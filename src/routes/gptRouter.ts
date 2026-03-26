@@ -11,6 +11,10 @@ import {
   shapeClientRouteResult
 } from '@shared/http/clientResponseGuards.js';
 import { applyCanonicalGptRouteHeaders } from '@shared/http/gptRouteHeaders.js';
+import {
+  applyAIDegradedResponseHeaders,
+  extractAIDegradedResponseMetadata
+} from '@shared/http/aiDegradedHeaders.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { getDiagnosticsSnapshot } from '@core/diagnostics.js';
 import {
@@ -260,6 +264,7 @@ router.post("/:gptId", async (req, res, next) => {
         });
 
         if (!envelope.ok) {
+          applyAIDegradedResponseHeaders(res, extractAIDegradedResponseMetadata(envelope.error.details));
           const statusCode =
             envelope.error.code === "UNKNOWN_GPT"
               ? 404
@@ -297,6 +302,7 @@ router.post("/:gptId", async (req, res, next) => {
 
         logGptConnection(routingInfo);
         logGptAckSent(routingInfo, (envelope._route.availableActions ?? []).length);
+        applyAIDegradedResponseHeaders(res, extractAIDegradedResponseMetadata(envelope.result));
         requestLogger?.info?.("gpt.request.route_result", {
           endpoint: req.originalUrl,
           gptId: incomingGptId,

@@ -33,7 +33,7 @@ jest.unstable_mockModule('@transport/http/requestHandler.js', () => ({
 }));
 
 jest.unstable_mockModule('@platform/resilience/runtimeBudget.js', () => ({
-  createRuntimeBudget: mockCreateRuntimeBudget
+  createRuntimeBudgetWithLimit: mockCreateRuntimeBudget
 }));
 
 jest.unstable_mockModule('@services/promptRouteShortcuts.js', () => ({

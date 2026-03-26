@@ -644,6 +644,21 @@ function buildDispatchTimeoutMessage(timeoutMs?: number, scope: 'module' | 'mcp'
     : 'Module dispatch timed out before completion.';
 }
 
+function buildDispatchTimeoutDetails(moduleName: string, errorMessage: string): Record<string, unknown> | undefined {
+  const normalizedMessage = errorMessage.toLowerCase();
+  if (
+    moduleName === 'ARCANOS:CORE' &&
+    normalizedMessage.includes('arcanos:core pipeline timeout after')
+  ) {
+    return {
+      timeoutKind: 'pipeline_timeout',
+      degradedModeReason: 'arcanos_core_pipeline_timeout'
+    };
+  }
+
+  return undefined;
+}
+
 function logTrinityExecution(
   requestLogger: { info?: (message: string, meta?: Record<string, unknown>) => void } | undefined,
   params: {
@@ -1874,7 +1889,10 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       ok: false,
       error: {
         code: isDispatchTimeout ? "MODULE_TIMEOUT" : "MODULE_ERROR",
-        message: dispatchErrorMessage
+        message: dispatchErrorMessage,
+        ...(buildDispatchTimeoutDetails(activeEntry.module, errorMessage)
+          ? { details: buildDispatchTimeoutDetails(activeEntry.module, errorMessage) }
+          : {})
       },
       _route: {
         ...baseRoute,

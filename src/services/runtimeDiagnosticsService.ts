@@ -7,6 +7,7 @@ import { getGptModuleMap } from '@platform/runtime/gptRouterConfig.js';
 import { loadModuleDefinitions, type LoadedModule } from './moduleLoader.js';
 import { getActiveRouteTable } from './runtimeRouteTableService.js';
 import { resolveConfiguredRedisConnection } from '@platform/runtime/redis.js';
+import type { AIDegradedResponseMetadata, AITimeoutKind } from '@shared/http/aiDegradedHeaders.js';
 
 type ModuleStatus =
   | 'active'
@@ -48,6 +49,9 @@ export interface RequestSample {
   statusCode: number;
   latencyMs: number;
   timedOut: boolean;
+  timeoutKind: AITimeoutKind | null;
+  degradedModeReason: string | null;
+  bypassedSubsystems: string[];
 }
 
 export interface RequestWindowRouteSnapshot {
@@ -55,6 +59,11 @@ export interface RequestWindowRouteSnapshot {
   requestCount: number;
   errorCount: number;
   timeoutCount: number;
+  pipelineTimeoutCount: number;
+  providerTimeoutCount: number;
+  workerTimeoutCount: number;
+  budgetAbortCount: number;
+  degradedCount: number;
   slowRequestCount: number;
   avgLatencyMs: number;
   p95LatencyMs: number;
@@ -71,6 +80,13 @@ export interface RequestWindowSnapshot {
   errorRate: number;
   timeoutCount: number;
   timeoutRate: number;
+  pipelineTimeoutCount: number;
+  providerTimeoutCount: number;
+  workerTimeoutCount: number;
+  budgetAbortCount: number;
+  degradedCount: number;
+  degradedReasons: string[];
+  bypassedSubsystems: string[];
   slowRequestCount: number;
   avgLatencyMs: number;
   p95LatencyMs: number;
@@ -147,7 +163,12 @@ class RuntimeDiagnosticsService {
   private readonly redisStore = new RuntimeDiagnosticsRedisStore();
   private activeRouteTableCache: string[] | null = null;
 
-  recordRequestCompletion(statusCode: number, latencyMs: number, route = 'unmatched'): void {
+  recordRequestCompletion(
+    statusCode: number,
+    latencyMs: number,
+    route = 'unmatched',
+    metadata: AIDegradedResponseMetadata = {}
+  ): void {
     this.requestsTotal += 1;
     this.totalLatencyMs += latencyMs;
 
@@ -160,7 +181,7 @@ class RuntimeDiagnosticsService {
       this.recentLatencyMs.splice(0, this.recentLatencyMs.length - RECENT_LATENCY_LIMIT);
     }
 
-    this.recentRequests.push(buildRequestSample(route, statusCode, latencyMs));
+    this.recentRequests.push(buildRequestSample(route, statusCode, latencyMs, metadata));
     if (this.recentRequests.length > RECENT_REQUEST_LIMIT) {
       this.recentRequests.splice(0, this.recentRequests.length - RECENT_REQUEST_LIMIT);
     }
@@ -547,13 +568,33 @@ function sanitizeKeySegment(value: string): string {
   return value.trim().toLowerCase().replace(/[^a-z0-9:_-]+/g, '-');
 }
 
-function buildRequestSample(route: string, statusCode: number, latencyMs: number): RequestSample {
+function buildRequestSample(
+  route: string,
+  statusCode: number,
+  latencyMs: number,
+  metadata: AIDegradedResponseMetadata = {}
+): RequestSample {
+  const timeoutKind = metadata.timeoutKind ?? null;
+  const degradedModeReason =
+    typeof metadata.degradedModeReason === 'string' && metadata.degradedModeReason.trim().length > 0
+      ? metadata.degradedModeReason.trim()
+      : null;
+  const bypassedSubsystems = Array.isArray(metadata.bypassedSubsystems)
+    ? metadata.bypassedSubsystems
+      .filter((entry): entry is string => typeof entry === 'string')
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0)
+    : [];
+
   return {
     timestamp: new Date().toISOString(),
     route: route.trim().length > 0 ? route : 'unmatched',
     statusCode,
     latencyMs: roundMetric(latencyMs),
-    timedOut: statusCode === 408 || statusCode === 504 || latencyMs >= TIMEOUT_LATENCY_MS
+    timedOut: timeoutKind !== null || statusCode === 408 || statusCode === 504 || latencyMs >= TIMEOUT_LATENCY_MS,
+    timeoutKind,
+    degradedModeReason,
+    bypassedSubsystems
   };
 }
 
@@ -576,6 +617,13 @@ function aggregateRequestSamples(samples: RequestSample[], windowMs: number): Re
   let clientErrorCount = 0;
   let serverErrorCount = 0;
   let timeoutCount = 0;
+  let pipelineTimeoutCount = 0;
+  let providerTimeoutCount = 0;
+  let workerTimeoutCount = 0;
+  let budgetAbortCount = 0;
+  let degradedCount = 0;
+  const degradedReasons = new Map<string, number>();
+  const bypassedSubsystems = new Set<string>();
   let slowRequestCount = 0;
   let totalLatencyMs = 0;
   let maxLatencyMs = 0;
@@ -595,6 +643,25 @@ function aggregateRequestSamples(samples: RequestSample[], windowMs: number): Re
     if (sample.timedOut) {
       timeoutCount += 1;
     }
+    if (sample.timeoutKind === 'pipeline_timeout') {
+      pipelineTimeoutCount += 1;
+    } else if (sample.timeoutKind === 'provider_timeout') {
+      providerTimeoutCount += 1;
+    } else if (sample.timeoutKind === 'worker_timeout') {
+      workerTimeoutCount += 1;
+    } else if (sample.timeoutKind === 'budget_abort') {
+      budgetAbortCount += 1;
+    }
+    if (sample.degradedModeReason) {
+      degradedCount += 1;
+      degradedReasons.set(
+        sample.degradedModeReason,
+        (degradedReasons.get(sample.degradedModeReason) ?? 0) + 1
+      );
+    }
+    for (const subsystem of sample.bypassedSubsystems) {
+      bypassedSubsystems.add(subsystem);
+    }
     if (sample.latencyMs >= SLOW_REQUEST_LATENCY_MS) {
       slowRequestCount += 1;
     }
@@ -611,6 +678,11 @@ function aggregateRequestSamples(samples: RequestSample[], windowMs: number): Re
       requestCount: routeSamples.length,
       errorCount: routeSamples.filter((sample) => sample.statusCode >= 400).length,
       timeoutCount: routeSamples.filter((sample) => sample.timedOut).length,
+      pipelineTimeoutCount: routeSamples.filter((sample) => sample.timeoutKind === 'pipeline_timeout').length,
+      providerTimeoutCount: routeSamples.filter((sample) => sample.timeoutKind === 'provider_timeout').length,
+      workerTimeoutCount: routeSamples.filter((sample) => sample.timeoutKind === 'worker_timeout').length,
+      budgetAbortCount: routeSamples.filter((sample) => sample.timeoutKind === 'budget_abort').length,
+      degradedCount: routeSamples.filter((sample) => sample.degradedModeReason !== null).length,
       slowRequestCount: routeSamples.filter((sample) => sample.latencyMs >= SLOW_REQUEST_LATENCY_MS).length,
       avgLatencyMs: routeSamples.length > 0 ? roundMetric(average(routeSamples.map((sample) => sample.latencyMs))) : 0,
       p95LatencyMs: routeSamples.length > 0 ? roundMetric(percentile(routeSamples.map((sample) => sample.latencyMs), 95)) : 0,
@@ -637,6 +709,16 @@ function aggregateRequestSamples(samples: RequestSample[], windowMs: number): Re
     errorRate: requestCount > 0 ? roundMetric(errorCount / requestCount) : 0,
     timeoutCount,
     timeoutRate: requestCount > 0 ? roundMetric(timeoutCount / requestCount) : 0,
+    pipelineTimeoutCount,
+    providerTimeoutCount,
+    workerTimeoutCount,
+    budgetAbortCount,
+    degradedCount,
+    degradedReasons: [...degradedReasons.entries()]
+      .sort((left, right) => right[1] - left[1])
+      .slice(0, 3)
+      .map(([reason]) => reason),
+    bypassedSubsystems: [...bypassedSubsystems].sort(),
     slowRequestCount,
     avgLatencyMs: requestCount > 0 ? roundMetric(totalLatencyMs / requestCount) : 0,
     p95LatencyMs: requestCount > 0 ? roundMetric(percentile(samples.map((sample) => sample.latencyMs), 95)) : 0,

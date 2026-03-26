@@ -154,6 +154,9 @@ describe('/api/arcanos/ask compatibility', () => {
       buildTrinityResult({
         result: 'Hello',
         activeModel: 'gpt-4.1',
+        timeoutKind: 'pipeline_timeout',
+        degradedModeReason: 'arcanos_core_pipeline_timeout_direct_answer',
+        bypassedSubsystems: ['trinity_intake', 'trinity_reasoning'],
         taskLineage: {
           requestId: 'compat-request-2',
           logged: true
@@ -167,6 +170,9 @@ describe('/api/arcanos/ask compatibility', () => {
     });
 
     expect(response.status).toBe(200);
+    expect(response.headers['x-ai-timeout-kind']).toBe('pipeline_timeout');
+    expect(response.headers['x-ai-degraded-reason']).toBe('arcanos_core_pipeline_timeout_direct_answer');
+    expect(response.headers['x-ai-bypassed-subsystems']).toBe('trinity_intake,trinity_reasoning');
     expect(mockRunArcanosCoreQuery).toHaveBeenCalledWith({
       client: { clientId: 'openai-client-1' },
       prompt: 'Say hello in one word.',

@@ -2,6 +2,7 @@ import type { NextFunction, Request, Response } from 'express';
 import { generateRequestId } from '@shared/idGenerator.js';
 import { resolveSafeRequestPath } from '@shared/requestPathSanitizer.js';
 import { redactSensitive } from '@shared/redaction.js';
+import { readAIDegradedResponseHeaders } from '@shared/http/aiDegradedHeaders.js';
 import { runtimeDiagnosticsService } from '@services/runtimeDiagnosticsService.js';
 import {
   recordHttpRequestCompletion,
@@ -152,17 +153,23 @@ export function requestContext(req: Request, res: Response, next: NextFunction):
     const latencyMs = Date.now() - startTimeMs;
     const statusCode = res.statusCode;
     const route = resolveMetricRouteLabel(req);
+    const degradedMetadata = readAIDegradedResponseHeaders(res);
     const completionData = {
       statusCode,
-      contentLength: res.getHeader('content-length') ?? null
+      contentLength: res.getHeader('content-length') ?? null,
+      ...(degradedMetadata.timeoutKind ? { timeoutKind: degradedMetadata.timeoutKind } : {}),
+      ...(degradedMetadata.degradedModeReason ? { degradedModeReason: degradedMetadata.degradedModeReason } : {}),
+      ...((degradedMetadata.bypassedSubsystems?.length ?? 0) > 0
+        ? { bypassedSubsystems: degradedMetadata.bypassedSubsystems }
+        : {})
     };
 
-    runtimeDiagnosticsService.recordRequestCompletion(statusCode, latencyMs, route);
+    runtimeDiagnosticsService.recordRequestCompletion(statusCode, latencyMs, route, degradedMetadata);
 
     let level: RequestLogLevel = 'info';
     if (statusCode >= 500) {
       level = 'error';
-    } else if (statusCode >= 400) {
+    } else if (statusCode >= 400 || degradedMetadata.timeoutKind !== null) {
       level = 'warn';
     }
 

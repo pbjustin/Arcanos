@@ -103,6 +103,7 @@ type DiagnosisType =
   | 'healthy'
   | 'prompt_route_stabilized'
   | 'worker_stall'
+  | 'pipeline_timeout_cluster'
   | 'timeout_storm'
   | 'latency_spike'
   | 'provider_failure_cluster'
@@ -174,17 +175,25 @@ export interface SelfHealingLoopStatus {
   lastEvidence: Record<string, unknown> | null;
   lastVerificationResult: SelfHealingVerificationResult | null;
   activeMitigation: string | null;
+  degradedModeReason: string | null;
   lastLatencySnapshot: {
     requestCount: number;
     avgLatencyMs: number;
     p95LatencyMs: number;
     maxLatencyMs: number;
+    degradedCount: number;
+    pipelineTimeoutCount: number;
     promptRoute: SelfHealingVerificationSnapshot['promptRoute'];
   } | null;
   recentTimeoutCounts: {
     windowMs: number;
     total: number;
     promptRoute: number;
+    pipelineTimeouts: number;
+    providerTimeouts: number;
+    workerTimeouts: number;
+    budgetAborts: number;
+    coreRoute: number;
   } | null;
   bypassedSubsystems: string[];
   ineffectiveActions: Record<string, string>;
@@ -420,6 +429,7 @@ function createInitialStatus(): SelfHealingLoopStatus {
     lastEvidence: null,
     lastVerificationResult: null,
     activeMitigation: null,
+    degradedModeReason: null,
     lastLatencySnapshot: null,
     recentTimeoutCounts: null,
     bypassedSubsystems: [],
@@ -525,6 +535,15 @@ function getActiveBypassedSubsystems(): string[] {
   return promptRouteMitigation.active ? [...promptRouteMitigation.bypassedSubsystems] : [];
 }
 
+function combineBypassedSubsystems(requestWindow: RequestWindowSnapshot): string[] {
+  return [
+    ...new Set([
+      ...getActiveBypassedSubsystems(),
+      ...(Array.isArray(requestWindow.bypassedSubsystems) ? requestWindow.bypassedSubsystems : [])
+    ])
+  ].sort();
+}
+
 function deriveTelemetrySignals(
   telemetry: ReturnType<typeof getTelemetrySnapshot>,
   windowMs: number
@@ -626,6 +645,8 @@ function buildLatencySnapshot(
     avgLatencyMs: requestWindow.avgLatencyMs,
     p95LatencyMs: requestWindow.p95LatencyMs,
     maxLatencyMs: requestWindow.maxLatencyMs,
+    degradedCount: requestWindow.degradedCount ?? 0,
+    pipelineTimeoutCount: requestWindow.pipelineTimeoutCount ?? 0,
     promptRoute: buildPromptRouteVerificationSnapshot(requestWindow)
   };
 }
@@ -634,10 +655,18 @@ function buildRecentTimeoutCounts(
   requestWindow: RequestWindowSnapshot
 ): SelfHealingLoopStatus['recentTimeoutCounts'] {
   const promptRoute = requestWindow.routes.find((route) => route.route === PROMPT_ROUTE_PATH) ?? null;
+  const coreRouteTimeouts = requestWindow.routes
+    .filter((route) => route.route === '/gpt/:gptId' || route.route === '/api/arcanos/ask')
+    .reduce((total, route) => total + route.timeoutCount, 0);
   return {
     windowMs: requestWindow.windowMs,
     total: requestWindow.timeoutCount,
-    promptRoute: promptRoute?.timeoutCount ?? 0
+    promptRoute: promptRoute?.timeoutCount ?? 0,
+    pipelineTimeouts: requestWindow.pipelineTimeoutCount ?? 0,
+    providerTimeouts: requestWindow.providerTimeoutCount ?? 0,
+    workerTimeouts: requestWindow.workerTimeoutCount ?? 0,
+    budgetAborts: requestWindow.budgetAbortCount ?? 0,
+    coreRoute: coreRouteTimeouts
   };
 }
 
@@ -649,6 +678,13 @@ function buildRequestEvidence(window: RequestWindowSnapshot): Record<string, unk
     clientErrorCount: window.clientErrorCount,
     timeoutCount: window.timeoutCount,
     timeoutRate: window.timeoutRate,
+    pipelineTimeoutCount: window.pipelineTimeoutCount ?? 0,
+    providerTimeoutCount: window.providerTimeoutCount ?? 0,
+    workerTimeoutCount: window.workerTimeoutCount ?? 0,
+    budgetAbortCount: window.budgetAbortCount ?? 0,
+    degradedCount: window.degradedCount ?? 0,
+    degradedReasons: window.degradedReasons ?? [],
+    bypassedSubsystems: window.bypassedSubsystems ?? [],
     avgLatencyMs: window.avgLatencyMs,
     p95LatencyMs: window.p95LatencyMs,
     maxLatencyMs: window.maxLatencyMs,
@@ -657,6 +693,11 @@ function buildRequestEvidence(window: RequestWindowSnapshot): Record<string, unk
       requestCount: route.requestCount,
       errorCount: route.errorCount,
       timeoutCount: route.timeoutCount,
+      pipelineTimeoutCount: route.pipelineTimeoutCount,
+      providerTimeoutCount: route.providerTimeoutCount,
+      workerTimeoutCount: route.workerTimeoutCount,
+      budgetAbortCount: route.budgetAbortCount,
+      degradedCount: route.degradedCount,
       slowRequestCount: route.slowRequestCount ?? 0,
       avgLatencyMs: route.avgLatencyMs,
       p95LatencyMs: route.p95LatencyMs,
@@ -918,6 +959,22 @@ function buildDiagnosisSummary(
     };
   }
 
+  if (type === 'pipeline_timeout_cluster') {
+    return {
+      summary: 'pipeline timeout cluster detected',
+      confidence: 0.93,
+      evidence: withPromptRouteEvidence(
+        {
+          ...requestEvidence,
+          degradedModeReason: observation.requestWindow.degradedReasons?.[0] ?? null
+        },
+        observation.requestWindow
+      ),
+      actionPlan: buildLatencyMitigationActionPlan(observation.requestWindow, activeMitigation),
+      shouldRunController: activeMitigation !== null
+    };
+  }
+
   if (type === 'timeout_storm') {
     const evidence = withPromptRouteEvidence(
       {
@@ -1124,6 +1181,9 @@ function diagnoseSelfHealingRuntime(
     String(observation.openaiHealth.circuitBreaker.state).toUpperCase() !== 'CLOSED' ||
     providerFailureCount >= resolveProviderFailureThreshold() ||
     telemetrySignals.fallbackDegradedCount >= 2;
+  const pipelineTimeoutClusterDetected =
+    requestWindow.requestCount >= Math.max(4, Math.floor(minRequestCount / 3)) &&
+    (requestWindow.pipelineTimeoutCount ?? 0) >= Math.max(2, Math.floor(resolveTimeoutCountThreshold() / 2));
   // Timeout storms should capture repeated timeout-class failures plus either long-tail latency or
   // server-side breakage, so a burst of 5-13s requests does not slip through on average latency alone.
   const timeoutStormDetected =
@@ -1174,6 +1234,8 @@ function diagnoseSelfHealingRuntime(
     diagnosisType = 'prompt_route_stabilized';
   } else if (providerClusterDetected) {
     diagnosisType = 'provider_failure_cluster';
+  } else if (pipelineTimeoutClusterDetected) {
+    diagnosisType = 'pipeline_timeout_cluster';
   } else if (timeoutStormDetected) {
     diagnosisType = 'timeout_storm';
   } else if (latencySpikeDetected) {
@@ -1322,7 +1384,9 @@ function refreshStatusViews(runtime: SelfHealingLoopRuntime): void {
   runtime.status.attemptsByDiagnosis = serializeDiagnosisAttempts(runtime);
   runtime.status.cooldowns = serializeCooldowns(runtime);
   runtime.status.ineffectiveActions = serializeIneffectiveActions(runtime);
-  runtime.status.bypassedSubsystems = getActiveBypassedSubsystems();
+  runtime.status.bypassedSubsystems = [
+    ...new Set([...runtime.status.bypassedSubsystems, ...getActiveBypassedSubsystems()])
+  ].sort();
 }
 
 function beginVerification(
@@ -1930,9 +1994,10 @@ export async function runSelfHealingLoop(options: {
     runtime.status.lastWorkerHealth = diagnosis.workerHealthLabel;
     runtime.status.lastTrinityMitigation = diagnosis.trinityMitigation;
     runtime.status.activeMitigation = getActiveAutomatedMitigation(observation.trinityStatus);
+    runtime.status.degradedModeReason = observation.requestWindow.degradedReasons?.[0] ?? null;
     runtime.status.lastLatencySnapshot = buildLatencySnapshot(observation.requestWindow);
     runtime.status.recentTimeoutCounts = buildRecentTimeoutCounts(observation.requestWindow);
-    runtime.status.bypassedSubsystems = getActiveBypassedSubsystems();
+    runtime.status.bypassedSubsystems = combineBypassedSubsystems(observation.requestWindow);
 
     if (diagnosis.type === 'healthy' || diagnosis.type === 'prompt_route_stabilized') {
       runtime.status.lastHealthyObservedAt = tickAt;

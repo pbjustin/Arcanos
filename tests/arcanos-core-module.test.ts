@@ -24,13 +24,19 @@ beforeEach(async () => {
   }));
 
   jest.unstable_mockModule('@platform/resilience/runtimeBudget.js', () => ({
-    createRuntimeBudget: mockCreateRuntimeBudget,
+    createRuntimeBudgetWithLimit: mockCreateRuntimeBudget,
   }));
 
   jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({
+    aiLogger: {
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+    },
     logger: {
       info: jest.fn(),
       error: jest.fn(),
+      warn: jest.fn(),
     },
   }));
 
@@ -49,6 +55,7 @@ beforeEach(async () => {
   jest.unstable_mockModule('@arcanos/runtime', () => ({
     getRequestAbortSignal: jest.fn(),
     getRequestRemainingMs: jest.fn(() => null),
+    isAbortError: jest.fn(() => false),
     runWithRequestAbortTimeout: jest.fn(async (_config: unknown, run: () => unknown) => run()),
   }));
 

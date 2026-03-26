@@ -22,10 +22,15 @@ jest.unstable_mockModule('@services/openai/clientBridge.js', () => ({
 }));
 
 jest.unstable_mockModule('@platform/resilience/runtimeBudget.js', () => ({
-  createRuntimeBudget: mockCreateRuntimeBudget,
+  createRuntimeBudgetWithLimit: mockCreateRuntimeBudget,
 }));
 
 jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({
+  aiLogger: {
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn()
+  },
   logger: {
     info: loggerInfoMock,
     warn: jest.fn(),
@@ -36,6 +41,7 @@ jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({
 jest.unstable_mockModule('@arcanos/runtime', () => ({
   getRequestAbortSignal: jest.fn(() => undefined),
   getRequestRemainingMs: getRequestRemainingMsMock,
+  isAbortError: jest.fn(() => false),
   runWithRequestAbortTimeout: runWithRequestAbortTimeoutMock
 }));
 
@@ -79,15 +85,19 @@ describe('ARCANOS:CORE service', () => {
     expect(runWithRequestAbortTimeoutMock).toHaveBeenCalledTimes(1);
     expect(runWithRequestAbortTimeoutMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        timeoutMs: 55_000,
-        abortMessage: 'ARCANOS:CORE handler timed out after 55000ms'
+        timeoutMs: 3_000,
+        abortMessage: 'ARCANOS:CORE pipeline timeout after 3000ms'
       }),
       expect.any(Function)
     );
+    expect(mockCreateRuntimeBudget).toHaveBeenCalledWith(3_000, 250);
     expect(loggerInfoMock).toHaveBeenCalledWith(
       '[core] handler.start',
       expect.objectContaining({
-        sourceEndpoint: 'gpt.arcanos-core.query'
+        sourceEndpoint: 'gpt.arcanos-core.query',
+        timeoutMs: 3_000,
+        totalTimeoutMs: 5_000,
+        degradedTimeoutMs: 2_000
       })
     );
     expect(result).toBe(trinityResult);
@@ -105,7 +115,7 @@ describe('ARCANOS:CORE service', () => {
 
     expect(runWithRequestAbortTimeoutMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        timeoutMs: 55_000
+        timeoutMs: 3_000
       }),
       expect.any(Function)
     );
