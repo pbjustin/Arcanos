@@ -31,6 +31,8 @@ let activatePromptRouteDegradedMode: (reason: string) => unknown;
 let activatePromptRouteReducedLatencyMode: (reason: string, defaultTokenLimit: number) => unknown;
 let getPromptRouteMitigationState: () => any;
 let resetPromptRouteMitigationStateForTests: () => void;
+let DEFAULT_PROMPT_ROUTE_PIPELINE_TIMEOUT_MS: number;
+let DEFAULT_PROMPT_ROUTE_PROVIDER_TIMEOUT_MS: number;
 let originalNodeEnv: string | undefined;
 
 beforeEach(async () => {
@@ -72,9 +74,14 @@ beforeEach(async () => {
   }));
 
   ({ handlePrompt } = await import('../src/transport/http/controllers/openaiController.js'));
-  ({ activatePromptRouteDegradedMode, activatePromptRouteReducedLatencyMode, getPromptRouteMitigationState, resetPromptRouteMitigationStateForTests } = await import(
-    '../src/services/openai/promptRouteMitigation.js'
-  ));
+  ({
+    activatePromptRouteDegradedMode,
+    activatePromptRouteReducedLatencyMode,
+    getPromptRouteMitigationState,
+    resetPromptRouteMitigationStateForTests,
+    DEFAULT_PROMPT_ROUTE_PIPELINE_TIMEOUT_MS,
+    DEFAULT_PROMPT_ROUTE_PROVIDER_TIMEOUT_MS
+  } = await import('../src/services/openai/promptRouteMitigation.js'));
   resetPromptRouteMitigationStateForTests();
 });
 
@@ -100,7 +107,7 @@ describe('handlePrompt', () => {
       256,
       true,
       expect.objectContaining({
-        timeoutMs: 4500,
+        timeoutMs: DEFAULT_PROMPT_ROUTE_PROVIDER_TIMEOUT_MS,
         maxRetries: 1,
         metadata: expect.objectContaining({
           route: '/api/openai/prompt',
@@ -110,7 +117,7 @@ describe('handlePrompt', () => {
     );
     expect(runWithRequestAbortTimeoutMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        timeoutMs: 5000,
+        timeoutMs: DEFAULT_PROMPT_ROUTE_PIPELINE_TIMEOUT_MS,
         onAbort: expect.any(Function)
       }),
       expect.any(Function)
@@ -147,7 +154,7 @@ describe('handlePrompt', () => {
       256,
       true,
       expect.objectContaining({
-        timeoutMs: 4500,
+        timeoutMs: DEFAULT_PROMPT_ROUTE_PROVIDER_TIMEOUT_MS,
         maxRetries: 1
       })
     );
@@ -176,7 +183,7 @@ describe('handlePrompt', () => {
       256,
       true,
       expect.objectContaining({
-        timeoutMs: 4500,
+        timeoutMs: DEFAULT_PROMPT_ROUTE_PROVIDER_TIMEOUT_MS,
         maxRetries: 1
       })
     );
