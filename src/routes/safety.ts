@@ -21,6 +21,28 @@ import {
 
 const router = express.Router();
 
+function getEventTimestamp(event: { timestamp?: string | null } | null | undefined): string | null {
+  return event?.timestamp ?? null;
+}
+
+function getLastSelfHealResultEvent(
+  recentEvents: Array<{
+    kind?: string | null;
+    timestamp?: string | null;
+    actionTaken?: string | null;
+    healedComponent?: string | null;
+  }>
+) {
+  for (let index = recentEvents.length - 1; index >= 0; index -= 1) {
+    const event = recentEvents[index];
+    if (event.kind === 'success' || event.kind === 'failure' || event.kind === 'noop' || event.kind === 'fallback') {
+      return event;
+    }
+  }
+
+  return null;
+}
+
 /**
  * GET /status/safety/operator-auth
  * Purpose: Expose non-secret operator authentication requirements for diagnostics.
@@ -81,12 +103,21 @@ router.get('/status/safety/self-heal', (_req: Request, res: Response) => {
     currentActionTaken: loopStatus.lastAction,
     currentHealedComponent: inferSelfHealComponentFromAction(loopStatus.lastAction)
   });
+  const lastHealResultEvent = getLastSelfHealResultEvent(selfHealTelemetry.recentEvents);
 
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
     enabled: selfHealTelemetry.enabled,
     active: selfHealTelemetry.active,
+    lastTriggerAt: getEventTimestamp(selfHealTelemetry.lastTrigger),
+    lastHealAttemptAt: getEventTimestamp(selfHealTelemetry.lastAttempt),
+    lastHealSuccessAt: getEventTimestamp(selfHealTelemetry.lastSuccess),
+    lastHealFailureAt: getEventTimestamp(selfHealTelemetry.lastFailure),
+    lastTriggerReason: selfHealTelemetry.lastTrigger?.reason ?? selfHealTelemetry.triggerReason,
+    lastHealedComponent: lastHealResultEvent?.healedComponent ?? selfHealTelemetry.healedComponent,
+    lastHealAction: lastHealResultEvent?.actionTaken ?? selfHealTelemetry.actionTaken,
+    lastHealResult: lastHealResultEvent?.kind ?? null,
     lastTrigger: selfHealTelemetry.lastTrigger,
     lastAttempt: selfHealTelemetry.lastAttempt,
     lastSuccess: selfHealTelemetry.lastSuccess,
