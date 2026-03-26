@@ -48,6 +48,10 @@ function readBoolean(value: unknown): boolean | undefined {
   return typeof value === 'boolean' ? value : undefined;
 }
 
+function readNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
 function readStringArray(value: unknown, maxItems = 8): string[] | undefined {
   if (!Array.isArray(value)) {
     return undefined;
@@ -187,6 +191,174 @@ function pickModulesSummary(value: Record<string, unknown>): Record<string, unkn
   };
 }
 
+function computeNodeDurationMs(node: Record<string, unknown>): number | undefined {
+  const startedAt = readString(node.startedAt);
+  const completedAt = readString(node.completedAt);
+  if (!startedAt || !completedAt) {
+    return undefined;
+  }
+
+  const startedAtMs = Date.parse(startedAt);
+  const completedAtMs = Date.parse(completedAt);
+  if (!Number.isFinite(startedAtMs) || !Number.isFinite(completedAtMs) || completedAtMs < startedAtMs) {
+    return undefined;
+  }
+
+  return completedAtMs - startedAtMs;
+}
+
+function pickDagTraceNodeSummary(node: Record<string, unknown>): Record<string, unknown> {
+  const nodeId = readString(node.nodeId);
+  const agentRole = readString(node.agentRole);
+  const jobType = readString(node.jobType);
+  const status = readString(node.status);
+  const workerId = readString(node.workerId);
+  const startedAt = readString(node.startedAt);
+  const completedAt = readString(node.completedAt);
+  const spawnDepth = readNumber(node.spawnDepth);
+  const durationMs = computeNodeDurationMs(node);
+
+  return {
+    ...(nodeId ? { nodeId } : {}),
+    ...(agentRole ? { agentRole } : {}),
+    ...(jobType ? { jobType } : {}),
+    ...(status ? { status } : {}),
+    ...(workerId ? { workerId } : {}),
+    ...(startedAt ? { startedAt } : {}),
+    ...(completedAt ? { completedAt } : {}),
+    ...(spawnDepth !== undefined ? { spawnDepth } : {}),
+    ...(durationMs !== undefined ? { durationMs } : {}),
+  };
+}
+
+function pickDagRunSummary(run: Record<string, unknown>): Record<string, unknown> {
+  const runId = readString(run.runId);
+  const sessionId = readString(run.sessionId);
+  const status = readString(run.status);
+  const template = readString(run.template);
+  const durationMs = readNumber(run.durationMs);
+  const totalNodes = readNumber(run.totalNodes);
+  const completedNodes = readNumber(run.completedNodes);
+  const failedNodes = readNumber(run.failedNodes);
+  const createdAt = readString(run.createdAt);
+  const updatedAt = readString(run.updatedAt);
+
+  return {
+    ...(runId ? { runId } : {}),
+    ...(sessionId ? { sessionId } : {}),
+    ...(status ? { status } : {}),
+    ...(template ? { template } : {}),
+    ...(durationMs !== undefined ? { durationMs } : {}),
+    ...(totalNodes !== undefined ? { totalNodes } : {}),
+    ...(completedNodes !== undefined ? { completedNodes } : {}),
+    ...(failedNodes !== undefined ? { failedNodes } : {}),
+    ...(createdAt ? { createdAt } : {}),
+    ...(updatedAt ? { updatedAt } : {}),
+  };
+}
+
+function pickDagMetricsSummary(metricBody: Record<string, unknown>): Record<string, unknown> {
+  const totalNodes = readNumber(metricBody.totalNodes);
+  const totalAiCalls = readNumber(metricBody.totalAiCalls);
+  const totalRetries = readNumber(metricBody.totalRetries);
+  const totalFailures = readNumber(metricBody.totalFailures);
+  const wallClockDurationMs = readNumber(metricBody.wallClockDurationMs);
+  const maxParallelNodesObserved = readNumber(metricBody.maxParallelNodesObserved);
+  const maxSpawnDepthObserved = readNumber(metricBody.maxSpawnDepthObserved);
+
+  return {
+    ...(totalNodes !== undefined ? { totalNodes } : {}),
+    ...(totalAiCalls !== undefined ? { totalAiCalls } : {}),
+    ...(totalRetries !== undefined ? { totalRetries } : {}),
+    ...(totalFailures !== undefined ? { totalFailures } : {}),
+    ...(wallClockDurationMs !== undefined ? { wallClockDurationMs } : {}),
+    ...(maxParallelNodesObserved !== undefined ? { maxParallelNodesObserved } : {}),
+    ...(maxSpawnDepthObserved !== undefined ? { maxSpawnDepthObserved } : {}),
+  };
+}
+
+function pickDagVerificationSummary(verificationBody: Record<string, unknown>): Record<string, unknown> {
+  const runCompleted = readBoolean(verificationBody.runCompleted);
+  const parallelExecutionObserved = readBoolean(verificationBody.parallelExecutionObserved);
+  const aggregationRanLast = readBoolean(verificationBody.aggregationRanLast);
+  const retryPolicyRespected = readBoolean(verificationBody.retryPolicyRespected);
+  const budgetPolicyRespected = readBoolean(verificationBody.budgetPolicyRespected);
+  const loopDetected = readBoolean(verificationBody.loopDetected);
+
+  return {
+    ...(runCompleted !== undefined ? { runCompleted } : {}),
+    ...(parallelExecutionObserved !== undefined ? { parallelExecutionObserved } : {}),
+    ...(aggregationRanLast !== undefined ? { aggregationRanLast } : {}),
+    ...(retryPolicyRespected !== undefined ? { retryPolicyRespected } : {}),
+    ...(budgetPolicyRespected !== undefined ? { budgetPolicyRespected } : {}),
+    ...(loopDetected !== undefined ? { loopDetected } : {}),
+  };
+}
+
+function pickDagLineageSummary(lineage: Record<string, unknown>): Record<string, unknown> {
+  const loopDetected = readBoolean(lineage.loopDetected);
+
+  return {
+    ...(Array.isArray(lineage.lineage) ? { total: lineage.lineage.length } : {}),
+    ...(loopDetected !== undefined ? { loopDetected } : {}),
+  };
+}
+
+function pickDagErrorsSummary(errors: Record<string, unknown>): Record<string, unknown> {
+  return {
+    ...(Array.isArray(errors.errors) ? { total: errors.errors.length } : {}),
+  };
+}
+
+function pickDagTraceSummary(value: Record<string, unknown>): Record<string, unknown> | null {
+  const run = isRecord(value.run) ? value.run : null;
+  const tree = isRecord(value.tree) ? value.tree : null;
+  if (!run || !tree) {
+    return null;
+  }
+
+  const nodes = Array.isArray(tree.nodes)
+    ? tree.nodes
+        .filter(isRecord)
+        .slice(0, 32)
+        .map((node) => pickDagTraceNodeSummary(node))
+    : [];
+
+  const metrics = isRecord(value.metrics) ? value.metrics : null;
+  const metricBody = metrics && isRecord(metrics.metrics) ? metrics.metrics : null;
+  const verification = isRecord(value.verification) ? value.verification : null;
+  const verificationBody = verification && isRecord(verification.verification) ? verification.verification : null;
+  const sections = isRecord(value.sections) ? pruneGenericValue(value.sections) : undefined;
+  const lineage = isRecord(value.lineage) ? value.lineage : null;
+  const errors = isRecord(value.errors) ? value.errors : null;
+
+  return {
+    run: pickDagRunSummary(run),
+    nodes,
+    ...(metricBody
+      ? {
+          metrics: pickDagMetricsSummary(metricBody)
+        }
+      : {}),
+    ...(verificationBody
+      ? {
+          verification: pickDagVerificationSummary(verificationBody)
+        }
+      : {}),
+    ...(lineage
+      ? {
+          lineage: pickDagLineageSummary(lineage)
+        }
+      : {}),
+    ...(errors
+      ? {
+          errors: pickDagErrorsSummary(errors)
+        }
+      : {}),
+    ...(sections !== undefined ? { sections } : {}),
+  };
+}
+
 function extractMcpText(value: Record<string, unknown>): string | null {
   if (!Array.isArray(value.content)) {
     return null;
@@ -249,7 +421,7 @@ function shapeMcpToolOutput(toolName: string | undefined, rawResult: unknown): u
     return rawResult;
   }
 
-  const structured = isRecord(rawResult.structuredContent) ? rawResult.structuredContent : null;
+  const structured = isRecord(rawResult.structuredContent) ? rawResult.structuredContent : rawResult;
 
   if (structured) {
     const trinitySummary = pickTrinitySummary(structured);
@@ -266,6 +438,13 @@ function shapeMcpToolOutput(toolName: string | undefined, rawResult: unknown): u
       const modulesSummary = pickModulesSummary(structured);
       if (modulesSummary) {
         return modulesSummary;
+      }
+    }
+
+    if (toolName === 'dag.run.trace') {
+      const dagTraceSummary = pickDagTraceSummary(structured);
+      if (dagTraceSummary) {
+        return dagTraceSummary;
       }
     }
 
@@ -299,7 +478,7 @@ function shapeMcpDispatchResult(value: Record<string, unknown>): Record<string, 
       ...(toolName ? { toolName } : {}),
       ...(readString(value.mcp.dispatchMode) ? { dispatchMode: readString(value.mcp.dispatchMode) } : {}),
       ...(readString(value.mcp.reason) ? { reason: readString(value.mcp.reason) } : {}),
-      output: shapeMcpToolOutput(toolName, value.mcp.result),
+      output: shapeMcpToolOutput(toolName, value.mcp.output ?? value.mcp.result),
     },
   };
 }

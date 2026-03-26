@@ -168,6 +168,7 @@ type McpDispatchIntent =
       toolArguments: Record<string, unknown>;
       dispatchMode: 'automatic' | 'explicit';
       reason: string;
+      followLatestRunWithTrace?: boolean;
     }
   | {
       action: 'mcp.list_tools';
@@ -344,16 +345,17 @@ function inferAutomaticMcpDispatchIntent(params: {
       };
     }
 
-    return {
-      action: 'mcp.invoke',
-      toolName: 'dag.run.latest',
-      toolArguments: {
-        ...(sessionId ? { sessionId } : {}),
-      },
-      dispatchMode: 'automatic',
-      reason: 'prompt_requests_latest_dag_run',
-    };
-  }
+      return {
+        action: 'mcp.invoke',
+        toolName: 'dag.run.latest',
+        toolArguments: {
+          ...(sessionId ? { sessionId } : {}),
+        },
+        dispatchMode: 'automatic',
+        reason: 'prompt_requests_latest_dag_run',
+        followLatestRunWithTrace: automaticMcpDagTraceSelectorPattern.test(prompt),
+      };
+    }
 
   if (automaticMcpListToolsPattern.test(prompt)) {
     return {
@@ -405,6 +407,7 @@ function inferAutomaticMcpDispatchIntent(params: {
       },
       dispatchMode: 'automatic',
       reason: 'prompt_requests_latest_dag_run',
+      followLatestRunWithTrace: automaticMcpDagTraceSelectorPattern.test(prompt),
     };
   }
 
@@ -420,6 +423,7 @@ function inferAutomaticMcpDispatchIntent(params: {
       },
       dispatchMode: 'automatic',
       reason: 'prompt_requests_dag_orchestration',
+      followLatestRunWithTrace: true,
     };
   }
 
@@ -505,6 +509,29 @@ function extractMcpToolError(result: ArcanosMcpToolCallResult | ArcanosMcpToolLi
     message: typeof errorBody.message === 'string' ? errorBody.message : 'ARCANOS MCP tool returned an error result.',
     details: errorBody.details,
   };
+}
+
+function extractMcpToolOutput(
+  result: ArcanosMcpToolCallResult | ArcanosMcpToolListResult
+): Record<string, unknown> | ArcanosMcpToolCallResult | ArcanosMcpToolListResult {
+  return isRecord(result) && isRecord(result.structuredContent)
+    ? result.structuredContent
+    : result;
+}
+
+function extractDagRunIdFromMcpOutput(output: unknown): string | null {
+  if (!isRecord(output)) {
+    return null;
+  }
+
+  const directRunId = typeof output.runId === 'string' ? output.runId.trim() : '';
+  if (directRunId) {
+    return directRunId;
+  }
+
+  const run = isRecord(output.run) ? output.run : null;
+  const nestedRunId = run && typeof run.runId === 'string' ? run.runId.trim() : '';
+  return nestedRunId || null;
 }
 
 function resolveMemorySessionId(
@@ -1487,6 +1514,28 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       resolvedMcpDispatchIntent.dispatchMode === "automatic"
         ? `mcp.auto.${dispatcherAction === "mcp.invoke" ? "invoke" : "list_tools"}`
         : dispatcherAction;
+    const buildMcpDispatchErrorResponse = (error: { code: string; message: string; details?: unknown }) => {
+      recordDispatcherRoute({
+        gptId: trimmedGptId,
+        module: activeEntry.module,
+        route: activeEntry.route,
+        handler: 'mcp-dispatcher',
+        outcome: 'error',
+      });
+      return {
+        ok: false as const,
+        error,
+        _route: {
+          ...baseRoute,
+          module: activeEntry.module,
+          action: dispatcherRouteAction,
+          matchMethod,
+          route: activeEntry.route,
+          availableActions,
+          moduleVersion: (moduleMetadata as any)?.version ?? null
+        }
+      };
+    };
 
     if (resolvedMcpDispatchIntent.dispatchMode === "automatic") {
       if (resolvedMcpDispatchIntent.action === 'mcp.invoke') {
@@ -1547,26 +1596,64 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
 
       const mcpToolError = extractMcpToolError(mcpResult);
       if (mcpToolError) {
-        recordDispatcherRoute({
-          gptId: trimmedGptId,
-          module: activeEntry.module,
-          route: activeEntry.route,
-          handler: 'mcp-dispatcher',
-          outcome: 'error',
-        });
-        return {
-          ok: false,
-          error: mcpToolError,
-          _route: {
-            ...baseRoute,
+        return buildMcpDispatchErrorResponse(mcpToolError);
+      }
+
+      let finalMcpResult = mcpResult;
+      let finalToolName =
+        resolvedMcpDispatchIntent.action === "mcp.invoke"
+          ? resolvedMcpDispatchIntent.toolName
+          : undefined;
+
+      if (
+        resolvedMcpDispatchIntent.action === "mcp.invoke" &&
+        resolvedMcpDispatchIntent.followLatestRunWithTrace
+      ) {
+        const latestRunOutput = extractMcpToolOutput(mcpResult);
+        const resolvedRunId = extractDagRunIdFromMcpOutput(latestRunOutput);
+
+        if (resolvedRunId) {
+          logger?.info?.("gpt.dispatch.mcp.follow_up", {
+            requestId,
+            gptId: trimmedGptId,
             module: activeEntry.module,
-            action: dispatcherRouteAction,
-            matchMethod,
-            route: activeEntry.route,
-            availableActions,
-            moduleVersion: (moduleMetadata as any)?.version ?? null
+            sourceToolName: resolvedMcpDispatchIntent.toolName,
+            followUpToolName: "dag.run.trace",
+            runId: resolvedRunId,
+          });
+
+          const traceResult = await dispatcherMcpService.invokeTool({
+            toolName: "dag.run.trace",
+            toolArguments: { runId: resolvedRunId },
+            request,
+            sessionId,
+          });
+
+          const traceToolError = extractMcpToolError(traceResult);
+          if (traceToolError) {
+            return buildMcpDispatchErrorResponse(traceToolError);
           }
-        };
+
+          if (resolvedMcpDispatchIntent.dispatchMode === "automatic") {
+            recordMcpAutoInvoke({
+              gptId: trimmedGptId,
+              module: activeEntry.module,
+              toolName: "dag.run.trace",
+              reason: resolvedMcpDispatchIntent.reason,
+            });
+          }
+
+          finalMcpResult = traceResult;
+          finalToolName = "dag.run.trace";
+        } else {
+          logger?.warn?.("gpt.dispatch.mcp.follow_up_skipped", {
+            requestId,
+            gptId: trimmedGptId,
+            module: activeEntry.module,
+            sourceToolName: resolvedMcpDispatchIntent.toolName,
+            reason: "latest_run_missing_run_id",
+          });
+        }
       }
 
       const routedMcpResult = {
@@ -1575,13 +1662,10 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
           resolvedMcpDispatchIntent.action === "mcp.invoke"
             ? {
                 action: "invoke",
-                toolName: resolvedMcpDispatchIntent.toolName,
+                toolName: finalToolName,
                 dispatchMode: resolvedMcpDispatchIntent.dispatchMode,
                 reason: resolvedMcpDispatchIntent.reason,
-                output:
-                  isRecord(mcpResult) && isRecord(mcpResult.structuredContent)
-                    ? mcpResult.structuredContent
-                    : mcpResult,
+                output: extractMcpToolOutput(finalMcpResult),
               }
             : {
                 action: "list_tools",
@@ -1618,7 +1702,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         action: dispatcherAction,
         dispatchMode: resolvedMcpDispatchIntent.dispatchMode,
         reason: resolvedMcpDispatchIntent.reason,
-        toolName: resolvedMcpDispatchIntent.action === "mcp.invoke" ? resolvedMcpDispatchIntent.toolName : undefined,
+        toolName: finalToolName,
       });
 
       recordDispatcherRoute({

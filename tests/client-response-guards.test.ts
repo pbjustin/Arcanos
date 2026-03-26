@@ -16,7 +16,7 @@ describe('client response guards', () => {
         toolName: 'ops.health_report',
         dispatchMode: 'automatic',
         reason: 'prompt_requests_ops_health',
-        result: {
+        output: {
           content: [
             {
               type: 'text',
@@ -64,6 +64,136 @@ describe('client response guards', () => {
     });
     expect(output.raw).toBeUndefined();
     expect(measureJsonBytes(shaped)).toBeLessThan(1024);
+  });
+
+  it('preserves node-level DAG trace output for MCP dispatcher responses', () => {
+    const shaped = shapeClientRouteResult({
+      handledBy: 'mcp-dispatcher',
+      mcp: {
+        action: 'invoke',
+        toolName: 'dag.run.trace',
+        dispatchMode: 'automatic',
+        reason: 'prompt_requests_latest_dag_run',
+        output: {
+          run: {
+            runId: 'dagrun_trace_1',
+            sessionId: 'sess-1',
+            status: 'complete',
+            template: 'trinity-core',
+            durationMs: 181693,
+            totalNodes: 2,
+            completedNodes: 2,
+            failedNodes: 0,
+            createdAt: '2026-03-24T08:05:19.514Z',
+            updatedAt: '2026-03-24T08:08:21.207Z',
+          },
+          tree: {
+            nodes: [
+              {
+                nodeId: 'planner',
+                agentRole: 'planner',
+                jobType: 'plan',
+                status: 'complete',
+                workerId: 'async-queue-slot-2',
+                spawnDepth: 0,
+                startedAt: '2026-03-24T08:05:55.425Z',
+                completedAt: '2026-03-24T08:06:28.711Z',
+              },
+              {
+                nodeId: 'writer',
+                agentRole: 'writer',
+                jobType: 'synthesize',
+                status: 'complete',
+                workerId: 'async-queue-slot-3',
+                spawnDepth: 2,
+                startedAt: '2026-03-24T08:07:48.844Z',
+                completedAt: '2026-03-24T08:08:21.168Z',
+              },
+            ],
+          },
+          metrics: {
+            metrics: {
+              totalNodes: 2,
+              totalAiCalls: 2,
+              totalRetries: 0,
+              totalFailures: 0,
+              wallClockDurationMs: 181693,
+              maxParallelNodesObserved: 1,
+              maxSpawnDepthObserved: 2,
+            },
+          },
+          verification: {
+            verification: {
+              runCompleted: true,
+              parallelExecutionObserved: false,
+              aggregationRanLast: true,
+              retryPolicyRespected: true,
+              budgetPolicyRespected: true,
+              loopDetected: false,
+            },
+          },
+          lineage: {
+            lineage: [{ nodeId: 'planner' }, { nodeId: 'writer' }],
+            loopDetected: false,
+          },
+          errors: {
+            errors: [],
+          },
+          sections: {
+            requested: ['run', 'tree', 'metrics', 'verification'],
+            events: {
+              total: 22,
+              returned: 22,
+              truncated: false,
+              maxEvents: 200,
+            },
+          },
+        },
+      },
+    }) as Record<string, unknown>;
+
+    expect(shaped).toEqual({
+      handledBy: 'mcp-dispatcher',
+      mcp: {
+        action: 'invoke',
+        toolName: 'dag.run.trace',
+        dispatchMode: 'automatic',
+        reason: 'prompt_requests_latest_dag_run',
+        output: {
+          run: expect.objectContaining({
+            runId: 'dagrun_trace_1',
+            totalNodes: 2,
+          }),
+          nodes: [
+            expect.objectContaining({
+              nodeId: 'planner',
+              durationMs: 33286,
+            }),
+            expect.objectContaining({
+              nodeId: 'writer',
+              durationMs: 32324,
+            }),
+          ],
+          metrics: expect.objectContaining({
+            totalNodes: 2,
+            wallClockDurationMs: 181693,
+          }),
+          verification: expect.objectContaining({
+            runCompleted: true,
+          }),
+          lineage: {
+            total: 2,
+            loopDetected: false,
+          },
+          errors: {
+            total: 0,
+          },
+          sections: expect.objectContaining({
+            requested: expect.any(Array),
+          }),
+        },
+      },
+    });
   });
 
   it('strips internal Trinity fields from client-visible results', () => {
