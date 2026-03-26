@@ -100,7 +100,7 @@ describe('handlePrompt', () => {
       256,
       true,
       expect.objectContaining({
-        timeoutMs: 4500,
+        timeoutMs: 4000,
         maxRetries: 1,
         metadata: expect.objectContaining({
           route: '/api/openai/prompt',
@@ -110,7 +110,7 @@ describe('handlePrompt', () => {
     );
     expect(runWithRequestAbortTimeoutMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        timeoutMs: 5000,
+        timeoutMs: 4500,
         onAbort: expect.any(Function)
       }),
       expect.any(Function)
@@ -147,7 +147,7 @@ describe('handlePrompt', () => {
       256,
       true,
       expect.objectContaining({
-        timeoutMs: 4500,
+        timeoutMs: 4000,
         maxRetries: 1
       })
     );
@@ -176,7 +176,7 @@ describe('handlePrompt', () => {
       256,
       true,
       expect.objectContaining({
-        timeoutMs: 4500,
+        timeoutMs: 4000,
         maxRetries: 1
       })
     );
