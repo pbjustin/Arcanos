@@ -300,6 +300,25 @@ export interface WorkerBootstrapSummary {
   message: string;
 }
 
+function buildWorkersDisabledSummary(): WorkerBootstrapSummary {
+  const message =
+    workerRuntimeMode.reason === 'process_kind_web'
+      || workerRuntimeMode.reason === 'railway_web_service'
+      || workerRuntimeMode.reason === 'railway_dedicated_worker_service'
+      ? 'RUN_WORKERS disabled for this service role; workers not started.'
+      : 'RUN_WORKERS disabled; workers not started.';
+
+  return {
+    started: false,
+    alreadyRunning: false,
+    runWorkers: false,
+    workerCount: 0,
+    workerIds: [],
+    model: workerSettings.model,
+    message
+  };
+}
+
 function createWorkerHandler(workerId: string) {
   return async (request: WorkerDispatchRequest): Promise<WorkerResult> => {
     logger.info('[WORKER] Dispatching task', {
@@ -332,16 +351,8 @@ function createWorkerHandler(workerId: string) {
 }
 
 function startWorkersUnsafe(force = false): WorkerBootstrapSummary {
-  if (!workerSettings.runWorkers && !force) {
-    return {
-      started: false,
-      alreadyRunning: false,
-      runWorkers: false,
-      workerCount: 0,
-      workerIds: [],
-      model: workerSettings.model,
-      message: 'RUN_WORKERS disabled; workers not started.'
-    };
+  if (!workerSettings.runWorkers) {
+    return buildWorkersDisabledSummary();
   }
 
   if (runtimeState.started && !force) {

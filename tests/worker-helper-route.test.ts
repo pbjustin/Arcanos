@@ -406,4 +406,58 @@ describe('/worker-helper routes', () => {
       })
     }));
   });
+
+  it('does not start in-process workers when execute heal is requested on a disabled runtime', async () => {
+    startWorkersMock.mockResolvedValue({
+      started: false,
+      alreadyRunning: false,
+      runWorkers: false,
+      workerCount: 0,
+      workerIds: [],
+      model: 'gpt-5.1',
+      message: 'RUN_WORKERS disabled for this service role; workers not started.'
+    });
+    getWorkerRuntimeStatusMock.mockReturnValue({
+      enabled: false,
+      model: 'gpt-5.1',
+      configuredCount: 2,
+      started: false,
+      activeListeners: 0,
+      workerIds: [],
+      totalDispatched: 5
+    });
+
+    const response = await request(buildApp())
+      .post('/worker-helper/heal')
+      .set('x-confirmed', 'yes')
+      .send({});
+
+    expect(response.status).toBe(200);
+    expect(startWorkersMock).toHaveBeenCalledWith(true);
+    expect(response.body).toEqual(expect.objectContaining({
+      requestedForce: true,
+      restart: expect.objectContaining({
+        started: false,
+        runWorkers: false,
+        message: 'RUN_WORKERS disabled for this service role; workers not started.'
+      }),
+      runtime: expect.objectContaining({
+        enabled: false,
+        started: false,
+        activeListeners: 0
+      })
+    }));
+    expect(recordSelfHealEventMock).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'attempt',
+      source: 'worker-helper',
+      actionTaken: 'healWorkerRuntime',
+      healedComponent: 'worker_runtime'
+    }));
+    expect(recordSelfHealEventMock).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'noop',
+      source: 'worker-helper',
+      actionTaken: 'healWorkerRuntime:blocked',
+      healedComponent: 'worker_runtime'
+    }));
+  });
 });
