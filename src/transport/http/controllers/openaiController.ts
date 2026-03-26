@@ -17,13 +17,21 @@ import {
   getOpenAIKeySource
 } from "@services/openai.js";
 import { recordTraceEvent } from '@platform/logging/telemetry.js';
-import { getPromptRouteMitigationState } from '@services/openai/promptRouteMitigation.js';
+import {
+  getPromptRouteExecutionPolicy,
+  getPromptRouteMitigationState
+} from '@services/openai/promptRouteMitigation.js';
 import { generateDegradedResponse } from '@transport/http/middleware/fallbackHandler.js';
-import { validateAIRequest, handleAIError } from "@transport/http/requestHandler.js";
+import {
+  classifyBudgetAbortKind,
+  handleAIError,
+  validateAIRequest
+} from "@transport/http/requestHandler.js";
 import type { AIRequestDTO, AIResponseDTO, ErrorResponseDTO } from "@shared/types/dto.js";
 import { getConfirmGateConfiguration } from "@transport/http/middleware/confirmGate.js";
 import { config } from "@platform/runtime/config.js";
 import { getEnv } from "@platform/runtime/env.js";
+import { runWithRequestAbortTimeout, getRequestAbortSignal } from '@arcanos/runtime';
 
 /**
  * Request type for prompt execution with optional model override.
@@ -41,6 +49,7 @@ type PromptResponse = AIResponseDTO & {
 };
 
 const PROMPT_MAX_TOKENS = config.ai.defaultMaxTokens;
+const PROMPT_ROUTE_PATH = '/api/openai/prompt';
 
 /**
  * Handles direct OpenAI prompt execution requests.
@@ -61,6 +70,7 @@ export async function handlePrompt(
   const modelOverride = typeof req.body.model === 'string' ? req.body.model.trim() : undefined;
   const model = modelOverride && modelOverride.length > 0 ? modelOverride : getDefaultModel();
   const promptRouteMitigation = getPromptRouteMitigationState();
+  const promptRoutePolicy = getPromptRouteExecutionPolicy(PROMPT_MAX_TOKENS);
 
   if (promptRouteMitigation.active && promptRouteMitigation.mode === 'degraded_response') {
     const degradedResponse = generateDegradedResponse(prompt, 'prompt');
@@ -102,20 +112,82 @@ export async function handlePrompt(
   }
 
   try {
-    const { output } = await callOpenAI(model, prompt, PROMPT_MAX_TOKENS);
+    const effectiveModel = promptRoutePolicy.useFallbackModel ? getFallbackModel() : model;
+    const effectiveTokenLimit = promptRoutePolicy.maxTokens ?? PROMPT_MAX_TOKENS;
+    const mitigationMetadata = {
+      route: PROMPT_ROUTE_PATH,
+      requestId: (req as Request & { requestId?: string }).requestId ?? null,
+      mitigationMode: promptRoutePolicy.mode,
+      bypassedSubsystems: promptRoutePolicy.bypassedSubsystems
+    };
+
+    if (promptRoutePolicy.mode === 'reduced_latency') {
+      req.logger?.warn?.('prompt.route.reduced_latency', {
+        ...mitigationMetadata,
+        providerTimeoutMs: promptRoutePolicy.providerTimeoutMs,
+        pipelineTimeoutMs: promptRoutePolicy.pipelineTimeoutMs,
+        maxRetries: promptRoutePolicy.maxRetries,
+        maxTokens: effectiveTokenLimit,
+        targetModel: effectiveModel
+      });
+      recordTraceEvent('prompt_route.reduced_latency', {
+        ...mitigationMetadata,
+        providerTimeoutMs: promptRoutePolicy.providerTimeoutMs,
+        pipelineTimeoutMs: promptRoutePolicy.pipelineTimeoutMs,
+        maxRetries: promptRoutePolicy.maxRetries,
+        maxTokens: effectiveTokenLimit,
+        targetModel: effectiveModel
+      });
+    }
+
+    const { output, model: activeModel } = await runWithRequestAbortTimeout(
+      {
+        timeoutMs: promptRoutePolicy.pipelineTimeoutMs,
+        requestId: (req as Request & { requestId?: string }).requestId,
+        parentSignal: getRequestAbortSignal(),
+        abortMessage: `prompt_route_pipeline_timeout_after_${promptRoutePolicy.pipelineTimeoutMs}ms`
+      },
+      async () =>
+        callOpenAI(effectiveModel, prompt, effectiveTokenLimit, true, {
+          timeoutMs: promptRoutePolicy.providerTimeoutMs ?? undefined,
+          maxRetries: promptRoutePolicy.maxRetries,
+          metadata: {
+            ...mitigationMetadata,
+            providerTimeoutMs: promptRoutePolicy.providerTimeoutMs,
+            pipelineTimeoutMs: promptRoutePolicy.pipelineTimeoutMs
+          }
+        })
+    );
     const timestamp = Math.floor(Date.now() / 1000);
     res.json({
       result: output,
-      model,
+      model: activeModel,
       meta: {
         id: `prompt_${timestamp}`,
         created: timestamp,
         tokens: undefined
       },
-      activeModel: model,
-      fallbackFlag: false
+      activeModel,
+      fallbackFlag: promptRoutePolicy.useFallbackModel
     });
   } catch (err) {
+    const timeoutKind = classifyBudgetAbortKind(err);
+    if (timeoutKind) {
+      req.logger?.warn?.('prompt.route.timeout', {
+        route: PROMPT_ROUTE_PATH,
+        timeoutKind,
+        mitigationMode: promptRoutePolicy.mode,
+        providerTimeoutMs: promptRoutePolicy.providerTimeoutMs,
+        pipelineTimeoutMs: promptRoutePolicy.pipelineTimeoutMs
+      });
+      recordTraceEvent('prompt_route.timeout', {
+        route: PROMPT_ROUTE_PATH,
+        timeoutKind,
+        mitigationMode: promptRoutePolicy.mode,
+        providerTimeoutMs: promptRoutePolicy.providerTimeoutMs,
+        pipelineTimeoutMs: promptRoutePolicy.pipelineTimeoutMs
+      });
+    }
     handleAIError(err, prompt, 'prompt', res);
   }
 }

@@ -28,6 +28,8 @@ export interface CallOpenAIOptions {
   user?: string;
   metadata?: Record<string, unknown>;
   signal?: AbortSignal;
+  timeoutMs?: number;
+  maxRetries?: number;
 }
 
 export interface CallOpenAICacheEntry {

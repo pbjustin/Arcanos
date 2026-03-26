@@ -73,6 +73,22 @@ describe('GET /status/safety/self-heal', () => {
         }
       },
       activeMitigation: 'reasoning:enable_degraded_mode',
+      lastLatencySnapshot: {
+        requestCount: 20,
+        avgLatencyMs: 1400,
+        p95LatencyMs: 2800,
+        maxLatencyMs: 4200,
+        promptRoute: null
+      },
+      recentTimeoutCounts: {
+        windowMs: 300000,
+        total: 1,
+        promptRoute: 0
+      },
+      bypassedSubsystems: ['provider_retry'],
+      ineffectiveActions: {
+        'timeout_storm:activatePromptRouteMitigation:reduced_latency': '2026-03-25T12:10:00.000Z'
+      },
       attemptsByDiagnosis: {
         timeout_storm: 1
       },
@@ -111,6 +127,19 @@ describe('GET /status/safety/self-heal', () => {
         outcome: 'improved'
       }),
       activeMitigation: 'reasoning:enable_degraded_mode',
+      lastLatencySnapshot: expect.objectContaining({
+        p95LatencyMs: 2800,
+        maxLatencyMs: 4200
+      }),
+      recentTimeoutCounts: {
+        windowMs: 300000,
+        total: 1,
+        promptRoute: 0
+      },
+      bypassedSubsystems: ['provider_retry'],
+      ineffectiveActions: {
+        'timeout_storm:activatePromptRouteMitigation:reduced_latency': '2026-03-25T12:10:00.000Z'
+      },
       attemptsByDiagnosis: {
         timeout_storm: 1
       },

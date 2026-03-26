@@ -26,6 +26,51 @@ const BUDGET_ABORT_ERROR_MARKERS = [
   'execution aborted by watchdog'
 ];
 
+const PIPELINE_TIMEOUT_ERROR_MARKERS = [
+  'prompt route timeout after',
+  'prompt_route_pipeline_timeout_after',
+  'gpt route timeout after',
+  'handler timed out after'
+];
+
+const PROVIDER_TIMEOUT_ERROR_MARKERS = [
+  'openai responses request timed out after',
+  'openai chat completion timed out after'
+];
+
+const WORKER_TIMEOUT_ERROR_MARKERS = [
+  'worker timeout after',
+  'worker timed out after',
+  'worker runtime timed out after'
+];
+
+const GENERIC_ABORT_ERROR_MARKERS = [
+  'request was aborted',
+  'the operation was aborted',
+  'this operation was aborted',
+  'operation was aborted',
+  'signal is aborted without reason'
+];
+
+const TIMEOUT_PAYLOAD_BY_KIND = {
+  pipeline_timeout: {
+    error: 'AI pipeline timeout',
+    code: 'PIPELINE_TIMEOUT'
+  },
+  provider_timeout: {
+    error: 'AI provider timeout',
+    code: 'PROVIDER_TIMEOUT'
+  },
+  worker_timeout: {
+    error: 'AI worker timeout',
+    code: 'WORKER_TIMEOUT'
+  },
+  budget_abort: {
+    error: 'AI timeout/budget abort',
+    code: 'BUDGET_ABORT'
+  }
+} as const;
+
 /**
  * Extract input text from various possible field names in request body
  */
@@ -136,13 +181,52 @@ export function validateAIRequest(
 
 export function isBudgetAbort(err: unknown): boolean {
   if (err instanceof Error) {
-    if (err.name === 'RuntimeBudgetExceededError' || err.name === 'OpenAIAbortError') {
+    if (
+      err.name === 'RuntimeBudgetExceededError' ||
+      err.name === 'OpenAIAbortError' ||
+      err.name === 'AbortError'
+    ) {
       return true;
     }
   }
 
   const normalizedMessage = resolveErrorMessage(err).toLowerCase();
-  return BUDGET_ABORT_ERROR_MARKERS.some(marker => normalizedMessage.includes(marker));
+  return (
+    BUDGET_ABORT_ERROR_MARKERS.some(marker => normalizedMessage.includes(marker)) ||
+    PIPELINE_TIMEOUT_ERROR_MARKERS.some(marker => normalizedMessage.includes(marker)) ||
+    PROVIDER_TIMEOUT_ERROR_MARKERS.some(marker => normalizedMessage.includes(marker)) ||
+    WORKER_TIMEOUT_ERROR_MARKERS.some(marker => normalizedMessage.includes(marker)) ||
+    GENERIC_ABORT_ERROR_MARKERS.some(marker => normalizedMessage.includes(marker))
+  );
+}
+
+export function classifyBudgetAbortKind(
+  err: unknown
+): 'pipeline_timeout' | 'provider_timeout' | 'worker_timeout' | 'budget_abort' | null {
+  const normalizedMessage = resolveErrorMessage(err).toLowerCase();
+  const normalizedName = err instanceof Error ? err.name.toLowerCase() : '';
+
+  if (PIPELINE_TIMEOUT_ERROR_MARKERS.some(marker => normalizedMessage.includes(marker))) {
+    return 'pipeline_timeout';
+  }
+
+  if (PROVIDER_TIMEOUT_ERROR_MARKERS.some(marker => normalizedMessage.includes(marker))) {
+    return 'provider_timeout';
+  }
+
+  if (WORKER_TIMEOUT_ERROR_MARKERS.some(marker => normalizedMessage.includes(marker))) {
+    return 'worker_timeout';
+  }
+
+  if (normalizedName === 'openaiaborterror') {
+    return 'provider_timeout';
+  }
+
+  if (normalizedName === 'aborterror' || GENERIC_ABORT_ERROR_MARKERS.some(marker => normalizedMessage.includes(marker))) {
+    return 'budget_abort';
+  }
+
+  return isBudgetAbort(err) ? 'budget_abort' : null;
 }
 
 /**
@@ -166,12 +250,14 @@ export function handleAIError(
     return;
   }
 
-  if (isBudgetAbort(err)) {
+  const budgetAbortKind = classifyBudgetAbortKind(err);
+  if (budgetAbortKind) {
+    const timeoutPayload = TIMEOUT_PAYLOAD_BY_KIND[budgetAbortKind];
     res.status(408).json({
-      error: 'AI timeout/budget abort',
+      error: timeoutPayload.error,
       detail: errorMessage,
       details: errorMessage,
-      code: 'BUDGET_ABORT'
+      code: timeoutPayload.code
     } as ErrorResponseDTO);
     return;
   }
