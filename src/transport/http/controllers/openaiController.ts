@@ -19,7 +19,8 @@ import {
 import { recordTraceEvent } from '@platform/logging/telemetry.js';
 import {
   getPromptRouteExecutionPolicy,
-  getPromptRouteMitigationState
+  getPromptRouteMitigationState,
+  recordPromptRouteTimeoutIncident
 } from '@services/openai/promptRouteMitigation.js';
 import { generateDegradedResponse } from '@transport/http/middleware/fallbackHandler.js';
 import {
@@ -50,6 +51,23 @@ type PromptResponse = AIResponseDTO & {
 
 const PROMPT_MAX_TOKENS = config.ai.defaultMaxTokens;
 const PROMPT_ROUTE_PATH = '/api/openai/prompt';
+const PROMPT_ROUTE_ABORT_PROPAGATION_COVERAGE = [
+  'request_abort_context',
+  'prompt_route_call_openai_signal',
+  'request_abort_timeout_on_abort_hook'
+] as const;
+
+function resolveAbortReasonMessage(reason: unknown): string {
+  if (reason instanceof Error && typeof reason.message === 'string' && reason.message.length > 0) {
+    return reason.message;
+  }
+
+  if (typeof reason === 'string' && reason.length > 0) {
+    return reason;
+  }
+
+  return 'request_aborted';
+}
 
 /**
  * Handles direct OpenAI prompt execution requests.
@@ -114,12 +132,33 @@ export async function handlePrompt(
   try {
     const effectiveModel = promptRoutePolicy.useFallbackModel ? getFallbackModel() : model;
     const effectiveTokenLimit = promptRoutePolicy.maxTokens ?? PROMPT_MAX_TOKENS;
+    const requestAbortSignal = getRequestAbortSignal();
     const mitigationMetadata = {
       route: PROMPT_ROUTE_PATH,
       requestId: (req as Request & { requestId?: string }).requestId ?? null,
       mitigationMode: promptRoutePolicy.mode,
-      bypassedSubsystems: promptRoutePolicy.bypassedSubsystems
+      bypassedSubsystems: promptRoutePolicy.bypassedSubsystems,
+      abortPropagationCoverage: [...PROMPT_ROUTE_ABORT_PROPAGATION_COVERAGE]
     };
+
+    if (promptRoutePolicy.mode === 'normal' || promptRoutePolicy.mode === 'reduced_latency') {
+      req.logger?.info?.('prompt.route.policy', {
+        ...mitigationMetadata,
+        providerTimeoutMs: promptRoutePolicy.providerTimeoutMs,
+        pipelineTimeoutMs: promptRoutePolicy.pipelineTimeoutMs,
+        maxRetries: promptRoutePolicy.maxRetries,
+        maxTokens: effectiveTokenLimit,
+        targetModel: effectiveModel
+      });
+      recordTraceEvent('prompt_route.policy', {
+        ...mitigationMetadata,
+        providerTimeoutMs: promptRoutePolicy.providerTimeoutMs,
+        pipelineTimeoutMs: promptRoutePolicy.pipelineTimeoutMs,
+        maxRetries: promptRoutePolicy.maxRetries,
+        maxTokens: effectiveTokenLimit,
+        targetModel: effectiveModel
+      });
+    }
 
     if (promptRoutePolicy.mode === 'reduced_latency') {
       req.logger?.warn?.('prompt.route.reduced_latency', {
@@ -144,11 +183,27 @@ export async function handlePrompt(
       {
         timeoutMs: promptRoutePolicy.pipelineTimeoutMs,
         requestId: (req as Request & { requestId?: string }).requestId,
-        parentSignal: getRequestAbortSignal(),
-        abortMessage: `prompt_route_pipeline_timeout_after_${promptRoutePolicy.pipelineTimeoutMs}ms`
+        parentSignal: requestAbortSignal,
+        abortMessage: `prompt_route_pipeline_timeout_after_${promptRoutePolicy.pipelineTimeoutMs}ms`,
+        onAbort: (reason) => {
+          const abortReason = resolveAbortReasonMessage(reason);
+          req.logger?.warn?.('prompt.route.abort_propagation', {
+            ...mitigationMetadata,
+            abortReason,
+            providerTimeoutMs: promptRoutePolicy.providerTimeoutMs,
+            pipelineTimeoutMs: promptRoutePolicy.pipelineTimeoutMs
+          });
+          recordTraceEvent('prompt_route.abort_propagation', {
+            ...mitigationMetadata,
+            abortReason,
+            providerTimeoutMs: promptRoutePolicy.providerTimeoutMs,
+            pipelineTimeoutMs: promptRoutePolicy.pipelineTimeoutMs
+          });
+        }
       },
       async () =>
         callOpenAI(effectiveModel, prompt, effectiveTokenLimit, true, {
+          signal: getRequestAbortSignal(),
           timeoutMs: promptRoutePolicy.providerTimeoutMs ?? undefined,
           maxRetries: promptRoutePolicy.maxRetries,
           metadata: {
@@ -187,6 +242,28 @@ export async function handlePrompt(
         providerTimeoutMs: promptRoutePolicy.providerTimeoutMs,
         pipelineTimeoutMs: promptRoutePolicy.pipelineTimeoutMs
       });
+
+      if (promptRoutePolicy.mode === 'normal') {
+        const fastTripResult = recordPromptRouteTimeoutIncident(timeoutKind, PROMPT_MAX_TOKENS);
+        if (fastTripResult.applied) {
+          req.logger?.warn?.('prompt.route.fast_trip', {
+            route: PROMPT_ROUTE_PATH,
+            timeoutKind,
+            mitigationMode: 'reduced_latency',
+            mitigationReason: fastTripResult.state.reason,
+            providerTimeoutMs: fastTripResult.state.providerTimeoutMs,
+            pipelineTimeoutMs: fastTripResult.state.pipelineTimeoutMs
+          });
+          recordTraceEvent('prompt_route.fast_trip', {
+            route: PROMPT_ROUTE_PATH,
+            timeoutKind,
+            mitigationMode: 'reduced_latency',
+            mitigationReason: fastTripResult.state.reason,
+            providerTimeoutMs: fastTripResult.state.providerTimeoutMs,
+            pipelineTimeoutMs: fastTripResult.state.pipelineTimeoutMs
+          });
+        }
+      }
     }
     handleAIError(err, prompt, 'prompt', res);
   }

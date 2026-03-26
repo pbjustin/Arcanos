@@ -24,6 +24,7 @@ import {
 } from '@services/openai/promptRouteMitigation.js';
 import { getOpenAIServiceHealth } from '@services/openai/serviceHealth.js';
 import { runtimeDiagnosticsService, type RequestWindowSnapshot } from '@services/runtimeDiagnosticsService.js';
+import { resolveGptRouteHardTimeoutMs } from '@shared/http/gptRouteTimeout.js';
 import {
   getWorkerControlHealth,
   healWorkerRuntime,
@@ -53,9 +54,15 @@ const DEFAULT_INEFFECTIVE_COOLDOWN_MS = 10 * 60_000;
 const DEFAULT_PROMPT_ROUTE_VERIFICATION_MIN_REQUESTS = 3;
 const SELF_HEAL_RUNTIME_KEY = '__ARCANOS_SELF_HEAL_RUNTIME__';
 const PROMPT_ROUTE_PATH = '/api/openai/prompt';
+const PROMPT_ROUTE_SIGNIFICANT_SHARE = 0.15;
 const VERIFICATION_SUCCESS_SIGNAL_COUNT = 2;
 const VERIFICATION_FAILURE_SIGNAL_COUNT = 2;
 const VERIFICATION_TIMEOUT_COUNT_WORSE_DELTA = 1;
+const PROMPT_ROUTE_ABORT_PROPAGATION_COVERAGE = [
+  'request_abort_context',
+  'prompt_route_call_openai_signal',
+  'request_abort_timeout_on_abort_hook'
+] as const;
 const ERROR_RATE_TREND_THRESHOLDS = {
   betterAbsoluteDelta: 0.03,
   worseAbsoluteDelta: 0.02,
@@ -175,6 +182,8 @@ export interface SelfHealingLoopStatus {
   lastEvidence: Record<string, unknown> | null;
   lastVerificationResult: SelfHealingVerificationResult | null;
   activeMitigation: string | null;
+  activePromptMitigation: string | null;
+  lastPromptMitigationReason: string | null;
   degradedModeReason: string | null;
   lastLatencySnapshot: {
     requestCount: number;
@@ -195,6 +204,16 @@ export interface SelfHealingLoopStatus {
     budgetAborts: number;
     coreRoute: number;
   } | null;
+  recentPipelineTimeoutCounts: {
+    total: number;
+    promptRoute: number;
+    coreRoute: number;
+  } | null;
+  recentPromptRouteTimeouts: number | null;
+  recentPromptRouteLatencyP95: number | null;
+  recentPromptRouteMaxLatency: number | null;
+  outerRouteTimeoutMs: number;
+  abortPropagationCoverage: string[];
   bypassedSubsystems: string[];
   ineffectiveActions: Record<string, string>;
   attemptsByDiagnosis: Record<string, number>;
@@ -429,9 +448,17 @@ function createInitialStatus(): SelfHealingLoopStatus {
     lastEvidence: null,
     lastVerificationResult: null,
     activeMitigation: null,
+    activePromptMitigation: null,
+    lastPromptMitigationReason: null,
     degradedModeReason: null,
     lastLatencySnapshot: null,
     recentTimeoutCounts: null,
+    recentPipelineTimeoutCounts: null,
+    recentPromptRouteTimeouts: null,
+    recentPromptRouteLatencyP95: null,
+    recentPromptRouteMaxLatency: null,
+    outerRouteTimeoutMs: resolveGptRouteHardTimeoutMs(),
+    abortPropagationCoverage: [...PROMPT_ROUTE_ABORT_PROPAGATION_COVERAGE],
     bypassedSubsystems: [],
     ineffectiveActions: {},
     attemptsByDiagnosis: {},
@@ -577,10 +604,16 @@ function captureVerificationSnapshot(observation: SelfHealingObservation): SelfH
   };
 }
 
+function getPromptRouteWindowSnapshot(
+  requestWindow: RequestWindowSnapshot
+): RequestWindowSnapshot['routes'][number] | null {
+  return requestWindow.routes.find((route) => route.route === PROMPT_ROUTE_PATH) ?? null;
+}
+
 function buildPromptRouteVerificationSnapshot(
   requestWindow: RequestWindowSnapshot
 ): SelfHealingVerificationSnapshot['promptRoute'] {
-  const promptRoute = requestWindow.routes.find((route) => route.route === PROMPT_ROUTE_PATH) ?? null;
+  const promptRoute = getPromptRouteWindowSnapshot(requestWindow);
   if (!promptRoute) {
     return null;
   }
@@ -596,6 +629,21 @@ function buildPromptRouteVerificationSnapshot(
     avgLatencyMs: promptRoute.avgLatencyMs,
     p95LatencyMs: promptRoute.p95LatencyMs,
     maxLatencyMs: promptRoute.maxLatencyMs ?? promptRoute.p95LatencyMs
+  };
+}
+
+function buildRecentPipelineTimeoutCounts(
+  requestWindow: RequestWindowSnapshot
+): SelfHealingLoopStatus['recentPipelineTimeoutCounts'] {
+  const promptRoute = getPromptRouteWindowSnapshot(requestWindow);
+  const coreRoutePipelineTimeouts = requestWindow.routes
+    .filter((route) => route.route === '/gpt/:gptId' || route.route === '/api/arcanos/ask')
+    .reduce((total, route) => total + route.pipelineTimeoutCount, 0);
+
+  return {
+    total: requestWindow.pipelineTimeoutCount ?? 0,
+    promptRoute: promptRoute?.pipelineTimeoutCount ?? 0,
+    coreRoute: coreRoutePipelineTimeouts
   };
 }
 
@@ -654,7 +702,7 @@ function buildLatencySnapshot(
 function buildRecentTimeoutCounts(
   requestWindow: RequestWindowSnapshot
 ): SelfHealingLoopStatus['recentTimeoutCounts'] {
-  const promptRoute = requestWindow.routes.find((route) => route.route === PROMPT_ROUTE_PATH) ?? null;
+  const promptRoute = getPromptRouteWindowSnapshot(requestWindow);
   const coreRouteTimeouts = requestWindow.routes
     .filter((route) => route.route === '/gpt/:gptId' || route.route === '/api/arcanos/ask')
     .reduce((total, route) => total + route.timeoutCount, 0);
@@ -707,20 +755,34 @@ function buildRequestEvidence(window: RequestWindowSnapshot): Record<string, unk
 }
 
 function getPromptRouteCandidate(window: RequestWindowSnapshot): RequestWindowSnapshot['routes'][number] | null {
-  const promptRoute = window.routes.find((route) => route.route === PROMPT_ROUTE_PATH);
+  const promptRoute = getPromptRouteWindowSnapshot(window);
   if (!promptRoute) {
     return null;
   }
 
-  const dominatesWindow = promptRoute.requestCount >= Math.max(4, Math.floor(window.requestCount * 0.35));
-  const materiallyDegraded =
-    promptRoute.timeoutCount > 0 ||
-    (promptRoute.maxLatencyMs ?? promptRoute.p95LatencyMs) >= resolveMaxLatencyThresholdMs() ||
-    promptRoute.errorCount >= 2 ||
-    promptRoute.p95LatencyMs >= resolveLatencyP95ThresholdMs() ||
-    promptRoute.avgLatencyMs >= resolveAverageLatencyThresholdMs();
+  const requestShare = promptRoute.requestCount / Math.max(1, window.requestCount);
+  const promptRouteMaxLatencyMs = promptRoute.maxLatencyMs ?? promptRoute.p95LatencyMs;
+  const promptTimeoutClusterDetected =
+    promptRoute.timeoutCount >= Math.max(1, Math.min(2, resolveTimeoutCountThreshold())) ||
+    promptRoute.pipelineTimeoutCount > 0 ||
+    promptRoute.providerTimeoutCount > 0;
+  const promptLatencyClusterDetected =
+    promptRoute.requestCount >= 2 &&
+    (
+      promptRouteMaxLatencyMs >= resolveMaxLatencyThresholdMs() ||
+      promptRoute.p95LatencyMs >= resolveLatencyP95ThresholdMs() ||
+      ((promptRoute.slowRequestCount ?? 0) >= 2 && promptRoute.avgLatencyMs >= resolveAverageLatencyThresholdMs())
+    );
+  const promptErrorClusterDetected = promptRoute.errorCount >= 2;
+  const meaningfulPromptTraffic = promptRoute.requestCount >= 3 && requestShare >= PROMPT_ROUTE_SIGNIFICANT_SHARE;
+  const severePromptMinorityIncident =
+    promptRoute.requestCount >= 2 && (promptTimeoutClusterDetected || promptRouteMaxLatencyMs >= resolveMaxLatencyThresholdMs());
 
-  if (!dominatesWindow || !materiallyDegraded) {
+  if (!meaningfulPromptTraffic && !severePromptMinorityIncident) {
+    return null;
+  }
+
+  if (!promptTimeoutClusterDetected && !promptLatencyClusterDetected && !promptErrorClusterDetected) {
     return null;
   }
 
@@ -739,16 +801,22 @@ function buildLatencyMitigationActionPlan(
     }
 
     if (promptRouteMitigation.active && promptRouteMitigation.mode === 'reduced_latency') {
+      const promptMitigationUpdatedAt =
+        promptRouteMitigation.updatedAt ?? promptRouteMitigation.activatedAt;
+      if (promptMitigationUpdatedAt) {
+        const promptMitigationAgeMs = Date.now() - Date.parse(promptMitigationUpdatedAt);
+        const promptMitigationHoldoffMs = Math.max(30_000, resolveVerificationDelayMs());
+        if (promptMitigationAgeMs < promptMitigationHoldoffMs) {
+          return null;
+        }
+      }
+
       return {
         kind: 'activate_prompt_route_degraded_mode',
         actionKey: 'activate_prompt_route_degraded_mode',
         cooldownKey: 'activate_prompt_route_degraded_mode',
         cooldownMs: resolveActionCooldownMs() * 2
       };
-    }
-
-    if (activeMitigation && !String(activeMitigation).includes('prompt:/api/openai/prompt')) {
-      return null;
     }
 
     return {
@@ -790,6 +858,9 @@ function withPromptRouteEvidence(
       requestShare: Number((promptRouteCandidate.requestCount / Math.max(1, requestWindow.requestCount)).toFixed(3)),
       errorCount: promptRouteCandidate.errorCount,
       timeoutCount: promptRouteCandidate.timeoutCount,
+      pipelineTimeoutCount: promptRouteCandidate.pipelineTimeoutCount,
+      providerTimeoutCount: promptRouteCandidate.providerTimeoutCount,
+      budgetAbortCount: promptRouteCandidate.budgetAbortCount,
       slowRequestCount: promptRouteCandidate.slowRequestCount ?? 0,
       avgLatencyMs: promptRouteCandidate.avgLatencyMs,
       p95LatencyMs: promptRouteCandidate.p95LatencyMs,
@@ -1170,31 +1241,55 @@ function diagnoseSelfHealingRuntime(
   const queueSummary = observation.workerHealth?.queueSummary;
   const telemetrySignals = deriveTelemetrySignals(observation.telemetry, observation.requestWindow.windowMs);
   const requestWindow = observation.requestWindow;
+  const promptRouteCandidate = getPromptRouteCandidate(requestWindow);
   const promptRouteStability = assessPromptRouteMitigationStability(requestWindow);
   const runtimeInactive =
     observation.workerRuntime.enabled &&
     (!observation.workerRuntime.started || observation.workerRuntime.activeListeners === 0);
   const minRequestCount = resolveMinRequestCount();
   const latencyBurstDetected = detectBurstingLatency(requestWindow, minRequestCount);
+  const promptRouteTimeoutClusterDetected =
+    promptRouteCandidate !== null &&
+    (
+      promptRouteCandidate.timeoutCount >= Math.max(1, Math.min(2, resolveTimeoutCountThreshold())) ||
+      promptRouteCandidate.pipelineTimeoutCount > 0 ||
+      promptRouteCandidate.providerTimeoutCount > 0
+    );
+  const promptRouteLatencySpikeDetected =
+    promptRouteCandidate !== null &&
+    (
+      (promptRouteCandidate.maxLatencyMs ?? promptRouteCandidate.p95LatencyMs) >= resolveMaxLatencyThresholdMs() ||
+      promptRouteCandidate.p95LatencyMs >= resolveLatencyP95ThresholdMs() ||
+      (
+        (promptRouteCandidate.slowRequestCount ?? 0) >= 2 &&
+        promptRouteCandidate.avgLatencyMs >= resolveAverageLatencyThresholdMs()
+      )
+    );
   const providerFailureCount = telemetrySignals.openaiFailureCount + telemetrySignals.resilienceFailureCount;
   const providerClusterDetected =
     String(observation.openaiHealth.circuitBreaker.state).toUpperCase() !== 'CLOSED' ||
     providerFailureCount >= resolveProviderFailureThreshold() ||
     telemetrySignals.fallbackDegradedCount >= 2;
   const pipelineTimeoutClusterDetected =
-    requestWindow.requestCount >= Math.max(4, Math.floor(minRequestCount / 3)) &&
-    (requestWindow.pipelineTimeoutCount ?? 0) >= Math.max(2, Math.floor(resolveTimeoutCountThreshold() / 2));
+    (
+      requestWindow.requestCount >= Math.max(4, Math.floor(minRequestCount / 3)) &&
+      (requestWindow.pipelineTimeoutCount ?? 0) >= Math.max(2, Math.floor(resolveTimeoutCountThreshold() / 2))
+    ) ||
+    (promptRouteCandidate !== null && promptRouteCandidate.pipelineTimeoutCount > 0);
   // Timeout storms should capture repeated timeout-class failures plus either long-tail latency or
   // server-side breakage, so a burst of 5-13s requests does not slip through on average latency alone.
   const timeoutStormDetected =
-    requestWindow.requestCount >= Math.max(6, Math.floor(minRequestCount / 2)) &&
-    (requestWindow.timeoutCount >= resolveTimeoutCountThreshold() ||
-      requestWindow.timeoutRate >= resolveTimeoutRateThreshold()) &&
     (
-      requestWindow.p95LatencyMs >= resolveLatencyP95ThresholdMs() ||
-      requestWindow.maxLatencyMs >= resolveMaxLatencyThresholdMs() ||
-      requestWindow.serverErrorCount >= 2
-    );
+      requestWindow.requestCount >= Math.max(6, Math.floor(minRequestCount / 2)) &&
+      (requestWindow.timeoutCount >= resolveTimeoutCountThreshold() ||
+        requestWindow.timeoutRate >= resolveTimeoutRateThreshold()) &&
+      (
+        requestWindow.p95LatencyMs >= resolveLatencyP95ThresholdMs() ||
+        requestWindow.maxLatencyMs >= resolveMaxLatencyThresholdMs() ||
+        requestWindow.serverErrorCount >= 2
+      )
+    ) ||
+    promptRouteTimeoutClusterDetected;
   // Latency spikes should catch both sustained degradation and bursty outliers that keep the rolling
   // average deceptively low while operators still experience multi-second stalls.
   const latencySpikeDetected =
@@ -1204,7 +1299,8 @@ function diagnoseSelfHealingRuntime(
       requestWindow.avgLatencyMs >= resolveAverageLatencyThresholdMs() &&
       requestWindow.slowRequestCount >= Math.max(4, Math.floor(minRequestCount / 3))
     ) ||
-    latencyBurstDetected;
+    latencyBurstDetected ||
+    promptRouteLatencySpikeDetected;
   // Elevated error rate requires enough traffic and server-side failures to avoid acting on tiny samples
   // or mostly client-driven noise.
   const elevatedErrorRateDetected =
@@ -1345,6 +1441,20 @@ function serializeDiagnosisAttempts(runtime: SelfHealingLoopRuntime): Record<str
   return attempts;
 }
 
+function snapshotDiagnosisAttempts(runtime: SelfHealingLoopRuntime): Record<string, number> {
+  const attempts: Record<string, number> = {};
+  const nowMs = Date.now();
+
+  for (const [key, value] of runtime.diagnosisAttempts.entries()) {
+    if (nowMs - value.windowStartedAtMs >= resolveIncidentWindowMs()) {
+      continue;
+    }
+    attempts[key] = value.count;
+  }
+
+  return attempts;
+}
+
 function serializeCooldowns(runtime: SelfHealingLoopRuntime): Record<string, string> {
   const result: Record<string, string> = {};
   const nowMs = Date.now();
@@ -1366,12 +1476,45 @@ function serializeCooldowns(runtime: SelfHealingLoopRuntime): Record<string, str
   return result;
 }
 
+function snapshotCooldowns(runtime: SelfHealingLoopRuntime): Record<string, string> {
+  const result: Record<string, string> = {};
+  const nowMs = Date.now();
+
+  const registerEntries = (prefix: string, cooldowns: Map<string, number>) => {
+    for (const [key, expiresAtMs] of cooldowns.entries()) {
+      if (expiresAtMs <= nowMs) {
+        continue;
+      }
+      result[`${prefix}:${key}`] = new Date(expiresAtMs).toISOString();
+    }
+  };
+
+  registerEntries('action', runtime.actionCooldowns);
+  registerEntries('controller', runtime.controllerCooldowns);
+  registerEntries('ineffective', runtime.ineffectiveActionCooldowns);
+
+  return result;
+}
+
 function serializeIneffectiveActions(runtime: SelfHealingLoopRuntime): Record<string, string> {
   const nowMs = Date.now();
   const result: Record<string, string> = {};
   for (const [key, expiresAtMs] of runtime.ineffectiveActionCooldowns.entries()) {
     if (expiresAtMs <= nowMs) {
       runtime.ineffectiveActionCooldowns.delete(key);
+      continue;
+    }
+    result[key] = new Date(expiresAtMs).toISOString();
+  }
+
+  return result;
+}
+
+function snapshotIneffectiveActions(runtime: SelfHealingLoopRuntime): Record<string, string> {
+  const nowMs = Date.now();
+  const result: Record<string, string> = {};
+  for (const [key, expiresAtMs] of runtime.ineffectiveActionCooldowns.entries()) {
+    if (expiresAtMs <= nowMs) {
       continue;
     }
     result[key] = new Date(expiresAtMs).toISOString();
@@ -1698,6 +1841,8 @@ function maybeVerifyPendingAction(
   runtime.status.lastAction = followUpAction;
   runtime.status.lastActionAt = new Date().toISOString();
   runtime.status.lastTrinityMitigation = getActiveTrinityMitigation(getTrinitySelfHealingStatus());
+  runtime.status.activePromptMitigation = getActivePromptRouteMitigation();
+  runtime.status.lastPromptMitigationReason = getPromptRouteMitigationState().reason;
   runtime.status.activeMitigation = getActiveAutomatedMitigation(getTrinitySelfHealingStatus());
   console.log(`[SELF-HEAL] action ${followUpAction}`);
 
@@ -1917,36 +2062,50 @@ async function executeActionPlan(
 
 export function getSelfHealingLoopStatus(): SelfHealingLoopStatus {
   const runtime = getRuntime();
-  if (runtime.timer === null) {
-    runtime.status.intervalMs = resolveLoopIntervalMs();
-  }
-  runtime.status.loopRunning = runtime.timer !== null;
-  runtime.status.active = runtime.status.loopRunning;
-  runtime.status.lastTrinityMitigation = getActiveTrinityMitigation(getTrinitySelfHealingStatus());
-  runtime.status.activeMitigation = getActiveAutomatedMitigation(getTrinitySelfHealingStatus());
-  refreshStatusViews(runtime);
+  const trinityStatus = getTrinitySelfHealingStatus();
+  const promptRouteMitigationState = getPromptRouteMitigationState();
+  const snapshot: SelfHealingLoopStatus = {
+    ...runtime.status,
+    active: runtime.timer !== null,
+    loopRunning: runtime.timer !== null,
+    intervalMs: runtime.timer === null ? resolveLoopIntervalMs() : runtime.status.intervalMs,
+    lastTrinityMitigation: getActiveTrinityMitigation(trinityStatus),
+    activePromptMitigation: getActivePromptRouteMitigation(),
+    lastPromptMitigationReason: promptRouteMitigationState.reason,
+    activeMitigation: getActiveAutomatedMitigation(trinityStatus),
+    outerRouteTimeoutMs: resolveGptRouteHardTimeoutMs(),
+    abortPropagationCoverage: [...PROMPT_ROUTE_ABORT_PROPAGATION_COVERAGE],
+    attemptsByDiagnosis: snapshotDiagnosisAttempts(runtime),
+    cooldowns: snapshotCooldowns(runtime),
+    ineffectiveActions: snapshotIneffectiveActions(runtime),
+    bypassedSubsystems: [...new Set([...runtime.status.bypassedSubsystems, ...getActiveBypassedSubsystems()])].sort()
+  };
 
   return {
-    ...runtime.status,
-    bypassedSubsystems: [...runtime.status.bypassedSubsystems],
-    ineffectiveActions: { ...runtime.status.ineffectiveActions },
-    attemptsByDiagnosis: { ...runtime.status.attemptsByDiagnosis },
-    cooldowns: { ...runtime.status.cooldowns },
-    lastEvidence: runtime.status.lastEvidence ? { ...runtime.status.lastEvidence } : null,
-    lastLatencySnapshot: runtime.status.lastLatencySnapshot
+    ...snapshot,
+    abortPropagationCoverage: [...snapshot.abortPropagationCoverage],
+    bypassedSubsystems: [...snapshot.bypassedSubsystems],
+    ineffectiveActions: { ...snapshot.ineffectiveActions },
+    attemptsByDiagnosis: { ...snapshot.attemptsByDiagnosis },
+    cooldowns: { ...snapshot.cooldowns },
+    lastEvidence: snapshot.lastEvidence ? { ...snapshot.lastEvidence } : null,
+    lastLatencySnapshot: snapshot.lastLatencySnapshot
       ? {
-          ...runtime.status.lastLatencySnapshot,
-          promptRoute: runtime.status.lastLatencySnapshot.promptRoute
-            ? { ...runtime.status.lastLatencySnapshot.promptRoute }
+          ...snapshot.lastLatencySnapshot,
+          promptRoute: snapshot.lastLatencySnapshot.promptRoute
+            ? { ...snapshot.lastLatencySnapshot.promptRoute }
             : null
         }
       : null,
-    recentTimeoutCounts: runtime.status.recentTimeoutCounts ? { ...runtime.status.recentTimeoutCounts } : null,
-    lastVerificationResult: runtime.status.lastVerificationResult
+    recentTimeoutCounts: snapshot.recentTimeoutCounts ? { ...snapshot.recentTimeoutCounts } : null,
+    recentPipelineTimeoutCounts: snapshot.recentPipelineTimeoutCounts
+      ? { ...snapshot.recentPipelineTimeoutCounts }
+      : null,
+    lastVerificationResult: snapshot.lastVerificationResult
       ? {
-          ...runtime.status.lastVerificationResult,
-          baseline: { ...runtime.status.lastVerificationResult.baseline },
-          current: { ...runtime.status.lastVerificationResult.current }
+          ...snapshot.lastVerificationResult,
+          baseline: { ...snapshot.lastVerificationResult.baseline },
+          current: { ...snapshot.lastVerificationResult.current }
         }
       : null
   };
@@ -1993,10 +2152,21 @@ export async function runSelfHealingLoop(options: {
     runtime.status.lastEvidence = diagnosis.evidence;
     runtime.status.lastWorkerHealth = diagnosis.workerHealthLabel;
     runtime.status.lastTrinityMitigation = diagnosis.trinityMitigation;
+    runtime.status.activePromptMitigation = getActivePromptRouteMitigation();
+    runtime.status.lastPromptMitigationReason = getPromptRouteMitigationState().reason;
     runtime.status.activeMitigation = getActiveAutomatedMitigation(observation.trinityStatus);
     runtime.status.degradedModeReason = observation.requestWindow.degradedReasons?.[0] ?? null;
     runtime.status.lastLatencySnapshot = buildLatencySnapshot(observation.requestWindow);
     runtime.status.recentTimeoutCounts = buildRecentTimeoutCounts(observation.requestWindow);
+    runtime.status.recentPipelineTimeoutCounts = buildRecentPipelineTimeoutCounts(observation.requestWindow);
+    runtime.status.recentPromptRouteTimeouts = getPromptRouteWindowSnapshot(observation.requestWindow)?.timeoutCount ?? null;
+    runtime.status.recentPromptRouteLatencyP95 = getPromptRouteWindowSnapshot(observation.requestWindow)?.p95LatencyMs ?? null;
+    runtime.status.recentPromptRouteMaxLatency =
+      getPromptRouteWindowSnapshot(observation.requestWindow)?.maxLatencyMs ??
+      getPromptRouteWindowSnapshot(observation.requestWindow)?.p95LatencyMs ??
+      null;
+    runtime.status.outerRouteTimeoutMs = resolveGptRouteHardTimeoutMs();
+    runtime.status.abortPropagationCoverage = [...PROMPT_ROUTE_ABORT_PROPAGATION_COVERAGE];
     runtime.status.bypassedSubsystems = combineBypassedSubsystems(observation.requestWindow);
 
     if (diagnosis.type === 'healthy' || diagnosis.type === 'prompt_route_stabilized') {
@@ -2017,6 +2187,8 @@ export async function runSelfHealingLoop(options: {
     }
 
     runtime.status.lastTrinityMitigation = getActiveTrinityMitigation(getTrinitySelfHealingStatus());
+    runtime.status.activePromptMitigation = getActivePromptRouteMitigation();
+    runtime.status.lastPromptMitigationReason = getPromptRouteMitigationState().reason;
     runtime.status.activeMitigation = getActiveAutomatedMitigation(getTrinitySelfHealingStatus());
 
     let controllerDecision: SelfImproveDecision['decision'] | 'ERROR' | null = null;

@@ -15,6 +15,7 @@ import {
   applyAIDegradedResponseHeaders,
   extractAIDegradedResponseMetadata
 } from '@shared/http/aiDegradedHeaders.js';
+import { resolveGptRouteHardTimeoutMs } from '@shared/http/gptRouteTimeout.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { getDiagnosticsSnapshot } from '@core/diagnostics.js';
 import {
@@ -26,21 +27,6 @@ import { hasDagOrchestrationIntentCue } from '@services/naturalLanguageMemory.js
 import { recordDagTraceTimeout } from '@platform/observability/appMetrics.js';
 
 const router = express.Router();
-const DEFAULT_GPT_ROUTE_HARD_TIMEOUT_MS = 12_000;
-const MIN_GPT_ROUTE_HARD_TIMEOUT_MS = 10_000;
-const MAX_GPT_ROUTE_HARD_TIMEOUT_MS = 60_000;
-
-function resolveGptRouteHardTimeoutMs(): number {
-  const configuredTimeoutMs = Number.parseInt(process.env.GPT_ROUTE_HARD_TIMEOUT_MS ?? '', 10);
-  if (!Number.isFinite(configuredTimeoutMs) || configuredTimeoutMs <= 0) {
-    return DEFAULT_GPT_ROUTE_HARD_TIMEOUT_MS;
-  }
-
-  return Math.max(
-    MIN_GPT_ROUTE_HARD_TIMEOUT_MS,
-    Math.min(MAX_GPT_ROUTE_HARD_TIMEOUT_MS, Math.trunc(configuredTimeoutMs))
-  );
-}
 
 function tryParseBodyRecord(value: string): Record<string, unknown> | null {
   try {

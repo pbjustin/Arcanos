@@ -395,7 +395,7 @@ describe('gpt router auth logging', () => {
   });
 
   it('maps route-level aborts onto 504 MODULE_TIMEOUT envelopes', async () => {
-    const abortError = new Error('GPT route timeout after 12000ms');
+    const abortError = new Error('GPT route timeout after 6000ms');
     abortError.name = 'AbortError';
     mockRouteGptRequest.mockRejectedValue(abortError);
 
@@ -413,7 +413,7 @@ describe('gpt router auth logging', () => {
       ok: false,
       error: {
         code: 'MODULE_TIMEOUT',
-        message: 'GPT route timeout after 12000ms',
+        message: 'GPT route timeout after 6000ms',
       },
       _route: expect.objectContaining({
         gptId: 'arcanos-core',
@@ -421,9 +421,9 @@ describe('gpt router auth logging', () => {
     });
   });
 
-  it('honors larger configured GPT route timeout budgets without clipping them to 15s', async () => {
+  it('clips oversized configured GPT route timeout budgets to the bounded ceiling', async () => {
     process.env.GPT_ROUTE_HARD_TIMEOUT_MS = '60000';
-    const abortError = new Error('GPT route timeout after 60000ms');
+    const abortError = new Error('GPT route timeout after 6000ms');
     abortError.name = 'AbortError';
     mockRouteGptRequest.mockRejectedValue(abortError);
 
@@ -441,7 +441,7 @@ describe('gpt router auth logging', () => {
       ok: false,
       error: {
         code: 'MODULE_TIMEOUT',
-        message: 'GPT route timeout after 60000ms',
+        message: 'GPT route timeout after 6000ms',
       },
       _route: expect.objectContaining({
         gptId: 'arcanos-core',

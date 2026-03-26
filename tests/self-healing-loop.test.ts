@@ -248,6 +248,8 @@ describe('selfHealingLoop', () => {
   let promptRouteMitigationActive: boolean;
   let promptRouteMitigationMode: 'reduced_latency' | 'degraded_response' | null;
   let promptRouteMitigationReason: string | null;
+  let promptRouteMitigationActivatedAt: string | null;
+  let promptRouteMitigationUpdatedAt: string | null;
   let consoleLogSpy: ReturnType<typeof jest.spyOn>;
   let consoleErrorSpy: ReturnType<typeof jest.spyOn>;
 
@@ -257,6 +259,8 @@ describe('selfHealingLoop', () => {
     promptRouteMitigationActive = false;
     promptRouteMitigationMode = null;
     promptRouteMitigationReason = null;
+    promptRouteMitigationActivatedAt = null;
+    promptRouteMitigationUpdatedAt = null;
 
     for (const envKey of envKeys) {
       originalEnv.set(envKey, process.env[envKey]);
@@ -305,9 +309,14 @@ describe('selfHealingLoop', () => {
       active: promptRouteMitigationActive,
       mode: promptRouteMitigationActive ? promptRouteMitigationMode : null,
       route: '/api/openai/prompt',
-      activatedAt: promptRouteMitigationActive ? '2026-03-25T12:00:00.000Z' : null,
-      updatedAt: promptRouteMitigationActive ? '2026-03-25T12:00:00.000Z' : null,
+      activatedAt: promptRouteMitigationActive ? promptRouteMitigationActivatedAt ?? '2026-03-25T12:00:00.000Z' : null,
+      updatedAt: promptRouteMitigationActive ? promptRouteMitigationUpdatedAt ?? '2026-03-25T12:00:00.000Z' : null,
       reason: promptRouteMitigationReason,
+      recentTimeoutCount: 0,
+      timeoutWindowStartedAt: null,
+      lastTimeoutAt: null,
+      lastAutoActivationAt: null,
+      lastAutoActivationReason: null,
       pipelineTimeoutMs: promptRouteMitigationMode === 'reduced_latency' ? 3500 : null,
       providerTimeoutMs: promptRouteMitigationMode === 'reduced_latency' ? 3200 : null,
       maxRetries: promptRouteMitigationMode === 'reduced_latency' ? 0 : promptRouteMitigationActive ? 0 : null,
@@ -350,6 +359,8 @@ describe('selfHealingLoop', () => {
       promptRouteMitigationActive = true;
       promptRouteMitigationMode = 'reduced_latency';
       promptRouteMitigationReason = reason;
+      promptRouteMitigationActivatedAt = '2026-03-25T12:00:00.000Z';
+      promptRouteMitigationUpdatedAt = '2026-03-25T12:00:00.000Z';
       return {
         applied: true,
         rolledBack: false,
@@ -361,6 +372,11 @@ describe('selfHealingLoop', () => {
           activatedAt: '2026-03-25T12:00:00.000Z',
           updatedAt: '2026-03-25T12:00:00.000Z',
           reason,
+          recentTimeoutCount: 0,
+          timeoutWindowStartedAt: null,
+          lastTimeoutAt: null,
+          lastAutoActivationAt: '2026-03-25T12:00:00.000Z',
+          lastAutoActivationReason: reason,
           pipelineTimeoutMs: 3500,
           providerTimeoutMs: 3200,
           maxRetries: 0,
@@ -374,6 +390,8 @@ describe('selfHealingLoop', () => {
       promptRouteMitigationActive = true;
       promptRouteMitigationMode = 'degraded_response';
       promptRouteMitigationReason = reason;
+      promptRouteMitigationActivatedAt = '2026-03-25T12:00:00.000Z';
+      promptRouteMitigationUpdatedAt = '2026-03-25T12:00:00.000Z';
       return {
         applied: true,
         rolledBack: false,
@@ -385,6 +403,11 @@ describe('selfHealingLoop', () => {
           activatedAt: '2026-03-25T12:00:00.000Z',
           updatedAt: '2026-03-25T12:00:00.000Z',
           reason,
+          recentTimeoutCount: 0,
+          timeoutWindowStartedAt: null,
+          lastTimeoutAt: null,
+          lastAutoActivationAt: '2026-03-25T12:00:00.000Z',
+          lastAutoActivationReason: reason,
           pipelineTimeoutMs: null,
           providerTimeoutMs: null,
           maxRetries: 0,
@@ -649,9 +672,9 @@ describe('selfHealingLoop', () => {
 
     const result = await runSelfHealingLoop({ trigger: 'interval' });
 
-    expect(activatePromptRouteReducedLatencyModeMock).toHaveBeenCalledWith('latency spike cluster detected', 256);
+    expect(activatePromptRouteReducedLatencyModeMock).toHaveBeenCalledWith('timeout storm detected', 256);
     expect(result).toEqual(expect.objectContaining({
-      diagnosis: 'latency spike cluster detected',
+      diagnosis: 'timeout storm detected',
       action: 'activatePromptRouteMitigation:reduced_latency'
     }));
     expect(getSelfHealingLoopStatus()).toEqual(expect.objectContaining({
@@ -659,11 +682,9 @@ describe('selfHealingLoop', () => {
       activeMitigation: 'prompt:/api/openai/prompt:reduced_latency',
       bypassedSubsystems: expect.arrayContaining(['provider_retry', 'long_generation_tail']),
       lastEvidence: expect.objectContaining({
+        timeoutCount: 2,
+        timeoutRate: 0.143,
         maxLatencyMs: 8800,
-        spikeDetector: expect.objectContaining({
-          maxThresholdMs: 5000,
-          burstTimeoutThreshold: 2
-        }),
         targetedRoute: expect.objectContaining({
           route: '/api/openai/prompt',
           timeoutCount: 2,
@@ -673,10 +694,131 @@ describe('selfHealingLoop', () => {
     }));
   });
 
+  it('targets prompt-route timeout clusters even when prompt traffic is a minority of the window', async () => {
+    getRollingRequestWindowMock.mockReturnValueOnce(createRequestWindow({
+      requestCount: 24,
+      errorCount: 2,
+      serverErrorCount: 2,
+      errorRate: 0.083,
+      timeoutCount: 2,
+      timeoutRate: 0.083,
+      pipelineTimeoutCount: 1,
+      slowRequestCount: 4,
+      avgLatencyMs: 1200,
+      p95LatencyMs: 2400,
+      maxLatencyMs: 5600,
+      routes: [
+        {
+          route: '/api/openai/prompt',
+          requestCount: 4,
+          errorCount: 1,
+          timeoutCount: 2,
+          pipelineTimeoutCount: 1,
+          slowRequestCount: 3,
+          avgLatencyMs: 2810,
+          p95LatencyMs: 4810,
+          maxLatencyMs: 5600
+        },
+        {
+          route: '/ask',
+          requestCount: 20,
+          errorCount: 1,
+          timeoutCount: 0,
+          slowRequestCount: 1,
+          avgLatencyMs: 880,
+          p95LatencyMs: 1200,
+          maxLatencyMs: 1600
+        }
+      ]
+    }));
+
+    const result = await runSelfHealingLoop({ trigger: 'interval' });
+
+    expect(activatePromptRouteReducedLatencyModeMock).toHaveBeenCalledWith('pipeline timeout cluster detected', 256);
+    expect(result).toEqual(expect.objectContaining({
+      diagnosis: 'pipeline timeout cluster detected',
+      action: 'activatePromptRouteMitigation:reduced_latency'
+    }));
+    expect(getSelfHealingLoopStatus()).toEqual(expect.objectContaining({
+      lastAction: 'activatePromptRouteMitigation:reduced_latency',
+      recentPromptRouteTimeouts: 2,
+      recentPromptRouteLatencyP95: 4810,
+      recentPromptRouteMaxLatency: 5600,
+      recentPipelineTimeoutCounts: expect.objectContaining({
+        total: 1,
+        promptRoute: 1
+      }),
+      lastEvidence: expect.objectContaining({
+        targetedRoute: expect.objectContaining({
+          route: '/api/openai/prompt',
+          requestShare: 0.167,
+          timeoutCount: 2,
+          pipelineTimeoutCount: 1,
+          maxLatencyMs: 5600
+        })
+      })
+    }));
+  });
+
+  it('allows prompt-route mitigation even when a trinity mitigation is already active', async () => {
+    trinityActiveAction = 'enable_degraded_mode';
+    getRollingRequestWindowMock.mockReturnValueOnce(createRequestWindow({
+      requestCount: 18,
+      errorCount: 2,
+      serverErrorCount: 2,
+      errorRate: 0.111,
+      timeoutCount: 2,
+      timeoutRate: 0.111,
+      pipelineTimeoutCount: 1,
+      slowRequestCount: 5,
+      avgLatencyMs: 1500,
+      p95LatencyMs: 3100,
+      maxLatencyMs: 5900,
+      routes: [
+        {
+          route: '/api/openai/prompt',
+          requestCount: 3,
+          errorCount: 1,
+          timeoutCount: 2,
+          pipelineTimeoutCount: 1,
+          slowRequestCount: 2,
+          avgLatencyMs: 3320,
+          p95LatencyMs: 5200,
+          maxLatencyMs: 5900
+        },
+        {
+          route: '/api/other',
+          requestCount: 15,
+          errorCount: 1,
+          timeoutCount: 0,
+          slowRequestCount: 3,
+          avgLatencyMs: 1130,
+          p95LatencyMs: 1800,
+          maxLatencyMs: 2200
+        }
+      ]
+    }));
+
+    const result = await runSelfHealingLoop({ trigger: 'interval' });
+
+    expect(activatePromptRouteReducedLatencyModeMock).toHaveBeenCalledWith('pipeline timeout cluster detected', 256);
+    expect(activateTrinitySelfHealingMitigationMock).not.toHaveBeenCalled();
+    expect(result).toEqual(expect.objectContaining({
+      diagnosis: 'pipeline timeout cluster detected',
+      action: 'activatePromptRouteMitigation:reduced_latency'
+    }));
+    expect(getSelfHealingLoopStatus()).toEqual(expect.objectContaining({
+      activePromptMitigation: 'prompt:/api/openai/prompt:reduced_latency',
+      activeMitigation: expect.stringContaining('prompt:/api/openai/prompt:reduced_latency')
+    }));
+  });
+
   it('escalates prompt-route mitigation to degraded mode when reduced-latency mode is already active', async () => {
     promptRouteMitigationActive = true;
     promptRouteMitigationMode = 'reduced_latency';
     promptRouteMitigationReason = 'timeout storm detected';
+    promptRouteMitigationActivatedAt = '2026-03-25T11:55:00.000Z';
+    promptRouteMitigationUpdatedAt = '2026-03-25T11:55:00.000Z';
     getRollingRequestWindowMock.mockReturnValueOnce(createRequestWindow({
       requestCount: 20,
       errorCount: 2,
@@ -727,6 +869,57 @@ describe('selfHealingLoop', () => {
           requestCount: 16
         })
       })
+    }));
+  });
+
+  it('does not immediately escalate reduced-latency prompt mitigation before the stabilization window elapses', async () => {
+    process.env.SELF_HEAL_VERIFICATION_DELAY_MS = '90000';
+    promptRouteMitigationActive = true;
+    promptRouteMitigationMode = 'reduced_latency';
+    promptRouteMitigationReason = 'prompt route timeout cluster detected (budget_abort)';
+    promptRouteMitigationActivatedAt = '2026-03-25T11:59:40.000Z';
+    promptRouteMitigationUpdatedAt = '2026-03-25T11:59:40.000Z';
+    getRollingRequestWindowMock.mockReturnValueOnce(createRequestWindow({
+      requestCount: 20,
+      errorCount: 2,
+      serverErrorCount: 2,
+      errorRate: 0.1,
+      timeoutCount: 0,
+      timeoutRate: 0,
+      slowRequestCount: 10,
+      avgLatencyMs: 2800,
+      p95LatencyMs: 7200,
+      maxLatencyMs: 9100,
+      routes: [
+        {
+          route: '/api/openai/prompt',
+          requestCount: 16,
+          errorCount: 2,
+          timeoutCount: 0,
+          avgLatencyMs: 3300,
+          p95LatencyMs: 9100
+        },
+        {
+          route: '/ask',
+          requestCount: 4,
+          errorCount: 0,
+          timeoutCount: 0,
+          avgLatencyMs: 650,
+          p95LatencyMs: 900
+        }
+      ]
+    }));
+
+    const result = await runSelfHealingLoop({ trigger: 'interval' });
+
+    expect(activatePromptRouteDegradedModeMock).not.toHaveBeenCalled();
+    expect(result).toEqual(expect.objectContaining({
+      diagnosis: 'latency spike cluster detected',
+      action: null
+    }));
+    expect(getSelfHealingLoopStatus()).toEqual(expect.objectContaining({
+      activePromptMitigation: 'prompt:/api/openai/prompt:reduced_latency',
+      activeMitigation: 'prompt:/api/openai/prompt:reduced_latency'
     }));
   });
 
