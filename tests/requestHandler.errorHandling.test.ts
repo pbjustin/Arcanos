@@ -87,7 +87,7 @@ describe('requestHandler error mapping', () => {
   it('returns 408 with pipeline timeout code for pipeline timeouts', () => {
     const res = createResponseMock();
 
-    handleAIError(new Error('prompt_route_pipeline_timeout_after_2500ms'), 'prompt', 'prompt', res);
+    handleAIError(new Error('prompt_route_pipeline_timeout_after_3500ms'), 'prompt', 'prompt', res);
 
     expect(res.status).toHaveBeenCalledWith(408);
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({

@@ -248,7 +248,7 @@ describe('handlePrompt', () => {
       96,
       true,
       expect.objectContaining({
-        timeoutMs: 2250,
+        timeoutMs: 3200,
         maxRetries: 0,
         metadata: expect.objectContaining({
           route: '/api/openai/prompt',
@@ -261,8 +261,8 @@ describe('handlePrompt', () => {
       'prompt.route.reduced_latency',
       expect.objectContaining({
         mitigationMode: 'reduced_latency',
-        providerTimeoutMs: 2250,
-        pipelineTimeoutMs: 2500,
+        providerTimeoutMs: 3200,
+        pipelineTimeoutMs: 3500,
         maxRetries: 0,
         maxTokens: 96,
         targetModel: 'ft:fallback-model'
@@ -272,8 +272,8 @@ describe('handlePrompt', () => {
       'prompt_route.reduced_latency',
       expect.objectContaining({
         mitigationMode: 'reduced_latency',
-        providerTimeoutMs: 2250,
-        pipelineTimeoutMs: 2500,
+        providerTimeoutMs: 3200,
+        pipelineTimeoutMs: 3500,
         maxRetries: 0
       })
     );
