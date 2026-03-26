@@ -24,6 +24,10 @@ import { buildTrinityUserVisibleResponse } from '@shared/ask/trinityResponseSeri
 import {
   applyDeprecatedAskRouteHeaders
 } from '@shared/http/gptRouteHeaders.js';
+import {
+  applyAIDegradedResponseHeaders,
+  extractAIDegradedResponseMetadata
+} from '@shared/http/aiDegradedHeaders.js';
 import apiArcanosVerificationRouter from './api-arcanos-verification.js';
 import { buildPromptShortcutTelemetry } from '@routes/_core/promptShortcutResponse.js';
 import {
@@ -467,6 +471,7 @@ const handleArcanosAsk = asyncHandler(async (
       sourceEndpoint: ARCANOS_API_ENDPOINT_NAME,
       runOptions: buildTrinityOutputControlOptions(req.body)
     });
+    applyAIDegradedResponseHeaders(res, extractAIDegradedResponseMetadata(trinityResult));
 
     const responsePayload = buildArcanosCompatibilityResponse(trinityResult);
 

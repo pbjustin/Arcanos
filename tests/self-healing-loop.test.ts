@@ -180,6 +180,13 @@ function createRequestWindow(overrides: Record<string, unknown> = {}) {
     errorRate: 0,
     timeoutCount: 0,
     timeoutRate: 0,
+    pipelineTimeoutCount: 0,
+    providerTimeoutCount: 0,
+    workerTimeoutCount: 0,
+    budgetAbortCount: 0,
+    degradedCount: 0,
+    degradedReasons: [],
+    bypassedSubsystems: [],
     slowRequestCount: 0,
     avgLatencyMs: 0,
     p95LatencyMs: 0,
@@ -540,6 +547,67 @@ describe('selfHealingLoop', () => {
         timeoutCount: 4,
         timeoutRate: 0.2
       })
+    }));
+  });
+
+  it('activates trinity degraded mode when shared core pipeline timeouts cluster', async () => {
+    getRollingRequestWindowMock.mockReturnValueOnce(createRequestWindow({
+      requestCount: 14,
+      errorCount: 1,
+      serverErrorCount: 1,
+      errorRate: 0.071,
+      timeoutCount: 2,
+      timeoutRate: 0.143,
+      pipelineTimeoutCount: 2,
+      degradedCount: 2,
+      degradedReasons: ['arcanos_core_pipeline_timeout_direct_answer'],
+      bypassedSubsystems: ['trinity_intake', 'trinity_reasoning'],
+      slowRequestCount: 5,
+      avgLatencyMs: 1900,
+      p95LatencyMs: 4800,
+      maxLatencyMs: 6100,
+      routes: [
+        {
+          route: '/gpt/:gptId',
+          requestCount: 10,
+          errorCount: 1,
+          timeoutCount: 2,
+          pipelineTimeoutCount: 2,
+          degradedCount: 2,
+          avgLatencyMs: 2300,
+          p95LatencyMs: 6100,
+          maxLatencyMs: 6100
+        },
+        {
+          route: '/ask',
+          requestCount: 4,
+          errorCount: 0,
+          timeoutCount: 0,
+          avgLatencyMs: 620,
+          p95LatencyMs: 900,
+          maxLatencyMs: 1100
+        }
+      ]
+    }));
+
+    const result = await runSelfHealingLoop({ trigger: 'interval' });
+
+    expect(activateTrinitySelfHealingMitigationMock).toHaveBeenCalledWith(expect.objectContaining({
+      stage: 'reasoning',
+      action: 'enable_degraded_mode'
+    }));
+    expect(result).toEqual(expect.objectContaining({
+      diagnosis: 'pipeline timeout cluster detected',
+      action: 'activateTrinityMitigation:reasoning:enable_degraded_mode'
+    }));
+    expect(getSelfHealingLoopStatus()).toEqual(expect.objectContaining({
+      lastDiagnosis: 'pipeline timeout cluster detected',
+      degradedModeReason: 'arcanos_core_pipeline_timeout_direct_answer',
+      recentTimeoutCounts: expect.objectContaining({
+        pipelineTimeouts: 2,
+        coreRoute: 2
+      }),
+      bypassedSubsystems: expect.arrayContaining(['trinity_intake', 'trinity_reasoning'])
     }));
   });
 

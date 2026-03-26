@@ -448,4 +448,67 @@ describe('gpt router auth logging', () => {
       }),
     });
   });
+
+  it('applies degraded pipeline headers when routed Trinity results recover under the clamp', async () => {
+    mockRouteGptRequest.mockResolvedValue({
+      ok: true,
+      result: {
+        result: 'Degraded answer',
+        module: 'trinity',
+        meta: {
+          id: 'core-timeout-1',
+          created: 1772917000000
+        },
+        activeModel: 'gpt-4.1-mini',
+        fallbackFlag: true,
+        dryRun: false,
+        fallbackSummary: {
+          intakeFallbackUsed: false,
+          gpt5FallbackUsed: false,
+          finalFallbackUsed: true,
+          fallbackReasons: ['Recovered via direct answer']
+        },
+        auditSafe: {
+          mode: true,
+          overrideUsed: false,
+          auditFlags: [],
+          processedSafely: true
+        },
+        memoryContext: {
+          entriesAccessed: 0,
+          contextSummary: 'No memory context available.',
+          memoryEnhanced: false,
+          maxRelevanceScore: 0,
+          averageRelevanceScore: 0
+        },
+        taskLineage: {
+          requestId: 'core-timeout-1',
+          logged: true
+        },
+        timeoutKind: 'pipeline_timeout',
+        degradedModeReason: 'arcanos_core_pipeline_timeout_direct_answer',
+        bypassedSubsystems: ['trinity_intake', 'trinity_reasoning']
+      },
+      _route: {
+        gptId: 'arcanos-core',
+        module: 'ARCANOS:CORE',
+        route: 'core',
+        availableActions: ['query']
+      }
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use(requestContext);
+    app.use('/gpt', gptRouter);
+
+    const response = await request(app)
+      .post('/gpt/arcanos-core')
+      .send({ prompt: 'Summarize the current state quickly.' });
+
+    expect(response.status).toBe(200);
+    expect(response.headers['x-ai-timeout-kind']).toBe('pipeline_timeout');
+    expect(response.headers['x-ai-degraded-reason']).toBe('arcanos_core_pipeline_timeout_direct_answer');
+    expect(response.headers['x-ai-bypassed-subsystems']).toBe('trinity_intake,trinity_reasoning');
+  });
 });

@@ -170,6 +170,9 @@ export interface TrinityResult {
   outputControls?: TrinityOutputControls;
   reasoningHonesty?: TrinityReasoningHonesty;
   pipelineDebug?: TrinityPipelineDebug;
+  timeoutKind?: 'pipeline_timeout' | 'provider_timeout' | 'worker_timeout' | 'budget_abort';
+  degradedModeReason?: string;
+  bypassedSubsystems?: string[];
 }
 
 export interface TrinityRunOptions {
@@ -187,6 +190,7 @@ export interface TrinityRunOptions {
   answerMode?: TrinityAnswerMode;
   debugPipeline?: boolean;
   strictUserVisibleOutput?: boolean;
+  directAnswerModelOverride?: string;
 }
 
 export interface TrinityDryRunPreview {

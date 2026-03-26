@@ -83,8 +83,6 @@ export { TRINITY_INTAKE_TOKEN_LIMIT, TRINITY_STAGE_TEMPERATURE, TRINITY_PREVIEW_
 export { calculateMemoryScoreSummary };
 
 const DEFAULT_TRINITY_DIRECT_ANSWER_STAGE_TIMEOUT_MS = 12_000;
-const DEFAULT_TRINITY_DIRECT_ANSWER_RETRY_TIMEOUT_MS = 4_000;
-const DEFAULT_TRINITY_DIRECT_ANSWER_RETRY_TOKEN_LIMIT = 320;
 const DEFAULT_TRINITY_MODEL_VALIDATION_TIMEOUT_MS = 4_000;
 const DEFAULT_TRINITY_INTAKE_STAGE_TIMEOUT_MS = 6_000;
 const DEFAULT_TRINITY_REASONING_STAGE_TIMEOUT_MS = 20_000;
@@ -489,11 +487,15 @@ export async function runDirectAnswerStage(
   auditSafePrompt: string,
   cognitiveDomain?: CognitiveDomain,
   runtimeBudget?: RuntimeBudget,
-  requestId?: string
+  requestId?: string,
+  directAnswerModelOverride?: string
 ): Promise<TrinityFinalOutput> {
   if (runtimeBudget) assertBudgetAvailable(runtimeBudget);
 
-  const directAnswerModel = getFallbackModel();
+  const directAnswerModel =
+    typeof directAnswerModelOverride === 'string' && directAnswerModelOverride.trim().length > 0
+      ? directAnswerModelOverride.trim()
+      : getFallbackModel();
   const directAnswerTokenLimit = resolveTrinityDirectAnswerTokenLimit(
     auditSafePrompt,
     APPLICATION_CONSTANTS.DEFAULT_TOKEN_LIMIT
@@ -512,37 +514,24 @@ export async function runDirectAnswerStage(
     tokenLimit: cappedTokenLimit
   });
 
-  const executeDirectAnswerAttempt = async (params: {
-    model: string;
-    timeoutMs: number;
-    tokenLimit: number;
-  }): Promise<Awaited<ReturnType<typeof createSingleChatCompletion>>> => {
-    const tokenParams = getTokenParameter(params.model, params.tokenLimit);
-    return runWithRequestAbortTimeout(
+  let directAnswerResponse: Awaited<ReturnType<typeof createSingleChatCompletion>>;
+  try {
+    directAnswerResponse = await runWithRequestAbortTimeout(
       {
-        timeoutMs: params.timeoutMs,
+        timeoutMs: stageTimeoutMs,
         requestId,
         parentSignal: getRequestAbortSignal(),
-        abortMessage: `Trinity direct-answer stage timed out after ${params.timeoutMs}ms using ${params.model}.`
+        abortMessage: `Trinity direct-answer stage timed out after ${stageTimeoutMs}ms using ${directAnswerModel}.`
       },
       () =>
         createSingleChatCompletion(client, {
           messages: buildTrinityDirectAnswerMessages(memoryContextSummary, auditSafePrompt),
           temperature,
-          model: params.model,
+          model: directAnswerModel,
           signal: getRequestAbortSignal(),
-          ...tokenParams
+          ...directAnswerTokenParams
         })
     );
-  };
-
-  let directAnswerResponse: Awaited<ReturnType<typeof createSingleChatCompletion>>;
-  try {
-    directAnswerResponse = await executeDirectAnswerAttempt({
-      model: directAnswerModel,
-      timeoutMs: stageTimeoutMs,
-      tokenLimit: cappedTokenLimit
-    });
   } catch (error) {
     const errorMessage = resolveErrorMessage(error);
     logger.warn(
@@ -559,43 +548,7 @@ export async function runDirectAnswerStage(
         error: errorMessage
       }
     );
-    const retryModel = APPLICATION_CONSTANTS.MODEL_GPT_4_1_MINI;
-    const retryTimeoutMs = Math.max(
-      1,
-      Math.min(DEFAULT_TRINITY_DIRECT_ANSWER_RETRY_TIMEOUT_MS, resolveDirectAnswerStageTimeoutMs(runtimeBudget))
-    );
-    const retryTokenLimit = enforceTokenCap(
-      Math.min(cappedTokenLimit, DEFAULT_TRINITY_DIRECT_ANSWER_RETRY_TOKEN_LIMIT)
-    );
-
-    logger.warn('trinity.direct_answer.retry', {
-      module: 'trinity',
-      operation: 'direct-answer-stage',
-      requestId,
-      fromModel: directAnswerModel,
-      retryModel,
-      retryTimeoutMs,
-      retryTokenLimit,
-      error: errorMessage
-    });
-
-    try {
-      directAnswerResponse = await executeDirectAnswerAttempt({
-        model: retryModel,
-        timeoutMs: retryTimeoutMs,
-        tokenLimit: retryTokenLimit
-      });
-    } catch (retryError) {
-      logger.warn('trinity.direct_answer.retry_failed', {
-        module: 'trinity',
-        operation: 'direct-answer-stage',
-        requestId,
-        retryModel,
-        retryTimeoutMs,
-        error: resolveErrorMessage(retryError)
-      });
-      throw retryError;
-    }
+    throw error;
   }
 
   const directAnswerText = directAnswerResponse.choices[0]?.message?.content || '';
