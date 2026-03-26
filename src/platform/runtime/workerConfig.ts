@@ -34,6 +34,8 @@ interface WorkerRuntimeState {
   started: boolean;
   startedAt?: string;
   workerIds: string[];
+  workerHandlers: Map<string, (request: WorkerDispatchRequest) => Promise<WorkerResult>>;
+  surgeWorkerSequence: number;
   totalDispatched: number;
   lastDispatchAt?: string;
   lastInputPreview?: string;
@@ -88,6 +90,8 @@ export interface WorkerRuntimeStatus {
   enabled: boolean;
   model: string;
   configuredCount: number;
+  maxActiveWorkers: number;
+  surgeWorkerCount: number;
   started: boolean;
   startedAt?: string;
   activeListeners: number;
@@ -102,6 +106,8 @@ export interface WorkerRuntimeStatus {
 const runtimeState: WorkerRuntimeState = {
   started: false,
   workerIds: [],
+  workerHandlers: new Map(),
+  surgeWorkerSequence: 0,
   totalDispatched: 0,
   lastResult: null,
   lastError: null
@@ -166,6 +172,58 @@ export type WorkerResult = Partial<TrinityResult> & {
   error?: string;
   workerId?: string;
 };
+
+export interface WorkerScaleUpResult {
+  supported: boolean;
+  applied: boolean;
+  deltaRequested: number;
+  deltaApplied: number;
+  activeWorkerCount: number;
+  maxActiveWorkers: number;
+  workerIds: string[];
+  message: string;
+}
+
+export interface WorkerRecycleResult {
+  supported: boolean;
+  applied: boolean;
+  workerId: string;
+  activeWorkerCount: number;
+  workerIds: string[];
+  message: string;
+}
+
+function getMaxActiveWorkers(): number {
+  return Math.max(
+    workerSettings.count,
+    workerSettings.count + Math.max(0, config.predictiveScaleUpMaxExtraWorkers ?? 2)
+  );
+}
+
+function registerWorkerHandler(workerId: string): void {
+  if (runtimeState.workerHandlers.has(workerId)) {
+    return;
+  }
+
+  const handler = createWorkerHandler(workerId);
+  runtimeState.workerHandlers.set(workerId, handler);
+  workerTaskQueue.register(handler);
+  if (!runtimeState.workerIds.includes(workerId)) {
+    runtimeState.workerIds.push(workerId);
+  }
+}
+
+function unregisterWorkerHandler(workerId: string): boolean {
+  const handler = runtimeState.workerHandlers.get(workerId);
+  if (!handler) {
+    return false;
+  }
+
+  workerTaskQueue.off('task', handler);
+  runtimeState.workerHandlers.delete(workerId);
+  runtimeState.workerIds = runtimeState.workerIds.filter((candidateId) => candidateId !== workerId);
+  return true;
+}
 
 function normalizeWorkerDispatchRequest(
   input: string,
@@ -292,13 +350,13 @@ function startWorkersUnsafe(force = false): WorkerBootstrapSummary {
   if (force && runtimeState.started) {
     workerTaskQueue.removeAllListeners('task');
     runtimeState.workerIds = [];
+    runtimeState.workerHandlers.clear();
   }
 
   for (let i = 0; i < workerSettings.count; i++) {
     const workerId = `arcanos-worker-${i + 1}`;
     logger.info('[WORKER] Starting worker', { workerId, model: workerSettings.model });
-    workerTaskQueue.register(createWorkerHandler(workerId));
-    runtimeState.workerIds.push(workerId);
+    registerWorkerHandler(workerId);
   }
 
   runtimeState.started = true;
@@ -415,6 +473,8 @@ export function getWorkerRuntimeStatus(): WorkerRuntimeStatus {
     enabled: workerSettings.runWorkers,
     model: workerSettings.model,
     configuredCount: workerSettings.count,
+    maxActiveWorkers: getMaxActiveWorkers(),
+    surgeWorkerCount: Math.max(0, runtimeState.workerIds.length - workerSettings.count),
     started: runtimeState.started,
     startedAt: runtimeState.startedAt,
     activeListeners: workerTaskQueue.listenerCount('task'),
@@ -425,6 +485,126 @@ export function getWorkerRuntimeStatus(): WorkerRuntimeStatus {
     lastResult: runtimeState.lastResult ?? undefined,
     lastError: runtimeState.lastError ?? undefined
   };
+}
+
+export async function scaleWorkersUp(delta = 1): Promise<WorkerScaleUpResult> {
+  const normalizedDelta = Math.max(1, Math.trunc(delta));
+  const lock = await acquireExecutionLock('worker-runtime:start');
+  if (!lock) {
+    return {
+      supported: true,
+      applied: false,
+      deltaRequested: normalizedDelta,
+      deltaApplied: 0,
+      activeWorkerCount: runtimeState.workerIds.length,
+      maxActiveWorkers: getMaxActiveWorkers(),
+      workerIds: [...runtimeState.workerIds],
+      message: 'Worker scale-up suppressed by execution lock.'
+    };
+  }
+
+  try {
+    if (!workerSettings.runWorkers) {
+      return {
+        supported: false,
+        applied: false,
+        deltaRequested: normalizedDelta,
+        deltaApplied: 0,
+        activeWorkerCount: runtimeState.workerIds.length,
+        maxActiveWorkers: getMaxActiveWorkers(),
+        workerIds: [...runtimeState.workerIds],
+        message: 'RUN_WORKERS disabled; scale-up unsupported.'
+      };
+    }
+
+    if (!runtimeState.started) {
+      startWorkersUnsafe(false);
+    }
+
+    const maxActiveWorkers = getMaxActiveWorkers();
+    const capacityRemaining = Math.max(0, maxActiveWorkers - runtimeState.workerIds.length);
+    const deltaApplied = Math.min(normalizedDelta, capacityRemaining);
+
+    for (let index = 0; index < deltaApplied; index += 1) {
+      runtimeState.surgeWorkerSequence += 1;
+      const workerId = `arcanos-worker-surge-${runtimeState.surgeWorkerSequence}`;
+      logger.info('[WORKER] Scaling worker runtime', { workerId, model: workerSettings.model });
+      registerWorkerHandler(workerId);
+    }
+
+    return {
+      supported: true,
+      applied: deltaApplied > 0,
+      deltaRequested: normalizedDelta,
+      deltaApplied,
+      activeWorkerCount: runtimeState.workerIds.length,
+      maxActiveWorkers,
+      workerIds: [...runtimeState.workerIds],
+      message:
+        deltaApplied > 0
+          ? `Scaled worker runtime by ${deltaApplied} listener(s).`
+          : 'Worker runtime is already at predictive scale-up capacity.'
+    };
+  } finally {
+    await lock.release();
+  }
+}
+
+export async function recycleWorker(workerId: string): Promise<WorkerRecycleResult> {
+  const normalizedWorkerId = workerId.trim();
+  const lock = await acquireExecutionLock('worker-runtime:start');
+  if (!lock) {
+    return {
+      supported: true,
+      applied: false,
+      workerId: normalizedWorkerId,
+      activeWorkerCount: runtimeState.workerIds.length,
+      workerIds: [...runtimeState.workerIds],
+      message: 'Worker recycle suppressed by execution lock.'
+    };
+  }
+
+  try {
+    if (!workerSettings.runWorkers) {
+      return {
+        supported: false,
+        applied: false,
+        workerId: normalizedWorkerId,
+        activeWorkerCount: runtimeState.workerIds.length,
+        workerIds: [...runtimeState.workerIds],
+        message: 'RUN_WORKERS disabled; targeted recycle unsupported.'
+      };
+    }
+
+    if (!runtimeState.started) {
+      startWorkersUnsafe(false);
+    }
+
+    if (!runtimeState.workerHandlers.has(normalizedWorkerId)) {
+      return {
+        supported: false,
+        applied: false,
+        workerId: normalizedWorkerId,
+        activeWorkerCount: runtimeState.workerIds.length,
+        workerIds: [...runtimeState.workerIds],
+        message: `Worker ${normalizedWorkerId} is not managed by this runtime.`
+      };
+    }
+
+    unregisterWorkerHandler(normalizedWorkerId);
+    registerWorkerHandler(normalizedWorkerId);
+
+    return {
+      supported: true,
+      applied: true,
+      workerId: normalizedWorkerId,
+      activeWorkerCount: runtimeState.workerIds.length,
+      workerIds: [...runtimeState.workerIds],
+      message: `Recycled worker ${normalizedWorkerId}.`
+    };
+  } finally {
+    await lock.release();
+  }
 }
 
 if (workerSettings.runWorkers) {

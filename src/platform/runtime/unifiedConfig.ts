@@ -79,6 +79,28 @@ export interface AppConfig {
   selfImprovePiiScrubEnabled: boolean;
   selfImproveActuatorMode: 'pr_bot' | 'daemon';
 
+  // Predictive Self-Healing Configuration
+  predictiveHealingEnabled: boolean;
+  predictiveHealingDryRun: boolean;
+  autoExecuteHealing: boolean;
+  predictiveHealingWindowMs: number;
+  predictiveHealingMinObservations: number;
+  predictiveHealingStaleAfterMs: number;
+  predictiveHealingMinConfidence: number;
+  predictiveHealingActionCooldownMs: number;
+  predictiveHealingObservationHistoryLimit: number;
+  predictiveHealingAuditHistoryLimit: number;
+  predictiveErrorRateThreshold: number;
+  predictiveLatencyConsecutiveIntervals: number;
+  predictiveLatencyRiseDeltaMs: number;
+  predictiveMemoryThresholdMb: number;
+  predictiveMemoryGrowthThresholdMb: number;
+  predictiveMemorySustainedIntervals: number;
+  predictiveQueuePendingThreshold: number;
+  predictiveQueueVelocityThreshold: number;
+  predictiveScaleUpStep: number;
+  predictiveScaleUpMaxExtraWorkers: number;
+
 }
 
 /**
@@ -245,7 +267,29 @@ export function getConfig(): AppConfig {
     selfImproveEvidenceDir: getEnv('SELF_IMPROVE_EVIDENCE_DIR', path.join(process.cwd(), 'governance', 'evidence_packs')),
     selfImproveRetentionDays: getEnvNumber('SELF_IMPROVE_RETENTION_DAYS', 30),
     selfImprovePiiScrubEnabled: getEnvBoolean('SELF_IMPROVE_PII_SCRUB', true),
-    selfImproveActuatorMode: parseSelfImproveActuatorMode(getEnv('SELF_IMPROVE_ACTUATOR_MODE', 'pr_bot'))
+    selfImproveActuatorMode: parseSelfImproveActuatorMode(getEnv('SELF_IMPROVE_ACTUATOR_MODE', 'pr_bot')),
+
+    // Predictive Self-Healing Configuration
+    predictiveHealingEnabled: getEnvBoolean('PREDICTIVE_HEALING_ENABLED', false),
+    predictiveHealingDryRun: getEnvBoolean('PREDICTIVE_HEALING_DRY_RUN', true),
+    autoExecuteHealing: getEnvBoolean('AUTO_EXECUTE_HEALING', false),
+    predictiveHealingWindowMs: getEnvNumber('PREDICTIVE_HEALING_WINDOW_MS', 5 * 60_000),
+    predictiveHealingMinObservations: getEnvNumber('PREDICTIVE_HEALING_MIN_OBSERVATIONS', 3),
+    predictiveHealingStaleAfterMs: getEnvNumber('PREDICTIVE_HEALING_STALE_AFTER_MS', 2 * 60_000),
+    predictiveHealingMinConfidence: getEnvNumber('PREDICTIVE_HEALING_MIN_CONFIDENCE', 0.65),
+    predictiveHealingActionCooldownMs: getEnvNumber('PREDICTIVE_HEALING_ACTION_COOLDOWN_MS', 5 * 60_000),
+    predictiveHealingObservationHistoryLimit: getEnvNumber('PREDICTIVE_HEALING_OBSERVATION_HISTORY_LIMIT', 12),
+    predictiveHealingAuditHistoryLimit: getEnvNumber('PREDICTIVE_HEALING_AUDIT_HISTORY_LIMIT', 25),
+    predictiveErrorRateThreshold: getEnvNumber('PREDICTIVE_ERROR_RATE_THRESHOLD', 0.18),
+    predictiveLatencyConsecutiveIntervals: getEnvNumber('PREDICTIVE_LATENCY_CONSECUTIVE_INTERVALS', 3),
+    predictiveLatencyRiseDeltaMs: getEnvNumber('PREDICTIVE_LATENCY_RISE_DELTA_MS', 350),
+    predictiveMemoryThresholdMb: getEnvNumber('PREDICTIVE_MEMORY_THRESHOLD_MB', 1024),
+    predictiveMemoryGrowthThresholdMb: getEnvNumber('PREDICTIVE_MEMORY_GROWTH_THRESHOLD_MB', 192),
+    predictiveMemorySustainedIntervals: getEnvNumber('PREDICTIVE_MEMORY_SUSTAINED_INTERVALS', 3),
+    predictiveQueuePendingThreshold: getEnvNumber('PREDICTIVE_QUEUE_PENDING_THRESHOLD', 5),
+    predictiveQueueVelocityThreshold: getEnvNumber('PREDICTIVE_QUEUE_VELOCITY_THRESHOLD', 2),
+    predictiveScaleUpStep: getEnvNumber('PREDICTIVE_SCALE_UP_STEP', 1),
+    predictiveScaleUpMaxExtraWorkers: getEnvNumber('PREDICTIVE_SCALE_UP_MAX_EXTRA_WORKERS', 2)
   };
 
   return config;
@@ -281,6 +325,14 @@ export function validateConfig(): ValidationResult {
   const rawActuatorMode = getEnv('SELF_IMPROVE_ACTUATOR_MODE');
   if (rawActuatorMode && parseSelfImproveActuatorMode(rawActuatorMode) !== rawActuatorMode.trim().toLowerCase()) {
     warnings.push('SELF_IMPROVE_ACTUATOR_MODE invalid - defaulted to pr_bot');
+  }
+
+  if (config.autoExecuteHealing && !config.predictiveHealingEnabled) {
+    warnings.push('AUTO_EXECUTE_HEALING enabled while PREDICTIVE_HEALING_ENABLED is false - auto execution will stay inactive');
+  }
+
+  if (config.autoExecuteHealing && config.predictiveHealingDryRun) {
+    warnings.push('AUTO_EXECUTE_HEALING enabled while PREDICTIVE_HEALING_DRY_RUN is true - predictive actions will remain dry-run');
   }
 
   // Railway-specific checks
