@@ -23,6 +23,7 @@ import { createServer } from 'node:http';
 import process from 'node:process';
 
 const WORKER_SERVICE_TOKEN = 'worker';
+const PROCESS_KIND_ENV = 'ARCANOS_PROCESS_KIND';
 const HEALTH_PATHS = new Set(['/health', '/healthz', '/readyz']);
 const HEALTH_OK_BODY = 'ok';
 const HEALTH_NOT_FOUND_BODY = 'not found';
@@ -77,8 +78,19 @@ function resolveHealthPort() {
  * Edge case behavior:
  * - `error` event is handled by caller to prevent silent startup failures.
  */
-function spawnProcess(command, args) {
-  return spawn(command, args, { stdio: 'inherit' });
+function buildChildEnvironment(processKind) {
+  return {
+    ...process.env,
+    RUN_WORKERS: processKind === 'worker' ? 'true' : 'false',
+    [PROCESS_KIND_ENV]: processKind
+  };
+}
+
+function spawnProcess(command, args, processKind) {
+  return spawn(command, args, {
+    stdio: 'inherit',
+    env: buildChildEnvironment(processKind)
+  });
 }
 
 /**
@@ -117,12 +129,13 @@ function waitForExit(childProcess) {
  * - Child startup errors surface and terminate launcher with failure.
  */
 async function runWebRuntime() {
+  console.log(`[railway-launcher] starting web runtime ${PROCESS_KIND_ENV}=web RUN_WORKERS=false`);
   const webProcess = spawnProcess('node', [
     '--max-old-space-size=7168',
     '--import',
     './scripts/register-esm-loader.mjs',
     'dist/start-server.js',
-  ]);
+  ], 'web');
   const exitCode = await waitForExit(webProcess);
   process.exit(exitCode);
 }
@@ -140,7 +153,8 @@ async function runWebRuntime() {
  */
 async function runWorkerRuntimeWithHealthServer() {
   const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-  const workerProcess = spawnProcess(npmCommand, ['run', 'start:worker']);
+  console.log(`[railway-launcher] starting worker runtime ${PROCESS_KIND_ENV}=worker RUN_WORKERS=true`);
+  const workerProcess = spawnProcess(npmCommand, ['run', 'start:worker'], 'worker');
   const healthPort = resolveHealthPort();
 
   const healthServer = createServer((request, response) => {

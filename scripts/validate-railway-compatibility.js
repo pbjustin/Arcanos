@@ -21,8 +21,10 @@ import { pathToFileURL } from 'node:url';
 const PROJECT_ROOT = process.cwd();
 const RAILWAY_CONFIG_PATH = path.join(PROJECT_ROOT, 'railway.json');
 const ENV_TEMPLATE_PATH = path.join(PROJECT_ROOT, '.env.example');
+const DOCKERFILE_PATH = path.join(PROJECT_ROOT, 'Dockerfile');
 const EXPECTED_START_COMMAND = 'node scripts/start-railway-service.mjs';
 const EXPECTED_HEALTHCHECK_PATH = '/health';
+const EXPECTED_DOCKERFILE_CMD = 'CMD ["node", "scripts/start-railway-service.mjs"]';
 const REQUIRED_PRODUCTION_VARIABLES = [
   'NODE_ENV',
   'PORT',
@@ -70,6 +72,10 @@ async function readRailwayConfig() {
  */
 async function readEnvTemplate() {
   return readProjectFile(ENV_TEMPLATE_PATH);
+}
+
+async function readDockerfile() {
+  return readProjectFile(DOCKERFILE_PATH);
 }
 
 /**
@@ -203,15 +209,28 @@ export function validateEnvTemplate(documentedKeys) {
   return errors;
 }
 
+export function validateDockerfile(dockerfileRaw) {
+  const errors = [];
+
+  //audit Assumption: Dockerfile-backed Railway deploys must boot through the same launcher as railway.json; risk: image CMD bypasses service-role logic and starts web instances with worker settings; invariant: Dockerfile CMD points at the shared Railway launcher; handling: fail validation when the launcher command is absent.
+  if (!dockerfileRaw.includes(EXPECTED_DOCKERFILE_CMD)) {
+    errors.push(`Dockerfile must include ${EXPECTED_DOCKERFILE_CMD}`);
+  }
+
+  return errors;
+}
+
 async function main() {
   try {
-    const [config, envTemplateRaw] = await Promise.all([
+    const [config, envTemplateRaw, dockerfileRaw] = await Promise.all([
       readRailwayConfig(),
       readEnvTemplate(),
+      readDockerfile(),
     ]);
     const errors = [
       ...validateConfig(config),
       ...validateEnvTemplate(extractEnvTemplateKeys(envTemplateRaw)),
+      ...validateDockerfile(dockerfileRaw),
     ];
 
     //audit Assumption: any compatibility error should block CI/deploy; risk: shipping invalid platform config; invariant: zero validation errors required; handling: print all errors and exit 1.

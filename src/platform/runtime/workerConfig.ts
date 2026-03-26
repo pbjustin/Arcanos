@@ -1,7 +1,7 @@
 import { EventEmitter } from 'events';
 import type { TrinityResult } from "@core/logic/trinity.js";
 import { logger } from "@platform/logging/structuredLogging.js";
-import { getConfig } from "@platform/runtime/unifiedConfig.js";
+import { getConfig, resolveWorkerRuntimeMode } from "@platform/runtime/unifiedConfig.js";
 import { config as runtimeConfig } from "@platform/runtime/config.js";
 import { getEnvNumber, getEnv } from "@platform/runtime/env.js";
 import { requireOpenAIClientOrAdapter } from "@services/openai/clientBridge.js";
@@ -23,11 +23,22 @@ process.env.WORKER_MODEL = workerModelEnv;
 
 // Environment configuration
 const config = getConfig();
+const workerRuntimeMode = resolveWorkerRuntimeMode();
 export const workerSettings = {
   runWorkers: config.runWorkers,
   count: getEnvNumber('WORKER_COUNT', 4),
   model: workerModelEnv
 };
+
+if (workerRuntimeMode.requestedRunWorkers && !workerRuntimeMode.resolvedRunWorkers) {
+  logger.warn('[WORKER] In-process worker startup suppressed for this service role', {
+    module: 'core',
+    serviceName: workerRuntimeMode.railwayServiceName,
+    processKind: workerRuntimeMode.processKind,
+    dedicatedWorkerServiceDetected: workerRuntimeMode.dedicatedWorkerServiceDetected,
+    reason: workerRuntimeMode.reason
+  });
+}
 
 // Worker runtime bookkeeping
 interface WorkerRuntimeState {

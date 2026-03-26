@@ -58,5 +58,6 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD node -e "require('http').get('http://localhost:' + (process.env.PORT || 8080) + '/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) }).on('error', () => process.exit(1))"
 
-# Start with Railway-optimized memory settings
-CMD ["sh", "-c", "NODE_OPTIONS='--max-old-space-size=7168' npm start"]
+# Start through the Railway launcher so web and worker services receive the
+# correct runtime role and worker flags even when service-level env vars drift.
+CMD ["node", "scripts/start-railway-service.mjs"]

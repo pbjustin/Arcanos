@@ -115,6 +115,21 @@ export interface ValidationResult {
   warnings: string[];
 }
 
+export interface WorkerRuntimeModeResolution {
+  requestedRunWorkers: boolean;
+  resolvedRunWorkers: boolean;
+  processKind: 'web' | 'worker' | 'unknown';
+  railwayServiceName: string | null;
+  dedicatedWorkerServiceDetected: boolean;
+  webServiceWorkersOverride: boolean;
+  reason:
+    | 'requested'
+    | 'process_kind_web'
+    | 'process_kind_worker'
+    | 'railway_web_service'
+    | 'railway_dedicated_worker_service';
+}
+
 function parseSelfImproveEnvironment(raw: string | undefined): AppConfig['selfImproveEnvironment'] {
   const normalized = (raw || '').trim().toLowerCase();
   if (normalized === 'production' || normalized === 'staging' || normalized === 'development') {
@@ -187,6 +202,101 @@ export function isRailwayEnvironment(): boolean {
   );
 }
 
+function normalizeProcessKind(raw: string | undefined): WorkerRuntimeModeResolution['processKind'] {
+  const normalized = (raw || '').trim().toLowerCase();
+  if (normalized === 'web' || normalized === 'worker') {
+    return normalized;
+  }
+
+  return 'unknown';
+}
+
+function hasDedicatedRailwayWorkerService(): boolean {
+  return Object.entries(process.env).some(([key, value]) => {
+    if (!/^RAILWAY_SERVICE_.*WORKER.*_URL$/u.test(key)) {
+      return false;
+    }
+
+    return typeof value === 'string' && value.trim().length > 0;
+  });
+}
+
+export function resolveWorkerRuntimeMode(): WorkerRuntimeModeResolution {
+  const requestedRunWorkers = getEnvBoolean('RUN_WORKERS', getEnv('NODE_ENV') !== 'test');
+  const processKind = normalizeProcessKind(getEnv('ARCANOS_PROCESS_KIND'));
+  const railwayServiceName = getEnv('RAILWAY_SERVICE_NAME')?.trim() || null;
+  const dedicatedWorkerServiceDetected = isRailwayEnvironment() && hasDedicatedRailwayWorkerService();
+  const webServiceWorkersOverride = getEnvBoolean('ARCANOS_ALLOW_WEB_SERVICE_WORKERS', false);
+
+  if (processKind === 'web') {
+    return {
+      requestedRunWorkers,
+      resolvedRunWorkers: false,
+      processKind,
+      railwayServiceName,
+      dedicatedWorkerServiceDetected,
+      webServiceWorkersOverride,
+      reason: 'process_kind_web'
+    };
+  }
+
+  if (processKind === 'worker') {
+    return {
+      requestedRunWorkers,
+      resolvedRunWorkers: true,
+      processKind,
+      railwayServiceName,
+      dedicatedWorkerServiceDetected,
+      webServiceWorkersOverride,
+      reason: 'process_kind_worker'
+    };
+  }
+
+  const normalizedServiceName = railwayServiceName?.toLowerCase() ?? '';
+  if (
+    isRailwayEnvironment() &&
+    !webServiceWorkersOverride &&
+    normalizedServiceName.length > 0 &&
+    !normalizedServiceName.includes('worker')
+  ) {
+    return {
+      requestedRunWorkers,
+      resolvedRunWorkers: false,
+      processKind,
+      railwayServiceName,
+      dedicatedWorkerServiceDetected,
+      webServiceWorkersOverride,
+      reason: 'railway_web_service'
+    };
+  }
+
+  if (
+    dedicatedWorkerServiceDetected &&
+    normalizedServiceName.length > 0 &&
+    !normalizedServiceName.includes('worker')
+  ) {
+    return {
+      requestedRunWorkers,
+      resolvedRunWorkers: false,
+      processKind,
+      railwayServiceName,
+      dedicatedWorkerServiceDetected,
+      webServiceWorkersOverride,
+      reason: 'railway_dedicated_worker_service'
+    };
+  }
+
+  return {
+    requestedRunWorkers,
+    resolvedRunWorkers: requestedRunWorkers,
+    processKind,
+    railwayServiceName,
+    dedicatedWorkerServiceDetected,
+    webServiceWorkersOverride,
+    reason: 'requested'
+  };
+}
+
 /**
  * Gets unified application configuration
  * 
@@ -196,6 +306,7 @@ export function isRailwayEnvironment(): boolean {
  * @returns Application configuration object
  */
 export function getConfig(): AppConfig {
+  const workerRuntimeMode = resolveWorkerRuntimeMode();
   const config: AppConfig = {
     // Server Configuration
     nodeEnv: getEnv('NODE_ENV', 'development'),
@@ -237,7 +348,7 @@ export function getConfig(): AppConfig {
     pgHost: getEnv('PGHOST', 'localhost'),
 
     // Worker Configuration
-    runWorkers: getEnvBoolean('RUN_WORKERS', getEnv('NODE_ENV') !== 'test'),
+    runWorkers: workerRuntimeMode.resolvedRunWorkers,
     workerApiTimeoutMs: getEnvNumber('WORKER_API_TIMEOUT_MS', APPLICATION_CONSTANTS.DEFAULT_API_TIMEOUT),
 
     // Logging Configuration
