@@ -1431,6 +1431,20 @@ function serializeDiagnosisAttempts(runtime: SelfHealingLoopRuntime): Record<str
   return attempts;
 }
 
+function snapshotDiagnosisAttempts(runtime: SelfHealingLoopRuntime): Record<string, number> {
+  const attempts: Record<string, number> = {};
+  const nowMs = Date.now();
+
+  for (const [key, value] of runtime.diagnosisAttempts.entries()) {
+    if (nowMs - value.windowStartedAtMs >= resolveIncidentWindowMs()) {
+      continue;
+    }
+    attempts[key] = value.count;
+  }
+
+  return attempts;
+}
+
 function serializeCooldowns(runtime: SelfHealingLoopRuntime): Record<string, string> {
   const result: Record<string, string> = {};
   const nowMs = Date.now();
@@ -1452,12 +1466,45 @@ function serializeCooldowns(runtime: SelfHealingLoopRuntime): Record<string, str
   return result;
 }
 
+function snapshotCooldowns(runtime: SelfHealingLoopRuntime): Record<string, string> {
+  const result: Record<string, string> = {};
+  const nowMs = Date.now();
+
+  const registerEntries = (prefix: string, cooldowns: Map<string, number>) => {
+    for (const [key, expiresAtMs] of cooldowns.entries()) {
+      if (expiresAtMs <= nowMs) {
+        continue;
+      }
+      result[`${prefix}:${key}`] = new Date(expiresAtMs).toISOString();
+    }
+  };
+
+  registerEntries('action', runtime.actionCooldowns);
+  registerEntries('controller', runtime.controllerCooldowns);
+  registerEntries('ineffective', runtime.ineffectiveActionCooldowns);
+
+  return result;
+}
+
 function serializeIneffectiveActions(runtime: SelfHealingLoopRuntime): Record<string, string> {
   const nowMs = Date.now();
   const result: Record<string, string> = {};
   for (const [key, expiresAtMs] of runtime.ineffectiveActionCooldowns.entries()) {
     if (expiresAtMs <= nowMs) {
       runtime.ineffectiveActionCooldowns.delete(key);
+      continue;
+    }
+    result[key] = new Date(expiresAtMs).toISOString();
+  }
+
+  return result;
+}
+
+function snapshotIneffectiveActions(runtime: SelfHealingLoopRuntime): Record<string, string> {
+  const nowMs = Date.now();
+  const result: Record<string, string> = {};
+  for (const [key, expiresAtMs] of runtime.ineffectiveActionCooldowns.entries()) {
+    if (expiresAtMs <= nowMs) {
       continue;
     }
     result[key] = new Date(expiresAtMs).toISOString();
@@ -2005,44 +2052,50 @@ async function executeActionPlan(
 
 export function getSelfHealingLoopStatus(): SelfHealingLoopStatus {
   const runtime = getRuntime();
-  if (runtime.timer === null) {
-    runtime.status.intervalMs = resolveLoopIntervalMs();
-  }
-  runtime.status.loopRunning = runtime.timer !== null;
-  runtime.status.active = runtime.status.loopRunning;
-  runtime.status.lastTrinityMitigation = getActiveTrinityMitigation(getTrinitySelfHealingStatus());
-  runtime.status.activePromptMitigation = getActivePromptRouteMitigation();
-  runtime.status.lastPromptMitigationReason = getPromptRouteMitigationState().reason;
-  runtime.status.activeMitigation = getActiveAutomatedMitigation(getTrinitySelfHealingStatus());
-  runtime.status.outerRouteTimeoutMs = resolveGptRouteHardTimeoutMs();
-  runtime.status.abortPropagationCoverage = [...PROMPT_ROUTE_ABORT_PROPAGATION_COVERAGE];
-  refreshStatusViews(runtime);
+  const trinityStatus = getTrinitySelfHealingStatus();
+  const promptRouteMitigationState = getPromptRouteMitigationState();
+  const snapshot: SelfHealingLoopStatus = {
+    ...runtime.status,
+    active: runtime.timer !== null,
+    loopRunning: runtime.timer !== null,
+    intervalMs: runtime.timer === null ? resolveLoopIntervalMs() : runtime.status.intervalMs,
+    lastTrinityMitigation: getActiveTrinityMitigation(trinityStatus),
+    activePromptMitigation: getActivePromptRouteMitigation(),
+    lastPromptMitigationReason: promptRouteMitigationState.reason,
+    activeMitigation: getActiveAutomatedMitigation(trinityStatus),
+    outerRouteTimeoutMs: resolveGptRouteHardTimeoutMs(),
+    abortPropagationCoverage: [...PROMPT_ROUTE_ABORT_PROPAGATION_COVERAGE],
+    attemptsByDiagnosis: snapshotDiagnosisAttempts(runtime),
+    cooldowns: snapshotCooldowns(runtime),
+    ineffectiveActions: snapshotIneffectiveActions(runtime),
+    bypassedSubsystems: [...new Set([...runtime.status.bypassedSubsystems, ...getActiveBypassedSubsystems()])].sort()
+  };
 
   return {
-    ...runtime.status,
-    abortPropagationCoverage: [...runtime.status.abortPropagationCoverage],
-    bypassedSubsystems: [...runtime.status.bypassedSubsystems],
-    ineffectiveActions: { ...runtime.status.ineffectiveActions },
-    attemptsByDiagnosis: { ...runtime.status.attemptsByDiagnosis },
-    cooldowns: { ...runtime.status.cooldowns },
-    lastEvidence: runtime.status.lastEvidence ? { ...runtime.status.lastEvidence } : null,
-    lastLatencySnapshot: runtime.status.lastLatencySnapshot
+    ...snapshot,
+    abortPropagationCoverage: [...snapshot.abortPropagationCoverage],
+    bypassedSubsystems: [...snapshot.bypassedSubsystems],
+    ineffectiveActions: { ...snapshot.ineffectiveActions },
+    attemptsByDiagnosis: { ...snapshot.attemptsByDiagnosis },
+    cooldowns: { ...snapshot.cooldowns },
+    lastEvidence: snapshot.lastEvidence ? { ...snapshot.lastEvidence } : null,
+    lastLatencySnapshot: snapshot.lastLatencySnapshot
       ? {
-          ...runtime.status.lastLatencySnapshot,
-          promptRoute: runtime.status.lastLatencySnapshot.promptRoute
-            ? { ...runtime.status.lastLatencySnapshot.promptRoute }
+          ...snapshot.lastLatencySnapshot,
+          promptRoute: snapshot.lastLatencySnapshot.promptRoute
+            ? { ...snapshot.lastLatencySnapshot.promptRoute }
             : null
         }
       : null,
-    recentTimeoutCounts: runtime.status.recentTimeoutCounts ? { ...runtime.status.recentTimeoutCounts } : null,
-    recentPipelineTimeoutCounts: runtime.status.recentPipelineTimeoutCounts
-      ? { ...runtime.status.recentPipelineTimeoutCounts }
+    recentTimeoutCounts: snapshot.recentTimeoutCounts ? { ...snapshot.recentTimeoutCounts } : null,
+    recentPipelineTimeoutCounts: snapshot.recentPipelineTimeoutCounts
+      ? { ...snapshot.recentPipelineTimeoutCounts }
       : null,
-    lastVerificationResult: runtime.status.lastVerificationResult
+    lastVerificationResult: snapshot.lastVerificationResult
       ? {
-          ...runtime.status.lastVerificationResult,
-          baseline: { ...runtime.status.lastVerificationResult.baseline },
-          current: { ...runtime.status.lastVerificationResult.current }
+          ...snapshot.lastVerificationResult,
+          baseline: { ...snapshot.lastVerificationResult.baseline },
+          current: { ...snapshot.lastVerificationResult.current }
         }
       : null
   };
