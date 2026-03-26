@@ -36,6 +36,7 @@ import {
   recordSelfHealEvent,
   resetSelfHealTelemetryForTests
 } from '@services/selfImprove/selfHealTelemetry.js';
+import { runPredictiveHealingFromLoop } from '@services/selfImprove/predictiveHealingService.js';
 import type { WorkerRuntimeStatus } from '@platform/runtime/workerConfig.js';
 
 const DEFAULT_INTERVAL_MS = 30_000;
@@ -2380,6 +2381,30 @@ export async function runSelfHealingLoop(options: {
     runtime.status.abortPropagationCoverage = [...PROMPT_ROUTE_ABORT_PROPAGATION_COVERAGE];
     runtime.status.bypassedSubsystems = combineBypassedSubsystems(observation.requestWindow);
 
+    const predictiveResult = await runPredictiveHealingFromLoop({
+      source: 'predictive_self_heal_loop',
+      observation: {
+        requestWindow: observation.requestWindow,
+        workerHealth: observation.workerHealth,
+        workerRuntime: observation.workerRuntime,
+        workerHealthError: observation.workerHealthError
+      }
+    });
+    if (predictiveResult.decision.action !== 'none') {
+      runtime.status.lastEvidence = {
+        ...(runtime.status.lastEvidence ?? {}),
+        predictive: {
+          action: predictiveResult.decision.action,
+          confidence: predictiveResult.decision.confidence,
+          matchedRule: predictiveResult.decision.matchedRule,
+          executionStatus: predictiveResult.execution.status
+        }
+      };
+    }
+    if (predictiveResult.execution.status === 'failed' && !runtime.status.lastError) {
+      runtime.status.lastError = predictiveResult.execution.message;
+    }
+
     if (diagnosis.type === 'healthy' || diagnosis.type === 'prompt_route_stabilized') {
       runtime.status.lastHealthyObservedAt = tickAt;
     }
@@ -2398,6 +2423,11 @@ export async function runSelfHealingLoop(options: {
     console.log(`[SELF-HEAL] diagnosis ${diagnosis.summary}`);
 
     let action: string | null = verification.followUpAction;
+    if (!action && predictiveResult.execution.status === 'executed') {
+      action = predictiveResult.decision.action;
+      runtime.status.lastAction = action;
+      runtime.status.lastActionAt = new Date().toISOString();
+    }
     if (!action && verification.verificationResult === null) {
       const actionResult = await executeActionPlan(runtime, diagnosis, observation);
       if (actionResult.executed && actionResult.action) {

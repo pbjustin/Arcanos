@@ -10,6 +10,8 @@ const buildCompactSelfHealSummaryMock = jest.fn();
 const inferSelfHealComponentFromActionMock = jest.fn();
 const inferSelfHealComponentFromRequestMock = jest.fn();
 const recordSelfHealEventMock = jest.fn();
+const buildPredictiveHealingStatusSnapshotMock = jest.fn();
+const buildPredictiveHealingCompactSummaryMock = jest.fn();
 
 jest.unstable_mockModule('@services/selfImprove/selfHealingLoop.js', () => ({
   getSelfHealingLoopStatus: getSelfHealingLoopStatusMock
@@ -29,6 +31,11 @@ jest.unstable_mockModule('@services/selfImprove/selfHealTelemetry.js', () => ({
   inferSelfHealComponentFromAction: inferSelfHealComponentFromActionMock,
   inferSelfHealComponentFromRequest: inferSelfHealComponentFromRequestMock,
   recordSelfHealEvent: recordSelfHealEventMock
+}));
+
+jest.unstable_mockModule('@services/selfImprove/predictiveHealingService.js', () => ({
+  buildPredictiveHealingStatusSnapshot: buildPredictiveHealingStatusSnapshotMock,
+  buildPredictiveHealingCompactSummary: buildPredictiveHealingCompactSummaryMock
 }));
 
 jest.unstable_mockModule('../src/services/safety/runtimeState.js', () => ({
@@ -119,6 +126,22 @@ describe('safety self-heal routes', () => {
         { id: 'success-1', timestamp: '2026-03-25T12:00:02.000Z', kind: 'success' }
       ]
     });
+    buildPredictiveHealingStatusSnapshotMock.mockReturnValue({
+      enabled: false,
+      dryRun: true,
+      autoExecute: false,
+      lastObservedAt: null,
+      lastDecisionAt: null,
+      lastAction: null,
+      lastResult: null,
+      lastMatchedRule: null,
+      recentAuditCount: 0,
+      recentAudits: [],
+      recentObservations: [],
+      cooldowns: {},
+      detailsPath: '/api/self-heal/decide',
+      advisors: ['rules_v1']
+    });
 
     const response = await request(createApp()).get('/status/safety/self-heal').expect(200);
 
@@ -158,7 +181,11 @@ describe('safety self-heal routes', () => {
       trinity: {
         enabled: true,
         snapshot: {}
-      }
+      },
+      predictiveHealing: expect.objectContaining({
+        enabled: false,
+        dryRun: true
+      })
     }));
   });
 
@@ -203,6 +230,33 @@ describe('safety self-heal routes', () => {
       recentEventCount: 3,
       detailsPath: '/status/safety/self-heal'
     });
+    buildPredictiveHealingStatusSnapshotMock.mockReturnValue({
+      enabled: true,
+      dryRun: true,
+      autoExecute: false,
+      lastObservedAt: '2026-03-25T12:00:00.000Z',
+      lastDecisionAt: '2026-03-25T12:00:00.000Z',
+      lastAction: 'scale_workers_up',
+      lastResult: 'dry_run',
+      lastMatchedRule: 'latency_rising_scale_up',
+      recentAuditCount: 1,
+      recentAudits: [],
+      recentObservations: [],
+      cooldowns: {},
+      detailsPath: '/api/self-heal/decide',
+      advisors: ['rules_v1']
+    });
+    buildPredictiveHealingCompactSummaryMock.mockReturnValue({
+      enabled: true,
+      dryRun: true,
+      autoExecute: false,
+      lastObservedAt: '2026-03-25T12:00:00.000Z',
+      lastDecisionAt: '2026-03-25T12:00:00.000Z',
+      lastAction: 'scale_workers_up',
+      lastResult: 'dry_run',
+      recentAuditCount: 1,
+      detailsPath: '/api/self-heal/decide'
+    });
 
     const response = await request(createApp()).get('/status/safety').expect(200);
 
@@ -220,6 +274,17 @@ describe('safety self-heal routes', () => {
         healedComponent: 'worker_runtime',
         recentEventCount: 3,
         detailsPath: '/status/safety/self-heal'
+      },
+      predictiveHealing: {
+        enabled: true,
+        dryRun: true,
+        autoExecute: false,
+        lastObservedAt: '2026-03-25T12:00:00.000Z',
+        lastDecisionAt: '2026-03-25T12:00:00.000Z',
+        lastAction: 'scale_workers_up',
+        lastResult: 'dry_run',
+        recentAuditCount: 1,
+        detailsPath: '/api/self-heal/decide'
       }
     }));
   });

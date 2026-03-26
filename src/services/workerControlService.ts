@@ -704,6 +704,22 @@ export async function healWorkerRuntime(
       runtime: getWorkerRuntimeStatus()
     };
 
+    if (!restartSummary.runWorkers && !restartSummary.started) {
+      recordSelfHealEvent({
+        kind: 'noop',
+        source,
+        trigger: 'manual',
+        reason: restartSummary.message ?? 'worker runtime heal blocked because workers are disabled',
+        actionTaken: 'healWorkerRuntime:blocked',
+        healedComponent: 'worker_runtime',
+        details: {
+          requestedForce: forceRestart,
+          restart: restartSummary
+        }
+      });
+      return response;
+    }
+
     recordSelfHealEvent({
       kind: 'success',
       source,

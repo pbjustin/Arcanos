@@ -2,6 +2,7 @@ import { describe, expect, it } from '@jest/globals';
 import {
   extractEnvTemplateKeys,
   validateConfig,
+  validateDockerfile,
   validateEnvTemplate,
 } from '../scripts/validate-railway-compatibility.js';
 
@@ -93,5 +94,17 @@ describe('validate-railway-compatibility', () => {
     ]);
     expect(validationErrors[0]).toContain('GPT5_MODEL');
     expect(validationErrors[0]).toContain('ENABLE_CLEAR_2');
+  });
+
+  it('requires Dockerfile to boot through the Railway launcher', () => {
+    expect(
+      validateDockerfile('CMD ["sh", "-c", "NODE_OPTIONS=\'--max-old-space-size=7168\' npm start"]')
+    ).toEqual([
+      expect.stringContaining('CMD ["node", "scripts/start-railway-service.mjs"]'),
+    ]);
+
+    expect(
+      validateDockerfile('CMD ["node", "scripts/start-railway-service.mjs"]')
+    ).toEqual([]);
   });
 });

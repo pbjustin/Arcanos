@@ -18,6 +18,10 @@ import {
   buildSelfHealTelemetrySnapshot,
   inferSelfHealComponentFromAction
 } from '@services/selfImprove/selfHealTelemetry.js';
+import {
+  buildPredictiveHealingCompactSummary,
+  buildPredictiveHealingStatusSnapshot
+} from '@services/selfImprove/predictiveHealingService.js';
 
 const router = express.Router();
 
@@ -79,13 +83,15 @@ router.get('/status/safety', (_req: Request, res: Response) => {
     currentActionTaken: loopStatus.lastAction,
     currentHealedComponent: inferSelfHealComponentFromAction(loopStatus.lastAction)
   });
+  const predictiveHealing = buildPredictiveHealingStatusSnapshot();
   res.json({
     status: hasUnsafeBlockingConditions() ? 'unsafe' : 'safe',
     timestamp: new Date().toISOString(),
     activeConditions: getActiveUnsafeConditions(),
     activeQuarantines: getActiveQuarantines(),
     counters: snapshot.counters,
-    selfHealing: buildCompactSelfHealSummary(selfHealTelemetry)
+    selfHealing: buildCompactSelfHealSummary(selfHealTelemetry),
+    predictiveHealing: buildPredictiveHealingCompactSummary(predictiveHealing)
   });
 });
 
@@ -103,6 +109,7 @@ router.get('/status/safety/self-heal', (_req: Request, res: Response) => {
     currentActionTaken: loopStatus.lastAction,
     currentHealedComponent: inferSelfHealComponentFromAction(loopStatus.lastAction)
   });
+  const predictiveHealing = buildPredictiveHealingStatusSnapshot();
   const lastHealResultEvent = getLastSelfHealResultEvent(selfHealTelemetry.recentEvents);
 
   res.json({
@@ -130,7 +137,8 @@ router.get('/status/safety/self-heal', (_req: Request, res: Response) => {
     persistence: selfHealTelemetry.persistence,
     loop: loopStatus,
     promptRouteMitigation,
-    trinity: trinityStatus
+    trinity: trinityStatus,
+    predictiveHealing
   });
 });
 

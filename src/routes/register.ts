@@ -28,6 +28,7 @@ import plansRouter from './plans.js';
 import clearRouter from './clear.js';
 import agentsRouter from './agents.js';
 import selfImproveRouter from './self-improve.js';
+import selfHealRouter from './self-heal.js';
 import workerHelperRouter from './worker-helper.js';
 import { createFallbackTestRoute } from "@transport/http/middleware/fallbackHandler.js";
 import { runHealthCheck } from "@platform/logging/diagnostics.js";
@@ -131,6 +132,7 @@ export function registerRoutes(app: Express): void {
   app.use('/', reinforcementRouter);
   app.use('/', devopsRouter);
   app.use('/', selfImproveRouter);
+  app.use('/', selfHealRouter);
 
   // ActionPlan orchestration + CLEAR 2.0 governance
   app.use('/', plansRouter);

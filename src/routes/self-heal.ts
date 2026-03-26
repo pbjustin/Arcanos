@@ -1,0 +1,98 @@
+import { Router, Request, Response } from 'express';
+import { z } from 'zod';
+import { resolveErrorMessage } from '@core/lib/errors/index.js';
+import { capabilityGate } from '@transport/http/middleware/capabilityGate.js';
+import {
+  runPredictiveHealingDecision,
+  type PredictiveHealingSimulationInput
+} from '@services/selfImprove/predictiveHealingService.js';
+import { sendInternalErrorPayload } from '@shared/http/index.js';
+
+const router = Router();
+
+const simulatedWorkerSchema = z.object({
+  workerId: z.string().trim().min(1),
+  healthStatus: z.string().trim().min(1),
+  currentJobId: z.string().trim().min(1).nullable().optional()
+});
+
+const decidePredictiveSelfHealSchema = z.object({
+  execute: z.boolean().optional(),
+  dryRun: z.boolean().optional(),
+  source: z.string().trim().min(1).max(64).optional(),
+  simulate: z.object({
+    requestCount: z.number().int().min(0).optional(),
+    errorRate: z.number().min(0).max(1).optional(),
+    timeoutRate: z.number().min(0).max(1).optional(),
+    avgLatencyMs: z.number().min(0).optional(),
+    p95LatencyMs: z.number().min(0).optional(),
+    maxLatencyMs: z.number().min(0).optional(),
+    degradedCount: z.number().int().min(0).optional(),
+    memory: z.object({
+      rssMb: z.number().min(0).optional(),
+      heapUsedMb: z.number().min(0).optional(),
+      heapTotalMb: z.number().min(0).optional(),
+      externalMb: z.number().min(0).optional(),
+      arrayBuffersMb: z.number().min(0).optional()
+    }).partial().optional(),
+    workerHealth: z.object({
+      overallStatus: z.enum(['healthy', 'degraded', 'unhealthy', 'offline']).nullable().optional(),
+      alertCount: z.number().int().min(0).optional(),
+      alerts: z.array(z.string().trim().min(1)).optional(),
+      pending: z.number().int().min(0).optional(),
+      running: z.number().int().min(0).optional(),
+      delayed: z.number().int().min(0).optional(),
+      stalledRunning: z.number().int().min(0).optional(),
+      oldestPendingJobAgeMs: z.number().min(0).optional(),
+      degradedWorkerIds: z.array(z.string().trim().min(1)).optional(),
+      unhealthyWorkerIds: z.array(z.string().trim().min(1)).optional(),
+      workers: z.array(simulatedWorkerSchema).optional()
+    }).partial().optional(),
+    workerRuntime: z.object({
+      enabled: z.boolean().optional(),
+      started: z.boolean().optional(),
+      configuredCount: z.number().int().min(0).optional(),
+      activeListeners: z.number().int().min(0).optional(),
+      maxActiveWorkers: z.number().int().min(0).optional(),
+      surgeWorkerCount: z.number().int().min(0).optional(),
+      workerIds: z.array(z.string().trim().min(1)).optional()
+    }).partial().optional(),
+    promptRoute: z.object({
+      active: z.boolean().optional(),
+      mode: z.enum(['reduced_latency', 'degraded_response']).nullable().optional(),
+      reason: z.string().trim().min(1).nullable().optional()
+    }).partial().optional()
+  }).partial().optional()
+}).strip();
+
+router.post('/api/self-heal/decide', capabilityGate('self_improve_admin'), async (req: Request, res: Response) => {
+  try {
+    const parsed = decidePredictiveSelfHealSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({
+        error: 'Invalid predictive self-heal payload',
+        issues: parsed.error.issues
+      });
+      return;
+    }
+
+    const result = await runPredictiveHealingDecision({
+      source: parsed.data.source ?? 'api_self_heal_decide',
+      execute: parsed.data.execute,
+      dryRun: parsed.data.dryRun,
+      simulate: parsed.data.simulate as PredictiveHealingSimulationInput | undefined
+    });
+
+    res.json({
+      status: 'ok',
+      predictiveHealing: result
+    });
+  } catch (error) {
+    sendInternalErrorPayload(res, {
+      error: resolveErrorMessage(error),
+      where: 'self-heal/decide'
+    });
+  }
+});
+
+export default router;

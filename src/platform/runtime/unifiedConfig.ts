@@ -79,6 +79,28 @@ export interface AppConfig {
   selfImprovePiiScrubEnabled: boolean;
   selfImproveActuatorMode: 'pr_bot' | 'daemon';
 
+  // Predictive Self-Healing Configuration
+  predictiveHealingEnabled: boolean;
+  predictiveHealingDryRun: boolean;
+  autoExecuteHealing: boolean;
+  predictiveHealingWindowMs: number;
+  predictiveHealingMinObservations: number;
+  predictiveHealingStaleAfterMs: number;
+  predictiveHealingMinConfidence: number;
+  predictiveHealingActionCooldownMs: number;
+  predictiveHealingObservationHistoryLimit: number;
+  predictiveHealingAuditHistoryLimit: number;
+  predictiveErrorRateThreshold: number;
+  predictiveLatencyConsecutiveIntervals: number;
+  predictiveLatencyRiseDeltaMs: number;
+  predictiveMemoryThresholdMb: number;
+  predictiveMemoryGrowthThresholdMb: number;
+  predictiveMemorySustainedIntervals: number;
+  predictiveQueuePendingThreshold: number;
+  predictiveQueueVelocityThreshold: number;
+  predictiveScaleUpStep: number;
+  predictiveScaleUpMaxExtraWorkers: number;
+
 }
 
 /**
@@ -91,6 +113,21 @@ export interface ValidationResult {
   errors: string[];
   /** Validation warnings */
   warnings: string[];
+}
+
+export interface WorkerRuntimeModeResolution {
+  requestedRunWorkers: boolean;
+  resolvedRunWorkers: boolean;
+  processKind: 'web' | 'worker' | 'unknown';
+  railwayServiceName: string | null;
+  dedicatedWorkerServiceDetected: boolean;
+  webServiceWorkersOverride: boolean;
+  reason:
+    | 'requested'
+    | 'process_kind_web'
+    | 'process_kind_worker'
+    | 'railway_web_service'
+    | 'railway_dedicated_worker_service';
 }
 
 function parseSelfImproveEnvironment(raw: string | undefined): AppConfig['selfImproveEnvironment'] {
@@ -165,6 +202,101 @@ export function isRailwayEnvironment(): boolean {
   );
 }
 
+function normalizeProcessKind(raw: string | undefined): WorkerRuntimeModeResolution['processKind'] {
+  const normalized = (raw || '').trim().toLowerCase();
+  if (normalized === 'web' || normalized === 'worker') {
+    return normalized;
+  }
+
+  return 'unknown';
+}
+
+function hasDedicatedRailwayWorkerService(): boolean {
+  return Object.entries(process.env).some(([key, value]) => {
+    if (!/^RAILWAY_SERVICE_.*WORKER.*_URL$/u.test(key)) {
+      return false;
+    }
+
+    return typeof value === 'string' && value.trim().length > 0;
+  });
+}
+
+export function resolveWorkerRuntimeMode(): WorkerRuntimeModeResolution {
+  const requestedRunWorkers = getEnvBoolean('RUN_WORKERS', getEnv('NODE_ENV') !== 'test');
+  const processKind = normalizeProcessKind(getEnv('ARCANOS_PROCESS_KIND'));
+  const railwayServiceName = getEnv('RAILWAY_SERVICE_NAME')?.trim() || null;
+  const dedicatedWorkerServiceDetected = isRailwayEnvironment() && hasDedicatedRailwayWorkerService();
+  const webServiceWorkersOverride = getEnvBoolean('ARCANOS_ALLOW_WEB_SERVICE_WORKERS', false);
+
+  if (processKind === 'web') {
+    return {
+      requestedRunWorkers,
+      resolvedRunWorkers: false,
+      processKind,
+      railwayServiceName,
+      dedicatedWorkerServiceDetected,
+      webServiceWorkersOverride,
+      reason: 'process_kind_web'
+    };
+  }
+
+  if (processKind === 'worker') {
+    return {
+      requestedRunWorkers,
+      resolvedRunWorkers: true,
+      processKind,
+      railwayServiceName,
+      dedicatedWorkerServiceDetected,
+      webServiceWorkersOverride,
+      reason: 'process_kind_worker'
+    };
+  }
+
+  const normalizedServiceName = railwayServiceName?.toLowerCase() ?? '';
+  if (
+    isRailwayEnvironment() &&
+    !webServiceWorkersOverride &&
+    normalizedServiceName.length > 0 &&
+    !normalizedServiceName.includes('worker')
+  ) {
+    return {
+      requestedRunWorkers,
+      resolvedRunWorkers: false,
+      processKind,
+      railwayServiceName,
+      dedicatedWorkerServiceDetected,
+      webServiceWorkersOverride,
+      reason: 'railway_web_service'
+    };
+  }
+
+  if (
+    dedicatedWorkerServiceDetected &&
+    normalizedServiceName.length > 0 &&
+    !normalizedServiceName.includes('worker')
+  ) {
+    return {
+      requestedRunWorkers,
+      resolvedRunWorkers: false,
+      processKind,
+      railwayServiceName,
+      dedicatedWorkerServiceDetected,
+      webServiceWorkersOverride,
+      reason: 'railway_dedicated_worker_service'
+    };
+  }
+
+  return {
+    requestedRunWorkers,
+    resolvedRunWorkers: requestedRunWorkers,
+    processKind,
+    railwayServiceName,
+    dedicatedWorkerServiceDetected,
+    webServiceWorkersOverride,
+    reason: 'requested'
+  };
+}
+
 /**
  * Gets unified application configuration
  * 
@@ -174,6 +306,7 @@ export function isRailwayEnvironment(): boolean {
  * @returns Application configuration object
  */
 export function getConfig(): AppConfig {
+  const workerRuntimeMode = resolveWorkerRuntimeMode();
   const config: AppConfig = {
     // Server Configuration
     nodeEnv: getEnv('NODE_ENV', 'development'),
@@ -215,7 +348,7 @@ export function getConfig(): AppConfig {
     pgHost: getEnv('PGHOST', 'localhost'),
 
     // Worker Configuration
-    runWorkers: getEnvBoolean('RUN_WORKERS', getEnv('NODE_ENV') !== 'test'),
+    runWorkers: workerRuntimeMode.resolvedRunWorkers,
     workerApiTimeoutMs: getEnvNumber('WORKER_API_TIMEOUT_MS', APPLICATION_CONSTANTS.DEFAULT_API_TIMEOUT),
 
     // Logging Configuration
@@ -245,7 +378,29 @@ export function getConfig(): AppConfig {
     selfImproveEvidenceDir: getEnv('SELF_IMPROVE_EVIDENCE_DIR', path.join(process.cwd(), 'governance', 'evidence_packs')),
     selfImproveRetentionDays: getEnvNumber('SELF_IMPROVE_RETENTION_DAYS', 30),
     selfImprovePiiScrubEnabled: getEnvBoolean('SELF_IMPROVE_PII_SCRUB', true),
-    selfImproveActuatorMode: parseSelfImproveActuatorMode(getEnv('SELF_IMPROVE_ACTUATOR_MODE', 'pr_bot'))
+    selfImproveActuatorMode: parseSelfImproveActuatorMode(getEnv('SELF_IMPROVE_ACTUATOR_MODE', 'pr_bot')),
+
+    // Predictive Self-Healing Configuration
+    predictiveHealingEnabled: getEnvBoolean('PREDICTIVE_HEALING_ENABLED', false),
+    predictiveHealingDryRun: getEnvBoolean('PREDICTIVE_HEALING_DRY_RUN', true),
+    autoExecuteHealing: getEnvBoolean('AUTO_EXECUTE_HEALING', false),
+    predictiveHealingWindowMs: getEnvNumber('PREDICTIVE_HEALING_WINDOW_MS', 5 * 60_000),
+    predictiveHealingMinObservations: getEnvNumber('PREDICTIVE_HEALING_MIN_OBSERVATIONS', 3),
+    predictiveHealingStaleAfterMs: getEnvNumber('PREDICTIVE_HEALING_STALE_AFTER_MS', 2 * 60_000),
+    predictiveHealingMinConfidence: getEnvNumber('PREDICTIVE_HEALING_MIN_CONFIDENCE', 0.65),
+    predictiveHealingActionCooldownMs: getEnvNumber('PREDICTIVE_HEALING_ACTION_COOLDOWN_MS', 5 * 60_000),
+    predictiveHealingObservationHistoryLimit: getEnvNumber('PREDICTIVE_HEALING_OBSERVATION_HISTORY_LIMIT', 12),
+    predictiveHealingAuditHistoryLimit: getEnvNumber('PREDICTIVE_HEALING_AUDIT_HISTORY_LIMIT', 25),
+    predictiveErrorRateThreshold: getEnvNumber('PREDICTIVE_ERROR_RATE_THRESHOLD', 0.18),
+    predictiveLatencyConsecutiveIntervals: getEnvNumber('PREDICTIVE_LATENCY_CONSECUTIVE_INTERVALS', 3),
+    predictiveLatencyRiseDeltaMs: getEnvNumber('PREDICTIVE_LATENCY_RISE_DELTA_MS', 350),
+    predictiveMemoryThresholdMb: getEnvNumber('PREDICTIVE_MEMORY_THRESHOLD_MB', 1024),
+    predictiveMemoryGrowthThresholdMb: getEnvNumber('PREDICTIVE_MEMORY_GROWTH_THRESHOLD_MB', 192),
+    predictiveMemorySustainedIntervals: getEnvNumber('PREDICTIVE_MEMORY_SUSTAINED_INTERVALS', 3),
+    predictiveQueuePendingThreshold: getEnvNumber('PREDICTIVE_QUEUE_PENDING_THRESHOLD', 5),
+    predictiveQueueVelocityThreshold: getEnvNumber('PREDICTIVE_QUEUE_VELOCITY_THRESHOLD', 2),
+    predictiveScaleUpStep: getEnvNumber('PREDICTIVE_SCALE_UP_STEP', 1),
+    predictiveScaleUpMaxExtraWorkers: getEnvNumber('PREDICTIVE_SCALE_UP_MAX_EXTRA_WORKERS', 2)
   };
 
   return config;
@@ -281,6 +436,14 @@ export function validateConfig(): ValidationResult {
   const rawActuatorMode = getEnv('SELF_IMPROVE_ACTUATOR_MODE');
   if (rawActuatorMode && parseSelfImproveActuatorMode(rawActuatorMode) !== rawActuatorMode.trim().toLowerCase()) {
     warnings.push('SELF_IMPROVE_ACTUATOR_MODE invalid - defaulted to pr_bot');
+  }
+
+  if (config.autoExecuteHealing && !config.predictiveHealingEnabled) {
+    warnings.push('AUTO_EXECUTE_HEALING enabled while PREDICTIVE_HEALING_ENABLED is false - auto execution will stay inactive');
+  }
+
+  if (config.autoExecuteHealing && config.predictiveHealingDryRun) {
+    warnings.push('AUTO_EXECUTE_HEALING enabled while PREDICTIVE_HEALING_DRY_RUN is true - predictive actions will remain dry-run');
   }
 
   // Railway-specific checks

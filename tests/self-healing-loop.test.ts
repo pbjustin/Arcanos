@@ -19,6 +19,7 @@ const getTelemetrySnapshotMock = jest.fn();
 const getOpenAIServiceHealthMock = jest.fn();
 const recoverStaleJobsMock = jest.fn();
 const getWorkerAutonomySettingsMock = jest.fn();
+const runPredictiveHealingFromLoopMock = jest.fn();
 
 jest.unstable_mockModule('@platform/runtime/unifiedConfig.js', () => ({
   getConfig: getConfigMock
@@ -48,7 +49,9 @@ jest.unstable_mockModule('@services/workerControlService.js', () => ({
 }));
 
 jest.unstable_mockModule('@platform/runtime/workerConfig.js', () => ({
-  getWorkerRuntimeStatus: getWorkerRuntimeStatusMock
+  getWorkerRuntimeStatus: getWorkerRuntimeStatusMock,
+  recycleWorker: jest.fn(),
+  scaleWorkersUp: jest.fn()
 }));
 
 jest.unstable_mockModule('@services/runtimeDiagnosticsService.js', () => ({
@@ -77,6 +80,10 @@ jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
 
 jest.unstable_mockModule('@services/workerAutonomyService.js', () => ({
   getWorkerAutonomySettings: getWorkerAutonomySettingsMock
+}));
+
+jest.unstable_mockModule('@services/selfImprove/predictiveHealingService.js', () => ({
+  runPredictiveHealingFromLoop: runPredictiveHealingFromLoopMock
 }));
 
 const {
@@ -303,6 +310,17 @@ describe('selfHealingLoop', () => {
       failureWebhookUrl: null,
       failureWebhookThreshold: 3,
       failureWebhookCooldownMs: 300000
+    });
+    runPredictiveHealingFromLoopMock.mockResolvedValue({
+      decision: {
+        action: 'none',
+        confidence: 0,
+        matchedRule: null
+      },
+      execution: {
+        status: 'skipped',
+        message: 'Predictive action was recommended only.'
+      }
     });
     getTrinitySelfHealingStatusMock.mockImplementation(() => createTrinityStatus(trinityActiveAction));
     getPromptRouteMitigationStateMock.mockImplementation(() => ({
