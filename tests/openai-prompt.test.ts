@@ -29,6 +29,7 @@ const getRequestAbortSignalMock = jest.fn(() => undefined);
 let handlePrompt: (req: any, res: any) => Promise<void>;
 let activatePromptRouteDegradedMode: (reason: string) => unknown;
 let activatePromptRouteReducedLatencyMode: (reason: string, defaultTokenLimit: number) => unknown;
+let getPromptRouteMitigationState: () => any;
 let resetPromptRouteMitigationStateForTests: () => void;
 let originalNodeEnv: string | undefined;
 
@@ -71,7 +72,7 @@ beforeEach(async () => {
   }));
 
   ({ handlePrompt } = await import('../src/transport/http/controllers/openaiController.js'));
-  ({ activatePromptRouteDegradedMode, activatePromptRouteReducedLatencyMode, resetPromptRouteMitigationStateForTests } = await import(
+  ({ activatePromptRouteDegradedMode, activatePromptRouteReducedLatencyMode, getPromptRouteMitigationState, resetPromptRouteMitigationStateForTests } = await import(
     '../src/services/openai/promptRouteMitigation.js'
   ));
   resetPromptRouteMitigationStateForTests();
@@ -292,6 +293,61 @@ describe('handlePrompt', () => {
         model: 'ft:fallback-model',
         activeModel: 'ft:fallback-model',
         fallbackFlag: true
+      })
+    );
+  });
+
+  it('fast-trips into reduced latency mode after repeated prompt timeout incidents', async () => {
+    validateAIRequest.mockReturnValue({ input: 'hello', client: {} });
+    classifyBudgetAbortKind.mockReturnValue('budget_abort');
+    callOpenAI.mockRejectedValue(new Error('Request was aborted.'));
+
+    const reqFactory = () => ({
+      body: { prompt: 'hello' },
+      logger: {
+        warn: jest.fn(),
+        info: jest.fn()
+      }
+    });
+    const resFactory = () => ({ json: jest.fn(), status: jest.fn().mockReturnThis() });
+
+    const firstReq = reqFactory();
+    await handlePrompt(firstReq as any, resFactory() as any);
+
+    expect(getPromptRouteMitigationState()).toEqual(
+      expect.objectContaining({
+        active: false,
+        recentTimeoutCount: 1
+      })
+    );
+
+    const secondReq = reqFactory();
+    await handlePrompt(secondReq as any, resFactory() as any);
+
+    expect(secondReq.logger.warn).toHaveBeenCalledWith(
+      'prompt.route.fast_trip',
+      expect.objectContaining({
+        route: '/api/openai/prompt',
+        timeoutKind: 'budget_abort',
+        mitigationMode: 'reduced_latency',
+        mitigationReason: expect.stringContaining('prompt route timeout cluster detected')
+      })
+    );
+    expect(recordTraceEvent).toHaveBeenCalledWith(
+      'prompt_route.fast_trip',
+      expect.objectContaining({
+        route: '/api/openai/prompt',
+        timeoutKind: 'budget_abort',
+        mitigationMode: 'reduced_latency'
+      })
+    );
+    expect(getPromptRouteMitigationState()).toEqual(
+      expect.objectContaining({
+        active: true,
+        mode: 'reduced_latency',
+        reason: expect.stringContaining('prompt route timeout cluster detected'),
+        providerTimeoutMs: 3200,
+        pipelineTimeoutMs: 3500
       })
     );
   });

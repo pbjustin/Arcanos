@@ -801,6 +801,16 @@ function buildLatencyMitigationActionPlan(
     }
 
     if (promptRouteMitigation.active && promptRouteMitigation.mode === 'reduced_latency') {
+      const promptMitigationUpdatedAt =
+        promptRouteMitigation.updatedAt ?? promptRouteMitigation.activatedAt;
+      if (promptMitigationUpdatedAt) {
+        const promptMitigationAgeMs = Date.now() - Date.parse(promptMitigationUpdatedAt);
+        const promptMitigationHoldoffMs = Math.max(30_000, resolveVerificationDelayMs());
+        if (promptMitigationAgeMs < promptMitigationHoldoffMs) {
+          return null;
+        }
+      }
+
       return {
         kind: 'activate_prompt_route_degraded_mode',
         actionKey: 'activate_prompt_route_degraded_mode',

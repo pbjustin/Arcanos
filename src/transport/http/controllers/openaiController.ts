@@ -19,7 +19,8 @@ import {
 import { recordTraceEvent } from '@platform/logging/telemetry.js';
 import {
   getPromptRouteExecutionPolicy,
-  getPromptRouteMitigationState
+  getPromptRouteMitigationState,
+  recordPromptRouteTimeoutIncident
 } from '@services/openai/promptRouteMitigation.js';
 import { generateDegradedResponse } from '@transport/http/middleware/fallbackHandler.js';
 import {
@@ -241,6 +242,28 @@ export async function handlePrompt(
         providerTimeoutMs: promptRoutePolicy.providerTimeoutMs,
         pipelineTimeoutMs: promptRoutePolicy.pipelineTimeoutMs
       });
+
+      if (promptRoutePolicy.mode === 'normal') {
+        const fastTripResult = recordPromptRouteTimeoutIncident(timeoutKind, PROMPT_MAX_TOKENS);
+        if (fastTripResult.applied) {
+          req.logger?.warn?.('prompt.route.fast_trip', {
+            route: PROMPT_ROUTE_PATH,
+            timeoutKind,
+            mitigationMode: 'reduced_latency',
+            mitigationReason: fastTripResult.state.reason,
+            providerTimeoutMs: fastTripResult.state.providerTimeoutMs,
+            pipelineTimeoutMs: fastTripResult.state.pipelineTimeoutMs
+          });
+          recordTraceEvent('prompt_route.fast_trip', {
+            route: PROMPT_ROUTE_PATH,
+            timeoutKind,
+            mitigationMode: 'reduced_latency',
+            mitigationReason: fastTripResult.state.reason,
+            providerTimeoutMs: fastTripResult.state.providerTimeoutMs,
+            pipelineTimeoutMs: fastTripResult.state.pipelineTimeoutMs
+          });
+        }
+      }
     }
     handleAIError(err, prompt, 'prompt', res);
   }
