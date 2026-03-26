@@ -48,6 +48,10 @@ function readBoolean(value: unknown): boolean | undefined {
   return typeof value === 'boolean' ? value : undefined;
 }
 
+function readNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
 function readStringArray(value: unknown, maxItems = 8): string[] | undefined {
   if (!Array.isArray(value)) {
     return undefined;
@@ -187,6 +191,130 @@ function pickModulesSummary(value: Record<string, unknown>): Record<string, unkn
   };
 }
 
+function computeNodeDurationMs(node: Record<string, unknown>): number | undefined {
+  const startedAt = readString(node.startedAt);
+  const completedAt = readString(node.completedAt);
+  if (!startedAt || !completedAt) {
+    return undefined;
+  }
+
+  const startedAtMs = Date.parse(startedAt);
+  const completedAtMs = Date.parse(completedAt);
+  if (!Number.isFinite(startedAtMs) || !Number.isFinite(completedAtMs) || completedAtMs < startedAtMs) {
+    return undefined;
+  }
+
+  return completedAtMs - startedAtMs;
+}
+
+function pickDagTraceSummary(value: Record<string, unknown>): Record<string, unknown> | null {
+  const run = isRecord(value.run) ? value.run : null;
+  const tree = isRecord(value.tree) ? value.tree : null;
+  if (!run || !tree) {
+    return null;
+  }
+
+  const nodes = Array.isArray(tree.nodes)
+    ? tree.nodes
+        .filter(isRecord)
+        .slice(0, 32)
+        .map((node) => ({
+          ...(readString(node.nodeId) ? { nodeId: readString(node.nodeId) } : {}),
+          ...(readString(node.agentRole) ? { agentRole: readString(node.agentRole) } : {}),
+          ...(readString(node.jobType) ? { jobType: readString(node.jobType) } : {}),
+          ...(readString(node.status) ? { status: readString(node.status) } : {}),
+          ...(readString(node.workerId) ? { workerId: readString(node.workerId) } : {}),
+          ...(readString(node.startedAt) ? { startedAt: readString(node.startedAt) } : {}),
+          ...(readString(node.completedAt) ? { completedAt: readString(node.completedAt) } : {}),
+          ...(readNumber(node.spawnDepth) !== undefined ? { spawnDepth: readNumber(node.spawnDepth) } : {}),
+          ...(computeNodeDurationMs(node) !== undefined ? { durationMs: computeNodeDurationMs(node) } : {}),
+        }))
+    : [];
+
+  const metrics = isRecord(value.metrics) ? value.metrics : null;
+  const metricBody = metrics && isRecord(metrics.metrics) ? metrics.metrics : null;
+  const verification = isRecord(value.verification) ? value.verification : null;
+  const verificationBody = verification && isRecord(verification.verification) ? verification.verification : null;
+  const sections = isRecord(value.sections) ? pruneGenericValue(value.sections) : undefined;
+  const lineage = isRecord(value.lineage) ? value.lineage : null;
+  const errors = isRecord(value.errors) ? value.errors : null;
+
+  return {
+    run: {
+      ...(readString(run.runId) ? { runId: readString(run.runId) } : {}),
+      ...(readString(run.sessionId) ? { sessionId: readString(run.sessionId) } : {}),
+      ...(readString(run.status) ? { status: readString(run.status) } : {}),
+      ...(readString(run.template) ? { template: readString(run.template) } : {}),
+      ...(readNumber(run.durationMs) !== undefined ? { durationMs: readNumber(run.durationMs) } : {}),
+      ...(readNumber(run.totalNodes) !== undefined ? { totalNodes: readNumber(run.totalNodes) } : {}),
+      ...(readNumber(run.completedNodes) !== undefined ? { completedNodes: readNumber(run.completedNodes) } : {}),
+      ...(readNumber(run.failedNodes) !== undefined ? { failedNodes: readNumber(run.failedNodes) } : {}),
+      ...(readString(run.createdAt) ? { createdAt: readString(run.createdAt) } : {}),
+      ...(readString(run.updatedAt) ? { updatedAt: readString(run.updatedAt) } : {}),
+    },
+    nodes,
+    ...(metricBody
+      ? {
+          metrics: {
+            ...(readNumber(metricBody.totalNodes) !== undefined ? { totalNodes: readNumber(metricBody.totalNodes) } : {}),
+            ...(readNumber(metricBody.totalAiCalls) !== undefined ? { totalAiCalls: readNumber(metricBody.totalAiCalls) } : {}),
+            ...(readNumber(metricBody.totalRetries) !== undefined ? { totalRetries: readNumber(metricBody.totalRetries) } : {}),
+            ...(readNumber(metricBody.totalFailures) !== undefined ? { totalFailures: readNumber(metricBody.totalFailures) } : {}),
+            ...(readNumber(metricBody.wallClockDurationMs) !== undefined
+              ? { wallClockDurationMs: readNumber(metricBody.wallClockDurationMs) }
+              : {}),
+            ...(readNumber(metricBody.maxParallelNodesObserved) !== undefined
+              ? { maxParallelNodesObserved: readNumber(metricBody.maxParallelNodesObserved) }
+              : {}),
+            ...(readNumber(metricBody.maxSpawnDepthObserved) !== undefined
+              ? { maxSpawnDepthObserved: readNumber(metricBody.maxSpawnDepthObserved) }
+              : {}),
+          }
+        }
+      : {}),
+    ...(verificationBody
+      ? {
+          verification: {
+            ...(readBoolean(verificationBody.runCompleted) !== undefined
+              ? { runCompleted: readBoolean(verificationBody.runCompleted) }
+              : {}),
+            ...(readBoolean(verificationBody.parallelExecutionObserved) !== undefined
+              ? { parallelExecutionObserved: readBoolean(verificationBody.parallelExecutionObserved) }
+              : {}),
+            ...(readBoolean(verificationBody.aggregationRanLast) !== undefined
+              ? { aggregationRanLast: readBoolean(verificationBody.aggregationRanLast) }
+              : {}),
+            ...(readBoolean(verificationBody.retryPolicyRespected) !== undefined
+              ? { retryPolicyRespected: readBoolean(verificationBody.retryPolicyRespected) }
+              : {}),
+            ...(readBoolean(verificationBody.budgetPolicyRespected) !== undefined
+              ? { budgetPolicyRespected: readBoolean(verificationBody.budgetPolicyRespected) }
+              : {}),
+            ...(readBoolean(verificationBody.loopDetected) !== undefined
+              ? { loopDetected: readBoolean(verificationBody.loopDetected) }
+              : {}),
+          }
+        }
+      : {}),
+    ...(lineage
+      ? {
+          lineage: {
+            ...(Array.isArray(lineage.lineage) ? { total: lineage.lineage.length } : {}),
+            ...(readBoolean(lineage.loopDetected) !== undefined ? { loopDetected: readBoolean(lineage.loopDetected) } : {}),
+          }
+        }
+      : {}),
+    ...(errors
+      ? {
+          errors: {
+            ...(Array.isArray(errors.errors) ? { total: errors.errors.length } : {}),
+          }
+        }
+      : {}),
+    ...(sections !== undefined ? { sections } : {}),
+  };
+}
+
 function extractMcpText(value: Record<string, unknown>): string | null {
   if (!Array.isArray(value.content)) {
     return null;
@@ -249,7 +377,7 @@ function shapeMcpToolOutput(toolName: string | undefined, rawResult: unknown): u
     return rawResult;
   }
 
-  const structured = isRecord(rawResult.structuredContent) ? rawResult.structuredContent : null;
+  const structured = isRecord(rawResult.structuredContent) ? rawResult.structuredContent : rawResult;
 
   if (structured) {
     const trinitySummary = pickTrinitySummary(structured);
@@ -266,6 +394,13 @@ function shapeMcpToolOutput(toolName: string | undefined, rawResult: unknown): u
       const modulesSummary = pickModulesSummary(structured);
       if (modulesSummary) {
         return modulesSummary;
+      }
+    }
+
+    if (toolName === 'dag.run.trace') {
+      const dagTraceSummary = pickDagTraceSummary(structured);
+      if (dagTraceSummary) {
+        return dagTraceSummary;
       }
     }
 
@@ -299,7 +434,7 @@ function shapeMcpDispatchResult(value: Record<string, unknown>): Record<string, 
       ...(toolName ? { toolName } : {}),
       ...(readString(value.mcp.dispatchMode) ? { dispatchMode: readString(value.mcp.dispatchMode) } : {}),
       ...(readString(value.mcp.reason) ? { reason: readString(value.mcp.reason) } : {}),
-      output: shapeMcpToolOutput(toolName, value.mcp.result),
+      output: shapeMcpToolOutput(toolName, value.mcp.output ?? value.mcp.result),
     },
   };
 }

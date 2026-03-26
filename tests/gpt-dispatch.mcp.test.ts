@@ -350,20 +350,37 @@ describe('routeGptRequest MCP dispatch branch', () => {
     );
   });
 
-  it('automatically routes latest DAG trace prompts into dag.run.latest instead of trinity.query', async () => {
-    const invokeTool = jest.fn().mockResolvedValue({
-      structuredContent: {
-        __debug: 'NEW_DAG_LOGIC_ACTIVE',
-        found: true,
-        runId: 'dagrun_latest_1',
-        status: 'complete',
-        nodeCount: 4,
-        durationMs: 123,
-        timings: { lookupMs: 5, totalMs: 9 },
-        topLevelMetrics: { eventCount: 8, completedNodes: 4, failedNodes: 0, verificationStatus: 'passed' },
-        available: { nodes: true, events: true, metrics: true, verification: true, fullTrace: true },
-      },
-    });
+  it('automatically resolves latest DAG trace prompts into dag.run.trace after latest-run lookup', async () => {
+    const invokeTool = jest.fn()
+      .mockResolvedValueOnce({
+        structuredContent: {
+          summary: 'Most recent DAG run is dagrun_latest_1.',
+          run: {
+            runId: 'dagrun_latest_1',
+            status: 'complete',
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        structuredContent: {
+          run: {
+            runId: 'dagrun_latest_1',
+            status: 'complete',
+          },
+          tree: {
+            nodes: [{ nodeId: 'planner', agentRole: 'planner', status: 'complete' }],
+          },
+          metrics: {
+            metrics: { totalNodes: 1, totalFailures: 0 },
+          },
+          verification: {
+            verification: { runCompleted: true },
+          },
+          sections: {
+            requested: ['run', 'tree', 'metrics', 'verification'],
+          },
+        },
+      });
     const request = {
       app: {
         locals: {
@@ -386,10 +403,18 @@ describe('routeGptRequest MCP dispatch branch', () => {
       request,
     });
 
-    expect(invokeTool).toHaveBeenCalledWith({
+    expect(invokeTool).toHaveBeenNthCalledWith(1, {
       toolName: 'dag.run.latest',
       toolArguments: {
         sessionId: 'sess-dag-1',
+      },
+      request,
+      sessionId: 'sess-dag-1',
+    });
+    expect(invokeTool).toHaveBeenNthCalledWith(2, {
+      toolName: 'dag.run.trace',
+      toolArguments: {
+        runId: 'dagrun_latest_1',
       },
       request,
       sessionId: 'sess-dag-1',
@@ -401,34 +426,50 @@ describe('routeGptRequest MCP dispatch branch', () => {
           handledBy: 'mcp-dispatcher',
           mcp: expect.objectContaining({
             action: 'invoke',
-            toolName: 'dag.run.latest',
+            toolName: 'dag.run.trace',
             dispatchMode: 'automatic',
             reason: 'prompt_requests_latest_dag_run',
             output: expect.objectContaining({
-              __debug: 'NEW_DAG_LOGIC_ACTIVE',
-              found: true,
-              runId: 'dagrun_latest_1',
+              run: expect.objectContaining({
+                runId: 'dagrun_latest_1',
+              }),
+              tree: expect.objectContaining({
+                nodes: expect.any(Array),
+              }),
             }),
           }),
         }),
       })
     );
-    expect((envelope as any).result.mcp.output.summary).toBeUndefined();
+    expect((envelope as any).result.mcp.output.tree.nodes[0].nodeId).toBe('planner');
 
     const metricsText = await getMetricsText();
     expect(metricsText).toMatch(/mcp_auto_invoke_total\{[^}]*gpt_id="arcanos-core"[^}]*module="ARCANOS:CORE"[^}]*tool_name="dag\.run\.latest"[^}]*reason="prompt_requests_latest_dag_run"[^}]*\} 1/);
+    expect(metricsText).toMatch(/mcp_auto_invoke_total\{[^}]*gpt_id="arcanos-core"[^}]*module="ARCANOS:CORE"[^}]*tool_name="dag\.run\.trace"[^}]*reason="prompt_requests_latest_dag_run"[^}]*\} 1/);
     expect(metricsText).toMatch(/dispatcher_route_total\{[^}]*gpt_id="arcanos-core"[^}]*module="ARCANOS:CORE"[^}]*route="core"[^}]*handler="mcp-dispatcher"[^}]*outcome="ok"[^}]*\} 1/);
   });
 
   it('bypasses the memory dispatcher for DAG intent prompts even when memory cues are present', async () => {
-    const invokeTool = jest.fn().mockResolvedValue({
-      structuredContent: {
-        __debug: 'NEW_DAG_LOGIC_ACTIVE',
-        found: true,
-        runId: 'dagrun_latest_2',
-        status: 'complete',
-      },
-    });
+    const invokeTool = jest.fn()
+      .mockResolvedValueOnce({
+        structuredContent: {
+          run: {
+            runId: 'dagrun_latest_2',
+            status: 'complete',
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        structuredContent: {
+          run: {
+            runId: 'dagrun_latest_2',
+            status: 'complete',
+          },
+          tree: {
+            nodes: [{ nodeId: 'planner' }],
+          },
+        },
+      });
     const request = {
       app: {
         locals: {
@@ -455,9 +496,15 @@ describe('routeGptRequest MCP dispatch branch', () => {
     });
 
     expect(mockExecuteNaturalLanguageMemoryCommand).not.toHaveBeenCalled();
-    expect(invokeTool).toHaveBeenCalledWith({
+    expect(invokeTool).toHaveBeenNthCalledWith(1, {
       toolName: 'dag.run.latest',
       toolArguments: {},
+      request,
+      sessionId: undefined,
+    });
+    expect(invokeTool).toHaveBeenNthCalledWith(2, {
+      toolName: 'dag.run.trace',
+      toolArguments: { runId: 'dagrun_latest_2' },
       request,
       sessionId: undefined,
     });
@@ -465,14 +512,26 @@ describe('routeGptRequest MCP dispatch branch', () => {
   });
 
   it('retries DAG routing when the memory dispatcher ignores a misclassified DAG prompt', async () => {
-    const invokeTool = jest.fn().mockResolvedValue({
-      structuredContent: {
-        __debug: 'NEW_DAG_LOGIC_ACTIVE',
-        found: true,
-        runId: 'dagrun_latest_3',
-        status: 'complete',
-      },
-    });
+    const invokeTool = jest.fn()
+      .mockResolvedValueOnce({
+        structuredContent: {
+          run: {
+            runId: 'dagrun_latest_3',
+            status: 'complete',
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        structuredContent: {
+          run: {
+            runId: 'dagrun_latest_3',
+            status: 'complete',
+          },
+          tree: {
+            nodes: [{ nodeId: 'planner' }],
+          },
+        },
+      });
     const logger = { info: jest.fn(), warn: jest.fn() };
     const request = {
       app: {
@@ -510,9 +569,15 @@ describe('routeGptRequest MCP dispatch branch', () => {
     });
 
     expect(mockExecuteNaturalLanguageMemoryCommand).toHaveBeenCalledTimes(1);
-    expect(invokeTool).toHaveBeenCalledWith({
+    expect(invokeTool).toHaveBeenNthCalledWith(1, {
       toolName: 'dag.run.latest',
       toolArguments: {},
+      request,
+      sessionId: undefined,
+    });
+    expect(invokeTool).toHaveBeenNthCalledWith(2, {
+      toolName: 'dag.run.trace',
+      toolArguments: { runId: 'dagrun_latest_3' },
       request,
       sessionId: undefined,
     });
@@ -531,14 +596,26 @@ describe('routeGptRequest MCP dispatch branch', () => {
   });
 
   it('accepts explicit module:dag commands for latest-run tracing', async () => {
-    const invokeTool = jest.fn().mockResolvedValue({
-      structuredContent: {
-        __debug: 'NEW_DAG_LOGIC_ACTIVE',
-        found: true,
-        runId: 'dagrun_latest_4',
-        status: 'complete',
-      },
-    });
+    const invokeTool = jest.fn()
+      .mockResolvedValueOnce({
+        structuredContent: {
+          run: {
+            runId: 'dagrun_latest_4',
+            status: 'complete',
+          },
+        },
+      })
+      .mockResolvedValueOnce({
+        structuredContent: {
+          run: {
+            runId: 'dagrun_latest_4',
+            status: 'complete',
+          },
+          tree: {
+            nodes: [{ nodeId: 'planner' }],
+          },
+        },
+      });
     const request = {
       app: {
         locals: {
@@ -560,10 +637,18 @@ describe('routeGptRequest MCP dispatch branch', () => {
       request,
     });
 
-    expect(invokeTool).toHaveBeenCalledWith({
+    expect(invokeTool).toHaveBeenNthCalledWith(1, {
       toolName: 'dag.run.latest',
       toolArguments: {
         sessionId: 'sess-dag-command',
+      },
+      request,
+      sessionId: 'sess-dag-command',
+    });
+    expect(invokeTool).toHaveBeenNthCalledWith(2, {
+      toolName: 'dag.run.trace',
+      toolArguments: {
+        runId: 'dagrun_latest_4',
       },
       request,
       sessionId: 'sess-dag-command',
