@@ -649,9 +649,9 @@ describe('selfHealingLoop', () => {
 
     const result = await runSelfHealingLoop({ trigger: 'interval' });
 
-    expect(activatePromptRouteReducedLatencyModeMock).toHaveBeenCalledWith('latency spike cluster detected', 256);
+    expect(activatePromptRouteReducedLatencyModeMock).toHaveBeenCalledWith('timeout storm detected', 256);
     expect(result).toEqual(expect.objectContaining({
-      diagnosis: 'latency spike cluster detected',
+      diagnosis: 'timeout storm detected',
       action: 'activatePromptRouteMitigation:reduced_latency'
     }));
     expect(getSelfHealingLoopStatus()).toEqual(expect.objectContaining({
@@ -659,17 +659,134 @@ describe('selfHealingLoop', () => {
       activeMitigation: 'prompt:/api/openai/prompt:reduced_latency',
       bypassedSubsystems: expect.arrayContaining(['provider_retry', 'long_generation_tail']),
       lastEvidence: expect.objectContaining({
+        timeoutCount: 2,
+        timeoutRate: 0.143,
         maxLatencyMs: 8800,
-        spikeDetector: expect.objectContaining({
-          maxThresholdMs: 5000,
-          burstTimeoutThreshold: 2
-        }),
         targetedRoute: expect.objectContaining({
           route: '/api/openai/prompt',
           timeoutCount: 2,
           maxLatencyMs: 8800
         })
       })
+    }));
+  });
+
+  it('targets prompt-route timeout clusters even when prompt traffic is a minority of the window', async () => {
+    getRollingRequestWindowMock.mockReturnValueOnce(createRequestWindow({
+      requestCount: 24,
+      errorCount: 2,
+      serverErrorCount: 2,
+      errorRate: 0.083,
+      timeoutCount: 2,
+      timeoutRate: 0.083,
+      pipelineTimeoutCount: 1,
+      slowRequestCount: 4,
+      avgLatencyMs: 1200,
+      p95LatencyMs: 2400,
+      maxLatencyMs: 5600,
+      routes: [
+        {
+          route: '/api/openai/prompt',
+          requestCount: 4,
+          errorCount: 1,
+          timeoutCount: 2,
+          pipelineTimeoutCount: 1,
+          slowRequestCount: 3,
+          avgLatencyMs: 2810,
+          p95LatencyMs: 4810,
+          maxLatencyMs: 5600
+        },
+        {
+          route: '/ask',
+          requestCount: 20,
+          errorCount: 1,
+          timeoutCount: 0,
+          slowRequestCount: 1,
+          avgLatencyMs: 880,
+          p95LatencyMs: 1200,
+          maxLatencyMs: 1600
+        }
+      ]
+    }));
+
+    const result = await runSelfHealingLoop({ trigger: 'interval' });
+
+    expect(activatePromptRouteReducedLatencyModeMock).toHaveBeenCalledWith('pipeline timeout cluster detected', 256);
+    expect(result).toEqual(expect.objectContaining({
+      diagnosis: 'pipeline timeout cluster detected',
+      action: 'activatePromptRouteMitigation:reduced_latency'
+    }));
+    expect(getSelfHealingLoopStatus()).toEqual(expect.objectContaining({
+      lastAction: 'activatePromptRouteMitigation:reduced_latency',
+      recentPromptRouteTimeouts: 2,
+      recentPromptRouteLatencyP95: 4810,
+      recentPromptRouteMaxLatency: 5600,
+      recentPipelineTimeoutCounts: expect.objectContaining({
+        total: 1,
+        promptRoute: 1
+      }),
+      lastEvidence: expect.objectContaining({
+        targetedRoute: expect.objectContaining({
+          route: '/api/openai/prompt',
+          requestShare: 0.167,
+          timeoutCount: 2,
+          pipelineTimeoutCount: 1,
+          maxLatencyMs: 5600
+        })
+      })
+    }));
+  });
+
+  it('allows prompt-route mitigation even when a trinity mitigation is already active', async () => {
+    trinityActiveAction = 'enable_degraded_mode';
+    getRollingRequestWindowMock.mockReturnValueOnce(createRequestWindow({
+      requestCount: 18,
+      errorCount: 2,
+      serverErrorCount: 2,
+      errorRate: 0.111,
+      timeoutCount: 2,
+      timeoutRate: 0.111,
+      pipelineTimeoutCount: 1,
+      slowRequestCount: 5,
+      avgLatencyMs: 1500,
+      p95LatencyMs: 3100,
+      maxLatencyMs: 5900,
+      routes: [
+        {
+          route: '/api/openai/prompt',
+          requestCount: 3,
+          errorCount: 1,
+          timeoutCount: 2,
+          pipelineTimeoutCount: 1,
+          slowRequestCount: 2,
+          avgLatencyMs: 3320,
+          p95LatencyMs: 5200,
+          maxLatencyMs: 5900
+        },
+        {
+          route: '/api/other',
+          requestCount: 15,
+          errorCount: 1,
+          timeoutCount: 0,
+          slowRequestCount: 3,
+          avgLatencyMs: 1130,
+          p95LatencyMs: 1800,
+          maxLatencyMs: 2200
+        }
+      ]
+    }));
+
+    const result = await runSelfHealingLoop({ trigger: 'interval' });
+
+    expect(activatePromptRouteReducedLatencyModeMock).toHaveBeenCalledWith('pipeline timeout cluster detected', 256);
+    expect(activateTrinitySelfHealingMitigationMock).not.toHaveBeenCalled();
+    expect(result).toEqual(expect.objectContaining({
+      diagnosis: 'pipeline timeout cluster detected',
+      action: 'activatePromptRouteMitigation:reduced_latency'
+    }));
+    expect(getSelfHealingLoopStatus()).toEqual(expect.objectContaining({
+      activePromptMitigation: 'prompt:/api/openai/prompt:reduced_latency',
+      activeMitigation: expect.stringContaining('prompt:/api/openai/prompt:reduced_latency')
     }));
   });
 

@@ -73,6 +73,9 @@ describe('GET /status/safety/self-heal', () => {
         }
       },
       activeMitigation: 'reasoning:enable_degraded_mode',
+      activePromptMitigation: 'prompt:/api/openai/prompt:reduced_latency',
+      lastPromptMitigationReason: 'timeout storm detected',
+      degradedModeReason: 'prompt_route_pipeline_timeout_after_5000ms',
       lastLatencySnapshot: {
         requestCount: 20,
         avgLatencyMs: 1400,
@@ -83,8 +86,23 @@ describe('GET /status/safety/self-heal', () => {
       recentTimeoutCounts: {
         windowMs: 300000,
         total: 1,
-        promptRoute: 0
+        promptRoute: 0,
+        pipelineTimeouts: 1,
+        providerTimeouts: 0,
+        workerTimeouts: 0,
+        budgetAborts: 0,
+        coreRoute: 0
       },
+      recentPipelineTimeoutCounts: {
+        total: 1,
+        promptRoute: 0,
+        coreRoute: 0
+      },
+      recentPromptRouteTimeouts: 0,
+      recentPromptRouteLatencyP95: 2800,
+      recentPromptRouteMaxLatency: 4200,
+      outerRouteTimeoutMs: 6000,
+      abortPropagationCoverage: ['request_abort_context', 'prompt_route_call_openai_signal'],
       bypassedSubsystems: ['provider_retry'],
       ineffectiveActions: {
         'timeout_storm:activatePromptRouteMitigation:reduced_latency': '2026-03-25T12:10:00.000Z'
@@ -127,6 +145,9 @@ describe('GET /status/safety/self-heal', () => {
         outcome: 'improved'
       }),
       activeMitigation: 'reasoning:enable_degraded_mode',
+      activePromptMitigation: 'prompt:/api/openai/prompt:reduced_latency',
+      lastPromptMitigationReason: 'timeout storm detected',
+      degradedModeReason: 'prompt_route_pipeline_timeout_after_5000ms',
       lastLatencySnapshot: expect.objectContaining({
         p95LatencyMs: 2800,
         maxLatencyMs: 4200
@@ -134,8 +155,23 @@ describe('GET /status/safety/self-heal', () => {
       recentTimeoutCounts: {
         windowMs: 300000,
         total: 1,
-        promptRoute: 0
+        promptRoute: 0,
+        pipelineTimeouts: 1,
+        providerTimeouts: 0,
+        workerTimeouts: 0,
+        budgetAborts: 0,
+        coreRoute: 0
       },
+      recentPipelineTimeoutCounts: {
+        total: 1,
+        promptRoute: 0,
+        coreRoute: 0
+      },
+      recentPromptRouteTimeouts: 0,
+      recentPromptRouteLatencyP95: 2800,
+      recentPromptRouteMaxLatency: 4200,
+      outerRouteTimeoutMs: 6000,
+      abortPropagationCoverage: expect.arrayContaining(['prompt_route_call_openai_signal']),
       bypassedSubsystems: ['provider_retry'],
       ineffectiveActions: {
         'timeout_storm:activatePromptRouteMitigation:reduced_latency': '2026-03-25T12:10:00.000Z'

@@ -23,6 +23,8 @@ const getOpenAIServiceHealth = jest.fn(() => ({
   lastHealthCheck: null
 }));
 const getOpenAIKeySource = jest.fn(() => null);
+const runWithRequestAbortTimeoutMock = jest.fn(async (_options: unknown, fn: () => Promise<unknown>) => await fn());
+const getRequestAbortSignalMock = jest.fn(() => undefined);
 
 let handlePrompt: (req: any, res: any) => Promise<void>;
 let activatePromptRouteDegradedMode: (reason: string) => unknown;
@@ -51,8 +53,8 @@ beforeEach(async () => {
   }));
 
   jest.unstable_mockModule('@arcanos/runtime', () => ({
-    runWithRequestAbortTimeout: async (_options: unknown, fn: () => Promise<unknown>) => await fn(),
-    getRequestAbortSignal: jest.fn(() => undefined)
+    runWithRequestAbortTimeout: runWithRequestAbortTimeoutMock,
+    getRequestAbortSignal: getRequestAbortSignalMock
   }));
 
   jest.unstable_mockModule('../src/platform/logging/telemetry.js', () => ({
@@ -97,13 +99,20 @@ describe('handlePrompt', () => {
       256,
       true,
       expect.objectContaining({
-        timeoutMs: 6000,
+        timeoutMs: 4500,
         maxRetries: 1,
         metadata: expect.objectContaining({
           route: '/api/openai/prompt',
           mitigationMode: 'normal'
         })
       })
+    );
+    expect(runWithRequestAbortTimeoutMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        timeoutMs: 5000,
+        onAbort: expect.any(Function)
+      }),
+      expect.any(Function)
     );
     const payload = res.json.mock.calls[0][0];
     expect(payload).toEqual(
@@ -137,7 +146,7 @@ describe('handlePrompt', () => {
       256,
       true,
       expect.objectContaining({
-        timeoutMs: 6000,
+        timeoutMs: 4500,
         maxRetries: 1
       })
     );
@@ -166,7 +175,7 @@ describe('handlePrompt', () => {
       256,
       true,
       expect.objectContaining({
-        timeoutMs: 6000,
+        timeoutMs: 4500,
         maxRetries: 1
       })
     );

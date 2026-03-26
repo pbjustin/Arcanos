@@ -121,6 +121,7 @@ export async function runWithRequestAbortTimeout<T>(
     requestId?: string;
     parentSignal?: AbortSignal;
     abortMessage?: string;
+    onAbort?: (reason: unknown, context: RequestAbortContext) => void;
   },
   callback: () => Promise<T> | T
 ): Promise<T> {
@@ -129,12 +130,37 @@ export async function runWithRequestAbortTimeout<T>(
     parentSignal: options.parentSignal,
     abortMessage: options.abortMessage
   });
+  const requestAbortContext: RequestAbortContext = {
+    requestId: options.requestId,
+    controller: linked.controller,
+    signal: linked.signal,
+    deadlineAt: linked.deadlineAt,
+    timeoutMs: normalizeTimeoutMs(options.timeoutMs)
+  };
+  let abortHandled = false;
+
+  const notifyAbort = (reason: unknown) => {
+    if (abortHandled) {
+      return;
+    }
+    abortHandled = true;
+    if (typeof options.onAbort !== 'function') {
+      return;
+    }
+
+    try {
+      options.onAbort(reason, requestAbortContext);
+    } catch {
+      // Preserve the original abort flow even if the observer fails.
+    }
+  };
 
   try {
     return await new Promise<T>((resolve, reject) => {
       const onAbort = () => {
         linked.signal.removeEventListener('abort', onAbort);
         const reason = linked.signal.reason;
+        notifyAbort(reason);
         reject(reason instanceof Error ? reason : createAbortError());
       };
 
@@ -147,13 +173,7 @@ export async function runWithRequestAbortTimeout<T>(
 
       Promise.resolve(
         runWithRequestAbortContext(
-          {
-            requestId: options.requestId,
-            controller: linked.controller,
-            signal: linked.signal,
-            deadlineAt: linked.deadlineAt,
-            timeoutMs: normalizeTimeoutMs(options.timeoutMs)
-          },
+          requestAbortContext,
           callback
         )
       ).then(

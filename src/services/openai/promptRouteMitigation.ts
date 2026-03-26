@@ -35,13 +35,14 @@ export interface PromptRouteMitigationResult {
 }
 
 const GLOBAL_KEY = '__ARCANOS_PROMPT_ROUTE_MITIGATION__';
-const DEFAULT_PROMPT_ROUTE_PIPELINE_TIMEOUT_MS = 6_500;
-const DEFAULT_PROMPT_ROUTE_PROVIDER_TIMEOUT_MS = 6_000;
+const DEFAULT_PROMPT_ROUTE_PIPELINE_TIMEOUT_MS = 5_000;
+const DEFAULT_PROMPT_ROUTE_PROVIDER_TIMEOUT_MS = 4_500;
 const DEFAULT_PROMPT_ROUTE_MAX_RETRIES = 1;
 const DEFAULT_REDUCED_LATENCY_PIPELINE_TIMEOUT_MS = 3_500;
 const DEFAULT_REDUCED_LATENCY_PROVIDER_TIMEOUT_MS = 3_200;
 const DEFAULT_REDUCED_LATENCY_MAX_RETRIES = 0;
 const DEFAULT_REDUCED_LATENCY_MAX_TOKENS = 96;
+const PROMPT_ROUTE_PROVIDER_HEADROOM_MS = 250;
 
 function resolvePromptRoutePipelineTimeoutMs(): number {
   return Math.max(1_000, getEnvNumber('PROMPT_ROUTE_PIPELINE_TIMEOUT_MS', DEFAULT_PROMPT_ROUTE_PIPELINE_TIMEOUT_MS));
@@ -67,6 +68,10 @@ function resolveReducedLatencyProviderTimeoutMs(): number {
     750,
     getEnvNumber('PROMPT_ROUTE_REDUCED_LATENCY_PROVIDER_TIMEOUT_MS', DEFAULT_REDUCED_LATENCY_PROVIDER_TIMEOUT_MS)
   );
+}
+
+function alignProviderTimeoutMs(pipelineTimeoutMs: number, providerTimeoutMs: number): number {
+  return Math.max(750, Math.min(providerTimeoutMs, Math.max(750, pipelineTimeoutMs - PROMPT_ROUTE_PROVIDER_HEADROOM_MS)));
 }
 
 function resolveReducedLatencyMaxRetries(): number {
@@ -161,13 +166,14 @@ export function activatePromptRouteReducedLatencyMode(reason: string, defaultTok
   }
 
   const now = new Date().toISOString();
+  const pipelineTimeoutMs = resolveReducedLatencyPipelineTimeoutMs();
   state.active = true;
   state.mode = 'reduced_latency';
   state.activatedAt = state.activatedAt ?? now;
   state.updatedAt = now;
   state.reason = reason;
-  state.pipelineTimeoutMs = resolveReducedLatencyPipelineTimeoutMs();
-  state.providerTimeoutMs = resolveReducedLatencyProviderTimeoutMs();
+  state.pipelineTimeoutMs = pipelineTimeoutMs;
+  state.providerTimeoutMs = alignProviderTimeoutMs(pipelineTimeoutMs, resolveReducedLatencyProviderTimeoutMs());
   state.maxRetries = resolveReducedLatencyMaxRetries();
   state.maxTokens = resolveReducedLatencyMaxTokens(defaultTokenLimit);
   state.fallbackModel = true;
@@ -219,10 +225,14 @@ export function rollbackPromptRouteDegradedMode(reason: string): PromptRouteMiti
 export function getPromptRouteExecutionPolicy(defaultTokenLimit: number): PromptRouteExecutionPolicy {
   const state = getMutableState();
   if (state.active && state.mode === 'reduced_latency') {
+    const pipelineTimeoutMs = state.pipelineTimeoutMs ?? resolveReducedLatencyPipelineTimeoutMs();
     return {
       mode: 'reduced_latency',
-      pipelineTimeoutMs: state.pipelineTimeoutMs ?? resolveReducedLatencyPipelineTimeoutMs(),
-      providerTimeoutMs: state.providerTimeoutMs ?? resolveReducedLatencyProviderTimeoutMs(),
+      pipelineTimeoutMs,
+      providerTimeoutMs: alignProviderTimeoutMs(
+        pipelineTimeoutMs,
+        state.providerTimeoutMs ?? resolveReducedLatencyProviderTimeoutMs()
+      ),
       maxRetries: state.maxRetries ?? resolveReducedLatencyMaxRetries(),
       maxTokens:
         typeof state.maxTokens === 'number'
@@ -245,10 +255,11 @@ export function getPromptRouteExecutionPolicy(defaultTokenLimit: number): Prompt
     };
   }
 
+  const pipelineTimeoutMs = resolvePromptRoutePipelineTimeoutMs();
   return {
     mode: 'normal',
-    pipelineTimeoutMs: resolvePromptRoutePipelineTimeoutMs(),
-    providerTimeoutMs: resolvePromptRouteProviderTimeoutMs(),
+    pipelineTimeoutMs,
+    providerTimeoutMs: alignProviderTimeoutMs(pipelineTimeoutMs, resolvePromptRouteProviderTimeoutMs()),
     maxRetries: resolvePromptRouteMaxRetries(),
     maxTokens: defaultTokenLimit,
     useFallbackModel: false,
