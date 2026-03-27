@@ -11,14 +11,6 @@
     "outDir": "dist",
     "rootDir": "src",
     "baseUrl": ".",
-    "paths": {
-      "@arcanos/protocol": [
-        "../protocol/dist/src/index.d.ts"
-      ],
-      "@arcanos/protocol/*": [
-        "../protocol/dist/src/*"
-      ]
-    },
     "types": [
       "node"
     ],

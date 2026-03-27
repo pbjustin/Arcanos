@@ -68,7 +68,7 @@ function runProbe() {
   console.log('📁 Required Files Check:');
   
   const requiredFiles = [
-    { path: 'index.js', description: 'Main entry point' },
+    { path: 'scripts/start-railway-service.mjs', description: 'Shared Railway launcher' },
     { path: 'tests/test-arcanos-api.js', description: 'API test file' },
     { path: 'dist/start-server.js', description: 'Runtime entry point' },
     { path: 'package.json', description: 'Package configuration' }
