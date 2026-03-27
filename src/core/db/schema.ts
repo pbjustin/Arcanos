@@ -359,6 +359,70 @@ export const TABLE_DEFINITIONS = [
     UNIQUE (session_id, version_number)
   )`,
 
+  // Action-plan tables used by predictive healing and agent orchestration
+  `CREATE TABLE IF NOT EXISTS "Agent" (
+    "id" TEXT PRIMARY KEY,
+    "role" TEXT NOT NULL DEFAULT 'executor',
+    "capabilities" TEXT[] NOT NULL,
+    "publicKey" TEXT,
+    "status" TEXT NOT NULL DEFAULT 'idle',
+    "lastHeartbeat" TIMESTAMP(3),
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`,
+
+  `CREATE TABLE IF NOT EXISTS "ActionPlan" (
+    "id" TEXT PRIMARY KEY,
+    "createdBy" TEXT NOT NULL,
+    "origin" TEXT NOT NULL,
+    "status" TEXT NOT NULL DEFAULT 'planned',
+    "confidence" DOUBLE PRECISION NOT NULL DEFAULT 0,
+    "requiresConfirmation" BOOLEAN NOT NULL DEFAULT true,
+    "idempotencyKey" TEXT NOT NULL UNIQUE,
+    "expiresAt" TIMESTAMP(3),
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`,
+
+  `CREATE TABLE IF NOT EXISTS "Action" (
+    "id" TEXT PRIMARY KEY,
+    "planId" TEXT NOT NULL REFERENCES "ActionPlan"("id") ON DELETE RESTRICT ON UPDATE CASCADE,
+    "agentId" TEXT NOT NULL,
+    "capability" TEXT NOT NULL,
+    "params" JSONB NOT NULL,
+    "timeoutMs" INTEGER NOT NULL DEFAULT 30000,
+    "rollbackAction" JSONB,
+    "sortOrder" INTEGER NOT NULL DEFAULT 0
+  )`,
+
+  `CREATE TABLE IF NOT EXISTS "ExecutionResult" (
+    "id" TEXT PRIMARY KEY,
+    "planId" TEXT NOT NULL REFERENCES "ActionPlan"("id") ON DELETE RESTRICT ON UPDATE CASCADE,
+    "actionId" TEXT NOT NULL,
+    "agentId" TEXT NOT NULL,
+    "status" TEXT NOT NULL,
+    "output" JSONB,
+    "error" JSONB,
+    "signature" TEXT,
+    "clearDecision" TEXT NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE ("planId", "actionId")
+  )`,
+
+  `CREATE TABLE IF NOT EXISTS "ClearScore" (
+    "id" TEXT PRIMARY KEY,
+    "planId" TEXT NOT NULL UNIQUE REFERENCES "ActionPlan"("id") ON DELETE RESTRICT ON UPDATE CASCADE,
+    "clarity" DOUBLE PRECISION NOT NULL,
+    "leverage" DOUBLE PRECISION NOT NULL,
+    "efficiency" DOUBLE PRECISION NOT NULL,
+    "alignment" DOUBLE PRECISION NOT NULL,
+    "resilience" DOUBLE PRECISION NOT NULL,
+    "overall" DOUBLE PRECISION NOT NULL,
+    "decision" TEXT NOT NULL,
+    "notes" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+  )`,
+
   // Reasoning logs table for GPT-5.1 reasoning results
   `CREATE TABLE IF NOT EXISTS reasoning_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -386,6 +450,17 @@ export const TABLE_DEFINITIONS = [
   `CREATE INDEX IF NOT EXISTS idx_sessions_memory_type_updated_at ON sessions(memory_type, updated_at DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_sessions_payload_memory_key ON sessions ((payload->>'memoryKey'))`,
   `CREATE INDEX IF NOT EXISTS idx_session_versions_session_version ON session_versions(session_id, version_number DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_agent_status_updated_at ON "Agent"("status", "updatedAt" DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_action_plan_status_created_at ON "ActionPlan"("status", "createdAt" DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_action_plan_created_by_created_at ON "ActionPlan"("createdBy", "createdAt" DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_action_plan_updated_at ON "ActionPlan"("updatedAt" DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_action_plan_expires_at ON "ActionPlan"("expiresAt" DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_action_plan_origin_created_at ON "ActionPlan"("origin", "createdAt" DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_action_plan_requires_confirmation ON "ActionPlan"("requiresConfirmation", "createdAt" DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_action_plan_confidence ON "ActionPlan"("confidence" DESC, "createdAt" DESC)`,
+  `CREATE INDEX IF NOT EXISTS idx_action_plan_idempotency_key ON "ActionPlan"("idempotencyKey")`,
+  `CREATE INDEX IF NOT EXISTS idx_action_plan_sort_order ON "Action"("planId", "sortOrder" ASC)`,
+  `CREATE INDEX IF NOT EXISTS idx_execution_result_plan_created_at ON "ExecutionResult"("planId", "createdAt" ASC)`,
   `CREATE INDEX IF NOT EXISTS idx_reasoning_logs_timestamp ON reasoning_logs(timestamp DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_saves_module_timestamp ON saves(module, timestamp)`,
   `CREATE INDEX IF NOT EXISTS idx_audit_logs_event_timestamp ON audit_logs(event, timestamp DESC)`,
