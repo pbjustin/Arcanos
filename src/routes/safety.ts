@@ -22,11 +22,33 @@ import {
   buildPredictiveHealingCompactSummary,
   buildPredictiveHealingStatusSnapshot
 } from '@services/selfImprove/predictiveHealingService.js';
+import { getSelfHealingControlLoopStatus } from '@services/selfImprove/controlLoop.js';
 
 const router = express.Router();
 
 function getEventTimestamp(event: { timestamp?: string | null } | null | undefined): string | null {
   return event?.timestamp ?? null;
+}
+
+function pickLatestTimestamp(...timestamps: Array<string | null | undefined>): string | null {
+  let latestTimestamp: string | null = null;
+  let latestTimestampMs = Number.NEGATIVE_INFINITY;
+
+  for (const timestamp of timestamps) {
+    if (typeof timestamp !== 'string' || timestamp.trim().length === 0) {
+      continue;
+    }
+
+    const timestampMs = Date.parse(timestamp);
+    if (!Number.isFinite(timestampMs) || timestampMs < latestTimestampMs) {
+      continue;
+    }
+
+    latestTimestamp = timestamp;
+    latestTimestampMs = timestampMs;
+  }
+
+  return latestTimestamp;
 }
 
 function getLastSelfHealResultEvent(
@@ -101,30 +123,109 @@ router.get('/status/safety', (_req: Request, res: Response) => {
  */
 router.get('/status/safety/self-heal', (_req: Request, res: Response) => {
   const loopStatus = getSelfHealingLoopStatus();
+  const controlLoop = getSelfHealingControlLoopStatus();
   const trinityStatus = getTrinitySelfHealingStatus();
   const promptRouteMitigation = getPromptRouteMitigationState();
+  const currentHealedComponent =
+    inferSelfHealComponentFromAction(loopStatus.lastAction) ??
+    inferSelfHealComponentFromAction(controlLoop.lastAction);
   const selfHealTelemetry = buildSelfHealTelemetrySnapshot({
-    enabled: loopStatus.loopRunning || trinityStatus.enabled,
-    active: Boolean(loopStatus.activeMitigation || promptRouteMitigation.active),
+    enabled: loopStatus.loopRunning || trinityStatus.enabled || controlLoop.active || controlLoop.loopRunning,
+    active: Boolean(
+      loopStatus.inFlight ||
+      loopStatus.activeMitigation ||
+      promptRouteMitigation.active ||
+      controlLoop.incidentActive ||
+      controlLoop.executionStatus === 'running' ||
+      controlLoop.mitigation.activeAction
+    ),
     currentActionTaken: loopStatus.lastAction,
-    currentHealedComponent: inferSelfHealComponentFromAction(loopStatus.lastAction)
+    currentHealedComponent
   });
   const predictiveHealing = buildPredictiveHealingStatusSnapshot();
   const lastHealResultEvent = getLastSelfHealResultEvent(selfHealTelemetry.recentEvents);
+  const combinedEnabled = Boolean(
+    selfHealTelemetry.enabled ||
+    controlLoop.active ||
+    controlLoop.loopRunning
+  );
+  const combinedActive = Boolean(
+    selfHealTelemetry.active ||
+    loopStatus.inFlight ||
+    controlLoop.incidentActive ||
+    controlLoop.executionStatus === 'running' ||
+    controlLoop.mitigation.activeAction
+  );
+  const lastTriggerAt = getEventTimestamp(selfHealTelemetry.lastTrigger) ?? controlLoop.lastObservedAt;
+  const lastHealAttemptAt = getEventTimestamp(selfHealTelemetry.lastAttempt) ?? controlLoop.lastActionAt;
+  const lastHealAction = lastHealResultEvent?.actionTaken ?? selfHealTelemetry.actionTaken ?? controlLoop.lastAction;
+  const lastHealResult =
+    lastHealResultEvent?.kind ??
+    controlLoop.executionStatus ??
+    controlLoop.lastResult ??
+    null;
+  const lastTriggerReason =
+    selfHealTelemetry.lastTrigger?.reason ??
+    selfHealTelemetry.triggerReason ??
+    controlLoop.lastDiagnosis;
+  const lastHealedComponent =
+    lastHealResultEvent?.healedComponent ??
+    selfHealTelemetry.healedComponent ??
+    inferSelfHealComponentFromAction(controlLoop.lastAction);
+  const lastHealRun = pickLatestTimestamp(
+    lastHealAttemptAt,
+    getEventTimestamp(selfHealTelemetry.lastSuccess),
+    getEventTimestamp(selfHealTelemetry.lastFailure),
+    controlLoop.lastActionAt,
+    loopStatus.lastActionAt
+  );
+  const hasControlLoopObservation = controlLoop.lastObservedAt !== null;
+  const boundedLoopErrorRate =
+    loopStatus.lastVerificationResult?.current.errorRate ??
+    loopStatus.lastVerificationResult?.baseline.errorRate ??
+    0;
+  const boundedLoopLatency =
+    loopStatus.lastLatencySnapshot?.avgLatencyMs ??
+    loopStatus.lastVerificationResult?.current.avgLatencyMs ??
+    loopStatus.lastVerificationResult?.baseline.avgLatencyMs ??
+    0;
+  const boundedLoopOperationalRequests =
+    loopStatus.lastLatencySnapshot?.requestCount ??
+    loopStatus.lastVerificationResult?.current.promptRoute?.requestCount ??
+    0;
+  const systemState = {
+    errorRate: hasControlLoopObservation ? controlLoop.errorRate : boundedLoopErrorRate,
+    latency: hasControlLoopObservation ? controlLoop.avgLatencyMs : boundedLoopLatency,
+    lastCheck: controlLoop.lastObservedAt ?? loopStatus.lastTick ?? null,
+    operationalRequests: hasControlLoopObservation ? controlLoop.operationalRequests : boundedLoopOperationalRequests
+  };
 
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
-    enabled: selfHealTelemetry.enabled,
-    active: selfHealTelemetry.active,
-    lastTriggerAt: getEventTimestamp(selfHealTelemetry.lastTrigger),
-    lastHealAttemptAt: getEventTimestamp(selfHealTelemetry.lastAttempt),
+    enabled: combinedEnabled,
+    active: combinedActive,
+    isHealing: combinedActive,
+    lastTriggerAt,
+    lastHealAttemptAt,
     lastHealSuccessAt: getEventTimestamp(selfHealTelemetry.lastSuccess),
     lastHealFailureAt: getEventTimestamp(selfHealTelemetry.lastFailure),
-    lastTriggerReason: selfHealTelemetry.lastTrigger?.reason ?? selfHealTelemetry.triggerReason,
-    lastHealedComponent: lastHealResultEvent?.healedComponent ?? selfHealTelemetry.healedComponent,
-    lastHealAction: lastHealResultEvent?.actionTaken ?? selfHealTelemetry.actionTaken,
-    lastHealResult: lastHealResultEvent?.kind ?? null,
+    lastTriggerReason,
+    lastHealedComponent,
+    lastHealAction,
+    lastHealResult,
+    lastHealRun,
+    systemState,
+    loopRunning: loopStatus.loopRunning,
+    inFlight: loopStatus.inFlight,
+    lastDiagnosis: loopStatus.lastDiagnosis,
+    lastAction: loopStatus.lastAction,
+    lastActionAt: loopStatus.lastActionAt,
+    lastError: loopStatus.lastError,
+    activeMitigation: loopStatus.activeMitigation,
+    degradedModeReason: loopStatus.degradedModeReason,
+    recentTimeoutCounts: loopStatus.recentTimeoutCounts,
+    lastVerificationResult: loopStatus.lastVerificationResult,
     lastTrigger: selfHealTelemetry.lastTrigger,
     lastAttempt: selfHealTelemetry.lastAttempt,
     lastSuccess: selfHealTelemetry.lastSuccess,
@@ -136,6 +237,7 @@ router.get('/status/safety/self-heal', (_req: Request, res: Response) => {
     recentEvents: selfHealTelemetry.recentEvents,
     persistence: selfHealTelemetry.persistence,
     loop: loopStatus,
+    controlLoop,
     promptRouteMitigation,
     trinity: trinityStatus,
     predictiveHealing

@@ -569,6 +569,14 @@ export function inferSelfHealComponentFromAction(actionTaken: string | null | un
     return null;
   }
 
+  if (actionTaken === 'enable_degraded_mode' || actionTaken === 'bypass_final_stage') {
+    return 'trinity';
+  }
+
+  if (actionTaken === 'restart_service' || actionTaken === 'redeploy_service') {
+    return 'service_runtime';
+  }
+
   if (actionTaken.startsWith('recoverStaleJobs')) {
     return 'worker_queue';
   }

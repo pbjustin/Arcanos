@@ -174,6 +174,7 @@ export interface SelfHealingVerificationResult {
 export interface SelfHealingLoopStatus {
   active: boolean;
   loopRunning: boolean;
+  inFlight: boolean;
   startedAt: string | null;
   lastTick: string | null;
   tickCount: number;
@@ -459,6 +460,7 @@ function createInitialStatus(): SelfHealingLoopStatus {
   return {
     active: false,
     loopRunning: false,
+    inFlight: false,
     startedAt: null,
     lastTick: null,
     tickCount: 0,
@@ -2271,6 +2273,7 @@ export function getSelfHealingLoopStatus(): SelfHealingLoopStatus {
     ...runtime.status,
     active: runtime.timer !== null,
     loopRunning: runtime.timer !== null,
+    inFlight: runtime.inFlight,
     intervalMs: runtime.timer === null ? resolveLoopIntervalMs() : runtime.status.intervalMs,
     lastTrinityMitigation: getActiveTrinityMitigation(trinityStatus),
     activePromptMitigation: getActivePromptRouteMitigation(),

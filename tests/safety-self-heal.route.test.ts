@@ -3,6 +3,7 @@ import request from 'supertest';
 import { describe, expect, it, jest } from '@jest/globals';
 
 const getSelfHealingLoopStatusMock = jest.fn();
+const getSelfHealingControlLoopStatusMock = jest.fn();
 const getTrinitySelfHealingStatusMock = jest.fn();
 const getPromptRouteMitigationStateMock = jest.fn();
 const buildSelfHealTelemetrySnapshotMock = jest.fn();
@@ -15,6 +16,10 @@ const buildPredictiveHealingCompactSummaryMock = jest.fn();
 
 jest.unstable_mockModule('@services/selfImprove/selfHealingLoop.js', () => ({
   getSelfHealingLoopStatus: getSelfHealingLoopStatusMock
+}));
+
+jest.unstable_mockModule('@services/selfImprove/controlLoop.js', () => ({
+  getSelfHealingControlLoopStatus: getSelfHealingControlLoopStatusMock
 }));
 
 jest.unstable_mockModule('@services/selfImprove/selfHealingV2.js', () => ({
@@ -96,9 +101,24 @@ function createApp(): express.Express {
 describe('safety self-heal routes', () => {
   it('returns structured self-heal telemetry with nested subsystem status', async () => {
     getSelfHealingLoopStatusMock.mockReturnValue({
+      inFlight: false,
       loopRunning: true,
       activeMitigation: 'prompt:/api/openai/prompt:reduced_latency',
       lastAction: 'activatePromptRouteMitigation:reduced_latency'
+    });
+    getSelfHealingControlLoopStatusMock.mockReturnValue({
+      active: true,
+      loopRunning: true,
+      incidentActive: false,
+      executionStatus: null,
+      mitigation: { activeAction: null },
+      lastDiagnosis: null,
+      lastAction: null,
+      lastActionAt: null,
+      lastObservedAt: null,
+      errorRate: 0,
+      avgLatencyMs: 0,
+      operationalRequests: 0
     });
     getTrinitySelfHealingStatusMock.mockReturnValue({
       enabled: true,
@@ -163,6 +183,14 @@ describe('safety self-heal routes', () => {
       lastHealedComponent: 'prompt_route',
       lastHealAction: 'activatePromptRouteMitigation:reduced_latency',
       lastHealResult: 'success',
+      lastHealRun: '2026-03-25T12:00:02.000Z',
+      isHealing: true,
+      systemState: {
+        errorRate: 0,
+        latency: 0,
+        lastCheck: null,
+        operationalRequests: 0
+      },
       triggerReason: 'latency spike cluster detected',
       actionTaken: 'activatePromptRouteMitigation:reduced_latency',
       healedComponent: 'prompt_route',
@@ -173,6 +201,10 @@ describe('safety self-heal routes', () => {
       loop: expect.objectContaining({
         loopRunning: true,
         activeMitigation: 'prompt:/api/openai/prompt:reduced_latency'
+      }),
+      controlLoop: expect.objectContaining({
+        active: true,
+        loopRunning: true
       }),
       promptRouteMitigation: expect.objectContaining({
         active: true,
@@ -189,11 +221,229 @@ describe('safety self-heal routes', () => {
     }));
   });
 
+  it('falls back to the autonomous control loop when bounded telemetry is idle', async () => {
+    getSelfHealingLoopStatusMock.mockReturnValue({
+      inFlight: false,
+      loopRunning: false,
+      activeMitigation: null,
+      lastAction: null,
+      lastActionAt: null,
+      lastTick: null,
+      lastLatencySnapshot: null,
+      lastVerificationResult: null
+    });
+    getSelfHealingControlLoopStatusMock.mockReturnValue({
+      active: true,
+      loopRunning: true,
+      incidentActive: true,
+      executionStatus: 'running',
+      mitigation: { activeAction: 'restart_service' },
+      lastDiagnosis: 'timeout cluster across operational routes',
+      lastAction: 'restart_service',
+      lastActionAt: '2026-03-25T12:04:00.000Z',
+      lastObservedAt: '2026-03-25T12:03:30.000Z',
+      errorRate: 0.21,
+      avgLatencyMs: 2300,
+      operationalRequests: 14
+    });
+    getTrinitySelfHealingStatusMock.mockReturnValue({
+      enabled: false,
+      snapshot: {}
+    });
+    getPromptRouteMitigationStateMock.mockReturnValue({
+      active: false,
+      mode: null,
+      route: '/api/openai/prompt'
+    });
+    inferSelfHealComponentFromActionMock.mockImplementation((actionTaken?: string | null) => {
+      if (actionTaken === 'restart_service') {
+        return 'service_runtime';
+      }
+      return null;
+    });
+    buildSelfHealTelemetrySnapshotMock.mockReturnValue({
+      enabled: false,
+      active: false,
+      lastTrigger: null,
+      lastAttempt: null,
+      lastSuccess: null,
+      lastFailure: null,
+      lastFallback: null,
+      triggerReason: null,
+      actionTaken: null,
+      healedComponent: null,
+      recentEvents: [],
+      persistence: {
+        mode: 'local_memory_dir',
+        durable: false,
+        restoredFromDisk: false,
+        lastLoadedAt: null,
+        lastSavedAt: null,
+        lastSaveError: null
+      }
+    });
+    buildPredictiveHealingStatusSnapshotMock.mockReturnValue({
+      enabled: false,
+      dryRun: true,
+      autoExecute: false,
+      lastObservedAt: null,
+      lastDecisionAt: null,
+      lastAction: null,
+      lastResult: null,
+      lastMatchedRule: null,
+      recentAuditCount: 0,
+      recentAudits: [],
+      recentObservations: [],
+      cooldowns: {},
+      detailsPath: '/api/self-heal/decide',
+      advisors: ['rules_v1']
+    });
+
+    const response = await request(createApp()).get('/status/safety/self-heal').expect(200);
+
+    expect(response.body).toEqual(expect.objectContaining({
+      enabled: true,
+      active: true,
+      isHealing: true,
+      lastTriggerAt: '2026-03-25T12:03:30.000Z',
+      lastHealAttemptAt: '2026-03-25T12:04:00.000Z',
+      lastTriggerReason: 'timeout cluster across operational routes',
+      lastHealAction: 'restart_service',
+      lastHealResult: 'running',
+      lastHealRun: '2026-03-25T12:04:00.000Z',
+      lastHealedComponent: 'service_runtime',
+      systemState: {
+        errorRate: 0.21,
+        latency: 2300,
+        lastCheck: '2026-03-25T12:03:30.000Z',
+        operationalRequests: 14
+      },
+      controlLoop: expect.objectContaining({
+        incidentActive: true,
+        executionStatus: 'running',
+        lastAction: 'restart_service'
+      })
+    }));
+  });
+
+  it('preserves observed zero-valued control loop metrics instead of falling back to bounded loop history', async () => {
+    getSelfHealingLoopStatusMock.mockReturnValue({
+      inFlight: false,
+      loopRunning: true,
+      activeMitigation: null,
+      lastAction: null,
+      lastActionAt: null,
+      lastTick: '2026-03-25T12:03:00.000Z',
+      lastLatencySnapshot: {
+        requestCount: 19,
+        avgLatencyMs: 1800
+      },
+      lastVerificationResult: {
+        current: {
+          errorRate: 0.4,
+          avgLatencyMs: 2200,
+          promptRoute: {
+            requestCount: 7
+          }
+        },
+        baseline: {
+          errorRate: 0.5,
+          avgLatencyMs: 2500
+        }
+      }
+    });
+    getSelfHealingControlLoopStatusMock.mockReturnValue({
+      active: true,
+      loopRunning: true,
+      incidentActive: false,
+      executionStatus: null,
+      mitigation: { activeAction: null },
+      lastDiagnosis: 'healthy',
+      lastAction: null,
+      lastActionAt: null,
+      lastObservedAt: '2026-03-25T12:04:00.000Z',
+      errorRate: 0,
+      avgLatencyMs: 0,
+      operationalRequests: 0
+    });
+    getTrinitySelfHealingStatusMock.mockReturnValue({
+      enabled: true,
+      snapshot: {}
+    });
+    getPromptRouteMitigationStateMock.mockReturnValue({
+      active: false,
+      mode: null,
+      route: '/api/openai/prompt'
+    });
+    inferSelfHealComponentFromActionMock.mockReturnValue(null);
+    buildSelfHealTelemetrySnapshotMock.mockReturnValue({
+      enabled: true,
+      active: false,
+      lastTrigger: null,
+      lastAttempt: null,
+      lastSuccess: null,
+      lastFailure: null,
+      lastFallback: null,
+      triggerReason: null,
+      actionTaken: null,
+      healedComponent: null,
+      recentEvents: [],
+      persistence: {
+        mode: 'local_memory_dir',
+        durable: false,
+        restoredFromDisk: false,
+        lastLoadedAt: null,
+        lastSavedAt: null,
+        lastSaveError: null
+      }
+    });
+    buildPredictiveHealingStatusSnapshotMock.mockReturnValue({
+      enabled: false,
+      dryRun: true,
+      autoExecute: false,
+      lastObservedAt: null,
+      lastDecisionAt: null,
+      lastAction: null,
+      lastResult: null,
+      lastMatchedRule: null,
+      recentAuditCount: 0,
+      recentAudits: [],
+      recentObservations: [],
+      cooldowns: {},
+      detailsPath: '/api/self-heal/decide',
+      advisors: ['rules_v1']
+    });
+
+    const response = await request(createApp()).get('/status/safety/self-heal').expect(200);
+
+    expect(response.body.systemState).toEqual({
+      errorRate: 0,
+      latency: 0,
+      lastCheck: '2026-03-25T12:04:00.000Z',
+      operationalRequests: 0
+    });
+  });
+
   it('returns a compact self-heal summary from /status/safety', async () => {
     getSelfHealingLoopStatusMock.mockReturnValue({
+      inFlight: false,
       loopRunning: true,
       activeMitigation: null,
       lastAction: 'healWorkerRuntime:started'
+    });
+    getSelfHealingControlLoopStatusMock.mockReturnValue({
+      active: false,
+      loopRunning: false,
+      incidentActive: false,
+      executionStatus: null,
+      mitigation: { activeAction: null },
+      lastDiagnosis: null,
+      lastAction: null,
+      lastActionAt: null,
+      lastObservedAt: null,
+      errorRate: 0,
+      avgLatencyMs: 0,
+      operationalRequests: 0
     });
     getTrinitySelfHealingStatusMock.mockReturnValue({
       enabled: true,
