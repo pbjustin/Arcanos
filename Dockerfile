@@ -7,9 +7,10 @@ ENV PYTHON=python3
 ENV ARCANOS_WORKSPACE_ROOT=/app
 ENV ARCANOS_PYTHON_RUNTIME_DIR=/app/daemon-python
 
-# Install build-time VCS dependency required by git-based npm overrides and
-# the minimal Python runtime needed for protocol repo tools.
-RUN apk add --no-cache git python3 py3-jsonschema
+# Install build-time VCS dependency required by git-based npm overrides,
+# OpenSSL for Prisma engine detection/runtime loading, and the minimal Python
+# runtime needed for protocol repo tools.
+RUN apk add --no-cache git openssl python3 py3-jsonschema
 
 # Create non-root user for security
 RUN addgroup -g 1001 -S nodejs && \
