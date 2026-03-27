@@ -33,6 +33,10 @@ const EXCLUDED_DIRS = [
   'docs' // Don't index the indices themselves
 ];
 
+function shouldExcludeDirectory(entryName) {
+  return EXCLUDED_DIRS.includes(entryName) || entryName === 'tmp' || entryName.startsWith('.');
+}
+
 /**
  * Recursively collects files by extension, excluding certain directories.
  */
@@ -42,7 +46,7 @@ async function collectFiles(dir, extensions, allFiles = []) {
   for (const entry of entries) {
     const res = path.resolve(dir, entry.name);
     if (entry.isDirectory()) {
-      if (EXCLUDED_DIRS.includes(entry.name)) continue;
+      if (shouldExcludeDirectory(entry.name)) continue;
       await collectFiles(res, extensions, allFiles);
     } else {
       if (extensions.some(ext => entry.name.endsWith(ext))) {

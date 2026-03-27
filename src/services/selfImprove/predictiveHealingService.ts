@@ -8,6 +8,7 @@ import {
   type WorkerScaleUpResult
 } from '@platform/runtime/workerConfig.js';
 import { getConfig } from '@platform/runtime/unifiedConfig.js';
+import { logger } from '@platform/logging/structuredLogging.js';
 import {
   activatePromptRouteDegradedMode,
   activatePromptRouteReducedLatencyMode,
@@ -29,6 +30,7 @@ import {
   type WorkerControlHealthResponse
 } from '@services/workerControlService.js';
 import { getEnvNumber } from '@platform/runtime/env.js';
+import { resolvePredictiveHealingLoopIntervalMs } from './runtimeConfig.js';
 import { recordSelfHealEvent } from './selfHealTelemetry.js';
 
 export type PredictiveHealingActionType =
@@ -1748,7 +1750,7 @@ function buildAutomationStatus(
       (config.autoExecuteHealing ?? false) &&
       !(config.predictiveHealingDryRun ?? true)
     ),
-    pollIntervalMs: Math.max(1_000, getEnvNumber('SELF_HEAL_LOOP_INTERVAL_MS', DEFAULT_LOOP_INTERVAL_MS)),
+    pollIntervalMs: resolvePredictiveHealingLoopIntervalMs(DEFAULT_LOOP_INTERVAL_MS),
     minConfidence: config.predictiveHealingMinConfidence ?? DEFAULT_MIN_CONFIDENCE,
     cooldownMs: Math.max(10_000, config.predictiveHealingActionCooldownMs ?? DEFAULT_ACTION_COOLDOWN_MS),
     lastLoopDecisionAt: lastLoopAudit?.timestamp ?? null,
@@ -1760,16 +1762,66 @@ function buildAutomationStatus(
   };
 }
 
+function buildPredictiveHealingAuditLogMetadata(entry: PredictiveHealingAuditEntry): Record<string, unknown> {
+  return {
+    featureFlags: { ...entry.featureFlags },
+    observation: {
+      collectedAt: entry.observation.collectedAt,
+      windowMs: entry.observation.windowMs,
+      requestCount: entry.observation.requestCount,
+      errorRate: entry.observation.errorRate,
+      timeoutRate: entry.observation.timeoutRate,
+      avgLatencyMs: entry.observation.avgLatencyMs,
+      p95LatencyMs: entry.observation.p95LatencyMs,
+      maxLatencyMs: entry.observation.maxLatencyMs,
+      degradedCount: entry.observation.degradedCount,
+      workerHealth: {
+        overallStatus: entry.observation.workerHealth.overallStatus,
+        alertCount: entry.observation.workerHealth.alertCount,
+        pending: entry.observation.workerHealth.pending,
+        running: entry.observation.workerHealth.running,
+        stalledRunning: entry.observation.workerHealth.stalledRunning,
+        unhealthyWorkerIds: [...entry.observation.workerHealth.unhealthyWorkerIds],
+        degradedWorkerIds: [...entry.observation.workerHealth.degradedWorkerIds]
+      },
+      memory: { ...entry.observation.memory },
+      promptRoute: { ...entry.observation.promptRoute },
+      trinity: {
+        activeStage: entry.observation.trinity.activeStage,
+        activeAction: entry.observation.trinity.activeAction,
+        verified: entry.observation.trinity.verified
+      }
+    },
+    trends: cloneTrends(entry.trends),
+    decision: cloneDecision(entry.decision),
+    execution: cloneExecution(entry.execution)
+  };
+}
+
 function maybeLogPredictiveHealingAudit(entry: PredictiveHealingAuditEntry): void {
-  if (entry.decision.action === 'none' && entry.execution.status === 'skipped') {
+  const context = {
+    module: 'predictive-healing',
+    operation: 'decision',
+    source: entry.source
+  };
+  const metadata = buildPredictiveHealingAuditLogMetadata(entry);
+
+  if (entry.execution.status === 'failed') {
+    logger.error('predictive_healing.audit', context, metadata);
     return;
   }
 
-  console.log(
-    `[PREDICTIVE-HEAL] source=${entry.source} decision=${entry.decision.action} confidence=${entry.decision.confidence} ` +
-      `mode=${entry.execution.mode} result=${entry.execution.status} outcome=${entry.execution.recoveryOutcome.status} ` +
-      `rule=${entry.decision.matchedRule ?? 'none'}`
-  );
+  if (
+    entry.decision.action !== 'none' &&
+    (entry.execution.status === 'cooldown' ||
+      entry.execution.status === 'unsupported' ||
+      entry.execution.status === 'refused')
+  ) {
+    logger.warn('predictive_healing.audit', context, metadata);
+    return;
+  }
+
+  logger.info('predictive_healing.audit', context, metadata);
 }
 
 function buildLoopDisabledDecisionResult(params: {

@@ -88,9 +88,10 @@ function resolveRequestTimeoutMs(
   budget: RuntimeBudget,
   explicitTimeoutMs?: number
 ): number {
+  assertBudgetAvailable(budget);
   const safeRemainingMs = getSafeRemainingMs(budget);
   if (safeRemainingMs <= 0) {
-    throw new OpenAIAbortError();
+    assertBudgetAvailable(budget);
   }
 
   const requestRemainingMs = getRequestRemainingMs();

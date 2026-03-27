@@ -37,6 +37,7 @@ import {
   resetSelfHealTelemetryForTests
 } from '@services/selfImprove/selfHealTelemetry.js';
 import { runPredictiveHealingFromLoop } from '@services/selfImprove/predictiveHealingService.js';
+import { resolvePredictiveHealingLoopIntervalMs } from '@services/selfImprove/runtimeConfig.js';
 import type { WorkerRuntimeStatus } from '@platform/runtime/workerConfig.js';
 
 const DEFAULT_INTERVAL_MS = 30_000;
@@ -173,6 +174,7 @@ export interface SelfHealingVerificationResult {
 export interface SelfHealingLoopStatus {
   active: boolean;
   loopRunning: boolean;
+  inFlight: boolean;
   startedAt: string | null;
   lastTick: string | null;
   tickCount: number;
@@ -373,7 +375,7 @@ type SelfHealingLoopGlobal = typeof globalThis & {
 };
 
 function resolveLoopIntervalMs(): number {
-  return Math.max(1_000, getEnvNumber('SELF_HEAL_LOOP_INTERVAL_MS', DEFAULT_INTERVAL_MS));
+  return resolvePredictiveHealingLoopIntervalMs(DEFAULT_INTERVAL_MS);
 }
 
 function resolveActionCooldownMs(): number {
@@ -458,6 +460,7 @@ function createInitialStatus(): SelfHealingLoopStatus {
   return {
     active: false,
     loopRunning: false,
+    inFlight: false,
     startedAt: null,
     lastTick: null,
     tickCount: 0,
@@ -2270,6 +2273,7 @@ export function getSelfHealingLoopStatus(): SelfHealingLoopStatus {
     ...runtime.status,
     active: runtime.timer !== null,
     loopRunning: runtime.timer !== null,
+    inFlight: runtime.inFlight,
     intervalMs: runtime.timer === null ? resolveLoopIntervalMs() : runtime.status.intervalMs,
     lastTrinityMitigation: getActiveTrinityMitigation(trinityStatus),
     activePromptMitigation: getActivePromptRouteMitigation(),

@@ -6,6 +6,9 @@ const recycleWorkerMock = jest.fn();
 const healWorkerRuntimeMock = jest.fn();
 const recordSelfHealEventMock = jest.fn();
 const activateTrinitySelfHealingMitigationMock = jest.fn();
+const loggerInfoMock = jest.fn();
+const loggerWarnMock = jest.fn();
+const loggerErrorMock = jest.fn();
 
 jest.unstable_mockModule('@platform/runtime/workerConfig.js', () => ({
   getWorkerRuntimeStatus: jest.fn(),
@@ -15,6 +18,39 @@ jest.unstable_mockModule('@platform/runtime/workerConfig.js', () => ({
 
 jest.unstable_mockModule('@platform/runtime/unifiedConfig.js', () => ({
   getConfig: getConfigMock
+}));
+
+jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({
+  logger: {
+    info: loggerInfoMock,
+    warn: loggerWarnMock,
+    error: loggerErrorMock
+  },
+  aiLogger: {
+    info: loggerInfoMock,
+    warn: loggerWarnMock,
+    error: loggerErrorMock
+  },
+  apiLogger: {
+    info: loggerInfoMock,
+    warn: loggerWarnMock,
+    error: loggerErrorMock
+  },
+  dbLogger: {
+    info: loggerInfoMock,
+    warn: loggerWarnMock,
+    error: loggerErrorMock
+  },
+  workerLogger: {
+    info: loggerInfoMock,
+    warn: loggerWarnMock,
+    error: loggerErrorMock
+  },
+  default: {
+    info: loggerInfoMock,
+    warn: loggerWarnMock,
+    error: loggerErrorMock
+  }
 }));
 
 jest.unstable_mockModule('@services/openai/promptRouteMitigation.js', () => ({
@@ -274,6 +310,9 @@ describe('predictive healing execution', () => {
   beforeEach(() => {
     jest.useFakeTimers().setSystemTime(new Date('2026-03-26T12:00:00.000Z'));
     jest.clearAllMocks();
+    loggerInfoMock.mockReset();
+    loggerWarnMock.mockReset();
+    loggerErrorMock.mockReset();
     getConfigMock.mockReturnValue({
       predictiveHealingEnabled: true,
       predictiveHealingDryRun: false,
@@ -336,6 +375,7 @@ describe('predictive healing execution', () => {
 
   afterEach(() => {
     delete process.env.SELF_HEAL_LOOP_INTERVAL_MS;
+    delete process.env.PREDICTIVE_HEALING_INTERVAL_MS;
     jest.useRealTimers();
   });
 
@@ -385,6 +425,41 @@ describe('predictive healing execution', () => {
     expect(recordSelfHealEventMock).toHaveBeenCalled();
   });
 
+  it('emits a structured audit log for healthy no-op decisions', async () => {
+    const result = await runPredictiveHealingDecision({
+      source: 'predictive_test_healthy',
+      observation: createObservation({
+        requestCount: 8,
+        avgLatencyMs: 250,
+        p95LatencyMs: 400,
+        workerHealth: { ...createObservation().workerHealth, pending: 0 }
+      })
+    });
+
+    expect(result.decision.action).toBe('none');
+    expect(result.execution.status).toBe('refused');
+    expect(loggerInfoMock).toHaveBeenCalledWith(
+      'predictive_healing.audit',
+      expect.objectContaining({
+        module: 'predictive-healing',
+        operation: 'decision',
+        source: 'predictive_test_healthy'
+      }),
+      expect.objectContaining({
+        observation: expect.objectContaining({
+          requestCount: 8,
+          avgLatencyMs: 250
+        }),
+        decision: expect.objectContaining({
+          action: 'none'
+        }),
+        execution: expect.objectContaining({
+          status: 'refused'
+        })
+      })
+    );
+  });
+
   it('skips the background automation loop when predictive healing is disabled', async () => {
     getConfigMock.mockReturnValue({
       predictiveHealingEnabled: false,
@@ -427,7 +502,7 @@ describe('predictive healing execution', () => {
   });
 
   it('summarizes automated loop decisions and outcomes in status output', async () => {
-    process.env.SELF_HEAL_LOOP_INTERVAL_MS = '15000';
+    process.env.PREDICTIVE_HEALING_INTERVAL_MS = '15000';
     getConfigMock.mockReturnValue({
       predictiveHealingEnabled: true,
       predictiveHealingDryRun: false,
@@ -508,6 +583,28 @@ describe('predictive healing execution', () => {
         recoveryStatus: 'pending_observation'
       })
     ]));
+    expect(loggerWarnMock).toHaveBeenCalledWith(
+      'predictive_healing.audit',
+      expect.objectContaining({
+        module: 'predictive-healing',
+        operation: 'decision',
+        source: 'predictive_self_heal_loop'
+      }),
+      expect.objectContaining({
+        observation: expect.objectContaining({
+          requestCount: 30,
+          avgLatencyMs: 2400
+        }),
+        decision: expect.objectContaining({
+          action: 'scale_workers_up',
+          matchedRule: 'latency_rising_scale_up'
+        }),
+        execution: expect.objectContaining({
+          mode: 'auto_execute',
+          status: 'cooldown'
+        })
+      })
+    );
   });
 
   it('executes Trinity mitigation when predictive rules select a Trinity stage pre-heal', async () => {
