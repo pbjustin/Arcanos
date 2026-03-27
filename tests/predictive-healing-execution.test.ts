@@ -100,6 +100,7 @@ function createObservation(overrides: Record<string, unknown> = {}) {
 
 function toLoopObservation(observation = createObservation()) {
   return {
+    collectedAt: observation.collectedAt,
     requestWindow: {
       windowMs: observation.windowMs,
       requestCount: observation.requestCount,
@@ -347,7 +348,7 @@ describe('predictive healing execution', () => {
       lastLoopDecisionAt: '2026-03-26T12:00:00.000Z',
       lastLoopAction: 'scale_workers_up',
       lastLoopResult: 'cooldown',
-      lastAutoExecutionAt: '2026-03-26T12:00:00.000Z',
+      lastAutoExecutionAt: '2026-03-26T11:59:00.000Z',
       lastAutoExecutionAction: 'scale_workers_up',
       lastAutoExecutionResult: 'executed'
     }));

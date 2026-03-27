@@ -95,11 +95,11 @@ Actionable predictive decisions are also mirrored into the existing self-heal te
 
 ## Rollout Plan
 
-1. Enable `PREDICTIVE_HEALING_ENABLED=true` with `PREDICTIVE_HEALING_DRY_RUN=true` and `AUTO_EXECUTE_HEALING=false`.
+1. Enable `PREDICTIVE_HEALING_ENABLED=true` with `PREDICTIVE_DRY_RUN=true` and `PREDICTIVE_AUTO_EXECUTE=false`.
 2. Watch `GET /status/safety/self-heal` for `predictiveHealing.recentAudits`.
 3. Exercise `POST /api/self-heal/decide` with `simulate` payloads to validate rule behavior.
 4. Tune thresholds until dry-run recommendations are stable.
-5. Enable `AUTO_EXECUTE_HEALING=true` only after reviewing cooldown behavior and audit logs.
+5. Enable `PREDICTIVE_AUTO_EXECUTE=true` only after reviewing cooldown behavior and audit logs.
 
 ## Example Request
 

@@ -320,6 +320,20 @@ const DEFAULT_AUDIT_HISTORY_LIMIT = 25;
 const DEFAULT_LOOP_INTERVAL_MS = 30_000;
 const DEFAULT_EXECUTION_LOG_LIMIT = 10;
 const DEFAULT_SCALE_UP_STEP = 1;
+const REDUCED_LATENCY_MODE_TOKEN_LIMIT = 96;
+const SINGLE_UNHEALTHY_WORKER_CONFIDENCE = 0.86;
+const LATENCY_RISING_BASE_CONFIDENCE = 0.68;
+const LATENCY_RISING_CONFIDENCE_FACTOR = 0.06;
+const LATENCY_RISING_MAX_CONFIDENCE = 0.92;
+const QUEUE_BACKLOG_BASE_CONFIDENCE = 0.7;
+const QUEUE_BACKLOG_CONFIDENCE_FACTOR = 0.04;
+const QUEUE_BACKLOG_MAX_CONFIDENCE = 0.93;
+const MEMORY_GROWTH_RECYCLE_CONFIDENCE = 0.84;
+const ERROR_RATE_BASE_CONFIDENCE = 0.72;
+const ERROR_RATE_CONFIDENCE_FACTOR = 1.5;
+const ERROR_RATE_MAX_CONFIDENCE = 0.95;
+const PREEMPTIVE_DEGRADE_CONFIDENCE = 0.69;
+const OFFLINE_NODE_SHIFT_TRAFFIC_CONFIDENCE = 0.88;
 const PREDICTIVE_LOOP_SOURCE = 'predictive_self_heal_loop';
 
 type PredictiveHealingGlobal = typeof globalThis & {
@@ -665,7 +679,7 @@ function buildCandidates(
       action: 'recycle_worker',
       target: workerId,
       reason: `Worker ${workerId} is unhealthy while queue capacity remains available.`,
-      confidence: 0.86,
+      confidence: SINGLE_UNHEALTHY_WORKER_CONFIDENCE,
       matchedRule: 'single_worker_unhealthy_recycle',
       priority: 10,
       details: {
@@ -680,7 +694,10 @@ function buildCandidates(
       action: 'scale_workers_up',
       target: 'worker_runtime',
       reason: `Average latency has risen for ${trends.latencyRiseIntervals + 1} consecutive intervals.`,
-      confidence: Math.min(0.92, 0.68 + trends.latencyRiseIntervals * 0.06),
+      confidence: Math.min(
+        LATENCY_RISING_MAX_CONFIDENCE,
+        LATENCY_RISING_BASE_CONFIDENCE + trends.latencyRiseIntervals * LATENCY_RISING_CONFIDENCE_FACTOR
+      ),
       matchedRule: 'latency_rising_scale_up',
       priority: 20,
       details: {
@@ -701,7 +718,10 @@ function buildCandidates(
       action: 'scale_workers_up',
       target: 'worker_runtime',
       reason: 'Queue backlog is growing faster than workers are draining it.',
-      confidence: Math.min(0.93, 0.7 + trends.queueDepthVelocity * 0.04),
+      confidence: Math.min(
+        QUEUE_BACKLOG_MAX_CONFIDENCE,
+        QUEUE_BACKLOG_BASE_CONFIDENCE + trends.queueDepthVelocity * QUEUE_BACKLOG_CONFIDENCE_FACTOR
+      ),
       matchedRule: 'queue_backlog_growth_scale_up',
       priority: 25,
       details: {
@@ -721,7 +741,7 @@ function buildCandidates(
       action: 'recycle_worker_runtime',
       target: 'worker_runtime',
       reason: 'RSS memory has remained high and continues to grow across the rolling window.',
-      confidence: 0.84,
+      confidence: MEMORY_GROWTH_RECYCLE_CONFIDENCE,
       matchedRule: 'memory_growth_recycle_runtime',
       priority: 30,
       details: {
@@ -737,7 +757,10 @@ function buildCandidates(
       action: 'heal_worker_runtime',
       target: 'worker_runtime',
       reason: `Error rate ${observation.errorRate} exceeded the predictive threshold ${config.errorRateThreshold}.`,
-      confidence: Math.min(0.95, 0.72 + (observation.errorRate - config.errorRateThreshold) * 1.5),
+      confidence: Math.min(
+        ERROR_RATE_MAX_CONFIDENCE,
+        ERROR_RATE_BASE_CONFIDENCE + (observation.errorRate - config.errorRateThreshold) * ERROR_RATE_CONFIDENCE_FACTOR
+      ),
       matchedRule: 'error_rate_reheal_runtime',
       priority: 40,
       details: {
@@ -756,7 +779,7 @@ function buildCandidates(
       action: 'mark_node_degraded',
       target: 'prompt_route',
       reason: 'Prompt route is trending toward degraded service and should shed load before hard failure.',
-      confidence: 0.69,
+      confidence: PREEMPTIVE_DEGRADE_CONFIDENCE,
       matchedRule: 'preemptive_prompt_route_degrade',
       priority: 50,
       details: {
@@ -775,7 +798,7 @@ function buildCandidates(
       action: 'shift_traffic_away',
       target: 'node',
       reason: 'Local runtime appears offline even after degraded mode is active.',
-      confidence: 0.88,
+      confidence: OFFLINE_NODE_SHIFT_TRAFFIC_CONFIDENCE,
       matchedRule: 'offline_node_shift_traffic',
       priority: 60,
       details: {
@@ -1101,7 +1124,7 @@ async function executeDecision(
     } else if (request.decision.action === 'mark_node_degraded') {
       const reason = `predictive_healing:${request.decision.matchedRule ?? 'mark_node_degraded'}`;
       if (!request.observation.promptRoute.active) {
-        const result = activatePromptRouteReducedLatencyMode(reason, 96);
+        const result = activatePromptRouteReducedLatencyMode(reason, REDUCED_LATENCY_MODE_TOKEN_LIMIT);
         actuatorResult = {
           applied: result.applied,
           rolledBack: result.rolledBack,
@@ -1534,10 +1557,11 @@ export async function runPredictiveHealingDecision(params: {
 export async function runPredictiveHealingFromLoop(params: {
   source: string;
   observation: {
-    requestWindow: RequestWindowSnapshot;
-    workerHealth: WorkerControlHealthResponse | null;
-    workerRuntime: WorkerRuntimeStatus;
-    workerHealthError?: string | null;
+      requestWindow: RequestWindowSnapshot;
+      workerHealth: WorkerControlHealthResponse | null;
+      workerRuntime: WorkerRuntimeStatus;
+      collectedAt?: string;
+      workerHealthError?: string | null;
   };
 }): Promise<PredictiveHealingDecisionResult> {
   const loopObservation = buildObservationFromSources({
@@ -1547,6 +1571,7 @@ export async function runPredictiveHealingFromLoop(params: {
     workerRuntime: params.observation.workerRuntime,
     promptRouteMitigation: getPromptRouteMitigationState(),
     memoryUsage: process.memoryUsage(),
+    collectedAt: params.observation.collectedAt,
     workerHealthError: params.observation.workerHealthError ?? null
   });
 
