@@ -1,4 +1,4 @@
-import { cosineSimilarity } from '../src/utils/vectorUtils.js';
+import { cosineSimilarity } from '../src/shared/vectorUtils.js';
 
 describe('cosineSimilarity', () => {
   it('returns 0 when vectors are empty', () => {

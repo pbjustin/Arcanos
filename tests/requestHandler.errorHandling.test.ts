@@ -50,7 +50,7 @@ afterEach(() => {
 
 describe('requestHandler error mapping', () => {
   it('returns 408 for runtime budget exhaustion', async () => {
-    const { RuntimeBudgetExceededError } = await import('../src/runtime/runtimeErrors.js');
+    const { RuntimeBudgetExceededError } = await import('../src/platform/resilience/runtimeErrors.js');
     const res = createResponseMock();
 
     handleAIError(new RuntimeBudgetExceededError(), 'prompt', 'ask', res);

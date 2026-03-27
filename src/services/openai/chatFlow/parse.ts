@@ -1,4 +1,4 @@
-import { extractResponseOutputText, convertResponseToLegacyChatCompletion } from "../requestBuilders.js";
+import { extractResponseOutputText, convertResponseToLegacyChatCompletion } from "../requestBuilders/index.js";
 import { NO_RESPONSE_CONTENT_FALLBACK } from "../constants.js";
 import type { ChatCompletion } from "../types.js";
 

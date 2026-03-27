@@ -1,4 +1,4 @@
-import { callOpenAI, createCentralizedCompletion, createGPT5Reasoning, createGPT5ReasoningLayer, call_gpt5_strict } from './openai/chatFlow.js';
+import { callOpenAI, createCentralizedCompletion, createGPT5Reasoning, createGPT5ReasoningLayer, call_gpt5_strict } from './openai/chatFlow/index.js';
 import { generateImage } from './openai/imageGeneration.js';
 import { getOpenAIServiceHealth, validateAPIKeyAtStartup } from './openai/serviceHealth.js';
 import { getOrCreateClient, validateClientHealth } from '@arcanos/openai/unifiedClient';

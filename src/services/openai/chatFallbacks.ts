@@ -7,7 +7,7 @@ import { executeWithResilience } from './resilience.js';
 import { getTokenParameter } from "@shared/tokenParameterHelper.js";
 import { formatErrorMessage } from "@core/lib/errors/reusable.js";
 import { aiLogger } from "@platform/logging/structuredLogging.js";
-import { buildResponsesRequest, convertResponseToLegacyChatCompletion } from './requestBuilders.js';
+import { buildResponsesRequest, convertResponseToLegacyChatCompletion } from './requestBuilders/index.js';
 import {
   buildFailureContext,
   buildFinalFallbackReason,

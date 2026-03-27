@@ -1,6 +1,6 @@
 import type OpenAI from 'openai';
 import type { OpenAIAdapter } from "@core/adapters/openai.adapter.js";
-import { buildEmbeddingRequest } from './requestBuilders.js';
+import { buildEmbeddingRequest } from './requestBuilders/index.js';
 import { getOpenAIClientOrAdapter } from './clientBridge.js';
 
 const DEFAULT_EMBEDDING_MODEL = 'text-embedding-3-small';
