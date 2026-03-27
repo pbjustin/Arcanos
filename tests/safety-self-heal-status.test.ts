@@ -82,7 +82,50 @@ jest.unstable_mockModule('@services/selfImprove/selfHealingLoop.js', () => ({
 }));
 
 jest.unstable_mockModule('@services/openai/promptRouteMitigation.js', () => ({
+  activatePromptRouteDegradedMode: () => ({
+    active: true,
+    route: '/api/openai/prompt',
+    mode: 'degraded_response',
+    reason: 'mocked',
+    activatedAt: null,
+    updatedAt: null,
+    pipelineTimeoutMs: null,
+    providerTimeoutMs: null,
+    fallbackModel: true,
+    maxRetries: null,
+    maxTokens: null,
+    bypassedSubsystems: []
+  }),
+  activatePromptRouteReducedLatencyMode: () => ({
+    active: true,
+    route: '/api/openai/prompt',
+    mode: 'reduced_latency',
+    reason: 'mocked',
+    activatedAt: null,
+    updatedAt: null,
+    pipelineTimeoutMs: 3500,
+    providerTimeoutMs: 3200,
+    fallbackModel: true,
+    maxRetries: 0,
+    maxTokens: 96,
+    bypassedSubsystems: []
+  }),
   getPromptRouteMitigationState: () => ({
+    active: false,
+    route: '/api/openai/prompt',
+    mode: null,
+    reason: null,
+    activatedAt: null,
+    updatedAt: null,
+    pipelineTimeoutMs: null,
+    providerTimeoutMs: null,
+    fallbackModel: false,
+    maxRetries: null,
+    maxTokens: null,
+    bypassedSubsystems: []
+  }),
+  resetPromptRouteMitigationStateForTests: () => undefined,
+  rollbackPromptRouteMitigation: () => ({
     active: false,
     route: '/api/openai/prompt',
     mode: null,
@@ -99,6 +142,23 @@ jest.unstable_mockModule('@services/openai/promptRouteMitigation.js', () => ({
 }));
 
 jest.unstable_mockModule('@services/selfImprove/selfHealingV2.js', () => ({
+  activateTrinitySelfHealingMitigation: () => ({
+    applied: false,
+    rolledBack: false,
+    stage: 'reasoning',
+    action: null,
+    reason: 'mocked',
+    activeAction: null,
+    verified: false,
+    expiresAtMs: null
+  }),
+  getTrinitySelfHealingMitigation: () => ({
+    activeAction: null,
+    stage: null,
+    bypassFinalStage: false,
+    forceDirectAnswer: false,
+    verified: false
+  }),
   getTrinitySelfHealingStatus: () => ({
     enabled: true,
     config: {},
@@ -107,6 +167,18 @@ jest.unstable_mockModule('@services/selfImprove/selfHealingV2.js', () => ({
       reasoning: {},
       final: {}
     }
+  }),
+  noteTrinityMitigationOutcome: () => undefined,
+  recordTrinityStageFailure: () => null,
+  rollbackTrinitySelfHealingMitigation: () => ({
+    applied: false,
+    rolledBack: false,
+    stage: 'reasoning',
+    action: null,
+    reason: 'mocked',
+    activeAction: null,
+    verified: false,
+    expiresAtMs: null
   })
 }));
 
@@ -131,17 +203,22 @@ describe('/status/safety/self-heal', () => {
       expect.objectContaining({
         status: 'ok',
         active: true,
-        loopRunning: true,
-        lastDiagnosis: 'pipeline timeout cluster detected',
-        lastAction: 'activateTrinityMitigation:reasoning:enable_degraded_mode',
-        activeMitigation: 'reasoning:enable_degraded_mode',
-        degradedModeReason: 'arcanos_core_pipeline_timeout_static_fallback',
-        recentTimeoutCounts: expect.objectContaining({
-          total: 4,
-          coreRoute: 3
-        }),
-        lastVerificationResult: expect.objectContaining({
-          outcome: 'improved'
+        enabled: true,
+        actionTaken: 'activateTrinityMitigation:reasoning:enable_degraded_mode',
+        healedComponent: 'trinity.reasoning',
+        loop: expect.objectContaining({
+          loopRunning: true,
+          lastDiagnosis: 'pipeline timeout cluster detected',
+          lastAction: 'activateTrinityMitigation:reasoning:enable_degraded_mode',
+          activeMitigation: 'reasoning:enable_degraded_mode',
+          degradedModeReason: 'arcanos_core_pipeline_timeout_static_fallback',
+          recentTimeoutCounts: expect.objectContaining({
+            total: 4,
+            coreRoute: 3
+          }),
+          lastVerificationResult: expect.objectContaining({
+            outcome: 'improved'
+          })
         }),
         trinity: expect.objectContaining({
           enabled: true

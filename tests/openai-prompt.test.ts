@@ -214,7 +214,7 @@ describe('handlePrompt', () => {
         warn: jest.fn()
       }
     };
-    const res: any = { json: jest.fn() };
+    const res: any = { json: jest.fn(), setHeader: jest.fn() };
 
     await handlePrompt(req, res);
 
@@ -229,6 +229,10 @@ describe('handlePrompt', () => {
       mitigationReason: 'latency spike cluster detected',
       fallbackMode: 'mock'
     }));
+    expect(res.setHeader).toHaveBeenCalledWith(
+      'x-ai-degraded-reason',
+      'latency spike cluster detected'
+    );
     expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
       result: 'degraded output',
       model: 'ft:fallback-model',
