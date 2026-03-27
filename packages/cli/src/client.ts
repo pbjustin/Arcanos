@@ -4,7 +4,7 @@ import {
   createProtocolRequest,
   type ProtocolCaller,
   type ToolInvokeResponseData
-} from "../../protocol/dist/src/index.js";
+} from "@arcanos/protocol";
 
 import { dispatchProtocolRequest, type ProtocolTransportName } from "./transport.js";
 

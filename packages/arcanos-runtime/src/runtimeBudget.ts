@@ -1,12 +1,12 @@
 import { RuntimeBudgetExceededError } from "./runtimeErrors.js";
 
-function parseEnvInteger(rawValue: string | undefined, fallbackValue: number): number {
+function parseEnvInteger(rawValue: string | undefined, fallbackValue: number, allowZero = false): number {
   if (typeof rawValue !== 'string' || rawValue.trim().length === 0) {
     return fallbackValue;
   }
 
   const parsedValue = Number.parseInt(rawValue, 10);
-  return Number.isFinite(parsedValue) && parsedValue > 0
+  return Number.isFinite(parsedValue) && (allowZero ? parsedValue >= 0 : parsedValue > 0)
     ? Math.trunc(parsedValue)
     : fallbackValue;
 }
@@ -33,8 +33,18 @@ function parseEnvBoolean(rawValue: string | undefined, fallbackValue: boolean): 
 }
 
 export const WATCHDOG_LIMIT_MS = parseEnvInteger(process.env.WATCHDOG_LIMIT_MS, 120_000);
-export const SAFETY_BUFFER_MS = parseEnvInteger(process.env.SAFETY_BUFFER_MS, 2_000);
+export const SAFETY_BUFFER_MS = parseEnvInteger(process.env.SAFETY_BUFFER_MS, 2_000, true);
 export const BUDGET_DISABLED = parseEnvBoolean(process.env.BUDGET_DISABLED, false);
+
+function normalizePositiveInteger(value: number, fallback: number): number {
+  const truncatedValue = Math.trunc(value);
+
+  if (!Number.isFinite(truncatedValue) || truncatedValue <= 0) {
+    return fallback;
+  }
+
+  return truncatedValue;
+}
 
 export interface RuntimeBudget {
   readonly startedAt: number;
@@ -44,13 +54,22 @@ export interface RuntimeBudget {
 }
 
 export function createRuntimeBudget(): RuntimeBudget {
+  return createRuntimeBudgetWithLimit(WATCHDOG_LIMIT_MS);
+}
+
+export function createRuntimeBudgetWithLimit(
+  watchdogLimitMs: number,
+  safetyBufferMs: number = SAFETY_BUFFER_MS
+): RuntimeBudget {
   const startedAt = Date.now();
+  const normalizedWatchdogLimitMs = normalizePositiveInteger(watchdogLimitMs, WATCHDOG_LIMIT_MS);
+  const normalizedSafetyBufferMs = Math.max(0, Math.trunc(safetyBufferMs));
 
   return {
     startedAt,
-    hardDeadline: startedAt + WATCHDOG_LIMIT_MS,
-    watchdogLimit: WATCHDOG_LIMIT_MS,
-    safetyBuffer: SAFETY_BUFFER_MS,
+    hardDeadline: startedAt + normalizedWatchdogLimitMs,
+    watchdogLimit: normalizedWatchdogLimitMs,
+    safetyBuffer: normalizedSafetyBufferMs,
   };
 }
 

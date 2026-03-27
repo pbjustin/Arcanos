@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-02-28T05:46:06.473Z",
+  "generatedAt": "2026-03-27T18:45:39.143Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -14,13 +14,13 @@
           "relativePath": "arcanos-ai-runtime/src/ai/openaiClient.ts"
         },
         {
-          "relativePath": "arcanos-ai-runtime/src/auth/apiKey.ts"
-        },
-        {
           "relativePath": "arcanos-ai-runtime/src/config.ts"
         },
         {
           "relativePath": "arcanos-ai-runtime/src/config/env.ts"
+        },
+        {
+          "relativePath": "arcanos-ai-runtime/src/http/errors.ts"
         },
         {
           "relativePath": "arcanos-ai-runtime/src/jobs/jobStore.ts"
@@ -64,13 +64,132 @@
       ]
     },
     {
+      "scope": "packages",
+      "files": [
+        {
+          "relativePath": "packages/arcanos-openai/src/client.ts"
+        },
+        {
+          "relativePath": "packages/arcanos-openai/src/index.ts"
+        },
+        {
+          "relativePath": "packages/arcanos-openai/src/resilience.ts"
+        },
+        {
+          "relativePath": "packages/arcanos-openai/src/responseParsing.ts"
+        },
+        {
+          "relativePath": "packages/arcanos-openai/src/retry.ts"
+        },
+        {
+          "relativePath": "packages/arcanos-openai/src/runGPT5.ts"
+        },
+        {
+          "relativePath": "packages/arcanos-openai/src/structuredReasoning.ts"
+        },
+        {
+          "relativePath": "packages/arcanos-openai/src/unifiedClient.ts"
+        },
+        {
+          "relativePath": "packages/arcanos-runtime/src/index.ts"
+        },
+        {
+          "relativePath": "packages/arcanos-runtime/src/redaction.ts"
+        },
+        {
+          "relativePath": "packages/arcanos-runtime/src/requestAbort.ts"
+        },
+        {
+          "relativePath": "packages/arcanos-runtime/src/runtimeBudget.ts"
+        },
+        {
+          "relativePath": "packages/arcanos-runtime/src/runtimeErrors.ts"
+        },
+        {
+          "relativePath": "packages/cli/__tests__/cli.test.ts"
+        },
+        {
+          "relativePath": "packages/cli/__tests__/gpt-client.test.ts"
+        },
+        {
+          "relativePath": "packages/cli/src/cli.ts"
+        },
+        {
+          "relativePath": "packages/cli/src/client.ts"
+        },
+        {
+          "relativePath": "packages/cli/src/client/backend.ts"
+        },
+        {
+          "relativePath": "packages/cli/src/client/protocol.ts"
+        },
+        {
+          "relativePath": "packages/cli/src/commands/ask.ts"
+        },
+        {
+          "relativePath": "packages/cli/src/commands/doctor.ts"
+        },
+        {
+          "relativePath": "packages/cli/src/commands/exec.ts"
+        },
+        {
+          "relativePath": "packages/cli/src/commands/parse.ts"
+        },
+        {
+          "relativePath": "packages/cli/src/commands/plan.ts"
+        },
+        {
+          "relativePath": "packages/cli/src/commands/status.ts"
+        },
+        {
+          "relativePath": "packages/cli/src/commands/types.ts"
+        },
+        {
+          "relativePath": "packages/cli/src/dispatcher.ts"
+        },
+        {
+          "relativePath": "packages/cli/src/index.ts"
+        },
+        {
+          "relativePath": "packages/cli/src/protocolCli.ts"
+        },
+        {
+          "relativePath": "packages/cli/src/transport.ts"
+        },
+        {
+          "relativePath": "packages/protocol/src/commands.ts"
+        },
+        {
+          "relativePath": "packages/protocol/src/constants.ts"
+        },
+        {
+          "relativePath": "packages/protocol/src/index.ts"
+        },
+        {
+          "relativePath": "packages/protocol/src/schemaCatalog.ts"
+        },
+        {
+          "relativePath": "packages/protocol/src/types.ts"
+        },
+        {
+          "relativePath": "packages/protocol/src/validation.ts"
+        }
+      ]
+    },
+    {
       "scope": "scripts",
       "files": [
         {
           "relativePath": "scripts/assistants-sync.ts"
         },
         {
+          "relativePath": "scripts/build-openai-finetune-dataset.ts"
+        },
+        {
           "relativePath": "scripts/check-boundaries.ts"
+        },
+        {
+          "relativePath": "scripts/compare-finetune-checkpoints.ts"
         },
         {
           "relativePath": "scripts/db-init.ts"
@@ -80,6 +199,12 @@
     {
       "scope": "src",
       "files": [
+        {
+          "relativePath": "src/agents/agentManager.ts"
+        },
+        {
+          "relativePath": "src/agents/registry.ts"
+        },
         {
           "relativePath": "src/analytics/clearAutoTuner.ts"
         },
@@ -105,13 +230,31 @@
           "relativePath": "src/config/env.ts"
         },
         {
+          "relativePath": "src/config/environmentFingerprints.ts"
+        },
+        {
           "relativePath": "src/config/index.ts"
         },
         {
           "relativePath": "src/config/integrityManifest.ts"
         },
         {
+          "relativePath": "src/config/openai.ts"
+        },
+        {
+          "relativePath": "src/config/openaiStore.ts"
+        },
+        {
+          "relativePath": "src/config/prompts.ts"
+        },
+        {
+          "relativePath": "src/config/queryFinetune.ts"
+        },
+        {
           "relativePath": "src/config/unifiedConfig.ts"
+        },
+        {
+          "relativePath": "src/config/workerConfig.ts"
         },
         {
           "relativePath": "src/controllers/dispatchControllerV9.ts"
@@ -165,6 +308,12 @@
           "relativePath": "src/core/db/query.ts"
         },
         {
+          "relativePath": "src/core/db/repositories/dagArtifactRepository.ts"
+        },
+        {
+          "relativePath": "src/core/db/repositories/dagRunRepository.ts"
+        },
+        {
           "relativePath": "src/core/db/repositories/executionLogRepository.ts"
         },
         {
@@ -181,6 +330,12 @@
         },
         {
           "relativePath": "src/core/db/repositories/selfReflectionRepository.ts"
+        },
+        {
+          "relativePath": "src/core/db/repositories/sessionRepository.ts"
+        },
+        {
+          "relativePath": "src/core/db/repositories/workerRuntimeRepository.ts"
         },
         {
           "relativePath": "src/core/db/schema.ts"
@@ -231,10 +386,19 @@
           "relativePath": "src/core/logic/trinityConstants.ts"
         },
         {
+          "relativePath": "src/core/logic/trinityDirectAnswerMode.ts"
+        },
+        {
           "relativePath": "src/core/logic/trinityGuards.ts"
         },
         {
           "relativePath": "src/core/logic/trinityHelpers.ts"
+        },
+        {
+          "relativePath": "src/core/logic/trinityHonesty.ts"
+        },
+        {
+          "relativePath": "src/core/logic/trinityJudgedFeedback.ts"
         },
         {
           "relativePath": "src/core/logic/trinitySchema.ts"
@@ -270,13 +434,43 @@
           "relativePath": "src/core/types/cognitiveDomain.ts"
         },
         {
+          "relativePath": "src/dag/artifactStore.ts"
+        },
+        {
+          "relativePath": "src/dag/dagGraph.ts"
+        },
+        {
+          "relativePath": "src/dag/dagNode.ts"
+        },
+        {
+          "relativePath": "src/dag/orchestrator.ts"
+        },
+        {
+          "relativePath": "src/dag/templates.ts"
+        },
+        {
+          "relativePath": "src/db.ts"
+        },
+        {
           "relativePath": "src/db/client.ts"
+        },
+        {
+          "relativePath": "src/db/index.ts"
+        },
+        {
+          "relativePath": "src/db/schema.ts"
         },
         {
           "relativePath": "src/dispatcher/detectCognitiveDomain.ts"
         },
         {
           "relativePath": "src/dispatcher/gptDomainClassifier.ts"
+        },
+        {
+          "relativePath": "src/jobs/jobQueue.ts"
+        },
+        {
+          "relativePath": "src/jobs/jobSchema.ts"
         },
         {
           "relativePath": "src/lib/errors.ts"
@@ -300,13 +494,73 @@
           "relativePath": "src/lib/errors/reusable.ts"
         },
         {
+          "relativePath": "src/lib/requestId.ts"
+        },
+        {
+          "relativePath": "src/lib/runResponse.ts"
+        },
+        {
           "relativePath": "src/lib/tokenStore.ts"
         },
         {
-          "relativePath": "src/middleware/operatorAuth.ts"
+          "relativePath": "src/mcp/auth.ts"
+        },
+        {
+          "relativePath": "src/mcp/confirm.ts"
+        },
+        {
+          "relativePath": "src/mcp/context.ts"
+        },
+        {
+          "relativePath": "src/mcp/errors.ts"
+        },
+        {
+          "relativePath": "src/mcp/log.ts"
+        },
+        {
+          "relativePath": "src/mcp/mcp-stdio.ts"
+        },
+        {
+          "relativePath": "src/mcp/modulesAllowlist.ts"
+        },
+        {
+          "relativePath": "src/mcp/registry.ts"
+        },
+        {
+          "relativePath": "src/mcp/server.ts"
+        },
+        {
+          "relativePath": "src/mcp/server/dagTools.ts"
+        },
+        {
+          "relativePath": "src/mcp/server/helpers.ts"
+        },
+        {
+          "relativePath": "src/mcp/server/index.ts"
+        },
+        {
+          "relativePath": "src/memory/store.ts"
+        },
+        {
+          "relativePath": "src/middleware/capabilityGate.ts"
+        },
+        {
+          "relativePath": "src/middleware/confirmGate.ts"
+        },
+        {
+          "relativePath": "src/middleware/memoryConsistencyGate.ts"
         },
         {
           "relativePath": "src/middleware/requestContext.ts"
+        },
+        {
+          "relativePath": "src/middleware/requestId.ts"
+        },
+        {
+          "relativePath": "src/middleware/unsafeExecutionGate.ts"
+        },
+        {
+          "relativePath": "src/modules/arcanos-gaming.ts"
         },
         {
           "relativePath": "src/platform/index.ts"
@@ -330,7 +584,16 @@
           "relativePath": "src/platform/logging/gptLogger.ts"
         },
         {
+          "relativePath": "src/platform/logging/index.ts"
+        },
+        {
+          "relativePath": "src/platform/logging/logger.ts"
+        },
+        {
           "relativePath": "src/platform/logging/openaiLogger.ts"
+        },
+        {
+          "relativePath": "src/platform/logging/specialized.ts"
         },
         {
           "relativePath": "src/platform/logging/structuredLogging.ts"
@@ -345,6 +608,9 @@
           "relativePath": "src/platform/logging/unifiedTelemetry.ts"
         },
         {
+          "relativePath": "src/platform/observability/appMetrics.ts"
+        },
+        {
           "relativePath": "src/platform/resilience/cache.ts"
         },
         {
@@ -355,6 +621,12 @@
         },
         {
           "relativePath": "src/platform/resilience/idleManager.ts"
+        },
+        {
+          "relativePath": "src/platform/resilience/runtimeBudget.ts"
+        },
+        {
+          "relativePath": "src/platform/resilience/runtimeErrors.ts"
         },
         {
           "relativePath": "src/platform/resilience/serviceUnavailable.ts"
@@ -480,6 +752,9 @@
           "relativePath": "src/platform/runtime/reasoningTemplates.ts"
         },
         {
+          "relativePath": "src/platform/runtime/redis.ts"
+        },
+        {
           "relativePath": "src/platform/runtime/researchPrompts.ts"
         },
         {
@@ -525,6 +800,15 @@
           "relativePath": "src/platform/runtime/workerPaths.ts"
         },
         {
+          "relativePath": "src/routes/_core/gptDispatch.ts"
+        },
+        {
+          "relativePath": "src/routes/_core/promptShortcutResponse.ts"
+        },
+        {
+          "relativePath": "src/routes/_core/researchRoute.ts"
+        },
+        {
           "relativePath": "src/routes/afol.ts"
         },
         {
@@ -534,10 +818,13 @@
           "relativePath": "src/routes/ai-endpoints.ts"
         },
         {
-          "relativePath": "src/routes/api-arcanos.ts"
+          "relativePath": "src/routes/api-agent.ts"
         },
         {
-          "relativePath": "src/routes/api-ask.ts"
+          "relativePath": "src/routes/api-arcanos-verification.ts"
+        },
+        {
+          "relativePath": "src/routes/api-arcanos.ts"
         },
         {
           "relativePath": "src/routes/api-assistants.ts"
@@ -552,9 +839,6 @@
           "relativePath": "src/routes/api-daemon.ts"
         },
         {
-          "relativePath": "src/routes/api-daemon/auth.ts"
-        },
-        {
           "relativePath": "src/routes/api-daemon/context.ts"
         },
         {
@@ -565,6 +849,12 @@
         },
         {
           "relativePath": "src/routes/api-reusable-code.ts"
+        },
+        {
+          "relativePath": "src/routes/api-save-conversation.ts"
+        },
+        {
+          "relativePath": "src/routes/api-session-system.ts"
         },
         {
           "relativePath": "src/routes/api-sim.ts"
@@ -585,22 +875,40 @@
           "relativePath": "src/routes/arcanos.ts"
         },
         {
-          "relativePath": "src/routes/arcanosQuery.ts"
-        },
-        {
           "relativePath": "src/routes/ask.ts"
         },
         {
           "relativePath": "src/routes/ask/daemonTools.ts"
         },
         {
+          "relativePath": "src/routes/ask/dagTools.ts"
+        },
+        {
+          "relativePath": "src/routes/ask/helpers.ts"
+        },
+        {
+          "relativePath": "src/routes/ask/index.ts"
+        },
+        {
           "relativePath": "src/routes/ask/intent_store.ts"
+        },
+        {
+          "relativePath": "src/routes/ask/repoTools.ts"
+        },
+        {
+          "relativePath": "src/routes/ask/toolLoop.ts"
+        },
+        {
+          "relativePath": "src/routes/ask/toolRuntime.ts"
         },
         {
           "relativePath": "src/routes/ask/types.ts"
         },
         {
           "relativePath": "src/routes/ask/validation.ts"
+        },
+        {
+          "relativePath": "src/routes/ask/workerTools.ts"
         },
         {
           "relativePath": "src/routes/backstage.ts"
@@ -642,6 +950,15 @@
           "relativePath": "src/routes/image.ts"
         },
         {
+          "relativePath": "src/routes/introspection.ts"
+        },
+        {
+          "relativePath": "src/routes/jobs.ts"
+        },
+        {
+          "relativePath": "src/routes/mcp.ts"
+        },
+        {
           "relativePath": "src/routes/modules.ts"
         },
         {
@@ -660,6 +977,9 @@
           "relativePath": "src/routes/pr-analysis.ts"
         },
         {
+          "relativePath": "src/routes/queryFinetune.ts"
+        },
+        {
           "relativePath": "src/routes/rag.ts"
         },
         {
@@ -675,9 +995,6 @@
           "relativePath": "src/routes/safety.ts"
         },
         {
-          "relativePath": "src/routes/sdk.ts"
-        },
-        {
           "relativePath": "src/routes/sdk/diagnostics.ts"
         },
         {
@@ -690,10 +1007,16 @@
           "relativePath": "src/routes/sdk/research.ts"
         },
         {
+          "relativePath": "src/routes/sdk/shared.ts"
+        },
+        {
           "relativePath": "src/routes/sdk/workers.ts"
         },
         {
-          "relativePath": "src/routes/sessionRoutes.ts"
+          "relativePath": "src/routes/self-heal.ts"
+        },
+        {
+          "relativePath": "src/routes/self-improve.ts"
         },
         {
           "relativePath": "src/routes/siri.ts"
@@ -702,16 +1025,16 @@
           "relativePath": "src/routes/status.ts"
         },
         {
+          "relativePath": "src/routes/trinity.ts"
+        },
+        {
+          "relativePath": "src/routes/web-search.ts"
+        },
+        {
+          "relativePath": "src/routes/worker-helper.ts"
+        },
+        {
           "relativePath": "src/routes/workers.ts"
-        },
-        {
-          "relativePath": "src/runtime/openaiClient.ts"
-        },
-        {
-          "relativePath": "src/runtime/runtimeBudget.ts"
-        },
-        {
-          "relativePath": "src/runtime/runtimeErrors.ts"
         },
         {
           "relativePath": "src/server.ts"
@@ -720,13 +1043,64 @@
           "relativePath": "src/server/bootstrap.ts"
         },
         {
+          "relativePath": "src/services/agentCapabilityRegistry.ts"
+        },
+        {
+          "relativePath": "src/services/agentExecutionSchemas.ts"
+        },
+        {
+          "relativePath": "src/services/agentExecutionService.ts"
+        },
+        {
+          "relativePath": "src/services/agentExecutionTraceService.ts"
+        },
+        {
+          "relativePath": "src/services/agentExecutionTypes.ts"
+        },
+        {
+          "relativePath": "src/services/agentGoalPlanner.ts"
+        },
+        {
+          "relativePath": "src/services/agentPlanningErrors.ts"
+        },
+        {
           "relativePath": "src/services/ai-reflections.ts"
+        },
+        {
+          "relativePath": "src/services/arcanos-audit.ts"
+        },
+        {
+          "relativePath": "src/services/arcanos-build.ts"
+        },
+        {
+          "relativePath": "src/services/arcanos-core.ts"
         },
         {
           "relativePath": "src/services/arcanos-gaming.ts"
         },
         {
+          "relativePath": "src/services/arcanos-guide.ts"
+        },
+        {
+          "relativePath": "src/services/arcanos-research.ts"
+        },
+        {
+          "relativePath": "src/services/arcanos-sim.ts"
+        },
+        {
+          "relativePath": "src/services/arcanos-tracker.ts"
+        },
+        {
           "relativePath": "src/services/arcanos-tutor.ts"
+        },
+        {
+          "relativePath": "src/services/arcanos-write.ts"
+        },
+        {
+          "relativePath": "src/services/arcanosDagRunService.ts"
+        },
+        {
+          "relativePath": "src/services/arcanosMcp.ts"
         },
         {
           "relativePath": "src/services/arcanosPipeline.ts"
@@ -736,6 +1110,9 @@
         },
         {
           "relativePath": "src/services/arcanosQuery.ts"
+        },
+        {
+          "relativePath": "src/services/arcanosTrinityModule.ts"
         },
         {
           "relativePath": "src/services/audit.ts"
@@ -753,7 +1130,37 @@
           "relativePath": "src/services/backstage-booker.ts"
         },
         {
+          "relativePath": "src/services/backstageBookerRouteShortcut.ts"
+        },
+        {
           "relativePath": "src/services/bridgeSocket.ts"
+        },
+        {
+          "relativePath": "src/services/cef/boundaryTrace.ts"
+        },
+        {
+          "relativePath": "src/services/cef/commandErrors.ts"
+        },
+        {
+          "relativePath": "src/services/cef/handlerRuntime.ts"
+        },
+        {
+          "relativePath": "src/services/cef/handlers/ai.handler.ts"
+        },
+        {
+          "relativePath": "src/services/cef/handlers/auditSafe.handler.ts"
+        },
+        {
+          "relativePath": "src/services/cef/handlers/index.ts"
+        },
+        {
+          "relativePath": "src/services/cef/schemaDefinitions.ts"
+        },
+        {
+          "relativePath": "src/services/cef/schemaRegistry.ts"
+        },
+        {
+          "relativePath": "src/services/cef/types.ts"
         },
         {
           "relativePath": "src/services/clear2.ts"
@@ -780,13 +1187,28 @@
           "relativePath": "src/services/datasetHarvester.ts"
         },
         {
+          "relativePath": "src/services/directAnswerMode.ts"
+        },
+        {
           "relativePath": "src/services/dispatchControllerV9.ts"
+        },
+        {
+          "relativePath": "src/services/exactLiteralPromptShortcut.ts"
         },
         {
           "relativePath": "src/services/gaming.ts"
         },
         {
+          "relativePath": "src/services/gamingModes.ts"
+        },
+        {
           "relativePath": "src/services/git.ts"
+        },
+        {
+          "relativePath": "src/services/governance/evidencePack.ts"
+        },
+        {
+          "relativePath": "src/services/governance/loopContract.ts"
         },
         {
           "relativePath": "src/services/gpt4Shadow.ts"
@@ -802,6 +1224,12 @@
         },
         {
           "relativePath": "src/services/idleStateService.ts"
+        },
+        {
+          "relativePath": "src/services/incidentResponse/killSwitch.ts"
+        },
+        {
+          "relativePath": "src/services/judgedResponseFeedback.ts"
         },
         {
           "relativePath": "src/services/memory.ts"
@@ -846,13 +1274,37 @@
           "relativePath": "src/services/memoryDigest.ts"
         },
         {
+          "relativePath": "src/services/memoryIdentifierSemantics.ts"
+        },
+        {
+          "relativePath": "src/services/memoryInspectionGuard.ts"
+        },
+        {
+          "relativePath": "src/services/memoryListing.ts"
+        },
+        {
           "relativePath": "src/services/memoryState.ts"
+        },
+        {
+          "relativePath": "src/services/memoryTablePage.ts"
         },
         {
           "relativePath": "src/services/midLayerTranslator.ts"
         },
         {
+          "relativePath": "src/services/moduleConversationPersistence.ts"
+        },
+        {
           "relativePath": "src/services/moduleLoader.ts"
+        },
+        {
+          "relativePath": "src/services/naturalLanguageConversationSessionStore.ts"
+        },
+        {
+          "relativePath": "src/services/naturalLanguageMemory.ts"
+        },
+        {
+          "relativePath": "src/services/naturalLanguageMemoryRouteShortcut.ts"
         },
         {
           "relativePath": "src/services/openai-assistants.ts"
@@ -864,7 +1316,22 @@
           "relativePath": "src/services/openai/chatFallbacks.ts"
         },
         {
-          "relativePath": "src/services/openai/chatFlow.ts"
+          "relativePath": "src/services/openai/chatFlow/execute.ts"
+        },
+        {
+          "relativePath": "src/services/openai/chatFlow/index.ts"
+        },
+        {
+          "relativePath": "src/services/openai/chatFlow/parse.ts"
+        },
+        {
+          "relativePath": "src/services/openai/chatFlow/prepare.ts"
+        },
+        {
+          "relativePath": "src/services/openai/chatFlow/trace.ts"
+        },
+        {
+          "relativePath": "src/services/openai/chatFlow/utils.ts"
         },
         {
           "relativePath": "src/services/openai/clientBridge.ts"
@@ -882,6 +1349,9 @@
           "relativePath": "src/services/openai/embeddings.ts"
         },
         {
+          "relativePath": "src/services/openai/functionTools.ts"
+        },
+        {
           "relativePath": "src/services/openai/imageGeneration.ts"
         },
         {
@@ -891,7 +1361,25 @@
           "relativePath": "src/services/openai/mock.ts"
         },
         {
-          "relativePath": "src/services/openai/requestBuilders.ts"
+          "relativePath": "src/services/openai/promptRouteMitigation.ts"
+        },
+        {
+          "relativePath": "src/services/openai/requestBuilders/build.ts"
+        },
+        {
+          "relativePath": "src/services/openai/requestBuilders/convert.ts"
+        },
+        {
+          "relativePath": "src/services/openai/requestBuilders/index.ts"
+        },
+        {
+          "relativePath": "src/services/openai/requestBuilders/normalize.ts"
+        },
+        {
+          "relativePath": "src/services/openai/requestBuilders/types.ts"
+        },
+        {
+          "relativePath": "src/services/openai/requestBuilders/validate.ts"
         },
         {
           "relativePath": "src/services/openai/requestTransforms.ts"
@@ -903,10 +1391,10 @@
           "relativePath": "src/services/openai/serviceHealth.ts"
         },
         {
-          "relativePath": "src/services/openai/types.ts"
+          "relativePath": "src/services/openai/structuredReasoning.ts"
         },
         {
-          "relativePath": "src/services/openai/unifiedClient.ts"
+          "relativePath": "src/services/openai/types.ts"
         },
         {
           "relativePath": "src/services/openaiRuntime.ts"
@@ -969,7 +1457,19 @@
           "relativePath": "src/services/prAssistant/utils.ts"
         },
         {
+          "relativePath": "src/services/privacy/piiScrubber.ts"
+        },
+        {
+          "relativePath": "src/services/promptRouteShortcuts.ts"
+        },
+        {
+          "relativePath": "src/services/queuedAskCompletionService.ts"
+        },
+        {
           "relativePath": "src/services/railwayClient.ts"
+        },
+        {
+          "relativePath": "src/services/repoImplementationEvidence.ts"
         },
         {
           "relativePath": "src/services/research.ts"
@@ -982,6 +1482,12 @@
         },
         {
           "relativePath": "src/services/routeMemorySnapshotStore.ts"
+        },
+        {
+          "relativePath": "src/services/runtimeDiagnosticsService.ts"
+        },
+        {
+          "relativePath": "src/services/runtimeRouteTableService.ts"
         },
         {
           "relativePath": "src/services/safety/aiOutputBoundary.ts"
@@ -1006,6 +1512,21 @@
         },
         {
           "relativePath": "src/services/safety/runtimeState.ts"
+        },
+        {
+          "relativePath": "src/services/safety/runtimeState/defaults.ts"
+        },
+        {
+          "relativePath": "src/services/safety/runtimeState/index.ts"
+        },
+        {
+          "relativePath": "src/services/safety/runtimeState/normalize.ts"
+        },
+        {
+          "relativePath": "src/services/safety/runtimeState/payloads.ts"
+        },
+        {
+          "relativePath": "src/services/safety/runtimeState/types.ts"
         },
         {
           "relativePath": "src/services/safety/v2/auditLogger.ts"
@@ -1035,6 +1556,9 @@
           "relativePath": "src/services/safety/v2/trustVerify.ts"
         },
         {
+          "relativePath": "src/services/saveConversationPersistence.ts"
+        },
+        {
           "relativePath": "src/services/scholarlyFetcher.ts"
         },
         {
@@ -1044,7 +1568,49 @@
           "relativePath": "src/services/securityCompliance.ts"
         },
         {
+          "relativePath": "src/services/selfImprove/autonomy.ts"
+        },
+        {
+          "relativePath": "src/services/selfImprove/controller.ts"
+        },
+        {
+          "relativePath": "src/services/selfImprove/controlLoop.ts"
+        },
+        {
+          "relativePath": "src/services/selfImprove/driftWatcher.ts"
+        },
+        {
+          "relativePath": "src/services/selfImprove/patchProposal.ts"
+        },
+        {
+          "relativePath": "src/services/selfImprove/predictiveHealingService.ts"
+        },
+        {
+          "relativePath": "src/services/selfImprove/repoContext.ts"
+        },
+        {
+          "relativePath": "src/services/selfImprove/runtimeConfig.ts"
+        },
+        {
+          "relativePath": "src/services/selfImprove/selfHealingLoop.ts"
+        },
+        {
+          "relativePath": "src/services/selfImprove/selfHealingV2.ts"
+        },
+        {
+          "relativePath": "src/services/selfImprove/selfHealTelemetry.ts"
+        },
+        {
+          "relativePath": "src/services/selfImprove/signals.ts"
+        },
+        {
           "relativePath": "src/services/selfTestPipeline.ts"
+        },
+        {
+          "relativePath": "src/services/sessionApiSchemas.ts"
+        },
+        {
+          "relativePath": "src/services/sessionCatalogService.ts"
         },
         {
           "relativePath": "src/services/sessionMemoryRepository.ts"
@@ -1053,7 +1619,16 @@
           "relativePath": "src/services/sessionMemoryService.ts"
         },
         {
+          "relativePath": "src/services/sessionReplayStateService.ts"
+        },
+        {
           "relativePath": "src/services/sessionResolver.ts"
+        },
+        {
+          "relativePath": "src/services/sessionStorage.ts"
+        },
+        {
+          "relativePath": "src/services/sessionSystemDiagnosticsService.ts"
         },
         {
           "relativePath": "src/services/shadowControl.ts"
@@ -1062,7 +1637,34 @@
           "relativePath": "src/services/stateManager.ts"
         },
         {
+          "relativePath": "src/services/systemState.ts"
+        },
+        {
+          "relativePath": "src/services/telemetry/selfImproveMetrics.ts"
+        },
+        {
+          "relativePath": "src/services/trinityStatusService.ts"
+        },
+        {
           "relativePath": "src/services/webRag.ts"
+        },
+        {
+          "relativePath": "src/services/webSearchAgent.ts"
+        },
+        {
+          "relativePath": "src/services/workerAutonomyService.ts"
+        },
+        {
+          "relativePath": "src/services/workerControlService.ts"
+        },
+        {
+          "relativePath": "src/shared/ask/asyncAskJob.ts"
+        },
+        {
+          "relativePath": "src/shared/ask/trinityRequestOptions.ts"
+        },
+        {
+          "relativePath": "src/shared/ask/trinityResponseSerializer.ts"
         },
         {
           "relativePath": "src/shared/constants.ts"
@@ -1081,6 +1683,45 @@
         },
         {
           "relativePath": "src/shared/hashUtils.ts"
+        },
+        {
+          "relativePath": "src/shared/http/aiDegradedHeaders.ts"
+        },
+        {
+          "relativePath": "src/shared/http/asyncHandler.ts"
+        },
+        {
+          "relativePath": "src/shared/http/clientResponseGuards.ts"
+        },
+        {
+          "relativePath": "src/shared/http/diagnosticRequest.ts"
+        },
+        {
+          "relativePath": "src/shared/http/errors.ts"
+        },
+        {
+          "relativePath": "src/shared/http/gptRouteHeaders.ts"
+        },
+        {
+          "relativePath": "src/shared/http/gptRouteTimeout.ts"
+        },
+        {
+          "relativePath": "src/shared/http/index.ts"
+        },
+        {
+          "relativePath": "src/shared/http/middleware.ts"
+        },
+        {
+          "relativePath": "src/shared/http/normalizeRequestBody.ts"
+        },
+        {
+          "relativePath": "src/shared/http/types.ts"
+        },
+        {
+          "relativePath": "src/shared/http/validation.ts"
+        },
+        {
+          "relativePath": "src/shared/http/workerHealRequest.ts"
         },
         {
           "relativePath": "src/shared/idGenerator.ts"
@@ -1104,13 +1745,28 @@
           "relativePath": "src/shared/promptUtils.ts"
         },
         {
+          "relativePath": "src/shared/redaction.ts"
+        },
+        {
           "relativePath": "src/shared/requestPathSanitizer.ts"
+        },
+        {
+          "relativePath": "src/shared/sleep.ts"
+        },
+        {
+          "relativePath": "src/shared/text/countWords.ts"
         },
         {
           "relativePath": "src/shared/tokenParameterHelper.ts"
         },
         {
+          "relativePath": "src/shared/typeGuards.ts"
+        },
+        {
           "relativePath": "src/shared/types/actionPlan.ts"
+        },
+        {
+          "relativePath": "src/shared/types/arcanos-verification-contract.types.ts"
         },
         {
           "relativePath": "src/shared/types/cognitiveDomain.ts"
@@ -1150,6 +1806,12 @@
         },
         {
           "relativePath": "src/stores/agentRegistry.ts"
+        },
+        {
+          "relativePath": "src/training/openaiFineTuneDataset.ts"
+        },
+        {
+          "relativePath": "src/transport/http/aiRouteTelemetry.ts"
         },
         {
           "relativePath": "src/transport/http/asyncHandler.ts"
@@ -1215,7 +1877,34 @@
           "relativePath": "src/transport/http/middleware/memoryConsistencyGate.ts"
         },
         {
-          "relativePath": "src/transport/http/middleware/operatorAuth.ts"
+          "relativePath": "src/transport/http/middleware/memoryConsistencyGate/constants.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/memoryConsistencyGate/exempt.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/memoryConsistencyGate/failsafe.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/memoryConsistencyGate/headers.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/memoryConsistencyGate/index.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/memoryConsistencyGate/intent.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/memoryConsistencyGate/payloads.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/memoryConsistencyGate/requestState.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/memoryConsistencyGate/types.ts"
+        },
+        {
+          "relativePath": "src/transport/http/middleware/memoryConsistencyGate/utils.ts"
         },
         {
           "relativePath": "src/transport/http/middleware/unsafeExecutionGate.ts"
@@ -1245,73 +1934,28 @@
           "relativePath": "src/transport/index.ts"
         },
         {
-          "relativePath": "src/types/actionPlan.ts"
+          "relativePath": "src/trinity/trinity.ts"
         },
         {
-          "relativePath": "src/types/cognitiveDomain.ts"
+          "relativePath": "src/utils/environmentSecurity.ts"
         },
         {
-          "relativePath": "src/upload/app.ts"
+          "relativePath": "src/utils/environmentValidation.ts"
         },
         {
-          "relativePath": "src/upload/config/index.ts"
+          "relativePath": "src/utils/http.ts"
         },
         {
-          "relativePath": "src/upload/middleware/errorHandler.ts"
+          "relativePath": "src/utils/idleManager.ts"
         },
         {
-          "relativePath": "src/upload/middleware/rateLimiter.ts"
+          "relativePath": "src/utils/logger.ts"
         },
         {
-          "relativePath": "src/upload/routes/abstractUpload.ts"
+          "relativePath": "src/utils/metrics.ts"
         },
         {
-          "relativePath": "src/upload/routes/analyze.ts"
-        },
-        {
-          "relativePath": "src/upload/routes/health.ts"
-        },
-        {
-          "relativePath": "src/upload/routes/upload.ts"
-        },
-        {
-          "relativePath": "src/upload/server.ts"
-        },
-        {
-          "relativePath": "src/upload/services/abstractionService.ts"
-        },
-        {
-          "relativePath": "src/upload/services/analyzeService.ts"
-        },
-        {
-          "relativePath": "src/upload/services/clamavService.ts"
-        },
-        {
-          "relativePath": "src/upload/services/cleanupService.ts"
-        },
-        {
-          "relativePath": "src/upload/services/extractor.ts"
-        },
-        {
-          "relativePath": "src/upload/services/uploadService.ts"
-        },
-        {
-          "relativePath": "src/upload/types/upload.ts"
-        },
-        {
-          "relativePath": "src/upload/utils/archiveSizeGuard.ts"
-        },
-        {
-          "relativePath": "src/upload/utils/ensureDir.ts"
-        },
-        {
-          "relativePath": "src/upload/utils/logger.ts"
-        },
-        {
-          "relativePath": "src/upload/utils/streamPipeline.ts"
-        },
-        {
-          "relativePath": "src/upload/utils/zipSlipGuard.ts"
+          "relativePath": "src/utils/portUtils.ts"
         },
         {
           "relativePath": "src/utils/requestHeaders.ts"
@@ -1321,6 +1965,48 @@
         },
         {
           "relativePath": "src/utils/telemetry.ts"
+        },
+        {
+          "relativePath": "src/workers/autoscalingLoop.ts"
+        },
+        {
+          "relativePath": "src/workers/autoscalingTypes.ts"
+        },
+        {
+          "relativePath": "src/workers/dagNodePromptBridge.ts"
+        },
+        {
+          "relativePath": "src/workers/jobRunner.ts"
+        },
+        {
+          "relativePath": "src/workers/jobRunnerRuntime.ts"
+        },
+        {
+          "relativePath": "src/workers/manager.ts"
+        },
+        {
+          "relativePath": "src/workers/metricsAgent.ts"
+        },
+        {
+          "relativePath": "src/workers/orchestrator.ts"
+        },
+        {
+          "relativePath": "src/workers/queueService.ts"
+        },
+        {
+          "relativePath": "src/workers/scaler.ts"
+        },
+        {
+          "relativePath": "src/workers/taskRunners.ts"
+        },
+        {
+          "relativePath": "src/workers/trinityWorkerPipeline.ts"
+        },
+        {
+          "relativePath": "src/workers/workerExecutionLimits.ts"
+        },
+        {
+          "relativePath": "src/workers/workerPool.ts"
         }
       ]
     },
@@ -1331,13 +2017,73 @@
           "relativePath": "tests/action-plan-store.test.ts"
         },
         {
-          "relativePath": "tests/afol.test.ts"
+          "relativePath": "tests/agent-architecture-boundary.test.ts"
+        },
+        {
+          "relativePath": "tests/agent-command-chain-exploit.test.ts"
+        },
+        {
+          "relativePath": "tests/agent-execution-service.test.ts"
+        },
+        {
+          "relativePath": "tests/agent-goal-planner.test.ts"
+        },
+        {
+          "relativePath": "tests/agent-registry-error-paths.test.ts"
+        },
+        {
+          "relativePath": "tests/agents.route.test.ts"
+        },
+        {
+          "relativePath": "tests/ai-controller-source-endpoint.test.ts"
         },
         {
           "relativePath": "tests/ai-output-boundary.test.ts"
         },
         {
-          "relativePath": "tests/api-ask-action-selection.test.ts"
+          "relativePath": "tests/ai-reflections.persistence-mode.test.ts"
+        },
+        {
+          "relativePath": "tests/ai-runtime-openai-client.test.ts"
+        },
+        {
+          "relativePath": "tests/api-agent.route.test.ts"
+        },
+        {
+          "relativePath": "tests/api-arcanos-compatibility.test.ts"
+        },
+        {
+          "relativePath": "tests/api-arcanos-honesty.e2e.test.ts"
+        },
+        {
+          "relativePath": "tests/api-arcanos-verification.route.test.ts"
+        },
+        {
+          "relativePath": "tests/api-arcanos.route.test.ts"
+        },
+        {
+          "relativePath": "tests/api-memory-load.test.ts"
+        },
+        {
+          "relativePath": "tests/api-memory-nl.test.ts"
+        },
+        {
+          "relativePath": "tests/api-memory-save-ttl.test.ts"
+        },
+        {
+          "relativePath": "tests/api-memory-search.test.ts"
+        },
+        {
+          "relativePath": "tests/api-memory-table.test.ts"
+        },
+        {
+          "relativePath": "tests/api-save-conversation.test.ts"
+        },
+        {
+          "relativePath": "tests/api-sessions.route.test.ts"
+        },
+        {
+          "relativePath": "tests/api-sim.dispatch.test.ts"
         },
         {
           "relativePath": "tests/api-transcribe.test.ts"
@@ -1349,13 +2095,76 @@
           "relativePath": "tests/api-vision.test.ts"
         },
         {
+          "relativePath": "tests/app-metrics.test.ts"
+        },
+        {
+          "relativePath": "tests/arcanos-build-tracker.module.test.ts"
+        },
+        {
+          "relativePath": "tests/arcanos-core-module.test.ts"
+        },
+        {
+          "relativePath": "tests/arcanos-core.service.test.ts"
+        },
+        {
+          "relativePath": "tests/arcanos-core.timeout.test.ts"
+        },
+        {
+          "relativePath": "tests/arcanos-dag-run-persistence.test.ts"
+        },
+        {
+          "relativePath": "tests/arcanos-dag-run-service.test.ts"
+        },
+        {
+          "relativePath": "tests/arcanos-gaming.modes.test.ts"
+        },
+        {
           "relativePath": "tests/arcanos-gaming.test.ts"
+        },
+        {
+          "relativePath": "tests/arcanos-mcp.service.test.ts"
+        },
+        {
+          "relativePath": "tests/arcanos-query.test.ts"
+        },
+        {
+          "relativePath": "tests/arcanos-sim.module.test.ts"
+        },
+        {
+          "relativePath": "tests/ask-async-route.test.ts"
+        },
+        {
+          "relativePath": "tests/ask-diagnostic.route.test.ts"
+        },
+        {
+          "relativePath": "tests/ask-memory-shortcut.route.test.ts"
+        },
+        {
+          "relativePath": "tests/ask-repo-inspection.route.test.ts"
         },
         {
           "relativePath": "tests/ask-system-governance.test.ts"
         },
         {
+          "relativePath": "tests/ask-tool-loop.test.ts"
+        },
+        {
           "relativePath": "tests/ask-validation.test.ts"
+        },
+        {
+          "relativePath": "tests/ask-worker-tools-route.test.ts"
+        },
+        {
+          "relativePath": "tests/async-ask-job.test.ts"
+        },
+        {
+          "relativePath": "tests/autoscaling-architecture.test.ts"
+        },
+        {
+          "relativePath": "tests/backstage-booker.generateBooking.test.ts"
+        },
+        {
+          "relativePath": "tests/backstageBookerRouteShortcut.test.ts"
         },
         {
           "relativePath": "tests/brain.test.ts"
@@ -1370,13 +2179,22 @@
           "relativePath": "tests/clear2.test.ts"
         },
         {
+          "relativePath": "tests/client-response-guards.test.ts"
+        },
+        {
           "relativePath": "tests/codebase-api.test.ts"
+        },
+        {
+          "relativePath": "tests/command-center.contract.test.ts"
         },
         {
           "relativePath": "tests/config-integrity.test.ts"
         },
         {
           "relativePath": "tests/confirmGate-oneTimeToken.test.ts"
+        },
+        {
+          "relativePath": "tests/confirmGate-route-metadata.test.ts"
         },
         {
           "relativePath": "tests/confirmGate-token-integration.test.ts"
@@ -1388,7 +2206,28 @@
           "relativePath": "tests/converge-plan.test.ts"
         },
         {
+          "relativePath": "tests/daemon-tools-response-loop.test.ts"
+        },
+        {
           "relativePath": "tests/daemon-tools-trust-boundary.test.ts"
+        },
+        {
+          "relativePath": "tests/dag-agent-registry.test.ts"
+        },
+        {
+          "relativePath": "tests/dag-node-prompt-bridge.test.ts"
+        },
+        {
+          "relativePath": "tests/dag-templates.test.ts"
+        },
+        {
+          "relativePath": "tests/dag-tools.test.ts"
+        },
+        {
+          "relativePath": "tests/dag/artifactStore.test.ts"
+        },
+        {
+          "relativePath": "tests/dag/orchestrator.test.ts"
         },
         {
           "relativePath": "tests/db-client-sanitization.test.ts"
@@ -1397,7 +2236,13 @@
           "relativePath": "tests/db-modular.test.ts"
         },
         {
+          "relativePath": "tests/db-schema-action-plan-bootstrap.test.ts"
+        },
+        {
           "relativePath": "tests/debug-confirmation.test.ts"
+        },
+        {
+          "relativePath": "tests/direct-answer-mode.test.ts"
         },
         {
           "relativePath": "tests/dispatch-controller-v9.test.ts"
@@ -1409,7 +2254,58 @@
           "relativePath": "tests/environment-security.test.ts"
         },
         {
+          "relativePath": "tests/environment-validation-logging.test.ts"
+        },
+        {
+          "relativePath": "tests/environment-validation.test.ts"
+        },
+        {
+          "relativePath": "tests/envParsers.test.ts"
+        },
+        {
+          "relativePath": "tests/exactLiteralPromptShortcut.test.ts"
+        },
+        {
           "relativePath": "tests/execution-lock.test.ts"
+        },
+        {
+          "relativePath": "tests/gaming.direct-answer.test.ts"
+        },
+        {
+          "relativePath": "tests/git.service.test.ts"
+        },
+        {
+          "relativePath": "tests/governance-evidence-pack.test.ts"
+        },
+        {
+          "relativePath": "tests/governance-loop-contract.test.ts"
+        },
+        {
+          "relativePath": "tests/gpt-dispatch-compatibility.test.ts"
+        },
+        {
+          "relativePath": "tests/gpt-dispatch.backstage-booker.test.ts"
+        },
+        {
+          "relativePath": "tests/gpt-dispatch.gaming.test.ts"
+        },
+        {
+          "relativePath": "tests/gpt-dispatch.mcp.test.ts"
+        },
+        {
+          "relativePath": "tests/gpt-dispatch.registry-recovery.test.ts"
+        },
+        {
+          "relativePath": "tests/gpt-domain-classifier.test.ts"
+        },
+        {
+          "relativePath": "tests/gpt-router-auth-logging.test.ts"
+        },
+        {
+          "relativePath": "tests/gpt-router-config.runtime.test.ts"
+        },
+        {
+          "relativePath": "tests/hrcWrapper.memoryInspection.test.ts"
         },
         {
           "relativePath": "tests/http.test.ts"
@@ -1418,16 +2314,64 @@
           "relativePath": "tests/idleManager.test.ts"
         },
         {
+          "relativePath": "tests/incident-response-kill-switch.test.ts"
+        },
+        {
+          "relativePath": "tests/integration/session-system.integration.test.ts"
+        },
+        {
           "relativePath": "tests/interpreter-supervisor.test.ts"
+        },
+        {
+          "relativePath": "tests/introspection-openapi-contract.route.test.ts"
+        },
+        {
+          "relativePath": "tests/job-queue.test.ts"
+        },
+        {
+          "relativePath": "tests/job-runner-runtime.test.ts"
         },
         {
           "relativePath": "tests/json-helpers.test.ts"
         },
         {
+          "relativePath": "tests/judgedResponseFeedback.test.ts"
+        },
+        {
+          "relativePath": "tests/mcp-context.test.ts"
+        },
+        {
+          "relativePath": "tests/mcp-dag-tools.test.ts"
+        },
+        {
           "relativePath": "tests/memory-consistency-gate.test.ts"
         },
         {
+          "relativePath": "tests/memory-listing.test.ts"
+        },
+        {
+          "relativePath": "tests/memoryRepository.ttl.test.ts"
+        },
+        {
           "relativePath": "tests/memorySync-worker.test.ts"
+        },
+        {
+          "relativePath": "tests/metrics.route.test.ts"
+        },
+        {
+          "relativePath": "tests/mock-response-config.test.ts"
+        },
+        {
+          "relativePath": "tests/mocks/prisma-client.ts"
+        },
+        {
+          "relativePath": "tests/moduleConversationPersistence.test.ts"
+        },
+        {
+          "relativePath": "tests/naturalLanguageMemory.session.test.ts"
+        },
+        {
+          "relativePath": "tests/naturalLanguageMemoryRouteShortcut.test.ts"
         },
         {
           "relativePath": "tests/one-time-token-integration.test.ts"
@@ -1440,6 +2384,12 @@
         },
         {
           "relativePath": "tests/openai-fallback-sequence.test.ts"
+        },
+        {
+          "relativePath": "tests/openai-finetune-dataset.test.ts"
+        },
+        {
+          "relativePath": "tests/openai-gpt5-reasoning-abort.test.ts"
         },
         {
           "relativePath": "tests/openai-integration.test.ts"
@@ -1460,16 +2410,58 @@
           "relativePath": "tests/plan-routes.test.ts"
         },
         {
+          "relativePath": "tests/platform/runtime/workerPaths.test.ts"
+        },
+        {
           "relativePath": "tests/port-utils.test.ts"
+        },
+        {
+          "relativePath": "tests/predictive-healing-execution.test.ts"
+        },
+        {
+          "relativePath": "tests/predictive-healing-service.test.ts"
+        },
+        {
+          "relativePath": "tests/predictive-self-heal.route.test.ts"
+        },
+        {
+          "relativePath": "tests/promptRouteShortcuts.test.ts"
         },
         {
           "relativePath": "tests/prompts-system.test.ts"
         },
         {
+          "relativePath": "tests/query-finetune-rate-limit.test.ts"
+        },
+        {
+          "relativePath": "tests/query-finetune-trinity.test.ts"
+        },
+        {
+          "relativePath": "tests/query-finetune.config.test.ts"
+        },
+        {
+          "relativePath": "tests/query-finetune.route.test.ts"
+        },
+        {
+          "relativePath": "tests/queuedAskCompletionService.test.ts"
+        },
+        {
           "relativePath": "tests/railway-client.test.ts"
         },
         {
+          "relativePath": "tests/reinforcement.metrics-route.test.ts"
+        },
+        {
+          "relativePath": "tests/repo-implementation-evidence.test.ts"
+        },
+        {
+          "relativePath": "tests/repo-tools.test.ts"
+        },
+        {
           "relativePath": "tests/requestContext-security-logging.test.ts"
+        },
+        {
+          "relativePath": "tests/requestHandler.errorHandling.test.ts"
         },
         {
           "relativePath": "tests/requestPathSanitizer.test.ts"
@@ -1478,10 +2470,85 @@
           "relativePath": "tests/route-memory-snapshot-store.test.ts"
         },
         {
+          "relativePath": "tests/routes-agents-admin-auth.test.ts"
+        },
+        {
+          "relativePath": "tests/routes-self-improve.test.ts"
+        },
+        {
+          "relativePath": "tests/runGPT5-budget.test.ts"
+        },
+        {
+          "relativePath": "tests/runtime-diagnostics.route.test.ts"
+        },
+        {
+          "relativePath": "tests/runtime-env-dotenv.test.ts"
+        },
+        {
+          "relativePath": "tests/safety-self-heal-status.test.ts"
+        },
+        {
+          "relativePath": "tests/safety-self-heal.route.test.ts"
+        },
+        {
+          "relativePath": "tests/security-rate-limit.test.ts"
+        },
+        {
+          "relativePath": "tests/self-heal-signals.test.ts"
+        },
+        {
+          "relativePath": "tests/self-heal-telemetry.test.ts"
+        },
+        {
+          "relativePath": "tests/self-healing-loop.test.ts"
+        },
+        {
+          "relativePath": "tests/self-healing-v2.test.ts"
+        },
+        {
+          "relativePath": "tests/self-improve-autonomy.test.ts"
+        },
+        {
+          "relativePath": "tests/self-improve-controller-decisions.test.ts"
+        },
+        {
+          "relativePath": "tests/self-improve-patch-proposal.test.ts"
+        },
+        {
+          "relativePath": "tests/self-improve-repo-context.test.ts"
+        },
+        {
+          "relativePath": "tests/selfReflectionRepository.persistence.test.ts"
+        },
+        {
+          "relativePath": "tests/services-git-coverage-extra.test.ts"
+        },
+        {
+          "relativePath": "tests/services-git-coverage.test.ts"
+        },
+        {
           "relativePath": "tests/session-memory-roundtrip.test.ts"
         },
         {
+          "relativePath": "tests/sessionMemoryController.test.ts"
+        },
+        {
+          "relativePath": "tests/sessionReplayStateService.test.ts"
+        },
+        {
+          "relativePath": "tests/sessionRepository.persistence.test.ts"
+        },
+        {
+          "relativePath": "tests/sessionResolver.persistence.test.ts"
+        },
+        {
           "relativePath": "tests/structured-logging-sanitization.test.ts"
+        },
+        {
+          "relativePath": "tests/structured-reasoning-budget.test.ts"
+        },
+        {
+          "relativePath": "tests/task-runners.test.ts"
         },
         {
           "relativePath": "tests/telemetry-limits.test.ts"
@@ -1517,22 +2584,64 @@
           "relativePath": "tests/test-stateless-pr.ts"
         },
         {
+          "relativePath": "tests/testUtils/mockFetch.ts"
+        },
+        {
           "relativePath": "tests/tokenParameterHelper.test.ts"
         },
         {
           "relativePath": "tests/tokenStore.test.ts"
         },
         {
+          "relativePath": "tests/transport-unsafe-execution-gate.test.ts"
+        },
+        {
+          "relativePath": "tests/trinity-direct-answer-mode.test.ts"
+        },
+        {
+          "relativePath": "tests/trinity-direct-answer-stage.test.ts"
+        },
+        {
+          "relativePath": "tests/trinity-stage-budget.test.ts"
+        },
+        {
+          "relativePath": "tests/trinity-status-service.test.ts"
+        },
+        {
+          "relativePath": "tests/trinity.route.test.ts"
+        },
+        {
           "relativePath": "tests/trinity.test.ts"
         },
         {
+          "relativePath": "tests/trinityHonesty.test.ts"
+        },
+        {
+          "relativePath": "tests/trinityJudgedFeedback.test.ts"
+        },
+        {
+          "relativePath": "tests/tutor-logic.prompt-forwarding.test.ts"
+        },
+        {
+          "relativePath": "tests/unified-config-nullish-branches.test.ts"
+        },
+        {
+          "relativePath": "tests/unified-config-self-improve.test.ts"
+        },
+        {
+          "relativePath": "tests/unified-config.predictive-flags.test.ts"
+        },
+        {
+          "relativePath": "tests/unified-config.runtime.test.ts"
+        },
+        {
+          "relativePath": "tests/unified-config.worker-mode.test.ts"
+        },
+        {
+          "relativePath": "tests/unified-health-redis.test.ts"
+        },
+        {
           "relativePath": "tests/unsafe-execution-gate.test.ts"
-        },
-        {
-          "relativePath": "tests/upload-archive-size-guard.test.ts"
-        },
-        {
-          "relativePath": "tests/upload-extractor.test.ts"
         },
         {
           "relativePath": "tests/utal.test.ts"
@@ -1541,16 +2650,43 @@
           "relativePath": "tests/vector-utils.test.ts"
         },
         {
+          "relativePath": "tests/web-search-agent.test.ts"
+        },
+        {
+          "relativePath": "tests/web-search.route.test.ts"
+        },
+        {
           "relativePath": "tests/webFetcher-util.test.ts"
         },
         {
           "relativePath": "tests/webFetcher.test.ts"
         },
         {
+          "relativePath": "tests/webRag.chunking.test.ts"
+        },
+        {
+          "relativePath": "tests/worker-autonomy-service.test.ts"
+        },
+        {
+          "relativePath": "tests/worker-context.mcp.test.ts"
+        },
+        {
           "relativePath": "tests/worker-duplication-suppression.test.ts"
         },
         {
+          "relativePath": "tests/worker-heal-request.test.ts"
+        },
+        {
+          "relativePath": "tests/worker-helper-route.test.ts"
+        },
+        {
           "relativePath": "tests/worker-task-queue.test.ts"
+        },
+        {
+          "relativePath": "tests/worker-tools.test.ts"
+        },
+        {
+          "relativePath": "tests/worker-trinity-pipeline.test.ts"
         }
       ]
     },

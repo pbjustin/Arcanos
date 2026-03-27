@@ -3,7 +3,7 @@ import type { CallOpenAIOptions } from "../types.js";
 import { withRetry } from "@platform/resilience/unifiedRetry.js";
 import { DEFAULT_MAX_RETRIES, REQUEST_ID_HEADER } from "../constants.js";
 import { getApiTimeoutMs } from "@arcanos/openai/unifiedClient";
-import { buildResponsesRequest } from "../requestBuilders.js";
+import { buildResponsesRequest } from "../requestBuilders/index.js";
 import { classifyOpenAIError } from "@core/lib/errors/reusable.js";
 import { logRequestAttempt, logRequestPermanentFailure } from "./trace.js";
 import { createLinkedAbortController, getRequestAbortSignal } from "@arcanos/runtime";

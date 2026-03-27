@@ -3,7 +3,7 @@
  */
 
 import { describe, test, expect } from '@jest/globals';
-import { safeJSONParse, safeJSONStringify, validateSchema, REQUEST_SCHEMAS } from '../src/utils/jsonHelpers.js';
+import { safeJSONParse, safeJSONStringify, validateSchema, REQUEST_SCHEMAS } from '../src/shared/jsonHelpers.js';
 
 describe('JSON Helpers', () => {
   test('should parse valid JSON safely', () => {

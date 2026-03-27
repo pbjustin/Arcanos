@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect, beforeEach, jest } from '@jest/globals';
-import type { ActionPlanInput } from '../src/types/actionPlan.js';
+import type { ActionPlanInput } from '../src/shared/types/actionPlan.js';
 
 // Mock Prisma client for testing
 const mockPrismaCreate = jest.fn();

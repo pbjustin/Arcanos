@@ -14,8 +14,8 @@ import type {
   ToolDefinition,
   ToolRegistryRequestPayload,
   ToolRegistryResponseData
-} from "../../protocol/dist/src/index.js";
-import { ARCANOS_PROTOCOL_VERSION } from "../../protocol/dist/src/index.js";
+} from "@arcanos/protocol";
+import { ARCANOS_PROTOCOL_VERSION } from "@arcanos/protocol";
 
 export interface LocalDispatcherDependencies {
   now: () => Date;

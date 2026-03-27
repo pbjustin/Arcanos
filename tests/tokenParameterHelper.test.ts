@@ -1,5 +1,4 @@
-import { getTokenParameter } from '../src/utils/tokenParameterHelper';
-import { APPLICATION_CONSTANTS } from '../src/utils/constants';
+import { getTokenParameter } from '../src/shared/tokenParameterHelper.js';
 
 describe('tokenParameterHelper - Gemini detection and parameter selection', () => {
   test.each([

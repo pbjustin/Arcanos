@@ -121,14 +121,15 @@ export async function runARCANOS(
     const combinedPrompt = `${systemMessage}\n\nUser: ${userMessage}`;
     
     console.log(`[ðŸŽ¯ ARCANOS] Using strict GPT-5.1 call with model: ${gpt5Model}`);
-    response = await call_gpt5_strict(combinedPrompt, {
+    const strictResponse = await call_gpt5_strict(combinedPrompt, {
       temperature: 0.1, // Low temperature for consistent diagnostic output
       ...tokenParams,
-    });
+    }) as GPT5StrictResponse;
+    response = strictResponse;
 
     finalResult =
-      response.output_text ||
-      response.output?.[0]?.content?.[0]?.text ||
+      strictResponse.output_text ||
+      strictResponse.output?.[0]?.content?.[0]?.text ||
       '';
     console.log(`[ðŸ”¬ ARCANOS] Diagnosis complete using strict GPT-5.1: ${gpt5Model}`);
     

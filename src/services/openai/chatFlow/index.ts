@@ -59,7 +59,7 @@ import {
   buildResponsesRequest,
   convertResponseToLegacyChatCompletion,
   extractResponseOutputText
-} from '../requestBuilders.js';
+} from '../requestBuilders/index.js';
 import {
   createLinkedAbortController,
   getRequestAbortSignal,

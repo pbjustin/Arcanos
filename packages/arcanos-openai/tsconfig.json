@@ -11,14 +11,6 @@
     "outDir": "dist",
     "rootDir": "src",
     "baseUrl": ".",
-    "paths": {
-      "@arcanos/runtime": [
-        "../arcanos-runtime/dist/index.d.ts"
-      ],
-      "@arcanos/runtime/*": [
-        "../arcanos-runtime/dist/*"
-      ]
-    },
     "types": [
       "node"
     ],

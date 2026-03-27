@@ -9,8 +9,8 @@ import {
   actionPlanInputSchema,
   agentRegistrationSchema,
   executionResultInputSchema,
-} from '../src/types/actionPlan.js';
-import type { ActionPlanInput } from '../src/types/actionPlan.js';
+} from '../src/shared/types/actionPlan.js';
+import type { ActionPlanInput } from '../src/shared/types/actionPlan.js';
 
 describe('Plan Routes — Schema Validation', () => {
   describe('actionPlanInputSchema', () => {

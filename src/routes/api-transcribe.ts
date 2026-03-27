@@ -7,7 +7,7 @@ import { toFile } from 'openai/uploads';
 import path from 'path';
 import type { ErrorResponseDTO } from "@shared/types/dto.js";
 import { asyncHandler } from "@shared/http/index.js";
-import { buildTranscriptionRequest } from "@services/openai/requestBuilders.js";
+import { buildTranscriptionRequest } from "@services/openai/requestBuilders/index.js";
 import { getOpenAIClientOrAdapter } from "@services/openai/clientBridge.js";
 import { sendOpenAIProcessingFailed, sendOpenAIServiceUnavailable } from "@platform/resilience/serviceUnavailable.js";
 

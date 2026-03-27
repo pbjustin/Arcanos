@@ -8,7 +8,7 @@ import {
   isImplementedProtocolCommandId,
   type ProtocolRequest,
   type ProtocolResponse
-} from "../../protocol/dist/src/index.js";
+} from "@arcanos/protocol";
 
 import { createLocalProtocolDispatcher } from "./dispatcher.js";
 
