@@ -49,4 +49,15 @@ describe('predictive healing config aliases', () => {
 
     expect(config.predictiveHealingMinConfidence).toBe(0.81);
   });
+
+  it('accepts the requested predictive cooldown alias', () => {
+    resetEnv({
+      PREDICTIVE_HEALING_COOLDOWN_MS: '45000',
+      PREDICTIVE_HEALING_ACTION_COOLDOWN_MS: undefined
+    });
+
+    const config = getConfig();
+
+    expect(config.predictiveHealingActionCooldownMs).toBe(45000);
+  });
 });

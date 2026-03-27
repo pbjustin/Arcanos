@@ -414,14 +414,18 @@ export function getConfig(): AppConfig {
     // Predictive Self-Healing Configuration
     predictiveHealingEnabled: getEnvBoolean('PREDICTIVE_HEALING_ENABLED', false),
     predictiveHealingDryRun: getEnvBooleanWithFallbacks('PREDICTIVE_HEALING_DRY_RUN', true, ['PREDICTIVE_DRY_RUN']),
-    autoExecuteHealing: getEnvBooleanWithFallbacks('AUTO_EXECUTE_HEALING', false, ['PREDICTIVE_AUTO_EXECUTE']),
+    autoExecuteHealing: getEnvBooleanWithFallbacks('PREDICTIVE_AUTO_EXECUTE', false, ['AUTO_EXECUTE_HEALING']),
     predictiveHealingWindowMs: getEnvNumber('PREDICTIVE_HEALING_WINDOW_MS', 5 * 60_000),
     predictiveHealingMinObservations: getEnvNumber('PREDICTIVE_HEALING_MIN_OBSERVATIONS', 3),
     predictiveHealingStaleAfterMs: getEnvNumber('PREDICTIVE_HEALING_STALE_AFTER_MS', 2 * 60_000),
     predictiveHealingMinConfidence: getEnvNumberWithFallbacks('PREDICTIVE_HEALING_MIN_CONFIDENCE', 0.65, [
       'PREDICTIVE_AUTO_EXECUTE_CONFIDENCE_THRESHOLD'
     ]),
-    predictiveHealingActionCooldownMs: getEnvNumber('PREDICTIVE_HEALING_ACTION_COOLDOWN_MS', 5 * 60_000),
+    predictiveHealingActionCooldownMs: getEnvNumberWithFallbacks(
+      'PREDICTIVE_HEALING_COOLDOWN_MS',
+      5 * 60_000,
+      ['PREDICTIVE_HEALING_ACTION_COOLDOWN_MS']
+    ),
     predictiveHealingObservationHistoryLimit: getEnvNumber('PREDICTIVE_HEALING_OBSERVATION_HISTORY_LIMIT', 12),
     predictiveHealingAuditHistoryLimit: getEnvNumber('PREDICTIVE_HEALING_AUDIT_HISTORY_LIMIT', 25),
     predictiveErrorRateThreshold: getEnvNumber('PREDICTIVE_ERROR_RATE_THRESHOLD', 0.18),
@@ -472,11 +476,15 @@ export function validateConfig(): ValidationResult {
   }
 
   if (config.autoExecuteHealing && !config.predictiveHealingEnabled) {
-    warnings.push('AUTO_EXECUTE_HEALING enabled while PREDICTIVE_HEALING_ENABLED is false - auto execution will stay inactive');
+    warnings.push(
+      'PREDICTIVE_AUTO_EXECUTE/AUTO_EXECUTE_HEALING enabled while PREDICTIVE_HEALING_ENABLED is false - auto execution will stay inactive'
+    );
   }
 
   if (config.autoExecuteHealing && config.predictiveHealingDryRun) {
-    warnings.push('AUTO_EXECUTE_HEALING enabled while PREDICTIVE_HEALING_DRY_RUN is true - predictive actions will remain dry-run');
+    warnings.push(
+      'PREDICTIVE_AUTO_EXECUTE/AUTO_EXECUTE_HEALING enabled while PREDICTIVE_HEALING_DRY_RUN is true - predictive actions will remain dry-run'
+    );
   }
 
   // Railway-specific checks

@@ -373,6 +373,11 @@ type SelfHealingLoopGlobal = typeof globalThis & {
 };
 
 function resolveLoopIntervalMs(): number {
+  const predictiveIntervalMs = getEnvNumber('PREDICTIVE_HEALING_INTERVAL_MS', Number.NaN);
+  if (Number.isFinite(predictiveIntervalMs)) {
+    return Math.max(1_000, predictiveIntervalMs);
+  }
+
   return Math.max(1_000, getEnvNumber('SELF_HEAL_LOOP_INTERVAL_MS', DEFAULT_INTERVAL_MS));
 }
 
