@@ -1,5 +1,6 @@
 import { recoverStaleJobs } from '@core/db/repositories/jobRepository.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
+import { logger } from '@platform/logging/structuredLogging.js';
 import { getTelemetrySnapshot } from '@platform/logging/telemetry.js';
 import { getEnvNumber } from '@platform/runtime/env.js';
 import { getConfig } from '@platform/runtime/unifiedConfig.js';
@@ -27,7 +28,6 @@ import { runtimeDiagnosticsService, type RequestWindowSnapshot } from '@services
 import { resolveGptRouteHardTimeoutMs } from '@shared/http/gptRouteTimeout.js';
 import {
   getWorkerControlHealth,
-  healWorkerRuntime,
   type WorkerControlHealthResponse
 } from '@services/workerControlService.js';
 import { getWorkerAutonomySettings } from '@services/workerAutonomyService.js';
@@ -38,6 +38,10 @@ import {
 } from '@services/selfImprove/selfHealTelemetry.js';
 import { runPredictiveHealingFromLoop } from '@services/selfImprove/predictiveHealingService.js';
 import { resolvePredictiveHealingLoopIntervalMs } from '@services/selfImprove/runtimeConfig.js';
+import {
+  buildWorkerRepairActuatorStatus,
+  executeWorkerRepairActuator
+} from '@services/selfImprove/workerRepairActuator.js';
 import type { WorkerRuntimeStatus } from '@platform/runtime/workerConfig.js';
 
 const DEFAULT_INTERVAL_MS = 30_000;
@@ -2092,10 +2096,50 @@ async function executeActionPlan(
     }
 
     if (actionPlan.kind === 'heal_worker_runtime') {
-      const healResult = await healWorkerRuntime(true, 'self_heal_loop');
-      const action = `healWorkerRuntime:${healResult.runtime.started ? 'started' : 'pending'}`;
+      const actuator = buildWorkerRepairActuatorStatus();
+      logger.info('self_heal.repair.execution', {
+        module: 'self_heal.loop',
+        source: 'self_heal_loop',
+        action: actionTrackingKey,
+        diagnosis: diagnosis.type,
+        actuatorMode: actuator.mode,
+        actuatorPath: actuator.path,
+        actuatorBaseUrl: actuator.baseUrl
+      });
+      const healResult = await executeWorkerRepairActuator({
+        force: true,
+        source: 'self_heal_loop'
+      });
+      const action = `healWorkerRuntime:${healResult.mode}`;
       recordCooldown(runtime.actionCooldowns, actionPlan.cooldownKey, actionPlan.cooldownMs);
       recordDiagnosisAttempt(runtime, diagnosis.type);
+      recordSelfHealEvent({
+        kind: 'success',
+        source: 'self_heal_loop',
+        trigger: 'action',
+        reason: diagnosis.summary,
+        actionTaken: action,
+        healedComponent: actionTarget,
+        details: {
+          actuatorMode: healResult.mode,
+          actuatorPath: healResult.path,
+          actuatorBaseUrl: healResult.baseUrl,
+          statusCode: healResult.statusCode,
+          message: healResult.message,
+          payload: healResult.payload
+        }
+      });
+      logger.info('self_heal.repair.result', {
+        module: 'self_heal.loop',
+        source: 'self_heal_loop',
+        action,
+        diagnosis: diagnosis.type,
+        actuatorMode: healResult.mode,
+        actuatorPath: healResult.path,
+        actuatorBaseUrl: healResult.baseUrl,
+        statusCode: healResult.statusCode,
+        message: healResult.message
+      });
       console.log(`[SELF-HEAL] action ${action}`);
       return {
         executed: true,
@@ -2472,12 +2516,28 @@ export async function runSelfHealingLoop(options: {
           runtime.status.lastControllerDecision = decision.decision;
           runtime.status.lastControllerRunAt = new Date().toISOString();
           recordCooldown(runtime.controllerCooldowns, controllerKey, resolveControllerCooldownMs());
+          logger.info('self_heal.controller.decision', {
+            module: 'self_heal.loop',
+            source: 'self_heal_loop',
+            incidentKey: controllerKey,
+            decision: decision.decision,
+            decisionId: decision.id,
+            component: diagnosis.controllerInput.component ?? null
+          });
           console.log(`[SELF-HEAL] controller decision=${decision.decision} id=${decision.id}`);
         } catch (error) {
           controllerDecision = 'ERROR';
           runtime.status.lastControllerDecision = 'ERROR';
           runtime.status.lastControllerRunAt = new Date().toISOString();
           runtime.status.lastError = resolveErrorMessage(error);
+          logger.error('self_heal.controller.decision', {
+            module: 'self_heal.loop',
+            source: 'self_heal_loop',
+            incidentKey: controllerKey,
+            decision: 'ERROR',
+            component: diagnosis.controllerInput.component ?? null,
+            error: runtime.status.lastError
+          });
           recordSelfHealEvent({
             kind: 'failure',
             source: 'self_heal_loop',

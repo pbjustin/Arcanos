@@ -45,6 +45,7 @@ export interface RailwayProjectSummary {
 }
 
 export interface DeployServiceOptions {
+  environmentId: string;
   serviceId: string;
   branch?: string;
   commitId?: string;
@@ -331,38 +332,32 @@ export async function listProjects(): Promise<RailwayProjectSummary[]> {
 }
 
 /**
- * Purpose: trigger a Railway deployment for a specific service.
- * Inputs/outputs: accepts a service identifier with optional branch or commit selectors and returns the new deployment id and status.
+ * Purpose: trigger a Railway redeploy for a specific service instance in an environment.
+ * Inputs/outputs: accepts service and environment identifiers and returns whether Railway accepted the redeploy request.
  * Edge cases: throws a structured Railway API error when the token is missing, the request times out, or the API rejects the mutation.
  */
-export async function deployService(options: DeployServiceOptions): Promise<{ deploymentId: string; status: string; }> {
+export async function deployService(options: DeployServiceOptions): Promise<{
+  accepted: boolean;
+  status: string;
+}> {
   const mutation = `
-    mutation DeployService($input: DeployServiceInput!) {
-      deployService(input: $input) {
-        id
-        status
-      }
+    mutation ServiceInstanceRedeploy($environmentId: String!, $serviceId: String!) {
+      serviceInstanceRedeploy(environmentId: $environmentId, serviceId: $serviceId)
     }
   `;
 
   const variables = {
-    input: {
-      serviceId: options.serviceId,
-      branch: options.branch,
-      commitId: options.commitId
-    }
+    environmentId: options.environmentId,
+    serviceId: options.serviceId
   };
 
   const data = await executeGraphQL<{
-    deployService: {
-      id: string;
-      status: string;
-    };
+    serviceInstanceRedeploy: boolean;
   }>(mutation, variables);
 
   return {
-    deploymentId: data.deployService.id,
-    status: data.deployService.status
+    accepted: data.serviceInstanceRedeploy,
+    status: data.serviceInstanceRedeploy ? 'TRIGGERED' : 'REJECTED'
   };
 }
 

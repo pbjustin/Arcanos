@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import {
   getWorkerRuntimeStatus,
@@ -26,12 +27,18 @@ import {
 } from '@services/selfImprove/selfHealingV2.js';
 import {
   getWorkerControlHealth,
-  healWorkerRuntime,
   type WorkerControlHealthResponse
 } from '@services/workerControlService.js';
 import { getEnvNumber } from '@platform/runtime/env.js';
+import { runArcanosCoreQuery } from '@services/arcanos-core.js';
+import { getOpenAIClientOrAdapter } from '@services/openai/clientBridge.js';
 import { resolvePredictiveHealingLoopIntervalMs } from './runtimeConfig.js';
 import { recordSelfHealEvent } from './selfHealTelemetry.js';
+import {
+  buildWorkerRepairActuatorStatus,
+  executeWorkerRepairActuator,
+  type WorkerRepairActuatorStatus
+} from './workerRepairActuator.js';
 
 export type PredictiveHealingActionType =
   | 'none'
@@ -51,6 +58,8 @@ export type PredictiveHealingExecutionStatus =
   | 'unsupported'
   | 'refused'
   | 'failed';
+
+export type PredictiveHealingAdvisor = 'rules_v1' | 'arcanos_core_v1' | 'rules_fallback_v1';
 
 export interface PredictiveHealingObservation {
   collectedAt: string;
@@ -183,7 +192,7 @@ export interface PredictiveHealingTrends {
 }
 
 export interface PredictiveHealingDecision {
-  advisor: 'rules_v1';
+  advisor: PredictiveHealingAdvisor;
   decidedAt: string;
   action: PredictiveHealingActionType;
   target: string | null;
@@ -272,6 +281,7 @@ export interface PredictiveHealingStatusSnapshot {
   automation: PredictiveHealingAutomationStatus;
   recentExecutionLog: PredictiveHealingExecutionLogEntry[];
   detailsPath: '/api/self-heal/decide';
+  actuator: WorkerRepairActuatorStatus;
   advisors: string[];
 }
 
@@ -345,7 +355,11 @@ interface PredictiveHealingExecutionRequest {
 }
 
 const GLOBAL_KEY = '__ARCANOS_PREDICTIVE_SELF_HEAL__';
-const DEFAULT_ADVISORS = ['rules_v1'] as const;
+const DEFAULT_ADVISORS: readonly PredictiveHealingAdvisor[] = [
+  'rules_v1',
+  'arcanos_core_v1',
+  'rules_fallback_v1'
+] as const;
 const DEFAULT_WINDOW_MS = 5 * 60_000;
 const DEFAULT_MIN_OBSERVATIONS = 3;
 const DEFAULT_STALE_AFTER_MS = 2 * 60_000;
@@ -383,6 +397,19 @@ const TRINITY_PREHEAL_MAX_CONFIDENCE = 0.91;
 const PREEMPTIVE_DEGRADE_CONFIDENCE = 0.69;
 const OFFLINE_NODE_SHIFT_TRAFFIC_CONFIDENCE = 0.88;
 const PREDICTIVE_LOOP_SOURCE = 'predictive_self_heal_loop';
+const PREDICTIVE_AI_SOURCE_ENDPOINT = 'self_heal.predictive.ai_decision';
+const PREDICTIVE_AI_MODULE = 'ARCANOS:CORE' as const;
+const PREDICTIVE_AI_MAX_WORDS = 180;
+
+const predictiveHealingAiDecisionSchema = z.object({
+  selectedCandidateIndex: z.number().int().min(0).nullable(),
+  chooseNoAction: z.boolean().optional(),
+  reason: z.string().min(1).max(600),
+  safeToExecute: z.boolean(),
+  confidence: z.number().min(0).max(1).optional()
+});
+
+type PredictiveHealingAiDecisionPayload = z.infer<typeof predictiveHealingAiDecisionSchema>;
 
 type PredictiveHealingGlobal = typeof globalThis & {
   [GLOBAL_KEY]?: PredictiveHealingState;
@@ -878,6 +905,322 @@ function buildNoopDecision(
       sampleAgeMs: trends.sampleAgeMs
     }
   };
+}
+
+function parseJsonObjectFromModelOutput(rawOutput: string): unknown {
+  const raw = (rawOutput || '').trim();
+  try {
+    return JSON.parse(raw);
+  } catch {
+    // Continue to JSON recovery.
+  }
+
+  const fencedMatch = raw.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (fencedMatch?.[1]) {
+    try {
+      return JSON.parse(fencedMatch[1].trim());
+    } catch {
+      // Continue to brace extraction.
+    }
+  }
+
+  const firstBrace = raw.indexOf('{');
+  const lastBrace = raw.lastIndexOf('}');
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    try {
+      return JSON.parse(raw.slice(firstBrace, lastBrace + 1));
+    } catch {
+      // Continue to progressive trimming.
+    }
+  }
+
+  for (let end = raw.length - 1; end > 0; end -= 1) {
+    if (raw[end] !== '}') {
+      continue;
+    }
+    const start = raw.indexOf('{');
+    if (start < 0 || end <= start) {
+      continue;
+    }
+    try {
+      return JSON.parse(raw.slice(start, end + 1));
+    } catch {
+      // Keep trimming.
+    }
+  }
+
+  throw new Error('Predictive healing AI response is not valid JSON.');
+}
+
+function buildFallbackDecision(
+  decision: PredictiveHealingDecision,
+  fallbackReason: string,
+  metadata: Record<string, unknown> = {}
+): PredictiveHealingDecision {
+  return {
+    ...decision,
+    advisor: 'rules_fallback_v1',
+    details: {
+      ...decision.details,
+      aiPath: PREDICTIVE_AI_MODULE,
+      aiSourceEndpoint: PREDICTIVE_AI_SOURCE_ENDPOINT,
+      aiUsed: false,
+      aiFallbackReason: fallbackReason,
+      ...metadata
+    }
+  };
+}
+
+function buildAiDecisionPrompt(params: {
+  source: string;
+  observation: PredictiveHealingObservation;
+  trends: PredictiveHealingTrends;
+  rulesDecision: PredictiveHealingDecision;
+  candidates: Array<Omit<PredictiveHealingCandidate, 'priority'>>;
+  actuator: WorkerRepairActuatorStatus;
+}): string {
+  const candidatePreview = params.candidates.slice(0, 5).map((candidate, index) => ({
+    index,
+    action: candidate.action,
+    target: candidate.target,
+    confidence: candidate.confidence,
+    matchedRule: candidate.matchedRule,
+    reason: candidate.reason,
+    details: candidate.details
+  }));
+
+  return [
+    'You are ARCANOS:CORE making a bounded production self-healing decision.',
+    'Return JSON only with this schema:',
+    '{"selectedCandidateIndex":number|null,"chooseNoAction":boolean,"reason":string,"safeToExecute":boolean,"confidence":number}',
+    'Rules:',
+    '- Only pick a candidate index from the provided list.',
+    '- Never invent an action or target.',
+    '- Prefer no action over an unsafe or weak action.',
+    '- If selectedCandidateIndex is null, set chooseNoAction to true.',
+    '- The runtime may execute the selected action automatically.',
+    `Actuator=${JSON.stringify({
+      mode: params.actuator.mode,
+      available: params.actuator.available,
+      reason: params.actuator.reason,
+      baseUrl: params.actuator.baseUrl,
+      path: params.actuator.path
+    })}`,
+    `Observation=${JSON.stringify({
+      source: params.source,
+      collectedAt: params.observation.collectedAt,
+      requestCount: params.observation.requestCount,
+      errorRate: params.observation.errorRate,
+      timeoutRate: params.observation.timeoutRate,
+      avgLatencyMs: params.observation.avgLatencyMs,
+      p95LatencyMs: params.observation.p95LatencyMs,
+      maxLatencyMs: params.observation.maxLatencyMs,
+      degradedCount: params.observation.degradedCount,
+      workerHealth: {
+        overallStatus: params.observation.workerHealth.overallStatus,
+        alertCount: params.observation.workerHealth.alertCount,
+        alerts: params.observation.workerHealth.alerts,
+        pending: params.observation.workerHealth.pending,
+        running: params.observation.workerHealth.running,
+        stalledRunning: params.observation.workerHealth.stalledRunning,
+        unhealthyWorkerIds: params.observation.workerHealth.unhealthyWorkerIds,
+        degradedWorkerIds: params.observation.workerHealth.degradedWorkerIds
+      },
+      workerRuntime: params.observation.workerRuntime,
+      promptRoute: params.observation.promptRoute,
+      trinity: {
+        enabled: params.observation.trinity.enabled,
+        activeStage: params.observation.trinity.activeStage,
+        activeAction: params.observation.trinity.activeAction,
+        verified: params.observation.trinity.verified
+      }
+    })}`,
+    `Trends=${JSON.stringify(params.trends)}`,
+    `RulesDecision=${JSON.stringify({
+      advisor: params.rulesDecision.advisor,
+      action: params.rulesDecision.action,
+      target: params.rulesDecision.target,
+      reason: params.rulesDecision.reason,
+      confidence: params.rulesDecision.confidence,
+      matchedRule: params.rulesDecision.matchedRule,
+      safeToExecute: params.rulesDecision.safeToExecute
+    })}`,
+    `Candidates=${JSON.stringify(candidatePreview)}`
+  ].join('\n');
+}
+
+async function resolveAiDecision(params: {
+  source: string;
+  observation: PredictiveHealingObservation;
+  trends: PredictiveHealingTrends;
+  rulesDecision: PredictiveHealingDecision;
+  candidates: Array<Omit<PredictiveHealingCandidate, 'priority'>>;
+  minConfidence: number;
+}): Promise<PredictiveHealingDecision> {
+  const actuator = buildWorkerRepairActuatorStatus();
+  logger.info('self_heal.ai_diagnosis.requested', {
+    module: 'predictive-healing',
+    source: params.source,
+    aiPath: PREDICTIVE_AI_MODULE,
+    sourceEndpoint: PREDICTIVE_AI_SOURCE_ENDPOINT,
+    candidateCount: params.candidates.length,
+    rulesAction: params.rulesDecision.action,
+    rulesConfidence: params.rulesDecision.confidence,
+    actuatorMode: actuator.mode,
+    actuatorPath: actuator.path,
+    actuatorBaseUrl: actuator.baseUrl
+  });
+
+  const { client } = getOpenAIClientOrAdapter();
+  if (!client) {
+    const fallbackReason = 'openai_client_unavailable';
+    recordSelfHealEvent({
+      kind: 'fallback',
+      source: params.source,
+      trigger: 'predictive_ai',
+      reason: fallbackReason,
+      actionTaken: params.rulesDecision.action,
+      healedComponent: params.rulesDecision.target
+    });
+    logger.warn('self_heal.ai_diagnosis.fallback', {
+      module: 'predictive-healing',
+      source: params.source,
+      aiPath: PREDICTIVE_AI_MODULE,
+      sourceEndpoint: PREDICTIVE_AI_SOURCE_ENDPOINT,
+      fallbackReason,
+      fallbackAdvisor: 'rules_fallback_v1'
+    });
+    return buildFallbackDecision(params.rulesDecision, fallbackReason, {
+      actuatorMode: actuator.mode,
+      actuatorPath: actuator.path,
+      actuatorBaseUrl: actuator.baseUrl
+    });
+  }
+
+  try {
+    const aiResult = await runArcanosCoreQuery({
+      client,
+      prompt: buildAiDecisionPrompt({
+        source: params.source,
+        observation: params.observation,
+        trends: params.trends,
+        rulesDecision: params.rulesDecision,
+        candidates: params.candidates,
+        actuator
+      }),
+      sourceEndpoint: PREDICTIVE_AI_SOURCE_ENDPOINT,
+      runOptions: {
+        answerMode: 'direct',
+        requestedVerbosity: 'minimal',
+        maxWords: PREDICTIVE_AI_MAX_WORDS,
+        strictUserVisibleOutput: true,
+        debugPipeline: false
+      }
+    });
+
+    const parsed = predictiveHealingAiDecisionSchema.parse(parseJsonObjectFromModelOutput(aiResult.result));
+    const chosenCandidate =
+      parsed.selectedCandidateIndex === null ? null : params.candidates[parsed.selectedCandidateIndex] ?? null;
+
+    if (parsed.selectedCandidateIndex !== null && !chosenCandidate) {
+      throw new Error(`AI selected candidate index ${parsed.selectedCandidateIndex} but no candidate exists there.`);
+    }
+
+    const aiMetadata = {
+      aiPath: PREDICTIVE_AI_MODULE,
+      aiSourceEndpoint: PREDICTIVE_AI_SOURCE_ENDPOINT,
+      aiUsed: true,
+      aiSelectedCandidateIndex: parsed.selectedCandidateIndex,
+      aiModel: aiResult.activeModel,
+      aiFallbackFlag: aiResult.fallbackFlag,
+      aiFallbackReasons: aiResult.fallbackSummary.fallbackReasons,
+      aiRoutingStages: aiResult.routingStages ?? [],
+      aiTimeoutKind: aiResult.timeoutKind ?? null,
+      aiDegradedModeReason: aiResult.degradedModeReason ?? null,
+      aiBypassedSubsystems: aiResult.bypassedSubsystems ?? [],
+      actuatorMode: actuator.mode,
+      actuatorPath: actuator.path,
+      actuatorBaseUrl: actuator.baseUrl
+    };
+
+    let decision: PredictiveHealingDecision;
+    if (parsed.chooseNoAction || parsed.selectedCandidateIndex === null || !chosenCandidate) {
+      decision = {
+        ...buildNoopDecision(params.observation, params.trends, parsed.reason),
+        advisor: 'arcanos_core_v1',
+        confidence: roundMetric(parsed.confidence ?? params.rulesDecision.confidence, 2),
+        details: {
+          ...params.rulesDecision.details,
+          ...aiMetadata,
+          aiRecommendedNoAction: true
+        }
+      };
+    } else {
+      const boundedConfidence = roundMetric(
+        Math.min(
+          chosenCandidate.confidence,
+          parsed.confidence ?? chosenCandidate.confidence
+        ),
+        2
+      );
+      decision = {
+        advisor: 'arcanos_core_v1',
+        decidedAt: params.observation.collectedAt,
+        action: chosenCandidate.action,
+        target: chosenCandidate.target,
+        reason: parsed.reason,
+        confidence: boundedConfidence,
+        matchedRule: chosenCandidate.matchedRule,
+        safeToExecute: Boolean(parsed.safeToExecute) && boundedConfidence >= params.minConfidence,
+        staleData: false,
+        suggestedMode: 'recommend_only',
+        details: {
+          ...chosenCandidate.details,
+          ...aiMetadata
+        }
+      };
+    }
+
+    logger.info('self_heal.ai_diagnosis.result', {
+      module: 'predictive-healing',
+      source: params.source,
+      advisor: decision.advisor,
+      action: decision.action,
+      target: decision.target,
+      confidence: decision.confidence,
+      safeToExecute: decision.safeToExecute,
+      aiFallbackFlag: aiResult.fallbackFlag,
+      activeModel: aiResult.activeModel,
+      timeoutKind: aiResult.timeoutKind ?? null,
+      degradedModeReason: aiResult.degradedModeReason ?? null,
+      bypassedSubsystems: aiResult.bypassedSubsystems ?? []
+    });
+
+    return decision;
+  } catch (error) {
+    const fallbackReason = resolveErrorMessage(error);
+    recordSelfHealEvent({
+      kind: 'fallback',
+      source: params.source,
+      trigger: 'predictive_ai',
+      reason: fallbackReason,
+      actionTaken: params.rulesDecision.action,
+      healedComponent: params.rulesDecision.target
+    });
+    logger.warn('self_heal.ai_diagnosis.fallback', {
+      module: 'predictive-healing',
+      source: params.source,
+      aiPath: PREDICTIVE_AI_MODULE,
+      sourceEndpoint: PREDICTIVE_AI_SOURCE_ENDPOINT,
+      fallbackReason,
+      fallbackAdvisor: 'rules_fallback_v1'
+    });
+    return buildFallbackDecision(params.rulesDecision, fallbackReason, {
+      actuatorMode: actuator.mode,
+      actuatorPath: actuator.path,
+      actuatorBaseUrl: actuator.baseUrl
+    });
+  }
 }
 
 function buildCandidates(
@@ -1448,13 +1791,44 @@ async function executeDecision(
       request.decision.action === 'recycle_worker_runtime' ||
       request.decision.action === 'heal_worker_runtime'
     ) {
-      const result = await healWorkerRuntime(true, request.source);
+      const actuator = buildWorkerRepairActuatorStatus();
+      logger.info('self_heal.repair.execution', {
+        module: 'predictive-healing',
+        source: request.source,
+        action: request.decision.action,
+        target: request.decision.target,
+        advisor: request.decision.advisor,
+        mode,
+        actuatorMode: actuator.mode,
+        actuatorPath: actuator.path,
+        actuatorBaseUrl: actuator.baseUrl
+      });
+      const result = await executeWorkerRepairActuator({
+        force: true,
+        source: request.source
+      });
       actuatorResult = {
-        restart: result.restart,
-        runtime: result.runtime
+        actuatorMode: result.mode,
+        actuatorPath: result.path,
+        actuatorBaseUrl: result.baseUrl,
+        statusCode: result.statusCode,
+        payload: result.payload
       };
-      message = result.restart.message;
-      recoveryOutcome = buildPendingOutcome(result.restart.message);
+      message = result.message;
+      recoveryOutcome = buildPendingOutcome(result.message);
+      logger.info('self_heal.repair.result', {
+        module: 'predictive-healing',
+        source: request.source,
+        action: request.decision.action,
+        target: request.decision.target,
+        advisor: request.decision.advisor,
+        executionStatus: 'executed',
+        actuatorMode: result.mode,
+        actuatorPath: result.path,
+        actuatorBaseUrl: result.baseUrl,
+        statusCode: result.statusCode,
+        message: result.message
+      });
     } else if (request.decision.action === 'activate_trinity_mitigation') {
       const trinityDecision = extractTrinityDecisionDetails(request.decision);
       if (!trinityDecision) {
@@ -1564,6 +1938,26 @@ async function executeDecision(
       }
     };
   }
+}
+
+function recordPredictiveRepairFeedback(
+  request: PredictiveHealingExecutionRequest,
+  execution: PredictiveHealingExecutionResult
+): void {
+  if (execution.status !== 'executed' && execution.status !== 'failed') {
+    return;
+  }
+
+  logger.info('self_heal.repair.feedback', {
+    module: 'predictive-healing',
+    source: request.source,
+    action: request.decision.action,
+    target: request.decision.target,
+    advisor: request.decision.advisor,
+    executionStatus: execution.status,
+    recoveryStatus: execution.recoveryOutcome.status,
+    feedbackSummary: execution.recoveryOutcome.summary
+  });
 }
 
 function recordPredictiveTelemetry(
@@ -1928,9 +2322,17 @@ export async function runPredictiveHealingDecision(params: {
   const liveObservation = params.observation ?? (await collectLiveObservation(params.source));
   const observation = applySimulation(liveObservation, params.simulate);
   const history = collectRecentObservations(state, observation);
-  const { decision, trends } = evaluatePredictiveHealingRules({
+  const { decision: rulesDecision, trends, candidates } = evaluatePredictiveHealingRules({
     observation,
     history
+  });
+  const decision = await resolveAiDecision({
+    source: params.source,
+    observation,
+    trends,
+    rulesDecision,
+    candidates,
+    minConfidence: getRulesConfig().minConfidence
   });
 
   const executionRequest: PredictiveHealingExecutionRequest = {
@@ -1956,6 +2358,7 @@ export async function runPredictiveHealingDecision(params: {
     dryRunOverride: params.dryRun
   };
   const execution = await executeDecision(executionRequest);
+  recordPredictiveRepairFeedback(executionRequest, execution);
   recordPredictiveTelemetry(executionRequest, executionRequest.decision, execution, trends);
 
   const auditEntry: PredictiveHealingAuditEntry = {
@@ -2053,6 +2456,7 @@ export function buildPredictiveHealingStatusSnapshot(): PredictiveHealingStatusS
     automation,
     recentExecutionLog,
     detailsPath: '/api/self-heal/decide',
+    actuator: buildWorkerRepairActuatorStatus(),
     advisors: [...DEFAULT_ADVISORS]
   };
 }
