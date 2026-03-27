@@ -2387,6 +2387,7 @@ export async function runSelfHealingLoop(options: {
         requestWindow: observation.requestWindow,
         workerHealth: observation.workerHealth,
         workerRuntime: observation.workerRuntime,
+        trinityStatus: observation.trinityStatus,
         workerHealthError: observation.workerHealthError
       }
     });

@@ -5,6 +5,7 @@ const scaleWorkersUpMock = jest.fn();
 const recycleWorkerMock = jest.fn();
 const healWorkerRuntimeMock = jest.fn();
 const recordSelfHealEventMock = jest.fn();
+const activateTrinitySelfHealingMitigationMock = jest.fn();
 
 jest.unstable_mockModule('@platform/runtime/workerConfig.js', () => ({
   getWorkerRuntimeStatus: jest.fn(),
@@ -37,13 +38,64 @@ jest.unstable_mockModule('@services/workerControlService.js', () => ({
   healWorkerRuntime: healWorkerRuntimeMock
 }));
 
+jest.unstable_mockModule('@services/selfImprove/selfHealingV2.js', () => ({
+  activateTrinitySelfHealingMitigation: activateTrinitySelfHealingMitigationMock,
+  getTrinitySelfHealingStatus: jest.fn(() => ({
+    enabled: true,
+    config: {
+      triggerThreshold: 3,
+      maxAttempts: 3
+    },
+    snapshot: {
+      intake: {
+        observations: [],
+        attempts: 0,
+        activeAction: null,
+        activeSinceMs: null,
+        expiresAtMs: null,
+        verificationSuccesses: 0,
+        verificationFailures: 0,
+        verifiedAtMs: null,
+        cooldownUntilMs: null,
+        failedActions: []
+      },
+      reasoning: {
+        observations: [],
+        attempts: 0,
+        activeAction: null,
+        activeSinceMs: null,
+        expiresAtMs: null,
+        verificationSuccesses: 0,
+        verificationFailures: 0,
+        verifiedAtMs: null,
+        cooldownUntilMs: null,
+        failedActions: []
+      },
+      final: {
+        observations: [],
+        attempts: 0,
+        activeAction: null,
+        activeSinceMs: null,
+        expiresAtMs: null,
+        verificationSuccesses: 0,
+        verificationFailures: 0,
+        verifiedAtMs: null,
+        cooldownUntilMs: null,
+        failedActions: []
+      }
+    }
+  }))
+}));
+
 jest.unstable_mockModule('../src/services/selfImprove/selfHealTelemetry.js', () => ({
   recordSelfHealEvent: recordSelfHealEventMock
 }));
 
 const {
+  buildPredictiveHealingStatusSnapshot,
   resetPredictiveHealingStateForTests,
-  runPredictiveHealingDecision
+  runPredictiveHealingDecision,
+  runPredictiveHealingFromLoop
 } = await import('../src/services/selfImprove/predictiveHealingService.js');
 
 function createObservation(overrides: Record<string, unknown> = {}) {
@@ -92,7 +144,129 @@ function createObservation(overrides: Record<string, unknown> = {}) {
       mode: null,
       reason: null
     },
+    trinity: {
+      enabled: true,
+      activeStage: null,
+      activeAction: null,
+      verified: false,
+      config: {
+        triggerThreshold: 3,
+        maxAttempts: 3
+      },
+      stages: {
+        intake: {
+          observationsInWindow: 0,
+          attempts: 0,
+          activeAction: null,
+          verified: false,
+          cooldownUntil: null,
+          failedActions: []
+        },
+        reasoning: {
+          observationsInWindow: 0,
+          attempts: 0,
+          activeAction: null,
+          verified: false,
+          cooldownUntil: null,
+          failedActions: []
+        },
+        final: {
+          observationsInWindow: 0,
+          attempts: 0,
+          activeAction: null,
+          verified: false,
+          cooldownUntil: null,
+          failedActions: []
+        }
+      }
+    },
     ...overrides
+  };
+}
+
+function toLoopObservation(observation = createObservation()) {
+  return {
+    collectedAt: observation.collectedAt,
+    requestWindow: {
+      windowMs: observation.windowMs,
+      requestCount: observation.requestCount,
+      errorRate: observation.errorRate,
+      timeoutRate: observation.timeoutRate,
+      avgLatencyMs: observation.avgLatencyMs,
+      p95LatencyMs: observation.p95LatencyMs,
+      maxLatencyMs: observation.maxLatencyMs,
+      degradedCount: observation.degradedCount,
+      routes: [],
+      serverErrorCount: Math.round(observation.requestCount * observation.errorRate),
+      clientErrorCount: 0,
+      pipelineTimeoutCount: 0,
+      timeoutCount: Math.round(observation.requestCount * observation.timeoutRate)
+    },
+    workerHealth: {
+      overallStatus: observation.workerHealth.overallStatus,
+      alerts: observation.workerHealth.alerts,
+      workers: observation.workerHealth.workers,
+      queueSummary: {
+        pending: observation.workerHealth.pending,
+        running: observation.workerHealth.running,
+        delayed: observation.workerHealth.delayed,
+        stalledRunning: observation.workerHealth.stalledRunning,
+        oldestPendingJobAgeMs: observation.workerHealth.oldestPendingJobAgeMs
+      }
+    },
+    workerRuntime: observation.workerRuntime,
+    trinityStatus: {
+      enabled: observation.trinity.enabled,
+      config: {
+        triggerThreshold: observation.trinity.config.triggerThreshold,
+        maxAttempts: observation.trinity.config.maxAttempts
+      },
+      snapshot: {
+        intake: {
+          observations: new Array(observation.trinity.stages.intake.observationsInWindow).fill(0),
+          attempts: observation.trinity.stages.intake.attempts,
+          activeAction: observation.trinity.stages.intake.activeAction,
+          activeSinceMs: null,
+          expiresAtMs: null,
+          verificationSuccesses: observation.trinity.stages.intake.verified ? 1 : 0,
+          verificationFailures: 0,
+          verifiedAtMs: observation.trinity.stages.intake.verified ? Date.now() : null,
+          cooldownUntilMs: observation.trinity.stages.intake.cooldownUntil
+            ? Date.parse(observation.trinity.stages.intake.cooldownUntil)
+            : null,
+          failedActions: observation.trinity.stages.intake.failedActions
+        },
+        reasoning: {
+          observations: new Array(observation.trinity.stages.reasoning.observationsInWindow).fill(0),
+          attempts: observation.trinity.stages.reasoning.attempts,
+          activeAction: observation.trinity.stages.reasoning.activeAction,
+          activeSinceMs: null,
+          expiresAtMs: null,
+          verificationSuccesses: observation.trinity.stages.reasoning.verified ? 1 : 0,
+          verificationFailures: 0,
+          verifiedAtMs: observation.trinity.stages.reasoning.verified ? Date.now() : null,
+          cooldownUntilMs: observation.trinity.stages.reasoning.cooldownUntil
+            ? Date.parse(observation.trinity.stages.reasoning.cooldownUntil)
+            : null,
+          failedActions: observation.trinity.stages.reasoning.failedActions
+        },
+        final: {
+          observations: new Array(observation.trinity.stages.final.observationsInWindow).fill(0),
+          attempts: observation.trinity.stages.final.attempts,
+          activeAction: observation.trinity.stages.final.activeAction,
+          activeSinceMs: null,
+          expiresAtMs: null,
+          verificationSuccesses: observation.trinity.stages.final.verified ? 1 : 0,
+          verificationFailures: 0,
+          verifiedAtMs: observation.trinity.stages.final.verified ? Date.now() : null,
+          cooldownUntilMs: observation.trinity.stages.final.cooldownUntil
+            ? Date.parse(observation.trinity.stages.final.cooldownUntil)
+            : null,
+          failedActions: observation.trinity.stages.final.failedActions
+        }
+      }
+    },
+    workerHealthError: null
   };
 }
 
@@ -147,10 +321,21 @@ describe('predictive healing execution', () => {
         started: true
       }
     });
+    activateTrinitySelfHealingMitigationMock.mockReturnValue({
+      applied: true,
+      rolledBack: false,
+      stage: 'final',
+      action: 'bypass_final_stage',
+      reason: 'applied',
+      activeAction: 'bypass_final_stage',
+      verified: false,
+      expiresAtMs: Date.now() + 600000
+    });
     resetPredictiveHealingStateForTests();
   });
 
   afterEach(() => {
+    delete process.env.SELF_HEAL_LOOP_INTERVAL_MS;
     jest.useRealTimers();
   });
 
@@ -198,5 +383,229 @@ describe('predictive healing execution', () => {
     expect(result.execution.status).toBe('failed');
     expect(result.execution.message).toContain('runtime restart failed');
     expect(recordSelfHealEventMock).toHaveBeenCalled();
+  });
+
+  it('skips the background automation loop when predictive healing is disabled', async () => {
+    getConfigMock.mockReturnValue({
+      predictiveHealingEnabled: false,
+      predictiveHealingDryRun: true,
+      autoExecuteHealing: false,
+      predictiveHealingObservationHistoryLimit: 12,
+      predictiveHealingAuditHistoryLimit: 25,
+      predictiveHealingActionCooldownMs: 60000,
+      predictiveScaleUpStep: 1,
+      predictiveHealingMinObservations: 3,
+      predictiveHealingStaleAfterMs: 300000,
+      predictiveHealingMinConfidence: 0.6,
+      predictiveErrorRateThreshold: 0.18,
+      predictiveLatencyConsecutiveIntervals: 3,
+      predictiveLatencyRiseDeltaMs: 250,
+      predictiveMemoryThresholdMb: 900,
+      predictiveMemoryGrowthThresholdMb: 120,
+      predictiveMemorySustainedIntervals: 3,
+      predictiveQueuePendingThreshold: 5,
+      predictiveQueueVelocityThreshold: 2
+    });
+
+    const result = await runPredictiveHealingFromLoop({
+      source: 'predictive_self_heal_loop',
+      observation: toLoopObservation(
+        createObservation({
+          avgLatencyMs: 2600,
+          p95LatencyMs: 3400,
+          workerHealth: { ...createObservation().workerHealth, pending: 9 }
+        })
+      )
+    });
+
+    expect(result.decision.action).toBe('none');
+    expect(result.execution.status).toBe('skipped');
+    expect(result.execution.message).toContain('disabled');
+    expect(scaleWorkersUpMock).not.toHaveBeenCalled();
+    expect(recordSelfHealEventMock).not.toHaveBeenCalled();
+    expect(buildPredictiveHealingStatusSnapshot().recentAuditCount).toBe(0);
+  });
+
+  it('summarizes automated loop decisions and outcomes in status output', async () => {
+    process.env.SELF_HEAL_LOOP_INTERVAL_MS = '15000';
+    getConfigMock.mockReturnValue({
+      predictiveHealingEnabled: true,
+      predictiveHealingDryRun: false,
+      autoExecuteHealing: true,
+      predictiveHealingObservationHistoryLimit: 12,
+      predictiveHealingAuditHistoryLimit: 25,
+      predictiveHealingActionCooldownMs: 60000,
+      predictiveScaleUpStep: 1,
+      predictiveHealingMinObservations: 3,
+      predictiveHealingStaleAfterMs: 300000,
+      predictiveHealingMinConfidence: 0.6,
+      predictiveErrorRateThreshold: 0.18,
+      predictiveLatencyConsecutiveIntervals: 3,
+      predictiveLatencyRiseDeltaMs: 250,
+      predictiveMemoryThresholdMb: 900,
+      predictiveMemoryGrowthThresholdMb: 120,
+      predictiveMemorySustainedIntervals: 3,
+      predictiveQueuePendingThreshold: 5,
+      predictiveQueueVelocityThreshold: 2
+    });
+
+    const history = [
+      createObservation({
+        collectedAt: '2026-03-26T11:57:00.000Z',
+        avgLatencyMs: 900,
+        p95LatencyMs: 1200,
+        workerHealth: { ...createObservation().workerHealth, pending: 4 }
+      }),
+      createObservation({
+        collectedAt: '2026-03-26T11:58:00.000Z',
+        avgLatencyMs: 1400,
+        p95LatencyMs: 1800,
+        workerHealth: { ...createObservation().workerHealth, pending: 6 }
+      }),
+      createObservation({
+        collectedAt: '2026-03-26T11:59:00.000Z',
+        avgLatencyMs: 1900,
+        p95LatencyMs: 2500,
+        workerHealth: { ...createObservation().workerHealth, pending: 7 }
+      }),
+      createObservation({
+        collectedAt: '2026-03-26T12:00:00.000Z',
+        avgLatencyMs: 2400,
+        p95LatencyMs: 3200,
+        workerHealth: { ...createObservation().workerHealth, pending: 8 }
+      })
+    ];
+
+    for (const observation of history) {
+      await runPredictiveHealingFromLoop({
+        source: 'predictive_self_heal_loop',
+        observation: toLoopObservation(observation)
+      });
+    }
+
+    const snapshot = buildPredictiveHealingStatusSnapshot();
+
+    expect(scaleWorkersUpMock).toHaveBeenCalledWith(1);
+    expect(snapshot.automation).toEqual(expect.objectContaining({
+      active: true,
+      autoExecuteReady: true,
+      cooldownMs: 60000,
+      pollIntervalMs: 15000,
+      minConfidence: 0.6,
+      lastLoopDecisionAt: '2026-03-26T12:00:00.000Z',
+      lastLoopAction: 'scale_workers_up',
+      lastLoopResult: 'cooldown',
+      lastAutoExecutionAt: '2026-03-26T11:59:00.000Z',
+      lastAutoExecutionAction: 'scale_workers_up',
+      lastAutoExecutionResult: 'executed'
+    }));
+    expect(snapshot.recentExecutionLog).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        source: 'predictive_self_heal_loop',
+        action: 'scale_workers_up',
+        result: 'executed',
+        mode: 'auto_execute',
+        recoveryStatus: 'pending_observation'
+      })
+    ]));
+  });
+
+  it('executes Trinity mitigation when predictive rules select a Trinity stage pre-heal', async () => {
+    const result = await runPredictiveHealingDecision({
+      source: 'predictive_test_trinity_execute',
+      observation: createObservation({
+        requestCount: 14,
+        trinity: {
+          ...createObservation().trinity,
+          stages: {
+            ...createObservation().trinity.stages,
+            final: {
+              observationsInWindow: 2,
+              attempts: 0,
+              activeAction: null,
+              verified: false,
+              cooldownUntil: null,
+              failedActions: []
+            }
+          }
+        }
+      }),
+      execute: true
+    });
+
+    expect(result.decision.action).toBe('activate_trinity_mitigation');
+    expect(result.decision.target).toBe('trinity:final');
+    expect(activateTrinitySelfHealingMitigationMock).toHaveBeenCalledWith({
+      stage: 'final',
+      action: 'bypass_final_stage',
+      reason: 'predictive_healing:trinity_final_stage_preheal'
+    });
+    expect(result.execution.status).toBe('executed');
+  });
+
+  it('captures Trinity predictive automation in loop status history', async () => {
+    getConfigMock.mockReturnValue({
+      predictiveHealingEnabled: true,
+      predictiveHealingDryRun: false,
+      autoExecuteHealing: true,
+      predictiveHealingObservationHistoryLimit: 12,
+      predictiveHealingAuditHistoryLimit: 25,
+      predictiveHealingActionCooldownMs: 60000,
+      predictiveScaleUpStep: 1,
+      predictiveHealingMinObservations: 3,
+      predictiveHealingStaleAfterMs: 300000,
+      predictiveHealingMinConfidence: 0.6,
+      predictiveErrorRateThreshold: 0.18,
+      predictiveLatencyConsecutiveIntervals: 3,
+      predictiveLatencyRiseDeltaMs: 250,
+      predictiveMemoryThresholdMb: 900,
+      predictiveMemoryGrowthThresholdMb: 120,
+      predictiveMemorySustainedIntervals: 3,
+      predictiveQueuePendingThreshold: 5,
+      predictiveQueueVelocityThreshold: 2
+    });
+
+    const seededObservations = [
+      createObservation({ collectedAt: '2026-03-26T11:58:00.000Z' }),
+      createObservation({ collectedAt: '2026-03-26T11:59:00.000Z' }),
+      createObservation({
+        collectedAt: '2026-03-26T12:00:00.000Z',
+        requestCount: 14,
+        trinity: {
+          ...createObservation().trinity,
+          stages: {
+            ...createObservation().trinity.stages,
+            final: {
+              observationsInWindow: 2,
+              attempts: 0,
+              activeAction: null,
+              verified: false,
+              cooldownUntil: null,
+              failedActions: []
+            }
+          }
+        }
+      })
+    ];
+
+    for (const observation of seededObservations) {
+      await runPredictiveHealingFromLoop({
+        source: 'predictive_self_heal_loop',
+        observation: toLoopObservation(observation)
+      });
+    }
+
+    const snapshot = buildPredictiveHealingStatusSnapshot();
+
+    expect(snapshot.automation.lastLoopAction).toBe('activate_trinity_mitigation');
+    expect(snapshot.automation.lastLoopResult).toBe('executed');
+    expect(snapshot.recentExecutionLog).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        action: 'activate_trinity_mitigation',
+        target: 'trinity:final',
+        matchedRule: 'trinity_final_stage_preheal',
+        result: 'executed'
+      })
+    ]));
   });
 });

@@ -101,10 +101,18 @@ describe('validate-railway-compatibility', () => {
       validateDockerfile('CMD ["sh", "-c", "NODE_OPTIONS=\'--max-old-space-size=7168\' npm start"]')
     ).toEqual([
       expect.stringContaining('CMD ["node", "scripts/start-railway-service.mjs"]'),
+      expect.stringContaining('COPY prisma/ ./prisma/'),
+      expect.stringContaining('npx --yes prisma@5.22.0 generate --schema ./prisma/schema.prisma'),
     ]);
 
     expect(
-      validateDockerfile('CMD ["node", "scripts/start-railway-service.mjs"]')
+      validateDockerfile([
+        'COPY prisma/ ./prisma/',
+        'RUN npm install --include=dev --no-audit --no-fund && \\',
+        '    npx --yes prisma@5.22.0 generate --schema ./prisma/schema.prisma && \\',
+        '    npm run build',
+        'CMD ["node", "scripts/start-railway-service.mjs"]',
+      ].join('\n'))
     ).toEqual([]);
   });
 });

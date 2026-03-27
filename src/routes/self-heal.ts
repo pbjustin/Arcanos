@@ -16,6 +16,15 @@ const simulatedWorkerSchema = z.object({
   currentJobId: z.string().trim().min(1).nullable().optional()
 });
 
+const simulatedTrinityStageSchema = z.object({
+  observationsInWindow: z.number().int().min(0).optional(),
+  attempts: z.number().int().min(0).optional(),
+  activeAction: z.enum(['enable_degraded_mode', 'bypass_final_stage']).nullable().optional(),
+  verified: z.boolean().optional(),
+  cooldownUntil: z.string().datetime().nullable().optional(),
+  failedActions: z.array(z.enum(['enable_degraded_mode', 'bypass_final_stage'])).optional()
+}).partial();
+
 const decidePredictiveSelfHealSchema = z.object({
   execute: z.boolean().optional(),
   dryRun: z.boolean().optional(),
@@ -61,6 +70,21 @@ const decidePredictiveSelfHealSchema = z.object({
       active: z.boolean().optional(),
       mode: z.enum(['reduced_latency', 'degraded_response']).nullable().optional(),
       reason: z.string().trim().min(1).nullable().optional()
+    }).partial().optional(),
+    trinity: z.object({
+      enabled: z.boolean().optional(),
+      activeStage: z.enum(['intake', 'reasoning', 'final']).nullable().optional(),
+      activeAction: z.enum(['enable_degraded_mode', 'bypass_final_stage']).nullable().optional(),
+      verified: z.boolean().optional(),
+      config: z.object({
+        triggerThreshold: z.number().int().min(1).optional(),
+        maxAttempts: z.number().int().min(1).optional()
+      }).partial().optional(),
+      stages: z.object({
+        intake: simulatedTrinityStageSchema.optional(),
+        reasoning: simulatedTrinityStageSchema.optional(),
+        final: simulatedTrinityStageSchema.optional()
+      }).partial().optional()
     }).partial().optional()
   }).partial().optional()
 }).strip();

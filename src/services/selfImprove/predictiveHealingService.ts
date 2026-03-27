@@ -17,10 +17,18 @@ import {
 } from '@services/openai/promptRouteMitigation.js';
 import { runtimeDiagnosticsService, type RequestWindowSnapshot } from '@services/runtimeDiagnosticsService.js';
 import {
+  activateTrinitySelfHealingMitigation,
+  getTrinitySelfHealingStatus,
+  type TrinitySelfHealingAction,
+  type TrinitySelfHealingMitigationCommandResult,
+  type TrinitySelfHealingStage
+} from '@services/selfImprove/selfHealingV2.js';
+import {
   getWorkerControlHealth,
   healWorkerRuntime,
   type WorkerControlHealthResponse
 } from '@services/workerControlService.js';
+import { getEnvNumber } from '@platform/runtime/env.js';
 import { recordSelfHealEvent } from './selfHealTelemetry.js';
 
 export type PredictiveHealingActionType =
@@ -29,6 +37,7 @@ export type PredictiveHealingActionType =
   | 'recycle_worker'
   | 'recycle_worker_runtime'
   | 'heal_worker_runtime'
+  | 'activate_trinity_mitigation'
   | 'mark_node_degraded'
   | 'shift_traffic_away';
 
@@ -90,6 +99,27 @@ export interface PredictiveHealingObservation {
     mode: PromptRouteMitigationMode;
     reason: string | null;
   };
+  trinity: {
+    enabled: boolean;
+    activeStage: TrinitySelfHealingStage | null;
+    activeAction: TrinitySelfHealingAction | null;
+    verified: boolean;
+    config: {
+      triggerThreshold: number;
+      maxAttempts: number;
+    };
+    stages: Record<
+      TrinitySelfHealingStage,
+      {
+        observationsInWindow: number;
+        attempts: number;
+        activeAction: TrinitySelfHealingAction | null;
+        verified: boolean;
+        cooldownUntil: string | null;
+        failedActions: TrinitySelfHealingAction[];
+      }
+    >;
+  };
 }
 
 export interface PredictiveHealingSimulationInput {
@@ -120,6 +150,19 @@ export interface PredictiveHealingSimulationInput {
   }>;
   workerRuntime?: Partial<PredictiveHealingObservation['workerRuntime']>;
   promptRoute?: Partial<PredictiveHealingObservation['promptRoute']>;
+  trinity?: Partial<{
+    enabled: boolean;
+    activeStage: TrinitySelfHealingStage | null;
+    activeAction: TrinitySelfHealingAction | null;
+    verified: boolean;
+    config: Partial<PredictiveHealingObservation['trinity']['config']>;
+    stages: Partial<
+      Record<
+        TrinitySelfHealingStage,
+        Partial<PredictiveHealingObservation['trinity']['stages'][TrinitySelfHealingStage]>
+      >
+    >;
+  }>;
 }
 
 export interface PredictiveHealingTrends {
@@ -183,6 +226,34 @@ export interface PredictiveHealingAuditEntry {
   execution: PredictiveHealingExecutionResult;
 }
 
+export interface PredictiveHealingExecutionLogEntry {
+  timestamp: string;
+  source: string;
+  action: PredictiveHealingActionType;
+  target: string | null;
+  confidence: number;
+  matchedRule: string | null;
+  mode: PredictiveHealingExecutionResult['mode'];
+  result: PredictiveHealingExecutionStatus;
+  reason: string;
+  outcome: string;
+  recoveryStatus: PredictiveHealingRecoveryOutcome['status'];
+}
+
+export interface PredictiveHealingAutomationStatus {
+  active: boolean;
+  autoExecuteReady: boolean;
+  pollIntervalMs: number;
+  minConfidence: number;
+  cooldownMs: number;
+  lastLoopDecisionAt: string | null;
+  lastLoopAction: PredictiveHealingActionType | null;
+  lastLoopResult: PredictiveHealingExecutionStatus | null;
+  lastAutoExecutionAt: string | null;
+  lastAutoExecutionAction: PredictiveHealingActionType | null;
+  lastAutoExecutionResult: PredictiveHealingExecutionStatus | null;
+}
+
 export interface PredictiveHealingStatusSnapshot {
   enabled: boolean;
   dryRun: boolean;
@@ -196,6 +267,8 @@ export interface PredictiveHealingStatusSnapshot {
   recentAudits: PredictiveHealingAuditEntry[];
   recentObservations: PredictiveHealingObservation[];
   cooldowns: Record<string, string>;
+  automation: PredictiveHealingAutomationStatus;
+  recentExecutionLog: PredictiveHealingExecutionLogEntry[];
   detailsPath: '/api/self-heal/decide';
   advisors: string[];
 }
@@ -204,10 +277,13 @@ export interface PredictiveHealingCompactSummary {
   enabled: boolean;
   dryRun: boolean;
   autoExecute: boolean;
+  autoExecuteReady: boolean;
   lastObservedAt: string | null;
   lastDecisionAt: string | null;
   lastAction: PredictiveHealingActionType | null;
   lastResult: PredictiveHealingExecutionStatus | null;
+  lastAutoExecutionAt: string | null;
+  lastAutoExecutionResult: PredictiveHealingExecutionStatus | null;
   recentAuditCount: number;
   detailsPath: '/api/self-heal/decide';
 }
@@ -283,7 +359,28 @@ const DEFAULT_QUEUE_VELOCITY_THRESHOLD = 2;
 const DEFAULT_ACTION_COOLDOWN_MS = 5 * 60_000;
 const DEFAULT_OBSERVATION_HISTORY_LIMIT = 12;
 const DEFAULT_AUDIT_HISTORY_LIMIT = 25;
+const DEFAULT_LOOP_INTERVAL_MS = 30_000;
+const DEFAULT_EXECUTION_LOG_LIMIT = 10;
 const DEFAULT_SCALE_UP_STEP = 1;
+const REDUCED_LATENCY_MODE_TOKEN_LIMIT = 96;
+const SINGLE_UNHEALTHY_WORKER_CONFIDENCE = 0.86;
+const LATENCY_RISING_BASE_CONFIDENCE = 0.68;
+const LATENCY_RISING_CONFIDENCE_FACTOR = 0.06;
+const LATENCY_RISING_MAX_CONFIDENCE = 0.92;
+const QUEUE_BACKLOG_BASE_CONFIDENCE = 0.7;
+const QUEUE_BACKLOG_CONFIDENCE_FACTOR = 0.04;
+const QUEUE_BACKLOG_MAX_CONFIDENCE = 0.93;
+const MEMORY_GROWTH_RECYCLE_CONFIDENCE = 0.84;
+const ERROR_RATE_BASE_CONFIDENCE = 0.72;
+const ERROR_RATE_CONFIDENCE_FACTOR = 1.5;
+const ERROR_RATE_MAX_CONFIDENCE = 0.95;
+const TRINITY_FINAL_STAGE_BASE_CONFIDENCE = 0.82;
+const TRINITY_INTERMEDIATE_STAGE_BASE_CONFIDENCE = 0.76;
+const TRINITY_PREHEAL_CONFIRMATION_BOOST = 0.06;
+const TRINITY_PREHEAL_MAX_CONFIDENCE = 0.91;
+const PREEMPTIVE_DEGRADE_CONFIDENCE = 0.69;
+const OFFLINE_NODE_SHIFT_TRAFFIC_CONFIDENCE = 0.88;
+const PREDICTIVE_LOOP_SOURCE = 'predictive_self_heal_loop';
 
 type PredictiveHealingGlobal = typeof globalThis & {
   [GLOBAL_KEY]?: PredictiveHealingState;
@@ -320,12 +417,87 @@ function normalizeStringArray(values: string[] | undefined | null): string[] {
     : [];
 }
 
+function stageCooldownToIso(value: number | null | undefined): string | null {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return null;
+  }
+
+  return new Date(value).toISOString();
+}
+
+function inferActiveTrinityStage(snapshot: ReturnType<typeof getTrinitySelfHealingStatus>['snapshot']): TrinitySelfHealingStage | null {
+  if (snapshot.intake.activeAction) {
+    return 'intake';
+  }
+  if (snapshot.reasoning.activeAction) {
+    return 'reasoning';
+  }
+  if (snapshot.final.activeAction) {
+    return 'final';
+  }
+
+  return null;
+}
+
+function inferActiveTrinityAction(
+  snapshot: ReturnType<typeof getTrinitySelfHealingStatus>['snapshot']
+): TrinitySelfHealingAction | null {
+  return snapshot.intake.activeAction ?? snapshot.reasoning.activeAction ?? snapshot.final.activeAction ?? null;
+}
+
+function buildTrinityObservation(status: ReturnType<typeof getTrinitySelfHealingStatus>): PredictiveHealingObservation['trinity'] {
+  const snapshot = status.snapshot;
+  const activeStage = inferActiveTrinityStage(snapshot);
+
+  return {
+    enabled: status.enabled,
+    activeStage,
+    activeAction: inferActiveTrinityAction(snapshot),
+    verified: Boolean(
+      snapshot.intake.verifiedAtMs !== null ||
+        snapshot.reasoning.verifiedAtMs !== null ||
+        snapshot.final.verifiedAtMs !== null
+    ),
+    config: {
+      triggerThreshold: status.config.triggerThreshold,
+      maxAttempts: status.config.maxAttempts
+    },
+    stages: {
+      intake: {
+        observationsInWindow: snapshot.intake.observations.length,
+        attempts: snapshot.intake.attempts,
+        activeAction: snapshot.intake.activeAction,
+        verified: snapshot.intake.verifiedAtMs !== null,
+        cooldownUntil: stageCooldownToIso(snapshot.intake.cooldownUntilMs),
+        failedActions: [...snapshot.intake.failedActions]
+      },
+      reasoning: {
+        observationsInWindow: snapshot.reasoning.observations.length,
+        attempts: snapshot.reasoning.attempts,
+        activeAction: snapshot.reasoning.activeAction,
+        verified: snapshot.reasoning.verifiedAtMs !== null,
+        cooldownUntil: stageCooldownToIso(snapshot.reasoning.cooldownUntilMs),
+        failedActions: [...snapshot.reasoning.failedActions]
+      },
+      final: {
+        observationsInWindow: snapshot.final.observations.length,
+        attempts: snapshot.final.attempts,
+        activeAction: snapshot.final.activeAction,
+        verified: snapshot.final.verifiedAtMs !== null,
+        cooldownUntil: stageCooldownToIso(snapshot.final.cooldownUntilMs),
+        failedActions: [...snapshot.final.failedActions]
+      }
+    }
+  };
+}
+
 function buildObservationFromSources(params: {
   source: string;
   requestWindow: RequestWindowSnapshot;
   workerHealth: WorkerControlHealthResponse | null;
   workerRuntime: WorkerRuntimeStatus;
   promptRouteMitigation: PromptRouteMitigationState;
+  trinityStatus: ReturnType<typeof getTrinitySelfHealingStatus>;
   memoryUsage: NodeJS.MemoryUsage;
   collectedAt?: string;
   workerHealthError?: string | null;
@@ -396,7 +568,8 @@ function buildObservationFromSources(params: {
       active: params.promptRouteMitigation.active,
       mode: params.promptRouteMitigation.mode,
       reason: params.promptRouteMitigation.reason ?? null
-    }
+    },
+    trinity: buildTrinityObservation(params.trinityStatus)
   };
 }
 
@@ -451,6 +624,37 @@ function applySimulation(
     promptRoute: {
       ...base.promptRoute,
       ...(simulate.promptRoute ?? {})
+    },
+    trinity: {
+      ...base.trinity,
+      ...(simulate.trinity ?? {}),
+      config: {
+        ...base.trinity.config,
+        ...(simulate.trinity?.config ?? {})
+      },
+      stages: {
+        intake: {
+          ...base.trinity.stages.intake,
+          ...(simulate.trinity?.stages?.intake ?? {}),
+          failedActions: simulate.trinity?.stages?.intake?.failedActions
+            ? [...simulate.trinity.stages.intake.failedActions]
+            : base.trinity.stages.intake.failedActions
+        },
+        reasoning: {
+          ...base.trinity.stages.reasoning,
+          ...(simulate.trinity?.stages?.reasoning ?? {}),
+          failedActions: simulate.trinity?.stages?.reasoning?.failedActions
+            ? [...simulate.trinity.stages.reasoning.failedActions]
+            : base.trinity.stages.reasoning.failedActions
+        },
+        final: {
+          ...base.trinity.stages.final,
+          ...(simulate.trinity?.stages?.final ?? {}),
+          failedActions: simulate.trinity?.stages?.final?.failedActions
+            ? [...simulate.trinity.stages.final.failedActions]
+            : base.trinity.stages.final.failedActions
+        }
+      }
     }
   };
 }
@@ -470,7 +674,25 @@ function cloneObservation(observation: PredictiveHealingObservation): Predictive
       ...observation.workerRuntime,
       workerIds: [...observation.workerRuntime.workerIds]
     },
-    promptRoute: { ...observation.promptRoute }
+    promptRoute: { ...observation.promptRoute },
+    trinity: {
+      ...observation.trinity,
+      config: { ...observation.trinity.config },
+      stages: {
+        intake: {
+          ...observation.trinity.stages.intake,
+          failedActions: [...observation.trinity.stages.intake.failedActions]
+        },
+        reasoning: {
+          ...observation.trinity.stages.reasoning,
+          failedActions: [...observation.trinity.stages.reasoning.failedActions]
+        },
+        final: {
+          ...observation.trinity.stages.final,
+          failedActions: [...observation.trinity.stages.final.failedActions]
+        }
+      }
+    }
   };
 }
 
@@ -558,6 +780,53 @@ function workerHealthRank(status: WorkerControlHealthResponse['overallStatus'] |
   return 0;
 }
 
+function trinityActionOrder(stage: TrinitySelfHealingStage): TrinitySelfHealingAction[] {
+  if (stage === 'final') {
+    return ['bypass_final_stage', 'enable_degraded_mode'];
+  }
+
+  return ['enable_degraded_mode'];
+}
+
+function selectTrinityStageAction(
+  stage: TrinitySelfHealingStage,
+  failedActions: TrinitySelfHealingAction[]
+): TrinitySelfHealingAction | null {
+  for (const action of trinityActionOrder(stage)) {
+    if (!failedActions.includes(action)) {
+      return action;
+    }
+  }
+
+  return null;
+}
+
+function getTrinityCandidatePriority(stage: TrinitySelfHealingStage): number {
+  if (stage === 'final') {
+    return 35;
+  }
+  if (stage === 'reasoning') {
+    return 36;
+  }
+
+  return 37;
+}
+
+function getTrinityCandidateConfidence(
+  stage: TrinitySelfHealingStage,
+  observationsInWindow: number,
+  triggerThreshold: number
+): number {
+  const baseConfidence =
+    stage === 'final' ? TRINITY_FINAL_STAGE_BASE_CONFIDENCE : TRINITY_INTERMEDIATE_STAGE_BASE_CONFIDENCE;
+  const thresholdReached = observationsInWindow >= triggerThreshold;
+
+  return Math.min(
+    TRINITY_PREHEAL_MAX_CONFIDENCE,
+    baseConfidence + (thresholdReached ? TRINITY_PREHEAL_CONFIRMATION_BOOST : 0)
+  );
+}
+
 function buildTrends(
   history: PredictiveHealingObservation[],
   config: PredictiveHealingRulesConfig
@@ -628,7 +897,7 @@ function buildCandidates(
       action: 'recycle_worker',
       target: workerId,
       reason: `Worker ${workerId} is unhealthy while queue capacity remains available.`,
-      confidence: 0.86,
+      confidence: SINGLE_UNHEALTHY_WORKER_CONFIDENCE,
       matchedRule: 'single_worker_unhealthy_recycle',
       priority: 10,
       details: {
@@ -643,7 +912,10 @@ function buildCandidates(
       action: 'scale_workers_up',
       target: 'worker_runtime',
       reason: `Average latency has risen for ${trends.latencyRiseIntervals + 1} consecutive intervals.`,
-      confidence: Math.min(0.92, 0.68 + trends.latencyRiseIntervals * 0.06),
+      confidence: Math.min(
+        LATENCY_RISING_MAX_CONFIDENCE,
+        LATENCY_RISING_BASE_CONFIDENCE + trends.latencyRiseIntervals * LATENCY_RISING_CONFIDENCE_FACTOR
+      ),
       matchedRule: 'latency_rising_scale_up',
       priority: 20,
       details: {
@@ -664,7 +936,10 @@ function buildCandidates(
       action: 'scale_workers_up',
       target: 'worker_runtime',
       reason: 'Queue backlog is growing faster than workers are draining it.',
-      confidence: Math.min(0.93, 0.7 + trends.queueDepthVelocity * 0.04),
+      confidence: Math.min(
+        QUEUE_BACKLOG_MAX_CONFIDENCE,
+        QUEUE_BACKLOG_BASE_CONFIDENCE + trends.queueDepthVelocity * QUEUE_BACKLOG_CONFIDENCE_FACTOR
+      ),
       matchedRule: 'queue_backlog_growth_scale_up',
       priority: 25,
       details: {
@@ -684,7 +959,7 @@ function buildCandidates(
       action: 'recycle_worker_runtime',
       target: 'worker_runtime',
       reason: 'RSS memory has remained high and continues to grow across the rolling window.',
-      confidence: 0.84,
+      confidence: MEMORY_GROWTH_RECYCLE_CONFIDENCE,
       matchedRule: 'memory_growth_recycle_runtime',
       priority: 30,
       details: {
@@ -695,12 +970,62 @@ function buildCandidates(
     });
   }
 
+  if (observation.trinity.enabled) {
+    for (const stage of ['final', 'reasoning', 'intake'] as const) {
+      const stageState = observation.trinity.stages[stage];
+      const prehealThreshold = Math.max(1, observation.trinity.config.triggerThreshold - 1);
+      const selectedAction = selectTrinityStageAction(stage, stageState.failedActions);
+      const cooldownActive =
+        typeof stageState.cooldownUntil === 'string' && Date.parse(stageState.cooldownUntil) > Date.now();
+
+      if (
+        stageState.activeAction ||
+        cooldownActive ||
+        stageState.attempts >= observation.trinity.config.maxAttempts ||
+        !selectedAction ||
+        stageState.observationsInWindow < prehealThreshold
+      ) {
+        continue;
+      }
+
+      const candidateReason =
+        stage === 'final'
+          ? `Trinity final stage is nearing its self-heal trigger threshold with ${stageState.observationsInWindow} recent aborts.`
+          : `Trinity ${stage} stage is degrading toward its self-heal trigger threshold with ${stageState.observationsInWindow} recent aborts.`;
+
+      candidates.push({
+        action: 'activate_trinity_mitigation',
+        target: `trinity:${stage}`,
+        reason: candidateReason,
+        confidence: getTrinityCandidateConfidence(
+          stage,
+          stageState.observationsInWindow,
+          observation.trinity.config.triggerThreshold
+        ),
+        matchedRule: `trinity_${stage}_stage_preheal`,
+        priority: getTrinityCandidatePriority(stage),
+        details: {
+          stage,
+          trinityAction: selectedAction,
+          observationsInWindow: stageState.observationsInWindow,
+          triggerThreshold: observation.trinity.config.triggerThreshold,
+          attempts: stageState.attempts,
+          failedActions: [...stageState.failedActions]
+        }
+      });
+      break;
+    }
+  }
+
   if (hasEnoughTraffic && observation.errorRate >= config.errorRateThreshold) {
     candidates.push({
       action: 'heal_worker_runtime',
       target: 'worker_runtime',
       reason: `Error rate ${observation.errorRate} exceeded the predictive threshold ${config.errorRateThreshold}.`,
-      confidence: Math.min(0.95, 0.72 + (observation.errorRate - config.errorRateThreshold) * 1.5),
+      confidence: Math.min(
+        ERROR_RATE_MAX_CONFIDENCE,
+        ERROR_RATE_BASE_CONFIDENCE + (observation.errorRate - config.errorRateThreshold) * ERROR_RATE_CONFIDENCE_FACTOR
+      ),
       matchedRule: 'error_rate_reheal_runtime',
       priority: 40,
       details: {
@@ -719,7 +1044,7 @@ function buildCandidates(
       action: 'mark_node_degraded',
       target: 'prompt_route',
       reason: 'Prompt route is trending toward degraded service and should shed load before hard failure.',
-      confidence: 0.69,
+      confidence: PREEMPTIVE_DEGRADE_CONFIDENCE,
       matchedRule: 'preemptive_prompt_route_degrade',
       priority: 50,
       details: {
@@ -738,7 +1063,7 @@ function buildCandidates(
       action: 'shift_traffic_away',
       target: 'node',
       reason: 'Local runtime appears offline even after degraded mode is active.',
-      confidence: 0.88,
+      confidence: OFFLINE_NODE_SHIFT_TRAFFIC_CONFIDENCE,
       matchedRule: 'offline_node_shift_traffic',
       priority: 60,
       details: {
@@ -871,6 +1196,25 @@ function snapshotCooldowns(): Record<string, string> {
   return Object.fromEntries(entries);
 }
 
+function extractTrinityDecisionDetails(
+  decision: PredictiveHealingDecision
+): {
+  stage: TrinitySelfHealingStage;
+  action: TrinitySelfHealingAction;
+} | null {
+  const stage = decision.details.stage;
+  const action = decision.details.trinityAction;
+
+  if (
+    (stage === 'intake' || stage === 'reasoning' || stage === 'final') &&
+    (action === 'enable_degraded_mode' || action === 'bypass_final_stage')
+  ) {
+    return { stage, action };
+  }
+
+  return null;
+}
+
 function buildSupportPreview(
   observation: PredictiveHealingObservation,
   decision: PredictiveHealingDecision
@@ -921,6 +1265,50 @@ function buildSupportPreview(
     return {
       supported: true,
       message: 'Targeted worker recycle supported.'
+    };
+  }
+
+  if (decision.action === 'activate_trinity_mitigation') {
+    if (!observation.trinity.enabled) {
+      return {
+        supported: false,
+        message: 'Trinity self-healing is disabled.'
+      };
+    }
+
+    const trinityDecision = extractTrinityDecisionDetails(decision);
+    if (!trinityDecision) {
+      return {
+        supported: false,
+        message: 'Trinity predictive decision is missing stage/action details.'
+      };
+    }
+
+    const stageState = observation.trinity.stages[trinityDecision.stage];
+    if (stageState.activeAction === trinityDecision.action) {
+      return {
+        supported: false,
+        message: `Trinity ${trinityDecision.stage} stage mitigation is already active.`
+      };
+    }
+
+    if (stageState.cooldownUntil && Date.parse(stageState.cooldownUntil) > Date.now()) {
+      return {
+        supported: false,
+        message: `Trinity ${trinityDecision.stage} stage mitigation is cooling down.`
+      };
+    }
+
+    if (stageState.attempts >= observation.trinity.config.maxAttempts) {
+      return {
+        supported: false,
+        message: `Trinity ${trinityDecision.stage} stage mitigation has exhausted its attempt budget.`
+      };
+    }
+
+    return {
+      supported: true,
+      message: 'Trinity mitigation supported.'
     };
   }
 
@@ -1033,7 +1421,11 @@ async function executeDecision(
   }
 
   try {
-    let actuatorResult: WorkerScaleUpResult | WorkerRecycleResult | Record<string, unknown>;
+    let actuatorResult:
+      | WorkerScaleUpResult
+      | WorkerRecycleResult
+      | TrinitySelfHealingMitigationCommandResult
+      | Record<string, unknown>;
     let message = request.decision.reason;
     let recoveryOutcome = buildPendingOutcome('Action executed; awaiting subsequent rolling-window confirmation.');
 
@@ -1061,10 +1453,59 @@ async function executeDecision(
       };
       message = result.restart.message;
       recoveryOutcome = buildPendingOutcome(result.restart.message);
+    } else if (request.decision.action === 'activate_trinity_mitigation') {
+      const trinityDecision = extractTrinityDecisionDetails(request.decision);
+      if (!trinityDecision) {
+        return {
+          attempted: false,
+          status: 'unsupported',
+          mode,
+          action: request.decision.action,
+          target: request.decision.target,
+          message: 'Trinity predictive decision is missing stage/action details.',
+          cooldownRemainingMs: null,
+          actuatorResult: null,
+          recoveryOutcome: {
+            status: 'unsupported',
+            summary: 'Trinity predictive action could not be resolved.'
+          }
+        };
+      }
+
+      const result = activateTrinitySelfHealingMitigation({
+        stage: trinityDecision.stage,
+        action: trinityDecision.action,
+        reason: `predictive_healing:${request.decision.matchedRule ?? trinityDecision.stage}`
+      });
+
+      actuatorResult = result;
+      message = result.reason;
+      recoveryOutcome = buildPendingOutcome(
+        `Trinity ${trinityDecision.stage} stage mitigation ${trinityDecision.action} activated.`
+      );
+
+      if (!result.applied) {
+        const status: PredictiveHealingExecutionStatus =
+          result.reason === 'cooldown_active' ? 'cooldown' : 'skipped';
+        return {
+          attempted: false,
+          status,
+          mode,
+          action: request.decision.action,
+          target: request.decision.target,
+          message,
+          cooldownRemainingMs: status === 'cooldown' ? getCooldownRemainingMs(cooldownKey) : null,
+          actuatorResult: result as unknown as Record<string, unknown>,
+          recoveryOutcome: {
+            status: 'not_executed',
+            summary: `Trinity mitigation was not applied: ${result.reason}.`
+          }
+        };
+      }
     } else if (request.decision.action === 'mark_node_degraded') {
       const reason = `predictive_healing:${request.decision.matchedRule ?? 'mark_node_degraded'}`;
       if (!request.observation.promptRoute.active) {
-        const result = activatePromptRouteReducedLatencyMode(reason, 96);
+        const result = activatePromptRouteReducedLatencyMode(reason, REDUCED_LATENCY_MODE_TOKEN_LIMIT);
         actuatorResult = {
           applied: result.applied,
           rolledBack: result.rolledBack,
@@ -1261,6 +1702,136 @@ function cloneAuditEntry(entry: PredictiveHealingAuditEntry): PredictiveHealingA
   };
 }
 
+function buildExecutionLogEntry(entry: PredictiveHealingAuditEntry): PredictiveHealingExecutionLogEntry {
+  return {
+    timestamp: entry.timestamp,
+    source: entry.source,
+    action: entry.decision.action,
+    target: entry.decision.target,
+    confidence: entry.decision.confidence,
+    matchedRule: entry.decision.matchedRule,
+    mode: entry.execution.mode,
+    result: entry.execution.status,
+    reason: entry.decision.reason,
+    outcome: entry.execution.recoveryOutcome.summary,
+    recoveryStatus: entry.execution.recoveryOutcome.status
+  };
+}
+
+function findLastAudit(
+  entries: PredictiveHealingAuditEntry[],
+  predicate: (entry: PredictiveHealingAuditEntry) => boolean
+): PredictiveHealingAuditEntry | null {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    if (predicate(entries[index])) {
+      return entries[index];
+    }
+  }
+
+  return null;
+}
+
+function buildAutomationStatus(
+  state: PredictiveHealingState,
+  config: ReturnType<typeof getConfig>
+): PredictiveHealingAutomationStatus {
+  const lastLoopAudit = findLastAudit(state.recentAudits, (entry) => entry.source === PREDICTIVE_LOOP_SOURCE);
+  const lastAutoExecutionAudit = findLastAudit(
+    state.recentAudits,
+    (entry) => entry.execution.mode === 'auto_execute' && entry.execution.status === 'executed'
+  );
+
+  return {
+    active: config.predictiveHealingEnabled ?? false,
+    autoExecuteReady: Boolean(
+      (config.predictiveHealingEnabled ?? false) &&
+      (config.autoExecuteHealing ?? false) &&
+      !(config.predictiveHealingDryRun ?? true)
+    ),
+    pollIntervalMs: Math.max(1_000, getEnvNumber('SELF_HEAL_LOOP_INTERVAL_MS', DEFAULT_LOOP_INTERVAL_MS)),
+    minConfidence: config.predictiveHealingMinConfidence ?? DEFAULT_MIN_CONFIDENCE,
+    cooldownMs: Math.max(10_000, config.predictiveHealingActionCooldownMs ?? DEFAULT_ACTION_COOLDOWN_MS),
+    lastLoopDecisionAt: lastLoopAudit?.timestamp ?? null,
+    lastLoopAction: lastLoopAudit?.decision.action ?? null,
+    lastLoopResult: lastLoopAudit?.execution.status ?? null,
+    lastAutoExecutionAt: lastAutoExecutionAudit?.timestamp ?? null,
+    lastAutoExecutionAction: lastAutoExecutionAudit?.decision.action ?? null,
+    lastAutoExecutionResult: lastAutoExecutionAudit?.execution.status ?? null
+  };
+}
+
+function maybeLogPredictiveHealingAudit(entry: PredictiveHealingAuditEntry): void {
+  if (entry.decision.action === 'none' && entry.execution.status === 'skipped') {
+    return;
+  }
+
+  console.log(
+    `[PREDICTIVE-HEAL] source=${entry.source} decision=${entry.decision.action} confidence=${entry.decision.confidence} ` +
+      `mode=${entry.execution.mode} result=${entry.execution.status} outcome=${entry.execution.recoveryOutcome.status} ` +
+      `rule=${entry.decision.matchedRule ?? 'none'}`
+  );
+}
+
+function buildLoopDisabledDecisionResult(params: {
+  source: string;
+  observation: PredictiveHealingObservation;
+}): PredictiveHealingDecisionResult {
+  const config = getConfig();
+  const decision: PredictiveHealingDecision = {
+    advisor: 'rules_v1',
+    decidedAt: params.observation.collectedAt,
+    action: 'none',
+    target: null,
+    reason: 'Predictive healing automation is disabled by feature flag.',
+    confidence: 0,
+    matchedRule: null,
+    safeToExecute: false,
+    staleData: false,
+    suggestedMode: 'recommend_only',
+    details: {
+      enabled: false
+    }
+  };
+  const execution: PredictiveHealingExecutionResult = {
+    attempted: false,
+    status: 'skipped',
+    mode: 'recommend_only',
+    action: 'none',
+    target: null,
+    message: decision.reason,
+    cooldownRemainingMs: null,
+    actuatorResult: null,
+    recoveryOutcome: {
+      status: 'not_executed',
+      summary: 'Predictive loop skipped because predictive healing is disabled.'
+    }
+  };
+  const auditEntry: PredictiveHealingAuditEntry = {
+    id: 'predictive_heal_audit_disabled',
+    timestamp: params.observation.collectedAt,
+    source: params.source,
+    featureFlags: {
+      enabled: config.predictiveHealingEnabled ?? false,
+      dryRun: config.predictiveHealingDryRun ?? true,
+      autoExecute: config.autoExecuteHealing ?? false
+    },
+    observation: cloneObservation(params.observation),
+    trends: buildTrends([params.observation], getRulesConfig()),
+    decision: cloneDecision(decision),
+    execution: cloneExecution(execution)
+  };
+
+  return {
+    source: params.source,
+    featureFlags: { ...auditEntry.featureFlags },
+    observation: cloneObservation(params.observation),
+    trends: cloneTrends(auditEntry.trends),
+    decision: cloneDecision(decision),
+    execution: cloneExecution(execution),
+    auditEntry: cloneAuditEntry(auditEntry)
+  };
+}
+
 async function collectLiveObservation(source: string): Promise<PredictiveHealingObservation> {
   const config = getConfig();
   let workerHealth: WorkerControlHealthResponse | null = null;
@@ -1280,6 +1851,7 @@ async function collectLiveObservation(source: string): Promise<PredictiveHealing
     workerHealth,
     workerRuntime: getWorkerRuntimeStatus(),
     promptRouteMitigation: getPromptRouteMitigationState(),
+    trinityStatus: getTrinitySelfHealingStatus(),
     memoryUsage: process.memoryUsage(),
     workerHealthError
   });
@@ -1351,6 +1923,7 @@ export async function runPredictiveHealingDecision(params: {
   if (state.recentAudits.length > auditHistoryLimit) {
     state.recentAudits.splice(0, state.recentAudits.length - auditHistoryLimit);
   }
+  maybeLogPredictiveHealingAudit(auditEntry);
 
   return {
     source: params.source,
@@ -1366,10 +1939,12 @@ export async function runPredictiveHealingDecision(params: {
 export async function runPredictiveHealingFromLoop(params: {
   source: string;
   observation: {
-    requestWindow: RequestWindowSnapshot;
-    workerHealth: WorkerControlHealthResponse | null;
-    workerRuntime: WorkerRuntimeStatus;
-    workerHealthError?: string | null;
+      requestWindow: RequestWindowSnapshot;
+      workerHealth: WorkerControlHealthResponse | null;
+      workerRuntime: WorkerRuntimeStatus;
+      trinityStatus: ReturnType<typeof getTrinitySelfHealingStatus>;
+      collectedAt?: string;
+      workerHealthError?: string | null;
   };
 }): Promise<PredictiveHealingDecisionResult> {
   const loopObservation = buildObservationFromSources({
@@ -1378,9 +1953,18 @@ export async function runPredictiveHealingFromLoop(params: {
     workerHealth: params.observation.workerHealth,
     workerRuntime: params.observation.workerRuntime,
     promptRouteMitigation: getPromptRouteMitigationState(),
+    trinityStatus: params.observation.trinityStatus,
     memoryUsage: process.memoryUsage(),
+    collectedAt: params.observation.collectedAt,
     workerHealthError: params.observation.workerHealthError ?? null
   });
+
+  if (!(getConfig().predictiveHealingEnabled ?? false)) {
+    return buildLoopDisabledDecisionResult({
+      source: params.source,
+      observation: loopObservation
+    });
+  }
 
   return runPredictiveHealingDecision({
     source: params.source,
@@ -1396,6 +1980,10 @@ export function buildPredictiveHealingStatusSnapshot(): PredictiveHealingStatusS
   const lastObservation = state.recentObservations.length > 0
     ? state.recentObservations[state.recentObservations.length - 1]
     : null;
+  const automation = buildAutomationStatus(state, config);
+  const recentExecutionLog = state.recentAudits
+    .slice(-DEFAULT_EXECUTION_LOG_LIMIT)
+    .map((entry) => buildExecutionLogEntry(entry));
 
   return {
     enabled: config.predictiveHealingEnabled ?? false,
@@ -1410,6 +1998,8 @@ export function buildPredictiveHealingStatusSnapshot(): PredictiveHealingStatusS
     recentAudits: state.recentAudits.map((entry) => cloneAuditEntry(entry)),
     recentObservations: state.recentObservations.map((entry) => cloneObservation(entry)),
     cooldowns: snapshotCooldowns(),
+    automation,
+    recentExecutionLog,
     detailsPath: '/api/self-heal/decide',
     advisors: [...DEFAULT_ADVISORS]
   };
@@ -1422,10 +2012,13 @@ export function buildPredictiveHealingCompactSummary(
     enabled: snapshot.enabled,
     dryRun: snapshot.dryRun,
     autoExecute: snapshot.autoExecute,
+    autoExecuteReady: snapshot.automation.autoExecuteReady,
     lastObservedAt: snapshot.lastObservedAt,
     lastDecisionAt: snapshot.lastDecisionAt,
     lastAction: snapshot.lastAction,
     lastResult: snapshot.lastResult,
+    lastAutoExecutionAt: snapshot.automation.lastAutoExecutionAt,
+    lastAutoExecutionResult: snapshot.automation.lastAutoExecutionResult,
     recentAuditCount: snapshot.recentAuditCount,
     detailsPath: snapshot.detailsPath
   };
