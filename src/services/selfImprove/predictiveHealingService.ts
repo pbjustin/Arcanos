@@ -405,6 +405,15 @@ function getState(): PredictiveHealingState {
   return runtime[GLOBAL_KEY];
 }
 
+function resolvePredictiveLoopIntervalMs(): number {
+  const preferredIntervalMs = getEnvNumber('PREDICTIVE_HEALING_INTERVAL_MS', Number.NaN);
+  if (Number.isFinite(preferredIntervalMs)) {
+    return Math.max(1_000, preferredIntervalMs);
+  }
+
+  return Math.max(1_000, getEnvNumber('SELF_HEAL_LOOP_INTERVAL_MS', DEFAULT_LOOP_INTERVAL_MS));
+}
+
 function roundMetric(value: number, digits = 3): number {
   return Number(value.toFixed(digits));
 }
