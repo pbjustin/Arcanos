@@ -74,6 +74,42 @@ describe('predictive self-heal route', () => {
           active: false,
           mode: null,
           reason: null
+        },
+        trinity: {
+          enabled: true,
+          activeStage: null,
+          activeAction: null,
+          verified: false,
+          config: {
+            triggerThreshold: 3,
+            maxAttempts: 3
+          },
+          stages: {
+            intake: {
+              observationsInWindow: 0,
+              attempts: 0,
+              activeAction: null,
+              verified: false,
+              cooldownUntil: null,
+              failedActions: []
+            },
+            reasoning: {
+              observationsInWindow: 0,
+              attempts: 0,
+              activeAction: null,
+              verified: false,
+              cooldownUntil: null,
+              failedActions: []
+            },
+            final: {
+              observationsInWindow: 2,
+              attempts: 0,
+              activeAction: null,
+              verified: false,
+              cooldownUntil: null,
+              failedActions: []
+            }
+          }
         }
       },
       trends: {
@@ -132,7 +168,14 @@ describe('predictive self-heal route', () => {
       .send({
         dryRun: true,
         simulate: {
-          avgLatencyMs: 1800
+          avgLatencyMs: 1800,
+          trinity: {
+            stages: {
+              final: {
+                observationsInWindow: 2
+              }
+            }
+          }
         }
       })
       .expect(200);
@@ -142,7 +185,14 @@ describe('predictive self-heal route', () => {
       dryRun: true,
       execute: undefined,
       simulate: expect.objectContaining({
-        avgLatencyMs: 1800
+        avgLatencyMs: 1800,
+        trinity: expect.objectContaining({
+          stages: expect.objectContaining({
+            final: expect.objectContaining({
+              observationsInWindow: 2
+            })
+          })
+        })
       })
     }));
     expect(response.body).toEqual(expect.objectContaining({

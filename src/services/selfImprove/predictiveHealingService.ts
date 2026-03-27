@@ -17,6 +17,13 @@ import {
 } from '@services/openai/promptRouteMitigation.js';
 import { runtimeDiagnosticsService, type RequestWindowSnapshot } from '@services/runtimeDiagnosticsService.js';
 import {
+  activateTrinitySelfHealingMitigation,
+  getTrinitySelfHealingStatus,
+  type TrinitySelfHealingAction,
+  type TrinitySelfHealingMitigationCommandResult,
+  type TrinitySelfHealingStage
+} from '@services/selfImprove/selfHealingV2.js';
+import {
   getWorkerControlHealth,
   healWorkerRuntime,
   type WorkerControlHealthResponse
@@ -30,6 +37,7 @@ export type PredictiveHealingActionType =
   | 'recycle_worker'
   | 'recycle_worker_runtime'
   | 'heal_worker_runtime'
+  | 'activate_trinity_mitigation'
   | 'mark_node_degraded'
   | 'shift_traffic_away';
 
@@ -91,6 +99,27 @@ export interface PredictiveHealingObservation {
     mode: PromptRouteMitigationMode;
     reason: string | null;
   };
+  trinity: {
+    enabled: boolean;
+    activeStage: TrinitySelfHealingStage | null;
+    activeAction: TrinitySelfHealingAction | null;
+    verified: boolean;
+    config: {
+      triggerThreshold: number;
+      maxAttempts: number;
+    };
+    stages: Record<
+      TrinitySelfHealingStage,
+      {
+        observationsInWindow: number;
+        attempts: number;
+        activeAction: TrinitySelfHealingAction | null;
+        verified: boolean;
+        cooldownUntil: string | null;
+        failedActions: TrinitySelfHealingAction[];
+      }
+    >;
+  };
 }
 
 export interface PredictiveHealingSimulationInput {
@@ -121,6 +150,19 @@ export interface PredictiveHealingSimulationInput {
   }>;
   workerRuntime?: Partial<PredictiveHealingObservation['workerRuntime']>;
   promptRoute?: Partial<PredictiveHealingObservation['promptRoute']>;
+  trinity?: Partial<{
+    enabled: boolean;
+    activeStage: TrinitySelfHealingStage | null;
+    activeAction: TrinitySelfHealingAction | null;
+    verified: boolean;
+    config: Partial<PredictiveHealingObservation['trinity']['config']>;
+    stages: Partial<
+      Record<
+        TrinitySelfHealingStage,
+        Partial<PredictiveHealingObservation['trinity']['stages'][TrinitySelfHealingStage]>
+      >
+    >;
+  }>;
 }
 
 export interface PredictiveHealingTrends {
@@ -332,6 +374,10 @@ const MEMORY_GROWTH_RECYCLE_CONFIDENCE = 0.84;
 const ERROR_RATE_BASE_CONFIDENCE = 0.72;
 const ERROR_RATE_CONFIDENCE_FACTOR = 1.5;
 const ERROR_RATE_MAX_CONFIDENCE = 0.95;
+const TRINITY_FINAL_STAGE_BASE_CONFIDENCE = 0.82;
+const TRINITY_INTERMEDIATE_STAGE_BASE_CONFIDENCE = 0.76;
+const TRINITY_PREHEAL_CONFIRMATION_BOOST = 0.06;
+const TRINITY_PREHEAL_MAX_CONFIDENCE = 0.91;
 const PREEMPTIVE_DEGRADE_CONFIDENCE = 0.69;
 const OFFLINE_NODE_SHIFT_TRAFFIC_CONFIDENCE = 0.88;
 const PREDICTIVE_LOOP_SOURCE = 'predictive_self_heal_loop';
@@ -371,12 +417,87 @@ function normalizeStringArray(values: string[] | undefined | null): string[] {
     : [];
 }
 
+function stageCooldownToIso(value: number | null | undefined): string | null {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return null;
+  }
+
+  return new Date(value).toISOString();
+}
+
+function inferActiveTrinityStage(snapshot: ReturnType<typeof getTrinitySelfHealingStatus>['snapshot']): TrinitySelfHealingStage | null {
+  if (snapshot.intake.activeAction) {
+    return 'intake';
+  }
+  if (snapshot.reasoning.activeAction) {
+    return 'reasoning';
+  }
+  if (snapshot.final.activeAction) {
+    return 'final';
+  }
+
+  return null;
+}
+
+function inferActiveTrinityAction(
+  snapshot: ReturnType<typeof getTrinitySelfHealingStatus>['snapshot']
+): TrinitySelfHealingAction | null {
+  return snapshot.intake.activeAction ?? snapshot.reasoning.activeAction ?? snapshot.final.activeAction ?? null;
+}
+
+function buildTrinityObservation(status: ReturnType<typeof getTrinitySelfHealingStatus>): PredictiveHealingObservation['trinity'] {
+  const snapshot = status.snapshot;
+  const activeStage = inferActiveTrinityStage(snapshot);
+
+  return {
+    enabled: status.enabled,
+    activeStage,
+    activeAction: inferActiveTrinityAction(snapshot),
+    verified: Boolean(
+      snapshot.intake.verifiedAtMs !== null ||
+        snapshot.reasoning.verifiedAtMs !== null ||
+        snapshot.final.verifiedAtMs !== null
+    ),
+    config: {
+      triggerThreshold: status.config.triggerThreshold,
+      maxAttempts: status.config.maxAttempts
+    },
+    stages: {
+      intake: {
+        observationsInWindow: snapshot.intake.observations.length,
+        attempts: snapshot.intake.attempts,
+        activeAction: snapshot.intake.activeAction,
+        verified: snapshot.intake.verifiedAtMs !== null,
+        cooldownUntil: stageCooldownToIso(snapshot.intake.cooldownUntilMs),
+        failedActions: [...snapshot.intake.failedActions]
+      },
+      reasoning: {
+        observationsInWindow: snapshot.reasoning.observations.length,
+        attempts: snapshot.reasoning.attempts,
+        activeAction: snapshot.reasoning.activeAction,
+        verified: snapshot.reasoning.verifiedAtMs !== null,
+        cooldownUntil: stageCooldownToIso(snapshot.reasoning.cooldownUntilMs),
+        failedActions: [...snapshot.reasoning.failedActions]
+      },
+      final: {
+        observationsInWindow: snapshot.final.observations.length,
+        attempts: snapshot.final.attempts,
+        activeAction: snapshot.final.activeAction,
+        verified: snapshot.final.verifiedAtMs !== null,
+        cooldownUntil: stageCooldownToIso(snapshot.final.cooldownUntilMs),
+        failedActions: [...snapshot.final.failedActions]
+      }
+    }
+  };
+}
+
 function buildObservationFromSources(params: {
   source: string;
   requestWindow: RequestWindowSnapshot;
   workerHealth: WorkerControlHealthResponse | null;
   workerRuntime: WorkerRuntimeStatus;
   promptRouteMitigation: PromptRouteMitigationState;
+  trinityStatus: ReturnType<typeof getTrinitySelfHealingStatus>;
   memoryUsage: NodeJS.MemoryUsage;
   collectedAt?: string;
   workerHealthError?: string | null;
@@ -447,7 +568,8 @@ function buildObservationFromSources(params: {
       active: params.promptRouteMitigation.active,
       mode: params.promptRouteMitigation.mode,
       reason: params.promptRouteMitigation.reason ?? null
-    }
+    },
+    trinity: buildTrinityObservation(params.trinityStatus)
   };
 }
 
@@ -502,6 +624,37 @@ function applySimulation(
     promptRoute: {
       ...base.promptRoute,
       ...(simulate.promptRoute ?? {})
+    },
+    trinity: {
+      ...base.trinity,
+      ...(simulate.trinity ?? {}),
+      config: {
+        ...base.trinity.config,
+        ...(simulate.trinity?.config ?? {})
+      },
+      stages: {
+        intake: {
+          ...base.trinity.stages.intake,
+          ...(simulate.trinity?.stages?.intake ?? {}),
+          failedActions: simulate.trinity?.stages?.intake?.failedActions
+            ? [...simulate.trinity.stages.intake.failedActions]
+            : base.trinity.stages.intake.failedActions
+        },
+        reasoning: {
+          ...base.trinity.stages.reasoning,
+          ...(simulate.trinity?.stages?.reasoning ?? {}),
+          failedActions: simulate.trinity?.stages?.reasoning?.failedActions
+            ? [...simulate.trinity.stages.reasoning.failedActions]
+            : base.trinity.stages.reasoning.failedActions
+        },
+        final: {
+          ...base.trinity.stages.final,
+          ...(simulate.trinity?.stages?.final ?? {}),
+          failedActions: simulate.trinity?.stages?.final?.failedActions
+            ? [...simulate.trinity.stages.final.failedActions]
+            : base.trinity.stages.final.failedActions
+        }
+      }
     }
   };
 }
@@ -521,7 +674,25 @@ function cloneObservation(observation: PredictiveHealingObservation): Predictive
       ...observation.workerRuntime,
       workerIds: [...observation.workerRuntime.workerIds]
     },
-    promptRoute: { ...observation.promptRoute }
+    promptRoute: { ...observation.promptRoute },
+    trinity: {
+      ...observation.trinity,
+      config: { ...observation.trinity.config },
+      stages: {
+        intake: {
+          ...observation.trinity.stages.intake,
+          failedActions: [...observation.trinity.stages.intake.failedActions]
+        },
+        reasoning: {
+          ...observation.trinity.stages.reasoning,
+          failedActions: [...observation.trinity.stages.reasoning.failedActions]
+        },
+        final: {
+          ...observation.trinity.stages.final,
+          failedActions: [...observation.trinity.stages.final.failedActions]
+        }
+      }
+    }
   };
 }
 
@@ -607,6 +778,53 @@ function workerHealthRank(status: WorkerControlHealthResponse['overallStatus'] |
     return 1;
   }
   return 0;
+}
+
+function trinityActionOrder(stage: TrinitySelfHealingStage): TrinitySelfHealingAction[] {
+  if (stage === 'final') {
+    return ['bypass_final_stage', 'enable_degraded_mode'];
+  }
+
+  return ['enable_degraded_mode'];
+}
+
+function selectTrinityStageAction(
+  stage: TrinitySelfHealingStage,
+  failedActions: TrinitySelfHealingAction[]
+): TrinitySelfHealingAction | null {
+  for (const action of trinityActionOrder(stage)) {
+    if (!failedActions.includes(action)) {
+      return action;
+    }
+  }
+
+  return null;
+}
+
+function getTrinityCandidatePriority(stage: TrinitySelfHealingStage): number {
+  if (stage === 'final') {
+    return 35;
+  }
+  if (stage === 'reasoning') {
+    return 36;
+  }
+
+  return 37;
+}
+
+function getTrinityCandidateConfidence(
+  stage: TrinitySelfHealingStage,
+  observationsInWindow: number,
+  triggerThreshold: number
+): number {
+  const baseConfidence =
+    stage === 'final' ? TRINITY_FINAL_STAGE_BASE_CONFIDENCE : TRINITY_INTERMEDIATE_STAGE_BASE_CONFIDENCE;
+  const thresholdReached = observationsInWindow >= triggerThreshold;
+
+  return Math.min(
+    TRINITY_PREHEAL_MAX_CONFIDENCE,
+    baseConfidence + (thresholdReached ? TRINITY_PREHEAL_CONFIRMATION_BOOST : 0)
+  );
 }
 
 function buildTrends(
@@ -750,6 +968,53 @@ function buildCandidates(
         sustainedIntervals: trends.memoryPressureIntervals
       }
     });
+  }
+
+  if (observation.trinity.enabled) {
+    for (const stage of ['final', 'reasoning', 'intake'] as const) {
+      const stageState = observation.trinity.stages[stage];
+      const prehealThreshold = Math.max(1, observation.trinity.config.triggerThreshold - 1);
+      const selectedAction = selectTrinityStageAction(stage, stageState.failedActions);
+      const cooldownActive =
+        typeof stageState.cooldownUntil === 'string' && Date.parse(stageState.cooldownUntil) > Date.now();
+
+      if (
+        stageState.activeAction ||
+        cooldownActive ||
+        stageState.attempts >= observation.trinity.config.maxAttempts ||
+        !selectedAction ||
+        stageState.observationsInWindow < prehealThreshold
+      ) {
+        continue;
+      }
+
+      const candidateReason =
+        stage === 'final'
+          ? `Trinity final stage is nearing its self-heal trigger threshold with ${stageState.observationsInWindow} recent aborts.`
+          : `Trinity ${stage} stage is degrading toward its self-heal trigger threshold with ${stageState.observationsInWindow} recent aborts.`;
+
+      candidates.push({
+        action: 'activate_trinity_mitigation',
+        target: `trinity:${stage}`,
+        reason: candidateReason,
+        confidence: getTrinityCandidateConfidence(
+          stage,
+          stageState.observationsInWindow,
+          observation.trinity.config.triggerThreshold
+        ),
+        matchedRule: `trinity_${stage}_stage_preheal`,
+        priority: getTrinityCandidatePriority(stage),
+        details: {
+          stage,
+          trinityAction: selectedAction,
+          observationsInWindow: stageState.observationsInWindow,
+          triggerThreshold: observation.trinity.config.triggerThreshold,
+          attempts: stageState.attempts,
+          failedActions: [...stageState.failedActions]
+        }
+      });
+      break;
+    }
   }
 
   if (hasEnoughTraffic && observation.errorRate >= config.errorRateThreshold) {
@@ -931,6 +1196,25 @@ function snapshotCooldowns(): Record<string, string> {
   return Object.fromEntries(entries);
 }
 
+function extractTrinityDecisionDetails(
+  decision: PredictiveHealingDecision
+): {
+  stage: TrinitySelfHealingStage;
+  action: TrinitySelfHealingAction;
+} | null {
+  const stage = decision.details.stage;
+  const action = decision.details.trinityAction;
+
+  if (
+    (stage === 'intake' || stage === 'reasoning' || stage === 'final') &&
+    (action === 'enable_degraded_mode' || action === 'bypass_final_stage')
+  ) {
+    return { stage, action };
+  }
+
+  return null;
+}
+
 function buildSupportPreview(
   observation: PredictiveHealingObservation,
   decision: PredictiveHealingDecision
@@ -981,6 +1265,50 @@ function buildSupportPreview(
     return {
       supported: true,
       message: 'Targeted worker recycle supported.'
+    };
+  }
+
+  if (decision.action === 'activate_trinity_mitigation') {
+    if (!observation.trinity.enabled) {
+      return {
+        supported: false,
+        message: 'Trinity self-healing is disabled.'
+      };
+    }
+
+    const trinityDecision = extractTrinityDecisionDetails(decision);
+    if (!trinityDecision) {
+      return {
+        supported: false,
+        message: 'Trinity predictive decision is missing stage/action details.'
+      };
+    }
+
+    const stageState = observation.trinity.stages[trinityDecision.stage];
+    if (stageState.activeAction === trinityDecision.action) {
+      return {
+        supported: false,
+        message: `Trinity ${trinityDecision.stage} stage mitigation is already active.`
+      };
+    }
+
+    if (stageState.cooldownUntil && Date.parse(stageState.cooldownUntil) > Date.now()) {
+      return {
+        supported: false,
+        message: `Trinity ${trinityDecision.stage} stage mitigation is cooling down.`
+      };
+    }
+
+    if (stageState.attempts >= observation.trinity.config.maxAttempts) {
+      return {
+        supported: false,
+        message: `Trinity ${trinityDecision.stage} stage mitigation has exhausted its attempt budget.`
+      };
+    }
+
+    return {
+      supported: true,
+      message: 'Trinity mitigation supported.'
     };
   }
 
@@ -1093,7 +1421,11 @@ async function executeDecision(
   }
 
   try {
-    let actuatorResult: WorkerScaleUpResult | WorkerRecycleResult | Record<string, unknown>;
+    let actuatorResult:
+      | WorkerScaleUpResult
+      | WorkerRecycleResult
+      | TrinitySelfHealingMitigationCommandResult
+      | Record<string, unknown>;
     let message = request.decision.reason;
     let recoveryOutcome = buildPendingOutcome('Action executed; awaiting subsequent rolling-window confirmation.');
 
@@ -1121,6 +1453,55 @@ async function executeDecision(
       };
       message = result.restart.message;
       recoveryOutcome = buildPendingOutcome(result.restart.message);
+    } else if (request.decision.action === 'activate_trinity_mitigation') {
+      const trinityDecision = extractTrinityDecisionDetails(request.decision);
+      if (!trinityDecision) {
+        return {
+          attempted: false,
+          status: 'unsupported',
+          mode,
+          action: request.decision.action,
+          target: request.decision.target,
+          message: 'Trinity predictive decision is missing stage/action details.',
+          cooldownRemainingMs: null,
+          actuatorResult: null,
+          recoveryOutcome: {
+            status: 'unsupported',
+            summary: 'Trinity predictive action could not be resolved.'
+          }
+        };
+      }
+
+      const result = activateTrinitySelfHealingMitigation({
+        stage: trinityDecision.stage,
+        action: trinityDecision.action,
+        reason: `predictive_healing:${request.decision.matchedRule ?? trinityDecision.stage}`
+      });
+
+      actuatorResult = result;
+      message = result.reason;
+      recoveryOutcome = buildPendingOutcome(
+        `Trinity ${trinityDecision.stage} stage mitigation ${trinityDecision.action} activated.`
+      );
+
+      if (!result.applied) {
+        const status: PredictiveHealingExecutionStatus =
+          result.reason === 'cooldown_active' ? 'cooldown' : 'skipped';
+        return {
+          attempted: false,
+          status,
+          mode,
+          action: request.decision.action,
+          target: request.decision.target,
+          message,
+          cooldownRemainingMs: status === 'cooldown' ? getCooldownRemainingMs(cooldownKey) : null,
+          actuatorResult: result as unknown as Record<string, unknown>,
+          recoveryOutcome: {
+            status: 'not_executed',
+            summary: `Trinity mitigation was not applied: ${result.reason}.`
+          }
+        };
+      }
     } else if (request.decision.action === 'mark_node_degraded') {
       const reason = `predictive_healing:${request.decision.matchedRule ?? 'mark_node_degraded'}`;
       if (!request.observation.promptRoute.active) {
@@ -1470,6 +1851,7 @@ async function collectLiveObservation(source: string): Promise<PredictiveHealing
     workerHealth,
     workerRuntime: getWorkerRuntimeStatus(),
     promptRouteMitigation: getPromptRouteMitigationState(),
+    trinityStatus: getTrinitySelfHealingStatus(),
     memoryUsage: process.memoryUsage(),
     workerHealthError
   });
@@ -1560,6 +1942,7 @@ export async function runPredictiveHealingFromLoop(params: {
       requestWindow: RequestWindowSnapshot;
       workerHealth: WorkerControlHealthResponse | null;
       workerRuntime: WorkerRuntimeStatus;
+      trinityStatus: ReturnType<typeof getTrinitySelfHealingStatus>;
       collectedAt?: string;
       workerHealthError?: string | null;
   };
@@ -1570,6 +1953,7 @@ export async function runPredictiveHealingFromLoop(params: {
     workerHealth: params.observation.workerHealth,
     workerRuntime: params.observation.workerRuntime,
     promptRouteMitigation: getPromptRouteMitigationState(),
+    trinityStatus: params.observation.trinityStatus,
     memoryUsage: process.memoryUsage(),
     collectedAt: params.observation.collectedAt,
     workerHealthError: params.observation.workerHealthError ?? null

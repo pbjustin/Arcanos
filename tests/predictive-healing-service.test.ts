@@ -35,6 +35,55 @@ jest.unstable_mockModule('@services/workerControlService.js', () => ({
   healWorkerRuntime: jest.fn()
 }));
 
+jest.unstable_mockModule('@services/selfImprove/selfHealingV2.js', () => ({
+  activateTrinitySelfHealingMitigation: jest.fn(),
+  getTrinitySelfHealingStatus: jest.fn(() => ({
+    enabled: true,
+    config: {
+      triggerThreshold: 3,
+      maxAttempts: 3
+    },
+    snapshot: {
+      intake: {
+        observations: [],
+        attempts: 0,
+        activeAction: null,
+        activeSinceMs: null,
+        expiresAtMs: null,
+        verificationSuccesses: 0,
+        verificationFailures: 0,
+        verifiedAtMs: null,
+        cooldownUntilMs: null,
+        failedActions: []
+      },
+      reasoning: {
+        observations: [],
+        attempts: 0,
+        activeAction: null,
+        activeSinceMs: null,
+        expiresAtMs: null,
+        verificationSuccesses: 0,
+        verificationFailures: 0,
+        verifiedAtMs: null,
+        cooldownUntilMs: null,
+        failedActions: []
+      },
+      final: {
+        observations: [],
+        attempts: 0,
+        activeAction: null,
+        activeSinceMs: null,
+        expiresAtMs: null,
+        verificationSuccesses: 0,
+        verificationFailures: 0,
+        verifiedAtMs: null,
+        cooldownUntilMs: null,
+        failedActions: []
+      }
+    }
+  }))
+}));
+
 jest.unstable_mockModule('../src/services/selfImprove/selfHealTelemetry.js', () => ({
   recordSelfHealEvent: jest.fn()
 }));
@@ -86,6 +135,42 @@ function createObservation(overrides: Record<string, unknown> = {}) {
       active: false,
       mode: null,
       reason: null
+    },
+    trinity: {
+      enabled: true,
+      activeStage: null,
+      activeAction: null,
+      verified: false,
+      config: {
+        triggerThreshold: 3,
+        maxAttempts: 3
+      },
+      stages: {
+        intake: {
+          observationsInWindow: 0,
+          attempts: 0,
+          activeAction: null,
+          verified: false,
+          cooldownUntil: null,
+          failedActions: []
+        },
+        reasoning: {
+          observationsInWindow: 0,
+          attempts: 0,
+          activeAction: null,
+          verified: false,
+          cooldownUntil: null,
+          failedActions: []
+        },
+        final: {
+          observationsInWindow: 0,
+          attempts: 0,
+          activeAction: null,
+          verified: false,
+          cooldownUntil: null,
+          failedActions: []
+        }
+      }
     },
     ...overrides
   };
@@ -158,5 +243,57 @@ describe('predictive healing rule evaluation', () => {
     expect(result.decision.action).toBe('none');
     expect(result.decision.staleData).toBe(true);
     expect(result.decision.reason).toContain('stale');
+  });
+
+  it('recommends Trinity final-stage mitigation before the reactive threshold is exceeded', () => {
+    const observation = createObservation({
+      requestCount: 12,
+      trinity: {
+        ...createObservation().trinity,
+        stages: {
+          ...createObservation().trinity.stages,
+          final: {
+            observationsInWindow: 2,
+            attempts: 0,
+            activeAction: null,
+            verified: false,
+            cooldownUntil: null,
+            failedActions: []
+          }
+        }
+      }
+    });
+
+    const history = [
+      createObservation({ collectedAt: '2026-03-26T11:58:00.000Z' }),
+      createObservation({ collectedAt: '2026-03-26T11:59:00.000Z' }),
+      observation
+    ];
+
+    const result = evaluatePredictiveHealingRules({
+      observation,
+      history,
+      config: {
+        minObservations: 3,
+        staleAfterMs: 300000,
+        minConfidence: 0.6,
+        errorRateThreshold: 0.18,
+        latencyConsecutiveIntervals: 3,
+        latencyRiseDeltaMs: 250,
+        memoryThresholdMb: 900,
+        memoryGrowthThresholdMb: 120,
+        memorySustainedIntervals: 3,
+        queuePendingThreshold: 5,
+        queueVelocityThreshold: 2
+      }
+    });
+
+    expect(result.decision.action).toBe('activate_trinity_mitigation');
+    expect(result.decision.target).toBe('trinity:final');
+    expect(result.decision.matchedRule).toBe('trinity_final_stage_preheal');
+    expect(result.decision.details).toEqual(expect.objectContaining({
+      stage: 'final',
+      trinityAction: 'bypass_final_stage'
+    }));
   });
 });
