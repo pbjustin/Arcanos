@@ -25,6 +25,8 @@ const DOCKERFILE_PATH = path.join(PROJECT_ROOT, 'Dockerfile');
 const EXPECTED_START_COMMAND = 'node scripts/start-railway-service.mjs';
 const EXPECTED_HEALTHCHECK_PATH = '/health';
 const EXPECTED_DOCKERFILE_CMD = 'CMD ["node", "scripts/start-railway-service.mjs"]';
+const EXPECTED_DOCKERFILE_PRISMA_COPY = 'COPY prisma/ ./prisma/';
+const EXPECTED_DOCKERFILE_PRISMA_GENERATE = 'npx --yes prisma@5.22.0 generate --schema ./prisma/schema.prisma';
 const REQUIRED_PRODUCTION_VARIABLES = [
   'NODE_ENV',
   'PORT',
@@ -215,6 +217,15 @@ export function validateDockerfile(dockerfileRaw) {
   //audit Assumption: Dockerfile-backed Railway deploys must boot through the same launcher as railway.json; risk: image CMD bypasses service-role logic and starts web instances with worker settings; invariant: Dockerfile CMD points at the shared Railway launcher; handling: fail validation when the launcher command is absent.
   if (!dockerfileRaw.includes(EXPECTED_DOCKERFILE_CMD)) {
     errors.push(`Dockerfile must include ${EXPECTED_DOCKERFILE_CMD}`);
+  }
+
+  //audit Assumption: Railway images that expose Prisma-backed routes must include the schema during build and generate the client before pruning dev tooling; risk: routes importing @prisma/client fail at runtime even though the service boots successfully; invariant: Dockerfile copies prisma/ and runs Prisma client generation; handling: fail validation when either build step is absent.
+  if (!dockerfileRaw.includes(EXPECTED_DOCKERFILE_PRISMA_COPY)) {
+    errors.push(`Dockerfile must include ${EXPECTED_DOCKERFILE_PRISMA_COPY}`);
+  }
+
+  if (!dockerfileRaw.includes(EXPECTED_DOCKERFILE_PRISMA_GENERATE)) {
+    errors.push(`Dockerfile must include ${EXPECTED_DOCKERFILE_PRISMA_GENERATE}`);
   }
 
   return errors;

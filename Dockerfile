@@ -22,6 +22,7 @@ WORKDIR /app
 # Include package-lock.json so `npm ci` has a complete lockfile
 COPY package*.json package-lock.json ./
 COPY scripts/ ./scripts/
+COPY prisma/ ./prisma/
 
 # Install dependencies with memory optimization
 RUN NODE_OPTIONS=--max_old_space_size=256 npm ci --omit=dev --no-audit --no-fund
@@ -38,6 +39,7 @@ COPY tsconfig.json ./
 
 # Install dev dependencies (override NODE_ENV) and build
 RUN npm install --include=dev --no-audit --no-fund && \
+    npx --yes prisma@5.22.0 generate --schema ./prisma/schema.prisma && \
     npm run build:workers && \
     npm run build
 
