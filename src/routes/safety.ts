@@ -179,24 +179,25 @@ router.get('/status/safety/self-heal', (_req: Request, res: Response) => {
     controlLoop.lastActionAt,
     loopStatus.lastActionAt
   );
+  const hasControlLoopObservation = controlLoop.lastObservedAt !== null;
+  const boundedLoopErrorRate =
+    loopStatus.lastVerificationResult?.current.errorRate ??
+    loopStatus.lastVerificationResult?.baseline.errorRate ??
+    0;
+  const boundedLoopLatency =
+    loopStatus.lastLatencySnapshot?.avgLatencyMs ??
+    loopStatus.lastVerificationResult?.current.avgLatencyMs ??
+    loopStatus.lastVerificationResult?.baseline.avgLatencyMs ??
+    0;
+  const boundedLoopOperationalRequests =
+    loopStatus.lastLatencySnapshot?.requestCount ??
+    loopStatus.lastVerificationResult?.current.promptRoute?.requestCount ??
+    0;
   const systemState = {
-    errorRate:
-      controlLoop.errorRate ??
-      loopStatus.lastVerificationResult?.current.errorRate ??
-      loopStatus.lastVerificationResult?.baseline.errorRate ??
-      0,
-    latency:
-      controlLoop.avgLatencyMs ??
-      loopStatus.lastLatencySnapshot?.avgLatencyMs ??
-      loopStatus.lastVerificationResult?.current.avgLatencyMs ??
-      loopStatus.lastVerificationResult?.baseline.avgLatencyMs ??
-      0,
+    errorRate: hasControlLoopObservation ? controlLoop.errorRate : boundedLoopErrorRate,
+    latency: hasControlLoopObservation ? controlLoop.avgLatencyMs : boundedLoopLatency,
     lastCheck: controlLoop.lastObservedAt ?? loopStatus.lastTick ?? null,
-    operationalRequests:
-      controlLoop.operationalRequests ??
-      loopStatus.lastLatencySnapshot?.requestCount ??
-      loopStatus.lastVerificationResult?.current.promptRoute?.requestCount ??
-      0
+    operationalRequests: hasControlLoopObservation ? controlLoop.operationalRequests : boundedLoopOperationalRequests
   };
 
   res.json({
