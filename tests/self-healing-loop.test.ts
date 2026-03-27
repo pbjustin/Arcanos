@@ -245,6 +245,7 @@ function createOpenAIHealth(overrides: Record<string, unknown> = {}) {
 describe('selfHealingLoop', () => {
   const envKeys = [
     'NODE_ENV',
+    'PREDICTIVE_HEALING_INTERVAL_MS',
     'SELF_HEAL_LOOP_INTERVAL_MS',
     'SELF_HEAL_ACTION_COOLDOWN_MS',
     'SELF_HEAL_CONTROLLER_COOLDOWN_MS',
@@ -510,6 +511,14 @@ describe('selfHealingLoop', () => {
     expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('[SELF-HEAL] start skipped; already running'));
 
     setIntervalSpy.mockRestore();
+  });
+
+  it('prefers the predictive interval alias when starting the loop', () => {
+    process.env.PREDICTIVE_HEALING_INTERVAL_MS = '15000';
+
+    const status = startSelfHealingLoop();
+
+    expect(status.intervalMs).toBe(15000);
   });
 
   it('recovers stale jobs when the queue is stalled', async () => {
