@@ -30,6 +30,7 @@ import {
   type WorkerControlHealthResponse
 } from '@services/workerControlService.js';
 import { getEnvNumber } from '@platform/runtime/env.js';
+import { resolvePredictiveHealingLoopIntervalMs } from './runtimeConfig.js';
 import { recordSelfHealEvent } from './selfHealTelemetry.js';
 
 export type PredictiveHealingActionType =
@@ -402,15 +403,6 @@ function getState(): PredictiveHealingState {
     runtime[GLOBAL_KEY] = createInitialState();
   }
   return runtime[GLOBAL_KEY];
-}
-
-function resolvePredictiveLoopIntervalMs(): number {
-  const preferredIntervalMs = getEnvNumber('PREDICTIVE_HEALING_INTERVAL_MS', Number.NaN);
-  if (Number.isFinite(preferredIntervalMs)) {
-    return Math.max(1_000, preferredIntervalMs);
-  }
-
-  return Math.max(1_000, getEnvNumber('SELF_HEAL_LOOP_INTERVAL_MS', DEFAULT_LOOP_INTERVAL_MS));
 }
 
 function roundMetric(value: number, digits = 3): number {
@@ -1758,7 +1750,7 @@ function buildAutomationStatus(
       (config.autoExecuteHealing ?? false) &&
       !(config.predictiveHealingDryRun ?? true)
     ),
-    pollIntervalMs: resolvePredictiveLoopIntervalMs(),
+    pollIntervalMs: resolvePredictiveHealingLoopIntervalMs(DEFAULT_LOOP_INTERVAL_MS),
     minConfidence: config.predictiveHealingMinConfidence ?? DEFAULT_MIN_CONFIDENCE,
     cooldownMs: Math.max(10_000, config.predictiveHealingActionCooldownMs ?? DEFAULT_ACTION_COOLDOWN_MS),
     lastLoopDecisionAt: lastLoopAudit?.timestamp ?? null,
@@ -1770,13 +1762,8 @@ function buildAutomationStatus(
   };
 }
 
-function maybeLogPredictiveHealingAudit(entry: PredictiveHealingAuditEntry): void {
-  const context = {
-    module: 'predictive-healing',
-    operation: 'decision',
-    source: entry.source
-  };
-  const metadata = {
+function buildPredictiveHealingAuditLogMetadata(entry: PredictiveHealingAuditEntry): Record<string, unknown> {
+  return {
     featureFlags: { ...entry.featureFlags },
     observation: {
       collectedAt: entry.observation.collectedAt,
@@ -1809,6 +1796,15 @@ function maybeLogPredictiveHealingAudit(entry: PredictiveHealingAuditEntry): voi
     decision: cloneDecision(entry.decision),
     execution: cloneExecution(entry.execution)
   };
+}
+
+function maybeLogPredictiveHealingAudit(entry: PredictiveHealingAuditEntry): void {
+  const context = {
+    module: 'predictive-healing',
+    operation: 'decision',
+    source: entry.source
+  };
+  const metadata = buildPredictiveHealingAuditLogMetadata(entry);
 
   if (entry.execution.status === 'failed') {
     logger.error('predictive_healing.audit', context, metadata);

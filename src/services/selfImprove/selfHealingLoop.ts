@@ -37,6 +37,7 @@ import {
   resetSelfHealTelemetryForTests
 } from '@services/selfImprove/selfHealTelemetry.js';
 import { runPredictiveHealingFromLoop } from '@services/selfImprove/predictiveHealingService.js';
+import { resolvePredictiveHealingLoopIntervalMs } from '@services/selfImprove/runtimeConfig.js';
 import type { WorkerRuntimeStatus } from '@platform/runtime/workerConfig.js';
 
 const DEFAULT_INTERVAL_MS = 30_000;
@@ -373,12 +374,7 @@ type SelfHealingLoopGlobal = typeof globalThis & {
 };
 
 function resolveLoopIntervalMs(): number {
-  const predictiveIntervalMs = getEnvNumber('PREDICTIVE_HEALING_INTERVAL_MS', Number.NaN);
-  if (Number.isFinite(predictiveIntervalMs)) {
-    return Math.max(1_000, predictiveIntervalMs);
-  }
-
-  return Math.max(1_000, getEnvNumber('SELF_HEAL_LOOP_INTERVAL_MS', DEFAULT_INTERVAL_MS));
+  return resolvePredictiveHealingLoopIntervalMs(DEFAULT_INTERVAL_MS);
 }
 
 function resolveActionCooldownMs(): number {
