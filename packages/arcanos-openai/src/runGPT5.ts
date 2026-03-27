@@ -10,7 +10,16 @@ import type {
   ResponseInput,
 } from "openai/resources/responses/responses";
 import type { RuntimeBudget } from "@arcanos/runtime";
-import { getSafeRemainingMs, assertBudgetAvailable, OpenAIAbortError } from "@arcanos/runtime";
+import {
+  assertBudgetAvailable,
+  createLinkedAbortController,
+  getRequestAbortSignal,
+  getRequestRemainingMs,
+  getSafeRemainingMs,
+  isAbortError,
+  OpenAIAbortError,
+} from "@arcanos/runtime";
+import type { RetryOptions } from "./retry.js";
 
 export interface GPT5Request {
   model: string;
@@ -21,6 +30,25 @@ export interface GPT5Request {
 }
 
 export type GPT5Response = OpenAIResponse;
+export interface GPT5Client {
+  responses: {
+    create: (
+      payload: ResponseCreateParamsNonStreaming,
+      options: { signal: AbortSignal }
+    ) => Promise<GPT5Response>;
+  };
+}
+
+export type GPT5Retry = <T>(
+  fn: (attempt: number) => Promise<T>,
+  options?: RetryOptions
+) => Promise<T>;
+
+export interface GPT5RunOptions {
+  retry?: GPT5Retry;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}
 
 function resolveRequestInput(request: GPT5Request): Array<Record<string, unknown>> {
   if (Array.isArray(request.input)) {
@@ -56,47 +84,64 @@ function buildRequestPayload(
   return payload;
 }
 
-function isAbortError(error: unknown): boolean {
-  if (!(error instanceof Error)) {
-    return false;
+function resolveRequestTimeoutMs(
+  budget: RuntimeBudget,
+  explicitTimeoutMs?: number
+): number {
+  const safeRemainingMs = getSafeRemainingMs(budget);
+  if (safeRemainingMs <= 0) {
+    throw new OpenAIAbortError();
   }
 
-  return (
-    error.name === "AbortError" ||
-    error.message.toLowerCase().includes("aborted")
+  const requestRemainingMs = getRequestRemainingMs();
+  const preferredTimeoutMs =
+    typeof explicitTimeoutMs === "number" && Number.isFinite(explicitTimeoutMs) && explicitTimeoutMs > 0
+      ? Math.trunc(explicitTimeoutMs)
+      : safeRemainingMs;
+
+  return Math.max(
+    1,
+    Math.min(
+      preferredTimeoutMs,
+      safeRemainingMs,
+      requestRemainingMs ?? safeRemainingMs
+    )
   );
 }
 
 export async function runGPT5(
-  client: { responses: { create: Function } },
+  client: GPT5Client,
   request: GPT5Request,
-  budget: RuntimeBudget
+  budget: RuntimeBudget,
+  options: GPT5RunOptions = {}
 ): Promise<GPT5Response> {
   assertBudgetAvailable(budget);
-  const safeRemaining = getSafeRemainingMs(budget);
-
-  const controller = new AbortController();
-
-  const timeout = setTimeout(() => {
-    controller.abort();
-  }, safeRemaining);
+  const requestTimeoutMs = resolveRequestTimeoutMs(budget, options.timeoutMs);
+  const requestScope = createLinkedAbortController({
+    timeoutMs: requestTimeoutMs,
+    parentSignal: options.signal ?? getRequestAbortSignal(),
+    abortMessage: `OpenAI GPT-5 request timed out after ${requestTimeoutMs}ms`
+  });
 
   try {
-    const response = await client.responses.create(
+    const executeRequest = (attempt: number) => client.responses.create(
       buildRequestPayload(request),
-      { signal: controller.signal }
+      { signal: requestScope.signal }
     );
+    const response = options.retry
+      ? await options.retry(executeRequest, { signal: requestScope.signal })
+      : await executeRequest(1);
 
     return response;
 
   } catch (error: unknown) {
-    if (isAbortError(error)) {
+    if (requestScope.signal.aborted || isAbortError(error)) {
       throw new OpenAIAbortError();
     }
 
     throw error;
   } finally {
-    clearTimeout(timeout);
+    requestScope.cleanup();
   }
 }
 
