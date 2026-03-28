@@ -9,6 +9,44 @@ import {
   runtimeDiagnosticsService
 } from '@services/runtimeDiagnosticsService.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
+import { getGptRegistrySnapshot } from '@platform/runtime/gptRouterConfig.js';
+import { withJsonResponseBytes } from '@shared/http/clientResponseGuards.js';
+
+const SERVICE_NAME = 'arcanos-backend';
+const SERVICE_VERSION = '1.0.0';
+
+function hasConfiguredOpenAIKey(): boolean {
+  const key = getEnv('OPENAI_API_KEY');
+  return typeof key === 'string' && key.trim().length > 0;
+}
+
+export async function writePublicHealthResponse(req: Request, res: Response): Promise<void> {
+  const baseSnapshot = runtimeDiagnosticsService.getHealthSnapshot();
+  const { validation } = await getGptRegistrySnapshot();
+  const status = validation.missingGptIds.length === 0 ? 'ok' : 'unhealthy';
+  const payload = withJsonResponseBytes({
+    ...baseSnapshot,
+    status,
+    service: SERVICE_NAME,
+    version: SERVICE_VERSION,
+    gpt_routes: validation.registeredGptCount,
+    required_gpts: {
+      required: validation.requiredGptIds,
+      missing: validation.missingGptIds
+    },
+    openai_configured: hasConfiguredOpenAIKey(),
+  });
+
+  req.logger?.info?.('health.response', {
+    responseBytes: payload.response_bytes,
+    gptRoutes: payload.gpt_routes,
+    missingRequiredGpts: validation.missingGptIds,
+  });
+
+  res.set('cache-control', 'no-store, max-age=0');
+  res.setHeader('x-response-bytes', String(payload.response_bytes));
+  res.status(status === 'ok' ? 200 : 503).json(payload);
+}
 
 /**
  * Registers health check endpoint and monitoring cron job.
@@ -44,10 +82,18 @@ export function setupDiagnostics(app: Express): void {
     });
   }
 
-  app.get('/health', (_req: Request, res: Response) => {
-    const payload = runtimeDiagnosticsService.getHealthSnapshot();
-    res.set('cache-control', 'no-store, max-age=0');
-    res.json(payload);
+  app.get('/health', async (req: Request, res: Response) => {
+    try {
+      await writePublicHealthResponse(req, res);
+    } catch (error) {
+      logger.error('health.response.failed', {
+        module: 'runtime-diagnostics',
+        error: resolveErrorMessage(error)
+      });
+      res.status(500).json({
+        error: 'Health check unavailable'
+      });
+    }
   });
 
   app.get('/diagnostics', async (req: Request, res: Response) => {
