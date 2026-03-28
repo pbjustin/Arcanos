@@ -8,6 +8,19 @@ jest.unstable_mockModule('@services/selfImprove/predictiveHealingService.js', ()
   runPredictiveHealingDecision: runPredictiveHealingDecisionMock
 }));
 
+jest.unstable_mockModule('@services/selfHealRuntimeInspectionService.js', () => ({
+  buildSelfHealEventsSnapshot: jest.fn(() => ({
+    status: 'ok',
+    timestamp: '2026-03-26T12:00:00.000Z',
+    count: 0,
+    events: []
+  })),
+  buildSelfHealRuntimeSnapshot: jest.fn(() => ({
+    status: 'ok',
+    timestamp: '2026-03-26T12:00:00.000Z'
+  }))
+}));
+
 jest.unstable_mockModule('@transport/http/middleware/capabilityGate.js', () => ({
   capabilityGate: () => (_req: express.Request, _res: express.Response, next: express.NextFunction) => next()
 }));

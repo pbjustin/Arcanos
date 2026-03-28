@@ -5,6 +5,7 @@ const mockGetModuleMetadata = jest.fn();
 const mockDispatchModuleAction = jest.fn();
 
 jest.unstable_mockModule('@platform/observability/appMetrics.js', () => ({
+  recordDependencyCall: jest.fn(),
   recordDagTraceTimeout: jest.fn(),
   recordDispatcherFallback: jest.fn(),
   recordDispatcherMisroute: jest.fn(),
@@ -45,6 +46,9 @@ jest.unstable_mockModule('@services/repoImplementationEvidence.js', () => ({
 }));
 
 jest.unstable_mockModule('@services/systemState.js', () => ({
+  executeSystemStateRequest: jest.fn(() => ({
+    mode: 'system_state'
+  })),
   SystemStateConflictError: class SystemStateConflictError extends Error {
     code = 'SYSTEM_STATE_CONFLICT';
     conflict = {};
@@ -53,6 +57,7 @@ jest.unstable_mockModule('@services/systemState.js', () => ({
 
 jest.unstable_mockModule('@platform/runtime/gptRouterConfig.js', () => ({
   default: mockGetGptModuleMap,
+  getGptModuleMap: mockGetGptModuleMap,
   rebuildGptModuleMap: jest.fn(),
   validateGptRegistry: jest.fn(() => ({ requiredGptIds: ['arcanos-core'] })),
 }));

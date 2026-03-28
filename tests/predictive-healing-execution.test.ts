@@ -10,6 +10,19 @@ const loggerInfoMock = jest.fn();
 const loggerWarnMock = jest.fn();
 const loggerErrorMock = jest.fn();
 
+function createStructuredLoggerMock() {
+  const channel = {
+    info: loggerInfoMock,
+    warn: loggerWarnMock,
+    error: loggerErrorMock,
+    child: jest.fn()
+  };
+  channel.child.mockReturnValue(channel);
+  return channel;
+}
+
+const structuredLoggerMock = createStructuredLoggerMock();
+
 jest.unstable_mockModule('@platform/runtime/workerConfig.js', () => ({
   getWorkerRuntimeStatus: jest.fn(),
   scaleWorkersUp: scaleWorkersUpMock,
@@ -17,40 +30,17 @@ jest.unstable_mockModule('@platform/runtime/workerConfig.js', () => ({
 }));
 
 jest.unstable_mockModule('@platform/runtime/unifiedConfig.js', () => ({
-  getConfig: getConfigMock
+  getConfig: getConfigMock,
+  getEnvVar: jest.fn()
 }));
 
 jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({
-  logger: {
-    info: loggerInfoMock,
-    warn: loggerWarnMock,
-    error: loggerErrorMock
-  },
-  aiLogger: {
-    info: loggerInfoMock,
-    warn: loggerWarnMock,
-    error: loggerErrorMock
-  },
-  apiLogger: {
-    info: loggerInfoMock,
-    warn: loggerWarnMock,
-    error: loggerErrorMock
-  },
-  dbLogger: {
-    info: loggerInfoMock,
-    warn: loggerWarnMock,
-    error: loggerErrorMock
-  },
-  workerLogger: {
-    info: loggerInfoMock,
-    warn: loggerWarnMock,
-    error: loggerErrorMock
-  },
-  default: {
-    info: loggerInfoMock,
-    warn: loggerWarnMock,
-    error: loggerErrorMock
-  }
+  logger: structuredLoggerMock,
+  aiLogger: structuredLoggerMock,
+  apiLogger: structuredLoggerMock,
+  dbLogger: structuredLoggerMock,
+  workerLogger: structuredLoggerMock,
+  default: structuredLoggerMock
 }));
 
 jest.unstable_mockModule('@services/openai/promptRouteMitigation.js', () => ({
@@ -69,6 +59,16 @@ jest.unstable_mockModule('@services/runtimeDiagnosticsService.js', () => ({
   }
 }));
 
+jest.unstable_mockModule('@services/openai/clientBridge.js', () => ({
+  getOpenAIClientOrAdapter: jest.fn(() => ({
+    client: null
+  }))
+}));
+
+jest.unstable_mockModule('@services/arcanos-core.js', () => ({
+  runArcanosCoreQuery: jest.fn()
+}));
+
 jest.unstable_mockModule('@services/workerControlService.js', () => ({
   getWorkerControlHealth: jest.fn(),
   healWorkerRuntime: healWorkerRuntimeMock
@@ -76,6 +76,12 @@ jest.unstable_mockModule('@services/workerControlService.js', () => ({
 
 jest.unstable_mockModule('@services/selfImprove/selfHealingV2.js', () => ({
   activateTrinitySelfHealingMitigation: activateTrinitySelfHealingMitigationMock,
+  getTrinitySelfHealingMitigation: jest.fn(() => ({
+    forceDirectAnswer: false,
+    bypassFinalStage: false,
+    activeAction: null,
+    stage: null
+  })),
   getTrinitySelfHealingStatus: jest.fn(() => ({
     enabled: true,
     config: {
@@ -120,7 +126,9 @@ jest.unstable_mockModule('@services/selfImprove/selfHealingV2.js', () => ({
         failedActions: []
       }
     }
-  }))
+  })),
+  noteTrinityMitigationOutcome: jest.fn(),
+  recordTrinityStageFailure: jest.fn()
 }));
 
 jest.unstable_mockModule('../src/services/selfImprove/selfHealTelemetry.js', () => ({
@@ -331,7 +339,9 @@ describe('predictive healing execution', () => {
       predictiveMemoryGrowthThresholdMb: 120,
       predictiveMemorySustainedIntervals: 3,
       predictiveQueuePendingThreshold: 5,
-      predictiveQueueVelocityThreshold: 2
+      predictiveQueueVelocityThreshold: 2,
+      runWorkers: true,
+      workerApiTimeoutMs: 10000
     });
     scaleWorkersUpMock.mockResolvedValue({
       supported: true,
@@ -479,7 +489,9 @@ describe('predictive healing execution', () => {
       predictiveMemoryGrowthThresholdMb: 120,
       predictiveMemorySustainedIntervals: 3,
       predictiveQueuePendingThreshold: 5,
-      predictiveQueueVelocityThreshold: 2
+      predictiveQueueVelocityThreshold: 2,
+      runWorkers: true,
+      workerApiTimeoutMs: 10000
     });
 
     const result = await runPredictiveHealingFromLoop({
@@ -493,12 +505,26 @@ describe('predictive healing execution', () => {
       )
     });
 
-    expect(result.decision.action).toBe('none');
+    expect(result.featureFlags.enabled).toBe(false);
+    expect(result.decision.action).not.toBe('none');
     expect(result.execution.status).toBe('skipped');
-    expect(result.execution.message).toContain('disabled');
+    expect(result.execution.mode).toBe('recommend_only');
+    expect(result.execution.message).toContain('recommended only');
     expect(scaleWorkersUpMock).not.toHaveBeenCalled();
-    expect(recordSelfHealEventMock).not.toHaveBeenCalled();
-    expect(buildPredictiveHealingStatusSnapshot().recentAuditCount).toBe(0);
+    expect(recordSelfHealEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'trigger',
+        trigger: 'predictive'
+      })
+    );
+    expect(recordSelfHealEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'noop',
+        trigger: 'predictive',
+        reason: expect.stringContaining('recommended only')
+      })
+    );
+    expect(buildPredictiveHealingStatusSnapshot().recentAuditCount).toBe(1);
   });
 
   it('summarizes automated loop decisions and outcomes in status output', async () => {
@@ -521,7 +547,9 @@ describe('predictive healing execution', () => {
       predictiveMemoryGrowthThresholdMb: 120,
       predictiveMemorySustainedIntervals: 3,
       predictiveQueuePendingThreshold: 5,
-      predictiveQueueVelocityThreshold: 2
+      predictiveQueueVelocityThreshold: 2,
+      runWorkers: true,
+      workerApiTimeoutMs: 10000
     });
 
     const history = [
@@ -659,7 +687,9 @@ describe('predictive healing execution', () => {
       predictiveMemoryGrowthThresholdMb: 120,
       predictiveMemorySustainedIntervals: 3,
       predictiveQueuePendingThreshold: 5,
-      predictiveQueueVelocityThreshold: 2
+      predictiveQueueVelocityThreshold: 2,
+      runWorkers: true,
+      workerApiTimeoutMs: 10000
     });
 
     const seededObservations = [

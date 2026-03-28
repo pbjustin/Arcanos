@@ -18,6 +18,7 @@ const mockShouldInspectRepoPrompt = jest.fn();
 
 jest.unstable_mockModule('../src/platform/runtime/gptRouterConfig.js', () => ({
   default: mockGetGptModuleMap,
+  getGptModuleMap: mockGetGptModuleMap,
   rebuildGptModuleMap: mockRebuildGptModuleMap,
   validateGptRegistry: mockValidateGptRegistry,
 }));

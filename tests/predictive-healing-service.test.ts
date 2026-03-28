@@ -11,7 +11,8 @@ jest.unstable_mockModule('@platform/runtime/unifiedConfig.js', () => ({
     predictiveHealingEnabled: true,
     predictiveHealingDryRun: true,
     autoExecuteHealing: false
-  }))
+  })),
+  getEnvVar: jest.fn()
 }));
 
 jest.unstable_mockModule('@services/openai/promptRouteMitigation.js', () => ({
@@ -30,6 +31,16 @@ jest.unstable_mockModule('@services/runtimeDiagnosticsService.js', () => ({
   }
 }));
 
+jest.unstable_mockModule('@services/openai/clientBridge.js', () => ({
+  getOpenAIClientOrAdapter: jest.fn(() => ({
+    client: null
+  }))
+}));
+
+jest.unstable_mockModule('@services/arcanos-core.js', () => ({
+  runArcanosCoreQuery: jest.fn()
+}));
+
 jest.unstable_mockModule('@services/workerControlService.js', () => ({
   getWorkerControlHealth: jest.fn(),
   healWorkerRuntime: jest.fn()
@@ -37,6 +48,12 @@ jest.unstable_mockModule('@services/workerControlService.js', () => ({
 
 jest.unstable_mockModule('@services/selfImprove/selfHealingV2.js', () => ({
   activateTrinitySelfHealingMitigation: jest.fn(),
+  getTrinitySelfHealingMitigation: jest.fn(() => ({
+    forceDirectAnswer: false,
+    bypassFinalStage: false,
+    activeAction: null,
+    stage: null
+  })),
   getTrinitySelfHealingStatus: jest.fn(() => ({
     enabled: true,
     config: {
@@ -81,7 +98,9 @@ jest.unstable_mockModule('@services/selfImprove/selfHealingV2.js', () => ({
         failedActions: []
       }
     }
-  }))
+  })),
+  noteTrinityMitigationOutcome: jest.fn(),
+  recordTrinityStageFailure: jest.fn()
 }));
 
 jest.unstable_mockModule('../src/services/selfImprove/selfHealTelemetry.js', () => ({

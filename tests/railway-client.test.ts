@@ -45,10 +45,7 @@ describe('railwayClient', () => {
       status: 200,
       text: async () => JSON.stringify({
         data: {
-          deployService: {
-            id: 'deployment-abc',
-            status: 'DEPLOYING'
-          }
+          serviceInstanceRedeploy: true
         }
       })
     } as any;
@@ -56,13 +53,24 @@ describe('railwayClient', () => {
     const fetchSpy = jest.fn().mockResolvedValue(mockResponse);
     global.fetch = fetchSpy;
 
-    const result = await deployService({ serviceId: 'service-123', branch: 'main' });
+    const result = await deployService({
+      environmentId: 'env-123',
+      serviceId: 'service-123',
+      branch: 'main'
+    });
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     const [, requestInit] = fetchSpy.mock.calls[0] as [string, RequestInit];
     expect(requestInit.headers).toMatchObject({ Authorization: 'Bearer test-token-1234567890-railway-access' });
 
-    expect(result).toEqual({ deploymentId: 'deployment-abc', status: 'DEPLOYING' });
+    const requestBody = JSON.parse(String(requestInit.body));
+    expect(requestBody.query).toContain('mutation ServiceInstanceRedeploy');
+    expect(requestBody.variables).toEqual({
+      environmentId: 'env-123',
+      serviceId: 'service-123'
+    });
+
+    expect(result).toEqual({ accepted: true, status: 'TRIGGERED' });
   });
 
   it('wraps low-level fetch failures with RailwayApiError context', async () => {
