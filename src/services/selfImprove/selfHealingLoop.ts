@@ -465,9 +465,9 @@ function buildAIDiagnosisFromPredictiveResult(
   return {
     requestedAt,
     completedAt: new Date().toISOString(),
-    advisor: predictiveResult.decision.advisor ?? 'arcanos_core_v1',
+    advisor: predictiveResult.decision.advisor,
     decision: predictiveResult.decision.action === 'none' ? 'observe' : 'heal',
-    reason: predictiveResult.decision.reason ?? 'AI diagnosis completed.',
+    reason: predictiveResult.decision.reason,
     confidence: predictiveResult.decision.confidence,
     action: predictiveResult.decision.action === 'none' ? null : predictiveResult.decision.action,
     target: predictiveResult.decision.target,
@@ -485,20 +485,76 @@ function recordAIDiagnosisStatus(
   runtime.status.lastDecision = diagnosis.decision;
   runtime.status.lastEvidence = {
     ...(runtime.status.lastEvidence ?? {}),
-    aiDiagnosis: {
-      requestedAt: diagnosis.requestedAt,
-      completedAt: diagnosis.completedAt,
-      advisor: diagnosis.advisor,
-      decision: diagnosis.decision,
-      reason: diagnosis.reason,
-      confidence: diagnosis.confidence,
-      action: diagnosis.action,
-      target: diagnosis.target,
-      safeToExecute: diagnosis.safeToExecute,
-      executionStatus: diagnosis.executionStatus,
-      fallbackUsed: diagnosis.fallbackUsed
-    }
+    aiDiagnosis: { ...diagnosis }
   };
+}
+
+function buildAIDiagnosisResultDetails(diagnosis: SelfHealingAIDiagnosis): Record<string, unknown> {
+  return {
+    advisor: diagnosis.advisor,
+    decision: diagnosis.decision,
+    confidence: diagnosis.confidence,
+    safeToExecute: diagnosis.safeToExecute,
+    executionStatus: diagnosis.executionStatus,
+    fallbackUsed: diagnosis.fallbackUsed
+  };
+}
+
+function recordAndLogAIDiagnosisResult(params: {
+  runtime: SelfHealingLoopRuntime;
+  trigger: 'startup' | 'interval' | 'manual';
+  diagnosis: SelfHealingAIDiagnosis;
+  isFallback?: boolean;
+}): void {
+  const details = buildAIDiagnosisResultDetails(params.diagnosis);
+  recordAIDiagnosisStatus(params.runtime, params.diagnosis);
+
+  const logPayload = {
+    module: 'self_heal.loop',
+    source: 'self_heal_loop',
+    trigger: params.trigger,
+    advisor: params.diagnosis.advisor,
+    decision: params.diagnosis.decision,
+    action: params.diagnosis.action,
+    target: params.diagnosis.target,
+    confidence: params.diagnosis.confidence,
+    safeToExecute: params.diagnosis.safeToExecute,
+    executionStatus: params.diagnosis.executionStatus,
+    fallbackUsed: params.diagnosis.fallbackUsed
+  };
+
+  if (params.isFallback) {
+    logger.warn(AI_DIAGNOSIS_RESULT_EVENT, logPayload);
+  } else {
+    logger.info(AI_DIAGNOSIS_RESULT_EVENT, logPayload);
+  }
+
+  recordTraceEvent(AI_DIAGNOSIS_RESULT_EVENT, {
+    trigger: params.trigger,
+    advisor: params.diagnosis.advisor,
+    decision: params.diagnosis.decision,
+    action: params.diagnosis.action,
+    target: params.diagnosis.target,
+    confidence: params.diagnosis.confidence,
+    safeToExecute: params.diagnosis.safeToExecute,
+    executionStatus: params.diagnosis.executionStatus,
+    fallbackUsed: params.diagnosis.fallbackUsed
+  });
+
+  recordSelfHealEvent({
+    kind: AI_DIAGNOSIS_RESULT_EVENT,
+    source: 'self_heal_loop',
+    trigger: 'ai_diagnosis',
+    reason: params.diagnosis.reason,
+    actionTaken: params.diagnosis.action,
+    healedComponent: params.diagnosis.target,
+    details,
+    timestamp: params.diagnosis.completedAt
+  });
+
+  console.log(
+    `[SELF-HEAL] ai diagnosis${params.isFallback ? ' fallback' : ''} decision=${params.diagnosis.decision} advisor=${params.diagnosis.advisor} action=${params.diagnosis.action ?? 'none'}`
+  );
 }
 
 async function aiDiagnoseAndDecide(params: {
@@ -559,51 +615,11 @@ async function aiDiagnoseAndDecide(params: {
       }
     });
     const aiDiagnosis = buildAIDiagnosisFromPredictiveResult(params.diagnosis, predictiveResult, requestedAt);
-    recordAIDiagnosisStatus(params.runtime, aiDiagnosis);
-    logger.info(AI_DIAGNOSIS_RESULT_EVENT, {
-      module: 'self_heal.loop',
-      source: 'self_heal_loop',
+    recordAndLogAIDiagnosisResult({
+      runtime: params.runtime,
       trigger: params.trigger,
-      advisor: aiDiagnosis.advisor,
-      decision: aiDiagnosis.decision,
-      action: aiDiagnosis.action,
-      target: aiDiagnosis.target,
-      confidence: aiDiagnosis.confidence,
-      safeToExecute: aiDiagnosis.safeToExecute,
-      executionStatus: aiDiagnosis.executionStatus,
-      fallbackUsed: aiDiagnosis.fallbackUsed
+      diagnosis: aiDiagnosis
     });
-    recordTraceEvent(AI_DIAGNOSIS_RESULT_EVENT, {
-      trigger: params.trigger,
-      advisor: aiDiagnosis.advisor,
-      decision: aiDiagnosis.decision,
-      action: aiDiagnosis.action,
-      target: aiDiagnosis.target,
-      confidence: aiDiagnosis.confidence,
-      safeToExecute: aiDiagnosis.safeToExecute,
-      executionStatus: aiDiagnosis.executionStatus,
-      fallbackUsed: aiDiagnosis.fallbackUsed
-    });
-    recordSelfHealEvent({
-      kind: AI_DIAGNOSIS_RESULT_EVENT,
-      source: 'self_heal_loop',
-      trigger: 'ai_diagnosis',
-      reason: aiDiagnosis.reason,
-      actionTaken: aiDiagnosis.action,
-      healedComponent: aiDiagnosis.target,
-      details: {
-        advisor: aiDiagnosis.advisor,
-        decision: aiDiagnosis.decision,
-        confidence: aiDiagnosis.confidence,
-        safeToExecute: aiDiagnosis.safeToExecute,
-        executionStatus: aiDiagnosis.executionStatus,
-        fallbackUsed: aiDiagnosis.fallbackUsed
-      },
-      timestamp: aiDiagnosis.completedAt
-    });
-    console.log(
-      `[SELF-HEAL] ai diagnosis decision=${aiDiagnosis.decision} advisor=${aiDiagnosis.advisor} action=${aiDiagnosis.action ?? 'none'}`
-    );
     return {
       diagnosis: aiDiagnosis,
       predictiveResult
@@ -614,51 +630,12 @@ async function aiDiagnoseAndDecide(params: {
       requestedAt,
       `AI diagnosis failed; deterministic fallback selected. ${resolveErrorMessage(error)}`
     );
-    recordAIDiagnosisStatus(params.runtime, aiDiagnosis);
-    logger.warn(AI_DIAGNOSIS_RESULT_EVENT, {
-      module: 'self_heal.loop',
-      source: 'self_heal_loop',
+    recordAndLogAIDiagnosisResult({
+      runtime: params.runtime,
       trigger: params.trigger,
-      advisor: aiDiagnosis.advisor,
-      decision: aiDiagnosis.decision,
-      action: aiDiagnosis.action,
-      target: aiDiagnosis.target,
-      confidence: aiDiagnosis.confidence,
-      safeToExecute: aiDiagnosis.safeToExecute,
-      executionStatus: aiDiagnosis.executionStatus,
-      fallbackUsed: aiDiagnosis.fallbackUsed
+      diagnosis: aiDiagnosis,
+      isFallback: true
     });
-    recordTraceEvent(AI_DIAGNOSIS_RESULT_EVENT, {
-      trigger: params.trigger,
-      advisor: aiDiagnosis.advisor,
-      decision: aiDiagnosis.decision,
-      action: aiDiagnosis.action,
-      target: aiDiagnosis.target,
-      confidence: aiDiagnosis.confidence,
-      safeToExecute: aiDiagnosis.safeToExecute,
-      executionStatus: aiDiagnosis.executionStatus,
-      fallbackUsed: aiDiagnosis.fallbackUsed
-    });
-    recordSelfHealEvent({
-      kind: AI_DIAGNOSIS_RESULT_EVENT,
-      source: 'self_heal_loop',
-      trigger: 'ai_diagnosis',
-      reason: aiDiagnosis.reason,
-      actionTaken: aiDiagnosis.action,
-      healedComponent: aiDiagnosis.target,
-      details: {
-        advisor: aiDiagnosis.advisor,
-        decision: aiDiagnosis.decision,
-        confidence: aiDiagnosis.confidence,
-        safeToExecute: aiDiagnosis.safeToExecute,
-        executionStatus: aiDiagnosis.executionStatus,
-        fallbackUsed: aiDiagnosis.fallbackUsed
-      },
-      timestamp: aiDiagnosis.completedAt
-    });
-    console.log(
-      `[SELF-HEAL] ai diagnosis fallback decision=${aiDiagnosis.decision} action=${aiDiagnosis.action ?? 'none'}`
-    );
     return {
       diagnosis: aiDiagnosis,
       predictiveResult: null
@@ -2738,7 +2715,7 @@ export async function runSelfHealingLoop(options: {
       observation
     });
     const predictiveResult = aiDiagnosisResult.predictiveResult;
-    if (predictiveResult?.decision.action !== 'none') {
+    if (predictiveResult && predictiveResult.decision.action !== 'none') {
       runtime.status.lastEvidence = {
         ...(runtime.status.lastEvidence ?? {}),
         predictive: {
