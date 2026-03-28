@@ -140,6 +140,12 @@
     "express-rate-limit": "https://codeload.github.com/express-rate-limit/express-rate-limit/tar.gz/refs/tags/v8.3.0",
     "hono": "https://codeload.github.com/honojs/hono/tar.gz/refs/tags/v4.12.8",
     "undici": "https://codeload.github.com/nodejs/undici/tar.gz/refs/tags/v7.24.3",
+    "express": {
+      "path-to-regexp": "https://codeload.github.com/pillarjs/path-to-regexp/tar.gz/refs/tags/v.0.1.13"
+    },
+    "router": {
+      "path-to-regexp": "https://codeload.github.com/pillarjs/path-to-regexp/tar.gz/refs/tags/v8.4.0"
+    },
     "@typescript-eslint/typescript-estree": {
       "minimatch": "file:../../vendor/minimatch-9.0.7"
     },
