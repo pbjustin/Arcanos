@@ -260,7 +260,8 @@ describe('selfHealingLoop', () => {
     'SELF_HEAL_LOOP_INTERVAL_MS',
     'SELF_HEAL_ACTION_COOLDOWN_MS',
     'SELF_HEAL_CONTROLLER_COOLDOWN_MS',
-    'SELF_HEAL_VERIFICATION_DELAY_MS'
+    'SELF_HEAL_VERIFICATION_DELAY_MS',
+    'SELF_HEAL_DEBUG_FORCE_AI_HEAL_ONCE'
   ] as const;
   const originalEnv = new Map<string, string | undefined>();
   let trinityActiveAction: string | null;
@@ -1560,7 +1561,70 @@ describe('selfHealingLoop', () => {
     }));
   });
 
-  it('records AI diagnosis request and result in the runtime snapshots for each loop cycle', async () => {
+  it('invokes AI diagnosis and records controller decisions on every loop cycle', async () => {
+    runPredictiveHealingFromLoopMock
+      .mockResolvedValueOnce({
+        decision: {
+          advisor: 'arcanos_core_v1',
+          action: 'none',
+          target: null,
+          reason: 'System is healthy; continue observing.',
+          confidence: 0.41,
+          matchedRule: null,
+          safeToExecute: false,
+          details: {
+            aiUsed: true
+          }
+        },
+        execution: {
+          status: 'skipped',
+          message: 'No healing action recommended.'
+        }
+      })
+      .mockResolvedValueOnce({
+        decision: {
+          advisor: 'arcanos_core_v1',
+          action: 'none',
+          target: null,
+          reason: 'System is still healthy; continue observing.',
+          confidence: 0.39,
+          matchedRule: null,
+          safeToExecute: false,
+          details: {
+            aiUsed: true
+          }
+        },
+        execution: {
+          status: 'skipped',
+          message: 'No healing action recommended.'
+        }
+      });
+
+    await runSelfHealingLoop({ trigger: 'interval' });
+    await runSelfHealingLoop({ trigger: 'interval' });
+
+    const runtimeSnapshot = buildSelfHealRuntimeSnapshot();
+    const eventsSnapshot = buildSelfHealEventsSnapshot(20);
+    const aiRequestEvents = eventsSnapshot.events.filter((event) => event.kind === 'AI_DIAGNOSIS_REQUEST');
+    const aiResultEvents = eventsSnapshot.events.filter((event) => event.kind === 'AI_DIAGNOSIS_RESULT');
+    const controllerDecisionEvents = eventsSnapshot.events.filter((event) => event.kind === 'CONTROLLER_DECISION');
+
+    expect(runPredictiveHealingFromLoopMock).toHaveBeenCalledTimes(2);
+    expect(runtimeSnapshot.loopStatus).toEqual(expect.objectContaining({
+      lastDecision: 'observe',
+      lastAIDiagnosis: expect.objectContaining({
+        advisor: 'arcanos_core_v1',
+        decision: 'observe',
+        fallbackUsed: false
+      })
+    }));
+    expect(aiRequestEvents).toHaveLength(2);
+    expect(aiResultEvents).toHaveLength(2);
+    expect(controllerDecisionEvents).toHaveLength(2);
+  });
+
+  it('records visible AI diagnosis and action execution events when the debug heal override is enabled', async () => {
+    process.env.SELF_HEAL_DEBUG_FORCE_AI_HEAL_ONCE = 'true';
     getWorkerControlHealthMock.mockResolvedValueOnce(createWorkerHealth({
       overallStatus: 'unhealthy',
       queueSummary: {
@@ -1582,12 +1646,12 @@ describe('selfHealingLoop', () => {
     runPredictiveHealingFromLoopMock.mockResolvedValueOnce({
       decision: {
         advisor: 'arcanos_core_v1',
-        action: 'heal_worker_runtime',
-        target: 'worker_runtime',
-        reason: 'Worker recovery is recommended.',
-        confidence: 0.88,
-        matchedRule: 'worker_stall_heal',
-        safeToExecute: true,
+        action: 'none',
+        target: null,
+        reason: 'Observe for one more interval.',
+        confidence: 0.51,
+        matchedRule: null,
+        safeToExecute: false,
         details: {
           aiUsed: true
         }
@@ -1600,30 +1664,58 @@ describe('selfHealingLoop', () => {
 
     const result = await runSelfHealingLoop({ trigger: 'interval' });
     const runtimeSnapshot = buildSelfHealRuntimeSnapshot();
-    const eventsSnapshot = buildSelfHealEventsSnapshot(10);
+    const eventsSnapshot = buildSelfHealEventsSnapshot(20);
+    const filteredRuntimeEvents = eventsSnapshot.events
+      .filter((event) =>
+        event.kind === 'METRICS_COLLECTED' ||
+        event.kind === 'AI_DIAGNOSIS_REQUEST' ||
+        event.kind === 'AI_DIAGNOSIS_RESULT' ||
+        event.kind === 'CONTROLLER_DECISION' ||
+        event.kind === 'ACTION_EXECUTED'
+      )
+      .map((event) => event.kind);
 
     expect(result).toEqual(expect.objectContaining({
       diagnosis: 'worker stall detected',
       action: 'recoverStaleJobs:recovered=1:failed=0'
     }));
+    expect(runPredictiveHealingFromLoopMock).toHaveBeenCalledTimes(1);
     expect(runtimeSnapshot.loopStatus).toEqual(expect.objectContaining({
       lastDecision: 'heal',
       lastAIDiagnosis: expect.objectContaining({
         advisor: 'arcanos_core_v1',
         decision: 'heal',
-        action: 'heal_worker_runtime',
+        action: 'recover_stale_jobs',
         fallbackUsed: false
       }),
       lastAction: 'recoverStaleJobs:recovered=1:failed=0'
     }));
+    expect(filteredRuntimeEvents).toEqual([
+      'METRICS_COLLECTED',
+      'AI_DIAGNOSIS_REQUEST',
+      'AI_DIAGNOSIS_RESULT',
+      'CONTROLLER_DECISION',
+      'ACTION_EXECUTED'
+    ]);
     expect(eventsSnapshot.events).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: 'AI_DIAGNOSIS_REQUEST' }),
       expect.objectContaining({
         kind: 'AI_DIAGNOSIS_RESULT',
         details: expect.objectContaining({
           advisor: 'arcanos_core_v1',
+          decision: 'heal',
+          action: 'recover_stale_jobs'
+        })
+      }),
+      expect.objectContaining({
+        kind: 'CONTROLLER_DECISION',
+        details: expect.objectContaining({
           decision: 'heal'
         })
+      }),
+      expect.objectContaining({
+        kind: 'ACTION_EXECUTED',
+        actionTaken: 'recoverStaleJobs:recovered=1:failed=0'
       })
     ]));
   });
