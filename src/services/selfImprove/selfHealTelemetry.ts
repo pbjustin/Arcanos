@@ -7,6 +7,7 @@ import { resolveConfiguredRedisConnection } from '@platform/runtime/redis.js';
 import { readJsonFileSafely } from '@shared/jsonFileUtils.js';
 
 export type SelfHealEventKind =
+  | 'METRICS_COLLECTED'
   | 'trigger'
   | 'attempt'
   | 'success'
@@ -14,7 +15,9 @@ export type SelfHealEventKind =
   | 'noop'
   | 'fallback'
   | 'AI_DIAGNOSIS_REQUEST'
-  | 'AI_DIAGNOSIS_RESULT';
+  | 'AI_DIAGNOSIS_RESULT'
+  | 'CONTROLLER_DECISION'
+  | 'ACTION_EXECUTED';
 
 export interface SelfHealEvent {
   id: string;
@@ -224,14 +227,17 @@ function getOrCreateMutableState(): SelfHealTelemetryState {
 }
 
 function normalizeEventKind(value: unknown): SelfHealEventKind | null {
-  return value === 'trigger' ||
+  return value === 'METRICS_COLLECTED' ||
+    value === 'trigger' ||
     value === 'attempt' ||
     value === 'success' ||
     value === 'failure' ||
     value === 'noop' ||
     value === 'fallback' ||
     value === 'AI_DIAGNOSIS_REQUEST' ||
-    value === 'AI_DIAGNOSIS_RESULT'
+    value === 'AI_DIAGNOSIS_RESULT' ||
+    value === 'CONTROLLER_DECISION' ||
+    value === 'ACTION_EXECUTED'
     ? value
     : null;
 }
@@ -688,7 +694,9 @@ export function recordSelfHealEvent(input: {
       event.kind === 'failure' ||
       event.kind === 'fallback' ||
       event.kind === 'noop' ||
-      event.kind === 'AI_DIAGNOSIS_RESULT'
+      event.kind === 'AI_DIAGNOSIS_RESULT' ||
+      event.kind === 'CONTROLLER_DECISION' ||
+      event.kind === 'ACTION_EXECUTED'
   });
   logSelfHealEvent(event);
   return cloneEvent(event)!;
