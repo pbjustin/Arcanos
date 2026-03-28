@@ -6,7 +6,15 @@ import { getEnv } from '@platform/runtime/env.js';
 import { resolveConfiguredRedisConnection } from '@platform/runtime/redis.js';
 import { readJsonFileSafely } from '@shared/jsonFileUtils.js';
 
-export type SelfHealEventKind = 'trigger' | 'attempt' | 'success' | 'failure' | 'noop' | 'fallback';
+export type SelfHealEventKind =
+  | 'trigger'
+  | 'attempt'
+  | 'success'
+  | 'failure'
+  | 'noop'
+  | 'fallback'
+  | 'AI_DIAGNOSIS_REQUEST'
+  | 'AI_DIAGNOSIS_RESULT';
 
 export interface SelfHealEvent {
   id: string;
@@ -221,7 +229,9 @@ function normalizeEventKind(value: unknown): SelfHealEventKind | null {
     value === 'success' ||
     value === 'failure' ||
     value === 'noop' ||
-    value === 'fallback'
+    value === 'fallback' ||
+    value === 'AI_DIAGNOSIS_REQUEST' ||
+    value === 'AI_DIAGNOSIS_RESULT'
     ? value
     : null;
 }
@@ -673,7 +683,12 @@ export function recordSelfHealEvent(input: {
   }
 
   schedulePersistence(state, {
-    immediate: event.kind === 'success' || event.kind === 'failure' || event.kind === 'fallback' || event.kind === 'noop'
+    immediate:
+      event.kind === 'success' ||
+      event.kind === 'failure' ||
+      event.kind === 'fallback' ||
+      event.kind === 'noop' ||
+      event.kind === 'AI_DIAGNOSIS_RESULT'
   });
   logSelfHealEvent(event);
   return cloneEvent(event)!;

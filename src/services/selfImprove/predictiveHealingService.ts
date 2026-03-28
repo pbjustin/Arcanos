@@ -2218,66 +2218,6 @@ function maybeLogPredictiveHealingAudit(entry: PredictiveHealingAuditEntry): voi
   logger.info('predictive_healing.audit', context, metadata);
 }
 
-function buildLoopDisabledDecisionResult(params: {
-  source: string;
-  observation: PredictiveHealingObservation;
-}): PredictiveHealingDecisionResult {
-  const config = getConfig();
-  const decision: PredictiveHealingDecision = {
-    advisor: 'rules_v1',
-    decidedAt: params.observation.collectedAt,
-    action: 'none',
-    target: null,
-    reason: 'Predictive healing automation is disabled by feature flag.',
-    confidence: 0,
-    matchedRule: null,
-    safeToExecute: false,
-    staleData: false,
-    suggestedMode: 'recommend_only',
-    details: {
-      enabled: false
-    }
-  };
-  const execution: PredictiveHealingExecutionResult = {
-    attempted: false,
-    status: 'skipped',
-    mode: 'recommend_only',
-    action: 'none',
-    target: null,
-    message: decision.reason,
-    cooldownRemainingMs: null,
-    actuatorResult: null,
-    recoveryOutcome: {
-      status: 'not_executed',
-      summary: 'Predictive loop skipped because predictive healing is disabled.'
-    }
-  };
-  const auditEntry: PredictiveHealingAuditEntry = {
-    id: 'predictive_heal_audit_disabled',
-    timestamp: params.observation.collectedAt,
-    source: params.source,
-    featureFlags: {
-      enabled: config.predictiveHealingEnabled ?? false,
-      dryRun: config.predictiveHealingDryRun ?? true,
-      autoExecute: config.autoExecuteHealing ?? false
-    },
-    observation: cloneObservation(params.observation),
-    trends: buildTrends([params.observation], getRulesConfig()),
-    decision: cloneDecision(decision),
-    execution: cloneExecution(execution)
-  };
-
-  return {
-    source: params.source,
-    featureFlags: { ...auditEntry.featureFlags },
-    observation: cloneObservation(params.observation),
-    trends: cloneTrends(auditEntry.trends),
-    decision: cloneDecision(decision),
-    execution: cloneExecution(execution),
-    auditEntry: cloneAuditEntry(auditEntry)
-  };
-}
-
 async function collectLiveObservation(source: string): Promise<PredictiveHealingObservation> {
   const config = getConfig();
   let workerHealth: WorkerControlHealthResponse | null = null;
@@ -2413,13 +2353,6 @@ export async function runPredictiveHealingFromLoop(params: {
     collectedAt: params.observation.collectedAt,
     workerHealthError: params.observation.workerHealthError ?? null
   });
-
-  if (!(getConfig().predictiveHealingEnabled ?? false)) {
-    return buildLoopDisabledDecisionResult({
-      source: params.source,
-      observation: loopObservation
-    });
-  }
 
   return runPredictiveHealingDecision({
     source: params.source,

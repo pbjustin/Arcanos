@@ -20,6 +20,8 @@ const getOpenAIServiceHealthMock = jest.fn();
 const recoverStaleJobsMock = jest.fn();
 const getWorkerAutonomySettingsMock = jest.fn();
 const runPredictiveHealingFromLoopMock = jest.fn();
+const buildPredictiveHealingStatusSnapshotMock = jest.fn();
+const getSelfHealingControlLoopStatusMock = jest.fn();
 
 jest.unstable_mockModule('@platform/runtime/unifiedConfig.js', () => ({
   getConfig: getConfigMock
@@ -83,7 +85,12 @@ jest.unstable_mockModule('@services/workerAutonomyService.js', () => ({
 }));
 
 jest.unstable_mockModule('@services/selfImprove/predictiveHealingService.js', () => ({
-  runPredictiveHealingFromLoop: runPredictiveHealingFromLoopMock
+  runPredictiveHealingFromLoop: runPredictiveHealingFromLoopMock,
+  buildPredictiveHealingStatusSnapshot: buildPredictiveHealingStatusSnapshotMock
+}));
+
+jest.unstable_mockModule('@services/selfImprove/controlLoop.js', () => ({
+  getSelfHealingControlLoopStatus: getSelfHealingControlLoopStatusMock
 }));
 
 const {
@@ -92,6 +99,10 @@ const {
   runSelfHealingLoop,
   startSelfHealingLoop
 } = await import('../src/services/selfImprove/selfHealingLoop.js');
+const {
+  buildSelfHealEventsSnapshot,
+  buildSelfHealRuntimeSnapshot
+} = await import('../src/services/selfHealRuntimeInspectionService.js');
 
 function createConfig(overrides: Record<string, unknown> = {}) {
   return {
@@ -321,6 +332,60 @@ describe('selfHealingLoop', () => {
       execution: {
         status: 'skipped',
         message: 'Predictive action was recommended only.'
+      }
+    });
+    buildPredictiveHealingStatusSnapshotMock.mockReturnValue({
+      enabled: true,
+      dryRun: true,
+      autoExecute: false,
+      lastObservedAt: null,
+      lastDecisionAt: null,
+      lastAction: null,
+      lastResult: null,
+      lastMatchedRule: null,
+      recentAuditCount: 0,
+      recentAudits: [],
+      recentObservations: [],
+      cooldowns: {},
+      automation: {
+        active: true,
+        autoExecuteReady: false,
+        pollIntervalMs: 30000,
+        minConfidence: 0.65,
+        cooldownMs: 60000,
+        lastLoopDecisionAt: null,
+        lastLoopAction: null,
+        lastLoopResult: null,
+        lastAutoExecutionAt: null,
+        lastAutoExecutionAction: null,
+        lastAutoExecutionResult: null
+      },
+      recentExecutionLog: [],
+      detailsPath: '/api/self-heal/decide',
+      actuator: {
+        available: true,
+        mode: 'worker_helper_http',
+        path: '/worker-helper/heal',
+        baseUrl: 'http://127.0.0.1:8787',
+        reason: null
+      },
+      advisors: ['rules_v1', 'arcanos_core_v1', 'rules_fallback_v1']
+    });
+    getSelfHealingControlLoopStatusMock.mockReturnValue({
+      active: false,
+      loopRunning: false,
+      incidentActive: false,
+      executionStatus: 'idle',
+      lastObservedAt: null,
+      lastDiagnosis: null,
+      lastAction: null,
+      lastActionAt: null,
+      lastResult: null,
+      errorRate: 0,
+      avgLatencyMs: 0,
+      operationalRequests: 0,
+      mitigation: {
+        activeAction: null
       }
     });
     getTrinitySelfHealingStatusMock.mockImplementation(() => createTrinityStatus(trinityActiveAction));
@@ -1493,5 +1558,73 @@ describe('selfHealingLoop', () => {
       action: null,
       controllerDecision: 'PATCH_PROPOSAL'
     }));
+  });
+
+  it('records AI diagnosis request and result in the runtime snapshots for each loop cycle', async () => {
+    getWorkerControlHealthMock.mockResolvedValueOnce(createWorkerHealth({
+      overallStatus: 'unhealthy',
+      queueSummary: {
+        pending: 2,
+        running: 1,
+        completed: 0,
+        failed: 0,
+        total: 3,
+        delayed: 0,
+        stalledRunning: 2,
+        oldestPendingJobAgeMs: 91000
+      },
+      alerts: ['Detected 2 stalled running job(s).']
+    }));
+    recoverStaleJobsMock.mockResolvedValueOnce({
+      recoveredJobs: ['job-1'],
+      failedJobs: []
+    });
+    runPredictiveHealingFromLoopMock.mockResolvedValueOnce({
+      decision: {
+        advisor: 'arcanos_core_v1',
+        action: 'heal_worker_runtime',
+        target: 'worker_runtime',
+        reason: 'Worker recovery is recommended.',
+        confidence: 0.88,
+        matchedRule: 'worker_stall_heal',
+        safeToExecute: true,
+        details: {
+          aiUsed: true
+        }
+      },
+      execution: {
+        status: 'skipped',
+        message: 'Predictive action was recommended only.'
+      }
+    });
+
+    const result = await runSelfHealingLoop({ trigger: 'interval' });
+    const runtimeSnapshot = buildSelfHealRuntimeSnapshot();
+    const eventsSnapshot = buildSelfHealEventsSnapshot(10);
+
+    expect(result).toEqual(expect.objectContaining({
+      diagnosis: 'worker stall detected',
+      action: 'recoverStaleJobs:recovered=1:failed=0'
+    }));
+    expect(runtimeSnapshot.loopStatus).toEqual(expect.objectContaining({
+      lastDecision: 'heal',
+      lastAIDiagnosis: expect.objectContaining({
+        advisor: 'arcanos_core_v1',
+        decision: 'heal',
+        action: 'heal_worker_runtime',
+        fallbackUsed: false
+      }),
+      lastAction: 'recoverStaleJobs:recovered=1:failed=0'
+    }));
+    expect(eventsSnapshot.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'AI_DIAGNOSIS_REQUEST' }),
+      expect.objectContaining({
+        kind: 'AI_DIAGNOSIS_RESULT',
+        details: expect.objectContaining({
+          advisor: 'arcanos_core_v1',
+          decision: 'heal'
+        })
+      })
+    ]));
   });
 });
