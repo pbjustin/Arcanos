@@ -34,6 +34,10 @@ import { getConfirmGateConfiguration } from "@transport/http/middleware/confirmG
 import { config } from "@platform/runtime/config.js";
 import { getEnv } from "@platform/runtime/env.js";
 import { runWithRequestAbortTimeout, getRequestAbortSignal } from '@arcanos/runtime';
+import {
+  extractPromptText,
+  recordPromptDebugTrace,
+} from '@services/promptDebugTraceService.js';
 
 /**
  * Request type for prompt execution with optional model override.
@@ -82,14 +86,37 @@ export async function handlePrompt(
   req: Request<{}, PromptResponse | ErrorResponseDTO, PromptRequest>,
   res: Response<PromptResponse | ErrorResponseDTO>
 ): Promise<void> {
+  const requestId = req.requestId ?? 'prompt-route';
+  const rawPrompt = extractPromptText(req.body, false) ?? '';
+  recordPromptDebugTrace(requestId, 'ingress', {
+    traceId: req.traceId ?? null,
+    endpoint: PROMPT_ROUTE_PATH,
+    method: req.method,
+    rawPrompt,
+  });
+
   const validation = validateAIRequest(req, res, 'prompt');
-  if (!validation) return; // Response already handled (mock or error)
+  if (!validation) {
+    return;
+  }
 
   const { input: prompt } = validation;
   const modelOverride = typeof req.body.model === 'string' ? req.body.model.trim() : undefined;
   const model = modelOverride && modelOverride.length > 0 ? modelOverride : getDefaultModel();
   const promptRouteMitigation = getPromptRouteMitigationState();
   const promptRoutePolicy = getPromptRouteExecutionPolicy(PROMPT_MAX_TOKENS);
+  recordPromptDebugTrace(requestId, 'routing', {
+    endpoint: PROMPT_ROUTE_PATH,
+    method: req.method,
+    rawPrompt,
+    normalizedPrompt: prompt,
+    selectedRoute: PROMPT_ROUTE_PATH,
+    selectedModule: 'openai.prompt',
+    selectedTools: [],
+    repoInspectionChosen: false,
+    runtimeInspectionChosen: false,
+    intentTags: ['openai_prompt'],
+  });
 
   if (promptRouteMitigation.active && promptRouteMitigation.mode === 'degraded_response') {
     const degradedResponse = generateDegradedResponse(prompt, 'prompt');
@@ -116,7 +143,7 @@ export async function handlePrompt(
           : promptRouteMitigation.bypassedSubsystems
     });
 
-    res.json({
+    const degradedPayload = {
       result: degradedResult,
       model: getFallbackModel(),
       meta: {
@@ -133,7 +160,26 @@ export async function handlePrompt(
         fallbackMode: degradedResponse.fallbackMode,
         timestamp: degradedResponse.timestamp
       }
-    } as PromptResponse);
+    } as PromptResponse;
+    recordPromptDebugTrace(requestId, 'fallback', {
+      endpoint: PROMPT_ROUTE_PATH,
+      method: req.method,
+      rawPrompt,
+      normalizedPrompt: prompt,
+      selectedRoute: PROMPT_ROUTE_PATH,
+      selectedModule: 'openai.prompt',
+      finalExecutorPayload: {
+        executor: 'prompt-route.degraded_response',
+        model: getFallbackModel(),
+        prompt,
+        mitigationMode: promptRouteMitigation.mode,
+        mitigationReason: promptRouteMitigation.reason,
+      },
+      responseReturned: degradedPayload,
+      fallbackPathUsed: 'prompt-route.degraded_response',
+      fallbackReason: promptRouteMitigation.reason ?? 'prompt_route_degraded_mode',
+    });
+    res.json(degradedPayload);
     return;
   }
 
@@ -222,7 +268,27 @@ export async function handlePrompt(
         })
     );
     const timestamp = Math.floor(Date.now() / 1000);
-    res.json({
+    recordPromptDebugTrace(requestId, 'executor', {
+      endpoint: PROMPT_ROUTE_PATH,
+      method: req.method,
+      rawPrompt,
+      normalizedPrompt: prompt,
+      selectedRoute: PROMPT_ROUTE_PATH,
+      selectedModule: 'openai.prompt',
+      finalExecutorPayload: {
+        executor: 'callOpenAI',
+        model: effectiveModel,
+        prompt,
+        tokenLimit: effectiveTokenLimit,
+        useCache: true,
+        options: {
+          timeoutMs: promptRoutePolicy.providerTimeoutMs ?? null,
+          maxRetries: promptRoutePolicy.maxRetries,
+          metadata: mitigationMetadata,
+        },
+      },
+    });
+    const successPayload = {
       result: output,
       model: activeModel,
       meta: {
@@ -232,8 +298,40 @@ export async function handlePrompt(
       },
       activeModel,
       fallbackFlag: promptRoutePolicy.useFallbackModel
+    };
+    recordPromptDebugTrace(requestId, 'response', {
+      endpoint: PROMPT_ROUTE_PATH,
+      method: req.method,
+      rawPrompt,
+      normalizedPrompt: prompt,
+      selectedRoute: PROMPT_ROUTE_PATH,
+      selectedModule: 'openai.prompt',
+      responseReturned: successPayload,
+      fallbackPathUsed: promptRoutePolicy.useFallbackModel ? 'fallback-model' : null,
+      fallbackReason: promptRoutePolicy.useFallbackModel ? 'fallback_model_selected' : null,
     });
+    res.json(successPayload);
   } catch (err) {
+    recordPromptDebugTrace(requestId, 'fallback', {
+      endpoint: PROMPT_ROUTE_PATH,
+      method: req.method,
+      rawPrompt,
+      normalizedPrompt: prompt,
+      selectedRoute: PROMPT_ROUTE_PATH,
+      selectedModule: 'openai.prompt',
+      finalExecutorPayload: {
+        executor: 'callOpenAI',
+        model,
+        prompt,
+        tokenLimit: PROMPT_MAX_TOKENS,
+      },
+      responseReturned: {
+        error: classifyBudgetAbortKind(err) ?? 'AI_FAILURE',
+        detail: err instanceof Error ? err.message : String(err),
+      },
+      fallbackPathUsed: 'error-handler',
+      fallbackReason: err instanceof Error ? err.message : String(err),
+    });
     const timeoutKind = classifyBudgetAbortKind(err);
     if (timeoutKind) {
       req.logger?.warn?.('prompt.route.timeout', {

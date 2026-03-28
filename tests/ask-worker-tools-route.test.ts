@@ -91,6 +91,7 @@ function buildApp() {
 describe('/ask worker tools integration', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env.ASK_ROUTE_MODE = 'compat';
     validateAIRequestMock.mockReturnValue({
       client: { responses: { create: jest.fn() } },
       input: 'show me worker status',

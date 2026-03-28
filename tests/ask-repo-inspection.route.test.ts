@@ -74,6 +74,7 @@ function buildApp() {
 describe('/ask repo inspection routing', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env.ASK_ROUTE_MODE = 'compat';
     validateAIRequestMock.mockReturnValue({
       client: { responses: { create: jest.fn() } },
       input: 'Is my CLI implemented?',

@@ -99,6 +99,7 @@ function buildApp() {
 describe('async /brain queue contract', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env.ASK_ROUTE_MODE = 'compat';
     createJobMock.mockResolvedValue({ id: 'job-123' });
     getJobByIdMock.mockResolvedValue(null);
     validateAIRequestMock.mockReturnValue({

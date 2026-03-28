@@ -107,6 +107,7 @@ function buildApp() {
 describe('/ask prompt shortcuts', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env.ASK_ROUTE_MODE = 'compat';
     createJobMock.mockResolvedValue({ id: 'job-123' });
     validateAIRequestMock.mockReturnValue({
       client: { responses: { create: jest.fn() } },

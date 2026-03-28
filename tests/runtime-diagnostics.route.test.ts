@@ -130,6 +130,35 @@ describe('runtime diagnostics routes', () => {
     expect(response.body).not.toHaveProperty('result');
   });
 
+  it('returns the canonical public health contract from /health with legacy diagnostics fields preserved', async () => {
+    const app = await buildApp();
+
+    const response = await request(app).get('/health');
+
+    expect(response.status).toBe(200);
+    expect(response.headers['x-response-bytes']).toBeTruthy();
+    expect(response.body).toEqual(expect.objectContaining({
+      status: 'ok',
+      service: 'arcanos-backend',
+      version: '1.0.0',
+      gpt_routes: expect.any(Number),
+      required_gpts: {
+        required: expect.arrayContaining(['arcanos-core', 'core']),
+        missing: []
+      },
+      openai_configured: false,
+      uptime: expect.any(Number),
+      memory: expect.objectContaining({
+        rss_mb: expect.any(Number),
+        heap_total_mb: expect.any(Number),
+        heap_used_mb: expect.any(Number),
+        external_mb: expect.any(Number),
+        array_buffers_mb: expect.any(Number)
+      }),
+      response_bytes: expect.any(Number),
+    }));
+  });
+
   it('reports required GPT registration status from /healthz', async () => {
     const app = await buildApp();
 

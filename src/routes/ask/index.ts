@@ -80,6 +80,11 @@ import {
   isVerificationQuestion,
   shouldInspectRepoPrompt
 } from '@services/repoImplementationEvidence.js';
+import {
+  extractPromptText,
+  recordPromptDebugTrace,
+  shouldInspectRuntimePrompt,
+} from '@services/promptDebugTraceService.js';
 
 const router = express.Router();
 
@@ -196,6 +201,27 @@ const systemStateUpdateSchema = z
 
 function nowIso(): string {
   return new Date().toISOString();
+}
+
+function buildPromptDebugContext(
+  req: Request,
+  endpointName: string,
+  rawPrompt: string,
+  normalizedPrompt?: string,
+): {
+  traceId: string | null;
+  endpoint: string;
+  method: string;
+  rawPrompt: string;
+  normalizedPrompt?: string;
+} {
+  return {
+    traceId: req.traceId ?? null,
+    endpoint: endpointName,
+    method: req.method,
+    rawPrompt,
+    ...(typeof normalizedPrompt === 'string' ? { normalizedPrompt } : {}),
+  };
 }
 
 function getMode(body: AskRequest): 'chat' | 'system_review' | 'system_state' {
@@ -540,6 +566,9 @@ export const handleAIRequest = async (
   res: Response<any>,
   endpointName: string
 ) => {
+  const requestId = req.requestId ?? `${endpointName}-prompt-debug`;
+  const rawPrompt = extractPromptText(req.body, false) ?? '';
+  recordPromptDebugTrace(requestId, 'ingress', buildPromptDebugContext(req, endpointName, rawPrompt));
   const mode = getMode(req.body);
 
   if (mode === 'system_state') {
@@ -661,19 +690,31 @@ export const handleAIRequest = async (
 
   //audit Assumption: diagnostic probes must bypass prompt shortcuts, memory, audit-safe, and Trinity to stay deterministic and stateless; failure risk: health checks inherit prior context or gameplay routing; expected invariant: explicit diagnostic traffic returns a stable route-local payload; handling strategy: short-circuit before validation normalization and before any stateful or generative layer executes.
   if (isDiagnosticRequest(req.body, extractTextInput(req.body))) {
+    const diagnosticPayload = buildDiagnosticAskResponse({
+      endpointName,
+      clientContext: req.body.clientContext
+    });
+    recordPromptDebugTrace(requestId, 'response', {
+      ...buildPromptDebugContext(req, endpointName, rawPrompt, rawPrompt.trim()),
+      selectedRoute: endpointName,
+      selectedModule: 'diagnostic',
+      responseReturned: diagnosticPayload,
+    });
     return sendGuardedAskResponse(
       req,
       res,
-      buildDiagnosticAskResponse({
-        endpointName,
-        clientContext: req.body.clientContext
-      }),
+      diagnosticPayload,
       `${endpointName}.diagnostic.response`
     );
   }
 
   const lenientChatValidation = validateLenientChatRequest(req.body);
   if (!lenientChatValidation.ok) {
+    recordPromptDebugTrace(requestId, 'response', {
+      ...buildPromptDebugContext(req, endpointName, rawPrompt),
+      responseReturned: lenientChatValidation.errorPayload,
+      fallbackReason: 'lenient_chat_validation_failed',
+    });
     return res.status(400).json(lenientChatValidation.errorPayload);
   }
 
@@ -682,6 +723,7 @@ export const handleAIRequest = async (
 
   const { sessionId, overrideAuditSafe, metadata } = req.body;
   const normalizedPrompt = req.body.prompt || extractTextInput(req.body) || '';
+  recordPromptDebugTrace(requestId, 'preprocess', buildPromptDebugContext(req, endpointName, rawPrompt, normalizedPrompt));
   const trackedSessionId =
     typeof sessionId === 'string' && sessionId.trim().length > 0 ? sessionId.trim() : undefined;
 
@@ -702,6 +744,7 @@ export const handleAIRequest = async (
 
   const { client: openai, input: prompt } = validation;
   const repoInspectionRequested = shouldInspectRepoPrompt(prompt);
+  const runtimeInspectionRequested = shouldInspectRuntimePrompt(prompt);
   const verificationQuestion = isVerificationQuestion(prompt);
   let repoEvidence: Awaited<ReturnType<typeof collectRepoInspectionEvidence>> | null = null;
 
@@ -715,6 +758,22 @@ export const handleAIRequest = async (
       || repoEvidence.searches.some((search) => search.ok);
 
     if (verificationQuestion && !hasSuccessfulRepoEvidence) {
+      const failurePayload = {
+        error: {
+          code: 'REPO_EVIDENCE_REQUIRED',
+          message: 'Cannot verify implementation without repo inspection.'
+        }
+      };
+      recordPromptDebugTrace(requestId, 'response', {
+        ...buildPromptDebugContext(req, endpointName, rawPrompt, normalizedPrompt),
+        selectedRoute: endpointName,
+        selectedModule: 'repo-inspection',
+        selectedTools: ['repo-inspection'],
+        repoInspectionChosen: true,
+        runtimeInspectionChosen: false,
+        responseReturned: failurePayload,
+        fallbackReason: 'repo_evidence_required',
+      });
       return res.status(503).json({
         error: {
           code: 'REPO_EVIDENCE_REQUIRED',
@@ -759,8 +818,37 @@ export const handleAIRequest = async (
   try {
     const daemonToolResponse = await tryDispatchDaemonTools(openai, prompt, metadata);
     if (daemonToolResponse) {
+      recordPromptDebugTrace(requestId, 'routing', {
+        ...buildPromptDebugContext(req, endpointName, rawPrompt, normalizedPrompt),
+        selectedRoute: endpointName,
+        selectedModule: 'daemon-tool',
+        selectedTools: ['daemon-tools'],
+        repoInspectionChosen: repoInspectionRequested,
+        runtimeInspectionChosen: false,
+      });
       if ('confirmation_required' in daemonToolResponse) {
         //audit Assumption: confirmation required should block response; risk: sensitive execution; invariant: 403 returned; handling: return challenge.
+        const confirmationPayload = {
+          code: 'CONFIRMATION_REQUIRED',
+          confirmationChallenge: { id: daemonToolResponse.confirmation_token },
+          pending_actions: daemonToolResponse.pending_actions
+        };
+        recordPromptDebugTrace(requestId, 'response', {
+          ...buildPromptDebugContext(req, endpointName, rawPrompt, normalizedPrompt),
+          selectedRoute: endpointName,
+          selectedModule: 'daemon-tool',
+          selectedTools: ['daemon-tools'],
+          repoInspectionChosen: repoInspectionRequested,
+          runtimeInspectionChosen: false,
+          finalExecutorPayload: {
+            executor: 'daemon-tools',
+            prompt,
+            metadata: metadata ?? null,
+          },
+          responseReturned: confirmationPayload,
+          fallbackPathUsed: 'confirmation-required',
+          fallbackReason: 'daemon_tool_confirmation_required',
+        });
         completeAiRouteTrace(req, routeTrace, {
           activeModel: 'daemon-tool',
           fallbackFlag: false,
@@ -773,6 +861,20 @@ export const handleAIRequest = async (
         });
       }
       //audit Assumption: daemon tool response is terminal; risk: skipping trinity; invariant: tool actions queued; handling: return early.
+      recordPromptDebugTrace(requestId, 'response', {
+        ...buildPromptDebugContext(req, endpointName, rawPrompt, normalizedPrompt),
+        selectedRoute: endpointName,
+        selectedModule: 'daemon-tool',
+        selectedTools: ['daemon-tools'],
+        repoInspectionChosen: repoInspectionRequested,
+        runtimeInspectionChosen: false,
+        finalExecutorPayload: {
+          executor: 'daemon-tools',
+          prompt,
+          metadata: metadata ?? null,
+        },
+        responseReturned: daemonToolResponse,
+      });
       completeAiRouteTrace(req, routeTrace, {
         activeModel: 'daemon-tool',
         fallbackFlag: false,
@@ -793,6 +895,22 @@ export const handleAIRequest = async (
       logger: req.logger,
     });
     if (dagToolResponse) {
+      recordPromptDebugTrace(requestId, 'response', {
+        ...buildPromptDebugContext(req, endpointName, rawPrompt, normalizedPrompt),
+        selectedRoute: endpointName,
+        selectedModule: 'dag-tool',
+        selectedTools: ['dag-tools'],
+        repoInspectionChosen: repoInspectionRequested,
+        runtimeInspectionChosen: false,
+        finalExecutorPayload: {
+          executor: 'dag-tools',
+          prompt,
+          sessionId: sessionId ?? null,
+          requestId: req.requestId ?? null,
+          traceId: req.traceId ?? null,
+        },
+        responseReturned: dagToolResponse,
+      });
       completeAiRouteTrace(req, routeTrace, {
         activeModel: 'dag-tool',
         fallbackFlag: false,
@@ -808,6 +926,19 @@ export const handleAIRequest = async (
 
     const workerToolResponse = await tryDispatchWorkerTools(openai, prompt);
     if (workerToolResponse) {
+      recordPromptDebugTrace(requestId, 'response', {
+        ...buildPromptDebugContext(req, endpointName, rawPrompt, normalizedPrompt),
+        selectedRoute: endpointName,
+        selectedModule: 'worker-tool',
+        selectedTools: ['worker-tools'],
+        repoInspectionChosen: repoInspectionRequested,
+        runtimeInspectionChosen: false,
+        finalExecutorPayload: {
+          executor: 'worker-tools',
+          prompt,
+        },
+        responseReturned: workerToolResponse,
+      });
       completeAiRouteTrace(req, routeTrace, {
         activeModel: 'worker-tool',
         fallbackFlag: false,
@@ -827,6 +958,26 @@ export const handleAIRequest = async (
     });
     //audit Assumption: deterministic prompt shortcuts should bypass Trinity generation when they have a confident route-specific execution path; failure risk: memory and booker prompts drift back into generic chat behavior; expected invariant: registered shortcuts return stable route-specific output before Trinity; handling strategy: execute the shared shortcut registry and short-circuit on the first match.
     if (promptShortcut) {
+      const shortcutResponse = buildAskPromptShortcutResponse({
+        shortcut: promptShortcut,
+        endpointName,
+        clientContext: req.body.clientContext,
+        auditFlag: bypassAuditFlag ?? undefined
+      });
+      recordPromptDebugTrace(requestId, 'response', {
+        ...buildPromptDebugContext(req, endpointName, rawPrompt, normalizedPrompt),
+        selectedRoute: endpointName,
+        selectedModule: promptShortcut.response.module,
+        selectedTools: [promptShortcut.shortcutId],
+        repoInspectionChosen: repoInspectionRequested,
+        runtimeInspectionChosen: false,
+        finalExecutorPayload: {
+          executor: 'prompt-shortcut',
+          shortcutId: promptShortcut.shortcutId,
+          prompt,
+        },
+        responseReturned: shortcutResponse,
+      });
       completeAiRouteTrace(req, routeTrace, {
         activeModel: promptShortcut.response.activeModel,
         fallbackFlag: false,
@@ -838,12 +989,7 @@ export const handleAIRequest = async (
       return sendGuardedAskResponse(
         req,
         res,
-        buildAskPromptShortcutResponse({
-          shortcut: promptShortcut,
-          endpointName,
-          clientContext: req.body.clientContext,
-          auditFlag: bypassAuditFlag ?? undefined
-        }),
+        shortcutResponse,
         `${endpointName}.shortcut.response`
       );
     }
@@ -853,6 +999,19 @@ export const handleAIRequest = async (
         endpointName,
         clientContext: req.body.clientContext,
         auditFlag: bypassAuditFlag ?? undefined
+      });
+      recordPromptDebugTrace(requestId, 'response', {
+        ...buildPromptDebugContext(req, endpointName, rawPrompt, normalizedPrompt),
+        selectedRoute: endpointName,
+        selectedModule: 'system-health',
+        selectedTools: [],
+        repoInspectionChosen: repoInspectionRequested,
+        runtimeInspectionChosen: true,
+        finalExecutorPayload: {
+          executor: 'system-health-shortcut',
+          prompt,
+        },
+        responseReturned: systemHealthResponse,
       });
       completeAiRouteTrace(req, routeTrace, {
         activeModel: systemHealthResponse.activeModel,
@@ -864,12 +1023,7 @@ export const handleAIRequest = async (
 
     if (repoEvidence) {
       const repoInspectionResult = buildRepoInspectionAnswer(prompt, repoEvidence);
-      completeAiRouteTrace(req, routeTrace, {
-        activeModel: 'repo-inspection',
-        fallbackFlag: false,
-        extra: { disposition: 'repo-inspection' }
-      });
-      return sendGuardedAskResponse(req, res, {
+      const repoInspectionResponse = {
         result: repoInspectionResult,
         module: 'repo-inspection',
         meta: {
@@ -883,7 +1037,27 @@ export const handleAIRequest = async (
         endpoint: endpointName,
         clientContext: req.body.clientContext,
         ...(bypassAuditFlag ? { auditFlag: bypassAuditFlag } : {})
-      }, `${endpointName}.repo_inspection.response`);
+      };
+      recordPromptDebugTrace(requestId, 'response', {
+        ...buildPromptDebugContext(req, endpointName, rawPrompt, normalizedPrompt),
+        selectedRoute: endpointName,
+        selectedModule: 'repo-inspection',
+        selectedTools: ['repo-inspection'],
+        repoInspectionChosen: true,
+        runtimeInspectionChosen: false,
+        finalExecutorPayload: {
+          executor: 'repo-inspection',
+          prompt,
+          repoEvidence,
+        },
+        responseReturned: repoInspectionResponse,
+      });
+      completeAiRouteTrace(req, routeTrace, {
+        activeModel: 'repo-inspection',
+        fallbackFlag: false,
+        extra: { disposition: 'repo-inspection' }
+      });
+      return sendGuardedAskResponse(req, res, repoInspectionResponse, `${endpointName}.repo_inspection.response`);
     }
 
     let trinityPrompt = prompt;
@@ -901,15 +1075,14 @@ export const handleAIRequest = async (
 
     // runThroughBrain now unconditionally routes through GPT-5.1 before final ARCANOS processing.
     //
-    // NOTE: This /ask route (and its /brain alias) is currently the only entrypoint that performs
-    // cognitive domain detection (via detectCognitiveDomain / gptFallbackClassifier earlier in
-    // this handler) and passes an explicit `cognitiveDomain` hint into runThroughBrain.
+    // NOTE: Legacy ask-style endpoints still perform cognitive domain detection (via
+    // detectCognitiveDomain / gptFallbackClassifier earlier in this handler) and pass an explicit
+    // `cognitiveDomain` hint into runThroughBrain when compat mode is enabled.
     //
-    // Other endpoints that call runThroughBrain (e.g. /siri, /write, /guide, /audit, /sim, and
-    // arcanosPrompt flows) do *not* perform this detection and therefore rely on the default
-    // TRINITY_STAGE_TEMPERATURE configuration inside runThroughBrain. This asymmetry is
-    // intentional for now: /ask is the primary, fully context-routed chat endpoint, while the
-    // others use a simpler, fixed-temperature behavior unless/until they adopt similar routing.
+    // Canonical GPT traffic should target /gpt/:gptId. Other endpoints that call runThroughBrain
+    // (e.g. /siri, /write, /guide, /audit, /sim, and arcanosPrompt flows) do not perform this
+    // detection and therefore rely on the default TRINITY_STAGE_TEMPERATURE configuration inside
+    // runThroughBrain until they adopt equivalent routing hints.
     if (asyncRequested) {
       const workerId = process.env.WORKER_ID || 'api';
       const plannedJob = await planAutonomousWorkerJob('ask', queuedAskJobInput);
@@ -927,6 +1100,20 @@ export const handleAIRequest = async (
         const completedResponse = normalizeCompletedAsyncAskResponse(waitedJob.job.output);
 
         if (!completedResponse) {
+          recordPromptDebugTrace(requestId, 'fallback', {
+            ...buildPromptDebugContext(req, endpointName, rawPrompt, normalizedPrompt),
+            selectedRoute: endpointName,
+            selectedModule: 'queued-ask',
+            selectedTools: ['queued-ask'],
+            repoInspectionChosen: repoInspectionRequested,
+            runtimeInspectionChosen: false,
+            finalExecutorPayload: {
+              executor: 'queued-ask',
+              jobInput: queuedAskJobInput,
+            },
+            fallbackPathUsed: 'async-completed-invalid',
+            fallbackReason: 'Async ask job completed without a structured output payload.',
+          });
           failAiRouteTrace(req, routeTrace, new Error('Async ask job completed without a structured output payload.'), {
             activeModel: 'queued-ask',
             statusCode: 500,
@@ -940,6 +1127,19 @@ export const handleAIRequest = async (
           });
         }
 
+        recordPromptDebugTrace(requestId, 'response', {
+          ...buildPromptDebugContext(req, endpointName, rawPrompt, normalizedPrompt),
+          selectedRoute: endpointName,
+          selectedModule: 'queued-ask',
+          selectedTools: ['queued-ask'],
+          repoInspectionChosen: repoInspectionRequested,
+          runtimeInspectionChosen: false,
+          finalExecutorPayload: {
+            executor: 'queued-ask',
+            jobInput: queuedAskJobInput,
+          },
+          responseReturned: completedResponse,
+        });
         completeAiRouteTrace(req, routeTrace, {
           activeModel: completedResponse.activeModel,
           fallbackFlag: completedResponse.fallbackFlag,
@@ -953,6 +1153,20 @@ export const handleAIRequest = async (
       }
 
       if (waitedJob.state === 'failed') {
+        recordPromptDebugTrace(requestId, 'fallback', {
+          ...buildPromptDebugContext(req, endpointName, rawPrompt, normalizedPrompt),
+          selectedRoute: endpointName,
+          selectedModule: 'queued-ask',
+          selectedTools: ['queued-ask'],
+          repoInspectionChosen: repoInspectionRequested,
+          runtimeInspectionChosen: false,
+          finalExecutorPayload: {
+            executor: 'queued-ask',
+            jobInput: queuedAskJobInput,
+          },
+          fallbackPathUsed: 'async-job-failed',
+          fallbackReason: waitedJob.job.error_message || 'Async ask job failed.',
+        });
         failAiRouteTrace(req, routeTrace, new Error(waitedJob.job.error_message || 'Async ask job failed.'), {
           activeModel: 'queued-ask',
           statusCode: 500,
@@ -965,6 +1179,20 @@ export const handleAIRequest = async (
       }
 
       if (waitedJob.state === 'missing') {
+        recordPromptDebugTrace(requestId, 'fallback', {
+          ...buildPromptDebugContext(req, endpointName, rawPrompt, normalizedPrompt),
+          selectedRoute: endpointName,
+          selectedModule: 'queued-ask',
+          selectedTools: ['queued-ask'],
+          repoInspectionChosen: repoInspectionRequested,
+          runtimeInspectionChosen: false,
+          finalExecutorPayload: {
+            executor: 'queued-ask',
+            jobInput: queuedAskJobInput,
+          },
+          fallbackPathUsed: 'async-job-missing',
+          fallbackReason: 'Async ask job disappeared before completion.',
+        });
         failAiRouteTrace(req, routeTrace, new Error('Async ask job disappeared before completion.'), {
           activeModel: 'queued-ask',
           statusCode: 500,
@@ -986,17 +1214,62 @@ export const handleAIRequest = async (
           jobId: job.id
         }
       });
+      const pendingResponse = buildQueuedAskPendingResponse(job.id);
+      recordPromptDebugTrace(requestId, 'response', {
+        ...buildPromptDebugContext(req, endpointName, rawPrompt, normalizedPrompt),
+        selectedRoute: endpointName,
+        selectedModule: 'queued-ask',
+        selectedTools: ['queued-ask'],
+        repoInspectionChosen: repoInspectionRequested,
+        runtimeInspectionChosen: false,
+        finalExecutorPayload: {
+          executor: 'queued-ask',
+          jobInput: queuedAskJobInput,
+        },
+        responseReturned: pendingResponse,
+      });
       res.status(202);
       return sendGuardedAskResponse(
         req,
         res,
-        buildQueuedAskPendingResponse(job.id),
+        pendingResponse,
         `${endpointName}.async_pending.response`
       );
     }
 
     const runtimeBudget = createRuntimeBudget();
     const outputControlOptions = buildTrinityOutputControlOptions(req.body);
+    recordPromptDebugTrace(requestId, 'routing', {
+      ...buildPromptDebugContext(req, endpointName, rawPrompt, normalizedPrompt),
+      selectedRoute: endpointName,
+      selectedModule: 'trinity',
+      selectedTools: [],
+      repoInspectionChosen: repoInspectionRequested,
+      runtimeInspectionChosen: false,
+      intentTags: [
+        `cognitive_domain:${finalDomain}`,
+        ...(runtimeInspectionRequested ? ['runtime_inspection_requested'] : []),
+      ],
+    });
+    recordPromptDebugTrace(requestId, 'executor', {
+      ...buildPromptDebugContext(req, endpointName, rawPrompt, normalizedPrompt),
+      selectedRoute: endpointName,
+      selectedModule: 'trinity',
+      selectedTools: [],
+      repoInspectionChosen: repoInspectionRequested,
+      runtimeInspectionChosen: false,
+      finalExecutorPayload: {
+        executor: 'runThroughBrain',
+        prompt: trinityPrompt,
+        sessionId: sessionId ?? null,
+        overrideAuditSafe: overrideAuditSafe ?? null,
+        options: {
+          cognitiveDomain: finalDomain,
+          sourceEndpoint: endpointName,
+          ...outputControlOptions,
+        },
+      },
+    });
     const output = await runThroughBrain(
       openai,
       trinityPrompt,
@@ -1009,6 +1282,18 @@ export const handleAIRequest = async (
       },
       runtimeBudget
     );
+    const completedOutput = buildCompletedQueuedAskOutput(output, queuedAskJobInput);
+    recordPromptDebugTrace(requestId, 'response', {
+      ...buildPromptDebugContext(req, endpointName, rawPrompt, normalizedPrompt),
+      selectedRoute: endpointName,
+      selectedModule: 'trinity',
+      selectedTools: [],
+      repoInspectionChosen: repoInspectionRequested,
+      runtimeInspectionChosen: false,
+      responseReturned: completedOutput,
+      fallbackPathUsed: output.fallbackFlag ? 'trinity-fallback' : null,
+      fallbackReason: output.fallbackSummary?.fallbackReasons?.join('; ') ?? null,
+    });
     completeAiRouteTrace(req, routeTrace, {
       activeModel: output.activeModel,
       fallbackFlag: output.fallbackFlag,
@@ -1023,10 +1308,20 @@ export const handleAIRequest = async (
     return sendGuardedAskResponse(
       req,
       res,
-      buildCompletedQueuedAskOutput(output, queuedAskJobInput),
+      completedOutput,
       `${endpointName}.trinity.response`
     );
   } catch (err) {
+    recordPromptDebugTrace(requestId, 'fallback', {
+      ...buildPromptDebugContext(req, endpointName, rawPrompt, normalizedPrompt),
+      selectedRoute: endpointName,
+      selectedModule: 'trinity',
+      selectedTools: [],
+      repoInspectionChosen: repoInspectionRequested,
+      runtimeInspectionChosen: false,
+      fallbackPathUsed: 'error-handler',
+      fallbackReason: err instanceof Error ? err.message : String(err),
+    });
     failAiRouteTrace(req, routeTrace, err, {
       activeModel: getGPT5Model(),
       statusCode: 500
@@ -1082,7 +1377,7 @@ function rejectRemovedAskRoute(req: Request, res: Response, next: () => void): v
 
   res.setHeader(ASK_ROUTE_MODE_HEADER, 'gone');
   res.status(410).json({
-    error: 'Legacy /ask route has been removed; use /gpt/:gptId',
+    error: 'Legacy ask-style route has been removed; use /gpt/:gptId',
     deprecated: true,
     canonicalRoute,
     sunsetAt: ASK_ROUTE_SUNSET_HEADER,
@@ -1094,8 +1389,8 @@ function rejectRemovedAskRoute(req: Request, res: Response, next: () => void): v
 
 // Brain endpoint (alias for ask) still requires explicit confirmation.
 //audit Assumption: explicit confirmation gate is sufficient for sensitive brain actions in unsigned mode; failure risk: anonymous challenge attempts; expected invariant: confirmGate enforces confirmation token flow; handling strategy: keep confirmGate in front of handler.
-router.post('/brain', askRateLimit, rejectGptRoutedAskRequests, askValidationMiddleware, confirmGate, asyncHandler((req, res) => handleAIRequest(req, res, 'brain')));
-router.get('/brain', askRateLimit, rejectGptRoutedAskRequests, askValidationMiddleware, confirmGate, asyncHandler((req, res) => handleAIRequest(req, res, 'brain')));
+router.post('/brain', askRateLimit, attachAskDeprecationMetadata, rejectRemovedAskRoute, rejectGptRoutedAskRequests, askValidationMiddleware, confirmGate, asyncHandler((req, res) => handleAIRequest(req, res, 'brain')));
+router.get('/brain', askRateLimit, attachAskDeprecationMetadata, rejectRemovedAskRoute, rejectGptRoutedAskRequests, askValidationMiddleware, confirmGate, asyncHandler((req, res) => handleAIRequest(req, res, 'brain')));
 
 export default router;
 

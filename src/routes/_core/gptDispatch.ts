@@ -41,6 +41,10 @@ import {
   recordUnknownGpt,
 } from "@platform/observability/appMetrics.js";
 import { SystemStateConflictError } from "@services/systemState.js";
+import {
+  recordPromptDebugTrace,
+  shouldInspectRuntimePrompt,
+} from "@services/promptDebugTraceService.js";
 
 export type AskEnvelope =
   | { ok: true; result: unknown; _route: RouteMeta }
@@ -297,6 +301,25 @@ const automaticMcpOpsVerbPattern =
   /\b(?:diagnose|debug|inspect|audit|analyze|check|report|trace|verify|investigate|orchestrate|manage)\b/i;
 const automaticMcpBackendNounPattern =
   /\b(?:backend|system|deployment|service|worker|queue|database|postgres|redis|railway|dag|workflow|plan|plans|agent|agents|module|modules|research|memory)\b/i;
+const automaticRuntimeVerificationVerbPattern =
+  /\b(?:verify|check|confirm|validate|inspect|test|probe)\b/i;
+const automaticRuntimeVerificationStrongCuePattern =
+  /\b(?:verify\s+in\s+production|currently\s+active|system\s+health|health\s+probe|live\s+verification)\b/i;
+
+function shouldAutoInspectRuntimeVerificationPrompt(prompt: string | null): boolean {
+  if (!prompt || !shouldInspectRuntimePrompt(prompt)) {
+    return false;
+  }
+
+  return (
+    automaticRuntimeVerificationStrongCuePattern.test(prompt) ||
+    automaticRuntimeVerificationVerbPattern.test(prompt)
+  );
+}
+
+function isRuntimeInspectionMcpIntent(intent: McpDispatchIntent | null): boolean {
+  return intent?.action === 'mcp.invoke' && intent.toolName === 'ops.health_report';
+}
 
 /**
  * Infer conservative automatic MCP dispatch for query-like operational prompts.
@@ -372,6 +395,16 @@ function inferAutomaticMcpDispatchIntent(params: {
       toolArguments: {},
       dispatchMode: 'automatic',
       reason: 'prompt_requests_module_inventory',
+    };
+  }
+
+  if (shouldAutoInspectRuntimeVerificationPrompt(prompt)) {
+    return {
+      action: 'mcp.invoke',
+      toolName: 'ops.health_report',
+      toolArguments: {},
+      dispatchMode: 'automatic',
+      reason: 'prompt_requests_runtime_verification',
     };
   }
 
@@ -1060,6 +1093,22 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
   const requestEndpoint = request?.originalUrl ?? request?.url ?? request?.path;
   const preDispatchPayload = buildDispatchPayload(body);
   const diagnosticTextInput = extractPrompt(preDispatchPayload) ?? extractDiagnosticTextInput(body as Record<string, unknown> | undefined);
+  const promptDebugRequestId = requestId ?? `gpt-${trimmedGptId || 'unknown'}`;
+  const rawPrompt = extractPrompt(body) ?? diagnosticTextInput ?? '';
+  const normalizedPrompt = extractPrompt(preDispatchPayload) ?? diagnosticTextInput ?? '';
+  recordPromptDebugTrace(promptDebugRequestId, 'ingress', {
+    traceId: request?.traceId ?? null,
+    endpoint: requestEndpoint ?? '/gpt/:gptId',
+    method: request?.method ?? null,
+    rawPrompt,
+  });
+  recordPromptDebugTrace(promptDebugRequestId, 'preprocess', {
+    traceId: request?.traceId ?? null,
+    endpoint: requestEndpoint ?? '/gpt/:gptId',
+    method: request?.method ?? null,
+    rawPrompt,
+    normalizedPrompt,
+  });
 
   const baseRoute: RouteMeta = {
     requestId,
@@ -1082,6 +1131,16 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
 
   //audit Assumption: diagnostic probes must never enter module resolution or gameplay dispatch; failure risk: lightweight health checks trigger simulation, HRC, or persistence side effects; expected invariant: `action:"ping"` or `prompt:"ping"` returns the fixed diagnostic payload immediately; handling strategy: short-circuit before GPT map lookup and before any action inference.
   if (isDiagnosticRequest(body as Record<string, unknown> | undefined, diagnosticTextInput)) {
+    recordPromptDebugTrace(promptDebugRequestId, 'response', {
+      traceId: request?.traceId ?? null,
+      endpoint: requestEndpoint ?? '/gpt/:gptId',
+      method: request?.method ?? null,
+      rawPrompt,
+      normalizedPrompt,
+      selectedRoute: 'diagnostic',
+      selectedModule: 'diagnostic',
+      responseReturned: buildDiagnosticRouteResult(),
+    });
     recordDispatcherRoute({
       gptId: trimmedGptId,
       module: 'diagnostic',
@@ -1227,6 +1286,22 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     memoryIntent: parsedMemoryCommand.intent !== "unknown" ? parsedMemoryCommand.intent : null,
     fallbackReason: null,
   });
+  recordPromptDebugTrace(promptDebugRequestId, 'routing', {
+    traceId: request?.traceId ?? null,
+    endpoint: requestEndpoint ?? '/gpt/:gptId',
+    method: request?.method ?? null,
+    rawPrompt,
+    normalizedPrompt,
+    selectedRoute: activeEntry.route,
+    selectedModule: activeEntry.module,
+    repoInspectionChosen: shouldInspectRepoPrompt(prompt),
+    runtimeInspectionChosen: false,
+    intentTags: [
+      promptIntentClassification.intent,
+      ...(parsedMemoryCommand.intent !== "unknown" ? [`memory:${parsedMemoryCommand.intent}`] : []),
+      ...(shouldInspectRuntimePrompt(prompt) ? ['runtime_inspection_requested'] : []),
+    ],
+  });
 
   const shouldInterceptMemoryInDispatcher =
     typeof prompt === "string" &&
@@ -1320,6 +1395,24 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
           route: activeEntry.route,
           handler: 'memory-dispatcher',
           outcome: memoryResult.operation === 'ignored' ? 'ignored' : 'ok',
+        });
+        recordPromptDebugTrace(promptDebugRequestId, 'response', {
+          traceId: request?.traceId ?? null,
+          endpoint: requestEndpoint ?? '/gpt/:gptId',
+          method: request?.method ?? null,
+          rawPrompt,
+          normalizedPrompt,
+          selectedRoute: activeEntry.route,
+          selectedModule: activeEntry.module,
+          selectedTools: ['memory-dispatcher'],
+          finalExecutorPayload: {
+            executor: 'memory-dispatcher',
+            prompt,
+            sessionId: memorySessionId,
+          },
+          responseReturned: routedMemoryResult,
+          fallbackPathUsed: memoryResult.operation === 'ignored' ? 'memory-ignored' : null,
+          fallbackReason: memoryResult.operation === 'ignored' ? 'ignored_without_fallback' : null,
         });
         return {
           ok: true,
@@ -1481,6 +1574,23 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       handler: 'repo-inspection',
       outcome: 'ok',
     });
+    recordPromptDebugTrace(promptDebugRequestId, 'response', {
+      traceId: request?.traceId ?? null,
+      endpoint: requestEndpoint ?? '/gpt/:gptId',
+      method: request?.method ?? null,
+      rawPrompt,
+      normalizedPrompt,
+      selectedRoute: activeEntry.route,
+      selectedModule: activeEntry.module,
+      selectedTools: ['repo-inspection'],
+      repoInspectionChosen: true,
+      runtimeInspectionChosen: false,
+      finalExecutorPayload: {
+        executor: 'repo-inspection',
+        prompt,
+      },
+      responseReturned: automaticRepoInspectionResult,
+    });
     return {
       ok: true,
       result: automaticRepoInspectionResult,
@@ -1510,6 +1620,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
   if (resolvedMcpDispatchIntent) {
     const dispatcherMcpService = getDispatcherMcpService(request);
     const dispatcherAction = resolvedMcpDispatchIntent.action;
+    const runtimeInspectionChosen = isRuntimeInspectionMcpIntent(resolvedMcpDispatchIntent);
     const dispatcherRouteAction =
       resolvedMcpDispatchIntent.dispatchMode === "automatic"
         ? `mcp.auto.${dispatcherAction === "mcp.invoke" ? "invoke" : "list_tools"}`
@@ -1521,6 +1632,22 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         route: activeEntry.route,
         handler: 'mcp-dispatcher',
         outcome: 'error',
+      });
+      recordPromptDebugTrace(promptDebugRequestId, 'fallback', {
+        traceId: request?.traceId ?? null,
+        endpoint: requestEndpoint ?? '/gpt/:gptId',
+        method: request?.method ?? null,
+        rawPrompt,
+        normalizedPrompt,
+        selectedRoute: activeEntry.route,
+        selectedModule: activeEntry.module,
+        selectedTools:
+          resolvedMcpDispatchIntent.action === 'mcp.invoke'
+            ? [resolvedMcpDispatchIntent.toolName]
+            : ['mcp.list_tools'],
+        runtimeInspectionChosen,
+        fallbackPathUsed: 'mcp-dispatcher',
+        fallbackReason: error.message,
       });
       return {
         ok: false as const,
@@ -1566,6 +1693,37 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       dispatchMode: resolvedMcpDispatchIntent.dispatchMode,
       reason: resolvedMcpDispatchIntent.reason,
       toolName: resolvedMcpDispatchIntent.action === "mcp.invoke" ? resolvedMcpDispatchIntent.toolName : undefined,
+    });
+    recordPromptDebugTrace(promptDebugRequestId, 'executor', {
+      traceId: request?.traceId ?? null,
+      endpoint: requestEndpoint ?? '/gpt/:gptId',
+      method: request?.method ?? null,
+      rawPrompt,
+      normalizedPrompt,
+      selectedRoute: activeEntry.route,
+      selectedModule: activeEntry.module,
+      selectedTools:
+        resolvedMcpDispatchIntent.action === 'mcp.invoke'
+          ? [resolvedMcpDispatchIntent.toolName]
+          : ['mcp.list_tools'],
+      repoInspectionChosen: false,
+      runtimeInspectionChosen,
+      finalExecutorPayload:
+        resolvedMcpDispatchIntent.action === 'mcp.invoke'
+          ? {
+              executor: 'mcp.invoke',
+              prompt,
+              toolName: resolvedMcpDispatchIntent.toolName,
+              toolArguments: resolvedMcpDispatchIntent.toolArguments,
+              sessionId,
+              runtimeInspectionRequested: runtimeInspectionChosen,
+            }
+          : {
+              executor: 'mcp.list_tools',
+              prompt,
+              sessionId,
+              runtimeInspectionRequested: false,
+            },
     });
 
     if (resolvedMcpDispatchIntent.action === "mcp.invoke" && resolvedMcpDispatchIntent.toolName === "trinity.query") {
@@ -1712,6 +1870,18 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         handler: 'mcp-dispatcher',
         outcome: 'ok',
       });
+      recordPromptDebugTrace(promptDebugRequestId, 'response', {
+        traceId: request?.traceId ?? null,
+        endpoint: requestEndpoint ?? '/gpt/:gptId',
+        method: request?.method ?? null,
+        rawPrompt,
+        normalizedPrompt,
+        selectedRoute: activeEntry.route,
+        selectedModule: activeEntry.module,
+        selectedTools: finalToolName ? [finalToolName] : ['mcp.list_tools'],
+        runtimeInspectionChosen,
+        responseReturned: routedMcpResult,
+      });
       return {
         ok: true,
         result: routedMcpResult,
@@ -1750,6 +1920,22 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         route: activeEntry.route,
         handler: 'mcp-dispatcher',
         outcome: isMcpTimeout ? 'timeout' : 'error',
+      });
+      recordPromptDebugTrace(promptDebugRequestId, 'fallback', {
+        traceId: request?.traceId ?? null,
+        endpoint: requestEndpoint ?? '/gpt/:gptId',
+        method: request?.method ?? null,
+        rawPrompt,
+        normalizedPrompt,
+        selectedRoute: activeEntry.route,
+        selectedModule: activeEntry.module,
+        selectedTools:
+          resolvedMcpDispatchIntent.action === 'mcp.invoke'
+            ? [resolvedMcpDispatchIntent.toolName]
+            : ['mcp.list_tools'],
+        runtimeInspectionChosen,
+        fallbackPathUsed: 'mcp-dispatcher',
+        fallbackReason: mcpErrorMessage,
       });
       return {
         ok: false,
@@ -1825,6 +2011,26 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     timeoutMs,
     timeoutSource,
   });
+  recordPromptDebugTrace(promptDebugRequestId, 'executor', {
+    traceId: request?.traceId ?? null,
+    endpoint: requestEndpoint ?? '/gpt/:gptId',
+    method: request?.method ?? null,
+    rawPrompt,
+    normalizedPrompt,
+    selectedRoute: activeEntry.route,
+    selectedModule: activeEntry.module,
+    selectedTools: [],
+    repoInspectionChosen: shouldInspectRepoPrompt(prompt),
+    runtimeInspectionChosen: false,
+    finalExecutorPayload: {
+      executor: 'module-dispatch',
+      module: activeEntry.module,
+      action,
+      payload,
+      timeoutMs,
+      timeoutSource,
+    },
+  });
 
   if (action === "query") {
     logTrinityExecution(logger, {
@@ -1889,6 +2095,16 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       route: activeEntry.route,
       handler: 'module-dispatcher',
       outcome: 'ok',
+    });
+    recordPromptDebugTrace(promptDebugRequestId, 'response', {
+      traceId: request?.traceId ?? null,
+      endpoint: requestEndpoint ?? '/gpt/:gptId',
+      method: request?.method ?? null,
+      rawPrompt,
+      normalizedPrompt,
+      selectedRoute: activeEntry.route,
+      selectedModule: activeEntry.module,
+      responseReturned: result,
     });
     return {
       ok: true,
@@ -1968,6 +2184,17 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       route: activeEntry.route,
       handler: 'module-dispatcher',
       outcome: isDispatchTimeout ? 'timeout' : 'error',
+    });
+    recordPromptDebugTrace(promptDebugRequestId, 'fallback', {
+      traceId: request?.traceId ?? null,
+      endpoint: requestEndpoint ?? '/gpt/:gptId',
+      method: request?.method ?? null,
+      rawPrompt,
+      normalizedPrompt,
+      selectedRoute: activeEntry.route,
+      selectedModule: activeEntry.module,
+      fallbackPathUsed: 'module-dispatcher',
+      fallbackReason: dispatchErrorMessage,
     });
     return {
       ok: false,

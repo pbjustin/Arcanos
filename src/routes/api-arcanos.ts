@@ -22,7 +22,10 @@ import {
 import { buildTrinityOutputControlOptions } from '@shared/ask/trinityRequestOptions.js';
 import { buildTrinityUserVisibleResponse } from '@shared/ask/trinityResponseSerializer.js';
 import {
-  applyDeprecatedAskRouteHeaders
+  applyDeprecatedAskRouteHeaders,
+  ASK_ROUTE_SUNSET_HEADER,
+  ASK_ROUTE_MODE_HEADER,
+  resolveAskRouteMode
 } from '@shared/http/gptRouteHeaders.js';
 import {
   applyAIDegradedResponseHeaders,
@@ -35,6 +38,10 @@ import {
   type PromptRouteShortcutResult
 } from '@services/promptRouteShortcuts.js';
 import { runArcanosCoreQuery } from '@services/arcanos-core.js';
+import {
+  extractPromptText,
+  recordPromptDebugTrace,
+} from '@services/promptDebugTraceService.js';
 
 const router = express.Router();
 
@@ -121,6 +128,15 @@ interface AskResponse {
   dryRun?: boolean;
   pipelineDebug?: TrinityResult['pipelineDebug'];
 }
+
+type DeprecatedAskRouteRemovedResponse = ErrorResponseDTO & {
+  deprecated: true;
+  canonicalRoute: string;
+  routeMode: 'gone';
+  sunsetAt: string;
+};
+
+type ApiArcanosResponse = AskResponse | ErrorResponseDTO | DeprecatedAskRouteRemovedResponse;
 
 const arcanosSchema = {
   mode: {
@@ -384,8 +400,8 @@ function buildArcanosPromptShortcutResponse(params: {
 }
 
 function attachApiArcanosCompatibilityMetadata(
-  req: Request<{}, AskResponse | ErrorResponseDTO, AskBody>,
-  res: Response<AskResponse | ErrorResponseDTO>,
+  req: Request<{}, ApiArcanosResponse, AskBody>,
+  res: Response<ApiArcanosResponse>,
   next: () => void
 ): void {
   const canonicalRoute = applyDeprecatedAskRouteHeaders(res, CANONICAL_ARCANOS_GPT_ID);
@@ -398,22 +414,62 @@ function attachApiArcanosCompatibilityMetadata(
   next();
 }
 
+function rejectRemovedApiArcanosAskRoute(
+  req: Request<{}, ApiArcanosResponse, AskBody>,
+  res: Response<ApiArcanosResponse>,
+  next: () => void
+): void {
+  if (resolveAskRouteMode() === 'compat') {
+    next();
+    return;
+  }
+
+  const canonicalRoute = applyDeprecatedAskRouteHeaders(res, CANONICAL_ARCANOS_GPT_ID);
+  res.setHeader('x-deprecated-endpoint', DEPRECATED_ARCANOS_ENDPOINT);
+  res.setHeader(ASK_ROUTE_MODE_HEADER, 'gone');
+  req.logger?.warn?.('deprecated.endpoint.blocked', {
+    deprecatedEndpoint: DEPRECATED_ARCANOS_ENDPOINT,
+    canonicalRoute,
+    requestId: req.requestId ?? null,
+    routeMode: 'gone',
+    sunsetAt: ASK_ROUTE_SUNSET_HEADER
+  });
+  res.status(410).json({
+    error: 'Legacy /api/arcanos/ask route has been removed; use /gpt/:gptId',
+    deprecated: true,
+    canonicalRoute,
+    routeMode: 'gone',
+    sunsetAt: ASK_ROUTE_SUNSET_HEADER,
+    details: [
+      `POST ${DEPRECATED_ARCANOS_ENDPOINT} is no longer available. Migrate callers to POST ${canonicalRoute}.`
+    ]
+  });
+}
+
 /**
  * Purpose: Compatibility handler for deprecated `/api/arcanos/ask` traffic.
  * Inputs/Outputs: Accepts legacy request bodies and returns the historical route envelope.
  * Edge cases: Preserves `ping` health checks and rewrites deprecated traffic through the shared Trinity wrapper.
  */
 const handleArcanosAsk = asyncHandler(async (
-  req: Request<{}, AskResponse | ErrorResponseDTO, AskBody>,
-  res: Response<AskResponse | ErrorResponseDTO>
+  req: Request<{}, ApiArcanosResponse, AskBody>,
+  res: Response<ApiArcanosResponse>
 ) => {
+  const requestId = req.requestId ?? 'api-arcanos-ask';
+  const rawPrompt = extractPromptText(req.body, false) ?? '';
+  recordPromptDebugTrace(requestId, 'ingress', {
+    traceId: req.traceId ?? null,
+    endpoint: ARCANOS_API_ENDPOINT_NAME,
+    method: req.method,
+    rawPrompt,
+  });
   const pingCandidate = extractInput((req.body ?? {}) as AIRequestDTO)?.trim().toLowerCase();
   const diagnosticProbe = isDiagnosticRequest(req.body, pingCandidate);
 
   if (diagnosticProbe) {
     const idleStateService = req.app.locals.idleStateService as IdleStateService | undefined;
     idleStateService?.noteUserPing({ route: DEPRECATED_ARCANOS_ENDPOINT, source: ARCANOS_API_ENDPOINT_NAME });
-    return res.json({
+    const diagnosticPayload = {
       success: true,
       result: pingCandidate === 'ping' ? 'pong' : 'backend operational',
       metadata: {
@@ -433,7 +489,18 @@ const handleArcanosAsk = asyncHandler(async (
       fallbackFlag: false,
       routingStages: ['DIAGNOSTIC-SHORTCUT'],
       gpt5Used: false
+    };
+    recordPromptDebugTrace(requestId, 'response', {
+      traceId: req.traceId ?? null,
+      endpoint: ARCANOS_API_ENDPOINT_NAME,
+      method: req.method,
+      rawPrompt,
+      normalizedPrompt: pingCandidate ?? '',
+      selectedRoute: DEPRECATED_ARCANOS_ENDPOINT,
+      selectedModule: 'diagnostic',
+      responseReturned: diagnosticPayload,
     });
+    return res.json(diagnosticPayload);
   }
 
   let promptForError = pingCandidate ?? '';
@@ -451,18 +518,62 @@ const handleArcanosAsk = asyncHandler(async (
 
     const { client: openai, input: prompt } = validation;
     promptForError = prompt;
+    recordPromptDebugTrace(requestId, 'preprocess', {
+      traceId: req.traceId ?? null,
+      endpoint: ARCANOS_API_ENDPOINT_NAME,
+      method: req.method,
+      rawPrompt,
+      normalizedPrompt: prompt,
+    });
     const promptShortcut = await tryExecutePromptRouteShortcut({
       prompt,
       sessionId: req.body.sessionId
     });
     if (promptShortcut) {
-      return res.json(
-        buildArcanosPromptShortcutResponse({
-          shortcut: promptShortcut
-        })
-      );
+      const shortcutPayload = buildArcanosPromptShortcutResponse({
+        shortcut: promptShortcut
+      });
+      recordPromptDebugTrace(requestId, 'response', {
+        traceId: req.traceId ?? null,
+        endpoint: ARCANOS_API_ENDPOINT_NAME,
+        method: req.method,
+        rawPrompt,
+        normalizedPrompt: prompt,
+        selectedRoute: DEPRECATED_ARCANOS_ENDPOINT,
+        selectedModule: promptShortcut.response.module,
+        selectedTools: [promptShortcut.shortcutId],
+        responseReturned: shortcutPayload,
+      });
+      return res.json(shortcutPayload);
     }
 
+    recordPromptDebugTrace(requestId, 'routing', {
+      traceId: req.traceId ?? null,
+      endpoint: ARCANOS_API_ENDPOINT_NAME,
+      method: req.method,
+      rawPrompt,
+      normalizedPrompt: prompt,
+      selectedRoute: DEPRECATED_ARCANOS_ENDPOINT,
+      selectedModule: 'ARCANOS:CORE',
+      selectedTools: [],
+    });
+    recordPromptDebugTrace(requestId, 'executor', {
+      traceId: req.traceId ?? null,
+      endpoint: ARCANOS_API_ENDPOINT_NAME,
+      method: req.method,
+      rawPrompt,
+      normalizedPrompt: prompt,
+      selectedRoute: DEPRECATED_ARCANOS_ENDPOINT,
+      selectedModule: 'ARCANOS:CORE',
+      finalExecutorPayload: {
+        executor: 'runArcanosCoreQuery',
+        prompt,
+        sessionId: req.body.sessionId ?? null,
+        overrideAuditSafe: req.body.overrideAuditSafe ?? null,
+        sourceEndpoint: ARCANOS_API_ENDPOINT_NAME,
+        runOptions: buildTrinityOutputControlOptions(req.body),
+      },
+    });
     const trinityResult = await runArcanosCoreQuery({
       client: openai,
       prompt,
@@ -474,6 +585,18 @@ const handleArcanosAsk = asyncHandler(async (
     applyAIDegradedResponseHeaders(res, extractAIDegradedResponseMetadata(trinityResult));
 
     const responsePayload = buildArcanosCompatibilityResponse(trinityResult);
+    recordPromptDebugTrace(requestId, 'response', {
+      traceId: req.traceId ?? null,
+      endpoint: ARCANOS_API_ENDPOINT_NAME,
+      method: req.method,
+      rawPrompt,
+      normalizedPrompt: prompt,
+      selectedRoute: DEPRECATED_ARCANOS_ENDPOINT,
+      selectedModule: 'ARCANOS:CORE',
+      responseReturned: responsePayload,
+      fallbackPathUsed: responsePayload.fallbackFlag ? 'trinity-fallback' : null,
+      fallbackReason: trinityResult.fallbackSummary?.fallbackReasons?.join('; ') ?? null,
+    });
 
     if (req.body.options?.stream === true) {
       sendTrinityCompatibilityStream(res, responsePayload);
@@ -482,6 +605,17 @@ const handleArcanosAsk = asyncHandler(async (
 
     return res.json(responsePayload);
   } catch (error: unknown) {
+    recordPromptDebugTrace(requestId, 'fallback', {
+      traceId: req.traceId ?? null,
+      endpoint: ARCANOS_API_ENDPOINT_NAME,
+      method: req.method,
+      rawPrompt,
+      normalizedPrompt: promptForError,
+      selectedRoute: DEPRECATED_ARCANOS_ENDPOINT,
+      selectedModule: 'ARCANOS:CORE',
+      fallbackPathUsed: 'error-handler',
+      fallbackReason: error instanceof Error ? error.message : String(error),
+    });
     handleAIError(
       error,
       promptForError,
@@ -494,6 +628,7 @@ const handleArcanosAsk = asyncHandler(async (
 router.post(
   '/ask',
   arcanosAskRateLimit,
+  rejectRemovedApiArcanosAskRoute,
   attachApiArcanosCompatibilityMetadata,
   confirmGate,
   createValidationMiddleware(arcanosSchema),
