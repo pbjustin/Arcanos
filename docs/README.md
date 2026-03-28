@@ -11,22 +11,23 @@ This is the production documentation map for the active Arcanos codebase.
 Recommended reading order:
 1. `README.md`
 2. `docs/RUN_LOCAL.md`
-3. `docs/CLI_DAEMON.md` (optional local Python agent)
-4. `docs/CONFIGURATION.md`
-5. `docs/API.md`
-6. `docs/SOLO_OPERATOR_RUNTIME_GUIDE.md`
-7. `docs/OPENAI_RESPONSES_TOOLS.md`
-8. `docs/TRINITY_PIPELINE.md`
-9. `docs/SELF_REFLECTIONS.md`
-10. `docs/ARCANOS_MCP_SERVER.md`
-11. `docs/CUSTOM_GPTS.md`
-12. `docs/FINE_TUNING.md`
-13. `docs/CLEAR_METHOD_2_0.md`
-14. `docs/RAILWAY_DEPLOYMENT.md`
-15. `docs/CI_CD.md`
-16. `docs/DOCUMENTATION.md`
-17. `docs/MEMORY_BACKEND_USAGE.md`
-18. `docs/WEB_SEARCH_AGENT.md`
+3. `docs/CLI_OVERVIEW.md`
+4. `docs/CLI_DAEMON.md` (optional local Python agent)
+5. `docs/CONFIGURATION.md`
+6. `docs/API.md`
+7. `docs/SOLO_OPERATOR_RUNTIME_GUIDE.md`
+8. `docs/OPENAI_RESPONSES_TOOLS.md`
+9. `docs/TRINITY_PIPELINE.md`
+10. `docs/SELF_REFLECTIONS.md`
+11. `docs/ARCANOS_MCP_SERVER.md`
+12. `docs/CUSTOM_GPTS.md`
+13. `docs/FINE_TUNING.md`
+14. `docs/CLEAR_METHOD_2_0.md`
+15. `docs/RAILWAY_DEPLOYMENT.md`
+16. `docs/CI_CD.md`
+17. `docs/DOCUMENTATION.md`
+18. `docs/MEMORY_BACKEND_USAGE.md`
+19. `docs/WEB_SEARCH_AGENT.md`
 
 ## Configuration
 Configuration source files:
@@ -46,6 +47,7 @@ Use `docs/TROUBLESHOOTING.md` and include concrete errors, command output, and e
 
 ## References
 - `docs/ARCHITECTURE.md`
+- `docs/CLI_OVERVIEW.md`
 - `docs/SOLO_OPERATOR_RUNTIME_GUIDE.md`
 - `docs/TRINITY_PIPELINE.md`
 - `docs/API.md`
