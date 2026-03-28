@@ -6,15 +6,32 @@ import { getEnv } from '@platform/runtime/env.js';
 import { resolveConfiguredRedisConnection } from '@platform/runtime/redis.js';
 import { readJsonFileSafely } from '@shared/jsonFileUtils.js';
 
-export type SelfHealEventKind =
-  | 'trigger'
-  | 'attempt'
-  | 'success'
-  | 'failure'
-  | 'noop'
-  | 'fallback'
-  | 'AI_DIAGNOSIS_REQUEST'
-  | 'AI_DIAGNOSIS_RESULT';
+const SELF_HEAL_EVENT_KINDS = [
+  'METRICS_COLLECTED',
+  'trigger',
+  'attempt',
+  'success',
+  'failure',
+  'noop',
+  'fallback',
+  'AI_DIAGNOSIS_REQUEST',
+  'AI_DIAGNOSIS_RESULT',
+  'CONTROLLER_DECISION',
+  'ACTION_EXECUTED'
+] as const;
+
+export type SelfHealEventKind = (typeof SELF_HEAL_EVENT_KINDS)[number];
+
+const SELF_HEAL_EVENT_KIND_SET = new Set<SelfHealEventKind>(SELF_HEAL_EVENT_KINDS);
+const IMMEDIATE_PERSISTENCE_EVENT_KINDS = new Set<SelfHealEventKind>([
+  'success',
+  'failure',
+  'fallback',
+  'noop',
+  'AI_DIAGNOSIS_RESULT',
+  'CONTROLLER_DECISION',
+  'ACTION_EXECUTED'
+]);
 
 export interface SelfHealEvent {
   id: string;
@@ -224,16 +241,11 @@ function getOrCreateMutableState(): SelfHealTelemetryState {
 }
 
 function normalizeEventKind(value: unknown): SelfHealEventKind | null {
-  return value === 'trigger' ||
-    value === 'attempt' ||
-    value === 'success' ||
-    value === 'failure' ||
-    value === 'noop' ||
-    value === 'fallback' ||
-    value === 'AI_DIAGNOSIS_REQUEST' ||
-    value === 'AI_DIAGNOSIS_RESULT'
-    ? value
-    : null;
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  return SELF_HEAL_EVENT_KIND_SET.has(value as SelfHealEventKind) ? (value as SelfHealEventKind) : null;
 }
 
 function normalizePrimitive(value: unknown): string | number | boolean | null | undefined {
@@ -683,12 +695,7 @@ export function recordSelfHealEvent(input: {
   }
 
   schedulePersistence(state, {
-    immediate:
-      event.kind === 'success' ||
-      event.kind === 'failure' ||
-      event.kind === 'fallback' ||
-      event.kind === 'noop' ||
-      event.kind === 'AI_DIAGNOSIS_RESULT'
+    immediate: IMMEDIATE_PERSISTENCE_EVENT_KINDS.has(event.kind)
   });
   logSelfHealEvent(event);
   return cloneEvent(event)!;
