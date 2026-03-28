@@ -16,6 +16,10 @@ import {
   type ErrorResponseDTO
 } from "@shared/types/dto.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import {
+  extractPromptText,
+  recordPromptDebugTrace,
+} from '@services/promptDebugTraceService.js';
 
 const BUDGET_ABORT_ERROR_MARKERS = [
   'openai_call_aborted_due_to_budget',
@@ -133,6 +137,8 @@ export function validateAIRequest(
   endpointName: string
 ): { client: OpenAI; input: string; body: AIRequestDTO } | null {
   console.log(`📨 /${endpointName} received`);
+  const requestId = req.requestId ?? `prompt-debug-${endpointName}`;
+  const rawPrompt = extractPromptText(req.body, false) ?? '';
 
   const clientContext = (req.body as AIRequestDTO).clientContext;
 
@@ -140,6 +146,18 @@ export function validateAIRequest(
   //audit Assumption: schema failure should return 400; Handling: error response
   if (!parsed.success) {
     const details = parsed.error.errors.map(err => `${err.path.join('.') || 'body'}: ${err.message}`);
+    const errorPayload = {
+      error: `Invalid request payload for ${endpointName}`,
+      details,
+    };
+    recordPromptDebugTrace(requestId, 'response', {
+      endpoint: endpointName,
+      method: req.method,
+      rawPrompt,
+      normalizedPrompt: rawPrompt.trim(),
+      responseReturned: errorPayload,
+      fallbackReason: 'request_validation_failed',
+    });
     res.status(400).json({
       error: `Invalid request payload for ${endpointName}`,
       details
@@ -151,26 +169,74 @@ export function validateAIRequest(
 
   //audit Assumption: input must be a non-empty string; Handling: validation fail
   if (!input || typeof input !== 'string') {
+    const errorPayload = {
+      error: `Missing or invalid input in request body. Use 'prompt', 'userInput', 'content', 'text', or 'query' field.`,
+    };
+    recordPromptDebugTrace(requestId, 'response', {
+      endpoint: endpointName,
+      method: req.method,
+      rawPrompt,
+      normalizedPrompt: rawPrompt.trim(),
+      responseReturned: errorPayload,
+      fallbackReason: 'request_input_missing',
+    });
     res.status(400).json({
       error: `Missing or invalid input in request body. Use 'prompt', 'userInput', 'content', 'text', or 'query' field.`
     });
     return null;
   }
 
+  recordPromptDebugTrace(requestId, 'preprocess', {
+    endpoint: endpointName,
+    method: req.method,
+    rawPrompt,
+    normalizedPrompt: input,
+  });
+
   // Check if we have a valid API key
   //audit Assumption: missing API key should trigger mock path; Handling: fallback
   if (!hasValidAPIKey()) {
+    const mockPayload = createMockAIResponse(input, endpointName, { clientContext });
+    recordPromptDebugTrace(requestId, 'fallback', {
+      endpoint: endpointName,
+      method: req.method,
+      rawPrompt,
+      normalizedPrompt: input,
+      responseReturned: mockPayload,
+      fallbackPathUsed: 'mock-response',
+      fallbackReason: 'no_api_key',
+    });
     return sendMockAIResponse(res, input, endpointName, 'no API key', { clientContext });
   }
 
   const { adapter, client: openai } = getOpenAIClientOrAdapter();
 
   if (!adapter) {
+    const mockPayload = createMockAIResponse(input, endpointName, { clientContext });
+    recordPromptDebugTrace(requestId, 'fallback', {
+      endpoint: endpointName,
+      method: req.method,
+      rawPrompt,
+      normalizedPrompt: input,
+      responseReturned: mockPayload,
+      fallbackPathUsed: 'mock-response',
+      fallbackReason: 'adapter_init_failed',
+    });
     return sendMockAIResponse(res, input, endpointName, 'adapter init failed', { clientContext });
   }
 
   //audit Assumption: client init failure should return mock response; Handling: fallback
   if (!openai) {
+    const mockPayload = createMockAIResponse(input, endpointName, { clientContext });
+    recordPromptDebugTrace(requestId, 'fallback', {
+      endpoint: endpointName,
+      method: req.method,
+      rawPrompt,
+      normalizedPrompt: input,
+      responseReturned: mockPayload,
+      fallbackPathUsed: 'mock-response',
+      fallbackReason: 'client_init_failed',
+    });
     return sendMockAIResponse(res, input, endpointName, 'client init failed', { clientContext });
   }
 

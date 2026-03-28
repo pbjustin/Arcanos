@@ -11,6 +11,10 @@ import { harvestDatasetsFromAudit } from "@services/datasetHarvester.js";
 import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { buildTrinityOutputControlOptions } from '@shared/ask/trinityRequestOptions.js';
 import { buildTrinityUserVisibleResponse } from '@shared/ask/trinityResponseSerializer.js';
+import {
+  extractPromptText,
+  recordPromptDebugTrace,
+} from '@services/promptDebugTraceService.js';
 
 type AIRequest = AIRequestDTO & {
   prompt?: string;
@@ -39,6 +43,14 @@ export class AIController {
     res: Response<AIResponse | ErrorResponseDTO>,
     endpointName: string
   ): Promise<void> {
+    const requestId = req.requestId ?? endpointName;
+    const rawPrompt = extractPromptText(req.body, false) ?? '';
+    recordPromptDebugTrace(requestId, 'ingress', {
+      traceId: req.traceId ?? null,
+      endpoint: endpointName,
+      method: req.method,
+      rawPrompt,
+    });
     // Use shared validation logic
     const validation = validateAIRequest(req, res, endpointName);
     if (!validation) return; // Response already sent
@@ -48,6 +60,36 @@ export class AIController {
     try {
       // runThroughBrain enforces GPT-5.1 as the primary reasoning stage
       const runtimeBudget = createRuntimeBudget();
+      const outputControlOptions = buildTrinityOutputControlOptions(body);
+      recordPromptDebugTrace(requestId, 'routing', {
+        traceId: req.traceId ?? null,
+        endpoint: endpointName,
+        method: req.method,
+        rawPrompt,
+        normalizedPrompt: input,
+        selectedRoute: endpointName,
+        selectedModule: 'trinity',
+        selectedTools: [],
+      });
+      recordPromptDebugTrace(requestId, 'executor', {
+        traceId: req.traceId ?? null,
+        endpoint: endpointName,
+        method: req.method,
+        rawPrompt,
+        normalizedPrompt: input,
+        selectedRoute: endpointName,
+        selectedModule: 'trinity',
+        finalExecutorPayload: {
+          executor: 'runThroughBrain',
+          prompt: input,
+          sessionId: body.sessionId ?? null,
+          overrideAuditSafe: body.overrideAuditSafe ?? null,
+          options: {
+            sourceEndpoint: endpointName,
+            ...outputControlOptions,
+          },
+        },
+      });
       const output = await runThroughBrain(
         openai,
         input,
@@ -55,7 +97,7 @@ export class AIController {
         body.overrideAuditSafe,
         {
           sourceEndpoint: endpointName,
-          ...buildTrinityOutputControlOptions(body)
+          ...outputControlOptions
         },
         runtimeBudget
       );
@@ -81,8 +123,28 @@ export class AIController {
         }
       }
 
+      recordPromptDebugTrace(requestId, 'response', {
+        traceId: req.traceId ?? null,
+        endpoint: endpointName,
+        method: req.method,
+        rawPrompt,
+        normalizedPrompt: input,
+        selectedRoute: endpointName,
+        selectedModule: 'trinity',
+        responseReturned: responsePayload,
+        fallbackPathUsed: output.fallbackFlag ? 'trinity-fallback' : null,
+        fallbackReason: output.fallbackSummary?.fallbackReasons?.join('; ') ?? null,
+      });
       res.json(responsePayload);
     } catch (err) {
+      recordPromptDebugTrace(requestId, 'fallback', {
+        traceId: req.traceId ?? null,
+        endpoint: endpointName,
+        method: req.method,
+        rawPrompt,
+        fallbackPathUsed: 'error-handler',
+        fallbackReason: err instanceof Error ? err.message : String(err),
+      });
       handleAIError(err, input, endpointName, res);
     }
   }
