@@ -1075,15 +1075,14 @@ export const handleAIRequest = async (
 
     // runThroughBrain now unconditionally routes through GPT-5.1 before final ARCANOS processing.
     //
-    // NOTE: This /ask route (and its /brain alias) is currently the only entrypoint that performs
-    // cognitive domain detection (via detectCognitiveDomain / gptFallbackClassifier earlier in
-    // this handler) and passes an explicit `cognitiveDomain` hint into runThroughBrain.
+    // NOTE: Legacy ask-style endpoints still perform cognitive domain detection (via
+    // detectCognitiveDomain / gptFallbackClassifier earlier in this handler) and pass an explicit
+    // `cognitiveDomain` hint into runThroughBrain when compat mode is enabled.
     //
-    // Other endpoints that call runThroughBrain (e.g. /siri, /write, /guide, /audit, /sim, and
-    // arcanosPrompt flows) do *not* perform this detection and therefore rely on the default
-    // TRINITY_STAGE_TEMPERATURE configuration inside runThroughBrain. This asymmetry is
-    // intentional for now: /ask is the primary, fully context-routed chat endpoint, while the
-    // others use a simpler, fixed-temperature behavior unless/until they adopt similar routing.
+    // Canonical GPT traffic should target /gpt/:gptId. Other endpoints that call runThroughBrain
+    // (e.g. /siri, /write, /guide, /audit, /sim, and arcanosPrompt flows) do not perform this
+    // detection and therefore rely on the default TRINITY_STAGE_TEMPERATURE configuration inside
+    // runThroughBrain until they adopt equivalent routing hints.
     if (asyncRequested) {
       const workerId = process.env.WORKER_ID || 'api';
       const plannedJob = await planAutonomousWorkerJob('ask', queuedAskJobInput);
@@ -1378,7 +1377,7 @@ function rejectRemovedAskRoute(req: Request, res: Response, next: () => void): v
 
   res.setHeader(ASK_ROUTE_MODE_HEADER, 'gone');
   res.status(410).json({
-    error: 'Legacy /ask route has been removed; use /gpt/:gptId',
+    error: 'Legacy ask-style route has been removed; use /gpt/:gptId',
     deprecated: true,
     canonicalRoute,
     sunsetAt: ASK_ROUTE_SUNSET_HEADER,
@@ -1390,8 +1389,8 @@ function rejectRemovedAskRoute(req: Request, res: Response, next: () => void): v
 
 // Brain endpoint (alias for ask) still requires explicit confirmation.
 //audit Assumption: explicit confirmation gate is sufficient for sensitive brain actions in unsigned mode; failure risk: anonymous challenge attempts; expected invariant: confirmGate enforces confirmation token flow; handling strategy: keep confirmGate in front of handler.
-router.post('/brain', askRateLimit, rejectGptRoutedAskRequests, askValidationMiddleware, confirmGate, asyncHandler((req, res) => handleAIRequest(req, res, 'brain')));
-router.get('/brain', askRateLimit, rejectGptRoutedAskRequests, askValidationMiddleware, confirmGate, asyncHandler((req, res) => handleAIRequest(req, res, 'brain')));
+router.post('/brain', askRateLimit, attachAskDeprecationMetadata, rejectRemovedAskRoute, rejectGptRoutedAskRequests, askValidationMiddleware, confirmGate, asyncHandler((req, res) => handleAIRequest(req, res, 'brain')));
+router.get('/brain', askRateLimit, attachAskDeprecationMetadata, rejectRemovedAskRoute, rejectGptRoutedAskRequests, askValidationMiddleware, confirmGate, asyncHandler((req, res) => handleAIRequest(req, res, 'brain')));
 
 export default router;
 

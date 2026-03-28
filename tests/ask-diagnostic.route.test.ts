@@ -63,6 +63,7 @@ function buildApp() {
 describe('/ask diagnostic shortcut', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env.ASK_ROUTE_MODE = 'compat';
     validateAIRequestMock.mockReturnValue({
       client: { responses: { create: jest.fn() } },
       input: 'ping',
@@ -77,6 +78,27 @@ describe('/ask diagnostic shortcut', () => {
     mockRunThroughBrain.mockResolvedValue({
       result: 'unexpected trinity response'
     });
+  });
+
+  it('rejects deprecated brain traffic by default and points callers to the canonical GPT route', async () => {
+    delete process.env.ASK_ROUTE_MODE;
+
+    const response = await request(buildApp()).post('/brain').send({
+      prompt: 'ping',
+      gptId: 'arcanos-core'
+    });
+
+    expect(response.status).toBe(410);
+    expect(response.headers['x-canonical-route']).toBe('/gpt/arcanos-core');
+    expect(response.headers['x-route-deprecated']).toBe('true');
+    expect(response.headers['x-ask-route-mode']).toBe('gone');
+    expect(response.body).toMatchObject({
+      error: 'Legacy ask-style route has been removed; use /gpt/:gptId',
+      deprecated: true,
+      canonicalRoute: '/gpt/arcanos-core'
+    });
+    expect(validateAIRequestMock).not.toHaveBeenCalled();
+    expect(mockRunThroughBrain).not.toHaveBeenCalled();
   });
 
   it('returns a deterministic diagnostic response and bypasses stateful layers', async () => {
