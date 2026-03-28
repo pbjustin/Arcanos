@@ -137,9 +137,9 @@ Use `--transport local` for local-only workflows; use default/python when you ne
 ## Command surface (quick reference)
 
 ```text
-arcanos ask "..." [--json]
-arcanos plan "..." [--json]
-arcanos exec ["..."] [--json]
+arcanos ask <prompt> [--json]
+arcanos plan <prompt> [--json]
+arcanos exec [<prompt>] [--json]
 arcanos status [--json]
 arcanos workers [--json]
 arcanos logs --recent [--json]
