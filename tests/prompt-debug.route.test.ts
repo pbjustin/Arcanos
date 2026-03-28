@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { promises as fsp } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 const callOpenAIMock = jest.fn();
 const validateAIRequestMock = jest.fn();
@@ -108,9 +111,15 @@ function buildApp() {
 }
 
 describe('prompt debug routes', () => {
-  beforeEach(() => {
+  let tempDir = '';
+  let storagePath = '';
+
+  beforeEach(async () => {
+    tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'arcanos-prompt-debug-route-'));
+    storagePath = path.join(tempDir, 'prompt-debug-events.jsonl');
+    process.env.PROMPT_DEBUG_EVENTS_PATH = storagePath;
     jest.clearAllMocks();
-    clearPromptDebugTracesForTest();
+    await clearPromptDebugTracesForTest();
     validateAIRequestMock.mockReturnValue({
       client: { responses: { create: jest.fn() } },
       input: 'verify in production on the live backend runtime that is currently active',
@@ -122,6 +131,13 @@ describe('prompt debug routes', () => {
       output: 'Observed a response.',
       model: 'gpt-5',
     });
+  });
+
+  afterEach(async () => {
+    process.env.PROMPT_DEBUG_EVENTS_PATH = storagePath;
+    await clearPromptDebugTracesForTest();
+    delete process.env.PROMPT_DEBUG_EVENTS_PATH;
+    await fsp.rm(tempDir, { recursive: true, force: true });
   });
 
   it('captures prompt observability fields and exposes them via the debug endpoints', async () => {

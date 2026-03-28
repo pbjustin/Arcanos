@@ -50,6 +50,32 @@ export function parseCliInvocation(argv: string[]): CliInvocation {
         kind: "status",
         options
       };
+    case "workers":
+      if (rest.length > 0) {
+        throw new Error('`workers` does not accept positional arguments.');
+      }
+      return {
+        kind: "workers",
+        options
+      };
+    case "logs":
+      if (rest.length !== 1 || rest[0] !== "--recent") {
+        throw new Error('Supported logs command: `arcanos logs --recent`.');
+      }
+      return {
+        kind: "logs",
+        recent: true,
+        options
+      };
+    case "inspect":
+      if (rest.length !== 1 || rest[0] !== "self-heal") {
+        throw new Error('Supported inspect command: `arcanos inspect self-heal`.');
+      }
+      return {
+        kind: "inspect",
+        subject: "self-heal",
+        options
+      };
     case "doctor":
       if (rest.length !== 1 || rest[0] !== "implementation") {
         throw new Error('Supported doctor command: `arcanos doctor implementation`.');
@@ -75,6 +101,9 @@ export function renderUsage(): string {
     "  arcanos plan \"...\" [--json]",
     "  arcanos exec [\"...\"] [--json]",
     "  arcanos status [--json]",
+    "  arcanos workers [--json]",
+    "  arcanos logs --recent [--json]",
+    "  arcanos inspect self-heal [--json]",
     "  arcanos doctor implementation [--json]",
     "  arcanos protocol <command> --payload-json '{}'",
     "",
@@ -107,6 +136,22 @@ function parseGlobalOptions(argv: string[]): {
   for (let index = 0; index < argv.length; index += 1) {
     const currentArgument = argv[index];
     if (!currentArgument.startsWith("--")) {
+      positionals.push(currentArgument);
+      continue;
+    }
+
+    const isKnownGlobalFlag =
+      currentArgument === "--json" ||
+      currentArgument === "--base-url" ||
+      currentArgument === "--session-id" ||
+      currentArgument === "--project-id" ||
+      currentArgument === "--environment" ||
+      currentArgument === "--cwd" ||
+      currentArgument === "--shell" ||
+      currentArgument === "--python-bin" ||
+      currentArgument === "--transport";
+
+    if (!isKnownGlobalFlag && positionals.length > 0) {
       positionals.push(currentArgument);
       continue;
     }

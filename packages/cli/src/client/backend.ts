@@ -25,6 +25,16 @@ export interface BackendStatusSnapshot {
   health: Record<string, unknown>;
 }
 
+export interface BackendWorkersSnapshot {
+  workers: Record<string, unknown>;
+  health: Record<string, unknown>;
+}
+
+export interface BackendRecentLogsSnapshot {
+  source: "runtime-events";
+  events: Record<string, unknown>;
+}
+
 export interface GptRouteRequestBody {
   prompt: string;
   gptVersion?: string;
@@ -144,6 +154,29 @@ export async function fetchStatusSnapshot(options: CliGlobalOptions): Promise<Ba
   ]);
 
   return { state, health };
+}
+
+export async function fetchWorkersSnapshot(options: CliGlobalOptions): Promise<BackendWorkersSnapshot> {
+  const [workers, health] = await Promise.all([
+    getJson(options.baseUrl, "/workers/status"),
+    getJson(options.baseUrl, "/worker-helper/health")
+  ]);
+
+  return { workers, health };
+}
+
+export async function fetchRecentLogsSnapshot(options: CliGlobalOptions, limit = 20): Promise<BackendRecentLogsSnapshot> {
+  const boundedLimit = Number.isFinite(limit) ? Math.max(1, Math.min(50, Math.floor(limit))) : 20;
+  const events = await getJson(options.baseUrl, `/api/self-heal/events?limit=${boundedLimit}`);
+
+  return {
+    source: "runtime-events",
+    events
+  };
+}
+
+export async function fetchSelfHealInspectionSnapshot(options: CliGlobalOptions): Promise<Record<string, unknown>> {
+  return getJson(options.baseUrl, "/status/safety/self-heal");
 }
 
 export function validateStatusResponse(

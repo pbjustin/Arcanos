@@ -50,6 +50,23 @@ describe("Arcanos CLI", () => {
       kind: "doctor",
       subject: "implementation"
     });
+
+    expect(parseCliInvocation(["workers", "--json"])).toMatchObject({
+      kind: "workers",
+      options: {
+        json: true,
+      }
+    });
+
+    expect(parseCliInvocation(["logs", "--recent"])).toMatchObject({
+      kind: "logs",
+      recent: true,
+    });
+
+    expect(parseCliInvocation(["inspect", "self-heal"])).toMatchObject({
+      kind: "inspect",
+      subject: "self-heal",
+    });
   });
 
   it("builds a validated task.create request payload", () => {
@@ -126,5 +143,93 @@ describe("Arcanos CLI", () => {
         body: expect.stringContaining("\"prompt\":\"ship it\"")
       })
     );
+  });
+
+  it("queries runtime routes for workers and self-heal inspection commands", async () => {
+    const fetchMock = jest.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      const pathname = url instanceof URL ? url.pathname : String(url);
+      if (pathname.endsWith("/workers/status")) {
+        return createJsonResponse({ totalWorkers: 2 });
+      }
+      if (pathname.endsWith("/worker-helper/health")) {
+        return createJsonResponse({ overallStatus: "healthy" });
+      }
+      if (pathname.endsWith("/status/safety/self-heal")) {
+        return createJsonResponse({ status: "ok", lastHealResult: "success" });
+      }
+      if (pathname.includes("/api/self-heal/events")) {
+        return createJsonResponse({ count: 1, events: [{ id: "evt-1" }] });
+      }
+      throw new Error(`Unexpected URL: ${pathname}`);
+    });
+
+    const stdout = createWritableCapture();
+    const stderr = createWritableCapture();
+
+    const workersExitCode = await runCli(
+      ["workers", "--json", "--base-url", "http://127.0.0.1:3000"],
+      stdout.stream,
+      stderr.stream
+    );
+
+    expect(workersExitCode).toBe(0);
+    expect(JSON.parse(stdout.read())).toMatchObject({
+      ok: true,
+      data: {
+        command: "workers",
+        response: {
+          ok: true,
+          data: {
+            workers: { totalWorkers: 2 },
+            health: { overallStatus: "healthy" },
+          }
+        }
+      }
+    });
+
+    const inspectStdout = createWritableCapture();
+    const inspectExitCode = await runCli(
+      ["inspect", "self-heal", "--json", "--base-url", "http://127.0.0.1:3000"],
+      inspectStdout.stream,
+      stderr.stream
+    );
+    expect(inspectExitCode).toBe(0);
+    expect(JSON.parse(inspectStdout.read())).toMatchObject({
+      ok: true,
+      data: {
+        command: "inspect",
+        response: {
+          ok: true,
+          data: {
+            status: "ok",
+            lastHealResult: "success",
+          }
+        }
+      }
+    });
+
+    const logsStdout = createWritableCapture();
+    const logsExitCode = await runCli(
+      ["logs", "--recent", "--json", "--base-url", "http://127.0.0.1:3000"],
+      logsStdout.stream,
+      stderr.stream
+    );
+    expect(logsExitCode).toBe(0);
+    expect(JSON.parse(logsStdout.read())).toMatchObject({
+      ok: true,
+      data: {
+        command: "logs",
+        response: {
+          ok: true,
+          data: {
+            source: "runtime-events",
+            events: {
+              count: 1,
+            }
+          }
+        }
+      }
+    });
+    expect(fetchMock).toHaveBeenCalled();
   });
 });

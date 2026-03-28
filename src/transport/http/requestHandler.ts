@@ -6,7 +6,7 @@ import { sendInternalErrorPayload } from '@shared/http/index.js';
 
 import type OpenAI from 'openai';
 import { Request, Response } from 'express';
-import fs from 'fs';
+import path from 'node:path';
 import { generateMockResponse, hasValidAPIKey } from "@services/openai.js";
 import { getOpenAIClientOrAdapter } from "@services/openai/clientBridge.js";
 import {
@@ -16,6 +16,7 @@ import {
   type ErrorResponseDTO
 } from "@shared/types/dto.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { AsyncSnapshotFileWriter } from '@platform/runtime/asyncFileWriters.js';
 import {
   extractPromptText,
   recordPromptDebugTrace,
@@ -75,6 +76,25 @@ const TIMEOUT_PAYLOAD_BY_KIND = {
   }
 } as const;
 
+const REQUEST_FEEDBACK_PATH_ENV = 'REQUEST_FEEDBACK_PATH';
+const DEFAULT_REQUEST_FEEDBACK_PATH = '/tmp/last-gpt-request';
+
+function resolveRequestFeedbackPath(): string {
+  const configured = process.env[REQUEST_FEEDBACK_PATH_ENV];
+  if (typeof configured === 'string' && configured.trim().length > 0) {
+    return path.isAbsolute(configured.trim())
+      ? configured.trim()
+      : path.resolve(process.cwd(), configured.trim());
+  }
+
+  return DEFAULT_REQUEST_FEEDBACK_PATH;
+}
+
+const requestFeedbackWriter = new AsyncSnapshotFileWriter(
+  resolveRequestFeedbackPath,
+  'request-feedback',
+);
+
 /**
  * Extract input text from various possible field names in request body
  */
@@ -107,10 +127,11 @@ export function sendMockAIResponse<T extends AIResponseDTO | ErrorResponseDTO>(
   options: {
     clientContext?: AIRequestDTO['clientContext'];
     error?: string;
+    payload?: AIResponseDTO;
   } = {}
 ): null {
   console.log(`🤖 Returning mock response for /${endpointName} (${reason})`);
-  const payload = createMockAIResponse(input, endpointName, options);
+  const payload = options.payload ?? createMockAIResponse(input, endpointName, options);
   res.json(payload as T);
   return null;
 }
@@ -158,10 +179,7 @@ export function validateAIRequest(
       responseReturned: errorPayload,
       fallbackReason: 'request_validation_failed',
     });
-    res.status(400).json({
-      error: `Invalid request payload for ${endpointName}`,
-      details
-    });
+    res.status(400).json(errorPayload);
     return null;
   }
 
@@ -180,9 +198,7 @@ export function validateAIRequest(
       responseReturned: errorPayload,
       fallbackReason: 'request_input_missing',
     });
-    res.status(400).json({
-      error: `Missing or invalid input in request body. Use 'prompt', 'userInput', 'content', 'text', or 'query' field.`
-    });
+    res.status(400).json(errorPayload);
     return null;
   }
 
@@ -206,7 +222,10 @@ export function validateAIRequest(
       fallbackPathUsed: 'mock-response',
       fallbackReason: 'no_api_key',
     });
-    return sendMockAIResponse(res, input, endpointName, 'no API key', { clientContext });
+    return sendMockAIResponse(res, input, endpointName, 'no API key', {
+      clientContext,
+      payload: mockPayload,
+    });
   }
 
   const { adapter, client: openai } = getOpenAIClientOrAdapter();
@@ -222,7 +241,10 @@ export function validateAIRequest(
       fallbackPathUsed: 'mock-response',
       fallbackReason: 'adapter_init_failed',
     });
-    return sendMockAIResponse(res, input, endpointName, 'adapter init failed', { clientContext });
+    return sendMockAIResponse(res, input, endpointName, 'adapter init failed', {
+      clientContext,
+      payload: mockPayload,
+    });
   }
 
   //audit Assumption: client init failure should return mock response; Handling: fallback
@@ -237,7 +259,10 @@ export function validateAIRequest(
       fallbackPathUsed: 'mock-response',
       fallbackReason: 'client_init_failed',
     });
-    return sendMockAIResponse(res, input, endpointName, 'client init failed', { clientContext });
+    return sendMockAIResponse(res, input, endpointName, 'client init failed', {
+      clientContext,
+      payload: mockPayload,
+    });
   }
 
   req.body = parsed.data;
@@ -346,9 +371,17 @@ export function logRequestFeedback(input: string, endpointName: string): void {
       endpoint: endpointName,
       prompt: input.substring(0, 500) // Limit length for privacy
     };
-    fs.writeFileSync('/tmp/last-gpt-request', JSON.stringify(feedbackData));
+    requestFeedbackWriter.enqueue(JSON.stringify(feedbackData));
   } catch (error: unknown) {
     //audit Assumption: feedback logging failures should not break request; Handling: log only
     console.log('Could not write feedback file:', resolveErrorMessage(error));
   }
+}
+
+export async function flushRequestFeedbackWritesForTest(): Promise<void> {
+  await requestFeedbackWriter.flush();
+}
+
+export function resetRequestFeedbackWritesForTest(): void {
+  requestFeedbackWriter.reset();
 }

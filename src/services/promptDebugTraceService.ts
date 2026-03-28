@@ -1,5 +1,6 @@
-import fs from 'node:fs';
+import fs, { promises as fsp } from 'node:fs';
 import path from 'node:path';
+import readline from 'node:readline';
 
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 
@@ -77,6 +78,20 @@ const MAX_IN_MEMORY_TRACES = 200;
 const DEFAULT_LIST_LIMIT = 50;
 const MAX_LIST_LIMIT = 200;
 const MAX_STAGE_EVENTS = 24;
+const MAX_PERSISTED_EVENT_BUFFER = 2048;
+const SAFE_CLONE_MAX_DEPTH = 4;
+const SAFE_CLONE_MAX_ARRAY_ITEMS = 20;
+const SAFE_CLONE_MAX_OBJECT_PROPS = 40;
+
+const PROMPT_DEBUG_EVENT_KIND = 'prompt-debug-stage-event';
+
+interface PromptDebugPersistedEvent {
+  kind: typeof PROMPT_DEBUG_EVENT_KIND;
+  requestId: string;
+  stage: PromptDebugStage;
+  timestamp: string;
+  patch: PromptDebugTracePatch;
+}
 
 const PROMPT_CONSTRAINT_RULES: PromptConstraintRule[] = [
   {
@@ -112,11 +127,18 @@ const PROMPT_CONSTRAINT_RULES: PromptConstraintRule[] = [
 ];
 
 const runtimeInspectionPatterns = [
+  /\blive\b/i,
   /\blive\s+backend\b/i,
   /\bruntime\b/i,
+  /\bcurrently\s+running\b/i,
   /\bcurrently\s+active\b/i,
   /\bverify\s+in\s+production\b/i,
   /\bproduction\b/i,
+  /\bproduction\s+state\b/i,
+  /\bstatus\s+now\b/i,
+  /\bloop\s+running\b/i,
+  /\btelemetry\b/i,
+  /\b(?:runtime|telemetry|worker|self[-\s]?heal|process|queue|deployment)\b[^.!?\n]{0,20}\bevents?\b|\bevents?\b[^.!?\n]{0,20}\b(?:runtime|telemetry|worker|self[-\s]?heal|process|queue|deployment)\b/i,
   /\blive\s+system\b/i,
   /\bsystem\s+health\b/i,
   /\bhealth\s+probe\b/i,
@@ -144,8 +166,8 @@ function resolveStoragePath(): string {
   return DEFAULT_PROMPT_DEBUG_STORAGE_PATH;
 }
 
-function ensureStorageDirectory(filePath: string): void {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+async function ensureStorageDirectory(filePath: string): Promise<void> {
+  await fsp.mkdir(path.dirname(filePath), { recursive: true });
 }
 
 function uniqueStrings(values: Array<string | null | undefined>): string[] {
@@ -183,16 +205,16 @@ function safeClone(value: unknown, depth = 0): unknown {
     return '[function]';
   }
 
-  if (depth >= 4) {
+  if (depth >= SAFE_CLONE_MAX_DEPTH) {
     return '[truncated]';
   }
 
   if (Array.isArray(value)) {
-    return value.slice(0, 20).map(item => safeClone(item, depth + 1));
+    return value.slice(0, SAFE_CLONE_MAX_ARRAY_ITEMS).map(item => safeClone(item, depth + 1));
   }
 
   if (typeof value === 'object') {
-    const entries = Object.entries(value as Record<string, unknown>).slice(0, 40);
+    const entries = Object.entries(value as Record<string, unknown>).slice(0, SAFE_CLONE_MAX_OBJECT_PROPS);
     return Object.fromEntries(entries.map(([key, nestedValue]) => [key, safeClone(nestedValue, depth + 1)]));
   }
 
@@ -363,6 +385,172 @@ function buildEmptyTraceRecord(requestId: string): PromptDebugTraceRecord {
   };
 }
 
+function sanitizeTracePatch(patch: PromptDebugTracePatch): PromptDebugTracePatch {
+  return {
+    ...(Object.prototype.hasOwnProperty.call(patch, 'traceId') ? { traceId: patch.traceId ?? null } : {}),
+    ...(Object.prototype.hasOwnProperty.call(patch, 'endpoint') ? { endpoint: patch.endpoint ?? null } : {}),
+    ...(Object.prototype.hasOwnProperty.call(patch, 'method') ? { method: patch.method ?? null } : {}),
+    ...(typeof patch.rawPrompt === 'string' ? { rawPrompt: patch.rawPrompt } : {}),
+    ...(typeof patch.normalizedPrompt === 'string' ? { normalizedPrompt: patch.normalizedPrompt } : {}),
+    ...(Array.isArray(patch.intentTags) ? { intentTags: uniqueStrings(patch.intentTags) } : {}),
+    ...(Object.prototype.hasOwnProperty.call(patch, 'selectedRoute')
+      ? { selectedRoute: patch.selectedRoute ?? null }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(patch, 'selectedModule')
+      ? { selectedModule: patch.selectedModule ?? null }
+      : {}),
+    ...(Array.isArray(patch.selectedTools) ? { selectedTools: uniqueStrings(patch.selectedTools) } : {}),
+    ...(typeof patch.repoInspectionChosen === 'boolean'
+      ? { repoInspectionChosen: patch.repoInspectionChosen }
+      : {}),
+    ...(typeof patch.runtimeInspectionChosen === 'boolean'
+      ? { runtimeInspectionChosen: patch.runtimeInspectionChosen }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(patch, 'finalExecutorPayload')
+      ? { finalExecutorPayload: safeClone(patch.finalExecutorPayload) }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(patch, 'responseReturned')
+      ? { responseReturned: safeClone(patch.responseReturned) }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(patch, 'fallbackPathUsed')
+      ? { fallbackPathUsed: patch.fallbackPathUsed ?? null }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(patch, 'fallbackReason')
+      ? { fallbackReason: patch.fallbackReason ?? null }
+      : {}),
+  };
+}
+
+function compareIsoTimestamp(left: string, right: string): number {
+  return left.localeCompare(right);
+}
+
+function sortStageEvents(events: PromptDebugStageEvent[]): PromptDebugStageEvent[] {
+  return [...events]
+    .sort((left, right) => compareIsoTimestamp(left.timestamp, right.timestamp))
+    .slice(-MAX_STAGE_EVENTS);
+}
+
+function resolveCreatedAt(existing: string, candidate: string): string {
+  return compareIsoTimestamp(existing, candidate) <= 0 ? existing : candidate;
+}
+
+function resolveUpdatedAt(existing: string, candidate: string): string {
+  return compareIsoTimestamp(existing, candidate) >= 0 ? existing : candidate;
+}
+
+function applyPromptDebugStageEvent(
+  existing: PromptDebugTraceRecord,
+  stage: PromptDebugStage,
+  timestamp: string,
+  patch: PromptDebugTracePatch,
+): PromptDebugTraceRecord {
+  const sanitizedPatch = sanitizeTracePatch(patch);
+
+  return updateDerivedFields({
+    ...existing,
+    ...(Object.prototype.hasOwnProperty.call(sanitizedPatch, 'traceId')
+      ? { traceId: sanitizedPatch.traceId ?? null }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(sanitizedPatch, 'endpoint')
+      ? { endpoint: sanitizedPatch.endpoint ?? null }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(sanitizedPatch, 'method')
+      ? { method: sanitizedPatch.method ?? null }
+      : {}),
+    ...(typeof sanitizedPatch.rawPrompt === 'string' ? { rawPrompt: sanitizedPatch.rawPrompt } : {}),
+    ...(typeof sanitizedPatch.normalizedPrompt === 'string'
+      ? { normalizedPrompt: sanitizedPatch.normalizedPrompt }
+      : {}),
+    ...(Array.isArray(sanitizedPatch.intentTags)
+      ? { intentTags: uniqueStrings([...(existing.intentTags ?? []), ...sanitizedPatch.intentTags]) }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(sanitizedPatch, 'selectedRoute')
+      ? { selectedRoute: sanitizedPatch.selectedRoute ?? null }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(sanitizedPatch, 'selectedModule')
+      ? { selectedModule: sanitizedPatch.selectedModule ?? null }
+      : {}),
+    ...(Array.isArray(sanitizedPatch.selectedTools)
+      ? { selectedTools: uniqueStrings([...(existing.selectedTools ?? []), ...sanitizedPatch.selectedTools]) }
+      : {}),
+    ...(typeof sanitizedPatch.repoInspectionChosen === 'boolean'
+      ? { repoInspectionChosen: sanitizedPatch.repoInspectionChosen }
+      : {}),
+    ...(typeof sanitizedPatch.runtimeInspectionChosen === 'boolean'
+      ? { runtimeInspectionChosen: sanitizedPatch.runtimeInspectionChosen }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(sanitizedPatch, 'finalExecutorPayload')
+      ? { finalExecutorPayload: sanitizedPatch.finalExecutorPayload ?? null }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(sanitizedPatch, 'responseReturned')
+      ? { responseReturned: sanitizedPatch.responseReturned ?? null }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(sanitizedPatch, 'fallbackPathUsed')
+      ? { fallbackPathUsed: sanitizedPatch.fallbackPathUsed ?? null }
+      : {}),
+    ...(Object.prototype.hasOwnProperty.call(sanitizedPatch, 'fallbackReason')
+      ? { fallbackReason: sanitizedPatch.fallbackReason ?? null }
+      : {}),
+    createdAt: resolveCreatedAt(existing.createdAt, timestamp),
+    updatedAt: resolveUpdatedAt(existing.updatedAt, timestamp),
+    stages: sortStageEvents([
+      ...existing.stages,
+      {
+        stage,
+        timestamp,
+        data: safeClone(sanitizedPatch) as Record<string, unknown>,
+      },
+    ]),
+  });
+}
+
+function buildPersistedStageEvent(
+  requestId: string,
+  stage: PromptDebugStage,
+  timestamp: string,
+  patch: PromptDebugTracePatch,
+): PromptDebugPersistedEvent {
+  return {
+    kind: PROMPT_DEBUG_EVENT_KIND,
+    requestId,
+    stage,
+    timestamp,
+    patch: sanitizeTracePatch(patch),
+  };
+}
+
+function isPromptDebugPersistedEvent(value: unknown): value is PromptDebugPersistedEvent {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  return (
+    candidate.kind === PROMPT_DEBUG_EVENT_KIND &&
+    typeof candidate.requestId === 'string' &&
+    typeof candidate.stage === 'string' &&
+    typeof candidate.timestamp === 'string' &&
+    typeof candidate.patch === 'object' &&
+    candidate.patch !== null &&
+    !Array.isArray(candidate.patch)
+  );
+}
+
+function isPromptDebugTraceRecord(value: unknown): value is PromptDebugTraceRecord {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  return (
+    typeof candidate.requestId === 'string' &&
+    typeof candidate.createdAt === 'string' &&
+    typeof candidate.updatedAt === 'string' &&
+    Array.isArray(candidate.stages)
+  );
+}
+
 function updateDerivedFields(record: PromptDebugTraceRecord): PromptDebugTraceRecord {
   const rawConstraintPhrases = extractConstraintPhrases(record.rawPrompt);
   const normalizedConstraintPhrases = extractConstraintPhrases(record.normalizedPrompt);
@@ -398,42 +586,143 @@ function updateDerivedFields(record: PromptDebugTraceRecord): PromptDebugTraceRe
 class PromptDebugTraceStore {
   private readonly byRequestId = new Map<string, PromptDebugTraceRecord>();
 
+  private readonly pendingPersistedLines: string[] = [];
+
   private hydrated = false;
 
-  private hydrateFromDisk(): void {
+  private hydrationPromise: Promise<void> | null = null;
+
+  private persistFlushPromise: Promise<void> | null = null;
+
+  private persistFailed = false;
+
+  private queuePersistedLine(line: string): void {
+    if (this.pendingPersistedLines.length >= MAX_PERSISTED_EVENT_BUFFER) {
+      this.pendingPersistedLines.shift();
+      console.warn(`[prompt-debug] dropping oldest buffered event after reaching ${MAX_PERSISTED_EVENT_BUFFER} queued entries`);
+    }
+
+    this.pendingPersistedLines.push(line);
+    this.persistFailed = false;
+    this.ensurePersistFlushLoop();
+  }
+
+  private ensurePersistFlushLoop(): void {
+    if (!this.persistFlushPromise) {
+      this.persistFlushPromise = this.flushPersistedLines();
+    }
+  }
+
+  private async flushPersistedLines(): Promise<void> {
+    let batch: string[] = [];
+
+    try {
+      while (this.pendingPersistedLines.length > 0) {
+        batch = this.pendingPersistedLines.splice(0, this.pendingPersistedLines.length);
+        const storagePath = resolveStoragePath();
+        await ensureStorageDirectory(storagePath);
+        await fsp.appendFile(storagePath, batch.join(''), 'utf8');
+        batch = [];
+      }
+    } catch (error) {
+      this.persistFailed = true;
+      if (batch.length > 0) {
+        this.pendingPersistedLines.unshift(...batch);
+        if (this.pendingPersistedLines.length > MAX_PERSISTED_EVENT_BUFFER) {
+          this.pendingPersistedLines.splice(0, this.pendingPersistedLines.length - MAX_PERSISTED_EVENT_BUFFER);
+        }
+      }
+      console.error('[prompt-debug] failed to persist trace event', resolveErrorMessage(error));
+    } finally {
+      this.persistFlushPromise = null;
+      if (this.pendingPersistedLines.length > 0 && !this.persistFailed) {
+        this.ensurePersistFlushLoop();
+      }
+    }
+  }
+
+  private applyLegacyRecord(parsed: PromptDebugTraceRecord): void {
+    const existing = this.byRequestId.get(parsed.requestId);
+    if (!existing || compareIsoTimestamp(existing.updatedAt, parsed.updatedAt) < 0) {
+      this.byRequestId.set(parsed.requestId, updateDerivedFields(safeClone(parsed) as PromptDebugTraceRecord));
+      this.trimInMemory();
+    }
+  }
+
+  private applyPersistedEvent(event: PromptDebugPersistedEvent): PromptDebugTraceRecord {
+    const existing = this.byRequestId.get(event.requestId) ?? buildEmptyTraceRecord(event.requestId);
+    const nextRecord = applyPromptDebugStageEvent(existing, event.stage, event.timestamp, event.patch);
+    this.byRequestId.set(event.requestId, nextRecord);
+    this.trimInMemory();
+    return nextRecord;
+  }
+
+  private applyPersistedLine(line: string): void {
+    const trimmed = line.trim();
+    if (trimmed.length === 0) {
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(trimmed) as unknown;
+      if (isPromptDebugPersistedEvent(parsed)) {
+        this.applyPersistedEvent(parsed);
+        return;
+      }
+
+      if (isPromptDebugTraceRecord(parsed)) {
+        this.applyLegacyRecord(parsed);
+      }
+    } catch (error) {
+      console.error('[prompt-debug] failed to parse persisted trace line', resolveErrorMessage(error));
+    }
+  }
+
+  private async hydrateFromDisk(): Promise<void> {
     if (this.hydrated) {
       return;
     }
 
-    this.hydrated = true;
-    const storagePath = resolveStoragePath();
-    if (!fs.existsSync(storagePath)) {
-      return;
-    }
-
-    try {
-      const lines = fs.readFileSync(storagePath, 'utf8')
-        .split(/\r?\n/)
-        .filter(line => line.trim().length > 0);
-
-      for (const line of lines) {
-        const parsed = JSON.parse(line) as PromptDebugTraceRecord;
-        if (parsed?.requestId) {
-          this.byRequestId.set(parsed.requestId, parsed);
+    if (!this.hydrationPromise) {
+      this.hydrationPromise = (async () => {
+        const storagePath = resolveStoragePath();
+        try {
+          await fsp.access(storagePath);
+        } catch (error) {
+          const errorCode = (error as NodeJS.ErrnoException).code;
+          if (errorCode === 'ENOENT') {
+            this.hydrated = true;
+            return;
+          }
+          console.error('[prompt-debug] failed to access trace storage', resolveErrorMessage(error));
+          this.hydrated = true;
+          return;
         }
-      }
-    } catch (error) {
-      console.error('[prompt-debug] failed to hydrate traces', resolveErrorMessage(error));
-    }
-  }
 
-  private persist(record: PromptDebugTraceRecord): void {
-    const storagePath = resolveStoragePath();
+        const input = fs.createReadStream(storagePath, { encoding: 'utf8' });
+        const lines = readline.createInterface({
+          input,
+          crlfDelay: Infinity,
+        });
+
+        try {
+          for await (const line of lines) {
+            this.applyPersistedLine(line);
+          }
+        } catch (error) {
+          console.error('[prompt-debug] failed to hydrate traces', resolveErrorMessage(error));
+        } finally {
+          lines.close();
+          input.destroy();
+          this.hydrated = true;
+        }
+      })();
+    }
+
     try {
-      ensureStorageDirectory(storagePath);
-      fs.appendFileSync(storagePath, `${JSON.stringify(record)}\n`, 'utf8');
-    } catch (error) {
-      console.error('[prompt-debug] failed to persist trace', resolveErrorMessage(error));
+      await this.hydrationPromise;
+    } finally {
+      this.hydrationPromise = null;
     }
   }
 
@@ -451,66 +740,14 @@ class PromptDebugTraceStore {
   }
 
   upsert(requestId: string, stage: PromptDebugStage, patch: PromptDebugTracePatch): PromptDebugTraceRecord {
-    this.hydrateFromDisk();
-    const existing = this.byRequestId.get(requestId) ?? buildEmptyTraceRecord(requestId);
-    const now = new Date().toISOString();
-
-    const nextRecord: PromptDebugTraceRecord = updateDerivedFields({
-      ...existing,
-      ...(Object.prototype.hasOwnProperty.call(patch, 'traceId') ? { traceId: patch.traceId ?? null } : {}),
-      ...(Object.prototype.hasOwnProperty.call(patch, 'endpoint') ? { endpoint: patch.endpoint ?? null } : {}),
-      ...(Object.prototype.hasOwnProperty.call(patch, 'method') ? { method: patch.method ?? null } : {}),
-      ...(typeof patch.rawPrompt === 'string' ? { rawPrompt: patch.rawPrompt } : {}),
-      ...(typeof patch.normalizedPrompt === 'string' ? { normalizedPrompt: patch.normalizedPrompt } : {}),
-      ...(Array.isArray(patch.intentTags)
-        ? { intentTags: uniqueStrings([...(existing.intentTags ?? []), ...patch.intentTags]) }
-        : {}),
-      ...(Object.prototype.hasOwnProperty.call(patch, 'selectedRoute')
-        ? { selectedRoute: patch.selectedRoute ?? null }
-        : {}),
-      ...(Object.prototype.hasOwnProperty.call(patch, 'selectedModule')
-        ? { selectedModule: patch.selectedModule ?? null }
-        : {}),
-      ...(Array.isArray(patch.selectedTools)
-        ? { selectedTools: uniqueStrings([...(existing.selectedTools ?? []), ...patch.selectedTools]) }
-        : {}),
-      ...(typeof patch.repoInspectionChosen === 'boolean'
-        ? { repoInspectionChosen: patch.repoInspectionChosen }
-        : {}),
-      ...(typeof patch.runtimeInspectionChosen === 'boolean'
-        ? { runtimeInspectionChosen: patch.runtimeInspectionChosen }
-        : {}),
-      ...(Object.prototype.hasOwnProperty.call(patch, 'finalExecutorPayload')
-        ? { finalExecutorPayload: safeClone(patch.finalExecutorPayload) }
-        : {}),
-      ...(Object.prototype.hasOwnProperty.call(patch, 'responseReturned')
-        ? { responseReturned: safeClone(patch.responseReturned) }
-        : {}),
-      ...(Object.prototype.hasOwnProperty.call(patch, 'fallbackPathUsed')
-        ? { fallbackPathUsed: patch.fallbackPathUsed ?? null }
-        : {}),
-      ...(Object.prototype.hasOwnProperty.call(patch, 'fallbackReason')
-        ? { fallbackReason: patch.fallbackReason ?? null }
-        : {}),
-      updatedAt: now,
-      stages: [
-        ...existing.stages,
-        {
-          stage,
-          timestamp: now,
-          data: safeClone(patch) as Record<string, unknown>,
-        },
-      ].slice(-MAX_STAGE_EVENTS),
-    });
-
-    this.byRequestId.set(requestId, nextRecord);
-    this.trimInMemory();
-    this.persist(nextRecord);
+    const persistedEvent = buildPersistedStageEvent(requestId, stage, new Date().toISOString(), patch);
+    const nextRecord = this.applyPersistedEvent(persistedEvent);
+    this.queuePersistedLine(`${JSON.stringify(persistedEvent)}\n`);
     return safeClone(nextRecord) as PromptDebugTraceRecord;
   }
 
-  list(limit = DEFAULT_LIST_LIMIT, requestId?: string): PromptDebugTraceRecord[] {
-    this.hydrateFromDisk();
+  async list(limit = DEFAULT_LIST_LIMIT, requestId?: string): Promise<PromptDebugTraceRecord[]> {
+    await this.hydrateFromDisk();
 
     const normalizedLimit = Math.max(1, Math.min(MAX_LIST_LIMIT, Math.trunc(limit)));
     const records = Array.from(this.byRequestId.values())
@@ -521,18 +758,41 @@ class PromptDebugTraceStore {
     return safeClone(records) as PromptDebugTraceRecord[];
   }
 
-  latest(requestId?: string): PromptDebugTraceRecord | null {
-    const [latestRecord] = this.list(1, requestId);
+  async latest(requestId?: string): Promise<PromptDebugTraceRecord | null> {
+    const [latestRecord] = await this.list(1, requestId);
     return latestRecord ?? null;
   }
 
-  clear(): void {
+  async flush(): Promise<void> {
+    this.ensurePersistFlushLoop();
+    await this.persistFlushPromise;
+  }
+
+  async clear(): Promise<void> {
+    this.ensurePersistFlushLoop();
+    await this.persistFlushPromise;
+    this.pendingPersistedLines.length = 0;
+    this.persistFailed = false;
+    this.persistFlushPromise = null;
     this.byRequestId.clear();
-    this.hydrated = true;
+    this.hydrated = false;
+    this.hydrationPromise = null;
     const storagePath = resolveStoragePath();
-    if (fs.existsSync(storagePath)) {
-      fs.rmSync(storagePath, { force: true });
+    try {
+      await fsp.rm(storagePath, { force: true });
+    } catch (error) {
+      const errorCode = (error as NodeJS.ErrnoException).code;
+      if (errorCode !== 'ENOENT') {
+        console.error('[prompt-debug] failed to clear traces', resolveErrorMessage(error));
+      }
     }
+  }
+
+  async reloadFromDiskForTest(): Promise<void> {
+    this.byRequestId.clear();
+    this.hydrated = false;
+    this.hydrationPromise = null;
+    await this.hydrateFromDisk();
   }
 }
 
@@ -546,14 +806,22 @@ export function recordPromptDebugTrace(
   return promptDebugTraceStore.upsert(requestId, stage, patch);
 }
 
-export function getLatestPromptDebugTrace(requestId?: string): PromptDebugTraceRecord | null {
+export async function getLatestPromptDebugTrace(requestId?: string): Promise<PromptDebugTraceRecord | null> {
   return promptDebugTraceStore.latest(requestId);
 }
 
-export function listPromptDebugTraces(limit?: number, requestId?: string): PromptDebugTraceRecord[] {
+export async function listPromptDebugTraces(limit?: number, requestId?: string): Promise<PromptDebugTraceRecord[]> {
   return promptDebugTraceStore.list(limit, requestId);
 }
 
-export function clearPromptDebugTracesForTest(): void {
-  promptDebugTraceStore.clear();
+export async function flushPromptDebugTracePersistenceForTest(): Promise<void> {
+  await promptDebugTraceStore.flush();
+}
+
+export async function clearPromptDebugTracesForTest(): Promise<void> {
+  await promptDebugTraceStore.clear();
+}
+
+export async function reloadPromptDebugTracesFromDiskForTest(): Promise<void> {
+  await promptDebugTraceStore.reloadFromDiskForTest();
 }

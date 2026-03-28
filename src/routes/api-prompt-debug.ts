@@ -16,25 +16,25 @@ function resolveLimit(value: unknown): number | undefined {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
-router.get('/api/prompt-debug/latest', (_req: Request, res: Response) => {
+router.get('/api/prompt-debug/latest', async (_req: Request, res: Response) => {
   const requestId =
     typeof _req.query.requestId === 'string' && _req.query.requestId.trim().length > 0
       ? _req.query.requestId.trim()
       : undefined;
-  const latest = getLatestPromptDebugTrace(requestId);
+  const latest = await getLatestPromptDebugTrace(requestId);
 
   res.json({
     latest,
   });
 });
 
-router.get('/api/prompt-debug/events', (req: Request, res: Response) => {
+router.get('/api/prompt-debug/events', async (req: Request, res: Response) => {
   const requestId =
     typeof req.query.requestId === 'string' && req.query.requestId.trim().length > 0
       ? req.query.requestId.trim()
       : undefined;
   const limit = resolveLimit(req.query.limit);
-  const events = listPromptDebugTraces(limit, requestId);
+  const events = await listPromptDebugTraces(limit, requestId);
 
   res.json({
     count: events.length,

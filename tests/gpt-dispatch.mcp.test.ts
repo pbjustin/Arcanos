@@ -16,6 +16,16 @@ const mockBuildRepoInspectionPrompt = jest.fn();
 const mockBuildRepoInspectionAnswer = jest.fn();
 const mockCollectRepoImplementationEvidence = jest.fn();
 const mockShouldInspectRepoPrompt = jest.fn();
+const mockBuildSelfHealRuntimeSnapshot = jest.fn();
+const mockBuildSelfHealEventsSnapshot = jest.fn();
+const mockBuildSafetySelfHealSnapshot = jest.fn();
+const mockGetWorkerControlHealth = jest.fn();
+const mockGetWorkerRuntimeStatus = jest.fn();
+const mockGetConfig = jest.fn();
+const mockIsArcanosCliAvailable = jest.fn();
+const mockRunArcanosCLI = jest.fn();
+const mockGetDiagnosticsSnapshot = jest.fn();
+const mockGetHealthSnapshot = jest.fn();
 
 jest.unstable_mockModule('../src/platform/runtime/gptRouterConfig.js', () => ({
   default: mockGetGptModuleMap,
@@ -55,6 +65,41 @@ jest.unstable_mockModule('../src/services/repoImplementationEvidence.js', () => 
   shouldInspectRepoPrompt: mockShouldInspectRepoPrompt,
 }));
 
+jest.unstable_mockModule('../src/services/selfHealRuntimeInspectionService.js', () => ({
+  buildSelfHealRuntimeSnapshot: mockBuildSelfHealRuntimeSnapshot,
+  buildSelfHealEventsSnapshot: mockBuildSelfHealEventsSnapshot,
+  buildSafetySelfHealSnapshot: mockBuildSafetySelfHealSnapshot,
+}));
+
+jest.unstable_mockModule('../src/services/workerControlService.js', () => ({
+  getWorkerControlHealth: mockGetWorkerControlHealth,
+}));
+
+jest.unstable_mockModule('../src/platform/runtime/workerConfig.js', () => ({
+  getWorkerRuntimeStatus: mockGetWorkerRuntimeStatus,
+}));
+
+jest.unstable_mockModule('../src/platform/runtime/unifiedConfig.js', () => ({
+  getConfig: mockGetConfig,
+  getEnvVar: jest.fn(),
+  isRailwayEnvironment: jest.fn(() => false),
+  resolveWorkerRuntimeMode: jest.fn(() => ({ mode: 'disabled', enabled: false })),
+  validateConfig: jest.fn(() => ({ ok: true, issues: [] })),
+  getConfigValue: jest.fn(),
+}));
+
+jest.unstable_mockModule('../src/services/arcanosCliRuntimeService.js', () => ({
+  isArcanosCliAvailable: mockIsArcanosCliAvailable,
+  runArcanosCLI: mockRunArcanosCLI,
+}));
+
+jest.unstable_mockModule('../src/services/runtimeDiagnosticsService.js', () => ({
+  runtimeDiagnosticsService: {
+    getDiagnosticsSnapshot: mockGetDiagnosticsSnapshot,
+    getHealthSnapshot: mockGetHealthSnapshot,
+  },
+}));
+
 jest.unstable_mockModule('../src/shared/typeGuards.js', () => ({
   isRecord(value: unknown) {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -67,11 +112,16 @@ const {
   clearPromptDebugTracesForTest,
   getLatestPromptDebugTrace,
 } = await import('../src/services/promptDebugTraceService.js');
+const {
+  clearAiRoutingDebugSnapshotsForTest,
+  getLatestAiRoutingDebugSnapshot,
+} = await import('../src/services/aiRoutingDebugService.js');
 
 describe('routeGptRequest MCP dispatch branch', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     jest.clearAllMocks();
-    clearPromptDebugTracesForTest();
+    await clearPromptDebugTracesForTest();
+    clearAiRoutingDebugSnapshotsForTest();
     process.env.METRICS_INCLUDE_WORKER_STATE = 'false';
     resetAppMetricsForTests();
     mockGetGptModuleMap.mockResolvedValue({
@@ -111,6 +161,61 @@ describe('routeGptRequest MCP dispatch branch', () => {
     });
     mockBuildRepoInspectionPrompt.mockImplementation((prompt: string) => `repo-evidence:${prompt}`);
     mockBuildRepoInspectionAnswer.mockImplementation((prompt: string) => `repo-answer:${prompt}`);
+    mockBuildSelfHealRuntimeSnapshot.mockReturnValue({
+      status: 'ok',
+      timestamp: '2026-03-27T00:00:00.000Z',
+      loopStatus: { loopRunning: true, activeMitigation: null },
+      telemetry: { recentEvents: [] },
+    });
+    mockBuildSelfHealEventsSnapshot.mockReturnValue({
+      status: 'ok',
+      timestamp: '2026-03-27T00:00:00.000Z',
+      count: 0,
+      events: [],
+    });
+    mockBuildSafetySelfHealSnapshot.mockReturnValue({
+      status: 'ok',
+      lastHealResult: 'success',
+      recentEvents: [],
+    });
+    mockGetWorkerControlHealth.mockResolvedValue({
+      overallStatus: 'healthy',
+      workers: [],
+    });
+    mockGetWorkerRuntimeStatus.mockReturnValue({
+      enabled: true,
+      configuredCount: 2,
+      started: true,
+      model: 'gpt-5',
+    });
+    mockGetConfig.mockReturnValue({
+      defaultModel: 'gpt-5',
+      nodeEnv: 'test',
+    });
+    mockIsArcanosCliAvailable.mockResolvedValue(true);
+    mockRunArcanosCLI.mockImplementation(async (command: string) => ({
+      available: true,
+      command,
+      cliPath: '/workspace/packages/cli/dist/index.js',
+      stdout: JSON.stringify({ ok: true, data: { command } }),
+      stderr: '',
+      parsedOutput: { ok: true, data: { command } },
+      exitCode: 0,
+      timedOut: false,
+      error: null,
+    }));
+    mockGetHealthSnapshot.mockReturnValue({
+      status: 'ok',
+      timestamp: '2026-03-27T00:00:00.000Z',
+      uptime: 12.3,
+      memory: { rss_mb: 12 },
+    });
+    mockGetDiagnosticsSnapshot.mockResolvedValue({
+      avg_latency_ms: 18,
+      recent_latency_ms: [18],
+      requests_total: 10,
+      errors_total: 0,
+    });
   });
 
   it('uses the request-scoped ARCANOS MCP service for explicit mcp.invoke actions', async () => {
@@ -355,13 +460,7 @@ describe('routeGptRequest MCP dispatch branch', () => {
     );
   });
 
-  it('preserves live runtime verification by routing canonical GPT prompts into ops.health_report', async () => {
-    const invokeTool = jest.fn().mockResolvedValue({
-      structuredContent: {
-        status: 'ok',
-        summary: 'Runtime looks healthy.',
-      },
-    });
+  it('preserves live runtime verification by routing canonical GPT prompts into runtime inspection', async () => {
     const request = {
       method: 'POST',
       originalUrl: '/gpt/arcanos-core',
@@ -369,7 +468,7 @@ describe('routeGptRequest MCP dispatch branch', () => {
       app: {
         locals: {
           arcanosMcp: {
-            invokeTool,
+            invokeTool: jest.fn(),
             listTools: jest.fn(),
           },
         },
@@ -386,48 +485,101 @@ describe('routeGptRequest MCP dispatch branch', () => {
       request,
     });
 
-    expect(invokeTool).toHaveBeenCalledWith({
-      toolName: 'ops.health_report',
-      toolArguments: {},
-      request,
-      sessionId: undefined,
-    });
+    expect(request.app.locals.arcanosMcp.invokeTool).not.toHaveBeenCalled();
     expect(mockDispatchModuleAction).not.toHaveBeenCalled();
     expect(envelope).toEqual(
       expect.objectContaining({
         ok: true,
         result: expect.objectContaining({
-          handledBy: 'mcp-dispatcher',
-          mcp: expect.objectContaining({
-            action: 'invoke',
-            toolName: 'ops.health_report',
-            dispatchMode: 'automatic',
-            reason: 'prompt_requests_runtime_verification',
+          handledBy: 'runtime-inspection',
+          runtimeInspection: expect.objectContaining({
+            detectedIntent: 'RUNTIME_INSPECTION_REQUIRED',
+            cliUsed: true,
+            repoFallbackUsed: false,
           }),
         }),
         _route: expect.objectContaining({
-          action: 'mcp.auto.invoke',
+          action: 'runtime.inspect',
         }),
       })
     );
 
-    expect(getLatestPromptDebugTrace('req-runtime-1')).toMatchObject({
+    expect(await getLatestPromptDebugTrace('req-runtime-1')).toMatchObject({
       requestId: 'req-runtime-1',
       rawPrompt: prompt,
       normalizedPrompt: prompt,
       selectedRoute: 'core',
       selectedModule: 'ARCANOS:CORE',
-      selectedTools: ['ops.health_report'],
+      selectedTools: expect.arrayContaining(['/api/self-heal/runtime', '/api/self-heal/events', '/status/safety/self-heal', '/worker-helper/health', '/workers/status', 'cli:status', 'system.metrics']),
       runtimeInspectionChosen: true,
       explicitlyRequestedLiveRuntimeVerification: true,
       liveRuntimeRequirementPreserved: true,
-      preservedConstraints: ['live backend', 'runtime', 'currently active', 'verify in production'],
+      preservedConstraints: expect.arrayContaining(['runtime', 'currently active', 'verify in production']),
       droppedConstraints: [],
       finalExecutorPayload: expect.objectContaining({
-        executor: 'mcp.invoke',
-        toolName: 'ops.health_report',
-        runtimeInspectionRequested: true,
+        executor: 'runtime-inspection',
+        cliUsed: true,
       }),
+    });
+    expect(getLatestAiRoutingDebugSnapshot('req-runtime-1')).toMatchObject({
+      requestId: 'req-runtime-1',
+      detectedIntent: 'RUNTIME_INSPECTION_REQUIRED',
+      routingDecision: 'runtime_inspection_completed',
+      cliUsed: true,
+      repoFallbackUsed: false,
+      toolsSelected: expect.arrayContaining(['cli:status']),
+      runtimeEndpointsQueried: expect.arrayContaining(['/api/self-heal/runtime', '/api/self-heal/events', '/status/safety/self-heal', '/worker-helper/health', '/workers/status']),
+    });
+  });
+
+  it('returns explicit runtime inspection unavailable when repo inspection is disallowed', async () => {
+    mockBuildSelfHealRuntimeSnapshot.mockImplementation(() => {
+      throw new Error('runtime unavailable');
+    });
+    mockBuildSelfHealEventsSnapshot.mockImplementation(() => {
+      throw new Error('events unavailable');
+    });
+    mockBuildSafetySelfHealSnapshot.mockImplementation(() => {
+      throw new Error('self-heal unavailable');
+    });
+    mockGetWorkerControlHealth.mockRejectedValue(new Error('worker health unavailable'));
+    mockGetWorkerRuntimeStatus.mockImplementation(() => {
+      throw new Error('worker runtime unavailable');
+    });
+    mockIsArcanosCliAvailable.mockResolvedValue(false);
+    mockGetHealthSnapshot.mockImplementation(() => {
+      throw new Error('metrics unavailable');
+    });
+    mockShouldInspectRepoPrompt.mockReturnValue(true);
+
+    const envelope = await routeGptRequest({
+      gptId: 'arcanos-core',
+      body: {
+        prompt: 'Read live runtime state. Do not use repo inspection.',
+      },
+      requestId: 'req-runtime-2',
+      request: {
+        method: 'POST',
+        originalUrl: '/gpt/arcanos-core',
+      } as any,
+    });
+
+    expect(mockCollectRepoImplementationEvidence).not.toHaveBeenCalled();
+    expect(envelope).toEqual(
+      expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({
+          code: 'RUNTIME_INSPECTION_UNAVAILABLE',
+          message: 'runtime inspection unavailable',
+        }),
+      })
+    );
+    expect(getLatestAiRoutingDebugSnapshot('req-runtime-2')).toMatchObject({
+      requestId: 'req-runtime-2',
+      detectedIntent: 'RUNTIME_INSPECTION_REQUIRED',
+      routingDecision: 'runtime_inspection_unavailable',
+      repoFallbackUsed: false,
+      cliUsed: false,
     });
   });
 

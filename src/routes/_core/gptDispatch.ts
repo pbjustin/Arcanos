@@ -21,6 +21,7 @@ import {
   collectRepoImplementationEvidence,
   shouldInspectRepoPrompt,
 } from "@services/repoImplementationEvidence.js";
+import { recordAiRoutingDebugSnapshot } from "@services/aiRoutingDebugService.js";
 import { extractDiagnosticTextInput, isDiagnosticRequest } from "@shared/http/diagnosticRequest.js";
 import { isRecord } from "@shared/typeGuards.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
@@ -45,6 +46,10 @@ import {
   recordPromptDebugTrace,
   shouldInspectRuntimePrompt,
 } from "@services/promptDebugTraceService.js";
+import {
+  classifyRuntimeInspectionPrompt,
+  executeRuntimeInspection,
+} from "@services/runtimeInspectionRoutingService.js";
 
 export type AskEnvelope =
   | { ok: true; result: unknown; _route: RouteMeta }
@@ -1273,6 +1278,11 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     parsedMemoryCommand,
     hasMemoryCue,
   });
+  const runtimeInspectionClassification = classifyRuntimeInspectionPrompt(prompt);
+  const runtimeInspectionRequired =
+    runtimeInspectionClassification.detectedIntent === 'RUNTIME_INSPECTION_REQUIRED';
+  const repoInspectionAllowed = !runtimeInspectionClassification.repoInspectionDisabled;
+  const repoInspectionRequested = repoInspectionAllowed && shouldInspectRepoPrompt(prompt);
 
   logger?.info?.("gpt.dispatch.intent_classification", {
     requestId,
@@ -1294,12 +1304,13 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     normalizedPrompt,
     selectedRoute: activeEntry.route,
     selectedModule: activeEntry.module,
-    repoInspectionChosen: shouldInspectRepoPrompt(prompt),
-    runtimeInspectionChosen: false,
+    repoInspectionChosen: repoInspectionRequested,
+    runtimeInspectionChosen: runtimeInspectionRequired,
     intentTags: [
       promptIntentClassification.intent,
       ...(parsedMemoryCommand.intent !== "unknown" ? [`memory:${parsedMemoryCommand.intent}`] : []),
-      ...(shouldInspectRuntimePrompt(prompt) ? ['runtime_inspection_requested'] : []),
+      ...(runtimeInspectionRequired ? ['runtime_inspection_requested'] : []),
+      ...(runtimeInspectionClassification.repoInspectionDisabled ? ['repo_inspection_disabled'] : []),
     ],
   });
 
@@ -1493,6 +1504,151 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       canonicalAction: requestedAction,
     });
   }
+
+  if (
+    !forceDirectModuleRouting &&
+    !mcpDispatch.intent &&
+    activeEntry.module === "ARCANOS:CORE" &&
+    (!requestedAction || requestedAction === "query") &&
+    (!actionCandidate || actionCandidate === "query") &&
+    runtimeInspectionRequired
+  ) {
+    const runtimeInspection = await executeRuntimeInspection({
+      requestId: promptDebugRequestId,
+      rawPrompt,
+      normalizedPrompt,
+      request,
+    });
+
+    if (runtimeInspection.ok && runtimeInspection.responsePayload) {
+      await persistModuleConversation({
+        moduleName: activeEntry.module,
+        route: activeEntry.route,
+        action: "runtime.inspect",
+        gptId: trimmedGptId,
+        sessionId,
+        requestId,
+        requestPayload: payload,
+        responsePayload: runtimeInspection.responsePayload,
+      }).catch((error: unknown) => {
+        logger?.warn?.("gpt.dispatch.runtime_inspection.persistence_failed", {
+          requestId,
+          gptId: trimmedGptId,
+          module: activeEntry.module,
+          action: "runtime.inspect",
+          error: String((error as Error)?.message ?? error),
+        });
+      });
+
+      recordDispatcherRoute({
+        gptId: trimmedGptId,
+        module: activeEntry.module,
+        route: activeEntry.route,
+        handler: 'runtime-inspection',
+        outcome: 'ok',
+      });
+      recordPromptDebugTrace(promptDebugRequestId, 'executor', {
+        traceId: request?.traceId ?? null,
+        endpoint: requestEndpoint ?? '/gpt/:gptId',
+        method: request?.method ?? null,
+        rawPrompt,
+        normalizedPrompt,
+        selectedRoute: activeEntry.route,
+        selectedModule: activeEntry.module,
+        selectedTools: runtimeInspection.selectedTools,
+        repoInspectionChosen: false,
+        runtimeInspectionChosen: true,
+        finalExecutorPayload: {
+          executor: 'runtime-inspection',
+          prompt,
+          runtimeEndpointsQueried: runtimeInspection.runtimeEndpointsQueried,
+          cliUsed: runtimeInspection.cliUsed,
+        },
+      });
+      recordPromptDebugTrace(promptDebugRequestId, 'response', {
+        traceId: request?.traceId ?? null,
+        endpoint: requestEndpoint ?? '/gpt/:gptId',
+        method: request?.method ?? null,
+        rawPrompt,
+        normalizedPrompt,
+        selectedRoute: activeEntry.route,
+        selectedModule: activeEntry.module,
+        selectedTools: runtimeInspection.selectedTools,
+        repoInspectionChosen: false,
+        runtimeInspectionChosen: true,
+        finalExecutorPayload: {
+          executor: 'runtime-inspection',
+          prompt,
+          runtimeEndpointsQueried: runtimeInspection.runtimeEndpointsQueried,
+          cliUsed: runtimeInspection.cliUsed,
+        },
+        responseReturned: runtimeInspection.responsePayload,
+      });
+      return {
+        ok: true,
+        result: runtimeInspection.responsePayload,
+        _route: {
+          ...baseRoute,
+          module: activeEntry.module,
+          action: "runtime.inspect",
+          matchMethod,
+          route: activeEntry.route,
+          availableActions,
+          moduleVersion: (moduleMetadata as any)?.version ?? null,
+        },
+      };
+    }
+
+    if (
+      runtimeInspection.error &&
+      (!runtimeInspection.repoFallbackAllowed || !repoInspectionRequested)
+    ) {
+      recordDispatcherRoute({
+        gptId: trimmedGptId,
+        module: activeEntry.module,
+        route: activeEntry.route,
+        handler: 'runtime-inspection',
+        outcome: 'error',
+      });
+      recordPromptDebugTrace(promptDebugRequestId, 'fallback', {
+        traceId: request?.traceId ?? null,
+        endpoint: requestEndpoint ?? '/gpt/:gptId',
+        method: request?.method ?? null,
+        rawPrompt,
+        normalizedPrompt,
+        selectedRoute: activeEntry.route,
+        selectedModule: activeEntry.module,
+        selectedTools: runtimeInspection.selectedTools,
+        repoInspectionChosen: false,
+        runtimeInspectionChosen: true,
+        fallbackPathUsed: 'runtime-inspection',
+        fallbackReason: runtimeInspection.error.message,
+      });
+      return {
+        ok: false,
+        error: runtimeInspection.error,
+        _route: {
+          ...baseRoute,
+          module: activeEntry.module,
+          action: "runtime.inspect",
+          matchMethod,
+          route: activeEntry.route,
+          availableActions,
+          moduleVersion: (moduleMetadata as any)?.version ?? null,
+        },
+      };
+    }
+
+    if (runtimeInspection.error && runtimeInspection.repoFallbackAllowed && repoInspectionRequested) {
+      recordAiRoutingDebugSnapshot({
+        ...runtimeInspection.routingDebug,
+        timestamp: new Date().toISOString(),
+        routingDecision: 'repo_inspection_fallback',
+        repoFallbackUsed: true,
+      });
+    }
+  }
+
   let automaticRepoInspectionResult:
     | {
         handledBy: "repo-inspection";
@@ -1509,7 +1665,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     activeEntry.module === "ARCANOS:CORE" &&
     (!requestedAction || requestedAction === "query") &&
     (!actionCandidate || actionCandidate === "query") &&
-    shouldInspectRepoPrompt(prompt)
+    repoInspectionRequested
   ) {
     try {
       const repoEvidence = await collectRepoImplementationEvidence();
@@ -1548,6 +1704,23 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     }
   }
   if (automaticRepoInspectionResult) {
+    if (runtimeInspectionRequired) {
+      recordAiRoutingDebugSnapshot({
+        requestId: promptDebugRequestId,
+        timestamp: new Date().toISOString(),
+        rawPrompt,
+        normalizedPrompt,
+        detectedIntent: 'RUNTIME_INSPECTION_REQUIRED',
+        routingDecision: 'repo_inspection_fallback',
+        toolsAvailable: ['repo-inspection'],
+        toolsSelected: ['repo-inspection'],
+        cliUsed: false,
+        runtimeEndpointsQueried: [],
+        repoFallbackUsed: true,
+        constraintViolations: repoInspectionAllowed ? [] : ['repo_inspection_used_when_disabled'],
+      });
+    }
+
     await persistModuleConversation({
       moduleName: activeEntry.module,
       route: activeEntry.route,
@@ -2020,8 +2193,8 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     selectedRoute: activeEntry.route,
     selectedModule: activeEntry.module,
     selectedTools: [],
-    repoInspectionChosen: shouldInspectRepoPrompt(prompt),
-    runtimeInspectionChosen: false,
+    repoInspectionChosen: repoInspectionRequested,
+    runtimeInspectionChosen: runtimeInspectionRequired,
     finalExecutorPayload: {
       executor: 'module-dispatch',
       module: activeEntry.module,

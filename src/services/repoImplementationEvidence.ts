@@ -69,6 +69,13 @@ const repoInspectionIntentPatterns = [
   /\bstatus\b/
 ];
 
+const repoInspectionDisallowedPatterns = [
+  /\bdo\s+not\s+use\s+repo(?:\s+inspection)?\b/i,
+  /\bno\s+repo(?:\s+inspection)?\b/i,
+  /\bonly\s+return\s+runtime\s+values\b/i,
+  /\bruntime\s+values\s+only\b/i,
+];
+
 const verificationPhrases = [
   "is it implemented",
   "implemented",
@@ -92,6 +99,9 @@ export function shouldInspectRepoPrompt(prompt: string | null): boolean {
   }
 
   const normalizedPrompt = prompt.toLowerCase();
+  if (repoInspectionDisallowedPatterns.some((pattern) => pattern.test(normalizedPrompt))) {
+    return false;
+  }
   if (verificationPhrases.some((phrase) => normalizedPrompt.includes(phrase))) {
     return true;
   }

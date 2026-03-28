@@ -1,9 +1,12 @@
 import { runAskCommand } from "./commands/ask.js";
 import { runDoctorCommand } from "./commands/doctor.js";
 import { runExecCommand } from "./commands/exec.js";
+import { runInspectCommand } from "./commands/inspect.js";
+import { runLogsCommand } from "./commands/logs.js";
 import { parseCliInvocation, renderUsage } from "./commands/parse.js";
 import { runPlanCommand } from "./commands/plan.js";
 import { runStatusCommand } from "./commands/status.js";
+import { runWorkersCommand } from "./commands/workers.js";
 import type { CliJsonEnvelope, CliProtocolCommandResult } from "./commands/types.js";
 import { serializeDeterministicJson } from "./client/protocol.js";
 import { runProtocolCli } from "./protocolCli.js";
@@ -57,6 +60,12 @@ async function runCommand(invocation: Exclude<ReturnType<typeof parseCliInvocati
       return runExecCommand(invocation);
     case "status":
       return runStatusCommand(invocation);
+    case "workers":
+      return runWorkersCommand(invocation);
+    case "logs":
+      return runLogsCommand(invocation);
+    case "inspect":
+      return runInspectCommand(invocation);
     case "doctor":
       return runDoctorCommand(invocation);
   }

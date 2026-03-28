@@ -1,4 +1,4 @@
-import type { ProtocolCommandId, ProtocolRequest, ProtocolResponse } from "@arcanos/protocol";
+import type { ProtocolRequest, ProtocolResponse } from "@arcanos/protocol";
 
 export interface CliGlobalOptions {
   json: boolean;
@@ -35,6 +35,23 @@ export interface StatusCommandInvocation {
   options: CliGlobalOptions;
 }
 
+export interface WorkersCommandInvocation {
+  kind: "workers";
+  options: CliGlobalOptions;
+}
+
+export interface LogsCommandInvocation {
+  kind: "logs";
+  recent: boolean;
+  options: CliGlobalOptions;
+}
+
+export interface InspectCommandInvocation {
+  kind: "inspect";
+  subject: "self-heal";
+  options: CliGlobalOptions;
+}
+
 export interface DoctorCommandInvocation {
   kind: "doctor";
   subject: "implementation";
@@ -55,6 +72,9 @@ export type CliInvocation =
   | PlanCommandInvocation
   | ExecCommandInvocation
   | StatusCommandInvocation
+  | WorkersCommandInvocation
+  | LogsCommandInvocation
+  | InspectCommandInvocation
   | DoctorCommandInvocation
   | ProtocolCommandInvocation
   | HelpCommandInvocation;
@@ -74,10 +94,20 @@ export interface CliFailureEnvelope {
 
 export type CliJsonEnvelope<TData> = CliSuccessEnvelope<TData> | CliFailureEnvelope;
 
-export interface CliProtocolCommandResult<TData = unknown> {
-  command: ProtocolCommandId;
-  request: ProtocolRequest<unknown>;
-  response: ProtocolResponse<TData>;
+export interface CliCommandResult<TData = unknown> {
+  command: string;
+  request: ProtocolRequest<unknown> | Record<string, unknown>;
+  response: ProtocolResponse<TData> | {
+    ok: boolean;
+    data?: TData;
+    error?: {
+      code: string;
+      message: string;
+    };
+    meta?: Record<string, unknown>;
+  };
   humanOutput: string;
   extraJson?: Record<string, unknown>;
 }
+
+export type CliProtocolCommandResult<TData = unknown> = CliCommandResult<TData>;

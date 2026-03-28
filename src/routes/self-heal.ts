@@ -6,6 +6,10 @@ import {
   runPredictiveHealingDecision,
   type PredictiveHealingSimulationInput
 } from '@services/selfImprove/predictiveHealingService.js';
+import {
+  buildSelfHealEventsSnapshot,
+  buildSelfHealRuntimeSnapshot,
+} from '@services/selfHealRuntimeInspectionService.js';
 import { sendInternalErrorPayload } from '@shared/http/index.js';
 
 const router = Router();
@@ -115,6 +119,30 @@ router.post('/api/self-heal/decide', capabilityGate('self_improve_admin'), async
     sendInternalErrorPayload(res, {
       error: resolveErrorMessage(error),
       where: 'self-heal/decide'
+    });
+  }
+});
+
+router.get('/api/self-heal/runtime', (_req: Request, res: Response) => {
+  try {
+    res.json(buildSelfHealRuntimeSnapshot());
+  } catch (error) {
+    sendInternalErrorPayload(res, {
+      error: resolveErrorMessage(error),
+      where: 'self-heal/runtime'
+    });
+  }
+});
+
+router.get('/api/self-heal/events', (req: Request, res: Response) => {
+  try {
+    const rawLimit = typeof req.query.limit === 'string' ? Number.parseInt(req.query.limit, 10) : NaN;
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : 20;
+    res.json(buildSelfHealEventsSnapshot(limit));
+  } catch (error) {
+    sendInternalErrorPayload(res, {
+      error: resolveErrorMessage(error),
+      where: 'self-heal/events'
     });
   }
 });
