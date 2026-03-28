@@ -9,9 +9,9 @@ export type AskRouteMode = 'compat' | 'gone';
 
 export function resolveAskRouteMode(): AskRouteMode {
   const configuredMode = (process.env.ASK_ROUTE_MODE ?? '').trim().toLowerCase();
-  return configuredMode === 'gone' || configuredMode === '410'
-    ? 'gone'
-    : 'compat';
+  return configuredMode === 'compat'
+    ? 'compat'
+    : 'gone';
 }
 
 export function buildCanonicalGptRoute(gptId?: string | null): string {

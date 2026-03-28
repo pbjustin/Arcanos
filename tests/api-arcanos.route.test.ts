@@ -108,11 +108,35 @@ function buildTrinityResult(overrides: Partial<Record<string, unknown>> = {}) {
 describe('api-arcanos route', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env.ASK_ROUTE_MODE = 'compat';
     mockExtractInput.mockImplementation((body: Record<string, unknown>) =>
       typeof body.prompt === 'string' ? body.prompt : null
     );
     mockCreateRuntimeBudget.mockReturnValue({ budgetId: 'runtime-budget-1' });
     mockTryExecutePromptRouteShortcut.mockResolvedValue(null);
+  });
+
+  it('rejects deprecated ask traffic by default and points callers to the canonical GPT route', async () => {
+    delete process.env.ASK_ROUTE_MODE;
+
+    const response = await request(buildApp())
+      .post('/ask')
+      .send({
+        prompt: 'Explain the deployment state.'
+      });
+
+    expect(response.status).toBe(410);
+    expect(response.headers['x-canonical-route']).toBe('/gpt/arcanos-core');
+    expect(response.headers['x-route-deprecated']).toBe('true');
+    expect(response.headers['x-ask-route-mode']).toBe('gone');
+    expect(response.body).toMatchObject({
+      error: 'Legacy /api/arcanos/ask route has been removed; use /gpt/:gptId',
+      deprecated: true,
+      canonicalRoute: '/gpt/arcanos-core',
+      routeMode: 'gone'
+    });
+    expect(mockValidateAIRequest).not.toHaveBeenCalled();
+    expect(mockRunThroughBrain).not.toHaveBeenCalled();
   });
 
   it('routes non-ping requests through Trinity and returns explicit pipeline metadata', async () => {

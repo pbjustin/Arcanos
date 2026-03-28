@@ -22,7 +22,10 @@ import {
 import { buildTrinityOutputControlOptions } from '@shared/ask/trinityRequestOptions.js';
 import { buildTrinityUserVisibleResponse } from '@shared/ask/trinityResponseSerializer.js';
 import {
-  applyDeprecatedAskRouteHeaders
+  applyDeprecatedAskRouteHeaders,
+  ASK_ROUTE_SUNSET_HEADER,
+  ASK_ROUTE_MODE_HEADER,
+  resolveAskRouteMode
 } from '@shared/http/gptRouteHeaders.js';
 import {
   applyAIDegradedResponseHeaders,
@@ -125,6 +128,15 @@ interface AskResponse {
   dryRun?: boolean;
   pipelineDebug?: TrinityResult['pipelineDebug'];
 }
+
+type DeprecatedAskRouteRemovedResponse = ErrorResponseDTO & {
+  deprecated: true;
+  canonicalRoute: string;
+  routeMode: 'gone';
+  sunsetAt: string;
+};
+
+type ApiArcanosResponse = AskResponse | ErrorResponseDTO | DeprecatedAskRouteRemovedResponse;
 
 const arcanosSchema = {
   mode: {
@@ -388,8 +400,8 @@ function buildArcanosPromptShortcutResponse(params: {
 }
 
 function attachApiArcanosCompatibilityMetadata(
-  req: Request<{}, AskResponse | ErrorResponseDTO, AskBody>,
-  res: Response<AskResponse | ErrorResponseDTO>,
+  req: Request<{}, ApiArcanosResponse, AskBody>,
+  res: Response<ApiArcanosResponse>,
   next: () => void
 ): void {
   const canonicalRoute = applyDeprecatedAskRouteHeaders(res, CANONICAL_ARCANOS_GPT_ID);
@@ -402,14 +414,46 @@ function attachApiArcanosCompatibilityMetadata(
   next();
 }
 
+function rejectRemovedApiArcanosAskRoute(
+  req: Request<{}, ApiArcanosResponse, AskBody>,
+  res: Response<ApiArcanosResponse>,
+  next: () => void
+): void {
+  if (resolveAskRouteMode() === 'compat') {
+    next();
+    return;
+  }
+
+  const canonicalRoute = applyDeprecatedAskRouteHeaders(res, CANONICAL_ARCANOS_GPT_ID);
+  res.setHeader('x-deprecated-endpoint', DEPRECATED_ARCANOS_ENDPOINT);
+  res.setHeader(ASK_ROUTE_MODE_HEADER, 'gone');
+  req.logger?.warn?.('deprecated.endpoint.blocked', {
+    deprecatedEndpoint: DEPRECATED_ARCANOS_ENDPOINT,
+    canonicalRoute,
+    requestId: req.requestId ?? null,
+    routeMode: 'gone',
+    sunsetAt: ASK_ROUTE_SUNSET_HEADER
+  });
+  res.status(410).json({
+    error: 'Legacy /api/arcanos/ask route has been removed; use /gpt/:gptId',
+    deprecated: true,
+    canonicalRoute,
+    routeMode: 'gone',
+    sunsetAt: ASK_ROUTE_SUNSET_HEADER,
+    details: [
+      `POST ${DEPRECATED_ARCANOS_ENDPOINT} is no longer available. Migrate callers to POST ${canonicalRoute}.`
+    ]
+  });
+}
+
 /**
  * Purpose: Compatibility handler for deprecated `/api/arcanos/ask` traffic.
  * Inputs/Outputs: Accepts legacy request bodies and returns the historical route envelope.
  * Edge cases: Preserves `ping` health checks and rewrites deprecated traffic through the shared Trinity wrapper.
  */
 const handleArcanosAsk = asyncHandler(async (
-  req: Request<{}, AskResponse | ErrorResponseDTO, AskBody>,
-  res: Response<AskResponse | ErrorResponseDTO>
+  req: Request<{}, ApiArcanosResponse, AskBody>,
+  res: Response<ApiArcanosResponse>
 ) => {
   const requestId = req.requestId ?? 'api-arcanos-ask';
   const rawPrompt = extractPromptText(req.body, false) ?? '';
@@ -584,6 +628,7 @@ const handleArcanosAsk = asyncHandler(async (
 router.post(
   '/ask',
   arcanosAskRateLimit,
+  rejectRemovedApiArcanosAskRoute,
   attachApiArcanosCompatibilityMetadata,
   confirmGate,
   createValidationMiddleware(arcanosSchema),

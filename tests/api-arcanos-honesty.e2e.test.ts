@@ -96,6 +96,7 @@ function buildApp() {
 describe('/api/arcanos/ask honesty e2e', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env.ASK_ROUTE_MODE = 'compat';
 
     mockTryExecutePromptRouteShortcut.mockResolvedValue(null);
     mockRunClearAudit.mockResolvedValue({

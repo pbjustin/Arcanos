@@ -104,6 +104,7 @@ function buildTrinityResult(overrides: Partial<Record<string, unknown>> = {}) {
 describe('/api/arcanos/ask compatibility', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    process.env.ASK_ROUTE_MODE = 'compat';
     mockExtractInput.mockImplementation((body: Record<string, unknown>) =>
       typeof body.prompt === 'string' ? body.prompt : null
     );
