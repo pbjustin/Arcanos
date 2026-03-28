@@ -63,10 +63,15 @@ jest.unstable_mockModule('../src/shared/typeGuards.js', () => ({
 
 const { routeGptRequest } = await import('../src/routes/_core/gptDispatch.js');
 const { getMetricsText, resetAppMetricsForTests } = await import('../src/platform/observability/appMetrics.js');
+const {
+  clearPromptDebugTracesForTest,
+  getLatestPromptDebugTrace,
+} = await import('../src/services/promptDebugTraceService.js');
 
 describe('routeGptRequest MCP dispatch branch', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    clearPromptDebugTracesForTest();
     process.env.METRICS_INCLUDE_WORKER_STATE = 'false';
     resetAppMetricsForTests();
     mockGetGptModuleMap.mockResolvedValue({
@@ -348,6 +353,82 @@ describe('routeGptRequest MCP dispatch branch', () => {
         }),
       })
     );
+  });
+
+  it('preserves live runtime verification by routing canonical GPT prompts into ops.health_report', async () => {
+    const invokeTool = jest.fn().mockResolvedValue({
+      structuredContent: {
+        status: 'ok',
+        summary: 'Runtime looks healthy.',
+      },
+    });
+    const request = {
+      method: 'POST',
+      originalUrl: '/gpt/arcanos-core',
+      traceId: 'trace-runtime-1',
+      app: {
+        locals: {
+          arcanosMcp: {
+            invokeTool,
+            listTools: jest.fn(),
+          },
+        },
+      },
+    } as any;
+
+    const prompt = 'verify in production on the live backend runtime that is currently active';
+    const envelope = await routeGptRequest({
+      gptId: 'arcanos-core',
+      body: {
+        message: prompt,
+      },
+      requestId: 'req-runtime-1',
+      request,
+    });
+
+    expect(invokeTool).toHaveBeenCalledWith({
+      toolName: 'ops.health_report',
+      toolArguments: {},
+      request,
+      sessionId: undefined,
+    });
+    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+    expect(envelope).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: expect.objectContaining({
+          handledBy: 'mcp-dispatcher',
+          mcp: expect.objectContaining({
+            action: 'invoke',
+            toolName: 'ops.health_report',
+            dispatchMode: 'automatic',
+            reason: 'prompt_requests_runtime_verification',
+          }),
+        }),
+        _route: expect.objectContaining({
+          action: 'mcp.auto.invoke',
+        }),
+      })
+    );
+
+    expect(getLatestPromptDebugTrace('req-runtime-1')).toMatchObject({
+      requestId: 'req-runtime-1',
+      rawPrompt: prompt,
+      normalizedPrompt: prompt,
+      selectedRoute: 'core',
+      selectedModule: 'ARCANOS:CORE',
+      selectedTools: ['ops.health_report'],
+      runtimeInspectionChosen: true,
+      explicitlyRequestedLiveRuntimeVerification: true,
+      liveRuntimeRequirementPreserved: true,
+      preservedConstraints: ['live backend', 'runtime', 'currently active', 'verify in production'],
+      droppedConstraints: [],
+      finalExecutorPayload: expect.objectContaining({
+        executor: 'mcp.invoke',
+        toolName: 'ops.health_report',
+        runtimeInspectionRequested: true,
+      }),
+    });
   });
 
   it('automatically resolves latest DAG trace prompts into dag.run.trace after latest-run lookup', async () => {

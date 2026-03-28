@@ -301,6 +301,25 @@ const automaticMcpOpsVerbPattern =
   /\b(?:diagnose|debug|inspect|audit|analyze|check|report|trace|verify|investigate|orchestrate|manage)\b/i;
 const automaticMcpBackendNounPattern =
   /\b(?:backend|system|deployment|service|worker|queue|database|postgres|redis|railway|dag|workflow|plan|plans|agent|agents|module|modules|research|memory)\b/i;
+const automaticRuntimeVerificationVerbPattern =
+  /\b(?:verify|check|confirm|validate|inspect|test|probe)\b/i;
+const automaticRuntimeVerificationStrongCuePattern =
+  /\b(?:verify\s+in\s+production|currently\s+active|system\s+health|health\s+probe|live\s+verification)\b/i;
+
+function shouldAutoInspectRuntimeVerificationPrompt(prompt: string | null): boolean {
+  if (!prompt || !shouldInspectRuntimePrompt(prompt)) {
+    return false;
+  }
+
+  return (
+    automaticRuntimeVerificationStrongCuePattern.test(prompt) ||
+    automaticRuntimeVerificationVerbPattern.test(prompt)
+  );
+}
+
+function isRuntimeInspectionMcpIntent(intent: McpDispatchIntent | null): boolean {
+  return intent?.action === 'mcp.invoke' && intent.toolName === 'ops.health_report';
+}
 
 /**
  * Infer conservative automatic MCP dispatch for query-like operational prompts.
@@ -376,6 +395,16 @@ function inferAutomaticMcpDispatchIntent(params: {
       toolArguments: {},
       dispatchMode: 'automatic',
       reason: 'prompt_requests_module_inventory',
+    };
+  }
+
+  if (shouldAutoInspectRuntimeVerificationPrompt(prompt)) {
+    return {
+      action: 'mcp.invoke',
+      toolName: 'ops.health_report',
+      toolArguments: {},
+      dispatchMode: 'automatic',
+      reason: 'prompt_requests_runtime_verification',
     };
   }
 
@@ -1591,6 +1620,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
   if (resolvedMcpDispatchIntent) {
     const dispatcherMcpService = getDispatcherMcpService(request);
     const dispatcherAction = resolvedMcpDispatchIntent.action;
+    const runtimeInspectionChosen = isRuntimeInspectionMcpIntent(resolvedMcpDispatchIntent);
     const dispatcherRouteAction =
       resolvedMcpDispatchIntent.dispatchMode === "automatic"
         ? `mcp.auto.${dispatcherAction === "mcp.invoke" ? "invoke" : "list_tools"}`
@@ -1615,6 +1645,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
           resolvedMcpDispatchIntent.action === 'mcp.invoke'
             ? [resolvedMcpDispatchIntent.toolName]
             : ['mcp.list_tools'],
+        runtimeInspectionChosen,
         fallbackPathUsed: 'mcp-dispatcher',
         fallbackReason: error.message,
       });
@@ -1676,18 +1707,22 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
           ? [resolvedMcpDispatchIntent.toolName]
           : ['mcp.list_tools'],
       repoInspectionChosen: false,
-      runtimeInspectionChosen: false,
+      runtimeInspectionChosen,
       finalExecutorPayload:
         resolvedMcpDispatchIntent.action === 'mcp.invoke'
           ? {
               executor: 'mcp.invoke',
+              prompt,
               toolName: resolvedMcpDispatchIntent.toolName,
               toolArguments: resolvedMcpDispatchIntent.toolArguments,
               sessionId,
+              runtimeInspectionRequested: runtimeInspectionChosen,
             }
           : {
               executor: 'mcp.list_tools',
+              prompt,
               sessionId,
+              runtimeInspectionRequested: false,
             },
     });
 
@@ -1844,6 +1879,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         selectedRoute: activeEntry.route,
         selectedModule: activeEntry.module,
         selectedTools: finalToolName ? [finalToolName] : ['mcp.list_tools'],
+        runtimeInspectionChosen,
         responseReturned: routedMcpResult,
       });
       return {
@@ -1897,6 +1933,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
           resolvedMcpDispatchIntent.action === 'mcp.invoke'
             ? [resolvedMcpDispatchIntent.toolName]
             : ['mcp.list_tools'],
+        runtimeInspectionChosen,
         fallbackPathUsed: 'mcp-dispatcher',
         fallbackReason: mcpErrorMessage,
       });
