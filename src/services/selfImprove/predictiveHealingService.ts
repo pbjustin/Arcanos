@@ -32,6 +32,8 @@ import {
 import { getEnvNumber } from '@platform/runtime/env.js';
 import { runArcanosCoreQuery } from '@services/arcanos-core.js';
 import { getOpenAIClientOrAdapter } from '@services/openai/clientBridge.js';
+import { createSingleChatCompletion, getFallbackModel } from '@services/openai.js';
+import { getOpenAIServiceHealth } from '@services/openai/serviceHealth.js';
 import { resolvePredictiveHealingLoopIntervalMs } from './runtimeConfig.js';
 import { recordSelfHealEvent } from './selfHealTelemetry.js';
 import {
@@ -265,6 +267,62 @@ export interface PredictiveHealingAutomationStatus {
   lastAutoExecutionResult: PredictiveHealingExecutionStatus | null;
 }
 
+export type PredictiveHealingAIProviderFailureCategory =
+  | 'missing_client'
+  | 'circuit_open'
+  | 'insufficient_quota'
+  | 'rate_limited'
+  | 'authentication'
+  | 'network'
+  | 'timeout'
+  | 'invalid_request'
+  | 'provider_error'
+  | 'unknown';
+
+export interface PredictiveHealingAIProviderStatusSnapshot {
+  configured: boolean;
+  clientInitialized: boolean;
+  reachable: boolean | null;
+  authenticated: boolean | null;
+  completionHealthy: boolean | null;
+  model: string;
+  baseUrl: string | null;
+  lastAttemptAt: string | null;
+  lastSuccessAt: string | null;
+  lastFailureAt: string | null;
+  lastFailureReason: string | null;
+  lastFailureCategory: PredictiveHealingAIProviderFailureCategory | null;
+  lastFailureStatus: number | null;
+  circuitBreakerState: string;
+  circuitBreakerHealthy: boolean;
+  circuitBreakerFailures: number;
+  circuitBreakerLastOpenedAt: string | null;
+  circuitBreakerLastHalfOpenAt: string | null;
+  circuitBreakerLastClosedAt: string | null;
+  circuitBreakerNextRetryAt: string | null;
+}
+
+export interface PredictiveHealingAIProviderProbeSnapshot {
+  performedAt: string;
+  configured: boolean;
+  clientInitialized: boolean;
+  reachable: boolean | null;
+  authenticated: boolean | null;
+  completionHealthy: boolean | null;
+  model: string;
+  baseUrl: string | null;
+  failureReason: string | null;
+  failureCategory: PredictiveHealingAIProviderFailureCategory | null;
+  failureStatus: number | null;
+  circuitBreakerState: string;
+  circuitBreakerHealthy: boolean;
+  circuitBreakerFailures: number;
+  circuitBreakerLastOpenedAt: string | null;
+  circuitBreakerLastHalfOpenAt: string | null;
+  circuitBreakerLastClosedAt: string | null;
+  circuitBreakerNextRetryAt: string | null;
+}
+
 export interface PredictiveHealingStatusSnapshot {
   enabled: boolean;
   dryRun: boolean;
@@ -283,6 +341,7 @@ export interface PredictiveHealingStatusSnapshot {
   detailsPath: '/api/self-heal/decide';
   actuator: WorkerRepairActuatorStatus;
   advisors: string[];
+  aiProvider: PredictiveHealingAIProviderStatusSnapshot;
 }
 
 export interface PredictiveHealingCompactSummary {
@@ -333,6 +392,7 @@ interface PredictiveHealingState {
   recentObservations: PredictiveHealingObservation[];
   recentAudits: PredictiveHealingAuditEntry[];
   actionCooldowns: Map<string, number>;
+  aiProvider: PredictiveHealingAIProviderStatusSnapshot;
 }
 
 interface PredictiveHealingCandidate {
@@ -415,12 +475,77 @@ type PredictiveHealingGlobal = typeof globalThis & {
   [GLOBAL_KEY]?: PredictiveHealingState;
 };
 
+function toIsoTimestamp(value: number | null | undefined): string | null {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return null;
+  }
+
+  return new Date(value).toISOString();
+}
+
+function resolveCircuitBreakerNextRetryAt(health: ReturnType<typeof getOpenAIServiceHealth>): string | null {
+  if (health.circuitBreaker.state !== 'OPEN') {
+    return null;
+  }
+
+  const lastFailureTime =
+    typeof health.circuitBreaker.lastFailureTime === 'number' ? health.circuitBreaker.lastFailureTime : 0;
+  const resetTimeoutMs =
+    typeof health.circuitBreaker.constants?.CIRCUIT_BREAKER_RESET_TIMEOUT_MS === 'number'
+      ? health.circuitBreaker.constants.CIRCUIT_BREAKER_RESET_TIMEOUT_MS
+      : 0;
+
+  return toIsoTimestamp(lastFailureTime + resetTimeoutMs);
+}
+
+function cloneAiProviderStatus(
+  snapshot: PredictiveHealingAIProviderStatusSnapshot
+): PredictiveHealingAIProviderStatusSnapshot {
+  return {
+    ...snapshot
+  };
+}
+
+function buildAiProviderStatusSnapshot(
+  health: ReturnType<typeof getOpenAIServiceHealth>,
+  previous?: Partial<PredictiveHealingAIProviderStatusSnapshot>
+): PredictiveHealingAIProviderStatusSnapshot {
+  return {
+    configured: Boolean(health.apiKey.configured),
+    clientInitialized: Boolean(health.client.initialized),
+    reachable: previous?.reachable ?? null,
+    authenticated: previous?.authenticated ?? null,
+    completionHealthy: previous?.completionHealthy ?? null,
+    model: previous?.model ?? getFallbackModel(),
+    baseUrl: health.client.baseURL ?? previous?.baseUrl ?? null,
+    lastAttemptAt: previous?.lastAttemptAt ?? null,
+    lastSuccessAt: previous?.lastSuccessAt ?? null,
+    lastFailureAt: previous?.lastFailureAt ?? null,
+    lastFailureReason: previous?.lastFailureReason ?? null,
+    lastFailureCategory: previous?.lastFailureCategory ?? null,
+    lastFailureStatus: previous?.lastFailureStatus ?? null,
+    circuitBreakerState: health.circuitBreaker.state,
+    circuitBreakerHealthy: Boolean(health.circuitBreaker.healthy),
+    circuitBreakerFailures:
+      typeof health.circuitBreaker.failureCount === 'number' ? health.circuitBreaker.failureCount : 0,
+    circuitBreakerLastOpenedAt: toIsoTimestamp(health.circuitBreaker.lastOpenedAt),
+    circuitBreakerLastHalfOpenAt: toIsoTimestamp(health.circuitBreaker.lastHalfOpenAt),
+    circuitBreakerLastClosedAt: toIsoTimestamp(health.circuitBreaker.lastClosedAt),
+    circuitBreakerNextRetryAt: resolveCircuitBreakerNextRetryAt(health)
+  };
+}
+
+function createInitialAiProviderStatus(): PredictiveHealingAIProviderStatusSnapshot {
+  return buildAiProviderStatusSnapshot(getOpenAIServiceHealth());
+}
+
 function createInitialState(): PredictiveHealingState {
   return {
     nextAuditSequence: 1,
     recentObservations: [],
     recentAudits: [],
-    actionCooldowns: new Map()
+    actionCooldowns: new Map(),
+    aiProvider: createInitialAiProviderStatus()
   };
 }
 
@@ -430,6 +555,336 @@ function getState(): PredictiveHealingState {
     runtime[GLOBAL_KEY] = createInitialState();
   }
   return runtime[GLOBAL_KEY];
+}
+
+function extractErrorStatus(error: unknown): number | null {
+  if (!error || typeof error !== 'object') {
+    return null;
+  }
+
+  const candidate = error as { status?: unknown; code?: unknown; response?: { status?: unknown } };
+  if (typeof candidate.status === 'number') {
+    return candidate.status;
+  }
+
+  if (typeof candidate.response?.status === 'number') {
+    return candidate.response.status;
+  }
+
+  return null;
+}
+
+function sanitizeProviderFailureReason(reason: string): string {
+  const trimmed = reason.trim();
+  return trimmed.length > 400 ? `${trimmed.slice(0, 397).trimEnd()}...` : trimmed;
+}
+
+function classifyProviderFailure(error: unknown): {
+  reason: string;
+  status: number | null;
+  category: PredictiveHealingAIProviderFailureCategory;
+  reachable: boolean | null;
+  authenticated: boolean | null;
+  completionHealthy: boolean;
+} {
+  const reason = sanitizeProviderFailureReason(resolveErrorMessage(error));
+  const normalizedReason = reason.toLowerCase();
+  const status = extractErrorStatus(error);
+
+  if (reason === 'openai_client_unavailable') {
+    return {
+      reason,
+      status,
+      category: 'missing_client',
+      reachable: null,
+      authenticated: null,
+      completionHealthy: false
+    };
+  }
+
+  if (normalizedReason.includes('circuit breaker is open')) {
+    return {
+      reason,
+      status,
+      category: 'circuit_open',
+      reachable: null,
+      authenticated: null,
+      completionHealthy: false
+    };
+  }
+
+  if (
+    status === 401 ||
+    status === 403 ||
+    normalizedReason.includes('invalid api key') ||
+    normalizedReason.includes('incorrect api key') ||
+    normalizedReason.includes('authentication')
+  ) {
+    return {
+      reason,
+      status,
+      category: 'authentication',
+      reachable: true,
+      authenticated: false,
+      completionHealthy: false
+    };
+  }
+
+  if (status === 429 && (normalizedReason.includes('quota') || normalizedReason.includes('billing'))) {
+    return {
+      reason,
+      status,
+      category: 'insufficient_quota',
+      reachable: true,
+      authenticated: true,
+      completionHealthy: false
+    };
+  }
+
+  if (status === 429) {
+    return {
+      reason,
+      status,
+      category: 'rate_limited',
+      reachable: true,
+      authenticated: true,
+      completionHealthy: false
+    };
+  }
+
+  if (status === 400) {
+    return {
+      reason,
+      status,
+      category: 'invalid_request',
+      reachable: true,
+      authenticated: true,
+      completionHealthy: false
+    };
+  }
+
+  if (status !== null && status >= 500) {
+    return {
+      reason,
+      status,
+      category: 'provider_error',
+      reachable: true,
+      authenticated: true,
+      completionHealthy: false
+    };
+  }
+
+  if (
+    normalizedReason.includes('timed out') ||
+    normalizedReason.includes('timeout') ||
+    normalizedReason.includes('request was aborted') ||
+    normalizedReason.includes('runtime_budget_exhausted')
+  ) {
+    return {
+      reason,
+      status,
+      category: 'timeout',
+      reachable: false,
+      authenticated: null,
+      completionHealthy: false
+    };
+  }
+
+  if (
+    normalizedReason.includes('fetch failed') ||
+    normalizedReason.includes('econnrefused') ||
+    normalizedReason.includes('enotfound') ||
+    normalizedReason.includes('dns') ||
+    normalizedReason.includes('tls') ||
+    normalizedReason.includes('socket')
+  ) {
+    return {
+      reason,
+      status,
+      category: 'network',
+      reachable: false,
+      authenticated: null,
+      completionHealthy: false
+    };
+  }
+
+  return {
+    reason,
+    status,
+    category: 'unknown',
+    reachable: null,
+    authenticated: null,
+    completionHealthy: false
+  };
+}
+
+function updateAiProviderState(
+  state: PredictiveHealingState,
+  updater: (current: PredictiveHealingAIProviderStatusSnapshot) => PredictiveHealingAIProviderStatusSnapshot
+): PredictiveHealingAIProviderStatusSnapshot {
+  const nextSnapshot = updater(buildAiProviderStatusSnapshot(getOpenAIServiceHealth(), state.aiProvider));
+  state.aiProvider = cloneAiProviderStatus(nextSnapshot);
+  return cloneAiProviderStatus(state.aiProvider);
+}
+
+function recordCircuitBreakerTransitionEvents(params: {
+  source: string;
+  eventTimestamp: string;
+  previousHealth: ReturnType<typeof getOpenAIServiceHealth>;
+  nextHealth: ReturnType<typeof getOpenAIServiceHealth>;
+  model: string;
+  correlationId?: string | null;
+}): void {
+  const previousOpenedAt = toIsoTimestamp(params.previousHealth.circuitBreaker.lastOpenedAt);
+  const nextOpenedAt = toIsoTimestamp(params.nextHealth.circuitBreaker.lastOpenedAt);
+  if (nextOpenedAt && nextOpenedAt !== previousOpenedAt) {
+    recordSelfHealEvent({
+      kind: 'CIRCUIT_BREAKER_OPENED',
+      source: params.source,
+      trigger: 'predictive_ai',
+      reason: 'OpenAI circuit breaker opened for the self-heal provider path.',
+      healedComponent: 'ai_provider',
+      correlationId: params.correlationId,
+      details: {
+        state: params.nextHealth.circuitBreaker.state,
+        failures: params.nextHealth.circuitBreaker.failureCount,
+        model: params.model,
+        nextRetryAt: resolveCircuitBreakerNextRetryAt(params.nextHealth)
+      },
+      timestamp: params.eventTimestamp
+    });
+  }
+
+  const previousHalfOpenAt = toIsoTimestamp(params.previousHealth.circuitBreaker.lastHalfOpenAt);
+  const nextHalfOpenAt = toIsoTimestamp(params.nextHealth.circuitBreaker.lastHalfOpenAt);
+  if (nextHalfOpenAt && nextHalfOpenAt !== previousHalfOpenAt) {
+    recordSelfHealEvent({
+      kind: 'CIRCUIT_BREAKER_HALF_OPEN',
+      source: params.source,
+      trigger: 'predictive_ai',
+      reason: 'OpenAI circuit breaker entered half-open recovery mode.',
+      healedComponent: 'ai_provider',
+      correlationId: params.correlationId,
+      details: {
+        state: params.nextHealth.circuitBreaker.state,
+        failures: params.nextHealth.circuitBreaker.failureCount,
+        model: params.model
+      },
+      timestamp: params.eventTimestamp
+    });
+  }
+
+  const previousClosedAt = toIsoTimestamp(params.previousHealth.circuitBreaker.lastClosedAt);
+  const nextClosedAt = toIsoTimestamp(params.nextHealth.circuitBreaker.lastClosedAt);
+  if (nextClosedAt && nextClosedAt !== previousClosedAt) {
+    recordSelfHealEvent({
+      kind: 'CIRCUIT_BREAKER_CLOSED',
+      source: params.source,
+      trigger: 'predictive_ai',
+      reason: 'OpenAI circuit breaker closed after provider recovery.',
+      healedComponent: 'ai_provider',
+      correlationId: params.correlationId,
+      details: {
+        state: params.nextHealth.circuitBreaker.state,
+        failures: params.nextHealth.circuitBreaker.failureCount,
+        model: params.model
+      },
+      timestamp: params.eventTimestamp
+    });
+  }
+}
+
+function recordAiProviderCallAttempt(params: {
+  source: string;
+  reason: string;
+  model: string;
+  actuator: WorkerRepairActuatorStatus;
+}): string {
+  const timestamp = new Date().toISOString();
+  recordSelfHealEvent({
+    kind: 'AI_PROVIDER_CALL_ATTEMPT',
+    source: params.source,
+    trigger: 'predictive_ai',
+    reason: params.reason,
+    healedComponent: 'ai_provider',
+    details: {
+      model: params.model,
+      sourceEndpoint: PREDICTIVE_AI_SOURCE_ENDPOINT,
+      actuatorMode: params.actuator.mode,
+      actuatorPath: params.actuator.path,
+      actuatorBaseUrl: params.actuator.baseUrl
+    },
+    timestamp
+  });
+  return timestamp;
+}
+
+function recordAiProviderCallSuccess(params: {
+  source: string;
+  timestamp: string;
+  model: string;
+  activeModel: string;
+  fallbackFlag: boolean;
+  timeoutKind: string | null | undefined;
+  degradedModeReason: string | null | undefined;
+}): void {
+  recordSelfHealEvent({
+    kind: 'AI_PROVIDER_CALL_SUCCESS',
+    source: params.source,
+    trigger: 'predictive_ai',
+    reason: 'Self-heal AI provider returned a completion.',
+    healedComponent: 'ai_provider',
+    details: {
+      model: params.model,
+      activeModel: params.activeModel,
+      sourceEndpoint: PREDICTIVE_AI_SOURCE_ENDPOINT,
+      fallbackFlag: params.fallbackFlag,
+      timeoutKind: params.timeoutKind ?? null,
+      degradedModeReason: params.degradedModeReason ?? null
+    },
+    timestamp: params.timestamp
+  });
+}
+
+function recordAiProviderCallFailure(params: {
+  source: string;
+  timestamp: string;
+  model: string;
+  classification: ReturnType<typeof classifyProviderFailure>;
+}): void {
+  recordSelfHealEvent({
+    kind: 'AI_PROVIDER_CALL_FAILURE',
+    source: params.source,
+    trigger: 'predictive_ai',
+    reason: params.classification.reason,
+    healedComponent: 'ai_provider',
+    details: {
+      model: params.model,
+      sourceEndpoint: PREDICTIVE_AI_SOURCE_ENDPOINT,
+      failureCategory: params.classification.category,
+      failureStatus: params.classification.status
+    },
+    timestamp: params.timestamp
+  });
+}
+
+async function runWithTimeout<T>(
+  factory: () => Promise<T>,
+  timeoutMs: number,
+  timeoutMessage: string
+): Promise<T> {
+  let timeoutHandle: NodeJS.Timeout | null = null;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutHandle = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+  });
+
+  try {
+    return await Promise.race([factory(), timeoutPromise]);
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
+  }
 }
 
 function roundMetric(value: number, digits = 3): number {
@@ -1057,7 +1512,23 @@ async function resolveAiDecision(params: {
   candidates: Array<Omit<PredictiveHealingCandidate, 'priority'>>;
   minConfidence: number;
 }): Promise<PredictiveHealingDecision> {
+  const state = getState();
   const actuator = buildWorkerRepairActuatorStatus();
+  const expectedModel = getFallbackModel();
+  const preCallHealth = getOpenAIServiceHealth();
+  const attemptAt = recordAiProviderCallAttempt({
+    source: params.source,
+    reason: 'Self-heal requested an AI provider completion for predictive diagnosis.',
+    model: expectedModel,
+    actuator
+  });
+
+  updateAiProviderState(state, (current) => ({
+    ...buildAiProviderStatusSnapshot(preCallHealth, current),
+    model: expectedModel,
+    lastAttemptAt: attemptAt
+  }));
+
   logger.info('self_heal.ai_diagnosis.requested', {
     module: 'predictive-healing',
     source: params.source,
@@ -1073,7 +1544,27 @@ async function resolveAiDecision(params: {
 
   const { client } = getOpenAIClientOrAdapter();
   if (!client) {
-    const fallbackReason = 'openai_client_unavailable';
+    const fallbackFailure = classifyProviderFailure(new Error('openai_client_unavailable'));
+    const providerStatus = updateAiProviderState(state, (current) => ({
+      ...buildAiProviderStatusSnapshot(getOpenAIServiceHealth(), current),
+      model: expectedModel,
+      lastAttemptAt: attemptAt,
+      reachable: fallbackFailure.reachable,
+      authenticated: fallbackFailure.authenticated,
+      completionHealthy: fallbackFailure.completionHealthy,
+      lastFailureAt: attemptAt,
+      lastFailureReason: fallbackFailure.reason,
+      lastFailureCategory: fallbackFailure.category,
+      lastFailureStatus: fallbackFailure.status
+    }));
+
+    const fallbackReason = fallbackFailure.reason;
+    recordAiProviderCallFailure({
+      source: params.source,
+      timestamp: attemptAt,
+      model: expectedModel,
+      classification: fallbackFailure
+    });
     recordSelfHealEvent({
       kind: 'fallback',
       source: params.source,
@@ -1088,12 +1579,28 @@ async function resolveAiDecision(params: {
       aiPath: PREDICTIVE_AI_MODULE,
       sourceEndpoint: PREDICTIVE_AI_SOURCE_ENDPOINT,
       fallbackReason,
-      fallbackAdvisor: 'rules_fallback_v1'
+      fallbackAdvisor: 'rules_fallback_v1',
+      aiProviderConfigured: providerStatus.configured,
+      aiProviderReachable: providerStatus.reachable,
+      aiProviderAuthenticated: providerStatus.authenticated,
+      circuitBreakerState: providerStatus.circuitBreakerState
     });
     return buildFallbackDecision(params.rulesDecision, fallbackReason, {
       actuatorMode: actuator.mode,
       actuatorPath: actuator.path,
-      actuatorBaseUrl: actuator.baseUrl
+      actuatorBaseUrl: actuator.baseUrl,
+      aiProviderConfigured: providerStatus.configured,
+      aiProviderReachable: providerStatus.reachable,
+      aiProviderAuthenticated: providerStatus.authenticated,
+      aiProviderModel: providerStatus.model,
+      aiProviderLastAttemptAt: providerStatus.lastAttemptAt,
+      aiProviderLastFailureAt: providerStatus.lastFailureAt,
+      aiProviderLastFailureReason: providerStatus.lastFailureReason,
+      aiProviderFailureCategory: providerStatus.lastFailureCategory,
+      aiProviderFailureStatus: providerStatus.lastFailureStatus,
+      aiProviderCircuitBreakerState: providerStatus.circuitBreakerState,
+      aiProviderCircuitBreakerFailures: providerStatus.circuitBreakerFailures,
+      aiProviderCircuitBreakerNextRetryAt: providerStatus.circuitBreakerNextRetryAt
     });
   }
 
@@ -1181,6 +1688,38 @@ async function resolveAiDecision(params: {
       };
     }
 
+    const successAt = new Date().toISOString();
+    const postCallHealth = getOpenAIServiceHealth();
+    const providerStatus = updateAiProviderState(state, (current) => ({
+      ...buildAiProviderStatusSnapshot(postCallHealth, current),
+      model: aiResult.activeModel || expectedModel,
+      lastAttemptAt: attemptAt,
+      lastSuccessAt: successAt,
+      reachable: true,
+      authenticated: true,
+      completionHealthy: true,
+      lastFailureReason: null,
+      lastFailureCategory: null,
+      lastFailureStatus: null
+    }));
+
+    recordAiProviderCallSuccess({
+      source: params.source,
+      timestamp: successAt,
+      model: expectedModel,
+      activeModel: aiResult.activeModel,
+      fallbackFlag: aiResult.fallbackFlag,
+      timeoutKind: aiResult.timeoutKind ?? null,
+      degradedModeReason: aiResult.degradedModeReason ?? null
+    });
+    recordCircuitBreakerTransitionEvents({
+      source: params.source,
+      eventTimestamp: successAt,
+      previousHealth: preCallHealth,
+      nextHealth: postCallHealth,
+      model: providerStatus.model
+    });
+
     logger.info('self_heal.ai_diagnosis.result', {
       module: 'predictive-healing',
       source: params.source,
@@ -1193,12 +1732,44 @@ async function resolveAiDecision(params: {
       activeModel: aiResult.activeModel,
       timeoutKind: aiResult.timeoutKind ?? null,
       degradedModeReason: aiResult.degradedModeReason ?? null,
-      bypassedSubsystems: aiResult.bypassedSubsystems ?? []
+      bypassedSubsystems: aiResult.bypassedSubsystems ?? [],
+      aiProviderReachable: providerStatus.reachable,
+      aiProviderAuthenticated: providerStatus.authenticated,
+      circuitBreakerState: providerStatus.circuitBreakerState
     });
 
     return decision;
   } catch (error) {
-    const fallbackReason = resolveErrorMessage(error);
+    const fallbackFailure = classifyProviderFailure(error);
+    const failureAt = new Date().toISOString();
+    const postCallHealth = getOpenAIServiceHealth();
+    const providerStatus = updateAiProviderState(state, (current) => ({
+      ...buildAiProviderStatusSnapshot(postCallHealth, current),
+      model: expectedModel,
+      lastAttemptAt: attemptAt,
+      lastFailureAt: failureAt,
+      lastFailureReason: fallbackFailure.reason,
+      lastFailureCategory: fallbackFailure.category,
+      lastFailureStatus: fallbackFailure.status,
+      reachable: fallbackFailure.reachable,
+      authenticated: fallbackFailure.authenticated,
+      completionHealthy: fallbackFailure.completionHealthy
+    }));
+
+    const fallbackReason = fallbackFailure.reason;
+    recordAiProviderCallFailure({
+      source: params.source,
+      timestamp: failureAt,
+      model: expectedModel,
+      classification: fallbackFailure
+    });
+    recordCircuitBreakerTransitionEvents({
+      source: params.source,
+      eventTimestamp: failureAt,
+      previousHealth: preCallHealth,
+      nextHealth: postCallHealth,
+      model: providerStatus.model
+    });
     recordSelfHealEvent({
       kind: 'fallback',
       source: params.source,
@@ -1213,12 +1784,33 @@ async function resolveAiDecision(params: {
       aiPath: PREDICTIVE_AI_MODULE,
       sourceEndpoint: PREDICTIVE_AI_SOURCE_ENDPOINT,
       fallbackReason,
-      fallbackAdvisor: 'rules_fallback_v1'
+      fallbackAdvisor: 'rules_fallback_v1',
+      failureCategory: fallbackFailure.category,
+      failureStatus: fallbackFailure.status,
+      aiProviderReachable: providerStatus.reachable,
+      aiProviderAuthenticated: providerStatus.authenticated,
+      circuitBreakerState: providerStatus.circuitBreakerState,
+      circuitBreakerFailures: providerStatus.circuitBreakerFailures,
+      circuitBreakerNextRetryAt: providerStatus.circuitBreakerNextRetryAt
     });
     return buildFallbackDecision(params.rulesDecision, fallbackReason, {
       actuatorMode: actuator.mode,
       actuatorPath: actuator.path,
-      actuatorBaseUrl: actuator.baseUrl
+      actuatorBaseUrl: actuator.baseUrl,
+      aiProviderConfigured: providerStatus.configured,
+      aiProviderReachable: providerStatus.reachable,
+      aiProviderAuthenticated: providerStatus.authenticated,
+      aiProviderModel: providerStatus.model,
+      aiProviderLastAttemptAt: providerStatus.lastAttemptAt,
+      aiProviderLastSuccessAt: providerStatus.lastSuccessAt,
+      aiProviderLastFailureAt: providerStatus.lastFailureAt,
+      aiProviderLastFailureReason: providerStatus.lastFailureReason,
+      aiProviderFailureCategory: providerStatus.lastFailureCategory,
+      aiProviderFailureStatus: providerStatus.lastFailureStatus,
+      aiProviderCircuitBreakerState: providerStatus.circuitBreakerState,
+      aiProviderCircuitBreakerFailures: providerStatus.circuitBreakerFailures,
+      aiProviderCircuitBreakerLastOpenedAt: providerStatus.circuitBreakerLastOpenedAt,
+      aiProviderCircuitBreakerNextRetryAt: providerStatus.circuitBreakerNextRetryAt
     });
   }
 }
@@ -2361,6 +2953,104 @@ export async function runPredictiveHealingFromLoop(params: {
   });
 }
 
+export function buildPredictiveHealingAIProviderStatusSnapshot(): PredictiveHealingAIProviderStatusSnapshot {
+  const state = getState();
+  return cloneAiProviderStatus(buildAiProviderStatusSnapshot(getOpenAIServiceHealth(), state.aiProvider));
+}
+
+export async function probePredictiveHealingAIProvider(): Promise<PredictiveHealingAIProviderProbeSnapshot> {
+  const performedAt = new Date().toISOString();
+  const serviceHealth = getOpenAIServiceHealth();
+  const model = getFallbackModel();
+  const baseSnapshot = buildAiProviderStatusSnapshot(serviceHealth, {
+    model,
+    lastAttemptAt: performedAt
+  });
+  const { client } = getOpenAIClientOrAdapter();
+
+  if (!serviceHealth.apiKey.configured || !client) {
+    const failure = classifyProviderFailure(new Error('openai_client_unavailable'));
+    return {
+      performedAt,
+      ...baseSnapshot,
+      reachable: failure.reachable,
+      authenticated: failure.authenticated,
+      completionHealthy: failure.completionHealthy,
+      failureReason: failure.reason,
+      failureCategory: failure.category,
+      failureStatus: failure.status
+    };
+  }
+
+  try {
+    await runWithTimeout(
+      () => client.models.list({ page: 1 } as any),
+      4_000,
+      'OpenAI model-list probe timed out after 4000ms'
+    );
+  } catch (error) {
+    const failure = classifyProviderFailure(error);
+    return {
+      performedAt,
+      ...baseSnapshot,
+      reachable: failure.reachable,
+      authenticated: failure.authenticated,
+      completionHealthy: false,
+      failureReason: failure.reason,
+      failureCategory: failure.category,
+      failureStatus: failure.status
+    };
+  }
+
+  try {
+    await createSingleChatCompletion(client, {
+      model,
+      messages: [{ role: 'user', content: 'Reply with exactly ok.' }],
+      max_completion_tokens: 16,
+      timeoutMs: 6_000
+    });
+
+    const successHealth = getOpenAIServiceHealth();
+    return {
+      performedAt,
+      ...buildAiProviderStatusSnapshot(successHealth, {
+        model,
+        lastAttemptAt: performedAt,
+        lastSuccessAt: performedAt,
+        reachable: true,
+        authenticated: true,
+        completionHealthy: true
+      }),
+      failureReason: null,
+      failureCategory: null,
+      failureStatus: null
+    };
+  } catch (error) {
+    const failure = classifyProviderFailure(error);
+    const failureHealth = getOpenAIServiceHealth();
+    return {
+      performedAt,
+      ...buildAiProviderStatusSnapshot(failureHealth, {
+        model,
+        lastAttemptAt: performedAt,
+        reachable: true,
+        authenticated: true,
+        completionHealthy: false,
+        lastFailureAt: performedAt,
+        lastFailureReason: failure.reason,
+        lastFailureCategory: failure.category,
+        lastFailureStatus: failure.status
+      }),
+      reachable: failure.reachable ?? true,
+      authenticated: failure.authenticated ?? true,
+      completionHealthy: false,
+      failureReason: failure.reason,
+      failureCategory: failure.category,
+      failureStatus: failure.status
+    };
+  }
+}
+
 export function buildPredictiveHealingStatusSnapshot(): PredictiveHealingStatusSnapshot {
   const config = getConfig();
   const state = getState();
@@ -2390,7 +3080,8 @@ export function buildPredictiveHealingStatusSnapshot(): PredictiveHealingStatusS
     recentExecutionLog,
     detailsPath: '/api/self-heal/decide',
     actuator: buildWorkerRepairActuatorStatus(),
-    advisors: [...DEFAULT_ADVISORS]
+    advisors: [...DEFAULT_ADVISORS],
+    aiProvider: buildPredictiveHealingAIProviderStatusSnapshot()
   };
 }
 

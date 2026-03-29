@@ -6,6 +6,10 @@ const recycleWorkerMock = jest.fn();
 const healWorkerRuntimeMock = jest.fn();
 const recordSelfHealEventMock = jest.fn();
 const activateTrinitySelfHealingMitigationMock = jest.fn();
+const getOpenAIClientOrAdapterMock = jest.fn();
+const runArcanosCoreQueryMock = jest.fn();
+const getOpenAIServiceHealthMock = jest.fn();
+const createSingleChatCompletionMock = jest.fn();
 const loggerInfoMock = jest.fn();
 const loggerWarnMock = jest.fn();
 const loggerErrorMock = jest.fn();
@@ -60,13 +64,20 @@ jest.unstable_mockModule('@services/runtimeDiagnosticsService.js', () => ({
 }));
 
 jest.unstable_mockModule('@services/openai/clientBridge.js', () => ({
-  getOpenAIClientOrAdapter: jest.fn(() => ({
-    client: null
-  }))
+  getOpenAIClientOrAdapter: getOpenAIClientOrAdapterMock
 }));
 
 jest.unstable_mockModule('@services/arcanos-core.js', () => ({
-  runArcanosCoreQuery: jest.fn()
+  runArcanosCoreQuery: runArcanosCoreQueryMock
+}));
+
+jest.unstable_mockModule('@services/openai.js', () => ({
+  getFallbackModel: jest.fn(() => 'gpt-4.1'),
+  createSingleChatCompletion: createSingleChatCompletionMock
+}));
+
+jest.unstable_mockModule('@services/openai/serviceHealth.js', () => ({
+  getOpenAIServiceHealth: getOpenAIServiceHealthMock
 }));
 
 jest.unstable_mockModule('@services/workerControlService.js', () => ({
@@ -136,7 +147,9 @@ jest.unstable_mockModule('../src/services/selfImprove/selfHealTelemetry.js', () 
 }));
 
 const {
+  buildPredictiveHealingAIProviderStatusSnapshot,
   buildPredictiveHealingStatusSnapshot,
+  probePredictiveHealingAIProvider,
   resetPredictiveHealingStateForTests,
   runPredictiveHealingDecision,
   runPredictiveHealingFromLoop
@@ -321,6 +334,44 @@ describe('predictive healing execution', () => {
     loggerInfoMock.mockReset();
     loggerWarnMock.mockReset();
     loggerErrorMock.mockReset();
+    getOpenAIClientOrAdapterMock.mockReturnValue({
+      client: null
+    });
+    runArcanosCoreQueryMock.mockReset();
+    createSingleChatCompletionMock.mockReset();
+    getOpenAIServiceHealthMock.mockReturnValue({
+      apiKey: {
+        configured: true,
+        status: 'valid',
+        source: 'OPENAI_API_KEY'
+      },
+      client: {
+        initialized: true,
+        model: 'gpt-4.1',
+        timeout: 8000,
+        baseURL: 'https://api.openai.com/v1'
+      },
+      circuitBreaker: {
+        state: 'CLOSED',
+        failureCount: 0,
+        lastFailureTime: 0,
+        successCount: 0,
+        lastOpenedAt: 0,
+        lastHalfOpenAt: 0,
+        lastClosedAt: Date.parse('2026-03-26T11:59:30.000Z'),
+        healthy: true,
+        constants: {
+          CIRCUIT_BREAKER_RESET_TIMEOUT_MS: 30000
+        }
+      },
+      cache: {
+        enabled: true
+      },
+      lastHealthCheck: '2026-03-26T11:59:30.000Z',
+      defaults: {
+        maxTokens: 1024
+      }
+    });
     getConfigMock.mockReturnValue({
       predictiveHealingEnabled: true,
       predictiveHealingDryRun: false,
@@ -734,5 +785,103 @@ describe('predictive healing execution', () => {
         result: 'executed'
       })
     ]));
+  });
+
+  it('records provider failure diagnostics when the AI completion path exhausts quota', async () => {
+    getOpenAIClientOrAdapterMock.mockReturnValue({
+      client: { models: { list: jest.fn() } }
+    });
+    runArcanosCoreQueryMock.mockRejectedValue(Object.assign(new Error('You exceeded your current quota.'), {
+      status: 429
+    }));
+    getOpenAIServiceHealthMock
+      .mockReturnValueOnce({
+        apiKey: { configured: true, status: 'valid', source: 'OPENAI_API_KEY' },
+        client: { initialized: true, model: 'gpt-4.1', timeout: 8000, baseURL: 'https://api.openai.com/v1' },
+        circuitBreaker: {
+          state: 'CLOSED',
+          failureCount: 0,
+          lastFailureTime: 0,
+          successCount: 0,
+          lastOpenedAt: 0,
+          lastHalfOpenAt: 0,
+          lastClosedAt: Date.parse('2026-03-26T11:59:30.000Z'),
+          healthy: true,
+          constants: { CIRCUIT_BREAKER_RESET_TIMEOUT_MS: 30000 }
+        },
+        cache: { enabled: true },
+        lastHealthCheck: '2026-03-26T11:59:30.000Z',
+        defaults: { maxTokens: 1024 }
+      })
+      .mockReturnValue({
+        apiKey: { configured: true, status: 'valid', source: 'OPENAI_API_KEY' },
+        client: { initialized: true, model: 'gpt-4.1', timeout: 8000, baseURL: 'https://api.openai.com/v1' },
+        circuitBreaker: {
+          state: 'OPEN',
+          failureCount: 5,
+          lastFailureTime: Date.parse('2026-03-26T12:00:00.000Z'),
+          successCount: 0,
+          lastOpenedAt: Date.parse('2026-03-26T12:00:00.000Z'),
+          lastHalfOpenAt: 0,
+          lastClosedAt: Date.parse('2026-03-26T11:59:30.000Z'),
+          healthy: false,
+          constants: { CIRCUIT_BREAKER_RESET_TIMEOUT_MS: 30000 }
+        },
+        cache: { enabled: true },
+        lastHealthCheck: '2026-03-26T12:00:00.000Z',
+        defaults: { maxTokens: 1024 }
+      });
+
+    const result = await runPredictiveHealingDecision({
+      source: 'predictive_test_quota_failure',
+      observation: createObservation()
+    });
+    const providerSnapshot = buildPredictiveHealingAIProviderStatusSnapshot();
+
+    expect(result.decision.advisor).toBe('rules_fallback_v1');
+    expect(result.decision.details).toMatchObject({
+      aiFallbackReason: expect.stringContaining('quota'),
+      aiProviderFailureCategory: 'insufficient_quota',
+      aiProviderFailureStatus: 429,
+      aiProviderCircuitBreakerState: 'OPEN'
+    });
+    expect(providerSnapshot).toMatchObject({
+      configured: true,
+      reachable: true,
+      authenticated: true,
+      completionHealthy: false,
+      lastFailureCategory: 'insufficient_quota',
+      lastFailureStatus: 429,
+      circuitBreakerState: 'OPEN',
+      circuitBreakerFailures: 5
+    });
+    expect(recordSelfHealEventMock).toHaveBeenCalledWith(expect.objectContaining({ kind: 'AI_PROVIDER_CALL_ATTEMPT' }));
+    expect(recordSelfHealEventMock).toHaveBeenCalledWith(expect.objectContaining({ kind: 'AI_PROVIDER_CALL_FAILURE' }));
+    expect(recordSelfHealEventMock).toHaveBeenCalledWith(expect.objectContaining({ kind: 'CIRCUIT_BREAKER_OPENED' }));
+  });
+
+  it('separates auth reachability from completion health in the provider probe', async () => {
+    getOpenAIClientOrAdapterMock.mockReturnValue({
+      client: {
+        models: {
+          list: jest.fn().mockResolvedValue({ data: [] })
+        }
+      }
+    });
+    createSingleChatCompletionMock.mockRejectedValue(
+      Object.assign(new Error('You exceeded your current quota.'), { status: 429 })
+    );
+
+    const probe = await probePredictiveHealingAIProvider();
+
+    expect(probe).toMatchObject({
+      configured: true,
+      clientInitialized: true,
+      reachable: true,
+      authenticated: true,
+      completionHealthy: false,
+      failureCategory: 'insufficient_quota',
+      failureStatus: 429
+    });
   });
 });

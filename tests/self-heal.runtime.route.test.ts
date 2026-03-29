@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 const mockBuildSelfHealRuntimeSnapshot = jest.fn();
 const mockBuildSelfHealEventsSnapshot = jest.fn();
 const mockBuildSelfHealInspectionSnapshot = jest.fn();
+const mockBuildSelfHealProviderHealthSnapshot = jest.fn();
 
 jest.unstable_mockModule('@transport/http/middleware/capabilityGate.js', () => ({
   capabilityGate: () => (_req: unknown, _res: unknown, next: () => void) => next(),
@@ -16,6 +17,7 @@ jest.unstable_mockModule('@services/selfHealRuntimeInspectionService.js', () => 
   buildSelfHealRuntimeSnapshot: mockBuildSelfHealRuntimeSnapshot,
   buildSelfHealEventsSnapshot: mockBuildSelfHealEventsSnapshot,
   buildSelfHealInspectionSnapshot: mockBuildSelfHealInspectionSnapshot,
+  buildSelfHealProviderHealthSnapshot: mockBuildSelfHealProviderHealthSnapshot,
 }));
 
 const express = (await import('express')).default;
@@ -64,6 +66,33 @@ describe('self-heal runtime routes', () => {
         workerEvidence: 10,
       },
     });
+    mockBuildSelfHealProviderHealthSnapshot.mockResolvedValue({
+      status: 'ok',
+      timestamp: '2026-03-27T00:00:00.000Z',
+      provider: {
+        configured: true,
+        clientInitialized: true,
+        reachable: true,
+        authenticated: true,
+        completionHealthy: true,
+        model: 'gpt-4.1',
+        baseUrl: 'https://api.openai.com/v1',
+        lastAttemptAt: '2026-03-27T00:00:00.000Z',
+        lastSuccessAt: '2026-03-27T00:00:00.000Z',
+        lastFailureAt: null,
+        lastFailureReason: null,
+        lastFailureCategory: null,
+        lastFailureStatus: null,
+        circuitBreakerState: 'CLOSED',
+        circuitBreakerHealthy: true,
+        circuitBreakerFailures: 0,
+        circuitBreakerLastOpenedAt: null,
+        circuitBreakerLastHalfOpenAt: null,
+        circuitBreakerLastClosedAt: '2026-03-27T00:00:00.000Z',
+        circuitBreakerNextRetryAt: null,
+      },
+      probe: null,
+    });
   });
 
   it('exposes self-heal runtime and event snapshots', async () => {
@@ -97,5 +126,17 @@ describe('self-heal runtime routes', () => {
       },
     });
     expect(mockBuildSelfHealInspectionSnapshot).toHaveBeenCalledWith(7);
+
+    const providerHealthResponse = await request(app).get('/api/self-heal/provider-health?probe=true');
+    expect(providerHealthResponse.status).toBe(200);
+    expect(providerHealthResponse.body).toMatchObject({
+      status: 'ok',
+      provider: {
+        configured: true,
+        completionHealthy: true,
+        model: 'gpt-4.1',
+      },
+    });
+    expect(mockBuildSelfHealProviderHealthSnapshot).toHaveBeenCalledWith(true);
   });
 });

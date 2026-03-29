@@ -9,6 +9,7 @@ import {
 import {
   buildSelfHealEventsSnapshot,
   buildSelfHealInspectionSnapshot,
+  buildSelfHealProviderHealthSnapshot,
   buildSelfHealRuntimeSnapshot,
 } from '@services/selfHealRuntimeInspectionService.js';
 import { sendInternalErrorPayload } from '@shared/http/index.js';
@@ -157,6 +158,20 @@ router.get('/api/self-heal/inspection', async (req: Request, res: Response) => {
     sendInternalErrorPayload(res, {
       error: resolveErrorMessage(error),
       where: 'self-heal/inspection'
+    });
+  }
+});
+
+router.get('/api/self-heal/provider-health', async (req: Request, res: Response) => {
+  try {
+    const probeRequested =
+      typeof req.query.probe === 'string' &&
+      ['1', 'true', 'yes'].includes(req.query.probe.trim().toLowerCase());
+    res.json(await buildSelfHealProviderHealthSnapshot(probeRequested));
+  } catch (error) {
+    sendInternalErrorPayload(res, {
+      error: resolveErrorMessage(error),
+      where: 'self-heal/provider-health'
     });
   }
 });

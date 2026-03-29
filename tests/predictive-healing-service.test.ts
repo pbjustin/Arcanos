@@ -1,5 +1,39 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
+const getOpenAIServiceHealthMock = jest.fn(() => ({
+  apiKey: {
+    configured: true,
+    status: 'valid',
+    source: 'OPENAI_API_KEY'
+  },
+  client: {
+    initialized: true,
+    model: 'gpt-4.1',
+    timeout: 8000,
+    baseURL: 'https://api.openai.com/v1'
+  },
+  circuitBreaker: {
+    state: 'CLOSED',
+    failureCount: 0,
+    lastFailureTime: 0,
+    successCount: 0,
+    lastOpenedAt: 0,
+    lastHalfOpenAt: 0,
+    lastClosedAt: 0,
+    healthy: true,
+    constants: {
+      CIRCUIT_BREAKER_RESET_TIMEOUT_MS: 30000
+    }
+  },
+  cache: {
+    enabled: true
+  },
+  lastHealthCheck: '2026-03-26T12:00:00.000Z',
+  defaults: {
+    maxTokens: 1024
+  }
+}));
+
 jest.unstable_mockModule('@platform/runtime/workerConfig.js', () => ({
   getWorkerRuntimeStatus: jest.fn(),
   recycleWorker: jest.fn(),
@@ -39,6 +73,15 @@ jest.unstable_mockModule('@services/openai/clientBridge.js', () => ({
 
 jest.unstable_mockModule('@services/arcanos-core.js', () => ({
   runArcanosCoreQuery: jest.fn()
+}));
+
+jest.unstable_mockModule('@services/openai.js', () => ({
+  getFallbackModel: jest.fn(() => 'gpt-4.1'),
+  createSingleChatCompletion: jest.fn()
+}));
+
+jest.unstable_mockModule('@services/openai/serviceHealth.js', () => ({
+  getOpenAIServiceHealth: getOpenAIServiceHealthMock
 }));
 
 jest.unstable_mockModule('@services/workerControlService.js', () => ({

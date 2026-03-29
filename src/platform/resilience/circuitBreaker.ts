@@ -22,13 +22,17 @@ export class CircuitBreaker {
   private failureCount = 0;
   private lastFailureTime = 0;
   private successCount = 0;
+  private lastOpenedAt = 0;
+  private lastHalfOpenAt = 0;
+  private lastClosedAt = Date.now();
+  private lastStateChangeTime = this.lastClosedAt;
   
   constructor(private options: CircuitBreakerOptions) {}
 
   async execute<T>(operation: () => Promise<T>): Promise<T> {
     if (this.state === CircuitBreakerState.OPEN) {
       if (this.shouldAttemptReset()) {
-        this.state = CircuitBreakerState.HALF_OPEN;
+        this.transitionTo(CircuitBreakerState.HALF_OPEN);
         console.log('🔄 Circuit breaker transitioning to HALF_OPEN state');
       } else {
         throw new Error(`Circuit breaker is OPEN. Last failure: ${new Date(this.lastFailureTime).toISOString()}`);
@@ -52,7 +56,7 @@ export class CircuitBreaker {
       this.successCount++;
       // Require multiple successes to fully close
       if (this.successCount >= 2) {
-        this.state = CircuitBreakerState.CLOSED;
+        this.transitionTo(CircuitBreakerState.CLOSED);
         this.successCount = 0;
         console.log('✅ Circuit breaker CLOSED - service recovered');
       }
@@ -65,9 +69,30 @@ export class CircuitBreaker {
     this.successCount = 0;
 
     if (this.failureCount >= this.options.failureThreshold) {
-      this.state = CircuitBreakerState.OPEN;
+      this.transitionTo(CircuitBreakerState.OPEN);
       console.warn(`🚨 Circuit breaker OPEN - failure threshold (${this.options.failureThreshold}) exceeded`);
     }
+  }
+
+  private transitionTo(nextState: CircuitBreakerState): void {
+    if (this.state === nextState) {
+      return;
+    }
+
+    this.state = nextState;
+    this.lastStateChangeTime = Date.now();
+
+    if (nextState === CircuitBreakerState.OPEN) {
+      this.lastOpenedAt = this.lastStateChangeTime;
+      return;
+    }
+
+    if (nextState === CircuitBreakerState.HALF_OPEN) {
+      this.lastHalfOpenAt = this.lastStateChangeTime;
+      return;
+    }
+
+    this.lastClosedAt = this.lastStateChangeTime;
   }
 
   private shouldAttemptReset(): boolean {
@@ -83,7 +108,11 @@ export class CircuitBreaker {
       state: this.state,
       failureCount: this.failureCount,
       lastFailureTime: this.lastFailureTime,
-      successCount: this.successCount
+      successCount: this.successCount,
+      lastOpenedAt: this.lastOpenedAt,
+      lastHalfOpenAt: this.lastHalfOpenAt,
+      lastClosedAt: this.lastClosedAt,
+      lastStateChangeTime: this.lastStateChangeTime
     };
   }
 }

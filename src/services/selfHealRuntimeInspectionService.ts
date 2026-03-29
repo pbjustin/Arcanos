@@ -6,9 +6,7 @@ import {
   listPromptDebugTraces,
   type PromptDebugTraceRecord,
 } from '@services/promptDebugTraceService.js';
-import {
-  buildPredictiveHealingStatusSnapshot,
-} from '@services/selfImprove/predictiveHealingService.js';
+import * as predictiveHealingService from '@services/selfImprove/predictiveHealingService.js';
 import {
   buildSelfHealTelemetrySnapshot,
   inferSelfHealComponentFromAction,
@@ -252,8 +250,9 @@ function deriveInspectionFields(params: {
   loopStatus: ReturnType<typeof getSelfHealingLoopStatus>;
   controlLoop: ReturnType<typeof getSelfHealingControlLoopStatus>;
   telemetry: SelfHealTelemetrySnapshot;
+  aiProvider: predictiveHealingService.PredictiveHealingAIProviderStatusSnapshot;
 }) {
-  const { timestamp, loopStatus, controlLoop, telemetry } = params;
+  const { timestamp, loopStatus, controlLoop, telemetry, aiProvider } = params;
   const combinedEnabled = Boolean(telemetry.enabled || controlLoop.active || controlLoop.loopRunning);
   const combinedActive = Boolean(
     telemetry.active ||
@@ -388,6 +387,22 @@ function deriveInspectionFields(params: {
     lastWorkerReceipt,
     lastHealResult,
     timeline,
+    aiProviderConfigured: aiProvider.configured,
+    aiProviderReachable: aiProvider.reachable,
+    aiProviderAuthenticated: aiProvider.authenticated,
+    aiProviderCompletionHealthy: aiProvider.completionHealthy,
+    aiProviderModel: aiProvider.model,
+    aiProviderBaseUrl: aiProvider.baseUrl,
+    aiProviderLastAttemptAt: aiProvider.lastAttemptAt,
+    aiProviderLastSuccessAt: aiProvider.lastSuccessAt,
+    aiProviderLastFailureAt: aiProvider.lastFailureAt,
+    aiProviderLastFailureReason: aiProvider.lastFailureReason,
+    circuitBreakerState: aiProvider.circuitBreakerState,
+    circuitBreakerHealthy: aiProvider.circuitBreakerHealthy,
+    circuitBreakerFailures: aiProvider.circuitBreakerFailures,
+    circuitBreakerLastOpenedAt: aiProvider.circuitBreakerLastOpenedAt,
+    circuitBreakerNextRetryAt: aiProvider.circuitBreakerNextRetryAt,
+    aiProvider,
   };
 }
 
@@ -398,12 +413,38 @@ export function buildSelfHealRuntimeSnapshot() {
   const trinityStatus = getTrinitySelfHealingStatus();
   const promptRouteMitigation = getPromptRouteMitigationState();
   const telemetry = buildTelemetrySnapshot();
-  const predictiveHealing = buildPredictiveHealingStatusSnapshot();
+  const predictiveHealing = predictiveHealingService.buildPredictiveHealingStatusSnapshot();
+  const aiProvider =
+    predictiveHealing.aiProvider ??
+    predictiveHealingService.buildPredictiveHealingAIProviderStatusSnapshot?.() ??
+    {
+      configured: false,
+      clientInitialized: false,
+      reachable: null,
+      authenticated: null,
+      completionHealthy: null,
+      model: 'unknown',
+      baseUrl: null,
+      lastAttemptAt: null,
+      lastSuccessAt: null,
+      lastFailureAt: null,
+      lastFailureReason: null,
+      lastFailureCategory: null,
+      lastFailureStatus: null,
+      circuitBreakerState: 'UNKNOWN',
+      circuitBreakerHealthy: false,
+      circuitBreakerFailures: 0,
+      circuitBreakerLastOpenedAt: null,
+      circuitBreakerLastHalfOpenAt: null,
+      circuitBreakerLastClosedAt: null,
+      circuitBreakerNextRetryAt: null,
+    };
   const inspection = deriveInspectionFields({
     timestamp,
     loopStatus,
     controlLoop,
     telemetry,
+    aiProvider,
   });
 
   return {
@@ -434,6 +475,25 @@ export function buildSelfHealEventsSnapshot(limit = DEFAULT_EVENTS_LIMIT) {
     lastSuccess: runtimeSnapshot.telemetry.lastSuccess,
     lastFailure: runtimeSnapshot.telemetry.lastFailure,
     lastFallback: runtimeSnapshot.telemetry.lastFallback,
+  };
+}
+
+export async function buildSelfHealProviderHealthSnapshot(
+  probe = false
+): Promise<{
+  status: 'ok';
+  timestamp: string;
+  provider: predictiveHealingService.PredictiveHealingAIProviderStatusSnapshot;
+  probe: Awaited<ReturnType<typeof predictiveHealingService.probePredictiveHealingAIProvider>> | null;
+}> {
+  const runtimeSnapshot = buildSelfHealRuntimeSnapshot();
+  return {
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    provider: runtimeSnapshot.aiProvider,
+    probe: probe && predictiveHealingService.probePredictiveHealingAIProvider
+      ? await predictiveHealingService.probePredictiveHealingAIProvider()
+      : null,
   };
 }
 

@@ -515,10 +515,16 @@ function buildAIDiagnosisFromPredictiveResult(
   requestedAt: string
 ): SelfHealingAIDiagnosis {
   if (isPredictiveAIFallback(predictiveResult)) {
+    const aiFallbackReason =
+      typeof predictiveResult.decision.details?.aiFallbackReason === 'string' &&
+      predictiveResult.decision.details.aiFallbackReason.trim().length > 0
+        ? predictiveResult.decision.details.aiFallbackReason.trim()
+        : predictiveResult.decision.reason;
+
     return buildDeterministicAIDiagnosis(
       diagnosis,
       requestedAt,
-      `AI unavailable; deterministic fallback selected. ${predictiveResult.decision.reason}`
+      `AI unavailable; deterministic fallback selected. ${aiFallbackReason}`
     );
   }
 

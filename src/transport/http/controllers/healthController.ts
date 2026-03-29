@@ -62,6 +62,10 @@ function buildFallbackOpenAIHealth(): OpenAIServiceHealth {
         failureCount: 0,
         lastFailureTime: 0,
         successCount: 0,
+        lastOpenedAt: 0,
+        lastHalfOpenAt: 0,
+        lastClosedAt: 0,
+        lastStateChangeTime: 0,
         constants: RESILIENCE_CONSTANTS,
         healthy: false
       },

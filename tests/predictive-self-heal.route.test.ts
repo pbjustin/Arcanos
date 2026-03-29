@@ -15,6 +15,51 @@ jest.unstable_mockModule('@services/selfHealRuntimeInspectionService.js', () => 
     count: 0,
     events: []
   })),
+  buildSelfHealInspectionSnapshot: jest.fn(async () => ({
+    status: 'ok',
+    timestamp: '2026-03-26T12:00:00.000Z',
+    summary: 'mocked inspection',
+    evidence: {
+      selfHealRuntimeSnapshot: { status: 'ok' },
+      recentSelfHealEvents: [],
+      recentPromptDebugEvents: [],
+      recentAIRoutingEvents: [],
+      recentWorkerEvidence: []
+    },
+    limits: {
+      selfHealEvents: 10,
+      promptDebugEvents: 10,
+      aiRoutingEvents: 10,
+      workerEvidence: 10
+    }
+  })),
+  buildSelfHealProviderHealthSnapshot: jest.fn(async () => ({
+    status: 'ok',
+    timestamp: '2026-03-26T12:00:00.000Z',
+    provider: {
+      configured: false,
+      clientInitialized: false,
+      reachable: null,
+      authenticated: null,
+      completionHealthy: null,
+      model: 'unknown',
+      baseUrl: null,
+      lastAttemptAt: null,
+      lastSuccessAt: null,
+      lastFailureAt: null,
+      lastFailureReason: null,
+      lastFailureCategory: null,
+      lastFailureStatus: null,
+      circuitBreakerState: 'UNKNOWN',
+      circuitBreakerHealthy: false,
+      circuitBreakerFailures: 0,
+      circuitBreakerLastOpenedAt: null,
+      circuitBreakerLastHalfOpenAt: null,
+      circuitBreakerLastClosedAt: null,
+      circuitBreakerNextRetryAt: null
+    },
+    probe: null
+  })),
   buildSelfHealRuntimeSnapshot: jest.fn(() => ({
     status: 'ok',
     timestamp: '2026-03-26T12:00:00.000Z'
