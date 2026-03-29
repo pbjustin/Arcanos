@@ -17,6 +17,7 @@ import {
 import type { AskResponse } from './types.js';
 
 const DEFAULT_DAG_TRACE_SLOW_MS = 1_500;
+const DEFAULT_MIN_POST_CREATE_INSPECTION_BUDGET_MS = 1_500;
 
 const DAG_TOOL_SYSTEM_PROMPT = [
   'You are ARCANOS in DAG orchestration mode.',
@@ -592,7 +593,7 @@ export async function tryExecuteDeterministicDagTools(
           typeof context.minPostCreateInspectionBudgetMs === 'number' &&
           Number.isFinite(context.minPostCreateInspectionBudgetMs)
             ? context.minPostCreateInspectionBudgetMs
-            : 1_500;
+            : DEFAULT_MIN_POST_CREATE_INSPECTION_BUDGET_MS;
         const elapsedMs = Date.now() - executionStartedAt;
         const remainingBudgetMs = budgetMs === null ? null : budgetMs - elapsedMs;
         const allowPostCreateInspection = remainingBudgetMs === null || remainingBudgetMs > minPostCreateInspectionBudgetMs;

@@ -647,6 +647,7 @@ describe('routeGptRequest MCP dispatch branch', () => {
     mockTryExecuteDeterministicDagTools.mockResolvedValue({
       summary: `Started DAG run ${runId}.`,
       runId,
+      deferredToolNames: [],
       operations: selectedTools.map((toolName) => ({
         toolName:
           toolName === 'dag.run.create'

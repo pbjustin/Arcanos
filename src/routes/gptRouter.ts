@@ -25,12 +25,9 @@ import {
 } from '@arcanos/runtime';
 import { hasDagOrchestrationIntentCue } from '@services/naturalLanguageMemory.js';
 import { recordDagTraceTimeout } from '@platform/observability/appMetrics.js';
+import { shouldTreatPromptAsDagExecution } from '@shared/dag/dagExecutionRouting.js';
 
 const router = express.Router();
-const DAG_EXECUTION_VERB_PATTERN = /\b(?:create|start|launch|run|trigger|execute|kick\s*off)\b/i;
-const DAG_EXECUTION_SUBJECT_PATTERN = /\b(?:dag|workflow|orchestration|pipeline)\b/i;
-const DAG_EXECUTION_ARTIFACT_PATTERN =
-  /\b(?:trace|tree|graph|nodes?|events?|metrics?|errors?|failures?|lineage|verification|verify|validated?)\b/i;
 
 function tryParseBodyRecord(value: string): Record<string, unknown> | null {
   try {
@@ -96,11 +93,7 @@ function shouldUseDagExecutionTimeoutProfile(prompt: string | null): boolean {
     return false;
   }
 
-  if (!DAG_EXECUTION_VERB_PATTERN.test(prompt)) {
-    return false;
-  }
-
-  return DAG_EXECUTION_SUBJECT_PATTERN.test(prompt) || DAG_EXECUTION_ARTIFACT_PATTERN.test(prompt);
+  return shouldTreatPromptAsDagExecution(prompt);
 }
 
 function resolveBodyGptId(body: unknown): string | null {

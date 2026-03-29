@@ -27,6 +27,10 @@ import { isRecord } from "@shared/typeGuards.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import type { Request } from "express";
 import {
+  buildDagRunFollowUpPaths,
+  shouldTreatPromptAsDagExecution,
+} from "@shared/dag/dagExecutionRouting.js";
+import {
   getRequestAbortContext,
   getRequestRemainingMs,
   isAbortError,
@@ -311,12 +315,6 @@ const automaticRuntimeVerificationVerbPattern =
   /\b(?:verify|check|confirm|validate|inspect|test|probe)\b/i;
 const automaticRuntimeVerificationStrongCuePattern =
   /\b(?:verify\s+in\s+production|currently\s+active|system\s+health|health\s+probe|live\s+verification)\b/i;
-const automaticDagExecutionVerbPattern =
-  /\b(?:create|start|launch|run|trigger|execute|kick\s*off)\b/i;
-const automaticDagExecutionSubjectPattern =
-  /\b(?:dag\s+run|workflow|orchestration|pipeline)\b/i;
-const automaticDagExecutionArtifactPattern =
-  /\b(?:trace|tree|graph|nodes?|events?|metrics?|errors?|failures?|lineage|verification|verify|validated?)\b/i;
 
 function shouldAutoInspectRuntimeVerificationPrompt(prompt: string | null): boolean {
   if (!prompt || !shouldInspectRuntimePrompt(prompt)) {
@@ -362,14 +360,7 @@ function shouldPreferAutomaticDagExecution(params: {
     return false;
   }
 
-  if (!automaticDagExecutionVerbPattern.test(prompt)) {
-    return false;
-  }
-
-  return (
-    automaticDagExecutionSubjectPattern.test(prompt) ||
-    (/\bdag\b/i.test(prompt) && automaticDagExecutionArtifactPattern.test(prompt))
-  );
+  return shouldTreatPromptAsDagExecution(prompt, { requireDagTokenForArtifact: true });
 }
 
 function mapDagToolNameToDispatcherAction(toolName: string): string {
@@ -457,17 +448,7 @@ function buildAutomaticDagDispatchResult(
     ]),
   );
   const runId = execution.runId;
-  const followUp = runId
-    ? {
-        runId,
-        trace: `/api/arcanos/dag/runs/${runId}/trace`,
-        tree: `/api/arcanos/dag/runs/${runId}/tree`,
-        lineage: `/api/arcanos/dag/runs/${runId}/lineage`,
-        metrics: `/api/arcanos/dag/runs/${runId}/metrics`,
-        errors: `/api/arcanos/dag/runs/${runId}/errors`,
-        verification: `/api/arcanos/dag/runs/${runId}/verification`,
-      }
-    : null;
+  const followUp = runId ? buildDagRunFollowUpPaths(runId) : null;
 
   return {
     primaryAction,
@@ -483,8 +464,8 @@ function buildAutomaticDagDispatchResult(
         artifacts,
         artifactKeys: Object.keys(artifacts),
         deferredTools: {
-          total: (execution.deferredToolNames ?? []).length,
-          tools: (execution.deferredToolNames ?? []).map(toolName =>
+          total: execution.deferredToolNames.length,
+          tools: execution.deferredToolNames.map(toolName =>
             mapDagToolNameToDispatcherAction(toolName),
           ),
         },
@@ -1689,12 +1670,13 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     })
   ) {
     try {
+      const requestBudgetMs = getRequestRemainingMs();
       const deterministicDagExecution = await tryExecuteDeterministicDagTools(prompt!, {
         sessionId,
         requestId: promptDebugRequestId,
-        traceId: request?.traceId ?? undefined,
-        requestBudgetMs: getRequestRemainingMs() ?? undefined,
+        traceId: request?.traceId,
         logger,
+        ...(typeof requestBudgetMs === 'number' ? { requestBudgetMs } : {}),
       });
 
       if (deterministicDagExecution) {
@@ -1750,7 +1732,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
           handler: 'dag-dispatcher',
           outcome: 'ok',
         });
-        recordPromptDebugTrace(promptDebugRequestId, 'executor', {
+        const dagDispatchTracePayload = {
           traceId: request?.traceId ?? null,
           endpoint: requestEndpoint ?? '/gpt/:gptId',
           method: request?.method ?? null,
@@ -1767,24 +1749,10 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
             runId: deterministicDagExecution.runId,
             selectedTools: dagDispatch.selectedTools,
           },
-        });
+        };
+        recordPromptDebugTrace(promptDebugRequestId, 'executor', dagDispatchTracePayload);
         recordPromptDebugTrace(promptDebugRequestId, 'response', {
-          traceId: request?.traceId ?? null,
-          endpoint: requestEndpoint ?? '/gpt/:gptId',
-          method: request?.method ?? null,
-          rawPrompt,
-          normalizedPrompt,
-          selectedRoute: activeEntry.route,
-          selectedModule: activeEntry.module,
-          selectedTools: dagDispatch.selectedTools,
-          repoInspectionChosen: false,
-          runtimeInspectionChosen: false,
-          finalExecutorPayload: {
-            executor: 'dag-dispatcher',
-            prompt,
-            runId: deterministicDagExecution.runId,
-            selectedTools: dagDispatch.selectedTools,
-          },
+          ...dagDispatchTracePayload,
           responseReturned: dagDispatch.responsePayload,
         });
         return {
