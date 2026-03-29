@@ -8,6 +8,7 @@ import {
   inferSelfHealComponentFromRequest,
   recordSelfHealEvent
 } from '@services/selfImprove/selfHealTelemetry.js';
+import { recordSelfHealingHttpSignal } from '@services/selfImprove/signals.js';
 import {
   recordHttpRequestCompletion,
   recordHttpRequestEnd,
@@ -170,6 +171,13 @@ export function requestContext(req: Request, res: Response, next: NextFunction):
     };
 
     runtimeDiagnosticsService.recordRequestCompletion(statusCode, latencyMs, route, degradedMetadata);
+    recordSelfHealingHttpSignal({
+      route,
+      method: req.method,
+      statusCode,
+      latencyMs,
+      requestId
+    });
 
     if (
       degradedMetadata.timeoutKind !== null ||

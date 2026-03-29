@@ -2,6 +2,10 @@ import express from 'express';
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import requestContext from '../src/middleware/requestContext.js';
+import {
+  getSelfHealingSignalsSince,
+  resetSelfHealingSignalsForTests
+} from '../src/services/selfImprove/signals.js';
 import errorHandler from '../src/transport/http/middleware/errorHandler.js';
 
 type LoggedPayload = {
@@ -34,9 +38,11 @@ describe('requestContext security logging', () => {
 
   beforeEach(() => {
     consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => undefined);
+    resetSelfHealingSignalsForTests();
   });
 
   afterEach(() => {
+    resetSelfHealingSignalsForTests();
     consoleLogSpy.mockRestore();
   });
 
@@ -114,5 +120,27 @@ describe('requestContext security logging', () => {
       error: 'invalid request schema',
       code: 400
     });
+  });
+
+  it('records self-healing signals for completed operational requests', async () => {
+    const app = express();
+    app.use(requestContext);
+    app.get('/api/arcanos/health', (_req, res) => {
+      res.status(200).json({ status: 'healthy' });
+    });
+
+    await request(app).get('/api/arcanos/health');
+
+    const signals = getSelfHealingSignalsSince(0).filter((signal) => signal.kind === 'http');
+    expect(signals).toHaveLength(1);
+    expect(signals[0]).toMatchObject({
+      route: '/api/arcanos/health',
+      method: 'GET',
+      statusCode: 200,
+      expected: false,
+      cluster: null
+    });
+    expect(signals[0]?.requestId).toEqual(expect.any(String));
+    expect(signals[0]?.latencyMs).toEqual(expect.any(Number));
   });
 });
