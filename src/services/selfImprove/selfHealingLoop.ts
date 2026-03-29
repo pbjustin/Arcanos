@@ -753,6 +753,20 @@ async function aiDiagnoseAndDecide(params: {
   diagnosis: SelfHealingDiagnosis;
   observation: SelfHealingObservation;
 }): Promise<SelfHealingAIDiagnosisResult> {
+  logger.info('self_heal.ai_path.executed', {
+    module: 'self_heal.loop',
+    source: 'self_heal_loop',
+    marker: '[SELF-HEAL] AI PATH EXECUTED v2',
+    trigger: params.trigger,
+    diagnosisType: params.diagnosis.type,
+    incidentKey: params.diagnosis.incidentKey
+  });
+  recordTraceEvent('self_heal.ai_path.executed', {
+    marker: '[SELF-HEAL] AI PATH EXECUTED v2',
+    trigger: params.trigger,
+    diagnosisType: params.diagnosis.type,
+    incidentKey: params.diagnosis.incidentKey
+  });
   const requestedAt = new Date().toISOString();
   const recommendedAction = getSelfHealingActionRecommendation(params.diagnosis.actionPlan);
   const recommendedTarget = params.diagnosis.actionPlan
