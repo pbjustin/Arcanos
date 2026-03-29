@@ -10,7 +10,6 @@ import { TRINITY_CORE_DAG_TEMPLATE_NAME } from '@dag/templates.js';
 import {
   appendUniqueDeterministicOperation,
   buildToolAskResponse,
-  executeDeterministicToolOperations,
   runAskToolMode,
   type DeterministicToolOperation,
   type ToolExecutionResult,
@@ -268,6 +267,8 @@ interface DagToolContext {
   sessionId?: string;
   requestId?: string;
   traceId?: string;
+  requestBudgetMs?: number;
+  minPostCreateInspectionBudgetMs?: number;
   logger?: {
     info?: (event: string, data?: Record<string, unknown>) => void;
     warn?: (event: string, data?: Record<string, unknown>) => void;
@@ -291,14 +292,29 @@ type DagControlToolName =
 
 interface DeterministicDagOperation extends DeterministicToolOperation<DagControlToolName> {}
 
+export interface DagDeterministicExecutionStep {
+  toolName: DagControlToolName;
+  output: Record<string, unknown>;
+  summary: string;
+}
+
+export interface DagDeterministicExecutionResult {
+  summary: string;
+  runId: string | null;
+  operations: DagDeterministicExecutionStep[];
+  deferredToolNames: DagControlToolName[];
+}
+
 const dagRunIdPattern = /\b(dagrun[-_][a-z0-9_-]+)\b/i;
 const dagLatestRunPattern =
   /\b(?:latest|recent|most recent)\b[^.!?\n]{0,40}\b(?:dag(?:\s+run)?|workflow(?:\s+run)?|orchestration(?:\s+run)?)\b|\b(?:dag(?:\s+run)?|workflow(?:\s+run)?|orchestration(?:\s+run)?)\b[^.!?\n]{0,40}\b(?:latest|recent|most recent)\b/i;
 const dagNodeIdPattern = /\bnode(?:\s+id)?\s*[:#]?\s*([a-z][a-z0-9_-]{1,63})\b/i;
 const dagCapabilitiesPattern =
   /\b(?:dag|workflow|orchestration|orchestrator)\b[^.!?\n]{0,40}\b(?:capabilities|limits|features)\b|\b(?:capabilities|limits|features)\b[^.!?\n]{0,40}\b(?:dag|workflow|orchestration|orchestrator)\b/i;
+const dagCreateWithGoalPattern =
+  /\b(?:create|start|launch|run|trigger|execute|kick\s*off)\b[^.!?\n]{0,30}\b(?:dag|workflow|orchestration|pipeline)\b(?:\s+run)?(?:\s+(?:for|to|about))\s*[:\-]?\s*(.+)$/is;
 const dagCreatePattern =
-  /\b(?:create|start|launch|run|kick\s*off)\b[^.!?\n]{0,30}\b(?:dag|workflow|orchestration|pipeline)\b(?:\s+run)?(?:\s+(?:for|to|about))?\s*[:\-]?\s*(.+)$/is;
+  /\b(?:create|start|launch|run|trigger|execute|kick\s*off)\b[^.!?\n]{0,30}\b(?:dag|workflow|orchestration|pipeline)\b(?:\s+run)?\b/i;
 const dagTreePattern = /\b(?:tree|graph|nodes?)\b/i;
 const dagEventsPattern = /\b(?:events?|log)\b/i;
 const dagMetricsPattern = /\b(?:metrics?|stats?|performance)\b/i;
@@ -348,6 +364,108 @@ function looksLikeDagControlPrompt(prompt: string): boolean {
   return dagControlPatterns.some(pattern => pattern.test(prompt));
 }
 
+function buildImplicitDagGoal(prompt: string): string {
+  return `Respond to the operator request: ${prompt.trim()}`;
+}
+
+function countRequestedDagSections(prompt: string): number {
+  return [
+    dagTreePattern.test(prompt),
+    dagEventsPattern.test(prompt),
+    dagMetricsPattern.test(prompt),
+    dagErrorsPattern.test(prompt),
+    dagLineagePattern.test(prompt),
+    dagVerificationPattern.test(prompt),
+  ].filter(Boolean).length;
+}
+
+function appendDagRunInspectionOperations(
+  operations: DeterministicDagOperation[],
+  prompt: string,
+  runId: string,
+  matchIndex: number,
+  options: {
+    includeSummaryFallback?: boolean;
+  } = {},
+): void {
+  const includeSummaryFallback = options.includeSummaryFallback ?? true;
+  const nodeIdMatch = dagNodeIdPattern.exec(prompt);
+  const requestsTrace = dagTracePattern.test(prompt);
+  const requestedSectionCount = countRequestedDagSections(prompt);
+  const shouldUseFullTrace = requestsTrace || requestedSectionCount >= 3;
+
+  if (shouldUseFullTrace) {
+    appendUniqueDeterministicOperation(operations, matchIndex, 'get_dag_trace', { runId });
+    return;
+  }
+
+  appendUniqueDeterministicOperation(
+    operations,
+    dagVerificationPattern.exec(prompt)?.index,
+    'get_dag_verification',
+    { runId },
+  );
+  appendUniqueDeterministicOperation(
+    operations,
+    dagMetricsPattern.exec(prompt)?.index,
+    'get_dag_metrics',
+    { runId },
+  );
+  appendUniqueDeterministicOperation(
+    operations,
+    dagErrorsPattern.exec(prompt)?.index,
+    'get_dag_errors',
+    { runId },
+  );
+  appendUniqueDeterministicOperation(
+    operations,
+    dagLineagePattern.exec(prompt)?.index,
+    'get_dag_lineage',
+    { runId },
+  );
+  appendUniqueDeterministicOperation(
+    operations,
+    dagEventsPattern.exec(prompt)?.index,
+    'get_dag_events',
+    { runId },
+  );
+  appendUniqueDeterministicOperation(
+    operations,
+    dagCancelPattern.exec(prompt)?.index,
+    'cancel_dag_run',
+    { runId },
+  );
+
+  if (nodeIdMatch?.[1]) {
+    appendUniqueDeterministicOperation(operations, nodeIdMatch.index, 'get_dag_node', {
+      runId,
+      nodeId: nodeIdMatch[1],
+    });
+  }
+
+  appendUniqueDeterministicOperation(
+    operations,
+    dagTreePattern.exec(prompt)?.index,
+    'get_dag_tree',
+    { runId },
+  );
+
+  if (includeSummaryFallback) {
+    appendUniqueDeterministicOperation(operations, matchIndex, 'get_dag_run', { runId });
+  }
+}
+
+function extractDagRunId(output: Record<string, unknown>): string | null {
+  const directRunId = typeof output.runId === 'string' ? output.runId.trim() : '';
+  if (directRunId) {
+    return directRunId;
+  }
+
+  const trace = output.trace as { run?: { runId?: string } } | undefined;
+  const tracedRunId = typeof trace?.run?.runId === 'string' ? trace.run.runId.trim() : '';
+  return tracedRunId || null;
+}
+
 /**
  * Extract a DAG run creation request from natural-language command text.
  *
@@ -359,17 +477,18 @@ function looksLikeDagControlPrompt(prompt: string): boolean {
  * - Output: captured goal text, optional template, and match position or `null`.
  *
  * Edge case behavior:
- * - Rejects empty captured goals to avoid creating malformed DAG runs.
+ * - Falls back to a deterministic goal derived from the operator prompt when no explicit `for/to/about` goal is present.
  */
 function extractCreateDagRunRequest(
   prompt: string,
   context: DagToolContext,
 ): { args: Record<string, unknown>; matchIndex: number } | null {
-  const match = dagCreatePattern.exec(prompt);
-  const goal = match?.[1]?.trim();
+  const explicitGoalMatch = dagCreateWithGoalPattern.exec(prompt);
+  const match = explicitGoalMatch ?? dagCreatePattern.exec(prompt);
+  const goal = explicitGoalMatch?.[1]?.trim() || buildImplicitDagGoal(prompt);
   const template = dagTemplatePattern.exec(prompt)?.[1]?.trim();
 
-  //audit Assumption: DAG run creation should require an explicit captured goal; failure risk: vague inspection prompts create unintended runs; expected invariant: non-empty goal text; handling strategy: reject missing captured goals.
+  //audit Assumption: DAG run creation still needs one stable goal payload even for terse operator commands; failure risk: malformed runs with empty node prompts; expected invariant: one non-empty goal string; handling strategy: derive an implicit goal from the prompt when none is captured explicitly.
   if (!match || typeof match.index !== 'number' || !goal) {
     return null;
   }
@@ -404,18 +523,8 @@ function collectDeterministicDagOperations(
   const operations: DeterministicDagOperation[] = [];
   const runIdMatch = dagRunIdPattern.exec(prompt);
   const latestRunMatch = dagLatestRunPattern.exec(prompt);
-  const nodeIdMatch = dagNodeIdPattern.exec(prompt);
   const capabilitiesMatch = dagCapabilitiesPattern.exec(prompt);
   const createDagRun = extractCreateDagRunRequest(prompt, context);
-  const requestsTrace = dagTracePattern.test(prompt);
-  const requestedSectionCount = [
-    dagTreePattern.test(prompt),
-    dagEventsPattern.test(prompt),
-    dagMetricsPattern.test(prompt),
-    dagErrorsPattern.test(prompt),
-    dagLineagePattern.test(prompt),
-    dagVerificationPattern.test(prompt),
-  ].filter(Boolean).length;
 
   appendUniqueDeterministicOperation(operations, capabilitiesMatch?.index, 'get_dag_capabilities');
 
@@ -426,66 +535,7 @@ function collectDeterministicDagOperations(
   }
 
   if (runIdMatch?.[1]) {
-    const runId = runIdMatch[1];
-    const shouldUseFullTrace = requestsTrace || requestedSectionCount >= 3;
-
-    if (shouldUseFullTrace) {
-      appendUniqueDeterministicOperation(operations, runIdMatch.index, 'get_dag_trace', { runId });
-    } else {
-      appendUniqueDeterministicOperation(
-        operations,
-        dagVerificationPattern.exec(prompt)?.index,
-        'get_dag_verification',
-        { runId },
-      );
-      appendUniqueDeterministicOperation(
-        operations,
-        dagMetricsPattern.exec(prompt)?.index,
-        'get_dag_metrics',
-        { runId },
-      );
-      appendUniqueDeterministicOperation(
-        operations,
-        dagErrorsPattern.exec(prompt)?.index,
-        'get_dag_errors',
-        { runId },
-      );
-      appendUniqueDeterministicOperation(
-        operations,
-        dagLineagePattern.exec(prompt)?.index,
-        'get_dag_lineage',
-        { runId },
-      );
-      appendUniqueDeterministicOperation(
-        operations,
-        dagEventsPattern.exec(prompt)?.index,
-        'get_dag_events',
-        { runId },
-      );
-      appendUniqueDeterministicOperation(
-        operations,
-        dagCancelPattern.exec(prompt)?.index,
-        'cancel_dag_run',
-        { runId },
-      );
-
-      if (nodeIdMatch?.[1]) {
-        appendUniqueDeterministicOperation(operations, nodeIdMatch.index, 'get_dag_node', {
-          runId,
-          nodeId: nodeIdMatch[1],
-        });
-      }
-
-      appendUniqueDeterministicOperation(
-        operations,
-        dagTreePattern.exec(prompt)?.index,
-        'get_dag_tree',
-        { runId },
-      );
-
-      //audit Assumption: a run id without a more specific selector implies summary inspection; failure risk: prompt returns nothing for simple "show run" requests; expected invariant: one summary fetch for bare run-id prompts; handling strategy: append run summary last so more specific operations still execute first.
-      appendUniqueDeterministicOperation(operations, runIdMatch.index, 'get_dag_run', { runId });
-    }
+    appendDagRunInspectionOperations(operations, prompt, runIdMatch[1], runIdMatch.index);
   }
 
   if (createDagRun) {
@@ -498,6 +548,80 @@ function collectDeterministicDagOperations(
   }
 
   return operations.sort((left, right) => left.matchIndex - right.matchIndex);
+}
+
+export async function tryExecuteDeterministicDagTools(
+  prompt: string,
+  context: DagToolContext = {},
+): Promise<DagDeterministicExecutionResult | null> {
+  if (!looksLikeDagControlPrompt(prompt)) {
+    return null;
+  }
+
+  const operations = collectDeterministicDagOperations(prompt, context);
+  if (operations.length === 0) {
+    return null;
+  }
+
+  const executedOperations: DagDeterministicExecutionStep[] = [];
+  const deferredToolNames: DagControlToolName[] = [];
+  let createdRunId: string | null = null;
+  const executionStartedAt = Date.now();
+
+  for (const operation of operations) {
+    const executed = await executeDagTool(operation.toolName, operation.rawArgs, context);
+    executedOperations.push({
+      toolName: operation.toolName,
+      output: executed.output,
+      summary: executed.summary,
+    });
+
+    if (operation.toolName === 'create_dag_run' && !createdRunId) {
+      createdRunId = extractDagRunId(executed.output);
+      if (createdRunId) {
+        const postCreateOperations: DeterministicDagOperation[] = [];
+        appendDagRunInspectionOperations(postCreateOperations, prompt, createdRunId, operation.matchIndex, {
+          includeSummaryFallback: false,
+        });
+
+        const budgetMs =
+          typeof context.requestBudgetMs === 'number' && Number.isFinite(context.requestBudgetMs)
+            ? context.requestBudgetMs
+            : null;
+        const minPostCreateInspectionBudgetMs =
+          typeof context.minPostCreateInspectionBudgetMs === 'number' &&
+          Number.isFinite(context.minPostCreateInspectionBudgetMs)
+            ? context.minPostCreateInspectionBudgetMs
+            : 1_500;
+        const elapsedMs = Date.now() - executionStartedAt;
+        const remainingBudgetMs = budgetMs === null ? null : budgetMs - elapsedMs;
+        const allowPostCreateInspection = remainingBudgetMs === null || remainingBudgetMs > minPostCreateInspectionBudgetMs;
+
+        if (!allowPostCreateInspection) {
+          deferredToolNames.push(
+            ...postCreateOperations.map(followUp => followUp.toolName),
+          );
+          continue;
+        }
+
+        for (const followUp of postCreateOperations.sort((left, right) => left.matchIndex - right.matchIndex)) {
+          const followUpResult = await executeDagTool(followUp.toolName, followUp.rawArgs, context);
+          executedOperations.push({
+            toolName: followUp.toolName,
+            output: followUpResult.output,
+            summary: followUpResult.summary,
+          });
+        }
+      }
+    }
+  }
+
+  return {
+    summary: executedOperations.map(operation => operation.summary).join(' '),
+    runId: createdRunId ?? extractDagRunId(executedOperations.at(-1)?.output ?? {}),
+    operations: executedOperations,
+    deferredToolNames,
+  };
 }
 
 function summarizeDagTree(nodes: unknown): string {
@@ -832,12 +956,9 @@ export async function tryDispatchDagTools(
     return null;
   }
 
-  const deterministicSummary = await executeDeterministicToolOperations(
-    collectDeterministicDagOperations(prompt, context),
-    (toolName, rawArgs) => executeDagTool(toolName, rawArgs, context),
-  );
-  if (deterministicSummary) {
-    return buildToolAskResponse('dag-tools', null, deterministicSummary, 'dag-tool');
+  const deterministicExecution = await tryExecuteDeterministicDagTools(prompt, context);
+  if (deterministicExecution) {
+    return buildToolAskResponse('dag-tools', null, deterministicExecution.summary, 'dag-tool');
   }
 
   //audit Assumption: OpenAI client must expose at least one tool-capable API; failure risk: DAG control prompts silently fail; expected invariant: either Responses or Chat Completions is available; handling strategy: throw explicit capability error.

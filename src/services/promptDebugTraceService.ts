@@ -127,9 +127,12 @@ const PROMPT_CONSTRAINT_RULES: PromptConstraintRule[] = [
 ];
 
 const runtimeInspectionPatterns = [
+  /\bdiagnostics?\b/i,
   /\blive\b/i,
   /\blive\s+backend\b/i,
   /\bruntime\b/i,
+  /\bself[-\s]?heal\b/i,
+  /\bcheck\s+workers?\b|\bworkers?\b[^.!?\n]{0,20}\b(?:status|health|active|running)\b|\b(?:worker|workers)\s+status\b/i,
   /\bcurrently\s+running\b/i,
   /\bcurrently\s+active\b/i,
   /\bverify\s+in\s+production\b/i,
@@ -138,6 +141,7 @@ const runtimeInspectionPatterns = [
   /\bstatus\s+now\b/i,
   /\bloop\s+running\b/i,
   /\btelemetry\b/i,
+  /\bqueue\b[^.!?\n]{0,20}\b(?:health|status|inspect|inspection)\b|\b(?:health|status|inspect|inspection)\b[^.!?\n]{0,20}\bqueue\b/i,
   /\b(?:runtime|telemetry|worker|self[-\s]?heal|process|queue|deployment)\b[^.!?\n]{0,20}\bevents?\b|\bevents?\b[^.!?\n]{0,20}\b(?:runtime|telemetry|worker|self[-\s]?heal|process|queue|deployment)\b/i,
   /\blive\s+system\b/i,
   /\bsystem\s+health\b/i,

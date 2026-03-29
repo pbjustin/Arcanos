@@ -27,6 +27,10 @@ import { hasDagOrchestrationIntentCue } from '@services/naturalLanguageMemory.js
 import { recordDagTraceTimeout } from '@platform/observability/appMetrics.js';
 
 const router = express.Router();
+const DAG_EXECUTION_VERB_PATTERN = /\b(?:create|start|launch|run|trigger|execute|kick\s*off)\b/i;
+const DAG_EXECUTION_SUBJECT_PATTERN = /\b(?:dag|workflow|orchestration|pipeline)\b/i;
+const DAG_EXECUTION_ARTIFACT_PATTERN =
+  /\b(?:trace|tree|graph|nodes?|events?|metrics?|errors?|failures?|lineage|verification|verify|validated?)\b/i;
 
 function tryParseBodyRecord(value: string): Record<string, unknown> | null {
   try {
@@ -87,6 +91,18 @@ function extractPromptText(body: unknown): string | null {
     : null;
 }
 
+function shouldUseDagExecutionTimeoutProfile(prompt: string | null): boolean {
+  if (!prompt || !hasDagOrchestrationIntentCue(prompt)) {
+    return false;
+  }
+
+  if (!DAG_EXECUTION_VERB_PATTERN.test(prompt)) {
+    return false;
+  }
+
+  return DAG_EXECUTION_SUBJECT_PATTERN.test(prompt) || DAG_EXECUTION_ARTIFACT_PATTERN.test(prompt);
+}
+
 function resolveBodyGptId(body: unknown): string | null {
   const normalizedBody = normalizeRequestBody(body);
   const gptId = normalizedBody?.gptId;
@@ -131,7 +147,11 @@ function buildGptRequestAuthState(req: express.Request): Record<string, unknown>
 }
 
 router.post("/:gptId", async (req, res, next) => {
-  const routeTimeoutMs = resolveGptRouteHardTimeoutMs();
+  const promptText = extractPromptText(req.body);
+  const routeTimeoutProfile = shouldUseDagExecutionTimeoutProfile(promptText)
+    ? 'dag_execution'
+    : 'default';
+  const routeTimeoutMs = resolveGptRouteHardTimeoutMs({ profile: routeTimeoutProfile });
   const requestId = (req as any).requestId;
   const timeoutMessage = `GPT route timeout after ${routeTimeoutMs}ms`;
   const clientAbortController = new AbortController();
@@ -162,7 +182,8 @@ router.post("/:gptId", async (req, res, next) => {
         requestLogger?.info?.('gpt.request.timeout_plan', {
           endpoint: req.originalUrl,
           gptId: incomingGptId,
-          timeoutMs: routeTimeoutMs
+          timeoutMs: routeTimeoutMs,
+          timeoutProfile: routeTimeoutProfile,
         });
 
         requestLogger?.info?.('gpt.request.body', {
@@ -354,7 +375,6 @@ router.post("/:gptId", async (req, res, next) => {
     );
   } catch (err) {
     if (isAbortError(err)) {
-      const promptText = extractPromptText(req.body);
       if (promptText && hasDagOrchestrationIntentCue(promptText)) {
         recordDagTraceTimeout({
           handler: 'gpt-route',

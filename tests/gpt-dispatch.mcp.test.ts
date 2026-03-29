@@ -27,6 +27,7 @@ const mockIsArcanosCliAvailable = jest.fn();
 const mockRunArcanosCLI = jest.fn();
 const mockGetDiagnosticsSnapshot = jest.fn();
 const mockGetHealthSnapshot = jest.fn();
+const mockTryExecuteDeterministicDagTools = jest.fn();
 
 jest.unstable_mockModule('../src/platform/runtime/gptRouterConfig.js', () => ({
   default: mockGetGptModuleMap,
@@ -100,6 +101,10 @@ jest.unstable_mockModule('../src/services/runtimeDiagnosticsService.js', () => (
     getDiagnosticsSnapshot: mockGetDiagnosticsSnapshot,
     getHealthSnapshot: mockGetHealthSnapshot,
   },
+}));
+
+jest.unstable_mockModule('../src/routes/ask/dagTools.js', () => ({
+  tryExecuteDeterministicDagTools: mockTryExecuteDeterministicDagTools,
 }));
 
 jest.unstable_mockModule('../src/shared/typeGuards.js', () => ({
@@ -262,6 +267,7 @@ describe('routeGptRequest MCP dispatch branch', () => {
       requests_total: 10,
       errors_total: 0,
     });
+    mockTryExecuteDeterministicDagTools.mockResolvedValue(null);
   });
 
   it('uses the request-scoped ARCANOS MCP service for explicit mcp.invoke actions', async () => {
@@ -586,6 +592,186 @@ describe('routeGptRequest MCP dispatch branch', () => {
       toolsSelected: expect.arrayContaining(['cli:status']),
       runtimeEndpointsQueried: expect.arrayContaining(['/api/self-heal/runtime', '/api/self-heal/events', '/api/self-heal/inspection', '/status/safety/self-heal', '/worker-helper/health', '/workers/status']),
     });
+  });
+
+  it.each([
+    {
+      prompt: 'trigger a real DAG run',
+      selectedTools: ['dag.run.create'],
+      runId: 'dagrun_exec_1',
+      artifacts: {
+        'dag.run.create': {
+          runId: 'dagrun_exec_1',
+          status: 'queued',
+        },
+      },
+    },
+    {
+      prompt: 'run a live DAG trace',
+      selectedTools: ['dag.run.create', 'dag.run.trace'],
+      runId: 'dagrun_exec_2',
+      artifacts: {
+        'dag.run.create': {
+          runId: 'dagrun_exec_2',
+          status: 'queued',
+        },
+        'dag.run.trace': {
+          runId: 'dagrun_exec_2',
+          trace: {
+            run: {
+              runId: 'dagrun_exec_2',
+              status: 'queued',
+            },
+          },
+        },
+      },
+    },
+    {
+      prompt: 'execute DAG and return lineage',
+      selectedTools: ['dag.run.create', 'dag.run.lineage'],
+      runId: 'dagrun_exec_3',
+      artifacts: {
+        'dag.run.create': {
+          runId: 'dagrun_exec_3',
+          status: 'queued',
+        },
+        'dag.run.lineage': {
+          runId: 'dagrun_exec_3',
+          lineage: [],
+          loopDetected: false,
+        },
+      },
+    },
+  ])('routes clear DAG execution prompt "$prompt" into dag execution instead of runtime inspection', async ({ prompt, selectedTools, runId, artifacts }) => {
+    mockHasDagOrchestrationIntentCue.mockReturnValue(true);
+    mockTryExecuteDeterministicDagTools.mockResolvedValue({
+      summary: `Started DAG run ${runId}.`,
+      runId,
+      operations: selectedTools.map((toolName) => ({
+        toolName:
+          toolName === 'dag.run.create'
+            ? 'create_dag_run'
+            : toolName === 'dag.run.trace'
+            ? 'get_dag_trace'
+            : 'get_dag_lineage',
+        output: artifacts[toolName as keyof typeof artifacts],
+        summary: `Executed ${toolName}.`,
+      })),
+    });
+
+    const request = {
+      method: 'POST',
+      originalUrl: '/gpt/arcanos-core',
+      traceId: `trace-${runId}`,
+      app: {
+        locals: {
+          arcanosMcp: {
+            invokeTool: jest.fn(),
+            listTools: jest.fn(),
+          },
+        },
+      },
+    } as any;
+
+    const envelope = await routeGptRequest({
+      gptId: 'arcanos-core',
+      body: {
+        message: prompt,
+        sessionId: `sess-${runId}`,
+      },
+      requestId: `req-${runId}`,
+      request,
+    });
+
+    expect(mockTryExecuteDeterministicDagTools).toHaveBeenCalledWith(prompt, {
+      sessionId: `sess-${runId}`,
+      requestId: `req-${runId}`,
+      traceId: `trace-${runId}`,
+      logger: undefined,
+    });
+    expect(request.app.locals.arcanosMcp.invokeTool).not.toHaveBeenCalled();
+    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+    expect(envelope).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: expect.objectContaining({
+          handledBy: 'dag-dispatcher',
+          dag: expect.objectContaining({
+            dispatchMode: 'automatic',
+            reason: 'prompt_requests_dag_execution',
+            runId,
+            artifacts: expect.objectContaining(artifacts),
+          }),
+        }),
+        _route: expect.objectContaining({
+          action: 'dag.run.create',
+        }),
+      })
+    );
+
+    expect(await getLatestPromptDebugTrace(`req-${runId}`)).toMatchObject({
+      requestId: `req-${runId}`,
+      selectedRoute: 'core',
+      selectedModule: 'ARCANOS:CORE',
+      selectedTools: selectedTools,
+      runtimeInspectionChosen: false,
+      finalExecutorPayload: expect.objectContaining({
+        executor: 'dag-dispatcher',
+        runId,
+      }),
+    });
+    expect(getLatestAiRoutingDebugSnapshot(`req-${runId}`)).toMatchObject({
+      requestId: `req-${runId}`,
+      detectedIntent: prompt.includes('live') ? 'RUNTIME_INSPECTION_REQUIRED' : 'STANDARD',
+      routingDecision: 'dag_execution_completed',
+      toolsSelected: selectedTools,
+      cliUsed: false,
+      repoFallbackUsed: false,
+    });
+  });
+
+  it.each([
+    'run diagnostics',
+    'inspect self-heal',
+    'check workers',
+    'show runtime status',
+  ])('keeps runtime diagnostics prompt "%s" on runtime inspection routing', async (prompt) => {
+    mockHasDagOrchestrationIntentCue.mockReturnValue(false);
+    const request = {
+      method: 'POST',
+      originalUrl: '/gpt/arcanos-core',
+      traceId: `trace-${prompt}`,
+      app: {
+        locals: {
+          arcanosMcp: {
+            invokeTool: jest.fn(),
+            listTools: jest.fn(),
+          },
+        },
+      },
+    } as any;
+
+    const envelope = await routeGptRequest({
+      gptId: 'arcanos-core',
+      body: {
+        message: prompt,
+      },
+      requestId: `req-${prompt}`,
+      request,
+    });
+
+    expect(mockTryExecuteDeterministicDagTools).not.toHaveBeenCalled();
+    expect(envelope).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: expect.objectContaining({
+          handledBy: 'runtime-inspection',
+        }),
+        _route: expect.objectContaining({
+          action: 'runtime.inspect',
+        }),
+      })
+    );
   });
 
   it('returns explicit runtime inspection unavailable when repo inspection is disallowed', async () => {

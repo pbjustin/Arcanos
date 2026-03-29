@@ -50,6 +50,7 @@ import {
   classifyRuntimeInspectionPrompt,
   executeRuntimeInspection,
 } from "@services/runtimeInspectionRoutingService.js";
+import { tryExecuteDeterministicDagTools, type DagDeterministicExecutionResult } from "../ask/dagTools.js";
 
 export type AskEnvelope =
   | { ok: true; result: unknown; _route: RouteMeta }
@@ -310,6 +311,12 @@ const automaticRuntimeVerificationVerbPattern =
   /\b(?:verify|check|confirm|validate|inspect|test|probe)\b/i;
 const automaticRuntimeVerificationStrongCuePattern =
   /\b(?:verify\s+in\s+production|currently\s+active|system\s+health|health\s+probe|live\s+verification)\b/i;
+const automaticDagExecutionVerbPattern =
+  /\b(?:create|start|launch|run|trigger|execute|kick\s*off)\b/i;
+const automaticDagExecutionSubjectPattern =
+  /\b(?:dag\s+run|workflow|orchestration|pipeline)\b/i;
+const automaticDagExecutionArtifactPattern =
+  /\b(?:trace|tree|graph|nodes?|events?|metrics?|errors?|failures?|lineage|verification|verify|validated?)\b/i;
 
 function shouldAutoInspectRuntimeVerificationPrompt(prompt: string | null): boolean {
   if (!prompt || !shouldInspectRuntimePrompt(prompt)) {
@@ -324,6 +331,171 @@ function shouldAutoInspectRuntimeVerificationPrompt(prompt: string | null): bool
 
 function isRuntimeInspectionMcpIntent(intent: McpDispatchIntent | null): boolean {
   return intent?.action === 'mcp.invoke' && intent.toolName === 'ops.health_report';
+}
+
+function shouldPreferAutomaticDagExecution(params: {
+  moduleName: string;
+  prompt: string | null;
+  requestedAction: string | undefined;
+  actionCandidate: string | null;
+  promptIntent: PromptIntentClassification['intent'];
+}): boolean {
+  const { moduleName, prompt, requestedAction, actionCandidate, promptIntent } = params;
+
+  if (!prompt) {
+    return false;
+  }
+
+  if (requestedAction && requestedAction !== 'query') {
+    return false;
+  }
+
+  if (moduleName !== 'ARCANOS:CORE') {
+    return false;
+  }
+
+  if (actionCandidate && actionCandidate !== 'query') {
+    return false;
+  }
+
+  if (promptIntent !== 'dag') {
+    return false;
+  }
+
+  if (!automaticDagExecutionVerbPattern.test(prompt)) {
+    return false;
+  }
+
+  return (
+    automaticDagExecutionSubjectPattern.test(prompt) ||
+    (/\bdag\b/i.test(prompt) && automaticDagExecutionArtifactPattern.test(prompt))
+  );
+}
+
+function mapDagToolNameToDispatcherAction(toolName: string): string {
+  switch (toolName) {
+    case 'create_dag_run':
+      return 'dag.run.create';
+    case 'get_latest_dag_run':
+      return 'dag.run.latest';
+    case 'get_dag_run':
+      return 'dag.run.get';
+    case 'get_dag_trace':
+      return 'dag.run.trace';
+    case 'get_dag_tree':
+      return 'dag.run.tree';
+    case 'get_dag_node':
+      return 'dag.run.node';
+    case 'get_dag_events':
+      return 'dag.run.events';
+    case 'get_dag_metrics':
+      return 'dag.run.metrics';
+    case 'get_dag_errors':
+      return 'dag.run.errors';
+    case 'get_dag_lineage':
+      return 'dag.run.lineage';
+    case 'cancel_dag_run':
+      return 'dag.run.cancel';
+    case 'get_dag_verification':
+      return 'dag.run.verification';
+    default:
+      return toolName;
+  }
+}
+
+function buildAutomaticDagDispatchResult(
+  execution: DagDeterministicExecutionResult,
+): {
+  primaryAction: string;
+  selectedTools: string[];
+  responsePayload: {
+    handledBy: 'dag-dispatcher';
+    dag: {
+      dispatchMode: 'automatic';
+      reason: 'prompt_requests_dag_execution';
+      summary: string;
+      runId: string | null;
+      run: Record<string, unknown> | null;
+      artifacts: Record<string, Record<string, unknown>>;
+      artifactKeys: string[];
+      deferredTools: {
+        total: number;
+        tools: string[];
+      };
+      followUp: {
+        runId: string;
+        trace: string;
+        tree: string;
+        lineage: string;
+        metrics: string;
+        errors: string;
+        verification: string;
+      } | null;
+      steps: Array<{
+        action: string;
+        output: Record<string, unknown>;
+      }>;
+    };
+  };
+} {
+  const selectedTools = execution.operations.map(operation =>
+    mapDagToolNameToDispatcherAction(operation.toolName),
+  );
+  const primaryAction = execution.operations.some(operation => operation.toolName === 'create_dag_run')
+    ? 'dag.run.create'
+    : selectedTools[0] ?? 'dag.run.create';
+  const runStep =
+    execution.operations.find(operation =>
+      operation.toolName === 'create_dag_run' ||
+      operation.toolName === 'get_dag_run' ||
+      operation.toolName === 'get_latest_dag_run',
+    ) ?? null;
+  const artifacts = Object.fromEntries(
+    execution.operations.map(operation => [
+      mapDagToolNameToDispatcherAction(operation.toolName),
+      operation.output,
+    ]),
+  );
+  const runId = execution.runId;
+  const followUp = runId
+    ? {
+        runId,
+        trace: `/api/arcanos/dag/runs/${runId}/trace`,
+        tree: `/api/arcanos/dag/runs/${runId}/tree`,
+        lineage: `/api/arcanos/dag/runs/${runId}/lineage`,
+        metrics: `/api/arcanos/dag/runs/${runId}/metrics`,
+        errors: `/api/arcanos/dag/runs/${runId}/errors`,
+        verification: `/api/arcanos/dag/runs/${runId}/verification`,
+      }
+    : null;
+
+  return {
+    primaryAction,
+    selectedTools,
+    responsePayload: {
+      handledBy: 'dag-dispatcher',
+      dag: {
+        dispatchMode: 'automatic',
+        reason: 'prompt_requests_dag_execution',
+        summary: execution.summary,
+        runId,
+        run: runStep?.output ?? null,
+        artifacts,
+        artifactKeys: Object.keys(artifacts),
+        deferredTools: {
+          total: (execution.deferredToolNames ?? []).length,
+          tools: (execution.deferredToolNames ?? []).map(toolName =>
+            mapDagToolNameToDispatcherAction(toolName),
+          ),
+        },
+        followUp,
+        steps: execution.operations.map(operation => ({
+          action: mapDagToolNameToDispatcherAction(operation.toolName),
+          output: operation.output,
+        })),
+      },
+    },
+  };
 }
 
 /**
@@ -1503,6 +1675,165 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       requestedAction: rawRequestedAction,
       canonicalAction: requestedAction,
     });
+  }
+
+  if (
+    !forceDirectModuleRouting &&
+    !mcpDispatch.intent &&
+    shouldPreferAutomaticDagExecution({
+      moduleName: activeEntry.module,
+      prompt,
+      requestedAction,
+      actionCandidate,
+      promptIntent: promptIntentClassification.intent,
+    })
+  ) {
+    try {
+      const deterministicDagExecution = await tryExecuteDeterministicDagTools(prompt!, {
+        sessionId,
+        requestId: promptDebugRequestId,
+        traceId: request?.traceId ?? undefined,
+        requestBudgetMs: getRequestRemainingMs() ?? undefined,
+        logger,
+      });
+
+      if (deterministicDagExecution) {
+        const dagDispatch = buildAutomaticDagDispatchResult(deterministicDagExecution);
+
+        recordAiRoutingDebugSnapshot({
+          requestId: promptDebugRequestId,
+          timestamp: new Date().toISOString(),
+          rawPrompt,
+          normalizedPrompt,
+          detectedIntent: runtimeInspectionRequired ? 'RUNTIME_INSPECTION_REQUIRED' : 'STANDARD',
+          routingDecision: 'dag_execution_completed',
+          toolsAvailable: dagDispatch.selectedTools,
+          toolsSelected: dagDispatch.selectedTools,
+          cliUsed: false,
+          runtimeEndpointsQueried: [],
+          repoFallbackUsed: false,
+          constraintViolations: [],
+        });
+
+        await persistModuleConversation({
+          moduleName: activeEntry.module,
+          route: activeEntry.route,
+          action: dagDispatch.primaryAction,
+          gptId: trimmedGptId,
+          sessionId,
+          requestId,
+          requestPayload: payload,
+          responsePayload: dagDispatch.responsePayload,
+        }).catch((error: unknown) => {
+          logger?.warn?.("gpt.dispatch.dag_execution.persistence_failed", {
+            requestId,
+            gptId: trimmedGptId,
+            module: activeEntry.module,
+            action: dagDispatch.primaryAction,
+            error: String((error as Error)?.message ?? error),
+          });
+        });
+
+        logger?.info?.("gpt.dispatch.dag_execution.ok", {
+          requestId,
+          gptId: trimmedGptId,
+          module: activeEntry.module,
+          action: dagDispatch.primaryAction,
+          selectedTools: dagDispatch.selectedTools,
+          runId: deterministicDagExecution.runId,
+        });
+
+        recordDispatcherRoute({
+          gptId: trimmedGptId,
+          module: activeEntry.module,
+          route: activeEntry.route,
+          handler: 'dag-dispatcher',
+          outcome: 'ok',
+        });
+        recordPromptDebugTrace(promptDebugRequestId, 'executor', {
+          traceId: request?.traceId ?? null,
+          endpoint: requestEndpoint ?? '/gpt/:gptId',
+          method: request?.method ?? null,
+          rawPrompt,
+          normalizedPrompt,
+          selectedRoute: activeEntry.route,
+          selectedModule: activeEntry.module,
+          selectedTools: dagDispatch.selectedTools,
+          repoInspectionChosen: false,
+          runtimeInspectionChosen: false,
+          finalExecutorPayload: {
+            executor: 'dag-dispatcher',
+            prompt,
+            runId: deterministicDagExecution.runId,
+            selectedTools: dagDispatch.selectedTools,
+          },
+        });
+        recordPromptDebugTrace(promptDebugRequestId, 'response', {
+          traceId: request?.traceId ?? null,
+          endpoint: requestEndpoint ?? '/gpt/:gptId',
+          method: request?.method ?? null,
+          rawPrompt,
+          normalizedPrompt,
+          selectedRoute: activeEntry.route,
+          selectedModule: activeEntry.module,
+          selectedTools: dagDispatch.selectedTools,
+          repoInspectionChosen: false,
+          runtimeInspectionChosen: false,
+          finalExecutorPayload: {
+            executor: 'dag-dispatcher',
+            prompt,
+            runId: deterministicDagExecution.runId,
+            selectedTools: dagDispatch.selectedTools,
+          },
+          responseReturned: dagDispatch.responsePayload,
+        });
+        return {
+          ok: true,
+          result: dagDispatch.responsePayload,
+          _route: {
+            ...baseRoute,
+            module: activeEntry.module,
+            action: dagDispatch.primaryAction,
+            matchMethod,
+            route: activeEntry.route,
+            availableActions,
+            moduleVersion: (moduleMetadata as any)?.version ?? null,
+          },
+        };
+      }
+    } catch (error) {
+      logger?.error?.("gpt.dispatch.dag_execution.error", {
+        requestId,
+        gptId: trimmedGptId,
+        module: activeEntry.module,
+        action: 'dag.run.create',
+        error: resolveErrorMessage(error),
+      });
+
+      recordDispatcherRoute({
+        gptId: trimmedGptId,
+        module: activeEntry.module,
+        route: activeEntry.route,
+        handler: 'dag-dispatcher',
+        outcome: 'error',
+      });
+      return {
+        ok: false,
+        error: {
+          code: 'MODULE_ERROR',
+          message: `DAG execution failed: ${resolveErrorMessage(error)}`,
+        },
+        _route: {
+          ...baseRoute,
+          module: activeEntry.module,
+          action: 'dag.run.create',
+          matchMethod,
+          route: activeEntry.route,
+          availableActions,
+          moduleVersion: (moduleMetadata as any)?.version ?? null,
+        },
+      };
+    }
   }
 
   if (

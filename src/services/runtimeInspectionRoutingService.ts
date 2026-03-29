@@ -62,8 +62,14 @@ type RuntimeKeywordRule = {
 };
 
 const RUNTIME_KEYWORD_RULES: RuntimeKeywordRule[] = [
+  { label: 'diagnostics', pattern: /\bdiagnostics?\b/i },
   { label: 'live', pattern: /\blive\b/i },
   { label: 'runtime', pattern: /\bruntime\b/i },
+  { label: 'self-heal', pattern: /\bself[-\s]?heal\b/i },
+  {
+    label: 'workers',
+    pattern: /\bcheck\s+workers?\b|\bworkers?\b[^.!?\n]{0,20}\b(?:status|health|active|running)\b|\b(?:worker|workers)\s+status\b/i,
+  },
   { label: 'currently running', pattern: /\bcurrently\s+running\b/i },
   { label: 'currently active', pattern: /\bcurrently\s+active\b/i },
   {
@@ -71,6 +77,10 @@ const RUNTIME_KEYWORD_RULES: RuntimeKeywordRule[] = [
     pattern: /\b(?:runtime|worker|process|deployment|service|queue|loop)\b[^.!?\n]{0,16}\bactive\b|\bactive\b[^.!?\n]{0,16}\b(?:runtime|worker|process|deployment|service|queue|loop)\b/i,
   },
   { label: 'status now', pattern: /\bstatus\s+now\b/i },
+  {
+    label: 'queue health',
+    pattern: /\bqueue\b[^.!?\n]{0,20}\b(?:health|status|inspect|inspection)\b|\b(?:health|status|inspect|inspection)\b[^.!?\n]{0,20}\bqueue\b/i,
+  },
   { label: 'production state', pattern: /\bproduction\s+state\b/i },
   { label: 'loop running', pattern: /\bloop\s+running\b/i },
   { label: 'telemetry', pattern: /\btelemetry\b/i },
