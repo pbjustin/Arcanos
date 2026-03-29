@@ -19,6 +19,7 @@ const mockShouldInspectRepoPrompt = jest.fn();
 const mockBuildSelfHealRuntimeSnapshot = jest.fn();
 const mockBuildSelfHealEventsSnapshot = jest.fn();
 const mockBuildSafetySelfHealSnapshot = jest.fn();
+const mockBuildSelfHealInspectionSnapshot = jest.fn();
 const mockGetWorkerControlHealth = jest.fn();
 const mockGetWorkerRuntimeStatus = jest.fn();
 const mockGetConfig = jest.fn();
@@ -69,6 +70,7 @@ jest.unstable_mockModule('../src/services/selfHealRuntimeInspectionService.js', 
   buildSelfHealRuntimeSnapshot: mockBuildSelfHealRuntimeSnapshot,
   buildSelfHealEventsSnapshot: mockBuildSelfHealEventsSnapshot,
   buildSafetySelfHealSnapshot: mockBuildSafetySelfHealSnapshot,
+  buildSelfHealInspectionSnapshot: mockBuildSelfHealInspectionSnapshot,
 }));
 
 jest.unstable_mockModule('../src/services/workerControlService.js', () => ({
@@ -177,6 +179,50 @@ describe('routeGptRequest MCP dispatch branch', () => {
       status: 'ok',
       lastHealResult: 'success',
       recentEvents: [],
+    });
+    mockBuildSelfHealInspectionSnapshot.mockResolvedValue({
+      status: 'ok',
+      timestamp: '2026-03-27T00:00:00.000Z',
+      summary: 'Collected 3 self-heal runtime events.',
+      evidence: {
+        selfHealRuntimeSnapshot: {
+          status: 'ok',
+          lastDecision: 'observe',
+          lastAIDiagnosis: {
+            advisor: 'arcanos_core_v1',
+            decision: 'observe',
+          },
+        },
+        recentSelfHealEvents: [
+          {
+            ts: '2026-03-27T00:00:00.000Z',
+            type: 'AI_DIAGNOSIS_REQUEST',
+            source: '/api/self-heal/events',
+            payload: { trigger: 'interval' },
+          },
+          {
+            ts: '2026-03-27T00:00:01.000Z',
+            type: 'AI_DIAGNOSIS_RESULT',
+            source: '/api/self-heal/events',
+            payload: { decision: 'observe' },
+          },
+          {
+            ts: '2026-03-27T00:00:01.000Z',
+            type: 'CONTROLLER_DECISION',
+            source: '/api/self-heal/events',
+            payload: { decision: 'observe' },
+          },
+        ],
+        recentPromptDebugEvents: [],
+        recentAIRoutingEvents: [],
+        recentWorkerEvidence: [],
+      },
+      limits: {
+        selfHealEvents: 10,
+        promptDebugEvents: 10,
+        aiRoutingEvents: 10,
+        workerEvidence: 10,
+      },
     });
     mockGetWorkerControlHealth.mockResolvedValue({
       overallStatus: 'healthy',
@@ -496,6 +542,16 @@ describe('routeGptRequest MCP dispatch branch', () => {
             detectedIntent: 'RUNTIME_INSPECTION_REQUIRED',
             cliUsed: true,
             repoFallbackUsed: false,
+            evidence: expect.objectContaining({
+              selfHealRuntimeSnapshot: expect.objectContaining({
+                lastDecision: 'observe',
+              }),
+              recentSelfHealEvents: expect.arrayContaining([
+                expect.objectContaining({ type: 'AI_DIAGNOSIS_REQUEST' }),
+                expect.objectContaining({ type: 'AI_DIAGNOSIS_RESULT' }),
+                expect.objectContaining({ type: 'CONTROLLER_DECISION' }),
+              ]),
+            }),
           }),
         }),
         _route: expect.objectContaining({
@@ -528,7 +584,7 @@ describe('routeGptRequest MCP dispatch branch', () => {
       cliUsed: true,
       repoFallbackUsed: false,
       toolsSelected: expect.arrayContaining(['cli:status']),
-      runtimeEndpointsQueried: expect.arrayContaining(['/api/self-heal/runtime', '/api/self-heal/events', '/status/safety/self-heal', '/worker-helper/health', '/workers/status']),
+      runtimeEndpointsQueried: expect.arrayContaining(['/api/self-heal/runtime', '/api/self-heal/events', '/api/self-heal/inspection', '/status/safety/self-heal', '/worker-helper/health', '/workers/status']),
     });
   });
 
@@ -538,6 +594,9 @@ describe('routeGptRequest MCP dispatch branch', () => {
     });
     mockBuildSelfHealEventsSnapshot.mockImplementation(() => {
       throw new Error('events unavailable');
+    });
+    mockBuildSelfHealInspectionSnapshot.mockImplementation(() => {
+      throw new Error('inspection unavailable');
     });
     mockBuildSafetySelfHealSnapshot.mockImplementation(() => {
       throw new Error('self-heal unavailable');

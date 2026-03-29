@@ -59,6 +59,24 @@ export function getLatestAiRoutingDebugSnapshot(requestId?: string): AiRoutingDe
   return state.byRequestId.get(resolvedRequestId) ?? null;
 }
 
+export function listAiRoutingDebugSnapshots(limit = 20): AiRoutingDebugSnapshot[] {
+  const state = getMutableState();
+  const normalizedLimit = Number.isFinite(limit)
+    ? Math.max(1, Math.min(MAX_RECORDS, Math.trunc(limit)))
+    : 20;
+
+  return Array.from(state.byRequestId.values())
+    .sort((left, right) => right.timestamp.localeCompare(left.timestamp))
+    .slice(0, normalizedLimit)
+    .map(snapshot => ({
+      ...snapshot,
+      toolsAvailable: [...snapshot.toolsAvailable],
+      toolsSelected: [...snapshot.toolsSelected],
+      runtimeEndpointsQueried: [...snapshot.runtimeEndpointsQueried],
+      constraintViolations: [...snapshot.constraintViolations],
+    }));
+}
+
 export function clearAiRoutingDebugSnapshotsForTest(): void {
   const state = getMutableState();
   state.byRequestId.clear();

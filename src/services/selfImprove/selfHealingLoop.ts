@@ -69,11 +69,18 @@ const PROMPT_ROUTE_SIGNIFICANT_SHARE = 0.15;
 const VERIFICATION_SUCCESS_SIGNAL_COUNT = 2;
 const VERIFICATION_FAILURE_SIGNAL_COUNT = 2;
 const VERIFICATION_TIMEOUT_COUNT_WORSE_DELTA = 1;
+const LOOP_TICK_EVENT = 'LOOP_TICK';
 const METRICS_COLLECTED_EVENT = 'METRICS_COLLECTED';
 const AI_DIAGNOSIS_REQUEST_EVENT = 'AI_DIAGNOSIS_REQUEST';
 const AI_DIAGNOSIS_RESULT_EVENT = 'AI_DIAGNOSIS_RESULT';
 const CONTROLLER_DECISION_EVENT = 'CONTROLLER_DECISION';
 const ACTION_EXECUTED_EVENT = 'ACTION_EXECUTED';
+const ACTION_DISPATCH_ATTEMPT_EVENT = 'ACTION_DISPATCH_ATTEMPT';
+const ACTION_DISPATCH_RESULT_EVENT = 'ACTION_DISPATCH_RESULT';
+const WORKER_RECEIPT_EVENT = 'WORKER_RECEIPT';
+const HEAL_RESULT_EVENT = 'HEAL_RESULT';
+const AI_FAILED_EVENT = 'AI_FAILED';
+const FALLBACK_USED_EVENT = 'FALLBACK_USED';
 const SELF_HEAL_DEBUG_FORCE_AI_HEAL_ONCE_ENV = 'SELF_HEAL_DEBUG_FORCE_AI_HEAL_ONCE';
 const PROMPT_ROUTE_ABORT_PROPAGATION_COVERAGE = [
   'request_abort_context',
@@ -203,10 +210,12 @@ export interface SelfHealingLoopStatus {
     safeToExecute: boolean;
     executionStatus: string | null;
     fallbackUsed: boolean;
+    aiUsedInRuntime: boolean;
   } | null;
   lastDecision: 'heal' | 'observe' | null;
   lastAction: string | null;
   lastActionAt: string | null;
+  lastResult: string | null;
   lastControllerDecision: SelfImproveDecision['decision'] | 'ERROR' | null;
   lastControllerRunAt: string | null;
   lastWorkerHealth: string | null;
@@ -217,6 +226,48 @@ export interface SelfHealingLoopStatus {
   activePromptMitigation: string | null;
   lastPromptMitigationReason: string | null;
   degradedModeReason: string | null;
+  aiUsedInRuntime: boolean | null;
+  lastDispatchAttempt: {
+    at: string;
+    action: string;
+    target: string | null;
+    actuatorMode: string | null;
+    baseUrl: string | null;
+    path: string | null;
+    correlationId: string | null;
+  } | null;
+  lastDispatchTarget: {
+    target: string | null;
+    actuatorMode: string | null;
+    baseUrl: string | null;
+    path: string | null;
+  } | null;
+  lastWorkerReceipt: {
+    at: string;
+    action: string;
+    target: string | null;
+    actuatorMode: string | null;
+    statusCode: number | null;
+    message: string | null;
+  } | null;
+  lastHealResult: {
+    at: string;
+    outcome: 'success' | 'failure' | 'noop' | 'fallback';
+    action: string | null;
+    target: string | null;
+    message: string | null;
+  } | null;
+  timeline: {
+    lastLoopTickAt: string | null;
+    lastMetricsCollectedAt: string | null;
+    lastAIRequestAt: string | null;
+    lastAIResultAt: string | null;
+    lastDecisionAt: string | null;
+    lastActionDispatchAttemptAt: string | null;
+    lastActionDispatchResultAt: string | null;
+    lastWorkerReceiptAt: string | null;
+    lastHealResultAt: string | null;
+  };
   lastLatencySnapshot: {
     requestCount: number;
     avgLatencyMs: number;
@@ -453,7 +504,8 @@ function buildDeterministicAIDiagnosis(
     target: diagnosis.actionPlan ? getSelfHealingActionTarget(diagnosis.actionPlan) : null,
     safeToExecute: Boolean(diagnosis.actionPlan && diagnosis.confidence >= 0.7),
     executionStatus: null,
-    fallbackUsed: true
+    fallbackUsed: true,
+    aiUsedInRuntime: false
   };
 }
 
@@ -481,7 +533,8 @@ function buildAIDiagnosisFromPredictiveResult(
     target: predictiveResult.decision.target,
     safeToExecute: predictiveResult.decision.safeToExecute,
     executionStatus: predictiveResult.execution.status,
-    fallbackUsed: false
+    fallbackUsed: false,
+    aiUsedInRuntime: predictiveResult.decision.details?.aiUsed !== false
   };
 }
 
@@ -527,6 +580,8 @@ function recordAIDiagnosisStatus(
 ): void {
   runtime.status.lastAIDiagnosis = { ...diagnosis };
   runtime.status.lastDecision = diagnosis.decision;
+  runtime.status.aiUsedInRuntime = diagnosis.aiUsedInRuntime;
+  runtime.status.timeline.lastAIResultAt = diagnosis.completedAt;
   runtime.status.lastEvidence = {
     ...(runtime.status.lastEvidence ?? {}),
     aiDiagnosis: { ...diagnosis }
@@ -543,15 +598,260 @@ function buildAIDiagnosisResultDetails(diagnosis: SelfHealingAIDiagnosis): Recor
     confidence: diagnosis.confidence,
     safeToExecute: diagnosis.safeToExecute,
     executionStatus: diagnosis.executionStatus,
-    fallbackUsed: diagnosis.fallbackUsed
+    fallbackUsed: diagnosis.fallbackUsed,
+    aiUsedInRuntime: diagnosis.aiUsedInRuntime
   };
 }
 
+function recordLoopTick(params: {
+  runtime: SelfHealingLoopRuntime;
+  trigger: 'startup' | 'interval' | 'manual';
+  tickAt: string;
+}): void {
+  params.runtime.status.timeline.lastLoopTickAt = params.tickAt;
+  recordSelfHealEvent({
+    kind: LOOP_TICK_EVENT,
+    source: 'self_heal_loop',
+    trigger: params.trigger,
+    reason: `self-heal loop tick ${params.runtime.status.tickCount}`,
+    actionTaken: params.runtime.status.lastAction,
+    healedComponent: inferSelfHealComponentFromAction(params.runtime.status.lastAction),
+    details: {
+      trigger: params.trigger,
+      tickCount: params.runtime.status.tickCount,
+      inFlight: params.runtime.inFlight
+    },
+    timestamp: params.tickAt
+  });
+}
+
+function recordFallbackUsed(params: {
+  runtime: SelfHealingLoopRuntime;
+  trigger: 'startup' | 'interval' | 'manual';
+  diagnosis: SelfHealingDiagnosis;
+  aiDiagnosis: SelfHealingAIDiagnosis;
+  reason: string;
+}): void {
+  recordSelfHealEvent({
+    kind: FALLBACK_USED_EVENT,
+    source: 'self_heal_loop',
+    trigger: 'ai_diagnosis',
+    reason: params.reason,
+    actionTaken: params.aiDiagnosis.action,
+    healedComponent: params.aiDiagnosis.target,
+    correlationId: params.diagnosis.incidentKey,
+    details: {
+      trigger: params.trigger,
+      advisor: params.aiDiagnosis.advisor,
+      decision: params.aiDiagnosis.decision,
+      diagnosisType: params.diagnosis.type,
+      incidentKey: params.diagnosis.incidentKey
+    },
+    timestamp: params.aiDiagnosis.completedAt
+  });
+}
+
+function recordAIFailed(params: {
+  trigger: 'startup' | 'interval' | 'manual';
+  diagnosis: SelfHealingDiagnosis;
+  requestedAt: string;
+  errorMessage: string;
+}): void {
+  recordSelfHealEvent({
+    kind: AI_FAILED_EVENT,
+    source: 'self_heal_loop',
+    trigger: 'ai_diagnosis',
+    reason: params.errorMessage,
+    actionTaken: getSelfHealingActionRecommendation(params.diagnosis.actionPlan),
+    healedComponent: params.diagnosis.actionPlan ? getSelfHealingActionTarget(params.diagnosis.actionPlan) : null,
+    correlationId: params.diagnosis.incidentKey,
+    details: {
+      trigger: params.trigger,
+      diagnosisType: params.diagnosis.type,
+      incidentKey: params.diagnosis.incidentKey
+    },
+    timestamp: params.requestedAt
+  });
+}
+
+function recordActionDispatchAttempt(params: {
+  runtime: SelfHealingLoopRuntime;
+  trigger: 'startup' | 'interval' | 'manual';
+  diagnosis: SelfHealingDiagnosis;
+  action: string;
+  target: string | null;
+  actuatorMode?: string | null;
+  baseUrl?: string | null;
+  path?: string | null;
+}): void {
+  const timestamp = new Date().toISOString();
+  const dispatchAttempt = {
+    at: timestamp,
+    action: params.action,
+    target: params.target,
+    actuatorMode: params.actuatorMode ?? null,
+    baseUrl: params.baseUrl ?? null,
+    path: params.path ?? null,
+    correlationId: params.diagnosis.incidentKey
+  };
+
+  params.runtime.status.lastDispatchAttempt = dispatchAttempt;
+  params.runtime.status.lastDispatchTarget = {
+    target: params.target,
+    actuatorMode: dispatchAttempt.actuatorMode,
+    baseUrl: dispatchAttempt.baseUrl,
+    path: dispatchAttempt.path
+  };
+  params.runtime.status.timeline.lastActionDispatchAttemptAt = timestamp;
+
+  recordSelfHealEvent({
+    kind: ACTION_DISPATCH_ATTEMPT_EVENT,
+    source: 'self_heal_loop',
+    trigger: 'action',
+    reason: params.diagnosis.summary,
+    actionTaken: params.action,
+    healedComponent: params.target,
+    correlationId: params.diagnosis.incidentKey,
+    details: {
+      trigger: params.trigger,
+      diagnosisType: params.diagnosis.type,
+      incidentKey: params.diagnosis.incidentKey,
+      actuatorMode: dispatchAttempt.actuatorMode,
+      baseUrl: dispatchAttempt.baseUrl,
+      path: dispatchAttempt.path
+    },
+    timestamp
+  });
+}
+
+function recordActionDispatchResult(params: {
+  runtime: SelfHealingLoopRuntime;
+  diagnosis: SelfHealingDiagnosis;
+  action: string;
+  target: string | null;
+  outcome: 'success' | 'failure' | 'skipped';
+  actuatorMode?: string | null;
+  baseUrl?: string | null;
+  path?: string | null;
+  statusCode?: number | null;
+  message?: string | null;
+  timestamp?: string;
+}): void {
+  const timestamp = params.timestamp ?? new Date().toISOString();
+  params.runtime.status.timeline.lastActionDispatchResultAt = timestamp;
+  if (params.outcome === 'success') {
+    params.runtime.status.lastResult = 'success';
+  } else if (params.outcome === 'failure') {
+    params.runtime.status.lastResult = 'failure';
+  }
+
+  recordSelfHealEvent({
+    kind: ACTION_DISPATCH_RESULT_EVENT,
+    source: 'self_heal_loop',
+    trigger: 'action',
+    reason: params.message ?? params.diagnosis.summary,
+    actionTaken: params.action,
+    healedComponent: params.target,
+    correlationId: params.diagnosis.incidentKey,
+    details: {
+      diagnosisType: params.diagnosis.type,
+      incidentKey: params.diagnosis.incidentKey,
+      outcome: params.outcome,
+      actuatorMode: params.actuatorMode ?? null,
+      baseUrl: params.baseUrl ?? null,
+      path: params.path ?? null,
+      statusCode: params.statusCode ?? null,
+      message: params.message ?? null
+    },
+    timestamp
+  });
+}
+
+function recordWorkerReceipt(params: {
+  runtime: SelfHealingLoopRuntime;
+  diagnosis: SelfHealingDiagnosis;
+  action: string;
+  target: string | null;
+  actuatorMode: string;
+  statusCode: number | null;
+  message: string;
+  timestamp?: string;
+}): void {
+  const timestamp = params.timestamp ?? new Date().toISOString();
+  params.runtime.status.lastWorkerReceipt = {
+    at: timestamp,
+    action: params.action,
+    target: params.target,
+    actuatorMode: params.actuatorMode,
+    statusCode: params.statusCode,
+    message: params.message
+  };
+  params.runtime.status.timeline.lastWorkerReceiptAt = timestamp;
+
+  recordSelfHealEvent({
+    kind: WORKER_RECEIPT_EVENT,
+    source: 'self_heal_loop',
+    trigger: 'action',
+    reason: params.message,
+    actionTaken: params.action,
+    healedComponent: params.target,
+    correlationId: params.diagnosis.incidentKey,
+    details: {
+      diagnosisType: params.diagnosis.type,
+      incidentKey: params.diagnosis.incidentKey,
+      actuatorMode: params.actuatorMode,
+      statusCode: params.statusCode,
+      message: params.message
+    },
+    timestamp
+  });
+}
+
+function recordHealResult(params: {
+  runtime: SelfHealingLoopRuntime;
+  diagnosis: SelfHealingDiagnosis;
+  action: string | null;
+  target: string | null;
+  outcome: 'success' | 'failure' | 'noop' | 'fallback';
+  message: string | null;
+  timestamp?: string;
+}): void {
+  const timestamp = params.timestamp ?? new Date().toISOString();
+  params.runtime.status.lastHealResult = {
+    at: timestamp,
+    outcome: params.outcome,
+    action: params.action,
+    target: params.target,
+    message: params.message
+  };
+  params.runtime.status.lastResult = params.outcome;
+  params.runtime.status.timeline.lastHealResultAt = timestamp;
+
+  recordSelfHealEvent({
+    kind: HEAL_RESULT_EVENT,
+    source: 'self_heal_loop',
+    trigger: 'action',
+    reason: params.message,
+    actionTaken: params.action,
+    healedComponent: params.target,
+    correlationId: params.diagnosis.incidentKey,
+    details: {
+      diagnosisType: params.diagnosis.type,
+      incidentKey: params.diagnosis.incidentKey,
+      outcome: params.outcome,
+      message: params.message
+    },
+    timestamp
+  });
+}
+
 function recordMetricsCollected(params: {
+  runtime: SelfHealingLoopRuntime;
   trigger: 'startup' | 'interval' | 'manual';
   diagnosis: SelfHealingDiagnosis;
   observation: SelfHealingObservation;
 }): void {
+  params.runtime.status.timeline.lastMetricsCollectedAt = params.observation.requestWindow.generatedAt;
   const details = {
     diagnosisType: params.diagnosis.type,
     requestCount: params.observation.requestWindow.requestCount,
@@ -580,17 +880,20 @@ function recordMetricsCollected(params: {
     trigger: params.trigger,
     reason: params.diagnosis.summary,
     healedComponent: params.diagnosis.actionPlan ? getSelfHealingActionTarget(params.diagnosis.actionPlan) : null,
+    correlationId: params.diagnosis.incidentKey,
     details,
     timestamp: params.observation.requestWindow.generatedAt
   });
 }
 
 function recordControllerDecision(params: {
+  runtime: SelfHealingLoopRuntime;
   trigger: 'startup' | 'interval' | 'manual';
   diagnosis: SelfHealingDiagnosis;
   aiDiagnosis: SelfHealingAIDiagnosis;
 }): void {
   const details = buildAIDiagnosisResultDetails(params.aiDiagnosis);
+  params.runtime.status.timeline.lastDecisionAt = params.aiDiagnosis.completedAt;
 
   logger.info(CONTROLLER_DECISION_EVENT, {
     module: 'self_heal.loop',
@@ -613,6 +916,7 @@ function recordControllerDecision(params: {
     reason: params.aiDiagnosis.reason,
     actionTaken: params.aiDiagnosis.action,
     healedComponent: params.aiDiagnosis.target,
+    correlationId: params.diagnosis.incidentKey,
     details: {
       trigger: params.trigger,
       incidentKey: params.diagnosis.incidentKey,
@@ -669,6 +973,7 @@ function recordActionExecuted(params: {
     reason: params.diagnosis.summary,
     actionTaken: params.action,
     healedComponent: params.target,
+    correlationId: params.diagnosis.incidentKey,
     details,
     timestamp: new Date().toISOString()
   });
@@ -686,6 +991,7 @@ function recordActionExecuted(params: {
 function recordAndLogAIDiagnosisResult(params: {
   runtime: SelfHealingLoopRuntime;
   trigger: 'startup' | 'interval' | 'manual';
+  diagnosisContext?: SelfHealingDiagnosis | null;
   diagnosis: SelfHealingAIDiagnosis;
   isFallback?: boolean;
 }): void {
@@ -731,6 +1037,7 @@ function recordAndLogAIDiagnosisResult(params: {
     reason: params.diagnosis.reason,
     actionTaken: params.diagnosis.action,
     healedComponent: params.diagnosis.target,
+    correlationId: params.diagnosisContext?.incidentKey ?? null,
     details,
     timestamp: params.diagnosis.completedAt
   });
@@ -768,6 +1075,7 @@ async function aiDiagnoseAndDecide(params: {
     incidentKey: params.diagnosis.incidentKey
   });
   const requestedAt = new Date().toISOString();
+  params.runtime.status.timeline.lastAIRequestAt = requestedAt;
   const recommendedAction = getSelfHealingActionRecommendation(params.diagnosis.actionPlan);
   const recommendedTarget = params.diagnosis.actionPlan
     ? getSelfHealingActionTarget(params.diagnosis.actionPlan)
@@ -798,6 +1106,7 @@ async function aiDiagnoseAndDecide(params: {
     reason: params.diagnosis.summary,
     actionTaken: recommendedAction,
     healedComponent: recommendedTarget,
+    correlationId: params.diagnosis.incidentKey,
     details: {
       trigger: params.trigger,
       diagnosisType: params.diagnosis.type,
@@ -826,23 +1135,48 @@ async function aiDiagnoseAndDecide(params: {
     recordAndLogAIDiagnosisResult({
       runtime: params.runtime,
       trigger: params.trigger,
+      diagnosisContext: params.diagnosis,
       diagnosis: aiDiagnosis
     });
+    if (aiDiagnosis.fallbackUsed) {
+      recordFallbackUsed({
+        runtime: params.runtime,
+        trigger: params.trigger,
+        diagnosis: params.diagnosis,
+        aiDiagnosis,
+        reason: aiDiagnosis.reason
+      });
+    }
     return {
       diagnosis: aiDiagnosis,
       predictiveResult
     };
   } catch (error) {
+    const errorMessage = resolveErrorMessage(error);
+    recordAIFailed({
+      trigger: params.trigger,
+      diagnosis: params.diagnosis,
+      requestedAt,
+      errorMessage
+    });
     const aiDiagnosis = buildDeterministicAIDiagnosis(
       params.diagnosis,
       requestedAt,
-      `AI diagnosis failed; deterministic fallback selected. ${resolveErrorMessage(error)}`
+      `AI diagnosis failed; deterministic fallback selected. ${errorMessage}`
     );
     recordAndLogAIDiagnosisResult({
       runtime: params.runtime,
       trigger: params.trigger,
+      diagnosisContext: params.diagnosis,
       diagnosis: aiDiagnosis,
       isFallback: true
+    });
+    recordFallbackUsed({
+      runtime: params.runtime,
+      trigger: params.trigger,
+      diagnosis: params.diagnosis,
+      aiDiagnosis,
+      reason: aiDiagnosis.reason
     });
     return {
       diagnosis: aiDiagnosis,
@@ -952,6 +1286,7 @@ function createInitialStatus(): SelfHealingLoopStatus {
     lastDecision: null,
     lastAction: null,
     lastActionAt: null,
+    lastResult: null,
     lastControllerDecision: null,
     lastControllerRunAt: null,
     lastWorkerHealth: null,
@@ -962,6 +1297,22 @@ function createInitialStatus(): SelfHealingLoopStatus {
     activePromptMitigation: null,
     lastPromptMitigationReason: null,
     degradedModeReason: null,
+    aiUsedInRuntime: null,
+    lastDispatchAttempt: null,
+    lastDispatchTarget: null,
+    lastWorkerReceipt: null,
+    lastHealResult: null,
+    timeline: {
+      lastLoopTickAt: null,
+      lastMetricsCollectedAt: null,
+      lastAIRequestAt: null,
+      lastAIResultAt: null,
+      lastDecisionAt: null,
+      lastActionDispatchAttemptAt: null,
+      lastActionDispatchResultAt: null,
+      lastWorkerReceiptAt: null,
+      lastHealResultAt: null
+    },
     lastLatencySnapshot: null,
     recentTimeoutCounts: null,
     recentPipelineTimeoutCounts: null,
@@ -2528,12 +2879,27 @@ async function executeActionPlan(
     });
 
     if (actionPlan.kind === 'recover_stale_jobs') {
+      recordActionDispatchAttempt({
+        runtime,
+        trigger,
+        diagnosis,
+        action: actionTrackingKey,
+        target: actionTarget
+      });
       const settings = getWorkerAutonomySettings();
       const recoverResult = await recoverStaleJobs({
         staleAfterMs: settings.staleAfterMs,
         maxRetries: settings.defaultMaxRetries
       });
       const action = `recoverStaleJobs:recovered=${recoverResult.recoveredJobs.length}:failed=${recoverResult.failedJobs.length}`;
+      recordActionDispatchResult({
+        runtime,
+        diagnosis,
+        action,
+        target: actionTarget,
+        outcome: 'success',
+        message: `Recovered ${recoverResult.recoveredJobs.length} stale jobs; failed ${recoverResult.failedJobs.length}.`
+      });
       recordCooldown(runtime.actionCooldowns, actionPlan.cooldownKey, actionPlan.cooldownMs);
       recordDiagnosisAttempt(runtime, diagnosis.type);
       recordActionExecuted({
@@ -2559,6 +2925,14 @@ async function executeActionPlan(
           recoveredJobs: recoverResult.recoveredJobs.length
         }
       });
+      recordHealResult({
+        runtime,
+        diagnosis,
+        action,
+        target: actionTarget,
+        outcome: 'success',
+        message: `Recovered ${recoverResult.recoveredJobs.length} stale jobs; failed ${recoverResult.failedJobs.length}.`
+      });
       console.log(`[SELF-HEAL] action ${action}`);
       return {
         executed: true,
@@ -2569,6 +2943,16 @@ async function executeActionPlan(
 
     if (actionPlan.kind === 'heal_worker_runtime') {
       const actuator = buildWorkerRepairActuatorStatus();
+      recordActionDispatchAttempt({
+        runtime,
+        trigger,
+        diagnosis,
+        action: actionTrackingKey,
+        target: actionTarget,
+        actuatorMode: actuator.mode,
+        baseUrl: actuator.baseUrl,
+        path: actuator.path
+      });
       logger.info('self_heal.repair.execution', {
         module: 'self_heal.loop',
         source: 'self_heal_loop',
@@ -2583,6 +2967,27 @@ async function executeActionPlan(
         source: 'self_heal_loop'
       });
       const action = `healWorkerRuntime:${healResult.mode}`;
+      recordWorkerReceipt({
+        runtime,
+        diagnosis,
+        action,
+        target: actionTarget,
+        actuatorMode: healResult.mode,
+        statusCode: healResult.statusCode,
+        message: healResult.message
+      });
+      recordActionDispatchResult({
+        runtime,
+        diagnosis,
+        action,
+        target: actionTarget,
+        outcome: 'success',
+        actuatorMode: healResult.mode,
+        baseUrl: healResult.baseUrl,
+        path: healResult.path,
+        statusCode: healResult.statusCode,
+        message: healResult.message
+      });
       recordCooldown(runtime.actionCooldowns, actionPlan.cooldownKey, actionPlan.cooldownMs);
       recordDiagnosisAttempt(runtime, diagnosis.type);
       recordActionExecuted({
@@ -2614,6 +3019,14 @@ async function executeActionPlan(
           payload: healResult.payload
         }
       });
+      recordHealResult({
+        runtime,
+        diagnosis,
+        action,
+        target: actionTarget,
+        outcome: 'success',
+        message: healResult.message
+      });
       logger.info('self_heal.repair.result', {
         module: 'self_heal.loop',
         source: 'self_heal_loop',
@@ -2634,6 +3047,13 @@ async function executeActionPlan(
     }
 
     if (actionPlan.kind === 'activate_trinity_degraded_mode') {
+      recordActionDispatchAttempt({
+        runtime,
+        trigger,
+        diagnosis,
+        action: actionTrackingKey,
+        target: actionTarget
+      });
       const mitigationResult = activateTrinitySelfHealingMitigation({
         stage: actionPlan.stage,
         action: actionPlan.trinityAction,
@@ -2652,6 +3072,22 @@ async function executeActionPlan(
           actionTaken: actionTrackingKey,
           healedComponent: actionTarget
         });
+        recordActionDispatchResult({
+          runtime,
+          diagnosis,
+          action: actionTrackingKey,
+          target: actionTarget,
+          outcome: 'skipped',
+          message: mitigationResult.reason
+        });
+        recordHealResult({
+          runtime,
+          diagnosis,
+          action: actionTrackingKey,
+          target: actionTarget,
+          outcome: 'noop',
+          message: mitigationResult.reason
+        });
         return {
           executed: false,
           action: null,
@@ -2660,6 +3096,14 @@ async function executeActionPlan(
       }
 
       const action = `activateTrinityMitigation:${actionPlan.stage}:${actionPlan.trinityAction}`;
+      recordActionDispatchResult({
+        runtime,
+        diagnosis,
+        action,
+        target: actionTarget,
+        outcome: 'success',
+        message: mitigationResult.reason
+      });
       recordCooldown(runtime.actionCooldowns, actionPlan.cooldownKey, actionPlan.cooldownMs);
       recordDiagnosisAttempt(runtime, diagnosis.type);
       recordActionExecuted({
@@ -2682,6 +3126,14 @@ async function executeActionPlan(
         details: {
           mitigationReason: mitigationResult.reason
         }
+      });
+      recordHealResult({
+        runtime,
+        diagnosis,
+        action,
+        target: actionTarget,
+        outcome: 'success',
+        message: mitigationResult.reason
       });
       console.log(`[SELF-HEAL] action ${action}`);
       return {
@@ -2697,6 +3149,13 @@ async function executeActionPlan(
     }
 
     if (actionPlan.kind === 'activate_prompt_route_reduced_latency_mode') {
+      recordActionDispatchAttempt({
+        runtime,
+        trigger,
+        diagnosis,
+        action: actionTrackingKey,
+        target: actionTarget
+      });
       const defaultTokenLimit = Math.max(64, Math.min(256, observation.openaiHealth.defaults?.maxTokens ?? 256));
       const mitigationResult = activatePromptRouteReducedLatencyMode(diagnosis.summary, defaultTokenLimit);
       if (!mitigationResult.applied) {
@@ -2709,6 +3168,22 @@ async function executeActionPlan(
           actionTaken: actionTrackingKey,
           healedComponent: actionTarget
         });
+        recordActionDispatchResult({
+          runtime,
+          diagnosis,
+          action: actionTrackingKey,
+          target: actionTarget,
+          outcome: 'skipped',
+          message: mitigationResult.reason
+        });
+        recordHealResult({
+          runtime,
+          diagnosis,
+          action: actionTrackingKey,
+          target: actionTarget,
+          outcome: 'noop',
+          message: mitigationResult.reason
+        });
         return {
           executed: false,
           action: null,
@@ -2717,6 +3192,14 @@ async function executeActionPlan(
       }
 
       const action = actionTrackingKey;
+      recordActionDispatchResult({
+        runtime,
+        diagnosis,
+        action,
+        target: actionTarget,
+        outcome: 'success',
+        message: mitigationResult.reason
+      });
       recordCooldown(runtime.actionCooldowns, actionPlan.cooldownKey, actionPlan.cooldownMs);
       recordDiagnosisAttempt(runtime, diagnosis.type);
       recordActionExecuted({
@@ -2739,6 +3222,14 @@ async function executeActionPlan(
         details: {
           mitigationReason: mitigationResult.reason
         }
+      });
+      recordHealResult({
+        runtime,
+        diagnosis,
+        action,
+        target: actionTarget,
+        outcome: 'success',
+        message: mitigationResult.reason
       });
       console.log(`[SELF-HEAL] action ${action}`);
       return {
@@ -2752,6 +3243,13 @@ async function executeActionPlan(
     }
 
     if (actionPlan.kind === 'activate_prompt_route_degraded_mode') {
+      recordActionDispatchAttempt({
+        runtime,
+        trigger,
+        diagnosis,
+        action: actionTrackingKey,
+        target: actionTarget
+      });
       const mitigationResult = activatePromptRouteDegradedMode(diagnosis.summary);
       if (!mitigationResult.applied) {
         console.log(`[SELF-HEAL] action skipped diagnosis=${diagnosis.type} reason=${mitigationResult.reason}`);
@@ -2763,6 +3261,22 @@ async function executeActionPlan(
           actionTaken: actionTrackingKey,
           healedComponent: actionTarget
         });
+        recordActionDispatchResult({
+          runtime,
+          diagnosis,
+          action: actionTrackingKey,
+          target: actionTarget,
+          outcome: 'skipped',
+          message: mitigationResult.reason
+        });
+        recordHealResult({
+          runtime,
+          diagnosis,
+          action: actionTrackingKey,
+          target: actionTarget,
+          outcome: 'noop',
+          message: mitigationResult.reason
+        });
         return {
           executed: false,
           action: null,
@@ -2771,6 +3285,14 @@ async function executeActionPlan(
       }
 
       const action = actionTrackingKey;
+      recordActionDispatchResult({
+        runtime,
+        diagnosis,
+        action,
+        target: actionTarget,
+        outcome: 'success',
+        message: mitigationResult.reason
+      });
       recordCooldown(runtime.actionCooldowns, actionPlan.cooldownKey, actionPlan.cooldownMs);
       recordDiagnosisAttempt(runtime, diagnosis.type);
       recordActionExecuted({
@@ -2794,6 +3316,14 @@ async function executeActionPlan(
           mitigationReason: mitigationResult.reason
         }
       });
+      recordHealResult({
+        runtime,
+        diagnosis,
+        action,
+        target: actionTarget,
+        outcome: 'success',
+        message: mitigationResult.reason
+      });
       console.log(`[SELF-HEAL] action ${action}`);
       return {
         executed: true,
@@ -2806,6 +3336,14 @@ async function executeActionPlan(
     }
   } catch (error) {
     runtime.status.lastError = resolveErrorMessage(error);
+    recordActionDispatchResult({
+      runtime,
+      diagnosis,
+      action: actionTrackingKey,
+      target: actionTarget,
+      outcome: 'failure',
+      message: runtime.status.lastError
+    });
     recordSelfHealEvent({
       kind: 'failure',
       source: 'self_heal_loop',
@@ -2813,6 +3351,14 @@ async function executeActionPlan(
       reason: runtime.status.lastError,
       actionTaken: actionTrackingKey,
       healedComponent: actionTarget
+    });
+    recordHealResult({
+      runtime,
+      diagnosis,
+      action: actionTrackingKey,
+      target: actionTarget,
+      outcome: 'failure',
+      message: runtime.status.lastError
     });
     console.error(`[SELF-HEAL] action error ${runtime.status.lastError}`);
   }
@@ -2864,6 +3410,11 @@ export function getSelfHealingLoopStatus(): SelfHealingLoopStatus {
     cooldowns: { ...snapshot.cooldowns },
     lastAIDiagnosis: snapshot.lastAIDiagnosis ? { ...snapshot.lastAIDiagnosis } : null,
     lastEvidence: snapshot.lastEvidence ? { ...snapshot.lastEvidence } : null,
+    lastDispatchAttempt: snapshot.lastDispatchAttempt ? { ...snapshot.lastDispatchAttempt } : null,
+    lastDispatchTarget: snapshot.lastDispatchTarget ? { ...snapshot.lastDispatchTarget } : null,
+    lastWorkerReceipt: snapshot.lastWorkerReceipt ? { ...snapshot.lastWorkerReceipt } : null,
+    lastHealResult: snapshot.lastHealResult ? { ...snapshot.lastHealResult } : null,
+    timeline: { ...snapshot.timeline },
     lastLatencySnapshot: snapshot.lastLatencySnapshot
       ? {
           ...snapshot.lastLatencySnapshot,
@@ -2926,6 +3477,11 @@ export async function runSelfHealingLoop(options: {
     runtime.status.lastTick = tickAt;
     runtime.status.tickCount += 1;
     runtime.status.lastError = null;
+    recordLoopTick({
+      runtime,
+      trigger,
+      tickAt
+    });
 
     console.log(`[SELF-HEAL] tick ${tickAt} trigger=${trigger} tickCount=${runtime.status.tickCount}`);
 
@@ -2954,6 +3510,7 @@ export async function runSelfHealingLoop(options: {
     runtime.status.abortPropagationCoverage = [...PROMPT_ROUTE_ABORT_PROPAGATION_COVERAGE];
     runtime.status.bypassedSubsystems = combineBypassedSubsystems(observation.requestWindow);
     recordMetricsCollected({
+      runtime,
       trigger,
       diagnosis,
       observation
@@ -2965,6 +3522,7 @@ export async function runSelfHealingLoop(options: {
       observation
     });
     recordControllerDecision({
+      runtime,
       trigger,
       diagnosis,
       aiDiagnosis: aiDiagnosisResult.diagnosis
@@ -3005,6 +3563,14 @@ export async function runSelfHealingLoop(options: {
     let action: string | null = verification.followUpAction;
     if (!action && predictiveResult?.execution.status === 'executed') {
       action = predictiveResult.decision.action;
+      recordActionDispatchResult({
+        runtime,
+        diagnosis,
+        action,
+        target: predictiveResult.decision.target,
+        outcome: 'success',
+        message: predictiveResult.execution.message
+      });
       runtime.status.lastAction = action;
       runtime.status.lastActionAt = new Date().toISOString();
       recordActionExecuted({
@@ -3018,6 +3584,14 @@ export async function runSelfHealingLoop(options: {
           executionStatus: predictiveResult.execution.status,
           message: predictiveResult.execution.message
         }
+      });
+      recordHealResult({
+        runtime,
+        diagnosis,
+        action,
+        target: predictiveResult.decision.target,
+        outcome: 'success',
+        message: predictiveResult.execution.message
       });
     }
     if (

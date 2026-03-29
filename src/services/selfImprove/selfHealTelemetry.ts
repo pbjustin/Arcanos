@@ -7,6 +7,7 @@ import { resolveConfiguredRedisConnection } from '@platform/runtime/redis.js';
 import { readJsonFileSafely } from '@shared/jsonFileUtils.js';
 
 const SELF_HEAL_EVENT_KINDS = [
+  'LOOP_TICK',
   'METRICS_COLLECTED',
   'trigger',
   'attempt',
@@ -17,7 +18,13 @@ const SELF_HEAL_EVENT_KINDS = [
   'AI_DIAGNOSIS_REQUEST',
   'AI_DIAGNOSIS_RESULT',
   'CONTROLLER_DECISION',
-  'ACTION_EXECUTED'
+  'ACTION_EXECUTED',
+  'ACTION_DISPATCH_ATTEMPT',
+  'ACTION_DISPATCH_RESULT',
+  'WORKER_RECEIPT',
+  'HEAL_RESULT',
+  'AI_FAILED',
+  'FALLBACK_USED'
 ] as const;
 
 export type SelfHealEventKind = (typeof SELF_HEAL_EVENT_KINDS)[number];
@@ -30,19 +37,29 @@ const IMMEDIATE_PERSISTENCE_EVENT_KINDS = new Set<SelfHealEventKind>([
   'noop',
   'AI_DIAGNOSIS_RESULT',
   'CONTROLLER_DECISION',
-  'ACTION_EXECUTED'
+  'ACTION_EXECUTED',
+  'ACTION_DISPATCH_RESULT',
+  'WORKER_RECEIPT',
+  'HEAL_RESULT',
+  'AI_FAILED',
+  'FALLBACK_USED'
 ]);
 
 export interface SelfHealEvent {
   id: string;
   timestamp: string;
   kind: SelfHealEventKind;
+  type: SelfHealEventKind;
   source: string;
   trigger: string | null;
   reason: string | null;
   actionTaken: string | null;
   healedComponent: string | null;
+  payload: Record<string, unknown> | null;
   details: Record<string, unknown> | null;
+  correlationId: string | null;
+  requestId: string | null;
+  traceId: string | null;
 }
 
 interface SelfHealTelemetryState {
@@ -102,7 +119,7 @@ type SelfHealTelemetryGlobal = typeof globalThis & {
 };
 
 const GLOBAL_KEY = '__ARCANOS_SELF_HEAL_TELEMETRY__';
-const MAX_RECENT_EVENTS = 25;
+const MAX_RECENT_EVENTS = 100;
 const PERSISTENCE_VERSION = 1;
 const PERSISTENCE_SAVE_DEBOUNCE_MS = 100;
 
@@ -306,6 +323,22 @@ function normalizeDetails(details: Record<string, unknown> | null | undefined): 
     : null;
 }
 
+function buildEventPayload(params: {
+  trigger?: string | null;
+  reason?: string | null;
+  actionTaken?: string | null;
+  healedComponent?: string | null;
+  details?: Record<string, unknown> | null;
+}): Record<string, unknown> | null {
+  return normalizeDetails({
+    trigger: params.trigger ?? null,
+    reason: params.reason ?? null,
+    actionTaken: params.actionTaken ?? null,
+    healedComponent: params.healedComponent ?? null,
+    ...(params.details ?? {})
+  });
+}
+
 function normalizeEvent(raw: unknown): SelfHealEvent | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     return null;
@@ -322,20 +355,38 @@ function normalizeEvent(raw: unknown): SelfHealEvent | null {
     return null;
   }
 
+  const details = normalizeDetails(
+    candidate.details && typeof candidate.details === 'object' && !Array.isArray(candidate.details)
+      ? (candidate.details as Record<string, unknown>)
+      : null
+  );
+  const payload = normalizeDetails(
+    candidate.payload && typeof candidate.payload === 'object' && !Array.isArray(candidate.payload)
+      ? (candidate.payload as Record<string, unknown>)
+      : buildEventPayload({
+          trigger: typeof candidate.trigger === 'string' ? candidate.trigger : null,
+          reason: typeof candidate.reason === 'string' ? candidate.reason : null,
+          actionTaken: typeof candidate.actionTaken === 'string' ? candidate.actionTaken : null,
+          healedComponent: typeof candidate.healedComponent === 'string' ? candidate.healedComponent : null,
+          details
+        })
+  );
+
   return {
     id: candidate.id,
     timestamp: candidate.timestamp,
     kind,
+    type: kind,
     source: candidate.source,
     trigger: typeof candidate.trigger === 'string' ? candidate.trigger : null,
     reason: typeof candidate.reason === 'string' ? candidate.reason : null,
     actionTaken: typeof candidate.actionTaken === 'string' ? candidate.actionTaken : null,
     healedComponent: typeof candidate.healedComponent === 'string' ? candidate.healedComponent : null,
-    details: normalizeDetails(
-      candidate.details && typeof candidate.details === 'object' && !Array.isArray(candidate.details)
-        ? (candidate.details as Record<string, unknown>)
-        : null
-    )
+    payload,
+    details,
+    correlationId: typeof candidate.correlationId === 'string' ? candidate.correlationId : null,
+    requestId: typeof candidate.requestId === 'string' ? candidate.requestId : null,
+    traceId: typeof candidate.traceId === 'string' ? candidate.traceId : null
   };
 }
 
@@ -568,6 +619,7 @@ function cloneEvent(event: SelfHealEvent | null): SelfHealEvent | null {
 
   return {
     ...event,
+    payload: event.payload ? normalizeDetails(event.payload) : null,
     details: event.details ? normalizeDetails(event.details) : null
   };
 }
@@ -659,21 +711,46 @@ export function recordSelfHealEvent(input: {
   actionTaken?: string | null;
   healedComponent?: string | null;
   details?: Record<string, unknown> | null;
+  correlationId?: string | null;
+  requestId?: string | null;
+  traceId?: string | null;
   timestamp?: string;
 }): SelfHealEvent {
   const state = getMutableState();
   const timestamp = input.timestamp ?? new Date().toISOString();
   const actionTaken = input.actionTaken ?? null;
+  const healedComponent = input.healedComponent ?? inferSelfHealComponentFromAction(actionTaken);
+  const normalizedDetails = normalizeDetails(input.details);
+  const correlationId =
+    input.correlationId ??
+    (typeof normalizedDetails?.incidentKey === 'string' ? normalizedDetails.incidentKey : null);
+  const requestId =
+    input.requestId ??
+    (typeof normalizedDetails?.requestId === 'string' ? normalizedDetails.requestId : null);
+  const traceId =
+    input.traceId ??
+    (typeof normalizedDetails?.traceId === 'string' ? normalizedDetails.traceId : null);
   const event: SelfHealEvent = {
     id: `self_heal_event_${state.nextSequence}`,
     timestamp,
     kind: input.kind,
+    type: input.kind,
     source: input.source,
     trigger: input.trigger ?? null,
     reason: input.reason ?? null,
     actionTaken,
-    healedComponent: input.healedComponent ?? inferSelfHealComponentFromAction(actionTaken),
-    details: normalizeDetails(input.details)
+    healedComponent,
+    payload: buildEventPayload({
+      trigger: input.trigger ?? null,
+      reason: input.reason ?? null,
+      actionTaken,
+      healedComponent,
+      details: normalizedDetails
+    }),
+    details: normalizedDetails,
+    correlationId,
+    requestId,
+    traceId
   };
 
   state.nextSequence += 1;

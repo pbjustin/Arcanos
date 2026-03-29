@@ -8,6 +8,7 @@ import {
 } from '@services/selfImprove/predictiveHealingService.js';
 import {
   buildSelfHealEventsSnapshot,
+  buildSelfHealInspectionSnapshot,
   buildSelfHealRuntimeSnapshot,
 } from '@services/selfHealRuntimeInspectionService.js';
 import { sendInternalErrorPayload } from '@shared/http/index.js';
@@ -143,6 +144,19 @@ router.get('/api/self-heal/events', (req: Request, res: Response) => {
     sendInternalErrorPayload(res, {
       error: resolveErrorMessage(error),
       where: 'self-heal/events'
+    });
+  }
+});
+
+router.get('/api/self-heal/inspection', async (req: Request, res: Response) => {
+  try {
+    const rawLimit = typeof req.query.limit === 'string' ? Number.parseInt(req.query.limit, 10) : NaN;
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : 10;
+    res.json(await buildSelfHealInspectionSnapshot(limit));
+  } catch (error) {
+    sendInternalErrorPayload(res, {
+      error: resolveErrorMessage(error),
+      where: 'self-heal/inspection'
     });
   }
 });

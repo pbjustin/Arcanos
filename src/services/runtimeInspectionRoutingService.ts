@@ -13,6 +13,7 @@ import { shouldInspectRuntimePrompt } from '@services/promptDebugTraceService.js
 import {
   buildSafetySelfHealSnapshot,
   buildSelfHealEventsSnapshot,
+  buildSelfHealInspectionSnapshot,
   buildSelfHealRuntimeSnapshot,
 } from '@services/selfHealRuntimeInspectionService.js';
 import { runtimeDiagnosticsService } from '@services/runtimeDiagnosticsService.js';
@@ -238,6 +239,7 @@ export async function executeRuntimeInspection(params: {
   const toolsAvailable = [
     '/api/self-heal/runtime',
     '/api/self-heal/events',
+    '/api/self-heal/inspection',
     '/status/safety/self-heal',
     '/worker-helper/health',
     '/workers/status',
@@ -278,6 +280,7 @@ export async function executeRuntimeInspection(params: {
 
   await tryCollect('runtime-endpoint', '/api/self-heal/runtime', () => buildSelfHealRuntimeSnapshot());
   await tryCollect('runtime-endpoint', '/api/self-heal/events', () => buildSelfHealEventsSnapshot(20));
+  await tryCollect('runtime-endpoint', '/api/self-heal/inspection', async () => await buildSelfHealInspectionSnapshot(10));
   await tryCollect('runtime-endpoint', '/status/safety/self-heal', () => buildSafetySelfHealSnapshot());
   await tryCollect('worker-health', '/worker-helper/health', async () => await getWorkerControlHealth());
   await tryCollect('worker-health', '/workers/status', () => buildWorkersStatusSnapshot());
@@ -360,6 +363,15 @@ export async function executeRuntimeInspection(params: {
     };
   }
 
+  const selfHealInspectionSource = sources.find(source => source.tool === '/api/self-heal/inspection');
+  const selfHealInspectionEvidence =
+    selfHealInspectionSource &&
+    selfHealInspectionSource.data &&
+    typeof selfHealInspectionSource.data === 'object' &&
+    !Array.isArray(selfHealInspectionSource.data)
+      ? (selfHealInspectionSource.data as Record<string, unknown>).evidence ?? null
+      : null;
+
   return {
     ok: true,
     responsePayload: {
@@ -367,7 +379,10 @@ export async function executeRuntimeInspection(params: {
       runtimeInspection: {
         detectedIntent: classification.detectedIntent,
         status: 'ok',
-        summary: `Collected live runtime state from ${selectedTools.length} runtime sources.`,
+        summary:
+          typeof (selfHealInspectionSource?.data as Record<string, unknown> | undefined)?.summary === 'string'
+            ? (selfHealInspectionSource?.data as Record<string, unknown>).summary
+            : `Collected live runtime state from ${selectedTools.length} runtime sources.`,
         matchedKeywords: classification.matchedKeywords,
         repoInspectionDisabled: classification.repoInspectionDisabled,
         onlyReturnRuntimeValues: classification.onlyReturnRuntimeValues,
@@ -375,6 +390,7 @@ export async function executeRuntimeInspection(params: {
         repoFallbackUsed: false,
         runtimeEndpointsQueried,
         toolsSelected: selectedTools,
+        evidence: selfHealInspectionEvidence,
         sources,
         failures,
       },

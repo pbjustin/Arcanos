@@ -509,6 +509,264 @@ function shapeMemoryDispatchResult(value: Record<string, unknown>): Record<strin
   };
 }
 
+function pickRuntimeInspectionEvidenceItem(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const output: Record<string, unknown> = {};
+  const timestamp = readString(value.ts) ?? readString(value.timestamp);
+  const type = readString(value.type) ?? readString(value.kind);
+  const source = readString(value.source);
+  const eventId = readString(value.eventId) ?? readString(value.id);
+  const requestId = readString(value.requestId);
+  const traceId = readString(value.traceId);
+  const correlationId = readString(value.correlationId);
+
+  if (timestamp) {
+    output.ts = timestamp;
+  }
+
+  if (type) {
+    output.type = type;
+  }
+
+  if (source) {
+    output.source = source;
+  }
+
+  if (eventId) {
+    output.eventId = eventId;
+  }
+
+  if (requestId) {
+    output.requestId = requestId;
+  }
+
+  if (traceId) {
+    output.traceId = traceId;
+  }
+
+  if (correlationId) {
+    output.correlationId = correlationId;
+  }
+
+  const payload = pruneGenericValue(value.payload);
+  if (payload !== undefined || value.payload === null) {
+    output.payload = payload ?? null;
+  }
+
+  return Object.keys(output).length > 0 ? output : null;
+}
+
+function pickRuntimeInspectionEvidenceArray(value: unknown, maxItems = 12): Record<string, unknown>[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  return value
+    .slice(0, maxItems)
+    .map(item => pickRuntimeInspectionEvidenceItem(item))
+    .filter((item): item is Record<string, unknown> => item !== null);
+}
+
+function pickRuntimeInspectionSources(value: unknown, maxItems = 12): Record<string, unknown>[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const items = value
+    .filter(isRecord)
+    .slice(0, maxItems)
+    .map((entry) => {
+      const data = isRecord(entry.data) ? entry.data : null;
+      const observedAt = data ? readString(data.timestamp) : undefined;
+
+      return {
+        ...(readString(entry.tool) ? { tool: readString(entry.tool) } : {}),
+        ...(readString(entry.sourceType) ? { sourceType: readString(entry.sourceType) } : {}),
+        ...(observedAt ? { observedAt } : {}),
+      };
+    })
+    .filter((entry) => Object.keys(entry).length > 0);
+
+  return items.length > 0 ? items : undefined;
+}
+
+function pickRuntimeInspectionFailures(value: unknown, maxItems = 8): Record<string, unknown>[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const items = value
+    .filter(isRecord)
+    .slice(0, maxItems)
+    .map((entry) => ({
+      ...(readString(entry.tool) ? { tool: readString(entry.tool) } : {}),
+      ...(readString(entry.sourceType) ? { sourceType: readString(entry.sourceType) } : {}),
+      ...(readString(entry.error) ? { error: truncateText(readString(entry.error) as string, 320) } : {}),
+    }))
+    .filter((entry) => Object.keys(entry).length > 0);
+
+  return items.length > 0 ? items : undefined;
+}
+
+function pickSelfHealRuntimeInspectionSnapshot(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const loopStatus = isRecord(value.loopStatus) ? value.loopStatus : null;
+  const output: Record<string, unknown> = {
+    ...(readString(value.status) ? { status: readString(value.status) } : {}),
+    ...(readString(value.timestamp) ? { timestamp: readString(value.timestamp) } : {}),
+    ...(readBoolean(value.enabled) !== undefined ? { enabled: readBoolean(value.enabled) } : {}),
+    ...(readBoolean(value.active) !== undefined ? { active: readBoolean(value.active) } : {}),
+    ...(readBoolean(value.isHealing) !== undefined ? { isHealing: readBoolean(value.isHealing) } : {}),
+    ...(readString(value.lastHealRun) ? { lastHealRun: readString(value.lastHealRun) } : {}),
+    ...(readString(value.lastDecision) ? { lastDecision: readString(value.lastDecision) } : {}),
+    ...(readString(value.lastAction) ? { lastAction: readString(value.lastAction) } : {}),
+    ...(readString(value.lastResult) ? { lastResult: readString(value.lastResult) } : {}),
+  };
+
+  if (Object.prototype.hasOwnProperty.call(value, 'aiUsedInRuntime')) {
+    output.aiUsedInRuntime =
+      readBoolean(value.aiUsedInRuntime) !== undefined ? readBoolean(value.aiUsedInRuntime) : null;
+  }
+
+  const systemState = pruneGenericValue(value.systemState);
+  if (systemState !== undefined) {
+    output.systemState = systemState;
+  }
+
+  const lastAIDiagnosis = pruneGenericValue(value.lastAIDiagnosis);
+  if (lastAIDiagnosis !== undefined) {
+    output.lastAIDiagnosis = lastAIDiagnosis;
+  }
+
+  const lastDispatchAttempt = pruneGenericValue(value.lastDispatchAttempt);
+  if (lastDispatchAttempt !== undefined) {
+    output.lastDispatchAttempt = lastDispatchAttempt;
+  }
+
+  const lastDispatchTarget = pruneGenericValue(value.lastDispatchTarget);
+  if (lastDispatchTarget !== undefined) {
+    output.lastDispatchTarget = lastDispatchTarget;
+  }
+
+  const lastWorkerReceipt = pruneGenericValue(value.lastWorkerReceipt);
+  if (lastWorkerReceipt !== undefined) {
+    output.lastWorkerReceipt = lastWorkerReceipt;
+  }
+
+  const lastHealResult = pruneGenericValue(value.lastHealResult);
+  if (lastHealResult !== undefined) {
+    output.lastHealResult = lastHealResult;
+  }
+
+  const timeline = pruneGenericValue(value.timeline);
+  if (timeline !== undefined) {
+    output.timeline = timeline;
+  }
+
+  if (loopStatus) {
+    const compactLoopStatus = {
+      ...(readBoolean(loopStatus.loopRunning) !== undefined ? { loopRunning: readBoolean(loopStatus.loopRunning) } : {}),
+      ...(readNumber(loopStatus.tickCount) !== undefined ? { tickCount: readNumber(loopStatus.tickCount) } : {}),
+      ...(readString(loopStatus.lastTick) ? { lastTick: readString(loopStatus.lastTick) } : {}),
+    };
+
+    if (Object.keys(compactLoopStatus).length > 0) {
+      output.loopStatus = compactLoopStatus;
+    }
+  }
+
+  return Object.keys(output).length > 0 ? output : null;
+}
+
+function pickRuntimeInspectionEvidence(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const output: Record<string, unknown> = {};
+  const selfHealRuntimeSnapshot = pickSelfHealRuntimeInspectionSnapshot(value.selfHealRuntimeSnapshot);
+  const recentSelfHealEvents = pickRuntimeInspectionEvidenceArray(value.recentSelfHealEvents);
+  const recentPromptDebugEvents = pickRuntimeInspectionEvidenceArray(value.recentPromptDebugEvents, 8);
+  const recentAIRoutingEvents = pickRuntimeInspectionEvidenceArray(value.recentAIRoutingEvents, 8);
+  const recentWorkerEvidence = pickRuntimeInspectionEvidenceArray(value.recentWorkerEvidence, 8);
+
+  if (selfHealRuntimeSnapshot) {
+    output.selfHealRuntimeSnapshot = selfHealRuntimeSnapshot;
+  }
+
+  if (recentSelfHealEvents) {
+    output.recentSelfHealEvents = recentSelfHealEvents;
+  }
+
+  if (recentPromptDebugEvents) {
+    output.recentPromptDebugEvents = recentPromptDebugEvents;
+  }
+
+  if (recentAIRoutingEvents) {
+    output.recentAIRoutingEvents = recentAIRoutingEvents;
+  }
+
+  if (recentWorkerEvidence) {
+    output.recentWorkerEvidence = recentWorkerEvidence;
+  }
+
+  return Object.keys(output).length > 0 ? output : null;
+}
+
+function shapeRuntimeInspectionResult(value: Record<string, unknown>): Record<string, unknown> | null {
+  if (value.handledBy !== 'runtime-inspection' || !isRecord(value.runtimeInspection)) {
+    return null;
+  }
+
+  const runtimeInspection = value.runtimeInspection;
+  const evidence = pickRuntimeInspectionEvidence(runtimeInspection.evidence);
+  const sources = pickRuntimeInspectionSources(runtimeInspection.sources);
+  const failures = pickRuntimeInspectionFailures(runtimeInspection.failures);
+
+  return {
+    handledBy: 'runtime-inspection',
+    runtimeInspection: {
+      ...(readString(runtimeInspection.detectedIntent)
+        ? { detectedIntent: readString(runtimeInspection.detectedIntent) }
+        : {}),
+      ...(readString(runtimeInspection.status) ? { status: readString(runtimeInspection.status) } : {}),
+      ...(readString(runtimeInspection.summary)
+        ? { summary: truncateText(readString(runtimeInspection.summary) as string, 600) }
+        : {}),
+      ...(readStringArray(runtimeInspection.matchedKeywords, 12)
+        ? { matchedKeywords: readStringArray(runtimeInspection.matchedKeywords, 12) }
+        : {}),
+      ...(readBoolean(runtimeInspection.repoInspectionDisabled) !== undefined
+        ? { repoInspectionDisabled: readBoolean(runtimeInspection.repoInspectionDisabled) }
+        : {}),
+      ...(readBoolean(runtimeInspection.onlyReturnRuntimeValues) !== undefined
+        ? { onlyReturnRuntimeValues: readBoolean(runtimeInspection.onlyReturnRuntimeValues) }
+        : {}),
+      ...(readBoolean(runtimeInspection.cliUsed) !== undefined
+        ? { cliUsed: readBoolean(runtimeInspection.cliUsed) }
+        : {}),
+      ...(readBoolean(runtimeInspection.repoFallbackUsed) !== undefined
+        ? { repoFallbackUsed: readBoolean(runtimeInspection.repoFallbackUsed) }
+        : {}),
+      ...(readStringArray(runtimeInspection.runtimeEndpointsQueried, 16)
+        ? { runtimeEndpointsQueried: readStringArray(runtimeInspection.runtimeEndpointsQueried, 16) }
+        : {}),
+      ...(readStringArray(runtimeInspection.toolsSelected, 16)
+        ? { toolsSelected: readStringArray(runtimeInspection.toolsSelected, 16) }
+        : {}),
+      ...(evidence ? { evidence } : {}),
+      ...(sources ? { sources } : {}),
+      ...(failures ? { failures } : {}),
+    },
+  };
+}
+
 function shapeDiagnosticResult(value: Record<string, unknown>): Record<string, unknown> | null {
   if (value.ok !== true || readString(value.route) !== 'diagnostic') {
     return null;
@@ -552,6 +810,11 @@ export function shapeClientRouteResult(result: unknown): unknown {
   const memoryDispatch = shapeMemoryDispatchResult(result);
   if (memoryDispatch) {
     return memoryDispatch;
+  }
+
+  const runtimeInspection = shapeRuntimeInspectionResult(result);
+  if (runtimeInspection) {
+    return runtimeInspection;
   }
 
   const trinitySummary = pickTrinitySummary(result);

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const mockBuildSelfHealRuntimeSnapshot = jest.fn();
 const mockBuildSelfHealEventsSnapshot = jest.fn();
+const mockBuildSelfHealInspectionSnapshot = jest.fn();
 
 jest.unstable_mockModule('@transport/http/middleware/capabilityGate.js', () => ({
   capabilityGate: () => (_req: unknown, _res: unknown, next: () => void) => next(),
@@ -14,6 +15,7 @@ jest.unstable_mockModule('@services/selfImprove/predictiveHealingService.js', ()
 jest.unstable_mockModule('@services/selfHealRuntimeInspectionService.js', () => ({
   buildSelfHealRuntimeSnapshot: mockBuildSelfHealRuntimeSnapshot,
   buildSelfHealEventsSnapshot: mockBuildSelfHealEventsSnapshot,
+  buildSelfHealInspectionSnapshot: mockBuildSelfHealInspectionSnapshot,
 }));
 
 const express = (await import('express')).default;
@@ -41,6 +43,27 @@ describe('self-heal runtime routes', () => {
       count: 1,
       events: [{ id: 'evt-1' }],
     });
+    mockBuildSelfHealInspectionSnapshot.mockResolvedValue({
+      status: 'ok',
+      timestamp: '2026-03-27T00:00:00.000Z',
+      summary: 'Collected 1 self-heal runtime event.',
+      evidence: {
+        selfHealRuntimeSnapshot: {
+          status: 'ok',
+          lastDecision: 'observe',
+        },
+        recentSelfHealEvents: [{ ts: '2026-03-27T00:00:00.000Z', type: 'AI_DIAGNOSIS_REQUEST' }],
+        recentPromptDebugEvents: [],
+        recentAIRoutingEvents: [],
+        recentWorkerEvidence: [],
+      },
+      limits: {
+        selfHealEvents: 10,
+        promptDebugEvents: 10,
+        aiRoutingEvents: 10,
+        workerEvidence: 10,
+      },
+    });
   });
 
   it('exposes self-heal runtime and event snapshots', async () => {
@@ -61,5 +84,18 @@ describe('self-heal runtime routes', () => {
       events: [{ id: 'evt-1' }],
     });
     expect(mockBuildSelfHealEventsSnapshot).toHaveBeenCalledWith(5);
+
+    const inspectionResponse = await request(app).get('/api/self-heal/inspection?limit=7');
+    expect(inspectionResponse.status).toBe(200);
+    expect(inspectionResponse.body).toMatchObject({
+      status: 'ok',
+      evidence: {
+        selfHealRuntimeSnapshot: {
+          lastDecision: 'observe',
+        },
+        recentSelfHealEvents: [{ type: 'AI_DIAGNOSIS_REQUEST' }],
+      },
+    });
+    expect(mockBuildSelfHealInspectionSnapshot).toHaveBeenCalledWith(7);
   });
 });

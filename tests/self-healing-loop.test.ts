@@ -101,6 +101,7 @@ const {
 } = await import('../src/services/selfImprove/selfHealingLoop.js');
 const {
   buildSelfHealEventsSnapshot,
+  buildSelfHealInspectionSnapshot,
   buildSelfHealRuntimeSnapshot
 } = await import('../src/services/selfHealRuntimeInspectionService.js');
 
@@ -1612,9 +1613,18 @@ describe('selfHealingLoop', () => {
     expect(runPredictiveHealingFromLoopMock).toHaveBeenCalledTimes(2);
     expect(runtimeSnapshot.loopStatus).toEqual(expect.objectContaining({
       lastDecision: 'observe',
+      aiUsedInRuntime: true,
+      timeline: expect.objectContaining({
+        lastLoopTickAt: expect.any(String),
+        lastMetricsCollectedAt: expect.any(String),
+        lastAIRequestAt: expect.any(String),
+        lastAIResultAt: expect.any(String),
+        lastDecisionAt: expect.any(String),
+      }),
       lastAIDiagnosis: expect.objectContaining({
         advisor: 'arcanos_core_v1',
         decision: 'observe',
+        aiUsedInRuntime: true,
         fallbackUsed: false
       })
     }));
@@ -1665,13 +1675,18 @@ describe('selfHealingLoop', () => {
     const result = await runSelfHealingLoop({ trigger: 'interval' });
     const runtimeSnapshot = buildSelfHealRuntimeSnapshot();
     const eventsSnapshot = buildSelfHealEventsSnapshot(20);
+    const inspectionSnapshot = await buildSelfHealInspectionSnapshot(10);
     const filteredRuntimeEvents = eventsSnapshot.events
       .filter((event) =>
+        event.kind === 'LOOP_TICK' ||
         event.kind === 'METRICS_COLLECTED' ||
         event.kind === 'AI_DIAGNOSIS_REQUEST' ||
         event.kind === 'AI_DIAGNOSIS_RESULT' ||
         event.kind === 'CONTROLLER_DECISION' ||
-        event.kind === 'ACTION_EXECUTED'
+        event.kind === 'ACTION_DISPATCH_ATTEMPT' ||
+        event.kind === 'ACTION_DISPATCH_RESULT' ||
+        event.kind === 'ACTION_EXECUTED' ||
+        event.kind === 'HEAL_RESULT'
       )
       .map((event) => event.kind);
 
@@ -1682,21 +1697,77 @@ describe('selfHealingLoop', () => {
     expect(runPredictiveHealingFromLoopMock).toHaveBeenCalledTimes(1);
     expect(runtimeSnapshot.loopStatus).toEqual(expect.objectContaining({
       lastDecision: 'heal',
+      aiUsedInRuntime: true,
       lastAIDiagnosis: expect.objectContaining({
         advisor: 'arcanos_core_v1',
         decision: 'heal',
         action: 'recover_stale_jobs',
+        aiUsedInRuntime: true,
         fallbackUsed: false
       }),
-      lastAction: 'recoverStaleJobs:recovered=1:failed=0'
+      lastAction: 'recoverStaleJobs:recovered=1:failed=0',
+      lastResult: 'success',
+      lastDispatchAttempt: expect.objectContaining({
+        action: 'recover_stale_jobs',
+        target: 'worker_queue'
+      }),
+      lastHealResult: expect.objectContaining({
+        outcome: 'success',
+        action: 'recoverStaleJobs:recovered=1:failed=0',
+        target: 'worker_queue'
+      }),
+      timeline: expect.objectContaining({
+        lastLoopTickAt: expect.any(String),
+        lastMetricsCollectedAt: expect.any(String),
+        lastAIRequestAt: expect.any(String),
+        lastAIResultAt: expect.any(String),
+        lastDecisionAt: expect.any(String),
+        lastActionDispatchAttemptAt: expect.any(String),
+        lastActionDispatchResultAt: expect.any(String),
+        lastHealResultAt: expect.any(String),
+      })
     }));
     expect(filteredRuntimeEvents).toEqual([
+      'LOOP_TICK',
       'METRICS_COLLECTED',
       'AI_DIAGNOSIS_REQUEST',
       'AI_DIAGNOSIS_RESULT',
       'CONTROLLER_DECISION',
-      'ACTION_EXECUTED'
+      'ACTION_DISPATCH_ATTEMPT',
+      'ACTION_DISPATCH_RESULT',
+      'ACTION_EXECUTED',
+      'HEAL_RESULT'
     ]);
+    expect(inspectionSnapshot).toMatchObject({
+      status: 'ok',
+      evidence: {
+        selfHealRuntimeSnapshot: expect.objectContaining({
+          lastDecision: 'heal',
+          lastAction: 'recoverStaleJobs:recovered=1:failed=0',
+          lastResult: 'success',
+          aiUsedInRuntime: true
+        }),
+        recentSelfHealEvents: expect.arrayContaining([
+          expect.objectContaining({ type: 'AI_DIAGNOSIS_REQUEST', source: '/api/self-heal/events' }),
+          expect.objectContaining({ type: 'AI_DIAGNOSIS_RESULT', source: '/api/self-heal/events' }),
+          expect.objectContaining({ type: 'CONTROLLER_DECISION', source: '/api/self-heal/events' }),
+          expect.objectContaining({ type: 'ACTION_DISPATCH_ATTEMPT', source: '/api/self-heal/events' }),
+          expect.objectContaining({ type: 'ACTION_DISPATCH_RESULT', source: '/api/self-heal/events' }),
+          expect.objectContaining({ type: 'HEAL_RESULT', source: '/api/self-heal/events' })
+        ]),
+        recentWorkerEvidence: expect.arrayContaining([
+          expect.objectContaining({ type: 'ACTION_DISPATCH_ATTEMPT' }),
+          expect.objectContaining({ type: 'ACTION_DISPATCH_RESULT' }),
+          expect.objectContaining({ type: 'HEAL_RESULT' })
+        ])
+      }
+    });
+    expect(eventsSnapshot.recentSelfHealEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: 'AI_DIAGNOSIS_REQUEST', source: '/api/self-heal/events' }),
+      expect.objectContaining({ type: 'AI_DIAGNOSIS_RESULT', source: '/api/self-heal/events' }),
+      expect.objectContaining({ type: 'ACTION_DISPATCH_ATTEMPT', source: '/api/self-heal/events' }),
+      expect.objectContaining({ type: 'HEAL_RESULT', source: '/api/self-heal/events' })
+    ]));
     expect(eventsSnapshot.events).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: 'AI_DIAGNOSIS_REQUEST' }),
       expect.objectContaining({
@@ -1704,7 +1775,8 @@ describe('selfHealingLoop', () => {
         details: expect.objectContaining({
           advisor: 'arcanos_core_v1',
           decision: 'heal',
-          action: 'recover_stale_jobs'
+          action: 'recover_stale_jobs',
+          aiUsedInRuntime: true
         })
       }),
       expect.objectContaining({
@@ -1716,6 +1788,22 @@ describe('selfHealingLoop', () => {
       expect.objectContaining({
         kind: 'ACTION_EXECUTED',
         actionTaken: 'recoverStaleJobs:recovered=1:failed=0'
+      }),
+      expect.objectContaining({
+        kind: 'ACTION_DISPATCH_ATTEMPT',
+        actionTaken: 'recover_stale_jobs'
+      }),
+      expect.objectContaining({
+        kind: 'ACTION_DISPATCH_RESULT',
+        details: expect.objectContaining({
+          outcome: 'success'
+        })
+      }),
+      expect.objectContaining({
+        kind: 'HEAL_RESULT',
+        details: expect.objectContaining({
+          outcome: 'success'
+        })
       })
     ]));
   });

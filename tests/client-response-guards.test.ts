@@ -224,6 +224,206 @@ describe('client response guards', () => {
     });
   });
 
+  it('preserves compact self-heal runtime inspection evidence arrays for client responses', () => {
+    const shaped = shapeClientRouteResult({
+      handledBy: 'runtime-inspection',
+      runtimeInspection: {
+        detectedIntent: 'RUNTIME_INSPECTION_REQUIRED',
+        status: 'ok',
+        summary: 'Collected live runtime state from multiple sources.',
+        repoInspectionDisabled: true,
+        onlyReturnRuntimeValues: true,
+        cliUsed: true,
+        repoFallbackUsed: false,
+        runtimeEndpointsQueried: ['/api/self-heal/runtime', '/api/self-heal/events', '/api/self-heal/inspection'],
+        toolsSelected: ['/api/self-heal/runtime', '/api/self-heal/events', '/api/self-heal/inspection', 'cli:status'],
+        evidence: {
+          selfHealRuntimeSnapshot: {
+            status: 'ok',
+            isHealing: false,
+            lastHealRun: '2026-03-29T06:47:34.525Z',
+            lastDecision: 'observe',
+            lastResult: 'fallback',
+            aiUsedInRuntime: false,
+            systemState: {
+              errorRate: 0,
+              latency: 18,
+            },
+            lastAIDiagnosis: {
+              advisor: 'deterministic_fallback_v1',
+              decision: 'observe',
+              fallbackUsed: true,
+            },
+            timeline: {
+              lastAIRequestAt: '2026-03-29T06:47:34.356Z',
+              lastAIResultAt: '2026-03-29T06:47:34.530Z',
+              lastDecisionAt: '2026-03-29T06:47:34.530Z',
+            },
+            loopStatus: {
+              loopRunning: true,
+              tickCount: 42,
+              lastTick: '2026-03-29T06:47:34.344Z',
+            },
+          },
+          recentSelfHealEvents: [
+            {
+              ts: '2026-03-29T06:47:34.356Z',
+              type: 'AI_DIAGNOSIS_REQUEST',
+              source: '/api/self-heal/events',
+              payload: { trigger: 'interval' },
+            },
+            {
+              ts: '2026-03-29T06:47:34.530Z',
+              type: 'AI_DIAGNOSIS_RESULT',
+              source: '/api/self-heal/events',
+              payload: { decision: 'observe', fallbackUsed: true },
+            },
+            {
+              ts: '2026-03-29T06:47:34.530Z',
+              type: 'CONTROLLER_DECISION',
+              source: '/api/self-heal/events',
+              payload: { decision: 'observe' },
+            },
+          ],
+          recentPromptDebugEvents: [
+            {
+              ts: '2026-03-29T06:47:35.726Z',
+              type: 'PROMPT_DEBUG_TRACE',
+              source: '/api/prompt-debug/events',
+              payload: {
+                requestId: 'req_123',
+                selectedTools: ['/api/self-heal/runtime', '/api/self-heal/events', '/api/self-heal/inspection'],
+              },
+            },
+          ],
+          recentAIRoutingEvents: [
+            {
+              ts: '2026-03-29T06:47:35.728Z',
+              type: 'AI_ROUTING_DEBUG',
+              source: 'runtimeInspectionRoutingService',
+              payload: {
+                routingDecision: 'runtime_inspection_completed',
+                toolsSelected: ['/api/self-heal/runtime', '/api/self-heal/events', '/api/self-heal/inspection'],
+              },
+            },
+          ],
+          recentWorkerEvidence: [],
+        },
+        sources: [
+          {
+            tool: '/api/self-heal/runtime',
+            sourceType: 'runtime-endpoint',
+            data: { timestamp: '2026-03-29T06:47:34.525Z' },
+          },
+          {
+            tool: '/api/self-heal/events',
+            sourceType: 'runtime-endpoint',
+            data: { timestamp: '2026-03-29T06:47:34.530Z' },
+          },
+        ],
+      },
+    }) as Record<string, unknown>;
+
+    expect(shaped).toEqual({
+      handledBy: 'runtime-inspection',
+      runtimeInspection: {
+        detectedIntent: 'RUNTIME_INSPECTION_REQUIRED',
+        status: 'ok',
+        summary: 'Collected live runtime state from multiple sources.',
+        repoInspectionDisabled: true,
+        onlyReturnRuntimeValues: true,
+        cliUsed: true,
+        repoFallbackUsed: false,
+        runtimeEndpointsQueried: ['/api/self-heal/runtime', '/api/self-heal/events', '/api/self-heal/inspection'],
+        toolsSelected: ['/api/self-heal/runtime', '/api/self-heal/events', '/api/self-heal/inspection', 'cli:status'],
+        evidence: {
+          selfHealRuntimeSnapshot: {
+            status: 'ok',
+            isHealing: false,
+            lastHealRun: '2026-03-29T06:47:34.525Z',
+            lastDecision: 'observe',
+            lastResult: 'fallback',
+            aiUsedInRuntime: false,
+            systemState: {
+              errorRate: 0,
+              latency: 18,
+            },
+            lastAIDiagnosis: {
+              advisor: 'deterministic_fallback_v1',
+              decision: 'observe',
+              fallbackUsed: true,
+            },
+            timeline: {
+              lastAIRequestAt: '2026-03-29T06:47:34.356Z',
+              lastAIResultAt: '2026-03-29T06:47:34.530Z',
+              lastDecisionAt: '2026-03-29T06:47:34.530Z',
+            },
+            loopStatus: {
+              loopRunning: true,
+              tickCount: 42,
+              lastTick: '2026-03-29T06:47:34.344Z',
+            },
+          },
+          recentSelfHealEvents: [
+            {
+              ts: '2026-03-29T06:47:34.356Z',
+              type: 'AI_DIAGNOSIS_REQUEST',
+              source: '/api/self-heal/events',
+              payload: { trigger: 'interval' },
+            },
+            {
+              ts: '2026-03-29T06:47:34.530Z',
+              type: 'AI_DIAGNOSIS_RESULT',
+              source: '/api/self-heal/events',
+              payload: { decision: 'observe', fallbackUsed: true },
+            },
+            {
+              ts: '2026-03-29T06:47:34.530Z',
+              type: 'CONTROLLER_DECISION',
+              source: '/api/self-heal/events',
+              payload: { decision: 'observe' },
+            },
+          ],
+          recentPromptDebugEvents: [
+            {
+              ts: '2026-03-29T06:47:35.726Z',
+              type: 'PROMPT_DEBUG_TRACE',
+              source: '/api/prompt-debug/events',
+              payload: {
+                requestId: 'req_123',
+                selectedTools: ['/api/self-heal/runtime', '/api/self-heal/events', '/api/self-heal/inspection'],
+              },
+            },
+          ],
+          recentAIRoutingEvents: [
+            {
+              ts: '2026-03-29T06:47:35.728Z',
+              type: 'AI_ROUTING_DEBUG',
+              source: 'runtimeInspectionRoutingService',
+              payload: {
+                routingDecision: 'runtime_inspection_completed',
+                toolsSelected: ['/api/self-heal/runtime', '/api/self-heal/events', '/api/self-heal/inspection'],
+              },
+            },
+          ],
+          recentWorkerEvidence: [],
+        },
+        sources: [
+          {
+            tool: '/api/self-heal/runtime',
+            sourceType: 'runtime-endpoint',
+            observedAt: '2026-03-29T06:47:34.525Z',
+          },
+          {
+            tool: '/api/self-heal/events',
+            sourceType: 'runtime-endpoint',
+            observedAt: '2026-03-29T06:47:34.530Z',
+          },
+        ],
+      },
+    });
+  });
+
   it('enforces a hard byte ceiling by truncating the client payload', () => {
     const prepared = prepareBoundedClientJsonPayload({
       result: 'x'.repeat(10_000),
