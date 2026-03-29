@@ -509,6 +509,50 @@ function shapeMemoryDispatchResult(value: Record<string, unknown>): Record<strin
   };
 }
 
+function shapeDagDispatchResult(value: Record<string, unknown>): Record<string, unknown> | null {
+  if (value.handledBy !== 'dag-dispatcher' || !isRecord(value.dag)) {
+    return null;
+  }
+
+  const followUp = isRecord(value.dag.followUp)
+    ? {
+        ...(readString(value.dag.followUp.runId) ? { runId: readString(value.dag.followUp.runId) } : {}),
+        ...(readString(value.dag.followUp.trace) ? { trace: readString(value.dag.followUp.trace) } : {}),
+        ...(readString(value.dag.followUp.tree) ? { tree: readString(value.dag.followUp.tree) } : {}),
+        ...(readString(value.dag.followUp.lineage) ? { lineage: readString(value.dag.followUp.lineage) } : {}),
+        ...(readString(value.dag.followUp.metrics) ? { metrics: readString(value.dag.followUp.metrics) } : {}),
+        ...(readString(value.dag.followUp.errors) ? { errors: readString(value.dag.followUp.errors) } : {}),
+        ...(readString(value.dag.followUp.verification)
+          ? { verification: readString(value.dag.followUp.verification) }
+          : {}),
+      }
+    : undefined;
+  const deferredTools = isRecord(value.dag.deferredTools)
+    ? {
+        ...(readNumber(value.dag.deferredTools.total) !== undefined
+          ? { total: readNumber(value.dag.deferredTools.total) }
+          : {}),
+        ...(readStringArray(value.dag.deferredTools.tools, 12)
+          ? { tools: readStringArray(value.dag.deferredTools.tools, 12) }
+          : {}),
+      }
+    : undefined;
+
+  return {
+    handledBy: 'dag-dispatcher',
+    dag: {
+      ...(readString(value.dag.dispatchMode) ? { dispatchMode: readString(value.dag.dispatchMode) } : {}),
+      ...(readString(value.dag.reason) ? { reason: readString(value.dag.reason) } : {}),
+      ...(readString(value.dag.summary) ? { summary: readString(value.dag.summary) } : {}),
+      ...(readString(value.dag.runId) ? { runId: readString(value.dag.runId) } : {}),
+      ...(isRecord(value.dag.run) ? { run: pickDagRunSummary(value.dag.run) } : {}),
+      ...(readStringArray(value.dag.artifactKeys, 12) ? { artifactKeys: readStringArray(value.dag.artifactKeys, 12) } : {}),
+      ...(followUp && Object.keys(followUp).length > 0 ? { followUp } : {}),
+      ...(deferredTools && Object.keys(deferredTools).length > 0 ? { deferredTools } : {}),
+    },
+  };
+}
+
 function pickRuntimeInspectionEvidenceItem(value: unknown): Record<string, unknown> | null {
   if (!isRecord(value)) {
     return null;
@@ -810,6 +854,11 @@ export function shapeClientRouteResult(result: unknown): unknown {
   const memoryDispatch = shapeMemoryDispatchResult(result);
   if (memoryDispatch) {
     return memoryDispatch;
+  }
+
+  const dagDispatch = shapeDagDispatchResult(result);
+  if (dagDispatch) {
+    return dagDispatch;
   }
 
   const runtimeInspection = shapeRuntimeInspectionResult(result);

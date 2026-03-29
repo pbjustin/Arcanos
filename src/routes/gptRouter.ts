@@ -25,6 +25,7 @@ import {
 } from '@arcanos/runtime';
 import { hasDagOrchestrationIntentCue } from '@services/naturalLanguageMemory.js';
 import { recordDagTraceTimeout } from '@platform/observability/appMetrics.js';
+import { shouldTreatPromptAsDagExecution } from '@shared/dag/dagExecutionRouting.js';
 
 const router = express.Router();
 
@@ -87,6 +88,14 @@ function extractPromptText(body: unknown): string | null {
     : null;
 }
 
+function shouldUseDagExecutionTimeoutProfile(prompt: string | null): boolean {
+  if (!prompt || !hasDagOrchestrationIntentCue(prompt)) {
+    return false;
+  }
+
+  return shouldTreatPromptAsDagExecution(prompt);
+}
+
 function resolveBodyGptId(body: unknown): string | null {
   const normalizedBody = normalizeRequestBody(body);
   const gptId = normalizedBody?.gptId;
@@ -131,7 +140,11 @@ function buildGptRequestAuthState(req: express.Request): Record<string, unknown>
 }
 
 router.post("/:gptId", async (req, res, next) => {
-  const routeTimeoutMs = resolveGptRouteHardTimeoutMs();
+  const promptText = extractPromptText(req.body);
+  const routeTimeoutProfile = shouldUseDagExecutionTimeoutProfile(promptText)
+    ? 'dag_execution'
+    : 'default';
+  const routeTimeoutMs = resolveGptRouteHardTimeoutMs({ profile: routeTimeoutProfile });
   const requestId = (req as any).requestId;
   const timeoutMessage = `GPT route timeout after ${routeTimeoutMs}ms`;
   const clientAbortController = new AbortController();
@@ -162,7 +175,8 @@ router.post("/:gptId", async (req, res, next) => {
         requestLogger?.info?.('gpt.request.timeout_plan', {
           endpoint: req.originalUrl,
           gptId: incomingGptId,
-          timeoutMs: routeTimeoutMs
+          timeoutMs: routeTimeoutMs,
+          timeoutProfile: routeTimeoutProfile,
         });
 
         requestLogger?.info?.('gpt.request.body', {
@@ -354,7 +368,6 @@ router.post("/:gptId", async (req, res, next) => {
     );
   } catch (err) {
     if (isAbortError(err)) {
-      const promptText = extractPromptText(req.body);
       if (promptText && hasDagOrchestrationIntentCue(promptText)) {
         recordDagTraceTimeout({
           handler: 'gpt-route',

@@ -7,6 +7,7 @@ const inspectLatestRunMock = jest.fn();
 const inspectRunTraceMock = jest.fn();
 const getRunMock = jest.fn();
 const getRunMetricsMock = jest.fn();
+const getRunLineageMock = jest.fn();
 
 jest.unstable_mockModule('@services/openai.js', () => ({
   getDefaultModel: jest.fn(() => 'gpt-4.1-mini')
@@ -32,7 +33,8 @@ jest.unstable_mockModule('@services/arcanosDagRunService.js', () => ({
     inspectLatestRun: inspectLatestRunMock,
     inspectRunTrace: inspectRunTraceMock,
     getRun: getRunMock,
-    getRunMetrics: getRunMetricsMock
+    getRunMetrics: getRunMetricsMock,
+    getRunLineage: getRunLineageMock
   }
 }));
 
@@ -78,6 +80,188 @@ describe('tryDispatchDagTools', () => {
       expect.objectContaining({
         module: 'dag-tools',
         result: expect.stringContaining('pipeline=trinity, template=trinity-core')
+      })
+    );
+  });
+
+  it('creates and traces a new DAG run for terse trigger prompts without a separate goal clause', async () => {
+    createRunMock.mockReturnValue({
+      pipeline: 'trinity',
+      runId: 'dagrun_110_live',
+      sessionId: 'session-live',
+      template: 'trinity-core',
+      status: 'queued',
+      completedNodes: 0,
+      failedNodes: 0,
+      createdAt: '2026-03-07T12:00:00.000Z',
+      updatedAt: '2026-03-07T12:00:00.000Z'
+    });
+    inspectRunTraceMock.mockResolvedValue({
+      trace: {
+        pipeline: 'trinity',
+        trinity_version: '1.0',
+        run: {
+          pipeline: 'trinity',
+          trinity_version: '1.0',
+          runId: 'dagrun_110_live',
+          sessionId: 'session-live',
+          template: 'trinity-core',
+          status: 'queued',
+          createdAt: '2026-03-07T12:00:00.000Z',
+          updatedAt: '2026-03-07T12:00:00.000Z'
+        },
+        tree: { pipeline: 'trinity', trinity_version: '1.0', runId: 'dagrun_110_live', nodes: [{ nodeId: 'planner' }] },
+        events: { pipeline: 'trinity', trinity_version: '1.0', runId: 'dagrun_110_live', events: [] },
+        metrics: { runId: 'dagrun_110_live', metrics: {}, limits: {}, guardViolations: [] },
+        errors: { runId: 'dagrun_110_live', errors: [] },
+        lineage: { runId: 'dagrun_110_live', lineage: [], loopDetected: false },
+        verification: {
+          pipeline: 'trinity',
+          trinity_version: '1.0',
+          runId: 'dagrun_110_live',
+          verification: { runCompleted: false },
+          lineage: { workerPipeline: 'trinity' }
+        },
+        sections: {
+          requested: ['run', 'tree', 'events', 'metrics', 'errors', 'lineage', 'verification'],
+          events: { total: 0, returned: 0, truncated: false, maxEvents: 200 }
+        }
+      },
+      diagnostics: {
+        snapshotSource: 'persisted',
+        localLookupMs: 0,
+        persistedLookupMs: 3,
+        buildMs: {
+          run: 0,
+          tree: 1,
+          events: 0,
+          metrics: 0,
+          errors: 0,
+          lineage: 0,
+          verification: 0
+        },
+        totalMs: 4,
+        payload: {
+          nodes: 1,
+          totalEvents: 0,
+          returnedEvents: 0,
+          errors: 0,
+          lineageEntries: 0
+        }
+      }
+    });
+
+    const response = await tryDispatchDagTools(
+      {} as any,
+      'trigger a real DAG run and trace it live',
+      { sessionId: 'session-live' }
+    );
+
+    expect(createRunMock).toHaveBeenCalledWith({
+      sessionId: 'session-live',
+      template: 'trinity-core',
+      input: {
+        goal: 'Respond to the operator request: trigger a real DAG run and trace it live'
+      },
+      options: {
+        maxConcurrency: undefined,
+        debug: undefined
+      }
+    });
+    expect(inspectRunTraceMock).toHaveBeenCalledWith('dagrun_110_live', {
+      maxEvents: undefined,
+    });
+    expect(response).toEqual(
+      expect.objectContaining({
+        module: 'dag-tools',
+        result: expect.stringContaining('Started DAG run dagrun_110_live'),
+      })
+    );
+  });
+
+  it('creates a DAG run and returns lineage for execute prompts without explicit run ids', async () => {
+    createRunMock.mockReturnValue({
+      pipeline: 'trinity',
+      runId: 'dagrun_120_lineage',
+      sessionId: 'session-lineage',
+      template: 'trinity-core',
+      status: 'queued',
+      completedNodes: 0,
+      failedNodes: 0,
+      createdAt: '2026-03-07T12:00:00.000Z',
+      updatedAt: '2026-03-07T12:00:00.000Z'
+    });
+    getRunLineageMock.mockResolvedValue({
+      runId: 'dagrun_120_lineage',
+      lineage: [{ nodeId: 'planner', parentNodeId: null }],
+      loopDetected: false
+    });
+
+    const response = await tryDispatchDagTools(
+      {} as any,
+      'execute DAG and return lineage',
+      { sessionId: 'session-lineage' }
+    );
+
+    expect(createRunMock).toHaveBeenCalledWith({
+      sessionId: 'session-lineage',
+      template: 'trinity-core',
+      input: {
+        goal: 'Respond to the operator request: execute DAG and return lineage'
+      },
+      options: {
+        maxConcurrency: undefined,
+        debug: undefined
+      }
+    });
+    expect(getRunLineageMock).toHaveBeenCalledWith('dagrun_120_lineage');
+    expect(response).toEqual(
+      expect.objectContaining({
+        module: 'dag-tools',
+        result: expect.stringContaining('DAG lineage for dagrun_120_lineage'),
+      })
+    );
+  });
+
+  it('defers post-create trace inspection when the request budget is nearly exhausted', async () => {
+    createRunMock.mockReturnValue({
+      pipeline: 'trinity',
+      runId: 'dagrun_130_deferred',
+      sessionId: 'session-deferred',
+      template: 'trinity-core',
+      status: 'queued',
+      completedNodes: 0,
+      failedNodes: 0,
+      createdAt: '2026-03-07T12:00:00.000Z',
+      updatedAt: '2026-03-07T12:00:00.000Z'
+    });
+
+    const response = await tryDispatchDagTools(
+      {} as any,
+      'trigger a real DAG run and trace it live',
+      {
+        sessionId: 'session-deferred',
+        requestBudgetMs: 0,
+        minPostCreateInspectionBudgetMs: 1,
+      }
+    );
+
+    expect(createRunMock).toHaveBeenCalledWith({
+      sessionId: 'session-deferred',
+      template: 'trinity-core',
+      input: {
+        goal: 'Respond to the operator request: trigger a real DAG run and trace it live'
+      },
+      options: {
+        maxConcurrency: undefined,
+        debug: undefined
+      }
+    });
+    expect(inspectRunTraceMock).not.toHaveBeenCalled();
+    expect(response).toEqual(
+      expect.objectContaining({
+        module: 'dag-tools',
+        result: expect.stringContaining('Started DAG run dagrun_130_deferred'),
       })
     );
   });
