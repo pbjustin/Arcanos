@@ -363,6 +363,20 @@ function shouldPreferAutomaticDagExecution(params: {
   return shouldTreatPromptAsDagExecution(prompt, { requireDagTokenForArtifact: true });
 }
 
+function resolveAiRoutingDetectedIntent(params: {
+  promptIntent: PromptIntentClassification['intent'];
+  dagExecutionPreferred: boolean;
+  runtimeInspectionRequired: boolean;
+}): 'RUNTIME_INSPECTION_REQUIRED' | 'DAG_EXECUTION_REQUIRED' | 'STANDARD' {
+  const { promptIntent, dagExecutionPreferred, runtimeInspectionRequired } = params;
+
+  if (promptIntent === 'dag' && dagExecutionPreferred) {
+    return 'DAG_EXECUTION_REQUIRED';
+  }
+
+  return runtimeInspectionRequired ? 'RUNTIME_INSPECTION_REQUIRED' : 'STANDARD';
+}
+
 function mapDagToolNameToDispatcherAction(toolName: string): string {
   switch (toolName) {
     case 'create_dag_run':
@@ -1434,6 +1448,23 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
   const runtimeInspectionClassification = classifyRuntimeInspectionPrompt(prompt);
   const runtimeInspectionRequired =
     runtimeInspectionClassification.detectedIntent === 'RUNTIME_INSPECTION_REQUIRED';
+  const automaticDagExecutionPreferred =
+    !forceDirectModuleRouting &&
+    !mcpDispatch.intent &&
+    shouldPreferAutomaticDagExecution({
+      moduleName: activeEntry.module,
+      prompt,
+      requestedAction,
+      actionCandidate: initialActionCandidate,
+      promptIntent: promptIntentClassification.intent,
+    });
+  const routingDetectedIntent = resolveAiRoutingDetectedIntent({
+    promptIntent: promptIntentClassification.intent,
+    dagExecutionPreferred: automaticDagExecutionPreferred,
+    runtimeInspectionRequired,
+  });
+  const runtimeInspectionChosenInRoutingTrace =
+    runtimeInspectionRequired && routingDetectedIntent === 'RUNTIME_INSPECTION_REQUIRED';
   const repoInspectionAllowed = !runtimeInspectionClassification.repoInspectionDisabled;
   const repoInspectionRequested = repoInspectionAllowed && shouldInspectRepoPrompt(prompt);
 
@@ -1445,6 +1476,9 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     selectedRoute: activeEntry.route,
     promptIntent: promptIntentClassification.intent,
     classificationReason: promptIntentClassification.reason,
+    routingDetectedIntent,
+    runtimeInspectionDetectedIntent: runtimeInspectionClassification.detectedIntent,
+    dagExecutionPreferred: automaticDagExecutionPreferred,
     bypassMemoryDispatcher: promptIntentClassification.bypassMemoryDispatcher,
     memoryIntent: parsedMemoryCommand.intent !== "unknown" ? parsedMemoryCommand.intent : null,
     fallbackReason: null,
@@ -1458,11 +1492,12 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     selectedRoute: activeEntry.route,
     selectedModule: activeEntry.module,
     repoInspectionChosen: repoInspectionRequested,
-    runtimeInspectionChosen: runtimeInspectionRequired,
+    runtimeInspectionChosen: runtimeInspectionChosenInRoutingTrace,
     intentTags: [
       promptIntentClassification.intent,
       ...(parsedMemoryCommand.intent !== "unknown" ? [`memory:${parsedMemoryCommand.intent}`] : []),
-      ...(runtimeInspectionRequired ? ['runtime_inspection_requested'] : []),
+      ...(routingDetectedIntent === 'DAG_EXECUTION_REQUIRED' ? ['dag_execution_requested'] : []),
+      ...(runtimeInspectionChosenInRoutingTrace ? ['runtime_inspection_requested'] : []),
       ...(runtimeInspectionClassification.repoInspectionDisabled ? ['repo_inspection_disabled'] : []),
     ],
   });
@@ -1688,6 +1723,11 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
           rawPrompt,
           normalizedPrompt,
           detectedIntent: runtimeInspectionRequired ? 'RUNTIME_INSPECTION_REQUIRED' : 'STANDARD',
+          detectedIntent: resolveAiRoutingDetectedIntent({
+            promptIntent: promptIntentClassification.intent,
+            dagExecutionPreferred: true,
+            runtimeInspectionRequired,
+          }),
           routingDecision: 'dag_execution_completed',
           toolsAvailable: dagDispatch.selectedTools,
           toolsSelected: dagDispatch.selectedTools,
@@ -1732,6 +1772,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
           handler: 'dag-dispatcher',
           outcome: 'ok',
         });
+        const dagDispatchTracePayload = {
         const dagDispatchTracePayload = {
           traceId: request?.traceId ?? null,
           endpoint: requestEndpoint ?? '/gpt/:gptId',
