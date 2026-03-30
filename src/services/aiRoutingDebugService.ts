@@ -3,7 +3,7 @@ export interface AiRoutingDebugSnapshot {
   timestamp: string;
   rawPrompt: string;
   normalizedPrompt: string;
-  detectedIntent: 'RUNTIME_INSPECTION_REQUIRED' | 'STANDARD';
+  detectedIntent: 'RUNTIME_INSPECTION_REQUIRED' | 'DAG_EXECUTION_REQUIRED' | 'STANDARD';
   routingDecision: string;
   toolsAvailable: string[];
   toolsSelected: string[];
