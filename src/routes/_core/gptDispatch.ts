@@ -1773,7 +1773,6 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
           outcome: 'ok',
         });
         const dagDispatchTracePayload = {
-        const dagDispatchTracePayload = {
           traceId: request?.traceId ?? null,
           endpoint: requestEndpoint ?? '/gpt/:gptId',
           method: request?.method ?? null,
