@@ -1722,7 +1722,6 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
           timestamp: new Date().toISOString(),
           rawPrompt,
           normalizedPrompt,
-          detectedIntent: runtimeInspectionRequired ? 'RUNTIME_INSPECTION_REQUIRED' : 'STANDARD',
           detectedIntent: resolveAiRoutingDetectedIntent({
             promptIntent: promptIntentClassification.intent,
             dagExecutionPreferred: true,

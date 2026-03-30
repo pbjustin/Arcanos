@@ -723,7 +723,7 @@ describe('routeGptRequest MCP dispatch branch', () => {
     });
     expect(getLatestAiRoutingDebugSnapshot(`req-${runId}`)).toMatchObject({
       requestId: `req-${runId}`,
-      detectedIntent: prompt.includes('live') ? 'RUNTIME_INSPECTION_REQUIRED' : 'STANDARD',
+      detectedIntent: 'DAG_EXECUTION_REQUIRED',
       routingDecision: 'dag_execution_completed',
       toolsSelected: selectedTools,
       cliUsed: false,
