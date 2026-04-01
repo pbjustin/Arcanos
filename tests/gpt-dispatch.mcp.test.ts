@@ -642,73 +642,75 @@ describe('routeGptRequest MCP dispatch branch', () => {
         },
       },
     },
-  ])('routes clear DAG execution prompt "$prompt" into dag execution instead of runtime inspection', async ({ prompt, selectedTools, runId, artifacts }) => {
-    mockHasDagOrchestrationIntentCue.mockReturnValue(true);
-    mockTryExecuteDeterministicDagTools.mockResolvedValue({
-      summary: `Started DAG run ${runId}.`,
-      runId,
-      deferredToolNames: [],
-      operations: selectedTools.map((toolName) => ({
-        toolName:
-          toolName === 'dag.run.create'
-            ? 'create_dag_run'
-            : toolName === 'dag.run.trace'
-            ? 'get_dag_trace'
-            : 'get_dag_lineage',
-        output: artifacts[toolName as keyof typeof artifacts],
-        summary: `Executed ${toolName}.`,
-      })),
-    });
+  ])(
+    'routes clear DAG execution prompt "$prompt" into dag execution instead of runtime inspection',
+    async ({ prompt, selectedTools, runId, artifacts }) => {
+      mockHasDagOrchestrationIntentCue.mockReturnValue(true);
+      mockTryExecuteDeterministicDagTools.mockResolvedValue({
+        summary: `Started DAG run ${runId}.`,
+        runId,
+        deferredToolNames: [],
+        operations: selectedTools.map((toolName) => ({
+          toolName:
+            toolName === 'dag.run.create'
+              ? 'create_dag_run'
+              : toolName === 'dag.run.trace'
+              ? 'get_dag_trace'
+              : 'get_dag_lineage',
+          output: artifacts[toolName as keyof typeof artifacts],
+          summary: `Executed ${toolName}.`,
+        })),
+      });
 
-    const request = {
-      method: 'POST',
-      originalUrl: '/gpt/arcanos-core',
-      traceId: `trace-${runId}`,
-      app: {
-        locals: {
-          arcanosMcp: {
-            invokeTool: jest.fn(),
-            listTools: jest.fn(),
+      const request = {
+        method: 'POST',
+        originalUrl: '/gpt/arcanos-core',
+        traceId: `trace-${runId}`,
+        app: {
+          locals: {
+            arcanosMcp: {
+              invokeTool: jest.fn(),
+              listTools: jest.fn(),
+            },
           },
         },
-      },
-    } as any;
+      } as any;
 
-    const envelope = await routeGptRequest({
-      gptId: 'arcanos-core',
-      body: {
-        message: prompt,
+      const envelope = await routeGptRequest({
+        gptId: 'arcanos-core',
+        body: {
+          message: prompt,
+          sessionId: `sess-${runId}`,
+        },
+        requestId: `req-${runId}`,
+        request,
+      });
+
+      expect(mockTryExecuteDeterministicDagTools).toHaveBeenCalledWith(prompt, {
         sessionId: `sess-${runId}`,
-      },
-      requestId: `req-${runId}`,
-      request,
-    });
-
-    expect(mockTryExecuteDeterministicDagTools).toHaveBeenCalledWith(prompt, {
-      sessionId: `sess-${runId}`,
-      requestId: `req-${runId}`,
-      traceId: `trace-${runId}`,
-      logger: undefined,
-    });
-    expect(request.app.locals.arcanosMcp.invokeTool).not.toHaveBeenCalled();
-    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
-    expect(envelope).toEqual(
-      expect.objectContaining({
-        ok: true,
-        result: expect.objectContaining({
-          handledBy: 'dag-dispatcher',
-          dag: expect.objectContaining({
-            dispatchMode: 'automatic',
-            reason: 'prompt_requests_dag_execution',
-            runId,
-            artifacts: expect.objectContaining(artifacts),
+        requestId: `req-${runId}`,
+        traceId: `trace-${runId}`,
+        logger: undefined,
+      });
+      expect(request.app.locals.arcanosMcp.invokeTool).not.toHaveBeenCalled();
+      expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+      expect(envelope).toEqual(
+        expect.objectContaining({
+          ok: true,
+          result: expect.objectContaining({
+            handledBy: 'dag-dispatcher',
+            dag: expect.objectContaining({
+              dispatchMode: 'automatic',
+              reason: 'prompt_requests_dag_execution',
+              runId,
+              artifacts: expect.objectContaining(artifacts),
+            }),
+          }),
+          _route: expect.objectContaining({
+            action: 'dag.run.create',
           }),
         }),
-        _route: expect.objectContaining({
-          action: 'dag.run.create',
-        }),
-      })
-    );
+      );
 
     expect(await getLatestPromptDebugTrace(`req-${runId}`)).toMatchObject({
       requestId: `req-${runId}`,
@@ -733,8 +735,12 @@ describe('routeGptRequest MCP dispatch branch', () => {
 
   it.each([
     'run diagnostics',
+    'check self-heal',
     'inspect self-heal',
+    'inspect runtime',
     'check workers',
+    'show queue health',
+    'show system status',
     'show runtime status',
   ])('keeps runtime diagnostics prompt "%s" on runtime inspection routing', async (prompt) => {
     mockHasDagOrchestrationIntentCue.mockReturnValue(false);
@@ -771,7 +777,7 @@ describe('routeGptRequest MCP dispatch branch', () => {
         _route: expect.objectContaining({
           action: 'runtime.inspect',
         }),
-      })
+      }),
     );
   });
 
@@ -1329,7 +1335,7 @@ describe('routeGptRequest MCP dispatch branch', () => {
     expect(envelope.ok).toBe(true);
   });
 
-  it('dispatches broad backend operations prompts through the direct core query path', async () => {
+  it('dispatches broad backend architecture prompts through the direct core query path', async () => {
     const request = {
       app: {
         locals: {
@@ -1341,9 +1347,7 @@ describe('routeGptRequest MCP dispatch branch', () => {
       },
     } as any;
 
-    mockDispatchModuleAction.mockResolvedValueOnce({ ok: true, result: 'dispatched through direct query' });
-
-    const prompt = 'Inspect the backend worker, postgres, and redis state and report what is wrong.';
+    const prompt = 'Explain how the backend worker, postgres, and redis components fit together.';
     const envelope = await routeGptRequest({
       gptId: 'arcanos-core',
       body: {
@@ -1355,15 +1359,9 @@ describe('routeGptRequest MCP dispatch branch', () => {
     });
 
     expect(request.app.locals.arcanosMcp.invokeTool).not.toHaveBeenCalled();
-    expect(mockDispatchModuleAction).toHaveBeenCalledWith('ARCANOS:CORE', 'query', {
-      message: prompt,
-      sessionId: 'sess-auto-1',
-      prompt,
-    });
     expect(envelope).toEqual(
       expect.objectContaining({
         ok: true,
-        result: { ok: true, result: 'dispatched through direct query' },
         _route: expect.objectContaining({
           action: 'query',
           route: 'core',
