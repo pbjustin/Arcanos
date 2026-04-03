@@ -16,6 +16,10 @@ import {
   resolveMetricRouteLabel,
   shouldSkipHttpMetrics,
 } from '@platform/observability/appMetrics.js';
+import {
+  createAiExecutionContext,
+  runWithAiExecutionContext,
+} from '@services/openai/aiExecutionContext.js';
 
 export type RequestLogLevel = 'debug' | 'info' | 'warn' | 'error';
 
@@ -233,7 +237,14 @@ export function requestContext(req: Request, res: Response, next: NextFunction):
     }
   });
 
-  next();
+  const aiExecutionContext = createAiExecutionContext({
+    sourceType: 'route',
+    sourceName: 'unresolved-route',
+    requestId,
+    traceId,
+  });
+
+  runWithAiExecutionContext(aiExecutionContext, () => next());
 }
 
 export default requestContext;

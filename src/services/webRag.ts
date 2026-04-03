@@ -1,9 +1,15 @@
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { getDefaultModel, hasValidAPIKey } from './openai.js';
 import { createEmbedding } from './openai/embeddings.js';
 import { fetchAndClean } from "@shared/webFetcher.js";
 import { cosineSimilarity } from "@shared/vectorUtils.js";
-import { saveRagDoc, loadAllRagDocs, initializeDatabaseWithSchema as initializeDatabase, getStatus } from "@core/db/index.js";
+import {
+  saveRagDoc,
+  loadAllRagDocs,
+  loadRagDocById,
+  initializeDatabaseWithSchema as initializeDatabase,
+  getStatus
+} from "@core/db/index.js";
 import { logger } from "@platform/logging/structuredLogging.js";
 import { requireOpenAIClientOrAdapter } from './openai/clientBridge.js';
 
@@ -64,6 +70,28 @@ const DEFAULT_MIN_SIMILARITY = 0.18;
 const DEFAULT_ANSWER_MIN_SIMILARITY = 0.12;
 const MAX_QUERY_LENGTH = 4_000;
 const CONTENT_PREVIEW_LIMIT = 900;
+
+function hashText(value: string): string {
+  return createHash('sha256').update(value, 'utf8').digest('hex');
+}
+
+function buildConversationSnippetParentId(options: ConversationSnippetOptions, trimmedContent: string): string {
+  const messageId =
+    typeof options.metadata?.messageId === 'string' && options.metadata.messageId.trim().length > 0
+      ? options.metadata.messageId.trim()
+      : null;
+  const timestampPart =
+    typeof options.timestamp === 'number' && Number.isFinite(options.timestamp)
+      ? Math.trunc(options.timestamp)
+      : 0;
+  const contentHash = hashText(trimmedContent).slice(0, 16);
+
+  if (messageId) {
+    return `conversation:${options.sessionId}:${options.channel ?? 'conversations_core'}:${messageId}:${contentHash}`;
+  }
+
+  return `conversation:${options.sessionId}:${options.channel ?? 'conversations_core'}:${timestampPart}:${contentHash}`;
+}
 
 function upsertDoc(doc: Doc): void {
   if (!vectorStore) {
@@ -510,6 +538,7 @@ export async function ingestContent(options: IngestContentOptions): Promise<Inge
   const chunks = chunkText(content);
   for (let idx = 0; idx < chunks.length; idx++) {
     const chunk = chunks[idx];
+    const docId = `${parentId}#${idx}`;
     const chunkMetadata: Record<string, unknown> = {
       ...sanitizedMetadata,
       parentId,
@@ -517,8 +546,16 @@ export async function ingestContent(options: IngestContentOptions): Promise<Inge
       chunkCount: chunks.length,
     };
 
+    const existingDoc =
+      (vectorStore || []).find((candidate) => candidate.id === docId) ??
+      await loadRagDocById(docId).catch(() => null);
+    if (existingDoc && existingDoc.content === chunk && existingDoc.url === sourceLabel) {
+      upsertDoc(existingDoc as Doc);
+      continue;
+    }
+
     const doc: Doc = {
-      id: `${parentId}#${idx}`,
+      id: docId,
       url: sourceLabel,
       content: chunk,
       embedding: await createEmbedding(chunk, client),
@@ -583,6 +620,7 @@ export async function recordConversationSnippet(options: ConversationSnippetOpti
 
   try {
     await ingestContent({
+      id: buildConversationSnippetParentId(options, trimmed),
       content: trimmed,
       source: `session:${sessionId}`,
       metadata: snippetMetadata,

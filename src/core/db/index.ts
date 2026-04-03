@@ -59,6 +59,7 @@ export {
 
 export {
   saveRagDoc,
+  loadRagDocById,
   loadAllRagDocs
 } from './repositories/ragRepository.js';
 

@@ -9,6 +9,16 @@ import type { RagDoc } from "@core/db/schema.js";
 import { query } from "@core/db/query.js";
 import { safeJSONParse } from "@shared/jsonHelpers.js";
 
+type RagDocRow = {
+  id: string;
+  url: string;
+  content: string;
+  embedding: unknown;
+  metadata: unknown;
+  created_at: Date | string;
+  updated_at: Date | string;
+};
+
 /**
  * Parse JSON field with fallback (safe)
  */
@@ -19,6 +29,10 @@ function parseJsonField<T>(value: unknown, fallback: T): T {
     return result.success && result.data !== undefined ? result.data : fallback;
   }
   return value as T;
+}
+
+function parseDateField(value: Date | string): Date {
+  return value instanceof Date ? value : new Date(value);
 }
 
 /**
@@ -44,15 +58,47 @@ export async function saveRagDoc(doc: RagDoc): Promise<RagDoc> {
     ]
   );
 
-  const row = result.rows[0];
+  const row = result.rows[0] as RagDocRow | undefined;
+  if (!row) {
+    throw new Error('Failed to persist RAG document');
+  }
+
   return {
     id: row.id,
     url: row.url,
     content: row.content,
     embedding: parseJsonField(row.embedding, [] as number[]),
     metadata: parseJsonField(row.metadata, {} as Record<string, unknown>),
-    created_at: row.created_at,
-    updated_at: row.updated_at,
+    created_at: parseDateField(row.created_at),
+    updated_at: parseDateField(row.updated_at),
+  };
+}
+
+/**
+ * Load one RAG document by identifier.
+ */
+export async function loadRagDocById(id: string): Promise<RagDoc | null> {
+  if (!isDatabaseConnected()) {
+    throw new Error('Database not configured');
+  }
+
+  const result = await query(
+    'SELECT id, url, content, embedding, metadata, created_at, updated_at FROM rag_docs WHERE id = $1 LIMIT 1',
+    [id]
+  );
+  const row = result.rows[0] as RagDocRow | undefined;
+  if (!row) {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    url: row.url,
+    content: row.content,
+    embedding: parseJsonField(row.embedding, [] as number[]),
+    metadata: parseJsonField(row.metadata, {} as Record<string, unknown>),
+    created_at: parseDateField(row.created_at),
+    updated_at: parseDateField(row.updated_at),
   };
 }
 
@@ -71,13 +117,15 @@ export async function loadAllRagDocs(): Promise<RagDoc[]> {
     true
   );
 
-  return result.rows.map((row) => ({
-    id: row.id,
-    url: row.url,
-    content: row.content,
-    embedding: parseJsonField(row.embedding, [] as number[]),
-    metadata: parseJsonField(row.metadata, {} as Record<string, unknown>),
-    created_at: row.created_at,
-    updated_at: row.updated_at,
-  }));
+  return result.rows.map((row: RagDocRow) => {
+    return {
+      id: row.id,
+      url: row.url,
+      content: row.content,
+      embedding: parseJsonField(row.embedding, [] as number[]),
+      metadata: parseJsonField(row.metadata, {} as Record<string, unknown>),
+      created_at: parseDateField(row.created_at),
+      updated_at: parseDateField(row.updated_at),
+    };
+  });
 }

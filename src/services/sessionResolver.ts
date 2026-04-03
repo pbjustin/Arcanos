@@ -1,3 +1,5 @@
+import { createHash } from 'crypto';
+
 import { getCachedSessions } from './sessionMemoryService.js';
 import { loadMemory, query } from "@core/db/index.js";
 import { logger } from "@platform/logging/structuredLogging.js";
@@ -47,6 +49,61 @@ interface CachedSession {
 interface PersistedSessionRow {
   key: string;
   value: unknown;
+}
+
+interface SessionEmbeddingCacheEntry {
+  fingerprint: string;
+  embedding: number[];
+}
+
+const SESSION_EMBEDDING_TEXT_LIMIT = 4_000;
+const SESSION_EMBEDDING_MESSAGE_LIMIT = 12;
+const sessionEmbeddingCache = new Map<string, SessionEmbeddingCacheEntry>();
+
+function buildSessionSemanticText(session: CachedSession): string {
+  const recentMessages = Array.isArray(session.conversations_core)
+    ? session.conversations_core
+        .slice(-SESSION_EMBEDDING_MESSAGE_LIMIT)
+        .map((message) => (typeof message?.content === 'string' ? message.content.trim() : ''))
+        .filter(Boolean)
+    : [];
+
+  return [
+    session.metadata?.summary,
+    session.metadata?.topic,
+    ...(session.metadata?.tags || []),
+    ...recentMessages,
+  ]
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    .join('\n')
+    .slice(0, SESSION_EMBEDDING_TEXT_LIMIT);
+}
+
+function buildSessionSemanticFingerprint(text: string): string {
+  return createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
+async function getOrCreateSessionEmbedding(
+  session: CachedSession,
+  adapter: NonNullable<ReturnType<typeof getOpenAIClientOrAdapter>['adapter']>
+): Promise<number[]> {
+  const semanticText = buildSessionSemanticText(session);
+  if (!semanticText) {
+    return [];
+  }
+
+  const fingerprint = buildSessionSemanticFingerprint(semanticText);
+  const cachedEmbedding = sessionEmbeddingCache.get(session.sessionId);
+  if (cachedEmbedding?.fingerprint === fingerprint) {
+    return cachedEmbedding.embedding;
+  }
+
+  const embedding = await createEmbedding(semanticText, adapter);
+  sessionEmbeddingCache.set(session.sessionId, {
+    fingerprint,
+    embedding,
+  });
+  return embedding;
 }
 
 /**
@@ -126,15 +183,10 @@ export async function resolveSession(nlQuery: string): Promise<ResolveResult> {
     let bestScore = -Infinity;
 
     for (const sess of sessions) {
-      const metaPieces = [
-        sess.metadata?.summary,
-        sess.metadata?.topic,
-        ...(sess.metadata?.tags || []),
-        ...(Array.isArray(sess.conversations_core)
-          ? sess.conversations_core.map(message => message.content || '')
-          : [])
-      ].filter(Boolean);
-      const metaVector = await createEmbedding(metaPieces.join(' '), adapter);
+      const metaVector = await getOrCreateSessionEmbedding(sess, adapter);
+      if (metaVector.length === 0) {
+        continue;
+      }
 
       const score = cosineSimilarity(queryVector, metaVector);
       //audit Assumption: higher cosine similarity indicates better match
