@@ -3169,7 +3169,11 @@ async function executeActionPlan(
         diagnosis,
         action,
         target: actionTarget,
-        outcome: providerResult.ok ? 'success' : 'skipped',
+        outcome: providerResult.ok
+          ? 'success'
+          : providerResult.skipped
+            ? 'skipped'
+            : 'failure',
         message: providerResult.reason ?? 'OpenAI provider reinitialized.'
       });
       recordCooldown(runtime.actionCooldowns, actionPlan.cooldownKey, actionPlan.cooldownMs);
@@ -3189,7 +3193,7 @@ async function executeActionPlan(
         }
       });
       recordSelfHealEvent({
-        kind: providerResult.ok ? 'success' : 'failure',
+        kind: providerResult.ok ? 'success' : providerResult.skipped ? 'noop' : 'failure',
         source: 'self_heal_loop',
         trigger: 'action',
         reason: providerResult.reason ?? diagnosis.summary,
@@ -3207,7 +3211,7 @@ async function executeActionPlan(
         diagnosis,
         action,
         target: actionTarget,
-        outcome: providerResult.ok ? 'success' : 'failed',
+        outcome: providerResult.ok ? 'success' : providerResult.skipped ? 'noop' : 'failure',
         message: providerResult.reason ?? 'OpenAI provider reinitialized.'
       });
       console.log(`[SELF-HEAL] action ${action}`);

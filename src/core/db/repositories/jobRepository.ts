@@ -155,17 +155,19 @@ function buildEmptyFailureBreakdown(): JobFailureBreakdown {
   };
 }
 
+const VALID_FAILURE_CATEGORIES: readonly JobFailureCategory[] = [
+  'authentication',
+  'network',
+  'provider',
+  'rate_limited',
+  'timeout',
+  'validation',
+  'unknown'
+] as const;
+
 function normalizeFailureCategory(value: unknown): JobFailureCategory {
-  if (
-    value === 'authentication' ||
-    value === 'network' ||
-    value === 'provider' ||
-    value === 'rate_limited' ||
-    value === 'timeout' ||
-    value === 'validation' ||
-    value === 'unknown'
-  ) {
-    return value;
+  if (typeof value === 'string' && VALID_FAILURE_CATEGORIES.includes(value as JobFailureCategory)) {
+    return value as JobFailureCategory;
   }
 
   return 'unknown';
@@ -191,12 +193,7 @@ function normalizeRecentFailureReasons(value: unknown): JobFailureReasonSummary[
       : typeof record.lastSeenAt === 'string' && record.lastSeenAt.trim().length > 0
         ? new Date(record.lastSeenAt).toISOString()
         : new Date(0).toISOString();
-    const retryable =
-      typeof record.retryable === 'boolean'
-        ? record.retryable
-        : record.retryable === null
-          ? null
-          : null;
+    const retryable = typeof record.retryable === 'boolean' ? record.retryable : null;
 
     return [{
       reason,
@@ -671,6 +668,7 @@ export async function getJobQueueSummary(): Promise<JobQueueSummary | null> {
              ELSE status = 'failed' AND retry_count >= max_retries
            END AS retry_exhausted
          FROM job_data
+         WHERE status = 'failed'
        ),
        summary AS (
          SELECT

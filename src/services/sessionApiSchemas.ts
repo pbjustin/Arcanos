@@ -39,7 +39,7 @@ export const SessionApiQueueDiagnosticsSchema = z.object({
   status: z.enum(['live', 'degraded', 'offline']),
   workerRunning: z.boolean(),
   queueDepth: z.number().int().nonnegative(),
-  failureRate: z.number().min(0),
+  failureRate: z.number().min(0).max(1),
   failureBreakdown: z.object({
     retryable: z.number().int().nonnegative(),
     permanent: z.number().int().nonnegative(),

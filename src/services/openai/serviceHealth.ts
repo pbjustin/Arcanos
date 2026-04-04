@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { responseCache } from '@platform/resilience/cache.js';
 import {
   isOpenAIAdapterInitialized,
@@ -57,14 +58,10 @@ type OpenAIProviderRuntimeState = OpenAIProviderRuntimeStatus & {
   configFingerprint: string | null;
 };
 
-type OpenAIProviderRuntimeGlobal = typeof globalThis & {
-  __ARCANOS_OPENAI_PROVIDER_RUNTIME__?: OpenAIProviderRuntimeState;
-};
-
-const GLOBAL_KEY = '__ARCANOS_OPENAI_PROVIDER_RUNTIME__';
 const DEFAULT_PROVIDER_RETRY_BASE_MS = 1_000;
 const DEFAULT_PROVIDER_RETRY_MAX_MS = 60_000;
 const DEFAULT_PROVIDER_PROBE_TIMEOUT_MS = 4_000;
+let providerRuntimeState: OpenAIProviderRuntimeState | null = null;
 
 function createInitialProviderRuntimeState(): OpenAIProviderRuntimeState {
   return {
@@ -86,12 +83,11 @@ function createInitialProviderRuntimeState(): OpenAIProviderRuntimeState {
 }
 
 function getProviderRuntimeState(): OpenAIProviderRuntimeState {
-  const runtime = globalThis as OpenAIProviderRuntimeGlobal;
-  if (!runtime[GLOBAL_KEY]) {
-    runtime[GLOBAL_KEY] = createInitialProviderRuntimeState();
+  if (!providerRuntimeState) {
+    providerRuntimeState = createInitialProviderRuntimeState();
   }
 
-  return runtime[GLOBAL_KEY];
+  return providerRuntimeState;
 }
 
 function cloneProviderRuntimeState(state: OpenAIProviderRuntimeState): OpenAIProviderRuntimeStatus {
@@ -140,20 +136,43 @@ function resolveProviderConfigFingerprint(): {
   const config = getConfig();
   const configuredKeyText = config.openaiApiKey?.trim() || '';
   const source = getOpenAIKeySource() || null;
-  const keySuffix =
-    configuredKeyText.length > 4 ? configuredKeyText.slice(-4) : configuredKeyText;
-  const fingerprint = [
-    source ?? 'unknown',
-    configuredKeyText.length,
-    keySuffix,
-    resolveOpenAIBaseURL() || '',
-    config.defaultModel || ''
-  ].join('|');
+  const fingerprintInput = JSON.stringify({
+    source: source ?? 'unknown',
+    baseUrl: resolveOpenAIBaseURL() || '',
+    defaultModel: config.defaultModel || '',
+    credentialDigestSource: configuredKeyText
+  });
+  const fingerprint = createHash('sha256').update(fingerprintInput).digest('hex').slice(0, 16);
 
   return {
     fingerprint,
     source
   };
+}
+
+async function runProbeWithTimeout<T>(
+  operation: Promise<T>,
+  timeoutMs: number,
+  timeoutError: Error
+): Promise<T> {
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutHandle = setTimeout(() => {
+      reject(timeoutError);
+    }, timeoutMs);
+
+    if (timeoutHandle && typeof timeoutHandle.unref === 'function') {
+      timeoutHandle.unref();
+    }
+  });
+
+  try {
+    return await Promise.race([operation, timeoutPromise]);
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
+  }
 }
 
 function extractErrorStatus(error: unknown): number | null {
@@ -440,17 +459,7 @@ export async function probeOpenAIProviderHealth(options: {
   const timeoutError = new Error(`OpenAI provider probe timed out after ${timeoutMs}ms`);
 
   try {
-    await Promise.race([
-      client.models.list({ page: 1 } as any),
-      new Promise((_, reject) => {
-        const timeoutHandle = setTimeout(() => {
-          reject(timeoutError);
-        }, timeoutMs);
-        if (typeof timeoutHandle.unref === 'function') {
-          timeoutHandle.unref();
-        }
-      })
-    ]);
+    await runProbeWithTimeout(client.models.list({ page: 1 } as any), timeoutMs, timeoutError);
 
     return {
       ok: true,

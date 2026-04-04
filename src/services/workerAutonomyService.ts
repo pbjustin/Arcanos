@@ -709,7 +709,8 @@ export class WorkerAutonomyService {
       lastActivityAt && Number.isFinite(Date.parse(lastActivityAt))
         ? Math.max(0, Date.now() - Date.parse(lastActivityAt))
         : null;
-    const queueHasPendingWork = (queueSummary?.pending ?? 0) > 0 || (queueSummary?.running ?? 0) > 0;
+    const queueHasPendingWork =
+      (queueSummary?.pending ?? 0) > 0 || (queueSummary?.stalledRunning ?? 0) > 0;
     const triggered =
       queueHasPendingWork &&
       this.state.currentJobId === null &&
