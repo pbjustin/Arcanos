@@ -928,6 +928,121 @@ describe('predictive healing execution', () => {
     expect(recordSelfHealEventMock).toHaveBeenCalledWith(expect.objectContaining({ kind: 'CIRCUIT_BREAKER_OPENED' }));
   });
 
+  it('promotes the first authentication fallback into provider reinitialization', async () => {
+    getOpenAIClientOrAdapterMock.mockReturnValue({
+      client: { models: { list: jest.fn() } }
+    });
+    runArcanosCoreQueryMock.mockRejectedValue(Object.assign(
+      new Error('401 Incorrect API key provided: sk-test'),
+      { status: 401 }
+    ));
+    getOpenAIServiceHealthMock
+      .mockReturnValueOnce({
+        apiKey: { configured: true, status: 'valid', source: 'OPENAI_API_KEY' },
+        client: { initialized: true, model: 'gpt-4.1', timeout: 8000, baseURL: 'https://api.openai.com/v1' },
+        circuitBreaker: {
+          state: 'CLOSED',
+          failureCount: 0,
+          lastFailureTime: 0,
+          successCount: 0,
+          lastOpenedAt: 0,
+          lastHalfOpenAt: 0,
+          lastClosedAt: Date.parse('2026-03-26T11:59:30.000Z'),
+          healthy: true,
+          constants: { CIRCUIT_BREAKER_RESET_TIMEOUT_MS: 30000 }
+        },
+        cache: { enabled: true },
+        lastHealthCheck: '2026-03-26T11:59:30.000Z',
+        defaults: { maxTokens: 1024 },
+        providerRuntime: {
+          configSource: 'OPENAI_API_KEY',
+          configVersion: 'OPENAI_API_KEY|10|1234|https://api.openai.com/v1|gpt-4.1',
+          lastReloadAt: '2026-03-26T11:59:00.000Z',
+          reloadCount: 1,
+          lastAttemptAt: '2026-03-26T11:59:30.000Z',
+          lastSuccessAt: '2026-03-26T11:59:30.000Z',
+          lastFailureAt: null,
+          lastFailureReason: null,
+          lastFailureCategory: null,
+          lastFailureStatus: null,
+          consecutiveFailures: 0,
+          backoffMs: 0,
+          nextRetryAt: null
+        }
+      })
+      .mockReturnValue({
+        apiKey: { configured: true, status: 'valid', source: 'OPENAI_API_KEY' },
+        client: { initialized: true, model: 'gpt-4.1', timeout: 8000, baseURL: 'https://api.openai.com/v1' },
+        circuitBreaker: {
+          state: 'CLOSED',
+          failureCount: 1,
+          lastFailureTime: Date.parse('2026-03-26T12:00:00.000Z'),
+          successCount: 0,
+          lastOpenedAt: 0,
+          lastHalfOpenAt: 0,
+          lastClosedAt: Date.parse('2026-03-26T11:59:30.000Z'),
+          healthy: true,
+          constants: { CIRCUIT_BREAKER_RESET_TIMEOUT_MS: 30000 }
+        },
+        cache: { enabled: true },
+        lastHealthCheck: '2026-03-26T12:00:00.000Z',
+        defaults: { maxTokens: 1024 },
+        providerRuntime: {
+          configSource: 'OPENAI_API_KEY',
+          configVersion: 'OPENAI_API_KEY|10|1234|https://api.openai.com/v1|gpt-4.1',
+          lastReloadAt: '2026-03-26T11:59:00.000Z',
+          reloadCount: 1,
+          lastAttemptAt: '2026-03-26T12:00:00.000Z',
+          lastSuccessAt: null,
+          lastFailureAt: '2026-03-26T12:00:00.000Z',
+          lastFailureReason: '401 Incorrect API key provided: sk-test',
+          lastFailureCategory: 'authentication',
+          lastFailureStatus: 401,
+          consecutiveFailures: 1,
+          backoffMs: 1000,
+          nextRetryAt: '2026-03-26T12:00:01.000Z'
+        }
+      });
+
+    const result = await runPredictiveHealingDecision({
+      source: 'predictive_test_auth_failure',
+      observation: createObservation({
+        requestCount: 1,
+        errorRate: 0,
+        timeoutRate: 0,
+        avgLatencyMs: 120,
+        p95LatencyMs: 150,
+        maxLatencyMs: 180,
+        workerHealth: {
+          ...createObservation().workerHealth,
+          overallStatus: 'healthy',
+          pending: 0,
+          running: 0
+        }
+      }),
+      execute: true
+    });
+
+    expect(result.decision).toMatchObject({
+      advisor: 'rules_fallback_v1',
+      action: 'reinitialize_ai_provider',
+      target: 'ai_provider',
+      matchedRule: 'ai_provider_authentication_reinitialize',
+      safeToExecute: true
+    });
+    expect(result.decision.details).toMatchObject({
+      aiFallbackReason: expect.stringContaining('Incorrect API key'),
+      aiProviderFailureCategory: 'authentication',
+      aiFallbackPromotedAction: 'reinitialize_ai_provider'
+    });
+    expect(reinitializeOpenAIProviderMock).toHaveBeenCalledWith({
+      forceReload: true,
+      ignoreBackoff: true,
+      source: 'predictive_test_auth_failure'
+    });
+    expect(result.execution.status).toBe('executed');
+  });
+
   it('separates auth reachability from completion health in the provider probe', async () => {
     getOpenAIClientOrAdapterMock.mockReturnValue({
       client: {

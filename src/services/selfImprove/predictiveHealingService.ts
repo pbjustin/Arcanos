@@ -1440,6 +1440,40 @@ function buildFallbackDecision(
   fallbackReason: string,
   metadata: Record<string, unknown> = {}
 ): PredictiveHealingDecision {
+  const failureCategory =
+    typeof metadata.aiProviderFailureCategory === 'string' ? metadata.aiProviderFailureCategory : null;
+  const canPromoteProviderReinit =
+    decision.action === 'none' &&
+    failureCategory === 'authentication' &&
+    (
+      metadata.aiProviderConfigured === true ||
+      typeof metadata.aiProviderLastAttemptAt === 'string' ||
+      typeof metadata.aiProviderLastFailureAt === 'string'
+    );
+
+  if (canPromoteProviderReinit) {
+    return {
+      ...decision,
+      advisor: 'rules_fallback_v1',
+      action: 'reinitialize_ai_provider',
+      target: 'ai_provider',
+      reason: 'AI provider authentication failed during predictive diagnosis; forcing a provider reload so runtime recovery can resume when credentials change.',
+      confidence: Math.max(decision.confidence, 0.94),
+      matchedRule: 'ai_provider_authentication_reinitialize',
+      safeToExecute: true,
+      suggestedMode: 'auto_execute',
+      details: {
+        ...decision.details,
+        aiPath: PREDICTIVE_AI_MODULE,
+        aiSourceEndpoint: PREDICTIVE_AI_SOURCE_ENDPOINT,
+        aiUsed: false,
+        aiFallbackReason: fallbackReason,
+        aiFallbackPromotedAction: 'reinitialize_ai_provider',
+        ...metadata
+      }
+    };
+  }
+
   return {
     ...decision,
     advisor: 'rules_fallback_v1',
