@@ -368,6 +368,7 @@ router.post("/:gptId", async (req, res, next) => {
     );
   } catch (err) {
     if (isAbortError(err)) {
+      const promptText = extractPromptText(req.body);
       if (promptText && hasDagOrchestrationIntentCue(promptText)) {
         recordDagTraceTimeout({
           handler: 'gpt-route',
