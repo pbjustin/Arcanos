@@ -379,6 +379,9 @@ describe('predictive healing execution', () => {
       predictiveHealingObservationHistoryLimit: 12,
       predictiveHealingAuditHistoryLimit: 25,
       predictiveHealingActionCooldownMs: 60000,
+      predictiveHealingAiIdleCooldownMs: 21600000,
+      predictiveHealingAiActiveCooldownMs: 1800000,
+      predictiveHealingAiFailureCooldownMs: 21600000,
       predictiveScaleUpStep: 1,
       predictiveHealingMinObservations: 3,
       predictiveHealingStaleAfterMs: 300000,
@@ -486,6 +489,67 @@ describe('predictive healing execution', () => {
     expect(recordSelfHealEventMock).toHaveBeenCalled();
   });
 
+  it('backs off predictive AI calls for idle windows after a successful attempt', async () => {
+    getOpenAIClientOrAdapterMock.mockReturnValue({
+      client: {}
+    });
+    runArcanosCoreQueryMock.mockResolvedValue({
+      result: JSON.stringify({
+        selectedCandidateIndex: null,
+        chooseNoAction: true,
+        reason: 'No action required.',
+        safeToExecute: false,
+        confidence: 0.12
+      }),
+      activeModel: 'gpt-4.1',
+      fallbackFlag: false,
+      fallbackSummary: {
+        fallbackReasons: []
+      }
+    });
+    const idleObservation = createObservation({
+      requestCount: 0,
+      errorRate: 0,
+      timeoutRate: 0,
+      degradedCount: 0,
+      workerHealth: {
+        ...createObservation().workerHealth,
+        overallStatus: 'healthy',
+        pending: 0,
+        running: 0,
+        alertCount: 0,
+        stalledRunning: 0
+      },
+      trinity: {
+        ...createObservation().trinity,
+        activeAction: null
+      }
+    });
+
+    await runPredictiveHealingDecision({
+      source: 'predictive_test_idle_cooldown_first',
+      observation: idleObservation
+    });
+    const result = await runPredictiveHealingDecision({
+      source: 'predictive_test_idle_cooldown_second',
+      observation: idleObservation
+    });
+
+    expect(runArcanosCoreQueryMock).toHaveBeenCalledTimes(1);
+    expect(result.decision.advisor).toBe('rules_fallback_v1');
+    expect(result.decision.details).toMatchObject({
+      aiUsed: false,
+      aiCooldownReason: 'idle_window_backoff'
+    });
+    expect(loggerInfoMock).toHaveBeenCalledWith(
+      'self_heal.ai_diagnosis.cooldown',
+      expect.objectContaining({
+        source: 'predictive_test_idle_cooldown_second',
+        cooldownReason: 'idle_window_backoff'
+      })
+    );
+  });
+
   it('emits a structured audit log for healthy no-op decisions', async () => {
     const result = await runPredictiveHealingDecision({
       source: 'predictive_test_healthy',
@@ -529,6 +593,9 @@ describe('predictive healing execution', () => {
       predictiveHealingObservationHistoryLimit: 12,
       predictiveHealingAuditHistoryLimit: 25,
       predictiveHealingActionCooldownMs: 60000,
+      predictiveHealingAiIdleCooldownMs: 21600000,
+      predictiveHealingAiActiveCooldownMs: 1800000,
+      predictiveHealingAiFailureCooldownMs: 21600000,
       predictiveScaleUpStep: 1,
       predictiveHealingMinObservations: 3,
       predictiveHealingStaleAfterMs: 300000,
@@ -587,6 +654,9 @@ describe('predictive healing execution', () => {
       predictiveHealingObservationHistoryLimit: 12,
       predictiveHealingAuditHistoryLimit: 25,
       predictiveHealingActionCooldownMs: 60000,
+      predictiveHealingAiIdleCooldownMs: 21600000,
+      predictiveHealingAiActiveCooldownMs: 1800000,
+      predictiveHealingAiFailureCooldownMs: 21600000,
       predictiveScaleUpStep: 1,
       predictiveHealingMinObservations: 3,
       predictiveHealingStaleAfterMs: 300000,
@@ -727,6 +797,9 @@ describe('predictive healing execution', () => {
       predictiveHealingObservationHistoryLimit: 12,
       predictiveHealingAuditHistoryLimit: 25,
       predictiveHealingActionCooldownMs: 60000,
+      predictiveHealingAiIdleCooldownMs: 21600000,
+      predictiveHealingAiActiveCooldownMs: 1800000,
+      predictiveHealingAiFailureCooldownMs: 21600000,
       predictiveScaleUpStep: 1,
       predictiveHealingMinObservations: 3,
       predictiveHealingStaleAfterMs: 300000,
@@ -858,6 +931,66 @@ describe('predictive healing execution', () => {
     expect(recordSelfHealEventMock).toHaveBeenCalledWith(expect.objectContaining({ kind: 'AI_PROVIDER_CALL_ATTEMPT' }));
     expect(recordSelfHealEventMock).toHaveBeenCalledWith(expect.objectContaining({ kind: 'AI_PROVIDER_CALL_FAILURE' }));
     expect(recordSelfHealEventMock).toHaveBeenCalledWith(expect.objectContaining({ kind: 'CIRCUIT_BREAKER_OPENED' }));
+  });
+
+  it('backs off predictive AI calls after provider authentication failures', async () => {
+    getOpenAIClientOrAdapterMock.mockReturnValue({
+      client: {}
+    });
+    runArcanosCoreQueryMock
+      .mockRejectedValueOnce(Object.assign(new Error('Incorrect API key provided'), { status: 401 }))
+      .mockResolvedValue({
+        result: JSON.stringify({
+          selectedCandidateIndex: null,
+          chooseNoAction: true,
+          reason: 'No action required.',
+          safeToExecute: false,
+          confidence: 0.1
+        }),
+        activeModel: 'gpt-4.1',
+        fallbackFlag: false,
+        fallbackSummary: {
+          fallbackReasons: []
+        }
+      });
+
+    await runPredictiveHealingDecision({
+      source: 'predictive_test_auth_failure_first',
+      observation: createObservation({
+        requestCount: 0,
+        workerHealth: {
+          ...createObservation().workerHealth,
+          pending: 0,
+          running: 0,
+          alertCount: 0
+        }
+      })
+    });
+    const result = await runPredictiveHealingDecision({
+      source: 'predictive_test_auth_failure_second',
+      observation: createObservation({
+        requestCount: 0,
+        workerHealth: {
+          ...createObservation().workerHealth,
+          pending: 0,
+          running: 0,
+          alertCount: 0
+        }
+      })
+    });
+
+    expect(runArcanosCoreQueryMock).toHaveBeenCalledTimes(1);
+    expect(result.decision.details).toMatchObject({
+      aiCooldownReason: 'provider_failure_backoff',
+      aiProviderFailureCategory: 'authentication'
+    });
+    expect(loggerInfoMock).toHaveBeenCalledWith(
+      'self_heal.ai_diagnosis.cooldown',
+      expect.objectContaining({
+        source: 'predictive_test_auth_failure_second',
+        cooldownReason: 'provider_failure_backoff'
+      })
+    );
   });
 
   it('separates auth reachability from completion health in the provider probe', async () => {

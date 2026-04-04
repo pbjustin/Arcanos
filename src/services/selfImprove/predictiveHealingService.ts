@@ -438,6 +438,9 @@ const DEFAULT_AUDIT_HISTORY_LIMIT = 25;
 const DEFAULT_LOOP_INTERVAL_MS = 30_000;
 const DEFAULT_EXECUTION_LOG_LIMIT = 10;
 const DEFAULT_SCALE_UP_STEP = 1;
+const DEFAULT_AI_IDLE_COOLDOWN_MS = 6 * 60 * 60_000;
+const DEFAULT_AI_ACTIVE_COOLDOWN_MS = 30 * 60_000;
+const DEFAULT_AI_FAILURE_COOLDOWN_MS = 6 * 60 * 60_000;
 const REDUCED_LATENCY_MODE_TOKEN_LIMIT = 96;
 const SINGLE_UNHEALTHY_WORKER_CONFIDENCE = 0.86;
 const LATENCY_RISING_BASE_CONFIDENCE = 0.68;
@@ -473,6 +476,19 @@ type PredictiveHealingAiDecisionPayload = z.infer<typeof predictiveHealingAiDeci
 
 type PredictiveHealingGlobal = typeof globalThis & {
   [GLOBAL_KEY]?: PredictiveHealingState;
+};
+
+type PredictiveHealingAiCooldownReason =
+  | 'idle_window_backoff'
+  | 'active_incident_backoff'
+  | 'provider_failure_backoff';
+
+type PredictiveHealingAiCooldownWindow = {
+  reason: PredictiveHealingAiCooldownReason;
+  cooldownMs: number;
+  remainingMs: number;
+  cooldownUntil: string;
+  liveLoadSignal: boolean;
 };
 
 function toIsoTimestamp(value: number | null | undefined): string | null {
@@ -1511,11 +1527,72 @@ async function resolveAiDecision(params: {
   rulesDecision: PredictiveHealingDecision;
   candidates: Array<Omit<PredictiveHealingCandidate, 'priority'>>;
   minConfidence: number;
+  config: ReturnType<typeof getConfig>;
 }): Promise<PredictiveHealingDecision> {
   const state = getState();
   const actuator = buildWorkerRepairActuatorStatus();
   const expectedModel = getFallbackModel();
   const preCallHealth = getOpenAIServiceHealth();
+  const providerStatusBeforeAttempt = updateAiProviderState(state, (current) => ({
+    ...buildAiProviderStatusSnapshot(preCallHealth, current),
+    model: expectedModel
+  }));
+  const cooldownWindow = resolvePredictiveHealingAiCooldownWindow({
+    observation: params.observation,
+    providerStatus: providerStatusBeforeAttempt,
+    config: params.config
+  });
+  if (cooldownWindow) {
+    const fallbackReason = `AI diagnosis cooldown active (${cooldownWindow.reason}) until ${cooldownWindow.cooldownUntil}.`;
+    recordSelfHealEvent({
+      kind: 'fallback',
+      source: params.source,
+      trigger: 'predictive_ai',
+      reason: fallbackReason,
+      actionTaken: params.rulesDecision.action,
+      healedComponent: params.rulesDecision.target,
+      details: {
+        cooldownReason: cooldownWindow.reason,
+        cooldownMs: cooldownWindow.cooldownMs,
+        cooldownRemainingMs: cooldownWindow.remainingMs,
+        cooldownUntil: cooldownWindow.cooldownUntil,
+        liveLoadSignal: cooldownWindow.liveLoadSignal
+      }
+    });
+    logger.info('self_heal.ai_diagnosis.cooldown', {
+      module: 'predictive-healing',
+      source: params.source,
+      aiPath: PREDICTIVE_AI_MODULE,
+      sourceEndpoint: PREDICTIVE_AI_SOURCE_ENDPOINT,
+      cooldownReason: cooldownWindow.reason,
+      cooldownMs: cooldownWindow.cooldownMs,
+      cooldownRemainingMs: cooldownWindow.remainingMs,
+      cooldownUntil: cooldownWindow.cooldownUntil,
+      liveLoadSignal: cooldownWindow.liveLoadSignal
+    });
+    return buildFallbackDecision(params.rulesDecision, fallbackReason, {
+      actuatorMode: actuator.mode,
+      actuatorPath: actuator.path,
+      actuatorBaseUrl: actuator.baseUrl,
+      aiProviderConfigured: providerStatusBeforeAttempt.configured,
+      aiProviderReachable: providerStatusBeforeAttempt.reachable,
+      aiProviderAuthenticated: providerStatusBeforeAttempt.authenticated,
+      aiProviderModel: providerStatusBeforeAttempt.model,
+      aiProviderLastAttemptAt: providerStatusBeforeAttempt.lastAttemptAt,
+      aiProviderLastFailureAt: providerStatusBeforeAttempt.lastFailureAt,
+      aiProviderLastFailureReason: providerStatusBeforeAttempt.lastFailureReason,
+      aiProviderFailureCategory: providerStatusBeforeAttempt.lastFailureCategory,
+      aiProviderFailureStatus: providerStatusBeforeAttempt.lastFailureStatus,
+      aiProviderCircuitBreakerState: providerStatusBeforeAttempt.circuitBreakerState,
+      aiProviderCircuitBreakerFailures: providerStatusBeforeAttempt.circuitBreakerFailures,
+      aiProviderCircuitBreakerNextRetryAt: providerStatusBeforeAttempt.circuitBreakerNextRetryAt,
+      aiCooldownReason: cooldownWindow.reason,
+      aiCooldownMs: cooldownWindow.cooldownMs,
+      aiCooldownRemainingMs: cooldownWindow.remainingMs,
+      aiCooldownUntil: cooldownWindow.cooldownUntil
+    });
+  }
+
   const attemptAt = recordAiProviderCallAttempt({
     source: params.source,
     reason: 'Self-heal requested an AI provider completion for predictive diagnosis.',
@@ -2864,7 +2941,8 @@ export async function runPredictiveHealingDecision(params: {
     trends,
     rulesDecision,
     candidates,
-    minConfidence: getRulesConfig().minConfidence
+    minConfidence: getRulesConfig().minConfidence,
+    config
   });
 
   const executionRequest: PredictiveHealingExecutionRequest = {
@@ -3082,6 +3160,64 @@ export function buildPredictiveHealingStatusSnapshot(): PredictiveHealingStatusS
     actuator: buildWorkerRepairActuatorStatus(),
     advisors: [...DEFAULT_ADVISORS],
     aiProvider: buildPredictiveHealingAIProviderStatusSnapshot()
+  };
+}
+
+function hasLivePredictiveHealingLoad(observation: PredictiveHealingObservation): boolean {
+  return (
+    observation.requestCount > 0 ||
+    observation.errorRate > 0 ||
+    observation.timeoutRate > 0 ||
+    observation.degradedCount > 0 ||
+    observation.workerHealth.pending > 0 ||
+    observation.workerHealth.running > 0 ||
+    observation.workerHealth.alertCount > 0 ||
+    observation.workerHealth.stalledRunning > 0 ||
+    Boolean(observation.trinity.activeAction)
+  );
+}
+
+function resolvePredictiveHealingAiCooldownWindow(params: {
+  observation: PredictiveHealingObservation;
+  providerStatus: PredictiveHealingAIProviderStatusSnapshot;
+  config: ReturnType<typeof getConfig>;
+  nowMs?: number;
+}): PredictiveHealingAiCooldownWindow | null {
+  const nowMs = params.nowMs ?? Date.now();
+  const liveLoadSignal = hasLivePredictiveHealingLoad(params.observation);
+  const lastAttemptAtMs = Date.parse(params.providerStatus.lastAttemptAt ?? '');
+  if (!Number.isFinite(lastAttemptAtMs)) {
+    return null;
+  }
+
+  const providerFailureBackoffActive =
+    String(params.providerStatus.circuitBreakerState).toUpperCase() === 'OPEN' ||
+    params.providerStatus.lastFailureCategory === 'authentication' ||
+    params.providerStatus.lastFailureCategory === 'insufficient_quota' ||
+    params.providerStatus.lastFailureCategory === 'circuit_open';
+  const failureAnchorMs = Date.parse(params.providerStatus.lastFailureAt ?? '');
+  const cooldownAnchorMs =
+    providerFailureBackoffActive && Number.isFinite(failureAnchorMs) ? failureAnchorMs : lastAttemptAtMs;
+  const cooldownMs = providerFailureBackoffActive
+    ? Math.max(60_000, params.config.predictiveHealingAiFailureCooldownMs ?? DEFAULT_AI_FAILURE_COOLDOWN_MS)
+    : liveLoadSignal
+      ? Math.max(60_000, params.config.predictiveHealingAiActiveCooldownMs ?? DEFAULT_AI_ACTIVE_COOLDOWN_MS)
+      : Math.max(60_000, params.config.predictiveHealingAiIdleCooldownMs ?? DEFAULT_AI_IDLE_COOLDOWN_MS);
+  const cooldownUntilMs = cooldownAnchorMs + cooldownMs;
+  if (cooldownUntilMs <= nowMs) {
+    return null;
+  }
+
+  return {
+    reason: providerFailureBackoffActive
+      ? 'provider_failure_backoff'
+      : liveLoadSignal
+        ? 'active_incident_backoff'
+        : 'idle_window_backoff',
+    cooldownMs,
+    remainingMs: cooldownUntilMs - nowMs,
+    cooldownUntil: new Date(cooldownUntilMs).toISOString(),
+    liveLoadSignal
   };
 }
 
