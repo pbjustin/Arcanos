@@ -9,6 +9,7 @@ const activateTrinitySelfHealingMitigationMock = jest.fn();
 const getOpenAIClientOrAdapterMock = jest.fn();
 const runArcanosCoreQueryMock = jest.fn();
 const getOpenAIServiceHealthMock = jest.fn();
+const reinitializeOpenAIProviderMock = jest.fn();
 const createSingleChatCompletionMock = jest.fn();
 const loggerInfoMock = jest.fn();
 const loggerWarnMock = jest.fn();
@@ -77,7 +78,8 @@ jest.unstable_mockModule('@services/openai.js', () => ({
 }));
 
 jest.unstable_mockModule('@services/openai/serviceHealth.js', () => ({
-  getOpenAIServiceHealth: getOpenAIServiceHealthMock
+  getOpenAIServiceHealth: getOpenAIServiceHealthMock,
+  reinitializeOpenAIProvider: reinitializeOpenAIProviderMock
 }));
 
 jest.unstable_mockModule('@services/workerControlService.js', () => ({
@@ -370,6 +372,42 @@ describe('predictive healing execution', () => {
       lastHealthCheck: '2026-03-26T11:59:30.000Z',
       defaults: {
         maxTokens: 1024
+      },
+      providerRuntime: {
+        configSource: 'OPENAI_API_KEY',
+        configVersion: 'OPENAI_API_KEY|10|1234|https://api.openai.com/v1|gpt-4.1',
+        lastReloadAt: '2026-03-26T11:59:00.000Z',
+        reloadCount: 1,
+        lastAttemptAt: '2026-03-26T11:59:30.000Z',
+        lastSuccessAt: '2026-03-26T11:59:30.000Z',
+        lastFailureAt: null,
+        lastFailureReason: null,
+        lastFailureCategory: null,
+        lastFailureStatus: null,
+        consecutiveFailures: 0,
+        backoffMs: 0,
+        nextRetryAt: null
+      }
+    });
+    reinitializeOpenAIProviderMock.mockResolvedValue({
+      ok: true,
+      skipped: false,
+      reason: null,
+      reloaded: true,
+      runtime: {
+        configSource: 'OPENAI_API_KEY',
+        configVersion: 'OPENAI_API_KEY|10|1234|https://api.openai.com/v1|gpt-4.1',
+        lastReloadAt: '2026-03-26T12:00:00.000Z',
+        reloadCount: 2,
+        lastAttemptAt: '2026-03-26T12:00:00.000Z',
+        lastSuccessAt: '2026-03-26T12:00:00.000Z',
+        lastFailureAt: null,
+        lastFailureReason: null,
+        lastFailureCategory: null,
+        lastFailureStatus: null,
+        consecutiveFailures: 0,
+        backoffMs: 0,
+        nextRetryAt: null
       }
     });
     getConfigMock.mockReturnValue({
@@ -811,7 +849,22 @@ describe('predictive healing execution', () => {
         },
         cache: { enabled: true },
         lastHealthCheck: '2026-03-26T11:59:30.000Z',
-        defaults: { maxTokens: 1024 }
+        defaults: { maxTokens: 1024 },
+        providerRuntime: {
+          configSource: 'OPENAI_API_KEY',
+          configVersion: 'OPENAI_API_KEY|10|1234|https://api.openai.com/v1|gpt-4.1',
+          lastReloadAt: '2026-03-26T11:59:00.000Z',
+          reloadCount: 1,
+          lastAttemptAt: '2026-03-26T12:00:00.000Z',
+          lastSuccessAt: null,
+          lastFailureAt: '2026-03-26T12:00:00.000Z',
+          lastFailureReason: 'Quota exceeded',
+          lastFailureCategory: 'rate_limited',
+          lastFailureStatus: 429,
+          consecutiveFailures: 1,
+          backoffMs: 1000,
+          nextRetryAt: '2026-03-26T12:00:01.000Z'
+        }
       })
       .mockReturnValue({
         apiKey: { configured: true, status: 'valid', source: 'OPENAI_API_KEY' },
@@ -829,7 +882,22 @@ describe('predictive healing execution', () => {
         },
         cache: { enabled: true },
         lastHealthCheck: '2026-03-26T12:00:00.000Z',
-        defaults: { maxTokens: 1024 }
+        defaults: { maxTokens: 1024 },
+        providerRuntime: {
+          configSource: 'OPENAI_API_KEY',
+          configVersion: 'OPENAI_API_KEY|10|1234|https://api.openai.com/v1|gpt-4.1',
+          lastReloadAt: '2026-03-26T11:59:00.000Z',
+          reloadCount: 1,
+          lastAttemptAt: '2026-03-26T12:00:00.000Z',
+          lastSuccessAt: null,
+          lastFailureAt: '2026-03-26T12:00:00.000Z',
+          lastFailureReason: 'Quota exceeded',
+          lastFailureCategory: 'rate_limited',
+          lastFailureStatus: 429,
+          consecutiveFailures: 1,
+          backoffMs: 1000,
+          nextRetryAt: '2026-03-26T12:00:01.000Z'
+        }
       });
 
     const result = await runPredictiveHealingDecision({

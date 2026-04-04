@@ -80,6 +80,21 @@ function buildFallbackOpenAIHealth(): OpenAIServiceHealth {
       lastHealthCheck: new Date().toISOString(),
       defaults: {
         maxTokens: RESILIENCE_CONSTANTS.DEFAULT_MAX_TOKENS
+      },
+      providerRuntime: {
+        configSource: null,
+        configVersion: null,
+        lastReloadAt: null,
+        reloadCount: 0,
+        lastAttemptAt: null,
+        lastSuccessAt: null,
+        lastFailureAt: null,
+        lastFailureReason: null,
+        lastFailureCategory: null,
+        lastFailureStatus: null,
+        consecutiveFailures: 0,
+        backoffMs: 0,
+        nextRetryAt: null
       }
     };
   }

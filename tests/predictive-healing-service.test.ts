@@ -31,8 +31,24 @@ const getOpenAIServiceHealthMock = jest.fn(() => ({
   lastHealthCheck: '2026-03-26T12:00:00.000Z',
   defaults: {
     maxTokens: 1024
+  },
+  providerRuntime: {
+    configSource: 'OPENAI_API_KEY',
+    configVersion: 'OPENAI_API_KEY|10|1234|https://api.openai.com/v1|gpt-4.1',
+    lastReloadAt: '2026-03-26T11:59:00.000Z',
+    reloadCount: 1,
+    lastAttemptAt: '2026-03-26T12:00:00.000Z',
+    lastSuccessAt: '2026-03-26T12:00:00.000Z',
+    lastFailureAt: null,
+    lastFailureReason: null,
+    lastFailureCategory: null,
+    lastFailureStatus: null,
+    consecutiveFailures: 0,
+    backoffMs: 0,
+    nextRetryAt: null
   }
 }));
+const reinitializeOpenAIProviderMock = jest.fn();
 
 jest.unstable_mockModule('@platform/runtime/workerConfig.js', () => ({
   getWorkerRuntimeStatus: jest.fn(),
@@ -81,7 +97,8 @@ jest.unstable_mockModule('@services/openai.js', () => ({
 }));
 
 jest.unstable_mockModule('@services/openai/serviceHealth.js', () => ({
-  getOpenAIServiceHealth: getOpenAIServiceHealthMock
+  getOpenAIServiceHealth: getOpenAIServiceHealthMock,
+  reinitializeOpenAIProvider: reinitializeOpenAIProviderMock
 }));
 
 jest.unstable_mockModule('@services/workerControlService.js', () => ({
@@ -241,6 +258,28 @@ function createObservation(overrides: Record<string, unknown> = {}) {
 describe('predictive healing rule evaluation', () => {
   beforeEach(() => {
     jest.useFakeTimers().setSystemTime(new Date('2026-03-26T12:00:00.000Z'));
+    jest.clearAllMocks();
+    reinitializeOpenAIProviderMock.mockResolvedValue({
+      ok: true,
+      skipped: false,
+      reason: null,
+      reloaded: true,
+      runtime: {
+        configSource: 'OPENAI_API_KEY',
+        configVersion: 'OPENAI_API_KEY|10|1234|https://api.openai.com/v1|gpt-4.1',
+        lastReloadAt: '2026-03-26T12:00:00.000Z',
+        reloadCount: 2,
+        lastAttemptAt: '2026-03-26T12:00:00.000Z',
+        lastSuccessAt: '2026-03-26T12:00:00.000Z',
+        lastFailureAt: null,
+        lastFailureReason: null,
+        lastFailureCategory: null,
+        lastFailureStatus: null,
+        consecutiveFailures: 0,
+        backoffMs: 0,
+        nextRetryAt: null
+      }
+    });
   });
 
   afterEach(() => {

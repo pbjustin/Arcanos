@@ -49,7 +49,8 @@ jest.unstable_mockModule('@services/workerAutonomyService.js', () => ({
     defaultMaxRetries: 2,
     retryBackoffBaseMs: 2000,
     retryBackoffMaxMs: 60000,
-    staleAfterMs: 60000
+    staleAfterMs: 60000,
+    watchdogIdleMs: 120000
   })),
   planAutonomousWorkerJob: jest.fn(async () => ({
     status: 'pending',
@@ -104,6 +105,28 @@ describe('/worker-helper routes', () => {
       delayed: 0,
       stalledRunning: 0,
       oldestPendingJobAgeMs: 0,
+      failureBreakdown: {
+        retryable: 0,
+        permanent: 1,
+        retryScheduled: 0,
+        retryExhausted: 1,
+        authentication: 0,
+        network: 0,
+        provider: 0,
+        rateLimited: 0,
+        timeout: 1,
+        validation: 0,
+        unknown: 0
+      },
+      recentFailureReasons: [
+        {
+          reason: 'OpenAI upstream timeout',
+          category: 'timeout',
+          retryable: false,
+          count: 1,
+          lastSeenAt: '2026-03-06T09:58:00.000Z'
+        }
+      ],
       lastUpdatedAt: '2026-03-06T10:00:00.000Z'
     });
     getLatestJobMock.mockResolvedValue({
@@ -136,6 +159,31 @@ describe('/worker-helper routes', () => {
     getWorkerControlHealthMock.mockResolvedValue({
       overallStatus: 'healthy',
       alerts: [],
+      queueSummary: {
+        pending: 1,
+        running: 0,
+        completed: 3,
+        failed: 1,
+        total: 5,
+        delayed: 0,
+        stalledRunning: 0,
+        oldestPendingJobAgeMs: 0,
+        failureBreakdown: {
+          retryable: 0,
+          permanent: 1,
+          retryScheduled: 0,
+          retryExhausted: 1,
+          authentication: 0,
+          network: 0,
+          provider: 0,
+          rateLimited: 0,
+          timeout: 1,
+          validation: 0,
+          unknown: 0
+        },
+        recentFailureReasons: [],
+        lastUpdatedAt: '2026-03-06T10:00:00.000Z'
+      },
       workers: [
         {
           workerId: 'async-queue',
@@ -144,9 +192,30 @@ describe('/worker-helper routes', () => {
           currentJobId: null,
           lastError: null,
           lastHeartbeatAt: '2026-03-06T10:00:00.000Z',
-          updatedAt: '2026-03-06T10:00:00.000Z'
+          updatedAt: '2026-03-06T10:00:00.000Z',
+          snapshot: {
+            lastActivityAt: '2026-03-06T10:00:00.000Z',
+            lastProcessedJobAt: '2026-03-06T09:59:30.000Z',
+            watchdog: {
+              triggered: false,
+              reason: null,
+              restartRecommended: false,
+              idleThresholdMs: 120000
+            }
+          }
         }
-      ]
+      ],
+      settings: {
+        heartbeatIntervalMs: 10000,
+        leaseMs: 30000,
+        inspectorIntervalMs: 30000,
+        staleAfterMs: 60000,
+        watchdogIdleMs: 120000,
+        defaultMaxRetries: 2,
+        maxJobsPerHour: 120,
+        maxAiCallsPerHour: 120,
+        maxRssMb: 2048
+      }
     });
     detectCognitiveDomainMock.mockReturnValue({ domain: 'code', confidence: 0.91 });
     dispatchArcanosTaskMock.mockResolvedValue([{ workerId: 'arcanos-core-direct', result: 'ok' }]);
@@ -203,6 +272,28 @@ describe('/worker-helper routes', () => {
         delayed: 0,
         stalledRunning: 0,
         oldestPendingJobAgeMs: 0,
+        failureBreakdown: {
+          retryable: 0,
+          permanent: 1,
+          retryScheduled: 0,
+          retryExhausted: 1,
+          authentication: 0,
+          network: 0,
+          provider: 0,
+          rateLimited: 0,
+          timeout: 1,
+          validation: 0,
+          unknown: 0
+        },
+        recentFailureReasons: [
+          {
+            reason: 'OpenAI upstream timeout',
+            category: 'timeout',
+            retryable: false,
+            count: 1,
+            lastSeenAt: '2026-03-06T09:58:00.000Z'
+          }
+        ],
         lastUpdatedAt: '2026-03-06T10:00:00.000Z'
       },
       queueSemantics: {
@@ -215,7 +306,8 @@ describe('/worker-helper routes', () => {
         defaultMaxRetries: 2,
         retryBackoffBaseMs: 2000,
         retryBackoffMaxMs: 60000,
-        staleAfterMs: 60000
+        staleAfterMs: 60000,
+        watchdogIdleMs: 120000
       },
       recentFailedJobs: [
         {
@@ -253,7 +345,16 @@ describe('/worker-helper routes', () => {
             currentJobId: null,
             lastError: null,
             lastHeartbeatAt: '2026-03-06T10:00:00.000Z',
-            updatedAt: '2026-03-06T10:00:00.000Z'
+            lastActivityAt: '2026-03-06T10:00:00.000Z',
+            lastProcessedJobAt: '2026-03-06T09:59:30.000Z',
+            inactivityMs: expect.any(Number),
+            updatedAt: '2026-03-06T10:00:00.000Z',
+            watchdog: {
+              triggered: false,
+              reason: null,
+              restartRecommended: false,
+              idleThresholdMs: 120000
+            }
           }
         ]
       }

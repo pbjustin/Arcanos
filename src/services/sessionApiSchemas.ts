@@ -39,6 +39,35 @@ export const SessionApiQueueDiagnosticsSchema = z.object({
   status: z.enum(['live', 'degraded', 'offline']),
   workerRunning: z.boolean(),
   queueDepth: z.number().int().nonnegative(),
+  failureRate: z.number().min(0),
+  failureBreakdown: z.object({
+    retryable: z.number().int().nonnegative(),
+    permanent: z.number().int().nonnegative(),
+    retryScheduled: z.number().int().nonnegative(),
+    retryExhausted: z.number().int().nonnegative(),
+    authentication: z.number().int().nonnegative(),
+    network: z.number().int().nonnegative(),
+    provider: z.number().int().nonnegative(),
+    rateLimited: z.number().int().nonnegative(),
+    timeout: z.number().int().nonnegative(),
+    validation: z.number().int().nonnegative(),
+    unknown: z.number().int().nonnegative()
+  }),
+  recentFailureReasons: z.array(z.object({
+    reason: z.string().min(1),
+    category: z.enum([
+      'authentication',
+      'network',
+      'provider',
+      'rate_limited',
+      'timeout',
+      'validation',
+      'unknown'
+    ]),
+    retryable: z.boolean().nullable(),
+    count: z.number().int().nonnegative(),
+    lastSeenAt: z.string().datetime()
+  })),
   lastJobId: z.string().nullable(),
   lastJobStatus: z.string().nullable(),
   lastJobFinishedAt: z.string().datetime().nullable(),

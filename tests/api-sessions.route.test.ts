@@ -227,6 +227,21 @@ describe('canonical /api session system routes', () => {
       status: 'live',
       workerRunning: true,
       queueDepth: 0,
+      failureRate: 0,
+      failureBreakdown: {
+        retryable: 0,
+        permanent: 0,
+        retryScheduled: 0,
+        retryExhausted: 0,
+        authentication: 0,
+        network: 0,
+        provider: 0,
+        rateLimited: 0,
+        timeout: 0,
+        validation: 0,
+        unknown: 0
+      },
+      recentFailureReasons: [],
       lastJobId: 'job-1',
       lastJobStatus: 'completed',
       lastJobFinishedAt: '2026-03-09T12:00:00.000Z',
@@ -262,6 +277,11 @@ describe('canonical /api session system routes', () => {
       timestamp: '2026-03-09T12:00:00.000Z'
     });
     expect(queueResponse.body.queueDepth).toBe(0);
+    expect(queueResponse.body.failureRate).toBe(0);
+    expect(queueResponse.body.failureBreakdown).toEqual(expect.objectContaining({
+      retryable: 0,
+      retryExhausted: 0
+    }));
     expect(storageResponse.body.sessionCount).toBe(3);
   });
 

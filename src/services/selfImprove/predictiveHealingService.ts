@@ -33,7 +33,10 @@ import { getEnvNumber } from '@platform/runtime/env.js';
 import { runArcanosCoreQuery } from '@services/arcanos-core.js';
 import { getOpenAIClientOrAdapter } from '@services/openai/clientBridge.js';
 import { createSingleChatCompletion, getFallbackModel } from '@services/openai.js';
-import { getOpenAIServiceHealth } from '@services/openai/serviceHealth.js';
+import {
+  getOpenAIServiceHealth,
+  reinitializeOpenAIProvider
+} from '@services/openai/serviceHealth.js';
 import { resolvePredictiveHealingLoopIntervalMs } from './runtimeConfig.js';
 import { recordSelfHealEvent } from './selfHealTelemetry.js';
 import {
@@ -44,6 +47,7 @@ import {
 
 export type PredictiveHealingActionType =
   | 'none'
+  | 'reinitialize_ai_provider'
   | 'scale_workers_up'
   | 'recycle_worker'
   | 'recycle_worker_runtime'
@@ -510,20 +514,44 @@ function buildAiProviderStatusSnapshot(
   health: ReturnType<typeof getOpenAIServiceHealth>,
   previous?: Partial<PredictiveHealingAIProviderStatusSnapshot>
 ): PredictiveHealingAIProviderStatusSnapshot {
+  const providerRuntime = health.providerRuntime;
   return {
     configured: Boolean(health.apiKey.configured),
     clientInitialized: Boolean(health.client.initialized),
-    reachable: previous?.reachable ?? null,
-    authenticated: previous?.authenticated ?? null,
-    completionHealthy: previous?.completionHealthy ?? null,
+    reachable:
+      previous?.reachable ??
+      (providerRuntime.lastSuccessAt
+        ? true
+        : providerRuntime.lastFailureCategory === 'network'
+          ? false
+          : providerRuntime.lastFailureCategory === 'authentication'
+            ? true
+            : null),
+    authenticated:
+      previous?.authenticated ??
+      (providerRuntime.lastSuccessAt
+        ? true
+        : providerRuntime.lastFailureCategory === 'authentication'
+          ? false
+          : null),
+    completionHealthy:
+      previous?.completionHealthy ??
+      (providerRuntime.lastSuccessAt
+        ? true
+        : providerRuntime.lastFailureAt
+          ? false
+          : null),
     model: previous?.model ?? getFallbackModel(),
     baseUrl: health.client.baseURL ?? previous?.baseUrl ?? null,
-    lastAttemptAt: previous?.lastAttemptAt ?? null,
-    lastSuccessAt: previous?.lastSuccessAt ?? null,
-    lastFailureAt: previous?.lastFailureAt ?? null,
-    lastFailureReason: previous?.lastFailureReason ?? null,
-    lastFailureCategory: previous?.lastFailureCategory ?? null,
-    lastFailureStatus: previous?.lastFailureStatus ?? null,
+    lastAttemptAt: providerRuntime.lastAttemptAt ?? previous?.lastAttemptAt ?? null,
+    lastSuccessAt: providerRuntime.lastSuccessAt ?? previous?.lastSuccessAt ?? null,
+    lastFailureAt: providerRuntime.lastFailureAt ?? previous?.lastFailureAt ?? null,
+    lastFailureReason: providerRuntime.lastFailureReason ?? previous?.lastFailureReason ?? null,
+    lastFailureCategory:
+      (providerRuntime.lastFailureCategory as PredictiveHealingAIProviderFailureCategory | null) ??
+      previous?.lastFailureCategory ??
+      null,
+    lastFailureStatus: providerRuntime.lastFailureStatus ?? previous?.lastFailureStatus ?? null,
     circuitBreakerState: health.circuitBreaker.state,
     circuitBreakerHealthy: Boolean(health.circuitBreaker.healthy),
     circuitBreakerFailures:
@@ -531,7 +559,7 @@ function buildAiProviderStatusSnapshot(
     circuitBreakerLastOpenedAt: toIsoTimestamp(health.circuitBreaker.lastOpenedAt),
     circuitBreakerLastHalfOpenAt: toIsoTimestamp(health.circuitBreaker.lastHalfOpenAt),
     circuitBreakerLastClosedAt: toIsoTimestamp(health.circuitBreaker.lastClosedAt),
-    circuitBreakerNextRetryAt: resolveCircuitBreakerNextRetryAt(health)
+    circuitBreakerNextRetryAt: providerRuntime.nextRetryAt ?? resolveCircuitBreakerNextRetryAt(health)
   };
 }
 
@@ -1824,6 +1852,66 @@ function buildCandidates(
   const candidates: PredictiveHealingCandidate[] = [];
   const hasEnoughHistory = history.length >= config.minObservations;
   const hasEnoughTraffic = observation.requestCount >= Math.max(4, config.minObservations);
+  const providerStatus = buildPredictiveHealingAIProviderStatusSnapshot();
+  const providerFailureActive =
+    providerStatus.lastFailureCategory !== null ||
+    providerStatus.authenticated === false ||
+    providerStatus.reachable === false ||
+    providerStatus.completionHealthy === false ||
+    String(providerStatus.circuitBreakerState).toUpperCase() === 'OPEN';
+  const watchdogTriggered = observation.workerHealth.alerts.some(
+    (alert) => alert.toLowerCase().includes('watchdog')
+  );
+
+  if (providerFailureActive && (providerStatus.configured || providerStatus.lastAttemptAt !== null)) {
+    const authenticationFailure = providerStatus.lastFailureCategory === 'authentication';
+    candidates.push({
+      action: 'reinitialize_ai_provider',
+      target: 'ai_provider',
+      reason: authenticationFailure
+        ? 'AI provider authentication is unhealthy; force a provider reload so runtime recovery can resume when credentials change.'
+        : 'AI provider health is degraded; force a provider reload and probe before routing more AI-dependent recovery.',
+      confidence: authenticationFailure ? 0.94 : 0.89,
+      matchedRule: authenticationFailure
+        ? 'ai_provider_authentication_reinitialize'
+        : 'ai_provider_reinitialize',
+      priority: 5,
+      details: {
+        configured: providerStatus.configured,
+        reachable: providerStatus.reachable,
+        authenticated: providerStatus.authenticated,
+        completionHealthy: providerStatus.completionHealthy,
+        lastFailureCategory: providerStatus.lastFailureCategory,
+        lastFailureReason: providerStatus.lastFailureReason,
+        circuitBreakerState: providerStatus.circuitBreakerState,
+        circuitBreakerNextRetryAt: providerStatus.circuitBreakerNextRetryAt
+      }
+    });
+  }
+
+  if (
+    observation.workerRuntime.enabled &&
+    (watchdogTriggered || observation.workerHealth.overallStatus === 'unhealthy') &&
+    (observation.workerHealth.pending > 0 || observation.workerHealth.stalledRunning > 0)
+  ) {
+    candidates.push({
+      action: 'heal_worker_runtime',
+      target: 'worker_runtime',
+      reason: watchdogTriggered
+        ? 'Worker watchdog detected idle consumers while queue work remained available.'
+        : 'Worker health is unhealthy while queued work remains outstanding.',
+      confidence: watchdogTriggered ? 0.92 : 0.85,
+      matchedRule: watchdogTriggered
+        ? 'worker_watchdog_reheal_runtime'
+        : 'worker_unhealthy_reheal_runtime',
+      priority: 12,
+      details: {
+        alerts: observation.workerHealth.alerts,
+        pending: observation.workerHealth.pending,
+        stalledRunning: observation.workerHealth.stalledRunning
+      }
+    });
+  }
 
   if (
     observation.workerHealth.unhealthyWorkerIds.length === 1 &&
@@ -2170,6 +2258,21 @@ function buildSupportPreview(
     };
   }
 
+  if (decision.action === 'reinitialize_ai_provider') {
+    const providerStatus = buildPredictiveHealingAIProviderStatusSnapshot();
+    if (!providerStatus.configured && providerStatus.lastFailureCategory === null) {
+      return {
+        supported: false,
+        message: 'OpenAI provider reinitialization is unavailable because the provider is not configured.'
+      };
+    }
+
+    return {
+      supported: true,
+      message: 'OpenAI provider reinitialization supported.'
+    };
+  }
+
   if (decision.action === 'scale_workers_up') {
     if (!observation.workerRuntime.enabled) {
       return {
@@ -2366,7 +2469,22 @@ async function executeDecision(
     let message = request.decision.reason;
     let recoveryOutcome = buildPendingOutcome('Action executed; awaiting subsequent rolling-window confirmation.');
 
-    if (request.decision.action === 'scale_workers_up') {
+    if (request.decision.action === 'reinitialize_ai_provider') {
+      const result = await reinitializeOpenAIProvider({
+        forceReload: true,
+        ignoreBackoff: true,
+        source: request.source
+      });
+      actuatorResult = {
+        reloaded: result.reloaded,
+        ok: result.ok,
+        skipped: result.skipped,
+        reason: result.reason,
+        runtime: result.runtime
+      };
+      message = result.reason ?? (result.ok ? 'OpenAI provider reinitialized.' : 'OpenAI provider reload attempted.');
+      recoveryOutcome = buildPendingOutcome(message);
+    } else if (request.decision.action === 'scale_workers_up') {
       const config = getConfig();
       const result = await scaleWorkersUp(config.predictiveScaleUpStep ?? DEFAULT_SCALE_UP_STEP);
       actuatorResult = result;

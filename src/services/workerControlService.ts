@@ -142,6 +142,26 @@ export interface WorkerRetryPolicySummary {
   retryBackoffBaseMs: number;
   retryBackoffMaxMs: number;
   staleAfterMs: number;
+  watchdogIdleMs: number;
+}
+
+export interface WorkerControlWorkerSnapshot {
+  workerId: string;
+  workerType: string;
+  healthStatus: string;
+  currentJobId: string | null;
+  lastError: string | null;
+  lastHeartbeatAt: string | null;
+  lastActivityAt: string | null;
+  lastProcessedJobAt: string | null;
+  inactivityMs: number | null;
+  updatedAt: string;
+  watchdog: {
+    triggered: boolean;
+    reason: string | null;
+    restartRecommended: boolean;
+    idleThresholdMs: number | null;
+  };
 }
 
 /**
@@ -175,10 +195,7 @@ export interface WorkerControlStatusResponse {
     health: {
       overallStatus: WorkerAutonomyHealthReport['overallStatus'];
       alerts: string[];
-      workers: Array<Pick<
-        WorkerRuntimeSnapshotRecord,
-        'workerId' | 'workerType' | 'healthStatus' | 'currentJobId' | 'lastError' | 'lastHeartbeatAt' | 'updatedAt'
-      >>;
+      workers: WorkerControlWorkerSnapshot[];
     };
   };
 }
@@ -401,7 +418,77 @@ export function buildWorkerRetryPolicySummary(): WorkerRetryPolicySummary {
     defaultMaxRetries: settings.defaultMaxRetries,
     retryBackoffBaseMs: settings.retryBackoffBaseMs,
     retryBackoffMaxMs: settings.retryBackoffMaxMs,
-    staleAfterMs: settings.staleAfterMs
+    staleAfterMs: settings.staleAfterMs,
+    watchdogIdleMs: settings.watchdogIdleMs
+  };
+}
+
+function readWorkerSnapshotObject(
+  workerSnapshot: WorkerRuntimeSnapshotRecord
+): Record<string, unknown> {
+  return workerSnapshot.snapshot && typeof workerSnapshot.snapshot === 'object' && !Array.isArray(workerSnapshot.snapshot)
+    ? workerSnapshot.snapshot
+    : {};
+}
+
+function readSnapshotString(
+  snapshot: Record<string, unknown>,
+  key: string
+): string | null {
+  const value = snapshot[key];
+  return typeof value === 'string' && value.trim().length > 0 ? value : null;
+}
+
+function readWatchdogView(
+  workerSnapshot: WorkerRuntimeSnapshotRecord,
+  idleThresholdMs: number
+): WorkerControlWorkerSnapshot['watchdog'] {
+  const snapshot = readWorkerSnapshotObject(workerSnapshot);
+  const rawWatchdog = snapshot.watchdog;
+  if (!rawWatchdog || typeof rawWatchdog !== 'object' || Array.isArray(rawWatchdog)) {
+    return {
+      triggered: false,
+      reason: null,
+      restartRecommended: false,
+      idleThresholdMs
+    };
+  }
+
+  const watchdog = rawWatchdog as Record<string, unknown>;
+  return {
+    triggered: Boolean(watchdog.triggered),
+    reason: typeof watchdog.reason === 'string' ? watchdog.reason : null,
+    restartRecommended: Boolean(watchdog.restartRecommended),
+    idleThresholdMs:
+      typeof watchdog.idleThresholdMs === 'number'
+        ? watchdog.idleThresholdMs
+        : idleThresholdMs
+  };
+}
+
+function buildWorkerControlWorkerSnapshot(
+  workerSnapshot: WorkerRuntimeSnapshotRecord,
+  idleThresholdMs: number
+): WorkerControlWorkerSnapshot {
+  const snapshot = readWorkerSnapshotObject(workerSnapshot);
+  const lastActivityAt = readSnapshotString(snapshot, 'lastActivityAt');
+  const lastProcessedJobAt = readSnapshotString(snapshot, 'lastProcessedJobAt');
+  const inactivityMs = lastActivityAt && Number.isFinite(Date.parse(lastActivityAt))
+    ? Math.max(0, Date.now() - Date.parse(lastActivityAt))
+    : null;
+
+  return {
+    workerId: workerSnapshot.workerId,
+    workerType: workerSnapshot.workerType,
+    healthStatus: workerSnapshot.healthStatus,
+    currentJobId: workerSnapshot.currentJobId,
+    lastError: workerSnapshot.lastError,
+    lastHeartbeatAt: workerSnapshot.lastHeartbeatAt,
+    lastActivityAt,
+    lastProcessedJobAt,
+    inactivityMs,
+    updatedAt: workerSnapshot.updatedAt,
+    watchdog: readWatchdogView(workerSnapshot, idleThresholdMs)
   };
 }
 
@@ -495,15 +582,12 @@ export async function getWorkerControlStatus(
       health: {
         overallStatus: autonomyHealth.overallStatus,
         alerts: autonomyHealth.alerts,
-        workers: autonomyHealth.workers.map(workerSnapshot => ({
-          workerId: workerSnapshot.workerId,
-          workerType: workerSnapshot.workerType,
-          healthStatus: workerSnapshot.healthStatus,
-          currentJobId: workerSnapshot.currentJobId,
-          lastError: workerSnapshot.lastError,
-          lastHeartbeatAt: workerSnapshot.lastHeartbeatAt,
-          updatedAt: workerSnapshot.updatedAt
-        }))
+        workers: autonomyHealth.workers.map(workerSnapshot =>
+          buildWorkerControlWorkerSnapshot(
+            workerSnapshot,
+            autonomyHealth.settings.watchdogIdleMs
+          )
+        )
       }
     }
   };

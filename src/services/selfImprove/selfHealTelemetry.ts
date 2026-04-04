@@ -671,6 +671,13 @@ export function inferSelfHealComponentFromAction(actionTaken: string | null | un
   }
 
   if (
+    actionTaken.startsWith('reinitializeOpenAIProvider') ||
+    actionTaken === 'reinitialize_ai_provider'
+  ) {
+    return 'ai_provider';
+  }
+
+  if (
     actionTaken.startsWith('activatePromptRouteMitigation') ||
     actionTaken.startsWith('rollbackPromptRouteMitigation')
   ) {

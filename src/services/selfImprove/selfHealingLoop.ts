@@ -23,7 +23,10 @@ import {
   resetPromptRouteMitigationStateForTests,
   rollbackPromptRouteMitigation
 } from '@services/openai/promptRouteMitigation.js';
-import { getOpenAIServiceHealth } from '@services/openai/serviceHealth.js';
+import {
+  getOpenAIServiceHealth,
+  reinitializeOpenAIProvider
+} from '@services/openai/serviceHealth.js';
 import { runtimeDiagnosticsService, type RequestWindowSnapshot } from '@services/runtimeDiagnosticsService.js';
 import { resolveGptRouteHardTimeoutMs } from '@shared/http/gptRouteTimeout.js';
 import {
@@ -62,6 +65,7 @@ const DEFAULT_LATENCY_BURST_COUNT_THRESHOLD = 2;
 const DEFAULT_PROVIDER_FAILURE_THRESHOLD = 3;
 const DEFAULT_VALIDATION_NOISE_THRESHOLD = 6;
 const DEFAULT_INEFFECTIVE_COOLDOWN_MS = 10 * 60_000;
+const DEFAULT_DEGRADED_COOLDOWN_OVERRIDE_MS = 10 * 60_000;
 const DEFAULT_PROMPT_ROUTE_VERIFICATION_MIN_REQUESTS = 3;
 const SELF_HEAL_RUNTIME_KEY = '__ARCANOS_SELF_HEAL_RUNTIME__';
 const PROMPT_ROUTE_PATH = '/api/openai/prompt';
@@ -388,6 +392,12 @@ type SelfHealingActionPlan =
       cooldownMs: number;
     }
   | {
+      kind: 'reinitialize_ai_provider';
+      actionKey: 'reinitialize_ai_provider';
+      cooldownKey: string;
+      cooldownMs: number;
+    }
+  | {
       kind: 'activate_trinity_degraded_mode';
       actionKey: 'activate_trinity_degraded_mode';
       cooldownKey: string;
@@ -443,6 +453,10 @@ function getSelfHealingActionTarget(actionPlan: SelfHealingActionPlan): string {
     return 'worker_runtime';
   }
 
+  if (actionPlan.kind === 'reinitialize_ai_provider') {
+    return 'ai_provider';
+  }
+
   if (
     actionPlan.kind === 'activate_prompt_route_reduced_latency_mode' ||
     actionPlan.kind === 'activate_prompt_route_degraded_mode'
@@ -456,7 +470,8 @@ function getSelfHealingActionTarget(actionPlan: SelfHealingActionPlan): string {
 function resolveActionTrackingKey(actionPlan: SelfHealingActionPlan): string {
   if (
     actionPlan.kind === 'recover_stale_jobs' ||
-    actionPlan.kind === 'heal_worker_runtime'
+    actionPlan.kind === 'heal_worker_runtime' ||
+    actionPlan.kind === 'reinitialize_ai_provider'
   ) {
     return actionPlan.actionKey;
   }
@@ -1263,6 +1278,13 @@ function resolveValidationNoiseThreshold(): number {
   return Math.max(1, getEnvNumber('SELF_HEAL_VALIDATION_NOISE_THRESHOLD', DEFAULT_VALIDATION_NOISE_THRESHOLD));
 }
 
+function resolveDegradedCooldownOverrideMs(): number {
+  return Math.max(
+    resolveActionCooldownMs(),
+    getEnvNumber('SELF_HEAL_DEGRADED_COOLDOWN_OVERRIDE_MS', DEFAULT_DEGRADED_COOLDOWN_OVERRIDE_MS)
+  );
+}
+
 function resolveIneffectiveCooldownMs(): number {
   return Math.max(60_000, getEnvNumber('SELF_HEAL_INEFFECTIVE_COOLDOWN_MS', DEFAULT_INEFFECTIVE_COOLDOWN_MS));
 }
@@ -1891,6 +1913,9 @@ function buildDiagnosisSummary(
       {
         circuitBreakerState: observation.openaiHealth.circuitBreaker.state,
         circuitBreakerFailures: observation.openaiHealth.circuitBreaker.failureCount,
+        providerRuntimeFailureCategory: observation.openaiHealth.providerRuntime.lastFailureCategory,
+        providerRuntimeFailureReason: observation.openaiHealth.providerRuntime.lastFailureReason,
+        providerRuntimeNextRetryAt: observation.openaiHealth.providerRuntime.nextRetryAt,
         openaiFailureCount: telemetrySignals.openaiFailureCount,
         resilienceFailureCount: telemetrySignals.resilienceFailureCount,
         fallbackDegradedCount: telemetrySignals.fallbackDegradedCount,
@@ -1902,8 +1927,13 @@ function buildDiagnosisSummary(
       summary: 'provider failure cluster detected',
       confidence: 0.9,
       evidence,
-      actionPlan: buildLatencyMitigationActionPlan(observation.requestWindow, activeMitigation),
-      shouldRunController: activeMitigation !== null
+      actionPlan: {
+        kind: 'reinitialize_ai_provider',
+        actionKey: 'reinitialize_ai_provider',
+        cooldownKey: 'reinitialize_ai_provider',
+        cooldownMs: resolveActionCooldownMs()
+      },
+      shouldRunController: true
     };
   }
 
@@ -1989,6 +2019,7 @@ function buildDiagnosisSummary(
   }
 
   if (type === 'worker_degraded') {
+    const shouldRecoverStaleJobs = (queueSummary?.stalledRunning ?? 0) > 0;
     return {
       summary: observation.workerHealthError
         ? `worker health observation failed: ${observation.workerHealthError}`
@@ -2000,7 +2031,19 @@ function buildDiagnosisSummary(
         queueSummary,
         staleAfterMs: workerAutonomySettings.staleAfterMs
       },
-      actionPlan: null,
+      actionPlan: shouldRecoverStaleJobs
+        ? {
+            kind: 'recover_stale_jobs',
+            actionKey: 'recover_stale_jobs',
+            cooldownKey: 'recover_stale_jobs',
+            cooldownMs: resolveActionCooldownMs()
+          }
+        : {
+            kind: 'heal_worker_runtime',
+            actionKey: 'heal_worker_runtime',
+            cooldownKey: 'heal_worker_runtime',
+            cooldownMs: resolveActionCooldownMs()
+          },
       shouldRunController: true
     };
   }
@@ -2263,6 +2306,45 @@ function isCooldownActive(cooldowns: Map<string, number>, key: string): boolean 
 
 function recordCooldown(cooldowns: Map<string, number>, key: string, cooldownMs: number): void {
   cooldowns.set(key, Date.now() + cooldownMs);
+}
+
+function shouldOverrideActionCooldown(
+  runtime: SelfHealingLoopRuntime,
+  diagnosis: SelfHealingDiagnosis,
+  observation: SelfHealingObservation
+): boolean {
+  if (
+    diagnosis.type !== 'provider_failure_cluster' &&
+    diagnosis.type !== 'worker_stall' &&
+    diagnosis.type !== 'worker_degraded'
+  ) {
+    return false;
+  }
+
+  const degradedSinceSource = runtime.status.lastHealthyObservedAt ?? runtime.status.startedAt;
+  const degradedSinceMs =
+    degradedSinceSource && Number.isFinite(Date.parse(degradedSinceSource))
+      ? Date.now() - Date.parse(degradedSinceSource)
+      : 0;
+  if (degradedSinceMs < resolveDegradedCooldownOverrideMs()) {
+    return false;
+  }
+
+  if (diagnosis.type === 'provider_failure_cluster') {
+    return (
+      String(observation.openaiHealth.circuitBreaker.state).toUpperCase() !== 'CLOSED' ||
+      observation.openaiHealth.providerRuntime.lastFailureCategory !== null ||
+      Boolean(observation.openaiHealth.providerRuntime.nextRetryAt)
+    );
+  }
+
+  return (
+    observation.workerHealthError !== null ||
+    (observation.workerHealth?.overallStatus !== null &&
+      observation.workerHealth?.overallStatus !== 'healthy') ||
+    (observation.workerHealth?.queueSummary?.pending ?? 0) > 0 ||
+    (observation.workerHealth?.queueSummary?.stalledRunning ?? 0) > 0
+  );
 }
 
 function shouldAutoInvokeController(): boolean {
@@ -2799,6 +2881,7 @@ async function executeActionPlan(
 
   const actionPlan = diagnosis.actionPlan;
   const actionTarget = getSelfHealingActionTarget(actionPlan);
+  const cooldownOverrideActive = shouldOverrideActionCooldown(runtime, diagnosis, observation);
 
   const actionTrackingKey = resolveActionTrackingKey(actionPlan);
   const ineffectiveKey = `${diagnosis.type}:${actionTrackingKey}`;
@@ -2819,7 +2902,7 @@ async function executeActionPlan(
     };
   }
 
-  if (isCooldownActive(runtime.actionCooldowns, actionPlan.cooldownKey)) {
+  if (isCooldownActive(runtime.actionCooldowns, actionPlan.cooldownKey) && !cooldownOverrideActive) {
     console.log(`[SELF-HEAL] action skipped diagnosis=${diagnosis.type} reason=cooldown`);
     recordSelfHealEvent({
       kind: 'noop',
@@ -2836,7 +2919,7 @@ async function executeActionPlan(
     };
   }
 
-  if (isCooldownActive(runtime.ineffectiveActionCooldowns, ineffectiveKey)) {
+  if (isCooldownActive(runtime.ineffectiveActionCooldowns, ineffectiveKey) && !cooldownOverrideActive) {
     console.log(`[SELF-HEAL] action skipped diagnosis=${diagnosis.type} reason=recently-ineffective`);
     recordSelfHealEvent({
       kind: 'noop',
@@ -2851,6 +2934,18 @@ async function executeActionPlan(
       action: null,
       pendingVerification: null
     };
+  }
+
+  if (cooldownOverrideActive) {
+    logger.warn('self_heal.cooldown_override', {
+      module: 'self_heal.loop',
+      source: 'self_heal_loop',
+      diagnosis: diagnosis.type,
+      action: actionTrackingKey,
+      lastHealthyObservedAt: runtime.status.lastHealthyObservedAt,
+      startedAt: runtime.status.startedAt,
+      overrideAfterMs: resolveDegradedCooldownOverrideMs()
+    });
   }
 
   if (diagnosis.confidence < 0.7) {
@@ -3049,6 +3144,77 @@ async function executeActionPlan(
         executed: true,
         action,
         pendingVerification: beginVerification(diagnosis, 'healWorkerRuntime', observation)
+      };
+    }
+
+    if (actionPlan.kind === 'reinitialize_ai_provider') {
+      recordActionDispatchAttempt({
+        runtime,
+        trigger,
+        diagnosis,
+        action: actionTrackingKey,
+        target: actionTarget
+      });
+      const providerResult = await reinitializeOpenAIProvider({
+        forceReload: true,
+        ignoreBackoff: cooldownOverrideActive,
+        source: 'self_heal_loop'
+      });
+      const action =
+        `reinitializeOpenAIProvider:reloaded=${providerResult.reloaded}:ok=${providerResult.ok}:` +
+        `${providerResult.reason ?? 'healthy'}`;
+
+      recordActionDispatchResult({
+        runtime,
+        diagnosis,
+        action,
+        target: actionTarget,
+        outcome: providerResult.ok ? 'success' : 'skipped',
+        message: providerResult.reason ?? 'OpenAI provider reinitialized.'
+      });
+      recordCooldown(runtime.actionCooldowns, actionPlan.cooldownKey, actionPlan.cooldownMs);
+      recordDiagnosisAttempt(runtime, diagnosis.type);
+      recordActionExecuted({
+        trigger,
+        diagnosis,
+        action,
+        target: actionTarget,
+        executionSource: 'self_heal_execute_action',
+        details: {
+          reloaded: providerResult.reloaded,
+          ok: providerResult.ok,
+          skipped: providerResult.skipped,
+          reason: providerResult.reason,
+          runtime: providerResult.runtime
+        }
+      });
+      recordSelfHealEvent({
+        kind: providerResult.ok ? 'success' : 'failure',
+        source: 'self_heal_loop',
+        trigger: 'action',
+        reason: providerResult.reason ?? diagnosis.summary,
+        actionTaken: action,
+        healedComponent: actionTarget,
+        details: {
+          reloaded: providerResult.reloaded,
+          ok: providerResult.ok,
+          skipped: providerResult.skipped,
+          runtime: providerResult.runtime
+        }
+      });
+      recordHealResult({
+        runtime,
+        diagnosis,
+        action,
+        target: actionTarget,
+        outcome: providerResult.ok ? 'success' : 'failed',
+        message: providerResult.reason ?? 'OpenAI provider reinitialized.'
+      });
+      console.log(`[SELF-HEAL] action ${action}`);
+      return {
+        executed: true,
+        action,
+        pendingVerification: beginVerification(diagnosis, 'reinitializeOpenAIProvider', observation)
       };
     }
 

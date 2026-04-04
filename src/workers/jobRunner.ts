@@ -14,7 +14,7 @@ import {
   getStatus as getDatabaseStatus
 } from '@core/db/index.js';
 import { getConfig } from '@platform/runtime/unifiedConfig.js';
-import { getOpenAIAdapter, resetOpenAIAdapter } from '@core/adapters/openai.adapter.js';
+import { getOpenAIAdapter } from '@core/adapters/openai.adapter.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import {
   buildCompletedQueuedAskOutput,
@@ -37,6 +37,11 @@ import { createDagNodeRunPromptBridge } from './dagNodePromptBridge.js';
 import { runWorkerTrinityPrompt } from './trinityWorkerPipeline.js';
 import { sleep } from '@shared/sleep.js';
 import { recordWorkerJobDuration } from '@platform/observability/appMetrics.js';
+import {
+  getOpenAIProviderRuntimeStatus,
+  probeOpenAIProviderHealth,
+  syncOpenAIProviderRuntime
+} from '@services/openai/serviceHealth.js';
 
 interface JobExecutionOutcome {
   status: 'completed' | 'failed';
@@ -44,6 +49,8 @@ interface JobExecutionOutcome {
   errorMessage?: string;
   retryable?: boolean;
 }
+
+type OpenAIClient = ReturnType<typeof initOpenAIClient>;
 
 function initOpenAIClient() {
   const unified = getConfig();
@@ -62,6 +69,97 @@ function initOpenAIClient() {
 
   const adapter = getOpenAIAdapter(adapterConfig);
   return adapter.getClient();
+}
+
+function isProviderRuntimeError(message: string): boolean {
+  const normalizedMessage = message.toLowerCase();
+  return (
+    normalizedMessage.includes('openai') ||
+    normalizedMessage.includes('api key') ||
+    normalizedMessage.includes('incorrect api key') ||
+    normalizedMessage.includes('authentication') ||
+    normalizedMessage.includes('provider probe') ||
+    normalizedMessage.includes('circuit breaker')
+  );
+}
+
+function resolveProviderPauseMs(nextRetryAt: string | null, fallbackMs: number): number {
+  if (!nextRetryAt) {
+    return fallbackMs;
+  }
+
+  const remainingMs = Date.parse(nextRetryAt) - Date.now();
+  if (!Number.isFinite(remainingMs) || remainingMs <= 0) {
+    return fallbackMs;
+  }
+
+  return Math.max(1_000, Math.min(Math.max(fallbackMs, 1_000), remainingMs));
+}
+
+async function ensureOpenAIClientForSlot(params: {
+  workerId: string;
+  currentClient: OpenAIClient | null;
+  currentConfigVersion: string | null;
+  forceReload?: boolean;
+}): Promise<{
+  client: OpenAIClient | null;
+  configVersion: string | null;
+  pausedUntil: string | null;
+}> {
+  const sync = syncOpenAIProviderRuntime({
+    forceReload: params.forceReload ?? false,
+    reason: `job_runner:${params.workerId}`
+  });
+  const configVersion = sync.runtime.configVersion;
+  const configChanged = configVersion !== params.currentConfigVersion;
+
+  if (params.currentClient && !configChanged && !params.forceReload) {
+    return {
+      client: params.currentClient,
+      configVersion,
+      pausedUntil: sync.runtime.nextRetryAt
+    };
+  }
+
+  if (
+    sync.runtime.nextRetryAt &&
+    Date.parse(sync.runtime.nextRetryAt) > Date.now()
+  ) {
+    return {
+      client: null,
+      configVersion,
+      pausedUntil: sync.runtime.nextRetryAt
+    };
+  }
+
+  const providerProbe = await probeOpenAIProviderHealth({
+    source: `job_runner:${params.workerId}`
+  });
+  if (!providerProbe.ok) {
+    return {
+      client: null,
+      configVersion: providerProbe.runtime.configVersion,
+      pausedUntil: providerProbe.runtime.nextRetryAt
+    };
+  }
+
+  try {
+    return {
+      client: initOpenAIClient(),
+      configVersion: providerProbe.runtime.configVersion,
+      pausedUntil: providerProbe.runtime.nextRetryAt
+    };
+  } catch (error: unknown) {
+    console.error(
+      `[jobRunner] worker=${params.workerId} failed to initialize OpenAI client after a healthy probe:`,
+      resolveErrorMessage(error)
+    );
+    return {
+      client: null,
+      configVersion: providerProbe.runtime.configVersion,
+      pausedUntil: getOpenAIProviderRuntimeStatus().nextRetryAt
+    };
+  }
 }
 
 /**
@@ -226,13 +324,44 @@ async function runWorkerConsumerSlot(
   runtimeSettings: JobRunnerRuntimeSettings,
   autonomyService: WorkerAutonomyService = buildAutonomyServiceForSlot(slotDefinition)
 ): Promise<never> {
-  let openai = initOpenAIClient();
+  let openai: OpenAIClient | null = null;
+  let providerConfigVersion: string | null = null;
+  let lastProviderPauseLogAtMs = 0;
+
+  const initialClientState = await ensureOpenAIClientForSlot({
+    workerId: slotDefinition.workerId,
+    currentClient: null,
+    currentConfigVersion: null
+  });
+  openai = initialClientState.client;
+  providerConfigVersion = initialClientState.configVersion;
 
   console.log(
     `[jobRunner] worker=${slotDefinition.workerId} slot=${slotDefinition.slotNumber}/${runtimeSettings.concurrency} started`
   );
 
   while (true) {
+    const ensuredClientState = await ensureOpenAIClientForSlot({
+      workerId: slotDefinition.workerId,
+      currentClient: openai,
+      currentConfigVersion: providerConfigVersion
+    });
+    openai = ensuredClientState.client;
+    providerConfigVersion = ensuredClientState.configVersion;
+
+    if (!openai) {
+      const nowMs = Date.now();
+      if (nowMs - lastProviderPauseLogAtMs >= 10_000) {
+        console.warn(
+          `[jobRunner] worker=${slotDefinition.workerId} claim paused: openai_provider_unavailable nextRetryAt=${ensuredClientState.pausedUntil ?? 'unknown'}`
+        );
+        lastProviderPauseLogAtMs = nowMs;
+      }
+      await autonomyService.markIdle();
+      await sleep(resolveProviderPauseMs(ensuredClientState.pausedUntil, runtimeSettings.idleBackoffMs));
+      continue;
+    }
+
     const budgetDecision = await autonomyService.evaluateBudgetsBeforeClaim();
     if (!budgetDecision.allowed) {
       console.warn(
@@ -262,7 +391,14 @@ async function runWorkerConsumerSlot(
       let outcome: JobExecutionOutcome;
 
       //audit Assumption: the shared queue currently supports async ask jobs and DAG node jobs only; failure risk: unknown job types spin indefinitely after claim; expected invariant: unsupported job types fail deterministically; handling strategy: branch explicitly per supported job type and centralize failure handling.
-      if (job.job_type === 'ask') {
+      if (!openai) {
+        outcome = {
+          status: 'failed',
+          output: null,
+          errorMessage: 'OpenAI provider unavailable; job execution deferred until provider recovery.',
+          retryable: true
+        };
+      } else if (job.job_type === 'ask') {
         outcome = await executeQueuedPrompt(openai, job.input ?? {});
       } else if (job.job_type === 'dag-node') {
         outcome = await executeQueuedDagNode(openai, job.input ?? {});
@@ -299,16 +435,15 @@ async function runWorkerConsumerSlot(
     } catch (error: unknown) {
       const classifiedError = classifyWorkerExecutionError(error);
 
-      if (classifiedError.message.toLowerCase().includes('api key') || classifiedError.message.toLowerCase().includes('openai')) {
-        try {
-          resetOpenAIAdapter();
-          openai = initOpenAIClient();
-        } catch (reinitError: unknown) {
-          console.error(
-            `[jobRunner] worker=${slotDefinition.workerId} failed to re-initialize OpenAI client during error recovery:`,
-            resolveErrorMessage(reinitError)
-          );
-        }
+      if (isProviderRuntimeError(classifiedError.message)) {
+        const recoveredClientState = await ensureOpenAIClientForSlot({
+          workerId: slotDefinition.workerId,
+          currentClient: null,
+          currentConfigVersion: providerConfigVersion,
+          forceReload: true
+        });
+        openai = recoveredClientState.client;
+        providerConfigVersion = recoveredClientState.configVersion;
       }
 
       const failureResult = await autonomyService.handleJobFailure(
