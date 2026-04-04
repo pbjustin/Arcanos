@@ -87,6 +87,8 @@ const DEFAULT_TRINITY_MODEL_VALIDATION_TIMEOUT_MS = 4_000;
 const DEFAULT_TRINITY_INTAKE_STAGE_TIMEOUT_MS = 6_000;
 const DEFAULT_TRINITY_REASONING_STAGE_TIMEOUT_MS = 20_000;
 const DEFAULT_TRINITY_FINAL_STAGE_TIMEOUT_MS = 4_000;
+const MODEL_VALIDATION_CACHE_TTL_MS = 10 * 60_000;
+const validatedModelCache = new Map<string, number>();
 
 function resolveStageTimeoutMs(
   envName: string,
@@ -154,6 +156,10 @@ export async function validateModel(client: OpenAI, runtimeBudget?: RuntimeBudge
   if (runtimeBudget) assertBudgetAvailable(runtimeBudget);
 
   const defaultModel = getDefaultModel();
+  const cachedValidationExpiresAt = validatedModelCache.get(defaultModel) ?? 0;
+  if (cachedValidationExpiresAt > Date.now()) {
+    return defaultModel;
+  }
   try {
     const timeoutMs = resolveModelValidationTimeoutMs(runtimeBudget);
     await runWithRequestAbortTimeout(
@@ -174,6 +180,7 @@ export async function validateModel(client: OpenAI, runtimeBudget?: RuntimeBudge
       model: defaultModel,
       status: 'available'
     });
+    validatedModelCache.set(defaultModel, Date.now() + MODEL_VALIDATION_CACHE_TTL_MS);
     return defaultModel;
   } catch (err) {
     if (isAbortError(err)) {

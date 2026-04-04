@@ -37,6 +37,11 @@ import { createDagNodeRunPromptBridge } from './dagNodePromptBridge.js';
 import { runWorkerTrinityPrompt } from './trinityWorkerPipeline.js';
 import { sleep } from '@shared/sleep.js';
 import { recordWorkerJobDuration } from '@platform/observability/appMetrics.js';
+import {
+  createAiExecutionContext,
+  runWithAiExecutionContext,
+  summarizeAiExecutionContext,
+} from '@services/openai/aiExecutionContext.js';
 
 interface JobExecutionOutcome {
   status: 'completed' | 'failed';
@@ -259,20 +264,41 @@ async function runWorkerConsumerSlot(
     const jobStartedAtMs = Date.now();
 
     try {
-      let outcome: JobExecutionOutcome;
-
-      //audit Assumption: the shared queue currently supports async ask jobs and DAG node jobs only; failure risk: unknown job types spin indefinitely after claim; expected invariant: unsupported job types fail deterministically; handling strategy: branch explicitly per supported job type and centralize failure handling.
-      if (job.job_type === 'ask') {
-        outcome = await executeQueuedPrompt(openai, job.input ?? {});
-      } else if (job.job_type === 'dag-node') {
-        outcome = await executeQueuedDagNode(openai, job.input ?? {});
-      } else {
-        outcome = {
+      const aiExecutionContext = createAiExecutionContext({
+        sourceType: 'job',
+        sourceName: job.job_type,
+        requestId: job.id,
+        jobId: job.id,
+        budget: {
+          maxCalls: 24,
+        }
+      });
+      const outcome = await runWithAiExecutionContext(aiExecutionContext, async () => {
+        //audit Assumption: the shared queue currently supports async ask jobs and DAG node jobs only; failure risk: unknown job types spin indefinitely after claim; expected invariant: unsupported job types fail deterministically; handling strategy: branch explicitly per supported job type and centralize failure handling.
+        if (job.job_type === 'ask') {
+          return executeQueuedPrompt(openai, job.input ?? {});
+        }
+        if (job.job_type === 'dag-node') {
+          return executeQueuedDagNode(openai, job.input ?? {});
+        }
+        return {
           status: 'failed',
           output: null,
           errorMessage: `Unsupported job_type: ${job.job_type}`,
           retryable: false
-        };
+        } satisfies JobExecutionOutcome;
+      });
+      const aiUsageSummary = summarizeAiExecutionContext(aiExecutionContext);
+      if (aiUsageSummary && aiUsageSummary.totals.calls > 0) {
+        console.log(JSON.stringify({
+          timestamp: new Date().toISOString(),
+          level: 'info',
+          event: 'worker.ai.summary',
+          workerId: slotDefinition.workerId,
+          jobId: job.id,
+          jobType: job.job_type,
+          aiUsage: aiUsageSummary
+        }));
       }
 
       if (outcome.status === 'completed') {

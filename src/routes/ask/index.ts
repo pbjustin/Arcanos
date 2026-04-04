@@ -75,6 +75,10 @@ import {
   failAiRouteTrace
 } from '@transport/http/aiRouteTelemetry.js';
 import {
+  summarizeAiExecutionContext,
+  updateAiExecutionContext,
+} from '@services/openai/aiExecutionContext.js';
+import {
   collectRepoInspectionEvidence,
   buildRepoInspectionAnswer,
   isVerificationQuestion,
@@ -569,6 +573,15 @@ export const handleAIRequest = async (
   const requestId = req.requestId ?? `${endpointName}-prompt-debug`;
   const rawPrompt = extractPromptText(req.body, false) ?? '';
   recordPromptDebugTrace(requestId, 'ingress', buildPromptDebugContext(req, endpointName, rawPrompt));
+  updateAiExecutionContext({
+    sourceType: 'route',
+    sourceName: endpointName,
+    requestId: req.requestId,
+    traceId: req.traceId,
+    budget: {
+      maxCalls: 24,
+    }
+  });
   const mode = getMode(req.body);
 
   if (mode === 'system_state') {
@@ -1302,7 +1315,8 @@ export const handleAIRequest = async (
         disposition: 'trinity',
         reasoningModel: output.gpt5Model,
         gpt5Used: output.gpt5Used,
-        routingStages: output.routingStages
+        routingStages: output.routingStages,
+        aiUsage: summarizeAiExecutionContext()
       }
     });
     return sendGuardedAskResponse(
@@ -1324,7 +1338,10 @@ export const handleAIRequest = async (
     });
     failAiRouteTrace(req, routeTrace, err, {
       activeModel: getGPT5Model(),
-      statusCode: 500
+      statusCode: 500,
+      extra: {
+        aiUsage: summarizeAiExecutionContext()
+      }
     });
     handleAIError(err, prompt, endpointName, res);
   }
