@@ -54,10 +54,13 @@ interface PersistedSessionRow {
 interface SessionEmbeddingCacheEntry {
   fingerprint: string;
   embedding: number[];
+  expiresAtMs: number;
 }
 
 const SESSION_EMBEDDING_TEXT_LIMIT = 4_000;
 const SESSION_EMBEDDING_MESSAGE_LIMIT = 12;
+const SESSION_EMBEDDING_CACHE_MAX_ENTRIES = 256;
+const SESSION_EMBEDDING_CACHE_TTL_MS = 30 * 60_000;
 const sessionEmbeddingCache = new Map<string, SessionEmbeddingCacheEntry>();
 
 function buildSessionSemanticText(session: CachedSession): string {
@@ -83,6 +86,61 @@ function buildSessionSemanticFingerprint(text: string): string {
   return createHash('sha256').update(text, 'utf8').digest('hex');
 }
 
+function pruneExpiredSessionEmbeddingCache(nowMs: number): void {
+  for (const [sessionId, entry] of sessionEmbeddingCache.entries()) {
+    if (entry.expiresAtMs <= nowMs) {
+      sessionEmbeddingCache.delete(sessionId);
+    }
+  }
+}
+
+function touchSessionEmbeddingCacheEntry(
+  sessionId: string,
+  entry: SessionEmbeddingCacheEntry,
+  nowMs: number
+): number[] {
+  const refreshedEntry: SessionEmbeddingCacheEntry = {
+    ...entry,
+    expiresAtMs: nowMs + SESSION_EMBEDDING_CACHE_TTL_MS,
+  };
+  sessionEmbeddingCache.delete(sessionId);
+  sessionEmbeddingCache.set(sessionId, refreshedEntry);
+  return refreshedEntry.embedding;
+}
+
+function getCachedSessionEmbedding(sessionId: string, fingerprint: string, nowMs: number): number[] | null {
+  pruneExpiredSessionEmbeddingCache(nowMs);
+
+  const cachedEntry = sessionEmbeddingCache.get(sessionId);
+  if (!cachedEntry) {
+    return null;
+  }
+
+  if (cachedEntry.fingerprint !== fingerprint) {
+    sessionEmbeddingCache.delete(sessionId);
+    return null;
+  }
+
+  return touchSessionEmbeddingCacheEntry(sessionId, cachedEntry, nowMs);
+}
+
+function storeSessionEmbedding(sessionId: string, fingerprint: string, embedding: number[], nowMs: number): void {
+  sessionEmbeddingCache.delete(sessionId);
+  sessionEmbeddingCache.set(sessionId, {
+    fingerprint,
+    embedding,
+    expiresAtMs: nowMs + SESSION_EMBEDDING_CACHE_TTL_MS,
+  });
+
+  while (sessionEmbeddingCache.size > SESSION_EMBEDDING_CACHE_MAX_ENTRIES) {
+    const oldestSessionId = sessionEmbeddingCache.keys().next().value;
+    if (!oldestSessionId) {
+      break;
+    }
+    sessionEmbeddingCache.delete(oldestSessionId);
+  }
+}
+
 async function getOrCreateSessionEmbedding(
   session: CachedSession,
   adapter: NonNullable<ReturnType<typeof getOpenAIClientOrAdapter>['adapter']>
@@ -93,16 +151,14 @@ async function getOrCreateSessionEmbedding(
   }
 
   const fingerprint = buildSessionSemanticFingerprint(semanticText);
-  const cachedEmbedding = sessionEmbeddingCache.get(session.sessionId);
-  if (cachedEmbedding?.fingerprint === fingerprint) {
-    return cachedEmbedding.embedding;
+  const nowMs = Date.now();
+  const cachedEmbedding = getCachedSessionEmbedding(session.sessionId, fingerprint, nowMs);
+  if (cachedEmbedding) {
+    return cachedEmbedding;
   }
 
   const embedding = await createEmbedding(semanticText, adapter);
-  sessionEmbeddingCache.set(session.sessionId, {
-    fingerprint,
-    embedding,
-  });
+  storeSessionEmbedding(session.sessionId, fingerprint, embedding, nowMs);
   return embedding;
 }
 

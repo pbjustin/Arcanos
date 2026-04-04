@@ -103,6 +103,36 @@ export async function loadRagDocById(id: string): Promise<RagDoc | null> {
 }
 
 /**
+ * Load multiple RAG documents by identifier.
+ */
+export async function loadRagDocsByIds(ids: string[]): Promise<RagDoc[]> {
+  if (!isDatabaseConnected()) {
+    throw new Error('Database not configured');
+  }
+
+  if (ids.length === 0) {
+    return [];
+  }
+
+  const result = await query(
+    'SELECT id, url, content, embedding, metadata, created_at, updated_at FROM rag_docs WHERE id = ANY($1::text[])',
+    [ids]
+  );
+
+  return result.rows.map((row: RagDocRow) => {
+    return {
+      id: row.id,
+      url: row.url,
+      content: row.content,
+      embedding: parseJsonField(row.embedding, [] as number[]),
+      metadata: parseJsonField(row.metadata, {} as Record<string, unknown>),
+      created_at: parseDateField(row.created_at),
+      updated_at: parseDateField(row.updated_at),
+    };
+  });
+}
+
+/**
  * Load all RAG documents
  */
 export async function loadAllRagDocs(): Promise<RagDoc[]> {
