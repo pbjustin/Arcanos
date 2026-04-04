@@ -117,6 +117,7 @@ describe('workerAutonomyService', () => {
 
   it('classifies transient and terminal failures separately', () => {
     expect(classifyWorkerExecutionError(new Error('OpenAI rate limit timeout')).retryable).toBe(true);
+    expect(classifyWorkerExecutionError(new Error('Request was aborted.')).retryable).toBe(true);
     expect(classifyWorkerExecutionError(new Error('Invalid job.input: schema mismatch')).retryable).toBe(false);
   });
 

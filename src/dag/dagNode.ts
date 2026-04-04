@@ -14,6 +14,7 @@ export interface DAGResult {
   errorMessage?: string;
   metrics?: DAGNodeMetrics;
   artifactRef?: string;
+  retryable?: boolean;
 }
 
 export interface QueuedDAGNodeDefinition {
@@ -114,13 +115,17 @@ export function createDagSuccessResult(
 export function createDagFailureResult(
   nodeId: string,
   errorMessage: string,
-  output?: unknown
+  output?: unknown,
+  options: {
+    retryable?: boolean;
+  } = {}
 ): DAGResult {
   return {
     nodeId,
     status: 'failed',
     output: output ?? { errorMessage },
-    errorMessage
+    errorMessage,
+    ...(typeof options.retryable === 'boolean' ? { retryable: options.retryable } : {})
   };
 }
 

@@ -3,6 +3,8 @@ export const DEFAULT_WORKER_TRINITY_STAGE_TIMEOUT_MS = 180_000;
 export const DEFAULT_DAG_MAX_TOKEN_BUDGET = 250_000;
 export const DEFAULT_DAG_NODE_TIMEOUT_MS = 420_000;
 export const DEFAULT_DAG_QUEUE_CLAIM_GRACE_MS = 120_000;
+export const DEFAULT_PLANNER_MAX_RETRIES = 2;
+export const DEFAULT_PLANNER_RETRY_BACKOFF_MS = 1_000;
 
 function readPositiveIntegerFromEnvironment(
   variableName: string,
@@ -19,12 +21,30 @@ function readPositiveIntegerFromEnvironment(
   return parsedValue;
 }
 
+function readNonNegativeIntegerFromEnvironment(
+  variableName: string,
+  fallbackValue: number
+): number {
+  const rawValue = process.env[variableName];
+  const parsedValue = Number.parseInt(rawValue ?? '', 10);
+
+  //audit Assumption: retry budgets may explicitly disable retries with `0`; failure risk: positive-only parsing forces unintended retries; expected invariant: retry counts resolve to finite non-negative integers; handling strategy: preserve valid zero overrides and fall back otherwise.
+  if (!Number.isFinite(parsedValue) || parsedValue < 0) {
+    return fallbackValue;
+  }
+
+  return parsedValue;
+}
+
 export interface WorkerExecutionLimits {
   workerTrinityRuntimeBudgetMs: number;
   workerTrinityStageTimeoutMs: number;
   dagMaxTokenBudget: number;
   dagNodeTimeoutMs: number;
   dagQueueClaimGraceMs: number;
+  plannerTimeoutMs: number;
+  plannerMaxRetries: number;
+  plannerRetryBackoffMs: number;
 }
 
 /**
@@ -43,19 +63,22 @@ export interface WorkerExecutionLimits {
 export function getWorkerExecutionLimits(
   overrides: Partial<WorkerExecutionLimits> = {}
 ): WorkerExecutionLimits {
+  const workerTrinityRuntimeBudgetMs =
+    overrides.workerTrinityRuntimeBudgetMs ??
+    readPositiveIntegerFromEnvironment(
+      'WORKER_TRINITY_RUNTIME_BUDGET_MS',
+      DEFAULT_WORKER_TRINITY_RUNTIME_BUDGET_MS
+    );
+  const workerTrinityStageTimeoutMs =
+    overrides.workerTrinityStageTimeoutMs ??
+    readPositiveIntegerFromEnvironment(
+      'WORKER_TRINITY_STAGE_TIMEOUT_MS',
+      DEFAULT_WORKER_TRINITY_STAGE_TIMEOUT_MS
+    );
+
   return {
-    workerTrinityRuntimeBudgetMs:
-      overrides.workerTrinityRuntimeBudgetMs ??
-      readPositiveIntegerFromEnvironment(
-        'WORKER_TRINITY_RUNTIME_BUDGET_MS',
-        DEFAULT_WORKER_TRINITY_RUNTIME_BUDGET_MS
-      ),
-    workerTrinityStageTimeoutMs:
-      overrides.workerTrinityStageTimeoutMs ??
-      readPositiveIntegerFromEnvironment(
-        'WORKER_TRINITY_STAGE_TIMEOUT_MS',
-        DEFAULT_WORKER_TRINITY_STAGE_TIMEOUT_MS
-      ),
+    workerTrinityRuntimeBudgetMs,
+    workerTrinityStageTimeoutMs,
     dagMaxTokenBudget:
       overrides.dagMaxTokenBudget ??
       readPositiveIntegerFromEnvironment(
@@ -73,6 +96,24 @@ export function getWorkerExecutionLimits(
       readPositiveIntegerFromEnvironment(
         'DAG_QUEUE_CLAIM_GRACE_MS',
         DEFAULT_DAG_QUEUE_CLAIM_GRACE_MS
+      ),
+    plannerTimeoutMs:
+      overrides.plannerTimeoutMs ??
+      readPositiveIntegerFromEnvironment(
+        'PLANNER_TIMEOUT_MS',
+        workerTrinityStageTimeoutMs
+      ),
+    plannerMaxRetries:
+      overrides.plannerMaxRetries ??
+      readNonNegativeIntegerFromEnvironment(
+        'PLANNER_MAX_RETRIES',
+        DEFAULT_PLANNER_MAX_RETRIES
+      ),
+    plannerRetryBackoffMs:
+      overrides.plannerRetryBackoffMs ??
+      readPositiveIntegerFromEnvironment(
+        'PLANNER_RETRY_BACKOFF_MS',
+        DEFAULT_PLANNER_RETRY_BACKOFF_MS
       )
   };
 }

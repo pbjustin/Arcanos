@@ -756,6 +756,9 @@ export function classifyWorkerExecutionError(error: unknown): {
   const message = resolveErrorMessage(error);
   const normalizedMessage = message.toLowerCase();
   const retryablePatterns = [
+    'abort',
+    'aborted',
+    'cancelled',
     'timeout',
     'timed out',
     'rate limit',
