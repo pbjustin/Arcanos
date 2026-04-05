@@ -854,6 +854,88 @@ describe('predictive healing execution', () => {
     );
   });
 
+  it('does not heal the worker runtime when the queue is idle but one worker processed recently', async () => {
+    const result = await runPredictiveHealingFromLoop({
+      source: 'predictive_self_heal_loop',
+      observation: toLoopObservation(
+        createObservation({
+          requestCount: 0,
+          workerHealth: {
+            ...createObservation().workerHealth,
+            overallStatus: 'degraded',
+            alertCount: 7,
+            alerts: ['No worker receipts or processed jobs observed for 151385ms after startup.'],
+            pending: 0,
+            running: 0,
+            workers: [
+              {
+                workerId: 'async-queue-slot-2',
+                healthStatus: 'degraded',
+                currentJobId: null,
+                lastActivityAt: '2026-03-26T11:57:29.000Z',
+                lastProcessedJobAt: null,
+                inactivityMs: 151000,
+                watchdog: {
+                  triggered: false,
+                  reason: 'No worker receipts or processed jobs observed for 151000ms after startup.',
+                  restartRecommended: true,
+                  idleThresholdMs: 120000,
+                },
+              },
+              {
+                workerId: 'async-queue-slot-3',
+                healthStatus: 'degraded',
+                currentJobId: null,
+                lastActivityAt: '2026-03-26T11:57:31.000Z',
+                lastProcessedJobAt: null,
+                inactivityMs: 149000,
+                watchdog: {
+                  triggered: false,
+                  reason: 'No worker receipts or processed jobs observed for 149000ms after startup.',
+                  restartRecommended: true,
+                  idleThresholdMs: 120000,
+                },
+              },
+              {
+                workerId: 'async-queue-slot-1',
+                healthStatus: 'healthy',
+                currentJobId: null,
+                lastActivityAt: '2026-03-26T11:59:35.000Z',
+                lastProcessedJobAt: '2026-03-26T11:59:35.000Z',
+                inactivityMs: 25000,
+                watchdog: {
+                  triggered: false,
+                  reason: null,
+                  restartRecommended: false,
+                  idleThresholdMs: 120000,
+                },
+              },
+            ],
+          },
+          workerRuntime: {
+            enabled: false,
+            started: false,
+            configuredCount: 4,
+            activeListeners: 0,
+            maxActiveWorkers: 6,
+            surgeWorkerCount: 0,
+            workerIds: [],
+          },
+        }),
+      ),
+    });
+
+    const snapshot = buildPredictiveHealingStatusSnapshot();
+    const latestObservation = snapshot.recentObservations.at(-1);
+
+    expect(result.decision.action).not.toBe('heal_worker_runtime');
+    expect(latestObservation?.inactivity).toEqual(expect.objectContaining({
+      inactiveDegraded: false,
+      lastActivityAt: '2026-03-26T11:59:35.000Z',
+      lastProcessedJobAt: '2026-03-26T11:59:35.000Z',
+    }));
+  });
+
   it('executes Trinity mitigation when predictive rules select a Trinity stage pre-heal', async () => {
     const result = await runPredictiveHealingDecision({
       source: 'predictive_test_trinity_execute',

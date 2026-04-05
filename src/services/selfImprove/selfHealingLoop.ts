@@ -1865,6 +1865,10 @@ function buildDiagnosisSummary(
   const requestEvidence = buildRequestEvidence(observation.requestWindow);
   const workerAutonomySettings = getWorkerAutonomySettings();
   const queueSummary = observation.workerHealth?.queueSummary;
+  const inactiveWorkerEvidence = buildInactiveWorkerEvidence(
+    observation.workerHealth,
+    workerAutonomySettings.watchdogIdleMs
+  );
 
   if (type === 'worker_stall') {
     const hasStalledJobs = (queueSummary?.stalledRunning ?? 0) > 0;
@@ -2020,16 +2024,29 @@ function buildDiagnosisSummary(
 
   if (type === 'worker_degraded') {
     const shouldRecoverStaleJobs = (queueSummary?.stalledRunning ?? 0) > 0;
+    const inactiveSummary = inactiveWorkerEvidence.detected && observation.requestWindow.requestCount === 0;
     return {
       summary: observation.workerHealthError
         ? `worker health observation failed: ${observation.workerHealthError}`
-        : 'worker health degraded',
-      confidence: observation.workerHealthError ? 0.74 : 0.7,
+        : inactiveSummary
+          ? 'inactive_degraded: no worker activity observed'
+          : 'worker health degraded',
+      confidence: observation.workerHealthError ? 0.74 : inactiveSummary ? 0.86 : 0.7,
       evidence: {
         workerHealth: observation.workerHealth?.overallStatus ?? null,
         alerts: observation.workerHealth?.alerts ?? [],
         queueSummary,
-        staleAfterMs: workerAutonomySettings.staleAfterMs
+        staleAfterMs: workerAutonomySettings.staleAfterMs,
+        inactivity: inactiveWorkerEvidence.detected
+          ? {
+              maxInactivityMs: inactiveWorkerEvidence.maxInactivityMs,
+              lastActivityAt: inactiveWorkerEvidence.lastActivityAt,
+              lastProcessedJobAt: inactiveWorkerEvidence.lastProcessedJobAt,
+              idleThresholdMs: inactiveWorkerEvidence.idleThresholdMs,
+              workerIds: inactiveWorkerEvidence.workerIds
+            }
+          : null,
+        operationalRequests: observation.requestWindow.requestCount
       },
       actionPlan: shouldRecoverStaleJobs
         ? {
@@ -2161,6 +2178,10 @@ function diagnoseSelfHealingRuntime(
   const queueSummary = observation.workerHealth?.queueSummary;
   const telemetrySignals = deriveTelemetrySignals(observation.telemetry, observation.requestWindow.windowMs);
   const requestWindow = observation.requestWindow;
+  const inactiveWorkerEvidence = buildInactiveWorkerEvidence(
+    observation.workerHealth,
+    workerAutonomySettings.watchdogIdleMs
+  );
   const promptRouteCandidate = getPromptRouteCandidate(requestWindow);
   const promptRouteStability = assessPromptRouteMitigationStability(requestWindow);
   const runtimeInactive =
@@ -2242,6 +2263,9 @@ function diagnoseSelfHealingRuntime(
     ((queueSummary?.pending ?? 0) > 0 &&
       (queueSummary?.oldestPendingJobAgeMs ?? 0) >= workerAutonomySettings.staleAfterMs &&
       requestWindow.errorRate >= 0.1);
+  const inactiveWorkerDegraded =
+    inactiveWorkerEvidence.detected &&
+    (requestWindow.requestCount === 0 || (queueSummary?.pending ?? 0) > 0);
 
   let diagnosisType: DiagnosisType = 'healthy';
   if (workerStallDetected) {
@@ -2262,7 +2286,7 @@ function diagnoseSelfHealingRuntime(
     diagnosisType = 'validation_noise';
   } else if (activeTrinityMitigation) {
     diagnosisType = 'trinity_mitigation_active';
-  } else if (observation.workerHealth?.overallStatus === 'degraded' || observation.workerHealthError) {
+  } else if (inactiveWorkerDegraded || observation.workerHealth?.overallStatus === 'degraded' || observation.workerHealthError) {
     diagnosisType = 'worker_degraded';
   } else if (
     requestWindow.requestCount >= minRequestCount &&
@@ -2296,6 +2320,44 @@ function diagnoseSelfHealingRuntime(
   return {
     ...baseDiagnosis,
     controllerInput: buildControllerInput(options, observation, baseDiagnosis)
+  };
+}
+
+function buildInactiveWorkerEvidence(
+  workerHealth: WorkerControlHealthResponse | null,
+  fallbackIdleThresholdMs: number
+): {
+  detected: boolean;
+  maxInactivityMs: number;
+  lastActivityAt: string | null;
+  lastProcessedJobAt: string | null;
+  idleThresholdMs: number | null;
+  workerIds: string[];
+} {
+  const workers = Array.isArray(workerHealth?.workers) ? workerHealth.workers : [];
+  const idleWorkers = workers
+    .filter((worker) => worker.currentJobId === null)
+    .filter((worker) => {
+      const thresholdMs = worker.watchdog.idleThresholdMs ?? fallbackIdleThresholdMs;
+      return typeof worker.inactivityMs === 'number' && worker.inactivityMs >= thresholdMs;
+    });
+  const relevantWorkers = idleWorkers.length > 0
+    ? idleWorkers
+    : workers.filter((worker) => worker.watchdog.restartRecommended);
+  const worstWorker = relevantWorkers.reduce<typeof relevantWorkers[number] | null>((selected, worker) => {
+    if (!selected) {
+      return worker;
+    }
+    return (worker.inactivityMs ?? 0) > (selected.inactivityMs ?? 0) ? worker : selected;
+  }, null);
+
+  return {
+    detected: relevantWorkers.length > 0,
+    maxInactivityMs: worstWorker?.inactivityMs ?? 0,
+    lastActivityAt: worstWorker?.lastActivityAt ?? null,
+    lastProcessedJobAt: worstWorker?.lastProcessedJobAt ?? null,
+    idleThresholdMs: worstWorker?.watchdog.idleThresholdMs ?? fallbackIdleThresholdMs,
+    workerIds: relevantWorkers.map((worker) => worker.workerId).sort()
   };
 }
 

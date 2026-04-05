@@ -76,6 +76,14 @@ export interface WorkerAutonomyHealthReport {
   >;
 }
 
+interface WorkerInactivitySignal {
+  detected: boolean;
+  reason: string | null;
+  inactivityMs: number | null;
+  lastActivityAt: string | null;
+  lastProcessedJobAt: string | null;
+}
+
 export interface WorkerBootstrapResult {
   recovered: RecoverStaleJobsResult;
   healthStatus: WorkerAutonomyHealthStatus;
@@ -239,10 +247,11 @@ export async function planAutonomousWorkerJob(
 export async function getWorkerAutonomyHealthReport(
   settings: WorkerAutonomySettings = getWorkerAutonomySettings()
 ): Promise<WorkerAutonomyHealthReport> {
-  const [queueSummary, workers] = await Promise.all([
+  const [queueSummary, rawWorkers] = await Promise.all([
     getJobQueueSummary(),
     listWorkerRuntimeSnapshots()
   ]);
+  const workers = filterLegacyAggregateWorkerSnapshots(rawWorkers);
   const alerts: string[] = [];
 
   if (queueSummary?.stalledRunning) {
@@ -255,6 +264,8 @@ export async function getWorkerAutonomyHealthReport(
     const watchdog = readWatchdogState(worker);
     if (watchdog?.triggered && watchdog.reason) {
       alerts.push(`Worker ${worker.workerId} watchdog triggered: ${watchdog.reason}`);
+    } else if (watchdog?.restartRecommended && watchdog.reason) {
+      alerts.push(`Worker ${worker.workerId} inactive: ${watchdog.reason}`);
     }
   }
 
@@ -629,15 +640,25 @@ export class WorkerAutonomyService {
    * Edge case behavior: preserves degraded state if a budget pause or previous error remains active.
    */
   async markIdle(): Promise<void> {
+    const queueSummary = await getJobQueueSummary();
+    const watchdogState = this.buildWatchdogState(queueSummary);
+    const inactivitySignal = deriveWorkerInactivitySignal(watchdogState);
     const healthStatus: WorkerAutonomyHealthStatus =
-      this.state.lastBudgetPauseReason || this.state.lastError ? 'degraded' : 'healthy';
+      this.state.lastBudgetPauseReason || this.state.lastError || inactivitySignal.detected
+        ? 'degraded'
+        : 'healthy';
     const alerts = this.state.lastBudgetPauseReason
       ? [`Budget pause active: ${this.state.lastBudgetPauseReason}`]
       : [];
+    if (inactivitySignal.detected && inactivitySignal.reason) {
+      alerts.push(inactivitySignal.reason);
+    }
 
     await this.persistSnapshot({
       healthStatus,
-      alerts
+      alerts,
+      queueSummary,
+      watchdogState
     });
   }
 
@@ -647,6 +668,7 @@ export class WorkerAutonomyService {
     alerts: string[]
   ): WorkerAutonomyHealthStatus {
     const watchdogState = this.buildWatchdogState(queueSummary);
+    const inactivitySignal = deriveWorkerInactivitySignal(watchdogState);
     if (watchdogState.triggered) {
       return 'unhealthy';
     }
@@ -657,6 +679,7 @@ export class WorkerAutonomyService {
 
     if (
       alerts.length > 0 ||
+      inactivitySignal.detected ||
       queueSummary?.pending &&
       queueSummary.pending >= this.settings.queueDepthDeferralThreshold
     ) {
@@ -716,9 +739,18 @@ export class WorkerAutonomyService {
       this.state.currentJobId === null &&
       inactivityMs !== null &&
       inactivityMs >= this.settings.watchdogIdleMs;
+    const idleExceeded =
+      this.state.currentJobId === null &&
+      inactivityMs !== null &&
+      inactivityMs >= this.settings.watchdogIdleMs;
+    const idleReason = idleExceeded
+      ? this.state.lastProcessedJobAt
+        ? `No worker activity for ${inactivityMs}ms since ${this.state.lastProcessedJobAt}.`
+        : `No worker receipts or processed jobs observed for ${inactivityMs}ms after startup.`
+      : null;
     const reason = triggered
       ? `No worker activity for ${inactivityMs}ms while queue work remained pending.`
-      : null;
+      : idleReason;
 
     return {
       triggered,
@@ -727,7 +759,7 @@ export class WorkerAutonomyService {
       lastActivityAt,
       lastProcessedJobAt: this.state.lastProcessedJobAt,
       idleThresholdMs: this.settings.watchdogIdleMs,
-      restartRecommended: triggered
+      restartRecommended: idleExceeded
     };
   }
 
@@ -1065,6 +1097,44 @@ function readWatchdogState(worker: WorkerRuntimeSnapshotRecord): WorkerWatchdogS
   };
 }
 
+function deriveWorkerInactivitySignal(watchdog: WorkerWatchdogState | null): WorkerInactivitySignal {
+  if (!watchdog?.restartRecommended) {
+    return {
+      detected: false,
+      reason: null,
+      inactivityMs: watchdog?.inactivityMs ?? null,
+      lastActivityAt: watchdog?.lastActivityAt ?? null,
+      lastProcessedJobAt: watchdog?.lastProcessedJobAt ?? null
+    };
+  }
+
+  return {
+    detected: true,
+    reason: watchdog.reason,
+    inactivityMs: watchdog.inactivityMs,
+    lastActivityAt: watchdog.lastActivityAt,
+    lastProcessedJobAt: watchdog.lastProcessedJobAt
+  };
+}
+
+function filterLegacyAggregateWorkerSnapshots(
+  workers: WorkerRuntimeSnapshotRecord[]
+): WorkerRuntimeSnapshotRecord[] {
+  const slotPrefixes = new Set<string>();
+
+  for (const worker of workers) {
+    const match = worker.workerId.match(/^(.*)-slot-\d+$/);
+    if (match?.[1]) {
+      slotPrefixes.add(match[1]);
+    }
+  }
+
+  if (slotPrefixes.size === 0) {
+    return workers;
+  }
+
+  return workers.filter((worker) => !slotPrefixes.has(worker.workerId));
+}
 function deriveOverallHealthStatus(
   queueSummary: JobQueueSummary | null,
   workers: WorkerRuntimeSnapshotRecord[],
@@ -1081,7 +1151,13 @@ function deriveOverallHealthStatus(
     return 'unhealthy';
   }
 
-  if (workers.some(worker => worker.healthStatus === 'degraded') || alerts.length > 0) {
+  if (
+    workers.some(worker => {
+      const watchdog = readWatchdogState(worker);
+      return worker.healthStatus === 'degraded' || Boolean(watchdog?.restartRecommended);
+    }) ||
+    alerts.length > 0
+  ) {
     return 'degraded';
   }
 

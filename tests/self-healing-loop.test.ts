@@ -295,7 +295,8 @@ describe('selfHealingLoop', () => {
     'SELF_HEAL_ACTION_COOLDOWN_MS',
     'SELF_HEAL_CONTROLLER_COOLDOWN_MS',
     'SELF_HEAL_VERIFICATION_DELAY_MS',
-    'SELF_HEAL_DEBUG_FORCE_AI_HEAL_ONCE'
+    'SELF_HEAL_DEBUG_FORCE_AI_HEAL_ONCE',
+    'SELF_HEAL_WORKER_SERVICE_URL'
   ] as const;
   const originalEnv = new Map<string, string | undefined>();
   let trinityActiveAction: string | null;
@@ -667,6 +668,61 @@ describe('selfHealingLoop', () => {
       attemptsByDiagnosis: {
         worker_stall: 1
       }
+    }));
+  });
+
+  it('treats idle workers with no receipts as inactive degraded and heals the runtime', async () => {
+    const remoteHealFetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        message: 'Workers started successfully.'
+      })
+    });
+    (globalThis as typeof globalThis & { fetch: typeof remoteHealFetchMock }).fetch =
+      remoteHealFetchMock as any;
+    process.env.SELF_HEAL_WORKER_SERVICE_URL = 'https://worker.example.test';
+
+    getWorkerControlHealthMock.mockResolvedValueOnce(createWorkerHealth({
+      overallStatus: 'degraded',
+      alerts: ['No worker receipts or processed jobs observed for 180000ms after startup.'],
+      workers: [
+        {
+          workerId: 'async-queue',
+          workerType: 'async_queue',
+          healthStatus: 'degraded',
+          currentJobId: null,
+          lastError: null,
+          lastHeartbeatAt: null,
+          lastActivityAt: '2026-03-25T11:57:00.000Z',
+          lastProcessedJobAt: null,
+          inactivityMs: 180000,
+          updatedAt: '2026-03-25T12:00:00.000Z',
+          watchdog: {
+            triggered: false,
+            reason: 'No worker receipts or processed jobs observed for 180000ms after startup.',
+            restartRecommended: true,
+            idleThresholdMs: 120000
+          }
+        }
+      ]
+    }));
+
+    const result = await runSelfHealingLoop({ trigger: 'interval' });
+
+    expect(remoteHealFetchMock).toHaveBeenCalledWith(
+      'https://worker.example.test/worker-helper/heal',
+      expect.objectContaining({
+        method: 'POST'
+      })
+    );
+    expect(result).toEqual(expect.objectContaining({
+      diagnosis: 'inactive_degraded: no worker activity observed',
+      action: expect.stringContaining('healWorkerRuntime:')
+    }));
+    expect(getSelfHealingLoopStatus()).toEqual(expect.objectContaining({
+      lastDiagnosis: 'inactive_degraded: no worker activity observed',
+      lastWorkerHealth: 'degraded'
     }));
   });
 
@@ -1847,5 +1903,78 @@ describe('selfHealingLoop', () => {
         })
       })
     ]));
+  });
+
+  it('surfaces live worker activity timestamps in the runtime snapshot when inactivity fields are empty', () => {
+    buildPredictiveHealingStatusSnapshotMock.mockReturnValue({
+      enabled: true,
+      dryRun: true,
+      autoExecute: false,
+      lastObservedAt: null,
+      lastDecisionAt: null,
+      lastAction: null,
+      lastResult: null,
+      lastMatchedRule: null,
+      recentAuditCount: 0,
+      recentAudits: [],
+      recentObservations: [
+        {
+          inactivity: {
+            inactiveDegraded: false,
+            reason: null,
+            idleThresholdMs: 120000,
+            lastActivityAt: null,
+            lastProcessedJobAt: null,
+          },
+          workerHealth: {
+            workers: [
+              {
+                workerId: 'async-queue-slot-1',
+                lastActivityAt: '2026-03-25T12:01:30.000Z',
+                lastProcessedJobAt: '2026-03-25T12:01:20.000Z',
+              },
+              {
+                workerId: 'async-queue-slot-2',
+                lastActivityAt: '2026-03-25T12:01:45.000Z',
+                lastProcessedJobAt: '2026-03-25T12:01:40.000Z',
+              },
+            ],
+          },
+        },
+      ],
+      cooldowns: {},
+      automation: {
+        active: true,
+        autoExecuteReady: false,
+        pollIntervalMs: 30000,
+        minConfidence: 0.65,
+        cooldownMs: 60000,
+        lastLoopDecisionAt: null,
+        lastLoopAction: null,
+        lastLoopResult: null,
+        lastAutoExecutionAt: null,
+        lastAutoExecutionAction: null,
+        lastAutoExecutionResult: null,
+      },
+      recentExecutionLog: [],
+      detailsPath: '/api/self-heal/decide',
+      actuator: {
+        available: true,
+        mode: 'worker_helper_http',
+        path: '/worker-helper/heal',
+        baseUrl: 'http://127.0.0.1:8787',
+        reason: null,
+      },
+      advisors: ['rules_v1', 'arcanos_core_v1', 'rules_fallback_v1'],
+    });
+
+    const runtimeSnapshot = buildSelfHealRuntimeSnapshot();
+
+    expect(runtimeSnapshot.systemState).toEqual(expect.objectContaining({
+      status: 'healthy',
+      inactiveDegraded: false,
+      lastWorkerActivityAt: '2026-03-25T12:01:45.000Z',
+      lastProcessedJobAt: '2026-03-25T12:01:40.000Z',
+    }));
   });
 });

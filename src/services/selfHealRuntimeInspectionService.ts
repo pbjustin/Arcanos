@@ -133,13 +133,21 @@ function buildTelemetrySnapshot(): SelfHealTelemetrySnapshot {
 function buildSystemState(params: {
   loopStatus: ReturnType<typeof getSelfHealingLoopStatus>;
   controlLoop: ReturnType<typeof getSelfHealingControlLoopStatus>;
+  predictiveHealing: predictiveHealingService.PredictiveHealingStatusSnapshot;
 }): {
   errorRate: number;
   latency: number;
   lastCheck: string | null;
   operationalRequests: number;
+  status: 'healthy' | 'inactive_degraded';
+  inactiveDegraded: boolean;
+  reason: string | null;
+  uptimeMs: number;
+  idleThresholdMs: number | null;
+  lastWorkerActivityAt: string | null;
+  lastProcessedJobAt: string | null;
 } {
-  const { loopStatus, controlLoop } = params;
+  const { loopStatus, controlLoop, predictiveHealing } = params;
   const hasControlLoopObservation = controlLoop.lastObservedAt !== null;
   const boundedLoopErrorRate =
     loopStatus.lastVerificationResult?.current.errorRate ??
@@ -154,12 +162,52 @@ function buildSystemState(params: {
     loopStatus.lastLatencySnapshot?.requestCount ??
     loopStatus.lastVerificationResult?.current.promptRoute?.requestCount ??
     0;
+  const latestObservation =
+    predictiveHealing.recentObservations.length > 0
+      ? predictiveHealing.recentObservations[predictiveHealing.recentObservations.length - 1]
+      : null;
+  const inactivity = latestObservation?.inactivity;
+  const latestWorkers = Array.isArray(latestObservation?.workerHealth?.workers)
+    ? latestObservation.workerHealth.workers
+    : [];
+  const latestWorkerActivityAt = pickLatestTimestamp(
+    inactivity?.lastActivityAt ?? null,
+    loopStatus.timeline.lastWorkerReceiptAt ?? null,
+    ...latestWorkers.map(worker => worker.lastActivityAt ?? null),
+  );
+  const latestProcessedJobAt = pickLatestTimestamp(
+    inactivity?.lastProcessedJobAt ?? null,
+    ...latestWorkers.map(worker => worker.lastProcessedJobAt ?? null),
+  );
+  const startedAtMs = Date.parse(loopStatus.startedAt ?? '');
+  const uptimeMs = Number.isFinite(startedAtMs) ? Math.max(0, Date.now() - startedAtMs) : 0;
+  const idleThresholdMs = inactivity?.idleThresholdMs ?? null;
+  const lastWorkerActivityAtMs =
+    latestWorkerActivityAt && Number.isFinite(Date.parse(latestWorkerActivityAt))
+      ? Date.parse(latestWorkerActivityAt)
+      : null;
+  const inactiveDegraded =
+    Boolean(inactivity?.inactiveDegraded) &&
+    (
+      lastWorkerActivityAtMs !== null ||
+      idleThresholdMs === null ||
+      uptimeMs >= idleThresholdMs
+    );
 
   return {
     errorRate: hasControlLoopObservation ? controlLoop.errorRate : boundedLoopErrorRate,
     latency: hasControlLoopObservation ? controlLoop.avgLatencyMs : boundedLoopLatency,
     lastCheck: controlLoop.lastObservedAt ?? loopStatus.lastTick ?? null,
     operationalRequests: hasControlLoopObservation ? controlLoop.operationalRequests : boundedLoopOperationalRequests,
+    status: inactiveDegraded ? 'inactive_degraded' : 'healthy',
+    inactiveDegraded,
+    reason: inactiveDegraded
+      ? inactivity?.reason ?? 'No operational activity has been observed beyond the worker idle threshold.'
+      : null,
+    uptimeMs,
+    idleThresholdMs,
+    lastWorkerActivityAt: latestWorkerActivityAt,
+    lastProcessedJobAt: latestProcessedJobAt,
   };
 }
 
@@ -250,9 +298,10 @@ function deriveInspectionFields(params: {
   loopStatus: ReturnType<typeof getSelfHealingLoopStatus>;
   controlLoop: ReturnType<typeof getSelfHealingControlLoopStatus>;
   telemetry: SelfHealTelemetrySnapshot;
+  predictiveHealing: predictiveHealingService.PredictiveHealingStatusSnapshot;
   aiProvider: predictiveHealingService.PredictiveHealingAIProviderStatusSnapshot;
 }) {
-  const { timestamp, loopStatus, controlLoop, telemetry, aiProvider } = params;
+  const { timestamp, loopStatus, controlLoop, telemetry, predictiveHealing, aiProvider } = params;
   const combinedEnabled = Boolean(telemetry.enabled || controlLoop.active || controlLoop.loopRunning);
   const combinedActive = Boolean(
     telemetry.active ||
@@ -366,7 +415,7 @@ function deriveInspectionFields(params: {
     active: combinedActive,
     isHealing: combinedActive,
     lastHealRun,
-    systemState: buildSystemState({ loopStatus, controlLoop }),
+    systemState: buildSystemState({ loopStatus, controlLoop, predictiveHealing }),
     lastAIDiagnosis: loopStatus.lastAIDiagnosis,
     lastDecision: loopStatus.lastDecision,
     lastAction: loopStatus.lastAction ?? telemetry.actionTaken ?? controlLoop.lastAction,
@@ -444,6 +493,7 @@ export function buildSelfHealRuntimeSnapshot() {
     loopStatus,
     controlLoop,
     telemetry,
+    predictiveHealing,
     aiProvider,
   });
 

@@ -201,6 +201,15 @@ function createObservation(overrides: Record<string, unknown> = {}) {
       unhealthyWorkerIds: [],
       workers: []
     },
+    inactivity: {
+      inactiveDegraded: false,
+      reason: null,
+      idleThresholdMs: 120000,
+      maxInactivityMs: 0,
+      lastActivityAt: null,
+      lastProcessedJobAt: null,
+      workerIds: []
+    },
     workerRuntime: {
       enabled: true,
       started: true,
@@ -396,5 +405,70 @@ describe('predictive healing rule evaluation', () => {
       stage: 'final',
       trinityAction: 'bypass_final_stage'
     }));
+  });
+
+  it('heals inactive worker runtime when no operational requests are observed', () => {
+    const observation = createObservation({
+      requestCount: 0,
+      workerHealth: {
+        ...createObservation().workerHealth,
+        overallStatus: 'degraded',
+        alertCount: 1,
+        alerts: ['No worker receipts or processed jobs observed for 240000ms after startup.'],
+        workers: [
+          {
+            workerId: 'async-queue',
+            healthStatus: 'degraded',
+            currentJobId: null,
+            lastActivityAt: '2026-03-26T11:56:00.000Z',
+            lastProcessedJobAt: null,
+            inactivityMs: 240000,
+            watchdog: {
+              triggered: false,
+              reason: 'No worker receipts or processed jobs observed for 240000ms after startup.',
+              restartRecommended: true,
+              idleThresholdMs: 120000
+            }
+          }
+        ]
+      },
+      inactivity: {
+        inactiveDegraded: true,
+        reason: 'No worker receipts or processed jobs observed for 240000ms after startup.',
+        idleThresholdMs: 120000,
+        maxInactivityMs: 240000,
+        lastActivityAt: '2026-03-26T11:56:00.000Z',
+        lastProcessedJobAt: null,
+        workerIds: ['async-queue']
+      }
+    });
+    const history = [
+      createObservation({ collectedAt: '2026-03-26T11:58:00.000Z', requestCount: 0 }),
+      createObservation({ collectedAt: '2026-03-26T11:59:00.000Z', requestCount: 0 }),
+      observation
+    ];
+
+    const result = evaluatePredictiveHealingRules({
+      observation,
+      history,
+      config: {
+        minObservations: 3,
+        staleAfterMs: 300000,
+        minConfidence: 0.6,
+        errorRateThreshold: 0.18,
+        latencyConsecutiveIntervals: 3,
+        latencyRiseDeltaMs: 250,
+        memoryThresholdMb: 900,
+        memoryGrowthThresholdMb: 120,
+        memorySustainedIntervals: 3,
+        queuePendingThreshold: 5,
+        queueVelocityThreshold: 2
+      }
+    });
+
+    expect(result.decision.action).toBe('heal_worker_runtime');
+    expect(result.decision.matchedRule).toBe('inactive_worker_runtime_heal');
+    expect(result.decision.reason).toContain('No worker receipts');
+    expect(result.decision.safeToExecute).toBe(true);
   });
 });
