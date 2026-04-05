@@ -159,6 +159,43 @@ describe('workerAutonomyService', () => {
     );
   });
 
+  it('marks workers degraded when inactivity exceeds the watchdog threshold without receipts', async () => {
+    listWorkerRuntimeSnapshotsMock.mockResolvedValue([
+      {
+        workerId: 'async-queue',
+        workerType: 'async_queue',
+        healthStatus: 'healthy',
+        currentJobId: null,
+        lastError: null,
+        startedAt: '2026-03-07T11:55:00.000Z',
+        lastHeartbeatAt: null,
+        lastInspectorRunAt: '2026-03-07T12:00:00.000Z',
+        updatedAt: '2026-03-07T12:00:00.000Z',
+        snapshot: {
+          lastActivityAt: '2026-03-07T11:56:00.000Z',
+          lastProcessedJobAt: null,
+          watchdog: {
+            triggered: false,
+            reason: 'No worker receipts or processed jobs observed for 240000ms after startup.',
+            inactivityMs: 240000,
+            lastActivityAt: '2026-03-07T11:56:00.000Z',
+            lastProcessedJobAt: null,
+            idleThresholdMs: 120000,
+            restartRecommended: true
+          }
+        }
+      }
+    ]);
+
+    const report = await getWorkerAutonomyHealthReport();
+
+    expect(report.overallStatus).toBe('degraded');
+    expect(report.alerts).toEqual(expect.arrayContaining([
+      expect.stringContaining('inactive'),
+      expect.stringContaining('No worker receipts')
+    ]));
+  });
+
   it('schedules retries for transient failures before exhausting the retry budget', async () => {
     const service = new WorkerAutonomyService({
       workerId: 'async-queue',

@@ -80,7 +80,7 @@ function evaluateWorkerHealth(): WorkerHealth {
     return {
       expected: false,
       directoryExists,
-      healthy: true,
+      healthy: false,
       files: [],
       reason: 'Workers disabled via RUN_WORKERS'
     };
@@ -174,7 +174,16 @@ export function runHealthCheck(): HealthCheckReport {
     }
   }
 
-  if (!workers.healthy) {
+  if (!workers.expected) {
+    console.log(
+      `[🧵 Workers] Expected=${workers.expected} DirectoryExists=${workers.directoryExists} Files=${
+        workers.files.length > 0 ? workers.files.join(', ') : 'none'
+      }`
+    );
+    if (workers.reason) {
+      console.log(`[🧵 Workers] Detail: ${workers.reason}`);
+    }
+  } else if (!workers.healthy) {
     console.warn('[🧵 Workers] Worker subsystem reported an unhealthy status', workers.reason);
   } else {
     console.log(
@@ -196,7 +205,8 @@ export function runHealthCheck(): HealthCheckReport {
     `[📈 Telemetry] Logs=${telemetry.metrics.totalLogs} RecentEvents=${telemetry.traces.recentEvents.length}`
   );
 
-  const status: HealthCheckReport['status'] = workers.healthy ? 'ok' : 'degraded';
+  const workersImpactHealthy = !workers.expected || workers.healthy;
+  const status: HealthCheckReport['status'] = workersImpactHealthy ? 'ok' : 'degraded';
   const summaryParts = [
     `Heap ${heapMB}MB`,
     `RSS ${rssMB}MB`,
@@ -204,7 +214,9 @@ export function runHealthCheck(): HealthCheckReport {
     `Uptime ${uptime}s`
   ];
 
-  if (!workers.healthy && workers.reason) {
+  if (!workers.expected && workers.reason) {
+    summaryParts.push(`Workers: disabled (${workers.reason})`);
+  } else if (!workers.healthy && workers.reason) {
     summaryParts.push(`Workers: ${workers.reason}`);
   } else if (workers.expected) {
     summaryParts.push('Workers: healthy');

@@ -295,7 +295,8 @@ describe('selfHealingLoop', () => {
     'SELF_HEAL_ACTION_COOLDOWN_MS',
     'SELF_HEAL_CONTROLLER_COOLDOWN_MS',
     'SELF_HEAL_VERIFICATION_DELAY_MS',
-    'SELF_HEAL_DEBUG_FORCE_AI_HEAL_ONCE'
+    'SELF_HEAL_DEBUG_FORCE_AI_HEAL_ONCE',
+    'SELF_HEAL_WORKER_SERVICE_URL'
   ] as const;
   const originalEnv = new Map<string, string | undefined>();
   let trinityActiveAction: string | null;
@@ -667,6 +668,61 @@ describe('selfHealingLoop', () => {
       attemptsByDiagnosis: {
         worker_stall: 1
       }
+    }));
+  });
+
+  it('treats idle workers with no receipts as inactive degraded and heals the runtime', async () => {
+    const remoteHealFetchMock = jest.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({
+        message: 'Workers started successfully.'
+      })
+    });
+    (globalThis as typeof globalThis & { fetch: typeof remoteHealFetchMock }).fetch =
+      remoteHealFetchMock as any;
+    process.env.SELF_HEAL_WORKER_SERVICE_URL = 'https://worker.example.test';
+
+    getWorkerControlHealthMock.mockResolvedValueOnce(createWorkerHealth({
+      overallStatus: 'degraded',
+      alerts: ['No worker receipts or processed jobs observed for 180000ms after startup.'],
+      workers: [
+        {
+          workerId: 'async-queue',
+          workerType: 'async_queue',
+          healthStatus: 'degraded',
+          currentJobId: null,
+          lastError: null,
+          lastHeartbeatAt: null,
+          lastActivityAt: '2026-03-25T11:57:00.000Z',
+          lastProcessedJobAt: null,
+          inactivityMs: 180000,
+          updatedAt: '2026-03-25T12:00:00.000Z',
+          watchdog: {
+            triggered: false,
+            reason: 'No worker receipts or processed jobs observed for 180000ms after startup.',
+            restartRecommended: true,
+            idleThresholdMs: 120000
+          }
+        }
+      ]
+    }));
+
+    const result = await runSelfHealingLoop({ trigger: 'interval' });
+
+    expect(remoteHealFetchMock).toHaveBeenCalledWith(
+      'https://worker.example.test/worker-helper/heal',
+      expect.objectContaining({
+        method: 'POST'
+      })
+    );
+    expect(result).toEqual(expect.objectContaining({
+      diagnosis: 'inactive_degraded: no worker activity observed',
+      action: expect.stringContaining('healWorkerRuntime:')
+    }));
+    expect(getSelfHealingLoopStatus()).toEqual(expect.objectContaining({
+      lastDiagnosis: 'inactive_degraded: no worker activity observed',
+      lastWorkerHealth: 'degraded'
     }));
   });
 

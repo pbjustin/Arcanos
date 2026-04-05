@@ -213,7 +213,8 @@ export interface WorkerControlStatusResponse {
  * Edge case behavior:
  * - Returns `offline` overall status when no worker snapshots exist and the queue is idle.
  */
-export interface WorkerControlHealthResponse extends WorkerAutonomyHealthReport {
+export interface WorkerControlHealthResponse extends Omit<WorkerAutonomyHealthReport, 'workers'> {
+  workers: WorkerControlWorkerSnapshot[];
   queueSemantics: WorkerQueueSemantics;
   retryPolicy: WorkerRetryPolicySummary;
   recentFailedJobs: FailedWorkerJobSnapshot[];
@@ -712,6 +713,12 @@ export async function getWorkerControlHealth(): Promise<WorkerControlHealthRespo
 
   return {
     ...healthReport,
+    workers: healthReport.workers.map((workerSnapshot) =>
+      buildWorkerControlWorkerSnapshot(
+        workerSnapshot,
+        healthReport.settings.watchdogIdleMs
+      )
+    ),
     queueSemantics: buildWorkerQueueSemantics(),
     retryPolicy: buildWorkerRetryPolicySummary(),
     recentFailedJobs

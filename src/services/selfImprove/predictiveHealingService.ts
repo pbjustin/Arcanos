@@ -100,7 +100,25 @@ export interface PredictiveHealingObservation {
       workerId: string;
       healthStatus: string;
       currentJobId: string | null;
+      lastActivityAt?: string | null;
+      lastProcessedJobAt?: string | null;
+      inactivityMs?: number | null;
+      watchdog?: {
+        triggered: boolean;
+        reason: string | null;
+        restartRecommended: boolean;
+        idleThresholdMs: number | null;
+      };
     }>;
+  };
+  inactivity?: {
+    inactiveDegraded: boolean;
+    reason: string | null;
+    idleThresholdMs: number | null;
+    maxInactivityMs: number;
+    lastActivityAt: string | null;
+    lastProcessedJobAt: string | null;
+    workerIds: string[];
   };
   workerRuntime: {
     enabled: boolean;
@@ -163,8 +181,18 @@ export interface PredictiveHealingSimulationInput {
       workerId: string;
       healthStatus: string;
       currentJobId: string | null;
+      lastActivityAt?: string | null;
+      lastProcessedJobAt?: string | null;
+      inactivityMs?: number | null;
+      watchdog?: {
+        triggered?: boolean;
+        reason?: string | null;
+        restartRecommended?: boolean;
+        idleThresholdMs?: number | null;
+      };
     }>;
   }>;
+  inactivity?: Partial<NonNullable<PredictiveHealingObservation['inactivity']>>;
   workerRuntime?: Partial<PredictiveHealingObservation['workerRuntime']>;
   promptRoute?: Partial<PredictiveHealingObservation['promptRoute']>;
   trinity?: Partial<{
@@ -1039,7 +1067,18 @@ function buildObservationFromSources(params: {
     ? params.workerHealth!.workers.map((worker) => ({
         workerId: worker.workerId,
         healthStatus: worker.healthStatus,
-        currentJobId: worker.currentJobId ?? null
+        currentJobId: worker.currentJobId ?? null,
+        lastActivityAt: worker.lastActivityAt ?? null,
+        lastProcessedJobAt: worker.lastProcessedJobAt ?? null,
+        inactivityMs: worker.inactivityMs ?? null,
+        watchdog: worker.watchdog
+          ? {
+              triggered: Boolean(worker.watchdog.triggered),
+              reason: worker.watchdog.reason ?? null,
+              restartRecommended: Boolean(worker.watchdog.restartRecommended),
+              idleThresholdMs: worker.watchdog.idleThresholdMs ?? null
+            }
+          : undefined
       }))
     : [];
 
@@ -1051,6 +1090,14 @@ function buildObservationFromSources(params: {
     .filter((worker) => worker.healthStatus === 'unhealthy')
     .map((worker) => worker.workerId)
     .sort();
+  const inactivity = buildWorkerInactivityObservation({
+    workers,
+    alerts: workerHealthAlerts,
+    requestCount: params.requestWindow.requestCount,
+    pending: params.workerHealth?.queueSummary?.pending ?? 0,
+    stalledRunning: params.workerHealth?.queueSummary?.stalledRunning ?? 0,
+    idleThresholdMs: params.workerHealth?.settings.watchdogIdleMs ?? null
+  });
 
   return {
     collectedAt: params.collectedAt ?? new Date().toISOString(),
@@ -1083,6 +1130,7 @@ function buildObservationFromSources(params: {
       unhealthyWorkerIds,
       workers
     },
+    inactivity,
     workerRuntime: {
       enabled: params.workerRuntime.enabled,
       started: params.workerRuntime.started,
@@ -1138,10 +1186,35 @@ function applySimulation(
         ? simulate.workerHealth.workers.map((worker) => ({
             workerId: worker.workerId,
             healthStatus: worker.healthStatus,
-            currentJobId: worker.currentJobId ?? null
+            currentJobId: worker.currentJobId ?? null,
+            lastActivityAt: worker.lastActivityAt ?? null,
+            lastProcessedJobAt: worker.lastProcessedJobAt ?? null,
+            inactivityMs: worker.inactivityMs ?? null,
+            watchdog: worker.watchdog
+              ? {
+                  triggered: Boolean(worker.watchdog.triggered),
+                  reason: worker.watchdog.reason ?? null,
+                  restartRecommended: Boolean(worker.watchdog.restartRecommended),
+                  idleThresholdMs: worker.watchdog.idleThresholdMs ?? null
+                }
+              : undefined
           }))
         : base.workerHealth.workers
     },
+    inactivity: simulate.inactivity
+      ? {
+          inactiveDegraded: simulate.inactivity.inactiveDegraded ?? base.inactivity?.inactiveDegraded ?? false,
+          reason: simulate.inactivity.reason ?? base.inactivity?.reason ?? null,
+          idleThresholdMs: simulate.inactivity.idleThresholdMs ?? base.inactivity?.idleThresholdMs ?? null,
+          maxInactivityMs: simulate.inactivity.maxInactivityMs ?? base.inactivity?.maxInactivityMs ?? 0,
+          lastActivityAt: simulate.inactivity.lastActivityAt ?? base.inactivity?.lastActivityAt ?? null,
+          lastProcessedJobAt:
+            simulate.inactivity.lastProcessedJobAt ?? base.inactivity?.lastProcessedJobAt ?? null,
+          workerIds: simulate.inactivity.workerIds
+            ? [...simulate.inactivity.workerIds]
+            : [...(base.inactivity?.workerIds ?? [])]
+        }
+      : base.inactivity,
     workerRuntime: {
       ...base.workerRuntime,
       ...(simulate.workerRuntime ?? {}),
@@ -1198,6 +1271,7 @@ function cloneObservation(observation: PredictiveHealingObservation): Predictive
       unhealthyWorkerIds: [...observation.workerHealth.unhealthyWorkerIds],
       workers: observation.workerHealth.workers.map((worker) => ({ ...worker }))
     },
+    inactivity: observation.inactivity ? { ...observation.inactivity, workerIds: [...observation.inactivity.workerIds] } : undefined,
     workerRuntime: {
       ...observation.workerRuntime,
       workerIds: [...observation.workerRuntime.workerIds]
@@ -2059,6 +2133,34 @@ function buildCandidates(
         p95LatencySlopeMs: trends.p95LatencySlopeMs,
         currentAvgLatencyMs: observation.avgLatencyMs,
         currentP95LatencyMs: observation.p95LatencyMs
+      }
+    });
+  }
+
+  if (
+    observation.inactivity?.inactiveDegraded
+  ) {
+    candidates.push({
+      action: 'heal_worker_runtime',
+      target: 'worker_runtime',
+      reason:
+        observation.inactivity.reason ??
+        'No worker activity has been observed beyond the watchdog threshold.',
+      confidence:
+        observation.workerHealth.pending > 0 || observation.workerHealth.stalledRunning > 0
+          ? 0.96
+          : 0.84,
+      matchedRule: 'inactive_worker_runtime_heal',
+      priority: 15,
+      details: {
+        requestCount: observation.requestCount,
+        pending: observation.workerHealth.pending,
+        stalledRunning: observation.workerHealth.stalledRunning,
+        idleThresholdMs: observation.inactivity.idleThresholdMs,
+        maxInactivityMs: observation.inactivity.maxInactivityMs,
+        workerIds: observation.inactivity.workerIds,
+        lastActivityAt: observation.inactivity.lastActivityAt,
+        lastProcessedJobAt: observation.inactivity.lastProcessedJobAt
       }
     });
   }
@@ -3325,8 +3427,57 @@ function hasLivePredictiveHealingLoad(observation: PredictiveHealingObservation)
     observation.workerHealth.running > 0 ||
     observation.workerHealth.alertCount > 0 ||
     observation.workerHealth.stalledRunning > 0 ||
+    observation.inactivity?.inactiveDegraded === true ||
     Boolean(observation.trinity.activeAction)
   );
+}
+
+function buildWorkerInactivityObservation(params: {
+  workers: PredictiveHealingObservation['workerHealth']['workers'];
+  alerts: string[];
+  requestCount: number;
+  pending: number;
+  stalledRunning: number;
+  idleThresholdMs: number | null;
+}): NonNullable<PredictiveHealingObservation['inactivity']> {
+  const idleWorkers = params.workers
+    .filter((worker) => worker.currentJobId === null)
+    .filter((worker) => {
+      const inactivityMs = worker.inactivityMs ?? null;
+      const thresholdMs = worker.watchdog?.idleThresholdMs ?? params.idleThresholdMs;
+      return typeof inactivityMs === 'number' && typeof thresholdMs === 'number' && inactivityMs >= thresholdMs;
+    });
+  const relevantWorkers = idleWorkers.length > 0
+    ? idleWorkers
+    : params.workers.filter((worker) => worker.watchdog?.restartRecommended === true);
+  const worstWorker = relevantWorkers.reduce<typeof relevantWorkers[number] | null>((selected, worker) => {
+    if (!selected) {
+      return worker;
+    }
+    return (worker.inactivityMs ?? 0) > (selected.inactivityMs ?? 0) ? worker : selected;
+  }, null);
+  const maxInactivityMs = worstWorker?.inactivityMs ?? 0;
+  const idleThresholdMs = worstWorker?.watchdog?.idleThresholdMs ?? params.idleThresholdMs;
+  const alertReason =
+    params.alerts.find((alert) => /no worker activity|no worker receipts|watchdog triggered/i.test(alert)) ?? null;
+  const inactiveDegraded =
+    relevantWorkers.length > 0 &&
+    (params.requestCount === 0 || params.pending > 0 || params.stalledRunning > 0);
+
+  return {
+    inactiveDegraded,
+    reason: inactiveDegraded
+      ? alertReason ??
+        (params.pending > 0 || params.stalledRunning > 0
+          ? `No worker activity for ${maxInactivityMs}ms while queue work remained pending.`
+          : `No worker receipts or processed jobs observed for ${maxInactivityMs}ms.`)
+      : null,
+    idleThresholdMs: idleThresholdMs ?? null,
+    maxInactivityMs,
+    lastActivityAt: worstWorker?.lastActivityAt ?? null,
+    lastProcessedJobAt: worstWorker?.lastProcessedJobAt ?? null,
+    workerIds: relevantWorkers.map((worker) => worker.workerId).sort()
+  };
 }
 
 function resolvePredictiveHealingAiCooldownWindow(params: {
