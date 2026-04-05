@@ -6,18 +6,15 @@
 
 import type { PoolClient, QueryResult } from 'pg';
 import { getPool, isDatabaseConnected } from './client.js';
-import { dbLogger } from "@platform/logging/structuredLogging.js";
+import { LogLevel, dbLogger, getConfiguredLogLevel } from "@platform/logging/structuredLogging.js";
 import { queryCache } from "@platform/resilience/cache.js";
-import { getEnvNumber, getEnv } from "@platform/runtime/env.js";
+import { getEnvNumber } from "@platform/runtime/env.js";
 import crypto from 'crypto';
 import { recordDependencyCall } from '@platform/observability/appMetrics.js';
 
 const DEFAULT_SLOW_QUERY_LOG_MIN_MS = 250;
 const SLOW_QUERY_LOG_MIN_MS = Math.max(50, getEnvNumber('DB_QUERY_LOG_MIN_MS', DEFAULT_SLOW_QUERY_LOG_MIN_MS));
-
-function shouldLogEveryQuery(): boolean {
-  return (getEnv('LOG_LEVEL') || 'info').trim().toLowerCase() === 'debug';
-}
+const SHOULD_LOG_EVERY_QUERY = getConfiguredLogLevel() === LogLevel.DEBUG;
 
 /**
  * Creates a cache key for database queries
@@ -72,7 +69,7 @@ export async function query(text: string, params: unknown[] = [], attempt = 1, u
     const cacheKey = createQueryCacheKey(text, params);
     const cachedResult = queryCache.get(cacheKey);
     if (cachedResult) {
-      if (shouldLogEveryQuery()) {
+      if (SHOULD_LOG_EVERY_QUERY) {
         dbLogger.debug('db.query.cache_hit', {
           operation,
         });
@@ -119,7 +116,7 @@ export async function query(text: string, params: unknown[] = [], attempt = 1, u
         durationMs: duration,
         rowCount: result.rowCount || 0,
       });
-    } else if (shouldLogEveryQuery()) {
+    } else if (SHOULD_LOG_EVERY_QUERY) {
       dbLogger.debug('db.query.executed', {
         operation,
         durationMs: duration,

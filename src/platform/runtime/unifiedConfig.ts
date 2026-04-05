@@ -133,6 +133,9 @@ export interface WorkerRuntimeModeResolution {
     | 'railway_dedicated_worker_service';
 }
 
+const SHOULD_BYPASS_WORKER_RUNTIME_CACHE = getEnv('NODE_ENV') === 'test';
+let cachedWorkerRuntimeMode: WorkerRuntimeModeResolution | null = null;
+
 function parseSelfImproveEnvironment(raw: string | undefined): AppConfig['selfImproveEnvironment'] {
   const normalized = (raw || '').trim().toLowerCase();
   if (normalized === 'production' || normalized === 'staging' || normalized === 'development') {
@@ -331,6 +334,32 @@ export function resolveWorkerRuntimeMode(): WorkerRuntimeModeResolution {
   };
 }
 
+export function getStableWorkerRuntimeMode(): WorkerRuntimeModeResolution {
+  if (SHOULD_BYPASS_WORKER_RUNTIME_CACHE) {
+    return resolveWorkerRuntimeMode();
+  }
+
+  if (cachedWorkerRuntimeMode) {
+    return cachedWorkerRuntimeMode;
+  }
+
+  cachedWorkerRuntimeMode = resolveWorkerRuntimeMode();
+  return cachedWorkerRuntimeMode;
+}
+
+export function isWorkerRuntimeSuppressedForServiceRole(
+  workerRuntimeMode: WorkerRuntimeModeResolution
+): boolean {
+  return (
+    !workerRuntimeMode.resolvedRunWorkers
+    && (
+      workerRuntimeMode.processKind === 'web'
+      || workerRuntimeMode.reason === 'railway_web_service'
+      || workerRuntimeMode.reason === 'railway_dedicated_worker_service'
+    )
+  );
+}
+
 /**
  * Gets unified application configuration
  * 
@@ -340,7 +369,7 @@ export function resolveWorkerRuntimeMode(): WorkerRuntimeModeResolution {
  * @returns Application configuration object
  */
 export function getConfig(): AppConfig {
-  const workerRuntimeMode = resolveWorkerRuntimeMode();
+  const workerRuntimeMode = getStableWorkerRuntimeMode();
   const config: AppConfig = {
     // Server Configuration
     nodeEnv: getEnv('NODE_ENV', 'development'),

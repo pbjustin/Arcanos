@@ -13,7 +13,11 @@ import type { Tier } from '@core/logic/trinityTier.js';
 import { runtimeDiagnosticsService } from '@services/runtimeDiagnosticsService.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { getEnvNumber } from '@platform/runtime/env.js';
-import { getConfig, resolveWorkerRuntimeMode } from '@platform/runtime/unifiedConfig.js';
+import {
+  getConfig,
+  getStableWorkerRuntimeMode,
+  isWorkerRuntimeSuppressedForServiceRole,
+} from '@platform/runtime/unifiedConfig.js';
 import type { TrinitySelfHealingAction, TrinitySelfHealingStage } from './selfHealingV2.js';
 import { getTrinitySelfHealingStatus } from './selfHealingV2.js';
 import {
@@ -155,12 +159,11 @@ const loopState: {
 
 function getLoopConfig() {
   const cfg = getConfig();
-  const workerRuntimeMode = resolveWorkerRuntimeMode();
-  const disabledForServiceRole =
-    workerRuntimeMode.processKind === 'web'
-    || workerRuntimeMode.reason === 'railway_web_service'
-    || workerRuntimeMode.reason === 'railway_dedicated_worker_service';
+  const workerRuntimeMode = getStableWorkerRuntimeMode();
+  const disabledForServiceRole = isWorkerRuntimeSuppressedForServiceRole(workerRuntimeMode);
   return {
+    workerRuntimeMode,
+    disabledForServiceRole,
     enabled:
       cfg.selfImproveEnabled &&
       cfg.selfImproveActuatorMode === 'daemon' &&
@@ -1017,17 +1020,12 @@ export function startSelfHealingControlLoop(app: Application): void {
   const config = getLoopConfig();
   loopState.active = config.enabled;
   if (!config.enabled) {
-    const workerRuntimeMode = resolveWorkerRuntimeMode();
-    if (
-      workerRuntimeMode.processKind === 'web'
-      || workerRuntimeMode.reason === 'railway_web_service'
-      || workerRuntimeMode.reason === 'railway_dedicated_worker_service'
-    ) {
+    if (config.disabledForServiceRole) {
       logger.info('self_heal.loop.disabled_for_service_role', {
         module: 'self_heal.loop',
-        processKind: workerRuntimeMode.processKind,
-        serviceName: workerRuntimeMode.railwayServiceName,
-        reason: workerRuntimeMode.reason,
+        processKind: config.workerRuntimeMode.processKind,
+        serviceName: config.workerRuntimeMode.railwayServiceName,
+        reason: config.workerRuntimeMode.reason,
       });
     }
     loopState.loopRunning = false;

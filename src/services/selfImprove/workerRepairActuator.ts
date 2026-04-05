@@ -1,7 +1,11 @@
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { getEnv } from '@platform/runtime/env.js';
 import { getRailwayApiConfig } from '@platform/runtime/railway.js';
-import { getConfig, resolveWorkerRuntimeMode } from '@platform/runtime/unifiedConfig.js';
+import {
+  getConfig,
+  getStableWorkerRuntimeMode,
+  isWorkerRuntimeSuppressedForServiceRole,
+} from '@platform/runtime/unifiedConfig.js';
 import {
   deployService,
   isRailwayApiConfigured,
@@ -275,7 +279,7 @@ async function executeRemoteWorkerHelperRepair(
 
 export function buildWorkerRepairActuatorStatus(): WorkerRepairActuatorStatus {
   const config = getConfig();
-  const workerRuntimeMode = resolveWorkerRuntimeMode();
+  const workerRuntimeMode = getStableWorkerRuntimeMode();
   const currentServiceName = getEnv('RAILWAY_SERVICE_NAME')?.trim() || null;
   const timeoutMs = Math.max(5_000, config.workerApiTimeoutMs);
 
@@ -292,11 +296,7 @@ export function buildWorkerRepairActuatorStatus(): WorkerRepairActuatorStatus {
     };
   }
 
-  if (
-    workerRuntimeMode.processKind === 'web'
-    || workerRuntimeMode.reason === 'railway_web_service'
-    || workerRuntimeMode.reason === 'railway_dedicated_worker_service'
-  ) {
+  if (isWorkerRuntimeSuppressedForServiceRole(workerRuntimeMode)) {
     return {
       mode: 'unavailable',
       available: false,

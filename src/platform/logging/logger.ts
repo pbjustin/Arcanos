@@ -23,6 +23,10 @@ const LOG_LEVEL_PRIORITY: Record<LogLevel, number> = {
   [LogLevel.ERROR]: 40
 };
 
+const SHOULD_BYPASS_ENV_CACHES = getEnv('NODE_ENV') === 'test';
+let cachedConfiguredLogLevel: LogLevel | null = null;
+let cachedIsProductionRuntime: boolean | null = null;
+
 export interface LogContext {
   requestId?: string;
   userId?: string;
@@ -169,13 +173,12 @@ class StructuredLogger {
   }
 
   private log(entry: LogEntry): void {
-    const configuredLevel = parseLogLevel(getEnv('LOG_LEVEL'));
+    const configuredLevel = getConfiguredLogLevel();
     if (LOG_LEVEL_PRIORITY[entry.level] < LOG_LEVEL_PRIORITY[configuredLevel]) {
       return;
     }
 
-    // Use config layer for env access (adapter boundary pattern)
-    const isProduction = getEnv('NODE_ENV') === 'production';
+    const isProduction = isProductionRuntime();
 
     const sanitizedEntry: LogEntry = {
       ...entry,
@@ -289,6 +292,32 @@ function parseLogLevel(raw: string | undefined): LogLevel {
     default:
       return LogLevel.INFO;
   }
+}
+
+export function getConfiguredLogLevel(): LogLevel {
+  if (SHOULD_BYPASS_ENV_CACHES) {
+    return parseLogLevel(getEnv('LOG_LEVEL'));
+  }
+
+  if (cachedConfiguredLogLevel) {
+    return cachedConfiguredLogLevel;
+  }
+
+  cachedConfiguredLogLevel = parseLogLevel(getEnv('LOG_LEVEL'));
+  return cachedConfiguredLogLevel;
+}
+
+function isProductionRuntime(): boolean {
+  if (SHOULD_BYPASS_ENV_CACHES) {
+    return getEnv('NODE_ENV') === 'production';
+  }
+
+  if (cachedIsProductionRuntime !== null) {
+    return cachedIsProductionRuntime;
+  }
+
+  cachedIsProductionRuntime = getEnv('NODE_ENV') === 'production';
+  return cachedIsProductionRuntime;
 }
 
 // Global logger instances

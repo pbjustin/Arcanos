@@ -3,7 +3,11 @@ import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { getTelemetrySnapshot, recordTraceEvent } from '@platform/logging/telemetry.js';
 import { getEnvBoolean, getEnvNumber } from '@platform/runtime/env.js';
-import { getConfig, resolveWorkerRuntimeMode } from '@platform/runtime/unifiedConfig.js';
+import {
+  getConfig,
+  getStableWorkerRuntimeMode,
+  isWorkerRuntimeSuppressedForServiceRole,
+} from '@platform/runtime/unifiedConfig.js';
 import {
   runSelfImproveCycle,
   type SelfImproveDecision,
@@ -2349,11 +2353,8 @@ function shouldOverrideActionCooldown(
 
 function shouldAutoInvokeController(): boolean {
   const cfg = getConfig();
-  const workerRuntimeMode = resolveWorkerRuntimeMode();
-  const disabledForServiceRole =
-    workerRuntimeMode.processKind === 'web'
-    || workerRuntimeMode.reason === 'railway_web_service'
-    || workerRuntimeMode.reason === 'railway_dedicated_worker_service';
+  const workerRuntimeMode = getStableWorkerRuntimeMode();
+  const disabledForServiceRole = isWorkerRuntimeSuppressedForServiceRole(workerRuntimeMode);
   return (
     cfg.selfImproveEnabled &&
     cfg.selfImproveActuatorMode === 'daemon' &&
@@ -3895,19 +3896,19 @@ export async function runSelfHealingLoop(options: {
 export function startSelfHealingLoop(intervalMs = resolveLoopIntervalMs()): SelfHealingLoopStatus {
   const runtime = getRuntime();
   runtime.status.intervalMs = intervalMs;
-  const workerRuntimeMode = resolveWorkerRuntimeMode();
-  const disabledForServiceRole =
-    workerRuntimeMode.processKind === 'web'
-    || workerRuntimeMode.reason === 'railway_web_service'
-    || workerRuntimeMode.reason === 'railway_dedicated_worker_service';
+  const workerRuntimeMode = getStableWorkerRuntimeMode();
+  const disabledForServiceRole = isWorkerRuntimeSuppressedForServiceRole(workerRuntimeMode);
 
   if (disabledForServiceRole) {
     runtime.status.active = false;
     runtime.status.loopRunning = false;
     runtime.status.lastError = null;
-    console.log(
-      `[SELF-HEAL] start skipped; disabled for service role service=${workerRuntimeMode.railwayServiceName ?? 'unknown'} reason=${workerRuntimeMode.reason}`
-    );
+    logger.info('self_heal.loop.disabled_for_service_role', {
+      module: 'self_heal.loop',
+      processKind: workerRuntimeMode.processKind,
+      serviceName: workerRuntimeMode.railwayServiceName ?? 'unknown',
+      reason: workerRuntimeMode.reason,
+    });
     return getSelfHealingLoopStatus();
   }
 
