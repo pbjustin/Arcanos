@@ -196,6 +196,63 @@ describe('workerAutonomyService', () => {
     ]));
   });
 
+  it('ignores legacy aggregate worker snapshots when slot snapshots are present', async () => {
+    listWorkerRuntimeSnapshotsMock.mockResolvedValue([
+      {
+        workerId: 'async-queue',
+        workerType: 'async_queue',
+        healthStatus: 'healthy',
+        currentJobId: null,
+        lastError: null,
+        startedAt: '2026-03-07T11:00:00.000Z',
+        lastHeartbeatAt: null,
+        lastInspectorRunAt: '2026-03-07T12:00:00.000Z',
+        updatedAt: '2026-03-07T12:00:00.000Z',
+        snapshot: {
+          watchdog: {
+            triggered: false,
+            reason: 'No worker receipts or processed jobs observed for 240000ms after startup.',
+            inactivityMs: 240000,
+            lastActivityAt: null,
+            lastProcessedJobAt: null,
+            idleThresholdMs: 120000,
+            restartRecommended: true
+          }
+        }
+      },
+      {
+        workerId: 'async-queue-slot-1',
+        workerType: 'async_queue',
+        healthStatus: 'healthy',
+        currentJobId: null,
+        lastError: null,
+        startedAt: '2026-03-07T11:58:00.000Z',
+        lastHeartbeatAt: '2026-03-07T12:00:00.000Z',
+        lastInspectorRunAt: '2026-03-07T12:00:00.000Z',
+        updatedAt: '2026-03-07T12:00:00.000Z',
+        snapshot: {
+          lastActivityAt: '2026-03-07T12:00:00.000Z',
+          lastProcessedJobAt: '2026-03-07T12:00:00.000Z',
+          watchdog: {
+            triggered: false,
+            reason: null,
+            inactivityMs: 0,
+            lastActivityAt: '2026-03-07T12:00:00.000Z',
+            lastProcessedJobAt: '2026-03-07T12:00:00.000Z',
+            idleThresholdMs: 120000,
+            restartRecommended: false
+          }
+        }
+      }
+    ]);
+
+    const report = await getWorkerAutonomyHealthReport();
+
+    expect(report.overallStatus).toBe('healthy');
+    expect(report.workers.map((worker) => worker.workerId)).toEqual(['async-queue-slot-1']);
+    expect(report.alerts).toEqual([]);
+  });
+
   it('schedules retries for transient failures before exhausting the retry budget', async () => {
     const service = new WorkerAutonomyService({
       workerId: 'async-queue',

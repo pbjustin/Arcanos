@@ -247,10 +247,11 @@ export async function planAutonomousWorkerJob(
 export async function getWorkerAutonomyHealthReport(
   settings: WorkerAutonomySettings = getWorkerAutonomySettings()
 ): Promise<WorkerAutonomyHealthReport> {
-  const [queueSummary, workers] = await Promise.all([
+  const [queueSummary, rawWorkers] = await Promise.all([
     getJobQueueSummary(),
     listWorkerRuntimeSnapshots()
   ]);
+  const workers = filterLegacyAggregateWorkerSnapshots(rawWorkers);
   const alerts: string[] = [];
 
   if (queueSummary?.stalledRunning) {
@@ -1114,6 +1115,25 @@ function deriveWorkerInactivitySignal(watchdog: WorkerWatchdogState | null): Wor
     lastActivityAt: watchdog.lastActivityAt,
     lastProcessedJobAt: watchdog.lastProcessedJobAt
   };
+}
+
+function filterLegacyAggregateWorkerSnapshots(
+  workers: WorkerRuntimeSnapshotRecord[]
+): WorkerRuntimeSnapshotRecord[] {
+  const slotPrefixes = new Set<string>();
+
+  for (const worker of workers) {
+    const match = worker.workerId.match(/^(.*)-slot-\d+$/);
+    if (match?.[1]) {
+      slotPrefixes.add(match[1]);
+    }
+  }
+
+  if (slotPrefixes.size === 0) {
+    return workers;
+  }
+
+  return workers.filter((worker) => !slotPrefixes.has(worker.workerId));
 }
 
 function deriveOverallHealthStatus(
