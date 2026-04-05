@@ -16,6 +16,17 @@ export enum LogLevel {
   ERROR = 'error'
 }
 
+const LOG_LEVEL_PRIORITY: Record<LogLevel, number> = {
+  [LogLevel.DEBUG]: 10,
+  [LogLevel.INFO]: 20,
+  [LogLevel.WARN]: 30,
+  [LogLevel.ERROR]: 40
+};
+
+const SHOULD_BYPASS_ENV_CACHES = getEnv('NODE_ENV') === 'test';
+let cachedConfiguredLogLevel: LogLevel | null = null;
+let cachedIsProductionRuntime: boolean | null = null;
+
 export interface LogContext {
   requestId?: string;
   userId?: string;
@@ -162,8 +173,12 @@ class StructuredLogger {
   }
 
   private log(entry: LogEntry): void {
-    // Use config layer for env access (adapter boundary pattern)
-    const isProduction = getEnv('NODE_ENV') === 'production';
+    const configuredLevel = getConfiguredLogLevel();
+    if (LOG_LEVEL_PRIORITY[entry.level] < LOG_LEVEL_PRIORITY[configuredLevel]) {
+      return;
+    }
+
+    const isProduction = isProductionRuntime();
 
     const sanitizedEntry: LogEntry = {
       ...entry,
@@ -262,6 +277,47 @@ class StructuredLogger {
       });
     };
   }
+}
+
+function parseLogLevel(raw: string | undefined): LogLevel {
+  const normalized = (raw || '').trim().toLowerCase();
+  switch (normalized) {
+    case LogLevel.DEBUG:
+      return LogLevel.DEBUG;
+    case LogLevel.WARN:
+      return LogLevel.WARN;
+    case LogLevel.ERROR:
+      return LogLevel.ERROR;
+    case LogLevel.INFO:
+    default:
+      return LogLevel.INFO;
+  }
+}
+
+export function getConfiguredLogLevel(): LogLevel {
+  if (SHOULD_BYPASS_ENV_CACHES) {
+    return parseLogLevel(getEnv('LOG_LEVEL'));
+  }
+
+  if (cachedConfiguredLogLevel) {
+    return cachedConfiguredLogLevel;
+  }
+
+  cachedConfiguredLogLevel = parseLogLevel(getEnv('LOG_LEVEL'));
+  return cachedConfiguredLogLevel;
+}
+
+function isProductionRuntime(): boolean {
+  if (SHOULD_BYPASS_ENV_CACHES) {
+    return getEnv('NODE_ENV') === 'production';
+  }
+
+  if (cachedIsProductionRuntime !== null) {
+    return cachedIsProductionRuntime;
+  }
+
+  cachedIsProductionRuntime = getEnv('NODE_ENV') === 'production';
+  return cachedIsProductionRuntime;
 }
 
 // Global logger instances

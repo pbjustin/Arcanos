@@ -3,7 +3,11 @@ import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { getTelemetrySnapshot, recordTraceEvent } from '@platform/logging/telemetry.js';
 import { getEnvBoolean, getEnvNumber } from '@platform/runtime/env.js';
-import { getConfig } from '@platform/runtime/unifiedConfig.js';
+import {
+  getConfig,
+  getStableWorkerRuntimeMode,
+  isWorkerRuntimeSuppressedForServiceRole,
+} from '@platform/runtime/unifiedConfig.js';
 import {
   runSelfImproveCycle,
   type SelfImproveDecision,
@@ -2411,7 +2415,14 @@ function shouldOverrideActionCooldown(
 
 function shouldAutoInvokeController(): boolean {
   const cfg = getConfig();
-  return cfg.selfImproveEnabled && cfg.selfImproveActuatorMode === 'daemon' && !cfg.selfImproveFrozen;
+  const workerRuntimeMode = getStableWorkerRuntimeMode();
+  const disabledForServiceRole = isWorkerRuntimeSuppressedForServiceRole(workerRuntimeMode);
+  return (
+    cfg.selfImproveEnabled &&
+    cfg.selfImproveActuatorMode === 'daemon' &&
+    !cfg.selfImproveFrozen &&
+    !disabledForServiceRole
+  );
 }
 
 function canAttemptDiagnosis(runtime: SelfHealingLoopRuntime, diagnosisType: DiagnosisType): boolean {
@@ -3947,6 +3958,21 @@ export async function runSelfHealingLoop(options: {
 export function startSelfHealingLoop(intervalMs = resolveLoopIntervalMs()): SelfHealingLoopStatus {
   const runtime = getRuntime();
   runtime.status.intervalMs = intervalMs;
+  const workerRuntimeMode = getStableWorkerRuntimeMode();
+  const disabledForServiceRole = isWorkerRuntimeSuppressedForServiceRole(workerRuntimeMode);
+
+  if (disabledForServiceRole) {
+    runtime.status.active = false;
+    runtime.status.loopRunning = false;
+    runtime.status.lastError = null;
+    logger.info('self_heal.loop.disabled_for_service_role', {
+      module: 'self_heal.loop',
+      processKind: workerRuntimeMode.processKind,
+      serviceName: workerRuntimeMode.railwayServiceName ?? 'unknown',
+      reason: workerRuntimeMode.reason,
+    });
+    return getSelfHealingLoopStatus();
+  }
 
   if (runtime.timer !== null || runtime.status.loopRunning) {
     console.log(

@@ -14,6 +14,23 @@ const createSingleChatCompletionMock = jest.fn();
 const loggerInfoMock = jest.fn();
 const loggerWarnMock = jest.fn();
 const loggerErrorMock = jest.fn();
+const getStableWorkerRuntimeModeMock = jest.fn(() => ({
+  requestedRunWorkers: false,
+  resolvedRunWorkers: false,
+  processKind: 'unknown',
+  railwayServiceName: null,
+  dedicatedWorkerServiceDetected: false,
+  webServiceWorkersOverride: false,
+  reason: 'requested'
+}));
+const isWorkerRuntimeSuppressedForServiceRoleMock = jest.fn((workerRuntimeMode) => (
+  !workerRuntimeMode.resolvedRunWorkers
+  && (
+    workerRuntimeMode.processKind === 'web'
+    || workerRuntimeMode.reason === 'railway_web_service'
+    || workerRuntimeMode.reason === 'railway_dedicated_worker_service'
+  )
+));
 
 function createStructuredLoggerMock() {
   const channel = {
@@ -36,7 +53,9 @@ jest.unstable_mockModule('@platform/runtime/workerConfig.js', () => ({
 
 jest.unstable_mockModule('@platform/runtime/unifiedConfig.js', () => ({
   getConfig: getConfigMock,
-  getEnvVar: jest.fn()
+  getEnvVar: jest.fn(),
+  getStableWorkerRuntimeMode: getStableWorkerRuntimeModeMock,
+  isWorkerRuntimeSuppressedForServiceRole: isWorkerRuntimeSuppressedForServiceRoleMock
 }));
 
 jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({

@@ -23,9 +23,28 @@ const getWorkerAutonomySettingsMock = jest.fn();
 const runPredictiveHealingFromLoopMock = jest.fn();
 const buildPredictiveHealingStatusSnapshotMock = jest.fn();
 const getSelfHealingControlLoopStatusMock = jest.fn();
+const getStableWorkerRuntimeModeMock = jest.fn(() => ({
+  requestedRunWorkers: false,
+  resolvedRunWorkers: false,
+  processKind: 'unknown',
+  railwayServiceName: null,
+  dedicatedWorkerServiceDetected: false,
+  webServiceWorkersOverride: false,
+  reason: 'requested'
+}));
+const isWorkerRuntimeSuppressedForServiceRoleMock = jest.fn((workerRuntimeMode) => (
+  !workerRuntimeMode.resolvedRunWorkers
+  && (
+    workerRuntimeMode.processKind === 'web'
+    || workerRuntimeMode.reason === 'railway_web_service'
+    || workerRuntimeMode.reason === 'railway_dedicated_worker_service'
+  )
+));
 
 jest.unstable_mockModule('@platform/runtime/unifiedConfig.js', () => ({
-  getConfig: getConfigMock
+  getConfig: getConfigMock,
+  getStableWorkerRuntimeMode: getStableWorkerRuntimeModeMock,
+  isWorkerRuntimeSuppressedForServiceRole: isWorkerRuntimeSuppressedForServiceRoleMock
 }));
 
 jest.unstable_mockModule('@services/selfImprove/controller.js', () => ({

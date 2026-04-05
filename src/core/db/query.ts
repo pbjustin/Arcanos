@@ -6,9 +6,15 @@
 
 import type { PoolClient, QueryResult } from 'pg';
 import { getPool, isDatabaseConnected } from './client.js';
+import { LogLevel, dbLogger, getConfiguredLogLevel } from "@platform/logging/structuredLogging.js";
 import { queryCache } from "@platform/resilience/cache.js";
+import { getEnvNumber } from "@platform/runtime/env.js";
 import crypto from 'crypto';
 import { recordDependencyCall } from '@platform/observability/appMetrics.js';
+
+const DEFAULT_SLOW_QUERY_LOG_MIN_MS = 250;
+const SLOW_QUERY_LOG_MIN_MS = Math.max(50, getEnvNumber('DB_QUERY_LOG_MIN_MS', DEFAULT_SLOW_QUERY_LOG_MIN_MS));
+const SHOULD_LOG_EVERY_QUERY = getConfiguredLogLevel() === LogLevel.DEBUG;
 
 /**
  * Creates a cache key for database queries
@@ -63,7 +69,11 @@ export async function query(text: string, params: unknown[] = [], attempt = 1, u
     const cacheKey = createQueryCacheKey(text, params);
     const cachedResult = queryCache.get(cacheKey);
     if (cachedResult) {
-      console.log('💾 Database cache hit for query');
+      if (SHOULD_LOG_EVERY_QUERY) {
+        dbLogger.debug('db.query.cache_hit', {
+          operation,
+        });
+      }
       recordDependencyCall({
         dependency: 'postgres_cache',
         operation,
@@ -100,7 +110,19 @@ export async function query(text: string, params: unknown[] = [], attempt = 1, u
     const result = await client.query(text, params);
     const duration = Date.now() - start;
 
-    console.log(`[🔌 DB] Query executed in ${duration}ms (rows: ${result.rowCount || 0})`);
+    if (duration >= SLOW_QUERY_LOG_MIN_MS) {
+      dbLogger.warn('db.query.slow', {
+        operation,
+        durationMs: duration,
+        rowCount: result.rowCount || 0,
+      });
+    } else if (SHOULD_LOG_EVERY_QUERY) {
+      dbLogger.debug('db.query.executed', {
+        operation,
+        durationMs: duration,
+        rowCount: result.rowCount || 0,
+      });
+    }
     recordDependencyCall({
       dependency: 'postgres',
       operation,
@@ -117,7 +139,12 @@ export async function query(text: string, params: unknown[] = [], attempt = 1, u
 
     return result;
   } catch (error) {
-    console.error('[🔌 DB] Query error:', (error as Error).message);
+    dbLogger.error('db.query.error', {
+      operation,
+      attempt,
+    }, {
+      message: (error as Error).message,
+    }, error as Error);
     recordDependencyCall({
       dependency: 'postgres',
       operation,
@@ -126,7 +153,12 @@ export async function query(text: string, params: unknown[] = [], attempt = 1, u
     });
 
     if (attempt < 3) {
-      console.log(`[🔌 DB] Retry attempt ${attempt} for query`);
+      dbLogger.warn('db.query.retry', {
+        operation,
+        attempt,
+      }, {
+        nextAttempt: attempt + 1,
+      });
       return query(text, params, attempt + 1, useCache);
     }
 
@@ -184,7 +216,11 @@ export async function transaction<T>(callback: (client: PoolClient) => Promise<T
     return result;
   } catch (error) {
     await client.query('ROLLBACK');
-    console.error('[🔌 DB] Transaction error:', (error as Error).message);
+    dbLogger.error('db.transaction.error', {
+      operation: 'transaction',
+    }, {
+      message: (error as Error).message,
+    }, error as Error);
     recordDependencyCall({
       dependency: 'postgres',
       operation: 'transaction',

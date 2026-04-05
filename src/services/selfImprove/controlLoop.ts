@@ -13,7 +13,11 @@ import type { Tier } from '@core/logic/trinityTier.js';
 import { runtimeDiagnosticsService } from '@services/runtimeDiagnosticsService.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { getEnvNumber } from '@platform/runtime/env.js';
-import { getConfig } from '@platform/runtime/unifiedConfig.js';
+import {
+  getConfig,
+  getStableWorkerRuntimeMode,
+  isWorkerRuntimeSuppressedForServiceRole,
+} from '@platform/runtime/unifiedConfig.js';
 import type { TrinitySelfHealingAction, TrinitySelfHealingStage } from './selfHealingV2.js';
 import { getTrinitySelfHealingStatus } from './selfHealingV2.js';
 import {
@@ -155,12 +159,17 @@ const loopState: {
 
 function getLoopConfig() {
   const cfg = getConfig();
+  const workerRuntimeMode = getStableWorkerRuntimeMode();
+  const disabledForServiceRole = isWorkerRuntimeSuppressedForServiceRole(workerRuntimeMode);
   return {
+    workerRuntimeMode,
+    disabledForServiceRole,
     enabled:
       cfg.selfImproveEnabled &&
       cfg.selfImproveActuatorMode === 'daemon' &&
       cfg.selfImproveAutonomyLevel >= 3 &&
-      !cfg.selfImproveFrozen,
+      !cfg.selfImproveFrozen &&
+      !disabledForServiceRole,
     intervalMs: Math.max(5_000, getEnvNumber('SELF_HEAL_LOOP_INTERVAL_MS', DEFAULT_LOOP_INTERVAL_MS)),
     lookbackMs: Math.max(30_000, getEnvNumber('SELF_HEAL_LOOKBACK_MS', DEFAULT_LOOKBACK_MS)),
     errorRateTrigger: clampRate(getEnvNumber('SELF_HEAL_ERROR_RATE_TRIGGER_BPS', DEFAULT_ERROR_RATE_TRIGGER * 10_000) / 10_000),
@@ -1011,6 +1020,14 @@ export function startSelfHealingControlLoop(app: Application): void {
   const config = getLoopConfig();
   loopState.active = config.enabled;
   if (!config.enabled) {
+    if (config.disabledForServiceRole) {
+      logger.info('self_heal.loop.disabled_for_service_role', {
+        module: 'self_heal.loop',
+        processKind: config.workerRuntimeMode.processKind,
+        serviceName: config.workerRuntimeMode.railwayServiceName,
+        reason: config.workerRuntimeMode.reason,
+      });
+    }
     loopState.loopRunning = false;
     return;
   }
