@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const chatCreateMock = jest.fn();
 const responsesCreateMock = jest.fn();
+const responsesParseMock = jest.fn();
 const embeddingsCreateMock = jest.fn();
 const imagesGenerateMock = jest.fn();
 const transcriptionsCreateMock = jest.fn();
@@ -13,26 +14,42 @@ beforeEach(async () => {
   jest.resetModules();
   chatCreateMock.mockReset();
   responsesCreateMock.mockReset();
+  responsesParseMock.mockReset();
   embeddingsCreateMock.mockReset();
   imagesGenerateMock.mockReset();
   transcriptionsCreateMock.mockReset();
   openAIConstructorMock.mockReset();
 
-  openAIConstructorMock.mockImplementation(() => ({
-    chat: { completions: { create: chatCreateMock } },
-    responses: { create: responsesCreateMock, parse: jest.fn() },
-    embeddings: { create: embeddingsCreateMock },
-    images: { generate: imagesGenerateMock },
-    audio: { transcriptions: { create: transcriptionsCreateMock } },
-    models: { retrieve: jest.fn() },
-    beta: {
-      assistants: { list: jest.fn() },
-      threads: {
-        create: jest.fn(),
-        runs: { create: jest.fn() },
+  openAIConstructorMock.mockImplementation(() => {
+    const client: any = {
+      chat: { completions: { create: chatCreateMock } },
+      responses: {
+        create: responsesCreateMock,
+        parse: responsesParseMock
       },
-    },
-  }));
+      embeddings: { create: embeddingsCreateMock },
+      images: { generate: imagesGenerateMock },
+      audio: { transcriptions: { create: transcriptionsCreateMock } },
+      models: { retrieve: jest.fn() },
+      beta: {
+        assistants: { list: jest.fn() },
+        threads: {
+          create: jest.fn(),
+          runs: { create: jest.fn() },
+        },
+      },
+    };
+
+    responsesParseMock.mockImplementation((payload: unknown, options?: unknown) =>
+      (client.responses.create(payload, options) as Promise<any> & { _thenUnwrap: (fn: (value: any) => any) => Promise<any> })
+        ._thenUnwrap((response) => ({
+          ...response,
+          output_parsed: { ok: true }
+        }))
+    );
+
+    return client;
+  });
 
   jest.unstable_mockModule('openai', () => ({
     default: openAIConstructorMock
@@ -92,5 +109,31 @@ describe('openai adapter', () => {
     expect(imagesGenerateMock).toHaveBeenCalledTimes(1);
     expect(imagesGenerateMock.mock.calls[0][0]).toEqual(expect.objectContaining({ prompt: 'draw a lighthouse' }));
     expect(imagesGenerateMock.mock.calls[0][1]).toEqual({ headers });
+  });
+
+  it('keeps the raw SDK client parse helper functional', async () => {
+    responsesCreateMock.mockImplementation(() => {
+      const apiPromise = Promise.resolve({
+        id: 'resp_parse_1',
+        created_at: 1,
+        model: 'gpt-4.1-mini',
+        output_text: '{"ok":true}',
+        output: [],
+        usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 }
+      }) as Promise<any> & {
+        _thenUnwrap: <T>(fn: (value: any) => T | Promise<T>) => Promise<T>;
+      };
+      apiPromise._thenUnwrap = async (fn) => fn(await apiPromise);
+      return apiPromise;
+    });
+
+    const adapter = createOpenAIAdapter({ apiKey: 'test-key' });
+    const client = adapter.getClient() as any;
+
+    const result = await client.responses.parse({ model: 'gpt-4.1-mini', input: 'hello' });
+
+    expect(responsesParseMock).toHaveBeenCalledTimes(1);
+    expect(responsesCreateMock).toHaveBeenCalledTimes(1);
+    expect(result).toEqual(expect.objectContaining({ output_parsed: { ok: true } }));
   });
 });
