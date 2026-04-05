@@ -49,6 +49,23 @@ const getOpenAIServiceHealthMock = jest.fn(() => ({
   }
 }));
 const reinitializeOpenAIProviderMock = jest.fn();
+const getStableWorkerRuntimeModeMock = jest.fn(() => ({
+  requestedRunWorkers: false,
+  resolvedRunWorkers: false,
+  processKind: 'unknown',
+  railwayServiceName: null,
+  dedicatedWorkerServiceDetected: false,
+  webServiceWorkersOverride: false,
+  reason: 'requested'
+}));
+const isWorkerRuntimeSuppressedForServiceRoleMock = jest.fn((workerRuntimeMode) => (
+  !workerRuntimeMode.resolvedRunWorkers
+  && (
+    workerRuntimeMode.processKind === 'web'
+    || workerRuntimeMode.reason === 'railway_web_service'
+    || workerRuntimeMode.reason === 'railway_dedicated_worker_service'
+  )
+));
 
 jest.unstable_mockModule('@platform/runtime/workerConfig.js', () => ({
   getWorkerRuntimeStatus: jest.fn(),
@@ -62,7 +79,9 @@ jest.unstable_mockModule('@platform/runtime/unifiedConfig.js', () => ({
     predictiveHealingDryRun: true,
     autoExecuteHealing: false
   })),
-  getEnvVar: jest.fn()
+  getEnvVar: jest.fn(),
+  getStableWorkerRuntimeMode: getStableWorkerRuntimeModeMock,
+  isWorkerRuntimeSuppressedForServiceRole: isWorkerRuntimeSuppressedForServiceRoleMock
 }));
 
 jest.unstable_mockModule('@services/openai/promptRouteMitigation.js', () => ({
