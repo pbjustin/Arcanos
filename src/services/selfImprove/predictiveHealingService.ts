@@ -1096,7 +1096,7 @@ function buildObservationFromSources(params: {
     requestCount: params.requestWindow.requestCount,
     pending: params.workerHealth?.queueSummary?.pending ?? 0,
     stalledRunning: params.workerHealth?.queueSummary?.stalledRunning ?? 0,
-    idleThresholdMs: params.workerHealth?.settings.watchdogIdleMs ?? null
+    idleThresholdMs: params.workerHealth?.settings?.watchdogIdleMs ?? null
   });
 
   return {
@@ -3432,6 +3432,32 @@ function hasLivePredictiveHealingLoad(observation: PredictiveHealingObservation)
   );
 }
 
+function readIsoTimestampMs(value: string | null | undefined): number | null {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    return null;
+  }
+
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function pickLatestTimestamp(values: Array<string | null | undefined>): string | null {
+  let latestValue: string | null = null;
+  let latestMs = Number.NEGATIVE_INFINITY;
+
+  for (const value of values) {
+    const parsed = readIsoTimestampMs(value);
+    if (parsed === null || parsed < latestMs) {
+      continue;
+    }
+
+    latestMs = parsed;
+    latestValue = value ?? null;
+  }
+
+  return latestValue;
+}
+
 function buildWorkerInactivityObservation(params: {
   workers: PredictiveHealingObservation['workerHealth']['workers'];
   alerts: string[];
@@ -3450,33 +3476,57 @@ function buildWorkerInactivityObservation(params: {
   const relevantWorkers = idleWorkers.length > 0
     ? idleWorkers
     : params.workers.filter((worker) => worker.watchdog?.restartRecommended === true);
+  const mostRecentActivityAt = pickLatestTimestamp(
+    params.workers.map((worker) => worker.lastActivityAt ?? null),
+  );
+  const mostRecentProcessedJobAt = pickLatestTimestamp(
+    params.workers.map((worker) => worker.lastProcessedJobAt ?? null),
+  );
+  const mostRecentSeenAt = pickLatestTimestamp([
+    mostRecentProcessedJobAt,
+    mostRecentActivityAt,
+  ]);
   const worstWorker = relevantWorkers.reduce<typeof relevantWorkers[number] | null>((selected, worker) => {
     if (!selected) {
       return worker;
     }
     return (worker.inactivityMs ?? 0) > (selected.inactivityMs ?? 0) ? worker : selected;
   }, null);
-  const maxInactivityMs = worstWorker?.inactivityMs ?? 0;
-  const idleThresholdMs = worstWorker?.watchdog?.idleThresholdMs ?? params.idleThresholdMs;
+  const mostRecentSeenMs = readIsoTimestampMs(mostRecentSeenAt);
+  const fleetIdleThresholdMs = params.idleThresholdMs ?? worstWorker?.watchdog?.idleThresholdMs ?? null;
+  const fleetInactivityMs =
+    mostRecentSeenMs !== null
+      ? Math.max(0, Date.now() - mostRecentSeenMs)
+      : worstWorker?.inactivityMs ?? 0;
+  const maxInactivityMs = worstWorker?.inactivityMs ?? fleetInactivityMs;
+  const idleThresholdMs = worstWorker?.watchdog?.idleThresholdMs ?? fleetIdleThresholdMs;
   const alertReason =
     params.alerts.find((alert) => /no worker activity|no worker receipts|watchdog triggered/i.test(alert)) ?? null;
-  const inactiveDegraded =
-    relevantWorkers.length > 0 &&
-    (params.requestCount === 0 || params.pending > 0 || params.stalledRunning > 0);
+  const queueBacklogBlocked = params.pending > 0 || params.stalledRunning > 0;
+  const fleetInactive =
+    params.workers.length > 0 &&
+    mostRecentSeenMs !== null &&
+    typeof fleetIdleThresholdMs === 'number' &&
+    fleetInactivityMs >= fleetIdleThresholdMs;
+  const inactiveDegraded = queueBacklogBlocked
+    ? relevantWorkers.length > 0
+    : params.requestCount === 0 && fleetInactive;
 
   return {
     inactiveDegraded,
     reason: inactiveDegraded
       ? alertReason ??
-        (params.pending > 0 || params.stalledRunning > 0
+        (queueBacklogBlocked
           ? `No worker activity for ${maxInactivityMs}ms while queue work remained pending.`
-          : `No worker receipts or processed jobs observed for ${maxInactivityMs}ms.`)
+          : `No worker receipts or processed jobs observed for ${fleetInactivityMs}ms.`)
       : null,
-    idleThresholdMs: idleThresholdMs ?? null,
-    maxInactivityMs,
-    lastActivityAt: worstWorker?.lastActivityAt ?? null,
-    lastProcessedJobAt: worstWorker?.lastProcessedJobAt ?? null,
-    workerIds: relevantWorkers.map((worker) => worker.workerId).sort()
+    idleThresholdMs: (queueBacklogBlocked ? idleThresholdMs : fleetIdleThresholdMs) ?? null,
+    maxInactivityMs: queueBacklogBlocked ? maxInactivityMs : fleetInactivityMs,
+    lastActivityAt: mostRecentActivityAt ?? worstWorker?.lastActivityAt ?? null,
+    lastProcessedJobAt: mostRecentProcessedJobAt ?? worstWorker?.lastProcessedJobAt ?? null,
+    workerIds: inactiveDegraded
+      ? (queueBacklogBlocked ? relevantWorkers : params.workers).map((worker) => worker.workerId).sort()
+      : []
   };
 }
 
