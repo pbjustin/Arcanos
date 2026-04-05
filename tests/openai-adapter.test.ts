@@ -20,27 +20,12 @@ beforeEach(async () => {
   transcriptionsCreateMock.mockReset();
   openAIConstructorMock.mockReset();
 
-<<<<<<< HEAD
   openAIConstructorMock.mockImplementation(() => {
     const client: any = {
       chat: { completions: { create: chatCreateMock } },
       responses: {
         create: responsesCreateMock,
         parse: responsesParseMock
-=======
-  openAIConstructorMock.mockImplementation(() => ({
-    chat: { completions: { create: chatCreateMock } },
-    responses: { create: responsesCreateMock, parse: responsesParseMock },
-    embeddings: { create: embeddingsCreateMock },
-    images: { generate: imagesGenerateMock },
-    audio: { transcriptions: { create: transcriptionsCreateMock } },
-    models: { retrieve: jest.fn() },
-    beta: {
-      assistants: { list: jest.fn() },
-      threads: {
-        create: jest.fn(),
-        runs: { create: jest.fn() },
->>>>>>> 8c0a01d1 (fix worker error-rate regressions)
       },
       embeddings: { create: embeddingsCreateMock },
       images: { generate: imagesGenerateMock },
@@ -126,7 +111,6 @@ describe('openai adapter', () => {
     expect(imagesGenerateMock.mock.calls[0][1]).toEqual({ headers });
   });
 
-<<<<<<< HEAD
   it('keeps the raw SDK client parse helper functional', async () => {
     responsesCreateMock.mockImplementation(() => {
       const apiPromise = Promise.resolve({
@@ -145,29 +129,13 @@ describe('openai adapter', () => {
 
     const adapter = createOpenAIAdapter({ apiKey: 'test-key' });
     const client = adapter.getClient() as any;
+    expect(client.responses.create).toBe(responsesCreateMock);
+    expect(client.responses.parse).toBe(responsesParseMock);
 
     const result = await client.responses.parse({ model: 'gpt-4.1-mini', input: 'hello' });
 
     expect(responsesParseMock).toHaveBeenCalledTimes(1);
     expect(responsesCreateMock).toHaveBeenCalledTimes(1);
     expect(result).toEqual(expect.objectContaining({ output_parsed: { ok: true } }));
-=======
-  it('preserves raw responses SDK helpers on the underlying client', async () => {
-    responsesParseMock.mockResolvedValue({ output_parsed: { ok: true } });
-
-    const adapter = createOpenAIAdapter({ apiKey: 'test-key' });
-    const client = adapter.getClient();
-
-    expect(client.responses.create).toBe(responsesCreateMock);
-    expect(client.responses.parse).toBe(responsesParseMock);
-
-    await adapter.responses.parse({ model: 'gpt-4.1-mini', input: 'hello' } as any);
-
-    expect(responsesParseMock).toHaveBeenCalledTimes(1);
-    expect(responsesParseMock).toHaveBeenCalledWith(
-      expect.objectContaining({ model: 'gpt-4.1-mini' }),
-      undefined
-    );
->>>>>>> 8c0a01d1 (fix worker error-rate regressions)
   });
 });

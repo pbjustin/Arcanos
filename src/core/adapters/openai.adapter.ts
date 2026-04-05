@@ -399,7 +399,6 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): OpenAIAdapter 
     const responsePayload = buildResponsesRequestFromChatParams(nonStreamingParams);
     //audit Assumption: legacy chat callers must route through Responses API internally; risk: mixed API surfaces diverge; invariant: one canonical execution path for non-stream chat; handling: convert chat params to responses payload and backfill legacy shape.
     const normalizedResponsePayload = normalizeResponsesCreateParams(responsePayload);
-<<<<<<< HEAD
     const requestedModel =
       typeof normalizedResponsePayload.model === 'string' && normalizedResponsePayload.model.trim().length > 0
         ? normalizedResponsePayload.model.trim()
@@ -412,128 +411,6 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): OpenAIAdapter 
     });
     return convertResponseToLegacyChatCompletion(response, String(nonStreamingParams.model || 'gpt-4.1-mini'));
   };
-=======
-    const response = await client.responses.create(normalizedResponsePayload, options);
-    return convertResponseToLegacyChatCompletion(response, String(nonStreamingParams.model || 'gpt-4.1-mini'));
-  };
-
-  const mutableClient = client as unknown as {
-    responses: {
-      create: typeof originalResponsesCreate;
-      parse: typeof originalResponsesParse;
-    };
-    chat: {
-      completions: {
-        create: typeof originalChatCreate;
-      };
-    };
-    embeddings: {
-      create: typeof originalEmbeddingsCreate;
-    };
-    images: {
-      generate: typeof originalImagesGenerate;
-    };
-    audio: {
-      transcriptions: {
-        create: typeof originalAudioTranscriptionsCreate;
-      };
-    };
-    models: {
-      retrieve: typeof originalModelsRetrieve;
-    };
-    beta: {
-      assistants: {
-        list: typeof originalAssistantsList;
-      };
-      threads: {
-        create: typeof originalThreadsCreate;
-        runs: {
-          create: typeof originalThreadRunsCreate;
-        };
-      };
-    };
-  };
-  // Preserve the SDK-native Responses methods on the raw client. `responses.parse()`
-  // internally depends on `responses.create()` returning the SDK APIPromise shape.
-  //audit Assumption: some legacy call sites still use raw client.chat.completions.create; risk: bypassing adapter migration path; invariant: raw client non-stream chat is responses-backed; handling: patch client method at construction boundary.
-  mutableClient.chat.completions.create = responsesBackedChatCreate as unknown as typeof originalChatCreate;
-  mutableClient.embeddings.create = (async (params: EmbeddingCreateParams) => {
-    const requestedModel =
-      typeof params.model === 'string' && params.model.trim().length > 0
-        ? params.model.trim()
-        : null;
-
-    return instrumentOpenAIOperation({
-      operation: 'embeddings_create',
-      model: requestedModel,
-      callback: () => originalEmbeddingsCreate(params),
-      extractUsage: (result) => (result as { usage?: unknown } | null)?.usage,
-    });
-  }) as typeof originalEmbeddingsCreate;
-  mutableClient.images.generate = (async (
-    params: ImageGenerateParamsNonStreaming,
-    options?: OpenAIAdapterRequestOptions
-  ) => {
-    const requestedModel =
-      typeof params.model === 'string' && params.model.trim().length > 0
-        ? params.model.trim()
-        : null;
-
-    return instrumentOpenAIOperation({
-      operation: 'images_generate',
-      model: requestedModel,
-      callback: () => originalImagesGenerate(params, options),
-      extractUsage: (result) => (result as { usage?: unknown } | null)?.usage,
-    });
-  }) as typeof originalImagesGenerate;
-  mutableClient.audio.transcriptions.create = (async (
-    params: TranscriptionCreateParamsNonStreaming
-  ) => {
-    const requestedModel =
-      typeof params.model === 'string' && params.model.trim().length > 0
-        ? params.model.trim()
-        : null;
-
-    return instrumentOpenAIOperation({
-      operation: 'audio_transcriptions_create',
-      model: requestedModel,
-      callback: () => originalAudioTranscriptionsCreate(params),
-      extractUsage: (result) => (result as { usage?: unknown } | null)?.usage,
-    });
-  }) as typeof originalAudioTranscriptionsCreate;
-  mutableClient.models.retrieve = (async (model: string, options?: Record<string, unknown>) => {
-    const requestedModel = typeof model === 'string' && model.trim().length > 0 ? model.trim() : null;
-
-    return instrumentOpenAIOperation({
-      operation: 'models_retrieve',
-      model: requestedModel,
-      callback: () => originalModelsRetrieve(model, options as never),
-    });
-  }) as typeof originalModelsRetrieve;
-  mutableClient.beta.assistants.list = (async (params?: Record<string, unknown>) => {
-    return instrumentOpenAIOperation({
-      operation: 'assistants_list',
-      callback: () => originalAssistantsList(params as never),
-    });
-  }) as typeof originalAssistantsList;
-  mutableClient.beta.threads.create = (async (params?: Record<string, unknown>) => {
-    return instrumentOpenAIOperation({
-      operation: 'threads_create',
-      callback: () => originalThreadsCreate(params as never),
-    });
-  }) as typeof originalThreadsCreate;
-  mutableClient.beta.threads.runs.create = (async (
-    threadId: string,
-    params: Record<string, unknown>,
-    options?: Record<string, unknown>
-  ) => {
-    return instrumentOpenAIOperation({
-      operation: 'thread_runs_create',
-      callback: () => originalThreadRunsCreate(threadId, params as never, options as never),
-      extractUsage: (result) => (result as { usage?: unknown } | null)?.usage,
-    });
-  }) as unknown as typeof originalThreadRunsCreate;
->>>>>>> 8c0a01d1 (fix worker error-rate regressions)
 
   return {
     responses: {
