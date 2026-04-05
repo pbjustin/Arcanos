@@ -348,6 +348,10 @@ describe('/worker-helper routes', () => {
             lastActivityAt: '2026-03-06T10:00:00.000Z',
             lastProcessedJobAt: '2026-03-06T09:59:30.000Z',
             inactivityMs: expect.any(Number),
+            processedJobs: 0,
+            scheduledRetries: 0,
+            terminalFailures: 0,
+            recoveredJobs: 0,
             updatedAt: '2026-03-06T10:00:00.000Z',
             watchdog: {
               triggered: false,

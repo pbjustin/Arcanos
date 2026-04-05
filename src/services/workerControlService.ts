@@ -155,6 +155,10 @@ export interface WorkerControlWorkerSnapshot {
   lastActivityAt: string | null;
   lastProcessedJobAt: string | null;
   inactivityMs: number | null;
+  processedJobs?: number;
+  scheduledRetries?: number;
+  terminalFailures?: number;
+  recoveredJobs?: number;
   updatedAt: string;
   watchdog: {
     triggered: boolean;
@@ -440,6 +444,14 @@ function readSnapshotString(
   return typeof value === 'string' && value.trim().length > 0 ? value : null;
 }
 
+function readSnapshotNumber(
+  snapshot: Record<string, unknown>,
+  key: string
+): number {
+  const value = snapshot[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
 function readWatchdogView(
   workerSnapshot: WorkerRuntimeSnapshotRecord,
   idleThresholdMs: number
@@ -488,6 +500,10 @@ function buildWorkerControlWorkerSnapshot(
     lastActivityAt,
     lastProcessedJobAt,
     inactivityMs,
+    processedJobs: readSnapshotNumber(snapshot, 'processedJobs'),
+    scheduledRetries: readSnapshotNumber(snapshot, 'scheduledRetries'),
+    terminalFailures: readSnapshotNumber(snapshot, 'terminalFailures'),
+    recoveredJobs: readSnapshotNumber(snapshot, 'recoveredJobs'),
     updatedAt: workerSnapshot.updatedAt,
     watchdog: readWatchdogView(workerSnapshot, idleThresholdMs)
   };

@@ -755,14 +755,6 @@ function resetWorkerSnapshotMetrics(): void {
   recordWorkerRetryTotal('scheduled', 0);
 }
 
-function readSnapshotNumber(
-  snapshot: Record<string, unknown> | undefined,
-  key: string
-): number {
-  const value = snapshot?.[key];
-  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
-}
-
 async function refreshWorkerMetrics(): Promise<void> {
   if (process.env.METRICS_INCLUDE_WORKER_STATE === 'false') {
     resetWorkerSnapshotMetrics();
@@ -797,14 +789,10 @@ async function refreshWorkerMetrics(): Promise<void> {
       let recoveredJobs = 0;
 
       for (const worker of health.workers) {
-        const snapshot =
-          worker.snapshot && typeof worker.snapshot === 'object' && !Array.isArray(worker.snapshot)
-            ? (worker.snapshot as Record<string, unknown>)
-            : undefined;
-        processedJobs += readSnapshotNumber(snapshot, 'processedJobs');
-        scheduledRetries += readSnapshotNumber(snapshot, 'scheduledRetries');
-        terminalFailures += readSnapshotNumber(snapshot, 'terminalFailures');
-        recoveredJobs += readSnapshotNumber(snapshot, 'recoveredJobs');
+        processedJobs += typeof worker.processedJobs === 'number' ? worker.processedJobs : 0;
+        scheduledRetries += typeof worker.scheduledRetries === 'number' ? worker.scheduledRetries : 0;
+        terminalFailures += typeof worker.terminalFailures === 'number' ? worker.terminalFailures : 0;
+        recoveredJobs += typeof worker.recoveredJobs === 'number' ? worker.recoveredJobs : 0;
       }
 
       recordWorkerJobTotal('processed', processedJobs);
