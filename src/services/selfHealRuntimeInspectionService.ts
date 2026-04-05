@@ -170,9 +170,17 @@ function buildSystemState(params: {
   const startedAtMs = Date.parse(loopStatus.startedAt ?? '');
   const uptimeMs = Number.isFinite(startedAtMs) ? Math.max(0, Date.now() - startedAtMs) : 0;
   const idleThresholdMs = inactivity?.idleThresholdMs ?? null;
+  const lastWorkerActivityAtMs =
+    inactivity?.lastActivityAt && Number.isFinite(Date.parse(inactivity.lastActivityAt))
+      ? Date.parse(inactivity.lastActivityAt)
+      : null;
   const inactiveDegraded =
     Boolean(inactivity?.inactiveDegraded) &&
-    (idleThresholdMs === null || uptimeMs >= idleThresholdMs);
+    (
+      lastWorkerActivityAtMs !== null ||
+      idleThresholdMs === null ||
+      uptimeMs >= idleThresholdMs
+    );
 
   return {
     errorRate: hasControlLoopObservation ? controlLoop.errorRate : boundedLoopErrorRate,

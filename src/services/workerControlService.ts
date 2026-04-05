@@ -452,6 +452,15 @@ function readSnapshotNumber(
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
+function readIsoTimestampToMs(value: string | null): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function readWatchdogView(
   workerSnapshot: WorkerRuntimeSnapshotRecord,
   idleThresholdMs: number
@@ -459,10 +468,27 @@ function readWatchdogView(
   const snapshot = readWorkerSnapshotObject(workerSnapshot);
   const rawWatchdog = snapshot.watchdog;
   if (!rawWatchdog || typeof rawWatchdog !== 'object' || Array.isArray(rawWatchdog)) {
+    const lastActivityAt = readSnapshotString(snapshot, 'lastActivityAt');
+    const lastProcessedJobAt = readSnapshotString(snapshot, 'lastProcessedJobAt');
+    const inactivitySourceAt =
+      readIsoTimestampToMs(lastActivityAt) ??
+      readIsoTimestampToMs(lastProcessedJobAt) ??
+      readIsoTimestampToMs(workerSnapshot.lastHeartbeatAt) ??
+      readIsoTimestampToMs(workerSnapshot.updatedAt);
+    const inactivityMs =
+      inactivitySourceAt === null ? null : Math.max(0, Date.now() - inactivitySourceAt);
+    const restartRecommended =
+      workerSnapshot.currentJobId === null &&
+      inactivityMs !== null &&
+      inactivityMs >= idleThresholdMs;
+
     return {
       triggered: false,
-      reason: null,
-      restartRecommended: false,
+      reason:
+        restartRecommended
+          ? `No worker receipts or processed jobs observed for ${inactivityMs}ms.`
+          : null,
+      restartRecommended,
       idleThresholdMs
     };
   }
@@ -507,6 +533,48 @@ function buildWorkerControlWorkerSnapshot(
     updatedAt: workerSnapshot.updatedAt,
     watchdog: readWatchdogView(workerSnapshot, idleThresholdMs)
   };
+}
+
+function deriveWorkerControlAlerts(
+  fallbackAlerts: string[],
+  workers: WorkerControlWorkerSnapshot[]
+): string[] {
+  const alerts = new Set<string>(fallbackAlerts);
+
+  for (const worker of workers) {
+    if (worker.watchdog.restartRecommended) {
+      alerts.add(
+        worker.watchdog.reason ??
+          `Worker ${worker.workerId} has been idle beyond the watchdog threshold.`
+      );
+    }
+  }
+
+  return [...alerts];
+}
+
+function deriveWorkerControlOverallStatus(
+  fallbackStatus: WorkerAutonomyHealthReport['overallStatus'],
+  workers: WorkerControlWorkerSnapshot[],
+  alerts: string[]
+): WorkerAutonomyHealthReport['overallStatus'] {
+  if (fallbackStatus === 'offline' && workers.length === 0) {
+    return 'offline';
+  }
+
+  if (fallbackStatus === 'unhealthy' || workers.some((worker) => worker.healthStatus === 'unhealthy')) {
+    return 'unhealthy';
+  }
+
+  if (
+    fallbackStatus === 'degraded' ||
+    alerts.length > 0 ||
+    workers.some((worker) => worker.healthStatus === 'degraded' || worker.watchdog.restartRecommended)
+  ) {
+    return 'degraded';
+  }
+
+  return workers.length === 0 ? fallbackStatus : 'healthy';
 }
 
 /**
@@ -581,6 +649,19 @@ export async function getWorkerControlStatus(
     listRecentFailedWorkerJobs()
   ]);
 
+  const workerSnapshots = autonomyHealth.workers.map((workerSnapshot) =>
+    buildWorkerControlWorkerSnapshot(
+      workerSnapshot,
+      autonomyHealth.settings.watchdogIdleMs
+    )
+  );
+  const alerts = deriveWorkerControlAlerts(autonomyHealth.alerts, workerSnapshots);
+  const overallStatus = deriveWorkerControlOverallStatus(
+    autonomyHealth.overallStatus,
+    workerSnapshots,
+    alerts
+  );
+
   return {
     timestamp: new Date().toISOString(),
     mainApp: {
@@ -597,14 +678,9 @@ export async function getWorkerControlStatus(
       recentFailedJobs,
       latestJob: latestJob ? buildWorkerJobSnapshot(latestJob) : null,
       health: {
-        overallStatus: autonomyHealth.overallStatus,
-        alerts: autonomyHealth.alerts,
-        workers: autonomyHealth.workers.map(workerSnapshot =>
-          buildWorkerControlWorkerSnapshot(
-            workerSnapshot,
-            autonomyHealth.settings.watchdogIdleMs
-          )
-        )
+        overallStatus,
+        alerts,
+        workers: workerSnapshots
       }
     }
   };
@@ -726,15 +802,24 @@ export async function getWorkerControlHealth(): Promise<WorkerControlHealthRespo
     getWorkerAutonomyHealthReport(),
     listRecentFailedWorkerJobs()
   ]);
+  const workers = healthReport.workers.map((workerSnapshot) =>
+    buildWorkerControlWorkerSnapshot(
+      workerSnapshot,
+      healthReport.settings.watchdogIdleMs
+    )
+  );
+  const alerts = deriveWorkerControlAlerts(healthReport.alerts, workers);
+  const overallStatus = deriveWorkerControlOverallStatus(
+    healthReport.overallStatus,
+    workers,
+    alerts
+  );
 
   return {
     ...healthReport,
-    workers: healthReport.workers.map((workerSnapshot) =>
-      buildWorkerControlWorkerSnapshot(
-        workerSnapshot,
-        healthReport.settings.watchdogIdleMs
-      )
-    ),
+    overallStatus,
+    alerts,
+    workers,
     queueSemantics: buildWorkerQueueSemantics(),
     retryPolicy: buildWorkerRetryPolicySummary(),
     recentFailedJobs

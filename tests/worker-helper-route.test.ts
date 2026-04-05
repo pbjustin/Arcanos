@@ -462,6 +462,71 @@ describe('/worker-helper routes', () => {
     );
   });
 
+  it('marks stale worker snapshots as degraded even when legacy watchdog fields are missing', async () => {
+    getWorkerControlHealthMock.mockResolvedValueOnce({
+      overallStatus: 'healthy',
+      alerts: [],
+      queueSummary: {
+        pending: 0,
+        running: 0,
+        completed: 3,
+        failed: 0,
+        total: 3,
+        delayed: 0,
+        stalledRunning: 0,
+        oldestPendingJobAgeMs: 0,
+        failureBreakdown: null,
+        recentFailureReasons: [],
+        lastUpdatedAt: '2026-03-06T10:00:00.000Z'
+      },
+      workers: [
+        {
+          workerId: 'async-queue',
+          workerType: 'async_queue',
+          healthStatus: 'healthy',
+          currentJobId: null,
+          lastError: null,
+          lastHeartbeatAt: null,
+          updatedAt: '2026-03-06T10:00:00.000Z',
+          snapshot: {
+            lastActivityAt: '2026-03-06T09:55:00.000Z',
+            lastProcessedJobAt: null
+          }
+        }
+      ],
+      settings: {
+        heartbeatIntervalMs: 10000,
+        leaseMs: 30000,
+        inspectorIntervalMs: 30000,
+        staleAfterMs: 60000,
+        watchdogIdleMs: 120000,
+        defaultMaxRetries: 2,
+        maxJobsPerHour: 120,
+        maxAiCallsPerHour: 120,
+        maxRssMb: 2048
+      }
+    });
+
+    const response = await request(buildApp()).get('/worker-helper/health');
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(expect.objectContaining({
+      overallStatus: 'degraded',
+      alerts: expect.arrayContaining([
+        expect.stringContaining('No worker receipts or processed jobs observed')
+      ]),
+      workers: [
+        expect.objectContaining({
+          workerId: 'async-queue',
+          watchdog: expect.objectContaining({
+            restartRecommended: true,
+            idleThresholdMs: 120000
+          })
+        })
+      ]
+    }));
+  });
+
   it('dispatches direct commands through the in-process worker runtime', async () => {
     const response = await request(buildApp())
       .post('/worker-helper/dispatch')
