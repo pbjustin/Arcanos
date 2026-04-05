@@ -17,6 +17,7 @@ const getRollingRequestWindowMock = jest.fn();
 const getRequestWindowSinceMock = jest.fn();
 const getTelemetrySnapshotMock = jest.fn();
 const getOpenAIServiceHealthMock = jest.fn();
+const reinitializeOpenAIProviderMock = jest.fn();
 const recoverStaleJobsMock = jest.fn();
 const getWorkerAutonomySettingsMock = jest.fn();
 const runPredictiveHealingFromLoopMock = jest.fn();
@@ -73,7 +74,8 @@ jest.unstable_mockModule('@platform/logging/telemetry.js', () => ({
 }));
 
 jest.unstable_mockModule('@services/openai/serviceHealth.js', () => ({
-  getOpenAIServiceHealth: getOpenAIServiceHealthMock
+  getOpenAIServiceHealth: getOpenAIServiceHealthMock,
+  reinitializeOpenAIProvider: reinitializeOpenAIProviderMock
 }));
 
 jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
@@ -140,7 +142,21 @@ function createWorkerHealth(overrides: Record<string, unknown> = {}) {
       total: 0,
       delayed: 0,
       stalledRunning: 0,
-      oldestPendingJobAgeMs: 0
+      oldestPendingJobAgeMs: 0,
+      failureBreakdown: {
+        retryable: 0,
+        permanent: 0,
+        retryScheduled: 0,
+        retryExhausted: 0,
+        authentication: 0,
+        network: 0,
+        provider: 0,
+        rateLimited: 0,
+        timeout: 0,
+        validation: 0,
+        unknown: 0
+      },
+      recentFailureReasons: []
     },
     workers: [],
     alerts: [],
@@ -150,7 +166,8 @@ function createWorkerHealth(overrides: Record<string, unknown> = {}) {
       defaultMaxRetries: 3,
       retryBackoffBaseMs: 1000,
       retryBackoffMaxMs: 5000,
-      staleAfterMs: 60000
+      staleAfterMs: 60000,
+      watchdogIdleMs: 120000
     },
     queueSemantics: {
       failedCountMode: 'retained_terminal_jobs',
@@ -161,7 +178,8 @@ function createWorkerHealth(overrides: Record<string, unknown> = {}) {
       defaultMaxRetries: 3,
       retryBackoffBaseMs: 1000,
       retryBackoffMaxMs: 5000,
-      staleAfterMs: 60000
+      staleAfterMs: 60000,
+      watchdogIdleMs: 120000
     },
     recentFailedJobs: [],
     ...overrides
@@ -250,6 +268,21 @@ function createOpenAIHealth(overrides: Record<string, unknown> = {}) {
     cache: { enabled: true, size: 0, hitRate: 0 },
     lastHealthCheck: '2026-03-25T12:00:00.000Z',
     defaults: { maxTokens: 1024 },
+    providerRuntime: {
+      configSource: 'env',
+      configVersion: 'env|10|1234|https://api.openai.com|gpt-4.1',
+      lastReloadAt: '2026-03-25T11:59:00.000Z',
+      reloadCount: 1,
+      lastAttemptAt: '2026-03-25T12:00:00.000Z',
+      lastSuccessAt: '2026-03-25T12:00:00.000Z',
+      lastFailureAt: null,
+      lastFailureReason: null,
+      lastFailureCategory: null,
+      lastFailureStatus: null,
+      consecutiveFailures: 0,
+      backoffMs: 0,
+      nextRetryAt: null
+    },
     ...overrides
   };
 }
@@ -302,6 +335,13 @@ describe('selfHealingLoop', () => {
     getRequestWindowSinceMock.mockReturnValue(createRequestWindow());
     getTelemetrySnapshotMock.mockReturnValue(createTelemetrySnapshot());
     getOpenAIServiceHealthMock.mockReturnValue(createOpenAIHealth());
+    reinitializeOpenAIProviderMock.mockResolvedValue({
+      ok: true,
+      skipped: false,
+      reason: null,
+      reloaded: true,
+      runtime: createOpenAIHealth().providerRuntime
+    });
     recoverStaleJobsMock.mockResolvedValue({
       recoveredJobs: [],
       failedJobs: []
@@ -313,6 +353,7 @@ describe('selfHealingLoop', () => {
       leaseMs: 30000,
       inspectorIntervalMs: 30000,
       staleAfterMs: 60000,
+      watchdogIdleMs: 120000,
       defaultMaxRetries: 2,
       retryBackoffBaseMs: 2000,
       retryBackoffMaxMs: 60000,

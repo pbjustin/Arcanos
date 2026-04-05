@@ -30,6 +30,7 @@ export interface WorkerAutonomySettings {
   leaseMs: number;
   inspectorIntervalMs: number;
   staleAfterMs: number;
+  watchdogIdleMs: number;
   defaultMaxRetries: number;
   retryBackoffBaseMs: number;
   retryBackoffMaxMs: number;
@@ -67,6 +68,7 @@ export interface WorkerAutonomyHealthReport {
     | 'leaseMs'
     | 'inspectorIntervalMs'
     | 'staleAfterMs'
+    | 'watchdogIdleMs'
     | 'defaultMaxRetries'
     | 'maxJobsPerHour'
     | 'maxAiCallsPerHour'
@@ -93,6 +95,10 @@ interface RuntimeSnapshotState {
   lastError: string | null;
   lastHeartbeatAt: string | null;
   lastInspectorRunAt: string | null;
+  lastActivityAt: string | null;
+  lastProcessedJobAt: string | null;
+  watchdogTriggeredAt: string | null;
+  watchdogReason: string | null;
   processedJobs: number;
   scheduledRetries: number;
   terminalFailures: number;
@@ -106,6 +112,17 @@ interface WorkerSnapshotContext {
   stats?: JobExecutionStats;
   healthStatus: WorkerAutonomyHealthStatus;
   alerts: string[];
+  watchdogState?: WorkerWatchdogState;
+}
+
+interface WorkerWatchdogState {
+  triggered: boolean;
+  reason: string | null;
+  inactivityMs: number | null;
+  lastActivityAt: string | null;
+  lastProcessedJobAt: string | null;
+  idleThresholdMs: number;
+  restartRecommended: boolean;
 }
 
 const DEFAULT_AUTONOMY_SETTINGS: WorkerAutonomySettings = {
@@ -120,6 +137,7 @@ const DEFAULT_AUTONOMY_SETTINGS: WorkerAutonomySettings = {
   leaseMs: readNumberEnv('JOB_WORKER_LEASE_MS', 30_000),
   inspectorIntervalMs: readNumberEnv('JOB_WORKER_INSPECTOR_MS', 30_000),
   staleAfterMs: readNumberEnv('JOB_WORKER_STALE_AFTER_MS', 60_000),
+  watchdogIdleMs: readNumberEnv('JOB_WORKER_WATCHDOG_IDLE_MS', 120_000),
   defaultMaxRetries: readNumberEnv('JOB_WORKER_MAX_RETRIES', 2),
   retryBackoffBaseMs: readNumberEnv('JOB_WORKER_RETRY_BASE_MS', 2_000),
   retryBackoffMaxMs: readNumberEnv('JOB_WORKER_RETRY_MAX_MS', 60_000),
@@ -233,6 +251,12 @@ export async function getWorkerAutonomyHealthReport(
   if (queueSummary && queueSummary.pending >= settings.queueDepthDeferralThreshold) {
     alerts.push(`Queue pressure is elevated (pending=${queueSummary.pending}).`);
   }
+  for (const worker of workers) {
+    const watchdog = readWatchdogState(worker);
+    if (watchdog?.triggered && watchdog.reason) {
+      alerts.push(`Worker ${worker.workerId} watchdog triggered: ${watchdog.reason}`);
+    }
+  }
 
   const overallStatus = deriveOverallHealthStatus(queueSummary, workers, alerts);
 
@@ -247,6 +271,7 @@ export async function getWorkerAutonomyHealthReport(
       leaseMs: settings.leaseMs,
       inspectorIntervalMs: settings.inspectorIntervalMs,
       staleAfterMs: settings.staleAfterMs,
+      watchdogIdleMs: settings.watchdogIdleMs,
       defaultMaxRetries: settings.defaultMaxRetries,
       maxJobsPerHour: settings.maxJobsPerHour,
       maxAiCallsPerHour: settings.maxAiCallsPerHour,
@@ -274,6 +299,10 @@ export class WorkerAutonomyService {
       lastError: null,
       lastHeartbeatAt: null,
       lastInspectorRunAt: null,
+      lastActivityAt: this.startedAt,
+      lastProcessedJobAt: null,
+      watchdogTriggeredAt: null,
+      watchdogReason: null,
       processedJobs: 0,
       scheduledRetries: 0,
       terminalFailures: 0,
@@ -370,6 +399,15 @@ export class WorkerAutonomyService {
     );
 
     const alerts = buildHealthAlerts(queueSummary, stats, notes);
+    const watchdogState = this.buildWatchdogState(queueSummary);
+    if (watchdogState.triggered && watchdogState.reason) {
+      alerts.push(`Worker watchdog triggered: ${watchdogState.reason}`);
+      this.state.watchdogTriggeredAt = new Date().toISOString();
+      this.state.watchdogReason = watchdogState.reason;
+    } else {
+      this.state.watchdogTriggeredAt = null;
+      this.state.watchdogReason = null;
+    }
     if (recovered.recoveredJobs.length > 0) {
       alerts.push(`Recovered ${recovered.recoveredJobs.length} stale job(s).`);
     }
@@ -382,7 +420,8 @@ export class WorkerAutonomyService {
       queueSummary,
       stats,
       healthStatus,
-      alerts
+      alerts,
+      watchdogState
     });
     await this.maybeSendFailureWebhook(healthStatus, alerts, queueSummary, stats, reason);
 
@@ -460,6 +499,7 @@ export class WorkerAutonomyService {
     this.state.currentJobId = job.id;
     this.state.lastError = null;
     this.state.lastHeartbeatAt = new Date().toISOString();
+    this.state.lastActivityAt = this.state.lastHeartbeatAt;
     await this.persistSnapshot({
       healthStatus: 'healthy',
       alerts: []
@@ -475,6 +515,7 @@ export class WorkerAutonomyService {
   async recordHeartbeat(jobId: string): Promise<JobData | null> {
     const updatedJob = await recordJobHeartbeat(jobId, this.getClaimOptions());
     this.state.lastHeartbeatAt = new Date().toISOString();
+    this.state.lastActivityAt = this.state.lastHeartbeatAt;
     await this.persistSnapshot({
       healthStatus: 'healthy',
       alerts: []
@@ -489,8 +530,11 @@ export class WorkerAutonomyService {
    * Edge case behavior: preserves prior degraded state only when a budget pause is still active.
    */
   async markJobCompleted(_jobId: string): Promise<void> {
+    const completedAt = new Date().toISOString();
     this.state.currentJobId = null;
     this.state.lastError = null;
+    this.state.lastActivityAt = completedAt;
+    this.state.lastProcessedJobAt = completedAt;
     this.state.processedJobs += 1;
     await this.persistSnapshot({
       healthStatus: this.state.lastBudgetPauseReason ? 'degraded' : 'healthy',
@@ -520,14 +564,21 @@ export class WorkerAutonomyService {
         this.settings.retryBackoffBaseMs,
         this.settings.retryBackoffMaxMs
       );
+      const failedAt = new Date().toISOString();
       this.state.currentJobId = null;
       this.state.lastError = errorMessage;
+      this.state.lastActivityAt = failedAt;
+      this.state.lastProcessedJobAt = failedAt;
       this.state.scheduledRetries += 1;
       await scheduleJobRetry(job.id, {
         workerId: this.settings.workerId,
         delayMs,
         errorMessage,
         autonomyState: {
+          lastFailure: buildFailureSnapshot(errorMessage, {
+            retryable: true,
+            retryExhausted: false
+          }),
           lastRetryScheduledAt: new Date().toISOString(),
           lastRetryDelayMs: delayMs,
           retryReason: errorMessage
@@ -545,8 +596,15 @@ export class WorkerAutonomyService {
 
     this.state.currentJobId = null;
     this.state.lastError = errorMessage;
+    this.state.lastActivityAt = new Date().toISOString();
+    this.state.lastProcessedJobAt = this.state.lastActivityAt;
     this.state.terminalFailures += 1;
-    await updateJob(job.id, 'failed', output, errorMessage);
+    await updateJob(job.id, 'failed', output, errorMessage, {
+      lastFailure: buildFailureSnapshot(errorMessage, {
+        retryable,
+        retryExhausted: retryable && retryCount >= maxRetries
+      })
+    });
     await this.persistSnapshot({
       healthStatus: this.state.terminalFailures >= this.settings.failureWebhookThreshold ? 'unhealthy' : 'degraded',
       alerts: [`Job ${job.id} failed: ${errorMessage}`]
@@ -588,6 +646,11 @@ export class WorkerAutonomyService {
     stats: JobExecutionStats,
     alerts: string[]
   ): WorkerAutonomyHealthStatus {
+    const watchdogState = this.buildWatchdogState(queueSummary);
+    if (watchdogState.triggered) {
+      return 'unhealthy';
+    }
+
     if (queueSummary?.stalledRunning || stats.failed >= this.settings.failureWebhookThreshold) {
       return 'unhealthy';
     }
@@ -604,6 +667,7 @@ export class WorkerAutonomyService {
   }
 
   private async persistSnapshot(context: WorkerSnapshotContext): Promise<void> {
+    const watchdogState = context.watchdogState ?? this.buildWatchdogState(context.queueSummary ?? null);
     const snapshotRecord: WorkerRuntimeSnapshotRecord = {
       workerId: this.settings.workerId,
       workerType: this.settings.workerType,
@@ -623,6 +687,9 @@ export class WorkerAutonomyService {
         recoveredJobs: this.state.recoveredJobs,
         maxObservedQueueDepth: this.state.maxObservedQueueDepth,
         lastBudgetPauseReason: this.state.lastBudgetPauseReason,
+        lastActivityAt: this.state.lastActivityAt,
+        lastProcessedJobAt: this.state.lastProcessedJobAt,
+        watchdog: watchdogState,
         statsWorkerId: this.getStatsWorkerId(),
         alerts: context.alerts
       }
@@ -634,6 +701,34 @@ export class WorkerAutonomyService {
       //audit Assumption: snapshot persistence is operationally important but must not crash the worker loop; failure risk: observability outage halts queue processing; expected invariant: worker continues after logging persistence failures; handling strategy: log and continue.
       console.warn('[Worker Autonomy] Failed to persist runtime snapshot:', resolveErrorMessage(error));
     }
+  }
+
+  private buildWatchdogState(queueSummary: JobQueueSummary | null): WorkerWatchdogState {
+    const lastActivityAt = this.state.lastActivityAt;
+    const inactivityMs =
+      lastActivityAt && Number.isFinite(Date.parse(lastActivityAt))
+        ? Math.max(0, Date.now() - Date.parse(lastActivityAt))
+        : null;
+    const queueHasPendingWork =
+      (queueSummary?.pending ?? 0) > 0 || (queueSummary?.stalledRunning ?? 0) > 0;
+    const triggered =
+      queueHasPendingWork &&
+      this.state.currentJobId === null &&
+      inactivityMs !== null &&
+      inactivityMs >= this.settings.watchdogIdleMs;
+    const reason = triggered
+      ? `No worker activity for ${inactivityMs}ms while queue work remained pending.`
+      : null;
+
+    return {
+      triggered,
+      reason,
+      inactivityMs,
+      lastActivityAt,
+      lastProcessedJobAt: this.state.lastProcessedJobAt,
+      idleThresholdMs: this.settings.watchdogIdleMs,
+      restartRecommended: triggered
+    };
   }
 
   private async maybeSendFailureWebhook(
@@ -772,6 +867,9 @@ export function classifyWorkerExecutionError(error: unknown): {
     'temporary',
     'network',
     'openai',
+    'incorrect api key',
+    'invalid api key',
+    'authentication',
     'overloaded'
   ];
   const terminalPatterns = [
@@ -797,8 +895,91 @@ export function classifyWorkerExecutionError(error: unknown): {
   };
 }
 
+function classifyWorkerFailureCategory(errorMessage: string):
+  | 'authentication'
+  | 'network'
+  | 'provider'
+  | 'rate_limited'
+  | 'timeout'
+  | 'validation'
+  | 'unknown' {
+  const normalizedMessage = errorMessage.toLowerCase();
+
+  if (
+    normalizedMessage.includes('incorrect api key') ||
+    normalizedMessage.includes('invalid api key') ||
+    normalizedMessage.includes('authentication')
+  ) {
+    return 'authentication';
+  }
+
+  if (
+    normalizedMessage.includes('timeout') ||
+    normalizedMessage.includes('timed out') ||
+    normalizedMessage.includes('abort') ||
+    normalizedMessage.includes('aborted')
+  ) {
+    return 'timeout';
+  }
+
+  if (
+    normalizedMessage.includes('rate limit') ||
+    normalizedMessage.includes('quota') ||
+    normalizedMessage.includes('429')
+  ) {
+    return 'rate_limited';
+  }
+
+  if (
+    normalizedMessage.includes('network') ||
+    normalizedMessage.includes('socket') ||
+    normalizedMessage.includes('econn') ||
+    normalizedMessage.includes('fetch failed')
+  ) {
+    return 'network';
+  }
+
+  if (
+    normalizedMessage.includes('invalid job.input') ||
+    normalizedMessage.includes('unsupported job_type') ||
+    normalizedMessage.includes('schema') ||
+    normalizedMessage.includes('validation')
+  ) {
+    return 'validation';
+  }
+
+  if (
+    normalizedMessage.includes('openai') ||
+    normalizedMessage.includes('provider') ||
+    normalizedMessage.includes('500') ||
+    normalizedMessage.includes('502') ||
+    normalizedMessage.includes('503') ||
+    normalizedMessage.includes('504')
+  ) {
+    return 'provider';
+  }
+
+  return 'unknown';
+}
+
 function calculateRetryDelayMs(attempt: number, baseMs: number, maxMs: number): number {
   return Math.min(maxMs, baseMs * Math.max(1, 2 ** Math.max(0, attempt - 1)));
+}
+
+function buildFailureSnapshot(
+  errorMessage: string,
+  options: {
+    retryable: boolean;
+    retryExhausted: boolean;
+  }
+): Record<string, unknown> {
+  return {
+    at: new Date().toISOString(),
+    reason: errorMessage,
+    category: classifyWorkerFailureCategory(errorMessage),
+    retryable: options.retryable,
+    retryExhausted: options.retryExhausted
+  };
 }
 
 function determineJobPriority(jobType: string, input: unknown): number {
@@ -852,8 +1033,36 @@ function buildHealthAlerts(
   if (stats.failed > 0) {
     alerts.push(`Observed ${stats.failed} failed job(s) in the last hour.`);
   }
+  if ((queueSummary?.failureBreakdown?.retryExhausted ?? 0) > 0) {
+    alerts.push(
+      `Retry exhaustion is elevated (${queueSummary?.failureBreakdown?.retryExhausted ?? 0} terminal failure(s)).`
+    );
+  }
 
   return alerts;
+}
+
+function readWatchdogState(worker: WorkerRuntimeSnapshotRecord): WorkerWatchdogState | null {
+  const snapshot = worker.snapshot;
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) {
+    return null;
+  }
+
+  const watchdog = (snapshot as Record<string, unknown>).watchdog;
+  if (!watchdog || typeof watchdog !== 'object' || Array.isArray(watchdog)) {
+    return null;
+  }
+
+  const record = watchdog as Record<string, unknown>;
+  return {
+    triggered: Boolean(record.triggered),
+    reason: typeof record.reason === 'string' ? record.reason : null,
+    inactivityMs: typeof record.inactivityMs === 'number' ? record.inactivityMs : null,
+    lastActivityAt: typeof record.lastActivityAt === 'string' ? record.lastActivityAt : null,
+    lastProcessedJobAt: typeof record.lastProcessedJobAt === 'string' ? record.lastProcessedJobAt : null,
+    idleThresholdMs: typeof record.idleThresholdMs === 'number' ? record.idleThresholdMs : 0,
+    restartRecommended: Boolean(record.restartRecommended)
+  };
 }
 
 function deriveOverallHealthStatus(
@@ -865,7 +1074,10 @@ function deriveOverallHealthStatus(
     return queueSummary && (queueSummary.running > 0 || queueSummary.pending > 0) ? 'degraded' : 'offline';
   }
 
-  if (workers.some(worker => worker.healthStatus === 'unhealthy') || queueSummary?.stalledRunning) {
+  if (
+    workers.some(worker => worker.healthStatus === 'unhealthy' || readWatchdogState(worker)?.triggered) ||
+    queueSummary?.stalledRunning
+  ) {
     return 'unhealthy';
   }
 

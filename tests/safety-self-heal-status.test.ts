@@ -2,6 +2,8 @@ import express from 'express';
 import request from 'supertest';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
+const buildSafetySelfHealSnapshotMock = jest.fn();
+
 jest.unstable_mockModule('@services/selfImprove/selfHealingLoop.js', () => ({
   getSelfHealingLoopStatus: () => ({
     active: true,
@@ -281,6 +283,10 @@ jest.unstable_mockModule('@services/selfImprove/predictiveHealingService.js', ()
   })
 }));
 
+jest.unstable_mockModule('@services/selfHealRuntimeInspectionService.js', () => ({
+  buildSafetySelfHealSnapshot: buildSafetySelfHealSnapshotMock
+}));
+
 const safetyRouter = (await import('../src/routes/safety.js')).default;
 
 function createApp() {
@@ -293,6 +299,54 @@ function createApp() {
 describe('/status/safety/self-heal', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    buildSafetySelfHealSnapshotMock.mockReturnValue({
+      status: 'ok',
+      timestamp: '2026-03-24T00:00:30.000Z',
+      active: true,
+      enabled: true,
+      isHealing: true,
+      actionTaken: 'activateTrinityMitigation:reasoning:enable_degraded_mode',
+      healedComponent: 'trinity.reasoning',
+      loopRunning: true,
+      lastDiagnosis: 'pipeline timeout cluster detected',
+      lastAction: 'activateTrinityMitigation:reasoning:enable_degraded_mode',
+      lastHealRun: '2026-03-24T00:00:05.000Z',
+      systemState: {
+        errorRate: 0.2,
+        latency: 3100,
+        operationalRequests: 24
+      },
+      activeMitigation: 'reasoning:enable_degraded_mode',
+      degradedModeReason: 'arcanos_core_pipeline_timeout_static_fallback',
+      recentTimeoutCounts: {
+        total: 4,
+        coreRoute: 3
+      },
+      controlLoop: {
+        incidentActive: true,
+        lastAction: 'restart_service'
+      },
+      lastVerificationResult: {
+        outcome: 'improved'
+      },
+      loop: {
+        loopRunning: true,
+        lastDiagnosis: 'pipeline timeout cluster detected',
+        lastAction: 'activateTrinityMitigation:reasoning:enable_degraded_mode',
+        activeMitigation: 'reasoning:enable_degraded_mode',
+        degradedModeReason: 'arcanos_core_pipeline_timeout_static_fallback',
+        recentTimeoutCounts: {
+          total: 4,
+          coreRoute: 3
+        },
+        lastVerificationResult: {
+          outcome: 'improved'
+        }
+      },
+      trinity: {
+        enabled: true
+      }
+    });
   });
 
   it('returns the bounded self-healing loop status fields', async () => {

@@ -4,7 +4,12 @@
 
 import type { Application } from 'express';
 import { getStatus as getDatabaseStatus } from '@core/db/client.js';
-import { getLatestJob, getJobQueueSummary } from '@core/db/repositories/jobRepository.js';
+import {
+  getLatestJob,
+  getJobQueueSummary,
+  type JobFailureBreakdown,
+  type JobFailureReasonSummary
+} from '@core/db/repositories/jobRepository.js';
 import { getSessionStorageMetrics } from '@core/db/repositories/sessionRepository.js';
 import { getCanonicalPublicRouteTable } from './runtimeRouteTableService.js';
 
@@ -82,6 +87,14 @@ export async function getQueueDiagnostics(): Promise<{
   status: DiagnosticStatus;
   workerRunning: boolean;
   queueDepth: number;
+  failureRate: number;
+  historicalFailureRate: number;
+  failureRateWindowMs: number;
+  windowCompletedJobs: number;
+  windowFailedJobs: number;
+  windowTerminalJobs: number;
+  failureBreakdown: JobFailureBreakdown;
+  recentFailureReasons: JobFailureReasonSummary[];
   lastJobId: string | null;
   lastJobStatus: string | null;
   lastJobFinishedAt: string | null;
@@ -94,15 +107,52 @@ export async function getQueueDiagnostics(): Promise<{
 
   const workerRunning = Boolean(queueSummary);
   const queueDepth = queueSummary ? queueSummary.pending + queueSummary.running + queueSummary.delayed : 0;
+  const totalTerminalJobs = (queueSummary?.completed ?? 0) + (queueSummary?.failed ?? 0);
+  const windowCompletedJobs = queueSummary?.recentCompleted ?? 0;
+  const windowFailedJobs = queueSummary?.recentFailed ?? 0;
+  const windowTerminalJobs = queueSummary?.recentTotalTerminal ?? (windowCompletedJobs + windowFailedJobs);
+  const failureRateWindowMs = queueSummary?.recentTerminalWindowMs ?? 0;
+  const failureRate =
+    windowTerminalJobs > 0
+      ? Number((windowFailedJobs / windowTerminalJobs).toFixed(4))
+      : 0;
+  const historicalFailureRate =
+    totalTerminalJobs > 0
+      ? Number(((queueSummary?.failed ?? 0) / totalTerminalJobs).toFixed(4))
+      : 0;
   const finishedAt =
     latestJob && typeof latestJob.completed_at !== 'undefined' && latestJob.completed_at !== null
       ? new Date(String(latestJob.completed_at)).toISOString()
       : null;
+  const queueHealthy =
+    workerRunning &&
+    (queueSummary?.stalledRunning ?? 0) === 0 &&
+    failureRate < 0.05;
 
   return {
-    status: resolveMachineStatus([workerRunning]),
+    status: resolveMachineStatus([queueHealthy, workerRunning]),
     workerRunning,
     queueDepth,
+    failureRate,
+    historicalFailureRate,
+    failureRateWindowMs,
+    windowCompletedJobs,
+    windowFailedJobs,
+    windowTerminalJobs,
+    failureBreakdown: queueSummary?.failureBreakdown ?? {
+      retryable: 0,
+      permanent: 0,
+      retryScheduled: 0,
+      retryExhausted: 0,
+      authentication: 0,
+      network: 0,
+      provider: 0,
+      rateLimited: 0,
+      timeout: 0,
+      validation: 0,
+      unknown: 0
+    },
+    recentFailureReasons: queueSummary?.recentFailureReasons ?? [],
     lastJobId: latestJob?.id ?? null,
     lastJobStatus: latestJob?.status ?? null,
     lastJobFinishedAt: finishedAt,

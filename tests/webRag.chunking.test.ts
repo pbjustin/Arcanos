@@ -4,6 +4,7 @@ const createEmbeddingMock = jest.fn();
 const requireOpenAIClientOrAdapterMock = jest.fn();
 const saveRagDocMock = jest.fn();
 const loadAllRagDocsMock = jest.fn();
+const loadRagDocsByIdsMock = jest.fn();
 const initializeDatabaseMock = jest.fn();
 const getStatusMock = jest.fn();
 const fetchAndCleanMock = jest.fn();
@@ -37,6 +38,9 @@ beforeEach(async () => {
 
   loadAllRagDocsMock.mockReset();
   loadAllRagDocsMock.mockResolvedValue([]);
+
+  loadRagDocsByIdsMock.mockReset();
+  loadRagDocsByIdsMock.mockResolvedValue([]);
 
   initializeDatabaseMock.mockReset();
   initializeDatabaseMock.mockResolvedValue(true);
@@ -81,6 +85,7 @@ beforeEach(async () => {
   jest.unstable_mockModule('@core/db/index.js', () => ({
     saveRagDoc: saveRagDocMock,
     loadAllRagDocs: loadAllRagDocsMock,
+    loadRagDocsByIds: loadRagDocsByIdsMock,
     initializeDatabaseWithSchema: initializeDatabaseMock,
     getStatus: getStatusMock,
   }));

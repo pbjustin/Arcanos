@@ -5,14 +5,33 @@ const mockGetModuleMetadata = jest.fn();
 const mockDispatchModuleAction = jest.fn();
 
 jest.unstable_mockModule('@platform/observability/appMetrics.js', () => ({
-  recordDependencyCall: jest.fn(),
+  getMetricsText: jest.fn(),
+  metricsRegistry: {},
+  recordAiBudgetExceeded: jest.fn(),
+  recordAiOperation: jest.fn(),
+  recordDagRunRequest: jest.fn(),
+  recordDagRunStatus: jest.fn(),
   recordDagTraceTimeout: jest.fn(),
+  recordDependencyCall: jest.fn(),
   recordDispatcherFallback: jest.fn(),
   recordDispatcherMisroute: jest.fn(),
   recordDispatcherRoute: jest.fn(),
+  recordHttpRequestCompletion: jest.fn(),
+  recordHttpRequestEnd: jest.fn(),
+  recordHttpRequestStart: jest.fn(),
   recordMcpAutoInvoke: jest.fn(),
   recordMemoryDispatchIgnored: jest.fn(),
   recordUnknownGpt: jest.fn(),
+  recordWorkerFailureTotal: jest.fn(),
+  recordWorkerJobDuration: jest.fn(),
+  recordWorkerJobTotal: jest.fn(),
+  recordWorkerQueueDepth: jest.fn(),
+  recordWorkerQueueLatency: jest.fn(),
+  recordWorkerRetryTotal: jest.fn(),
+  resetAppMetricsForTests: jest.fn(),
+  resolveMetricRouteLabel: jest.fn(),
+  shouldSkipHttpMetrics: jest.fn(() => false),
+  writeMetricsResponse: jest.fn(),
 }));
 
 jest.unstable_mockModule('@services/moduleConversationPersistence.js', () => ({

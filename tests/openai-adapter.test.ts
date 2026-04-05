@@ -24,6 +24,14 @@ beforeEach(async () => {
     embeddings: { create: embeddingsCreateMock },
     images: { generate: imagesGenerateMock },
     audio: { transcriptions: { create: transcriptionsCreateMock } },
+    models: { retrieve: jest.fn() },
+    beta: {
+      assistants: { list: jest.fn() },
+      threads: {
+        create: jest.fn(),
+        runs: { create: jest.fn() },
+      },
+    },
   }));
 
   jest.unstable_mockModule('openai', () => ({

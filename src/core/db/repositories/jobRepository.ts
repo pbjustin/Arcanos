@@ -10,6 +10,37 @@ import { query } from '@core/db/query.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { safeJSONStringify } from '@shared/jsonHelpers.js';
 
+export type JobFailureCategory =
+  | 'authentication'
+  | 'network'
+  | 'provider'
+  | 'rate_limited'
+  | 'timeout'
+  | 'validation'
+  | 'unknown';
+
+export interface JobFailureBreakdown {
+  retryable: number;
+  permanent: number;
+  retryScheduled: number;
+  retryExhausted: number;
+  authentication: number;
+  network: number;
+  provider: number;
+  rateLimited: number;
+  timeout: number;
+  validation: number;
+  unknown: number;
+}
+
+export interface JobFailureReasonSummary {
+  reason: string;
+  category: JobFailureCategory;
+  retryable: boolean | null;
+  count: number;
+  lastSeenAt: string;
+}
+
 export interface JobQueueSummary {
   pending: number;
   running: number;
@@ -19,6 +50,12 @@ export interface JobQueueSummary {
   delayed: number;
   stalledRunning: number;
   oldestPendingJobAgeMs: number;
+  failureBreakdown: JobFailureBreakdown;
+  recentFailureReasons: JobFailureReasonSummary[];
+  recentTerminalWindowMs?: number;
+  recentCompleted?: number;
+  recentFailed?: number;
+  recentTotalTerminal?: number;
   lastUpdatedAt?: string;
 }
 
@@ -106,6 +143,87 @@ function normalizeAutonomyState(state?: Record<string, unknown>): Record<string,
   return state ?? {};
 }
 
+export const DEFAULT_QUEUE_DIAGNOSTICS_FAILURE_WINDOW_MS = 60 * 60 * 1000;
+
+export function resolveQueueDiagnosticsFailureWindowMs(
+  env: NodeJS.ProcessEnv = process.env
+): number {
+  const rawValue = env.QUEUE_DIAGNOSTICS_FAILURE_WINDOW_MS;
+  const parsedValue = rawValue ? Number(rawValue) : Number.NaN;
+
+  if (!Number.isFinite(parsedValue) || parsedValue <= 0) {
+    return DEFAULT_QUEUE_DIAGNOSTICS_FAILURE_WINDOW_MS;
+  }
+
+  return Math.min(7 * 24 * 60 * 60 * 1000, Math.max(60 * 1000, Math.trunc(parsedValue)));
+}
+
+function buildEmptyFailureBreakdown(): JobFailureBreakdown {
+  return {
+    retryable: 0,
+    permanent: 0,
+    retryScheduled: 0,
+    retryExhausted: 0,
+    authentication: 0,
+    network: 0,
+    provider: 0,
+    rateLimited: 0,
+    timeout: 0,
+    validation: 0,
+    unknown: 0
+  };
+}
+
+const VALID_FAILURE_CATEGORIES: readonly JobFailureCategory[] = [
+  'authentication',
+  'network',
+  'provider',
+  'rate_limited',
+  'timeout',
+  'validation',
+  'unknown'
+] as const;
+
+function normalizeFailureCategory(value: unknown): JobFailureCategory {
+  if (typeof value === 'string' && VALID_FAILURE_CATEGORIES.includes(value as JobFailureCategory)) {
+    return value as JobFailureCategory;
+  }
+
+  return 'unknown';
+}
+
+function normalizeRecentFailureReasons(value: unknown): JobFailureReasonSummary[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      return [];
+    }
+
+    const record = entry as Record<string, unknown>;
+    const reason = typeof record.reason === 'string' && record.reason.trim().length > 0
+      ? record.reason.trim()
+      : 'unknown failure';
+    const count = Number(record.count ?? 0);
+    const lastSeenAt = record.lastSeenAt instanceof Date
+      ? record.lastSeenAt.toISOString()
+      : typeof record.lastSeenAt === 'string' && record.lastSeenAt.trim().length > 0
+        ? new Date(record.lastSeenAt).toISOString()
+        : new Date(0).toISOString();
+    const retryable = typeof record.retryable === 'boolean' ? record.retryable : null;
+
+    return [{
+      reason,
+      category: normalizeFailureCategory(record.category),
+      retryable,
+      count: Number.isFinite(count) ? Math.max(0, Math.trunc(count)) : 0,
+      lastSeenAt
+    }];
+  });
+}
+
 /**
  * Create a new queue job.
  * Purpose: persist queue work with scheduling, retry, and autonomy metadata in one write.
@@ -186,7 +304,8 @@ export async function updateJob(
   jobId: string,
   status: string,
   output: unknown = null,
-  errorMessage: string | null = null
+  errorMessage: string | null = null,
+  autonomyState?: Record<string, unknown>
 ): Promise<JobData> {
   assertDatabaseReady();
 
@@ -214,8 +333,9 @@ export async function updateJob(
        lease_expires_at = CASE
          WHEN $5 THEN lease_expires_at
          ELSE NULL
-       END
-     WHERE id = $6
+       END,
+       autonomy_state = COALESCE(autonomy_state, '{}'::jsonb) || $6::jsonb
+     WHERE id = $7
      RETURNING *`,
     [
       status,
@@ -223,6 +343,10 @@ export async function updateJob(
       errorMessage,
       terminalStatus,
       runningStatus,
+      normalizeJsonbInput(
+        normalizeAutonomyState(autonomyState),
+        'jobRepository.updateJob.autonomyState'
+      ),
       jobId
     ]
   );
@@ -352,7 +476,7 @@ export async function scheduleJobRetry(
        last_heartbeat_at = NULL,
        lease_expires_at = NULL,
        last_worker_id = COALESCE($3, last_worker_id),
-       autonomy_state = COALESCE($4::jsonb, autonomy_state)
+       autonomy_state = COALESCE(autonomy_state, '{}'::jsonb) || $4::jsonb
      WHERE id = $5
      RETURNING *`,
     [
@@ -510,34 +634,173 @@ export async function getJobQueueSummary(): Promise<JobQueueSummary | null> {
   }
 
   try {
+    const recentTerminalWindowMs = resolveQueueDiagnosticsFailureWindowMs();
     const result = await query(
-      `SELECT
-         COUNT(*) FILTER (WHERE status = 'pending')::int AS pending_count,
-         COUNT(*) FILTER (WHERE status = 'running')::int AS running_count,
-         COUNT(*) FILTER (WHERE status = 'completed')::int AS completed_count,
-         COUNT(*) FILTER (WHERE status = 'failed')::int AS failed_count,
-         COUNT(*)::int AS total_count,
-         COUNT(*) FILTER (WHERE status = 'pending' AND next_run_at > NOW())::int AS delayed_count,
-         COUNT(*) FILTER (
-           WHERE status = 'running'
-             AND (
-               (lease_expires_at IS NOT NULL AND lease_expires_at < NOW())
-               OR (last_heartbeat_at IS NOT NULL AND last_heartbeat_at < NOW() - INTERVAL '60 seconds')
-             )
-         )::int AS stalled_running_count,
+      `WITH failure_rows AS (
+         SELECT
+           status,
+           retry_count,
+           max_retries,
+           updated_at,
+           COALESCE(autonomy_state->'lastFailure'->>'reason', error_message, 'unknown failure') AS reason,
+           CASE
+             WHEN COALESCE(autonomy_state->'lastFailure'->>'category', '') <> ''
+               THEN autonomy_state->'lastFailure'->>'category'
+             WHEN LOWER(COALESCE(error_message, '')) LIKE '%incorrect api key%'
+               OR LOWER(COALESCE(error_message, '')) LIKE '%invalid api key%'
+               OR LOWER(COALESCE(error_message, '')) LIKE '%authentication%'
+               THEN 'authentication'
+             WHEN LOWER(COALESCE(error_message, '')) LIKE '%timeout%'
+               OR LOWER(COALESCE(error_message, '')) LIKE '%timed out%'
+               OR LOWER(COALESCE(error_message, '')) LIKE '%aborted%'
+               THEN 'timeout'
+             WHEN LOWER(COALESCE(error_message, '')) LIKE '%rate limit%'
+               OR LOWER(COALESCE(error_message, '')) LIKE '%quota%'
+               OR LOWER(COALESCE(error_message, '')) LIKE '%429%'
+               THEN 'rate_limited'
+             WHEN LOWER(COALESCE(error_message, '')) LIKE '%network%'
+               OR LOWER(COALESCE(error_message, '')) LIKE '%socket%'
+               OR LOWER(COALESCE(error_message, '')) LIKE '%econn%'
+               OR LOWER(COALESCE(error_message, '')) LIKE '%fetch failed%'
+               THEN 'network'
+             WHEN LOWER(COALESCE(error_message, '')) LIKE '%validation%'
+               OR LOWER(COALESCE(error_message, '')) LIKE '%schema%'
+               OR LOWER(COALESCE(error_message, '')) LIKE '%unsupported job_type%'
+               OR LOWER(COALESCE(error_message, '')) LIKE '%invalid job.input%'
+               THEN 'validation'
+             WHEN LOWER(COALESCE(error_message, '')) LIKE '%openai%'
+               OR LOWER(COALESCE(error_message, '')) LIKE '%provider%'
+               OR LOWER(COALESCE(error_message, '')) LIKE '%500%'
+               OR LOWER(COALESCE(error_message, '')) LIKE '%502%'
+               OR LOWER(COALESCE(error_message, '')) LIKE '%503%'
+               OR LOWER(COALESCE(error_message, '')) LIKE '%504%'
+               THEN 'provider'
+             ELSE 'unknown'
+           END AS category,
+           CASE
+             WHEN autonomy_state->'lastFailure'->>'retryable' IN ('true', 'false')
+               THEN (autonomy_state->'lastFailure'->>'retryable')::boolean
+             ELSE retry_count < max_retries
+           END AS retryable,
+           CASE
+             WHEN autonomy_state->'lastFailure'->>'retryExhausted' IN ('true', 'false')
+               THEN (autonomy_state->'lastFailure'->>'retryExhausted')::boolean
+             ELSE status = 'failed' AND retry_count >= max_retries
+           END AS retry_exhausted
+         FROM job_data
+         WHERE status = 'failed'
+       ),
+       summary AS (
+         SELECT
+           COUNT(*) FILTER (WHERE status = 'pending')::int AS pending_count,
+           COUNT(*) FILTER (WHERE status = 'running')::int AS running_count,
+           COUNT(*) FILTER (WHERE status = 'completed')::int AS completed_count,
+           COUNT(*) FILTER (WHERE status = 'failed')::int AS failed_count,
+           COUNT(*)::int AS total_count,
+           COUNT(*) FILTER (WHERE status = 'pending' AND next_run_at > NOW())::int AS delayed_count,
+           COUNT(*) FILTER (
+             WHERE status = 'running'
+               AND (
+                 (lease_expires_at IS NOT NULL AND lease_expires_at < NOW())
+                 OR (last_heartbeat_at IS NOT NULL AND last_heartbeat_at < NOW() - INTERVAL '60 seconds')
+               )
+           )::int AS stalled_running_count,
+           COALESCE(
+             MAX(
+               CASE
+                 WHEN status = 'pending' AND next_run_at <= NOW()
+                 THEN EXTRACT(EPOCH FROM (NOW() - created_at)) * 1000
+                 ELSE 0
+               END
+             ),
+             0
+           )::bigint AS oldest_pending_age_ms,
+           MAX(updated_at) AS last_updated_at,
+           COUNT(*) FILTER (
+             WHERE status = 'completed'
+               AND updated_at >= NOW() - ($1::bigint * INTERVAL '1 millisecond')
+           )::int AS recent_completed_count,
+           COUNT(*) FILTER (
+             WHERE status = 'failed'
+               AND updated_at >= NOW() - ($1::bigint * INTERVAL '1 millisecond')
+           )::int AS recent_failed_count,
+           COUNT(*) FILTER (
+             WHERE status IN ('completed', 'failed')
+               AND updated_at >= NOW() - ($1::bigint * INTERVAL '1 millisecond')
+           )::int AS recent_terminal_count,
+           COUNT(*) FILTER (WHERE status = 'pending' AND retry_count > 0)::int AS retry_scheduled_count
+         FROM job_data
+       ),
+       failure_breakdown AS (
+         SELECT
+           COUNT(*) FILTER (WHERE status = 'failed' AND retryable)::int AS retryable_count,
+           COUNT(*) FILTER (WHERE status = 'failed' AND NOT retryable)::int AS permanent_count,
+           COUNT(*) FILTER (WHERE status = 'failed' AND retry_exhausted)::int AS retry_exhausted_count,
+           COUNT(*) FILTER (WHERE status = 'failed' AND category = 'authentication')::int AS authentication_count,
+           COUNT(*) FILTER (WHERE status = 'failed' AND category = 'network')::int AS network_count,
+           COUNT(*) FILTER (WHERE status = 'failed' AND category = 'provider')::int AS provider_count,
+           COUNT(*) FILTER (WHERE status = 'failed' AND category = 'rate_limited')::int AS rate_limited_count,
+           COUNT(*) FILTER (WHERE status = 'failed' AND category = 'timeout')::int AS timeout_count,
+           COUNT(*) FILTER (WHERE status = 'failed' AND category = 'validation')::int AS validation_count,
+           COUNT(*) FILTER (WHERE status = 'failed' AND category = 'unknown')::int AS unknown_count
+         FROM failure_rows
+       ),
+       recent_failure_reasons AS (
+         SELECT
+           reason,
+           category,
+           retryable,
+           COUNT(*)::int AS count,
+           MAX(updated_at) AS last_seen_at
+         FROM failure_rows
+         WHERE status = 'failed'
+         GROUP BY reason, category, retryable
+         ORDER BY MAX(updated_at) DESC
+         LIMIT 5
+       )
+       SELECT
+         summary.pending_count,
+         summary.running_count,
+         summary.completed_count,
+         summary.failed_count,
+         summary.total_count,
+         summary.delayed_count,
+         summary.stalled_running_count,
+         summary.oldest_pending_age_ms,
+         summary.last_updated_at,
+         summary.recent_completed_count,
+         summary.recent_failed_count,
+         summary.recent_terminal_count,
+         summary.retry_scheduled_count,
+         failure_breakdown.retryable_count,
+         failure_breakdown.permanent_count,
+         failure_breakdown.retry_exhausted_count,
+         failure_breakdown.authentication_count,
+         failure_breakdown.network_count,
+         failure_breakdown.provider_count,
+         failure_breakdown.rate_limited_count,
+         failure_breakdown.timeout_count,
+         failure_breakdown.validation_count,
+         failure_breakdown.unknown_count,
          COALESCE(
-           MAX(
-             CASE
-               WHEN status = 'pending' AND next_run_at <= NOW()
-               THEN EXTRACT(EPOCH FROM (NOW() - created_at)) * 1000
-               ELSE 0
-             END
+           (
+             SELECT jsonb_agg(
+               jsonb_build_object(
+                 'reason', reason,
+                 'category', category,
+                 'retryable', retryable,
+                 'count', count,
+                 'lastSeenAt', last_seen_at
+               )
+               ORDER BY last_seen_at DESC
+             )
+             FROM recent_failure_reasons
            ),
-           0
-         )::bigint AS oldest_pending_age_ms,
-         MAX(updated_at) AS last_updated_at
-       FROM job_data`,
-      []
+           '[]'::jsonb
+         ) AS recent_failure_reasons
+       FROM summary
+       CROSS JOIN failure_breakdown`,
+      [recentTerminalWindowMs]
     );
 
     const summaryRow = result.rows[0] as {
@@ -549,6 +812,21 @@ export async function getJobQueueSummary(): Promise<JobQueueSummary | null> {
       delayed_count: number;
       stalled_running_count: number;
       oldest_pending_age_ms: number;
+      recent_completed_count: number;
+      recent_failed_count: number;
+      recent_terminal_count: number;
+      retry_scheduled_count: number;
+      retryable_count: number;
+      permanent_count: number;
+      retry_exhausted_count: number;
+      authentication_count: number;
+      network_count: number;
+      provider_count: number;
+      rate_limited_count: number;
+      timeout_count: number;
+      validation_count: number;
+      unknown_count: number;
+      recent_failure_reasons?: unknown;
       last_updated_at?: string | Date | null;
     } | undefined;
 
@@ -561,7 +839,13 @@ export async function getJobQueueSummary(): Promise<JobQueueSummary | null> {
         total: 0,
         delayed: 0,
         stalledRunning: 0,
-        oldestPendingJobAgeMs: 0
+        oldestPendingJobAgeMs: 0,
+        failureBreakdown: buildEmptyFailureBreakdown(),
+        recentFailureReasons: [],
+        recentTerminalWindowMs,
+        recentCompleted: 0,
+        recentFailed: 0,
+        recentTotalTerminal: 0
       };
     }
 
@@ -573,7 +857,25 @@ export async function getJobQueueSummary(): Promise<JobQueueSummary | null> {
       total: summaryRow.total_count,
       delayed: summaryRow.delayed_count,
       stalledRunning: summaryRow.stalled_running_count,
-      oldestPendingJobAgeMs: Number(summaryRow.oldest_pending_age_ms ?? 0)
+      oldestPendingJobAgeMs: Number(summaryRow.oldest_pending_age_ms ?? 0),
+      failureBreakdown: {
+        retryable: Number(summaryRow.retryable_count ?? 0),
+        permanent: Number(summaryRow.permanent_count ?? 0),
+        retryScheduled: Number(summaryRow.retry_scheduled_count ?? 0),
+        retryExhausted: Number(summaryRow.retry_exhausted_count ?? 0),
+        authentication: Number(summaryRow.authentication_count ?? 0),
+        network: Number(summaryRow.network_count ?? 0),
+        provider: Number(summaryRow.provider_count ?? 0),
+        rateLimited: Number(summaryRow.rate_limited_count ?? 0),
+        timeout: Number(summaryRow.timeout_count ?? 0),
+        validation: Number(summaryRow.validation_count ?? 0),
+        unknown: Number(summaryRow.unknown_count ?? 0)
+      },
+      recentFailureReasons: normalizeRecentFailureReasons(summaryRow.recent_failure_reasons),
+      recentTerminalWindowMs,
+      recentCompleted: Number(summaryRow.recent_completed_count ?? 0),
+      recentFailed: Number(summaryRow.recent_failed_count ?? 0),
+      recentTotalTerminal: Number(summaryRow.recent_terminal_count ?? 0)
     };
 
     if (summaryRow.last_updated_at) {

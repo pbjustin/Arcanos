@@ -7,6 +7,7 @@ const mockGetStatus = jest.fn();
 const mockInitializeDatabaseWithSchema = jest.fn();
 const mockSaveRagDoc = jest.fn();
 const mockLoadAllRagDocs = jest.fn();
+const mockLoadRagDocsByIds = jest.fn();
 const mockGetMemoryRecordByKey = jest.fn();
 const mockGetMemoryRecordByRecordId = jest.fn();
 const mockGetMemoryRecordByLegacyRowId = jest.fn();
@@ -22,7 +23,8 @@ jest.unstable_mockModule('@core/db/index.js', () => ({
   getMemoryRecordByLegacyRowId: mockGetMemoryRecordByLegacyRowId,
   initializeDatabaseWithSchema: mockInitializeDatabaseWithSchema,
   saveRagDoc: mockSaveRagDoc,
-  loadAllRagDocs: mockLoadAllRagDocs
+  loadAllRagDocs: mockLoadAllRagDocs,
+  loadRagDocsByIds: mockLoadRagDocsByIds
 }));
 
 const { default: apiMemoryRouter } = await import('../src/routes/api-memory.js');
@@ -48,6 +50,7 @@ describe('/api/memory/table', () => {
     mockInitializeDatabaseWithSchema.mockResolvedValue(true);
     mockSaveRagDoc.mockResolvedValue(undefined);
     mockLoadAllRagDocs.mockResolvedValue([]);
+    mockLoadRagDocsByIds.mockResolvedValue([]);
     mockGetMemoryRecordByKey.mockResolvedValue(null);
     mockGetMemoryRecordByRecordId.mockResolvedValue(null);
     mockGetMemoryRecordByLegacyRowId.mockResolvedValue(null);
