@@ -636,6 +636,12 @@ export async function runThroughBrain(
     getGPT5Model(),
     options.watchdogModelTimeoutMs
   );
+  const stageTimeoutOverrideMs =
+    typeof options.watchdogModelTimeoutMs === 'number' &&
+    Number.isFinite(options.watchdogModelTimeoutMs) &&
+    options.watchdogModelTimeoutMs > 0
+      ? Math.max(1, Math.min(Math.trunc(options.watchdogModelTimeoutMs), effectiveLimit))
+      : undefined;
   const checkWatchdog = () => {
     assertBudgetAvailable(runtimeBudget);
     watchdog.check();
@@ -714,7 +720,8 @@ export async function runThroughBrain(
             cognitiveDomain,
             runtimeBudget,
             requestId,
-            options.directAnswerModelOverride
+            options.directAnswerModelOverride,
+            stageTimeoutOverrideMs
           )
       });
       checkWatchdog();
@@ -887,7 +894,7 @@ export async function runThroughBrain(
       requestId,
       stage: 'model-validation',
       runtimeBudget,
-      operation: () => validateModel(client, runtimeBudget)
+      operation: () => validateModel(client, runtimeBudget, stageTimeoutOverrideMs)
     });
     logArcanosRouting('INTAKE', arcanosModel, `Tier: ${tier}, Input length: ${prompt.length}, Memory entries: ${memoryContext.relevantEntries.length}, AuditSafe: ${auditConfig.auditSafeMode}`);
     routingStages.push(`ARCANOS-INTAKE:${arcanosModel}`);
@@ -909,7 +916,8 @@ export async function runThroughBrain(
             outputControls,
             cognitiveDomain,
             internalDirective,
-            runtimeBudget
+            runtimeBudget,
+            stageTimeoutOverrideMs
           )
       });
     } catch (error) {
@@ -957,7 +965,8 @@ export async function runThroughBrain(
             capabilityFlags,
             outputControls,
             tier,
-            runtimeBudget
+            runtimeBudget,
+            stageTimeoutOverrideMs
           )
       });
     } catch (error) {
@@ -1143,7 +1152,8 @@ export async function runThroughBrain(
               reasoningHonesty,
               cognitiveDomain,
               internalDirective,
-              runtimeBudget
+              runtimeBudget,
+              stageTimeoutOverrideMs
             )
         });
       } catch (error) {

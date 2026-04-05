@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const chatCreateMock = jest.fn();
 const responsesCreateMock = jest.fn();
+const responsesParseMock = jest.fn();
 const embeddingsCreateMock = jest.fn();
 const imagesGenerateMock = jest.fn();
 const transcriptionsCreateMock = jest.fn();
@@ -13,6 +14,7 @@ beforeEach(async () => {
   jest.resetModules();
   chatCreateMock.mockReset();
   responsesCreateMock.mockReset();
+  responsesParseMock.mockReset();
   embeddingsCreateMock.mockReset();
   imagesGenerateMock.mockReset();
   transcriptionsCreateMock.mockReset();
@@ -20,7 +22,7 @@ beforeEach(async () => {
 
   openAIConstructorMock.mockImplementation(() => ({
     chat: { completions: { create: chatCreateMock } },
-    responses: { create: responsesCreateMock, parse: jest.fn() },
+    responses: { create: responsesCreateMock, parse: responsesParseMock },
     embeddings: { create: embeddingsCreateMock },
     images: { generate: imagesGenerateMock },
     audio: { transcriptions: { create: transcriptionsCreateMock } },
@@ -92,5 +94,23 @@ describe('openai adapter', () => {
     expect(imagesGenerateMock).toHaveBeenCalledTimes(1);
     expect(imagesGenerateMock.mock.calls[0][0]).toEqual(expect.objectContaining({ prompt: 'draw a lighthouse' }));
     expect(imagesGenerateMock.mock.calls[0][1]).toEqual({ headers });
+  });
+
+  it('preserves raw responses SDK helpers on the underlying client', async () => {
+    responsesParseMock.mockResolvedValue({ output_parsed: { ok: true } });
+
+    const adapter = createOpenAIAdapter({ apiKey: 'test-key' });
+    const client = adapter.getClient();
+
+    expect(client.responses.create).toBe(responsesCreateMock);
+    expect(client.responses.parse).toBe(responsesParseMock);
+
+    await adapter.responses.parse({ model: 'gpt-4.1-mini', input: 'hello' } as any);
+
+    expect(responsesParseMock).toHaveBeenCalledTimes(1);
+    expect(responsesParseMock).toHaveBeenCalledWith(
+      expect.objectContaining({ model: 'gpt-4.1-mini' }),
+      undefined
+    );
   });
 });

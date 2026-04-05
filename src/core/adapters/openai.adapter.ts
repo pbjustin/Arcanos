@@ -439,39 +439,8 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): OpenAIAdapter 
       };
     };
   };
-  mutableClient.responses.create = (async (
-    params: ResponseCreateParamsNonStreaming,
-    options?: OpenAIResponsesRequestOptions
-  ) => {
-    const normalizedParams = normalizeResponsesCreateParams(params);
-    const requestedModel =
-      typeof normalizedParams.model === 'string' && normalizedParams.model.trim().length > 0
-        ? normalizedParams.model.trim()
-        : null;
-
-    return instrumentOpenAIOperation({
-      operation: 'responses_create',
-      model: requestedModel,
-      callback: () => originalResponsesCreate(normalizedParams, options),
-      extractUsage: (result) => (result as { usage?: unknown } | null)?.usage,
-    });
-  }) as typeof originalResponsesCreate;
-  mutableClient.responses.parse = (async (
-    params: Record<string, unknown>,
-    options?: OpenAIResponsesRequestOptions
-  ) => {
-    const requestedModel =
-      typeof params.model === 'string' && params.model.trim().length > 0
-        ? params.model.trim()
-        : null;
-
-    return instrumentOpenAIOperation({
-      operation: 'responses_parse',
-      model: requestedModel,
-      callback: () => originalResponsesParse(params as never, options),
-      extractUsage: (result) => (result as { usage?: unknown } | null)?.usage,
-    });
-  }) as typeof originalResponsesParse;
+  // Preserve the SDK-native Responses methods on the raw client. `responses.parse()`
+  // internally depends on `responses.create()` returning the SDK APIPromise shape.
   //audit Assumption: some legacy call sites still use raw client.chat.completions.create; risk: bypassing adapter migration path; invariant: raw client non-stream chat is responses-backed; handling: patch client method at construction boundary.
   mutableClient.chat.completions.create = responsesBackedChatCreate as unknown as typeof originalChatCreate;
   mutableClient.embeddings.create = (async (params: EmbeddingCreateParams) => {
