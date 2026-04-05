@@ -1135,7 +1135,6 @@ function filterLegacyAggregateWorkerSnapshots(
 
   return workers.filter((worker) => !slotPrefixes.has(worker.workerId));
 }
-
 function deriveOverallHealthStatus(
   queueSummary: JobQueueSummary | null,
   workers: WorkerRuntimeSnapshotRecord[],
