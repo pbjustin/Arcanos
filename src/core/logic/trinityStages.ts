@@ -93,58 +93,83 @@ const validatedModelCache = new Map<string, number>();
 function resolveStageTimeoutMs(
   envName: string,
   fallbackMs: number,
-  runtimeBudget?: RuntimeBudget
+  runtimeBudget?: RuntimeBudget,
+  explicitTimeoutMs?: number
 ): number {
   const configuredTimeoutMs = Number.parseInt(process.env[envName] ?? '', 10);
   const normalizedConfiguredTimeoutMs =
     Number.isFinite(configuredTimeoutMs) && configuredTimeoutMs > 0
       ? Math.trunc(configuredTimeoutMs)
       : fallbackMs;
+  const preferredTimeoutMs =
+    typeof explicitTimeoutMs === 'number' && Number.isFinite(explicitTimeoutMs) && explicitTimeoutMs > 0
+      ? Math.trunc(explicitTimeoutMs)
+      : normalizedConfiguredTimeoutMs;
 
   if (!runtimeBudget) {
-    return normalizedConfiguredTimeoutMs;
+    return preferredTimeoutMs;
   }
 
-  return Math.max(1, Math.min(normalizedConfiguredTimeoutMs, getSafeRemainingMs(runtimeBudget)));
+  return Math.max(1, Math.min(preferredTimeoutMs, getSafeRemainingMs(runtimeBudget)));
 }
 
-function resolveDirectAnswerStageTimeoutMs(runtimeBudget?: RuntimeBudget): number {
+function resolveDirectAnswerStageTimeoutMs(
+  runtimeBudget?: RuntimeBudget,
+  explicitTimeoutMs?: number
+): number {
   return resolveStageTimeoutMs(
     'TRINITY_DIRECT_ANSWER_STAGE_TIMEOUT_MS',
     DEFAULT_TRINITY_DIRECT_ANSWER_STAGE_TIMEOUT_MS,
-    runtimeBudget
+    runtimeBudget,
+    explicitTimeoutMs
   );
 }
 
-function resolveModelValidationTimeoutMs(runtimeBudget?: RuntimeBudget): number {
+function resolveModelValidationTimeoutMs(
+  runtimeBudget?: RuntimeBudget,
+  explicitTimeoutMs?: number
+): number {
   return resolveStageTimeoutMs(
     'TRINITY_MODEL_VALIDATION_TIMEOUT_MS',
     DEFAULT_TRINITY_MODEL_VALIDATION_TIMEOUT_MS,
-    runtimeBudget
+    runtimeBudget,
+    explicitTimeoutMs
   );
 }
 
-function resolveIntakeStageTimeoutMs(runtimeBudget?: RuntimeBudget): number {
+function resolveIntakeStageTimeoutMs(
+  runtimeBudget?: RuntimeBudget,
+  explicitTimeoutMs?: number
+): number {
   return resolveStageTimeoutMs(
     'TRINITY_INTAKE_STAGE_TIMEOUT_MS',
     DEFAULT_TRINITY_INTAKE_STAGE_TIMEOUT_MS,
-    runtimeBudget
+    runtimeBudget,
+    explicitTimeoutMs
   );
 }
 
-function resolveReasoningStageTimeoutMs(runtimeBudget?: RuntimeBudget): number {
+function resolveReasoningStageTimeoutMs(
+  runtimeBudget?: RuntimeBudget,
+  explicitTimeoutMs?: number
+): number {
   return resolveStageTimeoutMs(
     'TRINITY_REASONING_STAGE_TIMEOUT_MS',
     DEFAULT_TRINITY_REASONING_STAGE_TIMEOUT_MS,
-    runtimeBudget
+    runtimeBudget,
+    explicitTimeoutMs
   );
 }
 
-function resolveFinalStageTimeoutMs(runtimeBudget?: RuntimeBudget): number {
+function resolveFinalStageTimeoutMs(
+  runtimeBudget?: RuntimeBudget,
+  explicitTimeoutMs?: number
+): number {
   return resolveStageTimeoutMs(
     'TRINITY_FINAL_STAGE_TIMEOUT_MS',
     DEFAULT_TRINITY_FINAL_STAGE_TIMEOUT_MS,
-    runtimeBudget
+    runtimeBudget,
+    explicitTimeoutMs
   );
 }
 
@@ -152,7 +177,11 @@ function resolveFinalStageTimeoutMs(runtimeBudget?: RuntimeBudget): number {
  * Validates the availability of the configured AI model.
  * Falls back to GPT-4.1-mini if the primary model is unavailable.
  */
-export async function validateModel(client: OpenAI, runtimeBudget?: RuntimeBudget): Promise<string> {
+export async function validateModel(
+  client: OpenAI,
+  runtimeBudget?: RuntimeBudget,
+  explicitTimeoutMs?: number
+): Promise<string> {
   if (runtimeBudget) assertBudgetAvailable(runtimeBudget);
 
   const defaultModel = getDefaultModel();
@@ -161,7 +190,7 @@ export async function validateModel(client: OpenAI, runtimeBudget?: RuntimeBudge
     return defaultModel;
   }
   try {
-    const timeoutMs = resolveModelValidationTimeoutMs(runtimeBudget);
+    const timeoutMs = resolveModelValidationTimeoutMs(runtimeBudget, explicitTimeoutMs);
     await runWithRequestAbortTimeout(
       {
         timeoutMs,
@@ -291,7 +320,8 @@ export async function runIntakeStage(
   outputControls: TrinityOutputControls,
   cognitiveDomain?: CognitiveDomain,
   systemPromptOverride?: string,
-  runtimeBudget?: RuntimeBudget
+  runtimeBudget?: RuntimeBudget,
+  explicitTimeoutMs?: number
 ): Promise<TrinityIntakeOutput> {
   if (runtimeBudget) assertBudgetAvailable(runtimeBudget);
 
@@ -315,7 +345,7 @@ export async function runIntakeStage(
       }
     ],
     temperature,
-    timeoutMs: resolveIntakeStageTimeoutMs(runtimeBudget),
+    timeoutMs: resolveIntakeStageTimeoutMs(runtimeBudget, explicitTimeoutMs),
     ...intakeTokenParams
   });
 
@@ -347,7 +377,8 @@ export async function runReasoningStage(
   capabilityFlags: TrinityCapabilityFlags,
   outputControls: TrinityOutputControls,
   tier?: Tier,
-  runtimeBudget?: RuntimeBudget
+  runtimeBudget?: RuntimeBudget,
+  explicitTimeoutMs?: number
 ): Promise<TrinityReasoningOutput> {
   //audit Assumption: reasoning stage requires a shared runtime budget; risk: unbounded model call if missing; invariant: one RuntimeBudget governs each job; handling: fail-fast.
   if (!runtimeBudget) {
@@ -373,7 +404,7 @@ export async function runReasoningStage(
     gpt5ModelUsed,
     reasoningPrompt,
     runtimeBudget,
-    resolveReasoningStageTimeoutMs(runtimeBudget),
+    resolveReasoningStageTimeoutMs(runtimeBudget, explicitTimeoutMs),
     { schemaVariant }
   );
   if (!structuredReasoning) {
@@ -437,7 +468,8 @@ export async function runFinalStage(
   reasoningHonesty: TrinityReasoningHonesty = createDefaultTrinityReasoningHonesty(),
   cognitiveDomain?: CognitiveDomain,
   systemPromptOverride?: string,
-  runtimeBudget?: RuntimeBudget
+  runtimeBudget?: RuntimeBudget,
+  explicitTimeoutMs?: number
 ): Promise<TrinityFinalOutput> {
   if (runtimeBudget) assertBudgetAvailable(runtimeBudget);
 
@@ -461,7 +493,7 @@ export async function runFinalStage(
     ),
     temperature,
     model: complexModel,
-    timeoutMs: resolveFinalStageTimeoutMs(runtimeBudget),
+    timeoutMs: resolveFinalStageTimeoutMs(runtimeBudget, explicitTimeoutMs),
     ...finalTokenParams
   });
   const finalText = finalResponse.choices[0]?.message?.content || '';
@@ -495,7 +527,8 @@ export async function runDirectAnswerStage(
   cognitiveDomain?: CognitiveDomain,
   runtimeBudget?: RuntimeBudget,
   requestId?: string,
-  directAnswerModelOverride?: string
+  directAnswerModelOverride?: string,
+  explicitTimeoutMs?: number
 ): Promise<TrinityFinalOutput> {
   if (runtimeBudget) assertBudgetAvailable(runtimeBudget);
 
@@ -510,7 +543,7 @@ export async function runDirectAnswerStage(
   const cappedTokenLimit = enforceTokenCap(directAnswerTokenLimit);
   const directAnswerTokenParams = getTokenParameter(directAnswerModel, cappedTokenLimit);
   const temperature = Math.min(resolveTemperature(cognitiveDomain), 0.2);
-  const stageTimeoutMs = resolveDirectAnswerStageTimeoutMs(runtimeBudget);
+  const stageTimeoutMs = resolveDirectAnswerStageTimeoutMs(runtimeBudget, explicitTimeoutMs);
 
   logger.info('trinity.direct_answer.execution_plan', {
     module: 'trinity',

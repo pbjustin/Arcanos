@@ -129,6 +129,8 @@ describe('openai adapter', () => {
 
     const adapter = createOpenAIAdapter({ apiKey: 'test-key' });
     const client = adapter.getClient() as any;
+    expect(client.responses.create).toBe(responsesCreateMock);
+    expect(client.responses.parse).toBe(responsesParseMock);
 
     const result = await client.responses.parse({ model: 'gpt-4.1-mini', input: 'hello' });
 

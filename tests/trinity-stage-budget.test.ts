@@ -111,6 +111,84 @@ describe('trinity stage budgets', () => {
     );
   });
 
+  it('allows worker-originated stages to override the route default timeout while staying budget-safe', async () => {
+    createSingleChatCompletionMock
+      .mockResolvedValueOnce({
+        choices: [{ message: { content: 'framed-request' } }],
+        activeModel: 'ft:test-default',
+        fallbackFlag: false,
+        usage: { total_tokens: 10 },
+        id: 'resp-intake',
+        created: 1
+      })
+      .mockResolvedValueOnce({
+        choices: [{ message: { content: 'final-answer' } }],
+        activeModel: 'ft:test-complex',
+        fallbackFlag: false,
+        usage: { total_tokens: 12 },
+        id: 'resp-final',
+        created: 2
+      });
+
+    const runtimeBudget = createRuntimeBudgetWithLimit(20_000, 0);
+
+    await runIntakeStage(
+      {} as never,
+      'ft:test-default',
+      'Prompt',
+      'Memory',
+      {
+        canBrowse: false,
+        canVerifyProvidedData: false,
+        canVerifyLiveData: false,
+        canConfirmExternalState: false,
+        canPersistData: false,
+        canCallBackend: false
+      },
+      { strictUserVisibleOutput: true },
+      undefined,
+      undefined,
+      runtimeBudget,
+      15_000
+    );
+
+    await runFinalStage(
+      {} as never,
+      'Memory',
+      'Prompt',
+      'Reasoning',
+      {
+        canBrowse: false,
+        canVerifyProvidedData: false,
+        canVerifyLiveData: false,
+        canConfirmExternalState: false,
+        canPersistData: false,
+        canCallBackend: false
+      },
+      { strictUserVisibleOutput: true },
+      undefined,
+      undefined,
+      undefined,
+      runtimeBudget,
+      15_000
+    );
+
+    expect(createSingleChatCompletionMock).toHaveBeenNthCalledWith(
+      1,
+      expect.anything(),
+      expect.objectContaining({
+        timeoutMs: 15_000
+      })
+    );
+    expect(createSingleChatCompletionMock).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      expect.objectContaining({
+        timeoutMs: 15_000
+      })
+    );
+  });
+
   it('caps structured reasoning with an explicit stage timeout', async () => {
     runStructuredReasoningMock.mockResolvedValue({
       reasoning_steps: ['step'],
@@ -156,6 +234,47 @@ describe('trinity stage budgets', () => {
     );
     expect(complexReasoningCall?.[4]).toBeLessThanOrEqual(20000);
     expect(complexReasoningCall?.[4]).toBeGreaterThan(0);
+  });
+
+  it('uses the worker override for structured reasoning and clamps it to the remaining budget', async () => {
+    runStructuredReasoningMock.mockResolvedValue({
+      reasoning_steps: ['step'],
+      assumptions: [],
+      constraints: [],
+      tradeoffs: [],
+      alternatives_considered: [],
+      chosen_path_justification: 'because',
+      response_mode: 'answer',
+      achievable_subtasks: ['answer'],
+      blocked_subtasks: [],
+      user_visible_caveats: [],
+      claim_tags: [],
+      final_answer: 'final'
+    });
+
+    const runtimeBudget = createRuntimeBudgetWithLimit(20_000, 0);
+
+    await runReasoningStage(
+      {} as never,
+      'Framed request',
+      {
+        canBrowse: false,
+        canVerifyProvidedData: false,
+        canVerifyLiveData: false,
+        canConfirmExternalState: false,
+        canPersistData: false,
+        canCallBackend: false
+      },
+      { strictUserVisibleOutput: true },
+      'complex',
+      runtimeBudget,
+      30_000
+    );
+
+    const complexReasoningCall = runStructuredReasoningMock.mock.calls[0];
+    expect(complexReasoningCall?.[4]).toBeLessThanOrEqual(20_000);
+    expect(complexReasoningCall?.[4]).toBeGreaterThan(0);
+    expect(complexReasoningCall?.[4]).toBeGreaterThan(6_000);
   });
 
   it('uses the compact structured reasoning schema for simple-tier requests', async () => {
