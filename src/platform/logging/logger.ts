@@ -16,6 +16,13 @@ export enum LogLevel {
   ERROR = 'error'
 }
 
+const LOG_LEVEL_PRIORITY: Record<LogLevel, number> = {
+  [LogLevel.DEBUG]: 10,
+  [LogLevel.INFO]: 20,
+  [LogLevel.WARN]: 30,
+  [LogLevel.ERROR]: 40
+};
+
 export interface LogContext {
   requestId?: string;
   userId?: string;
@@ -162,6 +169,11 @@ class StructuredLogger {
   }
 
   private log(entry: LogEntry): void {
+    const configuredLevel = parseLogLevel(getEnv('LOG_LEVEL'));
+    if (LOG_LEVEL_PRIORITY[entry.level] < LOG_LEVEL_PRIORITY[configuredLevel]) {
+      return;
+    }
+
     // Use config layer for env access (adapter boundary pattern)
     const isProduction = getEnv('NODE_ENV') === 'production';
 
@@ -261,6 +273,21 @@ class StructuredLogger {
         traceId: startEvent.id
       });
     };
+  }
+}
+
+function parseLogLevel(raw: string | undefined): LogLevel {
+  const normalized = (raw || '').trim().toLowerCase();
+  switch (normalized) {
+    case LogLevel.DEBUG:
+      return LogLevel.DEBUG;
+    case LogLevel.WARN:
+      return LogLevel.WARN;
+    case LogLevel.ERROR:
+      return LogLevel.ERROR;
+    case LogLevel.INFO:
+    default:
+      return LogLevel.INFO;
   }
 }
 

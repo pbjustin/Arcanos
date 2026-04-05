@@ -13,7 +13,7 @@ import type { Tier } from '@core/logic/trinityTier.js';
 import { runtimeDiagnosticsService } from '@services/runtimeDiagnosticsService.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { getEnvNumber } from '@platform/runtime/env.js';
-import { getConfig } from '@platform/runtime/unifiedConfig.js';
+import { getConfig, resolveWorkerRuntimeMode } from '@platform/runtime/unifiedConfig.js';
 import type { TrinitySelfHealingAction, TrinitySelfHealingStage } from './selfHealingV2.js';
 import { getTrinitySelfHealingStatus } from './selfHealingV2.js';
 import {
@@ -155,12 +155,18 @@ const loopState: {
 
 function getLoopConfig() {
   const cfg = getConfig();
+  const workerRuntimeMode = resolveWorkerRuntimeMode();
+  const disabledForServiceRole =
+    workerRuntimeMode.processKind === 'web'
+    || workerRuntimeMode.reason === 'railway_web_service'
+    || workerRuntimeMode.reason === 'railway_dedicated_worker_service';
   return {
     enabled:
       cfg.selfImproveEnabled &&
       cfg.selfImproveActuatorMode === 'daemon' &&
       cfg.selfImproveAutonomyLevel >= 3 &&
-      !cfg.selfImproveFrozen,
+      !cfg.selfImproveFrozen &&
+      !disabledForServiceRole,
     intervalMs: Math.max(5_000, getEnvNumber('SELF_HEAL_LOOP_INTERVAL_MS', DEFAULT_LOOP_INTERVAL_MS)),
     lookbackMs: Math.max(30_000, getEnvNumber('SELF_HEAL_LOOKBACK_MS', DEFAULT_LOOKBACK_MS)),
     errorRateTrigger: clampRate(getEnvNumber('SELF_HEAL_ERROR_RATE_TRIGGER_BPS', DEFAULT_ERROR_RATE_TRIGGER * 10_000) / 10_000),
@@ -1011,6 +1017,19 @@ export function startSelfHealingControlLoop(app: Application): void {
   const config = getLoopConfig();
   loopState.active = config.enabled;
   if (!config.enabled) {
+    const workerRuntimeMode = resolveWorkerRuntimeMode();
+    if (
+      workerRuntimeMode.processKind === 'web'
+      || workerRuntimeMode.reason === 'railway_web_service'
+      || workerRuntimeMode.reason === 'railway_dedicated_worker_service'
+    ) {
+      logger.info('self_heal.loop.disabled_for_service_role', {
+        module: 'self_heal.loop',
+        processKind: workerRuntimeMode.processKind,
+        serviceName: workerRuntimeMode.railwayServiceName,
+        reason: workerRuntimeMode.reason,
+      });
+    }
     loopState.loopRunning = false;
     return;
   }

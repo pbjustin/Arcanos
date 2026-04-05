@@ -1,7 +1,7 @@
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { getEnv } from '@platform/runtime/env.js';
 import { getRailwayApiConfig } from '@platform/runtime/railway.js';
-import { getConfig } from '@platform/runtime/unifiedConfig.js';
+import { getConfig, resolveWorkerRuntimeMode } from '@platform/runtime/unifiedConfig.js';
 import {
   deployService,
   isRailwayApiConfigured,
@@ -275,6 +275,7 @@ async function executeRemoteWorkerHelperRepair(
 
 export function buildWorkerRepairActuatorStatus(): WorkerRepairActuatorStatus {
   const config = getConfig();
+  const workerRuntimeMode = resolveWorkerRuntimeMode();
   const currentServiceName = getEnv('RAILWAY_SERVICE_NAME')?.trim() || null;
   const timeoutMs = Math.max(5_000, config.workerApiTimeoutMs);
 
@@ -285,6 +286,23 @@ export function buildWorkerRepairActuatorStatus(): WorkerRepairActuatorStatus {
       reason: 'Local worker runtime is enabled for this service.',
       serviceName: currentServiceName,
       targetServiceName: currentServiceName,
+      baseUrl: null,
+      path: null,
+      timeoutMs
+    };
+  }
+
+  if (
+    workerRuntimeMode.processKind === 'web'
+    || workerRuntimeMode.reason === 'railway_web_service'
+    || workerRuntimeMode.reason === 'railway_dedicated_worker_service'
+  ) {
+    return {
+      mode: 'unavailable',
+      available: false,
+      reason: 'Worker repair actuator is disabled in the web service role; use the dedicated worker service or Railway CLI for recovery.',
+      serviceName: currentServiceName,
+      targetServiceName: getWorkerRepairTargetServiceName(),
       baseUrl: null,
       path: null,
       timeoutMs

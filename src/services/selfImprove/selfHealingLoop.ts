@@ -3,7 +3,7 @@ import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { getTelemetrySnapshot, recordTraceEvent } from '@platform/logging/telemetry.js';
 import { getEnvBoolean, getEnvNumber } from '@platform/runtime/env.js';
-import { getConfig } from '@platform/runtime/unifiedConfig.js';
+import { getConfig, resolveWorkerRuntimeMode } from '@platform/runtime/unifiedConfig.js';
 import {
   runSelfImproveCycle,
   type SelfImproveDecision,
@@ -2349,7 +2349,17 @@ function shouldOverrideActionCooldown(
 
 function shouldAutoInvokeController(): boolean {
   const cfg = getConfig();
-  return cfg.selfImproveEnabled && cfg.selfImproveActuatorMode === 'daemon' && !cfg.selfImproveFrozen;
+  const workerRuntimeMode = resolveWorkerRuntimeMode();
+  const disabledForServiceRole =
+    workerRuntimeMode.processKind === 'web'
+    || workerRuntimeMode.reason === 'railway_web_service'
+    || workerRuntimeMode.reason === 'railway_dedicated_worker_service';
+  return (
+    cfg.selfImproveEnabled &&
+    cfg.selfImproveActuatorMode === 'daemon' &&
+    !cfg.selfImproveFrozen &&
+    !disabledForServiceRole
+  );
 }
 
 function canAttemptDiagnosis(runtime: SelfHealingLoopRuntime, diagnosisType: DiagnosisType): boolean {
@@ -3885,6 +3895,21 @@ export async function runSelfHealingLoop(options: {
 export function startSelfHealingLoop(intervalMs = resolveLoopIntervalMs()): SelfHealingLoopStatus {
   const runtime = getRuntime();
   runtime.status.intervalMs = intervalMs;
+  const workerRuntimeMode = resolveWorkerRuntimeMode();
+  const disabledForServiceRole =
+    workerRuntimeMode.processKind === 'web'
+    || workerRuntimeMode.reason === 'railway_web_service'
+    || workerRuntimeMode.reason === 'railway_dedicated_worker_service';
+
+  if (disabledForServiceRole) {
+    runtime.status.active = false;
+    runtime.status.loopRunning = false;
+    runtime.status.lastError = null;
+    console.log(
+      `[SELF-HEAL] start skipped; disabled for service role service=${workerRuntimeMode.railwayServiceName ?? 'unknown'} reason=${workerRuntimeMode.reason}`
+    );
+    return getSelfHealingLoopStatus();
+  }
 
   if (runtime.timer !== null || runtime.status.loopRunning) {
     console.log(
