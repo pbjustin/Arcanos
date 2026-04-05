@@ -88,6 +88,11 @@ export async function getQueueDiagnostics(): Promise<{
   workerRunning: boolean;
   queueDepth: number;
   failureRate: number;
+  historicalFailureRate: number;
+  failureRateWindowMs: number;
+  windowCompletedJobs: number;
+  windowFailedJobs: number;
+  windowTerminalJobs: number;
   failureBreakdown: JobFailureBreakdown;
   recentFailureReasons: JobFailureReasonSummary[];
   lastJobId: string | null;
@@ -103,7 +108,15 @@ export async function getQueueDiagnostics(): Promise<{
   const workerRunning = Boolean(queueSummary);
   const queueDepth = queueSummary ? queueSummary.pending + queueSummary.running + queueSummary.delayed : 0;
   const totalTerminalJobs = (queueSummary?.completed ?? 0) + (queueSummary?.failed ?? 0);
+  const windowCompletedJobs = queueSummary?.recentCompleted ?? 0;
+  const windowFailedJobs = queueSummary?.recentFailed ?? 0;
+  const windowTerminalJobs = queueSummary?.recentTotalTerminal ?? (windowCompletedJobs + windowFailedJobs);
+  const failureRateWindowMs = queueSummary?.recentTerminalWindowMs ?? 0;
   const failureRate =
+    windowTerminalJobs > 0
+      ? Number((windowFailedJobs / windowTerminalJobs).toFixed(4))
+      : 0;
+  const historicalFailureRate =
     totalTerminalJobs > 0
       ? Number(((queueSummary?.failed ?? 0) / totalTerminalJobs).toFixed(4))
       : 0;
@@ -121,6 +134,11 @@ export async function getQueueDiagnostics(): Promise<{
     workerRunning,
     queueDepth,
     failureRate,
+    historicalFailureRate,
+    failureRateWindowMs,
+    windowCompletedJobs,
+    windowFailedJobs,
+    windowTerminalJobs,
     failureBreakdown: queueSummary?.failureBreakdown ?? {
       retryable: 0,
       permanent: 0,

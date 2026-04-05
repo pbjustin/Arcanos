@@ -40,6 +40,11 @@ export const SessionApiQueueDiagnosticsSchema = z.object({
   workerRunning: z.boolean(),
   queueDepth: z.number().int().nonnegative(),
   failureRate: z.number().min(0).max(1),
+  historicalFailureRate: z.number().min(0).max(1),
+  failureRateWindowMs: z.number().int().nonnegative(),
+  windowCompletedJobs: z.number().int().nonnegative(),
+  windowFailedJobs: z.number().int().nonnegative(),
+  windowTerminalJobs: z.number().int().nonnegative(),
   failureBreakdown: z.object({
     retryable: z.number().int().nonnegative(),
     permanent: z.number().int().nonnegative(),

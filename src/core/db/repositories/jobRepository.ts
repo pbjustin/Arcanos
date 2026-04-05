@@ -52,6 +52,10 @@ export interface JobQueueSummary {
   oldestPendingJobAgeMs: number;
   failureBreakdown: JobFailureBreakdown;
   recentFailureReasons: JobFailureReasonSummary[];
+  recentTerminalWindowMs?: number;
+  recentCompleted?: number;
+  recentFailed?: number;
+  recentTotalTerminal?: number;
   lastUpdatedAt?: string;
 }
 
@@ -137,6 +141,21 @@ function normalizeJsonbInput(value: unknown, context: string): string {
 
 function normalizeAutonomyState(state?: Record<string, unknown>): Record<string, unknown> {
   return state ?? {};
+}
+
+export const DEFAULT_QUEUE_DIAGNOSTICS_FAILURE_WINDOW_MS = 60 * 60 * 1000;
+
+export function resolveQueueDiagnosticsFailureWindowMs(
+  env: NodeJS.ProcessEnv = process.env
+): number {
+  const rawValue = env.QUEUE_DIAGNOSTICS_FAILURE_WINDOW_MS;
+  const parsedValue = rawValue ? Number(rawValue) : Number.NaN;
+
+  if (!Number.isFinite(parsedValue) || parsedValue <= 0) {
+    return DEFAULT_QUEUE_DIAGNOSTICS_FAILURE_WINDOW_MS;
+  }
+
+  return Math.min(7 * 24 * 60 * 60 * 1000, Math.max(60 * 1000, Math.trunc(parsedValue)));
 }
 
 function buildEmptyFailureBreakdown(): JobFailureBreakdown {
@@ -615,6 +634,7 @@ export async function getJobQueueSummary(): Promise<JobQueueSummary | null> {
   }
 
   try {
+    const recentTerminalWindowMs = resolveQueueDiagnosticsFailureWindowMs();
     const result = await query(
       `WITH failure_rows AS (
          SELECT
@@ -696,6 +716,18 @@ export async function getJobQueueSummary(): Promise<JobQueueSummary | null> {
              0
            )::bigint AS oldest_pending_age_ms,
            MAX(updated_at) AS last_updated_at,
+           COUNT(*) FILTER (
+             WHERE status = 'completed'
+               AND updated_at >= NOW() - ($1::bigint * INTERVAL '1 millisecond')
+           )::int AS recent_completed_count,
+           COUNT(*) FILTER (
+             WHERE status = 'failed'
+               AND updated_at >= NOW() - ($1::bigint * INTERVAL '1 millisecond')
+           )::int AS recent_failed_count,
+           COUNT(*) FILTER (
+             WHERE status IN ('completed', 'failed')
+               AND updated_at >= NOW() - ($1::bigint * INTERVAL '1 millisecond')
+           )::int AS recent_terminal_count,
            COUNT(*) FILTER (WHERE status = 'pending' AND retry_count > 0)::int AS retry_scheduled_count
          FROM job_data
        ),
@@ -736,6 +768,9 @@ export async function getJobQueueSummary(): Promise<JobQueueSummary | null> {
          summary.stalled_running_count,
          summary.oldest_pending_age_ms,
          summary.last_updated_at,
+         summary.recent_completed_count,
+         summary.recent_failed_count,
+         summary.recent_terminal_count,
          summary.retry_scheduled_count,
          failure_breakdown.retryable_count,
          failure_breakdown.permanent_count,
@@ -765,7 +800,7 @@ export async function getJobQueueSummary(): Promise<JobQueueSummary | null> {
          ) AS recent_failure_reasons
        FROM summary
        CROSS JOIN failure_breakdown`,
-      []
+      [recentTerminalWindowMs]
     );
 
     const summaryRow = result.rows[0] as {
@@ -777,6 +812,9 @@ export async function getJobQueueSummary(): Promise<JobQueueSummary | null> {
       delayed_count: number;
       stalled_running_count: number;
       oldest_pending_age_ms: number;
+      recent_completed_count: number;
+      recent_failed_count: number;
+      recent_terminal_count: number;
       retry_scheduled_count: number;
       retryable_count: number;
       permanent_count: number;
@@ -803,7 +841,11 @@ export async function getJobQueueSummary(): Promise<JobQueueSummary | null> {
         stalledRunning: 0,
         oldestPendingJobAgeMs: 0,
         failureBreakdown: buildEmptyFailureBreakdown(),
-        recentFailureReasons: []
+        recentFailureReasons: [],
+        recentTerminalWindowMs,
+        recentCompleted: 0,
+        recentFailed: 0,
+        recentTotalTerminal: 0
       };
     }
 
@@ -829,7 +871,11 @@ export async function getJobQueueSummary(): Promise<JobQueueSummary | null> {
         validation: Number(summaryRow.validation_count ?? 0),
         unknown: Number(summaryRow.unknown_count ?? 0)
       },
-      recentFailureReasons: normalizeRecentFailureReasons(summaryRow.recent_failure_reasons)
+      recentFailureReasons: normalizeRecentFailureReasons(summaryRow.recent_failure_reasons),
+      recentTerminalWindowMs,
+      recentCompleted: Number(summaryRow.recent_completed_count ?? 0),
+      recentFailed: Number(summaryRow.recent_failed_count ?? 0),
+      recentTotalTerminal: Number(summaryRow.recent_terminal_count ?? 0)
     };
 
     if (summaryRow.last_updated_at) {

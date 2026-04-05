@@ -228,6 +228,11 @@ describe('canonical /api session system routes', () => {
       workerRunning: true,
       queueDepth: 0,
       failureRate: 0,
+      historicalFailureRate: 0.25,
+      failureRateWindowMs: 3600000,
+      windowCompletedJobs: 3,
+      windowFailedJobs: 0,
+      windowTerminalJobs: 3,
       failureBreakdown: {
         retryable: 0,
         permanent: 0,
@@ -278,6 +283,9 @@ describe('canonical /api session system routes', () => {
     });
     expect(queueResponse.body.queueDepth).toBe(0);
     expect(queueResponse.body.failureRate).toBe(0);
+    expect(queueResponse.body.historicalFailureRate).toBe(0.25);
+    expect(queueResponse.body.failureRateWindowMs).toBe(3600000);
+    expect(queueResponse.body.windowTerminalJobs).toBe(3);
     expect(queueResponse.body.failureBreakdown).toEqual(expect.objectContaining({
       retryable: 0,
       retryExhausted: 0
