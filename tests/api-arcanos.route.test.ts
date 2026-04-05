@@ -116,24 +116,27 @@ describe('api-arcanos route', () => {
     mockTryExecutePromptRouteShortcut.mockResolvedValue(null);
   });
 
-  it('rejects deprecated ask traffic by default and points callers to the canonical GPT route', async () => {
+  it('forces deprecated ask traffic onto compat mode and points callers to the canonical GPT route', async () => {
     delete process.env.ASK_ROUTE_MODE;
 
     const response = await request(buildApp())
       .post('/ask')
       .send({
-        prompt: 'Explain the deployment state.'
+        prompt: 'ping'
       });
 
-    expect(response.status).toBe(410);
+    expect(response.status).toBe(200);
     expect(response.headers['x-canonical-route']).toBe('/gpt/arcanos-core');
     expect(response.headers['x-route-deprecated']).toBe('true');
-    expect(response.headers['x-ask-route-mode']).toBe('gone');
+    expect(response.headers['x-ask-route-mode']).toBe('compat');
     expect(response.body).toMatchObject({
-      error: 'Legacy /api/arcanos/ask route has been removed; use /gpt/:gptId',
-      deprecated: true,
-      canonicalRoute: '/gpt/arcanos-core',
-      routeMode: 'gone'
+      success: true,
+      result: 'pong',
+      metadata: expect.objectContaining({
+        deprecatedEndpoint: true,
+        canonicalRoute: '/gpt/arcanos-core',
+        endpoint: 'api-arcanos.ask',
+      }),
     });
     expect(mockValidateAIRequest).not.toHaveBeenCalled();
     expect(mockRunThroughBrain).not.toHaveBeenCalled();
@@ -181,7 +184,7 @@ describe('api-arcanos route', () => {
       openaiClient,
       'Explain the deployment state.',
       'session-route-1',
-      'operator-approved',
+      undefined,
       expect.objectContaining({
         sourceEndpoint: 'api-arcanos.ask'
       }),

@@ -1,6 +1,6 @@
 import express from "express";
 import { routeGptRequest } from "./_core/gptDispatch.js";
-import { buildArcanosCoreTimeoutFallbackResult } from "@services/arcanos-core.js";
+import { buildArcanosCoreTimeoutFallbackEnvelope } from "@services/arcanos-core.js";
 import {
   logGptConnection,
   logGptConnectionFailed,
@@ -104,6 +104,23 @@ function resolveBodyGptId(body: unknown): string | null {
   return typeof gptId === 'string' && gptId.trim().length > 0
     ? gptId.trim()
     : null;
+}
+
+function isTimeoutAbortError(error: unknown, timeoutMessage: string): boolean {
+  if (!isAbortError(error)) {
+    return false;
+  }
+
+  const errorMessage = resolveErrorMessage(error).trim().toLowerCase();
+  return errorMessage.includes(timeoutMessage.trim().toLowerCase());
+}
+
+function isClientDisconnectAbort(error: unknown): boolean {
+  if (!isAbortError(error)) {
+    return false;
+  }
+
+  return resolveErrorMessage(error).toLowerCase().includes('client disconnected');
 }
 
 function buildGptRequestAuthState(req: express.Request): Record<string, unknown> {
@@ -372,38 +389,41 @@ router.post("/:gptId", async (req, res, next) => {
     if (isAbortError(err)) {
       const promptText = extractPromptText(req.body);
       const gptId = req.params.gptId;
-      if (promptText && hasDagOrchestrationIntentCue(promptText)) {
+      const errorMessage = resolveErrorMessage(err);
+      const routeTimedOut = isTimeoutAbortError(err, timeoutMessage);
+      const clientDisconnected = isClientDisconnectAbort(err);
+      if (routeTimedOut && promptText && hasDagOrchestrationIntentCue(promptText)) {
         recordDagTraceTimeout({
           handler: 'gpt-route',
           reason: 'request_timeout',
         });
       }
-      req.logger?.warn?.('gpt.request.timeout', {
+      req.logger?.warn?.(routeTimedOut ? 'gpt.request.timeout' : 'gpt.request.aborted', {
         endpoint: req.originalUrl,
         gptId: req.params.gptId,
         timeoutMs: routeTimeoutMs,
-        error: resolveErrorMessage(err)
+        error: errorMessage,
+        abortKind: routeTimedOut ? 'route_timeout' : clientDisconnected ? 'client_disconnect' : 'request_abort'
       });
-      if (!res.headersSent && promptText && ARCANOS_CORE_GPT_IDS.has(gptId)) {
-        const timeoutFallback = buildArcanosCoreTimeoutFallbackResult(promptText);
-        applyAIDegradedResponseHeaders(res, extractAIDegradedResponseMetadata(timeoutFallback));
+      const responseOpen = !res.headersSent && !res.writableEnded && !res.destroyed;
+      if (routeTimedOut && responseOpen && promptText && ARCANOS_CORE_GPT_IDS.has(gptId)) {
+        const timeoutFallback = buildArcanosCoreTimeoutFallbackEnvelope({
+          prompt: promptText,
+          gptId,
+          requestId,
+          route: 'core'
+        });
+        applyAIDegradedResponseHeaders(res, extractAIDegradedResponseMetadata(timeoutFallback.result));
         req.logger?.warn?.('gpt.request.timeout_fallback', {
           endpoint: req.originalUrl,
           gptId,
           errorType: 'route_timeout_static_fallback',
           timeoutMs: routeTimeoutMs,
+          error: errorMessage,
         });
         const publicEnvelope = prepareBoundedClientJsonPayload({
-          ok: true,
-          result: shapeClientRouteResult(timeoutFallback),
-          _route: {
-            requestId,
-            gptId,
-            module: 'ARCANOS:CORE',
-            action: 'query',
-            route: 'core',
-            timestamp: new Date().toISOString(),
-          }
+          ...timeoutFallback,
+          result: shapeClientRouteResult(timeoutFallback.result),
         }, {
           logger: req.logger,
           logEvent: 'gpt.response.timeout_fallback',
@@ -414,7 +434,7 @@ router.post("/:gptId", async (req, res, next) => {
         }
         return res.status(200).json(publicEnvelope.payload);
       }
-      if (!res.headersSent) {
+      if (routeTimedOut && responseOpen) {
         return res.status(504).json({
           ok: false,
           error: {

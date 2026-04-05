@@ -39,6 +39,9 @@ export interface DiagnosticsSnapshot {
   errors_total: number;
   error_rate: number | `DATA NOT EXPOSED: ${string}`;
   error_rate_window_ms: number;
+  public_metrics_scope: 'instance_window' | 'shared_lifetime' | 'local_lifetime';
+  public_metrics_request_count: number;
+  public_metrics_error_count: number;
   avg_latency_ms: number | `DATA NOT EXPOSED: ${string}`;
   recent_latency_ms: number[] | `DATA NOT EXPOSED: ${string}`;
   top_error_routes: DiagnosticsRouteErrorSnapshot[];
@@ -115,6 +118,9 @@ interface MetricsSnapshot {
   avgLatencyMs: number | `DATA NOT EXPOSED: ${string}`;
   errorRate: number | `DATA NOT EXPOSED: ${string}`;
   errorRateWindowMs: number;
+  publicMetricsScope: 'instance_window' | 'shared_lifetime' | 'local_lifetime';
+  publicMetricsRequestCount: number;
+  publicMetricsErrorCount: number;
   recentLatencyMs: number[] | `DATA NOT EXPOSED: ${string}`;
   topErrorRoutes: DiagnosticsRouteErrorSnapshot[];
 }
@@ -265,6 +271,9 @@ class RuntimeDiagnosticsService {
       errors_total: metricsSnapshot.errorsTotal,
       error_rate: metricsSnapshot.errorRate,
       error_rate_window_ms: metricsSnapshot.errorRateWindowMs,
+      public_metrics_scope: metricsSnapshot.publicMetricsScope,
+      public_metrics_request_count: metricsSnapshot.publicMetricsRequestCount,
+      public_metrics_error_count: metricsSnapshot.publicMetricsErrorCount,
       avg_latency_ms: metricsSnapshot.avgLatencyMs,
       recent_latency_ms: metricsSnapshot.recentLatencyMs,
       top_error_routes: metricsSnapshot.topErrorRoutes,
@@ -391,13 +400,31 @@ class RuntimeDiagnosticsService {
 
     const requestsTotal = sharedSnapshot?.requestsTotal ?? localSnapshot.requestsTotal;
     const errorsTotal = sharedSnapshot?.errorsTotal ?? localSnapshot.errorsTotal;
-    const avgLatencyMs =
+    const publicMetricsScope =
       rollingSnapshot && rollingSnapshot.requestCount > 0
-        ? rollingSnapshot.avgLatencyMs
+        ? 'instance_window'
+        : sharedSnapshot
+        ? 'shared_lifetime'
+        : 'local_lifetime';
+    const publicMetricsRequestCount =
+      publicMetricsScope === 'instance_window'
+        ? rollingSnapshot?.requestCount ?? 0
+        : publicMetricsScope === 'shared_lifetime'
+        ? requestsTotal
+        : localSnapshot.requestsTotal;
+    const publicMetricsErrorCount =
+      publicMetricsScope === 'instance_window'
+        ? rollingSnapshot?.errorCount ?? 0
+        : publicMetricsScope === 'shared_lifetime'
+        ? errorsTotal
+        : localSnapshot.errorsTotal;
+    const avgLatencyMs =
+      publicMetricsScope === 'instance_window'
+        ? rollingSnapshot?.avgLatencyMs ?? 'DATA NOT EXPOSED: avg_latency_ms'
         : sharedSnapshot?.avgLatencyMs ?? localSnapshot.avgLatencyMs;
     const errorRate =
-      rollingSnapshot && rollingSnapshot.requestCount > 0
-        ? rollingSnapshot.errorRate
+      publicMetricsScope === 'instance_window'
+        ? rollingSnapshot?.errorRate ?? 'DATA NOT EXPOSED: error_rate'
         : sharedSnapshot?.errorRate ?? localSnapshot.errorRate;
     const recentLatencyMs = sharedSnapshot?.recentLatencyMs ?? localSnapshot.recentLatencyMs;
 
@@ -407,6 +434,9 @@ class RuntimeDiagnosticsService {
       avgLatencyMs,
       errorRate,
       errorRateWindowMs: PUBLIC_ERROR_RATE_WINDOW_MS,
+      publicMetricsScope,
+      publicMetricsRequestCount,
+      publicMetricsErrorCount,
       recentLatencyMs,
       topErrorRoutes: rollingSnapshot ? buildTopErrorRoutes(rollingSnapshot) : []
     };
@@ -500,6 +530,9 @@ class RuntimeDiagnosticsRedisStore {
           ? roundMetric(errorsTotal / requestsTotal)
           : 'DATA NOT EXPOSED: error_rate',
         errorRateWindowMs: PUBLIC_ERROR_RATE_WINDOW_MS,
+        publicMetricsScope: 'shared_lifetime',
+        publicMetricsRequestCount: requestsTotal,
+        publicMetricsErrorCount: errorsTotal,
         recentLatencyMs: recentLatencyMs.length > 0
           ? recentLatencyMs
           : 'DATA NOT EXPOSED: recent_latency_ms',

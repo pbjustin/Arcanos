@@ -14,7 +14,6 @@ import type {
 } from '@shared/types/dto.js';
 import type { IdleStateService } from '@services/idleStateService.js';
 import {
-  classifyBudgetAbortKind,
   extractInput,
   handleAIError,
   validateAIRequest
@@ -419,6 +418,43 @@ function attachApiArcanosCompatibilityMetadata(
   next();
 }
 
+function stripLegacyAuditOverride(
+  req: Request<{}, ApiArcanosResponse, AskBody>,
+  _res: Response<ApiArcanosResponse>,
+  next: () => void
+): void {
+  if (req.body && typeof req.body === 'object' && !Array.isArray(req.body) && req.body.overrideAuditSafe) {
+    delete req.body.overrideAuditSafe;
+    req.logger?.warn?.('deprecated.endpoint.audit_override_ignored', {
+      deprecatedEndpoint: DEPRECATED_ARCANOS_ENDPOINT,
+      canonicalRoute: CANONICAL_ARCANOS_ROUTE,
+      requestId: req.requestId ?? null,
+      route: DEPRECATED_ARCANOS_ENDPOINT
+    });
+  }
+
+  next();
+}
+
+function classifyApiArcanosErrorType(error: unknown): string {
+  if (error && typeof error === 'object') {
+    const candidateName = (error as { name?: unknown }).name;
+    if (typeof candidateName === 'string' && candidateName.trim().length > 0) {
+      return candidateName.trim();
+    }
+  }
+
+  const message = resolveErrorMessage(error).toLowerCase();
+  if (message.includes('timeout')) {
+    return 'timeout';
+  }
+  if (message.includes('abort')) {
+    return 'abort';
+  }
+
+  return 'unexpected_error';
+}
+
 /**
  * Purpose: Compatibility handler for deprecated `/api/arcanos/ask` traffic.
  * Inputs/Outputs: Accepts legacy request bodies and returns the historical route envelope.
@@ -581,7 +617,7 @@ const handleArcanosAsk = asyncHandler(async (
     req.logger?.error?.('api-arcanos.ask.failed', {
       route: DEPRECATED_ARCANOS_ENDPOINT,
       endpoint: ARCANOS_API_ENDPOINT_NAME,
-      errorType: classifyBudgetAbortKind(error) ?? 'unexpected_error',
+      errorType: classifyApiArcanosErrorType(error),
       error: resolveErrorMessage(error),
       requestId,
     });
@@ -610,6 +646,7 @@ router.post(
   arcanosAskRateLimit,
   attachApiArcanosCompatibilityMetadata,
   createValidationMiddleware(arcanosSchema),
+  stripLegacyAuditOverride,
   handleArcanosAsk
 );
 
