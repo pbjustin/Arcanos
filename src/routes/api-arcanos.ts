@@ -1,6 +1,5 @@
 import express, { Request, Response } from 'express';
 import type { TrinityResult } from '@core/logic/trinity.js';
-import { confirmGate } from '@transport/http/middleware/confirmGate.js';
 import {
   createValidationMiddleware,
   createRateLimitMiddleware,
@@ -15,6 +14,7 @@ import type {
 } from '@shared/types/dto.js';
 import type { IdleStateService } from '@services/idleStateService.js';
 import {
+  classifyBudgetAbortKind,
   extractInput,
   handleAIError,
   validateAIRequest
@@ -23,7 +23,6 @@ import { buildTrinityOutputControlOptions } from '@shared/ask/trinityRequestOpti
 import { buildTrinityUserVisibleResponse } from '@shared/ask/trinityResponseSerializer.js';
 import {
   applyDeprecatedAskRouteHeaders,
-  ASK_ROUTE_SUNSET_HEADER,
   ASK_ROUTE_MODE_HEADER,
   resolveAskRouteMode
 } from '@shared/http/gptRouteHeaders.js';
@@ -42,6 +41,7 @@ import {
   extractPromptText,
   recordPromptDebugTrace,
 } from '@services/promptDebugTraceService.js';
+import { resolveErrorMessage } from '@core/lib/errors/index.js';
 
 const router = express.Router();
 
@@ -129,14 +129,7 @@ interface AskResponse {
   pipelineDebug?: TrinityResult['pipelineDebug'];
 }
 
-type DeprecatedAskRouteRemovedResponse = ErrorResponseDTO & {
-  deprecated: true;
-  canonicalRoute: string;
-  routeMode: 'gone';
-  sunsetAt: string;
-};
-
-type ApiArcanosResponse = AskResponse | ErrorResponseDTO | DeprecatedAskRouteRemovedResponse;
+type ApiArcanosResponse = AskResponse | ErrorResponseDTO;
 
 const arcanosSchema = {
   mode: {
@@ -406,44 +399,24 @@ function attachApiArcanosCompatibilityMetadata(
 ): void {
   const canonicalRoute = applyDeprecatedAskRouteHeaders(res, CANONICAL_ARCANOS_GPT_ID);
   res.setHeader('x-deprecated-endpoint', DEPRECATED_ARCANOS_ENDPOINT);
+  res.setHeader(ASK_ROUTE_MODE_HEADER, 'compat');
+  if (resolveAskRouteMode() !== 'compat') {
+    req.logger?.warn?.('deprecated.endpoint.recovered', {
+      deprecatedEndpoint: DEPRECATED_ARCANOS_ENDPOINT,
+      canonicalRoute,
+      configuredRouteMode: resolveAskRouteMode(),
+      effectiveRouteMode: 'compat',
+      requestId: req.requestId ?? null,
+      route: DEPRECATED_ARCANOS_ENDPOINT
+    });
+  }
   req.logger?.info?.('deprecated.endpoint.used', {
     deprecatedEndpoint: DEPRECATED_ARCANOS_ENDPOINT,
     canonicalRoute,
+    routeMode: 'compat',
     requestId: req.requestId ?? null
   });
   next();
-}
-
-function rejectRemovedApiArcanosAskRoute(
-  req: Request<{}, ApiArcanosResponse, AskBody>,
-  res: Response<ApiArcanosResponse>,
-  next: () => void
-): void {
-  if (resolveAskRouteMode() === 'compat') {
-    next();
-    return;
-  }
-
-  const canonicalRoute = applyDeprecatedAskRouteHeaders(res, CANONICAL_ARCANOS_GPT_ID);
-  res.setHeader('x-deprecated-endpoint', DEPRECATED_ARCANOS_ENDPOINT);
-  res.setHeader(ASK_ROUTE_MODE_HEADER, 'gone');
-  req.logger?.warn?.('deprecated.endpoint.blocked', {
-    deprecatedEndpoint: DEPRECATED_ARCANOS_ENDPOINT,
-    canonicalRoute,
-    requestId: req.requestId ?? null,
-    routeMode: 'gone',
-    sunsetAt: ASK_ROUTE_SUNSET_HEADER
-  });
-  res.status(410).json({
-    error: 'Legacy /api/arcanos/ask route has been removed; use /gpt/:gptId',
-    deprecated: true,
-    canonicalRoute,
-    routeMode: 'gone',
-    sunsetAt: ASK_ROUTE_SUNSET_HEADER,
-    details: [
-      `POST ${DEPRECATED_ARCANOS_ENDPOINT} is no longer available. Migrate callers to POST ${canonicalRoute}.`
-    ]
-  });
 }
 
 /**
@@ -605,6 +578,13 @@ const handleArcanosAsk = asyncHandler(async (
 
     return res.json(responsePayload);
   } catch (error: unknown) {
+    req.logger?.error?.('api-arcanos.ask.failed', {
+      route: DEPRECATED_ARCANOS_ENDPOINT,
+      endpoint: ARCANOS_API_ENDPOINT_NAME,
+      errorType: classifyBudgetAbortKind(error) ?? 'unexpected_error',
+      error: resolveErrorMessage(error),
+      requestId,
+    });
     recordPromptDebugTrace(requestId, 'fallback', {
       traceId: req.traceId ?? null,
       endpoint: ARCANOS_API_ENDPOINT_NAME,
@@ -628,9 +608,7 @@ const handleArcanosAsk = asyncHandler(async (
 router.post(
   '/ask',
   arcanosAskRateLimit,
-  rejectRemovedApiArcanosAskRoute,
   attachApiArcanosCompatibilityMetadata,
-  confirmGate,
   createValidationMiddleware(arcanosSchema),
   handleArcanosAsk
 );

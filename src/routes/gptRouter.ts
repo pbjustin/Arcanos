@@ -1,5 +1,6 @@
 import express from "express";
 import { routeGptRequest } from "./_core/gptDispatch.js";
+import { buildArcanosCoreTimeoutFallbackResult } from "@services/arcanos-core.js";
 import {
   logGptConnection,
   logGptConnectionFailed,
@@ -28,6 +29,7 @@ import { recordDagTraceTimeout } from '@platform/observability/appMetrics.js';
 import { shouldTreatPromptAsDagExecution } from '@shared/dag/dagExecutionRouting.js';
 
 const router = express.Router();
+const ARCANOS_CORE_GPT_IDS = new Set(['arcanos-core', 'core', 'arcanos-daemon']);
 
 function tryParseBodyRecord(value: string): Record<string, unknown> | null {
   try {
@@ -369,6 +371,7 @@ router.post("/:gptId", async (req, res, next) => {
   } catch (err) {
     if (isAbortError(err)) {
       const promptText = extractPromptText(req.body);
+      const gptId = req.params.gptId;
       if (promptText && hasDagOrchestrationIntentCue(promptText)) {
         recordDagTraceTimeout({
           handler: 'gpt-route',
@@ -381,6 +384,36 @@ router.post("/:gptId", async (req, res, next) => {
         timeoutMs: routeTimeoutMs,
         error: resolveErrorMessage(err)
       });
+      if (!res.headersSent && promptText && ARCANOS_CORE_GPT_IDS.has(gptId)) {
+        const timeoutFallback = buildArcanosCoreTimeoutFallbackResult(promptText);
+        applyAIDegradedResponseHeaders(res, extractAIDegradedResponseMetadata(timeoutFallback));
+        req.logger?.warn?.('gpt.request.timeout_fallback', {
+          endpoint: req.originalUrl,
+          gptId,
+          errorType: 'route_timeout_static_fallback',
+          timeoutMs: routeTimeoutMs,
+        });
+        const publicEnvelope = prepareBoundedClientJsonPayload({
+          ok: true,
+          result: shapeClientRouteResult(timeoutFallback),
+          _route: {
+            requestId,
+            gptId,
+            module: 'ARCANOS:CORE',
+            action: 'query',
+            route: 'core',
+            timestamp: new Date().toISOString(),
+          }
+        }, {
+          logger: req.logger,
+          logEvent: 'gpt.response.timeout_fallback',
+        });
+        res.setHeader('x-response-bytes', String(publicEnvelope.responseBytes));
+        if (publicEnvelope.truncated) {
+          res.setHeader('x-response-truncated', 'true');
+        }
+        return res.status(200).json(publicEnvelope.payload);
+      }
       if (!res.headersSent) {
         return res.status(504).json({
           ok: false,

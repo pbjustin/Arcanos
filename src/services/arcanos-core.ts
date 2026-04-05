@@ -202,6 +202,10 @@ function buildCoreStaticFallbackResult(prompt: string): TrinityResult {
   };
 }
 
+export function buildArcanosCoreTimeoutFallbackResult(prompt: string): TrinityResult {
+  return buildCoreStaticFallbackResult(prompt);
+}
+
 function buildCorePipelineAbortMessage(timeoutMs: number): string {
   return `ARCANOS:CORE pipeline timeout after ${timeoutMs}ms`;
 }

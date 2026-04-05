@@ -51,6 +51,10 @@ export function registerRoutes(app: Express): void {
     res.send('ARCANOS is live');
   });
 
+  app.get('/robots.txt', (_: Request, res: Response) => {
+    res.type('text/plain').send('User-agent: *\nDisallow:\n');
+  });
+
   app.get('/railway/healthcheck', (_: Request, res: Response) => {
     try {
       const report = runHealthCheck();
