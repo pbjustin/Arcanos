@@ -1904,4 +1904,77 @@ describe('selfHealingLoop', () => {
       })
     ]));
   });
+
+  it('surfaces live worker activity timestamps in the runtime snapshot when inactivity fields are empty', () => {
+    buildPredictiveHealingStatusSnapshotMock.mockReturnValue({
+      enabled: true,
+      dryRun: true,
+      autoExecute: false,
+      lastObservedAt: null,
+      lastDecisionAt: null,
+      lastAction: null,
+      lastResult: null,
+      lastMatchedRule: null,
+      recentAuditCount: 0,
+      recentAudits: [],
+      recentObservations: [
+        {
+          inactivity: {
+            inactiveDegraded: false,
+            reason: null,
+            idleThresholdMs: 120000,
+            lastActivityAt: null,
+            lastProcessedJobAt: null,
+          },
+          workerHealth: {
+            workers: [
+              {
+                workerId: 'async-queue-slot-1',
+                lastActivityAt: '2026-03-25T12:01:30.000Z',
+                lastProcessedJobAt: '2026-03-25T12:01:20.000Z',
+              },
+              {
+                workerId: 'async-queue-slot-2',
+                lastActivityAt: '2026-03-25T12:01:45.000Z',
+                lastProcessedJobAt: '2026-03-25T12:01:40.000Z',
+              },
+            ],
+          },
+        },
+      ],
+      cooldowns: {},
+      automation: {
+        active: true,
+        autoExecuteReady: false,
+        pollIntervalMs: 30000,
+        minConfidence: 0.65,
+        cooldownMs: 60000,
+        lastLoopDecisionAt: null,
+        lastLoopAction: null,
+        lastLoopResult: null,
+        lastAutoExecutionAt: null,
+        lastAutoExecutionAction: null,
+        lastAutoExecutionResult: null,
+      },
+      recentExecutionLog: [],
+      detailsPath: '/api/self-heal/decide',
+      actuator: {
+        available: true,
+        mode: 'worker_helper_http',
+        path: '/worker-helper/heal',
+        baseUrl: 'http://127.0.0.1:8787',
+        reason: null,
+      },
+      advisors: ['rules_v1', 'arcanos_core_v1', 'rules_fallback_v1'],
+    });
+
+    const runtimeSnapshot = buildSelfHealRuntimeSnapshot();
+
+    expect(runtimeSnapshot.systemState).toEqual(expect.objectContaining({
+      status: 'healthy',
+      inactiveDegraded: false,
+      lastWorkerActivityAt: '2026-03-25T12:01:45.000Z',
+      lastProcessedJobAt: '2026-03-25T12:01:40.000Z',
+    }));
+  });
 });

@@ -167,12 +167,24 @@ function buildSystemState(params: {
       ? predictiveHealing.recentObservations[predictiveHealing.recentObservations.length - 1]
       : null;
   const inactivity = latestObservation?.inactivity;
+  const latestWorkers = Array.isArray(latestObservation?.workerHealth?.workers)
+    ? latestObservation.workerHealth.workers
+    : [];
+  const latestWorkerActivityAt = pickLatestTimestamp(
+    inactivity?.lastActivityAt ?? null,
+    loopStatus.timeline.lastWorkerReceiptAt ?? null,
+    ...latestWorkers.map(worker => worker.lastActivityAt ?? null),
+  );
+  const latestProcessedJobAt = pickLatestTimestamp(
+    inactivity?.lastProcessedJobAt ?? null,
+    ...latestWorkers.map(worker => worker.lastProcessedJobAt ?? null),
+  );
   const startedAtMs = Date.parse(loopStatus.startedAt ?? '');
   const uptimeMs = Number.isFinite(startedAtMs) ? Math.max(0, Date.now() - startedAtMs) : 0;
   const idleThresholdMs = inactivity?.idleThresholdMs ?? null;
   const lastWorkerActivityAtMs =
-    inactivity?.lastActivityAt && Number.isFinite(Date.parse(inactivity.lastActivityAt))
-      ? Date.parse(inactivity.lastActivityAt)
+    latestWorkerActivityAt && Number.isFinite(Date.parse(latestWorkerActivityAt))
+      ? Date.parse(latestWorkerActivityAt)
       : null;
   const inactiveDegraded =
     Boolean(inactivity?.inactiveDegraded) &&
@@ -194,8 +206,8 @@ function buildSystemState(params: {
       : null,
     uptimeMs,
     idleThresholdMs,
-    lastWorkerActivityAt: inactivity?.lastActivityAt ?? loopStatus.timeline.lastWorkerReceiptAt ?? null,
-    lastProcessedJobAt: inactivity?.lastProcessedJobAt ?? null,
+    lastWorkerActivityAt: latestWorkerActivityAt,
+    lastProcessedJobAt: latestProcessedJobAt,
   };
 }
 
