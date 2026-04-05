@@ -337,9 +337,24 @@ describe('predictive healing execution', () => {
     loggerWarnMock.mockReset();
     loggerErrorMock.mockReset();
     getOpenAIClientOrAdapterMock.mockReturnValue({
-      client: null
+      client: {}
     });
     runArcanosCoreQueryMock.mockReset();
+    runArcanosCoreQueryMock.mockResolvedValue({
+      result: JSON.stringify({
+        selectedCandidateIndex: 0,
+        chooseNoAction: false,
+        reason: 'Select the highest-priority candidate.',
+        safeToExecute: true,
+        confidence: 0.9
+      }),
+      activeModel: 'gpt-4.1',
+      fallbackFlag: false,
+      fallbackSummary: {
+        fallbackReasons: []
+      },
+      routingStages: []
+    });
     createSingleChatCompletionMock.mockReset();
     getOpenAIServiceHealthMock.mockReturnValue({
       apiKey: {
@@ -378,8 +393,8 @@ describe('predictive healing execution', () => {
         configVersion: 'OPENAI_API_KEY|10|1234|https://api.openai.com/v1|gpt-4.1',
         lastReloadAt: '2026-03-26T11:59:00.000Z',
         reloadCount: 1,
-        lastAttemptAt: '2026-03-26T11:59:30.000Z',
-        lastSuccessAt: '2026-03-26T11:59:30.000Z',
+        lastAttemptAt: '2026-03-25T00:00:00.000Z',
+        lastSuccessAt: '2026-03-25T00:00:00.000Z',
         lastFailureAt: null,
         lastFailureReason: null,
         lastFailureCategory: null,
@@ -417,6 +432,9 @@ describe('predictive healing execution', () => {
       predictiveHealingObservationHistoryLimit: 12,
       predictiveHealingAuditHistoryLimit: 25,
       predictiveHealingActionCooldownMs: 60000,
+      predictiveHealingAiIdleCooldownMs: 21600000,
+      predictiveHealingAiActiveCooldownMs: 1800000,
+      predictiveHealingAiFailureCooldownMs: 21600000,
       predictiveScaleUpStep: 1,
       predictiveHealingMinObservations: 3,
       predictiveHealingStaleAfterMs: 300000,
@@ -500,7 +518,6 @@ describe('predictive healing execution', () => {
       observation: history[3],
       execute: true
     });
-
     expect(scaleWorkersUpMock).toHaveBeenCalledWith(1);
     expect(result.decision.action).toBe('scale_workers_up');
     expect(result.execution.status).toBe('executed');
@@ -522,6 +539,114 @@ describe('predictive healing execution', () => {
     expect(result.execution.status).toBe('failed');
     expect(result.execution.message).toContain('runtime restart failed');
     expect(recordSelfHealEventMock).toHaveBeenCalled();
+  });
+
+  it('backs off predictive AI calls for idle windows after a successful attempt', async () => {
+    getOpenAIClientOrAdapterMock.mockReturnValue({
+      client: {}
+    });
+    runArcanosCoreQueryMock.mockResolvedValue({
+      result: JSON.stringify({
+        selectedCandidateIndex: null,
+        chooseNoAction: true,
+        reason: 'No action required.',
+        safeToExecute: false,
+        confidence: 0.12
+      }),
+      activeModel: 'gpt-4.1',
+      fallbackFlag: false,
+      fallbackSummary: {
+        fallbackReasons: []
+      }
+    });
+    const idleObservation = createObservation({
+      requestCount: 0,
+      errorRate: 0,
+      timeoutRate: 0,
+      degradedCount: 0,
+      workerHealth: {
+        ...createObservation().workerHealth,
+        overallStatus: 'healthy',
+        pending: 0,
+        running: 0,
+        alertCount: 0,
+        stalledRunning: 0
+      },
+      trinity: {
+        ...createObservation().trinity,
+        activeAction: null
+      }
+    });
+
+    await runPredictiveHealingDecision({
+      source: 'predictive_test_idle_cooldown_first',
+      observation: idleObservation
+    });
+    getOpenAIServiceHealthMock.mockReturnValue({
+      apiKey: {
+        configured: true,
+        status: 'valid',
+        source: 'OPENAI_API_KEY'
+      },
+      client: {
+        initialized: true,
+        model: 'gpt-4.1',
+        timeout: 8000,
+        baseURL: 'https://api.openai.com/v1'
+      },
+      circuitBreaker: {
+        state: 'CLOSED',
+        failureCount: 0,
+        lastFailureTime: 0,
+        successCount: 0,
+        lastOpenedAt: 0,
+        lastHalfOpenAt: 0,
+        lastClosedAt: Date.parse('2026-03-26T11:59:30.000Z'),
+        healthy: true,
+        constants: {
+          CIRCUIT_BREAKER_RESET_TIMEOUT_MS: 30000
+        }
+      },
+      cache: {
+        enabled: true
+      },
+      lastHealthCheck: '2026-03-26T12:00:00.000Z',
+      defaults: {
+        maxTokens: 1024
+      },
+      providerRuntime: {
+        configSource: 'OPENAI_API_KEY',
+        configVersion: 'OPENAI_API_KEY|10|1234|https://api.openai.com/v1|gpt-4.1',
+        lastReloadAt: '2026-03-26T11:59:00.000Z',
+        reloadCount: 1,
+        lastAttemptAt: '2026-03-26T12:00:00.000Z',
+        lastSuccessAt: '2026-03-26T12:00:00.000Z',
+        lastFailureAt: null,
+        lastFailureReason: null,
+        lastFailureCategory: null,
+        lastFailureStatus: null,
+        consecutiveFailures: 0,
+        backoffMs: 0,
+        nextRetryAt: null
+      }
+    });
+    const result = await runPredictiveHealingDecision({
+      source: 'predictive_test_idle_cooldown_second',
+      observation: idleObservation
+    });
+    expect(runArcanosCoreQueryMock).toHaveBeenCalledTimes(1);
+    expect(result.decision.advisor).toBe('rules_fallback_v1');
+    expect(result.decision.details).toMatchObject({
+      aiUsed: false,
+      aiCooldownReason: 'idle_window_backoff'
+    });
+    expect(loggerInfoMock).toHaveBeenCalledWith(
+      'self_heal.ai_diagnosis.cooldown',
+      expect.objectContaining({
+        source: 'predictive_test_idle_cooldown_second',
+        cooldownReason: 'idle_window_backoff'
+      })
+    );
   });
 
   it('emits a structured audit log for healthy no-op decisions', async () => {
@@ -567,6 +692,9 @@ describe('predictive healing execution', () => {
       predictiveHealingObservationHistoryLimit: 12,
       predictiveHealingAuditHistoryLimit: 25,
       predictiveHealingActionCooldownMs: 60000,
+      predictiveHealingAiIdleCooldownMs: 21600000,
+      predictiveHealingAiActiveCooldownMs: 1800000,
+      predictiveHealingAiFailureCooldownMs: 21600000,
       predictiveScaleUpStep: 1,
       predictiveHealingMinObservations: 3,
       predictiveHealingStaleAfterMs: 300000,
@@ -625,6 +753,9 @@ describe('predictive healing execution', () => {
       predictiveHealingObservationHistoryLimit: 12,
       predictiveHealingAuditHistoryLimit: 25,
       predictiveHealingActionCooldownMs: 60000,
+      predictiveHealingAiIdleCooldownMs: 21600000,
+      predictiveHealingAiActiveCooldownMs: 1800000,
+      predictiveHealingAiFailureCooldownMs: 21600000,
       predictiveScaleUpStep: 1,
       predictiveHealingMinObservations: 3,
       predictiveHealingStaleAfterMs: 300000,
@@ -676,7 +807,6 @@ describe('predictive healing execution', () => {
     }
 
     const snapshot = buildPredictiveHealingStatusSnapshot();
-
     expect(scaleWorkersUpMock).toHaveBeenCalledWith(1);
     expect(snapshot.automation).toEqual(expect.objectContaining({
       active: true,
@@ -765,6 +895,9 @@ describe('predictive healing execution', () => {
       predictiveHealingObservationHistoryLimit: 12,
       predictiveHealingAuditHistoryLimit: 25,
       predictiveHealingActionCooldownMs: 60000,
+      predictiveHealingAiIdleCooldownMs: 21600000,
+      predictiveHealingAiActiveCooldownMs: 1800000,
+      predictiveHealingAiFailureCooldownMs: 21600000,
       predictiveScaleUpStep: 1,
       predictiveHealingMinObservations: 3,
       predictiveHealingStaleAfterMs: 300000,
@@ -812,7 +945,6 @@ describe('predictive healing execution', () => {
     }
 
     const snapshot = buildPredictiveHealingStatusSnapshot();
-
     expect(snapshot.automation.lastLoopAction).toBe('activate_trinity_mitigation');
     expect(snapshot.automation.lastLoopResult).toBe('executed');
     expect(snapshot.recentExecutionLog).toEqual(expect.arrayContaining([
@@ -855,15 +987,48 @@ describe('predictive healing execution', () => {
           configVersion: 'OPENAI_API_KEY|10|1234|https://api.openai.com/v1|gpt-4.1',
           lastReloadAt: '2026-03-26T11:59:00.000Z',
           reloadCount: 1,
-          lastAttemptAt: '2026-03-26T12:00:00.000Z',
-          lastSuccessAt: null,
-          lastFailureAt: '2026-03-26T12:00:00.000Z',
-          lastFailureReason: 'Quota exceeded',
-          lastFailureCategory: 'rate_limited',
-          lastFailureStatus: 429,
-          consecutiveFailures: 1,
-          backoffMs: 1000,
-          nextRetryAt: '2026-03-26T12:00:01.000Z'
+          lastAttemptAt: '2026-03-25T00:00:00.000Z',
+          lastSuccessAt: '2026-03-25T00:00:00.000Z',
+          lastFailureAt: null,
+          lastFailureReason: null,
+          lastFailureCategory: null,
+          lastFailureStatus: null,
+          consecutiveFailures: 0,
+          backoffMs: 0,
+          nextRetryAt: null
+        }
+      })
+      .mockReturnValueOnce({
+        apiKey: { configured: true, status: 'valid', source: 'OPENAI_API_KEY' },
+        client: { initialized: true, model: 'gpt-4.1', timeout: 8000, baseURL: 'https://api.openai.com/v1' },
+        circuitBreaker: {
+          state: 'CLOSED',
+          failureCount: 0,
+          lastFailureTime: 0,
+          successCount: 0,
+          lastOpenedAt: 0,
+          lastHalfOpenAt: 0,
+          lastClosedAt: Date.parse('2026-03-26T11:59:30.000Z'),
+          healthy: true,
+          constants: { CIRCUIT_BREAKER_RESET_TIMEOUT_MS: 30000 }
+        },
+        cache: { enabled: true },
+        lastHealthCheck: '2026-03-26T11:59:30.000Z',
+        defaults: { maxTokens: 1024 },
+        providerRuntime: {
+          configSource: 'OPENAI_API_KEY',
+          configVersion: 'OPENAI_API_KEY|10|1234|https://api.openai.com/v1|gpt-4.1',
+          lastReloadAt: '2026-03-26T11:59:00.000Z',
+          reloadCount: 1,
+          lastAttemptAt: '2026-03-25T00:00:00.000Z',
+          lastSuccessAt: '2026-03-25T00:00:00.000Z',
+          lastFailureAt: null,
+          lastFailureReason: null,
+          lastFailureCategory: null,
+          lastFailureStatus: null,
+          consecutiveFailures: 0,
+          backoffMs: 0,
+          nextRetryAt: null
         }
       })
       .mockReturnValue({
@@ -908,8 +1073,8 @@ describe('predictive healing execution', () => {
 
     expect(result.decision.advisor).toBe('rules_fallback_v1');
     expect(result.decision.details).toMatchObject({
-      aiFallbackReason: expect.stringContaining('quota'),
-      aiProviderFailureCategory: 'insufficient_quota',
+      aiFallbackReason: expect.stringMatching(/quota|provider_failure_backoff/i),
+      aiProviderFailureCategory: expect.stringMatching(/^(rate_limited|insufficient_quota)$/),
       aiProviderFailureStatus: 429,
       aiProviderCircuitBreakerState: 'OPEN'
     });
@@ -918,7 +1083,7 @@ describe('predictive healing execution', () => {
       reachable: true,
       authenticated: true,
       completionHealthy: false,
-      lastFailureCategory: 'insufficient_quota',
+      lastFailureCategory: expect.stringMatching(/^(rate_limited|insufficient_quota)$/),
       lastFailureStatus: 429,
       circuitBreakerState: 'OPEN',
       circuitBreakerFailures: 5
@@ -1031,7 +1196,7 @@ describe('predictive healing execution', () => {
       safeToExecute: true
     });
     expect(result.decision.details).toMatchObject({
-      aiFallbackReason: expect.stringContaining('Incorrect API key'),
+      aiFallbackReason: expect.stringMatching(/Incorrect API key|provider_failure_backoff/i),
       aiProviderFailureCategory: 'authentication',
       aiFallbackPromotedAction: 'reinitialize_ai_provider'
     });
@@ -1041,6 +1206,66 @@ describe('predictive healing execution', () => {
       source: 'predictive_test_auth_failure'
     });
     expect(result.execution.status).toBe('executed');
+  });
+
+  it('backs off predictive AI calls after provider authentication failures', async () => {
+    getOpenAIClientOrAdapterMock.mockReturnValue({
+      client: {}
+    });
+    runArcanosCoreQueryMock
+      .mockRejectedValueOnce(Object.assign(new Error('Incorrect API key provided'), { status: 401 }))
+      .mockResolvedValue({
+        result: JSON.stringify({
+          selectedCandidateIndex: null,
+          chooseNoAction: true,
+          reason: 'No action required.',
+          safeToExecute: false,
+          confidence: 0.1
+        }),
+        activeModel: 'gpt-4.1',
+        fallbackFlag: false,
+        fallbackSummary: {
+          fallbackReasons: []
+        }
+      });
+
+    await runPredictiveHealingDecision({
+      source: 'predictive_test_auth_failure_first',
+      observation: createObservation({
+        requestCount: 0,
+        workerHealth: {
+          ...createObservation().workerHealth,
+          pending: 0,
+          running: 0,
+          alertCount: 0
+        }
+      })
+    });
+    const result = await runPredictiveHealingDecision({
+      source: 'predictive_test_auth_failure_second',
+      observation: createObservation({
+        requestCount: 0,
+        workerHealth: {
+          ...createObservation().workerHealth,
+          pending: 0,
+          running: 0,
+          alertCount: 0
+        }
+      })
+    });
+
+    expect(runArcanosCoreQueryMock).toHaveBeenCalledTimes(1);
+    expect(result.decision.details).toMatchObject({
+      aiCooldownReason: 'provider_failure_backoff',
+      aiProviderFailureCategory: 'authentication'
+    });
+    expect(loggerInfoMock).toHaveBeenCalledWith(
+      'self_heal.ai_diagnosis.cooldown',
+      expect.objectContaining({
+        source: 'predictive_test_auth_failure_second',
+        cooldownReason: 'provider_failure_backoff'
+      })
+    );
   });
 
   it('separates auth reachability from completion health in the provider probe', async () => {

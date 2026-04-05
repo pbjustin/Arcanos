@@ -449,6 +449,119 @@ describe('gpt router auth logging', () => {
     });
   });
 
+  it('extends route-level timeout budgets for DAG execution prompts', async () => {
+    const abortError = new Error('GPT route timeout after 8000ms');
+    abortError.name = 'AbortError';
+    mockRouteGptRequest.mockRejectedValue(abortError);
+
+    const app = express();
+    app.use(express.json());
+    app.use(requestContext);
+    app.use('/gpt', gptRouter);
+
+    const response = await request(app)
+      .post('/gpt/arcanos-core')
+      .send({ prompt: 'trigger a real DAG run and trace it live' });
+
+    expect(response.status).toBe(504);
+    expect(response.body).toEqual({
+      ok: false,
+      error: {
+        code: 'MODULE_TIMEOUT',
+        message: 'GPT route timeout after 8000ms',
+      },
+      _route: expect.objectContaining({
+        gptId: 'arcanos-core',
+      }),
+    });
+  });
+
+  it('exposes DAG follow-up endpoints in shaped GPT responses', async () => {
+    mockRouteGptRequest.mockResolvedValue({
+      ok: true,
+      result: {
+        handledBy: 'dag-dispatcher',
+        dag: {
+          dispatchMode: 'automatic',
+          reason: 'prompt_requests_dag_execution',
+          summary: 'Started DAG run dagrun_test_followup.',
+          runId: 'dagrun_test_followup',
+          run: {
+            runId: 'dagrun_test_followup',
+            sessionId: 'sess-followup',
+            status: 'queued',
+            template: 'trinity-core',
+            totalNodes: 5,
+            completedNodes: 0,
+            failedNodes: 0,
+            createdAt: '2026-03-29T00:00:00.000Z',
+            updatedAt: '2026-03-29T00:00:00.000Z',
+          },
+          artifactKeys: ['dag.run.create', 'dag.run.trace'],
+          deferredTools: {
+            total: 1,
+            tools: ['dag.run.trace'],
+          },
+          followUp: {
+            runId: 'dagrun_test_followup',
+            trace: '/api/arcanos/dag/runs/dagrun_test_followup/trace',
+            tree: '/api/arcanos/dag/runs/dagrun_test_followup/tree',
+            lineage: '/api/arcanos/dag/runs/dagrun_test_followup/lineage',
+            metrics: '/api/arcanos/dag/runs/dagrun_test_followup/metrics',
+            errors: '/api/arcanos/dag/runs/dagrun_test_followup/errors',
+            verification: '/api/arcanos/dag/runs/dagrun_test_followup/verification',
+          },
+        },
+      },
+      _route: {
+        gptId: 'arcanos-core',
+        module: 'ARCANOS:CORE',
+        route: 'core',
+        action: 'dag.run.create',
+        availableActions: ['query', 'system_state'],
+      },
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use(requestContext);
+    app.use('/gpt', gptRouter);
+
+    const response = await request(app)
+      .post('/gpt/arcanos-core')
+      .send({ prompt: 'trigger a real DAG run and trace it live' });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: {
+          handledBy: 'dag-dispatcher',
+          dag: expect.objectContaining({
+            runId: 'dagrun_test_followup',
+            artifactKeys: ['dag.run.create', 'dag.run.trace'],
+            deferredTools: {
+              total: 1,
+              tools: ['dag.run.trace'],
+            },
+            followUp: {
+              runId: 'dagrun_test_followup',
+              trace: '/api/arcanos/dag/runs/dagrun_test_followup/trace',
+              tree: '/api/arcanos/dag/runs/dagrun_test_followup/tree',
+              lineage: '/api/arcanos/dag/runs/dagrun_test_followup/lineage',
+              metrics: '/api/arcanos/dag/runs/dagrun_test_followup/metrics',
+              errors: '/api/arcanos/dag/runs/dagrun_test_followup/errors',
+              verification: '/api/arcanos/dag/runs/dagrun_test_followup/verification',
+            },
+          }),
+        },
+        _route: expect.objectContaining({
+          action: 'dag.run.create',
+        }),
+      })
+    );
+  });
+
   it('applies degraded pipeline headers when routed Trinity results recover under the clamp', async () => {
     mockRouteGptRequest.mockResolvedValue({
       ok: true,

@@ -14,6 +14,7 @@ import {
 import type { DagNodeJobInput } from '../jobs/jobSchema.js';
 import { dagLogger, type DagLogger } from '../utils/logger.js';
 import { dagMetrics, type DagMetricsRecorder } from '../utils/metrics.js';
+import type { PlannerExecutionFailureDetails } from './trinityWorkerPipeline.js';
 
 export interface DagTaskRunnerDependencies {
   runPrompt(prompt: string, options: DagAgentPromptOptions): Promise<unknown>;
@@ -110,6 +111,76 @@ function extractTokenUsageFromPromptOutput(promptOutput: unknown): number | unde
   }
 
   return undefined;
+}
+
+function extractPlannerExecutionDetails(error: unknown): PlannerExecutionFailureDetails | null {
+  if (!error || typeof error !== 'object') {
+    return null;
+  }
+
+  const candidate = (error as { plannerExecution?: unknown }).plannerExecution;
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+    return null;
+  }
+
+  const details = candidate as Partial<PlannerExecutionFailureDetails>;
+  if (
+    typeof details.sourceEndpoint !== 'string' ||
+    typeof details.timeoutMs !== 'number' ||
+    typeof details.maxRetries !== 'number' ||
+    typeof details.retryBackoffMs !== 'number' ||
+    typeof details.attemptsUsed !== 'number' ||
+    typeof details.durationMs !== 'number' ||
+    typeof details.finalFailureClassification !== 'string' ||
+    typeof details.transientFailure !== 'boolean' ||
+    typeof details.retryable !== 'boolean' ||
+    typeof details.errorName !== 'string' ||
+    typeof details.errorMessage !== 'string'
+  ) {
+    return null;
+  }
+
+  return details as PlannerExecutionFailureDetails;
+}
+
+function buildDagFailureOutput(
+  error: unknown,
+  durationMs: number
+): {
+  output: unknown;
+  retryable?: boolean;
+} {
+  const errorMessage = error instanceof Error ? error.message : String(error);
+  const plannerExecution = extractPlannerExecutionDetails(error);
+
+  if (!plannerExecution) {
+    return {
+      output: {
+        errorMessage,
+        durationMs
+      }
+    };
+  }
+
+  return {
+    output: {
+      errorMessage,
+      errorName: plannerExecution.errorName,
+      ...(typeof plannerExecution.errorCode === 'string'
+        ? { errorCode: plannerExecution.errorCode }
+        : {}),
+      ...(typeof plannerExecution.statusCode === 'number'
+        ? { statusCode: plannerExecution.statusCode }
+        : {}),
+      durationMs: plannerExecution.durationMs,
+      retryCountUsed: Math.max(0, plannerExecution.attemptsUsed - 1),
+      finalFailureClassification: plannerExecution.finalFailureClassification,
+      transientFailure: plannerExecution.transientFailure,
+      retryable: plannerExecution.retryable,
+      plannerExecution
+    },
+    retryable: plannerExecution.retryable
+  };
 }
 
 async function attachDagResultArtifactReference(
@@ -276,6 +347,7 @@ export async function runDagNodeJob(
   } catch (error: unknown) {
     const durationMs = Date.now() - startedAt;
     const errorMessage = error instanceof Error ? error.message : String(error);
+    const failureOutput = buildDagFailureOutput(error, durationMs);
 
     activeMetrics.incrementCounter('node_failure');
     activeMetrics.recordDuration('node_execution_failed', durationMs);
@@ -283,13 +355,18 @@ export async function runDagNodeJob(
       dagId: jobInput.dagId,
       nodeId: jobInput.node.id,
       executionKey: jobInput.node.executionKey,
-      errorMessage
+      errorMessage,
+      ...(failureOutput.retryable !== undefined ? { retryable: failureOutput.retryable } : {})
     });
 
-    return attachDagResultArtifactReference(createDagFailureResult(jobInput.node.id, errorMessage, {
+    return attachDagResultArtifactReference(createDagFailureResult(
+      jobInput.node.id,
       errorMessage,
-      durationMs
-    }), {
+      failureOutput.output,
+      typeof failureOutput.retryable === 'boolean'
+        ? { retryable: failureOutput.retryable }
+        : {}
+    ), {
       artifactStore,
       dagId: jobInput.dagId,
       nodeId: jobInput.node.id,

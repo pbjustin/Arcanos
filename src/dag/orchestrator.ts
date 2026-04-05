@@ -546,7 +546,10 @@ export class DAGOrchestrator {
       if (terminalResult.status === 'failed') {
         const nextAttempt = (attemptsByNodeId.get(nodeId) ?? 0) + 1;
         attemptsByNodeId.set(nodeId, nextAttempt);
-        const willRetry = nextAttempt <= completedRunningJob.record.maxRetries;
+        const resultAllowsRetry = terminalResult.retryable !== false;
+        const willRetry =
+          resultAllowsRetry &&
+          nextAttempt <= completedRunningJob.record.maxRetries;
         context.observer?.onNodeFailed?.({
           dagId,
           nodeId,
@@ -585,11 +588,14 @@ export class DAGOrchestrator {
         resultsByNodeId[nodeId] = terminalResult;
         emitGuardViolation(
           'max_retries_exceeded',
-          `Node "${nodeId}" exhausted retry budget (${completedRunningJob.record.maxRetries}).`,
+          resultAllowsRetry
+            ? `Node "${nodeId}" exhausted retry budget (${completedRunningJob.record.maxRetries}).`
+            : `Node "${nodeId}" failed with a non-retryable error; DAG retries were skipped.`,
           nodeId,
           {
             retries: nextAttempt,
-            maxRetries: completedRunningJob.record.maxRetries
+            maxRetries: completedRunningJob.record.maxRetries,
+            retryable: resultAllowsRetry
           }
         );
         cascadeBlockedDependents(

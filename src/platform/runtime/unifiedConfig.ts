@@ -88,6 +88,9 @@ export interface AppConfig {
   predictiveHealingStaleAfterMs: number;
   predictiveHealingMinConfidence: number;
   predictiveHealingActionCooldownMs: number;
+  predictiveHealingAiIdleCooldownMs: number;
+  predictiveHealingAiActiveCooldownMs: number;
+  predictiveHealingAiFailureCooldownMs: number;
   predictiveHealingObservationHistoryLimit: number;
   predictiveHealingAuditHistoryLimit: number;
   predictiveErrorRateThreshold: number;
@@ -426,6 +429,9 @@ export function getConfig(): AppConfig {
       5 * 60_000,
       ['PREDICTIVE_HEALING_ACTION_COOLDOWN_MS']
     ),
+    predictiveHealingAiIdleCooldownMs: getEnvNumber('PREDICTIVE_HEALING_AI_IDLE_COOLDOWN_MS', 6 * 60 * 60_000),
+    predictiveHealingAiActiveCooldownMs: getEnvNumber('PREDICTIVE_HEALING_AI_ACTIVE_COOLDOWN_MS', 30 * 60_000),
+    predictiveHealingAiFailureCooldownMs: getEnvNumber('PREDICTIVE_HEALING_AI_FAILURE_COOLDOWN_MS', 6 * 60 * 60_000),
     predictiveHealingObservationHistoryLimit: getEnvNumber('PREDICTIVE_HEALING_OBSERVATION_HISTORY_LIMIT', 12),
     predictiveHealingAuditHistoryLimit: getEnvNumber('PREDICTIVE_HEALING_AUDIT_HISTORY_LIMIT', 25),
     predictiveErrorRateThreshold: getEnvNumber('PREDICTIVE_ERROR_RATE_THRESHOLD', 0.18),

@@ -47,4 +47,34 @@ describe('ai routing debug route', () => {
       toolsSelected: ['/api/self-heal/runtime', 'cli:status'],
     });
   });
+
+  it('returns DAG execution intent snapshots unchanged', async () => {
+    recordAiRoutingDebugSnapshot({
+      requestId: 'req-ai-routing-dag-1',
+      timestamp: '2026-03-30T00:00:00.000Z',
+      rawPrompt: 'run a live DAG trace',
+      normalizedPrompt: 'run a live DAG trace',
+      detectedIntent: 'DAG_EXECUTION_REQUIRED',
+      routingDecision: 'dag_execution_completed',
+      toolsAvailable: ['dag.run.create', 'dag.run.trace'],
+      toolsSelected: ['dag.run.create', 'dag.run.trace'],
+      cliUsed: false,
+      runtimeEndpointsQueried: [],
+      repoFallbackUsed: false,
+      constraintViolations: [],
+    });
+
+    const app = buildApp();
+    const response = await request(app)
+      .get('/api/ai-routing/debug/latest')
+      .query({ requestId: 'req-ai-routing-dag-1' });
+
+    expect(response.status).toBe(200);
+    expect(response.body.latest).toMatchObject({
+      requestId: 'req-ai-routing-dag-1',
+      detectedIntent: 'DAG_EXECUTION_REQUIRED',
+      routingDecision: 'dag_execution_completed',
+      toolsSelected: ['dag.run.create', 'dag.run.trace'],
+    });
+  });
 });

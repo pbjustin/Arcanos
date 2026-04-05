@@ -5,6 +5,7 @@ import type { DagNodeJobInput } from '../src/jobs/jobSchema.js';
 import { runDagNodeJob } from '../src/workers/taskRunners.js';
 
 const TEST_AUDIT_EXECUTION_KEY = 'audit-regression-test';
+const TEST_PLANNER_EXECUTION_KEY = 'planner-regression-test';
 
 function buildDagNodeJobInput(): DagNodeJobInput {
   return {
@@ -32,6 +33,29 @@ function buildDagNodeJobInput(): DagNodeJobInput {
   };
 }
 
+function buildPlannerDagNodeJobInput(): DagNodeJobInput {
+  return {
+    dagId: 'dagrun_planner_1',
+    node: {
+      id: 'planner',
+      type: 'agent',
+      dependencies: [],
+      executionKey: TEST_PLANNER_EXECUTION_KEY
+    },
+    payload: {
+      prompt: 'Create the execution plan.'
+    },
+    dependencyResults: {},
+    sharedState: {
+      sessionId: 'session-planner-1'
+    },
+    depth: 0,
+    attempt: 0,
+    maxRetries: 2,
+    waitingTimeoutMs: 60_000
+  };
+}
+
 describe('runDagNodeJob', () => {
   beforeEach(() => {
     dagAgentManager.registerAgent(TEST_AUDIT_EXECUTION_KEY, async () => ({
@@ -43,6 +67,11 @@ describe('runDagNodeJob', () => {
         auditFlags: ['VERIFY_OUTPUT_NORMALIZED']
       }
     }));
+    dagAgentManager.registerAgent(TEST_PLANNER_EXECUTION_KEY, async (_context, helpers) => {
+      return helpers.runPrompt('Create the execution plan.', {
+        sourceEndpoint: 'dag.agent.planner'
+      });
+    });
   });
 
   it('normalizes DAG verification worker output to include a stable summary field', async () => {
@@ -89,5 +118,64 @@ describe('runDagNodeJob', () => {
       nodeId: 'audit',
       summaryPreview: expect.stringContaining('Validated the provided dependency outputs')
     }));
+  });
+
+  it('surfaces structured planner failure metadata and marks the result as non-retryable after planner retries exhaust', async () => {
+    const plannerError = new Error('Request was aborted.') as Error & {
+      plannerExecution?: Record<string, unknown>;
+    };
+    plannerError.plannerExecution = {
+      sourceEndpoint: 'dag.agent.planner',
+      timeoutMs: 90_000,
+      maxRetries: 2,
+      retryBackoffMs: 500,
+      attemptsUsed: 3,
+      durationMs: 12_345,
+      finalFailureClassification: 'abort',
+      transientFailure: true,
+      retryable: false,
+      errorName: 'AbortError',
+      errorMessage: 'Request was aborted.'
+    };
+
+    const result = await runDagNodeJob(buildPlannerDagNodeJobInput(), {
+      runPrompt: jest.fn().mockRejectedValue(plannerError),
+      logger: {
+        debug: jest.fn(),
+        info: jest.fn(),
+        warn: jest.fn(),
+        error: jest.fn()
+      },
+      metrics: {
+        incrementCounter: jest.fn(),
+        recordGauge: jest.fn(),
+        recordDuration: jest.fn(),
+        snapshot: jest.fn(() => ({
+          counters: {},
+          gauges: {},
+          durationsMs: {}
+        }))
+      },
+      artifactStore: {
+        writeArtifact: jest.fn().mockResolvedValue('planner-failure-artifact'),
+        readArtifact: jest.fn()
+      }
+    });
+
+    expect(result.status).toBe('failed');
+    expect(result.retryable).toBe(false);
+    expect(result.output).toMatchObject({
+      errorMessage: 'Request was aborted.',
+      errorName: 'AbortError',
+      durationMs: 12_345,
+      retryCountUsed: 2,
+      finalFailureClassification: 'abort',
+      transientFailure: true,
+      retryable: false,
+      plannerExecution: expect.objectContaining({
+        attemptsUsed: 3,
+        timeoutMs: 90_000
+      })
+    });
   });
 });

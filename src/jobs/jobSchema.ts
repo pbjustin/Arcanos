@@ -12,7 +12,8 @@ const dagResultSchema = z.object({
   output: z.unknown(),
   errorMessage: z.string().trim().min(1).optional(),
   metrics: dagNodeMetricsSchema,
-  artifactRef: z.string().trim().min(1).optional()
+  artifactRef: z.string().trim().min(1).optional(),
+  retryable: z.boolean().optional()
 });
 
 const queuedDagNodeDefinitionSchema = z.object({

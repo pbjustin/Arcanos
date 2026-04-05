@@ -289,6 +289,65 @@ describe('DAGOrchestrator', () => {
     expect(summary.resultsByNodeId.writer?.output).toEqual({ upstreamStatus: 'success' });
   });
 
+  it('retries a transient planner failure and continues the DAG once planner recovers', async () => {
+    const queue = new InMemoryDagJobQueue();
+    const orchestrator = new DAGOrchestrator({
+      jobQueue: queue,
+      settings: {
+        maxConcurrentNodes: 2,
+        maxDepth: 3,
+        maxChildrenPerNode: 5,
+        maxRetries: 2,
+        maxTokenBudgetPerDag: 1000,
+        nodeTimeoutMs: 5000,
+        pollIntervalMs: 1
+      }
+    });
+
+    let plannerAttempts = 0;
+
+    const graph: DAGGraph = {
+      id: 'dag-planner-retry-path',
+      nodes: {
+        planner: createExecutableNode('planner', [], async () => {
+          plannerAttempts += 1;
+
+          if (plannerAttempts === 1) {
+            return createDagFailureResult(
+              'planner',
+              'Request was aborted.',
+              { errorMessage: 'Request was aborted.' },
+              { retryable: true }
+            );
+          }
+
+          return createDagSuccessResult('planner', { outline: 'plan ready' });
+        }),
+        research: createExecutableNode('research', ['planner'], async () =>
+          createDagSuccessResult('research', { ok: true })
+        ),
+        writer: createExecutableNode('writer', ['research'], async context =>
+          createDagSuccessResult('writer', {
+            upstreamStatus: context.dependencyResults.research?.status ?? 'missing'
+          })
+        )
+      },
+      edges: [
+        { from: 'planner', to: 'research' },
+        { from: 'research', to: 'writer' }
+      ],
+      entrypoints: ['planner']
+    };
+
+    const summary = await orchestrator.runGraph(graph);
+
+    expect(summary.status).toBe('success');
+    expect(plannerAttempts).toBe(2);
+    expect(summary.failedNodeIds).toEqual([]);
+    expect(summary.skippedNodeIds).toEqual([]);
+    expect(summary.resultsByNodeId.writer?.status).toBe('success');
+  });
+
   it('skips downstream nodes when a dependency fails after retries are exhausted', async () => {
     const queue = new InMemoryDagJobQueue();
     const orchestrator = new DAGOrchestrator({
@@ -338,6 +397,111 @@ describe('DAGOrchestrator', () => {
     expect(summary.skippedNodeIds).toEqual(['writer']);
     expect(summary.resultsByNodeId.audit?.status).toBe('success');
     expect(summary.resultsByNodeId.writer?.status).toBe('skipped');
+  });
+
+  it('fails the DAG cleanly when planner transient failures exhaust retries', async () => {
+    const queue = new InMemoryDagJobQueue();
+    const orchestrator = new DAGOrchestrator({
+      jobQueue: queue,
+      settings: {
+        maxConcurrentNodes: 2,
+        maxDepth: 3,
+        maxChildrenPerNode: 5,
+        maxRetries: 2,
+        maxTokenBudgetPerDag: 1000,
+        nodeTimeoutMs: 5000,
+        pollIntervalMs: 1
+      }
+    });
+
+    let plannerAttempts = 0;
+
+    const graph: DAGGraph = {
+      id: 'dag-planner-final-failure',
+      nodes: {
+        planner: createExecutableNode('planner', [], async () => {
+          plannerAttempts += 1;
+          return createDagFailureResult(
+            'planner',
+            'Planner DAG node timed out after 90000ms',
+            { errorMessage: 'Planner DAG node timed out after 90000ms' },
+            { retryable: true }
+          );
+        }),
+        research: createExecutableNode('research', ['planner'], async () =>
+          createDagSuccessResult('research', { ok: true })
+        ),
+        writer: createExecutableNode('writer', ['research'], async () =>
+          createDagSuccessResult('writer', { ok: true })
+        )
+      },
+      edges: [
+        { from: 'planner', to: 'research' },
+        { from: 'research', to: 'writer' }
+      ],
+      entrypoints: ['planner']
+    };
+
+    const summary = await orchestrator.runGraph(graph);
+
+    expect(summary.status).toBe('failed');
+    expect(plannerAttempts).toBe(3);
+    expect(summary.failedNodeIds).toEqual(['planner']);
+    expect(summary.skippedNodeIds).toEqual(['research', 'writer']);
+    expect(summary.resultsByNodeId.research?.status).toBe('skipped');
+    expect(summary.resultsByNodeId.writer?.status).toBe('skipped');
+  });
+
+  it('does not retry non-retryable planner validation failures', async () => {
+    const queue = new InMemoryDagJobQueue();
+    const orchestrator = new DAGOrchestrator({
+      jobQueue: queue,
+      settings: {
+        maxConcurrentNodes: 2,
+        maxDepth: 3,
+        maxChildrenPerNode: 5,
+        maxRetries: 2,
+        maxTokenBudgetPerDag: 1000,
+        nodeTimeoutMs: 5000,
+        pollIntervalMs: 1
+      }
+    });
+
+    let plannerAttempts = 0;
+
+    const graph: DAGGraph = {
+      id: 'dag-planner-non-retryable',
+      nodes: {
+        planner: createExecutableNode('planner', [], async () => {
+          plannerAttempts += 1;
+          return createDagFailureResult(
+            'planner',
+            'Validation error: missing planner input.',
+            { errorMessage: 'Validation error: missing planner input.' },
+            { retryable: false }
+          );
+        }),
+        research: createExecutableNode('research', ['planner'], async () =>
+          createDagSuccessResult('research', { ok: true })
+        ),
+        writer: createExecutableNode('writer', ['research'], async () =>
+          createDagSuccessResult('writer', { ok: true })
+        )
+      },
+      edges: [
+        { from: 'planner', to: 'research' },
+        { from: 'research', to: 'writer' }
+      ],
+      entrypoints: ['planner']
+    };
+
+    const summary = await orchestrator.runGraph(graph);
+
+    expect(summary.status).toBe('failed');
+    expect(plannerAttempts).toBe(1);
+    expect(summary.failedNodeIds).toEqual(['planner']);
+    expect(summary.skippedNodeIds).toEqual(['research', 'writer']);
+    expect(summary.resultsByNodeId.research?.status).toBe('skipped');
   });
 
   it('rejects graphs that exceed the configured max depth', async () => {

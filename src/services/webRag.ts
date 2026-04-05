@@ -1,9 +1,15 @@
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { getDefaultModel, hasValidAPIKey } from './openai.js';
 import { createEmbedding } from './openai/embeddings.js';
 import { fetchAndClean } from "@shared/webFetcher.js";
 import { cosineSimilarity } from "@shared/vectorUtils.js";
-import { saveRagDoc, loadAllRagDocs, initializeDatabaseWithSchema as initializeDatabase, getStatus } from "@core/db/index.js";
+import {
+  saveRagDoc,
+  loadAllRagDocs,
+  loadRagDocsByIds,
+  initializeDatabaseWithSchema as initializeDatabase,
+  getStatus
+} from "@core/db/index.js";
 import { logger } from "@platform/logging/structuredLogging.js";
 import { requireOpenAIClientOrAdapter } from './openai/clientBridge.js';
 
@@ -57,6 +63,7 @@ export interface RagQueryResult {
 }
 
 let vectorStore: Doc[] | null = null;
+let vectorStoreIndexById: Map<string, number> | null = null;
 const ragLogger = logger.child({ module: 'webRag' });
 const DEFAULT_RETRIEVAL_LIMIT = 5;
 const MAX_RETRIEVAL_LIMIT = 25;
@@ -65,15 +72,64 @@ const DEFAULT_ANSWER_MIN_SIMILARITY = 0.12;
 const MAX_QUERY_LENGTH = 4_000;
 const CONTENT_PREVIEW_LIMIT = 900;
 
+function setVectorStore(docs: Doc[]): void {
+  vectorStore = docs;
+  vectorStoreIndexById = new Map(docs.map((doc, index) => [doc.id, index]));
+}
+
+function ensureVectorStoreIndex(): Map<string, number> {
+  if (!vectorStoreIndexById) {
+    vectorStoreIndexById = new Map((vectorStore || []).map((doc, index) => [doc.id, index]));
+  }
+
+  return vectorStoreIndexById;
+}
+
+function getVectorStoreDocById(id: string): Doc | null {
+  const docs = vectorStore || [];
+  const existingIndex = ensureVectorStoreIndex().get(id);
+  if (existingIndex === undefined) {
+    return null;
+  }
+
+  return docs[existingIndex] ?? null;
+}
+
+function hashText(value: string): string {
+  return createHash('sha256').update(value, 'utf8').digest('hex');
+}
+
+function buildConversationSnippetParentId(options: ConversationSnippetOptions, trimmedContent: string): string {
+  const messageId =
+    typeof options.metadata?.messageId === 'string' && options.metadata.messageId.trim().length > 0
+      ? options.metadata.messageId.trim()
+      : null;
+  const timestampPart =
+    typeof options.timestamp === 'number' && Number.isFinite(options.timestamp)
+      ? Math.trunc(options.timestamp)
+      : 0;
+  const contentHash = hashText(trimmedContent).slice(0, 16);
+
+  if (messageId) {
+    return `conversation:${options.sessionId}:${options.channel ?? 'conversations_core'}:${messageId}:${contentHash}`;
+  }
+
+  return `conversation:${options.sessionId}:${options.channel ?? 'conversations_core'}:${timestampPart}:${contentHash}`;
+}
+
 function upsertDoc(doc: Doc): void {
   if (!vectorStore) {
-    vectorStore = [];
+    setVectorStore([]);
   }
-  const existingIndex = vectorStore.findIndex((existing) => existing.id === doc.id);
-  if (existingIndex >= 0) {
-    vectorStore[existingIndex] = doc;
+
+  const docs = vectorStore || [];
+  const indexById = ensureVectorStoreIndex();
+  const existingIndex = indexById.get(doc.id);
+  if (existingIndex !== undefined) {
+    docs[existingIndex] = doc;
   } else {
-    vectorStore.push(doc);
+    indexById.set(doc.id, docs.length);
+    docs.push(doc);
   }
 }
 
@@ -297,21 +353,21 @@ async function ensureStore(): Promise<void> {
       const connected = await initializeDatabase('web-rag');
       if (!connected) {
         console.warn('[🧠 RAG] Database unavailable - using in-memory vector store');
-        vectorStore = [];
+        setVectorStore([]);
         return;
       }
     } catch (error) {
       console.warn('[🧠 RAG] Database initialization failed - using in-memory vector store', error);
-      vectorStore = [];
+      setVectorStore([]);
       return;
     }
   }
 
   try {
-    vectorStore = await loadAllRagDocs();
+    setVectorStore(await loadAllRagDocs());
   } catch (error) {
     console.warn('[🧠 RAG] Failed to load documents from database - using in-memory vector store', error);
-    vectorStore = [];
+    setVectorStore([]);
   }
 }
 
@@ -508,8 +564,27 @@ export async function ingestContent(options: IngestContentOptions): Promise<Inge
   }
 
   const chunks = chunkText(content);
+  const docIds = chunks.map((_, idx) => `${parentId}#${idx}`);
+  const existingDocsById = new Map<string, Doc>();
+
+  for (const docId of docIds) {
+    const existingInMemoryDoc = getVectorStoreDocById(docId);
+    if (existingInMemoryDoc) {
+      existingDocsById.set(docId, existingInMemoryDoc);
+    }
+  }
+
+  const missingDocIds = docIds.filter((docId) => !existingDocsById.has(docId));
+  if (missingDocIds.length > 0) {
+    const persistedDocs = await loadRagDocsByIds(missingDocIds).catch(() => []);
+    for (const persistedDoc of persistedDocs) {
+      existingDocsById.set(persistedDoc.id, persistedDoc as Doc);
+    }
+  }
+
   for (let idx = 0; idx < chunks.length; idx++) {
     const chunk = chunks[idx];
+    const docId = `${parentId}#${idx}`;
     const chunkMetadata: Record<string, unknown> = {
       ...sanitizedMetadata,
       parentId,
@@ -517,8 +592,14 @@ export async function ingestContent(options: IngestContentOptions): Promise<Inge
       chunkCount: chunks.length,
     };
 
+    const existingDoc = existingDocsById.get(docId);
+    if (existingDoc && existingDoc.content === chunk && existingDoc.url === sourceLabel) {
+      upsertDoc(existingDoc);
+      continue;
+    }
+
     const doc: Doc = {
-      id: `${parentId}#${idx}`,
+      id: docId,
       url: sourceLabel,
       content: chunk,
       embedding: await createEmbedding(chunk, client),
@@ -532,6 +613,7 @@ export async function ingestContent(options: IngestContentOptions): Promise<Inge
     }
 
     upsertDoc(doc);
+    existingDocsById.set(docId, doc);
   }
 
   return {
@@ -583,6 +665,7 @@ export async function recordConversationSnippet(options: ConversationSnippetOpti
 
   try {
     await ingestContent({
+      id: buildConversationSnippetParentId(options, trimmed),
       content: trimmed,
       source: `session:${sessionId}`,
       metadata: snippetMetadata,

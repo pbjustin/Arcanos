@@ -253,6 +253,35 @@ const dependencyTimeoutsTotal = new Counter({
   registers: [metricsRegistry],
 });
 
+const aiCallsTotal = new Counter({
+  name: 'ai_calls_total',
+  help: 'AI provider calls by source, model, operation, and outcome.',
+  labelNames: ['provider', 'operation', 'source_type', 'source_name', 'model', 'outcome'] as const,
+  registers: [metricsRegistry],
+});
+
+const aiCallDurationMs = new Histogram({
+  name: 'ai_call_duration_ms',
+  help: 'AI provider call duration in milliseconds.',
+  labelNames: ['provider', 'operation', 'source_type', 'source_name', 'model', 'outcome'] as const,
+  buckets: [1, 5, 10, 25, 50, 100, 250, 500, 1_000, 2_500, 5_000, 10_000, 20_000, 30_000, 60_000, 120_000],
+  registers: [metricsRegistry],
+});
+
+const aiTokensTotal = new Counter({
+  name: 'ai_tokens_total',
+  help: 'AI tokens consumed by source, model, operation, and token type.',
+  labelNames: ['provider', 'operation', 'source_type', 'source_name', 'model', 'token_type'] as const,
+  registers: [metricsRegistry],
+});
+
+const aiBudgetExceededTotal = new Counter({
+  name: 'ai_budget_exceeded_total',
+  help: 'AI boundary budget exceed events by source and limit kind.',
+  labelNames: ['provider', 'source_type', 'source_name', 'limit_kind'] as const,
+  registers: [metricsRegistry],
+});
+
 const processHeapUsedBytes = new Gauge({
   name: 'process_heap_used_bytes',
   help: 'Heap used by the current Node.js process.',
@@ -605,6 +634,100 @@ export function recordDependencyCall(input: {
   if (isTimeoutError(input.error) || outcome === 'timeout') {
     dependencyTimeoutsTotal.inc({ dependency, operation });
   }
+}
+
+export function recordAiOperation(input: {
+  provider: string;
+  operation: string;
+  sourceType?: string | null;
+  sourceName?: string | null;
+  model?: string | null;
+  outcome: string;
+  durationMs?: number;
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+}): void {
+  const provider = normalizeLabel(input.provider, 'openai');
+  const operation = normalizeLabel(input.operation);
+  const sourceType = normalizeLabel(input.sourceType, 'unknown');
+  const sourceName = normalizeLabel(input.sourceName, 'unknown');
+  const model = normalizeLabel(input.model, 'unknown');
+  const outcome = normalizeLabel(input.outcome);
+
+  aiCallsTotal.inc({
+    provider,
+    operation,
+    source_type: sourceType,
+    source_name: sourceName,
+    model,
+    outcome,
+  });
+
+  if (typeof input.durationMs === 'number' && Number.isFinite(input.durationMs)) {
+    aiCallDurationMs.observe(
+      {
+        provider,
+        operation,
+        source_type: sourceType,
+        source_name: sourceName,
+        model,
+        outcome,
+      },
+      Math.max(0, input.durationMs),
+    );
+  }
+
+  const promptTokens = Math.max(0, Math.trunc(input.promptTokens ?? 0));
+  const completionTokens = Math.max(0, Math.trunc(input.completionTokens ?? 0));
+  const totalTokens = Math.max(0, Math.trunc(input.totalTokens ?? 0));
+
+  if (promptTokens > 0) {
+    aiTokensTotal.inc({
+      provider,
+      operation,
+      source_type: sourceType,
+      source_name: sourceName,
+      model,
+      token_type: 'prompt',
+    }, promptTokens);
+  }
+
+  if (completionTokens > 0) {
+    aiTokensTotal.inc({
+      provider,
+      operation,
+      source_type: sourceType,
+      source_name: sourceName,
+      model,
+      token_type: 'completion',
+    }, completionTokens);
+  }
+
+  if (totalTokens > 0) {
+    aiTokensTotal.inc({
+      provider,
+      operation,
+      source_type: sourceType,
+      source_name: sourceName,
+      model,
+      token_type: 'total',
+    }, totalTokens);
+  }
+}
+
+export function recordAiBudgetExceeded(input: {
+  provider: string;
+  sourceType?: string | null;
+  sourceName?: string | null;
+  limitKind: 'calls' | 'prompt_tokens' | 'completion_tokens' | 'total_tokens';
+}): void {
+  aiBudgetExceededTotal.inc({
+    provider: normalizeLabel(input.provider, 'openai'),
+    source_type: normalizeLabel(input.sourceType, 'unknown'),
+    source_name: normalizeLabel(input.sourceName, 'unknown'),
+    limit_kind: normalizeLabel(input.limitKind),
+  });
 }
 
 function refreshProcessMetrics(): void {
