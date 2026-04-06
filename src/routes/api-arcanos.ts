@@ -30,11 +30,6 @@ import {
   extractAIDegradedResponseMetadata
 } from '@shared/http/aiDegradedHeaders.js';
 import apiArcanosVerificationRouter from './api-arcanos-verification.js';
-import { buildPromptShortcutTelemetry } from '@routes/_core/promptShortcutResponse.js';
-import {
-  tryExecutePromptRouteShortcut,
-  type PromptRouteShortcutResult
-} from '@services/promptRouteShortcuts.js';
 import { runArcanosCoreQuery } from '@services/arcanos-core.js';
 import {
   extractPromptText,
@@ -359,38 +354,6 @@ function sendTrinityCompatibilityStream(
   res.end();
 }
 
-/**
- * Purpose: Build a compatibility response for any registered prompt shortcut on `/api/arcanos/ask`.
- * Inputs/Outputs: normalized shortcut result -> legacy-compatible response envelope.
- * Edge cases: new shortcut types reuse the same compatibility envelope without bespoke per-shortcut route builders.
- */
-function buildArcanosPromptShortcutResponse(params: {
-  shortcut: PromptRouteShortcutResult;
-}): AskResponse {
-  const shortcutTelemetry = buildPromptShortcutTelemetry(params.shortcut);
-
-  return {
-    success: true,
-    result: params.shortcut.resultText,
-    metadata: {
-      service: 'ARCANOS API',
-      version: '1.0.0',
-      timestamp: shortcutTelemetry.timestamp,
-      arcanosRouting: false,
-      deprecatedEndpoint: true,
-      canonicalRoute: CANONICAL_ARCANOS_ROUTE,
-      endpoint: ARCANOS_API_ENDPOINT_NAME,
-      requestId: shortcutTelemetry.requestId,
-      gptId: CANONICAL_ARCANOS_GPT_ID,
-      routingStages: shortcutTelemetry.routingStages
-    },
-    module: shortcutTelemetry.module,
-    activeModel: shortcutTelemetry.activeModel,
-    fallbackFlag: shortcutTelemetry.fallbackFlag,
-    routingStages: shortcutTelemetry.routingStages
-  };
-}
-
 function attachApiArcanosCompatibilityMetadata(
   req: Request<{}, ApiArcanosResponse, AskBody>,
   res: Response<ApiArcanosResponse>,
@@ -534,28 +497,6 @@ const handleArcanosAsk = asyncHandler(async (
       rawPrompt,
       normalizedPrompt: prompt,
     });
-    const promptShortcut = await tryExecutePromptRouteShortcut({
-      prompt,
-      sessionId: req.body.sessionId
-    });
-    if (promptShortcut) {
-      const shortcutPayload = buildArcanosPromptShortcutResponse({
-        shortcut: promptShortcut
-      });
-      recordPromptDebugTrace(requestId, 'response', {
-        traceId: req.traceId ?? null,
-        endpoint: ARCANOS_API_ENDPOINT_NAME,
-        method: req.method,
-        rawPrompt,
-        normalizedPrompt: prompt,
-        selectedRoute: DEPRECATED_ARCANOS_ENDPOINT,
-        selectedModule: promptShortcut.response.module,
-        selectedTools: [promptShortcut.shortcutId],
-        responseReturned: shortcutPayload,
-      });
-      return res.json(shortcutPayload);
-    }
-
     recordPromptDebugTrace(requestId, 'routing', {
       traceId: req.traceId ?? null,
       endpoint: ARCANOS_API_ENDPOINT_NAME,

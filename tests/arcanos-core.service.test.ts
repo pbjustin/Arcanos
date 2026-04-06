@@ -40,6 +40,7 @@ jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({
 
 jest.unstable_mockModule('@arcanos/runtime', () => ({
   getRequestAbortSignal: jest.fn(() => undefined),
+  getRequestAbortContext: jest.fn(() => null),
   getRequestRemainingMs: getRequestRemainingMsMock,
   isAbortError: jest.fn(() => false),
   runWithRequestAbortTimeout: runWithRequestAbortTimeoutMock

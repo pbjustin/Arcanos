@@ -448,6 +448,24 @@ router.post("/:gptId", async (req, res, next) => {
           }
         });
       }
+      if (clientDisconnected && responseOpen) {
+        res.destroy(err instanceof Error ? err : undefined);
+        return;
+      }
+      if (responseOpen) {
+        return res.status(503).json({
+          ok: false,
+          error: {
+            code: 'REQUEST_ABORTED',
+            message: 'Request was aborted before completion.'
+          },
+          _route: {
+            requestId,
+            gptId: req.params.gptId,
+            timestamp: new Date().toISOString()
+          }
+        });
+      }
       return;
     }
 

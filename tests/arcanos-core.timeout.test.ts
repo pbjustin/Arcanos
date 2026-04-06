@@ -57,6 +57,7 @@ jest.unstable_mockModule('@services/systemState.js', () => ({
 jest.unstable_mockModule('@arcanos/runtime', () => ({
   runWithRequestAbortTimeout: runWithRequestAbortTimeoutMock,
   getRequestAbortSignal: getRequestAbortSignalMock,
+  getRequestAbortContext: jest.fn(() => null),
   getRequestRemainingMs: getRequestRemainingMsMock,
   isAbortError: isAbortErrorMock
 }));

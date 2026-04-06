@@ -54,6 +54,7 @@ beforeEach(async () => {
 
   jest.unstable_mockModule('@arcanos/runtime', () => ({
     getRequestAbortSignal: jest.fn(),
+    getRequestAbortContext: jest.fn(() => null),
     getRequestRemainingMs: jest.fn(() => null),
     isAbortError: jest.fn(() => false),
     runWithRequestAbortTimeout: jest.fn(async (_config: unknown, run: () => unknown) => run()),

@@ -130,6 +130,37 @@ describe('runtime diagnostics routes', () => {
     expect(response.body).not.toHaveProperty('result');
   });
 
+  it('counts degraded timeout fallbacks as public diagnostic failures', async () => {
+    const app = await buildApp();
+    const { runtimeDiagnosticsService } = await import('../src/services/runtimeDiagnosticsService.js');
+
+    runtimeDiagnosticsService.recordRequestCompletion(
+      200,
+      125,
+      'POST /gpt/:gptId',
+      {
+        timeoutKind: 'pipeline_timeout',
+        degradedModeReason: 'arcanos_core_static_timeout_fallback',
+        bypassedSubsystems: ['trinity_intake', 'trinity_reasoning']
+      }
+    );
+
+    const response = await request(app).get('/diagnostics');
+
+    expect(response.status).toBe(200);
+    expect(response.body.errors_total).toBeGreaterThanOrEqual(1);
+    expect(response.body.error_rate).not.toBe(0);
+    expect(response.body.top_error_routes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          route: 'POST /gpt/:gptId',
+          errorCount: expect.any(Number),
+          timeoutCount: expect.any(Number)
+        })
+      ])
+    );
+  });
+
   it('returns the canonical public health contract from /health with legacy diagnostics fields preserved', async () => {
     const app = await buildApp();
 

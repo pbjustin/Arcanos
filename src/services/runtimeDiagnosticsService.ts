@@ -60,6 +60,7 @@ export interface RequestSample {
   timestamp: string;
   route: string;
   statusCode: number;
+  publicError: boolean;
   latencyMs: number;
   timedOut: boolean;
   timeoutKind: AITimeoutKind | null;
@@ -191,7 +192,7 @@ class RuntimeDiagnosticsService {
     this.requestsTotal += 1;
     this.totalLatencyMs += latencyMs;
 
-    if (statusCode >= 400) {
+    if (countsAsPublicFailure(statusCode, metadata)) {
       this.errorsTotal += 1;
     }
 
@@ -205,7 +206,7 @@ class RuntimeDiagnosticsService {
       this.recentRequests.splice(0, this.recentRequests.length - RECENT_REQUEST_LIMIT);
     }
 
-    void this.redisStore.recordRequestCompletion(statusCode, latencyMs);
+    void this.redisStore.recordRequestCompletion(statusCode, latencyMs, metadata);
   }
 
   getRollingRequestWindow(windowMs: number): RequestWindowSnapshot {
@@ -464,7 +465,11 @@ class RuntimeDiagnosticsService {
 class RuntimeDiagnosticsRedisStore {
   private clientPromise: Promise<RuntimeDiagnosticsRedisClient | null> | null = null;
 
-  async recordRequestCompletion(statusCode: number, latencyMs: number): Promise<void> {
+  async recordRequestCompletion(
+    statusCode: number,
+    latencyMs: number,
+    metadata: AIDegradedResponseMetadata = {}
+  ): Promise<void> {
     const redisClient = await this.getClient();
     if (!redisClient) {
       return;
@@ -474,7 +479,7 @@ class RuntimeDiagnosticsRedisStore {
       const redisCommandBatch = redisClient.multi();
       redisCommandBatch.incr(this.key('requests_total'));
       redisCommandBatch.incrByFloat(this.key('latency_total_ms'), latencyMs);
-      if (statusCode >= 400) {
+      if (countsAsPublicFailure(statusCode, metadata)) {
         redisCommandBatch.incr(this.key('errors_total'));
       }
       redisCommandBatch.lPush(this.key('recent_latency_ms'), String(latencyMs));
@@ -662,6 +667,10 @@ function buildRequestSample(
     timestamp: new Date().toISOString(),
     route: route.trim().length > 0 ? route : 'unmatched',
     statusCode,
+    publicError: countsAsPublicFailure(statusCode, {
+      timeoutKind,
+      degradedModeReason
+    }),
     latencyMs: roundMetric(latencyMs),
     timedOut: timeoutKind !== null || statusCode === 408 || statusCode === 504 || latencyMs >= TIMEOUT_LATENCY_MS,
     timeoutKind,
@@ -703,7 +712,7 @@ function aggregateRequestSamples(samples: RequestSample[], windowMs: number): Re
   for (const sample of samples) {
     totalLatencyMs += sample.latencyMs;
     maxLatencyMs = Math.max(maxLatencyMs, sample.latencyMs);
-    if (sample.statusCode >= 400) {
+    if (sample.publicError) {
       errorCount += 1;
     }
     if (sample.statusCode >= 400 && sample.statusCode < 500) {
@@ -748,7 +757,7 @@ function aggregateRequestSamples(samples: RequestSample[], windowMs: number): Re
     .map(([route, routeSamples]) => ({
       route,
       requestCount: routeSamples.length,
-      errorCount: routeSamples.filter((sample) => sample.statusCode >= 400).length,
+      errorCount: routeSamples.filter((sample) => sample.publicError).length,
       timeoutCount: routeSamples.filter((sample) => sample.timedOut).length,
       pipelineTimeoutCount: routeSamples.filter((sample) => sample.timeoutKind === 'pipeline_timeout').length,
       providerTimeoutCount: routeSamples.filter((sample) => sample.timeoutKind === 'provider_timeout').length,
@@ -819,6 +828,15 @@ function buildTopErrorRoutes(snapshot: RequestWindowSnapshot): DiagnosticsRouteE
         ? roundMetric(routeSnapshot.errorCount / routeSnapshot.requestCount)
         : 0,
     }));
+}
+
+function countsAsPublicFailure(
+  statusCode: number,
+  metadata: Pick<AIDegradedResponseMetadata, 'timeoutKind' | 'degradedModeReason'> = {}
+): boolean {
+  const timeoutKind = metadata.timeoutKind ?? null;
+  const degradedModeReason = metadata.degradedModeReason ?? null;
+  return statusCode >= 400 || timeoutKind !== null || degradedModeReason !== null;
 }
 
 function average(values: number[]): number {

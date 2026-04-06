@@ -428,6 +428,37 @@ describe('gpt router auth logging', () => {
     );
   });
 
+  it('terminates non-timeout aborts with a single deterministic aborted response', async () => {
+    const abortError = new Error('Request was aborted.');
+    abortError.name = 'AbortError';
+    mockRouteGptRequest.mockRejectedValue(abortError);
+
+    const app = express();
+    app.use(express.json());
+    app.use(requestContext);
+    app.use('/gpt', gptRouter);
+
+    const response = await request(app)
+      .post('/gpt/arcanos-core')
+      .send({ prompt: 'Inspect the backend worker.' });
+
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({
+      ok: false,
+      error: {
+        code: 'REQUEST_ABORTED',
+        message: 'Request was aborted before completion.'
+      },
+      _route: expect.objectContaining({
+        gptId: 'arcanos-core',
+      })
+    });
+
+    const logs = collectStructuredLogs(consoleLogSpy.mock.calls);
+    expect(logs.filter((entry) => entry.event === 'gpt.request.aborted')).toHaveLength(1);
+    expect(logs.find((entry) => entry.event === 'gpt.request.timeout_fallback')).toBeUndefined();
+  });
+
   it('clips oversized configured GPT route timeout budgets to the bounded ceiling', async () => {
     process.env.GPT_ROUTE_HARD_TIMEOUT_MS = '60000';
     const abortError = new Error('GPT route timeout after 6000ms');
