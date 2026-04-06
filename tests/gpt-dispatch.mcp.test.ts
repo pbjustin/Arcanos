@@ -781,6 +781,106 @@ describe('routeGptRequest MCP dispatch branch', () => {
     );
   });
 
+  it.each([
+    'Generate a strong, reusable prompt template for the Codex IDE Agent CLI',
+    'Revise the Codex IDE Agent CLI prompt by incorporating this follow-up scope',
+    'Generate a prompt that debugs and tests PR #1279 using this Railway URL',
+    'Write a concise prompt to audit transport capability behavior',
+    'Write a prompt that also runs diagnostics now against the live Railway deployment',
+  ])('keeps prompt-authoring request "%s" on the normal core query path', async (prompt) => {
+    mockHasDagOrchestrationIntentCue.mockReturnValue(false);
+    const request = {
+      method: 'POST',
+      originalUrl: '/gpt/arcanos-core',
+      traceId: `trace-generate-${prompt}`,
+      app: {
+        locals: {
+          arcanosMcp: {
+            invokeTool: jest.fn(),
+            listTools: jest.fn(),
+          },
+        },
+      },
+    } as any;
+
+    const envelope = await routeGptRequest({
+      gptId: 'arcanos-core',
+      body: {
+        message: prompt,
+      },
+      requestId: `req-generate-${prompt}`,
+      request,
+    });
+
+    expect(mockTryExecuteDeterministicDagTools).not.toHaveBeenCalled();
+    expect(request.app.locals.arcanosMcp.invokeTool).not.toHaveBeenCalled();
+    expect(envelope).toEqual(
+      expect.objectContaining({
+        ok: true,
+        _route: expect.objectContaining({
+          action: 'query',
+          route: 'core',
+        }),
+      }),
+    );
+    expect(await getLatestPromptDebugTrace(`req-generate-${prompt}`)).toMatchObject({
+      requestId: `req-generate-${prompt}`,
+      runtimeInspectionChosen: false,
+      selectedRoute: 'core',
+      selectedModule: 'ARCANOS:CORE',
+    });
+  });
+
+  it.each([
+    'Reach my backend and run diagnostics',
+    'Run a live transport-capability audit against this instance',
+    'Inspect current worker health and self-heal events',
+    'Check runtime status of the current backend instance',
+    'Run diagnostics on the live Railway deployment',
+  ])('routes explicit runtime inspection request "%s" into runtime inspection', async (prompt) => {
+    mockHasDagOrchestrationIntentCue.mockReturnValue(false);
+    const request = {
+      method: 'POST',
+      originalUrl: '/gpt/arcanos-core',
+      traceId: `trace-runtime-explicit-${prompt}`,
+      app: {
+        locals: {
+          arcanosMcp: {
+            invokeTool: jest.fn(),
+            listTools: jest.fn(),
+          },
+        },
+      },
+    } as any;
+
+    const envelope = await routeGptRequest({
+      gptId: 'arcanos-core',
+      body: {
+        message: prompt,
+      },
+      requestId: `req-runtime-explicit-${prompt}`,
+      request,
+    });
+
+    expect(mockTryExecuteDeterministicDagTools).not.toHaveBeenCalled();
+    expect(envelope).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: expect.objectContaining({
+          handledBy: 'runtime-inspection',
+        }),
+        _route: expect.objectContaining({
+          action: 'runtime.inspect',
+        }),
+      }),
+    );
+    expect(getLatestAiRoutingDebugSnapshot(`req-runtime-explicit-${prompt}`)).toMatchObject({
+      requestId: `req-runtime-explicit-${prompt}`,
+      detectedIntent: 'RUNTIME_INSPECTION_REQUIRED',
+      routingDecision: 'runtime_inspection_completed',
+    });
+  });
+
   it('returns explicit runtime inspection unavailable when repo inspection is disallowed', async () => {
     mockBuildSelfHealRuntimeSnapshot.mockImplementation(() => {
       throw new Error('runtime unavailable');

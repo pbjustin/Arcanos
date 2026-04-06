@@ -1,5 +1,7 @@
 import { invokeTool } from "@arcanos/cli/client";
 
+import { isPromptAuthoringRequest } from '@services/promptDebugTraceService.js';
+
 export interface ImplementationDoctorCheck {
   name: string;
   status: "pass" | "missing";
@@ -95,6 +97,10 @@ const verificationPhrases = [
  */
 export function shouldInspectRepoPrompt(prompt: string | null): boolean {
   if (!prompt) {
+    return false;
+  }
+
+  if (isPromptAuthoringRequest(prompt)) {
     return false;
   }
 
@@ -396,18 +402,6 @@ function isRepoInspectionEvidence(value: unknown): value is RepoInspectionEviden
     && "status" in value
     && "log" in value
     && "searches" in value;
-}
-
-function readStringArray(
-  value: Record<string, unknown> | undefined,
-  key: string
-): string[] {
-  const candidate = value?.[key];
-  if (!Array.isArray(candidate)) {
-    return [];
-  }
-
-  return candidate.filter((item): item is string => typeof item === "string");
 }
 
 function readRecordArray(

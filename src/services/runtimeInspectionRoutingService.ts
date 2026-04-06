@@ -230,7 +230,7 @@ export function classifyRuntimeInspectionPrompt(prompt: string | null | undefine
   const repoInspectionDisabled = REPO_BLOCK_RULES.some(rule => rule.test(normalized));
   const onlyReturnRuntimeValues = /\bonly\s+return\s+runtime\s+values\b/i.test(normalized) || /\bruntime\s+values\s+only\b/i.test(normalized);
   const detectedIntent =
-    shouldInspectRuntimePrompt(normalized) || matchedKeywords.length > 0
+    shouldInspectRuntimePrompt(normalized)
       ? 'RUNTIME_INSPECTION_REQUIRED'
       : 'STANDARD';
 

@@ -126,28 +126,34 @@ const PROMPT_CONSTRAINT_RULES: PromptConstraintRule[] = [
   },
 ];
 
+const promptAuthoringPatterns = [
+  /\b(?:generate|write|draft|revise|rewrite|create|compose|produce|craft|author|summari[sz]e)\b[^.!?\n]{0,48}\b(?:prompt|template|instructions?)\b/i,
+  /\b(?:prompt|template|instructions?)\b[^.!?\n]{0,48}\b(?:generate|write|draft|revise|rewrite|create|compose|produce|craft|author|summari[sz]e)\b/i,
+  /\boutput\s+only\s+the\s+prompt\b/i,
+];
+
+const dagArtifactExecutionPatterns = [
+  /\b(?:dag(?:\s+run)?|workflow(?:\s+run)?|orchestration(?:\s+run)?)\b/i,
+  /\b(?:trace|lineage|nodes?|events?|metrics?|verification|latest|recent|most\s+recent)\b/i,
+];
+
 const runtimeInspectionPatterns = [
-  /\blive\b/i,
-  /\blive\s+backend\b/i,
-  /\bruntime\b/i,
-  /\bcurrently\s+running\b/i,
-  /\bcurrently\s+active\b/i,
+  /\b(?:run|reach|show|check|inspect|list|query|fetch|get|audit|diagnose|debug|investigate|probe|validate|verify)\b[^.!?\n]{0,40}\bdiagnostics?\b/i,
+  /\b(?:run|reach|show|check|inspect|list|query|fetch|get|audit|diagnose|debug|investigate|probe|validate|verify)\b[^.!?\n]{0,40}\b(?:runtime|self[-\s]?heal|workers?|worker\s+health|queue|system\s+status|runtime\s+status|telemetry|metrics|events?|status)\b/i,
+  /\b(?:runtime|self[-\s]?heal|worker\s+health|queue\s+health|system\s+status|runtime\s+status|telemetry|metrics|events?)\b[^.!?\n]{0,20}\b(?:now|current|currently|live)\b/i,
+  /\b(?:current|currently|live)\b[^.!?\n]{0,20}\b(?:runtime|backend|deployment|service|instance|worker\s+health|queue|system\s+status)\b/i,
   /\bverify\s+in\s+production\b/i,
-  /\b(?:run|show|check|inspect)\s+diagnostics?\b|\bdiagnostics?\s+(?:status|report|summary)\b/i,
   /\b(?:run|show|check|inspect)\s+self[-\s]?heal\b|\bself[-\s]?heal\s+(?:status|health|runtime|events?)\b/i,
   /\b(?:show|check|inspect|list)\s+workers?\b|\bworkers?\s+(?:status|health|queue|runtime)\b/i,
   /\bqueue\s+health\b/i,
   /\bsystem\s+status\b/i,
-  /\bproduction\b/i,
-  /\bproduction\s+state\b/i,
-  /\bstatus\s+now\b/i,
   /\bloop\s+running\b/i,
-  /\btelemetry\b/i,
   /\b(?:runtime|telemetry|worker|self[-\s]?heal|process|queue|deployment)\b[^.!?\n]{0,20}\bevents?\b|\bevents?\b[^.!?\n]{0,20}\b(?:runtime|telemetry|worker|self[-\s]?heal|process|queue|deployment)\b/i,
-  /\blive\s+system\b/i,
   /\bsystem\s+health\b/i,
   /\bhealth\s+probe\b/i,
   /\blive\s+verification\b/i,
+  /\baudit\b[^.!?\n]{0,24}\b(?:this|the)\s+(?:instance|deployment|backend|service)\b/i,
+  /\b(?:instance|deployment|backend|service)\b[^.!?\n]{0,24}\baudit\b/i,
 ];
 
 const repoInspectionPatterns = [
@@ -316,7 +322,11 @@ function buildDerivedIntentTags(prompt: string): string[] {
     }
   }
 
-  if (runtimeInspectionPatterns.some(pattern => pattern.test(prompt))) {
+  if (isPromptAuthoringRequest(prompt)) {
+    tags.push('prompt_authoring_requested');
+  }
+
+  if (shouldInspectRuntimePrompt(prompt)) {
     tags.push('runtime_inspection_candidate');
   }
 
@@ -336,7 +346,31 @@ export function shouldInspectRuntimePrompt(prompt: string | null | undefined): b
     return false;
   }
 
+  if (isPromptAuthoringRequest(prompt)) {
+    return false;
+  }
+
+  if (isDagArtifactExecutionRequest(prompt)) {
+    return false;
+  }
+
   return runtimeInspectionPatterns.some(pattern => pattern.test(prompt));
+}
+
+export function isPromptAuthoringRequest(prompt: string | null | undefined): boolean {
+  if (!prompt) {
+    return false;
+  }
+
+  return promptAuthoringPatterns.some(pattern => pattern.test(prompt));
+}
+
+function isDagArtifactExecutionRequest(prompt: string | null | undefined): boolean {
+  if (!prompt) {
+    return false;
+  }
+
+  return dagArtifactExecutionPatterns.every(pattern => pattern.test(prompt));
 }
 
 function resolveExecutorConstraintPhrases(payload: unknown): string[] {

@@ -21,6 +21,11 @@ describe('repo inspection prompt detection', () => {
     expect(shouldInspectRepoPrompt('Inspect the codebase and list the protocol schemas.')).toBe(true);
   });
 
+  it('does not hijack prompt-authoring requests that merely mention repo inspection', () => {
+    expect(shouldInspectRepoPrompt('Create a prompt for Codex to inspect the repo and suggest fixes')).toBe(false);
+    expect(shouldInspectRepoPrompt('Write a prompt template that inspects the codebase and lists protocol schemas')).toBe(false);
+  });
+
   it('still marks explicit verification prompts as verification questions', () => {
     expect(isVerificationQuestion('What commands exist?')).toBe(true);
     expect(isVerificationQuestion('Can you see my codebase?')).toBe(true);
