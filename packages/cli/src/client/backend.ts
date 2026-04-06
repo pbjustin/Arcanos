@@ -298,6 +298,8 @@ interface BackendResponsePayload {
   rawText: string;
 }
 
+const MAX_ERROR_BODY_CHARS = 1000;
+
 async function readResponsePayload(response: Response): Promise<BackendResponsePayload> {
   const rawText = await response.text();
   const trimmedText = rawText.trim();
@@ -329,7 +331,9 @@ async function readResponsePayload(response: Response): Promise<BackendResponseP
 
 function requireJsonObjectPayload(payload: BackendResponsePayload): Record<string, unknown> {
   if (!payload.json) {
-    throw new Error("Backend returned a non-object JSON payload.");
+    throw new Error(
+      `Backend returned a non-JSON or non-object JSON payload: ${formatResponsePayloadForError(payload)}`
+    );
   }
 
   return payload.json;
@@ -341,7 +345,15 @@ function formatResponsePayloadForError(payload: BackendResponsePayload): string 
   }
 
   const trimmedText = payload.rawText.trim();
-  return trimmedText || "<empty response body>";
+  if (!trimmedText) {
+    return "<empty response body>";
+  }
+
+  if (trimmedText.length <= MAX_ERROR_BODY_CHARS) {
+    return trimmedText;
+  }
+
+  return `${trimmedText.slice(0, MAX_ERROR_BODY_CHARS)}\n[truncated]`;
 }
 
 function withTrailingSlash(value: string): string {

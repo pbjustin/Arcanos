@@ -250,6 +250,22 @@ describe("Arcanos CLI", () => {
     expect(stderr.read()).toContain("--transport python");
   });
 
+  it("prints a friendly human error for CLI parse failures", async () => {
+    const stdout = createWritableCapture();
+    const stderr = createWritableCapture();
+
+    const exitCode = await runCli(
+      ["doctor"],
+      stdout.stream,
+      stderr.stream
+    );
+
+    expect(exitCode).toBe(1);
+    expect(stdout.read()).toBe("");
+    expect(stderr.read()).toContain("Supported doctor command");
+    expect(stderr.read().trim().startsWith("{")).toBe(false);
+  });
+
   it("returns a structured protocol error for explicit local tool.invoke requests", async () => {
     const stdout = createWritableCapture();
     const stderr = createWritableCapture();

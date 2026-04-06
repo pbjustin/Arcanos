@@ -94,7 +94,7 @@ function shouldRenderHumanError(
   invocation: ReturnType<typeof parseCliInvocation> | undefined
 ): boolean {
   if (!invocation) {
-    return false;
+    return true;
   }
 
   return invocation.kind !== "help"

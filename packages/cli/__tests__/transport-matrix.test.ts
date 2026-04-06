@@ -9,6 +9,7 @@ import {
 import { dispatchProtocolRequest } from "../src/transport.js";
 
 const PYTHON_BINARY = process.env.PYTHON ?? "python";
+const IS_CI = Boolean(process.env.CI);
 
 function createRequest(
   requestId: string,
@@ -30,29 +31,32 @@ describe("protocol transport matrix", () => {
   });
 
   it("keeps local capabilities explicit and reserves tool describe/invoke for python transport", async () => {
-    const [localCapabilitiesResponse, pythonCapabilitiesResponse, localRegistryResponse, pythonRegistryResponse] =
-      await Promise.all([
-        dispatchProtocolRequest(
-          createRequest("req-local-capabilities", "daemon.capabilities"),
-          "local",
-          {}
-        ),
-        dispatchProtocolRequest(
-          createRequest("req-python-capabilities", "daemon.capabilities"),
-          "python",
-          { pythonBinary: PYTHON_BINARY }
-        ),
-        dispatchProtocolRequest(
-          createRequest("req-local-registry", "tool.registry"),
-          "local",
-          {}
-        ),
-        dispatchProtocolRequest(
-          createRequest("req-python-registry", "tool.registry"),
-          "python",
-          { pythonBinary: PYTHON_BINARY }
-        )
-      ]);
+    const [localCapabilitiesResponse, localRegistryResponse] = await Promise.all([
+      dispatchProtocolRequest(
+        createRequest("req-local-capabilities", "daemon.capabilities"),
+        "local",
+        {}
+      ),
+      dispatchProtocolRequest(
+        createRequest("req-local-registry", "tool.registry"),
+        "local",
+        {}
+      )
+    ]);
+
+    const pythonCapabilitiesResponse = await dispatchPythonRequestOrSkip(
+      createRequest("req-python-capabilities", "daemon.capabilities")
+    );
+    if (!pythonCapabilitiesResponse) {
+      return;
+    }
+
+    const pythonRegistryResponse = await dispatchPythonRequestOrSkip(
+      createRequest("req-python-registry", "tool.registry")
+    );
+    if (!pythonRegistryResponse) {
+      return;
+    }
 
     expect(localCapabilitiesResponse.ok).toBe(true);
     expect(pythonCapabilitiesResponse.ok).toBe(true);
@@ -166,3 +170,26 @@ describe("protocol transport matrix", () => {
     });
   });
 });
+
+async function dispatchPythonRequestOrSkip(request: ReturnType<typeof createRequest>) {
+  try {
+    return await dispatchProtocolRequest(
+      request,
+      "python",
+      { pythonBinary: PYTHON_BINARY }
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!IS_CI && isMissingPythonRuntimeDependency(message)) {
+      console.warn(`Skipping python transport matrix assertions: ${message}`);
+      return null;
+    }
+
+    throw error;
+  }
+}
+
+function isMissingPythonRuntimeDependency(message: string): boolean {
+  return message.includes("ModuleNotFoundError")
+    || message.includes("No module named");
+}

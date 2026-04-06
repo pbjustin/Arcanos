@@ -69,6 +69,18 @@ jobs:
       - name: 📦 Install dependencies
         run: npm ci
 
+      - name: 🐍 Setup Python for transport-matrix tests
+        if: matrix.test-type == 'unit'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 📦 Install minimal Python protocol runtime dependencies
+        if: matrix.test-type == 'unit'
+        run: |
+          python -m pip install --upgrade pip
+          pip install jsonschema referencing
+
       - name: 🔨 Build project
         run: npm run build
 

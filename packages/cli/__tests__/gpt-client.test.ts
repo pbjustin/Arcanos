@@ -146,4 +146,47 @@ describe("GPT route OpenAPI contract and client", () => {
       })
     ).rejects.toThrow("Backend /gpt/arcanos-gaming failed with HTTP 502: <empty response body>");
   });
+
+  it("truncates oversized non-JSON backend error bodies", async () => {
+    const largeBody = "x".repeat(1105);
+    jest.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(largeBody, {
+        status: 504,
+        headers: {
+          "content-type": "text/html"
+        }
+      })
+    );
+
+    await expect(
+      invokeGptRoute({
+        baseUrl: "http://127.0.0.1:3000",
+        gptId: "arcanos-gaming",
+        prompt: "Retry later?"
+      })
+    ).rejects.toThrow(
+      `Backend /gpt/arcanos-gaming failed with HTTP 504: ${"x".repeat(1000)}\n[truncated]`
+    );
+  });
+
+  it("explains invalid success payloads when the backend returns non-JSON content", async () => {
+    jest.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("upstream HTML error page", {
+        status: 200,
+        headers: {
+          "content-type": "text/html"
+        }
+      })
+    );
+
+    await expect(
+      invokeGptRoute({
+        baseUrl: "http://127.0.0.1:3000",
+        gptId: "arcanos-gaming",
+        prompt: "Retry later?"
+      })
+    ).rejects.toThrow(
+      "Backend returned a non-JSON or non-object JSON payload: upstream HTML error page"
+    );
+  });
 });
