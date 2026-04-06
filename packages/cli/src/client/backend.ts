@@ -275,30 +275,85 @@ async function postJson(
     body: JSON.stringify(body)
   });
 
-  const payload = await readJsonPayload(response);
+  const payload = await readResponsePayload(response);
   if (!response.ok) {
-    throw new Error(`Backend ${pathname} failed with HTTP ${response.status}: ${JSON.stringify(payload)}`);
+    throw new Error(`Backend ${pathname} failed with HTTP ${response.status}: ${formatResponsePayloadForError(payload)}`);
   }
 
-  return payload;
+  return requireJsonObjectPayload(payload);
 }
 
 async function getJson(baseUrl: string, pathname: string): Promise<Record<string, unknown>> {
   const response = await fetch(new URL(pathname, withTrailingSlash(baseUrl)));
-  const payload = await readJsonPayload(response);
+  const payload = await readResponsePayload(response);
   if (!response.ok) {
-    throw new Error(`Backend ${pathname} failed with HTTP ${response.status}: ${JSON.stringify(payload)}`);
+    throw new Error(`Backend ${pathname} failed with HTTP ${response.status}: ${formatResponsePayloadForError(payload)}`);
   }
 
-  return payload;
+  return requireJsonObjectPayload(payload);
 }
 
-async function readJsonPayload(response: Response): Promise<Record<string, unknown>> {
-  const payload = await response.json();
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-    throw new Error("Backend returned a non-object JSON payload.");
+interface BackendResponsePayload {
+  json: Record<string, unknown> | null;
+  rawText: string;
+}
+
+const MAX_ERROR_BODY_CHARS = 1000;
+
+async function readResponsePayload(response: Response): Promise<BackendResponsePayload> {
+  const rawText = await response.text();
+  const trimmedText = rawText.trim();
+
+  if (!trimmedText) {
+    return {
+      json: null,
+      rawText
+    };
   }
-  return payload as Record<string, unknown>;
+
+  try {
+    const parsed = JSON.parse(trimmedText);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return {
+        json: parsed as Record<string, unknown>,
+        rawText
+      };
+    }
+  } catch {
+    // Preserve the original response body for downstream error reporting.
+  }
+
+  return {
+    json: null,
+    rawText
+  };
+}
+
+function requireJsonObjectPayload(payload: BackendResponsePayload): Record<string, unknown> {
+  if (!payload.json) {
+    throw new Error(
+      `Backend returned a non-JSON or non-object JSON payload: ${formatResponsePayloadForError(payload)}`
+    );
+  }
+
+  return payload.json;
+}
+
+function formatResponsePayloadForError(payload: BackendResponsePayload): string {
+  if (payload.json) {
+    return JSON.stringify(payload.json);
+  }
+
+  const trimmedText = payload.rawText.trim();
+  if (!trimmedText) {
+    return "<empty response body>";
+  }
+
+  if (trimmedText.length <= MAX_ERROR_BODY_CHARS) {
+    return trimmedText;
+  }
+
+  return `${trimmedText.slice(0, MAX_ERROR_BODY_CHARS)}\n[truncated]`;
 }
 
 function withTrailingSlash(value: string): string {

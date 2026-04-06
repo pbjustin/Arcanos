@@ -10,6 +10,7 @@ export interface CliGlobalOptions {
   shell?: string;
   pythonBinary?: string;
   transport: "python" | "local";
+  transportExplicit?: boolean;
 }
 
 export interface AskCommandInvocation {

@@ -2,11 +2,17 @@ import type { ToolInvokeResponseData } from "@arcanos/protocol";
 
 import { executeRuntimeRequest, validateToolInvokeResponse } from "../client/backend.js";
 import { buildDoctorImplementationRequest } from "../client/protocol.js";
+import { assertTransportSupportsDoctorImplementation } from "../transportConstraints.js";
 import type { CliProtocolCommandResult, DoctorCommandInvocation } from "./types.js";
 
 export async function runDoctorCommand(
   invocation: DoctorCommandInvocation
 ): Promise<CliProtocolCommandResult<ToolInvokeResponseData>> {
+  assertTransportSupportsDoctorImplementation({
+    transport: invocation.options.transport,
+    transportExplicit: invocation.options.transportExplicit
+  });
+
   const request = buildDoctorImplementationRequest(invocation.options);
   const response = validateToolInvokeResponse(
     await executeRuntimeRequest<ToolInvokeResponseData>(request, invocation.options)

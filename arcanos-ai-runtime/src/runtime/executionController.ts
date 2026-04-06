@@ -81,7 +81,7 @@ function buildFirstPassRequest(input: ExecutionInput): GPT5Request {
   return request;
 }
 
-function extractConfidence(response: GPT5Response): number {
+function extractConfidence(_response: GPT5Response): number {
   // TODO: Replace with real confidence extraction logic
   return 0.9;
 }
@@ -141,4 +141,3 @@ function sanitizeUntrustedOutput(value: string): string {
 
   return `${trimmed.slice(0, MAX_SECOND_PASS_INPUT_CHARS)}\n[truncated]`;
 }
-

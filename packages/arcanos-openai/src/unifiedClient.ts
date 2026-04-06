@@ -394,9 +394,7 @@ let globalExplicitlyConfigured = false;
  * ⚠️ These are kept for backward compatibility. In CommonJS builds, destructuring imports can snapshot values.
  * Prefer the getters `getApiTimeoutMs()` and `getRoutingMessage()` instead.
  */
-// eslint-disable-next-line @typescript-eslint/naming-convention
 export let API_TIMEOUT_MS: number = 60000;
-// eslint-disable-next-line @typescript-eslint/naming-convention
 export let ARCANOS_ROUTING_MESSAGE: string = '';
 
 function isStrictRequireConfig(): boolean {

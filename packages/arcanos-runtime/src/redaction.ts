@@ -28,10 +28,6 @@ export const SENSITIVE_VALUE_PATTERNS: RegExp[] = [
   /\b(?:api[_-]?key|token|secret|password)\s*[:=]\s*["']?[a-zA-Z0-9._-]{12,}/i
 ];
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
 export function redactString(value: string): string {
   if (!value) return value;
   if (SENSITIVE_VALUE_PATTERNS.some((pattern) => pattern.test(value))) {
