@@ -16,8 +16,10 @@ export async function runCli(
   stdout: NodeJS.WritableStream,
   stderr: NodeJS.WritableStream
 ): Promise<number> {
+  let invocation: ReturnType<typeof parseCliInvocation> | undefined;
+
   try {
-    const invocation = parseCliInvocation(argv);
+    invocation = parseCliInvocation(argv);
 
     if (invocation.kind === "help") {
       stdout.write(`${renderUsage()}\n`);
@@ -37,15 +39,20 @@ export async function runCli(
 
     return result.response.ok ? 0 : 1;
   } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Unknown CLI failure.";
     const failureEnvelope: CliJsonEnvelope<never> = {
       ok: false,
       error: {
         code: "cli_error",
-        message: error instanceof Error ? error.message : "Unknown CLI failure."
+        message: errorMessage
       }
     };
 
-    stderr.write(`${serializeDeterministicJson(failureEnvelope)}\n`);
+    if (shouldRenderHumanError(invocation)) {
+      stderr.write(`${errorMessage}\n`);
+    } else {
+      stderr.write(`${serializeDeterministicJson(failureEnvelope)}\n`);
+    }
     return 1;
   }
 }
@@ -81,4 +88,16 @@ function toJsonEnvelope(result: CliProtocolCommandResult<unknown>): CliJsonEnvel
       ...(result.extraJson ?? {})
     }
   };
+}
+
+function shouldRenderHumanError(
+  invocation: ReturnType<typeof parseCliInvocation> | undefined
+): boolean {
+  if (!invocation) {
+    return false;
+  }
+
+  return invocation.kind !== "help"
+    && invocation.kind !== "protocol"
+    && invocation.options.json !== true;
 }

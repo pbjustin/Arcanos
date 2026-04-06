@@ -125,7 +125,7 @@ export async function runGPT5(
   });
 
   try {
-    const executeRequest = (attempt: number) => client.responses.create(
+    const executeRequest = (_attempt: number) => client.responses.create(
       buildRequestPayload(request),
       { signal: requestScope.signal }
     );

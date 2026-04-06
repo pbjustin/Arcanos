@@ -111,4 +111,39 @@ describe("GPT route OpenAPI contract and client", () => {
     expect(requestSchema?.properties?.gptId).toBeUndefined();
     expect(requestSchema?.not?.required).toContain("gptId");
   });
+
+  it("preserves backend HTTP status details when the error body is plain text", async () => {
+    jest.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response("backend unavailable", {
+        status: 503,
+        headers: {
+          "content-type": "text/plain"
+        }
+      })
+    );
+
+    await expect(
+      invokeGptRoute({
+        baseUrl: "http://127.0.0.1:3000",
+        gptId: "arcanos-gaming",
+        prompt: "Retry later?"
+      })
+    ).rejects.toThrow("Backend /gpt/arcanos-gaming failed with HTTP 503: backend unavailable");
+  });
+
+  it("preserves backend HTTP status details when the error body is empty", async () => {
+    jest.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(null, {
+        status: 502
+      })
+    );
+
+    await expect(
+      invokeGptRoute({
+        baseUrl: "http://127.0.0.1:3000",
+        gptId: "arcanos-gaming",
+        prompt: "Retry later?"
+      })
+    ).rejects.toThrow("Backend /gpt/arcanos-gaming failed with HTTP 502: <empty response body>");
+  });
 });

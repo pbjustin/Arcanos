@@ -5,6 +5,7 @@ import { jest } from "@jest/globals";
 
 import { runCli } from "../src/cli.js";
 import { buildTaskCreateRequest } from "../src/client/protocol.js";
+import { runProtocolCli } from "../src/protocolCli.js";
 import { parseCliInvocation } from "../src/commands/parse.js";
 
 function createWritableCapture() {
@@ -231,5 +232,75 @@ describe("Arcanos CLI", () => {
       }
     });
     expect(fetchMock).toHaveBeenCalled();
+  });
+
+  it("prints a friendly human error for doctor implementation on explicit local transport", async () => {
+    const stdout = createWritableCapture();
+    const stderr = createWritableCapture();
+
+    const exitCode = await runCli(
+      ["doctor", "implementation", "--transport", "local"],
+      stdout.stream,
+      stderr.stream
+    );
+
+    expect(exitCode).toBe(1);
+    expect(stdout.read()).toBe("");
+    expect(stderr.read()).toContain("doctor implementation requires the python transport");
+    expect(stderr.read()).toContain("--transport python");
+  });
+
+  it("returns a structured protocol error for explicit local tool.invoke requests", async () => {
+    const stdout = createWritableCapture();
+    const stderr = createWritableCapture();
+
+    const exitCode = await runProtocolCli(
+      [
+        "tool.invoke",
+        "--payload-json",
+        "{\"toolId\":\"doctor.implementation\",\"input\":{}}",
+        "--transport",
+        "local"
+      ],
+      stdout.stream,
+      stderr.stream
+    );
+
+    expect(exitCode).toBe(1);
+    expect(stdout.read()).toBe("");
+    expect(JSON.parse(stderr.read())).toMatchObject({
+      ok: false,
+      error: {
+        code: "cli_validation_error",
+        message: expect.stringContaining("Protocol command \"tool.invoke\" requires the python transport")
+      }
+    });
+  });
+
+  it("returns a structured protocol error for explicit local tool.describe requests", async () => {
+    const stdout = createWritableCapture();
+    const stderr = createWritableCapture();
+
+    const exitCode = await runProtocolCli(
+      [
+        "tool.describe",
+        "--payload-json",
+        "{\"toolId\":\"repo.readFile\"}",
+        "--transport",
+        "local"
+      ],
+      stdout.stream,
+      stderr.stream
+    );
+
+    expect(exitCode).toBe(1);
+    expect(stdout.read()).toBe("");
+    expect(JSON.parse(stderr.read())).toMatchObject({
+      ok: false,
+      error: {
+        code: "cli_validation_error",
+        message: expect.stringContaining("Protocol command \"tool.describe\" requires the python transport")
+      }
+    });
   });
 });

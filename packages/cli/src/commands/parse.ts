@@ -130,7 +130,8 @@ function parseGlobalOptions(argv: string[]): {
     baseUrl: DEFAULT_BASE_URL,
     cwd: process.cwd(),
     shell: process.env.ComSpec ?? process.env.SHELL,
-    transport: "python"
+    transport: "python",
+    transportExplicit: false
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -193,6 +194,7 @@ function parseGlobalOptions(argv: string[]): {
           throw new Error('Flag "--transport" must be "python" or "local".');
         }
         options.transport = value;
+        options.transportExplicit = true;
         break;
       default:
         throw new Error(`Unknown flag "${currentArgument}".`);

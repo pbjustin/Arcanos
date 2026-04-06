@@ -6,13 +6,16 @@ import {
   type ToolInvokeResponseData
 } from "@arcanos/protocol";
 
+import { serializeDeterministicJson } from "./client/protocol.js";
 import { dispatchProtocolRequest, type ProtocolTransportName } from "./transport.js";
+import { assertTransportSupportsProtocolCommand } from "./transportConstraints.js";
 
 export interface InvokeToolOptions {
   toolId: string;
   inputs?: Record<string, unknown>;
   requestId?: string;
   transport?: ProtocolTransportName;
+  transportExplicit?: boolean;
   pythonBinary?: string;
   context?: {
     sessionId?: string;
@@ -37,6 +40,12 @@ const DEFAULT_CALLER: ProtocolCaller = {
  * Edge cases: failed protocol responses throw so higher layers cannot silently proceed without evidence.
  */
 export async function invokeTool(options: InvokeToolOptions): Promise<unknown> {
+  const resolvedTransport = options.transport ?? "python";
+  assertTransportSupportsProtocolCommand("tool.invoke", {
+    transport: resolvedTransport,
+    transportExplicit: options.transportExplicit
+  });
+
   const request = createProtocolRequest({
     requestId: options.requestId ?? createInvokeRequestId(options.toolId, options.inputs ?? {}),
     command: "tool.invoke",
@@ -56,7 +65,7 @@ export async function invokeTool(options: InvokeToolOptions): Promise<unknown> {
 
   const response = await dispatchProtocolRequest(
     request,
-    options.transport ?? "python",
+    resolvedTransport,
     { pythonBinary: options.pythonBinary }
   );
 
@@ -76,7 +85,7 @@ export {
 
 function createInvokeRequestId(toolId: string, inputs: Record<string, unknown>): string {
   const digest = createHash("sha1")
-    .update(JSON.stringify({ toolId, inputs, command: "tool.invoke" }))
+    .update(serializeDeterministicJson({ toolId, inputs, command: "tool.invoke" }))
     .digest("hex")
     .slice(0, 12);
   return `tool-${digest}`;

@@ -12,6 +12,7 @@ import {
 
 import { serializeDeterministicJson } from "./client/protocol.js";
 import { dispatchProtocolRequest, type ProtocolTransportName } from "./transport.js";
+import { assertTransportSupportsProtocolCommand } from "./transportConstraints.js";
 
 interface ParsedProtocolCliArguments {
   command?: string;
@@ -25,6 +26,7 @@ interface ParsedProtocolCliArguments {
   authStrategy?: string;
   authToken?: string;
   transport?: ProtocolTransportName;
+  transportExplicit?: boolean;
   pythonBinary?: string;
 }
 
@@ -36,9 +38,14 @@ export async function runProtocolCli(
   try {
     const parsedArguments = parseProtocolCliArguments(argv);
     const request = buildProtocolRequestFromCliArguments(parsedArguments);
+    const resolvedTransport = parsedArguments.transport ?? "python";
+    assertTransportSupportsProtocolCommand(request.command, {
+      transport: resolvedTransport,
+      transportExplicit: parsedArguments.transportExplicit
+    });
     const response = await dispatchProtocolRequest(
       request,
-      parsedArguments.transport ?? "python",
+      resolvedTransport,
       { pythonBinary: parsedArguments.pythonBinary }
     );
 
@@ -118,6 +125,7 @@ export function parseProtocolCliArguments(argv: string[]): ParsedProtocolCliArgu
           throw new Error('Flag "--transport" must be "local" or "python".');
         }
         parsedArguments.transport = value;
+        parsedArguments.transportExplicit = true;
         break;
       case "--python-bin":
         parsedArguments.pythonBinary = value;
