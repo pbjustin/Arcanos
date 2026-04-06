@@ -93,6 +93,8 @@ const errorHandler = (err: unknown, req: Request, res: Response, _next: NextFunc
     requestId,
     method: req.method,
     path: requestPath,
+    errorType: name,
+    statusCode,
     name,
     message,
     stack

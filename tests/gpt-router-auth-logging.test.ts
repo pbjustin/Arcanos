@@ -394,7 +394,7 @@ describe('gpt router auth logging', () => {
     );
   });
 
-  it('maps route-level aborts onto 504 MODULE_TIMEOUT envelopes', async () => {
+  it('maps route-level timeout aborts onto bounded ARCANOS fallback envelopes', async () => {
     const abortError = new Error('GPT route timeout after 6000ms');
     abortError.name = 'AbortError';
     mockRouteGptRequest.mockRejectedValue(abortError);
@@ -408,17 +408,55 @@ describe('gpt router auth logging', () => {
       .post('/gpt/arcanos-core')
       .send({ prompt: 'Inspect the backend worker.' });
 
-    expect(response.status).toBe(504);
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: expect.objectContaining({
+          module: 'trinity',
+          activeModel: 'arcanos-core:static-timeout-fallback',
+          fallbackFlag: true,
+          routingStages: ['ARCANOS-CORE-TIMEOUT-FALLBACK'],
+        }),
+        _route: expect.objectContaining({
+          gptId: 'arcanos-core',
+          module: 'ARCANOS:CORE',
+          action: 'query',
+          route: 'core',
+        }),
+      })
+    );
+  });
+
+  it('terminates non-timeout aborts with a single deterministic aborted response', async () => {
+    const abortError = new Error('Request was aborted.');
+    abortError.name = 'AbortError';
+    mockRouteGptRequest.mockRejectedValue(abortError);
+
+    const app = express();
+    app.use(express.json());
+    app.use(requestContext);
+    app.use('/gpt', gptRouter);
+
+    const response = await request(app)
+      .post('/gpt/arcanos-core')
+      .send({ prompt: 'Inspect the backend worker.' });
+
+    expect(response.status).toBe(503);
     expect(response.body).toEqual({
       ok: false,
       error: {
-        code: 'MODULE_TIMEOUT',
-        message: 'GPT route timeout after 6000ms',
+        code: 'REQUEST_ABORTED',
+        message: 'Request was aborted before completion.'
       },
       _route: expect.objectContaining({
         gptId: 'arcanos-core',
-      }),
+      })
     });
+
+    const logs = collectStructuredLogs(consoleLogSpy.mock.calls);
+    expect(logs.filter((entry) => entry.event === 'gpt.request.aborted')).toHaveLength(1);
+    expect(logs.find((entry) => entry.event === 'gpt.request.timeout_fallback')).toBeUndefined();
   });
 
   it('clips oversized configured GPT route timeout budgets to the bounded ceiling', async () => {
@@ -436,17 +474,23 @@ describe('gpt router auth logging', () => {
       .post('/gpt/arcanos-core')
       .send({ prompt: 'Inspect the backend worker.' });
 
-    expect(response.status).toBe(504);
-    expect(response.body).toEqual({
-      ok: false,
-      error: {
-        code: 'MODULE_TIMEOUT',
-        message: 'GPT route timeout after 6000ms',
-      },
-      _route: expect.objectContaining({
-        gptId: 'arcanos-core',
-      }),
-    });
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: expect.objectContaining({
+          module: 'trinity',
+          activeModel: 'arcanos-core:static-timeout-fallback',
+          fallbackFlag: true,
+        }),
+        _route: expect.objectContaining({
+          gptId: 'arcanos-core',
+          module: 'ARCANOS:CORE',
+          action: 'query',
+          route: 'core',
+        }),
+      })
+    );
   });
 
   it('extends route-level timeout budgets for DAG execution prompts', async () => {
@@ -463,17 +507,23 @@ describe('gpt router auth logging', () => {
       .post('/gpt/arcanos-core')
       .send({ prompt: 'trigger a real DAG run and trace it live' });
 
-    expect(response.status).toBe(504);
-    expect(response.body).toEqual({
-      ok: false,
-      error: {
-        code: 'MODULE_TIMEOUT',
-        message: 'GPT route timeout after 8000ms',
-      },
-      _route: expect.objectContaining({
-        gptId: 'arcanos-core',
-      }),
-    });
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: expect.objectContaining({
+          module: 'trinity',
+          activeModel: 'arcanos-core:static-timeout-fallback',
+          fallbackFlag: true,
+        }),
+        _route: expect.objectContaining({
+          gptId: 'arcanos-core',
+          module: 'ARCANOS:CORE',
+          action: 'query',
+          route: 'core',
+        }),
+      })
+    );
   });
 
   it('exposes DAG follow-up endpoints in shaped GPT responses', async () => {

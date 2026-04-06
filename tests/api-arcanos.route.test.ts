@@ -116,24 +116,27 @@ describe('api-arcanos route', () => {
     mockTryExecutePromptRouteShortcut.mockResolvedValue(null);
   });
 
-  it('rejects deprecated ask traffic by default and points callers to the canonical GPT route', async () => {
+  it('forces deprecated ask traffic onto compat mode and points callers to the canonical GPT route', async () => {
     delete process.env.ASK_ROUTE_MODE;
 
     const response = await request(buildApp())
       .post('/ask')
       .send({
-        prompt: 'Explain the deployment state.'
+        prompt: 'ping'
       });
 
-    expect(response.status).toBe(410);
+    expect(response.status).toBe(200);
     expect(response.headers['x-canonical-route']).toBe('/gpt/arcanos-core');
     expect(response.headers['x-route-deprecated']).toBe('true');
-    expect(response.headers['x-ask-route-mode']).toBe('gone');
+    expect(response.headers['x-ask-route-mode']).toBe('compat');
     expect(response.body).toMatchObject({
-      error: 'Legacy /api/arcanos/ask route has been removed; use /gpt/:gptId',
-      deprecated: true,
-      canonicalRoute: '/gpt/arcanos-core',
-      routeMode: 'gone'
+      success: true,
+      result: 'pong',
+      metadata: expect.objectContaining({
+        deprecatedEndpoint: true,
+        canonicalRoute: '/gpt/arcanos-core',
+        endpoint: 'api-arcanos.ask',
+      }),
     });
     expect(mockValidateAIRequest).not.toHaveBeenCalled();
     expect(mockRunThroughBrain).not.toHaveBeenCalled();
@@ -181,7 +184,7 @@ describe('api-arcanos route', () => {
       openaiClient,
       'Explain the deployment state.',
       'session-route-1',
-      'operator-approved',
+      undefined,
       expect.objectContaining({
         sourceEndpoint: 'api-arcanos.ask'
       }),
@@ -339,7 +342,7 @@ describe('api-arcanos route', () => {
     expect(response.text).toContain('"type":"done"');
   });
 
-  it('bypasses Trinity for deterministic memory shortcuts', async () => {
+  it('keeps memory-style prompts on the legacy route inside Trinity instead of shortcut execution', async () => {
     const openaiClient = { clientId: 'openai-client-3' };
     mockValidateAIRequest.mockReturnValue({
       client: openaiClient,
@@ -348,24 +351,11 @@ describe('api-arcanos route', () => {
         prompt: 'Recall: RAW_20260308_VAN_PROBE2'
       }
     });
-    mockTryExecutePromptRouteShortcut.mockResolvedValue({
-      shortcutId: 'memory',
-      resultText: 'Persisted summary for Vancouver Raw',
-      response: {
-        requestIdPrefix: 'memory',
-        module: 'memory-dispatcher',
-        activeModel: 'memory-dispatcher',
-        routingStage: 'MEMORY-DISPATCH',
-        auditFlag: 'MEMORY_SHORTCUT_ACTIVE',
-        sessionId: 'raw_20260308_van_probe2',
-        contextSummary: 'Memory dispatcher retrieved for session raw_20260308_van_probe2.'
-      },
-      dispatcher: {
-        module: 'memory-dispatcher',
-        action: 'retrieved',
-        reason: 'retrieve'
-      }
-    });
+    mockRunThroughBrain.mockResolvedValue(
+      buildTrinityResult({
+        result: 'Handled through Trinity instead of memory persistence.'
+      })
+    );
 
     const response = await request(buildApp())
       .post('/ask')
@@ -376,18 +366,14 @@ describe('api-arcanos route', () => {
 
     expect(response.status).toBe(200);
     expect(response.body.success).toBe(true);
-    expect(response.body.result).toBe('Persisted summary for Vancouver Raw');
-    expect(response.body.module).toBe('memory-dispatcher');
+    expect(response.body.result).toBe('Handled through Trinity instead of memory persistence.');
+    expect(response.body.module).toBe('trinity');
     expect(response.body.metadata.endpoint).toBe('api-arcanos.ask');
-    expect(response.body.routingStages).toEqual(['MEMORY-DISPATCH']);
-    expect(mockTryExecutePromptRouteShortcut).toHaveBeenCalledWith({
-      prompt: 'Recall: RAW_20260308_VAN_PROBE2',
-      sessionId: 'RAW_20260308_VAN_PROBE2'
-    });
-    expect(mockRunThroughBrain).not.toHaveBeenCalled();
+    expect(mockTryExecutePromptRouteShortcut).not.toHaveBeenCalled();
+    expect(mockRunThroughBrain).toHaveBeenCalled();
   });
 
-  it('bypasses Trinity for deterministic backstage-booker shortcuts', async () => {
+  it('keeps backstage-booker prompts on the legacy route inside Trinity instead of shortcut execution', async () => {
     const openaiClient = { clientId: 'openai-client-4' };
     mockValidateAIRequest.mockReturnValue({
       client: openaiClient,
@@ -396,24 +382,11 @@ describe('api-arcanos route', () => {
         prompt: 'Generate three rivalries for RAW after WrestleMania.'
       }
     });
-    mockTryExecutePromptRouteShortcut.mockResolvedValue({
-      shortcutId: 'backstage-booker',
-      resultText: 'Rivalry one: Gunther vs AJ Styles.',
-      response: {
-        requestIdPrefix: 'booker',
-        module: 'BACKSTAGE:BOOKER',
-        activeModel: 'backstage-booker',
-        routingStage: 'BACKSTAGE-BOOKER-DISPATCH',
-        auditFlag: 'BACKSTAGE_BOOKER_SHORTCUT_ACTIVE',
-        sessionId: 'RAW_RIVALRY_TEST',
-        contextSummary: 'Backstage Booker generated a booking response for session RAW_RIVALRY_TEST.'
-      },
-      dispatcher: {
-        module: 'BACKSTAGE:BOOKER',
-        action: 'generateBooking',
-        reason: 'booking_verb+storyline_request+wrestling_brand'
-      }
-    });
+    mockRunThroughBrain.mockResolvedValue(
+      buildTrinityResult({
+        result: 'Handled through Trinity instead of backstage shortcut.',
+      })
+    );
 
     const response = await request(buildApp())
       .post('/ask')
@@ -424,13 +397,9 @@ describe('api-arcanos route', () => {
 
     expect(response.status).toBe(200);
     expect(response.body.success).toBe(true);
-    expect(response.body.result).toBe('Rivalry one: Gunther vs AJ Styles.');
-    expect(response.body.module).toBe('BACKSTAGE:BOOKER');
-    expect(response.body.routingStages).toEqual(['BACKSTAGE-BOOKER-DISPATCH']);
-    expect(mockTryExecutePromptRouteShortcut).toHaveBeenCalledWith({
-      prompt: 'Generate three rivalries for RAW after WrestleMania.',
-      sessionId: 'RAW_RIVALRY_TEST'
-    });
-    expect(mockRunThroughBrain).not.toHaveBeenCalled();
+    expect(response.body.result).toBe('Handled through Trinity instead of backstage shortcut.');
+    expect(response.body.module).toBe('trinity');
+    expect(mockTryExecutePromptRouteShortcut).not.toHaveBeenCalled();
+    expect(mockRunThroughBrain).toHaveBeenCalled();
   });
 });

@@ -10,6 +10,7 @@ import { APPLICATION_CONSTANTS } from '@shared/constants.js';
 import type { ModuleDef } from './moduleLoader.js';
 import { executeSystemStateRequest } from './systemState.js';
 import {
+  getRequestAbortContext,
   getRequestAbortSignal,
   getRequestRemainingMs,
   isAbortError,
@@ -57,6 +58,25 @@ export interface RunArcanosCoreQueryParams {
   sessionId?: string;
   overrideAuditSafe?: string;
   runOptions?: Omit<TrinityRunOptions, 'sourceEndpoint'>;
+}
+
+export interface BuildArcanosCoreTimeoutFallbackParams {
+  prompt: string;
+  requestId?: string | null;
+  createdAtMs?: number;
+}
+
+export interface ArcanosCoreTimeoutFallbackEnvelope {
+  ok: true;
+  result: TrinityResult;
+  _route: {
+    gptId: string;
+    module: 'ARCANOS:CORE';
+    action: 'query';
+    route: string;
+    timestamp: string;
+    requestId?: string;
+  };
 }
 
 function extractPrompt(payload: ArcanosCoreQueryPayload): string {
@@ -148,11 +168,15 @@ function resolveCoreRuntimeBudgetSafetyBufferMs(timeoutMs: number): number {
   return Math.max(0, Math.min(DEFAULT_ARCANOS_CORE_RUNTIME_BUDGET_SAFETY_BUFFER_MS, Math.floor(timeoutMs / 4)));
 }
 
-function buildCoreStaticFallbackResult(prompt: string): TrinityResult {
-  const created = Date.now();
-  const normalizedPrompt = prompt.replace(/\s+/g, ' ').trim();
+function buildCoreStaticFallbackResult(params: BuildArcanosCoreTimeoutFallbackParams): TrinityResult {
+  const created = params.createdAtMs ?? Date.now();
+  const normalizedPrompt = params.prompt.replace(/\s+/g, ' ').trim();
   const promptPreview =
     normalizedPrompt.length > 140 ? `${normalizedPrompt.slice(0, 137).trimEnd()}...` : normalizedPrompt;
+  const normalizedRequestId =
+    typeof params.requestId === 'string' && params.requestId.trim().length > 0
+      ? params.requestId.trim()
+      : `arcanos-core-timeout-${created}`;
 
   return {
     result: [
@@ -162,7 +186,7 @@ function buildCoreStaticFallbackResult(prompt: string): TrinityResult {
     ].join(' '),
     module: 'trinity',
     meta: {
-      id: `arcanos-core-timeout-${created}`,
+      id: normalizedRequestId,
       created
     },
     activeModel: 'arcanos-core:static-timeout-fallback',
@@ -193,12 +217,48 @@ function buildCoreStaticFallbackResult(prompt: string): TrinityResult {
       averageRelevanceScore: 0
     },
     taskLineage: {
-      requestId: `arcanos-core-timeout-${created}`,
+      requestId: normalizedRequestId,
       logged: false
     },
     timeoutKind: 'pipeline_timeout',
     degradedModeReason: ARCANOS_CORE_STATIC_FALLBACK_REASON,
     bypassedSubsystems: [...ARCANOS_CORE_PIPELINE_BYPASSED_SUBSYSTEMS]
+  };
+}
+
+export function buildArcanosCoreTimeoutFallbackResult(
+  params: BuildArcanosCoreTimeoutFallbackParams
+): TrinityResult {
+  return buildCoreStaticFallbackResult(params);
+}
+
+export function buildArcanosCoreTimeoutFallbackEnvelope(params: {
+  prompt: string;
+  gptId: string;
+  route?: string;
+  requestId?: string | null;
+  timestamp?: string;
+  createdAtMs?: number;
+}): ArcanosCoreTimeoutFallbackEnvelope {
+  const result = buildCoreStaticFallbackResult({
+    prompt: params.prompt,
+    requestId: params.requestId,
+    createdAtMs: params.createdAtMs
+  });
+
+  return {
+    ok: true,
+    result,
+    _route: {
+      gptId: params.gptId,
+      module: 'ARCANOS:CORE',
+      action: 'query',
+      route: params.route ?? 'core',
+      timestamp: params.timestamp ?? new Date().toISOString(),
+      ...(typeof params.requestId === 'string' && params.requestId.trim().length > 0
+        ? { requestId: params.requestId.trim() }
+        : {})
+    }
   };
 }
 
@@ -430,7 +490,10 @@ export async function runArcanosCoreQuery(
           degradedTimeoutMs: pipelinePlan.degradedTimeoutMs,
           error: resolveErrorMessage(degradedError)
         });
-        const staticFallback = buildCoreStaticFallbackResult(params.prompt);
+        const staticFallback = buildCoreStaticFallbackResult({
+          prompt: params.prompt,
+          requestId: getRequestAbortContext()?.requestId ?? null,
+        });
         logger.warn('[PIPELINE] static fallback engaged', {
           module: 'ARCANOS:CORE',
           sourceEndpoint: params.sourceEndpoint,

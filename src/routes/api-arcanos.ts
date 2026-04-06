@@ -1,6 +1,5 @@
 import express, { Request, Response } from 'express';
 import type { TrinityResult } from '@core/logic/trinity.js';
-import { confirmGate } from '@transport/http/middleware/confirmGate.js';
 import {
   createValidationMiddleware,
   createRateLimitMiddleware,
@@ -23,7 +22,6 @@ import { buildTrinityOutputControlOptions } from '@shared/ask/trinityRequestOpti
 import { buildTrinityUserVisibleResponse } from '@shared/ask/trinityResponseSerializer.js';
 import {
   applyDeprecatedAskRouteHeaders,
-  ASK_ROUTE_SUNSET_HEADER,
   ASK_ROUTE_MODE_HEADER,
   resolveAskRouteMode
 } from '@shared/http/gptRouteHeaders.js';
@@ -32,16 +30,12 @@ import {
   extractAIDegradedResponseMetadata
 } from '@shared/http/aiDegradedHeaders.js';
 import apiArcanosVerificationRouter from './api-arcanos-verification.js';
-import { buildPromptShortcutTelemetry } from '@routes/_core/promptShortcutResponse.js';
-import {
-  tryExecutePromptRouteShortcut,
-  type PromptRouteShortcutResult
-} from '@services/promptRouteShortcuts.js';
 import { runArcanosCoreQuery } from '@services/arcanos-core.js';
 import {
   extractPromptText,
   recordPromptDebugTrace,
 } from '@services/promptDebugTraceService.js';
+import { resolveErrorMessage } from '@core/lib/errors/index.js';
 
 const router = express.Router();
 
@@ -129,14 +123,7 @@ interface AskResponse {
   pipelineDebug?: TrinityResult['pipelineDebug'];
 }
 
-type DeprecatedAskRouteRemovedResponse = ErrorResponseDTO & {
-  deprecated: true;
-  canonicalRoute: string;
-  routeMode: 'gone';
-  sunsetAt: string;
-};
-
-type ApiArcanosResponse = AskResponse | ErrorResponseDTO | DeprecatedAskRouteRemovedResponse;
+type ApiArcanosResponse = AskResponse | ErrorResponseDTO;
 
 const arcanosSchema = {
   mode: {
@@ -367,38 +354,6 @@ function sendTrinityCompatibilityStream(
   res.end();
 }
 
-/**
- * Purpose: Build a compatibility response for any registered prompt shortcut on `/api/arcanos/ask`.
- * Inputs/Outputs: normalized shortcut result -> legacy-compatible response envelope.
- * Edge cases: new shortcut types reuse the same compatibility envelope without bespoke per-shortcut route builders.
- */
-function buildArcanosPromptShortcutResponse(params: {
-  shortcut: PromptRouteShortcutResult;
-}): AskResponse {
-  const shortcutTelemetry = buildPromptShortcutTelemetry(params.shortcut);
-
-  return {
-    success: true,
-    result: params.shortcut.resultText,
-    metadata: {
-      service: 'ARCANOS API',
-      version: '1.0.0',
-      timestamp: shortcutTelemetry.timestamp,
-      arcanosRouting: false,
-      deprecatedEndpoint: true,
-      canonicalRoute: CANONICAL_ARCANOS_ROUTE,
-      endpoint: ARCANOS_API_ENDPOINT_NAME,
-      requestId: shortcutTelemetry.requestId,
-      gptId: CANONICAL_ARCANOS_GPT_ID,
-      routingStages: shortcutTelemetry.routingStages
-    },
-    module: shortcutTelemetry.module,
-    activeModel: shortcutTelemetry.activeModel,
-    fallbackFlag: shortcutTelemetry.fallbackFlag,
-    routingStages: shortcutTelemetry.routingStages
-  };
-}
-
 function attachApiArcanosCompatibilityMetadata(
   req: Request<{}, ApiArcanosResponse, AskBody>,
   res: Response<ApiArcanosResponse>,
@@ -406,44 +361,61 @@ function attachApiArcanosCompatibilityMetadata(
 ): void {
   const canonicalRoute = applyDeprecatedAskRouteHeaders(res, CANONICAL_ARCANOS_GPT_ID);
   res.setHeader('x-deprecated-endpoint', DEPRECATED_ARCANOS_ENDPOINT);
+  res.setHeader(ASK_ROUTE_MODE_HEADER, 'compat');
+  if (resolveAskRouteMode() !== 'compat') {
+    req.logger?.warn?.('deprecated.endpoint.recovered', {
+      deprecatedEndpoint: DEPRECATED_ARCANOS_ENDPOINT,
+      canonicalRoute,
+      configuredRouteMode: resolveAskRouteMode(),
+      effectiveRouteMode: 'compat',
+      requestId: req.requestId ?? null,
+      route: DEPRECATED_ARCANOS_ENDPOINT
+    });
+  }
   req.logger?.info?.('deprecated.endpoint.used', {
     deprecatedEndpoint: DEPRECATED_ARCANOS_ENDPOINT,
     canonicalRoute,
+    routeMode: 'compat',
     requestId: req.requestId ?? null
   });
   next();
 }
 
-function rejectRemovedApiArcanosAskRoute(
+function stripLegacyAuditOverride(
   req: Request<{}, ApiArcanosResponse, AskBody>,
-  res: Response<ApiArcanosResponse>,
+  _res: Response<ApiArcanosResponse>,
   next: () => void
 ): void {
-  if (resolveAskRouteMode() === 'compat') {
-    next();
-    return;
+  if (req.body && typeof req.body === 'object' && !Array.isArray(req.body) && req.body.overrideAuditSafe) {
+    delete req.body.overrideAuditSafe;
+    req.logger?.warn?.('deprecated.endpoint.audit_override_ignored', {
+      deprecatedEndpoint: DEPRECATED_ARCANOS_ENDPOINT,
+      canonicalRoute: CANONICAL_ARCANOS_ROUTE,
+      requestId: req.requestId ?? null,
+      route: DEPRECATED_ARCANOS_ENDPOINT
+    });
   }
 
-  const canonicalRoute = applyDeprecatedAskRouteHeaders(res, CANONICAL_ARCANOS_GPT_ID);
-  res.setHeader('x-deprecated-endpoint', DEPRECATED_ARCANOS_ENDPOINT);
-  res.setHeader(ASK_ROUTE_MODE_HEADER, 'gone');
-  req.logger?.warn?.('deprecated.endpoint.blocked', {
-    deprecatedEndpoint: DEPRECATED_ARCANOS_ENDPOINT,
-    canonicalRoute,
-    requestId: req.requestId ?? null,
-    routeMode: 'gone',
-    sunsetAt: ASK_ROUTE_SUNSET_HEADER
-  });
-  res.status(410).json({
-    error: 'Legacy /api/arcanos/ask route has been removed; use /gpt/:gptId',
-    deprecated: true,
-    canonicalRoute,
-    routeMode: 'gone',
-    sunsetAt: ASK_ROUTE_SUNSET_HEADER,
-    details: [
-      `POST ${DEPRECATED_ARCANOS_ENDPOINT} is no longer available. Migrate callers to POST ${canonicalRoute}.`
-    ]
-  });
+  next();
+}
+
+function classifyApiArcanosErrorType(error: unknown): string {
+  if (error && typeof error === 'object') {
+    const candidateName = (error as { name?: unknown }).name;
+    if (typeof candidateName === 'string' && candidateName.trim().length > 0) {
+      return candidateName.trim();
+    }
+  }
+
+  const message = resolveErrorMessage(error).toLowerCase();
+  if (message.includes('timeout')) {
+    return 'timeout';
+  }
+  if (message.includes('abort')) {
+    return 'abort';
+  }
+
+  return 'unexpected_error';
 }
 
 /**
@@ -525,28 +497,6 @@ const handleArcanosAsk = asyncHandler(async (
       rawPrompt,
       normalizedPrompt: prompt,
     });
-    const promptShortcut = await tryExecutePromptRouteShortcut({
-      prompt,
-      sessionId: req.body.sessionId
-    });
-    if (promptShortcut) {
-      const shortcutPayload = buildArcanosPromptShortcutResponse({
-        shortcut: promptShortcut
-      });
-      recordPromptDebugTrace(requestId, 'response', {
-        traceId: req.traceId ?? null,
-        endpoint: ARCANOS_API_ENDPOINT_NAME,
-        method: req.method,
-        rawPrompt,
-        normalizedPrompt: prompt,
-        selectedRoute: DEPRECATED_ARCANOS_ENDPOINT,
-        selectedModule: promptShortcut.response.module,
-        selectedTools: [promptShortcut.shortcutId],
-        responseReturned: shortcutPayload,
-      });
-      return res.json(shortcutPayload);
-    }
-
     recordPromptDebugTrace(requestId, 'routing', {
       traceId: req.traceId ?? null,
       endpoint: ARCANOS_API_ENDPOINT_NAME,
@@ -605,6 +555,13 @@ const handleArcanosAsk = asyncHandler(async (
 
     return res.json(responsePayload);
   } catch (error: unknown) {
+    req.logger?.error?.('api-arcanos.ask.failed', {
+      route: DEPRECATED_ARCANOS_ENDPOINT,
+      endpoint: ARCANOS_API_ENDPOINT_NAME,
+      errorType: classifyApiArcanosErrorType(error),
+      error: resolveErrorMessage(error),
+      requestId,
+    });
     recordPromptDebugTrace(requestId, 'fallback', {
       traceId: req.traceId ?? null,
       endpoint: ARCANOS_API_ENDPOINT_NAME,
@@ -628,10 +585,9 @@ const handleArcanosAsk = asyncHandler(async (
 router.post(
   '/ask',
   arcanosAskRateLimit,
-  rejectRemovedApiArcanosAskRoute,
   attachApiArcanosCompatibilityMetadata,
-  confirmGate,
   createValidationMiddleware(arcanosSchema),
+  stripLegacyAuditOverride,
   handleArcanosAsk
 );
 

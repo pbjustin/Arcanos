@@ -3,6 +3,7 @@ import getGptModuleMap, {
   validateGptRegistry,
   type GptModuleEntry
 } from "@platform/runtime/gptRouterConfig.js";
+import { buildArcanosCoreTimeoutFallbackEnvelope } from "@services/arcanos-core.js";
 import { dispatchModuleAction, getModuleMetadata } from "../modules.js";
 import type { GptMatchMethod } from "@platform/logging/gptLogger.js";
 import { persistModuleConversation } from "@services/moduleConversationPersistence.js";
@@ -2687,6 +2688,71 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         timeoutSource,
         durationMs: Date.now() - dispatchStartedAt,
       });
+    }
+
+    if (
+      isDispatchTimeout &&
+      activeEntry.module === 'ARCANOS:CORE' &&
+      action === 'query' &&
+      typeof prompt === 'string' &&
+      prompt.length > 0
+    ) {
+      const timeoutFallback = buildArcanosCoreTimeoutFallbackEnvelope({
+        prompt,
+        gptId: trimmedGptId,
+        requestId,
+        route: activeEntry.route,
+      });
+      recordDispatcherRoute({
+        gptId: trimmedGptId,
+        module: activeEntry.module,
+        route: activeEntry.route,
+        handler: 'module-dispatcher',
+        outcome: 'timeout',
+      });
+      recordDispatcherFallback({
+        gptId: trimmedGptId,
+        module: activeEntry.module,
+        reason: 'module_timeout_static_fallback',
+      });
+      logger?.warn?.('gpt.dispatch.timeout_fallback', {
+        requestId,
+        gptId: trimmedGptId,
+        module: activeEntry.module,
+        action,
+        route: activeEntry.route,
+        errorType: 'module_timeout_static_fallback',
+        error: errorMessage,
+        timeoutMs,
+        timeoutSource,
+        durationMs: Date.now() - dispatchStartedAt,
+      });
+      recordPromptDebugTrace(promptDebugRequestId, 'response', {
+        traceId: request?.traceId ?? null,
+        endpoint: requestEndpoint ?? '/gpt/:gptId',
+        method: request?.method ?? null,
+        rawPrompt,
+        normalizedPrompt,
+        selectedRoute: activeEntry.route,
+        selectedModule: activeEntry.module,
+        responseReturned: timeoutFallback.result,
+        fallbackPathUsed: 'module-timeout-static-fallback',
+        fallbackReason: dispatchErrorMessage,
+      });
+      return {
+        ok: true,
+        result: timeoutFallback.result,
+        _route: {
+          ...baseRoute,
+          ...timeoutFallback._route,
+          module: activeEntry.module,
+          action,
+          matchMethod,
+          route: activeEntry.route,
+          availableActions,
+          moduleVersion: (moduleMetadata as any)?.version ?? null,
+        },
+      };
     }
 
     recordDispatcherRoute({

@@ -38,15 +38,29 @@ export interface DiagnosticsSnapshot {
   requests_total: number;
   errors_total: number;
   error_rate: number | `DATA NOT EXPOSED: ${string}`;
+  error_rate_window_ms: number;
+  public_metrics_scope: 'instance_window' | 'shared_lifetime' | 'local_lifetime';
+  public_metrics_request_count: number;
+  public_metrics_error_count: number;
   avg_latency_ms: number | `DATA NOT EXPOSED: ${string}`;
   recent_latency_ms: number[] | `DATA NOT EXPOSED: ${string}`;
+  top_error_routes: DiagnosticsRouteErrorSnapshot[];
   modules: Record<string, ModuleStatus>;
+}
+
+export interface DiagnosticsRouteErrorSnapshot {
+  route: string;
+  requestCount: number;
+  errorCount: number;
+  timeoutCount: number;
+  errorRate: number;
 }
 
 export interface RequestSample {
   timestamp: string;
   route: string;
   statusCode: number;
+  publicError: boolean;
   latencyMs: number;
   timedOut: boolean;
   timeoutKind: AITimeoutKind | null;
@@ -104,7 +118,12 @@ interface MetricsSnapshot {
   errorsTotal: number;
   avgLatencyMs: number | `DATA NOT EXPOSED: ${string}`;
   errorRate: number | `DATA NOT EXPOSED: ${string}`;
+  errorRateWindowMs: number;
+  publicMetricsScope: 'instance_window' | 'shared_lifetime' | 'local_lifetime';
+  publicMetricsRequestCount: number;
+  publicMetricsErrorCount: number;
   recentLatencyMs: number[] | `DATA NOT EXPOSED: ${string}`;
+  topErrorRoutes: DiagnosticsRouteErrorSnapshot[];
 }
 
 type RuntimeDiagnosticsRedisClient = ReturnType<typeof createClient>;
@@ -113,6 +132,7 @@ const RECENT_LATENCY_LIMIT = Math.max(10, getEnvNumber('DIAGNOSTICS_RECENT_LATEN
 const RECENT_REQUEST_LIMIT = Math.max(25, getEnvNumber('DIAGNOSTICS_RECENT_REQUEST_LIMIT', 250));
 const TIMEOUT_LATENCY_MS = Math.max(2_500, getEnvNumber('DIAGNOSTICS_TIMEOUT_LATENCY_MS', 5_000));
 const SLOW_REQUEST_LATENCY_MS = Math.max(1_000, getEnvNumber('DIAGNOSTICS_SLOW_REQUEST_LATENCY_MS', 2_500));
+const PUBLIC_ERROR_RATE_WINDOW_MS = Math.max(60_000, getEnvNumber('DIAGNOSTICS_PUBLIC_WINDOW_MS', 15 * 60 * 1000));
 const REDIS_SHARED_METRICS_ENABLED = getEnv('DIAGNOSTICS_SHARED_METRICS', 'true') !== 'false';
 
 const MODULE_PROBES: Record<string, { moduleNames?: string[]; routes?: string[] }> = {
@@ -172,7 +192,7 @@ class RuntimeDiagnosticsService {
     this.requestsTotal += 1;
     this.totalLatencyMs += latencyMs;
 
-    if (statusCode >= 400) {
+    if (countsAsPublicFailure(statusCode, metadata)) {
       this.errorsTotal += 1;
     }
 
@@ -186,7 +206,7 @@ class RuntimeDiagnosticsService {
       this.recentRequests.splice(0, this.recentRequests.length - RECENT_REQUEST_LIMIT);
     }
 
-    void this.redisStore.recordRequestCompletion(statusCode, latencyMs);
+    void this.redisStore.recordRequestCompletion(statusCode, latencyMs, metadata);
   }
 
   getRollingRequestWindow(windowMs: number): RequestWindowSnapshot {
@@ -251,8 +271,13 @@ class RuntimeDiagnosticsService {
       requests_total: metricsSnapshot.requestsTotal,
       errors_total: metricsSnapshot.errorsTotal,
       error_rate: metricsSnapshot.errorRate,
+      error_rate_window_ms: metricsSnapshot.errorRateWindowMs,
+      public_metrics_scope: metricsSnapshot.publicMetricsScope,
+      public_metrics_request_count: metricsSnapshot.publicMetricsRequestCount,
+      public_metrics_error_count: metricsSnapshot.publicMetricsErrorCount,
       avg_latency_ms: metricsSnapshot.avgLatencyMs,
       recent_latency_ms: metricsSnapshot.recentLatencyMs,
+      top_error_routes: metricsSnapshot.topErrorRoutes,
       modules: this.resolveModuleStatuses(registry.loadedModules)
     };
   }
@@ -356,22 +381,65 @@ class RuntimeDiagnosticsService {
 
   private async getMetricsSnapshot(): Promise<MetricsSnapshot> {
     const sharedSnapshot = await this.redisStore.getSnapshot();
-    if (sharedSnapshot) {
-      return sharedSnapshot;
-    }
-
-    return {
+    const rollingSnapshot =
+      this.recentRequests.length > 0
+        ? this.getRollingRequestWindow(PUBLIC_ERROR_RATE_WINDOW_MS)
+        : null;
+    const localSnapshot = {
       requestsTotal: this.requestsTotal,
       errorsTotal: this.errorsTotal,
       avgLatencyMs: this.requestsTotal > 0
         ? roundMetric(this.totalLatencyMs / this.requestsTotal)
-        : 'DATA NOT EXPOSED: avg_latency_ms',
+        : 'DATA NOT EXPOSED: avg_latency_ms' as const,
       errorRate: this.requestsTotal > 0
         ? roundMetric(this.errorsTotal / this.requestsTotal)
-        : 'DATA NOT EXPOSED: error_rate',
+        : 'DATA NOT EXPOSED: error_rate' as const,
       recentLatencyMs: this.recentLatencyMs.length > 0
         ? [...this.recentLatencyMs]
-        : 'DATA NOT EXPOSED: recent_latency_ms'
+        : 'DATA NOT EXPOSED: recent_latency_ms' as const
+    };
+
+    const requestsTotal = sharedSnapshot?.requestsTotal ?? localSnapshot.requestsTotal;
+    const errorsTotal = sharedSnapshot?.errorsTotal ?? localSnapshot.errorsTotal;
+    const publicMetricsScope =
+      rollingSnapshot && rollingSnapshot.requestCount > 0
+        ? 'instance_window'
+        : sharedSnapshot
+        ? 'shared_lifetime'
+        : 'local_lifetime';
+    const publicMetricsRequestCount =
+      publicMetricsScope === 'instance_window'
+        ? rollingSnapshot?.requestCount ?? 0
+        : publicMetricsScope === 'shared_lifetime'
+        ? requestsTotal
+        : localSnapshot.requestsTotal;
+    const publicMetricsErrorCount =
+      publicMetricsScope === 'instance_window'
+        ? rollingSnapshot?.errorCount ?? 0
+        : publicMetricsScope === 'shared_lifetime'
+        ? errorsTotal
+        : localSnapshot.errorsTotal;
+    const avgLatencyMs =
+      publicMetricsScope === 'instance_window'
+        ? rollingSnapshot?.avgLatencyMs ?? 'DATA NOT EXPOSED: avg_latency_ms'
+        : sharedSnapshot?.avgLatencyMs ?? localSnapshot.avgLatencyMs;
+    const errorRate =
+      publicMetricsScope === 'instance_window'
+        ? rollingSnapshot?.errorRate ?? 'DATA NOT EXPOSED: error_rate'
+        : sharedSnapshot?.errorRate ?? localSnapshot.errorRate;
+    const recentLatencyMs = sharedSnapshot?.recentLatencyMs ?? localSnapshot.recentLatencyMs;
+
+    return {
+      requestsTotal,
+      errorsTotal,
+      avgLatencyMs,
+      errorRate,
+      errorRateWindowMs: PUBLIC_ERROR_RATE_WINDOW_MS,
+      publicMetricsScope,
+      publicMetricsRequestCount,
+      publicMetricsErrorCount,
+      recentLatencyMs,
+      topErrorRoutes: rollingSnapshot ? buildTopErrorRoutes(rollingSnapshot) : []
     };
   }
 
@@ -397,7 +465,11 @@ class RuntimeDiagnosticsService {
 class RuntimeDiagnosticsRedisStore {
   private clientPromise: Promise<RuntimeDiagnosticsRedisClient | null> | null = null;
 
-  async recordRequestCompletion(statusCode: number, latencyMs: number): Promise<void> {
+  async recordRequestCompletion(
+    statusCode: number,
+    latencyMs: number,
+    metadata: AIDegradedResponseMetadata = {}
+  ): Promise<void> {
     const redisClient = await this.getClient();
     if (!redisClient) {
       return;
@@ -407,7 +479,7 @@ class RuntimeDiagnosticsRedisStore {
       const redisCommandBatch = redisClient.multi();
       redisCommandBatch.incr(this.key('requests_total'));
       redisCommandBatch.incrByFloat(this.key('latency_total_ms'), latencyMs);
-      if (statusCode >= 400) {
+      if (countsAsPublicFailure(statusCode, metadata)) {
         redisCommandBatch.incr(this.key('errors_total'));
       }
       redisCommandBatch.lPush(this.key('recent_latency_ms'), String(latencyMs));
@@ -462,9 +534,14 @@ class RuntimeDiagnosticsRedisStore {
         errorRate: requestsTotal > 0
           ? roundMetric(errorsTotal / requestsTotal)
           : 'DATA NOT EXPOSED: error_rate',
+        errorRateWindowMs: PUBLIC_ERROR_RATE_WINDOW_MS,
+        publicMetricsScope: 'shared_lifetime',
+        publicMetricsRequestCount: requestsTotal,
+        publicMetricsErrorCount: errorsTotal,
         recentLatencyMs: recentLatencyMs.length > 0
           ? recentLatencyMs
-          : 'DATA NOT EXPOSED: recent_latency_ms'
+          : 'DATA NOT EXPOSED: recent_latency_ms',
+        topErrorRoutes: []
       };
     } catch (error) {
       logger.warn('diagnostics.shared_metrics.read_failed', {
@@ -590,6 +667,10 @@ function buildRequestSample(
     timestamp: new Date().toISOString(),
     route: route.trim().length > 0 ? route : 'unmatched',
     statusCode,
+    publicError: countsAsPublicFailure(statusCode, {
+      timeoutKind,
+      degradedModeReason
+    }),
     latencyMs: roundMetric(latencyMs),
     timedOut: timeoutKind !== null || statusCode === 408 || statusCode === 504 || latencyMs >= TIMEOUT_LATENCY_MS,
     timeoutKind,
@@ -631,7 +712,7 @@ function aggregateRequestSamples(samples: RequestSample[], windowMs: number): Re
   for (const sample of samples) {
     totalLatencyMs += sample.latencyMs;
     maxLatencyMs = Math.max(maxLatencyMs, sample.latencyMs);
-    if (sample.statusCode >= 400) {
+    if (sample.publicError) {
       errorCount += 1;
     }
     if (sample.statusCode >= 400 && sample.statusCode < 500) {
@@ -676,7 +757,7 @@ function aggregateRequestSamples(samples: RequestSample[], windowMs: number): Re
     .map(([route, routeSamples]) => ({
       route,
       requestCount: routeSamples.length,
-      errorCount: routeSamples.filter((sample) => sample.statusCode >= 400).length,
+      errorCount: routeSamples.filter((sample) => sample.publicError).length,
       timeoutCount: routeSamples.filter((sample) => sample.timedOut).length,
       pipelineTimeoutCount: routeSamples.filter((sample) => sample.timeoutKind === 'pipeline_timeout').length,
       providerTimeoutCount: routeSamples.filter((sample) => sample.timeoutKind === 'provider_timeout').length,
@@ -725,6 +806,37 @@ function aggregateRequestSamples(samples: RequestSample[], windowMs: number): Re
     maxLatencyMs: roundMetric(maxLatencyMs),
     routes
   };
+}
+
+function buildTopErrorRoutes(snapshot: RequestWindowSnapshot): DiagnosticsRouteErrorSnapshot[] {
+  return snapshot.routes
+    .filter((routeSnapshot) => routeSnapshot.errorCount > 0)
+    .sort((left, right) => {
+      if (right.errorCount !== left.errorCount) {
+        return right.errorCount - left.errorCount;
+      }
+
+      return right.timeoutCount - left.timeoutCount;
+    })
+    .slice(0, 5)
+    .map((routeSnapshot) => ({
+      route: routeSnapshot.route,
+      requestCount: routeSnapshot.requestCount,
+      errorCount: routeSnapshot.errorCount,
+      timeoutCount: routeSnapshot.timeoutCount,
+      errorRate: routeSnapshot.requestCount > 0
+        ? roundMetric(routeSnapshot.errorCount / routeSnapshot.requestCount)
+        : 0,
+    }));
+}
+
+function countsAsPublicFailure(
+  statusCode: number,
+  metadata: Pick<AIDegradedResponseMetadata, 'timeoutKind' | 'degradedModeReason'> = {}
+): boolean {
+  const timeoutKind = metadata.timeoutKind ?? null;
+  const degradedModeReason = metadata.degradedModeReason ?? null;
+  return statusCode >= 400 || timeoutKind !== null || degradedModeReason !== null;
 }
 
 function average(values: number[]): number {
