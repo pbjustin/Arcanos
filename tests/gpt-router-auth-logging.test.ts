@@ -118,6 +118,51 @@ describe('gpt router auth logging', () => {
     });
   });
 
+  it('logs sanitized GPT request metadata without leaking prompt text', async () => {
+    const promptMarker = 'QA-LOG-PRIVACY-MARKER-20260407';
+    mockRouteGptRequest.mockResolvedValue({
+      ok: true,
+      result: { gaming_response: 'ok' },
+      _route: {
+        gptId: 'arcanos-gaming',
+        module: 'ARCANOS:GAMING',
+        route: 'gaming',
+        availableActions: ['query'],
+      },
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use(requestContext);
+    app.use('/gpt', gptRouter);
+
+    const response = await request(app)
+      .post('/gpt/arcanos-gaming')
+      .send({
+        prompt: `Inspect ${promptMarker} carefully`,
+        messages: [{ role: 'user', content: `Inspect ${promptMarker} carefully` }]
+      });
+
+    expect(response.status).toBe(200);
+
+    const rawStructuredLogs = consoleLogSpy.mock.calls
+      .map((call) => typeof call[0] === 'string' ? call[0] : '')
+      .join('\n');
+    const logs = collectStructuredLogs(consoleLogSpy.mock.calls);
+    const requestMetaLog = logs.find((entry) => entry.event === 'gpt.request.meta');
+
+    expect(requestMetaLog?.data).toMatchObject({
+      endpoint: '/gpt/arcanos-gaming',
+      gptId: 'arcanos-gaming',
+      promptLength: `Inspect ${promptMarker} carefully`.length,
+      messageCount: 1,
+      promptLikeFields: ['messages', 'prompt']
+    });
+    expect(requestMetaLog?.data?.promptHash).toEqual(expect.any(String));
+    expect(requestMetaLog?.data?.bodyKeys).toEqual(['messages', 'prompt']);
+    expect(rawStructuredLogs).not.toContain(promptMarker);
+  });
+
   it('logs anonymous GPT requests so UI-auth mismatches are visible in traces', async () => {
     mockRouteGptRequest.mockResolvedValue({
       ok: false,

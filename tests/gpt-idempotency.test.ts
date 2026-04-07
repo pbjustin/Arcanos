@@ -64,6 +64,21 @@ describe('gpt idempotency fingerprinting', () => {
     expect(baseHash).toBe(retriedHash);
   });
 
+  it('does not collapse non-normalized request bodies onto the empty-object fingerprint', () => {
+    const stringBodyHash = buildGptRequestFingerprintHash({
+      gptId: 'arcanos-core',
+      action: 'query',
+      body: '  raw prompt body  '
+    });
+    const emptyObjectHash = buildGptRequestFingerprintHash({
+      gptId: 'arcanos-core',
+      action: 'query',
+      body: {}
+    });
+
+    expect(stringBodyHash).not.toBe(emptyObjectHash);
+  });
+
   it('produces explicit and derived idempotency descriptors without leaking prompt text', () => {
     const explicitDescriptor = buildGptIdempotencyDescriptor({
       gptId: 'arcanos-core',

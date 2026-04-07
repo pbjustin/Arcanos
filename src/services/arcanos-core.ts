@@ -121,10 +121,8 @@ function normalizeAnswerMode(value: unknown): TrinityAnswerMode | undefined {
   return value;
 }
 
-function resolveCoreExecutionMode(
-  remainingRequestMs: number | null
-): ArcanosCoreExecutionMode {
-  return remainingRequestMs === null ? 'background' : 'request';
+function resolveCoreExecutionMode(): ArcanosCoreExecutionMode {
+  return 'request';
 }
 
 function resolveCoreHandlerTimeoutMs(
@@ -353,7 +351,7 @@ function buildCorePipelinePlan(
   degradedTimeoutMs: number;
 } {
   const remainingRequestMs = getRequestRemainingMs();
-  const executionMode = executionModeOverride ?? resolveCoreExecutionMode(remainingRequestMs);
+  const executionMode = executionModeOverride ?? resolveCoreExecutionMode();
   const handlerTimeoutMs = resolveCoreHandlerTimeoutMs(executionMode, remainingRequestMs);
   const pipelineTimeoutMs = resolveCorePipelineTimeoutMs(executionMode);
   const totalTimeoutMs = remainingRequestMs === null
@@ -375,7 +373,8 @@ function buildCorePipelinePlan(
 
 function buildCoreDegradedRunOptions(
   sourceEndpoint: string,
-  runOptions?: Omit<TrinityRunOptions, 'sourceEndpoint'>
+  runOptions?: Omit<TrinityRunOptions, 'sourceEndpoint'>,
+  watchdogModelTimeoutMs?: number
 ): TrinityRunOptions {
   return {
     ...(runOptions ?? {}),
@@ -385,7 +384,10 @@ function buildCoreDegradedRunOptions(
     maxWords: resolveCoreDegradedMaxWords(runOptions?.maxWords ?? null),
     debugPipeline: false,
     strictUserVisibleOutput: true,
-    directAnswerModelOverride: APPLICATION_CONSTANTS.MODEL_GPT_4_1_MINI
+    directAnswerModelOverride: APPLICATION_CONSTANTS.MODEL_GPT_4_1_MINI,
+    ...(typeof watchdogModelTimeoutMs === 'number' && Number.isFinite(watchdogModelTimeoutMs) && watchdogModelTimeoutMs > 0
+      ? { watchdogModelTimeoutMs: Math.trunc(watchdogModelTimeoutMs) }
+      : {})
   };
 }
 
@@ -394,6 +396,13 @@ export async function runArcanosCoreQuery(
 ): Promise<TrinityResult> {
   const startedAt = Date.now();
   const pipelinePlan = buildCorePipelinePlan(params.executionModeOverride);
+  const primaryRunOptions: TrinityRunOptions = {
+    ...(params.runOptions ?? {}),
+    sourceEndpoint: params.sourceEndpoint,
+    ...(pipelinePlan.executionMode === 'background'
+      ? { watchdogModelTimeoutMs: pipelinePlan.primaryTimeoutMs }
+      : {})
+  };
   const runtimeBudget = createRuntimeBudgetWithLimit(
     pipelinePlan.primaryTimeoutMs,
     resolveCoreRuntimeBudgetSafetyBufferMs(pipelinePlan.primaryTimeoutMs)
@@ -408,7 +417,8 @@ export async function runArcanosCoreQuery(
     sessionId: params.sessionId,
     timeoutMs: pipelinePlan.primaryTimeoutMs,
     totalTimeoutMs: pipelinePlan.totalTimeoutMs,
-    degradedTimeoutMs: pipelinePlan.degradedTimeoutMs
+    degradedTimeoutMs: pipelinePlan.degradedTimeoutMs,
+    watchdogModelTimeoutMs: primaryRunOptions.watchdogModelTimeoutMs ?? null
   });
   logger.info('[core] stall_guard.armed', {
     module: 'ARCANOS:CORE',
@@ -416,7 +426,8 @@ export async function runArcanosCoreQuery(
     executionMode: pipelinePlan.executionMode,
     timeoutMs: pipelinePlan.primaryTimeoutMs,
     totalTimeoutMs: pipelinePlan.totalTimeoutMs,
-    degradedTimeoutMs: pipelinePlan.degradedTimeoutMs
+    degradedTimeoutMs: pipelinePlan.degradedTimeoutMs,
+    watchdogModelTimeoutMs: primaryRunOptions.watchdogModelTimeoutMs ?? null
   });
 
   try {
@@ -437,10 +448,7 @@ export async function runArcanosCoreQuery(
           params.prompt,
           params.sessionId,
           params.overrideAuditSafe,
-          {
-            sourceEndpoint: params.sourceEndpoint,
-            ...(params.runOptions ?? {})
-          },
+          primaryRunOptions,
           runtimeBudget
         )
     );
@@ -514,7 +522,13 @@ export async function runArcanosCoreQuery(
               params.prompt,
               params.sessionId,
               params.overrideAuditSafe,
-              buildCoreDegradedRunOptions(params.sourceEndpoint, params.runOptions),
+              buildCoreDegradedRunOptions(
+                params.sourceEndpoint,
+                params.runOptions,
+                pipelinePlan.executionMode === 'background'
+                  ? pipelinePlan.degradedTimeoutMs
+                  : undefined
+              ),
               createRuntimeBudgetWithLimit(
                 pipelinePlan.degradedTimeoutMs,
                 resolveCoreRuntimeBudgetSafetyBufferMs(pipelinePlan.degradedTimeoutMs)

@@ -302,6 +302,17 @@ async function executeQueuedGptRequest(params: {
   const routeStartedAtMs = Date.now();
   const { gptId, body, requestId } = parsedGptJobInput.value;
   const latestJob = await getJobById(params.jobId);
+  const resolveCancellationReason = async (
+    fallbackMessage: string,
+    error?: unknown
+  ): Promise<string> => {
+    const refreshedJob = await getJobById(params.jobId);
+    return (
+      refreshedJob?.cancel_reason ??
+      (error ? resolveErrorMessage(error) : null) ??
+      fallbackMessage
+    );
+  };
   if (latestJob?.cancel_requested_at) {
     return {
       status: 'cancelled',
@@ -340,7 +351,10 @@ async function executeQueuedGptRequest(params: {
       return {
         status: 'cancelled',
         output: null,
-        errorMessage: latestJob?.cancel_reason ?? 'Job cancellation requested while GPT execution was running.',
+        errorMessage: await resolveCancellationReason(
+          'Job cancellation requested while GPT execution was running.',
+          error
+        ),
         retryable: false
       };
     }
@@ -356,7 +370,7 @@ async function executeQueuedGptRequest(params: {
       return {
         status: 'cancelled',
         output: null,
-        errorMessage: latestJob?.cancel_reason ?? envelope.error.message,
+        errorMessage: await resolveCancellationReason(envelope.error.message),
         retryable: false
       };
     }

@@ -1029,18 +1029,6 @@ function resolveDispatchTimeout(
     | "background-default"
     | "background-cap";
 } {
-  const requestTimeoutMs = resolvePositiveTimeoutMs((body as any)?.timeoutMs);
-  if (requestTimeoutMs !== null) {
-    const requestRemainingMs = getRequestRemainingMs();
-    if (requestRemainingMs !== null) {
-      return {
-        timeoutMs: Math.max(1, Math.min(requestTimeoutMs, requestRemainingMs)),
-        timeoutSource: requestTimeoutMs > requestRemainingMs ? "request-cap" : "request"
-      };
-    }
-    return { timeoutMs: requestTimeoutMs, timeoutSource: "request" };
-  }
-
   const moduleTimeoutMs = resolvePositiveTimeoutMs(moduleMetadata?.defaultTimeoutMs);
   if (runtimeExecutionMode === 'background') {
     const backgroundTimeoutMs = Math.max(
@@ -1060,6 +1048,18 @@ function resolveDispatchTimeout(
       timeoutMs: backgroundTimeoutMs,
       timeoutSource: 'background-default'
     };
+  }
+
+  const requestTimeoutMs = resolvePositiveTimeoutMs((body as any)?.timeoutMs);
+  if (requestTimeoutMs !== null) {
+    const requestRemainingMs = getRequestRemainingMs();
+    if (requestRemainingMs !== null) {
+      return {
+        timeoutMs: Math.max(1, Math.min(requestTimeoutMs, requestRemainingMs)),
+        timeoutSource: requestTimeoutMs > requestRemainingMs ? "request-cap" : "request"
+      };
+    }
+    return { timeoutMs: requestTimeoutMs, timeoutSource: "request" };
   }
 
   if (moduleTimeoutMs !== null) {

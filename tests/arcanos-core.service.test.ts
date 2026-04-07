@@ -134,4 +134,44 @@ describe('ARCANOS:CORE service', () => {
     expect(mockGenerateMockResponse).toHaveBeenCalledWith('Health check.', 'gpt/arcanos-core');
     expect(result).toEqual({ result: 'mock-core-response' });
   });
+
+  it('uses background budgets only when the caller explicitly requests background execution', async () => {
+    const client = { id: 'openai-client' };
+    mockGetOpenAIClientOrAdapter.mockReturnValue({ client });
+    mockRunThroughBrain.mockResolvedValue({ result: 'background-core-response' });
+    getRequestRemainingMsMock.mockReturnValue(null);
+
+    await ArcanosCore.actions.query({
+      prompt: 'Process this in worker mode.',
+      __arcanosExecutionMode: 'background'
+    });
+
+    expect(runWithRequestAbortTimeoutMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        timeoutMs: 110_000,
+        abortMessage: 'ARCANOS:CORE pipeline timeout after 110000ms'
+      }),
+      expect.any(Function)
+    );
+    expect(mockCreateRuntimeBudget).toHaveBeenCalledWith(110_000, 250);
+    expect(mockRunThroughBrain).toHaveBeenCalledWith(
+      client,
+      'Process this in worker mode.',
+      undefined,
+      undefined,
+      {
+        sourceEndpoint: 'gpt.arcanos-core.query',
+        watchdogModelTimeoutMs: 110_000
+      },
+      { budget: 'runtime' }
+    );
+    expect(loggerInfoMock).toHaveBeenCalledWith(
+      '[core] handler.start',
+      expect.objectContaining({
+        executionMode: 'background',
+        timeoutMs: 110_000,
+        watchdogModelTimeoutMs: 110_000
+      })
+    );
+  });
 });

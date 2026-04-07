@@ -6,6 +6,8 @@ const mockRouteGptRequest = jest.fn();
 const findOrCreateGptJobMock = jest.fn();
 const planAutonomousWorkerJobMock = jest.fn();
 const waitForQueuedGptJobCompletionMock = jest.fn();
+class MockIdempotencyKeyConflictError extends Error {}
+class MockJobRepositoryUnavailableError extends Error {}
 
 jest.unstable_mockModule('../src/routes/_core/gptDispatch.js', () => ({
   routeGptRequest: mockRouteGptRequest,
@@ -18,6 +20,8 @@ jest.unstable_mockModule('../src/platform/logging/gptLogger.js', () => ({
 }));
 
 jest.unstable_mockModule('../src/core/db/repositories/jobRepository.js', () => ({
+  IdempotencyKeyConflictError: MockIdempotencyKeyConflictError,
+  JobRepositoryUnavailableError: MockJobRepositoryUnavailableError,
   findOrCreateGptJob: findOrCreateGptJobMock,
   getJobById: jest.fn(),
   createJob: jest.fn(),
@@ -220,7 +224,9 @@ describe('async /gpt idempotency', () => {
 
   it('rejects explicit idempotency key reuse for a different semantic request', async () => {
     findOrCreateGptJobMock.mockRejectedValue(
-      new Error('IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_REQUEST: explicit idempotency key mapped to a different GPT request fingerprint.')
+      new MockIdempotencyKeyConflictError(
+        'Explicit idempotency key mapped to a different GPT request fingerprint.'
+      )
     );
 
     const response = await request(buildApp())
@@ -237,6 +243,64 @@ describe('async /gpt idempotency', () => {
         code: 'IDEMPOTENCY_KEY_CONFLICT'
       },
       idempotencyKey: 'retry-123'
+    });
+  });
+
+  it('falls back to synchronous dispatch when async job persistence is unavailable', async () => {
+    findOrCreateGptJobMock.mockRejectedValue(
+      new MockJobRepositoryUnavailableError('Database not configured')
+    );
+    mockRouteGptRequest.mockResolvedValue({
+      ok: true,
+      result: {
+        result: '[MOCK RESPONSE] sync fallback'
+      },
+      _route: {
+        gptId: 'arcanos-core',
+        module: 'ARCANOS:CORE',
+        route: 'core',
+        action: 'query'
+      }
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        prompt: 'Fallback to sync when queue persistence is offline'
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.result?.result).toContain('sync fallback');
+    expect(mockRouteGptRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        gptId: 'arcanos-core',
+        body: {
+          prompt: 'Fallback to sync when queue persistence is offline'
+        }
+      })
+    );
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+  });
+
+  it('returns 503 for explicit idempotency when durable persistence is unavailable', async () => {
+    findOrCreateGptJobMock.mockRejectedValue(
+      new MockJobRepositoryUnavailableError('Database not configured')
+    );
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .set('Idempotency-Key', 'retry-offline')
+      .send({
+        prompt: 'Persist this safely'
+      });
+
+    expect(response.status).toBe(503);
+    expect(response.body).toMatchObject({
+      ok: false,
+      error: {
+        code: 'IDEMPOTENCY_UNAVAILABLE'
+      },
+      idempotencyKey: 'retry-offline'
     });
   });
 });

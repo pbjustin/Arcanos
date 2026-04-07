@@ -53,6 +53,18 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function compareStringKeys(leftKey: string, rightKey: string): number {
+  if (leftKey < rightKey) {
+    return -1;
+  }
+
+  if (leftKey > rightKey) {
+    return 1;
+  }
+
+  return 0;
+}
+
 function tryParseBodyRecord(value: string): Record<string, unknown> | null {
   try {
     const parsedValue = JSON.parse(value);
@@ -112,7 +124,7 @@ function canonicalizeValue(value: unknown, path: string[] = []): unknown {
         canonicalizeValue(entryValue, [...path, key])
       ] as const)
       .filter(([, entryValue]) => entryValue !== undefined)
-      .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey));
+      .sort(([leftKey], [rightKey]) => compareStringKeys(leftKey, rightKey));
 
     return Object.fromEntries(normalizedEntries);
   }
@@ -134,7 +146,7 @@ function stableStringify(value: unknown): string {
   }
 
   const normalizedEntries = Object.entries(value as Record<string, unknown>)
-    .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
+    .sort(([leftKey], [rightKey]) => compareStringKeys(leftKey, rightKey))
     .map(([key, entryValue]) => `${JSON.stringify(key)}:${stableStringify(entryValue)}`);
 
   return `{${normalizedEntries.join(',')}}`;
@@ -177,13 +189,13 @@ export function summarizeFingerprintHash(hash: string | null | undefined): strin
 }
 
 export function buildGptRequestFingerprintHash(input: GptRequestFingerprintInput): string {
-  const normalizedBody = canonicalizeValue(normalizeGptRequestBody(input.body) ?? {});
+  const normalizedBody = normalizeGptRequestBody(input.body);
   const normalizedFingerprintPayload = {
     gptId: input.gptId.trim().toLowerCase(),
     action: typeof input.action === 'string' && input.action.trim().length > 0
       ? input.action.trim().toLowerCase()
       : 'query',
-    body: normalizedBody
+    body: canonicalizeValue(normalizedBody ?? input.body)
   };
 
   return sha256(stableStringify(normalizedFingerprintPayload));

@@ -171,9 +171,33 @@ export interface CleanupGptJobsResult {
   deletedExpired: number;
 }
 
+export class JobRepositoryUnavailableError extends Error {
+  readonly code = 'JOB_REPOSITORY_UNAVAILABLE';
+
+  constructor(message = 'Job repository unavailable.') {
+    super(message);
+    this.name = 'JobRepositoryUnavailableError';
+    Object.setPrototypeOf(this, new.target.prototype);
+    Error.captureStackTrace?.(this, JobRepositoryUnavailableError);
+  }
+}
+
+export class IdempotencyKeyConflictError extends Error {
+  readonly code = 'IDEMPOTENCY_KEY_CONFLICT';
+
+  constructor(
+    message = 'Explicit idempotency key mapped to a different GPT request fingerprint.'
+  ) {
+    super(message);
+    this.name = 'IdempotencyKeyConflictError';
+    Object.setPrototypeOf(this, new.target.prototype);
+    Error.captureStackTrace?.(this, IdempotencyKeyConflictError);
+  }
+}
+
 function assertDatabaseReady(): void {
   if (!isDatabaseConnected()) {
-    throw new Error('Database not configured');
+    throw new JobRepositoryUnavailableError('Database not configured');
   }
 }
 
@@ -628,7 +652,7 @@ export async function findOrCreateGptJob(
 
   const pool = getPool();
   if (!pool) {
-    throw new Error('Database pool unavailable');
+    throw new JobRepositoryUnavailableError('Database pool unavailable');
   }
 
   const client = await pool.connect();
@@ -665,8 +689,8 @@ export async function findOrCreateGptJob(
           existingFingerprintHash &&
           existingFingerprintHash !== options.requestFingerprintHash
         ) {
-          throw new Error(
-            'IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_REQUEST: explicit idempotency key mapped to a different GPT request fingerprint.'
+          throw new IdempotencyKeyConflictError(
+            'Explicit idempotency key mapped to a different GPT request fingerprint.'
           );
         }
 

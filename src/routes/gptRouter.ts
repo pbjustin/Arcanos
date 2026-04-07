@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import express from "express";
 import { routeGptRequest } from "./_core/gptDispatch.js";
 import { buildArcanosCoreTimeoutFallbackEnvelope } from "@services/arcanos-core.js";
@@ -31,7 +32,11 @@ import {
   recordGptRequestEvent
 } from '@platform/observability/appMetrics.js';
 import { shouldTreatPromptAsDagExecution } from '@shared/dag/dagExecutionRouting.js';
-import { findOrCreateGptJob } from '@core/db/repositories/jobRepository.js';
+import {
+  IdempotencyKeyConflictError,
+  JobRepositoryUnavailableError,
+  findOrCreateGptJob
+} from '@core/db/repositories/jobRepository.js';
 import { planAutonomousWorkerJob } from '@services/workerAutonomyService.js';
 import {
   buildQueuedGptJobInput,
@@ -44,6 +49,7 @@ import {
 } from '@services/queuedGptCompletionService.js';
 import {
   buildGptIdempotencyDescriptor,
+  normalizeGptRequestBody,
   normalizeExplicitIdempotencyKey,
   summarizeFingerprintHash
 } from '@shared/gpt/gptIdempotency.js';
@@ -70,44 +76,8 @@ type GptExecutionPlan = {
   heavyPrompt: boolean;
 };
 
-function tryParseBodyRecord(value: string): Record<string, unknown> | null {
-  try {
-    const parsed = JSON.parse(value);
-    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
-    }
-  } catch {
-    return null;
-  }
-
-  return null;
-}
-
-function normalizeRequestBody(body: unknown): Record<string, unknown> | null {
-  if (typeof body === 'object' && body !== null && !Array.isArray(body)) {
-    const recordBody = body as Record<string, unknown>;
-    const entries = Object.entries(recordBody);
-    if (entries.length === 1) {
-      const [candidateJson, candidateValue] = entries[0];
-      if (candidateValue === '' || candidateValue === null) {
-        const reparsedBody = tryParseBodyRecord(candidateJson);
-        if (reparsedBody) {
-          return reparsedBody;
-        }
-      }
-    }
-    return recordBody;
-  }
-
-  if (typeof body === 'string' && body.trim().length > 0) {
-    return tryParseBodyRecord(body);
-  }
-
-  return null;
-}
-
 function resolveRequestedAction(body: unknown): string | null {
-  const normalizedBody = normalizeRequestBody(body);
+  const normalizedBody = normalizeGptRequestBody(body);
   const action = normalizedBody?.action;
   return typeof action === 'string' && action.trim().length > 0
     ? action.trim().toLowerCase()
@@ -115,7 +85,7 @@ function resolveRequestedAction(body: unknown): string | null {
 }
 
 function extractPromptText(body: unknown): string | null {
-  const normalizedBody = normalizeRequestBody(body);
+  const normalizedBody = normalizeGptRequestBody(body);
   const candidate =
     normalizedBody?.message ??
     normalizedBody?.prompt ??
@@ -129,6 +99,66 @@ function extractPromptText(body: unknown): string | null {
     : null;
 }
 
+function hashPromptText(promptText: string | null): string | null {
+  if (!promptText) {
+    return null;
+  }
+
+  return crypto
+    .createHash('sha256')
+    .update(promptText.replace(/\s+/g, ' ').trim())
+    .digest('hex')
+    .slice(0, 12);
+}
+
+function compareLogKeys(leftKey: string, rightKey: string): number {
+  if (leftKey < rightKey) {
+    return -1;
+  }
+
+  if (leftKey > rightKey) {
+    return 1;
+  }
+
+  return 0;
+}
+
+function buildGptRequestMetaLog(input: {
+  body: unknown;
+  normalizedBody: Record<string, unknown> | null;
+  promptText: string | null;
+}): Record<string, unknown> {
+  const bodyRecord =
+    input.normalizedBody ??
+    (
+      input.body &&
+      typeof input.body === 'object' &&
+      !Array.isArray(input.body)
+        ? input.body as Record<string, unknown>
+        : null
+    );
+  const bodyKeys = bodyRecord
+    ? Object.keys(bodyRecord).sort(compareLogKeys)
+    : [];
+  const promptLikeFields = bodyKeys.filter((key) =>
+    ['content', 'message', 'messages', 'prompt', 'query', 'text', 'userInput'].includes(key)
+  );
+
+  return {
+    bodyType: input.normalizedBody
+      ? 'json-object'
+      : Array.isArray(input.body)
+      ? 'array'
+      : typeof input.body,
+    bodyKeyCount: bodyKeys.length,
+    bodyKeys,
+    promptHash: hashPromptText(input.promptText),
+    promptLength: input.promptText?.length ?? 0,
+    promptLikeFields,
+    messageCount: Array.isArray(bodyRecord?.messages) ? bodyRecord.messages.length : 0
+  };
+}
+
 function shouldUseDagExecutionTimeoutProfile(prompt: string | null): boolean {
   if (!prompt || !hasDagOrchestrationIntentCue(prompt)) {
     return false;
@@ -138,7 +168,7 @@ function shouldUseDagExecutionTimeoutProfile(prompt: string | null): boolean {
 }
 
 function resolveBodyGptId(body: unknown): string | null {
-  const normalizedBody = normalizeRequestBody(body);
+  const normalizedBody = normalizeGptRequestBody(body);
   const gptId = normalizedBody?.gptId;
   return typeof gptId === 'string' && gptId.trim().length > 0
     ? gptId.trim()
@@ -185,7 +215,7 @@ function resolveRequestedExecutionMode(
   req: express.Request,
   body: unknown
 ): GptExecutionMode | null {
-  const normalizedBody = normalizeRequestBody(body);
+  const normalizedBody = normalizeGptRequestBody(body);
   const bodyModeCandidate =
     typeof normalizedBody?.executionMode === 'string'
       ? normalizedBody.executionMode
@@ -255,14 +285,14 @@ function resolveRequestedExecutionMode(
 }
 
 function extractMessageCount(body: unknown): number {
-  const normalizedBody = normalizeRequestBody(body);
+  const normalizedBody = normalizeGptRequestBody(body);
   return Array.isArray(normalizedBody?.messages)
     ? normalizedBody.messages.length
     : 0;
 }
 
 function extractAnswerMode(body: unknown): string | null {
-  const normalizedBody = normalizeRequestBody(body);
+  const normalizedBody = normalizeGptRequestBody(body);
   const answerMode = normalizedBody?.answerMode;
   return typeof answerMode === 'string' && answerMode.trim().length > 0
     ? answerMode.trim().toLowerCase()
@@ -270,7 +300,7 @@ function extractAnswerMode(body: unknown): string | null {
 }
 
 function extractMaxWords(body: unknown): number | null {
-  const normalizedBody = normalizeRequestBody(body);
+  const normalizedBody = normalizeGptRequestBody(body);
   const candidates = [normalizedBody?.maxWords, normalizedBody?.max_words];
 
   for (const candidate of candidates) {
@@ -554,7 +584,8 @@ router.post("/:gptId", async (req, res, next) => {
       async () => {
         const incomingGptId = req.params.gptId;
         const requestLogger = (req as any).logger;
-        const normalizedBody = normalizeRequestBody(req.body);
+        const normalizedBody = normalizeGptRequestBody(req.body);
+        const effectiveBody = normalizedBody ?? req.body;
         const bodyGptId = resolveBodyGptId(req.body);
         const requestedAction = resolveRequestedAction(req.body);
         applyCanonicalGptRouteHeaders(res, incomingGptId);
@@ -566,11 +597,14 @@ router.post("/:gptId", async (req, res, next) => {
           timeoutProfile: routeTimeoutProfile,
         });
 
-        requestLogger?.info?.('gpt.request.body', {
+        requestLogger?.info?.('gpt.request.meta', {
           endpoint: req.originalUrl,
           gptId: incomingGptId,
-          bodyType: normalizedBody ? 'json-object' : typeof req.body,
-          body: normalizedBody ?? req.body ?? null
+          ...buildGptRequestMetaLog({
+            body: req.body,
+            normalizedBody,
+            promptText
+          })
         });
         requestLogger?.info?.('gpt.request.action', {
           endpoint: req.originalUrl,
@@ -616,7 +650,7 @@ router.post("/:gptId", async (req, res, next) => {
               buildGptIdempotencyDescriptor({
                 gptId: incomingGptId,
                 action: requestedAction,
-                body: normalizedBody ?? req.body,
+                body: effectiveBody,
                 actorKey: getRequestActorKey(req),
                 explicitIdempotencyKey
               }).idempotencyKeyHash
@@ -631,7 +665,7 @@ router.post("/:gptId", async (req, res, next) => {
         const executionPlan = resolveGptExecutionPlan({
           req,
           gptId: incomingGptId,
-          body: normalizedBody ?? req.body,
+          body: effectiveBody,
           promptText,
           requestedAction,
           routeTimeoutProfile
@@ -697,339 +731,404 @@ router.post("/:gptId", async (req, res, next) => {
         const shouldUseJobBackedExecution = executionPlan.mode === 'async' || Boolean(explicitIdempotencyKey);
 
         if (shouldUseJobBackedExecution) {
-          const idempotencyDescriptor = buildGptIdempotencyDescriptor({
-            gptId: incomingGptId,
-            action: requestedAction,
-            body: normalizedBody ?? {},
-            actorKey: getRequestActorKey(req),
-            explicitIdempotencyKey
-          });
-          if (!explicitIdempotencyKey) {
-            requestLogger?.info?.('gpt.request.idempotency_key_derived', {
+          if (!normalizedBody) {
+            if (explicitIdempotencyKey) {
+              requestLogger?.warn?.('gpt.request.idempotency_invalid_body', {
+                endpoint: req.originalUrl,
+                gptId: incomingGptId,
+                requestId,
+                bodyType: typeof req.body
+              });
+              return res.status(400).json({
+                ok: false,
+                error: {
+                  code: 'BAD_REQUEST',
+                  message: 'Idempotent GPT requests require a JSON object request body.'
+                },
+                idempotencyKey: explicitIdempotencyKey,
+                _route: {
+                  requestId,
+                  gptId: incomingGptId,
+                  timestamp: new Date().toISOString()
+                }
+              });
+            }
+
+            requestLogger?.warn?.('gpt.request.async_invalid_body_sync_fallback', {
               endpoint: req.originalUrl,
               gptId: incomingGptId,
               requestId,
-              fingerprintHash: summarizeFingerprintHash(idempotencyDescriptor.fingerprintHash),
-              scopeHash: summarizeFingerprintHash(idempotencyDescriptor.scopeHash)
-            });
-            recordGptRequestEvent({
-              event: 'idempotency_key_derived',
-              source: 'derived'
-            });
-          }
-          const queuedGptJobInput = buildQueuedGptJobInput({
-            gptId: incomingGptId,
-            body: normalizedBody ?? {},
-            prompt: promptText,
-            requestId,
-            routeHint: requestedAction ?? 'query',
-            requestPath: req.originalUrl,
-            executionModeReason: executionPlan.reason
-          });
-          const plannedJob = await planAutonomousWorkerJob('gpt', queuedGptJobInput);
-          let createResult;
-          try {
-            createResult = await findOrCreateGptJob({
-              workerId: process.env.WORKER_ID || 'api',
-              input: queuedGptJobInput,
-              requestFingerprintHash: idempotencyDescriptor.fingerprintHash,
-              idempotencyScopeHash: idempotencyDescriptor.scopeHash,
-              idempotencyKeyHash: explicitIdempotencyKey
-                ? idempotencyDescriptor.idempotencyKeyHash
-                : null,
-              idempotencyOrigin: idempotencyDescriptor.source,
-              createOptions: plannedJob
-            });
-          } catch (error: unknown) {
-            const errorMessage = resolveErrorMessage(error);
-            if (errorMessage.includes('IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_REQUEST')) {
-              return res.status(409).json({
-                ok: false,
-                error: {
-                  code: 'IDEMPOTENCY_KEY_CONFLICT',
-                  message: 'The supplied idempotency key is already bound to a different GPT request.'
-                },
-                idempotencyKey: idempotencyDescriptor.publicIdempotencyKey,
-                _route: {
-                  requestId,
-                  gptId: incomingGptId,
-                  timestamp: new Date().toISOString()
-                }
-              });
-            }
-
-            throw error;
-          }
-          const job = createResult.job;
-          queuedJobId = job.id;
-          queuedPendingResponse = buildQueuedGptPendingResponse({
-            jobId: job.id,
-            gptId: incomingGptId,
-            requestId,
-            jobStatus: job.status,
-            lifecycleStatus: resolveGptJobLifecycleStatus(job.status),
-            deduped: createResult.deduped,
-            idempotencyKey: idempotencyDescriptor.publicIdempotencyKey,
-            idempotencySource: idempotencyDescriptor.source
-          });
-          requestLogger?.info?.(createResult.deduped ? 'gpt.request.deduped' : 'gpt.request.async_enqueued', {
-            endpoint: req.originalUrl,
-            gptId: incomingGptId,
-            jobId: job.id,
-            dedupeReason: createResult.dedupeReason,
-            deduped: createResult.deduped,
-            idempotencySource: idempotencyDescriptor.source,
-            fingerprintHash: summarizeFingerprintHash(idempotencyDescriptor.fingerprintHash),
-            scopeHash: summarizeFingerprintHash(idempotencyDescriptor.scopeHash),
-            planningReasons: plannedJob.planningReasons,
-            priority: plannedJob.priority ?? null,
-            nextRunAt: plannedJob.nextRunAt instanceof Date
-              ? plannedJob.nextRunAt.toISOString()
-              : plannedJob.nextRunAt ?? null,
-            executionReason: executionPlan.reason
-          });
-          if (createResult.deduped) {
-            recordGptRequestEvent({
-              event: 'deduped',
-              source: idempotencyDescriptor.source
-            });
-            requestLogger?.info?.('gpt.request.duplicate_prevention_race_loss', {
-              endpoint: req.originalUrl,
-              gptId: incomingGptId,
-              jobId: job.id,
-              dedupeReason: createResult.dedupeReason
+              bodyType: typeof req.body,
+              executionReason: executionPlan.reason
             });
           } else {
-            requestLogger?.info?.('gpt.request.duplicate_prevention_race_win', {
-              endpoint: req.originalUrl,
+            const idempotencyDescriptor = buildGptIdempotencyDescriptor({
               gptId: incomingGptId,
-              jobId: job.id
+              action: requestedAction,
+              body: normalizedBody,
+              actorKey: getRequestActorKey(req),
+              explicitIdempotencyKey
             });
-          }
-
-          const waitedJob = await waitForQueuedGptJobCompletion(
-            job.id,
-            {
-              waitForResultMs: asyncWaitForResultMs,
-              pollIntervalMs: asyncPollIntervalMs
-            }
-          );
-
-          if (waitedJob.state === 'completed') {
-            const completedEnvelope = normalizeCompletedAsyncGptResponse(waitedJob.job.output);
-            if (!completedEnvelope) {
-              requestLogger?.error?.('gpt.request.async_completed_invalid', {
+            if (!explicitIdempotencyKey) {
+              requestLogger?.info?.('gpt.request.idempotency_key_derived', {
                 endpoint: req.originalUrl,
                 gptId: incomingGptId,
-                jobId: job.id
+                requestId,
+                fingerprintHash: summarizeFingerprintHash(idempotencyDescriptor.fingerprintHash),
+                scopeHash: summarizeFingerprintHash(idempotencyDescriptor.scopeHash)
               });
-              return res.status(500).json({
-                ok: false,
-                error: {
-                  code: 'ASYNC_GPT_JOB_OUTPUT_INVALID',
-                  message: 'Async GPT job completed without a valid envelope.'
-                },
-                jobId: job.id,
-                poll: `/jobs/${job.id}`,
-                stream: `/jobs/${job.id}/stream`,
-                _route: {
-                  requestId,
-                  gptId: incomingGptId,
-                  timestamp: new Date().toISOString()
+              recordGptRequestEvent({
+                event: 'idempotency_key_derived',
+                source: 'derived'
+              });
+            }
+            const queuedGptJobInput = buildQueuedGptJobInput({
+              gptId: incomingGptId,
+              body: normalizedBody,
+              prompt: promptText,
+              requestId,
+              routeHint: requestedAction ?? 'query',
+              requestPath: req.originalUrl,
+              executionModeReason: executionPlan.reason
+            });
+            const plannedJob = await planAutonomousWorkerJob('gpt', queuedGptJobInput);
+            let createResult;
+            try {
+              createResult = await findOrCreateGptJob({
+                workerId: process.env.WORKER_ID || 'api',
+                input: queuedGptJobInput,
+                requestFingerprintHash: idempotencyDescriptor.fingerprintHash,
+                idempotencyScopeHash: idempotencyDescriptor.scopeHash,
+                idempotencyKeyHash: explicitIdempotencyKey
+                  ? idempotencyDescriptor.idempotencyKeyHash
+                  : null,
+                idempotencyOrigin: idempotencyDescriptor.source,
+                createOptions: plannedJob
+              });
+            } catch (error: unknown) {
+              if (error instanceof IdempotencyKeyConflictError) {
+                return res.status(409).json({
+                  ok: false,
+                  error: {
+                    code: 'IDEMPOTENCY_KEY_CONFLICT',
+                    message: 'The supplied idempotency key is already bound to a different GPT request.'
+                  },
+                  idempotencyKey: idempotencyDescriptor.publicIdempotencyKey,
+                  _route: {
+                    requestId,
+                    gptId: incomingGptId,
+                    timestamp: new Date().toISOString()
+                  }
+                });
+              }
+
+              if (error instanceof JobRepositoryUnavailableError) {
+                if (explicitIdempotencyKey) {
+                  requestLogger?.error?.('gpt.request.idempotency_unavailable', {
+                    endpoint: req.originalUrl,
+                    gptId: incomingGptId,
+                    requestId,
+                    error: error.message
+                  });
+                  return res.status(503).json({
+                    ok: false,
+                    error: {
+                      code: 'IDEMPOTENCY_UNAVAILABLE',
+                      message: 'Durable idempotency is unavailable because GPT job persistence is not configured.'
+                    },
+                    idempotencyKey: idempotencyDescriptor.publicIdempotencyKey,
+                    _route: {
+                      requestId,
+                      gptId: incomingGptId,
+                      timestamp: new Date().toISOString()
+                    }
+                  });
                 }
-              });
-            }
 
-            const routingInfo: GptRoutingInfo = {
-              gptId: completedEnvelope._route.gptId,
-              moduleName: completedEnvelope._route.module ?? "unknown",
-              route: completedEnvelope._route.route ?? "unknown",
-              matchMethod: (completedEnvelope._route.matchMethod as any) ?? "none",
-            };
-            logGptConnection(routingInfo);
-            logGptAckSent(routingInfo, (completedEnvelope._route.availableActions ?? []).length);
-            applyAIDegradedResponseHeaders(
-              res,
-              extractAIDegradedResponseMetadata(completedEnvelope.result)
-            );
-            requestLogger?.info?.('gpt.request.async_completed', {
-              endpoint: req.originalUrl,
-              gptId: incomingGptId,
-              jobId: job.id,
-              module: completedEnvelope._route.module ?? 'unknown',
-              route: completedEnvelope._route.route ?? 'unknown',
-              deduped: createResult.deduped,
-              dedupeReason: createResult.dedupeReason,
-              ...summarizeGptJobTimings(waitedJob.job)
-            });
-            if (createResult.deduped && createResult.dedupeReason === 'reused_completed_result') {
-              requestLogger?.info?.('gpt.job.reused_completed_result', {
+                requestLogger?.warn?.('gpt.request.async_unavailable_sync_fallback', {
+                  endpoint: req.originalUrl,
+                  gptId: incomingGptId,
+                  requestId,
+                  error: error.message,
+                  executionReason: executionPlan.reason
+                });
+              } else {
+                throw error;
+              }
+            }
+            if (createResult) {
+              const job = createResult.job;
+              queuedJobId = job.id;
+              queuedPendingResponse = buildQueuedGptPendingResponse({
+                jobId: job.id,
+                gptId: incomingGptId,
+                requestId,
+                jobStatus: job.status,
+                lifecycleStatus: resolveGptJobLifecycleStatus(job.status),
+                deduped: createResult.deduped,
+                idempotencyKey: idempotencyDescriptor.publicIdempotencyKey,
+                idempotencySource: idempotencyDescriptor.source
+              });
+              requestLogger?.info?.(createResult.deduped ? 'gpt.request.deduped' : 'gpt.request.async_enqueued', {
                 endpoint: req.originalUrl,
                 gptId: incomingGptId,
-                jobId: job.id
+                jobId: job.id,
+                dedupeReason: createResult.dedupeReason,
+                deduped: createResult.deduped,
+                idempotencySource: idempotencyDescriptor.source,
+                fingerprintHash: summarizeFingerprintHash(idempotencyDescriptor.fingerprintHash),
+                scopeHash: summarizeFingerprintHash(idempotencyDescriptor.scopeHash),
+                planningReasons: plannedJob.planningReasons,
+                priority: plannedJob.priority ?? null,
+                nextRunAt: plannedJob.nextRunAt instanceof Date
+                  ? plannedJob.nextRunAt.toISOString()
+                  : plannedJob.nextRunAt ?? null,
+                executionReason: executionPlan.reason
               });
-              recordGptJobEvent({
-                event: 'reused_completed_result',
-                status: 'completed',
-                retryable: false
+              if (createResult.deduped) {
+                recordGptRequestEvent({
+                  event: 'deduped',
+                  source: idempotencyDescriptor.source
+                });
+                requestLogger?.info?.('gpt.request.duplicate_prevention_race_loss', {
+                  endpoint: req.originalUrl,
+                  gptId: incomingGptId,
+                  jobId: job.id,
+                  dedupeReason: createResult.dedupeReason
+                });
+              } else {
+                requestLogger?.info?.('gpt.request.duplicate_prevention_race_win', {
+                  endpoint: req.originalUrl,
+                  gptId: incomingGptId,
+                  jobId: job.id
+                });
+              }
+
+              const waitedJob = await waitForQueuedGptJobCompletion(
+                job.id,
+                {
+                  waitForResultMs: asyncWaitForResultMs,
+                  pollIntervalMs: asyncPollIntervalMs
+                }
+              );
+
+              if (waitedJob.state === 'completed') {
+                const completedEnvelope = normalizeCompletedAsyncGptResponse(waitedJob.job.output);
+                if (!completedEnvelope) {
+                  requestLogger?.error?.('gpt.request.async_completed_invalid', {
+                    endpoint: req.originalUrl,
+                    gptId: incomingGptId,
+                    jobId: job.id
+                  });
+                  return res.status(500).json({
+                    ok: false,
+                    error: {
+                      code: 'ASYNC_GPT_JOB_OUTPUT_INVALID',
+                      message: 'Async GPT job completed without a valid envelope.'
+                    },
+                    jobId: job.id,
+                    poll: `/jobs/${job.id}`,
+                    stream: `/jobs/${job.id}/stream`,
+                    _route: {
+                      requestId,
+                      gptId: incomingGptId,
+                      timestamp: new Date().toISOString()
+                    }
+                  });
+                }
+
+                const routingInfo: GptRoutingInfo = {
+                  gptId: completedEnvelope._route.gptId,
+                  moduleName: completedEnvelope._route.module ?? "unknown",
+                  route: completedEnvelope._route.route ?? "unknown",
+                  matchMethod: (completedEnvelope._route.matchMethod as any) ?? "none",
+                };
+                logGptConnection(routingInfo);
+                logGptAckSent(routingInfo, (completedEnvelope._route.availableActions ?? []).length);
+                applyAIDegradedResponseHeaders(
+                  res,
+                  extractAIDegradedResponseMetadata(completedEnvelope.result)
+                );
+                requestLogger?.info?.('gpt.request.async_completed', {
+                  endpoint: req.originalUrl,
+                  gptId: incomingGptId,
+                  jobId: job.id,
+                  module: completedEnvelope._route.module ?? 'unknown',
+                  route: completedEnvelope._route.route ?? 'unknown',
+                  deduped: createResult.deduped,
+                  dedupeReason: createResult.dedupeReason,
+                  ...summarizeGptJobTimings(waitedJob.job)
+                });
+                if (createResult.deduped && createResult.dedupeReason === 'reused_completed_result') {
+                  requestLogger?.info?.('gpt.job.reused_completed_result', {
+                    endpoint: req.originalUrl,
+                    gptId: incomingGptId,
+                    jobId: job.id
+                  });
+                  recordGptJobEvent({
+                    event: 'reused_completed_result',
+                    status: 'completed',
+                    retryable: false
+                  });
+                }
+
+                const publicEnvelope = prepareBoundedClientJsonPayload({
+                  ...completedEnvelope,
+                  ...buildAsyncJobResponseMetadata({
+                    jobId: job.id,
+                    jobStatus: waitedJob.job.status,
+                    deduped: createResult.deduped,
+                    idempotencyKey: idempotencyDescriptor.publicIdempotencyKey,
+                    idempotencySource: idempotencyDescriptor.source
+                  }),
+                  result: shapeClientRouteResult(completedEnvelope.result),
+                }, {
+                  logger: req.logger,
+                  logEvent: 'gpt.response.async_completed',
+                });
+                res.setHeader('x-response-bytes', String(publicEnvelope.responseBytes));
+                if (publicEnvelope.truncated) {
+                  res.setHeader('x-response-truncated', 'true');
+                }
+                return res.json(publicEnvelope.payload);
+              }
+
+              if (waitedJob.state === 'failed') {
+                requestLogger?.warn?.('gpt.request.async_failed', {
+                  endpoint: req.originalUrl,
+                  gptId: incomingGptId,
+                  jobId: job.id,
+                  error: waitedJob.job.error_message ?? 'Async GPT job failed.',
+                  deduped: createResult.deduped,
+                  ...summarizeGptJobTimings(waitedJob.job)
+                });
+                return res.status(500).json({
+                  ok: false,
+                  error: {
+                    code: 'ASYNC_GPT_JOB_FAILED',
+                    message: waitedJob.job.error_message ?? 'Async GPT job failed.'
+                  },
+                  ...buildAsyncJobResponseMetadata({
+                    jobId: job.id,
+                    jobStatus: waitedJob.job.status,
+                    deduped: createResult.deduped,
+                    idempotencyKey: idempotencyDescriptor.publicIdempotencyKey,
+                    idempotencySource: idempotencyDescriptor.source
+                  }),
+                  _route: {
+                    requestId,
+                    gptId: incomingGptId,
+                    timestamp: new Date().toISOString()
+                  }
+                });
+              }
+
+              if (waitedJob.state === 'cancelled') {
+                requestLogger?.warn?.('gpt.job.cancelled', {
+                  endpoint: req.originalUrl,
+                  gptId: incomingGptId,
+                  jobId: job.id,
+                  deduped: createResult.deduped,
+                  ...summarizeGptJobTimings(waitedJob.job)
+                });
+                recordGptJobEvent({
+                  event: 'cancelled',
+                  status: 'cancelled',
+                  retryable: false
+                });
+                return res.status(409).json({
+                  ok: false,
+                  error: {
+                    code: 'ASYNC_GPT_JOB_CANCELLED',
+                    message: waitedJob.job.error_message ?? 'Async GPT job was cancelled.'
+                  },
+                  ...buildAsyncJobResponseMetadata({
+                    jobId: job.id,
+                    jobStatus: waitedJob.job.status,
+                    deduped: createResult.deduped,
+                    idempotencyKey: idempotencyDescriptor.publicIdempotencyKey,
+                    idempotencySource: idempotencyDescriptor.source
+                  }),
+                  _route: {
+                    requestId,
+                    gptId: incomingGptId,
+                    timestamp: new Date().toISOString()
+                  }
+                });
+              }
+
+              if (waitedJob.state === 'expired') {
+                requestLogger?.warn?.('gpt.job.expired', {
+                  endpoint: req.originalUrl,
+                  gptId: incomingGptId,
+                  jobId: job.id
+                });
+                recordGptJobEvent({
+                  event: 'expired',
+                  status: 'expired',
+                  retryable: false
+                });
+                return res.status(410).json({
+                  ok: false,
+                  error: {
+                    code: 'ASYNC_GPT_JOB_EXPIRED',
+                    message: waitedJob.job.error_message ?? 'Async GPT job expired after its retention window.'
+                  },
+                  ...buildAsyncJobResponseMetadata({
+                    jobId: job.id,
+                    jobStatus: waitedJob.job.status,
+                    deduped: createResult.deduped,
+                    idempotencyKey: idempotencyDescriptor.publicIdempotencyKey,
+                    idempotencySource: idempotencyDescriptor.source
+                  }),
+                  _route: {
+                    requestId,
+                    gptId: incomingGptId,
+                    timestamp: new Date().toISOString()
+                  }
+                });
+              }
+
+              if (waitedJob.state === 'missing') {
+                requestLogger?.error?.('gpt.request.async_missing', {
+                  endpoint: req.originalUrl,
+                  gptId: incomingGptId,
+                  jobId: job.id
+                });
+                return res.status(500).json({
+                  ok: false,
+                  error: {
+                    code: 'ASYNC_GPT_JOB_MISSING',
+                    message: 'Async GPT job disappeared before completion.'
+                  },
+                  jobId: job.id,
+                  poll: `/jobs/${job.id}`,
+                  stream: `/jobs/${job.id}/stream`,
+                  _route: {
+                    requestId,
+                    gptId: incomingGptId,
+                    timestamp: new Date().toISOString()
+                  }
+                });
+              }
+
+              requestLogger?.info?.('gpt.request.async_pending', {
+                endpoint: req.originalUrl,
+                gptId: incomingGptId,
+                jobId: job.id,
+                waitForResultMs: asyncWaitForResultMs,
+                pollIntervalMs: asyncPollIntervalMs,
+                deduped: createResult.deduped,
+                dedupeReason: createResult.dedupeReason
               });
+              return res.status(202).json(queuedPendingResponse);
             }
-
-            const publicEnvelope = prepareBoundedClientJsonPayload({
-              ...completedEnvelope,
-              ...buildAsyncJobResponseMetadata({
-                jobId: job.id,
-                jobStatus: waitedJob.job.status,
-                deduped: createResult.deduped,
-                idempotencyKey: idempotencyDescriptor.publicIdempotencyKey,
-                idempotencySource: idempotencyDescriptor.source
-              }),
-              result: shapeClientRouteResult(completedEnvelope.result),
-            }, {
-              logger: req.logger,
-              logEvent: 'gpt.response.async_completed',
-            });
-            res.setHeader('x-response-bytes', String(publicEnvelope.responseBytes));
-            if (publicEnvelope.truncated) {
-              res.setHeader('x-response-truncated', 'true');
-            }
-            return res.json(publicEnvelope.payload);
           }
-
-          if (waitedJob.state === 'failed') {
-            requestLogger?.warn?.('gpt.request.async_failed', {
-              endpoint: req.originalUrl,
-              gptId: incomingGptId,
-              jobId: job.id,
-              error: waitedJob.job.error_message ?? 'Async GPT job failed.',
-              deduped: createResult.deduped,
-              ...summarizeGptJobTimings(waitedJob.job)
-            });
-            return res.status(500).json({
-              ok: false,
-              error: {
-                code: 'ASYNC_GPT_JOB_FAILED',
-                message: waitedJob.job.error_message ?? 'Async GPT job failed.'
-              },
-              ...buildAsyncJobResponseMetadata({
-                jobId: job.id,
-                jobStatus: waitedJob.job.status,
-                deduped: createResult.deduped,
-                idempotencyKey: idempotencyDescriptor.publicIdempotencyKey,
-                idempotencySource: idempotencyDescriptor.source
-              }),
-              _route: {
-                requestId,
-                gptId: incomingGptId,
-                timestamp: new Date().toISOString()
-              }
-            });
-          }
-
-          if (waitedJob.state === 'cancelled') {
-            requestLogger?.warn?.('gpt.job.cancelled', {
-              endpoint: req.originalUrl,
-              gptId: incomingGptId,
-              jobId: job.id,
-              deduped: createResult.deduped,
-              ...summarizeGptJobTimings(waitedJob.job)
-            });
-            recordGptJobEvent({
-              event: 'cancelled',
-              status: 'cancelled',
-              retryable: false
-            });
-            return res.status(409).json({
-              ok: false,
-              error: {
-                code: 'ASYNC_GPT_JOB_CANCELLED',
-                message: waitedJob.job.error_message ?? 'Async GPT job was cancelled.'
-              },
-              ...buildAsyncJobResponseMetadata({
-                jobId: job.id,
-                jobStatus: waitedJob.job.status,
-                deduped: createResult.deduped,
-                idempotencyKey: idempotencyDescriptor.publicIdempotencyKey,
-                idempotencySource: idempotencyDescriptor.source
-              }),
-              _route: {
-                requestId,
-                gptId: incomingGptId,
-                timestamp: new Date().toISOString()
-              }
-            });
-          }
-
-          if (waitedJob.state === 'expired') {
-            requestLogger?.warn?.('gpt.job.expired', {
-              endpoint: req.originalUrl,
-              gptId: incomingGptId,
-              jobId: job.id
-            });
-            recordGptJobEvent({
-              event: 'expired',
-              status: 'expired',
-              retryable: false
-            });
-            return res.status(410).json({
-              ok: false,
-              error: {
-                code: 'ASYNC_GPT_JOB_EXPIRED',
-                message: waitedJob.job.error_message ?? 'Async GPT job expired after its retention window.'
-              },
-              ...buildAsyncJobResponseMetadata({
-                jobId: job.id,
-                jobStatus: waitedJob.job.status,
-                deduped: createResult.deduped,
-                idempotencyKey: idempotencyDescriptor.publicIdempotencyKey,
-                idempotencySource: idempotencyDescriptor.source
-              }),
-              _route: {
-                requestId,
-                gptId: incomingGptId,
-                timestamp: new Date().toISOString()
-              }
-            });
-          }
-
-          if (waitedJob.state === 'missing') {
-            requestLogger?.error?.('gpt.request.async_missing', {
-              endpoint: req.originalUrl,
-              gptId: incomingGptId,
-              jobId: job.id
-            });
-            return res.status(500).json({
-              ok: false,
-              error: {
-                code: 'ASYNC_GPT_JOB_MISSING',
-                message: 'Async GPT job disappeared before completion.'
-              },
-              jobId: job.id,
-              poll: `/jobs/${job.id}`,
-              stream: `/jobs/${job.id}/stream`,
-              _route: {
-                requestId,
-                gptId: incomingGptId,
-                timestamp: new Date().toISOString()
-              }
-            });
-          }
-
-          requestLogger?.info?.('gpt.request.async_pending', {
-            endpoint: req.originalUrl,
-            gptId: incomingGptId,
-            jobId: job.id,
-            waitForResultMs: asyncWaitForResultMs,
-            pollIntervalMs: asyncPollIntervalMs,
-            deduped: createResult.deduped,
-            dedupeReason: createResult.dedupeReason
-          });
-          return res.status(202).json(queuedPendingResponse);
         }
 
         const envelope = await routeGptRequest({
           gptId: incomingGptId,
-          body: normalizedBody ?? req.body,
+          body: effectiveBody,
           requestId,
           logger: requestLogger,
           request: req,
