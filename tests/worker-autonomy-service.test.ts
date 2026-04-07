@@ -124,10 +124,13 @@ describe('workerAutonomyService', () => {
 
   it('classifies transient and terminal failures separately', () => {
     expect(classifyWorkerExecutionError(new Error('OpenAI rate limit timeout')).retryable).toBe(true);
+    expect(classifyWorkerExecutionError(new Error('OpenAI internal error')).retryable).toBe(true);
     expect(classifyWorkerExecutionError(new Error('Request was aborted.')).retryable).toBe(true);
     expect(classifyWorkerExecutionError(new Error('Invalid job.input: schema mismatch')).retryable).toBe(false);
     expect(classifyWorkerExecutionError(new Error('401 Incorrect API key provided')).retryable).toBe(false);
+    expect(classifyWorkerExecutionError(new Error('API key expired')).retryable).toBe(false);
     expect(classifyWorkerExecutionError(new Error('openai_call_aborted_due_to_budget')).retryable).toBe(false);
+    expect(classifyWorkerExecutionError(new Error('insufficient_quota')).retryable).toBe(false);
   });
 
   it('reports unhealthy worker health when stalled jobs or unhealthy snapshots exist', async () => {

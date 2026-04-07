@@ -941,15 +941,13 @@ export function classifyWorkerExecutionError(error: unknown): {
     'cancelled by client'
   ];
   const authenticationPatterns = [
-    'incorrect api key',
-    'invalid api key',
+    'api key',
     'authentication',
-    'unauthorized',
-    '401'
+    'unauthorized'
   ];
   const budgetExhaustionPatterns = [
     'aborted_due_to_budget',
-    'openai_call_aborted_due_to_budget',
+    'quota',
     'token budget',
     'budget exceeded',
     'context length',
@@ -971,6 +969,7 @@ export function classifyWorkerExecutionError(error: unknown): {
     'socket hang up',
     'temporary',
     'network',
+    'openai',
     'overloaded'
   ];
   const terminalPatterns = [
@@ -986,7 +985,11 @@ export function classifyWorkerExecutionError(error: unknown): {
   ];
 
   //audit Assumption: explicit validation and unsupported-type failures are deterministic; failure risk: wasting retry budget on poison jobs; expected invariant: terminal patterns override transient ones; handling strategy: check terminal signatures first.
-  if (terminalPatterns.some(pattern => normalizedMessage.includes(pattern))) {
+  const matchesTerminalPattern =
+    terminalPatterns.some(pattern => normalizedMessage.includes(pattern)) ||
+    /\b401\b/.test(normalizedMessage);
+
+  if (matchesTerminalPattern) {
     return {
       message,
       retryable: false
