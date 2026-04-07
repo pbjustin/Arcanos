@@ -927,6 +927,48 @@ function shouldAlertOnInspection(
  * Inputs/outputs: accepts an unknown error value and returns a retryability decision with a normalized message.
  * Edge case behavior: malformed input falls back to a non-empty error string and conservative retry classification.
  */
+const WORKER_AUTHENTICATION_PATTERNS = [
+  'api key',
+  'authentication',
+  'unauthorized'
+] as const;
+
+const WORKER_QUOTA_PATTERNS = [
+  'quota'
+] as const;
+
+const WORKER_RUNTIME_BUDGET_PATTERNS = [
+  'aborted_due_to_budget',
+  'runtime_budget_exhausted',
+  'token budget',
+  'budget exceeded',
+  'budgetexceeded',
+  'runtimebudget',
+  'budget exhaustion',
+  'watchdog threshold',
+  'execution aborted by watchdog',
+  'watchdog aborted execution'
+] as const;
+
+const WORKER_PROMPT_BUDGET_PATTERNS = [
+  'context length',
+  'max tokens',
+  'prompt too long'
+] as const;
+
+const WORKER_VALIDATION_PATTERNS = [
+  'invalid job.input',
+  'unsupported job_type',
+  'schema',
+  'validation',
+  'missing',
+  'not found'
+] as const;
+
+function matchesAnyPattern(normalizedMessage: string, patterns: readonly string[]): boolean {
+  return patterns.some(pattern => normalizedMessage.includes(pattern));
+}
+
 export function classifyWorkerExecutionError(error: unknown): {
   message: string;
   retryable: boolean;
@@ -940,19 +982,10 @@ export function classifyWorkerExecutionError(error: unknown): {
     'cancellation requested while',
     'cancelled by client'
   ];
-  const authenticationPatterns = [
-    'api key',
-    'authentication',
-    'unauthorized'
-  ];
   const budgetExhaustionPatterns = [
-    'aborted_due_to_budget',
-    'quota',
-    'token budget',
-    'budget exceeded',
-    'context length',
-    'max tokens',
-    'prompt too long'
+    ...WORKER_QUOTA_PATTERNS,
+    ...WORKER_RUNTIME_BUDGET_PATTERNS,
+    ...WORKER_PROMPT_BUDGET_PATTERNS
   ];
   const retryablePatterns = [
     'abort',
@@ -973,13 +1006,8 @@ export function classifyWorkerExecutionError(error: unknown): {
     'overloaded'
   ];
   const terminalPatterns = [
-    'invalid job.input',
-    'unsupported job_type',
-    'schema',
-    'validation',
-    'missing',
-    'not found',
-    ...authenticationPatterns,
+    ...WORKER_VALIDATION_PATTERNS,
+    ...WORKER_AUTHENTICATION_PATTERNS,
     ...budgetExhaustionPatterns,
     ...cancellationPatterns
   ];
@@ -1012,15 +1040,12 @@ function classifyWorkerFailureCategory(errorMessage: string):
   | 'unknown' {
   const normalizedMessage = errorMessage.toLowerCase();
 
-  if (
-    normalizedMessage.includes('incorrect api key') ||
-    normalizedMessage.includes('invalid api key') ||
-    normalizedMessage.includes('authentication')
-  ) {
+  if (matchesAnyPattern(normalizedMessage, WORKER_AUTHENTICATION_PATTERNS) || /\b401\b/.test(normalizedMessage)) {
     return 'authentication';
   }
 
   if (
+    matchesAnyPattern(normalizedMessage, WORKER_RUNTIME_BUDGET_PATTERNS) ||
     normalizedMessage.includes('timeout') ||
     normalizedMessage.includes('timed out') ||
     normalizedMessage.includes('abort') ||
@@ -1031,7 +1056,7 @@ function classifyWorkerFailureCategory(errorMessage: string):
 
   if (
     normalizedMessage.includes('rate limit') ||
-    normalizedMessage.includes('quota') ||
+    matchesAnyPattern(normalizedMessage, WORKER_QUOTA_PATTERNS) ||
     normalizedMessage.includes('429')
   ) {
     return 'rate_limited';
@@ -1047,10 +1072,8 @@ function classifyWorkerFailureCategory(errorMessage: string):
   }
 
   if (
-    normalizedMessage.includes('invalid job.input') ||
-    normalizedMessage.includes('unsupported job_type') ||
-    normalizedMessage.includes('schema') ||
-    normalizedMessage.includes('validation')
+    matchesAnyPattern(normalizedMessage, WORKER_VALIDATION_PATTERNS) ||
+    matchesAnyPattern(normalizedMessage, WORKER_PROMPT_BUDGET_PATTERNS)
   ) {
     return 'validation';
   }
