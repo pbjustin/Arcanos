@@ -37,6 +37,7 @@
     "worker:helper": "node scripts/worker-helper.mjs",
     "validate:railway": "node scripts/validate-railway-compatibility.js",
     "railway:smoke:production": "node scripts/railway-production-smoke-check.js --environment production",
+    "validate:gpt:job-hardening": "node scripts/validate-gpt-job-hardening.js",
     "railway:alert:timeouts": "node scripts/check-railway-timeout-regressions.js",
     "railway:alert:budget-abort": "node scripts/check-railway-timeout-regressions.js --since 15m --lines 500 --fail-on-budget-abort",
     "audit": "node scripts/continuous-audit.js",
