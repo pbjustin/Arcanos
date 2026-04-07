@@ -6,6 +6,7 @@ const recordJobHeartbeatMock = jest.fn();
 const recoverStaleJobsMock = jest.fn();
 const scheduleJobRetryMock = jest.fn();
 const updateJobMock = jest.fn();
+const cleanupExpiredGptJobsMock = jest.fn();
 const listWorkerRuntimeSnapshotsMock = jest.fn();
 const upsertWorkerRuntimeSnapshotMock = jest.fn();
 const fetchMock = jest.fn();
@@ -16,7 +17,8 @@ jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
   recordJobHeartbeat: recordJobHeartbeatMock,
   recoverStaleJobs: recoverStaleJobsMock,
   scheduleJobRetry: scheduleJobRetryMock,
-  updateJob: updateJobMock
+  updateJob: updateJobMock,
+  cleanupExpiredGptJobs: cleanupExpiredGptJobsMock
 }));
 
 jest.unstable_mockModule('@core/db/repositories/workerRuntimeRepository.js', () => ({
@@ -61,6 +63,11 @@ describe('workerAutonomyService', () => {
     recoverStaleJobsMock.mockResolvedValue({
       recoveredJobs: [],
       failedJobs: []
+    });
+    cleanupExpiredGptJobsMock.mockResolvedValue({
+      expiredPending: 0,
+      expiredTerminal: 0,
+      deletedExpired: 0
     });
     scheduleJobRetryMock.mockResolvedValue({
       id: 'job-1'

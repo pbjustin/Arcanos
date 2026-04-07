@@ -79,6 +79,8 @@ export type RouteGptRequestInput = {
   requestId?: string;
   logger?: any;
   request?: Request;
+  runtimeExecutionMode?: 'request' | 'background';
+  parentAbortSignal?: AbortSignal;
 };
 
 function extractPrompt(body: any): string | null {
@@ -155,6 +157,20 @@ function buildDispatchPayload(body: unknown): unknown {
 
   //audit Assumption: legacy callers send top-level fields instead of payload wrappers; failure risk: module breakage for compatibility clients; expected invariant: top-level body remains supported; handling strategy: forward raw body fallback.
   return body;
+}
+
+function applyRuntimeExecutionModeOverride(
+  payload: unknown,
+  runtimeExecutionMode: 'request' | 'background' | undefined
+): unknown {
+  if (!runtimeExecutionMode || !isRecord(payload)) {
+    return payload;
+  }
+
+  return {
+    ...payload,
+    __arcanosExecutionMode: runtimeExecutionMode
+  };
 }
 
 function actionRequiresPrompt(action: string): boolean {
@@ -865,6 +881,15 @@ function isDispatchTimeoutError(err: unknown, timeoutMs?: number): boolean {
   return DISPATCH_TIMEOUT_ERROR_MARKERS.some((marker) => normalizedMessage.includes(marker));
 }
 
+function isDispatchCancellationError(err: unknown): boolean {
+  if (!isAbortError(err)) {
+    return false;
+  }
+
+  const normalizedMessage = resolveErrorMessage(err).toLowerCase();
+  return normalizedMessage.includes('cancel');
+}
+
 function buildDispatchTimeoutMessage(timeoutMs?: number, scope: 'module' | 'mcp' = 'module'): string {
   if (typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0) {
     return scope === 'mcp'
@@ -975,15 +1000,35 @@ function inferAutomaticBackstageBookerDispatchIntent(params: {
 }
 
 const DEFAULT_MODULE_DISPATCH_TIMEOUT_MS = 15000;
+const DEFAULT_BACKGROUND_MODULE_DISPATCH_TIMEOUT_MS = 180000;
 
 function resolvePositiveTimeoutMs(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
 }
 
+function resolveBackgroundDispatchTimeoutMs(): number {
+  const configuredTimeoutMs = Number.parseInt(process.env.GPT_BACKGROUND_DISPATCH_TIMEOUT_MS ?? '', 10);
+  if (!Number.isFinite(configuredTimeoutMs) || configuredTimeoutMs <= 0) {
+    return DEFAULT_BACKGROUND_MODULE_DISPATCH_TIMEOUT_MS;
+  }
+
+  return Math.max(60_000, Math.min(300_000, Math.trunc(configuredTimeoutMs)));
+}
+
 function resolveDispatchTimeout(
   body: unknown,
-  moduleMetadata: { defaultTimeoutMs?: number } | null
-): { timeoutMs: number; timeoutSource: "request" | "module-default" | "dispatcher-default" | "request-cap" } {
+  moduleMetadata: { defaultTimeoutMs?: number } | null,
+  runtimeExecutionMode?: 'request' | 'background'
+): {
+  timeoutMs: number;
+  timeoutSource:
+    | "request"
+    | "module-default"
+    | "dispatcher-default"
+    | "request-cap"
+    | "background-default"
+    | "background-cap";
+} {
   const requestTimeoutMs = resolvePositiveTimeoutMs((body as any)?.timeoutMs);
   if (requestTimeoutMs !== null) {
     const requestRemainingMs = getRequestRemainingMs();
@@ -997,6 +1042,26 @@ function resolveDispatchTimeout(
   }
 
   const moduleTimeoutMs = resolvePositiveTimeoutMs(moduleMetadata?.defaultTimeoutMs);
+  if (runtimeExecutionMode === 'background') {
+    const backgroundTimeoutMs = Math.max(
+      moduleTimeoutMs ?? 0,
+      resolveBackgroundDispatchTimeoutMs()
+    );
+    const requestRemainingMs = getRequestRemainingMs();
+
+    if (requestRemainingMs !== null) {
+      return {
+        timeoutMs: Math.max(1, Math.min(backgroundTimeoutMs, requestRemainingMs)),
+        timeoutSource: backgroundTimeoutMs > requestRemainingMs ? 'background-cap' : 'background-default'
+      };
+    }
+
+    return {
+      timeoutMs: backgroundTimeoutMs,
+      timeoutSource: 'background-default'
+    };
+  }
+
   if (moduleTimeoutMs !== null) {
     const requestRemainingMs = getRequestRemainingMs();
     if (requestRemainingMs !== null) {
@@ -1261,10 +1326,13 @@ export async function resolveGptRouting(gptId: string, requestId?: string): Prom
   };
 }
 export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskEnvelope> {
-  const { gptId, body, requestId, logger, request } = input;
+  const { gptId, body, requestId, logger, request, runtimeExecutionMode, parentAbortSignal } = input;
   const trimmedGptId = (gptId ?? "").trim();
   const requestEndpoint = request?.originalUrl ?? request?.url ?? request?.path;
-  const preDispatchPayload = buildDispatchPayload(body);
+  const preDispatchPayload = applyRuntimeExecutionModeOverride(
+    buildDispatchPayload(body),
+    runtimeExecutionMode
+  );
   const diagnosticTextInput = extractPrompt(preDispatchPayload) ?? extractDiagnosticTextInput(body as Record<string, unknown> | undefined);
   const promptDebugRequestId = requestId ?? `gpt-${trimmedGptId || 'unknown'}`;
   const rawPrompt = extractPrompt(body) ?? diagnosticTextInput ?? '';
@@ -2495,7 +2563,11 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     };
   }
 
-  const { timeoutMs, timeoutSource } = resolveDispatchTimeout(body, moduleMetadata);
+  const { timeoutMs, timeoutSource } = resolveDispatchTimeout(
+    body,
+    moduleMetadata,
+    runtimeExecutionMode
+  );
 
   //audit Assumption: query actions depend on natural-language prompt content; failure risk: modules receiving empty prompt and failing deep in stack; expected invariant: query dispatch has message/prompt text; handling strategy: validate prompt at router boundary.
   if (actionRequiresPrompt(action) && !prompt) {
@@ -2559,14 +2631,14 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
   const dispatchStartedAt = Date.now();
 
   try {
-    const activeAbortContext = getRequestAbortContext();
-    const result = await runWithRequestAbortTimeout(
-      {
-        timeoutMs,
-        requestId,
-        parentSignal: activeAbortContext?.signal,
-        abortMessage: `Module dispatch timeout after ${timeoutMs}ms`
-      },
+      const activeAbortContext = getRequestAbortContext();
+      const result = await runWithRequestAbortTimeout(
+        {
+          timeoutMs,
+          requestId,
+          parentSignal: parentAbortSignal ?? activeAbortContext?.signal,
+          abortMessage: `Module dispatch timeout after ${timeoutMs}ms`
+        },
       () => dispatchModuleAction(activeEntry.module, action, payload)
     );
 
@@ -2650,14 +2722,17 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
           moduleVersion: (moduleMetadata as any)?.version ?? null,
         },
       };
-    }
+      }
 
-    const errorMessage = String(err?.message ?? err);
-    const isDispatchTimeout = isDispatchTimeoutError(err, timeoutMs);
-    const dispatchLogEvent = isDispatchTimeout ? "gpt.dispatch.timeout" : "gpt.dispatch.error";
-    const dispatchErrorMessage = isDispatchTimeout
-      ? buildDispatchTimeoutMessage(timeoutMs)
-      : err?.message ?? "Module dispatch failed";
+      const errorMessage = String(err?.message ?? err);
+      const isDispatchCancellation = isDispatchCancellationError(err);
+      const isDispatchTimeout = !isDispatchCancellation && isDispatchTimeoutError(err, timeoutMs);
+      const dispatchLogEvent = isDispatchTimeout ? "gpt.dispatch.timeout" : "gpt.dispatch.error";
+      const dispatchErrorMessage = isDispatchTimeout
+        ? buildDispatchTimeoutMessage(timeoutMs)
+        : isDispatchCancellation
+        ? 'GPT job cancellation requested.'
+        : err?.message ?? "Module dispatch failed";
 
     logger?.error?.("gpt.dispatch.error", {
       requestId,
@@ -2670,7 +2745,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       timeoutSource,
       durationMs: Date.now() - dispatchStartedAt,
     });
-    if (isDispatchTimeout) {
+      if (isDispatchTimeout) {
       if (promptIntentClassification.intent === 'dag') {
         recordDagTraceTimeout({
           handler: 'gpt-dispatch',
@@ -2688,10 +2763,29 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         timeoutSource,
         durationMs: Date.now() - dispatchStartedAt,
       });
-    }
+      }
 
-    if (
-      isDispatchTimeout &&
+      if (isDispatchCancellation) {
+        return {
+          ok: false,
+          error: {
+            code: 'REQUEST_ABORTED',
+            message: dispatchErrorMessage
+          },
+          _route: {
+            ...baseRoute,
+            module: activeEntry.module,
+            action,
+            matchMethod,
+            route: activeEntry.route,
+            availableActions,
+            moduleVersion: (moduleMetadata as any)?.version ?? null,
+          },
+        };
+      }
+
+      if (
+        isDispatchTimeout &&
       activeEntry.module === 'ARCANOS:CORE' &&
       action === 'query' &&
       typeof prompt === 'string' &&

@@ -44,10 +44,12 @@ function collectStructuredLogs(logCalls: unknown[][]): LoggedPayload[] {
 describe('gpt router auth logging', () => {
   let consoleLogSpy: ReturnType<typeof jest.spyOn>;
   const originalGptRouteHardTimeoutMs = process.env.GPT_ROUTE_HARD_TIMEOUT_MS;
+  const originalGptRouteAsyncCoreDefault = process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT;
 
   beforeEach(() => {
     consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => undefined);
     jest.clearAllMocks();
+    process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = 'false';
   });
 
   afterEach(() => {
@@ -55,6 +57,11 @@ describe('gpt router auth logging', () => {
       delete process.env.GPT_ROUTE_HARD_TIMEOUT_MS;
     } else {
       process.env.GPT_ROUTE_HARD_TIMEOUT_MS = originalGptRouteHardTimeoutMs;
+    }
+    if (originalGptRouteAsyncCoreDefault === undefined) {
+      delete process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT;
+    } else {
+      process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = originalGptRouteAsyncCoreDefault;
     }
     consoleLogSpy.mockRestore();
   });
@@ -505,7 +512,7 @@ describe('gpt router auth logging', () => {
 
     const response = await request(app)
       .post('/gpt/arcanos-core')
-      .send({ prompt: 'trigger a real DAG run and trace it live' });
+      .send({ prompt: 'trigger a real DAG run and trace it live', executionMode: 'sync' });
 
     expect(response.status).toBe(200);
     expect(response.body).toEqual(
@@ -579,7 +586,7 @@ describe('gpt router auth logging', () => {
 
     const response = await request(app)
       .post('/gpt/arcanos-core')
-      .send({ prompt: 'trigger a real DAG run and trace it live' });
+      .send({ prompt: 'trigger a real DAG run and trace it live', executionMode: 'sync' });
 
     expect(response.status).toBe(200);
     expect(response.body).toEqual(

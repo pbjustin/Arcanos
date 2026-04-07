@@ -9,6 +9,12 @@ import type { JobData } from '@core/db/schema.js';
 import { query } from '@core/db/query.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { safeJSONStringify } from '@shared/jsonHelpers.js';
+import {
+  computeGptJobLifecycleDeadlines,
+  isGptJobReusableStatus,
+  resolveGptExpiredCompactionMs,
+  resolveGptPendingMaxAgeMs
+} from '@shared/gpt/gptJobLifecycle.js';
 
 export type JobFailureCategory =
   | 'authentication'
@@ -70,6 +76,23 @@ export interface CreateJobOptions {
   priority?: number;
   lastWorkerId?: string | null;
   autonomyState?: Record<string, unknown>;
+  requestFingerprintHash?: string | null;
+  idempotencyKeyHash?: string | null;
+  idempotencyScopeHash?: string | null;
+  idempotencyOrigin?: 'explicit' | 'derived' | null;
+  idempotencyUntil?: Date | string | null;
+  retentionUntil?: Date | string | null;
+  expiresAt?: Date | string | null;
+  cancelRequestedAt?: Date | string | null;
+  cancelReason?: string | null;
+}
+
+export interface UpdateJobMetadata {
+  idempotencyUntil?: Date | string | null;
+  retentionUntil?: Date | string | null;
+  expiresAt?: Date | string | null;
+  cancelRequestedAt?: Date | string | null;
+  cancelReason?: string | null;
 }
 
 export interface ClaimNextPendingJobOptions {
@@ -116,6 +139,38 @@ export interface FailedJobSnapshot {
   completed_at: string | Date | null;
 }
 
+export interface FindOrCreateGptJobOptions {
+  workerId: string;
+  input: unknown;
+  requestFingerprintHash: string;
+  idempotencyScopeHash: string;
+  idempotencyKeyHash?: string | null;
+  idempotencyOrigin: 'explicit' | 'derived';
+  createOptions: CreateJobOptions;
+}
+
+export interface FindOrCreateGptJobResult {
+  job: JobData;
+  created: boolean;
+  deduped: boolean;
+  dedupeReason:
+    | 'new_job'
+    | 'reused_inflight_job'
+    | 'reused_completed_result'
+    | 'reused_terminal_result';
+}
+
+export interface CancelJobResult {
+  outcome: 'cancelled' | 'cancellation_requested' | 'already_terminal' | 'not_found';
+  job: JobData | null;
+}
+
+export interface CleanupGptJobsResult {
+  expiredPending: number;
+  expiredTerminal: number;
+  deletedExpired: number;
+}
+
 function assertDatabaseReady(): void {
   if (!isDatabaseConnected()) {
     throw new Error('Database not configured');
@@ -141,6 +196,57 @@ function normalizeJsonbInput(value: unknown, context: string): string {
 
 function normalizeAutonomyState(state?: Record<string, unknown>): Record<string, unknown> {
   return state ?? {};
+}
+
+function normalizeNullableString(value: string | null | undefined): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const trimmedValue = value.trim();
+  return trimmedValue.length > 0 ? trimmedValue : null;
+}
+
+function applyGptLifecycleDefaults(jobType: string, status: string, options: CreateJobOptions): {
+  idempotencyUntil: string | null;
+  retentionUntil: string | null;
+} {
+  if (jobType !== 'gpt') {
+    return {
+      idempotencyUntil: normalizeNullableDate(options.idempotencyUntil),
+      retentionUntil: normalizeNullableDate(options.retentionUntil)
+    };
+  }
+
+  const computedDeadlines = computeGptJobLifecycleDeadlines(status);
+
+  return {
+    idempotencyUntil:
+      normalizeNullableDate(options.idempotencyUntil) ?? computedDeadlines.idempotencyUntil,
+    retentionUntil:
+      normalizeNullableDate(options.retentionUntil) ?? computedDeadlines.retentionUntil
+  };
+}
+
+async function acquireAdvisoryLock(
+  client: { query: (sql: string, params?: unknown[]) => Promise<unknown> },
+  namespace: string,
+  key: string | null | undefined
+): Promise<void> {
+  const normalizedKey = normalizeNullableString(key);
+  if (!normalizedKey) {
+    return;
+  }
+
+  await client.query(
+    'SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))',
+    [namespace, normalizedKey]
+  );
+}
+
+function resolveReusableFingerprintStatuses(idempotencyOrigin: 'explicit' | 'derived'): string[] {
+  const allStatuses = ['pending', 'running', 'completed', 'failed', 'cancelled'] as const;
+  return allStatuses.filter((status) => isGptJobReusableStatus(status, idempotencyOrigin));
 }
 
 export const DEFAULT_QUEUE_DIAGNOSTICS_FAILURE_WINDOW_MS = 60 * 60 * 1000;
@@ -239,6 +345,11 @@ export async function createJob(
   assertDatabaseReady();
 
   const options = normalizeCreateJobOptions(statusOrOptions);
+  const lifecycleDefaults = applyGptLifecycleDefaults(
+    jobType,
+    options.status ?? 'pending',
+    options
+  );
   const result = await query(
     `INSERT INTO job_data (
        worker_id,
@@ -253,7 +364,16 @@ export async function createJob(
        lease_expires_at,
        priority,
        last_worker_id,
-       autonomy_state
+       autonomy_state,
+       request_fingerprint_hash,
+       idempotency_key_hash,
+       idempotency_scope_hash,
+       idempotency_origin,
+       idempotency_until,
+       retention_until,
+       expires_at,
+       cancel_requested_at,
+       cancel_reason
      )
      VALUES (
        $1,
@@ -268,7 +388,16 @@ export async function createJob(
        $10::timestamptz,
        $11,
        $12,
-       $13::jsonb
+       $13::jsonb,
+       $14,
+       $15,
+       $16,
+       $17,
+       $18::timestamptz,
+       $19::timestamptz,
+       $20::timestamptz,
+       $21::timestamptz,
+       $22
      )
      RETURNING *`,
     [
@@ -287,7 +416,16 @@ export async function createJob(
       normalizeJsonbInput(
         normalizeAutonomyState(options.autonomyState),
         'jobRepository.createJob.autonomyState'
-      )
+      ),
+      normalizeNullableString(options.requestFingerprintHash ?? null),
+      normalizeNullableString(options.idempotencyKeyHash ?? null),
+      normalizeNullableString(options.idempotencyScopeHash ?? null),
+      normalizeNullableString(options.idempotencyOrigin ?? null),
+      lifecycleDefaults.idempotencyUntil,
+      lifecycleDefaults.retentionUntil,
+      normalizeNullableDate(options.expiresAt),
+      normalizeNullableDate(options.cancelRequestedAt),
+      normalizeNullableString(options.cancelReason ?? null)
     ]
   );
 
@@ -305,16 +443,21 @@ export async function updateJob(
   status: string,
   output: unknown = null,
   errorMessage: string | null = null,
-  autonomyState?: Record<string, unknown>
+  autonomyState?: Record<string, unknown>,
+  metadata: UpdateJobMetadata = {}
 ): Promise<JobData> {
   assertDatabaseReady();
 
-  const terminalStatus = status === 'completed' || status === 'failed' || status === 'cancelled';
+  const terminalStatus =
+    status === 'completed' ||
+    status === 'failed' ||
+    status === 'cancelled' ||
+    status === 'expired';
   const runningStatus = status === 'running';
   const result = await query(
     `UPDATE job_data
      SET
-       status = $1,
+      status = $1::varchar(50),
        output = $2::jsonb,
        error_message = $3,
        updated_at = NOW(),
@@ -334,8 +477,21 @@ export async function updateJob(
          WHEN $5 THEN lease_expires_at
          ELSE NULL
        END,
-       autonomy_state = COALESCE(autonomy_state, '{}'::jsonb) || $6::jsonb
-     WHERE id = $7
+       autonomy_state = COALESCE(autonomy_state, '{}'::jsonb) || $6::jsonb,
+       idempotency_until = COALESCE($7::timestamptz, idempotency_until),
+       retention_until = COALESCE($8::timestamptz, retention_until),
+       expires_at = CASE
+         WHEN $9::timestamptz IS NOT NULL THEN $9::timestamptz
+        WHEN $1::varchar(50) = 'expired'::varchar(50) THEN COALESCE(expires_at, NOW())
+         ELSE expires_at
+       END,
+       cancel_requested_at = CASE
+         WHEN $10::timestamptz IS NOT NULL THEN $10::timestamptz
+        WHEN $1::varchar(50) = 'cancelled'::varchar(50) THEN COALESCE(cancel_requested_at, NOW())
+         ELSE cancel_requested_at
+       END,
+       cancel_reason = COALESCE($11, cancel_reason)
+     WHERE id = $12
      RETURNING *`,
     [
       status,
@@ -347,6 +503,11 @@ export async function updateJob(
         normalizeAutonomyState(autonomyState),
         'jobRepository.updateJob.autonomyState'
       ),
+      normalizeNullableDate(metadata.idempotencyUntil),
+      normalizeNullableDate(metadata.retentionUntil),
+      normalizeNullableDate(metadata.expiresAt),
+      normalizeNullableDate(metadata.cancelRequestedAt),
+      normalizeNullableString(metadata.cancelReason ?? null),
       jobId
     ]
   );
@@ -367,6 +528,399 @@ export async function getJobById(jobId: string): Promise<JobData | null> {
 
   const result = await query('SELECT * FROM job_data WHERE id = $1 LIMIT 1', [jobId]);
   return (result.rows[0] as JobData | undefined) ?? null;
+}
+
+async function findReusableGptJobByIdempotencyKey(
+  client: { query: (sql: string, params?: unknown[]) => Promise<{ rows: unknown[] }> },
+  options: {
+    idempotencyScopeHash: string;
+    idempotencyKeyHash: string;
+  }
+): Promise<JobData | null> {
+  const result = await client.query(
+    `SELECT *
+     FROM job_data
+     WHERE job_type = 'gpt'
+       AND idempotency_scope_hash = $1
+       AND idempotency_key_hash = $2
+       AND status <> 'expired'
+       AND (
+         status IN ('pending', 'running')
+         OR (idempotency_until IS NOT NULL AND idempotency_until > NOW())
+       )
+     ORDER BY
+       CASE status
+         WHEN 'running' THEN 0
+         WHEN 'pending' THEN 1
+         WHEN 'completed' THEN 2
+         WHEN 'failed' THEN 3
+         WHEN 'cancelled' THEN 4
+         ELSE 5
+       END ASC,
+       created_at DESC
+     LIMIT 1`,
+    [options.idempotencyScopeHash, options.idempotencyKeyHash]
+  );
+
+  return (result.rows[0] as JobData | undefined) ?? null;
+}
+
+async function findReusableGptJobByFingerprint(
+  client: { query: (sql: string, params?: unknown[]) => Promise<{ rows: unknown[] }> },
+  options: {
+    idempotencyScopeHash: string;
+    requestFingerprintHash: string;
+    idempotencyOrigin: 'explicit' | 'derived';
+  }
+): Promise<JobData | null> {
+  const reusableStatuses = resolveReusableFingerprintStatuses(options.idempotencyOrigin);
+  const result = await client.query(
+    `SELECT *
+     FROM job_data
+     WHERE job_type = 'gpt'
+       AND idempotency_scope_hash = $1
+       AND request_fingerprint_hash = $2
+       AND status = ANY($3::text[])
+       AND status <> 'expired'
+       AND (
+         status IN ('pending', 'running')
+         OR (idempotency_until IS NOT NULL AND idempotency_until > NOW())
+       )
+     ORDER BY
+       CASE status
+         WHEN 'running' THEN 0
+         WHEN 'pending' THEN 1
+         WHEN 'completed' THEN 2
+         WHEN 'failed' THEN 3
+         WHEN 'cancelled' THEN 4
+         ELSE 5
+       END ASC,
+       created_at DESC
+     LIMIT 1`,
+    [options.idempotencyScopeHash, options.requestFingerprintHash, reusableStatuses]
+  );
+
+  return (result.rows[0] as JobData | undefined) ?? null;
+}
+
+function classifyGptJobReuse(job: JobData): FindOrCreateGptJobResult['dedupeReason'] {
+  if (job.status === 'completed') {
+    return 'reused_completed_result';
+  }
+
+  if (job.status === 'failed' || job.status === 'cancelled') {
+    return 'reused_terminal_result';
+  }
+
+  return 'reused_inflight_job';
+}
+
+/**
+ * Find an existing reusable GPT job or create a new canonical row under transaction-scoped advisory locks.
+ * Purpose: collapse duplicate async GPT submissions safely across concurrent web instances.
+ * Inputs/outputs: accepts hashed scope/idempotency identifiers plus create options; returns either the new row or the canonical reusable row.
+ * Edge case behavior: explicit idempotency key reuse with a different semantic fingerprint throws a conflict instead of silently aliasing the wrong job.
+ */
+export async function findOrCreateGptJob(
+  options: FindOrCreateGptJobOptions
+): Promise<FindOrCreateGptJobResult> {
+  assertDatabaseReady();
+
+  const pool = getPool();
+  if (!pool) {
+    throw new Error('Database pool unavailable');
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await acquireAdvisoryLock(
+      client,
+      'job_data.gpt.idempotency_scope',
+      options.idempotencyScopeHash
+    );
+    await acquireAdvisoryLock(
+      client,
+      'job_data.gpt.idempotency_key',
+      options.idempotencyKeyHash ?? null
+    );
+    await acquireAdvisoryLock(
+      client,
+      'job_data.gpt.request_fingerprint',
+      `${options.idempotencyScopeHash}:${options.requestFingerprintHash}`
+    );
+
+    if (options.idempotencyKeyHash) {
+      const existingJobByKey = await findReusableGptJobByIdempotencyKey(client, {
+        idempotencyScopeHash: options.idempotencyScopeHash,
+        idempotencyKeyHash: options.idempotencyKeyHash
+      });
+
+      if (existingJobByKey) {
+        const existingFingerprintHash = normalizeNullableString(
+          existingJobByKey.request_fingerprint_hash ?? null
+        );
+
+        if (
+          existingFingerprintHash &&
+          existingFingerprintHash !== options.requestFingerprintHash
+        ) {
+          throw new Error(
+            'IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_REQUEST: explicit idempotency key mapped to a different GPT request fingerprint.'
+          );
+        }
+
+        await client.query('COMMIT');
+        return {
+          job: existingJobByKey,
+          created: false,
+          deduped: true,
+          dedupeReason: classifyGptJobReuse(existingJobByKey)
+        };
+      }
+    }
+
+    const existingJobByFingerprint = await findReusableGptJobByFingerprint(client, {
+      idempotencyScopeHash: options.idempotencyScopeHash,
+      requestFingerprintHash: options.requestFingerprintHash,
+      idempotencyOrigin: options.idempotencyOrigin
+    });
+
+    if (existingJobByFingerprint) {
+      await client.query('COMMIT');
+      return {
+        job: existingJobByFingerprint,
+        created: false,
+        deduped: true,
+        dedupeReason: classifyGptJobReuse(existingJobByFingerprint)
+      };
+    }
+
+    const createOptions: CreateJobOptions = {
+      ...options.createOptions,
+      requestFingerprintHash: options.requestFingerprintHash,
+      idempotencyKeyHash: options.idempotencyKeyHash ?? null,
+      idempotencyScopeHash: options.idempotencyScopeHash,
+      idempotencyOrigin: options.idempotencyOrigin
+    };
+    const lifecycleDefaults = applyGptLifecycleDefaults(
+      'gpt',
+      createOptions.status ?? 'pending',
+      createOptions
+    );
+    const result = await client.query(
+      `INSERT INTO job_data (
+         worker_id,
+         job_type,
+         status,
+         input,
+         retry_count,
+         max_retries,
+         next_run_at,
+         started_at,
+         last_heartbeat_at,
+         lease_expires_at,
+         priority,
+         last_worker_id,
+         autonomy_state,
+         request_fingerprint_hash,
+         idempotency_key_hash,
+         idempotency_scope_hash,
+         idempotency_origin,
+         idempotency_until,
+         retention_until,
+         expires_at,
+         cancel_requested_at,
+         cancel_reason
+       )
+       VALUES (
+         $1,
+         'gpt',
+         $2,
+         $3::jsonb,
+         $4,
+         $5,
+         COALESCE($6::timestamptz, NOW()),
+         $7::timestamptz,
+         $8::timestamptz,
+         $9::timestamptz,
+         $10,
+         $11,
+         $12::jsonb,
+         $13,
+         $14,
+         $15,
+         $16,
+         $17::timestamptz,
+         $18::timestamptz,
+         $19::timestamptz,
+         $20::timestamptz,
+         $21
+       )
+       RETURNING *`,
+      [
+        options.workerId,
+        createOptions.status ?? 'pending',
+        normalizeJsonbInput(options.input, 'jobRepository.findOrCreateGptJob.input'),
+        createOptions.retryCount ?? 0,
+        createOptions.maxRetries ?? 2,
+        normalizeNullableDate(createOptions.nextRunAt),
+        normalizeNullableDate(createOptions.startedAt),
+        normalizeNullableDate(createOptions.lastHeartbeatAt),
+        normalizeNullableDate(createOptions.leaseExpiresAt),
+        createOptions.priority ?? 100,
+        createOptions.lastWorkerId ?? null,
+        normalizeJsonbInput(
+          normalizeAutonomyState(createOptions.autonomyState),
+          'jobRepository.findOrCreateGptJob.autonomyState'
+        ),
+        options.requestFingerprintHash,
+        normalizeNullableString(options.idempotencyKeyHash ?? null),
+        options.idempotencyScopeHash,
+        options.idempotencyOrigin,
+        lifecycleDefaults.idempotencyUntil,
+        lifecycleDefaults.retentionUntil,
+        normalizeNullableDate(createOptions.expiresAt),
+        normalizeNullableDate(createOptions.cancelRequestedAt),
+        normalizeNullableString(createOptions.cancelReason ?? null)
+      ]
+    );
+
+    await client.query('COMMIT');
+    return {
+      job: result.rows[0] as JobData,
+      created: true,
+      deduped: false,
+      dedupeReason: 'new_job'
+    };
+  } catch (error: unknown) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Request cancellation for a queued job.
+ * Purpose: stop pending GPT work immediately and signal best-effort abortion for currently running GPT jobs.
+ * Inputs/outputs: accepts a job id plus optional reason; returns the current cancellation outcome and row snapshot.
+ * Edge case behavior: terminal jobs are left unchanged and reported explicitly so API callers do not assume cancellation succeeded.
+ */
+export async function requestJobCancellation(
+  jobId: string,
+  reason = 'Job cancellation requested by client.'
+): Promise<CancelJobResult> {
+  assertDatabaseReady();
+
+  const pool = getPool();
+  if (!pool) {
+    throw new Error('Database pool unavailable');
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const jobResult = await client.query(
+      'SELECT * FROM job_data WHERE id = $1 FOR UPDATE',
+      [jobId]
+    );
+    const job = (jobResult.rows[0] as JobData | undefined) ?? null;
+    if (!job) {
+      await client.query('COMMIT');
+      return {
+        outcome: 'not_found',
+        job: null
+      };
+    }
+
+    if (
+      job.status === 'completed' ||
+      job.status === 'failed' ||
+      job.status === 'cancelled' ||
+      job.status === 'expired'
+    ) {
+      await client.query('COMMIT');
+      return {
+        outcome: 'already_terminal',
+        job
+      };
+    }
+
+    const normalizedReason = normalizeNullableString(reason) ?? 'Job cancellation requested by client.';
+    const lifecycleDeadlines =
+      job.job_type === 'gpt'
+        ? computeGptJobLifecycleDeadlines('cancelled')
+        : { idempotencyUntil: null, retentionUntil: null };
+
+    if (job.status === 'pending') {
+      const cancelledJobResult = await client.query(
+        `UPDATE job_data
+         SET
+           status = 'cancelled',
+           error_message = COALESCE(error_message, $1),
+           updated_at = NOW(),
+           completed_at = COALESCE(completed_at, NOW()),
+           last_heartbeat_at = NULL,
+           lease_expires_at = NULL,
+           cancel_requested_at = NOW(),
+           cancel_reason = $2,
+           idempotency_until = COALESCE($3::timestamptz, idempotency_until),
+           retention_until = COALESCE($4::timestamptz, retention_until)
+         WHERE id = $5
+         RETURNING *`,
+        [
+          normalizedReason,
+          normalizedReason,
+          lifecycleDeadlines.idempotencyUntil,
+          lifecycleDeadlines.retentionUntil,
+          jobId
+        ]
+      );
+
+      await client.query('COMMIT');
+      return {
+        outcome: 'cancelled',
+        job: (cancelledJobResult.rows[0] as JobData | undefined) ?? job
+      };
+    }
+
+    const requestedCancellationResult = await client.query(
+      `UPDATE job_data
+       SET
+         updated_at = NOW(),
+         cancel_requested_at = COALESCE(cancel_requested_at, NOW()),
+         cancel_reason = COALESCE($1, cancel_reason),
+         autonomy_state = COALESCE(autonomy_state, '{}'::jsonb) || $2::jsonb
+       WHERE id = $3
+       RETURNING *`,
+      [
+        normalizedReason,
+        normalizeJsonbInput(
+          {
+            cancellation: {
+              requestedAt: new Date().toISOString(),
+              reason: normalizedReason
+            }
+          },
+          'jobRepository.requestJobCancellation.autonomyState'
+        ),
+        jobId
+      ]
+    );
+
+    await client.query('COMMIT');
+    return {
+      outcome: 'cancellation_requested',
+      job: (requestedCancellationResult.rows[0] as JobData | undefined) ?? job
+    };
+  } catch (error: unknown) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 /**
@@ -475,6 +1029,11 @@ export async function scheduleJobRetry(
        completed_at = NULL,
        last_heartbeat_at = NULL,
        lease_expires_at = NULL,
+       idempotency_until = NULL,
+       retention_until = NULL,
+       expires_at = NULL,
+       cancel_requested_at = NULL,
+       cancel_reason = NULL,
        last_worker_id = COALESCE($3, last_worker_id),
        autonomy_state = COALESCE(autonomy_state, '{}'::jsonb) || $4::jsonb
      WHERE id = $5
@@ -516,7 +1075,7 @@ export async function recoverStaleJobs(
     await client.query('BEGIN');
 
     const staleResult = await client.query(
-      `SELECT id, retry_count, max_retries, autonomy_state
+      `SELECT id, job_type, retry_count, max_retries, autonomy_state, cancel_requested_at, cancel_reason
        FROM job_data
        WHERE status = 'running'
          AND (
@@ -533,16 +1092,58 @@ export async function recoverStaleJobs(
 
     for (const row of staleResult.rows as Array<{
       id: string;
+      job_type: string;
       retry_count: number;
       max_retries: number;
       autonomy_state: Record<string, unknown> | string | null;
+      cancel_requested_at: Date | string | null;
+      cancel_reason: string | null;
     }>) {
       const retryCount = Number(row.retry_count ?? 0);
       const maxRetries = Number(options.maxRetries ?? row.max_retries ?? 2);
       const normalizedAutonomyState = buildRecoveredAutonomyState(row.autonomy_state, retryCount);
 
+      if (row.cancel_requested_at) {
+        const lifecycleDeadlines =
+          row.job_type === 'gpt'
+            ? computeGptJobLifecycleDeadlines('cancelled')
+            : { idempotencyUntil: null, retentionUntil: null };
+        await client.query(
+          `UPDATE job_data
+           SET
+             status = 'cancelled',
+             error_message = COALESCE(error_message, $1),
+             updated_at = NOW(),
+             completed_at = COALESCE(completed_at, NOW()),
+             last_heartbeat_at = NULL,
+             lease_expires_at = NULL,
+             cancel_reason = COALESCE(cancel_reason, $2),
+             autonomy_state = $3::jsonb,
+             idempotency_until = COALESCE($4::timestamptz, idempotency_until),
+             retention_until = COALESCE($5::timestamptz, retention_until)
+           WHERE id = $6`,
+          [
+            row.cancel_reason ?? 'Job cancellation was requested before stale recovery.',
+            row.cancel_reason ?? 'Job cancellation was requested before stale recovery.',
+            normalizeJsonbInput(
+              normalizedAutonomyState,
+              'jobRepository.recoverStaleJobs.cancelledAutonomyState'
+            ),
+            lifecycleDeadlines.idempotencyUntil,
+            lifecycleDeadlines.retentionUntil,
+            row.id
+          ]
+        );
+        failedJobs.push(row.id);
+        continue;
+      }
+
       //audit Assumption: stale running jobs should be retried only while within retry budget; failure risk: infinite stale-recovery loops; expected invariant: exhausted jobs become terminal failures; handling strategy: branch on retry budget before resetting state.
       if (retryCount >= maxRetries) {
+        const lifecycleDeadlines =
+          row.job_type === 'gpt'
+            ? computeGptJobLifecycleDeadlines('failed')
+            : { idempotencyUntil: null, retentionUntil: null };
         await client.query(
           `UPDATE job_data
            SET
@@ -552,13 +1153,17 @@ export async function recoverStaleJobs(
              completed_at = NOW(),
              last_heartbeat_at = NULL,
              lease_expires_at = NULL,
-             autonomy_state = $1::jsonb
-           WHERE id = $2`,
+             autonomy_state = $1::jsonb,
+             idempotency_until = COALESCE($2::timestamptz, idempotency_until),
+             retention_until = COALESCE($3::timestamptz, retention_until)
+           WHERE id = $4`,
           [
             normalizeJsonbInput(
               normalizedAutonomyState,
               'jobRepository.recoverStaleJobs.failedAutonomyState'
             ),
+            lifecycleDeadlines.idempotencyUntil,
+            lifecycleDeadlines.retentionUntil,
             row.id
           ]
         );
@@ -576,6 +1181,11 @@ export async function recoverStaleJobs(
            updated_at = NOW(),
            last_heartbeat_at = NULL,
            lease_expires_at = NULL,
+           idempotency_until = NULL,
+           retention_until = NULL,
+           expires_at = NULL,
+           cancel_requested_at = NULL,
+           cancel_reason = NULL,
            autonomy_state = $1::jsonb
          WHERE id = $2`,
         [
@@ -915,10 +1525,10 @@ export async function getJobExecutionStatsSince(
        COUNT(*) FILTER (WHERE status = 'completed')::int AS completed_count,
        COUNT(*) FILTER (WHERE status = 'failed')::int AS failed_count,
        COUNT(*) FILTER (WHERE status = 'running')::int AS running_count,
-       COUNT(*) FILTER (WHERE status IN ('completed', 'failed'))::int AS total_terminal_count,
+       COUNT(*) FILTER (WHERE status IN ('completed', 'failed', 'cancelled', 'expired'))::int AS total_terminal_count,
        COUNT(*) FILTER (
-         WHERE status IN ('completed', 'failed')
-           AND job_type IN ('ask', 'dag-node')
+         WHERE status IN ('completed', 'failed', 'cancelled', 'expired')
+           AND job_type IN ('ask', 'dag-node', 'gpt')
        )::int AS ai_call_count
      FROM job_data
      WHERE updated_at >= $1::timestamptz
@@ -940,6 +1550,64 @@ export async function getJobExecutionStatsSince(
     running: row?.running_count ?? 0,
     totalTerminal: row?.total_terminal_count ?? 0,
     aiCalls: row?.ai_call_count ?? 0
+  };
+}
+
+/**
+ * Expire retained GPT jobs and compact expired rows after a grace period.
+ * Purpose: keep the GPT job table bounded while preserving explicit lifecycle visibility for recent terminal rows.
+ * Inputs/outputs: no inputs, returns the number of pending/terminal expirations plus deleted expired rows.
+ * Edge case behavior: expired rows remain visible until the configurable compaction grace elapses.
+ */
+export async function cleanupExpiredGptJobs(): Promise<CleanupGptJobsResult> {
+  assertDatabaseReady();
+
+  const pendingMaxAgeMs = resolveGptPendingMaxAgeMs();
+  const expiredCompactionMs = resolveGptExpiredCompactionMs();
+
+  const expiredPendingResult = await query(
+    `UPDATE job_data
+     SET
+       status = 'expired',
+       error_message = COALESCE(error_message, 'GPT job expired before the worker claimed it.'),
+       updated_at = NOW(),
+       completed_at = COALESCE(completed_at, NOW()),
+       expires_at = COALESCE(expires_at, NOW())
+     WHERE job_type = 'gpt'
+       AND status = 'pending'
+       AND created_at < NOW() - ($1::bigint * INTERVAL '1 millisecond')
+     RETURNING id`,
+    [pendingMaxAgeMs]
+  );
+
+  const expiredTerminalResult = await query(
+    `UPDATE job_data
+     SET
+       status = 'expired',
+       updated_at = NOW(),
+       expires_at = COALESCE(expires_at, NOW())
+     WHERE job_type = 'gpt'
+       AND status IN ('completed', 'failed', 'cancelled')
+       AND retention_until IS NOT NULL
+       AND retention_until <= NOW()
+     RETURNING id`,
+    []
+  );
+
+  const deletedExpiredResult = await query(
+    `DELETE FROM job_data
+     WHERE job_type = 'gpt'
+       AND status = 'expired'
+       AND expires_at IS NOT NULL
+       AND expires_at < NOW() - ($1::bigint * INTERVAL '1 millisecond')
+     RETURNING id`,
+    [expiredCompactionMs]
+  );
+
+  return {
+    expiredPending: expiredPendingResult.rowCount ?? expiredPendingResult.rows.length,
+    expiredTerminal: expiredTerminalResult.rowCount ?? expiredTerminalResult.rows.length,
+    deletedExpired: deletedExpiredResult.rowCount ?? deletedExpiredResult.rows.length
   };
 }
 

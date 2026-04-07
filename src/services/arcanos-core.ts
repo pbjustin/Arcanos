@@ -29,7 +29,10 @@ type ArcanosCoreQueryPayload = {
   answerMode?: string;
   max_words?: number;
   maxWords?: number;
+  __arcanosExecutionMode?: string;
 };
+
+type ArcanosCoreExecutionMode = 'request' | 'background';
 
 const DEFAULT_ARCANOS_CORE_ROUTE_TIMEOUT_MS = 60_000;
 const DEFAULT_ARCANOS_CORE_HANDLER_HEADROOM_MS = 5_000;
@@ -39,6 +42,11 @@ const DEFAULT_ARCANOS_CORE_PIPELINE_TIMEOUT_MS = 5_000;
 const MIN_ARCANOS_CORE_PIPELINE_TIMEOUT_MS = 2_500;
 const MAX_ARCANOS_CORE_PIPELINE_TIMEOUT_MS = 15_000;
 const DEFAULT_ARCANOS_CORE_DEGRADED_HEADROOM_MS = 2_000;
+const DEFAULT_ARCANOS_CORE_BACKGROUND_HANDLER_TIMEOUT_MS = 180_000;
+const DEFAULT_ARCANOS_CORE_BACKGROUND_PIPELINE_TIMEOUT_MS = 120_000;
+const MIN_ARCANOS_CORE_BACKGROUND_PIPELINE_TIMEOUT_MS = 15_000;
+const MAX_ARCANOS_CORE_BACKGROUND_PIPELINE_TIMEOUT_MS = 180_000;
+const DEFAULT_ARCANOS_CORE_BACKGROUND_DEGRADED_HEADROOM_MS = 10_000;
 const DEFAULT_ARCANOS_CORE_DEGRADED_MAX_WORDS = 60;
 const DEFAULT_ARCANOS_CORE_RUNTIME_BUDGET_SAFETY_BUFFER_MS = 250;
 const ARCANOS_CORE_PIPELINE_TIMEOUT_REASON = 'arcanos_core_pipeline_timeout_direct_answer';
@@ -58,6 +66,7 @@ export interface RunArcanosCoreQueryParams {
   sessionId?: string;
   overrideAuditSafe?: string;
   runOptions?: Omit<TrinityRunOptions, 'sourceEndpoint'>;
+  executionModeOverride?: ArcanosCoreExecutionMode;
 }
 
 export interface BuildArcanosCoreTimeoutFallbackParams {
@@ -112,14 +121,28 @@ function normalizeAnswerMode(value: unknown): TrinityAnswerMode | undefined {
   return value;
 }
 
-function resolveCoreHandlerTimeoutMs(): number {
-  const configuredTimeoutMs = Number.parseInt(process.env.ARCANOS_CORE_HANDLER_TIMEOUT_MS ?? '', 10);
+function resolveCoreExecutionMode(
+  remainingRequestMs: number | null
+): ArcanosCoreExecutionMode {
+  return remainingRequestMs === null ? 'background' : 'request';
+}
+
+function resolveCoreHandlerTimeoutMs(
+  executionMode: ArcanosCoreExecutionMode,
+  remainingRequestMs: number | null
+): number {
+  const envKey =
+    executionMode === 'background'
+      ? 'ARCANOS_CORE_BACKGROUND_HANDLER_TIMEOUT_MS'
+      : 'ARCANOS_CORE_HANDLER_TIMEOUT_MS';
+  const configuredTimeoutMs = Number.parseInt(process.env[envKey] ?? '', 10);
   //audit Assumption: the core handler should finish slightly before the outer route timeout when no explicit override is configured; failure risk: a shorter default aborts Trinity mid-stage, while a longer default lets Railway edge time out first; expected invariant: the fallback handler timeout stays below the route cap and above Trinity's per-stage guards; handling strategy: default to route timeout minus fixed headroom, then clamp to the remaining request budget.
   const normalizedConfiguredTimeoutMs =
     Number.isFinite(configuredTimeoutMs) && configuredTimeoutMs > 0
       ? Math.trunc(configuredTimeoutMs)
+      : executionMode === 'background'
+      ? DEFAULT_ARCANOS_CORE_BACKGROUND_HANDLER_TIMEOUT_MS
       : DEFAULT_ARCANOS_CORE_HANDLER_TIMEOUT_MS;
-  const remainingRequestMs = getRequestRemainingMs();
 
   if (remainingRequestMs === null) {
     return normalizedConfiguredTimeoutMs;
@@ -128,10 +151,25 @@ function resolveCoreHandlerTimeoutMs(): number {
   return Math.max(1, Math.min(normalizedConfiguredTimeoutMs, remainingRequestMs));
 }
 
-function resolveCorePipelineTimeoutMs(): number {
-  const configuredTimeoutMs = Number.parseInt(process.env.ARCANOS_CORE_PIPELINE_TIMEOUT_MS ?? '', 10);
+function resolveCorePipelineTimeoutMs(
+  executionMode: ArcanosCoreExecutionMode
+): number {
+  const envKey =
+    executionMode === 'background'
+      ? 'ARCANOS_CORE_BACKGROUND_PIPELINE_TIMEOUT_MS'
+      : 'ARCANOS_CORE_PIPELINE_TIMEOUT_MS';
+  const configuredTimeoutMs = Number.parseInt(process.env[envKey] ?? '', 10);
   if (!Number.isFinite(configuredTimeoutMs) || configuredTimeoutMs <= 0) {
-    return DEFAULT_ARCANOS_CORE_PIPELINE_TIMEOUT_MS;
+    return executionMode === 'background'
+      ? DEFAULT_ARCANOS_CORE_BACKGROUND_PIPELINE_TIMEOUT_MS
+      : DEFAULT_ARCANOS_CORE_PIPELINE_TIMEOUT_MS;
+  }
+
+  if (executionMode === 'background') {
+    return Math.max(
+      MIN_ARCANOS_CORE_BACKGROUND_PIPELINE_TIMEOUT_MS,
+      Math.min(MAX_ARCANOS_CORE_BACKGROUND_PIPELINE_TIMEOUT_MS, Math.trunc(configuredTimeoutMs))
+    );
   }
 
   return Math.max(
@@ -140,11 +178,20 @@ function resolveCorePipelineTimeoutMs(): number {
   );
 }
 
-function resolveCoreDegradedHeadroomMs(totalTimeoutMs: number): number {
-  const configuredHeadroomMs = Number.parseInt(process.env.ARCANOS_CORE_DEGRADED_HEADROOM_MS ?? '', 10);
+function resolveCoreDegradedHeadroomMs(
+  totalTimeoutMs: number,
+  executionMode: ArcanosCoreExecutionMode
+): number {
+  const envKey =
+    executionMode === 'background'
+      ? 'ARCANOS_CORE_BACKGROUND_DEGRADED_HEADROOM_MS'
+      : 'ARCANOS_CORE_DEGRADED_HEADROOM_MS';
+  const configuredHeadroomMs = Number.parseInt(process.env[envKey] ?? '', 10);
   const normalizedConfiguredHeadroomMs =
     Number.isFinite(configuredHeadroomMs) && configuredHeadroomMs > 0
       ? Math.trunc(configuredHeadroomMs)
+      : executionMode === 'background'
+      ? DEFAULT_ARCANOS_CORE_BACKGROUND_DEGRADED_HEADROOM_MS
       : DEFAULT_ARCANOS_CORE_DEGRADED_HEADROOM_MS;
 
   return Math.max(750, Math.min(normalizedConfiguredHeadroomMs, Math.max(750, totalTimeoutMs - 1_000)));
@@ -297,23 +344,29 @@ function shouldRecoverViaCoreDegradedPath(
   return looksLikeBudgetAbort && durationMs >= nearBoundaryThresholdMs;
 }
 
-function buildCorePipelinePlan(): {
+function buildCorePipelinePlan(
+  executionModeOverride?: ArcanosCoreExecutionMode
+): {
+  executionMode: ArcanosCoreExecutionMode;
   totalTimeoutMs: number;
   primaryTimeoutMs: number;
   degradedTimeoutMs: number;
 } {
-  const handlerTimeoutMs = resolveCoreHandlerTimeoutMs();
   const remainingRequestMs = getRequestRemainingMs();
+  const executionMode = executionModeOverride ?? resolveCoreExecutionMode(remainingRequestMs);
+  const handlerTimeoutMs = resolveCoreHandlerTimeoutMs(executionMode, remainingRequestMs);
+  const pipelineTimeoutMs = resolveCorePipelineTimeoutMs(executionMode);
   const totalTimeoutMs = remainingRequestMs === null
-    ? Math.min(handlerTimeoutMs, resolveCorePipelineTimeoutMs())
-    : Math.max(1, Math.min(handlerTimeoutMs, resolveCorePipelineTimeoutMs(), remainingRequestMs));
-  const degradedHeadroomMs = resolveCoreDegradedHeadroomMs(totalTimeoutMs);
+    ? Math.max(1, Math.min(handlerTimeoutMs, pipelineTimeoutMs))
+    : Math.max(1, Math.min(handlerTimeoutMs, pipelineTimeoutMs, remainingRequestMs));
+  const degradedHeadroomMs = resolveCoreDegradedHeadroomMs(totalTimeoutMs, executionMode);
   const degradedTimeoutMs = totalTimeoutMs > 2_000
     ? Math.min(degradedHeadroomMs, Math.max(750, totalTimeoutMs - 1_000))
     : 0;
   const primaryTimeoutMs = Math.max(1, totalTimeoutMs - degradedTimeoutMs);
 
   return {
+    executionMode,
     totalTimeoutMs,
     primaryTimeoutMs,
     degradedTimeoutMs
@@ -340,7 +393,7 @@ export async function runArcanosCoreQuery(
   params: RunArcanosCoreQueryParams
 ): Promise<TrinityResult> {
   const startedAt = Date.now();
-  const pipelinePlan = buildCorePipelinePlan();
+  const pipelinePlan = buildCorePipelinePlan(params.executionModeOverride);
   const runtimeBudget = createRuntimeBudgetWithLimit(
     pipelinePlan.primaryTimeoutMs,
     resolveCoreRuntimeBudgetSafetyBufferMs(pipelinePlan.primaryTimeoutMs)
@@ -350,6 +403,7 @@ export async function runArcanosCoreQuery(
   logger.info('[core] handler.start', {
     module: 'ARCANOS:CORE',
     sourceEndpoint: params.sourceEndpoint,
+    executionMode: pipelinePlan.executionMode,
     promptLength: params.prompt.length,
     sessionId: params.sessionId,
     timeoutMs: pipelinePlan.primaryTimeoutMs,
@@ -359,6 +413,7 @@ export async function runArcanosCoreQuery(
   logger.info('[core] stall_guard.armed', {
     module: 'ARCANOS:CORE',
     sourceEndpoint: params.sourceEndpoint,
+    executionMode: pipelinePlan.executionMode,
     timeoutMs: pipelinePlan.primaryTimeoutMs,
     totalTimeoutMs: pipelinePlan.totalTimeoutMs,
     degradedTimeoutMs: pipelinePlan.degradedTimeoutMs
@@ -367,7 +422,8 @@ export async function runArcanosCoreQuery(
   try {
     logger.info('[core] before trinity.query', {
       module: 'ARCANOS:CORE',
-      sourceEndpoint: params.sourceEndpoint
+      sourceEndpoint: params.sourceEndpoint,
+      executionMode: pipelinePlan.executionMode
     });
     const result = await runWithRequestAbortTimeout(
       {
@@ -391,11 +447,13 @@ export async function runArcanosCoreQuery(
     logger.info('[core] after trinity.query', {
       module: 'ARCANOS:CORE',
       sourceEndpoint: params.sourceEndpoint,
+      executionMode: pipelinePlan.executionMode,
       durationMs: Date.now() - startedAt
     });
     logger.info('[core] returning result', {
       module: 'ARCANOS:CORE',
       sourceEndpoint: params.sourceEndpoint,
+      executionMode: pipelinePlan.executionMode,
       durationMs: Date.now() - startedAt
     });
     return result;
@@ -406,6 +464,7 @@ export async function runArcanosCoreQuery(
       logger.warn('[PIPELINE] timeout clamp fired', {
         module: 'ARCANOS:CORE',
         sourceEndpoint: params.sourceEndpoint,
+        executionMode: pipelinePlan.executionMode,
         durationMs,
         timeoutKind: 'pipeline_timeout',
         primaryTimeoutMs: pipelinePlan.primaryTimeoutMs,
@@ -416,6 +475,7 @@ export async function runArcanosCoreQuery(
       });
       recordTraceEvent('core.pipeline.timeout', {
         sourceEndpoint: params.sourceEndpoint,
+        executionMode: pipelinePlan.executionMode,
         durationMs,
         timeoutKind: 'pipeline_timeout',
         primaryTimeoutMs: pipelinePlan.primaryTimeoutMs,
@@ -427,6 +487,7 @@ export async function runArcanosCoreQuery(
         logger.warn('[PIPELINE] degraded path engaged', {
           module: 'ARCANOS:CORE',
           sourceEndpoint: params.sourceEndpoint,
+          executionMode: pipelinePlan.executionMode,
           reason: ARCANOS_CORE_PIPELINE_TIMEOUT_REASON,
           timeoutKind: 'pipeline_timeout',
           degradedTimeoutMs: pipelinePlan.degradedTimeoutMs,
@@ -434,6 +495,7 @@ export async function runArcanosCoreQuery(
         });
         recordTraceEvent('core.pipeline.degraded', {
           sourceEndpoint: params.sourceEndpoint,
+          executionMode: pipelinePlan.executionMode,
           reason: ARCANOS_CORE_PIPELINE_TIMEOUT_REASON,
           timeoutKind: 'pipeline_timeout',
           degradedTimeoutMs: pipelinePlan.degradedTimeoutMs,
@@ -463,6 +525,7 @@ export async function runArcanosCoreQuery(
         logger.info('[PIPELINE] degraded path completed', {
           module: 'ARCANOS:CORE',
           sourceEndpoint: params.sourceEndpoint,
+          executionMode: pipelinePlan.executionMode,
           durationMs: Date.now() - startedAt,
           timeoutKind: 'pipeline_timeout',
           activeModel: degradedResult.activeModel,
@@ -479,6 +542,7 @@ export async function runArcanosCoreQuery(
         logger.error('[PIPELINE] degraded path failed', {
           module: 'ARCANOS:CORE',
           sourceEndpoint: params.sourceEndpoint,
+          executionMode: pipelinePlan.executionMode,
           durationMs: Date.now() - startedAt,
           timeoutKind: 'pipeline_timeout',
           degradedTimeoutMs: pipelinePlan.degradedTimeoutMs,
@@ -486,6 +550,7 @@ export async function runArcanosCoreQuery(
         });
         recordTraceEvent('core.pipeline.degraded_failure', {
           sourceEndpoint: params.sourceEndpoint,
+          executionMode: pipelinePlan.executionMode,
           timeoutKind: 'pipeline_timeout',
           degradedTimeoutMs: pipelinePlan.degradedTimeoutMs,
           error: resolveErrorMessage(degradedError)
@@ -497,6 +562,7 @@ export async function runArcanosCoreQuery(
         logger.warn('[PIPELINE] static fallback engaged', {
           module: 'ARCANOS:CORE',
           sourceEndpoint: params.sourceEndpoint,
+          executionMode: pipelinePlan.executionMode,
           durationMs: Date.now() - startedAt,
           timeoutKind: 'pipeline_timeout',
           reason: ARCANOS_CORE_STATIC_FALLBACK_REASON,
@@ -504,6 +570,7 @@ export async function runArcanosCoreQuery(
         });
         recordTraceEvent('core.pipeline.static_fallback', {
           sourceEndpoint: params.sourceEndpoint,
+          executionMode: pipelinePlan.executionMode,
           timeoutKind: 'pipeline_timeout',
           reason: ARCANOS_CORE_STATIC_FALLBACK_REASON,
           bypassedSubsystems: [...ARCANOS_CORE_PIPELINE_BYPASSED_SUBSYSTEMS]
@@ -515,6 +582,7 @@ export async function runArcanosCoreQuery(
     logger.error('[core] handler.error', {
       module: 'ARCANOS:CORE',
       sourceEndpoint: params.sourceEndpoint,
+      executionMode: pipelinePlan.executionMode,
       durationMs,
       error: errorMessage
     });
@@ -549,6 +617,12 @@ export const ArcanosCore: ModuleDef = {
       const maxWords =
         normalizePositiveInteger(normalizedPayload.maxWords) ??
         normalizePositiveInteger(normalizedPayload.max_words);
+      const executionModeOverride =
+        normalizedPayload.__arcanosExecutionMode === 'background'
+          ? 'background'
+          : normalizedPayload.__arcanosExecutionMode === 'request'
+          ? 'request'
+          : undefined;
       const { client } = getOpenAIClientOrAdapter();
 
       if (!client) {
@@ -568,7 +642,8 @@ export const ArcanosCore: ModuleDef = {
         runOptions: {
           ...(answerMode ? { answerMode } : {}),
           ...(maxWords ? { maxWords } : {})
-        }
+        },
+        executionModeOverride
       });
     },
     async system_state(payload: unknown) {
