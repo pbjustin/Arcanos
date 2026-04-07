@@ -1,5 +1,6 @@
 import type { JobData } from '@core/db/schema.js';
 import {
+  cleanupExpiredGptJobs,
   getJobExecutionStatsSince,
   getJobQueueSummary,
   recordJobHeartbeat,
@@ -12,6 +13,7 @@ import {
   type JobQueueSummary,
   type RecoverStaleJobsResult
 } from '@core/db/repositories/jobRepository.js';
+import { computeGptJobLifecycleDeadlines } from '@shared/gpt/gptJobLifecycle.js';
 import {
   listWorkerRuntimeSnapshots,
   upsertWorkerRuntimeSnapshot,
@@ -19,6 +21,7 @@ import {
 } from '@core/db/repositories/workerRuntimeRepository.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { recordDependencyCall } from '@platform/observability/appMetrics.js';
+import { logger } from '@platform/logging/structuredLogging.js';
 
 export type WorkerAutonomyHealthStatus = 'healthy' | 'degraded' | 'unhealthy' | 'offline';
 
@@ -92,6 +95,11 @@ export interface WorkerBootstrapResult {
 
 export interface WorkerInspectionResult {
   recovered: RecoverStaleJobsResult;
+  cleaned: {
+    expiredPending: number;
+    expiredTerminal: number;
+    deletedExpired: number;
+  };
   queueSummary: JobQueueSummary | null;
   stats: JobExecutionStats;
   healthStatus: WorkerAutonomyHealthStatus;
@@ -396,6 +404,7 @@ export class WorkerAutonomyService {
       staleAfterMs: this.settings.staleAfterMs,
       maxRetries: this.settings.defaultMaxRetries
     });
+    const cleaned = await cleanupExpiredGptJobs();
     const stats = await getJobExecutionStatsSince(
       new Date(Date.now() - 60 * 60 * 1000),
       this.getStatsWorkerId()
@@ -425,6 +434,17 @@ export class WorkerAutonomyService {
     if (recovered.failedJobs.length > 0) {
       alerts.push(`Marked ${recovered.failedJobs.length} stale job(s) failed after retry exhaustion.`);
     }
+    if (cleaned.expiredPending > 0 || cleaned.expiredTerminal > 0) {
+      logger.info('gpt.job.expired', {
+        workerId: this.settings.workerId,
+        expiredPending: cleaned.expiredPending,
+        expiredTerminal: cleaned.expiredTerminal,
+        deletedExpired: cleaned.deletedExpired
+      });
+      alerts.push(
+        `Expired ${cleaned.expiredPending + cleaned.expiredTerminal} GPT job(s) during lifecycle maintenance.`
+      );
+    }
 
     const healthStatus = this.deriveHealthStatus(queueSummary, stats, alerts);
     await this.persistSnapshot({
@@ -438,6 +458,7 @@ export class WorkerAutonomyService {
 
     return {
       recovered,
+      cleaned,
       queueSummary,
       stats,
       healthStatus,
@@ -550,6 +571,25 @@ export class WorkerAutonomyService {
     await this.persistSnapshot({
       healthStatus: this.state.lastBudgetPauseReason ? 'degraded' : 'healthy',
       alerts: this.state.lastBudgetPauseReason ? [`Budget pause active: ${this.state.lastBudgetPauseReason}`] : []
+      });
+  }
+
+  /**
+   * Persist cancelled job completion without scheduling retries.
+   * Purpose: keep worker accounting accurate when cancellation resolves a running GPT job.
+   * Inputs/outputs: accepts the cancelled job id; returns once the snapshot is persisted.
+   * Edge case behavior: cancellation counts as processed work and clears the current job marker.
+   */
+  async markJobCancelled(_jobId: string): Promise<void> {
+    const cancelledAt = new Date().toISOString();
+    this.state.currentJobId = null;
+    this.state.lastError = null;
+    this.state.lastActivityAt = cancelledAt;
+    this.state.lastProcessedJobAt = cancelledAt;
+    this.state.processedJobs += 1;
+    await this.persistSnapshot({
+      healthStatus: this.state.lastBudgetPauseReason ? 'degraded' : 'healthy',
+      alerts: this.state.lastBudgetPauseReason ? [`Budget pause active: ${this.state.lastBudgetPauseReason}`] : []
     });
   }
 
@@ -610,12 +650,23 @@ export class WorkerAutonomyService {
     this.state.lastActivityAt = new Date().toISOString();
     this.state.lastProcessedJobAt = this.state.lastActivityAt;
     this.state.terminalFailures += 1;
-    await updateJob(job.id, 'failed', output, errorMessage, {
-      lastFailure: buildFailureSnapshot(errorMessage, {
-        retryable,
-        retryExhausted: retryable && retryCount >= maxRetries
-      })
-    });
+    const lifecycleDeadlines =
+      job.job_type === 'gpt'
+        ? computeGptJobLifecycleDeadlines('failed')
+        : { idempotencyUntil: null, retentionUntil: null };
+    await updateJob(
+      job.id,
+      'failed',
+      output,
+      errorMessage,
+      {
+        lastFailure: buildFailureSnapshot(errorMessage, {
+          retryable,
+          retryExhausted: retryable && retryCount >= maxRetries
+        })
+      },
+      lifecycleDeadlines
+    );
     await this.persistSnapshot({
       healthStatus: this.state.terminalFailures >= this.settings.failureWebhookThreshold ? 'unhealthy' : 'degraded',
       alerts: [`Job ${job.id} failed: ${errorMessage}`]
@@ -881,12 +932,18 @@ export function classifyWorkerExecutionError(error: unknown): {
   retryable: boolean;
 } {
   const message = resolveErrorMessage(error);
-  const normalizedMessage = message.toLowerCase();
-  const retryablePatterns = [
-    'abort',
-    'aborted',
-    'cancelled',
-    'timeout',
+    const normalizedMessage = message.toLowerCase();
+    const cancellationPatterns = [
+      'job cancellation requested',
+      'job was cancelled',
+      'gpt job was cancelled',
+      'cancellation requested while',
+      'cancelled by client'
+    ];
+    const retryablePatterns = [
+      'abort',
+      'aborted',
+      'timeout',
     'timed out',
     'rate limit',
     '429',
@@ -907,11 +964,12 @@ export function classifyWorkerExecutionError(error: unknown): {
   const terminalPatterns = [
     'invalid job.input',
     'unsupported job_type',
-    'schema',
-    'validation',
-    'missing',
-    'not found'
-  ];
+      'schema',
+      'validation',
+      'missing',
+      'not found',
+      ...cancellationPatterns
+    ];
 
   //audit Assumption: explicit validation and unsupported-type failures are deterministic; failure risk: wasting retry budget on poison jobs; expected invariant: terminal patterns override transient ones; handling strategy: check terminal signatures first.
   if (terminalPatterns.some(pattern => normalizedMessage.includes(pattern))) {
@@ -1032,6 +1090,14 @@ function determineJobPriority(jobType: string, input: unknown): number {
       return 95;
     }
     return 100;
+  }
+
+  if (jobType === 'gpt') {
+    const gptId = readStringPath(input, ['gptId']);
+    if (gptId === 'arcanos-core' || gptId === 'core' || gptId === 'arcanos-daemon') {
+      return 85;
+    }
+    return 95;
   }
 
   return 110;

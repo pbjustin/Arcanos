@@ -8,7 +8,7 @@
  * - Persists worker health snapshots for cross-instance inspection
  */
 
-import { claimNextPendingJob, updateJob } from '@core/db/repositories/jobRepository.js';
+import { claimNextPendingJob, getJobById, updateJob } from '@core/db/repositories/jobRepository.js';
 import {
   initializeDatabaseWithSchema as initializeDatabase,
   getStatus as getDatabaseStatus
@@ -20,6 +20,7 @@ import {
   buildCompletedQueuedAskOutput,
   parseQueuedAskJobInput
 } from '@shared/ask/asyncAskJob.js';
+import { parseQueuedGptJobInput } from '@shared/gpt/asyncGptJob.js';
 import { parseDagNodeJobInput } from '../jobs/jobSchema.js';
 import { runDagNodeJob } from './taskRunners.js';
 import {
@@ -36,20 +37,28 @@ import {
 import { createDagNodeRunPromptBridge } from './dagNodePromptBridge.js';
 import { runWorkerTrinityPrompt } from './trinityWorkerPipeline.js';
 import { sleep } from '@shared/sleep.js';
-import { recordWorkerJobDuration } from '@platform/observability/appMetrics.js';
+import {
+  recordGptJobEvent,
+  recordGptJobTiming,
+  recordWorkerJobDuration
+} from '@platform/observability/appMetrics.js';
 import {
   createAiExecutionContext,
   runWithAiExecutionContext,
   summarizeAiExecutionContext
 } from '@services/openai/aiExecutionContext.js';
+import { createAbortError, isAbortError } from '@arcanos/runtime';
+import { computeGptJobLifecycleDeadlines, summarizeGptJobTimings } from '@shared/gpt/gptJobLifecycle.js';
 import {
   getOpenAIProviderRuntimeStatus,
   probeOpenAIProviderHealth,
   syncOpenAIProviderRuntime
 } from '@services/openai/serviceHealth.js';
+import { routeGptRequest } from '@routes/_core/gptDispatch.js';
+import { logger } from '@platform/logging/structuredLogging.js';
 
 interface JobExecutionOutcome {
-  status: 'completed' | 'failed';
+  status: 'completed' | 'failed' | 'cancelled';
   output: unknown;
   errorMessage?: string;
   retryable?: boolean;
@@ -268,18 +277,149 @@ async function executeQueuedDagNode(
   };
 }
 
+/**
+ * Execute one queued canonical `/gpt/:gptId` request.
+ * Purpose: move long-running GPT traffic onto the shared worker queue while preserving the canonical route envelope.
+ * Inputs/outputs: accepts raw persisted queue input and returns a structured execution outcome for centralized retry handling.
+ * Edge case behavior: malformed payloads are terminal failures, while transient module timeouts remain retryable.
+ */
+async function executeQueuedGptRequest(params: {
+  jobId: string;
+  rawInput: unknown;
+  cancellationSignal?: AbortSignal;
+}): Promise<JobExecutionOutcome> {
+  const parsedGptJobInput = parseQueuedGptJobInput(params.rawInput ?? {});
+
+  if (!parsedGptJobInput.ok) {
+    return {
+      status: 'failed',
+      output: null,
+      errorMessage: `Invalid GPT job.input: ${parsedGptJobInput.error}`,
+      retryable: false
+    };
+  }
+
+  const routeStartedAtMs = Date.now();
+  const { gptId, body, requestId } = parsedGptJobInput.value;
+  const latestJob = await getJobById(params.jobId);
+  const resolveCancellationReason = async (
+    fallbackMessage: string,
+    error?: unknown
+  ): Promise<string> => {
+    const refreshedJob = await getJobById(params.jobId);
+    return (
+      refreshedJob?.cancel_reason ??
+      (error ? resolveErrorMessage(error) : null) ??
+      fallbackMessage
+    );
+  };
+  if (latestJob?.cancel_requested_at) {
+    return {
+      status: 'cancelled',
+      output: null,
+      errorMessage: latestJob.cancel_reason ?? 'Job cancellation requested before GPT execution started.',
+      retryable: false
+    };
+  }
+  const routeLogger = logger.child({
+    module: 'worker-gpt',
+    gptId,
+    requestId,
+    jobId: params.jobId
+  });
+
+  routeLogger.info('gpt.job.started', {
+    gptId,
+    requestId,
+    routeHint: parsedGptJobInput.value.routeHint ?? null,
+    executionModeReason: parsedGptJobInput.value.executionModeReason ?? null,
+    promptLength: parsedGptJobInput.value.prompt?.length ?? null
+  });
+
+  let envelope;
+  try {
+    envelope = await routeGptRequest({
+      gptId,
+      body,
+      requestId,
+      logger: routeLogger,
+      runtimeExecutionMode: 'background',
+      parentAbortSignal: params.cancellationSignal
+    });
+  } catch (error: unknown) {
+    if (params.cancellationSignal?.aborted && isAbortError(error)) {
+      return {
+        status: 'cancelled',
+        output: null,
+        errorMessage: await resolveCancellationReason(
+          'Job cancellation requested while GPT execution was running.',
+          error
+        ),
+        retryable: false
+      };
+    }
+
+    throw error;
+  }
+
+  if (!envelope.ok) {
+    if (
+      params.cancellationSignal?.aborted &&
+      envelope.error.code === 'REQUEST_ABORTED'
+    ) {
+      return {
+        status: 'cancelled',
+        output: null,
+        errorMessage: await resolveCancellationReason(envelope.error.message),
+        retryable: false
+      };
+    }
+    routeLogger.warn('gpt.job.failed', {
+      gptId,
+      requestId,
+      durationMs: Date.now() - routeStartedAtMs,
+      errorCode: envelope.error.code,
+      errorMessage: envelope.error.message
+    });
+    return {
+      status: 'failed',
+      output: envelope,
+      errorMessage: `${envelope.error.code}: ${envelope.error.message}`,
+      retryable: envelope.error.code === 'MODULE_TIMEOUT' || envelope.error.code === 'MODULE_ERROR'
+    };
+  }
+
+  routeLogger.info('gpt.job.completed', {
+    gptId,
+    requestId,
+    durationMs: Date.now() - routeStartedAtMs,
+    module: envelope._route.module ?? undefined,
+    route: envelope._route.route ?? null
+  });
+
+  return {
+    status: 'completed',
+    output: envelope
+  };
+}
+
 function startHeartbeatLoop(
   autonomyService: WorkerAutonomyService,
   jobId: string,
-  workerId: string
+  workerId: string,
+  onHeartbeat?: (job: Awaited<ReturnType<WorkerAutonomyService['recordHeartbeat']>>) => void
 ): NodeJS.Timeout {
   const intervalHandle = setInterval(() => {
-    void autonomyService.recordHeartbeat(jobId).catch((error: unknown) => {
-      console.warn(
-        `[jobRunner] worker=${workerId} heartbeat failed:`,
-        resolveErrorMessage(error)
-      );
-    });
+    void autonomyService.recordHeartbeat(jobId)
+      .then((job) => {
+        onHeartbeat?.(job);
+      })
+      .catch((error: unknown) => {
+        console.warn(
+          `[jobRunner] worker=${workerId} heartbeat failed:`,
+          resolveErrorMessage(error)
+        );
+      });
   }, autonomyService.getClaimOptions().leaseMs ? Math.max(1_000, Math.floor((autonomyService.getClaimOptions().leaseMs ?? 30_000) / 3)) : 10_000);
 
   if (typeof intervalHandle.unref === 'function') {
@@ -385,12 +525,35 @@ async function runWorkerConsumerSlot(
     }
 
     await autonomyService.markJobStarted(job);
+    const gptCancellationController = job.job_type === 'gpt' ? new AbortController() : null;
     const heartbeatHandle = startHeartbeatLoop(
       autonomyService,
       job.id,
-      slotDefinition.workerId
+      slotDefinition.workerId,
+      (updatedJob) => {
+        if (
+          gptCancellationController &&
+          updatedJob?.cancel_requested_at &&
+          !gptCancellationController.signal.aborted
+        ) {
+          gptCancellationController.abort(
+            createAbortError(updatedJob.cancel_reason ?? 'GPT job cancellation requested.')
+          );
+        }
+      }
     );
     const jobStartedAtMs = Date.now();
+    const queueWaitMs = Math.max(
+      0,
+      jobStartedAtMs - new Date(job.created_at as string | Date).getTime()
+    );
+    if (job.job_type === 'gpt') {
+      recordGptJobTiming({
+        phase: 'queue_wait',
+        outcome: 'claimed',
+        durationMs: queueWaitMs
+      });
+    }
 
     try {
       const aiExecutionContext = createAiExecutionContext({
@@ -418,6 +581,13 @@ async function runWorkerConsumerSlot(
         if (job.job_type === 'dag-node') {
           return executeQueuedDagNode(openai, job.input ?? {});
         }
+        if (job.job_type === 'gpt') {
+          return executeQueuedGptRequest({
+            jobId: job.id,
+            rawInput: job.input ?? {},
+            cancellationSignal: gptCancellationController?.signal
+          });
+        }
         return {
           status: 'failed',
           output: null,
@@ -439,14 +609,117 @@ async function runWorkerConsumerSlot(
       }
 
       if (outcome.status === 'completed') {
-        await updateJob(job.id, 'completed', outcome.output, null);
+        const lifecycleDeadlines =
+          job.job_type === 'gpt'
+            ? computeGptJobLifecycleDeadlines('completed')
+            : { idempotencyUntil: null, retentionUntil: null };
+        await updateJob(
+          job.id,
+          'completed',
+          outcome.output,
+          null,
+          undefined,
+          lifecycleDeadlines
+        );
         await autonomyService.markJobCompleted(job.id);
         recordWorkerJobDuration({
           jobType: job.job_type,
           outcome: 'completed',
           durationMs: Date.now() - jobStartedAtMs,
         });
+        if (job.job_type === 'gpt') {
+          const timings = summarizeGptJobTimings({
+            created_at: job.created_at,
+            started_at: new Date(jobStartedAtMs),
+            completed_at: new Date()
+          });
+          recordGptJobEvent({
+            event: 'completed',
+            status: 'completed',
+            retryable: false
+          });
+          recordGptJobTiming({
+            phase: 'execution',
+            outcome: 'completed',
+            durationMs: timings.executionMs
+          });
+          recordGptJobTiming({
+            phase: 'end_to_end',
+            outcome: 'completed',
+            durationMs: timings.endToEndMs
+          });
+          logger.info('gpt.job.completed_timing', {
+            jobId: job.id,
+            queueWaitMs: timings.queueWaitMs,
+            executionMs: timings.executionMs,
+            endToEndMs: timings.endToEndMs
+          });
+        }
+      } else if (outcome.status === 'cancelled') {
+        const lifecycleDeadlines =
+          job.job_type === 'gpt'
+            ? computeGptJobLifecycleDeadlines('cancelled')
+            : { idempotencyUntil: null, retentionUntil: null };
+        await updateJob(
+          job.id,
+          'cancelled',
+          outcome.output,
+          outcome.errorMessage ?? 'GPT job was cancelled.',
+          undefined,
+          {
+            ...lifecycleDeadlines,
+            cancelRequestedAt: new Date().toISOString(),
+            cancelReason: outcome.errorMessage ?? 'GPT job was cancelled.'
+          }
+        );
+        await autonomyService.markJobCancelled(job.id);
+        recordWorkerJobDuration({
+          jobType: job.job_type,
+          outcome: 'cancelled',
+          durationMs: Date.now() - jobStartedAtMs,
+        });
+        if (job.job_type === 'gpt') {
+          const timings = summarizeGptJobTimings({
+            created_at: job.created_at,
+            started_at: new Date(jobStartedAtMs),
+            completed_at: new Date()
+          });
+          recordGptJobEvent({
+            event: 'cancelled',
+            status: 'cancelled',
+            retryable: false
+          });
+          recordGptJobTiming({
+            phase: 'execution',
+            outcome: 'cancelled',
+            durationMs: timings.executionMs
+          });
+          recordGptJobTiming({
+            phase: 'end_to_end',
+            outcome: 'cancelled',
+            durationMs: timings.endToEndMs
+          });
+          logger.info('gpt.job.cancelled', {
+            jobId: job.id,
+            errorMessage: outcome.errorMessage ?? 'GPT job was cancelled.',
+            queueWaitMs: timings.queueWaitMs,
+            executionMs: timings.executionMs,
+            endToEndMs: timings.endToEndMs
+          });
+        }
       } else {
+        if (job.job_type === 'gpt') {
+          logger.warn(outcome.retryable ? 'gpt.job.retryable_failure' : 'gpt.job.non_retryable_failure', {
+            jobId: job.id,
+            errorMessage: outcome.errorMessage ?? 'Job execution failed.',
+            retryable: outcome.retryable ?? false
+          });
+          recordGptJobEvent({
+            event: outcome.retryable ? 'retryable_failure' : 'non_retryable_failure',
+            status: 'failed',
+            retryable: outcome.retryable ?? false
+          });
+        }
         const failureResult = await autonomyService.handleJobFailure(
           job,
           outcome.errorMessage ?? 'Job execution failed.',
@@ -458,6 +731,23 @@ async function runWorkerConsumerSlot(
           outcome: failureResult.action === 'retried' ? 'retried' : 'failed',
           durationMs: Date.now() - jobStartedAtMs,
         });
+        if (job.job_type === 'gpt') {
+          const timings = summarizeGptJobTimings({
+            created_at: job.created_at,
+            started_at: new Date(jobStartedAtMs),
+            completed_at: new Date()
+          });
+          recordGptJobTiming({
+            phase: 'execution',
+            outcome: failureResult.action === 'retried' ? 'retried' : 'failed',
+            durationMs: timings.executionMs
+          });
+          recordGptJobTiming({
+            phase: 'end_to_end',
+            outcome: failureResult.action === 'retried' ? 'retried' : 'failed',
+            durationMs: timings.endToEndMs
+          });
+        }
       }
     } catch (error: unknown) {
       const classifiedError = classifyWorkerExecutionError(error);
@@ -473,6 +763,18 @@ async function runWorkerConsumerSlot(
         providerConfigVersion = recoveredClientState.configVersion;
       }
 
+        if (job.job_type === 'gpt') {
+          logger.warn(classifiedError.retryable ? 'gpt.job.retryable_failure' : 'gpt.job.non_retryable_failure', {
+            jobId: job.id,
+            errorMessage: classifiedError.message,
+            retryable: classifiedError.retryable
+          });
+          recordGptJobEvent({
+            event: classifiedError.retryable ? 'retryable_failure' : 'non_retryable_failure',
+            status: 'failed',
+            retryable: classifiedError.retryable
+        });
+      }
       const failureResult = await autonomyService.handleJobFailure(
         job,
         classifiedError.message,
@@ -484,6 +786,23 @@ async function runWorkerConsumerSlot(
         outcome: failureResult.action === 'retried' ? 'retried' : 'failed',
         durationMs: Date.now() - jobStartedAtMs,
       });
+      if (job.job_type === 'gpt') {
+        const timings = summarizeGptJobTimings({
+          created_at: job.created_at,
+          started_at: new Date(jobStartedAtMs),
+          completed_at: new Date()
+        });
+        recordGptJobTiming({
+          phase: 'execution',
+          outcome: failureResult.action === 'retried' ? 'retried' : 'failed',
+          durationMs: timings.executionMs
+        });
+        recordGptJobTiming({
+          phase: 'end_to_end',
+          outcome: failureResult.action === 'retried' ? 'retried' : 'failed',
+          durationMs: timings.endToEndMs
+        });
+      }
     } finally {
       clearInterval(heartbeatHandle);
     }

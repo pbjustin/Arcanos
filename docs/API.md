@@ -46,6 +46,50 @@ No API path changes are required for Railway. Ensure liveness (`/healthz`) and r
 - API mount index: `../src/routes/api/index.ts`
 - Validation and auth middleware: `../src/middleware/confirmGate.ts`
 
+## GPT Async Contract
+`POST /gpt/:gptId` now supports deterministic async GPT execution with idempotent retry handling for job-backed requests.
+
+Request guidance:
+- Send `Idempotency-Key` when the client may retry the same GPT submission. The backend hashes the key before storage.
+- If `Idempotency-Key` is absent and the request is routed onto the GPT job path, the backend derives a stable semantic fingerprint from `gptId`, `action`, normalized prompt/input fields, and caller scope.
+- Prompt/result contents are not stored in the idempotency mapping. Only hashed scope, key, and fingerprint values are persisted.
+
+Deduplication rules:
+- Reuses in-flight GPT jobs for the same caller scope and semantic request.
+- Reuses recently completed GPT jobs for the same caller scope and semantic request.
+- Reuses failed or cancelled GPT jobs only when the client supplied the same explicit `Idempotency-Key`.
+- Transport-only retry hints such as `async`, `executionMode`, `responseMode`, `waitForResultMs`, and polling intervals do not create a new GPT job.
+- Reusing an explicit `Idempotency-Key` for a different semantic GPT request returns `409 IDEMPOTENCY_KEY_CONFLICT`.
+
+Job-backed `POST /gpt/:gptId` response shapes:
+- `202 Accepted`: `{ ok, status:"pending", jobId, poll, stream, jobStatus, lifecycleStatus, deduped?, idempotencyKey, idempotencySource, _route }`
+- `200 OK` after bounded inline completion: standard GPT envelope plus `{ jobId, status, lifecycleStatus, poll, stream, deduped?, idempotencyKey, idempotencySource }`
+- Duplicate submissions set `deduped: true` and return the canonical `jobId`.
+
+Job status routes:
+- `GET /jobs/:id`: returns `{ id, job_type, status, lifecycle_status, created_at, updated_at, completed_at, cancel_requested_at, cancel_reason, retention_until, idempotency_until, expires_at, error_message, output, result }`
+- `GET /jobs/:id/stream`: SSE stream of status changes. Terminal events include `completed`, `failed`, `cancelled`, and `expired`.
+- `POST /jobs/:id/cancel`: cancels a queued GPT job immediately or requests best-effort cancellation for a running GPT job.
+
+GPT job lifecycle:
+- Storage states: `pending`, `running`, `completed`, `failed`, `cancelled`, `expired`
+- API alias: `lifecycle_status: "queued"` is emitted for stored `pending`
+- Running-job cancellation is best effort; queued jobs cancel synchronously
+- Running stale jobs are recovered through the worker lease inspector
+- Old terminal GPT jobs transition to `expired`, then are compacted after an additional grace window
+
+Retention defaults:
+- Completed GPT jobs: 24h retention
+- Failed GPT jobs: 6h retention
+- Cancelled GPT jobs: 1h retention
+- Idempotency reuse window: 24h, capped by the terminal state retention window
+- Pending GPT jobs that sit unclaimed for too long are expired by lifecycle maintenance
+
+Client retry guidance:
+- Reuse the same `Idempotency-Key` for safe client retries of the same GPT request body.
+- Poll `GET /jobs/:id` or subscribe to `GET /jobs/:id/stream` after any `202`.
+- Treat `cancelled` and `expired` as terminal and submit a fresh request if more work is needed.
+
 ## Active Endpoint Groups
 
 ### Core health and status
@@ -114,6 +158,9 @@ No API path changes are required for Railway. Ensure liveness (`/healthz`) and r
 - `GET /workers/status`
 - `POST /workers/heal` (confirmation required)
 - `POST /workers/run/:workerId` (confirmation required)
+- `GET /jobs/:id`
+- `GET /jobs/:id/stream`
+- `POST /jobs/:id/cancel`
 - `POST /orchestration/reset` (confirmation required)
 - `GET /orchestration/status`
 - `POST /orchestration/purge` (confirmation required)

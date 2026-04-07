@@ -224,6 +224,28 @@ const workerRetriesTotal = new Gauge({
   registers: [metricsRegistry],
 });
 
+const gptRequestEventsTotal = new Counter({
+  name: 'gpt_request_events_total',
+  help: 'GPT request idempotency and dedupe events.',
+  labelNames: ['event', 'source'] as const,
+  registers: [metricsRegistry],
+});
+
+const gptJobEventsTotal = new Counter({
+  name: 'gpt_job_events_total',
+  help: 'GPT job lifecycle events by event, status, and retryability.',
+  labelNames: ['event', 'status', 'retryable'] as const,
+  registers: [metricsRegistry],
+});
+
+const gptJobTimingMs = new Histogram({
+  name: 'gpt_job_timing_ms',
+  help: 'GPT job queue wait, execution, and end-to-end timings in milliseconds.',
+  labelNames: ['phase', 'outcome'] as const,
+  buckets: [10, 25, 50, 100, 250, 500, 1_000, 2_500, 5_000, 10_000, 30_000, 60_000, 180_000],
+  registers: [metricsRegistry],
+});
+
 const dependencyCallsTotal = new Counter({
   name: 'dependency_calls_total',
   help: 'Dependency calls by dependency, operation, and outcome.',
@@ -585,6 +607,48 @@ export function recordWorkerFailureTotal(scope: string, value: number): void {
 
 export function recordWorkerRetryTotal(scope: string, value: number): void {
   workerRetriesTotal.set({ scope: normalizeLabel(scope) }, Math.max(0, value));
+}
+
+export function recordGptRequestEvent(input: {
+  event: string;
+  source?: string | null;
+}): void {
+  gptRequestEventsTotal.inc({
+    event: normalizeLabel(input.event),
+    source: normalizeLabel(input.source)
+  });
+}
+
+export function recordGptJobEvent(input: {
+  event: string;
+  status?: string | null;
+  retryable?: boolean | null;
+}): void {
+  gptJobEventsTotal.inc({
+    event: normalizeLabel(input.event),
+    status: normalizeLabel(input.status),
+    retryable:
+      input.retryable === null || input.retryable === undefined
+        ? 'unknown'
+        : input.retryable
+        ? 'true'
+        : 'false'
+  });
+}
+
+export function recordGptJobTiming(input: {
+  phase: 'queue_wait' | 'execution' | 'end_to_end';
+  outcome: string;
+  durationMs: number | null | undefined;
+}): void {
+  if (typeof input.durationMs !== 'number' || !Number.isFinite(input.durationMs) || input.durationMs < 0) {
+    return;
+  }
+
+  gptJobTimingMs.observe({
+    phase: normalizeLabel(input.phase),
+    outcome: normalizeLabel(input.outcome)
+  }, input.durationMs);
 }
 
 function isTimeoutError(error: unknown): boolean {
