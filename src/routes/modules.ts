@@ -3,6 +3,9 @@ import { loadModuleDefinitions, ModuleDef } from '@services/moduleLoader.js';
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { logger } from "@platform/logging/structuredLogging.js";
 import { sendBadRequest, sendNotFound, sendInternalErrorPayload } from '@shared/http/index.js';
+import { dispatchLegacyRouteToGpt } from './_core/legacyGptCompat.js';
+import { applyLegacyRouteDeprecationHeaders, buildCanonicalGptRoute } from '@shared/http/gptRouteHeaders.js';
+import { legacyGptRoutesEnabled } from '@platform/runtime/legacyRouteMode.js';
 
 const router = express.Router();
 
@@ -10,8 +13,19 @@ const registryByRoute = new Map<string, ModuleDef>();
 const registryByName = new Map<string, ModuleDef>();
 const moduleRoutes = new Map<string, string>();
 
-function createHandler(mod: ModuleDef) {
-  return async (req: Request, res: Response) => {
+function createHandler(mod: ModuleDef, route: string) {
+  return async (req: Request, res: Response, next: (error?: unknown) => void) => {
+    const canonicalGptId = mod.gptIds?.[0] ?? mod.name;
+
+    if (canonicalGptId) {
+      return dispatchLegacyRouteToGpt(req, res, next as any, {
+        legacyRoute: `/modules/${route}`,
+        gptId: canonicalGptId
+      });
+    }
+
+    applyLegacyRouteDeprecationHeaders(res, buildCanonicalGptRoute());
+
     //audit Assumption: rerouted requests should not execute module actions; risk: conflicting side effects; invariant: module execution skipped; handling: log warning + return safe error.
     if (req.dispatchRerouted && req.dispatchDecision === 'reroute') {
       logger.warn('Rerouted request reached module handler unexpectedly', {
@@ -60,7 +74,9 @@ export function registerModule(route: string, mod: ModuleDef) {
   registryByRoute.set(route, mod);
   registryByName.set(mod.name, mod);
   moduleRoutes.set(mod.name, route);
-  router.post(`/modules/${route}`, createHandler(mod));
+  if (legacyGptRoutesEnabled()) {
+    router.post(`/modules/${route}`, createHandler(mod, route));
+  }
 }
 
 /**
@@ -173,47 +189,68 @@ router.get('/registry/:moduleName', (req: Request, res: Response) => {
   });
 });
 
-router.post('/queryroute', async (req: Request, res: Response) => {
-  //audit Assumption: rerouted requests should not execute module query routes; risk: conflicting side effects; invariant: queryroute skipped; handling: log warning + return safe error.
-  if (req.dispatchRerouted && req.dispatchDecision === 'reroute') {
-    logger.warn('Rerouted request reached queryroute handler unexpectedly', {
-      module: 'modules',
-      url: req.url,
-      originalRoute: (req.body as Record<string, unknown>)?.dispatchReroute
-    });
-    return res.status(409).json({
-      error: 'Dispatch rerouted to safe default dispatcher',
-      code: 'DISPATCH_REROUTED',
-      target: '/gpt/arcanos-daemon'
-    });
-  }
+if (legacyGptRoutesEnabled()) {
+  router.post('/queryroute', async (req: Request, res: Response, next: (error?: unknown) => void) => {
+    const { module: moduleName } = req.body as {
+      module?: string;
+      action?: string;
+      payload?: unknown;
+    };
+    const mod = typeof moduleName === 'string'
+      ? (registryByName.get(moduleName) ?? registryByRoute.get(moduleName))
+      : undefined;
+    const canonicalGptId = mod?.gptIds?.[0] ?? (typeof moduleName === 'string' ? moduleName : null);
 
-  const { module: moduleName, action, payload } = req.body as {
-    module?: string;
-    action?: string;
-    payload?: unknown;
-  };
-  if (!moduleName) {
-    return sendBadRequest(res, 'Module name is required');
-  }
-  const mod = registryByName.get(moduleName) ?? registryByRoute.get(moduleName);
-  if (!mod) {
-    return sendNotFound(res, 'Module not found');
-  }
-  if (!action) {
-    return sendBadRequest(res, 'Action is required');
-  }
-  const handler = mod.actions[action];
-  if (!handler) {
-    return sendNotFound(res, 'Action not found');
-  }
-  try {
-    const result = await handler(payload);
-    res.json(result);
-  } catch (err: unknown) {
-    //audit Assumption: module failures should return 500
-    sendInternalErrorPayload(res, { error: resolveErrorMessage(err) });
-  }
-});
+    if (canonicalGptId) {
+      return dispatchLegacyRouteToGpt(req, res, next as any, {
+        legacyRoute: '/queryroute',
+        gptId: canonicalGptId
+      });
+    }
+
+    applyLegacyRouteDeprecationHeaders(res, buildCanonicalGptRoute());
+
+    //audit Assumption: rerouted requests should not execute module query routes; risk: conflicting side effects; invariant: queryroute skipped; handling: log warning + return safe error.
+    if (req.dispatchRerouted && req.dispatchDecision === 'reroute') {
+      logger.warn('Rerouted request reached queryroute handler unexpectedly', {
+        module: 'modules',
+        url: req.url,
+        originalRoute: (req.body as Record<string, unknown>)?.dispatchReroute
+      });
+      return res.status(409).json({
+        error: 'Dispatch rerouted to safe default dispatcher',
+        code: 'DISPATCH_REROUTED',
+        target: '/gpt/arcanos-daemon'
+      });
+    }
+
+    const { module: moduleRouteOrName, action, payload } = req.body as {
+      module?: string;
+      action?: string;
+      payload?: unknown;
+    };
+    if (!moduleRouteOrName) {
+      return sendBadRequest(res, 'Module name is required');
+    }
+    const fallbackMod = registryByName.get(moduleRouteOrName) ?? registryByRoute.get(moduleRouteOrName);
+    if (!fallbackMod) {
+      return sendNotFound(res, 'Module not found');
+    }
+    if (!action) {
+      return sendBadRequest(res, 'Action is required');
+    }
+    const handler = fallbackMod.actions[action];
+    if (!handler) {
+      return sendNotFound(res, 'Action not found');
+    }
+    try {
+      const result = await handler(payload);
+      res.json(result);
+    } catch (err: unknown) {
+      //audit Assumption: module failures should return 500
+      sendInternalErrorPayload(res, { error: resolveErrorMessage(err) });
+    }
+  });
+}
 
 export default router;

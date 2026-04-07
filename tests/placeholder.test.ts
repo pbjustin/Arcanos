@@ -6,6 +6,7 @@ import { resetSafetyRuntimeStateForTests } from '../src/services/safety/runtimeS
 
 const originalApiKey = process.env.OPENAI_API_KEY;
 const originalApiKeyAlias = process.env.API_KEY;
+const originalLegacyGptRoutes = process.env.LEGACY_GPT_ROUTES;
 
 describe('AI endpoints in mock mode', () => {
   let server: Server;
@@ -14,6 +15,7 @@ describe('AI endpoints in mock mode', () => {
   beforeAll(async () => {
     process.env.OPENAI_API_KEY = '';
     process.env.API_KEY = '';
+    process.env.LEGACY_GPT_ROUTES = 'enabled';
     resetSafetyRuntimeStateForTests();
     const app = createApp();
     server = await new Promise<Server>((resolve, reject) => {
@@ -31,6 +33,7 @@ describe('AI endpoints in mock mode', () => {
   afterAll(async () => {
     process.env.OPENAI_API_KEY = originalApiKey;
     process.env.API_KEY = originalApiKeyAlias;
+    process.env.LEGACY_GPT_ROUTES = originalLegacyGptRoutes;
     resetSafetyRuntimeStateForTests();
     await new Promise<void>((resolve, reject) => {
       if (!server) {
@@ -71,7 +74,7 @@ describe('AI endpoints in mock mode', () => {
     expect(payload.error?.code).toBe('BODY_GPT_ID_FORBIDDEN');
   });
 
-  it('provides deterministic mock diagnostics for /arcanos', async () => {
+  it('proxies deprecated /arcanos traffic through the canonical GPT route', async () => {
     const response = await fetch(`${baseUrl}/arcanos`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-confirmed': 'yes' },
@@ -80,9 +83,10 @@ describe('AI endpoints in mock mode', () => {
 
     expect(response.status).toBe(200);
     const payload = await response.json();
-    expect(payload.result).toContain('[MOCK ARCANOS RESPONSE]');
-    expect(payload.componentStatus).toContain('MOCK');
-    expect(payload.meta).toHaveProperty('id');
-    expect(payload.meta).toHaveProperty('created');
+    expect(response.headers.get('x-canonical-route')).toBe('/gpt/arcanos-core');
+    expect(response.headers.get('x-route-deprecated')).toBe('true');
+    expect(payload.ok).toBe(true);
+    expect(payload._route?.gptId).toBe('arcanos-core');
+    expect(payload.result?.result).toContain('[MOCK RESPONSE]');
   });
 });
