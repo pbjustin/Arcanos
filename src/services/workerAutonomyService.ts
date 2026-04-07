@@ -932,18 +932,34 @@ export function classifyWorkerExecutionError(error: unknown): {
   retryable: boolean;
 } {
   const message = resolveErrorMessage(error);
-    const normalizedMessage = message.toLowerCase();
-    const cancellationPatterns = [
-      'job cancellation requested',
-      'job was cancelled',
-      'gpt job was cancelled',
-      'cancellation requested while',
-      'cancelled by client'
-    ];
-    const retryablePatterns = [
-      'abort',
-      'aborted',
-      'timeout',
+  const normalizedMessage = message.toLowerCase();
+  const cancellationPatterns = [
+    'job cancellation requested',
+    'job was cancelled',
+    'gpt job was cancelled',
+    'cancellation requested while',
+    'cancelled by client'
+  ];
+  const authenticationPatterns = [
+    'incorrect api key',
+    'invalid api key',
+    'authentication',
+    'unauthorized',
+    '401'
+  ];
+  const budgetExhaustionPatterns = [
+    'aborted_due_to_budget',
+    'openai_call_aborted_due_to_budget',
+    'token budget',
+    'budget exceeded',
+    'context length',
+    'max tokens',
+    'prompt too long'
+  ];
+  const retryablePatterns = [
+    'abort',
+    'aborted',
+    'timeout',
     'timed out',
     'rate limit',
     '429',
@@ -955,21 +971,19 @@ export function classifyWorkerExecutionError(error: unknown): {
     'socket hang up',
     'temporary',
     'network',
-    'openai',
-    'incorrect api key',
-    'invalid api key',
-    'authentication',
     'overloaded'
   ];
   const terminalPatterns = [
     'invalid job.input',
     'unsupported job_type',
-      'schema',
-      'validation',
-      'missing',
-      'not found',
-      ...cancellationPatterns
-    ];
+    'schema',
+    'validation',
+    'missing',
+    'not found',
+    ...authenticationPatterns,
+    ...budgetExhaustionPatterns,
+    ...cancellationPatterns
+  ];
 
   //audit Assumption: explicit validation and unsupported-type failures are deterministic; failure risk: wasting retry budget on poison jobs; expected invariant: terminal patterns override transient ones; handling strategy: check terminal signatures first.
   if (terminalPatterns.some(pattern => normalizedMessage.includes(pattern))) {
