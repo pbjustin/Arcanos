@@ -6,6 +6,8 @@ const mockRouteGptRequest = jest.fn();
 const findOrCreateGptJobMock = jest.fn();
 const planAutonomousWorkerJobMock = jest.fn();
 const waitForQueuedGptJobCompletionMock = jest.fn();
+const resolveAsyncGptPollIntervalMsMock = jest.fn(() => 250);
+const resolveAsyncGptWaitForResultMsMock = jest.fn((requested?: number) => requested ?? 3500);
 class MockIdempotencyKeyConflictError extends Error {}
 class MockJobRepositoryUnavailableError extends Error {}
 
@@ -48,8 +50,8 @@ jest.unstable_mockModule('../src/services/workerAutonomyService.js', () => ({
 
 jest.unstable_mockModule('../src/services/queuedGptCompletionService.js', () => ({
   waitForQueuedGptJobCompletion: waitForQueuedGptJobCompletionMock,
-  resolveAsyncGptPollIntervalMs: jest.fn(() => 250),
-  resolveAsyncGptWaitForResultMs: jest.fn(() => 3500)
+  resolveAsyncGptPollIntervalMs: resolveAsyncGptPollIntervalMsMock,
+  resolveAsyncGptWaitForResultMs: resolveAsyncGptWaitForResultMsMock
 }));
 
 const { default: requestContext } = await import('../src/middleware/requestContext.js');
@@ -67,6 +69,7 @@ describe('async /gpt idempotency', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     delete process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT;
+    delete process.env.GPT_ASYNC_HEAVY_WAIT_FOR_RESULT_MS;
     planAutonomousWorkerJobMock.mockResolvedValue({
       status: 'pending',
       retryCount: 0,
@@ -122,6 +125,41 @@ describe('async /gpt idempotency', () => {
         route: 'async'
       })
     });
+  });
+
+  it('uses a short inline wait budget for heavy async core requests', async () => {
+    findOrCreateGptJobMock.mockResolvedValue({
+      job: {
+        id: 'job-heavy',
+        status: 'running'
+      },
+      created: true,
+      deduped: false,
+      dedupeReason: 'new_job'
+    });
+    waitForQueuedGptJobCompletionMock.mockResolvedValue({
+      state: 'pending',
+      job: {
+        id: 'job-heavy',
+        status: 'running'
+      }
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        prompt: 'Return a full distributed systems diagnosis for this latency incident'
+      });
+
+    expect(response.status).toBe(202);
+    expect(resolveAsyncGptWaitForResultMsMock).toHaveBeenCalledWith(500);
+    expect(waitForQueuedGptJobCompletionMock).toHaveBeenCalledWith(
+      'job-heavy',
+      expect.objectContaining({
+        waitForResultMs: 500,
+        pollIntervalMs: 250
+      })
+    );
   });
 
   it('reuses a completed result for duplicate async submissions', async () => {

@@ -64,6 +64,7 @@ const ARCANOS_CORE_GPT_IDS = new Set(['arcanos-core', 'core', 'arcanos-daemon'])
 const DEFAULT_GPT_ASYNC_HEAVY_PROMPT_CHARS = 1_200;
 const DEFAULT_GPT_ASYNC_HEAVY_MESSAGE_COUNT = 8;
 const DEFAULT_GPT_ASYNC_HEAVY_MAX_WORDS = 700;
+const DEFAULT_GPT_ASYNC_HEAVY_WAIT_FOR_RESULT_MS = 500;
 
 type GptExecutionMode = 'sync' | 'async';
 type GptExecutionPlan = {
@@ -670,8 +671,14 @@ router.post("/:gptId", async (req, res, next) => {
           requestedAction,
           routeTimeoutProfile
         });
+        const requestedAsyncWaitForResultMs = executionPlan.heavyPrompt
+          ? readPositiveIntegerEnv(
+              'GPT_ASYNC_HEAVY_WAIT_FOR_RESULT_MS',
+              DEFAULT_GPT_ASYNC_HEAVY_WAIT_FOR_RESULT_MS
+            )
+          : undefined;
         const asyncWaitForResultMs = clampAsyncWaitForRouteTimeout(
-          resolveAsyncGptWaitForResultMs(undefined),
+          resolveAsyncGptWaitForResultMs(requestedAsyncWaitForResultMs),
           routeTimeoutMs
         );
         const asyncPollIntervalMs = resolveAsyncGptPollIntervalMs(undefined);
