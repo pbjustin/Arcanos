@@ -7,6 +7,15 @@ import {
 } from '@shared/http/aiDegradedHeaders.js';
 
 type BodyTransform = (body: unknown, req: Request) => unknown;
+type SuccessBodyTransform = (
+  result: unknown,
+  req: Request,
+  envelope: {
+    ok: true;
+    result: unknown;
+    _route: unknown;
+  }
+) => unknown;
 
 const LEGACY_ROUTE_ERROR_STATUS_CODES: Record<string, number> = {
   UNKNOWN_GPT: 404,
@@ -22,6 +31,8 @@ export async function dispatchLegacyRouteToGpt(
     legacyRoute: string;
     gptId: string;
     bodyTransform?: BodyTransform;
+    successBodyTransform?: SuccessBodyTransform;
+    applyDeprecationHeaders?: boolean;
   }
 ): Promise<void> {
   try {
@@ -30,7 +41,9 @@ export async function dispatchLegacyRouteToGpt(
       : req.body;
     const canonicalRoute = buildCanonicalGptRoute(options.gptId);
 
-    applyLegacyRouteDeprecationHeaders(res, canonicalRoute);
+    if (options.applyDeprecationHeaders !== false) {
+      applyLegacyRouteDeprecationHeaders(res, canonicalRoute);
+    }
 
     req.logger?.info?.('legacy.route.compat_dispatch', {
       legacyRoute: options.legacyRoute,
@@ -55,7 +68,10 @@ export async function dispatchLegacyRouteToGpt(
     }
 
     applyAIDegradedResponseHeaders(res, extractAIDegradedResponseMetadata(envelope.result));
-    res.status(200).json(envelope);
+    const responseBody = options.successBodyTransform
+      ? options.successBodyTransform(envelope.result, req, envelope)
+      : envelope;
+    res.status(200).json(responseBody);
   } catch (error) {
     next(error);
   }

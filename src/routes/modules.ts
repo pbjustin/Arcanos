@@ -6,6 +6,10 @@ import { sendBadRequest, sendNotFound, sendInternalErrorPayload } from '@shared/
 import { dispatchLegacyRouteToGpt } from './_core/legacyGptCompat.js';
 import { applyLegacyRouteDeprecationHeaders, buildCanonicalGptRoute } from '@shared/http/gptRouteHeaders.js';
 import { legacyGptRoutesEnabled } from '@platform/runtime/legacyRouteMode.js';
+import {
+  buildLegacyModuleDispatchBody,
+  unwrapLegacyModuleRouteResult
+} from './_core/legacyRouteAdapters.js';
 
 const router = express.Router();
 
@@ -19,33 +23,19 @@ type ModuleDispatchRequestBody = {
   payload?: unknown;
 };
 
-function resolveModuleDispatchTarget(moduleName: string | undefined): {
-  mod: ModuleDef | undefined;
-  canonicalGptId: string | null;
-} {
-  const mod = typeof moduleName === 'string'
+function resolveRegisteredModule(moduleName: string | undefined): ModuleDef | undefined {
+  return typeof moduleName === 'string'
     ? (registryByName.get(moduleName) ?? registryByRoute.get(moduleName))
     : undefined;
-  const canonicalGptId = mod?.gptIds?.[0] ?? (typeof moduleName === 'string' ? moduleName : null);
-
-  return {
-    mod,
-    canonicalGptId
-  };
 }
 
 function createHandler(mod: ModuleDef, route: string) {
   return async (req: Request, res: Response, next: NextFunction) => {
-    const canonicalGptId = mod.gptIds?.[0] ?? mod.name;
-
-    if (canonicalGptId) {
-      return dispatchLegacyRouteToGpt(req, res, next, {
-        legacyRoute: `/modules/${route}`,
-        gptId: canonicalGptId
-      });
-    }
-
-    applyLegacyRouteDeprecationHeaders(res, buildCanonicalGptRoute());
+    const canonicalGptId = mod.gptIds?.[0] ?? null;
+    applyLegacyRouteDeprecationHeaders(
+      res,
+      canonicalGptId ? buildCanonicalGptRoute(canonicalGptId) : buildCanonicalGptRoute()
+    );
 
     //audit Assumption: rerouted requests should not execute module actions; risk: conflicting side effects; invariant: module execution skipped; handling: log warning + return safe error.
     if (req.dispatchRerouted && req.dispatchDecision === 'reroute') {
@@ -71,6 +61,15 @@ function createHandler(mod: ModuleDef, route: string) {
     const handler = mod.actions[action];
     if (!handler) {
       return sendNotFound(res, 'Action not found');
+    }
+    if (canonicalGptId) {
+      return dispatchLegacyRouteToGpt(req, res, next, {
+        legacyRoute: `/modules/${route}`,
+        gptId: canonicalGptId,
+        applyDeprecationHeaders: false,
+        bodyTransform: () => buildLegacyModuleDispatchBody(action, payload),
+        successBodyTransform: (result) => unwrapLegacyModuleRouteResult(result)
+      });
     }
     try {
       const result = await handler(payload);
@@ -209,16 +208,12 @@ router.get('/registry/:moduleName', (req: Request, res: Response) => {
 if (legacyGptRoutesEnabled()) {
   router.post('/queryroute', async (req: Request, res: Response, next: NextFunction) => {
     const { module: moduleName, action, payload } = req.body as ModuleDispatchRequestBody;
-    const { mod, canonicalGptId } = resolveModuleDispatchTarget(moduleName);
-
-    if (canonicalGptId) {
-      return dispatchLegacyRouteToGpt(req, res, next, {
-        legacyRoute: '/queryroute',
-        gptId: canonicalGptId
-      });
-    }
-
-    applyLegacyRouteDeprecationHeaders(res, buildCanonicalGptRoute());
+    const mod = resolveRegisteredModule(moduleName);
+    const canonicalGptId = mod?.gptIds?.[0] ?? null;
+    applyLegacyRouteDeprecationHeaders(
+      res,
+      canonicalGptId ? buildCanonicalGptRoute(canonicalGptId) : buildCanonicalGptRoute()
+    );
 
     //audit Assumption: rerouted requests should not execute module query routes; risk: conflicting side effects; invariant: queryroute skipped; handling: log warning + return safe error.
     if (req.dispatchRerouted && req.dispatchDecision === 'reroute') {
@@ -246,6 +241,15 @@ if (legacyGptRoutesEnabled()) {
     const handler = mod.actions[action];
     if (!handler) {
       return sendNotFound(res, 'Action not found');
+    }
+    if (canonicalGptId) {
+      return dispatchLegacyRouteToGpt(req, res, next, {
+        legacyRoute: '/queryroute',
+        gptId: canonicalGptId,
+        applyDeprecationHeaders: false,
+        bodyTransform: () => buildLegacyModuleDispatchBody(action, payload),
+        successBodyTransform: (result) => unwrapLegacyModuleRouteResult(result)
+      });
     }
     try {
       const result = await handler(payload);

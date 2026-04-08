@@ -1,5 +1,6 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
+const originalLegacyGptRoutes = process.env.LEGACY_GPT_ROUTES;
 process.env.LEGACY_GPT_ROUTES = 'enabled';
 
 const express = (await import('express')).default;
@@ -40,6 +41,15 @@ function buildApp() {
 }
 
 describe('module legacy route compatibility', () => {
+  afterAll(() => {
+    if (originalLegacyGptRoutes === undefined) {
+      delete process.env.LEGACY_GPT_ROUTES;
+      return;
+    }
+
+    process.env.LEGACY_GPT_ROUTES = originalLegacyGptRoutes;
+  });
+
   beforeEach(() => {
     jest.clearAllMocks();
     mockRouteGptRequest.mockResolvedValue({
@@ -73,7 +83,6 @@ describe('module legacy route compatibility', () => {
       expect.objectContaining({
         gptId: 'test-legacy-gpt',
         body: {
-          module: 'TEST:MODULE',
           action: 'query',
           payload: {
             prompt: 'hello'
@@ -84,14 +93,27 @@ describe('module legacy route compatibility', () => {
     expect(moduleActionHandler).not.toHaveBeenCalled();
     expect(response.body).toMatchObject({
       ok: true,
-      result: {
-        ok: true,
-        echoedPrompt: 'hello'
-      },
-      _route: {
-        gptId: 'test-legacy-gpt'
-      }
+      echoedPrompt: 'hello'
     });
+    expect(response.body._route).toBeUndefined();
+  });
+
+  it('preserves the legacy /modules/:route validation contract before dispatching', async () => {
+    const response = await request(buildApp())
+      .post('/modules/test-route')
+      .send({
+        action: 'query',
+        payload: {
+          prompt: 'hello'
+        }
+      });
+
+    expect(response.status).toBe(404);
+    expect(response.body).toEqual({
+      error: 'Module not found'
+    });
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+    expect(moduleActionHandler).not.toHaveBeenCalled();
   });
 
   it('proxies /queryroute traffic through the canonical GPT dispatcher', async () => {
@@ -110,9 +132,54 @@ describe('module legacy route compatibility', () => {
     expect(response.headers['x-route-deprecated']).toBe('true');
     expect(mockRouteGptRequest).toHaveBeenCalledWith(
       expect.objectContaining({
-        gptId: 'test-legacy-gpt'
+        gptId: 'test-legacy-gpt',
+        body: {
+          action: 'query',
+          payload: {
+            prompt: 'hello'
+          }
+        }
       })
     );
-    expect(response.body._route.gptId).toBe('test-legacy-gpt');
+    expect(response.body).toMatchObject({
+      ok: true,
+      echoedPrompt: 'hello'
+    });
+    expect(response.body._route).toBeUndefined();
+  });
+
+  it('preserves the legacy /queryroute validation contract before dispatching', async () => {
+    const response = await request(buildApp())
+      .post('/queryroute')
+      .send({
+        module: 'TEST:MODULE',
+        payload: {
+          prompt: 'hello'
+        }
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual({
+      error: 'Action is required'
+    });
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('does not fall through to raw GPT ids for unknown /queryroute modules', async () => {
+    const response = await request(buildApp())
+      .post('/queryroute')
+      .send({
+        module: 'no-such-gpt',
+        action: 'query',
+        payload: {
+          prompt: 'hello'
+        }
+      });
+
+    expect(response.status).toBe(404);
+    expect(response.body).toEqual({
+      error: 'Module not found'
+    });
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 });

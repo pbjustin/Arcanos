@@ -15,6 +15,11 @@ function buildApp() {
 
 describe('legacy GPT route gate', () => {
   afterEach(() => {
+    if (originalLegacyGptRoutes === undefined) {
+      delete process.env.LEGACY_GPT_ROUTES;
+      return;
+    }
+
     process.env.LEGACY_GPT_ROUTES = originalLegacyGptRoutes;
   });
 
@@ -29,8 +34,16 @@ describe('legacy GPT route gate', () => {
     const writeResponse = await request(app)
       .post('/write')
       .send({ prompt: 'hello' });
+    const guideResponse = await request(app)
+      .post('/guide')
+      .send({ prompt: 'hello' });
+    const simResponse = await request(app)
+      .post('/sim')
+      .send({ prompt: 'hello' });
 
     expect(arcanosResponse.status).toBe(404);
     expect(writeResponse.status).toBe(404);
+    expect(guideResponse.status).toBe(404);
+    expect(simResponse.status).toBe(404);
   });
 });

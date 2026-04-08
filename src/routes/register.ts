@@ -115,9 +115,9 @@ export function registerRoutes(app: Express): void {
   app.use('/', queryFinetuneRouter);
   app.use('/', apiSessionSystemRouter);
   app.use('/', apiRouter);
+  app.use('/', arcanosPipelineRouter);
   if (legacyGptRoutesEnabled()) {
     app.use('/', arcanosRouter);
-    app.use('/', arcanosPipelineRouter);
     app.use('/', aiEndpointsRouter);
   }
   app.use('/', modulesRouter);
