@@ -141,6 +141,8 @@ interface WorkerWatchdogState {
   restartRecommended: boolean;
 }
 
+const WORKER_RUNTIME_SNAPSHOT_MIN_INTERVAL_MS = 30_000;
+
 const DEFAULT_AUTONOMY_SETTINGS: WorkerAutonomySettings = {
   workerId: process.env.JOB_WORKER_ID?.trim() || process.env.WORKER_ID?.trim() || 'async-queue',
   statsWorkerId:
@@ -309,6 +311,7 @@ export class WorkerAutonomyService {
   private readonly settings: WorkerAutonomySettings;
   private readonly startedAt: string;
   private readonly state: RuntimeSnapshotState;
+  private lastSnapshotPersistedAtMs = 0;
 
   constructor(settings: WorkerAutonomySettings = getWorkerAutonomySettings()) {
     this.settings = settings;
@@ -387,7 +390,7 @@ export class WorkerAutonomyService {
       await this.persistSnapshot({
         healthStatus: 'unhealthy',
         alerts: [`Bootstrap failed: ${message}`]
-      });
+      }, { force: true });
       throw error;
     }
   }
@@ -453,7 +456,7 @@ export class WorkerAutonomyService {
       healthStatus,
       alerts,
       watchdogState
-    });
+    }, { force: true });
     await this.maybeSendFailureWebhook(healthStatus, alerts, queueSummary, stats, reason);
 
     return {
@@ -510,7 +513,7 @@ export class WorkerAutonomyService {
       stats,
       healthStatus: 'degraded',
       alerts: [`Budget pause active: ${reason}`]
-    });
+    }, { force: true });
 
     return {
       allowed: false,
@@ -535,7 +538,7 @@ export class WorkerAutonomyService {
     await this.persistSnapshot({
       healthStatus: 'healthy',
       alerts: []
-    });
+    }, { force: true });
   }
 
   /**
@@ -571,7 +574,7 @@ export class WorkerAutonomyService {
     await this.persistSnapshot({
       healthStatus: this.state.lastBudgetPauseReason ? 'degraded' : 'healthy',
       alerts: this.state.lastBudgetPauseReason ? [`Budget pause active: ${this.state.lastBudgetPauseReason}`] : []
-      });
+      }, { force: true });
   }
 
   /**
@@ -590,7 +593,7 @@ export class WorkerAutonomyService {
     await this.persistSnapshot({
       healthStatus: this.state.lastBudgetPauseReason ? 'degraded' : 'healthy',
       alerts: this.state.lastBudgetPauseReason ? [`Budget pause active: ${this.state.lastBudgetPauseReason}`] : []
-    });
+    }, { force: true });
   }
 
   /**
@@ -638,7 +641,7 @@ export class WorkerAutonomyService {
       await this.persistSnapshot({
         healthStatus: 'degraded',
         alerts: [`Scheduled retry for job ${job.id} in ${delayMs}ms.`]
-      });
+      }, { force: true });
       return {
         action: 'retried',
         delayMs
@@ -670,7 +673,7 @@ export class WorkerAutonomyService {
     await this.persistSnapshot({
       healthStatus: this.state.terminalFailures >= this.settings.failureWebhookThreshold ? 'unhealthy' : 'degraded',
       alerts: [`Job ${job.id} failed: ${errorMessage}`]
-    });
+    }, { force: true });
     await this.maybeSendFailureWebhook(
       this.state.terminalFailures >= this.settings.failureWebhookThreshold ? 'unhealthy' : 'degraded',
       [`Job ${job.id} failed: ${errorMessage}`],
@@ -710,7 +713,7 @@ export class WorkerAutonomyService {
       alerts,
       queueSummary,
       watchdogState
-    });
+    }, { force: healthStatus !== 'healthy' || alerts.length > 0 });
   }
 
   private deriveHealthStatus(
@@ -740,7 +743,19 @@ export class WorkerAutonomyService {
     return 'healthy';
   }
 
-  private async persistSnapshot(context: WorkerSnapshotContext): Promise<void> {
+  private async persistSnapshot(
+    context: WorkerSnapshotContext,
+    options: { force?: boolean } = {}
+  ): Promise<void> {
+    const nowMs = Date.now();
+    if (
+      !options.force &&
+      this.lastSnapshotPersistedAtMs > 0 &&
+      nowMs - this.lastSnapshotPersistedAtMs < WORKER_RUNTIME_SNAPSHOT_MIN_INTERVAL_MS
+    ) {
+      return;
+    }
+
     const watchdogState = context.watchdogState ?? this.buildWatchdogState(context.queueSummary ?? null);
     const snapshotRecord: WorkerRuntimeSnapshotRecord = {
       workerId: this.settings.workerId,
@@ -771,6 +786,7 @@ export class WorkerAutonomyService {
 
     try {
       await upsertWorkerRuntimeSnapshot(snapshotRecord);
+      this.lastSnapshotPersistedAtMs = nowMs;
     } catch (error: unknown) {
       //audit Assumption: snapshot persistence is operationally important but must not crash the worker loop; failure risk: observability outage halts queue processing; expected invariant: worker continues after logging persistence failures; handling strategy: log and continue.
       console.warn('[Worker Autonomy] Failed to persist runtime snapshot:', resolveErrorMessage(error));
@@ -790,18 +806,9 @@ export class WorkerAutonomyService {
       this.state.currentJobId === null &&
       inactivityMs !== null &&
       inactivityMs >= this.settings.watchdogIdleMs;
-    const idleExceeded =
-      this.state.currentJobId === null &&
-      inactivityMs !== null &&
-      inactivityMs >= this.settings.watchdogIdleMs;
-    const idleReason = idleExceeded
-      ? this.state.lastProcessedJobAt
-        ? `No worker activity for ${inactivityMs}ms since ${this.state.lastProcessedJobAt}.`
-        : `No worker receipts or processed jobs observed for ${inactivityMs}ms after startup.`
-      : null;
     const reason = triggered
       ? `No worker activity for ${inactivityMs}ms while queue work remained pending.`
-      : idleReason;
+      : null;
 
     return {
       triggered,
@@ -810,7 +817,7 @@ export class WorkerAutonomyService {
       lastActivityAt,
       lastProcessedJobAt: this.state.lastProcessedJobAt,
       idleThresholdMs: this.settings.watchdogIdleMs,
-      restartRecommended: idleExceeded
+      restartRecommended: triggered
     };
   }
 
@@ -932,18 +939,41 @@ export function classifyWorkerExecutionError(error: unknown): {
   retryable: boolean;
 } {
   const message = resolveErrorMessage(error);
-    const normalizedMessage = message.toLowerCase();
-    const cancellationPatterns = [
-      'job cancellation requested',
-      'job was cancelled',
-      'gpt job was cancelled',
-      'cancellation requested while',
-      'cancelled by client'
-    ];
-    const retryablePatterns = [
-      'abort',
-      'aborted',
-      'timeout',
+  const normalizedMessage = message.toLowerCase();
+  const cancellationPatterns = [
+    'job cancellation requested',
+    'job was cancelled',
+    'gpt job was cancelled',
+    'cancellation requested while',
+    'cancelled by client'
+  ];
+  const terminalPatterns = [
+    'invalid job.input',
+    'unsupported job_type',
+    'schema',
+    'validation',
+    'missing',
+    'not found',
+    'openai_call_aborted_due_to_budget',
+    'runtime_budget_exhausted',
+    'runtimebudget',
+    'budgetexceeded',
+    'watchdog threshold',
+    'execution aborted by watchdog',
+    'session token limit exceeded',
+    'ai call budget exceeded',
+    'ai prompt-token budget exceeded',
+    'ai completion-token budget exceeded',
+    'ai total-token budget exceeded',
+    'incorrect api key',
+    'invalid api key',
+    'authentication',
+    ...cancellationPatterns
+  ];
+  const retryablePatterns = [
+    'abort',
+    'aborted',
+    'timeout',
     'timed out',
     'rate limit',
     '429',
@@ -956,20 +986,8 @@ export function classifyWorkerExecutionError(error: unknown): {
     'temporary',
     'network',
     'openai',
-    'incorrect api key',
-    'invalid api key',
-    'authentication',
     'overloaded'
   ];
-  const terminalPatterns = [
-    'invalid job.input',
-    'unsupported job_type',
-      'schema',
-      'validation',
-      'missing',
-      'not found',
-      ...cancellationPatterns
-    ];
 
   //audit Assumption: explicit validation and unsupported-type failures are deterministic; failure risk: wasting retry budget on poison jobs; expected invariant: terminal patterns override transient ones; handling strategy: check terminal signatures first.
   if (terminalPatterns.some(pattern => normalizedMessage.includes(pattern))) {
@@ -1164,7 +1182,7 @@ function readWatchdogState(worker: WorkerRuntimeSnapshotRecord): WorkerWatchdogS
 }
 
 function deriveWorkerInactivitySignal(watchdog: WorkerWatchdogState | null): WorkerInactivitySignal {
-  if (!watchdog?.restartRecommended) {
+  if (!watchdog?.triggered) {
     return {
       detected: false,
       reason: null,

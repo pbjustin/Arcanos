@@ -56,15 +56,9 @@ router.post(
   '/api/reusables',
   createValidationMiddleware(reusableCodeRequestSchema),
   asyncHandler(async (req: Request, res: Response) => {
-    const { adapter, client } = getOpenAIClientOrAdapter();
+    const { adapter } = getOpenAIClientOrAdapter();
     if (!adapter) {
       sendCodegenServiceUnavailable(res, 'adapter');
-      return;
-    }
-
-    //audit Assumption: OpenAI client must be available; risk: missing API key; invariant: client required for generation; handling: return 503.
-    if (!client) {
-      sendCodegenServiceUnavailable(res, 'client');
       return;
     }
 
@@ -73,7 +67,7 @@ router.post(
     const includeDocs = requestBody.includeDocs ?? true;
     const language = requestBody.language ?? 'typescript';
 
-    const result = await generateReusableCodeSnippets(client, {
+    const result = await generateReusableCodeSnippets(adapter, {
       target: target as ReusableCodeTarget,
       includeDocs,
       language
@@ -96,15 +90,9 @@ router.post(
  * @edgeCases Returns 503 when OpenAI client is not initialized.
  */
 router.get('/api/reusables/health', (_req: Request, res: Response) => {
-  const { adapter, client } = getOpenAIClientOrAdapter();
+  const { adapter } = getOpenAIClientOrAdapter();
   if (!adapter) {
     sendCodegenHealthUnavailable(res, 'adapter');
-    return;
-  }
-
-  //audit Assumption: client presence maps to readiness; risk: false positives; invariant: client required; handling: status based on client.
-  if (!client) {
-    sendCodegenHealthUnavailable(res, 'client');
     return;
   }
 

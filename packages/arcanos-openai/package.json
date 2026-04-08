@@ -33,6 +33,10 @@
       "types": "./dist/responseParsing.d.ts",
       "import": "./dist/responseParsing.js"
     },
+    "./responses": {
+      "types": "./dist/responses.d.ts",
+      "import": "./dist/responses.js"
+    },
     "./unifiedClient": {
       "types": "./dist/unifiedClient.d.ts",
       "import": "./dist/unifiedClient.js"

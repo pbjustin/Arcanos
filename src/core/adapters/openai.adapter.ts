@@ -3,6 +3,10 @@ import {
   extractTextFromContentParts,
   normalizeUsage as normalizeOpenAIUsage
 } from '@arcanos/openai/responseParsing';
+import {
+  createSafeResponsesParse,
+  type OpenAIResponsesClientLike,
+} from '@arcanos/openai';
 /**
  * OpenAI Adapter
  * 
@@ -364,7 +368,6 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): OpenAIAdapter 
   });
 
   const originalResponsesCreate = client.responses.create.bind(client.responses);
-  const originalResponsesParse = client.responses.parse.bind(client.responses);
   const originalChatCreate = client.chat.completions.create.bind(client.chat.completions);
   const originalEmbeddingsCreate = client.embeddings.create.bind(client.embeddings);
   const originalImagesGenerate = client.images.generate.bind(client.images);
@@ -411,6 +414,39 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): OpenAIAdapter 
     });
     return convertResponseToLegacyChatCompletion(response, String(nonStreamingParams.model || 'gpt-4.1-mini'));
   };
+
+  const safeResponsesParse = async (
+    params: Record<string, unknown>,
+    options?: OpenAIResponsesRequestOptions
+  ): Promise<any> => {
+    const normalizedParams = normalizeResponsesCreateParams(params as ResponseCreateParamsNonStreaming);
+    const requestedModel =
+      typeof normalizedParams.model === 'string' && normalizedParams.model.trim().length > 0
+        ? normalizedParams.model.trim()
+        : null;
+    const safeParseClient: OpenAIResponsesClientLike = {
+      responses: {
+        create: (
+          payload: ResponseCreateParamsNonStreaming,
+          requestOptions?: OpenAIResponsesRequestOptions
+        ) => originalResponsesCreate(payload, requestOptions),
+      },
+    };
+
+    return instrumentOpenAIOperation({
+      operation: 'responses_parse',
+      model: requestedModel,
+      callback: () => createSafeResponsesParse(
+        safeParseClient,
+        normalizedParams,
+        options,
+        { source: 'OpenAI responses.parse' }
+      ),
+      extractUsage: (result) => (result as { usage?: unknown } | null)?.usage,
+    });
+  };
+
+  (client.responses as { parse: typeof safeResponsesParse }).parse = safeResponsesParse;
 
   return {
     responses: {
@@ -460,19 +496,7 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): OpenAIAdapter 
       parse: async (
         params: Record<string, unknown>,
         options?: OpenAIResponsesRequestOptions
-      ): Promise<any> => {
-        //audit Assumption: parse may use evolving schema shape; risk: over-constrained types break compile on SDK updates; invariant: parse call remains available; handling: permissive typed pass-through.
-        const requestedModel =
-          typeof params.model === 'string' && params.model.trim().length > 0
-            ? params.model.trim()
-            : null;
-        return instrumentOpenAIOperation({
-          operation: 'responses_parse',
-          model: requestedModel,
-          callback: () => originalResponsesParse(params as never, options),
-          extractUsage: (result) => (result as { usage?: unknown } | null)?.usage,
-        });
-      }
+      ): Promise<any> => safeResponsesParse(params, options)
     },
     chat: {
       completions: {

@@ -166,7 +166,7 @@ describe('workerAutonomyService', () => {
     );
   });
 
-  it('marks workers degraded when inactivity exceeds the watchdog threshold without receipts', async () => {
+  it('keeps idle workers healthy when inactivity exceeds the watchdog threshold without pending work', async () => {
     listWorkerRuntimeSnapshotsMock.mockResolvedValue([
       {
         workerId: 'async-queue',
@@ -183,12 +183,12 @@ describe('workerAutonomyService', () => {
           lastProcessedJobAt: null,
           watchdog: {
             triggered: false,
-            reason: 'No worker receipts or processed jobs observed for 240000ms after startup.',
+            reason: null,
             inactivityMs: 240000,
             lastActivityAt: '2026-03-07T11:56:00.000Z',
             lastProcessedJobAt: null,
             idleThresholdMs: 120000,
-            restartRecommended: true
+            restartRecommended: false
           }
         }
       }
@@ -196,11 +196,8 @@ describe('workerAutonomyService', () => {
 
     const report = await getWorkerAutonomyHealthReport();
 
-    expect(report.overallStatus).toBe('degraded');
-    expect(report.alerts).toEqual(expect.arrayContaining([
-      expect.stringContaining('inactive'),
-      expect.stringContaining('No worker receipts')
-    ]));
+    expect(report.overallStatus).toBe('healthy');
+    expect(report.alerts).toEqual([]);
   });
 
   it('ignores legacy aggregate worker snapshots when slot snapshots are present', async () => {
@@ -461,5 +458,173 @@ describe('workerAutonomyService', () => {
       expect.any(Date),
       'async-queue'
     );
+  });
+
+  it('throttles healthy snapshot writes but preserves forced state transitions', async () => {
+    jest.useFakeTimers();
+
+    try {
+      jest.setSystemTime(new Date('2026-03-07T12:00:00.000Z'));
+      recordJobHeartbeatMock.mockResolvedValue({
+        id: 'job-1',
+        status: 'running'
+      });
+
+      const service = new WorkerAutonomyService({
+        workerId: 'async-queue',
+        workerType: 'async_queue',
+        heartbeatIntervalMs: 10_000,
+        leaseMs: 30_000,
+        inspectorIntervalMs: 30_000,
+        staleAfterMs: 60_000,
+        watchdogIdleMs: 120_000,
+        defaultMaxRetries: 2,
+        retryBackoffBaseMs: 2_000,
+        retryBackoffMaxMs: 60_000,
+        maxJobsPerHour: 120,
+        maxAiCallsPerHour: 120,
+        maxRssMb: 2_048,
+        queueDepthDeferralThreshold: 25,
+        queueDepthDeferralMs: 5_000,
+        failureWebhookUrl: null,
+        failureWebhookThreshold: 3,
+        failureWebhookCooldownMs: 300_000
+      });
+
+      await service.recordHeartbeat('job-1');
+      await service.recordHeartbeat('job-1');
+      await service.markIdle();
+
+      expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenCalledTimes(1);
+
+      await service.markJobStarted({
+        id: 'job-1',
+        job_type: 'gpt',
+        worker_id: 'async-queue',
+        status: 'running',
+        input: {},
+        created_at: new Date('2026-03-07T11:59:00.000Z'),
+        updated_at: new Date('2026-03-07T12:00:00.000Z')
+      } as any);
+
+      expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenCalledTimes(2);
+
+      jest.advanceTimersByTime(30_000);
+      await service.markIdle();
+
+      expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenCalledTimes(3);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('does not force idle watchdog-only snapshots when no work is pending', async () => {
+    jest.useFakeTimers();
+
+    try {
+      jest.setSystemTime(new Date('2026-03-07T12:00:00.000Z'));
+
+      const service = new WorkerAutonomyService({
+        workerId: 'async-queue',
+        workerType: 'async_queue',
+        heartbeatIntervalMs: 10_000,
+        leaseMs: 30_000,
+        inspectorIntervalMs: 30_000,
+        staleAfterMs: 60_000,
+        watchdogIdleMs: 120_000,
+        defaultMaxRetries: 2,
+        retryBackoffBaseMs: 2_000,
+        retryBackoffMaxMs: 60_000,
+        maxJobsPerHour: 120,
+        maxAiCallsPerHour: 120,
+        maxRssMb: 2_048,
+        queueDepthDeferralThreshold: 25,
+        queueDepthDeferralMs: 5_000,
+        failureWebhookUrl: null,
+        failureWebhookThreshold: 3,
+        failureWebhookCooldownMs: 300_000
+      });
+
+      jest.advanceTimersByTime(121_000);
+      await service.markIdle();
+      await service.markIdle();
+
+      expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenCalledTimes(1);
+      expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          healthStatus: 'healthy',
+          snapshot: expect.objectContaining({
+            alerts: [],
+            watchdog: expect.objectContaining({
+              triggered: false,
+              reason: null,
+              restartRecommended: false
+            })
+          })
+        })
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('marks blocked queue work as degraded when inactivity exceeds the watchdog threshold', async () => {
+    jest.useFakeTimers();
+
+    try {
+      jest.setSystemTime(new Date('2026-03-07T12:00:00.000Z'));
+      getJobQueueSummaryMock.mockResolvedValue({
+        pending: 1,
+        running: 0,
+        completed: 0,
+        failed: 0,
+        total: 1,
+        delayed: 0,
+        stalledRunning: 0,
+        oldestPendingJobAgeMs: 60_000,
+        lastUpdatedAt: '2026-03-07T12:00:00.000Z'
+      });
+
+      const service = new WorkerAutonomyService({
+        workerId: 'async-queue',
+        workerType: 'async_queue',
+        heartbeatIntervalMs: 10_000,
+        leaseMs: 30_000,
+        inspectorIntervalMs: 30_000,
+        staleAfterMs: 60_000,
+        watchdogIdleMs: 120_000,
+        defaultMaxRetries: 2,
+        retryBackoffBaseMs: 2_000,
+        retryBackoffMaxMs: 60_000,
+        maxJobsPerHour: 120,
+        maxAiCallsPerHour: 120,
+        maxRssMb: 2_048,
+        queueDepthDeferralThreshold: 25,
+        queueDepthDeferralMs: 5_000,
+        failureWebhookUrl: null,
+        failureWebhookThreshold: 3,
+        failureWebhookCooldownMs: 300_000
+      });
+
+      jest.advanceTimersByTime(121_000);
+      await service.markIdle();
+
+      expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenCalledTimes(1);
+      expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          healthStatus: 'degraded',
+          snapshot: expect.objectContaining({
+            alerts: [expect.stringContaining('queue work remained pending')],
+            watchdog: expect.objectContaining({
+              triggered: true,
+              reason: expect.stringContaining('queue work remained pending'),
+              restartRecommended: true
+            })
+          })
+        })
+      );
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });
