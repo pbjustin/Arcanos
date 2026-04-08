@@ -8,6 +8,12 @@ import {
 
 type BodyTransform = (body: unknown, req: Request) => unknown;
 
+const LEGACY_ROUTE_ERROR_STATUS_CODES: Record<string, number> = {
+  UNKNOWN_GPT: 404,
+  SYSTEM_STATE_CONFLICT: 409,
+  MODULE_TIMEOUT: 504,
+};
+
 export async function dispatchLegacyRouteToGpt(
   req: Request,
   res: Response,
@@ -43,14 +49,7 @@ export async function dispatchLegacyRouteToGpt(
 
     if (!envelope.ok) {
       applyAIDegradedResponseHeaders(res, extractAIDegradedResponseMetadata(envelope.error.details));
-      const statusCode =
-        envelope.error.code === 'UNKNOWN_GPT'
-          ? 404
-          : envelope.error.code === 'SYSTEM_STATE_CONFLICT'
-          ? 409
-          : envelope.error.code === 'MODULE_TIMEOUT'
-          ? 504
-          : 400;
+      const statusCode = LEGACY_ROUTE_ERROR_STATUS_CODES[envelope.error.code] ?? 400;
       res.status(statusCode).json(envelope);
       return;
     }

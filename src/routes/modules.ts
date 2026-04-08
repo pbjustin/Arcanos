@@ -1,4 +1,4 @@
-import express, { Request, Response } from 'express';
+import express, { NextFunction, Request, Response } from 'express';
 import { loadModuleDefinitions, ModuleDef } from '@services/moduleLoader.js';
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { logger } from "@platform/logging/structuredLogging.js";
@@ -13,12 +13,33 @@ const registryByRoute = new Map<string, ModuleDef>();
 const registryByName = new Map<string, ModuleDef>();
 const moduleRoutes = new Map<string, string>();
 
+type ModuleDispatchRequestBody = {
+  module?: string;
+  action?: string;
+  payload?: unknown;
+};
+
+function resolveModuleDispatchTarget(moduleName: string | undefined): {
+  mod: ModuleDef | undefined;
+  canonicalGptId: string | null;
+} {
+  const mod = typeof moduleName === 'string'
+    ? (registryByName.get(moduleName) ?? registryByRoute.get(moduleName))
+    : undefined;
+  const canonicalGptId = mod?.gptIds?.[0] ?? (typeof moduleName === 'string' ? moduleName : null);
+
+  return {
+    mod,
+    canonicalGptId
+  };
+}
+
 function createHandler(mod: ModuleDef, route: string) {
-  return async (req: Request, res: Response, next: (error?: unknown) => void) => {
+  return async (req: Request, res: Response, next: NextFunction) => {
     const canonicalGptId = mod.gptIds?.[0] ?? mod.name;
 
     if (canonicalGptId) {
-      return dispatchLegacyRouteToGpt(req, res, next as any, {
+      return dispatchLegacyRouteToGpt(req, res, next, {
         legacyRoute: `/modules/${route}`,
         gptId: canonicalGptId
       });
@@ -40,11 +61,7 @@ function createHandler(mod: ModuleDef, route: string) {
       });
     }
 
-    const { module, action, payload } = req.body as {
-      module?: string;
-      action?: string;
-      payload?: unknown;
-    };
+    const { module, action, payload } = req.body as ModuleDispatchRequestBody;
     if (module !== mod.name) {
       return sendNotFound(res, 'Module not found');
     }
@@ -190,19 +207,12 @@ router.get('/registry/:moduleName', (req: Request, res: Response) => {
 });
 
 if (legacyGptRoutesEnabled()) {
-  router.post('/queryroute', async (req: Request, res: Response, next: (error?: unknown) => void) => {
-    const { module: moduleName } = req.body as {
-      module?: string;
-      action?: string;
-      payload?: unknown;
-    };
-    const mod = typeof moduleName === 'string'
-      ? (registryByName.get(moduleName) ?? registryByRoute.get(moduleName))
-      : undefined;
-    const canonicalGptId = mod?.gptIds?.[0] ?? (typeof moduleName === 'string' ? moduleName : null);
+  router.post('/queryroute', async (req: Request, res: Response, next: NextFunction) => {
+    const { module: moduleName, action, payload } = req.body as ModuleDispatchRequestBody;
+    const { mod, canonicalGptId } = resolveModuleDispatchTarget(moduleName);
 
     if (canonicalGptId) {
-      return dispatchLegacyRouteToGpt(req, res, next as any, {
+      return dispatchLegacyRouteToGpt(req, res, next, {
         legacyRoute: '/queryroute',
         gptId: canonicalGptId
       });
@@ -224,22 +234,16 @@ if (legacyGptRoutesEnabled()) {
       });
     }
 
-    const { module: moduleRouteOrName, action, payload } = req.body as {
-      module?: string;
-      action?: string;
-      payload?: unknown;
-    };
-    if (!moduleRouteOrName) {
+    if (!moduleName) {
       return sendBadRequest(res, 'Module name is required');
     }
-    const fallbackMod = registryByName.get(moduleRouteOrName) ?? registryByRoute.get(moduleRouteOrName);
-    if (!fallbackMod) {
+    if (!mod) {
       return sendNotFound(res, 'Module not found');
     }
     if (!action) {
       return sendBadRequest(res, 'Action is required');
     }
-    const handler = fallbackMod.actions[action];
+    const handler = mod.actions[action];
     if (!handler) {
       return sendNotFound(res, 'Action not found');
     }
