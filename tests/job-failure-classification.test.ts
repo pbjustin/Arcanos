@@ -23,6 +23,19 @@ describe('job failure classification', () => {
     expect(classifyWorkerExecutionError(new Error('OpenAI rate limit timeout')).retryable).toBe(true);
   });
 
+  it('does not treat broad transient phrases as terminal failures', () => {
+    expect(
+      classifyWorkerExecutionError(
+        new Error('Authentication service timeout while contacting provider')
+      ).retryable
+    ).toBe(true);
+    expect(
+      classifyWorkerExecutionError(
+        new Error('Temporary network failure: missing response body from upstream')
+      ).retryable
+    ).toBe(true);
+  });
+
   it('preserves explicit non-retryable dag failure hints from nested result metadata', () => {
     const classifiedFailure = classifyDagNodeFailureForWorkerRetry({
       errorMessage: 'Request was aborted.',

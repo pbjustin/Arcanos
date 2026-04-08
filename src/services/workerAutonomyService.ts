@@ -934,19 +934,22 @@ function shouldAlertOnInspection(
  * Inputs/outputs: accepts an unknown error value and returns a retryability decision with a normalized message.
  * Edge case behavior: malformed input falls back to a non-empty error string and conservative retry classification.
  */
-const WORKER_AUTHENTICATION_PATTERNS = [
-  'api key',
-  'authentication',
-  'unauthorized',
-  'invalid api key',
-  'incorrect api key'
+type ErrorPattern = string | RegExp;
+
+const WORKER_AUTHENTICATION_PATTERNS: readonly ErrorPattern[] = [
+  /\bincorrect api key\b/i,
+  /\binvalid api key\b/i,
+  /\b(?:missing|required|expired)\b.{0,40}\bapi key\b/i,
+  /\bapi key\b.{0,40}\b(?:missing|required|expired)\b/i,
+  /\bunauthorized\b/i,
+  /\bauthentication (?:failed|error|required)\b/i
 ] as const;
 
-const WORKER_QUOTA_PATTERNS = [
+const WORKER_QUOTA_PATTERNS: readonly ErrorPattern[] = [
   'quota'
 ] as const;
 
-const WORKER_RUNTIME_BUDGET_PATTERNS = [
+const WORKER_RUNTIME_BUDGET_PATTERNS: readonly ErrorPattern[] = [
   'aborted_due_to_budget',
   'runtime_budget_exhausted',
   'token budget',
@@ -964,23 +967,33 @@ const WORKER_RUNTIME_BUDGET_PATTERNS = [
   'watchdog aborted execution'
 ] as const;
 
-const WORKER_PROMPT_BUDGET_PATTERNS = [
+const WORKER_PROMPT_BUDGET_PATTERNS: readonly ErrorPattern[] = [
   'context length',
   'max tokens',
   'prompt too long'
 ] as const;
 
-const WORKER_VALIDATION_PATTERNS = [
+const WORKER_VALIDATION_PATTERNS: readonly ErrorPattern[] = [
   'invalid job.input',
   'unsupported job_type',
-  'schema',
-  'validation',
-  'missing',
-  'not found'
+  /\bschema (?:mismatch|validation|invalid|error|failed)\b/i,
+  /\bvalidation (?:failed|error|issues?|mismatch)\b/i,
+  /\bmissing (?:required )?(?:field|input|parameter|argument|property|api key)\b/i,
+  /\b(?:was|were|is) not found\b/i,
+  /\bnot found for cancellation\b/i
 ] as const;
 
-function matchesAnyPattern(normalizedMessage: string, patterns: readonly string[]): boolean {
-  return patterns.some(pattern => normalizedMessage.includes(pattern));
+function matchesPattern(normalizedMessage: string, pattern: ErrorPattern): boolean {
+  if (typeof pattern === 'string') {
+    return normalizedMessage.includes(pattern);
+  }
+
+  pattern.lastIndex = 0;
+  return pattern.test(normalizedMessage);
+}
+
+function matchesAnyPattern(normalizedMessage: string, patterns: readonly ErrorPattern[]): boolean {
+  return patterns.some(pattern => matchesPattern(normalizedMessage, pattern));
 }
 
 export function classifyWorkerExecutionError(error: unknown): {
@@ -1028,7 +1041,7 @@ export function classifyWorkerExecutionError(error: unknown): {
 
   //audit Assumption: explicit validation and unsupported-type failures are deterministic; failure risk: wasting retry budget on poison jobs; expected invariant: terminal patterns override transient ones; handling strategy: check terminal signatures first.
   const matchesTerminalPattern =
-    terminalPatterns.some(pattern => normalizedMessage.includes(pattern)) ||
+    matchesAnyPattern(normalizedMessage, terminalPatterns) ||
     /\b401\b/.test(normalizedMessage);
 
   if (matchesTerminalPattern) {

@@ -50,7 +50,7 @@ function sendCodegenHealthUnavailable(res: Response, reason: 'adapter' | 'client
  *
  * @param req Express request with generation options.
  * @param res Express response with generated snippets.
- * @edgeCases Returns 503 when the OpenAI client is not configured.
+ * @edgeCases Returns 503 when the OpenAI adapter is not configured.
  */
 router.post(
   '/api/reusables',
@@ -87,7 +87,7 @@ router.post(
  *
  * @param _req Express request instance.
  * @param res Express response with status summary.
- * @edgeCases Returns 503 when OpenAI client is not initialized.
+ * @edgeCases Returns 503 when the OpenAI adapter is not initialized.
  */
 router.get('/api/reusables/health', (_req: Request, res: Response) => {
   const { adapter } = getOpenAIClientOrAdapter();
