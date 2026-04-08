@@ -41,6 +41,7 @@ import { sendTimestampedStatus } from "@platform/resilience/serviceUnavailable.j
 import { TRINITY_BASE_SOFT_CAP_MS, TRINITY_MULTIPLIERS } from "@core/logic/trinityGuards.js";
 import { WATCHDOG_LIMIT_MS, SAFETY_BUFFER_MS, BUDGET_DISABLED } from '../platform/resilience/runtimeBudget.js';
 import { resolveTimeout } from "@platform/runtime/watchdogConfig.js";
+import { legacyGptRoutesEnabled } from '@platform/runtime/legacyRouteMode.js';
 
 /**
  * Mounts all application routes on the provided Express app.
@@ -114,9 +115,11 @@ export function registerRoutes(app: Express): void {
   app.use('/', queryFinetuneRouter);
   app.use('/', apiSessionSystemRouter);
   app.use('/', apiRouter);
-  app.use('/', arcanosRouter);
   app.use('/', arcanosPipelineRouter);
-  app.use('/', aiEndpointsRouter);
+  if (legacyGptRoutesEnabled()) {
+    app.use('/', arcanosRouter);
+    app.use('/', aiEndpointsRouter);
+  }
   app.use('/', modulesRouter);
   app.use('/', workersRouter);
   app.use('/', orchestrationRouter);

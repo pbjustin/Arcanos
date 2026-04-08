@@ -39,3 +39,22 @@ export function applyDeprecatedAskRouteHeaders(res: Response, gptId?: string | n
   res.append('Link', `<${canonicalRoute}>; rel="successor-version"`);
   return canonicalRoute;
 }
+
+export function applyLegacyRouteDeprecationHeaders(
+  res: Response,
+  canonicalRoute: string,
+  options?: {
+    sunset?: string | null;
+  }
+): string {
+  res.setHeader('x-canonical-route', canonicalRoute);
+  res.setHeader('Deprecation', 'true');
+  res.setHeader('x-route-deprecated', 'true');
+  const sunset = options?.sunset ?? ASK_ROUTE_SUNSET_HEADER;
+  if (sunset) {
+    res.setHeader('Sunset', sunset);
+  }
+  res.append('Link', `<${CUSTOM_GPT_CONTRACT_PATH}>; rel="describedby"`);
+  res.append('Link', `<${canonicalRoute}>; rel="successor-version"`);
+  return canonicalRoute;
+}

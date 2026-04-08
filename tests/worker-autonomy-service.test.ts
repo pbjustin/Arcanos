@@ -124,8 +124,84 @@ describe('workerAutonomyService', () => {
 
   it('classifies transient and terminal failures separately', () => {
     expect(classifyWorkerExecutionError(new Error('OpenAI rate limit timeout')).retryable).toBe(true);
+    expect(classifyWorkerExecutionError(new Error('OpenAI internal error')).retryable).toBe(true);
     expect(classifyWorkerExecutionError(new Error('Request was aborted.')).retryable).toBe(true);
     expect(classifyWorkerExecutionError(new Error('Invalid job.input: schema mismatch')).retryable).toBe(false);
+    expect(classifyWorkerExecutionError(new Error('401 Incorrect API key provided')).retryable).toBe(false);
+    expect(classifyWorkerExecutionError(new Error('API key expired')).retryable).toBe(false);
+    expect(classifyWorkerExecutionError(new Error('openai_call_aborted_due_to_budget')).retryable).toBe(false);
+    expect(classifyWorkerExecutionError(new Error('insufficient_quota')).retryable).toBe(false);
+    expect(classifyWorkerExecutionError(new Error('runtime_budget_exhausted')).retryable).toBe(false);
+    expect(classifyWorkerExecutionError(new Error('budgetexceeded')).retryable).toBe(false);
+    expect(classifyWorkerExecutionError(new Error('watchdog aborted execution due to budget exhaustion')).retryable).toBe(false);
+  });
+
+  it('records aligned categories for terminal auth and budget failures', async () => {
+    const service = new WorkerAutonomyService({
+      workerId: 'async-queue',
+      workerType: 'async_queue',
+      heartbeatIntervalMs: 10_000,
+      leaseMs: 30_000,
+      inspectorIntervalMs: 30_000,
+      staleAfterMs: 60_000,
+      defaultMaxRetries: 0,
+      retryBackoffBaseMs: 2_000,
+      retryBackoffMaxMs: 60_000,
+      maxJobsPerHour: 120,
+      maxAiCallsPerHour: 120,
+      maxRssMb: 2_048,
+      queueDepthDeferralThreshold: 25,
+      queueDepthDeferralMs: 5_000,
+      failureWebhookUrl: null,
+      failureWebhookThreshold: 3,
+      failureWebhookCooldownMs: 300_000
+    });
+
+    const baseJob = {
+      job_type: 'ask',
+      worker_id: 'async-queue',
+      status: 'running',
+      input: { prompt: 'test' },
+      retry_count: 0,
+      max_retries: 0,
+      created_at: new Date(),
+      updated_at: new Date()
+    } as const;
+
+    const categoryCases = [
+      { id: 'job-auth', message: 'API key expired', category: 'authentication' },
+      { id: 'job-quota', message: 'insufficient_quota', category: 'rate_limited' },
+      { id: 'job-budget', message: 'runtime_budget_exhausted', category: 'timeout' },
+      { id: 'job-prompt', message: 'prompt too long', category: 'validation' }
+    ] as const;
+
+    for (const testCase of categoryCases) {
+      updateJobMock.mockClear();
+
+      await service.handleJobFailure(
+        {
+          ...baseJob,
+          id: testCase.id
+        } as any,
+        testCase.message,
+        false
+      );
+
+      expect(updateJobMock).toHaveBeenCalledWith(
+        testCase.id,
+        'failed',
+        null,
+        testCase.message,
+        expect.objectContaining({
+          lastFailure: expect.objectContaining({
+            category: testCase.category,
+            retryable: false,
+            retryExhausted: false
+          })
+        }),
+        expect.anything()
+      );
+    }
   });
 
   it('reports unhealthy worker health when stalled jobs or unhealthy snapshots exist', async () => {
