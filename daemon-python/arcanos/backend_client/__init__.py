@@ -13,6 +13,7 @@ import requests
 from ..backend_auth_client import normalize_backend_url
 from .chat import request_ask_with_domain as _request_ask_with_domain
 from .chat import request_chat_completion as _request_chat_completion
+from .chat import request_job_result as _request_job_result
 from .chat import request_system_state as _request_system_state
 from .daemon import request_confirm_daemon_actions as _request_confirm_daemon_actions
 from .plans import fetch_plan as _fetch_plan
@@ -488,6 +489,18 @@ class BackendApiClient:
         Edge cases: returns structured validation errors for partial update payloads.
         """
         return _request_system_state(self, metadata, expected_version, patch, gpt_id)
+
+    def request_job_result(
+        self,
+        job_id: str,
+        gpt_id: Optional[str] = None,
+    ) -> BackendResponse[dict[str, Any]]:
+        """
+        Purpose: Fetch one stored async GPT job result through the canonical GPT route.
+        Inputs/Outputs: required job_id plus optional GPT override; returns raw job-result payload.
+        Edge cases: blank ids fail fast as validation errors.
+        """
+        return _request_job_result(self, job_id, gpt_id)
 
     def request_vision_analysis(
         self,

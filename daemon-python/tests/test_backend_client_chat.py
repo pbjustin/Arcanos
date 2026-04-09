@@ -9,6 +9,7 @@ from arcanos.backend_client.chat import (
     resolve_backend_chat_route,
     request_ask_with_domain,
     request_chat_completion,
+    request_job_result,
     request_system_state,
 )
 from arcanos.backend_client import BackendApiClient
@@ -151,6 +152,37 @@ def test_request_system_state_honors_explicit_gpt_id_on_canonical_route() -> Non
     assert path == "/gpt/arcanos-gaming"
     assert "gptId" not in payload
     assert payload["action"] == "system_state"
+
+
+def test_request_job_result_uses_explicit_action_without_prompt() -> None:
+    client = SimpleNamespace()
+    client._request_json = MagicMock(
+        return_value=BackendResponse(ok=True, value={"ok": True, "result": {"status": "complete"}})
+    )
+
+    response = request_job_result(client, "job-123")
+
+    assert response.ok is True
+    _, path, payload = client._request_json.call_args.args
+    assert path == "/gpt/arcanos-daemon"
+    assert payload == {
+        "action": "get_result",
+        "payload": {
+            "jobId": "job-123"
+        }
+    }
+
+
+def test_request_job_result_rejects_blank_job_ids() -> None:
+    client = SimpleNamespace()
+    client._request_json = MagicMock()
+
+    response = request_job_result(client, "   ")
+
+    assert response.ok is False
+    assert response.error is not None
+    assert response.error.kind == "validation"
+    client._request_json.assert_not_called()
 
 
 def test_backend_api_client_parses_gpt_envelope_chat_response() -> None:

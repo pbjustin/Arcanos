@@ -65,6 +65,7 @@ Job-backed `POST /gpt/:gptId` response shapes:
 - `202 Accepted`: `{ ok, status:"pending", jobId, poll, stream, jobStatus, lifecycleStatus, deduped?, idempotencyKey, idempotencySource, _route }`
 - `200 OK` after bounded inline completion: standard GPT envelope plus `{ jobId, status, lifecycleStatus, poll, stream, deduped?, idempotencyKey, idempotencySource }`
 - Duplicate submissions set `deduped: true` and return the canonical `jobId`.
+- `200 OK` result retrieval: `POST /gpt/:gptId` with `{ "action": "get_result", "payload": { "jobId": "..." } }` returns `{ ok, result: { jobId, status:"pending|complete|failed|not_found", jobStatus, lifecycleStatus, createdAt, updatedAt, completedAt, poll, stream, result, error }, _route }` and never enqueues new work.
 
 Job status routes:
 - `GET /jobs/:id`: returns `{ id, job_type, status, lifecycle_status, created_at, updated_at, completed_at, cancel_requested_at, cancel_reason, retention_until, idempotency_until, expires_at, error_message, output, result }`
@@ -88,6 +89,7 @@ Retention defaults:
 Client retry guidance:
 - Reuse the same `Idempotency-Key` for safe client retries of the same GPT request body.
 - Poll `GET /jobs/:id` or subscribe to `GET /jobs/:id/stream` after any `202`.
+- If you need to fetch a stored result through the GPT route, call `action: "get_result"` with `payload.jobId` instead of sending a prompt that asks the model to fetch it.
 - Treat `cancelled` and `expired` as terminal and submit a fresh request if more work is needed.
 
 ## Active Endpoint Groups

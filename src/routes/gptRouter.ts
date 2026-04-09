@@ -35,6 +35,7 @@ import { shouldTreatPromptAsDagExecution } from '@shared/dag/dagExecutionRouting
 import {
   IdempotencyKeyConflictError,
   JobRepositoryUnavailableError,
+  getJobById,
   findOrCreateGptJob
 } from '@core/db/repositories/jobRepository.js';
 import { planAutonomousWorkerJob } from '@services/workerAutonomyService.js';
@@ -58,6 +59,11 @@ import {
   summarizeGptJobTimings
 } from '@shared/gpt/gptJobLifecycle.js';
 import { getRequestActorKey } from '@platform/runtime/security.js';
+import {
+  GPT_GET_RESULT_ACTION,
+  buildGptJobResultLookupPayload,
+  parseGptJobResultRequest
+} from '@shared/gpt/gptJobResult.js';
 
 const router = express.Router();
 const ARCANOS_CORE_GPT_IDS = new Set(['arcanos-core', 'core', 'arcanos-daemon']);
@@ -638,6 +644,59 @@ router.post("/:gptId", async (req, res, next) => {
           gptId: incomingGptId,
           ...buildGptRequestAuthState(req),
         });
+
+        if (requestedAction === GPT_GET_RESULT_ACTION) {
+          const parsedJobResultRequest = parseGptJobResultRequest(normalizedBody ?? effectiveBody);
+
+          if (!parsedJobResultRequest.ok) {
+            requestLogger?.warn?.('gpt.request.result_lookup_invalid', {
+              endpoint: req.originalUrl,
+              gptId: incomingGptId,
+              requestId,
+              error: parsedJobResultRequest.error
+            });
+            return res.status(400).json({
+              ok: false,
+              error: {
+                code: 'JOB_ID_INVALID',
+                message: `get_result action requires payload.jobId. ${parsedJobResultRequest.error}`
+              },
+              _route: {
+                requestId,
+                gptId: incomingGptId,
+                action: GPT_GET_RESULT_ACTION,
+                route: 'job_result',
+                timestamp: new Date().toISOString()
+              }
+            });
+          }
+
+          const jobLookup = buildGptJobResultLookupPayload(
+            parsedJobResultRequest.jobId,
+            await getJobById(parsedJobResultRequest.jobId)
+          );
+          requestLogger?.info?.('gpt.request.result_lookup', {
+            endpoint: req.originalUrl,
+            gptId: incomingGptId,
+            requestId,
+            jobId: jobLookup.jobId,
+            lookupStatus: jobLookup.status,
+            jobStatus: jobLookup.jobStatus,
+            lifecycleStatus: jobLookup.lifecycleStatus
+          });
+
+          return res.status(200).json({
+            ok: true,
+            result: jobLookup,
+            _route: {
+              requestId,
+              gptId: incomingGptId,
+              action: GPT_GET_RESULT_ACTION,
+              route: 'job_result',
+              timestamp: new Date().toISOString()
+            }
+          });
+        }
 
         const explicitIdempotencyKey = normalizeExplicitIdempotencyKey(
           req.header('Idempotency-Key') ?? req.header('idempotency-key')

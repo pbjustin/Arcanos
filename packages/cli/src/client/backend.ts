@@ -36,7 +36,7 @@ export interface BackendRecentLogsSnapshot {
 }
 
 export interface GptRouteRequestBody {
-  prompt: string;
+  prompt?: string;
   gptVersion?: string;
   action?: string;
   payload?: Record<string, unknown>;
@@ -46,11 +46,18 @@ export interface GptRouteRequestBody {
 export interface InvokeGptRouteOptions {
   baseUrl: string;
   gptId: string;
-  prompt: string;
+  prompt?: string;
   gptVersion?: string;
   action?: string;
   payload?: Record<string, unknown>;
   context?: Record<string, unknown>;
+  headers?: Record<string, string>;
+}
+
+export interface FetchGptJobResultOptions {
+  baseUrl: string;
+  gptId: string;
+  jobId: string;
   headers?: Record<string, string>;
 }
 
@@ -209,21 +216,23 @@ export function validateToolInvokeResponse(
  * Edge cases: blank `action` values are omitted so clients do not silently inject unsupported defaults such as `"ask"`.
  */
 export function buildGptRouteRequestBody(options: Omit<InvokeGptRouteOptions, "baseUrl" | "gptId" | "headers">): GptRouteRequestBody {
-  const prompt = options.prompt.trim();
-  if (!prompt) {
-    throw new Error("GPT route prompt is required.");
+  const prompt = options.prompt?.trim();
+  const action = options.action?.trim();
+  if (!prompt && !action) {
+    throw new Error("GPT route prompt is required when action is not supplied.");
   }
 
-  const body: GptRouteRequestBody = {
-    prompt
-  };
+  const body: GptRouteRequestBody = {};
+
+  if (prompt) {
+    body.prompt = prompt;
+  }
 
   const gptVersion = options.gptVersion?.trim();
   if (gptVersion) {
     body.gptVersion = gptVersion;
   }
 
-  const action = options.action?.trim();
   // Keep the route generic: only include action when the caller explicitly requested one.
   if (action) {
     body.action = action;
@@ -258,6 +267,20 @@ export async function invokeGptRoute(options: InvokeGptRouteOptions): Promise<Re
     body,
     options.headers
   );
+}
+
+export async function fetchGptJobResult(
+  options: FetchGptJobResultOptions
+): Promise<Record<string, unknown>> {
+  return invokeGptRoute({
+    baseUrl: options.baseUrl,
+    gptId: options.gptId,
+    action: "get_result",
+    payload: {
+      jobId: options.jobId
+    },
+    headers: options.headers
+  });
 }
 
 async function postJson(
