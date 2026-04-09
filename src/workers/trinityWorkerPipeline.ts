@@ -15,6 +15,7 @@ import {
 } from '@arcanos/runtime';
 import { sleep } from '@shared/sleep.js';
 import type { CognitiveDomain } from '@shared/types/cognitiveDomain.js';
+import type { PreviewAskChaosHook } from '@shared/ask/previewChaos.js';
 import { getWorkerExecutionLimits } from './workerExecutionLimits.js';
 
 export interface WorkerTrinityRequest {
@@ -31,6 +32,7 @@ export interface WorkerTrinityRequest {
   answerMode?: 'direct' | 'explained' | 'audit' | 'debug';
   debugPipeline?: boolean;
   strictUserVisibleOutput?: boolean;
+  previewChaosHook?: PreviewAskChaosHook;
 }
 
 export type PlannerFailureClassification =
@@ -270,7 +272,8 @@ function buildTrinityRunOptions(
     ...(typeof request.debugPipeline === 'boolean' ? { debugPipeline: request.debugPipeline } : {}),
     ...(typeof request.strictUserVisibleOutput === 'boolean'
       ? { strictUserVisibleOutput: request.strictUserVisibleOutput }
-      : {})
+      : {}),
+    ...(request.previewChaosHook ? { reasoningStagePreviewChaosHook: request.previewChaosHook } : {})
   };
 }
 

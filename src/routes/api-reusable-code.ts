@@ -50,21 +50,15 @@ function sendCodegenHealthUnavailable(res: Response, reason: 'adapter' | 'client
  *
  * @param req Express request with generation options.
  * @param res Express response with generated snippets.
- * @edgeCases Returns 503 when the OpenAI client is not configured.
+ * @edgeCases Returns 503 when the OpenAI adapter is not configured.
  */
 router.post(
   '/api/reusables',
   createValidationMiddleware(reusableCodeRequestSchema),
   asyncHandler(async (req: Request, res: Response) => {
-    const { adapter, client } = getOpenAIClientOrAdapter();
+    const { adapter } = getOpenAIClientOrAdapter();
     if (!adapter) {
       sendCodegenServiceUnavailable(res, 'adapter');
-      return;
-    }
-
-    //audit Assumption: OpenAI client must be available; risk: missing API key; invariant: client required for generation; handling: return 503.
-    if (!client) {
-      sendCodegenServiceUnavailable(res, 'client');
       return;
     }
 
@@ -73,7 +67,7 @@ router.post(
     const includeDocs = requestBody.includeDocs ?? true;
     const language = requestBody.language ?? 'typescript';
 
-    const result = await generateReusableCodeSnippets(client, {
+    const result = await generateReusableCodeSnippets(adapter, {
       target: target as ReusableCodeTarget,
       includeDocs,
       language
@@ -93,18 +87,12 @@ router.post(
  *
  * @param _req Express request instance.
  * @param res Express response with status summary.
- * @edgeCases Returns 503 when OpenAI client is not initialized.
+ * @edgeCases Returns 503 when the OpenAI adapter is not initialized.
  */
 router.get('/api/reusables/health', (_req: Request, res: Response) => {
-  const { adapter, client } = getOpenAIClientOrAdapter();
+  const { adapter } = getOpenAIClientOrAdapter();
   if (!adapter) {
     sendCodegenHealthUnavailable(res, 'adapter');
-    return;
-  }
-
-  //audit Assumption: client presence maps to readiness; risk: false positives; invariant: client required; handling: status based on client.
-  if (!client) {
-    sendCodegenHealthUnavailable(res, 'client');
     return;
   }
 

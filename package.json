@@ -90,7 +90,7 @@
     "@types/pg": "^8.15.5",
     "ajv": "^8.18.0",
     "async-mutex": "^0.5.0",
-    "axios": "^1.11.0",
+    "axios": "https://codeload.github.com/axios/axios/tar.gz/refs/tags/v1.15.0",
     "busboy": "^1.6.0",
     "cheerio": "^1.1.0",
     "cors": "^2.8.5",
@@ -137,9 +137,10 @@
     "typescript": "^5.9.2"
   },
   "overrides": {
-    "@hono/node-server": "https://codeload.github.com/honojs/node-server/tar.gz/refs/tags/v1.19.11",
+    "@hono/node-server": "https://codeload.github.com/honojs/node-server/tar.gz/refs/tags/v1.19.13",
     "express-rate-limit": "https://codeload.github.com/express-rate-limit/express-rate-limit/tar.gz/refs/tags/v8.3.0",
-    "hono": "https://codeload.github.com/honojs/hono/tar.gz/refs/tags/v4.12.8",
+    "hono": "https://codeload.github.com/honojs/hono/tar.gz/refs/tags/v4.12.12",
+    "proxy-from-env": "https://codeload.github.com/Rob--W/proxy-from-env/tar.gz/refs/tags/v2.1.0",
     "undici": "https://codeload.github.com/nodejs/undici/tar.gz/refs/tags/v7.24.3",
     "express": {
       "path-to-regexp": "https://codeload.github.com/pillarjs/path-to-regexp/tar.gz/refs/tags/v.0.1.13"

@@ -3,6 +3,7 @@
  * Used by trinity.ts and trinityStages.ts; consumers should import from trinity.js only.
  */
 
+import type { PreviewAskChaosHook } from '@shared/ask/previewChaos.js';
 import type {
   TrinityCapabilityFlags,
   TrinityEvidenceTag,
@@ -191,6 +192,7 @@ export interface TrinityRunOptions {
   debugPipeline?: boolean;
   strictUserVisibleOutput?: boolean;
   directAnswerModelOverride?: string;
+  reasoningStagePreviewChaosHook?: PreviewAskChaosHook;
 }
 
 export interface TrinityDryRunPreview {

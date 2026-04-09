@@ -35,6 +35,7 @@ import type {
   ReasoningLedger
 } from './trinityTypes.js';
 import type { CognitiveDomain } from "@shared/types/cognitiveDomain.js";
+import type { PreviewAskChaosHook } from '@shared/ask/previewChaos.js';
 import { TRINITY_INTAKE_TOKEN_LIMIT, TRINITY_STAGE_TEMPERATURE, TRINITY_PREVIEW_SNIPPET_LENGTH } from './trinityConstants.js';
 import { enforceTokenCap } from './trinityGuards.js';
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
@@ -378,7 +379,8 @@ export async function runReasoningStage(
   outputControls: TrinityOutputControls,
   tier?: Tier,
   runtimeBudget?: RuntimeBudget,
-  explicitTimeoutMs?: number
+  explicitTimeoutMs?: number,
+  previewChaosHook?: PreviewAskChaosHook
 ): Promise<TrinityReasoningOutput> {
   //audit Assumption: reasoning stage requires a shared runtime budget; risk: unbounded model call if missing; invariant: one RuntimeBudget governs each job; handling: fail-fast.
   if (!runtimeBudget) {
@@ -405,7 +407,10 @@ export async function runReasoningStage(
     reasoningPrompt,
     runtimeBudget,
     resolveReasoningStageTimeoutMs(runtimeBudget, explicitTimeoutMs),
-    { schemaVariant }
+    {
+      schemaVariant,
+      previewChaosHook
+    }
   );
   if (!structuredReasoning) {
     throw new Error('Model failed to provide structured reasoning.');
