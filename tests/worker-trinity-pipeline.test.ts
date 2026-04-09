@@ -102,6 +102,38 @@ describe('runWorkerTrinityPrompt', () => {
     expect(createRuntimeBudgetWithLimitMock).toHaveBeenCalledWith(420_000);
   });
 
+  it('forwards preview reasoning chaos hooks into Trinity options', async () => {
+    const openaiClient = {} as never;
+
+    await runWorkerTrinityPrompt(openaiClient, {
+      prompt: 'Force a preview-only timeout once.',
+      sourceEndpoint: 'worker-helper',
+      previewChaosHook: {
+        kind: 'reasoning_timeout_once',
+        hookId: 'preview-chaos-test-hook',
+        delayBeforeCallMs: 250,
+        timeoutMs: 50
+      }
+    });
+
+    expect(runThroughBrainMock).toHaveBeenCalledWith(
+      openaiClient,
+      'Force a preview-only timeout once.',
+      undefined,
+      undefined,
+      expect.objectContaining({
+        sourceEndpoint: 'worker-helper',
+        reasoningStagePreviewChaosHook: {
+          kind: 'reasoning_timeout_once',
+          hookId: 'preview-chaos-test-hook',
+          delayBeforeCallMs: 250,
+          timeoutMs: 50
+        }
+      }),
+      { budgetId: 'runtime-budget' }
+    );
+  });
+
   it('applies the default worker source endpoint when the caller omits one', async () => {
     const openaiClient = {} as never;
 

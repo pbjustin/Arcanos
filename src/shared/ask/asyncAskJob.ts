@@ -7,6 +7,10 @@ import type {
 import { clientContextSchema, type ClientContextDTO } from '@shared/types/dto.js';
 import type { CognitiveDomain } from '@shared/types/cognitiveDomain.js';
 import {
+  previewAskChaosHookSchema,
+  type PreviewAskChaosHook
+} from './previewChaos.js';
+import {
   buildTrinityUserVisibleResponse,
   type TrinityUserVisibleResponse
 } from './trinityResponseSerializer.js';
@@ -33,7 +37,8 @@ const queuedAskJobInputSchema = z.object({
   strictUserVisibleOutput: z.boolean().optional(),
   clientContext: clientContextSchema.nullable().optional(),
   endpointName: z.string().trim().max(64).optional(),
-  auditFlag: asyncAskAuditFlagSchema.optional()
+  auditFlag: asyncAskAuditFlagSchema.optional(),
+  previewChaosHook: previewAskChaosHookSchema.optional()
 }).passthrough();
 
 /**
@@ -81,6 +86,7 @@ export interface QueuedAskJobInput {
   clientContext?: ClientContextDTO;
   endpointName: string;
   auditFlag?: AsyncAskAuditFlag;
+  previewChaosHook?: PreviewAskChaosHook;
 }
 
 /**
@@ -172,6 +178,7 @@ export function buildQueuedAskJobInput(input: {
   clientContext?: ClientContextDTO | null;
   endpointName?: string;
   auditFlag?: AsyncAskAuditFlag;
+  previewChaosHook?: PreviewAskChaosHook;
 }): QueuedAskJobInput {
   const normalizedJobInput: QueuedAskJobInput = {
     prompt: input.prompt,
@@ -208,6 +215,9 @@ export function buildQueuedAskJobInput(input: {
   }
   if (input.auditFlag) {
     normalizedJobInput.auditFlag = input.auditFlag;
+  }
+  if (input.previewChaosHook) {
+    normalizedJobInput.previewChaosHook = input.previewChaosHook;
   }
 
   return normalizedJobInput;

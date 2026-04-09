@@ -384,6 +384,85 @@ describe('workerAutonomyService', () => {
     expect(updateJobMock).not.toHaveBeenCalled();
   });
 
+  it('recovers idle slot health after a retryable failure is handed off for retry', async () => {
+    jest.useFakeTimers();
+
+    try {
+      jest.setSystemTime(new Date('2026-03-07T12:00:00.000Z'));
+
+      const service = new WorkerAutonomyService({
+        workerId: 'async-queue',
+        workerType: 'async_queue',
+        heartbeatIntervalMs: 10_000,
+        leaseMs: 30_000,
+        inspectorIntervalMs: 30_000,
+        staleAfterMs: 60_000,
+        watchdogIdleMs: 120_000,
+        defaultMaxRetries: 2,
+        retryBackoffBaseMs: 2_000,
+        retryBackoffMaxMs: 60_000,
+        maxJobsPerHour: 120,
+        maxAiCallsPerHour: 120,
+        maxRssMb: 2_048,
+        queueDepthDeferralThreshold: 25,
+        queueDepthDeferralMs: 5_000,
+        failureWebhookUrl: null,
+        failureWebhookThreshold: 3,
+        failureWebhookCooldownMs: 300_000
+      });
+
+      await service.handleJobFailure(
+        {
+          id: 'job-retry',
+          job_type: 'ask',
+          worker_id: 'async-queue',
+          status: 'running',
+          input: { prompt: 'test' },
+          retry_count: 0,
+          max_retries: 2,
+          created_at: new Date(),
+          updated_at: new Date()
+        } as any,
+        'OpenAI rate limit timeout',
+        true
+      );
+
+      expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenCalledTimes(1);
+      expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          healthStatus: 'degraded',
+          lastError: 'OpenAI rate limit timeout',
+          snapshot: expect.objectContaining({
+            alerts: ['Scheduled retry for job job-retry in 2000ms.']
+          })
+        })
+      );
+
+      jest.advanceTimersByTime(30_000);
+      await service.markIdle();
+
+      expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenCalledTimes(2);
+      expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          healthStatus: 'healthy',
+          lastError: null,
+          snapshot: expect.objectContaining({
+            alerts: [],
+            watchdog: expect.objectContaining({
+              triggered: false,
+              reason: null,
+              restartRecommended: false
+            })
+          })
+        })
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('sends a failure webhook immediately for terminal job failures', async () => {
     const service = new WorkerAutonomyService({
       workerId: 'async-queue',

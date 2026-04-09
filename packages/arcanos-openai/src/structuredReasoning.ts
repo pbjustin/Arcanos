@@ -30,6 +30,7 @@ export interface StructuredReasoningOptions<T> {
   extractRefusal?: (response: any) => string | null;
   signal?: AbortSignal;
   timeoutMs?: number;
+  beforeCall?: (signal: AbortSignal) => Promise<void>;
 }
 
 /**
@@ -62,6 +63,10 @@ export async function runStructuredReasoning<T>(
   });
 
   try {
+    if (opts.beforeCall) {
+      await opts.beforeCall(requestScope.signal);
+    }
+
     const { outputParsed } = await callStructuredResponse(
       client as any,
       {

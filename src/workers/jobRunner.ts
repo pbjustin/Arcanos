@@ -209,7 +209,8 @@ async function executeQueuedPrompt(
     maxWords,
     answerMode,
     debugPipeline,
-    strictUserVisibleOutput
+    strictUserVisibleOutput,
+    previewChaosHook
   } = parsedJobInput.value;
 
   const trinityResult = await runWorkerTrinityPrompt(openai, {
@@ -222,7 +223,8 @@ async function executeQueuedPrompt(
     maxWords,
     answerMode,
     debugPipeline,
-    strictUserVisibleOutput
+    strictUserVisibleOutput,
+    previewChaosHook
   });
 
   return {

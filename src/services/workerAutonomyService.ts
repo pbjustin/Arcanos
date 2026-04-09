@@ -642,6 +642,9 @@ export class WorkerAutonomyService {
         healthStatus: 'degraded',
         alerts: [`Scheduled retry for job ${job.id} in ${delayMs}ms.`]
       }, { force: true });
+      // Retry scheduling is a transient slot state. Keep the degraded snapshot above for visibility,
+      // then clear the local error so idle health can recover once the retry is handed off.
+      this.state.lastError = null;
       return {
         action: 'retried',
         delayMs

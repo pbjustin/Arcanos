@@ -29,6 +29,10 @@ import { getWorkerRuntimeStatus } from '@platform/runtime/workerConfig.js';
 import { parseWorkerHealRequest } from '@shared/http/workerHealRequest.js';
 import { clientContextSchema } from '@shared/types/dto.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
+import {
+  isRailwayPreviewEnvironment,
+  previewAskChaosHookSchema
+} from '@shared/ask/previewChaos.js';
 import { recordSelfHealEvent } from '@services/selfImprove/selfHealTelemetry.js';
 import {
   dispatchWorkerInput,
@@ -59,7 +63,8 @@ const queueAskRequestSchema = z.object({
   overrideAuditSafe: z.string().trim().min(1).max(50).optional(),
   cognitiveDomain: cognitiveDomainSchema.optional(),
   clientContext: clientContextSchema.optional(),
-  endpointName: z.string().trim().min(1).max(64).optional()
+  endpointName: z.string().trim().min(1).max(64).optional(),
+  previewChaosHook: previewAskChaosHookSchema.optional()
 });
 
 const dispatchRequestSchema = z.object({
@@ -250,13 +255,22 @@ router.post(
   asyncHandler(async (req, res) => {
     try {
       const body = req.validated!.body as z.infer<typeof queueAskRequestSchema>;
+      if (body.previewChaosHook && !isRailwayPreviewEnvironment()) {
+        sendBadRequestPayload(res, {
+          error: 'PREVIEW_CHAOS_HOOK_UNAVAILABLE',
+          message: 'previewChaosHook is only allowed in Railway PR preview environments.'
+        });
+        return;
+      }
+
       res.status(202).json(await queueWorkerAsk({
         prompt: body.prompt,
         sessionId: body.sessionId,
         overrideAuditSafe: body.overrideAuditSafe,
         cognitiveDomain: body.cognitiveDomain,
         clientContext: body.clientContext ?? null,
-        endpointName: body.endpointName || 'worker-helper'
+        endpointName: body.endpointName || 'worker-helper',
+        previewChaosHook: body.previewChaosHook
       }));
     } catch (error: unknown) {
       sendInternalErrorPayload(res, {

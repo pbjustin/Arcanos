@@ -147,4 +147,32 @@ describe('runStructuredReasoning budget handling', () => {
         typeof value === 'object' && value !== null && typeof (value as { answer?: unknown }).answer === 'string'
     })).rejects.toThrow('Model returned malformed structured reasoning JSON');
   });
+
+  it('treats pre-call abort hooks as OpenAI aborts and skips the SDK request', async () => {
+    const create = jest.fn().mockResolvedValue({
+      output_text: '{"answer":"ok"}',
+      output: []
+    });
+    const client = { responses: { create } } as any;
+    isAbortError.mockImplementation((error: unknown) =>
+      error instanceof Error && error.message === 'Request was aborted.'
+    );
+
+    await expect(runStructuredReasoning(client, {
+      model: 'gpt-5',
+      prompt: 'test prompt',
+      budget: { startedAt: 0, hardDeadline: 60_000, watchdogLimit: 60_000, safetyBuffer: 0 },
+      schema: { type: 'json_schema', name: 'test', schema: {} },
+      validate: (value: unknown): value is { answer: string } =>
+        typeof value === 'object' && value !== null && typeof (value as { answer?: unknown }).answer === 'string',
+      beforeCall: async () => {
+        throw new Error('Request was aborted.');
+      }
+    })).rejects.toMatchObject({
+      name: 'OpenAIAbortError',
+      message: 'openai_call_aborted_due_to_budget'
+    });
+
+    expect(create).not.toHaveBeenCalled();
+  });
 });

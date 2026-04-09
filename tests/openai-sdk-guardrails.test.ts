@@ -11,6 +11,20 @@ const ALLOWED_OPENAI_CONSTRUCTORS = new Set([
   path.resolve(REPO_ROOT, 'packages', 'arcanos-openai', 'src', 'client.ts'),
   path.resolve(REPO_ROOT, 'src', 'core', 'adapters', 'openai.adapter.ts'),
 ]);
+const ALLOWED_PATTERN_FILES = new Map<string, Set<string>>([
+  [
+    'responses.parse',
+    new Set([
+      path.resolve(REPO_ROOT, 'tests', 'openai-adapter.test.ts'),
+    ]),
+  ],
+  [
+    'responses[parse]',
+    new Set([
+      path.resolve(REPO_ROOT, 'tests', 'openai-adapter.test.ts'),
+    ]),
+  ],
+]);
 
 const FORBIDDEN_PATTERNS = [
   {
@@ -18,8 +32,16 @@ const FORBIDDEN_PATTERNS = [
     regex: /\bresponses\.parse\s*\(/,
   },
   {
+    label: 'responses[parse]',
+    regex: /\bresponses\s*\[\s*(['"])parse\1\s*\]\s*\(/,
+  },
+  {
     label: 'chat.completions.parse',
     regex: /\bchat\.completions\.parse\s*\(/,
+  },
+  {
+    label: 'chat.completions[parse]',
+    regex: /\bchat\.completions\s*\[\s*(['"])parse\1\s*\]\s*\(/,
   },
   {
     label: '_thenUnwrap',
@@ -67,6 +89,10 @@ describe('openai sdk guardrails', () => {
 
         const content = fs.readFileSync(filePath, 'utf8');
         for (const pattern of FORBIDDEN_PATTERNS) {
+          const allowedFiles = ALLOWED_PATTERN_FILES.get(pattern.label);
+          if (allowedFiles?.has(path.resolve(filePath))) {
+            continue;
+          }
           if (pattern.regex.test(content)) {
             violations.push(`${path.relative(REPO_ROOT, filePath)} => ${pattern.label}`);
           }

@@ -81,6 +81,8 @@ describe('/worker-helper routes', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     delete process.env.WORKER_ID;
+    delete process.env.RAILWAY_ENVIRONMENT;
+    delete process.env.RAILWAY_ENVIRONMENT_NAME;
 
     getDatabaseStatusMock.mockReturnValue({
       connected: true,
@@ -416,6 +418,59 @@ describe('/worker-helper routes', () => {
         maxRetries: 2,
         priority: 100
       })
+    );
+  });
+
+  it('rejects preview chaos hooks outside Railway preview environments', async () => {
+    process.env.RAILWAY_ENVIRONMENT = 'production';
+
+    const response = await request(buildApp())
+      .post('/worker-helper/queue/ask')
+      .send({
+        prompt: 'Explain this stack trace.',
+        previewChaosHook: {
+          kind: 'reasoning_timeout_once',
+          hookId: 'preview-chaos-test-hook',
+          delayBeforeCallMs: 250,
+          timeoutMs: 50
+        }
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual(expect.objectContaining({
+      error: 'PREVIEW_CHAOS_HOOK_UNAVAILABLE'
+    }));
+    expect(createJobMock).not.toHaveBeenCalled();
+  });
+
+  it('allows preview chaos hooks in Railway preview environments', async () => {
+    process.env.RAILWAY_ENVIRONMENT = 'Arcanos-pr-1283';
+
+    const response = await request(buildApp())
+      .post('/worker-helper/queue/ask')
+      .send({
+        prompt: 'Explain this stack trace.',
+        previewChaosHook: {
+          kind: 'reasoning_timeout_once',
+          hookId: 'preview-chaos-test-hook',
+          delayBeforeCallMs: 250,
+          timeoutMs: 50
+        }
+      });
+
+    expect(response.status).toBe(202);
+    expect(createJobMock).toHaveBeenCalledWith(
+      'worker-helper',
+      'ask',
+      expect.objectContaining({
+        previewChaosHook: {
+          kind: 'reasoning_timeout_once',
+          hookId: 'preview-chaos-test-hook',
+          delayBeforeCallMs: 250,
+          timeoutMs: 50
+        }
+      }),
+      expect.any(Object)
     );
   });
 
