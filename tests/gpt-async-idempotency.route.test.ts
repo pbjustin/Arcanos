@@ -186,6 +186,48 @@ describe('async /gpt idempotency', () => {
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
+  it('accepts normalized get_result action variants without enqueueing work', async () => {
+    getJobByIdMock.mockResolvedValue({
+      id: 'job-lookup-normalized',
+      job_type: 'gpt',
+      status: 'completed',
+      created_at: '2026-04-06T10:00:00.000Z',
+      updated_at: '2026-04-06T10:00:03.000Z',
+      completed_at: '2026-04-06T10:00:03.000Z',
+      output: {
+        ok: true,
+        result: {
+          answer: 'normalized output'
+        }
+      },
+      error_message: null
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        action: ' Get_Result ',
+        payload: {
+          jobId: 'job-lookup-normalized'
+        }
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.result).toMatchObject({
+      jobId: 'job-lookup-normalized',
+      status: 'complete',
+      result: {
+        ok: true,
+        result: {
+          answer: 'normalized output'
+        }
+      }
+    });
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
   it('returns explicit pending status for get_result without enqueueing work', async () => {
     getJobByIdMock.mockResolvedValue({
       id: 'job-lookup-pending',

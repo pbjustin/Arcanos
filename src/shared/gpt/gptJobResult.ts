@@ -5,7 +5,12 @@ import { resolveGptJobLifecycleStatus } from './gptJobLifecycle.js';
 export const GPT_GET_RESULT_ACTION = 'get_result';
 
 const gptJobResultRequestSchema = z.object({
-  action: z.literal(GPT_GET_RESULT_ACTION),
+  action: z.preprocess(
+    (value) => typeof value === 'string'
+      ? value.trim().toLowerCase()
+      : value,
+    z.literal(GPT_GET_RESULT_ACTION)
+  ),
   payload: z.object({
     jobId: z.string().trim().min(1)
   }).passthrough()
@@ -140,14 +145,14 @@ export function buildStoredJobStatusPayload(job: JobData) {
     job_type: job.job_type,
     status: job.status,
     lifecycle_status: resolveGptJobLifecycleStatus(job.status),
-    created_at: job.created_at,
-    updated_at: job.updated_at,
-    completed_at: job.completed_at ?? null,
-    cancel_requested_at: job.cancel_requested_at ?? null,
+    created_at: serializeJobTimestamp(job.created_at),
+    updated_at: serializeJobTimestamp(job.updated_at),
+    completed_at: serializeJobTimestamp(job.completed_at),
+    cancel_requested_at: serializeJobTimestamp(job.cancel_requested_at),
     cancel_reason: job.cancel_reason ?? null,
-    retention_until: job.retention_until ?? null,
-    idempotency_until: job.idempotency_until ?? null,
-    expires_at: job.expires_at ?? null,
+    retention_until: serializeJobTimestamp(job.retention_until),
+    idempotency_until: serializeJobTimestamp(job.idempotency_until),
+    expires_at: serializeJobTimestamp(job.expires_at),
     error_message: job.error_message ?? null,
     output: job.output ?? null,
     result: job.output ?? null
