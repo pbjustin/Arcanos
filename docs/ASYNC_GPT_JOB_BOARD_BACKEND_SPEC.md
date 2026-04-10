@@ -16,7 +16,7 @@ Railway context observed during authoring:
 
 | Hypothesis | Command | Result | Interpretation | Next Step |
 | --- | --- | --- | --- | --- |
-| ARCANOS production is split into web and worker planes. | `railway whoami` | Authenticated as `pbjustin@gmail.com`. | Railway CLI context is valid. | Target production explicitly. |
+| ARCANOS production is split into web and worker planes. | `railway whoami` | Authenticated as the active Railway account. | Railway CLI context is valid. | Target production explicitly. |
 | The active environment is production and the project wiring is intact. | `railway environment production` | Production environment activated. | The remaining inspection should use production-scoped data. | Inspect service status and deployments. |
 | The current live backend shape includes separate web, worker, Postgres, and Redis services. | `railway status --json` | Returned project and service metadata for `ARCANOS V2`, `ARCANOS Worker`, `Postgres-BTrN`, and `Redis-lQbV`. | The job board must read shared durable state, not in-memory process state. | Inspect recent web and worker deployments. |
 | The web plane owns GPT enqueue and GPT read-path routing. | `railway deployment list --service "ARCANOS V2" --environment production --limit 3 --json` | Latest web deployment is healthy. | The web plane is the right home for a read-only job-board API. | Inspect live web logs for job events. |
@@ -111,36 +111,42 @@ The job board should reuse current durable sources wherever possible.
 | --- | --- | --- |
 | job state | `job_data` | Includes current status, result, error, retry, retention, idempotency, and timestamps. |
 | worker state | `worker_runtime_snapshots` | Includes slot health, watchdog state, current job, and activity timestamps. |
-| aggregate queue summary | derived query over `job_data` | Current helper logic already does most of this. |
+| aggregate queue summary | derived query over `job_data` plus purge telemetry | Current helper logic already does most of this for live rows; `purged_recent` requires a purge metric, deletion audit row, or `job_board_events` feed because purged rows no longer exist in `job_data`. |
 | board event feed | optional `job_board_events` table | Recommended only after basic snapshot APIs ship. |
 
 ### 5.2 Canonical Response Models
+
+Recommended naming convention for new `/job-board/*` and GPT job-board read payloads:
+- use `snake_case` field names
+- keep action names in `snake_case`
+- keep the existing `get_result` payload contract unchanged for backward compatibility
 
 #### `JobBoardJobSummary`
 
 ```json
 {
-  "jobId": "uuid",
-  "jobType": "gpt",
-  "gptId": "arcanos-core",
-  "executionStatus": "pending",
-  "lifecycleStatus": "active",
-  "retryState": "scheduled",
-  "retryCount": 1,
-  "maxRetries": 2,
-  "createdAt": "2026-04-10T20:16:21.489Z",
-  "startedAt": "2026-04-10T20:16:21.570Z",
-  "completedAt": null,
-  "queueWaitMs": 73,
-  "executionMs": null,
-  "endToEndMs": null,
-  "originWorkerId": "api",
-  "lastWorkerId": "async-queue-slot-1",
-  "resultAvailable": false,
+  "job_id": "uuid",
+  "job_type": "gpt",
+  "gpt_id": "arcanos-core",
+  "execution_status": "pending",
+  "lifecycle_status": "active",
+  "retry_state": "scheduled",
+  "retry_count": 1,
+  "max_retries": 2,
+  "created_at": "2026-04-10T20:16:21.489Z",
+  "updated_at": "2026-04-10T20:16:21.570Z",
+  "started_at": "2026-04-10T20:16:21.570Z",
+  "completed_at": null,
+  "queue_wait_ms": 73,
+  "execution_ms": null,
+  "end_to_end_ms": null,
+  "origin_worker_id": "api",
+  "last_worker_id": "async-queue-slot-1",
+  "result_available": false,
   "deduped": false,
-  "dedupeReason": "new_job",
-  "requestId": "req_123",
-  "traceId": "trace_123"
+  "dedupe_reason": "new_job",
+  "request_id": "req_123",
+  "trace_id": "trace_123"
 }
 ```
 
@@ -148,36 +154,37 @@ The job board should reuse current durable sources wherever possible.
 
 ```json
 {
-  "jobId": "uuid",
-  "jobType": "gpt",
-  "gptId": "arcanos-core",
-  "executionStatus": "failed",
-  "lifecycleStatus": "retained",
-  "retryState": "exhausted",
-  "retryCount": 2,
-  "maxRetries": 2,
-  "createdAt": "2026-04-10T20:16:21.489Z",
-  "startedAt": "2026-04-10T20:16:21.570Z",
-  "completedAt": "2026-04-10T20:16:45.576Z",
-  "queueWaitMs": 73,
-  "executionMs": 24048,
-  "endToEndMs": 24121,
-  "originWorkerId": "api",
-  "lastWorkerId": "async-queue-slot-1",
-  "resultAvailable": false,
+  "job_id": "uuid",
+  "job_type": "gpt",
+  "gpt_id": "arcanos-core",
+  "execution_status": "failed",
+  "lifecycle_status": "retained",
+  "retry_state": "exhausted",
+  "retry_count": 2,
+  "max_retries": 2,
+  "created_at": "2026-04-10T20:16:21.489Z",
+  "updated_at": "2026-04-10T20:16:45.576Z",
+  "started_at": "2026-04-10T20:16:21.570Z",
+  "completed_at": "2026-04-10T20:16:45.576Z",
+  "queue_wait_ms": 73,
+  "execution_ms": 24048,
+  "end_to_end_ms": 24121,
+  "origin_worker_id": "api",
+  "last_worker_id": "async-queue-slot-1",
+  "result_available": false,
   "deduped": false,
   "error": {
     "family": "authentication",
     "code": "openai_auth_401",
     "message": "Redacted upstream authentication failure."
   },
-  "retentionUntil": "2026-04-11T02:16:45.576Z",
-  "idempotencyUntil": "2026-04-11T20:16:21.489Z",
-  "expiresAt": "2026-04-11T02:16:45.576Z",
+  "retention_until": "2026-04-11T02:16:45.576Z",
+  "idempotency_until": "2026-04-11T20:16:21.489Z",
+  "expires_at": "2026-04-11T02:16:45.576Z",
   "retrieval": {
-    "httpResult": "/jobs/uuid/result",
-    "httpStream": "/jobs/uuid/stream",
-    "gptReadAction": {
+    "http_result": "/jobs/uuid/result",
+    "http_stream": "/jobs/uuid/stream",
+    "gpt_read_action": {
       "action": "get_result",
       "payload": {
         "jobId": "uuid"
@@ -192,51 +199,54 @@ The job board should reuse current durable sources wherever possible.
 ```json
 {
   "scope": "gpt",
-  "snapshotAt": "2026-04-10T20:30:00.000Z",
+  "snapshot_at": "2026-04-10T20:30:00.000Z",
   "pending": 2,
   "running": 1,
-  "completedRetained": 14,
-  "failedRetained": 3,
-  "cancelledRetained": 0,
-  "expiredRetained": 1,
-  "purgedRecent": 4,
+  "completed_retained": 14,
+  "failed_retained": 3,
+  "cancelled_retained": 0,
+  "expired_retained": 1,
+  "purged_recent": 4,
+  "purged_recent_source": "job_board_events",
   "delayed": 0,
-  "stalledRunning": 0,
-  "oldestPendingAgeMs": 4200,
-  "waitMsP50": 106,
-  "waitMsP95": 636,
-  "waitMsP99": 1200,
-  "executionMsP50": 24048,
-  "executionMsP95": 72555,
-  "executionMsP99": 90000,
-  "recentCompleted": 4,
-  "recentFailed": 0,
-  "retryScheduled": 0,
-  "retryExhausted": 0
+  "stalled_running": 0,
+  "oldest_pending_age_ms": 4200,
+  "wait_ms_p50": 106,
+  "wait_ms_p95": 636,
+  "wait_ms_p99": 1200,
+  "execution_ms_p50": 24048,
+  "execution_ms_p95": 72555,
+  "execution_ms_p99": 90000,
+  "recent_completed": 4,
+  "recent_failed": 0,
+  "retry_scheduled": 0,
+  "retry_exhausted": 0
 }
 ```
+
+`purged_recent` must not be calculated from `job_data` alone. When purge telemetry is not yet implemented, the field should be omitted or returned as `null`.
 
 #### `JobBoardWorkerSnapshot`
 
 ```json
 {
-  "workerId": "async-queue-slot-1",
-  "workerType": "async_queue",
-  "healthStatus": "degraded",
-  "currentJobId": null,
-  "lastHeartbeatAt": "2026-04-10T20:16:41.571Z",
-  "lastActivityAt": "2026-04-10T20:16:45.593Z",
-  "lastProcessedJobAt": "2026-04-10T20:16:45.593Z",
-  "inactivityMs": 702774,
-  "processedJobs": 2,
-  "scheduledRetries": 0,
-  "terminalFailures": 0,
-  "recoveredJobs": 0,
+  "worker_id": "async-queue-slot-1",
+  "worker_type": "async_queue",
+  "health_status": "degraded",
+  "current_job_id": null,
+  "last_heartbeat_at": "2026-04-10T20:16:41.571Z",
+  "last_activity_at": "2026-04-10T20:16:45.593Z",
+  "last_processed_job_at": "2026-04-10T20:16:45.593Z",
+  "inactivity_ms": 702774,
+  "processed_jobs": 2,
+  "scheduled_retries": 0,
+  "terminal_failures": 0,
+  "recovered_jobs": 0,
   "watchdog": {
     "triggered": false,
     "reason": null,
-    "restartRecommended": false,
-    "idleThresholdMs": 120000
+    "restart_recommended": false,
+    "idle_threshold_ms": 120000
   }
 }
 ```
@@ -274,14 +284,14 @@ The job board should live under a dedicated read-only route group on the web ser
 
 | Endpoint | Purpose | Request Parameters | Response Shape | Read or Write | Polling-Friendly | Streaming | AI-Agent-Friendly |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `GET /job-board/summary` | One bounded operator or service snapshot. | `scope`, `window`, `activeLimit`, `include` | `JobBoardSnapshot` | read-only | yes | via summary stream | yes |
-| `GET /job-board/jobs` | Filtered list of jobs. | `scope`, `gptId`, `executionStatus`, `lifecycleStatus`, `workerId`, `updatedSince`, `limit`, `cursor` | paginated `JobBoardJobSummary[]` | read-only | yes | no | yes |
+| `GET /job-board/summary` | One bounded operator or service snapshot. | `scope`, `window`, `active_limit`, `include` | `JobBoardSnapshot` | read-only | yes | via summary stream | yes |
+| `GET /job-board/jobs` | Filtered list of jobs. | `scope`, `gpt_id`, `execution_status`, `lifecycle_status`, `worker_id`, `updated_since`, `limit`, `cursor` | paginated `JobBoardJobSummary[]` | read-only | yes | no | yes |
 | `GET /job-board/jobs/:id` | Detailed bounded job view without large result payload by default. | `include=correlation,error,retrieval,retry` | `JobBoardJobDetail` | read-only | yes | no | yes |
 | `GET /job-board/queue` | Queue-only aggregate summary. | `scope`, `window` | `JobBoardQueueSummary` | read-only | yes | via summary stream | yes |
-| `GET /job-board/workers` | Worker and slot health summary. | `health`, `workerType`, `limit` | `JobBoardWorkerSnapshot[]` plus totals | read-only | yes | via summary stream | yes |
-| `GET /job-board/failures` | Recent retained failures and grouped reasons. | `scope`, `category`, `retryState`, `limit` | `JobBoardFailureSummary[]` plus grouped counts | read-only | yes | via summary stream | yes |
-| `GET /job-board/events` | Recent normalized event feed. | `since`, `cursor`, `jobId`, `workerId`, `eventName`, `limit` | `JobBoardEvent[]` | read-only | yes | no | yes |
-| `GET /job-board/stream` | Streaming summary and delta feed. | `scope`, `include`, `heartbeatMs`, `cursor` | SSE events | read-only | no | yes | no |
+| `GET /job-board/workers` | Worker and slot health summary. | `health`, `worker_type`, `limit` | `JobBoardWorkerSnapshot[]` plus totals | read-only | yes | via summary stream | yes |
+| `GET /job-board/failures` | Recent retained failures and grouped reasons. | `scope`, `category`, `retry_state`, `limit` | `JobBoardFailureSummary[]` plus grouped counts | read-only | yes | via summary stream | yes |
+| `GET /job-board/events` | Recent normalized event feed. | `since`, `cursor`, `job_id`, `worker_id`, `event_name`, `limit` | `JobBoardEvent[]` | read-only | yes | no | yes |
+| `GET /job-board/stream` | Streaming summary and delta feed. | `scope`, `include`, `heartbeat_ms`, `cursor` | SSE events | read-only | no | yes | no |
 
 ### 6.2 Route Design Rules
 
@@ -297,35 +307,37 @@ The job board should live under a dedicated read-only route group on the web ser
 Request:
 
 ```http
-GET /job-board/summary?scope=gpt&window=1h&activeLimit=10
+GET /job-board/summary?scope=gpt&window=1h&active_limit=10
 ```
 
 Response:
 
 ```json
 {
-  "snapshotAt": "2026-04-10T20:30:00.000Z",
+  "snapshot_at": "2026-04-10T20:30:00.000Z",
   "scope": "gpt",
   "queue": {
     "pending": 2,
     "running": 1,
-    "completedRetained": 14,
-    "failedRetained": 3,
-    "expiredRetained": 1,
+    "completed_retained": 14,
+    "failed_retained": 3,
+    "expired_retained": 1,
+    "purged_recent": 4,
+    "purged_recent_source": "job_board_events",
     "delayed": 0,
-    "stalledRunning": 0,
-    "oldestPendingAgeMs": 4200,
-    "waitMsP50": 106,
-    "waitMsP95": 636,
-    "waitMsP99": 1200,
-    "executionMsP50": 24048,
-    "executionMsP95": 72555,
-    "executionMsP99": 90000,
-    "recentCompleted": 4,
-    "recentFailed": 0,
-    "retryScheduled": 0,
-    "retryExhausted": 0,
-    "lastUpdatedAt": "2026-04-10T20:16:45.576Z"
+    "stalled_running": 0,
+    "oldest_pending_age_ms": 4200,
+    "wait_ms_p50": 106,
+    "wait_ms_p95": 636,
+    "wait_ms_p99": 1200,
+    "execution_ms_p50": 24048,
+    "execution_ms_p95": 72555,
+    "execution_ms_p99": 90000,
+    "recent_completed": 4,
+    "recent_failed": 0,
+    "retry_scheduled": 0,
+    "retry_exhausted": 0,
+    "last_updated_at": "2026-04-10T20:16:45.576Z"
   },
   "workers": {
     "total": 8,
@@ -334,14 +346,15 @@ Response:
     "unhealthy": 0,
     "offline": 0
   },
-  "recentFailures": [],
-  "activeJobs": [
+  "recent_failures": [],
+  "active_jobs": [
     {
-      "jobId": "ac021f69-9bc4-4e5a-9186-36f0048ed03f",
-      "gptId": "arcanos-core",
-      "executionStatus": "running",
-      "lifecycleStatus": "active",
-      "resultAvailable": false
+      "job_id": "ac021f69-9bc4-4e5a-9186-36f0048ed03f",
+      "gpt_id": "arcanos-core",
+      "execution_status": "running",
+      "lifecycle_status": "active",
+      "updated_at": "2026-04-10T20:16:41.571Z",
+      "result_available": false
     }
   ]
 }
@@ -359,30 +372,31 @@ Response:
 
 ```json
 {
-  "jobId": "ac021f69-9bc4-4e5a-9186-36f0048ed03f",
-  "jobType": "gpt",
-  "gptId": "arcanos-core",
-  "executionStatus": "completed",
-  "lifecycleStatus": "retained",
-  "retryState": "not_applicable",
-  "retryCount": 0,
-  "maxRetries": 2,
-  "createdAt": "2026-04-10T20:16:21.489Z",
-  "startedAt": "2026-04-10T20:16:21.570Z",
-  "completedAt": "2026-04-10T20:16:45.576Z",
-  "queueWaitMs": 73,
-  "executionMs": 24048,
-  "endToEndMs": 24121,
-  "originWorkerId": "api",
-  "lastWorkerId": "async-queue-slot-1",
-  "resultAvailable": true,
+  "job_id": "ac021f69-9bc4-4e5a-9186-36f0048ed03f",
+  "job_type": "gpt",
+  "gpt_id": "arcanos-core",
+  "execution_status": "completed",
+  "lifecycle_status": "retained",
+  "retry_state": "not_applicable",
+  "retry_count": 0,
+  "max_retries": 2,
+  "created_at": "2026-04-10T20:16:21.489Z",
+  "updated_at": "2026-04-10T20:16:45.576Z",
+  "started_at": "2026-04-10T20:16:21.570Z",
+  "completed_at": "2026-04-10T20:16:45.576Z",
+  "queue_wait_ms": 73,
+  "execution_ms": 24048,
+  "end_to_end_ms": 24121,
+  "origin_worker_id": "api",
+  "last_worker_id": "async-queue-slot-1",
+  "result_available": true,
   "deduped": false,
-  "dedupeReason": "new_job",
+  "dedupe_reason": "new_job",
   "error": null,
   "retrieval": {
-    "httpResult": "/jobs/ac021f69-9bc4-4e5a-9186-36f0048ed03f/result",
-    "httpStream": "/jobs/ac021f69-9bc4-4e5a-9186-36f0048ed03f/stream",
-    "gptReadAction": {
+    "http_result": "/jobs/ac021f69-9bc4-4e5a-9186-36f0048ed03f/result",
+    "http_stream": "/jobs/ac021f69-9bc4-4e5a-9186-36f0048ed03f/stream",
+    "gpt_read_action": {
       "action": "get_result",
       "payload": {
         "jobId": "ac021f69-9bc4-4e5a-9186-36f0048ed03f"
@@ -404,34 +418,34 @@ Response:
 
 ```json
 {
-  "snapshotAt": "2026-04-10T20:30:00.000Z",
-  "overallStatus": "degraded",
-  "retryPolicy": {
-    "defaultMaxRetries": 2,
-    "retryBackoffBaseMs": 2000,
-    "retryBackoffMaxMs": 60000,
-    "staleAfterMs": 60000,
-    "watchdogIdleMs": 120000
+  "snapshot_at": "2026-04-10T20:30:00.000Z",
+  "overall_status": "degraded",
+  "retry_policy": {
+    "default_max_retries": 2,
+    "retry_backoff_base_ms": 2000,
+    "retry_backoff_max_ms": 60000,
+    "stale_after_ms": 60000,
+    "watchdog_idle_ms": 120000
   },
   "workers": [
     {
-      "workerId": "async-queue-slot-1",
-      "workerType": "async_queue",
-      "healthStatus": "degraded",
-      "currentJobId": null,
-      "lastHeartbeatAt": "2026-04-10T20:16:41.571Z",
-      "lastActivityAt": "2026-04-10T20:16:45.593Z",
-      "lastProcessedJobAt": "2026-04-10T20:16:45.593Z",
-      "inactivityMs": 702774,
-      "processedJobs": 2,
-      "scheduledRetries": 0,
-      "terminalFailures": 0,
-      "recoveredJobs": 0,
+      "worker_id": "async-queue-slot-1",
+      "worker_type": "async_queue",
+      "health_status": "degraded",
+      "current_job_id": null,
+      "last_heartbeat_at": "2026-04-10T20:16:41.571Z",
+      "last_activity_at": "2026-04-10T20:16:45.593Z",
+      "last_processed_job_at": "2026-04-10T20:16:45.593Z",
+      "inactivity_ms": 702774,
+      "processed_jobs": 2,
+      "scheduled_retries": 0,
+      "terminal_failures": 0,
+      "recovered_jobs": 0,
       "watchdog": {
         "triggered": false,
         "reason": null,
-        "restartRecommended": false,
-        "idleThresholdMs": 120000
+        "restart_recommended": false,
+        "idle_threshold_ms": 120000
       }
     }
   ]
@@ -461,11 +475,11 @@ This is the critical compatibility requirement. ChatGPT-style callers that only 
 
 | GPT Action | Purpose | Payload | Response |
 | --- | --- | --- | --- |
-| `get_result` | Existing full per-job result lookup. | `jobId` | current canonical stored result payload |
-| `get_job_status` | One job detail lookup without large output by default. | `jobId`, `include` | `JobBoardJobDetail` |
-| `get_job_board_snapshot` | One bounded board snapshot for queue, workers, active jobs, and recent failures. | `scope`, `window`, `activeLimit`, `include` | `JobBoardSnapshot` |
+| `get_result` | Existing full per-job result lookup. | legacy backward-compatible `jobId` | current canonical stored result payload |
+| `get_job_status` | One job detail lookup without large output by default. | `job_id`, `include` | `JobBoardJobDetail` |
+| `get_job_board_snapshot` | One bounded board snapshot for queue, workers, active jobs, and recent failures. | `scope`, `window`, `active_limit`, `include` | `JobBoardSnapshot` |
 | `get_queue_status` | Queue-only summary. | `scope`, `window` | `JobBoardQueueSummary` |
-| `get_worker_status` | Worker summary or filtered subset. | `health`, `limit`, `workerId` | worker summary payload |
+| `get_worker_status` | Worker summary or filtered subset. | `health`, `limit`, `worker_id` | worker summary payload |
 | `get_recent_failures` | Recent retained failures and grouped reasons. | `scope`, `category`, `limit` | failure summary payload |
 
 ### 8.2 GPT Read-Action Rules
@@ -490,8 +504,8 @@ Content-Type: application/json
   "payload": {
     "scope": "gpt",
     "window": "1h",
-    "activeLimit": 10,
-    "include": ["queue", "workers", "recentFailures"]
+    "active_limit": 10,
+    "include": ["queue", "workers", "recent_failures"]
   }
 }
 ```
@@ -505,7 +519,7 @@ Content-Type: application/json
 {
   "action": "get_job_status",
   "payload": {
-    "jobId": "ac021f69-9bc4-4e5a-9186-36f0048ed03f",
+    "job_id": "ac021f69-9bc4-4e5a-9186-36f0048ed03f",
     "include": ["correlation", "retrieval", "retry"]
   }
 }
@@ -533,11 +547,11 @@ Content-Type: application/json
   "ok": true,
   "result": {
     "scope": "gpt",
-    "snapshotAt": "2026-04-10T20:30:00.000Z"
+    "snapshot_at": "2026-04-10T20:30:00.000Z"
   },
   "_route": {
-    "requestId": "req_123",
-    "gptId": "arcanos-core",
+    "request_id": "req_123",
+    "gpt_id": "arcanos-core",
     "action": "get_job_board_snapshot",
     "route": "job_board",
     "timestamp": "2026-04-10T20:30:00.000Z"
@@ -577,33 +591,33 @@ The job board should use structured event names and stable fields across web and
 ### 9.2 Required Structured Fields
 
 Every board-related event should carry as many of the following fields as are relevant:
-- `requestId`
-- `traceId`
-- `jobId`
-- `jobType`
-- `gptId`
+- `request_id`
+- `trace_id`
+- `job_id`
+- `job_type`
+- `gpt_id`
 - `route`
 - `action`
-- `workerId`
-- `executionStatus`
-- `lifecycleStatus`
-- `retryState`
-- `retryCount`
-- `maxRetries`
-- `enqueueTime`
-- `startTime`
-- `completionTime`
-- `queueWaitMs`
-- `executionMs`
-- `endToEndMs`
-- `terminalClassification`
-- `errorFamily`
-- `errorCode`
-- `resultAvailable`
-- `retentionUntil`
-- `expiresAt`
+- `worker_id`
+- `execution_status`
+- `lifecycle_status`
+- `retry_state`
+- `retry_count`
+- `max_retries`
+- `enqueue_time`
+- `start_time`
+- `completion_time`
+- `queue_wait_ms`
+- `execution_ms`
+- `end_to_end_ms`
+- `terminal_classification`
+- `error_family`
+- `error_code`
+- `result_available`
+- `retention_until`
+- `expires_at`
 - `deduped`
-- `dedupeReason`
+- `dedupe_reason`
 
 ### 9.3 Logging Rules
 
@@ -648,9 +662,9 @@ Existing metrics already present in production:
 Current lifecycle defaults already distinguish different retention horizons. The job board should present those clearly instead of collapsing them into a single opaque status.
 
 Recommended presentation model:
-- `executionStatus` reports the last execution outcome.
-- `lifecycleStatus` reports whether the row is active, retained, expired, purged, or missing.
-- `resultAvailable` reports whether a result can still be retrieved.
+- `execution_status` reports the last execution outcome.
+- `lifecycle_status` reports whether the row is active, retained, expired, purged, or missing.
+- `result_available` reports whether a result can still be retrieved.
 
 Recommended lifecycle semantics:
 - `pending` and `running` are active execution states.
@@ -689,7 +703,7 @@ Operator flow should be:
 1. check `GET /job-board/summary`
 2. drill into `GET /job-board/jobs/:id` or `GET /job-board/failures`
 3. inspect `GET /job-board/workers`
-4. correlate `jobId`, `requestId`, `traceId`, and `workerId` in Railway logs
+4. correlate `job_id`, `request_id`, `trace_id`, and `worker_id` in Railway logs
 
 ## 13. Failure, Retry, and Expired Job Handling
 
