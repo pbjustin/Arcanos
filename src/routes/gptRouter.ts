@@ -646,7 +646,7 @@ router.post("/:gptId", async (req, res, next) => {
         });
 
         if (requestedAction === GPT_GET_RESULT_ACTION) {
-          const parsedJobResultRequest = parseGptJobResultRequest(normalizedBody ?? effectiveBody);
+          const parsedJobResultRequest = parseGptJobResultRequest(effectiveBody);
 
           if (!parsedJobResultRequest.ok) {
             requestLogger?.warn?.('gpt.request.result_lookup_invalid', {
