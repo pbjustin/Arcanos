@@ -137,7 +137,7 @@ describe("GPT route OpenAPI contract and client", () => {
     ).toEqual({
       action: "get_result",
       payload: {
-        jobId: "job_123"
+        jobId: "59dbfb2b-0c64-4eda-8a1e-b950a63f7fe0"
       }
     });
   });
