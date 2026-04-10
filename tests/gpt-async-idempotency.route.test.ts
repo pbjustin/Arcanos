@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const mockRouteGptRequest = jest.fn();
 const findOrCreateGptJobMock = jest.fn();
+const getJobByIdMock = jest.fn();
 const planAutonomousWorkerJobMock = jest.fn();
 const waitForQueuedGptJobCompletionMock = jest.fn();
 const resolveAsyncGptPollIntervalMsMock = jest.fn(() => 250);
@@ -25,7 +26,7 @@ jest.unstable_mockModule('../src/core/db/repositories/jobRepository.js', () => (
   IdempotencyKeyConflictError: MockIdempotencyKeyConflictError,
   JobRepositoryUnavailableError: MockJobRepositoryUnavailableError,
   findOrCreateGptJob: findOrCreateGptJobMock,
-  getJobById: jest.fn(),
+  getJobById: getJobByIdMock,
   createJob: jest.fn(),
   claimNextPendingJob: jest.fn(),
   recordJobHeartbeat: jest.fn(),
@@ -125,6 +126,269 @@ describe('async /gpt idempotency', () => {
         route: 'async'
       })
     });
+  });
+
+  it('returns stored completed job results for explicit get_result actions without enqueueing work', async () => {
+    getJobByIdMock.mockResolvedValue({
+      id: 'job-lookup-complete',
+      job_type: 'gpt',
+      status: 'completed',
+      created_at: '2026-04-06T10:00:00.000Z',
+      updated_at: '2026-04-06T10:00:03.000Z',
+      completed_at: '2026-04-06T10:00:03.000Z',
+      retention_until: null,
+      idempotency_until: null,
+      expires_at: null,
+      output: {
+        ok: true,
+        result: {
+          answer: 'stored output'
+        }
+      },
+      error_message: null
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        action: 'get_result',
+        payload: {
+          jobId: 'job-lookup-complete'
+        }
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      ok: true,
+      result: {
+        jobId: 'job-lookup-complete',
+        status: 'completed',
+        jobStatus: 'completed',
+        lifecycleStatus: 'completed',
+        createdAt: '2026-04-06T10:00:00.000Z',
+        updatedAt: '2026-04-06T10:00:03.000Z',
+        completedAt: '2026-04-06T10:00:03.000Z',
+        retentionUntil: null,
+        idempotencyUntil: null,
+        expiresAt: null,
+        poll: '/jobs/job-lookup-complete',
+        stream: '/jobs/job-lookup-complete/stream',
+        result: {
+          ok: true,
+          result: {
+            answer: 'stored output'
+          }
+        },
+        error: null
+      },
+      _route: expect.objectContaining({
+        gptId: 'arcanos-core',
+        action: 'get_result',
+        route: 'job_result'
+      })
+    });
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('accepts normalized get_result action variants without enqueueing work', async () => {
+    getJobByIdMock.mockResolvedValue({
+      id: 'job-lookup-normalized',
+      job_type: 'gpt',
+      status: 'completed',
+      created_at: '2026-04-06T10:00:00.000Z',
+      updated_at: '2026-04-06T10:00:03.000Z',
+      completed_at: '2026-04-06T10:00:03.000Z',
+      output: {
+        ok: true,
+        result: {
+          answer: 'normalized output'
+        }
+      },
+      error_message: null
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        action: ' Get_Result ',
+        payload: {
+          jobId: 'job-lookup-normalized'
+        }
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.result).toMatchObject({
+      jobId: 'job-lookup-normalized',
+      status: 'completed',
+      result: {
+        ok: true,
+        result: {
+          answer: 'normalized output'
+        }
+      }
+    });
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('returns explicit pending status for get_result without enqueueing work', async () => {
+    getJobByIdMock.mockResolvedValue({
+      id: 'job-lookup-pending',
+      job_type: 'gpt',
+      status: 'running',
+      created_at: '2026-04-06T10:00:00.000Z',
+      updated_at: '2026-04-06T10:00:01.000Z',
+      completed_at: null,
+      output: null,
+      error_message: null
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        action: 'get_result',
+        payload: {
+          jobId: 'job-lookup-pending'
+        }
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.result).toMatchObject({
+      jobId: 'job-lookup-pending',
+      status: 'pending',
+      jobStatus: 'running',
+      lifecycleStatus: 'running',
+      result: null,
+      error: null
+    });
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  });
+
+  it('returns explicit expired status and preserved retained output for get_result without enqueueing work', async () => {
+    getJobByIdMock.mockResolvedValue({
+      id: 'job-lookup-expired',
+      job_type: 'gpt',
+      status: 'expired',
+      created_at: '2026-04-06T10:00:00.000Z',
+      updated_at: '2026-04-06T10:15:00.000Z',
+      completed_at: '2026-04-06T10:01:30.000Z',
+      retention_until: '2026-04-06T10:10:00.000Z',
+      idempotency_until: '2026-04-06T10:05:00.000Z',
+      expires_at: '2026-04-06T10:15:00.000Z',
+      output: {
+        ok: true,
+        result: {
+          answer: 'retained expired output'
+        }
+      },
+      error_message: 'Expired after retention window.'
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        action: 'get_result',
+        payload: {
+          jobId: 'job-lookup-expired'
+        }
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.result).toMatchObject({
+      jobId: 'job-lookup-expired',
+      status: 'expired',
+      jobStatus: 'expired',
+      lifecycleStatus: 'expired',
+      retentionUntil: '2026-04-06T10:10:00.000Z',
+      idempotencyUntil: '2026-04-06T10:05:00.000Z',
+      expiresAt: '2026-04-06T10:15:00.000Z',
+      result: {
+        ok: true,
+        result: {
+          answer: 'retained expired output'
+        }
+      },
+      error: {
+        code: 'JOB_EXPIRED',
+        message: 'Expired after retention window.'
+      }
+    });
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+  });
+
+  it('returns explicit failed status for terminal get_result lookups without enqueueing work', async () => {
+    getJobByIdMock.mockResolvedValue({
+      id: 'job-lookup-failed',
+      job_type: 'gpt',
+      status: 'failed',
+      created_at: '2026-04-06T10:00:00.000Z',
+      updated_at: '2026-04-06T10:00:02.000Z',
+      completed_at: '2026-04-06T10:00:02.000Z',
+      output: null,
+      error_message: 'OpenAI upstream timed out'
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        action: 'get_result',
+        payload: {
+          jobId: 'job-lookup-failed'
+        }
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.result).toMatchObject({
+      jobId: 'job-lookup-failed',
+      status: 'failed',
+      jobStatus: 'failed',
+      lifecycleStatus: 'failed',
+      result: null,
+      error: {
+        code: 'JOB_FAILED',
+        message: 'OpenAI upstream timed out'
+      }
+    });
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  });
+
+  it('returns explicit not_found status for missing get_result lookups without enqueueing work', async () => {
+    getJobByIdMock.mockResolvedValue(null);
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        action: 'get_result',
+        payload: {
+          jobId: 'missing-job'
+        }
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.result).toEqual({
+      jobId: 'missing-job',
+      status: 'not_found',
+      jobStatus: null,
+      lifecycleStatus: 'not_found',
+      createdAt: null,
+      updatedAt: null,
+      completedAt: null,
+      retentionUntil: null,
+      idempotencyUntil: null,
+      expiresAt: null,
+      poll: '/jobs/missing-job',
+      stream: '/jobs/missing-job/stream',
+      result: null,
+      error: {
+        code: 'JOB_NOT_FOUND',
+        message: 'Async GPT job was not found.'
+      }
+    });
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
   });
 
   it('uses a short inline wait budget for heavy async core requests', async () => {

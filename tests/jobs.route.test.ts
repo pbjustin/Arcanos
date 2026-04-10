@@ -29,6 +29,81 @@ describe('/jobs routes', () => {
     jest.clearAllMocks();
   });
 
+  it('returns the canonical stored-result lookup payload without enqueueing work', async () => {
+    getJobByIdMock.mockResolvedValue({
+      id: 'job-result-123',
+      job_type: 'gpt',
+      status: 'completed',
+      created_at: '2026-04-06T10:00:00.000Z',
+      updated_at: '2026-04-06T10:01:00.000Z',
+      completed_at: '2026-04-06T10:01:00.000Z',
+      retention_until: '2026-04-07T10:01:00.000Z',
+      idempotency_until: '2026-04-07T10:01:00.000Z',
+      expires_at: null,
+      error_message: null,
+      output: {
+        ok: true,
+        result: {
+          answer: 'stored output'
+        }
+      },
+      cancel_requested_at: null,
+      cancel_reason: null
+    });
+
+    const response = await request(buildApp()).get('/jobs/job-result-123/result');
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      jobId: 'job-result-123',
+      status: 'completed',
+      jobStatus: 'completed',
+      lifecycleStatus: 'completed',
+      createdAt: '2026-04-06T10:00:00.000Z',
+      updatedAt: '2026-04-06T10:01:00.000Z',
+      completedAt: '2026-04-06T10:01:00.000Z',
+      retentionUntil: '2026-04-07T10:01:00.000Z',
+      idempotencyUntil: '2026-04-07T10:01:00.000Z',
+      expiresAt: null,
+      poll: '/jobs/job-result-123',
+      stream: '/jobs/job-result-123/stream',
+      result: {
+        ok: true,
+        result: {
+          answer: 'stored output'
+        }
+      },
+      error: null
+    });
+  });
+
+  it('returns an explicit not_found payload for the canonical result route', async () => {
+    getJobByIdMock.mockResolvedValue(null);
+
+    const response = await request(buildApp()).get('/jobs/missing-job/result');
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      jobId: 'missing-job',
+      status: 'not_found',
+      jobStatus: null,
+      lifecycleStatus: 'not_found',
+      createdAt: null,
+      updatedAt: null,
+      completedAt: null,
+      retentionUntil: null,
+      idempotencyUntil: null,
+      expiresAt: null,
+      poll: '/jobs/missing-job',
+      stream: '/jobs/missing-job/stream',
+      result: null,
+      error: {
+        code: 'JOB_NOT_FOUND',
+        message: 'Async GPT job was not found.'
+      }
+    });
+  });
+
   it('returns lifecycle metadata for job polling responses', async () => {
     getJobByIdMock.mockResolvedValue({
       id: 'job-123',
