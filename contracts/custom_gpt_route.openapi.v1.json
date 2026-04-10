@@ -58,11 +58,11 @@
                   }
                 },
                 "getResult": {
-                  "summary": "Read a stored async GPT job result",
+                  "summary": "Read a stored async GPT job result without enqueuing new work",
                   "value": {
                     "action": "get_result",
                     "payload": {
-                      "jobId": "job_123"
+                      "jobId": "59dbfb2b-0c64-4eda-8a1e-b950a63f7fe0"
                     }
                   }
                 }
@@ -133,7 +133,7 @@
           },
           "action": {
             "type": "string",
-            "description": "Optional explicit backend action. Omit by default so the backend can infer intent. Supported explicit actions include module-specific actions, `system_state`, and `get_result`. Do not inject unsupported defaults such as \"ask\"."
+            "description": "Optional explicit backend action. Omit by default so the backend can infer intent. Supported explicit actions include module-specific actions, `system_state`, and `get_result`. Do not inject unsupported defaults such as \"ask\". Use `get_result` only with `payload.jobId` when reading an existing async job result."
           },
           "payload": {
             "type": "object",

@@ -12,18 +12,32 @@ const CUSTOM_GPT_OPENAPI_CONTRACT_PATH = path.resolve(
   "contracts",
   "custom_gpt_route.openapi.v1.json"
 );
+const JOB_RESULT_OPENAPI_CONTRACT_PATH = path.resolve(
+  process.cwd(),
+  'contracts',
+  'job_result.openapi.v1.json'
+);
 
-async function readCustomGptOpenApiContract(): Promise<unknown> {
-  const rawContract = await fs.readFile(CUSTOM_GPT_OPENAPI_CONTRACT_PATH, "utf8");
+async function readOpenApiContract(contractPath: string): Promise<unknown> {
+  const rawContract = await fs.readFile(contractPath, "utf8");
   return JSON.parse(rawContract) as unknown;
 }
 
 router.get(
   "/contracts/custom_gpt_route.openapi.v1.json",
   asyncHandler(async (_req: Request, res: Response) => {
-    const contract = await readCustomGptOpenApiContract();
+    const contract = await readOpenApiContract(CUSTOM_GPT_OPENAPI_CONTRACT_PATH);
     //audit Assumption: Custom GPT builders should always fetch the latest contract from the backend instead of caching a stale local copy; failure risk: action routing drifts back to deprecated paths like `/ask`; expected invariant: this endpoint returns the live canonical schema and discourages intermediary caching; handling strategy: serve deterministic JSON with `no-store`.
     res.set("cache-control", "no-store, max-age=0");
+    return res.json(contract);
+  })
+);
+
+router.get(
+  '/contracts/job_result.openapi.v1.json',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const contract = await readOpenApiContract(JOB_RESULT_OPENAPI_CONTRACT_PATH);
+    res.set('cache-control', 'no-store, max-age=0');
     return res.json(contract);
   })
 );

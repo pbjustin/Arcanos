@@ -18,12 +18,15 @@ const gptJobResultRequestSchema = z.object({
 
 export interface GptJobResultLookupPayload {
   jobId: string;
-  status: 'pending' | 'complete' | 'failed' | 'not_found';
+  status: 'pending' | 'completed' | 'failed' | 'expired' | 'not_found';
   jobStatus: string | null;
   lifecycleStatus: string;
   createdAt: string | null;
   updatedAt: string | null;
   completedAt: string | null;
+  retentionUntil: string | null;
+  idempotencyUntil: string | null;
+  expiresAt: string | null;
   poll: string;
   stream: string;
   result: unknown | null;
@@ -71,6 +74,9 @@ function buildPendingJobLookupPayload(job: JobData): GptJobResultLookupPayload {
     createdAt: serializeJobTimestamp(job.created_at),
     updatedAt: serializeJobTimestamp(job.updated_at),
     completedAt: serializeJobTimestamp(job.completed_at),
+    retentionUntil: serializeJobTimestamp(job.retention_until),
+    idempotencyUntil: serializeJobTimestamp(job.idempotency_until),
+    expiresAt: serializeJobTimestamp(job.expires_at),
     poll: `/jobs/${job.id}`,
     stream: `/jobs/${job.id}/stream`,
     result: null,
@@ -81,12 +87,15 @@ function buildPendingJobLookupPayload(job: JobData): GptJobResultLookupPayload {
 function buildCompletedJobLookupPayload(job: JobData): GptJobResultLookupPayload {
   return {
     jobId: job.id,
-    status: 'complete',
+    status: 'completed',
     jobStatus: job.status,
     lifecycleStatus: resolveGptJobLifecycleStatus(job.status),
     createdAt: serializeJobTimestamp(job.created_at),
     updatedAt: serializeJobTimestamp(job.updated_at),
     completedAt: serializeJobTimestamp(job.completed_at),
+    retentionUntil: serializeJobTimestamp(job.retention_until),
+    idempotencyUntil: serializeJobTimestamp(job.idempotency_until),
+    expiresAt: serializeJobTimestamp(job.expires_at),
     poll: `/jobs/${job.id}`,
     stream: `/jobs/${job.id}/stream`,
     result: job.output ?? null,
@@ -107,15 +116,46 @@ function buildFailedJobLookupPayload(
     createdAt: serializeJobTimestamp(job.created_at),
     updatedAt: serializeJobTimestamp(job.updated_at),
     completedAt: serializeJobTimestamp(job.completed_at),
+    retentionUntil: serializeJobTimestamp(job.retention_until),
+    idempotencyUntil: serializeJobTimestamp(job.idempotency_until),
+    expiresAt: serializeJobTimestamp(job.expires_at),
     poll: `/jobs/${job.id}`,
     stream: `/jobs/${job.id}/stream`,
-    result: null,
+    result: job.output ?? null,
     error: buildJobFailurePayload(
       code,
       job.error_message ?? defaultMessage,
       {
         lifecycleStatus: resolveGptJobLifecycleStatus(job.status),
-        jobStatus: job.status
+        jobStatus: job.status,
+        resultRetained: job.output != null
+      }
+    )
+  };
+}
+
+function buildExpiredJobLookupPayload(job: JobData): GptJobResultLookupPayload {
+  return {
+    jobId: job.id,
+    status: 'expired',
+    jobStatus: job.status,
+    lifecycleStatus: resolveGptJobLifecycleStatus(job.status),
+    createdAt: serializeJobTimestamp(job.created_at),
+    updatedAt: serializeJobTimestamp(job.updated_at),
+    completedAt: serializeJobTimestamp(job.completed_at),
+    retentionUntil: serializeJobTimestamp(job.retention_until),
+    idempotencyUntil: serializeJobTimestamp(job.idempotency_until),
+    expiresAt: serializeJobTimestamp(job.expires_at),
+    poll: `/jobs/${job.id}`,
+    stream: `/jobs/${job.id}/stream`,
+    result: job.output ?? null,
+    error: buildJobFailurePayload(
+      'JOB_EXPIRED',
+      job.error_message ?? 'Async GPT job expired after its retention window.',
+      {
+        lifecycleStatus: resolveGptJobLifecycleStatus(job.status),
+        jobStatus: job.status,
+        resultRetained: job.output != null
       }
     )
   };
@@ -172,6 +212,9 @@ export function buildGptJobResultLookupPayload(
       createdAt: null,
       updatedAt: null,
       completedAt: null,
+      retentionUntil: null,
+      idempotencyUntil: null,
+      expiresAt: null,
       poll: `/jobs/${jobId}`,
       stream: `/jobs/${jobId}/stream`,
       result: null,
@@ -192,11 +235,7 @@ export function buildGptJobResultLookupPayload(
   }
 
   if (job.status === 'expired') {
-    return buildFailedJobLookupPayload(
-      job,
-      'JOB_EXPIRED',
-      'Async GPT job expired after its retention window.'
-    );
+    return buildExpiredJobLookupPayload(job);
   }
 
   return buildPendingJobLookupPayload(job);

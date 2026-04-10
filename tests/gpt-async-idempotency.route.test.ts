@@ -136,6 +136,9 @@ describe('async /gpt idempotency', () => {
       created_at: '2026-04-06T10:00:00.000Z',
       updated_at: '2026-04-06T10:00:03.000Z',
       completed_at: '2026-04-06T10:00:03.000Z',
+      retention_until: null,
+      idempotency_until: null,
+      expires_at: null,
       output: {
         ok: true,
         result: {
@@ -159,12 +162,15 @@ describe('async /gpt idempotency', () => {
       ok: true,
       result: {
         jobId: 'job-lookup-complete',
-        status: 'complete',
+        status: 'completed',
         jobStatus: 'completed',
         lifecycleStatus: 'completed',
         createdAt: '2026-04-06T10:00:00.000Z',
         updatedAt: '2026-04-06T10:00:03.000Z',
         completedAt: '2026-04-06T10:00:03.000Z',
+        retentionUntil: null,
+        idempotencyUntil: null,
+        expiresAt: null,
         poll: '/jobs/job-lookup-complete',
         stream: '/jobs/job-lookup-complete/stream',
         result: {
@@ -215,7 +221,7 @@ describe('async /gpt idempotency', () => {
     expect(response.status).toBe(200);
     expect(response.body.result).toMatchObject({
       jobId: 'job-lookup-normalized',
-      status: 'complete',
+      status: 'completed',
       result: {
         ok: true,
         result: {
@@ -259,6 +265,59 @@ describe('async /gpt idempotency', () => {
       error: null
     });
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  });
+
+  it('returns explicit expired status and preserved retained output for get_result without enqueueing work', async () => {
+    getJobByIdMock.mockResolvedValue({
+      id: 'job-lookup-expired',
+      job_type: 'gpt',
+      status: 'expired',
+      created_at: '2026-04-06T10:00:00.000Z',
+      updated_at: '2026-04-06T10:15:00.000Z',
+      completed_at: '2026-04-06T10:01:30.000Z',
+      retention_until: '2026-04-06T10:10:00.000Z',
+      idempotency_until: '2026-04-06T10:05:00.000Z',
+      expires_at: '2026-04-06T10:15:00.000Z',
+      output: {
+        ok: true,
+        result: {
+          answer: 'retained expired output'
+        }
+      },
+      error_message: 'Expired after retention window.'
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        action: 'get_result',
+        payload: {
+          jobId: 'job-lookup-expired'
+        }
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.result).toMatchObject({
+      jobId: 'job-lookup-expired',
+      status: 'expired',
+      jobStatus: 'expired',
+      lifecycleStatus: 'expired',
+      retentionUntil: '2026-04-06T10:10:00.000Z',
+      idempotencyUntil: '2026-04-06T10:05:00.000Z',
+      expiresAt: '2026-04-06T10:15:00.000Z',
+      result: {
+        ok: true,
+        result: {
+          answer: 'retained expired output'
+        }
+      },
+      error: {
+        code: 'JOB_EXPIRED',
+        message: 'Expired after retention window.'
+      }
+    });
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
   });
 
   it('returns explicit failed status for terminal get_result lookups without enqueueing work', async () => {
@@ -318,6 +377,9 @@ describe('async /gpt idempotency', () => {
       createdAt: null,
       updatedAt: null,
       completedAt: null,
+      retentionUntil: null,
+      idempotencyUntil: null,
+      expiresAt: null,
       poll: '/jobs/missing-job',
       stream: '/jobs/missing-job/stream',
       result: null,

@@ -1,0 +1,202 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Arcanos Async Job Result API",
+    "version": "1.0.0",
+    "description": "Canonical read contract for retrieving stored async GPT job results without enqueueing new work."
+  },
+  "paths": {
+    "/jobs/{jobId}/result": {
+      "get": {
+        "operationId": "getJobResult",
+        "summary": "Retrieve a stored async GPT job result",
+        "description": "Returns the stored result lifecycle for a job id. This route is read-only and never enqueues work. Missing jobs are reported in-body with `status: \"not_found\"`.",
+        "parameters": [
+          {
+            "name": "jobId",
+            "in": "path",
+            "required": true,
+            "description": "Async job identifier returned by `POST /gpt/{gptId}`.",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Stored async job result lookup payload.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobResultLookup"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid job id",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RouteError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "JobResultLookupStatus": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "completed",
+          "failed",
+          "expired",
+          "not_found"
+        ]
+      },
+      "RouteError": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": false
+          },
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "details": {}
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "ok",
+          "error"
+        ],
+        "additionalProperties": true
+      },
+      "JobResultLookup": {
+        "type": "object",
+        "properties": {
+          "jobId": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/JobResultLookupStatus"
+          },
+          "jobStatus": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lifecycleStatus": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "completedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "retentionUntil": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "idempotencyUntil": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "expiresAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "poll": {
+            "type": "string"
+          },
+          "stream": {
+            "type": "string"
+          },
+          "result": {},
+          "error": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "details": {}
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "jobId",
+          "status",
+          "jobStatus",
+          "lifecycleStatus",
+          "createdAt",
+          "updatedAt",
+          "completedAt",
+          "retentionUntil",
+          "idempotencyUntil",
+          "expiresAt",
+          "poll",
+          "stream",
+          "result",
+          "error"
+        ],
+        "additionalProperties": false
+      }
+    }
+  }
+}

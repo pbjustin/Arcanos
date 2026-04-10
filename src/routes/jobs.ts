@@ -13,14 +13,17 @@ import { getRequestActorKey } from '@platform/runtime/security.js';
 import {
   isGptJobTerminalStatus
 } from '@shared/gpt/gptJobLifecycle.js';
-import { buildStoredJobStatusPayload } from '@shared/gpt/gptJobResult.js';
+import {
+  buildGptJobResultLookupPayload,
+  buildStoredJobStatusPayload
+} from '@shared/gpt/gptJobResult.js';
 
 const router = express.Router();
 const DEFAULT_JOB_STREAM_POLL_MS = 500;
 const DEFAULT_JOB_STREAM_MAX_DURATION_MS = 60_000;
 
 const jobIdSchema = z.object({
-  id: z.string().min(1)
+  id: z.string().trim().min(1)
 });
 
 function isTerminalJobStatus(status: JobData['status']): boolean {
@@ -62,6 +65,17 @@ router.get(
     }
 
     res.json(buildStoredJobStatusPayload(job));
+  })
+);
+
+router.get(
+  '/jobs/:id/result',
+  validateParams(jobIdSchema, { errorCode: 'JOB_ID_INVALID' }),
+  asyncHandler(async (req, res) => {
+    const { id } = req.validated!.params as z.infer<typeof jobIdSchema>;
+    const job = await getJobById(id);
+
+    res.json(buildGptJobResultLookupPayload(id, job));
   })
 );
 
