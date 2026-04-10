@@ -24,6 +24,7 @@ import {
   buildQueuedAskPendingResponse,
   type QueuedAskPendingResponse
 } from '@shared/ask/asyncAskJob.js';
+import type { PreviewAskChaosHook } from '@shared/ask/previewChaos.js';
 import type { ClientContextDTO } from '@shared/types/dto.js';
 import { detectCognitiveDomain } from '@dispatcher/detectCognitiveDomain.js';
 import type { CognitiveDomain } from '@shared/types/cognitiveDomain.js';
@@ -245,6 +246,7 @@ export interface QueueWorkerAskRequest {
   clientContext?: ClientContextDTO | null;
   endpointName?: string;
   workerId?: string;
+  previewChaosHook?: PreviewAskChaosHook;
 }
 
 /**
@@ -765,7 +767,8 @@ export async function queueWorkerAsk(
     overrideAuditSafe: request.overrideAuditSafe,
     cognitiveDomain: resolvedDomain.cognitiveDomain,
     clientContext: request.clientContext ?? null,
-    endpointName: request.endpointName || 'worker-helper'
+    endpointName: request.endpointName || 'worker-helper',
+    previewChaosHook: request.previewChaosHook
   });
   const plannedJob = await planAutonomousWorkerJob('ask', queuedAskJobInput);
 

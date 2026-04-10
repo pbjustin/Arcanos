@@ -4,6 +4,7 @@ import type {
   TrinityCompactStructuredReasoning,
   TrinityStructuredReasoning
 } from '@core/logic/trinitySchema.js';
+import type { PreviewAskChaosHook } from '@shared/ask/previewChaos.js';
 import {
   TRINITY_COMPACT_STRUCTURED_REASONING_SCHEMA,
   TRINITY_STRUCTURED_REASONING_SCHEMA
@@ -78,6 +79,49 @@ function isStructuredReasoningPayload(value: unknown): value is TrinityStructure
 
 export interface StructuredReasoningSchemaOptions {
   schemaVariant?: 'compact' | 'full';
+  previewChaosHook?: PreviewAskChaosHook;
+}
+
+const consumedReasoningTimeoutChaosTokens = new Set<string>();
+
+async function sleep(delayMs: number): Promise<void> {
+  await new Promise<void>(resolve => {
+    setTimeout(resolve, delayMs);
+  });
+}
+
+function activatePreviewChaosHook(
+  previewChaosHook?: PreviewAskChaosHook
+):
+  | {
+      beforeCall: (signal: AbortSignal) => Promise<void>;
+    }
+  | undefined {
+  if (!previewChaosHook || previewChaosHook.kind !== 'reasoning_timeout_once') {
+    return undefined;
+  }
+
+  if (consumedReasoningTimeoutChaosTokens.has(previewChaosHook.hookId)) {
+    return undefined;
+  }
+  consumedReasoningTimeoutChaosTokens.add(previewChaosHook.hookId);
+
+  return {
+    beforeCall: async (signal: AbortSignal) => {
+      if (signal.aborted) {
+        throw signal.reason ?? new Error('request was aborted');
+      }
+      await sleep(previewChaosHook.delayBeforeCallMs);
+      if (signal.aborted) {
+        throw signal.reason ?? new Error('request was aborted');
+      }
+      const effectiveTimeoutMs =
+        typeof previewChaosHook.timeoutMs === 'number'
+          ? previewChaosHook.timeoutMs
+          : previewChaosHook.delayBeforeCallMs;
+      throw new Error(`Structured reasoning timed out after ${effectiveTimeoutMs}ms`);
+    }
+  };
 }
 
 export async function runStructuredReasoning(
@@ -89,6 +133,7 @@ export async function runStructuredReasoning(
   options: StructuredReasoningSchemaOptions = {}
 ): Promise<TrinityResolvedStructuredReasoning> {
   const schemaVariant = options.schemaVariant ?? 'full';
+  const activePreviewChaosHook = activatePreviewChaosHook(options.previewChaosHook);
   return runStructuredReasoningGeneric(client, {
     model,
     prompt,
@@ -101,6 +146,7 @@ export async function runStructuredReasoning(
     } as any,
     validate: schemaVariant === 'compact' ? isCompactStructuredReasoningPayload : isStructuredReasoningPayload,
     extractRefusal: extractRefusalReason as any,
+    ...(activePreviewChaosHook ? { beforeCall: activePreviewChaosHook.beforeCall } : {}),
     ...(typeof timeoutMs === 'number' ? { timeoutMs } : {})
   });
 }

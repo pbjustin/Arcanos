@@ -104,6 +104,16 @@ describe('/jobs routes', () => {
     });
   });
 
+  it('rejects whitespace-only job identifiers for the canonical result route', async () => {
+    const response = await request(buildApp()).get('/jobs/%20/result');
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual({
+      error: 'JOB_ID_INVALID'
+    });
+    expect(getJobByIdMock).not.toHaveBeenCalled();
+  });
+
   it('returns lifecycle metadata for job polling responses', async () => {
     getJobByIdMock.mockResolvedValue({
       id: 'job-123',

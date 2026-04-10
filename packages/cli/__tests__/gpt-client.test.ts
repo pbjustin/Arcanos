@@ -3,7 +3,7 @@ import path from "node:path";
 
 import { jest } from "@jest/globals";
 
-import { invokeGptRoute } from "../src/client/backend.js";
+import { fetchGptJobResult, invokeGptRoute } from "../src/client/backend.js";
 
 function createJsonResponse(payload: Record<string, unknown>, init?: ResponseInit): Response {
   return new Response(JSON.stringify(payload), {
@@ -82,6 +82,28 @@ describe("GPT route OpenAPI contract and client", () => {
     expect(body.action).not.toBe("ask");
   });
 
+  it("supports action-only job result retrieval without requiring a prompt", async () => {
+    const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(
+      createJsonResponse({ ok: true, result: { status: "complete" } })
+    );
+
+    await fetchGptJobResult({
+      baseUrl: "http://127.0.0.1:3000",
+      gptId: "arcanos-core",
+      jobId: "job-123",
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body));
+
+    expect(body).toEqual({
+      action: "get_result",
+      payload: {
+        jobId: "job-123"
+      }
+    });
+  });
+
   it("defines the OpenAPI contract on POST /gpt/{gptId} with path-bound gptId only", () => {
     const specPath = path.resolve(process.cwd(), "contracts", "custom_gpt_route.openapi.v1.json");
     const spec = JSON.parse(readFileSync(specPath, "utf-8")) as Record<string, any>;
@@ -110,6 +132,14 @@ describe("GPT route OpenAPI contract and client", () => {
     expect(requestSchema?.required ?? []).not.toContain("action");
     expect(requestSchema?.properties?.gptId).toBeUndefined();
     expect(requestSchema?.not?.required).toContain("gptId");
+    expect(
+      spec.paths?.["/gpt/{gptId}"]?.post?.requestBody?.content?.["application/json"]?.examples?.getResult?.value
+    ).toEqual({
+      action: "get_result",
+      payload: {
+        jobId: "job_123"
+      }
+    });
   });
 
   it("preserves backend HTTP status details when the error body is plain text", async () => {

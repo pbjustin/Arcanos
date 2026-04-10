@@ -141,6 +141,8 @@ interface WorkerWatchdogState {
   restartRecommended: boolean;
 }
 
+const WORKER_RUNTIME_SNAPSHOT_MIN_INTERVAL_MS = 30_000;
+
 const DEFAULT_AUTONOMY_SETTINGS: WorkerAutonomySettings = {
   workerId: process.env.JOB_WORKER_ID?.trim() || process.env.WORKER_ID?.trim() || 'async-queue',
   statsWorkerId:
@@ -309,6 +311,7 @@ export class WorkerAutonomyService {
   private readonly settings: WorkerAutonomySettings;
   private readonly startedAt: string;
   private readonly state: RuntimeSnapshotState;
+  private lastSnapshotPersistedAtMs = 0;
 
   constructor(settings: WorkerAutonomySettings = getWorkerAutonomySettings()) {
     this.settings = settings;
@@ -387,7 +390,7 @@ export class WorkerAutonomyService {
       await this.persistSnapshot({
         healthStatus: 'unhealthy',
         alerts: [`Bootstrap failed: ${message}`]
-      });
+      }, { force: true });
       throw error;
     }
   }
@@ -453,7 +456,7 @@ export class WorkerAutonomyService {
       healthStatus,
       alerts,
       watchdogState
-    });
+    }, { force: true });
     await this.maybeSendFailureWebhook(healthStatus, alerts, queueSummary, stats, reason);
 
     return {
@@ -510,7 +513,7 @@ export class WorkerAutonomyService {
       stats,
       healthStatus: 'degraded',
       alerts: [`Budget pause active: ${reason}`]
-    });
+    }, { force: true });
 
     return {
       allowed: false,
@@ -535,7 +538,7 @@ export class WorkerAutonomyService {
     await this.persistSnapshot({
       healthStatus: 'healthy',
       alerts: []
-    });
+    }, { force: true });
   }
 
   /**
@@ -571,7 +574,7 @@ export class WorkerAutonomyService {
     await this.persistSnapshot({
       healthStatus: this.state.lastBudgetPauseReason ? 'degraded' : 'healthy',
       alerts: this.state.lastBudgetPauseReason ? [`Budget pause active: ${this.state.lastBudgetPauseReason}`] : []
-      });
+      }, { force: true });
   }
 
   /**
@@ -590,7 +593,7 @@ export class WorkerAutonomyService {
     await this.persistSnapshot({
       healthStatus: this.state.lastBudgetPauseReason ? 'degraded' : 'healthy',
       alerts: this.state.lastBudgetPauseReason ? [`Budget pause active: ${this.state.lastBudgetPauseReason}`] : []
-    });
+    }, { force: true });
   }
 
   /**
@@ -638,7 +641,10 @@ export class WorkerAutonomyService {
       await this.persistSnapshot({
         healthStatus: 'degraded',
         alerts: [`Scheduled retry for job ${job.id} in ${delayMs}ms.`]
-      });
+      }, { force: true });
+      // Retry scheduling is a transient slot state. Keep the degraded snapshot above for visibility,
+      // then clear the local error so idle health can recover once the retry is handed off.
+      this.state.lastError = null;
       return {
         action: 'retried',
         delayMs
@@ -670,7 +676,7 @@ export class WorkerAutonomyService {
     await this.persistSnapshot({
       healthStatus: this.state.terminalFailures >= this.settings.failureWebhookThreshold ? 'unhealthy' : 'degraded',
       alerts: [`Job ${job.id} failed: ${errorMessage}`]
-    });
+    }, { force: true });
     await this.maybeSendFailureWebhook(
       this.state.terminalFailures >= this.settings.failureWebhookThreshold ? 'unhealthy' : 'degraded',
       [`Job ${job.id} failed: ${errorMessage}`],
@@ -710,7 +716,7 @@ export class WorkerAutonomyService {
       alerts,
       queueSummary,
       watchdogState
-    });
+    }, { force: healthStatus !== 'healthy' || alerts.length > 0 });
   }
 
   private deriveHealthStatus(
@@ -740,7 +746,19 @@ export class WorkerAutonomyService {
     return 'healthy';
   }
 
-  private async persistSnapshot(context: WorkerSnapshotContext): Promise<void> {
+  private async persistSnapshot(
+    context: WorkerSnapshotContext,
+    options: { force?: boolean } = {}
+  ): Promise<void> {
+    const nowMs = Date.now();
+    if (
+      !options.force &&
+      this.lastSnapshotPersistedAtMs > 0 &&
+      nowMs - this.lastSnapshotPersistedAtMs < WORKER_RUNTIME_SNAPSHOT_MIN_INTERVAL_MS
+    ) {
+      return;
+    }
+
     const watchdogState = context.watchdogState ?? this.buildWatchdogState(context.queueSummary ?? null);
     const snapshotRecord: WorkerRuntimeSnapshotRecord = {
       workerId: this.settings.workerId,
@@ -771,6 +789,7 @@ export class WorkerAutonomyService {
 
     try {
       await upsertWorkerRuntimeSnapshot(snapshotRecord);
+      this.lastSnapshotPersistedAtMs = nowMs;
     } catch (error: unknown) {
       //audit Assumption: snapshot persistence is operationally important but must not crash the worker loop; failure risk: observability outage halts queue processing; expected invariant: worker continues after logging persistence failures; handling strategy: log and continue.
       console.warn('[Worker Autonomy] Failed to persist runtime snapshot:', resolveErrorMessage(error));
@@ -790,18 +809,9 @@ export class WorkerAutonomyService {
       this.state.currentJobId === null &&
       inactivityMs !== null &&
       inactivityMs >= this.settings.watchdogIdleMs;
-    const idleExceeded =
-      this.state.currentJobId === null &&
-      inactivityMs !== null &&
-      inactivityMs >= this.settings.watchdogIdleMs;
-    const idleReason = idleExceeded
-      ? this.state.lastProcessedJobAt
-        ? `No worker activity for ${inactivityMs}ms since ${this.state.lastProcessedJobAt}.`
-        : `No worker receipts or processed jobs observed for ${inactivityMs}ms after startup.`
-      : null;
     const reason = triggered
       ? `No worker activity for ${inactivityMs}ms while queue work remained pending.`
-      : idleReason;
+      : null;
 
     return {
       triggered,
@@ -810,7 +820,7 @@ export class WorkerAutonomyService {
       lastActivityAt,
       lastProcessedJobAt: this.state.lastProcessedJobAt,
       idleThresholdMs: this.settings.watchdogIdleMs,
-      restartRecommended: idleExceeded
+      restartRecommended: triggered
     };
   }
 
@@ -927,23 +937,90 @@ function shouldAlertOnInspection(
  * Inputs/outputs: accepts an unknown error value and returns a retryability decision with a normalized message.
  * Edge case behavior: malformed input falls back to a non-empty error string and conservative retry classification.
  */
+type ErrorPattern = string | RegExp;
+
+const WORKER_AUTHENTICATION_PATTERNS: readonly ErrorPattern[] = [
+  /\bincorrect api key\b/i,
+  /\binvalid api key\b/i,
+  /\b(?:missing|required|expired)\b.{0,40}\bapi key\b/i,
+  /\bapi key\b.{0,40}\b(?:missing|required|expired)\b/i,
+  /\bunauthorized\b/i,
+  /\bauthentication (?:failed|error|required)\b/i
+] as const;
+
+const WORKER_QUOTA_PATTERNS: readonly ErrorPattern[] = [
+  'quota'
+] as const;
+
+const WORKER_RUNTIME_BUDGET_PATTERNS: readonly ErrorPattern[] = [
+  'aborted_due_to_budget',
+  'runtime_budget_exhausted',
+  'token budget',
+  'budget exceeded',
+  'budgetexceeded',
+  'runtimebudget',
+  'budget exhaustion',
+  'session token limit exceeded',
+  'ai call budget exceeded',
+  'ai prompt-token budget exceeded',
+  'ai completion-token budget exceeded',
+  'ai total-token budget exceeded',
+  'watchdog threshold',
+  'execution aborted by watchdog',
+  'watchdog aborted execution'
+] as const;
+
+const WORKER_PROMPT_BUDGET_PATTERNS: readonly ErrorPattern[] = [
+  'context length',
+  'max tokens',
+  'prompt too long'
+] as const;
+
+const WORKER_VALIDATION_PATTERNS: readonly ErrorPattern[] = [
+  'invalid job.input',
+  'unsupported job_type',
+  /\bschema (?:mismatch|validation|invalid|error|failed)\b/i,
+  /\bvalidation (?:failed|error|issues?|mismatch)\b/i,
+  /\bmissing (?:required )?(?:field|input|parameter|argument|property|api key)\b/i,
+  /\b(?:was|were|is) not found\b/i,
+  /\bnot found for cancellation\b/i
+] as const;
+
+function matchesPattern(normalizedMessage: string, pattern: ErrorPattern): boolean {
+  if (typeof pattern === 'string') {
+    return normalizedMessage.includes(pattern);
+  }
+
+  pattern.lastIndex = 0;
+  return pattern.test(normalizedMessage);
+}
+
+function matchesAnyPattern(normalizedMessage: string, patterns: readonly ErrorPattern[]): boolean {
+  return patterns.some(pattern => matchesPattern(normalizedMessage, pattern));
+}
+
 export function classifyWorkerExecutionError(error: unknown): {
   message: string;
   retryable: boolean;
 } {
   const message = resolveErrorMessage(error);
-    const normalizedMessage = message.toLowerCase();
-    const cancellationPatterns = [
-      'job cancellation requested',
-      'job was cancelled',
-      'gpt job was cancelled',
-      'cancellation requested while',
-      'cancelled by client'
-    ];
-    const retryablePatterns = [
-      'abort',
-      'aborted',
-      'timeout',
+  const normalizedMessage = message.toLowerCase();
+  const cancellationPatterns = [
+    'job cancellation requested',
+    'job was cancelled',
+    'gpt job was cancelled',
+    'cancellation requested while',
+    'cancelled by client'
+  ];
+  const budgetExhaustionPatterns = [
+    ...WORKER_QUOTA_PATTERNS,
+    ...WORKER_RUNTIME_BUDGET_PATTERNS,
+    ...WORKER_PROMPT_BUDGET_PATTERNS
+  ];
+  const retryablePatterns = [
+    'abort',
+    'aborted',
+    'timeout',
     'timed out',
     'rate limit',
     '429',
@@ -956,23 +1033,21 @@ export function classifyWorkerExecutionError(error: unknown): {
     'temporary',
     'network',
     'openai',
-    'incorrect api key',
-    'invalid api key',
-    'authentication',
     'overloaded'
   ];
   const terminalPatterns = [
-    'invalid job.input',
-    'unsupported job_type',
-      'schema',
-      'validation',
-      'missing',
-      'not found',
-      ...cancellationPatterns
-    ];
+    ...WORKER_VALIDATION_PATTERNS,
+    ...WORKER_AUTHENTICATION_PATTERNS,
+    ...budgetExhaustionPatterns,
+    ...cancellationPatterns
+  ];
 
   //audit Assumption: explicit validation and unsupported-type failures are deterministic; failure risk: wasting retry budget on poison jobs; expected invariant: terminal patterns override transient ones; handling strategy: check terminal signatures first.
-  if (terminalPatterns.some(pattern => normalizedMessage.includes(pattern))) {
+  const matchesTerminalPattern =
+    matchesAnyPattern(normalizedMessage, terminalPatterns) ||
+    /\b401\b/.test(normalizedMessage);
+
+  if (matchesTerminalPattern) {
     return {
       message,
       retryable: false
@@ -995,15 +1070,12 @@ function classifyWorkerFailureCategory(errorMessage: string):
   | 'unknown' {
   const normalizedMessage = errorMessage.toLowerCase();
 
-  if (
-    normalizedMessage.includes('incorrect api key') ||
-    normalizedMessage.includes('invalid api key') ||
-    normalizedMessage.includes('authentication')
-  ) {
+  if (matchesAnyPattern(normalizedMessage, WORKER_AUTHENTICATION_PATTERNS) || /\b401\b/.test(normalizedMessage)) {
     return 'authentication';
   }
 
   if (
+    matchesAnyPattern(normalizedMessage, WORKER_RUNTIME_BUDGET_PATTERNS) ||
     normalizedMessage.includes('timeout') ||
     normalizedMessage.includes('timed out') ||
     normalizedMessage.includes('abort') ||
@@ -1014,7 +1086,7 @@ function classifyWorkerFailureCategory(errorMessage: string):
 
   if (
     normalizedMessage.includes('rate limit') ||
-    normalizedMessage.includes('quota') ||
+    matchesAnyPattern(normalizedMessage, WORKER_QUOTA_PATTERNS) ||
     normalizedMessage.includes('429')
   ) {
     return 'rate_limited';
@@ -1030,10 +1102,8 @@ function classifyWorkerFailureCategory(errorMessage: string):
   }
 
   if (
-    normalizedMessage.includes('invalid job.input') ||
-    normalizedMessage.includes('unsupported job_type') ||
-    normalizedMessage.includes('schema') ||
-    normalizedMessage.includes('validation')
+    matchesAnyPattern(normalizedMessage, WORKER_VALIDATION_PATTERNS) ||
+    matchesAnyPattern(normalizedMessage, WORKER_PROMPT_BUDGET_PATTERNS)
   ) {
     return 'validation';
   }
@@ -1164,7 +1234,7 @@ function readWatchdogState(worker: WorkerRuntimeSnapshotRecord): WorkerWatchdogS
 }
 
 function deriveWorkerInactivitySignal(watchdog: WorkerWatchdogState | null): WorkerInactivitySignal {
-  if (!watchdog?.restartRecommended) {
+  if (!watchdog?.triggered) {
     return {
       detected: false,
       reason: null,

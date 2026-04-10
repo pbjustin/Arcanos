@@ -1,7 +1,10 @@
-import type OpenAI from 'openai';
 import { getDefaultModel } from './openai/credentialProvider.js';
 import { z } from 'zod';
 import { parseModelOutputWithSchema } from './safety/aiOutputBoundary.js';
+import {
+  callStructuredResponse,
+  type OpenAIResponsesClientLike,
+} from '@arcanos/openai';
 
 export type ReusableCodeTarget = 'all' | 'asyncHandler' | 'errorResponse' | 'idGenerator';
 
@@ -35,6 +38,11 @@ const reusableCodeResponseSchema = z.object({
     })
   )
 });
+type ReusableCodeResponsePayload = z.infer<typeof reusableCodeResponseSchema>;
+
+function isReusableCodeResponsePayload(value: unknown): value is ReusableCodeResponsePayload {
+  return reusableCodeResponseSchema.safeParse(value).success;
+}
 
 /**
  * Resolve the requested targets for code generation.
@@ -104,39 +112,39 @@ export function parseReusableCodeResponse(raw: string): ReusableCodeSnippet[] {
  * @edgeCases Throws when OpenAI returns invalid JSON.
  */
 export async function generateReusableCodeSnippets(
-  client: OpenAI,
+  client: OpenAIResponsesClientLike,
   request: ReusableCodeGenerationRequest
 ): Promise<ReusableCodeGenerationResult> {
   const model = getDefaultModel();
   const prompt = buildReusableCodePrompt(request);
 
-  const response: any = await (client.responses as any).create({
-    model,
-    messages: [
-      {
-        role: 'system',
-        content: 'You are a senior TypeScript engineer who responds with JSON only.'
-      },
-      {
-        role: 'user',
-        content: prompt
-      }
-    ],
-    temperature: 0.2
-  });
-
-  const rawContent = (typeof response?.output_text === 'string' ? response.output_text : response?.choices?.[0]?.message?.content) ?? '';
-  //audit Assumption: OpenAI returns content; risk: empty response; invariant: non-empty string; handling: throw error if empty.
-  if (!rawContent.trim()) {
-    throw new Error('OpenAI response contained no content.');
-  }
-
-  const snippets = parseReusableCodeResponse(rawContent);
+  const { response, outputText, outputParsed } = await callStructuredResponse<ReusableCodeResponsePayload>(
+    client,
+    {
+      model,
+      input: [
+        {
+          role: 'system',
+          content: [{ type: 'input_text', text: 'You are a senior TypeScript engineer who responds with JSON only.' }]
+        },
+        {
+          role: 'user',
+          content: [{ type: 'input_text', text: prompt }]
+        }
+      ],
+      text: { format: { type: 'json_object' } },
+      temperature: 0.2
+    },
+    undefined,
+    {
+      validate: isReusableCodeResponsePayload,
+      source: 'reusable code generation'
+    }
+  );
 
   return {
     model: response.model ?? model,
-    snippets,
-    raw: rawContent
+    snippets: outputParsed.snippets,
+    raw: outputText
   };
 }
-

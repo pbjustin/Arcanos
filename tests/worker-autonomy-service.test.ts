@@ -124,8 +124,84 @@ describe('workerAutonomyService', () => {
 
   it('classifies transient and terminal failures separately', () => {
     expect(classifyWorkerExecutionError(new Error('OpenAI rate limit timeout')).retryable).toBe(true);
+    expect(classifyWorkerExecutionError(new Error('OpenAI internal error')).retryable).toBe(true);
     expect(classifyWorkerExecutionError(new Error('Request was aborted.')).retryable).toBe(true);
     expect(classifyWorkerExecutionError(new Error('Invalid job.input: schema mismatch')).retryable).toBe(false);
+    expect(classifyWorkerExecutionError(new Error('401 Incorrect API key provided')).retryable).toBe(false);
+    expect(classifyWorkerExecutionError(new Error('API key expired')).retryable).toBe(false);
+    expect(classifyWorkerExecutionError(new Error('openai_call_aborted_due_to_budget')).retryable).toBe(false);
+    expect(classifyWorkerExecutionError(new Error('insufficient_quota')).retryable).toBe(false);
+    expect(classifyWorkerExecutionError(new Error('runtime_budget_exhausted')).retryable).toBe(false);
+    expect(classifyWorkerExecutionError(new Error('budgetexceeded')).retryable).toBe(false);
+    expect(classifyWorkerExecutionError(new Error('watchdog aborted execution due to budget exhaustion')).retryable).toBe(false);
+  });
+
+  it('records aligned categories for terminal auth and budget failures', async () => {
+    const service = new WorkerAutonomyService({
+      workerId: 'async-queue',
+      workerType: 'async_queue',
+      heartbeatIntervalMs: 10_000,
+      leaseMs: 30_000,
+      inspectorIntervalMs: 30_000,
+      staleAfterMs: 60_000,
+      defaultMaxRetries: 0,
+      retryBackoffBaseMs: 2_000,
+      retryBackoffMaxMs: 60_000,
+      maxJobsPerHour: 120,
+      maxAiCallsPerHour: 120,
+      maxRssMb: 2_048,
+      queueDepthDeferralThreshold: 25,
+      queueDepthDeferralMs: 5_000,
+      failureWebhookUrl: null,
+      failureWebhookThreshold: 3,
+      failureWebhookCooldownMs: 300_000
+    });
+
+    const baseJob = {
+      job_type: 'ask',
+      worker_id: 'async-queue',
+      status: 'running',
+      input: { prompt: 'test' },
+      retry_count: 0,
+      max_retries: 0,
+      created_at: new Date(),
+      updated_at: new Date()
+    } as const;
+
+    const categoryCases = [
+      { id: 'job-auth', message: 'API key expired', category: 'authentication' },
+      { id: 'job-quota', message: 'insufficient_quota', category: 'rate_limited' },
+      { id: 'job-budget', message: 'runtime_budget_exhausted', category: 'timeout' },
+      { id: 'job-prompt', message: 'prompt too long', category: 'validation' }
+    ] as const;
+
+    for (const testCase of categoryCases) {
+      updateJobMock.mockClear();
+
+      await service.handleJobFailure(
+        {
+          ...baseJob,
+          id: testCase.id
+        } as any,
+        testCase.message,
+        false
+      );
+
+      expect(updateJobMock).toHaveBeenCalledWith(
+        testCase.id,
+        'failed',
+        null,
+        testCase.message,
+        expect.objectContaining({
+          lastFailure: expect.objectContaining({
+            category: testCase.category,
+            retryable: false,
+            retryExhausted: false
+          })
+        }),
+        expect.anything()
+      );
+    }
   });
 
   it('reports unhealthy worker health when stalled jobs or unhealthy snapshots exist', async () => {
@@ -166,7 +242,7 @@ describe('workerAutonomyService', () => {
     );
   });
 
-  it('marks workers degraded when inactivity exceeds the watchdog threshold without receipts', async () => {
+  it('keeps idle workers healthy when inactivity exceeds the watchdog threshold without pending work', async () => {
     listWorkerRuntimeSnapshotsMock.mockResolvedValue([
       {
         workerId: 'async-queue',
@@ -183,12 +259,12 @@ describe('workerAutonomyService', () => {
           lastProcessedJobAt: null,
           watchdog: {
             triggered: false,
-            reason: 'No worker receipts or processed jobs observed for 240000ms after startup.',
+            reason: null,
             inactivityMs: 240000,
             lastActivityAt: '2026-03-07T11:56:00.000Z',
             lastProcessedJobAt: null,
             idleThresholdMs: 120000,
-            restartRecommended: true
+            restartRecommended: false
           }
         }
       }
@@ -196,11 +272,8 @@ describe('workerAutonomyService', () => {
 
     const report = await getWorkerAutonomyHealthReport();
 
-    expect(report.overallStatus).toBe('degraded');
-    expect(report.alerts).toEqual(expect.arrayContaining([
-      expect.stringContaining('inactive'),
-      expect.stringContaining('No worker receipts')
-    ]));
+    expect(report.overallStatus).toBe('healthy');
+    expect(report.alerts).toEqual([]);
   });
 
   it('ignores legacy aggregate worker snapshots when slot snapshots are present', async () => {
@@ -309,6 +382,85 @@ describe('workerAutonomyService', () => {
       })
     );
     expect(updateJobMock).not.toHaveBeenCalled();
+  });
+
+  it('recovers idle slot health after a retryable failure is handed off for retry', async () => {
+    jest.useFakeTimers();
+
+    try {
+      jest.setSystemTime(new Date('2026-03-07T12:00:00.000Z'));
+
+      const service = new WorkerAutonomyService({
+        workerId: 'async-queue',
+        workerType: 'async_queue',
+        heartbeatIntervalMs: 10_000,
+        leaseMs: 30_000,
+        inspectorIntervalMs: 30_000,
+        staleAfterMs: 60_000,
+        watchdogIdleMs: 120_000,
+        defaultMaxRetries: 2,
+        retryBackoffBaseMs: 2_000,
+        retryBackoffMaxMs: 60_000,
+        maxJobsPerHour: 120,
+        maxAiCallsPerHour: 120,
+        maxRssMb: 2_048,
+        queueDepthDeferralThreshold: 25,
+        queueDepthDeferralMs: 5_000,
+        failureWebhookUrl: null,
+        failureWebhookThreshold: 3,
+        failureWebhookCooldownMs: 300_000
+      });
+
+      await service.handleJobFailure(
+        {
+          id: 'job-retry',
+          job_type: 'ask',
+          worker_id: 'async-queue',
+          status: 'running',
+          input: { prompt: 'test' },
+          retry_count: 0,
+          max_retries: 2,
+          created_at: new Date(),
+          updated_at: new Date()
+        } as any,
+        'OpenAI rate limit timeout',
+        true
+      );
+
+      expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenCalledTimes(1);
+      expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({
+          healthStatus: 'degraded',
+          lastError: 'OpenAI rate limit timeout',
+          snapshot: expect.objectContaining({
+            alerts: ['Scheduled retry for job job-retry in 2000ms.']
+          })
+        })
+      );
+
+      jest.advanceTimersByTime(30_000);
+      await service.markIdle();
+
+      expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenCalledTimes(2);
+      expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          healthStatus: 'healthy',
+          lastError: null,
+          snapshot: expect.objectContaining({
+            alerts: [],
+            watchdog: expect.objectContaining({
+              triggered: false,
+              reason: null,
+              restartRecommended: false
+            })
+          })
+        })
+      );
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('sends a failure webhook immediately for terminal job failures', async () => {
@@ -461,5 +613,173 @@ describe('workerAutonomyService', () => {
       expect.any(Date),
       'async-queue'
     );
+  });
+
+  it('throttles healthy snapshot writes but preserves forced state transitions', async () => {
+    jest.useFakeTimers();
+
+    try {
+      jest.setSystemTime(new Date('2026-03-07T12:00:00.000Z'));
+      recordJobHeartbeatMock.mockResolvedValue({
+        id: 'job-1',
+        status: 'running'
+      });
+
+      const service = new WorkerAutonomyService({
+        workerId: 'async-queue',
+        workerType: 'async_queue',
+        heartbeatIntervalMs: 10_000,
+        leaseMs: 30_000,
+        inspectorIntervalMs: 30_000,
+        staleAfterMs: 60_000,
+        watchdogIdleMs: 120_000,
+        defaultMaxRetries: 2,
+        retryBackoffBaseMs: 2_000,
+        retryBackoffMaxMs: 60_000,
+        maxJobsPerHour: 120,
+        maxAiCallsPerHour: 120,
+        maxRssMb: 2_048,
+        queueDepthDeferralThreshold: 25,
+        queueDepthDeferralMs: 5_000,
+        failureWebhookUrl: null,
+        failureWebhookThreshold: 3,
+        failureWebhookCooldownMs: 300_000
+      });
+
+      await service.recordHeartbeat('job-1');
+      await service.recordHeartbeat('job-1');
+      await service.markIdle();
+
+      expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenCalledTimes(1);
+
+      await service.markJobStarted({
+        id: 'job-1',
+        job_type: 'gpt',
+        worker_id: 'async-queue',
+        status: 'running',
+        input: {},
+        created_at: new Date('2026-03-07T11:59:00.000Z'),
+        updated_at: new Date('2026-03-07T12:00:00.000Z')
+      } as any);
+
+      expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenCalledTimes(2);
+
+      jest.advanceTimersByTime(30_000);
+      await service.markIdle();
+
+      expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenCalledTimes(3);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('does not force idle watchdog-only snapshots when no work is pending', async () => {
+    jest.useFakeTimers();
+
+    try {
+      jest.setSystemTime(new Date('2026-03-07T12:00:00.000Z'));
+
+      const service = new WorkerAutonomyService({
+        workerId: 'async-queue',
+        workerType: 'async_queue',
+        heartbeatIntervalMs: 10_000,
+        leaseMs: 30_000,
+        inspectorIntervalMs: 30_000,
+        staleAfterMs: 60_000,
+        watchdogIdleMs: 120_000,
+        defaultMaxRetries: 2,
+        retryBackoffBaseMs: 2_000,
+        retryBackoffMaxMs: 60_000,
+        maxJobsPerHour: 120,
+        maxAiCallsPerHour: 120,
+        maxRssMb: 2_048,
+        queueDepthDeferralThreshold: 25,
+        queueDepthDeferralMs: 5_000,
+        failureWebhookUrl: null,
+        failureWebhookThreshold: 3,
+        failureWebhookCooldownMs: 300_000
+      });
+
+      jest.advanceTimersByTime(121_000);
+      await service.markIdle();
+      await service.markIdle();
+
+      expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenCalledTimes(1);
+      expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          healthStatus: 'healthy',
+          snapshot: expect.objectContaining({
+            alerts: [],
+            watchdog: expect.objectContaining({
+              triggered: false,
+              reason: null,
+              restartRecommended: false
+            })
+          })
+        })
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('marks blocked queue work as degraded when inactivity exceeds the watchdog threshold', async () => {
+    jest.useFakeTimers();
+
+    try {
+      jest.setSystemTime(new Date('2026-03-07T12:00:00.000Z'));
+      getJobQueueSummaryMock.mockResolvedValue({
+        pending: 1,
+        running: 0,
+        completed: 0,
+        failed: 0,
+        total: 1,
+        delayed: 0,
+        stalledRunning: 0,
+        oldestPendingJobAgeMs: 60_000,
+        lastUpdatedAt: '2026-03-07T12:00:00.000Z'
+      });
+
+      const service = new WorkerAutonomyService({
+        workerId: 'async-queue',
+        workerType: 'async_queue',
+        heartbeatIntervalMs: 10_000,
+        leaseMs: 30_000,
+        inspectorIntervalMs: 30_000,
+        staleAfterMs: 60_000,
+        watchdogIdleMs: 120_000,
+        defaultMaxRetries: 2,
+        retryBackoffBaseMs: 2_000,
+        retryBackoffMaxMs: 60_000,
+        maxJobsPerHour: 120,
+        maxAiCallsPerHour: 120,
+        maxRssMb: 2_048,
+        queueDepthDeferralThreshold: 25,
+        queueDepthDeferralMs: 5_000,
+        failureWebhookUrl: null,
+        failureWebhookThreshold: 3,
+        failureWebhookCooldownMs: 300_000
+      });
+
+      jest.advanceTimersByTime(121_000);
+      await service.markIdle();
+
+      expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenCalledTimes(1);
+      expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          healthStatus: 'degraded',
+          snapshot: expect.objectContaining({
+            alerts: [expect.stringContaining('queue work remained pending')],
+            watchdog: expect.objectContaining({
+              triggered: true,
+              reason: expect.stringContaining('queue work remained pending'),
+              restartRecommended: true
+            })
+          })
+        })
+      );
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

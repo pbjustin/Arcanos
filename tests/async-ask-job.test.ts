@@ -39,7 +39,13 @@ describe('async ask job helpers', () => {
     const parsedJobInput = parseQueuedAskJobInput({
       prompt: 'Diagnose this exception',
       endpointName: '',
-      clientContext: { routingDirectives: ['diagnostic'] }
+      clientContext: { routingDirectives: ['diagnostic'] },
+      previewChaosHook: {
+        kind: 'reasoning_timeout_once',
+        hookId: 'preview-chaos-test-hook',
+        delayBeforeCallMs: 250,
+        timeoutMs: 50
+      }
     });
 
     expect(parsedJobInput).toEqual({
@@ -47,7 +53,13 @@ describe('async ask job helpers', () => {
       value: {
         prompt: 'Diagnose this exception',
         endpointName: 'ask',
-        clientContext: { routingDirectives: ['diagnostic'] }
+        clientContext: { routingDirectives: ['diagnostic'] },
+        previewChaosHook: {
+          kind: 'reasoning_timeout_once',
+          hookId: 'preview-chaos-test-hook',
+          delayBeforeCallMs: 250,
+          timeoutMs: 50
+        }
       }
     });
   });

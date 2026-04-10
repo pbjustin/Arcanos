@@ -28,6 +28,7 @@ import {
   getWorkerAutonomySettings,
   classifyWorkerExecutionError
 } from '@services/workerAutonomyService.js';
+import { classifyDagNodeFailureForWorkerRetry } from './jobFailureClassification.js';
 import {
   buildJobRunnerSlotDefinitions,
   resolveJobRunnerRuntimeSettings,
@@ -208,7 +209,8 @@ async function executeQueuedPrompt(
     maxWords,
     answerMode,
     debugPipeline,
-    strictUserVisibleOutput
+    strictUserVisibleOutput,
+    previewChaosHook
   } = parsedJobInput.value;
 
   const trinityResult = await runWorkerTrinityPrompt(openai, {
@@ -221,7 +223,8 @@ async function executeQueuedPrompt(
     maxWords,
     answerMode,
     debugPipeline,
-    strictUserVisibleOutput
+    strictUserVisibleOutput,
+    previewChaosHook
   });
 
   return {
@@ -260,9 +263,7 @@ async function executeQueuedDagNode(
 
   //audit Assumption: failed DAG node results may be transient or terminal depending on the message; failure risk: blanket non-retry classification wastes available retry budget; expected invariant: central retry logic receives a normalized hint; handling strategy: classify the node error before returning the failed outcome.
   if (dagResult.status === 'failed') {
-    const classifiedFailure = classifyWorkerExecutionError(
-      dagResult.errorMessage ?? 'DAG node failed.'
-    );
+    const classifiedFailure = classifyDagNodeFailureForWorkerRetry(dagResult);
     return {
       status: 'failed',
       output: dagResult,

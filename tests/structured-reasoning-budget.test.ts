@@ -45,11 +45,11 @@ describe('runStructuredReasoning budget handling', () => {
   });
 
   it('uses the available runtime budget when no explicit timeout is provided', async () => {
-    const parse = jest.fn().mockResolvedValue({
-      output_parsed: { answer: 'ok' },
+    const create = jest.fn().mockResolvedValue({
+      output_text: '{"answer":"ok"}',
       output: []
     });
-    const client = { responses: { parse } } as any;
+    const client = { responses: { create } } as any;
 
     const result = await runStructuredReasoning(client, {
       model: 'gpt-5',
@@ -70,11 +70,11 @@ describe('runStructuredReasoning budget handling', () => {
   });
 
   it('still honors an explicit smaller timeout override', async () => {
-    const parse = jest.fn().mockResolvedValue({
-      output_parsed: { answer: 'ok' },
+    const create = jest.fn().mockResolvedValue({
+      output_text: '{"answer":"ok"}',
       output: []
     });
-    const client = { responses: { parse } } as any;
+    const client = { responses: { create } } as any;
 
     await runStructuredReasoning(client, {
       model: 'gpt-5',
@@ -92,5 +92,87 @@ describe('runStructuredReasoning budget handling', () => {
         abortMessage: 'Structured reasoning timed out after 9000ms'
       })
     );
+  });
+
+  it('accepts native Promise responses without SDK parse helpers', async () => {
+    const create = jest.fn().mockResolvedValue({
+      output_text: '{"answer":"ok"}',
+      output: [
+        {
+          type: 'message',
+          content: [{ type: 'output_text', text: '{"answer":"ok"}' }]
+        }
+      ]
+    });
+    const client = {
+      responses: {
+        create,
+        parse: jest.fn(() => {
+          throw new Error('responses.parse should not be used');
+        })
+      }
+    } as any;
+
+    const result = await runStructuredReasoning(client, {
+      model: 'gpt-5',
+      prompt: 'test prompt',
+      budget: { startedAt: 0, hardDeadline: 60_000, watchdogLimit: 60_000, safetyBuffer: 0 },
+      schema: { type: 'json_schema', name: 'test', schema: {} },
+      validate: (value: unknown): value is { answer: string } =>
+        typeof value === 'object' && value !== null && typeof (value as { answer?: unknown }).answer === 'string'
+    });
+
+    expect(result).toEqual({ answer: 'ok' });
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails clearly when the structured response JSON is malformed', async () => {
+    const create = jest.fn().mockResolvedValue({
+      output_text: '{"answer":',
+      output: [
+        {
+          type: 'message',
+          content: [{ type: 'output_text', text: '{"answer":' }]
+        }
+      ]
+    });
+    const client = { responses: { create } } as any;
+
+    await expect(runStructuredReasoning(client, {
+      model: 'gpt-5',
+      prompt: 'test prompt',
+      budget: { startedAt: 0, hardDeadline: 60_000, watchdogLimit: 60_000, safetyBuffer: 0 },
+      schema: { type: 'json_schema', name: 'test', schema: {} },
+      validate: (value: unknown): value is { answer: string } =>
+        typeof value === 'object' && value !== null && typeof (value as { answer?: unknown }).answer === 'string'
+    })).rejects.toThrow('Model returned malformed structured reasoning JSON');
+  });
+
+  it('treats pre-call abort hooks as OpenAI aborts and skips the SDK request', async () => {
+    const create = jest.fn().mockResolvedValue({
+      output_text: '{"answer":"ok"}',
+      output: []
+    });
+    const client = { responses: { create } } as any;
+    isAbortError.mockImplementation((error: unknown) =>
+      error instanceof Error && error.message === 'Request was aborted.'
+    );
+
+    await expect(runStructuredReasoning(client, {
+      model: 'gpt-5',
+      prompt: 'test prompt',
+      budget: { startedAt: 0, hardDeadline: 60_000, watchdogLimit: 60_000, safetyBuffer: 0 },
+      schema: { type: 'json_schema', name: 'test', schema: {} },
+      validate: (value: unknown): value is { answer: string } =>
+        typeof value === 'object' && value !== null && typeof (value as { answer?: unknown }).answer === 'string',
+      beforeCall: async () => {
+        throw new Error('Request was aborted.');
+      }
+    })).rejects.toMatchObject({
+      name: 'OpenAIAbortError',
+      message: 'openai_call_aborted_due_to_budget'
+    });
+
+    expect(create).not.toHaveBeenCalled();
   });
 });

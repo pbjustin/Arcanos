@@ -23,7 +23,7 @@ const DEFAULT_JOB_STREAM_POLL_MS = 500;
 const DEFAULT_JOB_STREAM_MAX_DURATION_MS = 60_000;
 
 const jobIdSchema = z.object({
-  id: z.string().min(1)
+  id: z.string().trim().min(1)
 });
 
 function isTerminalJobStatus(status: JobData['status']): boolean {

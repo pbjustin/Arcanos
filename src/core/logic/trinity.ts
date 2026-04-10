@@ -966,7 +966,8 @@ export async function runThroughBrain(
             outputControls,
             tier,
             runtimeBudget,
-            stageTimeoutOverrideMs
+            stageTimeoutOverrideMs,
+            options.reasoningStagePreviewChaosHook
           )
       });
     } catch (error) {

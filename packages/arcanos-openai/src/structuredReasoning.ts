@@ -1,4 +1,8 @@
 import type OpenAI from 'openai';
+import {
+  callStructuredResponse,
+  OpenAIResponseMalformedJsonError,
+} from './responses.js';
 import type { RuntimeBudget } from '@arcanos/runtime';
 import {
   createLinkedAbortController,
@@ -26,6 +30,7 @@ export interface StructuredReasoningOptions<T> {
   extractRefusal?: (response: any) => string | null;
   signal?: AbortSignal;
   timeoutMs?: number;
+  beforeCall?: (signal: AbortSignal) => Promise<void>;
 }
 
 /**
@@ -58,24 +63,34 @@ export async function runStructuredReasoning<T>(
   });
 
   try {
-    const response = await (client.responses as any).parse(
+    if (opts.beforeCall) {
+      await opts.beforeCall(requestScope.signal);
+    }
+
+    const { outputParsed } = await callStructuredResponse(
+      client as any,
       {
         model: opts.model,
         input: opts.prompt,
-        text: { format: { ...opts.schema } }
+        text: { format: opts.schema as any }
       },
-      { signal: requestScope.signal }
+      { signal: requestScope.signal },
+      {
+        validate: opts.validate,
+        extractRefusal: opts.extractRefusal,
+        source: 'structured reasoning'
+      }
     );
 
-    const refusalReason = opts.extractRefusal ? opts.extractRefusal(response) : null;
-    if (refusalReason) throw new Error(`Model refusal: ${refusalReason}`);
-
-    if (!opts.validate((response as any).output_parsed)) {
-      throw new Error('Model failed to provide structured reasoning output.');
-    }
-    return (response as any).output_parsed as T;
+    return outputParsed;
   } catch (err) {
     if (requestScope.signal.aborted || isAbortError(err)) throw new OpenAIAbortError();
+    if (err instanceof OpenAIResponseMalformedJsonError) {
+      const detail = err.message.includes(': ')
+        ? err.message.slice(err.message.indexOf(': ') + 2)
+        : err.message;
+      throw new Error(`Model returned malformed structured reasoning JSON: ${detail}`);
+    }
     throw err;
   } finally {
     requestScope.cleanup();
