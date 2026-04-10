@@ -11,9 +11,9 @@ import type { JobData } from '@core/db/schema.js';
 import { sleep } from '@shared/sleep.js';
 import { getRequestActorKey } from '@platform/runtime/security.js';
 import {
-  isGptJobTerminalStatus,
-  resolveGptJobLifecycleStatus
+  isGptJobTerminalStatus
 } from '@shared/gpt/gptJobLifecycle.js';
+import { buildStoredJobStatusPayload } from '@shared/gpt/gptJobResult.js';
 
 const router = express.Router();
 const DEFAULT_JOB_STREAM_POLL_MS = 500;
@@ -25,26 +25,6 @@ const jobIdSchema = z.object({
 
 function isTerminalJobStatus(status: JobData['status']): boolean {
   return isGptJobTerminalStatus(status);
-}
-
-function buildJobStatusPayload(job: JobData) {
-  return {
-    id: job.id,
-    job_type: job.job_type,
-    status: job.status,
-    lifecycle_status: resolveGptJobLifecycleStatus(job.status),
-    created_at: job.created_at,
-    updated_at: job.updated_at,
-    completed_at: job.completed_at ?? null,
-    cancel_requested_at: job.cancel_requested_at ?? null,
-    cancel_reason: job.cancel_reason ?? null,
-    retention_until: job.retention_until ?? null,
-    idempotency_until: job.idempotency_until ?? null,
-    expires_at: job.expires_at ?? null,
-    error_message: job.error_message ?? null,
-    output: job.output ?? null,
-    result: job.output ?? null
-  };
 }
 
 function writeSseEvent(
@@ -81,7 +61,7 @@ router.get(
       return;
     }
 
-    res.json(buildJobStatusPayload(job));
+    res.json(buildStoredJobStatusPayload(job));
   })
 );
 
@@ -163,7 +143,7 @@ router.post(
           code: 'JOB_ALREADY_TERMINAL',
           message: 'Terminal jobs cannot be cancelled.'
         },
-        job: cancellation.job ? buildJobStatusPayload(cancellation.job) : null
+        job: cancellation.job ? buildStoredJobStatusPayload(cancellation.job) : null
       });
       return;
     }
@@ -172,7 +152,7 @@ router.post(
     res.status(statusCode).json({
       ok: true,
       cancellationRequested: cancellation.outcome === 'cancellation_requested',
-      ...buildJobStatusPayload(cancellation.job!)
+      ...buildStoredJobStatusPayload(cancellation.job!)
     });
   })
 );
@@ -220,7 +200,7 @@ router.get(
           return;
         }
 
-        const payload = buildJobStatusPayload(job);
+        const payload = buildStoredJobStatusPayload(job);
         if (job.status !== lastObservedStatus) {
           writeSseEvent(
             res,

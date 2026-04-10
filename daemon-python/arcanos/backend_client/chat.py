@@ -181,3 +181,35 @@ def request_system_state(
         return BackendResponse(ok=False, error=response.error)
 
     return BackendResponse(ok=True, value=response.value)
+
+
+def request_job_result(
+    client: "BackendApiClient",
+    job_id: str,
+    gpt_id: Optional[str] = None,
+) -> BackendResponse[dict[str, Any]]:
+    """
+    Purpose: Fetch a stored async GPT job result through the canonical GPT route.
+    Inputs/Outputs: required job_id plus optional gpt_id override; returns raw job-result JSON.
+    Edge cases: blank job ids fail locally so retrieval never degrades into a prompt query.
+    """
+    normalized_job_id = job_id.strip()
+    if not normalized_job_id:
+        return BackendResponse(
+            ok=False,
+            error=BackendRequestError(
+                kind="validation",
+                message="job_id is required for get_result",
+            ),
+        )
+
+    route = resolve_backend_chat_route(gpt_id)
+    payload = _build_backend_payload(
+        action="get_result",
+        payload={"jobId": normalized_job_id},
+    )
+    response = client._request_json("post", route.endpoint, payload)
+    if not response.ok or not response.value:
+        return BackendResponse(ok=False, error=response.error)
+
+    return BackendResponse(ok=True, value=response.value)

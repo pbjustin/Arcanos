@@ -10,7 +10,7 @@
       "post": {
         "operationId": "invokeGptRoute",
         "summary": "Invoke a GPT-routed module request",
-        "description": "Send a prompt to any GPT/module binding using the path-bound GPT identifier. `action` is optional and should only be sent when the caller explicitly selects a backend-supported action.",
+        "description": "Send a prompt to any GPT/module binding using the path-bound GPT identifier. `action` is optional and should only be sent when the caller explicitly selects a backend-supported action. Use `action: \"get_result\"` with `payload.jobId` to read a stored async GPT job result without enqueueing new work.",
         "parameters": [
           {
             "name": "gptId",
@@ -54,6 +54,15 @@
                     "action": "system_state",
                     "payload": {
                       "sessionId": "cli-123"
+                    }
+                  }
+                },
+                "getResult": {
+                  "summary": "Read a stored async GPT job result",
+                  "value": {
+                    "action": "get_result",
+                    "payload": {
+                      "jobId": "job_123"
                     }
                   }
                 }
@@ -124,7 +133,7 @@
           },
           "action": {
             "type": "string",
-            "description": "Optional explicit backend action. Omit by default so the backend can infer intent. Do not inject unsupported defaults such as \"ask\"."
+            "description": "Optional explicit backend action. Omit by default so the backend can infer intent. Supported explicit actions include module-specific actions, `system_state`, and `get_result`. Do not inject unsupported defaults such as \"ask\"."
           },
           "payload": {
             "type": "object",
