@@ -21,7 +21,7 @@
     "env": {
       "NODE_ENV": "production",
       "PORT": "$PORT",
-      "RUN_WORKERS": "false"
+      "ARCANOS_PROCESS_KIND": "$ARCANOS_PROCESS_KIND"
     }
   },
   "environments": {
@@ -36,7 +36,7 @@
         "GPT51_MODEL": "$GPT51_MODEL",
         "GPT5_MODEL": "$GPT5_MODEL",
         "RAILWAY_ENVIRONMENT": "production",
-        "RUN_WORKERS": "false",
+        "ARCANOS_PROCESS_KIND": "$ARCANOS_PROCESS_KIND",
         "WORKER_API_TIMEOUT_MS": "60000",
         "ARC_LOG_PATH": "/tmp/arc/log",
         "ENABLE_ACTION_PLANS": "false",
@@ -47,6 +47,7 @@
       "variables": {
         "NODE_ENV": "development",
         "PORT": "8080",
+        "ARCANOS_PROCESS_KIND": "$ARCANOS_PROCESS_KIND",
         "RUN_WORKERS": "true"
       }
     }

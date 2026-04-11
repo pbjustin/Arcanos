@@ -85,7 +85,7 @@ describe('worker duplication suppression', () => {
       runWorkers: false,
       workerCount: 0,
       workerIds: [],
-      message: 'RUN_WORKERS disabled for this service role; workers not started.'
+      message: 'RUN_WORKERS disabled for explicit web process role; workers not started.'
     }));
     expect(workerConfig.getWorkerRuntimeStatus()).toEqual(expect.objectContaining({
       enabled: false,

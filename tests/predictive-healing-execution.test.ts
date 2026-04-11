@@ -19,17 +19,11 @@ const getStableWorkerRuntimeModeMock = jest.fn(() => ({
   resolvedRunWorkers: false,
   processKind: 'unknown',
   railwayServiceName: null,
-  dedicatedWorkerServiceDetected: false,
-  webServiceWorkersOverride: false,
   reason: 'requested'
 }));
 const isWorkerRuntimeSuppressedForServiceRoleMock = jest.fn((workerRuntimeMode) => (
   !workerRuntimeMode.resolvedRunWorkers
-  && (
-    workerRuntimeMode.processKind === 'web'
-    || workerRuntimeMode.reason === 'railway_web_service'
-    || workerRuntimeMode.reason === 'railway_dedicated_worker_service'
-  )
+  && workerRuntimeMode.processKind === 'web'
 ));
 
 function createStructuredLoggerMock() {

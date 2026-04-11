@@ -123,14 +123,10 @@ export interface WorkerRuntimeModeResolution {
   resolvedRunWorkers: boolean;
   processKind: 'web' | 'worker' | 'unknown';
   railwayServiceName: string | null;
-  dedicatedWorkerServiceDetected: boolean;
-  webServiceWorkersOverride: boolean;
   reason:
     | 'requested'
     | 'process_kind_web'
-    | 'process_kind_worker'
-    | 'railway_web_service'
-    | 'railway_dedicated_worker_service';
+    | 'process_kind_worker';
 }
 
 const SHOULD_BYPASS_WORKER_RUNTIME_CACHE = getEnv('NODE_ENV') === 'test';
@@ -248,22 +244,10 @@ function normalizeProcessKind(raw: string | undefined): WorkerRuntimeModeResolut
   return 'unknown';
 }
 
-function hasDedicatedRailwayWorkerService(): boolean {
-  return Object.entries(process.env).some(([key, value]) => {
-    if (!/^RAILWAY_SERVICE_.*WORKER.*_URL$/u.test(key)) {
-      return false;
-    }
-
-    return typeof value === 'string' && value.trim().length > 0;
-  });
-}
-
 export function resolveWorkerRuntimeMode(): WorkerRuntimeModeResolution {
   const requestedRunWorkers = getEnvBoolean('RUN_WORKERS', getEnv('NODE_ENV') !== 'test');
   const processKind = normalizeProcessKind(getEnv('ARCANOS_PROCESS_KIND'));
   const railwayServiceName = getEnv('RAILWAY_SERVICE_NAME')?.trim() || null;
-  const dedicatedWorkerServiceDetected = isRailwayEnvironment() && hasDedicatedRailwayWorkerService();
-  const webServiceWorkersOverride = getEnvBoolean('ARCANOS_ALLOW_WEB_SERVICE_WORKERS', false);
 
   if (processKind === 'web') {
     return {
@@ -271,8 +255,6 @@ export function resolveWorkerRuntimeMode(): WorkerRuntimeModeResolution {
       resolvedRunWorkers: false,
       processKind,
       railwayServiceName,
-      dedicatedWorkerServiceDetected,
-      webServiceWorkersOverride,
       reason: 'process_kind_web'
     };
   }
@@ -283,43 +265,7 @@ export function resolveWorkerRuntimeMode(): WorkerRuntimeModeResolution {
       resolvedRunWorkers: true,
       processKind,
       railwayServiceName,
-      dedicatedWorkerServiceDetected,
-      webServiceWorkersOverride,
       reason: 'process_kind_worker'
-    };
-  }
-
-  const normalizedServiceName = railwayServiceName?.toLowerCase() ?? '';
-  if (
-    isRailwayEnvironment() &&
-    !webServiceWorkersOverride &&
-    normalizedServiceName.length > 0 &&
-    !normalizedServiceName.includes('worker')
-  ) {
-    return {
-      requestedRunWorkers,
-      resolvedRunWorkers: false,
-      processKind,
-      railwayServiceName,
-      dedicatedWorkerServiceDetected,
-      webServiceWorkersOverride,
-      reason: 'railway_web_service'
-    };
-  }
-
-  if (
-    dedicatedWorkerServiceDetected &&
-    normalizedServiceName.length > 0 &&
-    !normalizedServiceName.includes('worker')
-  ) {
-    return {
-      requestedRunWorkers,
-      resolvedRunWorkers: false,
-      processKind,
-      railwayServiceName,
-      dedicatedWorkerServiceDetected,
-      webServiceWorkersOverride,
-      reason: 'railway_dedicated_worker_service'
     };
   }
 
@@ -328,8 +274,6 @@ export function resolveWorkerRuntimeMode(): WorkerRuntimeModeResolution {
     resolvedRunWorkers: requestedRunWorkers,
     processKind,
     railwayServiceName,
-    dedicatedWorkerServiceDetected,
-    webServiceWorkersOverride,
     reason: 'requested'
   };
 }
@@ -350,14 +294,7 @@ export function getStableWorkerRuntimeMode(): WorkerRuntimeModeResolution {
 export function isWorkerRuntimeSuppressedForServiceRole(
   workerRuntimeMode: WorkerRuntimeModeResolution
 ): boolean {
-  return (
-    !workerRuntimeMode.resolvedRunWorkers
-    && (
-      workerRuntimeMode.processKind === 'web'
-      || workerRuntimeMode.reason === 'railway_web_service'
-      || workerRuntimeMode.reason === 'railway_dedicated_worker_service'
-    )
-  );
+  return !workerRuntimeMode.resolvedRunWorkers && workerRuntimeMode.processKind === 'web';
 }
 
 /**

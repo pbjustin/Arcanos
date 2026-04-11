@@ -35,7 +35,6 @@ if (workerRuntimeMode.requestedRunWorkers && !workerRuntimeMode.resolvedRunWorke
     module: 'core',
     serviceName: workerRuntimeMode.railwayServiceName,
     processKind: workerRuntimeMode.processKind,
-    dedicatedWorkerServiceDetected: workerRuntimeMode.dedicatedWorkerServiceDetected,
     reason: workerRuntimeMode.reason
   });
 }
@@ -303,9 +302,7 @@ export interface WorkerBootstrapSummary {
 function buildWorkersDisabledSummary(): WorkerBootstrapSummary {
   const message =
     workerRuntimeMode.reason === 'process_kind_web'
-      || workerRuntimeMode.reason === 'railway_web_service'
-      || workerRuntimeMode.reason === 'railway_dedicated_worker_service'
-      ? 'RUN_WORKERS disabled for this service role; workers not started.'
+      ? 'RUN_WORKERS disabled for explicit web process role; workers not started.'
       : 'RUN_WORKERS disabled; workers not started.';
 
   return {

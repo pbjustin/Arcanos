@@ -25,39 +25,7 @@ afterEach(() => {
 });
 
 describe('resolveWorkerRuntimeMode', () => {
-  it('suppresses in-process workers on Railway web services by default', () => {
-    resetEnv({
-      NODE_ENV: 'production',
-      RUN_WORKERS: 'true',
-      RAILWAY_ENVIRONMENT: 'production',
-      RAILWAY_SERVICE_NAME: 'ARCANOS V2',
-      RAILWAY_SERVICE_ARCANOS_WORKER_URL: 'arcanos-worker-production.up.railway.app'
-    });
-
-    const resolution = resolveWorkerRuntimeMode();
-
-    expect(resolution.resolvedRunWorkers).toBe(false);
-    expect(resolution.reason).toBe('railway_web_service');
-    expect(getConfig().runWorkers).toBe(false);
-  });
-
-  it('keeps workers enabled for dedicated Railway worker services', () => {
-    resetEnv({
-      NODE_ENV: 'production',
-      RUN_WORKERS: 'true',
-      RAILWAY_ENVIRONMENT: 'production',
-      RAILWAY_SERVICE_NAME: 'ARCANOS Worker',
-      RAILWAY_SERVICE_ARCANOS_WORKER_URL: 'arcanos-worker-production.up.railway.app'
-    });
-
-    const resolution = resolveWorkerRuntimeMode();
-
-    expect(resolution.resolvedRunWorkers).toBe(true);
-    expect(resolution.reason).toBe('requested');
-    expect(getConfig().runWorkers).toBe(true);
-  });
-
-  it('forces web role workers off when the launcher marks the process as web', () => {
+  it('forces workers off when the process kind is explicitly web', () => {
     resetEnv({
       NODE_ENV: 'production',
       RUN_WORKERS: 'true',
@@ -68,20 +36,48 @@ describe('resolveWorkerRuntimeMode', () => {
 
     expect(resolution.resolvedRunWorkers).toBe(false);
     expect(resolution.reason).toBe('process_kind_web');
+    expect(getConfig().runWorkers).toBe(false);
   });
 
-  it('allows Railway web services to opt back into in-process workers explicitly', () => {
+  it('forces workers on when the process kind is explicitly worker', () => {
     resetEnv({
       NODE_ENV: 'production',
-      RUN_WORKERS: 'true',
-      RAILWAY_ENVIRONMENT: 'production',
-      RAILWAY_SERVICE_NAME: 'ARCANOS V2',
-      ARCANOS_ALLOW_WEB_SERVICE_WORKERS: 'true'
+      RUN_WORKERS: 'false',
+      ARCANOS_PROCESS_KIND: 'worker'
     });
 
     const resolution = resolveWorkerRuntimeMode();
 
     expect(resolution.resolvedRunWorkers).toBe(true);
+    expect(resolution.reason).toBe('process_kind_worker');
+    expect(getConfig().runWorkers).toBe(true);
+  });
+
+  it('falls back to RUN_WORKERS without service-name suppression when process kind is missing', () => {
+    resetEnv({
+      NODE_ENV: 'production',
+      RUN_WORKERS: 'true',
+      RAILWAY_ENVIRONMENT: 'production',
+      RAILWAY_SERVICE_NAME: 'ARCANOS V2'
+    });
+
+    const resolution = resolveWorkerRuntimeMode();
+
+    expect(resolution.resolvedRunWorkers).toBe(true);
+    expect(resolution.reason).toBe('requested');
+  });
+
+  it('treats invalid process kinds as unknown and falls back to RUN_WORKERS', () => {
+    resetEnv({
+      NODE_ENV: 'production',
+      RUN_WORKERS: 'false',
+      ARCANOS_PROCESS_KIND: 'scheduler'
+    });
+
+    const resolution = resolveWorkerRuntimeMode();
+
+    expect(resolution.processKind).toBe('unknown');
+    expect(resolution.resolvedRunWorkers).toBe(false);
     expect(resolution.reason).toBe('requested');
   });
 });

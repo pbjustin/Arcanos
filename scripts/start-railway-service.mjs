@@ -2,18 +2,25 @@
 /**
  * Railway-aware process launcher.
  *
- * Purpose:
- * - Start the correct runtime command for each Railway service from one shared
- *   `railway.json` start command.
- * - Keep worker services healthy under Railway by exposing a minimal health
- *   endpoint while the async runner is active.
+ * Service-name inference was removed because coupling runtime role selection to
+ * Railway service naming allowed misnamed or missing worker services to accept
+ * async jobs without ever consuming them.
+ *
+ * `ARCANOS_PROCESS_KIND` is now the explicit runtime contract:
+ * - `ARCANOS_PROCESS_KIND=web` starts the API server.
+ * - `ARCANOS_PROCESS_KIND=worker` starts the async worker runtime.
+ *
+ * Configure Railway services explicitly:
+ * - Web service: `ARCANOS_PROCESS_KIND=web`
+ * - Worker service: `ARCANOS_PROCESS_KIND=worker`
  *
  * Inputs/outputs:
- * - Input: Railway environment variables (`RAILWAY_SERVICE_NAME`, `PORT`).
+ * - Input: Railway environment variables (`ARCANOS_PROCESS_KIND`, `PORT`).
  * - Output: Spawns either web server runtime or worker runtime, exits with the
  *   spawned process exit code.
  *
  * Edge cases:
+ * - Missing or invalid `ARCANOS_PROCESS_KIND` is a hard startup failure.
  * - If `PORT` is missing/invalid in worker mode, falls back to `8080`.
  * - If worker process exits, health server is shut down and this launcher exits.
  */
@@ -22,28 +29,59 @@ import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import process from 'node:process';
 
-const WORKER_SERVICE_TOKEN = 'worker';
 const PROCESS_KIND_ENV = 'ARCANOS_PROCESS_KIND';
+const VALID_PROCESS_KINDS = new Set(['web', 'worker']);
 const HEALTH_PATHS = new Set(['/health', '/healthz', '/readyz']);
 const HEALTH_OK_BODY = 'ok';
 const HEALTH_NOT_FOUND_BODY = 'not found';
 const DEFAULT_HEALTH_PORT = 8080;
 
 /**
- * Resolve whether this Railway service should run the async worker entrypoint.
+ * Resolve the explicit runtime process kind from environment.
  *
  * Inputs/outputs:
- * - Input: `serviceName` from Railway env.
- * - Output: `true` when service name implies worker runtime.
+ * - Input: `ARCANOS_PROCESS_KIND` from environment.
+ * - Output: normalized process kind (`web` or `worker`).
  *
  * Edge case behavior:
- * - Empty service names default to web runtime for safer API availability.
+ * - Missing or invalid values throw to prevent ambiguous service boot.
  */
-function shouldRunWorkerRuntime(serviceName) {
-  const normalizedName = String(serviceName ?? '').trim().toLowerCase();
+function resolveProcessKindOrThrow() {
+  const rawProcessKind = process.env[PROCESS_KIND_ENV];
+  const normalizedProcessKind = String(rawProcessKind ?? '').trim().toLowerCase();
 
-  //audit Assumption: worker services include "worker" in service name; risk: false negatives for custom names; invariant: non-worker services must remain on web start path; handling: default to web when token missing.
-  return normalizedName.includes(WORKER_SERVICE_TOKEN);
+  if (normalizedProcessKind.length === 0) {
+    console.warn(
+      `[ARCANOS] Missing ${PROCESS_KIND_ENV}. Set ${PROCESS_KIND_ENV}=web on the web service and ${PROCESS_KIND_ENV}=worker on the worker service.`
+    );
+    throw new Error(`${PROCESS_KIND_ENV} is required and must be "web" or "worker".`);
+  }
+
+  if (!VALID_PROCESS_KINDS.has(normalizedProcessKind)) {
+    throw new Error(
+      `${PROCESS_KIND_ENV} must be "web" or "worker", received "${String(rawProcessKind)}".`
+    );
+  }
+
+  return normalizedProcessKind;
+}
+
+/**
+ * Emit a stable startup log for operator visibility.
+ *
+ * Inputs/outputs:
+ * - Input: resolved process kind.
+ * - Output: writes a startup log line to stdout.
+ *
+ * Edge case behavior:
+ * - Missing service name is omitted from the log line.
+ */
+function logStartup(processKind) {
+  const nodeEnv = process.env.NODE_ENV ?? 'development';
+  const railwayServiceName = process.env.RAILWAY_SERVICE_NAME?.trim();
+  const serviceSegment = railwayServiceName ? `, service: ${railwayServiceName}` : '';
+
+  console.log(`[ARCANOS] Starting process: ${processKind} (env: ${nodeEnv}${serviceSegment})`);
 }
 
 /**
@@ -207,10 +245,11 @@ async function runWorkerRuntimeWithHealthServer() {
  */
 async function main() {
   try {
-    const railwayServiceName = process.env.RAILWAY_SERVICE_NAME ?? '';
+    const processKind = resolveProcessKindOrThrow();
+    logStartup(processKind);
 
-    //audit Assumption: service-specific behavior should be deterministic from env metadata; risk: wrong process type launched; invariant: worker services take worker branch only; handling: branch on normalized service name token.
-    if (shouldRunWorkerRuntime(railwayServiceName)) {
+    //audit Assumption: runtime role must be selected from an explicit env contract, not infrastructure naming; risk: wrong process type launched; invariant: only validated `web`/`worker` values are accepted; handling: strict env validation before branch selection.
+    if (processKind === 'worker') {
       await runWorkerRuntimeWithHealthServer();
       return;
     }
