@@ -17,7 +17,7 @@ function buildMinimalRailwayConfig(overrides = {}) {
       healthcheckPath: '/health',
       restartPolicyType: 'ON_FAILURE',
       env: {
-        RUN_WORKERS: 'true',
+        ARCANOS_PROCESS_KIND: '$ARCANOS_PROCESS_KIND',
       },
     },
     environments: {
@@ -28,7 +28,7 @@ function buildMinimalRailwayConfig(overrides = {}) {
           DATABASE_URL: '$DATABASE_URL',
           OPENAI_API_KEY: '$OPENAI_API_KEY',
           RAILWAY_ENVIRONMENT: 'production',
-          RUN_WORKERS: 'true',
+          ARCANOS_PROCESS_KIND: '$ARCANOS_PROCESS_KIND',
         },
       },
     },
@@ -43,7 +43,7 @@ describe('validate-railway-compatibility', () => {
     expect(validationErrors).toEqual([]);
   });
 
-  it('rejects malformed RUN_WORKERS values in deploy and production env settings', () => {
+  it('rejects malformed ARCANOS_PROCESS_KIND values in deploy and production env settings', () => {
     const validationErrors = validateConfig(
       buildMinimalRailwayConfig({
         deploy: {
@@ -51,7 +51,7 @@ describe('validate-railway-compatibility', () => {
           healthcheckPath: '/health',
           restartPolicyType: 'ON_FAILURE',
           env: {
-            RUN_WORKERS: 'sometimes',
+            ARCANOS_PROCESS_KIND: 'sometimes',
           },
         },
         environments: {
@@ -62,7 +62,7 @@ describe('validate-railway-compatibility', () => {
               DATABASE_URL: '$DATABASE_URL',
               OPENAI_API_KEY: '$OPENAI_API_KEY',
               RAILWAY_ENVIRONMENT: 'production',
-              RUN_WORKERS: 'sometimes',
+              ARCANOS_PROCESS_KIND: 'sometimes',
             },
           },
         },
@@ -71,8 +71,8 @@ describe('validate-railway-compatibility', () => {
 
     expect(validationErrors).toEqual(
       expect.arrayContaining([
-        expect.stringContaining('deploy.env.RUN_WORKERS'),
-        expect.stringContaining('environments.production.variables.RUN_WORKERS'),
+        expect.stringContaining('deploy.env.ARCANOS_PROCESS_KIND'),
+        expect.stringContaining('environments.production.variables.ARCANOS_PROCESS_KIND'),
       ]),
     );
   });
@@ -84,6 +84,7 @@ describe('validate-railway-compatibility', () => {
 # DATABASE_URL=$DATABASE_URL
 # OPENAI_API_KEY=$OPENAI_API_KEY
 # RAILWAY_ENVIRONMENT=production
+# ARCANOS_PROCESS_KIND=web
 # RUN_WORKERS=false
 `);
 

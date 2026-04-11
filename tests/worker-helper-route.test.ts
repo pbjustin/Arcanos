@@ -640,7 +640,7 @@ describe('/worker-helper routes', () => {
       workerCount: 0,
       workerIds: [],
       model: 'gpt-5.1',
-      message: 'RUN_WORKERS disabled for this service role; workers not started.'
+      message: 'RUN_WORKERS disabled for explicit web process role; workers not started.'
     });
     getWorkerRuntimeStatusMock.mockReturnValue({
       enabled: false,
@@ -664,7 +664,7 @@ describe('/worker-helper routes', () => {
       restart: expect.objectContaining({
         started: false,
         runWorkers: false,
-        message: 'RUN_WORKERS disabled for this service role; workers not started.'
+        message: 'RUN_WORKERS disabled for explicit web process role; workers not started.'
       }),
       runtime: expect.objectContaining({
         enabled: false,

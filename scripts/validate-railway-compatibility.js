@@ -27,16 +27,18 @@ const EXPECTED_HEALTHCHECK_PATH = '/health';
 const EXPECTED_DOCKERFILE_CMD = 'CMD ["node", "scripts/start-railway-service.mjs"]';
 const EXPECTED_DOCKERFILE_PRISMA_COPY = 'COPY prisma/ ./prisma/';
 const EXPECTED_DOCKERFILE_PRISMA_GENERATE = 'npx --yes prisma@5.22.0 generate --schema ./prisma/schema.prisma';
+const PROCESS_KIND_ENV = 'ARCANOS_PROCESS_KIND';
 const REQUIRED_PRODUCTION_VARIABLES = [
   'NODE_ENV',
   'PORT',
   'DATABASE_URL',
   'OPENAI_API_KEY',
   'RAILWAY_ENVIRONMENT',
-  'RUN_WORKERS',
+  PROCESS_KIND_ENV,
 ];
 const DOCUMENTED_PRODUCTION_VARIABLES = [
   ...REQUIRED_PRODUCTION_VARIABLES,
+  'RUN_WORKERS',
   'OPENAI_BASE_URL',
   'AI_MODEL',
   'GPT51_MODEL',
@@ -98,6 +100,25 @@ export function isBooleanEnvironmentValue(value) {
 }
 
 /**
+ * Validate the explicit process kind runtime contract.
+ *
+ * @param {unknown} value - Raw environment value candidate.
+ * @returns {boolean} `true` when the value is an accepted explicit process kind or Railway pass-through.
+ */
+export function isProcessKindEnvironmentValue(value) {
+  if (typeof value !== 'string') {
+    return false;
+  }
+
+  const normalizedValue = value.trim().toLowerCase();
+  return (
+    normalizedValue === 'web'
+    || normalizedValue === 'worker'
+    || normalizedValue === `$${PROCESS_KIND_ENV.toLowerCase()}`
+  );
+}
+
+/**
  * Validate core Railway deployment settings.
  *
  * @param {Record<string, unknown>} config - Parsed railway config.
@@ -141,10 +162,10 @@ export function validateConfig(config) {
     errors.push(`Expected deploy.restartPolicyType to be "ON_FAILURE" but found "${String(deploy.restartPolicyType ?? '')}"`);
   }
 
-  //audit Assumption: Railway deploy env should declare worker topology explicitly instead of inheriting a runtime default; risk: unreviewed config drift changes whether the web service starts in-process workers; invariant: deploy.env.RUN_WORKERS is present and boolean-like; handling: fail validation on missing or malformed values.
-  if (!isBooleanEnvironmentValue(deploy.env?.RUN_WORKERS)) {
+  //audit Assumption: Railway deploy env should declare runtime role explicitly instead of inferring it from service naming; risk: unreviewed config drift boots the wrong process type; invariant: deploy.env.ARCANOS_PROCESS_KIND is present and either explicit or service-level pass-through; handling: fail validation on missing or malformed values.
+  if (!isProcessKindEnvironmentValue(deploy.env?.[PROCESS_KIND_ENV])) {
     errors.push(
-      `Expected deploy.env.RUN_WORKERS to be one of "true", "false", "1", or "0" but found "${String(deploy.env?.RUN_WORKERS ?? '')}"`,
+      `Expected deploy.env.${PROCESS_KIND_ENV} to be "web", "worker", or "$${PROCESS_KIND_ENV}" but found "${String(deploy.env?.[PROCESS_KIND_ENV] ?? '')}"`,
     );
   }
 
@@ -157,10 +178,10 @@ export function validateConfig(config) {
       errors.push(`environments.production.variables missing required keys: ${missingVariables.join(', ')}`);
     }
 
-    //audit Assumption: environment-level worker topology should also remain explicit for operators inspecting Railway variables; risk: silent fallback to runtime defaults obscures service behavior; invariant: RUN_WORKERS is a boolean-like string when present in production variables; handling: fail validation on malformed values.
-    if (!isBooleanEnvironmentValue(productionVariables.RUN_WORKERS)) {
+    //audit Assumption: environment-level process role should also remain explicit for operators inspecting Railway variables; risk: silent fallback obscures whether a service should boot web or worker runtime; invariant: ARCANOS_PROCESS_KIND is a valid explicit value or Railway pass-through; handling: fail validation on malformed values.
+    if (!isProcessKindEnvironmentValue(productionVariables[PROCESS_KIND_ENV])) {
       errors.push(
-        `Expected environments.production.variables.RUN_WORKERS to be one of "true", "false", "1", or "0" but found "${String(productionVariables.RUN_WORKERS ?? '')}"`,
+        `Expected environments.production.variables.${PROCESS_KIND_ENV} to be "web", "worker", or "$${PROCESS_KIND_ENV}" but found "${String(productionVariables[PROCESS_KIND_ENV] ?? '')}"`,
       );
     }
   }

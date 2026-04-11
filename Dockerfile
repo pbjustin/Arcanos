@@ -61,6 +61,6 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
     CMD node -e "require('http').get('http://localhost:' + (process.env.PORT || 8080) + '/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) }).on('error', () => process.exit(1))"
 
-# Start through the Railway launcher so web and worker services receive the
-# correct runtime role and worker flags even when service-level env vars drift.
+# Start through the Railway launcher so each Railway service enforces the
+# explicit ARCANOS_PROCESS_KIND contract at runtime.
 CMD ["node", "scripts/start-railway-service.mjs"]
