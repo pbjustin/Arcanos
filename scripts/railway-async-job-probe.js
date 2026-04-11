@@ -104,6 +104,13 @@ function buildSuccess(detail) {
   };
 }
 
+function redactResultUrlForLogs(resultUrl) {
+  const sanitizedUrl = new URL(resultUrl);
+  sanitizedUrl.search = '';
+  sanitizedUrl.hash = '';
+  return sanitizedUrl.toString();
+}
+
 function buildResultUrl(baseUrl, pollPath) {
   const normalizedPollPath = String(pollPath ?? '').trim();
   if (!normalizedPollPath) {
@@ -272,7 +279,8 @@ export async function pollAsyncProbe(config, queuedProbe, dependencies = {}) {
       const terminalStatus = extractTerminalStatus(parsedResponse.parsedBody);
 
       if (terminalStatus === 'completed') {
-        return buildSuccess(`Async probe job ${queuedProbe.jobId} completed successfully via ${queuedProbe.resultUrl}.`);
+        const safeResultUrl = redactResultUrlForLogs(queuedProbe.resultUrl);
+        return buildSuccess(`Async probe job ${queuedProbe.jobId} completed successfully via ${safeResultUrl}.`);
       }
 
       if (

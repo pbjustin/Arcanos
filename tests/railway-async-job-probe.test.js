@@ -87,6 +87,37 @@ describe('railway-async-job-probe', () => {
     expect(result.detail).toMatch(/job-123/);
   });
 
+  it('redacts query parameters from successful probe output', async () => {
+    const result = await pollAsyncProbe(
+      {
+        ...DEFAULTS,
+        timeoutMs: 1_000,
+        pollIntervalMs: 10
+      },
+      {
+        jobId: 'job-secret',
+        resultUrl: 'https://example.com/jobs/job-secret/result?trace=probe-secret'
+      },
+      {
+        fetchFn: async () => ({
+          status: 200,
+          ok: true,
+          text: async () => JSON.stringify({
+            jobId: 'job-secret',
+            status: 'completed',
+            result: { ok: true }
+          })
+        }),
+        sleepFn: async () => {},
+        nowFn: () => 0
+      }
+    );
+
+    expect(result.status).toBe(PROBE_STATUS.PASS);
+    expect(result.detail).toContain('https://example.com/jobs/job-secret/result');
+    expect(result.detail).not.toContain('trace=probe-secret');
+  });
+
   it('fails when the queued job reaches a terminal failed state', async () => {
     const result = await pollAsyncProbe(
       {
@@ -162,7 +193,7 @@ describe('railway-async-job-probe', () => {
             ok: true,
             status: 'pending',
             jobId: 'job-789',
-            poll: 'https://example.com/jobs/job-789?token=abc123'
+            poll: 'https://example.com/jobs/job-789?trace=abc123'
           })
         })
       }
@@ -171,7 +202,7 @@ describe('railway-async-job-probe', () => {
     expect(enqueueResult).toEqual({
       mode: 'queued',
       jobId: 'job-789',
-      resultUrl: 'https://example.com/jobs/job-789/result?token=abc123'
+      resultUrl: 'https://example.com/jobs/job-789/result?trace=abc123'
     });
   });
 });
