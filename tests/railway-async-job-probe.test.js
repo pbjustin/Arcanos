@@ -146,4 +146,32 @@ describe('railway-async-job-probe', () => {
       resultUrl: 'https://example.com/jobs/job-456/result'
     });
   });
+
+  it('preserves query parameters when the poll URL is already absolute', async () => {
+    const enqueueResult = await enqueueAsyncProbe(
+      {
+        ...DEFAULTS,
+        baseUrl: 'https://example.com',
+        gptId: 'arcanos-core'
+      },
+      {
+        fetchFn: async () => ({
+          status: 202,
+          ok: true,
+          text: async () => JSON.stringify({
+            ok: true,
+            status: 'pending',
+            jobId: 'job-789',
+            poll: 'https://example.com/jobs/job-789?token=abc123'
+          })
+        })
+      }
+    );
+
+    expect(enqueueResult).toEqual({
+      mode: 'queued',
+      jobId: 'job-789',
+      resultUrl: 'https://example.com/jobs/job-789/result?token=abc123'
+    });
+  });
 });

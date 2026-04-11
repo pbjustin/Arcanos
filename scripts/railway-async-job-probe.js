@@ -110,13 +110,12 @@ function buildResultUrl(baseUrl, pollPath) {
     throw new Error('Async probe response did not include a poll path.');
   }
 
-  const absolutePollUrl = normalizedPollPath.startsWith('http://') || normalizedPollPath.startsWith('https://')
-    ? normalizedPollPath
-    : `${baseUrl}${normalizedPollPath.startsWith('/') ? normalizedPollPath : `/${normalizedPollPath}`}`;
+  const absolutePollUrl = new URL(normalizedPollPath, baseUrl);
+  if (!absolutePollUrl.pathname.endsWith('/result')) {
+    absolutePollUrl.pathname = `${absolutePollUrl.pathname.replace(/\/+$/, '')}/result`;
+  }
 
-  return absolutePollUrl.endsWith('/result')
-    ? absolutePollUrl
-    : `${absolutePollUrl.replace(/\/+$/, '')}/result`;
+  return absolutePollUrl.toString();
 }
 
 function createRequestTimeoutSignal(timeoutMs) {
