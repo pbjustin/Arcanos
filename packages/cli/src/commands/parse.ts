@@ -281,18 +281,18 @@ function parseGenerateAndWaitArgs(args: string[]): {
 
 function parseNonNegativeIntegerFlag(flagName: string, rawValue: string): number {
   const parsedValue = Number(rawValue);
-  if (!Number.isFinite(parsedValue) || parsedValue < 0) {
+  if (!Number.isFinite(parsedValue) || !Number.isInteger(parsedValue) || parsedValue < 0) {
     throw new Error(`Flag "${flagName}" must be a non-negative integer.`);
   }
 
-  return Math.trunc(parsedValue);
+  return parsedValue;
 }
 
 function parsePositiveIntegerFlag(flagName: string, rawValue: string): number {
   const parsedValue = Number(rawValue);
-  if (!Number.isFinite(parsedValue) || parsedValue <= 0) {
+  if (!Number.isFinite(parsedValue) || !Number.isInteger(parsedValue) || parsedValue <= 0) {
     throw new Error(`Flag "${flagName}" must be a positive integer.`);
   }
 
-  return Math.trunc(parsedValue);
+  return parsedValue;
 }

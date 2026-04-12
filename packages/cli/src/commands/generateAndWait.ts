@@ -1,7 +1,4 @@
-import {
-  generatePromptAndWait,
-  type GeneratePromptAndWaitOptions
-} from "../client/backend.js";
+import { generatePromptAndWait } from "../client/backend.js";
 import { serializeDeterministicJson } from "../client/protocol.js";
 import type { CliCommandResult, GenerateAndWaitCommandInvocation } from "./types.js";
 

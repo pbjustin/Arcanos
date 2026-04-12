@@ -1216,29 +1216,6 @@ router.post("/:gptId", async (req, res, next) => {
               });
             }
 
-            if (queryAndWaitRequested) {
-              requestLogger?.error?.('integration.job.query_and_wait_unavailable', {
-                endpoint: req.originalUrl,
-                gptId: incomingGptId,
-                requestId,
-                reason: 'non_json_body'
-              });
-              return res.status(400).json({
-                ok: false,
-                error: {
-                  code: 'BAD_REQUEST',
-                  message: 'query_and_wait requires a JSON object request body.'
-                },
-                _route: {
-                  requestId,
-                  gptId: incomingGptId,
-                  action: GPT_QUERY_AND_WAIT_ACTION,
-                  route: 'async',
-                  timestamp: new Date().toISOString()
-                }
-              });
-            }
-
             requestLogger?.warn?.('gpt.request.async_invalid_body_sync_fallback', {
               endpoint: req.originalUrl,
               gptId: incomingGptId,

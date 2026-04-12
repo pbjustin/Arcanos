@@ -90,6 +90,32 @@ describe("Arcanos CLI", () => {
     });
   });
 
+  it("rejects non-integer wait-control flags for generate-and-wait", () => {
+    expect(() =>
+      parseCliInvocation([
+        "generate-and-wait",
+        "--gpt",
+        "arcanos-core",
+        "--prompt",
+        "Generate a Seth Rollins promo prompt",
+        "--timeout-ms",
+        "1.9"
+      ])
+    ).toThrow('Flag "--timeout-ms" must be a non-negative integer.');
+
+    expect(() =>
+      parseCliInvocation([
+        "generate-and-wait",
+        "--gpt",
+        "arcanos-core",
+        "--prompt",
+        "Generate a Seth Rollins promo prompt",
+        "--poll-interval-ms",
+        "0.5"
+      ])
+    ).toThrow('Flag "--poll-interval-ms" must be a positive integer.');
+  });
+
   it("builds a validated task.create request payload", () => {
     const request = buildTaskCreateRequest("add auth", {
       json: false,
