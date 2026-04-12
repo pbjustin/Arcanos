@@ -38,7 +38,7 @@ function createQueuedGptJob(partial: Partial<JobData>): JobData {
 describe('queuedGptCompletionService', () => {
   it('clamps wait durations and preserves explicit zero', () => {
     expect(resolveAsyncGptWaitForResultMs(0)).toBe(0);
-    expect(resolveAsyncGptWaitForResultMs(45_000)).toBe(15_000);
+    expect(resolveAsyncGptWaitForResultMs(45_000)).toBe(30_000);
     expect(
       resolveAsyncGptWaitForResultMs(undefined, {
         GPT_ASYNC_WAIT_FOR_RESULT_MS: '12000'

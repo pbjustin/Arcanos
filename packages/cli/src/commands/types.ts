@@ -19,6 +19,15 @@ export interface AskCommandInvocation {
   options: CliGlobalOptions;
 }
 
+export interface GenerateAndWaitCommandInvocation {
+  kind: "generate-and-wait";
+  gptId: string;
+  prompt: string;
+  timeoutMs?: number;
+  pollIntervalMs?: number;
+  options: CliGlobalOptions;
+}
+
 export interface PlanCommandInvocation {
   kind: "plan";
   prompt: string;
@@ -70,6 +79,7 @@ export interface HelpCommandInvocation {
 
 export type CliInvocation =
   | AskCommandInvocation
+  | GenerateAndWaitCommandInvocation
   | PlanCommandInvocation
   | ExecCommandInvocation
   | StatusCommandInvocation

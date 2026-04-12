@@ -79,14 +79,21 @@ export async function invokeTool(options: InvokeToolOptions): Promise<unknown> {
 export {
   buildGptRouteRequestBody,
   createAsyncGptJob,
+  generatePromptAndWait,
   fetchGptJobResult,
+  getGptRouteJobResult,
+  getGptRouteJobStatus,
   getJobResult,
   getJobStatus,
   invokeGptRoute,
+  queryAndWaitGptRoute,
   type FetchGptJobResultOptions,
   type FetchGptJobStatusOptions,
+  type GeneratePromptAndWaitOptions,
   type GptRouteRequestBody,
-  type InvokeGptRouteOptions
+  type InvokeGptJobLookupActionOptions,
+  type InvokeGptRouteOptions,
+  type QueryAndWaitGptRouteOptions
 } from "./client/backend.js";
 
 function createInvokeRequestId(toolId: string, inputs: Record<string, unknown>): string {

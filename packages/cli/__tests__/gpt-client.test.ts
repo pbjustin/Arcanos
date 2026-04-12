@@ -5,10 +5,14 @@ import { jest } from "@jest/globals";
 
 import {
   createAsyncGptJob,
+  generatePromptAndWait,
   fetchGptJobResult,
+  getGptRouteJobResult,
+  getGptRouteJobStatus,
   getJobResult,
   getJobStatus,
-  invokeGptRoute
+  invokeGptRoute,
+  queryAndWaitGptRoute
 } from "../src/client/backend.js";
 
 function createJsonResponse(payload: Record<string, unknown>, init?: ResponseInit): Response {
@@ -86,6 +90,98 @@ describe("GPT route OpenAPI contract and client", () => {
       }
     });
     expect(body.action).not.toBe("ask");
+  });
+
+  it("builds an explicit queue-backed direct-return GPT request", async () => {
+    const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(
+      createJsonResponse({ ok: true, result: "Generated Seth Rollins prompt" })
+    );
+
+    await generatePromptAndWait({
+      baseUrl: "http://127.0.0.1:3000",
+      gptId: "arcanos-core",
+      prompt: "Generate a Seth Rollins promo prompt",
+      timeoutMs: 20_000,
+      pollIntervalMs: 125
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body));
+
+    expect(body).toEqual({
+      prompt: "Generate a Seth Rollins promo prompt",
+      executionMode: "async",
+      waitForResultMs: 20_000,
+      pollIntervalMs: 125
+    });
+  });
+
+  it("builds the explicit query_and_wait GPT action contract", async () => {
+    const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(
+      createJsonResponse({ ok: true, result: "Generated Seth Rollins prompt" })
+    );
+
+    await queryAndWaitGptRoute({
+      baseUrl: "http://127.0.0.1:3000",
+      gptId: "arcanos-core",
+      prompt: "Generate a Seth Rollins promo prompt",
+      timeoutMs: 25_000,
+      pollIntervalMs: 500
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body));
+
+    expect(body).toEqual({
+      prompt: "Generate a Seth Rollins promo prompt",
+      action: "query_and_wait",
+      waitForResultMs: 25_000,
+      pollIntervalMs: 500
+    });
+  });
+
+  it("builds the explicit get_status GPT action contract", async () => {
+    const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(
+      createJsonResponse({ ok: true, result: { id: "job-123", status: "running" } })
+    );
+
+    await getGptRouteJobStatus({
+      baseUrl: "http://127.0.0.1:3000",
+      gptId: "backstage-booker",
+      jobId: "job-123"
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body));
+
+    expect(body).toEqual({
+      action: "get_status",
+      payload: {
+        jobId: "job-123"
+      }
+    });
+  });
+
+  it("builds the explicit get_result GPT action contract", async () => {
+    const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(
+      createJsonResponse({ ok: true, result: { jobId: "job-123", status: "completed" } })
+    );
+
+    await getGptRouteJobResult({
+      baseUrl: "http://127.0.0.1:3000",
+      gptId: "backstage-booker",
+      jobId: "job-123"
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body));
+
+    expect(body).toEqual({
+      action: "get_result",
+      payload: {
+        jobId: "job-123"
+      }
+    });
   });
 
   it("reads job results from the canonical /jobs/{jobId}/result route", async () => {
@@ -180,9 +276,18 @@ describe("GPT route OpenAPI contract and client", () => {
       })
     );
     expect(requestSchema?.properties?.prompt).toBeDefined();
+    expect(requestSchema?.properties?.executionMode).toBeDefined();
+    expect(requestSchema?.properties?.waitForResultMs).toBeDefined();
     expect(requestSchema?.required ?? []).not.toContain("action");
     expect(requestSchema?.properties?.gptId).toBeUndefined();
     expect(requestSchema?.not?.required).toContain("gptId");
+    expect(
+      spec.paths?.["/gpt/{gptId}"]?.post?.requestBody?.content?.["application/json"]?.examples?.generateAndWait?.value
+    ).toEqual({
+      prompt: "Generate a Seth Rollins promo prompt",
+      executionMode: "async",
+      waitForResultMs: 20000
+    });
     expect(
       spec.paths?.["/gpt/{gptId}"]?.post?.requestBody?.content?.["application/json"]?.examples?.getResult?.value
     ).toEqual({
@@ -190,6 +295,22 @@ describe("GPT route OpenAPI contract and client", () => {
       payload: {
         jobId: "59dbfb2b-0c64-4eda-8a1e-b950a63f7fe0"
       }
+    });
+    expect(
+      spec.paths?.["/gpt/{gptId}"]?.post?.requestBody?.content?.["application/json"]?.examples?.getStatus?.value
+    ).toEqual({
+      action: "get_status",
+      payload: {
+        jobId: "59dbfb2b-0c64-4eda-8a1e-b950a63f7fe0"
+      }
+    });
+    expect(
+      spec.paths?.["/gpt/{gptId}"]?.post?.requestBody?.content?.["application/json"]?.examples?.queryAndWait?.value
+    ).toEqual({
+      action: "query_and_wait",
+      prompt: "Generate a Seth Rollins promo prompt",
+      timeoutMs: 25000,
+      pollIntervalMs: 500
     });
   });
 

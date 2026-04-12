@@ -17,6 +17,11 @@ const JOB_RESULT_OPENAPI_CONTRACT_PATH = path.resolve(
   'contracts',
   'job_result.openapi.v1.json'
 );
+const JOB_STATUS_OPENAPI_CONTRACT_PATH = path.resolve(
+  process.cwd(),
+  'contracts',
+  'job_status.openapi.v1.json'
+);
 
 async function readOpenApiContract(contractPath: string): Promise<unknown> {
   const rawContract = await fs.readFile(contractPath, "utf8");
@@ -37,6 +42,15 @@ router.get(
   '/contracts/job_result.openapi.v1.json',
   asyncHandler(async (_req: Request, res: Response) => {
     const contract = await readOpenApiContract(JOB_RESULT_OPENAPI_CONTRACT_PATH);
+    res.set('cache-control', 'no-store, max-age=0');
+    return res.json(contract);
+  })
+);
+
+router.get(
+  '/contracts/job_status.openapi.v1.json',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const contract = await readOpenApiContract(JOB_STATUS_OPENAPI_CONTRACT_PATH);
     res.set('cache-control', 'no-store, max-age=0');
     return res.json(contract);
   })

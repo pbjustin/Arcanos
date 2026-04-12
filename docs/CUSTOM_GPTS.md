@@ -11,7 +11,7 @@ Custom GPTs let Arcanos ship specialized assistants (Backstage Booker, Arcanos G
 
 ## How Custom GPT Routing Works
 1. The GPT calls `POST /gpt/:gptId` with a request body that contains `prompt` and optional `gptVersion`, `action`, `payload`, and `context`.
-2. Async job results must be fetched explicitly, either through `GET /jobs/:id` or through `POST /gpt/:gptId` with `action: "get_result"` and `payload.jobId`.
+2. Async job status/results must be fetched explicitly, either through `GET /jobs/:id` / `GET /jobs/:id/result`, or through `POST /gpt/:gptId` with `action: "get_status"` / `action: "get_result"` plus `payload.jobId`.
 3. The GPT router resolves the incoming GPT ID to a module route using the module map and fuzzy matching strategy if needed.
 4. The request is forwarded to `/modules/:route`, and the response is wrapped with a `_gptAck` metadata block.
 5. The module handler calls the action implementation and returns the result as JSON.【F:src/routes/gptRouter.ts†L16-L159】【F:src/routes/modules.ts†L1-L83】
@@ -55,7 +55,8 @@ Use a single HTTP action in your Custom GPT definition:
 Rules:
 - `gptId` belongs in the path, not the JSON body.
 - Omit `action` by default so the backend can infer intent from the GPT/module binding.
-- Use `action: "get_result"` with `payload.jobId` when you need to fetch a stored async GPT job result without creating new work.
+- Use `action: "get_status"` or `action: "get_result"` with `payload.jobId` when you need to fetch canonical async GPT job state without creating new work.
+- Use `action: "query_and_wait"` with a non-empty `prompt` when the integration surface needs one explicit caller action that creates one async GPT job and waits internally for completion.
 - Do **not** inject a default action like `"ask"`; only send `action` when the caller explicitly selects a supported backend action.
 
 The router injects the module name server-side, so your Custom GPT does not need to specify `module` in the payload.【F:src/routes/gptRouter.ts†L16-L159】

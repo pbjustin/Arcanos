@@ -3,7 +3,7 @@ import type { JobData } from '@core/db/schema.js';
 import { sleep } from '@shared/sleep.js';
 
 export const DEFAULT_ASYNC_GPT_WAIT_FOR_RESULT_MS = 3_500;
-export const MAX_ASYNC_GPT_WAIT_FOR_RESULT_MS = 15_000;
+export const MAX_ASYNC_GPT_WAIT_FOR_RESULT_MS = 30_000;
 export const DEFAULT_ASYNC_GPT_WAIT_POLL_MS = 250;
 
 export interface WaitForQueuedGptJobCompletionOptions {

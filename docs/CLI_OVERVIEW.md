@@ -17,6 +17,7 @@ Both binaries point at the same entrypoint and command parser. The standard comm
 
 ```bash
 arcanos ask "Summarize current worker health"
+arcanos generate-and-wait --gpt arcanos-core --prompt "Generate a Seth Rollins promo prompt"
 ```
 
 - Sends your prompt as a protocol `task.create` request.
@@ -138,6 +139,7 @@ Use `--transport local` for local-only workflows; use default/python when you ne
 
 ```text
 arcanos ask <prompt> [--json]
+arcanos generate-and-wait --gpt <gpt-id> --prompt <prompt> [--timeout-ms <ms>] [--poll-interval-ms <ms>] [--json]
 arcanos plan <prompt> [--json]
 arcanos exec [<prompt>] [--json]
 arcanos status [--json]

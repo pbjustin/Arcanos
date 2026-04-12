@@ -31,4 +31,15 @@ describe('custom GPT OpenAPI contract route', () => {
     expect(Object.keys(response.body.paths ?? {})).toEqual(['/jobs/{jobId}/result']);
     expect(response.body.paths?.['/jobs/{jobId}/result']?.get?.operationId).toBe('getJobResult');
   });
+
+  it('serves the canonical job-status contract with no-store caching', async () => {
+    const response = await request(buildApp())
+      .get('/contracts/job_status.openapi.v1.json');
+
+    expect(response.status).toBe(200);
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(response.body.openapi).toBe('3.1.0');
+    expect(Object.keys(response.body.paths ?? {})).toEqual(['/jobs/{jobId}']);
+    expect(response.body.paths?.['/jobs/{jobId}']?.get?.operationId).toBe('getJobStatus');
+  });
 });

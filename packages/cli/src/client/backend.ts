@@ -39,6 +39,9 @@ export interface GptRouteRequestBody {
   prompt?: string;
   gptVersion?: string;
   action?: string;
+  executionMode?: "sync" | "async";
+  waitForResultMs?: number;
+  pollIntervalMs?: number;
   payload?: Record<string, unknown>;
   context?: Record<string, unknown>;
 }
@@ -49,8 +52,30 @@ export interface InvokeGptRouteOptions {
   prompt?: string;
   gptVersion?: string;
   action?: string;
+  executionMode?: "sync" | "async";
+  waitForResultMs?: number;
+  pollIntervalMs?: number;
   payload?: Record<string, unknown>;
   context?: Record<string, unknown>;
+  headers?: Record<string, string>;
+}
+
+export interface GeneratePromptAndWaitOptions {
+  baseUrl: string;
+  gptId: string;
+  prompt: string;
+  timeoutMs?: number;
+  pollIntervalMs?: number;
+  headers?: Record<string, string>;
+  context?: Record<string, unknown>;
+}
+
+export interface QueryAndWaitGptRouteOptions extends GeneratePromptAndWaitOptions {}
+
+export interface InvokeGptJobLookupActionOptions {
+  baseUrl: string;
+  gptId: string;
+  jobId: string;
   headers?: Record<string, string>;
 }
 
@@ -243,6 +268,26 @@ export function buildGptRouteRequestBody(options: Omit<InvokeGptRouteOptions, "b
     body.action = action;
   }
 
+  if (options.executionMode) {
+    body.executionMode = options.executionMode;
+  }
+
+  if (
+    typeof options.waitForResultMs === "number" &&
+    Number.isFinite(options.waitForResultMs) &&
+    options.waitForResultMs >= 0
+  ) {
+    body.waitForResultMs = Math.trunc(options.waitForResultMs);
+  }
+
+  if (
+    typeof options.pollIntervalMs === "number" &&
+    Number.isFinite(options.pollIntervalMs) &&
+    options.pollIntervalMs > 0
+  ) {
+    body.pollIntervalMs = Math.trunc(options.pollIntervalMs);
+  }
+
   if (options.payload) {
     body.payload = options.payload;
   }
@@ -283,6 +328,94 @@ export async function createAsyncGptJob(
   options: InvokeGptRouteOptions
 ): Promise<Record<string, unknown>> {
   return invokeGptRoute(options);
+}
+
+/**
+ * Creates one async GPT job, waits for a bounded inline result, and returns the backend envelope.
+ * Inputs/Outputs: explicit GPT id, prompt, and optional timeout/poll settings; returns either a direct result or the canonical pending payload.
+ * Edge cases: timeout and polling hints stay transport-only so the backend reuses the same semantic job when the caller retries.
+ */
+export async function generatePromptAndWait(
+  options: GeneratePromptAndWaitOptions
+): Promise<Record<string, unknown>> {
+  return invokeGptRoute({
+    baseUrl: options.baseUrl,
+    gptId: options.gptId,
+    prompt: options.prompt,
+    executionMode: "async",
+    waitForResultMs: options.timeoutMs,
+    pollIntervalMs: options.pollIntervalMs,
+    context: options.context,
+    headers: options.headers
+  });
+}
+
+/**
+ * Executes the explicit `query_and_wait` GPT integration action over `/gpt/{gptId}`.
+ * Inputs/Outputs: explicit GPT id, prompt, and optional timeout/poll settings; returns the backend action envelope.
+ * Edge cases: still creates exactly one async GPT job because the wait happens inside the same POST request.
+ */
+export async function queryAndWaitGptRoute(
+  options: QueryAndWaitGptRouteOptions
+): Promise<Record<string, unknown>> {
+  return invokeGptRoute({
+    baseUrl: options.baseUrl,
+    gptId: options.gptId,
+    prompt: options.prompt,
+    action: "query_and_wait",
+    waitForResultMs: options.timeoutMs,
+    pollIntervalMs: options.pollIntervalMs,
+    context: options.context,
+    headers: options.headers
+  });
+}
+
+/**
+ * Executes the explicit `get_status` integration action over `/gpt/{gptId}`.
+ * Inputs/Outputs: GPT route id plus job id; returns the GPT action envelope without enqueueing new work.
+ * Edge cases: blank job ids fail locally so callers never fall back to prompt routing.
+ */
+export async function getGptRouteJobStatus(
+  options: InvokeGptJobLookupActionOptions
+): Promise<Record<string, unknown>> {
+  const normalizedJobId = options.jobId.trim();
+  if (!normalizedJobId) {
+    throw new Error("Job lookup jobId is required.");
+  }
+
+  return invokeGptRoute({
+    baseUrl: options.baseUrl,
+    gptId: options.gptId,
+    action: "get_status",
+    payload: {
+      jobId: normalizedJobId
+    },
+    headers: options.headers
+  });
+}
+
+/**
+ * Executes the explicit `get_result` integration action over `/gpt/{gptId}`.
+ * Inputs/Outputs: GPT route id plus job id; returns the GPT action envelope without enqueueing new work.
+ * Edge cases: blank job ids fail locally so callers never fall back to prompt routing.
+ */
+export async function getGptRouteJobResult(
+  options: InvokeGptJobLookupActionOptions
+): Promise<Record<string, unknown>> {
+  const normalizedJobId = options.jobId.trim();
+  if (!normalizedJobId) {
+    throw new Error("Job lookup jobId is required.");
+  }
+
+  return invokeGptRoute({
+    baseUrl: options.baseUrl,
+    gptId: options.gptId,
+    action: "get_result",
+    payload: {
+      jobId: normalizedJobId
+    },
+    headers: options.headers
+  });
 }
 
 function normalizeJobLookupId(jobId: string): string {
