@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional, Sequence, TYPE_CHECKING
+from urllib.parse import quote
 
 from ..backend_client_models import BackendChatResult, BackendRequestError, BackendResponse
 from ..config import Config
@@ -189,8 +190,8 @@ def request_job_result(
     gpt_id: Optional[str] = None,
 ) -> BackendResponse[dict[str, Any]]:
     """
-    Purpose: Fetch a stored async GPT job result through the canonical GPT route.
-    Inputs/Outputs: required job_id plus optional gpt_id override; returns raw job-result JSON.
+    Purpose: Fetch a stored async GPT job result through the canonical jobs API.
+    Inputs/Outputs: required job_id; returns raw job-result JSON from `GET /jobs/:id/result`.
     Edge cases: blank job ids fail locally so retrieval never degrades into a prompt query.
     """
     normalized_job_id = job_id.strip()
@@ -203,12 +204,45 @@ def request_job_result(
             ),
         )
 
-    route = resolve_backend_chat_route(gpt_id)
-    payload = _build_backend_payload(
-        action="get_result",
-        payload={"jobId": normalized_job_id},
+    # Keep the deprecated gpt_id parameter in the signature for compatibility, but do not
+    # use it for routing. Job lookups are path-bound to `/jobs/:id/...` only.
+    _ = gpt_id
+
+    response = client._request_json(
+        "get",
+        f"/jobs/{quote(normalized_job_id, safe='')}/result",
+        None,
     )
-    response = client._request_json("post", route.endpoint, payload)
+    if not response.ok or not response.value:
+        return BackendResponse(ok=False, error=response.error)
+
+    return BackendResponse(ok=True, value=response.value)
+
+
+def request_job_status(
+    client: "BackendApiClient",
+    job_id: str,
+) -> BackendResponse[dict[str, Any]]:
+    """
+    Purpose: Fetch async GPT job status through the canonical jobs API.
+    Inputs/Outputs: required job_id; returns raw job-status JSON from `GET /jobs/:id`.
+    Edge cases: blank job ids fail locally so status polling never degrades into a prompt query.
+    """
+    normalized_job_id = job_id.strip()
+    if not normalized_job_id:
+        return BackendResponse(
+            ok=False,
+            error=BackendRequestError(
+                kind="validation",
+                message="job_id is required for job status",
+            ),
+        )
+
+    response = client._request_json(
+        "get",
+        f"/jobs/{quote(normalized_job_id, safe='')}",
+        None,
+    )
     if not response.ok or not response.value:
         return BackendResponse(ok=False, error=response.error)
 

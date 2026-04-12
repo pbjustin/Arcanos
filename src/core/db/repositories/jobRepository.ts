@@ -30,6 +30,7 @@ export interface JobFailureBreakdown {
   permanent: number;
   retryScheduled: number;
   retryExhausted: number;
+  deadLetter: number;
   authentication: number;
   network: number;
   provider: number;
@@ -117,6 +118,23 @@ export interface RecoverStaleJobsResult {
   failedJobs: string[];
 }
 
+export type StalledJobRecoveryAction = 'requeue' | 'dead_letter';
+
+export interface RecoverStalledJobsForWorkersOptions {
+  workerIds: string[];
+  staleAfterMs: number;
+  maxRetries?: number;
+  stalledJobAction?: StalledJobRecoveryAction;
+}
+
+export interface RecoverStalledJobsForWorkersResult {
+  staleWorkerIds: string[];
+  stalledJobIds: string[];
+  requeuedJobIds: string[];
+  deadLetterJobIds: string[];
+  cancelledJobIds: string[];
+}
+
 export interface JobExecutionStats {
   completed: number;
   failed: number;
@@ -169,6 +187,12 @@ export interface CleanupGptJobsResult {
   expiredPending: number;
   expiredTerminal: number;
   deletedExpired: number;
+}
+
+export interface RequeueFailedJobOptions {
+  workerId?: string | null;
+  requestedBy?: string | null;
+  resetRetryCount?: boolean;
 }
 
 export class JobRepositoryUnavailableError extends Error {
@@ -274,6 +298,7 @@ function resolveReusableFingerprintStatuses(idempotencyOrigin: 'explicit' | 'der
 }
 
 export const DEFAULT_QUEUE_DIAGNOSTICS_FAILURE_WINDOW_MS = 60 * 60 * 1000;
+export const DEFAULT_JOB_WORKER_STALE_AFTER_MS = 10_000;
 
 export function resolveQueueDiagnosticsFailureWindowMs(
   env: NodeJS.ProcessEnv = process.env
@@ -288,12 +313,26 @@ export function resolveQueueDiagnosticsFailureWindowMs(
   return Math.min(7 * 24 * 60 * 60 * 1000, Math.max(60 * 1000, Math.trunc(parsedValue)));
 }
 
+export function resolveJobWorkerStaleAfterMs(
+  env: NodeJS.ProcessEnv = process.env
+): number {
+  const rawValue = env.JOB_WORKER_STALE_AFTER_MS;
+  const parsedValue = rawValue ? Number(rawValue) : Number.NaN;
+
+  if (!Number.isFinite(parsedValue) || parsedValue <= 0) {
+    return DEFAULT_JOB_WORKER_STALE_AFTER_MS;
+  }
+
+  return Math.max(1_000, Math.trunc(parsedValue));
+}
+
 function buildEmptyFailureBreakdown(): JobFailureBreakdown {
   return {
     retryable: 0,
     permanent: 0,
     retryScheduled: 0,
     retryExhausted: 0,
+    deadLetter: 0,
     authentication: 0,
     network: 0,
     provider: 0,
@@ -1168,22 +1207,36 @@ export async function recoverStaleJobs(
           row.job_type === 'gpt'
             ? computeGptJobLifecycleDeadlines('failed')
             : { idempotencyUntil: null, retentionUntil: null };
+        const deadLetterMessage =
+          'Job moved to dead-letter after stale worker lease recovery exhausted retry budget.';
         await client.query(
           `UPDATE job_data
            SET
              status = 'failed',
-             error_message = 'Job lease expired and retry budget was exhausted during recovery.',
+             error_message = $1,
              updated_at = NOW(),
              completed_at = NOW(),
              last_heartbeat_at = NULL,
              lease_expires_at = NULL,
-             autonomy_state = $1::jsonb,
-             idempotency_until = COALESCE($2::timestamptz, idempotency_until),
-             retention_until = COALESCE($3::timestamptz, retention_until)
-           WHERE id = $4`,
+             autonomy_state = $2::jsonb,
+             idempotency_until = COALESCE($3::timestamptz, idempotency_until),
+             retention_until = COALESCE($4::timestamptz, retention_until)
+           WHERE id = $5`,
           [
+            deadLetterMessage,
             normalizeJsonbInput(
-              normalizedAutonomyState,
+              {
+                ...normalizedAutonomyState,
+                lastFailure: {
+                  at: new Date().toISOString(),
+                  reason: deadLetterMessage,
+                  retryable: false,
+                  retryExhausted: true,
+                  deadLetter: true,
+                  recoverySource: 'lease_expired'
+                },
+                lastRecoveryAction: 'dead_letter'
+              },
               'jobRepository.recoverStaleJobs.failedAutonomyState'
             ),
             lifecycleDeadlines.idempotencyUntil,
@@ -1235,6 +1288,239 @@ export async function recoverStaleJobs(
 }
 
 /**
+ * Recover running jobs whose last assigned workers stopped heartbeating.
+ * Purpose: reclaim work quickly after worker crashes or hung slots using the persisted worker heartbeat stream.
+ * Inputs/outputs: accepts stale worker ids, stale timing, and retry policy; returns the affected worker and job ids.
+ * Edge case behavior: cancelled jobs resolve to `cancelled`, retry-exhausted jobs become dead-lettered retained failures, and empty worker-id sets no-op.
+ */
+export async function recoverStalledJobsForWorkers(
+  options: RecoverStalledJobsForWorkersOptions
+): Promise<RecoverStalledJobsForWorkersResult> {
+  assertDatabaseReady();
+
+  const normalizedWorkerIds = [...new Set(
+    options.workerIds
+      .map((workerId) => normalizeNullableString(workerId))
+      .filter((workerId): workerId is string => Boolean(workerId))
+  )];
+
+  if (normalizedWorkerIds.length === 0) {
+    return {
+      staleWorkerIds: [],
+      stalledJobIds: [],
+      requeuedJobIds: [],
+      deadLetterJobIds: [],
+      cancelledJobIds: []
+    };
+  }
+
+  const pool = getPool();
+  if (!pool) {
+    throw new Error('Database pool unavailable');
+  }
+
+  const staleAfterMs = Math.max(1_000, options.staleAfterMs);
+  const stalledJobAction: StalledJobRecoveryAction =
+    options.stalledJobAction === 'dead_letter' ? 'dead_letter' : 'requeue';
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const stalledResult = await client.query(
+      `SELECT
+         id,
+         job_type,
+         retry_count,
+         max_retries,
+         autonomy_state,
+         cancel_requested_at,
+         cancel_reason,
+         last_worker_id
+       FROM job_data
+       WHERE status = 'running'
+         AND last_worker_id = ANY($1::text[])
+         AND (
+           (last_heartbeat_at IS NULL AND started_at < NOW() - ($2::bigint * INTERVAL '1 millisecond'))
+           OR (last_heartbeat_at IS NOT NULL AND last_heartbeat_at < NOW() - ($2::bigint * INTERVAL '1 millisecond'))
+           OR updated_at < NOW() - ($2::bigint * INTERVAL '1 millisecond')
+         )
+       FOR UPDATE`,
+      [normalizedWorkerIds, staleAfterMs]
+    );
+
+    const stalledJobIds: string[] = [];
+    const requeuedJobIds: string[] = [];
+    const deadLetterJobIds: string[] = [];
+    const cancelledJobIds: string[] = [];
+
+    for (const row of stalledResult.rows as Array<{
+      id: string;
+      job_type: string;
+      retry_count: number;
+      max_retries: number;
+      autonomy_state: Record<string, unknown> | string | null;
+      cancel_requested_at: Date | string | null;
+      cancel_reason: string | null;
+      last_worker_id: string | null;
+    }>) {
+      stalledJobIds.push(row.id);
+      const retryCount = Number(row.retry_count ?? 0);
+      const maxRetries = Number(options.maxRetries ?? row.max_retries ?? 2);
+      const detectedAt = new Date().toISOString();
+      const baseAutonomyState = buildRecoveredAutonomyState(row.autonomy_state, retryCount, {
+        recoveredFromStaleLeaseAt: null,
+        recoveredFromStaleWorkerAt: detectedAt,
+        staleWorkerRecoveryCount:
+          resolveAutonomyStateNumber(row.autonomy_state, 'staleWorkerRecoveryCount') + 1,
+        lastStaleWorkerId: row.last_worker_id,
+        lastStalledDetectedAt: detectedAt
+      });
+
+      if (row.cancel_requested_at) {
+        const lifecycleDeadlines =
+          row.job_type === 'gpt'
+            ? computeGptJobLifecycleDeadlines('cancelled')
+            : { idempotencyUntil: null, retentionUntil: null };
+        const cancelMessage =
+          row.cancel_reason ?? 'Job cancellation was requested before stalled worker recovery.';
+        await client.query(
+          `UPDATE job_data
+           SET
+             status = 'cancelled',
+             error_message = COALESCE(error_message, $1),
+             updated_at = NOW(),
+             completed_at = COALESCE(completed_at, NOW()),
+             last_heartbeat_at = NULL,
+             lease_expires_at = NULL,
+             cancel_reason = COALESCE(cancel_reason, $2),
+             autonomy_state = $3::jsonb,
+             idempotency_until = COALESCE($4::timestamptz, idempotency_until),
+             retention_until = COALESCE($5::timestamptz, retention_until)
+           WHERE id = $6`,
+          [
+            cancelMessage,
+            cancelMessage,
+            normalizeJsonbInput(
+              {
+                ...baseAutonomyState,
+                lastRecoveryAction: 'cancelled'
+              },
+              'jobRepository.recoverStalledJobsForWorkers.cancelledAutonomyState'
+            ),
+            lifecycleDeadlines.idempotencyUntil,
+            lifecycleDeadlines.retentionUntil,
+            row.id
+          ]
+        );
+        cancelledJobIds.push(row.id);
+        continue;
+      }
+
+      const shouldDeadLetter =
+        stalledJobAction === 'dead_letter' || retryCount >= maxRetries;
+
+      if (shouldDeadLetter) {
+        const lifecycleDeadlines =
+          row.job_type === 'gpt'
+            ? computeGptJobLifecycleDeadlines('failed')
+            : { idempotencyUntil: null, retentionUntil: null };
+        const deadLetterMessage =
+          retryCount >= maxRetries
+            ? 'Job moved to dead-letter after stalled worker recovery exhausted retry budget.'
+            : 'Job moved to dead-letter after stalled worker recovery.';
+        await client.query(
+          `UPDATE job_data
+           SET
+             status = 'failed',
+             error_message = $1,
+             updated_at = NOW(),
+             completed_at = NOW(),
+             last_heartbeat_at = NULL,
+             lease_expires_at = NULL,
+             autonomy_state = $2::jsonb,
+             idempotency_until = COALESCE($3::timestamptz, idempotency_until),
+             retention_until = COALESCE($4::timestamptz, retention_until)
+           WHERE id = $5`,
+          [
+            deadLetterMessage,
+            normalizeJsonbInput(
+              {
+                ...baseAutonomyState,
+                lastFailure: {
+                  at: detectedAt,
+                  reason: deadLetterMessage,
+                  retryable: false,
+                  retryExhausted: retryCount >= maxRetries,
+                  deadLetter: true,
+                  recoverySource: 'stale_worker_watchdog'
+                },
+                lastRecoveryAction: 'dead_letter'
+              },
+              'jobRepository.recoverStalledJobsForWorkers.deadLetterAutonomyState'
+            ),
+            lifecycleDeadlines.idempotencyUntil,
+            lifecycleDeadlines.retentionUntil,
+            row.id
+          ]
+        );
+        deadLetterJobIds.push(row.id);
+        continue;
+      }
+
+      const recoveryMessage = 'Job requeued after stalled worker heartbeat recovery.';
+      await client.query(
+        `UPDATE job_data
+         SET
+           status = 'pending',
+           error_message = $1,
+           retry_count = retry_count + 1,
+           next_run_at = NOW(),
+           updated_at = NOW(),
+           completed_at = NULL,
+           last_heartbeat_at = NULL,
+           lease_expires_at = NULL,
+           idempotency_until = NULL,
+           retention_until = NULL,
+           expires_at = NULL,
+           cancel_requested_at = NULL,
+           cancel_reason = NULL,
+           autonomy_state = $2::jsonb
+         WHERE id = $3`,
+        [
+          recoveryMessage,
+          normalizeJsonbInput(
+            {
+              ...baseAutonomyState,
+              lastRecoveryAction: 'requeue',
+              lastRecoveryReason: recoveryMessage
+            },
+            'jobRepository.recoverStalledJobsForWorkers.requeuedAutonomyState'
+          ),
+          row.id
+        ]
+      );
+      requeuedJobIds.push(row.id);
+    }
+
+    await client.query('COMMIT');
+    return {
+      staleWorkerIds: normalizedWorkerIds,
+      stalledJobIds,
+      requeuedJobIds,
+      deadLetterJobIds,
+      cancelledJobIds
+    };
+  } catch (error: unknown) {
+    await client.query('ROLLBACK');
+    console.error('Error recovering stalled worker jobs:', resolveErrorMessage(error));
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+/**
  * Get the latest queue job.
  * Purpose: support operator tooling that needs one recent queue sample.
  * Inputs/outputs: no inputs, returns the most recently created job or `null`.
@@ -1269,6 +1555,7 @@ export async function getJobQueueSummary(): Promise<JobQueueSummary | null> {
 
   try {
     const recentTerminalWindowMs = resolveQueueDiagnosticsFailureWindowMs();
+    const staleAfterMs = resolveJobWorkerStaleAfterMs();
     const result = await query(
       `WITH failure_rows AS (
          SELECT
@@ -1320,7 +1607,12 @@ export async function getJobQueueSummary(): Promise<JobQueueSummary | null> {
              WHEN autonomy_state->'lastFailure'->>'retryExhausted' IN ('true', 'false')
                THEN (autonomy_state->'lastFailure'->>'retryExhausted')::boolean
              ELSE status = 'failed' AND retry_count >= max_retries
-           END AS retry_exhausted
+           END AS retry_exhausted,
+           CASE
+             WHEN autonomy_state->'lastFailure'->>'deadLetter' IN ('true', 'false')
+               THEN (autonomy_state->'lastFailure'->>'deadLetter')::boolean
+             ELSE false
+           END AS dead_letter
          FROM job_data
          WHERE status = 'failed'
        ),
@@ -1336,7 +1628,7 @@ export async function getJobQueueSummary(): Promise<JobQueueSummary | null> {
              WHERE status = 'running'
                AND (
                  (lease_expires_at IS NOT NULL AND lease_expires_at < NOW())
-                 OR (last_heartbeat_at IS NOT NULL AND last_heartbeat_at < NOW() - INTERVAL '60 seconds')
+                 OR (last_heartbeat_at IS NOT NULL AND last_heartbeat_at < NOW() - ($2::bigint * INTERVAL '1 millisecond'))
                )
            )::int AS stalled_running_count,
            COALESCE(
@@ -1366,10 +1658,11 @@ export async function getJobQueueSummary(): Promise<JobQueueSummary | null> {
          FROM job_data
        ),
        failure_breakdown AS (
-         SELECT
+        SELECT
            COUNT(*) FILTER (WHERE status = 'failed' AND retryable)::int AS retryable_count,
            COUNT(*) FILTER (WHERE status = 'failed' AND NOT retryable)::int AS permanent_count,
            COUNT(*) FILTER (WHERE status = 'failed' AND retry_exhausted)::int AS retry_exhausted_count,
+           COUNT(*) FILTER (WHERE status = 'failed' AND dead_letter)::int AS dead_letter_count,
            COUNT(*) FILTER (WHERE status = 'failed' AND category = 'authentication')::int AS authentication_count,
            COUNT(*) FILTER (WHERE status = 'failed' AND category = 'network')::int AS network_count,
            COUNT(*) FILTER (WHERE status = 'failed' AND category = 'provider')::int AS provider_count,
@@ -1434,7 +1727,7 @@ export async function getJobQueueSummary(): Promise<JobQueueSummary | null> {
          ) AS recent_failure_reasons
        FROM summary
        CROSS JOIN failure_breakdown`,
-      [recentTerminalWindowMs]
+      [recentTerminalWindowMs, staleAfterMs]
     );
 
     const summaryRow = result.rows[0] as {
@@ -1453,6 +1746,7 @@ export async function getJobQueueSummary(): Promise<JobQueueSummary | null> {
       retryable_count: number;
       permanent_count: number;
       retry_exhausted_count: number;
+      dead_letter_count: number;
       authentication_count: number;
       network_count: number;
       provider_count: number;
@@ -1497,6 +1791,7 @@ export async function getJobQueueSummary(): Promise<JobQueueSummary | null> {
         permanent: Number(summaryRow.permanent_count ?? 0),
         retryScheduled: Number(summaryRow.retry_scheduled_count ?? 0),
         retryExhausted: Number(summaryRow.retry_exhausted_count ?? 0),
+        deadLetter: Number(summaryRow.dead_letter_count ?? 0),
         authentication: Number(summaryRow.authentication_count ?? 0),
         network: Number(summaryRow.network_count ?? 0),
         provider: Number(summaryRow.provider_count ?? 0),
@@ -1635,6 +1930,78 @@ export async function cleanupExpiredGptJobs(): Promise<CleanupGptJobsResult> {
   };
 }
 
+/**
+ * Requeue one retained failed job for an explicit operator retry.
+ * Purpose: provide a narrow manual recovery path without exposing a public mutation route.
+ * Inputs/outputs: accepts a failed job id plus optional operator metadata; returns the re-queued job or `null`.
+ * Edge case behavior: non-existent or non-failed jobs return `null` and are left unchanged.
+ */
+export async function requeueFailedJob(
+  jobId: string,
+  options: RequeueFailedJobOptions = {}
+): Promise<JobData | null> {
+  assertDatabaseReady();
+
+  const job = await getJobById(jobId);
+  if (!job || job.status !== 'failed') {
+    return null;
+  }
+
+  const resetRetryCount = options.resetRetryCount ?? true;
+  const requestedAt = new Date().toISOString();
+  const requestedBy = normalizeNullableString(options.requestedBy ?? null) ?? 'operator';
+  const lastWorkerId = normalizeNullableString(options.workerId ?? null);
+  const autonomyState = {
+    manualRequeue: {
+      requestedAt,
+      requestedBy,
+      previousStatus: job.status,
+      previousErrorMessage: normalizeNullableString(job.error_message ?? null),
+      previousRetryCount: Number(job.retry_count ?? 0),
+      resetRetryCount
+    }
+  };
+
+  const result = await query(
+    `UPDATE job_data
+     SET
+       status = 'pending',
+       output = NULL,
+       error_message = NULL,
+       retry_count = CASE
+         WHEN $1::boolean THEN 0
+         ELSE retry_count
+       END,
+       next_run_at = NOW(),
+       updated_at = NOW(),
+       completed_at = NULL,
+       started_at = NULL,
+       last_heartbeat_at = NULL,
+       lease_expires_at = NULL,
+       last_worker_id = COALESCE($2, last_worker_id),
+       idempotency_until = NULL,
+       retention_until = NULL,
+       expires_at = NULL,
+       cancel_requested_at = NULL,
+       cancel_reason = NULL,
+       autonomy_state = COALESCE(autonomy_state, '{}'::jsonb) || $3::jsonb
+     WHERE id = $4
+       AND status = 'failed'
+     RETURNING *`,
+    [
+      resetRetryCount,
+      lastWorkerId,
+      normalizeJsonbInput(
+        autonomyState,
+        'jobRepository.requeueFailedJob.autonomyState'
+      ),
+      jobId
+    ]
+  );
+
+  return (result.rows[0] as JobData | undefined) ?? null;
+}
+
 function normalizeNullableDate(value: Date | string | null | undefined): string | null {
   if (!value) {
     return null;
@@ -1649,7 +2016,8 @@ function normalizeNullableDate(value: Date | string | null | undefined): string 
 
 function buildRecoveredAutonomyState(
   autonomyState: Record<string, unknown> | string | null,
-  retryCount: number
+  retryCount: number,
+  additions: Record<string, unknown> = {}
 ): Record<string, unknown> {
   let baseState: Record<string, unknown> = {};
 
@@ -1661,8 +2029,21 @@ function buildRecoveredAutonomyState(
     ...baseState,
     recoveredFromStaleLeaseAt: new Date().toISOString(),
     staleRecoveryCount: Number(baseState.staleRecoveryCount ?? 0) + 1,
-    previousRetryCount: retryCount
+    previousRetryCount: retryCount,
+    ...additions
   };
+}
+
+function resolveAutonomyStateNumber(
+  autonomyState: Record<string, unknown> | string | null,
+  key: string
+): number {
+  if (typeof autonomyState !== 'object' || autonomyState === null || Array.isArray(autonomyState)) {
+    return 0;
+  }
+
+  const value = autonomyState[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
 function normalizeInspectionLimit(limit: number | undefined, fallback: number): number {

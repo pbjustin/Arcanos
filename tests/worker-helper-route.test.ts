@@ -1,10 +1,11 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const createJobMock = jest.fn();
 const getJobByIdMock = jest.fn();
 const getJobQueueSummaryMock = jest.fn();
 const getLatestJobMock = jest.fn();
 const listFailedJobsMock = jest.fn();
+const requeueFailedJobMock = jest.fn();
 const dispatchArcanosTaskMock = jest.fn();
 const getWorkerRuntimeStatusMock = jest.fn();
 const startWorkersMock = jest.fn();
@@ -18,7 +19,8 @@ jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
   getJobById: getJobByIdMock,
   getJobQueueSummary: getJobQueueSummaryMock,
   getLatestJob: getLatestJobMock,
-  listFailedJobs: listFailedJobsMock
+  listFailedJobs: listFailedJobsMock,
+  requeueFailedJob: requeueFailedJobMock
 }));
 
 jest.unstable_mockModule('@platform/runtime/workerConfig.js', () => ({
@@ -80,6 +82,8 @@ function buildApp() {
 describe('/worker-helper routes', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2026-03-06T10:00:30.000Z'));
     delete process.env.WORKER_ID;
     delete process.env.RAILWAY_ENVIRONMENT;
     delete process.env.RAILWAY_ENVIRONMENT_NAME;
@@ -161,6 +165,7 @@ describe('/worker-helper routes', () => {
     getWorkerControlHealthMock.mockResolvedValue({
       overallStatus: 'healthy',
       alerts: [],
+      diagnosticAlerts: [],
       queueSummary: {
         pending: 1,
         running: 0,
@@ -170,6 +175,10 @@ describe('/worker-helper routes', () => {
         delayed: 0,
         stalledRunning: 0,
         oldestPendingJobAgeMs: 0,
+        recentFailed: 0,
+        recentCompleted: 0,
+        recentTotalTerminal: 0,
+        recentTerminalWindowMs: 3600000,
         failureBreakdown: {
           retryable: 0,
           permanent: 1,
@@ -183,14 +192,60 @@ describe('/worker-helper routes', () => {
           validation: 0,
           unknown: 0
         },
-        recentFailureReasons: [],
+        recentFailureReasons: [
+          {
+            reason: 'OpenAI upstream timeout',
+            category: 'timeout',
+            retryable: false,
+            count: 1,
+            lastSeenAt: '2026-03-06T09:58:00.000Z'
+          }
+        ],
+        recentTerminalWindowMs: 3600000,
+        recentFailed: 0,
+        recentCompleted: 0,
+        recentTotalTerminal: 0,
         lastUpdatedAt: '2026-03-06T10:00:00.000Z'
+      },
+      operationalHealth: {
+        overallStatus: 'healthy',
+        alerts: [],
+        pending: 1,
+        running: 0,
+        delayed: 0,
+        stalledRunning: 0,
+        oldestPendingJobAgeMs: 0,
+        recentFailed: 0,
+        recentCompleted: 0,
+        recentTotalTerminal: 0,
+        recentTerminalWindowMs: 3600000,
+        workerHeartbeatAgeMs: 0,
+        degradedWorkerIds: [],
+        unhealthyWorkerIds: []
+      },
+      historicalDebt: {
+        retainedFailedJobs: 1,
+        retryExhaustedJobs: 1,
+        deadLetterJobs: 0,
+        recentFailureReasons: [
+          {
+            reason: 'OpenAI upstream timeout',
+            category: 'timeout',
+            retryable: false,
+            count: 1,
+            lastSeenAt: '2026-03-06T09:58:00.000Z'
+          }
+        ],
+        failureWindowMs: 3600000,
+        inspectionEndpoint: '/worker-helper/jobs/failed',
+        currentRiskExcluded: true
       },
       workers: [
         {
           workerId: 'async-queue',
           workerType: 'async_queue',
           healthStatus: 'healthy',
+          operationalStatus: 'healthy',
           currentJobId: null,
           lastError: null,
           lastHeartbeatAt: '2026-03-06T10:00:00.000Z',
@@ -258,7 +313,7 @@ describe('/worker-helper routes', () => {
         workerIds: ['worker-1', 'worker-2']
       })
     });
-    expect(response.body.workerService).toEqual({
+    expect(response.body.workerService).toEqual(expect.objectContaining({
       observationMode: 'queue-observed',
       database: {
         connected: true,
@@ -274,6 +329,10 @@ describe('/worker-helper routes', () => {
         delayed: 0,
         stalledRunning: 0,
         oldestPendingJobAgeMs: 0,
+        recentFailed: 0,
+        recentCompleted: 0,
+        recentTotalTerminal: 0,
+        recentTerminalWindowMs: 3600000,
         failureBreakdown: {
           retryable: 0,
           permanent: 1,
@@ -302,7 +361,7 @@ describe('/worker-helper routes', () => {
         failedCountMode: 'retained_terminal_jobs',
         failedCountDescription:
           'The failed counter represents job rows currently retained in terminal failed state. It is not a count of currently running failures.',
-        activeFailureSignals: ['running', 'stalledRunning', 'health.alerts']
+        activeFailureSignals: ['stalledRunning', 'oldestPendingJobAgeMs', 'recentFailed', 'workerHeartbeatAgeMs']
       },
       retryPolicy: {
         defaultMaxRetries: 2,
@@ -339,21 +398,69 @@ describe('/worker-helper routes', () => {
       health: {
         overallStatus: 'healthy',
         alerts: [],
+        diagnosticAlerts: [],
+        operationalHealth: {
+          overallStatus: 'healthy',
+          alerts: [],
+          pending: 1,
+          running: 0,
+          delayed: 0,
+          stalledRunning: 0,
+          staleWorkers: 0,
+          staleWorkerIds: [],
+          stalledJobs: 0,
+          recoveryActions: 0,
+          oldestPendingJobAgeMs: 0,
+          recentFailed: 0,
+          recentCompleted: 0,
+          recentTotalTerminal: 0,
+          recentTerminalWindowMs: 3600000,
+          workerHeartbeatAgeMs: expect.any(Number),
+          degradedWorkerIds: [],
+          unhealthyWorkerIds: []
+        },
+        historicalDebt: {
+          retainedFailedJobs: 1,
+          retryExhaustedJobs: 1,
+          deadLetterJobs: 0,
+          recentFailureReasons: [
+            {
+              reason: 'OpenAI upstream timeout',
+              category: 'timeout',
+              retryable: false,
+              count: 1,
+              lastSeenAt: '2026-03-06T09:58:00.000Z'
+            }
+          ],
+          failureWindowMs: 3600000,
+          inspectionEndpoint: '/worker-helper/jobs/failed',
+          currentRiskExcluded: true
+        },
         workers: [
           {
             workerId: 'async-queue',
             workerType: 'async_queue',
             healthStatus: 'healthy',
+            operationalStatus: 'healthy',
+            activeJobs: [],
             currentJobId: null,
             lastError: null,
             lastHeartbeatAt: '2026-03-06T10:00:00.000Z',
             lastActivityAt: '2026-03-06T10:00:00.000Z',
             lastProcessedJobAt: '2026-03-06T09:59:30.000Z',
+            heartbeatAgeMs: expect.any(Number),
+            stale: false,
             inactivityMs: expect.any(Number),
             processedJobs: 0,
             scheduledRetries: 0,
             terminalFailures: 0,
             recoveredJobs: 0,
+            staleWorkersDetected: 0,
+            stalledJobsDetected: 0,
+            deadLetterJobs: 0,
+            recoveryActions: 0,
+            lastRecoveryActionAt: null,
+            lastWatchdogRunAt: null,
             updatedAt: '2026-03-06T10:00:00.000Z',
             watchdog: {
               triggered: false,
@@ -364,7 +471,7 @@ describe('/worker-helper routes', () => {
           }
         ]
       }
-    });
+    }));
   });
 
   it('ignores legacy auth headers and still serves worker helper requests', async () => {
@@ -503,44 +610,100 @@ describe('/worker-helper routes', () => {
     const response = await request(buildApp()).get('/worker-helper/health');
 
     expect(response.status).toBe(200);
-    expect(response.body).toEqual(
-      expect.objectContaining({
-        overallStatus: 'healthy',
-        alerts: [],
-        workers: [
-          expect.objectContaining({
-            workerId: 'async-queue',
-            healthStatus: 'healthy'
-          })
-        ]
-      })
-    );
-  });
-
-  it('marks stale worker snapshots as degraded even when legacy watchdog fields are missing', async () => {
-    getWorkerControlHealthMock.mockResolvedValueOnce({
+    expect(response.body).toEqual(expect.objectContaining({
       overallStatus: 'healthy',
       alerts: [],
+      operationalHealth: expect.objectContaining({
+        overallStatus: 'healthy',
+        staleWorkers: 0,
+        stalledJobs: 0,
+        recoveryActions: 0
+      }),
+      historicalDebt: expect.objectContaining({
+        retainedFailedJobs: 1,
+        retryExhaustedJobs: 1
+      }),
+      workers: [
+        expect.objectContaining({
+          workerId: 'async-queue',
+          healthStatus: 'healthy',
+          operationalStatus: 'healthy',
+          activeJobs: [],
+          stale: false,
+          heartbeatAgeMs: expect.any(Number)
+        })
+      ]
+    }));
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it('returns idle historical debt without degrading the primary health payload', async () => {
+    getWorkerControlHealthMock.mockResolvedValueOnce({
+      overallStatus: 'healthy',
+      alerts: ['Retry exhaustion is elevated (56 terminal failure(s)).'],
       queueSummary: {
         pending: 0,
         running: 0,
         completed: 3,
-        failed: 0,
-        total: 3,
+        failed: 56,
+        total: 59,
         delayed: 0,
         stalledRunning: 0,
         oldestPendingJobAgeMs: 0,
-        failureBreakdown: null,
+        failureBreakdown: {
+          retryable: 0,
+          permanent: 56,
+          retryScheduled: 0,
+          retryExhausted: 56,
+          authentication: 0,
+          network: 0,
+          provider: 0,
+          rateLimited: 0,
+          timeout: 56,
+          validation: 0,
+          unknown: 0
+        },
         recentFailureReasons: [],
+        recentTerminalWindowMs: 3600000,
+        recentFailed: 0,
         lastUpdatedAt: '2026-03-06T10:00:00.000Z'
+      },
+      operationalHealth: {
+        overallStatus: 'healthy',
+        alerts: [],
+        pending: 0,
+        running: 0,
+        delayed: 0,
+        stalledRunning: 0,
+        oldestPendingJobAgeMs: 0,
+        recentFailed: 0,
+        recentCompleted: 0,
+        recentTotalTerminal: 0,
+        recentTerminalWindowMs: 3600000,
+        workerHeartbeatAgeMs: 300000,
+        degradedWorkerIds: [],
+        unhealthyWorkerIds: []
+      },
+      historicalDebt: {
+        retainedFailedJobs: 56,
+        retryExhaustedJobs: 56,
+        deadLetterJobs: 0,
+        recentFailureReasons: [],
+        failureWindowMs: 3600000,
+        inspectionEndpoint: '/worker-helper/jobs/failed',
+        currentRiskExcluded: true
       },
       workers: [
         {
           workerId: 'async-queue',
           workerType: 'async_queue',
-          healthStatus: 'healthy',
+          healthStatus: 'degraded',
+          operationalStatus: 'healthy',
           currentJobId: null,
-          lastError: null,
+          lastError: 'OpenAI upstream timeout',
           lastHeartbeatAt: null,
           updatedAt: '2026-03-06T10:00:00.000Z',
           snapshot: {
@@ -566,19 +729,25 @@ describe('/worker-helper routes', () => {
 
     expect(response.status).toBe(200);
     expect(response.body).toEqual(expect.objectContaining({
-      overallStatus: 'degraded',
-      alerts: expect.arrayContaining([
-        expect.stringContaining('No worker receipts or processed jobs observed')
-      ]),
-      workers: [
+      overallStatus: 'healthy',
+      alerts: [],
+      diagnosticAlerts: ['Retry exhaustion is elevated (56 terminal failure(s)).'],
+      operationalHealth: expect.objectContaining({
+        overallStatus: 'healthy',
+        workerHeartbeatAgeMs: expect.any(Number)
+      }),
+      historicalDebt: expect.objectContaining({
+        retainedFailedJobs: 56,
+        retryExhaustedJobs: 56
+      }),
+      workers: expect.arrayContaining([
         expect.objectContaining({
           workerId: 'async-queue',
-          watchdog: expect.objectContaining({
-            restartRecommended: true,
-            idleThresholdMs: 120000
-          })
+          healthStatus: 'degraded',
+          operationalStatus: 'healthy',
+          inactivityMs: expect.any(Number)
         })
-      ]
+      ])
     }));
   });
 

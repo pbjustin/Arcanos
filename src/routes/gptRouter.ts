@@ -29,6 +29,7 @@ import { hasDagOrchestrationIntentCue } from '@services/naturalLanguageMemory.js
 import {
   recordDagTraceTimeout,
   recordGptJobEvent,
+  recordGptJobLookup,
   recordGptRequestEvent
 } from '@platform/observability/appMetrics.js';
 import { shouldTreatPromptAsDagExecution } from '@shared/dag/dagExecutionRouting.js';
@@ -64,6 +65,7 @@ import {
   buildGptJobResultLookupPayload,
   parseGptJobResultRequest
 } from '@shared/gpt/gptJobResult.js';
+import { parseNaturalLanguageJobLookup } from '@shared/gpt/naturalLanguageJobLookup.js';
 
 const router = express.Router();
 const ARCANOS_CORE_GPT_IDS = new Set(['arcanos-core', 'core', 'arcanos-daemon']);
@@ -639,6 +641,80 @@ router.post("/:gptId", async (req, res, next) => {
           });
         }
 
+        if (!requestedAction) {
+          const promptJobLookup = parseNaturalLanguageJobLookup(promptText);
+          if (promptJobLookup) {
+            const canonicalRoutes = promptJobLookup.ok
+              ? {
+                  poll: `/jobs/${promptJobLookup.jobId}`,
+                  result: `/jobs/${promptJobLookup.jobId}/result`
+                }
+              : {
+                  poll: null,
+                  result: null
+                };
+
+            if (!promptJobLookup.ok) {
+              requestLogger?.warn?.('gpt.request.job_lookup_guard_missing_job_id', {
+                endpoint: req.originalUrl,
+                gptId: incomingGptId,
+                requestId,
+                lookup: promptJobLookup.kind,
+                source: promptJobLookup.source
+              });
+              recordGptJobLookup({
+                channel: 'prompt_guard',
+                lookup: promptJobLookup.kind,
+                outcome: 'missing_job_id'
+              });
+              return res.status(400).json({
+                ok: false,
+                error: {
+                  code: 'JOB_ID_REQUIRED',
+                  message: 'Job retrieval prompts sent to /gpt/{gptId} must include a concrete job ID. Use the jobs API instead of prompting the GPT route.'
+                },
+                canonical: canonicalRoutes,
+                _route: {
+                  requestId,
+                  gptId: incomingGptId,
+                  route: 'job_lookup_guard',
+                  action: `${promptJobLookup.kind}_lookup`,
+                  timestamp: new Date().toISOString()
+                }
+              });
+            }
+
+            requestLogger?.warn?.('gpt.request.job_lookup_guard_rejected', {
+              endpoint: req.originalUrl,
+              gptId: incomingGptId,
+              requestId,
+              jobId: promptJobLookup.jobId,
+              lookup: promptJobLookup.kind,
+              source: promptJobLookup.source
+            });
+            recordGptJobLookup({
+              channel: 'prompt_guard',
+              lookup: promptJobLookup.kind,
+              outcome: 'rejected'
+            });
+            return res.status(400).json({
+              ok: false,
+              error: {
+                code: 'JOB_LOOKUP_REQUIRES_JOBS_API',
+                message: 'Job retrieval requests must use the jobs API. Do not send result or status lookups through POST /gpt/{gptId}.'
+              },
+              canonical: canonicalRoutes,
+              _route: {
+                requestId,
+                gptId: incomingGptId,
+                route: 'job_lookup_guard',
+                action: `${promptJobLookup.kind}_lookup`,
+                timestamp: new Date().toISOString()
+              }
+            });
+          }
+        }
+
         requestLogger?.info?.("gpt.request.auth_state", {
           endpoint: req.originalUrl,
           gptId: incomingGptId,
@@ -683,6 +759,11 @@ router.post("/:gptId", async (req, res, next) => {
             lookupStatus: jobLookup.status,
             jobStatus: jobLookup.jobStatus,
             lifecycleStatus: jobLookup.lifecycleStatus
+          });
+          recordGptJobLookup({
+            channel: 'gpt_action',
+            lookup: 'result',
+            outcome: jobLookup.status
           });
 
           return res.status(200).json({

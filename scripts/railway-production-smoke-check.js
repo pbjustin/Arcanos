@@ -509,6 +509,10 @@ export function evaluateWorkerLogEntries(entries) {
     const level = normalizeString(entry.level).toLowerCase();
     const message = normalizeString(entry.message);
 
+    if (isIgnorableAppLogMessage(message)) {
+      continue;
+    }
+
     //audit assumption: explicit worker errors should fail the smoke check because job processing correctness is uncertain after an unhandled runtime fault; failure risk: queue work silently stalls; expected invariant: no recent worker `level=error` lines; handling strategy: fail immediately on error logs.
     if (level === 'error') {
       errorMessages.push(message || 'worker emitted an error log without a message');

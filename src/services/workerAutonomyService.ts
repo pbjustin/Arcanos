@@ -4,6 +4,7 @@ import {
   getJobExecutionStatsSince,
   getJobQueueSummary,
   recordJobHeartbeat,
+  recoverStalledJobsForWorkers,
   recoverStaleJobs,
   scheduleJobRetry,
   updateJob,
@@ -20,7 +21,12 @@ import {
   type WorkerRuntimeSnapshotRecord
 } from '@core/db/repositories/workerRuntimeRepository.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
-import { recordDependencyCall } from '@platform/observability/appMetrics.js';
+import {
+  recordDependencyCall,
+  recordWorkerRecoveredJobs,
+  recordWorkerStaleDetection,
+  recordWorkerStalledJobs
+} from '@platform/observability/appMetrics.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 
 export type WorkerAutonomyHealthStatus = 'healthy' | 'degraded' | 'unhealthy' | 'offline';
@@ -32,8 +38,10 @@ export interface WorkerAutonomySettings {
   heartbeatIntervalMs: number;
   leaseMs: number;
   inspectorIntervalMs: number;
+  watchdogIntervalMs?: number;
   staleAfterMs: number;
   watchdogIdleMs: number;
+  stalledJobAction?: 'requeue' | 'dead_letter';
   defaultMaxRetries: number;
   retryBackoffBaseMs: number;
   retryBackoffMaxMs: number;
@@ -70,6 +78,7 @@ export interface WorkerAutonomyHealthReport {
     | 'heartbeatIntervalMs'
     | 'leaseMs'
     | 'inspectorIntervalMs'
+    | 'watchdogIntervalMs'
     | 'staleAfterMs'
     | 'watchdogIdleMs'
     | 'defaultMaxRetries'
@@ -95,6 +104,13 @@ export interface WorkerBootstrapResult {
 
 export interface WorkerInspectionResult {
   recovered: RecoverStaleJobsResult;
+  stalledRecovery: {
+    staleWorkers: number;
+    stalledJobs: number;
+    requeuedJobs: number;
+    deadLetterJobs: number;
+    cancelledJobs: number;
+  };
   cleaned: {
     expiredPending: number;
     expiredTerminal: number;
@@ -111,6 +127,7 @@ interface RuntimeSnapshotState {
   lastError: string | null;
   lastHeartbeatAt: string | null;
   lastInspectorRunAt: string | null;
+  lastWatchdogRunAt: string | null;
   lastActivityAt: string | null;
   lastProcessedJobAt: string | null;
   watchdogTriggeredAt: string | null;
@@ -119,8 +136,13 @@ interface RuntimeSnapshotState {
   scheduledRetries: number;
   terminalFailures: number;
   recoveredJobs: number;
+  staleWorkersDetected: number;
+  stalledJobsDetected: number;
+  deadLetterJobs: number;
+  recoveryActions: number;
   maxObservedQueueDepth: number;
   lastBudgetPauseReason: string | null;
+  lastRecoveryActionAt: string | null;
 }
 
 interface WorkerSnapshotContext {
@@ -137,6 +159,9 @@ interface WorkerWatchdogState {
   inactivityMs: number | null;
   lastActivityAt: string | null;
   lastProcessedJobAt: string | null;
+  lastHeartbeatAt: string | null;
+  stale: boolean;
+  staleAfterMs: number;
   idleThresholdMs: number;
   restartRecommended: boolean;
 }
@@ -151,11 +176,16 @@ const DEFAULT_AUTONOMY_SETTINGS: WorkerAutonomySettings = {
     process.env.WORKER_ID?.trim() ||
     'async-queue',
   workerType: 'async_queue',
-  heartbeatIntervalMs: readNumberEnv('JOB_WORKER_HEARTBEAT_MS', 10_000),
-  leaseMs: readNumberEnv('JOB_WORKER_LEASE_MS', 30_000),
+  heartbeatIntervalMs: readNumberEnv('JOB_WORKER_HEARTBEAT_MS', 5_000),
+  leaseMs: readNumberEnv('JOB_WORKER_LEASE_MS', 15_000),
   inspectorIntervalMs: readNumberEnv('JOB_WORKER_INSPECTOR_MS', 30_000),
-  staleAfterMs: readNumberEnv('JOB_WORKER_STALE_AFTER_MS', 60_000),
+  watchdogIntervalMs: readNumberEnv('JOB_WORKER_WATCHDOG_MS', 5_000),
+  staleAfterMs: readNumberEnv('JOB_WORKER_STALE_AFTER_MS', 10_000),
   watchdogIdleMs: readNumberEnv('JOB_WORKER_WATCHDOG_IDLE_MS', 120_000),
+  stalledJobAction:
+    process.env.JOB_WORKER_STALLED_JOB_ACTION?.trim().toLowerCase() === 'dead_letter'
+      ? 'dead_letter'
+      : 'requeue',
   defaultMaxRetries: readNumberEnv('JOB_WORKER_MAX_RETRIES', 2),
   retryBackoffBaseMs: readNumberEnv('JOB_WORKER_RETRY_BASE_MS', 2_000),
   retryBackoffMaxMs: readNumberEnv('JOB_WORKER_RETRY_MAX_MS', 60_000),
@@ -291,6 +321,7 @@ export async function getWorkerAutonomyHealthReport(
       heartbeatIntervalMs: settings.heartbeatIntervalMs,
       leaseMs: settings.leaseMs,
       inspectorIntervalMs: settings.inspectorIntervalMs,
+      watchdogIntervalMs: settings.watchdogIntervalMs,
       staleAfterMs: settings.staleAfterMs,
       watchdogIdleMs: settings.watchdogIdleMs,
       defaultMaxRetries: settings.defaultMaxRetries,
@@ -321,6 +352,7 @@ export class WorkerAutonomyService {
       lastError: null,
       lastHeartbeatAt: null,
       lastInspectorRunAt: null,
+      lastWatchdogRunAt: null,
       lastActivityAt: this.startedAt,
       lastProcessedJobAt: null,
       watchdogTriggeredAt: null,
@@ -329,8 +361,13 @@ export class WorkerAutonomyService {
       scheduledRetries: 0,
       terminalFailures: 0,
       recoveredJobs: 0,
+      staleWorkersDetected: 0,
+      stalledJobsDetected: 0,
+      deadLetterJobs: 0,
+      recoveryActions: 0,
       maxObservedQueueDepth: 0,
-      lastBudgetPauseReason: null
+      lastBudgetPauseReason: null,
+      lastRecoveryActionAt: null
     };
   }
 
@@ -370,6 +407,14 @@ export class WorkerAutonomyService {
     };
   }
 
+  getHeartbeatIntervalMs(): number {
+    return this.settings.heartbeatIntervalMs;
+  }
+
+  getWatchdogIntervalMs(): number {
+    return this.settings.watchdogIntervalMs ?? this.settings.heartbeatIntervalMs;
+  }
+
   /**
    * Run startup recovery before the worker starts claiming new jobs.
    * Purpose: heal stale queue rows, persist an initial snapshot, and surface degraded prerequisites early.
@@ -402,6 +447,7 @@ export class WorkerAutonomyService {
    * Edge case behavior: stale jobs over the retry limit are terminally failed instead of re-queued.
    */
   async inspect(reason: string, notes: string[] = []): Promise<WorkerInspectionResult> {
+    const stalledRecovery = await this.runWatchdogCycle(reason, { persistSnapshot: false });
     const queueSummaryBeforeRecovery = await getJobQueueSummary();
     const recovered = await recoverStaleJobs({
       staleAfterMs: this.settings.staleAfterMs,
@@ -416,6 +462,23 @@ export class WorkerAutonomyService {
 
     this.state.lastInspectorRunAt = new Date().toISOString();
     this.state.recoveredJobs += recovered.recoveredJobs.length;
+    this.state.deadLetterJobs += recovered.failedJobs.length;
+    this.state.recoveryActions += recovered.recoveredJobs.length + recovered.failedJobs.length;
+    if (recovered.recoveredJobs.length > 0 || recovered.failedJobs.length > 0) {
+      this.state.lastRecoveryActionAt = new Date().toISOString();
+    }
+    if (recovered.recoveredJobs.length > 0) {
+      recordWorkerRecoveredJobs({
+        action: 'lease_requeue',
+        count: recovered.recoveredJobs.length
+      });
+    }
+    if (recovered.failedJobs.length > 0) {
+      recordWorkerRecoveredJobs({
+        action: 'lease_dead_letter',
+        count: recovered.failedJobs.length
+      });
+    }
     this.state.maxObservedQueueDepth = Math.max(
       this.state.maxObservedQueueDepth,
       queueSummary?.pending ?? queueSummaryBeforeRecovery?.pending ?? 0
@@ -436,6 +499,20 @@ export class WorkerAutonomyService {
     }
     if (recovered.failedJobs.length > 0) {
       alerts.push(`Marked ${recovered.failedJobs.length} stale job(s) failed after retry exhaustion.`);
+    }
+    if (stalledRecovery.staleWorkers > 0) {
+      alerts.push(
+        `Detected ${stalledRecovery.staleWorkers} stale worker(s) and ${stalledRecovery.stalledJobs} stalled job(s).`
+      );
+    }
+    if (stalledRecovery.requeuedJobs > 0) {
+      alerts.push(`Requeued ${stalledRecovery.requeuedJobs} stalled job(s).`);
+    }
+    if (stalledRecovery.deadLetterJobs > 0) {
+      alerts.push(`Moved ${stalledRecovery.deadLetterJobs} stalled job(s) to dead-letter.`);
+    }
+    if (stalledRecovery.cancelledJobs > 0) {
+      alerts.push(`Cancelled ${stalledRecovery.cancelledJobs} stalled job(s) during recovery.`);
     }
     if (cleaned.expiredPending > 0 || cleaned.expiredTerminal > 0) {
       logger.info('gpt.job.expired', {
@@ -461,12 +538,125 @@ export class WorkerAutonomyService {
 
     return {
       recovered,
+      stalledRecovery,
       cleaned,
       queueSummary,
       stats,
       healthStatus,
       alerts
     };
+  }
+
+  /**
+   * Run the worker watchdog recovery cycle.
+   * Purpose: detect stale workers from persisted heartbeats, reclaim stalled jobs, and persist recovery telemetry.
+   * Inputs/outputs: accepts a reason string and optional persistence override; returns the detected stale workers and recovery actions.
+   * Edge case behavior: empty or heartbeat-fresh worker sets no-op without touching queue state.
+   */
+  async runWatchdogCycle(
+    reason: string,
+    options: { persistSnapshot?: boolean } = {}
+  ): Promise<WorkerInspectionResult['stalledRecovery']> {
+    const workerSnapshots = filterLegacyAggregateWorkerSnapshots(await listWorkerRuntimeSnapshots());
+    const staleWorkerIds = workerSnapshots
+      .filter((worker) => isWorkerSnapshotStale(worker, this.settings.staleAfterMs))
+      .map((worker) => worker.workerId);
+    const recovery =
+      staleWorkerIds.length > 0
+        ? await recoverStalledJobsForWorkers({
+            workerIds: staleWorkerIds,
+            staleAfterMs: this.settings.staleAfterMs,
+            maxRetries: this.settings.defaultMaxRetries,
+            stalledJobAction: this.settings.stalledJobAction
+          })
+        : {
+            staleWorkerIds: [],
+            stalledJobIds: [],
+            requeuedJobIds: [],
+            deadLetterJobIds: [],
+            cancelledJobIds: []
+          };
+    const nowIso = new Date().toISOString();
+    const stalledRecovery = {
+      staleWorkers: recovery.staleWorkerIds.length,
+      stalledJobs: recovery.stalledJobIds.length,
+      requeuedJobs: recovery.requeuedJobIds.length,
+      deadLetterJobs: recovery.deadLetterJobIds.length,
+      cancelledJobs: recovery.cancelledJobIds.length
+    };
+
+    this.state.lastWatchdogRunAt = nowIso;
+    this.state.staleWorkersDetected += stalledRecovery.staleWorkers;
+    this.state.stalledJobsDetected += stalledRecovery.stalledJobs;
+    this.state.recoveredJobs += stalledRecovery.requeuedJobs;
+    this.state.deadLetterJobs += stalledRecovery.deadLetterJobs;
+    this.state.recoveryActions +=
+      stalledRecovery.requeuedJobs + stalledRecovery.deadLetterJobs + stalledRecovery.cancelledJobs;
+    if (stalledRecovery.staleWorkers > 0) {
+      recordWorkerStaleDetection({
+        reason,
+        count: stalledRecovery.staleWorkers
+      });
+    }
+    if (stalledRecovery.stalledJobs > 0) {
+      recordWorkerStalledJobs({
+        action:
+          stalledRecovery.deadLetterJobs > 0 && stalledRecovery.requeuedJobs === 0
+            ? 'dead_letter'
+            : stalledRecovery.requeuedJobs > 0
+            ? 'requeue'
+            : 'cancelled',
+        count: stalledRecovery.stalledJobs
+      });
+    }
+    if (stalledRecovery.requeuedJobs > 0) {
+      recordWorkerRecoveredJobs({
+        action: 'requeue',
+        count: stalledRecovery.requeuedJobs
+      });
+    }
+    if (stalledRecovery.deadLetterJobs > 0) {
+      recordWorkerRecoveredJobs({
+        action: 'dead_letter',
+        count: stalledRecovery.deadLetterJobs
+      });
+    }
+    if (stalledRecovery.cancelledJobs > 0) {
+      recordWorkerRecoveredJobs({
+        action: 'cancelled',
+        count: stalledRecovery.cancelledJobs
+      });
+    }
+    if (
+      stalledRecovery.requeuedJobs > 0 ||
+      stalledRecovery.deadLetterJobs > 0 ||
+      stalledRecovery.cancelledJobs > 0
+    ) {
+      this.state.lastRecoveryActionAt = nowIso;
+      logger.warn('worker.watchdog.recovery', {
+        workerId: this.settings.workerId,
+        reason,
+        staleWorkers: stalledRecovery.staleWorkers,
+        stalledJobs: stalledRecovery.stalledJobs,
+        requeuedJobs: stalledRecovery.requeuedJobs,
+        deadLetterJobs: stalledRecovery.deadLetterJobs,
+        cancelledJobs: stalledRecovery.cancelledJobs
+      });
+    }
+
+    if (options.persistSnapshot !== false) {
+      const queueSummary = await getJobQueueSummary();
+      const alerts = buildWatchdogRecoveryAlerts(stalledRecovery);
+      await this.persistSnapshot({
+        queueSummary,
+        healthStatus:
+          alerts.length > 0 || this.state.lastBudgetPauseReason ? 'degraded' : 'healthy',
+        alerts,
+        watchdogState: this.buildWatchdogState(queueSummary)
+      }, { force: true });
+    }
+
+    return stalledRecovery;
   }
 
   /**
@@ -542,6 +732,22 @@ export class WorkerAutonomyService {
   }
 
   /**
+   * Persist a worker heartbeat even when no job is currently running.
+   * Purpose: distinguish live idle workers from dead workers by emitting a durable liveness pulse.
+   * Inputs/outputs: no inputs, returns once the snapshot heartbeat is persisted.
+   * Edge case behavior: does not overwrite `lastActivityAt`, which remains reserved for work progress and slot state transitions.
+   */
+  async recordWorkerHeartbeat(): Promise<void> {
+    this.state.lastHeartbeatAt = new Date().toISOString();
+    await this.persistSnapshot({
+      healthStatus: this.state.lastBudgetPauseReason ? 'degraded' : 'healthy',
+      alerts: this.state.lastBudgetPauseReason
+        ? [`Budget pause active: ${this.state.lastBudgetPauseReason}`]
+        : []
+    }, { force: true });
+  }
+
+  /**
    * Record a heartbeat for the active job.
    * Purpose: keep the lease fresh in the queue table and in the persisted worker snapshot.
    * Inputs/outputs: accepts the running job id; returns the refreshed job row or `null`.
@@ -554,7 +760,7 @@ export class WorkerAutonomyService {
     await this.persistSnapshot({
       healthStatus: 'healthy',
       alerts: []
-    });
+    }, { force: true });
     return updatedJob;
   }
 
@@ -701,7 +907,7 @@ export class WorkerAutonomyService {
     const watchdogState = this.buildWatchdogState(queueSummary);
     const inactivitySignal = deriveWorkerInactivitySignal(watchdogState);
     const healthStatus: WorkerAutonomyHealthStatus =
-      this.state.lastBudgetPauseReason || this.state.lastError || inactivitySignal.detected
+      this.state.lastBudgetPauseReason || inactivitySignal.detected
         ? 'degraded'
         : 'healthy';
     const alerts = this.state.lastBudgetPauseReason
@@ -726,6 +932,16 @@ export class WorkerAutonomyService {
   ): WorkerAutonomyHealthStatus {
     const watchdogState = this.buildWatchdogState(queueSummary);
     const inactivitySignal = deriveWorkerInactivitySignal(watchdogState);
+    const recentFailed = queueSummary?.recentFailed ?? stats.failed;
+    const queuePressure =
+      Boolean(queueSummary?.pending) &&
+      (queueSummary?.pending ?? 0) >= this.settings.queueDepthDeferralThreshold;
+    const pendingAgeElevated =
+      Boolean(queueSummary?.pending) &&
+      (queueSummary?.oldestPendingJobAgeMs ?? 0) > 60_000;
+    const liveDegradedSignals = alerts.some((alert) =>
+      /budget pause active|stale job|watchdog triggered/i.test(alert)
+    );
     if (watchdogState.triggered) {
       return 'unhealthy';
     }
@@ -735,10 +951,11 @@ export class WorkerAutonomyService {
     }
 
     if (
-      alerts.length > 0 ||
       inactivitySignal.detected ||
-      queueSummary?.pending &&
-      queueSummary.pending >= this.settings.queueDepthDeferralThreshold
+      liveDegradedSignals ||
+      recentFailed > 0 ||
+      pendingAgeElevated ||
+      queuePressure
     ) {
       return 'degraded';
     }
@@ -771,16 +988,23 @@ export class WorkerAutonomyService {
       lastInspectorRunAt: this.state.lastInspectorRunAt,
       updatedAt: new Date().toISOString(),
       snapshot: {
+        activeJobs: this.state.currentJobId ? [this.state.currentJobId] : [],
         queueSummary: context.queueSummary ?? null,
         stats: context.stats ?? null,
         processedJobs: this.state.processedJobs,
         scheduledRetries: this.state.scheduledRetries,
         terminalFailures: this.state.terminalFailures,
         recoveredJobs: this.state.recoveredJobs,
+        staleWorkersDetected: this.state.staleWorkersDetected,
+        stalledJobsDetected: this.state.stalledJobsDetected,
+        deadLetterJobs: this.state.deadLetterJobs,
+        recoveryActions: this.state.recoveryActions,
+        lastRecoveryActionAt: this.state.lastRecoveryActionAt,
         maxObservedQueueDepth: this.state.maxObservedQueueDepth,
         lastBudgetPauseReason: this.state.lastBudgetPauseReason,
         lastActivityAt: this.state.lastActivityAt,
         lastProcessedJobAt: this.state.lastProcessedJobAt,
+        lastWatchdogRunAt: this.state.lastWatchdogRunAt,
         watchdog: watchdogState,
         statsWorkerId: this.getStatsWorkerId(),
         alerts: context.alerts
@@ -798,18 +1022,28 @@ export class WorkerAutonomyService {
 
   private buildWatchdogState(queueSummary: JobQueueSummary | null): WorkerWatchdogState {
     const lastActivityAt = this.state.lastActivityAt;
+    const lastHeartbeatAt = this.state.lastHeartbeatAt;
     const inactivityMs =
       lastActivityAt && Number.isFinite(Date.parse(lastActivityAt))
         ? Math.max(0, Date.now() - Date.parse(lastActivityAt))
         : null;
+    const heartbeatAgeMs =
+      lastHeartbeatAt && Number.isFinite(Date.parse(lastHeartbeatAt))
+        ? Math.max(0, Date.now() - Date.parse(lastHeartbeatAt))
+        : null;
     const queueHasPendingWork =
       (queueSummary?.pending ?? 0) > 0 || (queueSummary?.stalledRunning ?? 0) > 0;
+    const stale = heartbeatAgeMs !== null && heartbeatAgeMs > this.settings.staleAfterMs;
     const triggered =
       queueHasPendingWork &&
       this.state.currentJobId === null &&
-      inactivityMs !== null &&
-      inactivityMs >= this.settings.watchdogIdleMs;
-    const reason = triggered
+      (
+        stale ||
+        (inactivityMs !== null && inactivityMs >= this.settings.watchdogIdleMs)
+      );
+    const reason = stale
+      ? `Worker heartbeat expired after ${heartbeatAgeMs}ms while queue work remained pending.`
+      : triggered
       ? `No worker activity for ${inactivityMs}ms while queue work remained pending.`
       : null;
 
@@ -819,6 +1053,9 @@ export class WorkerAutonomyService {
       inactivityMs,
       lastActivityAt,
       lastProcessedJobAt: this.state.lastProcessedJobAt,
+      lastHeartbeatAt,
+      stale,
+      staleAfterMs: this.settings.staleAfterMs,
       idleThresholdMs: this.settings.watchdogIdleMs,
       restartRecommended: triggered
     };
@@ -1198,13 +1435,9 @@ function buildHealthAlerts(
   if (queueSummary?.pending && queueSummary.pending > 0 && queueSummary.oldestPendingJobAgeMs > 60_000) {
     alerts.push(`Oldest pending job has waited ${queueSummary.oldestPendingJobAgeMs}ms.`);
   }
-  if (stats.failed > 0) {
-    alerts.push(`Observed ${stats.failed} failed job(s) in the last hour.`);
-  }
-  if ((queueSummary?.failureBreakdown?.retryExhausted ?? 0) > 0) {
-    alerts.push(
-      `Retry exhaustion is elevated (${queueSummary?.failureBreakdown?.retryExhausted ?? 0} terminal failure(s)).`
-    );
+  const recentFailed = queueSummary?.recentFailed ?? stats.failed;
+  if (recentFailed > 0) {
+    alerts.push(`Observed ${recentFailed} failed job(s) in the recent diagnostics window.`);
   }
 
   return alerts;
@@ -1228,6 +1461,9 @@ function readWatchdogState(worker: WorkerRuntimeSnapshotRecord): WorkerWatchdogS
     inactivityMs: typeof record.inactivityMs === 'number' ? record.inactivityMs : null,
     lastActivityAt: typeof record.lastActivityAt === 'string' ? record.lastActivityAt : null,
     lastProcessedJobAt: typeof record.lastProcessedJobAt === 'string' ? record.lastProcessedJobAt : null,
+    lastHeartbeatAt: typeof record.lastHeartbeatAt === 'string' ? record.lastHeartbeatAt : null,
+    stale: Boolean(record.stale),
+    staleAfterMs: typeof record.staleAfterMs === 'number' ? record.staleAfterMs : 0,
     idleThresholdMs: typeof record.idleThresholdMs === 'number' ? record.idleThresholdMs : 0,
     restartRecommended: Boolean(record.restartRecommended)
   };
@@ -1251,6 +1487,52 @@ function deriveWorkerInactivitySignal(watchdog: WorkerWatchdogState | null): Wor
     lastActivityAt: watchdog.lastActivityAt,
     lastProcessedJobAt: watchdog.lastProcessedJobAt
   };
+}
+
+function isWorkerSnapshotStale(
+  worker: WorkerRuntimeSnapshotRecord,
+  staleAfterMs: number
+): boolean {
+  const snapshot =
+    worker.snapshot && typeof worker.snapshot === 'object' && !Array.isArray(worker.snapshot)
+      ? (worker.snapshot as Record<string, unknown>)
+      : {};
+  const lastActivityAt =
+    typeof snapshot.lastActivityAt === 'string' && snapshot.lastActivityAt.trim().length > 0
+      ? snapshot.lastActivityAt
+      : null;
+  const heartbeatCandidate =
+    worker.lastHeartbeatAt ??
+    lastActivityAt ??
+    worker.updatedAt;
+  if (!heartbeatCandidate || !Number.isFinite(Date.parse(heartbeatCandidate))) {
+    return false;
+  }
+
+  return Date.now() - Date.parse(heartbeatCandidate) > staleAfterMs;
+}
+
+function buildWatchdogRecoveryAlerts(
+  stalledRecovery: WorkerInspectionResult['stalledRecovery']
+): string[] {
+  const alerts: string[] = [];
+
+  if (stalledRecovery.staleWorkers > 0) {
+    alerts.push(
+      `Detected ${stalledRecovery.staleWorkers} stale worker(s) and ${stalledRecovery.stalledJobs} stalled job(s).`
+    );
+  }
+  if (stalledRecovery.requeuedJobs > 0) {
+    alerts.push(`Requeued ${stalledRecovery.requeuedJobs} stalled job(s).`);
+  }
+  if (stalledRecovery.deadLetterJobs > 0) {
+    alerts.push(`Moved ${stalledRecovery.deadLetterJobs} stalled job(s) to dead-letter.`);
+  }
+  if (stalledRecovery.cancelledJobs > 0) {
+    alerts.push(`Cancelled ${stalledRecovery.cancelledJobs} stalled job(s) during recovery.`);
+  }
+
+  return alerts;
 }
 
 function filterLegacyAggregateWorkerSnapshots(

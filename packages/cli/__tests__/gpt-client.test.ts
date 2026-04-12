@@ -3,7 +3,13 @@ import path from "node:path";
 
 import { jest } from "@jest/globals";
 
-import { fetchGptJobResult, invokeGptRoute } from "../src/client/backend.js";
+import {
+  createAsyncGptJob,
+  fetchGptJobResult,
+  getJobResult,
+  getJobStatus,
+  invokeGptRoute
+} from "../src/client/backend.js";
 
 function createJsonResponse(payload: Record<string, unknown>, init?: ResponseInit): Response {
   return new Response(JSON.stringify(payload), {
@@ -25,7 +31,7 @@ describe("GPT route OpenAPI contract and client", () => {
       createJsonResponse({ ok: true, result: "generic route ok" })
     );
 
-    await invokeGptRoute({
+    await createAsyncGptJob({
       baseUrl: "http://127.0.0.1:3000",
       gptId: "arcanos-gaming",
       prompt: "How do I beat the boss?"
@@ -82,26 +88,71 @@ describe("GPT route OpenAPI contract and client", () => {
     expect(body.action).not.toBe("ask");
   });
 
-  it("supports action-only job result retrieval without requiring a prompt", async () => {
+  it("reads job results from the canonical /jobs/{jobId}/result route", async () => {
+    const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(
+      createJsonResponse({ ok: true, result: { status: "complete" } })
+    );
+
+    await getJobResult({
+      baseUrl: "http://127.0.0.1:3000",
+      jobId: "job-123",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      new URL("/jobs/job-123/result", "http://127.0.0.1:3000/"),
+      expect.objectContaining({
+        headers: {}
+      })
+    );
+  });
+
+  it("reads job status from the canonical /jobs/{jobId} route", async () => {
+    const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(
+      createJsonResponse({ id: "job-123", status: "running" })
+    );
+
+    await getJobStatus({
+      baseUrl: "http://127.0.0.1:3000",
+      jobId: "job-123",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      new URL("/jobs/job-123", "http://127.0.0.1:3000/"),
+      expect.objectContaining({
+        headers: {}
+      })
+    );
+  });
+
+  it("keeps fetchGptJobResult as a compatibility alias over the canonical jobs API", async () => {
     const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(
       createJsonResponse({ ok: true, result: { status: "complete" } })
     );
 
     await fetchGptJobResult({
       baseUrl: "http://127.0.0.1:3000",
-      gptId: "arcanos-core",
       jobId: "job-123",
     });
 
-    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
-    const body = JSON.parse(String(requestInit.body));
+    expect(fetchMock).toHaveBeenCalledWith(
+      new URL("/jobs/job-123/result", "http://127.0.0.1:3000/"),
+      expect.objectContaining({
+        headers: {}
+      })
+    );
+  });
 
-    expect(body).toEqual({
-      action: "get_result",
-      payload: {
-        jobId: "job-123"
-      }
-    });
+  it("rejects blank job ids before any jobs API call is attempted", async () => {
+    const fetchMock = jest.spyOn(globalThis, "fetch");
+
+    await expect(
+      getJobResult({
+        baseUrl: "http://127.0.0.1:3000",
+        jobId: "   "
+      })
+    ).rejects.toThrow("Job lookup jobId is required.");
+
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("defines the OpenAPI contract on POST /gpt/{gptId} with path-bound gptId only", () => {

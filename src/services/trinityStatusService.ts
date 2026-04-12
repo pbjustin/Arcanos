@@ -230,7 +230,7 @@ function buildFallbackQueueSemantics(): WorkerControlStatusResponse['workerServi
     failedCountMode: 'retained_terminal_jobs',
     failedCountDescription:
       'The failed counter represents job rows currently retained in terminal failed state. It is not a count of currently running failures.',
-    activeFailureSignals: ['running', 'stalledRunning', 'health.alerts']
+    activeFailureSignals: ['stalledRunning', 'oldestPendingJobAgeMs', 'recentFailed', 'workerHeartbeatAgeMs']
   };
 }
 

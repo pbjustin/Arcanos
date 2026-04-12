@@ -1,7 +1,14 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+
+const getWorkerControlHealthMock = jest.fn();
+
+jest.unstable_mockModule('@services/workerControlService.js', () => ({
+  getWorkerControlHealth: getWorkerControlHealthMock
+}));
 
 async function loadMetricsModule() {
   jest.resetModules();
+  jest.clearAllMocks();
   const metricsModule = await import('../src/platform/observability/appMetrics.js');
   metricsModule.resetAppMetricsForTests();
   return metricsModule;
@@ -12,6 +19,11 @@ describe('app metrics registry', () => {
     delete process.env.METRICS_AUTH_TOKEN;
     process.env.METRICS_ENABLED = 'true';
     process.env.METRICS_INCLUDE_WORKER_STATE = 'false';
+    getWorkerControlHealthMock.mockReset();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
   });
 
   it('emits dispatcher, DAG, dependency, and worker metrics with bounded labels', async () => {
@@ -119,5 +131,145 @@ describe('app metrics registry', () => {
     expect(metricsText).toMatch(/worker_queue_latency_ms\{[^}]*scope="oldest_pending"[^}]*\} 1250/);
     expect(metricsText).toContain('process_heap_used_bytes');
     expect(metricsText).toContain('event_loop_lag_ms');
+  });
+
+  it('reconstructs worker watchdog counters from persisted snapshots without double counting', async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2026-04-12T01:05:00.000Z'));
+    process.env.METRICS_INCLUDE_WORKER_STATE = 'true';
+
+    const healthResponses = [
+      {
+        queueSummary: {
+          pending: 1,
+          running: 1,
+          delayed: 0,
+          failed: 4,
+          completed: 8,
+          stalledRunning: 0,
+          oldestPendingJobAgeMs: 1200
+        },
+        operationalHealth: {
+          overallStatus: 'healthy',
+          recentFailed: 0,
+          workerHeartbeatAgeMs: 2500
+        },
+        historicalDebt: {
+          retryExhaustedJobs: 1,
+          deadLetterJobs: 1
+        },
+        workers: [
+          {
+            workerId: 'async-queue-slot-1',
+            processedJobs: 12,
+            scheduledRetries: 2,
+            terminalFailures: 1,
+            staleWorkersDetected: 2,
+            stalledJobsDetected: 3,
+            recoveredJobs: 2,
+            deadLetterJobs: 1,
+            recoveryActions: 3
+          }
+        ]
+      },
+      {
+        queueSummary: {
+          pending: 0,
+          running: 1,
+          delayed: 0,
+          failed: 4,
+          completed: 9,
+          stalledRunning: 0,
+          oldestPendingJobAgeMs: 600
+        },
+        operationalHealth: {
+          overallStatus: 'healthy',
+          recentFailed: 0,
+          workerHeartbeatAgeMs: 1800
+        },
+        historicalDebt: {
+          retryExhaustedJobs: 1,
+          deadLetterJobs: 1
+        },
+        workers: [
+          {
+            workerId: 'async-queue-slot-1',
+            processedJobs: 13,
+            scheduledRetries: 2,
+            terminalFailures: 1,
+            staleWorkersDetected: 3,
+            stalledJobsDetected: 4,
+            recoveredJobs: 3,
+            deadLetterJobs: 1,
+            recoveryActions: 4
+          }
+        ]
+      },
+      {
+        queueSummary: {
+          pending: 0,
+          running: 1,
+          delayed: 0,
+          failed: 4,
+          completed: 10,
+          stalledRunning: 0,
+          oldestPendingJobAgeMs: 500
+        },
+        operationalHealth: {
+          overallStatus: 'healthy',
+          recentFailed: 0,
+          workerHeartbeatAgeMs: 900
+        },
+        historicalDebt: {
+          retryExhaustedJobs: 1,
+          deadLetterJobs: 1
+        },
+        workers: [
+          {
+            workerId: 'async-queue-slot-1',
+            processedJobs: 14,
+            scheduledRetries: 2,
+            terminalFailures: 1,
+            staleWorkersDetected: 0,
+            stalledJobsDetected: 1,
+            recoveredJobs: 1,
+            deadLetterJobs: 0,
+            recoveryActions: 1
+          }
+        ]
+      }
+    ];
+
+    getWorkerControlHealthMock
+      .mockResolvedValueOnce(healthResponses[0] as any)
+      .mockResolvedValueOnce(healthResponses[1] as any)
+      .mockResolvedValueOnce(healthResponses[2] as any);
+
+    const { getMetricsText } = await loadMetricsModule();
+
+    let metricsText = await getMetricsText();
+    expect(metricsText).toMatch(/worker_stale_total\{[^}]*reason="persisted_snapshot"[^}]*\} 2/);
+    expect(metricsText).toMatch(/worker_stalled_jobs_total\{[^}]*action="requeue"[^}]*\} 2/);
+    expect(metricsText).toMatch(/worker_stalled_jobs_total\{[^}]*action="dead_letter"[^}]*\} 1/);
+    expect(metricsText).toMatch(/worker_recovered_jobs_total\{[^}]*action="requeue"[^}]*\} 2/);
+    expect(metricsText).toMatch(/worker_recovered_jobs_total\{[^}]*action="dead_letter"[^}]*\} 1/);
+
+    metricsText = await getMetricsText();
+    expect(metricsText).toMatch(/worker_stale_total\{[^}]*reason="persisted_snapshot"[^}]*\} 2/);
+    expect(getWorkerControlHealthMock).toHaveBeenCalledTimes(1);
+
+    jest.advanceTimersByTime(6_000);
+    metricsText = await getMetricsText();
+    expect(metricsText).toMatch(/worker_stale_total\{[^}]*reason="persisted_snapshot"[^}]*\} 3/);
+    expect(metricsText).toMatch(/worker_stalled_jobs_total\{[^}]*action="requeue"[^}]*\} 3/);
+    expect(metricsText).toMatch(/worker_stalled_jobs_total\{[^}]*action="dead_letter"[^}]*\} 1/);
+    expect(metricsText).toMatch(/worker_recovered_jobs_total\{[^}]*action="requeue"[^}]*\} 3/);
+    expect(metricsText).toMatch(/worker_recovered_jobs_total\{[^}]*action="dead_letter"[^}]*\} 1/);
+
+    jest.advanceTimersByTime(6_000);
+    metricsText = await getMetricsText();
+    expect(metricsText).toMatch(/worker_stale_total\{[^}]*reason="persisted_snapshot"[^}]*\} 3/);
+    expect(metricsText).toMatch(/worker_stalled_jobs_total\{[^}]*action="requeue"[^}]*\} 4/);
+    expect(metricsText).toMatch(/worker_recovered_jobs_total\{[^}]*action="requeue"[^}]*\} 4/);
   });
 });

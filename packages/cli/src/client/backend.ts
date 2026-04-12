@@ -56,7 +56,12 @@ export interface InvokeGptRouteOptions {
 
 export interface FetchGptJobResultOptions {
   baseUrl: string;
-  gptId: string;
+  jobId: string;
+  headers?: Record<string, string>;
+}
+
+export interface FetchGptJobStatusOptions {
+  baseUrl: string;
   jobId: string;
   headers?: Record<string, string>;
 }
@@ -269,18 +274,54 @@ export async function invokeGptRoute(options: InvokeGptRouteOptions): Promise<Re
   );
 }
 
+/**
+ * Creates async GPT work through the canonical `/gpt/{gptId}` write route.
+ * Inputs/Outputs: prompt-first GPT route options; returns the backend JSON payload.
+ * Edge cases: preserves the same validation rules as `invokeGptRoute`.
+ */
+export async function createAsyncGptJob(
+  options: InvokeGptRouteOptions
+): Promise<Record<string, unknown>> {
+  return invokeGptRoute(options);
+}
+
+function normalizeJobLookupId(jobId: string): string {
+  const normalized = jobId.trim();
+  if (!normalized) {
+    throw new Error("Job lookup jobId is required.");
+  }
+
+  return encodeURIComponent(normalized);
+}
+
+/**
+ * Reads canonical async job status from `GET /jobs/{jobId}`.
+ * Inputs/Outputs: base URL plus job id; returns the backend JSON payload.
+ * Edge cases: blank job ids fail locally so callers never fall back to GPT routing.
+ */
+export async function getJobStatus(
+  options: FetchGptJobStatusOptions
+): Promise<Record<string, unknown>> {
+  const encodedJobId = normalizeJobLookupId(options.jobId);
+  return getJson(options.baseUrl, `/jobs/${encodedJobId}`, options.headers);
+}
+
+/**
+ * Reads canonical async job results from `GET /jobs/{jobId}/result`.
+ * Inputs/Outputs: base URL plus job id; returns the backend JSON payload.
+ * Edge cases: blank job ids fail locally so callers never fall back to GPT routing.
+ */
+export async function getJobResult(
+  options: FetchGptJobResultOptions
+): Promise<Record<string, unknown>> {
+  const encodedJobId = normalizeJobLookupId(options.jobId);
+  return getJson(options.baseUrl, `/jobs/${encodedJobId}/result`, options.headers);
+}
+
 export async function fetchGptJobResult(
   options: FetchGptJobResultOptions
 ): Promise<Record<string, unknown>> {
-  return invokeGptRoute({
-    baseUrl: options.baseUrl,
-    gptId: options.gptId,
-    action: "get_result",
-    payload: {
-      jobId: options.jobId
-    },
-    headers: options.headers
-  });
+  return getJobResult(options);
 }
 
 async function postJson(
@@ -306,8 +347,14 @@ async function postJson(
   return requireJsonObjectPayload(payload);
 }
 
-async function getJson(baseUrl: string, pathname: string): Promise<Record<string, unknown>> {
-  const response = await fetch(new URL(pathname, withTrailingSlash(baseUrl)));
+async function getJson(
+  baseUrl: string,
+  pathname: string,
+  extraHeaders: Record<string, string> = {}
+): Promise<Record<string, unknown>> {
+  const response = await fetch(new URL(pathname, withTrailingSlash(baseUrl)), {
+    headers: extraHeaders
+  });
   const payload = await readResponsePayload(response);
   if (!response.ok) {
     throw new Error(`Backend ${pathname} failed with HTTP ${response.status}: ${formatResponsePayloadForError(payload)}`);

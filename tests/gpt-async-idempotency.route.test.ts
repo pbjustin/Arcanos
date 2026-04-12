@@ -234,6 +234,31 @@ describe('async /gpt idempotency', () => {
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
+  it('rejects whitespace-only job identifiers for get_result actions', async () => {
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        action: 'get_result',
+        payload: {
+          jobId: '   '
+        }
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({
+      ok: false,
+      error: {
+        code: 'JOB_ID_INVALID'
+      },
+      _route: {
+        gptId: 'arcanos-core',
+        action: 'get_result',
+        route: 'job_result'
+      }
+    });
+    expect(getJobByIdMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  });
   it('returns explicit pending status for get_result without enqueueing work', async () => {
     getJobByIdMock.mockResolvedValue({
       id: 'job-lookup-pending',

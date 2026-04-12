@@ -8,6 +8,8 @@ import {
   getJobQueueSummary,
   getLatestJob,
   listFailedJobs,
+  requeueFailedJob,
+  type JobFailureReasonSummary,
   type JobQueueSummary
 } from '@core/db/repositories/jobRepository.js';
 import type { WorkerRuntimeSnapshotRecord } from '@core/db/repositories/workerRuntimeRepository.js';
@@ -150,16 +152,26 @@ export interface WorkerControlWorkerSnapshot {
   workerId: string;
   workerType: string;
   healthStatus: string;
+  operationalStatus: WorkerAutonomyHealthReport['overallStatus'];
+  activeJobs: string[];
   currentJobId: string | null;
   lastError: string | null;
   lastHeartbeatAt: string | null;
   lastActivityAt: string | null;
   lastProcessedJobAt: string | null;
+  heartbeatAgeMs: number | null;
+  stale: boolean;
   inactivityMs: number | null;
   processedJobs?: number;
   scheduledRetries?: number;
   terminalFailures?: number;
   recoveredJobs?: number;
+  staleWorkersDetected?: number;
+  stalledJobsDetected?: number;
+  deadLetterJobs?: number;
+  recoveryActions?: number;
+  lastRecoveryActionAt?: string | null;
+  lastWatchdogRunAt?: string | null;
   updatedAt: string;
   watchdog: {
     triggered: boolean;
@@ -200,6 +212,9 @@ export interface WorkerControlStatusResponse {
     health: {
       overallStatus: WorkerAutonomyHealthReport['overallStatus'];
       alerts: string[];
+      diagnosticAlerts: string[];
+      operationalHealth: WorkerOperationalHealthSummary;
+      historicalDebt: WorkerHistoricalDebtSummary;
       workers: WorkerControlWorkerSnapshot[];
     };
   };
@@ -223,7 +238,48 @@ export interface WorkerControlHealthResponse extends Omit<WorkerAutonomyHealthRe
   queueSemantics: WorkerQueueSemantics;
   retryPolicy: WorkerRetryPolicySummary;
   recentFailedJobs: FailedWorkerJobSnapshot[];
+  diagnosticAlerts: string[];
+  operationalHealth: WorkerOperationalHealthSummary;
+  historicalDebt: WorkerHistoricalDebtSummary;
 }
+
+export interface WorkerOperationalHealthSummary {
+  overallStatus: WorkerAutonomyHealthReport['overallStatus'];
+  alerts: string[];
+  pending: number;
+  running: number;
+  delayed: number;
+  stalledRunning: number;
+  staleWorkers: number;
+  staleWorkerIds: string[];
+  stalledJobs: number;
+  recoveryActions: number;
+  oldestPendingJobAgeMs: number;
+  recentFailed: number;
+  recentCompleted: number;
+  recentTotalTerminal: number;
+  recentTerminalWindowMs: number | null;
+  workerHeartbeatAgeMs: number | null;
+  degradedWorkerIds: string[];
+  unhealthyWorkerIds: string[];
+}
+
+export interface WorkerHistoricalDebtSummary {
+  retainedFailedJobs: number;
+  retryExhaustedJobs: number;
+  deadLetterJobs: number;
+  recentFailureReasons: JobFailureReasonSummary[];
+  failureWindowMs: number | null;
+  inspectionEndpoint: '/worker-helper/jobs/failed';
+  currentRiskExcluded: true;
+}
+
+export interface RequeueFailedWorkerJobResult {
+  outcome: 'requeued' | 'not_found' | 'not_failed';
+  job: WorkerJobDetailSnapshot | null;
+}
+
+const PENDING_AGE_DEGRADED_THRESHOLD_MS = 60_000;
 
 /**
  * Request payload for queueing dedicated-worker async `/ask` jobs.
@@ -401,7 +457,7 @@ export function buildWorkerQueueSemantics(): WorkerQueueSemantics {
     failedCountMode: 'retained_terminal_jobs',
     failedCountDescription:
       'The failed counter represents job rows currently retained in terminal failed state. It is not a count of currently running failures.',
-    activeFailureSignals: ['running', 'stalledRunning', 'health.alerts']
+    activeFailureSignals: ['stalledRunning', 'oldestPendingJobAgeMs', 'recentFailed', 'workerHeartbeatAgeMs']
   };
 }
 
@@ -452,6 +508,18 @@ function readSnapshotNumber(
 ): number {
   const value = snapshot[key];
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
+function readSnapshotStringArray(
+  snapshot: Record<string, unknown>,
+  key: string
+): string[] {
+  const value = snapshot[key];
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0);
 }
 
 function readIsoTimestampToMs(value: string | null): number | null {
@@ -507,47 +575,141 @@ function readWatchdogView(
   };
 }
 
+function deriveObservationAgeMs(worker: {
+  lastHeartbeatAt: string | null;
+  lastActivityAt: string | null;
+  updatedAt: string;
+}): number | null {
+  const observedAtMs =
+    readIsoTimestampToMs(worker.lastHeartbeatAt) ??
+    readIsoTimestampToMs(worker.lastActivityAt) ??
+    readIsoTimestampToMs(worker.updatedAt);
+  return observedAtMs === null ? null : Math.max(0, Date.now() - observedAtMs);
+}
+
+function hasActiveQueueWork(queueSummary: JobQueueSummary | null): boolean {
+  return Boolean(
+    (queueSummary?.pending ?? 0) > 0 ||
+    (queueSummary?.running ?? 0) > 0 ||
+    (queueSummary?.stalledRunning ?? 0) > 0
+  );
+}
+
+function deriveWorkerOperationalStatus(
+  workerSnapshot: WorkerRuntimeSnapshotRecord,
+  queueSummary: JobQueueSummary | null,
+  watchdog: WorkerControlWorkerSnapshot['watchdog'],
+  stale: boolean
+): WorkerAutonomyHealthReport['overallStatus'] {
+  const activeQueueWork = hasActiveQueueWork(queueSummary);
+
+  if (workerSnapshot.healthStatus === 'offline') {
+    return 'offline';
+  }
+
+  if (watchdog.triggered || workerSnapshot.healthStatus === 'unhealthy') {
+    return activeQueueWork ? 'unhealthy' : 'healthy';
+  }
+
+  if ((stale && activeQueueWork) || workerSnapshot.healthStatus === 'degraded' || watchdog.restartRecommended) {
+    return activeQueueWork ? 'degraded' : 'healthy';
+  }
+
+  return 'healthy';
+}
+
 function buildWorkerControlWorkerSnapshot(
   workerSnapshot: WorkerRuntimeSnapshotRecord,
-  idleThresholdMs: number
+  idleThresholdMs: number,
+  staleAfterMs: number,
+  queueSummary: JobQueueSummary | null
 ): WorkerControlWorkerSnapshot {
   const snapshot = readWorkerSnapshotObject(workerSnapshot);
   const lastActivityAt = readSnapshotString(snapshot, 'lastActivityAt');
   const lastProcessedJobAt = readSnapshotString(snapshot, 'lastProcessedJobAt');
+  const lastRecoveryActionAt = readSnapshotString(snapshot, 'lastRecoveryActionAt');
+  const lastWatchdogRunAt = readSnapshotString(snapshot, 'lastWatchdogRunAt');
+  const activeJobs = readSnapshotStringArray(snapshot, 'activeJobs');
+  const heartbeatAgeMs = deriveObservationAgeMs({
+    lastHeartbeatAt: workerSnapshot.lastHeartbeatAt,
+    lastActivityAt,
+    updatedAt: workerSnapshot.updatedAt
+  });
+  const stale = heartbeatAgeMs !== null && heartbeatAgeMs > staleAfterMs;
   const inactivityMs = lastActivityAt && Number.isFinite(Date.parse(lastActivityAt))
     ? Math.max(0, Date.now() - Date.parse(lastActivityAt))
     : null;
+  const watchdog = readWatchdogView(workerSnapshot, idleThresholdMs);
 
   return {
     workerId: workerSnapshot.workerId,
     workerType: workerSnapshot.workerType,
     healthStatus: workerSnapshot.healthStatus,
+    operationalStatus: deriveWorkerOperationalStatus(workerSnapshot, queueSummary, watchdog, stale),
+    activeJobs: activeJobs.length > 0
+      ? activeJobs
+      : workerSnapshot.currentJobId
+      ? [workerSnapshot.currentJobId]
+      : [],
     currentJobId: workerSnapshot.currentJobId,
     lastError: workerSnapshot.lastError,
     lastHeartbeatAt: workerSnapshot.lastHeartbeatAt,
     lastActivityAt,
     lastProcessedJobAt,
+    heartbeatAgeMs,
+    stale,
     inactivityMs,
     processedJobs: readSnapshotNumber(snapshot, 'processedJobs'),
     scheduledRetries: readSnapshotNumber(snapshot, 'scheduledRetries'),
     terminalFailures: readSnapshotNumber(snapshot, 'terminalFailures'),
     recoveredJobs: readSnapshotNumber(snapshot, 'recoveredJobs'),
+    staleWorkersDetected: readSnapshotNumber(snapshot, 'staleWorkersDetected'),
+    stalledJobsDetected: readSnapshotNumber(snapshot, 'stalledJobsDetected'),
+    deadLetterJobs: readSnapshotNumber(snapshot, 'deadLetterJobs'),
+    recoveryActions: readSnapshotNumber(snapshot, 'recoveryActions'),
+    lastRecoveryActionAt,
+    lastWatchdogRunAt,
     updatedAt: workerSnapshot.updatedAt,
-    watchdog: readWatchdogView(workerSnapshot, idleThresholdMs)
+    watchdog
   };
 }
 
-function deriveWorkerControlAlerts(
-  fallbackAlerts: string[],
+function buildWorkerOperationalAlerts(
+  queueSummary: JobQueueSummary | null,
   workers: WorkerControlWorkerSnapshot[]
 ): string[] {
-  const alerts = new Set<string>(fallbackAlerts);
+  const alerts = new Set<string>();
+  const pending = queueSummary?.pending ?? 0;
+  const stalledRunning = queueSummary?.stalledRunning ?? 0;
+  const oldestPendingJobAgeMs = queueSummary?.oldestPendingJobAgeMs ?? 0;
+  const recentFailed = queueSummary?.recentFailed ?? 0;
+  const activeQueueWork = hasActiveQueueWork(queueSummary);
 
-  for (const worker of workers) {
-    if (worker.watchdog.restartRecommended) {
+  if (stalledRunning > 0) {
+    alerts.add(`Queue has ${stalledRunning} stalled running job(s).`);
+  }
+  if (pending > 0 && oldestPendingJobAgeMs > PENDING_AGE_DEGRADED_THRESHOLD_MS) {
+    alerts.add(`Oldest pending job has waited ${oldestPendingJobAgeMs}ms.`);
+  }
+  if (recentFailed > 0) {
+    alerts.add(`Observed ${recentFailed} failed job(s) in the recent diagnostics window.`);
+  }
+  if (workers.length === 0 && activeQueueWork) {
+    alerts.add('No queue worker snapshots observed while queue work is active.');
+  }
+  const staleWorkers = workers.filter((worker) => worker.stale);
+  if (activeQueueWork && staleWorkers.length > 0) {
+    alerts.add(`Detected ${staleWorkers.length} stale worker heartbeat(s).`);
+  }
+
+  if (activeQueueWork) {
+    for (const worker of workers) {
+      if (worker.operationalStatus === 'healthy' || worker.operationalStatus === 'offline') {
+        continue;
+      }
       alerts.add(
         worker.watchdog.reason ??
-          `Worker ${worker.workerId} has been idle beyond the watchdog threshold.`
+          `Worker ${worker.workerId} is ${worker.operationalStatus} while queue work is active.`
       );
     }
   }
@@ -555,28 +717,113 @@ function deriveWorkerControlAlerts(
   return [...alerts];
 }
 
-function deriveWorkerControlOverallStatus(
+function buildWorkerOperationalHealth(
   fallbackStatus: WorkerAutonomyHealthReport['overallStatus'],
+  queueSummary: JobQueueSummary | null,
   workers: WorkerControlWorkerSnapshot[],
-  alerts: string[]
-): WorkerAutonomyHealthReport['overallStatus'] {
-  if (fallbackStatus === 'offline' && workers.length === 0) {
-    return 'offline';
+): WorkerOperationalHealthSummary {
+  const alerts = buildWorkerOperationalAlerts(queueSummary, workers);
+  const activeQueueWork = hasActiveQueueWork(queueSummary);
+  const recentFailed = queueSummary?.recentFailed ?? 0;
+  const staleWorkerIds = workers
+    .filter((worker) => worker.stale)
+    .map((worker) => worker.workerId);
+  const degradedWorkerIds = workers
+    .filter((worker) => worker.operationalStatus === 'degraded')
+    .map((worker) => worker.workerId);
+  const unhealthyWorkerIds = workers
+    .filter((worker) => worker.operationalStatus === 'unhealthy')
+    .map((worker) => worker.workerId);
+  const recoveryActions = workers.reduce(
+    (total, worker) => total + (typeof worker.recoveryActions === 'number' ? worker.recoveryActions : 0),
+    0
+  );
+  const workerHeartbeatAgeMs = workers.reduce<number | null>((selected, worker) => {
+    const ageMs = typeof worker.heartbeatAgeMs === 'number' ? worker.heartbeatAgeMs : null;
+    if (ageMs === null) {
+      return selected;
+    }
+    return selected === null ? ageMs : Math.max(selected, ageMs);
+  }, null);
+
+  let overallStatus: WorkerAutonomyHealthReport['overallStatus'];
+  if (workers.length === 0) {
+    overallStatus =
+      activeQueueWork
+        ? 'unhealthy'
+        : fallbackStatus === 'offline'
+        ? 'offline'
+        : recentFailed > 0
+        ? 'degraded'
+        : 'healthy';
+  } else if ((queueSummary?.stalledRunning ?? 0) > 0 || unhealthyWorkerIds.length > 0) {
+    overallStatus = 'unhealthy';
+  } else if (alerts.length > 0 || degradedWorkerIds.length > 0) {
+    overallStatus = 'degraded';
+  } else {
+    overallStatus = 'healthy';
   }
 
-  if (fallbackStatus === 'unhealthy' || workers.some((worker) => worker.healthStatus === 'unhealthy')) {
-    return 'unhealthy';
-  }
+  return {
+    overallStatus,
+    alerts,
+    pending: queueSummary?.pending ?? 0,
+    running: queueSummary?.running ?? 0,
+    delayed: queueSummary?.delayed ?? 0,
+    stalledRunning: queueSummary?.stalledRunning ?? 0,
+    staleWorkers: staleWorkerIds.length,
+    staleWorkerIds,
+    stalledJobs: queueSummary?.stalledRunning ?? 0,
+    recoveryActions,
+    oldestPendingJobAgeMs: queueSummary?.oldestPendingJobAgeMs ?? 0,
+    recentFailed,
+    recentCompleted: queueSummary?.recentCompleted ?? 0,
+    recentTotalTerminal: queueSummary?.recentTotalTerminal ?? 0,
+    recentTerminalWindowMs: queueSummary?.recentTerminalWindowMs ?? null,
+    workerHeartbeatAgeMs,
+    degradedWorkerIds,
+    unhealthyWorkerIds
+  };
+}
 
-  if (
-    fallbackStatus === 'degraded' ||
-    alerts.length > 0 ||
-    workers.some((worker) => worker.healthStatus === 'degraded' || worker.watchdog.restartRecommended)
-  ) {
-    return 'degraded';
-  }
+function buildWorkerHistoricalDebt(queueSummary: JobQueueSummary | null): WorkerHistoricalDebtSummary {
+  return {
+    retainedFailedJobs: queueSummary?.failed ?? 0,
+    retryExhaustedJobs: queueSummary?.failureBreakdown?.retryExhausted ?? 0,
+    deadLetterJobs: queueSummary?.failureBreakdown?.deadLetter ?? 0,
+    recentFailureReasons: queueSummary?.recentFailureReasons ?? [],
+    failureWindowMs: queueSummary?.recentTerminalWindowMs ?? null,
+    inspectionEndpoint: '/worker-helper/jobs/failed',
+    currentRiskExcluded: true
+  };
+}
 
-  return workers.length === 0 ? fallbackStatus : 'healthy';
+function buildWorkerControlHealthPayload(params: {
+  healthReport: WorkerAutonomyHealthReport;
+}) {
+  const workers = params.healthReport.workers.map((workerSnapshot) =>
+    buildWorkerControlWorkerSnapshot(
+      workerSnapshot,
+      params.healthReport.settings.watchdogIdleMs,
+      params.healthReport.settings.staleAfterMs,
+      params.healthReport.queueSummary
+    )
+  );
+  const operationalHealth = buildWorkerOperationalHealth(
+    params.healthReport.overallStatus,
+    params.healthReport.queueSummary,
+    workers
+  );
+  const historicalDebt = buildWorkerHistoricalDebt(params.healthReport.queueSummary);
+
+  return {
+    overallStatus: operationalHealth.overallStatus,
+    alerts: operationalHealth.alerts,
+    diagnosticAlerts: params.healthReport.alerts,
+    workers,
+    operationalHealth,
+    historicalDebt
+  };
 }
 
 /**
@@ -650,19 +897,9 @@ export async function getWorkerControlStatus(
     getWorkerAutonomyHealthReport(),
     listRecentFailedWorkerJobs()
   ]);
-
-  const workerSnapshots = autonomyHealth.workers.map((workerSnapshot) =>
-    buildWorkerControlWorkerSnapshot(
-      workerSnapshot,
-      autonomyHealth.settings.watchdogIdleMs
-    )
-  );
-  const alerts = deriveWorkerControlAlerts(autonomyHealth.alerts, workerSnapshots);
-  const overallStatus = deriveWorkerControlOverallStatus(
-    autonomyHealth.overallStatus,
-    workerSnapshots,
-    alerts
-  );
+  const health = buildWorkerControlHealthPayload({
+    healthReport: autonomyHealth
+  });
 
   return {
     timestamp: new Date().toISOString(),
@@ -674,15 +911,18 @@ export async function getWorkerControlStatus(
     workerService: {
       observationMode: 'queue-observed',
       database: getDatabaseStatus(),
-      queueSummary: await getJobQueueSummary(),
+      queueSummary: autonomyHealth.queueSummary ?? await getJobQueueSummary(),
       queueSemantics: buildWorkerQueueSemantics(),
       retryPolicy: buildWorkerRetryPolicySummary(),
       recentFailedJobs,
       latestJob: latestJob ? buildWorkerJobSnapshot(latestJob) : null,
       health: {
-        overallStatus,
-        alerts,
-        workers: workerSnapshots
+        overallStatus: health.overallStatus,
+        alerts: health.alerts,
+        diagnosticAlerts: health.diagnosticAlerts,
+        operationalHealth: health.operationalHealth,
+        historicalDebt: health.historicalDebt,
+        workers: health.workers
       }
     }
   };
@@ -805,27 +1045,63 @@ export async function getWorkerControlHealth(): Promise<WorkerControlHealthRespo
     getWorkerAutonomyHealthReport(),
     listRecentFailedWorkerJobs()
   ]);
-  const workers = healthReport.workers.map((workerSnapshot) =>
-    buildWorkerControlWorkerSnapshot(
-      workerSnapshot,
-      healthReport.settings.watchdogIdleMs
-    )
-  );
-  const alerts = deriveWorkerControlAlerts(healthReport.alerts, workers);
-  const overallStatus = deriveWorkerControlOverallStatus(
-    healthReport.overallStatus,
-    workers,
-    alerts
-  );
+  const health = buildWorkerControlHealthPayload({
+    healthReport
+  });
 
   return {
     ...healthReport,
-    overallStatus,
-    alerts,
-    workers,
+    overallStatus: health.overallStatus,
+    alerts: health.alerts,
+    diagnosticAlerts: health.diagnosticAlerts,
+    workers: health.workers,
     queueSemantics: buildWorkerQueueSemantics(),
     retryPolicy: buildWorkerRetryPolicySummary(),
-    recentFailedJobs
+    recentFailedJobs,
+    operationalHealth: health.operationalHealth,
+    historicalDebt: health.historicalDebt
+  };
+}
+
+/**
+ * Requeue one retained failed worker job for an explicit operator retry.
+ *
+ * Purpose:
+ * - Support repo-local maintenance commands without exposing a public HTTP mutation surface.
+ *
+ * Inputs/outputs:
+ * - Input: failed job id plus optional operator metadata.
+ * - Output: requeue outcome and refreshed job snapshot when successful.
+ *
+ * Edge case behavior:
+ * - Missing or non-failed jobs return explicit outcomes and are left unchanged.
+ */
+export async function requeueFailedWorkerJob(
+  jobId: string,
+  options: {
+    workerId?: string | null;
+    requestedBy?: string | null;
+    resetRetryCount?: boolean;
+  } = {}
+): Promise<RequeueFailedWorkerJobResult> {
+  const existingJob = await getJobById(jobId);
+  if (!existingJob) {
+    return {
+      outcome: 'not_found',
+      job: null
+    };
+  }
+  if (existingJob.status !== 'failed') {
+    return {
+      outcome: 'not_failed',
+      job: buildWorkerJobDetailSnapshot(existingJob)
+    };
+  }
+
+  const requeuedJob = await requeueFailedJob(jobId, options);
+  return {
+    outcome: requeuedJob ? 'requeued' : 'not_failed',
+    job: requeuedJob ? buildWorkerJobDetailSnapshot(requeuedJob) : null
   };
 }
 

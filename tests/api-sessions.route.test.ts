@@ -238,6 +238,7 @@ describe('canonical /api session system routes', () => {
         permanent: 0,
         retryScheduled: 0,
         retryExhausted: 0,
+        deadLetter: 0,
         authentication: 0,
         network: 0,
         provider: 0,

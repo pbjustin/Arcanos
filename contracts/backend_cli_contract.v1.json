@@ -24,6 +24,26 @@
         "payload"
       ]
     },
+    "/jobs/{id}": {
+      "method": "GET",
+      "tsRouteFile": "src/routes/jobs.ts",
+      "pythonClientMethods": [
+        "request_job_status"
+      ],
+      "requestFields": [
+        "id(path)"
+      ]
+    },
+    "/jobs/{id}/result": {
+      "method": "GET",
+      "tsRouteFile": "src/routes/jobs.ts",
+      "pythonClientMethods": [
+        "request_job_result"
+      ],
+      "requestFields": [
+        "id(path)"
+      ]
+    },
     "/api/vision": {
       "method": "POST",
       "tsRouteFile": "src/routes/api-vision.ts",

@@ -10,6 +10,7 @@ import { confirmGate } from '@transport/http/middleware/confirmGate.js';
 import type { JobData } from '@core/db/schema.js';
 import { sleep } from '@shared/sleep.js';
 import { getRequestActorKey } from '@platform/runtime/security.js';
+import { recordGptJobLookup } from '@platform/observability/appMetrics.js';
 import {
   isGptJobTerminalStatus
 } from '@shared/gpt/gptJobLifecycle.js';
@@ -57,12 +58,36 @@ router.get(
   validateParams(jobIdSchema, { errorCode: 'JOB_ID_INVALID' }),
   asyncHandler(async (req, res) => {
     const { id } = req.validated!.params as z.infer<typeof jobIdSchema>;
+    const requestId = (req as any).requestId;
 
     const job = await getJobById(id);
     if (!job) {
+      req.logger?.warn?.('gpt.job.status_lookup.not_found', {
+        endpoint: req.originalUrl,
+        jobId: id,
+        requestId
+      });
+      recordGptJobLookup({
+        channel: 'jobs_status',
+        lookup: 'status',
+        outcome: 'not_found'
+      });
       sendNotFound(res, 'JOB_NOT_FOUND');
       return;
     }
+
+    req.logger?.info?.('gpt.job.status_lookup', {
+      endpoint: req.originalUrl,
+      jobId: id,
+      requestId,
+      jobStatus: job.status,
+      lifecycleStatus: isGptJobTerminalStatus(job.status) ? 'terminal' : 'active'
+    });
+    recordGptJobLookup({
+      channel: 'jobs_status',
+      lookup: 'status',
+      outcome: job.status
+    });
 
     res.json(buildStoredJobStatusPayload(job));
   })
@@ -73,9 +98,30 @@ router.get(
   validateParams(jobIdSchema, { errorCode: 'JOB_ID_INVALID' }),
   asyncHandler(async (req, res) => {
     const { id } = req.validated!.params as z.infer<typeof jobIdSchema>;
+    const requestId = (req as any).requestId;
     const job = await getJobById(id);
+    const jobLookup = buildGptJobResultLookupPayload(id, job);
 
-    res.json(buildGptJobResultLookupPayload(id, job));
+    req.logger?.info?.(
+      jobLookup.status === 'not_found'
+        ? 'gpt.job.result_lookup.not_found'
+        : 'gpt.job.result_lookup',
+      {
+        endpoint: req.originalUrl,
+        jobId: id,
+        requestId,
+        lookupStatus: jobLookup.status,
+        jobStatus: jobLookup.jobStatus,
+        lifecycleStatus: jobLookup.lifecycleStatus
+      }
+    );
+    recordGptJobLookup({
+      channel: 'jobs_result',
+      lookup: 'result',
+      outcome: jobLookup.status
+    });
+
+    res.json(jobLookup);
   })
 );
 

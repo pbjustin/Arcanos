@@ -430,6 +430,51 @@ function startHeartbeatLoop(
   return intervalHandle;
 }
 
+function startWorkerHeartbeatLoop(
+  autonomyService: WorkerAutonomyService,
+  workerId: string
+): NodeJS.Timeout {
+  const intervalMs = Math.max(1_000, autonomyService.getHeartbeatIntervalMs());
+  void autonomyService.recordWorkerHeartbeat().catch((error: unknown) => {
+    console.warn(
+      `[jobRunner] worker=${workerId} initial worker heartbeat failed:`,
+      resolveErrorMessage(error)
+    );
+  });
+  const intervalHandle = setInterval(() => {
+    void autonomyService.recordWorkerHeartbeat().catch((error: unknown) => {
+      console.warn(
+        `[jobRunner] worker=${workerId} worker heartbeat failed:`,
+        resolveErrorMessage(error)
+      );
+    });
+  }, intervalMs);
+
+  if (typeof intervalHandle.unref === 'function') {
+    intervalHandle.unref();
+  }
+
+  return intervalHandle;
+}
+
+function startWatchdogLoop(autonomyService: WorkerAutonomyService): NodeJS.Timeout {
+  const intervalMs = Math.max(5_000, autonomyService.getWatchdogIntervalMs());
+  const intervalHandle = setInterval(() => {
+    void autonomyService.runWatchdogCycle('watchdog').catch((error: unknown) => {
+      console.warn(
+        `[jobRunner] worker=${autonomyService.getWorkerId()} watchdog failed:`,
+        resolveErrorMessage(error)
+      );
+    });
+  }, intervalMs);
+
+  if (typeof intervalHandle.unref === 'function') {
+    intervalHandle.unref();
+  }
+
+  return intervalHandle;
+}
+
 function startInspectorLoop(autonomyService: WorkerAutonomyService): NodeJS.Timeout {
   const intervalMs = Math.max(5_000, Number(process.env.JOB_WORKER_INSPECTOR_MS || 30_000));
   const intervalHandle = setInterval(() => {
@@ -485,129 +530,132 @@ async function runWorkerConsumerSlot(
   console.log(
     `[jobRunner] worker=${slotDefinition.workerId} slot=${slotDefinition.slotNumber}/${runtimeSettings.concurrency} started`
   );
+  const workerHeartbeatHandle = startWorkerHeartbeatLoop(autonomyService, slotDefinition.workerId);
 
-  while (true) {
-    const ensuredClientState = await ensureOpenAIClientForSlot({
-      workerId: slotDefinition.workerId,
-      currentClient: openai,
-      currentConfigVersion: providerConfigVersion
-    });
-    openai = ensuredClientState.client;
-    providerConfigVersion = ensuredClientState.configVersion;
+  try {
+    while (true) {
+      const ensuredClientState = await ensureOpenAIClientForSlot({
+        workerId: slotDefinition.workerId,
+        currentClient: openai,
+        currentConfigVersion: providerConfigVersion
+      });
+      openai = ensuredClientState.client;
+      providerConfigVersion = ensuredClientState.configVersion;
 
-    if (!openai) {
-      const nowMs = Date.now();
-      if (nowMs - lastProviderPauseLogAtMs >= 10_000) {
-        console.warn(
-          `[jobRunner] worker=${slotDefinition.workerId} claim paused: openai_provider_unavailable nextRetryAt=${ensuredClientState.pausedUntil ?? 'unknown'}`
-        );
-        lastProviderPauseLogAtMs = nowMs;
-      }
-      await autonomyService.markIdle();
-      await sleep(resolveProviderPauseMs(ensuredClientState.pausedUntil, runtimeSettings.idleBackoffMs));
-      continue;
-    }
-
-    const budgetDecision = await autonomyService.evaluateBudgetsBeforeClaim();
-    if (!budgetDecision.allowed) {
-      console.warn(
-        `[jobRunner] worker=${slotDefinition.workerId} claim paused: ${budgetDecision.reason}`
-      );
-      await sleep(budgetDecision.sleepMs);
-      continue;
-    }
-
-    const job = await claimNextPendingJob(autonomyService.getClaimOptions());
-
-    if (!job) {
-      await autonomyService.markIdle();
-      await sleep(runtimeSettings.idleBackoffMs);
-      continue;
-    }
-
-    await autonomyService.markJobStarted(job);
-    const gptCancellationController = job.job_type === 'gpt' ? new AbortController() : null;
-    const heartbeatHandle = startHeartbeatLoop(
-      autonomyService,
-      job.id,
-      slotDefinition.workerId,
-      (updatedJob) => {
-        if (
-          gptCancellationController &&
-          updatedJob?.cancel_requested_at &&
-          !gptCancellationController.signal.aborted
-        ) {
-          gptCancellationController.abort(
-            createAbortError(updatedJob.cancel_reason ?? 'GPT job cancellation requested.')
+      if (!openai) {
+        const nowMs = Date.now();
+        if (nowMs - lastProviderPauseLogAtMs >= 10_000) {
+          console.warn(
+            `[jobRunner] worker=${slotDefinition.workerId} claim paused: openai_provider_unavailable nextRetryAt=${ensuredClientState.pausedUntil ?? 'unknown'}`
           );
+          lastProviderPauseLogAtMs = nowMs;
         }
+        await autonomyService.markIdle();
+        await sleep(resolveProviderPauseMs(ensuredClientState.pausedUntil, runtimeSettings.idleBackoffMs));
+        continue;
       }
-    );
-    const jobStartedAtMs = Date.now();
-    const queueWaitMs = Math.max(
-      0,
-      jobStartedAtMs - new Date(job.created_at as string | Date).getTime()
-    );
-    if (job.job_type === 'gpt') {
-      recordGptJobTiming({
-        phase: 'queue_wait',
-        outcome: 'claimed',
-        durationMs: queueWaitMs
-      });
-    }
 
-    try {
-      const aiExecutionContext = createAiExecutionContext({
-        sourceType: 'job',
-        sourceName: job.job_type,
-        requestId: job.id,
-        jobId: job.id,
-        budget: {
-          maxCalls: 24
+      const budgetDecision = await autonomyService.evaluateBudgetsBeforeClaim();
+      if (!budgetDecision.allowed) {
+        console.warn(
+          `[jobRunner] worker=${slotDefinition.workerId} claim paused: ${budgetDecision.reason}`
+        );
+        await sleep(budgetDecision.sleepMs);
+        continue;
+      }
+
+      const job = await claimNextPendingJob(autonomyService.getClaimOptions());
+
+      if (!job) {
+        await autonomyService.markIdle();
+        await sleep(runtimeSettings.idleBackoffMs);
+        continue;
+      }
+
+      await autonomyService.markJobStarted(job);
+      const gptCancellationController = job.job_type === 'gpt' ? new AbortController() : null;
+      const heartbeatHandle = startHeartbeatLoop(
+        autonomyService,
+        job.id,
+        slotDefinition.workerId,
+        (updatedJob) => {
+          if (
+            gptCancellationController &&
+            updatedJob?.cancel_requested_at &&
+            !gptCancellationController.signal.aborted
+          ) {
+            gptCancellationController.abort(
+              createAbortError(updatedJob.cancel_reason ?? 'GPT job cancellation requested.')
+            );
+          }
         }
-      });
-      const outcome = await runWithAiExecutionContext(aiExecutionContext, async () => {
-        //audit Assumption: the shared queue currently supports async ask jobs and DAG node jobs only; failure risk: unknown job types spin indefinitely after claim; expected invariant: unsupported job types fail deterministically; handling strategy: branch explicitly per supported job type and centralize failure handling.
-        if (!openai) {
+      );
+      const jobStartedAtMs = Date.now();
+      const queueWaitMs = Math.max(
+        0,
+        jobStartedAtMs - new Date(job.created_at as string | Date).getTime()
+      );
+      if (job.job_type === 'gpt') {
+        recordGptJobTiming({
+          phase: 'queue_wait',
+          outcome: 'claimed',
+          durationMs: queueWaitMs
+        });
+      }
+
+      try {
+        const aiExecutionContext = createAiExecutionContext({
+          sourceType: 'job',
+          sourceName: job.job_type,
+          requestId: job.id,
+          jobId: job.id,
+          budget: {
+            maxCalls: 24
+          }
+        });
+        const outcome = await runWithAiExecutionContext(aiExecutionContext, async () => {
+          //audit Assumption: the shared queue currently supports async ask jobs and DAG node jobs only; failure risk: unknown job types spin indefinitely after claim; expected invariant: unsupported job types fail deterministically; handling strategy: branch explicitly per supported job type and centralize failure handling.
+          if (!openai) {
+            return {
+              status: 'failed',
+              output: null,
+              errorMessage: 'OpenAI provider unavailable; job execution deferred until provider recovery.',
+              retryable: true
+            } satisfies JobExecutionOutcome;
+          }
+          if (job.job_type === 'ask') {
+            return executeQueuedPrompt(openai, job.input ?? {});
+          }
+          if (job.job_type === 'dag-node') {
+            return executeQueuedDagNode(openai, job.input ?? {});
+          }
+          if (job.job_type === 'gpt') {
+            return executeQueuedGptRequest({
+              jobId: job.id,
+              rawInput: job.input ?? {},
+              cancellationSignal: gptCancellationController?.signal
+            });
+          }
           return {
             status: 'failed',
             output: null,
-            errorMessage: 'OpenAI provider unavailable; job execution deferred until provider recovery.',
-            retryable: true
+            errorMessage: `Unsupported job_type: ${job.job_type}`,
+            retryable: false
           } satisfies JobExecutionOutcome;
-        }
-        if (job.job_type === 'ask') {
-          return executeQueuedPrompt(openai, job.input ?? {});
-        }
-        if (job.job_type === 'dag-node') {
-          return executeQueuedDagNode(openai, job.input ?? {});
-        }
-        if (job.job_type === 'gpt') {
-          return executeQueuedGptRequest({
+        });
+        const aiUsageSummary = summarizeAiExecutionContext(aiExecutionContext);
+        if (aiUsageSummary && aiUsageSummary.totals.calls > 0) {
+          console.log(JSON.stringify({
+            timestamp: new Date().toISOString(),
+            level: 'info',
+            event: 'worker.ai.summary',
+            workerId: slotDefinition.workerId,
             jobId: job.id,
-            rawInput: job.input ?? {},
-            cancellationSignal: gptCancellationController?.signal
-          });
+            jobType: job.job_type,
+            aiUsage: aiUsageSummary
+          }));
         }
-        return {
-          status: 'failed',
-          output: null,
-          errorMessage: `Unsupported job_type: ${job.job_type}`,
-          retryable: false
-        } satisfies JobExecutionOutcome;
-      });
-      const aiUsageSummary = summarizeAiExecutionContext(aiExecutionContext);
-      if (aiUsageSummary && aiUsageSummary.totals.calls > 0) {
-        console.log(JSON.stringify({
-          timestamp: new Date().toISOString(),
-          level: 'info',
-          event: 'worker.ai.summary',
-          workerId: slotDefinition.workerId,
-          jobId: job.id,
-          jobType: job.job_type,
-          aiUsage: aiUsageSummary
-        }));
-      }
+        
 
       if (outcome.status === 'completed') {
         const lifecycleDeadlines =
@@ -804,11 +852,14 @@ async function runWorkerConsumerSlot(
           durationMs: timings.endToEndMs
         });
       }
-    } finally {
-      clearInterval(heartbeatHandle);
-    }
+      } finally {
+        clearInterval(heartbeatHandle);
+      }
 
-    await sleep(runtimeSettings.pollMs);
+      await sleep(runtimeSettings.pollMs);
+    }
+  } finally {
+    clearInterval(workerHeartbeatHandle);
   }
 }
 
@@ -832,6 +883,7 @@ async function run(): Promise<void> {
     `[jobRunner] bootstrap status=${bootstrapResult.healthStatus} slots=${slotDefinitions.length} recovered=${bootstrapResult.recovered.recoveredJobs.length} failed=${bootstrapResult.recovered.failedJobs.length}`
   );
 
+  const watchdogHandle = startWatchdogLoop(inspectorAutonomyService);
   const inspectorHandle = startInspectorLoop(inspectorAutonomyService);
 
   try {
@@ -848,6 +900,7 @@ async function run(): Promise<void> {
       )
     );
   } finally {
+    clearInterval(watchdogHandle);
     clearInterval(inspectorHandle);
   }
 }

@@ -50,6 +50,7 @@ export const SessionApiQueueDiagnosticsSchema = z.object({
     permanent: z.number().int().nonnegative(),
     retryScheduled: z.number().int().nonnegative(),
     retryExhausted: z.number().int().nonnegative(),
+    deadLetter: z.number().int().nonnegative(),
     authentication: z.number().int().nonnegative(),
     network: z.number().int().nonnegative(),
     provider: z.number().int().nonnegative(),

@@ -72,7 +72,7 @@ describe('getTrinityStatus', () => {
           failedCountMode: 'retained_terminal_jobs',
           failedCountDescription:
             'The failed counter represents job rows currently retained in terminal failed state. It is not a count of currently running failures.',
-          activeFailureSignals: ['running', 'stalledRunning', 'health.alerts']
+          activeFailureSignals: ['stalledRunning', 'oldestPendingJobAgeMs', 'recentFailed', 'workerHeartbeatAgeMs']
         },
         retryPolicy: {
           defaultMaxRetries: 2,
@@ -189,12 +189,12 @@ describe('getTrinityStatus', () => {
       delayedJobs: 1,
       stalledRunningJobs: 0,
       lastUpdatedAt: '2026-03-07T20:00:08.000Z',
-      semantics: {
-        failedCountMode: 'retained_terminal_jobs',
-        failedCountDescription:
-          'The failed counter represents job rows currently retained in terminal failed state. It is not a count of currently running failures.',
-        activeFailureSignals: ['running', 'stalledRunning', 'health.alerts']
-      },
+        semantics: {
+          failedCountMode: 'retained_terminal_jobs',
+          failedCountDescription:
+            'The failed counter represents job rows currently retained in terminal failed state. It is not a count of currently running failures.',
+          activeFailureSignals: ['stalledRunning', 'oldestPendingJobAgeMs', 'recentFailed', 'workerHeartbeatAgeMs']
+        },
       retryPolicy: {
         defaultMaxRetries: 2,
         retryBackoffBaseMs: 2000,
@@ -255,7 +255,7 @@ describe('getTrinityStatus', () => {
           failedCountMode: 'retained_terminal_jobs',
           failedCountDescription:
             'The failed counter represents job rows currently retained in terminal failed state. It is not a count of currently running failures.',
-          activeFailureSignals: ['running', 'stalledRunning', 'health.alerts']
+          activeFailureSignals: ['stalledRunning', 'oldestPendingJobAgeMs', 'recentFailed', 'workerHeartbeatAgeMs']
         },
         retryPolicy: {
           defaultMaxRetries: 2,
@@ -298,12 +298,12 @@ describe('getTrinityStatus', () => {
       delayedJobs: 0,
       stalledRunningJobs: 0,
       lastUpdatedAt: null,
-      semantics: {
-        failedCountMode: 'retained_terminal_jobs',
-        failedCountDescription:
-          'The failed counter represents job rows currently retained in terminal failed state. It is not a count of currently running failures.',
-        activeFailureSignals: ['running', 'stalledRunning', 'health.alerts']
-      },
+        semantics: {
+          failedCountMode: 'retained_terminal_jobs',
+          failedCountDescription:
+            'The failed counter represents job rows currently retained in terminal failed state. It is not a count of currently running failures.',
+          activeFailureSignals: ['stalledRunning', 'oldestPendingJobAgeMs', 'recentFailed', 'workerHeartbeatAgeMs']
+        },
       retryPolicy: {
         defaultMaxRetries: 2,
         retryBackoffBaseMs: 2000,

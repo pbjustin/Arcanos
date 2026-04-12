@@ -210,6 +210,18 @@ const workerQueueLatencyMs = new Gauge({
   registers: [metricsRegistry],
 });
 
+const workerHeartbeatAgeMs = new Gauge({
+  name: 'worker_heartbeat_age_ms',
+  help: 'Age in milliseconds of the stalest observed worker heartbeat or activity.',
+  registers: [metricsRegistry],
+});
+
+const workerHealthStatus = new Gauge({
+  name: 'worker_health_status',
+  help: 'Current operational worker health status as a numeric gauge (healthy=0, degraded=1, unhealthy=2, offline=-1).',
+  registers: [metricsRegistry],
+});
+
 const workerFailuresTotal = new Gauge({
   name: 'worker_failures_total',
   help: 'Worker failure totals from persisted queue-worker snapshots.',
@@ -221,6 +233,27 @@ const workerRetriesTotal = new Gauge({
   name: 'worker_retries_total',
   help: 'Worker retry totals from persisted queue-worker snapshots.',
   labelNames: ['scope'] as const,
+  registers: [metricsRegistry],
+});
+
+const workerStaleTotal = new Counter({
+  name: 'worker_stale_total',
+  help: 'Total stale worker detections observed by the queue watchdog.',
+  labelNames: ['reason'] as const,
+  registers: [metricsRegistry],
+});
+
+const workerStalledJobsTotal = new Counter({
+  name: 'worker_stalled_jobs_total',
+  help: 'Total stalled running jobs detected by the queue watchdog.',
+  labelNames: ['action'] as const,
+  registers: [metricsRegistry],
+});
+
+const workerRecoveredJobsTotal = new Counter({
+  name: 'worker_recovered_jobs_total',
+  help: 'Total worker-job recovery actions taken by the queue watchdog.',
+  labelNames: ['action'] as const,
   registers: [metricsRegistry],
 });
 
@@ -243,6 +276,13 @@ const gptJobTimingMs = new Histogram({
   help: 'GPT job queue wait, execution, and end-to-end timings in milliseconds.',
   labelNames: ['phase', 'outcome'] as const,
   buckets: [10, 25, 50, 100, 250, 500, 1_000, 2_500, 5_000, 10_000, 30_000, 60_000, 180_000],
+  registers: [metricsRegistry],
+});
+
+const gptJobLookupTotal = new Counter({
+  name: 'gpt_job_lookup_total',
+  help: 'Job status/result lookup requests by channel and outcome.',
+  labelNames: ['channel', 'lookup', 'outcome'] as const,
   registers: [metricsRegistry],
 });
 
@@ -324,6 +364,21 @@ const eventLoopLagMs = new Gauge({
 
 let lastWorkerMetricsRefreshAtMs = 0;
 let pendingWorkerMetricsRefresh: Promise<void> | null = null;
+type WorkerSnapshotCounterTotals = {
+  staleWorkersDetected: number;
+  stalledJobsDetected: number;
+  recoveredJobs: number;
+  deadLetterJobs: number;
+  cancelledJobs: number;
+};
+const DEFAULT_WORKER_SNAPSHOT_COUNTER_TOTALS: WorkerSnapshotCounterTotals = {
+  staleWorkersDetected: 0,
+  stalledJobsDetected: 0,
+  recoveredJobs: 0,
+  deadLetterJobs: 0,
+  cancelledJobs: 0
+};
+const lastWorkerSnapshotCounterTotalsByWorkerId = new Map<string, WorkerSnapshotCounterTotals>();
 
 function normalizeLabel(value: string | number | null | undefined, fallback = 'unknown'): string {
   if (typeof value === 'number' && Number.isFinite(value)) {
@@ -609,6 +664,144 @@ export function recordWorkerRetryTotal(scope: string, value: number): void {
   workerRetriesTotal.set({ scope: normalizeLabel(scope) }, Math.max(0, value));
 }
 
+function readWorkerSnapshotCounter(value: number | null | undefined): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.trunc(value) : 0;
+}
+
+function getWorkerSnapshotCounterTotals(worker: {
+  staleWorkersDetected?: number;
+  stalledJobsDetected?: number;
+  recoveredJobs?: number;
+  deadLetterJobs?: number;
+  recoveryActions?: number;
+}): WorkerSnapshotCounterTotals {
+  const recoveredJobs = readWorkerSnapshotCounter(worker.recoveredJobs);
+  const deadLetterJobs = readWorkerSnapshotCounter(worker.deadLetterJobs);
+  const recoveryActions = readWorkerSnapshotCounter(worker.recoveryActions);
+
+  return {
+    staleWorkersDetected: readWorkerSnapshotCounter(worker.staleWorkersDetected),
+    stalledJobsDetected: readWorkerSnapshotCounter(worker.stalledJobsDetected),
+    recoveredJobs,
+    deadLetterJobs,
+    cancelledJobs: Math.max(0, recoveryActions - recoveredJobs - deadLetterJobs)
+  };
+}
+
+function resolveWorkerSnapshotCounterDelta(current: number, previous: number | undefined): number {
+  if (!Number.isFinite(current) || current <= 0) {
+    return 0;
+  }
+
+  if (!Number.isFinite(previous) || previous === undefined || previous < 0) {
+    return current;
+  }
+
+  return current >= previous ? current - previous : current;
+}
+
+function recordObservedWorkerSnapshotCounters(workers: Array<{
+  workerId: string;
+  staleWorkersDetected?: number;
+  stalledJobsDetected?: number;
+  recoveredJobs?: number;
+  deadLetterJobs?: number;
+  recoveryActions?: number;
+}>): void {
+  const observedWorkerIds = new Set<string>();
+
+  for (const worker of workers) {
+    const workerId = normalizeLabel(worker.workerId);
+    observedWorkerIds.add(workerId);
+    const current = getWorkerSnapshotCounterTotals(worker);
+    const previous = lastWorkerSnapshotCounterTotalsByWorkerId.get(workerId);
+
+    const staleWorkersDelta = resolveWorkerSnapshotCounterDelta(
+      current.staleWorkersDetected,
+      previous?.staleWorkersDetected
+    );
+    if (staleWorkersDelta > 0) {
+      workerStaleTotal.inc({ reason: 'persisted_snapshot' }, staleWorkersDelta);
+    }
+
+    const requeuedJobsDelta = resolveWorkerSnapshotCounterDelta(
+      current.recoveredJobs,
+      previous?.recoveredJobs
+    );
+    const deadLetterJobsDelta = resolveWorkerSnapshotCounterDelta(
+      current.deadLetterJobs,
+      previous?.deadLetterJobs
+    );
+    const cancelledJobsDelta = resolveWorkerSnapshotCounterDelta(
+      current.cancelledJobs,
+      previous?.cancelledJobs
+    );
+    const stalledJobsDelta = resolveWorkerSnapshotCounterDelta(
+      current.stalledJobsDetected,
+      previous?.stalledJobsDetected
+    );
+
+    if (requeuedJobsDelta > 0) {
+      workerStalledJobsTotal.inc({ action: 'requeue' }, requeuedJobsDelta);
+      workerRecoveredJobsTotal.inc({ action: 'requeue' }, requeuedJobsDelta);
+    }
+    if (deadLetterJobsDelta > 0) {
+      workerStalledJobsTotal.inc({ action: 'dead_letter' }, deadLetterJobsDelta);
+      workerRecoveredJobsTotal.inc({ action: 'dead_letter' }, deadLetterJobsDelta);
+    }
+    if (cancelledJobsDelta > 0) {
+      workerStalledJobsTotal.inc({ action: 'cancelled' }, cancelledJobsDelta);
+      workerRecoveredJobsTotal.inc({ action: 'cancelled' }, cancelledJobsDelta);
+    }
+
+    const residualDetectedDelta = Math.max(
+      0,
+      stalledJobsDelta - requeuedJobsDelta - deadLetterJobsDelta - cancelledJobsDelta
+    );
+    if (residualDetectedDelta > 0) {
+      workerStalledJobsTotal.inc({ action: 'detected' }, residualDetectedDelta);
+    }
+
+    lastWorkerSnapshotCounterTotalsByWorkerId.set(workerId, current);
+  }
+
+  for (const workerId of lastWorkerSnapshotCounterTotalsByWorkerId.keys()) {
+    if (!observedWorkerIds.has(workerId)) {
+      lastWorkerSnapshotCounterTotalsByWorkerId.delete(workerId);
+    }
+  }
+}
+
+export function recordWorkerStaleDetection(input: {
+  reason: string;
+  count?: number;
+}): void {
+  workerStaleTotal.inc(
+    { reason: normalizeLabel(input.reason) },
+    Math.max(0, input.count ?? 1)
+  );
+}
+
+export function recordWorkerStalledJobs(input: {
+  action: string;
+  count?: number;
+}): void {
+  workerStalledJobsTotal.inc(
+    { action: normalizeLabel(input.action) },
+    Math.max(0, input.count ?? 1)
+  );
+}
+
+export function recordWorkerRecoveredJobs(input: {
+  action: string;
+  count?: number;
+}): void {
+  workerRecoveredJobsTotal.inc(
+    { action: normalizeLabel(input.action) },
+    Math.max(0, input.count ?? 1)
+  );
+}
+
 export function recordGptRequestEvent(input: {
   event: string;
   source?: string | null;
@@ -649,6 +842,18 @@ export function recordGptJobTiming(input: {
     phase: normalizeLabel(input.phase),
     outcome: normalizeLabel(input.outcome)
   }, input.durationMs);
+}
+
+export function recordGptJobLookup(input: {
+  channel: string;
+  lookup: 'status' | 'result';
+  outcome: string;
+}): void {
+  gptJobLookupTotal.inc({
+    channel: normalizeLabel(input.channel),
+    lookup: normalizeLabel(input.lookup),
+    outcome: normalizeLabel(input.outcome)
+  });
 }
 
 function isTimeoutError(error: unknown): boolean {
@@ -816,7 +1021,28 @@ function resetWorkerSnapshotMetrics(): void {
   recordWorkerJobTotal('recovered', 0);
   recordWorkerFailureTotal('terminal', 0);
   recordWorkerFailureTotal('queue_failed_rows', 0);
+  recordWorkerFailureTotal('retry_exhausted_jobs', 0);
+  recordWorkerFailureTotal('dead_letter_jobs', 0);
+  recordWorkerFailureTotal('recent_failed_jobs', 0);
   recordWorkerRetryTotal('scheduled', 0);
+  workerHeartbeatAgeMs.set(0);
+  workerHealthStatus.set(-1);
+  lastWorkerSnapshotCounterTotalsByWorkerId.clear();
+}
+
+function encodeWorkerHealthStatus(status: string | null | undefined): number {
+  switch (status) {
+    case 'healthy':
+      return 0;
+    case 'degraded':
+      return 1;
+    case 'unhealthy':
+      return 2;
+    case 'offline':
+      return -1;
+    default:
+      return -1;
+  }
 }
 
 async function refreshWorkerMetrics(): Promise<void> {
@@ -839,6 +1065,7 @@ async function refreshWorkerMetrics(): Promise<void> {
       const { getWorkerControlHealth } = await import('@services/workerControlService.js');
       const health = await getWorkerControlHealth();
       const queueSummary = health.queueSummary;
+      const operationalHealth = health.operationalHealth;
 
       recordWorkerQueueDepth('pending', queueSummary?.pending ?? 0);
       recordWorkerQueueDepth('running', queueSummary?.running ?? 0);
@@ -868,7 +1095,13 @@ async function refreshWorkerMetrics(): Promise<void> {
 
       recordWorkerFailureTotal('terminal', terminalFailures);
       recordWorkerFailureTotal('queue_failed_rows', queueSummary?.failed ?? 0);
+      recordWorkerFailureTotal('retry_exhausted_jobs', health.historicalDebt.retryExhaustedJobs);
+      recordWorkerFailureTotal('dead_letter_jobs', health.historicalDebt.deadLetterJobs);
+      recordWorkerFailureTotal('recent_failed_jobs', operationalHealth.recentFailed);
       recordWorkerRetryTotal('scheduled', scheduledRetries);
+      workerHeartbeatAgeMs.set(Math.max(0, operationalHealth.workerHeartbeatAgeMs ?? 0));
+      workerHealthStatus.set(encodeWorkerHealthStatus(operationalHealth.overallStatus));
+      recordObservedWorkerSnapshotCounters(health.workers);
     } catch {
       resetWorkerSnapshotMetrics();
     } finally {

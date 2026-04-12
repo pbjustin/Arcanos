@@ -9,6 +9,7 @@ import json
 import re
 import time
 import uuid
+from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Optional, TYPE_CHECKING
 
 from .audit import record as audit_record
@@ -235,6 +236,49 @@ def confirm_pending_actions(cli: "ArcanosCLI", confirmation_token: str) -> Optio
 
 
 _ERROR_CODE_RE = re.compile(r'"code"\s*:\s*"([^"]+)"', re.IGNORECASE)
+_JOB_ROUTE_LOOKUP_RE = re.compile(
+    r"/jobs/(?P<job_id>[^/\s?#]+)(?:/(?P<route_kind>result))?",
+    re.IGNORECASE,
+)
+_JOB_TEXT_ID_RE = re.compile(
+    r"\bjob(?:\s+id)?\s*(?::|#|=|\bis\b)?\s*(?P<job_id>[A-Za-z0-9][A-Za-z0-9._:-]{2,})\b",
+    re.IGNORECASE,
+)
+_JOB_LOOKUP_VERB_RE = re.compile(
+    r"\b(check|fetch|get|inspect|lookup|poll|pull|read|retrieve|show)\b",
+    re.IGNORECASE,
+)
+_JOB_RESULT_CUE_RE = re.compile(
+    r"\b(answer|completion|output|response|result)\b",
+    re.IGNORECASE,
+)
+_JOB_STATUS_CUE_RE = re.compile(
+    r"\b(poll|progress|state|status)\b",
+    re.IGNORECASE,
+)
+_JOB_CUE_RE = re.compile(r"\bjobs?\b|/jobs/", re.IGNORECASE)
+_RESERVED_JOB_ID_TOKENS = {
+    "a",
+    "an",
+    "answer",
+    "for",
+    "it",
+    "job",
+    "jobs",
+    "of",
+    "output",
+    "please",
+    "poll",
+    "progress",
+    "response",
+    "result",
+    "state",
+    "status",
+    "that",
+    "the",
+    "this",
+    "to",
+}
 
 _DOMAIN_TO_GPT_ID: dict[str, str] = {
     "gaming": "arcanos-gaming",
@@ -248,6 +292,19 @@ _DOMAIN_TO_GPT_ID: dict[str, str] = {
     "backstage:booker": "backstage-booker",
     "hrc": "hrc",
 }
+
+
+@dataclass(frozen=True)
+class BackendJobLookupIntent:
+    """
+    Purpose: Carry a deterministic backend jobs lookup inferred from user text.
+    Inputs/Outputs: lookup kind, optional job id, and source hint.
+    Edge cases: missing job ids are preserved so callers can fail clearly instead of falling back to chat.
+    """
+
+    kind: str
+    job_id: Optional[str]
+    source: str
 
 
 def _extract_backend_error_code(error: Optional[BackendRequestError]) -> Optional[str]:
@@ -318,6 +375,221 @@ def _resolve_backend_gpt_id(domain: Optional[str]) -> Optional[str]:
     return _DOMAIN_TO_GPT_ID.get(normalized_domain)
 
 
+def _resolve_backend_job_lookup_kind(message: str, route_kind: Optional[str] = None) -> str:
+    """
+    Purpose: Resolve whether a job lookup targets status or result.
+    Inputs/Outputs: raw message and optional route suffix; returns `status` or `result`.
+    Edge cases: explicit `/result` route suffix wins over textual cues.
+    """
+    if route_kind and route_kind.strip().lower() == "result":
+        return "result"
+
+    if _JOB_RESULT_CUE_RE.search(message):
+        return "result"
+
+    return "status"
+
+
+def _normalize_backend_job_lookup_id(raw_job_id: Optional[str]) -> Optional[str]:
+    """
+    Purpose: Normalize and validate a job identifier extracted from natural language.
+    Inputs/Outputs: raw candidate string; returns a usable job id or None.
+    Edge cases: reserved cue words are rejected so `job status` is not misread as a real id.
+    """
+    if not raw_job_id:
+        return None
+
+    normalized_job_id = raw_job_id.strip().rstrip(".,:;)]}>\"'")
+    if not normalized_job_id:
+        return None
+
+    if normalized_job_id.lower() in _RESERVED_JOB_ID_TOKENS:
+        return None
+
+    return normalized_job_id
+
+
+def _parse_backend_job_lookup_intent(message: str) -> Optional[BackendJobLookupIntent]:
+    """
+    Purpose: Detect explicit job status/result retrieval requests inside CLI conversation text.
+    Inputs/Outputs: raw user message; returns lookup intent when the message is clearly a jobs API request.
+    Edge cases: general discussion about jobs returns None so regular chat routing remains unchanged.
+    """
+    normalized_message = message.strip()
+    if not normalized_message:
+        return None
+
+    route_match = _JOB_ROUTE_LOOKUP_RE.search(normalized_message)
+    if route_match:
+        return BackendJobLookupIntent(
+            kind=_resolve_backend_job_lookup_kind(
+                normalized_message,
+                route_kind=route_match.group("route_kind"),
+            ),
+            job_id=_normalize_backend_job_lookup_id(route_match.group("job_id")),
+            source="jobs_route",
+        )
+
+    has_job_cue = _JOB_CUE_RE.search(normalized_message) is not None
+    has_lookup_verb = _JOB_LOOKUP_VERB_RE.search(normalized_message) is not None
+    has_result_cue = _JOB_RESULT_CUE_RE.search(normalized_message) is not None
+    has_status_cue = _JOB_STATUS_CUE_RE.search(normalized_message) is not None
+    explicit_lookup_request = has_job_cue and (has_lookup_verb or normalized_message.lower().startswith("job ")) and (has_result_cue or has_status_cue)
+
+    if not explicit_lookup_request:
+        return None
+
+    text_match = _JOB_TEXT_ID_RE.search(normalized_message)
+    return BackendJobLookupIntent(
+        kind="result" if has_result_cue else "status",
+        job_id=_normalize_backend_job_lookup_id(text_match.group("job_id") if text_match else None),
+        source="natural_language",
+    )
+
+
+def _serialize_backend_job_lookup_payload(payload: Mapping[str, Any]) -> str:
+    """
+    Purpose: Serialize job lookup output as deterministic JSON for CLI display.
+    Inputs/Outputs: payload mapping; returns ASCII-safe stable JSON string.
+    Edge cases: sort_keys keeps repeated responses diff-friendly for operators and tests.
+    """
+    return json.dumps(dict(payload), ensure_ascii=True, sort_keys=True)
+
+
+def _build_backend_job_lookup_result(
+    *,
+    kind: str,
+    job_id: Optional[str],
+    ok: bool,
+    payload: Mapping[str, Any],
+) -> ConversationResult:
+    """
+    Purpose: Build a stable ConversationResult for job status/result retrieval.
+    Inputs/Outputs: lookup kind, job id, success flag, payload mapping; returns ConversationResult.
+    Edge cases: missing job ids are serialized as null so callers can surface validation failures without fallback.
+    """
+    lookup_type = "job_result" if kind == "result" else "job_status"
+    return ConversationResult(
+        response_text=_serialize_backend_job_lookup_payload(
+            {
+                "data": dict(payload),
+                "jobId": job_id,
+                "lookupType": lookup_type,
+                "ok": ok,
+            }
+        ),
+        tokens_used=ZERO_TOKENS_USED,
+        cost_usd=ZERO_COST_USD,
+        model="backend-jobs",
+        source="backend",
+    )
+
+
+def _extract_backend_request_error_details(error: BackendRequestError) -> Any:
+    """
+    Purpose: Parse structured backend error details when available.
+    Inputs/Outputs: BackendRequestError; returns parsed details object or raw string/None.
+    Edge cases: non-JSON details remain strings so the operator still sees backend context.
+    """
+    raw_details = (error.details or "").strip()
+    if not raw_details:
+        return None
+
+    try:
+        return json.loads(raw_details)
+    except ValueError:
+        return raw_details
+
+
+def _build_backend_job_lookup_error_payload(
+    *,
+    kind: str,
+    job_id: Optional[str],
+    code: str,
+    message: str,
+    backend_error: Optional[BackendRequestError] = None,
+) -> ConversationResult:
+    """
+    Purpose: Build a stable job lookup error payload that prevents fallback to chat generation.
+    Inputs/Outputs: lookup kind, optional job id, error code/message, optional backend error; returns ConversationResult.
+    Edge cases: backend 404s are normalized to `JOB_NOT_FOUND` while preserving backend diagnostics under `details`.
+    """
+    error_payload: dict[str, Any] = {
+        "code": code,
+        "message": message,
+    }
+    if backend_error is not None:
+        error_payload["backend"] = {
+            "details": _extract_backend_request_error_details(backend_error),
+            "kind": backend_error.kind,
+            "statusCode": backend_error.status_code,
+        }
+
+    return _build_backend_job_lookup_result(
+        kind=kind,
+        job_id=job_id,
+        ok=False,
+        payload={"error": error_payload},
+    )
+
+
+def _perform_backend_job_lookup(
+    cli: "ArcanosCLI",
+    intent: BackendJobLookupIntent,
+) -> ConversationResult:
+    """
+    Purpose: Execute an explicit jobs API lookup without falling back to prompt-driven GPT routing.
+    Inputs/Outputs: CLI instance plus parsed lookup intent; returns deterministic ConversationResult.
+    Edge cases: missing ids fail locally and backend 404s are surfaced as stable error payloads.
+    """
+    if not intent.job_id:
+        return _build_backend_job_lookup_error_payload(
+            kind=intent.kind,
+            job_id=None,
+            code="JOB_ID_REQUIRED",
+            message="Job retrieval requests must include a concrete job ID.",
+        )
+
+    action_label = "job result" if intent.kind == "result" else "job status"
+    request_func: Callable[[], BackendResponse[dict[str, Any]]]
+    if intent.kind == "result":
+        request_func = lambda: cli.backend_client.request_job_result(intent.job_id)
+    else:
+        request_func = lambda: cli.backend_client.request_job_status(intent.job_id)
+
+    response = request_with_auth_retry(
+        cli,
+        request_func,
+        action_label,
+        report_errors=False,
+    )
+    if response.ok and response.value is not None:
+        return _build_backend_job_lookup_result(
+            kind=intent.kind,
+            job_id=intent.job_id,
+            ok=True,
+            payload=response.value,
+        )
+
+    error = response.error
+    if error is not None and error.status_code == 404:
+        return _build_backend_job_lookup_error_payload(
+            kind=intent.kind,
+            job_id=intent.job_id,
+            code="JOB_NOT_FOUND",
+            message="Async GPT job was not found.",
+            backend_error=error,
+        )
+
+    return _build_backend_job_lookup_error_payload(
+        kind=intent.kind,
+        job_id=intent.job_id,
+        code="BACKEND_JOB_LOOKUP_FAILED",
+        message=f"Backend {action_label} request failed.",
+        backend_error=error,
+    )
+
+
 def _emit_backend_failure_telemetry(
     cli: "ArcanosCLI",
     *,
@@ -376,6 +648,10 @@ def perform_backend_conversation(
         return None
 
     cli._last_confirmation_handled = False
+    job_lookup_intent = _parse_backend_job_lookup_intent(message)
+    if job_lookup_intent is not None:
+        return _perform_backend_job_lookup(cli, job_lookup_intent)
+
     refresh_registry_cache_if_stale(cli)
 
     # //audit assumption: history limit must not be negative; risk: invalid slice behavior; invariant: non-negative history count; strategy: clamp to zero.
