@@ -513,7 +513,7 @@ describe('gpt router auth logging', () => {
 
   it('clips oversized configured GPT route timeout budgets to the bounded ceiling', async () => {
     process.env.GPT_ROUTE_HARD_TIMEOUT_MS = '60000';
-    const abortError = new Error('GPT route timeout after 6000ms');
+    const abortError = new Error('GPT route timeout after 60000ms');
     abortError.name = 'AbortError';
     mockRouteGptRequest.mockRejectedValue(abortError);
 

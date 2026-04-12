@@ -772,7 +772,7 @@ describe('async /gpt idempotency', () => {
     expect(waitForQueuedGptJobCompletionMock).toHaveBeenCalledWith(
       'job-query-and-wait',
       expect.objectContaining({
-        waitForResultMs: 5_250,
+        waitForResultMs: 25_000,
         pollIntervalMs: 250
       })
     );
@@ -876,7 +876,8 @@ describe('async /gpt idempotency', () => {
       error: {
         code: 'ASYNC_GPT_JOBS_UNAVAILABLE',
         message: 'query_and_wait requires durable GPT job persistence, but the jobs backend is unavailable.'
-      }
+      },
+      idempotencyKey: expect.stringMatching(/^derived:/)
     });
     expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
     expect(mockRouteGptRequest).not.toHaveBeenCalled();

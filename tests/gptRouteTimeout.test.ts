@@ -39,6 +39,16 @@ describe('resolveGptRouteHardTimeoutMs', () => {
     expect(resolveGptRouteHardTimeoutMs()).toBe(5_000);
   });
 
+  it('allows explicit callers to raise the default-profile fallback when no env override is configured', () => {
+    expect(resolveGptRouteHardTimeoutMs({ defaultMsOverride: 25_750 })).toBe(25_750);
+  });
+
+  it('keeps honoring an explicit env timeout over the query_and_wait fallback override', () => {
+    process.env.GPT_ROUTE_HARD_TIMEOUT_MS = '5000';
+
+    expect(resolveGptRouteHardTimeoutMs({ defaultMsOverride: 25_750 })).toBe(5_000);
+  });
+
   it('keeps the dag-execution timeout clamp unchanged', () => {
     process.env.GPT_ROUTE_DAG_EXECUTION_HARD_TIMEOUT_MS = '60000';
 

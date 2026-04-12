@@ -78,6 +78,9 @@ const DEFAULT_GPT_ASYNC_HEAVY_MESSAGE_COUNT = 8;
 const DEFAULT_GPT_ASYNC_HEAVY_MAX_WORDS = 700;
 const DEFAULT_GPT_ASYNC_HEAVY_WAIT_FOR_RESULT_MS = 500;
 const DEFAULT_GPT_QUERY_AND_WAIT_TIMEOUT_MS = 25_000;
+const DIRECT_RETURN_ROUTE_TIMEOUT_HEADROOM_MS = 750;
+const DEFAULT_GPT_QUERY_AND_WAIT_ROUTE_TIMEOUT_MS =
+  DEFAULT_GPT_QUERY_AND_WAIT_TIMEOUT_MS + DIRECT_RETURN_ROUTE_TIMEOUT_HEADROOM_MS;
 const DIRECT_RETURN_WAIT_KEYS = [
   'waitForResultMs',
   'wait_for_result_ms',
@@ -533,7 +536,10 @@ function resolveGptExecutionPlan(params: {
 }
 
 function clampAsyncWaitForRouteTimeout(waitForResultMs: number, routeTimeoutMs: number): number {
-  const routeSafeWaitBudgetMs = Math.max(0, routeTimeoutMs - 750);
+  const routeSafeWaitBudgetMs = Math.max(
+    0,
+    routeTimeoutMs - DIRECT_RETURN_ROUTE_TIMEOUT_HEADROOM_MS
+  );
   return Math.min(waitForResultMs, routeSafeWaitBudgetMs);
 }
 
@@ -709,11 +715,27 @@ function buildAsyncJobResponseMetadata(input: {
 }
 
 router.post("/:gptId", async (req, res, next) => {
+  const requestedAction = resolveRequestedAction(req.body);
+  const queryAndWaitRequested = requestedAction === GPT_QUERY_AND_WAIT_ACTION;
   const promptText = extractPromptText(req.body);
   const routeTimeoutProfile = shouldUseDagExecutionTimeoutProfile(promptText)
     ? 'dag_execution'
     : 'default';
-  const routeTimeoutMs = resolveGptRouteHardTimeoutMs({ profile: routeTimeoutProfile });
+  const explicitAsyncWaitForResultMs = readRequestedAsyncGptWaitForResultMs(req, req.body);
+  const explicitAsyncPollIntervalMs = readRequestedAsyncGptPollIntervalMs(req, req.body);
+  const queryAndWaitRequestedTimeoutMs =
+    explicitAsyncWaitForResultMs ?? DEFAULT_GPT_QUERY_AND_WAIT_TIMEOUT_MS;
+  const routeTimeoutMs = resolveGptRouteHardTimeoutMs({
+    profile: routeTimeoutProfile,
+    ...(queryAndWaitRequested && routeTimeoutProfile === 'default'
+      ? {
+          defaultMsOverride: Math.max(
+            DEFAULT_GPT_QUERY_AND_WAIT_ROUTE_TIMEOUT_MS,
+            queryAndWaitRequestedTimeoutMs + DIRECT_RETURN_ROUTE_TIMEOUT_HEADROOM_MS
+          )
+        }
+      : {})
+  });
   const requestId = (req as any).requestId;
   let queuedJobId: string | null = null;
   let queuedPendingResponse:
@@ -742,8 +764,6 @@ router.post("/:gptId", async (req, res, next) => {
         const requestLogger = (req as any).logger;
         const normalizedBody = normalizeGptRequestBody(req.body);
         const bodyGptId = resolveBodyGptId(req.body);
-        const requestedAction = resolveRequestedAction(req.body);
-        const queryAndWaitRequested = requestedAction === GPT_QUERY_AND_WAIT_ACTION;
         const effectiveRequestedAction = queryAndWaitRequested ? 'query' : requestedAction;
         const effectiveBody = normalizeQueryAndWaitBody(normalizedBody, requestedAction) ?? req.body;
         applyCanonicalGptRouteHeaders(res, incomingGptId);
@@ -1069,23 +1089,20 @@ router.post("/:gptId", async (req, res, next) => {
           requestedAction: effectiveRequestedAction,
           routeTimeoutProfile
         });
-        const explicitAsyncWaitForResultMs = readRequestedAsyncGptWaitForResultMs(req, effectiveBody);
-        const explicitAsyncPollIntervalMs = readRequestedAsyncGptPollIntervalMs(req, effectiveBody);
         const directReturnRequested =
           queryAndWaitRequested ||
           (explicitAsyncWaitForResultMs !== undefined && executionPlan.mode === 'async');
-        const requestedAsyncWaitForResultMs = explicitAsyncWaitForResultMs ?? (
-          queryAndWaitRequested
-            ? DEFAULT_GPT_QUERY_AND_WAIT_TIMEOUT_MS
-            : (
-          executionPlan.heavyPrompt
-          ? readPositiveIntegerEnv(
+        let requestedAsyncWaitForResultMs = explicitAsyncWaitForResultMs;
+        if (requestedAsyncWaitForResultMs === undefined) {
+          if (queryAndWaitRequested) {
+            requestedAsyncWaitForResultMs = DEFAULT_GPT_QUERY_AND_WAIT_TIMEOUT_MS;
+          } else if (executionPlan.heavyPrompt) {
+            requestedAsyncWaitForResultMs = readPositiveIntegerEnv(
               'GPT_ASYNC_HEAVY_WAIT_FOR_RESULT_MS',
               DEFAULT_GPT_ASYNC_HEAVY_WAIT_FOR_RESULT_MS
-            )
-          : undefined
-            )
-        );
+            );
+          }
+        }
         const asyncWaitForResultMs = clampAsyncWaitForRouteTimeout(
           resolveAsyncGptWaitForResultMs(requestedAsyncWaitForResultMs),
           routeTimeoutMs
@@ -1103,7 +1120,7 @@ router.post("/:gptId", async (req, res, next) => {
           answerMode: executionPlan.answerMode,
           maxWords: executionPlan.maxWords,
           directReturnRequested,
-          requestedAsyncWaitForResultMs: explicitAsyncWaitForResultMs ?? null,
+          requestedAsyncWaitForResultMs: requestedAsyncWaitForResultMs ?? null,
           requestedAsyncPollIntervalMs: explicitAsyncPollIntervalMs ?? null,
           asyncWaitForResultMs,
           asyncPollIntervalMs
@@ -1308,9 +1325,7 @@ router.post("/:gptId", async (req, res, next) => {
                         ? 'query_and_wait requires durable GPT job persistence, but the jobs backend is unavailable.'
                         : 'Durable idempotency is unavailable because GPT job persistence is not configured.'
                     },
-                    ...(queryAndWaitRequested
-                      ? {}
-                      : { idempotencyKey: idempotencyDescriptor.publicIdempotencyKey }),
+                    idempotencyKey: idempotencyDescriptor.publicIdempotencyKey,
                     _route: {
                       requestId,
                       gptId: incomingGptId,
