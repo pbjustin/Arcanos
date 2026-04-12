@@ -47,6 +47,26 @@ describe("Arcanos CLI", () => {
       }
     });
 
+    expect(
+      parseCliInvocation([
+        "generate-and-wait",
+        "--gpt",
+        "arcanos-core",
+        "--prompt",
+        "Generate a Seth Rollins promo prompt",
+        "--timeout-ms",
+        "20000",
+        "--poll-interval-ms",
+        "125"
+      ])
+    ).toMatchObject({
+      kind: "generate-and-wait",
+      gptId: "arcanos-core",
+      prompt: "Generate a Seth Rollins promo prompt",
+      timeoutMs: 20000,
+      pollIntervalMs: 125
+    });
+
     expect(parseCliInvocation(["doctor", "implementation"])).toMatchObject({
       kind: "doctor",
       subject: "implementation"
@@ -68,6 +88,32 @@ describe("Arcanos CLI", () => {
       kind: "inspect",
       subject: "self-heal",
     });
+  });
+
+  it("rejects non-integer wait-control flags for generate-and-wait", () => {
+    expect(() =>
+      parseCliInvocation([
+        "generate-and-wait",
+        "--gpt",
+        "arcanos-core",
+        "--prompt",
+        "Generate a Seth Rollins promo prompt",
+        "--timeout-ms",
+        "1.9"
+      ])
+    ).toThrow('Flag "--timeout-ms" must be a non-negative integer.');
+
+    expect(() =>
+      parseCliInvocation([
+        "generate-and-wait",
+        "--gpt",
+        "arcanos-core",
+        "--prompt",
+        "Generate a Seth Rollins promo prompt",
+        "--poll-interval-ms",
+        "0.5"
+      ])
+    ).toThrow('Flag "--poll-interval-ms" must be a positive integer.');
   });
 
   it("builds a validated task.create request payload", () => {
@@ -142,6 +188,48 @@ describe("Arcanos CLI", () => {
       expect.objectContaining({
         method: "POST",
         body: expect.stringContaining("\"prompt\":\"ship it\"")
+      })
+    );
+  });
+
+  it("sends generate-and-wait requests to the canonical backend GPT route with explicit wait controls", async () => {
+    const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(
+      createJsonResponse({ ok: true, result: "Generated Seth Rollins prompt" })
+    );
+    const stdout = createWritableCapture();
+    const stderr = createWritableCapture();
+
+    const exitCode = await runCli(
+      [
+        "generate-and-wait",
+        "--gpt",
+        "arcanos-core",
+        "--prompt",
+        "Generate a Seth Rollins promo prompt",
+        "--timeout-ms",
+        "20000",
+        "--poll-interval-ms",
+        "125",
+        "--base-url",
+        "http://127.0.0.1:3000"
+      ],
+      stdout.stream,
+      stderr.stream
+    );
+
+    expect(exitCode).toBe(0);
+    expect(stdout.read()).toContain("Generated Seth Rollins prompt");
+    expect(stderr.read()).toBe("");
+    expect(fetchMock).toHaveBeenCalledWith(
+      new URL("/gpt/arcanos-core", "http://127.0.0.1:3000/"),
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          prompt: "Generate a Seth Rollins promo prompt",
+          executionMode: "async",
+          waitForResultMs: 20000,
+          pollIntervalMs: 125
+        })
       })
     );
   });

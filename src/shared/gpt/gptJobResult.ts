@@ -2,19 +2,30 @@ import { z } from 'zod';
 import type { JobData } from '@core/db/schema.js';
 import { resolveGptJobLifecycleStatus } from './gptJobLifecycle.js';
 
+export const GPT_GET_STATUS_ACTION = 'get_status';
 export const GPT_GET_RESULT_ACTION = 'get_result';
+export const GPT_QUERY_AND_WAIT_ACTION = 'query_and_wait';
 
-const gptJobResultRequestSchema = z.object({
-  action: z.preprocess(
-    (value) => typeof value === 'string'
-      ? value.trim().toLowerCase()
-      : value,
-    z.literal(GPT_GET_RESULT_ACTION)
-  ),
-  payload: z.object({
-    jobId: z.string().trim().min(1)
-  }).passthrough()
+const normalizeActionValue = (value: unknown) => typeof value === 'string'
+  ? value.trim().toLowerCase()
+  : value;
+
+const gptJobLookupPayloadSchema = z.object({
+  jobId: z.string().trim().min(1)
 }).passthrough();
+
+function buildGptJobLookupRequestSchema(expectedAction: string) {
+  return z.object({
+    action: z.preprocess(
+      normalizeActionValue,
+      z.literal(expectedAction)
+    ),
+    payload: gptJobLookupPayloadSchema
+  }).passthrough();
+}
+
+const gptJobResultRequestSchema = buildGptJobLookupRequestSchema(GPT_GET_RESULT_ACTION);
+const gptJobStatusRequestSchema = buildGptJobLookupRequestSchema(GPT_GET_STATUS_ACTION);
 
 export interface GptJobResultLookupPayload {
   jobId: string;
@@ -40,6 +51,8 @@ export interface GptJobResultLookupPayload {
 export type ParsedGptJobResultRequest =
   | { ok: true; jobId: string }
   | { ok: false; error: string };
+
+export type ParsedGptJobStatusRequest = ParsedGptJobResultRequest;
 
 function serializeJobTimestamp(value: string | Date | null | undefined): string | null {
   if (typeof value === 'string') {
@@ -163,6 +176,24 @@ function buildExpiredJobLookupPayload(job: JobData): GptJobResultLookupPayload {
 
 export function parseGptJobResultRequest(body: unknown): ParsedGptJobResultRequest {
   const parsedRequest = gptJobResultRequestSchema.safeParse(body);
+
+  if (!parsedRequest.success) {
+    return {
+      ok: false,
+      error: parsedRequest.error.issues
+        .map(issue => `${issue.path.join('.') || 'body'}: ${issue.message}`)
+        .join('; ')
+    };
+  }
+
+  return {
+    ok: true,
+    jobId: parsedRequest.data.payload.jobId
+  };
+}
+
+export function parseGptJobStatusRequest(body: unknown): ParsedGptJobStatusRequest {
+  const parsedRequest = gptJobStatusRequestSchema.safeParse(body);
 
   if (!parsedRequest.success) {
     return {

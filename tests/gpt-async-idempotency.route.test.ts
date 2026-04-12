@@ -71,6 +71,7 @@ describe('async /gpt idempotency', () => {
     jest.clearAllMocks();
     delete process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT;
     delete process.env.GPT_ASYNC_HEAVY_WAIT_FOR_RESULT_MS;
+    delete process.env.GPT_ROUTE_HARD_TIMEOUT_MS;
     planAutonomousWorkerJobMock.mockResolvedValue({
       status: 'pending',
       retryCount: 0,
@@ -416,6 +417,118 @@ describe('async /gpt idempotency', () => {
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
   });
 
+  it('returns canonical job status for explicit get_status actions without enqueueing work', async () => {
+    getJobByIdMock.mockResolvedValue({
+      id: 'job-status-running',
+      job_type: 'gpt',
+      status: 'running',
+      created_at: '2026-04-11T10:00:00.000Z',
+      updated_at: '2026-04-11T10:00:02.000Z',
+      completed_at: null,
+      cancel_requested_at: null,
+      cancel_reason: null,
+      retention_until: null,
+      idempotency_until: null,
+      expires_at: null,
+      output: null,
+      error_message: null
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/backstage-booker')
+      .send({
+        action: 'get_status',
+        payload: {
+          jobId: 'job-status-running'
+        }
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      ok: true,
+      result: {
+        id: 'job-status-running',
+        job_type: 'gpt',
+        status: 'running',
+        lifecycle_status: 'running',
+        created_at: '2026-04-11T10:00:00.000Z',
+        updated_at: '2026-04-11T10:00:02.000Z',
+        completed_at: null,
+        cancel_requested_at: null,
+        cancel_reason: null,
+        retention_until: null,
+        idempotency_until: null,
+        expires_at: null,
+        error_message: null,
+        output: null,
+        result: null
+      },
+      _route: expect.objectContaining({
+        gptId: 'backstage-booker',
+        action: 'get_status',
+        route: 'job_status'
+      })
+    });
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('returns 404 for missing get_status lookups without enqueueing work', async () => {
+    getJobByIdMock.mockResolvedValue(null);
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        action: 'get_status',
+        payload: {
+          jobId: 'missing-status-job'
+        }
+      });
+
+    expect(response.status).toBe(404);
+    expect(response.body).toMatchObject({
+      ok: false,
+      error: {
+        code: 'JOB_NOT_FOUND',
+        message: 'Async GPT job was not found.'
+      },
+      _route: {
+        gptId: 'arcanos-core',
+        action: 'get_status',
+        route: 'job_status'
+      }
+    });
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects whitespace-only job identifiers for get_status actions', async () => {
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        action: 'get_status',
+        payload: {
+          jobId: '   '
+        }
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({
+      ok: false,
+      error: {
+        code: 'JOB_ID_INVALID'
+      },
+      _route: {
+        gptId: 'arcanos-core',
+        action: 'get_status',
+        route: 'job_status'
+      }
+    });
+    expect(getJobByIdMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  });
+
   it('uses a short inline wait budget for heavy async core requests', async () => {
     findOrCreateGptJobMock.mockResolvedValue({
       job: {
@@ -449,6 +562,325 @@ describe('async /gpt idempotency', () => {
         pollIntervalMs: 250
       })
     );
+  });
+
+  it('honors an explicit direct-return wait override for async GPT requests', async () => {
+    findOrCreateGptJobMock.mockResolvedValue({
+      job: {
+        id: 'job-direct-return',
+        status: 'completed'
+      },
+      created: true,
+      deduped: false,
+      dedupeReason: 'new_job'
+    });
+    waitForQueuedGptJobCompletionMock.mockResolvedValue({
+      state: 'completed',
+      job: {
+        id: 'job-direct-return',
+        status: 'completed',
+        output: {
+          ok: true,
+          result: 'Generated Seth Rollins prompt',
+          _route: {
+            gptId: 'arcanos-core',
+            module: 'ARCANOS:CORE',
+            route: 'core',
+            timestamp: '2026-04-06T10:00:03.000Z'
+          }
+        }
+      }
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        prompt: 'Generate a Seth Rollins promo prompt',
+        executionMode: 'async',
+        waitForResultMs: 12_000,
+        pollIntervalMs: 100
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      ok: true,
+      jobId: 'job-direct-return',
+      status: 'completed',
+      lifecycleStatus: 'completed',
+      result: 'Generated Seth Rollins prompt'
+    });
+    expect(resolveAsyncGptWaitForResultMsMock).toHaveBeenCalledWith(12_000);
+    expect(resolveAsyncGptPollIntervalMsMock).toHaveBeenCalledWith(100);
+    expect(waitForQueuedGptJobCompletionMock).toHaveBeenCalledWith(
+      'job-direct-return',
+      expect.objectContaining({
+        waitForResultMs: 5_250,
+        pollIntervalMs: 250
+      })
+    );
+  });
+
+  it('honors a larger route timeout budget when configured for direct-return waits', async () => {
+    process.env.GPT_ROUTE_HARD_TIMEOUT_MS = '60000';
+
+    findOrCreateGptJobMock.mockResolvedValue({
+      job: {
+        id: 'job-direct-return-expanded-timeout',
+        status: 'completed'
+      },
+      created: true,
+      deduped: false,
+      dedupeReason: 'new_job'
+    });
+    waitForQueuedGptJobCompletionMock.mockResolvedValue({
+      state: 'completed',
+      job: {
+        id: 'job-direct-return-expanded-timeout',
+        status: 'completed',
+        output: {
+          ok: true,
+          result: 'Generated Seth Rollins prompt',
+          _route: {
+            gptId: 'arcanos-core',
+            module: 'ARCANOS:CORE',
+            route: 'core',
+            timestamp: '2026-04-06T10:00:03.000Z'
+          }
+        }
+      }
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        prompt: 'Generate a Seth Rollins promo prompt',
+        executionMode: 'async',
+        waitForResultMs: 12_000,
+        pollIntervalMs: 100
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      ok: true,
+      jobId: 'job-direct-return-expanded-timeout',
+      status: 'completed',
+      lifecycleStatus: 'completed',
+      result: 'Generated Seth Rollins prompt'
+    });
+    expect(resolveAsyncGptWaitForResultMsMock).toHaveBeenCalledWith(12_000);
+    expect(waitForQueuedGptJobCompletionMock).toHaveBeenCalledWith(
+      'job-direct-return-expanded-timeout',
+      expect.objectContaining({
+        waitForResultMs: 12_000,
+        pollIntervalMs: 250
+      })
+    );
+  });
+
+  it('returns direct-return timeout guidance without creating a second job', async () => {
+    findOrCreateGptJobMock.mockResolvedValue({
+      job: {
+        id: 'job-timeout',
+        status: 'running'
+      },
+      created: true,
+      deduped: false,
+      dedupeReason: 'new_job'
+    });
+    waitForQueuedGptJobCompletionMock.mockResolvedValue({
+      state: 'pending',
+      job: {
+        id: 'job-timeout',
+        status: 'running'
+      }
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        prompt: 'Generate a Seth Rollins promo prompt',
+        executionMode: 'async',
+        waitForResultMs: 20_000,
+        pollIntervalMs: 125
+      });
+
+    expect(response.status).toBe(202);
+    expect(response.body).toMatchObject({
+      ok: true,
+      status: 'pending',
+      jobId: 'job-timeout',
+      jobStatus: 'running',
+      lifecycleStatus: 'running',
+      instruction: 'Direct wait timed out after 5250ms. Use GET /jobs/job-timeout/result to retrieve the final result.',
+      directReturn: {
+        requested: true,
+        timedOut: true,
+        waitForResultMs: 5_250,
+        pollIntervalMs: 250,
+        poll: '/jobs/job-timeout',
+        result: '/jobs/job-timeout/result'
+      }
+    });
+    expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
+    expect(waitForQueuedGptJobCompletionMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('supports explicit query_and_wait for non-core gpt ids without creating duplicate jobs', async () => {
+    findOrCreateGptJobMock.mockResolvedValue({
+      job: {
+        id: 'job-query-and-wait',
+        status: 'completed'
+      },
+      created: true,
+      deduped: false,
+      dedupeReason: 'new_job'
+    });
+    waitForQueuedGptJobCompletionMock.mockResolvedValue({
+      state: 'completed',
+      job: {
+        id: 'job-query-and-wait',
+        status: 'completed',
+        output: {
+          ok: true,
+          result: 'Seth Rollins promo prompt',
+          _route: {
+            gptId: 'backstage-booker',
+            module: 'BACKSTAGE:BOOKER',
+            route: 'backstage-booker',
+            timestamp: '2026-04-11T10:00:03.000Z'
+          }
+        }
+      }
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/backstage-booker')
+      .send({
+        action: 'query_and_wait',
+        prompt: 'Generate a Seth Rollins promo prompt'
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      ok: true,
+      jobId: 'job-query-and-wait',
+      status: 'completed',
+      lifecycleStatus: 'completed',
+      result: 'Seth Rollins promo prompt'
+    });
+    expect(resolveAsyncGptWaitForResultMsMock).toHaveBeenCalledWith(25_000);
+    expect(waitForQueuedGptJobCompletionMock).toHaveBeenCalledWith(
+      'job-query-and-wait',
+      expect.objectContaining({
+        waitForResultMs: 25_000,
+        pollIntervalMs: 250
+      })
+    );
+    expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
+    expect(findOrCreateGptJobMock.mock.calls[0]?.[0]).toMatchObject({
+      input: {
+        gptId: 'backstage-booker',
+        body: {
+          prompt: 'Generate a Seth Rollins promo prompt',
+          executionMode: 'async'
+        },
+        routeHint: 'query'
+      }
+    });
+    expect((findOrCreateGptJobMock.mock.calls[0]?.[0] as { input?: { body?: Record<string, unknown> } }).input?.body?.action).toBeUndefined();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('returns query_and_wait timeout guidance with the same job id and one job creation only', async () => {
+    findOrCreateGptJobMock.mockResolvedValue({
+      job: {
+        id: 'job-query-and-wait-timeout',
+        status: 'running'
+      },
+      created: true,
+      deduped: false,
+      dedupeReason: 'new_job'
+    });
+    waitForQueuedGptJobCompletionMock.mockResolvedValue({
+      state: 'pending',
+      job: {
+        id: 'job-query-and-wait-timeout',
+        status: 'running'
+      }
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-gaming')
+      .send({
+        action: 'query_and_wait',
+        prompt: 'Generate a Seth Rollins promo prompt',
+        timeoutMs: 1,
+        pollIntervalMs: 1
+      });
+
+    expect(response.status).toBe(202);
+    expect(response.body).toMatchObject({
+      ok: true,
+      status: 'pending',
+      jobId: 'job-query-and-wait-timeout',
+      jobStatus: 'running',
+      lifecycleStatus: 'running',
+      instruction: 'Direct wait timed out after 1ms. Use GET /jobs/job-query-and-wait-timeout/result to retrieve the final result.',
+      directReturn: {
+        requested: true,
+        timedOut: true,
+        waitForResultMs: 1,
+        pollIntervalMs: 250,
+        poll: '/jobs/job-query-and-wait-timeout',
+        result: '/jobs/job-query-and-wait-timeout/result'
+      }
+    });
+    expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
+    expect(waitForQueuedGptJobCompletionMock).toHaveBeenCalledTimes(1);
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('rejects query_and_wait requests without a prompt', async () => {
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        action: 'query_and_wait'
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({
+      ok: false,
+      error: {
+        code: 'PROMPT_REQUIRED'
+      }
+    });
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+  });
+
+  it('fails query_and_wait clearly when durable async jobs are unavailable instead of falling back to sync query routing', async () => {
+    findOrCreateGptJobMock.mockRejectedValue(
+      new MockJobRepositoryUnavailableError('jobs backend unavailable')
+    );
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        action: 'query_and_wait',
+        prompt: 'Generate a Seth Rollins promo prompt'
+      });
+
+    expect(response.status).toBe(503);
+    expect(response.body).toMatchObject({
+      ok: false,
+      error: {
+        code: 'ASYNC_GPT_JOBS_UNAVAILABLE',
+        message: 'query_and_wait requires durable GPT job persistence, but the jobs backend is unavailable.'
+      },
+      idempotencyKey: expect.stringMatching(/^derived:/)
+    });
+    expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
   it('reuses a completed result for duplicate async submissions', async () => {

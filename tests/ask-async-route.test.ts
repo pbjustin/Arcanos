@@ -13,6 +13,7 @@ jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
   createJob: createJobMock,
   claimNextPendingJob: jest.fn(),
   recordJobHeartbeat: jest.fn(),
+  requeueFailedJob: jest.fn(),
   scheduleJobRetry: jest.fn(),
   recoverStaleJobs: jest.fn(),
   updateJob: jest.fn(),

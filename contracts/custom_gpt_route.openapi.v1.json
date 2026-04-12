@@ -10,7 +10,7 @@
       "post": {
         "operationId": "invokeGptRoute",
         "summary": "Invoke a GPT-routed module request",
-        "description": "Send a prompt to any GPT/module binding using the path-bound GPT identifier. `action` is optional and should only be sent when the caller explicitly selects a backend-supported action. Use `action: \"get_result\"` with `payload.jobId` to read a stored async GPT job result without enqueueing new work.",
+        "description": "Send a prompt to any GPT/module binding using the path-bound GPT identifier. `action` is optional and should only be sent when the caller explicitly selects a backend-supported action. Use `executionMode: \"async\"` with `waitForResultMs` for transport-level direct-return attempts, or use `action: \"query_and_wait\"` with `prompt` for the explicit integration action that creates one async GPT job, waits internally, and returns the final result or the canonical `jobId` on timeout. Use `action: \"get_status\"` or `action: \"get_result\"` with `payload.jobId` to read canonical async job state without enqueueing new work.",
         "parameters": [
           {
             "name": "gptId",
@@ -54,6 +54,32 @@
                     "action": "system_state",
                     "payload": {
                       "sessionId": "cli-123"
+                    }
+                  }
+                },
+                "generateAndWait": {
+                  "summary": "Queue-backed generate-and-wait request for a short prompt-generation flow",
+                  "value": {
+                    "prompt": "Generate a Seth Rollins promo prompt",
+                    "executionMode": "async",
+                    "waitForResultMs": 20000
+                  }
+                },
+                "queryAndWait": {
+                  "summary": "Explicit integration action that creates one async job and waits for completion",
+                  "value": {
+                    "action": "query_and_wait",
+                    "prompt": "Generate a Seth Rollins promo prompt",
+                    "timeoutMs": 25000,
+                    "pollIntervalMs": 500
+                  }
+                },
+                "getStatus": {
+                  "summary": "Read canonical async GPT job status without enqueuing new work",
+                  "value": {
+                    "action": "get_status",
+                    "payload": {
+                      "jobId": "59dbfb2b-0c64-4eda-8a1e-b950a63f7fe0"
                     }
                   }
                 },
@@ -133,7 +159,30 @@
           },
           "action": {
             "type": "string",
-            "description": "Optional explicit backend action. Omit by default so the backend can infer intent. Supported explicit actions include module-specific actions, `system_state`, and `get_result`. Do not inject unsupported defaults such as \"ask\". Use `get_result` only with `payload.jobId` when reading an existing async job result."
+            "description": "Optional explicit backend action. Omit by default so the backend can infer intent. Supported explicit actions include module-specific actions, `system_state`, `get_status`, `get_result`, and `query_and_wait`. Do not inject unsupported defaults such as \"ask\". Use `get_status` or `get_result` only with `payload.jobId`, and use `query_and_wait` only with a non-empty `prompt`."
+          },
+          "executionMode": {
+            "type": "string",
+            "enum": [
+              "sync",
+              "async"
+            ],
+            "description": "Optional execution preference. Use `async` together with `waitForResultMs` to request a queue-backed direct-return attempt."
+          },
+          "waitForResultMs": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optional bounded wait budget in milliseconds for transport-level job-backed direct-return calls. When the budget expires, the backend returns the canonical `jobId` plus instructions to read `/jobs/{id}/result`."
+          },
+          "timeoutMs": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Optional bounded wait budget in milliseconds for the explicit `query_and_wait` action. This is an alias of `waitForResultMs` for integration callers that model waiting as an action contract."
+          },
+          "pollIntervalMs": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Optional polling cadence in milliseconds used only while the backend waits for the async job to finish. Supported by both transport-level direct-return requests and `query_and_wait`."
           },
           "payload": {
             "type": "object",

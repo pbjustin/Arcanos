@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 import {
   buildStoredJobStatusPayload,
+  parseGptJobStatusRequest,
   parseGptJobResultRequest
 } from '../src/shared/gpt/gptJobResult.js';
 
@@ -16,6 +17,20 @@ describe('gpt job result helpers', () => {
     expect(parsed).toEqual({
       ok: true,
       jobId: 'job-123'
+    });
+  });
+
+  it('normalizes get_status action values during request parsing', () => {
+    const parsed = parseGptJobStatusRequest({
+      action: ' Get_Status ',
+      payload: {
+        jobId: 'job-456'
+      }
+    });
+
+    expect(parsed).toEqual({
+      ok: true,
+      jobId: 'job-456'
     });
   });
 

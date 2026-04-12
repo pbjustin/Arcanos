@@ -30,6 +30,12 @@ export function parseCliInvocation(argv: string[]): CliInvocation {
         prompt: requirePrompt("ask", rest),
         options
       };
+    case "generate-and-wait":
+      return {
+        kind: "generate-and-wait",
+        ...parseGenerateAndWaitArgs(rest),
+        options
+      };
     case "plan":
       return {
         kind: "plan",
@@ -98,6 +104,7 @@ export function renderUsage(): string {
   return [
     "Usage:",
     "  arcanos ask \"...\" [--json]",
+    "  arcanos generate-and-wait --gpt <gpt-id> --prompt \"...\" [--timeout-ms <ms>] [--poll-interval-ms <ms>] [--json]",
     "  arcanos plan \"...\" [--json]",
     "  arcanos exec [\"...\"] [--json]",
     "  arcanos status [--json]",
@@ -212,4 +219,80 @@ function requirePrompt(command: string, args: string[]): string {
   }
 
   return args.join(" ").trim();
+}
+
+function parseGenerateAndWaitArgs(args: string[]): {
+  gptId: string;
+  prompt: string;
+  timeoutMs?: number;
+  pollIntervalMs?: number;
+} {
+  let gptId: string | undefined;
+  let prompt: string | undefined;
+  let timeoutMs: number | undefined;
+  let pollIntervalMs: number | undefined;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const currentArgument = args[index];
+    if (!currentArgument.startsWith("--")) {
+      throw new Error('`generate-and-wait` only accepts --gpt, --prompt, --timeout-ms, and --poll-interval-ms.');
+    }
+
+    const nextValue = args[index + 1];
+    if (!nextValue || nextValue.startsWith("--")) {
+      throw new Error(`Flag "${currentArgument}" requires a value.`);
+    }
+
+    switch (currentArgument) {
+      case "--gpt":
+        gptId = nextValue.trim();
+        break;
+      case "--prompt":
+        prompt = nextValue.trim();
+        break;
+      case "--timeout-ms":
+        timeoutMs = parseNonNegativeIntegerFlag(currentArgument, nextValue);
+        break;
+      case "--poll-interval-ms":
+        pollIntervalMs = parsePositiveIntegerFlag(currentArgument, nextValue);
+        break;
+      default:
+        throw new Error(`Unknown flag "${currentArgument}" for \`generate-and-wait\`.`);
+    }
+
+    index += 1;
+  }
+
+  if (!gptId) {
+    throw new Error('`generate-and-wait` requires --gpt <gpt-id>.');
+  }
+
+  if (!prompt) {
+    throw new Error('`generate-and-wait` requires --prompt "...".');
+  }
+
+  return {
+    gptId,
+    prompt,
+    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+    ...(pollIntervalMs !== undefined ? { pollIntervalMs } : {})
+  };
+}
+
+function parseNonNegativeIntegerFlag(flagName: string, rawValue: string): number {
+  const parsedValue = Number(rawValue);
+  if (!Number.isFinite(parsedValue) || !Number.isInteger(parsedValue) || parsedValue < 0) {
+    throw new Error(`Flag "${flagName}" must be a non-negative integer.`);
+  }
+
+  return parsedValue;
+}
+
+function parsePositiveIntegerFlag(flagName: string, rawValue: string): number {
+  const parsedValue = Number(rawValue);
+  if (!Number.isFinite(parsedValue) || !Number.isInteger(parsedValue) || parsedValue <= 0) {
+    throw new Error(`Flag "${flagName}" must be a positive integer.`);
+  }
+
+  return parsedValue;
 }

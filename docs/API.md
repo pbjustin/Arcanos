@@ -61,10 +61,18 @@ Deduplication rules:
 - Transport-only retry hints such as `async`, `executionMode`, `responseMode`, `waitForResultMs`, and polling intervals do not create a new GPT job.
 - Reusing an explicit `Idempotency-Key` for a different semantic GPT request returns `409 IDEMPOTENCY_KEY_CONFLICT`.
 
+Explicit direct-return path:
+- Use `POST /gpt/:gptId` with `{"prompt":"...","executionMode":"async","waitForResultMs":20000}` when the caller wants one queue-backed request that either returns the final GPT result inline or times out safely with the canonical job id.
+- Or use the explicit integration action `POST /gpt/:gptId` with `{ "action": "query_and_wait", "prompt": "...", "timeoutMs": 25000, "pollIntervalMs": 500 }` when the caller can only express waiting as an action contract.
+- Optional `pollIntervalMs` adjusts the internal polling cadence while the backend waits.
+- Direct-return timeouts never enqueue a second job; they return the same canonical job id and point callers to `GET /jobs/:id/result`.
+
 Job-backed `POST /gpt/:gptId` response shapes:
 - `202 Accepted`: `{ ok, status:"pending", jobId, poll, stream, jobStatus, lifecycleStatus, deduped?, idempotencyKey, idempotencySource, _route }`
 - `200 OK` after bounded inline completion: standard GPT envelope plus `{ jobId, status, lifecycleStatus, poll, stream, deduped?, idempotencyKey, idempotencySource }`
+- `202 Accepted` after an explicit direct-return timeout: the canonical pending payload plus `instruction` and `directReturn.result` pointing to `/jobs/:id/result`
 - Duplicate submissions set `deduped: true` and return the canonical `jobId`.
+- `200 OK` status retrieval: `POST /gpt/:gptId` with `{ "action": "get_status", "payload": { "jobId": "..." } }` returns `{ ok, result: { id, job_type, status, lifecycle_status, created_at, updated_at, completed_at, cancel_requested_at, cancel_reason, retention_until, idempotency_until, expires_at, error_message, output, result }, _route }` and never enqueues new work.
 - `200 OK` result retrieval: `POST /gpt/:gptId` with `{ "action": "get_result", "payload": { "jobId": "..." } }` returns `{ ok, result: { jobId, status:"pending|complete|failed|not_found", jobStatus, lifecycleStatus, createdAt, updatedAt, completedAt, poll, stream, result, error }, _route }` and never enqueues new work.
 
 Job status routes:
@@ -89,7 +97,7 @@ Retention defaults:
 Client retry guidance:
 - Reuse the same `Idempotency-Key` for safe client retries of the same GPT request body.
 - Poll `GET /jobs/:id` or subscribe to `GET /jobs/:id/stream` after any `202`.
-- If you need to fetch a stored result through the GPT route, call `action: "get_result"` with `payload.jobId` instead of sending a prompt that asks the model to fetch it.
+- If you need to fetch canonical job state through the GPT route, call `action: "get_status"` or `action: "get_result"` with `payload.jobId` instead of sending a prompt that asks the model to fetch it.
 - Treat `cancelled` and `expired` as terminal and submit a fresh request if more work is needed.
 
 ## Active Endpoint Groups

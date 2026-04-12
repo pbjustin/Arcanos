@@ -61,8 +61,12 @@ import {
 } from '@shared/gpt/gptJobLifecycle.js';
 import { getRequestActorKey } from '@platform/runtime/security.js';
 import {
+  GPT_GET_STATUS_ACTION,
   GPT_GET_RESULT_ACTION,
+  GPT_QUERY_AND_WAIT_ACTION,
+  buildStoredJobStatusPayload,
   buildGptJobResultLookupPayload,
+  parseGptJobStatusRequest,
   parseGptJobResultRequest
 } from '@shared/gpt/gptJobResult.js';
 import { parseNaturalLanguageJobLookup } from '@shared/gpt/naturalLanguageJobLookup.js';
@@ -73,6 +77,17 @@ const DEFAULT_GPT_ASYNC_HEAVY_PROMPT_CHARS = 1_200;
 const DEFAULT_GPT_ASYNC_HEAVY_MESSAGE_COUNT = 8;
 const DEFAULT_GPT_ASYNC_HEAVY_MAX_WORDS = 700;
 const DEFAULT_GPT_ASYNC_HEAVY_WAIT_FOR_RESULT_MS = 500;
+const DEFAULT_GPT_QUERY_AND_WAIT_TIMEOUT_MS = 25_000;
+const DIRECT_RETURN_ROUTE_TIMEOUT_HEADROOM_MS = 750;
+const DEFAULT_GPT_QUERY_AND_WAIT_ROUTE_TIMEOUT_MS =
+  DEFAULT_GPT_QUERY_AND_WAIT_TIMEOUT_MS + DIRECT_RETURN_ROUTE_TIMEOUT_HEADROOM_MS;
+const DIRECT_RETURN_WAIT_KEYS = [
+  'waitForResultMs',
+  'wait_for_result_ms',
+  'timeoutMs',
+  'timeout_ms'
+];
+const DIRECT_RETURN_POLL_KEYS = ['pollIntervalMs', 'poll_interval_ms'];
 
 type GptExecutionMode = 'sync' | 'async';
 type GptExecutionPlan = {
@@ -84,6 +99,8 @@ type GptExecutionPlan = {
   maxWords: number | null;
   heavyPrompt: boolean;
 };
+
+type GptJobLookupAction = typeof GPT_GET_STATUS_ACTION | typeof GPT_GET_RESULT_ACTION;
 
 function resolveRequestedAction(body: unknown): string | null {
   const normalizedBody = normalizeGptRequestBody(body);
@@ -218,6 +235,86 @@ function parseBooleanLike(value: unknown): boolean | null {
   }
 
   return null;
+}
+
+function parseNonNegativeIntegerLike(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+    return Math.trunc(value);
+  }
+
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  const normalizedValue = value.trim();
+  if (!normalizedValue) {
+    return undefined;
+  }
+
+  const parsedValue = Number(normalizedValue);
+  return Number.isFinite(parsedValue) && parsedValue >= 0
+    ? Math.trunc(parsedValue)
+    : undefined;
+}
+
+function readNumberOverrideFromSources(
+  req: express.Request,
+  body: unknown,
+  fieldNames: readonly string[],
+  headerNames: readonly string[] = []
+): number | undefined {
+  const normalizedBody = normalizeGptRequestBody(body);
+  for (const fieldName of fieldNames) {
+    const value = normalizedBody?.[fieldName];
+    const parsedValue = parseNonNegativeIntegerLike(value);
+    if (parsedValue !== undefined) {
+      return parsedValue;
+    }
+  }
+
+  const queryRecord = req.query as Record<string, unknown>;
+  for (const fieldName of fieldNames) {
+    const queryValue = queryRecord[fieldName];
+    const parsedValue = Array.isArray(queryValue)
+      ? parseNonNegativeIntegerLike(queryValue[0])
+      : parseNonNegativeIntegerLike(queryValue);
+    if (parsedValue !== undefined) {
+      return parsedValue;
+    }
+  }
+
+  for (const headerName of headerNames) {
+    const parsedValue = parseNonNegativeIntegerLike(req.header(headerName));
+    if (parsedValue !== undefined) {
+      return parsedValue;
+    }
+  }
+
+  return undefined;
+}
+
+function readRequestedAsyncGptWaitForResultMs(
+  req: express.Request,
+  body: unknown
+): number | undefined {
+  return readNumberOverrideFromSources(
+    req,
+    body,
+    DIRECT_RETURN_WAIT_KEYS,
+    ['x-gpt-wait-for-result-ms', 'x-gpt-timeout-ms']
+  );
+}
+
+function readRequestedAsyncGptPollIntervalMs(
+  req: express.Request,
+  body: unknown
+): number | undefined {
+  return readNumberOverrideFromSources(
+    req,
+    body,
+    DIRECT_RETURN_POLL_KEYS,
+    ['x-gpt-poll-interval-ms']
+  );
 }
 
 function resolveRequestedExecutionMode(
@@ -439,8 +536,64 @@ function resolveGptExecutionPlan(params: {
 }
 
 function clampAsyncWaitForRouteTimeout(waitForResultMs: number, routeTimeoutMs: number): number {
-  const routeSafeWaitBudgetMs = Math.max(0, routeTimeoutMs - 750);
+  const routeSafeWaitBudgetMs = Math.max(
+    0,
+    routeTimeoutMs - DIRECT_RETURN_ROUTE_TIMEOUT_HEADROOM_MS
+  );
   return Math.min(waitForResultMs, routeSafeWaitBudgetMs);
+}
+
+function buildDirectReturnTimeoutResponse(params: {
+  pendingResponse: ReturnType<typeof buildQueuedGptPendingResponse>;
+  jobId: string;
+  waitForResultMs: number;
+  pollIntervalMs: number;
+}) {
+  return {
+    ...params.pendingResponse,
+    instruction: `Direct wait timed out after ${params.waitForResultMs}ms. Use GET /jobs/${params.jobId}/result to retrieve the final result.`,
+    directReturn: {
+      requested: true,
+      timedOut: true,
+      waitForResultMs: params.waitForResultMs,
+      pollIntervalMs: params.pollIntervalMs,
+      poll: `/jobs/${params.jobId}`,
+      result: `/jobs/${params.jobId}/result`
+    }
+  };
+}
+
+function normalizeQueryAndWaitBody(
+  normalizedBody: Record<string, unknown> | null,
+  requestedAction: string | null
+): Record<string, unknown> | null {
+  if (!normalizedBody) {
+    return null;
+  }
+
+  if (requestedAction !== GPT_QUERY_AND_WAIT_ACTION) {
+    return normalizedBody;
+  }
+
+  const normalizedQueryBody = { ...normalizedBody };
+  delete normalizedQueryBody.action;
+  normalizedQueryBody.executionMode = 'async';
+  return normalizedQueryBody;
+}
+
+function buildJobLookupRouteMeta(params: {
+  requestId: string | undefined;
+  gptId: string;
+  action: GptJobLookupAction;
+  route: 'job_status' | 'job_result';
+}) {
+  return {
+    requestId: params.requestId,
+    gptId: params.gptId,
+    action: params.action,
+    route: params.route,
+    timestamp: new Date().toISOString()
+  };
 }
 
 function normalizeCompletedAsyncGptResponse(
@@ -562,11 +715,27 @@ function buildAsyncJobResponseMetadata(input: {
 }
 
 router.post("/:gptId", async (req, res, next) => {
+  const requestedAction = resolveRequestedAction(req.body);
+  const queryAndWaitRequested = requestedAction === GPT_QUERY_AND_WAIT_ACTION;
   const promptText = extractPromptText(req.body);
   const routeTimeoutProfile = shouldUseDagExecutionTimeoutProfile(promptText)
     ? 'dag_execution'
     : 'default';
-  const routeTimeoutMs = resolveGptRouteHardTimeoutMs({ profile: routeTimeoutProfile });
+  const explicitAsyncWaitForResultMs = readRequestedAsyncGptWaitForResultMs(req, req.body);
+  const explicitAsyncPollIntervalMs = readRequestedAsyncGptPollIntervalMs(req, req.body);
+  const queryAndWaitRequestedTimeoutMs =
+    explicitAsyncWaitForResultMs ?? DEFAULT_GPT_QUERY_AND_WAIT_TIMEOUT_MS;
+  const routeTimeoutMs = resolveGptRouteHardTimeoutMs({
+    profile: routeTimeoutProfile,
+    ...(queryAndWaitRequested && routeTimeoutProfile === 'default'
+      ? {
+          defaultMsOverride: Math.max(
+            DEFAULT_GPT_QUERY_AND_WAIT_ROUTE_TIMEOUT_MS,
+            queryAndWaitRequestedTimeoutMs + DIRECT_RETURN_ROUTE_TIMEOUT_HEADROOM_MS
+          )
+        }
+      : {})
+  });
   const requestId = (req as any).requestId;
   let queuedJobId: string | null = null;
   let queuedPendingResponse:
@@ -594,9 +763,9 @@ router.post("/:gptId", async (req, res, next) => {
         const incomingGptId = req.params.gptId;
         const requestLogger = (req as any).logger;
         const normalizedBody = normalizeGptRequestBody(req.body);
-        const effectiveBody = normalizedBody ?? req.body;
         const bodyGptId = resolveBodyGptId(req.body);
-        const requestedAction = resolveRequestedAction(req.body);
+        const effectiveRequestedAction = queryAndWaitRequested ? 'query' : requestedAction;
+        const effectiveBody = normalizeQueryAndWaitBody(normalizedBody, requestedAction) ?? req.body;
         applyCanonicalGptRouteHeaders(res, incomingGptId);
 
         requestLogger?.info?.('gpt.request.timeout_plan', {
@@ -721,8 +890,119 @@ router.post("/:gptId", async (req, res, next) => {
           ...buildGptRequestAuthState(req),
         });
 
+        if (queryAndWaitRequested && !normalizedBody) {
+          requestLogger?.warn?.('integration.job.query_and_wait_invalid_body', {
+            endpoint: req.originalUrl,
+            gptId: incomingGptId,
+            requestId,
+            bodyType: typeof req.body
+          });
+          return res.status(400).json({
+            ok: false,
+            error: {
+              code: 'BAD_REQUEST',
+              message: 'query_and_wait requires a JSON object request body.'
+            },
+            _route: {
+              requestId,
+              gptId: incomingGptId,
+              action: GPT_QUERY_AND_WAIT_ACTION,
+              route: 'async',
+              timestamp: new Date().toISOString()
+            }
+          });
+        }
+
+        if (queryAndWaitRequested && !promptText) {
+          requestLogger?.warn?.('integration.job.query_and_wait_missing_prompt', {
+            endpoint: req.originalUrl,
+            gptId: incomingGptId,
+            requestId
+          });
+          return res.status(400).json({
+            ok: false,
+            error: {
+              code: 'PROMPT_REQUIRED',
+              message: 'query_and_wait requires a non-empty prompt.'
+            },
+            _route: {
+              requestId,
+              gptId: incomingGptId,
+              action: GPT_QUERY_AND_WAIT_ACTION,
+              route: 'async',
+              timestamp: new Date().toISOString()
+            }
+          });
+        }
+
+        if (requestedAction === GPT_GET_STATUS_ACTION) {
+          const parsedJobStatusRequest = parseGptJobStatusRequest(effectiveBody);
+          const routeMeta = buildJobLookupRouteMeta({
+            requestId,
+            gptId: incomingGptId,
+            action: GPT_GET_STATUS_ACTION,
+            route: 'job_status'
+          });
+
+          if (!parsedJobStatusRequest.ok) {
+            requestLogger?.warn?.('gpt.request.status_lookup_invalid', {
+              endpoint: req.originalUrl,
+              gptId: incomingGptId,
+              requestId,
+              error: parsedJobStatusRequest.error
+            });
+            return res.status(400).json({
+              ok: false,
+              error: {
+                code: 'JOB_ID_INVALID',
+                message: `get_status action requires payload.jobId. ${parsedJobStatusRequest.error}`
+              },
+              _route: routeMeta
+            });
+          }
+
+          const job = await getJobById(parsedJobStatusRequest.jobId);
+          requestLogger?.info?.('integration.job.status_lookup', {
+            endpoint: req.originalUrl,
+            gptId: incomingGptId,
+            requestId,
+            jobId: parsedJobStatusRequest.jobId,
+            lookupStatus: job ? 'found' : 'not_found',
+            jobStatus: job?.status ?? null,
+            canonicalPath: `/jobs/${parsedJobStatusRequest.jobId}`
+          });
+          recordGptJobLookup({
+            channel: 'gpt_action',
+            lookup: 'status',
+            outcome: job?.status ?? 'not_found'
+          });
+
+          if (!job) {
+            return res.status(404).json({
+              ok: false,
+              error: {
+                code: 'JOB_NOT_FOUND',
+                message: 'Async GPT job was not found.'
+              },
+              _route: routeMeta
+            });
+          }
+
+          return res.status(200).json({
+            ok: true,
+            result: buildStoredJobStatusPayload(job),
+            _route: routeMeta
+          });
+        }
+
         if (requestedAction === GPT_GET_RESULT_ACTION) {
           const parsedJobResultRequest = parseGptJobResultRequest(effectiveBody);
+          const routeMeta = buildJobLookupRouteMeta({
+            requestId,
+            gptId: incomingGptId,
+            action: GPT_GET_RESULT_ACTION,
+            route: 'job_result'
+          });
 
           if (!parsedJobResultRequest.ok) {
             requestLogger?.warn?.('gpt.request.result_lookup_invalid', {
@@ -737,13 +1017,7 @@ router.post("/:gptId", async (req, res, next) => {
                 code: 'JOB_ID_INVALID',
                 message: `get_result action requires payload.jobId. ${parsedJobResultRequest.error}`
               },
-              _route: {
-                requestId,
-                gptId: incomingGptId,
-                action: GPT_GET_RESULT_ACTION,
-                route: 'job_result',
-                timestamp: new Date().toISOString()
-              }
+              _route: routeMeta
             });
           }
 
@@ -751,6 +1025,16 @@ router.post("/:gptId", async (req, res, next) => {
             parsedJobResultRequest.jobId,
             await getJobById(parsedJobResultRequest.jobId)
           );
+          requestLogger?.info?.('integration.job.result_lookup', {
+            endpoint: req.originalUrl,
+            gptId: incomingGptId,
+            requestId,
+            jobId: jobLookup.jobId,
+            lookupStatus: jobLookup.status,
+            jobStatus: jobLookup.jobStatus,
+            lifecycleStatus: jobLookup.lifecycleStatus,
+            canonicalPath: `/jobs/${jobLookup.jobId}/result`
+          });
           requestLogger?.info?.('gpt.request.result_lookup', {
             endpoint: req.originalUrl,
             gptId: incomingGptId,
@@ -769,13 +1053,7 @@ router.post("/:gptId", async (req, res, next) => {
           return res.status(200).json({
             ok: true,
             result: jobLookup,
-            _route: {
-              requestId,
-              gptId: incomingGptId,
-              action: GPT_GET_RESULT_ACTION,
-              route: 'job_result',
-              timestamp: new Date().toISOString()
-            }
+            _route: routeMeta
           });
         }
 
@@ -790,7 +1068,7 @@ router.post("/:gptId", async (req, res, next) => {
             idempotencyKeyHash: summarizeFingerprintHash(
               buildGptIdempotencyDescriptor({
                 gptId: incomingGptId,
-                action: requestedAction,
+                action: effectiveRequestedAction,
                 body: effectiveBody,
                 actorKey: getRequestActorKey(req),
                 explicitIdempotencyKey
@@ -808,20 +1086,28 @@ router.post("/:gptId", async (req, res, next) => {
           gptId: incomingGptId,
           body: effectiveBody,
           promptText,
-          requestedAction,
+          requestedAction: effectiveRequestedAction,
           routeTimeoutProfile
         });
-        const requestedAsyncWaitForResultMs = executionPlan.heavyPrompt
-          ? readPositiveIntegerEnv(
+        const directReturnRequested =
+          queryAndWaitRequested ||
+          (explicitAsyncWaitForResultMs !== undefined && executionPlan.mode === 'async');
+        let requestedAsyncWaitForResultMs = explicitAsyncWaitForResultMs;
+        if (requestedAsyncWaitForResultMs === undefined) {
+          if (queryAndWaitRequested) {
+            requestedAsyncWaitForResultMs = DEFAULT_GPT_QUERY_AND_WAIT_TIMEOUT_MS;
+          } else if (executionPlan.heavyPrompt) {
+            requestedAsyncWaitForResultMs = readPositiveIntegerEnv(
               'GPT_ASYNC_HEAVY_WAIT_FOR_RESULT_MS',
               DEFAULT_GPT_ASYNC_HEAVY_WAIT_FOR_RESULT_MS
-            )
-          : undefined;
+            );
+          }
+        }
         const asyncWaitForResultMs = clampAsyncWaitForRouteTimeout(
           resolveAsyncGptWaitForResultMs(requestedAsyncWaitForResultMs),
           routeTimeoutMs
         );
-        const asyncPollIntervalMs = resolveAsyncGptPollIntervalMs(undefined);
+        const asyncPollIntervalMs = resolveAsyncGptPollIntervalMs(explicitAsyncPollIntervalMs);
         requestLogger?.info?.('gpt.request.execution_plan', {
           endpoint: req.originalUrl,
           gptId: incomingGptId,
@@ -833,9 +1119,35 @@ router.post("/:gptId", async (req, res, next) => {
           heavyPrompt: executionPlan.heavyPrompt,
           answerMode: executionPlan.answerMode,
           maxWords: executionPlan.maxWords,
+          directReturnRequested,
+          requestedAsyncWaitForResultMs: requestedAsyncWaitForResultMs ?? null,
+          requestedAsyncPollIntervalMs: explicitAsyncPollIntervalMs ?? null,
           asyncWaitForResultMs,
           asyncPollIntervalMs
         });
+        if (explicitAsyncWaitForResultMs !== undefined && !directReturnRequested) {
+          requestLogger?.info?.('gpt.request.direct_return_ignored', {
+            endpoint: req.originalUrl,
+            gptId: incomingGptId,
+            action: requestedAction ?? 'query',
+            executionMode: executionPlan.mode,
+            executionReason: executionPlan.reason,
+            requestedWaitForResultMs: explicitAsyncWaitForResultMs
+          });
+        }
+        if (directReturnRequested) {
+          requestLogger?.info?.('gpt.request.direct_return_plan', {
+            endpoint: req.originalUrl,
+            gptId: incomingGptId,
+            action: requestedAction ?? 'query',
+            executionMode: executionPlan.mode,
+            executionReason: executionPlan.reason,
+            requestedWaitForResultMs: explicitAsyncWaitForResultMs,
+            resolvedWaitForResultMs: asyncWaitForResultMs,
+            requestedPollIntervalMs: explicitAsyncPollIntervalMs ?? null,
+            resolvedPollIntervalMs: asyncPollIntervalMs
+          });
+        }
 
         if (requestedAction === 'diagnostics') {
           const diagnostics = await getDiagnosticsSnapshot(req.app);
@@ -875,7 +1187,10 @@ router.post("/:gptId", async (req, res, next) => {
           return res.json(diagnosticsPayload.payload);
         }
 
-        const shouldUseJobBackedExecution = executionPlan.mode === 'async' || Boolean(explicitIdempotencyKey);
+        const shouldUseJobBackedExecution =
+          queryAndWaitRequested ||
+          executionPlan.mode === 'async' ||
+          Boolean(explicitIdempotencyKey);
 
         if (shouldUseJobBackedExecution) {
           if (!normalizedBody) {
@@ -911,8 +1226,8 @@ router.post("/:gptId", async (req, res, next) => {
           } else {
             const idempotencyDescriptor = buildGptIdempotencyDescriptor({
               gptId: incomingGptId,
-              action: requestedAction,
-              body: normalizedBody,
+              action: effectiveRequestedAction,
+              body: effectiveBody,
               actorKey: getRequestActorKey(req),
               explicitIdempotencyKey
             });
@@ -931,10 +1246,10 @@ router.post("/:gptId", async (req, res, next) => {
             }
             const queuedGptJobInput = buildQueuedGptJobInput({
               gptId: incomingGptId,
-              body: normalizedBody,
+              body: effectiveBody as Record<string, unknown>,
               prompt: promptText,
               requestId,
-              routeHint: requestedAction ?? 'query',
+              routeHint: effectiveRequestedAction ?? 'query',
               requestPath: req.originalUrl,
               executionModeReason: executionPlan.reason
             });
@@ -970,7 +1285,7 @@ router.post("/:gptId", async (req, res, next) => {
               }
 
               if (error instanceof JobRepositoryUnavailableError) {
-                if (explicitIdempotencyKey) {
+                if (explicitIdempotencyKey || queryAndWaitRequested) {
                   requestLogger?.error?.('gpt.request.idempotency_unavailable', {
                     endpoint: req.originalUrl,
                     gptId: incomingGptId,
@@ -980,8 +1295,12 @@ router.post("/:gptId", async (req, res, next) => {
                   return res.status(503).json({
                     ok: false,
                     error: {
-                      code: 'IDEMPOTENCY_UNAVAILABLE',
-                      message: 'Durable idempotency is unavailable because GPT job persistence is not configured.'
+                      code: queryAndWaitRequested
+                        ? 'ASYNC_GPT_JOBS_UNAVAILABLE'
+                        : 'IDEMPOTENCY_UNAVAILABLE',
+                      message: queryAndWaitRequested
+                        ? 'query_and_wait requires durable GPT job persistence, but the jobs backend is unavailable.'
+                        : 'Durable idempotency is unavailable because GPT job persistence is not configured.'
                     },
                     idempotencyKey: idempotencyDescriptor.publicIdempotencyKey,
                     _route: {
@@ -1050,6 +1369,18 @@ router.post("/:gptId", async (req, res, next) => {
                   jobId: job.id
                 });
               }
+              if (queryAndWaitRequested) {
+                requestLogger?.info?.('integration.job.query_and_wait_started', {
+                  endpoint: req.originalUrl,
+                  gptId: incomingGptId,
+                  requestId,
+                  jobId: job.id,
+                  waitForResultMs: asyncWaitForResultMs,
+                  pollIntervalMs: asyncPollIntervalMs,
+                  deduped: createResult.deduped,
+                  dedupeReason: createResult.dedupeReason
+                });
+              }
 
               const waitedJob = await waitForQueuedGptJobCompletion(
                 job.id,
@@ -1116,6 +1447,29 @@ router.post("/:gptId", async (req, res, next) => {
                     event: 'reused_completed_result',
                     status: 'completed',
                     retryable: false
+                  });
+                }
+                if (directReturnRequested) {
+                  requestLogger?.info?.('gpt.request.direct_return_completed', {
+                    endpoint: req.originalUrl,
+                    gptId: incomingGptId,
+                    jobId: job.id,
+                    waitForResultMs: asyncWaitForResultMs,
+                    pollIntervalMs: asyncPollIntervalMs,
+                    deduped: createResult.deduped,
+                    dedupeReason: createResult.dedupeReason
+                  });
+                }
+                if (queryAndWaitRequested) {
+                  requestLogger?.info?.('integration.job.query_and_wait_completed', {
+                    endpoint: req.originalUrl,
+                    gptId: incomingGptId,
+                    requestId,
+                    jobId: job.id,
+                    waitForResultMs: asyncWaitForResultMs,
+                    pollIntervalMs: asyncPollIntervalMs,
+                    deduped: createResult.deduped,
+                    dedupeReason: createResult.dedupeReason
                   });
                 }
 
@@ -1268,6 +1622,37 @@ router.post("/:gptId", async (req, res, next) => {
                 deduped: createResult.deduped,
                 dedupeReason: createResult.dedupeReason
               });
+              if (directReturnRequested) {
+                requestLogger?.info?.('gpt.request.direct_return_timeout', {
+                  endpoint: req.originalUrl,
+                  gptId: incomingGptId,
+                  jobId: job.id,
+                  waitForResultMs: asyncWaitForResultMs,
+                  pollIntervalMs: asyncPollIntervalMs,
+                  jobStatus: waitedJob.job?.status ?? job.status,
+                  deduped: createResult.deduped,
+                  dedupeReason: createResult.dedupeReason
+                });
+                if (queryAndWaitRequested) {
+                  requestLogger?.info?.('integration.job.query_and_wait_timeout', {
+                    endpoint: req.originalUrl,
+                    gptId: incomingGptId,
+                    requestId,
+                    jobId: job.id,
+                    waitForResultMs: asyncWaitForResultMs,
+                    pollIntervalMs: asyncPollIntervalMs,
+                    jobStatus: waitedJob.job?.status ?? job.status,
+                    deduped: createResult.deduped,
+                    dedupeReason: createResult.dedupeReason
+                  });
+                }
+                return res.status(202).json(buildDirectReturnTimeoutResponse({
+                  pendingResponse: queuedPendingResponse,
+                  jobId: job.id,
+                  waitForResultMs: asyncWaitForResultMs,
+                  pollIntervalMs: asyncPollIntervalMs
+                }));
+              }
               return res.status(202).json(queuedPendingResponse);
             }
           }
