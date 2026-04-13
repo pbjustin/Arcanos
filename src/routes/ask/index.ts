@@ -1247,12 +1247,12 @@ export const handleAIRequest = async (
         },
         responseReturned: pendingResponse,
       });
-      res.status(202);
       return sendGuardedAskResponse(
         req,
         res,
         pendingResponse,
-        `${endpointName}.async_pending.response`
+        `${endpointName}.async_pending.response`,
+        202
       );
     }
 

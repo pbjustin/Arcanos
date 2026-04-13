@@ -127,6 +127,8 @@ describe('async /brain queue contract', () => {
     });
 
     expect(response.status).toBe(202);
+    expect(response.headers['x-response-bytes']).toMatch(/^\d+$/);
+    expect(response.headers['x-response-truncated']).toBeUndefined();
     expect(response.body).toEqual({
       ok: true,
       status: 'pending',
