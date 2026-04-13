@@ -92,6 +92,7 @@ describe('/ask diagnostic shortcut', () => {
     expect(response.headers['x-canonical-route']).toBe('/gpt/arcanos-core');
     expect(response.headers['x-route-deprecated']).toBe('true');
     expect(response.headers['x-ask-route-mode']).toBe('gone');
+    expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toMatchObject({
       error: 'Legacy ask-style route has been removed; use /gpt/:gptId',
       deprecated: true,
@@ -115,6 +116,7 @@ describe('/ask diagnostic shortcut', () => {
     const third = await request(app).post('/brain').send(payload);
 
     expect(first.status).toBe(200);
+    expect(first.headers['x-response-bytes']).toBeTruthy();
     expect(first.body).toEqual({
       result: 'backend operational',
       module: 'diagnostic',
@@ -146,6 +148,7 @@ describe('/ask diagnostic shortcut', () => {
     });
 
     expect(response.status).toBe(200);
+    expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body.result).toBe('backend operational');
     expect(response.body.module).toBe('diagnostic');
     expect(validateAIRequestMock).not.toHaveBeenCalled();
@@ -159,6 +162,7 @@ describe('/ask diagnostic shortcut', () => {
     });
 
     expect(response.status).toBe(200);
+    expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body.result).toBe('backend operational');
     expect(response.body.routingStages).toEqual(['DIAGNOSTIC-SHORTCUT']);
     expect(validateAIRequestMock).not.toHaveBeenCalled();

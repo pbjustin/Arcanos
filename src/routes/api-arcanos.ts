@@ -36,6 +36,7 @@ import {
   recordPromptDebugTrace,
 } from '@services/promptDebugTraceService.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
+import { sendBoundedJsonResponse } from '@shared/http/sendBoundedJsonResponse.js';
 
 const router = express.Router();
 
@@ -472,7 +473,9 @@ const handleArcanosAsk = asyncHandler(async (
       selectedModule: 'diagnostic',
       responseReturned: diagnosticPayload,
     });
-    return res.json(diagnosticPayload);
+    return sendBoundedJsonResponse(req, res, diagnosticPayload, {
+      logEvent: 'api-arcanos.diagnostic.response',
+    });
   }
 
   let promptForError = pingCandidate ?? '';
@@ -553,7 +556,9 @@ const handleArcanosAsk = asyncHandler(async (
       return;
     }
 
-    return res.json(responsePayload);
+    return sendBoundedJsonResponse(req, res, responsePayload, {
+      logEvent: 'api-arcanos.response',
+    });
   } catch (error: unknown) {
     req.logger?.error?.('api-arcanos.ask.failed', {
       route: DEPRECATED_ARCANOS_ENDPOINT,

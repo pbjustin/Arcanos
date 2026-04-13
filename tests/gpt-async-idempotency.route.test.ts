@@ -161,6 +161,7 @@ describe('async /gpt idempotency', () => {
       });
 
     expect(response.status).toBe(200);
+    expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toEqual({
       ok: true,
       result: {
@@ -222,6 +223,7 @@ describe('async /gpt idempotency', () => {
       });
 
     expect(response.status).toBe(200);
+    expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body.result).toMatchObject({
       jobId: 'job-lookup-normalized',
       status: 'completed',
@@ -248,6 +250,7 @@ describe('async /gpt idempotency', () => {
       });
 
     expect(response.status).toBe(400);
+    expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toMatchObject({
       ok: false,
       error: {
@@ -284,6 +287,7 @@ describe('async /gpt idempotency', () => {
       });
 
     expect(response.status).toBe(200);
+    expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body.result).toMatchObject({
       jobId: 'job-lookup-pending',
       status: 'pending',
@@ -325,6 +329,7 @@ describe('async /gpt idempotency', () => {
       });
 
     expect(response.status).toBe(200);
+    expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body.result).toMatchObject({
       jobId: 'job-lookup-expired',
       status: 'expired',
@@ -397,6 +402,7 @@ describe('async /gpt idempotency', () => {
       });
 
     expect(response.status).toBe(200);
+    expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body.result).toEqual({
       jobId: 'missing-job',
       status: 'not_found',
@@ -446,6 +452,7 @@ describe('async /gpt idempotency', () => {
       });
 
     expect(response.status).toBe(200);
+    expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toEqual({
       ok: true,
       result: {
@@ -489,6 +496,7 @@ describe('async /gpt idempotency', () => {
       });
 
     expect(response.status).toBe(404);
+    expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toMatchObject({
       ok: false,
       error: {
@@ -516,6 +524,7 @@ describe('async /gpt idempotency', () => {
       });
 
     expect(response.status).toBe(400);
+    expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toMatchObject({
       ok: false,
       error: {
@@ -854,6 +863,7 @@ describe('async /gpt idempotency', () => {
       });
 
     expect(response.status).toBe(400);
+    expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toMatchObject({
       ok: false,
       error: {
@@ -877,6 +887,7 @@ describe('async /gpt idempotency', () => {
       });
 
     expect(response.status).toBe(503);
+    expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toMatchObject({
       ok: false,
       error: {
@@ -1002,6 +1013,7 @@ describe('async /gpt idempotency', () => {
       });
 
     expect(response.status).toBe(409);
+    expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toMatchObject({
       ok: false,
       error: {
@@ -1060,6 +1072,7 @@ describe('async /gpt idempotency', () => {
       });
 
     expect(response.status).toBe(503);
+    expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toMatchObject({
       ok: false,
       error: {

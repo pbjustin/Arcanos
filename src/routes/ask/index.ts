@@ -16,10 +16,9 @@ import type {
 import { aiRequestSchema } from "@shared/types/dto.js";
 import { asyncHandler, sendBadRequest, sendInternalErrorPayload } from '@shared/http/index.js';
 import {
-  prepareBoundedClientJsonPayload,
   shapeClientRouteResult
 } from '@shared/http/clientResponseGuards.js';
-import { sendPreparedJsonResponse } from '@shared/http/sendPreparedJsonResponse.js';
+import { sendBoundedJsonResponse } from '@shared/http/sendBoundedJsonResponse.js';
 import {
   applyDeprecatedAskRouteHeaders,
   ASK_ROUTE_SUNSET_HEADER,
@@ -513,14 +512,13 @@ function sendGuardedAskResponse(
   req: Request<{}, any, AskRequest>,
   res: Response<any>,
   payload: object,
-  logEvent: string
+  logEvent: string,
+  statusCode = 200
 ) {
-  const boundedPayload = prepareBoundedClientJsonPayload(payload as Record<string, unknown>, {
-    logger: req.logger,
+  return sendBoundedJsonResponse(req, res, payload as Record<string, unknown>, {
     logEvent,
+    statusCode,
   });
-
-  return sendPreparedJsonResponse(res, boundedPayload);
 }
 
 function extractAskRouteGptHint(req: Request): string | null {
@@ -596,7 +594,13 @@ export const handleAIRequest = async (
       //audit Assumption: optimistic lock mismatch must return conflict; failure risk: stale write accepted; expected invariant: 409 on version mismatch; handling strategy: return conflict payload.
       if (!updateResult.ok) {
         const conflict = (updateResult as { ok: false; conflict: IntentConflict }).conflict;
-        return res.status(409).json(conflict);
+        return sendGuardedAskResponse(
+          req,
+          res,
+          conflict,
+          `${endpointName}.system_state.conflict`,
+          409
+        );
       }
     }
 
@@ -724,7 +728,13 @@ export const handleAIRequest = async (
       responseReturned: lenientChatValidation.errorPayload,
       fallbackReason: 'lenient_chat_validation_failed',
     });
-    return res.status(400).json(lenientChatValidation.errorPayload);
+    return sendGuardedAskResponse(
+      req,
+      res,
+      lenientChatValidation.errorPayload as Record<string, unknown>,
+      `${endpointName}.validation.error`,
+      400
+    );
   }
 
   req.body = lenientChatValidation.normalizedBody;
@@ -783,12 +793,12 @@ export const handleAIRequest = async (
         responseReturned: failurePayload,
         fallbackReason: 'repo_evidence_required',
       });
-      return res.status(503).json({
+      return sendGuardedAskResponse(req, res, {
         error: {
           code: 'REPO_EVIDENCE_REQUIRED',
           message: 'Cannot verify implementation without repo inspection.'
         }
-      });
+      }, `${endpointName}.repo_evidence_required`, 503);
     }
   }
 
@@ -863,11 +873,11 @@ export const handleAIRequest = async (
           fallbackFlag: false,
           extra: { disposition: 'confirmation-required' }
         });
-        return res.status(403).json({
+        return sendGuardedAskResponse(req, res, {
           code: 'CONFIRMATION_REQUIRED',
           confirmationChallenge: { id: daemonToolResponse.confirmation_token },
           pending_actions: daemonToolResponse.pending_actions
-        });
+        }, `${endpointName}.confirmation_required`, 403);
       }
       //audit Assumption: daemon tool response is terminal; risk: skipping trinity; invariant: tool actions queued; handling: return early.
       recordPromptDebugTrace(requestId, 'response', {
@@ -1356,12 +1366,12 @@ function rejectGptRoutedAskRequests(req: Request, res: Response, next: () => voi
     gptId: rawGptId,
     canonicalRoute: `/gpt/${encodeURIComponent(rawGptId)}`
   });
-  res.status(400).json({
+  sendGuardedAskResponse(req, res, {
     error: 'GPT-routed requests must target /gpt/:gptId',
     deprecated: true,
     canonicalRoute: `/gpt/${encodeURIComponent(rawGptId)}`,
     details: [`Received gptId '${rawGptId}' on ${req.originalUrl}; use /gpt/${rawGptId} instead.`]
-  });
+  }, 'ask.misroute.response', 400);
 }
 
 function rejectRemovedAskRoute(req: Request, res: Response, next: () => void): void {
@@ -1389,7 +1399,7 @@ function rejectRemovedAskRoute(req: Request, res: Response, next: () => void): v
   });
 
   res.setHeader(ASK_ROUTE_MODE_HEADER, 'gone');
-  res.status(410).json({
+  sendGuardedAskResponse(req, res, {
     error: 'Legacy ask-style route has been removed; use /gpt/:gptId',
     deprecated: true,
     canonicalRoute,
@@ -1397,7 +1407,7 @@ function rejectRemovedAskRoute(req: Request, res: Response, next: () => void): v
     details: [
       `${req.method} ${req.originalUrl} is no longer available. Migrate callers to POST ${canonicalRoute}.`
     ]
-  });
+  }, 'ask.removed.response', 410);
 }
 
 // Brain endpoint (alias for ask) still requires explicit confirmation.

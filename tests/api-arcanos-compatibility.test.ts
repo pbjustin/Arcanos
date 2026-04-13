@@ -125,6 +125,7 @@ describe('/api/arcanos/ask compatibility', () => {
     expect(response.headers['x-canonical-route']).toBe('/gpt/arcanos-core');
     expect(response.headers['x-route-deprecated']).toBe('true');
     expect(response.headers['x-ask-route-mode']).toBe('compat');
+    expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toMatchObject({
       success: true,
       result: 'pong',
@@ -174,6 +175,7 @@ describe('/api/arcanos/ask compatibility', () => {
     expect(response.headers['x-ai-timeout-kind']).toBe('pipeline_timeout');
     expect(response.headers['x-ai-degraded-reason']).toBe('arcanos_core_pipeline_timeout_direct_answer');
     expect(response.headers['x-ai-bypassed-subsystems']).toBe('trinity_intake,trinity_reasoning');
+    expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(mockRunArcanosCoreQuery).toHaveBeenCalledWith({
       client: { clientId: 'openai-client-1' },
       prompt: 'Say hello in one word.',

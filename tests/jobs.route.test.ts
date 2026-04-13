@@ -54,6 +54,8 @@ describe('/jobs routes', () => {
     const response = await request(buildApp()).get('/jobs/job-result-123/result');
 
     expect(response.status).toBe(200);
+    expect(response.headers['x-response-bytes']).toBeTruthy();
+    expect(response.headers['x-response-truncated']).toBeUndefined();
     expect(response.body).toEqual({
       jobId: 'job-result-123',
       status: 'completed',
@@ -83,6 +85,7 @@ describe('/jobs routes', () => {
     const response = await request(buildApp()).get('/jobs/missing-job/result');
 
     expect(response.status).toBe(200);
+    expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toEqual({
       jobId: 'missing-job',
       status: 'not_found',
@@ -134,6 +137,7 @@ describe('/jobs routes', () => {
     const response = await request(buildApp()).get('/jobs/job-123');
 
     expect(response.status).toBe(200);
+    expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toMatchObject({
       id: 'job-123',
       status: 'expired',
@@ -151,6 +155,7 @@ describe('/jobs routes', () => {
       .send({ reason: 'Stop this job' });
 
     expect(response.status).toBe(401);
+    expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toEqual({
       ok: false,
       error: {
@@ -232,6 +237,7 @@ describe('/jobs routes', () => {
       .send({ reason: 'Stop this job' });
 
     expect(response.status).toBe(200);
+    expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toMatchObject({
       ok: true,
       id: 'job-123',
@@ -279,6 +285,7 @@ describe('/jobs routes', () => {
       .send({ reason: 'Stop this job' });
 
     expect(response.status).toBe(202);
+    expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toMatchObject({
       ok: true,
       id: 'job-456',
@@ -325,6 +332,7 @@ describe('/jobs routes', () => {
       .set('x-session-id', 'owner-3');
 
     expect(response.status).toBe(409);
+    expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toMatchObject({
       ok: false,
       error: {

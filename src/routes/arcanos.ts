@@ -21,7 +21,7 @@ router.post(
     gptId: 'arcanos-core',
     applyDeprecationHeaders: false,
     bodyTransform: (body) => buildLegacyArcanosDispatchBody(body),
-    successBodyTransform: (result, request) => adaptLegacyArcanosRouteResult(request.body, result, request)
+    successBodyTransform: (result, request) => adaptLegacyArcanosRouteResult(request.body, result)
   })
 );
 

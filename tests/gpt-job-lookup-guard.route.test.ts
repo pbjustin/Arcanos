@@ -79,6 +79,7 @@ describe('natural-language job lookup guard on /gpt/:gptId', () => {
       });
 
     expect(response.status).toBe(400);
+    expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toEqual({
       ok: false,
       error: {
@@ -110,6 +111,7 @@ describe('natural-language job lookup guard on /gpt/:gptId', () => {
       });
 
     expect(response.status).toBe(400);
+    expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toEqual({
       ok: false,
       error: {
@@ -141,6 +143,7 @@ describe('natural-language job lookup guard on /gpt/:gptId', () => {
       });
 
     expect(response.status).toBe(400);
+    expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toEqual({
       ok: false,
       error: {

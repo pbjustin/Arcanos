@@ -56,6 +56,8 @@ describe('runtime diagnostics routes', () => {
 
     const directBeforeResponse = await request(app).get('/diagnostics');
     expect(directBeforeResponse.status).toBe(200);
+    expect(directBeforeResponse.headers['x-response-bytes']).toBeTruthy();
+    expect(directBeforeResponse.headers['x-response-truncated']).toBeUndefined();
 
     const gptDiagnosticsResponse = await request(app)
       .post('/gpt/arcanos-core')
@@ -103,6 +105,8 @@ describe('runtime diagnostics routes', () => {
 
     const directAfterResponse = await request(app).get('/diagnostics');
     expect(directAfterResponse.status).toBe(200);
+    expect(directAfterResponse.headers['x-response-bytes']).toBeTruthy();
+    expect(directAfterResponse.headers['x-response-truncated']).toBeUndefined();
     expect(gptDiagnosticsResponse.body.requests_total).toBeGreaterThan(
       directBeforeResponse.body.requests_total
     );
@@ -148,6 +152,7 @@ describe('runtime diagnostics routes', () => {
     const response = await request(app).get('/diagnostics');
 
     expect(response.status).toBe(200);
+    expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body.errors_total).toBeGreaterThanOrEqual(1);
     expect(response.body.error_rate).not.toBe(0);
     expect(response.body.top_error_routes).toEqual(
