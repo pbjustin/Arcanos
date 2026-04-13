@@ -1,6 +1,6 @@
 import type { RequestScopedLogger } from './types.js';
+import type { PreparedClientJsonPayload } from './clientResponseCommon.js';
 import {
-  PreparedClientJsonPayload,
   STRING_PREVIEW_MAX_BYTES,
   emitClientResponseTruncationWarning,
   isRecord,
@@ -27,10 +27,10 @@ function extractPreviewText(payload: Record<string, unknown>): string {
   return truncateText(JSON.stringify(payload), STRING_PREVIEW_MAX_BYTES);
 }
 
-function buildTruncatedPayload(payload: Record<string, unknown>, maxBytes: number): Record<string, unknown> {
-  const previewBudget = Math.max(512, Math.floor(maxBytes * 0.45));
-  const preview = truncateText(extractPreviewText(payload), previewBudget);
-
+function buildTruncatedPayloadFromPreview(
+  payload: Record<string, unknown>,
+  preview: string
+): Record<string, unknown> {
   if (isRecord(payload.meta)) {
     return {
       result: preview,
@@ -62,6 +62,32 @@ function buildTruncatedPayload(payload: Record<string, unknown>, maxBytes: numbe
     result: preview,
     truncated: true,
   };
+}
+
+function buildTruncatedPayload(payload: Record<string, unknown>, maxBytes: number): Record<string, unknown> {
+  const previewSource = extractPreviewText(payload);
+  const maxPreviewBytes = Math.max(512, Math.floor(maxBytes * 0.45));
+  let lowerPreviewBytes = 0;
+  let upperPreviewBytes = maxPreviewBytes;
+  let bestPayload = buildTruncatedPayloadFromPreview(payload, truncateText(previewSource, 0));
+
+  while (lowerPreviewBytes <= upperPreviewBytes) {
+    const previewBytes = Math.floor((lowerPreviewBytes + upperPreviewBytes) / 2);
+    const candidatePayload = buildTruncatedPayloadFromPreview(
+      payload,
+      truncateText(previewSource, previewBytes)
+    );
+    const candidateBytes = measureJsonBytes(candidatePayload);
+
+    if (candidateBytes <= maxBytes) {
+      bestPayload = candidatePayload;
+      lowerPreviewBytes = previewBytes + 1;
+    } else {
+      upperPreviewBytes = previewBytes - 1;
+    }
+  }
+
+  return bestPayload;
 }
 
 export function prepareBoundedClientJsonPayload<T extends Record<string, unknown>>(

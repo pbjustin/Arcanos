@@ -485,6 +485,23 @@ describe('client response guards', () => {
     );
   });
 
+  it('keeps truncated payloads within the JSON byte ceiling for JSON-escaped strings', () => {
+    const prepared = prepareBoundedClientJsonPayload({
+      result: '\u0000'.repeat(2_000),
+      module: 'ARCANOS:CORE',
+      meta: {
+        gptId: 'core',
+        route: 'core',
+        timestamp: '2026-03-21T10:00:00.000Z',
+      },
+    }, {
+      maxBytes: 2048,
+    });
+
+    expect(prepared.truncated).toBe(true);
+    expect(prepared.responseBytes).toBeLessThanOrEqual(prepared.maxResponseBytes);
+  });
+
   it('stamps lightweight probe payloads with their JSON response size', () => {
     const payload = withJsonResponseBytes({
       status: 'ok',
