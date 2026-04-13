@@ -6,6 +6,7 @@ import {
   shapeClientRouteResult,
   withJsonResponseBytes,
 } from '../src/shared/http/clientResponseGuards.js';
+import { truncateText } from '../src/shared/http/clientResponseCommon.js';
 
 describe('client response guards', () => {
   it('reduces oversized MCP health results to a compact public shape', () => {
@@ -494,5 +495,24 @@ describe('client response guards', () => {
 
     expect(payload.response_bytes).toBe(measureJsonBytes(payload));
     expect(payload.response_bytes).toBeGreaterThan(0);
+  });
+
+  it('supports a custom response byte field without adding the default field', () => {
+    const payload = withJsonResponseBytes(
+      {
+        status: 'ok',
+        service: 'arcanos-backend',
+      },
+      'bytes'
+    );
+
+    expect(payload.bytes).toBe(measureJsonBytes(payload));
+    expect((payload as Record<string, unknown>).response_bytes).toBeUndefined();
+  });
+
+  it('does not truncate strings that fit within the raw UTF-8 budget', () => {
+    const text = '"quoted"';
+
+    expect(truncateText(text, Buffer.byteLength(text, 'utf8'))).toBe(text);
   });
 });

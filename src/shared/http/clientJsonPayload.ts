@@ -111,13 +111,13 @@ export function prepareBoundedClientJsonPayload<T extends Record<string, unknown
 export function withJsonResponseBytes<T extends Record<string, unknown>, K extends string = 'response_bytes'>(
   payload: T,
   fieldName?: K
-): T & Record<K | 'response_bytes', number> {
-  const resolvedFieldName = (fieldName ?? 'response_bytes') as K | 'response_bytes';
+): T & Record<K, number> {
+  const resolvedFieldName = (fieldName ?? 'response_bytes') as K;
   let responseBytes = 0;
   let nextPayload = {
     ...payload,
     [resolvedFieldName]: responseBytes,
-  } as T & Record<K | 'response_bytes', number>;
+  } as T & Record<K, number>;
 
   for (let iteration = 0; iteration < 4; iteration += 1) {
     const measuredResponseBytes = measureJsonBytes(nextPayload);
@@ -129,7 +129,7 @@ export function withJsonResponseBytes<T extends Record<string, unknown>, K exten
     nextPayload = {
       ...payload,
       [resolvedFieldName]: responseBytes,
-    } as T & Record<K | 'response_bytes', number>;
+    } as T & Record<K, number>;
   }
 
   return nextPayload;

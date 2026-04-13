@@ -69,7 +69,7 @@ export function measureJsonBytes(payload: unknown): number {
 }
 
 export function truncateText(text: string, maxBytes: number): string {
-  if (measureJsonBytes(text) <= maxBytes) {
+  if (Buffer.byteLength(text, 'utf8') <= maxBytes) {
     return text;
   }
 
