@@ -564,6 +564,21 @@ function buildDirectReturnTimeoutResponse(params: {
   };
 }
 
+function sendGuardedGptJsonResponse(
+  req: express.Request,
+  res: express.Response,
+  payload: object,
+  logEvent: string,
+  statusCode = 200
+) {
+  const boundedPayload = prepareBoundedClientJsonPayload(payload as Record<string, unknown>, {
+    logger: req.logger,
+    logEvent,
+  });
+
+  return sendPreparedJsonResponse(res.status(statusCode), boundedPayload);
+}
+
 function normalizeQueryAndWaitBody(
   normalizedBody: Record<string, unknown> | null,
   requestedAction: string | null
@@ -1639,14 +1654,26 @@ router.post("/:gptId", async (req, res, next) => {
                     dedupeReason: createResult.dedupeReason
                   });
                 }
-                return res.status(202).json(buildDirectReturnTimeoutResponse({
-                  pendingResponse: queuedPendingResponse,
-                  jobId: job.id,
-                  waitForResultMs: asyncWaitForResultMs,
-                  pollIntervalMs: asyncPollIntervalMs
-                }));
+                return sendGuardedGptJsonResponse(
+                  req,
+                  res,
+                  buildDirectReturnTimeoutResponse({
+                    pendingResponse: queuedPendingResponse,
+                    jobId: job.id,
+                    waitForResultMs: asyncWaitForResultMs,
+                    pollIntervalMs: asyncPollIntervalMs
+                  }),
+                  'gpt.response.async_direct_return_timeout',
+                  202
+                );
               }
-              return res.status(202).json(queuedPendingResponse);
+              return sendGuardedGptJsonResponse(
+                req,
+                res,
+                queuedPendingResponse,
+                'gpt.response.async_pending',
+                202
+              );
             }
           }
         }
@@ -1783,7 +1810,13 @@ router.post("/:gptId", async (req, res, next) => {
           timeoutMs: routeTimeoutMs,
           error: errorMessage,
         });
-        return res.status(202).json(queuedPendingResponse);
+        return sendGuardedGptJsonResponse(
+          req,
+          res,
+          queuedPendingResponse,
+          'gpt.response.timeout_pending',
+          202
+        );
       }
       if (routeTimedOut && responseOpen && promptText && ARCANOS_CORE_GPT_IDS.has(gptId)) {
         const timeoutFallback = buildArcanosCoreTimeoutFallbackEnvelope({

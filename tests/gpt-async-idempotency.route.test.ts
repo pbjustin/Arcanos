@@ -127,6 +127,8 @@ describe('async /gpt idempotency', () => {
         route: 'async'
       })
     });
+    expect(response.headers['x-response-bytes']).toBeTruthy();
+    expect(response.headers['x-response-truncated']).toBeUndefined();
   });
 
   it('returns stored completed job results for explicit get_result actions without enqueueing work', async () => {
@@ -721,6 +723,8 @@ describe('async /gpt idempotency', () => {
         result: '/jobs/job-timeout/result'
       }
     });
+    expect(response.headers['x-response-bytes']).toBeTruthy();
+    expect(response.headers['x-response-truncated']).toBeUndefined();
     expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
     expect(waitForQueuedGptJobCompletionMock).toHaveBeenCalledTimes(1);
   });
@@ -835,6 +839,8 @@ describe('async /gpt idempotency', () => {
         result: '/jobs/job-query-and-wait-timeout/result'
       }
     });
+    expect(response.headers['x-response-bytes']).toBeTruthy();
+    expect(response.headers['x-response-truncated']).toBeUndefined();
     expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
     expect(waitForQueuedGptJobCompletionMock).toHaveBeenCalledTimes(1);
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
