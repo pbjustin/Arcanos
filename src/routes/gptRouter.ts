@@ -12,6 +12,7 @@ import {
   prepareBoundedClientJsonPayload,
   shapeClientRouteResult
 } from '@shared/http/clientResponseGuards.js';
+import { sendPreparedJsonResponse } from '@shared/http/sendPreparedJsonResponse.js';
 import { applyCanonicalGptRouteHeaders } from '@shared/http/gptRouteHeaders.js';
 import {
   applyAIDegradedResponseHeaders,
@@ -1180,11 +1181,7 @@ router.post("/:gptId", async (req, res, next) => {
             truncated: diagnosticsPayload.truncated,
           });
 
-          res.setHeader('x-response-bytes', String(diagnosticsPayload.responseBytes));
-          if (diagnosticsPayload.truncated) {
-            res.setHeader('x-response-truncated', 'true');
-          }
-          return res.json(diagnosticsPayload.payload);
+          return sendPreparedJsonResponse(res, diagnosticsPayload);
         }
 
         const shouldUseJobBackedExecution =
@@ -1487,11 +1484,7 @@ router.post("/:gptId", async (req, res, next) => {
                   logger: req.logger,
                   logEvent: 'gpt.response.async_completed',
                 });
-                res.setHeader('x-response-bytes', String(publicEnvelope.responseBytes));
-                if (publicEnvelope.truncated) {
-                  res.setHeader('x-response-truncated', 'true');
-                }
-                return res.json(publicEnvelope.payload);
+                return sendPreparedJsonResponse(res, publicEnvelope);
               }
 
               if (waitedJob.state === 'failed') {
@@ -1737,11 +1730,7 @@ router.post("/:gptId", async (req, res, next) => {
             responseBytes: diagnosticPayload.responseBytes,
             truncated: diagnosticPayload.truncated,
           });
-          res.setHeader('x-response-bytes', String(diagnosticPayload.responseBytes));
-          if (diagnosticPayload.truncated) {
-            res.setHeader('x-response-truncated', 'true');
-          }
-          return res.json(diagnosticPayload.payload);
+          return sendPreparedJsonResponse(res, diagnosticPayload);
         }
 
         const responseSerializationStartedAt = Date.now();
@@ -1761,12 +1750,7 @@ router.post("/:gptId", async (req, res, next) => {
           truncated: publicEnvelope.truncated,
         });
 
-        res.setHeader('x-response-bytes', String(publicEnvelope.responseBytes));
-        if (publicEnvelope.truncated) {
-          res.setHeader('x-response-truncated', 'true');
-        }
-
-        return res.json(publicEnvelope.payload);
+        return sendPreparedJsonResponse(res, publicEnvelope);
       }
     );
   } catch (err) {
@@ -1823,11 +1807,7 @@ router.post("/:gptId", async (req, res, next) => {
           logger: req.logger,
           logEvent: 'gpt.response.timeout_fallback',
         });
-        res.setHeader('x-response-bytes', String(publicEnvelope.responseBytes));
-        if (publicEnvelope.truncated) {
-          res.setHeader('x-response-truncated', 'true');
-        }
-        return res.status(200).json(publicEnvelope.payload);
+        return sendPreparedJsonResponse(res.status(200), publicEnvelope);
       }
       if (routeTimedOut && responseOpen) {
         return res.status(504).json({

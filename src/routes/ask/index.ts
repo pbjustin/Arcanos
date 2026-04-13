@@ -19,6 +19,7 @@ import {
   prepareBoundedClientJsonPayload,
   shapeClientRouteResult
 } from '@shared/http/clientResponseGuards.js';
+import { sendPreparedJsonResponse } from '@shared/http/sendPreparedJsonResponse.js';
 import {
   applyDeprecatedAskRouteHeaders,
   ASK_ROUTE_SUNSET_HEADER,
@@ -519,12 +520,7 @@ function sendGuardedAskResponse(
     logEvent,
   });
 
-  res.setHeader('x-response-bytes', String(boundedPayload.responseBytes));
-  if (boundedPayload.truncated) {
-    res.setHeader('x-response-truncated', 'true');
-  }
-
-  return res.json(boundedPayload.payload);
+  return sendPreparedJsonResponse(res, boundedPayload);
 }
 
 function extractAskRouteGptHint(req: Request): string | null {

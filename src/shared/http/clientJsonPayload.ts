@@ -1,0 +1,136 @@
+import type { RequestScopedLogger } from './types.js';
+import {
+  PreparedClientJsonPayload,
+  STRING_PREVIEW_MAX_BYTES,
+  emitClientResponseTruncationWarning,
+  isRecord,
+  measureJsonBytes,
+  readString,
+  resolveClientResponseMaxBytes,
+  truncateText,
+} from './clientResponseCommon.js';
+
+function extractPreviewText(payload: Record<string, unknown>): string {
+  const result = payload.result;
+
+  if (typeof result === 'string' && result.trim().length > 0) {
+    return result;
+  }
+
+  if (isRecord(result)) {
+    const resultText = readString(result.result) ?? readString(result.message) ?? readString(result.text);
+    if (resultText) {
+      return resultText;
+    }
+  }
+
+  return truncateText(JSON.stringify(payload), STRING_PREVIEW_MAX_BYTES);
+}
+
+function buildTruncatedPayload(payload: Record<string, unknown>, maxBytes: number): Record<string, unknown> {
+  const previewBudget = Math.max(512, Math.floor(maxBytes * 0.45));
+  const preview = truncateText(extractPreviewText(payload), previewBudget);
+
+  if (isRecord(payload.meta)) {
+    return {
+      result: preview,
+      ...(readString(payload.module) ? { module: readString(payload.module) } : {}),
+      meta: {
+        ...(readString(payload.meta.gptId) ? { gptId: readString(payload.meta.gptId) } : {}),
+        ...(readString(payload.meta.route) ? { route: readString(payload.meta.route) } : {}),
+        ...(readString(payload.meta.timestamp) ? { timestamp: readString(payload.meta.timestamp) } : {}),
+        truncated: true,
+      },
+    };
+  }
+
+  if (isRecord(payload._route)) {
+    return {
+      ...(typeof payload.ok === 'boolean' ? { ok: payload.ok } : {}),
+      result: preview,
+      _route: {
+        ...(readString(payload._route.gptId) ? { gptId: readString(payload._route.gptId) } : {}),
+        ...(readString(payload._route.module) ? { module: readString(payload._route.module) } : {}),
+        ...(readString(payload._route.route) ? { route: readString(payload._route.route) } : {}),
+        ...(readString(payload._route.timestamp) ? { timestamp: readString(payload._route.timestamp) } : {}),
+        truncated: true,
+      },
+    };
+  }
+
+  return {
+    result: preview,
+    truncated: true,
+  };
+}
+
+export function prepareBoundedClientJsonPayload<T extends Record<string, unknown>>(
+  payload: T,
+  options: {
+    logger?: RequestScopedLogger;
+    logEvent?: string;
+    maxBytes?: number;
+  } = {}
+): PreparedClientJsonPayload<T> {
+  const maxResponseBytes = resolveClientResponseMaxBytes(options.maxBytes);
+  const originalResponseBytes = measureJsonBytes(payload);
+  let normalizedPayload: Record<string, unknown> = payload;
+  let truncated = false;
+
+  if (originalResponseBytes > maxResponseBytes) {
+    normalizedPayload = buildTruncatedPayload(payload, maxResponseBytes);
+    truncated = true;
+  }
+
+  const responseBytes = measureJsonBytes(normalizedPayload);
+
+  options.logger?.info(options.logEvent ?? 'http.client_response', {
+    originalResponseBytes,
+    responseBytes,
+    maxResponseBytes,
+    truncated,
+  });
+
+  if (truncated) {
+    emitClientResponseTruncationWarning(options.logger, options.logEvent ?? 'http.client_response', {
+      originalResponseBytes,
+      responseBytes,
+      maxResponseBytes,
+    });
+  }
+
+  return {
+    payload: normalizedPayload as T,
+    responseBytes,
+    originalResponseBytes,
+    truncated,
+    maxResponseBytes,
+  };
+}
+
+export function withJsonResponseBytes<T extends Record<string, unknown>, K extends string = 'response_bytes'>(
+  payload: T,
+  fieldName?: K
+): T & Record<K | 'response_bytes', number> {
+  const resolvedFieldName = (fieldName ?? 'response_bytes') as K | 'response_bytes';
+  let responseBytes = 0;
+  let nextPayload = {
+    ...payload,
+    [resolvedFieldName]: responseBytes,
+  } as T & Record<K | 'response_bytes', number>;
+
+  for (let iteration = 0; iteration < 4; iteration += 1) {
+    const measuredResponseBytes = measureJsonBytes(nextPayload);
+    if (measuredResponseBytes === responseBytes) {
+      return nextPayload;
+    }
+
+    responseBytes = measuredResponseBytes;
+    nextPayload = {
+      ...payload,
+      [resolvedFieldName]: responseBytes,
+    } as T & Record<K | 'response_bytes', number>;
+  }
+
+  return nextPayload;
+}
