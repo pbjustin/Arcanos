@@ -637,6 +637,42 @@ describe('gpt router auth logging', () => {
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
+  it('rejects explicit embedded DAG control actions before dispatching to the write plane', async () => {
+    const app = express();
+    app.use(express.json());
+    app.use(requestContext);
+    app.use('/gpt', gptRouter);
+
+    const response = await request(app)
+      .post('/gpt/arcanos-core')
+      .send({
+        prompt: 'run the latest dag trace for me',
+        payload: {
+          action: 'dag.run.latest'
+        }
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual({
+      ok: false,
+      error: {
+        code: 'DAG_CONTROL_REQUIRES_DIRECT_ENDPOINT',
+        message: 'DAG execution and trace retrieval must use /api/arcanos/dag/* or POST /mcp. Do not send DAG control requests through POST /gpt/{gptId}.'
+      },
+      canonical: {
+        mcp: '/mcp',
+        dagRuns: '/api/arcanos/dag/runs/{runId}',
+        dagTrace: '/api/arcanos/dag/runs/{runId}/trace'
+      },
+      _route: expect.objectContaining({
+        gptId: 'arcanos-core',
+        route: 'control_guard',
+        action: 'dag.run.latest'
+      })
+    });
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
   it('rejects explicit MCP control actions and points callers to /mcp', async () => {
     const app = express();
     app.use(express.json());

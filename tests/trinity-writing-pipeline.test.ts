@@ -298,4 +298,42 @@ describe('runTrinityWritingPipeline', () => {
       })
     );
   });
+
+  it('rejects explicit embedded DAG control actions before the Trinity engine executes', async () => {
+    await expect(
+      runTrinityWritingPipeline({
+        input: {
+          prompt: 'run the latest dag trace for me',
+          sourceEndpoint: 'write',
+          body: {
+            prompt: 'run the latest dag trace for me',
+            payload: {
+              action: 'dag.run.latest'
+            }
+          }
+        },
+        context: {
+          client: {} as never,
+          requestId: 'req-dag-leak-2'
+        }
+      })
+    ).rejects.toMatchObject({
+      name: 'TrinityControlLeakError',
+      classification: expect.objectContaining({
+        kind: 'dag_control',
+        action: 'dag.run.latest'
+      })
+    });
+
+    expect(runThroughBrainMock).not.toHaveBeenCalled();
+    expect(loggerErrorMock).toHaveBeenCalledWith(
+      'trinity.control_leak_detected',
+      expect.objectContaining({
+        requestId: 'req-dag-leak-2',
+        sourceEndpoint: 'write',
+        classification: 'dag_control',
+        action: 'dag.run.latest'
+      })
+    );
+  });
 });

@@ -78,6 +78,11 @@ function normalizeMcpAction(action: string | null | undefined): McpControlAction
   return null;
 }
 
+function normalizeDagControlAction(action: string | null | undefined): string | null {
+  const normalizedAction = normalizeAction(action);
+  return normalizedAction && normalizedAction.startsWith('dag.') ? normalizedAction : null;
+}
+
 function getString(record: Record<string, unknown>, key: string): string | null {
   const value = record[key];
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
@@ -103,6 +108,20 @@ function detectEmbeddedMcpAction(body: unknown): McpControlAction | null {
     getString(embeddedEnvelope, 'action') ?? getString(embeddedEnvelope, 'operation');
 
   return normalizeMcpAction(envelopeAction);
+}
+
+function detectEmbeddedDagAction(body: unknown): string | null {
+  const normalizedBody = normalizeGptRequestBody(body);
+  if (!normalizedBody) {
+    return null;
+  }
+
+  const payloadRecord = isRecord(normalizedBody.payload) ? normalizedBody.payload : normalizedBody;
+  const embeddedEnvelope = isRecord(payloadRecord.dag) ? payloadRecord.dag : payloadRecord;
+  const envelopeAction =
+    getString(embeddedEnvelope, 'action') ?? getString(embeddedEnvelope, 'operation');
+
+  return normalizeDagControlAction(envelopeAction);
 }
 
 export function classifyWritingPlaneInput(input: {
@@ -226,6 +245,25 @@ export function classifyWritingPlaneInput(input: {
         'MCP tool calls must use POST /mcp. Do not send MCP control requests through POST /gpt/{gptId}.',
       canonical: {
         mcp: '/mcp',
+      },
+    };
+  }
+
+  const explicitDagAction =
+    normalizeDagControlAction(normalizedAction) ?? detectEmbeddedDagAction(input.body);
+  if (explicitDagAction) {
+    return {
+      plane: 'control',
+      kind: 'dag_control',
+      action: explicitDagAction,
+      reason: 'explicit_dag_control_action',
+      errorCode: 'DAG_CONTROL_REQUIRES_DIRECT_ENDPOINT',
+      message:
+        'DAG execution and trace retrieval must use /api/arcanos/dag/* or POST /mcp. Do not send DAG control requests through POST /gpt/{gptId}.',
+      canonical: {
+        mcp: '/mcp',
+        dagRuns: '/api/arcanos/dag/runs/{runId}',
+        dagTrace: '/api/arcanos/dag/runs/{runId}/trace',
       },
     };
   }
