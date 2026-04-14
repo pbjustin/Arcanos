@@ -8,6 +8,7 @@ const loggerInfoMock = jest.fn();
 const loggerErrorMock = jest.fn();
 const runWithRequestAbortTimeoutMock = jest.fn(async (_config: unknown, operation: () => Promise<unknown>) => operation());
 const getRequestRemainingMsMock = jest.fn(() => null);
+const getRequestAbortContextMock = jest.fn(() => null);
 
 jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({
   runTrinityWritingPipeline: mockRunTrinityWritingPipeline,
@@ -40,7 +41,7 @@ jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({
 
 jest.unstable_mockModule('@arcanos/runtime', () => ({
   getRequestAbortSignal: jest.fn(() => undefined),
-  getRequestAbortContext: jest.fn(() => null),
+  getRequestAbortContext: getRequestAbortContextMock,
   getRequestRemainingMs: getRequestRemainingMsMock,
   isAbortError: jest.fn(() => false),
   runWithRequestAbortTimeout: runWithRequestAbortTimeoutMock
@@ -53,6 +54,7 @@ describe('ARCANOS:CORE service', () => {
     jest.clearAllMocks();
     delete process.env.ARCANOS_CORE_HANDLER_TIMEOUT_MS;
     getRequestRemainingMsMock.mockReturnValue(null);
+    getRequestAbortContextMock.mockReturnValue(null);
     mockCreateRuntimeBudget.mockReturnValue({ budget: 'runtime' });
   });
 
@@ -61,6 +63,7 @@ describe('ARCANOS:CORE service', () => {
     const trinityResult = { result: 'core-response' };
 
     mockGetOpenAIClientOrAdapter.mockReturnValue({ client });
+    getRequestAbortContextMock.mockReturnValue({ requestId: 'req-core-1' });
     mockRunTrinityWritingPipeline.mockResolvedValue(trinityResult);
 
     const result = await ArcanosCore.actions.query({
@@ -81,7 +84,7 @@ describe('ARCANOS:CORE service', () => {
       },
       context: {
         client,
-        requestId: 'sess-core-1',
+        requestId: 'req-core-1',
         runtimeBudget: { budget: 'runtime' },
         runOptions: {
           answerMode: 'direct',
@@ -113,6 +116,7 @@ describe('ARCANOS:CORE service', () => {
   it('keeps the default handler timeout aligned with the route budget instead of aborting after five seconds', async () => {
     const client = { id: 'openai-client' };
     mockGetOpenAIClientOrAdapter.mockReturnValue({ client });
+    getRequestAbortContextMock.mockReturnValue({ requestId: 'req-core-default-1' });
     mockRunTrinityWritingPipeline.mockResolvedValue({ result: 'core-response' });
     getRequestRemainingMsMock.mockReturnValue(60_000);
 
@@ -146,6 +150,7 @@ describe('ARCANOS:CORE service', () => {
     mockGetOpenAIClientOrAdapter.mockReturnValue({ client });
     mockRunTrinityWritingPipeline.mockResolvedValue({ result: 'background-core-response' });
     getRequestRemainingMsMock.mockReturnValue(null);
+    getRequestAbortContextMock.mockReturnValue({ requestId: 'req-core-background-1' });
 
     await ArcanosCore.actions.query({
       prompt: 'Process this in worker mode.',
@@ -170,7 +175,7 @@ describe('ARCANOS:CORE service', () => {
       },
       context: {
         client,
-        requestId: 'gpt.arcanos-core.query',
+        requestId: 'req-core-background-1',
         runtimeBudget: { budget: 'runtime' },
         runOptions: {
           watchdogModelTimeoutMs: 110_000

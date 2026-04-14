@@ -63,6 +63,7 @@ export interface RunArcanosCoreQueryParams {
   client: OpenAI;
   prompt: string;
   sourceEndpoint: string;
+  requestId?: string;
   sessionId?: string;
   overrideAuditSafe?: string;
   runOptions?: Omit<TrinityRunOptions, 'sourceEndpoint'>;
@@ -371,6 +372,22 @@ function buildCorePipelinePlan(
   };
 }
 
+function resolveTrinityRequestId(explicitRequestId?: string): string | undefined {
+  const normalizedExplicitRequestId =
+    typeof explicitRequestId === 'string' && explicitRequestId.trim().length > 0
+      ? explicitRequestId.trim()
+      : null;
+
+  if (normalizedExplicitRequestId) {
+    return normalizedExplicitRequestId;
+  }
+
+  const activeRequestId = getRequestAbortContext()?.requestId;
+  return typeof activeRequestId === 'string' && activeRequestId.trim().length > 0
+    ? activeRequestId.trim()
+    : undefined;
+}
+
 function buildCoreDegradedRunOptions(
   sourceEndpoint: string,
   runOptions?: Omit<TrinityRunOptions, 'sourceEndpoint'>,
@@ -396,6 +413,7 @@ export async function runArcanosCoreQuery(
 ): Promise<TrinityResult> {
   const startedAt = Date.now();
   const pipelinePlan = buildCorePipelinePlan(params.executionModeOverride);
+  const trinityRequestId = resolveTrinityRequestId(params.requestId);
   const primaryRunOptions: TrinityRunOptions = {
     ...(params.runOptions ?? {}),
     sourceEndpoint: params.sourceEndpoint,
@@ -457,7 +475,7 @@ export async function runArcanosCoreQuery(
           },
           context: {
             client: params.client,
-            requestId: params.sessionId ?? params.sourceEndpoint,
+            ...(trinityRequestId ? { requestId: trinityRequestId } : {}),
             runtimeBudget,
             runOptions: primaryRunOptionsWithoutSource
           }
@@ -550,7 +568,7 @@ export async function runArcanosCoreQuery(
               },
               context: {
                 client: params.client,
-                requestId: params.sessionId ?? params.sourceEndpoint,
+                ...(trinityRequestId ? { requestId: trinityRequestId } : {}),
                 runtimeBudget: createRuntimeBudgetWithLimit(
                   pipelinePlan.degradedTimeoutMs,
                   resolveCoreRuntimeBudgetSafetyBufferMs(pipelinePlan.degradedTimeoutMs)
@@ -675,6 +693,7 @@ export const ArcanosCore: ModuleDef = {
       return runArcanosCoreQuery({
         client,
         prompt,
+        requestId: getRequestAbortContext()?.requestId,
         sessionId,
         overrideAuditSafe,
         sourceEndpoint: 'gpt.arcanos-core.query',

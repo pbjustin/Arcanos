@@ -14,6 +14,7 @@ const getWorkerExecutionLimitsMock = jest.fn(() => ({
 }));
 const runWithRequestAbortTimeoutMock = jest.fn(async (_options, callback) => callback());
 const getRequestAbortSignalMock = jest.fn(() => undefined);
+const getRequestAbortContextMock = jest.fn(() => null);
 const isAbortErrorMock = jest.fn((error: unknown) =>
   error instanceof Error && error.message.toLowerCase().includes('abort')
 );
@@ -38,6 +39,7 @@ jest.unstable_mockModule('../src/workers/workerExecutionLimits.js', () => ({
 
 jest.unstable_mockModule('@arcanos/runtime', () => ({
   createAbortError: createAbortErrorMock,
+  getRequestAbortContext: getRequestAbortContextMock,
   getRequestAbortSignal: getRequestAbortSignalMock,
   isAbortError: isAbortErrorMock,
   runWithRequestAbortTimeout: runWithRequestAbortTimeoutMock
@@ -62,6 +64,7 @@ describe('runWorkerTrinityPrompt', () => {
     runTrinityWritingPipelineMock.mockResolvedValue({ result: 'ok' });
     runWithRequestAbortTimeoutMock.mockImplementation(async (_options, callback) => callback());
     getRequestAbortSignalMock.mockReturnValue(undefined);
+    getRequestAbortContextMock.mockReturnValue(null);
     isAbortErrorMock.mockImplementation((error: unknown) =>
       error instanceof Error && error.message.toLowerCase().includes('abort')
     );
@@ -69,6 +72,7 @@ describe('runWorkerTrinityPrompt', () => {
 
   it('forwards worker routing metadata into Trinity', async () => {
     const openaiClient = {} as never;
+    getRequestAbortContextMock.mockReturnValue({ requestId: 'req-worker-1' });
 
     await runWorkerTrinityPrompt(openaiClient, {
       prompt: 'Audit the DAG output',
@@ -97,7 +101,7 @@ describe('runWorkerTrinityPrompt', () => {
       },
       context: {
         client: openaiClient,
-        requestId: 'session-123',
+        requestId: 'req-worker-1',
         runtimeBudget: { budgetId: 'runtime-budget' },
         runOptions: {
           cognitiveDomain: 'diagnostic',

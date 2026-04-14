@@ -2,6 +2,7 @@ import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js
 import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { buildTrinityOutputControlOptions } from '@shared/ask/trinityRequestOptions.js';
 import type { AIRequestDTO } from '@shared/types/dto.js';
+import { getRequestAbortContext } from '@arcanos/runtime';
 import { generateMockResponse } from './openai.js';
 import { getOpenAIClientOrAdapter } from './openai/clientBridge.js';
 import type { ModuleDef } from './moduleLoader.js';
@@ -46,6 +47,8 @@ export function createArcanosTrinityModule(
           return generateMockResponse(prompt, options.mockEndpoint);
         }
 
+        const requestId = getRequestAbortContext()?.requestId;
+
         return runTrinityWritingPipeline({
           input: {
             prompt,
@@ -56,7 +59,9 @@ export function createArcanosTrinityModule(
           },
           context: {
             client,
-            requestId: normalizedPayload.sessionId,
+            ...(typeof requestId === 'string' && requestId.trim().length > 0
+              ? { requestId: requestId.trim() }
+              : {}),
             runtimeBudget: createRuntimeBudget(),
             runOptions: buildTrinityOutputControlOptions(normalizedPayload)
           }

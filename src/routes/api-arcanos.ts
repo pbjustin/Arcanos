@@ -530,6 +530,7 @@ const handleArcanosAsk = asyncHandler(async (
     const trinityResult = await runArcanosCoreQuery({
       client: openai,
       prompt,
+      requestId,
       sessionId: req.body.sessionId,
       overrideAuditSafe: req.body.overrideAuditSafe,
       sourceEndpoint: ARCANOS_API_ENDPOINT_NAME,

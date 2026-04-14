@@ -10,6 +10,7 @@ import { logger } from '@platform/logging/structuredLogging.js';
 import { createRuntimeBudgetWithLimit } from '@platform/resilience/runtimeBudget.js';
 import {
   createAbortError,
+  getRequestAbortContext,
   getRequestAbortSignal,
   isAbortError,
   runWithRequestAbortTimeout
@@ -452,6 +453,7 @@ export async function runWorkerTrinityPrompt(
     request,
     workerExecutionLimits.workerTrinityStageTimeoutMs
   );
+  const requestId = getRequestAbortContext()?.requestId;
 
   return runTrinityWritingPipeline({
     input: {
@@ -463,7 +465,9 @@ export async function runWorkerTrinityPrompt(
     },
     context: {
       client: openaiClient,
-      requestId: request.sessionId ?? normalizedSourceEndpoint,
+      ...(typeof requestId === 'string' && requestId.trim().length > 0
+        ? { requestId: requestId.trim() }
+        : {}),
       runtimeBudget: createRuntimeBudgetWithLimit(workerExecutionLimits.workerTrinityRuntimeBudgetMs),
       runOptions: trinityRunOptions
     }
