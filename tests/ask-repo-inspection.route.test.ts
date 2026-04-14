@@ -163,6 +163,7 @@ describe('/ask repo inspection routing', () => {
     });
 
     expect(response.status).toBe(503);
+    expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toEqual({
       error: {
         code: 'REPO_EVIDENCE_REQUIRED',

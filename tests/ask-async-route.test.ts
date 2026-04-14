@@ -127,6 +127,8 @@ describe('async /brain queue contract', () => {
     });
 
     expect(response.status).toBe(202);
+    expect(response.headers['x-response-bytes']).toMatch(/^\d+$/);
+    expect(response.headers['x-response-truncated']).toBeUndefined();
     expect(response.body).toEqual({
       ok: true,
       status: 'pending',
@@ -219,9 +221,53 @@ describe('async /brain queue contract', () => {
     });
 
     expect(response.status).toBe(500);
+    expect(response.headers['x-response-bytes']).toMatch(/^\d+$/);
+    expect(response.headers['x-response-truncated']).toBeUndefined();
     expect(response.body).toEqual({
       error: 'ASYNC_ASK_JOB_FAILED',
       message: 'OpenAI upstream timed out',
+      jobId: 'job-123',
+      poll: '/jobs/job-123'
+    });
+  });
+
+  it('keeps malformed completed async outputs on the shared guarded response path', async () => {
+    getJobByIdMock.mockResolvedValue({
+      id: 'job-123',
+      status: 'completed',
+      output: 'not-a-structured-payload'
+    });
+
+    const response = await request(buildApp()).post('/brain').send({
+      message: 'Refactor this TypeScript function.',
+      async: true
+    });
+
+    expect(response.status).toBe(500);
+    expect(response.headers['x-response-bytes']).toMatch(/^\d+$/);
+    expect(response.headers['x-response-truncated']).toBeUndefined();
+    expect(response.body).toEqual({
+      error: 'ASYNC_ASK_JOB_OUTPUT_INVALID',
+      message: 'Async ask job completed without a structured output payload.',
+      jobId: 'job-123',
+      poll: '/jobs/job-123'
+    });
+  });
+
+  it('keeps missing async jobs on the shared guarded response path', async () => {
+    getJobByIdMock.mockResolvedValue(null);
+
+    const response = await request(buildApp()).post('/brain').send({
+      message: 'Refactor this TypeScript function.',
+      async: true
+    });
+
+    expect(response.status).toBe(500);
+    expect(response.headers['x-response-bytes']).toMatch(/^\d+$/);
+    expect(response.headers['x-response-truncated']).toBeUndefined();
+    expect(response.body).toEqual({
+      error: 'ASYNC_ASK_JOB_MISSING',
+      message: 'Async ask job disappeared before completion.',
       jobId: 'job-123',
       poll: '/jobs/job-123'
     });

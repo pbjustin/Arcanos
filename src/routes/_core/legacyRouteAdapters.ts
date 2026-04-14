@@ -3,7 +3,6 @@ import type { TrinityResult } from '@core/logic/trinity.js';
 import { buildTrinityUserVisibleResponse } from '@shared/ask/trinityResponseSerializer.js';
 import { extractDiagnosticTextInput } from '@shared/http/diagnosticRequest.js';
 import {
-  prepareBoundedClientJsonPayload,
   shapeClientRouteResult
 } from '@shared/http/clientResponseGuards.js';
 import {
@@ -192,8 +191,7 @@ export function adaptLegacyAiRouteResult(
 
 export function adaptLegacyArcanosRouteResult(
   body: unknown,
-  result: unknown,
-  req: Request
+  result: unknown
 ): unknown {
   const input = extractLegacyTextInput(body);
 
@@ -210,10 +208,7 @@ export function adaptLegacyArcanosRouteResult(
     return shapedResult;
   }
 
-  return prepareBoundedClientJsonPayload(shapedResult, {
-    logger: req.logger,
-    logEvent: 'legacy.route.arcanos.response'
-  }).payload;
+  return shapedResult;
 }
 
 export function unwrapLegacyModuleRouteResult(result: unknown): unknown {

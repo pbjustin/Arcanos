@@ -112,11 +112,13 @@ describe('api-arcanos-verification routes', () => {
     const capabilitiesResponse = await request(buildApp()).get('/capabilities');
 
     expect(healthResponse.status).toBe(200);
+    expect(healthResponse.headers['x-response-bytes']).toBeTruthy();
     expect(healthResponse.body.ok).toBe(true);
     expect(healthResponse.body.requestId).toBe('req-test');
     expect(healthResponse.body.data.service).toBe('arcanos-verification-api');
 
     expect(capabilitiesResponse.status).toBe(200);
+    expect(capabilitiesResponse.headers['x-response-bytes']).toBeTruthy();
     expect(capabilitiesResponse.body.data.features.dagOrchestration).toBe(true);
     expect(capabilitiesResponse.body.data.limits.maxAiCallsPerRun).toBe(20);
   });
@@ -126,11 +128,13 @@ describe('api-arcanos-verification routes', () => {
     const queueResponse = await request(buildApp()).get('/workers/queue');
 
     expect(workersResponse.status).toBe(200);
+    expect(workersResponse.headers['x-response-bytes']).toBeTruthy();
     expect(workersResponse.body.data.workers).toHaveLength(2);
     expect(workersResponse.body.data.workers[1].type).toBe('async_queue');
     expect(workersResponse.body.data.workers[1].activeJobs).toBe(1);
 
     expect(queueResponse.status).toBe(200);
+    expect(queueResponse.headers['x-response-bytes']).toBeTruthy();
     expect(queueResponse.body.data.queue.depth).toBe(3);
     expect(queueResponse.body.data.queue.waiting).toBe(2);
   });
@@ -385,6 +389,7 @@ describe('api-arcanos-verification routes', () => {
       });
 
     expect(createResponse.status).toBe(202);
+    expect(createResponse.headers['x-response-bytes']).toBeTruthy();
     expect(createResponse.body.data.run.runId).toBe('run-1');
     expect(createResponse.body.data.run.pipeline).toBe('trinity');
     expect(createResponse.body.data.run.template).toBe('trinity-core');
@@ -399,10 +404,12 @@ describe('api-arcanos-verification routes', () => {
     const cancelResponse = await request(buildApp()).post('/dag/runs/run-1/cancel');
 
     expect(latestResponse.status).toBe(200);
+    expect(latestResponse.headers['x-response-bytes']).toBeTruthy();
     expect(latestResponse.body.data.run.runId).toBe('run-1');
     expect(mockGetLatestRun).toHaveBeenCalledWith(undefined);
 
     expect(runResponse.status).toBe(200);
+    expect(runResponse.headers['x-response-bytes']).toBeTruthy();
     expect(runResponse.body.data.run.status).toBe('running');
     expect(runResponse.body.data.run.trinity_version).toBe('1.0');
     expect(mockWaitForRunUpdate).toHaveBeenCalledWith('run-1', {
@@ -411,17 +418,21 @@ describe('api-arcanos-verification routes', () => {
     });
 
     expect(treeResponse.status).toBe(200);
+    expect(treeResponse.headers['x-response-bytes']).toBeTruthy();
     expect(treeResponse.body.data.nodes[0].nodeId).toBe('planner');
     expect(treeResponse.body.data.nodes[0].role).toBe('trinity_planner');
 
     expect(nodeResponse.status).toBe(200);
+    expect(nodeResponse.headers['x-response-bytes']).toBeTruthy();
     expect(nodeResponse.body.data.node.agentRole).toBe('planner');
     expect(nodeResponse.body.data.node.pipeline).toBe('trinity');
 
     expect(metricsResponse.status).toBe(200);
+    expect(metricsResponse.headers['x-response-bytes']).toBeTruthy();
     expect(metricsResponse.body.data.metrics.maxParallelNodesObserved).toBe(3);
 
     expect(traceResponse.status).toBe(200);
+    expect(traceResponse.headers['x-response-bytes']).toBeTruthy();
     expect(traceResponse.body.data.run.runId).toBe('run-1');
     expect(traceResponse.body.data.sections.events.maxEvents).toBe(200);
     expect(mockGetRunTrace).toHaveBeenCalledWith('run-1', {
@@ -429,12 +440,14 @@ describe('api-arcanos-verification routes', () => {
     });
 
     expect(verificationResponse.status).toBe(200);
+    expect(verificationResponse.headers['x-response-bytes']).toBeTruthy();
     expect(verificationResponse.body.data.verification.parallelExecutionObserved).toBe(true);
     expect(verificationResponse.body.data.pipeline).toBe('trinity');
     expect(verificationResponse.body.data.lineage.workerPipeline).toBe('trinity');
     expect(verificationResponse.body.data.lineage.workerEntryPoint).toBe('runWorkerTrinityPrompt');
 
     expect(cancelResponse.status).toBe(200);
+    expect(cancelResponse.headers['x-response-bytes']).toBeTruthy();
     expect(cancelResponse.body.data.status).toBe('cancelled');
   });
 
@@ -462,6 +475,7 @@ describe('api-arcanos-verification routes', () => {
       });
 
     expect(response.status).toBe(200);
+    expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.headers['x-arcanos-run-wait-applied']).toBe('true');
     expect(response.headers['x-arcanos-run-updated']).toBe('true');
     expect(response.headers['x-arcanos-recommended-poll-interval-ms']).toBe('5000');

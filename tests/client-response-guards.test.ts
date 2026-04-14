@@ -6,6 +6,7 @@ import {
   shapeClientRouteResult,
   withJsonResponseBytes,
 } from '../src/shared/http/clientResponseGuards.js';
+import { truncateText } from '../src/shared/http/clientResponseCommon.js';
 
 describe('client response guards', () => {
   it('reduces oversized MCP health results to a compact public shape', () => {
@@ -484,6 +485,54 @@ describe('client response guards', () => {
     );
   });
 
+  it('keeps truncated payloads within the JSON byte ceiling for JSON-escaped strings', () => {
+    const prepared = prepareBoundedClientJsonPayload({
+      result: '\u0000'.repeat(2_000),
+      module: 'ARCANOS:CORE',
+      meta: {
+        gptId: 'core',
+        route: 'core',
+        timestamp: '2026-03-21T10:00:00.000Z',
+      },
+    }, {
+      maxBytes: 2048,
+    });
+
+    expect(prepared.truncated).toBe(true);
+    expect(prepared.responseBytes).toBeLessThanOrEqual(prepared.maxResponseBytes);
+  });
+
+  it('preserves generic job lookup metadata when truncating oversized payloads', () => {
+    const prepared = prepareBoundedClientJsonPayload({
+      jobId: 'job-123',
+      status: 'completed',
+      jobStatus: 'completed',
+      lifecycleStatus: 'completed',
+      poll: '/jobs/job-123',
+      stream: '/jobs/job-123/stream',
+      result: {
+        answer: 'x'.repeat(16_000),
+      },
+      error: null,
+    }, {
+      maxBytes: 2048,
+    });
+
+    expect(prepared.truncated).toBe(true);
+    expect(prepared.responseBytes).toBeLessThanOrEqual(prepared.maxResponseBytes);
+    expect(prepared.payload).toMatchObject({
+      jobId: 'job-123',
+      status: 'completed',
+      jobStatus: 'completed',
+      lifecycleStatus: 'completed',
+      poll: '/jobs/job-123',
+      stream: '/jobs/job-123/stream',
+      truncated: true,
+      result: expect.stringContaining('[truncated]'),
+      error: null,
+    });
+  });
+
   it('stamps lightweight probe payloads with their JSON response size', () => {
     const payload = withJsonResponseBytes({
       status: 'ok',
@@ -494,5 +543,24 @@ describe('client response guards', () => {
 
     expect(payload.response_bytes).toBe(measureJsonBytes(payload));
     expect(payload.response_bytes).toBeGreaterThan(0);
+  });
+
+  it('supports a custom response byte field without adding the default field', () => {
+    const payload = withJsonResponseBytes(
+      {
+        status: 'ok',
+        service: 'arcanos-backend',
+      },
+      'bytes'
+    );
+
+    expect(payload.bytes).toBe(measureJsonBytes(payload));
+    expect((payload as Record<string, unknown>).response_bytes).toBeUndefined();
+  });
+
+  it('does not truncate strings that fit within the raw UTF-8 budget', () => {
+    const text = '"quoted"';
+
+    expect(truncateText(text, Buffer.byteLength(text, 'utf8'))).toBe(text);
   });
 });

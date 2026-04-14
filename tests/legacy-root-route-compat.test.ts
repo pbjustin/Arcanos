@@ -77,6 +77,7 @@ describe('legacy root route compatibility', () => {
       expect(response.status).toBe(200);
       expect(response.headers['x-canonical-route']).toBe(canonicalRoute);
       expect(response.headers['x-route-deprecated']).toBe('true');
+      expect(response.headers['x-response-bytes']).toBeTruthy();
       expect(response.body.ok).toBeUndefined();
       expect(response.body._route).toBeUndefined();
       expect(mockRouteGptRequest).toHaveBeenCalledWith(
@@ -154,6 +155,7 @@ describe('legacy root route compatibility', () => {
 
       expect(response.status).toBe(expectedStatus);
       expect(response.headers['x-canonical-route']).toBe('/gpt/write');
+      expect(response.headers['x-response-bytes']).toBeTruthy();
       expect(response.body.error.code).toBe(errorCode);
     }
   );
