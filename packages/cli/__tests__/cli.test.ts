@@ -67,6 +67,40 @@ describe("Arcanos CLI", () => {
       pollIntervalMs: 125
     });
 
+    expect(
+      parseCliInvocation([
+        "query",
+        "--gpt",
+        "backstage-booker",
+        "--prompt",
+        "Draft the next promo",
+      ])
+    ).toMatchObject({
+      kind: "query",
+      gptId: "backstage-booker",
+      prompt: "Draft the next promo",
+    });
+
+    expect(
+      parseCliInvocation([
+        "query-and-wait",
+        "--gpt",
+        "arcanos-core",
+        "--prompt",
+        "Generate a Seth Rollins promo prompt",
+        "--timeout-ms",
+        "25000",
+        "--poll-interval-ms",
+        "500"
+      ])
+    ).toMatchObject({
+      kind: "query-and-wait",
+      gptId: "arcanos-core",
+      prompt: "Generate a Seth Rollins promo prompt",
+      timeoutMs: 25000,
+      pollIntervalMs: 500
+    });
+
     expect(parseCliInvocation(["job-status", "job-123", "--json"])).toMatchObject({
       kind: "job-status",
       jobId: "job-123",
@@ -242,6 +276,84 @@ describe("Arcanos CLI", () => {
           executionMode: "async",
           waitForResultMs: 20000,
           pollIntervalMs: 125
+        })
+      })
+    );
+  });
+
+  it("sends query requests to the canonical backend GPT route with the explicit async bridge action", async () => {
+    const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(
+      createJsonResponse({ ok: true, action: "query", jobId: "job-query-1", status: "pending" })
+    );
+    const stdout = createWritableCapture();
+    const stderr = createWritableCapture();
+
+    const exitCode = await runCli(
+      [
+        "query",
+        "--gpt",
+        "backstage-booker",
+        "--prompt",
+        "Draft the next promo",
+        "--base-url",
+        "http://127.0.0.1:3000"
+      ],
+      stdout.stream,
+      stderr.stream
+    );
+
+    expect(exitCode).toBe(0);
+    expect(stdout.read()).toContain("Queued job job-query-1 (pending)");
+    expect(stderr.read()).toBe("");
+    expect(fetchMock).toHaveBeenCalledWith(
+      new URL("/gpt/backstage-booker", "http://127.0.0.1:3000/"),
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          prompt: "Draft the next promo",
+          action: "query"
+        })
+      })
+    );
+  });
+
+  it("sends query-and-wait requests to the canonical backend GPT route with explicit wait controls", async () => {
+    const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(
+      createJsonResponse({ ok: true, action: "query_and_wait", result: { text: "Generated Seth Rollins prompt" } })
+    );
+    const stdout = createWritableCapture();
+    const stderr = createWritableCapture();
+
+    const exitCode = await runCli(
+      [
+        "query-and-wait",
+        "--gpt",
+        "arcanos-core",
+        "--prompt",
+        "Generate a Seth Rollins promo prompt",
+        "--timeout-ms",
+        "25000",
+        "--poll-interval-ms",
+        "500",
+        "--base-url",
+        "http://127.0.0.1:3000"
+      ],
+      stdout.stream,
+      stderr.stream
+    );
+
+    expect(exitCode).toBe(0);
+    expect(stdout.read()).toContain("Generated Seth Rollins prompt");
+    expect(stderr.read()).toBe("");
+    expect(fetchMock).toHaveBeenCalledWith(
+      new URL("/gpt/arcanos-core", "http://127.0.0.1:3000/"),
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          prompt: "Generate a Seth Rollins promo prompt",
+          action: "query_and_wait",
+          waitForResultMs: 25000,
+          pollIntervalMs: 500
         })
       })
     );

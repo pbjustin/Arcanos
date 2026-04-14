@@ -9,8 +9,12 @@ from arcanos.backend_client.chat import (
     resolve_backend_chat_route,
     request_ask_with_domain,
     request_chat_completion,
+    request_gpt_job_result,
+    request_gpt_job_status,
     request_job_result,
     request_job_status,
+    request_query,
+    request_query_and_wait,
     request_system_state,
 )
 from arcanos.backend_client import BackendApiClient
@@ -153,6 +157,155 @@ def test_request_system_state_honors_explicit_gpt_id_on_canonical_route() -> Non
     assert path == "/gpt/arcanos-gaming"
     assert "gptId" not in payload
     assert payload["action"] == "system_state"
+
+
+def test_request_query_uses_canonical_gpt_bridge_action_and_normalizes_response() -> None:
+    client = SimpleNamespace()
+    client._normalize_metadata = MagicMock(return_value={"instanceId": "cli-123", "repoIndex": "repo-7"})
+    client._request_json = MagicMock(
+        return_value=BackendResponse(ok=True, value={"ok": True, "jobId": "job-query-1", "status": "pending"})
+    )
+
+    response = request_query(
+        client,
+        prompt="Draft the next promo",
+        metadata={"instanceId": "cli-123", "repoIndex": "repo-7"},
+    )
+
+    assert response.ok is True
+    assert response.value is not None
+    _, path, payload = client._request_json.call_args.args
+    assert path == "/gpt/arcanos-daemon"
+    assert payload["action"] == "query"
+    assert payload["prompt"] == "Draft the next promo"
+    assert payload["metadata"] == {"instanceId": "cli-123", "repoIndex": "repo-7"}
+    assert payload["sessionId"] == "cli-123"
+    assert payload["context"] == {"repoIndex": "repo-7"}
+    assert response.value.action == "query"
+    assert response.value.job_id == "job-query-1"
+    assert response.value.status == "pending"
+
+
+def test_request_query_and_wait_uses_bridge_wait_controls_and_normalizes_response() -> None:
+    client = SimpleNamespace()
+    client._normalize_metadata = MagicMock(return_value=None)
+    client._request_json = MagicMock(
+        return_value=BackendResponse(
+            ok=True,
+            value={
+                "ok": True,
+                "action": "query_and_wait",
+                "jobId": "job-query-and-wait-1",
+                "status": "completed",
+                "result": {"text": "Generated Seth Rollins prompt"},
+            },
+        )
+    )
+
+    response = request_query_and_wait(
+        client,
+        prompt="Generate a Seth Rollins promo prompt",
+        timeout_ms=25000,
+        poll_interval_ms=500,
+        gpt_id="arcanos-core",
+    )
+
+    assert response.ok is True
+    assert response.value is not None
+    _, path, payload = client._request_json.call_args.args
+    assert path == "/gpt/arcanos-core"
+    assert payload == {
+        "action": "query_and_wait",
+        "prompt": "Generate a Seth Rollins promo prompt",
+        "timeoutMs": 25000,
+        "pollIntervalMs": 500,
+    }
+    assert response.value.action == "query_and_wait"
+    assert response.value.job_id == "job-query-and-wait-1"
+    assert response.value.status == "completed"
+    assert response.value.result == {"text": "Generated Seth Rollins prompt"}
+
+
+def test_request_gpt_job_status_uses_structured_bridge_payload() -> None:
+    client = SimpleNamespace()
+    client._request_json = MagicMock(
+        return_value=BackendResponse(
+            ok=True,
+            value={
+                "ok": True,
+                "action": "get_status",
+                "jobId": "job-123",
+                "status": "running",
+                "lifecycleStatus": "running",
+                "result": {"id": "job-123", "status": "running", "lifecycle_status": "running"},
+            },
+        )
+    )
+
+    response = request_gpt_job_status(client, "job-123", gpt_id="backstage-booker")
+
+    assert response.ok is True
+    assert response.value is not None
+    _, path, payload = client._request_json.call_args.args
+    assert path == "/gpt/backstage-booker"
+    assert payload == {
+        "action": "get_status",
+        "payload": {"jobId": "job-123"},
+    }
+    assert response.value.action == "get_status"
+    assert response.value.job_id == "job-123"
+    assert response.value.status == "running"
+    assert response.value.lifecycle_status == "running"
+    assert response.value.result == {"id": "job-123", "status": "running", "lifecycle_status": "running"}
+
+
+def test_request_gpt_job_result_uses_structured_bridge_payload() -> None:
+    client = SimpleNamespace()
+    client._request_json = MagicMock(
+        return_value=BackendResponse(
+            ok=True,
+            value={
+                "ok": True,
+                "action": "get_result",
+                "jobId": "job-123",
+                "status": "completed",
+                "jobStatus": "completed",
+                "lifecycleStatus": "completed",
+                "poll": "/jobs/job-123",
+                "stream": "/jobs/job-123/stream",
+                "output": {"text": "final output"},
+                "result": {
+                    "jobId": "job-123",
+                    "status": "completed",
+                    "result": {"text": "final output"},
+                },
+            },
+        )
+    )
+
+    response = request_gpt_job_result(client, "job-123", gpt_id="backstage-booker")
+
+    assert response.ok is True
+    assert response.value is not None
+    _, path, payload = client._request_json.call_args.args
+    assert path == "/gpt/backstage-booker"
+    assert payload == {
+        "action": "get_result",
+        "payload": {"jobId": "job-123"},
+    }
+    assert response.value.action == "get_result"
+    assert response.value.job_id == "job-123"
+    assert response.value.status == "completed"
+    assert response.value.job_status == "completed"
+    assert response.value.lifecycle_status == "completed"
+    assert response.value.poll == "/jobs/job-123"
+    assert response.value.stream == "/jobs/job-123/stream"
+    assert response.value.result == {"text": "final output"}
+    assert response.value.raw["result"] == {
+        "jobId": "job-123",
+        "status": "completed",
+        "result": {"text": "final output"},
+    }
 
 
 def test_request_job_result_uses_canonical_jobs_result_route() -> None:

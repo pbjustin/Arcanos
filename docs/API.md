@@ -47,10 +47,10 @@ No API path changes are required for Railway. Ensure liveness (`/healthz`) and r
 - Validation and auth middleware: `../src/middleware/confirmGate.ts`
 
 ## GPT Async Contract
-`POST /gpt/:gptId` is the writing plane. It supports deterministic async GPT execution with idempotent retry handling for job-backed requests, but it must not be used for control-plane prompts.
+`POST /gpt/:gptId` is the writing plane. It supports a typed async GPT bridge with idempotent retry handling for job-backed requests, but it must not be used for prompt-shaped control-plane retrieval.
 
 Writing vs control:
-- Writing plane: prompt generation, assistant responses, and explicit write/query actions.
+- Writing plane: prompt generation, assistant responses, and explicit async write actions `query` and `query_and_wait`.
 - Direct control plane: `GET /jobs/:id`, `GET /jobs/:id/result`, `GET /workers/status`, `GET /worker-helper/health`, `GET /status`, `GET /status/safety/self-heal`, `POST /mcp`, and `/api/arcanos/dag/*`.
 - Router-handled compatibility control actions on `POST /gpt/:gptId`: `get_status`, `get_result`, `diagnostics`, and `system_state`. These are handled before write dispatch and never enqueue new GPT work.
 - Rejected on `POST /gpt/:gptId`: prompt-based job lookups, DAG execution/tracing prompts, runtime inspection prompts, and explicit MCP tool calls. The backend returns canonical control endpoints instead of routing them through generation.
@@ -67,19 +67,25 @@ Deduplication rules:
 - Transport-only retry hints such as `async`, `executionMode`, `responseMode`, `waitForResultMs`, and polling intervals do not create a new GPT job.
 - Reusing an explicit `Idempotency-Key` for a different semantic GPT request returns `409 IDEMPOTENCY_KEY_CONFLICT`.
 
-Explicit direct-return path:
-- Use `POST /gpt/:gptId` with `{"prompt":"...","executionMode":"async","waitForResultMs":20000}` when the caller wants one queue-backed request that either returns the final GPT result inline or times out safely with the canonical job id.
-- Or use the explicit integration action `POST /gpt/:gptId` with `{ "action": "query_and_wait", "prompt": "...", "timeoutMs": 25000, "pollIntervalMs": 500 }` when the caller can only express waiting as an action contract.
+Canonical async bridge:
+- `query`: `POST /gpt/:gptId` with `{ "action": "query", "prompt": "..." }` creates or reuses one durable GPT writing job and returns the canonical `jobId` without inline waiting.
+- `query_and_wait`: `POST /gpt/:gptId` with `{ "action": "query_and_wait", "prompt": "...", "timeoutMs": 25000, "pollIntervalMs": 500 }` creates or reuses one durable GPT writing job and waits briefly for fast completion.
+- `get_status`: `POST /gpt/:gptId` with `{ "action": "get_status", "payload": { "jobId": "..." } }` returns structured status from the control plane without creating work.
+- `get_result`: `POST /gpt/:gptId` with `{ "action": "get_result", "payload": { "jobId": "..." } }` returns structured job result state from the control plane without creating work.
+
+Legacy compatibility:
+- `POST /gpt/:gptId` with `{"prompt":"...","executionMode":"async","waitForResultMs":20000}` still supports one queue-backed request that either returns the final GPT result inline or times out safely with the canonical `jobId`.
+- Prefer the explicit `query` and `query_and_wait` action contract for agent and tool clients because it is typed, discoverable, and easier to validate.
 - Optional `pollIntervalMs` adjusts the internal polling cadence while the backend waits.
-- Direct-return timeouts never enqueue a second job; they return the same canonical job id and point callers to `GET /jobs/:id/result`.
+- Direct-return timeouts never enqueue a second job; they return the same canonical `jobId` and point callers to `GET /jobs/:id/result`.
 
 Job-backed `POST /gpt/:gptId` response shapes:
-- `202 Accepted`: `{ ok, status:"pending", jobId, poll, stream, jobStatus, lifecycleStatus, deduped?, idempotencyKey, idempotencySource, _route }`
-- `200 OK` after bounded inline completion: standard GPT envelope plus `{ jobId, status, lifecycleStatus, poll, stream, deduped?, idempotencyKey, idempotencySource }`
-- `202 Accepted` after an explicit direct-return timeout: the canonical pending payload plus `instruction` and `directReturn.result` pointing to `/jobs/:id/result`
+- `202 Accepted` pending write: `{ ok:true, action:"query"|"query_and_wait", jobId, status:"pending", poll, stream, jobStatus, lifecycleStatus, deduped?, idempotencyKey, idempotencySource, _route }`
+- `200 OK` completed write: `{ ok:true, action:"query_and_wait", jobId, status:"completed", result:{ text }, poll, stream, jobStatus, lifecycleStatus, deduped?, idempotencyKey, idempotencySource, _route }`
+- `200 OK` status retrieval: `{ ok:true, action:"get_status", jobId, status:"queued|running|completed|failed|cancelled|expired", ... }`
+- `200 OK` result retrieval: `{ ok:true, action:"get_result", jobId, status, output?, result?, error?, poll?, stream?, ... }`
+- Error shape: `{ ok:false, action, error:{ code, message } }`
 - Duplicate submissions set `deduped: true` and return the canonical `jobId`.
-- `200 OK` status retrieval: `POST /gpt/:gptId` with `{ "action": "get_status", "payload": { "jobId": "..." } }` returns `{ ok, result: { id, job_type, status, lifecycle_status, created_at, updated_at, completed_at, cancel_requested_at, cancel_reason, retention_until, idempotency_until, expires_at, error_message, output, result }, _route }` and never enqueues new work.
-- `200 OK` result retrieval: `POST /gpt/:gptId` with `{ "action": "get_result", "payload": { "jobId": "..." } }` returns `{ ok, result: { jobId, status:"pending|complete|failed|not_found", jobStatus, lifecycleStatus, createdAt, updatedAt, completedAt, poll, stream, result, error }, _route }` and never enqueues new work.
 - `200 OK` system-state retrieval/update: `POST /gpt/:gptId` with `{ "action": "system_state", "payload": { ... } }` is handled directly on the control plane for core GPT ids and never enters the writing dispatcher.
 - `400 Bad Request` control rejection: prompt-based job lookups, runtime inspection, DAG control, and MCP tool calls return deterministic JSON with `canonical` control routes.
 
@@ -106,7 +112,8 @@ Client retry guidance:
 - Reuse the same `Idempotency-Key` for safe client retries of the same GPT request body.
 - Poll `GET /jobs/:id` or subscribe to `GET /jobs/:id/stream` after any `202`.
 - Prefer the canonical jobs API for job reads. Use GPT compatibility actions only when the caller cannot reach `/jobs/*`.
-- ARCANOS CLI follows the same split: `arcanos generate-and-wait` uses the writing plane, while `arcanos job-status` and `arcanos job-result` call the canonical jobs API.
+- ARCANOS CLI follows the same split: `arcanos query` and `arcanos query-and-wait` use the writing plane, while `arcanos job-status` and `arcanos job-result` call the canonical jobs API.
+- Natural-language retrieval through `prompt` text is intentionally blocked. Retrieval must use structured `action + payload.jobId`.
 - Do not send prompts that ask the GPT route to inspect runtime state, trigger DAGs, or call MCP tools. Use the direct control endpoints instead.
 - Treat `cancelled` and `expired` as terminal and submit a fresh request if more work is needed.
 

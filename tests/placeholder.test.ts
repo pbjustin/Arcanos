@@ -57,7 +57,7 @@ describe('AI endpoints in mock mode', () => {
     const response = await fetch(`${baseUrl}/gpt/arcanos-daemon`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ action: 'query', prompt: 'test prompt for mock mode' })
+      body: JSON.stringify({ prompt: 'test prompt for mock mode' })
     });
 
     expect(response.status).toBe(200);

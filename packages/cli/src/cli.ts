@@ -8,6 +8,8 @@ import { runJobStatusCommand } from "./commands/jobStatus.js";
 import { runLogsCommand } from "./commands/logs.js";
 import { parseCliInvocation, renderUsage } from "./commands/parse.js";
 import { runPlanCommand } from "./commands/plan.js";
+import { runQueryCommand } from "./commands/query.js";
+import { runQueryAndWaitCommand } from "./commands/queryAndWait.js";
 import { runStatusCommand } from "./commands/status.js";
 import { runWorkersCommand } from "./commands/workers.js";
 import type { CliJsonEnvelope, CliProtocolCommandResult } from "./commands/types.js";
@@ -64,6 +66,10 @@ async function runCommand(invocation: Exclude<ReturnType<typeof parseCliInvocati
   switch (invocation.kind) {
     case "ask":
       return runAskCommand(invocation);
+    case "query":
+      return runQueryCommand(invocation);
+    case "query-and-wait":
+      return runQueryAndWaitCommand(invocation);
     case "generate-and-wait":
       return runGenerateAndWaitCommand(invocation);
     case "job-status":

@@ -63,11 +63,12 @@ import {
 } from '@shared/gpt/gptJobLifecycle.js';
 import { getRequestActorKey } from '@platform/runtime/security.js';
 import {
+  GPT_QUERY_ACTION,
   GPT_GET_STATUS_ACTION,
   GPT_GET_RESULT_ACTION,
   GPT_QUERY_AND_WAIT_ACTION,
-  buildStoredJobStatusPayload,
-  buildGptJobResultLookupPayload,
+  buildGptJobStatusBridgePayload,
+  buildGptJobResultBridgePayload,
   parseGptJobStatusRequest,
   parseGptJobResultRequest
 } from '@shared/gpt/gptJobResult.js';
@@ -452,7 +453,7 @@ function shouldDefaultCoreQueriesToAsync(
   gptId: string,
   requestedAction: string | null
 ): boolean {
-  if (requestedAction && requestedAction !== 'query') {
+  if (requestedAction && requestedAction !== GPT_QUERY_ACTION) {
     return false;
   }
 
@@ -518,7 +519,7 @@ function resolveGptExecutionPlan(params: {
     };
   }
 
-  if (!params.promptText && (!params.requestedAction || params.requestedAction === 'query')) {
+  if (!params.promptText && (!params.requestedAction || params.requestedAction === GPT_QUERY_ACTION)) {
     return {
       mode: 'sync',
       reason: 'missing_prompt_validation',
@@ -527,6 +528,18 @@ function resolveGptExecutionPlan(params: {
       answerMode,
       maxWords,
       heavyPrompt: false
+    };
+  }
+
+  if (params.requestedAction === GPT_QUERY_ACTION) {
+    return {
+      mode: 'async',
+      reason: 'explicit_query_action',
+      promptLength,
+      messageCount,
+      answerMode,
+      maxWords,
+      heavyPrompt
     };
   }
 
@@ -622,6 +635,12 @@ function normalizeQueryAndWaitBody(
   delete normalizedQueryBody.action;
   normalizedQueryBody.executionMode = 'async';
   return normalizedQueryBody;
+}
+
+function resolveAsyncBridgeAction(queryAndWaitRequested: boolean) {
+  return queryAndWaitRequested
+    ? GPT_QUERY_AND_WAIT_ACTION
+    : GPT_QUERY_ACTION;
 }
 
 function buildJobLookupRouteMeta(params: {
@@ -771,6 +790,7 @@ function buildGptRequestAuthState(req: express.Request): Record<string, unknown>
 }
 
 function buildAsyncJobResponseMetadata(input: {
+  action: typeof GPT_QUERY_ACTION | typeof GPT_QUERY_AND_WAIT_ACTION;
   jobId: string;
   jobStatus: string;
   deduped: boolean;
@@ -778,6 +798,7 @@ function buildAsyncJobResponseMetadata(input: {
   idempotencySource: 'explicit' | 'derived';
 }) {
   return {
+    action: input.action,
     jobId: input.jobId,
     status: input.jobStatus,
     lifecycleStatus: resolveGptJobLifecycleStatus(input.jobStatus),
@@ -791,7 +812,9 @@ function buildAsyncJobResponseMetadata(input: {
 
 router.post("/:gptId", async (req, res, next) => {
   const requestedAction = resolveRequestedAction(req.body);
+  const queryRequested = requestedAction === GPT_QUERY_ACTION;
   const queryAndWaitRequested = requestedAction === GPT_QUERY_AND_WAIT_ACTION;
+  const asyncBridgeAction = resolveAsyncBridgeAction(queryAndWaitRequested);
   const promptText = extractPromptText(req.body);
   const routeTimeoutProfile = shouldUseDagExecutionTimeoutProfile(promptText)
     ? 'dag_execution'
@@ -900,6 +923,7 @@ router.post("/:gptId", async (req, res, next) => {
           });
           return sendGuardedGptJsonResponse(req, res, {
             ok: false,
+            action: GPT_QUERY_AND_WAIT_ACTION,
             error: {
               code: 'BAD_REQUEST',
               message: 'query_and_wait requires a JSON object request body.'
@@ -914,6 +938,29 @@ router.post("/:gptId", async (req, res, next) => {
           }, 'gpt.response.query_and_wait_invalid_body', 400);
         }
 
+        if (queryRequested && !promptText) {
+          requestLogger?.warn?.('integration.job.query_missing_prompt', {
+            endpoint: req.originalUrl,
+            gptId: incomingGptId,
+            requestId
+          });
+          return res.status(400).json({
+            ok: false,
+            action: GPT_QUERY_ACTION,
+            error: {
+              code: 'PROMPT_REQUIRED',
+              message: 'query requires a non-empty prompt.'
+            },
+            _route: {
+              requestId,
+              gptId: incomingGptId,
+              action: GPT_QUERY_ACTION,
+              route: 'async',
+              timestamp: new Date().toISOString()
+            }
+          });
+        }
+
         if (queryAndWaitRequested && !promptText) {
           requestLogger?.warn?.('integration.job.query_and_wait_missing_prompt', {
             endpoint: req.originalUrl,
@@ -922,6 +969,7 @@ router.post("/:gptId", async (req, res, next) => {
           });
           return sendGuardedGptJsonResponse(req, res, {
             ok: false,
+            action: GPT_QUERY_AND_WAIT_ACTION,
             error: {
               code: 'PROMPT_REQUIRED',
               message: 'query_and_wait requires a non-empty prompt.'
@@ -989,6 +1037,7 @@ router.post("/:gptId", async (req, res, next) => {
 
           return res.status(400).json({
             ok: false,
+            action: planeClassification.action,
             error: {
               code: planeClassification.errorCode,
               message: planeClassification.message
@@ -1024,6 +1073,7 @@ router.post("/:gptId", async (req, res, next) => {
             });
             return sendGuardedGptJsonResponse(req, res, {
               ok: false,
+              action: GPT_GET_STATUS_ACTION,
               error: {
                 code: 'JOB_ID_INVALID',
                 message: `get_status action requires payload.jobId. ${parsedJobStatusRequest.error}`
@@ -1051,6 +1101,8 @@ router.post("/:gptId", async (req, res, next) => {
           if (!job) {
             return sendGuardedGptJsonResponse(req, res, {
               ok: false,
+              action: GPT_GET_STATUS_ACTION,
+              jobId: parsedJobStatusRequest.jobId,
               error: {
                 code: 'JOB_NOT_FOUND',
                 message: 'Async GPT job was not found.'
@@ -1059,9 +1111,10 @@ router.post("/:gptId", async (req, res, next) => {
             }, 'gpt.response.job_status_not_found', 404);
           }
 
+          const jobStatusEnvelope = buildGptJobStatusBridgePayload(job);
           return sendGuardedGptJsonResponse(req, res, {
             ok: true,
-            result: buildStoredJobStatusPayload(job),
+            ...jobStatusEnvelope,
             _route: routeMeta
           }, 'gpt.response.job_status');
         }
@@ -1084,6 +1137,7 @@ router.post("/:gptId", async (req, res, next) => {
             });
             return sendGuardedGptJsonResponse(req, res, {
               ok: false,
+              action: GPT_GET_RESULT_ACTION,
               error: {
                 code: 'JOB_ID_INVALID',
                 message: `get_result action requires payload.jobId. ${parsedJobResultRequest.error}`
@@ -1092,7 +1146,7 @@ router.post("/:gptId", async (req, res, next) => {
             }, 'gpt.response.job_result_invalid', 400);
           }
 
-          const jobLookup = buildGptJobResultLookupPayload(
+          const jobLookup = buildGptJobResultBridgePayload(
             parsedJobResultRequest.jobId,
             await getJobById(parsedJobResultRequest.jobId)
           );
@@ -1123,7 +1177,7 @@ router.post("/:gptId", async (req, res, next) => {
 
           return sendGuardedGptJsonResponse(req, res, {
             ok: true,
-            result: jobLookup,
+            ...jobLookup,
             _route: routeMeta
           }, 'gpt.response.job_result');
         }
@@ -1461,6 +1515,8 @@ router.post("/:gptId", async (req, res, next) => {
         if (requestedAsyncWaitForResultMs === undefined) {
           if (queryAndWaitRequested) {
             requestedAsyncWaitForResultMs = DEFAULT_GPT_QUERY_AND_WAIT_TIMEOUT_MS;
+          } else if (queryRequested) {
+            requestedAsyncWaitForResultMs = 0;
           } else if (executionPlan.heavyPrompt) {
             requestedAsyncWaitForResultMs = readPositiveIntegerEnv(
               'GPT_ASYNC_HEAVY_WAIT_FOR_RESULT_MS',
@@ -1598,6 +1654,7 @@ router.post("/:gptId", async (req, res, next) => {
               if (error instanceof IdempotencyKeyConflictError) {
                 return sendGuardedGptJsonResponse(req, res, {
                   ok: false,
+                  action: asyncBridgeAction,
                   error: {
                     code: 'IDEMPOTENCY_KEY_CONFLICT',
                     message: 'The supplied idempotency key is already bound to a different GPT request.'
@@ -1612,7 +1669,7 @@ router.post("/:gptId", async (req, res, next) => {
               }
 
               if (error instanceof JobRepositoryUnavailableError) {
-                if (explicitIdempotencyKey || queryAndWaitRequested) {
+                if (explicitIdempotencyKey || queryAndWaitRequested || queryRequested) {
                   requestLogger?.error?.('gpt.request.idempotency_unavailable', {
                     endpoint: req.originalUrl,
                     gptId: incomingGptId,
@@ -1621,12 +1678,15 @@ router.post("/:gptId", async (req, res, next) => {
                   });
                   return sendGuardedGptJsonResponse(req, res, {
                     ok: false,
+                    action: asyncBridgeAction,
                     error: {
-                      code: queryAndWaitRequested
+                      code: (queryAndWaitRequested || queryRequested)
                         ? 'ASYNC_GPT_JOBS_UNAVAILABLE'
                         : 'IDEMPOTENCY_UNAVAILABLE',
                       message: queryAndWaitRequested
                         ? 'query_and_wait requires durable GPT job persistence, but the jobs backend is unavailable.'
+                        : queryRequested
+                        ? 'query requires durable GPT job persistence, but the jobs backend is unavailable.'
                         : 'Durable idempotency is unavailable because GPT job persistence is not configured.'
                     },
                     idempotencyKey: idempotencyDescriptor.publicIdempotencyKey,
@@ -1653,6 +1713,7 @@ router.post("/:gptId", async (req, res, next) => {
               const job = createResult.job;
               queuedJobId = job.id;
               queuedPendingResponse = buildQueuedGptPendingResponse({
+                action: asyncBridgeAction,
                 jobId: job.id,
                 gptId: incomingGptId,
                 requestId,
@@ -1727,6 +1788,7 @@ router.post("/:gptId", async (req, res, next) => {
                   });
                   return sendGuardedGptJsonResponse(req, res, {
                     ok: false,
+                    action: asyncBridgeAction,
                     error: {
                       code: 'ASYNC_GPT_JOB_OUTPUT_INVALID',
                       message: 'Async GPT job completed without a valid envelope.'
@@ -1803,6 +1865,7 @@ router.post("/:gptId", async (req, res, next) => {
                 const publicEnvelope = prepareBoundedClientJsonPayload({
                   ...completedEnvelope,
                   ...buildAsyncJobResponseMetadata({
+                    action: asyncBridgeAction,
                     jobId: job.id,
                     jobStatus: waitedJob.job.status,
                     deduped: createResult.deduped,
@@ -1833,6 +1896,7 @@ router.post("/:gptId", async (req, res, next) => {
                     message: waitedJob.job.error_message ?? 'Async GPT job failed.'
                   },
                   ...buildAsyncJobResponseMetadata({
+                    action: asyncBridgeAction,
                     jobId: job.id,
                     jobStatus: waitedJob.job.status,
                     deduped: createResult.deduped,
@@ -1867,6 +1931,7 @@ router.post("/:gptId", async (req, res, next) => {
                     message: waitedJob.job.error_message ?? 'Async GPT job was cancelled.'
                   },
                   ...buildAsyncJobResponseMetadata({
+                    action: asyncBridgeAction,
                     jobId: job.id,
                     jobStatus: waitedJob.job.status,
                     deduped: createResult.deduped,
@@ -1899,6 +1964,7 @@ router.post("/:gptId", async (req, res, next) => {
                     message: waitedJob.job.error_message ?? 'Async GPT job expired after its retention window.'
                   },
                   ...buildAsyncJobResponseMetadata({
+                    action: asyncBridgeAction,
                     jobId: job.id,
                     jobStatus: waitedJob.job.status,
                     deduped: createResult.deduped,
@@ -1921,6 +1987,7 @@ router.post("/:gptId", async (req, res, next) => {
                 });
                 return sendGuardedGptJsonResponse(req, res, {
                   ok: false,
+                  action: asyncBridgeAction,
                   error: {
                     code: 'ASYNC_GPT_JOB_MISSING',
                     message: 'Async GPT job disappeared before completion.'

@@ -30,10 +30,22 @@ export function parseCliInvocation(argv: string[]): CliInvocation {
         prompt: requirePrompt("ask", rest),
         options
       };
+    case "query":
+      return {
+        kind: "query",
+        ...parseQueryArgs(rest),
+        options
+      };
+    case "query-and-wait":
+      return {
+        kind: "query-and-wait",
+        ...parseGenerateAndWaitArgs("query-and-wait", rest),
+        options
+      };
     case "generate-and-wait":
       return {
         kind: "generate-and-wait",
-        ...parseGenerateAndWaitArgs(rest),
+        ...parseGenerateAndWaitArgs("generate-and-wait", rest),
         options
       };
     case "job-status":
@@ -116,6 +128,8 @@ export function renderUsage(): string {
   return [
     "Usage:",
     "  arcanos ask \"...\" [--json]",
+    "  arcanos query --gpt <gpt-id> --prompt \"...\" [--json]",
+    "  arcanos query-and-wait --gpt <gpt-id> --prompt \"...\" [--timeout-ms <ms>] [--poll-interval-ms <ms>] [--json]",
     "  arcanos generate-and-wait --gpt <gpt-id> --prompt \"...\" [--timeout-ms <ms>] [--poll-interval-ms <ms>] [--json]",
     "  arcanos job-status <job-id> [--json]",
     "  arcanos job-result <job-id> [--json]",
@@ -137,7 +151,13 @@ export function renderUsage(): string {
     "  --cwd <path>",
     "  --shell <name>",
     "  --python-bin <path>",
-    "  --transport <python|local>"
+    "  --transport <python|local>",
+    "",
+    "Async bridge examples:",
+    "  arcanos query --gpt arcanos-core --prompt \"Create the writing job\"",
+    "  arcanos query-and-wait --gpt arcanos-core --prompt \"Wait briefly for a fast result\"",
+    "  arcanos job-status <job-id>",
+    "  arcanos job-result <job-id>"
   ].join("\n");
 }
 
@@ -243,7 +263,53 @@ function requireSingleArgument(command: string, args: string[]): string {
   return args[0].trim();
 }
 
-function parseGenerateAndWaitArgs(args: string[]): {
+function parseQueryArgs(args: string[]): {
+  gptId: string;
+  prompt: string;
+} {
+  let gptId: string | undefined;
+  let prompt: string | undefined;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const currentArgument = args[index];
+    if (!currentArgument.startsWith("--")) {
+      throw new Error('`query` only accepts --gpt and --prompt.');
+    }
+
+    const nextValue = args[index + 1];
+    if (!nextValue || nextValue.startsWith("--")) {
+      throw new Error(`Flag "${currentArgument}" requires a value.`);
+    }
+
+    switch (currentArgument) {
+      case "--gpt":
+        gptId = nextValue.trim();
+        break;
+      case "--prompt":
+        prompt = nextValue.trim();
+        break;
+      default:
+        throw new Error(`Unknown flag "${currentArgument}" for \`query\`.`);
+    }
+
+    index += 1;
+  }
+
+  if (!gptId) {
+    throw new Error('`query` requires --gpt <gpt-id>.');
+  }
+
+  if (!prompt) {
+    throw new Error('`query` requires --prompt "...".');
+  }
+
+  return {
+    gptId,
+    prompt
+  };
+}
+
+function parseGenerateAndWaitArgs(commandName: "generate-and-wait" | "query-and-wait", args: string[]): {
   gptId: string;
   prompt: string;
   timeoutMs?: number;
@@ -257,7 +323,7 @@ function parseGenerateAndWaitArgs(args: string[]): {
   for (let index = 0; index < args.length; index += 1) {
     const currentArgument = args[index];
     if (!currentArgument.startsWith("--")) {
-      throw new Error('`generate-and-wait` only accepts --gpt, --prompt, --timeout-ms, and --poll-interval-ms.');
+      throw new Error(`\`${commandName}\` only accepts --gpt, --prompt, --timeout-ms, and --poll-interval-ms.`);
     }
 
     const nextValue = args[index + 1];
@@ -279,18 +345,18 @@ function parseGenerateAndWaitArgs(args: string[]): {
         pollIntervalMs = parsePositiveIntegerFlag(currentArgument, nextValue);
         break;
       default:
-        throw new Error(`Unknown flag "${currentArgument}" for \`generate-and-wait\`.`);
+        throw new Error(`Unknown flag "${currentArgument}" for \`${commandName}\`.`);
     }
 
     index += 1;
   }
 
   if (!gptId) {
-    throw new Error('`generate-and-wait` requires --gpt <gpt-id>.');
+    throw new Error(`\`${commandName}\` requires --gpt <gpt-id>.`);
   }
 
   if (!prompt) {
-    throw new Error('`generate-and-wait` requires --prompt "...".');
+    throw new Error(`\`${commandName}\` requires --prompt "...".`);
   }
 
   return {

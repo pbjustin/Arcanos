@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { GptAsyncWriteAction } from './gptJobResult.js';
 
 const jsonValueSchema: z.ZodType<unknown> = z.lazy(() =>
   z.union([
@@ -33,6 +34,7 @@ export interface QueuedGptJobInput {
 
 export interface QueuedGptPendingResponse {
   ok: true;
+  action: GptAsyncWriteAction;
   status: 'pending';
   jobId: string;
   poll: string;
@@ -140,6 +142,7 @@ export function parseQueuedGptJobInput(rawInput: unknown): ParsedQueuedGptJobInp
  * Edge case behavior: route metadata remains sparse when no request id was available.
  */
 export function buildQueuedGptPendingResponse(input: {
+  action?: GptAsyncWriteAction;
   jobId: string;
   gptId: string;
   requestId?: string | null;
@@ -154,6 +157,7 @@ export function buildQueuedGptPendingResponse(input: {
 
   return {
     ok: true,
+    action: input.action ?? 'query',
     status: 'pending',
     jobId: input.jobId,
     poll: `/jobs/${input.jobId}`,

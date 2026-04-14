@@ -81,3 +81,23 @@ class BackendTranscriptionResult:
 
     text: str
     model: str
+
+
+@dataclass(frozen=True)
+class BackendGptAsyncBridgeResult:
+    """
+    Purpose: Typed async GPT bridge payload shared across query, wait, status, and result helpers.
+    Inputs/Outputs: canonical action/status/job metadata plus optional result/error payloads.
+    Edge cases: `result` remains arbitrary JSON for completed jobs, while `raw` preserves the backend envelope for callers that need compatibility details.
+    """
+
+    action: str
+    job_id: Optional[str]
+    status: Optional[str]
+    result: Any = None
+    lifecycle_status: Optional[str] = None
+    job_status: Optional[str] = None
+    poll: Optional[str] = None
+    stream: Optional[str] = None
+    error: Optional[Mapping[str, Any]] = None
+    raw: Optional[Mapping[str, Any]] = None

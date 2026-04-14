@@ -13,8 +13,12 @@ import requests
 from ..backend_auth_client import normalize_backend_url
 from .chat import request_ask_with_domain as _request_ask_with_domain
 from .chat import request_chat_completion as _request_chat_completion
+from .chat import request_gpt_job_result as _request_gpt_job_result
+from .chat import request_gpt_job_status as _request_gpt_job_status
 from .chat import request_job_result as _request_job_result
 from .chat import request_job_status as _request_job_status
+from .chat import request_query as _request_query
+from .chat import request_query_and_wait as _request_query_and_wait
 from .chat import request_system_state as _request_system_state
 from .daemon import request_confirm_daemon_actions as _request_confirm_daemon_actions
 from .plans import fetch_plan as _fetch_plan
@@ -27,6 +31,7 @@ from .updates import submit_update_event as _submit_update_event
 from .vision import request_vision_analysis as _request_vision_analysis
 from ..backend_client_models import (
     BackendChatResult,
+    BackendGptAsyncBridgeResult,
     BackendRequestError,
     BackendResponse,
     BackendTranscriptionResult,
@@ -490,6 +495,65 @@ class BackendApiClient:
         Edge cases: returns structured validation errors for partial update payloads.
         """
         return _request_system_state(self, metadata, expected_version, patch, gpt_id)
+
+    def request_query(
+        self,
+        prompt: str,
+        metadata: Optional[Mapping[str, Any]] = None,
+        gpt_id: Optional[str] = None,
+    ) -> BackendResponse[BackendGptAsyncBridgeResult]:
+        """
+        Purpose: Create one async GPT writing job through the canonical `query` bridge action.
+        Inputs/Outputs: prompt plus optional metadata/gpt_id; returns typed async bridge metadata.
+        Edge cases: blank prompts fail fast as validation errors.
+        """
+        return _request_query(self, prompt, metadata, gpt_id)
+
+    def request_query_and_wait(
+        self,
+        prompt: str,
+        timeout_ms: Optional[int] = None,
+        poll_interval_ms: Optional[int] = None,
+        metadata: Optional[Mapping[str, Any]] = None,
+        gpt_id: Optional[str] = None,
+    ) -> BackendResponse[BackendGptAsyncBridgeResult]:
+        """
+        Purpose: Create one async GPT writing job and wait briefly through the canonical `query_and_wait` bridge action.
+        Inputs/Outputs: prompt plus optional wait controls/metadata/gpt_id; returns typed async bridge metadata.
+        Edge cases: blank prompts fail fast as validation errors.
+        """
+        return _request_query_and_wait(
+            self,
+            prompt,
+            timeout_ms,
+            poll_interval_ms,
+            metadata,
+            gpt_id,
+        )
+
+    def request_gpt_job_status(
+        self,
+        job_id: str,
+        gpt_id: Optional[str] = None,
+    ) -> BackendResponse[BackendGptAsyncBridgeResult]:
+        """
+        Purpose: Read async job status through the GPT compatibility bridge without enqueueing new work.
+        Inputs/Outputs: required job_id and optional gpt_id; returns typed async bridge status metadata.
+        Edge cases: blank ids fail fast as validation errors.
+        """
+        return _request_gpt_job_status(self, job_id, gpt_id)
+
+    def request_gpt_job_result(
+        self,
+        job_id: str,
+        gpt_id: Optional[str] = None,
+    ) -> BackendResponse[BackendGptAsyncBridgeResult]:
+        """
+        Purpose: Read async job results through the GPT compatibility bridge without enqueueing new work.
+        Inputs/Outputs: required job_id and optional gpt_id; returns typed async bridge result metadata.
+        Edge cases: blank ids fail fast as validation errors.
+        """
+        return _request_gpt_job_result(self, job_id, gpt_id)
 
     def request_job_result(
         self,

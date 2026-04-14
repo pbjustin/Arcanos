@@ -72,6 +72,8 @@ export interface GeneratePromptAndWaitOptions {
 
 export interface QueryAndWaitGptRouteOptions extends GeneratePromptAndWaitOptions {}
 
+export interface QueryGptRouteOptions extends GeneratePromptAndWaitOptions {}
+
 export interface InvokeGptJobLookupActionOptions {
   baseUrl: string;
   gptId: string;
@@ -90,6 +92,12 @@ export interface FetchGptJobStatusOptions {
   jobId: string;
   headers?: Record<string, string>;
 }
+
+export type GptAsyncBridgeAction =
+  | "query"
+  | "query_and_wait"
+  | "get_status"
+  | "get_result";
 
 const DEFAULT_BACKEND_GPT_ID =
   process.env.ARCANOS_BACKEND_GPT_ID?.trim() ||
@@ -330,6 +338,23 @@ export async function createAsyncGptJob(
   return invokeGptRoute(options);
 }
 
+export async function requestQuery(
+  options: QueryGptRouteOptions
+): Promise<Record<string, unknown>> {
+  const payload = await invokeGptRoute({
+    baseUrl: options.baseUrl,
+    gptId: options.gptId,
+    prompt: options.prompt,
+    action: "query",
+    ...(typeof options.timeoutMs === "number" ? { waitForResultMs: options.timeoutMs } : {}),
+    ...(typeof options.pollIntervalMs === "number" ? { pollIntervalMs: options.pollIntervalMs } : {}),
+    context: options.context,
+    headers: options.headers
+  });
+
+  return normalizeGptAsyncBridgePayload(payload, "query");
+}
+
 /**
  * Creates one async GPT job, waits for a bounded inline result, and returns the backend envelope.
  * Inputs/Outputs: explicit GPT id, prompt, and optional timeout/poll settings; returns either a direct result or the canonical pending payload.
@@ -338,7 +363,7 @@ export async function createAsyncGptJob(
 export async function generatePromptAndWait(
   options: GeneratePromptAndWaitOptions
 ): Promise<Record<string, unknown>> {
-  return invokeGptRoute({
+  const payload = await invokeGptRoute({
     baseUrl: options.baseUrl,
     gptId: options.gptId,
     prompt: options.prompt,
@@ -348,6 +373,8 @@ export async function generatePromptAndWait(
     context: options.context,
     headers: options.headers
   });
+
+  return normalizeGptAsyncBridgePayload(payload, "query");
 }
 
 /**
@@ -358,7 +385,7 @@ export async function generatePromptAndWait(
 export async function queryAndWaitGptRoute(
   options: QueryAndWaitGptRouteOptions
 ): Promise<Record<string, unknown>> {
-  return invokeGptRoute({
+  const payload = await invokeGptRoute({
     baseUrl: options.baseUrl,
     gptId: options.gptId,
     prompt: options.prompt,
@@ -368,6 +395,8 @@ export async function queryAndWaitGptRoute(
     context: options.context,
     headers: options.headers
   });
+
+  return normalizeGptAsyncBridgePayload(payload, "query_and_wait");
 }
 
 /**
@@ -383,7 +412,7 @@ export async function getGptRouteJobStatus(
     throw new Error("Job lookup jobId is required.");
   }
 
-  return invokeGptRoute({
+  const payload = await invokeGptRoute({
     baseUrl: options.baseUrl,
     gptId: options.gptId,
     action: "get_status",
@@ -392,6 +421,8 @@ export async function getGptRouteJobStatus(
     },
     headers: options.headers
   });
+
+  return normalizeGptAsyncBridgePayload(payload, "get_status");
 }
 
 /**
@@ -407,7 +438,7 @@ export async function getGptRouteJobResult(
     throw new Error("Job lookup jobId is required.");
   }
 
-  return invokeGptRoute({
+  const payload = await invokeGptRoute({
     baseUrl: options.baseUrl,
     gptId: options.gptId,
     action: "get_result",
@@ -416,6 +447,8 @@ export async function getGptRouteJobResult(
     },
     headers: options.headers
   });
+
+  return normalizeGptAsyncBridgePayload(payload, "get_result");
 }
 
 function normalizeJobLookupId(jobId: string): string {
@@ -436,7 +469,8 @@ export async function getJobStatus(
   options: FetchGptJobStatusOptions
 ): Promise<Record<string, unknown>> {
   const encodedJobId = normalizeJobLookupId(options.jobId);
-  return getJson(options.baseUrl, `/jobs/${encodedJobId}`, options.headers);
+  const payload = await getJson(options.baseUrl, `/jobs/${encodedJobId}`, options.headers);
+  return normalizeGptAsyncBridgePayload(payload, "get_status");
 }
 
 /**
@@ -448,13 +482,125 @@ export async function getJobResult(
   options: FetchGptJobResultOptions
 ): Promise<Record<string, unknown>> {
   const encodedJobId = normalizeJobLookupId(options.jobId);
-  return getJson(options.baseUrl, `/jobs/${encodedJobId}/result`, options.headers);
+  const payload = await getJson(options.baseUrl, `/jobs/${encodedJobId}/result`, options.headers);
+  return normalizeGptAsyncBridgePayload(payload, "get_result");
 }
 
 export async function fetchGptJobResult(
   options: FetchGptJobResultOptions
 ): Promise<Record<string, unknown>> {
   return getJobResult(options);
+}
+
+export async function requestQueryAndWait(
+  options: QueryAndWaitGptRouteOptions
+): Promise<Record<string, unknown>> {
+  return queryAndWaitGptRoute(options);
+}
+
+export async function requestGptJobStatus(
+  options: InvokeGptJobLookupActionOptions
+): Promise<Record<string, unknown>> {
+  return getGptRouteJobStatus(options);
+}
+
+export async function requestGptJobResult(
+  options: InvokeGptJobLookupActionOptions
+): Promise<Record<string, unknown>> {
+  return getGptRouteJobResult(options);
+}
+
+function normalizeGptAsyncBridgePayload(
+  payload: Record<string, unknown>,
+  action: GptAsyncBridgeAction
+): Record<string, unknown> {
+  if (action === "get_status") {
+    const rawStatus = isJobLookupEnvelope(payload.result, "status") ? payload.result : payload;
+    return compactObject({
+      ok: payload.ok !== false,
+      action,
+      jobId: readString(payload.jobId) ?? readString(rawStatus.id),
+      status: readString(payload.status) ?? readString(rawStatus.status),
+      lifecycleStatus: readString(payload.lifecycleStatus) ?? readString(rawStatus.lifecycle_status),
+      result: rawStatus,
+      error: isRecord(payload.error) ? payload.error : undefined
+    });
+  }
+
+  if (action === "get_result") {
+    const rawLookup = isJobLookupEnvelope(payload.result, "result") ? payload.result : payload;
+    return compactObject({
+      ok: payload.ok !== false,
+      action,
+      jobId: readString(payload.jobId) ?? readString(rawLookup.jobId),
+      status: readString(payload.status) ?? readString(rawLookup.status),
+      jobStatus: readNullableString(payload.jobStatus) ?? readNullableString(rawLookup.jobStatus),
+      lifecycleStatus: readString(payload.lifecycleStatus) ?? readString(rawLookup.lifecycleStatus),
+      poll: readString(payload.poll) ?? readString(rawLookup.poll),
+      stream: readString(payload.stream) ?? readString(rawLookup.stream),
+      result: Object.prototype.hasOwnProperty.call(payload, "output")
+        ? payload.output
+        : rawLookup === payload
+        ? payload.result
+        : rawLookup.result,
+      error: isRecord(payload.error)
+        ? payload.error
+        : isRecord(rawLookup.error)
+        ? rawLookup.error
+        : undefined
+    });
+  }
+
+  return compactObject({
+    ...payload,
+    action: readString(payload.action) ?? action
+  });
+}
+
+function compactObject(record: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(record).filter(([, value]) => value !== undefined)
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isJobLookupEnvelope(
+  value: unknown,
+  kind: "status" | "result"
+): value is Record<string, unknown> {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  if (kind === "status") {
+    return Boolean(
+      readString(value.id) ||
+      readString(value.status) ||
+      readString(value.lifecycle_status)
+    );
+  }
+
+  return Boolean(
+    readString(value.jobId) ||
+    readString(value.status) ||
+    readString(value.lifecycleStatus) ||
+    readString(value.poll)
+  );
+}
+
+function readString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+
+function readNullableString(value: unknown): string | null | undefined {
+  if (value === null) {
+    return null;
+  }
+
+  return readString(value);
 }
 
 async function postJson(

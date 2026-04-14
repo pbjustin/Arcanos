@@ -48,31 +48,13 @@ describe('canonical GPT route validation', () => {
   });
 
   it('propagates query validation failures from dispatch as HTTP 400', async () => {
-    mockRouteGptRequest.mockResolvedValue({
-      ok: false,
-      error: {
-        code: 'BAD_REQUEST',
-        message: "Query actions require message/prompt in the request body."
-      },
-      _route: {
-        gptId: 'arcanos-daemon',
-        module: 'ARCANOS:CORE',
-        route: 'core',
-      },
-    });
-
     const app = buildApp();
     const res = await request(app).post('/gpt/arcanos-daemon').send({ action: 'query', sessionId: 'demo-session' });
 
     expect(res.status).toBe(400);
-    expect(res.body.error?.code).toBe('BAD_REQUEST');
-    expect(String(res.body.error?.message || '')).toContain('message/prompt');
-    expect(mockRouteGptRequest).toHaveBeenCalledWith(
-      expect.objectContaining({
-        gptId: 'arcanos-daemon',
-        body: { action: 'query', sessionId: 'demo-session' }
-      })
-    );
+    expect(res.body.error?.code).toBe('PROMPT_REQUIRED');
+    expect(String(res.body.error?.message || '')).toContain('prompt');
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
   it('forwards alternate prompt field aliases to canonical GPT dispatch', async () => {
@@ -92,7 +74,6 @@ describe('canonical GPT route validation', () => {
 
     const app = buildApp();
     const res = await request(app).post('/gpt/arcanos-daemon').send({
-      action: 'query',
       userInput: 'Hello from test',
       clientContext: { routingDirectives: ['concise'] }
     });
@@ -105,7 +86,6 @@ describe('canonical GPT route validation', () => {
       expect.objectContaining({
         gptId: 'arcanos-daemon',
         body: {
-          action: 'query',
           userInput: 'Hello from test',
           clientContext: { routingDirectives: ['concise'] }
         }

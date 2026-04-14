@@ -28,6 +28,22 @@ export interface GenerateAndWaitCommandInvocation {
   options: CliGlobalOptions;
 }
 
+export interface QueryCommandInvocation {
+  kind: "query";
+  gptId: string;
+  prompt: string;
+  options: CliGlobalOptions;
+}
+
+export interface QueryAndWaitCommandInvocation {
+  kind: "query-and-wait";
+  gptId: string;
+  prompt: string;
+  timeoutMs?: number;
+  pollIntervalMs?: number;
+  options: CliGlobalOptions;
+}
+
 export interface JobStatusCommandInvocation {
   kind: "job-status";
   jobId: string;
@@ -92,6 +108,8 @@ export interface HelpCommandInvocation {
 export type CliInvocation =
   | AskCommandInvocation
   | GenerateAndWaitCommandInvocation
+  | QueryCommandInvocation
+  | QueryAndWaitCommandInvocation
   | JobStatusCommandInvocation
   | JobResultCommandInvocation
   | PlanCommandInvocation

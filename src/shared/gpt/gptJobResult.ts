@@ -2,9 +2,14 @@ import { z } from 'zod';
 import type { JobData } from '@core/db/schema.js';
 import { resolveGptJobLifecycleStatus } from './gptJobLifecycle.js';
 
+export const GPT_QUERY_ACTION = 'query';
 export const GPT_GET_STATUS_ACTION = 'get_status';
 export const GPT_GET_RESULT_ACTION = 'get_result';
 export const GPT_QUERY_AND_WAIT_ACTION = 'query_and_wait';
+
+export type GptAsyncWriteAction =
+  | typeof GPT_QUERY_ACTION
+  | typeof GPT_QUERY_AND_WAIT_ACTION;
 
 const normalizeActionValue = (value: unknown) => typeof value === 'string'
   ? value.trim().toLowerCase()
@@ -53,6 +58,33 @@ export type ParsedGptJobResultRequest =
   | { ok: false; error: string };
 
 export type ParsedGptJobStatusRequest = ParsedGptJobResultRequest;
+
+export interface GptJobStatusBridgePayload {
+  action: typeof GPT_GET_STATUS_ACTION;
+  jobId: string;
+  status: string;
+  lifecycleStatus: string;
+  result: ReturnType<typeof buildStoredJobStatusPayload>;
+}
+
+export interface GptJobResultBridgePayload {
+  action: typeof GPT_GET_RESULT_ACTION;
+  jobId: string;
+  status: GptJobResultLookupPayload['status'];
+  jobStatus: string | null;
+  lifecycleStatus: string;
+  createdAt: string | null;
+  updatedAt: string | null;
+  completedAt: string | null;
+  retentionUntil: string | null;
+  idempotencyUntil: string | null;
+  expiresAt: string | null;
+  poll: string;
+  stream: string;
+  output: unknown | null;
+  error: GptJobResultLookupPayload['error'];
+  result: GptJobResultLookupPayload;
+}
 
 function serializeJobTimestamp(value: string | Date | null | undefined): string | null {
   if (typeof value === 'string') {
@@ -230,6 +262,17 @@ export function buildStoredJobStatusPayload(job: JobData) {
   };
 }
 
+export function buildGptJobStatusBridgePayload(job: JobData): GptJobStatusBridgePayload {
+  const statusPayload = buildStoredJobStatusPayload(job);
+  return {
+    action: GPT_GET_STATUS_ACTION,
+    jobId: job.id,
+    status: statusPayload.status,
+    lifecycleStatus: statusPayload.lifecycle_status,
+    result: statusPayload
+  };
+}
+
 export function buildGptJobResultLookupPayload(
   jobId: string,
   job: JobData | null
@@ -270,4 +313,29 @@ export function buildGptJobResultLookupPayload(
   }
 
   return buildPendingJobLookupPayload(job);
+}
+
+export function buildGptJobResultBridgePayload(
+  jobId: string,
+  job: JobData | null
+): GptJobResultBridgePayload {
+  const lookup = buildGptJobResultLookupPayload(jobId, job);
+  return {
+    action: GPT_GET_RESULT_ACTION,
+    jobId: lookup.jobId,
+    status: lookup.status,
+    jobStatus: lookup.jobStatus,
+    lifecycleStatus: lookup.lifecycleStatus,
+    createdAt: lookup.createdAt,
+    updatedAt: lookup.updatedAt,
+    completedAt: lookup.completedAt,
+    retentionUntil: lookup.retentionUntil,
+    idempotencyUntil: lookup.idempotencyUntil,
+    expiresAt: lookup.expiresAt,
+    poll: lookup.poll,
+    stream: lookup.stream,
+    output: lookup.result,
+    error: lookup.error,
+    result: lookup
+  };
 }
