@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
-const runThroughBrainMock = jest.fn();
+const runTrinityWritingPipelineMock = jest.fn();
 const createRuntimeBudgetWithLimitMock = jest.fn((watchdogLimit: number, safetyBuffer = 0) => ({
   startedAt: 0,
   hardDeadline: watchdogLimit,
@@ -14,10 +14,11 @@ const recordTraceEventMock = jest.fn();
 const runWithRequestAbortTimeoutMock = jest.fn();
 const getRequestAbortSignalMock = jest.fn(() => undefined);
 const getRequestRemainingMsMock = jest.fn(() => null);
+const getRequestAbortContextMock = jest.fn(() => null);
 const isAbortErrorMock = jest.fn((error: unknown) => error instanceof Error && error.name === 'AbortError');
 
-jest.unstable_mockModule('@core/logic/trinity.js', () => ({
-  runThroughBrain: runThroughBrainMock
+jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({
+  runTrinityWritingPipeline: runTrinityWritingPipelineMock
 }));
 
 jest.unstable_mockModule('@platform/resilience/runtimeBudget.js', () => ({
@@ -57,7 +58,7 @@ jest.unstable_mockModule('@services/systemState.js', () => ({
 jest.unstable_mockModule('@arcanos/runtime', () => ({
   runWithRequestAbortTimeout: runWithRequestAbortTimeoutMock,
   getRequestAbortSignal: getRequestAbortSignalMock,
-  getRequestAbortContext: jest.fn(() => null),
+  getRequestAbortContext: getRequestAbortContextMock,
   getRequestRemainingMs: getRequestRemainingMsMock,
   isAbortError: isAbortErrorMock
 }));
@@ -109,6 +110,7 @@ describe('runArcanosCoreQuery timeout clamp', () => {
     delete process.env.ARCANOS_CORE_DEGRADED_HEADROOM_MS;
     delete process.env.ARCANOS_CORE_DEGRADED_MAX_WORDS;
     getRequestRemainingMsMock.mockReturnValue(null);
+    getRequestAbortContextMock.mockReturnValue(null);
   });
 
   it('recovers with a direct-answer degraded path when the shared core pipeline times out', async () => {
@@ -118,7 +120,8 @@ describe('runArcanosCoreQuery timeout clamp', () => {
     runWithRequestAbortTimeoutMock
       .mockRejectedValueOnce(timeoutError)
       .mockImplementationOnce(async (_options: unknown, callback: () => Promise<unknown>) => await callback());
-    runThroughBrainMock.mockResolvedValueOnce(createTrinityResult());
+    getRequestAbortContextMock.mockReturnValue({ requestId: 'req-core-timeout-1' });
+    runTrinityWritingPipelineMock.mockResolvedValueOnce(createTrinityResult());
 
     const result = await runArcanosCoreQuery({
       client: {} as never,
@@ -144,24 +147,30 @@ describe('runArcanosCoreQuery timeout clamp', () => {
     );
     expect(createRuntimeBudgetWithLimitMock).toHaveBeenNthCalledWith(1, 3000, 250);
     expect(createRuntimeBudgetWithLimitMock).toHaveBeenNthCalledWith(2, 2000, 250);
-    expect(runThroughBrainMock).toHaveBeenCalledWith(
-      {} as never,
-      'Summarize the service health quickly.',
-      undefined,
-      undefined,
-      expect.objectContaining({
+    expect(runTrinityWritingPipelineMock).toHaveBeenCalledWith({
+      input: {
+        prompt: 'Summarize the service health quickly.',
+        sessionId: undefined,
+        overrideAuditSafe: undefined,
         sourceEndpoint: 'api-arcanos.ask.degraded',
-        answerMode: 'direct',
-        requestedVerbosity: 'minimal',
-        maxWords: 60,
-        strictUserVisibleOutput: true,
-        directAnswerModelOverride: 'gpt-4.1-mini'
-      }),
-      expect.objectContaining({
-        watchdogLimit: 2000,
-        safetyBuffer: 250
-      })
-    );
+        body: { prompt: 'Summarize the service health quickly.' }
+      },
+      context: {
+        client: {} as never,
+        requestId: 'req-core-timeout-1',
+        runtimeBudget: expect.objectContaining({
+          watchdogLimit: 2000,
+          safetyBuffer: 250
+        }),
+        runOptions: expect.objectContaining({
+          answerMode: 'direct',
+          requestedVerbosity: 'minimal',
+          maxWords: 60,
+          strictUserVisibleOutput: true,
+          directAnswerModelOverride: 'gpt-4.1-mini'
+        })
+      }
+    });
     expect(result).toEqual(expect.objectContaining({
       timeoutKind: 'pipeline_timeout',
       degradedModeReason: 'arcanos_core_pipeline_timeout_direct_answer',
@@ -180,7 +189,8 @@ describe('runArcanosCoreQuery timeout clamp', () => {
     runWithRequestAbortTimeoutMock
       .mockRejectedValueOnce(timeoutError)
       .mockImplementationOnce(async (_options: unknown, callback: () => Promise<unknown>) => await callback());
-    runThroughBrainMock.mockResolvedValueOnce(createTrinityResult({
+    getRequestAbortContextMock.mockReturnValue({ requestId: 'req-core-timeout-2' });
+    runTrinityWritingPipelineMock.mockResolvedValueOnce(createTrinityResult({
       result: 'Recovered after near-deadline abort'
     }));
 
@@ -211,7 +221,7 @@ describe('runArcanosCoreQuery timeout clamp', () => {
       })
     ).rejects.toThrow('upstream failure');
 
-    expect(runThroughBrainMock).not.toHaveBeenCalled();
+    expect(runTrinityWritingPipelineMock).not.toHaveBeenCalled();
     expect(recordTraceEventMock).not.toHaveBeenCalled();
   });
 

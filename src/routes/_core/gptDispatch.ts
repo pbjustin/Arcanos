@@ -7,12 +7,10 @@ import { buildArcanosCoreTimeoutFallbackEnvelope } from "@services/arcanos-core.
 import { dispatchModuleAction, getModuleMetadata } from "../modules.js";
 import type { GptMatchMethod } from "@platform/logging/gptLogger.js";
 import { persistModuleConversation } from "@services/moduleConversationPersistence.js";
-import { arcanosMcpService, type ArcanosMcpService, type ArcanosMcpToolCallResult, type ArcanosMcpToolListResult } from "@services/arcanosMcp.js";
 import {
   executeNaturalLanguageMemoryCommand,
   extractNaturalLanguageSessionId,
   extractNaturalLanguageStorageLabel,
-  hasDagOrchestrationIntentCue,
   hasNaturalLanguageMemoryCue,
   parseNaturalLanguageMemoryCommand
 } from "@services/naturalLanguageMemory.js";
@@ -22,15 +20,10 @@ import {
   collectRepoImplementationEvidence,
   shouldInspectRepoPrompt,
 } from "@services/repoImplementationEvidence.js";
-import { recordAiRoutingDebugSnapshot } from "@services/aiRoutingDebugService.js";
 import { extractDiagnosticTextInput, isDiagnosticRequest } from "@shared/http/diagnosticRequest.js";
 import { isRecord } from "@shared/typeGuards.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import type { Request } from "express";
-import {
-  buildDagRunFollowUpPaths,
-  shouldTreatPromptAsDagExecution,
-} from "@shared/dag/dagExecutionRouting.js";
 import {
   getRequestAbortContext,
   getRequestRemainingMs,
@@ -38,24 +31,17 @@ import {
   runWithRequestAbortTimeout
 } from "@arcanos/runtime";
 import {
-  recordDagTraceTimeout,
   recordDispatcherFallback,
   recordDispatcherMisroute,
   recordDispatcherRoute,
-  recordMcpAutoInvoke,
   recordMemoryDispatchIgnored,
   recordUnknownGpt,
 } from "@platform/observability/appMetrics.js";
-import { SystemStateConflictError } from "@services/systemState.js";
+import { recordPromptDebugTrace } from "@services/promptDebugTraceService.js";
 import {
-  recordPromptDebugTrace,
-  shouldInspectRuntimePrompt,
-} from "@services/promptDebugTraceService.js";
-import {
-  classifyRuntimeInspectionPrompt,
-  executeRuntimeInspection,
-} from "@services/runtimeInspectionRoutingService.js";
-import { tryExecuteDeterministicDagTools, type DagDeterministicExecutionResult } from "../ask/dagTools.js";
+  assertWritingPlaneClassification,
+  classifyGptRequestPlane,
+} from "./gptPlaneClassification.js";
 
 export type AskEnvelope =
   | { ok: true; result: unknown; _route: RouteMeta }
@@ -192,465 +178,10 @@ function resolveSessionId(body: unknown, payload: unknown): string | undefined {
   return undefined;
 }
 
-type McpDispatchIntent =
-  | {
-      action: 'mcp.invoke';
-      toolName: string;
-      toolArguments: Record<string, unknown>;
-      dispatchMode: 'automatic' | 'explicit';
-      reason: string;
-      followLatestRunWithTrace?: boolean;
-    }
-  | {
-      action: 'mcp.list_tools';
-      dispatchMode: 'automatic' | 'explicit';
-      reason: string;
-    };
-
 type PromptIntentClassification = {
-  intent: 'dag' | 'memory' | 'generic';
+  intent: 'memory' | 'generic';
   reason: string;
-  bypassMemoryDispatcher: boolean;
 };
-
-function getRecordString(record: Record<string, unknown>, key: string): string | undefined {
-  const value = record[key];
-  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
-}
-
-function getRecordObject(record: Record<string, unknown>, key: string): Record<string, unknown> | undefined {
-  const value = record[key];
-  return isRecord(value) ? value : undefined;
-}
-
-function normalizeMcpDispatchAction(rawAction: string | undefined): 'mcp.invoke' | 'mcp.list_tools' | null {
-  if (!rawAction) {
-    return null;
-  }
-
-  const normalizedAction = normalize(rawAction);
-  if (normalizedAction === 'mcp.invoke' || normalizedAction === 'mcp.run') {
-    return 'mcp.invoke';
-  }
-  if (
-    normalizedAction === 'mcp.list_tools' ||
-    normalizedAction === 'mcp.listtools' ||
-    normalizedAction === 'mcp.list-tools'
-  ) {
-    return 'mcp.list_tools';
-  }
-
-  return null;
-}
-
-/**
- * Resolve explicit dispatcher requests for the internal ARCANOS MCP service.
- * Inputs/Outputs: requested action plus normalized payload; returns MCP intent, validation error, or null.
- * Edge cases: ignores payload.mcp when a non-MCP action was explicitly requested.
- */
-function parseMcpDispatchIntent(
-  requestedAction: string | undefined,
-  payload: unknown
-): { intent: McpDispatchIntent | null; error?: string } {
-  const normalizedRequestedAction = normalizeMcpDispatchAction(requestedAction);
-
-  //audit Assumption: explicit non-MCP actions must keep existing dispatcher semantics; failure risk: payload fields accidentally reroute normal module calls into MCP; expected invariant: MCP branch only activates for explicit MCP actions or when no action was requested and payload.mcp is present; handling strategy: short-circuit on non-MCP requested actions.
-  if (requestedAction && !normalizedRequestedAction) {
-    return { intent: null };
-  }
-
-  const payloadRecord = isRecord(payload) ? payload : null;
-  const embeddedEnvelope = payloadRecord ? getRecordObject(payloadRecord, 'mcp') : undefined;
-  const envelope = embeddedEnvelope ?? payloadRecord;
-
-  if (!envelope) {
-    return { intent: null };
-  }
-
-  const normalizedEnvelopeAction =
-    normalizedRequestedAction ??
-    normalizeMcpDispatchAction(getRecordString(envelope, 'action') ?? getRecordString(envelope, 'operation'));
-
-  if (!normalizedEnvelopeAction) {
-    return { intent: null };
-  }
-
-  if (normalizedEnvelopeAction === 'mcp.list_tools') {
-    return {
-      intent: {
-        action: 'mcp.list_tools',
-        dispatchMode: 'explicit',
-        reason: 'payload_mcp_list_tools',
-      }
-    };
-  }
-
-  const toolName =
-    getRecordString(envelope, 'toolName') ??
-    getRecordString(envelope, 'name');
-
-  //audit Assumption: MCP invoke dispatch requires a concrete tool identifier; failure risk: opening a dispatcher MCP session with an empty target creates opaque downstream errors; expected invariant: every MCP invoke request names one tool; handling strategy: reject malformed requests at dispatcher boundary.
-  if (!toolName) {
-    return { intent: null, error: 'MCP invoke dispatch requires payload.toolName (or payload.mcp.toolName).' };
-  }
-
-  const toolArguments =
-    getRecordObject(envelope, 'toolArguments') ??
-    getRecordObject(envelope, 'arguments') ??
-    {};
-
-  return {
-    intent: {
-      action: 'mcp.invoke',
-      toolName,
-      toolArguments,
-      dispatchMode: 'explicit',
-      reason: 'payload_mcp_invoke',
-    }
-  };
-}
-
-const automaticMcpListToolsPattern =
-  /\b(?:list|show|get|what(?:\s+are)?)\b[^.!?\n]{0,24}\b(?:mcp\s+)?tools?\b|\bmcp\s+tools?\b/i;
-const automaticMcpModulesListPattern =
-  /\b(?:list|show|get)\b[^.!?\n]{0,20}\bmodules?\b|\bmodules?\b[^.!?\n]{0,20}\b(?:list|show|get)\b/i;
-const automaticMcpHealthReportPattern =
-  /\b(?:ops|system|backend|service|deployment|railway)\b[^.!?\n]{0,28}\bhealth\b|\bhealth\b[^.!?\n]{0,28}\b(?:ops|system|backend|service|deployment|railway)\b|\bhealth\s+report\b/i;
-const automaticMcpDagLatestRunPattern =
-  /\b(?:latest|recent|most recent)\b[^.!?\n]{0,40}\b(?:dag(?:\s+run)?|workflow(?:\s+run)?|orchestration(?:\s+run)?)\b|\b(?:dag(?:\s+run)?|workflow(?:\s+run)?|orchestration(?:\s+run)?)\b[^.!?\n]{0,40}\b(?:latest|recent|most recent)\b/i;
-const automaticMcpDagTraceSelectorPattern =
-  /\b(?:full\s+trace|trace|lineage|nodes?|events?|metrics?|verification)\b/i;
-const automaticMcpDagRunIdPattern = /\b(dagrun[-_][a-z0-9_-]+)\b/i;
-const automaticMcpDagExplicitCommandPattern = /^\s*module\s*:\s*dag\b/i;
-const automaticMcpDagApiRoutePattern = /\/api\/arcanos\/dag\b/i;
-const automaticMcpStrongCuePattern = /\b(?:use|via|through)\s+mcp\b|\bmcp\s+(?:server|tools?|tooling)\b/i;
-const automaticMcpOpsVerbPattern =
-  /\b(?:diagnose|debug|inspect|audit|analyze|check|report|trace|verify|investigate|orchestrate|manage)\b/i;
-const automaticMcpBackendNounPattern =
-  /\b(?:backend|system|deployment|service|worker|queue|database|postgres|redis|railway|dag|workflow|plan|plans|agent|agents|module|modules|research|memory)\b/i;
-const automaticRuntimeVerificationVerbPattern =
-  /\b(?:verify|check|confirm|validate|inspect|test|probe)\b/i;
-const automaticRuntimeVerificationStrongCuePattern =
-  /\b(?:verify\s+in\s+production|currently\s+active|system\s+health|health\s+probe|live\s+verification)\b/i;
-
-function shouldAutoInspectRuntimeVerificationPrompt(prompt: string | null): boolean {
-  if (!prompt || !shouldInspectRuntimePrompt(prompt)) {
-    return false;
-  }
-
-  return (
-    automaticRuntimeVerificationStrongCuePattern.test(prompt) ||
-    automaticRuntimeVerificationVerbPattern.test(prompt)
-  );
-}
-
-function isRuntimeInspectionMcpIntent(intent: McpDispatchIntent | null): boolean {
-  return intent?.action === 'mcp.invoke' && intent.toolName === 'ops.health_report';
-}
-
-function shouldPreferAutomaticDagExecution(params: {
-  moduleName: string;
-  prompt: string | null;
-  requestedAction: string | undefined;
-  actionCandidate: string | null;
-  promptIntent: PromptIntentClassification['intent'];
-}): boolean {
-  const { moduleName, prompt, requestedAction, actionCandidate, promptIntent } = params;
-
-  if (!prompt) {
-    return false;
-  }
-
-  if (requestedAction && requestedAction !== 'query') {
-    return false;
-  }
-
-  if (moduleName !== 'ARCANOS:CORE') {
-    return false;
-  }
-
-  if (actionCandidate && actionCandidate !== 'query') {
-    return false;
-  }
-
-  if (promptIntent !== 'dag') {
-    return false;
-  }
-
-  return shouldTreatPromptAsDagExecution(prompt, { requireDagTokenForArtifact: true });
-}
-
-function resolveAiRoutingDetectedIntent(params: {
-  promptIntent: PromptIntentClassification['intent'];
-  dagExecutionPreferred: boolean;
-  runtimeInspectionRequired: boolean;
-}): 'RUNTIME_INSPECTION_REQUIRED' | 'DAG_EXECUTION_REQUIRED' | 'STANDARD' {
-  const { promptIntent, dagExecutionPreferred, runtimeInspectionRequired } = params;
-
-  if (promptIntent === 'dag' && dagExecutionPreferred) {
-    return 'DAG_EXECUTION_REQUIRED';
-  }
-
-  return runtimeInspectionRequired ? 'RUNTIME_INSPECTION_REQUIRED' : 'STANDARD';
-}
-
-function mapDagToolNameToDispatcherAction(toolName: string): string {
-  switch (toolName) {
-    case 'create_dag_run':
-      return 'dag.run.create';
-    case 'get_latest_dag_run':
-      return 'dag.run.latest';
-    case 'get_dag_run':
-      return 'dag.run.get';
-    case 'get_dag_trace':
-      return 'dag.run.trace';
-    case 'get_dag_tree':
-      return 'dag.run.tree';
-    case 'get_dag_node':
-      return 'dag.run.node';
-    case 'get_dag_events':
-      return 'dag.run.events';
-    case 'get_dag_metrics':
-      return 'dag.run.metrics';
-    case 'get_dag_errors':
-      return 'dag.run.errors';
-    case 'get_dag_lineage':
-      return 'dag.run.lineage';
-    case 'cancel_dag_run':
-      return 'dag.run.cancel';
-    case 'get_dag_verification':
-      return 'dag.run.verification';
-    default:
-      return toolName;
-  }
-}
-
-function buildAutomaticDagDispatchResult(
-  execution: DagDeterministicExecutionResult,
-): {
-  primaryAction: string;
-  selectedTools: string[];
-  responsePayload: {
-    handledBy: 'dag-dispatcher';
-    dag: {
-      dispatchMode: 'automatic';
-      reason: 'prompt_requests_dag_execution';
-      summary: string;
-      runId: string | null;
-      run: Record<string, unknown> | null;
-      artifacts: Record<string, Record<string, unknown>>;
-      artifactKeys: string[];
-      deferredTools: {
-        total: number;
-        tools: string[];
-      };
-      followUp: {
-        runId: string;
-        trace: string;
-        tree: string;
-        lineage: string;
-        metrics: string;
-        errors: string;
-        verification: string;
-      } | null;
-      steps: Array<{
-        action: string;
-        output: Record<string, unknown>;
-      }>;
-    };
-  };
-} {
-  const selectedTools = execution.operations.map(operation =>
-    mapDagToolNameToDispatcherAction(operation.toolName),
-  );
-  const primaryAction = execution.operations.some(operation => operation.toolName === 'create_dag_run')
-    ? 'dag.run.create'
-    : selectedTools[0] ?? 'dag.run.create';
-  const runStep =
-    execution.operations.find(operation =>
-      operation.toolName === 'create_dag_run' ||
-      operation.toolName === 'get_dag_run' ||
-      operation.toolName === 'get_latest_dag_run',
-    ) ?? null;
-  const artifacts = Object.fromEntries(
-    execution.operations.map(operation => [
-      mapDagToolNameToDispatcherAction(operation.toolName),
-      operation.output,
-    ]),
-  );
-  const runId = execution.runId;
-  const followUp = runId ? buildDagRunFollowUpPaths(runId) : null;
-
-  return {
-    primaryAction,
-    selectedTools,
-    responsePayload: {
-      handledBy: 'dag-dispatcher',
-      dag: {
-        dispatchMode: 'automatic',
-        reason: 'prompt_requests_dag_execution',
-        summary: execution.summary,
-        runId,
-        run: runStep?.output ?? null,
-        artifacts,
-        artifactKeys: Object.keys(artifacts),
-        deferredTools: {
-          total: execution.deferredToolNames.length,
-          tools: execution.deferredToolNames.map(toolName =>
-            mapDagToolNameToDispatcherAction(toolName),
-          ),
-        },
-        followUp,
-        steps: execution.operations.map(operation => ({
-          action: mapDagToolNameToDispatcherAction(operation.toolName),
-          output: operation.output,
-        })),
-      },
-    },
-  };
-}
-
-/**
- * Infer conservative automatic MCP dispatch for query-like operational prompts.
- * Inputs/Outputs: module, action context, prompt text, and session id; returns MCP intent or null.
- * Edge cases: only auto-routes generic tutor-like query flows so domain-specific modules keep their existing handlers.
- */
-function inferAutomaticMcpDispatchIntent(params: {
-  moduleName: string;
-  prompt: string | null;
-  requestedAction: string | undefined;
-  actionCandidate: string | null;
-  sessionId: string | undefined;
-}): McpDispatchIntent | null {
-  const { moduleName, prompt, requestedAction, actionCandidate, sessionId } = params;
-
-  //audit Assumption: automatic MCP selection should never override explicit non-query actions; failure risk: dispatcher bypasses strict module contracts; expected invariant: auto MCP only applies to query-like traffic; handling strategy: gate on absent/`query` action intent.
-  if (requestedAction && requestedAction !== 'query') {
-    return null;
-  }
-
-  //audit Assumption: auto MCP routing is safest on the primary ARCANOS core path; failure risk: domain-specific modules lose specialized behavior; expected invariant: gaming/booker/etc. keep existing module dispatch unless MCP was explicit; handling strategy: restrict automatic inference to the core module.
-  if (moduleName !== 'ARCANOS:CORE') {
-    return null;
-  }
-
-  //audit Assumption: only query/default-query routes can be safely upgraded to MCP automatically; failure risk: ambiguous modules or non-query actions get rerouted unexpectedly; expected invariant: automatic MCP stays within generic query execution; handling strategy: require null-or-query action candidate.
-  if (actionCandidate && actionCandidate !== 'query') {
-    return null;
-  }
-
-  if (!prompt) {
-    return null;
-  }
-
-  if (automaticMcpDagExplicitCommandPattern.test(prompt)) {
-    const explicitDagRunIdMatch = automaticMcpDagRunIdPattern.exec(prompt);
-    if (explicitDagRunIdMatch?.[1]) {
-      return {
-        action: 'mcp.invoke',
-        toolName: 'dag.run.trace',
-        toolArguments: {
-          runId: explicitDagRunIdMatch[1],
-        },
-        dispatchMode: 'automatic',
-        reason: 'prompt_requests_explicit_dag_trace',
-      };
-    }
-
-      return {
-        action: 'mcp.invoke',
-        toolName: 'dag.run.latest',
-        toolArguments: {
-          ...(sessionId ? { sessionId } : {}),
-        },
-        dispatchMode: 'automatic',
-        reason: 'prompt_requests_latest_dag_run',
-        followLatestRunWithTrace: automaticMcpDagTraceSelectorPattern.test(prompt),
-      };
-    }
-
-  if (automaticMcpListToolsPattern.test(prompt)) {
-    return {
-      action: 'mcp.list_tools',
-      dispatchMode: 'automatic',
-      reason: 'prompt_requests_mcp_tools',
-    };
-  }
-
-  if (automaticMcpModulesListPattern.test(prompt)) {
-    return {
-      action: 'mcp.invoke',
-      toolName: 'modules.list',
-      toolArguments: {},
-      dispatchMode: 'automatic',
-      reason: 'prompt_requests_module_inventory',
-    };
-  }
-
-  if (shouldAutoInspectRuntimeVerificationPrompt(prompt)) {
-    return {
-      action: 'mcp.invoke',
-      toolName: 'ops.health_report',
-      toolArguments: {},
-      dispatchMode: 'automatic',
-      reason: 'prompt_requests_runtime_verification',
-    };
-  }
-
-  if (automaticMcpHealthReportPattern.test(prompt)) {
-    return {
-      action: 'mcp.invoke',
-      toolName: 'ops.health_report',
-      toolArguments: {},
-      dispatchMode: 'automatic',
-      reason: 'prompt_requests_ops_health',
-    };
-  }
-
-  const dagRunIdMatch = automaticMcpDagRunIdPattern.exec(prompt);
-  if (dagRunIdMatch?.[1] && automaticMcpDagTraceSelectorPattern.test(prompt)) {
-    return {
-      action: 'mcp.invoke',
-      toolName: 'dag.run.trace',
-      toolArguments: {
-        runId: dagRunIdMatch[1],
-      },
-      dispatchMode: 'automatic',
-      reason: 'prompt_requests_explicit_dag_trace',
-    };
-  }
-
-  if (automaticMcpDagLatestRunPattern.test(prompt)) {
-    return {
-      action: 'mcp.invoke',
-      toolName: 'dag.run.latest',
-      toolArguments: {
-        ...(sessionId ? { sessionId } : {}),
-      },
-      dispatchMode: 'automatic',
-      reason: 'prompt_requests_latest_dag_run',
-      followLatestRunWithTrace: automaticMcpDagTraceSelectorPattern.test(prompt),
-    };
-  }
-
-  if (
-    (automaticMcpDagApiRoutePattern.test(prompt) || hasDagOrchestrationIntentCue(prompt)) &&
-    automaticMcpDagTraceSelectorPattern.test(prompt)
-  ) {
-    return {
-      action: 'mcp.invoke',
-      toolName: 'dag.run.latest',
-      toolArguments: {
-        ...(sessionId ? { sessionId } : {}),
-      },
-      dispatchMode: 'automatic',
-      reason: 'prompt_requests_dag_orchestration',
-      followLatestRunWithTrace: true,
-    };
-  }
-
-  return null;
-}
 
 function classifyPromptIntent(params: {
   prompt: string | null;
@@ -663,19 +194,6 @@ function classifyPromptIntent(params: {
     return {
       intent: 'generic',
       reason: 'no_prompt',
-      bypassMemoryDispatcher: false,
-    };
-  }
-
-  if (hasDagOrchestrationIntentCue(prompt)) {
-    return {
-      intent: 'dag',
-      reason: prompt.includes('/api/arcanos/dag')
-        ? 'api_arcanos_dag_reference'
-        : /^\s*module\s*:\s*dag\b/i.test(prompt)
-        ? 'explicit_module_dag_command'
-        : 'dag_orchestration_terms',
-      bypassMemoryDispatcher: true,
     };
   }
 
@@ -683,77 +201,13 @@ function classifyPromptIntent(params: {
     return {
       intent: 'memory',
       reason: `memory_${parsedMemoryCommand.intent}`,
-      bypassMemoryDispatcher: false,
     };
   }
 
   return {
     intent: 'generic',
     reason: parsedMemoryCommand.intent !== 'unknown' ? 'memory_cue_not_confirmed' : 'no_specialized_intent',
-    bypassMemoryDispatcher: false,
   };
-}
-
-function getDispatcherMcpService(request: Request | undefined): ArcanosMcpService {
-  const requestScopedService = request?.app?.locals?.arcanosMcp;
-  //audit Assumption: app.locals may expose a request-scoped MCP facade; failure risk: missing app-local wiring breaks HTTP context reuse; expected invariant: fallback singleton remains available when locals are absent; handling strategy: validate shape and fall back to the shared service instance.
-  if (
-    requestScopedService &&
-    typeof requestScopedService.invokeTool === 'function' &&
-    typeof requestScopedService.listTools === 'function'
-  ) {
-    return requestScopedService as ArcanosMcpService;
-  }
-
-  return arcanosMcpService;
-}
-
-function extractMcpToolError(result: ArcanosMcpToolCallResult | ArcanosMcpToolListResult): {
-  code: string;
-  message: string;
-  details?: unknown;
-} | null {
-  if (!('isError' in result) || result.isError !== true) {
-    return null;
-  }
-
-  const structuredContent = isRecord(result.structuredContent) ? result.structuredContent : null;
-  const errorBody = structuredContent && isRecord(structuredContent.error) ? structuredContent.error : null;
-  if (!errorBody) {
-    return {
-      code: 'MCP_TOOL_ERROR',
-      message: 'ARCANOS MCP tool returned an error result.',
-    };
-  }
-
-  return {
-    code: typeof errorBody.code === 'string' ? errorBody.code : 'MCP_TOOL_ERROR',
-    message: typeof errorBody.message === 'string' ? errorBody.message : 'ARCANOS MCP tool returned an error result.',
-    details: errorBody.details,
-  };
-}
-
-function extractMcpToolOutput(
-  result: ArcanosMcpToolCallResult | ArcanosMcpToolListResult
-): Record<string, unknown> | ArcanosMcpToolCallResult | ArcanosMcpToolListResult {
-  return isRecord(result) && isRecord(result.structuredContent)
-    ? result.structuredContent
-    : result;
-}
-
-function extractDagRunIdFromMcpOutput(output: unknown): string | null {
-  if (!isRecord(output)) {
-    return null;
-  }
-
-  const directRunId = typeof output.runId === 'string' ? output.runId.trim() : '';
-  if (directRunId) {
-    return directRunId;
-  }
-
-  const run = isRecord(output.run) ? output.run : null;
-  const nestedRunId = run && typeof run.runId === 'string' ? run.runId.trim() : '';
-  return nestedRunId || null;
 }
 
 function resolveMemorySessionId(
@@ -1403,6 +857,107 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     };
   }
 
+  const rawRequestedAction = typeof body?.action === "string" ? body.action.trim() : undefined;
+  const writePlaneClassification = classifyGptRequestPlane({
+    body,
+    promptText: normalizedPrompt || rawPrompt || null,
+    requestedAction: rawRequestedAction ?? null,
+  });
+  if (writePlaneClassification.plane !== "writing") {
+    const controlError =
+      writePlaneClassification.plane === "reject"
+        ? {
+            code: writePlaneClassification.errorCode,
+            message: writePlaneClassification.message,
+            details: {
+              canonical: writePlaneClassification.canonical,
+              reason: writePlaneClassification.reason,
+              kind: writePlaneClassification.kind,
+            },
+          }
+        : {
+            code: "WRITING_PLANE_ONLY",
+            message:
+              "Control-plane requests must be handled by direct control handlers before entering the writing dispatcher.",
+            details: {
+              reason: writePlaneClassification.reason,
+              kind: writePlaneClassification.kind,
+            },
+          };
+
+    logger?.warn?.("gpt.dispatch.write_guard_rejected", {
+      requestId,
+      gptId: trimmedGptId,
+      endpoint: requestEndpoint,
+      action: writePlaneClassification.action,
+      plane: writePlaneClassification.plane,
+      kind: writePlaneClassification.kind,
+      reason: writePlaneClassification.reason,
+    });
+    if (writePlaneClassification.kind === "mcp_control") {
+      logger?.error?.("gpt.dispatch.write_guard.mcp_violation", {
+        requestId,
+        gptId: trimmedGptId,
+        endpoint: requestEndpoint,
+        action: writePlaneClassification.action,
+        plane: writePlaneClassification.plane,
+        kind: writePlaneClassification.kind,
+        reason: writePlaneClassification.reason,
+      });
+    }
+    if (writePlaneClassification.kind === "dag_control") {
+      logger?.error?.("gpt.dispatch.write_guard.dag_violation", {
+        requestId,
+        gptId: trimmedGptId,
+        endpoint: requestEndpoint,
+        action: writePlaneClassification.action,
+        plane: writePlaneClassification.plane,
+        kind: writePlaneClassification.kind,
+        reason: writePlaneClassification.reason,
+      });
+    }
+    recordDispatcherMisroute({
+      gptId: trimmedGptId,
+      module: "write-guard",
+      reason: writePlaneClassification.reason,
+    });
+    recordDispatcherRoute({
+      gptId: trimmedGptId,
+      module: "write-guard",
+      route: "write_guard",
+      handler: "write-guard",
+      outcome: "rejected",
+    });
+    recordPromptDebugTrace(promptDebugRequestId, "fallback", {
+      traceId: request?.traceId ?? null,
+      endpoint: requestEndpoint ?? "/gpt/:gptId",
+      method: request?.method ?? null,
+      rawPrompt,
+      normalizedPrompt,
+      selectedRoute: "write_guard",
+      selectedModule: "write-guard",
+      fallbackPathUsed: "write-guard",
+      fallbackReason: controlError.message,
+    });
+    return {
+      ok: false,
+      error: controlError,
+      _route: {
+        ...baseRoute,
+        action: writePlaneClassification.action,
+        route: "write_guard",
+      },
+    };
+  }
+  assertWritingPlaneClassification(writePlaneClassification);
+
+  logger?.info?.("gpt.write.entry", {
+    requestId,
+    gptId: trimmedGptId,
+    endpoint: requestEndpoint,
+    action: writePlaneClassification.action ?? "query",
+  });
+
   const forcedDirectResolved = resolveForcedDirectGptEntry(trimmedGptId);
   const forceDirectModuleRouting = Boolean(forcedDirectResolved);
   let gptModuleMap = forcedDirectResolved ? null : await getGptModuleMap();
@@ -1455,7 +1010,6 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     matchMethod,
     forcedDirectRoute: forceDirectModuleRouting,
   });
-  const rawRequestedAction = typeof body?.action === "string" ? body.action.trim() : undefined;
   const payload = preDispatchPayload;
   const prompt = extractPrompt(payload);
   const requestedMode = extractMode(body, payload);
@@ -1484,25 +1038,6 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     };
   }
 
-  const mcpDispatch = forceDirectModuleRouting
-    ? { intent: null as McpDispatchIntent | null, error: undefined }
-    : parseMcpDispatchIntent(requestedAction, payload);
-  if (mcpDispatch.error) {
-    return {
-      ok: false,
-      error: { code: "BAD_REQUEST", message: mcpDispatch.error },
-      _route: {
-        ...baseRoute,
-        module: activeEntry.module,
-        action: requestedAction ?? "mcp.invoke",
-        matchMethod,
-        route: activeEntry.route,
-        availableActions,
-        moduleVersion: (moduleMetadata as any)?.version ?? null,
-      },
-    };
-  }
-
   const parsedMemoryCommand =
     typeof prompt === "string" ? parseNaturalLanguageMemoryCommand(prompt) : { intent: "unknown" };
   const initialActionCandidate = pickAction(availableActions, requestedAction, moduleMetadata?.defaultAction ?? null);
@@ -1514,28 +1049,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     parsedMemoryCommand,
     hasMemoryCue,
   });
-  const runtimeInspectionClassification = classifyRuntimeInspectionPrompt(prompt);
-  const runtimeInspectionRequired =
-    runtimeInspectionClassification.detectedIntent === 'RUNTIME_INSPECTION_REQUIRED';
-  const automaticDagExecutionPreferred =
-    !forceDirectModuleRouting &&
-    !mcpDispatch.intent &&
-    shouldPreferAutomaticDagExecution({
-      moduleName: activeEntry.module,
-      prompt,
-      requestedAction,
-      actionCandidate: initialActionCandidate,
-      promptIntent: promptIntentClassification.intent,
-    });
-  const routingDetectedIntent = resolveAiRoutingDetectedIntent({
-    promptIntent: promptIntentClassification.intent,
-    dagExecutionPreferred: automaticDagExecutionPreferred,
-    runtimeInspectionRequired,
-  });
-  const runtimeInspectionChosenInRoutingTrace =
-    runtimeInspectionRequired && routingDetectedIntent === 'RUNTIME_INSPECTION_REQUIRED';
-  const repoInspectionAllowed = !runtimeInspectionClassification.repoInspectionDisabled;
-  const repoInspectionRequested = repoInspectionAllowed && shouldInspectRepoPrompt(prompt);
+  const repoInspectionRequested = shouldInspectRepoPrompt(prompt);
 
   logger?.info?.("gpt.dispatch.intent_classification", {
     requestId,
@@ -1545,10 +1059,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     selectedRoute: activeEntry.route,
     promptIntent: promptIntentClassification.intent,
     classificationReason: promptIntentClassification.reason,
-    routingDetectedIntent,
-    runtimeInspectionDetectedIntent: runtimeInspectionClassification.detectedIntent,
-    dagExecutionPreferred: automaticDagExecutionPreferred,
-    bypassMemoryDispatcher: promptIntentClassification.bypassMemoryDispatcher,
+    routingDetectedIntent: "STANDARD",
     memoryIntent: parsedMemoryCommand.intent !== "unknown" ? parsedMemoryCommand.intent : null,
     fallbackReason: null,
   });
@@ -1561,20 +1072,16 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     selectedRoute: activeEntry.route,
     selectedModule: activeEntry.module,
     repoInspectionChosen: repoInspectionRequested,
-    runtimeInspectionChosen: runtimeInspectionChosenInRoutingTrace,
+    runtimeInspectionChosen: false,
     intentTags: [
       promptIntentClassification.intent,
       ...(parsedMemoryCommand.intent !== "unknown" ? [`memory:${parsedMemoryCommand.intent}`] : []),
-      ...(routingDetectedIntent === 'DAG_EXECUTION_REQUIRED' ? ['dag_execution_requested'] : []),
-      ...(runtimeInspectionChosenInRoutingTrace ? ['runtime_inspection_requested'] : []),
-      ...(runtimeInspectionClassification.repoInspectionDisabled ? ['repo_inspection_disabled'] : []),
     ],
   });
 
   const shouldInterceptMemoryInDispatcher =
     typeof prompt === "string" &&
     parsedMemoryCommand.intent !== "unknown" &&
-    !promptIntentClassification.bypassMemoryDispatcher &&
     (hasMemoryCue || hasNoRoutableAction) &&
     (!requestedAction || requestedAction === "query");
 
@@ -1621,81 +1128,51 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         memoryOperation: memoryResult.operation
       });
 
-      if (
-        memoryResult.operation === "ignored" &&
-        typeof prompt === "string" &&
-        hasDagOrchestrationIntentCue(prompt)
-      ) {
+      if (memoryResult.operation === "ignored") {
         recordMemoryDispatchIgnored({
           gptId: trimmedGptId,
           module: activeEntry.module,
-          reason: 'memory_ignored_retry_dag',
+          reason: 'ignored_without_fallback',
         });
-        recordDispatcherMisroute({
-          gptId: trimmedGptId,
-          module: activeEntry.module,
-          reason: 'memory_ignored_retry_dag',
-        });
-        recordDispatcherFallback({
-          gptId: trimmedGptId,
-          module: activeEntry.module,
-          reason: 'memory_ignored_retry_dag',
-        });
-        logger?.warn?.("gpt.dispatch.intent_fallback", {
-          requestId,
-          gptId: trimmedGptId,
-          endpoint: requestEndpoint,
-          promptIntent: promptIntentClassification.intent,
-          selectedModule: activeEntry.module,
-          fallbackReason: "memory_ignored_retry_dag",
-        });
-      } else {
-        if (memoryResult.operation === "ignored") {
-          recordMemoryDispatchIgnored({
-            gptId: trimmedGptId,
-            module: activeEntry.module,
-            reason: 'ignored_without_fallback',
-          });
-        }
-        recordDispatcherRoute({
-          gptId: trimmedGptId,
-          module: activeEntry.module,
-          route: activeEntry.route,
-          handler: 'memory-dispatcher',
-          outcome: memoryResult.operation === 'ignored' ? 'ignored' : 'ok',
-        });
-        recordPromptDebugTrace(promptDebugRequestId, 'response', {
-          traceId: request?.traceId ?? null,
-          endpoint: requestEndpoint ?? '/gpt/:gptId',
-          method: request?.method ?? null,
-          rawPrompt,
-          normalizedPrompt,
-          selectedRoute: activeEntry.route,
-          selectedModule: activeEntry.module,
-          selectedTools: ['memory-dispatcher'],
-          finalExecutorPayload: {
-            executor: 'memory-dispatcher',
-            prompt,
-            sessionId: memorySessionId,
-          },
-          responseReturned: routedMemoryResult,
-          fallbackPathUsed: memoryResult.operation === 'ignored' ? 'memory-ignored' : null,
-          fallbackReason: memoryResult.operation === 'ignored' ? 'ignored_without_fallback' : null,
-        });
-        return {
-          ok: true,
-          result: routedMemoryResult,
-          _route: {
-            ...baseRoute,
-            module: activeEntry.module,
-            action: requestedAction || "memory",
-            matchMethod,
-            route: activeEntry.route,
-            availableActions,
-            moduleVersion: (moduleMetadata as any)?.version ?? null
-          }
-        };
       }
+      recordDispatcherRoute({
+        gptId: trimmedGptId,
+        module: activeEntry.module,
+        route: activeEntry.route,
+        handler: 'memory-dispatcher',
+        outcome: memoryResult.operation === 'ignored' ? 'ignored' : 'ok',
+      });
+      recordPromptDebugTrace(promptDebugRequestId, 'response', {
+        traceId: request?.traceId ?? null,
+        endpoint: requestEndpoint ?? '/gpt/:gptId',
+        method: request?.method ?? null,
+        rawPrompt,
+        normalizedPrompt,
+        selectedRoute: activeEntry.route,
+        selectedModule: activeEntry.module,
+        selectedTools: ['memory-dispatcher'],
+        finalExecutorPayload: {
+          executor: 'memory-dispatcher',
+          prompt,
+          sessionId: memorySessionId,
+        },
+        responseReturned: routedMemoryResult,
+        fallbackPathUsed: memoryResult.operation === 'ignored' ? 'memory-ignored' : null,
+        fallbackReason: memoryResult.operation === 'ignored' ? 'ignored_without_fallback' : null,
+      });
+      return {
+        ok: true,
+        result: routedMemoryResult,
+        _route: {
+          ...baseRoute,
+          module: activeEntry.module,
+          action: requestedAction || "memory",
+          matchMethod,
+          route: activeEntry.route,
+          availableActions,
+          moduleVersion: (moduleMetadata as any)?.version ?? null
+        }
+      };
     } catch (err: any) {
       return {
         ok: false,
@@ -1762,300 +1239,6 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     });
   }
 
-  if (
-    !forceDirectModuleRouting &&
-    !mcpDispatch.intent &&
-    shouldPreferAutomaticDagExecution({
-      moduleName: activeEntry.module,
-      prompt,
-      requestedAction,
-      actionCandidate,
-      promptIntent: promptIntentClassification.intent,
-    })
-  ) {
-    try {
-      const requestBudgetMs = getRequestRemainingMs();
-      const deterministicDagExecution = await tryExecuteDeterministicDagTools(prompt!, {
-        sessionId,
-        requestId: promptDebugRequestId,
-        traceId: request?.traceId,
-        logger,
-        ...(typeof requestBudgetMs === 'number' ? { requestBudgetMs } : {}),
-      });
-
-      if (deterministicDagExecution) {
-        const dagDispatch = buildAutomaticDagDispatchResult(deterministicDagExecution);
-
-        recordAiRoutingDebugSnapshot({
-          requestId: promptDebugRequestId,
-          timestamp: new Date().toISOString(),
-          rawPrompt,
-          normalizedPrompt,
-          detectedIntent: resolveAiRoutingDetectedIntent({
-            promptIntent: promptIntentClassification.intent,
-            dagExecutionPreferred: true,
-            runtimeInspectionRequired,
-          }),
-          routingDecision: 'dag_execution_completed',
-          toolsAvailable: dagDispatch.selectedTools,
-          toolsSelected: dagDispatch.selectedTools,
-          cliUsed: false,
-          runtimeEndpointsQueried: [],
-          repoFallbackUsed: false,
-          constraintViolations: [],
-        });
-
-        await persistModuleConversation({
-          moduleName: activeEntry.module,
-          route: activeEntry.route,
-          action: dagDispatch.primaryAction,
-          gptId: trimmedGptId,
-          sessionId,
-          requestId,
-          requestPayload: payload,
-          responsePayload: dagDispatch.responsePayload,
-        }).catch((error: unknown) => {
-          logger?.warn?.("gpt.dispatch.dag_execution.persistence_failed", {
-            requestId,
-            gptId: trimmedGptId,
-            module: activeEntry.module,
-            action: dagDispatch.primaryAction,
-            error: String((error as Error)?.message ?? error),
-          });
-        });
-
-        logger?.info?.("gpt.dispatch.dag_execution.ok", {
-          requestId,
-          gptId: trimmedGptId,
-          module: activeEntry.module,
-          action: dagDispatch.primaryAction,
-          selectedTools: dagDispatch.selectedTools,
-          runId: deterministicDagExecution.runId,
-        });
-
-        recordDispatcherRoute({
-          gptId: trimmedGptId,
-          module: activeEntry.module,
-          route: activeEntry.route,
-          handler: 'dag-dispatcher',
-          outcome: 'ok',
-        });
-        const dagDispatchTracePayload = {
-          traceId: request?.traceId ?? null,
-          endpoint: requestEndpoint ?? '/gpt/:gptId',
-          method: request?.method ?? null,
-          rawPrompt,
-          normalizedPrompt,
-          selectedRoute: activeEntry.route,
-          selectedModule: activeEntry.module,
-          selectedTools: dagDispatch.selectedTools,
-          repoInspectionChosen: false,
-          runtimeInspectionChosen: false,
-          finalExecutorPayload: {
-            executor: 'dag-dispatcher',
-            prompt,
-            runId: deterministicDagExecution.runId,
-            selectedTools: dagDispatch.selectedTools,
-          },
-        };
-        recordPromptDebugTrace(promptDebugRequestId, 'executor', dagDispatchTracePayload);
-        recordPromptDebugTrace(promptDebugRequestId, 'response', {
-          ...dagDispatchTracePayload,
-          responseReturned: dagDispatch.responsePayload,
-        });
-        return {
-          ok: true,
-          result: dagDispatch.responsePayload,
-          _route: {
-            ...baseRoute,
-            module: activeEntry.module,
-            action: dagDispatch.primaryAction,
-            matchMethod,
-            route: activeEntry.route,
-            availableActions,
-            moduleVersion: (moduleMetadata as any)?.version ?? null,
-          },
-        };
-      }
-    } catch (error) {
-      logger?.error?.("gpt.dispatch.dag_execution.error", {
-        requestId,
-        gptId: trimmedGptId,
-        module: activeEntry.module,
-        action: 'dag.run.create',
-        error: resolveErrorMessage(error),
-      });
-
-      recordDispatcherRoute({
-        gptId: trimmedGptId,
-        module: activeEntry.module,
-        route: activeEntry.route,
-        handler: 'dag-dispatcher',
-        outcome: 'error',
-      });
-      return {
-        ok: false,
-        error: {
-          code: 'MODULE_ERROR',
-          message: `DAG execution failed: ${resolveErrorMessage(error)}`,
-        },
-        _route: {
-          ...baseRoute,
-          module: activeEntry.module,
-          action: 'dag.run.create',
-          matchMethod,
-          route: activeEntry.route,
-          availableActions,
-          moduleVersion: (moduleMetadata as any)?.version ?? null,
-        },
-      };
-    }
-  }
-
-  if (
-    !forceDirectModuleRouting &&
-    !mcpDispatch.intent &&
-    activeEntry.module === "ARCANOS:CORE" &&
-    (!requestedAction || requestedAction === "query") &&
-    (!actionCandidate || actionCandidate === "query") &&
-    runtimeInspectionRequired
-  ) {
-    const runtimeInspection = await executeRuntimeInspection({
-      requestId: promptDebugRequestId,
-      rawPrompt,
-      normalizedPrompt,
-      request,
-    });
-
-    if (runtimeInspection.ok && runtimeInspection.responsePayload) {
-      await persistModuleConversation({
-        moduleName: activeEntry.module,
-        route: activeEntry.route,
-        action: "runtime.inspect",
-        gptId: trimmedGptId,
-        sessionId,
-        requestId,
-        requestPayload: payload,
-        responsePayload: runtimeInspection.responsePayload,
-      }).catch((error: unknown) => {
-        logger?.warn?.("gpt.dispatch.runtime_inspection.persistence_failed", {
-          requestId,
-          gptId: trimmedGptId,
-          module: activeEntry.module,
-          action: "runtime.inspect",
-          error: String((error as Error)?.message ?? error),
-        });
-      });
-
-      recordDispatcherRoute({
-        gptId: trimmedGptId,
-        module: activeEntry.module,
-        route: activeEntry.route,
-        handler: 'runtime-inspection',
-        outcome: 'ok',
-      });
-      recordPromptDebugTrace(promptDebugRequestId, 'executor', {
-        traceId: request?.traceId ?? null,
-        endpoint: requestEndpoint ?? '/gpt/:gptId',
-        method: request?.method ?? null,
-        rawPrompt,
-        normalizedPrompt,
-        selectedRoute: activeEntry.route,
-        selectedModule: activeEntry.module,
-        selectedTools: runtimeInspection.selectedTools,
-        repoInspectionChosen: false,
-        runtimeInspectionChosen: true,
-        finalExecutorPayload: {
-          executor: 'runtime-inspection',
-          prompt,
-          runtimeEndpointsQueried: runtimeInspection.runtimeEndpointsQueried,
-          cliUsed: runtimeInspection.cliUsed,
-        },
-      });
-      recordPromptDebugTrace(promptDebugRequestId, 'response', {
-        traceId: request?.traceId ?? null,
-        endpoint: requestEndpoint ?? '/gpt/:gptId',
-        method: request?.method ?? null,
-        rawPrompt,
-        normalizedPrompt,
-        selectedRoute: activeEntry.route,
-        selectedModule: activeEntry.module,
-        selectedTools: runtimeInspection.selectedTools,
-        repoInspectionChosen: false,
-        runtimeInspectionChosen: true,
-        finalExecutorPayload: {
-          executor: 'runtime-inspection',
-          prompt,
-          runtimeEndpointsQueried: runtimeInspection.runtimeEndpointsQueried,
-          cliUsed: runtimeInspection.cliUsed,
-        },
-        responseReturned: runtimeInspection.responsePayload,
-      });
-      return {
-        ok: true,
-        result: runtimeInspection.responsePayload,
-        _route: {
-          ...baseRoute,
-          module: activeEntry.module,
-          action: "runtime.inspect",
-          matchMethod,
-          route: activeEntry.route,
-          availableActions,
-          moduleVersion: (moduleMetadata as any)?.version ?? null,
-        },
-      };
-    }
-
-    if (
-      runtimeInspection.error &&
-      (!runtimeInspection.repoFallbackAllowed || !repoInspectionRequested)
-    ) {
-      recordDispatcherRoute({
-        gptId: trimmedGptId,
-        module: activeEntry.module,
-        route: activeEntry.route,
-        handler: 'runtime-inspection',
-        outcome: 'error',
-      });
-      recordPromptDebugTrace(promptDebugRequestId, 'fallback', {
-        traceId: request?.traceId ?? null,
-        endpoint: requestEndpoint ?? '/gpt/:gptId',
-        method: request?.method ?? null,
-        rawPrompt,
-        normalizedPrompt,
-        selectedRoute: activeEntry.route,
-        selectedModule: activeEntry.module,
-        selectedTools: runtimeInspection.selectedTools,
-        repoInspectionChosen: false,
-        runtimeInspectionChosen: true,
-        fallbackPathUsed: 'runtime-inspection',
-        fallbackReason: runtimeInspection.error.message,
-      });
-      return {
-        ok: false,
-        error: runtimeInspection.error,
-        _route: {
-          ...baseRoute,
-          module: activeEntry.module,
-          action: "runtime.inspect",
-          matchMethod,
-          route: activeEntry.route,
-          availableActions,
-          moduleVersion: (moduleMetadata as any)?.version ?? null,
-        },
-      };
-    }
-
-    if (runtimeInspection.error && runtimeInspection.repoFallbackAllowed && repoInspectionRequested) {
-      recordAiRoutingDebugSnapshot({
-        ...runtimeInspection.routingDebug,
-        timestamp: new Date().toISOString(),
-        routingDecision: 'repo_inspection_fallback',
-        repoFallbackUsed: true,
-      });
-    }
-  }
-
   let automaticRepoInspectionResult:
     | {
         handledBy: "repo-inspection";
@@ -2068,7 +1251,6 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     | null = null;
   if (
     !forceDirectModuleRouting &&
-    !mcpDispatch.intent &&
     activeEntry.module === "ARCANOS:CORE" &&
     (!requestedAction || requestedAction === "query") &&
     (!actionCandidate || actionCandidate === "query") &&
@@ -2101,7 +1283,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         _route: {
           ...baseRoute,
           module: activeEntry.module,
-          action: "mcp.auto.invoke",
+          action: "repo.inspect",
           matchMethod,
           route: activeEntry.route,
           availableActions,
@@ -2111,23 +1293,6 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     }
   }
   if (automaticRepoInspectionResult) {
-    if (runtimeInspectionRequired) {
-      recordAiRoutingDebugSnapshot({
-        requestId: promptDebugRequestId,
-        timestamp: new Date().toISOString(),
-        rawPrompt,
-        normalizedPrompt,
-        detectedIntent: 'RUNTIME_INSPECTION_REQUIRED',
-        routingDecision: 'repo_inspection_fallback',
-        toolsAvailable: ['repo-inspection'],
-        toolsSelected: ['repo-inspection'],
-        cliUsed: false,
-        runtimeEndpointsQueried: [],
-        repoFallbackUsed: true,
-        constraintViolations: repoInspectionAllowed ? [] : ['repo_inspection_used_when_disabled'],
-      });
-    }
-
     await persistModuleConversation({
       moduleName: activeEntry.module,
       route: activeEntry.route,
@@ -2184,356 +1349,6 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         moduleVersion: (moduleMetadata as any)?.version ?? null,
       },
     };
-  }
-  const automaticMcpDispatchIntent = forceDirectModuleRouting || mcpDispatch.intent
-    ? null
-    : inferAutomaticMcpDispatchIntent({
-        moduleName: activeEntry.module,
-        prompt,
-        requestedAction,
-        actionCandidate,
-        sessionId,
-      });
-  const resolvedMcpDispatchIntent =
-    mcpDispatch.intent ?? automaticMcpDispatchIntent;
-
-  if (resolvedMcpDispatchIntent) {
-    const dispatcherMcpService = getDispatcherMcpService(request);
-    const dispatcherAction = resolvedMcpDispatchIntent.action;
-    const runtimeInspectionChosen = isRuntimeInspectionMcpIntent(resolvedMcpDispatchIntent);
-    const dispatcherRouteAction =
-      resolvedMcpDispatchIntent.dispatchMode === "automatic"
-        ? `mcp.auto.${dispatcherAction === "mcp.invoke" ? "invoke" : "list_tools"}`
-        : dispatcherAction;
-    const buildMcpDispatchErrorResponse = (error: { code: string; message: string; details?: unknown }) => {
-      recordDispatcherRoute({
-        gptId: trimmedGptId,
-        module: activeEntry.module,
-        route: activeEntry.route,
-        handler: 'mcp-dispatcher',
-        outcome: 'error',
-      });
-      recordPromptDebugTrace(promptDebugRequestId, 'fallback', {
-        traceId: request?.traceId ?? null,
-        endpoint: requestEndpoint ?? '/gpt/:gptId',
-        method: request?.method ?? null,
-        rawPrompt,
-        normalizedPrompt,
-        selectedRoute: activeEntry.route,
-        selectedModule: activeEntry.module,
-        selectedTools:
-          resolvedMcpDispatchIntent.action === 'mcp.invoke'
-            ? [resolvedMcpDispatchIntent.toolName]
-            : ['mcp.list_tools'],
-        runtimeInspectionChosen,
-        fallbackPathUsed: 'mcp-dispatcher',
-        fallbackReason: error.message,
-      });
-      return {
-        ok: false as const,
-        error,
-        _route: {
-          ...baseRoute,
-          module: activeEntry.module,
-          action: dispatcherRouteAction,
-          matchMethod,
-          route: activeEntry.route,
-          availableActions,
-          moduleVersion: (moduleMetadata as any)?.version ?? null
-        }
-      };
-    };
-
-    if (resolvedMcpDispatchIntent.dispatchMode === "automatic") {
-      if (resolvedMcpDispatchIntent.action === 'mcp.invoke') {
-        recordMcpAutoInvoke({
-          gptId: trimmedGptId,
-          module: activeEntry.module,
-          toolName: resolvedMcpDispatchIntent.toolName,
-          reason: resolvedMcpDispatchIntent.reason,
-        });
-      }
-      logger?.info?.("gpt.dispatch.mcp.auto_selected", {
-        requestId,
-        gptId: trimmedGptId,
-        module: activeEntry.module,
-        action: dispatcherAction,
-        matchMethod,
-        reason: resolvedMcpDispatchIntent.reason,
-        toolName: resolvedMcpDispatchIntent.action === "mcp.invoke" ? resolvedMcpDispatchIntent.toolName : undefined,
-      });
-    }
-
-    logger?.info?.("gpt.dispatch.mcp.plan", {
-      requestId,
-      gptId: trimmedGptId,
-      module: activeEntry.module,
-      action: dispatcherAction,
-      matchMethod,
-      dispatchMode: resolvedMcpDispatchIntent.dispatchMode,
-      reason: resolvedMcpDispatchIntent.reason,
-      toolName: resolvedMcpDispatchIntent.action === "mcp.invoke" ? resolvedMcpDispatchIntent.toolName : undefined,
-    });
-    recordPromptDebugTrace(promptDebugRequestId, 'executor', {
-      traceId: request?.traceId ?? null,
-      endpoint: requestEndpoint ?? '/gpt/:gptId',
-      method: request?.method ?? null,
-      rawPrompt,
-      normalizedPrompt,
-      selectedRoute: activeEntry.route,
-      selectedModule: activeEntry.module,
-      selectedTools:
-        resolvedMcpDispatchIntent.action === 'mcp.invoke'
-          ? [resolvedMcpDispatchIntent.toolName]
-          : ['mcp.list_tools'],
-      repoInspectionChosen: false,
-      runtimeInspectionChosen,
-      finalExecutorPayload:
-        resolvedMcpDispatchIntent.action === 'mcp.invoke'
-          ? {
-              executor: 'mcp.invoke',
-              prompt,
-              toolName: resolvedMcpDispatchIntent.toolName,
-              toolArguments: resolvedMcpDispatchIntent.toolArguments,
-              sessionId,
-              runtimeInspectionRequested: runtimeInspectionChosen,
-            }
-          : {
-              executor: 'mcp.list_tools',
-              prompt,
-              sessionId,
-              runtimeInspectionRequested: false,
-            },
-    });
-
-    if (resolvedMcpDispatchIntent.action === "mcp.invoke" && resolvedMcpDispatchIntent.toolName === "trinity.query") {
-      logTrinityExecution(logger, {
-        requestId,
-        gptId: trimmedGptId,
-        action: "query",
-        handler: "mcp.trinity.query",
-        path: `/gpt/${trimmedGptId}`,
-        module: activeEntry.module,
-        route: activeEntry.route,
-      });
-    }
-
-    try {
-      const mcpResult =
-        resolvedMcpDispatchIntent.action === "mcp.invoke"
-          ? await dispatcherMcpService.invokeTool({
-              toolName: resolvedMcpDispatchIntent.toolName,
-              toolArguments: resolvedMcpDispatchIntent.toolArguments,
-              request,
-              sessionId,
-            })
-          : await dispatcherMcpService.listTools({
-              request,
-              sessionId,
-            });
-
-      const mcpToolError = extractMcpToolError(mcpResult);
-      if (mcpToolError) {
-        return buildMcpDispatchErrorResponse(mcpToolError);
-      }
-
-      let finalMcpResult = mcpResult;
-      let finalToolName =
-        resolvedMcpDispatchIntent.action === "mcp.invoke"
-          ? resolvedMcpDispatchIntent.toolName
-          : undefined;
-
-      if (
-        resolvedMcpDispatchIntent.action === "mcp.invoke" &&
-        resolvedMcpDispatchIntent.followLatestRunWithTrace
-      ) {
-        const latestRunOutput = extractMcpToolOutput(mcpResult);
-        const resolvedRunId = extractDagRunIdFromMcpOutput(latestRunOutput);
-
-        if (resolvedRunId) {
-          logger?.info?.("gpt.dispatch.mcp.follow_up", {
-            requestId,
-            gptId: trimmedGptId,
-            module: activeEntry.module,
-            sourceToolName: resolvedMcpDispatchIntent.toolName,
-            followUpToolName: "dag.run.trace",
-            runId: resolvedRunId,
-          });
-
-          const traceResult = await dispatcherMcpService.invokeTool({
-            toolName: "dag.run.trace",
-            toolArguments: { runId: resolvedRunId },
-            request,
-            sessionId,
-          });
-
-          const traceToolError = extractMcpToolError(traceResult);
-          if (traceToolError) {
-            return buildMcpDispatchErrorResponse(traceToolError);
-          }
-
-          if (resolvedMcpDispatchIntent.dispatchMode === "automatic") {
-            recordMcpAutoInvoke({
-              gptId: trimmedGptId,
-              module: activeEntry.module,
-              toolName: "dag.run.trace",
-              reason: resolvedMcpDispatchIntent.reason,
-            });
-          }
-
-          finalMcpResult = traceResult;
-          finalToolName = "dag.run.trace";
-        } else {
-          logger?.warn?.("gpt.dispatch.mcp.follow_up_skipped", {
-            requestId,
-            gptId: trimmedGptId,
-            module: activeEntry.module,
-            sourceToolName: resolvedMcpDispatchIntent.toolName,
-            reason: "latest_run_missing_run_id",
-          });
-        }
-      }
-
-      const routedMcpResult = {
-        handledBy: "mcp-dispatcher",
-        mcp:
-          resolvedMcpDispatchIntent.action === "mcp.invoke"
-            ? {
-                action: "invoke",
-                toolName: finalToolName,
-                dispatchMode: resolvedMcpDispatchIntent.dispatchMode,
-                reason: resolvedMcpDispatchIntent.reason,
-                output: extractMcpToolOutput(finalMcpResult),
-              }
-            : {
-                action: "list_tools",
-                dispatchMode: resolvedMcpDispatchIntent.dispatchMode,
-                reason: resolvedMcpDispatchIntent.reason,
-                output: mcpResult,
-              }
-      };
-
-      await persistModuleConversation({
-        moduleName: activeEntry.module,
-        route: activeEntry.route,
-        action: dispatcherRouteAction,
-        gptId: trimmedGptId,
-        sessionId,
-        requestId,
-        requestPayload: payload,
-        responsePayload: routedMcpResult
-      }).catch((error: unknown) => {
-        //audit Assumption: MCP dispatch persistence failures should not hide successful dispatcher output; failure risk: conversation history gaps; expected invariant: MCP result still returns to caller; handling strategy: warn and continue.
-        logger?.warn?.("gpt.dispatch.mcp.persistence_failed", {
-          requestId,
-          gptId: trimmedGptId,
-          module: activeEntry.module,
-          action: dispatcherRouteAction,
-          error: String((error as Error)?.message ?? error),
-        });
-      });
-
-      logger?.info?.("gpt.dispatch.mcp.ok", {
-        requestId,
-        gptId: trimmedGptId,
-        module: activeEntry.module,
-        action: dispatcherAction,
-        dispatchMode: resolvedMcpDispatchIntent.dispatchMode,
-        reason: resolvedMcpDispatchIntent.reason,
-        toolName: finalToolName,
-      });
-
-      recordDispatcherRoute({
-        gptId: trimmedGptId,
-        module: activeEntry.module,
-        route: activeEntry.route,
-        handler: 'mcp-dispatcher',
-        outcome: 'ok',
-      });
-      recordPromptDebugTrace(promptDebugRequestId, 'response', {
-        traceId: request?.traceId ?? null,
-        endpoint: requestEndpoint ?? '/gpt/:gptId',
-        method: request?.method ?? null,
-        rawPrompt,
-        normalizedPrompt,
-        selectedRoute: activeEntry.route,
-        selectedModule: activeEntry.module,
-        selectedTools: finalToolName ? [finalToolName] : ['mcp.list_tools'],
-        runtimeInspectionChosen,
-        responseReturned: routedMcpResult,
-      });
-      return {
-        ok: true,
-        result: routedMcpResult,
-        _route: {
-          ...baseRoute,
-          module: activeEntry.module,
-          action: dispatcherRouteAction,
-          matchMethod,
-          route: activeEntry.route,
-          availableActions,
-          moduleVersion: (moduleMetadata as any)?.version ?? null
-        },
-      };
-    } catch (err: any) {
-      const activeAbortContext = getRequestAbortContext();
-      const isMcpTimeout = isDispatchTimeoutError(err, activeAbortContext?.timeoutMs);
-      const mcpErrorMessage = isMcpTimeout
-        ? buildDispatchTimeoutMessage(activeAbortContext?.timeoutMs, 'mcp')
-        : err?.message ?? "MCP dispatch failed";
-
-      logger?.error?.("gpt.dispatch.mcp.error", {
-        requestId,
-        gptId: trimmedGptId,
-        module: activeEntry.module,
-        action: dispatcherAction,
-        matchMethod,
-        dispatchMode: resolvedMcpDispatchIntent.dispatchMode,
-        reason: resolvedMcpDispatchIntent.reason,
-        error: String(err?.message ?? err),
-        timeoutMs: activeAbortContext?.timeoutMs,
-      });
-
-      recordDispatcherRoute({
-        gptId: trimmedGptId,
-        module: activeEntry.module,
-        route: activeEntry.route,
-        handler: 'mcp-dispatcher',
-        outcome: isMcpTimeout ? 'timeout' : 'error',
-      });
-      recordPromptDebugTrace(promptDebugRequestId, 'fallback', {
-        traceId: request?.traceId ?? null,
-        endpoint: requestEndpoint ?? '/gpt/:gptId',
-        method: request?.method ?? null,
-        rawPrompt,
-        normalizedPrompt,
-        selectedRoute: activeEntry.route,
-        selectedModule: activeEntry.module,
-        selectedTools:
-          resolvedMcpDispatchIntent.action === 'mcp.invoke'
-            ? [resolvedMcpDispatchIntent.toolName]
-            : ['mcp.list_tools'],
-        runtimeInspectionChosen,
-        fallbackPathUsed: 'mcp-dispatcher',
-        fallbackReason: mcpErrorMessage,
-      });
-      return {
-        ok: false,
-        error: {
-          code: isMcpTimeout ? "MODULE_TIMEOUT" : "MODULE_ERROR",
-          message: mcpErrorMessage
-        },
-        _route: {
-          ...baseRoute,
-          module: activeEntry.module,
-          action: dispatcherRouteAction,
-          matchMethod,
-          route: activeEntry.route,
-          availableActions,
-          moduleVersion: (moduleMetadata as any)?.version ?? null
-        },
-      };
-    }
   }
 
   const action = actionCandidate;
@@ -2605,7 +1420,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     selectedModule: activeEntry.module,
     selectedTools: [],
     repoInspectionChosen: repoInspectionRequested,
-    runtimeInspectionChosen: runtimeInspectionRequired,
+    runtimeInspectionChosen: false,
     finalExecutorPayload: {
       executor: 'module-dispatch',
       module: activeEntry.module,
@@ -2704,26 +1519,6 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       },
     };
   } catch (err: any) {
-    if (err instanceof SystemStateConflictError) {
-      return {
-        ok: false,
-        error: {
-          code: err.code,
-          message: err.message,
-          details: err.conflict
-        },
-        _route: {
-          ...baseRoute,
-          module: activeEntry.module,
-          action,
-          matchMethod,
-          route: activeEntry.route,
-          availableActions,
-          moduleVersion: (moduleMetadata as any)?.version ?? null,
-        },
-      };
-      }
-
       const errorMessage = String(err?.message ?? err);
       const isDispatchCancellation = isDispatchCancellationError(err);
       const isDispatchTimeout = !isDispatchCancellation && isDispatchTimeoutError(err, timeoutMs);
@@ -2746,12 +1541,6 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       durationMs: Date.now() - dispatchStartedAt,
     });
       if (isDispatchTimeout) {
-      if (promptIntentClassification.intent === 'dag') {
-        recordDagTraceTimeout({
-          handler: 'gpt-dispatch',
-          reason: 'module_timeout',
-        });
-      }
       logger?.error?.(dispatchLogEvent, {
         requestId,
         gptId: trimmedGptId,

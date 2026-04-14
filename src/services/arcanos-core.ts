@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
-import { runThroughBrain } from '@core/logic/trinity.js';
 import type { TrinityAnswerMode, TrinityResult, TrinityRunOptions } from '@core/logic/trinity.js';
+import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
 import { createRuntimeBudgetWithLimit } from '@platform/resilience/runtimeBudget.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { recordTraceEvent } from '@platform/logging/telemetry.js';
@@ -63,6 +63,7 @@ export interface RunArcanosCoreQueryParams {
   client: OpenAI;
   prompt: string;
   sourceEndpoint: string;
+  requestId?: string;
   sessionId?: string;
   overrideAuditSafe?: string;
   runOptions?: Omit<TrinityRunOptions, 'sourceEndpoint'>;
@@ -371,6 +372,22 @@ function buildCorePipelinePlan(
   };
 }
 
+function resolveTrinityRequestId(explicitRequestId?: string): string | undefined {
+  const normalizedExplicitRequestId =
+    typeof explicitRequestId === 'string' && explicitRequestId.trim().length > 0
+      ? explicitRequestId.trim()
+      : null;
+
+  if (normalizedExplicitRequestId) {
+    return normalizedExplicitRequestId;
+  }
+
+  const activeRequestId = getRequestAbortContext()?.requestId;
+  return typeof activeRequestId === 'string' && activeRequestId.trim().length > 0
+    ? activeRequestId.trim()
+    : undefined;
+}
+
 function buildCoreDegradedRunOptions(
   sourceEndpoint: string,
   runOptions?: Omit<TrinityRunOptions, 'sourceEndpoint'>,
@@ -396,6 +413,7 @@ export async function runArcanosCoreQuery(
 ): Promise<TrinityResult> {
   const startedAt = Date.now();
   const pipelinePlan = buildCorePipelinePlan(params.executionModeOverride);
+  const trinityRequestId = resolveTrinityRequestId(params.requestId);
   const primaryRunOptions: TrinityRunOptions = {
     ...(params.runOptions ?? {}),
     sourceEndpoint: params.sourceEndpoint,
@@ -408,6 +426,10 @@ export async function runArcanosCoreQuery(
     resolveCoreRuntimeBudgetSafetyBufferMs(pipelinePlan.primaryTimeoutMs)
   );
   const primaryAbortMessage = buildCorePipelineAbortMessage(pipelinePlan.primaryTimeoutMs);
+  const {
+    sourceEndpoint: primarySourceEndpoint = params.sourceEndpoint,
+    ...primaryRunOptionsWithoutSource
+  } = primaryRunOptions;
 
   logger.info('[core] handler.start', {
     module: 'ARCANOS:CORE',
@@ -443,14 +465,21 @@ export async function runArcanosCoreQuery(
         abortMessage: primaryAbortMessage
       },
       () =>
-        runThroughBrain(
-          params.client,
-          params.prompt,
-          params.sessionId,
-          params.overrideAuditSafe,
-          primaryRunOptions,
-          runtimeBudget
-        )
+        runTrinityWritingPipeline({
+          input: {
+            prompt: params.prompt,
+            sessionId: params.sessionId,
+            overrideAuditSafe: params.overrideAuditSafe,
+            sourceEndpoint: primarySourceEndpoint,
+            body: { prompt: params.prompt }
+          },
+          context: {
+            client: params.client,
+            ...(trinityRequestId ? { requestId: trinityRequestId } : {}),
+            runtimeBudget,
+            runOptions: primaryRunOptionsWithoutSource
+          }
+        })
     );
     logger.info('[core] after trinity.query', {
       module: 'ARCANOS:CORE',
@@ -516,24 +545,38 @@ export async function runArcanosCoreQuery(
             parentSignal: getRequestAbortSignal(),
             abortMessage: buildCoreDegradedAbortMessage(pipelinePlan.degradedTimeoutMs)
           },
-          () =>
-            runThroughBrain(
-              params.client,
-              params.prompt,
-              params.sessionId,
-              params.overrideAuditSafe,
-              buildCoreDegradedRunOptions(
-                params.sourceEndpoint,
-                params.runOptions,
-                pipelinePlan.executionMode === 'background'
-                  ? pipelinePlan.degradedTimeoutMs
-                  : undefined
-              ),
-              createRuntimeBudgetWithLimit(
-                pipelinePlan.degradedTimeoutMs,
-                resolveCoreRuntimeBudgetSafetyBufferMs(pipelinePlan.degradedTimeoutMs)
-              )
-            )
+          () => {
+            const degradedRunOptions = buildCoreDegradedRunOptions(
+              params.sourceEndpoint,
+              params.runOptions,
+              pipelinePlan.executionMode === 'background'
+                ? pipelinePlan.degradedTimeoutMs
+                : undefined
+            );
+            const {
+              sourceEndpoint: degradedSourceEndpoint = `${params.sourceEndpoint}.degraded`,
+              ...degradedRunOptionsWithoutSource
+            } = degradedRunOptions;
+
+            return runTrinityWritingPipeline({
+              input: {
+                prompt: params.prompt,
+                sessionId: params.sessionId,
+                overrideAuditSafe: params.overrideAuditSafe,
+                sourceEndpoint: degradedSourceEndpoint,
+                body: { prompt: params.prompt }
+              },
+              context: {
+                client: params.client,
+                ...(trinityRequestId ? { requestId: trinityRequestId } : {}),
+                runtimeBudget: createRuntimeBudgetWithLimit(
+                  pipelinePlan.degradedTimeoutMs,
+                  resolveCoreRuntimeBudgetSafetyBufferMs(pipelinePlan.degradedTimeoutMs)
+                ),
+                runOptions: degradedRunOptionsWithoutSource
+              }
+            });
+          }
         );
 
         logger.info('[PIPELINE] degraded path completed', {
@@ -650,6 +693,7 @@ export const ArcanosCore: ModuleDef = {
       return runArcanosCoreQuery({
         client,
         prompt,
+        requestId: getRequestAbortContext()?.requestId,
         sessionId,
         overrideAuditSafe,
         sourceEndpoint: 'gpt.arcanos-core.query',

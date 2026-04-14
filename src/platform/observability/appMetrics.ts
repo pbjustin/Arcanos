@@ -97,13 +97,6 @@ const memoryDispatchIgnoredTotal = new Counter({
   registers: [metricsRegistry],
 });
 
-const mcpAutoInvokeTotal = new Counter({
-  name: 'mcp_auto_invoke_total',
-  help: 'Automatic MCP invoke dispatch selections.',
-  labelNames: ['gpt_id', 'module', 'tool_name', 'reason'] as const,
-  registers: [metricsRegistry],
-});
-
 const dagRunRequestsTotal = new Counter({
   name: 'dag_run_requests_total',
   help: 'DAG read or trace requests handled by the service.',
@@ -520,20 +513,6 @@ export function recordMemoryDispatchIgnored(input: {
   memoryDispatchIgnoredTotal.inc({
     gpt_id: normalizeLabel(input.gptId),
     module: normalizeLabel(input.module),
-    reason: normalizeLabel(input.reason),
-  });
-}
-
-export function recordMcpAutoInvoke(input: {
-  gptId: string;
-  module?: string | null;
-  toolName: string;
-  reason: string;
-}): void {
-  mcpAutoInvokeTotal.inc({
-    gpt_id: normalizeLabel(input.gptId),
-    module: normalizeLabel(input.module),
-    tool_name: normalizeLabel(input.toolName),
     reason: normalizeLabel(input.reason),
   });
 }

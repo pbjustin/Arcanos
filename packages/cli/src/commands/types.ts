@@ -28,6 +28,18 @@ export interface GenerateAndWaitCommandInvocation {
   options: CliGlobalOptions;
 }
 
+export interface JobStatusCommandInvocation {
+  kind: "job-status";
+  jobId: string;
+  options: CliGlobalOptions;
+}
+
+export interface JobResultCommandInvocation {
+  kind: "job-result";
+  jobId: string;
+  options: CliGlobalOptions;
+}
+
 export interface PlanCommandInvocation {
   kind: "plan";
   prompt: string;
@@ -80,6 +92,8 @@ export interface HelpCommandInvocation {
 export type CliInvocation =
   | AskCommandInvocation
   | GenerateAndWaitCommandInvocation
+  | JobStatusCommandInvocation
+  | JobResultCommandInvocation
   | PlanCommandInvocation
   | ExecCommandInvocation
   | StatusCommandInvocation

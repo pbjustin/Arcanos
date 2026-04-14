@@ -1,6 +1,6 @@
 /**
  * Trinity pipeline stage runners and pure helpers.
- * Internal implementation; consumers should use runThroughBrain from trinity.js only.
+ * Internal implementation; production callers should use the Trinity writing facade.
  */
 
 import type OpenAI from 'openai';

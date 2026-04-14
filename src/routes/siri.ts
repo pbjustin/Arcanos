@@ -1,5 +1,5 @@
 import express, { Request, Response } from 'express';
-import { runThroughBrain } from "@core/logic/trinity.js";
+import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
 import { validateAIRequest, handleAIError, logRequestFeedback } from "@transport/http/requestHandler.js";
 import { confirmGate } from "@transport/http/middleware/confirmGate.js";
 import type { AIRequestDTO, AIResponseDTO, ErrorResponseDTO } from "@shared/types/dto.js";
@@ -34,17 +34,21 @@ const handleSiriRequest = async (
 
   try {
     const runtimeBudget = createRuntimeBudget();
-    const output = await runThroughBrain(
-      openai,
-      input,
-      sessionId,
-      overrideAuditSafe,
-      {
+    const output = await runTrinityWritingPipeline({
+      input: {
+        prompt: input,
+        sessionId,
+        overrideAuditSafe,
         sourceEndpoint: 'siri',
-        ...buildTrinityOutputControlOptions(req.body)
+        body: req.body
       },
-      runtimeBudget
-    );
+      context: {
+        client: openai,
+        requestId: req.requestId,
+        runtimeBudget,
+        runOptions: buildTrinityOutputControlOptions(req.body)
+      }
+    });
     const userVisibleResponse = buildTrinityUserVisibleResponse({
       trinityResult: output,
       endpoint: 'siri',

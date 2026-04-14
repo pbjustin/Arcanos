@@ -67,6 +67,19 @@ describe("Arcanos CLI", () => {
       pollIntervalMs: 125
     });
 
+    expect(parseCliInvocation(["job-status", "job-123", "--json"])).toMatchObject({
+      kind: "job-status",
+      jobId: "job-123",
+      options: {
+        json: true
+      }
+    });
+
+    expect(parseCliInvocation(["job-result", "job-123"])).toMatchObject({
+      kind: "job-result",
+      jobId: "job-123"
+    });
+
     expect(parseCliInvocation(["doctor", "implementation"])).toMatchObject({
       kind: "doctor",
       subject: "implementation"
@@ -230,6 +243,56 @@ describe("Arcanos CLI", () => {
           waitForResultMs: 20000,
           pollIntervalMs: 125
         })
+      })
+    );
+  });
+
+  it("routes explicit job control commands to the canonical jobs endpoints", async () => {
+    const fetchMock = jest.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      const pathname = url instanceof URL ? url.pathname : String(url);
+      if (pathname.endsWith("/jobs/job-123")) {
+        return createJsonResponse({ id: "job-123", status: "completed" });
+      }
+      if (pathname.endsWith("/jobs/job-123/result")) {
+        return createJsonResponse({ status: "completed", result: "final output" });
+      }
+      throw new Error(`Unexpected URL: ${pathname}`);
+    });
+
+    const statusStdout = createWritableCapture();
+    const statusStderr = createWritableCapture();
+    const statusExitCode = await runCli(
+      ["job-status", "job-123", "--base-url", "http://127.0.0.1:3000"],
+      statusStdout.stream,
+      statusStderr.stream
+    );
+
+    expect(statusExitCode).toBe(0);
+    expect(statusStdout.read()).toContain("Job job-123: completed");
+    expect(statusStderr.read()).toBe("");
+
+    const resultStdout = createWritableCapture();
+    const resultStderr = createWritableCapture();
+    const resultExitCode = await runCli(
+      ["job-result", "job-123", "--base-url", "http://127.0.0.1:3000"],
+      resultStdout.stream,
+      resultStderr.stream
+    );
+
+    expect(resultExitCode).toBe(0);
+    expect(resultStdout.read()).toContain("final output");
+    expect(resultStderr.read()).toBe("");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      new URL("/jobs/job-123", "http://127.0.0.1:3000/"),
+      expect.objectContaining({
+        headers: {}
+      })
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      new URL("/jobs/job-123/result", "http://127.0.0.1:3000/"),
+      expect.objectContaining({
+        headers: {}
       })
     );
   });

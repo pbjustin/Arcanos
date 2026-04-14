@@ -4,7 +4,7 @@ type AIControllerModule = typeof import('../src/transport/http/controllers/aiCon
 
 interface AIControllerHarness {
   module: AIControllerModule;
-  runThroughBrainMock: jest.Mock;
+  runTrinityWritingPipelineMock: jest.Mock;
   validateAIRequestMock: jest.Mock;
   handleAIErrorMock: jest.Mock;
 }
@@ -19,7 +19,7 @@ interface AIControllerHarness {
 async function loadAIControllerHarness(): Promise<AIControllerHarness> {
   jest.resetModules();
 
-  const runThroughBrainMock = jest.fn(async () => ({
+  const runTrinityWritingPipelineMock = jest.fn(async () => ({
     result: 'ok',
     module: 'mock',
     meta: { id: 'mock-id', created: Date.now() },
@@ -60,8 +60,8 @@ async function loadAIControllerHarness(): Promise<AIControllerHarness> {
   }));
   const handleAIErrorMock = jest.fn();
 
-  jest.unstable_mockModule('@core/logic/trinity.js', () => ({
-    runThroughBrain: runThroughBrainMock
+  jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({
+    runTrinityWritingPipeline: runTrinityWritingPipelineMock
   }));
   jest.unstable_mockModule('@transport/http/requestHandler.js', () => ({
     validateAIRequest: validateAIRequestMock,
@@ -74,7 +74,7 @@ async function loadAIControllerHarness(): Promise<AIControllerHarness> {
   const module = await import('../src/transport/http/controllers/aiController.js');
   return {
     module,
-    runThroughBrainMock,
+    runTrinityWritingPipelineMock,
     validateAIRequestMock,
     handleAIErrorMock
   };
@@ -90,15 +90,23 @@ describe('AIController Trinity source endpoint forwarding', () => {
     await harness.module.AIController.processAIRequest(req, res, 'write');
 
     expect(harness.validateAIRequestMock).toHaveBeenCalledTimes(1);
-    expect(harness.runThroughBrainMock).toHaveBeenCalledTimes(1);
-    expect(harness.runThroughBrainMock).toHaveBeenCalledWith(
-      expect.anything(),
-      'test prompt',
-      'session-123',
-      'override-token',
-      { sourceEndpoint: 'write' },
-      expect.anything()
-    );
+    expect(harness.runTrinityWritingPipelineMock).toHaveBeenCalledTimes(1);
+    expect(harness.runTrinityWritingPipelineMock).toHaveBeenCalledWith({
+      input: {
+        prompt: 'test prompt',
+        sessionId: 'session-123',
+        overrideAuditSafe: 'override-token',
+        sourceEndpoint: 'write',
+        body: expect.objectContaining({
+          sessionId: 'session-123',
+          overrideAuditSafe: 'override-token'
+        })
+      },
+      context: expect.objectContaining({
+        client: expect.anything(),
+        runOptions: {},
+      })
+    });
     expect(harness.handleAIErrorMock).not.toHaveBeenCalled();
     expect(res.json).toHaveBeenCalledTimes(1);
   });

@@ -371,9 +371,9 @@ export async function queryAndWaitGptRoute(
 }
 
 /**
- * Executes the explicit `get_status` integration action over `/gpt/{gptId}`.
- * Inputs/Outputs: GPT route id plus job id; returns the GPT action envelope without enqueueing new work.
- * Edge cases: blank job ids fail locally so callers never fall back to prompt routing.
+ * Executes the compatibility `get_status` control action over `/gpt/{gptId}`.
+ * Inputs/Outputs: GPT route id plus job id; returns the control-plane envelope without enqueueing new work.
+ * Edge cases: blank job ids fail locally so callers never fall back to prompt routing. Prefer `getJobStatus` when `/jobs/{jobId}` is available.
  */
 export async function getGptRouteJobStatus(
   options: InvokeGptJobLookupActionOptions
@@ -395,9 +395,9 @@ export async function getGptRouteJobStatus(
 }
 
 /**
- * Executes the explicit `get_result` integration action over `/gpt/{gptId}`.
- * Inputs/Outputs: GPT route id plus job id; returns the GPT action envelope without enqueueing new work.
- * Edge cases: blank job ids fail locally so callers never fall back to prompt routing.
+ * Executes the compatibility `get_result` control action over `/gpt/{gptId}`.
+ * Inputs/Outputs: GPT route id plus job id; returns the control-plane envelope without enqueueing new work.
+ * Edge cases: blank job ids fail locally so callers never fall back to prompt routing. Prefer `getJobResult` when `/jobs/{jobId}/result` is available.
  */
 export async function getGptRouteJobResult(
   options: InvokeGptJobLookupActionOptions

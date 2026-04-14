@@ -9,3 +9,4 @@
 - Separate planning, execution, and mutation
 - No privilege escalation across tools or environments
 - Prefer deterministic JSON outputs
+- Never route system operations through the writing pipeline

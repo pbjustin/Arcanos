@@ -47,7 +47,13 @@ No API path changes are required for Railway. Ensure liveness (`/healthz`) and r
 - Validation and auth middleware: `../src/middleware/confirmGate.ts`
 
 ## GPT Async Contract
-`POST /gpt/:gptId` now supports deterministic async GPT execution with idempotent retry handling for job-backed requests.
+`POST /gpt/:gptId` is the writing plane. It supports deterministic async GPT execution with idempotent retry handling for job-backed requests, but it must not be used for control-plane prompts.
+
+Writing vs control:
+- Writing plane: prompt generation, assistant responses, and explicit write/query actions.
+- Direct control plane: `GET /jobs/:id`, `GET /jobs/:id/result`, `GET /workers/status`, `GET /worker-helper/health`, `GET /status`, `GET /status/safety/self-heal`, `POST /mcp`, and `/api/arcanos/dag/*`.
+- Router-handled compatibility control actions on `POST /gpt/:gptId`: `get_status`, `get_result`, `diagnostics`, and `system_state`. These are handled before write dispatch and never enqueue new GPT work.
+- Rejected on `POST /gpt/:gptId`: prompt-based job lookups, DAG execution/tracing prompts, runtime inspection prompts, and explicit MCP tool calls. The backend returns canonical control endpoints instead of routing them through generation.
 
 Request guidance:
 - Send `Idempotency-Key` when the client may retry the same GPT submission. The backend hashes the key before storage.
@@ -74,6 +80,8 @@ Job-backed `POST /gpt/:gptId` response shapes:
 - Duplicate submissions set `deduped: true` and return the canonical `jobId`.
 - `200 OK` status retrieval: `POST /gpt/:gptId` with `{ "action": "get_status", "payload": { "jobId": "..." } }` returns `{ ok, result: { id, job_type, status, lifecycle_status, created_at, updated_at, completed_at, cancel_requested_at, cancel_reason, retention_until, idempotency_until, expires_at, error_message, output, result }, _route }` and never enqueues new work.
 - `200 OK` result retrieval: `POST /gpt/:gptId` with `{ "action": "get_result", "payload": { "jobId": "..." } }` returns `{ ok, result: { jobId, status:"pending|complete|failed|not_found", jobStatus, lifecycleStatus, createdAt, updatedAt, completedAt, poll, stream, result, error }, _route }` and never enqueues new work.
+- `200 OK` system-state retrieval/update: `POST /gpt/:gptId` with `{ "action": "system_state", "payload": { ... } }` is handled directly on the control plane for core GPT ids and never enters the writing dispatcher.
+- `400 Bad Request` control rejection: prompt-based job lookups, runtime inspection, DAG control, and MCP tool calls return deterministic JSON with `canonical` control routes.
 
 Job status routes:
 - `GET /jobs/:id`: returns `{ id, job_type, status, lifecycle_status, created_at, updated_at, completed_at, cancel_requested_at, cancel_reason, retention_until, idempotency_until, expires_at, error_message, output, result }`
@@ -97,7 +105,9 @@ Retention defaults:
 Client retry guidance:
 - Reuse the same `Idempotency-Key` for safe client retries of the same GPT request body.
 - Poll `GET /jobs/:id` or subscribe to `GET /jobs/:id/stream` after any `202`.
-- If you need to fetch canonical job state through the GPT route, call `action: "get_status"` or `action: "get_result"` with `payload.jobId` instead of sending a prompt that asks the model to fetch it.
+- Prefer the canonical jobs API for job reads. Use GPT compatibility actions only when the caller cannot reach `/jobs/*`.
+- ARCANOS CLI follows the same split: `arcanos generate-and-wait` uses the writing plane, while `arcanos job-status` and `arcanos job-result` call the canonical jobs API.
+- Do not send prompts that ask the GPT route to inspect runtime state, trigger DAGs, or call MCP tools. Use the direct control endpoints instead.
 - Treat `cancelled` and `expired` as terminal and submit a fresh request if more work is needed.
 
 ## Active Endpoint Groups
@@ -203,7 +213,7 @@ Client retry guidance:
 - `GET /registry/:moduleName`
 - `POST /queryroute`
 - `POST /modules/:moduleRoute` (dynamic module route from runtime module loader)
-- `ANY /gpt/:gptId` (forwarded to module route via `gptRouter.ts`)
+- `POST /gpt/:gptId` (writing plane; control compatibility actions are intercepted before write dispatch)
 
 ### API submodules mounted under `/api`
 - `GET /api/assistants`

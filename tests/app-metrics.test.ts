@@ -30,15 +30,14 @@ describe('app metrics registry', () => {
     const {
       metricsRegistry,
       recordDagRunRequest,
-      recordDagRunStatus,
-      recordDependencyCall,
-      recordDispatcherFallback,
-      recordDispatcherRoute,
-      recordMemoryDispatchIgnored,
-      recordMcpAutoInvoke,
-      recordUnknownGpt,
-      recordWorkerFailureTotal,
-      recordWorkerJobDuration,
+    recordDagRunStatus,
+    recordDependencyCall,
+    recordDispatcherFallback,
+    recordDispatcherRoute,
+    recordMemoryDispatchIgnored,
+    recordUnknownGpt,
+    recordWorkerFailureTotal,
+    recordWorkerJobDuration,
       recordWorkerJobTotal,
       recordWorkerQueueLatency,
       recordWorkerQueueDepth,
@@ -49,7 +48,7 @@ describe('app metrics registry', () => {
       gptId: 'arcanos-core',
       module: 'ARCANOS:CORE',
       route: 'core',
-      handler: 'mcp-dispatcher',
+      handler: 'module-dispatcher',
       outcome: 'ok',
     });
     recordDispatcherFallback({
@@ -61,12 +60,6 @@ describe('app metrics registry', () => {
       gptId: 'arcanos-core',
       module: 'ARCANOS:CORE',
       reason: 'memory_ignored_retry_dag',
-    });
-    recordMcpAutoInvoke({
-      gptId: 'arcanos-core',
-      module: 'ARCANOS:CORE',
-      toolName: 'dag.run.latest',
-      reason: 'prompt_requests_latest_dag_run',
     });
     recordUnknownGpt({
       gptId: 'missing-core',
@@ -119,9 +112,8 @@ describe('app metrics registry', () => {
 
     const metricsText = await metricsRegistry.metrics();
 
-    expect(metricsText).toMatch(/dispatcher_route_total\{[^}]*gpt_id="arcanos-core"[^}]*handler="mcp-dispatcher"[^}]*outcome="ok"[^}]*\} 1/);
+    expect(metricsText).toMatch(/dispatcher_route_total\{[^}]*gpt_id="arcanos-core"[^}]*handler="module-dispatcher"[^}]*outcome="ok"[^}]*\} 1/);
     expect(metricsText).toMatch(/unknown_gpt_total\{[^}]*gpt_id="missing-core"[^}]*outcome="not_registered"[^}]*\} 1/);
-    expect(metricsText).toMatch(/mcp_auto_invoke_total\{[^}]*tool_name="dag\.run\.latest"[^}]*\} 1/);
     expect(metricsText).toMatch(/dag_run_requests_total\{[^}]*handler="trace"[^}]*outcome="ok"[^}]*snapshot_source="persisted"[^}]*\} 1/);
     expect(metricsText).toMatch(/dag_node_fetch_duration_ms_bucket\{[^}]*handler="trace"[^}]*snapshot_source="persisted"[^}]*\} \d+/);
     expect(metricsText).toMatch(/dependency_calls_total\{[^}]*dependency="postgres"[^}]*operation="select"[^}]*outcome="ok"[^}]*\} 1/);

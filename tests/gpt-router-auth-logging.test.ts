@@ -3,6 +3,15 @@ import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const mockRouteGptRequest = jest.fn();
+const mockExecuteSystemStateRequest = jest.fn();
+
+class MockSystemStateConflictError extends Error {
+  readonly code = 'SYSTEM_STATE_CONFLICT';
+
+  constructor(readonly conflict: Record<string, unknown>) {
+    super('system_state update conflict');
+  }
+}
 
 jest.unstable_mockModule('../src/routes/_core/gptDispatch.js', () => ({
   routeGptRequest: mockRouteGptRequest,
@@ -12,6 +21,11 @@ jest.unstable_mockModule('../src/platform/logging/gptLogger.js', () => ({
   logGptConnection: jest.fn(),
   logGptConnectionFailed: jest.fn(),
   logGptAckSent: jest.fn(),
+}));
+
+jest.unstable_mockModule('../src/services/systemState.js', () => ({
+  executeSystemStateRequest: mockExecuteSystemStateRequest,
+  SystemStateConflictError: MockSystemStateConflictError,
 }));
 
 const { default: requestContext } = await import('../src/middleware/requestContext.js');
@@ -362,21 +376,11 @@ describe('gpt router auth logging', () => {
   });
 
   it('maps system state conflicts to HTTP 409 on the canonical route', async () => {
-    mockRouteGptRequest.mockResolvedValue({
-      ok: false,
-      error: {
-        code: 'SYSTEM_STATE_CONFLICT',
-        message: 'system_state update conflict',
-        details: {
-          expectedVersion: 1,
-          currentVersion: 2,
-        },
-      },
-      _route: {
-        gptId: 'arcanos-daemon',
-        module: 'ARCANOS:CORE',
-        route: 'core',
-      },
+    mockExecuteSystemStateRequest.mockImplementation(() => {
+      throw new MockSystemStateConflictError({
+        expectedVersion: 1,
+        currentVersion: 2,
+      });
     });
 
     const app = express();
@@ -391,11 +395,11 @@ describe('gpt router auth logging', () => {
     expect(response.status).toBe(409);
     expect(response.body).toEqual({
       ok: false,
-      _route: {
+      _route: expect.objectContaining({
         gptId: 'arcanos-daemon',
-        module: 'ARCANOS:CORE',
-        route: 'core',
-      },
+        action: 'system_state',
+        route: 'system_state',
+      }),
       error: {
         code: 'SYSTEM_STATE_CONFLICT',
         message: 'system_state update conflict',
@@ -405,21 +409,12 @@ describe('gpt router auth logging', () => {
         },
       },
     });
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
   it('allows system_state reads without update fields on the canonical route', async () => {
-    mockRouteGptRequest.mockResolvedValue({
-      ok: true,
-      result: {
-        mode: 'system_state',
-      },
-      _route: {
-        gptId: 'arcanos-daemon',
-        module: 'ARCANOS:CORE',
-        route: 'core',
-        action: 'system_state',
-        availableActions: ['query', 'system_state'],
-      },
+    mockExecuteSystemStateRequest.mockResolvedValue({
+      mode: 'system_state',
     });
 
     const app = express();
@@ -441,9 +436,75 @@ describe('gpt router auth logging', () => {
         _route: expect.objectContaining({
           gptId: 'arcanos-daemon',
           action: 'system_state',
+          route: 'system_state',
         }),
       })
     );
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('accepts operation aliases for system_state on the canonical control route', async () => {
+    mockExecuteSystemStateRequest.mockResolvedValue({
+      mode: 'system_state',
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use(requestContext);
+    app.use('/gpt', gptRouter);
+
+    const response = await request(app)
+      .post('/gpt/arcanos-daemon')
+      .send({ operation: 'system_state' });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: {
+          mode: 'system_state',
+        },
+        _route: expect.objectContaining({
+          gptId: 'arcanos-daemon',
+          action: 'system_state',
+          route: 'system_state',
+        }),
+      })
+    );
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('rejects runtime control prompts before dispatching to the write plane', async () => {
+    const app = express();
+    app.use(express.json());
+    app.use(requestContext);
+    app.use('/gpt', gptRouter);
+
+    const response = await request(app)
+      .post('/gpt/arcanos-core')
+      .send({ prompt: 'verify in production on the live backend runtime that is currently active' });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual({
+      ok: false,
+      error: {
+        code: 'CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT',
+        message: 'Runtime diagnostics, worker state, tracing, and queue inspection must use direct control-plane endpoints or POST /mcp. Do not send runtime control requests through POST /gpt/{gptId}.'
+      },
+      canonical: {
+        status: '/status',
+        workers: '/workers/status',
+        workerHealth: '/worker-helper/health',
+        selfHeal: '/status/safety/self-heal',
+        mcp: '/mcp'
+      },
+      _route: expect.objectContaining({
+        gptId: 'arcanos-core',
+        route: 'control_guard',
+        action: 'runtime.inspect',
+      })
+    });
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
   it('maps route-level timeout aborts onto bounded ARCANOS fallback envelopes', async () => {
@@ -458,7 +519,7 @@ describe('gpt router auth logging', () => {
 
     const response = await request(app)
       .post('/gpt/arcanos-core')
-      .send({ prompt: 'Inspect the backend worker.' });
+      .send({ prompt: 'Explain how the backend worker is structured.' });
 
     expect(response.status).toBe(200);
     expect(response.body).toEqual(
@@ -492,7 +553,7 @@ describe('gpt router auth logging', () => {
 
     const response = await request(app)
       .post('/gpt/arcanos-core')
-      .send({ prompt: 'Inspect the backend worker.' });
+      .send({ prompt: 'Explain how the backend worker is structured.' });
 
     expect(response.status).toBe(503);
     expect(response.body).toEqual({
@@ -524,7 +585,7 @@ describe('gpt router auth logging', () => {
 
     const response = await request(app)
       .post('/gpt/arcanos-core')
-      .send({ prompt: 'Inspect the backend worker.' });
+      .send({ prompt: 'Explain how the backend worker is structured.' });
 
     expect(response.status).toBe(200);
     expect(response.body).toEqual(
@@ -545,11 +606,7 @@ describe('gpt router auth logging', () => {
     );
   });
 
-  it('extends route-level timeout budgets for DAG execution prompts', async () => {
-    const abortError = new Error('GPT route timeout after 8000ms');
-    abortError.name = 'AbortError';
-    mockRouteGptRequest.mockRejectedValue(abortError);
-
+  it('rejects DAG control prompts before dispatching to the write plane', async () => {
     const app = express();
     app.use(express.json());
     app.use(requestContext);
@@ -559,71 +616,28 @@ describe('gpt router auth logging', () => {
       .post('/gpt/arcanos-core')
       .send({ prompt: 'trigger a real DAG run and trace it live', executionMode: 'sync' });
 
-    expect(response.status).toBe(200);
-    expect(response.body).toEqual(
-      expect.objectContaining({
-        ok: true,
-        result: expect.objectContaining({
-          module: 'trinity',
-          activeModel: 'arcanos-core:static-timeout-fallback',
-          fallbackFlag: true,
-        }),
-        _route: expect.objectContaining({
-          gptId: 'arcanos-core',
-          module: 'ARCANOS:CORE',
-          action: 'query',
-          route: 'core',
-        }),
-      })
-    );
-  });
-
-  it('exposes DAG follow-up endpoints in shaped GPT responses', async () => {
-    mockRouteGptRequest.mockResolvedValue({
-      ok: true,
-      result: {
-        handledBy: 'dag-dispatcher',
-        dag: {
-          dispatchMode: 'automatic',
-          reason: 'prompt_requests_dag_execution',
-          summary: 'Started DAG run dagrun_test_followup.',
-          runId: 'dagrun_test_followup',
-          run: {
-            runId: 'dagrun_test_followup',
-            sessionId: 'sess-followup',
-            status: 'queued',
-            template: 'trinity-core',
-            totalNodes: 5,
-            completedNodes: 0,
-            failedNodes: 0,
-            createdAt: '2026-03-29T00:00:00.000Z',
-            updatedAt: '2026-03-29T00:00:00.000Z',
-          },
-          artifactKeys: ['dag.run.create', 'dag.run.trace'],
-          deferredTools: {
-            total: 1,
-            tools: ['dag.run.trace'],
-          },
-          followUp: {
-            runId: 'dagrun_test_followup',
-            trace: '/api/arcanos/dag/runs/dagrun_test_followup/trace',
-            tree: '/api/arcanos/dag/runs/dagrun_test_followup/tree',
-            lineage: '/api/arcanos/dag/runs/dagrun_test_followup/lineage',
-            metrics: '/api/arcanos/dag/runs/dagrun_test_followup/metrics',
-            errors: '/api/arcanos/dag/runs/dagrun_test_followup/errors',
-            verification: '/api/arcanos/dag/runs/dagrun_test_followup/verification',
-          },
-        },
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual({
+      ok: false,
+      error: {
+        code: 'DAG_CONTROL_REQUIRES_DIRECT_ENDPOINT',
+        message: 'DAG execution and trace retrieval must use /api/arcanos/dag/* or POST /mcp. Do not send DAG control requests through POST /gpt/{gptId}.'
       },
-      _route: {
+      canonical: {
+        mcp: '/mcp',
+        dagRuns: '/api/arcanos/dag/runs/{runId}',
+        dagTrace: '/api/arcanos/dag/runs/{runId}/trace'
+      },
+      _route: expect.objectContaining({
         gptId: 'arcanos-core',
-        module: 'ARCANOS:CORE',
-        route: 'core',
-        action: 'dag.run.create',
-        availableActions: ['query', 'system_state'],
-      },
+        route: 'control_guard',
+        action: 'dag.run.create'
+      })
     });
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
 
+  it('rejects explicit embedded DAG control actions before dispatching to the write plane', async () => {
     const app = express();
     app.use(express.json());
     app.use(requestContext);
@@ -631,37 +645,66 @@ describe('gpt router auth logging', () => {
 
     const response = await request(app)
       .post('/gpt/arcanos-core')
-      .send({ prompt: 'trigger a real DAG run and trace it live', executionMode: 'sync' });
+      .send({
+        prompt: 'run the latest dag trace for me',
+        payload: {
+          action: 'dag.run.latest'
+        }
+      });
 
-    expect(response.status).toBe(200);
-    expect(response.body).toEqual(
-      expect.objectContaining({
-        ok: true,
-        result: {
-          handledBy: 'dag-dispatcher',
-          dag: expect.objectContaining({
-            runId: 'dagrun_test_followup',
-            artifactKeys: ['dag.run.create', 'dag.run.trace'],
-            deferredTools: {
-              total: 1,
-              tools: ['dag.run.trace'],
-            },
-            followUp: {
-              runId: 'dagrun_test_followup',
-              trace: '/api/arcanos/dag/runs/dagrun_test_followup/trace',
-              tree: '/api/arcanos/dag/runs/dagrun_test_followup/tree',
-              lineage: '/api/arcanos/dag/runs/dagrun_test_followup/lineage',
-              metrics: '/api/arcanos/dag/runs/dagrun_test_followup/metrics',
-              errors: '/api/arcanos/dag/runs/dagrun_test_followup/errors',
-              verification: '/api/arcanos/dag/runs/dagrun_test_followup/verification',
-            },
-          }),
-        },
-        _route: expect.objectContaining({
-          action: 'dag.run.create',
-        }),
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual({
+      ok: false,
+      error: {
+        code: 'DAG_CONTROL_REQUIRES_DIRECT_ENDPOINT',
+        message: 'DAG execution and trace retrieval must use /api/arcanos/dag/* or POST /mcp. Do not send DAG control requests through POST /gpt/{gptId}.'
+      },
+      canonical: {
+        mcp: '/mcp',
+        dagRuns: '/api/arcanos/dag/runs/{runId}',
+        dagTrace: '/api/arcanos/dag/runs/{runId}/trace'
+      },
+      _route: expect.objectContaining({
+        gptId: 'arcanos-core',
+        route: 'control_guard',
+        action: 'dag.run.latest'
       })
-    );
+    });
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('rejects explicit MCP control actions and points callers to /mcp', async () => {
+    const app = express();
+    app.use(express.json());
+    app.use(requestContext);
+    app.use('/gpt', gptRouter);
+
+    const response = await request(app)
+      .post('/gpt/arcanos-core')
+      .send({
+        action: 'mcp.invoke',
+        payload: {
+          toolName: 'dag.run.latest',
+        },
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual({
+      ok: false,
+      error: {
+        code: 'MCP_CONTROL_REQUIRES_MCP_API',
+        message: 'MCP tool calls must use POST /mcp. Do not send MCP control requests through POST /gpt/{gptId}.'
+      },
+      canonical: {
+        mcp: '/mcp'
+      },
+      _route: expect.objectContaining({
+        gptId: 'arcanos-core',
+        route: 'control_guard',
+        action: 'mcp.invoke',
+      })
+    });
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
   it('applies degraded pipeline headers when routed Trinity results recover under the clamp', async () => {

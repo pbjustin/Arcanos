@@ -21,8 +21,8 @@ jest.unstable_mockModule('@transport/http/middleware/confirmGate.js', () => ({
   confirmGate: (_req: unknown, _res: unknown, next: () => void) => next()
 }));
 
-jest.unstable_mockModule('@core/logic/trinity.js', () => ({
-  runThroughBrain: mockRunThroughBrain
+jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({
+  runTrinityWritingPipeline: mockRunThroughBrain
 }));
 
 jest.unstable_mockModule('../src/routes/ask/daemonTools.js', () => ({

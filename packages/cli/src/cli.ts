@@ -3,6 +3,8 @@ import { runDoctorCommand } from "./commands/doctor.js";
 import { runExecCommand } from "./commands/exec.js";
 import { runGenerateAndWaitCommand } from "./commands/generateAndWait.js";
 import { runInspectCommand } from "./commands/inspect.js";
+import { runJobResultCommand } from "./commands/jobResult.js";
+import { runJobStatusCommand } from "./commands/jobStatus.js";
 import { runLogsCommand } from "./commands/logs.js";
 import { parseCliInvocation, renderUsage } from "./commands/parse.js";
 import { runPlanCommand } from "./commands/plan.js";
@@ -64,6 +66,10 @@ async function runCommand(invocation: Exclude<ReturnType<typeof parseCliInvocati
       return runAskCommand(invocation);
     case "generate-and-wait":
       return runGenerateAndWaitCommand(invocation);
+    case "job-status":
+      return runJobStatusCommand(invocation);
+    case "job-result":
+      return runJobResultCommand(invocation);
     case "plan":
       return runPlanCommand(invocation);
     case "exec":

@@ -8,8 +8,8 @@ import { isModuleActionAllowed } from '../modulesAllowlist.js';
 
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 
-import { runThroughBrain } from '@core/logic/trinity.js';
 import { runARCANOS } from '@core/logic/arcanos.js';
+import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
 import { runTrinity } from '@trinity/trinity.js';
 import { DEFAULT_FINE_TUNE } from '@config/openai.js';
 
@@ -84,7 +84,7 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
     'trinity.query',
     {
       title: 'Trinity Query',
-      description: 'Runs the Trinity pipeline through the canonical query action.',
+      description: 'Writing plane: runs the Trinity pipeline through the canonical query action.',
       annotations: { readOnlyHint: true, openWorldHint: true },
       inputSchema: z
         .object({
@@ -109,14 +109,20 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
         path: 'mcp://trinity.query',
         sessionId,
       });
-      const result = await runThroughBrain(
-        ctx.openai,
-        prompt,
-        sessionId,
-        args.overrideAuditSafe,
-        { sourceEndpoint: 'mcp.trinity.query' },
-        ctx.runtimeBudget
-      );
+      const result = await runTrinityWritingPipeline({
+        input: {
+          prompt,
+          sessionId,
+          overrideAuditSafe: args.overrideAuditSafe,
+          sourceEndpoint: 'mcp.trinity.query',
+          body: args
+        },
+        context: {
+          client: ctx.openai,
+          requestId: ctx.requestId,
+          runtimeBudget: ctx.runtimeBudget
+        }
+      });
       return mcpText(result);
     })
   );
@@ -125,7 +131,7 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
     'arcanos.run',
     {
       title: 'ARCANOS Run',
-      description: 'Runs the ARCANOS diagnostic pipeline (same as POST /arcanos).',
+      description: 'Writing plane: runs the ARCANOS response pipeline (same as POST /arcanos).',
       annotations: { readOnlyHint: true, openWorldHint: true },
       inputSchema: z.object({
         userInput: z.string(),
@@ -143,7 +149,7 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
     'trinity.query_finetune',
     {
       title: 'Query Fine-tune',
-      description: 'Runs the fine-tuned model endpoint (same as POST /query-finetune).',
+      description: 'Writing plane: runs the fine-tuned model endpoint (same as POST /query-finetune).',
       annotations: { readOnlyHint: true, openWorldHint: true },
       inputSchema: z.object({ prompt: z.string() }),
     },
@@ -636,7 +642,7 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
     'modules.list',
     {
       title: 'Modules List',
-      description: 'Lists loaded modules and actions (same as GET /registry).',
+      description: 'Control plane: lists loaded modules and actions (same as GET /registry).',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({}).passthrough(),
     },
@@ -650,7 +656,7 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
     'modules.invoke',
     {
       title: 'Modules Invoke',
-      description: 'Invokes a module action (similar to POST /queryroute). Deny-by-default allowlist is enforced.',
+      description: 'Control plane: invokes an allowed module action (similar to POST /queryroute). Deny-by-default allowlist is enforced.',
       annotations: { openWorldHint: true },
       inputSchema: z.object({
         module: z.string(),
@@ -686,7 +692,7 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
     'ops.health_report',
     {
       title: 'Ops Health Report',
-      description: 'Runs a health report (similar to GET /railway/healthcheck).',
+      description: 'Control plane: runs a health report (similar to GET /railway/healthcheck).',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({}).passthrough(),
     },

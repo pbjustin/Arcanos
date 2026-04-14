@@ -243,10 +243,12 @@ jobs:
       - name: 🔒 Run npm security audit
         run: |
           # GHSA-r5fr-rjxr-66jc and GHSA-f23m-r3pf-42rh are currently reported
-          # against transitive `lodash` via `knex`, but no remediated npm release
-          # is available yet on the published dependency line. Keep the audit
-          # active while suppressing only this known upstream-unfixed pair so CI
-          # still fails on any newly actionable production vulnerability.
+          # against transitive `lodash` via `knex`, and GHSA-r4q5-vmmm-2653 is
+          # currently reported against transitive `follow-redirects` via `axios`,
+          # but no remediated npm release is available yet on the published
+          # dependency lines. Keep the audit active while suppressing only these
+          # known upstream-unfixed advisories so CI still fails on any newly
+          # actionable production vulnerability.
           npm audit --omit=dev --json > npm-audit.json || true
           node scripts/check-npm-audit.js npm-audit.json
 

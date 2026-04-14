@@ -7,8 +7,9 @@
  * 2. **GPT-5.1 Reasoning**: Performs advanced reasoning and deep analysis (always invoked)
  * 3. **ARCANOS Execution**: Synthesizes results and generates final responses
  *
- * The Trinity pipeline is the primary entry point for all AI processing in ARCANOS.
- * Import only from this module; do not import trinityTypes or trinityStages from app/route code.
+ * This file contains the low-level Trinity engine. Production callers should enter through
+ * `runTrinityWritingPipeline` so writing-plane validation and leak guards execute first.
+ * Do not import trinityTypes or trinityStages from app/route code.
  *
  * @module trinity
  */
@@ -193,14 +194,6 @@ function buildDryRunTrinityResult(
 function getNextTier(tier: Tier): Tier {
   if (tier === 'simple') return 'complex';
   return 'critical';
-}
-
-function truncateStructuredLogValue(value: string, maxLength = 320): string {
-  if (value.length <= maxLength) {
-    return value;
-  }
-
-  return `${value.slice(0, Math.max(0, maxLength - 16))}...[truncated]`;
 }
 
 function logCoreExecution(event: string, context: Record<string, unknown>): void {
@@ -1206,22 +1199,6 @@ export async function runThroughBrain(
       reasoningHonesty
     });
     const finalText = enforcedFinalOutput.text;
-
-    //audit Assumption: verification-stage regressions are easiest to diagnose when the raw final model output and post-honesty result are logged together; failure risk: worker logs show only a generic DAG failure while hiding the exact guard rewrite; expected invariant: DAG audit nodes emit one bounded structured trace around final-stage enforcement; handling strategy: log only for the audit source endpoint and truncate large text fields.
-    if (options.sourceEndpoint === 'dag.agent.audit') {
-      logger.info('Trinity DAG verification enforcement', {
-        module: 'trinity',
-        operation: 'dag-verification-enforcement',
-        requestId,
-        sourceEndpoint: options.sourceEndpoint,
-        responseMode: reasoningHonesty.responseMode,
-        rawModelOutputPreview: truncateStructuredLogValue(finalOutput.output),
-        translatedOutputPreview: truncateStructuredLogValue(translatedFinalText),
-        finalUserVisiblePreview: truncateStructuredLogValue(finalText),
-        blockedCategories: honestyFilteredFinal.blockedCategories,
-        blockedOrRewrittenClaims: enforcedFinalOutput.blockedOrRewrittenClaims
-      });
-    }
 
     //audit Assumption: final-stage honesty rewrites must remain traceable for postmortems even when user-visible output is compressed.
     if (honestyFilteredFinal.blocked) {

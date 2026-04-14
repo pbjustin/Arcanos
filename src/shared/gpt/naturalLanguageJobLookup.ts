@@ -4,6 +4,10 @@ const JOB_LOOKUP_VERB_RE = /\b(check|fetch|get|inspect|lookup|poll|pull|read|ret
 const JOB_RESULT_CUE_RE = /\b(answer|completion|output|response|result)\b/i;
 const JOB_STATUS_CUE_RE = /\b(poll|progress|state|status)\b/i;
 const JOB_CUE_RE = /\bjobs?\b|\/jobs\//i;
+const JOB_LOOKUP_PHRASE_RE =
+  /\b(?:answer|completion|output|response|result|poll|progress|state|status)\b\s+(?:for|of)\s+job(?:\s+id)?\b/i;
+const JOB_LOOKUP_QUESTION_RE =
+  /\bwhat(?:'s|\s+is)?\b[^.?!]{0,80}\b(?:answer|completion|output|response|result|poll|progress|state|status)\b[^.?!]{0,80}\bjob(?:\s+id)?\b/i;
 const RESERVED_JOB_ID_TOKENS = new Set([
   'a',
   'an',
@@ -81,9 +85,13 @@ export function parseNaturalLanguageJobLookup(promptText: string | null): Natura
   const hasLookupVerb = JOB_LOOKUP_VERB_RE.test(normalizedPrompt);
   const hasResultCue = JOB_RESULT_CUE_RE.test(normalizedPrompt);
   const hasStatusCue = JOB_STATUS_CUE_RE.test(normalizedPrompt);
+  const naturalLanguageJobId = normalizeLookupJobId(normalizedPrompt.match(JOB_TEXT_ID_RE)?.groups?.jobId);
+  const hasQuestionStyleLookup =
+    naturalLanguageJobId !== null &&
+    (JOB_LOOKUP_PHRASE_RE.test(normalizedPrompt) || JOB_LOOKUP_QUESTION_RE.test(normalizedPrompt));
   const explicitLookupRequest =
     hasJobCue &&
-    (hasLookupVerb || normalizedPrompt.toLowerCase().startsWith('job ')) &&
+    (hasLookupVerb || normalizedPrompt.toLowerCase().startsWith('job ') || hasQuestionStyleLookup) &&
     (hasResultCue || hasStatusCue);
 
   if (!explicitLookupRequest) {
@@ -91,7 +99,7 @@ export function parseNaturalLanguageJobLookup(promptText: string | null): Natura
   }
 
   const kind: 'result' | 'status' = hasResultCue ? 'result' : 'status';
-  const jobId = normalizeLookupJobId(normalizedPrompt.match(JOB_TEXT_ID_RE)?.groups?.jobId);
+  const jobId = naturalLanguageJobId;
 
   return jobId
     ? { ok: true, kind, jobId, source: 'natural_language' }
