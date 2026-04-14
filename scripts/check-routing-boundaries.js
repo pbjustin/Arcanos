@@ -23,7 +23,6 @@ const BOUNDARY_GROUPS = [
       /^src\/services\/runtimeInspectionRoutingService\.ts$/i,
       /^src\/services\/systemState\.ts$/i,
       /^src\/routes\/ask\/dagTools\.ts$/i,
-      /^src\/mcp\/server\/.*\.ts$/i,
     ],
     blockedImportRules: [
       {

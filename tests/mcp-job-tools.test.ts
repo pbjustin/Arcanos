@@ -94,18 +94,43 @@ jest.unstable_mockModule('../src/services/researchHub.js', () => ({
 }));
 
 jest.unstable_mockModule('../src/core/db/index.js', () => ({
+  initializeDatabase: jest.fn(),
+  getPool: jest.fn(),
+  isDatabaseConnected: jest.fn(() => true),
+  getStatus: jest.fn(async () => ({ connected: true })),
+  close: jest.fn(),
+  refreshDatabaseCollation: jest.fn(),
+  initializeTables: jest.fn(),
   saveMemory: jest.fn(),
   loadMemory: jest.fn(),
   deleteMemory: jest.fn(),
   query: jest.fn(),
+  transaction: jest.fn(),
+  initializeDatabaseWithSchema: jest.fn(),
 }));
 
 jest.unstable_mockModule('../src/core/db/repositories/jobRepository.js', () => ({
   getJobById: mockGetJobById,
+  createJob: jest.fn(),
+  updateJob: jest.fn(),
+  findOrCreateGptJob: jest.fn(),
+  requestJobCancellation: jest.fn(),
+  claimNextPendingJob: jest.fn(),
+  recordJobHeartbeat: jest.fn(),
+  scheduleJobRetry: jest.fn(),
+  recoverStaleJobs: jest.fn(async () => ({ recoveredJobIds: [], skippedJobIds: [] })),
+  recoverStalledJobsForWorkers: jest.fn(async () => ({ recoveredJobIds: [], skippedJobIds: [] })),
+  getLatestJob: jest.fn(),
+  getJobQueueSummary: jest.fn(async () => null),
+  getJobExecutionStatsSince: jest.fn(async () => null),
+  cleanupExpiredGptJobs: jest.fn(async () => ({ deletedJobIds: [], deletedCount: 0 })),
+  requeueFailedJob: jest.fn(),
+  listFailedJobs: jest.fn(async () => []),
 }));
 
 jest.unstable_mockModule('../src/services/moduleLoader.js', () => ({
   loadModuleDefinitions: jest.fn(async () => []),
+  clearModuleDefinitionCache: jest.fn(),
 }));
 
 jest.unstable_mockModule('../src/routes/modules.js', () => ({

@@ -1035,7 +1035,7 @@ router.post("/:gptId", async (req, res, next) => {
             });
           }
 
-          return res.status(400).json({
+          return sendGuardedGptJsonResponse(req, res, {
             ok: false,
             action: planeClassification.action,
             error: {
@@ -1053,7 +1053,7 @@ router.post("/:gptId", async (req, res, next) => {
               action: planeClassification.action,
               timestamp: new Date().toISOString()
             }
-          });
+          }, 'gpt.response.control_rejected', 400);
         }
         if (planeClassification.plane === 'control' && planeClassification.kind === 'job_status') {
           const parsedJobStatusRequest = parseGptJobStatusRequest(effectiveBody);
@@ -1251,153 +1251,6 @@ router.post("/:gptId", async (req, res, next) => {
 
           try {
             const systemStateResult = await executeSystemStateRequest(
-              buildDirectControlPayload(normalizedBody)
-            );
-            requestLogger?.info?.('gpt.request.system_state', {
-              endpoint: req.originalUrl,
-              gptId: incomingGptId,
-              requestId,
-              route: 'system_state'
-            });
-            recordGptRequestEvent({
-              event: 'control_direct',
-              source: 'system_state'
-            });
-            return res.status(200).json({
-              ok: true,
-              result: systemStateResult,
-              _route: routeMeta
-            });
-          } catch (error) {
-            if (error instanceof SystemStateConflictError) {
-              requestLogger?.warn?.('gpt.request.system_state_conflict', {
-                endpoint: req.originalUrl,
-                gptId: incomingGptId,
-                requestId,
-                conflict: error.conflict
-              });
-              return res.status(409).json({
-                ok: false,
-                error: {
-                  code: error.code,
-                  message: error.message,
-                  details: error.conflict
-                },
-                _route: routeMeta
-              });
-            }
-
-            requestLogger?.warn?.('gpt.request.system_state_invalid', {
-              endpoint: req.originalUrl,
-              gptId: incomingGptId,
-              requestId,
-              error: resolveErrorMessage(error)
-            });
-            return res.status(400).json({
-              ok: false,
-              error: {
-                code: 'BAD_REQUEST',
-                message: resolveErrorMessage(error)
-              },
-              _route: routeMeta
-            });
-          }
-        }
-
-        if (planeClassification.plane !== 'writing') {
-          requestLogger?.error?.('gpt.request.control_plane_job_creation_blocked', {
-            endpoint: req.originalUrl,
-            gptId: incomingGptId,
-            requestId,
-            plane: planeClassification.plane,
-            kind: planeClassification.kind,
-            reason: planeClassification.reason
-          });
-          return res.status(500).json({
-            ok: false,
-            error: {
-              code: 'CONTROL_PLANE_ROUTING_BREACH',
-              message: 'Control-plane requests must exit before async GPT job planning.'
-            },
-            _route: {
-              requestId,
-              gptId: incomingGptId,
-              route: 'control_guard',
-              action: planeClassification.action,
-              timestamp: new Date().toISOString()
-            }
-          });
-        }
-
-        if (planeClassification.plane === 'control' && planeClassification.kind === 'diagnostics') {
-          const diagnostics = await getDiagnosticsSnapshot(req.app);
-          requestLogger?.info?.('gpt.request.diagnostics', {
-            endpoint: req.originalUrl,
-            gptId: incomingGptId,
-            internal: true,
-            registeredGpts: Array.isArray(diagnostics.registered_gpts)
-              ? diagnostics.registered_gpts.length
-              : diagnostics.registered_gpts,
-            routeCount: Array.isArray(diagnostics.active_routes)
-              ? diagnostics.active_routes.length
-              : diagnostics.active_routes
-          });
-          recordGptRequestEvent({
-            event: 'control_direct',
-            source: 'diagnostics'
-          });
-
-          const diagnosticsSerializationStartedAt = Date.now();
-          const diagnosticsPayload = prepareBoundedClientJsonPayload(
-            diagnostics as unknown as Record<string, unknown>,
-            {
-              logger: req.logger,
-              logEvent: 'gpt.response.diagnostics'
-            }
-          );
-          requestLogger?.info?.('gpt.response.serialization', {
-            endpoint: req.originalUrl,
-            gptId: incomingGptId,
-            action: 'diagnostics',
-            serializationMs: Date.now() - diagnosticsSerializationStartedAt,
-            responseBytes: diagnosticsPayload.responseBytes,
-            truncated: diagnosticsPayload.truncated,
-          });
-
-          res.setHeader('x-response-bytes', String(diagnosticsPayload.responseBytes));
-          if (diagnosticsPayload.truncated) {
-            res.setHeader('x-response-truncated', 'true');
-          }
-          return res.json(diagnosticsPayload.payload);
-        }
-
-        if (planeClassification.plane === 'control' && planeClassification.kind === 'system_state') {
-          const routeMeta = buildDirectControlRouteMeta({
-            requestId,
-            gptId: incomingGptId,
-            action: 'system_state',
-            route: 'system_state'
-          });
-
-          if (!ARCANOS_CORE_GPT_IDS.has(incomingGptId)) {
-            requestLogger?.warn?.('gpt.request.system_state_rejected', {
-              endpoint: req.originalUrl,
-              gptId: incomingGptId,
-              requestId,
-              reason: 'non_core_gpt'
-            });
-            return res.status(400).json({
-              ok: false,
-              error: {
-                code: 'SYSTEM_STATE_REQUIRES_CORE_GPT',
-                message: 'system_state requests must target an ARCANOS core GPT id.'
-              },
-              _route: routeMeta
-            });
-          }
-
-          try {
-            const systemStateResult = executeSystemStateRequest(
               buildDirectControlPayload(normalizedBody)
             );
             requestLogger?.info?.('gpt.request.system_state', {

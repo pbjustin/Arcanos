@@ -157,6 +157,7 @@ describe('natural-language job lookup guard on /gpt/:gptId', () => {
     expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toEqual({
       ok: false,
+      action: 'status_lookup',
       error: {
         code: 'JOB_LOOKUP_REQUIRES_JOBS_API',
         message: 'Job retrieval requests must use the jobs API. Do not send result or status lookups through POST /gpt/{gptId}.'

@@ -85,7 +85,7 @@ export default [
     }
   },
   {
-    files: ['src/services/runtimeInspectionRoutingService.ts', 'src/services/systemState.ts', 'src/routes/ask/dagTools.ts', 'src/mcp/server/**/*.ts'],
+    files: ['src/services/runtimeInspectionRoutingService.ts', 'src/services/systemState.ts', 'src/routes/ask/dagTools.ts'],
     languageOptions: sharedLanguageOptions,
     plugins: {
       '@typescript-eslint': tsPlugin,
