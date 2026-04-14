@@ -59,9 +59,20 @@ export class TrinityControlLeakError extends Error {
 function resolveRequestId(params: TrinityWritingPipelineRequest): string {
   return (
     params.context.requestId?.trim() ||
-    params.input.sessionId?.trim() ||
     generateRequestId('trinity')
   );
+}
+
+function readActionAlias(record: Record<string, unknown>): string | null {
+  const directAction = record.action;
+  if (typeof directAction === 'string' && directAction.trim().length > 0) {
+    return directAction.trim();
+  }
+
+  const operation = record.operation;
+  return typeof operation === 'string' && operation.trim().length > 0
+    ? operation.trim()
+    : null;
 }
 
 function readRequestedAction(body: unknown): string | null {
@@ -69,20 +80,18 @@ function readRequestedAction(body: unknown): string | null {
     return null;
   }
 
-  const directAction = (body as { action?: unknown }).action;
-  if (typeof directAction === 'string' && directAction.trim().length > 0) {
-    return directAction.trim();
+  const bodyRecord = body as Record<string, unknown>;
+  const directAction = readActionAlias(bodyRecord);
+  if (directAction) {
+    return directAction;
   }
 
-  const payload = (body as { payload?: unknown }).payload;
+  const payload = bodyRecord.payload;
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     return null;
   }
 
-  const payloadAction = (payload as { action?: unknown }).action;
-  return typeof payloadAction === 'string' && payloadAction.trim().length > 0
-    ? payloadAction.trim()
-    : null;
+  return readActionAlias(payload as Record<string, unknown>);
 }
 
 function classifyTrinityInput(params: TrinityWritingPipelineRequest): WritingPlaneInputClassification {

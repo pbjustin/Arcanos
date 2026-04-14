@@ -139,6 +139,68 @@ describe('runTrinityWritingPipeline', () => {
     );
   });
 
+  it('generates a unique request id when no explicit request id is provided', async () => {
+    runThroughBrainMock.mockResolvedValue({
+      result: 'ok',
+      module: 'trinity',
+      meta: { id: 'resp-2', created: Date.now() },
+      activeModel: 'gpt-5.1',
+      fallbackFlag: false,
+      dryRun: false,
+      fallbackSummary: {
+        intakeFallbackUsed: false,
+        gpt5FallbackUsed: false,
+        finalFallbackUsed: false,
+        fallbackReasons: []
+      },
+      auditSafe: {
+        mode: true,
+        overrideUsed: false,
+        auditFlags: [],
+        processedSafely: true
+      },
+      memoryContext: {
+        entriesAccessed: 0,
+        contextSummary: '',
+        memoryEnhanced: false,
+        maxRelevanceScore: 0,
+        averageRelevanceScore: 0
+      },
+      taskLineage: {
+        requestId: 'resp-request',
+        logged: true
+      }
+    });
+
+    await runTrinityWritingPipeline({
+      input: {
+        prompt: 'Write a short summary.',
+        sessionId: 'sess-shared-1',
+        sourceEndpoint: 'write',
+        body: {
+          prompt: 'Write a short summary.'
+        }
+      },
+      context: {
+        client: {} as never
+      }
+    });
+
+    expect(loggerInfoMock).toHaveBeenCalledWith(
+      'trinity.entry',
+      expect.objectContaining({
+        requestId: expect.stringMatching(/^trinity_/),
+        sourceEndpoint: 'write'
+      })
+    );
+    expect(loggerInfoMock).not.toHaveBeenCalledWith(
+      'trinity.entry',
+      expect.objectContaining({
+        requestId: 'sess-shared-1'
+      })
+    );
+  });
+
   it('rejects MCP control leakage before the Trinity engine executes', async () => {
     await expect(
       runTrinityWritingPipeline({
@@ -168,6 +230,37 @@ describe('runTrinityWritingPipeline', () => {
         sourceEndpoint: 'write',
         classification: 'mcp_control',
         action: 'mcp.invoke'
+      })
+    );
+  });
+
+  it('rejects MCP control leakage when supplied through operation aliases', async () => {
+    await expect(
+      runTrinityWritingPipeline({
+        input: {
+          prompt: 'List tools',
+          sourceEndpoint: 'write',
+          body: {
+            payload: {
+              operation: 'mcp.list-tools'
+            }
+          }
+        },
+        context: {
+          client: {} as never,
+          requestId: 'req-mcp-leak-2'
+        }
+      })
+    ).rejects.toBeInstanceOf(TrinityControlLeakError);
+
+    expect(runThroughBrainMock).not.toHaveBeenCalled();
+    expect(loggerErrorMock).toHaveBeenCalledWith(
+      'trinity.control_leak_detected',
+      expect.objectContaining({
+        requestId: 'req-mcp-leak-2',
+        sourceEndpoint: 'write',
+        classification: 'mcp_control',
+        action: 'mcp.list_tools'
       })
     );
   });

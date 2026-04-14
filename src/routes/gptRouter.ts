@@ -106,12 +106,36 @@ type GptExecutionPlan = {
 
 type GptJobLookupAction = typeof GPT_GET_STATUS_ACTION | typeof GPT_GET_RESULT_ACTION;
 
+function readActionAlias(record: Record<string, unknown>): string | null {
+  const actionValue = record.action;
+  if (typeof actionValue === 'string' && actionValue.trim().length > 0) {
+    return actionValue.trim();
+  }
+
+  const operationValue = record.operation;
+  return typeof operationValue === 'string' && operationValue.trim().length > 0
+    ? operationValue.trim()
+    : null;
+}
+
 function resolveRequestedAction(body: unknown): string | null {
   const normalizedBody = normalizeGptRequestBody(body);
-  const action = normalizedBody?.action;
-  return typeof action === 'string' && action.trim().length > 0
-    ? action.trim().toLowerCase()
-    : null;
+  if (!normalizedBody) {
+    return null;
+  }
+
+  const directAction = readActionAlias(normalizedBody);
+  if (directAction) {
+    return directAction.toLowerCase();
+  }
+
+  const payload = normalizedBody.payload;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return null;
+  }
+
+  const payloadAction = readActionAlias(payload as Record<string, unknown>);
+  return payloadAction ? payloadAction.toLowerCase() : null;
 }
 
 function extractPromptText(body: unknown): string | null {
@@ -1158,7 +1182,7 @@ router.post("/:gptId", async (req, res, next) => {
           }
 
           try {
-            const systemStateResult = executeSystemStateRequest(
+            const systemStateResult = await executeSystemStateRequest(
               buildDirectControlPayload(normalizedBody)
             );
             requestLogger?.info?.('gpt.request.system_state', {

@@ -413,7 +413,7 @@ describe('gpt router auth logging', () => {
   });
 
   it('allows system_state reads without update fields on the canonical route', async () => {
-    mockExecuteSystemStateRequest.mockReturnValue({
+    mockExecuteSystemStateRequest.mockResolvedValue({
       mode: 'system_state',
     });
 
@@ -425,6 +425,37 @@ describe('gpt router auth logging', () => {
     const response = await request(app)
       .post('/gpt/arcanos-daemon')
       .send({ action: 'system_state' });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: {
+          mode: 'system_state',
+        },
+        _route: expect.objectContaining({
+          gptId: 'arcanos-daemon',
+          action: 'system_state',
+          route: 'system_state',
+        }),
+      })
+    );
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('accepts operation aliases for system_state on the canonical control route', async () => {
+    mockExecuteSystemStateRequest.mockResolvedValue({
+      mode: 'system_state',
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use(requestContext);
+    app.use('/gpt', gptRouter);
+
+    const response = await request(app)
+      .post('/gpt/arcanos-daemon')
+      .send({ operation: 'system_state' });
 
     expect(response.status).toBe(200);
     expect(response.body).toEqual(
