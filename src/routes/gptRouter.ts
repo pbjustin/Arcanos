@@ -69,7 +69,11 @@ import {
   parseGptJobStatusRequest,
   parseGptJobResultRequest
 } from '@shared/gpt/gptJobResult.js';
-import { parseNaturalLanguageJobLookup } from '@shared/gpt/naturalLanguageJobLookup.js';
+import { classifyGptRequestPlane } from './_core/gptPlaneClassification.js';
+import {
+  executeSystemStateRequest,
+  SystemStateConflictError
+} from '@services/systemState.js';
 
 const router = express.Router();
 const ARCANOS_CORE_GPT_IDS = new Set(['arcanos-core', 'core', 'arcanos-daemon']);
@@ -596,6 +600,38 @@ function buildJobLookupRouteMeta(params: {
   };
 }
 
+function buildDirectControlRouteMeta(params: {
+  requestId: string | undefined;
+  gptId: string;
+  action: string;
+  route: string;
+}) {
+  return {
+    requestId: params.requestId,
+    gptId: params.gptId,
+    action: params.action,
+    route: params.route,
+    timestamp: new Date().toISOString()
+  };
+}
+
+function buildDirectControlPayload(
+  normalizedBody: Record<string, unknown> | null
+): unknown {
+  if (!normalizedBody) {
+    return {};
+  }
+
+  if (Object.prototype.hasOwnProperty.call(normalizedBody, 'payload')) {
+    return normalizedBody.payload;
+  }
+
+  const payload = { ...normalizedBody };
+  delete payload.action;
+  delete payload.gptId;
+  return payload;
+}
+
 function normalizeCompletedAsyncGptResponse(
   output: unknown
 ): ({
@@ -810,80 +846,6 @@ router.post("/:gptId", async (req, res, next) => {
           });
         }
 
-        if (!requestedAction) {
-          const promptJobLookup = parseNaturalLanguageJobLookup(promptText);
-          if (promptJobLookup) {
-            const canonicalRoutes = promptJobLookup.ok
-              ? {
-                  poll: `/jobs/${promptJobLookup.jobId}`,
-                  result: `/jobs/${promptJobLookup.jobId}/result`
-                }
-              : {
-                  poll: null,
-                  result: null
-                };
-
-            if (!promptJobLookup.ok) {
-              requestLogger?.warn?.('gpt.request.job_lookup_guard_missing_job_id', {
-                endpoint: req.originalUrl,
-                gptId: incomingGptId,
-                requestId,
-                lookup: promptJobLookup.kind,
-                source: promptJobLookup.source
-              });
-              recordGptJobLookup({
-                channel: 'prompt_guard',
-                lookup: promptJobLookup.kind,
-                outcome: 'missing_job_id'
-              });
-              return res.status(400).json({
-                ok: false,
-                error: {
-                  code: 'JOB_ID_REQUIRED',
-                  message: 'Job retrieval prompts sent to /gpt/{gptId} must include a concrete job ID. Use the jobs API instead of prompting the GPT route.'
-                },
-                canonical: canonicalRoutes,
-                _route: {
-                  requestId,
-                  gptId: incomingGptId,
-                  route: 'job_lookup_guard',
-                  action: `${promptJobLookup.kind}_lookup`,
-                  timestamp: new Date().toISOString()
-                }
-              });
-            }
-
-            requestLogger?.warn?.('gpt.request.job_lookup_guard_rejected', {
-              endpoint: req.originalUrl,
-              gptId: incomingGptId,
-              requestId,
-              jobId: promptJobLookup.jobId,
-              lookup: promptJobLookup.kind,
-              source: promptJobLookup.source
-            });
-            recordGptJobLookup({
-              channel: 'prompt_guard',
-              lookup: promptJobLookup.kind,
-              outcome: 'rejected'
-            });
-            return res.status(400).json({
-              ok: false,
-              error: {
-                code: 'JOB_LOOKUP_REQUIRES_JOBS_API',
-                message: 'Job retrieval requests must use the jobs API. Do not send result or status lookups through POST /gpt/{gptId}.'
-              },
-              canonical: canonicalRoutes,
-              _route: {
-                requestId,
-                gptId: incomingGptId,
-                route: 'job_lookup_guard',
-                action: `${promptJobLookup.kind}_lookup`,
-                timestamp: new Date().toISOString()
-              }
-            });
-          }
-        }
-
         requestLogger?.info?.("gpt.request.auth_state", {
           endpoint: req.originalUrl,
           gptId: incomingGptId,
@@ -935,7 +897,78 @@ router.post("/:gptId", async (req, res, next) => {
           });
         }
 
-        if (requestedAction === GPT_GET_STATUS_ACTION) {
+        const planeClassification = classifyGptRequestPlane({
+          body: effectiveBody,
+          promptText,
+          requestedAction
+        });
+        requestLogger?.info?.('gpt.request.classified', {
+          endpoint: req.originalUrl,
+          gptId: incomingGptId,
+          action: planeClassification.action,
+          plane: planeClassification.plane,
+          kind: planeClassification.kind,
+          reason: planeClassification.reason
+        });
+
+        if (planeClassification.plane === 'reject') {
+          if (planeClassification.kind === 'job_lookup' && planeClassification.jobLookup) {
+            const jobLookup = planeClassification.jobLookup;
+            const outcome = jobLookup.ok ? 'rejected' : 'missing_job_id';
+            requestLogger?.warn?.(
+              jobLookup.ok
+                ? 'gpt.request.job_lookup_guard_rejected'
+                : 'gpt.request.job_lookup_guard_missing_job_id',
+              {
+                endpoint: req.originalUrl,
+                gptId: incomingGptId,
+                requestId,
+                lookup: jobLookup.kind,
+                source: jobLookup.source,
+                jobId: jobLookup.ok ? jobLookup.jobId : null
+              }
+            );
+            recordGptJobLookup({
+              channel: 'prompt_guard',
+              lookup: jobLookup.kind,
+              outcome
+            });
+          } else {
+            requestLogger?.warn?.('gpt.request.control_rejected', {
+              endpoint: req.originalUrl,
+              gptId: incomingGptId,
+              requestId,
+              kind: planeClassification.kind,
+              reason: planeClassification.reason,
+              canonical: planeClassification.canonical
+            });
+            recordGptRequestEvent({
+              event: 'control_rejected',
+              source: planeClassification.kind
+            });
+          }
+
+          return res.status(400).json({
+            ok: false,
+            error: {
+              code: planeClassification.errorCode,
+              message: planeClassification.message
+            },
+            canonical: planeClassification.canonical,
+            _route: {
+              requestId,
+              gptId: incomingGptId,
+              route:
+                planeClassification.kind === 'job_lookup'
+                  ? 'job_lookup_guard'
+                  : 'control_guard',
+              action: planeClassification.action,
+              timestamp: new Date().toISOString()
+            }
+          });
+        }
+
+        if (planeClassification.plane === 'control' && planeClassification.kind === 'job_status') {
           const parsedJobStatusRequest = parseGptJobStatusRequest(effectiveBody);
           const routeMeta = buildJobLookupRouteMeta({
             requestId,
@@ -995,7 +1028,7 @@ router.post("/:gptId", async (req, res, next) => {
           });
         }
 
-        if (requestedAction === GPT_GET_RESULT_ACTION) {
+        if (planeClassification.plane === 'control' && planeClassification.kind === 'job_result') {
           const parsedJobResultRequest = parseGptJobResultRequest(effectiveBody);
           const routeMeta = buildJobLookupRouteMeta({
             requestId,
@@ -1054,6 +1087,153 @@ router.post("/:gptId", async (req, res, next) => {
             ok: true,
             result: jobLookup,
             _route: routeMeta
+          });
+        }
+
+        if (planeClassification.plane === 'control' && planeClassification.kind === 'diagnostics') {
+          const diagnostics = await getDiagnosticsSnapshot(req.app);
+          requestLogger?.info?.('gpt.request.diagnostics', {
+            endpoint: req.originalUrl,
+            gptId: incomingGptId,
+            internal: true,
+            registeredGpts: Array.isArray(diagnostics.registered_gpts)
+              ? diagnostics.registered_gpts.length
+              : diagnostics.registered_gpts,
+            routeCount: Array.isArray(diagnostics.active_routes)
+              ? diagnostics.active_routes.length
+              : diagnostics.active_routes
+          });
+          recordGptRequestEvent({
+            event: 'control_direct',
+            source: 'diagnostics'
+          });
+
+          const diagnosticsSerializationStartedAt = Date.now();
+          const diagnosticsPayload = prepareBoundedClientJsonPayload(
+            diagnostics as unknown as Record<string, unknown>,
+            {
+              logger: req.logger,
+              logEvent: 'gpt.response.diagnostics'
+            }
+          );
+          requestLogger?.info?.('gpt.response.serialization', {
+            endpoint: req.originalUrl,
+            gptId: incomingGptId,
+            action: 'diagnostics',
+            serializationMs: Date.now() - diagnosticsSerializationStartedAt,
+            responseBytes: diagnosticsPayload.responseBytes,
+            truncated: diagnosticsPayload.truncated,
+          });
+
+          res.setHeader('x-response-bytes', String(diagnosticsPayload.responseBytes));
+          if (diagnosticsPayload.truncated) {
+            res.setHeader('x-response-truncated', 'true');
+          }
+          return res.json(diagnosticsPayload.payload);
+        }
+
+        if (planeClassification.plane === 'control' && planeClassification.kind === 'system_state') {
+          const routeMeta = buildDirectControlRouteMeta({
+            requestId,
+            gptId: incomingGptId,
+            action: 'system_state',
+            route: 'system_state'
+          });
+
+          if (!ARCANOS_CORE_GPT_IDS.has(incomingGptId)) {
+            requestLogger?.warn?.('gpt.request.system_state_rejected', {
+              endpoint: req.originalUrl,
+              gptId: incomingGptId,
+              requestId,
+              reason: 'non_core_gpt'
+            });
+            return res.status(400).json({
+              ok: false,
+              error: {
+                code: 'SYSTEM_STATE_REQUIRES_CORE_GPT',
+                message: 'system_state requests must target an ARCANOS core GPT id.'
+              },
+              _route: routeMeta
+            });
+          }
+
+          try {
+            const systemStateResult = executeSystemStateRequest(
+              buildDirectControlPayload(normalizedBody)
+            );
+            requestLogger?.info?.('gpt.request.system_state', {
+              endpoint: req.originalUrl,
+              gptId: incomingGptId,
+              requestId,
+              route: 'system_state'
+            });
+            recordGptRequestEvent({
+              event: 'control_direct',
+              source: 'system_state'
+            });
+            return res.status(200).json({
+              ok: true,
+              result: systemStateResult,
+              _route: routeMeta
+            });
+          } catch (error) {
+            if (error instanceof SystemStateConflictError) {
+              requestLogger?.warn?.('gpt.request.system_state_conflict', {
+                endpoint: req.originalUrl,
+                gptId: incomingGptId,
+                requestId,
+                conflict: error.conflict
+              });
+              return res.status(409).json({
+                ok: false,
+                error: {
+                  code: error.code,
+                  message: error.message,
+                  details: error.conflict
+                },
+                _route: routeMeta
+              });
+            }
+
+            requestLogger?.warn?.('gpt.request.system_state_invalid', {
+              endpoint: req.originalUrl,
+              gptId: incomingGptId,
+              requestId,
+              error: resolveErrorMessage(error)
+            });
+            return res.status(400).json({
+              ok: false,
+              error: {
+                code: 'BAD_REQUEST',
+                message: resolveErrorMessage(error)
+              },
+              _route: routeMeta
+            });
+          }
+        }
+
+        if (planeClassification.plane !== 'writing') {
+          requestLogger?.error?.('gpt.request.control_plane_job_creation_blocked', {
+            endpoint: req.originalUrl,
+            gptId: incomingGptId,
+            requestId,
+            plane: planeClassification.plane,
+            kind: planeClassification.kind,
+            reason: planeClassification.reason
+          });
+          return res.status(500).json({
+            ok: false,
+            error: {
+              code: 'CONTROL_PLANE_ROUTING_BREACH',
+              message: 'Control-plane requests must exit before async GPT job planning.'
+            },
+            _route: {
+              requestId,
+              gptId: incomingGptId,
+              route: 'control_guard',
+              action: planeClassification.action,
+              timestamp: new Date().toISOString()
+            }
           });
         }
 
@@ -1147,44 +1327,6 @@ router.post("/:gptId", async (req, res, next) => {
             requestedPollIntervalMs: explicitAsyncPollIntervalMs ?? null,
             resolvedPollIntervalMs: asyncPollIntervalMs
           });
-        }
-
-        if (requestedAction === 'diagnostics') {
-          const diagnostics = await getDiagnosticsSnapshot(req.app);
-          requestLogger?.info?.('gpt.request.diagnostics', {
-            endpoint: req.originalUrl,
-            gptId: incomingGptId,
-            internal: true,
-            registeredGpts: Array.isArray(diagnostics.registered_gpts)
-              ? diagnostics.registered_gpts.length
-              : diagnostics.registered_gpts,
-            routeCount: Array.isArray(diagnostics.active_routes)
-              ? diagnostics.active_routes.length
-              : diagnostics.active_routes
-          });
-
-          const diagnosticsSerializationStartedAt = Date.now();
-          const diagnosticsPayload = prepareBoundedClientJsonPayload(
-            diagnostics as unknown as Record<string, unknown>,
-            {
-              logger: req.logger,
-              logEvent: 'gpt.response.diagnostics'
-            }
-          );
-          requestLogger?.info?.('gpt.response.serialization', {
-            endpoint: req.originalUrl,
-            gptId: incomingGptId,
-            action: 'diagnostics',
-            serializationMs: Date.now() - diagnosticsSerializationStartedAt,
-            responseBytes: diagnosticsPayload.responseBytes,
-            truncated: diagnosticsPayload.truncated,
-          });
-
-          res.setHeader('x-response-bytes', String(diagnosticsPayload.responseBytes));
-          if (diagnosticsPayload.truncated) {
-            res.setHeader('x-response-truncated', 'true');
-          }
-          return res.json(diagnosticsPayload.payload);
         }
 
         const shouldUseJobBackedExecution =

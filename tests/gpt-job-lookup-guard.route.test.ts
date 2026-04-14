@@ -35,6 +35,7 @@ jest.unstable_mockModule('../src/core/db/repositories/jobRepository.js', () => (
   updateJob: jest.fn(),
   getLatestJob: jest.fn(),
   listFailedJobs: jest.fn(async () => []),
+  requeueFailedJob: jest.fn(),
   getJobQueueSummary: jest.fn(),
   getJobExecutionStatsSince: jest.fn(),
   requestJobCancellation: jest.fn(),
@@ -46,7 +47,15 @@ jest.unstable_mockModule('../src/core/db/repositories/jobRepository.js', () => (
 }));
 
 jest.unstable_mockModule('../src/services/workerAutonomyService.js', () => ({
-  planAutonomousWorkerJob: planAutonomousWorkerJobMock
+  planAutonomousWorkerJob: planAutonomousWorkerJobMock,
+  getWorkerAutonomyHealthReport: jest.fn(async () => ({
+    status: 'ok',
+    workers: [],
+  })),
+  getWorkerAutonomySettings: jest.fn(() => ({
+    enabled: false,
+    mode: 'off',
+  })),
 }));
 
 jest.unstable_mockModule('../src/services/queuedGptCompletionService.js', () => ({

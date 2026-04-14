@@ -8,6 +8,10 @@ ARCANOS exposes MCP over two transports:
 
 Tool registration lives in `src/mcp/server/index.ts` and includes reasoning, plans, agents, DAG orchestration, RAG, research, memory, modules, and ops health.
 
+Routing rule:
+- `POST /mcp` is the explicit MCP control-plane transport.
+- `POST /gpt/:gptId` is the writing plane and does not auto-dispatch to MCP. If a caller needs MCP tools, it must call `/mcp` directly.
+
 ## How It Works (HTTP)
 
 Request flow for `POST /mcp`:
@@ -69,12 +73,20 @@ Destructive tools:
 
 ## Tool Catalog
 
-Core reasoning:
+### Writing-plane tools
 - `trinity.query`
 - `arcanos.run`
 - `trinity.query_finetune`
 
-CLEAR and plans:
+### Control-plane tools
+These tools are explicit operational interfaces and must be invoked over MCP, not inferred from the GPT writing plane.
+
+- `dag.*`
+- `modules.list`
+- `modules.invoke`
+- `ops.health_report`
+
+### Plans and agent control
 - `clear.evaluate`
 - `plans.create`
 - `plans.list`
@@ -91,7 +103,7 @@ Agents:
 - `agents.get`
 - `agents.heartbeat`
 
-DAG orchestration:
+### DAG orchestration
 - `dag.capabilities`
 - `dag.run.create`
 - `dag.run.get`
@@ -105,20 +117,17 @@ DAG orchestration:
 - `dag.run.verification`
 - `dag.run.cancel`
 
-RAG and research:
+### RAG and research
 - `rag.ingest_url`
 - `rag.ingest_content`
 - `rag.query`
 - `research.run`
 
-Memory, modules, ops:
+### Memory
 - `memory.save`
 - `memory.load`
 - `memory.list`
 - `memory.delete`
-- `modules.list`
-- `modules.invoke`
-- `ops.health_report`
 
 ## Common MCP Error Codes
 | Code | Meaning |

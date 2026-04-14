@@ -58,6 +58,69 @@ export default [
     ignores: ignoredFiles
   },
   {
+    files: ['src/routes/_core/gptDispatch.ts', 'src/workers/jobRunner.ts'],
+    languageOptions: sharedLanguageOptions,
+    plugins: {
+      '@typescript-eslint': tsPlugin,
+      'import': importPlugin
+    },
+    rules: {
+      'no-restricted-imports': ['error', {
+        patterns: [
+          {
+            group: [
+              '@services/arcanosMcp',
+              '@services/arcanosMcp.js',
+              '@services/runtimeInspectionRoutingService',
+              '@services/runtimeInspectionRoutingService.js',
+              '@routes/ask/dagTools',
+              '@routes/ask/dagTools.js',
+              '@services/systemState',
+              '@services/systemState.js'
+            ],
+            message: 'Write-plane modules must not import control-plane execution modules.'
+          }
+        ]
+      }]
+    }
+  },
+  {
+    files: ['src/services/runtimeInspectionRoutingService.ts', 'src/services/systemState.ts', 'src/routes/ask/dagTools.ts', 'src/mcp/server/**/*.ts'],
+    languageOptions: sharedLanguageOptions,
+    plugins: {
+      '@typescript-eslint': tsPlugin,
+      'import': importPlugin
+    },
+    rules: {
+      'no-restricted-imports': ['error', {
+        patterns: [
+          {
+            group: ['@routes/_core/gptDispatch', '@routes/_core/gptDispatch.js'],
+            message: 'Control-plane modules must not import the writing dispatcher.'
+          }
+        ]
+      }]
+    }
+  },
+  {
+    files: ['src/shared/**/*.{ts,js}'],
+    languageOptions: sharedLanguageOptions,
+    plugins: {
+      '@typescript-eslint': tsPlugin,
+      'import': importPlugin
+    },
+    rules: {
+      'no-restricted-imports': ['error', {
+        patterns: [
+          {
+            group: ['@routes/**', '../routes/**', '../../routes/**', '../../../routes/**'],
+            message: 'Shared modules must remain routing-agnostic.'
+          }
+        ]
+      }]
+    }
+  },
+  {
     files: rootSourceFiles,
     ignores: ['**/*.test.*'],
     languageOptions: sharedLanguageOptions,

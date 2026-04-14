@@ -36,6 +36,18 @@ export function parseCliInvocation(argv: string[]): CliInvocation {
         ...parseGenerateAndWaitArgs(rest),
         options
       };
+    case "job-status":
+      return {
+        kind: "job-status",
+        jobId: requireSingleArgument("job-status", rest),
+        options
+      };
+    case "job-result":
+      return {
+        kind: "job-result",
+        jobId: requireSingleArgument("job-result", rest),
+        options
+      };
     case "plan":
       return {
         kind: "plan",
@@ -105,6 +117,8 @@ export function renderUsage(): string {
     "Usage:",
     "  arcanos ask \"...\" [--json]",
     "  arcanos generate-and-wait --gpt <gpt-id> --prompt \"...\" [--timeout-ms <ms>] [--poll-interval-ms <ms>] [--json]",
+    "  arcanos job-status <job-id> [--json]",
+    "  arcanos job-result <job-id> [--json]",
     "  arcanos plan \"...\" [--json]",
     "  arcanos exec [\"...\"] [--json]",
     "  arcanos status [--json]",
@@ -219,6 +233,14 @@ function requirePrompt(command: string, args: string[]): string {
   }
 
   return args.join(" ").trim();
+}
+
+function requireSingleArgument(command: string, args: string[]): string {
+  if (args.length !== 1 || args[0].trim().length === 0) {
+    throw new Error(`\`${command}\` requires exactly one identifier argument.`);
+  }
+
+  return args[0].trim();
 }
 
 function parseGenerateAndWaitArgs(args: string[]): {
