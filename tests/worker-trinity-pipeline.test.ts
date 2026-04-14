@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
-const runThroughBrainMock = jest.fn();
+const runTrinityWritingPipelineMock = jest.fn();
 const createRuntimeBudgetWithLimitMock = jest.fn(() => ({ budgetId: 'runtime-budget' }));
 const getWorkerExecutionLimitsMock = jest.fn(() => ({
   workerTrinityRuntimeBudgetMs: 420_000,
@@ -24,8 +24,8 @@ const createAbortErrorMock = jest.fn((message = 'request_aborted') => {
 });
 const sleepMock = jest.fn(async () => undefined);
 
-jest.unstable_mockModule('@core/logic/trinity.js', () => ({
-  runThroughBrain: runThroughBrainMock
+jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({
+  runTrinityWritingPipeline: runTrinityWritingPipelineMock
 }));
 
 jest.unstable_mockModule('@platform/resilience/runtimeBudget.js', () => ({
@@ -51,7 +51,7 @@ const { runWorkerTrinityPrompt } = await import('../src/workers/trinityWorkerPip
 
 describe('runWorkerTrinityPrompt', () => {
   beforeEach(() => {
-    runThroughBrainMock.mockReset();
+    runTrinityWritingPipelineMock.mockReset();
     createRuntimeBudgetWithLimitMock.mockClear();
     getWorkerExecutionLimitsMock.mockClear();
     runWithRequestAbortTimeoutMock.mockClear();
@@ -59,7 +59,7 @@ describe('runWorkerTrinityPrompt', () => {
     isAbortErrorMock.mockClear();
     createAbortErrorMock.mockClear();
     sleepMock.mockClear();
-    runThroughBrainMock.mockResolvedValue({ result: 'ok' });
+    runTrinityWritingPipelineMock.mockResolvedValue({ result: 'ok' });
     runWithRequestAbortTimeoutMock.mockImplementation(async (_options, callback) => callback());
     getRequestAbortSignalMock.mockReturnValue(undefined);
     isAbortErrorMock.mockImplementation((error: unknown) =>
@@ -83,22 +83,32 @@ describe('runWorkerTrinityPrompt', () => {
     });
 
     expect(createRuntimeBudgetWithLimitMock).toHaveBeenCalledTimes(1);
-    expect(runThroughBrainMock).toHaveBeenCalledWith(
-      openaiClient,
-      'Audit the DAG output',
-      'session-123',
-      'allow',
-      {
-        cognitiveDomain: 'diagnostic',
+    expect(runTrinityWritingPipelineMock).toHaveBeenCalledWith({
+      input: {
+        prompt: 'Audit the DAG output',
+        sessionId: 'session-123',
+        overrideAuditSafe: 'allow',
         sourceEndpoint: 'dag.agent.audit',
-        toolBackedCapabilities: {
-          verifyProvidedData: true
-        },
-        tokenAuditSessionId: 'session-123:dag:run-1:audit:a0',
-        watchdogModelTimeoutMs: 180_000
+        body: expect.objectContaining({
+          prompt: 'Audit the DAG output',
+          sourceEndpoint: 'dag.agent.audit',
+          tokenAuditSessionId: 'session-123:dag:run-1:audit:a0'
+        })
       },
-      { budgetId: 'runtime-budget' }
-    );
+      context: {
+        client: openaiClient,
+        requestId: 'session-123',
+        runtimeBudget: { budgetId: 'runtime-budget' },
+        runOptions: {
+          cognitiveDomain: 'diagnostic',
+          toolBackedCapabilities: {
+            verifyProvidedData: true
+          },
+          tokenAuditSessionId: 'session-123:dag:run-1:audit:a0',
+          watchdogModelTimeoutMs: 180_000
+        }
+      }
+    });
     expect(createRuntimeBudgetWithLimitMock).toHaveBeenCalledWith(420_000);
   });
 
@@ -116,22 +126,23 @@ describe('runWorkerTrinityPrompt', () => {
       }
     });
 
-    expect(runThroughBrainMock).toHaveBeenCalledWith(
-      openaiClient,
-      'Force a preview-only timeout once.',
-      undefined,
-      undefined,
-      expect.objectContaining({
-        sourceEndpoint: 'worker-helper',
-        reasoningStagePreviewChaosHook: {
-          kind: 'reasoning_timeout_once',
-          hookId: 'preview-chaos-test-hook',
-          delayBeforeCallMs: 250,
-          timeoutMs: 50
-        }
+    expect(runTrinityWritingPipelineMock).toHaveBeenCalledWith({
+      input: expect.objectContaining({
+        prompt: 'Force a preview-only timeout once.',
+        sourceEndpoint: 'worker-helper'
       }),
-      { budgetId: 'runtime-budget' }
-    );
+      context: expect.objectContaining({
+        runtimeBudget: { budgetId: 'runtime-budget' },
+        runOptions: expect.objectContaining({
+          reasoningStagePreviewChaosHook: {
+            kind: 'reasoning_timeout_once',
+            hookId: 'preview-chaos-test-hook',
+            delayBeforeCallMs: 250,
+            timeoutMs: 50
+          }
+        })
+      })
+    });
   });
 
   it('applies the default worker source endpoint when the caller omits one', async () => {
@@ -141,24 +152,25 @@ describe('runWorkerTrinityPrompt', () => {
       prompt: 'Research the latest deployment logs'
     });
 
-    expect(runThroughBrainMock).toHaveBeenCalledWith(
-      openaiClient,
-      'Research the latest deployment logs',
-      undefined,
-      undefined,
-      {
-        cognitiveDomain: undefined,
-        sourceEndpoint: 'worker.dispatch',
-        watchdogModelTimeoutMs: 180_000
-      },
-      { budgetId: 'runtime-budget' }
-    );
+    expect(runTrinityWritingPipelineMock).toHaveBeenCalledWith({
+      input: expect.objectContaining({
+        prompt: 'Research the latest deployment logs',
+        sourceEndpoint: 'worker.dispatch'
+      }),
+      context: expect.objectContaining({
+        runtimeBudget: { budgetId: 'runtime-budget' },
+        runOptions: {
+          cognitiveDomain: undefined,
+          watchdogModelTimeoutMs: 180_000
+        }
+      })
+    });
   });
 
   it('retries planner abort failures and succeeds on a later attempt', async () => {
     const openaiClient = {} as never;
 
-    runThroughBrainMock
+    runTrinityWritingPipelineMock
       .mockRejectedValueOnce(new Error('Request was aborted.'))
       .mockResolvedValueOnce({ result: 'planner recovered' });
 
@@ -168,7 +180,7 @@ describe('runWorkerTrinityPrompt', () => {
     });
 
     expect(result).toEqual({ result: 'planner recovered' });
-    expect(runThroughBrainMock).toHaveBeenCalledTimes(2);
+    expect(runTrinityWritingPipelineMock).toHaveBeenCalledTimes(2);
     expect(createRuntimeBudgetWithLimitMock).toHaveBeenNthCalledWith(1, 90_000);
     expect(createRuntimeBudgetWithLimitMock).toHaveBeenNthCalledWith(2, 90_000);
     expect(runWithRequestAbortTimeoutMock).toHaveBeenCalledTimes(2);
@@ -181,24 +193,27 @@ describe('runWorkerTrinityPrompt', () => {
       expect.any(Function)
     );
     expect(sleepMock).toHaveBeenCalledWith(500, { unref: true });
-    expect(runThroughBrainMock).toHaveBeenNthCalledWith(
+    expect(runTrinityWritingPipelineMock).toHaveBeenNthCalledWith(
       1,
-      openaiClient,
-      'Plan the DAG execution.',
-      undefined,
-      undefined,
       expect.objectContaining({
-        sourceEndpoint: 'dag.agent.planner',
-        watchdogModelTimeoutMs: 90_000
-      }),
-      { budgetId: 'runtime-budget' }
+        input: expect.objectContaining({
+          prompt: 'Plan the DAG execution.',
+          sourceEndpoint: 'dag.agent.planner'
+        }),
+        context: expect.objectContaining({
+          runtimeBudget: { budgetId: 'runtime-budget' },
+          runOptions: expect.objectContaining({
+            watchdogModelTimeoutMs: 90_000
+          })
+        })
+      })
     );
   });
 
   it('classifies planner timeout failures as transient and retries once', async () => {
     const openaiClient = {} as never;
 
-    runThroughBrainMock
+    runTrinityWritingPipelineMock
       .mockRejectedValueOnce(new Error('Planner DAG node timed out after 90000ms'))
       .mockResolvedValueOnce({ result: 'planner recovered after timeout' });
 
@@ -208,14 +223,14 @@ describe('runWorkerTrinityPrompt', () => {
     });
 
     expect(result).toEqual({ result: 'planner recovered after timeout' });
-    expect(runThroughBrainMock).toHaveBeenCalledTimes(2);
+    expect(runTrinityWritingPipelineMock).toHaveBeenCalledTimes(2);
     expect(sleepMock).toHaveBeenCalledWith(500, { unref: true });
   });
 
   it('stops planner retries after the configured retry budget is exhausted', async () => {
     const openaiClient = {} as never;
 
-    runThroughBrainMock.mockRejectedValue(new Error('Request was aborted.'));
+    runTrinityWritingPipelineMock.mockRejectedValue(new Error('Request was aborted.'));
 
     await expect(
       runWorkerTrinityPrompt(openaiClient, {
@@ -236,7 +251,7 @@ describe('runWorkerTrinityPrompt', () => {
       })
     });
 
-    expect(runThroughBrainMock).toHaveBeenCalledTimes(3);
+    expect(runTrinityWritingPipelineMock).toHaveBeenCalledTimes(3);
     expect(sleepMock).toHaveBeenNthCalledWith(1, 500, { unref: true });
     expect(sleepMock).toHaveBeenNthCalledWith(2, 1000, { unref: true });
   });
@@ -244,7 +259,7 @@ describe('runWorkerTrinityPrompt', () => {
   it('does not retry planner validation failures', async () => {
     const openaiClient = {} as never;
 
-    runThroughBrainMock.mockRejectedValue(new Error('Validation error: missing planner prompt.'));
+    runTrinityWritingPipelineMock.mockRejectedValue(new Error('Validation error: missing planner prompt.'));
 
     await expect(
       runWorkerTrinityPrompt(openaiClient, {
@@ -261,7 +276,7 @@ describe('runWorkerTrinityPrompt', () => {
       })
     });
 
-    expect(runThroughBrainMock).toHaveBeenCalledTimes(1);
+    expect(runTrinityWritingPipelineMock).toHaveBeenCalledTimes(1);
     expect(sleepMock).not.toHaveBeenCalled();
   });
 });

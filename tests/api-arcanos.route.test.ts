@@ -12,8 +12,8 @@ const mockTryExecutePromptRouteShortcut = jest.fn();
 
 const verificationRouter = express.Router();
 
-jest.unstable_mockModule('@core/logic/trinity.js', () => ({
-  runThroughBrain: mockRunThroughBrain
+jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({
+  runTrinityWritingPipeline: mockRunThroughBrain
 }));
 
 jest.unstable_mockModule('@transport/http/middleware/confirmGate.js', () => ({
@@ -180,16 +180,17 @@ describe('api-arcanos route', () => {
     expect(response.body.auditSafe).toBeUndefined();
     expect(response.body.memoryContext).toBeUndefined();
     expect(response.body.taskLineage).toBeUndefined();
-    expect(mockRunThroughBrain).toHaveBeenCalledWith(
-      openaiClient,
-      'Explain the deployment state.',
-      'session-route-1',
-      undefined,
-      expect.objectContaining({
+    expect(mockRunThroughBrain).toHaveBeenCalledWith({
+      input: expect.objectContaining({
+        prompt: 'Explain the deployment state.',
+        sessionId: 'session-route-1',
         sourceEndpoint: 'api-arcanos.ask'
       }),
-      { budgetId: 'runtime-budget-1' }
-    );
+      context: expect.objectContaining({
+        client: openaiClient,
+        runtimeBudget: { budgetId: 'runtime-budget-1' }
+      })
+    });
   });
 
   it('exposes pipeline debug only when strict user-visible output is explicitly disabled', async () => {

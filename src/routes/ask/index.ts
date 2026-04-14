@@ -1,6 +1,6 @@
 import express, { Request, Response } from 'express';
 import { z } from 'zod';
-import { runThroughBrain } from "@core/logic/trinity.js";
+import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
 import { createJob } from "@core/db/repositories/jobRepository.js";
 import { validateAIRequest, handleAIError, logRequestFeedback } from "@transport/http/requestHandler.js";
 import { confirmGate } from "@transport/http/middleware/confirmGate.js";
@@ -1086,16 +1086,16 @@ export const handleAIRequest = async (
       auditFlag: bypassAuditFlag
     });
 
-    // runThroughBrain now unconditionally routes through GPT-5.1 before final ARCANOS processing.
+    // The writing-only Trinity facade now unconditionally routes through GPT-5.1 before final ARCANOS processing.
     //
     // NOTE: Legacy ask-style endpoints still perform cognitive domain detection (via
     // detectCognitiveDomain / gptFallbackClassifier earlier in this handler) and pass an explicit
-    // `cognitiveDomain` hint into runThroughBrain when compat mode is enabled.
+    // `cognitiveDomain` hint into the Trinity writing facade when compat mode is enabled.
     //
-    // Canonical GPT traffic should target /gpt/:gptId. Other endpoints that call runThroughBrain
+    // Canonical GPT traffic should target /gpt/:gptId. Other endpoints that call the Trinity writing facade
     // (e.g. /siri, /write, /guide, /audit, /sim, and arcanosPrompt flows) do not perform this
     // detection and therefore rely on the default TRINITY_STAGE_TEMPERATURE configuration inside
-    // runThroughBrain until they adopt equivalent routing hints.
+    // the low-level Trinity engine until they adopt equivalent routing hints.
     if (asyncRequested) {
       const workerId = process.env.WORKER_ID || 'api';
       const plannedJob = await planAutonomousWorkerJob('ask', queuedAskJobInput);
@@ -1272,29 +1272,37 @@ export const handleAIRequest = async (
       repoInspectionChosen: repoInspectionRequested,
       runtimeInspectionChosen: false,
       finalExecutorPayload: {
-        executor: 'runThroughBrain',
-        prompt: trinityPrompt,
-        sessionId: sessionId ?? null,
-        overrideAuditSafe: overrideAuditSafe ?? null,
-        options: {
-          cognitiveDomain: finalDomain,
+        executor: 'runTrinityWritingPipeline',
+        input: {
+          prompt: trinityPrompt,
+          sessionId: sessionId ?? null,
+          overrideAuditSafe: overrideAuditSafe ?? null,
           sourceEndpoint: endpointName,
+        },
+        runOptions: {
+          cognitiveDomain: finalDomain,
           ...outputControlOptions,
         },
       },
     });
-    const output = await runThroughBrain(
-      openai,
-      trinityPrompt,
-      sessionId,
-      overrideAuditSafe,
-      {
-        cognitiveDomain: finalDomain,
+    const output = await runTrinityWritingPipeline({
+      input: {
+        prompt: trinityPrompt,
+        sessionId,
+        overrideAuditSafe,
         sourceEndpoint: endpointName,
-        ...outputControlOptions
+        body: req.body
       },
-      runtimeBudget
-    );
+      context: {
+        client: openai,
+        requestId,
+        runtimeBudget,
+        runOptions: {
+          cognitiveDomain: finalDomain,
+          ...outputControlOptions
+        }
+      }
+    });
     const completedOutput = buildCompletedQueuedAskOutput(output, queuedAskJobInput);
     recordPromptDebugTrace(requestId, 'response', {
       ...buildPromptDebugContext(req, endpointName, rawPrompt, normalizedPrompt),

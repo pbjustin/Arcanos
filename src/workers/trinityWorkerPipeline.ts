@@ -1,9 +1,10 @@
 import type OpenAI from 'openai';
 import {
-  runThroughBrain,
   type TrinityResult,
+  type TrinityRunOptions,
   type TrinityToolBackedCapabilities
 } from '@core/logic/trinity.js';
+import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { createRuntimeBudgetWithLimit } from '@platform/resilience/runtimeBudget.js';
@@ -252,12 +253,10 @@ function createPlannerExecutionError(
 
 function buildTrinityRunOptions(
   request: WorkerTrinityRequest,
-  sourceEndpoint: string,
   watchdogModelTimeoutMs: number
-) {
+): Omit<TrinityRunOptions, 'sourceEndpoint'> {
   return {
     cognitiveDomain: request.cognitiveDomain,
-    sourceEndpoint,
     watchdogModelTimeoutMs,
     ...(request.toolBackedCapabilities ? { toolBackedCapabilities: request.toolBackedCapabilities } : {}),
     ...(typeof request.memorySessionId === 'string' && request.memorySessionId.trim().length > 0
@@ -299,7 +298,6 @@ async function runPlannerWithRetries(
   );
   const trinityRunOptions = buildTrinityRunOptions(
     request,
-    sourceEndpoint,
     workerExecutionLimits.plannerTimeoutMs
   );
   const plannerStartedAtMs = Date.now();
@@ -321,14 +319,21 @@ async function runPlannerWithRetries(
           abortMessage: `Planner DAG node timed out after ${workerExecutionLimits.plannerTimeoutMs}ms`
         },
         () =>
-          runThroughBrain(
-            openaiClient,
-            request.prompt,
-            request.sessionId,
-            request.overrideAuditSafe,
-            trinityRunOptions,
-            createRuntimeBudgetWithLimit(runtimeBudgetLimitMs)
-          )
+          runTrinityWritingPipeline({
+            input: {
+              prompt: request.prompt,
+              sessionId: request.sessionId,
+              overrideAuditSafe: request.overrideAuditSafe,
+              sourceEndpoint,
+              body: request
+            },
+            context: {
+              client: openaiClient,
+              requestId,
+              runtimeBudget: createRuntimeBudgetWithLimit(runtimeBudgetLimitMs),
+              runOptions: trinityRunOptions
+            }
+          })
       );
     } catch (error: unknown) {
       const classifiedFailure = classifyPlannerFailure(error);
@@ -445,16 +450,22 @@ export async function runWorkerTrinityPrompt(
 
   const trinityRunOptions = buildTrinityRunOptions(
     request,
-    normalizedSourceEndpoint,
     workerExecutionLimits.workerTrinityStageTimeoutMs
   );
 
-  return runThroughBrain(
-    openaiClient,
-    request.prompt,
-    request.sessionId,
-    request.overrideAuditSafe,
-    trinityRunOptions,
-    createRuntimeBudgetWithLimit(workerExecutionLimits.workerTrinityRuntimeBudgetMs)
-  );
+  return runTrinityWritingPipeline({
+    input: {
+      prompt: request.prompt,
+      sessionId: request.sessionId,
+      overrideAuditSafe: request.overrideAuditSafe,
+      sourceEndpoint: normalizedSourceEndpoint,
+      body: request
+    },
+    context: {
+      client: openaiClient,
+      requestId: request.sessionId ?? normalizedSourceEndpoint,
+      runtimeBudget: createRuntimeBudgetWithLimit(workerExecutionLimits.workerTrinityRuntimeBudgetMs),
+      runOptions: trinityRunOptions
+    }
+  });
 }

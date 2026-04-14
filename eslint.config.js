@@ -85,7 +85,29 @@ export default [
     }
   },
   {
-    files: ['src/services/runtimeInspectionRoutingService.ts', 'src/services/systemState.ts', 'src/routes/ask/dagTools.ts', 'src/mcp/server/**/*.ts'],
+    files: ['src/services/runtimeInspectionRoutingService.ts', 'src/services/systemState.ts', 'src/routes/ask/dagTools.ts'],
+    languageOptions: sharedLanguageOptions,
+    plugins: {
+      '@typescript-eslint': tsPlugin,
+      'import': importPlugin
+    },
+    rules: {
+      'no-restricted-imports': ['error', {
+        patterns: [
+          {
+            group: ['@routes/_core/gptDispatch', '@routes/_core/gptDispatch.js'],
+            message: 'Control-plane modules must not import the writing dispatcher.'
+          },
+          {
+            group: ['@core/logic/trinityWritingPipeline', '@core/logic/trinityWritingPipeline.js'],
+            message: 'Control-plane modules must not invoke the Trinity writing facade.'
+          }
+        ]
+      }]
+    }
+  },
+  {
+    files: ['src/mcp/server/**/*.ts'],
     languageOptions: sharedLanguageOptions,
     plugins: {
       '@typescript-eslint': tsPlugin,
@@ -130,6 +152,18 @@ export default [
     },
     rules: {
       'no-restricted-imports': ['error', {
+        paths: [
+          {
+            name: '@core/logic/trinity',
+            importNames: ['runThroughBrain'],
+            message: 'Use runTrinityWritingPipeline for production writing calls; runThroughBrain is internal.'
+          },
+          {
+            name: '@core/logic/trinity.js',
+            importNames: ['runThroughBrain'],
+            message: 'Use runTrinityWritingPipeline for production writing calls; runThroughBrain is internal.'
+          }
+        ],
         patterns: [
           ...sharedRestrictedImportPatterns,
           { group: ['../../*', '../../../*'], message: 'Avoid deep relative imports that bypass local module boundaries.' }
@@ -145,6 +179,17 @@ export default [
       '@typescript-eslint/no-explicit-any': 'off',
       '@typescript-eslint/no-non-null-assertion': 'off',
       'import/no-cycle': 'error'
+    }
+  },
+  {
+    files: ['src/core/logic/trinity.ts', 'src/core/logic/trinityWritingPipeline.ts'],
+    languageOptions: sharedLanguageOptions,
+    plugins: {
+      '@typescript-eslint': tsPlugin,
+      'import': importPlugin
+    },
+    rules: {
+      'no-restricted-imports': 'off'
     }
   },
   {

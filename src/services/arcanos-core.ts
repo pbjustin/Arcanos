@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
-import { runThroughBrain } from '@core/logic/trinity.js';
 import type { TrinityAnswerMode, TrinityResult, TrinityRunOptions } from '@core/logic/trinity.js';
+import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
 import { createRuntimeBudgetWithLimit } from '@platform/resilience/runtimeBudget.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { recordTraceEvent } from '@platform/logging/telemetry.js';
@@ -408,6 +408,10 @@ export async function runArcanosCoreQuery(
     resolveCoreRuntimeBudgetSafetyBufferMs(pipelinePlan.primaryTimeoutMs)
   );
   const primaryAbortMessage = buildCorePipelineAbortMessage(pipelinePlan.primaryTimeoutMs);
+  const {
+    sourceEndpoint: primarySourceEndpoint = params.sourceEndpoint,
+    ...primaryRunOptionsWithoutSource
+  } = primaryRunOptions;
 
   logger.info('[core] handler.start', {
     module: 'ARCANOS:CORE',
@@ -443,14 +447,21 @@ export async function runArcanosCoreQuery(
         abortMessage: primaryAbortMessage
       },
       () =>
-        runThroughBrain(
-          params.client,
-          params.prompt,
-          params.sessionId,
-          params.overrideAuditSafe,
-          primaryRunOptions,
-          runtimeBudget
-        )
+        runTrinityWritingPipeline({
+          input: {
+            prompt: params.prompt,
+            sessionId: params.sessionId,
+            overrideAuditSafe: params.overrideAuditSafe,
+            sourceEndpoint: primarySourceEndpoint,
+            body: { prompt: params.prompt }
+          },
+          context: {
+            client: params.client,
+            requestId: params.sessionId ?? params.sourceEndpoint,
+            runtimeBudget,
+            runOptions: primaryRunOptionsWithoutSource
+          }
+        })
     );
     logger.info('[core] after trinity.query', {
       module: 'ARCANOS:CORE',
@@ -516,24 +527,38 @@ export async function runArcanosCoreQuery(
             parentSignal: getRequestAbortSignal(),
             abortMessage: buildCoreDegradedAbortMessage(pipelinePlan.degradedTimeoutMs)
           },
-          () =>
-            runThroughBrain(
-              params.client,
-              params.prompt,
-              params.sessionId,
-              params.overrideAuditSafe,
-              buildCoreDegradedRunOptions(
-                params.sourceEndpoint,
-                params.runOptions,
-                pipelinePlan.executionMode === 'background'
-                  ? pipelinePlan.degradedTimeoutMs
-                  : undefined
-              ),
-              createRuntimeBudgetWithLimit(
-                pipelinePlan.degradedTimeoutMs,
-                resolveCoreRuntimeBudgetSafetyBufferMs(pipelinePlan.degradedTimeoutMs)
-              )
-            )
+          () => {
+            const degradedRunOptions = buildCoreDegradedRunOptions(
+              params.sourceEndpoint,
+              params.runOptions,
+              pipelinePlan.executionMode === 'background'
+                ? pipelinePlan.degradedTimeoutMs
+                : undefined
+            );
+            const {
+              sourceEndpoint: degradedSourceEndpoint = `${params.sourceEndpoint}.degraded`,
+              ...degradedRunOptionsWithoutSource
+            } = degradedRunOptions;
+
+            return runTrinityWritingPipeline({
+              input: {
+                prompt: params.prompt,
+                sessionId: params.sessionId,
+                overrideAuditSafe: params.overrideAuditSafe,
+                sourceEndpoint: degradedSourceEndpoint,
+                body: { prompt: params.prompt }
+              },
+              context: {
+                client: params.client,
+                requestId: params.sessionId ?? params.sourceEndpoint,
+                runtimeBudget: createRuntimeBudgetWithLimit(
+                  pipelinePlan.degradedTimeoutMs,
+                  resolveCoreRuntimeBudgetSafetyBufferMs(pipelinePlan.degradedTimeoutMs)
+                ),
+                runOptions: degradedRunOptionsWithoutSource
+              }
+            });
+          }
         );
 
         logger.info('[PIPELINE] degraded path completed', {

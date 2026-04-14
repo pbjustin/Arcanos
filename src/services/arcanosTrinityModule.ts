@@ -1,4 +1,4 @@
-import { runThroughBrain } from '@core/logic/trinity.js';
+import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
 import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { buildTrinityOutputControlOptions } from '@shared/ask/trinityRequestOptions.js';
 import type { AIRequestDTO } from '@shared/types/dto.js';
@@ -46,17 +46,21 @@ export function createArcanosTrinityModule(
           return generateMockResponse(prompt, options.mockEndpoint);
         }
 
-        return runThroughBrain(
-          client,
-          prompt,
-          normalizedPayload.sessionId,
-          normalizedPayload.overrideAuditSafe,
-          {
+        return runTrinityWritingPipeline({
+          input: {
+            prompt,
+            sessionId: normalizedPayload.sessionId,
+            overrideAuditSafe: normalizedPayload.overrideAuditSafe,
             sourceEndpoint: options.sourceEndpoint,
-            ...buildTrinityOutputControlOptions(normalizedPayload)
+            body: normalizedPayload
           },
-          createRuntimeBudget()
-        );
+          context: {
+            client,
+            requestId: normalizedPayload.sessionId,
+            runtimeBudget: createRuntimeBudget(),
+            runOptions: buildTrinityOutputControlOptions(normalizedPayload)
+          }
+        });
       }
     }
   };

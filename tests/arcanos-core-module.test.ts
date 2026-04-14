@@ -19,8 +19,8 @@ beforeEach(async () => {
   mockGetOpenAIClientOrAdapter.mockReturnValue({ client: null });
   mockGenerateMockResponse.mockReturnValue('mock response');
 
-  jest.unstable_mockModule('@core/logic/trinity.js', () => ({
-    runThroughBrain: mockRunThroughBrain,
+  jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({
+    runTrinityWritingPipeline: mockRunThroughBrain,
   }));
 
   jest.unstable_mockModule('@platform/resilience/runtimeBudget.js', () => ({
@@ -76,5 +76,15 @@ describe('ARCANOS core module registration', () => {
 
   it('fails fast when query payloads omit prompt text', async () => {
     await expect(ArcanosCoreModule.actions.query({})).rejects.toThrow(/Prompt is required/);
+  });
+
+  it('keeps system_state on the control path and never invokes Trinity', async () => {
+    mockExecuteSystemStateRequest.mockReturnValue({ ok: true, state: 'steady' });
+
+    const result = await ArcanosCoreModule.actions.system_state({});
+
+    expect(result).toEqual({ ok: true, state: 'steady' });
+    expect(mockExecuteSystemStateRequest).toHaveBeenCalledWith({});
+    expect(mockRunThroughBrain).not.toHaveBeenCalled();
   });
 });

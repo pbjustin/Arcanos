@@ -4,7 +4,7 @@
  */
 
 import { Request, Response } from 'express';
-import { runThroughBrain } from "@core/logic/trinity.js";
+import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
 import { validateAIRequest, handleAIError } from "@transport/http/requestHandler.js";
 import type { AIRequestDTO, AIResponseDTO, ErrorResponseDTO } from "@shared/types/dto.js";
 import { harvestDatasetsFromAudit } from "@services/datasetHarvester.js";
@@ -58,7 +58,6 @@ export class AIController {
     const { client: openai, input, body } = validation;
 
     try {
-      // runThroughBrain enforces GPT-5.1 as the primary reasoning stage
       const runtimeBudget = createRuntimeBudget();
       const outputControlOptions = buildTrinityOutputControlOptions(body);
       recordPromptDebugTrace(requestId, 'routing', {
@@ -80,27 +79,31 @@ export class AIController {
         selectedRoute: endpointName,
         selectedModule: 'trinity',
         finalExecutorPayload: {
-          executor: 'runThroughBrain',
-          prompt: input,
-          sessionId: body.sessionId ?? null,
-          overrideAuditSafe: body.overrideAuditSafe ?? null,
-          options: {
+          executor: 'runTrinityWritingPipeline',
+          input: {
+            prompt: input,
+            sessionId: body.sessionId ?? null,
+            overrideAuditSafe: body.overrideAuditSafe ?? null,
             sourceEndpoint: endpointName,
-            ...outputControlOptions,
           },
+          runOptions: outputControlOptions,
         },
       });
-      const output = await runThroughBrain(
-        openai,
-        input,
-        body.sessionId,
-        body.overrideAuditSafe,
-        {
+      const output = await runTrinityWritingPipeline({
+        input: {
+          prompt: input,
+          sessionId: body.sessionId,
+          overrideAuditSafe: body.overrideAuditSafe,
           sourceEndpoint: endpointName,
-          ...outputControlOptions
+          body
         },
-        runtimeBudget
-      );
+        context: {
+          client: openai,
+          requestId,
+          runtimeBudget,
+          runOptions: outputControlOptions
+        }
+      });
 
       const responsePayload: AIResponse = {
         ...buildTrinityUserVisibleResponse({

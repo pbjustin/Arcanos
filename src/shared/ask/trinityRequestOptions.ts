@@ -17,7 +17,7 @@ type TrinityOutputOptionSubset = Pick<
  * - Output: normalized Trinity output-control options.
  *
  * Edge case behavior:
- * - Missing fields are omitted so `runThroughBrain` can still apply prompt-based heuristics.
+ * - Missing fields are omitted so the Trinity writing facade can still apply prompt-based heuristics.
  */
 export function buildTrinityOutputControlOptions(
   requestBody: Partial<AIRequestDTO>

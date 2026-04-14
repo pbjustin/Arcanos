@@ -46,6 +46,14 @@ const BOUNDARY_GROUPS = [
   },
 ];
 
+const DIRECT_TRINITY_IMPORT_ALLOWED_FILES = new Set([
+  'src/core/logic/trinity.ts',
+  'src/core/logic/trinityWritingPipeline.ts',
+]);
+
+const DIRECT_TRINITY_IMPORT_PATTERN =
+  /\bimport\s*\{[^}]*\brunThroughBrain\b[^}]*\}\s*from\s*['"][^'"]*(?:@core\/logic\/trinity|\/core\/logic\/trinity|\.\/trinity|trinity)(?:\.js)?['"]/;
+
 function collectRepositoryFilesFromFilesystem(rootPath) {
   if (!existsSync(rootPath)) {
     return [];
@@ -129,6 +137,29 @@ export function findRoutingBoundaryViolations(trackedFiles = listTrackedFiles())
         });
       }
     }
+  }
+
+  for (const relativeFilePath of trackedFiles) {
+    if (!relativeFilePath.startsWith('src/')) {
+      continue;
+    }
+    if (DIRECT_TRINITY_IMPORT_ALLOWED_FILES.has(relativeFilePath)) {
+      continue;
+    }
+
+    const absoluteFilePath = path.resolve(process.cwd(), relativeFilePath);
+    const sourceText = readFileSync(absoluteFilePath, 'utf8');
+    const matches = sourceText.match(DIRECT_TRINITY_IMPORT_PATTERN) ?? [];
+    if (matches.length === 0) {
+      continue;
+    }
+
+    violations.push({
+      boundary: 'trinity-import',
+      filePath: relativeFilePath,
+      reason: 'Production code must use runTrinityWritingPipeline instead of importing runThroughBrain directly.',
+      matches,
+    });
   }
 
   return violations;

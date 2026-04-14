@@ -8,8 +8,8 @@ import { isModuleActionAllowed } from '../modulesAllowlist.js';
 
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 
-import { runThroughBrain } from '@core/logic/trinity.js';
 import { runARCANOS } from '@core/logic/arcanos.js';
+import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
 import { runTrinity } from '@trinity/trinity.js';
 import { DEFAULT_FINE_TUNE } from '@config/openai.js';
 
@@ -109,14 +109,20 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
         path: 'mcp://trinity.query',
         sessionId,
       });
-      const result = await runThroughBrain(
-        ctx.openai,
-        prompt,
-        sessionId,
-        args.overrideAuditSafe,
-        { sourceEndpoint: 'mcp.trinity.query' },
-        ctx.runtimeBudget
-      );
+      const result = await runTrinityWritingPipeline({
+        input: {
+          prompt,
+          sessionId,
+          overrideAuditSafe: args.overrideAuditSafe,
+          sourceEndpoint: 'mcp.trinity.query',
+          body: args
+        },
+        context: {
+          client: ctx.openai,
+          requestId: ctx.requestId,
+          runtimeBudget: ctx.runtimeBudget
+        }
+      });
       return mcpText(result);
     })
   );

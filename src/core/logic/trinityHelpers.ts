@@ -1,6 +1,6 @@
 /**
  * Trinity pipeline shared helpers.
- * Internal implementation; consumers should use runThroughBrain from trinity.js only.
+ * Internal implementation; production callers should use the Trinity writing facade.
  */
 
 import { logger } from "@platform/logging/structuredLogging.js";
