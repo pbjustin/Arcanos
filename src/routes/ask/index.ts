@@ -14,7 +14,7 @@ import type {
   ErrorResponseDTO
 } from "@shared/types/dto.js";
 import { aiRequestSchema } from "@shared/types/dto.js";
-import { asyncHandler, sendBadRequest, sendInternalErrorPayload } from '@shared/http/index.js';
+import { asyncHandler } from '@shared/http/index.js';
 import {
   shapeClientRouteResult
 } from '@shared/http/clientResponseGuards.js';
@@ -582,7 +582,10 @@ export const handleAIRequest = async (
     const stateRequest = systemStateUpdateSchema.safeParse(req.body);
     //audit Assumption: system mode requests are strictly validated; failure risk: ambiguous mode behavior; expected invariant: strict contract before execution; handling strategy: hard fail on validation errors.
     if (!stateRequest.success) {
-      return sendBadRequest(res, 'SYSTEM_STATE_REQUEST_INVALID', stateRequest.error.issues.map(issue => issue.message));
+      return sendGuardedAskResponse(req, res, {
+        error: 'SYSTEM_STATE_REQUEST_INVALID',
+        details: stateRequest.error.issues.map(issue => issue.message)
+      }, `${endpointName}.system_state.invalid`, 400);
     }
 
     if (stateRequest.data.expectedVersion !== undefined && stateRequest.data.patch) {
@@ -611,10 +614,10 @@ export const handleAIRequest = async (
     const strictState = systemStateSchema.safeParse(stateResponse);
     //audit Assumption: system_state responses must be schema-valid before send; failure risk: CLI drift on malformed payload; expected invariant: strict response contract; handling strategy: hard fail invalid payloads.
     if (!strictState.success) {
-      return sendInternalErrorPayload(res, {
+      return sendGuardedAskResponse(req, res, {
         error: 'SYSTEM_STATE_RESPONSE_INVALID',
         details: strictState.error.issues.map(issue => issue.message)
-      });
+      }, `${endpointName}.system_state.response_invalid`, 500);
     }
 
     return sendGuardedAskResponse(req, res, strictState.data, `${endpointName}.system_state.response`);
@@ -665,10 +668,10 @@ export const handleAIRequest = async (
       const rawContent = (modelResponse as any)?.output_text ?? (modelResponse as any)?.outputText ?? (modelResponse as any)?.output_text;
       //audit Assumption: strict review requires textual JSON payload; failure risk: empty model content; expected invariant: parseable JSON string; handling strategy: hard fail missing content.
       if (typeof rawContent !== 'string' || rawContent.trim().length === 0) {
-        return sendInternalErrorPayload(res, {
+        return sendGuardedAskResponse(req, res, {
           error: 'SYSTEM_REVIEW_RESPONSE_INVALID',
           details: ['Model returned empty content for system_review mode']
-        });
+        }, `${endpointName}.system_review.response_invalid`, 500);
       }
 
       const parsedContent = parseJsonContent(rawContent);
@@ -682,18 +685,18 @@ export const handleAIRequest = async (
 
       const strictReview = systemReviewSchema.safeParse(normalizedReviewPayload);
       if (!strictReview.success) {
-        return sendInternalErrorPayload(res, {
+        return sendGuardedAskResponse(req, res, {
           error: 'SYSTEM_REVIEW_RESPONSE_INVALID',
           details: strictReview.error.issues.map(issue => issue.message)
-        });
+        }, `${endpointName}.system_review.response_invalid`, 500);
       }
 
       return sendGuardedAskResponse(req, res, strictReview.data, `${endpointName}.system_review.response`);
     } catch (error) {
-      return sendInternalErrorPayload(res, {
+      return sendGuardedAskResponse(req, res, {
         error: 'SYSTEM_REVIEW_EXECUTION_FAILED',
         details: [error instanceof Error ? error.message : String(error)]
-      });
+      }, `${endpointName}.system_review.execution_failed`, 500);
     }
   }
 
@@ -1138,12 +1141,12 @@ export const handleAIRequest = async (
             statusCode: 500,
             extra: { disposition: 'async-completed-invalid', jobId: job.id }
           });
-          return sendInternalErrorPayload(res, {
+          return sendGuardedAskResponse(req, res, {
             error: 'ASYNC_ASK_JOB_OUTPUT_INVALID',
             message: 'Async ask job completed without a structured output payload.',
             jobId: job.id,
             poll: `/jobs/${job.id}`
-          });
+          }, `${endpointName}.async_completed_invalid`, 500);
         }
 
         recordPromptDebugTrace(requestId, 'response', {
@@ -1191,9 +1194,12 @@ export const handleAIRequest = async (
           statusCode: 500,
           extra: { disposition: 'async-failed', jobId: job.id }
         });
-        return sendInternalErrorPayload(
+        return sendGuardedAskResponse(
+          req,
           res,
-          buildAsyncAskFailurePayload(job.id, waitedJob.job.error_message)
+          buildAsyncAskFailurePayload(job.id, waitedJob.job.error_message),
+          `${endpointName}.async_failed`,
+          500
         );
       }
 
@@ -1217,12 +1223,12 @@ export const handleAIRequest = async (
           statusCode: 500,
           extra: { disposition: 'async-missing', jobId: job.id }
         });
-        return sendInternalErrorPayload(res, {
+        return sendGuardedAskResponse(req, res, {
           error: 'ASYNC_ASK_JOB_MISSING',
           message: 'Async ask job disappeared before completion.',
           jobId: job.id,
           poll: `/jobs/${job.id}`
-        });
+        }, `${endpointName}.async_missing`, 500);
       }
 
       completeAiRouteTrace(req, routeTrace, {

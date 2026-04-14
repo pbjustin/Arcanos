@@ -502,6 +502,37 @@ describe('client response guards', () => {
     expect(prepared.responseBytes).toBeLessThanOrEqual(prepared.maxResponseBytes);
   });
 
+  it('preserves generic job lookup metadata when truncating oversized payloads', () => {
+    const prepared = prepareBoundedClientJsonPayload({
+      jobId: 'job-123',
+      status: 'completed',
+      jobStatus: 'completed',
+      lifecycleStatus: 'completed',
+      poll: '/jobs/job-123',
+      stream: '/jobs/job-123/stream',
+      result: {
+        answer: 'x'.repeat(16_000),
+      },
+      error: null,
+    }, {
+      maxBytes: 2048,
+    });
+
+    expect(prepared.truncated).toBe(true);
+    expect(prepared.responseBytes).toBeLessThanOrEqual(prepared.maxResponseBytes);
+    expect(prepared.payload).toMatchObject({
+      jobId: 'job-123',
+      status: 'completed',
+      jobStatus: 'completed',
+      lifecycleStatus: 'completed',
+      poll: '/jobs/job-123',
+      stream: '/jobs/job-123/stream',
+      truncated: true,
+      result: expect.stringContaining('[truncated]'),
+      error: null,
+    });
+  });
+
   it('stamps lightweight probe payloads with their JSON response size', () => {
     const payload = withJsonResponseBytes({
       status: 'ok',

@@ -5,7 +5,10 @@ import {
   emitClientResponseTruncationWarning,
   isRecord,
   measureJsonBytes,
+  readBoolean,
+  readNumber,
   readString,
+  readStringArray,
   resolveClientResponseMaxBytes,
   truncateText,
 } from './clientResponseCommon.js';
@@ -58,8 +61,63 @@ function buildTruncatedPayloadFromPreview(
     };
   }
 
-  return {
+  const genericTruncatedPayload: Record<string, unknown> = {
     result: preview,
+    truncated: true,
+  };
+
+  for (const [key, value] of Object.entries(payload)) {
+    if (key === 'result' || key === 'output' || key === 'truncated') {
+      continue;
+    }
+
+    if (value === null) {
+      genericTruncatedPayload[key] = null;
+      continue;
+    }
+
+    const booleanValue = readBoolean(value);
+    if (booleanValue !== undefined) {
+      genericTruncatedPayload[key] = booleanValue;
+      continue;
+    }
+
+    const numberValue = readNumber(value);
+    if (numberValue !== undefined) {
+      genericTruncatedPayload[key] = numberValue;
+      continue;
+    }
+
+    const stringValue = readString(value);
+    if (stringValue !== undefined) {
+      genericTruncatedPayload[key] = truncateText(stringValue, STRING_PREVIEW_MAX_BYTES);
+      continue;
+    }
+
+    const stringArrayValue = readStringArray(value, 8);
+    if (stringArrayValue !== undefined) {
+      genericTruncatedPayload[key] = stringArrayValue;
+      continue;
+    }
+
+    if (isRecord(value)) {
+      const code = readString(value.code);
+      const message = readString(value.message);
+      if (code || message) {
+        genericTruncatedPayload[key] = {
+          ...(code ? { code } : {}),
+          ...(message ? { message } : {}),
+        };
+      }
+    }
+  }
+
+  return genericTruncatedPayload;
+}
+
+function buildMinimalTruncatedPayload(previewSource: string): Record<string, unknown> {
+  return {
+    result: truncateText(previewSource, 0),
     truncated: true,
   };
 }
@@ -69,7 +127,12 @@ function buildTruncatedPayload(payload: Record<string, unknown>, maxBytes: numbe
   const maxPreviewBytes = Math.max(512, Math.floor(maxBytes * 0.45));
   let lowerPreviewBytes = 0;
   let upperPreviewBytes = maxPreviewBytes;
+  const minimalPayload = buildMinimalTruncatedPayload(previewSource);
   let bestPayload = buildTruncatedPayloadFromPreview(payload, truncateText(previewSource, 0));
+
+  if (measureJsonBytes(bestPayload) > maxBytes) {
+    bestPayload = minimalPayload;
+  }
 
   while (lowerPreviewBytes <= upperPreviewBytes) {
     const previewBytes = Math.floor((lowerPreviewBytes + upperPreviewBytes) / 2);
@@ -87,7 +150,7 @@ function buildTruncatedPayload(payload: Record<string, unknown>, maxBytes: numbe
     }
   }
 
-  return bestPayload;
+  return measureJsonBytes(bestPayload) <= maxBytes ? bestPayload : minimalPayload;
 }
 
 export function prepareBoundedClientJsonPayload<T extends Record<string, unknown>>(

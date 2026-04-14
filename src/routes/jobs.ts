@@ -67,9 +67,27 @@ function sendJobsJsonResponse(
   });
 }
 
+function validateJobsJsonRouteParams(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction
+) {
+  const parsed = jobIdSchema.safeParse(req.params);
+  if (!parsed.success) {
+    sendJobsJsonResponse(req, res, { error: 'JOB_ID_INVALID' }, 'jobs.validation.invalid', 400);
+    return;
+  }
+
+  if (!req.validated) {
+    req.validated = {};
+  }
+  req.validated.params = parsed.data;
+  next();
+}
+
 router.get(
   '/jobs/:id',
-  validateParams(jobIdSchema, { errorCode: 'JOB_ID_INVALID' }),
+  validateJobsJsonRouteParams,
   asyncHandler(async (req, res) => {
     const { id } = req.validated!.params as z.infer<typeof jobIdSchema>;
     const requestId = (req as any).requestId;
@@ -114,7 +132,7 @@ router.get(
 
 router.get(
   '/jobs/:id/result',
-  validateParams(jobIdSchema, { errorCode: 'JOB_ID_INVALID' }),
+  validateJobsJsonRouteParams,
   asyncHandler(async (req, res) => {
     const { id } = req.validated!.params as z.infer<typeof jobIdSchema>;
     const requestId = (req as any).requestId;
@@ -151,7 +169,7 @@ router.get(
 
 router.post(
   '/jobs/:id/cancel',
-  validateParams(jobIdSchema, { errorCode: 'JOB_ID_INVALID' }),
+  validateJobsJsonRouteParams,
   confirmGate,
   asyncHandler(async (req, res) => {
     const { id } = req.validated!.params as z.infer<typeof jobIdSchema>;

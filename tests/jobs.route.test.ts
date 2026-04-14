@@ -111,10 +111,27 @@ describe('/jobs routes', () => {
     const response = await request(buildApp()).get('/jobs/%20/result');
 
     expect(response.status).toBe(400);
+    expect(response.headers['x-response-bytes']).toBeTruthy();
+    expect(response.headers['x-response-truncated']).toBeUndefined();
     expect(response.body).toEqual({
       error: 'JOB_ID_INVALID'
     });
     expect(getJobByIdMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects whitespace-only job identifiers for cancellation through the guarded response path', async () => {
+    const response = await request(buildApp())
+      .post('/jobs/%20/cancel')
+      .set('x-confirmed', 'yes');
+
+    expect(response.status).toBe(400);
+    expect(response.headers['x-response-bytes']).toBeTruthy();
+    expect(response.headers['x-response-truncated']).toBeUndefined();
+    expect(response.body).toEqual({
+      error: 'JOB_ID_INVALID'
+    });
+    expect(getJobByIdMock).not.toHaveBeenCalled();
+    expect(requestJobCancellationMock).not.toHaveBeenCalled();
   });
 
   it('returns lifecycle metadata for job polling responses', async () => {
@@ -340,5 +357,56 @@ describe('/jobs routes', () => {
         message: 'Terminal jobs cannot be cancelled.'
       }
     });
+  });
+
+  it('preserves job lookup metadata when bounded result payloads are truncated', async () => {
+    const previousMaxBytes = process.env.CLIENT_RESPONSE_MAX_BYTES;
+    process.env.CLIENT_RESPONSE_MAX_BYTES = '2048';
+    getJobByIdMock.mockResolvedValue({
+      id: 'job-truncated-123',
+      job_type: 'gpt',
+      status: 'completed',
+      created_at: '2026-04-06T10:00:00.000Z',
+      updated_at: '2026-04-06T10:01:00.000Z',
+      completed_at: '2026-04-06T10:01:00.000Z',
+      retention_until: '2026-04-07T10:01:00.000Z',
+      idempotency_until: '2026-04-07T10:01:00.000Z',
+      expires_at: null,
+      error_message: null,
+      output: {
+        ok: true,
+        result: {
+          answer: 'x'.repeat(16_000)
+        }
+      },
+      cancel_requested_at: null,
+      cancel_reason: null
+    });
+
+    try {
+      const response = await request(buildApp()).get('/jobs/job-truncated-123/result');
+
+      expect(response.status).toBe(200);
+      expect(response.headers['x-response-bytes']).toBeTruthy();
+      expect(response.headers['x-response-truncated']).toBe('true');
+      expect(Number(response.headers['x-response-bytes'])).toBeLessThanOrEqual(2048);
+      expect(response.body).toMatchObject({
+        jobId: 'job-truncated-123',
+        status: 'completed',
+        jobStatus: 'completed',
+        lifecycleStatus: 'completed',
+        poll: '/jobs/job-truncated-123',
+        stream: '/jobs/job-truncated-123/stream',
+        truncated: true,
+        result: expect.stringContaining('[truncated]')
+      });
+      expect(response.body.error).toBeNull();
+    } finally {
+      if (previousMaxBytes === undefined) {
+        delete process.env.CLIENT_RESPONSE_MAX_BYTES;
+      } else {
+        process.env.CLIENT_RESPONSE_MAX_BYTES = previousMaxBytes;
+      }
+    }
   });
 });
