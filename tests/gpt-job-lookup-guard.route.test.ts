@@ -144,6 +144,38 @@ describe('natural-language job lookup guard on /gpt/:gptId', () => {
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
+  it('rejects question-style status prompts that include a concrete job id', async () => {
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        prompt: 'What is the status of job job-789?'
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.headers['x-response-bytes']).toBeTruthy();
+    expect(response.body).toEqual({
+      ok: false,
+      error: {
+        code: 'JOB_LOOKUP_REQUIRES_JOBS_API',
+        message: 'Job retrieval requests must use the jobs API. Do not send result or status lookups through POST /gpt/{gptId}.'
+      },
+      canonical: {
+        poll: '/jobs/job-789',
+        result: '/jobs/job-789/result'
+      },
+      _route: expect.objectContaining({
+        gptId: 'arcanos-core',
+        route: 'job_lookup_guard',
+        action: 'status_lookup'
+      })
+    });
+    expect(getJobByIdMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
   it('rejects lookup prompts that omit a concrete job id', async () => {
     const response = await request(buildApp())
       .post('/gpt/arcanos-core')
