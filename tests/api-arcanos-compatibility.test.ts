@@ -179,6 +179,7 @@ describe('/api/arcanos/ask compatibility', () => {
     expect(mockRunArcanosCoreQuery).toHaveBeenCalledWith({
       client: { clientId: 'openai-client-1' },
       prompt: 'Say hello in one word.',
+      requestId: 'api-arcanos-ask',
       sessionId: undefined,
       overrideAuditSafe: undefined,
       sourceEndpoint: 'api-arcanos.ask',

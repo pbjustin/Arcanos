@@ -10,6 +10,8 @@ const updateJobMock = jest.fn();
 const getLatestJobMock = jest.fn();
 const getJobQueueSummaryMock = jest.fn();
 const getJobExecutionStatsSinceMock = jest.fn();
+const listFailedJobsMock = jest.fn();
+const requeueFailedJobMock = jest.fn();
 const validateAIRequestMock = jest.fn();
 const handleAIErrorMock = jest.fn();
 const logRequestFeedbackMock = jest.fn();
@@ -29,7 +31,9 @@ jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
   getJobById: getJobByIdMock,
   getLatestJob: getLatestJobMock,
   getJobQueueSummary: getJobQueueSummaryMock,
-  getJobExecutionStatsSince: getJobExecutionStatsSinceMock
+  getJobExecutionStatsSince: getJobExecutionStatsSinceMock,
+  listFailedJobs: listFailedJobsMock,
+  requeueFailedJob: requeueFailedJobMock
 }));
 
 jest.unstable_mockModule('@transport/http/requestHandler.js', () => ({
@@ -63,6 +67,46 @@ jest.unstable_mockModule('@dispatcher/gptDomainClassifier.js', () => ({
 }));
 
 jest.unstable_mockModule('@services/workerAutonomyService.js', () => ({
+  getWorkerAutonomyHealthReport: jest.fn(async () => ({
+    timestamp: new Date().toISOString(),
+    overallStatus: 'healthy',
+    queueSummary: null,
+    workers: [],
+    alerts: [],
+    settings: {
+      heartbeatIntervalMs: 5000,
+      leaseMs: 15000,
+      inspectorIntervalMs: 30000,
+      watchdogIntervalMs: 5000,
+      staleAfterMs: 10000,
+      watchdogIdleMs: 120000,
+      defaultMaxRetries: 2,
+      maxJobsPerHour: 120,
+      maxAiCallsPerHour: 120,
+      maxRssMb: 2048
+    }
+  })),
+  getWorkerAutonomySettings: jest.fn(() => ({
+    workerId: 'async-queue',
+    workerType: 'async_queue',
+    heartbeatIntervalMs: 5000,
+    leaseMs: 15000,
+    inspectorIntervalMs: 30000,
+    watchdogIntervalMs: 5000,
+    staleAfterMs: 10000,
+    watchdogIdleMs: 120000,
+    defaultMaxRetries: 2,
+    retryBackoffBaseMs: 2000,
+    retryBackoffMaxMs: 60000,
+    maxJobsPerHour: 120,
+    maxAiCallsPerHour: 120,
+    maxRssMb: 2048,
+    queueDepthDeferralThreshold: 25,
+    queueDepthDeferralMs: 5000,
+    failureWebhookUrl: null,
+    failureWebhookThreshold: 3,
+    failureWebhookCooldownMs: 300000
+  })),
   planAutonomousWorkerJob: jest.fn(async () => ({
     status: 'pending',
     retryCount: 0,

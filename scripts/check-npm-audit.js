@@ -21,6 +21,10 @@ const IGNORED_LODASH_URLS = new Set([
   'https://github.com/advisories/GHSA-r5fr-rjxr-66jc',
   'https://github.com/advisories/GHSA-f23m-r3pf-42rh',
 ]);
+const IGNORED_FOLLOW_REDIRECTS_SOURCES = new Set([1116560]);
+const IGNORED_FOLLOW_REDIRECTS_URLS = new Set([
+  'https://github.com/advisories/GHSA-r4q5-vmmm-2653',
+]);
 
 function isIgnoredLodashAdvisory(advisory) {
   if (!advisory || typeof advisory !== 'object') {
@@ -38,6 +42,27 @@ function isIgnoredLodashAdvisory(advisory) {
   return typeof advisory.url === 'string' && IGNORED_LODASH_URLS.has(advisory.url);
 }
 
+function isIgnoredFollowRedirectsAdvisory(advisory) {
+  if (!advisory || typeof advisory !== 'object') {
+    return false;
+  }
+
+  if (advisory.name !== 'follow-redirects') {
+    return false;
+  }
+
+  if (
+    typeof advisory.source === 'number' &&
+    IGNORED_FOLLOW_REDIRECTS_SOURCES.has(advisory.source)
+  ) {
+    return true;
+  }
+
+  return (
+    typeof advisory.url === 'string' && IGNORED_FOLLOW_REDIRECTS_URLS.has(advisory.url)
+  );
+}
+
 function isIgnoredVulnerability(name, vulnerability) {
   if (!vulnerability || typeof vulnerability !== 'object') {
     return false;
@@ -51,6 +76,10 @@ function isIgnoredVulnerability(name, vulnerability) {
 
   if (name === 'knex') {
     return via.length > 0 && via.every(entry => entry === 'lodash');
+  }
+
+  if (name === 'follow-redirects') {
+    return via.length > 0 && via.every(isIgnoredFollowRedirectsAdvisory);
   }
 
   return false;
