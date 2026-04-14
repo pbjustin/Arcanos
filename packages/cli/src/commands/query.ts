@@ -1,5 +1,6 @@
 import { requestQuery } from "../client/backend.js";
 import { serializeDeterministicJson } from "../client/protocol.js";
+import { extractHumanReadableText } from "./humanOutput.js";
 import type { CliCommandResult, QueryCommandInvocation } from "./types.js";
 
 export async function runQueryCommand(
@@ -31,7 +32,7 @@ export async function runQueryCommand(
 }
 
 function extractQueryHumanOutput(payload: Record<string, unknown>): string {
-  const resultText = extractTextValue(payload.result);
+  const resultText = extractHumanReadableText(payload.result, payload.message);
   if (resultText) {
     return resultText;
   }
@@ -43,24 +44,4 @@ function extractQueryHumanOutput(payload: Record<string, unknown>): string {
   }
 
   return serializeDeterministicJson(payload);
-}
-
-function extractTextValue(value: unknown): string {
-  if (typeof value === "string" && value.trim().length > 0) {
-    return value.trim();
-  }
-
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return "";
-  }
-
-  const recordValue = value as Record<string, unknown>;
-  for (const key of ["text", "message", "result", "response"]) {
-    const candidate = recordValue[key];
-    if (typeof candidate === "string" && candidate.trim().length > 0) {
-      return candidate.trim();
-    }
-  }
-
-  return "";
 }

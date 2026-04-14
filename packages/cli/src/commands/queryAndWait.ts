@@ -1,5 +1,6 @@
 import { requestQueryAndWait } from "../client/backend.js";
 import { serializeDeterministicJson } from "../client/protocol.js";
+import { extractHumanReadableText } from "./humanOutput.js";
 import type { CliCommandResult, QueryAndWaitCommandInvocation } from "./types.js";
 
 const DEFAULT_QUERY_AND_WAIT_TIMEOUT_MS = 25_000;
@@ -45,7 +46,7 @@ function extractQueryAndWaitHumanOutput(
   payload: Record<string, unknown>,
   timeoutMs: number
 ): string {
-  const directText = extractTextValue(payload.result);
+  const directText = extractHumanReadableText(payload.result, payload.message);
   if (directText) {
     return directText;
   }
@@ -61,24 +62,4 @@ function extractQueryAndWaitHumanOutput(
   }
 
   return serializeDeterministicJson(payload);
-}
-
-function extractTextValue(value: unknown): string {
-  if (typeof value === "string" && value.trim().length > 0) {
-    return value.trim();
-  }
-
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return "";
-  }
-
-  const recordValue = value as Record<string, unknown>;
-  for (const key of ["text", "message", "result", "response"]) {
-    const candidate = recordValue[key];
-    if (typeof candidate === "string" && candidate.trim().length > 0) {
-      return candidate.trim();
-    }
-  }
-
-  return "";
 }

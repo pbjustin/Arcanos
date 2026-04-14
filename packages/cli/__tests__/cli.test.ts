@@ -366,7 +366,7 @@ describe("Arcanos CLI", () => {
         return createJsonResponse({ id: "job-123", status: "completed" });
       }
       if (pathname.endsWith("/jobs/job-123/result")) {
-        return createJsonResponse({ status: "completed", result: "final output" });
+        return createJsonResponse({ jobId: "job-123", status: "completed", result: { text: "final output" } });
       }
       throw new Error(`Unexpected URL: ${pathname}`);
     });
