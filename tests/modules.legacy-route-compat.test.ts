@@ -79,6 +79,7 @@ describe('module legacy route compatibility', () => {
     expect(response.status).toBe(200);
     expect(response.headers['x-canonical-route']).toBe('/gpt/test-legacy-gpt');
     expect(response.headers['x-route-deprecated']).toBe('true');
+    expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(mockRouteGptRequest).toHaveBeenCalledWith(
       expect.objectContaining({
         gptId: 'test-legacy-gpt',
@@ -130,6 +131,7 @@ describe('module legacy route compatibility', () => {
     expect(response.status).toBe(200);
     expect(response.headers['x-canonical-route']).toBe('/gpt/test-legacy-gpt');
     expect(response.headers['x-route-deprecated']).toBe('true');
+    expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(mockRouteGptRequest).toHaveBeenCalledWith(
       expect.objectContaining({
         gptId: 'test-legacy-gpt',

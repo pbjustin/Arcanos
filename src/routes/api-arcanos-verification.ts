@@ -32,6 +32,7 @@ import type {
 import { getWorkerControlStatus } from '../services/workerControlService.js';
 import { arcanosDagRunService } from '../services/arcanosDagRunService.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
+import { sendBoundedJsonResponse } from '@shared/http/sendBoundedJsonResponse.js';
 
 const router = express.Router();
 const API_VERSION = '1.0.0';
@@ -123,6 +124,19 @@ function getRequestId(req: express.Request): string {
   return req.requestId ?? generateRequestId('api-arcanos');
 }
 
+function sendVerificationEnvelope<T extends object>(
+  req: express.Request,
+  res: express.Response,
+  data: T,
+  logEvent: string,
+  statusCode = 200
+) {
+  return sendBoundedJsonResponse(req, res, createEnvelope(getRequestId(req), data), {
+    logEvent,
+    statusCode,
+  });
+}
+
 function setDagRunPollingHeaders(
   res: express.Response,
   options: {
@@ -173,13 +187,12 @@ router.get(
   '/health',
   verificationControlRateLimit,
   asyncHandler(async (req, res) => {
-    const requestId = getRequestId(req);
     const data: HealthData = {
       service: 'arcanos-verification-api',
       status: 'healthy'
     };
 
-    res.json(createEnvelope(requestId, data));
+    sendVerificationEnvelope(req, res, data, 'verification.health.response');
   })
 );
 
@@ -187,13 +200,12 @@ router.get(
   '/capabilities',
   verificationControlRateLimit,
   asyncHandler(async (req, res) => {
-    const requestId = getRequestId(req);
     const data: CapabilitiesData = {
       features: arcanosDagRunService.getFeatureFlags(),
       limits: arcanosDagRunService.getExecutionLimits()
     };
 
-    res.json(createEnvelope(requestId, data));
+    sendVerificationEnvelope(req, res, data, 'verification.capabilities.response');
   })
 );
 
@@ -201,7 +213,6 @@ router.get(
   '/workers/status',
   verificationControlRateLimit,
   asyncHandler(async (req, res) => {
-    const requestId = getRequestId(req);
     const workerStatus = await getWorkerControlStatus();
     const queueSummary = workerStatus.workerService.queueSummary;
     const now = new Date().toISOString();
@@ -236,7 +247,7 @@ router.get(
       ]
     };
 
-    res.json(createEnvelope(requestId, data));
+    sendVerificationEnvelope(req, res, data, 'verification.workers_status.response');
   })
 );
 
@@ -244,7 +255,6 @@ router.get(
   '/workers/queue',
   verificationControlRateLimit,
   asyncHandler(async (req, res) => {
-    const requestId = getRequestId(req);
     const workerStatus = await getWorkerControlStatus();
     const queueSummary = workerStatus.workerService.queueSummary;
     const data: QueueStatusData = {
@@ -260,7 +270,7 @@ router.get(
       }
     };
 
-    res.json(createEnvelope(requestId, data));
+    sendVerificationEnvelope(req, res, data, 'verification.workers_queue.response');
   })
 );
 
@@ -270,12 +280,11 @@ router.post(
   validateBody(dagRunRequestSchema),
   asyncHandler(async (req, res) => {
     try {
-      const requestId = getRequestId(req);
       const body = req.validated!.body as CreateDagRunRequest;
       const run = await arcanosDagRunService.createRun(body);
       const data: CreateDagRunData = { run };
 
-      res.status(202).json(createEnvelope(requestId, data));
+      sendVerificationEnvelope(req, res, data, 'verification.dag_run_create.response', 202);
     } catch (error: unknown) {
       const errorMessage = resolveErrorMessage(error);
 
@@ -298,7 +307,6 @@ router.get(
   dagRunStatusRateLimit,
   validateQuery(dagLatestRunQuerySchema, { errorCode: 'RUN_LATEST_QUERY_INVALID', includeDetails: true }),
   asyncHandler(async (req, res) => {
-    const requestId = getRequestId(req);
     const { sessionId } = req.validated!.query as z.infer<typeof dagLatestRunQuerySchema>;
     const run = await arcanosDagRunService.getLatestRun(sessionId);
 
@@ -308,7 +316,7 @@ router.get(
     }
 
     const data: DagLatestRunData = { run };
-    res.json(createEnvelope(requestId, data));
+    sendVerificationEnvelope(req, res, data, 'verification.dag_run_latest.response');
   })
 );
 
@@ -318,7 +326,6 @@ router.get(
   validateParams(dagRunParamsSchema, { errorCode: 'RUN_ID_INVALID' }),
   validateQuery(dagRunWaitQuerySchema, { errorCode: 'RUN_STATUS_QUERY_INVALID', includeDetails: true }),
   asyncHandler(async (req, res) => {
-    const requestId = getRequestId(req);
     const { runId } = req.validated!.params as z.infer<typeof dagRunParamsSchema>;
     const { updatedAfter, waitForUpdateMs } = req.validated!.query as z.infer<typeof dagRunWaitQuerySchema>;
     const waitedRun = await arcanosDagRunService.waitForRunUpdate(runId, {
@@ -338,7 +345,7 @@ router.get(
     });
 
     const data: DagRunData = { run: waitedRun.run };
-    res.json(createEnvelope(requestId, data));
+    sendVerificationEnvelope(req, res, data, 'verification.dag_run_status.response');
   })
 );
 
@@ -348,7 +355,6 @@ router.get(
   validateParams(dagRunParamsSchema, { errorCode: 'RUN_ID_INVALID' }),
   validateQuery(dagTraceQuerySchema, { errorCode: 'RUN_TRACE_QUERY_INVALID', includeDetails: true }),
   asyncHandler(async (req, res) => {
-    const requestId = getRequestId(req);
     const { runId } = req.validated!.params as z.infer<typeof dagRunParamsSchema>;
     const { maxEvents } = req.validated!.query as z.infer<typeof dagTraceQuerySchema>;
     const trace = await arcanosDagRunService.getRunTrace(runId, { maxEvents });
@@ -359,7 +365,7 @@ router.get(
     }
 
     const data: DagTraceData = trace;
-    res.json(createEnvelope(requestId, data));
+    sendVerificationEnvelope(req, res, data, 'verification.dag_run_trace.response');
   })
 );
 
@@ -368,7 +374,6 @@ router.get(
   dagRunInspectRateLimit,
   validateParams(dagRunParamsSchema, { errorCode: 'RUN_ID_INVALID' }),
   asyncHandler(async (req, res) => {
-    const requestId = getRequestId(req);
     const { runId } = req.validated!.params as z.infer<typeof dagRunParamsSchema>;
     const tree = await arcanosDagRunService.getRunTree(runId);
 
@@ -377,7 +382,7 @@ router.get(
       return;
     }
 
-    res.json(createEnvelope(requestId, tree));
+    sendVerificationEnvelope(req, res, tree, 'verification.dag_run_tree.response');
   })
 );
 
@@ -386,7 +391,6 @@ router.get(
   dagRunInspectRateLimit,
   validateParams(dagNodeParamsSchema, { errorCode: 'RUN_NODE_ID_INVALID' }),
   asyncHandler(async (req, res) => {
-    const requestId = getRequestId(req);
     const { runId, nodeId } = req.validated!.params as z.infer<typeof dagNodeParamsSchema>;
     const node = await arcanosDagRunService.getNode(runId, nodeId);
 
@@ -396,7 +400,7 @@ router.get(
     }
 
     const data: NodeDetailData = { node };
-    res.json(createEnvelope(requestId, data));
+    sendVerificationEnvelope(req, res, data, 'verification.dag_run_node.response');
   })
 );
 
@@ -405,7 +409,6 @@ router.get(
   dagRunInspectRateLimit,
   validateParams(dagRunParamsSchema, { errorCode: 'RUN_ID_INVALID' }),
   asyncHandler(async (req, res) => {
-    const requestId = getRequestId(req);
     const { runId } = req.validated!.params as z.infer<typeof dagRunParamsSchema>;
     const events = await arcanosDagRunService.getRunEvents(runId);
 
@@ -414,7 +417,7 @@ router.get(
       return;
     }
 
-    res.json(createEnvelope(requestId, events));
+    sendVerificationEnvelope(req, res, events, 'verification.dag_run_events.response');
   })
 );
 
@@ -423,7 +426,6 @@ router.get(
   dagRunInspectRateLimit,
   validateParams(dagRunParamsSchema, { errorCode: 'RUN_ID_INVALID' }),
   asyncHandler(async (req, res) => {
-    const requestId = getRequestId(req);
     const { runId } = req.validated!.params as z.infer<typeof dagRunParamsSchema>;
     const metrics = await arcanosDagRunService.getRunMetrics(runId);
 
@@ -432,7 +434,7 @@ router.get(
       return;
     }
 
-    res.json(createEnvelope(requestId, metrics));
+    sendVerificationEnvelope(req, res, metrics, 'verification.dag_run_metrics.response');
   })
 );
 
@@ -441,7 +443,6 @@ router.get(
   dagRunInspectRateLimit,
   validateParams(dagRunParamsSchema, { errorCode: 'RUN_ID_INVALID' }),
   asyncHandler(async (req, res) => {
-    const requestId = getRequestId(req);
     const { runId } = req.validated!.params as z.infer<typeof dagRunParamsSchema>;
     const errors = await arcanosDagRunService.getRunErrors(runId);
 
@@ -450,7 +451,7 @@ router.get(
       return;
     }
 
-    res.json(createEnvelope(requestId, errors));
+    sendVerificationEnvelope(req, res, errors, 'verification.dag_run_errors.response');
   })
 );
 
@@ -459,7 +460,6 @@ router.get(
   dagRunInspectRateLimit,
   validateParams(dagRunParamsSchema, { errorCode: 'RUN_ID_INVALID' }),
   asyncHandler(async (req, res) => {
-    const requestId = getRequestId(req);
     const { runId } = req.validated!.params as z.infer<typeof dagRunParamsSchema>;
     const lineage = await arcanosDagRunService.getRunLineage(runId);
 
@@ -468,7 +468,7 @@ router.get(
       return;
     }
 
-    res.json(createEnvelope(requestId, lineage));
+    sendVerificationEnvelope(req, res, lineage, 'verification.dag_run_lineage.response');
   })
 );
 
@@ -477,7 +477,6 @@ router.post(
   dagRunWriteRateLimit,
   validateParams(dagRunParamsSchema, { errorCode: 'RUN_ID_INVALID' }),
   asyncHandler(async (req, res) => {
-    const requestId = getRequestId(req);
     const { runId } = req.validated!.params as z.infer<typeof dagRunParamsSchema>;
     const cancelled = arcanosDagRunService.cancelRun(runId);
 
@@ -487,7 +486,7 @@ router.post(
     }
 
     const data: CancelDagRunResponseData = cancelled;
-    res.json(createEnvelope(requestId, data));
+    sendVerificationEnvelope(req, res, data, 'verification.dag_run_cancel.response');
   })
 );
 
@@ -496,7 +495,6 @@ router.get(
   dagRunInspectRateLimit,
   validateParams(dagRunParamsSchema, { errorCode: 'RUN_ID_INVALID' }),
   asyncHandler(async (req, res) => {
-    const requestId = getRequestId(req);
     const { runId } = req.validated!.params as z.infer<typeof dagRunParamsSchema>;
     const verification = await arcanosDagRunService.getRunVerification(runId);
 
@@ -505,7 +503,7 @@ router.get(
       return;
     }
 
-    res.json(createEnvelope(requestId, verification));
+    sendVerificationEnvelope(req, res, verification, 'verification.dag_run_verification.response');
   })
 );
 

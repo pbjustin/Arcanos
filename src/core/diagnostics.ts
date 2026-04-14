@@ -11,6 +11,7 @@ import {
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { getGptRegistrySnapshot } from '@platform/runtime/gptRouterConfig.js';
 import { withJsonResponseBytes } from '@shared/http/clientResponseGuards.js';
+import { sendBoundedJsonResponse } from '@shared/http/sendBoundedJsonResponse.js';
 
 const SERVICE_NAME = 'arcanos-backend';
 const SERVICE_VERSION = '1.0.0';
@@ -90,8 +91,11 @@ export function setupDiagnostics(app: Express): void {
         module: 'runtime-diagnostics',
         error: resolveErrorMessage(error)
       });
-      res.status(500).json({
+      sendBoundedJsonResponse(req, res, {
         error: 'Health check unavailable'
+      }, {
+        logEvent: 'health.error.response',
+        statusCode: 500,
       });
     }
   });
@@ -109,14 +113,19 @@ export function setupDiagnostics(app: Express): void {
           : diagnostics.active_routes
       });
       res.set('cache-control', 'no-store, max-age=0');
-      res.json(diagnostics);
+      sendBoundedJsonResponse(req, res, diagnostics, {
+        logEvent: 'diagnostics.response',
+      });
     } catch (error) {
       logger.error('diagnostics.response.failed', {
         module: 'runtime-diagnostics',
         error: resolveErrorMessage(error)
       });
-      res.status(500).json({
+      sendBoundedJsonResponse(req, res, {
         error: 'Diagnostics unavailable'
+      }, {
+        logEvent: 'diagnostics.error.response',
+        statusCode: 500,
       });
     }
   });

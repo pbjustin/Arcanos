@@ -5,6 +5,7 @@ import {
   applyAIDegradedResponseHeaders,
   extractAIDegradedResponseMetadata
 } from '@shared/http/aiDegradedHeaders.js';
+import { sendBoundedJsonResponse } from '@shared/http/sendBoundedJsonResponse.js';
 
 type BodyTransform = (body: unknown, req: Request) => unknown;
 type SuccessBodyTransform = (
@@ -63,7 +64,10 @@ export async function dispatchLegacyRouteToGpt(
     if (!envelope.ok) {
       applyAIDegradedResponseHeaders(res, extractAIDegradedResponseMetadata(envelope.error.details));
       const statusCode = LEGACY_ROUTE_ERROR_STATUS_CODES[envelope.error.code] ?? 400;
-      res.status(statusCode).json(envelope);
+      sendBoundedJsonResponse(req, res, envelope, {
+        logEvent: 'legacy.route.error.response',
+        statusCode,
+      });
       return;
     }
 
@@ -71,6 +75,18 @@ export async function dispatchLegacyRouteToGpt(
     const responseBody = options.successBodyTransform
       ? options.successBodyTransform(envelope.result, req, envelope)
       : envelope;
+    if (
+      responseBody &&
+      typeof responseBody === 'object' &&
+      !Array.isArray(responseBody)
+    ) {
+      sendBoundedJsonResponse(req, res, responseBody as Record<string, unknown>, {
+        logEvent: 'legacy.route.response',
+        statusCode: 200,
+      });
+      return;
+    }
+
     res.status(200).json(responseBody);
   } catch (error) {
     next(error);

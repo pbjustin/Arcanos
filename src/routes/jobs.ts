@@ -18,6 +18,7 @@ import {
   buildGptJobResultLookupPayload,
   buildStoredJobStatusPayload
 } from '@shared/gpt/gptJobResult.js';
+import { sendBoundedJsonResponse } from '@shared/http/sendBoundedJsonResponse.js';
 
 const router = express.Router();
 const DEFAULT_JOB_STREAM_POLL_MS = 500;
@@ -53,9 +54,40 @@ function isInternalCancellationActor(actorKey: string): boolean {
   return actorKey.startsWith('daemon:') || actorKey.startsWith('operator:');
 }
 
+function sendJobsJsonResponse(
+  req: express.Request,
+  res: express.Response,
+  payload: object,
+  logEvent: string,
+  statusCode = 200
+) {
+  return sendBoundedJsonResponse(req, res, payload, {
+    logEvent,
+    statusCode,
+  });
+}
+
+function validateJobsJsonRouteParams(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction
+) {
+  const parsed = jobIdSchema.safeParse(req.params);
+  if (!parsed.success) {
+    sendJobsJsonResponse(req, res, { error: 'JOB_ID_INVALID' }, 'jobs.validation.invalid', 400);
+    return;
+  }
+
+  if (!req.validated) {
+    req.validated = {};
+  }
+  req.validated.params = parsed.data;
+  next();
+}
+
 router.get(
   '/jobs/:id',
-  validateParams(jobIdSchema, { errorCode: 'JOB_ID_INVALID' }),
+  validateJobsJsonRouteParams,
   asyncHandler(async (req, res) => {
     const { id } = req.validated!.params as z.infer<typeof jobIdSchema>;
     const requestId = (req as any).requestId;
@@ -72,7 +104,7 @@ router.get(
         lookup: 'status',
         outcome: 'not_found'
       });
-      sendNotFound(res, 'JOB_NOT_FOUND');
+      sendJobsJsonResponse(req, res, { error: 'JOB_NOT_FOUND' }, 'jobs.status.not_found', 404);
       return;
     }
 
@@ -89,13 +121,18 @@ router.get(
       outcome: job.status
     });
 
-    res.json(buildStoredJobStatusPayload(job));
+    sendJobsJsonResponse(
+      req,
+      res,
+      buildStoredJobStatusPayload(job),
+      'jobs.status.response'
+    );
   })
 );
 
 router.get(
   '/jobs/:id/result',
-  validateParams(jobIdSchema, { errorCode: 'JOB_ID_INVALID' }),
+  validateJobsJsonRouteParams,
   asyncHandler(async (req, res) => {
     const { id } = req.validated!.params as z.infer<typeof jobIdSchema>;
     const requestId = (req as any).requestId;
@@ -121,13 +158,18 @@ router.get(
       outcome: jobLookup.status
     });
 
-    res.json(jobLookup);
+    sendJobsJsonResponse(
+      req,
+      res,
+      jobLookup,
+      'jobs.result.response'
+    );
   })
 );
 
 router.post(
   '/jobs/:id/cancel',
-  validateParams(jobIdSchema, { errorCode: 'JOB_ID_INVALID' }),
+  validateJobsJsonRouteParams,
   confirmGate,
   asyncHandler(async (req, res) => {
     const { id } = req.validated!.params as z.infer<typeof jobIdSchema>;
@@ -137,13 +179,13 @@ router.post(
         endpoint: req.originalUrl,
         jobId: id
       });
-      res.status(401).json({
+      sendJobsJsonResponse(req, res, {
         ok: false,
         error: {
           code: 'JOB_CANCELLATION_AUTH_REQUIRED',
           message: 'Job cancellation requires an authenticated session or internal actor.'
         }
-      });
+      }, 'jobs.cancel.auth_required', 401);
       return;
     }
 
@@ -154,7 +196,7 @@ router.post(
     const job = await getJobById(id);
 
     if (!job) {
-      sendNotFound(res, 'JOB_NOT_FOUND');
+      sendJobsJsonResponse(req, res, { error: 'JOB_NOT_FOUND' }, 'jobs.cancel.not_found', 404);
       return;
     }
 
@@ -165,13 +207,13 @@ router.post(
           endpoint: req.originalUrl,
           jobId: id
         });
-        res.status(403).json({
+        sendJobsJsonResponse(req, res, {
           ok: false,
           error: {
             code: 'JOB_CANCELLATION_FORBIDDEN',
             message: 'The current caller does not own this job.'
           }
-        });
+        }, 'jobs.cancel.forbidden', 403);
         return;
       }
     } else if (!isInternalCancellationActor(cancellationActorKey)) {
@@ -179,41 +221,41 @@ router.post(
         endpoint: req.originalUrl,
         jobId: id
       });
-      res.status(403).json({
+      sendJobsJsonResponse(req, res, {
         ok: false,
         error: {
           code: 'JOB_CANCELLATION_FORBIDDEN',
           message: 'This job can only be cancelled by an internal actor.'
         }
-      });
+      }, 'jobs.cancel.unscoped_forbidden', 403);
       return;
     }
 
     const cancellation = await requestJobCancellation(id, reason);
 
     if (cancellation.outcome === 'not_found') {
-      sendNotFound(res, 'JOB_NOT_FOUND');
+      sendJobsJsonResponse(req, res, { error: 'JOB_NOT_FOUND' }, 'jobs.cancel.not_found', 404);
       return;
     }
 
     if (cancellation.outcome === 'already_terminal') {
-      res.status(409).json({
+      sendJobsJsonResponse(req, res, {
         ok: false,
         error: {
           code: 'JOB_ALREADY_TERMINAL',
           message: 'Terminal jobs cannot be cancelled.'
         },
         job: cancellation.job ? buildStoredJobStatusPayload(cancellation.job) : null
-      });
+      }, 'jobs.cancel.already_terminal', 409);
       return;
     }
 
     const statusCode = cancellation.outcome === 'cancelled' ? 200 : 202;
-    res.status(statusCode).json({
+    sendJobsJsonResponse(req, res, {
       ok: true,
       cancellationRequested: cancellation.outcome === 'cancellation_requested',
       ...buildStoredJobStatusPayload(cancellation.job!)
-    });
+    }, 'jobs.cancel.response', statusCode);
   })
 );
 

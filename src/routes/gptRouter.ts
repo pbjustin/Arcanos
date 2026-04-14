@@ -12,6 +12,8 @@ import {
   prepareBoundedClientJsonPayload,
   shapeClientRouteResult
 } from '@shared/http/clientResponseGuards.js';
+import { sendPreparedJsonResponse } from '@shared/http/sendPreparedJsonResponse.js';
+import { sendBoundedJsonResponse } from '@shared/http/sendBoundedJsonResponse.js';
 import { applyCanonicalGptRouteHeaders } from '@shared/http/gptRouteHeaders.js';
 import {
   applyAIDegradedResponseHeaders,
@@ -563,6 +565,19 @@ function buildDirectReturnTimeoutResponse(params: {
   };
 }
 
+function sendGuardedGptJsonResponse(
+  req: express.Request,
+  res: express.Response,
+  payload: object,
+  logEvent: string,
+  statusCode = 200
+) {
+  return sendBoundedJsonResponse(req, res, payload as Record<string, unknown>, {
+    logEvent,
+    statusCode,
+  });
+}
+
 function normalizeQueryAndWaitBody(
   normalizedBody: Record<string, unknown> | null,
   requestedAction: string | null
@@ -796,7 +811,7 @@ router.post("/:gptId", async (req, res, next) => {
             pathGptId: incomingGptId,
             bodyGptId
           });
-          return res.status(400).json({
+          return sendGuardedGptJsonResponse(req, res, {
             ok: false,
             error: {
               code: 'BODY_GPT_ID_FORBIDDEN',
@@ -807,7 +822,7 @@ router.post("/:gptId", async (req, res, next) => {
               gptId: incomingGptId,
               timestamp: new Date().toISOString()
             }
-          });
+          }, 'gpt.response.body_gpt_id_forbidden', 400);
         }
 
         if (!requestedAction) {
@@ -836,7 +851,7 @@ router.post("/:gptId", async (req, res, next) => {
                 lookup: promptJobLookup.kind,
                 outcome: 'missing_job_id'
               });
-              return res.status(400).json({
+              return sendGuardedGptJsonResponse(req, res, {
                 ok: false,
                 error: {
                   code: 'JOB_ID_REQUIRED',
@@ -850,7 +865,7 @@ router.post("/:gptId", async (req, res, next) => {
                   action: `${promptJobLookup.kind}_lookup`,
                   timestamp: new Date().toISOString()
                 }
-              });
+              }, 'gpt.response.job_lookup_guard_missing_id', 400);
             }
 
             requestLogger?.warn?.('gpt.request.job_lookup_guard_rejected', {
@@ -866,7 +881,7 @@ router.post("/:gptId", async (req, res, next) => {
               lookup: promptJobLookup.kind,
               outcome: 'rejected'
             });
-            return res.status(400).json({
+            return sendGuardedGptJsonResponse(req, res, {
               ok: false,
               error: {
                 code: 'JOB_LOOKUP_REQUIRES_JOBS_API',
@@ -880,7 +895,7 @@ router.post("/:gptId", async (req, res, next) => {
                 action: `${promptJobLookup.kind}_lookup`,
                 timestamp: new Date().toISOString()
               }
-            });
+            }, 'gpt.response.job_lookup_guard_rejected', 400);
           }
         }
 
@@ -897,7 +912,7 @@ router.post("/:gptId", async (req, res, next) => {
             requestId,
             bodyType: typeof req.body
           });
-          return res.status(400).json({
+          return sendGuardedGptJsonResponse(req, res, {
             ok: false,
             error: {
               code: 'BAD_REQUEST',
@@ -910,7 +925,7 @@ router.post("/:gptId", async (req, res, next) => {
               route: 'async',
               timestamp: new Date().toISOString()
             }
-          });
+          }, 'gpt.response.query_and_wait_invalid_body', 400);
         }
 
         if (queryAndWaitRequested && !promptText) {
@@ -919,7 +934,7 @@ router.post("/:gptId", async (req, res, next) => {
             gptId: incomingGptId,
             requestId
           });
-          return res.status(400).json({
+          return sendGuardedGptJsonResponse(req, res, {
             ok: false,
             error: {
               code: 'PROMPT_REQUIRED',
@@ -932,7 +947,7 @@ router.post("/:gptId", async (req, res, next) => {
               route: 'async',
               timestamp: new Date().toISOString()
             }
-          });
+          }, 'gpt.response.query_and_wait_prompt_required', 400);
         }
 
         if (requestedAction === GPT_GET_STATUS_ACTION) {
@@ -951,14 +966,14 @@ router.post("/:gptId", async (req, res, next) => {
               requestId,
               error: parsedJobStatusRequest.error
             });
-            return res.status(400).json({
+            return sendGuardedGptJsonResponse(req, res, {
               ok: false,
               error: {
                 code: 'JOB_ID_INVALID',
                 message: `get_status action requires payload.jobId. ${parsedJobStatusRequest.error}`
               },
               _route: routeMeta
-            });
+            }, 'gpt.response.job_status_invalid', 400);
           }
 
           const job = await getJobById(parsedJobStatusRequest.jobId);
@@ -978,21 +993,21 @@ router.post("/:gptId", async (req, res, next) => {
           });
 
           if (!job) {
-            return res.status(404).json({
+            return sendGuardedGptJsonResponse(req, res, {
               ok: false,
               error: {
                 code: 'JOB_NOT_FOUND',
                 message: 'Async GPT job was not found.'
               },
               _route: routeMeta
-            });
+            }, 'gpt.response.job_status_not_found', 404);
           }
 
-          return res.status(200).json({
+          return sendGuardedGptJsonResponse(req, res, {
             ok: true,
             result: buildStoredJobStatusPayload(job),
             _route: routeMeta
-          });
+          }, 'gpt.response.job_status');
         }
 
         if (requestedAction === GPT_GET_RESULT_ACTION) {
@@ -1011,14 +1026,14 @@ router.post("/:gptId", async (req, res, next) => {
               requestId,
               error: parsedJobResultRequest.error
             });
-            return res.status(400).json({
+            return sendGuardedGptJsonResponse(req, res, {
               ok: false,
               error: {
                 code: 'JOB_ID_INVALID',
                 message: `get_result action requires payload.jobId. ${parsedJobResultRequest.error}`
               },
               _route: routeMeta
-            });
+            }, 'gpt.response.job_result_invalid', 400);
           }
 
           const jobLookup = buildGptJobResultLookupPayload(
@@ -1050,11 +1065,11 @@ router.post("/:gptId", async (req, res, next) => {
             outcome: jobLookup.status
           });
 
-          return res.status(200).json({
+          return sendGuardedGptJsonResponse(req, res, {
             ok: true,
             result: jobLookup,
             _route: routeMeta
-          });
+          }, 'gpt.response.job_result');
         }
 
         const explicitIdempotencyKey = normalizeExplicitIdempotencyKey(
@@ -1180,11 +1195,7 @@ router.post("/:gptId", async (req, res, next) => {
             truncated: diagnosticsPayload.truncated,
           });
 
-          res.setHeader('x-response-bytes', String(diagnosticsPayload.responseBytes));
-          if (diagnosticsPayload.truncated) {
-            res.setHeader('x-response-truncated', 'true');
-          }
-          return res.json(diagnosticsPayload.payload);
+          return sendPreparedJsonResponse(res, diagnosticsPayload);
         }
 
         const shouldUseJobBackedExecution =
@@ -1201,7 +1212,7 @@ router.post("/:gptId", async (req, res, next) => {
                 requestId,
                 bodyType: typeof req.body
               });
-              return res.status(400).json({
+              return sendGuardedGptJsonResponse(req, res, {
                 ok: false,
                 error: {
                   code: 'BAD_REQUEST',
@@ -1213,7 +1224,7 @@ router.post("/:gptId", async (req, res, next) => {
                   gptId: incomingGptId,
                   timestamp: new Date().toISOString()
                 }
-              });
+              }, 'gpt.response.idempotency_invalid_body', 400);
             }
 
             requestLogger?.warn?.('gpt.request.async_invalid_body_sync_fallback', {
@@ -1269,7 +1280,7 @@ router.post("/:gptId", async (req, res, next) => {
               });
             } catch (error: unknown) {
               if (error instanceof IdempotencyKeyConflictError) {
-                return res.status(409).json({
+                return sendGuardedGptJsonResponse(req, res, {
                   ok: false,
                   error: {
                     code: 'IDEMPOTENCY_KEY_CONFLICT',
@@ -1281,7 +1292,7 @@ router.post("/:gptId", async (req, res, next) => {
                     gptId: incomingGptId,
                     timestamp: new Date().toISOString()
                   }
-                });
+                }, 'gpt.response.idempotency_conflict', 409);
               }
 
               if (error instanceof JobRepositoryUnavailableError) {
@@ -1292,7 +1303,7 @@ router.post("/:gptId", async (req, res, next) => {
                     requestId,
                     error: error.message
                   });
-                  return res.status(503).json({
+                  return sendGuardedGptJsonResponse(req, res, {
                     ok: false,
                     error: {
                       code: queryAndWaitRequested
@@ -1308,7 +1319,7 @@ router.post("/:gptId", async (req, res, next) => {
                       gptId: incomingGptId,
                       timestamp: new Date().toISOString()
                     }
-                  });
+                  }, 'gpt.response.jobs_unavailable', 503);
                 }
 
                 requestLogger?.warn?.('gpt.request.async_unavailable_sync_fallback', {
@@ -1398,7 +1409,7 @@ router.post("/:gptId", async (req, res, next) => {
                     gptId: incomingGptId,
                     jobId: job.id
                   });
-                  return res.status(500).json({
+                  return sendGuardedGptJsonResponse(req, res, {
                     ok: false,
                     error: {
                       code: 'ASYNC_GPT_JOB_OUTPUT_INVALID',
@@ -1412,7 +1423,7 @@ router.post("/:gptId", async (req, res, next) => {
                       gptId: incomingGptId,
                       timestamp: new Date().toISOString()
                     }
-                  });
+                  }, 'gpt.response.async_completed_invalid', 500);
                 }
 
                 const routingInfo: GptRoutingInfo = {
@@ -1487,11 +1498,7 @@ router.post("/:gptId", async (req, res, next) => {
                   logger: req.logger,
                   logEvent: 'gpt.response.async_completed',
                 });
-                res.setHeader('x-response-bytes', String(publicEnvelope.responseBytes));
-                if (publicEnvelope.truncated) {
-                  res.setHeader('x-response-truncated', 'true');
-                }
-                return res.json(publicEnvelope.payload);
+                return sendPreparedJsonResponse(res, publicEnvelope);
               }
 
               if (waitedJob.state === 'failed') {
@@ -1503,7 +1510,7 @@ router.post("/:gptId", async (req, res, next) => {
                   deduped: createResult.deduped,
                   ...summarizeGptJobTimings(waitedJob.job)
                 });
-                return res.status(500).json({
+                return sendGuardedGptJsonResponse(req, res, {
                   ok: false,
                   error: {
                     code: 'ASYNC_GPT_JOB_FAILED',
@@ -1521,7 +1528,7 @@ router.post("/:gptId", async (req, res, next) => {
                     gptId: incomingGptId,
                     timestamp: new Date().toISOString()
                   }
-                });
+                }, 'gpt.response.async_failed', 500);
               }
 
               if (waitedJob.state === 'cancelled') {
@@ -1537,7 +1544,7 @@ router.post("/:gptId", async (req, res, next) => {
                   status: 'cancelled',
                   retryable: false
                 });
-                return res.status(409).json({
+                return sendGuardedGptJsonResponse(req, res, {
                   ok: false,
                   error: {
                     code: 'ASYNC_GPT_JOB_CANCELLED',
@@ -1555,7 +1562,7 @@ router.post("/:gptId", async (req, res, next) => {
                     gptId: incomingGptId,
                     timestamp: new Date().toISOString()
                   }
-                });
+                }, 'gpt.response.async_cancelled', 409);
               }
 
               if (waitedJob.state === 'expired') {
@@ -1569,7 +1576,7 @@ router.post("/:gptId", async (req, res, next) => {
                   status: 'expired',
                   retryable: false
                 });
-                return res.status(410).json({
+                return sendGuardedGptJsonResponse(req, res, {
                   ok: false,
                   error: {
                     code: 'ASYNC_GPT_JOB_EXPIRED',
@@ -1587,7 +1594,7 @@ router.post("/:gptId", async (req, res, next) => {
                     gptId: incomingGptId,
                     timestamp: new Date().toISOString()
                   }
-                });
+                }, 'gpt.response.async_expired', 410);
               }
 
               if (waitedJob.state === 'missing') {
@@ -1596,7 +1603,7 @@ router.post("/:gptId", async (req, res, next) => {
                   gptId: incomingGptId,
                   jobId: job.id
                 });
-                return res.status(500).json({
+                return sendGuardedGptJsonResponse(req, res, {
                   ok: false,
                   error: {
                     code: 'ASYNC_GPT_JOB_MISSING',
@@ -1610,7 +1617,7 @@ router.post("/:gptId", async (req, res, next) => {
                     gptId: incomingGptId,
                     timestamp: new Date().toISOString()
                   }
-                });
+                }, 'gpt.response.async_missing', 500);
               }
 
               requestLogger?.info?.('gpt.request.async_pending', {
@@ -1646,14 +1653,26 @@ router.post("/:gptId", async (req, res, next) => {
                     dedupeReason: createResult.dedupeReason
                   });
                 }
-                return res.status(202).json(buildDirectReturnTimeoutResponse({
-                  pendingResponse: queuedPendingResponse,
-                  jobId: job.id,
-                  waitForResultMs: asyncWaitForResultMs,
-                  pollIntervalMs: asyncPollIntervalMs
-                }));
+                return sendGuardedGptJsonResponse(
+                  req,
+                  res,
+                  buildDirectReturnTimeoutResponse({
+                    pendingResponse: queuedPendingResponse,
+                    jobId: job.id,
+                    waitForResultMs: asyncWaitForResultMs,
+                    pollIntervalMs: asyncPollIntervalMs
+                  }),
+                  'gpt.response.async_direct_return_timeout',
+                  202
+                );
               }
-              return res.status(202).json(queuedPendingResponse);
+              return sendGuardedGptJsonResponse(
+                req,
+                res,
+                queuedPendingResponse,
+                'gpt.response.async_pending',
+                202
+              );
             }
           }
         }
@@ -1685,15 +1704,15 @@ router.post("/:gptId", async (req, res, next) => {
           });
           if (envelope.error.code === "UNKNOWN_GPT") {
             logGptConnectionFailed(incomingGptId);
-            return res.status(404).json(envelope);
+            return sendGuardedGptJsonResponse(req, res, envelope, 'gpt.response.route_error', 404);
           }
           if (envelope.error.code === "SYSTEM_STATE_CONFLICT") {
-            return res.status(409).json(envelope);
+            return sendGuardedGptJsonResponse(req, res, envelope, 'gpt.response.route_error', 409);
           }
           if (envelope.error.code === "MODULE_TIMEOUT") {
-            return res.status(504).json(envelope);
+            return sendGuardedGptJsonResponse(req, res, envelope, 'gpt.response.route_error', 504);
           }
-          return res.status(400).json(envelope);
+          return sendGuardedGptJsonResponse(req, res, envelope, 'gpt.response.route_error', 400);
         }
 
         const routingInfo: GptRoutingInfo = {
@@ -1737,11 +1756,7 @@ router.post("/:gptId", async (req, res, next) => {
             responseBytes: diagnosticPayload.responseBytes,
             truncated: diagnosticPayload.truncated,
           });
-          res.setHeader('x-response-bytes', String(diagnosticPayload.responseBytes));
-          if (diagnosticPayload.truncated) {
-            res.setHeader('x-response-truncated', 'true');
-          }
-          return res.json(diagnosticPayload.payload);
+          return sendPreparedJsonResponse(res, diagnosticPayload);
         }
 
         const responseSerializationStartedAt = Date.now();
@@ -1761,12 +1776,7 @@ router.post("/:gptId", async (req, res, next) => {
           truncated: publicEnvelope.truncated,
         });
 
-        res.setHeader('x-response-bytes', String(publicEnvelope.responseBytes));
-        if (publicEnvelope.truncated) {
-          res.setHeader('x-response-truncated', 'true');
-        }
-
-        return res.json(publicEnvelope.payload);
+        return sendPreparedJsonResponse(res, publicEnvelope);
       }
     );
   } catch (err) {
@@ -1799,7 +1809,13 @@ router.post("/:gptId", async (req, res, next) => {
           timeoutMs: routeTimeoutMs,
           error: errorMessage,
         });
-        return res.status(202).json(queuedPendingResponse);
+        return sendGuardedGptJsonResponse(
+          req,
+          res,
+          queuedPendingResponse,
+          'gpt.response.timeout_pending',
+          202
+        );
       }
       if (routeTimedOut && responseOpen && promptText && ARCANOS_CORE_GPT_IDS.has(gptId)) {
         const timeoutFallback = buildArcanosCoreTimeoutFallbackEnvelope({
@@ -1823,14 +1839,10 @@ router.post("/:gptId", async (req, res, next) => {
           logger: req.logger,
           logEvent: 'gpt.response.timeout_fallback',
         });
-        res.setHeader('x-response-bytes', String(publicEnvelope.responseBytes));
-        if (publicEnvelope.truncated) {
-          res.setHeader('x-response-truncated', 'true');
-        }
-        return res.status(200).json(publicEnvelope.payload);
+        return sendPreparedJsonResponse(res.status(200), publicEnvelope);
       }
       if (routeTimedOut && responseOpen) {
-        return res.status(504).json({
+        return sendGuardedGptJsonResponse(req, res, {
           ok: false,
           error: {
             code: 'MODULE_TIMEOUT',
@@ -1841,14 +1853,14 @@ router.post("/:gptId", async (req, res, next) => {
             gptId: req.params.gptId,
             timestamp: new Date().toISOString()
           }
-        });
+        }, 'gpt.response.timeout', 504);
       }
       if (clientDisconnected && responseOpen) {
         res.destroy(err instanceof Error ? err : undefined);
         return;
       }
       if (responseOpen) {
-        return res.status(503).json({
+        return sendGuardedGptJsonResponse(req, res, {
           ok: false,
           error: {
             code: 'REQUEST_ABORTED',
@@ -1859,7 +1871,7 @@ router.post("/:gptId", async (req, res, next) => {
             gptId: req.params.gptId,
             timestamp: new Date().toISOString()
           }
-        });
+        }, 'gpt.response.request_aborted', 503);
       }
       return;
     }

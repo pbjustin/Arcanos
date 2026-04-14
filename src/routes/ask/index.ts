@@ -14,11 +14,11 @@ import type {
   ErrorResponseDTO
 } from "@shared/types/dto.js";
 import { aiRequestSchema } from "@shared/types/dto.js";
-import { asyncHandler, sendBadRequest, sendInternalErrorPayload } from '@shared/http/index.js';
+import { asyncHandler } from '@shared/http/index.js';
 import {
-  prepareBoundedClientJsonPayload,
   shapeClientRouteResult
 } from '@shared/http/clientResponseGuards.js';
+import { sendBoundedJsonResponse } from '@shared/http/sendBoundedJsonResponse.js';
 import {
   applyDeprecatedAskRouteHeaders,
   ASK_ROUTE_SUNSET_HEADER,
@@ -512,19 +512,13 @@ function sendGuardedAskResponse(
   req: Request<{}, any, AskRequest>,
   res: Response<any>,
   payload: object,
-  logEvent: string
+  logEvent: string,
+  statusCode = 200
 ) {
-  const boundedPayload = prepareBoundedClientJsonPayload(payload as Record<string, unknown>, {
-    logger: req.logger,
+  return sendBoundedJsonResponse(req, res, payload as Record<string, unknown>, {
     logEvent,
+    statusCode,
   });
-
-  res.setHeader('x-response-bytes', String(boundedPayload.responseBytes));
-  if (boundedPayload.truncated) {
-    res.setHeader('x-response-truncated', 'true');
-  }
-
-  return res.json(boundedPayload.payload);
 }
 
 function extractAskRouteGptHint(req: Request): string | null {
@@ -588,7 +582,10 @@ export const handleAIRequest = async (
     const stateRequest = systemStateUpdateSchema.safeParse(req.body);
     //audit Assumption: system mode requests are strictly validated; failure risk: ambiguous mode behavior; expected invariant: strict contract before execution; handling strategy: hard fail on validation errors.
     if (!stateRequest.success) {
-      return sendBadRequest(res, 'SYSTEM_STATE_REQUEST_INVALID', stateRequest.error.issues.map(issue => issue.message));
+      return sendGuardedAskResponse(req, res, {
+        error: 'SYSTEM_STATE_REQUEST_INVALID',
+        details: stateRequest.error.issues.map(issue => issue.message)
+      }, `${endpointName}.system_state.invalid`, 400);
     }
 
     if (stateRequest.data.expectedVersion !== undefined && stateRequest.data.patch) {
@@ -600,7 +597,13 @@ export const handleAIRequest = async (
       //audit Assumption: optimistic lock mismatch must return conflict; failure risk: stale write accepted; expected invariant: 409 on version mismatch; handling strategy: return conflict payload.
       if (!updateResult.ok) {
         const conflict = (updateResult as { ok: false; conflict: IntentConflict }).conflict;
-        return res.status(409).json(conflict);
+        return sendGuardedAskResponse(
+          req,
+          res,
+          conflict,
+          `${endpointName}.system_state.conflict`,
+          409
+        );
       }
     }
 
@@ -611,10 +614,10 @@ export const handleAIRequest = async (
     const strictState = systemStateSchema.safeParse(stateResponse);
     //audit Assumption: system_state responses must be schema-valid before send; failure risk: CLI drift on malformed payload; expected invariant: strict response contract; handling strategy: hard fail invalid payloads.
     if (!strictState.success) {
-      return sendInternalErrorPayload(res, {
+      return sendGuardedAskResponse(req, res, {
         error: 'SYSTEM_STATE_RESPONSE_INVALID',
         details: strictState.error.issues.map(issue => issue.message)
-      });
+      }, `${endpointName}.system_state.response_invalid`, 500);
     }
 
     return sendGuardedAskResponse(req, res, strictState.data, `${endpointName}.system_state.response`);
@@ -665,10 +668,10 @@ export const handleAIRequest = async (
       const rawContent = (modelResponse as any)?.output_text ?? (modelResponse as any)?.outputText ?? (modelResponse as any)?.output_text;
       //audit Assumption: strict review requires textual JSON payload; failure risk: empty model content; expected invariant: parseable JSON string; handling strategy: hard fail missing content.
       if (typeof rawContent !== 'string' || rawContent.trim().length === 0) {
-        return sendInternalErrorPayload(res, {
+        return sendGuardedAskResponse(req, res, {
           error: 'SYSTEM_REVIEW_RESPONSE_INVALID',
           details: ['Model returned empty content for system_review mode']
-        });
+        }, `${endpointName}.system_review.response_invalid`, 500);
       }
 
       const parsedContent = parseJsonContent(rawContent);
@@ -682,18 +685,18 @@ export const handleAIRequest = async (
 
       const strictReview = systemReviewSchema.safeParse(normalizedReviewPayload);
       if (!strictReview.success) {
-        return sendInternalErrorPayload(res, {
+        return sendGuardedAskResponse(req, res, {
           error: 'SYSTEM_REVIEW_RESPONSE_INVALID',
           details: strictReview.error.issues.map(issue => issue.message)
-        });
+        }, `${endpointName}.system_review.response_invalid`, 500);
       }
 
       return sendGuardedAskResponse(req, res, strictReview.data, `${endpointName}.system_review.response`);
     } catch (error) {
-      return sendInternalErrorPayload(res, {
+      return sendGuardedAskResponse(req, res, {
         error: 'SYSTEM_REVIEW_EXECUTION_FAILED',
         details: [error instanceof Error ? error.message : String(error)]
-      });
+      }, `${endpointName}.system_review.execution_failed`, 500);
     }
   }
 
@@ -728,7 +731,13 @@ export const handleAIRequest = async (
       responseReturned: lenientChatValidation.errorPayload,
       fallbackReason: 'lenient_chat_validation_failed',
     });
-    return res.status(400).json(lenientChatValidation.errorPayload);
+    return sendGuardedAskResponse(
+      req,
+      res,
+      lenientChatValidation.errorPayload as Record<string, unknown>,
+      `${endpointName}.validation.error`,
+      400
+    );
   }
 
   req.body = lenientChatValidation.normalizedBody;
@@ -787,12 +796,12 @@ export const handleAIRequest = async (
         responseReturned: failurePayload,
         fallbackReason: 'repo_evidence_required',
       });
-      return res.status(503).json({
+      return sendGuardedAskResponse(req, res, {
         error: {
           code: 'REPO_EVIDENCE_REQUIRED',
           message: 'Cannot verify implementation without repo inspection.'
         }
-      });
+      }, `${endpointName}.repo_evidence_required`, 503);
     }
   }
 
@@ -867,11 +876,11 @@ export const handleAIRequest = async (
           fallbackFlag: false,
           extra: { disposition: 'confirmation-required' }
         });
-        return res.status(403).json({
+        return sendGuardedAskResponse(req, res, {
           code: 'CONFIRMATION_REQUIRED',
           confirmationChallenge: { id: daemonToolResponse.confirmation_token },
           pending_actions: daemonToolResponse.pending_actions
-        });
+        }, `${endpointName}.confirmation_required`, 403);
       }
       //audit Assumption: daemon tool response is terminal; risk: skipping trinity; invariant: tool actions queued; handling: return early.
       recordPromptDebugTrace(requestId, 'response', {
@@ -1132,12 +1141,12 @@ export const handleAIRequest = async (
             statusCode: 500,
             extra: { disposition: 'async-completed-invalid', jobId: job.id }
           });
-          return sendInternalErrorPayload(res, {
+          return sendGuardedAskResponse(req, res, {
             error: 'ASYNC_ASK_JOB_OUTPUT_INVALID',
             message: 'Async ask job completed without a structured output payload.',
             jobId: job.id,
             poll: `/jobs/${job.id}`
-          });
+          }, `${endpointName}.async_completed_invalid`, 500);
         }
 
         recordPromptDebugTrace(requestId, 'response', {
@@ -1185,9 +1194,12 @@ export const handleAIRequest = async (
           statusCode: 500,
           extra: { disposition: 'async-failed', jobId: job.id }
         });
-        return sendInternalErrorPayload(
+        return sendGuardedAskResponse(
+          req,
           res,
-          buildAsyncAskFailurePayload(job.id, waitedJob.job.error_message)
+          buildAsyncAskFailurePayload(job.id, waitedJob.job.error_message),
+          `${endpointName}.async_failed`,
+          500
         );
       }
 
@@ -1211,12 +1223,12 @@ export const handleAIRequest = async (
           statusCode: 500,
           extra: { disposition: 'async-missing', jobId: job.id }
         });
-        return sendInternalErrorPayload(res, {
+        return sendGuardedAskResponse(req, res, {
           error: 'ASYNC_ASK_JOB_MISSING',
           message: 'Async ask job disappeared before completion.',
           jobId: job.id,
           poll: `/jobs/${job.id}`
-        });
+        }, `${endpointName}.async_missing`, 500);
       }
 
       completeAiRouteTrace(req, routeTrace, {
@@ -1241,12 +1253,12 @@ export const handleAIRequest = async (
         },
         responseReturned: pendingResponse,
       });
-      res.status(202);
       return sendGuardedAskResponse(
         req,
         res,
         pendingResponse,
-        `${endpointName}.async_pending.response`
+        `${endpointName}.async_pending.response`,
+        202
       );
     }
 
@@ -1360,12 +1372,12 @@ function rejectGptRoutedAskRequests(req: Request, res: Response, next: () => voi
     gptId: rawGptId,
     canonicalRoute: `/gpt/${encodeURIComponent(rawGptId)}`
   });
-  res.status(400).json({
+  sendGuardedAskResponse(req, res, {
     error: 'GPT-routed requests must target /gpt/:gptId',
     deprecated: true,
     canonicalRoute: `/gpt/${encodeURIComponent(rawGptId)}`,
     details: [`Received gptId '${rawGptId}' on ${req.originalUrl}; use /gpt/${rawGptId} instead.`]
-  });
+  }, 'ask.misroute.response', 400);
 }
 
 function rejectRemovedAskRoute(req: Request, res: Response, next: () => void): void {
@@ -1393,7 +1405,7 @@ function rejectRemovedAskRoute(req: Request, res: Response, next: () => void): v
   });
 
   res.setHeader(ASK_ROUTE_MODE_HEADER, 'gone');
-  res.status(410).json({
+  sendGuardedAskResponse(req, res, {
     error: 'Legacy ask-style route has been removed; use /gpt/:gptId',
     deprecated: true,
     canonicalRoute,
@@ -1401,7 +1413,7 @@ function rejectRemovedAskRoute(req: Request, res: Response, next: () => void): v
     details: [
       `${req.method} ${req.originalUrl} is no longer available. Migrate callers to POST ${canonicalRoute}.`
     ]
-  });
+  }, 'ask.removed.response', 410);
 }
 
 // Brain endpoint (alias for ask) still requires explicit confirmation.
