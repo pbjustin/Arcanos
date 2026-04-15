@@ -409,6 +409,39 @@ describe("Arcanos CLI", () => {
     );
   });
 
+  it("prints human-readable text for nested completed job result shapes", async () => {
+    const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(
+      createJsonResponse({
+        jobId: "job-456",
+        status: "completed",
+        output: {
+          result: {
+            response: "nested final output"
+          }
+        }
+      })
+    );
+
+    const stdout = createWritableCapture();
+    const stderr = createWritableCapture();
+
+    const exitCode = await runCli(
+      ["job-result", "job-456", "--base-url", "http://127.0.0.1:3000"],
+      stdout.stream,
+      stderr.stream
+    );
+
+    expect(exitCode).toBe(0);
+    expect(stdout.read()).toContain("nested final output");
+    expect(stderr.read()).toBe("");
+    expect(fetchMock).toHaveBeenCalledWith(
+      new URL("/jobs/job-456/result", "http://127.0.0.1:3000/"),
+      expect.objectContaining({
+        headers: {}
+      })
+    );
+  });
+
   it("queries runtime routes for workers and self-heal inspection commands", async () => {
     const fetchMock = jest.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
       const pathname = url instanceof URL ? url.pathname : String(url);
