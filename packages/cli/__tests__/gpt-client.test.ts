@@ -146,6 +146,30 @@ describe("GPT route OpenAPI contract and client", () => {
     });
   });
 
+  it("ignores wait controls when callers try to send them with the query action", async () => {
+    const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(
+      createJsonResponse({ ok: true, jobId: "job-query-2", status: "pending" })
+    );
+
+    await requestQuery({
+      baseUrl: "http://127.0.0.1:3000",
+      gptId: "backstage-booker",
+      prompt: "Draft the next promo",
+      timeoutMs: 25_000,
+      pollIntervalMs: 500
+    } as any);
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body));
+
+    expect(body).toEqual({
+      prompt: "Draft the next promo",
+      action: "query"
+    });
+    expect(body).not.toHaveProperty("waitForResultMs");
+    expect(body).not.toHaveProperty("pollIntervalMs");
+  });
+
   it("builds the explicit query_and_wait GPT action contract", async () => {
     const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(
       createJsonResponse({ ok: true, result: "Generated Seth Rollins prompt" })

@@ -72,7 +72,13 @@ export interface GeneratePromptAndWaitOptions {
 
 export interface QueryAndWaitGptRouteOptions extends GeneratePromptAndWaitOptions {}
 
-export interface QueryGptRouteOptions extends GeneratePromptAndWaitOptions {}
+export interface QueryGptRouteOptions {
+  baseUrl: string;
+  gptId: string;
+  prompt: string;
+  headers?: Record<string, string>;
+  context?: Record<string, unknown>;
+}
 
 export interface InvokeGptJobLookupActionOptions {
   baseUrl: string;
@@ -346,8 +352,6 @@ export async function requestQuery(
     gptId: options.gptId,
     prompt: options.prompt,
     action: "query",
-    ...(typeof options.timeoutMs === "number" ? { waitForResultMs: options.timeoutMs } : {}),
-    ...(typeof options.pollIntervalMs === "number" ? { pollIntervalMs: options.pollIntervalMs } : {}),
     context: options.context,
     headers: options.headers
   });

@@ -293,4 +293,32 @@ describe('createMcpServer job control tools', () => {
     expect(mockRunTrinity).not.toHaveBeenCalled();
     expect(mockDispatchModuleAction).not.toHaveBeenCalled();
   });
+
+  it('returns an MCP not-found error for missing jobs.result lookups', async () => {
+    mockGetJobById.mockResolvedValue(null);
+
+    const server = await createMcpServer(buildContext()) as FakeMcpServer;
+    const output = await server.tools.get('jobs.result')!.handler({ jobId: 'job-missing' });
+
+    expect(mockGetJobById).toHaveBeenCalledWith('job-missing');
+    expect(output).toEqual(
+      expect.objectContaining({
+        isError: true,
+        structuredContent: {
+          error: expect.objectContaining({
+            code: 'ERR_NOT_FOUND',
+            message: 'Async GPT job was not found.',
+            details: {
+              action: 'get_result',
+              jobId: 'job-missing',
+            },
+          }),
+        },
+      })
+    );
+    expect(mockRunThroughBrain).not.toHaveBeenCalled();
+    expect(mockRunARCANOS).not.toHaveBeenCalled();
+    expect(mockRunTrinity).not.toHaveBeenCalled();
+    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+  });
 });

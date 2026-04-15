@@ -951,13 +951,7 @@ describe('async /gpt idempotency', () => {
       lifecycleStatus: 'queued'
     });
     expect(resolveAsyncGptWaitForResultMsMock).toHaveBeenCalledWith(0);
-    expect(waitForQueuedGptJobCompletionMock).toHaveBeenCalledWith(
-      'job-query',
-      expect.objectContaining({
-        waitForResultMs: 0,
-        pollIntervalMs: 250
-      })
-    );
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
     expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
     expect(findOrCreateGptJobMock.mock.calls[0]?.[0]).toMatchObject({
       input: {
@@ -1050,6 +1044,7 @@ describe('async /gpt idempotency', () => {
       });
 
     expect(response.status).toBe(400);
+    expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toMatchObject({
       ok: false,
       action: 'query',
@@ -1058,6 +1053,37 @@ describe('async /gpt idempotency', () => {
       }
     });
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+  });
+
+  it('ignores direct-wait controls for query requests so query_and_wait stays the only wait-capable action', async () => {
+    findOrCreateGptJobMock.mockResolvedValue({
+      job: {
+        id: 'job-query-ignore-wait',
+        status: 'pending'
+      },
+      deduped: false,
+      dedupeReason: 'new_job'
+    });
+    planAutonomousWorkerJobMock.mockResolvedValue({ planned: true });
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        action: 'query',
+        prompt: 'Create the writing job only.',
+        waitForResultMs: 5000,
+        pollIntervalMs: 250
+      });
+
+    expect(response.status).toBe(202);
+    expect(response.body).toMatchObject({
+      ok: true,
+      action: 'query',
+      status: 'pending',
+      jobId: 'job-query-ignore-wait'
+    });
+    expect(response.body).not.toHaveProperty('directReturn');
     expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
   });
 

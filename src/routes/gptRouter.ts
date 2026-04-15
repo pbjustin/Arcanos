@@ -944,7 +944,7 @@ router.post("/:gptId", async (req, res, next) => {
             gptId: incomingGptId,
             requestId
           });
-          return res.status(400).json({
+          return sendGuardedGptJsonResponse(req, res, {
             ok: false,
             action: GPT_QUERY_ACTION,
             error: {
@@ -958,7 +958,7 @@ router.post("/:gptId", async (req, res, next) => {
               route: 'async',
               timestamp: new Date().toISOString()
             }
-          });
+          }, 'gpt.response.query_prompt_required', 400);
         }
 
         if (queryAndWaitRequested && !promptText) {
@@ -1363,13 +1363,17 @@ router.post("/:gptId", async (req, res, next) => {
         });
         const directReturnRequested =
           queryAndWaitRequested ||
-          (explicitAsyncWaitForResultMs !== undefined && executionPlan.mode === 'async');
+          (
+            !queryRequested &&
+            explicitAsyncWaitForResultMs !== undefined &&
+            executionPlan.mode === 'async'
+          );
         let requestedAsyncWaitForResultMs = explicitAsyncWaitForResultMs;
-        if (requestedAsyncWaitForResultMs === undefined) {
+        if (queryRequested) {
+          requestedAsyncWaitForResultMs = 0;
+        } else if (requestedAsyncWaitForResultMs === undefined) {
           if (queryAndWaitRequested) {
             requestedAsyncWaitForResultMs = DEFAULT_GPT_QUERY_AND_WAIT_TIMEOUT_MS;
-          } else if (queryRequested) {
-            requestedAsyncWaitForResultMs = 0;
           } else if (executionPlan.heavyPrompt) {
             requestedAsyncWaitForResultMs = readPositiveIntegerEnv(
               'GPT_ASYNC_HEAVY_WAIT_FOR_RESULT_MS',
@@ -1621,6 +1625,24 @@ router.post("/:gptId", async (req, res, next) => {
                   deduped: createResult.deduped,
                   dedupeReason: createResult.dedupeReason
                 });
+              }
+
+              if (queryRequested && !directReturnRequested) {
+                requestLogger?.info?.('integration.job.query_created', {
+                  endpoint: req.originalUrl,
+                  gptId: incomingGptId,
+                  requestId,
+                  jobId: job.id,
+                  deduped: createResult.deduped,
+                  dedupeReason: createResult.dedupeReason
+                });
+                return sendGuardedGptJsonResponse(
+                  req,
+                  res,
+                  queuedPendingResponse,
+                  'gpt.response.async_pending',
+                  202
+                );
               }
 
               const waitedJob = await waitForQueuedGptJobCompletion(

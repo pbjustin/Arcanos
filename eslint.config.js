@@ -107,6 +107,28 @@ export default [
     }
   },
   {
+    files: ['src/mcp/server/jobTools.ts'],
+    languageOptions: sharedLanguageOptions,
+    plugins: {
+      '@typescript-eslint': tsPlugin,
+      'import': importPlugin
+    },
+    rules: {
+      'no-restricted-imports': ['error', {
+        patterns: [
+          {
+            group: ['@routes/_core/gptDispatch', '@routes/_core/gptDispatch.js'],
+            message: 'Control-plane MCP job tools must not import the writing dispatcher.'
+          },
+          {
+            group: ['@core/logic/trinityWritingPipeline', '@core/logic/trinityWritingPipeline.js'],
+            message: 'Control-plane MCP job tools must not invoke the Trinity writing facade.'
+          }
+        ]
+      }]
+    }
+  },
+  {
     files: ['src/shared/**/*.{ts,js}'],
     languageOptions: sharedLanguageOptions,
     plugins: {

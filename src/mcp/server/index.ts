@@ -34,21 +34,16 @@ import { ingestUrl, ingestContent, answerQuestion } from '@services/webRag.js';
 import { connectResearchBridge } from '@services/researchHub.js';
 
 import { saveMemory, loadMemory, deleteMemory, query as dbQuery } from '@core/db/index.js';
-import { getJobById } from '@core/db/repositories/jobRepository.js';
-
 import { loadModuleDefinitions } from '@services/moduleLoader.js';
 import { dispatchModuleAction } from '@routes/modules.js';
 import { buildActiveMemorySelect, normalizeMemoryEntries, type MemoryListRow } from '@services/memoryListing.js';
-import {
-  buildGptJobResultBridgePayload,
-  buildGptJobStatusBridgePayload,
-} from '@shared/gpt/gptJobResult.js';
 
 import { runHealthCheck } from '@platform/logging/diagnostics.js';
 import { acquireExecutionLock } from '@services/safety/executionLock.js';
 import { emitSafetyAuditEvent } from '@services/safety/auditEvents.js';
 import { stripConfirmationFields, requireNonceOrIssue, notExposed, buildClearRecheckInput, wrapTool } from './helpers.js';
 import { registerDagMcpTools } from './dagTools.js';
+import { registerJobMcpTools } from './jobTools.js';
 
 type AnyMcpServer = any;
 
@@ -164,52 +159,7 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
     })
   );
 
-  server.registerTool(
-    'jobs.status',
-    {
-      title: 'Job Status',
-      description: 'Control plane: reads async GPT job status without entering Trinity or write dispatch.',
-      annotations: { readOnlyHint: true },
-      inputSchema: z.object({
-        jobId: z.string().trim().min(1),
-      }),
-    },
-    wrapTool('jobs.status', ctx, async (args: any) => {
-      const job = await getJobById(args.jobId);
-      if (!job) {
-        return mcpError({
-          code: 'ERR_NOT_FOUND',
-          message: 'Async GPT job was not found.',
-          details: { action: 'get_status', jobId: args.jobId },
-          requestId: ctx.requestId,
-        });
-      }
-
-      return mcpText({
-        ok: true,
-        ...buildGptJobStatusBridgePayload(job),
-      });
-    })
-  );
-
-  server.registerTool(
-    'jobs.result',
-    {
-      title: 'Job Result',
-      description: 'Control plane: reads async GPT job results without entering Trinity or write dispatch.',
-      annotations: { readOnlyHint: true },
-      inputSchema: z.object({
-        jobId: z.string().trim().min(1),
-      }),
-    },
-    wrapTool('jobs.result', ctx, async (args: any) => {
-      const job = await getJobById(args.jobId);
-      return mcpText({
-        ok: true,
-        ...buildGptJobResultBridgePayload(args.jobId, job),
-      });
-    })
-  );
+  registerJobMcpTools(server, ctx);
 
   // -------------------------
   // CLEAR + Plans
