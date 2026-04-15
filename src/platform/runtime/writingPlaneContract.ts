@@ -2,6 +2,11 @@ import { classifyRuntimeInspectionPrompt } from '@services/runtimeInspectionRout
 import { shouldTreatPromptAsDagExecution } from '@shared/dag/dagExecutionRouting.js';
 import { normalizeGptRequestBody } from '@shared/gpt/gptIdempotency.js';
 import {
+  GPT_DIRECT_CONTROL_ACTIONS,
+  isReservedGptControlNamespace,
+  normalizeGptDirectControlAction,
+} from '@shared/gpt/gptControlActions.js';
+import {
   GPT_GET_RESULT_ACTION,
   GPT_GET_STATUS_ACTION,
   GPT_QUERY_AND_WAIT_ACTION,
@@ -18,14 +23,23 @@ export type WritingPlaneControlKind =
   | 'job_result'
   | 'job_status'
   | 'mcp_control'
+  | 'queue_inspection_action'
   | 'runtime_inspection'
-  | 'system_state';
+  | 'runtime_inspection_action'
+  | 'self_heal_status_action'
+  | 'system_state'
+  | 'unsupported_control_action'
+  | 'workers_status_action';
 
 export type DirectWritingPlaneControlKind =
   | 'diagnostics'
   | 'job_result'
   | 'job_status'
-  | 'system_state';
+  | 'queue_inspection_action'
+  | 'runtime_inspection_action'
+  | 'self_heal_status_action'
+  | 'system_state'
+  | 'workers_status_action';
 
 export type WritingPlaneInputClassification =
   | {
@@ -83,6 +97,12 @@ function normalizeDagControlAction(action: string | null | undefined): string | 
   return normalizedAction && normalizedAction.startsWith('dag.') ? normalizedAction : null;
 }
 
+function buildUnsupportedControlActionCanonical() {
+  return {
+    supportedActions: GPT_DIRECT_CONTROL_ACTIONS.join(', '),
+  };
+}
+
 function getString(record: Record<string, unknown>, key: string): string | null {
   const value = record[key];
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
@@ -131,6 +151,7 @@ export function classifyWritingPlaneInput(input: {
 }): WritingPlaneInputClassification {
   const normalizedAction = normalizeAction(input.requestedAction);
   const normalizedMode = readBodyMode(input.body);
+  const explicitDirectControlAction = normalizeGptDirectControlAction(normalizedAction);
 
   if (normalizedAction === GPT_GET_STATUS_ACTION) {
     return {
@@ -188,6 +209,74 @@ export function classifyWritingPlaneInput(input: {
       canonical: {
         systemState: '/gpt/arcanos-core',
       },
+    };
+  }
+
+  if (explicitDirectControlAction === 'runtime.inspect') {
+    return {
+      plane: 'control',
+      kind: 'runtime_inspection_action',
+      action: explicitDirectControlAction,
+      reason: 'explicit_action_runtime_inspect',
+      errorCode: 'TRINITY_CONTROL_LEAK',
+      message: 'Runtime inspection is a control-plane operation and must not execute inside Trinity.',
+      canonical: {
+        runtimeInspect: '/gpt/{gptId}',
+      },
+    };
+  }
+
+  if (explicitDirectControlAction === 'workers.status') {
+    return {
+      plane: 'control',
+      kind: 'workers_status_action',
+      action: explicitDirectControlAction,
+      reason: 'explicit_action_workers_status',
+      errorCode: 'TRINITY_CONTROL_LEAK',
+      message: 'Worker status inspection is a control-plane operation and must not execute inside Trinity.',
+      canonical: {
+        workers: '/gpt/{gptId}',
+      },
+    };
+  }
+
+  if (explicitDirectControlAction === 'queue.inspect') {
+    return {
+      plane: 'control',
+      kind: 'queue_inspection_action',
+      action: explicitDirectControlAction,
+      reason: 'explicit_action_queue_inspect',
+      errorCode: 'TRINITY_CONTROL_LEAK',
+      message: 'Queue inspection is a control-plane operation and must not execute inside Trinity.',
+      canonical: {
+        queueInspect: '/gpt/{gptId}',
+      },
+    };
+  }
+
+  if (explicitDirectControlAction === 'self_heal.status') {
+    return {
+      plane: 'control',
+      kind: 'self_heal_status_action',
+      action: explicitDirectControlAction,
+      reason: 'explicit_action_self_heal_status',
+      errorCode: 'TRINITY_CONTROL_LEAK',
+      message: 'Self-heal status inspection is a control-plane operation and must not execute inside Trinity.',
+      canonical: {
+        selfHealStatus: '/gpt/{gptId}',
+      },
+    };
+  }
+
+  if (normalizedAction && isReservedGptControlNamespace(normalizedAction)) {
+    return {
+      plane: 'control',
+      kind: 'unsupported_control_action',
+      action: normalizedAction,
+      reason: 'unsupported_reserved_control_action',
+      errorCode: 'UNSUPPORTED_GPT_ACTION',
+      message: `Unsupported control action '${normalizedAction}'. Supported control actions: ${GPT_DIRECT_CONTROL_ACTIONS.join(', ')}.`,
+      canonical: buildUnsupportedControlActionCanonical(),
     };
   }
 
@@ -324,5 +413,14 @@ export function classifyWritingPlaneInput(input: {
 export function isDirectControlPlaneKind(
   kind: WritingPlaneControlKind
 ): kind is DirectWritingPlaneControlKind {
-  return kind === 'job_status' || kind === 'job_result' || kind === 'diagnostics' || kind === 'system_state';
+  return (
+    kind === 'job_status' ||
+    kind === 'job_result' ||
+    kind === 'diagnostics' ||
+    kind === 'runtime_inspection_action' ||
+    kind === 'workers_status_action' ||
+    kind === 'queue_inspection_action' ||
+    kind === 'self_heal_status_action' ||
+    kind === 'system_state'
+  );
 }

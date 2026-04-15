@@ -3,14 +3,14 @@
   "info": {
     "title": "Arcanos GPT Route API",
     "version": "1.0.0",
-    "description": "Canonical public contract for GPT-routed module requests. GPT identity is path-bound at /gpt/{gptId}; callers must not duplicate gptId in the JSON body. The async bridge exposes four canonical operations: query, query_and_wait, get_status, and get_result."
+    "description": "Canonical public contract for GPT-routed module requests and allowlisted control-plane dispatch. GPT identity is path-bound at /gpt/{gptId}; callers must not duplicate gptId in the JSON body. POST /gpt/{gptId} accepts flexible request bodies with action as a string and payload as an open object so both durable GPT actions and approved runtime inspection actions can share one public endpoint. A bounded deterministic planner may normalize detail and section profiles for runtime inspection actions before execution, without inventing unsupported actions or bypassing response guards."
   },
   "paths": {
     "/gpt/{gptId}": {
       "post": {
         "operationId": "invokeGptRoute",
-        "summary": "Invoke a GPT-routed module request or async bridge operation",
-        "description": "Use action=query to create one durable writing job, action=query_and_wait to create one durable writing job and wait briefly for fast completion, action=get_status to read status through the GPT compatibility bridge, and action=get_result to read the final result through the GPT compatibility bridge. Natural-language retrieval prompts, runtime inspection prompts, DAG control prompts, and MCP control requests are intentionally rejected on this route.",
+        "summary": "Invoke a GPT-routed module request or universal control action",
+        "description": "POST /gpt/{gptId} is the universal public dispatcher. Use action=query to create one durable writing job, action=query_and_wait to create one durable writing job and wait briefly for fast completion, action=get_status to read status through the GPT compatibility bridge, action=get_result to read the final result through the GPT compatibility bridge, and approved control actions such as diagnostics, runtime.inspect, workers.status, queue.inspect, self_heal.status, and system_state for runtime inspection. For runtime.inspect and self_heal.status, payload.detail and payload.sections can request summary, standard, or full response profiles, and a deterministic bounded planner fills safe defaults when callers omit them. Unknown control-plane action names are rejected with a typed 400 error. Natural-language retrieval prompts, runtime inspection prompts without an explicit allowlisted action, DAG control prompts, and MCP control requests are still intentionally rejected on this route.",
         "parameters": [
           {
             "name": "gptId",
@@ -71,6 +71,50 @@
                     }
                   }
                 },
+                "runtimeInspect": {
+                  "summary": "Inspect the live runtime through the universal dispatcher with planner defaults",
+                  "value": {
+                    "action": "runtime.inspect"
+                  }
+                },
+                "runtimeInspectStandard": {
+                  "summary": "Request standard runtime inspection detail explicitly",
+                  "value": {
+                    "action": "runtime.inspect",
+                    "payload": {
+                      "detail": "standard"
+                    }
+                  }
+                },
+                "runtimeInspectFull": {
+                  "summary": "Request full runtime inspection detail for selected sections",
+                  "value": {
+                    "action": "runtime.inspect",
+                    "payload": {
+                      "detail": "full",
+                      "sections": [
+                        "workers",
+                        "queues",
+                        "memory"
+                      ]
+                    }
+                  }
+                },
+                "selfHealSummary": {
+                  "summary": "Request a compact self-heal summary through the universal dispatcher",
+                  "value": {
+                    "action": "self_heal.status",
+                    "payload": {
+                      "detail": "summary"
+                    }
+                  }
+                },
+                "workersStatus": {
+                  "summary": "Inspect worker runtime and queue state through the universal dispatcher",
+                  "value": {
+                    "action": "workers.status"
+                  }
+                },
                 "moduleAction": {
                   "summary": "Explicit module-specific action",
                   "value": {
@@ -108,7 +152,7 @@
             }
           },
           "400": {
-            "description": "Validation failure or control-plane misuse",
+            "description": "Validation failure, unsupported action, or control-plane misuse",
             "content": {
               "application/json": {
                 "schema": {
@@ -153,7 +197,7 @@
                     }
                   },
                   "controlGuard": {
-                    "summary": "Runtime inspection or other control prompts are rejected on the writing plane",
+                    "summary": "Prompt-based runtime inspection remains rejected without an explicit allowlisted action",
                     "value": {
                       "ok": false,
                       "action": "runtime.inspect",
@@ -167,6 +211,43 @@
                         "workerHealth": "/worker-helper/health",
                         "selfHeal": "/status/safety/self-heal",
                         "mcp": "/mcp"
+                      }
+                    }
+                  },
+                  "unknownControlAction": {
+                    "summary": "Unknown reserved control actions are rejected safely",
+                    "value": {
+                      "ok": false,
+                      "action": "runtime.unknown",
+                      "error": {
+                        "code": "UNSUPPORTED_GPT_ACTION",
+                        "message": "Unsupported control action 'runtime.unknown'. Supported control actions: diagnostics, system_state, runtime.inspect, workers.status, queue.inspect, self_heal.status."
+                      },
+                      "canonical": {
+                        "supportedActions": "diagnostics, system_state, runtime.inspect, workers.status, queue.inspect, self_heal.status"
+                      }
+                    }
+                  },
+                  "invalidDetail": {
+                    "summary": "Invalid planner detail is rejected safely",
+                    "value": {
+                      "ok": false,
+                      "action": "runtime.inspect",
+                      "error": {
+                        "code": "INVALID_GPT_DETAIL",
+                        "message": "Unsupported detail 'verbose'. Supported detail values: summary, standard, full."
+                      },
+                      "canonical": {
+                        "action": "runtime.inspect",
+                        "supportedDetail": "summary, standard, full",
+                        "availableSections": [
+                          "workers",
+                          "queues",
+                          "memory",
+                          "incidents",
+                          "events",
+                          "trace"
+                        ]
                       }
                     }
                   }
@@ -234,37 +315,76 @@
   "components": {
     "schemas": {
       "GptRouteRequest": {
-        "oneOf": [
-          {
-            "$ref": "#/components/schemas/GenericPromptRequest"
+        "type": "object",
+        "additionalProperties": true,
+        "description": "Universal GPT-route request. action is an open string field so callers can send canonical async bridge actions, module actions, and approved control-plane/runtime inspection actions through POST /gpt/{gptId}. Runtime inspection actions may also use a bounded planner profile via payload.detail and payload.sections.",
+        "properties": {
+          "action": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Requested action name. Canonical built-ins include query, query_and_wait, get_status, get_result, diagnostics, runtime.inspect, workers.status, queue.inspect, self_heal.status, and system_state. Module-specific action names are also allowed. Unsupported reserved control action names are rejected with HTTP 400."
           },
-          {
-            "$ref": "#/components/schemas/QueryActionRequest"
+          "prompt": {
+            "type": "string",
+            "minLength": 1
           },
-          {
-            "$ref": "#/components/schemas/QueryAndWaitActionRequest"
+          "message": {
+            "type": "string",
+            "minLength": 1
           },
-          {
-            "$ref": "#/components/schemas/GetStatusActionRequest"
+          "query": {
+            "type": "string",
+            "minLength": 1
           },
-          {
-            "$ref": "#/components/schemas/GetResultActionRequest"
+          "content": {
+            "type": "string",
+            "minLength": 1
           },
-          {
-            "$ref": "#/components/schemas/SystemStateActionRequest"
+          "text": {
+            "type": "string",
+            "minLength": 1
           },
-          {
-            "$ref": "#/components/schemas/ModuleActionRequest"
-          }
-        ],
-        "discriminator": {
-          "propertyName": "action",
-          "mapping": {
-            "query": "#/components/schemas/QueryActionRequest",
-            "query_and_wait": "#/components/schemas/QueryAndWaitActionRequest",
-            "get_status": "#/components/schemas/GetStatusActionRequest",
-            "get_result": "#/components/schemas/GetResultActionRequest",
-            "system_state": "#/components/schemas/SystemStateActionRequest"
+          "userInput": {
+            "type": "string",
+            "minLength": 1
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "gptVersion": {
+            "type": "string"
+          },
+          "payload": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Open payload object. For runtime.inspect and self_heal.status, payload.detail supports summary | standard | full and payload.sections accepts an allowlisted string array such as workers, queues, memory, incidents, events, or trace."
+          },
+          "context": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "executionMode": {
+            "type": "string",
+            "enum": [
+              "sync",
+              "async"
+            ]
+          },
+          "waitForResultMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "timeoutMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "pollIntervalMs": {
+            "type": "integer",
+            "minimum": 1
           }
         }
       },

@@ -8,13 +8,18 @@ export type GptDirectControlKind =
   | 'diagnostics'
   | 'job_result'
   | 'job_status'
-  | 'system_state';
+  | 'queue_inspection_action'
+  | 'runtime_inspection_action'
+  | 'self_heal_status_action'
+  | 'system_state'
+  | 'workers_status_action';
 
 export type GptRejectedControlKind =
   | 'dag_control'
   | 'job_lookup'
   | 'mcp_control'
-  | 'runtime_inspection';
+  | 'runtime_inspection'
+  | 'unsupported_control_action';
 
 export type GptPlaneClassification =
   | {
