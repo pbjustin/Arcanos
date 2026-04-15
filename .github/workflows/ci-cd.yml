@@ -246,9 +246,13 @@ jobs:
           # against transitive `lodash` via `knex`, and GHSA-r4q5-vmmm-2653 is
           # currently reported against transitive `follow-redirects` via `axios`,
           # but no remediated npm release is available yet on the published
-          # dependency lines. Keep the audit active while suppressing only these
-          # known upstream-unfixed advisories so CI still fails on any newly
-          # actionable production vulnerability.
+          # dependency lines. GHSA-8r9q-7v3j-jr4g and GHSA-345p-7cg4-v4c7 are
+          # reported against the MCP SDK, but this service does not expose MCP
+          # resource templates and it builds a fresh HTTP server/transport pair
+          # per request, so those code paths are not in use here. Keep the audit
+          # active while suppressing only these known upstream/unapplicable
+          # advisories so CI still fails on any newly actionable production
+          # vulnerability.
           npm audit --omit=dev --json > npm-audit.json || true
           node scripts/check-npm-audit.js npm-audit.json
 

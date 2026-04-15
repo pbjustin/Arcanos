@@ -88,8 +88,7 @@
   "author": "Justin",
   "license": "MIT",
   "dependencies": {
-    "@hono/node-server": "^1.19.9",
-    "@modelcontextprotocol/sdk": "^1.26.0",
+    "@modelcontextprotocol/sdk": "1.24.3",
     "@prisma/client": "^5.22.0",
     "@types/pg": "^8.15.5",
     "ajv": "^8.18.0",

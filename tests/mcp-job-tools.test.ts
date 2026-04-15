@@ -7,6 +7,8 @@ const mockRunARCANOS = jest.fn();
 const mockRunTrinity = jest.fn();
 const mockDispatchModuleAction = jest.fn();
 const mockRegisterDagMcpTools = jest.fn();
+const mockRegisterResource = jest.fn();
+const mockRegisterResourceTemplate = jest.fn();
 
 class FakeMcpServer {
   public readonly tools = new Map<string, { config: Record<string, unknown>; handler: (args: unknown) => Promise<unknown> }>();
@@ -19,6 +21,14 @@ class FakeMcpServer {
     handler: (args: unknown) => Promise<unknown>
   ) {
     this.tools.set(name, { config, handler });
+  }
+
+  registerResource(...args: unknown[]) {
+    mockRegisterResource(...args);
+  }
+
+  registerResourceTemplate(...args: unknown[]) {
+    mockRegisterResourceTemplate(...args);
   }
 }
 
@@ -173,6 +183,13 @@ function buildContext() {
 describe('createMcpServer job control tools', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  it('registers tools only and does not expose MCP resource templates', async () => {
+    await createMcpServer(buildContext());
+
+    expect(mockRegisterResource).not.toHaveBeenCalled();
+    expect(mockRegisterResourceTemplate).not.toHaveBeenCalled();
   });
 
   it('registers explicit control-plane jobs.status and jobs.result tools with required jobId schemas', async () => {
