@@ -3,6 +3,7 @@ import { shouldTreatPromptAsDagExecution } from '@shared/dag/dagExecutionRouting
 import { normalizeGptRequestBody } from '@shared/gpt/gptIdempotency.js';
 import {
   GPT_DIRECT_CONTROL_ACTIONS,
+  type GptDirectControlAction,
   isReservedGptControlNamespace,
   normalizeGptDirectControlAction,
 } from '@shared/gpt/gptControlActions.js';
@@ -41,6 +42,25 @@ export type DirectWritingPlaneControlKind =
   | 'system_state'
   | 'workers_status_action';
 
+type ExplicitWritingPlaneControlAction =
+  | 'runtime.inspect'
+  | 'workers.status'
+  | 'queue.inspect'
+  | 'self_heal.status';
+
+type ExplicitWritingPlaneControlClassification = {
+  kind: Extract<
+    DirectWritingPlaneControlKind,
+    | 'runtime_inspection_action'
+    | 'workers_status_action'
+    | 'queue_inspection_action'
+    | 'self_heal_status_action'
+  >;
+  reason: string;
+  message: string;
+  canonical: Record<string, string>;
+};
+
 export type WritingPlaneInputClassification =
   | {
       plane: 'writing';
@@ -60,6 +80,44 @@ export type WritingPlaneInputClassification =
     };
 
 type McpControlAction = 'mcp.invoke' | 'mcp.list_tools';
+
+const EXPLICIT_WRITING_PLANE_CONTROL_CLASSIFICATIONS: Record<
+  ExplicitWritingPlaneControlAction,
+  ExplicitWritingPlaneControlClassification
+> = {
+  'runtime.inspect': {
+    kind: 'runtime_inspection_action',
+    reason: 'explicit_action_runtime_inspect',
+    message: 'Runtime inspection is a control-plane operation and must not execute inside Trinity.',
+    canonical: {
+      runtimeInspect: '/gpt/{gptId}',
+    },
+  },
+  'workers.status': {
+    kind: 'workers_status_action',
+    reason: 'explicit_action_workers_status',
+    message: 'Worker status inspection is a control-plane operation and must not execute inside Trinity.',
+    canonical: {
+      workers: '/gpt/{gptId}',
+    },
+  },
+  'queue.inspect': {
+    kind: 'queue_inspection_action',
+    reason: 'explicit_action_queue_inspect',
+    message: 'Queue inspection is a control-plane operation and must not execute inside Trinity.',
+    canonical: {
+      queueInspect: '/gpt/{gptId}',
+    },
+  },
+  'self_heal.status': {
+    kind: 'self_heal_status_action',
+    reason: 'explicit_action_self_heal_status',
+    message: 'Self-heal status inspection is a control-plane operation and must not execute inside Trinity.',
+    canonical: {
+      selfHealStatus: '/gpt/{gptId}',
+    },
+  },
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -95,6 +153,15 @@ function normalizeMcpAction(action: string | null | undefined): McpControlAction
 function normalizeDagControlAction(action: string | null | undefined): string | null {
   const normalizedAction = normalizeAction(action);
   return normalizedAction && normalizedAction.startsWith('dag.') ? normalizedAction : null;
+}
+
+function isExplicitWritingPlaneControlAction(
+  action: GptDirectControlAction | null
+): action is ExplicitWritingPlaneControlAction {
+  return action === 'runtime.inspect' ||
+    action === 'workers.status' ||
+    action === 'queue.inspect' ||
+    action === 'self_heal.status';
 }
 
 function buildUnsupportedControlActionCanonical() {
@@ -212,59 +279,18 @@ export function classifyWritingPlaneInput(input: {
     };
   }
 
-  if (explicitDirectControlAction === 'runtime.inspect') {
-    return {
-      plane: 'control',
-      kind: 'runtime_inspection_action',
-      action: explicitDirectControlAction,
-      reason: 'explicit_action_runtime_inspect',
-      errorCode: 'TRINITY_CONTROL_LEAK',
-      message: 'Runtime inspection is a control-plane operation and must not execute inside Trinity.',
-      canonical: {
-        runtimeInspect: '/gpt/{gptId}',
-      },
-    };
-  }
+  if (isExplicitWritingPlaneControlAction(explicitDirectControlAction)) {
+    const controlClassification =
+      EXPLICIT_WRITING_PLANE_CONTROL_CLASSIFICATIONS[explicitDirectControlAction];
 
-  if (explicitDirectControlAction === 'workers.status') {
     return {
       plane: 'control',
-      kind: 'workers_status_action',
+      kind: controlClassification.kind,
       action: explicitDirectControlAction,
-      reason: 'explicit_action_workers_status',
+      reason: controlClassification.reason,
       errorCode: 'TRINITY_CONTROL_LEAK',
-      message: 'Worker status inspection is a control-plane operation and must not execute inside Trinity.',
-      canonical: {
-        workers: '/gpt/{gptId}',
-      },
-    };
-  }
-
-  if (explicitDirectControlAction === 'queue.inspect') {
-    return {
-      plane: 'control',
-      kind: 'queue_inspection_action',
-      action: explicitDirectControlAction,
-      reason: 'explicit_action_queue_inspect',
-      errorCode: 'TRINITY_CONTROL_LEAK',
-      message: 'Queue inspection is a control-plane operation and must not execute inside Trinity.',
-      canonical: {
-        queueInspect: '/gpt/{gptId}',
-      },
-    };
-  }
-
-  if (explicitDirectControlAction === 'self_heal.status') {
-    return {
-      plane: 'control',
-      kind: 'self_heal_status_action',
-      action: explicitDirectControlAction,
-      reason: 'explicit_action_self_heal_status',
-      errorCode: 'TRINITY_CONTROL_LEAK',
-      message: 'Self-heal status inspection is a control-plane operation and must not execute inside Trinity.',
-      canonical: {
-        selfHealStatus: '/gpt/{gptId}',
-      },
+      message: controlClassification.message,
+      canonical: controlClassification.canonical,
     };
   }
 
