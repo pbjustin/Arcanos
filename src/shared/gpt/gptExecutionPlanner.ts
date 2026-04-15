@@ -297,7 +297,7 @@ function normalizeSections(
       sections
         .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
         .map((value) => value.trim().toLowerCase())
-    ).values()
+    )
   );
 
   const unsupportedSections = normalizedSections.filter(
