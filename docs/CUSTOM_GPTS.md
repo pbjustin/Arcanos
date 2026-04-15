@@ -1,7 +1,7 @@
 # Custom GPTs and Backend Integration
 
 ## Overview
-Arcanos routes Custom GPT requests through the `/gpt/:gptId` gateway. This gateway is the writing plane: it resolves a GPT ID to a backend module, forwards generative work to the matched module, and returns an acknowledgement payload describing the matched module/action set. The routing table is built from module definitions (including their `gptIds`), with optional overrides via environment configuration. The canonical Custom GPT contract is path-based: call `/gpt/<gpt-id>` with a prompt-first request body for generative work, and use direct control endpoints for jobs, DAG traces, runtime diagnostics, and MCP tools.【F:src/routes/gptRouter.ts†L16-L159】【F:src/config/gptRouterConfig.ts†L1-L92】【F:src/modules/moduleLoader.ts†L1-L64】
+Arcanos routes Custom GPT requests through the `/gpt/:gptId` gateway. This gateway is the writing plane: it resolves a GPT ID to a backend module, forwards generative work to the matched module, and returns an acknowledgement payload describing the matched module/action set. The routing table is built from module definitions (including their `gptIds`), with optional overrides via environment configuration. The canonical Custom GPT contract is path-based: call `/gpt/<gpt-id>` with either a prompt-first generative request or the typed async bridge actions `query`, `query_and_wait`, `get_status`, and `get_result`. Use direct control endpoints for jobs, DAG traces, runtime diagnostics, and MCP tools when those surfaces are available.【F:src/routes/gptRouter.ts†L16-L159】【F:src/config/gptRouterConfig.ts†L1-L92】【F:src/modules/moduleLoader.ts†L1-L64】
 
 ## Why We Use Custom GPTs
 Custom GPTs let Arcanos ship specialized assistants (Backstage Booker, Arcanos Gaming, Tutor) that:
@@ -13,9 +13,10 @@ Custom GPTs let Arcanos ship specialized assistants (Backstage Booker, Arcanos G
 1. The GPT calls `POST /gpt/:gptId` with a request body that contains `prompt` and optional `gptVersion`, `action`, `payload`, and `context`.
 2. Async job status/results must be fetched explicitly, either through `GET /jobs/:id` / `GET /jobs/:id/result`, or through `POST /gpt/:gptId` with `action: "get_status"` / `action: "get_result"` plus `payload.jobId`.
 3. Prompt-based control requests are rejected: job lookup prompts, DAG execution/tracing prompts, runtime inspection prompts, and explicit MCP tool calls must use their canonical control-plane endpoints.
-4. The GPT router resolves the incoming GPT ID to a module route using the module map and fuzzy matching strategy if needed.
-5. The writing request is forwarded to `/modules/:route`, and the response is wrapped with a `_gptAck` metadata block.
-6. The module handler calls the action implementation and returns the result as JSON.【F:src/routes/gptRouter.ts†L16-L159】【F:src/routes/modules.ts†L1-L83】
+4. Control actions are intercepted in the router and handled on the control plane before any writing dispatch or Trinity entry.
+5. The GPT router resolves the incoming GPT ID to a module route using the module map and fuzzy matching strategy if needed.
+6. The writing request is forwarded to `/modules/:route`, and the response is wrapped with a `_gptAck` metadata block.
+7. The module handler calls the action implementation and returns the result as JSON.【F:src/routes/gptRouter.ts†L16-L159】【F:src/routes/modules.ts†L1-L83】
 
 ## Setup: Connect a Custom GPT to the Backend
 
@@ -56,9 +57,11 @@ Use a single HTTP action in your Custom GPT definition:
 Rules:
 - `gptId` belongs in the path, not the JSON body.
 - Omit `action` by default so the backend can infer intent from the GPT/module binding.
+- Use `action: "query"` with a non-empty `prompt` when the caller wants a durable writing job immediately and will poll later.
+- Use `action: "query_and_wait"` with a non-empty `prompt` when the caller wants one durable writing job plus a bounded inline wait.
 - Use `action: "get_status"` or `action: "get_result"` with `payload.jobId` when you need to fetch canonical async GPT job state without creating new work.
 - Use direct control endpoints instead of `/gpt/:gptId` for runtime inspection, DAG tracing/execution, and MCP tool calls.
-- Use `action: "query_and_wait"` with a non-empty `prompt` when the integration surface needs one explicit caller action that creates one async GPT job and waits internally for completion.
+- Retrieval by natural-language prompt is intentionally blocked. Do not ask the GPT route to “look up job 123” in `prompt`; use the structured `action + payload.jobId` contract.
 - Do **not** inject a default action like `"ask"`; only send `action` when the caller explicitly selects a supported backend action.
 
 The router injects the module name server-side, so your Custom GPT does not need to specify `module` in the payload.【F:src/routes/gptRouter.ts†L16-L159】
@@ -75,6 +78,54 @@ Important:
 - `arcanos-core` is the built-in GPT ID for the main `ARCANOS:CORE` route.
 - `arcanos-tutor` and `tutor` remain separate tutor-only GPT IDs for `ARCANOS:TUTOR`.
 - Use `GPT_MODULE_MAP` only when you need additional custom GPT IDs beyond the built-in routes.
+
+## Canonical Async Bridge
+Use these request shapes for agent-safe async GPT work:
+
+Create a durable writing job:
+```json
+{
+  "action": "query",
+  "prompt": "Draft the release summary."
+}
+```
+
+Create a durable writing job and wait briefly:
+```json
+{
+  "action": "query_and_wait",
+  "prompt": "Draft the release summary.",
+  "timeoutMs": 25000,
+  "pollIntervalMs": 500
+}
+```
+
+Check status without creating work:
+```json
+{
+  "action": "get_status",
+  "payload": {
+    "jobId": "job_123"
+  }
+}
+```
+
+Fetch result without creating work:
+```json
+{
+  "action": "get_result",
+  "payload": {
+    "jobId": "job_123"
+  }
+}
+```
+
+Canonical response guidance:
+- Pending write: `{ "ok": true, "action": "query"|"query_and_wait", "jobId": "job_123", "status": "pending" }`
+- Completed `query_and_wait`: `{ "ok": true, "action": "query_and_wait", "jobId": "job_123", "status": "completed", "result": { "text": "..." } }`
+- Status read: `{ "ok": true, "action": "get_status", "jobId": "job_123", "status": "queued|running|completed|failed|cancelled|expired" }`
+- Result read: `{ "ok": true, "action": "get_result", "jobId": "job_123", "status": "completed", "output": { "text": "..." } }`
+- Error: `{ "ok": false, "action": "...", "error": { "code": "...", "message": "..." } }`
 
 ## Spec Sheet Template (for Custom GPT Actions)
 Use this format when defining or documenting a Custom GPT:
@@ -96,6 +147,8 @@ body:
 success_response:
   description: JSON payload from the module, plus _gptAck metadata.
 ```
+
+For async bridge callers, prefer the generated OpenAPI schema instead of hand-written examples so the action discriminator stays aligned with the backend.
 
 ## Migration Note
 - What was broken: older integrations still modeled GPT requests as `/ask` plus body-level `gptId`, and some wrappers injected an implicit `"action": "ask"` even though GPT routes are module-specific.
@@ -210,3 +263,5 @@ success_response:
 - **Happy path:** Call `/gpt/<gpt-id>` with a valid `action` and `payload` and confirm `_gptAck` metadata returns for the matched module.【F:src/routes/gptRouter.ts†L96-L159】
 - **Edge case:** Use an unknown GPT ID and confirm a `404` with `Unknown GPTID` is returned.【F:src/routes/gptRouter.ts†L70-L104】
 - **Failure mode:** Call a valid GPT ID with an invalid action and confirm the module returns `Action not found` or `Module not found` as appropriate.【F:src/routes/modules.ts†L16-L56】
+- **Async bridge:** Confirm `query` creates one job, `query_and_wait` either completes inline or returns pending, and `get_status` / `get_result` never create work.
+- **Guardrail:** Confirm prompt-based job retrieval is rejected and callers are pointed at structured control actions or `/jobs/*`.

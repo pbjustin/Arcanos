@@ -34,7 +34,6 @@ import { ingestUrl, ingestContent, answerQuestion } from '@services/webRag.js';
 import { connectResearchBridge } from '@services/researchHub.js';
 
 import { saveMemory, loadMemory, deleteMemory, query as dbQuery } from '@core/db/index.js';
-
 import { loadModuleDefinitions } from '@services/moduleLoader.js';
 import { dispatchModuleAction } from '@routes/modules.js';
 import { buildActiveMemorySelect, normalizeMemoryEntries, type MemoryListRow } from '@services/memoryListing.js';
@@ -44,6 +43,7 @@ import { acquireExecutionLock } from '@services/safety/executionLock.js';
 import { emitSafetyAuditEvent } from '@services/safety/auditEvents.js';
 import { stripConfirmationFields, requireNonceOrIssue, notExposed, buildClearRecheckInput, wrapTool } from './helpers.js';
 import { registerDagMcpTools } from './dagTools.js';
+import { registerJobMcpTools } from './jobTools.js';
 
 type AnyMcpServer = any;
 
@@ -158,6 +158,8 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
       return mcpText(out);
     })
   );
+
+  registerJobMcpTools(server, ctx);
 
   // -------------------------
   // CLEAR + Plans

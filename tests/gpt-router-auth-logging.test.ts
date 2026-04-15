@@ -154,13 +154,13 @@ describe('gpt router auth logging', () => {
       .post('/gpt/arcanos-gaming')
       .send({
         prompt: `Inspect ${promptMarker} carefully`,
-        messages: [{ role: 'user', content: `Inspect ${promptMarker} carefully` }]
+        messages: [{ role: 'user', content: `Inspect ${promptMarker} carefully` }],
       });
 
     expect(response.status).toBe(200);
 
     const rawStructuredLogs = consoleLogSpy.mock.calls
-      .map((call) => typeof call[0] === 'string' ? call[0] : '')
+      .map((call) => (typeof call[0] === 'string' ? call[0] : ''))
       .join('\n');
     const logs = collectStructuredLogs(consoleLogSpy.mock.calls);
     const requestMetaLog = logs.find((entry) => entry.event === 'gpt.request.meta');
@@ -170,7 +170,7 @@ describe('gpt router auth logging', () => {
       gptId: 'arcanos-gaming',
       promptLength: `Inspect ${promptMarker} carefully`.length,
       messageCount: 1,
-      promptLikeFields: ['messages', 'prompt']
+      promptLikeFields: ['messages', 'prompt'],
     });
     expect(requestMetaLog?.data?.promptHash).toEqual(expect.any(String));
     expect(requestMetaLog?.data?.bodyKeys).toEqual(['messages', 'prompt']);
@@ -487,22 +487,23 @@ describe('gpt router auth logging', () => {
     expect(response.status).toBe(400);
     expect(response.body).toEqual({
       ok: false,
+      action: 'runtime.inspect',
       error: {
         code: 'CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT',
-        message: 'Runtime diagnostics, worker state, tracing, and queue inspection must use direct control-plane endpoints or POST /mcp. Do not send runtime control requests through POST /gpt/{gptId}.'
+        message: 'Runtime diagnostics, worker state, tracing, and queue inspection must use direct control-plane endpoints or POST /mcp. Do not send runtime control requests through POST /gpt/{gptId}.',
       },
       canonical: {
         status: '/status',
         workers: '/workers/status',
         workerHealth: '/worker-helper/health',
         selfHeal: '/status/safety/self-heal',
-        mcp: '/mcp'
+        mcp: '/mcp',
       },
       _route: expect.objectContaining({
         gptId: 'arcanos-core',
         route: 'control_guard',
         action: 'runtime.inspect',
-      })
+      }),
     });
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
@@ -560,11 +561,11 @@ describe('gpt router auth logging', () => {
       ok: false,
       error: {
         code: 'REQUEST_ABORTED',
-        message: 'Request was aborted before completion.'
+        message: 'Request was aborted before completion.',
       },
       _route: expect.objectContaining({
         gptId: 'arcanos-core',
-      })
+      }),
     });
 
     const logs = collectStructuredLogs(consoleLogSpy.mock.calls);
@@ -619,20 +620,21 @@ describe('gpt router auth logging', () => {
     expect(response.status).toBe(400);
     expect(response.body).toEqual({
       ok: false,
+      action: 'dag.run.create',
       error: {
         code: 'DAG_CONTROL_REQUIRES_DIRECT_ENDPOINT',
-        message: 'DAG execution and trace retrieval must use /api/arcanos/dag/* or POST /mcp. Do not send DAG control requests through POST /gpt/{gptId}.'
+        message: 'DAG execution and trace retrieval must use /api/arcanos/dag/* or POST /mcp. Do not send DAG control requests through POST /gpt/{gptId}.',
       },
       canonical: {
         mcp: '/mcp',
         dagRuns: '/api/arcanos/dag/runs/{runId}',
-        dagTrace: '/api/arcanos/dag/runs/{runId}/trace'
+        dagTrace: '/api/arcanos/dag/runs/{runId}/trace',
       },
       _route: expect.objectContaining({
         gptId: 'arcanos-core',
         route: 'control_guard',
-        action: 'dag.run.create'
-      })
+        action: 'dag.run.create',
+      }),
     });
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
@@ -648,27 +650,28 @@ describe('gpt router auth logging', () => {
       .send({
         prompt: 'run the latest dag trace for me',
         payload: {
-          action: 'dag.run.latest'
-        }
+          action: 'dag.run.latest',
+        },
       });
 
     expect(response.status).toBe(400);
     expect(response.body).toEqual({
       ok: false,
+      action: 'dag.run.latest',
       error: {
         code: 'DAG_CONTROL_REQUIRES_DIRECT_ENDPOINT',
-        message: 'DAG execution and trace retrieval must use /api/arcanos/dag/* or POST /mcp. Do not send DAG control requests through POST /gpt/{gptId}.'
+        message: 'DAG execution and trace retrieval must use /api/arcanos/dag/* or POST /mcp. Do not send DAG control requests through POST /gpt/{gptId}.',
       },
       canonical: {
         mcp: '/mcp',
         dagRuns: '/api/arcanos/dag/runs/{runId}',
-        dagTrace: '/api/arcanos/dag/runs/{runId}/trace'
+        dagTrace: '/api/arcanos/dag/runs/{runId}/trace',
       },
       _route: expect.objectContaining({
         gptId: 'arcanos-core',
         route: 'control_guard',
-        action: 'dag.run.latest'
-      })
+        action: 'dag.run.latest',
+      }),
     });
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
@@ -691,18 +694,19 @@ describe('gpt router auth logging', () => {
     expect(response.status).toBe(400);
     expect(response.body).toEqual({
       ok: false,
+      action: 'mcp.invoke',
       error: {
         code: 'MCP_CONTROL_REQUIRES_MCP_API',
-        message: 'MCP tool calls must use POST /mcp. Do not send MCP control requests through POST /gpt/{gptId}.'
+        message: 'MCP tool calls must use POST /mcp. Do not send MCP control requests through POST /gpt/{gptId}.',
       },
       canonical: {
-        mcp: '/mcp'
+        mcp: '/mcp',
       },
       _route: expect.objectContaining({
         gptId: 'arcanos-core',
         route: 'control_guard',
         action: 'mcp.invoke',
-      })
+      }),
     });
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
@@ -715,7 +719,7 @@ describe('gpt router auth logging', () => {
         module: 'trinity',
         meta: {
           id: 'core-timeout-1',
-          created: 1772917000000
+          created: 1772917000000,
         },
         activeModel: 'gpt-4.1-mini',
         fallbackFlag: true,
@@ -724,35 +728,35 @@ describe('gpt router auth logging', () => {
           intakeFallbackUsed: false,
           gpt5FallbackUsed: false,
           finalFallbackUsed: true,
-          fallbackReasons: ['Recovered via direct answer']
+          fallbackReasons: ['Recovered via direct answer'],
         },
         auditSafe: {
           mode: true,
           overrideUsed: false,
           auditFlags: [],
-          processedSafely: true
+          processedSafely: true,
         },
         memoryContext: {
           entriesAccessed: 0,
           contextSummary: 'No memory context available.',
           memoryEnhanced: false,
           maxRelevanceScore: 0,
-          averageRelevanceScore: 0
+          averageRelevanceScore: 0,
         },
         taskLineage: {
           requestId: 'core-timeout-1',
-          logged: true
+          logged: true,
         },
         timeoutKind: 'pipeline_timeout',
         degradedModeReason: 'arcanos_core_pipeline_timeout_direct_answer',
-        bypassedSubsystems: ['trinity_intake', 'trinity_reasoning']
+        bypassedSubsystems: ['trinity_intake', 'trinity_reasoning'],
       },
       _route: {
         gptId: 'arcanos-core',
         module: 'ARCANOS:CORE',
         route: 'core',
-        availableActions: ['query']
-      }
+        availableActions: ['query'],
+      },
     });
 
     const app = express();

@@ -1,5 +1,6 @@
 import { generatePromptAndWait } from "../client/backend.js";
 import { serializeDeterministicJson } from "../client/protocol.js";
+import { extractHumanReadableText } from "./humanOutput.js";
 import type { CliCommandResult, GenerateAndWaitCommandInvocation } from "./types.js";
 
 const DEFAULT_GENERATE_AND_WAIT_TIMEOUT_MS = 20_000;
@@ -46,7 +47,7 @@ function extractGenerateAndWaitHumanOutput(
   payload: Record<string, unknown>,
   timeoutMs: number
 ): string {
-  const directText = extractBackendText(payload);
+  const directText = extractHumanReadableText(payload.result, payload.message);
   if (directText) {
     return directText;
   }
@@ -66,46 +67,4 @@ function extractGenerateAndWaitHumanOutput(
   }
 
   return serializeDeterministicJson(payload);
-}
-
-function extractBackendText(payload: Record<string, unknown>): string {
-  const directResult = extractTextValue(payload.result);
-  if (directResult) {
-    return directResult;
-  }
-
-  const message = extractTextValue(payload.message);
-  if (message) {
-    return message;
-  }
-
-  return "";
-}
-
-function extractTextValue(value: unknown): string {
-  if (typeof value === "string" && value.trim().length > 0) {
-    return value.trim();
-  }
-
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return "";
-  }
-
-  const recordValue = value as Record<string, unknown>;
-  const nestedResult = recordValue.result;
-  if (typeof nestedResult === "string" && nestedResult.trim().length > 0) {
-    return nestedResult.trim();
-  }
-
-  const nestedPrompt = recordValue.prompt;
-  if (typeof nestedPrompt === "string" && nestedPrompt.trim().length > 0) {
-    return nestedPrompt.trim();
-  }
-
-  const nestedMessage = recordValue.message;
-  if (typeof nestedMessage === "string" && nestedMessage.trim().length > 0) {
-    return nestedMessage.trim();
-  }
-
-  return "";
 }

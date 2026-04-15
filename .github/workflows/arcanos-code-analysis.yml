@@ -94,12 +94,18 @@ jobs:
             exit 1
           fi
           
-          # //audit Assumption: code analysis should use the canonical GPT route; failure risk: legacy ask aliases drift away from the module registry; expected invariant: CI hits the same /gpt/{gptId} surface used in production; handling strategy: call /gpt/arcanos-daemon with the supported query action.
+          # //audit Assumption: CI analysis should hit the canonical GPT route while
+          # staying compatible with local workflows that do not provision durable
+          # async job persistence. Failure risk: forcing the public async `query`
+          # action in CI turns a healthy sync analysis path into a hard 503 when the
+          # jobs backend is intentionally unavailable. Expected invariant: agent/tool
+          # clients use explicit async actions, while this internal CI workflow uses
+          # the supported sync fallback on the same /gpt/{gptId} route.
           PROMPT="Analyze the current codebase changes and provide recommendations for code quality, security, and performance improvements. Focus on the commit SHA: $COMMIT_SHA"
           HTTP_CODE=$(curl -X POST http://localhost:8080/gpt/arcanos-daemon \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $CI_API_KEY" \
-            -d "$(jq -nc --arg p "$PROMPT" '{action: "query", prompt: $p, metadata: {context: "code_analysis"}}')" \
+            -d "$(jq -nc --arg p "$PROMPT" '{prompt: $p, executionMode: "sync", metadata: {context: "code_analysis"}}')" \
             -w "%{http_code}" \
             -o analysis_result.json \
             -s)
@@ -137,7 +143,7 @@ jobs:
             
             # Try to extract response from JSON
             if command -v jq &> /dev/null; then
-              RESPONSE=$(jq -r '.response // .content // .' analysis_result.json 2>/dev/null || cat analysis_result.json)
+              RESPONSE=$(jq -r '.result.text // .result.result // .result.response // .response // .content // .' analysis_result.json 2>/dev/null || cat analysis_result.json)
               echo "$RESPONSE" >> analysis_summary.md
             else
               echo '```json' >> analysis_summary.md

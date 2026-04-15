@@ -1,5 +1,6 @@
 import { serializeDeterministicJson } from "../client/protocol.js";
 import { getJobResult } from "../client/backend.js";
+import { extractHumanReadableText } from "./humanOutput.js";
 import type { CliCommandResult, JobResultCommandInvocation } from "./types.js";
 
 export async function runJobResultCommand(
@@ -30,16 +31,9 @@ export async function runJobResultCommand(
 }
 
 function extractJobResultHumanOutput(payload: Record<string, unknown>): string {
-  const directResult = payload.result;
-  if (typeof directResult === "string" && directResult.trim().length > 0) {
-    return directResult.trim();
-  }
-
-  if (directResult && typeof directResult === "object" && !Array.isArray(directResult)) {
-    const nestedMessage = (directResult as Record<string, unknown>).message;
-    if (typeof nestedMessage === "string" && nestedMessage.trim().length > 0) {
-      return nestedMessage.trim();
-    }
+  const directText = extractHumanReadableText(payload.output, payload.result, payload.message);
+  if (directText) {
+    return directText;
   }
 
   return serializeDeterministicJson(payload);

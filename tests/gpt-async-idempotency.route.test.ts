@@ -122,6 +122,7 @@ describe('async /gpt idempotency', () => {
     expect(response.status).toBe(202);
     expect(response.body).toEqual({
       ok: true,
+      action: 'query',
       status: 'pending',
       jobId: 'job-123',
       poll: '/jobs/job-123',
@@ -171,8 +172,28 @@ describe('async /gpt idempotency', () => {
 
     expect(response.status).toBe(200);
     expect(response.headers['x-response-bytes']).toBeTruthy();
-    expect(response.body).toEqual({
+    expect(response.body).toMatchObject({
       ok: true,
+      action: 'get_result',
+      jobId: 'job-lookup-complete',
+      status: 'completed',
+      jobStatus: 'completed',
+      lifecycleStatus: 'completed',
+      createdAt: '2026-04-06T10:00:00.000Z',
+      updatedAt: '2026-04-06T10:00:03.000Z',
+      completedAt: '2026-04-06T10:00:03.000Z',
+      retentionUntil: null,
+      idempotencyUntil: null,
+      expiresAt: null,
+      poll: '/jobs/job-lookup-complete',
+      stream: '/jobs/job-lookup-complete/stream',
+      output: {
+        ok: true,
+        result: {
+          answer: 'stored output'
+        }
+      },
+      error: null,
       result: {
         jobId: 'job-lookup-complete',
         status: 'completed',
@@ -233,6 +254,17 @@ describe('async /gpt idempotency', () => {
 
     expect(response.status).toBe(200);
     expect(response.headers['x-response-bytes']).toBeTruthy();
+    expect(response.body).toMatchObject({
+      action: 'get_result',
+      jobId: 'job-lookup-normalized',
+      status: 'completed',
+      output: {
+        ok: true,
+        result: {
+          answer: 'normalized output'
+        }
+      },
+    });
     expect(response.body.result).toMatchObject({
       jobId: 'job-lookup-normalized',
       status: 'completed',
@@ -297,13 +329,22 @@ describe('async /gpt idempotency', () => {
 
     expect(response.status).toBe(200);
     expect(response.headers['x-response-bytes']).toBeTruthy();
-    expect(response.body.result).toMatchObject({
+    expect(response.body).toMatchObject({
+      action: 'get_result',
       jobId: 'job-lookup-pending',
       status: 'pending',
       jobStatus: 'running',
       lifecycleStatus: 'running',
-      result: null,
-      error: null
+      output: null,
+      error: null,
+      result: {
+        jobId: 'job-lookup-pending',
+        status: 'pending',
+        jobStatus: 'running',
+        lifecycleStatus: 'running',
+        result: null,
+        error: null
+      }
     });
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
   });
@@ -339,7 +380,8 @@ describe('async /gpt idempotency', () => {
 
     expect(response.status).toBe(200);
     expect(response.headers['x-response-bytes']).toBeTruthy();
-    expect(response.body.result).toMatchObject({
+    expect(response.body).toMatchObject({
+      action: 'get_result',
       jobId: 'job-lookup-expired',
       status: 'expired',
       jobStatus: 'expired',
@@ -347,7 +389,7 @@ describe('async /gpt idempotency', () => {
       retentionUntil: '2026-04-06T10:10:00.000Z',
       idempotencyUntil: '2026-04-06T10:05:00.000Z',
       expiresAt: '2026-04-06T10:15:00.000Z',
-      result: {
+      output: {
         ok: true,
         result: {
           answer: 'retained expired output'
@@ -356,6 +398,25 @@ describe('async /gpt idempotency', () => {
       error: {
         code: 'JOB_EXPIRED',
         message: 'Expired after retention window.'
+      },
+      result: {
+        jobId: 'job-lookup-expired',
+        status: 'expired',
+        jobStatus: 'expired',
+        lifecycleStatus: 'expired',
+        retentionUntil: '2026-04-06T10:10:00.000Z',
+        idempotencyUntil: '2026-04-06T10:05:00.000Z',
+        expiresAt: '2026-04-06T10:15:00.000Z',
+        result: {
+          ok: true,
+          result: {
+            answer: 'retained expired output'
+          }
+        },
+        error: {
+          code: 'JOB_EXPIRED',
+          message: 'Expired after retention window.'
+        }
       }
     });
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
@@ -384,15 +445,27 @@ describe('async /gpt idempotency', () => {
       });
 
     expect(response.status).toBe(200);
-    expect(response.body.result).toMatchObject({
+    expect(response.body).toMatchObject({
+      action: 'get_result',
       jobId: 'job-lookup-failed',
       status: 'failed',
       jobStatus: 'failed',
       lifecycleStatus: 'failed',
-      result: null,
+      output: null,
       error: {
         code: 'JOB_FAILED',
         message: 'OpenAI upstream timed out'
+      },
+      result: {
+        jobId: 'job-lookup-failed',
+        status: 'failed',
+        jobStatus: 'failed',
+        lifecycleStatus: 'failed',
+        result: null,
+        error: {
+          code: 'JOB_FAILED',
+          message: 'OpenAI upstream timed out'
+        }
       }
     });
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
@@ -412,7 +485,9 @@ describe('async /gpt idempotency', () => {
 
     expect(response.status).toBe(200);
     expect(response.headers['x-response-bytes']).toBeTruthy();
-    expect(response.body.result).toEqual({
+    expect(response.body).toEqual({
+      ok: true,
+      action: 'get_result',
       jobId: 'missing-job',
       status: 'not_found',
       jobStatus: null,
@@ -425,11 +500,35 @@ describe('async /gpt idempotency', () => {
       expiresAt: null,
       poll: '/jobs/missing-job',
       stream: '/jobs/missing-job/stream',
-      result: null,
+      output: null,
       error: {
         code: 'JOB_NOT_FOUND',
         message: 'Async GPT job was not found.'
-      }
+      },
+      result: {
+        jobId: 'missing-job',
+        status: 'not_found',
+        jobStatus: null,
+        lifecycleStatus: 'not_found',
+        createdAt: null,
+        updatedAt: null,
+        completedAt: null,
+        retentionUntil: null,
+        idempotencyUntil: null,
+        expiresAt: null,
+        poll: '/jobs/missing-job',
+        stream: '/jobs/missing-job/stream',
+        result: null,
+        error: {
+          code: 'JOB_NOT_FOUND',
+          message: 'Async GPT job was not found.'
+        }
+      },
+      _route: expect.objectContaining({
+        gptId: 'arcanos-core',
+        action: 'get_result',
+        route: 'job_result'
+      })
     });
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
   });
@@ -462,8 +561,12 @@ describe('async /gpt idempotency', () => {
 
     expect(response.status).toBe(200);
     expect(response.headers['x-response-bytes']).toBeTruthy();
-    expect(response.body).toEqual({
+    expect(response.body).toMatchObject({
       ok: true,
+      action: 'get_status',
+      jobId: 'job-status-running',
+      status: 'running',
+      lifecycleStatus: 'running',
       result: {
         id: 'job-status-running',
         job_type: 'gpt',
@@ -813,6 +916,56 @@ describe('async /gpt idempotency', () => {
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
+  it('supports explicit query by creating one durable writing job without waiting for completion', async () => {
+    findOrCreateGptJobMock.mockResolvedValue({
+      job: {
+        id: 'job-query',
+        status: 'pending'
+      },
+      created: true,
+      deduped: false,
+      dedupeReason: 'new_job'
+    });
+    waitForQueuedGptJobCompletionMock.mockResolvedValue({
+      state: 'pending',
+      job: {
+        id: 'job-query',
+        status: 'pending'
+      }
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/backstage-booker')
+      .send({
+        action: 'query',
+        prompt: 'Draft the next promo'
+      });
+
+    expect(response.status).toBe(202);
+    expect(response.body).toMatchObject({
+      ok: true,
+      action: 'query',
+      status: 'pending',
+      jobId: 'job-query',
+      jobStatus: 'pending',
+      lifecycleStatus: 'queued'
+    });
+    expect(resolveAsyncGptWaitForResultMsMock).toHaveBeenCalledWith(0);
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
+    expect(findOrCreateGptJobMock.mock.calls[0]?.[0]).toMatchObject({
+      input: {
+        gptId: 'backstage-booker',
+        body: {
+          prompt: 'Draft the next promo'
+        },
+        routeHint: 'query'
+      }
+    });
+    expect((findOrCreateGptJobMock.mock.calls[0]?.[0] as { input?: { body?: Record<string, unknown> } }).input?.body?.action).toBe('query');
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
   it('returns query_and_wait timeout guidance with the same job id and one job creation only', async () => {
     findOrCreateGptJobMock.mockResolvedValue({
       job: {
@@ -883,6 +1036,57 @@ describe('async /gpt idempotency', () => {
     expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
   });
 
+  it('rejects query requests without a prompt', async () => {
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        action: 'query'
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.headers['x-response-bytes']).toBeTruthy();
+    expect(response.body).toMatchObject({
+      ok: false,
+      action: 'query',
+      error: {
+        code: 'PROMPT_REQUIRED'
+      }
+    });
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+  });
+
+  it('ignores direct-wait controls for query requests so query_and_wait stays the only wait-capable action', async () => {
+    findOrCreateGptJobMock.mockResolvedValue({
+      job: {
+        id: 'job-query-ignore-wait',
+        status: 'pending'
+      },
+      deduped: false,
+      dedupeReason: 'new_job'
+    });
+    planAutonomousWorkerJobMock.mockResolvedValue({ planned: true });
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        action: 'query',
+        prompt: 'Create the writing job only.',
+        waitForResultMs: 5000,
+        pollIntervalMs: 250
+      });
+
+    expect(response.status).toBe(202);
+    expect(response.body).toMatchObject({
+      ok: true,
+      action: 'query',
+      status: 'pending',
+      jobId: 'job-query-ignore-wait'
+    });
+    expect(response.body).not.toHaveProperty('directReturn');
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+  });
+
   it('fails query_and_wait clearly when durable async jobs are unavailable instead of falling back to sync query routing', async () => {
     findOrCreateGptJobMock.mockRejectedValue(
       new MockJobRepositoryUnavailableError('jobs backend unavailable')
@@ -902,6 +1106,32 @@ describe('async /gpt idempotency', () => {
       error: {
         code: 'ASYNC_GPT_JOBS_UNAVAILABLE',
         message: 'query_and_wait requires durable GPT job persistence, but the jobs backend is unavailable.'
+      },
+      idempotencyKey: expect.stringMatching(/^derived:/)
+    });
+    expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('fails query clearly when durable async jobs are unavailable instead of falling back to sync query routing', async () => {
+    findOrCreateGptJobMock.mockRejectedValue(
+      new MockJobRepositoryUnavailableError('jobs backend unavailable')
+    );
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        action: 'query',
+        prompt: 'Generate a Seth Rollins promo prompt'
+      });
+
+    expect(response.status).toBe(503);
+    expect(response.body).toMatchObject({
+      ok: false,
+      action: 'query',
+      error: {
+        code: 'ASYNC_GPT_JOBS_UNAVAILABLE',
+        message: 'query requires durable GPT job persistence, but the jobs backend is unavailable.'
       },
       idempotencyKey: expect.stringMatching(/^derived:/)
     });

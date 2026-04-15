@@ -11,6 +11,7 @@ Tool registration lives in `src/mcp/server/index.ts` and includes reasoning, pla
 Routing rule:
 - `POST /mcp` is the explicit MCP control-plane transport.
 - `POST /gpt/:gptId` is the writing plane and does not auto-dispatch to MCP. If a caller needs MCP tools, it must call `/mcp` directly.
+- `jobs.status` and `jobs.result` are control-plane MCP tools. They read existing GPT job state by `jobId` and never enter Trinity or write dispatch.
 
 ## How It Works (HTTP)
 
@@ -82,6 +83,8 @@ Destructive tools:
 These tools are explicit operational interfaces and must be invoked over MCP, not inferred from the GPT writing plane.
 
 - `dag.*`
+- `jobs.status`
+- `jobs.result`
 - `modules.list`
 - `modules.invoke`
 - `ops.health_report`
@@ -169,6 +172,22 @@ curl -X POST http://localhost:3000/mcp \
   -d "{\"jsonrpc\":\"2.0\",\"id\":\"2\",\"method\":\"tools/call\",\"params\":{\"name\":\"trinity.query\",\"arguments\":{\"prompt\":\"Health check\"}}}"
 ```
 
+Call `jobs.status`:
+```bash
+curl -X POST http://localhost:3000/mcp \
+  -H "Authorization: Bearer $MCP_BEARER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"jsonrpc\":\"2.0\",\"id\":\"2b\",\"method\":\"tools/call\",\"params\":{\"name\":\"jobs.status\",\"arguments\":{\"jobId\":\"job_123\"}}}"
+```
+
+Call `jobs.result`:
+```bash
+curl -X POST http://localhost:3000/mcp \
+  -H "Authorization: Bearer $MCP_BEARER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"jsonrpc\":\"2.0\",\"id\":\"2c\",\"method\":\"tools/call\",\"params\":{\"name\":\"jobs.result\",\"arguments\":{\"jobId\":\"job_123\"}}}"
+```
+
 Create a DAG run:
 ```bash
 curl -X POST http://localhost:3000/mcp \
@@ -207,3 +226,10 @@ curl -X POST http://localhost:3000/mcp \
 - `ERR_GATED` for `modules.invoke`
 1. Add explicit allowlist entry to `MCP_ALLOW_MODULE_ACTIONS`.
 2. Restart service after env update.
+
+## Async Bridge Guidance
+For agent-safe async GPT retrieval over MCP:
+- Create work through a writing-plane tool such as `trinity.query`.
+- Retrieve status through `jobs.status`.
+- Retrieve terminal output through `jobs.result`.
+- Do not attempt prompt-based job retrieval through `trinity.query`; retrieval must remain structured by `jobId`.

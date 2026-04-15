@@ -23,12 +23,16 @@ const BOUNDARY_GROUPS = [
       /^src\/services\/runtimeInspectionRoutingService\.ts$/i,
       /^src\/services\/systemState\.ts$/i,
       /^src\/routes\/ask\/dagTools\.ts$/i,
-      /^src\/mcp\/server\/.*\.ts$/i,
+      /^src\/mcp\/server\/jobTools\.ts$/i,
     ],
     blockedImportRules: [
       {
         pattern: /\bfrom ['"][^'"]*(?:@routes\/_core\/gptDispatch|\/routes\/_core\/gptDispatch)(?:\.js)?['"]|\brequire\(['"][^'"]*(?:@routes\/_core\/gptDispatch|\/routes\/_core\/gptDispatch)(?:\.js)?['"]\)/,
         reason: 'control-plane modules must not import the writing dispatcher',
+      },
+      {
+        pattern: /\bfrom ['"][^'"]*(?:@core\/logic\/trinityWritingPipeline|\/core\/logic\/trinityWritingPipeline)(?:\.js)?['"]|\brequire\(['"][^'"]*(?:@core\/logic\/trinityWritingPipeline|\/core\/logic\/trinityWritingPipeline)(?:\.js)?['"]\)/,
+        reason: 'control-plane modules must not invoke the Trinity writing facade',
       },
     ],
   },
@@ -53,7 +57,6 @@ const DIRECT_TRINITY_IMPORT_ALLOWED_FILES = new Set([
 
 const DIRECT_TRINITY_IMPORT_PATTERN =
   /\bimport\s*\{[^}]*\brunThroughBrain\b[^}]*\}\s*from\s*['"][^'"]*(?:@core\/logic\/trinity|\/core\/logic\/trinity|\.\/trinity|trinity)(?:\.js)?['"]/;
-
 function collectRepositoryFilesFromFilesystem(rootPath) {
   if (!existsSync(rootPath)) {
     return [];

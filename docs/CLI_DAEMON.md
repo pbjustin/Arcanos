@@ -18,12 +18,14 @@ The daemon calls the backend with this routing split:
 - legacy compatibility callers may still use `/api/ask` when intentionally targeting that compatibility layer
 
 CLI examples:
+- `arcanos query --gpt arcanos-core --prompt "Draft the release summary"` → writing plane through `/gpt/:gptId` with canonical `action: "query"`
+- `arcanos query-and-wait --gpt arcanos-core --prompt "Draft the release summary"` → writing plane through `/gpt/:gptId` with canonical `action: "query_and_wait"`
 - `arcanos generate-and-wait --gpt arcanos-core --prompt "Draft the release summary"` → writing plane through `/gpt/:gptId`
 - `arcanos job-status <job-id>` → direct control read through `GET /jobs/:id`
 - `arcanos job-result <job-id>` → direct control read through `GET /jobs/:id/result`
 
 Do **not** send Custom GPT payloads with `gptId` to `/ask`; the backend rejects that contract on purpose.
-Do **not** send job lookups, DAG traces, runtime diagnostics, or MCP tool calls through `/gpt/:gptId`; that route is reserved for the writing plane.
+Do **not** send job lookups, DAG traces, runtime diagnostics, or MCP tool calls through `/gpt/:gptId` as prompt text; that route is reserved for the writing plane, and retrieval must stay structured through `action + jobId`.
 
 For generic daemon chat, the daemon sends:
 - `sessionId`: stable local instance id (machine/user)
@@ -91,3 +93,23 @@ Rollback restores backed-up files from `PATCH_BACKUP_DIR/<rollback_id>/...`.
 - `daemon-python/arcanos/agentic/`: repo indexing, proposals parsing, patch orchestration, history DB, agent loop
 - `daemon-python/arcanos/assistant/translator.py`: response translation middleware
 - `daemon-python/arcanos/backend_client/`: backend HTTP client and payload builder
+
+## Async GPT Bridge
+Agent and tool clients now have one canonical async flow:
+
+1. `arcanos query --gpt <gpt-id> --prompt "..."` to create one durable writing job.
+2. `arcanos query-and-wait --gpt <gpt-id> --prompt "..." --timeout-ms 25000 --poll-interval-ms 500` when a fast inline completion is useful.
+3. `arcanos job-status <job-id>` to read lifecycle state on the control plane.
+4. `arcanos job-result <job-id>` to read the terminal result on the control plane.
+
+Lane ownership:
+- Writing plane: `query`, `query-and-wait`, `generate-and-wait`
+- Control plane: `job-status`, `job-result`
+
+Python client parity:
+- `BackendApiClient.request_query(...)`
+- `BackendApiClient.request_query_and_wait(...)`
+- `BackendApiClient.request_gpt_job_status(...)`
+- `BackendApiClient.request_gpt_job_result(...)`
+
+These wrappers normalize the async payload into a consistent shape with top-level `ok`, `action`, `jobId`, `status`, and `result`/`output` fields where available.

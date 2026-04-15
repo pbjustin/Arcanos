@@ -91,6 +91,40 @@ describe('natural-language job lookup guard on /gpt/:gptId', () => {
     expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toEqual({
       ok: false,
+      action: 'result_lookup',
+      error: {
+        code: 'JOB_LOOKUP_REQUIRES_JOBS_API',
+        message: 'Job retrieval requests must use the jobs API. Do not send result or status lookups through POST /gpt/{gptId}.'
+      },
+      canonical: {
+        poll: '/jobs/job-123',
+        result: '/jobs/job-123/result'
+      },
+      _route: expect.objectContaining({
+        gptId: 'arcanos-core',
+        route: 'job_lookup_guard',
+        action: 'result_lookup'
+      })
+    });
+    expect(getJobByIdMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('rejects look-up phrasing that previously slipped through to the writing plane', async () => {
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        prompt: 'Look up job id job-123 and return its result.'
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.headers['x-response-bytes']).toBeTruthy();
+    expect(response.body).toEqual({
+      ok: false,
+      action: 'result_lookup',
       error: {
         code: 'JOB_LOOKUP_REQUIRES_JOBS_API',
         message: 'Job retrieval requests must use the jobs API. Do not send result or status lookups through POST /gpt/{gptId}.'
@@ -123,6 +157,7 @@ describe('natural-language job lookup guard on /gpt/:gptId', () => {
     expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toEqual({
       ok: false,
+      action: 'status_lookup',
       error: {
         code: 'JOB_LOOKUP_REQUIRES_JOBS_API',
         message: 'Job retrieval requests must use the jobs API. Do not send result or status lookups through POST /gpt/{gptId}.'
@@ -155,6 +190,7 @@ describe('natural-language job lookup guard on /gpt/:gptId', () => {
     expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toEqual({
       ok: false,
+      action: 'status_lookup',
       error: {
         code: 'JOB_LOOKUP_REQUIRES_JOBS_API',
         message: 'Job retrieval requests must use the jobs API. Do not send result or status lookups through POST /gpt/{gptId}.'
@@ -187,6 +223,7 @@ describe('natural-language job lookup guard on /gpt/:gptId', () => {
     expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toEqual({
       ok: false,
+      action: 'result_lookup',
       error: {
         code: 'JOB_ID_REQUIRED',
         message: 'Job retrieval prompts sent to /gpt/{gptId} must include a concrete job ID. Use the jobs API instead of prompting the GPT route.'

@@ -107,7 +107,7 @@ export default [
     }
   },
   {
-    files: ['src/mcp/server/**/*.ts'],
+    files: ['src/mcp/server/jobTools.ts'],
     languageOptions: sharedLanguageOptions,
     plugins: {
       '@typescript-eslint': tsPlugin,
@@ -118,7 +118,11 @@ export default [
         patterns: [
           {
             group: ['@routes/_core/gptDispatch', '@routes/_core/gptDispatch.js'],
-            message: 'Control-plane modules must not import the writing dispatcher.'
+            message: 'Control-plane MCP job tools must not import the writing dispatcher.'
+          },
+          {
+            group: ['@core/logic/trinityWritingPipeline', '@core/logic/trinityWritingPipeline.js'],
+            message: 'Control-plane MCP job tools must not invoke the Trinity writing facade.'
           }
         ]
       }]

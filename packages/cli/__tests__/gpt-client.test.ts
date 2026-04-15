@@ -12,7 +12,11 @@ import {
   getJobResult,
   getJobStatus,
   invokeGptRoute,
-  queryAndWaitGptRoute
+  queryAndWaitGptRoute,
+  requestGptJobResult,
+  requestGptJobStatus,
+  requestQuery,
+  requestQueryAndWait
 } from "../src/client/backend.js";
 
 function createJsonResponse(payload: Record<string, unknown>, init?: ResponseInit): Response {
@@ -116,12 +120,62 @@ describe("GPT route OpenAPI contract and client", () => {
     });
   });
 
+  it("builds the explicit query GPT action contract", async () => {
+    const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(
+      createJsonResponse({ ok: true, jobId: "job-query-1", status: "pending" })
+    );
+
+    const payload = await requestQuery({
+      baseUrl: "http://127.0.0.1:3000",
+      gptId: "backstage-booker",
+      prompt: "Draft the next promo"
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body));
+
+    expect(body).toEqual({
+      prompt: "Draft the next promo",
+      action: "query"
+    });
+    expect(payload).toMatchObject({
+      ok: true,
+      action: "query",
+      jobId: "job-query-1",
+      status: "pending"
+    });
+  });
+
+  it("ignores wait controls when callers try to send them with the query action", async () => {
+    const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(
+      createJsonResponse({ ok: true, jobId: "job-query-2", status: "pending" })
+    );
+
+    await requestQuery({
+      baseUrl: "http://127.0.0.1:3000",
+      gptId: "backstage-booker",
+      prompt: "Draft the next promo",
+      timeoutMs: 25_000,
+      pollIntervalMs: 500
+    } as any);
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body));
+
+    expect(body).toEqual({
+      prompt: "Draft the next promo",
+      action: "query"
+    });
+    expect(body).not.toHaveProperty("waitForResultMs");
+    expect(body).not.toHaveProperty("pollIntervalMs");
+  });
+
   it("builds the explicit query_and_wait GPT action contract", async () => {
     const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(
       createJsonResponse({ ok: true, result: "Generated Seth Rollins prompt" })
     );
 
-    await queryAndWaitGptRoute({
+    await requestQueryAndWait({
       baseUrl: "http://127.0.0.1:3000",
       gptId: "arcanos-core",
       prompt: "Generate a Seth Rollins promo prompt",
@@ -142,10 +196,10 @@ describe("GPT route OpenAPI contract and client", () => {
 
   it("builds the explicit get_status GPT action contract", async () => {
     const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(
-      createJsonResponse({ ok: true, result: { id: "job-123", status: "running" } })
+      createJsonResponse({ ok: true, action: "get_status", jobId: "job-123", status: "running" })
     );
 
-    await getGptRouteJobStatus({
+    const payload = await requestGptJobStatus({
       baseUrl: "http://127.0.0.1:3000",
       gptId: "backstage-booker",
       jobId: "job-123"
@@ -160,14 +214,20 @@ describe("GPT route OpenAPI contract and client", () => {
         jobId: "job-123"
       }
     });
+    expect(payload).toMatchObject({
+      ok: true,
+      action: "get_status",
+      jobId: "job-123",
+      status: "running"
+    });
   });
 
   it("builds the explicit get_result GPT action contract", async () => {
     const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(
-      createJsonResponse({ ok: true, result: { jobId: "job-123", status: "completed" } })
+      createJsonResponse({ ok: true, action: "get_result", jobId: "job-123", status: "completed", output: { text: "done" } })
     );
 
-    await getGptRouteJobResult({
+    const payload = await requestGptJobResult({
       baseUrl: "http://127.0.0.1:3000",
       gptId: "backstage-booker",
       jobId: "job-123"
@@ -182,14 +242,23 @@ describe("GPT route OpenAPI contract and client", () => {
         jobId: "job-123"
       }
     });
+    expect(payload).toMatchObject({
+      ok: true,
+      action: "get_result",
+      jobId: "job-123",
+      status: "completed",
+      result: {
+        text: "done"
+      }
+    });
   });
 
   it("reads job results from the canonical /jobs/{jobId}/result route", async () => {
     const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(
-      createJsonResponse({ ok: true, result: { status: "complete" } })
+      createJsonResponse({ jobId: "job-123", status: "completed", result: { text: "final output" } })
     );
 
-    await getJobResult({
+    const payload = await getJobResult({
       baseUrl: "http://127.0.0.1:3000",
       jobId: "job-123",
     });
@@ -200,6 +269,15 @@ describe("GPT route OpenAPI contract and client", () => {
         headers: {}
       })
     );
+    expect(payload).toMatchObject({
+      ok: true,
+      action: "get_result",
+      jobId: "job-123",
+      status: "completed",
+      result: {
+        text: "final output"
+      }
+    });
   });
 
   it("reads job status from the canonical /jobs/{jobId} route", async () => {
@@ -207,7 +285,7 @@ describe("GPT route OpenAPI contract and client", () => {
       createJsonResponse({ id: "job-123", status: "running" })
     );
 
-    await getJobStatus({
+    const payload = await getJobStatus({
       baseUrl: "http://127.0.0.1:3000",
       jobId: "job-123",
     });
@@ -218,6 +296,12 @@ describe("GPT route OpenAPI contract and client", () => {
         headers: {}
       })
     );
+    expect(payload).toMatchObject({
+      ok: true,
+      action: "get_status",
+      jobId: "job-123",
+      status: "running"
+    });
   });
 
   it("keeps fetchGptJobResult as a compatibility alias over the canonical jobs API", async () => {
@@ -271,22 +355,43 @@ describe("GPT route OpenAPI contract and client", () => {
     const requestSchema = spec.components?.schemas?.GptRouteRequest;
     expect(requestSchema).toEqual(
       expect.objectContaining({
-        type: "object",
-        additionalProperties: false,
+        oneOf: expect.any(Array),
+        discriminator: expect.objectContaining({
+          propertyName: "action"
+        })
       })
     );
-    expect(requestSchema?.properties?.prompt).toBeDefined();
-    expect(requestSchema?.properties?.executionMode).toBeDefined();
-    expect(requestSchema?.properties?.waitForResultMs).toBeDefined();
-    expect(requestSchema?.required ?? []).not.toContain("action");
-    expect(requestSchema?.properties?.gptId).toBeUndefined();
-    expect(requestSchema?.not?.required).toContain("gptId");
+    expect(requestSchema?.oneOf).toEqual(
+      expect.arrayContaining([
+        { $ref: "#/components/schemas/GenericPromptRequest" },
+        { $ref: "#/components/schemas/QueryActionRequest" },
+        { $ref: "#/components/schemas/QueryAndWaitActionRequest" },
+        { $ref: "#/components/schemas/GetStatusActionRequest" },
+        { $ref: "#/components/schemas/GetResultActionRequest" },
+      ])
+    );
+    expect(spec.components?.schemas?.QueryActionRequest?.allOf?.[1]?.required ?? []).toEqual(
+      expect.arrayContaining(["action", "prompt"])
+    );
+    expect(spec.components?.schemas?.QueryAndWaitActionRequest?.allOf?.[1]?.required ?? []).toEqual(
+      expect.arrayContaining(["action", "prompt"])
+    );
+    expect(spec.components?.schemas?.GetStatusActionRequest?.required ?? []).toEqual(
+      expect.arrayContaining(["action", "payload"])
+    );
+    expect(spec.components?.schemas?.GetResultActionRequest?.required ?? []).toEqual(
+      expect.arrayContaining(["action", "payload"])
+    );
     expect(
-      spec.paths?.["/gpt/{gptId}"]?.post?.requestBody?.content?.["application/json"]?.examples?.generateAndWait?.value
+      spec.paths?.["/gpt/{gptId}"]?.post?.requestBody?.content?.["application/json"]?.examples?.genericPrompt?.value
     ).toEqual({
-      prompt: "Generate a Seth Rollins promo prompt",
-      executionMode: "async",
-      waitForResultMs: 20000
+      prompt: "Help me with this module request."
+    });
+    expect(
+      spec.paths?.["/gpt/{gptId}"]?.post?.requestBody?.content?.["application/json"]?.examples?.query?.value
+    ).toEqual({
+      action: "query",
+      prompt: "Create the writing job and return its identifier."
     });
     expect(
       spec.paths?.["/gpt/{gptId}"]?.post?.requestBody?.content?.["application/json"]?.examples?.getResult?.value
@@ -308,7 +413,7 @@ describe("GPT route OpenAPI contract and client", () => {
       spec.paths?.["/gpt/{gptId}"]?.post?.requestBody?.content?.["application/json"]?.examples?.queryAndWait?.value
     ).toEqual({
       action: "query_and_wait",
-      prompt: "Generate a Seth Rollins promo prompt",
+      prompt: "Wait briefly for a fast completion.",
       timeoutMs: 25000,
       pollIntervalMs: 500
     });

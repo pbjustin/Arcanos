@@ -3,14 +3,14 @@
   "info": {
     "title": "Arcanos GPT Route API",
     "version": "1.0.0",
-    "description": "Canonical public contract for GPT-routed module requests. GPT identity is path-bound at /gpt/{gptId}; callers must not duplicate gptId in the JSON body or default unsupported actions such as \"ask\"."
+    "description": "Canonical public contract for GPT-routed module requests. GPT identity is path-bound at /gpt/{gptId}; callers must not duplicate gptId in the JSON body. The async bridge exposes four canonical operations: query, query_and_wait, get_status, and get_result."
   },
   "paths": {
     "/gpt/{gptId}": {
       "post": {
         "operationId": "invokeGptRoute",
-        "summary": "Invoke a GPT-routed module request",
-        "description": "Send a prompt to any GPT/module binding using the path-bound GPT identifier. `action` is optional and should only be sent when the caller explicitly selects a backend-supported action. Use `executionMode: \"async\"` with `waitForResultMs` for transport-level direct-return attempts, or use `action: \"query_and_wait\"` with `prompt` for the explicit integration action that creates one async GPT job, waits internally, and returns the final result or the canonical `jobId` on timeout. Use `action: \"get_status\"` or `action: \"get_result\"` with `payload.jobId` to read canonical async job state without enqueueing new work.",
+        "summary": "Invoke a GPT-routed module request or async bridge operation",
+        "description": "Use action=query to create one durable writing job, action=query_and_wait to create one durable writing job and wait briefly for fast completion, action=get_status to read status through the GPT compatibility bridge, and action=get_result to read the final result through the GPT compatibility bridge. Natural-language retrieval prompts, runtime inspection prompts, DAG control prompts, and MCP control requests are intentionally rejected on this route.",
         "parameters": [
           {
             "name": "gptId",
@@ -37,39 +37,18 @@
                     "prompt": "Help me with this module request."
                   }
                 },
-                "explicitAction": {
-                  "summary": "Explicit supported action with structured payload",
+                "query": {
+                  "summary": "Canonical async bridge create-job operation",
                   "value": {
-                    "prompt": "Generate a booking plan for tonight's show.",
-                    "action": "generateBooking",
-                    "payload": {
-                      "brand": "AEW",
-                      "venue": "Daily's Place"
-                    }
-                  }
-                },
-                "systemState": {
-                  "summary": "Governed daemon/core system state request",
-                  "value": {
-                    "action": "system_state",
-                    "payload": {
-                      "sessionId": "cli-123"
-                    }
-                  }
-                },
-                "generateAndWait": {
-                  "summary": "Queue-backed generate-and-wait request for a short prompt-generation flow",
-                  "value": {
-                    "prompt": "Generate a Seth Rollins promo prompt",
-                    "executionMode": "async",
-                    "waitForResultMs": 20000
+                    "action": "query",
+                    "prompt": "Create the writing job and return its identifier."
                   }
                 },
                 "queryAndWait": {
-                  "summary": "Explicit integration action that creates one async job and waits for completion",
+                  "summary": "Canonical async bridge create-and-wait operation",
                   "value": {
                     "action": "query_and_wait",
-                    "prompt": "Generate a Seth Rollins promo prompt",
+                    "prompt": "Wait briefly for a fast completion.",
                     "timeoutMs": 25000,
                     "pollIntervalMs": 500
                   }
@@ -91,6 +70,17 @@
                       "jobId": "59dbfb2b-0c64-4eda-8a1e-b950a63f7fe0"
                     }
                   }
+                },
+                "moduleAction": {
+                  "summary": "Explicit module-specific action",
+                  "value": {
+                    "prompt": "Generate a booking plan for tonight's show.",
+                    "action": "generateBooking",
+                    "payload": {
+                      "brand": "AEW",
+                      "venue": "Daily's Place"
+                    }
+                  }
                 }
               }
             }
@@ -98,27 +88,94 @@
         },
         "responses": {
           "200": {
-            "description": "Routed module response envelope",
+            "description": "Completed async bridge response, control-plane bridge response, or generic GPT response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/GptRouteResponse"
+                  "$ref": "#/components/schemas/GptRouteSuccessResponse"
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Async job accepted or still pending after bounded wait",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GptAsyncPendingResponse"
                 }
               }
             }
           },
           "400": {
-            "description": "Bad request",
+            "description": "Validation failure or control-plane misuse",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/GptRouteErrorResponse"
+                },
+                "examples": {
+                  "missingJobId": {
+                    "summary": "Structured control action missing payload.jobId",
+                    "value": {
+                      "ok": false,
+                      "action": "get_status",
+                      "error": {
+                        "code": "JOB_ID_INVALID",
+                        "message": "get_status action requires payload.jobId. payload.jobId: String must contain at least 1 character(s)"
+                      }
+                    }
+                  },
+                  "queryMissingPrompt": {
+                    "summary": "Canonical query requires a prompt",
+                    "value": {
+                      "ok": false,
+                      "action": "query",
+                      "error": {
+                        "code": "PROMPT_REQUIRED",
+                        "message": "query requires a non-empty prompt."
+                      }
+                    }
+                  },
+                  "retrievalMisuse": {
+                    "summary": "Prompt-based job retrieval is rejected",
+                    "value": {
+                      "ok": false,
+                      "action": "result_lookup",
+                      "error": {
+                        "code": "JOB_LOOKUP_REQUIRES_JOBS_API",
+                        "message": "Job retrieval requests must use the jobs API. Do not send result or status lookups through POST /gpt/{gptId}."
+                      },
+                      "canonical": {
+                        "poll": "/jobs/59dbfb2b-0c64-4eda-8a1e-b950a63f7fe0",
+                        "result": "/jobs/59dbfb2b-0c64-4eda-8a1e-b950a63f7fe0/result"
+                      }
+                    }
+                  },
+                  "controlGuard": {
+                    "summary": "Runtime inspection or other control prompts are rejected on the writing plane",
+                    "value": {
+                      "ok": false,
+                      "action": "runtime.inspect",
+                      "error": {
+                        "code": "CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT",
+                        "message": "Runtime diagnostics, worker state, tracing, and queue inspection must use direct control-plane endpoints or POST /mcp. Do not send runtime control requests through POST /gpt/{gptId}."
+                      },
+                      "canonical": {
+                        "status": "/status",
+                        "workers": "/workers/status",
+                        "workerHealth": "/worker-helper/health",
+                        "selfHeal": "/status/safety/self-heal",
+                        "mcp": "/mcp"
+                      }
+                    }
+                  }
                 }
               }
             }
           },
           "404": {
-            "description": "Unknown GPT route",
+            "description": "Unknown GPT route or missing async job status lookup",
             "content": {
               "application/json": {
                 "schema": {
@@ -128,11 +185,44 @@
             }
           },
           "409": {
-            "description": "System state optimistic-lock conflict",
+            "description": "Idempotency conflict, optimistic-lock conflict, or terminal cancellation conflict",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/GptRouteErrorResponse"
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Async GPT job expired during bounded wait",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GptRouteErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable async GPT jobs unavailable for canonical bridge operations",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GptRouteErrorResponse"
+                },
+                "examples": {
+                  "asyncJobsUnavailable": {
+                    "summary": "Canonical query is unavailable when durable job persistence is down",
+                    "value": {
+                      "ok": false,
+                      "action": "query",
+                      "error": {
+                        "code": "ASYNC_GPT_JOBS_UNAVAILABLE",
+                        "message": "query requires durable GPT job persistence, but the jobs backend is unavailable."
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -144,121 +234,506 @@
   "components": {
     "schemas": {
       "GptRouteRequest": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/GenericPromptRequest"
+          },
+          {
+            "$ref": "#/components/schemas/QueryActionRequest"
+          },
+          {
+            "$ref": "#/components/schemas/QueryAndWaitActionRequest"
+          },
+          {
+            "$ref": "#/components/schemas/GetStatusActionRequest"
+          },
+          {
+            "$ref": "#/components/schemas/GetResultActionRequest"
+          },
+          {
+            "$ref": "#/components/schemas/SystemStateActionRequest"
+          },
+          {
+            "$ref": "#/components/schemas/ModuleActionRequest"
+          }
+        ],
+        "discriminator": {
+          "propertyName": "action",
+          "mapping": {
+            "query": "#/components/schemas/QueryActionRequest",
+            "query_and_wait": "#/components/schemas/QueryAndWaitActionRequest",
+            "get_status": "#/components/schemas/GetStatusActionRequest",
+            "get_result": "#/components/schemas/GetResultActionRequest",
+            "system_state": "#/components/schemas/SystemStateActionRequest"
+          }
+        }
+      },
+      "PromptPayload": {
         "type": "object",
-        "description": "Prompt-first request contract for GPT-routed module calls. The backend resolves the route from the path parameter, not from body metadata.",
         "additionalProperties": false,
         "properties": {
           "prompt": {
             "type": "string",
-            "minLength": 1,
-            "description": "Prompt or user-visible request text."
+            "minLength": 1
           },
           "gptVersion": {
-            "type": "string",
-            "description": "Optional GPT version marker from the caller."
-          },
-          "action": {
-            "type": "string",
-            "description": "Optional explicit backend action. Omit by default so the backend can infer intent. Supported explicit actions include module-specific actions, `system_state`, `get_status`, `get_result`, and `query_and_wait`. Do not inject unsupported defaults such as \"ask\". Use `get_status` or `get_result` only with `payload.jobId`, and use `query_and_wait` only with a non-empty `prompt`."
-          },
-          "executionMode": {
-            "type": "string",
-            "enum": [
-              "sync",
-              "async"
-            ],
-            "description": "Optional execution preference. Use `async` together with `waitForResultMs` to request a queue-backed direct-return attempt."
-          },
-          "waitForResultMs": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "Optional bounded wait budget in milliseconds for transport-level job-backed direct-return calls. When the budget expires, the backend returns the canonical `jobId` plus instructions to read `/jobs/{id}/result`."
-          },
-          "timeoutMs": {
-            "type": "integer",
-            "minimum": 0,
-            "description": "Optional bounded wait budget in milliseconds for the explicit `query_and_wait` action. This is an alias of `waitForResultMs` for integration callers that model waiting as an action contract."
-          },
-          "pollIntervalMs": {
-            "type": "integer",
-            "minimum": 1,
-            "description": "Optional polling cadence in milliseconds used only while the backend waits for the async job to finish. Supported by both transport-level direct-return requests and `query_and_wait`."
+            "type": "string"
           },
           "payload": {
             "type": "object",
-            "description": "Optional structured payload forwarded to the module when the caller intentionally uses structured inputs.",
             "additionalProperties": true
           },
           "context": {
             "type": "object",
-            "description": "Optional caller context object.",
             "additionalProperties": true
+          },
+          "waitForResultMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "timeoutMs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "pollIntervalMs": {
+            "type": "integer",
+            "minimum": 1
           }
-        },
-        "not": {
-          "required": [
-            "gptId"
-          ]
         }
       },
-      "GptRouteResponse": {
+      "GenericPromptRequest": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PromptPayload"
+          },
+          {
+            "type": "object",
+            "required": [
+              "prompt"
+            ],
+            "properties": {
+              "executionMode": {
+                "type": "string",
+                "enum": [
+                  "sync",
+                  "async"
+                ]
+              }
+            },
+            "not": {
+              "required": [
+                "action"
+              ]
+            }
+          }
+        ]
+      },
+      "QueryActionRequest": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PromptPayload"
+          },
+          {
+            "type": "object",
+            "required": [
+              "action",
+              "prompt"
+            ],
+            "properties": {
+              "action": {
+                "const": "query"
+              }
+            }
+          }
+        ]
+      },
+      "QueryAndWaitActionRequest": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PromptPayload"
+          },
+          {
+            "type": "object",
+            "required": [
+              "action",
+              "prompt"
+            ],
+            "properties": {
+              "action": {
+                "const": "query_and_wait"
+              }
+            }
+          }
+        ]
+      },
+      "GetStatusActionRequest": {
         "type": "object",
-        "description": "Generic GPT route response envelope.",
+        "additionalProperties": false,
+        "required": [
+          "action",
+          "payload"
+        ],
+        "properties": {
+          "action": {
+            "const": "get_status"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/JobLookupPayload"
+          }
+        }
+      },
+      "GetResultActionRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "action",
+          "payload"
+        ],
+        "properties": {
+          "action": {
+            "const": "get_result"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/JobLookupPayload"
+          }
+        }
+      },
+      "SystemStateActionRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "const": "system_state"
+          },
+          "payload": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "ModuleActionRequest": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PromptPayload"
+          },
+          {
+            "type": "object",
+            "required": [
+              "action"
+            ],
+            "properties": {
+              "action": {
+                "type": "string",
+                "minLength": 1,
+                "not": {
+                  "enum": [
+                    "query",
+                    "query_and_wait",
+                    "get_status",
+                    "get_result",
+                    "system_state"
+                  ]
+                }
+              }
+            }
+          }
+        ]
+      },
+      "JobLookupPayload": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "jobId"
+        ],
+        "properties": {
+          "jobId": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "GptRouteSuccessResponse": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/GptAsyncCompletedResponse"
+          },
+          {
+            "$ref": "#/components/schemas/GptJobStatusResponse"
+          },
+          {
+            "$ref": "#/components/schemas/GptJobResultResponse"
+          },
+          {
+            "$ref": "#/components/schemas/GptRouteGenericResponse"
+          }
+        ]
+      },
+      "GptAsyncPendingResponse": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "ok",
+          "action",
+          "status",
+          "jobId",
+          "poll",
+          "stream"
+        ],
         "properties": {
           "ok": {
-            "type": "boolean"
+            "const": true
+          },
+          "action": {
+            "enum": [
+              "query",
+              "query_and_wait"
+            ]
+          },
+          "status": {
+            "const": "pending"
+          },
+          "jobId": {
+            "type": "string"
+          },
+          "poll": {
+            "type": "string"
+          },
+          "stream": {
+            "type": "string"
+          },
+          "jobStatus": {
+            "type": "string"
+          },
+          "lifecycleStatus": {
+            "type": "string"
+          },
+          "instruction": {
+            "type": "string"
+          },
+          "directReturn": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "idempotencyKey": {
+            "type": "string"
+          },
+          "idempotencySource": {
+            "enum": [
+              "explicit",
+              "derived"
+            ]
+          },
+          "_route": {
+            "$ref": "#/components/schemas/GptRouteMeta"
+          }
+        }
+      },
+      "GptAsyncCompletedResponse": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "ok",
+          "action",
+          "jobId",
+          "status",
+          "result"
+        ],
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "action": {
+            "enum": [
+              "query",
+              "query_and_wait"
+            ]
+          },
+          "jobId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "lifecycleStatus": {
+            "type": "string"
+          },
+          "poll": {
+            "type": "string"
+          },
+          "stream": {
+            "type": "string"
+          },
+          "result": {},
+          "idempotencyKey": {
+            "type": "string"
+          },
+          "idempotencySource": {
+            "enum": [
+              "explicit",
+              "derived"
+            ]
+          },
+          "_route": {
+            "$ref": "#/components/schemas/GptRouteMeta"
+          }
+        }
+      },
+      "GptJobStatusResponse": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "ok",
+          "action",
+          "jobId",
+          "status",
+          "result"
+        ],
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "action": {
+            "const": "get_status"
+          },
+          "jobId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "lifecycleStatus": {
+            "type": "string"
+          },
+          "result": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "_route": {
+            "$ref": "#/components/schemas/GptRouteMeta"
+          }
+        }
+      },
+      "GptJobResultResponse": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "ok",
+          "action",
+          "jobId",
+          "status",
+          "result"
+        ],
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "action": {
+            "const": "get_result"
+          },
+          "jobId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "jobStatus": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lifecycleStatus": {
+            "type": "string"
+          },
+          "poll": {
+            "type": "string"
+          },
+          "stream": {
+            "type": "string"
+          },
+          "output": {},
+          "error": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GptRouteError"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "result": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "_route": {
+            "$ref": "#/components/schemas/GptRouteMeta"
+          }
+        }
+      },
+      "GptRouteGenericResponse": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "ok"
+        ],
+        "properties": {
+          "ok": {
+            "const": true
           },
           "result": {},
           "_route": {
-            "type": "object",
-            "properties": {
-              "gptId": {
-                "type": "string"
-              },
-              "module": {
-                "type": "string"
-              },
-              "action": {
-                "type": "string"
-              },
-              "route": {
-                "type": "string"
-              },
-              "timestamp": {
-                "type": "string"
-              }
-            },
-            "additionalProperties": true
-          },
-          "error": {
-            "$ref": "#/components/schemas/GptRouteError"
+            "$ref": "#/components/schemas/GptRouteMeta"
           }
-        },
-        "additionalProperties": true
+        }
       },
       "GptRouteErrorResponse": {
         "type": "object",
-        "properties": {
-          "ok": {
-            "type": "boolean",
-            "const": false
-          },
-          "error": {
-            "$ref": "#/components/schemas/GptRouteError"
-          },
-          "_route": {
-            "type": "object",
-            "additionalProperties": true
-          }
-        },
+        "additionalProperties": true,
         "required": [
           "ok",
           "error"
         ],
-        "additionalProperties": true
+        "properties": {
+          "ok": {
+            "const": false
+          },
+          "action": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "jobId": {
+            "type": "string"
+          },
+          "error": {
+            "$ref": "#/components/schemas/GptRouteError"
+          },
+          "canonical": {
+            "type": "object",
+            "additionalProperties": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "_route": {
+            "$ref": "#/components/schemas/GptRouteMeta"
+          }
+        }
       },
       "GptRouteError": {
         "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "code",
+          "message"
+        ],
         "properties": {
           "code": {
             "type": "string"
@@ -267,12 +742,31 @@
             "type": "string"
           },
           "details": {}
-        },
-        "required": [
-          "code",
-          "message"
-        ],
-        "additionalProperties": true
+        }
+      },
+      "GptRouteMeta": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "requestId": {
+            "type": "string"
+          },
+          "gptId": {
+            "type": "string"
+          },
+          "module": {
+            "type": "string"
+          },
+          "action": {
+            "type": "string"
+          },
+          "route": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "string"
+          }
+        }
       }
     }
   }
