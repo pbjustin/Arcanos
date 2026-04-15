@@ -1,6 +1,6 @@
 const JOB_ROUTE_LOOKUP_RE = /\/jobs\/(?<jobId>[^/\s?#]+)(?:\/(?<routeKind>result))?/i;
 const JOB_TEXT_ID_RE = /\bjob(?:\s+id)?\s*(?::|#|=|\bis\b)?\s*(?<jobId>[A-Za-z0-9][A-Za-z0-9._:-]{2,})\b/i;
-const JOB_LOOKUP_VERB_RE = /\b(check|fetch|get|inspect|lookup|poll|pull|read|retrieve|show)\b/i;
+const JOB_LOOKUP_VERB_RE = /\b(check|fetch|get|inspect|look\s+up|lookup|poll|pull|read|retrieve|show)\b/i;
 const JOB_RESULT_CUE_RE = /\b(answer|completion|output|response|result)\b/i;
 const JOB_STATUS_CUE_RE = /\b(poll|progress|state|status)\b/i;
 const JOB_CUE_RE = /\bjobs?\b|\/jobs\//i;
