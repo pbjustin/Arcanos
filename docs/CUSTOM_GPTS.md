@@ -58,7 +58,7 @@ Rules:
 - `gptId` belongs in the path, not the JSON body.
 - Omit `action` by default so the backend can infer intent from the GPT/module binding.
 - Use `action: "query"` with a non-empty `prompt` when the caller wants a durable writing job immediately and will poll later.
-- Use `action: "query_and_wait"` with a non-empty `prompt` when the caller wants one durable writing job plus a bounded inline wait.
+- Use `action: "query_and_wait"` with a non-empty `prompt` and optional `payload.timeoutMs` / `payload.pollIntervalMs` when the caller wants one durable writing job plus a bounded inline wait.
 - Use `action: "get_status"` or `action: "get_result"` with `payload.jobId` when you need to fetch canonical async GPT job state without creating new work.
 - Use direct control endpoints instead of `/gpt/:gptId` for runtime inspection, DAG tracing/execution, and MCP tool calls.
 - Retrieval by natural-language prompt is intentionally blocked. Do not ask the GPT route to “look up job 123” in `prompt`; use the structured `action + payload.jobId` contract.
@@ -95,8 +95,10 @@ Create a durable writing job and wait briefly:
 {
   "action": "query_and_wait",
   "prompt": "Draft the release summary.",
-  "timeoutMs": 25000,
-  "pollIntervalMs": 500
+  "payload": {
+    "timeoutMs": 25000,
+    "pollIntervalMs": 500
+  }
 }
 ```
 

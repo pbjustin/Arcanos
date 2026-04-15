@@ -286,23 +286,32 @@ export function buildGptRouteRequestBody(options: Omit<InvokeGptRouteOptions, "b
     body.executionMode = options.executionMode;
   }
 
-  if (
-    typeof options.waitForResultMs === "number" &&
-    Number.isFinite(options.waitForResultMs) &&
-    options.waitForResultMs >= 0
-  ) {
-    body.waitForResultMs = Math.trunc(options.waitForResultMs);
+  const isExplicitQueryAndWait = action === "query_and_wait";
+  const queryAndWaitPayload = buildQueryAndWaitPayload(options);
+
+  if (!isExplicitQueryAndWait) {
+    if (
+      typeof options.waitForResultMs === "number" &&
+      Number.isFinite(options.waitForResultMs) &&
+      options.waitForResultMs >= 0
+    ) {
+      body.waitForResultMs = Math.trunc(options.waitForResultMs);
+    }
+
+    if (
+      typeof options.pollIntervalMs === "number" &&
+      Number.isFinite(options.pollIntervalMs) &&
+      options.pollIntervalMs > 0
+    ) {
+      body.pollIntervalMs = Math.trunc(options.pollIntervalMs);
+    }
   }
 
-  if (
-    typeof options.pollIntervalMs === "number" &&
-    Number.isFinite(options.pollIntervalMs) &&
-    options.pollIntervalMs > 0
-  ) {
-    body.pollIntervalMs = Math.trunc(options.pollIntervalMs);
-  }
-
-  if (options.payload) {
+  if (isExplicitQueryAndWait) {
+    if (queryAndWaitPayload) {
+      body.payload = queryAndWaitPayload;
+    }
+  } else if (options.payload) {
     body.payload = options.payload;
   }
 
@@ -394,6 +403,12 @@ export async function queryAndWaitGptRoute(
     gptId: options.gptId,
     prompt: options.prompt,
     action: "query_and_wait",
+    payload: compactObject({
+      ...(typeof options.timeoutMs === "number" ? { timeoutMs: options.timeoutMs } : {}),
+      ...(typeof options.pollIntervalMs === "number"
+        ? { pollIntervalMs: options.pollIntervalMs }
+        : {})
+    }),
     waitForResultMs: options.timeoutMs,
     pollIntervalMs: options.pollIntervalMs,
     context: options.context,
@@ -569,6 +584,36 @@ function compactObject(record: Record<string, unknown>): Record<string, unknown>
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function buildQueryAndWaitPayload(
+  options: Pick<InvokeGptRouteOptions, "payload" | "waitForResultMs" | "pollIntervalMs">
+): Record<string, unknown> | undefined {
+  const payload = isRecord(options.payload)
+    ? { ...options.payload }
+    : {};
+
+  if (
+    !Object.prototype.hasOwnProperty.call(payload, "timeoutMs") &&
+    typeof options.waitForResultMs === "number" &&
+    Number.isFinite(options.waitForResultMs) &&
+    options.waitForResultMs >= 0
+  ) {
+    payload.timeoutMs = Math.trunc(options.waitForResultMs);
+  }
+
+  if (
+    !Object.prototype.hasOwnProperty.call(payload, "pollIntervalMs") &&
+    typeof options.pollIntervalMs === "number" &&
+    Number.isFinite(options.pollIntervalMs) &&
+    options.pollIntervalMs > 0
+  ) {
+    payload.pollIntervalMs = Math.trunc(options.pollIntervalMs);
+  }
+
+  return Object.keys(payload).length > 0
+    ? payload
+    : undefined;
 }
 
 function isJobLookupEnvelope(

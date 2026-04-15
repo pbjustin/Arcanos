@@ -9,6 +9,10 @@
       "method": "POST",
       "plane": "writing",
       "canonicalAction": "query",
+      "canonicalRequestBody": {
+        "action": "query",
+        "prompt": "Draft the release summary."
+      },
       "preferredClientSurface": "Async GPT bridge create-job operation. Use this when the caller needs a durable job id without waiting for final output."
     },
     "request_query_and_wait": {
@@ -16,6 +20,14 @@
       "method": "POST",
       "plane": "writing",
       "canonicalAction": "query_and_wait",
+      "canonicalRequestBody": {
+        "action": "query_and_wait",
+        "prompt": "Draft the release summary.",
+        "payload": {
+          "timeoutMs": 25000,
+          "pollIntervalMs": 500
+        }
+      },
       "preferredClientSurface": "Async GPT bridge create-and-wait operation. Use this when the caller can wait briefly for fast completion but still needs the same durable job id on timeout."
     },
     "request_gpt_job_status": {
@@ -23,6 +35,12 @@
       "method": "POST",
       "plane": "control",
       "canonicalAction": "get_status",
+      "canonicalRequestBody": {
+        "action": "get_status",
+        "payload": {
+          "jobId": "job_123"
+        }
+      },
       "preferredClientSurface": "GPT-route compatibility status read. Prefer direct /jobs/{id} when the caller can reach jobs endpoints."
     },
     "request_gpt_job_result": {
@@ -30,6 +48,12 @@
       "method": "POST",
       "plane": "control",
       "canonicalAction": "get_result",
+      "canonicalRequestBody": {
+        "action": "get_result",
+        "payload": {
+          "jobId": "job_123"
+        }
+      },
       "preferredClientSurface": "GPT-route compatibility result read. Prefer direct /jobs/{id}/result when the caller can reach jobs endpoints."
     },
     "request_job_status": {
@@ -68,6 +92,9 @@
         "messages",
         "mode",
         "pollIntervalMs",
+        "payload.jobId",
+        "payload.timeoutMs",
+        "payload.pollIntervalMs",
         "patch",
         "prompt",
         "expectedVersion",

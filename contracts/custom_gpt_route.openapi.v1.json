@@ -49,8 +49,10 @@
                   "value": {
                     "action": "query_and_wait",
                     "prompt": "Wait briefly for a fast completion.",
-                    "timeoutMs": 25000,
-                    "pollIntervalMs": 500
+                    "payload": {
+                      "timeoutMs": 25000,
+                      "pollIntervalMs": 500
+                    }
                   }
                 },
                 "getStatus": {
@@ -347,24 +349,46 @@
           }
         ]
       },
-      "QueryAndWaitActionRequest": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/PromptPayload"
+      "QueryAndWaitPayload": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "timeoutMs": {
+            "type": "integer",
+            "minimum": 0
           },
-          {
-            "type": "object",
-            "required": [
-              "action",
-              "prompt"
-            ],
-            "properties": {
-              "action": {
-                "const": "query_and_wait"
-              }
-            }
+          "pollIntervalMs": {
+            "type": "integer",
+            "minimum": 1
           }
-        ]
+        }
+      },
+      "QueryAndWaitActionRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "action",
+          "prompt"
+        ],
+        "properties": {
+          "action": {
+            "const": "query_and_wait"
+          },
+          "prompt": {
+            "type": "string",
+            "minLength": 1
+          },
+          "gptVersion": {
+            "type": "string"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/QueryAndWaitPayload"
+          },
+          "context": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
       },
       "GetStatusActionRequest": {
         "type": "object",

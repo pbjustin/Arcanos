@@ -288,6 +288,24 @@ function parseNonNegativeIntegerLike(value: unknown): number | undefined {
     : undefined;
 }
 
+function readNumberOverrideFromRecord(
+  record: Record<string, unknown> | null,
+  fieldNames: readonly string[]
+): number | undefined {
+  if (!record) {
+    return undefined;
+  }
+
+  for (const fieldName of fieldNames) {
+    const parsedValue = parseNonNegativeIntegerLike(record[fieldName]);
+    if (parsedValue !== undefined) {
+      return parsedValue;
+    }
+  }
+
+  return undefined;
+}
+
 function readNumberOverrideFromSources(
   req: express.Request,
   body: unknown,
@@ -295,12 +313,20 @@ function readNumberOverrideFromSources(
   headerNames: readonly string[] = []
 ): number | undefined {
   const normalizedBody = normalizeGptRequestBody(body);
-  for (const fieldName of fieldNames) {
-    const value = normalizedBody?.[fieldName];
-    const parsedValue = parseNonNegativeIntegerLike(value);
-    if (parsedValue !== undefined) {
-      return parsedValue;
-    }
+  const bodyOverride = readNumberOverrideFromRecord(normalizedBody, fieldNames);
+  if (bodyOverride !== undefined) {
+    return bodyOverride;
+  }
+
+  const payloadRecord =
+    normalizedBody?.payload &&
+    typeof normalizedBody.payload === 'object' &&
+    !Array.isArray(normalizedBody.payload)
+      ? normalizedBody.payload as Record<string, unknown>
+      : null;
+  const payloadOverride = readNumberOverrideFromRecord(payloadRecord, fieldNames);
+  if (payloadOverride !== undefined) {
+    return payloadOverride;
   }
 
   const queryRecord = req.query as Record<string, unknown>;
@@ -633,6 +659,7 @@ function normalizeQueryAndWaitBody(
 
   const normalizedQueryBody = { ...normalizedBody };
   delete normalizedQueryBody.action;
+  delete normalizedQueryBody.payload;
   normalizedQueryBody.executionMode = 'async';
   return normalizedQueryBody;
 }

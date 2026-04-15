@@ -217,8 +217,10 @@ def test_request_query_and_wait_uses_bridge_wait_controls_and_normalizes_respons
     assert payload == {
         "action": "query_and_wait",
         "prompt": "Generate a Seth Rollins promo prompt",
-        "timeoutMs": 25000,
-        "pollIntervalMs": 500,
+        "payload": {
+            "timeoutMs": 25000,
+            "pollIntervalMs": 500,
+        },
     }
     assert response.value.action == "query_and_wait"
     assert response.value.job_id == "job-query-and-wait-1"
@@ -305,6 +307,46 @@ def test_request_gpt_job_result_uses_structured_bridge_payload() -> None:
         "jobId": "job-123",
         "status": "completed",
         "result": {"text": "final output"},
+    }
+
+
+def test_backend_api_client_request_json_preserves_nested_bridge_payloads(monkeypatch) -> None:
+    captured_request: dict[str, Any] = {}
+
+    def _request_sender(method: str, url: str, **kwargs: Any) -> Any:
+        captured_request["method"] = method
+        captured_request["url"] = url
+        captured_request["kwargs"] = kwargs
+        return SimpleNamespace(
+            status_code=200,
+            json=lambda: {"ok": True, "action": "get_result", "jobId": "job-123", "status": "completed"},
+            text='{"ok": true}',
+            headers={},
+        )
+
+    monkeypatch.setattr(backend_client_module, "log_audit_event", lambda *args, **kwargs: None)
+
+    client = BackendApiClient(
+        "https://backend.example.com",
+        lambda: "token",
+        request_sender=_request_sender,
+    )
+
+    response = client._request_json(
+        "post",
+        "/gpt/arcanos-core",
+        {
+            "gptId": "arcanos-core",
+            "action": "get_result",
+            "payload": {"jobId": "job-123"},
+        },
+    )
+
+    assert response.ok is True
+    assert captured_request["url"] == "https://backend.example.com/gpt/arcanos-core"
+    assert captured_request["kwargs"]["json"] == {
+        "action": "get_result",
+        "payload": {"jobId": "job-123"},
     }
 
 

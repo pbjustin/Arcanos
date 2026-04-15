@@ -189,8 +189,35 @@ describe("GPT route OpenAPI contract and client", () => {
     expect(body).toEqual({
       prompt: "Generate a Seth Rollins promo prompt",
       action: "query_and_wait",
-      waitForResultMs: 25_000,
-      pollIntervalMs: 500
+      payload: {
+        timeoutMs: 25_000,
+        pollIntervalMs: 500
+      }
+    });
+  });
+
+  it("forwards nested GPT bridge payload objects intact through the generic route adapter", async () => {
+    const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(
+      createJsonResponse({ ok: true, action: "get_result", jobId: "job-123", status: "completed" })
+    );
+
+    await invokeGptRoute({
+      baseUrl: "http://127.0.0.1:3000",
+      gptId: "arcanos-core",
+      action: "get_result",
+      payload: {
+        jobId: "job-123"
+      }
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body));
+
+    expect(body).toEqual({
+      action: "get_result",
+      payload: {
+        jobId: "job-123"
+      }
     });
   });
 
@@ -373,7 +400,7 @@ describe("GPT route OpenAPI contract and client", () => {
     expect(spec.components?.schemas?.QueryActionRequest?.allOf?.[1]?.required ?? []).toEqual(
       expect.arrayContaining(["action", "prompt"])
     );
-    expect(spec.components?.schemas?.QueryAndWaitActionRequest?.allOf?.[1]?.required ?? []).toEqual(
+    expect(spec.components?.schemas?.QueryAndWaitActionRequest?.required ?? []).toEqual(
       expect.arrayContaining(["action", "prompt"])
     );
     expect(spec.components?.schemas?.GetStatusActionRequest?.required ?? []).toEqual(
@@ -414,8 +441,10 @@ describe("GPT route OpenAPI contract and client", () => {
     ).toEqual({
       action: "query_and_wait",
       prompt: "Wait briefly for a fast completion.",
-      timeoutMs: 25000,
-      pollIntervalMs: 500
+      payload: {
+        timeoutMs: 25000,
+        pollIntervalMs: 500
+      }
     });
   });
 

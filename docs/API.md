@@ -69,7 +69,7 @@ Deduplication rules:
 
 Canonical async bridge:
 - `query`: `POST /gpt/:gptId` with `{ "action": "query", "prompt": "..." }` creates or reuses one durable GPT writing job and returns the canonical `jobId` without inline waiting.
-- `query_and_wait`: `POST /gpt/:gptId` with `{ "action": "query_and_wait", "prompt": "...", "timeoutMs": 25000, "pollIntervalMs": 500 }` creates or reuses one durable GPT writing job and waits briefly for fast completion.
+- `query_and_wait`: `POST /gpt/:gptId` with `{ "action": "query_and_wait", "prompt": "...", "payload": { "timeoutMs": 25000, "pollIntervalMs": 500 } }` creates or reuses one durable GPT writing job and waits briefly for fast completion.
 - `get_status`: `POST /gpt/:gptId` with `{ "action": "get_status", "payload": { "jobId": "..." } }` returns structured status from the control plane without creating work.
 - `get_result`: `POST /gpt/:gptId` with `{ "action": "get_result", "payload": { "jobId": "..." } }` returns structured job result state from the control plane without creating work.
 

@@ -361,11 +361,14 @@ def request_query_and_wait(
         )
 
     route = resolve_backend_chat_route(gpt_id)
+    query_and_wait_payload = _build_backend_payload(
+        timeoutMs=timeout_ms,
+        pollIntervalMs=poll_interval_ms,
+    )
     payload = _build_backend_payload(
         action="query_and_wait",
         prompt=normalized_prompt,
-        timeoutMs=timeout_ms,
-        pollIntervalMs=poll_interval_ms,
+        payload=query_and_wait_payload if query_and_wait_payload else None,
     )
     _copy_backend_context_fields(client, payload, metadata)
     return _request_gpt_async_bridge(

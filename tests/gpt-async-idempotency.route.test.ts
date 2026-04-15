@@ -916,6 +916,66 @@ describe('async /gpt idempotency', () => {
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
+  it('reads query_and_wait wait controls from payload without falling back to top-level fields', async () => {
+    findOrCreateGptJobMock.mockResolvedValue({
+      job: {
+        id: 'job-query-and-wait-payload-controls',
+        status: 'running'
+      },
+      created: true,
+      deduped: false,
+      dedupeReason: 'new_job'
+    });
+    waitForQueuedGptJobCompletionMock.mockResolvedValue({
+      state: 'pending',
+      job: {
+        id: 'job-query-and-wait-payload-controls',
+        status: 'running'
+      }
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        action: 'query_and_wait',
+        prompt: 'Generate a Seth Rollins promo prompt',
+        payload: {
+          timeoutMs: 8_000,
+          pollIntervalMs: 125
+        }
+      });
+
+    expect(response.status).toBe(202);
+    expect(response.body).toMatchObject({
+      ok: true,
+      action: 'query_and_wait',
+      jobId: 'job-query-and-wait-payload-controls',
+      status: 'pending'
+    });
+    expect(resolveAsyncGptWaitForResultMsMock).toHaveBeenCalledWith(8_000);
+    expect(resolveAsyncGptPollIntervalMsMock).toHaveBeenCalledWith(125);
+    expect(waitForQueuedGptJobCompletionMock).toHaveBeenCalledWith(
+      'job-query-and-wait-payload-controls',
+      expect.objectContaining({
+        waitForResultMs: 8_000,
+        pollIntervalMs: 250
+      })
+    );
+    expect(planAutonomousWorkerJobMock).toHaveBeenCalledWith(
+      'gpt',
+      expect.objectContaining({
+        prompt: 'Generate a Seth Rollins promo prompt',
+        body: expect.objectContaining({
+          prompt: 'Generate a Seth Rollins promo prompt',
+          executionMode: 'async'
+        })
+      })
+    );
+    expect(planAutonomousWorkerJobMock.mock.calls[0]?.[1]?.body).not.toHaveProperty('payload');
+    expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
   it('supports explicit query by creating one durable writing job without waiting for completion', async () => {
     findOrCreateGptJobMock.mockResolvedValue({
       job: {

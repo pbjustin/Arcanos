@@ -352,8 +352,10 @@ describe("Arcanos CLI", () => {
         body: JSON.stringify({
           prompt: "Generate a Seth Rollins promo prompt",
           action: "query_and_wait",
-          waitForResultMs: 25000,
-          pollIntervalMs: 500
+          payload: {
+            timeoutMs: 25000,
+            pollIntervalMs: 500
+          }
         })
       })
     );
