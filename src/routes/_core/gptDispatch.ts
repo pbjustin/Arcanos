@@ -65,6 +65,7 @@ export type RouteGptRequestInput = {
   requestId?: string;
   logger?: any;
   request?: Request;
+  bypassIntentRouting?: boolean;
   runtimeExecutionMode?: 'request' | 'background';
   parentAbortSignal?: AbortSignal;
 };
@@ -106,6 +107,42 @@ function buildDiagnosticRouteResult(): { ok: true; route: "diagnostic"; message:
   };
 }
 
+const FORWARDED_TOP_LEVEL_PAYLOAD_KEYS = [
+  'message',
+  'prompt',
+  'userInput',
+  'content',
+  'text',
+  'query',
+  'messages',
+  'sessionId',
+  'overrideAuditSafe',
+  'answerMode',
+  'maxWords',
+  'max_words',
+  '__arcanosExecutionMode',
+] as const;
+
+function mergeForwardedTopLevelPayloadFields(
+  body: Record<string, unknown>,
+  explicitPayload: Record<string, unknown>
+): Record<string, unknown> {
+  const mergedPayload = { ...explicitPayload };
+
+  for (const key of FORWARDED_TOP_LEVEL_PAYLOAD_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(mergedPayload, key)) {
+      continue;
+    }
+
+    const forwardedValue = body[key];
+    if (forwardedValue !== undefined) {
+      mergedPayload[key] = forwardedValue;
+    }
+  }
+
+  return mergedPayload;
+}
+
 /**
  * Build module action payload while preserving explicit caller payloads.
  * Inputs: raw request body and resolved module action.
@@ -116,8 +153,8 @@ function buildDispatchPayload(body: unknown): unknown {
   //audit Assumption: explicit payload should take precedence for module actions; failure risk: action contracts receiving reshaped fields; expected invariant: payload passed through unchanged when provided; handling strategy: prefer `body.payload`.
   if (isRecord(body) && Object.prototype.hasOwnProperty.call(body, "payload")) {
     const explicitPayload = body.payload;
-    if (isRecord(explicitPayload) && Object.prototype.hasOwnProperty.call(explicitPayload, 'gptId')) {
-      const sanitizedPayload = { ...explicitPayload };
+    if (isRecord(explicitPayload)) {
+      const sanitizedPayload = mergeForwardedTopLevelPayloadFields(body, explicitPayload);
       delete sanitizedPayload.gptId;
       return sanitizedPayload;
     }
@@ -780,7 +817,16 @@ export async function resolveGptRouting(gptId: string, requestId?: string): Prom
   };
 }
 export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskEnvelope> {
-  const { gptId, body, requestId, logger, request, runtimeExecutionMode, parentAbortSignal } = input;
+  const {
+    gptId,
+    body,
+    requestId,
+    logger,
+    request,
+    bypassIntentRouting,
+    runtimeExecutionMode,
+    parentAbortSignal
+  } = input;
   const trimmedGptId = (gptId ?? "").trim();
   const requestEndpoint = request?.originalUrl ?? request?.url ?? request?.path;
   const preDispatchPayload = applyRuntimeExecutionModeOverride(
@@ -959,7 +1005,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
   });
 
   const forcedDirectResolved = resolveForcedDirectGptEntry(trimmedGptId);
-  const forceDirectModuleRouting = Boolean(forcedDirectResolved);
+  const forceDirectModuleRouting = Boolean(forcedDirectResolved) || bypassIntentRouting === true;
   let gptModuleMap = forcedDirectResolved ? null : await getGptModuleMap();
   let resolved = forcedDirectResolved ?? resolveGptEntry(trimmedGptId, (gptModuleMap ?? {}) as any);
   if (!resolved) {
@@ -1009,6 +1055,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     route: entry.route,
     matchMethod,
     forcedDirectRoute: forceDirectModuleRouting,
+    bypassIntentRouting: bypassIntentRouting === true,
   });
   const payload = preDispatchPayload;
   const prompt = extractPrompt(payload);

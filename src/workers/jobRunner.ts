@@ -67,6 +67,8 @@ interface JobExecutionOutcome {
 
 type OpenAIClient = ReturnType<typeof initOpenAIClient>;
 
+const QUEUED_GPT_PROMPT_KEYS = ['prompt', 'message', 'query', 'text', 'content', 'userInput'] as const;
+
 function initOpenAIClient() {
   const unified = getConfig();
   const apiKey = unified.openaiApiKey?.trim() || '';
@@ -96,6 +98,47 @@ function isProviderRuntimeError(message: string): boolean {
     normalizedMessage.includes('provider probe') ||
     normalizedMessage.includes('circuit breaker')
   );
+}
+
+function hasQueuedGptPromptField(body: Record<string, unknown>): boolean {
+  for (const key of QUEUED_GPT_PROMPT_KEYS) {
+    const candidate = body[key];
+    if (typeof candidate === 'string' && candidate.trim().length > 0) {
+      return true;
+    }
+  }
+
+  if (!Array.isArray(body.messages)) {
+    return false;
+  }
+
+  return body.messages.some((entry) => {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+      return false;
+    }
+
+    const candidate = entry as Record<string, unknown>;
+
+    return (
+      candidate.role === 'user' &&
+      typeof candidate.content === 'string' &&
+      candidate.content.trim().length > 0
+    );
+  });
+}
+
+function hydrateQueuedGptBodyPrompt(
+  body: Record<string, unknown>,
+  prompt: string | undefined
+): Record<string, unknown> {
+  if (!prompt || hasQueuedGptPromptField(body)) {
+    return body;
+  }
+
+  return {
+    ...body,
+    prompt
+  };
 }
 
 function resolveProviderPauseMs(nextRetryAt: string | null, fallbackMs: number): number {
@@ -301,7 +344,8 @@ async function executeQueuedGptRequest(params: {
   }
 
   const routeStartedAtMs = Date.now();
-  const { gptId, body, requestId } = parsedGptJobInput.value;
+  const { gptId, body, requestId, prompt, bypassIntentRouting } = parsedGptJobInput.value;
+  const hydratedBody = hydrateQueuedGptBodyPrompt(body, prompt);
   const latestJob = await getJobById(params.jobId);
   const resolveCancellationReason = async (
     fallbackMessage: string,
@@ -341,9 +385,10 @@ async function executeQueuedGptRequest(params: {
   try {
     envelope = await routeGptRequest({
       gptId,
-      body,
+      body: hydratedBody,
       requestId,
       logger: routeLogger,
+      bypassIntentRouting,
       runtimeExecutionMode: 'background',
       parentAbortSignal: params.cancellationSignal
     });

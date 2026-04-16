@@ -966,6 +966,56 @@ describe('async /gpt idempotency', () => {
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
+  it('keeps the exact prompt on async query jobs when callers provide transport hints inside payload', async () => {
+    findOrCreateGptJobMock.mockResolvedValue({
+      job: {
+        id: 'job-query-payload-async',
+        status: 'pending'
+      },
+      created: true,
+      deduped: false,
+      dedupeReason: 'new_job'
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        action: 'query',
+        prompt: 'Reply with exactly OK.',
+        payload: {
+          executionMode: 'async'
+        }
+      });
+
+    expect(response.status).toBe(202);
+    expect(response.body).toMatchObject({
+      ok: true,
+      action: 'query',
+      status: 'pending',
+      jobId: 'job-query-payload-async',
+      jobStatus: 'pending',
+      lifecycleStatus: 'queued'
+    });
+    expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
+    expect(findOrCreateGptJobMock.mock.calls[0]?.[0]).toMatchObject({
+      input: {
+        gptId: 'arcanos-core',
+        prompt: 'Reply with exactly OK.',
+        bypassIntentRouting: true,
+        body: {
+          action: 'query',
+          prompt: 'Reply with exactly OK.',
+          payload: {
+            executionMode: 'async'
+          }
+        },
+        routeHint: 'query'
+      }
+    });
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
   it('returns query_and_wait timeout guidance with the same job id and one job creation only', async () => {
     findOrCreateGptJobMock.mockResolvedValue({
       job: {

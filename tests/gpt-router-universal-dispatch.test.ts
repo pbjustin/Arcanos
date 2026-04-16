@@ -347,6 +347,29 @@ describe('gpt router universal dispatch', () => {
     expect(mockExecuteRuntimeInspection).not.toHaveBeenCalled();
   });
 
+  it('routes explicit query actions directly through the module dispatcher without intent rewrites', async () => {
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        action: 'query',
+        prompt: 'Reply with exactly OK.',
+        executionMode: 'sync'
+      });
+
+    expect(response.status).toBe(200);
+    expect(mockRouteGptRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        gptId: 'arcanos-core',
+        bypassIntentRouting: true,
+        body: expect.objectContaining({
+          action: 'query',
+          prompt: 'Reply with exactly OK.'
+        })
+      })
+    );
+    expect(mockExecuteRuntimeInspection).not.toHaveBeenCalled();
+  });
+
   it('keeps diagnostics working through POST /gpt/{gptId}', async () => {
     const response = await request(buildApp())
       .post('/gpt/arcanos-core')
@@ -654,10 +677,13 @@ describe('gpt router universal dispatch', () => {
           detail: 'full',
           truncated: true,
           source: 'explicit',
+          returnedSections: expect.any(Array),
           omittedSections: expect.any(Array),
+          availableSections: expect.arrayContaining(['workers', 'queues', 'memory', 'incidents']),
         }),
       }),
     );
+    expect(response.body.meta.returnedSections.length).toBeGreaterThan(0);
     expect(response.body.meta.omittedSections.length).toBeGreaterThan(0);
   });
 

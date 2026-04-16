@@ -156,19 +156,59 @@ function resolveRequestedAction(body: unknown): string | null {
   return payloadAction ? payloadAction.toLowerCase() : null;
 }
 
+function readPayloadRecord(
+  normalizedBody: Record<string, unknown> | null
+): Record<string, unknown> | null {
+  const payload = normalizedBody?.payload;
+  return payload && typeof payload === 'object' && !Array.isArray(payload)
+    ? (payload as Record<string, unknown>)
+    : null;
+}
+
+function extractPromptTextFromRecord(record: Record<string, unknown> | null): string | null {
+  const candidate =
+    record?.message ??
+    record?.prompt ??
+    record?.userInput ??
+    record?.content ??
+    record?.text ??
+    record?.query;
+
+  if (typeof candidate === 'string' && candidate.trim().length > 0) {
+    return candidate.trim();
+  }
+
+  if (!Array.isArray(record?.messages)) {
+    return null;
+  }
+
+  const lastUserMessage = [...record.messages].reverse().find((entry) => {
+    const candidate = typeof entry === 'object' && entry !== null && !Array.isArray(entry)
+      ? (entry as Record<string, unknown>)
+      : null;
+    return (
+      candidate?.role === 'user' &&
+      typeof candidate.content === 'string' &&
+      candidate.content.trim().length > 0
+    );
+  });
+
+  const normalizedLastUserMessage =
+    typeof lastUserMessage === 'object' && lastUserMessage !== null && !Array.isArray(lastUserMessage)
+      ? (lastUserMessage as Record<string, unknown>)
+      : null;
+
+  return normalizedLastUserMessage && typeof normalizedLastUserMessage.content === 'string'
+    ? normalizedLastUserMessage.content.trim()
+    : null;
+}
+
 function extractPromptText(body: unknown): string | null {
   const normalizedBody = normalizeGptRequestBody(body);
-  const candidate =
-    normalizedBody?.message ??
-    normalizedBody?.prompt ??
-    normalizedBody?.userInput ??
-    normalizedBody?.content ??
-    normalizedBody?.text ??
-    normalizedBody?.query;
-
-  return typeof candidate === 'string' && candidate.trim().length > 0
-    ? candidate.trim()
-    : null;
+  return (
+    extractPromptTextFromRecord(normalizedBody) ??
+    extractPromptTextFromRecord(readPayloadRecord(normalizedBody))
+  );
 }
 
 function hashPromptText(promptText: string | null): string | null {
@@ -368,13 +408,20 @@ function resolveRequestedExecutionMode(
   body: unknown
 ): GptExecutionMode | null {
   const normalizedBody = normalizeGptRequestBody(body);
+  const payload = readPayloadRecord(normalizedBody);
   const bodyModeCandidate =
     typeof normalizedBody?.executionMode === 'string'
       ? normalizedBody.executionMode
+      : typeof payload?.executionMode === 'string'
+      ? payload.executionMode
       : typeof normalizedBody?.responseMode === 'string'
       ? normalizedBody.responseMode
+      : typeof payload?.responseMode === 'string'
+      ? payload.responseMode
       : typeof normalizedBody?.mode === 'string'
       ? normalizedBody.mode
+      : typeof payload?.mode === 'string'
+      ? payload.mode
       : null;
   const normalizedBodyMode = bodyModeCandidate?.trim().toLowerCase();
   if (normalizedBodyMode === 'async') {
@@ -438,14 +485,18 @@ function resolveRequestedExecutionMode(
 
 function extractMessageCount(body: unknown): number {
   const normalizedBody = normalizeGptRequestBody(body);
-  return Array.isArray(normalizedBody?.messages)
-    ? normalizedBody.messages.length
-    : 0;
+  if (Array.isArray(normalizedBody?.messages)) {
+    return normalizedBody.messages.length;
+  }
+
+  const payload = readPayloadRecord(normalizedBody);
+  return Array.isArray(payload?.messages) ? payload.messages.length : 0;
 }
 
 function extractAnswerMode(body: unknown): string | null {
   const normalizedBody = normalizeGptRequestBody(body);
-  const answerMode = normalizedBody?.answerMode;
+  const payload = readPayloadRecord(normalizedBody);
+  const answerMode = normalizedBody?.answerMode ?? payload?.answerMode;
   return typeof answerMode === 'string' && answerMode.trim().length > 0
     ? answerMode.trim().toLowerCase()
     : null;
@@ -453,7 +504,13 @@ function extractAnswerMode(body: unknown): string | null {
 
 function extractMaxWords(body: unknown): number | null {
   const normalizedBody = normalizeGptRequestBody(body);
-  const candidates = [normalizedBody?.maxWords, normalizedBody?.max_words];
+  const payload = readPayloadRecord(normalizedBody);
+  const candidates = [
+    normalizedBody?.maxWords,
+    normalizedBody?.max_words,
+    payload?.maxWords,
+    payload?.max_words
+  ];
 
   for (const candidate of candidates) {
     if (typeof candidate === 'number' && Number.isFinite(candidate) && candidate > 0) {
@@ -650,6 +707,25 @@ function normalizeQueryAndWaitBody(
   delete normalizedQueryBody.action;
   normalizedQueryBody.executionMode = 'async';
   return normalizedQueryBody;
+}
+
+function hydrateDirectQueryBody(
+  normalizedBody: Record<string, unknown> | null,
+  promptText: string | null,
+  enabled: boolean
+): Record<string, unknown> | null {
+  if (!enabled || !normalizedBody || !promptText) {
+    return normalizedBody;
+  }
+
+  if (extractPromptTextFromRecord(normalizedBody)) {
+    return normalizedBody;
+  }
+
+  return {
+    ...normalizedBody,
+    prompt: promptText
+  };
 }
 
 function resolveAsyncBridgeAction(queryAndWaitRequested: boolean) {
@@ -1255,6 +1331,7 @@ router.post("/:gptId", async (req, res, next) => {
   const requestedAction = resolveRequestedAction(req.body);
   const queryRequested = requestedAction === GPT_QUERY_ACTION;
   const queryAndWaitRequested = requestedAction === GPT_QUERY_AND_WAIT_ACTION;
+  const bypassIntentRouting = queryRequested || queryAndWaitRequested;
   const asyncBridgeAction = resolveAsyncBridgeAction(queryAndWaitRequested);
   const promptText = extractPromptText(req.body);
   const routeTimeoutProfile = shouldUseDagExecutionTimeoutProfile(promptText)
@@ -1304,7 +1381,12 @@ router.post("/:gptId", async (req, res, next) => {
         const normalizedBody = normalizeGptRequestBody(req.body);
         const bodyGptId = resolveBodyGptId(req.body);
         const effectiveRequestedAction = queryAndWaitRequested ? 'query' : requestedAction;
-        const effectiveBody = normalizeQueryAndWaitBody(normalizedBody, requestedAction) ?? req.body;
+        const effectiveBody =
+          hydrateDirectQueryBody(
+            normalizeQueryAndWaitBody(normalizedBody, requestedAction) ?? normalizedBody,
+            promptText,
+            bypassIntentRouting
+          ) ?? req.body;
         applyCanonicalGptRouteHeaders(res, incomingGptId);
 
         requestLogger?.info?.('gpt.request.timeout_plan', {
@@ -1839,6 +1921,7 @@ router.post("/:gptId", async (req, res, next) => {
               gptId: incomingGptId,
               body: effectiveBody as Record<string, unknown>,
               prompt: promptText,
+              bypassIntentRouting,
               requestId,
               routeHint: effectiveRequestedAction ?? 'query',
               requestPath: req.originalUrl,
@@ -2292,6 +2375,7 @@ router.post("/:gptId", async (req, res, next) => {
           requestId,
           logger: requestLogger,
           request: req,
+          bypassIntentRouting,
         });
 
         if (!envelope.ok) {
