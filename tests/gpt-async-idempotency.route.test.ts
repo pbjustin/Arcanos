@@ -81,6 +81,7 @@ describe('async /gpt idempotency', () => {
     delete process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT;
     delete process.env.GPT_ASYNC_HEAVY_WAIT_FOR_RESULT_MS;
     delete process.env.GPT_ROUTE_HARD_TIMEOUT_MS;
+    delete process.env.GPT_PUBLIC_RESPONSE_MAX_BYTES;
     planAutonomousWorkerJobMock.mockResolvedValue({
       status: 'pending',
       retryCount: 0,
@@ -913,6 +914,66 @@ describe('async /gpt idempotency', () => {
       }
     });
     expect((findOrCreateGptJobMock.mock.calls[0]?.[0] as { input?: { body?: Record<string, unknown> } }).input?.body?.action).toBeUndefined();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('keeps query_and_wait prompt execution isolated from GPT control truncation limits', async () => {
+    process.env.GPT_PUBLIC_RESPONSE_MAX_BYTES = '5000';
+    findOrCreateGptJobMock.mockResolvedValue({
+      job: {
+        id: 'job-query-and-wait-ok',
+        status: 'completed'
+      },
+      created: true,
+      deduped: false,
+      dedupeReason: 'new_job'
+    });
+    waitForQueuedGptJobCompletionMock.mockResolvedValue({
+      state: 'completed',
+      job: {
+        id: 'job-query-and-wait-ok',
+        status: 'completed',
+        output: {
+          ok: true,
+          result: 'OK',
+          _route: {
+            gptId: 'arcanos-core',
+            module: 'ARCANOS:CORE',
+            route: 'core',
+            action: 'query',
+            timestamp: '2026-04-11T10:00:03.000Z'
+          }
+        }
+      }
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        action: 'query_and_wait',
+        prompt: 'Reply with OK'
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.headers['x-response-truncated']).toBeUndefined();
+    expect(response.body).toMatchObject({
+      ok: true,
+      jobId: 'job-query-and-wait-ok',
+      status: 'completed',
+      lifecycleStatus: 'completed',
+      result: 'OK'
+    });
+    expect(response.body.meta).toBeUndefined();
+    expect(findOrCreateGptJobMock.mock.calls[0]?.[0]).toMatchObject({
+      input: {
+        gptId: 'arcanos-core',
+        body: {
+          prompt: 'Reply with OK',
+          executionMode: 'async'
+        },
+        routeHint: 'query'
+      }
+    });
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 

@@ -84,15 +84,24 @@ export function truncateText(text: string, maxBytes: number): string {
   return `${text.slice(0, end).trimEnd()}${TRUNCATION_MARKER}`;
 }
 
-export function resolveClientResponseMaxBytes(explicitMaxBytes?: number): number {
-  const envValue = Number.parseInt(process.env.CLIENT_RESPONSE_MAX_BYTES ?? '', 10);
-  const candidate = explicitMaxBytes ?? envValue;
+function readPositiveIntegerEnv(name: string): number | undefined {
+  const value = Number.parseInt(process.env[name] ?? '', 10);
+  return Number.isFinite(value) && value > 0 ? value : undefined;
+}
 
-  if (!Number.isFinite(candidate) || candidate <= 0) {
+export function resolveClientResponseMaxBytes(explicitMaxBytes?: number): number {
+  const candidate = explicitMaxBytes ?? readPositiveIntegerEnv('CLIENT_RESPONSE_MAX_BYTES');
+
+  if (candidate === undefined || !Number.isFinite(candidate) || candidate <= 0) {
     return DEFAULT_CLIENT_RESPONSE_MAX_BYTES;
   }
 
   return Math.min(MAX_CLIENT_RESPONSE_MAX_BYTES, Math.max(MIN_CLIENT_RESPONSE_MAX_BYTES, candidate));
+}
+
+export function resolveGptPublicResponseMaxBytes(explicitMaxBytes?: number): number {
+  const gptPublicMaxBytes = readPositiveIntegerEnv('GPT_PUBLIC_RESPONSE_MAX_BYTES');
+  return resolveClientResponseMaxBytes(explicitMaxBytes ?? gptPublicMaxBytes);
 }
 
 export function emitClientResponseTruncationWarning(

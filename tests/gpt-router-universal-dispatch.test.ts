@@ -65,14 +65,197 @@ function buildApp() {
   return app;
 }
 
+function buildOversizedRuntimeInspectionResponse() {
+  return {
+    ok: true,
+    responsePayload: {
+      handledBy: 'runtime-inspection',
+      runtimeInspection: {
+        status: 'ok',
+        summary: 'Collected live runtime state from 5 runtime sources.',
+        detectedIntent: 'RUNTIME_INSPECTION_REQUIRED',
+        toolsSelected: [
+          '/worker-helper/health',
+          '/workers/status',
+          'system.metrics',
+          '/api/self-heal/events',
+          '/api/self-heal/inspection',
+        ],
+        runtimeEndpointsQueried: ['/worker-helper/health', '/workers/status'],
+        sources: [
+          {
+            sourceType: 'worker-health',
+            tool: '/worker-helper/health',
+            data: {
+              alerts: Array.from({ length: 40 }, (_, index) => `alert-${index}-${'a'.repeat(160)}`),
+              workers: Array.from({ length: 40 }, (_, index) => ({
+                workerId: `worker-${index}`,
+                healthStatus: 'healthy',
+                diagnostics: 'w'.repeat(240),
+              })),
+            },
+          },
+          {
+            sourceType: 'worker-health',
+            tool: '/workers/status',
+            data: {
+              queueDetails: Array.from({ length: 40 }, (_, index) => ({
+                id: `queue-${index}`,
+                detail: 'q'.repeat(240),
+              })),
+            },
+          },
+          {
+            sourceType: 'metrics',
+            tool: 'system.metrics',
+            data: {
+              diagnostics: {
+                recent_latency_ms: Array.from({ length: 80 }, (_, index) => index),
+                memorySamples: Array.from({ length: 40 }, (_, index) => ({
+                  index,
+                  heap: 'm'.repeat(220),
+                })),
+              },
+            },
+          },
+          {
+            sourceType: 'runtime-endpoint',
+            tool: '/api/self-heal/events',
+            data: {
+              events: Array.from({ length: 80 }, (_, index) => ({
+                id: `evt-${index}`,
+                type: 'HEAL_RESULT',
+                message: 'e'.repeat(260),
+              })),
+            },
+          },
+          {
+            sourceType: 'runtime-endpoint',
+            tool: '/api/self-heal/inspection',
+            data: {
+              evidence: {
+                traces: Array.from({ length: 80 }, (_, index) => ({
+                  id: `trace-${index}`,
+                  detail: 't'.repeat(260),
+                })),
+              },
+            },
+          },
+        ],
+        failures: Array.from({ length: 40 }, (_, index) => ({
+          tool: `tool-${index}`,
+          error: 'z'.repeat(220),
+        })),
+      },
+    },
+    routingDebug: {
+      requestId: 'req-runtime-oversized',
+      timestamp: '2026-04-15T00:00:00.000Z',
+      rawPrompt: 'full raw runtime inspection with everything included',
+      normalizedPrompt: 'full raw runtime inspection with everything included',
+      detectedIntent: 'RUNTIME_INSPECTION_REQUIRED',
+      routingDecision: 'runtime_inspection_completed',
+      toolsAvailable: ['system.metrics'],
+      toolsSelected: ['system.metrics'],
+      cliUsed: false,
+      runtimeEndpointsQueried: ['/workers/status'],
+      repoFallbackUsed: false,
+      constraintViolations: [],
+    },
+    repoFallbackAllowed: false,
+    selectedTools: ['system.metrics'],
+    runtimeEndpointsQueried: ['/workers/status'],
+    cliUsed: false,
+  };
+}
+
+function buildOversizedSelfHealSnapshot() {
+  return {
+    status: 'ok',
+    enabled: true,
+    active: false,
+    isHealing: false,
+    lastTriggerReason: 'steady_state',
+    lastHealedComponent: 'worker-service',
+    lastHealAction: 'restart_worker',
+    lastHealRun: '2026-04-15T00:00:00.000Z',
+    systemState: {
+      status: 'healthy',
+      detail: 's'.repeat(500),
+    },
+    loopRunning: true,
+    inFlight: false,
+    lastDiagnosis: 'healthy',
+    lastAction: 'restart_worker',
+    lastActionAt: '2026-04-15T00:00:00.000Z',
+    lastError: null,
+    activeMitigation: null,
+    degradedModeReason: null,
+    recentTimeoutCounts: {
+      prompt: 0,
+    },
+    lastVerificationResult: {
+      status: 'ok',
+      evidence: 'v'.repeat(800),
+    },
+    recentEvents: Array.from({ length: 80 }, (_, index) => ({
+      id: `evt-${index}`,
+      type: 'HEAL_RESULT',
+      message: 'h'.repeat(260),
+    })),
+    promptRouteMitigation: {
+      active: false,
+      diagnostics: 'p'.repeat(800),
+    },
+    trinity: {
+      enabled: true,
+      diagnostics: 'r'.repeat(800),
+    },
+    predictiveHealing: {
+      recentObservations: Array.from({ length: 80 }, (_, index) => ({
+        id: `obs-${index}`,
+        memory: {
+          rssMb: 128 + index,
+          heapUsedMb: 64 + index,
+          detail: 'o'.repeat(260),
+        },
+      })),
+      trends: {
+        memoryGrowthMb: 0,
+        detail: 'n'.repeat(800),
+      },
+      aiProvider: {
+        configured: false,
+        detail: 'a'.repeat(800),
+      },
+    },
+    inspection: {
+      lastDispatchAttempt: {
+        at: '2026-04-15T00:00:00.000Z',
+        detail: 'd'.repeat(800),
+      },
+      lastWorkerReceipt: {
+        at: '2026-04-15T00:00:00.000Z',
+        detail: 'w'.repeat(800),
+      },
+    },
+  };
+}
+
 describe('gpt router universal dispatch', () => {
   const originalGptRouteAsyncCoreDefault = process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT;
   const originalClientResponseMaxBytes = process.env.CLIENT_RESPONSE_MAX_BYTES;
+  const originalGptPublicResponseMaxBytes = process.env.GPT_PUBLIC_RESPONSE_MAX_BYTES;
+  const originalDebugGptControls = process.env.ARCANOS_ENABLE_DEBUG_GPT_CONTROLS;
+  const originalNodeEnv = process.env.NODE_ENV;
 
   beforeEach(() => {
     jest.clearAllMocks();
     process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = 'false';
     delete process.env.CLIENT_RESPONSE_MAX_BYTES;
+    delete process.env.GPT_PUBLIC_RESPONSE_MAX_BYTES;
+    delete process.env.ARCANOS_ENABLE_DEBUG_GPT_CONTROLS;
+    process.env.NODE_ENV = originalNodeEnv;
 
     mockRouteGptRequest.mockResolvedValue({
       ok: true,
@@ -323,10 +506,27 @@ describe('gpt router universal dispatch', () => {
 
     if (originalClientResponseMaxBytes === undefined) {
       delete process.env.CLIENT_RESPONSE_MAX_BYTES;
-      return;
+    } else {
+      process.env.CLIENT_RESPONSE_MAX_BYTES = originalClientResponseMaxBytes;
     }
 
-    process.env.CLIENT_RESPONSE_MAX_BYTES = originalClientResponseMaxBytes;
+    if (originalGptPublicResponseMaxBytes === undefined) {
+      delete process.env.GPT_PUBLIC_RESPONSE_MAX_BYTES;
+    } else {
+      process.env.GPT_PUBLIC_RESPONSE_MAX_BYTES = originalGptPublicResponseMaxBytes;
+    }
+
+    if (originalDebugGptControls === undefined) {
+      delete process.env.ARCANOS_ENABLE_DEBUG_GPT_CONTROLS;
+    } else {
+      process.env.ARCANOS_ENABLE_DEBUG_GPT_CONTROLS = originalDebugGptControls;
+    }
+
+    if (originalNodeEnv === undefined) {
+      delete process.env.NODE_ENV;
+    } else {
+      process.env.NODE_ENV = originalNodeEnv;
+    }
   });
 
   it('keeps normal GPT module requests on the writing dispatcher', async () => {
@@ -567,7 +767,7 @@ describe('gpt router universal dispatch', () => {
   });
 
   it('marks truncated runtime inspection responses explicitly before the public response guard', async () => {
-    process.env.CLIENT_RESPONSE_MAX_BYTES = '950';
+    process.env.GPT_PUBLIC_RESPONSE_MAX_BYTES = '5000';
     mockExecuteRuntimeInspection.mockResolvedValueOnce({
       ok: true,
       responsePayload: {
@@ -672,7 +872,7 @@ describe('gpt router universal dispatch', () => {
         ok: true,
         action: 'runtime.inspect',
         status: 'partial',
-        message: 'Response exceeded public route bounds. Narrow sections or use a less verbose detail level.',
+        message: 'Response exceeded public route bounds. Narrow sections or reduce detail.',
         meta: expect.objectContaining({
           detail: 'full',
           truncated: true,
@@ -685,6 +885,109 @@ describe('gpt router universal dispatch', () => {
     );
     expect(response.body.meta.returnedSections.length).toBeGreaterThan(0);
     expect(response.body.meta.omittedSections.length).toBeGreaterThan(0);
+  });
+
+  it('keeps section filtering bounded when a filtered runtime inspection response is truncated', async () => {
+    process.env.GPT_PUBLIC_RESPONSE_MAX_BYTES = '5000';
+    mockExecuteRuntimeInspection.mockResolvedValueOnce(buildOversizedRuntimeInspectionResponse());
+    const requestedSections = ['workers', 'queues'];
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        action: 'runtime.inspect',
+        payload: {
+          detail: 'full',
+          sections: requestedSections,
+        },
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.headers['x-response-truncated']).toBe('true');
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        ok: true,
+        action: 'runtime.inspect',
+        status: 'partial',
+        meta: expect.objectContaining({
+          detail: 'full',
+          truncated: true,
+          source: 'explicit',
+          returnedSections: expect.any(Array),
+          omittedSections: expect.any(Array),
+          availableSections: expect.arrayContaining(['workers', 'queues']),
+        }),
+      }),
+    );
+
+    const returnedSections = response.body.meta.returnedSections as string[];
+    const omittedSections = response.body.meta.omittedSections as string[];
+    expect(returnedSections.every((section) => requestedSections.includes(section))).toBe(true);
+    expect(omittedSections.every((section) => requestedSections.includes(section))).toBe(true);
+    expect(new Set([...returnedSections, ...omittedSections])).toEqual(new Set(requestedSections));
+  });
+
+  it('marks truncated self_heal.status responses explicitly before the public response guard', async () => {
+    process.env.GPT_PUBLIC_RESPONSE_MAX_BYTES = '5000';
+    mockBuildSafetySelfHealSnapshot.mockReturnValueOnce(buildOversizedSelfHealSnapshot());
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        action: 'self_heal.status',
+        payload: {
+          detail: 'full',
+        },
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.headers['x-response-truncated']).toBe('true');
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        ok: true,
+        action: 'self_heal.status',
+        status: 'partial',
+        message: 'Response exceeded public route bounds. Narrow sections or reduce detail.',
+        meta: expect.objectContaining({
+          detail: 'full',
+          truncated: true,
+          source: 'explicit',
+          returnedSections: expect.any(Array),
+          omittedSections: expect.any(Array),
+          availableSections: expect.arrayContaining(['system', 'workers', 'memory', 'incidents']),
+        }),
+      }),
+    );
+    expect(response.body.meta.omittedSections.length).toBeGreaterThan(0);
+  });
+
+  it('allows guarded non-production debug headers to lower GPT control response bounds', async () => {
+    process.env.NODE_ENV = 'test';
+    process.env.ARCANOS_ENABLE_DEBUG_GPT_CONTROLS = 'true';
+    mockExecuteRuntimeInspection.mockResolvedValueOnce(buildOversizedRuntimeInspectionResponse());
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .set('X-Debug-Max-Bytes', '5000')
+      .send({
+        action: 'runtime.inspect',
+        payload: {
+          detail: 'full',
+        },
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.headers['x-response-truncated']).toBe('true');
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        ok: true,
+        action: 'runtime.inspect',
+        status: 'partial',
+        meta: expect.objectContaining({
+          truncated: true,
+        }),
+      }),
+    );
   });
 
   it('rejects unknown reserved control actions with a typed 400 error', async () => {

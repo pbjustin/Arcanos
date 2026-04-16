@@ -4,7 +4,7 @@ import {
   measureJsonBytes,
   readBoolean,
   readString,
-  resolveClientResponseMaxBytes,
+  resolveGptPublicResponseMaxBytes,
   truncateText,
 } from '@shared/http/clientResponseCommon.js';
 import { prepareBoundedClientJsonPayload } from '@shared/http/clientJsonPayload.js';
@@ -44,7 +44,7 @@ const DETAIL_PRUNE_BUDGETS: Record<GptExecutionPlanDetail, DetailPruneBudget> = 
 };
 
 const PARTIAL_RESPONSE_MESSAGE =
-  'Response exceeded public route bounds. Narrow sections or use a less verbose detail level.';
+  'Response exceeded public route bounds. Narrow sections or reduce detail.';
 
 type PlannedControlPreparedResponse = PreparedClientJsonPayload<Record<string, unknown>> & {
   explicitTruncated: boolean;
@@ -393,6 +393,7 @@ function buildMinimalPartialEnvelope(params: {
         generatedAt: params.generatedAt,
         availableSections: getGptExecutionPlanAvailableSections(params.action),
         truncated: true,
+        returnedSections: [],
         omittedSections: params.omittedSections,
       }),
       message: PARTIAL_RESPONSE_MESSAGE,
@@ -419,6 +420,7 @@ function buildMinimalPartialEnvelope(params: {
       generatedAt: params.generatedAt,
       availableSections: getGptExecutionPlanAvailableSections(params.action),
       truncated: true,
+      returnedSections: [],
       omittedSections: params.omittedSections,
     }),
     message: PARTIAL_RESPONSE_MESSAGE,
@@ -466,8 +468,9 @@ export function prepareShapedControlResponse(params: {
   routeMeta: Record<string, unknown>;
   logger?: RequestScopedLogger;
   logEvent?: string;
+  maxResponseBytes?: number;
 }): PlannedControlPreparedResponse {
-  const maxResponseBytes = resolveClientResponseMaxBytes();
+  const maxResponseBytes = resolveGptPublicResponseMaxBytes(params.maxResponseBytes);
   const generatedAt = new Date().toISOString();
   const initialReturnedSections = [...params.plan.sections];
   let returnedSections = [...initialReturnedSections];

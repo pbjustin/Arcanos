@@ -103,6 +103,7 @@ const DEFAULT_GPT_QUERY_AND_WAIT_TIMEOUT_MS = 25_000;
 const DIRECT_RETURN_ROUTE_TIMEOUT_HEADROOM_MS = 750;
 const DEFAULT_GPT_QUERY_AND_WAIT_ROUTE_TIMEOUT_MS =
   DEFAULT_GPT_QUERY_AND_WAIT_TIMEOUT_MS + DIRECT_RETURN_ROUTE_TIMEOUT_HEADROOM_MS;
+const DEBUG_GPT_MAX_BYTES_HEADER = 'x-debug-max-bytes';
 const DIRECT_RETURN_WAIT_KEYS = [
   'waitForResultMs',
   'wait_for_result_ms',
@@ -207,6 +208,23 @@ function extractPromptText(body: unknown): string | null {
     extractPromptTextFromRecord(normalizedBody) ??
     extractPromptTextFromRecord(readPayloadRecord(normalizedBody))
   );
+}
+
+function resolveDebugGptPublicResponseMaxBytes(req: express.Request): number | undefined {
+  if (
+    process.env.NODE_ENV === 'production' ||
+    process.env.ARCANOS_ENABLE_DEBUG_GPT_CONTROLS !== 'true'
+  ) {
+    return undefined;
+  }
+
+  const rawValue = req.header(DEBUG_GPT_MAX_BYTES_HEADER);
+  if (!rawValue) {
+    return undefined;
+  }
+
+  const parsedValue = Number.parseInt(rawValue, 10);
+  return Number.isFinite(parsedValue) && parsedValue > 0 ? parsedValue : undefined;
 }
 
 function hashPromptText(promptText: string | null): string | null {
@@ -1065,6 +1083,7 @@ async function dispatchDirectControlAction(params: {
       routeMeta,
       logger: params.req.logger,
       logEvent: 'gpt.response.runtime_inspection',
+      maxResponseBytes: resolveDebugGptPublicResponseMaxBytes(params.req),
     });
     return {
       kind: 'prepared',
@@ -1189,6 +1208,7 @@ async function dispatchDirectControlAction(params: {
     routeMeta,
     logger: params.req.logger,
     logEvent: 'gpt.response.self_heal_status',
+    maxResponseBytes: resolveDebugGptPublicResponseMaxBytes(params.req),
   });
   return {
     kind: 'prepared',

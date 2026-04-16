@@ -340,10 +340,10 @@ export function buildGptControlResponseMeta(params: {
     detail: params.plan.detail,
     truncated: params.truncated,
     availableSections: [...params.availableSections],
-    ...(params.returnedSections && params.returnedSections.length > 0
+    ...(params.returnedSections
       ? { returnedSections: [...params.returnedSections] }
       : {}),
-    ...(params.omittedSections && params.omittedSections.length > 0
+    ...(params.omittedSections
       ? { omittedSections: [...params.omittedSections] }
       : {}),
     generatedAt: params.generatedAt ?? new Date().toISOString(),
