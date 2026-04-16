@@ -2,6 +2,12 @@ import { classifyRuntimeInspectionPrompt } from '@services/runtimeInspectionRout
 import { shouldTreatPromptAsDagExecution } from '@shared/dag/dagExecutionRouting.js';
 import { normalizeGptRequestBody } from '@shared/gpt/gptIdempotency.js';
 import {
+  GPT_DIRECT_CONTROL_ACTIONS,
+  type GptDirectControlAction,
+  isReservedGptControlNamespace,
+  normalizeGptDirectControlAction,
+} from '@shared/gpt/gptControlActions.js';
+import {
   GPT_GET_RESULT_ACTION,
   GPT_GET_STATUS_ACTION,
   GPT_QUERY_AND_WAIT_ACTION,
@@ -18,14 +24,42 @@ export type WritingPlaneControlKind =
   | 'job_result'
   | 'job_status'
   | 'mcp_control'
+  | 'queue_inspection_action'
   | 'runtime_inspection'
-  | 'system_state';
+  | 'runtime_inspection_action'
+  | 'self_heal_status_action'
+  | 'system_state'
+  | 'unsupported_control_action'
+  | 'workers_status_action';
 
 export type DirectWritingPlaneControlKind =
   | 'diagnostics'
   | 'job_result'
   | 'job_status'
-  | 'system_state';
+  | 'queue_inspection_action'
+  | 'runtime_inspection_action'
+  | 'self_heal_status_action'
+  | 'system_state'
+  | 'workers_status_action';
+
+type ExplicitWritingPlaneControlAction =
+  | 'runtime.inspect'
+  | 'workers.status'
+  | 'queue.inspect'
+  | 'self_heal.status';
+
+type ExplicitWritingPlaneControlClassification = {
+  kind: Extract<
+    DirectWritingPlaneControlKind,
+    | 'runtime_inspection_action'
+    | 'workers_status_action'
+    | 'queue_inspection_action'
+    | 'self_heal_status_action'
+  >;
+  reason: string;
+  message: string;
+  canonical: Record<string, string>;
+};
 
 export type WritingPlaneInputClassification =
   | {
@@ -46,6 +80,44 @@ export type WritingPlaneInputClassification =
     };
 
 type McpControlAction = 'mcp.invoke' | 'mcp.list_tools';
+
+const EXPLICIT_WRITING_PLANE_CONTROL_CLASSIFICATIONS: Record<
+  ExplicitWritingPlaneControlAction,
+  ExplicitWritingPlaneControlClassification
+> = {
+  'runtime.inspect': {
+    kind: 'runtime_inspection_action',
+    reason: 'explicit_action_runtime_inspect',
+    message: 'Runtime inspection is a control-plane operation and must not execute inside Trinity.',
+    canonical: {
+      runtimeInspect: '/gpt/{gptId}',
+    },
+  },
+  'workers.status': {
+    kind: 'workers_status_action',
+    reason: 'explicit_action_workers_status',
+    message: 'Worker status inspection is a control-plane operation and must not execute inside Trinity.',
+    canonical: {
+      workers: '/gpt/{gptId}',
+    },
+  },
+  'queue.inspect': {
+    kind: 'queue_inspection_action',
+    reason: 'explicit_action_queue_inspect',
+    message: 'Queue inspection is a control-plane operation and must not execute inside Trinity.',
+    canonical: {
+      queueInspect: '/gpt/{gptId}',
+    },
+  },
+  'self_heal.status': {
+    kind: 'self_heal_status_action',
+    reason: 'explicit_action_self_heal_status',
+    message: 'Self-heal status inspection is a control-plane operation and must not execute inside Trinity.',
+    canonical: {
+      selfHealStatus: '/gpt/{gptId}',
+    },
+  },
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -81,6 +153,21 @@ function normalizeMcpAction(action: string | null | undefined): McpControlAction
 function normalizeDagControlAction(action: string | null | undefined): string | null {
   const normalizedAction = normalizeAction(action);
   return normalizedAction && normalizedAction.startsWith('dag.') ? normalizedAction : null;
+}
+
+function isExplicitWritingPlaneControlAction(
+  action: GptDirectControlAction | null
+): action is ExplicitWritingPlaneControlAction {
+  return action === 'runtime.inspect' ||
+    action === 'workers.status' ||
+    action === 'queue.inspect' ||
+    action === 'self_heal.status';
+}
+
+function buildUnsupportedControlActionCanonical() {
+  return {
+    supportedActions: GPT_DIRECT_CONTROL_ACTIONS.join(', '),
+  };
 }
 
 function getString(record: Record<string, unknown>, key: string): string | null {
@@ -131,6 +218,7 @@ export function classifyWritingPlaneInput(input: {
 }): WritingPlaneInputClassification {
   const normalizedAction = normalizeAction(input.requestedAction);
   const normalizedMode = readBodyMode(input.body);
+  const explicitDirectControlAction = normalizeGptDirectControlAction(normalizedAction);
 
   if (normalizedAction === GPT_GET_STATUS_ACTION) {
     return {
@@ -188,6 +276,33 @@ export function classifyWritingPlaneInput(input: {
       canonical: {
         systemState: '/gpt/arcanos-core',
       },
+    };
+  }
+
+  if (isExplicitWritingPlaneControlAction(explicitDirectControlAction)) {
+    const controlClassification =
+      EXPLICIT_WRITING_PLANE_CONTROL_CLASSIFICATIONS[explicitDirectControlAction];
+
+    return {
+      plane: 'control',
+      kind: controlClassification.kind,
+      action: explicitDirectControlAction,
+      reason: controlClassification.reason,
+      errorCode: 'TRINITY_CONTROL_LEAK',
+      message: controlClassification.message,
+      canonical: controlClassification.canonical,
+    };
+  }
+
+  if (normalizedAction && isReservedGptControlNamespace(normalizedAction)) {
+    return {
+      plane: 'control',
+      kind: 'unsupported_control_action',
+      action: normalizedAction,
+      reason: 'unsupported_reserved_control_action',
+      errorCode: 'UNSUPPORTED_GPT_ACTION',
+      message: `Unsupported control action '${normalizedAction}'. Supported control actions: ${GPT_DIRECT_CONTROL_ACTIONS.join(', ')}.`,
+      canonical: buildUnsupportedControlActionCanonical(),
     };
   }
 
@@ -324,5 +439,14 @@ export function classifyWritingPlaneInput(input: {
 export function isDirectControlPlaneKind(
   kind: WritingPlaneControlKind
 ): kind is DirectWritingPlaneControlKind {
-  return kind === 'job_status' || kind === 'job_result' || kind === 'diagnostics' || kind === 'system_state';
+  return (
+    kind === 'job_status' ||
+    kind === 'job_result' ||
+    kind === 'diagnostics' ||
+    kind === 'runtime_inspection_action' ||
+    kind === 'workers_status_action' ||
+    kind === 'queue_inspection_action' ||
+    kind === 'self_heal_status_action' ||
+    kind === 'system_state'
+  );
 }
