@@ -361,7 +361,7 @@
           "payload": {
             "type": "object",
             "additionalProperties": true,
-            "description": "Open payload object. For runtime.inspect and self_heal.status, payload.detail supports summary | standard | full and payload.sections accepts an allowlisted string array such as workers, queues, memory, incidents, events, or trace."
+            "description": "Open payload object. For runtime.inspect and self_heal.status, payload.detail supports summary | standard | full. Valid payload.sections values are action-specific allowlisted strings: for example, runtime.inspect may use sections such as workers, queues, memory, incidents, events, or trace, while self_heal.status may use sections such as system or predictive."
           },
           "context": {
             "type": "object",
