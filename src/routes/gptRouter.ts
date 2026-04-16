@@ -182,25 +182,23 @@ function extractPromptTextFromRecord(record: Record<string, unknown> | null): st
     return null;
   }
 
-  const lastUserMessage = [...record.messages].reverse().find((entry) => {
-    const candidate = typeof entry === 'object' && entry !== null && !Array.isArray(entry)
-      ? (entry as Record<string, unknown>)
-      : null;
-    return (
-      candidate?.role === 'user' &&
-      typeof candidate.content === 'string' &&
-      candidate.content.trim().length > 0
-    );
-  });
+  for (let index = record.messages.length - 1; index >= 0; index -= 1) {
+    const entry = record.messages[index];
+    const normalizedEntry =
+      typeof entry === 'object' && entry !== null && !Array.isArray(entry)
+        ? (entry as Record<string, unknown>)
+        : null;
 
-  const normalizedLastUserMessage =
-    typeof lastUserMessage === 'object' && lastUserMessage !== null && !Array.isArray(lastUserMessage)
-      ? (lastUserMessage as Record<string, unknown>)
-      : null;
+    if (
+      normalizedEntry?.role === 'user' &&
+      typeof normalizedEntry.content === 'string' &&
+      normalizedEntry.content.trim().length > 0
+    ) {
+      return normalizedEntry.content.trim();
+    }
+  }
 
-  return normalizedLastUserMessage && typeof normalizedLastUserMessage.content === 'string'
-    ? normalizedLastUserMessage.content.trim()
-    : null;
+  return null;
 }
 
 function extractPromptText(body: unknown): string | null {

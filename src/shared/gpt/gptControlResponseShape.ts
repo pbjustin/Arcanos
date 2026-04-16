@@ -270,6 +270,7 @@ function buildRuntimeInspectionEnvelope(params: {
   rawResult: Record<string, unknown>;
   plan: GptExecutionPlan<'runtime.inspect'>;
   routeMeta: Record<string, unknown>;
+  generatedAt: string;
   returnedSections: string[];
   omittedSections: string[];
   truncated: boolean;
@@ -295,6 +296,7 @@ function buildRuntimeInspectionEnvelope(params: {
     },
     meta: buildGptControlResponseMeta({
       plan: params.plan,
+      generatedAt: params.generatedAt,
       availableSections: getGptExecutionPlanAvailableSections(params.action),
       truncated: params.truncated,
       returnedSections: actualReturnedSections,
@@ -310,6 +312,7 @@ function buildSelfHealEnvelope(params: {
   rawResult: Record<string, unknown>;
   plan: GptExecutionPlan<'self_heal.status'>;
   routeMeta: Record<string, unknown>;
+  generatedAt: string;
   returnedSections: string[];
   omittedSections: string[];
   truncated: boolean;
@@ -350,6 +353,7 @@ function buildSelfHealEnvelope(params: {
     },
     meta: buildGptControlResponseMeta({
       plan: params.plan,
+      generatedAt: params.generatedAt,
       availableSections: getGptExecutionPlanAvailableSections(params.action),
       truncated: params.truncated,
       returnedSections: actualReturnedSections,
@@ -365,6 +369,7 @@ function buildMinimalPartialEnvelope(params: {
   rawResult: Record<string, unknown>;
   plan: GptExecutionPlan<ShapableControlAction>;
   routeMeta: Record<string, unknown>;
+  generatedAt: string;
   omittedSections: string[];
 }): Record<string, unknown> {
   if (params.action === 'runtime.inspect') {
@@ -385,6 +390,7 @@ function buildMinimalPartialEnvelope(params: {
       },
       meta: buildGptControlResponseMeta({
         plan: params.plan,
+        generatedAt: params.generatedAt,
         availableSections: getGptExecutionPlanAvailableSections(params.action),
         truncated: true,
         omittedSections: params.omittedSections,
@@ -410,6 +416,7 @@ function buildMinimalPartialEnvelope(params: {
     },
     meta: buildGptControlResponseMeta({
       plan: params.plan,
+      generatedAt: params.generatedAt,
       availableSections: getGptExecutionPlanAvailableSections(params.action),
       truncated: true,
       omittedSections: params.omittedSections,
@@ -424,6 +431,7 @@ function buildEnvelope(params: {
   rawResult: Record<string, unknown>;
   plan: GptExecutionPlan<ShapableControlAction>;
   routeMeta: Record<string, unknown>;
+  generatedAt: string;
   returnedSections: string[];
   omittedSections: string[];
   truncated: boolean;
@@ -434,6 +442,7 @@ function buildEnvelope(params: {
         rawResult: params.rawResult,
         plan: params.plan as GptExecutionPlan<'runtime.inspect'>,
         routeMeta: params.routeMeta,
+        generatedAt: params.generatedAt,
         returnedSections: params.returnedSections,
         omittedSections: params.omittedSections,
         truncated: params.truncated,
@@ -443,6 +452,7 @@ function buildEnvelope(params: {
         rawResult: params.rawResult,
         plan: params.plan as GptExecutionPlan<'self_heal.status'>,
         routeMeta: params.routeMeta,
+        generatedAt: params.generatedAt,
         returnedSections: params.returnedSections,
         omittedSections: params.omittedSections,
         truncated: params.truncated,
@@ -458,6 +468,7 @@ export function prepareShapedControlResponse(params: {
   logEvent?: string;
 }): PlannedControlPreparedResponse {
   const maxResponseBytes = resolveClientResponseMaxBytes();
+  const generatedAt = new Date().toISOString();
   const initialReturnedSections = [...params.plan.sections];
   let returnedSections = [...initialReturnedSections];
   let omittedSections: string[] = [];
@@ -467,6 +478,7 @@ export function prepareShapedControlResponse(params: {
     rawResult: params.rawResult,
     plan: params.plan,
     routeMeta: params.routeMeta,
+    generatedAt,
     returnedSections,
     omittedSections,
     truncated: false,
@@ -483,6 +495,7 @@ export function prepareShapedControlResponse(params: {
       rawResult: params.rawResult,
       plan: params.plan,
       routeMeta: params.routeMeta,
+      generatedAt,
       returnedSections,
       omittedSections,
       truncated: true,
@@ -498,6 +511,7 @@ export function prepareShapedControlResponse(params: {
       rawResult: params.rawResult,
       plan: params.plan,
       routeMeta: params.routeMeta,
+      generatedAt,
       omittedSections,
     });
   }
@@ -516,6 +530,7 @@ export function prepareShapedControlResponse(params: {
         rawResult: params.rawResult,
         plan: params.plan,
         routeMeta: params.routeMeta,
+        generatedAt,
         omittedSections: [...initialReturnedSections],
       }),
       {
