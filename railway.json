@@ -31,6 +31,10 @@
         "PORT": "$PORT",
         "DATABASE_URL": "$DATABASE_URL",
         "OPENAI_API_KEY": "$OPENAI_API_KEY",
+        "OPENAI_ACTION_SHARED_SECRET": "$OPENAI_ACTION_SHARED_SECRET",
+        "DEFAULT_GPT_ID": "$DEFAULT_GPT_ID",
+        "OPENAI_ACTION_BRIDGE_WAIT_TIMEOUT_MS": "$OPENAI_ACTION_BRIDGE_WAIT_TIMEOUT_MS",
+        "OPENAI_ACTION_BRIDGE_POLL_INTERVAL_MS": "$OPENAI_ACTION_BRIDGE_POLL_INTERVAL_MS",
         "OPENAI_BASE_URL": "$OPENAI_BASE_URL",
         "AI_MODEL": "$AI_MODEL",
         "GPT51_MODEL": "$GPT51_MODEL",
@@ -47,6 +51,7 @@
       "variables": {
         "NODE_ENV": "development",
         "PORT": "8080",
+        "DEFAULT_GPT_ID": "arcanos-core",
         "ARCANOS_PROCESS_KIND": "$ARCANOS_PROCESS_KIND",
         "RUN_WORKERS": "true"
       }

@@ -1,0 +1,283 @@
+openapi: 3.1.0
+info:
+  title: Arcanos Custom GPT Bridge
+  version: 1.0.0
+  description: |
+    Secure HTTP bridge for Custom GPT Actions. The bridge authenticates inbound
+    Custom GPT requests, enqueues or dispatches them through the existing
+    Arcanos GPT ID execution layer, and returns either a completed result or
+    canonical job polling URLs.
+servers:
+  - url: https://YOUR-RAILWAY-DOMAIN
+    description: Replace with the deployed Railway service domain.
+paths:
+  /api/bridge/gpt:
+    post:
+      operationId: invokeArcanosGptBridge
+      summary: Invoke an Arcanos GPT ID through the secure bridge
+      description: |
+        Submit a prompt to the existing Arcanos GPT ID dispatcher. Use
+        `query_and_wait` when the Custom GPT should wait briefly for a completed
+        result before falling back to async polling.
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BridgeRequest"
+            examples:
+              queryAndWait:
+                summary: Query and wait briefly
+                value:
+                  gptId: arcanos-core
+                  prompt: Summarize current deployment health.
+                  action: query_and_wait
+                  metadata:
+                    source: custom-gpt-action
+      responses:
+        "200":
+          description: GPT execution completed within the bounded wait window.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BridgeCompletedResponse"
+        "202":
+          description: GPT execution is pending; poll the jobs API.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BridgePendingResponse"
+        "400":
+          description: Invalid bridge request payload.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BridgeErrorResponse"
+        "401":
+          description: Missing or invalid bridge shared secret.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BridgeErrorResponse"
+        "409":
+          description: Idempotency key conflict.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BridgeErrorResponse"
+        "500":
+          description: Routing, worker, or provider failure.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BridgeErrorResponse"
+        "503":
+          description: Bridge or queue storage is unavailable or misconfigured.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BridgeErrorResponse"
+  /api/bridge/health:
+    get:
+      operationId: getArcanosBridgeHealth
+      summary: Check bridge runtime health
+      description: Reports environment sanity, route reachability, database status, worker status, and recent bridge failure counters.
+      responses:
+        "200":
+          description: Bridge health is OK.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BridgeHealthResponse"
+        "503":
+          description: Bridge health is degraded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BridgeHealthResponse"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Use OPENAI_ACTION_SHARED_SECRET as the bearer token.
+  schemas:
+    BridgeRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - prompt
+        - action
+      properties:
+        gptId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: GPT ID to invoke. Defaults to DEFAULT_GPT_ID when omitted.
+          example: arcanos-core
+        prompt:
+          type: string
+          minLength: 1
+          maxLength: 50000
+          description: User prompt for the target GPT route.
+        action:
+          type: string
+          enum:
+            - query
+            - query_and_wait
+          description: Use query for immediate async response or query_and_wait for bounded inline completion.
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Optional JSON metadata passed through to the internal GPT execution body.
+    BridgePendingResponse:
+      type: object
+      required:
+        - ok
+        - status
+        - jobId
+        - poll_url
+        - result_url
+      properties:
+        ok:
+          type: boolean
+          const: true
+        status:
+          type: string
+          const: pending
+        jobId:
+          type: string
+        poll_url:
+          type: string
+          example: /jobs/job_123
+        result_url:
+          type: string
+          example: /jobs/job_123/result
+        request_id:
+          type: string
+        timing:
+          $ref: "#/components/schemas/BridgeTiming"
+        observability:
+          type: object
+          additionalProperties: true
+    BridgeCompletedResponse:
+      type: object
+      required:
+        - ok
+        - status
+        - output
+      properties:
+        ok:
+          type: boolean
+          const: true
+        status:
+          type: string
+          const: completed
+        jobId:
+          type: string
+        poll_url:
+          type: string
+        result_url:
+          type: string
+        output:
+          description: Normalized internal GPT output.
+        request_id:
+          type: string
+        timing:
+          $ref: "#/components/schemas/BridgeTiming"
+        observability:
+          type: object
+          additionalProperties: true
+    BridgeErrorResponse:
+      type: object
+      required:
+        - ok
+        - status
+        - error
+      properties:
+        ok:
+          type: boolean
+          const: false
+        status:
+          type: string
+        error:
+          type: object
+          required:
+            - source
+            - message
+          properties:
+            source:
+              type: string
+              enum:
+                - routing
+                - queue
+                - worker
+                - provider
+                - timeout
+                - auth
+            message:
+              type: string
+        request_id:
+          type:
+            - string
+            - "null"
+        timing:
+          $ref: "#/components/schemas/BridgeTiming"
+    BridgeTiming:
+      type: object
+      additionalProperties: true
+      properties:
+        total_ms:
+          type: number
+        enqueue_ms:
+          type: number
+        wait_ms:
+          type: number
+        queue_wait_ms:
+          type:
+            - number
+            - "null"
+        worker_execution_ms:
+          type:
+            - number
+            - "null"
+        provider_latency_ms:
+          type:
+            - number
+            - "null"
+        model_latency_ms:
+          type:
+            - number
+            - "null"
+    BridgeHealthResponse:
+      type: object
+      additionalProperties: true
+      required:
+        - ok
+        - status
+        - env
+        - route_reachability
+        - recent_failure_counters
+      properties:
+        ok:
+          type: boolean
+        status:
+          type: string
+          enum:
+            - ok
+            - degraded
+        env:
+          type: object
+          additionalProperties: true
+        route_reachability:
+          type: object
+          additionalProperties: true
+        worker_status:
+          type: object
+          additionalProperties: true
+        recent_failure_counters:
+          type: object
+          additionalProperties:
+            type: number
