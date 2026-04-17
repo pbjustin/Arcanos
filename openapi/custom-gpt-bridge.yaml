@@ -21,6 +21,8 @@ paths:
         result before falling back to async polling.
       security:
         - bearerAuth: []
+        - openaiActionSecretHeader: []
+        - actionSecretHeader: []
       requestBody:
         required: true
         content:
@@ -102,7 +104,17 @@ components:
     bearerAuth:
       type: http
       scheme: bearer
-      description: Use OPENAI_ACTION_SHARED_SECRET as the bearer token.
+      description: Preferred. Use OPENAI_ACTION_SHARED_SECRET as the bearer token.
+    openaiActionSecretHeader:
+      type: apiKey
+      in: header
+      name: x-openai-action-secret
+      description: Alternative shared-secret header using OPENAI_ACTION_SHARED_SECRET.
+    actionSecretHeader:
+      type: apiKey
+      in: header
+      name: x-action-secret
+      description: Legacy alternative shared-secret header using OPENAI_ACTION_SHARED_SECRET.
   schemas:
     BridgeRequest:
       type: object

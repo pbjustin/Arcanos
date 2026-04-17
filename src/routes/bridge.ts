@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import express from 'express';
 import { createRateLimitMiddleware, getRequestActorKey, securityHeaders } from "@platform/runtime/security.js";
 import { isBridgeEnabled } from "@platform/runtime/bridgeEnv.js";
@@ -12,6 +14,10 @@ import {
 } from '@services/customGptBridgeService.js';
 
 const router = express.Router();
+
+function buildFallbackRequestId(prefix: string): string {
+  return `${prefix}-${Date.now()}-${randomUUID()}`;
+}
 
 router.use(securityHeaders);
 router.use(createRateLimitMiddleware(120, 5 * 60 * 1000));
@@ -35,7 +41,7 @@ router.all(BRIDGE_PATHS, (_req, res) => {
 });
 
 router.post(['/api/bridge/gpt', '/api/openai/gpt-action'], asyncHandler(async (req, res) => {
-  const requestId = req.requestId ?? req.traceId ?? `bridge-${Date.now()}`;
+  const requestId = req.requestId ?? req.traceId ?? buildFallbackRequestId('bridge');
   const auth = validateCustomGptBridgeSecret({
     authorization: req.header('authorization'),
     actionSecret: req.header('x-openai-action-secret') ?? req.header('x-action-secret'),
@@ -76,7 +82,7 @@ router.post(['/api/bridge/gpt', '/api/openai/gpt-action'], asyncHandler(async (r
 }));
 
 router.get('/api/bridge/health', asyncHandler(async (req, res) => {
-  const requestId = req.requestId ?? req.traceId ?? `bridge-health-${Date.now()}`;
+  const requestId = req.requestId ?? req.traceId ?? buildFallbackRequestId('bridge-health');
   const payload = await buildCustomGptBridgeHealthPayload(requestId);
   return sendBoundedJsonResponse(req, res, payload, {
     logEvent: 'bridge.health.response',
