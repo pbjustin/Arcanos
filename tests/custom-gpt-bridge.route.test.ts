@@ -58,6 +58,7 @@ describe('Custom GPT bridge route', () => {
     delete process.env.OPENAI_ACTION_BRIDGE_WAIT_TIMEOUT_MS;
     delete process.env.OPENAI_ACTION_BRIDGE_QUERY_WAIT_TIMEOUT_MS;
     delete process.env.OPENAI_ACTION_BRIDGE_POLL_INTERVAL_MS;
+    delete process.env.OPENAI_ACTION_BRIDGE_FAILURE_COUNTER_WINDOW_MS;
     planAutonomousWorkerJobMock.mockResolvedValue({
       status: 'pending',
       retryCount: 0,
@@ -128,6 +129,31 @@ describe('Custom GPT bridge route', () => {
     );
     expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
     expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects an invalid DEFAULT_GPT_ID before enqueueing work', async () => {
+    process.env.DEFAULT_GPT_ID = 'x'.repeat(129);
+
+    const response = await request(buildApp())
+      .post('/api/bridge/gpt')
+      .set('Authorization', 'Bearer test-bridge-secret')
+      .send({
+        prompt: 'Analyze this deployment',
+        action: 'query',
+      });
+
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        ok: false,
+        status: 'misconfigured',
+        error: expect.objectContaining({
+          source: 'routing',
+          message: expect.stringContaining('DEFAULT_GPT_ID is invalid'),
+        }),
+      }),
+    );
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
   });
 
   it('returns a completed output when query_and_wait finishes within the wait window', async () => {

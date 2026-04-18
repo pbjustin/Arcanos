@@ -291,5 +291,18 @@ components:
           additionalProperties: true
         recent_failure_counters:
           type: object
+          additionalProperties: true
+          properties:
+            window_ms:
+              type: number
+            window_started_at:
+              type: string
+              format: date-time
+            counts:
+              type: object
+              additionalProperties:
+                type: number
+        failure_counters_since_start:
+          type: object
           additionalProperties:
             type: number

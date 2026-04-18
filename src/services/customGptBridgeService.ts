@@ -38,12 +38,15 @@ const BRIDGE_FAILURE_COUNTERS: BridgeFailureCounters = {
   timeout: 0,
   auth: 0,
 };
+const BRIDGE_FAILURE_EVENTS: Array<{ source: BridgeErrorSource; timestampMs: number }> = [];
+const DEFAULT_BRIDGE_FAILURE_COUNTER_WINDOW_MS = 15 * 60 * 1000;
 
 const bridgeMetadataSchema = z.record(z.unknown()).default({});
+const bridgeGptIdSchema = z.string().trim().min(1).max(128);
 
 const bridgeRequestSchema = z
   .object({
-    gptId: z.string().trim().min(1).max(128).optional(),
+    gptId: bridgeGptIdSchema.optional(),
     prompt: z.string().trim().min(1).max(50000),
     action: z.enum([GPT_QUERY_ACTION, GPT_QUERY_AND_WAIT_ACTION]).default(GPT_QUERY_ACTION),
     metadata: bridgeMetadataSchema,
@@ -159,6 +162,61 @@ function readMetadataNumber(metadata: Record<string, unknown>, keys: string[]): 
 
 function readEnvNumber(name: string): number | undefined {
   return readNumberCandidate(process.env[name]);
+}
+
+function resolveBridgeFailureCounterWindowMs(): number {
+  const configuredWindowMs = readEnvNumber('OPENAI_ACTION_BRIDGE_FAILURE_COUNTER_WINDOW_MS');
+  if (configuredWindowMs === undefined) {
+    return DEFAULT_BRIDGE_FAILURE_COUNTER_WINDOW_MS;
+  }
+  if (configuredWindowMs <= 0) {
+    return DEFAULT_BRIDGE_FAILURE_COUNTER_WINDOW_MS;
+  }
+  return Math.min(24 * 60 * 60 * 1000, Math.max(60 * 1000, Math.trunc(configuredWindowMs)));
+}
+
+function pruneBridgeFailureEvents(now = Date.now()): void {
+  const cutoffMs = now - resolveBridgeFailureCounterWindowMs();
+  while (BRIDGE_FAILURE_EVENTS.length > 0 && BRIDGE_FAILURE_EVENTS[0].timestampMs < cutoffMs) {
+    BRIDGE_FAILURE_EVENTS.shift();
+  }
+}
+
+function emptyFailureCounters(): BridgeFailureCounters {
+  return {
+    routing: 0,
+    queue: 0,
+    worker: 0,
+    provider: 0,
+    timeout: 0,
+    auth: 0,
+  };
+}
+
+function resolveDefaultGptId(): { ok: true; value: string } | { ok: false; reason: 'missing' | 'invalid'; message: string } {
+  if (process.env.DEFAULT_GPT_ID === undefined) {
+    return {
+      ok: false,
+      reason: 'missing',
+      message: 'gptId is required when DEFAULT_GPT_ID is not configured.',
+    };
+  }
+
+  const parsedDefaultGptId = bridgeGptIdSchema.safeParse(process.env.DEFAULT_GPT_ID);
+  if (!parsedDefaultGptId.success) {
+    return {
+      ok: false,
+      reason: 'invalid',
+      message: `DEFAULT_GPT_ID is invalid: ${parsedDefaultGptId.error.issues
+        .map((issue) => issue.message)
+        .join('; ')}`,
+    };
+  }
+
+  return {
+    ok: true,
+    value: parsedDefaultGptId.data,
+  };
 }
 
 function resolveBridgeWaitForResultMs(request: CustomGptBridgeRequest): number {
@@ -421,9 +479,20 @@ function buildBridgeErrorPayload(input: {
 
 export function recordCustomGptBridgeFailure(source: BridgeErrorSource): void {
   BRIDGE_FAILURE_COUNTERS[source] += 1;
+  BRIDGE_FAILURE_EVENTS.push({ source, timestampMs: Date.now() });
+  pruneBridgeFailureEvents();
 }
 
 export function getCustomGptBridgeFailureCounters(): BridgeFailureCounters {
+  pruneBridgeFailureEvents();
+  const recentCounters = emptyFailureCounters();
+  for (const event of BRIDGE_FAILURE_EVENTS) {
+    recentCounters[event.source] += 1;
+  }
+  return recentCounters;
+}
+
+export function getCustomGptBridgeFailureCountersSinceStart(): BridgeFailureCounters {
   return { ...BRIDGE_FAILURE_COUNTERS };
 }
 
@@ -470,15 +539,15 @@ export function parseCustomGptBridgeRequest(rawBody: unknown): ParseBridgeReques
       }),
     };
   }
-  const gptId = parsed.data.gptId ?? process.env.DEFAULT_GPT_ID?.trim();
-  if (!gptId) {
+  const defaultGptId = parsed.data.gptId ? { ok: true as const, value: parsed.data.gptId } : resolveDefaultGptId();
+  if (defaultGptId?.ok === false) {
     return {
       ok: false,
-      statusCode: 400,
+      statusCode: defaultGptId.reason === 'invalid' ? 503 : 400,
       body: buildBridgeErrorPayload({
         source: 'routing',
-        status: 'invalid_request',
-        message: 'gptId is required when DEFAULT_GPT_ID is not configured.',
+        status: defaultGptId.reason === 'invalid' ? 'misconfigured' : 'invalid_request',
+        message: defaultGptId.message,
       }),
     };
   }
@@ -486,7 +555,7 @@ export function parseCustomGptBridgeRequest(rawBody: unknown): ParseBridgeReques
     ok: true,
     statusCode: 200,
     request: {
-      gptId,
+      gptId: defaultGptId.value,
       prompt: parsed.data.prompt,
       action: parsed.data.action,
       metadata: parsed.data.metadata,
@@ -646,8 +715,10 @@ export async function executeCustomGptBridgeRequest(
 }
 
 export async function buildCustomGptBridgeHealthPayload(requestId: string): Promise<Record<string, unknown>> {
-  const defaultGptId = process.env.DEFAULT_GPT_ID?.trim() ?? null;
+  const defaultGptIdResult = resolveDefaultGptId();
+  const defaultGptId = defaultGptIdResult.ok ? defaultGptIdResult.value : null;
   const bridgeSecretConfigured = Boolean(readRequiredSecret());
+  const failureCounterWindowMs = resolveBridgeFailureCounterWindowMs();
   let databaseHealth: Record<string, unknown>;
   try {
     const { getStatus } = await import('@core/db/index.js');
@@ -718,9 +789,17 @@ export async function buildCustomGptBridgeHealthPayload(requestId: string): Prom
     request_id: requestId,
     env: {
       OPENAI_ACTION_SHARED_SECRET: { configured: bridgeSecretConfigured },
-      DEFAULT_GPT_ID: { configured: Boolean(defaultGptId), value: defaultGptId },
+      DEFAULT_GPT_ID: {
+        configured: process.env.DEFAULT_GPT_ID !== undefined,
+        valid: defaultGptIdResult.ok,
+        value: defaultGptId,
+        error: defaultGptIdResult.ok ? null : defaultGptIdResult.message,
+      },
       OPENAI_ACTION_BRIDGE_WAIT_TIMEOUT_MS: {
         configured: process.env.OPENAI_ACTION_BRIDGE_WAIT_TIMEOUT_MS !== undefined,
+      },
+      OPENAI_ACTION_BRIDGE_QUERY_WAIT_TIMEOUT_MS: {
+        configured: process.env.OPENAI_ACTION_BRIDGE_QUERY_WAIT_TIMEOUT_MS !== undefined,
       },
       OPENAI_ACTION_BRIDGE_POLL_INTERVAL_MS: {
         configured: process.env.OPENAI_ACTION_BRIDGE_POLL_INTERVAL_MS !== undefined,
@@ -733,6 +812,11 @@ export async function buildCustomGptBridgeHealthPayload(requestId: string): Prom
     route_reachability: routeReachability,
     database: databaseHealth,
     worker_status: workerStatus,
-    recent_failure_counters: getCustomGptBridgeFailureCounters(),
+    recent_failure_counters: {
+      window_ms: failureCounterWindowMs,
+      window_started_at: new Date(Date.now() - failureCounterWindowMs).toISOString(),
+      counts: getCustomGptBridgeFailureCounters(),
+    },
+    failure_counters_since_start: getCustomGptBridgeFailureCountersSinceStart(),
   };
 }
