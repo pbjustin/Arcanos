@@ -6,6 +6,12 @@ export interface JobRunnerRuntimeSettings {
   statsWorkerId: string;
 }
 
+export interface JobRunnerDatabaseBootstrapSettings {
+  retryMs: number;
+  maxRetryMs: number;
+  maxAttempts: number | null;
+}
+
 export interface JobRunnerSlotDefinition {
   slotIndex: number;
   slotNumber: number;
@@ -20,6 +26,14 @@ function readPositiveIntegerEnvValue(
 ): number {
   const parsedValue = rawValue ? Number(rawValue) : Number.NaN;
   return Number.isInteger(parsedValue) && parsedValue > 0 ? parsedValue : fallback;
+}
+
+function readNonNegativeIntegerEnvValue(
+  rawValue: string | undefined,
+  fallback: number
+): number {
+  const parsedValue = rawValue ? Number(rawValue) : Number.NaN;
+  return Number.isInteger(parsedValue) && parsedValue >= 0 ? parsedValue : fallback;
 }
 
 /**
@@ -47,6 +61,27 @@ export function resolveJobRunnerRuntimeSettings(
     concurrency,
     baseWorkerId,
     statsWorkerId: env.JOB_WORKER_STATS_ID?.trim() || baseWorkerId
+  };
+}
+
+/**
+ * Resolve database bootstrap retry settings for the worker process.
+ * Purpose: prevent transient Railway database reachability failures from permanently crashing the worker.
+ * Inputs/outputs: accepts an optional environment object and returns normalized retry settings.
+ * Edge case behavior: maxAttempts=0 means retry indefinitely; invalid values fall back to conservative defaults.
+ */
+export function resolveJobRunnerDatabaseBootstrapSettings(
+  env: NodeJS.ProcessEnv = process.env
+): JobRunnerDatabaseBootstrapSettings {
+  const maxAttempts = readNonNegativeIntegerEnvValue(
+    env.JOB_WORKER_DB_BOOTSTRAP_MAX_ATTEMPTS,
+    0
+  );
+
+  return {
+    retryMs: readPositiveIntegerEnvValue(env.JOB_WORKER_DB_BOOTSTRAP_RETRY_MS, 5_000),
+    maxRetryMs: readPositiveIntegerEnvValue(env.JOB_WORKER_DB_BOOTSTRAP_MAX_RETRY_MS, 30_000),
+    maxAttempts: maxAttempts === 0 ? null : maxAttempts
   };
 }
 

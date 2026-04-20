@@ -2,6 +2,7 @@ import { describe, expect, it } from '@jest/globals';
 
 import {
   buildJobRunnerSlotDefinitions,
+  resolveJobRunnerDatabaseBootstrapSettings,
   resolveJobRunnerRuntimeSettings
 } from '../src/workers/jobRunnerRuntime.js';
 
@@ -56,5 +57,29 @@ describe('jobRunnerRuntime', () => {
         isInspectorSlot: true
       }
     ]);
+  });
+
+  it('normalizes database bootstrap retry settings', () => {
+    const retrySettings = resolveJobRunnerDatabaseBootstrapSettings({
+      JOB_WORKER_DB_BOOTSTRAP_RETRY_MS: '2500',
+      JOB_WORKER_DB_BOOTSTRAP_MAX_RETRY_MS: '12000',
+      JOB_WORKER_DB_BOOTSTRAP_MAX_ATTEMPTS: '5'
+    } as NodeJS.ProcessEnv);
+
+    expect(retrySettings).toEqual({
+      retryMs: 2500,
+      maxRetryMs: 12000,
+      maxAttempts: 5
+    });
+  });
+
+  it('uses indefinite database bootstrap retries by default', () => {
+    const retrySettings = resolveJobRunnerDatabaseBootstrapSettings({} as NodeJS.ProcessEnv);
+
+    expect(retrySettings).toEqual({
+      retryMs: 5000,
+      maxRetryMs: 30000,
+      maxAttempts: null
+    });
   });
 });

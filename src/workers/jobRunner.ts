@@ -31,7 +31,9 @@ import {
 import { classifyDagNodeFailureForWorkerRetry } from './jobFailureClassification.js';
 import {
   buildJobRunnerSlotDefinitions,
+  resolveJobRunnerDatabaseBootstrapSettings,
   resolveJobRunnerRuntimeSettings,
+  type JobRunnerDatabaseBootstrapSettings,
   type JobRunnerRuntimeSettings,
   type JobRunnerSlotDefinition
 } from './jobRunnerRuntime.js';
@@ -84,6 +86,64 @@ function initOpenAIClient() {
 
   const adapter = getOpenAIAdapter(adapterConfig);
   return adapter.getClient();
+}
+
+function hasDatabaseConfiguration(): boolean {
+  const directUrlConfigured = [
+    'DATABASE_URL',
+    'DATABASE_PRIVATE_URL',
+    'DATABASE_PUBLIC_URL'
+  ].some(key => Boolean(process.env[key]?.trim()));
+  const pgVarsConfigured = [
+    'PGUSER',
+    'PGPASSWORD',
+    'PGHOST',
+    'PGPORT',
+    'PGDATABASE'
+  ].every(key => Boolean(process.env[key]?.trim()));
+
+  return directUrlConfigured || pgVarsConfigured;
+}
+
+function computeDatabaseBootstrapRetryDelayMs(
+  attempt: number,
+  settings: JobRunnerDatabaseBootstrapSettings
+): number {
+  const backoffMs = settings.retryMs * 2 ** Math.max(0, attempt - 1);
+  return Math.min(backoffMs, settings.maxRetryMs);
+}
+
+async function initializeJobRunnerDatabaseWithRetry(workerId: string): Promise<void> {
+  if (!hasDatabaseConfiguration()) {
+    throw new Error('Database not configured (no database URL or PG* credentials found)');
+  }
+
+  const settings = resolveJobRunnerDatabaseBootstrapSettings();
+  let attempt = 0;
+
+  while (true) {
+    attempt += 1;
+    const dbInitialized = await initializeDatabase(workerId);
+    const dbStatus = getDatabaseStatus();
+
+    if (dbInitialized && dbStatus.connected) {
+      if (attempt > 1) {
+        console.log(`[jobRunner] database bootstrap recovered after ${attempt} attempt(s)`);
+      }
+      return;
+    }
+
+    const statusMessage = `connected=${dbStatus.connected}, error=${dbStatus.error ?? 'none'}`;
+    if (settings.maxAttempts !== null && attempt >= settings.maxAttempts) {
+      throw new Error(`Database not configured (${statusMessage}) after ${attempt} attempt(s)`);
+    }
+
+    const delayMs = computeDatabaseBootstrapRetryDelayMs(attempt, settings);
+    console.warn(
+      `[jobRunner] database bootstrap attempt ${attempt} failed (${statusMessage}); retrying in ${delayMs}ms`
+    );
+    await sleep(delayMs);
+  }
 }
 
 function isProviderRuntimeError(message: string): boolean {
@@ -865,13 +925,7 @@ async function runWorkerConsumerSlot(
 
 async function run(): Promise<void> {
   const runtimeSettings = resolveJobRunnerRuntimeSettings();
-  const dbInitialized = await initializeDatabase('job-runner');
-  const dbStatus = getDatabaseStatus();
-
-  //audit Assumption: job polling requires an initialized DB pool and schema; failure risk: immediate fatal "Database not configured" loop despite valid env vars; expected invariant: DB reports connected before queue claims start; handling strategy: fail fast with explicit status context.
-  if (!dbInitialized || !dbStatus.connected) {
-    throw new Error(`Database not configured (connected=${dbStatus.connected}, error=${dbStatus.error ?? 'none'})`);
-  }
+  await initializeJobRunnerDatabaseWithRetry('job-runner');
 
   const slotDefinitions = buildJobRunnerSlotDefinitions(runtimeSettings);
   const inspectorSlot = slotDefinitions[0];

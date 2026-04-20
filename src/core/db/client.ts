@@ -19,6 +19,14 @@ let isConnected = false;
 let connectionError: Error | null = null;
 
 const RAILWAY_PRIVATE_HOST_SUFFIX = '.railway.internal';
+const PRIVATE_RAILWAY_REACHABILITY_ERROR_CODES = new Set([
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'ETIMEDOUT',
+  'ECONNREFUSED',
+  'ENETUNREACH',
+  'EHOSTUNREACH'
+]);
 
 const trackedEnvVars = [
   'DATABASE_URL',
@@ -68,6 +76,17 @@ interface DatabaseConnectionCandidate {
   connectionString: string;
   source: 'database_private_url' | 'database_url' | 'database_public_url';
   shouldUseSsl: boolean;
+}
+
+function pushUniqueDatabaseConnectionCandidate(
+  candidates: DatabaseConnectionCandidate[],
+  candidate: DatabaseConnectionCandidate
+): void {
+  if (candidates.some(existing => existing.connectionString === candidate.connectionString)) {
+    return;
+  }
+
+  candidates.push(candidate);
 }
 
 function buildConnectionStringFromPgEnv(credentials: Record<'PGUSER' | 'PGPASSWORD' | 'PGHOST' | 'PGPORT' | 'PGDATABASE', string>): string {
@@ -151,7 +170,7 @@ export function resolveDatabaseConnectionCandidates(
 
   //audit Assumption: Railway services benefit from a dedicated private connection string while local CLI flows need a public URL; failure risk: callers only ever try the public proxy or only ever try the private hostname; expected invariant: candidates are ordered from most preferred to safest fallback; handling strategy: prepend DATABASE_PRIVATE_URL when configured, then append the public-facing URLs without duplicates.
   if (configuredDatabasePrivateUrl) {
-    candidates.push({
+    pushUniqueDatabaseConnectionCandidate(candidates, {
       connectionString: normalizeDatabaseConnectionString(configuredDatabasePrivateUrl),
       source: 'database_private_url',
       shouldUseSsl: shouldUseSslForConnectionString(configuredDatabasePrivateUrl)
@@ -159,7 +178,7 @@ export function resolveDatabaseConnectionCandidates(
   }
 
   if (synthesizedDatabaseUrl) {
-    candidates.push({
+    pushUniqueDatabaseConnectionCandidate(candidates, {
       connectionString: normalizeDatabaseConnectionString(synthesizedDatabaseUrl),
       source: 'database_url',
       shouldUseSsl: shouldUseSslForConnectionString(synthesizedDatabaseUrl)
@@ -171,7 +190,7 @@ export function resolveDatabaseConnectionCandidates(
     configuredDatabasePublicUrl !== synthesizedDatabaseUrl &&
     configuredDatabasePublicUrl !== configuredDatabasePrivateUrl
   ) {
-    candidates.push({
+    pushUniqueDatabaseConnectionCandidate(candidates, {
       connectionString: normalizeDatabaseConnectionString(configuredDatabasePublicUrl),
       source: 'database_public_url',
       shouldUseSsl: shouldUseSslForConnectionString(configuredDatabasePublicUrl)
@@ -194,14 +213,23 @@ function shouldRetryWithPublicDatabaseUrl(
       ? (error as { code: string }).code
       : '';
   const hostname = extractHostnameFromConnectionString(candidate.connectionString);
-
-  //audit Assumption: local CLI processes cannot resolve Railway private DNS names; failure risk: DB bootstrap fails permanently even though a public proxy URL is configured; expected invariant: ENOTFOUND on a `.railway.internal` host should fall back once to the public URL; handling strategy: retry only for the private-host resolution failure and only when a public candidate exists.
-  return (
-    errorCode === 'ENOTFOUND' &&
+  const fallbackHostname = fallbackCandidate
+    ? extractHostnameFromConnectionString(fallbackCandidate.connectionString)
+    : null;
+  const errorMessage = error instanceof Error ? error.message : String(error ?? '');
+  const isPrivateRailwayCandidate =
     (candidate.source === 'database_private_url' || candidate.source === 'database_url') &&
-    Boolean(fallbackCandidate) &&
-    Boolean(hostname && hostname.endsWith(RAILWAY_PRIVATE_HOST_SUFFIX))
+    Boolean(hostname && hostname.endsWith(RAILWAY_PRIVATE_HOST_SUFFIX));
+  const hasPublicFallback = Boolean(
+    fallbackCandidate &&
+    (!fallbackHostname || !fallbackHostname.endsWith(RAILWAY_PRIVATE_HOST_SUFFIX))
   );
+  const isReachabilityError =
+    PRIVATE_RAILWAY_REACHABILITY_ERROR_CODES.has(errorCode) ||
+    /timeout exceeded when trying to connect|connect ETIMEDOUT|getaddrinfo|EAI_AGAIN|ECONNREFUSED|ENETUNREACH|EHOSTUNREACH/i.test(errorMessage);
+
+  //audit Assumption: private Railway DNS can fail by timeout as well as lookup error in preview/runtime contexts; failure risk: DB bootstrap crashes despite a public proxy URL being configured; expected invariant: private-host reachability failures fall back once to the public URL; handling strategy: retry only for private Railway hosts and only when a non-private candidate exists.
+  return isPrivateRailwayCandidate && hasPublicFallback && isReachabilityError;
 }
 
 async function closePoolSafely(activePool: PoolType): Promise<void> {
@@ -294,7 +322,7 @@ export async function initializeDatabase(workerId = ''): Promise<boolean> {
 
       if (shouldRetryWithPublicDatabaseUrl(error, connectionCandidate, fallbackCandidate)) {
         console.warn(
-          '[🔌 DB] Private Railway hostname was unreachable; retrying with DATABASE_PUBLIC_URL.'
+          '[🔌 DB] Private Railway database URL was unreachable; retrying with public database URL.'
         );
         continue;
       }
