@@ -582,6 +582,7 @@ export async function executeCustomGptBridgeRequest(
   const queuedInput = buildQueuedGptJobInput({
     gptId: input.request.gptId,
     body: internalBody,
+    prompt: input.request.prompt,
     requestId: input.requestId,
     routeHint: effectiveAction,
     requestPath: '/api/bridge/gpt',
@@ -609,6 +610,25 @@ export async function executeCustomGptBridgeRequest(
       idempotencyKey: descriptor.publicIdempotencyKey,
       idempotencySource: descriptor.source,
     };
+
+    if (jobResult.job.status === 'completed') {
+      const output = normalizeCompletedJobOutput(jobResult.job.output);
+      return {
+        statusCode: 200,
+        body: buildCompletedPayload({
+          ...basePendingInput,
+          job: jobResult.job,
+          output,
+          timing: buildBridgeTiming({
+            startedAtMs,
+            enqueueStartedAtMs,
+            enqueueCompletedAtMs,
+            job: jobResult.job,
+            output,
+          }),
+        }),
+      };
+    }
 
     if (waitForResultMs <= 0) {
       return {

@@ -128,6 +128,52 @@ describe('Custom GPT bridge route', () => {
       }),
     );
     expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
+    expect(findOrCreateGptJobMock.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        input: expect.objectContaining({
+          prompt: 'Analyze this deployment',
+          body: expect.objectContaining({
+            prompt: 'Analyze this deployment',
+          }),
+        }),
+      }),
+    );
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+  });
+
+  it('returns completed output immediately when a query dedupes to a completed job', async () => {
+    const completedJob = buildJob('job-deduped-completed-123', 'completed', {
+      ok: true,
+      result: 'cached output',
+    });
+    findOrCreateGptJobMock.mockResolvedValue({
+      job: completedJob,
+      created: false,
+      deduped: true,
+      dedupeReason: 'reused_completed_result',
+    });
+
+    const response = await request(buildApp())
+      .post('/api/openai/gpt-action')
+      .set('Authorization', 'Bearer test-bridge-secret')
+      .send({
+        gptId: 'arcanos-core',
+        prompt: 'Analyze this deployment',
+        action: 'query',
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        ok: true,
+        status: 'completed',
+        jobId: 'job-deduped-completed-123',
+        output: 'cached output',
+        observability: expect.objectContaining({
+          deduped: true,
+        }),
+      }),
+    );
     expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
   });
 
