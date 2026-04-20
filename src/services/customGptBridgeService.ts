@@ -40,6 +40,7 @@ const BRIDGE_FAILURE_COUNTERS: BridgeFailureCounters = {
 };
 const BRIDGE_FAILURE_EVENTS: Array<{ source: BridgeErrorSource; timestampMs: number }> = [];
 const DEFAULT_BRIDGE_FAILURE_COUNTER_WINDOW_MS = 15 * 60 * 1000;
+const BRIDGE_IDEMPOTENCY_FINGERPRINT_VERSION = 2;
 
 const bridgeMetadataSchema = z.record(z.unknown()).default({});
 const bridgeGptIdSchema = z.string().trim().min(1).max(128);
@@ -258,6 +259,13 @@ function buildInternalGptBody(request: CustomGptBridgeRequest): Record<string, u
     body.executionMode = 'async';
   }
   return body;
+}
+
+function buildBridgeIdempotencyBody(body: Record<string, unknown>): Record<string, unknown> {
+  return {
+    ...body,
+    bridgeFingerprintVersion: BRIDGE_IDEMPOTENCY_FINGERPRINT_VERSION,
+  };
 }
 
 function normalizeCompletedJobOutput(output: unknown): unknown {
@@ -573,7 +581,7 @@ export async function executeCustomGptBridgeRequest(
   const descriptor = buildGptIdempotencyDescriptor({
     gptId: input.request.gptId,
     action: effectiveAction,
-    body: internalBody,
+    body: buildBridgeIdempotencyBody(internalBody),
     actorKey: input.actorKey,
     explicitIdempotencyKey,
   });

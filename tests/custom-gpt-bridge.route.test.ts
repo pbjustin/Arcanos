@@ -29,6 +29,7 @@ jest.unstable_mockModule('../src/services/queuedGptCompletionService.js', () => 
 
 const { default: requestContext } = await import('../src/middleware/requestContext.js');
 const { default: bridgeRouter } = await import('../src/routes/bridge.js');
+const { buildGptRequestFingerprintHash } = await import('../src/shared/gpt/gptIdempotency.js');
 
 function buildApp() {
   const app = express();
@@ -138,6 +139,26 @@ describe('Custom GPT bridge route', () => {
         }),
       }),
     );
+    const jobOptions = findOrCreateGptJobMock.mock.calls[0]?.[0];
+    const legacyFingerprintHash = buildGptRequestFingerprintHash({
+      gptId: 'arcanos-core',
+      action: 'query',
+      body: {
+        prompt: 'Analyze this deployment',
+        action: 'query',
+      },
+    });
+    const bridgeFingerprintHash = buildGptRequestFingerprintHash({
+      gptId: 'arcanos-core',
+      action: 'query',
+      body: {
+        prompt: 'Analyze this deployment',
+        action: 'query',
+        bridgeFingerprintVersion: 2,
+      },
+    });
+    expect(jobOptions?.requestFingerprintHash).toBe(bridgeFingerprintHash);
+    expect(jobOptions?.requestFingerprintHash).not.toBe(legacyFingerprintHash);
     expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
   });
 
