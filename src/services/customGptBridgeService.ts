@@ -40,7 +40,7 @@ const BRIDGE_FAILURE_COUNTERS: BridgeFailureCounters = {
 };
 const BRIDGE_FAILURE_EVENTS: Array<{ source: BridgeErrorSource; timestampMs: number }> = [];
 const DEFAULT_BRIDGE_FAILURE_COUNTER_WINDOW_MS = 15 * 60 * 1000;
-const BRIDGE_IDEMPOTENCY_FINGERPRINT_VERSION = 2;
+const BRIDGE_IDEMPOTENCY_FINGERPRINT_VERSION = 3;
 
 const bridgeMetadataSchema = z.record(z.unknown()).default({});
 const bridgeGptIdSchema = z.string().trim().min(1).max(128);

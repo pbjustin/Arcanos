@@ -154,7 +154,7 @@ describe('Custom GPT bridge route', () => {
       body: {
         prompt: 'Analyze this deployment',
         action: 'query',
-        bridgeFingerprintVersion: 2,
+        bridgeFingerprintVersion: 3,
       },
     });
     expect(jobOptions?.requestFingerprintHash).toBe(bridgeFingerprintHash);
