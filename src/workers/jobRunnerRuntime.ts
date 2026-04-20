@@ -20,6 +20,22 @@ export interface JobRunnerSlotDefinition {
   isInspectorSlot: boolean;
 }
 
+const RETRYABLE_DATABASE_BOOTSTRAP_ERROR_MARKERS = [
+  'timeout exceeded when trying to connect',
+  'connect timeout',
+  'connection timeout',
+  'connection terminated',
+  'connection refused',
+  'could not connect',
+  'econnrefused',
+  'etimedout',
+  'enotfound',
+  'eai_again',
+  'enetwork',
+  'enetunreach',
+  'ehostunreach'
+];
+
 function readPositiveIntegerEnvValue(
   rawValue: string | undefined,
   fallback: number
@@ -83,6 +99,21 @@ export function resolveJobRunnerDatabaseBootstrapSettings(
     maxRetryMs: readPositiveIntegerEnvValue(env.JOB_WORKER_DB_BOOTSTRAP_MAX_RETRY_MS, 30_000),
     maxAttempts: maxAttempts === 0 ? null : maxAttempts
   };
+}
+
+/**
+ * Identify transient DB reachability errors that should delay worker startup instead of crashing the process.
+ */
+export function isRetryableJobRunnerDatabaseBootstrapError(error: unknown): boolean {
+  const message = error instanceof Error
+    ? error.message
+    : typeof error === 'string'
+      ? error
+      : String(error ?? '');
+  const normalizedMessage = message.toLowerCase();
+  return RETRYABLE_DATABASE_BOOTSTRAP_ERROR_MARKERS.some(marker =>
+    normalizedMessage.includes(marker)
+  );
 }
 
 /**

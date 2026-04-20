@@ -31,6 +31,7 @@ import {
 import { classifyDagNodeFailureForWorkerRetry } from './jobFailureClassification.js';
 import {
   buildJobRunnerSlotDefinitions,
+  isRetryableJobRunnerDatabaseBootstrapError,
   resolveJobRunnerDatabaseBootstrapSettings,
   resolveJobRunnerRuntimeSettings,
   type JobRunnerDatabaseBootstrapSettings,
@@ -113,17 +114,37 @@ function computeDatabaseBootstrapRetryDelayMs(
   return Math.min(backoffMs, settings.maxRetryMs);
 }
 
-async function initializeJobRunnerDatabaseWithRetry(workerId: string): Promise<void> {
+async function initializeJobRunnerDatabaseWithRetry(
+  workerId: string,
+  settings: JobRunnerDatabaseBootstrapSettings = resolveJobRunnerDatabaseBootstrapSettings()
+): Promise<void> {
   if (!hasDatabaseConfiguration()) {
     throw new Error('Database not configured (no database URL or PG* credentials found)');
   }
 
-  const settings = resolveJobRunnerDatabaseBootstrapSettings();
   let attempt = 0;
 
   while (true) {
     attempt += 1;
-    const dbInitialized = await initializeDatabase(workerId);
+    let dbInitialized = false;
+    try {
+      dbInitialized = await initializeDatabase(workerId);
+    } catch (error: unknown) {
+      const message = resolveErrorMessage(error);
+      if (
+        !isRetryableJobRunnerDatabaseBootstrapError(error) ||
+        (settings.maxAttempts !== null && attempt >= settings.maxAttempts)
+      ) {
+        throw error;
+      }
+
+      const delayMs = computeDatabaseBootstrapRetryDelayMs(attempt, settings);
+      console.warn(
+        `[jobRunner] database bootstrap attempt ${attempt} threw (${message}); retrying in ${delayMs}ms`
+      );
+      await sleep(delayMs);
+      continue;
+    }
     const dbStatus = getDatabaseStatus();
 
     if (dbInitialized && dbStatus.connected) {
@@ -143,6 +164,39 @@ async function initializeJobRunnerDatabaseWithRetry(workerId: string): Promise<v
       `[jobRunner] database bootstrap attempt ${attempt} failed (${statusMessage}); retrying in ${delayMs}ms`
     );
     await sleep(delayMs);
+  }
+}
+
+async function bootstrapWorkerAutonomyWithRetry(
+  autonomyService: WorkerAutonomyService,
+  notes: string[],
+  settings: JobRunnerDatabaseBootstrapSettings
+): Promise<Awaited<ReturnType<WorkerAutonomyService['bootstrap']>>> {
+  let attempt = 0;
+
+  while (true) {
+    attempt += 1;
+    try {
+      const bootstrapResult = await autonomyService.bootstrap(notes);
+      if (attempt > 1) {
+        console.log(`[jobRunner] worker autonomy bootstrap recovered after ${attempt} attempt(s)`);
+      }
+      return bootstrapResult;
+    } catch (error: unknown) {
+      const message = resolveErrorMessage(error);
+      if (
+        !isRetryableJobRunnerDatabaseBootstrapError(error) ||
+        (settings.maxAttempts !== null && attempt >= settings.maxAttempts)
+      ) {
+        throw error;
+      }
+
+      const delayMs = computeDatabaseBootstrapRetryDelayMs(attempt, settings);
+      console.warn(
+        `[jobRunner] worker autonomy bootstrap attempt ${attempt} failed (${message}); retrying in ${delayMs}ms`
+      );
+      await sleep(delayMs);
+    }
   }
 }
 
@@ -925,14 +979,17 @@ async function runWorkerConsumerSlot(
 
 async function run(): Promise<void> {
   const runtimeSettings = resolveJobRunnerRuntimeSettings();
-  await initializeJobRunnerDatabaseWithRetry('job-runner');
+  const databaseBootstrapSettings = resolveJobRunnerDatabaseBootstrapSettings();
+  await initializeJobRunnerDatabaseWithRetry('job-runner', databaseBootstrapSettings);
 
   const slotDefinitions = buildJobRunnerSlotDefinitions(runtimeSettings);
   const inspectorSlot = slotDefinitions[0];
   const inspectorAutonomyService = buildAutonomyServiceForSlot(inspectorSlot);
-  const bootstrapResult = await inspectorAutonomyService.bootstrap([
-    `Worker bootstrap completed with ${slotDefinitions.length} consumer slot(s).`
-  ]);
+  const bootstrapResult = await bootstrapWorkerAutonomyWithRetry(
+    inspectorAutonomyService,
+    [`Worker bootstrap completed with ${slotDefinitions.length} consumer slot(s).`],
+    databaseBootstrapSettings
+  );
   console.log(
     `[jobRunner] bootstrap status=${bootstrapResult.healthStatus} slots=${slotDefinitions.length} recovered=${bootstrapResult.recovered.recoveredJobs.length} failed=${bootstrapResult.recovered.failedJobs.length}`
   );

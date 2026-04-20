@@ -2,6 +2,7 @@ import { describe, expect, it } from '@jest/globals';
 
 import {
   buildJobRunnerSlotDefinitions,
+  isRetryableJobRunnerDatabaseBootstrapError,
   resolveJobRunnerDatabaseBootstrapSettings,
   resolveJobRunnerRuntimeSettings
 } from '../src/workers/jobRunnerRuntime.js';
@@ -81,5 +82,15 @@ describe('jobRunnerRuntime', () => {
       maxRetryMs: 30000,
       maxAttempts: null
     });
+  });
+
+  it('classifies transient database bootstrap reachability errors as retryable', () => {
+    expect(
+      isRetryableJobRunnerDatabaseBootstrapError(
+        new Error('timeout exceeded when trying to connect')
+      )
+    ).toBe(true);
+    expect(isRetryableJobRunnerDatabaseBootstrapError(new Error('ENOTFOUND railway.internal'))).toBe(true);
+    expect(isRetryableJobRunnerDatabaseBootstrapError(new Error('relation "job_data" does not exist'))).toBe(false);
   });
 });
