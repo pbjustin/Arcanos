@@ -484,7 +484,7 @@ export class WorkerAutonomyService {
       queueSummary?.pending ?? queueSummaryBeforeRecovery?.pending ?? 0
     );
 
-    const alerts = buildHealthAlerts(queueSummary, stats, notes);
+    const alerts = buildHealthAlerts(queueSummary, notes);
     const watchdogState = this.buildWatchdogState(queueSummary);
     if (watchdogState.triggered && watchdogState.reason) {
       alerts.push(`Worker watchdog triggered: ${watchdogState.reason}`);
@@ -526,7 +526,7 @@ export class WorkerAutonomyService {
       );
     }
 
-    const healthStatus = this.deriveHealthStatus(queueSummary, stats, alerts);
+    const healthStatus = this.deriveHealthStatus(queueSummary, alerts);
     await this.persistSnapshot({
       queueSummary,
       stats,
@@ -927,12 +927,10 @@ export class WorkerAutonomyService {
 
   private deriveHealthStatus(
     queueSummary: JobQueueSummary | null,
-    stats: JobExecutionStats,
     alerts: string[]
   ): WorkerAutonomyHealthStatus {
     const watchdogState = this.buildWatchdogState(queueSummary);
     const inactivitySignal = deriveWorkerInactivitySignal(watchdogState);
-    const recentFailed = queueSummary?.recentFailed ?? stats.failed;
     const queuePressure =
       Boolean(queueSummary?.pending) &&
       (queueSummary?.pending ?? 0) >= this.settings.queueDepthDeferralThreshold;
@@ -946,14 +944,13 @@ export class WorkerAutonomyService {
       return 'unhealthy';
     }
 
-    if (queueSummary?.stalledRunning || stats.failed >= this.settings.failureWebhookThreshold) {
+    if (queueSummary?.stalledRunning) {
       return 'unhealthy';
     }
 
     if (
       inactivitySignal.detected ||
       liveDegradedSignals ||
-      recentFailed > 0 ||
       pendingAgeElevated ||
       queuePressure
     ) {
@@ -1424,7 +1421,6 @@ function readStringPath(value: unknown, path: string[]): string | null {
 
 function buildHealthAlerts(
   queueSummary: JobQueueSummary | null,
-  stats: JobExecutionStats,
   notes: string[]
 ): string[] {
   const alerts = [...notes];
@@ -1434,10 +1430,6 @@ function buildHealthAlerts(
   }
   if (queueSummary?.pending && queueSummary.pending > 0 && queueSummary.oldestPendingJobAgeMs > 60_000) {
     alerts.push(`Oldest pending job has waited ${queueSummary.oldestPendingJobAgeMs}ms.`);
-  }
-  const recentFailed = queueSummary?.recentFailed ?? stats.failed;
-  if (recentFailed > 0) {
-    alerts.push(`Observed ${recentFailed} failed job(s) in the recent diagnostics window.`);
   }
 
   return alerts;

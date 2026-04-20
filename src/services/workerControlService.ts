@@ -457,7 +457,7 @@ export function buildWorkerQueueSemantics(): WorkerQueueSemantics {
     failedCountMode: 'retained_terminal_jobs',
     failedCountDescription:
       'The failed counter represents job rows currently retained in terminal failed state. It is not a count of currently running failures.',
-    activeFailureSignals: ['stalledRunning', 'oldestPendingJobAgeMs', 'recentFailed', 'workerHeartbeatAgeMs']
+    activeFailureSignals: ['stalledRunning', 'oldestPendingJobAgeMs', 'workerHeartbeatAgeMs']
   };
 }
 
@@ -682,7 +682,6 @@ function buildWorkerOperationalAlerts(
   const pending = queueSummary?.pending ?? 0;
   const stalledRunning = queueSummary?.stalledRunning ?? 0;
   const oldestPendingJobAgeMs = queueSummary?.oldestPendingJobAgeMs ?? 0;
-  const recentFailed = queueSummary?.recentFailed ?? 0;
   const activeQueueWork = hasActiveQueueWork(queueSummary);
 
   if (stalledRunning > 0) {
@@ -690,9 +689,6 @@ function buildWorkerOperationalAlerts(
   }
   if (pending > 0 && oldestPendingJobAgeMs > PENDING_AGE_DEGRADED_THRESHOLD_MS) {
     alerts.add(`Oldest pending job has waited ${oldestPendingJobAgeMs}ms.`);
-  }
-  if (recentFailed > 0) {
-    alerts.add(`Observed ${recentFailed} failed job(s) in the recent diagnostics window.`);
   }
   if (workers.length === 0 && activeQueueWork) {
     alerts.add('No queue worker snapshots observed while queue work is active.');
@@ -753,8 +749,6 @@ function buildWorkerOperationalHealth(
         ? 'unhealthy'
         : fallbackStatus === 'offline'
         ? 'offline'
-        : recentFailed > 0
-        ? 'degraded'
         : 'healthy';
   } else if ((queueSummary?.stalledRunning ?? 0) > 0 || unhealthyWorkerIds.length > 0) {
     overallStatus = 'unhealthy';
