@@ -72,11 +72,26 @@ import {
   parseGptJobStatusRequest,
   parseGptJobResultRequest
 } from '@shared/gpt/gptJobResult.js';
+import {
+  type GptDirectControlAction,
+  normalizeGptDirectControlAction,
+} from '@shared/gpt/gptControlActions.js';
+import {
+  buildGptControlResponseMeta,
+  getGptExecutionPlanAvailableSections,
+  isPlannableGptControlAction,
+  planGptControlExecution,
+  type GptExecutionPlan as GptControlExecutionPlan,
+} from '@shared/gpt/gptExecutionPlanner.js';
+import { prepareShapedControlResponse } from '@shared/gpt/gptControlResponseShape.js';
 import { classifyGptRequestPlane } from './_core/gptPlaneClassification.js';
 import {
   executeSystemStateRequest,
   SystemStateConflictError
 } from '@services/systemState.js';
+import { executeRuntimeInspection } from '@services/runtimeInspectionRoutingService.js';
+import { getWorkerControlStatus } from '@services/workerControlService.js';
+import { buildSafetySelfHealSnapshot } from '@services/selfHealRuntimeInspectionService.js';
 
 const router = express.Router();
 const ARCANOS_CORE_GPT_IDS = new Set(['arcanos-core', 'core', 'arcanos-daemon']);
@@ -88,6 +103,7 @@ const DEFAULT_GPT_QUERY_AND_WAIT_TIMEOUT_MS = 25_000;
 const DIRECT_RETURN_ROUTE_TIMEOUT_HEADROOM_MS = 750;
 const DEFAULT_GPT_QUERY_AND_WAIT_ROUTE_TIMEOUT_MS =
   DEFAULT_GPT_QUERY_AND_WAIT_TIMEOUT_MS + DIRECT_RETURN_ROUTE_TIMEOUT_HEADROOM_MS;
+const DEBUG_GPT_MAX_BYTES_HEADER = 'x-debug-max-bytes';
 const DIRECT_RETURN_WAIT_KEYS = [
   'waitForResultMs',
   'wait_for_result_ms',
@@ -141,19 +157,74 @@ function resolveRequestedAction(body: unknown): string | null {
   return payloadAction ? payloadAction.toLowerCase() : null;
 }
 
+function readPayloadRecord(
+  normalizedBody: Record<string, unknown> | null
+): Record<string, unknown> | null {
+  const payload = normalizedBody?.payload;
+  return payload && typeof payload === 'object' && !Array.isArray(payload)
+    ? (payload as Record<string, unknown>)
+    : null;
+}
+
+function extractPromptTextFromRecord(record: Record<string, unknown> | null): string | null {
+  const candidate =
+    record?.message ??
+    record?.prompt ??
+    record?.userInput ??
+    record?.content ??
+    record?.text ??
+    record?.query;
+
+  if (typeof candidate === 'string' && candidate.trim().length > 0) {
+    return candidate.trim();
+  }
+
+  if (!Array.isArray(record?.messages)) {
+    return null;
+  }
+
+  for (let index = record.messages.length - 1; index >= 0; index -= 1) {
+    const entry = record.messages[index];
+    const normalizedEntry =
+      typeof entry === 'object' && entry !== null && !Array.isArray(entry)
+        ? (entry as Record<string, unknown>)
+        : null;
+
+    if (
+      normalizedEntry?.role === 'user' &&
+      typeof normalizedEntry.content === 'string' &&
+      normalizedEntry.content.trim().length > 0
+    ) {
+      return normalizedEntry.content.trim();
+    }
+  }
+
+  return null;
+}
+
 function extractPromptText(body: unknown): string | null {
   const normalizedBody = normalizeGptRequestBody(body);
-  const candidate =
-    normalizedBody?.message ??
-    normalizedBody?.prompt ??
-    normalizedBody?.userInput ??
-    normalizedBody?.content ??
-    normalizedBody?.text ??
-    normalizedBody?.query;
+  return (
+    extractPromptTextFromRecord(normalizedBody) ??
+    extractPromptTextFromRecord(readPayloadRecord(normalizedBody))
+  );
+}
 
-  return typeof candidate === 'string' && candidate.trim().length > 0
-    ? candidate.trim()
-    : null;
+function resolveDebugGptPublicResponseMaxBytes(req: express.Request): number | undefined {
+  if (
+    process.env.NODE_ENV === 'production' ||
+    process.env.ARCANOS_ENABLE_DEBUG_GPT_CONTROLS !== 'true'
+  ) {
+    return undefined;
+  }
+
+  const rawValue = req.header(DEBUG_GPT_MAX_BYTES_HEADER);
+  if (!rawValue) {
+    return undefined;
+  }
+
+  const parsedValue = Number.parseInt(rawValue, 10);
+  return Number.isFinite(parsedValue) && parsedValue > 0 ? parsedValue : undefined;
 }
 
 function hashPromptText(promptText: string | null): string | null {
@@ -353,13 +424,20 @@ function resolveRequestedExecutionMode(
   body: unknown
 ): GptExecutionMode | null {
   const normalizedBody = normalizeGptRequestBody(body);
+  const payload = readPayloadRecord(normalizedBody);
   const bodyModeCandidate =
     typeof normalizedBody?.executionMode === 'string'
       ? normalizedBody.executionMode
+      : typeof payload?.executionMode === 'string'
+      ? payload.executionMode
       : typeof normalizedBody?.responseMode === 'string'
       ? normalizedBody.responseMode
+      : typeof payload?.responseMode === 'string'
+      ? payload.responseMode
       : typeof normalizedBody?.mode === 'string'
       ? normalizedBody.mode
+      : typeof payload?.mode === 'string'
+      ? payload.mode
       : null;
   const normalizedBodyMode = bodyModeCandidate?.trim().toLowerCase();
   if (normalizedBodyMode === 'async') {
@@ -423,14 +501,18 @@ function resolveRequestedExecutionMode(
 
 function extractMessageCount(body: unknown): number {
   const normalizedBody = normalizeGptRequestBody(body);
-  return Array.isArray(normalizedBody?.messages)
-    ? normalizedBody.messages.length
-    : 0;
+  if (Array.isArray(normalizedBody?.messages)) {
+    return normalizedBody.messages.length;
+  }
+
+  const payload = readPayloadRecord(normalizedBody);
+  return Array.isArray(payload?.messages) ? payload.messages.length : 0;
 }
 
 function extractAnswerMode(body: unknown): string | null {
   const normalizedBody = normalizeGptRequestBody(body);
-  const answerMode = normalizedBody?.answerMode;
+  const payload = readPayloadRecord(normalizedBody);
+  const answerMode = normalizedBody?.answerMode ?? payload?.answerMode;
   return typeof answerMode === 'string' && answerMode.trim().length > 0
     ? answerMode.trim().toLowerCase()
     : null;
@@ -438,7 +520,13 @@ function extractAnswerMode(body: unknown): string | null {
 
 function extractMaxWords(body: unknown): number | null {
   const normalizedBody = normalizeGptRequestBody(body);
-  const candidates = [normalizedBody?.maxWords, normalizedBody?.max_words];
+  const payload = readPayloadRecord(normalizedBody);
+  const candidates = [
+    normalizedBody?.maxWords,
+    normalizedBody?.max_words,
+    payload?.maxWords,
+    payload?.max_words
+  ];
 
   for (const candidate of candidates) {
     if (typeof candidate === 'number' && Number.isFinite(candidate) && candidate > 0) {
@@ -637,6 +725,25 @@ function normalizeQueryAndWaitBody(
   return normalizedQueryBody;
 }
 
+function hydrateDirectQueryBody(
+  normalizedBody: Record<string, unknown> | null,
+  promptText: string | null,
+  enabled: boolean
+): Record<string, unknown> | null {
+  if (!enabled || !normalizedBody || !promptText) {
+    return normalizedBody;
+  }
+
+  if (extractPromptTextFromRecord(normalizedBody)) {
+    return normalizedBody;
+  }
+
+  return {
+    ...normalizedBody,
+    prompt: promptText
+  };
+}
+
 function resolveAsyncBridgeAction(queryAndWaitRequested: boolean) {
   return queryAndWaitRequested
     ? GPT_QUERY_AND_WAIT_ACTION
@@ -688,6 +795,434 @@ function buildDirectControlPayload(
   delete payload.action;
   delete payload.gptId;
   return payload;
+}
+
+type DirectControlDispatchResponse =
+  | {
+      kind: 'guarded';
+      statusCode: number;
+      logEvent: string;
+      payload: Record<string, unknown>;
+    }
+  | {
+      kind: 'prepared';
+      statusCode: number;
+      payload: Record<string, unknown>;
+      headers?: Record<string, string>;
+    };
+
+async function dispatchDirectControlAction(params: {
+  req: express.Request;
+  requestId: string | undefined;
+  gptId: string;
+  action: GptDirectControlAction;
+  normalizedBody: Record<string, unknown> | null;
+  promptText: string | null;
+  logger?: {
+    info?: (...args: any[]) => void;
+    warn?: (...args: any[]) => void;
+  };
+}): Promise<DirectControlDispatchResponse> {
+  const routeMeta = buildDirectControlRouteMeta({
+    requestId: params.requestId,
+    gptId: params.gptId,
+    action: params.action,
+    route: params.action.replace(/[._]/g, '_')
+  });
+  const directControlPayload = buildDirectControlPayload(params.normalizedBody);
+  const directControlPlanResult = isPlannableGptControlAction(params.action)
+    ? planGptControlExecution({
+        action: params.action,
+        promptText: params.promptText,
+        payload: directControlPayload,
+      })
+    : null;
+
+  if (directControlPlanResult && !directControlPlanResult.ok) {
+    params.logger?.warn?.('gpt.request.control_plan_invalid', {
+      endpoint: params.req.originalUrl,
+      gptId: params.gptId,
+      requestId: params.requestId,
+      action: params.action,
+      errorCode: directControlPlanResult.error.code,
+      canonical: directControlPlanResult.canonical,
+    });
+    return {
+      kind: 'guarded',
+      statusCode: 400,
+      logEvent: 'gpt.response.control_plan_invalid',
+      payload: {
+        ok: false,
+        action: params.action,
+        error: directControlPlanResult.error,
+        canonical: directControlPlanResult.canonical,
+        _route: routeMeta,
+      }
+    };
+  }
+
+  const directControlPlan = directControlPlanResult?.ok === true
+    ? directControlPlanResult.plan
+    : null;
+  const directControlAvailableSections = directControlPlanResult?.ok === true
+    ? directControlPlanResult.availableSections
+    : [];
+
+  if (directControlPlan) {
+    params.logger?.info?.('gpt.request.control_plan', {
+      endpoint: params.req.originalUrl,
+      gptId: params.gptId,
+      requestId: params.requestId,
+      action: directControlPlan.action,
+      detail: directControlPlan.detail,
+      sections: directControlPlan.sections,
+      shouldUseAsync: directControlPlan.shouldUseAsync,
+      source: directControlPlan.source,
+    });
+  }
+
+  if (params.action === 'diagnostics') {
+    const diagnostics = await getDiagnosticsSnapshot(params.req.app);
+    params.logger?.info?.('gpt.request.diagnostics', {
+      endpoint: params.req.originalUrl,
+      gptId: params.gptId,
+      internal: true,
+      registeredGpts: Array.isArray(diagnostics.registered_gpts)
+        ? diagnostics.registered_gpts.length
+        : diagnostics.registered_gpts,
+      routeCount: Array.isArray(diagnostics.active_routes)
+        ? diagnostics.active_routes.length
+        : diagnostics.active_routes
+    });
+    recordGptRequestEvent({
+      event: 'control_direct',
+      source: 'diagnostics'
+    });
+
+    const diagnosticsSerializationStartedAt = Date.now();
+    const diagnosticsPayload = prepareBoundedClientJsonPayload(
+      diagnostics as unknown as Record<string, unknown>,
+      {
+        logger: (params.req as any).logger,
+        logEvent: 'gpt.response.diagnostics'
+      }
+    );
+    params.logger?.info?.('gpt.response.serialization', {
+      endpoint: params.req.originalUrl,
+      gptId: params.gptId,
+      action: 'diagnostics',
+      serializationMs: Date.now() - diagnosticsSerializationStartedAt,
+      responseBytes: diagnosticsPayload.responseBytes,
+      truncated: diagnosticsPayload.truncated,
+    });
+
+    const headers: Record<string, string> = {
+      'x-response-bytes': String(diagnosticsPayload.responseBytes)
+    };
+    if (diagnosticsPayload.truncated) {
+      headers['x-response-truncated'] = 'true';
+    }
+
+    return {
+      kind: 'prepared',
+      statusCode: 200,
+      payload: diagnosticsPayload.payload,
+      headers,
+    };
+  }
+
+  if (params.action === 'system_state') {
+    if (!ARCANOS_CORE_GPT_IDS.has(params.gptId)) {
+      params.logger?.warn?.('gpt.request.system_state_rejected', {
+        endpoint: params.req.originalUrl,
+        gptId: params.gptId,
+        requestId: params.requestId,
+        reason: 'non_core_gpt'
+      });
+      return {
+        kind: 'guarded',
+        statusCode: 400,
+        logEvent: 'gpt.response.system_state_rejected',
+        payload: {
+          ok: false,
+          error: {
+            code: 'SYSTEM_STATE_REQUIRES_CORE_GPT',
+            message: 'system_state requests must target an ARCANOS core GPT id.'
+          },
+          _route: routeMeta
+        }
+      };
+    }
+
+    try {
+      const systemStateResult = await executeSystemStateRequest(
+        directControlPayload
+      );
+      params.logger?.info?.('gpt.request.system_state', {
+        endpoint: params.req.originalUrl,
+        gptId: params.gptId,
+        requestId: params.requestId,
+        route: 'system_state'
+      });
+      recordGptRequestEvent({
+        event: 'control_direct',
+        source: 'system_state'
+      });
+      return {
+        kind: 'guarded',
+        statusCode: 200,
+        logEvent: 'gpt.response.system_state',
+        payload: {
+          ok: true,
+          result: systemStateResult,
+          _route: routeMeta
+        }
+      };
+    } catch (error) {
+      if (error instanceof SystemStateConflictError) {
+        params.logger?.warn?.('gpt.request.system_state_conflict', {
+          endpoint: params.req.originalUrl,
+          gptId: params.gptId,
+          requestId: params.requestId,
+          conflict: error.conflict
+        });
+        return {
+          kind: 'guarded',
+          statusCode: 409,
+          logEvent: 'gpt.response.system_state_conflict',
+          payload: {
+            ok: false,
+            error: {
+              code: error.code,
+              message: error.message,
+              details: error.conflict
+            },
+            _route: routeMeta
+          }
+        };
+      }
+
+      params.logger?.warn?.('gpt.request.system_state_invalid', {
+        endpoint: params.req.originalUrl,
+        gptId: params.gptId,
+        requestId: params.requestId,
+        error: resolveErrorMessage(error)
+      });
+      return {
+        kind: 'guarded',
+        statusCode: 400,
+        logEvent: 'gpt.response.system_state_invalid',
+        payload: {
+          ok: false,
+          error: {
+            code: 'BAD_REQUEST',
+            message: resolveErrorMessage(error)
+          },
+          _route: routeMeta
+        }
+      };
+    }
+  }
+
+  if (params.action === 'runtime.inspect') {
+    const runtimeInspection = await executeRuntimeInspection({
+      requestId: params.requestId ?? `${params.gptId}:runtime.inspect`,
+      rawPrompt: params.promptText ?? 'runtime inspect live runtime status',
+      normalizedPrompt: params.promptText ?? 'runtime inspect live runtime status',
+      request: params.req
+    });
+
+    if (!runtimeInspection.ok || !runtimeInspection.responsePayload) {
+      params.logger?.warn?.('gpt.request.runtime_inspection_unavailable', {
+        endpoint: params.req.originalUrl,
+        gptId: params.gptId,
+        requestId: params.requestId,
+        selectedTools: runtimeInspection.selectedTools,
+        runtimeEndpointsQueried: runtimeInspection.runtimeEndpointsQueried,
+        cliUsed: runtimeInspection.cliUsed,
+      });
+      return {
+        kind: 'guarded',
+        statusCode: 503,
+        logEvent: 'gpt.response.runtime_inspection_unavailable',
+        payload: {
+          ok: false,
+          action: params.action,
+          error: runtimeInspection.error ?? {
+            code: 'RUNTIME_INSPECTION_UNAVAILABLE',
+            message: 'runtime inspection unavailable'
+          },
+          _route: routeMeta
+        }
+      };
+    }
+
+    params.logger?.info?.('gpt.request.runtime_inspection', {
+      endpoint: params.req.originalUrl,
+      gptId: params.gptId,
+      requestId: params.requestId,
+      selectedTools: runtimeInspection.selectedTools,
+      runtimeEndpointsQueried: runtimeInspection.runtimeEndpointsQueried,
+      cliUsed: runtimeInspection.cliUsed,
+    });
+    recordGptRequestEvent({
+      event: 'control_direct',
+      source: 'runtime.inspect'
+    });
+    const shapedRuntimeInspection = prepareShapedControlResponse({
+      action: 'runtime.inspect',
+      rawResult: runtimeInspection.responsePayload,
+      plan: (directControlPlan ??
+        {
+          action: 'runtime.inspect',
+          detail: 'summary',
+          sections: getGptExecutionPlanAvailableSections('runtime.inspect'),
+          shouldUseAsync: false,
+          source: 'planner',
+        }) as GptControlExecutionPlan<'runtime.inspect'>,
+      routeMeta,
+      logger: params.req.logger,
+      logEvent: 'gpt.response.runtime_inspection',
+      maxResponseBytes: resolveDebugGptPublicResponseMaxBytes(params.req),
+    });
+    return {
+      kind: 'prepared',
+      statusCode: 200,
+      payload: shapedRuntimeInspection.payload,
+      headers: {
+        'x-response-bytes': String(shapedRuntimeInspection.responseBytes),
+        ...(
+          shapedRuntimeInspection.explicitTruncated || shapedRuntimeInspection.truncated
+            ? { 'x-response-truncated': 'true' }
+            : {}
+        ),
+      },
+    };
+  }
+
+  if (params.action === 'workers.status') {
+    const workerStatus = await getWorkerControlStatus();
+    params.logger?.info?.('gpt.request.workers_status', {
+      endpoint: params.req.originalUrl,
+      gptId: params.gptId,
+      requestId: params.requestId,
+      overallStatus: workerStatus.workerService.health.overallStatus,
+    });
+    recordGptRequestEvent({
+      event: 'control_direct',
+      source: 'workers.status'
+    });
+    return {
+      kind: 'guarded',
+      statusCode: 200,
+      logEvent: 'gpt.response.workers_status',
+      payload: {
+        ok: true,
+        action: params.action,
+        result: workerStatus,
+        ...(directControlPlan
+          ? {
+              meta: buildGptControlResponseMeta({
+                plan: directControlPlan,
+                availableSections: directControlAvailableSections,
+                truncated: false,
+              }),
+            }
+          : {}),
+        _route: routeMeta
+      }
+    };
+  }
+
+  if (params.action === 'queue.inspect') {
+    const workerStatus = await getWorkerControlStatus();
+    const queueInspection = {
+      timestamp: workerStatus.timestamp,
+      workerService: {
+        observationMode: workerStatus.workerService.observationMode,
+        database: workerStatus.workerService.database,
+        queueSummary: workerStatus.workerService.queueSummary,
+        queueSemantics: workerStatus.workerService.queueSemantics,
+        retryPolicy: workerStatus.workerService.retryPolicy,
+        recentFailedJobs: workerStatus.workerService.recentFailedJobs,
+        latestJob: workerStatus.workerService.latestJob,
+        health: workerStatus.workerService.health,
+      }
+    };
+    params.logger?.info?.('gpt.request.queue_inspect', {
+      endpoint: params.req.originalUrl,
+      gptId: params.gptId,
+      requestId: params.requestId,
+      queuePending: workerStatus.workerService.queueSummary?.pending ?? null,
+      queueRunning: workerStatus.workerService.queueSummary?.running ?? null,
+    });
+    recordGptRequestEvent({
+      event: 'control_direct',
+      source: 'queue.inspect'
+    });
+    return {
+      kind: 'guarded',
+      statusCode: 200,
+      logEvent: 'gpt.response.queue_inspect',
+      payload: {
+        ok: true,
+        action: params.action,
+        result: queueInspection,
+        ...(directControlPlan
+          ? {
+              meta: buildGptControlResponseMeta({
+                plan: directControlPlan,
+                availableSections: directControlAvailableSections,
+                truncated: false,
+              }),
+            }
+          : {}),
+        _route: routeMeta
+      }
+    };
+  }
+
+  const selfHealStatus = buildSafetySelfHealSnapshot();
+  params.logger?.info?.('gpt.request.self_heal_status', {
+    endpoint: params.req.originalUrl,
+    gptId: params.gptId,
+    requestId: params.requestId,
+    active: selfHealStatus.active,
+    enabled: selfHealStatus.enabled,
+  });
+  recordGptRequestEvent({
+    event: 'control_direct',
+    source: 'self_heal.status'
+  });
+  const shapedSelfHealStatus = prepareShapedControlResponse({
+    action: 'self_heal.status',
+    rawResult: selfHealStatus as Record<string, unknown>,
+    plan: (directControlPlan ??
+      {
+        action: 'self_heal.status',
+        detail: 'summary',
+        sections: getGptExecutionPlanAvailableSections('self_heal.status'),
+        shouldUseAsync: false,
+        source: 'planner',
+      }) as GptControlExecutionPlan<'self_heal.status'>,
+    routeMeta,
+    logger: params.req.logger,
+    logEvent: 'gpt.response.self_heal_status',
+    maxResponseBytes: resolveDebugGptPublicResponseMaxBytes(params.req),
+  });
+  return {
+    kind: 'prepared',
+    statusCode: 200,
+    payload: shapedSelfHealStatus.payload,
+    headers: {
+      'x-response-bytes': String(shapedSelfHealStatus.responseBytes),
+      ...(
+        shapedSelfHealStatus.explicitTruncated || shapedSelfHealStatus.truncated
+          ? { 'x-response-truncated': 'true' }
+          : {}
+      ),
+    },
+  };
 }
 
 function normalizeCompletedAsyncGptResponse(
@@ -814,6 +1349,7 @@ router.post("/:gptId", async (req, res, next) => {
   const requestedAction = resolveRequestedAction(req.body);
   const queryRequested = requestedAction === GPT_QUERY_ACTION;
   const queryAndWaitRequested = requestedAction === GPT_QUERY_AND_WAIT_ACTION;
+  const bypassIntentRouting = queryRequested || queryAndWaitRequested;
   const asyncBridgeAction = resolveAsyncBridgeAction(queryAndWaitRequested);
   const promptText = extractPromptText(req.body);
   const routeTimeoutProfile = shouldUseDagExecutionTimeoutProfile(promptText)
@@ -863,7 +1399,12 @@ router.post("/:gptId", async (req, res, next) => {
         const normalizedBody = normalizeGptRequestBody(req.body);
         const bodyGptId = resolveBodyGptId(req.body);
         const effectiveRequestedAction = queryAndWaitRequested ? 'query' : requestedAction;
-        const effectiveBody = normalizeQueryAndWaitBody(normalizedBody, requestedAction) ?? req.body;
+        const effectiveBody =
+          hydrateDirectQueryBody(
+            normalizeQueryAndWaitBody(normalizedBody, requestedAction) ?? normalizedBody,
+            promptText,
+            bypassIntentRouting
+          ) ?? req.body;
         applyCanonicalGptRouteHeaders(res, incomingGptId);
 
         requestLogger?.info?.('gpt.request.timeout_plan', {
@@ -1182,125 +1723,35 @@ router.post("/:gptId", async (req, res, next) => {
           }, 'gpt.response.job_result');
         }
 
-        if (planeClassification.plane === 'control' && planeClassification.kind === 'diagnostics') {
-          const diagnostics = await getDiagnosticsSnapshot(req.app);
-          requestLogger?.info?.('gpt.request.diagnostics', {
-            endpoint: req.originalUrl,
-            gptId: incomingGptId,
-            internal: true,
-            registeredGpts: Array.isArray(diagnostics.registered_gpts)
-              ? diagnostics.registered_gpts.length
-              : diagnostics.registered_gpts,
-            routeCount: Array.isArray(diagnostics.active_routes)
-              ? diagnostics.active_routes.length
-              : diagnostics.active_routes
-          });
-          recordGptRequestEvent({
-            event: 'control_direct',
-            source: 'diagnostics'
-          });
-
-          const diagnosticsSerializationStartedAt = Date.now();
-          const diagnosticsPayload = prepareBoundedClientJsonPayload(
-            diagnostics as unknown as Record<string, unknown>,
-            {
-              logger: req.logger,
-              logEvent: 'gpt.response.diagnostics'
-            }
-          );
-          requestLogger?.info?.('gpt.response.serialization', {
-            endpoint: req.originalUrl,
-            gptId: incomingGptId,
-            action: 'diagnostics',
-            serializationMs: Date.now() - diagnosticsSerializationStartedAt,
-            responseBytes: diagnosticsPayload.responseBytes,
-            truncated: diagnosticsPayload.truncated,
-          });
-
-          res.setHeader('x-response-bytes', String(diagnosticsPayload.responseBytes));
-          if (diagnosticsPayload.truncated) {
-            res.setHeader('x-response-truncated', 'true');
-          }
-          return res.json(diagnosticsPayload.payload);
-        }
-
-        if (planeClassification.plane === 'control' && planeClassification.kind === 'system_state') {
-          const routeMeta = buildDirectControlRouteMeta({
-            requestId,
-            gptId: incomingGptId,
-            action: 'system_state',
-            route: 'system_state'
-          });
-
-          if (!ARCANOS_CORE_GPT_IDS.has(incomingGptId)) {
-            requestLogger?.warn?.('gpt.request.system_state_rejected', {
-              endpoint: req.originalUrl,
-              gptId: incomingGptId,
+        if (planeClassification.plane === 'control') {
+          const directControlAction = normalizeGptDirectControlAction(planeClassification.action);
+          if (directControlAction) {
+            const directControlResponse = await dispatchDirectControlAction({
+              req,
               requestId,
-              reason: 'non_core_gpt'
+              gptId: incomingGptId,
+              action: directControlAction,
+              normalizedBody,
+              promptText,
+              logger: requestLogger,
             });
-            return res.status(400).json({
-              ok: false,
-              error: {
-                code: 'SYSTEM_STATE_REQUIRES_CORE_GPT',
-                message: 'system_state requests must target an ARCANOS core GPT id.'
-              },
-              _route: routeMeta
-            });
-          }
 
-          try {
-            const systemStateResult = await executeSystemStateRequest(
-              buildDirectControlPayload(normalizedBody)
+            if (directControlResponse.kind === 'prepared') {
+              for (const [headerName, headerValue] of Object.entries(
+                directControlResponse.headers ?? {}
+              )) {
+                res.setHeader(headerName, headerValue);
+              }
+              return res.status(directControlResponse.statusCode).json(directControlResponse.payload);
+            }
+
+            return sendGuardedGptJsonResponse(
+              req,
+              res,
+              directControlResponse.payload,
+              directControlResponse.logEvent,
+              directControlResponse.statusCode
             );
-            requestLogger?.info?.('gpt.request.system_state', {
-              endpoint: req.originalUrl,
-              gptId: incomingGptId,
-              requestId,
-              route: 'system_state'
-            });
-            recordGptRequestEvent({
-              event: 'control_direct',
-              source: 'system_state'
-            });
-            return res.status(200).json({
-              ok: true,
-              result: systemStateResult,
-              _route: routeMeta
-            });
-          } catch (error) {
-            if (error instanceof SystemStateConflictError) {
-              requestLogger?.warn?.('gpt.request.system_state_conflict', {
-                endpoint: req.originalUrl,
-                gptId: incomingGptId,
-                requestId,
-                conflict: error.conflict
-              });
-              return res.status(409).json({
-                ok: false,
-                error: {
-                  code: error.code,
-                  message: error.message,
-                  details: error.conflict
-                },
-                _route: routeMeta
-              });
-            }
-
-            requestLogger?.warn?.('gpt.request.system_state_invalid', {
-              endpoint: req.originalUrl,
-              gptId: incomingGptId,
-              requestId,
-              error: resolveErrorMessage(error)
-            });
-            return res.status(400).json({
-              ok: false,
-              error: {
-                code: 'BAD_REQUEST',
-                message: resolveErrorMessage(error)
-              },
-              _route: routeMeta
-            });
           }
         }
 
@@ -1488,6 +1939,7 @@ router.post("/:gptId", async (req, res, next) => {
               gptId: incomingGptId,
               body: effectiveBody as Record<string, unknown>,
               prompt: promptText,
+              bypassIntentRouting,
               requestId,
               routeHint: effectiveRequestedAction ?? 'query',
               requestPath: req.originalUrl,
@@ -1941,6 +2393,7 @@ router.post("/:gptId", async (req, res, next) => {
           requestId,
           logger: requestLogger,
           request: req,
+          bypassIntentRouting,
         });
 
         if (!envelope.ok) {

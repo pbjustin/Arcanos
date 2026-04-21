@@ -118,8 +118,8 @@ describe('workerControlService', () => {
         ],
         recentTerminalWindowMs: 3600000,
         recentCompleted: 2,
-        recentFailed: 0,
-        recentTotalTerminal: 2,
+        recentFailed: 1,
+        recentTotalTerminal: 3,
         lastUpdatedAt: '2026-04-11T22:29:00.000Z'
       },
       workers: [
@@ -171,7 +171,7 @@ describe('workerControlService', () => {
     ]);
     expect(health.operationalHealth).toEqual(expect.objectContaining({
       overallStatus: 'healthy',
-      recentFailed: 0,
+      recentFailed: 1,
       stalledRunning: 0
     }));
     expect(health.historicalDebt).toEqual({

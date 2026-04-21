@@ -23,9 +23,11 @@ import { sendBoundedJsonResponse } from '@shared/http/sendBoundedJsonResponse.js
 const router = express.Router();
 const DEFAULT_JOB_STREAM_POLL_MS = 500;
 const DEFAULT_JOB_STREAM_MAX_DURATION_MS = 60_000;
+const UUID_JOB_ID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const jobIdSchema = z.object({
-  id: z.string().trim().min(1)
+  id: z.string().trim().regex(UUID_JOB_ID_PATTERN)
 });
 
 function isTerminalJobStatus(status: JobData['status']): boolean {

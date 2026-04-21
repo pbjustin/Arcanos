@@ -22,6 +22,7 @@ const queuedGptJobInputSchema = z.object({
   gptId: z.string().trim().min(1).max(128),
   body: z.record(jsonValueSchema),
   prompt: z.string().trim().min(1).optional(),
+  bypassIntentRouting: z.boolean().optional(),
   requestId: z.string().trim().min(1).max(128).optional(),
   routeHint: z.string().trim().min(1).max(64).optional(),
   requestPath: z.string().trim().min(1).max(256).optional(),
@@ -34,6 +35,7 @@ export interface QueuedGptJobInput {
   gptId: string;
   body: Record<string, unknown>;
   prompt?: string;
+  bypassIntentRouting?: boolean;
   requestId?: string;
   routeHint?: string;
   requestPath?: string;
@@ -81,6 +83,7 @@ export function buildQueuedGptJobInput(input: {
   gptId: string;
   body: Record<string, unknown>;
   prompt?: string | null;
+  bypassIntentRouting?: boolean;
   requestId?: string | null;
   routeHint?: string | null;
   requestPath?: string | null;
@@ -96,6 +99,10 @@ export function buildQueuedGptJobInput(input: {
   const normalizedPrompt = normalizeOptionalString(input.prompt ?? undefined);
   if (normalizedPrompt) {
     normalizedJobInput.prompt = normalizedPrompt;
+  }
+
+  if (input.bypassIntentRouting === true) {
+    normalizedJobInput.bypassIntentRouting = true;
   }
 
   const normalizedRequestId = normalizeOptionalString(input.requestId ?? undefined);

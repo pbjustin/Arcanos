@@ -194,8 +194,11 @@ function resolveBridgeFailureCounterWindowMs(): number {
 
 function pruneBridgeFailureEvents(now = Date.now()): void {
   const cutoffMs = now - resolveBridgeFailureCounterWindowMs();
-  while (BRIDGE_FAILURE_EVENTS.length > 0 && BRIDGE_FAILURE_EVENTS[0].timestampMs < cutoffMs) {
-    BRIDGE_FAILURE_EVENTS.shift();
+  const firstValidIndex = BRIDGE_FAILURE_EVENTS.findIndex((event) => event.timestampMs >= cutoffMs);
+  if (firstValidIndex === -1) {
+    BRIDGE_FAILURE_EVENTS.length = 0;
+  } else if (firstValidIndex > 0) {
+    BRIDGE_FAILURE_EVENTS.splice(0, firstValidIndex);
   }
 }
 
@@ -602,13 +605,13 @@ export function parseCustomGptBridgeRequest(rawBody: unknown): ParseBridgeReques
   }
   return {
     ok: true,
-      statusCode: 200,
-      request: {
-        gptId: defaultGptId.value,
-        prompt: prompt ?? BRIDGE_SMOKE_OUTPUT,
-        action: parsed.data.action,
-        metadata: parsed.data.metadata,
-      },
+    statusCode: 200,
+    request: {
+      gptId: defaultGptId.value,
+      prompt: prompt ?? BRIDGE_SMOKE_OUTPUT,
+      action: parsed.data.action,
+      metadata: parsed.data.metadata,
+    },
   };
 }
 

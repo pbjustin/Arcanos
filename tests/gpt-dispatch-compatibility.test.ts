@@ -155,4 +155,30 @@ describe('gpt dispatch compatibility', () => {
       })
     );
   });
+
+  it('preserves the exact top-level prompt when query callers also send an explicit payload wrapper', async () => {
+    const response = await routeGptRequest({
+      gptId: 'arcanos-core',
+      body: {
+        action: 'query',
+        prompt: 'Reply with exactly OK.',
+        payload: {
+          executionMode: 'async',
+          extra: 'kept'
+        }
+      },
+      requestId: 'req_payload_prompt_query'
+    });
+
+    expect(response.ok).toBe(true);
+    expect(mockDispatchModuleAction).toHaveBeenCalledWith(
+      'ARCANOS:CORE',
+      'query',
+      expect.objectContaining({
+        prompt: 'Reply with exactly OK.',
+        executionMode: 'async',
+        extra: 'kept'
+      })
+    );
+  });
 });

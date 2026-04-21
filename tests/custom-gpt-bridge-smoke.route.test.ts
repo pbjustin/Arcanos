@@ -35,6 +35,10 @@ const { default: requestContext } = await import('../src/middleware/requestConte
 const { default: bridgeRouter } = await import('../src/routes/bridge.js');
 const { default: jobsRouter } = await import('../src/routes/jobs.js');
 
+const SMOKE_COMPLETE_JOB_ID = '11111111-1111-4111-8111-111111111111';
+const SMOKE_PENDING_JOB_ID = '22222222-2222-4222-8222-222222222222';
+const MODEL_PENDING_JOB_ID = '33333333-3333-4333-8333-333333333333';
+
 function buildApp() {
   const app = express();
   app.use(express.json());
@@ -85,7 +89,7 @@ describe('Custom GPT bridge smoke action', () => {
   it('returns the deterministic completed smoke response when the worker job completes inside the wait window', async () => {
     findOrCreateGptJobMock.mockResolvedValue({
       job: {
-        id: 'job-smoke-complete',
+        id: SMOKE_COMPLETE_JOB_ID,
         status: 'pending',
       },
       created: true,
@@ -95,7 +99,7 @@ describe('Custom GPT bridge smoke action', () => {
     waitForQueuedGptJobCompletionMock.mockResolvedValue({
       state: 'completed',
       job: {
-        id: 'job-smoke-complete',
+        id: SMOKE_COMPLETE_JOB_ID,
         job_type: 'gpt',
         status: 'completed',
         output: {
@@ -142,7 +146,7 @@ describe('Custom GPT bridge smoke action', () => {
   it('returns a standard pending payload for health_echo when inline waiting is disabled', async () => {
     findOrCreateGptJobMock.mockResolvedValue({
       job: {
-        id: 'job-smoke-pending',
+        id: SMOKE_PENDING_JOB_ID,
         status: 'pending',
       },
       created: true,
@@ -166,13 +170,13 @@ describe('Custom GPT bridge smoke action', () => {
       ok: true,
       status: 'pending',
       action: 'health_echo',
-      jobId: 'job-smoke-pending',
-      poll_url: '/jobs/job-smoke-pending',
-      result_url: '/jobs/job-smoke-pending/result',
-      poll: '/jobs/job-smoke-pending',
+      jobId: SMOKE_PENDING_JOB_ID,
+      poll_url: `/jobs/${SMOKE_PENDING_JOB_ID}`,
+      result_url: `/jobs/${SMOKE_PENDING_JOB_ID}/result`,
+      poll: `/jobs/${SMOKE_PENDING_JOB_ID}`,
       result: {
         method: 'GET',
-        url: '/jobs/job-smoke-pending/result',
+        url: `/jobs/${SMOKE_PENDING_JOB_ID}/result`,
       },
     });
     expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
@@ -189,7 +193,7 @@ describe('Custom GPT bridge smoke action', () => {
   it('keeps query_and_wait on the normal queued model path', async () => {
     findOrCreateGptJobMock.mockResolvedValue({
       job: {
-        id: 'job-model-pending',
+        id: MODEL_PENDING_JOB_ID,
         status: 'pending',
       },
       created: true,
@@ -199,7 +203,7 @@ describe('Custom GPT bridge smoke action', () => {
     waitForQueuedGptJobCompletionMock.mockResolvedValue({
       state: 'pending',
       job: {
-        id: 'job-model-pending',
+        id: MODEL_PENDING_JOB_ID,
         status: 'pending',
       },
     });
@@ -218,7 +222,7 @@ describe('Custom GPT bridge smoke action', () => {
       ok: true,
       status: 'pending',
       action: 'query_and_wait',
-      jobId: 'job-model-pending',
+      jobId: MODEL_PENDING_JOB_ID,
     });
     expect(findOrCreateGptJobMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -241,7 +245,7 @@ describe('Custom GPT bridge smoke action', () => {
 
   it('exposes the deterministic smoke output through the canonical job result route', async () => {
     getJobByIdMock.mockResolvedValue({
-      id: 'job-smoke-pending',
+      id: SMOKE_PENDING_JOB_ID,
       job_type: 'gpt',
       status: 'completed',
       created_at: '2026-04-21T10:00:00.000Z',
@@ -260,11 +264,11 @@ describe('Custom GPT bridge smoke action', () => {
       cancel_reason: null,
     });
 
-    const response = await request(buildApp()).get('/jobs/job-smoke-pending/result');
+    const response = await request(buildApp()).get(`/jobs/${SMOKE_PENDING_JOB_ID}/result`);
 
     expect(response.status).toBe(200);
     expect(response.body).toMatchObject({
-      jobId: 'job-smoke-pending',
+      jobId: SMOKE_PENDING_JOB_ID,
       status: 'completed',
       result: {
         ok: true,

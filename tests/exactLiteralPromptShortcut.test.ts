@@ -31,6 +31,15 @@ describe('exactLiteralPromptShortcut', () => {
     });
   });
 
+  it('extracts word-only literal directives used by GPT bridge health checks', () => {
+    expect(
+      tryExtractExactLiteralPromptShortcut('Return the word OK only.')
+    ).toEqual({
+      literal: 'OK',
+      matchedPattern: 'reply_with_only'
+    });
+  });
+
   it('accepts directive-only anti-simulation prefixes before a say-exactly clause', () => {
     expect(
       tryExtractExactLiteralPromptShortcut(
