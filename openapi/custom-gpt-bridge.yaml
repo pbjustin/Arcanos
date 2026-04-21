@@ -1,0 +1,181 @@
+openapi: 3.1.0
+info:
+  title: Arcanos Custom GPT Bridge
+  version: 1.1.0
+  description: >
+    Authenticated bridge contract for Custom GPT actions. The health_echo and
+    echo actions verify bridge transport, queueing, worker execution, and
+    canonical job result retrieval without invoking the ARCANOS Trinity model
+    pipeline. The query and query_and_wait actions execute real model behavior.
+paths:
+  /api/bridge/health:
+    get:
+      operationId: getCustomGptBridgeHealth
+      summary: Check bridge readiness
+      responses:
+        "200":
+          description: Bridge is configured.
+        "503":
+          description: Bridge is degraded or missing required configuration.
+  /api/bridge/gpt:
+    post:
+      operationId: invokeCustomGptBridge
+      summary: Invoke the authenticated Custom GPT bridge
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BridgeRequest"
+            examples:
+              healthEcho:
+                summary: Deterministic transport smoke test
+                value:
+                  gptId: arcanos-core
+                  action: health_echo
+              queryAndWait:
+                summary: Real model behavior
+                value:
+                  gptId: arcanos-core
+                  prompt: Return OK only.
+                  action: query_and_wait
+      responses:
+        "200":
+          description: Completed bridge response.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/SmokeCompletedResponse"
+                  - $ref: "#/components/schemas/BridgeCompletedResponse"
+              examples:
+                smokeCompleted:
+                  value:
+                    ok: true
+                    status: completed
+                    output: OK
+        "202":
+          description: Job accepted and should be polled through canonical job routes.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BridgePendingResponse"
+        "400":
+          description: Invalid request.
+        "401":
+          description: Missing or invalid bridge shared secret.
+        "503":
+          description: Bridge is not configured or queue is unavailable.
+  /jobs/{jobId}:
+    get:
+      operationId: getBridgeJobStatus
+      summary: Poll canonical job status
+      parameters:
+        - $ref: "#/components/parameters/jobId"
+      responses:
+        "200":
+          description: Job status payload.
+  /jobs/{jobId}/result:
+    get:
+      operationId: getBridgeJobResult
+      summary: Read canonical job result
+      parameters:
+        - $ref: "#/components/parameters/jobId"
+      responses:
+        "200":
+          description: Job result payload.
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  parameters:
+    jobId:
+      name: jobId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+  schemas:
+    BridgeRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - action
+      properties:
+        gptId:
+          type: string
+          minLength: 1
+          description: GPT route identifier. Required when DEFAULT_GPT_ID is not configured.
+        prompt:
+          type: string
+          minLength: 1
+          maxLength: 50000
+          description: Required for query and query_and_wait; ignored by health_echo and echo.
+        action:
+          type: string
+          enum:
+            - health_echo
+            - echo
+            - query
+            - query_and_wait
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Optional wait and polling controls.
+    SmokeCompletedResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - ok
+        - status
+        - output
+      properties:
+        ok:
+          const: true
+        status:
+          const: completed
+        output:
+          const: OK
+    BridgeCompletedResponse:
+      type: object
+      additionalProperties: true
+      required:
+        - ok
+        - status
+        - output
+      properties:
+        ok:
+          const: true
+        status:
+          const: completed
+        output: {}
+    BridgePendingResponse:
+      type: object
+      additionalProperties: true
+      required:
+        - ok
+        - status
+        - jobId
+        - poll_url
+        - result_url
+      properties:
+        ok:
+          const: true
+        status:
+          const: pending
+        action:
+          enum:
+            - health_echo
+            - echo
+            - query
+            - query_and_wait
+        jobId:
+          type: string
+        poll_url:
+          type: string
+        result_url:
+          type: string

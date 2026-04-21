@@ -22,6 +22,11 @@ const JOB_STATUS_OPENAPI_CONTRACT_PATH = path.resolve(
   'contracts',
   'job_status.openapi.v1.json'
 );
+const CUSTOM_GPT_BRIDGE_OPENAPI_CONTRACT_PATH = path.resolve(
+  process.cwd(),
+  'openapi',
+  'custom-gpt-bridge.yaml'
+);
 
 async function readOpenApiContract(contractPath: string): Promise<unknown> {
   const rawContract = await fs.readFile(contractPath, "utf8");
@@ -53,6 +58,16 @@ router.get(
     const contract = await readOpenApiContract(JOB_STATUS_OPENAPI_CONTRACT_PATH);
     res.set('cache-control', 'no-store, max-age=0');
     return res.json(contract);
+  })
+);
+
+router.get(
+  '/openapi/custom-gpt-bridge.yaml',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const contract = await fs.readFile(CUSTOM_GPT_BRIDGE_OPENAPI_CONTRACT_PATH, 'utf8');
+    res.set('cache-control', 'no-store, max-age=0');
+    res.type('text/yaml');
+    return res.send(contract);
   })
 );
 

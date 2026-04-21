@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { JobData } from '@core/db/schema.js';
 import { resolveGptJobLifecycleStatus } from './gptJobLifecycle.js';
+import type { GptBridgeSmokeAction } from './bridgeSmoke.js';
 
 export const GPT_QUERY_ACTION = 'query';
 export const GPT_GET_STATUS_ACTION = 'get_status';
@@ -9,7 +10,8 @@ export const GPT_QUERY_AND_WAIT_ACTION = 'query_and_wait';
 
 export type GptAsyncWriteAction =
   | typeof GPT_QUERY_ACTION
-  | typeof GPT_QUERY_AND_WAIT_ACTION;
+  | typeof GPT_QUERY_AND_WAIT_ACTION
+  | GptBridgeSmokeAction;
 
 const normalizeActionValue = (value: unknown) => typeof value === 'string'
   ? value.trim().toLowerCase()

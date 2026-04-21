@@ -21,6 +21,10 @@ import {
   parseQueuedAskJobInput
 } from '@shared/ask/asyncAskJob.js';
 import { parseQueuedGptJobInput } from '@shared/gpt/asyncGptJob.js';
+import {
+  buildBridgeSmokeCompletedOutput,
+  isQueuedBridgeSmokeJobInput
+} from '@shared/gpt/bridgeSmoke.js';
 import { parseDagNodeJobInput } from '../jobs/jobSchema.js';
 import { runDagNodeJob } from './taskRunners.js';
 import {
@@ -336,6 +340,20 @@ async function executeQueuedGptRequest(params: {
     executionModeReason: parsedGptJobInput.value.executionModeReason ?? null,
     promptLength: parsedGptJobInput.value.prompt?.length ?? null
   });
+
+  if (isQueuedBridgeSmokeJobInput(parsedGptJobInput.value)) {
+    const output = buildBridgeSmokeCompletedOutput();
+    routeLogger.info('gpt.bridge_smoke.completed', {
+      gptId,
+      requestId,
+      durationMs: Date.now() - routeStartedAtMs,
+      bridgeAction: parsedGptJobInput.value.bridgeAction ?? null
+    });
+    return {
+      status: 'completed',
+      output
+    };
+  }
 
   let envelope;
   try {
