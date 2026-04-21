@@ -648,13 +648,14 @@ async function runWorkerConsumerSlot(
 
   try {
     while (true) {
-      const ensuredClientState = await ensureOpenAIClientForSlot({
-        workerId: slotDefinition.workerId,
-        currentClient: openai,
-        currentConfigVersion: providerConfigVersion
-      });
-      openai = ensuredClientState.client;
-      providerConfigVersion = ensuredClientState.configVersion;
+      try {
+        const ensuredClientState = await ensureOpenAIClientForSlot({
+          workerId: slotDefinition.workerId,
+          currentClient: openai,
+          currentConfigVersion: providerConfigVersion
+        });
+        openai = ensuredClientState.client;
+        providerConfigVersion = ensuredClientState.configVersion;
 
       if (!openai) {
         const nowMs = Date.now();
@@ -971,6 +972,19 @@ async function runWorkerConsumerSlot(
       }
 
       await sleep(runtimeSettings.pollMs);
+      } catch (error: unknown) {
+        if (isRetryableJobRunnerDatabaseBootstrapError(error)) {
+          const backoffMs = Math.max(runtimeSettings.idleBackoffMs, 5_000);
+          console.warn(
+            `[jobRunner] worker=${slotDefinition.workerId} transient database error; retrying in ${backoffMs}ms:`,
+            resolveErrorMessage(error)
+          );
+          await sleep(backoffMs);
+          continue;
+        }
+
+        throw error;
+      }
     }
   } finally {
     clearInterval(workerHeartbeatHandle);
