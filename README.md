@@ -94,6 +94,9 @@ Canonical boundaries / pipelines:
 - Readiness: `GET /readyz` (critical dependencies ready for traffic)
 - Detailed dependency view: `GET /health` (includes Redis and other dependency state)
 
+## Custom GPT bridge smoke test
+Use `POST /api/bridge/gpt` with `action: "health_echo"` to verify bridge auth, request handling, queueing, worker execution, and canonical `/jobs/{id}/result` retrieval without invoking the Trinity reasoning pipeline. Use `action: "query"` or `action: "query_and_wait"` when the request must exercise real model behavior.
+
 ## OpenAI data retention
 Responses requests default to **stateless** (`store: false`). You can enable storage via:
 - `OPENAI_STORE=true`

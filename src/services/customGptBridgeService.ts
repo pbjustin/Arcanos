@@ -19,6 +19,14 @@ import {
 } from '@shared/gpt/gptIdempotency.js';
 import { resolveGptJobLifecycleStatus, summarizeGptJobTimings } from '@shared/gpt/gptJobLifecycle.js';
 import { GPT_QUERY_ACTION, GPT_QUERY_AND_WAIT_ACTION } from '@shared/gpt/gptJobResult.js';
+import {
+  BRIDGE_SMOKE_OUTPUT,
+  GPT_ECHO_ACTION,
+  GPT_HEALTH_ECHO_ACTION,
+  buildBridgeSmokeCompletedOutput,
+  isGptBridgeSmokeAction,
+  type GptBridgeSmokeAction,
+} from '@shared/gpt/bridgeSmoke.js';
 import { planAutonomousWorkerJob } from './workerAutonomyService.js';
 import {
   resolveAsyncGptPollIntervalMs,
@@ -44,20 +52,28 @@ const BRIDGE_IDEMPOTENCY_FINGERPRINT_VERSION = 3;
 
 const bridgeMetadataSchema = z.record(z.unknown()).default({});
 const bridgeGptIdSchema = z.string().trim().min(1).max(128);
+const bridgeActionSchema = z
+  .enum([GPT_QUERY_ACTION, GPT_QUERY_AND_WAIT_ACTION, GPT_HEALTH_ECHO_ACTION, GPT_ECHO_ACTION])
+  .default(GPT_QUERY_ACTION);
 
 const bridgeRequestSchema = z
   .object({
     gptId: bridgeGptIdSchema.optional(),
-    prompt: z.string().trim().min(1).max(50000),
-    action: z.enum([GPT_QUERY_ACTION, GPT_QUERY_AND_WAIT_ACTION]).default(GPT_QUERY_ACTION),
+    prompt: z.string().trim().min(1).max(50000).optional(),
+    action: bridgeActionSchema,
     metadata: bridgeMetadataSchema,
   })
   .strict();
 
+type CustomGptBridgeAction =
+  | typeof GPT_QUERY_ACTION
+  | typeof GPT_QUERY_AND_WAIT_ACTION
+  | GptBridgeSmokeAction;
+
 export interface CustomGptBridgeRequest {
   gptId: string;
   prompt: string;
-  action: typeof GPT_QUERY_ACTION | typeof GPT_QUERY_AND_WAIT_ACTION;
+  action: CustomGptBridgeAction;
   metadata: Record<string, unknown>;
 }
 
@@ -178,8 +194,11 @@ function resolveBridgeFailureCounterWindowMs(): number {
 
 function pruneBridgeFailureEvents(now = Date.now()): void {
   const cutoffMs = now - resolveBridgeFailureCounterWindowMs();
-  while (BRIDGE_FAILURE_EVENTS.length > 0 && BRIDGE_FAILURE_EVENTS[0].timestampMs < cutoffMs) {
-    BRIDGE_FAILURE_EVENTS.shift();
+  const firstValidIndex = BRIDGE_FAILURE_EVENTS.findIndex((event) => event.timestampMs >= cutoffMs);
+  if (firstValidIndex === -1) {
+    BRIDGE_FAILURE_EVENTS.length = 0;
+  } else if (firstValidIndex > 0) {
+    BRIDGE_FAILURE_EVENTS.splice(0, firstValidIndex);
   }
 }
 
@@ -238,6 +257,9 @@ function resolveBridgeWaitForResultMs(request: CustomGptBridgeRequest): number {
   if (envWaitMs !== undefined) {
     return resolveAsyncGptWaitForResultMs(envWaitMs);
   }
+  if (isGptBridgeSmokeAction(request.action)) {
+    return resolveAsyncGptWaitForResultMs(undefined);
+  }
   return request.action === GPT_QUERY_AND_WAIT_ACTION ? resolveAsyncGptWaitForResultMs(undefined) : 0;
 }
 
@@ -252,6 +274,12 @@ function buildInternalGptBody(request: CustomGptBridgeRequest): Record<string, u
   };
   if (Object.keys(request.metadata).length > 0) {
     body.metadata = request.metadata;
+  }
+  if (isGptBridgeSmokeAction(request.action)) {
+    body.action = request.action;
+    body.bridgeSmoke = true;
+    body.expectedOutput = BRIDGE_SMOKE_OUTPUT;
+    return body;
   }
   if (request.action === GPT_QUERY_ACTION) {
     body.action = GPT_QUERY_ACTION;
@@ -441,6 +469,10 @@ function buildCompletedPayload(input: {
   idempotencyKey: string | null;
   idempotencySource: 'explicit' | 'derived' | null;
 }): Record<string, unknown> {
+  if (isGptBridgeSmokeAction(input.request.action)) {
+    return buildBridgeSmokeCompletedOutput();
+  }
+
   return {
     ok: true,
     status: 'completed',
@@ -547,6 +579,18 @@ export function parseCustomGptBridgeRequest(rawBody: unknown): ParseBridgeReques
       }),
     };
   }
+  const prompt = parsed.data.prompt?.trim();
+  if (!isGptBridgeSmokeAction(parsed.data.action) && !prompt) {
+    return {
+      ok: false,
+      statusCode: 400,
+      body: buildBridgeErrorPayload({
+        source: 'routing',
+        status: 'invalid_request',
+        message: 'prompt is required for query and query_and_wait bridge actions.',
+      }),
+    };
+  }
   const defaultGptId = parsed.data.gptId ? { ok: true as const, value: parsed.data.gptId } : resolveDefaultGptId();
   if (defaultGptId?.ok === false) {
     return {
@@ -564,7 +608,7 @@ export function parseCustomGptBridgeRequest(rawBody: unknown): ParseBridgeReques
     statusCode: 200,
     request: {
       gptId: defaultGptId.value,
-      prompt: parsed.data.prompt,
+      prompt: prompt ?? BRIDGE_SMOKE_OUTPUT,
       action: parsed.data.action,
       metadata: parsed.data.metadata,
     },
@@ -576,11 +620,17 @@ export async function executeCustomGptBridgeRequest(
 ): Promise<ExecuteBridgeRequestResult> {
   const startedAtMs = Date.now();
   const internalBody = buildInternalGptBody(input.request);
-  const effectiveAction = GPT_QUERY_ACTION;
+  const effectiveAction = isGptBridgeSmokeAction(input.request.action)
+    ? input.request.action
+    : GPT_QUERY_ACTION;
   const explicitIdempotencyKey = normalizeExplicitIdempotencyKey(input.explicitIdempotencyKey);
+  const idempotencyAction =
+    isGptBridgeSmokeAction(input.request.action) && !explicitIdempotencyKey
+      ? `${input.request.action}:${input.requestId}`
+      : effectiveAction;
   const descriptor = buildGptIdempotencyDescriptor({
     gptId: input.request.gptId,
-    action: effectiveAction,
+    action: idempotencyAction,
     body: buildBridgeIdempotencyBody(internalBody),
     actorKey: input.actorKey,
     explicitIdempotencyKey,
@@ -594,7 +644,16 @@ export async function executeCustomGptBridgeRequest(
     requestId: input.requestId,
     routeHint: effectiveAction,
     requestPath: '/api/bridge/gpt',
-    executionModeReason: input.request.action === GPT_QUERY_AND_WAIT_ACTION ? 'bridge_query_and_wait' : 'bridge_query',
+    executionModeReason:
+      input.request.action === GPT_HEALTH_ECHO_ACTION
+        ? 'bridge_health_echo'
+        : input.request.action === GPT_ECHO_ACTION
+          ? 'bridge_echo'
+          : input.request.action === GPT_QUERY_AND_WAIT_ACTION
+            ? 'bridge_query_and_wait'
+            : 'bridge_query',
+    bridgeSmoke: isGptBridgeSmokeAction(input.request.action),
+    bridgeAction: input.request.action,
   });
   const enqueueStartedAtMs = Date.now();
   try {
