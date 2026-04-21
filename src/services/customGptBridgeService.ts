@@ -644,11 +644,14 @@ export async function executeCustomGptBridgeRequest(
     requestId: input.requestId,
     routeHint: effectiveAction,
     requestPath: '/api/bridge/gpt',
-    executionModeReason: isGptBridgeSmokeAction(input.request.action)
-      ? 'bridge_health_echo'
-      : input.request.action === GPT_QUERY_AND_WAIT_ACTION
-        ? 'bridge_query_and_wait'
-        : 'bridge_query',
+    executionModeReason:
+      input.request.action === GPT_HEALTH_ECHO_ACTION
+        ? 'bridge_health_echo'
+        : input.request.action === GPT_ECHO_ACTION
+          ? 'bridge_echo'
+          : input.request.action === GPT_QUERY_AND_WAIT_ACTION
+            ? 'bridge_query_and_wait'
+            : 'bridge_query',
     bridgeSmoke: isGptBridgeSmokeAction(input.request.action),
     bridgeAction: input.request.action,
   });

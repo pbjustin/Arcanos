@@ -53,5 +53,12 @@ describe('custom GPT OpenAPI contract route', () => {
     expect(response.text).toContain('/api/bridge/gpt');
     expect(response.text).toContain('health_echo');
     expect(response.text).toContain('query_and_wait');
+    expect(response.text).toContain('env:');
+    expect(response.text).toContain('OPENAI_ACTION_SHARED_SECRET:');
+
+    const pendingSchema = response.text.split('BridgePendingResponse:')[1]?.split('BridgeErrorResponse:')[0] ?? '';
+    expect(pendingSchema).toContain('result:');
+    expect(pendingSchema).toContain('job_status:');
+    expect(pendingSchema).not.toContain('stream:');
   });
 });

@@ -266,8 +266,29 @@ components:
           type: string
         poll:
           type: string
-        stream:
+        result:
+          type: object
+          required:
+            - method
+            - url
+          properties:
+            method:
+              type: string
+              const: GET
+            url:
+              type: string
+        job_status:
           type: string
+        lifecycle_status:
+          type: string
+        request_id:
+          type: string
+        timing:
+          type: object
+          additionalProperties: true
+        observability:
+          type: object
+          additionalProperties: true
     BridgeErrorResponse:
       type: object
       additionalProperties: true
@@ -322,6 +343,38 @@ components:
             - degraded
         request_id:
           type: string
+        env:
+          type: object
+          required:
+            - OPENAI_ACTION_SHARED_SECRET
+            - DEFAULT_GPT_ID
+          additionalProperties: true
+          properties:
+            OPENAI_ACTION_SHARED_SECRET:
+              type: object
+              required:
+                - configured
+              properties:
+                configured:
+                  type: boolean
+            DEFAULT_GPT_ID:
+              type: object
+              required:
+                - configured
+                - valid
+              properties:
+                configured:
+                  type: boolean
+                valid:
+                  type: boolean
+                value:
+                  type:
+                    - string
+                    - "null"
+                error:
+                  type:
+                    - string
+                    - "null"
         missing_required_env:
           type: array
           items:

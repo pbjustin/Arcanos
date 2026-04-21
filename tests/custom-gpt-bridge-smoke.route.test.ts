@@ -37,6 +37,7 @@ const { default: jobsRouter } = await import('../src/routes/jobs.js');
 
 const SMOKE_COMPLETE_JOB_ID = '11111111-1111-4111-8111-111111111111';
 const SMOKE_PENDING_JOB_ID = '22222222-2222-4222-8222-222222222222';
+const ECHO_PENDING_JOB_ID = '44444444-4444-4444-8444-444444444444';
 const MODEL_PENDING_JOB_ID = '33333333-3333-4333-8333-333333333333';
 
 function buildApp() {
@@ -185,6 +186,60 @@ describe('Custom GPT bridge smoke action', () => {
         input: expect.objectContaining({
           bridgeSmoke: true,
           bridgeAction: 'health_echo',
+        }),
+      })
+    );
+  });
+
+  it('labels echo smoke jobs with echo-specific execution metadata', async () => {
+    findOrCreateGptJobMock.mockResolvedValue({
+      job: {
+        id: ECHO_PENDING_JOB_ID,
+        status: 'pending',
+      },
+      created: true,
+      deduped: false,
+      dedupeReason: 'new_job',
+    });
+
+    const response = await request(buildApp())
+      .post('/api/bridge/gpt')
+      .set('Authorization', 'Bearer test-shared-secret')
+      .send({
+        gptId: 'arcanos-core',
+        action: 'echo',
+        prompt: 'OK',
+        metadata: {
+          waitForResultMs: 0,
+        },
+      });
+
+    expect(response.status).toBe(202);
+    expect(response.body).toMatchObject({
+      ok: true,
+      status: 'pending',
+      action: 'echo',
+      jobId: ECHO_PENDING_JOB_ID,
+      poll_url: `/jobs/${ECHO_PENDING_JOB_ID}`,
+      result_url: `/jobs/${ECHO_PENDING_JOB_ID}/result`,
+      result: {
+        method: 'GET',
+        url: `/jobs/${ECHO_PENDING_JOB_ID}/result`,
+      },
+    });
+    expect(planAutonomousWorkerJobMock).toHaveBeenCalledWith(
+      'gpt',
+      expect.objectContaining({
+        gptId: 'arcanos-core',
+        prompt: 'OK',
+        routeHint: 'echo',
+        executionModeReason: 'bridge_echo',
+        bridgeSmoke: true,
+        bridgeAction: 'echo',
+        body: expect.objectContaining({
+          action: 'echo',
+          bridgeSmoke: true,
+          expectedOutput: 'OK',
         }),
       })
     );
