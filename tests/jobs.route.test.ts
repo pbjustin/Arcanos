@@ -13,6 +13,15 @@ jest.unstable_mockModule('../src/core/db/repositories/jobRepository.js', () => (
 
 const { default: jobsRouter } = await import('../src/routes/jobs.js');
 
+const COMPLETED_JOB_ID = '11111111-1111-4111-8111-111111111111';
+const MISSING_JOB_ID = '22222222-2222-4222-8222-222222222222';
+const EXPIRED_JOB_ID = '33333333-3333-4333-8333-333333333333';
+const RUNNING_JOB_ID = '44444444-4444-4444-8444-444444444444';
+const QUEUED_JOB_ID = '55555555-5555-4555-8555-555555555555';
+const CANCEL_REQUEST_JOB_ID = '66666666-6666-4666-8666-666666666666';
+const TERMINAL_JOB_ID = '77777777-7777-4777-8777-777777777777';
+const TRUNCATED_JOB_ID = '88888888-8888-4888-8888-888888888888';
+
 function buildApp() {
   const app = express();
   app.use(express.json());
@@ -31,7 +40,7 @@ describe('/jobs routes', () => {
 
   it('returns the canonical stored-result lookup payload without enqueueing work', async () => {
     getJobByIdMock.mockResolvedValue({
-      id: 'job-result-123',
+      id: COMPLETED_JOB_ID,
       job_type: 'gpt',
       status: 'completed',
       created_at: '2026-04-06T10:00:00.000Z',
@@ -51,13 +60,13 @@ describe('/jobs routes', () => {
       cancel_reason: null
     });
 
-    const response = await request(buildApp()).get('/jobs/job-result-123/result');
+    const response = await request(buildApp()).get(`/jobs/${COMPLETED_JOB_ID}/result`);
 
     expect(response.status).toBe(200);
     expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.headers['x-response-truncated']).toBeUndefined();
     expect(response.body).toEqual({
-      jobId: 'job-result-123',
+      jobId: COMPLETED_JOB_ID,
       status: 'completed',
       jobStatus: 'completed',
       lifecycleStatus: 'completed',
@@ -67,8 +76,8 @@ describe('/jobs routes', () => {
       retentionUntil: '2026-04-07T10:01:00.000Z',
       idempotencyUntil: '2026-04-07T10:01:00.000Z',
       expiresAt: null,
-      poll: '/jobs/job-result-123',
-      stream: '/jobs/job-result-123/stream',
+      poll: `/jobs/${COMPLETED_JOB_ID}`,
+      stream: `/jobs/${COMPLETED_JOB_ID}/stream`,
       result: {
         ok: true,
         result: {
@@ -82,12 +91,12 @@ describe('/jobs routes', () => {
   it('returns an explicit not_found payload for the canonical result route', async () => {
     getJobByIdMock.mockResolvedValue(null);
 
-    const response = await request(buildApp()).get('/jobs/missing-job/result');
+    const response = await request(buildApp()).get(`/jobs/${MISSING_JOB_ID}/result`);
 
     expect(response.status).toBe(200);
     expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toEqual({
-      jobId: 'missing-job',
+      jobId: MISSING_JOB_ID,
       status: 'not_found',
       jobStatus: null,
       lifecycleStatus: 'not_found',
@@ -97,8 +106,8 @@ describe('/jobs routes', () => {
       retentionUntil: null,
       idempotencyUntil: null,
       expiresAt: null,
-      poll: '/jobs/missing-job',
-      stream: '/jobs/missing-job/stream',
+      poll: `/jobs/${MISSING_JOB_ID}`,
+      stream: `/jobs/${MISSING_JOB_ID}/stream`,
       result: null,
       error: {
         code: 'JOB_NOT_FOUND',
@@ -113,6 +122,17 @@ describe('/jobs routes', () => {
     expect(response.status).toBe(400);
     expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.headers['x-response-truncated']).toBeUndefined();
+    expect(response.body).toEqual({
+      error: 'JOB_ID_INVALID'
+    });
+    expect(getJobByIdMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects malformed job identifiers before hitting the repository', async () => {
+    const response = await request(buildApp()).get('/jobs/abc123/result');
+
+    expect(response.status).toBe(400);
+    expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toEqual({
       error: 'JOB_ID_INVALID'
     });
@@ -136,7 +156,7 @@ describe('/jobs routes', () => {
 
   it('returns lifecycle metadata for job polling responses', async () => {
     getJobByIdMock.mockResolvedValue({
-      id: 'job-123',
+      id: EXPIRED_JOB_ID,
       job_type: 'gpt',
       status: 'expired',
       created_at: '2026-04-06T10:00:00.000Z',
@@ -151,12 +171,12 @@ describe('/jobs routes', () => {
       cancel_reason: null
     });
 
-    const response = await request(buildApp()).get('/jobs/job-123');
+    const response = await request(buildApp()).get(`/jobs/${EXPIRED_JOB_ID}`);
 
     expect(response.status).toBe(200);
     expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toMatchObject({
-      id: 'job-123',
+      id: EXPIRED_JOB_ID,
       status: 'expired',
       lifecycle_status: 'expired',
       retention_until: '2026-04-06T10:04:00.000Z',
@@ -167,7 +187,7 @@ describe('/jobs routes', () => {
 
   it('rejects anonymous cancellation requests', async () => {
     const response = await request(buildApp())
-      .post('/jobs/job-123/cancel')
+      .post(`/jobs/${EXPIRED_JOB_ID}/cancel`)
       .set('x-confirmed', 'yes')
       .send({ reason: 'Stop this job' });
 
@@ -186,7 +206,7 @@ describe('/jobs routes', () => {
 
   it('rejects cancellation for the wrong session owner', async () => {
     getJobByIdMock.mockResolvedValue({
-      id: 'job-123',
+      id: RUNNING_JOB_ID,
       job_type: 'gpt',
       status: 'running',
       idempotency_scope_hash: hashActorKey('session:owner-1'),
@@ -200,7 +220,7 @@ describe('/jobs routes', () => {
     });
 
     const response = await request(buildApp())
-      .post('/jobs/job-123/cancel')
+      .post(`/jobs/${RUNNING_JOB_ID}/cancel`)
       .set('x-confirmed', 'yes')
       .set('x-session-id', 'owner-2')
       .send({ reason: 'Stop this job' });
@@ -218,7 +238,7 @@ describe('/jobs routes', () => {
 
   it('cancels queued jobs immediately for the matching session owner', async () => {
     getJobByIdMock.mockResolvedValue({
-      id: 'job-123',
+      id: QUEUED_JOB_ID,
       job_type: 'gpt',
       status: 'pending',
       idempotency_scope_hash: hashActorKey('session:owner-1'),
@@ -233,7 +253,7 @@ describe('/jobs routes', () => {
     requestJobCancellationMock.mockResolvedValue({
       outcome: 'cancelled',
       job: {
-        id: 'job-123',
+        id: QUEUED_JOB_ID,
         job_type: 'gpt',
         status: 'cancelled',
         idempotency_scope_hash: hashActorKey('session:owner-1'),
@@ -248,7 +268,7 @@ describe('/jobs routes', () => {
     });
 
     const response = await request(buildApp())
-      .post('/jobs/job-123/cancel')
+      .post(`/jobs/${QUEUED_JOB_ID}/cancel`)
       .set('x-confirmed', 'yes')
       .set('x-session-id', 'owner-1')
       .send({ reason: 'Stop this job' });
@@ -257,7 +277,7 @@ describe('/jobs routes', () => {
     expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toMatchObject({
       ok: true,
-      id: 'job-123',
+      id: QUEUED_JOB_ID,
       status: 'cancelled',
       lifecycle_status: 'cancelled',
       cancellationRequested: false
@@ -266,7 +286,7 @@ describe('/jobs routes', () => {
 
   it('returns 202 when cancellation is requested for a running job', async () => {
     getJobByIdMock.mockResolvedValue({
-      id: 'job-456',
+      id: CANCEL_REQUEST_JOB_ID,
       job_type: 'gpt',
       status: 'running',
       idempotency_scope_hash: hashActorKey('session:owner-2'),
@@ -281,7 +301,7 @@ describe('/jobs routes', () => {
     requestJobCancellationMock.mockResolvedValue({
       outcome: 'cancellation_requested',
       job: {
-        id: 'job-456',
+        id: CANCEL_REQUEST_JOB_ID,
         job_type: 'gpt',
         status: 'running',
         idempotency_scope_hash: hashActorKey('session:owner-2'),
@@ -296,7 +316,7 @@ describe('/jobs routes', () => {
     });
 
     const response = await request(buildApp())
-      .post('/jobs/job-456/cancel')
+      .post(`/jobs/${CANCEL_REQUEST_JOB_ID}/cancel`)
       .set('x-confirmed', 'yes')
       .set('x-session-id', 'owner-2')
       .send({ reason: 'Stop this job' });
@@ -305,7 +325,7 @@ describe('/jobs routes', () => {
     expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toMatchObject({
       ok: true,
-      id: 'job-456',
+      id: CANCEL_REQUEST_JOB_ID,
       status: 'running',
       lifecycle_status: 'running',
       cancellationRequested: true
@@ -314,7 +334,7 @@ describe('/jobs routes', () => {
 
   it('preserves terminal cancellation conflicts for the owning caller', async () => {
     getJobByIdMock.mockResolvedValue({
-      id: 'job-789',
+      id: TERMINAL_JOB_ID,
       job_type: 'gpt',
       status: 'completed',
       idempotency_scope_hash: hashActorKey('session:owner-3'),
@@ -329,7 +349,7 @@ describe('/jobs routes', () => {
     requestJobCancellationMock.mockResolvedValue({
       outcome: 'already_terminal',
       job: {
-        id: 'job-789',
+        id: TERMINAL_JOB_ID,
         job_type: 'gpt',
         status: 'completed',
         idempotency_scope_hash: hashActorKey('session:owner-3'),
@@ -344,7 +364,7 @@ describe('/jobs routes', () => {
     });
 
     const response = await request(buildApp())
-      .post('/jobs/job-789/cancel')
+      .post(`/jobs/${TERMINAL_JOB_ID}/cancel`)
       .set('x-confirmed', 'yes')
       .set('x-session-id', 'owner-3');
 
@@ -363,7 +383,7 @@ describe('/jobs routes', () => {
     const previousMaxBytes = process.env.CLIENT_RESPONSE_MAX_BYTES;
     process.env.CLIENT_RESPONSE_MAX_BYTES = '2048';
     getJobByIdMock.mockResolvedValue({
-      id: 'job-truncated-123',
+      id: TRUNCATED_JOB_ID,
       job_type: 'gpt',
       status: 'completed',
       created_at: '2026-04-06T10:00:00.000Z',
@@ -384,19 +404,19 @@ describe('/jobs routes', () => {
     });
 
     try {
-      const response = await request(buildApp()).get('/jobs/job-truncated-123/result');
+      const response = await request(buildApp()).get(`/jobs/${TRUNCATED_JOB_ID}/result`);
 
       expect(response.status).toBe(200);
       expect(response.headers['x-response-bytes']).toBeTruthy();
       expect(response.headers['x-response-truncated']).toBe('true');
       expect(Number(response.headers['x-response-bytes'])).toBeLessThanOrEqual(2048);
       expect(response.body).toMatchObject({
-        jobId: 'job-truncated-123',
+        jobId: TRUNCATED_JOB_ID,
         status: 'completed',
         jobStatus: 'completed',
         lifecycleStatus: 'completed',
-        poll: '/jobs/job-truncated-123',
-        stream: '/jobs/job-truncated-123/stream',
+        poll: `/jobs/${TRUNCATED_JOB_ID}`,
+        stream: `/jobs/${TRUNCATED_JOB_ID}/stream`,
         truncated: true,
         result: expect.stringContaining('[truncated]')
       });

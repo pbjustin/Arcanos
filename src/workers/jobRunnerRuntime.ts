@@ -6,6 +6,12 @@ export interface JobRunnerRuntimeSettings {
   statsWorkerId: string;
 }
 
+export interface JobRunnerDatabaseBootstrapSettings {
+  retryMs: number;
+  maxRetryMs: number;
+  maxAttempts: number | null;
+}
+
 export interface JobRunnerSlotDefinition {
   slotIndex: number;
   slotNumber: number;
@@ -14,12 +20,36 @@ export interface JobRunnerSlotDefinition {
   isInspectorSlot: boolean;
 }
 
+const RETRYABLE_DATABASE_BOOTSTRAP_ERROR_MARKERS = [
+  'timeout exceeded when trying to connect',
+  'connect timeout',
+  'connection timeout',
+  'connection terminated',
+  'connection refused',
+  'could not connect',
+  'econnrefused',
+  'etimedout',
+  'enotfound',
+  'eai_again',
+  'enetwork',
+  'enetunreach',
+  'ehostunreach'
+];
+
 function readPositiveIntegerEnvValue(
   rawValue: string | undefined,
   fallback: number
 ): number {
   const parsedValue = rawValue ? Number(rawValue) : Number.NaN;
   return Number.isInteger(parsedValue) && parsedValue > 0 ? parsedValue : fallback;
+}
+
+function readNonNegativeIntegerEnvValue(
+  rawValue: string | undefined,
+  fallback: number
+): number {
+  const parsedValue = rawValue ? Number(rawValue) : Number.NaN;
+  return Number.isInteger(parsedValue) && parsedValue >= 0 ? parsedValue : fallback;
 }
 
 /**
@@ -48,6 +78,42 @@ export function resolveJobRunnerRuntimeSettings(
     baseWorkerId,
     statsWorkerId: env.JOB_WORKER_STATS_ID?.trim() || baseWorkerId
   };
+}
+
+/**
+ * Resolve database bootstrap retry settings for the worker process.
+ * Purpose: prevent transient Railway database reachability failures from permanently crashing the worker.
+ * Inputs/outputs: accepts an optional environment object and returns normalized retry settings.
+ * Edge case behavior: maxAttempts=0 means retry indefinitely; invalid values fall back to conservative defaults.
+ */
+export function resolveJobRunnerDatabaseBootstrapSettings(
+  env: NodeJS.ProcessEnv = process.env
+): JobRunnerDatabaseBootstrapSettings {
+  const maxAttempts = readNonNegativeIntegerEnvValue(
+    env.JOB_WORKER_DB_BOOTSTRAP_MAX_ATTEMPTS,
+    0
+  );
+
+  return {
+    retryMs: readPositiveIntegerEnvValue(env.JOB_WORKER_DB_BOOTSTRAP_RETRY_MS, 5_000),
+    maxRetryMs: readPositiveIntegerEnvValue(env.JOB_WORKER_DB_BOOTSTRAP_MAX_RETRY_MS, 30_000),
+    maxAttempts: maxAttempts === 0 ? null : maxAttempts
+  };
+}
+
+/**
+ * Identify transient DB reachability errors that should delay worker startup instead of crashing the process.
+ */
+export function isRetryableJobRunnerDatabaseBootstrapError(error: unknown): boolean {
+  const message = error instanceof Error
+    ? error.message
+    : typeof error === 'string'
+      ? error
+      : String(error ?? '');
+  const normalizedMessage = message.toLowerCase();
+  return RETRYABLE_DATABASE_BOOTSTRAP_ERROR_MARKERS.some(marker =>
+    normalizedMessage.includes(marker)
+  );
 }
 
 /**

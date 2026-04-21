@@ -361,7 +361,7 @@ describe('/worker-helper routes', () => {
         failedCountMode: 'retained_terminal_jobs',
         failedCountDescription:
           'The failed counter represents job rows currently retained in terminal failed state. It is not a count of currently running failures.',
-        activeFailureSignals: ['stalledRunning', 'oldestPendingJobAgeMs', 'recentFailed', 'workerHeartbeatAgeMs']
+        activeFailureSignals: ['stalledRunning', 'oldestPendingJobAgeMs', 'workerHeartbeatAgeMs']
       },
       retryPolicy: {
         defaultMaxRetries: 2,

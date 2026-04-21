@@ -31,7 +31,10 @@ import {
 import { classifyDagNodeFailureForWorkerRetry } from './jobFailureClassification.js';
 import {
   buildJobRunnerSlotDefinitions,
+  isRetryableJobRunnerDatabaseBootstrapError,
+  resolveJobRunnerDatabaseBootstrapSettings,
   resolveJobRunnerRuntimeSettings,
+  type JobRunnerDatabaseBootstrapSettings,
   type JobRunnerRuntimeSettings,
   type JobRunnerSlotDefinition
 } from './jobRunnerRuntime.js';
@@ -86,6 +89,117 @@ function initOpenAIClient() {
 
   const adapter = getOpenAIAdapter(adapterConfig);
   return adapter.getClient();
+}
+
+function hasDatabaseConfiguration(): boolean {
+  const directUrlConfigured = [
+    'DATABASE_URL',
+    'DATABASE_PRIVATE_URL',
+    'DATABASE_PUBLIC_URL'
+  ].some(key => Boolean(process.env[key]?.trim()));
+  const pgVarsConfigured = [
+    'PGUSER',
+    'PGPASSWORD',
+    'PGHOST',
+    'PGPORT',
+    'PGDATABASE'
+  ].every(key => Boolean(process.env[key]?.trim()));
+
+  return directUrlConfigured || pgVarsConfigured;
+}
+
+function computeDatabaseBootstrapRetryDelayMs(
+  attempt: number,
+  settings: JobRunnerDatabaseBootstrapSettings
+): number {
+  const backoffMs = settings.retryMs * 2 ** Math.max(0, attempt - 1);
+  return Math.min(backoffMs, settings.maxRetryMs);
+}
+
+async function initializeJobRunnerDatabaseWithRetry(
+  workerId: string,
+  settings: JobRunnerDatabaseBootstrapSettings = resolveJobRunnerDatabaseBootstrapSettings()
+): Promise<void> {
+  if (!hasDatabaseConfiguration()) {
+    throw new Error('Database not configured (no database URL or PG* credentials found)');
+  }
+
+  let attempt = 0;
+
+  while (true) {
+    attempt += 1;
+    let dbInitialized = false;
+    try {
+      dbInitialized = await initializeDatabase(workerId);
+    } catch (error: unknown) {
+      const message = resolveErrorMessage(error);
+      if (
+        !isRetryableJobRunnerDatabaseBootstrapError(error) ||
+        (settings.maxAttempts !== null && attempt >= settings.maxAttempts)
+      ) {
+        throw error;
+      }
+
+      const delayMs = computeDatabaseBootstrapRetryDelayMs(attempt, settings);
+      console.warn(
+        `[jobRunner] database bootstrap attempt ${attempt} threw (${message}); retrying in ${delayMs}ms`
+      );
+      await sleep(delayMs);
+      continue;
+    }
+    const dbStatus = getDatabaseStatus();
+
+    if (dbInitialized && dbStatus.connected) {
+      if (attempt > 1) {
+        console.log(`[jobRunner] database bootstrap recovered after ${attempt} attempt(s)`);
+      }
+      return;
+    }
+
+    const statusMessage = `connected=${dbStatus.connected}, error=${dbStatus.error ?? 'none'}`;
+    if (settings.maxAttempts !== null && attempt >= settings.maxAttempts) {
+      throw new Error(`Database not configured (${statusMessage}) after ${attempt} attempt(s)`);
+    }
+
+    const delayMs = computeDatabaseBootstrapRetryDelayMs(attempt, settings);
+    console.warn(
+      `[jobRunner] database bootstrap attempt ${attempt} failed (${statusMessage}); retrying in ${delayMs}ms`
+    );
+    await sleep(delayMs);
+  }
+}
+
+async function bootstrapWorkerAutonomyWithRetry(
+  autonomyService: WorkerAutonomyService,
+  notes: string[],
+  settings: JobRunnerDatabaseBootstrapSettings
+): Promise<Awaited<ReturnType<WorkerAutonomyService['bootstrap']>>> {
+  let attempt = 0;
+
+  while (true) {
+    attempt += 1;
+    try {
+      const bootstrapResult = await autonomyService.bootstrap(notes);
+      if (attempt > 1) {
+        console.log(`[jobRunner] worker autonomy bootstrap recovered after ${attempt} attempt(s)`);
+      }
+      return bootstrapResult;
+    } catch (error: unknown) {
+      const message = resolveErrorMessage(error);
+      if (
+        !isRetryableJobRunnerDatabaseBootstrapError(error) ||
+        (settings.maxAttempts !== null && attempt >= settings.maxAttempts)
+      ) {
+        throw error;
+      }
+
+      const delayMs = computeDatabaseBootstrapRetryDelayMs(attempt, settings);
+      console.warn(
+        `[jobRunner] worker autonomy bootstrap attempt ${attempt} failed (${message}); retrying in ${delayMs}ms`
+      );
+      await sleep(delayMs);
+    }
+  }
 }
 
 function isProviderRuntimeError(message: string): boolean {
@@ -579,13 +693,14 @@ async function runWorkerConsumerSlot(
 
   try {
     while (true) {
-      const ensuredClientState = await ensureOpenAIClientForSlot({
-        workerId: slotDefinition.workerId,
-        currentClient: openai,
-        currentConfigVersion: providerConfigVersion
-      });
-      openai = ensuredClientState.client;
-      providerConfigVersion = ensuredClientState.configVersion;
+      try {
+        const ensuredClientState = await ensureOpenAIClientForSlot({
+          workerId: slotDefinition.workerId,
+          currentClient: openai,
+          currentConfigVersion: providerConfigVersion
+        });
+        openai = ensuredClientState.client;
+        providerConfigVersion = ensuredClientState.configVersion;
 
       if (!openai) {
         const nowMs = Date.now();
@@ -902,6 +1017,19 @@ async function runWorkerConsumerSlot(
       }
 
       await sleep(runtimeSettings.pollMs);
+      } catch (error: unknown) {
+        if (isRetryableJobRunnerDatabaseBootstrapError(error)) {
+          const backoffMs = Math.max(runtimeSettings.idleBackoffMs, 5_000);
+          console.warn(
+            `[jobRunner] worker=${slotDefinition.workerId} transient database error; retrying in ${backoffMs}ms:`,
+            resolveErrorMessage(error)
+          );
+          await sleep(backoffMs);
+          continue;
+        }
+
+        throw error;
+      }
     }
   } finally {
     clearInterval(workerHeartbeatHandle);
@@ -910,20 +1038,17 @@ async function runWorkerConsumerSlot(
 
 async function run(): Promise<void> {
   const runtimeSettings = resolveJobRunnerRuntimeSettings();
-  const dbInitialized = await initializeDatabase('job-runner');
-  const dbStatus = getDatabaseStatus();
-
-  //audit Assumption: job polling requires an initialized DB pool and schema; failure risk: immediate fatal "Database not configured" loop despite valid env vars; expected invariant: DB reports connected before queue claims start; handling strategy: fail fast with explicit status context.
-  if (!dbInitialized || !dbStatus.connected) {
-    throw new Error(`Database not configured (connected=${dbStatus.connected}, error=${dbStatus.error ?? 'none'})`);
-  }
+  const databaseBootstrapSettings = resolveJobRunnerDatabaseBootstrapSettings();
+  await initializeJobRunnerDatabaseWithRetry('job-runner', databaseBootstrapSettings);
 
   const slotDefinitions = buildJobRunnerSlotDefinitions(runtimeSettings);
   const inspectorSlot = slotDefinitions[0];
   const inspectorAutonomyService = buildAutonomyServiceForSlot(inspectorSlot);
-  const bootstrapResult = await inspectorAutonomyService.bootstrap([
-    `Worker bootstrap completed with ${slotDefinitions.length} consumer slot(s).`
-  ]);
+  const bootstrapResult = await bootstrapWorkerAutonomyWithRetry(
+    inspectorAutonomyService,
+    [`Worker bootstrap completed with ${slotDefinitions.length} consumer slot(s).`],
+    databaseBootstrapSettings
+  );
   console.log(
     `[jobRunner] bootstrap status=${bootstrapResult.healthStatus} slots=${slotDefinitions.length} recovered=${bootstrapResult.recovered.recoveredJobs.length} failed=${bootstrapResult.recovered.failedJobs.length}`
   );
