@@ -277,5 +277,5 @@ success_response:
 - **Edge case:** Use an unknown GPT ID and confirm a `404` with `Unknown GPTID` is returned.【F:src/routes/gptRouter.ts†L70-L104】
 - **Failure mode:** Call a valid GPT ID with an invalid action and confirm the module returns `Action not found` or `Module not found` as appropriate.【F:src/routes/modules.ts†L16-L56】
 - **Async bridge:** Confirm `query` creates one job, `query_and_wait` either completes inline or returns pending, and `get_status` / `get_result` never create work.
-- **Fast path:** Confirm `executionMode: "fast"` for a prompt-generation request returns `200`, `routeDecision.path: "fast_path"`, and `x-gpt-queue-bypassed: true`.
+- **Fast path:** Confirm `executionMode: "fast"` for a prompt-generation request returns `200`, `routeDecision.path: "fast_path"`, `x-gpt-fast-path-queue-bypassed: true`, and `x-gpt-queue-bypassed: true`.
 - **Guardrail:** Confirm prompt-based job retrieval is rejected and callers are pointed at structured control actions or `/jobs/*`.

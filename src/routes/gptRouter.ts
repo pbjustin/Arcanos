@@ -1424,7 +1424,15 @@ function applyGptRouteDecisionHeaders(
 ): void {
   res.setHeader('x-gpt-route-decision', decision.path);
   res.setHeader('x-gpt-route-decision-reason', decision.reason);
-  res.setHeader('x-gpt-queue-bypassed', decision.queueBypassed ? 'true' : 'false');
+  res.setHeader('x-gpt-fast-path-queue-bypassed', decision.queueBypassed ? 'true' : 'false');
+  res.setHeader('x-gpt-queue-bypassed', 'false');
+}
+
+function applyGptQueueBypassedHeader(
+  res: express.Response,
+  queueBypassed: boolean
+): void {
+  res.setHeader('x-gpt-queue-bypassed', queueBypassed ? 'true' : 'false');
 }
 
 router.post("/:gptId", async (req, res, next) => {
@@ -1896,11 +1904,6 @@ router.post("/:gptId", async (req, res, next) => {
           hasExplicitIdempotencyKey: Boolean(explicitIdempotencyKey)
         });
         applyGptRouteDecisionHeaders(res, fastPathDecision);
-        recordGptRouteDecision({
-          path: fastPathDecision.path,
-          reason: fastPathDecision.reason,
-          queueBypassed: fastPathDecision.queueBypassed
-        });
         requestLogger?.info?.('gpt.request.route_decision', {
           endpoint: req.originalUrl,
           gptId: incomingGptId,
@@ -1917,6 +1920,11 @@ router.post("/:gptId", async (req, res, next) => {
         });
 
         if (fastPathDecision.reason === 'invalid_payload_shape_requires_module_dispatch') {
+          recordGptRouteDecision({
+            path: fastPathDecision.path,
+            reason: fastPathDecision.reason,
+            queueBypassed: false
+          });
           return sendGuardedGptJsonResponse(req, res, {
             ok: false,
             action: asyncBridgeAction,
@@ -1928,7 +1936,7 @@ router.post("/:gptId", async (req, res, next) => {
             _route: {
               requestId,
               gptId: incomingGptId,
-              route: 'orchestrated_path',
+              route: 'async',
               timestamp: new Date().toISOString()
             }
           }, 'gpt.response.invalid_payload_shape', 400);
@@ -1953,6 +1961,12 @@ router.post("/:gptId", async (req, res, next) => {
               gptId: incomingGptId,
               outcome: 'completed',
               durationMs: totalLatencyMs
+            });
+            applyGptQueueBypassedHeader(res, true);
+            recordGptRouteDecision({
+              path: fastPathDecision.path,
+              reason: fastPathDecision.reason,
+              queueBypassed: true
             });
             requestLogger?.info?.('gpt.request.fast_path_completed', {
               endpoint: req.originalUrl,
@@ -1994,12 +2008,8 @@ router.post("/:gptId", async (req, res, next) => {
             });
             res.setHeader('x-gpt-route-decision', 'orchestrated_path');
             res.setHeader('x-gpt-route-decision-reason', 'fast_path_fallback');
+            res.setHeader('x-gpt-fast-path-queue-bypassed', 'false');
             res.setHeader('x-gpt-queue-bypassed', 'false');
-            recordGptRouteDecision({
-              path: 'orchestrated_path',
-              reason: 'fast_path_fallback',
-              queueBypassed: false
-            });
             fastPathFallbackToOrchestrated = true;
             requestLogger?.warn?.('gpt.request.fast_path_fallback', {
               endpoint: req.originalUrl,
@@ -2093,6 +2103,12 @@ router.post("/:gptId", async (req, res, next) => {
           Boolean(explicitIdempotencyKey);
 
         if (shouldUseJobBackedExecution) {
+          applyGptQueueBypassedHeader(res, false);
+          recordGptRouteDecision({
+            path: fastPathFallbackToOrchestrated ? 'orchestrated_path' : fastPathDecision.path,
+            reason: fastPathFallbackToOrchestrated ? 'fast_path_fallback' : fastPathDecision.reason,
+            queueBypassed: false
+          });
           if (!normalizedBody) {
             if (explicitIdempotencyKey) {
               requestLogger?.warn?.('gpt.request.idempotency_invalid_body', {
@@ -2596,6 +2612,12 @@ router.post("/:gptId", async (req, res, next) => {
           }
         }
 
+        applyGptQueueBypassedHeader(res, true);
+        recordGptRouteDecision({
+          path: fastPathDecision.path,
+          reason: fastPathDecision.reason,
+          queueBypassed: true
+        });
         const envelope = await routeGptRequest({
           gptId: incomingGptId,
           body: effectiveBody,

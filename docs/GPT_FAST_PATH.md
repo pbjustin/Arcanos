@@ -48,6 +48,7 @@ Expected signals:
 
 - HTTP `200`
 - Header `x-gpt-route-decision: fast_path`
+- Header `x-gpt-fast-path-queue-bypassed: true`
 - Header `x-gpt-queue-bypassed: true`
 - Body `routeDecision.path: "fast_path"`
 - No `jobId`
@@ -182,7 +183,8 @@ Every GPT route response includes route-decision headers once the request reache
 
 - `x-gpt-route-decision`
 - `x-gpt-route-decision-reason`
-- `x-gpt-queue-bypassed`
+- `x-gpt-fast-path-queue-bypassed` reflects whether the fast-path branch bypassed the queue.
+- `x-gpt-queue-bypassed` reflects whether the final response was returned without creating a durable GPT job. This can be `true` for legacy sync module-dispatch responses even when `x-gpt-route-decision` is `orchestrated_path`.
 
 Structured logs include:
 

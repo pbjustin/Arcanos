@@ -18,7 +18,7 @@ export const DEFAULTS = Object.freeze({
     process.env.ARCANOS_BACKEND_URL ||
     process.env.RAILWAY_SERVICE_ARCANOS_V2_URL ||
     process.env.RAILWAY_STATIC_URL ||
-    'https://acranos-production.up.railway.app',
+    'https://arcanos-production.up.railway.app',
   gptId: 'arcanos-core',
   prompt: 'Generate a concise prompt for a deployment smoke test.',
   requestTimeoutMs: 15_000,

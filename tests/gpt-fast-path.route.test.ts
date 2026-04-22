@@ -169,6 +169,7 @@ describe('GPT fast-path route branching', () => {
     expect(response.status).toBe(200);
     expect(response.headers['x-gpt-route-decision']).toBe('fast_path');
     expect(response.headers['x-gpt-route-decision-reason']).toBe('simple_prompt_generation');
+    expect(response.headers['x-gpt-fast-path-queue-bypassed']).toBe('true');
     expect(response.headers['x-gpt-queue-bypassed']).toBe('true');
     expect(response.body).toMatchObject({
       ok: true,
@@ -213,6 +214,7 @@ describe('GPT fast-path route branching', () => {
     expect(response.status).toBe(202);
     expect(response.headers['x-gpt-route-decision']).toBe('orchestrated_path');
     expect(response.headers['x-gpt-route-decision-reason']).toBe('no_prompt_generation_intent');
+    expect(response.headers['x-gpt-fast-path-queue-bypassed']).toBe('false');
     expect(response.headers['x-gpt-queue-bypassed']).toBe('false');
     expect(response.body).toMatchObject({
       ok: true,
@@ -228,6 +230,50 @@ describe('GPT fast-path route branching', () => {
     expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
   });
 
+  it('reports actual queue bypass for sync module-dispatch responses', async () => {
+    mockRouteGptRequest.mockResolvedValueOnce({
+      ok: true,
+      result: {
+        result: 'Synchronous module response.',
+      },
+      _route: {
+        requestId: 'req-sync',
+        gptId: 'support-bot',
+        module: 'GPT:SUPPORT',
+        action: 'query',
+        route: 'query',
+        matchMethod: 'direct',
+        availableActions: [],
+        timestamp: '2026-04-21T12:00:00.000Z',
+      },
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/support-bot')
+      .send({
+        prompt: 'Analyze this deployment timeout.',
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.headers['x-gpt-route-decision']).toBe('orchestrated_path');
+    expect(response.headers['x-gpt-route-decision-reason']).toBe('no_prompt_generation_intent');
+    expect(response.headers['x-gpt-fast-path-queue-bypassed']).toBe('false');
+    expect(response.headers['x-gpt-queue-bypassed']).toBe('true');
+    expect(response.body).toMatchObject({
+      ok: true,
+      result: {
+        result: 'Synchronous module response.',
+      },
+      _route: {
+        gptId: 'support-bot',
+        route: 'query',
+      },
+    });
+    expect(executeFastGptPromptMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).toHaveBeenCalledTimes(1);
+  });
+
   it('does not fast-path non-prompt-generation requests even when fast mode is requested', async () => {
     const response = await request(buildApp())
       .post('/gpt/arcanos-core')
@@ -239,6 +285,7 @@ describe('GPT fast-path route branching', () => {
     expect(response.status).toBe(202);
     expect(response.headers['x-gpt-route-decision']).toBe('orchestrated_path');
     expect(response.headers['x-gpt-route-decision-reason']).toBe('no_prompt_generation_intent');
+    expect(response.headers['x-gpt-fast-path-queue-bypassed']).toBe('false');
     expect(response.headers['x-gpt-queue-bypassed']).toBe('false');
     expect(response.body).toMatchObject({
       ok: true,
@@ -262,6 +309,7 @@ describe('GPT fast-path route branching', () => {
     expect(response.status).toBe(400);
     expect(response.headers['x-gpt-route-decision']).toBe('orchestrated_path');
     expect(response.headers['x-gpt-route-decision-reason']).toBe('invalid_payload_shape_requires_module_dispatch');
+    expect(response.headers['x-gpt-fast-path-queue-bypassed']).toBe('false');
     expect(response.headers['x-gpt-queue-bypassed']).toBe('false');
     expect(response.body).toMatchObject({
       ok: false,
@@ -272,6 +320,9 @@ describe('GPT fast-path route branching', () => {
       routeDecision: {
         path: 'orchestrated_path',
         reason: 'invalid_payload_shape_requires_module_dispatch',
+      },
+      _route: {
+        route: 'async',
       },
     });
     expect(executeFastGptPromptMock).not.toHaveBeenCalled();
@@ -290,6 +341,7 @@ describe('GPT fast-path route branching', () => {
     expect(response.status).toBe(202);
     expect(response.headers['x-gpt-route-decision']).toBe('orchestrated_path');
     expect(response.headers['x-gpt-route-decision-reason']).toBe('fast_path_fallback');
+    expect(response.headers['x-gpt-fast-path-queue-bypassed']).toBe('false');
     expect(response.headers['x-gpt-queue-bypassed']).toBe('false');
     expect(response.body).toMatchObject({
       ok: true,
