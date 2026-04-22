@@ -118,24 +118,42 @@ function buildFastPathEnvelope() {
   };
 }
 
-const GPT_FAST_PATH_ENV_KEYS = [
+const GPT_ROUTE_TEST_ENV_KEYS = [
+  'GPT_ASYNC_HEAVY_PROMPT_CHARS',
+  'GPT_ASYNC_HEAVY_MESSAGE_COUNT',
+  'GPT_ASYNC_HEAVY_MAX_WORDS',
+  'GPT_ASYNC_HEAVY_WAIT_FOR_RESULT_MS',
   'GPT_FAST_PATH_ENABLED',
   'GPT_FAST_PATH_GPT_ALLOWLIST',
   'GPT_FAST_PATH_MAX_PROMPT_CHARS',
   'GPT_FAST_PATH_MAX_MESSAGE_COUNT',
   'GPT_FAST_PATH_MAX_WORDS',
   'GPT_FAST_PATH_TIMEOUT_MS',
+  'GPT_PUBLIC_RESPONSE_MAX_BYTES',
   'GPT_ROUTE_ASYNC_CORE_DEFAULT',
+  'GPT_ROUTE_HARD_TIMEOUT_MS',
 ] as const;
 
-const originalFastPathEnv = new Map(
-  GPT_FAST_PATH_ENV_KEYS.map((key) => [key, process.env[key]])
-);
+function captureEnv(keys: readonly string[]): Map<string, string | undefined> {
+  return new Map(keys.map((key) => [key, process.env[key]]));
+}
+
+function restoreEnv(snapshot: ReadonlyMap<string, string | undefined>): void {
+  for (const [key, originalValue] of snapshot) {
+    if (originalValue === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = originalValue;
+    }
+  }
+}
+
+const originalRouteTestEnv = captureEnv(GPT_ROUTE_TEST_ENV_KEYS);
 
 describe('GPT fast-path route branching', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    for (const key of GPT_FAST_PATH_ENV_KEYS) {
+    for (const key of GPT_ROUTE_TEST_ENV_KEYS) {
       delete process.env[key];
     }
     executeFastGptPromptMock.mockResolvedValue(buildFastPathEnvelope());
@@ -170,14 +188,7 @@ describe('GPT fast-path route branching', () => {
   });
 
   afterEach(() => {
-    for (const key of GPT_FAST_PATH_ENV_KEYS) {
-      const originalValue = originalFastPathEnv.get(key);
-      if (originalValue === undefined) {
-        delete process.env[key];
-      } else {
-        process.env[key] = originalValue;
-      }
-    }
+    restoreEnv(originalRouteTestEnv);
   });
 
   it('returns eligible prompt-generation requests inline without queue submission', async () => {
