@@ -1,6 +1,6 @@
 import express from 'express';
 import request from 'supertest';
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const mockRouteGptRequest = jest.fn();
 const findOrCreateGptJobMock = jest.fn();
@@ -76,9 +76,11 @@ function buildApp() {
 }
 
 describe('async /gpt idempotency', () => {
+  const originalGptRouteAsyncCoreDefault = process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT;
+
   beforeEach(() => {
     jest.clearAllMocks();
-    delete process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT;
+    process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = 'true';
     delete process.env.GPT_ASYNC_HEAVY_WAIT_FOR_RESULT_MS;
     delete process.env.GPT_ROUTE_HARD_TIMEOUT_MS;
     delete process.env.GPT_PUBLIC_RESPONSE_MAX_BYTES;
@@ -94,6 +96,14 @@ describe('async /gpt idempotency', () => {
       },
       planningReasons: []
     });
+  });
+
+  afterEach(() => {
+    if (originalGptRouteAsyncCoreDefault === undefined) {
+      delete process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT;
+    } else {
+      process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = originalGptRouteAsyncCoreDefault;
+    }
   });
 
   it('returns the canonical in-flight job when an equivalent async request is deduped', async () => {

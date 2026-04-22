@@ -204,7 +204,60 @@ describe('GPT fast-path route branching', () => {
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
-  it('keeps non-prompt-generation requests on the existing async job path', async () => {
+  it('keeps small non-prompt-generation core requests on the bounded direct path by default', async () => {
+    mockRouteGptRequest.mockResolvedValueOnce({
+      ok: true,
+      result: {
+        result: 'Direct core response.',
+      },
+      _route: {
+        requestId: 'req-core-direct',
+        gptId: 'arcanos-core',
+        module: 'ARCANOS:CORE',
+        action: 'query',
+        route: 'core',
+        matchMethod: 'direct',
+        availableActions: [],
+        timestamp: '2026-04-21T12:00:00.000Z',
+      },
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        prompt: 'Analyze this deployment timeout.',
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.headers['x-gpt-route-decision']).toBe('orchestrated_path');
+    expect(response.headers['x-gpt-route-decision-reason']).toBe('no_prompt_generation_intent');
+    expect(response.headers['x-gpt-fast-path-queue-bypassed']).toBe('false');
+    expect(response.headers['x-gpt-queue-bypassed']).toBe('true');
+    expect(response.body).toMatchObject({
+      ok: true,
+      result: {
+        result: 'Direct core response.',
+      },
+      _route: {
+        gptId: 'arcanos-core',
+        route: 'core',
+      },
+    });
+    expect(executeFastGptPromptMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        gptId: 'arcanos-core',
+        body: {
+          prompt: 'Analyze this deployment timeout.',
+        },
+      })
+    );
+  });
+
+  it('preserves the legacy async core default when explicitly enabled', async () => {
+    process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = 'true';
+
     const response = await request(buildApp())
       .post('/gpt/arcanos-core')
       .send({
@@ -226,8 +279,80 @@ describe('GPT fast-path route branching', () => {
         route: 'async',
       },
     });
-    expect(executeFastGptPromptMock).not.toHaveBeenCalled();
+    expect(planAutonomousWorkerJobMock).toHaveBeenCalledWith(
+      'gpt',
+      expect.objectContaining({
+        executionModeReason: 'core_query_async_default',
+      })
+    );
     expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('keeps explicit async core requests on the job path', async () => {
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        prompt: 'Analyze this deployment timeout.',
+        executionMode: 'async',
+      });
+
+    expect(response.status).toBe(202);
+    expect(response.headers['x-gpt-route-decision']).toBe('orchestrated_path');
+    expect(response.headers['x-gpt-route-decision-reason']).toBe('explicit_orchestrated_mode');
+    expect(response.headers['x-gpt-fast-path-queue-bypassed']).toBe('false');
+    expect(response.headers['x-gpt-queue-bypassed']).toBe('false');
+    expect(response.body).toMatchObject({
+      ok: true,
+      action: 'query',
+      status: 'pending',
+      jobId: 'job-orchestrated',
+      _route: {
+        gptId: 'arcanos-core',
+        route: 'async',
+      },
+    });
+    expect(planAutonomousWorkerJobMock).toHaveBeenCalledWith(
+      'gpt',
+      expect.objectContaining({
+        executionModeReason: 'explicit_async_request',
+      })
+    );
+    expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('keeps heavy core requests on the async job path without the legacy default', async () => {
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        prompt: 'Analyze this deployment timeout.',
+        maxWords: 900,
+      });
+
+    expect(response.status).toBe(202);
+    expect(response.headers['x-gpt-route-decision']).toBe('orchestrated_path');
+    expect(response.headers['x-gpt-route-decision-reason']).toBe('no_prompt_generation_intent');
+    expect(response.headers['x-gpt-fast-path-queue-bypassed']).toBe('false');
+    expect(response.headers['x-gpt-queue-bypassed']).toBe('false');
+    expect(response.body).toMatchObject({
+      ok: true,
+      action: 'query',
+      status: 'pending',
+      jobId: 'job-orchestrated',
+      _route: {
+        gptId: 'arcanos-core',
+        route: 'async',
+      },
+    });
+    expect(planAutonomousWorkerJobMock).toHaveBeenCalledWith(
+      'gpt',
+      expect.objectContaining({
+        executionModeReason: 'heavy_prompt_auto_async',
+      })
+    );
+    expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
   it('reports actual queue bypass for sync module-dispatch responses', async () => {
@@ -275,6 +400,23 @@ describe('GPT fast-path route branching', () => {
   });
 
   it('does not fast-path non-prompt-generation requests even when fast mode is requested', async () => {
+    mockRouteGptRequest.mockResolvedValueOnce({
+      ok: true,
+      result: {
+        result: 'Direct core response.',
+      },
+      _route: {
+        requestId: 'req-core-fast-rejected',
+        gptId: 'arcanos-core',
+        module: 'ARCANOS:CORE',
+        action: 'query',
+        route: 'core',
+        matchMethod: 'direct',
+        availableActions: [],
+        timestamp: '2026-04-21T12:00:00.000Z',
+      },
+    });
+
     const response = await request(buildApp())
       .post('/gpt/arcanos-core')
       .send({
@@ -282,19 +424,24 @@ describe('GPT fast-path route branching', () => {
         executionMode: 'fast',
       });
 
-    expect(response.status).toBe(202);
+    expect(response.status).toBe(200);
     expect(response.headers['x-gpt-route-decision']).toBe('orchestrated_path');
     expect(response.headers['x-gpt-route-decision-reason']).toBe('no_prompt_generation_intent');
     expect(response.headers['x-gpt-fast-path-queue-bypassed']).toBe('false');
-    expect(response.headers['x-gpt-queue-bypassed']).toBe('false');
+    expect(response.headers['x-gpt-queue-bypassed']).toBe('true');
     expect(response.body).toMatchObject({
       ok: true,
-      action: 'query',
-      status: 'pending',
-      jobId: 'job-orchestrated',
+      result: {
+        result: 'Direct core response.',
+      },
+      _route: {
+        gptId: 'arcanos-core',
+        route: 'core',
+      },
     });
     expect(executeFastGptPromptMock).not.toHaveBeenCalled();
-    expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).toHaveBeenCalledTimes(1);
   });
 
   it('rejects malformed payload shapes before queue submission', async () => {

@@ -4,7 +4,7 @@
 `POST /gpt/:gptId` now has two execution modes:
 
 - `fast_path`: inline prompt generation for small requests that look like prompt-generation work. It bypasses job creation, worker orchestration, DAG planning, memory overlays, research overlays, and audit overlays.
-- `orchestrated_path`: existing async or module-dispatch behavior for durable jobs, complex prompts, explicit actions, DAG/research/tool requests, idempotent retries, and long-running work.
+- `orchestrated_path`: non-fast-path behavior. Execution planning may still return through bounded module dispatch, or it may use durable async jobs for explicit async requests, complex prompts, explicit actions, idempotent retries, and long-running work.
 
 The route keeps a single public endpoint so existing Custom GPT integrations do not need a new URL. The router branches internally before async job planning. Explicit async bridge actions (`query`, `query_and_wait`, `get_status`, `get_result`) always keep their current job-backed behavior; fast path is for prompt-generation requests that omit `action`.
 
@@ -16,7 +16,7 @@ A request is eligible when all of these are true:
 - `GPT_FAST_PATH_ENABLED` is not disabled.
 - The request has a prompt.
 - The prompt looks like prompt-generation work.
-- General short-form generation that does not ask for a prompt, such as `Generate a launch email`, stays orchestrated by design.
+- General short-form generation that does not ask for a prompt, such as `Generate a launch email`, stays out of the fast path by design. Small unadorned core requests then use the bounded direct path unless explicit async mode, heavy-request thresholds, idempotency, or `GPT_ROUTE_ASYNC_CORE_DEFAULT=true` require a durable job.
 - If the caller explicitly sets fast mode, all other eligibility checks still apply.
 - There is no explicit idempotency key.
 - The action is omitted. Explicit async bridge actions stay orchestrated even if `executionMode` is `fast`.
@@ -34,6 +34,7 @@ Configuration:
 | `GPT_FAST_PATH_MAX_MESSAGE_COUNT` | `3` | Maximum `messages[]` count. |
 | `GPT_FAST_PATH_MAX_WORDS` | `350` | Maximum requested output size from `maxWords` / `max_words`. |
 | `GPT_FAST_PATH_GPT_ALLOWLIST` | empty | Optional comma-separated GPT IDs allowed to use the fast path. Empty means all GPT IDs. |
+| `GPT_ROUTE_ASYNC_CORE_DEFAULT` | `false` | Legacy opt-in for routing small unadorned core queries through async jobs by default. Explicit async requests and heavy requests still use async jobs without this flag. |
 
 ## HTTP Usage
 Fast path:
@@ -202,8 +203,9 @@ If a request unexpectedly falls back to async, check:
 
 - The response header `x-gpt-route-decision-reason`.
 - Whether the prompt actually matches prompt-generation intent.
-- Whether the request is general generation instead of prompt generation. `Generate a launch email` is orchestrated; `Generate a prompt for a launch email` can be fast path.
+- Whether the request is general generation instead of prompt generation. `Generate a launch email` is not fast path; `Generate a prompt for a launch email` can be fast path.
 - Whether `executionMode` was set to `async` / `orchestrated`.
+- Whether `GPT_ROUTE_ASYNC_CORE_DEFAULT=true` is forcing small core queries into async jobs.
 - Whether the request has `action`, non-empty `payload`, `tools`, `dag`, `files`, `research`, or other heavy fields.
 - Whether an `Idempotency-Key` header was provided.
 - Whether `GPT_FAST_PATH_ENABLED=false` or `GPT_FAST_PATH_GPT_ALLOWLIST` excludes the GPT ID.

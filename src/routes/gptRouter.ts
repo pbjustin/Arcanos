@@ -619,7 +619,7 @@ function shouldDefaultCoreQueriesToAsync(
   }
 
   return ARCANOS_CORE_GPT_IDS.has(gptId) &&
-    readBooleanEnv('GPT_ROUTE_ASYNC_CORE_DEFAULT', true);
+    readBooleanEnv('GPT_ROUTE_ASYNC_CORE_DEFAULT', false);
 }
 
 function resolveGptExecutionPlan(params: {
