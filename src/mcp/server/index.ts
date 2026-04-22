@@ -41,7 +41,7 @@ import { buildActiveMemorySelect, normalizeMemoryEntries, type MemoryListRow } f
 import { runHealthCheck } from '@platform/logging/diagnostics.js';
 import { acquireExecutionLock } from '@services/safety/executionLock.js';
 import { emitSafetyAuditEvent } from '@services/safety/auditEvents.js';
-import { executeFastGptPrompt, resolveGptFastPathTimeoutMs } from '@services/gptFastPath.js';
+import { executeFastGptPrompt } from '@services/gptFastPath.js';
 import { classifyGptFastPathRequest } from '@shared/gpt/gptFastPath.js';
 import { stripConfirmationFields, requireNonceOrIssue, notExposed, buildClearRecheckInput, wrapTool } from './helpers.js';
 import { registerDagMcpTools } from './dagTools.js';
@@ -128,7 +128,7 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
         gptId,
         prompt,
         requestId: ctx.requestId,
-        timeoutMs: resolveGptFastPathTimeoutMs(),
+        timeoutMs: decision.timeoutMs,
         routeDecision: decision,
         logger: ctx.logger
       });

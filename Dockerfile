@@ -36,6 +36,7 @@ COPY arcanos-ai-runtime/ ./arcanos-ai-runtime/
 COPY daemon-python/ ./daemon-python/
 COPY config/ ./config/
 COPY contracts/ ./contracts/
+COPY openapi/ ./openapi/
 COPY tsconfig.json ./
 
 # Install dev dependencies (override NODE_ENV) and build

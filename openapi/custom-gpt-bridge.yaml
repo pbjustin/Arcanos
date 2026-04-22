@@ -1,0 +1,397 @@
+openapi: 3.1.0
+info:
+  title: Arcanos Custom GPT Bridge
+  version: 1.1.0
+  description: |
+    Secure HTTP bridge for Custom GPT Actions. The bridge authenticates inbound
+    Custom GPT requests, enqueues them through the existing Arcanos job
+    infrastructure, and returns either a completed result or canonical job
+    polling URLs.
+
+    The health_echo and echo actions are deterministic transport smoke checks:
+    they verify auth, bridge handling, queueing, worker execution, and
+    /jobs/{jobId}/result retrieval without invoking the ARCANOS Trinity model
+    pipeline. The query and query_and_wait actions execute real model behavior.
+servers:
+  - url: https://YOUR-RAILWAY-DOMAIN
+    description: Replace with the deployed Railway service domain.
+paths:
+  /api/bridge/gpt:
+    post:
+      operationId: invokeArcanosGptBridge
+      summary: Invoke an Arcanos GPT ID through the secure bridge
+      description: |
+        Submit a bridge action to the Arcanos backend. Use health_echo or echo
+        for deterministic transport verification. Use query_and_wait when the
+        Custom GPT should wait briefly for completed model output before
+        falling back to async polling.
+      security:
+        - bearerAuth: []
+        - openaiActionSecretHeader: []
+        - actionSecretHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BridgeRequest"
+            examples:
+              healthEcho:
+                summary: Deterministic transport smoke test
+                value:
+                  gptId: arcanos-core
+                  action: health_echo
+              echo:
+                summary: Deterministic transport smoke test alias
+                value:
+                  gptId: arcanos-core
+                  action: echo
+              queryAndWait:
+                summary: Query and wait briefly
+                value:
+                  gptId: arcanos-core
+                  prompt: Summarize current deployment health.
+                  action: query_and_wait
+                  metadata:
+                    source: custom-gpt-action
+      responses:
+        "200":
+          description: Bridge execution completed within the bounded wait window.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/SmokeCompletedResponse"
+                  - $ref: "#/components/schemas/BridgeCompletedResponse"
+              examples:
+                smokeCompleted:
+                  value:
+                    ok: true
+                    status: completed
+                    output: OK
+        "202":
+          description: Bridge execution is pending; poll the jobs API.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BridgePendingResponse"
+        "400":
+          description: Invalid bridge request payload.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BridgeErrorResponse"
+        "401":
+          description: Missing or invalid bridge shared secret.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BridgeErrorResponse"
+        "409":
+          description: Idempotency key conflict.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BridgeErrorResponse"
+        "500":
+          description: Routing, worker, or provider failure.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BridgeErrorResponse"
+        "503":
+          description: Bridge or queue storage is unavailable or misconfigured.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BridgeErrorResponse"
+  /api/bridge/health:
+    get:
+      operationId: getArcanosBridgeHealth
+      summary: Check bridge runtime health
+      description: Reports environment sanity, route reachability, database status, worker status, and recent bridge failure counters.
+      responses:
+        "200":
+          description: Bridge health is OK.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BridgeHealthResponse"
+        "503":
+          description: Bridge health is degraded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BridgeHealthResponse"
+  /jobs/{jobId}:
+    get:
+      operationId: getBridgeJobStatus
+      summary: Poll canonical job status
+      parameters:
+        - $ref: "#/components/parameters/jobId"
+      responses:
+        "200":
+          description: Job status payload.
+  /jobs/{jobId}/result:
+    get:
+      operationId: getBridgeJobResult
+      summary: Read canonical job result
+      parameters:
+        - $ref: "#/components/parameters/jobId"
+      responses:
+        "200":
+          description: Job result payload.
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Preferred. Use OPENAI_ACTION_SHARED_SECRET as the bearer token.
+    openaiActionSecretHeader:
+      type: apiKey
+      in: header
+      name: x-openai-action-secret
+      description: Alternative shared-secret header using OPENAI_ACTION_SHARED_SECRET.
+    actionSecretHeader:
+      type: apiKey
+      in: header
+      name: x-action-secret
+      description: Legacy alternative shared-secret header using OPENAI_ACTION_SHARED_SECRET.
+  parameters:
+    jobId:
+      name: jobId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+  schemas:
+    BridgeRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - action
+      properties:
+        gptId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: GPT ID to invoke. Defaults to DEFAULT_GPT_ID when omitted.
+          example: arcanos-core
+        prompt:
+          type: string
+          minLength: 1
+          maxLength: 50000
+          description: Required for query and query_and_wait; ignored by health_echo and echo.
+        action:
+          type: string
+          enum:
+            - health_echo
+            - echo
+            - query
+            - query_and_wait
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Optional JSON metadata and wait controls.
+    SmokeCompletedResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - ok
+        - status
+        - output
+      properties:
+        ok:
+          type: boolean
+          const: true
+        status:
+          type: string
+          const: completed
+        output:
+          type: string
+          const: OK
+    BridgeCompletedResponse:
+      type: object
+      additionalProperties: true
+      required:
+        - ok
+        - status
+        - output
+      properties:
+        ok:
+          type: boolean
+          const: true
+        status:
+          type: string
+          const: completed
+        jobId:
+          type: string
+        poll_url:
+          type: string
+        result_url:
+          type: string
+        output:
+          description: Normalized internal GPT output.
+        request_id:
+          type: string
+    BridgePendingResponse:
+      type: object
+      additionalProperties: true
+      required:
+        - ok
+        - status
+        - jobId
+        - poll_url
+        - result_url
+      properties:
+        ok:
+          type: boolean
+          const: true
+        status:
+          type: string
+          const: pending
+        action:
+          type: string
+          enum:
+            - health_echo
+            - echo
+            - query
+            - query_and_wait
+        jobId:
+          type: string
+        poll_url:
+          type: string
+        result_url:
+          type: string
+        poll:
+          type: string
+        result:
+          type: object
+          required:
+            - method
+            - url
+          properties:
+            method:
+              type: string
+              const: GET
+            url:
+              type: string
+        job_status:
+          type: string
+        lifecycle_status:
+          type: string
+        request_id:
+          type: string
+        timing:
+          type: object
+          additionalProperties: true
+        observability:
+          type: object
+          additionalProperties: true
+    BridgeErrorResponse:
+      type: object
+      additionalProperties: true
+      required:
+        - ok
+        - status
+        - error
+      properties:
+        ok:
+          type: boolean
+          const: false
+        status:
+          type: string
+        request_id:
+          type:
+            - string
+            - "null"
+        jobId:
+          type: string
+        error:
+          type: object
+          required:
+            - source
+            - message
+          properties:
+            source:
+              type: string
+              enum:
+                - routing
+                - queue
+                - worker
+                - provider
+                - timeout
+                - auth
+            message:
+              type: string
+    BridgeHealthResponse:
+      type: object
+      additionalProperties: true
+      required:
+        - ok
+        - status
+        - env
+        - missing_required_env
+      properties:
+        ok:
+          type: boolean
+        status:
+          type: string
+          enum:
+            - ok
+            - degraded
+        request_id:
+          type: string
+        env:
+          type: object
+          required:
+            - OPENAI_ACTION_SHARED_SECRET
+            - DEFAULT_GPT_ID
+          additionalProperties: true
+          properties:
+            OPENAI_ACTION_SHARED_SECRET:
+              type: object
+              required:
+                - configured
+              properties:
+                configured:
+                  type: boolean
+            DEFAULT_GPT_ID:
+              type: object
+              required:
+                - configured
+                - valid
+              properties:
+                configured:
+                  type: boolean
+                valid:
+                  type: boolean
+                value:
+                  type:
+                    - string
+                    - "null"
+                error:
+                  type:
+                    - string
+                    - "null"
+        missing_required_env:
+          type: array
+          items:
+            type: string
+        route_reachability:
+          type: object
+          additionalProperties: true
+        database:
+          type: object
+          additionalProperties: true
+        worker_status:
+          type: object
+          additionalProperties: true
+        recent_failure_counters:
+          type: object
+          additionalProperties: true
+        failure_counters_since_start:
+          type: object
+          additionalProperties:
+            type: number

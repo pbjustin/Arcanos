@@ -10,6 +10,7 @@ const BASE_ENV = {
   GPT_FAST_PATH_MAX_PROMPT_CHARS: '900',
   GPT_FAST_PATH_MAX_MESSAGE_COUNT: '3',
   GPT_FAST_PATH_MAX_WORDS: '350',
+  GPT_FAST_PATH_TIMEOUT_MS: '8000',
   GPT_FAST_PATH_GPT_ALLOWLIST: '',
 } as NodeJS.ProcessEnv;
 
@@ -32,6 +33,7 @@ describe('GPT fast-path classification', () => {
       reason: 'simple_prompt_generation',
       queueBypassed: true,
       promptGenerationIntent: true,
+      timeoutMs: 8000,
     });
   });
 
@@ -116,6 +118,16 @@ describe('GPT fast-path classification', () => {
         expectedReason: 'explicit_payload_requires_module_dispatch',
       },
       {
+        name: 'invalid payload shape',
+        body: {
+          prompt: 'Generate a prompt for a launch email.',
+          payload: 'operators',
+        },
+        promptText: 'Generate a prompt for a launch email.',
+        requestedAction: null,
+        expectedReason: 'invalid_payload_shape_requires_module_dispatch',
+      },
+      {
         name: 'DAG cue',
         body: {
           prompt: 'Generate a prompt for a launch email.',
@@ -191,6 +203,24 @@ describe('GPT fast-path classification', () => {
   it('keeps intent detection explicit and tuneable', () => {
     expect(hasPromptGenerationIntent('Generate a prompt for a landing page.')).toBe(true);
     expect(hasPromptGenerationIntent('Turn this product brief into a prompt.')).toBe(true);
+    expect(hasPromptGenerationIntent('Generate a launch email.')).toBe(false);
     expect(hasPromptGenerationIntent('Analyze this deployment timeout.')).toBe(false);
+  });
+
+  it('resolves the inline timeout once as part of the route decision', () => {
+    expect(classifyGptFastPathRequest({
+      gptId: 'arcanos-core',
+      body: { prompt: 'Generate a prompt for a launch email.' },
+      promptText: 'Generate a prompt for a launch email.',
+      requestedAction: null,
+      routeTimeoutProfile: 'default',
+      env: {
+        ...BASE_ENV,
+        GPT_FAST_PATH_TIMEOUT_MS: '25000',
+      },
+    })).toMatchObject({
+      path: 'fast_path',
+      timeoutMs: 20000,
+    });
   });
 });

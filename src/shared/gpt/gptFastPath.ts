@@ -10,6 +10,7 @@ export interface GptFastPathDecision {
   promptLength: number;
   messageCount: number;
   maxWords: number | null;
+  timeoutMs: number;
   action: string | null;
   promptGenerationIntent: boolean;
   explicitMode: GptFastPathModeHint;
@@ -20,6 +21,7 @@ export interface GptFastPathConfig {
   maxPromptChars: number;
   maxMessageCount: number;
   maxWords: number;
+  timeoutMs: number;
   gptAllowlist: string[];
 }
 
@@ -37,6 +39,9 @@ export interface ClassifyGptFastPathInput {
 const DEFAULT_FAST_PATH_MAX_PROMPT_CHARS = 900;
 const DEFAULT_FAST_PATH_MAX_MESSAGE_COUNT = 3;
 const DEFAULT_FAST_PATH_MAX_WORDS = 350;
+const DEFAULT_FAST_PATH_TIMEOUT_MS = 8_000;
+const MIN_FAST_PATH_TIMEOUT_MS = 500;
+const MAX_FAST_PATH_TIMEOUT_MS = 20_000;
 
 const HEAVY_REQUEST_FIELDS = new Set([
   'attachments',
@@ -59,6 +64,8 @@ const HEAVY_REQUEST_FIELDS = new Set([
   'workflowId'
 ]);
 
+// Intentionally prompt-generation specific. General short-form copywriting
+// remains orchestrated until the product contract is widened.
 const PROMPT_GENERATION_PATTERNS = [
   /\b(generate|create|write|draft|compose|make|build)\s+(?:me\s+|a\s+|an\s+|the\s+)?(?:[\w-]+\s+){0,6}prompt\b/i,
   /\b(?:image|video|system|assistant|ai|chatgpt|midjourney|stable diffusion|logo|marketing|copywriting)\s+prompt\b/i,
@@ -109,8 +116,24 @@ export function resolveGptFastPathConfig(
       DEFAULT_FAST_PATH_MAX_WORDS,
       env
     ),
+    timeoutMs: resolveGptFastPathTimeoutMs(env),
     gptAllowlist: parseCsvEnv('GPT_FAST_PATH_GPT_ALLOWLIST', env)
   };
+}
+
+export function resolveGptFastPathTimeoutMs(
+  env: NodeJS.ProcessEnv = process.env
+): number {
+  const configuredTimeoutMs = readPositiveIntegerEnv(
+    'GPT_FAST_PATH_TIMEOUT_MS',
+    DEFAULT_FAST_PATH_TIMEOUT_MS,
+    env
+  );
+
+  return Math.max(
+    MIN_FAST_PATH_TIMEOUT_MS,
+    Math.min(MAX_FAST_PATH_TIMEOUT_MS, configuredTimeoutMs)
+  );
 }
 
 function normalizeBodyRecord(body: unknown): Record<string, unknown> | null {
@@ -121,12 +144,23 @@ function normalizeBodyRecord(body: unknown): Record<string, unknown> | null {
 
 function countMessages(body: unknown): number {
   const bodyRecord = normalizeBodyRecord(body);
-  return Array.isArray(bodyRecord?.messages) ? bodyRecord.messages.length : 0;
+  if (Array.isArray(bodyRecord?.messages)) {
+    return bodyRecord.messages.length;
+  }
+
+  const payloadRecord = readPayloadRecord(body);
+  return Array.isArray(payloadRecord?.messages) ? payloadRecord.messages.length : 0;
 }
 
 function readMaxWords(body: unknown): number | null {
   const bodyRecord = normalizeBodyRecord(body);
-  const candidates = [bodyRecord?.maxWords, bodyRecord?.max_words];
+  const payloadRecord = readPayloadRecord(body);
+  const candidates = [
+    bodyRecord?.maxWords,
+    bodyRecord?.max_words,
+    payloadRecord?.maxWords,
+    payloadRecord?.max_words
+  ];
   for (const candidate of candidates) {
     if (typeof candidate === 'number' && Number.isFinite(candidate) && candidate > 0) {
       return Math.trunc(candidate);
@@ -138,8 +172,26 @@ function readMaxWords(body: unknown): number | null {
 
 function readAnswerMode(body: unknown): string | null {
   const bodyRecord = normalizeBodyRecord(body);
-  return typeof bodyRecord?.answerMode === 'string' && bodyRecord.answerMode.trim().length > 0
-    ? bodyRecord.answerMode.trim().toLowerCase()
+  const payloadRecord = readPayloadRecord(body);
+  const answerMode = typeof bodyRecord?.answerMode === 'string'
+    ? bodyRecord.answerMode
+    : typeof payloadRecord?.answerMode === 'string'
+      ? payloadRecord.answerMode
+      : null;
+
+  return answerMode && answerMode.trim().length > 0
+    ? answerMode.trim().toLowerCase()
+    : null;
+}
+
+function readPayloadRecord(body: unknown): Record<string, unknown> | null {
+  const bodyRecord = normalizeBodyRecord(body);
+  if (!bodyRecord || bodyRecord.payload === undefined || bodyRecord.payload === null) {
+    return null;
+  }
+
+  return typeof bodyRecord.payload === 'object' && !Array.isArray(bodyRecord.payload)
+    ? bodyRecord.payload as Record<string, unknown>
     : null;
 }
 
@@ -149,20 +201,24 @@ function hasHeavyRequestField(body: unknown): boolean {
     return false;
   }
 
-  return Object.keys(bodyRecord).some((key) => HEAVY_REQUEST_FIELDS.has(key));
+  const payloadRecord = readPayloadRecord(body);
+  return Object.keys(bodyRecord).some((key) => HEAVY_REQUEST_FIELDS.has(key))
+    || Boolean(payloadRecord && Object.keys(payloadRecord).some((key) => HEAVY_REQUEST_FIELDS.has(key)));
 }
 
-function hasNonEmptyPayload(body: unknown): boolean {
+function getPayloadFastPathRejectionReason(body: unknown): string | null {
   const bodyRecord = normalizeBodyRecord(body);
   if (!bodyRecord || bodyRecord.payload === undefined || bodyRecord.payload === null) {
-    return false;
+    return null;
   }
 
   if (typeof bodyRecord.payload !== 'object' || Array.isArray(bodyRecord.payload)) {
-    return true;
+    return 'invalid_payload_shape_requires_module_dispatch';
   }
 
-  return Object.keys(bodyRecord.payload as Record<string, unknown>).length > 0;
+  return Object.keys(bodyRecord.payload as Record<string, unknown>).length > 0
+    ? 'explicit_payload_requires_module_dispatch'
+    : null;
 }
 
 export function hasPromptGenerationIntent(promptText: string | null): boolean {
@@ -179,6 +235,7 @@ function buildDecision(input: {
   promptLength: number;
   messageCount: number;
   maxWords: number | null;
+  timeoutMs: number;
   action: string | null;
   promptGenerationIntent: boolean;
   explicitMode: GptFastPathModeHint;
@@ -192,6 +249,7 @@ function buildDecision(input: {
     promptLength: input.promptLength,
     messageCount: input.messageCount,
     maxWords: input.maxWords,
+    timeoutMs: input.timeoutMs,
     action: input.action,
     promptGenerationIntent: input.promptGenerationIntent,
     explicitMode: input.explicitMode
@@ -212,6 +270,7 @@ export function classifyGptFastPathRequest(
     promptLength,
     messageCount,
     maxWords,
+    timeoutMs: config.timeoutMs,
     action,
     promptGenerationIntent,
     explicitMode
@@ -270,8 +329,9 @@ export function classifyGptFastPathRequest(
     return buildDecision({ ...common, path: 'orchestrated_path', reason: 'heavy_request_field' });
   }
 
-  if (hasNonEmptyPayload(input.body)) {
-    return buildDecision({ ...common, path: 'orchestrated_path', reason: 'explicit_payload_requires_module_dispatch' });
+  const payloadRejectionReason = getPayloadFastPathRejectionReason(input.body);
+  if (payloadRejectionReason) {
+    return buildDecision({ ...common, path: 'orchestrated_path', reason: payloadRejectionReason });
   }
 
   return buildDecision({ ...common, path: 'fast_path', reason: explicitMode === 'fast' ? 'explicit_fast_mode' : 'simple_prompt_generation' });

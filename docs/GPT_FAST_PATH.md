@@ -16,10 +16,11 @@ A request is eligible when all of these are true:
 - `GPT_FAST_PATH_ENABLED` is not disabled.
 - The request has a prompt.
 - The prompt looks like prompt-generation work.
+- General short-form generation that does not ask for a prompt, such as `Generate a launch email`, stays orchestrated by design.
 - If the caller explicitly sets fast mode, all other eligibility checks still apply.
 - There is no explicit idempotency key.
 - The action is omitted. Explicit async bridge actions stay orchestrated even if `executionMode` is `fast`.
-- The request does not carry heavy fields such as `tools`, `workflow`, `dag`, `files`, `images`, `research`, or a non-empty `payload`.
+- The request does not carry heavy fields such as `tools`, `workflow`, `dag`, `files`, `images`, `research`, a non-object `payload`, or a non-empty object `payload`.
 - Prompt length, message count, and requested max words stay under configured limits.
 
 Configuration:
@@ -197,6 +198,7 @@ If a request unexpectedly falls back to async, check:
 
 - The response header `x-gpt-route-decision-reason`.
 - Whether the prompt actually matches prompt-generation intent.
+- Whether the request is general generation instead of prompt generation. `Generate a launch email` is orchestrated; `Generate a prompt for a launch email` can be fast path.
 - Whether `executionMode` was set to `async` / `orchestrated`.
 - Whether the request has `action`, non-empty `payload`, `tools`, `dag`, `files`, `research`, or other heavy fields.
 - Whether an `Idempotency-Key` header was provided.

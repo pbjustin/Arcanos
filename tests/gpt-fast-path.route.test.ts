@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const mockRouteGptRequest = jest.fn();
 const executeFastGptPromptMock = jest.fn();
-const resolveGptFastPathTimeoutMsMock = jest.fn(() => 5_000);
 const findOrCreateGptJobMock = jest.fn();
 const getJobByIdMock = jest.fn();
 const planAutonomousWorkerJobMock = jest.fn();
@@ -21,7 +20,6 @@ jest.unstable_mockModule('../src/routes/_core/gptDispatch.js', () => ({
 
 jest.unstable_mockModule('../src/services/gptFastPath.js', () => ({
   executeFastGptPrompt: executeFastGptPromptMock,
-  resolveGptFastPathTimeoutMs: resolveGptFastPathTimeoutMsMock,
 }));
 
 jest.unstable_mockModule('../src/platform/logging/gptLogger.js', () => ({
@@ -97,7 +95,7 @@ function buildFastPathEnvelope() {
         orchestrationBypassed: true,
         modelLatencyMs: 12,
         totalLatencyMs: 14,
-        timeoutMs: 5_000,
+        timeoutMs: 8_000,
       },
     },
     routeDecision: {
@@ -107,6 +105,7 @@ function buildFastPathEnvelope() {
       promptLength: 40,
       messageCount: 0,
       maxWords: null,
+      timeoutMs: 8_000,
     },
     _route: {
       requestId: 'req-fast',
@@ -191,10 +190,11 @@ describe('GPT fast-path route branching', () => {
       expect.objectContaining({
         gptId: 'arcanos-core',
         prompt: 'Generate a prompt for a launch email.',
-        timeoutMs: 5_000,
+        timeoutMs: 8_000,
         routeDecision: expect.objectContaining({
           path: 'fast_path',
           reason: 'simple_prompt_generation',
+          timeoutMs: 8_000,
         }),
       })
     );
@@ -247,6 +247,29 @@ describe('GPT fast-path route branching', () => {
       jobId: 'job-orchestrated',
     });
     expect(executeFastGptPromptMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to the orchestrated path when inline fast-path execution is unavailable', async () => {
+    executeFastGptPromptMock.mockRejectedValueOnce(new Error('OpenAI client unavailable for GPT fast path.'));
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        prompt: 'Generate a prompt for a launch email.',
+      });
+
+    expect(response.status).toBe(202);
+    expect(response.headers['x-gpt-route-decision']).toBe('orchestrated_path');
+    expect(response.headers['x-gpt-route-decision-reason']).toBe('fast_path_fallback');
+    expect(response.headers['x-gpt-queue-bypassed']).toBe('false');
+    expect(response.body).toMatchObject({
+      ok: true,
+      action: 'query',
+      status: 'pending',
+      jobId: 'job-orchestrated',
+    });
+    expect(executeFastGptPromptMock).toHaveBeenCalledTimes(1);
     expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
   });
 

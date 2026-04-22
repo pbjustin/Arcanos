@@ -42,4 +42,23 @@ describe('custom GPT OpenAPI contract route', () => {
     expect(Object.keys(response.body.paths ?? {})).toEqual(['/jobs/{jobId}']);
     expect(response.body.paths?.['/jobs/{jobId}']?.get?.operationId).toBe('getJobStatus');
   });
+
+  it('serves the Custom GPT bridge OpenAPI contract with the smoke action documented', async () => {
+    const response = await request(buildApp())
+      .get('/openapi/custom-gpt-bridge.yaml');
+
+    expect(response.status).toBe(200);
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(response.headers['content-type']).toContain('yaml');
+    expect(response.text).toContain('/api/bridge/gpt');
+    expect(response.text).toContain('health_echo');
+    expect(response.text).toContain('query_and_wait');
+    expect(response.text).toContain('env:');
+    expect(response.text).toContain('OPENAI_ACTION_SHARED_SECRET:');
+
+    const pendingSchema = response.text.split('BridgePendingResponse:')[1]?.split('BridgeErrorResponse:')[0] ?? '';
+    expect(pendingSchema).toContain('result:');
+    expect(pendingSchema).toContain('job_status:');
+    expect(pendingSchema).not.toContain('stream:');
+  });
 });

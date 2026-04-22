@@ -1,5 +1,11 @@
 import { z } from 'zod';
 import type { GptAsyncWriteAction } from './gptJobResult.js';
+import {
+  GPT_ECHO_ACTION,
+  GPT_HEALTH_ECHO_ACTION,
+  isGptBridgeSmokeAction,
+  type GptBridgeSmokeAction
+} from './bridgeSmoke.js';
 
 const jsonValueSchema: z.ZodType<unknown> = z.lazy(() =>
   z.union([
@@ -16,20 +22,26 @@ const queuedGptJobInputSchema = z.object({
   gptId: z.string().trim().min(1).max(128),
   body: z.record(jsonValueSchema),
   prompt: z.string().trim().min(1).optional(),
+  bypassIntentRouting: z.boolean().optional(),
   requestId: z.string().trim().min(1).max(128).optional(),
   routeHint: z.string().trim().min(1).max(64).optional(),
   requestPath: z.string().trim().min(1).max(256).optional(),
-  executionModeReason: z.string().trim().min(1).max(128).optional()
+  executionModeReason: z.string().trim().min(1).max(128).optional(),
+  bridgeSmoke: z.literal(true).optional(),
+  bridgeAction: z.enum([GPT_HEALTH_ECHO_ACTION, GPT_ECHO_ACTION]).optional()
 }).passthrough();
 
 export interface QueuedGptJobInput {
   gptId: string;
   body: Record<string, unknown>;
   prompt?: string;
+  bypassIntentRouting?: boolean;
   requestId?: string;
   routeHint?: string;
   requestPath?: string;
   executionModeReason?: string;
+  bridgeSmoke?: true;
+  bridgeAction?: GptBridgeSmokeAction;
 }
 
 export interface QueuedGptPendingResponse {
@@ -71,10 +83,13 @@ export function buildQueuedGptJobInput(input: {
   gptId: string;
   body: Record<string, unknown>;
   prompt?: string | null;
+  bypassIntentRouting?: boolean;
   requestId?: string | null;
   routeHint?: string | null;
   requestPath?: string | null;
   executionModeReason?: string | null;
+  bridgeSmoke?: boolean | null;
+  bridgeAction?: string | null;
 }): QueuedGptJobInput {
   const normalizedJobInput: QueuedGptJobInput = {
     gptId: input.gptId.trim(),
@@ -84,6 +99,10 @@ export function buildQueuedGptJobInput(input: {
   const normalizedPrompt = normalizeOptionalString(input.prompt ?? undefined);
   if (normalizedPrompt) {
     normalizedJobInput.prompt = normalizedPrompt;
+  }
+
+  if (input.bypassIntentRouting === true) {
+    normalizedJobInput.bypassIntentRouting = true;
   }
 
   const normalizedRequestId = normalizeOptionalString(input.requestId ?? undefined);
@@ -106,6 +125,11 @@ export function buildQueuedGptJobInput(input: {
   );
   if (normalizedExecutionModeReason) {
     normalizedJobInput.executionModeReason = normalizedExecutionModeReason;
+  }
+
+  if (input.bridgeSmoke === true && isGptBridgeSmokeAction(input.bridgeAction)) {
+    normalizedJobInput.bridgeSmoke = true;
+    normalizedJobInput.bridgeAction = input.bridgeAction;
   }
 
   return normalizedJobInput;

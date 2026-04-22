@@ -5,7 +5,6 @@ import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { recordAiOperation } from '@platform/observability/appMetrics.js';
 import { getDefaultModel } from '@services/openai/credentialProvider.js';
 import { getOpenAIClientOrAdapter } from '@services/openai/clientBridge.js';
-import { generateMockResponse } from '@services/openai.js';
 import type { GptFastPathDecision } from '@shared/gpt/gptFastPath.js';
 
 export interface ExecuteFastGptPromptInput {
@@ -32,6 +31,7 @@ export interface FastGptPromptEnvelope {
     promptLength: number;
     messageCount: number;
     maxWords: number | null;
+    timeoutMs: number;
   };
   _route: {
     requestId?: string;
@@ -50,29 +50,6 @@ const FAST_PATH_SYSTEM_INSTRUCTIONS = [
   'Do not describe internal routing, queues, tools, memory, audits, or orchestration.',
   'Return only the user-facing prompt or prompt text requested by the caller.'
 ].join(' ');
-
-const DEFAULT_FAST_PATH_TIMEOUT_MS = 8_000;
-const MIN_FAST_PATH_TIMEOUT_MS = 500;
-const MAX_FAST_PATH_TIMEOUT_MS = 20_000;
-
-function readPositiveIntegerEnv(name: string, fallbackValue: number): number {
-  const parsedValue = Number(process.env[name]);
-  return Number.isFinite(parsedValue) && parsedValue > 0
-    ? Math.trunc(parsedValue)
-    : fallbackValue;
-}
-
-export function resolveGptFastPathTimeoutMs(): number {
-  const configuredTimeoutMs = readPositiveIntegerEnv(
-    'GPT_FAST_PATH_TIMEOUT_MS',
-    DEFAULT_FAST_PATH_TIMEOUT_MS
-  );
-
-  return Math.max(
-    MIN_FAST_PATH_TIMEOUT_MS,
-    Math.min(MAX_FAST_PATH_TIMEOUT_MS, configuredTimeoutMs)
-  );
-}
 
 function readUsageNumber(usage: unknown, key: string): number {
   if (!usage || typeof usage !== 'object' || Array.isArray(usage)) {
@@ -171,50 +148,6 @@ function buildFastPathResult(input: {
   };
 }
 
-function buildMockFastPathEnvelope(input: ExecuteFastGptPromptInput, startedAtMs: number): FastGptPromptEnvelope {
-  const createdAtMs = Date.now();
-  const mockResult = generateMockResponse(input.prompt, 'gpt-fast-path') as unknown as Record<string, unknown>;
-  return {
-    ok: true,
-    result: {
-      ...mockResult,
-      fastPath: {
-        inline: true,
-        queueBypassed: true,
-        orchestrationBypassed: true,
-        modelLatencyMs: 0,
-        totalLatencyMs: createdAtMs - startedAtMs,
-        timeoutMs: input.timeoutMs,
-        mockResponse: true,
-        bypassedSubsystems: [
-          'queue',
-          'worker_orchestration',
-          'dag_planning',
-          'memory_overlay',
-          'research_overlay',
-          'audit_overlay'
-        ]
-      }
-    },
-    routeDecision: {
-      path: 'fast_path',
-      reason: input.routeDecision.reason,
-      queueBypassed: true,
-      promptLength: input.routeDecision.promptLength,
-      messageCount: input.routeDecision.messageCount,
-      maxWords: input.routeDecision.maxWords
-    },
-    _route: {
-      ...(input.requestId ? { requestId: input.requestId } : {}),
-      gptId: input.gptId,
-      module: 'GPT:FAST_PATH',
-      action: 'query',
-      route: 'fast_path',
-      timestamp: new Date(createdAtMs).toISOString()
-    }
-  };
-}
-
 /**
  * Execute one simple GPT prompt-generation request through the minimal inline path.
  * This path intentionally uses the shared OpenAI client but skips queue creation, worker
@@ -227,12 +160,12 @@ export async function executeFastGptPrompt(
   const { client } = getOpenAIClientOrAdapter();
 
   if (!client) {
-    input.logger?.warn?.('gpt.fast_path.mock_response', {
+    input.logger?.warn?.('gpt.fast_path.client_unavailable', {
       gptId: input.gptId,
       requestId: input.requestId,
       reason: 'openai_client_unavailable'
     });
-    return buildMockFastPathEnvelope(input, startedAtMs);
+    throw new Error('OpenAI client unavailable for GPT fast path.');
   }
 
   const model = getDefaultModel();
@@ -303,7 +236,8 @@ export async function executeFastGptPrompt(
         queueBypassed: true,
         promptLength: input.routeDecision.promptLength,
         messageCount: input.routeDecision.messageCount,
-        maxWords: input.routeDecision.maxWords
+        maxWords: input.routeDecision.maxWords,
+        timeoutMs: input.timeoutMs
       },
       _route: {
         ...(input.requestId ? { requestId: input.requestId } : {}),

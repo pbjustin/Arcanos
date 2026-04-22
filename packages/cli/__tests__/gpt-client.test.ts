@@ -386,33 +386,27 @@ describe("GPT route OpenAPI contract and client", () => {
     const requestSchema = spec.components?.schemas?.GptRouteRequest;
     expect(requestSchema).toEqual(
       expect.objectContaining({
-        oneOf: expect.any(Array),
-        discriminator: expect.objectContaining({
-          propertyName: "action"
+        type: "object",
+        additionalProperties: true,
+        properties: expect.objectContaining({
+          action: expect.objectContaining({
+            type: "string"
+          }),
+          payload: expect.objectContaining({
+            type: "object",
+            additionalProperties: true
+          }),
+          context: expect.objectContaining({
+            type: "object",
+            additionalProperties: true
+          })
         })
       })
     );
-    expect(requestSchema?.oneOf).toEqual(
-      expect.arrayContaining([
-        { $ref: "#/components/schemas/GenericPromptRequest" },
-        { $ref: "#/components/schemas/QueryActionRequest" },
-        { $ref: "#/components/schemas/QueryAndWaitActionRequest" },
-        { $ref: "#/components/schemas/GetStatusActionRequest" },
-        { $ref: "#/components/schemas/GetResultActionRequest" },
-      ])
-    );
-    expect(spec.components?.schemas?.QueryActionRequest?.allOf?.[1]?.required ?? []).toEqual(
-      expect.arrayContaining(["action", "prompt"])
-    );
-    expect(spec.components?.schemas?.QueryAndWaitActionRequest?.allOf?.[1]?.required ?? []).toEqual(
-      expect.arrayContaining(["action", "prompt"])
-    );
-    expect(spec.components?.schemas?.GetStatusActionRequest?.required ?? []).toEqual(
-      expect.arrayContaining(["action", "payload"])
-    );
-    expect(spec.components?.schemas?.GetResultActionRequest?.required ?? []).toEqual(
-      expect.arrayContaining(["action", "payload"])
-    );
+    expect(requestSchema?.description).toContain("Universal GPT-route request");
+    expect(requestSchema?.properties?.action?.description).toContain("runtime.inspect");
+    expect(requestSchema?.properties?.payload?.description).toContain("payload.detail");
+    expect(requestSchema?.properties?.payload?.description).toContain("payload.sections");
     expect(
       spec.paths?.["/gpt/{gptId}"]?.post?.requestBody?.content?.["application/json"]?.examples?.genericPrompt?.value
     ).toEqual({
@@ -448,6 +442,41 @@ describe("GPT route OpenAPI contract and client", () => {
       payload: {
         jobId: "59dbfb2b-0c64-4eda-8a1e-b950a63f7fe0"
       }
+    });
+    expect(
+      spec.paths?.["/gpt/{gptId}"]?.post?.requestBody?.content?.["application/json"]?.examples?.runtimeInspect?.value
+    ).toEqual({
+      action: "runtime.inspect"
+    });
+    expect(
+      spec.paths?.["/gpt/{gptId}"]?.post?.requestBody?.content?.["application/json"]?.examples?.runtimeInspectStandard?.value
+    ).toEqual({
+      action: "runtime.inspect",
+      payload: {
+        detail: "standard"
+      }
+    });
+    expect(
+      spec.paths?.["/gpt/{gptId}"]?.post?.requestBody?.content?.["application/json"]?.examples?.runtimeInspectFull?.value
+    ).toEqual({
+      action: "runtime.inspect",
+      payload: {
+        detail: "full",
+        sections: ["workers", "queues", "memory"]
+      }
+    });
+    expect(
+      spec.paths?.["/gpt/{gptId}"]?.post?.requestBody?.content?.["application/json"]?.examples?.selfHealSummary?.value
+    ).toEqual({
+      action: "self_heal.status",
+      payload: {
+        detail: "summary"
+      }
+    });
+    expect(
+      spec.paths?.["/gpt/{gptId}"]?.post?.requestBody?.content?.["application/json"]?.examples?.workersStatus?.value
+    ).toEqual({
+      action: "workers.status"
     });
     expect(
       spec.paths?.["/gpt/{gptId}"]?.post?.requestBody?.content?.["application/json"]?.examples?.queryAndWait?.value

@@ -51,6 +51,21 @@ Use the runbook docs for exact commands:
 - `docs/RAILWAY_DEPLOYMENT.md`
 - `docs/CI_CD.md`
 
+## Custom GPT + GPT ID API Bridge
+Custom GPT Actions should call the HTTP bridge, not Railway CLI. The runtime path is:
+`Custom GPT Action -> POST /api/bridge/gpt -> async GPT job -> /gpt/:gptId -> /jobs/*`.
+
+Required environment:
+- `OPENAI_ACTION_SHARED_SECRET` for inbound bridge auth.
+- `DEFAULT_GPT_ID` as the fallback GPT ID when callers omit `gptId`.
+
+Bridge endpoints:
+- `POST /api/bridge/gpt` accepts `{ "gptId": "arcanos-core", "prompt": "...", "action": "query" | "query_and_wait", "metadata": {} }`.
+- `GET /api/bridge/health` reports bridge env sanity, default GPT route reachability, database state, worker health when available, and bridge failure counters.
+- Async job retrieval stays on `GET /jobs/{id}` and `GET /jobs/{id}/result`.
+
+The Custom GPT Action OpenAPI document is `openapi/custom-gpt-bridge.yaml`.
+
 ## Troubleshooting
 - `docs/TROUBLESHOOTING.md`
 - Health checks: `GET /healthz` (liveness), `GET /readyz` (readiness), `GET /health` (dependencies)
@@ -78,6 +93,9 @@ Canonical boundaries / pipelines:
 - Liveness: `GET /healthz` (used by Railway healthchecks)
 - Readiness: `GET /readyz` (critical dependencies ready for traffic)
 - Detailed dependency view: `GET /health` (includes Redis and other dependency state)
+
+## Custom GPT bridge smoke test
+Use `POST /api/bridge/gpt` with `action: "health_echo"` to verify bridge auth, request handling, queueing, worker execution, and canonical `/jobs/{id}/result` retrieval without invoking the Trinity reasoning pipeline. Use `action: "query"` or `action: "query_and_wait"` when the request must exercise real model behavior.
 
 ## OpenAI data retention
 Responses requests default to **stateless** (`store: false`). You can enable storage via:

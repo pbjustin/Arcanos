@@ -10,7 +10,6 @@ const mockRegisterDagMcpTools = jest.fn();
 const mockRegisterResource = jest.fn();
 const mockRegisterResourceTemplate = jest.fn();
 const mockExecuteFastGptPrompt = jest.fn();
-const mockResolveGptFastPathTimeoutMs = jest.fn(() => 5_000);
 const mockClassifyGptFastPathRequest = jest.fn();
 
 class FakeMcpServer {
@@ -165,7 +164,6 @@ jest.unstable_mockModule('../src/mcp/server/dagTools.js', () => ({
 
 jest.unstable_mockModule('../src/services/gptFastPath.js', () => ({
   executeFastGptPrompt: mockExecuteFastGptPrompt,
-  resolveGptFastPathTimeoutMs: mockResolveGptFastPathTimeoutMs,
 }));
 
 jest.unstable_mockModule('../src/shared/gpt/gptFastPath.js', () => ({
@@ -203,6 +201,7 @@ describe('createMcpServer job control tools', () => {
       promptLength: 35,
       messageCount: 0,
       maxWords: null,
+      timeoutMs: 8_000,
       action: null,
       promptGenerationIntent: true,
       explicitMode: 'fast',
@@ -220,6 +219,7 @@ describe('createMcpServer job control tools', () => {
         promptLength: 35,
         messageCount: 0,
         maxWords: null,
+        timeoutMs: 8_000,
       },
       _route: {
         requestId: 'mcp-req-1',
@@ -294,9 +294,10 @@ describe('createMcpServer job control tools', () => {
       expect.objectContaining({
         gptId: 'arcanos-core',
         prompt: 'Generate a prompt for a launch email',
-        timeoutMs: 5_000,
+        timeoutMs: 8_000,
         routeDecision: expect.objectContaining({
           path: 'fast_path',
+          timeoutMs: 8_000,
         }),
       })
     );
