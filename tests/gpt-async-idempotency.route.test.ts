@@ -1,6 +1,6 @@
 import express from 'express';
 import request from 'supertest';
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const mockRouteGptRequest = jest.fn();
 const findOrCreateGptJobMock = jest.fn();
@@ -67,6 +67,30 @@ jest.unstable_mockModule('../src/services/queuedGptCompletionService.js', () => 
 const { default: requestContext } = await import('../src/middleware/requestContext.js');
 const { default: gptRouter } = await import('../src/routes/gptRouter.js');
 
+const ASYNC_IDEMPOTENCY_ENV_KEYS = [
+  'GPT_ASYNC_HEAVY_PROMPT_CHARS',
+  'GPT_ASYNC_HEAVY_MESSAGE_COUNT',
+  'GPT_ASYNC_HEAVY_MAX_WORDS',
+  'GPT_ASYNC_HEAVY_WAIT_FOR_RESULT_MS',
+  'GPT_PUBLIC_RESPONSE_MAX_BYTES',
+  'GPT_ROUTE_ASYNC_CORE_DEFAULT',
+  'GPT_ROUTE_HARD_TIMEOUT_MS',
+] as const;
+
+function captureEnv(keys: readonly string[]): Map<string, string | undefined> {
+  return new Map(keys.map((key) => [key, process.env[key]]));
+}
+
+function restoreEnv(snapshot: ReadonlyMap<string, string | undefined>): void {
+  for (const [key, originalValue] of snapshot) {
+    if (originalValue === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = originalValue;
+    }
+  }
+}
+
 function buildApp() {
   const app = express();
   app.use(express.json());
@@ -76,12 +100,14 @@ function buildApp() {
 }
 
 describe('async /gpt idempotency', () => {
+  const originalAsyncIdempotencyEnv = captureEnv(ASYNC_IDEMPOTENCY_ENV_KEYS);
+
   beforeEach(() => {
     jest.clearAllMocks();
-    delete process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT;
-    delete process.env.GPT_ASYNC_HEAVY_WAIT_FOR_RESULT_MS;
-    delete process.env.GPT_ROUTE_HARD_TIMEOUT_MS;
-    delete process.env.GPT_PUBLIC_RESPONSE_MAX_BYTES;
+    for (const key of ASYNC_IDEMPOTENCY_ENV_KEYS) {
+      delete process.env[key];
+    }
+    process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = 'true';
     planAutonomousWorkerJobMock.mockResolvedValue({
       status: 'pending',
       retryCount: 0,
@@ -94,6 +120,10 @@ describe('async /gpt idempotency', () => {
       },
       planningReasons: []
     });
+  });
+
+  afterEach(() => {
+    restoreEnv(originalAsyncIdempotencyEnv);
   });
 
   it('returns the canonical in-flight job when an equivalent async request is deduped', async () => {
