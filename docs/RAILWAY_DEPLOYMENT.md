@@ -46,6 +46,9 @@ Environment variables:
 | `RUN_WORKERS` | Recommended `false` | Defaults to `false` in deploy config. |
 | `DATABASE_URL` | Optional | Attach Railway PostgreSQL for persistence. |
 | `ARC_LOG_PATH` | Optional | Defaults to `/tmp/arc/log`. |
+| `GPT_FAST_PATH_ENABLED` | Optional | Defaults to `true`; disables inline prompt-generation fast path when set to `false`. |
+| `GPT_FAST_PATH_TIMEOUT_MS` | Optional | Defaults to `8000`; inline model timeout for fast-path requests. |
+| `GPT_FAST_PATH_GPT_ALLOWLIST` | Optional | Comma-separated GPT IDs allowed to use fast path; empty means all GPT IDs. |
 
 Environment separation:
 - `railway.json` defines `production` and `development` variable blocks.
@@ -67,6 +70,32 @@ curl http://localhost:3000/health
 3. Confirm health endpoint:
 ```bash
 curl https://<your-service>.up.railway.app/health
+```
+
+Railway CLI workflow:
+```bash
+railway login
+railway link
+railway status
+railway env production
+railway variable list --service <web-service> --environment production
+railway variable set GPT_FAST_PATH_ENABLED=true --service <web-service> --environment production
+railway run --service <web-service> --environment production npm run dev
+railway up --service <web-service> --environment production
+railway logs --service <web-service> --environment production
+```
+
+Railway CLI 4.x supports `railway env` for environment linking, `railway run` for local commands with Railway variables, `railway up` for local-code deployments, `--service` / `--environment` targeting, `railway logs` for deployment/runtime logs, and `railway variable` for environment variables (`variables`, `vars`, and `var` are aliases). See the official Railway references:
+- https://docs.railway.com/cli
+- https://docs.railway.com/cli/deploying
+- https://docs.railway.com/cli/up
+- https://docs.railway.com/cli/variable
+
+Post-deploy fast-path smoke test:
+```bash
+railway run --service <web-service> --environment production npm run railway:probe:fast-path
+npm run railway:probe:fast-path -- --base-url https://<your-service>.up.railway.app --gpt-id arcanos-core
+npm run railway:probe:async -- --base-url https://<your-service>.up.railway.app --gpt-id arcanos-core
 ```
 
 Rollback:

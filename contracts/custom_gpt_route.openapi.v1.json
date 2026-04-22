@@ -3,14 +3,14 @@
   "info": {
     "title": "Arcanos GPT Route API",
     "version": "1.0.0",
-    "description": "Canonical public contract for GPT-routed module requests. GPT identity is path-bound at /gpt/{gptId}; callers must not duplicate gptId in the JSON body. The async bridge exposes four canonical operations: query, query_and_wait, get_status, and get_result."
+    "description": "Canonical public contract for GPT-routed module requests. GPT identity is path-bound at /gpt/{gptId}; callers must not duplicate gptId in the JSON body. Simple prompt-generation requests can opt into inline fast-path execution with executionMode=fast. The async bridge exposes four canonical operations: query, query_and_wait, get_status, and get_result."
   },
   "paths": {
     "/gpt/{gptId}": {
       "post": {
         "operationId": "invokeGptRoute",
         "summary": "Invoke a GPT-routed module request or async bridge operation",
-        "description": "Use action=query to create one durable writing job, action=query_and_wait to create one durable writing job and wait briefly for fast completion, action=get_status to read status through the GPT compatibility bridge, and action=get_result to read the final result through the GPT compatibility bridge. Natural-language retrieval prompts, runtime inspection prompts, DAG control prompts, and MCP control requests are intentionally rejected on this route.",
+        "description": "Use a prompt-only request with executionMode=fast for small prompt-generation work that should return inline. Use action=query to create one durable writing job, action=query_and_wait to create one durable writing job and wait briefly for fast completion, action=get_status to read status through the GPT compatibility bridge, and action=get_result to read the final result through the GPT compatibility bridge. Natural-language retrieval prompts, runtime inspection prompts, DAG control prompts, and MCP control requests are intentionally rejected on this route.",
         "parameters": [
           {
             "name": "gptId",
@@ -35,6 +35,13 @@
                   "summary": "Prompt-first generic GPT route call",
                   "value": {
                     "prompt": "Help me with this module request."
+                  }
+                },
+                "fastPromptGeneration": {
+                  "summary": "Inline fast-path prompt generation",
+                  "value": {
+                    "prompt": "Generate a prompt for a launch email.",
+                    "executionMode": "fast"
                   }
                 },
                 "query": {
@@ -88,7 +95,7 @@
         },
         "responses": {
           "200": {
-            "description": "Completed async bridge response, control-plane bridge response, or generic GPT response",
+            "description": "Completed fast-path inline response, async bridge response, control-plane bridge response, or generic GPT response",
             "content": {
               "application/json": {
                 "schema": {
@@ -316,7 +323,9 @@
                 "type": "string",
                 "enum": [
                   "sync",
-                  "async"
+                  "async",
+                  "fast",
+                  "orchestrated"
                 ]
               }
             },
@@ -685,6 +694,9 @@
             "const": true
           },
           "result": {},
+          "routeDecision": {
+            "$ref": "#/components/schemas/GptRouteDecision"
+          },
           "_route": {
             "$ref": "#/components/schemas/GptRouteMeta"
           }
@@ -765,6 +777,38 @@
           },
           "timestamp": {
             "type": "string"
+          }
+        }
+      },
+      "GptRouteDecision": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "path": {
+            "enum": [
+              "fast_path",
+              "orchestrated_path"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "queueBypassed": {
+            "type": "boolean"
+          },
+          "promptLength": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "messageCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "maxWords": {
+            "type": [
+              "integer",
+              "null"
+            ]
           }
         }
       }

@@ -30,9 +30,11 @@ import {
 import { hasDagOrchestrationIntentCue } from '@services/naturalLanguageMemory.js';
 import {
   recordDagTraceTimeout,
+  recordGptFastPathLatency,
   recordGptJobEvent,
   recordGptJobLookup,
-  recordGptRequestEvent
+  recordGptRequestEvent,
+  recordGptRouteDecision
 } from '@platform/observability/appMetrics.js';
 import { shouldTreatPromptAsDagExecution } from '@shared/dag/dagExecutionRouting.js';
 import {
@@ -77,6 +79,15 @@ import {
   executeSystemStateRequest,
   SystemStateConflictError
 } from '@services/systemState.js';
+import {
+  classifyGptFastPathRequest,
+  type GptFastPathDecision,
+  type GptFastPathModeHint
+} from '@shared/gpt/gptFastPath.js';
+import {
+  executeFastGptPrompt,
+  resolveGptFastPathTimeoutMs
+} from '@services/gptFastPath.js';
 
 const router = express.Router();
 const ARCANOS_CORE_GPT_IDS = new Set(['arcanos-core', 'core', 'arcanos-daemon']);
@@ -368,6 +379,9 @@ function resolveRequestedExecutionMode(
   if (normalizedBodyMode === 'sync') {
     return 'sync';
   }
+  if (normalizedBodyMode === 'orchestrated' || normalizedBodyMode === 'orchestrated_path') {
+    return 'async';
+  }
 
   const asyncFlag = parseBooleanLike(normalizedBody?.async);
   if (asyncFlag === true) {
@@ -392,6 +406,9 @@ function resolveRequestedExecutionMode(
   if (normalizedQueryMode === 'sync') {
     return 'sync';
   }
+  if (normalizedQueryMode === 'orchestrated' || normalizedQueryMode === 'orchestrated_path') {
+    return 'async';
+  }
 
   const queryAsyncFlag = parseBooleanLike(req.query.async);
   if (queryAsyncFlag === true) {
@@ -412,6 +429,9 @@ function resolveRequestedExecutionMode(
   if (normalizedHeaderMode === 'sync') {
     return 'sync';
   }
+  if (normalizedHeaderMode === 'orchestrated' || normalizedHeaderMode === 'orchestrated_path') {
+    return 'async';
+  }
 
   const preferHeader = req.header('prefer')?.trim().toLowerCase() ?? '';
   if (preferHeader.includes('respond-async')) {
@@ -419,6 +439,62 @@ function resolveRequestedExecutionMode(
   }
 
   return null;
+}
+
+function normalizeFastPathModeHint(value: unknown): GptFastPathModeHint {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'fast' || normalized === 'fast_path' || normalized === 'inline') {
+    return 'fast';
+  }
+
+  if (
+    normalized === 'async' ||
+    normalized === 'orchestrated' ||
+    normalized === 'orchestrated_path' ||
+    normalized === 'queued'
+  ) {
+    return 'orchestrated';
+  }
+
+  return null;
+}
+
+function resolveRequestedFastPathMode(
+  req: express.Request,
+  body: unknown
+): GptFastPathModeHint {
+  const normalizedBody = normalizeGptRequestBody(body);
+  const bodyModeCandidate =
+    normalizedBody?.executionMode ??
+    normalizedBody?.responseMode ??
+    normalizedBody?.mode;
+  const bodyMode = normalizeFastPathModeHint(bodyModeCandidate);
+  if (bodyMode) {
+    return bodyMode;
+  }
+
+  const queryMode =
+    normalizeFastPathModeHint(req.query.executionMode) ??
+    normalizeFastPathModeHint(req.query.responseMode) ??
+    normalizeFastPathModeHint(req.query.mode);
+  if (queryMode) {
+    return queryMode;
+  }
+
+  const headerMode =
+    normalizeFastPathModeHint(req.header('x-gpt-execution-mode')) ??
+    normalizeFastPathModeHint(req.header('x-execution-mode')) ??
+    normalizeFastPathModeHint(req.header('x-response-mode'));
+  if (headerMode) {
+    return headerMode;
+  }
+
+  const preferHeader = req.header('prefer')?.trim().toLowerCase() ?? '';
+  return preferHeader.includes('respond-async') ? 'orchestrated' : null;
 }
 
 function extractMessageCount(body: unknown): number {
@@ -808,6 +884,15 @@ function buildAsyncJobResponseMetadata(input: {
     idempotencyKey: input.idempotencyKey,
     idempotencySource: input.idempotencySource
   };
+}
+
+function applyGptRouteDecisionHeaders(
+  res: express.Response,
+  decision: GptFastPathDecision
+): void {
+  res.setHeader('x-gpt-route-decision', decision.path);
+  res.setHeader('x-gpt-route-decision-reason', decision.reason);
+  res.setHeader('x-gpt-queue-bypassed', decision.queueBypassed ? 'true' : 'false');
 }
 
 router.post("/:gptId", async (req, res, next) => {
@@ -1353,6 +1438,113 @@ router.post("/:gptId", async (req, res, next) => {
           });
         }
 
+        const fastPathDecision = classifyGptFastPathRequest({
+          gptId: incomingGptId,
+          body: effectiveBody,
+          promptText,
+          requestedAction: effectiveRequestedAction,
+          routeTimeoutProfile,
+          explicitMode: resolveRequestedFastPathMode(req, effectiveBody),
+          hasExplicitIdempotencyKey: Boolean(explicitIdempotencyKey)
+        });
+        applyGptRouteDecisionHeaders(res, fastPathDecision);
+        recordGptRouteDecision({
+          path: fastPathDecision.path,
+          reason: fastPathDecision.reason,
+          queueBypassed: fastPathDecision.queueBypassed
+        });
+        requestLogger?.info?.('gpt.request.route_decision', {
+          endpoint: req.originalUrl,
+          gptId: incomingGptId,
+          action: effectiveRequestedAction ?? 'query',
+          path: fastPathDecision.path,
+          reason: fastPathDecision.reason,
+          queueBypassed: fastPathDecision.queueBypassed,
+          promptLength: fastPathDecision.promptLength,
+          messageCount: fastPathDecision.messageCount,
+          maxWords: fastPathDecision.maxWords,
+          promptGenerationIntent: fastPathDecision.promptGenerationIntent,
+          explicitMode: fastPathDecision.explicitMode
+        });
+
+        let fastPathFallbackToOrchestrated = false;
+        if (fastPathDecision.path === 'fast_path' && promptText) {
+          const fastPathStartedAt = Date.now();
+          const fastPathTimeoutMs = resolveGptFastPathTimeoutMs();
+          try {
+            const fastPathEnvelope = await executeFastGptPrompt({
+              gptId: incomingGptId,
+              prompt: promptText,
+              requestId,
+              timeoutMs: fastPathTimeoutMs,
+              routeDecision: fastPathDecision,
+              parentSignal: clientAbortController.signal,
+              logger: requestLogger
+            });
+            const totalLatencyMs = Date.now() - fastPathStartedAt;
+            recordGptFastPathLatency({
+              gptId: incomingGptId,
+              outcome: 'completed',
+              durationMs: totalLatencyMs
+            });
+            requestLogger?.info?.('gpt.request.fast_path_completed', {
+              endpoint: req.originalUrl,
+              gptId: incomingGptId,
+              requestId,
+              latencyMs: totalLatencyMs,
+              timeoutMs: fastPathTimeoutMs,
+              queueBypassed: true
+            });
+            applyAIDegradedResponseHeaders(res, extractAIDegradedResponseMetadata(fastPathEnvelope.result));
+            const fastPathSerializationStartedAt = Date.now();
+            const publicEnvelope = prepareBoundedClientJsonPayload({
+              ...fastPathEnvelope,
+              result: shapeClientRouteResult(fastPathEnvelope.result),
+            }, {
+              logger: req.logger,
+              logEvent: 'gpt.response.fast_path',
+            });
+            requestLogger?.info?.('gpt.response.serialization', {
+              endpoint: req.originalUrl,
+              gptId: incomingGptId,
+              action: 'query',
+              executionPath: 'fast_path',
+              serializationMs: Date.now() - fastPathSerializationStartedAt,
+              responseBytes: publicEnvelope.responseBytes,
+              truncated: publicEnvelope.truncated,
+            });
+            return sendPreparedJsonResponse(res, publicEnvelope);
+          } catch (error) {
+            if (clientAbortController.signal.aborted) {
+              throw error;
+            }
+
+            const totalLatencyMs = Date.now() - fastPathStartedAt;
+            recordGptFastPathLatency({
+              gptId: incomingGptId,
+              outcome: 'fallback',
+              durationMs: totalLatencyMs
+            });
+            res.setHeader('x-gpt-route-decision', 'orchestrated_path');
+            res.setHeader('x-gpt-route-decision-reason', 'fast_path_fallback');
+            res.setHeader('x-gpt-queue-bypassed', 'false');
+            recordGptRouteDecision({
+              path: 'orchestrated_path',
+              reason: 'fast_path_fallback',
+              queueBypassed: false
+            });
+            fastPathFallbackToOrchestrated = true;
+            requestLogger?.warn?.('gpt.request.fast_path_fallback', {
+              endpoint: req.originalUrl,
+              gptId: incomingGptId,
+              requestId,
+              latencyMs: totalLatencyMs,
+              timeoutMs: fastPathTimeoutMs,
+              error: resolveErrorMessage(error)
+            });
+          }
+        }
+
         const executionPlan = resolveGptExecutionPlan({
           req,
           gptId: incomingGptId,
@@ -1430,6 +1622,7 @@ router.post("/:gptId", async (req, res, next) => {
         const shouldUseJobBackedExecution =
           queryAndWaitRequested ||
           executionPlan.mode === 'async' ||
+          fastPathFallbackToOrchestrated ||
           Boolean(explicitIdempotencyKey);
 
         if (shouldUseJobBackedExecution) {

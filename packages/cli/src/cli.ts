@@ -1,6 +1,7 @@
 import { runAskCommand } from "./commands/ask.js";
 import { runDoctorCommand } from "./commands/doctor.js";
 import { runExecCommand } from "./commands/exec.js";
+import { runGenerateCommand } from "./commands/generate.js";
 import { runGenerateAndWaitCommand } from "./commands/generateAndWait.js";
 import { runInspectCommand } from "./commands/inspect.js";
 import { runJobResultCommand } from "./commands/jobResult.js";
@@ -66,6 +67,8 @@ async function runCommand(invocation: Exclude<ReturnType<typeof parseCliInvocati
   switch (invocation.kind) {
     case "ask":
       return runAskCommand(invocation);
+    case "generate":
+      return runGenerateCommand(invocation);
     case "query":
       return runQueryCommand(invocation);
     case "query-and-wait":

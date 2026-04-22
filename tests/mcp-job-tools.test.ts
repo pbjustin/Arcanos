@@ -9,6 +9,9 @@ const mockDispatchModuleAction = jest.fn();
 const mockRegisterDagMcpTools = jest.fn();
 const mockRegisterResource = jest.fn();
 const mockRegisterResourceTemplate = jest.fn();
+const mockExecuteFastGptPrompt = jest.fn();
+const mockResolveGptFastPathTimeoutMs = jest.fn(() => 5_000);
+const mockClassifyGptFastPathRequest = jest.fn();
 
 class FakeMcpServer {
   public readonly tools = new Map<string, { config: Record<string, unknown>; handler: (args: unknown) => Promise<unknown> }>();
@@ -160,6 +163,15 @@ jest.unstable_mockModule('../src/mcp/server/dagTools.js', () => ({
   registerDagMcpTools: mockRegisterDagMcpTools,
 }));
 
+jest.unstable_mockModule('../src/services/gptFastPath.js', () => ({
+  executeFastGptPrompt: mockExecuteFastGptPrompt,
+  resolveGptFastPathTimeoutMs: mockResolveGptFastPathTimeoutMs,
+}));
+
+jest.unstable_mockModule('../src/shared/gpt/gptFastPath.js', () => ({
+  classifyGptFastPathRequest: mockClassifyGptFastPathRequest,
+}));
+
 jest.unstable_mockModule('../src/mcp/modulesAllowlist.js', () => ({
   isModuleActionAllowed: jest.fn(() => true),
 }));
@@ -183,6 +195,41 @@ function buildContext() {
 describe('createMcpServer job control tools', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockClassifyGptFastPathRequest.mockReturnValue({
+      path: 'fast_path',
+      eligible: true,
+      reason: 'explicit_fast_mode',
+      queueBypassed: true,
+      promptLength: 35,
+      messageCount: 0,
+      maxWords: null,
+      action: null,
+      promptGenerationIntent: true,
+      explicitMode: 'fast',
+    });
+    mockExecuteFastGptPrompt.mockResolvedValue({
+      ok: true,
+      result: {
+        result: 'Write a fast prompt.',
+        module: 'fast_path',
+      },
+      routeDecision: {
+        path: 'fast_path',
+        reason: 'explicit_fast_mode',
+        queueBypassed: true,
+        promptLength: 35,
+        messageCount: 0,
+        maxWords: null,
+      },
+      _route: {
+        requestId: 'mcp-req-1',
+        gptId: 'arcanos-core',
+        module: 'GPT:FAST_PATH',
+        action: 'query',
+        route: 'fast_path',
+        timestamp: '2026-04-21T12:00:00.000Z',
+      },
+    });
   });
 
   it('registers tools only and does not expose MCP resource templates', async () => {
@@ -195,9 +242,14 @@ describe('createMcpServer job control tools', () => {
   it('registers explicit control-plane jobs.status and jobs.result tools with required jobId schemas', async () => {
     const server = await createMcpServer(buildContext()) as FakeMcpServer;
 
+    const generateTool = server.tools.get('gpt.generate');
     const statusTool = server.tools.get('jobs.status');
     const resultTool = server.tools.get('jobs.result');
 
+    expect(generateTool?.config).toMatchObject({
+      title: 'GPT Generate',
+      description: expect.stringContaining('fast path'),
+    });
     expect(statusTool?.config).toMatchObject({
       title: 'Job Status',
       description: expect.stringContaining('Control plane'),
@@ -207,13 +259,66 @@ describe('createMcpServer job control tools', () => {
       description: expect.stringContaining('Control plane'),
     });
 
+    const generateSchema = generateTool?.config.inputSchema as z.ZodTypeAny;
     const statusSchema = statusTool?.config.inputSchema as z.ZodTypeAny;
     const resultSchema = resultTool?.config.inputSchema as z.ZodTypeAny;
 
+    expect(generateSchema.safeParse({
+      gptId: 'arcanos-core',
+      prompt: 'Generate a prompt for a launch email',
+      mode: 'fast',
+    }).success).toBe(true);
+    expect(generateSchema.safeParse({ prompt: '   ' }).success).toBe(false);
     expect(statusSchema.safeParse({ jobId: 'job-123' }).success).toBe(true);
     expect(statusSchema.safeParse({ jobId: '   ' }).success).toBe(false);
     expect(resultSchema.safeParse({ jobId: 'job-123' }).success).toBe(true);
     expect(resultSchema.safeParse({}).success).toBe(false);
+  });
+
+  it('serves gpt.generate through the GPT fast path', async () => {
+    const server = await createMcpServer(buildContext()) as FakeMcpServer;
+    const output = await server.tools.get('gpt.generate')!.handler({
+      gptId: 'arcanos-core',
+      prompt: 'Generate a prompt for a launch email',
+      mode: 'fast',
+    });
+
+    expect(mockClassifyGptFastPathRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        gptId: 'arcanos-core',
+        promptText: 'Generate a prompt for a launch email',
+        explicitMode: 'fast',
+      })
+    );
+    expect(mockExecuteFastGptPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        gptId: 'arcanos-core',
+        prompt: 'Generate a prompt for a launch email',
+        timeoutMs: 5_000,
+        routeDecision: expect.objectContaining({
+          path: 'fast_path',
+        }),
+      })
+    );
+    expect(output).toEqual(
+      expect.objectContaining({
+        structuredContent: expect.objectContaining({
+          ok: true,
+          result: {
+            result: 'Write a fast prompt.',
+            module: 'fast_path',
+          },
+          routeDecision: expect.objectContaining({
+            path: 'fast_path',
+            queueBypassed: true,
+          }),
+        }),
+      })
+    );
+    expect(mockRunThroughBrain).not.toHaveBeenCalled();
+    expect(mockRunARCANOS).not.toHaveBeenCalled();
+    expect(mockRunTrinity).not.toHaveBeenCalled();
+    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
   });
 
   it('serves jobs.status entirely through the control plane', async () => {
