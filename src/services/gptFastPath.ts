@@ -3,9 +3,11 @@ import { getRequestAbortSignal, runWithRequestAbortTimeout } from '@arcanos/runt
 
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { recordAiOperation } from '@platform/observability/appMetrics.js';
-import { getDefaultModel } from '@services/openai/credentialProvider.js';
 import { getOpenAIClientOrAdapter } from '@services/openai/clientBridge.js';
-import type { GptFastPathDecision } from '@shared/gpt/gptFastPath.js';
+import {
+  resolveGptFastPathModel,
+  type GptFastPathDecision
+} from '@shared/gpt/gptFastPath.js';
 
 export interface ExecuteFastGptPromptInput {
   gptId: string;
@@ -168,7 +170,7 @@ export async function executeFastGptPrompt(
     throw new Error('OpenAI client unavailable for GPT fast path.');
   }
 
-  const model = getDefaultModel();
+  const model = resolveGptFastPathModel();
   const parentSignal = input.parentSignal ?? getRequestAbortSignal();
   let modelLatencyMs = 0;
 

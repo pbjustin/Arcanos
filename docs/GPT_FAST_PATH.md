@@ -28,6 +28,7 @@ Configuration:
 | Variable | Default | Notes |
 | --- | --- | --- |
 | `GPT_FAST_PATH_ENABLED` | `true` | Set `false` to route all requests through existing orchestration. |
+| `GPT_FAST_PATH_MODEL` | `gpt-4.1-mini` | Inline model for fast-path generation. This intentionally defaults to the lightweight repo model instead of the heavier configured default/fine-tuned model. |
 | `GPT_FAST_PATH_TIMEOUT_MS` | `8000` | Inline model timeout, clamped from 500ms to 20000ms. |
 | `GPT_FAST_PATH_MAX_PROMPT_CHARS` | `900` | Maximum prompt size for automatic fast-path classification. |
 | `GPT_FAST_PATH_MAX_MESSAGE_COUNT` | `3` | Maximum `messages[]` count. |
@@ -140,6 +141,7 @@ Set fast-path variables when needed:
 
 ```bash
 railway variable set GPT_FAST_PATH_ENABLED=true --service <web-service> --environment production
+railway variable set GPT_FAST_PATH_MODEL=gpt-4.1-mini --service <web-service> --environment production
 railway variable set GPT_FAST_PATH_TIMEOUT_MS=8000 --service <web-service> --environment production
 ```
 
@@ -203,5 +205,6 @@ If a request unexpectedly falls back to async, check:
 - Whether the request has `action`, non-empty `payload`, `tools`, `dag`, `files`, `research`, or other heavy fields.
 - Whether an `Idempotency-Key` header was provided.
 - Whether `GPT_FAST_PATH_ENABLED=false` or `GPT_FAST_PATH_GPT_ALLOWLIST` excludes the GPT ID.
+- Whether `GPT_FAST_PATH_MODEL` points at a slower or unavailable model.
 - Whether prompt size, message count, or `maxWords` exceeds configured limits.
 - Whether logs show `gpt.request.fast_path_fallback`, which means the classifier selected fast path but inline execution failed and the request continued through the existing orchestrated path.

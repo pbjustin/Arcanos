@@ -3,6 +3,7 @@ import { describe, expect, it } from '@jest/globals';
 import {
   classifyGptFastPathRequest,
   hasPromptGenerationIntent,
+  resolveGptFastPathModel,
 } from '../src/shared/gpt/gptFastPath.js';
 
 const BASE_ENV = {
@@ -222,5 +223,12 @@ describe('GPT fast-path classification', () => {
       path: 'fast_path',
       timeoutMs: 20000,
     });
+  });
+
+  it('uses a lightweight fast-path model by default and allows an explicit override', () => {
+    expect(resolveGptFastPathModel({} as NodeJS.ProcessEnv)).toBe('gpt-4.1-mini');
+    expect(resolveGptFastPathModel({
+      GPT_FAST_PATH_MODEL: 'gpt-fast-test',
+    } as NodeJS.ProcessEnv)).toBe('gpt-fast-test');
   });
 });

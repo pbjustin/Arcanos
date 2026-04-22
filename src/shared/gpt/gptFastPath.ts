@@ -1,3 +1,5 @@
+import { APPLICATION_CONSTANTS } from '@shared/constants.js';
+
 export type GptRouteExecutionPath = 'fast_path' | 'orchestrated_path';
 
 export type GptFastPathModeHint = 'fast' | 'orchestrated' | null;
@@ -18,6 +20,7 @@ export interface GptFastPathDecision {
 
 export interface GptFastPathConfig {
   enabled: boolean;
+  model: string;
   maxPromptChars: number;
   maxMessageCount: number;
   maxWords: number;
@@ -40,6 +43,7 @@ const DEFAULT_FAST_PATH_MAX_PROMPT_CHARS = 900;
 const DEFAULT_FAST_PATH_MAX_MESSAGE_COUNT = 3;
 const DEFAULT_FAST_PATH_MAX_WORDS = 350;
 const DEFAULT_FAST_PATH_TIMEOUT_MS = 8_000;
+const DEFAULT_FAST_PATH_MODEL = APPLICATION_CONSTANTS.MODEL_GPT_4_1_MINI;
 const MIN_FAST_PATH_TIMEOUT_MS = 500;
 const MAX_FAST_PATH_TIMEOUT_MS = 20_000;
 
@@ -101,6 +105,7 @@ export function resolveGptFastPathConfig(
 ): GptFastPathConfig {
   return {
     enabled: readBooleanEnv('GPT_FAST_PATH_ENABLED', true, env),
+    model: resolveGptFastPathModel(env),
     maxPromptChars: readPositiveIntegerEnv(
       'GPT_FAST_PATH_MAX_PROMPT_CHARS',
       DEFAULT_FAST_PATH_MAX_PROMPT_CHARS,
@@ -119,6 +124,13 @@ export function resolveGptFastPathConfig(
     timeoutMs: resolveGptFastPathTimeoutMs(env),
     gptAllowlist: parseCsvEnv('GPT_FAST_PATH_GPT_ALLOWLIST', env)
   };
+}
+
+export function resolveGptFastPathModel(
+  env: NodeJS.ProcessEnv = process.env
+): string {
+  const configuredModel = (env.GPT_FAST_PATH_MODEL ?? '').trim();
+  return configuredModel || DEFAULT_FAST_PATH_MODEL;
 }
 
 export function resolveGptFastPathTimeoutMs(

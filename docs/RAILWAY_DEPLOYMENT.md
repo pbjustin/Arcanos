@@ -47,6 +47,7 @@ Environment variables:
 | `DATABASE_URL` | Optional | Attach Railway PostgreSQL for persistence. |
 | `ARC_LOG_PATH` | Optional | Defaults to `/tmp/arc/log`. |
 | `GPT_FAST_PATH_ENABLED` | Optional | Defaults to `true`; disables inline prompt-generation fast path when set to `false`. |
+| `GPT_FAST_PATH_MODEL` | Optional | Defaults to `gpt-4.1-mini`; use a low-latency model for inline fast-path requests. |
 | `GPT_FAST_PATH_TIMEOUT_MS` | Optional | Defaults to `8000`; inline model timeout for fast-path requests. |
 | `GPT_FAST_PATH_GPT_ALLOWLIST` | Optional | Comma-separated GPT IDs allowed to use fast path; empty means all GPT IDs. |
 
@@ -80,6 +81,7 @@ railway status
 railway env production
 railway variable list --service <web-service> --environment production
 railway variable set GPT_FAST_PATH_ENABLED=true --service <web-service> --environment production
+railway variable set GPT_FAST_PATH_MODEL=gpt-4.1-mini --service <web-service> --environment production
 railway run --service <web-service> --environment production npm run dev
 railway up --service <web-service> --environment production
 railway logs --service <web-service> --environment production
