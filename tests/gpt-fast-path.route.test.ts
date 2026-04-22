@@ -1,6 +1,6 @@
 import express from 'express';
 import request from 'supertest';
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const mockRouteGptRequest = jest.fn();
 const executeFastGptPromptMock = jest.fn();
@@ -118,16 +118,26 @@ function buildFastPathEnvelope() {
   };
 }
 
+const GPT_FAST_PATH_ENV_KEYS = [
+  'GPT_FAST_PATH_ENABLED',
+  'GPT_FAST_PATH_GPT_ALLOWLIST',
+  'GPT_FAST_PATH_MAX_PROMPT_CHARS',
+  'GPT_FAST_PATH_MAX_MESSAGE_COUNT',
+  'GPT_FAST_PATH_MAX_WORDS',
+  'GPT_FAST_PATH_TIMEOUT_MS',
+  'GPT_ROUTE_ASYNC_CORE_DEFAULT',
+] as const;
+
+const originalFastPathEnv = new Map(
+  GPT_FAST_PATH_ENV_KEYS.map((key) => [key, process.env[key]])
+);
+
 describe('GPT fast-path route branching', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    delete process.env.GPT_FAST_PATH_ENABLED;
-    delete process.env.GPT_FAST_PATH_GPT_ALLOWLIST;
-    delete process.env.GPT_FAST_PATH_MAX_PROMPT_CHARS;
-    delete process.env.GPT_FAST_PATH_MAX_MESSAGE_COUNT;
-    delete process.env.GPT_FAST_PATH_MAX_WORDS;
-    delete process.env.GPT_FAST_PATH_TIMEOUT_MS;
-    delete process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT;
+    for (const key of GPT_FAST_PATH_ENV_KEYS) {
+      delete process.env[key];
+    }
     executeFastGptPromptMock.mockResolvedValue(buildFastPathEnvelope());
     planAutonomousWorkerJobMock.mockResolvedValue({
       status: 'pending',
@@ -157,6 +167,17 @@ describe('GPT fast-path route branching', () => {
         status: 'pending',
       },
     });
+  });
+
+  afterEach(() => {
+    for (const key of GPT_FAST_PATH_ENV_KEYS) {
+      const originalValue = originalFastPathEnv.get(key);
+      if (originalValue === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = originalValue;
+      }
+    }
   });
 
   it('returns eligible prompt-generation requests inline without queue submission', async () => {
