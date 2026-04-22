@@ -5,6 +5,7 @@ import { jest } from "@jest/globals";
 
 import {
   createAsyncGptJob,
+  generateGptPrompt,
   generatePromptAndWait,
   fetchGptJobResult,
   getGptRouteJobResult,
@@ -117,6 +118,36 @@ describe("GPT route OpenAPI contract and client", () => {
       executionMode: "async",
       waitForResultMs: 20_000,
       pollIntervalMs: 125
+    });
+  });
+
+  it("builds an explicit fast-path prompt-generation request", async () => {
+    const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(
+      createJsonResponse({
+        ok: true,
+        result: {
+          result: "Write a launch prompt."
+        },
+        routeDecision: {
+          path: "fast_path",
+          queueBypassed: true
+        }
+      })
+    );
+
+    await generateGptPrompt({
+      baseUrl: "http://127.0.0.1:3000",
+      gptId: "arcanos-core",
+      prompt: "Generate a prompt for a launch email",
+      mode: "fast"
+    });
+
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(requestInit.body));
+
+    expect(body).toEqual({
+      prompt: "Generate a prompt for a launch email",
+      executionMode: "fast"
     });
   });
 
@@ -381,6 +412,15 @@ describe("GPT route OpenAPI contract and client", () => {
     ).toEqual({
       prompt: "Help me with this module request."
     });
+    expect(
+      spec.paths?.["/gpt/{gptId}"]?.post?.requestBody?.content?.["application/json"]?.examples?.fastPromptGeneration?.value
+    ).toEqual({
+      prompt: "Generate a prompt for a launch email.",
+      executionMode: "fast"
+    });
+    expect(
+      spec.components?.schemas?.GenericPromptRequest?.allOf?.[1]?.properties?.executionMode?.enum
+    ).toEqual(expect.arrayContaining(["sync", "async", "fast", "orchestrated"]));
     expect(
       spec.paths?.["/gpt/{gptId}"]?.post?.requestBody?.content?.["application/json"]?.examples?.query?.value
     ).toEqual({

@@ -11,6 +11,7 @@ Tool registration lives in `src/mcp/server/index.ts` and includes reasoning, pla
 Routing rule:
 - `POST /mcp` is the explicit MCP control-plane transport.
 - `POST /gpt/:gptId` is the writing plane and does not auto-dispatch to MCP. If a caller needs MCP tools, it must call `/mcp` directly.
+- `gpt.generate` is an MCP tool that intentionally enters the GPT writing capability through the low-latency fast path for prompt-generation testing.
 - `jobs.status` and `jobs.result` are control-plane MCP tools. They read existing GPT job state by `jobId` and never enter Trinity or write dispatch.
 
 ## How It Works (HTTP)
@@ -75,6 +76,7 @@ Destructive tools:
 ## Tool Catalog
 
 ### Writing-plane tools
+- `gpt.generate`
 - `trinity.query`
 - `arcanos.run`
 - `trinity.query_finetune`
@@ -170,6 +172,14 @@ curl -X POST http://localhost:3000/mcp \
   -H "Authorization: Bearer $MCP_BEARER_TOKEN" \
   -H "Content-Type: application/json" \
   -d "{\"jsonrpc\":\"2.0\",\"id\":\"2\",\"method\":\"tools/call\",\"params\":{\"name\":\"trinity.query\",\"arguments\":{\"prompt\":\"Health check\"}}}"
+```
+
+Call `gpt.generate` through the fast path:
+```bash
+curl -X POST http://localhost:3000/mcp \
+  -H "Authorization: Bearer $MCP_BEARER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"jsonrpc\":\"2.0\",\"id\":\"2a\",\"method\":\"tools/call\",\"params\":{\"name\":\"gpt.generate\",\"arguments\":{\"gptId\":\"arcanos-core\",\"prompt\":\"Generate a prompt for a launch email.\",\"mode\":\"fast\"}}}"
 ```
 
 Call `jobs.status`:

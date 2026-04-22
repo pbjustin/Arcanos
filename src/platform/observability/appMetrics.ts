@@ -279,6 +279,21 @@ const gptJobLookupTotal = new Counter({
   registers: [metricsRegistry],
 });
 
+const gptRouteDecisionsTotal = new Counter({
+  name: 'gpt_route_decisions_total',
+  help: 'GPT route execution-path decisions by path, reason, and queue bypass state.',
+  labelNames: ['path', 'reason', 'queue_bypassed'] as const,
+  registers: [metricsRegistry],
+});
+
+const gptFastPathLatencyMs = new Histogram({
+  name: 'gpt_fast_path_latency_ms',
+  help: 'Inline GPT fast-path request latency in milliseconds.',
+  labelNames: ['gpt_id', 'outcome'] as const,
+  buckets: [5, 10, 25, 50, 100, 250, 500, 1_000, 2_500, 5_000, 10_000, 20_000],
+  registers: [metricsRegistry],
+});
+
 const dependencyCallsTotal = new Counter({
   name: 'dependency_calls_total',
   help: 'Dependency calls by dependency, operation, and outcome.',
@@ -833,6 +848,33 @@ export function recordGptJobLookup(input: {
     lookup: normalizeLabel(input.lookup),
     outcome: normalizeLabel(input.outcome)
   });
+}
+
+export function recordGptRouteDecision(input: {
+  path: 'fast_path' | 'orchestrated_path';
+  reason: string;
+  queueBypassed: boolean;
+}): void {
+  gptRouteDecisionsTotal.inc({
+    path: normalizeLabel(input.path),
+    reason: normalizeLabel(input.reason),
+    queue_bypassed: input.queueBypassed ? 'true' : 'false'
+  });
+}
+
+export function recordGptFastPathLatency(input: {
+  gptId: string;
+  outcome: 'completed' | 'fallback' | 'error';
+  durationMs: number;
+}): void {
+  if (!Number.isFinite(input.durationMs) || input.durationMs < 0) {
+    return;
+  }
+
+  gptFastPathLatencyMs.observe({
+    gpt_id: normalizeLabel(input.gptId),
+    outcome: normalizeLabel(input.outcome)
+  }, Math.max(0, Math.trunc(input.durationMs)));
 }
 
 function isTimeoutError(error: unknown): boolean {

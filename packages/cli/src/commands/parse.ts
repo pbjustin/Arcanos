@@ -30,6 +30,12 @@ export function parseCliInvocation(argv: string[]): CliInvocation {
         prompt: requirePrompt("ask", rest),
         options
       };
+    case "generate":
+      return {
+        kind: "generate",
+        ...parseGenerateArgs(rest),
+        options
+      };
     case "query":
       return {
         kind: "query",
@@ -128,6 +134,7 @@ export function renderUsage(): string {
   return [
     "Usage:",
     "  arcanos ask \"...\" [--json]",
+    "  arcanos generate --gpt <gpt-id> --prompt \"...\" [--mode fast|orchestrated] [--json]",
     "  arcanos query --gpt <gpt-id> --prompt \"...\" [--json]",
     "  arcanos query-and-wait --gpt <gpt-id> --prompt \"...\" [--timeout-ms <ms>] [--poll-interval-ms <ms>] [--json]",
     "  arcanos generate-and-wait --gpt <gpt-id> --prompt \"...\" [--timeout-ms <ms>] [--poll-interval-ms <ms>] [--json]",
@@ -154,6 +161,8 @@ export function renderUsage(): string {
     "  --transport <python|local>",
     "",
     "Async bridge examples:",
+    "  arcanos generate --gpt arcanos-core --prompt \"Generate a prompt for a launch email\" --mode fast",
+    "  arcanos generate --gpt arcanos-core --prompt \"Generate a large prompt pack\" --mode orchestrated",
     "  arcanos query --gpt arcanos-core --prompt \"Create the writing job\"",
     "  arcanos query-and-wait --gpt arcanos-core --prompt \"Wait briefly for a fast result\"",
     "  arcanos job-status <job-id>",
@@ -306,6 +315,63 @@ function parseQueryArgs(args: string[]): {
   return {
     gptId,
     prompt
+  };
+}
+
+function parseGenerateArgs(args: string[]): {
+  gptId: string;
+  prompt: string;
+  mode: "fast" | "orchestrated";
+} {
+  let gptId: string | undefined;
+  let prompt: string | undefined;
+  let mode: "fast" | "orchestrated" = "fast";
+
+  for (let index = 0; index < args.length; index += 1) {
+    const currentArgument = args[index];
+    if (!currentArgument.startsWith("--")) {
+      throw new Error('`generate` only accepts --gpt, --prompt, and --mode.');
+    }
+
+    const nextValue = args[index + 1];
+    if (!nextValue || nextValue.startsWith("--")) {
+      throw new Error(`Flag "${currentArgument}" requires a value.`);
+    }
+
+    switch (currentArgument) {
+      case "--gpt":
+        gptId = nextValue.trim();
+        break;
+      case "--prompt":
+        prompt = nextValue.trim();
+        break;
+      case "--mode": {
+        const normalizedMode = nextValue.trim().toLowerCase();
+        if (normalizedMode !== "fast" && normalizedMode !== "orchestrated") {
+          throw new Error('Flag "--mode" for `generate` must be "fast" or "orchestrated".');
+        }
+        mode = normalizedMode;
+        break;
+      }
+      default:
+        throw new Error(`Unknown flag "${currentArgument}" for \`generate\`.`);
+    }
+
+    index += 1;
+  }
+
+  if (!gptId) {
+    throw new Error('`generate` requires --gpt <gpt-id>.');
+  }
+
+  if (!prompt) {
+    throw new Error('`generate` requires --prompt "...".');
+  }
+
+  return {
+    gptId,
+    prompt,
+    mode
   };
 }
 

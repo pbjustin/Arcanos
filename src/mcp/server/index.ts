@@ -41,6 +41,8 @@ import { buildActiveMemorySelect, normalizeMemoryEntries, type MemoryListRow } f
 import { runHealthCheck } from '@platform/logging/diagnostics.js';
 import { acquireExecutionLock } from '@services/safety/executionLock.js';
 import { emitSafetyAuditEvent } from '@services/safety/auditEvents.js';
+import { executeFastGptPrompt } from '@services/gptFastPath.js';
+import { classifyGptFastPathRequest } from '@shared/gpt/gptFastPath.js';
 import { stripConfirmationFields, requireNonceOrIssue, notExposed, buildClearRecheckInput, wrapTool } from './helpers.js';
 import { registerDagMcpTools } from './dagTools.js';
 import { registerJobMcpTools } from './jobTools.js';
@@ -80,6 +82,60 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
   // -------------------------
   // Core reasoning tools
   // -------------------------
+  server.registerTool(
+    'gpt.generate',
+    {
+      title: 'GPT Generate',
+      description: 'Writing plane: generates prompt text through the low-latency GPT fast path.',
+      annotations: { readOnlyHint: true, openWorldHint: true },
+      inputSchema: z
+        .object({
+          gptId: z.string().trim().min(1).default('arcanos-core'),
+          prompt: z.string().trim().min(1),
+          mode: z.enum(['fast']).default('fast'),
+        })
+        .passthrough(),
+    },
+    wrapTool('gpt.generate', ctx, async (args: any) => {
+      const gptId = typeof args.gptId === 'string' && args.gptId.trim().length > 0
+        ? args.gptId.trim()
+        : 'arcanos-core';
+      const prompt = String(args.prompt ?? '').trim();
+      const decision = classifyGptFastPathRequest({
+        gptId,
+        body: {
+          prompt,
+          executionMode: 'fast'
+        },
+        promptText: prompt,
+        requestedAction: null,
+        routeTimeoutProfile: 'default',
+        explicitMode: 'fast'
+      });
+
+      if (decision.path !== 'fast_path') {
+        return mcpError({
+          code: 'ERR_BAD_REQUEST',
+          message: 'Request is not eligible for the GPT fast path.',
+          details: {
+            routeDecision: decision
+          },
+          requestId: ctx.requestId
+        });
+      }
+
+      const output = await executeFastGptPrompt({
+        gptId,
+        prompt,
+        requestId: ctx.requestId,
+        timeoutMs: decision.timeoutMs,
+        routeDecision: decision,
+        logger: ctx.logger
+      });
+      return mcpText(output);
+    })
+  );
+
   server.registerTool(
     'trinity.query',
     {

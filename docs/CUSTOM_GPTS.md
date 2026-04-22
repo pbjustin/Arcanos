@@ -14,9 +14,10 @@ Custom GPTs let Arcanos ship specialized assistants (Backstage Booker, Arcanos G
 2. Async job status/results must be fetched explicitly, either through `GET /jobs/:id` / `GET /jobs/:id/result`, or through `POST /gpt/:gptId` with `action: "get_status"` / `action: "get_result"` plus `payload.jobId`.
 3. Prompt-based control requests are rejected: job lookup prompts, DAG execution/tracing prompts, runtime inspection prompts, and explicit MCP tool calls must use their canonical control-plane endpoints.
 4. Control actions are intercepted in the router and handled on the control plane before any writing dispatch or Trinity entry.
-5. The GPT router resolves the incoming GPT ID to a module route using the module map and fuzzy matching strategy if needed.
-6. The writing request is forwarded to `/modules/:route`, and the response is wrapped with a `_gptAck` metadata block.
-7. The module handler calls the action implementation and returns the result as JSON.【F:src/routes/gptRouter.ts†L16-L159】【F:src/routes/modules.ts†L1-L83】
+5. Simple prompt-generation requests may be handled by the inline GPT fast path. These return directly with `routeDecision.path: "fast_path"` and do not create a job.
+6. Complex requests continue through the existing orchestrated path. The GPT router resolves the incoming GPT ID to a module route using the module map and fuzzy matching strategy if needed.
+7. The writing request is forwarded to `/modules/:route`, and the response is wrapped with a `_gptAck` metadata block.
+8. The module handler calls the action implementation and returns the result as JSON.【F:src/routes/gptRouter.ts†L16-L159】【F:src/routes/modules.ts†L1-L83】
 
 ## Setup: Connect a Custom GPT to the Backend
 
@@ -57,6 +58,8 @@ Use a single HTTP action in your Custom GPT definition:
 Rules:
 - `gptId` belongs in the path, not the JSON body.
 - Omit `action` by default so the backend can infer intent from the GPT/module binding.
+- Use `executionMode: "fast"` for small prompt-generation requests that should return inline without queueing.
+- Use `executionMode: "async"` or `executionMode: "orchestrated"` when the caller wants durable/orchestrated behavior even for prompt-generation text.
 - Use `action: "query"` with a non-empty `prompt` when the caller wants a durable writing job immediately and will poll later.
 - Use `action: "query_and_wait"` with a non-empty `prompt` when the caller wants one durable writing job plus a bounded inline wait.
 - Use `action: "get_status"` or `action: "get_result"` with `payload.jobId` when you need to fetch canonical async GPT job state without creating new work.
@@ -81,6 +84,14 @@ Important:
 
 ## Canonical Async Bridge
 Use these request shapes for agent-safe async GPT work:
+
+Inline fast-path prompt generation:
+```json
+{
+  "prompt": "Generate a prompt for a launch email.",
+  "executionMode": "fast"
+}
+```
 
 Create a durable writing job:
 ```json
@@ -126,6 +137,8 @@ Canonical response guidance:
 - Status read: `{ "ok": true, "action": "get_status", "jobId": "job_123", "status": "queued|running|completed|failed|cancelled|expired" }`
 - Result read: `{ "ok": true, "action": "get_result", "jobId": "job_123", "status": "completed", "output": { "text": "..." } }`
 - Error: `{ "ok": false, "action": "...", "error": { "code": "...", "message": "..." } }`
+
+For a full architecture and operations runbook, see [GPT_FAST_PATH.md](GPT_FAST_PATH.md).
 
 ## Spec Sheet Template (for Custom GPT Actions)
 Use this format when defining or documenting a Custom GPT:
@@ -264,4 +277,5 @@ success_response:
 - **Edge case:** Use an unknown GPT ID and confirm a `404` with `Unknown GPTID` is returned.【F:src/routes/gptRouter.ts†L70-L104】
 - **Failure mode:** Call a valid GPT ID with an invalid action and confirm the module returns `Action not found` or `Module not found` as appropriate.【F:src/routes/modules.ts†L16-L56】
 - **Async bridge:** Confirm `query` creates one job, `query_and_wait` either completes inline or returns pending, and `get_status` / `get_result` never create work.
+- **Fast path:** Confirm `executionMode: "fast"` for a prompt-generation request returns `200`, `routeDecision.path: "fast_path"`, `x-gpt-fast-path-queue-bypassed: true`, and `x-gpt-queue-bypassed: true`.
 - **Guardrail:** Confirm prompt-based job retrieval is rejected and callers are pointed at structured control actions or `/jobs/*`.

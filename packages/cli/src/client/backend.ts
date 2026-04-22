@@ -39,7 +39,7 @@ export interface GptRouteRequestBody {
   prompt?: string;
   gptVersion?: string;
   action?: string;
-  executionMode?: "sync" | "async";
+  executionMode?: "sync" | "async" | "fast" | "orchestrated";
   waitForResultMs?: number;
   pollIntervalMs?: number;
   payload?: Record<string, unknown>;
@@ -52,7 +52,7 @@ export interface InvokeGptRouteOptions {
   prompt?: string;
   gptVersion?: string;
   action?: string;
-  executionMode?: "sync" | "async";
+  executionMode?: "sync" | "async" | "fast" | "orchestrated";
   waitForResultMs?: number;
   pollIntervalMs?: number;
   payload?: Record<string, unknown>;
@@ -78,6 +78,10 @@ export interface QueryGptRouteOptions {
   prompt: string;
   headers?: Record<string, string>;
   context?: Record<string, unknown>;
+}
+
+export interface GenerateGptPromptOptions extends QueryGptRouteOptions {
+  mode: "fast" | "orchestrated";
 }
 
 export interface InvokeGptJobLookupActionOptions {
@@ -357,6 +361,19 @@ export async function requestQuery(
   });
 
   return normalizeGptAsyncBridgePayload(payload, "query");
+}
+
+export async function generateGptPrompt(
+  options: GenerateGptPromptOptions
+): Promise<Record<string, unknown>> {
+  return invokeGptRoute({
+    baseUrl: options.baseUrl,
+    gptId: options.gptId,
+    prompt: options.prompt,
+    executionMode: options.mode === "fast" ? "fast" : "async",
+    context: options.context,
+    headers: options.headers
+  });
 }
 
 /**

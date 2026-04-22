@@ -17,6 +17,7 @@ Both binaries point at the same entrypoint and command parser. The standard comm
 
 ```bash
 arcanos ask "Summarize current worker health"
+arcanos generate --gpt arcanos-core --prompt "Generate a prompt for a launch email" --mode fast
 arcanos query --gpt arcanos-core --prompt "Create the writing job and return its id"
 arcanos query-and-wait --gpt arcanos-core --prompt "Generate a Seth Rollins promo prompt"
 arcanos generate-and-wait --gpt arcanos-core --prompt "Generate a Seth Rollins promo prompt"
@@ -24,6 +25,18 @@ arcanos generate-and-wait --gpt arcanos-core --prompt "Generate a Seth Rollins p
 
 - Sends your prompt as a protocol `task.create` request.
 - The CLI routes this to the backend GPT endpoint (`/gpt/{gptId}`) and returns text output in human-readable mode.
+
+### Fast prompt generation (`generate`)
+
+```bash
+arcanos generate --gpt arcanos-core --prompt "Generate a prompt for a launch email" --mode fast
+arcanos generate --gpt arcanos-core --prompt "Generate a large prompt pack" --mode orchestrated
+arcanos generate --gpt arcanos-core --prompt "Generate a prompt for a launch email" --mode fast --json
+```
+
+- `--mode fast` sends `executionMode: "fast"` and expects inline prompt-generation output.
+- `--mode orchestrated` sends `executionMode: "async"` and preserves queue/orchestration behavior.
+- Output includes local latency and route-decision details; JSON mode places them under `diagnostics`.
 
 ### 2) Generate implementation plans (`plan`)
 
@@ -141,6 +154,7 @@ Use `--transport local` for local-only workflows; use default/python when you ne
 
 ```text
 arcanos ask <prompt> [--json]
+arcanos generate --gpt <gpt-id> --prompt <prompt> [--mode fast|orchestrated] [--json]
 arcanos query --gpt <gpt-id> --prompt <prompt> [--json]
 arcanos query-and-wait --gpt <gpt-id> --prompt <prompt> [--timeout-ms <ms>] [--poll-interval-ms <ms>] [--json]
 arcanos generate-and-wait --gpt <gpt-id> --prompt <prompt> [--timeout-ms <ms>] [--poll-interval-ms <ms>] [--json]
@@ -170,6 +184,7 @@ arcanos logs --recent
 
 ```bash
 arcanos ask "Propose safe refactor for command router"
+arcanos generate --gpt arcanos-core --prompt "Generate a prompt for a migration checklist" --mode fast
 arcanos plan "Implement the approved refactor"
 arcanos exec "Apply patch for approved plan"
 ```

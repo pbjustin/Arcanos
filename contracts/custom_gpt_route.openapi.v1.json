@@ -3,14 +3,14 @@
   "info": {
     "title": "Arcanos GPT Route API",
     "version": "1.0.0",
-    "description": "Canonical public contract for GPT-routed module requests and allowlisted control-plane dispatch. GPT identity is path-bound at /gpt/{gptId}; callers must not duplicate gptId in the JSON body. POST /gpt/{gptId} accepts flexible request bodies with action as a string and payload as an open object so both durable GPT actions and approved runtime inspection actions can share one public endpoint. A bounded deterministic planner may normalize detail and section profiles for runtime inspection actions before execution, without inventing unsupported actions or bypassing response guards."
+    "description": "Canonical public contract for GPT-routed module requests and allowlisted control-plane dispatch. GPT identity is path-bound at /gpt/{gptId}; callers must not duplicate gptId in the JSON body. POST /gpt/{gptId} accepts flexible request bodies with action as a string and payload as an open object so durable GPT actions, approved runtime inspection actions, and prompt-only fast-path generation can share one public endpoint. Simple prompt-generation requests that omit action can opt into inline fast-path execution with executionMode=fast. A bounded deterministic planner may normalize detail and section profiles for runtime inspection actions before execution, without inventing unsupported actions or bypassing response guards."
   },
   "paths": {
     "/gpt/{gptId}": {
       "post": {
         "operationId": "invokeGptRoute",
         "summary": "Invoke a GPT-routed module request or universal control action",
-        "description": "POST /gpt/{gptId} is the universal public dispatcher. Use action=query to create one durable writing job, action=query_and_wait to create one durable writing job and wait briefly for fast completion, action=get_status to read status through the GPT compatibility bridge, action=get_result to read the final result through the GPT compatibility bridge, and approved control actions such as diagnostics, runtime.inspect, workers.status, queue.inspect, self_heal.status, and system_state for runtime inspection. For runtime.inspect and self_heal.status, payload.detail and payload.sections can request summary, standard, or full response profiles, and a deterministic bounded planner fills safe defaults when callers omit them. Unknown control-plane action names are rejected with a typed 400 error. Natural-language retrieval prompts, runtime inspection prompts without an explicit allowlisted action, DAG control prompts, and MCP control requests are still intentionally rejected on this route.",
+        "description": "POST /gpt/{gptId} is the universal public dispatcher. Use a prompt-only request with executionMode=fast for small prompt-generation work that should return inline. Use action=query to create one durable writing job, action=query_and_wait to create one durable writing job and wait briefly for fast completion, action=get_status to read status through the GPT compatibility bridge, action=get_result to read the final result through the GPT compatibility bridge, and approved control actions such as diagnostics, runtime.inspect, workers.status, queue.inspect, self_heal.status, and system_state for runtime inspection. For runtime.inspect and self_heal.status, payload.detail and payload.sections can request summary, standard, or full response profiles, and a deterministic bounded planner fills safe defaults when callers omit them. Unknown control-plane action names are rejected with a typed 400 error. Natural-language retrieval prompts, runtime inspection prompts without an explicit allowlisted action, DAG control prompts, and MCP control requests are still intentionally rejected on this route.",
         "parameters": [
           {
             "name": "gptId",
@@ -35,6 +35,13 @@
                   "summary": "Prompt-first generic GPT route call",
                   "value": {
                     "prompt": "Help me with this module request."
+                  }
+                },
+                "fastPromptGeneration": {
+                  "summary": "Inline fast-path prompt generation",
+                  "value": {
+                    "prompt": "Generate a prompt for a launch email.",
+                    "executionMode": "fast"
                   }
                 },
                 "query": {
@@ -132,7 +139,7 @@
         },
         "responses": {
           "200": {
-            "description": "Completed async bridge response, control-plane bridge response, or generic GPT response",
+            "description": "Completed fast-path inline response, async bridge response, control-plane bridge response, or generic GPT response",
             "content": {
               "application/json": {
                 "schema": {
@@ -371,7 +378,9 @@
             "type": "string",
             "enum": [
               "sync",
-              "async"
+              "async",
+              "fast",
+              "orchestrated"
             ]
           },
           "waitForResultMs": {
@@ -436,7 +445,9 @@
                 "type": "string",
                 "enum": [
                   "sync",
-                  "async"
+                  "async",
+                  "fast",
+                  "orchestrated"
                 ]
               }
             },
@@ -805,6 +816,9 @@
             "const": true
           },
           "result": {},
+          "routeDecision": {
+            "$ref": "#/components/schemas/GptRouteDecision"
+          },
           "_route": {
             "$ref": "#/components/schemas/GptRouteMeta"
           }
@@ -885,6 +899,42 @@
           },
           "timestamp": {
             "type": "string"
+          }
+        }
+      },
+      "GptRouteDecision": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "path": {
+            "enum": [
+              "fast_path",
+              "orchestrated_path"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "queueBypassed": {
+            "type": "boolean"
+          },
+          "promptLength": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "messageCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "maxWords": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "timeoutMs": {
+            "type": "integer",
+            "minimum": 0
           }
         }
       }

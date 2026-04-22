@@ -49,6 +49,23 @@ describe("Arcanos CLI", () => {
 
     expect(
       parseCliInvocation([
+        "generate",
+        "--gpt",
+        "arcanos-core",
+        "--prompt",
+        "Generate a prompt for a launch email",
+        "--mode",
+        "fast"
+      ])
+    ).toMatchObject({
+      kind: "generate",
+      gptId: "arcanos-core",
+      prompt: "Generate a prompt for a launch email",
+      mode: "fast"
+    });
+
+    expect(
+      parseCliInvocation([
         "generate-and-wait",
         "--gpt",
         "arcanos-core",
@@ -235,6 +252,109 @@ describe("Arcanos CLI", () => {
       expect.objectContaining({
         method: "POST",
         body: expect.stringContaining("\"prompt\":\"ship it\"")
+      })
+    );
+  });
+
+  it("sends generate requests through the GPT fast path and prints route diagnostics", async () => {
+    const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(
+      createJsonResponse({
+        ok: true,
+        result: {
+          result: "Write a launch email prompt.",
+          module: "fast_path"
+        },
+        routeDecision: {
+          path: "fast_path",
+          reason: "simple_prompt_generation",
+          queueBypassed: true
+        },
+        _route: {
+          route: "fast_path"
+        }
+      })
+    );
+    const stdout = createWritableCapture();
+    const stderr = createWritableCapture();
+
+    const exitCode = await runCli(
+      [
+        "generate",
+        "--gpt",
+        "arcanos-core",
+        "--prompt",
+        "Generate a prompt for a launch email",
+        "--mode",
+        "fast",
+        "--base-url",
+        "http://127.0.0.1:3000"
+      ],
+      stdout.stream,
+      stderr.stream
+    );
+
+    expect(exitCode).toBe(0);
+    const output = stdout.read();
+    expect(output).toContain("Write a launch email prompt.");
+    expect(output).toContain("Latency:");
+    expect(output).toContain("Route: fast_path; queue bypassed: yes");
+    expect(stderr.read()).toBe("");
+    expect(fetchMock).toHaveBeenCalledWith(
+      new URL("/gpt/arcanos-core", "http://127.0.0.1:3000/"),
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          prompt: "Generate a prompt for a launch email",
+          executionMode: "fast"
+        })
+      })
+    );
+  });
+
+  it("sends orchestrated generate requests with explicit async execution mode", async () => {
+    const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(
+      createJsonResponse({
+        ok: true,
+        action: "query",
+        jobId: "job-generate-async",
+        status: "pending",
+        routeDecision: {
+          path: "orchestrated_path",
+          reason: "explicit_orchestrated_mode",
+          queueBypassed: false
+        }
+      })
+    );
+    const stdout = createWritableCapture();
+    const stderr = createWritableCapture();
+
+    const exitCode = await runCli(
+      [
+        "generate",
+        "--gpt",
+        "arcanos-core",
+        "--prompt",
+        "Generate a large prompt pack",
+        "--mode",
+        "orchestrated",
+        "--base-url",
+        "http://127.0.0.1:3000"
+      ],
+      stdout.stream,
+      stderr.stream
+    );
+
+    expect(exitCode).toBe(0);
+    expect(stdout.read()).toContain("Route: orchestrated_path; queue bypassed: no, job job-generate-async");
+    expect(stderr.read()).toBe("");
+    expect(fetchMock).toHaveBeenCalledWith(
+      new URL("/gpt/arcanos-core", "http://127.0.0.1:3000/"),
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          prompt: "Generate a large prompt pack",
+          executionMode: "async"
+        })
       })
     );
   });

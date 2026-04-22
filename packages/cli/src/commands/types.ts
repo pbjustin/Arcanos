@@ -28,6 +28,14 @@ export interface GenerateAndWaitCommandInvocation {
   options: CliGlobalOptions;
 }
 
+export interface GenerateCommandInvocation {
+  kind: "generate";
+  gptId: string;
+  prompt: string;
+  mode: "fast" | "orchestrated";
+  options: CliGlobalOptions;
+}
+
 export interface QueryCommandInvocation {
   kind: "query";
   gptId: string;
@@ -107,6 +115,7 @@ export interface HelpCommandInvocation {
 
 export type CliInvocation =
   | AskCommandInvocation
+  | GenerateCommandInvocation
   | GenerateAndWaitCommandInvocation
   | QueryCommandInvocation
   | QueryAndWaitCommandInvocation
