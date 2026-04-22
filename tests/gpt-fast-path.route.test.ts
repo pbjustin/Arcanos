@@ -250,6 +250,34 @@ describe('GPT fast-path route branching', () => {
     expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
   });
 
+  it('rejects malformed payload shapes before queue submission', async () => {
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        prompt: 'Generate a prompt for a launch email.',
+        executionMode: 'fast',
+        payload: 'operators',
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.headers['x-gpt-route-decision']).toBe('orchestrated_path');
+    expect(response.headers['x-gpt-route-decision-reason']).toBe('invalid_payload_shape_requires_module_dispatch');
+    expect(response.headers['x-gpt-queue-bypassed']).toBe('false');
+    expect(response.body).toMatchObject({
+      ok: false,
+      error: {
+        code: 'BAD_REQUEST',
+        message: 'GPT request payload must be a JSON object when provided.',
+      },
+      routeDecision: {
+        path: 'orchestrated_path',
+        reason: 'invalid_payload_shape_requires_module_dispatch',
+      },
+    });
+    expect(executeFastGptPromptMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  });
+
   it('falls back to the orchestrated path when inline fast-path execution is unavailable', async () => {
     executeFastGptPromptMock.mockRejectedValueOnce(new Error('OpenAI client unavailable for GPT fast path.'));
 

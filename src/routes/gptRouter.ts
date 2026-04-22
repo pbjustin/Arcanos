@@ -1916,6 +1916,24 @@ router.post("/:gptId", async (req, res, next) => {
           explicitMode: fastPathDecision.explicitMode
         });
 
+        if (fastPathDecision.reason === 'invalid_payload_shape_requires_module_dispatch') {
+          return sendGuardedGptJsonResponse(req, res, {
+            ok: false,
+            action: asyncBridgeAction,
+            error: {
+              code: 'BAD_REQUEST',
+              message: 'GPT request payload must be a JSON object when provided.'
+            },
+            routeDecision: fastPathDecision,
+            _route: {
+              requestId,
+              gptId: incomingGptId,
+              route: 'orchestrated_path',
+              timestamp: new Date().toISOString()
+            }
+          }, 'gpt.response.invalid_payload_shape', 400);
+        }
+
         let fastPathFallbackToOrchestrated = false;
         if (fastPathDecision.path === 'fast_path' && promptText) {
           const fastPathStartedAt = Date.now();
