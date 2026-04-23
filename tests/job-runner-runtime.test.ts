@@ -135,6 +135,20 @@ describe('jobRunnerRuntime', () => {
     expect(runner.isRunning()).toBe(false);
 
     const secondRun = runner();
+    nowMs = 20;
+    await expect(runner()).resolves.toBe(false);
+    expect(skipEvents).toEqual([
+      {
+        taskName: 'worker-heartbeat',
+        skippedCount: 1,
+        runningForMs: 10
+      },
+      {
+        taskName: 'worker-heartbeat',
+        skippedCount: 1,
+        runningForMs: 10
+      }
+    ]);
     resolveFirstTask?.();
     await expect(secondRun).resolves.toBe(true);
     expect(executedTasks).toBe(2);

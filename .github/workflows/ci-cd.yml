@@ -254,7 +254,7 @@ jobs:
           # transitive `uuid` via `bullmq`; the audit-reported fixed uuid@14.0.0
           # is not published, this service does not call uuid directly, and
           # BullMQ's bundled usage is limited to v4() queue/worker ids. Keep the
-          # audit active while suppressing only these known upstream/unapplicable
+          # audit active while suppressing only these known upstream/inapplicable
           # advisories so CI still fails on any newly actionable production
           # vulnerability.
           npm audit --omit=dev --json > npm-audit.json || true

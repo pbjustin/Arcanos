@@ -117,6 +117,7 @@ export function createNonOverlappingTaskRunner(
       running = false;
       runningStartedAtMs = null;
       skippedCount = 0;
+      lastSkipLogAtMs = 0;
     }
   }) as NonOverlappingTaskRunner;
 

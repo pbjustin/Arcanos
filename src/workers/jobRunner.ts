@@ -79,13 +79,14 @@ const QUEUED_GPT_PROMPT_KEYS = ['prompt', 'message', 'query', 'text', 'content',
 
 function createOverlapSkipLogger(workerId: string, source: string) {
   return (event: { taskName: string; skippedCount: number; runningForMs: number | null }) => {
-    logger.warn('task skipped due to overlap', {
+    logger.warn('worker.interval_task.overlap_skipped', {
       module: 'worker',
       workerId,
       source,
       taskName: event.taskName,
       skippedCount: event.skippedCount,
-      runningForMs: event.runningForMs
+      runningForMs: event.runningForMs,
+      reason: 'task skipped due to overlap'
     });
   };
 }

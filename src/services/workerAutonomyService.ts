@@ -429,7 +429,7 @@ export class WorkerAutonomyService {
    */
   async bootstrap(notes: string[] = []): Promise<WorkerBootstrapResult> {
     try {
-      const inspection = await this.inspect('bootstrap', notes, { source: 'inspector' });
+      const inspection = await this.inspect('bootstrap', notes, { source: 'bootstrap' });
       return {
         recovered: inspection.recovered,
         healthStatus: inspection.healthStatus,
