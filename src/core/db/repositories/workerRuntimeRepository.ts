@@ -9,6 +9,7 @@ import { query } from '@core/db/query.js';
 import { initializeTables } from '@core/db/schema.js';
 import { resolveErrorMessage } from '@shared/errorUtils.js';
 import { safeJSONParse, safeJSONStringify } from '@shared/jsonHelpers.js';
+import { logger } from '@platform/logging/structuredLogging.js';
 
 export interface WorkerRuntimeSnapshotRecord {
   workerId: string;
@@ -23,8 +24,13 @@ export interface WorkerRuntimeSnapshotRecord {
   snapshot: Record<string, unknown>;
 }
 
+export interface UpsertWorkerRuntimeSnapshotOptions {
+  source?: string;
+}
+
 const WORKER_RUNTIME_REPOSITORY_WORKER_ID = 'worker-runtime-snapshots';
 const WORKER_RUNTIME_BOOTSTRAP_RETRY_COOLDOWN_MS = 30_000;
+const WORKER_RUNTIME_UPSERT_SLOW_LOG_MIN_MS = 250;
 
 let pendingBootstrap: Promise<boolean> | null = null;
 let lastBootstrapFailureAtMs = 0;
@@ -87,8 +93,15 @@ async function ensureWorkerRuntimePersistenceReady(): Promise<boolean> {
  * Edge case behavior: throws when persistence is unavailable so callers can decide whether to degrade or fail.
  */
 export async function upsertWorkerRuntimeSnapshot(
-  record: WorkerRuntimeSnapshotRecord
+  record: WorkerRuntimeSnapshotRecord,
+  options: UpsertWorkerRuntimeSnapshotOptions = {}
 ): Promise<void> {
+  const source =
+    options.source ??
+    (typeof record.snapshot.lastPersistSource === 'string'
+      ? record.snapshot.lastPersistSource
+      : 'unspecified');
+  const startedAtMs = Date.now();
   const persistenceReady = await ensureWorkerRuntimePersistenceReady();
   if (!persistenceReady) {
     throw new Error('Worker runtime persistence is unavailable');
@@ -104,44 +117,68 @@ export async function upsertWorkerRuntimeSnapshot(
     throw new Error('Failed to serialize worker runtime snapshot');
   }
 
-  await query(
-    `INSERT INTO worker_runtime_snapshots (
-       worker_id,
-       worker_type,
-       health_status,
-       current_job_id,
-       last_error,
-       started_at,
-       last_heartbeat_at,
-       last_inspector_run_at,
-       updated_at,
-       snapshot
-     )
-     VALUES ($1, $2, $3, $4, $5, $6::timestamptz, $7::timestamptz, $8::timestamptz, $9::timestamptz, $10::jsonb)
-     ON CONFLICT (worker_id)
-     DO UPDATE SET
-       worker_type = EXCLUDED.worker_type,
-       health_status = EXCLUDED.health_status,
-       current_job_id = EXCLUDED.current_job_id,
-       last_error = EXCLUDED.last_error,
-       started_at = EXCLUDED.started_at,
-       last_heartbeat_at = EXCLUDED.last_heartbeat_at,
-       last_inspector_run_at = EXCLUDED.last_inspector_run_at,
-       updated_at = EXCLUDED.updated_at,
-       snapshot = EXCLUDED.snapshot`,
-    [
-      record.workerId,
-      record.workerType,
-      record.healthStatus,
-      record.currentJobId,
-      record.lastError,
-      record.startedAt,
-      record.lastHeartbeatAt,
-      record.lastInspectorRunAt,
-      record.updatedAt,
-      serializedSnapshot
-    ]
-  );
+  let outcome: 'ok' | 'error' = 'ok';
+  try {
+    await query(
+      `INSERT INTO worker_runtime_snapshots (
+         worker_id,
+         worker_type,
+         health_status,
+         current_job_id,
+         last_error,
+         started_at,
+         last_heartbeat_at,
+         last_inspector_run_at,
+         updated_at,
+         snapshot
+       )
+       VALUES ($1, $2, $3, $4, $5, $6::timestamptz, $7::timestamptz, $8::timestamptz, $9::timestamptz, $10::jsonb)
+       ON CONFLICT (worker_id)
+       DO UPDATE SET
+         worker_type = EXCLUDED.worker_type,
+         health_status = EXCLUDED.health_status,
+         current_job_id = EXCLUDED.current_job_id,
+         last_error = EXCLUDED.last_error,
+         started_at = EXCLUDED.started_at,
+         last_heartbeat_at = EXCLUDED.last_heartbeat_at,
+         last_inspector_run_at = EXCLUDED.last_inspector_run_at,
+         updated_at = EXCLUDED.updated_at,
+         snapshot = EXCLUDED.snapshot`,
+      [
+        record.workerId,
+        record.workerType,
+        record.healthStatus,
+        record.currentJobId,
+        record.lastError,
+        record.startedAt,
+        record.lastHeartbeatAt,
+        record.lastInspectorRunAt,
+        record.updatedAt,
+        serializedSnapshot
+      ]
+    );
+  } catch (error) {
+    outcome = 'error';
+    throw error;
+  } finally {
+    const durationMs = Date.now() - startedAtMs;
+    const logContext = {
+      module: 'worker-runtime',
+      workerId: record.workerId,
+      source,
+      outcome,
+      durationMs,
+      snapshotBytes: Buffer.byteLength(serializedSnapshot, 'utf8')
+    };
+    if (outcome === 'error' || durationMs >= WORKER_RUNTIME_UPSERT_SLOW_LOG_MIN_MS) {
+      logger.warn(
+        outcome === 'error' ? 'worker.runtime_snapshot.upsert.failed' : 'worker.runtime_snapshot.upsert.slow',
+        logContext
+      );
+    } else {
+      logger.debug('worker.runtime_snapshot.upsert.completed', logContext);
+    }
+  }
 }
 
 /**

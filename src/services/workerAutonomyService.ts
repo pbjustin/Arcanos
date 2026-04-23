@@ -153,6 +153,11 @@ interface WorkerSnapshotContext {
   watchdogState?: WorkerWatchdogState;
 }
 
+interface WorkerSnapshotPersistOptions {
+  force?: boolean;
+  source?: string;
+}
+
 interface WorkerWatchdogState {
   triggered: boolean;
   reason: string | null;
@@ -167,6 +172,7 @@ interface WorkerWatchdogState {
 }
 
 const WORKER_RUNTIME_SNAPSHOT_MIN_INTERVAL_MS = 30_000;
+const WORKER_RUNTIME_SNAPSHOT_SLOW_LOG_MIN_MS = 250;
 
 const DEFAULT_AUTONOMY_SETTINGS: WorkerAutonomySettings = {
   workerId: process.env.JOB_WORKER_ID?.trim() || process.env.WORKER_ID?.trim() || 'async-queue',
@@ -423,7 +429,7 @@ export class WorkerAutonomyService {
    */
   async bootstrap(notes: string[] = []): Promise<WorkerBootstrapResult> {
     try {
-      const inspection = await this.inspect('bootstrap', notes);
+      const inspection = await this.inspect('bootstrap', notes, { source: 'bootstrap' });
       return {
         recovered: inspection.recovered,
         healthStatus: inspection.healthStatus,
@@ -435,7 +441,7 @@ export class WorkerAutonomyService {
       await this.persistSnapshot({
         healthStatus: 'unhealthy',
         alerts: [`Bootstrap failed: ${message}`]
-      }, { force: true });
+      }, { force: true, source: 'bootstrap' });
       throw error;
     }
   }
@@ -446,8 +452,16 @@ export class WorkerAutonomyService {
    * Inputs/outputs: accepts an inspector reason and optional notes; returns the full inspection result.
    * Edge case behavior: stale jobs over the retry limit are terminally failed instead of re-queued.
    */
-  async inspect(reason: string, notes: string[] = []): Promise<WorkerInspectionResult> {
-    const stalledRecovery = await this.runWatchdogCycle(reason, { persistSnapshot: false });
+  async inspect(
+    reason: string,
+    notes: string[] = [],
+    options: WorkerSnapshotPersistOptions = {}
+  ): Promise<WorkerInspectionResult> {
+    const source = options.source ?? 'inspector';
+    const stalledRecovery = await this.runWatchdogCycle(reason, {
+      persistSnapshot: false,
+      source: 'watchdog'
+    });
     const queueSummaryBeforeRecovery = await getJobQueueSummary();
     const recovered = await recoverStaleJobs({
       staleAfterMs: this.settings.staleAfterMs,
@@ -533,7 +547,7 @@ export class WorkerAutonomyService {
       healthStatus,
       alerts,
       watchdogState
-    }, { force: true });
+    }, { force: true, source });
     await this.maybeSendFailureWebhook(healthStatus, alerts, queueSummary, stats, reason);
 
     return {
@@ -555,7 +569,7 @@ export class WorkerAutonomyService {
    */
   async runWatchdogCycle(
     reason: string,
-    options: { persistSnapshot?: boolean } = {}
+    options: WorkerSnapshotPersistOptions & { persistSnapshot?: boolean } = {}
   ): Promise<WorkerInspectionResult['stalledRecovery']> {
     const workerSnapshots = filterLegacyAggregateWorkerSnapshots(await listWorkerRuntimeSnapshots());
     const staleWorkerIds = workerSnapshots
@@ -653,7 +667,7 @@ export class WorkerAutonomyService {
           alerts.length > 0 || this.state.lastBudgetPauseReason ? 'degraded' : 'healthy',
         alerts,
         watchdogState: this.buildWatchdogState(queueSummary)
-      }, { force: true });
+      }, { force: true, source: options.source ?? 'watchdog' });
     }
 
     return stalledRecovery;
@@ -703,7 +717,7 @@ export class WorkerAutonomyService {
       stats,
       healthStatus: 'degraded',
       alerts: [`Budget pause active: ${reason}`]
-    }, { force: true });
+    }, { force: true, source: 'budget' });
 
     return {
       allowed: false,
@@ -728,7 +742,7 @@ export class WorkerAutonomyService {
     await this.persistSnapshot({
       healthStatus: 'healthy',
       alerts: []
-    }, { force: true });
+    }, { force: true, source: 'job-start' });
   }
 
   /**
@@ -737,14 +751,14 @@ export class WorkerAutonomyService {
    * Inputs/outputs: no inputs, returns once the snapshot heartbeat is persisted.
    * Edge case behavior: does not overwrite `lastActivityAt`, which remains reserved for work progress and slot state transitions.
    */
-  async recordWorkerHeartbeat(): Promise<void> {
+  async recordWorkerHeartbeat(options: WorkerSnapshotPersistOptions = {}): Promise<void> {
     this.state.lastHeartbeatAt = new Date().toISOString();
     await this.persistSnapshot({
       healthStatus: this.state.lastBudgetPauseReason ? 'degraded' : 'healthy',
       alerts: this.state.lastBudgetPauseReason
         ? [`Budget pause active: ${this.state.lastBudgetPauseReason}`]
         : []
-    }, { force: true });
+    }, { force: true, source: options.source ?? 'worker-heartbeat' });
   }
 
   /**
@@ -753,14 +767,17 @@ export class WorkerAutonomyService {
    * Inputs/outputs: accepts the running job id; returns the refreshed job row or `null`.
    * Edge case behavior: no-ops safely when the job is already terminal and no longer running.
    */
-  async recordHeartbeat(jobId: string): Promise<JobData | null> {
+  async recordHeartbeat(
+    jobId: string,
+    options: WorkerSnapshotPersistOptions = {}
+  ): Promise<JobData | null> {
     const updatedJob = await recordJobHeartbeat(jobId, this.getClaimOptions());
     this.state.lastHeartbeatAt = new Date().toISOString();
     this.state.lastActivityAt = this.state.lastHeartbeatAt;
     await this.persistSnapshot({
       healthStatus: 'healthy',
       alerts: []
-    }, { force: true });
+    }, { force: true, source: options.source ?? 'job-heartbeat' });
     return updatedJob;
   }
 
@@ -780,7 +797,7 @@ export class WorkerAutonomyService {
     await this.persistSnapshot({
       healthStatus: this.state.lastBudgetPauseReason ? 'degraded' : 'healthy',
       alerts: this.state.lastBudgetPauseReason ? [`Budget pause active: ${this.state.lastBudgetPauseReason}`] : []
-      }, { force: true });
+      }, { force: true, source: 'job-completed' });
   }
 
   /**
@@ -799,7 +816,7 @@ export class WorkerAutonomyService {
     await this.persistSnapshot({
       healthStatus: this.state.lastBudgetPauseReason ? 'degraded' : 'healthy',
       alerts: this.state.lastBudgetPauseReason ? [`Budget pause active: ${this.state.lastBudgetPauseReason}`] : []
-    }, { force: true });
+    }, { force: true, source: 'job-cancelled' });
   }
 
   /**
@@ -847,7 +864,7 @@ export class WorkerAutonomyService {
       await this.persistSnapshot({
         healthStatus: 'degraded',
         alerts: [`Scheduled retry for job ${job.id} in ${delayMs}ms.`]
-      }, { force: true });
+      }, { force: true, source: 'job-retry' });
       // Retry scheduling is a transient slot state. Keep the degraded snapshot above for visibility,
       // then clear the local error so idle health can recover once the retry is handed off.
       this.state.lastError = null;
@@ -882,7 +899,7 @@ export class WorkerAutonomyService {
     await this.persistSnapshot({
       healthStatus: this.state.terminalFailures >= this.settings.failureWebhookThreshold ? 'unhealthy' : 'degraded',
       alerts: [`Job ${job.id} failed: ${errorMessage}`]
-    }, { force: true });
+    }, { force: true, source: 'job-failed' });
     await this.maybeSendFailureWebhook(
       this.state.terminalFailures >= this.settings.failureWebhookThreshold ? 'unhealthy' : 'degraded',
       [`Job ${job.id} failed: ${errorMessage}`],
@@ -922,7 +939,10 @@ export class WorkerAutonomyService {
       alerts,
       queueSummary,
       watchdogState
-    }, { force: healthStatus !== 'healthy' || alerts.length > 0 });
+    }, {
+      force: healthStatus !== 'healthy' || alerts.length > 0,
+      source: 'worker-idle'
+    });
   }
 
   private deriveHealthStatus(
@@ -962,9 +982,10 @@ export class WorkerAutonomyService {
 
   private async persistSnapshot(
     context: WorkerSnapshotContext,
-    options: { force?: boolean } = {}
+    options: WorkerSnapshotPersistOptions = {}
   ): Promise<void> {
     const nowMs = Date.now();
+    const source = options.source ?? 'unspecified';
     if (
       !options.force &&
       this.lastSnapshotPersistedAtMs > 0 &&
@@ -1004,16 +1025,38 @@ export class WorkerAutonomyService {
         lastWatchdogRunAt: this.state.lastWatchdogRunAt,
         watchdog: watchdogState,
         statsWorkerId: this.getStatsWorkerId(),
+        lastPersistSource: source,
         alerts: context.alerts
       }
     };
 
+    const persistStartedAtMs = Date.now();
     try {
       await upsertWorkerRuntimeSnapshot(snapshotRecord);
       this.lastSnapshotPersistedAtMs = nowMs;
+      const durationMs = Date.now() - persistStartedAtMs;
+      const logContext = {
+        module: 'worker-autonomy',
+        workerId: this.settings.workerId,
+        source,
+        healthStatus: context.healthStatus,
+        durationMs
+      };
+      if (durationMs >= WORKER_RUNTIME_SNAPSHOT_SLOW_LOG_MIN_MS) {
+        logger.warn('worker.runtime_snapshot.persist.slow', logContext);
+      } else {
+        logger.debug('worker.runtime_snapshot.persist.completed', logContext);
+      }
     } catch (error: unknown) {
       //audit Assumption: snapshot persistence is operationally important but must not crash the worker loop; failure risk: observability outage halts queue processing; expected invariant: worker continues after logging persistence failures; handling strategy: log and continue.
-      console.warn('[Worker Autonomy] Failed to persist runtime snapshot:', resolveErrorMessage(error));
+      logger.warn('worker.runtime_snapshot.persist.failed', {
+        module: 'worker-autonomy',
+        workerId: this.settings.workerId,
+        source,
+        healthStatus: context.healthStatus,
+        durationMs: Date.now() - persistStartedAtMs,
+        error: resolveErrorMessage(error)
+      });
     }
   }
 

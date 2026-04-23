@@ -35,6 +35,7 @@ import {
 import { classifyDagNodeFailureForWorkerRetry } from './jobFailureClassification.js';
 import {
   buildJobRunnerSlotDefinitions,
+  createNonOverlappingTaskRunner,
   isRetryableJobRunnerDatabaseBootstrapError,
   resolveJobRunnerDatabaseBootstrapSettings,
   resolveJobRunnerRuntimeSettings,
@@ -75,6 +76,20 @@ interface JobExecutionOutcome {
 type OpenAIClient = ReturnType<typeof initOpenAIClient>;
 
 const QUEUED_GPT_PROMPT_KEYS = ['prompt', 'message', 'query', 'text', 'content', 'userInput'] as const;
+
+function createOverlapSkipLogger(workerId: string, source: string) {
+  return (event: { taskName: string; skippedCount: number; runningForMs: number | null }) => {
+    logger.warn('worker.interval_task.overlap_skipped', {
+      module: 'worker',
+      workerId,
+      source,
+      taskName: event.taskName,
+      skippedCount: event.skippedCount,
+      runningForMs: event.runningForMs,
+      reason: 'task skipped due to overlap'
+    });
+  };
+}
 
 function initOpenAIClient() {
   const unified = getConfig();
@@ -587,18 +602,27 @@ function startHeartbeatLoop(
   workerId: string,
   onHeartbeat?: (job: Awaited<ReturnType<WorkerAutonomyService['recordHeartbeat']>>) => void
 ): NodeJS.Timeout {
+  const runHeartbeat = createNonOverlappingTaskRunner(
+    async () => {
+      const job = await autonomyService.recordHeartbeat(jobId, { source: 'job-heartbeat' });
+      onHeartbeat?.(job);
+    },
+    {
+      taskName: 'job-heartbeat',
+      onSkip: createOverlapSkipLogger(workerId, 'job-heartbeat')
+    }
+  );
+
   const intervalHandle = setInterval(() => {
-    void autonomyService.recordHeartbeat(jobId)
-      .then((job) => {
-        onHeartbeat?.(job);
-      })
-      .catch((error: unknown) => {
-        console.warn(
-          `[jobRunner] worker=${workerId} heartbeat failed:`,
-          resolveErrorMessage(error)
-        );
-      });
-  }, autonomyService.getClaimOptions().leaseMs ? Math.max(1_000, Math.floor((autonomyService.getClaimOptions().leaseMs ?? 30_000) / 3)) : 10_000);
+    void runHeartbeat().catch((error: unknown) => {
+      console.warn(
+        `[jobRunner] worker=${workerId} heartbeat failed:`,
+        resolveErrorMessage(error)
+      );
+    });
+  }, autonomyService.getClaimOptions().leaseMs
+    ? Math.max(1_000, Math.floor((autonomyService.getClaimOptions().leaseMs ?? 30_000) / 3))
+    : 10_000);
 
   if (typeof intervalHandle.unref === 'function') {
     intervalHandle.unref();
@@ -612,14 +636,22 @@ function startWorkerHeartbeatLoop(
   workerId: string
 ): NodeJS.Timeout {
   const intervalMs = Math.max(1_000, autonomyService.getHeartbeatIntervalMs());
-  void autonomyService.recordWorkerHeartbeat().catch((error: unknown) => {
+  const runHeartbeat = createNonOverlappingTaskRunner(
+    () => autonomyService.recordWorkerHeartbeat({ source: 'worker-heartbeat' }),
+    {
+      taskName: 'worker-heartbeat',
+      onSkip: createOverlapSkipLogger(workerId, 'worker-heartbeat')
+    }
+  );
+
+  void runHeartbeat().catch((error: unknown) => {
     console.warn(
       `[jobRunner] worker=${workerId} initial worker heartbeat failed:`,
       resolveErrorMessage(error)
     );
   });
   const intervalHandle = setInterval(() => {
-    void autonomyService.recordWorkerHeartbeat().catch((error: unknown) => {
+    void runHeartbeat().catch((error: unknown) => {
       console.warn(
         `[jobRunner] worker=${workerId} worker heartbeat failed:`,
         resolveErrorMessage(error)
@@ -636,8 +668,20 @@ function startWorkerHeartbeatLoop(
 
 function startWatchdogLoop(autonomyService: WorkerAutonomyService): NodeJS.Timeout {
   const intervalMs = Math.max(5_000, autonomyService.getWatchdogIntervalMs());
+  const runWatchdog = createNonOverlappingTaskRunner(
+    async () => {
+      await autonomyService.runWatchdogCycle('watchdog', {
+        source: 'watchdog'
+      });
+    },
+    {
+      taskName: 'watchdog',
+      onSkip: createOverlapSkipLogger(autonomyService.getWorkerId(), 'watchdog')
+    }
+  );
+
   const intervalHandle = setInterval(() => {
-    void autonomyService.runWatchdogCycle('watchdog').catch((error: unknown) => {
+    void runWatchdog().catch((error: unknown) => {
       console.warn(
         `[jobRunner] worker=${autonomyService.getWorkerId()} watchdog failed:`,
         resolveErrorMessage(error)
@@ -654,8 +698,20 @@ function startWatchdogLoop(autonomyService: WorkerAutonomyService): NodeJS.Timeo
 
 function startInspectorLoop(autonomyService: WorkerAutonomyService): NodeJS.Timeout {
   const intervalMs = Math.max(5_000, Number(process.env.JOB_WORKER_INSPECTOR_MS || 30_000));
+  const runInspector = createNonOverlappingTaskRunner(
+    async () => {
+      await autonomyService.inspect('scheduled', [], {
+        source: 'inspector'
+      });
+    },
+    {
+      taskName: 'inspector',
+      onSkip: createOverlapSkipLogger(autonomyService.getWorkerId(), 'inspector')
+    }
+  );
+
   const intervalHandle = setInterval(() => {
-    void autonomyService.inspect('scheduled').catch((error: unknown) => {
+    void runInspector().catch((error: unknown) => {
       console.warn(
         `[jobRunner] worker=${autonomyService.getWorkerId()} inspector failed:`,
         resolveErrorMessage(error)

@@ -2,6 +2,7 @@ import { describe, expect, it } from '@jest/globals';
 
 import {
   buildJobRunnerSlotDefinitions,
+  createNonOverlappingTaskRunner,
   isRetryableJobRunnerDatabaseBootstrapError,
   resolveJobRunnerDatabaseBootstrapSettings,
   resolveJobRunnerRuntimeSettings
@@ -92,5 +93,132 @@ describe('jobRunnerRuntime', () => {
     ).toBe(true);
     expect(isRetryableJobRunnerDatabaseBootstrapError(new Error('ENOTFOUND railway.internal'))).toBe(true);
     expect(isRetryableJobRunnerDatabaseBootstrapError(new Error('relation "job_data" does not exist'))).toBe(false);
+  });
+
+  it('skips overlapping interval work while a task is still running', async () => {
+    let nowMs = 0;
+    let resolveFirstTask: (() => void) | null = null;
+    let executedTasks = 0;
+    const skipEvents: Array<{
+      taskName: string;
+      skippedCount: number;
+      runningForMs: number | null;
+    }> = [];
+    const runner = createNonOverlappingTaskRunner(
+      () => new Promise<void>((resolve) => {
+        executedTasks += 1;
+        resolveFirstTask = resolve;
+      }),
+      {
+        taskName: 'worker-heartbeat',
+        skipLogMinIntervalMs: 1,
+        nowMs: () => nowMs,
+        onSkip: (event) => skipEvents.push(event)
+      }
+    );
+
+    const firstRun = runner();
+
+    expect(runner.isRunning()).toBe(true);
+    nowMs = 10;
+    await expect(runner()).resolves.toBe(false);
+    expect(skipEvents).toEqual([
+      {
+        taskName: 'worker-heartbeat',
+        skippedCount: 1,
+        runningForMs: 10
+      }
+    ]);
+
+    resolveFirstTask?.();
+    await expect(firstRun).resolves.toBe(true);
+    expect(runner.isRunning()).toBe(false);
+
+    const secondRun = runner();
+    nowMs = 20;
+    await expect(runner()).resolves.toBe(false);
+    expect(skipEvents).toEqual([
+      {
+        taskName: 'worker-heartbeat',
+        skippedCount: 1,
+        runningForMs: 10
+      },
+      {
+        taskName: 'worker-heartbeat',
+        skippedCount: 1,
+        runningForMs: 10
+      }
+    ]);
+    resolveFirstTask?.();
+    await expect(secondRun).resolves.toBe(true);
+    expect(executedTasks).toBe(2);
+  });
+
+  it('unlocks after a task failure', async () => {
+    let shouldFail = true;
+    const runner = createNonOverlappingTaskRunner(
+      async () => {
+        if (shouldFail) {
+          throw new Error('heartbeat failed');
+        }
+      },
+      { taskName: 'worker-heartbeat' }
+    );
+
+    await expect(runner()).rejects.toThrow('heartbeat failed');
+    expect(runner.isRunning()).toBe(false);
+    shouldFail = false;
+    await expect(runner()).resolves.toBe(true);
+  });
+
+  it('caps delayed worker interval work at one active task per slot and source', async () => {
+    const slots = buildJobRunnerSlotDefinitions(resolveJobRunnerRuntimeSettings({
+      JOB_WORKER_CONCURRENCY: '8',
+      JOB_WORKER_ID: 'async-queue'
+    } as NodeJS.ProcessEnv));
+    const taskNames = [
+      ...slots.map(slot => `${slot.workerId}:worker-heartbeat`),
+      'async-queue-slot-1:watchdog',
+      'async-queue-slot-1:inspector'
+    ];
+    let activeTasks = 0;
+    let maxActiveTasks = 0;
+    let executedTasks = 0;
+    let skippedRuns = 0;
+    let skipLogEvents = 0;
+    const completeTasks: Array<() => void> = [];
+
+    const runners = taskNames.map(taskName => createNonOverlappingTaskRunner(
+      () => new Promise<void>((resolve) => {
+        executedTasks += 1;
+        activeTasks += 1;
+        maxActiveTasks = Math.max(maxActiveTasks, activeTasks);
+        completeTasks.push(() => {
+          activeTasks -= 1;
+          resolve();
+        });
+      }),
+      {
+        taskName,
+        skipLogMinIntervalMs: 1,
+        onSkip: () => {
+          skipLogEvents += 1;
+        }
+      }
+    ));
+
+    const initialRuns = runners.map(runner => runner());
+    for (let tick = 0; tick < 5; tick += 1) {
+      const results = await Promise.all(runners.map(runner => runner()));
+      skippedRuns += results.filter(result => result === false).length;
+    }
+
+    expect(executedTasks).toBe(10);
+    expect(maxActiveTasks).toBe(10);
+    expect(skippedRuns).toBe(50);
+    expect(skipLogEvents).toBe(10);
+
+    completeTasks.splice(0).forEach(completeTask => completeTask());
+    await expect(Promise.all(initialRuns)).resolves.toEqual(Array(10).fill(true));
   });
 });

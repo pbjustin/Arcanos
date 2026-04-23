@@ -249,8 +249,12 @@ jobs:
           # dependency lines. GHSA-8r9q-7v3j-jr4g and GHSA-345p-7cg4-v4c7 are
           # reported against the MCP SDK, but this service does not expose MCP
           # resource templates and it builds a fresh HTTP server/transport pair
-          # per request, so those code paths are not in use here. Keep the audit
-          # active while suppressing only these known upstream/unapplicable
+          # per request, so those code paths are not in use here.
+          # GHSA-w5hq-g745-h8pq is currently reported against `uuid` and
+          # transitive `uuid` via `bullmq`; the audit-reported fixed uuid@14.0.0
+          # is not published, this service does not call uuid directly, and
+          # BullMQ's bundled usage is limited to v4() queue/worker ids. Keep the
+          # audit active while suppressing only these known upstream/inapplicable
           # advisories so CI still fails on any newly actionable production
           # vulnerability.
           npm audit --omit=dev --json > npm-audit.json || true

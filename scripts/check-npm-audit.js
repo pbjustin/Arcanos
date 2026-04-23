@@ -30,6 +30,10 @@ const IGNORED_MCP_SDK_URLS = new Set([
   'https://github.com/advisories/GHSA-8r9q-7v3j-jr4g',
   'https://github.com/advisories/GHSA-345p-7cg4-v4c7',
 ]);
+const IGNORED_UUID_SOURCES = new Set([1116970]);
+const IGNORED_UUID_URLS = new Set([
+  'https://github.com/advisories/GHSA-w5hq-g745-h8pq',
+]);
 
 function isIgnoredLodashAdvisory(advisory) {
   if (!advisory || typeof advisory !== 'object') {
@@ -84,6 +88,22 @@ function isIgnoredMcpSdkAdvisory(advisory) {
   return typeof advisory.url === 'string' && IGNORED_MCP_SDK_URLS.has(advisory.url);
 }
 
+function isIgnoredUuidAdvisory(advisory) {
+  if (!advisory || typeof advisory !== 'object') {
+    return false;
+  }
+
+  if (advisory.name !== 'uuid') {
+    return false;
+  }
+
+  if (typeof advisory.source === 'number' && IGNORED_UUID_SOURCES.has(advisory.source)) {
+    return true;
+  }
+
+  return typeof advisory.url === 'string' && IGNORED_UUID_URLS.has(advisory.url);
+}
+
 function isIgnoredVulnerability(name, vulnerability) {
   if (!vulnerability || typeof vulnerability !== 'object') {
     return false;
@@ -110,6 +130,18 @@ function isIgnoredVulnerability(name, vulnerability) {
     // server/transport pair is reused across clients; our HTTP MCP route
     // constructs a fresh server and transport for every request.
     return via.length > 0 && via.every(isIgnoredMcpSdkAdvisory);
+  }
+
+  if (name === 'uuid') {
+    // GHSA-w5hq-g745-h8pq applies to uuid v3/v5/v6 when callers provide a buf
+    // argument. uuid@14.0.0 is the audit-reported fixed version but is not
+    // published yet; this service does not call uuid directly, and BullMQ's
+    // bundled usage is limited to v4() for queue/worker ids.
+    return via.length > 0 && via.every(isIgnoredUuidAdvisory);
+  }
+
+  if (name === 'bullmq') {
+    return via.length > 0 && via.every(entry => entry === 'uuid');
   }
 
   return false;
