@@ -338,6 +338,69 @@ describe('/api/arcanos/ask honesty e2e', () => {
     expect(response.body.result).not.toContain('cannot verify live or current external information here');
   });
 
+  it('applies honesty rewriting even when direct-answer mode is selected', async () => {
+    mockCreateChatCompletionWithFallback.mockReset();
+    mockRunStructuredReasoning.mockReset();
+
+    mockValidateAIRequest.mockImplementation((_req: unknown, _res: unknown) => ({
+      client: {
+        models: {
+          retrieve: jest.fn().mockResolvedValue({ id: 'arcanos-intake-model' })
+        }
+      },
+      input: 'Direct answer only: verify the latest competitor moves without browsing and build me a launch plan.',
+      body: {
+        prompt: 'Direct answer only: verify the latest competitor moves without browsing and build me a launch plan.'
+      }
+    }));
+
+    mockCreateChatCompletionWithFallback.mockResolvedValueOnce({
+      choices: [
+        {
+          message: {
+            content: [
+              'Latest Competitor Moves (as of June 2024, without live browsing):',
+              '',
+              '1. Product Innovation: Competitors have accelerated AI integration.',
+              '2. Partnerships: Strategic alliances are increasing.',
+              '',
+              'Launch plan:',
+              '1. Lead with differentiated positioning.',
+              '2. Prepare a rapid FAQ and objection-handling loop.'
+            ].join('\n')
+          }
+        }
+      ],
+      activeModel: 'gpt-4.1',
+      fallbackFlag: false,
+      usage: {
+        prompt_tokens: 18,
+        completion_tokens: 26,
+        total_tokens: 44
+      },
+      id: 'direct-answer-response-1',
+      created: 1773339300200
+    });
+
+    const response = await request(buildApp())
+      .post('/ask')
+      .send({
+        prompt: 'Direct answer only: verify the latest competitor moves without browsing and build me a launch plan.',
+        sessionId: 'honesty-session-direct-answer-1'
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.success).toBe(true);
+    expect(response.body.metadata.pipeline).toBe('trinity');
+    expect(response.body.result).toMatch(/can't (?:confirm|verify) current external state here without live access|cannot verify live or current external information here/i);
+    expect(response.body.result).toContain('Lead with differentiated positioning.');
+    expect(response.body.result).not.toContain('Competitors have accelerated AI integration');
+    expect(response.body.result).not.toContain('Strategic alliances are increasing');
+    expect(response.body.routingStages).toContain('ARCANOS-DIRECT-ANSWER');
+    expect(mockCreateChatCompletionWithFallback).toHaveBeenCalledTimes(1);
+    expect(mockRunStructuredReasoning).not.toHaveBeenCalled();
+  });
+
   it('normalizes duplicate limitations and scope drift at the route boundary', async () => {
     mockCreateChatCompletionWithFallback.mockReset();
     mockRunStructuredReasoning.mockReset();

@@ -277,6 +277,92 @@ function splitIntoSegments(text: string): string[] {
     .filter(Boolean);
 }
 
+function mergeOrphanListMarkerSegments(segments: string[]): string[] {
+  const mergedSegments: string[] = [];
+
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index]?.trim() ?? '';
+    if (!segment) {
+      continue;
+    }
+
+    if (/^\d+\.$/.test(segment)) {
+      const nextSegment = segments[index + 1]?.trim();
+      if (nextSegment) {
+        mergedSegments.push(`${segment} ${nextSegment}`);
+        index += 1;
+        continue;
+      }
+    }
+
+    mergedSegments.push(segment);
+  }
+
+  return mergedSegments;
+}
+
+function rewriteUnsupportedCurrentExternalStateSections(params: {
+  text: string;
+  userPrompt: string;
+  reasoningHonesty: TrinityReasoningHonesty;
+}): { text: string; blockedOrRewrittenClaims: string[] } {
+  if (!requestTargetsCurrentExternalState(params.userPrompt)) {
+    return {
+      text: params.text,
+      blockedOrRewrittenClaims: []
+    };
+  }
+
+  const blockedOrRewrittenClaims: string[] = [];
+  const keptLines: string[] = [];
+  let inUnsupportedExternalStateSection = false;
+  let liveLimitationAdded = false;
+
+  for (const rawLine of params.text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+
+    if (!line) {
+      if (!inUnsupportedExternalStateSection) {
+        keptLines.push('');
+      }
+      continue;
+    }
+
+    if (isLikelyCurrentExternalStateSectionHeading(line, params.userPrompt)) {
+      blockedOrRewrittenClaims.push(line);
+      if (!liveLimitationAdded) {
+        keptLines.push(ensureSingleSentence(buildLimitationSentence({
+          fallbackText: "I can't verify current external state here without live access",
+          existingCaveats: params.reasoningHonesty.userVisibleCaveats,
+          blockedSubtasks: params.reasoningHonesty.blockedSubtasks,
+          matcher: /\b(live|browse|current|latest|verify|external|competitor|market|news)\b/i
+        })));
+        liveLimitationAdded = true;
+      }
+      inUnsupportedExternalStateSection = true;
+      continue;
+    }
+
+    if (inUnsupportedExternalStateSection) {
+      if (isSectionHeading(line)) {
+        inUnsupportedExternalStateSection = false;
+        keptLines.push(rawLine);
+        continue;
+      }
+
+      blockedOrRewrittenClaims.push(line);
+      continue;
+    }
+
+    keptLines.push(rawLine);
+  }
+
+  return {
+    text: normalizeOutputSpacing(keptLines),
+    blockedOrRewrittenClaims
+  };
+}
+
 function hasExplicitLimitationLanguage(text: string): boolean {
   return LIMITATION_LANGUAGE_PATTERN.test(text);
 }
@@ -662,7 +748,6 @@ function rewriteUnsupportedClaims(params: {
   capabilityFlags: TrinityCapabilityFlags;
   reasoningHonesty: TrinityReasoningHonesty;
 }): { text: string; blockedOrRewrittenClaims: string[] } {
-  const segments = splitIntoSegments(params.text);
   const blockedOrRewrittenClaims: string[] = [];
   const rewrittenSegments: string[] = [];
   let liveLimitationAdded = false;
@@ -676,6 +761,18 @@ function rewriteUnsupportedClaims(params: {
   const supportsBackendAction =
     (params.capabilityFlags.canPersistData || params.capabilityFlags.canCallBackend) &&
     hasVerifiedToolEvidence(params.reasoningHonesty.evidenceTags, 'backend_action');
+  const sectionRewrite = !supportsLiveVerification
+    ? rewriteUnsupportedCurrentExternalStateSections({
+        text: params.text,
+        userPrompt: params.userPrompt,
+        reasoningHonesty: params.reasoningHonesty
+      })
+    : { text: params.text, blockedOrRewrittenClaims: [] };
+  if (sectionRewrite.blockedOrRewrittenClaims.length > 0) {
+    blockedOrRewrittenClaims.push(...sectionRewrite.blockedOrRewrittenClaims);
+    liveLimitationAdded = true;
+  }
+  const segments = mergeOrphanListMarkerSegments(splitIntoSegments(sectionRewrite.text));
   let inUnsupportedExternalStateSection = false;
 
   for (const segment of segments) {
