@@ -20,6 +20,23 @@ export interface JobRunnerSlotDefinition {
   isInspectorSlot: boolean;
 }
 
+export interface NonOverlappingTaskSkipEvent {
+  taskName: string;
+  skippedCount: number;
+  runningForMs: number | null;
+}
+
+export type NonOverlappingTaskRunner = (() => Promise<boolean>) & {
+  isRunning(): boolean;
+};
+
+export interface NonOverlappingTaskRunnerOptions {
+  taskName: string;
+  skipLogMinIntervalMs?: number;
+  onSkip?: (event: NonOverlappingTaskSkipEvent) => void;
+  nowMs?: () => number;
+}
+
 const RETRYABLE_DATABASE_BOOTSTRAP_ERROR_MARKERS = [
   'timeout exceeded when trying to connect',
   'connect timeout',
@@ -50,6 +67,61 @@ function readNonNegativeIntegerEnvValue(
 ): number {
   const parsedValue = rawValue ? Number(rawValue) : Number.NaN;
   return Number.isInteger(parsedValue) && parsedValue >= 0 ? parsedValue : fallback;
+}
+
+/**
+ * Create an async interval guard that skips ticks while the previous run is still active.
+ * Purpose: prevent timer-driven DB work from piling up when a previous tick is delayed.
+ * Inputs/outputs: accepts one async task and returns a callable runner; resolves true when executed, false when skipped.
+ * Edge case behavior: failed tasks still release the guard in finally, and skip notifications are rate-limited.
+ */
+export function createNonOverlappingTaskRunner(
+  task: () => Promise<void>,
+  options: NonOverlappingTaskRunnerOptions
+): NonOverlappingTaskRunner {
+  const skipLogMinIntervalMs = Math.max(1_000, options.skipLogMinIntervalMs ?? 30_000);
+  const nowMs = options.nowMs ?? (() => Date.now());
+  let running = false;
+  let runningStartedAtMs: number | null = null;
+  let skippedCount = 0;
+  let lastSkipLogAtMs = 0;
+
+  const runner = (async (): Promise<boolean> => {
+    const currentMs = nowMs();
+    if (running) {
+      skippedCount += 1;
+      const shouldLogSkip =
+        options.onSkip &&
+        (lastSkipLogAtMs === 0 || currentMs - lastSkipLogAtMs >= skipLogMinIntervalMs);
+
+      if (shouldLogSkip) {
+        lastSkipLogAtMs = currentMs;
+        options.onSkip?.({
+          taskName: options.taskName,
+          skippedCount,
+          runningForMs: runningStartedAtMs === null
+            ? null
+            : Math.max(0, currentMs - runningStartedAtMs)
+        });
+      }
+
+      return false;
+    }
+
+    running = true;
+    runningStartedAtMs = currentMs;
+    try {
+      await task();
+      return true;
+    } finally {
+      running = false;
+      runningStartedAtMs = null;
+      skippedCount = 0;
+    }
+  }) as NonOverlappingTaskRunner;
+
+  runner.isRunning = () => running;
+  return runner;
 }
 
 /**
