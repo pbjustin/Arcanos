@@ -245,6 +245,45 @@ describe('Trinity honesty controls', () => {
     ]);
   });
 
+  it('drops unsupported current-external-state sections while keeping downstream planning sections', () => {
+    const enforcementResult = enforceFinalStageHonestyAndMinimalism({
+      text: [
+        'Competitor Moves (as of latest available data):',
+        '- Competitors have accelerated feature releases, focusing on AI integration.',
+        '- Several have launched bundled offerings and tiered pricing.',
+        '- Increased investment in customer success and support channels.',
+        '',
+        'Launch plan:',
+        '1. Lead with differentiated positioning.',
+        '2. Prepare a rapid FAQ and objection-handling loop.'
+      ].join('\n'),
+      userPrompt: 'Verify the latest competitor moves without browsing and build me a launch plan.',
+      capabilityFlags: deriveTrinityCapabilityFlags(),
+      outputControls: deriveTrinityOutputControls('Verify the latest competitor moves without browsing and build me a launch plan.', {}),
+      reasoningHonesty: {
+        responseMode: 'partial_refusal',
+        achievableSubtasks: ['build the launch plan'],
+        blockedSubtasks: ['verify the latest competitor moves'],
+        userVisibleCaveats: ['Current competitor activity is unverified here.'],
+        evidenceTags: []
+      }
+    });
+
+    expect(enforcementResult.text).toContain('Current competitor activity is unverified here.');
+    expect(enforcementResult.text).toContain('1. Lead with differentiated positioning.');
+    expect(enforcementResult.text).toContain('2. Prepare a rapid FAQ and objection-handling loop.');
+    expect(enforcementResult.text).not.toContain('Competitor Moves (as of latest available data)');
+    expect(enforcementResult.text).not.toContain('Competitors have accelerated feature releases');
+    expect(enforcementResult.text).not.toContain('Several have launched bundled offerings');
+    expect(enforcementResult.text).not.toContain('Increased investment in customer success and support channels');
+    expect(enforcementResult.blockedOrRewrittenClaims).toEqual([
+      'Competitor Moves (as of latest available data):',
+      '- Competitors have accelerated feature releases, focusing on AI integration.',
+      '- Several have launched bundled offerings and tiered pricing.',
+      '- Increased investment in customer success and support channels.'
+    ]);
+  });
+
   it('keeps qualified live-runtime caveats during final minimalism enforcement for DAG audits', () => {
     const enforcementResult = enforceFinalStageHonestyAndMinimalism({
       text: [

@@ -66,8 +66,12 @@ const CURRENT_EXTERNAL_STATE_PATTERN =
   /\b(latest|current|currently|today|this week|recent|recently|up-to-date|as of now)\b/i;
 const EXTERNAL_STATE_CONTEXT_PATTERN =
   /\b(competitor|competitors|market|news|pricing|release|launch|moves?|external|trend|trends|company|companies|regulation|stock|stocks|state|status|events?)\b/i;
+const CURRENT_EXTERNAL_REQUEST_PATTERN =
+  /\b(verify|verified|check|checked|confirm|confirmed|review|reviewed|audit|audited|analy[sz]e|analy[sz]ed|assess|assessed|summari[sz]e|summari[sz]ed|compare|compared|track|tracked|latest|current|recent|today|this week|as of now)\b/i;
 const LIVE_RUNTIME_STATE_PATTERN =
   /\b(live|runtime|runtime behavior|runtime state|execution state|orchestration state|deployment status|service health|service status|worker state|queue state|run state|environment state)\b/i;
+const EXTERNAL_STATE_SECTION_HEADING_CONTEXT_PATTERN =
+  /\b(competitor|competitors|market|news|pricing|release|external|trend|trends|company|companies|regulation|stock|stocks|state|status|events?)\b/i;
 const BACKEND_ACTION_PATTERN =
   /\b(saved|save|persisted|persist|wrote|write|stored|store|pinged|ping|called|call|updated|update|inserted|insert|deleted|delete|committed|commit|queried|query|inspected|inspect)\b/i;
 const BACKEND_ACTION_CONTEXT_PATTERN =
@@ -92,6 +96,16 @@ const OPENING_PADDING_SEGMENT_PATTERNS = [
   /^here(?:'s| is) (?:the )?(?:answer|response|plan)\.?$/i,
   /^the short answer is:?$/i
 ] as const;
+const SECTION_HEADING_PATTERN = /:\s*$/;
+const LIST_ITEM_PATTERN = /^(?:[-*]|\d+\.)\s+/;
+const PLANNING_OR_INSTRUCTION_LEAD_PATTERN =
+  /^\s*(?:[-*]|\d+\.)?\s*(?:lead|highlight|emphasize|prioritize|ensure|prepare|offer|target|establish|provide|implement|secure|announce|obtain|conduct|coordinate|leverage|build|create|define|document|draft|position|launch|roll\s+out|ship|use|keep|focus)\b/i;
+const CURRENT_EXTERNAL_FACT_SUBJECT_PATTERN =
+  /^\s*(?:[-*]|\d+\.)?\s*(?:competitors?|several|many|most|major|the market|market|pricing|releases?|launches?|news|regulation|companies?|vendors?)\b/i;
+const CURRENT_EXTERNAL_FACT_NOUN_PHRASE_LEAD_PATTERN =
+  /^\s*(?:[-*]|\d+\.)?\s*(?:increased|decreased|heightened|growing|declining|notable)\b/i;
+const CURRENT_EXTERNAL_FACT_VERB_PATTERN =
+  /\b(is|are|was|were|has|have|had|continues?|continued|remains?|remained|shows?|showed|indicates?|indicated|accelerated|focused|focusing|expanded|cut|cuts|lowered|launched|launching|released|releasing|invested|investing|prioritized|prioritizing|emphasized|emphasizing)\b/i;
 const SUBSTRING_DUPLICATE_OVERLAP_THRESHOLD = 0.65;
 const SAME_CATEGORY_LIMITATION_DUPLICATE_OVERLAP_THRESHOLD = 0.72;
 const GENERAL_DUPLICATE_OVERLAP_THRESHOLD = 0.9;
@@ -389,6 +403,55 @@ function impliesCurrentExternalStateClaim(text: string): boolean {
   );
 }
 
+function requestTargetsCurrentExternalState(text: string): boolean {
+  return (
+    impliesCurrentExternalStateClaim(text) ||
+    (EXTERNAL_STATE_CONTEXT_PATTERN.test(text) && CURRENT_EXTERNAL_REQUEST_PATTERN.test(text))
+  );
+}
+
+function isSectionHeading(text: string): boolean {
+  const trimmedText = text.trim();
+  return SECTION_HEADING_PATTERN.test(trimmedText) && !LIST_ITEM_PATTERN.test(trimmedText);
+}
+
+function isListItem(text: string): boolean {
+  return LIST_ITEM_PATTERN.test(text.trim());
+}
+
+function isPlanningOrInstructionSegment(text: string): boolean {
+  return PLANNING_OR_INSTRUCTION_LEAD_PATTERN.test(text);
+}
+
+function isLikelyCurrentExternalStateSectionHeading(text: string, userPrompt: string): boolean {
+  return (
+    requestTargetsCurrentExternalState(userPrompt) &&
+    isSectionHeading(text) &&
+    (impliesCurrentExternalStateClaim(text) || EXTERNAL_STATE_SECTION_HEADING_CONTEXT_PATTERN.test(text))
+  );
+}
+
+function isLikelyCurrentExternalStateFactAssertion(text: string, userPrompt: string): boolean {
+  if (
+    !requestTargetsCurrentExternalState(userPrompt) ||
+    hasExplicitLimitationLanguage(text) ||
+    isPlanningOrInstructionSegment(text) ||
+    !EXTERNAL_STATE_CONTEXT_PATTERN.test(text)
+  ) {
+    return false;
+  }
+
+  return (
+    impliesCurrentExternalStateClaim(text) ||
+    (CURRENT_EXTERNAL_FACT_SUBJECT_PATTERN.test(text) && CURRENT_EXTERNAL_FACT_VERB_PATTERN.test(text)) ||
+    CURRENT_EXTERNAL_FACT_NOUN_PHRASE_LEAD_PATTERN.test(text)
+  );
+}
+
+function isLikelyUnsupportedExternalStateSectionBody(text: string): boolean {
+  return isListItem(text) && !hasExplicitLimitationLanguage(text) && !isPlanningOrInstructionSegment(text);
+}
+
 function containsAffirmativeVerificationVerb(text: string): boolean {
   const normalizedText = text.toLowerCase();
   const negativeVerificationPhrases = [
@@ -595,6 +658,7 @@ function buildRequestIntentPromptLines(requestIntent: TrinityIntentMode): string
 
 function rewriteUnsupportedClaims(params: {
   text: string;
+  userPrompt: string;
   capabilityFlags: TrinityCapabilityFlags;
   reasoningHonesty: TrinityReasoningHonesty;
 }): { text: string; blockedOrRewrittenClaims: string[] } {
@@ -612,10 +676,19 @@ function rewriteUnsupportedClaims(params: {
   const supportsBackendAction =
     (params.capabilityFlags.canPersistData || params.capabilityFlags.canCallBackend) &&
     hasVerifiedToolEvidence(params.reasoningHonesty.evidenceTags, 'backend_action');
+  let inUnsupportedExternalStateSection = false;
 
   for (const segment of segments) {
+    const externalStateSectionHeading = isLikelyCurrentExternalStateSectionHeading(segment, params.userPrompt);
+    if (isSectionHeading(segment) && !externalStateSectionHeading) {
+      inUnsupportedExternalStateSection = false;
+    }
+
     const impliesLiveVerification = LIVE_VERIFICATION_PATTERN.test(segment);
     const impliesCurrentExternalState = impliesCurrentExternalStateClaim(segment);
+    const impliesIndirectCurrentExternalState =
+      isLikelyCurrentExternalStateFactAssertion(segment, params.userPrompt) ||
+      (inUnsupportedExternalStateSection && isLikelyUnsupportedExternalStateSectionBody(segment));
     const qualifiedCurrentStateLimitation = isQualifiedCurrentStateLimitation(segment);
     const allowsProvidedDataVerification = allowsProvidedDataVerificationClaim(segment, params.capabilityFlags);
     const impliesBackendAction = BACKEND_ACTION_PATTERN.test(segment) && BACKEND_ACTION_CONTEXT_PATTERN.test(segment);
@@ -624,7 +697,11 @@ function rewriteUnsupportedClaims(params: {
     //audit Assumption: unverifiable current-state claims must be rewritten before the final answer reaches the caller, but explicit limitation caveats like "runtime enforcement remains unverified" must survive intact; failure risk: the guard replaces truthful caveats with a generic refusal and hides the useful static audit; expected invariant: only affirmative unsupported claims are rewritten; handling strategy: exempt qualified current-state limitations before applying the rewrite.
     if (
       !qualifiedCurrentStateLimitation &&
-      (((impliesLiveVerification && !allowsProvidedDataVerification) || impliesCurrentExternalState) && !supportsLiveVerification)
+      (((impliesLiveVerification && !allowsProvidedDataVerification) ||
+        impliesCurrentExternalState ||
+        externalStateSectionHeading ||
+        impliesIndirectCurrentExternalState) &&
+        !supportsLiveVerification)
     ) {
       blockedOrRewrittenClaims.push(segment);
       if (!liveLimitationAdded) {
@@ -636,6 +713,7 @@ function rewriteUnsupportedClaims(params: {
         })));
         liveLimitationAdded = true;
       }
+      inUnsupportedExternalStateSection = externalStateSectionHeading || inUnsupportedExternalStateSection || isListItem(segment);
       continue;
     }
 
@@ -1236,6 +1314,7 @@ export function enforceFinalStageHonestyAndMinimalism(params: {
       }
     : rewriteUnsupportedClaims({
         text: promptGenerationTrimmedText,
+        userPrompt: params.userPrompt,
         capabilityFlags: params.capabilityFlags,
         reasoningHonesty: params.reasoningHonesty
       });

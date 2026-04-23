@@ -149,7 +149,15 @@ describe('/api/arcanos/ask honesty e2e', () => {
         choices: [
           {
             message: {
-              content: 'I checked the latest competitor moves and verified they cut pricing today.\n\nLaunch plan:\n- Lead with differentiated positioning.\n- Prepare a rapid FAQ and objection-handling loop.'
+              content: [
+                'Competitor Moves (as of latest available data):',
+                '- Competitors have accelerated feature releases, focusing on AI integration.',
+                '- Several have launched bundled offerings and tiered pricing.',
+                '',
+                'Launch plan:',
+                '- Lead with differentiated positioning.',
+                '- Prepare a rapid FAQ and objection-handling loop.'
+              ].join('\n')
             }
           }
         ],
@@ -217,7 +225,8 @@ describe('/api/arcanos/ask honesty e2e', () => {
     expect(response.body.result).toContain('Current competitor activity is unverified here.');
     expect(response.body.result).toContain('Lead with differentiated positioning.');
     expect(response.body.result.match(/Current competitor activity is unverified here\./g)).toHaveLength(1);
-    expect(response.body.result).not.toMatch(/I checked|verified they cut pricing today/i);
+    expect(response.body.result).not.toContain('Competitors have accelerated feature releases');
+    expect(response.body.result).not.toContain('Several have launched bundled offerings');
     expect(response.body.auditSafe).toBeUndefined();
     expect(mockCreateChatCompletionWithFallback).toHaveBeenCalledTimes(2);
     expect(mockRunStructuredReasoning).toHaveBeenCalledTimes(1);
