@@ -35,6 +35,7 @@ import {
 import { classifyDagNodeFailureForWorkerRetry } from './jobFailureClassification.js';
 import {
   buildJobRunnerSlotDefinitions,
+  computeDeterministicIntervalJitterMs,
   createNonOverlappingTaskRunner,
   isRetryableJobRunnerDatabaseBootstrapError,
   resolveJobRunnerDatabaseBootstrapSettings,
@@ -76,6 +77,10 @@ interface JobExecutionOutcome {
 type OpenAIClient = ReturnType<typeof initOpenAIClient>;
 
 const QUEUED_GPT_PROMPT_KEYS = ['prompt', 'message', 'query', 'text', 'content', 'userInput'] as const;
+
+interface WorkerHeartbeatLoopHandle {
+  stop(): void;
+}
 
 function createOverlapSkipLogger(workerId: string, source: string) {
   return (event: { taskName: string; skippedCount: number; runningForMs: number | null }) => {
@@ -634,8 +639,9 @@ function startHeartbeatLoop(
 function startWorkerHeartbeatLoop(
   autonomyService: WorkerAutonomyService,
   workerId: string
-): NodeJS.Timeout {
+): WorkerHeartbeatLoopHandle {
   const intervalMs = Math.max(1_000, autonomyService.getHeartbeatIntervalMs());
+  const jitterMs = computeDeterministicIntervalJitterMs(workerId, intervalMs);
   const runHeartbeat = createNonOverlappingTaskRunner(
     () => autonomyService.recordWorkerHeartbeat({ source: 'worker-heartbeat' }),
     {
@@ -643,27 +649,54 @@ function startWorkerHeartbeatLoop(
       onSkip: createOverlapSkipLogger(workerId, 'worker-heartbeat')
     }
   );
+  let stopped = false;
+  let startTimeoutHandle: NodeJS.Timeout | null = null;
+  let intervalHandle: NodeJS.Timeout | null = null;
 
-  void runHeartbeat().catch((error: unknown) => {
-    console.warn(
-      `[jobRunner] worker=${workerId} initial worker heartbeat failed:`,
-      resolveErrorMessage(error)
-    );
-  });
-  const intervalHandle = setInterval(() => {
+  const executeHeartbeat = () => {
     void runHeartbeat().catch((error: unknown) => {
       console.warn(
         `[jobRunner] worker=${workerId} worker heartbeat failed:`,
         resolveErrorMessage(error)
       );
     });
-  }, intervalMs);
+  };
 
-  if (typeof intervalHandle.unref === 'function') {
-    intervalHandle.unref();
+  startTimeoutHandle = setTimeout(() => {
+    if (stopped) {
+      return;
+    }
+
+    executeHeartbeat();
+    intervalHandle = setInterval(executeHeartbeat, intervalMs);
+    if (typeof intervalHandle.unref === 'function') {
+      intervalHandle.unref();
+    }
+  }, jitterMs);
+  if (typeof startTimeoutHandle.unref === 'function') {
+    startTimeoutHandle.unref();
   }
 
-  return intervalHandle;
+  logger.info('worker.heartbeat.stagger_scheduled', {
+    module: 'worker',
+    workerId,
+    intervalMs,
+    jitterMs
+  });
+
+  return {
+    stop() {
+      stopped = true;
+      if (startTimeoutHandle) {
+        clearTimeout(startTimeoutHandle);
+        startTimeoutHandle = null;
+      }
+      if (intervalHandle) {
+        clearInterval(intervalHandle);
+        intervalHandle = null;
+      }
+    }
+  };
 }
 
 function startWatchdogLoop(autonomyService: WorkerAutonomyService): NodeJS.Timeout {
@@ -1106,7 +1139,7 @@ async function runWorkerConsumerSlot(
       }
     }
   } finally {
-    clearInterval(workerHeartbeatHandle);
+    workerHeartbeatHandle.stop();
   }
 }
 

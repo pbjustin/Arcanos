@@ -773,7 +773,7 @@ describe('workerAutonomyService', () => {
       await service.recordHeartbeat('job-1');
       await service.markIdle();
 
-      expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenCalledTimes(2);
+      expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenCalledTimes(1);
 
       await service.markJobStarted({
         id: 'job-1',
@@ -785,12 +785,12 @@ describe('workerAutonomyService', () => {
         updated_at: new Date('2026-03-07T12:00:00.000Z')
       } as any);
 
-      expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenCalledTimes(3);
+      expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenCalledTimes(2);
 
       jest.advanceTimersByTime(30_000);
       await service.markIdle();
 
-      expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenCalledTimes(4);
+      expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenCalledTimes(3);
     } finally {
       jest.useRealTimers();
     }
@@ -1091,5 +1091,56 @@ describe('workerAutonomyService', () => {
         error: 'database write timeout'
       })
     );
+  });
+
+  it('skips unchanged healthy heartbeat snapshots until the liveness refresh window', async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2026-04-23T20:00:00.000Z'));
+    try {
+      const service = new WorkerAutonomyService({
+        workerId: 'async-queue-slot-1',
+        workerType: 'async_queue',
+        heartbeatIntervalMs: 30_000,
+        leaseMs: 30_000,
+        inspectorIntervalMs: 30_000,
+        staleAfterMs: 90_000,
+        watchdogIdleMs: 120_000,
+        defaultMaxRetries: 2,
+        retryBackoffBaseMs: 2_000,
+        retryBackoffMaxMs: 60_000,
+        maxJobsPerHour: 120,
+        maxAiCallsPerHour: 120,
+        maxRssMb: 2_048,
+        queueDepthDeferralThreshold: 25,
+        queueDepthDeferralMs: 5_000,
+        failureWebhookUrl: null,
+        failureWebhookThreshold: 3,
+        failureWebhookCooldownMs: 300_000
+      });
+
+      await service.recordWorkerHeartbeat({ source: 'worker-heartbeat' });
+      expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenCalledTimes(1);
+
+      jest.setSystemTime(new Date('2026-04-23T20:00:30.000Z'));
+      await service.recordWorkerHeartbeat({ source: 'worker-heartbeat' });
+      expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenCalledTimes(1);
+      expect(loggerInfoMock).toHaveBeenCalledWith(
+        'worker.runtime_snapshot.persist.skipped',
+        expect.objectContaining({
+          module: 'worker-autonomy',
+          workerId: 'async-queue-slot-1',
+          source: 'worker-heartbeat',
+          healthStatus: 'healthy',
+          skippedCount: 1,
+          reason: 'no_meaningful_delta'
+        })
+      );
+
+      jest.setSystemTime(new Date('2026-04-23T20:01:00.000Z'));
+      await service.recordWorkerHeartbeat({ source: 'worker-heartbeat' });
+      expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenCalledTimes(2);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

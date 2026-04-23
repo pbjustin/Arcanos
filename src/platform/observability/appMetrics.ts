@@ -250,6 +250,13 @@ const workerRecoveredJobsTotal = new Counter({
   registers: [metricsRegistry],
 });
 
+const workerRuntimeSnapshotSkippedTotal = new Counter({
+  name: 'worker_runtime_snapshot_skipped_total',
+  help: 'Total worker runtime snapshot persistence attempts skipped because no meaningful state changed.',
+  labelNames: ['source', 'health_status'] as const,
+  registers: [metricsRegistry],
+});
+
 const gptRequestEventsTotal = new Counter({
   name: 'gpt_request_events_total',
   help: 'GPT request idempotency and dedupe events.',
@@ -792,6 +799,20 @@ export function recordWorkerRecoveredJobs(input: {
 }): void {
   workerRecoveredJobsTotal.inc(
     { action: normalizeLabel(input.action) },
+    Math.max(0, input.count ?? 1)
+  );
+}
+
+export function recordWorkerRuntimeSnapshotSkipped(input: {
+  source: string;
+  healthStatus: string;
+  count?: number;
+}): void {
+  workerRuntimeSnapshotSkippedTotal.inc(
+    {
+      source: normalizeLabel(input.source),
+      health_status: normalizeLabel(input.healthStatus),
+    },
     Math.max(0, input.count ?? 1)
   );
 }

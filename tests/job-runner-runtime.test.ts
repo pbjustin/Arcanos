@@ -2,6 +2,7 @@ import { describe, expect, it } from '@jest/globals';
 
 import {
   buildJobRunnerSlotDefinitions,
+  computeDeterministicIntervalJitterMs,
   createNonOverlappingTaskRunner,
   isRetryableJobRunnerDatabaseBootstrapError,
   resolveJobRunnerDatabaseBootstrapSettings,
@@ -59,6 +60,20 @@ describe('jobRunnerRuntime', () => {
         isInspectorSlot: true
       }
     ]);
+  });
+
+  it('computes stable per-worker interval jitter inside the heartbeat interval', () => {
+    const intervalMs = 30_000;
+    const first = computeDeterministicIntervalJitterMs('async-queue-slot-1', intervalMs);
+    const second = computeDeterministicIntervalJitterMs('async-queue-slot-1', intervalMs);
+    const other = computeDeterministicIntervalJitterMs('async-queue-slot-2', intervalMs);
+
+    expect(first).toBe(second);
+    expect(first).toBeGreaterThanOrEqual(0);
+    expect(first).toBeLessThan(intervalMs);
+    expect(other).toBeGreaterThanOrEqual(0);
+    expect(other).toBeLessThan(intervalMs);
+    expect(other).not.toBe(first);
   });
 
   it('normalizes database bootstrap retry settings', () => {

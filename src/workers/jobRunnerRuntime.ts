@@ -70,6 +70,30 @@ function readNonNegativeIntegerEnvValue(
 }
 
 /**
+ * Resolve a stable per-worker offset for interval work.
+ * Purpose: spread same-frequency worker tasks without relying on non-deterministic randomness.
+ * Inputs/outputs: accepts a worker id and interval, returns an offset in [0, intervalMs).
+ * Edge case behavior: invalid intervals collapse to a zero delay.
+ */
+export function computeDeterministicIntervalJitterMs(
+  workerId: string,
+  intervalMs: number
+): number {
+  const normalizedIntervalMs = Math.trunc(intervalMs);
+  if (!Number.isFinite(normalizedIntervalMs) || normalizedIntervalMs <= 1) {
+    return 0;
+  }
+
+  let hash = 2166136261;
+  for (let index = 0; index < workerId.length; index += 1) {
+    hash ^= workerId.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  return (hash >>> 0) % normalizedIntervalMs;
+}
+
+/**
  * Create an async interval guard that skips ticks while the previous run is still active.
  * Purpose: prevent timer-driven DB work from piling up when a previous tick is delayed.
  * Inputs/outputs: accepts one async task and returns a callable runner; resolves true when executed, false when skipped.

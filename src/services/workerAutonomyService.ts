@@ -24,6 +24,7 @@ import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import {
   recordDependencyCall,
   recordWorkerRecoveredJobs,
+  recordWorkerRuntimeSnapshotSkipped,
   recordWorkerStaleDetection,
   recordWorkerStalledJobs
 } from '@platform/observability/appMetrics.js';
@@ -173,6 +174,7 @@ interface WorkerWatchdogState {
 
 const WORKER_RUNTIME_SNAPSHOT_MIN_INTERVAL_MS = 30_000;
 const WORKER_RUNTIME_SNAPSHOT_SLOW_LOG_MIN_MS = 250;
+const WORKER_RUNTIME_SNAPSHOT_SKIP_LOG_MIN_MS = 60_000;
 
 const DEFAULT_AUTONOMY_SETTINGS: WorkerAutonomySettings = {
   workerId: process.env.JOB_WORKER_ID?.trim() || process.env.WORKER_ID?.trim() || 'async-queue',
@@ -349,6 +351,10 @@ export class WorkerAutonomyService {
   private readonly startedAt: string;
   private readonly state: RuntimeSnapshotState;
   private lastSnapshotPersistedAtMs = 0;
+  private lastSnapshotHealthStatus: WorkerAutonomyHealthStatus | null = null;
+  private lastSnapshotMeaningfulFingerprint: string | null = null;
+  private skippedSnapshotWriteCount = 0;
+  private lastSnapshotSkipLogAtMs = 0;
 
   constructor(settings: WorkerAutonomySettings = getWorkerAutonomySettings()) {
     this.settings = settings;
@@ -1029,11 +1035,51 @@ export class WorkerAutonomyService {
         alerts: context.alerts
       }
     };
+    const meaningfulFingerprint = buildWorkerRuntimeSnapshotMeaningfulFingerprint(snapshotRecord);
+    const noopRefreshMs = Math.max(
+      this.settings.heartbeatIntervalMs,
+      Math.floor(this.settings.staleAfterMs / 2)
+    );
+    const isNoopSnapshot =
+      this.lastSnapshotHealthStatus === context.healthStatus &&
+      this.lastSnapshotMeaningfulFingerprint === meaningfulFingerprint;
+    const canSkipNoopSnapshot =
+      isNoopSnapshot &&
+      this.lastSnapshotPersistedAtMs > 0 &&
+      nowMs - this.lastSnapshotPersistedAtMs < noopRefreshMs;
+
+    if (canSkipNoopSnapshot) {
+      this.skippedSnapshotWriteCount += 1;
+      recordWorkerRuntimeSnapshotSkipped({
+        source,
+        healthStatus: context.healthStatus
+      });
+      if (
+        this.lastSnapshotSkipLogAtMs === 0 ||
+        nowMs - this.lastSnapshotSkipLogAtMs >= WORKER_RUNTIME_SNAPSHOT_SKIP_LOG_MIN_MS
+      ) {
+        this.lastSnapshotSkipLogAtMs = nowMs;
+        logger.info('worker.runtime_snapshot.persist.skipped', {
+          module: 'worker-autonomy',
+          workerId: this.settings.workerId,
+          source,
+          healthStatus: context.healthStatus,
+          skippedCount: this.skippedSnapshotWriteCount,
+          reason: 'no_meaningful_delta',
+          nextRefreshInMs: Math.max(0, noopRefreshMs - (nowMs - this.lastSnapshotPersistedAtMs))
+        });
+      }
+      return;
+    }
 
     const persistStartedAtMs = Date.now();
     try {
       await upsertWorkerRuntimeSnapshot(snapshotRecord);
       this.lastSnapshotPersistedAtMs = nowMs;
+      this.lastSnapshotHealthStatus = context.healthStatus;
+      this.lastSnapshotMeaningfulFingerprint = meaningfulFingerprint;
+      this.skippedSnapshotWriteCount = 0;
+      this.lastSnapshotSkipLogAtMs = 0;
       const durationMs = Date.now() - persistStartedAtMs;
       const logContext = {
         module: 'worker-autonomy',
@@ -1184,6 +1230,43 @@ export class WorkerAutonomyService {
       console.warn('[Worker Autonomy] Failure webhook send failed:', resolveErrorMessage(error));
     }
   }
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function omitKeys(
+  value: Record<string, unknown>,
+  keysToOmit: ReadonlySet<string>
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(value).filter(([key]) => !keysToOmit.has(key))
+  );
+}
+
+function buildWorkerRuntimeSnapshotMeaningfulFingerprint(
+  record: WorkerRuntimeSnapshotRecord
+): string {
+  const volatileSnapshotKeys = new Set(['lastPersistSource']);
+  const volatileWatchdogKeys = new Set(['inactivityMs', 'lastHeartbeatAt']);
+  const volatileQueueSummaryKeys = new Set(['lastUpdatedAt', 'oldestPendingJobAgeMs']);
+  const snapshot = omitKeys(record.snapshot, volatileSnapshotKeys);
+  if (isPlainRecord(snapshot.queueSummary)) {
+    snapshot.queueSummary = omitKeys(snapshot.queueSummary, volatileQueueSummaryKeys);
+  }
+  if (isPlainRecord(snapshot.watchdog)) {
+    snapshot.watchdog = omitKeys(snapshot.watchdog, volatileWatchdogKeys);
+  }
+
+  return JSON.stringify({
+    workerType: record.workerType,
+    currentJobId: record.currentJobId,
+    lastError: record.lastError,
+    startedAt: record.startedAt,
+    lastInspectorRunAt: record.lastInspectorRunAt,
+    snapshot
+  });
 }
 
 /**
