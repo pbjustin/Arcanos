@@ -10,7 +10,9 @@ const {
   getLatestPromptDebugTrace,
   recordPromptDebugTrace,
   reloadPromptDebugTracesFromDiskForTest,
+  shouldInspectRuntimePrompt,
 } = await import('../src/services/promptDebugTraceService.js');
+const { classifyIntentMode } = await import('../src/shared/text/intentModeClassifier.js');
 
 describe('promptDebugTraceService persistence', () => {
   let tempDir = '';
@@ -166,5 +168,12 @@ describe('promptDebugTraceService persistence', () => {
         'intent_reason_delegated_deliverable_for_downstream_executor',
       ]),
     });
+  });
+
+  it('uses precomputed intent classification when suppressing runtime-inspection tags for prompt generation', () => {
+    const prompt = 'Write a prompt for Codex to verify runtime status.';
+
+    expect(shouldInspectRuntimePrompt(prompt, classifyIntentMode(prompt))).toBe(false);
+    expect(shouldInspectRuntimePrompt('Verify runtime status.')).toBe(true);
   });
 });

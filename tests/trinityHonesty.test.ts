@@ -374,6 +374,74 @@ describe('Trinity honesty controls', () => {
     expect(enforcementResult.text).not.toContain('cannot verify live or current external information here');
   });
 
+  it('blocks first-person unsupported claims while preserving downstream prompt-generation instructions', () => {
+    const result = enforceFinalStageHonesty(
+      [
+        'I verified the API routing.',
+        'I updated the backend record.',
+        'Prompt for Codex:',
+        'Verify the API routing, inspect the backend code, and update the docs.'
+      ].join('\n'),
+      createDefaultTrinityReasoningHonesty(),
+      deriveTrinityCapabilityFlags(),
+      'PROMPT_GENERATION'
+    );
+
+    expect(result.blocked).toBe(true);
+    expect(result.blockedCategories).toEqual(expect.arrayContaining(['live_verification', 'backend_action']));
+    expect(result.text).toContain('Prompt for Codex:');
+    expect(result.text).toContain('Verify the API routing');
+    expect(result.text).not.toContain('I verified the API routing');
+  });
+
+  it('removes prompt-generation backend self-claims without removing downstream imperative verification steps', () => {
+    const outputControls = deriveTrinityOutputControls(
+      'Write a prompt for Codex to verify the API routing and update docs.',
+      {}
+    );
+    const enforcementResult = enforceFinalStageHonestyAndMinimalism({
+      text: [
+        'I verified the API routing and updated the backend record.',
+        'Prompt for Codex:',
+        'Verify the API routing, inspect the backend code, and update the docs.'
+      ].join(' '),
+      userPrompt: 'Write a prompt for Codex to verify the API routing and update docs.',
+      capabilityFlags: deriveTrinityCapabilityFlags(),
+      outputControls,
+      reasoningHonesty: createDefaultTrinityReasoningHonesty()
+    });
+
+    expect(enforcementResult.text).toContain('Prompt for Codex:');
+    expect(enforcementResult.text).toContain('Verify the API routing');
+    expect(enforcementResult.text).not.toContain('I verified the API routing');
+    expect(enforcementResult.blockedOrRewrittenClaims).toEqual([
+      'I verified the API routing and updated the backend record.'
+    ]);
+  });
+
+  it('does not strip non-capability safety refusals from prompt-generation outputs', () => {
+    const outputControls = deriveTrinityOutputControls(
+      'Write what I should send another model.',
+      {}
+    );
+    const enforcementResult = enforceFinalStageHonestyAndMinimalism({
+      text: "I can't help write instructions to steal credentials. I can help draft a defensive incident-response prompt instead.",
+      userPrompt: 'Write what I should send another model.',
+      capabilityFlags: deriveTrinityCapabilityFlags(),
+      outputControls,
+      reasoningHonesty: {
+        responseMode: 'refusal',
+        achievableSubtasks: [],
+        blockedSubtasks: ['help write instructions to steal credentials'],
+        userVisibleCaveats: ["I can't help write instructions to steal credentials."],
+        evidenceTags: []
+      }
+    });
+
+    expect(enforcementResult.text).toContain("I can't help write instructions to steal credentials.");
+    expect(enforcementResult.text).toContain('defensive incident-response prompt');
+  });
+
   it('preserves GPT-5.1 version tokens inside partial-refusal leads without orphaning numeric fragments', () => {
     const auditReasoningHonesty: TrinityReasoningHonesty = {
       responseMode: 'partial_refusal',

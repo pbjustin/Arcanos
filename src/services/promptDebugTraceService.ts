@@ -3,7 +3,11 @@ import path from 'node:path';
 import readline from 'node:readline';
 
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
-import { classifyIntentMode, hasPromptGenerationIntent } from '@shared/text/intentModeClassifier.js';
+import {
+  classifyIntentMode,
+  hasPromptGenerationIntent,
+  type IntentModeClassification
+} from '@shared/text/intentModeClassifier.js';
 
 export type PromptDebugStage =
   | 'ingress'
@@ -324,7 +328,7 @@ function buildDerivedIntentTags(prompt: string): string[] {
   }
   tags.push(`intent_reason_${intentClassification.reason}`);
 
-  if (shouldInspectRuntimePrompt(prompt)) {
+  if (shouldInspectRuntimePrompt(prompt, intentClassification)) {
     tags.push('runtime_inspection_candidate');
   }
 
@@ -339,12 +343,19 @@ function buildDerivedIntentTags(prompt: string): string[] {
   return uniqueStrings(tags);
 }
 
-export function shouldInspectRuntimePrompt(prompt: string | null | undefined): boolean {
+export function shouldInspectRuntimePrompt(
+  prompt: string | null | undefined,
+  intentClassification?: IntentModeClassification
+): boolean {
   if (!prompt) {
     return false;
   }
 
-  if (isPromptAuthoringRequest(prompt)) {
+  if (intentClassification?.intentMode === 'PROMPT_GENERATION') {
+    return false;
+  }
+
+  if (!intentClassification && isPromptAuthoringRequest(prompt)) {
     return false;
   }
 
