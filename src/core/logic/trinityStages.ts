@@ -244,6 +244,7 @@ export function buildFinalArcanosMessages(
   gpt5Output: string,
   capabilityFlags: TrinityCapabilityFlags,
   reasoningHonesty: TrinityReasoningHonesty,
+  outputControls: TrinityOutputControls,
   systemPromptOverride?: string,
   finalInstructionOverride?: string
 ): ChatCompletionMessageParam[] {
@@ -257,7 +258,11 @@ export function buildFinalArcanosMessages(
   const assistantContent =
     ensureStringContent(buildFinalGpt5AnalysisMessage(gpt5Output)) ||
     'No analysis provided.';
-  const honestyInstructionContent = buildFinalHonestyInstruction(capabilityFlags, reasoningHonesty);
+  const honestyInstructionContent = buildFinalHonestyInstruction(
+    capabilityFlags,
+    reasoningHonesty,
+    outputControls.intentMode ?? outputControls.requestIntent ?? 'EXECUTE_TASK'
+  );
   const finalInstructionContent = ensureStringContent(
     [getFinalResponseInstruction(), finalInstructionOverride].filter(Boolean).join('\n\n')
   ) || 'Provide the final response.';
@@ -335,7 +340,11 @@ export async function runIntakeStage(
       {
         role: 'user',
         content: [
-          buildIntakeCapabilityEnvelope(auditSafePrompt, capabilityFlags),
+          buildIntakeCapabilityEnvelope(
+            auditSafePrompt,
+            capabilityFlags,
+            outputControls.intentMode ?? outputControls.requestIntent ?? 'EXECUTE_TASK'
+          ),
           '',
           buildTrinityStageContractBlock({
             stage: 'intake',
@@ -489,6 +498,7 @@ export async function runFinalStage(
       gpt5Output,
       capabilityFlags,
       reasoningHonesty,
+      outputControls,
       systemPromptOverride,
       buildFinalStageInstruction({
         capabilityFlags,

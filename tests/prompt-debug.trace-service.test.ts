@@ -150,4 +150,21 @@ describe('promptDebugTraceService persistence', () => {
     appendFileSpy.mockRestore();
     consoleErrorSpy.mockRestore();
   });
+
+  it('records delegated prompt-generation intent reasons in trace tags', async () => {
+    recordPromptDebugTrace('req-delegated-intent', 'ingress', {
+      endpoint: '/gpt/arcanos-core',
+      method: 'POST',
+      rawPrompt: 'Give me something I can hand to Codex to fix this',
+    });
+
+    await expect(getLatestPromptDebugTrace('req-delegated-intent')).resolves.toMatchObject({
+      requestId: 'req-delegated-intent',
+      intentTags: expect.arrayContaining([
+        'prompt_authoring_requested',
+        'intent_mode_prompt_generation',
+        'intent_reason_delegated_deliverable_for_downstream_executor',
+      ]),
+    });
+  });
 });

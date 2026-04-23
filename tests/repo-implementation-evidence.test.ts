@@ -24,6 +24,9 @@ describe('repo inspection prompt detection', () => {
   it('does not hijack prompt-authoring requests that merely mention repo inspection', () => {
     expect(shouldInspectRepoPrompt('Create a prompt for Codex to inspect the repo and suggest fixes')).toBe(false);
     expect(shouldInspectRepoPrompt('Write a prompt template that inspects the codebase and lists protocol schemas')).toBe(false);
+    expect(shouldInspectRepoPrompt('Draft a spec for another agent to inspect the repository and update the docs')).toBe(false);
+    expect(shouldInspectRepoPrompt('Help me make Codex fix my repo')).toBe(false);
+    expect(shouldInspectRepoPrompt('Generate something that lets another AI update docs')).toBe(false);
   });
 
   it('still marks explicit verification prompts as verification questions', () => {

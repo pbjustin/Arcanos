@@ -35,7 +35,6 @@ import type {
   TrinityRunOptions,
   TrinityDryRunPreview,
   TrinityCapabilityFlags,
-  TrinityToolBackedCapabilities,
   TrinityOutputControls,
   TrinityReasoningHonesty
 } from './trinityTypes.js';
@@ -1190,6 +1189,7 @@ export async function runThroughBrain(
       translatedFinalText,
       reasoningHonesty,
       capabilityFlags,
+      outputControls.intentMode ?? outputControls.requestIntent ?? 'EXECUTE_TASK'
     );
     const enforcedFinalOutput = enforceFinalStageHonestyAndMinimalism({
       text: honestyFilteredFinal.text,

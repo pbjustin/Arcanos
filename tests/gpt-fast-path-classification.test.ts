@@ -204,8 +204,19 @@ describe('GPT fast-path classification', () => {
   it('keeps intent detection explicit and tuneable', () => {
     expect(hasPromptGenerationIntent('Generate a prompt for a landing page.')).toBe(true);
     expect(hasPromptGenerationIntent('Turn this product brief into a prompt.')).toBe(true);
+    expect(hasPromptGenerationIntent('Write a prompt for Codex to inspect the repo and fix docs.')).toBe(true);
+    expect(hasPromptGenerationIntent('Help me make Codex fix my repo.')).toBe(true);
+    expect(hasPromptGenerationIntent('Generate something that lets another AI update docs.')).toBe(true);
+    expect(hasPromptGenerationIntent('Give me something I can hand to Codex to fix this.')).toBe(true);
+    expect(hasPromptGenerationIntent('Write what I should send another model.')).toBe(true);
+    expect(hasPromptGenerationIntent('Draft the tasking for an AI to handle this.')).toBe(true);
+    expect(hasPromptGenerationIntent('Make the instructions another tool would follow.')).toBe(true);
     expect(hasPromptGenerationIntent('Generate a launch email.')).toBe(false);
     expect(hasPromptGenerationIntent('Analyze this deployment timeout.')).toBe(false);
+    expect(hasPromptGenerationIntent('Fix this.')).toBe(false);
+    expect(hasPromptGenerationIntent('Inspect the repo.')).toBe(false);
+    expect(hasPromptGenerationIntent('Update the docs.')).toBe(false);
+    expect(hasPromptGenerationIntent('Verify the deployment config.')).toBe(false);
   });
 
   it('resolves the inline timeout once as part of the route decision', () => {

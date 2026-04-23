@@ -11,6 +11,10 @@ describe('runtime inspection prompt detection', () => {
     'Write a concise prompt to audit transport capability behavior',
     'Create a prompt for Codex to inspect the repo and suggest fixes',
     'Write a prompt that also runs diagnostics now against the live Railway deployment',
+    'Write instructions for another agent to verify the live API deployment and update docs',
+    'Draft a spec for Codex to inspect runtime logs and summarize findings',
+    'Help me make Codex fix my repo',
+    'Generate something that lets another AI update docs',
     'Show the DAG lineage, nodes, metrics, and verification for the latest run.',
     'Get the DAG lineage, nodes, metrics, and verification summary.',
   ])('keeps non-runtime request "%s" on the standard generation path', (prompt) => {

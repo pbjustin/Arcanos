@@ -2,8 +2,9 @@
  * Trinity honesty controls: capability framing, evidence tagging, minimalism rules, and user-visible debug gating.
  */
 
-import type { TrinityOutputControls, TrinityRunOptions } from './trinityTypes.js';
+import type { TrinityOutputControls, TrinityRunOptions, TrinityRequestIntent } from './trinityTypes.js';
 import { countWords } from '@shared/text/countWords.js';
+import { classifyIntentMode } from '@shared/text/intentModeClassifier.js';
 
 export type TrinitySourceType = 'tool' | 'user_context' | 'memory' | 'inference' | 'template';
 export type TrinityConfidence = 'high' | 'medium' | 'low';
@@ -55,7 +56,9 @@ const DEFAULT_OUTPUT_CONTROLS: TrinityOutputControls = {
   maxWords: null,
   answerMode: 'explained',
   debugPipeline: false,
-  strictUserVisibleOutput: true
+  strictUserVisibleOutput: true,
+  intentMode: 'EXECUTE_TASK',
+  requestIntent: 'EXECUTE_TASK'
 };
 
 const LIVE_VERIFICATION_PATTERN =
@@ -95,6 +98,12 @@ const SAME_CATEGORY_LIMITATION_DUPLICATE_OVERLAP_THRESHOLD = 0.72;
 const GENERAL_DUPLICATE_OVERLAP_THRESHOLD = 0.9;
 const SCOPE_DRIFT_QUALIFIER_PATTERN =
   /\s+or your(?: actual)?\s+(tooling|backend|stack|database|systems?|service|services)\b/gi;
+const PROMPT_GENERATION_DISCLAIMER_PATTERNS = [
+  /^(?:i|we)\s+(?:can(?:not|'t)|do not have|don't have|have not|haven't|am unable to|are unable to|cannot|can't)\b/i,
+  /^(?:current|live|runtime|external|backend)\b.+\b(?:unverified|unconfirmed|cannot be (?:confirmed|verified)|can't be (?:confirmed|verified)|cannot verify|can't verify)\b/i,
+  /^\byou can paste\b.+\bcodex\b/i,
+  /^\bpaste (?:this|your) prompt\b.+\bcodex\b/i
+] as const;
 const SCOPE_STOP_WORDS = new Set([
   'a', 'an', 'and', 'answer', 'as', 'at', 'be', 'but', 'by', 'can', 'could', 'do', 'does', 'for', 'from', 'give', 'help',
   'here', 'how', 'i', 'if', 'in', 'is', 'it', 'latest', 'me', 'my', 'no', 'of', 'on', 'only', 'or', 'our', 'the', 'this',
@@ -102,6 +111,29 @@ const SCOPE_STOP_WORDS = new Set([
 ]);
 
 type LimitationCategory = 'live_verification' | 'backend_action' | 'persistence_action' | 'general';
+
+function resolveIntentMode(
+  prompt: string,
+  options: TrinityRunOptions
+): TrinityRequestIntent {
+  if (options.intentMode) {
+    return options.intentMode;
+  }
+
+  if (options.requestIntent) {
+    return options.requestIntent;
+  }
+
+  return classifyIntentMode(prompt).intentMode;
+}
+
+function readIntentMode(outputControls: TrinityOutputControls): TrinityRequestIntent {
+  return outputControls.intentMode ?? outputControls.requestIntent ?? 'EXECUTE_TASK';
+}
+
+function isPromptGenerationRequest(outputControls: TrinityOutputControls): boolean {
+  return readIntentMode(outputControls) === 'PROMPT_GENERATION';
+}
 
 function escapePromptAngleBrackets(value: string): string {
   return value.replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -529,6 +561,39 @@ function ensureSingleSentence(text: string): string {
   return normalizedText ? `${normalizedText}.` : '';
 }
 
+function looksLikePromptGenerationCapabilityDisclaimer(segment: string): boolean {
+  return PROMPT_GENERATION_DISCLAIMER_PATTERNS.some(pattern => pattern.test(segment.trim()));
+}
+
+function stripLeadingPromptGenerationDisclaimers(text: string): string {
+  const segments = splitIntoSegments(text);
+  let startIndex = 0;
+
+  while (
+    segments.length - startIndex > 1 &&
+    looksLikePromptGenerationCapabilityDisclaimer(segments[startIndex] ?? '')
+  ) {
+    startIndex += 1;
+  }
+
+  return normalizeWhitespace(segments.slice(startIndex).join(' '));
+}
+
+function buildRequestIntentPromptLines(requestIntent: TrinityRequestIntent): string[] {
+  if (requestIntent === 'PROMPT_GENERATION') {
+    return [
+      '- Request intent: PROMPT_GENERATION.',
+      '- Treat repo inspection, runtime checks, API verification, commands, and live-state references as instructions for the downstream executor.',
+      '- Do not refuse solely because this backend lacks direct repo, runtime, or live external access when the user only asked for a prompt/spec/instructions.'
+    ];
+  }
+
+  return [
+    '- Request intent: EXECUTE_TASK.',
+    '- Apply normal capability limits to work the backend itself is being asked to perform.'
+  ];
+}
+
 function rewriteUnsupportedClaims(params: {
   text: string;
   capabilityFlags: TrinityCapabilityFlags;
@@ -842,13 +907,19 @@ export function buildCapabilityFlagsPromptBlock(capabilityFlags: TrinityCapabili
 /**
  * Build the intake-stage prompt envelope that preserves hard capability limits.
  */
-export function buildIntakeCapabilityEnvelope(userRequest: string, capabilityFlags: TrinityCapabilityFlags): string {
+export function buildIntakeCapabilityEnvelope(
+  userRequest: string,
+  capabilityFlags: TrinityCapabilityFlags,
+  requestIntent: TrinityRequestIntent = 'EXECUTE_TASK'
+): string {
   return [
     '<original_request>',
     sanitizePromptLine(userRequest),
     '</original_request>',
     '',
     buildCapabilityFlagsPromptBlock(capabilityFlags),
+    '',
+    ...buildRequestIntentPromptLines(requestIntent),
     '',
     'Hard constraints:',
     '- Preserve these capability flags exactly as written.',
@@ -862,13 +933,19 @@ export function buildIntakeCapabilityEnvelope(userRequest: string, capabilityFla
 /**
  * Build the reasoning-stage prompt envelope with conservative honesty rules.
  */
-export function buildReasoningCapabilityEnvelope(framedRequest: string, capabilityFlags: TrinityCapabilityFlags): string {
+export function buildReasoningCapabilityEnvelope(
+  framedRequest: string,
+  capabilityFlags: TrinityCapabilityFlags,
+  requestIntent: TrinityRequestIntent = 'EXECUTE_TASK'
+): string {
   return [
     '<framed_request>',
     sanitizePromptLine(framedRequest),
     '</framed_request>',
     '',
     buildCapabilityFlagsPromptBlock(capabilityFlags),
+    '',
+    ...buildRequestIntentPromptLines(requestIntent),
     '',
     'Schema requirements:',
     '- `response_mode` must be `partial_refusal` when any blocked subtask exists, and `refusal` only when nothing achievable remains.',
@@ -885,10 +962,13 @@ export function buildReasoningCapabilityEnvelope(framedRequest: string, capabili
  */
 export function buildFinalHonestyInstruction(
   capabilityFlags: TrinityCapabilityFlags,
-  reasoningHonesty: TrinityReasoningHonesty
+  reasoningHonesty: TrinityReasoningHonesty,
+  requestIntent: TrinityRequestIntent = 'EXECUTE_TASK'
 ): string {
   return [
     buildCapabilityFlagsPromptBlock(capabilityFlags),
+    '',
+    ...buildRequestIntentPromptLines(requestIntent),
     '',
     '<reasoning_honesty>',
     serializePromptJson({
@@ -909,6 +989,12 @@ export function buildFinalHonestyInstruction(
     '- If reasoning marked any subtask as blocked or unverifiable, keep that limitation explicit in the user-facing answer.',
     '- Do not upgrade `unverified`, `inferred`, or `unavailable` claims into verified, checked, current, or confirmed wording.',
     '- Do not claim backend calls, saves, writes, or successful tool actions unless there is explicit tool-backed verified evidence.',
+    ...(requestIntent === 'PROMPT_GENERATION'
+      ? [
+          '- For PROMPT_GENERATION, downstream repo/runtime/API steps are instructions for another executor, not unsupported claims by this backend.',
+          '- Do not refuse solely because the downstream prompt mentions inspection, verification, commands, or live state.'
+        ]
+      : []),
     '- If the request has both achievable and blocked parts, answer the achievable part and qualify the blocked part instead of refusing everything.'
   ].join('\n');
 }
@@ -919,8 +1005,18 @@ export function buildFinalHonestyInstruction(
 export function enforceFinalStageHonesty(
   rawText: string,
   reasoningHonesty: TrinityReasoningHonesty,
-  capabilityFlags: TrinityCapabilityFlags
+  capabilityFlags: TrinityCapabilityFlags,
+  requestIntent: TrinityRequestIntent = 'EXECUTE_TASK'
 ): FinalClaimBlockResult {
+  //audit Assumption: prompt-generation requests may legitimately contain repo/runtime/API verification steps for a downstream executor; failure risk: execution-time capability disclaimers overwrite a valid generated prompt; expected invariant: unsupported-access rewrites only apply when the backend itself was asked to execute the work; handling strategy: bypass claim blocking for PROMPT_GENERATION and rely on the downstream-instruction prompts plus normal safety layers.
+  if (requestIntent === 'PROMPT_GENERATION') {
+    return {
+      text: normalizeWhitespace(rawText),
+      blocked: false,
+      blockedCategories: []
+    };
+  }
+
   const supportsLiveVerification =
     capabilityFlags.canVerifyLiveData &&
     capabilityFlags.canConfirmExternalState &&
@@ -994,13 +1090,16 @@ export function deriveTrinityOutputControls(prompt: string, options: TrinityRunO
   const resolvedMaxWords = explicitMaxWords ?? parsedMaxWords;
   const debugPipeline = options.debugPipeline ?? answerMode === 'debug';
   const strictUserVisibleOutput = options.strictUserVisibleOutput ?? DEFAULT_OUTPUT_CONTROLS.strictUserVisibleOutput;
+  const intentMode = resolveIntentMode(prompt, options);
 
   return {
     requestedVerbosity: resolvedMaxWords !== null && resolvedMaxWords <= 80 && !options.requestedVerbosity ? 'minimal' : requestedVerbosity,
     maxWords: resolvedMaxWords,
     answerMode: resolvedMaxWords !== null && resolvedMaxWords <= 80 && !options.answerMode ? 'direct' : answerMode,
     debugPipeline,
-    strictUserVisibleOutput
+    strictUserVisibleOutput,
+    intentMode,
+    requestIntent: intentMode
   };
 }
 
@@ -1012,9 +1111,12 @@ export function buildTrinityStageContractBlock(params: {
   capabilityFlags: TrinityCapabilityFlags;
   outputControls: TrinityOutputControls;
 }): string {
+  const intentMode = readIntentMode(params.outputControls);
   return [
     '[TRINITY_PIPELINE_CONTRACT]',
     `stage=${params.stage}`,
+    `intent_mode=${intentMode}`,
+    `request_intent=${intentMode}`,
     `requested_verbosity=${params.outputControls.requestedVerbosity}`,
     `max_words=${params.outputControls.maxWords ?? 'null'}`,
     `answer_mode=${params.outputControls.answerMode}`,
@@ -1029,6 +1131,11 @@ export function buildTrinityStageContractBlock(params: {
     'Rules:',
     '- Do not claim live verification, current external state, backend actions, or saved writes without the matching capability and evidence.',
     '- `can_verify_provided_data=true` allows validation of the provided inputs only; it never permits live/runtime/deployment verification.',
+    ...(isPromptGenerationRequest(params.outputControls)
+      ? [
+          '- When request_intent=PROMPT_GENERATION, references to repo inspection, runtime checks, API verification, or commands belong to the downstream executor.'
+        ]
+      : []),
     '- If only part of the request is impossible, qualify only that part and continue with the doable portion.',
     '- Do not add audit notes, reasoning notes, or ceremonial framing unless answer_mode is audit or debug.',
     '- Prefer the shortest truthful answer that still completes the request.'
@@ -1044,8 +1151,20 @@ export function buildReasoningStagePrompt(params: {
   outputControls: TrinityOutputControls;
 }): string {
   return [
-    buildReasoningCapabilityEnvelope(params.framedRequest, params.capabilityFlags),
+    buildReasoningCapabilityEnvelope(
+      params.framedRequest,
+      params.capabilityFlags,
+      readIntentMode(params.outputControls)
+    ),
     '',
+    ...(isPromptGenerationRequest(params.outputControls)
+      ? [
+          'Prompt-generation override:',
+          '- When the user asks for a prompt, spec, brief, or instructions, treat downstream repo/runtime/API actions as executable steps for another agent.',
+          '- Keep `response_mode=answer` unless the requested content itself is unsafe.',
+          '- Do not mark downstream inspection or verification steps as blocked merely because this backend cannot perform them directly.'
+        ]
+      : []),
     buildTrinityStageContractBlock({
       stage: 'reasoning',
       capabilityFlags: params.capabilityFlags,
@@ -1081,6 +1200,12 @@ export function buildFinalStageInstruction(params: {
     '- Return only the user-facing answer.',
     '- Keep the answer natural and direct. Do not add packaging like "Here is a concise plan" or "Below are the audit notes".',
     '- Preserve any blocked-subtask limitation, but do not pad it with extra commentary.',
+    ...(isPromptGenerationRequest(params.outputControls)
+      ? [
+          '- Request intent is PROMPT_GENERATION. Write the prompt/spec/instructions for the downstream executor instead of refusing for lack of repo/runtime/live access.',
+          '- Imperative repo/runtime/API steps belong to the downstream executor and should remain in the generated prompt.'
+        ]
+      : []),
     optionalCaveat
       ? `- If a limitation is needed, keep it to one short sentence such as: "${optionalCaveat.trim()}"`
       : '- If a limitation is needed, state it once and continue with the doable part.'
@@ -1102,15 +1227,28 @@ export function enforceFinalStageHonestyAndMinimalism(params: {
 }): { text: string; removedMetaSections: string[]; blockedOrRewrittenClaims: string[] } {
   const withoutMetaSections = removeUnrequestedMetaSections(params.text, params.outputControls);
   const deInflatedText = stripStyleInflationPrefix(withoutMetaSections.text);
-  const rewrittenClaims = rewriteUnsupportedClaims({
-    text: deInflatedText,
-    capabilityFlags: params.capabilityFlags,
-    reasoningHonesty: params.reasoningHonesty
-  });
-  const textWithRequiredLimitation = ensureRequiredLimitation(rewrittenClaims.text, params.reasoningHonesty);
+  const promptGeneration = isPromptGenerationRequest(params.outputControls);
+  const promptGenerationTrimmedText = promptGeneration
+    ? stripLeadingPromptGenerationDisclaimers(deInflatedText)
+    : deInflatedText;
+  const rewrittenClaims = promptGeneration
+    ? {
+        text: promptGenerationTrimmedText,
+        blockedOrRewrittenClaims: []
+      }
+    : rewriteUnsupportedClaims({
+        text: promptGenerationTrimmedText,
+        capabilityFlags: params.capabilityFlags,
+        reasoningHonesty: params.reasoningHonesty
+      });
+  const textWithRequiredLimitation = promptGeneration
+    ? rewrittenClaims.text
+    : ensureRequiredLimitation(rewrittenClaims.text, params.reasoningHonesty);
   const openingMinimizedText = removeOpeningPadding(textWithRequiredLimitation);
   const scopeTightenedText = trimUnrequestedScopeDrift(openingMinimizedText, params.userPrompt, params.reasoningHonesty);
-  const limitationCompressedText = compressLimitationSegments(scopeTightenedText, params.reasoningHonesty);
+  const limitationCompressedText = promptGeneration
+    ? scopeTightenedText
+    : compressLimitationSegments(scopeTightenedText, params.reasoningHonesty);
   const dedupedText = dedupeNearDuplicateSegments(limitationCompressedText);
   return {
     text: normalizeWhitespace(compressToWordLimit(dedupedText, params.outputControls)),
