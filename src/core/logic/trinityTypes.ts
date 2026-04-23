@@ -30,7 +30,6 @@ export interface TrinityMetaTokens {
 export type TrinityRequestedVerbosity = 'minimal' | 'normal' | 'detailed';
 export type TrinityAnswerMode = 'direct' | 'explained' | 'audit' | 'debug';
 export type TrinityIntentMode = IntentMode;
-export type TrinityRequestIntent = TrinityIntentMode;
 
 export interface TrinityOutputControls {
   requestedVerbosity: TrinityRequestedVerbosity;
@@ -39,7 +38,6 @@ export interface TrinityOutputControls {
   debugPipeline: boolean;
   strictUserVisibleOutput: boolean;
   intentMode?: TrinityIntentMode;
-  requestIntent?: TrinityRequestIntent;
 }
 
 export interface TrinityPipelineDebug {
@@ -197,7 +195,8 @@ export interface TrinityRunOptions {
   debugPipeline?: boolean;
   strictUserVisibleOutput?: boolean;
   intentMode?: TrinityIntentMode;
-  requestIntent?: TrinityRequestIntent;
+  /** @deprecated Backward-compatible alias; normalize through `resolveIntentMode()` and prefer `intentMode`. */
+  requestIntent?: TrinityIntentMode;
   directAnswerModelOverride?: string;
   reasoningStagePreviewChaosHook?: PreviewAskChaosHook;
 }

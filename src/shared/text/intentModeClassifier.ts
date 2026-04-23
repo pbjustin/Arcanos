@@ -73,7 +73,7 @@ const AUTHORING_PATTERNS: LabeledPattern[] = [
   { label: 'prepare', pattern: /\bprepare\b/i },
   { label: 'rewrite', pattern: /\brewrite\b/i },
   { label: 'revise', pattern: /\brev(?:ise|ision)\b/i },
-  { label: 'convert', pattern: /\b(?:turn|convert)\b[\s\S]{0,80}\binto\b/i },
+  { label: 'convert', pattern: /\b(?:turn|convert)\b[^.!?\n]{0,80}\binto\b/i },
 ];
 
 const ARTIFACT_REQUEST_PATTERNS: LabeledPattern[] = [

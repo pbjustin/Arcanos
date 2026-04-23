@@ -75,7 +75,8 @@ import {
   deriveTrinityCapabilityFlags,
   deriveTrinityOutputControls,
   enforceFinalStageHonesty,
-  enforceFinalStageHonestyAndMinimalism
+  enforceFinalStageHonestyAndMinimalism,
+  readIntentMode
 } from './trinityHonesty.js';
 import { resolveTrinityDirectAnswerPreference } from '@services/directAnswerMode.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
@@ -1189,7 +1190,7 @@ export async function runThroughBrain(
       translatedFinalText,
       reasoningHonesty,
       capabilityFlags,
-      outputControls.intentMode ?? outputControls.requestIntent ?? 'EXECUTE_TASK'
+      readIntentMode(outputControls)
     );
     const enforcedFinalOutput = enforceFinalStageHonestyAndMinimalism({
       text: honestyFilteredFinal.text,

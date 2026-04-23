@@ -55,6 +55,7 @@ import {
   buildReasoningStagePrompt,
   buildTrinityStageContractBlock,
   createDefaultTrinityReasoningHonesty,
+  readIntentMode,
   type TrinityCapabilityFlags,
   type TrinityReasoningHonesty
 } from './trinityHonesty.js';
@@ -261,7 +262,7 @@ export function buildFinalArcanosMessages(
   const honestyInstructionContent = buildFinalHonestyInstruction(
     capabilityFlags,
     reasoningHonesty,
-    outputControls.intentMode ?? outputControls.requestIntent ?? 'EXECUTE_TASK'
+    readIntentMode(outputControls)
   );
   const finalInstructionContent = ensureStringContent(
     [getFinalResponseInstruction(), finalInstructionOverride].filter(Boolean).join('\n\n')
@@ -343,7 +344,7 @@ export async function runIntakeStage(
           buildIntakeCapabilityEnvelope(
             auditSafePrompt,
             capabilityFlags,
-            outputControls.intentMode ?? outputControls.requestIntent ?? 'EXECUTE_TASK'
+            readIntentMode(outputControls)
           ),
           '',
           buildTrinityStageContractBlock({

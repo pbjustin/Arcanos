@@ -96,4 +96,12 @@ describe('intent mode classification', () => {
       reason: 'artifact_requested_for_downstream_executor',
     });
   });
+
+  it('does not let sentence-spanning convert phrasing create a false prompt-generation match', () => {
+    expect(classifyIntentMode('Turn the light off. Then go into prompt engineering later.')).toMatchObject({
+      intentMode: 'EXECUTE_TASK',
+      artifactRequested: false,
+      reason: 'no_prompt_generation_signals',
+    });
+  });
 });

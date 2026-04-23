@@ -7,6 +7,8 @@ import {
   deriveTrinityOutputControls,
   enforceFinalStageHonesty,
   enforceFinalStageHonestyAndMinimalism,
+  readIntentMode,
+  resolveIntentMode,
   shouldExposePipelineDebug,
   type TrinityReasoningHonesty
 } from '../src/core/logic/trinityHonesty.js';
@@ -177,7 +179,6 @@ describe('Trinity honesty controls', () => {
     expect(outputControls.strictUserVisibleOutput).toBe(true);
     expect(outputControls.debugPipeline).toBe(false);
     expect(outputControls.intentMode).toBe('EXECUTE_TASK');
-    expect(outputControls.requestIntent).toBe('EXECUTE_TASK');
   });
 
   it.each([
@@ -194,7 +195,6 @@ describe('Trinity honesty controls', () => {
     const outputControls = deriveTrinityOutputControls(prompt, {});
 
     expect(outputControls.intentMode).toBe('PROMPT_GENERATION');
-    expect(outputControls.requestIntent).toBe('PROMPT_GENERATION');
   });
 
   it.each([
@@ -206,7 +206,14 @@ describe('Trinity honesty controls', () => {
     const outputControls = deriveTrinityOutputControls(prompt, {});
 
     expect(outputControls.intentMode).toBe('EXECUTE_TASK');
-    expect(outputControls.requestIntent).toBe('EXECUTE_TASK');
+  });
+
+  it('exports shared intent-mode helpers for callers that need consistent resolution', () => {
+    expect(resolveIntentMode('Write a prompt for Codex to inspect the repo.', {})).toBe('PROMPT_GENERATION');
+    expect(resolveIntentMode('Inspect the repo.', { intentMode: 'PROMPT_GENERATION' })).toBe('PROMPT_GENERATION');
+    expect(resolveIntentMode('Inspect the repo.', { requestIntent: 'PROMPT_GENERATION' })).toBe('PROMPT_GENERATION');
+    expect(readIntentMode({ requestedVerbosity: 'normal', maxWords: null, answerMode: 'explained', debugPipeline: false, strictUserVisibleOutput: true, intentMode: 'PROMPT_GENERATION' })).toBe('PROMPT_GENERATION');
+    expect(readIntentMode(undefined)).toBe('EXECUTE_TASK');
   });
 
   it('rewrites unsupported live-verification claims and strips unrequested meta sections', () => {
@@ -295,7 +302,6 @@ describe('Trinity honesty controls', () => {
     });
 
     expect(outputControls.intentMode).toBe('PROMPT_GENERATION');
-    expect(outputControls.requestIntent).toBe('PROMPT_GENERATION');
     expect(enforcementResult.text).toContain('Prompt for Codex:');
     expect(enforcementResult.text).toContain('Inspect the repository');
     expect(enforcementResult.text).not.toContain("I can't inspect your repo from here.");

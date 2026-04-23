@@ -2,7 +2,7 @@
  * Trinity honesty controls: capability framing, evidence tagging, minimalism rules, and user-visible debug gating.
  */
 
-import type { TrinityOutputControls, TrinityRunOptions, TrinityRequestIntent } from './trinityTypes.js';
+import type { TrinityIntentMode, TrinityOutputControls, TrinityRunOptions } from './trinityTypes.js';
 import { countWords } from '@shared/text/countWords.js';
 import { classifyIntentMode } from '@shared/text/intentModeClassifier.js';
 
@@ -57,8 +57,7 @@ const DEFAULT_OUTPUT_CONTROLS: TrinityOutputControls = {
   answerMode: 'explained',
   debugPipeline: false,
   strictUserVisibleOutput: true,
-  intentMode: 'EXECUTE_TASK',
-  requestIntent: 'EXECUTE_TASK'
+  intentMode: 'EXECUTE_TASK'
 };
 
 const LIVE_VERIFICATION_PATTERN =
@@ -112,10 +111,10 @@ const SCOPE_STOP_WORDS = new Set([
 
 type LimitationCategory = 'live_verification' | 'backend_action' | 'persistence_action' | 'general';
 
-function resolveIntentMode(
+export function resolveIntentMode(
   prompt: string,
   options: TrinityRunOptions
-): TrinityRequestIntent {
+): TrinityIntentMode {
   if (options.intentMode) {
     return options.intentMode;
   }
@@ -127,8 +126,8 @@ function resolveIntentMode(
   return classifyIntentMode(prompt).intentMode;
 }
 
-function readIntentMode(outputControls: TrinityOutputControls): TrinityRequestIntent {
-  return outputControls.intentMode ?? outputControls.requestIntent ?? 'EXECUTE_TASK';
+export function readIntentMode(outputControls?: TrinityOutputControls | null): TrinityIntentMode {
+  return outputControls?.intentMode ?? 'EXECUTE_TASK';
 }
 
 function isPromptGenerationRequest(outputControls: TrinityOutputControls): boolean {
@@ -579,7 +578,7 @@ function stripLeadingPromptGenerationDisclaimers(text: string): string {
   return normalizeWhitespace(segments.slice(startIndex).join(' '));
 }
 
-function buildRequestIntentPromptLines(requestIntent: TrinityRequestIntent): string[] {
+function buildRequestIntentPromptLines(requestIntent: TrinityIntentMode): string[] {
   if (requestIntent === 'PROMPT_GENERATION') {
     return [
       '- Request intent: PROMPT_GENERATION.',
@@ -910,7 +909,7 @@ export function buildCapabilityFlagsPromptBlock(capabilityFlags: TrinityCapabili
 export function buildIntakeCapabilityEnvelope(
   userRequest: string,
   capabilityFlags: TrinityCapabilityFlags,
-  requestIntent: TrinityRequestIntent = 'EXECUTE_TASK'
+  requestIntent: TrinityIntentMode = 'EXECUTE_TASK'
 ): string {
   return [
     '<original_request>',
@@ -936,7 +935,7 @@ export function buildIntakeCapabilityEnvelope(
 export function buildReasoningCapabilityEnvelope(
   framedRequest: string,
   capabilityFlags: TrinityCapabilityFlags,
-  requestIntent: TrinityRequestIntent = 'EXECUTE_TASK'
+  requestIntent: TrinityIntentMode = 'EXECUTE_TASK'
 ): string {
   return [
     '<framed_request>',
@@ -963,7 +962,7 @@ export function buildReasoningCapabilityEnvelope(
 export function buildFinalHonestyInstruction(
   capabilityFlags: TrinityCapabilityFlags,
   reasoningHonesty: TrinityReasoningHonesty,
-  requestIntent: TrinityRequestIntent = 'EXECUTE_TASK'
+  requestIntent: TrinityIntentMode = 'EXECUTE_TASK'
 ): string {
   return [
     buildCapabilityFlagsPromptBlock(capabilityFlags),
@@ -1006,7 +1005,7 @@ export function enforceFinalStageHonesty(
   rawText: string,
   reasoningHonesty: TrinityReasoningHonesty,
   capabilityFlags: TrinityCapabilityFlags,
-  requestIntent: TrinityRequestIntent = 'EXECUTE_TASK'
+  requestIntent: TrinityIntentMode = 'EXECUTE_TASK'
 ): FinalClaimBlockResult {
   //audit Assumption: prompt-generation requests may legitimately contain repo/runtime/API verification steps for a downstream executor; failure risk: execution-time capability disclaimers overwrite a valid generated prompt; expected invariant: unsupported-access rewrites only apply when the backend itself was asked to execute the work; handling strategy: bypass claim blocking for PROMPT_GENERATION and rely on the downstream-instruction prompts plus normal safety layers.
   if (requestIntent === 'PROMPT_GENERATION') {
@@ -1098,8 +1097,7 @@ export function deriveTrinityOutputControls(prompt: string, options: TrinityRunO
     answerMode: resolvedMaxWords !== null && resolvedMaxWords <= 80 && !options.answerMode ? 'direct' : answerMode,
     debugPipeline,
     strictUserVisibleOutput,
-    intentMode,
-    requestIntent: intentMode
+    intentMode
   };
 }
 

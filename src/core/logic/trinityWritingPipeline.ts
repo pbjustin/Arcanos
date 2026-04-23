@@ -8,9 +8,9 @@ import {
   type WritingPlaneInputClassification,
 } from '@platform/runtime/writingPlaneContract.js';
 import { generateRequestId } from '@shared/idGenerator.js';
-import { classifyIntentMode } from '@shared/text/intentModeClassifier.js';
 
 import { runThroughBrain, type TrinityResult, type TrinityRunOptions } from './trinity.js';
+import { readIntentMode, resolveIntentMode } from './trinityHonesty.js';
 
 export interface TrinityWritingInput {
   prompt: string;
@@ -137,10 +137,7 @@ export async function runTrinityWritingPipeline(
   const prompt = params.input.prompt.trim();
   const runtimeBudget = params.context.runtimeBudget ?? createRuntimeBudget();
   const startedAt = Date.now();
-  const intentMode =
-    params.context.runOptions?.intentMode ??
-    params.context.runOptions?.requestIntent ??
-    classifyIntentMode(prompt).intentMode;
+  const intentMode = resolveIntentMode(prompt, params.context.runOptions ?? {});
 
   logger.info('trinity.entry', {
     module: 'trinity',
@@ -171,7 +168,7 @@ export async function runTrinityWritingPipeline(
       durationMs: Date.now() - startedAt,
       activeModel: result.activeModel,
       fallbackFlag: result.fallbackFlag,
-      intentMode: result.outputControls?.intentMode ?? result.outputControls?.requestIntent ?? intentMode,
+      intentMode: result.outputControls ? readIntentMode(result.outputControls) : intentMode,
     });
 
     return result;
