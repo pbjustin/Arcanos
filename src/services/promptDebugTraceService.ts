@@ -3,6 +3,11 @@ import path from 'node:path';
 import readline from 'node:readline';
 
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
+import {
+  classifyIntentMode,
+  hasPromptGenerationIntent,
+  type IntentModeClassification
+} from '@shared/text/intentModeClassifier.js';
 
 export type PromptDebugStage =
   | 'ingress'
@@ -124,12 +129,6 @@ const PROMPT_CONSTRAINT_RULES: PromptConstraintRule[] = [
     tag: 'verify_in_production',
     liveRuntime: true,
   },
-];
-
-const promptAuthoringPatterns = [
-  /\b(?:generate|write|draft|revise|rewrite|create|compose|produce|craft|author|summari[sz]e)\b[^.!?\n]{0,48}\b(?:prompt|template|instructions?)\b/i,
-  /\b(?:prompt|template|instructions?)\b[^.!?\n]{0,48}\b(?:generate|write|draft|revise|rewrite|create|compose|produce|craft|author|summari[sz]e)\b/i,
-  /\boutput\s+only\s+the\s+prompt\b/i,
 ];
 
 const dagArtifactExecutionPatterns = [
@@ -314,6 +313,7 @@ function buildDerivedIntentTags(prompt: string): string[] {
     return [];
   }
 
+  const intentClassification = classifyIntentMode(prompt);
   const tags: string[] = [];
   const normalizedPrompt = prompt.toLowerCase();
   for (const rule of PROMPT_CONSTRAINT_RULES) {
@@ -322,11 +322,13 @@ function buildDerivedIntentTags(prompt: string): string[] {
     }
   }
 
-  if (isPromptAuthoringRequest(prompt)) {
+  if (intentClassification.intentMode === 'PROMPT_GENERATION') {
     tags.push('prompt_authoring_requested');
+    tags.push('intent_mode_prompt_generation');
   }
+  tags.push(`intent_reason_${intentClassification.reason}`);
 
-  if (shouldInspectRuntimePrompt(prompt)) {
+  if (shouldInspectRuntimePrompt(prompt, intentClassification)) {
     tags.push('runtime_inspection_candidate');
   }
 
@@ -341,12 +343,19 @@ function buildDerivedIntentTags(prompt: string): string[] {
   return uniqueStrings(tags);
 }
 
-export function shouldInspectRuntimePrompt(prompt: string | null | undefined): boolean {
+export function shouldInspectRuntimePrompt(
+  prompt: string | null | undefined,
+  intentClassification?: IntentModeClassification
+): boolean {
   if (!prompt) {
     return false;
   }
 
-  if (isPromptAuthoringRequest(prompt)) {
+  if (intentClassification?.intentMode === 'PROMPT_GENERATION') {
+    return false;
+  }
+
+  if (!intentClassification && isPromptAuthoringRequest(prompt)) {
     return false;
   }
 
@@ -358,11 +367,7 @@ export function shouldInspectRuntimePrompt(prompt: string | null | undefined): b
 }
 
 export function isPromptAuthoringRequest(prompt: string | null | undefined): boolean {
-  if (!prompt) {
-    return false;
-  }
-
-  return promptAuthoringPatterns.some(pattern => pattern.test(prompt));
+  return hasPromptGenerationIntent(prompt);
 }
 
 function isDagArtifactExecutionRequest(prompt: string | null | undefined): boolean {

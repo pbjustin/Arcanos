@@ -10,6 +10,7 @@ import {
 import { generateRequestId } from '@shared/idGenerator.js';
 
 import { runThroughBrain, type TrinityResult, type TrinityRunOptions } from './trinity.js';
+import { readIntentMode, resolveIntentMode } from './trinityHonesty.js';
 
 export interface TrinityWritingInput {
   prompt: string;
@@ -136,12 +137,14 @@ export async function runTrinityWritingPipeline(
   const prompt = params.input.prompt.trim();
   const runtimeBudget = params.context.runtimeBudget ?? createRuntimeBudget();
   const startedAt = Date.now();
+  const intentMode = resolveIntentMode(prompt, params.context.runOptions ?? {});
 
   logger.info('trinity.entry', {
     module: 'trinity',
     requestId,
     sourceEndpoint,
     action: classification.action ?? 'query',
+    intentMode,
     promptLength: prompt.length,
   });
 
@@ -165,6 +168,7 @@ export async function runTrinityWritingPipeline(
       durationMs: Date.now() - startedAt,
       activeModel: result.activeModel,
       fallbackFlag: result.fallbackFlag,
+      intentMode: result.outputControls ? readIntentMode(result.outputControls) : intentMode,
     });
 
     return result;

@@ -2,8 +2,9 @@
  * Trinity honesty controls: capability framing, evidence tagging, minimalism rules, and user-visible debug gating.
  */
 
-import type { TrinityOutputControls, TrinityRunOptions } from './trinityTypes.js';
+import type { TrinityIntentMode, TrinityOutputControls, TrinityRunOptions } from './trinityTypes.js';
 import { countWords } from '@shared/text/countWords.js';
+import { classifyIntentMode } from '@shared/text/intentModeClassifier.js';
 
 export type TrinitySourceType = 'tool' | 'user_context' | 'memory' | 'inference' | 'template';
 export type TrinityConfidence = 'high' | 'medium' | 'low';
@@ -55,7 +56,8 @@ const DEFAULT_OUTPUT_CONTROLS: TrinityOutputControls = {
   maxWords: null,
   answerMode: 'explained',
   debugPipeline: false,
-  strictUserVisibleOutput: true
+  strictUserVisibleOutput: true,
+  intentMode: 'EXECUTE_TASK'
 };
 
 const LIVE_VERIFICATION_PATTERN =
@@ -64,8 +66,12 @@ const CURRENT_EXTERNAL_STATE_PATTERN =
   /\b(latest|current|currently|today|this week|recent|recently|up-to-date|as of now)\b/i;
 const EXTERNAL_STATE_CONTEXT_PATTERN =
   /\b(competitor|competitors|market|news|pricing|release|launch|moves?|external|trend|trends|company|companies|regulation|stock|stocks|state|status|events?)\b/i;
+const CURRENT_EXTERNAL_REQUEST_PATTERN =
+  /\b(verify|verified|check|checked|confirm|confirmed|review|reviewed|audit|audited|analy[sz]e|analy[sz]ed|assess|assessed|summari[sz]e|summari[sz]ed|compare|compared|track|tracked|latest|current|recent|today|this week|as of now)\b/i;
 const LIVE_RUNTIME_STATE_PATTERN =
   /\b(live|runtime|runtime behavior|runtime state|execution state|orchestration state|deployment status|service health|service status|worker state|queue state|run state|environment state)\b/i;
+const EXTERNAL_STATE_SECTION_HEADING_CONTEXT_PATTERN =
+  /\b(competitor|competitors|market|news|pricing|release|external|trend|trends|company|companies|regulation|stock|stocks|state|status|events?)\b/i;
 const BACKEND_ACTION_PATTERN =
   /\b(saved|save|persisted|persist|wrote|write|stored|store|pinged|ping|called|call|updated|update|inserted|insert|deleted|delete|committed|commit|queried|query|inspected|inspect)\b/i;
 const BACKEND_ACTION_CONTEXT_PATTERN =
@@ -90,11 +96,74 @@ const OPENING_PADDING_SEGMENT_PATTERNS = [
   /^here(?:'s| is) (?:the )?(?:answer|response|plan)\.?$/i,
   /^the short answer is:?$/i
 ] as const;
+const SECTION_HEADING_PATTERN = /:\s*$/;
+const LIST_ITEM_PATTERN = /^(?:[-*]|\d+\.)\s+/;
+const PLANNING_OR_INSTRUCTION_LEAD_PATTERN =
+  /^\s*(?:[-*]|\d+\.)?\s*(?:lead|highlight|emphasize|prioritize|ensure|prepare|offer|target|establish|provide|implement|secure|announce|obtain|conduct|coordinate|leverage|build|create|define|document|draft|position|launch|roll\s+out|ship|use|keep|focus)\b/i;
+const CURRENT_EXTERNAL_FACT_SUBJECT_PATTERN =
+  /^\s*(?:[-*]|\d+\.)?\s*(?:competitors?|several|many|most|major|the market|market|pricing|releases?|launches?|news|regulation|companies?|vendors?)\b/i;
+const CURRENT_EXTERNAL_FACT_NOUN_PHRASE_LEAD_PATTERN =
+  /^\s*(?:[-*]|\d+\.)?\s*(?:increased|decreased|heightened|growing|declining|notable)\b/i;
+const CURRENT_EXTERNAL_FACT_VERB_PATTERN =
+  /\b(is|are|was|were|has|have|had|continues?|continued|remains?|remained|shows?|showed|indicates?|indicated|accelerated|focused|focusing|expanded|cut|cuts|lowered|launched|launching|released|releasing|invested|investing|prioritized|prioritizing|emphasized|emphasizing)\b/i;
 const SUBSTRING_DUPLICATE_OVERLAP_THRESHOLD = 0.65;
 const SAME_CATEGORY_LIMITATION_DUPLICATE_OVERLAP_THRESHOLD = 0.72;
 const GENERAL_DUPLICATE_OVERLAP_THRESHOLD = 0.9;
 const SCOPE_DRIFT_QUALIFIER_PATTERN =
   /\s+or your(?: actual)?\s+(tooling|backend|stack|database|systems?|service|services)\b/gi;
+const PROMPT_GENERATION_ACCESS_LIMITATION_FRAGMENT =
+  String.raw`(?:repo(?:sitory)?|codebase|source|files?|runtime|execution|environment|live|real(?:-|\s)?time|external|internet|web|browse|browser|api|backend|database|system|service|tool(?:ing)?|logs?|telemetry|deploy(?:ment)?|production)`;
+const PROMPT_GENERATION_ACCESS_ACTION_FRAGMENT =
+  String.raw`(?:access|inspect|verify|confirm|check|browse|view|see|read|open|run|execute|call|query|test|deploy|connect(?:\s+to)?)`;
+const PROMPT_GENERATION_DISCLAIMER_PATTERNS = [
+  new RegExp(
+    String.raw`^(?:i|we)\s+(?:can(?:not|'t)|cannot|can't|am unable to|are unable to)\s+` +
+      PROMPT_GENERATION_ACCESS_ACTION_FRAGMENT +
+      String.raw`\b[^.!?\n]{0,120}\b` +
+      PROMPT_GENERATION_ACCESS_LIMITATION_FRAGMENT +
+      String.raw`\b`,
+    'i'
+  ),
+  new RegExp(
+    String.raw`^(?:i|we)\s+(?:do not have|don't have)\s+(?:direct\s+)?(?:access|visibility)\b[^.!?\n]{0,120}\b` +
+      PROMPT_GENERATION_ACCESS_LIMITATION_FRAGMENT +
+      String.raw`\b`,
+    'i'
+  ),
+  new RegExp(
+    String.raw`^(?:i|we)\s+(?:have not|haven't)\s+` +
+      String.raw`(?:accessed|inspected|verified|confirmed|checked|browsed|viewed|read|opened|run|executed|called|queried|tested|deployed)\b[^.!?\n]{0,120}\b` +
+      PROMPT_GENERATION_ACCESS_LIMITATION_FRAGMENT +
+      String.raw`\b`,
+    'i'
+  ),
+  new RegExp(
+    String.raw`^(?:current|live|runtime|external|backend|api|repository|repo|codebase|deployment|production|service)\b[^.!?\n]{0,160}\b` +
+      String.raw`(?:unverified|unconfirmed|cannot be (?:confirmed|verified)|can't be (?:confirmed|verified)|cannot verify|can't verify)\b`,
+    'i'
+  ),
+  new RegExp(
+    String.raw`^(?:cannot|can't|unable to)\s+` +
+      PROMPT_GENERATION_ACCESS_ACTION_FRAGMENT +
+      String.raw`\b[^.!?\n]{0,120}\b` +
+      PROMPT_GENERATION_ACCESS_LIMITATION_FRAGMENT +
+      String.raw`\b`,
+    'i'
+  ),
+  /^\byou can paste\b.+\bcodex\b/i,
+  /^\bpaste (?:this|your) prompt\b.+\bcodex\b/i
+] as const;
+const PROMPT_GENERATION_ARTIFACT_REMAINDER_PATTERN =
+  /\b(?:prompt|system\s+prompt|instructions?|spec(?:ification)?|brief|tasking(?:\s+doc(?:ument)?)?|message|codex|agent|ai|model|tool|assistant|executor)\b|^\s*(?:you are|your task is|objective:|goal:|task:)/i;
+const PROMPT_GENERATION_SELF_CLAIM_PATTERN =
+  /\b(?:i|we)\s+(?:have\s+)?(?:checked|verified|confirmed|reviewed|validated|looked\s+up|updated|saved|persisted|wrote|called|queried|inspected|tested|ran|executed|deployed)\b/i;
+const PROMPT_GENERATION_ACCESS_TASK_PATTERN = new RegExp(
+  PROMPT_GENERATION_ACCESS_ACTION_FRAGMENT +
+    String.raw`\b[^.!?\n]{0,120}\b` +
+    PROMPT_GENERATION_ACCESS_LIMITATION_FRAGMENT +
+    String.raw`\b`,
+  'i'
+);
 const SCOPE_STOP_WORDS = new Set([
   'a', 'an', 'and', 'answer', 'as', 'at', 'be', 'but', 'by', 'can', 'could', 'do', 'does', 'for', 'from', 'give', 'help',
   'here', 'how', 'i', 'if', 'in', 'is', 'it', 'latest', 'me', 'my', 'no', 'of', 'on', 'only', 'or', 'our', 'the', 'this',
@@ -102,6 +171,29 @@ const SCOPE_STOP_WORDS = new Set([
 ]);
 
 type LimitationCategory = 'live_verification' | 'backend_action' | 'persistence_action' | 'general';
+
+export function resolveIntentMode(
+  prompt: string,
+  options: TrinityRunOptions
+): TrinityIntentMode {
+  if (options.intentMode) {
+    return options.intentMode;
+  }
+
+  if (options.requestIntent) {
+    return options.requestIntent;
+  }
+
+  return classifyIntentMode(prompt).intentMode;
+}
+
+export function readIntentMode(outputControls?: TrinityOutputControls | null): TrinityIntentMode {
+  return outputControls?.intentMode ?? 'EXECUTE_TASK';
+}
+
+function isPromptGenerationRequest(outputControls: TrinityOutputControls): boolean {
+  return readIntentMode(outputControls) === 'PROMPT_GENERATION';
+}
 
 function escapePromptAngleBrackets(value: string): string {
   return value.replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -232,6 +324,92 @@ function splitIntoSegments(text: string): string[] {
     .filter(Boolean);
 }
 
+function mergeOrphanListMarkerSegments(segments: string[]): string[] {
+  const mergedSegments: string[] = [];
+
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index]?.trim() ?? '';
+    if (!segment) {
+      continue;
+    }
+
+    if (/^\d+\.$/.test(segment)) {
+      const nextSegment = segments[index + 1]?.trim();
+      if (nextSegment) {
+        mergedSegments.push(`${segment} ${nextSegment}`);
+        index += 1;
+        continue;
+      }
+    }
+
+    mergedSegments.push(segment);
+  }
+
+  return mergedSegments;
+}
+
+function rewriteUnsupportedCurrentExternalStateSections(params: {
+  text: string;
+  userPrompt: string;
+  reasoningHonesty: TrinityReasoningHonesty;
+}): { text: string; blockedOrRewrittenClaims: string[] } {
+  if (!requestTargetsCurrentExternalState(params.userPrompt)) {
+    return {
+      text: params.text,
+      blockedOrRewrittenClaims: []
+    };
+  }
+
+  const blockedOrRewrittenClaims: string[] = [];
+  const keptLines: string[] = [];
+  let inUnsupportedExternalStateSection = false;
+  let liveLimitationAdded = false;
+
+  for (const rawLine of params.text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+
+    if (!line) {
+      if (!inUnsupportedExternalStateSection) {
+        keptLines.push('');
+      }
+      continue;
+    }
+
+    if (isLikelyCurrentExternalStateSectionHeading(line, params.userPrompt)) {
+      blockedOrRewrittenClaims.push(line);
+      if (!liveLimitationAdded) {
+        keptLines.push(ensureSingleSentence(buildLimitationSentence({
+          fallbackText: "I can't verify current external state here without live access",
+          existingCaveats: params.reasoningHonesty.userVisibleCaveats,
+          blockedSubtasks: params.reasoningHonesty.blockedSubtasks,
+          matcher: /\b(live|browse|current|latest|verify|external|competitor|market|news)\b/i
+        })));
+        liveLimitationAdded = true;
+      }
+      inUnsupportedExternalStateSection = true;
+      continue;
+    }
+
+    if (inUnsupportedExternalStateSection) {
+      if (isSectionHeading(line)) {
+        inUnsupportedExternalStateSection = false;
+        keptLines.push(rawLine);
+        continue;
+      }
+
+      blockedOrRewrittenClaims.push(line);
+      continue;
+    }
+
+    keptLines.push(rawLine);
+  }
+
+  return {
+    text: normalizeOutputSpacing(keptLines),
+    blockedOrRewrittenClaims
+  };
+}
+
 function hasExplicitLimitationLanguage(text: string): boolean {
   return LIMITATION_LANGUAGE_PATTERN.test(text);
 }
@@ -356,6 +534,55 @@ function impliesCurrentExternalStateClaim(text: string): boolean {
     (CURRENT_EXTERNAL_STATE_PATTERN.test(text) && EXTERNAL_STATE_CONTEXT_PATTERN.test(text)) ||
     LIVE_RUNTIME_STATE_PATTERN.test(text)
   );
+}
+
+function requestTargetsCurrentExternalState(text: string): boolean {
+  return (
+    impliesCurrentExternalStateClaim(text) ||
+    (EXTERNAL_STATE_CONTEXT_PATTERN.test(text) && CURRENT_EXTERNAL_REQUEST_PATTERN.test(text))
+  );
+}
+
+function isSectionHeading(text: string): boolean {
+  const trimmedText = text.trim();
+  return SECTION_HEADING_PATTERN.test(trimmedText) && !LIST_ITEM_PATTERN.test(trimmedText);
+}
+
+function isListItem(text: string): boolean {
+  return LIST_ITEM_PATTERN.test(text.trim());
+}
+
+function isPlanningOrInstructionSegment(text: string): boolean {
+  return PLANNING_OR_INSTRUCTION_LEAD_PATTERN.test(text);
+}
+
+function isLikelyCurrentExternalStateSectionHeading(text: string, userPrompt: string): boolean {
+  return (
+    requestTargetsCurrentExternalState(userPrompt) &&
+    isSectionHeading(text) &&
+    (impliesCurrentExternalStateClaim(text) || EXTERNAL_STATE_SECTION_HEADING_CONTEXT_PATTERN.test(text))
+  );
+}
+
+function isLikelyCurrentExternalStateFactAssertion(text: string, userPrompt: string): boolean {
+  if (
+    !requestTargetsCurrentExternalState(userPrompt) ||
+    hasExplicitLimitationLanguage(text) ||
+    isPlanningOrInstructionSegment(text) ||
+    !EXTERNAL_STATE_CONTEXT_PATTERN.test(text)
+  ) {
+    return false;
+  }
+
+  return (
+    impliesCurrentExternalStateClaim(text) ||
+    (CURRENT_EXTERNAL_FACT_SUBJECT_PATTERN.test(text) && CURRENT_EXTERNAL_FACT_VERB_PATTERN.test(text)) ||
+    CURRENT_EXTERNAL_FACT_NOUN_PHRASE_LEAD_PATTERN.test(text)
+  );
+}
+
+function isLikelyUnsupportedExternalStateSectionBody(text: string): boolean {
+  return isListItem(text) && !hasExplicitLimitationLanguage(text) && !isPlanningOrInstructionSegment(text);
 }
 
 function containsAffirmativeVerificationVerb(text: string): boolean {
@@ -529,12 +756,105 @@ function ensureSingleSentence(text: string): string {
   return normalizedText ? `${normalizedText}.` : '';
 }
 
+function looksLikePromptGenerationCapabilityDisclaimer(segment: string): boolean {
+  return PROMPT_GENERATION_DISCLAIMER_PATTERNS.some(pattern => pattern.test(segment.trim()));
+}
+
+function hasPromptGenerationArtifactRemainder(segments: string[], startIndex: number): boolean {
+  const remainderText = normalizeWhitespace(segments.slice(startIndex).join(' '));
+  return PROMPT_GENERATION_ARTIFACT_REMAINDER_PATTERN.test(remainderText);
+}
+
+function stripLeadingPromptGenerationDisclaimers(text: string): string {
+  const segments = splitIntoSegments(text);
+  let startIndex = 0;
+
+  while (
+    segments.length - startIndex > 1 &&
+    looksLikePromptGenerationCapabilityDisclaimer(segments[startIndex] ?? '') &&
+    hasPromptGenerationArtifactRemainder(segments, startIndex + 1)
+  ) {
+    startIndex += 1;
+  }
+
+  return normalizeWhitespace(segments.slice(startIndex).join(' '));
+}
+
+function isPromptGenerationAccessOnlyLimitation(text: string): boolean {
+  const trimmedText = text.trim();
+  if (!trimmedText) {
+    return true;
+  }
+
+  return (
+    looksLikePromptGenerationCapabilityDisclaimer(trimmedText) ||
+    PROMPT_GENERATION_ACCESS_TASK_PATTERN.test(trimmedText)
+  );
+}
+
+function hasOnlyPromptGenerationAccessLimitations(reasoningHonesty: TrinityReasoningHonesty): boolean {
+  const limitationTexts = [
+    ...reasoningHonesty.blockedSubtasks,
+    ...reasoningHonesty.userVisibleCaveats
+  ].map(value => value.trim()).filter(Boolean);
+
+  return (
+    limitationTexts.length > 0 &&
+    limitationTexts.every(isPromptGenerationAccessOnlyLimitation)
+  );
+}
+
+function isUnsupportedPromptGenerationSelfClaim(segment: string): boolean {
+  return (
+    PROMPT_GENERATION_SELF_CLAIM_PATTERN.test(segment) &&
+    (
+      LIVE_VERIFICATION_PATTERN.test(segment) ||
+      BACKEND_ACTION_PATTERN.test(segment) ||
+      /\b(saved|save|persisted|persist|wrote|write|stored|store|updated|update|inserted|insert|ran|run|executed|execute|deployed|deploy)\b/i.test(segment)
+    )
+  );
+}
+
+function rewritePromptGenerationSelfClaims(text: string): { text: string; blockedOrRewrittenClaims: string[] } {
+  const blockedOrRewrittenClaims: string[] = [];
+  const keptSegments: string[] = [];
+
+  for (const segment of splitIntoSegments(text)) {
+    if (isUnsupportedPromptGenerationSelfClaim(segment)) {
+      blockedOrRewrittenClaims.push(segment);
+      continue;
+    }
+
+    keptSegments.push(segment);
+  }
+
+  return {
+    text: normalizeWhitespace(keptSegments.join(' ')),
+    blockedOrRewrittenClaims
+  };
+}
+
+function buildRequestIntentPromptLines(requestIntent: TrinityIntentMode): string[] {
+  if (requestIntent === 'PROMPT_GENERATION') {
+    return [
+      '- Request intent: PROMPT_GENERATION.',
+      '- Treat repo inspection, runtime checks, API verification, commands, and live-state references as instructions for the downstream executor.',
+      '- Do not refuse solely because this backend lacks direct repo, runtime, or live external access when the user only asked for a prompt/spec/instructions.'
+    ];
+  }
+
+  return [
+    '- Request intent: EXECUTE_TASK.',
+    '- Apply normal capability limits to work the backend itself is being asked to perform.'
+  ];
+}
+
 function rewriteUnsupportedClaims(params: {
   text: string;
+  userPrompt: string;
   capabilityFlags: TrinityCapabilityFlags;
   reasoningHonesty: TrinityReasoningHonesty;
 }): { text: string; blockedOrRewrittenClaims: string[] } {
-  const segments = splitIntoSegments(params.text);
   const blockedOrRewrittenClaims: string[] = [];
   const rewrittenSegments: string[] = [];
   let liveLimitationAdded = false;
@@ -548,10 +868,31 @@ function rewriteUnsupportedClaims(params: {
   const supportsBackendAction =
     (params.capabilityFlags.canPersistData || params.capabilityFlags.canCallBackend) &&
     hasVerifiedToolEvidence(params.reasoningHonesty.evidenceTags, 'backend_action');
+  const sectionRewrite = !supportsLiveVerification
+    ? rewriteUnsupportedCurrentExternalStateSections({
+        text: params.text,
+        userPrompt: params.userPrompt,
+        reasoningHonesty: params.reasoningHonesty
+      })
+    : { text: params.text, blockedOrRewrittenClaims: [] };
+  if (sectionRewrite.blockedOrRewrittenClaims.length > 0) {
+    blockedOrRewrittenClaims.push(...sectionRewrite.blockedOrRewrittenClaims);
+    liveLimitationAdded = true;
+  }
+  const segments = mergeOrphanListMarkerSegments(splitIntoSegments(sectionRewrite.text));
+  let inUnsupportedExternalStateSection = false;
 
   for (const segment of segments) {
+    const externalStateSectionHeading = isLikelyCurrentExternalStateSectionHeading(segment, params.userPrompt);
+    if (isSectionHeading(segment) && !externalStateSectionHeading) {
+      inUnsupportedExternalStateSection = false;
+    }
+
     const impliesLiveVerification = LIVE_VERIFICATION_PATTERN.test(segment);
     const impliesCurrentExternalState = impliesCurrentExternalStateClaim(segment);
+    const impliesIndirectCurrentExternalState =
+      isLikelyCurrentExternalStateFactAssertion(segment, params.userPrompt) ||
+      (inUnsupportedExternalStateSection && isLikelyUnsupportedExternalStateSectionBody(segment));
     const qualifiedCurrentStateLimitation = isQualifiedCurrentStateLimitation(segment);
     const allowsProvidedDataVerification = allowsProvidedDataVerificationClaim(segment, params.capabilityFlags);
     const impliesBackendAction = BACKEND_ACTION_PATTERN.test(segment) && BACKEND_ACTION_CONTEXT_PATTERN.test(segment);
@@ -560,7 +901,11 @@ function rewriteUnsupportedClaims(params: {
     //audit Assumption: unverifiable current-state claims must be rewritten before the final answer reaches the caller, but explicit limitation caveats like "runtime enforcement remains unverified" must survive intact; failure risk: the guard replaces truthful caveats with a generic refusal and hides the useful static audit; expected invariant: only affirmative unsupported claims are rewritten; handling strategy: exempt qualified current-state limitations before applying the rewrite.
     if (
       !qualifiedCurrentStateLimitation &&
-      (((impliesLiveVerification && !allowsProvidedDataVerification) || impliesCurrentExternalState) && !supportsLiveVerification)
+      (((impliesLiveVerification && !allowsProvidedDataVerification) ||
+        impliesCurrentExternalState ||
+        externalStateSectionHeading ||
+        impliesIndirectCurrentExternalState) &&
+        !supportsLiveVerification)
     ) {
       blockedOrRewrittenClaims.push(segment);
       if (!liveLimitationAdded) {
@@ -572,6 +917,7 @@ function rewriteUnsupportedClaims(params: {
         })));
         liveLimitationAdded = true;
       }
+      inUnsupportedExternalStateSection = externalStateSectionHeading || inUnsupportedExternalStateSection || isListItem(segment);
       continue;
     }
 
@@ -842,13 +1188,19 @@ export function buildCapabilityFlagsPromptBlock(capabilityFlags: TrinityCapabili
 /**
  * Build the intake-stage prompt envelope that preserves hard capability limits.
  */
-export function buildIntakeCapabilityEnvelope(userRequest: string, capabilityFlags: TrinityCapabilityFlags): string {
+export function buildIntakeCapabilityEnvelope(
+  userRequest: string,
+  capabilityFlags: TrinityCapabilityFlags,
+  requestIntent: TrinityIntentMode = 'EXECUTE_TASK'
+): string {
   return [
     '<original_request>',
     sanitizePromptLine(userRequest),
     '</original_request>',
     '',
     buildCapabilityFlagsPromptBlock(capabilityFlags),
+    '',
+    ...buildRequestIntentPromptLines(requestIntent),
     '',
     'Hard constraints:',
     '- Preserve these capability flags exactly as written.',
@@ -862,13 +1214,19 @@ export function buildIntakeCapabilityEnvelope(userRequest: string, capabilityFla
 /**
  * Build the reasoning-stage prompt envelope with conservative honesty rules.
  */
-export function buildReasoningCapabilityEnvelope(framedRequest: string, capabilityFlags: TrinityCapabilityFlags): string {
+export function buildReasoningCapabilityEnvelope(
+  framedRequest: string,
+  capabilityFlags: TrinityCapabilityFlags,
+  requestIntent: TrinityIntentMode = 'EXECUTE_TASK'
+): string {
   return [
     '<framed_request>',
     sanitizePromptLine(framedRequest),
     '</framed_request>',
     '',
     buildCapabilityFlagsPromptBlock(capabilityFlags),
+    '',
+    ...buildRequestIntentPromptLines(requestIntent),
     '',
     'Schema requirements:',
     '- `response_mode` must be `partial_refusal` when any blocked subtask exists, and `refusal` only when nothing achievable remains.',
@@ -885,10 +1243,13 @@ export function buildReasoningCapabilityEnvelope(framedRequest: string, capabili
  */
 export function buildFinalHonestyInstruction(
   capabilityFlags: TrinityCapabilityFlags,
-  reasoningHonesty: TrinityReasoningHonesty
+  reasoningHonesty: TrinityReasoningHonesty,
+  requestIntent: TrinityIntentMode = 'EXECUTE_TASK'
 ): string {
   return [
     buildCapabilityFlagsPromptBlock(capabilityFlags),
+    '',
+    ...buildRequestIntentPromptLines(requestIntent),
     '',
     '<reasoning_honesty>',
     serializePromptJson({
@@ -909,6 +1270,12 @@ export function buildFinalHonestyInstruction(
     '- If reasoning marked any subtask as blocked or unverifiable, keep that limitation explicit in the user-facing answer.',
     '- Do not upgrade `unverified`, `inferred`, or `unavailable` claims into verified, checked, current, or confirmed wording.',
     '- Do not claim backend calls, saves, writes, or successful tool actions unless there is explicit tool-backed verified evidence.',
+    ...(requestIntent === 'PROMPT_GENERATION'
+      ? [
+          '- For PROMPT_GENERATION, downstream repo/runtime/API steps are instructions for another executor, not unsupported claims by this backend.',
+          '- Do not refuse solely because the downstream prompt mentions inspection, verification, commands, or live state.'
+        ]
+      : []),
     '- If the request has both achievable and blocked parts, answer the achievable part and qualify the blocked part instead of refusing everything.'
   ].join('\n');
 }
@@ -919,8 +1286,10 @@ export function buildFinalHonestyInstruction(
 export function enforceFinalStageHonesty(
   rawText: string,
   reasoningHonesty: TrinityReasoningHonesty,
-  capabilityFlags: TrinityCapabilityFlags
+  capabilityFlags: TrinityCapabilityFlags,
+  requestIntent: TrinityIntentMode = 'EXECUTE_TASK'
 ): FinalClaimBlockResult {
+  const promptGeneration = requestIntent === 'PROMPT_GENERATION';
   const supportsLiveVerification =
     capabilityFlags.canVerifyLiveData &&
     capabilityFlags.canConfirmExternalState &&
@@ -943,6 +1312,12 @@ export function enforceFinalStageHonesty(
     const qualifiedCurrentStateLimitation = isQualifiedCurrentStateLimitation(line);
     const allowsProvidedDataVerification = allowsProvidedDataVerificationClaim(line, capabilityFlags);
     const impliesBackendAction = BACKEND_ACTION_PATTERN.test(line) && BACKEND_ACTION_CONTEXT_PATTERN.test(line);
+
+    //audit Assumption: in PROMPT_GENERATION, imperative downstream steps like "Verify the API" are not claims that this backend verified anything; failure risk: the general overclaim guard strips the generated prompt itself; expected invariant: only first-person/completed backend self-claims remain subject to claim blocking; handling strategy: allow non-self-claim prompt instructions through this guard.
+    if (promptGeneration && !isUnsupportedPromptGenerationSelfClaim(line)) {
+      keptLines.push(line);
+      continue;
+    }
 
     //audit Assumption: unsupported verification language must be removed even when the prose sounds polished, but explicit limitation caveats about unverified live/runtime state are already the safe form and should remain visible; failure risk: stripping those caveats erases the precise boundary between static validation and live verification; expected invariant: affirmative unsupported claims are removed while qualified limitations stay in the answer; handling strategy: skip the block path for qualified current-state limitation lines.
     if (
@@ -994,13 +1369,15 @@ export function deriveTrinityOutputControls(prompt: string, options: TrinityRunO
   const resolvedMaxWords = explicitMaxWords ?? parsedMaxWords;
   const debugPipeline = options.debugPipeline ?? answerMode === 'debug';
   const strictUserVisibleOutput = options.strictUserVisibleOutput ?? DEFAULT_OUTPUT_CONTROLS.strictUserVisibleOutput;
+  const intentMode = resolveIntentMode(prompt, options);
 
   return {
     requestedVerbosity: resolvedMaxWords !== null && resolvedMaxWords <= 80 && !options.requestedVerbosity ? 'minimal' : requestedVerbosity,
     maxWords: resolvedMaxWords,
     answerMode: resolvedMaxWords !== null && resolvedMaxWords <= 80 && !options.answerMode ? 'direct' : answerMode,
     debugPipeline,
-    strictUserVisibleOutput
+    strictUserVisibleOutput,
+    intentMode
   };
 }
 
@@ -1012,9 +1389,12 @@ export function buildTrinityStageContractBlock(params: {
   capabilityFlags: TrinityCapabilityFlags;
   outputControls: TrinityOutputControls;
 }): string {
+  const intentMode = readIntentMode(params.outputControls);
   return [
     '[TRINITY_PIPELINE_CONTRACT]',
     `stage=${params.stage}`,
+    `intent_mode=${intentMode}`,
+    `request_intent=${intentMode}`,
     `requested_verbosity=${params.outputControls.requestedVerbosity}`,
     `max_words=${params.outputControls.maxWords ?? 'null'}`,
     `answer_mode=${params.outputControls.answerMode}`,
@@ -1029,6 +1409,11 @@ export function buildTrinityStageContractBlock(params: {
     'Rules:',
     '- Do not claim live verification, current external state, backend actions, or saved writes without the matching capability and evidence.',
     '- `can_verify_provided_data=true` allows validation of the provided inputs only; it never permits live/runtime/deployment verification.',
+    ...(isPromptGenerationRequest(params.outputControls)
+      ? [
+          '- When request_intent=PROMPT_GENERATION, references to repo inspection, runtime checks, API verification, or commands belong to the downstream executor.'
+        ]
+      : []),
     '- If only part of the request is impossible, qualify only that part and continue with the doable portion.',
     '- Do not add audit notes, reasoning notes, or ceremonial framing unless answer_mode is audit or debug.',
     '- Prefer the shortest truthful answer that still completes the request.'
@@ -1044,8 +1429,20 @@ export function buildReasoningStagePrompt(params: {
   outputControls: TrinityOutputControls;
 }): string {
   return [
-    buildReasoningCapabilityEnvelope(params.framedRequest, params.capabilityFlags),
+    buildReasoningCapabilityEnvelope(
+      params.framedRequest,
+      params.capabilityFlags,
+      readIntentMode(params.outputControls)
+    ),
     '',
+    ...(isPromptGenerationRequest(params.outputControls)
+      ? [
+          'Prompt-generation override:',
+          '- When the user asks for a prompt, spec, brief, or instructions, treat downstream repo/runtime/API actions as executable steps for another agent.',
+          '- Keep `response_mode=answer` unless the requested content itself is unsafe.',
+          '- Do not mark downstream inspection or verification steps as blocked merely because this backend cannot perform them directly.'
+        ]
+      : []),
     buildTrinityStageContractBlock({
       stage: 'reasoning',
       capabilityFlags: params.capabilityFlags,
@@ -1081,6 +1478,12 @@ export function buildFinalStageInstruction(params: {
     '- Return only the user-facing answer.',
     '- Keep the answer natural and direct. Do not add packaging like "Here is a concise plan" or "Below are the audit notes".',
     '- Preserve any blocked-subtask limitation, but do not pad it with extra commentary.',
+    ...(isPromptGenerationRequest(params.outputControls)
+      ? [
+          '- Request intent is PROMPT_GENERATION. Write the prompt/spec/instructions for the downstream executor instead of refusing for lack of repo/runtime/live access.',
+          '- Imperative repo/runtime/API steps belong to the downstream executor and should remain in the generated prompt.'
+        ]
+      : []),
     optionalCaveat
       ? `- If a limitation is needed, keep it to one short sentence such as: "${optionalCaveat.trim()}"`
       : '- If a limitation is needed, state it once and continue with the doable part.'
@@ -1102,15 +1505,34 @@ export function enforceFinalStageHonestyAndMinimalism(params: {
 }): { text: string; removedMetaSections: string[]; blockedOrRewrittenClaims: string[] } {
   const withoutMetaSections = removeUnrequestedMetaSections(params.text, params.outputControls);
   const deInflatedText = stripStyleInflationPrefix(withoutMetaSections.text);
-  const rewrittenClaims = rewriteUnsupportedClaims({
-    text: deInflatedText,
-    capabilityFlags: params.capabilityFlags,
-    reasoningHonesty: params.reasoningHonesty
-  });
-  const textWithRequiredLimitation = ensureRequiredLimitation(rewrittenClaims.text, params.reasoningHonesty);
+  const promptGeneration = isPromptGenerationRequest(params.outputControls);
+  const promptGenerationAccessOnlyLimitation =
+    promptGeneration && hasOnlyPromptGenerationAccessLimitations(params.reasoningHonesty);
+  const shouldPreservePromptGenerationLimitation =
+    promptGeneration &&
+    params.reasoningHonesty.responseMode !== 'answer' &&
+    !promptGenerationAccessOnlyLimitation;
+  const promptGenerationTrimmedText = promptGeneration
+    ? stripLeadingPromptGenerationDisclaimers(deInflatedText)
+    : deInflatedText;
+  const rewrittenClaims = promptGeneration
+    ? rewritePromptGenerationSelfClaims(promptGenerationTrimmedText)
+    : rewriteUnsupportedClaims({
+        text: promptGenerationTrimmedText,
+        userPrompt: params.userPrompt,
+        capabilityFlags: params.capabilityFlags,
+        reasoningHonesty: params.reasoningHonesty
+      });
+  const textWithRequiredLimitation =
+    !promptGeneration || shouldPreservePromptGenerationLimitation
+      ? ensureRequiredLimitation(rewrittenClaims.text, params.reasoningHonesty)
+      : rewrittenClaims.text;
   const openingMinimizedText = removeOpeningPadding(textWithRequiredLimitation);
   const scopeTightenedText = trimUnrequestedScopeDrift(openingMinimizedText, params.userPrompt, params.reasoningHonesty);
-  const limitationCompressedText = compressLimitationSegments(scopeTightenedText, params.reasoningHonesty);
+  const limitationCompressedText =
+    !promptGeneration || shouldPreservePromptGenerationLimitation
+      ? compressLimitationSegments(scopeTightenedText, params.reasoningHonesty)
+      : scopeTightenedText;
   const dedupedText = dedupeNearDuplicateSegments(limitationCompressedText);
   return {
     text: normalizeWhitespace(compressToWordLimit(dedupedText, params.outputControls)),

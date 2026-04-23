@@ -1,4 +1,5 @@
 import { APPLICATION_CONSTANTS } from '@shared/constants.js';
+import { hasPromptGenerationIntent as hasPromptGenerationIntentForClassifier } from '@shared/text/intentModeClassifier.js';
 
 export type GptRouteExecutionPath = 'fast_path' | 'orchestrated_path';
 
@@ -67,15 +68,6 @@ const HEAVY_REQUEST_FIELDS = new Set([
   'workflow',
   'workflowId'
 ]);
-
-// Intentionally prompt-generation specific. General short-form copywriting
-// remains orchestrated until the product contract is widened.
-const PROMPT_GENERATION_PATTERNS = [
-  /\b(generate|create|write|draft|compose|make|build)\s+(?:me\s+|a\s+|an\s+|the\s+)?(?:[\w-]+\s+){0,6}prompt\b/i,
-  /\b(?:image|video|system|assistant|ai|chatgpt|midjourney|stable diffusion|logo|marketing|copywriting)\s+prompt\b/i,
-  /\bprompt\s+(?:for|about|that|to|which|generator|template)\b/i,
-  /\bturn\s+.+\s+into\s+(?:a\s+|an\s+)?prompt\b/i
-];
 
 function readBooleanEnv(name: string, fallbackValue: boolean, env: NodeJS.ProcessEnv): boolean {
   const normalized = (env[name] ?? '').trim().toLowerCase();
@@ -234,11 +226,7 @@ function getPayloadFastPathRejectionReason(body: unknown): string | null {
 }
 
 export function hasPromptGenerationIntent(promptText: string | null): boolean {
-  if (!promptText) {
-    return false;
-  }
-
-  return PROMPT_GENERATION_PATTERNS.some((pattern) => pattern.test(promptText));
+  return hasPromptGenerationIntentForClassifier(promptText);
 }
 
 function buildDecision(input: {

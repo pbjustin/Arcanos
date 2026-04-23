@@ -114,6 +114,7 @@ describe('runArcanosCoreQuery timeout clamp', () => {
   });
 
   it('recovers with a direct-answer degraded path when the shared core pipeline times out', async () => {
+    process.env.ARCANOS_CORE_PIPELINE_TIMEOUT_MS = '5000';
     const timeoutError = new Error('ARCANOS:CORE pipeline timeout after 3500ms');
     timeoutError.name = 'AbortError';
 
@@ -181,6 +182,7 @@ describe('runArcanosCoreQuery timeout clamp', () => {
   });
 
   it('recovers when Trinity aborts near the shared pipeline deadline before the wrapper stamps its own timeout message', async () => {
+    process.env.ARCANOS_CORE_PIPELINE_TIMEOUT_MS = '5000';
     const timeoutError = new Error('Request was aborted.');
     timeoutError.name = 'AbortError';
     const nowSpy = jest.spyOn(Date, 'now');
@@ -226,6 +228,7 @@ describe('runArcanosCoreQuery timeout clamp', () => {
   });
 
   it('returns a static bounded fallback when the degraded direct-answer recovery also times out', async () => {
+    process.env.ARCANOS_CORE_PIPELINE_TIMEOUT_MS = '5000';
     const timeoutError = new Error('ARCANOS:CORE pipeline timeout after 3000ms');
     timeoutError.name = 'AbortError';
     const degradedError = new Error('Request was aborted.');

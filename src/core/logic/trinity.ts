@@ -35,7 +35,6 @@ import type {
   TrinityRunOptions,
   TrinityDryRunPreview,
   TrinityCapabilityFlags,
-  TrinityToolBackedCapabilities,
   TrinityOutputControls,
   TrinityReasoningHonesty
 } from './trinityTypes.js';
@@ -73,10 +72,12 @@ import { createRuntimeBudget, assertBudgetAvailable, getSafeRemainingMs } from '
 import { getRequestAbortSignal, getRequestRemainingMs, isAbortError, runWithRequestAbortTimeout } from '@arcanos/runtime';
 import { tryExtractExactLiteralPromptShortcut } from '@services/exactLiteralPromptShortcut.js';
 import {
+  createDefaultTrinityReasoningHonesty,
   deriveTrinityCapabilityFlags,
   deriveTrinityOutputControls,
   enforceFinalStageHonesty,
-  enforceFinalStageHonestyAndMinimalism
+  enforceFinalStageHonestyAndMinimalism,
+  readIntentMode
 } from './trinityHonesty.js';
 import { resolveTrinityDirectAnswerPreference } from '@services/directAnswerMode.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
@@ -719,7 +720,36 @@ export async function runThroughBrain(
       });
       checkWatchdog();
 
-      const finalText = applyTrinityDirectAnswerOutputContract(directAnswerOutput.output, prompt);
+      const directAnswerReasoningHonesty = createDefaultTrinityReasoningHonesty();
+      const honestyFilteredFinal = enforceFinalStageHonesty(
+        directAnswerOutput.output,
+        directAnswerReasoningHonesty,
+        capabilityFlags,
+        readIntentMode(outputControls)
+      );
+      const enforcedFinalOutput = enforceFinalStageHonestyAndMinimalism({
+        text: directAnswerOutput.output,
+        userPrompt: prompt,
+        capabilityFlags,
+        outputControls,
+        reasoningHonesty: directAnswerReasoningHonesty
+      });
+      const finalText = applyTrinityDirectAnswerOutputContract(enforcedFinalOutput.text, prompt);
+
+      if (honestyFilteredFinal.blocked) {
+        auditFlags.push('FINAL_UNSUPPORTED_CLAIM_BLOCKED');
+        for (const blockedCategory of honestyFilteredFinal.blockedCategories) {
+          auditFlags.push(`FINAL_UNSUPPORTED_${blockedCategory.toUpperCase()}_BLOCKED`);
+        }
+      }
+      if (enforcedFinalOutput.removedMetaSections.length > 0) {
+        auditFlags.push('FINAL_UNREQUESTED_META_REMOVED');
+      }
+      if (enforcedFinalOutput.blockedOrRewrittenClaims.length > 0) {
+        auditFlags.push('FINAL_UNSUPPORTED_CLAIM_REWRITTEN');
+        directAnswerReasoningHonesty.blockedOrRewrittenClaims = enforcedFinalOutput.blockedOrRewrittenClaims;
+      }
+
       const finalProcessedSafely = validateAuditSafeOutput(finalText, auditConfig);
       if (!finalProcessedSafely) {
         auditFlags.push('FINAL_OUTPUT_VALIDATION_FAILED');
@@ -792,7 +822,8 @@ export async function runThroughBrain(
         directAnswerOutput.responseId,
         directAnswerOutput.created,
         capabilityFlags,
-        outputControls
+        outputControls,
+        directAnswerReasoningHonesty
       );
 
       result.tierInfo = {
@@ -1190,6 +1221,7 @@ export async function runThroughBrain(
       translatedFinalText,
       reasoningHonesty,
       capabilityFlags,
+      readIntentMode(outputControls)
     );
     const enforcedFinalOutput = enforceFinalStageHonestyAndMinimalism({
       text: honestyFilteredFinal.text,

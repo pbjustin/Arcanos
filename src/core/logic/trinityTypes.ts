@@ -4,6 +4,7 @@
  */
 
 import type { PreviewAskChaosHook } from '@shared/ask/previewChaos.js';
+import type { IntentMode } from '@shared/text/intentModeClassifier.js';
 import type {
   TrinityCapabilityFlags,
   TrinityEvidenceTag,
@@ -28,6 +29,7 @@ export interface TrinityMetaTokens {
 
 export type TrinityRequestedVerbosity = 'minimal' | 'normal' | 'detailed';
 export type TrinityAnswerMode = 'direct' | 'explained' | 'audit' | 'debug';
+export type TrinityIntentMode = IntentMode;
 
 export interface TrinityOutputControls {
   requestedVerbosity: TrinityRequestedVerbosity;
@@ -35,6 +37,7 @@ export interface TrinityOutputControls {
   answerMode: TrinityAnswerMode;
   debugPipeline: boolean;
   strictUserVisibleOutput: boolean;
+  intentMode?: TrinityIntentMode;
 }
 
 export interface TrinityPipelineDebug {
@@ -191,6 +194,9 @@ export interface TrinityRunOptions {
   answerMode?: TrinityAnswerMode;
   debugPipeline?: boolean;
   strictUserVisibleOutput?: boolean;
+  intentMode?: TrinityIntentMode;
+  /** @deprecated Backward-compatible alias; normalize through `resolveIntentMode()` and prefer `intentMode`. */
+  requestIntent?: TrinityIntentMode;
   directAnswerModelOverride?: string;
   reasoningStagePreviewChaosHook?: PreviewAskChaosHook;
 }

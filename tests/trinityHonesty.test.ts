@@ -7,6 +7,8 @@ import {
   deriveTrinityOutputControls,
   enforceFinalStageHonesty,
   enforceFinalStageHonestyAndMinimalism,
+  readIntentMode,
+  resolveIntentMode,
   shouldExposePipelineDebug,
   type TrinityReasoningHonesty
 } from '../src/core/logic/trinityHonesty.js';
@@ -176,6 +178,42 @@ describe('Trinity honesty controls', () => {
     expect(outputControls.answerMode).toBe('direct');
     expect(outputControls.strictUserVisibleOutput).toBe(true);
     expect(outputControls.debugPipeline).toBe(false);
+    expect(outputControls.intentMode).toBe('EXECUTE_TASK');
+  });
+
+  it.each([
+    'Generate a prompt for Codex to update my documentation in my repo.',
+    'Write instructions for another agent to inspect the repo and verify the API responses.',
+    'Draft a spec for Codex to audit the transport layer and update docs.',
+    'Help me make Codex fix my repo.',
+    'Generate something that lets another AI update docs.',
+    'Give me something I can hand to Codex to fix this.',
+    'Write what I should send another model.',
+    'Draft the tasking for an AI to handle this.',
+    'Make the instructions another tool would follow.',
+  ])('classifies "%s" as prompt generation intent', (prompt) => {
+    const outputControls = deriveTrinityOutputControls(prompt, {});
+
+    expect(outputControls.intentMode).toBe('PROMPT_GENERATION');
+  });
+
+  it.each([
+    'Fix this.',
+    'Inspect the repo.',
+    'Update the docs.',
+    'Verify the deployment config.',
+  ])('keeps direct execution phrasing "%s" in execute-task mode', (prompt) => {
+    const outputControls = deriveTrinityOutputControls(prompt, {});
+
+    expect(outputControls.intentMode).toBe('EXECUTE_TASK');
+  });
+
+  it('exports shared intent-mode helpers for callers that need consistent resolution', () => {
+    expect(resolveIntentMode('Write a prompt for Codex to inspect the repo.', {})).toBe('PROMPT_GENERATION');
+    expect(resolveIntentMode('Inspect the repo.', { intentMode: 'PROMPT_GENERATION' })).toBe('PROMPT_GENERATION');
+    expect(resolveIntentMode('Inspect the repo.', { requestIntent: 'PROMPT_GENERATION' })).toBe('PROMPT_GENERATION');
+    expect(readIntentMode({ requestedVerbosity: 'normal', maxWords: null, answerMode: 'explained', debugPipeline: false, strictUserVisibleOutput: true, intentMode: 'PROMPT_GENERATION' })).toBe('PROMPT_GENERATION');
+    expect(readIntentMode(undefined)).toBe('EXECUTE_TASK');
   });
 
   it('rewrites unsupported live-verification claims and strips unrequested meta sections', () => {
@@ -204,6 +242,45 @@ describe('Trinity honesty controls', () => {
     expect(enforcementResult.removedMetaSections).toHaveLength(1);
     expect(enforcementResult.blockedOrRewrittenClaims).toEqual([
       "I checked the latest competitor moves and confirmed they're still pricing aggressively."
+    ]);
+  });
+
+  it('drops unsupported current-external-state sections while keeping downstream planning sections', () => {
+    const enforcementResult = enforceFinalStageHonestyAndMinimalism({
+      text: [
+        'Competitor Moves (as of latest available data):',
+        '- Competitors have accelerated feature releases, focusing on AI integration.',
+        '- Several have launched bundled offerings and tiered pricing.',
+        '- Increased investment in customer success and support channels.',
+        '',
+        'Launch plan:',
+        '1. Lead with differentiated positioning.',
+        '2. Prepare a rapid FAQ and objection-handling loop.'
+      ].join('\n'),
+      userPrompt: 'Verify the latest competitor moves without browsing and build me a launch plan.',
+      capabilityFlags: deriveTrinityCapabilityFlags(),
+      outputControls: deriveTrinityOutputControls('Verify the latest competitor moves without browsing and build me a launch plan.', {}),
+      reasoningHonesty: {
+        responseMode: 'partial_refusal',
+        achievableSubtasks: ['build the launch plan'],
+        blockedSubtasks: ['verify the latest competitor moves'],
+        userVisibleCaveats: ['Current competitor activity is unverified here.'],
+        evidenceTags: []
+      }
+    });
+
+    expect(enforcementResult.text).toContain('Current competitor activity is unverified here.');
+    expect(enforcementResult.text).toContain('1. Lead with differentiated positioning.');
+    expect(enforcementResult.text).toContain('2. Prepare a rapid FAQ and objection-handling loop.');
+    expect(enforcementResult.text).not.toContain('Competitor Moves (as of latest available data)');
+    expect(enforcementResult.text).not.toContain('Competitors have accelerated feature releases');
+    expect(enforcementResult.text).not.toContain('Several have launched bundled offerings');
+    expect(enforcementResult.text).not.toContain('Increased investment in customer success and support channels');
+    expect(enforcementResult.blockedOrRewrittenClaims).toEqual([
+      'Competitor Moves (as of latest available data):',
+      '- Competitors have accelerated feature releases, focusing on AI integration.',
+      '- Several have launched bundled offerings and tiered pricing.',
+      '- Increased investment in customer success and support channels.'
     ]);
   });
 
@@ -238,6 +315,131 @@ describe('Trinity honesty controls', () => {
     expect(enforcementResult.text).toContain('This audit can only check the structure and consistency of what you provide, not live behavior.');
     expect(enforcementResult.text).not.toContain('I can help with general guidance, but I cannot verify live or current external information here.');
     expect(enforcementResult.blockedOrRewrittenClaims).toEqual([]);
+  });
+
+  it('preserves prompt-generation instructions that mention repo inspection without injecting capability disclaimers', () => {
+    const outputControls = deriveTrinityOutputControls(
+      'Generate a prompt for Codex to update my documentation in my repo.',
+      {}
+    );
+    const enforcementResult = enforceFinalStageHonestyAndMinimalism({
+      text: [
+        "I can't inspect your repo from here.",
+        'Prompt for Codex:',
+        'Inspect the repository, identify outdated documentation, update the affected docs, and run the relevant checks before summarizing the changes.'
+      ].join(' '),
+      userPrompt: 'Generate a prompt for Codex to update my documentation in my repo.',
+      capabilityFlags: deriveTrinityCapabilityFlags(),
+      outputControls,
+      reasoningHonesty: {
+        responseMode: 'partial_refusal',
+        achievableSubtasks: ['write a prompt for Codex'],
+        blockedSubtasks: ['inspect the repository directly'],
+        userVisibleCaveats: ["I can't inspect your repo from here."],
+        evidenceTags: []
+      }
+    });
+
+    expect(outputControls.intentMode).toBe('PROMPT_GENERATION');
+    expect(enforcementResult.text).toContain('Prompt for Codex:');
+    expect(enforcementResult.text).toContain('Inspect the repository');
+    expect(enforcementResult.text).not.toContain("I can't inspect your repo from here.");
+    expect(enforcementResult.blockedOrRewrittenClaims).toEqual([]);
+  });
+
+  it('preserves prompt-generation instructions that mention API verification for the downstream executor', () => {
+    const outputControls = deriveTrinityOutputControls(
+      'Write instructions for another agent to verify the API and fix any documentation drift.',
+      {}
+    );
+    const enforcementResult = enforceFinalStageHonestyAndMinimalism({
+      text: [
+        'Current API behavior is unverified here.',
+        'Write a prompt for Codex that verifies the live API responses, compares them with the docs, updates any mismatches, and reports the exact commands and evidence used.'
+      ].join(' '),
+      userPrompt: 'Write instructions for another agent to verify the API and fix any documentation drift.',
+      capabilityFlags: deriveTrinityCapabilityFlags(),
+      outputControls,
+      reasoningHonesty: {
+        responseMode: 'partial_refusal',
+        achievableSubtasks: ['write instructions for another agent'],
+        blockedSubtasks: ['verify live API behavior here'],
+        userVisibleCaveats: ['Current API behavior is unverified here.'],
+        evidenceTags: []
+      }
+    });
+
+    expect(enforcementResult.text).toContain('verifies the live API responses');
+    expect(enforcementResult.text).not.toContain('unverified here');
+    expect(enforcementResult.text).not.toContain('cannot verify live or current external information here');
+  });
+
+  it('blocks first-person unsupported claims while preserving downstream prompt-generation instructions', () => {
+    const result = enforceFinalStageHonesty(
+      [
+        'I verified the API routing.',
+        'I updated the backend record.',
+        'Prompt for Codex:',
+        'Verify the API routing, inspect the backend code, and update the docs.'
+      ].join('\n'),
+      createDefaultTrinityReasoningHonesty(),
+      deriveTrinityCapabilityFlags(),
+      'PROMPT_GENERATION'
+    );
+
+    expect(result.blocked).toBe(true);
+    expect(result.blockedCategories).toEqual(expect.arrayContaining(['live_verification', 'backend_action']));
+    expect(result.text).toContain('Prompt for Codex:');
+    expect(result.text).toContain('Verify the API routing');
+    expect(result.text).not.toContain('I verified the API routing');
+  });
+
+  it('removes prompt-generation backend self-claims without removing downstream imperative verification steps', () => {
+    const outputControls = deriveTrinityOutputControls(
+      'Write a prompt for Codex to verify the API routing and update docs.',
+      {}
+    );
+    const enforcementResult = enforceFinalStageHonestyAndMinimalism({
+      text: [
+        'I verified the API routing and updated the backend record.',
+        'Prompt for Codex:',
+        'Verify the API routing, inspect the backend code, and update the docs.'
+      ].join(' '),
+      userPrompt: 'Write a prompt for Codex to verify the API routing and update docs.',
+      capabilityFlags: deriveTrinityCapabilityFlags(),
+      outputControls,
+      reasoningHonesty: createDefaultTrinityReasoningHonesty()
+    });
+
+    expect(enforcementResult.text).toContain('Prompt for Codex:');
+    expect(enforcementResult.text).toContain('Verify the API routing');
+    expect(enforcementResult.text).not.toContain('I verified the API routing');
+    expect(enforcementResult.blockedOrRewrittenClaims).toEqual([
+      'I verified the API routing and updated the backend record.'
+    ]);
+  });
+
+  it('does not strip non-capability safety refusals from prompt-generation outputs', () => {
+    const outputControls = deriveTrinityOutputControls(
+      'Write what I should send another model.',
+      {}
+    );
+    const enforcementResult = enforceFinalStageHonestyAndMinimalism({
+      text: "I can't help write instructions to steal credentials. I can help draft a defensive incident-response prompt instead.",
+      userPrompt: 'Write what I should send another model.',
+      capabilityFlags: deriveTrinityCapabilityFlags(),
+      outputControls,
+      reasoningHonesty: {
+        responseMode: 'refusal',
+        achievableSubtasks: [],
+        blockedSubtasks: ['help write instructions to steal credentials'],
+        userVisibleCaveats: ["I can't help write instructions to steal credentials."],
+        evidenceTags: []
+      }
+    });
+
+    expect(enforcementResult.text).toContain("I can't help write instructions to steal credentials.");
+    expect(enforcementResult.text).toContain('defensive incident-response prompt');
   });
 
   it('preserves GPT-5.1 version tokens inside partial-refusal leads without orphaning numeric fragments', () => {

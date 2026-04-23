@@ -149,7 +149,15 @@ describe('/api/arcanos/ask honesty e2e', () => {
         choices: [
           {
             message: {
-              content: 'I checked the latest competitor moves and verified they cut pricing today.\n\nLaunch plan:\n- Lead with differentiated positioning.\n- Prepare a rapid FAQ and objection-handling loop.'
+              content: [
+                'Competitor Moves (as of latest available data):',
+                '- Competitors have accelerated feature releases, focusing on AI integration.',
+                '- Several have launched bundled offerings and tiered pricing.',
+                '',
+                'Launch plan:',
+                '- Lead with differentiated positioning.',
+                '- Prepare a rapid FAQ and objection-handling loop.'
+              ].join('\n')
             }
           }
         ],
@@ -217,10 +225,180 @@ describe('/api/arcanos/ask honesty e2e', () => {
     expect(response.body.result).toContain('Current competitor activity is unverified here.');
     expect(response.body.result).toContain('Lead with differentiated positioning.');
     expect(response.body.result.match(/Current competitor activity is unverified here\./g)).toHaveLength(1);
-    expect(response.body.result).not.toMatch(/I checked|verified they cut pricing today/i);
+    expect(response.body.result).not.toContain('Competitors have accelerated feature releases');
+    expect(response.body.result).not.toContain('Several have launched bundled offerings');
     expect(response.body.auditSafe).toBeUndefined();
     expect(mockCreateChatCompletionWithFallback).toHaveBeenCalledTimes(2);
     expect(mockRunStructuredReasoning).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns a generated prompt for downstream repo work instead of capability disclaimers', async () => {
+    mockCreateChatCompletionWithFallback.mockReset();
+    mockRunStructuredReasoning.mockReset();
+
+    mockValidateAIRequest.mockImplementation((_req: unknown, _res: unknown) => ({
+      client: {
+        models: {
+          retrieve: jest.fn().mockResolvedValue({ id: 'arcanos-intake-model' })
+        }
+      },
+      input: 'Generate a prompt for Codex to update my documentation in my repo.',
+      body: {
+        prompt: 'Generate a prompt for Codex to update my documentation in my repo.'
+      }
+    }));
+
+    mockCreateChatCompletionWithFallback
+      .mockResolvedValueOnce({
+        choices: [
+          {
+            message: {
+              content: 'User wants a prompt for Codex. The downstream executor can inspect the repo, update docs, and run checks.'
+            }
+          }
+        ],
+        activeModel: 'arcanos-intake-model',
+        fallbackFlag: false,
+        usage: {
+          prompt_tokens: 10,
+          completion_tokens: 12,
+          total_tokens: 22
+        },
+        id: 'intake-response-prompt-1',
+        created: 1773339301000
+      })
+      .mockResolvedValueOnce({
+        choices: [
+          {
+            message: {
+              content: [
+                "I can't inspect your repo from here.",
+                'Prompt for Codex:',
+                'Inspect the repository, identify outdated documentation, update the affected docs, run the relevant checks, and summarize the exact files changed.'
+              ].join(' ')
+            }
+          }
+        ],
+        activeModel: 'arcanos-final-model',
+        fallbackFlag: false,
+        usage: {
+          prompt_tokens: 18,
+          completion_tokens: 30,
+          total_tokens: 48
+        },
+        id: 'final-response-prompt-1',
+        created: 1773339301100
+      });
+
+    mockRunStructuredReasoning.mockResolvedValue({
+      reasoning_steps: [
+        'The user only wants a prompt for a downstream executor, not direct repo execution here.'
+      ],
+      assumptions: [
+        'Codex can inspect the repository when it receives the generated prompt.'
+      ],
+      constraints: [],
+      tradeoffs: [
+        'Preserve actionable downstream instructions without capability disclaimers.'
+      ],
+      alternatives_considered: [
+        'Refusing because the backend cannot inspect the repo directly'
+      ],
+      chosen_path_justification: 'Prompt generation should treat repo work as downstream instructions.',
+      response_mode: 'answer',
+      achievable_subtasks: [
+        'write a prompt for Codex'
+      ],
+      blocked_subtasks: [],
+      user_visible_caveats: [],
+      claim_tags: [
+        {
+          claim_text: 'The generated prompt may instruct Codex to inspect the repository and run checks.',
+          source_type: 'template',
+          confidence: 'high',
+          verification_status: 'unverified'
+        }
+      ],
+      final_answer: 'Prompt for Codex: Inspect the repository and update the docs.'
+    });
+
+    const response = await request(buildApp())
+      .post('/ask')
+      .send({
+        prompt: 'Generate a prompt for Codex to update my documentation in my repo.',
+        sessionId: 'honesty-session-prompt-1'
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.success).toBe(true);
+    expect(response.body.metadata.pipeline).toBe('trinity');
+    expect(response.body.result).toContain('Prompt for Codex:');
+    expect(response.body.result).toContain('Inspect the repository');
+    expect(response.body.result).not.toContain("I can't inspect your repo from here.");
+    expect(response.body.result).not.toContain('cannot verify live or current external information here');
+  });
+
+  it('applies honesty rewriting even when direct-answer mode is selected', async () => {
+    mockCreateChatCompletionWithFallback.mockReset();
+    mockRunStructuredReasoning.mockReset();
+
+    mockValidateAIRequest.mockImplementation((_req: unknown, _res: unknown) => ({
+      client: {
+        models: {
+          retrieve: jest.fn().mockResolvedValue({ id: 'arcanos-intake-model' })
+        }
+      },
+      input: 'Direct answer only: verify the latest competitor moves without browsing and build me a launch plan.',
+      body: {
+        prompt: 'Direct answer only: verify the latest competitor moves without browsing and build me a launch plan.'
+      }
+    }));
+
+    mockCreateChatCompletionWithFallback.mockResolvedValueOnce({
+      choices: [
+        {
+          message: {
+            content: [
+              'Latest Competitor Moves (as of June 2024, without live browsing):',
+              '',
+              '1. Product Innovation: Competitors have accelerated AI integration.',
+              '2. Partnerships: Strategic alliances are increasing.',
+              '',
+              'Launch plan:',
+              '1. Lead with differentiated positioning.',
+              '2. Prepare a rapid FAQ and objection-handling loop.'
+            ].join('\n')
+          }
+        }
+      ],
+      activeModel: 'gpt-4.1',
+      fallbackFlag: false,
+      usage: {
+        prompt_tokens: 18,
+        completion_tokens: 26,
+        total_tokens: 44
+      },
+      id: 'direct-answer-response-1',
+      created: 1773339300200
+    });
+
+    const response = await request(buildApp())
+      .post('/ask')
+      .send({
+        prompt: 'Direct answer only: verify the latest competitor moves without browsing and build me a launch plan.',
+        sessionId: 'honesty-session-direct-answer-1'
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.success).toBe(true);
+    expect(response.body.metadata.pipeline).toBe('trinity');
+    expect(response.body.result).toMatch(/can't (?:confirm|verify) current external state here without live access|cannot verify live or current external information here/i);
+    expect(response.body.result).toContain('Lead with differentiated positioning.');
+    expect(response.body.result).not.toContain('Competitors have accelerated AI integration');
+    expect(response.body.result).not.toContain('Strategic alliances are increasing');
+    expect(response.body.routingStages).toContain('ARCANOS-DIRECT-ANSWER');
+    expect(mockCreateChatCompletionWithFallback).toHaveBeenCalledTimes(1);
+    expect(mockRunStructuredReasoning).not.toHaveBeenCalled();
   });
 
   it('normalizes duplicate limitations and scope drift at the route boundary', async () => {
