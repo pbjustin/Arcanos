@@ -11,6 +11,9 @@ const cleanupExpiredGptJobsMock = jest.fn();
 const listWorkerRuntimeSnapshotsMock = jest.fn();
 const upsertWorkerRuntimeSnapshotMock = jest.fn();
 const fetchMock = jest.fn();
+const loggerDebugMock = jest.fn();
+const loggerInfoMock = jest.fn();
+const loggerWarnMock = jest.fn();
 
 jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
   getJobQueueSummary: getJobQueueSummaryMock,
@@ -26,6 +29,25 @@ jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
 jest.unstable_mockModule('@core/db/repositories/workerRuntimeRepository.js', () => ({
   listWorkerRuntimeSnapshots: listWorkerRuntimeSnapshotsMock,
   upsertWorkerRuntimeSnapshot: upsertWorkerRuntimeSnapshotMock
+}));
+
+jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({
+  aiLogger: {
+    debug: jest.fn(),
+    error: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn()
+  },
+  default: {
+    debug: loggerDebugMock,
+    info: loggerInfoMock,
+    warn: loggerWarnMock
+  },
+  logger: {
+    debug: loggerDebugMock,
+    info: loggerInfoMock,
+    warn: loggerWarnMock
+  }
 }));
 
 const {
@@ -1030,5 +1052,44 @@ describe('workerAutonomyService', () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  it('logs snapshot persistence failures with structured context', async () => {
+    upsertWorkerRuntimeSnapshotMock.mockRejectedValueOnce(new Error('database write timeout'));
+
+    const service = new WorkerAutonomyService({
+      workerId: 'async-queue',
+      workerType: 'async_queue',
+      heartbeatIntervalMs: 10_000,
+      leaseMs: 30_000,
+      inspectorIntervalMs: 30_000,
+      staleAfterMs: 60_000,
+      watchdogIdleMs: 120_000,
+      defaultMaxRetries: 2,
+      retryBackoffBaseMs: 2_000,
+      retryBackoffMaxMs: 60_000,
+      maxJobsPerHour: 120,
+      maxAiCallsPerHour: 120,
+      maxRssMb: 2_048,
+      queueDepthDeferralThreshold: 25,
+      queueDepthDeferralMs: 5_000,
+      failureWebhookUrl: null,
+      failureWebhookThreshold: 3,
+      failureWebhookCooldownMs: 300_000
+    });
+
+    await service.inspect('scheduled', [], { source: 'inspector' });
+
+    expect(loggerWarnMock).toHaveBeenCalledWith(
+      'worker.runtime_snapshot.persist.failed',
+      expect.objectContaining({
+        module: 'worker-autonomy',
+        workerId: 'async-queue',
+        source: 'inspector',
+        healthStatus: 'healthy',
+        durationMs: expect.any(Number),
+        error: 'database write timeout'
+      })
+    );
   });
 });

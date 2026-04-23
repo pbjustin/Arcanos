@@ -1049,10 +1049,14 @@ export class WorkerAutonomyService {
       }
     } catch (error: unknown) {
       //audit Assumption: snapshot persistence is operationally important but must not crash the worker loop; failure risk: observability outage halts queue processing; expected invariant: worker continues after logging persistence failures; handling strategy: log and continue.
-      console.warn(
-        `[Worker Autonomy] Failed to persist runtime snapshot source=${source} durationMs=${Date.now() - persistStartedAtMs}:`,
-        resolveErrorMessage(error)
-      );
+      logger.warn('worker.runtime_snapshot.persist.failed', {
+        module: 'worker-autonomy',
+        workerId: this.settings.workerId,
+        source,
+        healthStatus: context.healthStatus,
+        durationMs: Date.now() - persistStartedAtMs,
+        error: resolveErrorMessage(error)
+      });
     }
   }
 

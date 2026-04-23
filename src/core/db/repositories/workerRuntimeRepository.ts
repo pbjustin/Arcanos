@@ -171,7 +171,10 @@ export async function upsertWorkerRuntimeSnapshot(
       snapshotBytes: Buffer.byteLength(serializedSnapshot, 'utf8')
     };
     if (outcome === 'error' || durationMs >= WORKER_RUNTIME_UPSERT_SLOW_LOG_MIN_MS) {
-      logger.warn('worker.runtime_snapshot.upsert.slow', logContext);
+      logger.warn(
+        outcome === 'error' ? 'worker.runtime_snapshot.upsert.failed' : 'worker.runtime_snapshot.upsert.slow',
+        logContext
+      );
     } else {
       logger.debug('worker.runtime_snapshot.upsert.completed', logContext);
     }
