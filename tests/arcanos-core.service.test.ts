@@ -53,6 +53,7 @@ describe('ARCANOS:CORE service', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     delete process.env.ARCANOS_CORE_HANDLER_TIMEOUT_MS;
+    delete process.env.ARCANOS_CORE_PIPELINE_TIMEOUT_MS;
     getRequestRemainingMsMock.mockReturnValue(null);
     getRequestAbortContextMock.mockReturnValue(null);
     mockCreateRuntimeBudget.mockReturnValue({ budget: 'runtime' });
@@ -95,18 +96,18 @@ describe('ARCANOS:CORE service', () => {
     expect(runWithRequestAbortTimeoutMock).toHaveBeenCalledTimes(1);
     expect(runWithRequestAbortTimeoutMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        timeoutMs: 3_000,
-        abortMessage: 'ARCANOS:CORE pipeline timeout after 3000ms'
+        timeoutMs: 18_000,
+        abortMessage: 'ARCANOS:CORE pipeline timeout after 18000ms'
       }),
       expect.any(Function)
     );
-    expect(mockCreateRuntimeBudget).toHaveBeenCalledWith(3_000, 250);
+    expect(mockCreateRuntimeBudget).toHaveBeenCalledWith(18_000, 250);
     expect(loggerInfoMock).toHaveBeenCalledWith(
       '[core] handler.start',
       expect.objectContaining({
         sourceEndpoint: 'gpt.arcanos-core.query',
-        timeoutMs: 3_000,
-        totalTimeoutMs: 5_000,
+        timeoutMs: 18_000,
+        totalTimeoutMs: 20_000,
         degradedTimeoutMs: 2_000
       })
     );
@@ -126,7 +127,7 @@ describe('ARCANOS:CORE service', () => {
 
     expect(runWithRequestAbortTimeoutMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        timeoutMs: 3_000
+        timeoutMs: 18_000
       }),
       expect.any(Function)
     );
