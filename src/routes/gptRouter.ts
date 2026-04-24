@@ -1487,6 +1487,8 @@ router.post("/:gptId", async (req, res, next) => {
   let queuedPendingResponse:
     | ReturnType<typeof buildQueuedGptPendingResponse>
     | null = null;
+  let queuedAsyncWaitForResultMs: number | null = null;
+  let queuedAsyncPollIntervalMs: number | null = null;
   const timeoutMessage = `GPT route timeout after ${routeTimeoutMs}ms`;
   const clientAbortController = new AbortController();
   const abortForClosedClient = () => {
@@ -2094,6 +2096,8 @@ router.post("/:gptId", async (req, res, next) => {
           routeTimeoutMs
         );
         const asyncPollIntervalMs = resolveAsyncGptPollIntervalMs(explicitAsyncPollIntervalMs);
+        queuedAsyncWaitForResultMs = asyncWaitForResultMs;
+        queuedAsyncPollIntervalMs = asyncPollIntervalMs;
         requestLogger?.info?.('gpt.request.execution_plan', {
           endpoint: req.originalUrl,
           gptId: incomingGptId,
@@ -2852,8 +2856,8 @@ router.post("/:gptId", async (req, res, next) => {
           buildDirectReturnTimeoutResponse({
             pendingResponse,
             jobId: queuedJobId ?? pendingResponse.jobId,
-            waitForResultMs: resolvedAsyncWaitForResultMs ?? routeTimeoutMs,
-            pollIntervalMs: resolveAsyncGptPollIntervalMs(explicitAsyncPollIntervalMs)
+            waitForResultMs: queuedAsyncWaitForResultMs ?? routeTimeoutMs,
+            pollIntervalMs: queuedAsyncPollIntervalMs ?? resolveAsyncGptPollIntervalMs(explicitAsyncPollIntervalMs)
           }),
           'gpt.response.timeout_pending',
           202

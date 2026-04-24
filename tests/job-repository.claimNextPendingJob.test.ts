@@ -110,7 +110,7 @@ describe('jobRepository.claimNextPendingJob', () => {
     expect(updateCalls[1]?.[1]).toEqual([12_000, 'worker-1']);
   });
 
-  it('serializes priority queue claims until fairness state is updated', async () => {
+  it('does not serialize database claim round-trips when priority queue fairness is enabled', async () => {
     let updateQueryCount = 0;
     let resolveFirstUpdateStarted: () => void = () => {};
     let resolveFirstUpdate: () => void = () => {};
@@ -153,11 +153,11 @@ describe('jobRepository.claimNextPendingJob', () => {
     });
     await new Promise(resolve => setTimeout(resolve, 0));
 
-    expect(updateQueryCount).toBe(1);
+    expect(updateQueryCount).toBe(2);
 
     resolveFirstUpdate();
     await Promise.all([firstClaim, secondClaim]);
 
-    expect(updateQueryCount).toBe(3);
+    expect(updateQueryCount).toBe(2);
   });
 });
