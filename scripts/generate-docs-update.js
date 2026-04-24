@@ -95,6 +95,7 @@ function buildAuthHeaders() {
   const token =
     process.env.ARCANOS_API_KEY?.trim() ||
     process.env.BACKEND_API_KEY?.trim() ||
+    process.env.CI_API_KEY?.trim() ||
     process.env.OPENAI_API_KEY?.trim();
 
   return token ? { Authorization: `Bearer ${token}` } : {};

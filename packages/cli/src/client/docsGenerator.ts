@@ -5,6 +5,7 @@ import {
   type ArcanosJobResult,
   type RunArcanosJobOptions,
 } from "./arcanosJob.js";
+import { mapWithConcurrency, normalizeConcurrency as normalizeBoundedConcurrency } from "./concurrency.js";
 
 export interface DocsGenerationSection {
   id: string;
@@ -365,36 +366,12 @@ function restoreDocumentationPlaceholders(markdown: string): string {
   return restored;
 }
 
-async function mapWithConcurrency<T, R>(
-  items: T[],
-  concurrency: number,
-  mapper: (item: T, index: number) => Promise<R>
-): Promise<R[]> {
-  if (items.length === 0) {
-    return [];
-  }
-
-  const results = new Array<R>(items.length);
-  let nextIndex = 0;
-  const workerCount = Math.min(concurrency, items.length);
-
-  await Promise.all(Array.from({ length: workerCount }, async () => {
-    while (nextIndex < items.length) {
-      const index = nextIndex;
-      nextIndex += 1;
-      results[index] = await mapper(items[index] as T, index);
-    }
-  }));
-
-  return results;
-}
-
 function normalizeConcurrency(value: number | undefined): number {
-  if (!Number.isFinite(value) || Number(value) <= 0) {
-    return DEFAULT_DOCS_GENERATION_CONCURRENCY;
-  }
-
-  return Math.min(MAX_DOCS_GENERATION_CONCURRENCY, Math.max(1, Math.trunc(Number(value))));
+  return normalizeBoundedConcurrency(
+    value,
+    DEFAULT_DOCS_GENERATION_CONCURRENCY,
+    MAX_DOCS_GENERATION_CONCURRENCY
+  );
 }
 
 function renderDocsUpdateMarkdown(input: {

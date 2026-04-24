@@ -89,6 +89,11 @@ export {
 } from "./client/arcanosJob.js";
 
 export {
+  mapWithConcurrency,
+  normalizeConcurrency,
+} from "./client/concurrency.js";
+
+export {
   DEFAULT_DOCS_UPDATE_FILE,
   DOCS_GENERATION_SECTIONS,
   DocsGenerationError,
