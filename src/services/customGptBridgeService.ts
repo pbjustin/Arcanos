@@ -145,7 +145,7 @@ function extractBearerToken(authorization?: string | null): string | null {
 }
 
 function pollUrl(jobId: string): string {
-  return `/jobs/${encodeURIComponent(jobId)}`;
+  return `/jobs/${encodeURIComponent(jobId)}/result`;
 }
 
 function resultUrl(jobId: string): string {

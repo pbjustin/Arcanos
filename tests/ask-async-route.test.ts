@@ -133,7 +133,7 @@ describe('async /brain queue contract', () => {
       ok: true,
       status: 'pending',
       jobId: 'job-123',
-      poll: '/jobs/job-123'
+      poll: '/jobs/job-123/result'
     });
     expect(createJobMock).toHaveBeenCalledWith(
       'api',
@@ -227,7 +227,7 @@ describe('async /brain queue contract', () => {
       error: 'ASYNC_ASK_JOB_FAILED',
       message: 'OpenAI upstream timed out',
       jobId: 'job-123',
-      poll: '/jobs/job-123'
+      poll: '/jobs/job-123/result'
     });
   });
 
@@ -250,7 +250,7 @@ describe('async /brain queue contract', () => {
       error: 'ASYNC_ASK_JOB_OUTPUT_INVALID',
       message: 'Async ask job completed without a structured output payload.',
       jobId: 'job-123',
-      poll: '/jobs/job-123'
+      poll: '/jobs/job-123/result'
     });
   });
 
@@ -269,7 +269,7 @@ describe('async /brain queue contract', () => {
       error: 'ASYNC_ASK_JOB_MISSING',
       message: 'Async ask job disappeared before completion.',
       jobId: 'job-123',
-      poll: '/jobs/job-123'
+      poll: '/jobs/job-123/result'
     });
   });
 });

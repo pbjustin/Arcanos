@@ -234,7 +234,7 @@ describe('async /gpt idempotency', () => {
       retentionUntil: null,
       idempotencyUntil: null,
       expiresAt: null,
-      poll: '/jobs/job-lookup-complete',
+      poll: '/jobs/job-lookup-complete/result',
       stream: '/jobs/job-lookup-complete/stream',
       output: {
         ok: true,
@@ -254,7 +254,7 @@ describe('async /gpt idempotency', () => {
         retentionUntil: null,
         idempotencyUntil: null,
         expiresAt: null,
-        poll: '/jobs/job-lookup-complete',
+        poll: '/jobs/job-lookup-complete/result',
         stream: '/jobs/job-lookup-complete/stream',
         result: {
           ok: true,
@@ -547,7 +547,7 @@ describe('async /gpt idempotency', () => {
       retentionUntil: null,
       idempotencyUntil: null,
       expiresAt: null,
-      poll: '/jobs/missing-job',
+      poll: '/jobs/missing-job/result',
       stream: '/jobs/missing-job/stream',
       output: null,
       error: {
@@ -565,7 +565,7 @@ describe('async /gpt idempotency', () => {
         retentionUntil: null,
         idempotencyUntil: null,
         expiresAt: null,
-        poll: '/jobs/missing-job',
+        poll: '/jobs/missing-job/result',
         stream: '/jobs/missing-job/stream',
         result: null,
         error: {

@@ -97,7 +97,7 @@ describe('natural-language job lookup guard on /gpt/:gptId', () => {
         message: 'Job retrieval requests must use the jobs API. Do not send result or status lookups through POST /gpt/{gptId}.'
       },
       canonical: {
-        poll: '/jobs/job-123',
+        poll: '/jobs/job-123/result',
         result: '/jobs/job-123/result'
       },
       _route: expect.objectContaining({
@@ -130,7 +130,7 @@ describe('natural-language job lookup guard on /gpt/:gptId', () => {
         message: 'Job retrieval requests must use the jobs API. Do not send result or status lookups through POST /gpt/{gptId}.'
       },
       canonical: {
-        poll: '/jobs/job-123',
+        poll: '/jobs/job-123/result',
         result: '/jobs/job-123/result'
       },
       _route: expect.objectContaining({
@@ -163,7 +163,7 @@ describe('natural-language job lookup guard on /gpt/:gptId', () => {
         message: 'Job retrieval requests must use the jobs API. Do not send result or status lookups through POST /gpt/{gptId}.'
       },
       canonical: {
-        poll: '/jobs/job-456',
+        poll: '/jobs/job-456/result',
         result: '/jobs/job-456/result'
       },
       _route: expect.objectContaining({
@@ -196,7 +196,7 @@ describe('natural-language job lookup guard on /gpt/:gptId', () => {
         message: 'Job retrieval requests must use the jobs API. Do not send result or status lookups through POST /gpt/{gptId}.'
       },
       canonical: {
-        poll: '/jobs/job-789',
+        poll: '/jobs/job-789/result',
         result: '/jobs/job-789/result'
       },
       _route: expect.objectContaining({

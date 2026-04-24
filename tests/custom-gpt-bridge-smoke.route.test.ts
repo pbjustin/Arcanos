@@ -172,9 +172,9 @@ describe('Custom GPT bridge smoke action', () => {
       status: 'pending',
       action: 'health_echo',
       jobId: SMOKE_PENDING_JOB_ID,
-      poll_url: `/jobs/${SMOKE_PENDING_JOB_ID}`,
+      poll_url: `/jobs/${SMOKE_PENDING_JOB_ID}/result`,
       result_url: `/jobs/${SMOKE_PENDING_JOB_ID}/result`,
-      poll: `/jobs/${SMOKE_PENDING_JOB_ID}`,
+      poll: `/jobs/${SMOKE_PENDING_JOB_ID}/result`,
       result: {
         method: 'GET',
         url: `/jobs/${SMOKE_PENDING_JOB_ID}/result`,
@@ -220,7 +220,7 @@ describe('Custom GPT bridge smoke action', () => {
       status: 'pending',
       action: 'echo',
       jobId: ECHO_PENDING_JOB_ID,
-      poll_url: `/jobs/${ECHO_PENDING_JOB_ID}`,
+      poll_url: `/jobs/${ECHO_PENDING_JOB_ID}/result`,
       result_url: `/jobs/${ECHO_PENDING_JOB_ID}/result`,
       result: {
         method: 'GET',
