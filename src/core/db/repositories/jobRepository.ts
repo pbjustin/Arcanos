@@ -1011,11 +1011,20 @@ async function withPriorityQueueFairnessLock<T>(operation: () => Promise<T>): Pr
   });
 
   await previousLock;
+
+  let operationPromise: Promise<T>;
   try {
-    return await operation();
-  } finally {
+    // Run the callback while holding the lock so any synchronous fairness-state
+    // reads/updates remain serialized, but release the lock before awaiting the
+    // returned promise so DB round-trips can proceed concurrently.
+    operationPromise = operation();
+  } catch (error) {
     releaseLock();
+    throw error;
   }
+
+  releaseLock();
+  return await operationPromise;
 }
 
 function toRepositoryClaimLane(lane: QueueLane): PriorityQueueClaimLane {
