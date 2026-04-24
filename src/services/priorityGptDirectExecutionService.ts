@@ -9,7 +9,7 @@ import {
   recordGptJobEvent,
   recordGptJobTiming
 } from '@platform/observability/appMetrics.js';
-import { routeGptRequest } from '@routes/_core/gptDispatch.js';
+import type { routeGptRequest as routeGptRequestType } from '@routes/_core/gptDispatch.js';
 import { parseQueuedGptJobInput } from '@shared/gpt/asyncGptJob.js';
 import { computeGptJobLifecycleDeadlines } from '@shared/gpt/gptJobLifecycle.js';
 import {
@@ -30,6 +30,14 @@ export interface PriorityGptDirectExecutionSnapshot {
 
 const DIRECT_HEARTBEAT_INTERVAL_MS = 5_000;
 let activePriorityDirectExecutions = 0;
+let routeGptRequestLoader: Promise<typeof routeGptRequestType> | null = null;
+
+async function loadRouteGptRequest(): Promise<typeof routeGptRequestType> {
+  routeGptRequestLoader ??= import('@routes/_core/gptDispatch.js').then(
+    (module) => module.routeGptRequest
+  );
+  return routeGptRequestLoader;
+}
 
 function hydrateQueuedGptBodyPrompt(
   body: Record<string, unknown>,
@@ -199,6 +207,7 @@ async function executeReservedPriorityGptDirectExecution(params: {
       workerId: params.workerId
     });
 
+    const routeGptRequest = await loadRouteGptRequest();
     const envelope = await routeGptRequest({
       gptId,
       body: hydrateQueuedGptBodyPrompt(body, prompt),
