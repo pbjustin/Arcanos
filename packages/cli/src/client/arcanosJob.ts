@@ -92,6 +92,7 @@ export async function runArcanosJob(
     pollIntervalMs: options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS,
     headers: options.headers,
     context: options.context,
+    fetchFn: options.fetchFn,
   });
   const initialResult = normalizeArcanosResult(initialPayload);
 
@@ -274,10 +275,11 @@ export function isPipelineFallback(result: unknown): boolean {
 export function buildJobResultPollUrl(baseUrl: string, pollUrl: string | undefined, jobId: string): string {
   const fallbackPollPath = `/jobs/${encodeURIComponent(jobId)}/result`;
   const absolutePollUrl = new URL(pollUrl?.trim() || fallbackPollPath, withTrailingSlash(baseUrl));
+  const trimmedPathname = absolutePollUrl.pathname.replace(/\/+$/, "");
 
-  if (!absolutePollUrl.pathname.endsWith("/result")) {
-    absolutePollUrl.pathname = `${absolutePollUrl.pathname.replace(/\/+$/, "")}/result`;
-  }
+  absolutePollUrl.pathname = trimmedPathname.endsWith("/result")
+    ? trimmedPathname
+    : `${trimmedPathname}/result`;
 
   return absolutePollUrl.toString();
 }
@@ -390,11 +392,13 @@ function extractErrorMessage(value: unknown): string | undefined {
 }
 
 function normalizeOptionalPollUrl(pollUrl: string | undefined, jobId: string | undefined): string | undefined {
-  if (pollUrl) {
-    if (pollUrl.endsWith("/result")) {
-      return pollUrl;
+  const trimmedPollUrl = pollUrl?.trim();
+  if (trimmedPollUrl) {
+    const normalizedPollUrl = trimmedPollUrl.replace(/\/+$/, "");
+    if (normalizedPollUrl.endsWith("/result")) {
+      return normalizedPollUrl;
     }
-    return `${pollUrl.replace(/\/+$/, "")}/result`;
+    return `${normalizedPollUrl}/result`;
   }
 
   return jobId ? `/jobs/${encodeURIComponent(jobId)}/result` : undefined;

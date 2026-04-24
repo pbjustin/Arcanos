@@ -58,6 +58,7 @@ export interface InvokeGptRouteOptions {
   payload?: Record<string, unknown>;
   context?: Record<string, unknown>;
   headers?: Record<string, string>;
+  fetchFn?: typeof fetch;
 }
 
 export interface GeneratePromptAndWaitOptions {
@@ -68,6 +69,7 @@ export interface GeneratePromptAndWaitOptions {
   pollIntervalMs?: number;
   headers?: Record<string, string>;
   context?: Record<string, unknown>;
+  fetchFn?: typeof fetch;
 }
 
 export interface QueryAndWaitGptRouteOptions extends GeneratePromptAndWaitOptions {}
@@ -78,6 +80,7 @@ export interface QueryGptRouteOptions {
   prompt: string;
   headers?: Record<string, string>;
   context?: Record<string, unknown>;
+  fetchFn?: typeof fetch;
 }
 
 export interface GenerateGptPromptOptions extends QueryGptRouteOptions {
@@ -89,18 +92,21 @@ export interface InvokeGptJobLookupActionOptions {
   gptId: string;
   jobId: string;
   headers?: Record<string, string>;
+  fetchFn?: typeof fetch;
 }
 
 export interface FetchGptJobResultOptions {
   baseUrl: string;
   jobId: string;
   headers?: Record<string, string>;
+  fetchFn?: typeof fetch;
 }
 
 export interface FetchGptJobStatusOptions {
   baseUrl: string;
   jobId: string;
   headers?: Record<string, string>;
+  fetchFn?: typeof fetch;
 }
 
 export type GptAsyncBridgeAction =
@@ -263,7 +269,7 @@ export function validateToolInvokeResponse(
  * Inputs/Outputs: caller-provided prompt/action/payload/context fields; returns the JSON body with no duplicated `gptId`.
  * Edge cases: blank `action` values are omitted so clients do not silently inject unsupported defaults such as `"ask"`.
  */
-export function buildGptRouteRequestBody(options: Omit<InvokeGptRouteOptions, "baseUrl" | "gptId" | "headers">): GptRouteRequestBody {
+export function buildGptRouteRequestBody(options: Omit<InvokeGptRouteOptions, "baseUrl" | "gptId" | "headers" | "fetchFn">): GptRouteRequestBody {
   const prompt = options.prompt?.trim();
   const action = options.action?.trim();
   if (!prompt && !action) {
@@ -333,7 +339,8 @@ export async function invokeGptRoute(options: InvokeGptRouteOptions): Promise<Re
     options.baseUrl,
     `/gpt/${encodeURIComponent(gptId)}`,
     body,
-    options.headers
+    options.headers,
+    options.fetchFn
   );
 }
 
@@ -357,7 +364,8 @@ export async function requestQuery(
     prompt: options.prompt,
     action: "query",
     context: options.context,
-    headers: options.headers
+    headers: options.headers,
+    fetchFn: options.fetchFn
   });
 
   return normalizeGptAsyncBridgePayload(payload, "query");
@@ -372,7 +380,8 @@ export async function generateGptPrompt(
     prompt: options.prompt,
     executionMode: options.mode === "fast" ? "fast" : "async",
     context: options.context,
-    headers: options.headers
+    headers: options.headers,
+    fetchFn: options.fetchFn
   });
 }
 
@@ -392,7 +401,8 @@ export async function generatePromptAndWait(
     waitForResultMs: options.timeoutMs,
     pollIntervalMs: options.pollIntervalMs,
     context: options.context,
-    headers: options.headers
+    headers: options.headers,
+    fetchFn: options.fetchFn
   });
 
   return normalizeGptAsyncBridgePayload(payload, "query");
@@ -414,7 +424,8 @@ export async function queryAndWaitGptRoute(
     waitForResultMs: options.timeoutMs,
     pollIntervalMs: options.pollIntervalMs,
     context: options.context,
-    headers: options.headers
+    headers: options.headers,
+    fetchFn: options.fetchFn
   });
 
   return normalizeGptAsyncBridgePayload(payload, "query_and_wait");
@@ -440,7 +451,8 @@ export async function getGptRouteJobStatus(
     payload: {
       jobId: normalizedJobId
     },
-    headers: options.headers
+    headers: options.headers,
+    fetchFn: options.fetchFn
   });
 
   return normalizeGptAsyncBridgePayload(payload, "get_status");
@@ -466,7 +478,8 @@ export async function getGptRouteJobResult(
     payload: {
       jobId: normalizedJobId
     },
-    headers: options.headers
+    headers: options.headers,
+    fetchFn: options.fetchFn
   });
 
   return normalizeGptAsyncBridgePayload(payload, "get_result");
@@ -490,7 +503,7 @@ export async function getJobStatus(
   options: FetchGptJobStatusOptions
 ): Promise<Record<string, unknown>> {
   const encodedJobId = normalizeJobLookupId(options.jobId);
-  const payload = await getJson(options.baseUrl, `/jobs/${encodedJobId}`, options.headers);
+  const payload = await getJson(options.baseUrl, `/jobs/${encodedJobId}`, options.headers, options.fetchFn);
   return normalizeGptAsyncBridgePayload(payload, "get_status");
 }
 
@@ -503,7 +516,7 @@ export async function getJobResult(
   options: FetchGptJobResultOptions
 ): Promise<Record<string, unknown>> {
   const encodedJobId = normalizeJobLookupId(options.jobId);
-  const payload = await getJson(options.baseUrl, `/jobs/${encodedJobId}/result`, options.headers);
+  const payload = await getJson(options.baseUrl, `/jobs/${encodedJobId}/result`, options.headers, options.fetchFn);
   return normalizeGptAsyncBridgePayload(payload, "get_result");
 }
 
@@ -628,9 +641,10 @@ async function postJson(
   baseUrl: string,
   pathname: string,
   body: object,
-  extraHeaders: Record<string, string> = {}
+  extraHeaders: Record<string, string> = {},
+  fetchFn: typeof fetch = fetch
 ): Promise<Record<string, unknown>> {
-  const response = await fetch(new URL(pathname, withTrailingSlash(baseUrl)), {
+  const response = await fetchFn(new URL(pathname, withTrailingSlash(baseUrl)), {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -650,9 +664,10 @@ async function postJson(
 async function getJson(
   baseUrl: string,
   pathname: string,
-  extraHeaders: Record<string, string> = {}
+  extraHeaders: Record<string, string> = {},
+  fetchFn: typeof fetch = fetch
 ): Promise<Record<string, unknown>> {
-  const response = await fetch(new URL(pathname, withTrailingSlash(baseUrl)), {
+  const response = await fetchFn(new URL(pathname, withTrailingSlash(baseUrl)), {
     headers: extraHeaders
   });
   const payload = await readResponsePayload(response);

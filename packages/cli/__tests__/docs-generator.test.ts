@@ -166,6 +166,31 @@ describe("docs generator", () => {
     expect(result.ok).toBe(true);
   });
 
+  it("omits generated timestamps unless explicitly supplied", async () => {
+    const runJob = jest.fn<(prompt: string) => Promise<ArcanosJobResult>>()
+      .mockResolvedValue(completedResult("## Stable Section\n\nDone.", "job-stable"));
+
+    const withoutTimestamp = await generateDocsUpdate({
+      baseUrl: "http://127.0.0.1:3000",
+      gptId: "arcanos-core",
+      sections: [TEST_SECTION],
+      strict: true,
+      runJob,
+    });
+
+    const withTimestamp = await generateDocsUpdate({
+      baseUrl: "http://127.0.0.1:3000",
+      gptId: "arcanos-core",
+      sections: [TEST_SECTION],
+      strict: true,
+      generatedAt: "2026-04-24T00:00:00.000Z",
+      runJob,
+    });
+
+    expect(withoutTimestamp.updates[0]?.content).not.toContain("Generated at:");
+    expect(withTimestamp.updates[0]?.content).toContain("Generated at: 2026-04-24T00:00:00.000Z");
+  });
+
   it("keeps guarded control-plane routes out of default prompts and restores placeholders in markdown", async () => {
     const guardedPromptText = DOCS_GENERATION_SECTIONS.map((section) => section.prompt).join("\n");
     expect(guardedPromptText).not.toContain("/jobs/:id/result");

@@ -66,14 +66,14 @@ Do not prompt `/gpt/:gptId` to inspect the queue.
 ## DAG Tracing
 DAG execution and trace retrieval are control-plane operations. Use:
 
-- `GET /api/arcanos/dag/runs/:runId`
-- `GET /api/arcanos/dag/runs/:runId/trace`
-- `GET /api/arcanos/dag/runs/:runId/tree`
-- `GET /api/arcanos/dag/runs/:runId/nodes/:nodeId`
-- `GET /api/arcanos/dag/runs/:runId/metrics`
-- `GET /api/arcanos/dag/runs/:runId/errors`
-- `GET /api/arcanos/dag/runs/:runId/lineage`
-- `GET /api/arcanos/dag/runs/:runId/verification`
+- `GET /api/arcanos/dag/runs/{runId}`
+- `GET /api/arcanos/dag/runs/{runId}/trace`
+- `GET /api/arcanos/dag/runs/{runId}/tree`
+- `GET /api/arcanos/dag/runs/{runId}/nodes/{nodeId}`
+- `GET /api/arcanos/dag/runs/{runId}/metrics`
+- `GET /api/arcanos/dag/runs/{runId}/errors`
+- `GET /api/arcanos/dag/runs/{runId}/lineage`
+- `GET /api/arcanos/dag/runs/{runId}/verification`
 - MCP tools such as `dag.run.trace` when operating through ARCANOS MCP
 
 Slow trace timing and node metrics should be read from DAG trace/metrics responses or MCP diagnostics, not generated through the writing pipeline.

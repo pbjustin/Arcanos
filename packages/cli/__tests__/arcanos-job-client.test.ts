@@ -1,7 +1,9 @@
 import { jest } from "@jest/globals";
 
 import {
+  buildJobResultPollUrl,
   isPipelineFallback,
+  normalizeArcanosResult,
   pollArcanosJob,
   runArcanosJob,
 } from "../src/client/arcanosJob.js";
@@ -45,6 +47,34 @@ describe("ARCANOS async job client", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("uses the injected fetchFn for the initial query_and_wait request", async () => {
+    const globalFetchMock = jest.spyOn(globalThis, "fetch").mockRejectedValue(
+      new Error("global fetch should not be used")
+    );
+    const fetchMock = jest.fn<typeof fetch>().mockResolvedValue(
+      createJsonResponse({
+        ok: true,
+        status: "completed",
+        jobId: "job-injected",
+        result: { text: "done" },
+      })
+    );
+
+    const result = await runArcanosJob("Write one section.", {
+      baseUrl: "http://127.0.0.1:3000",
+      gptId: "arcanos-core",
+      fetchFn: fetchMock,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      status: "completed",
+      jobId: "job-injected",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(globalFetchMock).not.toHaveBeenCalled();
+  });
+
   it("polls a timedOut response until completed", async () => {
     const fetchMock = jest.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(createJsonResponse({
@@ -82,6 +112,22 @@ describe("ARCANOS async job client", () => {
     });
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(fetchMock.mock.calls[1]?.[0]).toBe("http://127.0.0.1:3000/jobs/job-timeout/result");
+  });
+
+  it("normalizes poll URLs that already point to result endpoints with trailing slashes", () => {
+    expect(
+      buildJobResultPollUrl("http://127.0.0.1:3000", "/jobs/job-123/result/", "job-123")
+    ).toBe("http://127.0.0.1:3000/jobs/job-123/result");
+
+    expect(
+      normalizeArcanosResult({
+        ok: true,
+        status: "completed",
+        jobId: "job-123",
+        poll: "/jobs/job-123/result/",
+        result: { text: "done" },
+      }).poll
+    ).toBe("/jobs/job-123/result");
   });
 
   it("polls a queued response until completed", async () => {

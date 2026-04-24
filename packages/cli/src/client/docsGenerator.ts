@@ -379,11 +379,8 @@ function renderDocsUpdateMarkdown(input: {
   failures: DocsSectionGenerationResult[];
   generatedAt?: string;
 }): string {
-  const generatedAt = input.generatedAt ?? new Date().toISOString();
   const lines = [
     "# ARCANOS GPT Async Documentation Workflow",
-    "",
-    `Generated at: ${generatedAt}`,
     "",
     "This document is generated from narrow ARCANOS jobs. Control-plane operations stay on direct control endpoints; `/gpt/:gptId` is used only for writing jobs.",
     "",
@@ -396,6 +393,10 @@ function renderDocsUpdateMarkdown(input: {
     "- DAG trace: `GET /api/arcanos/dag/runs/{runId}/trace`",
     "",
   ];
+
+  if (input.generatedAt) {
+    lines.splice(2, 0, `Generated at: ${input.generatedAt}`, "");
+  }
 
   for (const section of input.sections) {
     lines.push(section.markdown!.trim(), "");

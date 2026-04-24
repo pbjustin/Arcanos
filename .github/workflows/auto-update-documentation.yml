@@ -50,6 +50,11 @@ jobs:
           export NODE_ENV=production
           export OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY || 'sk-mock-for-ci-testing' }}"
           CI_API_KEY="${OPENAI_API_KEY}"
+          DOCS_STRICT_FLAG="--strict"
+          if [ "$OPENAI_API_KEY" = "sk-mock-for-ci-testing" ]; then
+            echo "OPENAI_API_KEY secret is unavailable; running documentation generation in allow-partial validation mode."
+            DOCS_STRICT_FLAG="--allow-partial"
+          fi
           
           # Start ARCANOS backend for documentation analysis
           npm start &
@@ -76,7 +81,8 @@ jobs:
             --direct-timeout-ms 25000 \
             --timeout-ms 120000 \
             --poll-interval-ms 1000 \
-            --concurrency 2
+            --concurrency 2 \
+            $DOCS_STRICT_FLAG
           
           # Stop the server
           kill $SERVER_PID || true
@@ -106,6 +112,13 @@ jobs:
           
           # Extract updates from the response
           # Handle both direct JSON format and nested response field
+          ANALYSIS_OK=$(jq -r '.ok // .response.ok // false' doc_analysis.json 2>/dev/null || echo "false")
+          if [ "$ANALYSIS_OK" != "true" ]; then
+            echo "Documentation analysis completed with failures; artifacts were uploaded, so skipping file updates."
+            echo "has_updates=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
           UPDATES=$(jq -r '.updates // .response.updates // empty' doc_analysis.json 2>/dev/null || echo "[]")
           
           if [ "$UPDATES" = "[]" ] || [ "$UPDATES" = "null" ] || [ -z "$UPDATES" ]; then
