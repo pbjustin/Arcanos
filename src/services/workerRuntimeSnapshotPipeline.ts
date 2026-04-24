@@ -60,13 +60,17 @@ export function isWorkerSnapshotPipelineV2Enabled(env: NodeJS.ProcessEnv = proce
   return readBooleanEnv(env.WORKER_SNAPSHOT_PIPELINE_V2, false);
 }
 
+export function isWorkerSnapshotLegacyPreservationEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return readBooleanEnv(env.WORKER_SNAPSHOT_PRESERVE_LEGACY_TABLE, true);
+}
+
 export function createWorkerRuntimeSnapshotPipelineFromEnv(
   env: NodeJS.ProcessEnv = process.env
 ): WorkerRuntimeSnapshotPipeline {
   return new WorkerRuntimeSnapshotPipeline({
     coalesceMs: readNumberEnv(env.WORKER_SNAPSHOT_PIPELINE_COALESCE_MS, DEFAULT_SNAPSHOT_PIPELINE_COALESCE_MS),
     historyEnabled: readBooleanEnv(env.WORKER_SNAPSHOT_HISTORY_ENABLED, true),
-    preserveLegacySnapshot: readBooleanEnv(env.WORKER_SNAPSHOT_PRESERVE_LEGACY_TABLE, true)
+    preserveLegacySnapshot: isWorkerSnapshotLegacyPreservationEnabled(env)
   });
 }
 

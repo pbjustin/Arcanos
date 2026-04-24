@@ -102,6 +102,7 @@ export {
   upsertWorkerRuntimeState,
   recordWorkerLiveness,
   getWorkerRuntimeSnapshotById,
+  listWorkerRuntimeStateSnapshots,
   listWorkerRuntimeSnapshots,
   type WorkerLivenessSnapshotRecord,
   type WorkerRuntimeSnapshotRecord

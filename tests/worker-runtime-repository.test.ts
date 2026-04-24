@@ -28,7 +28,9 @@ jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({
 }));
 
 const {
+  listWorkerRuntimeStateSnapshots,
   listWorkerLiveness,
+  recordWorkerLiveness,
   upsertWorkerRuntimeState,
   upsertWorkerRuntimeSnapshot
 } = await import('../src/core/db/repositories/workerRuntimeRepository.js');
@@ -55,6 +57,25 @@ describe('workerRuntimeRepository', () => {
     jest.clearAllMocks();
     isDatabaseConnectedMock.mockReturnValue(true);
     queryMock.mockResolvedValue({ rows: [], rowCount: 1 });
+  });
+
+  it('initializes worker runtime tables once even when the database is already connected', async () => {
+    await recordWorkerLiveness({
+      workerId: 'async-queue-1',
+      healthStatus: 'healthy',
+      lastSeenAt: '2026-04-23T01:00:30.000Z'
+    });
+
+    expect(initializeDatabaseMock).not.toHaveBeenCalled();
+    expect(initializeTablesMock).toHaveBeenCalledTimes(1);
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining('worker_liveness'),
+      [
+        'async-queue-1',
+        '2026-04-23T01:00:30.000Z',
+        'healthy'
+      ]
+    );
   });
 
   it('logs runtime snapshot upsert failures with a failed event name', async () => {
@@ -128,4 +149,20 @@ describe('workerRuntimeRepository', () => {
       })
     );
   });
+
+  it('degrades V2 state reads to empty when the V2 table is not migrated yet', async () => {
+    queryMock.mockRejectedValueOnce(Object.assign(new Error('relation "worker_runtime_state" does not exist'), {
+      code: '42P01'
+    }));
+
+    await expect(listWorkerRuntimeStateSnapshots()).resolves.toEqual([]);
+    expect(loggerDebugMock).toHaveBeenCalledWith(
+      'worker.runtime_state.list.unavailable',
+      expect.objectContaining({
+        module: 'worker-runtime',
+        reason: 'missing_table'
+      })
+    );
+  });
+
 });

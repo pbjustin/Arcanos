@@ -17,6 +17,7 @@ import {
 import { computeGptJobLifecycleDeadlines } from '@shared/gpt/gptJobLifecycle.js';
 import {
   listWorkerLiveness,
+  listWorkerRuntimeStateSnapshots,
   listWorkerRuntimeSnapshots,
   upsertWorkerRuntimeSnapshot,
   type WorkerLivenessSnapshotRecord,
@@ -24,6 +25,7 @@ import {
 } from '@core/db/repositories/workerRuntimeRepository.js';
 import {
   createWorkerRuntimeSnapshotPipelineFromEnv,
+  isWorkerSnapshotLegacyPreservationEnabled,
   isWorkerSnapshotPipelineV2Enabled,
   type WorkerRuntimeSnapshotPipeline
 } from './workerRuntimeSnapshotPipeline.js';
@@ -307,7 +309,7 @@ export async function getWorkerAutonomyHealthReport(
 ): Promise<WorkerAutonomyHealthReport> {
   const [queueSummary, rawWorkers, livenessRecords] = await Promise.all([
     getJobQueueSummary(),
-    listWorkerRuntimeSnapshots(),
+    listWorkerRuntimeSnapshotsForAutonomyRead(),
     listWorkerLiveness()
   ]);
   const workers = filterLegacyAggregateWorkerSnapshots(
@@ -598,7 +600,7 @@ export class WorkerAutonomyService {
     options: WorkerSnapshotPersistOptions & { persistSnapshot?: boolean } = {}
   ): Promise<WorkerInspectionResult['stalledRecovery']> {
     const [rawWorkerSnapshots, livenessRecords] = await Promise.all([
-      listWorkerRuntimeSnapshots(),
+      listWorkerRuntimeSnapshotsForAutonomyRead(),
       listWorkerLiveness()
     ]);
     const workerSnapshots = filterLegacyAggregateWorkerSnapshots(
@@ -1586,6 +1588,16 @@ function buildHealthAlerts(
   }
 
   return alerts;
+}
+
+function shouldReadWorkerRuntimeStateSnapshots(): boolean {
+  return isWorkerSnapshotPipelineV2Enabled() && !isWorkerSnapshotLegacyPreservationEnabled();
+}
+
+async function listWorkerRuntimeSnapshotsForAutonomyRead(): Promise<WorkerRuntimeSnapshotRecord[]> {
+  return shouldReadWorkerRuntimeStateSnapshots()
+    ? listWorkerRuntimeStateSnapshots()
+    : listWorkerRuntimeSnapshots();
 }
 
 function readWatchdogState(worker: WorkerRuntimeSnapshotRecord): WorkerWatchdogState | null {

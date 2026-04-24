@@ -53,6 +53,7 @@ const WORKER_RUNTIME_UPSERT_SLOW_LOG_MIN_MS = 250;
 
 let pendingBootstrap: Promise<boolean> | null = null;
 let lastBootstrapFailureAtMs = 0;
+let tablesInitialized = false;
 
 /**
  * Ensure worker runtime persistence can reach PostgreSQL.
@@ -61,8 +62,8 @@ let lastBootstrapFailureAtMs = 0;
  * Edge case behavior: throttles repeated failed initialization attempts with a cooldown.
  */
 async function ensureWorkerRuntimePersistenceReady(): Promise<boolean> {
-  //audit Assumption: an already connected database can serve worker snapshot persistence immediately; failure risk: redundant initialization churn; expected invariant: connected DB short-circuits bootstrap; handling strategy: return early when connected.
-  if (isDatabaseConnected()) {
+  //audit Assumption: an already connected database can serve worker snapshot persistence after this process has initialized the schema; failure risk: V2 tables are missing when startup connected before repository use; expected invariant: connected DB only short-circuits after schema initialization; handling strategy: require initializeTables once per process.
+  if (isDatabaseConnected() && tablesInitialized) {
     return true;
   }
 
@@ -83,13 +84,21 @@ async function ensureWorkerRuntimePersistenceReady(): Promise<boolean> {
 
   pendingBootstrap = (async () => {
     try {
-      const connected = await initializeDatabase(WORKER_RUNTIME_REPOSITORY_WORKER_ID);
-      if (!connected || !isDatabaseConnected()) {
+      if (!isDatabaseConnected()) {
+        const connected = await initializeDatabase(WORKER_RUNTIME_REPOSITORY_WORKER_ID);
+        if (!connected || !isDatabaseConnected()) {
+          lastBootstrapFailureAtMs = Date.now();
+          return false;
+        }
+      }
+
+      await initializeTables();
+      if (!isDatabaseConnected()) {
         lastBootstrapFailureAtMs = Date.now();
         return false;
       }
 
-      await initializeTables();
+      tablesInitialized = true;
       lastBootstrapFailureAtMs = 0;
       return true;
     } catch (error: unknown) {
@@ -506,6 +515,56 @@ export async function listWorkerLiveness(): Promise<WorkerLivenessSnapshotRecord
     }
 
     logger.warn('worker.liveness.list.failed', {
+      module: 'worker-runtime',
+      error: resolveErrorMessage(error)
+    });
+    return [];
+  }
+}
+
+/**
+ * List V2 worker runtime state snapshots.
+ * Purpose: keep health/read paths current when legacy compatibility writes are disabled during V2 rollout.
+ * Edge case behavior: returns an empty array when the V2 state table has not been migrated yet.
+ */
+export async function listWorkerRuntimeStateSnapshots(): Promise<WorkerRuntimeSnapshotRecord[]> {
+  const persistenceReady = await ensureWorkerRuntimePersistenceReady();
+
+  if (!persistenceReady) {
+    return [];
+  }
+
+  try {
+    const result = await query(
+      `SELECT
+         worker_id,
+         worker_type,
+         health_status,
+         current_job_id,
+         last_error,
+         started_at,
+         last_heartbeat_at,
+         last_inspector_run_at,
+         changed_at AS updated_at,
+         snapshot
+       FROM worker_runtime_state
+       ORDER BY changed_at DESC`,
+      []
+    );
+
+    return result.rows
+      .map(row => buildWorkerRuntimeSnapshotRecord(row as Record<string, unknown>))
+      .filter((record): record is WorkerRuntimeSnapshotRecord => Boolean(record));
+  } catch (error: unknown) {
+    if (readPostgresErrorCode(error) === '42P01') {
+      logger.debug('worker.runtime_state.list.unavailable', {
+        module: 'worker-runtime',
+        reason: 'missing_table'
+      });
+      return [];
+    }
+
+    logger.warn('worker.runtime_state.list.failed', {
       module: 'worker-runtime',
       error: resolveErrorMessage(error)
     });
