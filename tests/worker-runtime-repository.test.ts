@@ -29,8 +29,26 @@ jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({
 
 const {
   listWorkerLiveness,
+  upsertWorkerRuntimeState,
   upsertWorkerRuntimeSnapshot
 } = await import('../src/core/db/repositories/workerRuntimeRepository.js');
+
+function buildSnapshotRecord() {
+  return {
+    workerId: 'async-queue-1',
+    workerType: 'async_queue',
+    healthStatus: 'healthy',
+    currentJobId: null,
+    lastError: null,
+    startedAt: '2026-04-23T01:00:00.000Z',
+    lastHeartbeatAt: '2026-04-23T01:00:10.000Z',
+    lastInspectorRunAt: '2026-04-23T01:00:20.000Z',
+    updatedAt: '2026-04-23T01:00:30.000Z',
+    snapshot: {
+      lastPersistSource: 'worker-heartbeat'
+    }
+  };
+}
 
 describe('workerRuntimeRepository', () => {
   beforeEach(() => {
@@ -44,20 +62,7 @@ describe('workerRuntimeRepository', () => {
 
     await expect(
       upsertWorkerRuntimeSnapshot(
-        {
-          workerId: 'async-queue-1',
-          workerType: 'async_queue',
-          healthStatus: 'healthy',
-          currentJobId: null,
-          lastError: null,
-          startedAt: '2026-04-23T01:00:00.000Z',
-          lastHeartbeatAt: '2026-04-23T01:00:10.000Z',
-          lastInspectorRunAt: '2026-04-23T01:00:20.000Z',
-          updatedAt: '2026-04-23T01:00:30.000Z',
-          snapshot: {
-            lastPersistSource: 'worker-heartbeat'
-          }
-        },
+        buildSnapshotRecord(),
         { source: 'worker-heartbeat' }
       )
     ).rejects.toThrow('connection timeout');
@@ -73,6 +78,40 @@ describe('workerRuntimeRepository', () => {
         snapshotBytes: expect.any(Number)
       })
     );
+  });
+
+  it('persists V2 state and legacy compatibility snapshot atomically in one query', async () => {
+    await upsertWorkerRuntimeState(
+      buildSnapshotRecord(),
+      {
+        source: 'worker-idle',
+        stateHash: 'state-hash-1',
+        preserveLegacySnapshot: true
+      }
+    );
+
+    expect(queryMock).toHaveBeenCalledTimes(1);
+    expect(queryMock).toHaveBeenCalledWith(
+      expect.stringContaining('WITH state_upsert AS'),
+      expect.any(Array)
+    );
+    expect(queryMock.mock.calls[0][0]).toContain('worker_runtime_state');
+    expect(queryMock.mock.calls[0][0]).toContain('worker_runtime_snapshots');
+  });
+
+  it('can persist only V2 state when legacy compatibility preservation is disabled', async () => {
+    await upsertWorkerRuntimeState(
+      buildSnapshotRecord(),
+      {
+        source: 'worker-idle',
+        stateHash: 'state-hash-1',
+        preserveLegacySnapshot: false
+      }
+    );
+
+    expect(queryMock).toHaveBeenCalledTimes(1);
+    expect(queryMock.mock.calls[0][0]).toContain('worker_runtime_state');
+    expect(queryMock.mock.calls[0][0]).not.toContain('worker_runtime_snapshots');
   });
 
   it('degrades liveness reads to empty when the V2 table is not migrated yet', async () => {

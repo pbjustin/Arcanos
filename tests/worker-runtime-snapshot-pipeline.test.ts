@@ -292,6 +292,40 @@ describe('WorkerRuntimeSnapshotPipeline', () => {
     );
   });
 
+  it('does not collapse built-in objects to empty records while hashing', () => {
+    const firstDateHash = buildWorkerRuntimeSnapshotStateHash({
+      ...buildSnapshot(),
+      snapshot: {
+        ...buildSnapshot().snapshot,
+        lastBudgetPauseReason: new Date('2026-04-23T20:00:00.000Z')
+      }
+    });
+    const secondDateHash = buildWorkerRuntimeSnapshotStateHash({
+      ...buildSnapshot(),
+      snapshot: {
+        ...buildSnapshot().snapshot,
+        lastBudgetPauseReason: new Date('2026-04-23T20:01:00.000Z')
+      }
+    });
+    const firstMapHash = buildWorkerRuntimeSnapshotStateHash({
+      ...buildSnapshot(),
+      snapshot: {
+        ...buildSnapshot().snapshot,
+        lastBudgetPauseReason: new Map([['reason', 'pause-a']])
+      }
+    });
+    const secondMapHash = buildWorkerRuntimeSnapshotStateHash({
+      ...buildSnapshot(),
+      snapshot: {
+        ...buildSnapshot().snapshot,
+        lastBudgetPauseReason: new Map([['reason', 'pause-b']])
+      }
+    });
+
+    expect(firstDateHash).not.toBe(secondDateHash);
+    expect(firstMapHash).not.toBe(secondMapHash);
+  });
+
   it('skips watchdog and inspector intents when only volatile observations changed', async () => {
     const pipeline = new WorkerRuntimeSnapshotPipeline({ coalesceMs: 10_000 });
     const baseline = buildSnapshot({ source: 'inspector' });
@@ -331,6 +365,35 @@ describe('WorkerRuntimeSnapshotPipeline', () => {
 
     expect(repositoryUpsertStateMock).toHaveBeenCalledTimes(1);
     expect(repositoryAppendHistoryMock).toHaveBeenCalledTimes(1);
+    expect(recordWorkerRuntimeSnapshotSkippedMock).toHaveBeenCalledWith({
+      source: 'watchdog',
+      healthStatus: 'healthy'
+    });
+  });
+
+  it('does not schedule a redundant write for duplicate intents while a flush is in flight', async () => {
+    let resolveUpsert: (() => void) | null = null;
+    repositoryUpsertStateMock.mockImplementationOnce(() => new Promise<void>((resolve) => {
+      resolveUpsert = resolve;
+    }));
+    const pipeline = new WorkerRuntimeSnapshotPipeline({ coalesceMs: 10_000 });
+    const snapshot = buildSnapshot({ source: 'worker-idle' });
+
+    pipeline.recordSnapshotIntent('async-queue-slot-1', 'worker-idle', snapshot);
+    const flushPromise = pipeline.flushAll('first');
+    pipeline.recordSnapshotIntent('async-queue-slot-1', 'watchdog', {
+      ...snapshot,
+      updatedAt: '2026-04-23T20:01:00.000Z',
+      snapshot: {
+        ...snapshot.snapshot,
+        lastPersistSource: 'watchdog'
+      }
+    });
+    resolveUpsert?.();
+    await flushPromise;
+    await pipeline.flushAll('second');
+
+    expect(repositoryUpsertStateMock).toHaveBeenCalledTimes(1);
     expect(recordWorkerRuntimeSnapshotSkippedMock).toHaveBeenCalledWith({
       source: 'watchdog',
       healthStatus: 'healthy'

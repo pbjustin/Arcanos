@@ -283,8 +283,7 @@ export async function upsertWorkerRuntimeState(
 
   let outcome: 'ok' | 'error' = 'ok';
   try {
-    await query(
-      `INSERT INTO worker_runtime_state (
+    const stateUpsertSql = `INSERT INTO worker_runtime_state (
          worker_id,
          worker_type,
          health_status,
@@ -309,24 +308,65 @@ export async function upsertWorkerRuntimeState(
          last_inspector_run_at = EXCLUDED.last_inspector_run_at,
          state_hash = EXCLUDED.state_hash,
          changed_at = EXCLUDED.changed_at,
-         snapshot = EXCLUDED.snapshot`,
-      [
-        record.workerId,
-        record.workerType,
-        record.healthStatus,
-        record.currentJobId,
-        record.lastError,
-        record.startedAt,
-        record.lastHeartbeatAt,
-        record.lastInspectorRunAt,
-        options.stateHash,
-        record.updatedAt,
-        serializedSnapshot
-      ]
-    );
-
+         snapshot = EXCLUDED.snapshot
+       RETURNING worker_id`;
+    const params = [
+      record.workerId,
+      record.workerType,
+      record.healthStatus,
+      record.currentJobId,
+      record.lastError,
+      record.startedAt,
+      record.lastHeartbeatAt,
+      record.lastInspectorRunAt,
+      options.stateHash,
+      record.updatedAt,
+      serializedSnapshot
+    ];
     if (options.preserveLegacySnapshot !== false) {
-      await upsertWorkerRuntimeSnapshot(record, { source });
+      await query(
+        `WITH state_upsert AS (
+           ${stateUpsertSql}
+         )
+         INSERT INTO worker_runtime_snapshots (
+           worker_id,
+           worker_type,
+           health_status,
+           current_job_id,
+           last_error,
+           started_at,
+           last_heartbeat_at,
+           last_inspector_run_at,
+           updated_at,
+           snapshot
+         )
+         SELECT
+           $1,
+           $2,
+           $3,
+           $4,
+           $5,
+           $6::timestamptz,
+           $7::timestamptz,
+           $8::timestamptz,
+           $10::timestamptz,
+           $11::jsonb
+         FROM state_upsert
+         ON CONFLICT (worker_id)
+         DO UPDATE SET
+           worker_type = EXCLUDED.worker_type,
+           health_status = EXCLUDED.health_status,
+           current_job_id = EXCLUDED.current_job_id,
+           last_error = EXCLUDED.last_error,
+           started_at = EXCLUDED.started_at,
+           last_heartbeat_at = EXCLUDED.last_heartbeat_at,
+           last_inspector_run_at = EXCLUDED.last_inspector_run_at,
+           updated_at = EXCLUDED.updated_at,
+           snapshot = EXCLUDED.snapshot`,
+        params
+      );
+    } else {
+      await query(stateUpsertSql, params);
     }
   } catch (error) {
     outcome = 'error';

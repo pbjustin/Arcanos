@@ -78,6 +78,7 @@ export class WorkerRuntimeSnapshotPipeline {
   private readonly dependencies: WorkerRuntimeSnapshotPipelineDependencies;
   private readonly pendingByWorkerId = new Map<string, PendingSnapshotIntent>();
   private readonly lastPersistedStateHashByWorkerId = new Map<string, string>();
+  private readonly inFlightStateHashByWorkerId = new Map<string, string>();
   private readonly skippedWritesByWorkerId = new Map<string, number>();
   private readonly lastSkipLogAtMsByWorkerId = new Map<string, number>();
   private readonly inFlightHistoryWrites = new Set<Promise<void>>();
@@ -135,9 +136,16 @@ export class WorkerRuntimeSnapshotPipeline {
     const lastPersistedStateHash = this.lastPersistedStateHashByWorkerId.get(workerId);
     const existingIntent = this.pendingByWorkerId.get(workerId);
 
-    if (!existingIntent && lastPersistedStateHash === stateHash) {
-      this.recordSkippedSnapshot(snapshot, normalizedSource, 'no_meaningful_delta');
-      return;
+    if (!existingIntent) {
+      if (lastPersistedStateHash === stateHash) {
+        this.recordSkippedSnapshot(snapshot, normalizedSource, 'no_meaningful_delta');
+        return;
+      }
+
+      if (this.inFlightStateHashByWorkerId.get(workerId) === stateHash) {
+        this.recordSkippedSnapshot(snapshot, normalizedSource, 'in_flight_duplicate');
+        return;
+      }
     }
 
     if (existingIntent) {
@@ -179,6 +187,7 @@ export class WorkerRuntimeSnapshotPipeline {
       return;
     }
 
+    this.inFlightStateHashByWorkerId.set(workerId, pendingIntent.stateHash);
     try {
       await this.dependencies.upsertState(pendingIntent.snapshot, {
         source: pendingIntent.source,
@@ -211,6 +220,10 @@ export class WorkerRuntimeSnapshotPipeline {
         stateHash: pendingIntent.stateHash.slice(0, 12),
         error: resolveErrorMessage(error)
       });
+    } finally {
+      if (this.inFlightStateHashByWorkerId.get(workerId) === pendingIntent.stateHash) {
+        this.inFlightStateHashByWorkerId.delete(workerId);
+      }
     }
   }
 
@@ -357,6 +370,28 @@ function normalizeWatchdogSnapshotForHash(value: unknown): Record<string, unknow
 }
 
 function stableStringify(value: unknown): string {
+  if (value instanceof Date) {
+    return JSON.stringify(value.toISOString());
+  }
+
+  if (value instanceof Map) {
+    const entries = [...value.entries()]
+      .map(([entryKey, entryValue]) => [stableStringify(entryKey), stableStringify(entryValue)] as const)
+      .sort(([leftKey, leftValue], [rightKey, rightValue]) => (
+        leftKey === rightKey
+          ? leftValue.localeCompare(rightValue)
+          : leftKey.localeCompare(rightKey)
+      ));
+    return `{"$map":[${entries.map(([entryKey, entryValue]) => `[${entryKey},${entryValue}]`).join(',')}]}`;
+  }
+
+  if (value instanceof Set) {
+    const entries = [...value.values()]
+      .map(entry => stableStringify(entry))
+      .sort();
+    return `{"$set":[${entries.join(',')}]}`;
+  }
+
   if (Array.isArray(value)) {
     return `[${value.map(entry => stableStringify(entry)).join(',')}]`;
   }
@@ -369,7 +404,11 @@ function stableStringify(value: unknown): string {
 }
 
 function isPlainRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
 }
 
 function hasUnref(value: unknown): value is { unref: () => void } {
