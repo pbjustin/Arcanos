@@ -49,7 +49,10 @@ function readGptId(input: unknown): string {
   return typeof gptId === 'string' ? gptId.trim() : '';
 }
 
-export function toJobSchedulingMetadata(job: JobData): JobSchedulingMetadata {
+export function toJobSchedulingMetadata(
+  job: JobData,
+  options: { priorityLaneMaxPriority?: number } = {}
+): JobSchedulingMetadata {
   const priority = job.priority ?? Number.MAX_SAFE_INTEGER;
 
   return {
@@ -58,7 +61,7 @@ export function toJobSchedulingMetadata(job: JobData): JobSchedulingMetadata {
     priority,
     lane: classifyQueueLane({
       priority,
-      priorityLaneMaxPriority: PRIORITY_QUEUE_LANE_MAX_PRIORITY
+      priorityLaneMaxPriority: options.priorityLaneMaxPriority ?? PRIORITY_QUEUE_LANE_MAX_PRIORITY
     }),
     createdAt: coerceDate(job.created_at, new Date(0)),
     attempts: job.retry_count ?? 0,
@@ -98,7 +101,9 @@ export class PostgresQueueSchedulerAdapter implements QueueSchedulerAdapter<JobD
     return {
       adapter: this.adapter,
       job,
-      lane: job ? toJobSchedulingMetadata(job).lane : null
+      lane: job ? toJobSchedulingMetadata(job, {
+        priorityLaneMaxPriority: options.priorityLaneMaxPriority
+      }).lane : null
     };
   }
 

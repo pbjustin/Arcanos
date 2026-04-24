@@ -1,4 +1,4 @@
-export type QueueLane = "priority" | "standard";
+export type QueueLane = 'priority' | 'standard';
 
 export interface JobSchedulingMetadata {
   jobId: string;
@@ -47,14 +47,14 @@ export interface SchedulerClaimOptions {
   priorityLaneMaxPriority?: number;
 }
 
-export type SchedulerBackendKind = "postgres" | "redis";
+export type SchedulerBackendKind = 'postgres' | 'redis';
 
 export interface SchedulerClaimDecision {
   lane: QueueLane;
   reason:
-    | "priority_queue_disabled"
-    | "priority_weight_available"
-    | "standard_weight_due";
+    | 'priority_queue_disabled'
+    | 'priority_weight_available'
+    | 'standard_weight_due';
   priorityQueueWeight: number;
   priorityClaimsSinceStandard: number;
 }

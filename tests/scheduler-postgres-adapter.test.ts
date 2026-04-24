@@ -61,6 +61,23 @@ describe('PostgresQueueSchedulerAdapter', () => {
     });
   });
 
+  it('uses the effective claim threshold when reporting claimed job lanes', async () => {
+    const job = buildJob({ priority: 8 });
+    const claimNextPendingJob = jest.fn(async () => job);
+    const adapter = createPostgresQueueSchedulerAdapter({
+      claimNextPendingJob,
+      getJobQueueSummary: jest.fn(async () => null)
+    });
+
+    await expect(adapter.claimNext({
+      priorityQueueEnabled: true,
+      priorityLaneMaxPriority: 3
+    })).resolves.toMatchObject({
+      lane: 'standard',
+      job
+    });
+  });
+
   it('maps JobData into the formal scheduler contract', () => {
     const job = buildJob({
       retry_count: 1,
