@@ -132,6 +132,7 @@ const GPT_ROUTE_TEST_ENV_KEYS = [
   'GPT_PUBLIC_RESPONSE_MAX_BYTES',
   'GPT_ROUTE_ASYNC_CORE_DEFAULT',
   'GPT_ROUTE_HARD_TIMEOUT_MS',
+  'PRIORITY_QUEUE_ENABLED',
 ] as const;
 
 function captureEnv(keys: readonly string[]): Map<string, string | undefined> {
@@ -156,6 +157,7 @@ describe('GPT fast-path route branching', () => {
     for (const key of GPT_ROUTE_TEST_ENV_KEYS) {
       delete process.env[key];
     }
+    process.env.PRIORITY_QUEUE_ENABLED = 'false';
     executeFastGptPromptMock.mockResolvedValue(buildFastPathEnvelope());
     planAutonomousWorkerJobMock.mockResolvedValue({
       status: 'pending',
