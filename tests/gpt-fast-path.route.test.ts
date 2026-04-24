@@ -306,7 +306,7 @@ describe('GPT fast-path route branching', () => {
     expect(response.body).toMatchObject({
       ok: true,
       action: 'query',
-      status: 'pending',
+      status: 'queued',
       jobId: 'job-orchestrated',
       _route: {
         gptId: 'arcanos-core',
@@ -339,7 +339,7 @@ describe('GPT fast-path route branching', () => {
     expect(response.body).toMatchObject({
       ok: true,
       action: 'query',
-      status: 'pending',
+      status: 'queued',
       jobId: 'job-orchestrated',
       _route: {
         gptId: 'arcanos-core',
@@ -372,7 +372,7 @@ describe('GPT fast-path route branching', () => {
     expect(response.body).toMatchObject({
       ok: true,
       action: 'query',
-      status: 'pending',
+      status: 'queued',
       jobId: 'job-orchestrated',
       _route: {
         gptId: 'arcanos-core',
@@ -527,7 +527,7 @@ describe('GPT fast-path route branching', () => {
     expect(response.body).toMatchObject({
       ok: true,
       action: 'query',
-      status: 'pending',
+      status: 'queued',
       jobId: 'job-orchestrated',
     });
     expect(executeFastGptPromptMock).toHaveBeenCalledTimes(1);
@@ -549,7 +549,7 @@ describe('GPT fast-path route branching', () => {
     expect(response.body).toMatchObject({
       ok: true,
       action: 'query',
-      status: 'pending',
+      status: 'queued',
       jobId: 'job-orchestrated',
     });
     expect(executeFastGptPromptMock).not.toHaveBeenCalled();
