@@ -35,7 +35,9 @@ import {
 import { classifyDagNodeFailureForWorkerRetry } from './jobFailureClassification.js';
 import {
   buildJobRunnerSlotDefinitions,
+  computeDeterministicIntervalJitterMs,
   createNonOverlappingTaskRunner,
+  isEntrypointModule,
   isRetryableJobRunnerDatabaseBootstrapError,
   resolveJobRunnerDatabaseBootstrapSettings,
   resolveJobRunnerRuntimeSettings,
@@ -76,6 +78,33 @@ interface JobExecutionOutcome {
 type OpenAIClient = ReturnType<typeof initOpenAIClient>;
 
 const QUEUED_GPT_PROMPT_KEYS = ['prompt', 'message', 'query', 'text', 'content', 'userInput'] as const;
+
+interface WorkerHeartbeatLoopHandle {
+  stop(): void;
+}
+
+let workerProcessShutdownRequested = false;
+let workerProcessShutdownSignal: NodeJS.Signals | null = null;
+
+function requestWorkerProcessShutdown(signal: NodeJS.Signals): void {
+  if (workerProcessShutdownRequested) {
+    return;
+  }
+
+  workerProcessShutdownRequested = true;
+  workerProcessShutdownSignal = signal;
+  logger.warn('job_runner.shutdown.requested', {
+    module: 'worker',
+    signal
+  });
+}
+
+function isWorkerProcessShutdownRequested(): boolean {
+  return workerProcessShutdownRequested;
+}
+
+process.once('SIGTERM', () => requestWorkerProcessShutdown('SIGTERM'));
+process.once('SIGINT', () => requestWorkerProcessShutdown('SIGINT'));
 
 function createOverlapSkipLogger(workerId: string, source: string) {
   return (event: { taskName: string; skippedCount: number; runningForMs: number | null }) => {
@@ -634,8 +663,9 @@ function startHeartbeatLoop(
 function startWorkerHeartbeatLoop(
   autonomyService: WorkerAutonomyService,
   workerId: string
-): NodeJS.Timeout {
+): WorkerHeartbeatLoopHandle {
   const intervalMs = Math.max(1_000, autonomyService.getHeartbeatIntervalMs());
+  const jitterMs = computeDeterministicIntervalJitterMs(workerId, intervalMs);
   const runHeartbeat = createNonOverlappingTaskRunner(
     () => autonomyService.recordWorkerHeartbeat({ source: 'worker-heartbeat' }),
     {
@@ -643,27 +673,54 @@ function startWorkerHeartbeatLoop(
       onSkip: createOverlapSkipLogger(workerId, 'worker-heartbeat')
     }
   );
+  let stopped = false;
+  let startTimeoutHandle: NodeJS.Timeout | null = null;
+  let intervalHandle: NodeJS.Timeout | null = null;
 
-  void runHeartbeat().catch((error: unknown) => {
-    console.warn(
-      `[jobRunner] worker=${workerId} initial worker heartbeat failed:`,
-      resolveErrorMessage(error)
-    );
-  });
-  const intervalHandle = setInterval(() => {
+  const executeHeartbeat = () => {
     void runHeartbeat().catch((error: unknown) => {
       console.warn(
         `[jobRunner] worker=${workerId} worker heartbeat failed:`,
         resolveErrorMessage(error)
       );
     });
-  }, intervalMs);
+  };
 
-  if (typeof intervalHandle.unref === 'function') {
-    intervalHandle.unref();
+  startTimeoutHandle = setTimeout(() => {
+    if (stopped) {
+      return;
+    }
+
+    executeHeartbeat();
+    intervalHandle = setInterval(executeHeartbeat, intervalMs);
+    if (typeof intervalHandle.unref === 'function') {
+      intervalHandle.unref();
+    }
+  }, jitterMs);
+  if (typeof startTimeoutHandle.unref === 'function') {
+    startTimeoutHandle.unref();
   }
 
-  return intervalHandle;
+  logger.info('worker.heartbeat.stagger_scheduled', {
+    module: 'worker',
+    workerId,
+    intervalMs,
+    jitterMs
+  });
+
+  return {
+    stop() {
+      stopped = true;
+      if (startTimeoutHandle) {
+        clearTimeout(startTimeoutHandle);
+        startTimeoutHandle = null;
+      }
+      if (intervalHandle) {
+        clearInterval(intervalHandle);
+        intervalHandle = null;
+      }
+    }
+  };
 }
 
 function startWatchdogLoop(autonomyService: WorkerAutonomyService): NodeJS.Timeout {
@@ -747,7 +804,7 @@ async function runWorkerConsumerSlot(
   slotDefinition: JobRunnerSlotDefinition,
   runtimeSettings: JobRunnerRuntimeSettings,
   autonomyService: WorkerAutonomyService = buildAutonomyServiceForSlot(slotDefinition)
-): Promise<never> {
+): Promise<void> {
   let openai: OpenAIClient | null = null;
   let providerConfigVersion: string | null = null;
   let lastProviderPauseLogAtMs = 0;
@@ -766,7 +823,7 @@ async function runWorkerConsumerSlot(
   const workerHeartbeatHandle = startWorkerHeartbeatLoop(autonomyService, slotDefinition.workerId);
 
   try {
-    while (true) {
+    while (!isWorkerProcessShutdownRequested()) {
       try {
         const ensuredClientState = await ensureOpenAIClientForSlot({
           workerId: slotDefinition.workerId,
@@ -1106,7 +1163,8 @@ async function runWorkerConsumerSlot(
       }
     }
   } finally {
-    clearInterval(workerHeartbeatHandle);
+    workerHeartbeatHandle.stop();
+    await autonomyService.flushSnapshotPipeline('worker-slot-shutdown');
   }
 }
 
@@ -1127,6 +1185,14 @@ async function run(): Promise<void> {
     `[jobRunner] bootstrap status=${bootstrapResult.healthStatus} slots=${slotDefinitions.length} recovered=${bootstrapResult.recovered.recoveredJobs.length} failed=${bootstrapResult.recovered.failedJobs.length}`
   );
 
+  if (isWorkerProcessShutdownRequested()) {
+    console.log(
+      `[jobRunner] shutdown requested before worker slots started (${workerProcessShutdownSignal ?? 'unknown'}); skipping consumer startup`
+    );
+    await inspectorAutonomyService.flushSnapshotPipeline('worker-process-shutdown');
+    return;
+  }
+
   const watchdogHandle = startWatchdogLoop(inspectorAutonomyService);
   const inspectorHandle = startInspectorLoop(inspectorAutonomyService);
 
@@ -1146,10 +1212,13 @@ async function run(): Promise<void> {
   } finally {
     clearInterval(watchdogHandle);
     clearInterval(inspectorHandle);
+    await inspectorAutonomyService.flushSnapshotPipeline('worker-process-shutdown');
   }
 }
 
-run().catch(error => {
-  console.error(`[jobRunner] fatal: ${resolveErrorMessage(error)}`);
-  process.exit(1);
-});
+if (isEntrypointModule(import.meta.url)) {
+  run().catch(error => {
+    console.error(`[jobRunner] fatal: ${resolveErrorMessage(error)}`);
+    process.exit(1);
+  });
+}

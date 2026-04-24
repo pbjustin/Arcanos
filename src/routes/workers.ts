@@ -28,6 +28,14 @@ const router = Router();
 
 // Get path to workers directory (from dist, it's one level up from the root)
 const { path: workersDir } = resolveWorkersDirectory();
+const INVENTORY_EXCLUDED_WORKER_MODULES = new Set(['jobrunner.js']);
+
+export function isWorkerInventoryFile(file: string): boolean {
+  const normalizedFile = file.toLowerCase();
+  return normalizedFile.endsWith('.js') &&
+    !normalizedFile.includes('shared') &&
+    !INVENTORY_EXCLUDED_WORKER_MODULES.has(normalizedFile);
+}
 
 async function loadWorkerInventory(): Promise<WorkerInfoDTO[]> {
   const workers: WorkerInfoDTO[] = [];
@@ -37,7 +45,7 @@ async function loadWorkerInventory(): Promise<WorkerInfoDTO[]> {
   }
 
   const files = fs.readdirSync(workersDir);
-  const workerFiles = files.filter(file => file.endsWith('.js') && !file.includes('shared'));
+  const workerFiles = files.filter(isWorkerInventoryFile);
 
   for (const file of workerFiles) {
     try {

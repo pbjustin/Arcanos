@@ -250,6 +250,34 @@ const workerRecoveredJobsTotal = new Counter({
   registers: [metricsRegistry],
 });
 
+const workerRuntimeSnapshotSkippedTotal = new Counter({
+  name: 'worker_runtime_snapshot_skipped_total',
+  help: 'Total worker runtime snapshot persistence attempts skipped because no meaningful state changed.',
+  labelNames: ['source', 'health_status'] as const,
+  registers: [metricsRegistry],
+});
+
+const workerLivenessWritesTotal = new Counter({
+  name: 'worker_liveness_writes_total',
+  help: 'Total V2 worker liveness writes by outcome and health status.',
+  labelNames: ['outcome', 'health_status'] as const,
+  registers: [metricsRegistry],
+});
+
+const workerRuntimeStateWritesTotal = new Counter({
+  name: 'worker_runtime_state_writes_total',
+  help: 'Total V2 worker runtime state writes by outcome and source.',
+  labelNames: ['outcome', 'source'] as const,
+  registers: [metricsRegistry],
+});
+
+const workerRuntimeHistoryWritesTotal = new Counter({
+  name: 'worker_runtime_history_writes_total',
+  help: 'Total V2 worker runtime history writes by outcome and source.',
+  labelNames: ['outcome', 'source'] as const,
+  registers: [metricsRegistry],
+});
+
 const gptRequestEventsTotal = new Counter({
   name: 'gpt_request_events_total',
   help: 'GPT request idempotency and dedupe events.',
@@ -792,6 +820,62 @@ export function recordWorkerRecoveredJobs(input: {
 }): void {
   workerRecoveredJobsTotal.inc(
     { action: normalizeLabel(input.action) },
+    Math.max(0, input.count ?? 1)
+  );
+}
+
+export function recordWorkerRuntimeSnapshotSkipped(input: {
+  source: string;
+  healthStatus: string;
+  count?: number;
+}): void {
+  workerRuntimeSnapshotSkippedTotal.inc(
+    {
+      source: normalizeLabel(input.source),
+      health_status: normalizeLabel(input.healthStatus),
+    },
+    Math.max(0, input.count ?? 1)
+  );
+}
+
+export function recordWorkerLivenessWrite(input: {
+  outcome: string;
+  healthStatus: string;
+  count?: number;
+}): void {
+  workerLivenessWritesTotal.inc(
+    {
+      outcome: normalizeLabel(input.outcome),
+      health_status: normalizeLabel(input.healthStatus),
+    },
+    Math.max(0, input.count ?? 1)
+  );
+}
+
+export function recordWorkerRuntimeStateWrite(input: {
+  outcome: string;
+  source: string;
+  count?: number;
+}): void {
+  workerRuntimeStateWritesTotal.inc(
+    {
+      outcome: normalizeLabel(input.outcome),
+      source: normalizeLabel(input.source),
+    },
+    Math.max(0, input.count ?? 1)
+  );
+}
+
+export function recordWorkerRuntimeHistoryWrite(input: {
+  outcome: string;
+  source: string;
+  count?: number;
+}): void {
+  workerRuntimeHistoryWritesTotal.inc(
+    {
+      outcome: normalizeLabel(input.outcome),
+      source: normalizeLabel(input.source),
+    },
     Math.max(0, input.count ?? 1)
   );
 }

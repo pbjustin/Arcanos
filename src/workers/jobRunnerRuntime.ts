@@ -1,3 +1,6 @@
+import path from 'path';
+import { fileURLToPath } from 'url';
+
 export interface JobRunnerRuntimeSettings {
   pollMs: number;
   idleBackoffMs: number;
@@ -67,6 +70,30 @@ function readNonNegativeIntegerEnvValue(
 ): number {
   const parsedValue = rawValue ? Number(rawValue) : Number.NaN;
   return Number.isInteger(parsedValue) && parsedValue >= 0 ? parsedValue : fallback;
+}
+
+/**
+ * Resolve a stable per-worker offset for interval work.
+ * Purpose: spread same-frequency worker tasks without relying on non-deterministic randomness.
+ * Inputs/outputs: accepts a worker id and interval, returns an offset in [0, intervalMs).
+ * Edge case behavior: invalid intervals collapse to a zero delay.
+ */
+export function computeDeterministicIntervalJitterMs(
+  workerId: string,
+  intervalMs: number
+): number {
+  const normalizedIntervalMs = Math.trunc(intervalMs);
+  if (!Number.isFinite(normalizedIntervalMs) || normalizedIntervalMs <= 1) {
+    return 0;
+  }
+
+  let hash = 2166136261;
+  for (let index = 0; index < workerId.length; index += 1) {
+    hash ^= workerId.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  return (hash >>> 0) % normalizedIntervalMs;
 }
 
 /**
@@ -213,4 +240,17 @@ export function buildJobRunnerSlotDefinitions(
       isInspectorSlot: slotIndex === 0
     };
   });
+}
+
+export function isEntrypointModule(moduleUrl: string, argv: string[] = process.argv): boolean {
+  const entrypoint = argv[1];
+  if (!entrypoint) {
+    return false;
+  }
+
+  try {
+    return path.resolve(entrypoint) === path.resolve(fileURLToPath(moduleUrl));
+  } catch {
+    return false;
+  }
 }

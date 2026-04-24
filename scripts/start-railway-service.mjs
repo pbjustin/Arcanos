@@ -35,6 +35,7 @@ const HEALTH_PATHS = new Set(['/health', '/healthz', '/readyz']);
 const HEALTH_OK_BODY = 'ok';
 const HEALTH_NOT_FOUND_BODY = 'not found';
 const DEFAULT_HEALTH_PORT = 8080;
+const SHUTDOWN_SIGNALS = new Set(['SIGTERM', 'SIGINT']);
 
 /**
  * Resolve the explicit runtime process kind from environment.
@@ -139,14 +140,22 @@ function spawnProcess(command, args, processKind) {
  * - Output: process exit code integer.
  *
  * Edge case behavior:
- * - Signal terminations return `1` as conservative failure code.
+ * - Expected shutdown signals can be mapped to success.
+ * - Unexpected signal terminations return `1` as conservative failure code.
  */
-function waitForExit(childProcess) {
+function waitForExit(childProcess, options = {}) {
+  const isExpectedShutdownSignal = options.isExpectedShutdownSignal ?? (() => false);
+
   return new Promise((resolve, reject) => {
     childProcess.once('error', reject);
     childProcess.once('exit', (code, signal) => {
-      //audit Assumption: signal-terminated child should propagate as failure for Railway restart policy; risk: reporting success on crash loops; invariant: numeric non-zero code on abnormal termination; handling: map signaled exit to code 1.
       if (signal) {
+        if (isExpectedShutdownSignal(signal)) {
+          resolve(0);
+          return;
+        }
+
+        //audit Assumption: unexpected signal-terminated child should propagate as failure for Railway restart policy; risk: reporting success on crash loops; invariant: numeric non-zero code on abnormal termination; handling: map unexpected signaled exit to code 1.
         resolve(1);
         return;
       }
@@ -154,6 +163,14 @@ function waitForExit(childProcess) {
       resolve(typeof code === 'number' ? code : 1);
     });
   });
+}
+
+async function repairDistAliases(processKind) {
+  const repairProcess = spawnProcess('node', ['scripts/repair-dist-aliases.js', '--rewrite'], processKind);
+  const exitCode = await waitForExit(repairProcess);
+  if (exitCode !== 0) {
+    throw new Error(`dist alias repair failed with exit code ${exitCode}`);
+  }
 }
 
 /**
@@ -190,10 +207,15 @@ async function runWebRuntime() {
  * - Shutdown signals are forwarded to worker for graceful termination.
  */
 async function runWorkerRuntimeWithHealthServer() {
-  const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
   console.log(`[railway-launcher] starting worker runtime ${PROCESS_KIND_ENV}=worker RUN_WORKERS=true`);
-  const workerProcess = spawnProcess(npmCommand, ['run', 'start:worker'], 'worker');
+  await repairDistAliases('worker');
+  const workerProcess = spawnProcess('node', [
+    '--import',
+    './scripts/register-esm-loader.mjs',
+    'dist/workers/jobRunner.js'
+  ], 'worker');
   const healthPort = resolveHealthPort();
+  let shutdownRequested = false;
 
   const healthServer = createServer((request, response) => {
     const requestPath = request.url ?? '';
@@ -212,6 +234,12 @@ async function runWorkerRuntimeWithHealthServer() {
   });
 
   const shutdownWorker = (signal) => {
+    if (shutdownRequested) {
+      return;
+    }
+
+    shutdownRequested = true;
+    console.log(`[railway-launcher] received ${signal}; forwarding shutdown to worker runtime`);
     //audit Assumption: forwarding platform signals avoids orphan worker process; risk: stuck shutdown/redeploy hangs; invariant: worker receives termination signal before launcher exits; handling: forward SIGTERM/SIGINT directly.
     workerProcess.kill(signal);
   };
@@ -224,7 +252,9 @@ async function runWorkerRuntimeWithHealthServer() {
     healthServer.listen(healthPort, '0.0.0.0', resolve);
   });
 
-  const exitCode = await waitForExit(workerProcess);
+  const exitCode = await waitForExit(workerProcess, {
+    isExpectedShutdownSignal: (signal) => shutdownRequested && SHUTDOWN_SIGNALS.has(signal)
+  });
 
   await new Promise((resolve) => {
     healthServer.close(() => resolve());

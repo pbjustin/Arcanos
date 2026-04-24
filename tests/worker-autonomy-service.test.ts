@@ -8,8 +8,13 @@ const recoverStaleJobsMock = jest.fn();
 const scheduleJobRetryMock = jest.fn();
 const updateJobMock = jest.fn();
 const cleanupExpiredGptJobsMock = jest.fn();
+const listWorkerLivenessMock = jest.fn();
+const listWorkerRuntimeStateSnapshotsMock = jest.fn();
 const listWorkerRuntimeSnapshotsMock = jest.fn();
 const upsertWorkerRuntimeSnapshotMock = jest.fn();
+const recordWorkerLivenessMock = jest.fn();
+const upsertWorkerRuntimeStateMock = jest.fn();
+const appendWorkerRuntimeHistoryMock = jest.fn();
 const fetchMock = jest.fn();
 const loggerDebugMock = jest.fn();
 const loggerInfoMock = jest.fn();
@@ -27,8 +32,13 @@ jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
 }));
 
 jest.unstable_mockModule('@core/db/repositories/workerRuntimeRepository.js', () => ({
+  listWorkerLiveness: listWorkerLivenessMock,
+  listWorkerRuntimeStateSnapshots: listWorkerRuntimeStateSnapshotsMock,
   listWorkerRuntimeSnapshots: listWorkerRuntimeSnapshotsMock,
-  upsertWorkerRuntimeSnapshot: upsertWorkerRuntimeSnapshotMock
+  upsertWorkerRuntimeSnapshot: upsertWorkerRuntimeSnapshotMock,
+  recordWorkerLiveness: recordWorkerLivenessMock,
+  upsertWorkerRuntimeState: upsertWorkerRuntimeStateMock,
+  appendWorkerRuntimeHistory: appendWorkerRuntimeHistoryMock
 }));
 
 jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({
@@ -106,8 +116,15 @@ describe('workerAutonomyService', () => {
     updateJobMock.mockResolvedValue({
       id: 'job-1'
     });
+    listWorkerLivenessMock.mockResolvedValue([]);
+    listWorkerRuntimeStateSnapshotsMock.mockResolvedValue([]);
     listWorkerRuntimeSnapshotsMock.mockResolvedValue([]);
     upsertWorkerRuntimeSnapshotMock.mockResolvedValue(undefined);
+    recordWorkerLivenessMock.mockResolvedValue(undefined);
+    upsertWorkerRuntimeStateMock.mockResolvedValue(undefined);
+    appendWorkerRuntimeHistoryMock.mockResolvedValue(undefined);
+    delete process.env.WORKER_SNAPSHOT_PIPELINE_V2;
+    delete process.env.WORKER_SNAPSHOT_PRESERVE_LEGACY_TABLE;
   });
 
   it('defers low-priority jobs when queue pressure is high', async () => {
@@ -392,6 +409,52 @@ describe('workerAutonomyService', () => {
     expect(report.alerts).toEqual([]);
   });
 
+  it('reads V2 runtime state for health reports when legacy preservation is disabled', async () => {
+    process.env.WORKER_SNAPSHOT_PIPELINE_V2 = 'true';
+    process.env.WORKER_SNAPSHOT_PRESERVE_LEGACY_TABLE = 'false';
+    listWorkerRuntimeSnapshotsMock.mockResolvedValue([
+      {
+        workerId: 'async-queue-slot-1',
+        workerType: 'async_queue',
+        healthStatus: 'unhealthy',
+        currentJobId: 'stale-job',
+        lastError: 'stale legacy row',
+        startedAt: '2026-03-07T11:00:00.000Z',
+        lastHeartbeatAt: '2026-03-07T11:00:00.000Z',
+        lastInspectorRunAt: '2026-03-07T11:00:00.000Z',
+        updatedAt: '2026-03-07T11:00:00.000Z',
+        snapshot: {}
+      }
+    ]);
+    listWorkerRuntimeStateSnapshotsMock.mockResolvedValue([
+      {
+        workerId: 'async-queue-slot-1',
+        workerType: 'async_queue',
+        healthStatus: 'healthy',
+        currentJobId: null,
+        lastError: null,
+        startedAt: '2026-03-07T11:58:00.000Z',
+        lastHeartbeatAt: '2026-03-07T12:00:00.000Z',
+        lastInspectorRunAt: '2026-03-07T12:00:00.000Z',
+        updatedAt: '2026-03-07T12:00:00.000Z',
+        snapshot: {}
+      }
+    ]);
+
+    const report = await getWorkerAutonomyHealthReport();
+
+    expect(listWorkerRuntimeStateSnapshotsMock).toHaveBeenCalledTimes(1);
+    expect(listWorkerRuntimeSnapshotsMock).not.toHaveBeenCalled();
+    expect(report.overallStatus).toBe('healthy');
+    expect(report.workers).toEqual([
+      expect.objectContaining({
+        workerId: 'async-queue-slot-1',
+        healthStatus: 'healthy',
+        currentJobId: null
+      })
+    ]);
+  });
+
   it('schedules retries for transient failures before exhausting the retry budget', async () => {
     const service = new WorkerAutonomyService({
       workerId: 'async-queue',
@@ -495,7 +558,8 @@ describe('workerAutonomyService', () => {
           snapshot: expect.objectContaining({
             alerts: ['Scheduled retry for job job-retry in 2000ms.']
           })
-        })
+        }),
+        { source: 'job-retry' }
       );
 
       jest.advanceTimersByTime(30_000);
@@ -515,7 +579,8 @@ describe('workerAutonomyService', () => {
               restartRecommended: false
             })
           })
-        })
+        }),
+        { source: 'worker-idle' }
       );
     } finally {
       jest.useRealTimers();
@@ -661,7 +726,8 @@ describe('workerAutonomyService', () => {
               restartRecommended: false
             })
           })
-        })
+        }),
+        { source: 'worker-idle' }
       );
     } finally {
       jest.useRealTimers();
@@ -870,6 +936,146 @@ describe('workerAutonomyService', () => {
     }
   });
 
+  it('uses fresh liveness records to avoid false stale-worker recovery in V2', async () => {
+    jest.useFakeTimers();
+
+    try {
+      jest.setSystemTime(new Date('2026-03-07T12:00:00.000Z'));
+      listWorkerRuntimeSnapshotsMock.mockResolvedValue([
+        {
+          workerId: 'async-queue-slot-2',
+          workerType: 'async_queue',
+          healthStatus: 'healthy',
+          currentJobId: 'job-running',
+          lastError: null,
+          startedAt: '2026-03-07T11:55:00.000Z',
+          lastHeartbeatAt: '2026-03-07T11:59:00.000Z',
+          lastInspectorRunAt: '2026-03-07T11:59:45.000Z',
+          updatedAt: '2026-03-07T11:59:00.000Z',
+          snapshot: {
+            activeJobs: ['job-running'],
+            lastActivityAt: '2026-03-07T11:59:00.000Z'
+          }
+        }
+      ]);
+      listWorkerLivenessMock.mockResolvedValue([
+        {
+          workerId: 'async-queue-slot-2',
+          healthStatus: 'healthy',
+          lastSeenAt: '2026-03-07T11:59:55.000Z'
+        }
+      ]);
+
+      const service = new WorkerAutonomyService({
+        workerId: 'async-queue-slot-1',
+        workerType: 'async_queue',
+        heartbeatIntervalMs: 5_000,
+        leaseMs: 15_000,
+        inspectorIntervalMs: 30_000,
+        watchdogIntervalMs: 5_000,
+        staleAfterMs: 10_000,
+        watchdogIdleMs: 120_000,
+        stalledJobAction: 'requeue',
+        defaultMaxRetries: 2,
+        retryBackoffBaseMs: 2_000,
+        retryBackoffMaxMs: 60_000,
+        maxJobsPerHour: 120,
+        maxAiCallsPerHour: 120,
+        maxRssMb: 2_048,
+        queueDepthDeferralThreshold: 25,
+        queueDepthDeferralMs: 5_000,
+        failureWebhookUrl: null,
+        failureWebhookThreshold: 3,
+        failureWebhookCooldownMs: 300_000
+      });
+
+      const result = await service.runWatchdogCycle('watchdog');
+
+      expect(recoverStalledJobsForWorkersMock).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        staleWorkers: 0,
+        stalledJobs: 0,
+        requeuedJobs: 0,
+        deadLetterJobs: 0,
+        cancelledJobs: 0
+      });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('uses V2 runtime state during watchdog recovery when legacy preservation is disabled', async () => {
+    jest.useFakeTimers();
+
+    try {
+      process.env.WORKER_SNAPSHOT_PIPELINE_V2 = 'true';
+      process.env.WORKER_SNAPSHOT_PRESERVE_LEGACY_TABLE = 'false';
+      jest.setSystemTime(new Date('2026-03-07T12:00:00.000Z'));
+      listWorkerRuntimeStateSnapshotsMock.mockResolvedValue([
+        {
+          workerId: 'async-queue-slot-2',
+          workerType: 'async_queue',
+          healthStatus: 'healthy',
+          currentJobId: 'job-running',
+          lastError: null,
+          startedAt: '2026-03-07T11:55:00.000Z',
+          lastHeartbeatAt: '2026-03-07T11:59:00.000Z',
+          lastInspectorRunAt: '2026-03-07T11:59:45.000Z',
+          updatedAt: '2026-03-07T11:59:00.000Z',
+          snapshot: {
+            activeJobs: ['job-running'],
+            lastActivityAt: '2026-03-07T11:59:00.000Z'
+          }
+        }
+      ]);
+      listWorkerLivenessMock.mockResolvedValue([
+        {
+          workerId: 'async-queue-slot-2',
+          healthStatus: 'healthy',
+          lastSeenAt: '2026-03-07T11:59:55.000Z'
+        }
+      ]);
+
+      const service = new WorkerAutonomyService({
+        workerId: 'async-queue-slot-1',
+        workerType: 'async_queue',
+        heartbeatIntervalMs: 5_000,
+        leaseMs: 15_000,
+        inspectorIntervalMs: 30_000,
+        watchdogIntervalMs: 5_000,
+        staleAfterMs: 10_000,
+        watchdogIdleMs: 120_000,
+        stalledJobAction: 'requeue',
+        defaultMaxRetries: 2,
+        retryBackoffBaseMs: 2_000,
+        retryBackoffMaxMs: 60_000,
+        maxJobsPerHour: 120,
+        maxAiCallsPerHour: 120,
+        maxRssMb: 2_048,
+        queueDepthDeferralThreshold: 25,
+        queueDepthDeferralMs: 5_000,
+        failureWebhookUrl: null,
+        failureWebhookThreshold: 3,
+        failureWebhookCooldownMs: 300_000
+      });
+
+      const result = await service.runWatchdogCycle('watchdog');
+
+      expect(listWorkerRuntimeStateSnapshotsMock).toHaveBeenCalledTimes(1);
+      expect(listWorkerRuntimeSnapshotsMock).not.toHaveBeenCalled();
+      expect(recoverStalledJobsForWorkersMock).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        staleWorkers: 0,
+        stalledJobs: 0,
+        requeuedJobs: 0,
+        deadLetterJobs: 0,
+        cancelledJobs: 0
+      });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('dead-letters stalled jobs when watchdog recovery is configured to stop retrying', async () => {
     jest.useFakeTimers();
 
@@ -987,7 +1193,8 @@ describe('workerAutonomyService', () => {
               restartRecommended: false
             })
           })
-        })
+        }),
+        { source: 'worker-idle' }
       );
     } finally {
       jest.useRealTimers();
@@ -1047,7 +1254,8 @@ describe('workerAutonomyService', () => {
               restartRecommended: true
             })
           })
-        })
+        }),
+        { source: 'worker-idle' }
       );
     } finally {
       jest.useRealTimers();
@@ -1091,5 +1299,52 @@ describe('workerAutonomyService', () => {
         error: 'database write timeout'
       })
     );
+  });
+
+  it('routes worker heartbeat through V2 liveness without forcing rich snapshot persistence', async () => {
+    const snapshotPipeline = {
+      recordLiveness: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
+      recordSnapshotIntent: jest.fn(),
+      flushWorker: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
+      shutdown: jest.fn<() => Promise<void>>().mockResolvedValue(undefined)
+    };
+    const service = new WorkerAutonomyService({
+      workerId: 'async-queue-slot-1',
+      workerType: 'async_queue',
+      heartbeatIntervalMs: 30_000,
+      leaseMs: 30_000,
+      inspectorIntervalMs: 30_000,
+      staleAfterMs: 90_000,
+      watchdogIdleMs: 120_000,
+      defaultMaxRetries: 2,
+      retryBackoffBaseMs: 2_000,
+      retryBackoffMaxMs: 60_000,
+      maxJobsPerHour: 120,
+      maxAiCallsPerHour: 120,
+      maxRssMb: 2_048,
+      queueDepthDeferralThreshold: 25,
+      queueDepthDeferralMs: 5_000,
+      failureWebhookUrl: null,
+      failureWebhookThreshold: 3,
+      failureWebhookCooldownMs: 300_000
+    }, snapshotPipeline);
+
+    await service.recordWorkerHeartbeat({ source: 'worker-heartbeat' });
+
+    expect(snapshotPipeline.recordLiveness).toHaveBeenCalledWith(
+      'async-queue-slot-1',
+      'healthy',
+      expect.any(String)
+    );
+    expect(snapshotPipeline.recordSnapshotIntent).toHaveBeenCalledWith(
+      'async-queue-slot-1',
+      'worker-heartbeat',
+      expect.objectContaining({
+        workerId: 'async-queue-slot-1',
+        healthStatus: 'healthy'
+      })
+    );
+    expect(snapshotPipeline.flushWorker).not.toHaveBeenCalled();
+    expect(upsertWorkerRuntimeSnapshotMock).not.toHaveBeenCalled();
   });
 });

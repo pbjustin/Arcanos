@@ -1,8 +1,12 @@
 import { describe, expect, it } from '@jest/globals';
+import path from 'path';
+import { pathToFileURL } from 'url';
 
 import {
   buildJobRunnerSlotDefinitions,
+  computeDeterministicIntervalJitterMs,
   createNonOverlappingTaskRunner,
+  isEntrypointModule,
   isRetryableJobRunnerDatabaseBootstrapError,
   resolveJobRunnerDatabaseBootstrapSettings,
   resolveJobRunnerRuntimeSettings
@@ -59,6 +63,29 @@ describe('jobRunnerRuntime', () => {
         isInspectorSlot: true
       }
     ]);
+  });
+
+  it('computes stable per-worker interval jitter inside the heartbeat interval', () => {
+    const intervalMs = 30_000;
+    const first = computeDeterministicIntervalJitterMs('async-queue-slot-1', intervalMs);
+    const second = computeDeterministicIntervalJitterMs('async-queue-slot-1', intervalMs);
+    const other = computeDeterministicIntervalJitterMs('async-queue-slot-2', intervalMs);
+
+    expect(first).toBe(second);
+    expect(first).toBeGreaterThanOrEqual(0);
+    expect(first).toBeLessThan(intervalMs);
+    expect(other).toBeGreaterThanOrEqual(0);
+    expect(other).toBeLessThan(intervalMs);
+    expect(other).not.toBe(first);
+  });
+
+  it('detects direct job runner entrypoint execution without matching imports', () => {
+    const jobRunnerPath = path.resolve('dist/workers/jobRunner.js');
+    const moduleUrl = pathToFileURL(jobRunnerPath).href;
+
+    expect(isEntrypointModule(moduleUrl, [process.execPath, jobRunnerPath])).toBe(true);
+    expect(isEntrypointModule(moduleUrl, [process.execPath, path.resolve('dist/start-server.js')])).toBe(false);
+    expect(isEntrypointModule(moduleUrl, [process.execPath])).toBe(false);
   });
 
   it('normalizes database bootstrap retry settings', () => {

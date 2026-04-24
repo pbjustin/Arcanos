@@ -24,6 +24,11 @@ function createQueryCacheKey(text: string, params: unknown[]): string {
   return crypto.createHash('sha256').update(content).digest('hex');
 }
 
+function createQueryHash(text: string): string {
+  const normalizedText = text.replace(/\s+/g, ' ').trim();
+  return crypto.createHash('sha256').update(normalizedText).digest('hex').slice(0, 12);
+}
+
 function classifySqlOperation(text: string): string {
   const normalizedText = text.trim().toLowerCase();
   if (normalizedText.startsWith('select')) {
@@ -55,6 +60,7 @@ function classifySqlOperation(text: string): string {
  */
 export async function query(text: string, params: unknown[] = [], attempt = 1, useCache = false): Promise<QueryResult> {
   const operation = classifySqlOperation(text);
+  const queryHash = createQueryHash(text);
   if (!isDatabaseConnected()) {
     throw new Error('Database not configured or not connected');
   }
@@ -72,6 +78,7 @@ export async function query(text: string, params: unknown[] = [], attempt = 1, u
       if (SHOULD_LOG_EVERY_QUERY) {
         dbLogger.debug('db.query.cache_hit', {
           operation,
+          queryHash,
         });
       }
       recordDependencyCall({
@@ -85,14 +92,16 @@ export async function query(text: string, params: unknown[] = [], attempt = 1, u
   }
 
   const connectStartedAtMs = Date.now();
+  let poolWaitMs = 0;
   let client: PoolClient;
   try {
     client = await pool.connect();
+    poolWaitMs = Date.now() - connectStartedAtMs;
     recordDependencyCall({
       dependency: 'postgres',
       operation: 'pool_connect',
       outcome: 'ok',
-      durationMs: Date.now() - connectStartedAtMs,
+      durationMs: poolWaitMs,
     });
   } catch (error) {
     recordDependencyCall({
@@ -108,18 +117,31 @@ export async function query(text: string, params: unknown[] = [], attempt = 1, u
   try {
     const start = Date.now();
     const result = await client.query(text, params);
-    const duration = Date.now() - start;
+    const executionMs = Date.now() - start;
+    const totalMs = poolWaitMs + executionMs;
 
-    if (duration >= SLOW_QUERY_LOG_MIN_MS) {
+    if (
+      executionMs >= SLOW_QUERY_LOG_MIN_MS ||
+      poolWaitMs >= SLOW_QUERY_LOG_MIN_MS ||
+      totalMs >= SLOW_QUERY_LOG_MIN_MS
+    ) {
       dbLogger.warn('db.query.slow', {
         operation,
-        durationMs: duration,
+        queryHash,
+        durationMs: executionMs,
+        executionMs,
+        poolWaitMs,
+        totalMs,
         rowCount: result.rowCount || 0,
       });
     } else if (SHOULD_LOG_EVERY_QUERY) {
       dbLogger.debug('db.query.executed', {
         operation,
-        durationMs: duration,
+        queryHash,
+        durationMs: executionMs,
+        executionMs,
+        poolWaitMs,
+        totalMs,
         rowCount: result.rowCount || 0,
       });
     }
@@ -127,7 +149,7 @@ export async function query(text: string, params: unknown[] = [], attempt = 1, u
       dependency: 'postgres',
       operation,
       outcome: 'ok',
-      durationMs: duration,
+      durationMs: executionMs,
     });
     
     // Cache SELECT queries that return data
@@ -141,6 +163,7 @@ export async function query(text: string, params: unknown[] = [], attempt = 1, u
   } catch (error) {
     dbLogger.error('db.query.error', {
       operation,
+      queryHash,
       attempt,
     }, {
       message: (error as Error).message,
@@ -155,6 +178,7 @@ export async function query(text: string, params: unknown[] = [], attempt = 1, u
     if (attempt < 3) {
       dbLogger.warn('db.query.retry', {
         operation,
+        queryHash,
         attempt,
       }, {
         nextAttempt: attempt + 1,
