@@ -1132,11 +1132,12 @@ export async function claimNextPendingJob(
       lane: firstLane
     });
 
-    if (!claimedJob && firstLane === 'normal') {
+    if (!claimedJob) {
+      const secondLane = firstLane === 'normal' ? 'priority' : 'normal';
       claimedJob = await claimPendingJobWithLane(client, {
         leaseMs,
         workerId: options.workerId ?? null,
-        lane: 'priority'
+        lane: secondLane
       });
     }
 
