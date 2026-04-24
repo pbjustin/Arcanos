@@ -157,7 +157,15 @@ async function executeReservedPriorityGptDirectExecution(params: {
 
     const { gptId, body, prompt, requestId, bypassIntentRouting } = parsedGptJobInput.value;
     const latestJob = await getJobById(params.jobId);
-    if (latestJob?.cancel_requested_at) {
+    if (!latestJob) {
+      params.requestLogger?.warn?.('gpt.priority_direct.job_missing', {
+        jobId: params.jobId,
+        workerId: params.workerId
+      });
+      return;
+    }
+
+    if (latestJob.cancel_requested_at) {
       await updateJob(
         params.jobId,
         'cancelled',
