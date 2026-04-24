@@ -82,6 +82,29 @@ interface WorkerHeartbeatLoopHandle {
   stop(): void;
 }
 
+let workerProcessShutdownRequested = false;
+let workerProcessShutdownSignal: NodeJS.Signals | null = null;
+
+function requestWorkerProcessShutdown(signal: NodeJS.Signals): void {
+  if (workerProcessShutdownRequested) {
+    return;
+  }
+
+  workerProcessShutdownRequested = true;
+  workerProcessShutdownSignal = signal;
+  logger.warn('job_runner.shutdown.requested', {
+    module: 'worker',
+    signal
+  });
+}
+
+function isWorkerProcessShutdownRequested(): boolean {
+  return workerProcessShutdownRequested;
+}
+
+process.once('SIGTERM', () => requestWorkerProcessShutdown('SIGTERM'));
+process.once('SIGINT', () => requestWorkerProcessShutdown('SIGINT'));
+
 function createOverlapSkipLogger(workerId: string, source: string) {
   return (event: { taskName: string; skippedCount: number; runningForMs: number | null }) => {
     logger.warn('worker.interval_task.overlap_skipped', {
@@ -780,7 +803,7 @@ async function runWorkerConsumerSlot(
   slotDefinition: JobRunnerSlotDefinition,
   runtimeSettings: JobRunnerRuntimeSettings,
   autonomyService: WorkerAutonomyService = buildAutonomyServiceForSlot(slotDefinition)
-): Promise<never> {
+): Promise<void> {
   let openai: OpenAIClient | null = null;
   let providerConfigVersion: string | null = null;
   let lastProviderPauseLogAtMs = 0;
@@ -799,7 +822,7 @@ async function runWorkerConsumerSlot(
   const workerHeartbeatHandle = startWorkerHeartbeatLoop(autonomyService, slotDefinition.workerId);
 
   try {
-    while (true) {
+    while (!isWorkerProcessShutdownRequested()) {
       try {
         const ensuredClientState = await ensureOpenAIClientForSlot({
           workerId: slotDefinition.workerId,
@@ -1160,6 +1183,14 @@ async function run(): Promise<void> {
   console.log(
     `[jobRunner] bootstrap status=${bootstrapResult.healthStatus} slots=${slotDefinitions.length} recovered=${bootstrapResult.recovered.recoveredJobs.length} failed=${bootstrapResult.recovered.failedJobs.length}`
   );
+
+  if (isWorkerProcessShutdownRequested()) {
+    console.log(
+      `[jobRunner] shutdown requested before worker slots started (${workerProcessShutdownSignal ?? 'unknown'}); skipping consumer startup`
+    );
+    await inspectorAutonomyService.flushSnapshotPipeline('worker-process-shutdown');
+    return;
+  }
 
   const watchdogHandle = startWatchdogLoop(inspectorAutonomyService);
   const inspectorHandle = startInspectorLoop(inspectorAutonomyService);
