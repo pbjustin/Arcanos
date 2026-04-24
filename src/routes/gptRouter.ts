@@ -2852,7 +2852,7 @@ router.post("/:gptId", async (req, res, next) => {
           buildDirectReturnTimeoutResponse({
             pendingResponse,
             jobId: queuedJobId ?? pendingResponse.jobId,
-            waitForResultMs: routeTimeoutMs,
+            waitForResultMs: resolvedAsyncWaitForResultMs ?? routeTimeoutMs,
             pollIntervalMs: resolveAsyncGptPollIntervalMs(explicitAsyncPollIntervalMs)
           }),
           'gpt.response.timeout_pending',
