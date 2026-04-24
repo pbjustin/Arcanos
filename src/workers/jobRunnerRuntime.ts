@@ -1,3 +1,6 @@
+import path from 'path';
+import { fileURLToPath } from 'url';
+
 export interface JobRunnerRuntimeSettings {
   pollMs: number;
   idleBackoffMs: number;
@@ -237,4 +240,17 @@ export function buildJobRunnerSlotDefinitions(
       isInspectorSlot: slotIndex === 0
     };
   });
+}
+
+export function isEntrypointModule(moduleUrl: string, argv: string[] = process.argv): boolean {
+  const entrypoint = argv[1];
+  if (!entrypoint) {
+    return false;
+  }
+
+  try {
+    return path.resolve(entrypoint) === path.resolve(fileURLToPath(moduleUrl));
+  } catch {
+    return false;
+  }
 }

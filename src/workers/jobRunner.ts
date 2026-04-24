@@ -37,6 +37,7 @@ import {
   buildJobRunnerSlotDefinitions,
   computeDeterministicIntervalJitterMs,
   createNonOverlappingTaskRunner,
+  isEntrypointModule,
   isRetryableJobRunnerDatabaseBootstrapError,
   resolveJobRunnerDatabaseBootstrapSettings,
   resolveJobRunnerRuntimeSettings,
@@ -1215,7 +1216,9 @@ async function run(): Promise<void> {
   }
 }
 
-run().catch(error => {
-  console.error(`[jobRunner] fatal: ${resolveErrorMessage(error)}`);
-  process.exit(1);
-});
+if (isEntrypointModule(import.meta.url)) {
+  run().catch(error => {
+    console.error(`[jobRunner] fatal: ${resolveErrorMessage(error)}`);
+    process.exit(1);
+  });
+}
