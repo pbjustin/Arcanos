@@ -39,7 +39,7 @@ describe('railway-async-job-probe', () => {
           ok: true,
           status: 'pending',
           jobId: 'job-123',
-          poll: '/jobs/job-123'
+          poll: '/jobs/job-123/result'
         })
       },
       {
@@ -165,7 +165,7 @@ describe('railway-async-job-probe', () => {
             ok: true,
             status: 'pending',
             jobId: 'job-456',
-            poll: '/jobs/job-456'
+            poll: '/jobs/job-456/result'
           })
         })
       }
@@ -193,7 +193,7 @@ describe('railway-async-job-probe', () => {
             ok: true,
             status: 'pending',
             jobId: 'job-789',
-            poll: 'https://example.com/jobs/job-789?trace=abc123'
+            poll: 'https://example.com/jobs/job-789/result?trace=abc123'
           })
         })
       }

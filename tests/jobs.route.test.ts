@@ -76,7 +76,7 @@ describe('/jobs routes', () => {
       retentionUntil: '2026-04-07T10:01:00.000Z',
       idempotencyUntil: '2026-04-07T10:01:00.000Z',
       expiresAt: null,
-      poll: `/jobs/${COMPLETED_JOB_ID}`,
+      poll: `/jobs/${COMPLETED_JOB_ID}/result`,
       stream: `/jobs/${COMPLETED_JOB_ID}/stream`,
       result: {
         ok: true,
@@ -106,7 +106,7 @@ describe('/jobs routes', () => {
       retentionUntil: null,
       idempotencyUntil: null,
       expiresAt: null,
-      poll: `/jobs/${MISSING_JOB_ID}`,
+      poll: `/jobs/${MISSING_JOB_ID}/result`,
       stream: `/jobs/${MISSING_JOB_ID}/stream`,
       result: null,
       error: {
@@ -177,8 +177,11 @@ describe('/jobs routes', () => {
     expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toMatchObject({
       id: EXPIRED_JOB_ID,
+      jobId: EXPIRED_JOB_ID,
       status: 'expired',
       lifecycle_status: 'expired',
+      poll: `/jobs/${EXPIRED_JOB_ID}/result`,
+      stream: `/jobs/${EXPIRED_JOB_ID}/stream`,
       retention_until: '2026-04-06T10:04:00.000Z',
       idempotency_until: '2026-04-06T10:03:00.000Z',
       expires_at: '2026-04-06T10:05:00.000Z'
@@ -415,7 +418,7 @@ describe('/jobs routes', () => {
         status: 'completed',
         jobStatus: 'completed',
         lifecycleStatus: 'completed',
-        poll: `/jobs/${TRUNCATED_JOB_ID}`,
+        poll: `/jobs/${TRUNCATED_JOB_ID}/result`,
         stream: `/jobs/${TRUNCATED_JOB_ID}/stream`,
         truncated: true,
         result: expect.stringContaining('[truncated]')

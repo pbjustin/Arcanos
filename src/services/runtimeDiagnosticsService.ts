@@ -43,7 +43,10 @@ export interface DiagnosticsSnapshot {
   public_metrics_request_count: number;
   public_metrics_error_count: number;
   avg_latency_ms: number | `DATA NOT EXPOSED: ${string}`;
+  p95_latency_ms: number | `DATA NOT EXPOSED: ${string}`;
   recent_latency_ms: number[] | `DATA NOT EXPOSED: ${string}`;
+  timeout_count: number;
+  recent_slow_routes: RuntimeSlowRouteSnapshot[];
   top_error_routes: DiagnosticsRouteErrorSnapshot[];
   modules: Record<string, ModuleStatus>;
 }
@@ -54,6 +57,15 @@ export interface DiagnosticsRouteErrorSnapshot {
   errorCount: number;
   timeoutCount: number;
   errorRate: number;
+}
+
+export interface RuntimeSlowRouteSnapshot {
+  route: string;
+  slowRequestCount: number;
+  avgLatencyMs: number;
+  p95LatencyMs: number;
+  maxLatencyMs: number;
+  timeoutCount: number;
 }
 
 export interface RequestSample {
@@ -260,6 +272,7 @@ class RuntimeDiagnosticsService {
 
   async getDiagnosticsSnapshot(app: Application): Promise<DiagnosticsSnapshot> {
     const metricsSnapshot = await this.getMetricsSnapshot();
+    const requestWindow = this.getRollingRequestWindow(PUBLIC_ERROR_RATE_WINDOW_MS);
     const activeRoutes = this.getActiveRoutes(app);
     const registry = await this.getRegistrySnapshot();
 
@@ -276,7 +289,20 @@ class RuntimeDiagnosticsService {
       public_metrics_request_count: metricsSnapshot.publicMetricsRequestCount,
       public_metrics_error_count: metricsSnapshot.publicMetricsErrorCount,
       avg_latency_ms: metricsSnapshot.avgLatencyMs,
+      p95_latency_ms: requestWindow.p95LatencyMs,
       recent_latency_ms: metricsSnapshot.recentLatencyMs,
+      timeout_count: requestWindow.timeoutCount,
+      recent_slow_routes: requestWindow.routes
+        .filter(route => route.slowRequestCount > 0)
+        .slice(0, 10)
+        .map(route => ({
+          route: route.route,
+          slowRequestCount: route.slowRequestCount,
+          avgLatencyMs: route.avgLatencyMs,
+          p95LatencyMs: route.p95LatencyMs,
+          maxLatencyMs: route.maxLatencyMs,
+          timeoutCount: route.timeoutCount
+        })),
       top_error_routes: metricsSnapshot.topErrorRoutes,
       modules: this.resolveModuleStatuses(registry.loadedModules)
     };

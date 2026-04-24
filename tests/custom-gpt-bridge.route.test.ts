@@ -123,7 +123,7 @@ describe('Custom GPT bridge route', () => {
         ok: true,
         status: 'pending',
         jobId: 'job-pending-123',
-        poll_url: '/jobs/job-pending-123',
+        poll_url: '/jobs/job-pending-123/result',
         result_url: '/jobs/job-pending-123/result',
         action: 'query',
       }),
@@ -256,7 +256,7 @@ describe('Custom GPT bridge route', () => {
         ok: true,
         status: 'completed',
         jobId: 'job-completed-123',
-        poll_url: '/jobs/job-completed-123',
+        poll_url: '/jobs/job-completed-123/result',
         result_url: '/jobs/job-completed-123/result',
         output: {
           answer: 'Deployment is healthy.',

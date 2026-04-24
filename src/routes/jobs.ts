@@ -18,6 +18,7 @@ import {
   buildGptJobResultLookupPayload,
   buildStoredJobStatusPayload
 } from '@shared/gpt/gptJobResult.js';
+import { buildJobResultPollPath } from '@shared/jobs/jobLinks.js';
 import { sendBoundedJsonResponse } from '@shared/http/sendBoundedJsonResponse.js';
 
 const router = express.Router();
@@ -324,7 +325,7 @@ router.get(
           writeSseEvent(res, 'timeout', {
             jobId: id,
             status: job.status,
-            poll: `/jobs/${id}`
+            poll: buildJobResultPollPath(id)
           });
           return;
         }

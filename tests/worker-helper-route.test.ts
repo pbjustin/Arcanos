@@ -504,7 +504,7 @@ describe('/worker-helper routes', () => {
       ok: true,
       status: 'pending',
       jobId: 'job-123',
-      poll: '/jobs/job-123',
+      poll: '/jobs/job-123/result',
       endpoint: 'worker-helper',
       cognitiveDomain: 'code',
       cognitiveDomainSource: 'detected'

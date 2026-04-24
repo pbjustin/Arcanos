@@ -8,17 +8,24 @@ import {
   recoverStaleJobs,
   scheduleJobRetry,
   updateJob,
-  type ClaimNextPendingJobOptions,
   type CreateJobOptions,
   type JobExecutionStats,
   type JobQueueSummary,
   type RecoverStaleJobsResult
 } from '@core/db/repositories/jobRepository.js';
+import type { SchedulerClaimOptions } from '@core/scheduler/types.js';
 import { computeGptJobLifecycleDeadlines } from '@shared/gpt/gptJobLifecycle.js';
 import {
+  PRIORITY_GPT_JOB_PRIORITY,
+  isPriorityGpt,
+  isPriorityQueueEnabled,
+  resolveGptJobMaxRetries,
+  resolvePriorityQueueWeight
+} from '@shared/gpt/priorityGpt.js';
+import {
+  listWorkerRuntimeSnapshots,
   listWorkerLiveness,
   listWorkerRuntimeStateSnapshots,
-  listWorkerRuntimeSnapshots,
   upsertWorkerRuntimeSnapshot,
   type WorkerLivenessSnapshotRecord,
   type WorkerRuntimeSnapshotRecord
@@ -257,6 +264,10 @@ export async function planAutonomousWorkerJob(
   const queueSummary = await getJobQueueSummary();
   const planningReasons: string[] = [];
   const basePriority = overrides.priority ?? determineJobPriority(jobType, input);
+  const defaultMaxRetries =
+    jobType === 'gpt'
+      ? resolveGptJobMaxRetries()
+      : settings.defaultMaxRetries;
   let priority = basePriority;
   let nextRunAt = overrides.nextRunAt;
 
@@ -286,7 +297,7 @@ export async function planAutonomousWorkerJob(
   return {
     status: overrides.status ?? 'pending',
     retryCount: overrides.retryCount ?? 0,
-    maxRetries: overrides.maxRetries ?? settings.defaultMaxRetries,
+    maxRetries: overrides.maxRetries ?? defaultMaxRetries,
     nextRunAt,
     startedAt: overrides.startedAt ?? null,
     lastHeartbeatAt: overrides.lastHeartbeatAt ?? null,
@@ -430,10 +441,12 @@ export class WorkerAutonomyService {
    * Inputs/outputs: no inputs, returns normalized claim options.
    * Edge case behavior: always includes a non-empty worker id and positive lease duration.
    */
-  getClaimOptions(): ClaimNextPendingJobOptions {
+  getClaimOptions(): SchedulerClaimOptions {
     return {
       workerId: this.settings.workerId,
-      leaseMs: this.settings.leaseMs
+      leaseMs: this.settings.leaseMs,
+      priorityQueueEnabled: isPriorityQueueEnabled(),
+      priorityQueueWeight: resolvePriorityQueueWeight()
     };
   }
 
@@ -1553,8 +1566,8 @@ function determineJobPriority(jobType: string, input: unknown): number {
 
   if (jobType === 'gpt') {
     const gptId = readStringPath(input, ['gptId']);
-    if (gptId === 'arcanos-core' || gptId === 'core' || gptId === 'arcanos-daemon') {
-      return 85;
+    if (isPriorityGpt(gptId)) {
+      return PRIORITY_GPT_JOB_PRIORITY;
     }
     return 95;
   }

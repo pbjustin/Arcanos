@@ -3,6 +3,7 @@ import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const mockRouteGptRequest = jest.fn();
+const mockResolveGptRouting = jest.fn();
 const executeFastGptPromptMock = jest.fn();
 const findOrCreateGptJobMock = jest.fn();
 const getJobByIdMock = jest.fn();
@@ -15,6 +16,7 @@ class MockIdempotencyKeyConflictError extends Error {}
 class MockJobRepositoryUnavailableError extends Error {}
 
 jest.unstable_mockModule('../src/routes/_core/gptDispatch.js', () => ({
+  resolveGptRouting: mockResolveGptRouting,
   routeGptRequest: mockRouteGptRequest,
 }));
 
@@ -132,6 +134,7 @@ const GPT_ROUTE_TEST_ENV_KEYS = [
   'GPT_PUBLIC_RESPONSE_MAX_BYTES',
   'GPT_ROUTE_ASYNC_CORE_DEFAULT',
   'GPT_ROUTE_HARD_TIMEOUT_MS',
+  'PRIORITY_QUEUE_ENABLED',
 ] as const;
 
 function captureEnv(keys: readonly string[]): Map<string, string | undefined> {
@@ -156,6 +159,27 @@ describe('GPT fast-path route branching', () => {
     for (const key of GPT_ROUTE_TEST_ENV_KEYS) {
       delete process.env[key];
     }
+    process.env.PRIORITY_QUEUE_ENABLED = 'false';
+    mockResolveGptRouting.mockImplementation(async (gptId: string) => ({
+      ok: true,
+      plan: {
+        matchedId: gptId,
+        module: 'ARCANOS:CORE',
+        route: 'core',
+        action: 'query',
+        availableActions: ['query'],
+        moduleVersion: null,
+        moduleDescription: null,
+        matchMethod: 'exact'
+      },
+      _route: {
+        gptId,
+        route: 'core',
+        module: 'ARCANOS:CORE',
+        action: 'query',
+        timestamp: '2026-04-24T00:00:00.000Z'
+      }
+    }));
     executeFastGptPromptMock.mockResolvedValue(buildFastPathEnvelope());
     planAutonomousWorkerJobMock.mockResolvedValue({
       status: 'pending',
@@ -304,7 +328,7 @@ describe('GPT fast-path route branching', () => {
     expect(response.body).toMatchObject({
       ok: true,
       action: 'query',
-      status: 'pending',
+      status: 'queued',
       jobId: 'job-orchestrated',
       _route: {
         gptId: 'arcanos-core',
@@ -337,7 +361,7 @@ describe('GPT fast-path route branching', () => {
     expect(response.body).toMatchObject({
       ok: true,
       action: 'query',
-      status: 'pending',
+      status: 'queued',
       jobId: 'job-orchestrated',
       _route: {
         gptId: 'arcanos-core',
@@ -370,7 +394,7 @@ describe('GPT fast-path route branching', () => {
     expect(response.body).toMatchObject({
       ok: true,
       action: 'query',
-      status: 'pending',
+      status: 'queued',
       jobId: 'job-orchestrated',
       _route: {
         gptId: 'arcanos-core',
@@ -525,7 +549,7 @@ describe('GPT fast-path route branching', () => {
     expect(response.body).toMatchObject({
       ok: true,
       action: 'query',
-      status: 'pending',
+      status: 'queued',
       jobId: 'job-orchestrated',
     });
     expect(executeFastGptPromptMock).toHaveBeenCalledTimes(1);
@@ -547,7 +571,7 @@ describe('GPT fast-path route branching', () => {
     expect(response.body).toMatchObject({
       ok: true,
       action: 'query',
-      status: 'pending',
+      status: 'queued',
       jobId: 'job-orchestrated',
     });
     expect(executeFastGptPromptMock).not.toHaveBeenCalled();

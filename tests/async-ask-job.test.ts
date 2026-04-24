@@ -162,7 +162,7 @@ describe('async ask job helpers', () => {
       ok: true,
       status: 'pending',
       jobId: 'job-123',
-      poll: '/jobs/job-123'
+      poll: '/jobs/job-123/result'
     });
   });
 });

@@ -140,6 +140,11 @@ export interface WorkerInfo {
 
 export interface WorkersStatusData {
   workers: WorkerInfo[];
+  activeWorkers: number;
+  activeWorkerSlots: number;
+  availableWorkerSlots: number;
+  queueDepth: number;
+  priorityQueueDepth: number;
 }
 
 export type WorkersStatusResponse = ApiEnvelope<WorkersStatusData>;
@@ -153,6 +158,12 @@ export interface QueueSnapshot {
   delayed: number;
   oldestWaitingJobAgeMs: number;
   stalledJobs: number;
+  priorityDepth: number;
+  priorityRunning: number;
+  normalWaiting: number;
+  activeWorkers: number;
+  availableWorkerSlots: number;
+  priorityJobCount: number;
 }
 
 export interface QueueStatusData {
@@ -266,6 +277,19 @@ export interface NodeDetail extends TrinityNodeMetadata {
   error: ErrorInfo | null;
 }
 
+export interface DagNodeTraceEntry {
+  nodeId: string;
+  moduleName: string;
+  module_name: string;
+  start_time: ISODateString | null;
+  end_time: ISODateString | null;
+  duration_ms: number | null;
+  retries: number;
+  error: ErrorInfo | null;
+  external_provider: string | null;
+  slow: boolean;
+}
+
 export interface NodeDetailData {
   node: NodeDetail;
 }
@@ -306,6 +330,7 @@ export interface DagRunMetrics {
   sumNodeDurationMs: number;
   queueWaitMsP50: number;
   queueWaitMsP95: number;
+  slowNodeCount: number;
 }
 
 export interface DagMetricsData {
@@ -313,6 +338,7 @@ export interface DagMetricsData {
   metrics: DagRunMetrics;
   limits: ExecutionLimits;
   guardViolations: GuardViolation[];
+  slowNodes: DagNodeTraceEntry[];
 }
 
 export type DagMetricsResponse = ApiEnvelope<DagMetricsData>;
@@ -391,6 +417,8 @@ export type DagVerificationResponse = ApiEnvelope<DagVerificationData>;
 export interface DagTraceData extends TrinityRuntimeMetadata {
   run: DagRunSummary;
   tree: DagTreeData;
+  nodeTrace: DagNodeTraceEntry[];
+  slowNodes: DagNodeTraceEntry[];
   events: DagEventsData;
   metrics: DagMetricsData;
   errors: DagErrorsData;

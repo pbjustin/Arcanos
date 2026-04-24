@@ -43,6 +43,7 @@ import {
   buildQueuedAskPendingResponse,
   type CompletedQueuedAskJobOutput
 } from '@shared/ask/asyncAskJob.js';
+import { buildJobResultPollPath } from '@shared/jobs/jobLinks.js';
 import { buildTrinityOutputControlOptions } from '@shared/ask/trinityRequestOptions.js';
 import {
   getActiveIntentSnapshot,
@@ -504,7 +505,7 @@ function buildAsyncAskFailurePayload(jobId: string, errorMessage?: string | null
     error: 'ASYNC_ASK_JOB_FAILED',
     message: errorMessage?.trim() || 'Async ask job failed.',
     jobId,
-    poll: `/jobs/${jobId}`
+    poll: buildJobResultPollPath(jobId)
   };
 }
 
@@ -1145,7 +1146,7 @@ export const handleAIRequest = async (
             error: 'ASYNC_ASK_JOB_OUTPUT_INVALID',
             message: 'Async ask job completed without a structured output payload.',
             jobId: job.id,
-            poll: `/jobs/${job.id}`
+            poll: buildJobResultPollPath(job.id)
           }, `${endpointName}.async_completed_invalid`, 500);
         }
 
@@ -1227,7 +1228,7 @@ export const handleAIRequest = async (
           error: 'ASYNC_ASK_JOB_MISSING',
           message: 'Async ask job disappeared before completion.',
           jobId: job.id,
-          poll: `/jobs/${job.id}`
+          poll: buildJobResultPollPath(job.id)
         }, `${endpointName}.async_missing`, 500);
       }
 

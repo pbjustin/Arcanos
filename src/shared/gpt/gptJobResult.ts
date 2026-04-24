@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { JobData } from '@core/db/schema.js';
+import { buildJobResultPollPath } from '@shared/jobs/jobLinks.js';
 import { resolveGptJobLifecycleStatus } from './gptJobLifecycle.js';
 import type { GptBridgeSmokeAction } from './bridgeSmoke.js';
 
@@ -124,7 +125,7 @@ function buildPendingJobLookupPayload(job: JobData): GptJobResultLookupPayload {
     retentionUntil: serializeJobTimestamp(job.retention_until),
     idempotencyUntil: serializeJobTimestamp(job.idempotency_until),
     expiresAt: serializeJobTimestamp(job.expires_at),
-    poll: `/jobs/${job.id}`,
+    poll: buildJobResultPollPath(job.id),
     stream: `/jobs/${job.id}/stream`,
     result: null,
     error: null
@@ -143,7 +144,7 @@ function buildCompletedJobLookupPayload(job: JobData): GptJobResultLookupPayload
     retentionUntil: serializeJobTimestamp(job.retention_until),
     idempotencyUntil: serializeJobTimestamp(job.idempotency_until),
     expiresAt: serializeJobTimestamp(job.expires_at),
-    poll: `/jobs/${job.id}`,
+    poll: buildJobResultPollPath(job.id),
     stream: `/jobs/${job.id}/stream`,
     result: job.output ?? null,
     error: null
@@ -166,7 +167,7 @@ function buildFailedJobLookupPayload(
     retentionUntil: serializeJobTimestamp(job.retention_until),
     idempotencyUntil: serializeJobTimestamp(job.idempotency_until),
     expiresAt: serializeJobTimestamp(job.expires_at),
-    poll: `/jobs/${job.id}`,
+    poll: buildJobResultPollPath(job.id),
     stream: `/jobs/${job.id}/stream`,
     result: job.output ?? null,
     error: buildJobFailurePayload(
@@ -193,7 +194,7 @@ function buildExpiredJobLookupPayload(job: JobData): GptJobResultLookupPayload {
     retentionUntil: serializeJobTimestamp(job.retention_until),
     idempotencyUntil: serializeJobTimestamp(job.idempotency_until),
     expiresAt: serializeJobTimestamp(job.expires_at),
-    poll: `/jobs/${job.id}`,
+    poll: buildJobResultPollPath(job.id),
     stream: `/jobs/${job.id}/stream`,
     result: job.output ?? null,
     error: buildJobFailurePayload(
@@ -247,6 +248,7 @@ export function parseGptJobStatusRequest(body: unknown): ParsedGptJobStatusReque
 export function buildStoredJobStatusPayload(job: JobData) {
   return {
     id: job.id,
+    jobId: job.id,
     job_type: job.job_type,
     status: job.status,
     lifecycle_status: resolveGptJobLifecycleStatus(job.status),
@@ -258,6 +260,8 @@ export function buildStoredJobStatusPayload(job: JobData) {
     retention_until: serializeJobTimestamp(job.retention_until),
     idempotency_until: serializeJobTimestamp(job.idempotency_until),
     expires_at: serializeJobTimestamp(job.expires_at),
+    poll: buildJobResultPollPath(job.id),
+    stream: `/jobs/${job.id}/stream`,
     error_message: job.error_message ?? null,
     output: job.output ?? null,
     result: job.output ?? null
@@ -291,7 +295,7 @@ export function buildGptJobResultLookupPayload(
       retentionUntil: null,
       idempotencyUntil: null,
       expiresAt: null,
-      poll: `/jobs/${jobId}`,
+      poll: buildJobResultPollPath(jobId),
       stream: `/jobs/${jobId}/stream`,
       result: null,
       error: buildJobFailurePayload('JOB_NOT_FOUND', 'Async GPT job was not found.')

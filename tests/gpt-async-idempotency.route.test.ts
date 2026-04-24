@@ -3,16 +3,20 @@ import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const mockRouteGptRequest = jest.fn();
+const mockResolveGptRouting = jest.fn();
 const findOrCreateGptJobMock = jest.fn();
 const getJobByIdMock = jest.fn();
 const planAutonomousWorkerJobMock = jest.fn();
 const waitForQueuedGptJobCompletionMock = jest.fn();
 const resolveAsyncGptPollIntervalMsMock = jest.fn(() => 250);
 const resolveAsyncGptWaitForResultMsMock = jest.fn((requested?: number) => requested ?? 3500);
+const tryAcquirePriorityGptDirectExecutionSlotMock = jest.fn(() => null);
+const startReservedPriorityGptDirectExecutionMock = jest.fn();
 class MockIdempotencyKeyConflictError extends Error {}
 class MockJobRepositoryUnavailableError extends Error {}
 
 jest.unstable_mockModule('../src/routes/_core/gptDispatch.js', () => ({
+  resolveGptRouting: mockResolveGptRouting,
   routeGptRequest: mockRouteGptRequest,
 }));
 
@@ -64,6 +68,16 @@ jest.unstable_mockModule('../src/services/queuedGptCompletionService.js', () => 
   resolveAsyncGptWaitForResultMs: resolveAsyncGptWaitForResultMsMock
 }));
 
+jest.unstable_mockModule('../src/services/priorityGptDirectExecutionService.js', () => ({
+  tryAcquirePriorityGptDirectExecutionSlot: tryAcquirePriorityGptDirectExecutionSlotMock,
+  startReservedPriorityGptDirectExecution: startReservedPriorityGptDirectExecutionMock,
+  getPriorityGptDirectExecutionSnapshot: jest.fn(() => ({
+    active: 0,
+    capacity: 1,
+    available: 1
+  }))
+}));
+
 const { default: requestContext } = await import('../src/middleware/requestContext.js');
 const { default: gptRouter } = await import('../src/routes/gptRouter.js');
 
@@ -75,6 +89,9 @@ const ASYNC_IDEMPOTENCY_ENV_KEYS = [
   'GPT_PUBLIC_RESPONSE_MAX_BYTES',
   'GPT_ROUTE_ASYNC_CORE_DEFAULT',
   'GPT_ROUTE_HARD_TIMEOUT_MS',
+  'PRIORITY_QUEUE_ENABLED',
+  'GPT_DIRECT_EXECUTION_THRESHOLD_MS',
+  'GPT_WAIT_TIMEOUT_MS',
 ] as const;
 
 function captureEnv(keys: readonly string[]): Map<string, string | undefined> {
@@ -108,6 +125,27 @@ describe('async /gpt idempotency', () => {
       delete process.env[key];
     }
     process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = 'true';
+    process.env.PRIORITY_QUEUE_ENABLED = 'false';
+    mockResolveGptRouting.mockImplementation(async (gptId: string) => ({
+      ok: true,
+      plan: {
+        matchedId: gptId,
+        module: 'ARCANOS:CORE',
+        route: 'core',
+        action: 'query',
+        availableActions: ['query'],
+        moduleVersion: null,
+        moduleDescription: null,
+        matchMethod: 'exact'
+      },
+      _route: {
+        gptId,
+        route: 'core',
+        module: 'ARCANOS:CORE',
+        action: 'query',
+        timestamp: '2026-04-24T00:00:00.000Z'
+      }
+    }));
     planAutonomousWorkerJobMock.mockResolvedValue({
       status: 'pending',
       retryCount: 0,
@@ -124,6 +162,42 @@ describe('async /gpt idempotency', () => {
 
   afterEach(() => {
     restoreEnv(originalAsyncIdempotencyEnv);
+  });
+
+  it('rejects unknown GPT IDs before creating async jobs', async () => {
+    mockResolveGptRouting.mockResolvedValueOnce({
+      ok: false,
+      error: {
+        code: 'UNKNOWN_GPT',
+        message: "gptId 'invalid-id' is not registered"
+      },
+      _route: {
+        gptId: 'invalid-id',
+        timestamp: '2026-04-24T00:00:00.000Z'
+      }
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/invalid-id')
+      .send({
+        action: 'query',
+        prompt: 'This should not enter the queue.'
+      });
+
+    expect(response.status).toBe(404);
+    expect(response.body).toMatchObject({
+      ok: false,
+      error: {
+        code: 'UNKNOWN_GPT'
+      },
+      _route: {
+        gptId: 'invalid-id'
+      }
+    });
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
   it('returns the canonical in-flight job when an equivalent async request is deduped', async () => {
@@ -154,10 +228,12 @@ describe('async /gpt idempotency', () => {
     expect(response.body).toEqual({
       ok: true,
       action: 'query',
-      status: 'pending',
+      status: 'running',
       jobId: 'job-123',
-      poll: '/jobs/job-123',
+      result: {},
+      poll: '/jobs/job-123/result',
       stream: '/jobs/job-123/stream',
+      timedOut: false,
       jobStatus: 'running',
       lifecycleStatus: 'running',
       deduped: true,
@@ -216,7 +292,7 @@ describe('async /gpt idempotency', () => {
       retentionUntil: null,
       idempotencyUntil: null,
       expiresAt: null,
-      poll: '/jobs/job-lookup-complete',
+      poll: '/jobs/job-lookup-complete/result',
       stream: '/jobs/job-lookup-complete/stream',
       output: {
         ok: true,
@@ -236,7 +312,7 @@ describe('async /gpt idempotency', () => {
         retentionUntil: null,
         idempotencyUntil: null,
         expiresAt: null,
-        poll: '/jobs/job-lookup-complete',
+        poll: '/jobs/job-lookup-complete/result',
         stream: '/jobs/job-lookup-complete/stream',
         result: {
           ok: true,
@@ -529,7 +605,7 @@ describe('async /gpt idempotency', () => {
       retentionUntil: null,
       idempotencyUntil: null,
       expiresAt: null,
-      poll: '/jobs/missing-job',
+      poll: '/jobs/missing-job/result',
       stream: '/jobs/missing-job/stream',
       output: null,
       error: {
@@ -547,7 +623,7 @@ describe('async /gpt idempotency', () => {
         retentionUntil: null,
         idempotencyUntil: null,
         expiresAt: null,
-        poll: '/jobs/missing-job',
+        poll: '/jobs/missing-job/result',
         stream: '/jobs/missing-job/stream',
         result: null,
         error: {
@@ -861,8 +937,12 @@ describe('async /gpt idempotency', () => {
     expect(response.status).toBe(202);
     expect(response.body).toMatchObject({
       ok: true,
-      status: 'pending',
+      status: 'timeout',
       jobId: 'job-timeout',
+      result: {},
+      poll: '/jobs/job-timeout/result',
+      stream: '/jobs/job-timeout/stream',
+      timedOut: true,
       jobStatus: 'running',
       lifecycleStatus: 'running',
       instruction: 'Direct wait timed out after 5250ms. Use GET /jobs/job-timeout/result to retrieve the final result.',
@@ -871,7 +951,7 @@ describe('async /gpt idempotency', () => {
         timedOut: true,
         waitForResultMs: 5_250,
         pollIntervalMs: 250,
-        poll: '/jobs/job-timeout',
+        poll: '/jobs/job-timeout/result',
         result: '/jobs/job-timeout/result'
       }
     });
@@ -924,11 +1004,11 @@ describe('async /gpt idempotency', () => {
       lifecycleStatus: 'completed',
       result: 'Seth Rollins promo prompt'
     });
-    expect(resolveAsyncGptWaitForResultMsMock).toHaveBeenCalledWith(25_000);
+    expect(resolveAsyncGptWaitForResultMsMock).toHaveBeenCalledWith(24_000);
     expect(waitForQueuedGptJobCompletionMock).toHaveBeenCalledWith(
       'job-query-and-wait',
       expect.objectContaining({
-        waitForResultMs: 25_000,
+        waitForResultMs: 24_000,
         pollIntervalMs: 250
       })
     );
@@ -1036,8 +1116,11 @@ describe('async /gpt idempotency', () => {
     expect(response.body).toMatchObject({
       ok: true,
       action: 'query',
-      status: 'pending',
+      status: 'queued',
       jobId: 'job-query',
+      result: {},
+      poll: '/jobs/job-query/result',
+      timedOut: false,
       jobStatus: 'pending',
       lifecycleStatus: 'queued'
     });
@@ -1082,8 +1165,11 @@ describe('async /gpt idempotency', () => {
     expect(response.body).toMatchObject({
       ok: true,
       action: 'query',
-      status: 'pending',
+      status: 'queued',
       jobId: 'job-query-payload-async',
+      result: {},
+      poll: '/jobs/job-query-payload-async/result',
+      timedOut: false,
       jobStatus: 'pending',
       lifecycleStatus: 'queued'
     });
@@ -1137,8 +1223,11 @@ describe('async /gpt idempotency', () => {
     expect(response.status).toBe(202);
     expect(response.body).toMatchObject({
       ok: true,
-      status: 'pending',
+      status: 'timeout',
       jobId: 'job-query-and-wait-timeout',
+      result: {},
+      poll: '/jobs/job-query-and-wait-timeout/result',
+      timedOut: true,
       jobStatus: 'running',
       lifecycleStatus: 'running',
       instruction: 'Direct wait timed out after 1ms. Use GET /jobs/job-query-and-wait-timeout/result to retrieve the final result.',
@@ -1147,7 +1236,7 @@ describe('async /gpt idempotency', () => {
         timedOut: true,
         waitForResultMs: 1,
         pollIntervalMs: 250,
-        poll: '/jobs/job-query-and-wait-timeout',
+        poll: '/jobs/job-query-and-wait-timeout/result',
         result: '/jobs/job-query-and-wait-timeout/result'
       }
     });
@@ -1221,7 +1310,7 @@ describe('async /gpt idempotency', () => {
     expect(response.body).toMatchObject({
       ok: true,
       action: 'query',
-      status: 'pending',
+      status: 'queued',
       jobId: 'job-query-ignore-wait'
     });
     expect(response.body).not.toHaveProperty('directReturn');
@@ -1325,8 +1414,10 @@ describe('async /gpt idempotency', () => {
       jobId: 'job-456',
       status: 'completed',
       lifecycleStatus: 'completed',
-      poll: '/jobs/job-456',
+      jobStatus: 'completed',
+      poll: '/jobs/job-456/result',
       stream: '/jobs/job-456/stream',
+      timedOut: false,
       deduped: true,
       result: {
         answer: 'done'

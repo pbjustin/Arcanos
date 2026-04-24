@@ -145,7 +145,7 @@ function extractBearerToken(authorization?: string | null): string | null {
 }
 
 function pollUrl(jobId: string): string {
-  return `/jobs/${encodeURIComponent(jobId)}`;
+  return `/jobs/${encodeURIComponent(jobId)}/result`;
 }
 
 function resultUrl(jobId: string): string {
@@ -449,7 +449,8 @@ function buildPendingPayload(input: {
       idempotencyKey: input.idempotencyKey,
       idempotencySource: input.idempotencySource,
     }),
-    poll: pending.poll,
+    poll: pollUrl(input.job.id),
+    stream: pending.stream,
     result: {
       method: 'GET',
       url: resultUrl(input.job.id),

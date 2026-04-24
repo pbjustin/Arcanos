@@ -14,6 +14,7 @@ import {
   buildTrinityUserVisibleResponse,
   type TrinityUserVisibleResponse
 } from './trinityResponseSerializer.js';
+import { buildJobResultPollPath } from '../jobs/jobLinks.js';
 
 const ASYNC_ASK_ENDPOINT_FALLBACK = 'ask';
 
@@ -274,7 +275,7 @@ export function buildQueuedAskPendingResponse(jobId: string): QueuedAskPendingRe
     ok: true,
     status: 'pending',
     jobId,
-    poll: `/jobs/${jobId}`
+    poll: buildJobResultPollPath(jobId)
   };
 }
 

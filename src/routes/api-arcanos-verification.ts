@@ -217,6 +217,10 @@ router.get(
     const queueSummary = workerStatus.workerService.queueSummary;
     const now = new Date().toISOString();
     const asyncQueueSnapshot = workerStatus.workerService.health.workers[0];
+    const activeQueueWorkers = workerStatus.workerService.health.workers
+      .filter(worker => worker.healthStatus !== 'offline').length;
+    const activeWorkerSlots = activeQueueWorkers;
+    const queueRunning = queueSummary?.running ?? 0;
     const data: WorkersStatusData = {
       workers: [
         {
@@ -244,7 +248,12 @@ router.get(
           activeJobs: queueSummary?.running ?? 0,
           lastHeartbeatAt: asyncQueueSnapshot?.lastHeartbeatAt || queueSummary?.lastUpdatedAt || now
         }
-      ]
+      ],
+      activeWorkers: activeQueueWorkers,
+      activeWorkerSlots,
+      availableWorkerSlots: Math.max(0, activeWorkerSlots - queueRunning),
+      queueDepth: (queueSummary?.pending ?? 0) + queueRunning,
+      priorityQueueDepth: queueSummary?.priorityPending ?? 0
     };
 
     sendVerificationEnvelope(req, res, data, 'verification.workers_status.response');
@@ -257,6 +266,9 @@ router.get(
   asyncHandler(async (req, res) => {
     const workerStatus = await getWorkerControlStatus();
     const queueSummary = workerStatus.workerService.queueSummary;
+    const activeQueueWorkers = workerStatus.workerService.health.workers
+      .filter(worker => worker.healthStatus !== 'offline').length;
+    const activeWorkerSlots = activeQueueWorkers;
     const data: QueueStatusData = {
       queue: {
         name: 'job_data',
@@ -266,7 +278,13 @@ router.get(
         failed: queueSummary?.failed ?? 0,
         delayed: queueSummary?.delayed ?? 0,
         oldestWaitingJobAgeMs: queueSummary?.oldestPendingJobAgeMs ?? 0,
-        stalledJobs: queueSummary?.stalledRunning ?? 0
+        stalledJobs: queueSummary?.stalledRunning ?? 0,
+        priorityDepth: queueSummary?.priorityPending ?? 0,
+        priorityRunning: queueSummary?.priorityRunning ?? 0,
+        normalWaiting: queueSummary?.normalPending ?? 0,
+        activeWorkers: activeQueueWorkers,
+        availableWorkerSlots: Math.max(0, activeWorkerSlots - (queueSummary?.running ?? 0)),
+        priorityJobCount: queueSummary?.priorityJobCount ?? 0
       }
     };
 

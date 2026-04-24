@@ -8,7 +8,8 @@
  * - Persists worker health snapshots for cross-instance inspection
  */
 
-import { claimNextPendingJob, getJobById, updateJob } from '@core/db/repositories/jobRepository.js';
+import { getJobById, updateJob } from '@core/db/repositories/jobRepository.js';
+import { postgresQueueSchedulerAdapter } from '@core/scheduler/postgresAdapter.js';
 import {
   initializeDatabaseWithSchema as initializeDatabase,
   getStatus as getDatabaseStatus
@@ -855,7 +856,9 @@ async function runWorkerConsumerSlot(
         continue;
       }
 
-      const job = await claimNextPendingJob(autonomyService.getClaimOptions());
+      const { job } = await postgresQueueSchedulerAdapter.claimNext(
+        autonomyService.getClaimOptions()
+      );
 
       if (!job) {
         await autonomyService.markIdle();

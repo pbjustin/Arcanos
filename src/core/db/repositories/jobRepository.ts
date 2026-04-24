@@ -15,6 +15,17 @@ import {
   resolveGptExpiredCompactionMs,
   resolveGptPendingMaxAgeMs
 } from '@shared/gpt/gptJobLifecycle.js';
+import {
+  PRIORITY_QUEUE_LANE_MAX_PRIORITY,
+  isPriorityQueueEnabled,
+  isPriorityQueueLaneJob,
+  resolvePriorityQueueWeight
+} from '@shared/gpt/priorityGpt.js';
+import {
+  resolveSchedulerClaimLane,
+  updateSchedulerClaimState
+} from '@core/scheduler/scheduler.js';
+import type { QueueLane, SchedulerClaimOptions } from '@core/scheduler/types.js';
 
 export type JobFailureCategory =
   | 'authentication'
@@ -63,6 +74,10 @@ export interface JobQueueSummary {
   recentCompleted?: number;
   recentFailed?: number;
   recentTotalTerminal?: number;
+  priorityPending: number;
+  priorityRunning: number;
+  normalPending: number;
+  priorityJobCount: number;
   lastUpdatedAt?: string;
 }
 
@@ -96,10 +111,7 @@ export interface UpdateJobMetadata {
   cancelReason?: string | null;
 }
 
-export interface ClaimNextPendingJobOptions {
-  workerId?: string;
-  leaseMs?: number;
-}
+export interface ClaimNextPendingJobOptions extends SchedulerClaimOptions {}
 
 export interface ScheduleJobRetryOptions {
   workerId?: string;
@@ -986,6 +998,144 @@ export async function requestJobCancellation(
   }
 }
 
+type PriorityQueueClaimLane = 'priority' | 'normal';
+
+let priorityClaimsSinceNormal = 0;
+let priorityQueueFairnessLock: Promise<void> = Promise.resolve();
+
+async function withPriorityQueueFairnessLock<T>(operation: () => Promise<T>): Promise<T> {
+  const previousLock = priorityQueueFairnessLock;
+  let releaseLock: () => void = () => {};
+  priorityQueueFairnessLock = new Promise<void>(resolve => {
+    releaseLock = resolve;
+  });
+
+  await previousLock;
+
+  try {
+    return await operation();
+  } catch (error) {
+    throw error;
+  } finally {
+    releaseLock();
+  }
+}
+
+function toRepositoryClaimLane(lane: QueueLane): PriorityQueueClaimLane {
+  return lane === 'standard' ? 'normal' : 'priority';
+}
+
+function normalizePriorityLaneMaxPriority(value: number | undefined): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return PRIORITY_QUEUE_LANE_MAX_PRIORITY;
+  }
+
+  const normalized = Math.trunc(value);
+  return normalized > 0 ? normalized : PRIORITY_QUEUE_LANE_MAX_PRIORITY;
+}
+
+export function resolvePriorityQueueClaimLane(options: {
+  priorityQueueEnabled?: boolean;
+  priorityQueueWeight?: number;
+  priorityLaneMaxPriority?: number;
+  priorityClaimsSinceNormal?: number;
+  env?: NodeJS.ProcessEnv;
+} = {}): PriorityQueueClaimLane {
+  const enabled =
+    options.priorityQueueEnabled ??
+    isPriorityQueueEnabled(options.env ?? process.env);
+  if (!enabled) {
+    return 'priority';
+  }
+
+  const weight = Math.max(
+    1,
+    Math.trunc(
+      options.priorityQueueWeight ??
+      resolvePriorityQueueWeight(options.env ?? process.env)
+    )
+  );
+  const claimsSinceNormal = Math.max(
+    0,
+    Math.trunc(options.priorityClaimsSinceNormal ?? priorityClaimsSinceNormal)
+  );
+  const priorityLaneMaxPriority = normalizePriorityLaneMaxPriority(
+    options.priorityLaneMaxPriority
+  );
+
+  return toRepositoryClaimLane(resolveSchedulerClaimLane({
+    policy: {
+      priorityQueueEnabled: enabled,
+      priorityQueueWeight: weight,
+      priorityLaneMaxPriority
+    },
+    state: {
+      priorityClaimsSinceStandard: claimsSinceNormal
+    }
+  }).lane);
+}
+
+export function resetPriorityQueueFairnessState(): void {
+  priorityClaimsSinceNormal = 0;
+}
+
+async function claimPendingJobWithLane(
+  client: { query: (sql: string, params?: unknown[]) => Promise<{ rows: unknown[] }> },
+  params: {
+    leaseMs: number;
+    workerId?: string | null;
+    lane: PriorityQueueClaimLane;
+    priorityLaneMaxPriority: number;
+  }
+): Promise<JobData | null> {
+  const queryParams: unknown[] = [params.leaseMs, params.workerId ?? null];
+  const normalLaneFilter = params.lane === 'normal'
+    ? `AND NOT (job_type = 'gpt' AND priority <= $3)`
+    : '';
+  if (params.lane === 'normal') {
+    queryParams.push(params.priorityLaneMaxPriority);
+  }
+
+  const result = await client.query(
+    `UPDATE job_data
+     SET
+       status = 'running',
+       updated_at = NOW(),
+       started_at = COALESCE(started_at, NOW()),
+       last_heartbeat_at = NOW(),
+       lease_expires_at = NOW() + ($1::bigint * INTERVAL '1 millisecond'),
+       last_worker_id = COALESCE($2, last_worker_id)
+     WHERE id = (
+       SELECT id
+       FROM job_data
+       WHERE status = 'pending'
+         AND next_run_at <= NOW()
+         ${normalLaneFilter}
+       ORDER BY priority ASC, next_run_at ASC, created_at ASC
+       FOR UPDATE SKIP LOCKED
+       LIMIT 1
+     )
+     RETURNING *`,
+    queryParams
+  );
+
+  return (result.rows[0] as JobData | undefined) ?? null;
+}
+
+function updatePriorityQueueFairnessAfterClaim(
+  job: JobData | null,
+  priorityLaneMaxPriority: number
+): void {
+  if (!job) {
+    return;
+  }
+
+  priorityClaimsSinceNormal = updateSchedulerClaimState(
+    { priorityClaimsSinceStandard: priorityClaimsSinceNormal },
+    isPriorityQueueLaneJob(job, priorityLaneMaxPriority) ? 'priority' : 'standard'
+  ).priorityClaimsSinceStandard;
+}
+
 /**
  * Atomically claim the next runnable pending job using SKIP LOCKED.
  * Purpose: lease due queue work to one worker while respecting scheduling and priority.
@@ -1003,41 +1153,56 @@ export async function claimNextPendingJob(
   }
 
   const leaseMs = Math.max(1_000, options.leaseMs ?? 30_000);
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
+  const priorityQueueEnabled = options.priorityQueueEnabled ?? isPriorityQueueEnabled();
+  const priorityLaneMaxPriority = normalizePriorityLaneMaxPriority(
+    options.priorityLaneMaxPriority
+  );
+  const claimOperation = async (): Promise<JobData | null> => {
+    const client = await pool.connect();
+    let claimedJob: JobData | null = null;
 
-    const result = await client.query(
-      `UPDATE job_data
-       SET
-         status = 'running',
-         updated_at = NOW(),
-         started_at = COALESCE(started_at, NOW()),
-         last_heartbeat_at = NOW(),
-         lease_expires_at = NOW() + ($1::bigint * INTERVAL '1 millisecond'),
-         last_worker_id = COALESCE($2, last_worker_id)
-       WHERE id = (
-         SELECT id
-         FROM job_data
-         WHERE status = 'pending'
-           AND next_run_at <= NOW()
-         ORDER BY priority ASC, next_run_at ASC, created_at ASC
-         FOR UPDATE SKIP LOCKED
-         LIMIT 1
-       )
-       RETURNING *`,
-      [leaseMs, options.workerId ?? null]
-    );
+    try {
+      await client.query('BEGIN');
 
-    await client.query('COMMIT');
-    return (result.rows[0] as JobData | undefined) ?? null;
-  } catch (error: unknown) {
-    await client.query('ROLLBACK');
-    console.error('Error claiming pending job:', resolveErrorMessage(error));
-    throw error;
-  } finally {
-    client.release();
-  }
+      const firstLane = resolvePriorityQueueClaimLane({
+        priorityQueueEnabled,
+        priorityQueueWeight: options.priorityQueueWeight,
+        priorityLaneMaxPriority
+      });
+      claimedJob = await claimPendingJobWithLane(client, {
+        leaseMs,
+        workerId: options.workerId ?? null,
+        lane: firstLane,
+        priorityLaneMaxPriority
+      });
+
+      if (!claimedJob && firstLane === 'normal') {
+        claimedJob = await claimPendingJobWithLane(client, {
+          leaseMs,
+          workerId: options.workerId ?? null,
+          lane: 'priority',
+          priorityLaneMaxPriority
+        });
+      }
+
+      await client.query('COMMIT');
+    } catch (error: unknown) {
+      await client.query('ROLLBACK');
+      console.error('Error claiming pending job:', resolveErrorMessage(error));
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    if (priorityQueueEnabled) {
+      updatePriorityQueueFairnessAfterClaim(claimedJob, priorityLaneMaxPriority);
+    }
+    return claimedJob;
+  };
+
+  return priorityQueueEnabled
+    ? withPriorityQueueFairnessLock(claimOperation)
+    : claimOperation();
 }
 
 /**
@@ -1622,6 +1787,24 @@ export async function getJobQueueSummary(): Promise<JobQueueSummary | null> {
            COUNT(*) FILTER (WHERE status = 'running')::int AS running_count,
            COUNT(*) FILTER (WHERE status = 'completed')::int AS completed_count,
            COUNT(*) FILTER (WHERE status = 'failed')::int AS failed_count,
+           COUNT(*) FILTER (
+             WHERE status = 'pending'
+               AND job_type = 'gpt'
+               AND priority <= $3
+           )::int AS priority_pending_count,
+           COUNT(*) FILTER (
+             WHERE status = 'running'
+               AND job_type = 'gpt'
+               AND priority <= $3
+           )::int AS priority_running_count,
+           COUNT(*) FILTER (
+             WHERE status = 'pending'
+               AND NOT (job_type = 'gpt' AND priority <= $3)
+           )::int AS normal_pending_count,
+           COUNT(*) FILTER (
+             WHERE job_type = 'gpt'
+               AND priority <= $3
+           )::int AS priority_job_count,
            COUNT(*)::int AS total_count,
            COUNT(*) FILTER (WHERE status = 'pending' AND next_run_at > NOW())::int AS delayed_count,
            COUNT(*) FILTER (
@@ -1690,6 +1873,10 @@ export async function getJobQueueSummary(): Promise<JobQueueSummary | null> {
          summary.running_count,
          summary.completed_count,
          summary.failed_count,
+         summary.priority_pending_count,
+         summary.priority_running_count,
+         summary.normal_pending_count,
+         summary.priority_job_count,
          summary.total_count,
          summary.delayed_count,
          summary.stalled_running_count,
@@ -1727,7 +1914,7 @@ export async function getJobQueueSummary(): Promise<JobQueueSummary | null> {
          ) AS recent_failure_reasons
        FROM summary
        CROSS JOIN failure_breakdown`,
-      [recentTerminalWindowMs, staleAfterMs]
+      [recentTerminalWindowMs, staleAfterMs, PRIORITY_QUEUE_LANE_MAX_PRIORITY]
     );
 
     const summaryRow = result.rows[0] as {
@@ -1735,6 +1922,10 @@ export async function getJobQueueSummary(): Promise<JobQueueSummary | null> {
       running_count: number;
       completed_count: number;
       failed_count: number;
+      priority_pending_count: number;
+      priority_running_count: number;
+      normal_pending_count: number;
+      priority_job_count: number;
       total_count: number;
       delayed_count: number;
       stalled_running_count: number;
@@ -1773,7 +1964,11 @@ export async function getJobQueueSummary(): Promise<JobQueueSummary | null> {
         recentTerminalWindowMs,
         recentCompleted: 0,
         recentFailed: 0,
-        recentTotalTerminal: 0
+        recentTotalTerminal: 0,
+        priorityPending: 0,
+        priorityRunning: 0,
+        normalPending: 0,
+        priorityJobCount: 0
       };
     }
 
@@ -1804,7 +1999,11 @@ export async function getJobQueueSummary(): Promise<JobQueueSummary | null> {
       recentTerminalWindowMs,
       recentCompleted: Number(summaryRow.recent_completed_count ?? 0),
       recentFailed: Number(summaryRow.recent_failed_count ?? 0),
-      recentTotalTerminal: Number(summaryRow.recent_terminal_count ?? 0)
+      recentTotalTerminal: Number(summaryRow.recent_terminal_count ?? 0),
+      priorityPending: Number(summaryRow.priority_pending_count ?? 0),
+      priorityRunning: Number(summaryRow.priority_running_count ?? 0),
+      normalPending: Number(summaryRow.normal_pending_count ?? 0),
+      priorityJobCount: Number(summaryRow.priority_job_count ?? 0)
     };
 
     if (summaryRow.last_updated_at) {

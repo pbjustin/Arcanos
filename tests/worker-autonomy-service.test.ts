@@ -170,6 +170,29 @@ describe('workerAutonomyService', () => {
     expect(plannedJob.planningReasons).toContain('queue_depth_deferred');
   });
 
+  it('plans priority GPT jobs ahead of normal queue work and caps retries', async () => {
+    const originalMaxRetries = process.env.GPT_JOB_MAX_RETRIES;
+    process.env.GPT_JOB_MAX_RETRIES = '1';
+
+    try {
+      const plannedJob = await planAutonomousWorkerJob('gpt', {
+        gptId: 'arcanos-build',
+        body: {
+          prompt: 'Inspect current latency.'
+        }
+      });
+
+      expect(plannedJob.priority).toBe(0);
+      expect(plannedJob.maxRetries).toBe(1);
+    } finally {
+      if (originalMaxRetries === undefined) {
+        delete process.env.GPT_JOB_MAX_RETRIES;
+      } else {
+        process.env.GPT_JOB_MAX_RETRIES = originalMaxRetries;
+      }
+    }
+  });
+
   it('classifies transient and terminal failures separately', () => {
     expect(classifyWorkerExecutionError(new Error('OpenAI rate limit timeout')).retryable).toBe(true);
     expect(classifyWorkerExecutionError(new Error('OpenAI internal error')).retryable).toBe(true);

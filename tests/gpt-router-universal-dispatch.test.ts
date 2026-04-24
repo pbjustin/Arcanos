@@ -3,6 +3,7 @@ import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const mockRouteGptRequest = jest.fn();
+const mockResolveGptRouting = jest.fn();
 const mockExecuteSystemStateRequest = jest.fn();
 const mockExecuteRuntimeInspection = jest.fn();
 const mockGetWorkerControlStatus = jest.fn();
@@ -18,6 +19,7 @@ class MockSystemStateConflictError extends Error {
 }
 
 jest.unstable_mockModule('../src/routes/_core/gptDispatch.js', () => ({
+  resolveGptRouting: mockResolveGptRouting,
   routeGptRequest: mockRouteGptRequest,
 }));
 
@@ -256,6 +258,27 @@ describe('gpt router universal dispatch', () => {
     delete process.env.GPT_PUBLIC_RESPONSE_MAX_BYTES;
     delete process.env.ARCANOS_ENABLE_DEBUG_GPT_CONTROLS;
     process.env.NODE_ENV = originalNodeEnv;
+
+    mockResolveGptRouting.mockImplementation(async (gptId: string) => ({
+      ok: true,
+      plan: {
+        matchedId: gptId,
+        module: 'ARCANOS:CORE',
+        route: 'core',
+        action: 'query',
+        availableActions: ['query'],
+        moduleVersion: null,
+        moduleDescription: null,
+        matchMethod: 'exact'
+      },
+      _route: {
+        gptId,
+        route: 'core',
+        module: 'ARCANOS:CORE',
+        action: 'query',
+        timestamp: '2026-04-24T00:00:00.000Z'
+      }
+    }));
 
     mockRouteGptRequest.mockResolvedValue({
       ok: true,

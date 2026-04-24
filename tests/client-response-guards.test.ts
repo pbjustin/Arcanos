@@ -508,7 +508,7 @@ describe('client response guards', () => {
       status: 'completed',
       jobStatus: 'completed',
       lifecycleStatus: 'completed',
-      poll: '/jobs/job-123',
+      poll: '/jobs/job-123/result',
       stream: '/jobs/job-123/stream',
       result: {
         answer: 'x'.repeat(16_000),
@@ -525,7 +525,7 @@ describe('client response guards', () => {
       status: 'completed',
       jobStatus: 'completed',
       lifecycleStatus: 'completed',
-      poll: '/jobs/job-123',
+      poll: '/jobs/job-123/result',
       stream: '/jobs/job-123/stream',
       truncated: true,
       result: expect.stringContaining('[truncated]'),
