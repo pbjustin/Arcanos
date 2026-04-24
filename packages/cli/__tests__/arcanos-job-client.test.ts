@@ -229,6 +229,40 @@ describe("ARCANOS async job client", () => {
     expect(sleepCalls).toEqual([2_000]);
   });
 
+  it("uses the injected clock for absolute Retry-After dates", async () => {
+    const baseNowMs = Date.UTC(2026, 3, 24, 12, 0, 0);
+    const retryAt = new Date(baseNowMs + 3_000).toUTCString();
+    const fetchMock = jest.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: "rate limited" }), {
+        status: 429,
+        headers: {
+          "content-type": "application/json",
+          "retry-after": retryAt,
+        },
+      }))
+      .mockResolvedValueOnce(createJsonResponse({
+        jobId: "job-rate-limited-date",
+        status: "completed",
+        result: { text: "done" },
+      }));
+    const sleepCalls: number[] = [];
+
+    const result = await pollArcanosJob("job-rate-limited-date", {
+      baseUrl: "http://127.0.0.1:3000",
+      timeoutMs: 10_000,
+      intervalMs: 100,
+      fetchFn: fetchMock,
+      sleepFn: async (ms) => {
+        sleepCalls.push(ms);
+      },
+      nowFn: () => baseNowMs,
+    });
+
+    expect(result.status).toBe("completed");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(sleepCalls).toEqual([3_000]);
+  });
+
   it("detects fallbackFlag fallback metadata", () => {
     expect(isPipelineFallback({ fallbackFlag: true })).toBe(true);
   });

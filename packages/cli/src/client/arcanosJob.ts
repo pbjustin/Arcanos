@@ -166,7 +166,7 @@ export async function pollArcanosJob(
   while (nowFn() <= deadlineMs) {
     let rawPayload: Record<string, unknown>;
     try {
-      rawPayload = await getJson(fetchFn, resultUrl, options.headers);
+      rawPayload = await getJson(fetchFn, resultUrl, options.headers, nowFn);
     } catch (error) {
       if (!isRateLimitError(error)) {
         throw error;
@@ -403,7 +403,8 @@ function normalizeOptionalPollUrl(pollUrl: string | undefined, jobId: string | u
 async function getJson(
   fetchFn: typeof fetch,
   url: string,
-  headers: Record<string, string> = {}
+  headers: Record<string, string> = {},
+  nowFn: () => number = Date.now
 ): Promise<Record<string, unknown>> {
   const response = await fetchFn(url, {
     method: "GET",
@@ -420,7 +421,7 @@ async function getJson(
 
   if (!response.ok) {
     const retryAfterMs = response.status === 429
-      ? parseRetryAfterMs(response.headers.get("retry-after"))
+      ? parseRetryAfterMs(response.headers.get("retry-after"), nowFn)
       : undefined;
     throw new ArcanosHttpError(
       `ARCANOS job poll failed with HTTP ${response.status}: ${formatPayloadForError(parsed, rawText)}`,
@@ -465,7 +466,7 @@ function jitterDelayMs(intervalMs: number, maxIntervalMs: number, randomFn: () =
   return Math.min(maxIntervalMs, Math.max(1, Math.ceil(intervalMs * jitterFactor)));
 }
 
-function parseRetryAfterMs(value: string | null): number | undefined {
+function parseRetryAfterMs(value: string | null, nowFn: () => number = Date.now): number | undefined {
   const trimmed = value?.trim();
   if (!trimmed) {
     return undefined;
@@ -478,7 +479,7 @@ function parseRetryAfterMs(value: string | null): number | undefined {
 
   const retryAtMs = Date.parse(trimmed);
   return Number.isFinite(retryAtMs)
-    ? Math.max(0, retryAtMs - Date.now())
+    ? Math.max(0, retryAtMs - nowFn())
     : undefined;
 }
 
