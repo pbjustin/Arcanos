@@ -449,7 +449,8 @@ function buildPendingPayload(input: {
       idempotencyKey: input.idempotencyKey,
       idempotencySource: input.idempotencySource,
     }),
-    poll: pending.poll,
+    poll: pollUrl(input.job.id),
+    stream: pending.stream,
     result: {
       method: 'GET',
       url: resultUrl(input.job.id),

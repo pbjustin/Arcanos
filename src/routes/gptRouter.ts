@@ -1508,7 +1508,7 @@ router.post("/:gptId", async (req, res, next) => {
       async () => {
         const incomingGptId = req.params.gptId;
         const requestLogger = (req as any).logger;
-        const priorityQueueActive = priorityGpt && isPriorityQueueEnabled();
+        const priorityQueueConfigured = priorityGpt && isPriorityQueueEnabled();
         const normalizedBody = normalizeGptRequestBody(req.body);
         const bodyGptId = resolveBodyGptId(req.body);
         const effectiveRequestedAction = queryAndWaitRequested ? 'query' : requestedAction;
@@ -1541,7 +1541,7 @@ router.post("/:gptId", async (req, res, next) => {
           gptId: incomingGptId,
           action: requestedAction,
           priorityGpt,
-          priorityQueueActive
+          priorityQueueConfigured
         });
 
         if (bodyGptId) {
@@ -2055,6 +2055,13 @@ router.post("/:gptId", async (req, res, next) => {
           requestedAction: effectiveRequestedAction,
           routeTimeoutProfile
         });
+        const priorityJobBackedExecutionRequested =
+          queryAndWaitRequested ||
+          executionPlan.mode === 'async' ||
+          fastPathFallbackToOrchestrated ||
+          Boolean(explicitIdempotencyKey);
+        const priorityQueueActive =
+          priorityQueueConfigured && priorityJobBackedExecutionRequested;
         const priorityDirectReturnRequested = priorityQueueActive;
         const directReturnRequested =
           queryAndWaitRequested ||
@@ -2131,7 +2138,6 @@ router.post("/:gptId", async (req, res, next) => {
         }
 
         const shouldUseJobBackedExecution =
-          priorityDirectReturnRequested ||
           queryAndWaitRequested ||
           executionPlan.mode === 'async' ||
           fastPathFallbackToOrchestrated ||
