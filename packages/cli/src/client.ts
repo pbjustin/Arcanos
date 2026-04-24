@@ -91,6 +91,7 @@ export {
 export {
   DEFAULT_DOCS_UPDATE_FILE,
   DOCS_GENERATION_SECTIONS,
+  DocsGenerationError,
   generateDocsUpdate,
   type DocsGenerationSection,
   type DocsSectionGenerationResult,

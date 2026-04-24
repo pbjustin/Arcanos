@@ -9,6 +9,7 @@ import {
 export interface DocsGenerationSection {
   id: string;
   title: string;
+  promptTitle?: string;
   prompt: string;
   retryPrompt: string;
 }
@@ -17,6 +18,9 @@ export interface DocsSectionGenerationResult {
   id: string;
   title: string;
   jobId?: string;
+  poll?: string;
+  stream?: string;
+  timedOut?: boolean;
   status: string;
   markdown?: string;
   attempts: number;
@@ -50,24 +54,47 @@ export interface GenerateDocsUpdateOptions extends RunArcanosJobOptions {
 export const DEFAULT_DOCS_UPDATE_FILE = "docs/GPT_ASYNC_DOCUMENTATION_WORKFLOW.md";
 const DEFAULT_DOCS_GENERATION_CONCURRENCY = 2;
 const MAX_DOCS_GENERATION_CONCURRENCY = 4;
+const DOCUMENTATION_PLACEHOLDERS: Record<string, string> = {
+  GPT_WRITE_ROUTE: "/gpt/:gptId",
+  JOB_RESULT_ROUTE: "/jobs/:id/result",
+  JOB_STREAM_ROUTE: "/jobs/:id/stream",
+  STATUS_ROUTE: "/status",
+  WORKERS_STATUS_ROUTE: "/workers/status",
+  WORKER_HEALTH_ROUTE: "/worker-helper/health",
+  MCP_ROUTE: "/mcp",
+  DAG_RUN_ROUTE: "/api/arcanos/dag/runs/{runId}",
+  DAG_TRACE_ROUTE: "/api/arcanos/dag/runs/{runId}/trace",
+};
+
+export class DocsGenerationError extends Error {
+  result: GenerateDocsUpdateResult;
+
+  constructor(message: string, result: GenerateDocsUpdateResult) {
+    super(message);
+    this.name = "DocsGenerationError";
+    this.result = result;
+  }
+}
 
 export const DOCS_GENERATION_SECTIONS: DocsGenerationSection[] = [
   createDocsSection({
     id: "gpt-api-behavior",
     title: "/gpt/:gptId API behavior",
+    promptTitle: "GPT writing route behavior",
     focus: [
-      "the writing-plane role of POST /gpt/:gptId",
+      "the writing-plane role of POST GPT_WRITE_ROUTE",
       "direct execution versus async fallback",
-      "why job retrieval and control-plane operations must use direct endpoints",
+      "why async completion data and operator controls must use direct endpoints",
     ],
   }),
   createDocsSection({
     id: "job-polling-contract",
     title: "Job polling and async contract",
+    promptTitle: "Async completion contract",
     focus: [
       "canonical queued/running/completed response fields",
-      "GET /jobs/:id/result polling",
-      "bounded retry, timeout, and stream metadata",
+      "bounded polling with JOB_RESULT_ROUTE",
+      "timeout handling and stream metadata via JOB_STREAM_ROUTE",
     ],
   }),
   createDocsSection({
@@ -82,19 +109,21 @@ export const DOCS_GENERATION_SECTIONS: DocsGenerationSection[] = [
   createDocsSection({
     id: "queue-diagnostics",
     title: "Queue diagnostics",
+    promptTitle: "Queue observability documentation",
     focus: [
-      "worker and queue control-plane inspection endpoints",
-      "using queue.inspect or direct worker endpoints for diagnostics",
-      "avoiding diagnostic prompts through the writing route",
+      "worker and queue operational state via WORKERS_STATUS_ROUTE and WORKER_HEALTH_ROUTE",
+      "operator-only health checks through STATUS_ROUTE and MCP_ROUTE",
+      "avoiding observability prompts through GPT_WRITE_ROUTE",
     ],
   }),
   createDocsSection({
     id: "dag-tracing",
     title: "DAG tracing and slow-node timing",
+    promptTitle: "Trace timing documentation",
     focus: [
-      "DAG run trace endpoints",
+      "trace records via DAG_TRACE_ROUTE",
       "slow trace timing and node metrics",
-      "why DAG trace retrieval is control-plane work",
+      "why trace records are control-plane data",
     ],
   }),
   createDocsSection({
@@ -132,15 +161,6 @@ export async function generateDocsUpdate(
   });
   const failures = sectionResults.filter((section) => section.degraded || Boolean(section.error));
 
-  if (strict && failures.length > 0) {
-    const degradedFailure = failures.find((failure) => failure.degraded);
-    if (degradedFailure) {
-      throw new Error(`${ARCANOS_DEGRADED_FALLBACK_MESSAGE} Section: ${degradedFailure.title}.`);
-    }
-
-    throw new Error(`ARCANOS documentation generation failed for ${failures.length} section(s).`);
-  }
-
   const successfulSections = sectionResults.filter((section) => section.markdown && !section.degraded && !section.error);
   const content = renderDocsUpdateMarkdown({
     sections: successfulSections,
@@ -149,7 +169,7 @@ export async function generateDocsUpdate(
   });
   const outputFile = options.outputFile ?? DEFAULT_DOCS_UPDATE_FILE;
 
-  return {
+  const result = {
     ok: failures.length === 0,
     summary: failures.length === 0
       ? `Generated ${successfulSections.length} ARCANOS async documentation sections.`
@@ -164,25 +184,47 @@ export async function generateDocsUpdate(
     sections: sectionResults,
     failures,
   };
+
+  if (strict && failures.length > 0) {
+    const degradedFailure = failures.find((failure) => failure.degraded);
+    if (degradedFailure) {
+      throw new DocsGenerationError(
+        `${ARCANOS_DEGRADED_FALLBACK_MESSAGE} Section: ${degradedFailure.title}.`,
+        result
+      );
+    }
+
+    throw new DocsGenerationError(
+      `ARCANOS documentation generation failed for ${failures.length} section(s).`,
+      result
+    );
+  }
+
+  return result;
 }
 
 function createDocsSection(input: {
   id: string;
   title: string;
+  promptTitle?: string;
   focus: string[];
 }): DocsGenerationSection {
   const focusList = input.focus.map((item) => `- ${item}`).join("\n");
+  const promptTitle = input.promptTitle ?? input.title;
   const prompt = [
-    `Write the documentation section "${input.title}" for ARCANOS.`,
+    `Write the documentation section "${promptTitle}" for ARCANOS.`,
     "Return markdown only.",
+    "This is a static documentation-writing task, not a runtime operation.",
+    "Use placeholder route tokens exactly as provided; do not expand them.",
     "Do not perform a full repository analysis.",
     "Do not call tools or describe tool usage.",
     "Keep the section scoped to these points:",
     focusList,
   ].join("\n");
   const retryPrompt = [
-    `Write only a compact markdown subsection for "${input.title}".`,
+    `Write only a compact markdown subsection for "${promptTitle}".`,
     "Return markdown only.",
+    "Use placeholder route tokens exactly as provided; do not expand them.",
     "Limit the answer to one heading and no more than six bullets.",
     "Cover only the most important client/operator contract details.",
   ].join("\n");
@@ -190,6 +232,7 @@ function createDocsSection(input: {
   return {
     id: input.id,
     title: input.title,
+    promptTitle: input.promptTitle,
     prompt,
     retryPrompt,
   };
@@ -218,6 +261,9 @@ async function runDocsSectionJob(
         id: section.id,
         title: section.title,
         jobId: result.jobId,
+        poll: result.poll,
+        stream: result.stream,
+        timedOut: result.timedOut,
         status: result.status,
         attempts: attempt,
         degraded: true,
@@ -231,6 +277,9 @@ async function runDocsSectionJob(
         id: section.id,
         title: section.title,
         jobId: result.jobId,
+        poll: result.poll,
+        stream: result.stream,
+        timedOut: result.timedOut,
         status: result.status,
         attempts: attempt,
         degraded: false,
@@ -242,8 +291,11 @@ async function runDocsSectionJob(
       id: section.id,
       title: section.title,
       jobId: result.jobId,
+      poll: result.poll,
+      stream: result.stream,
+      timedOut: result.timedOut,
       status: result.status,
-      markdown,
+      markdown: restoreDocumentationPlaceholders(markdown),
       attempts: attempt,
       degraded: false,
     };
@@ -305,6 +357,14 @@ function stripMarkdownFence(markdown: string): string {
   return fenceMatch ? fenceMatch[1].trim() : trimmed;
 }
 
+function restoreDocumentationPlaceholders(markdown: string): string {
+  let restored = markdown;
+  for (const [placeholder, value] of Object.entries(DOCUMENTATION_PLACEHOLDERS)) {
+    restored = restored.replaceAll(placeholder, value);
+  }
+  return restored;
+}
+
 async function mapWithConcurrency<T, R>(
   items: T[],
   concurrency: number,
@@ -349,6 +409,14 @@ function renderDocsUpdateMarkdown(input: {
     `Generated at: ${generatedAt}`,
     "",
     "This document is generated from narrow ARCANOS jobs. Control-plane operations stay on direct control endpoints; `/gpt/:gptId` is used only for writing jobs.",
+    "",
+    "## Canonical Routes",
+    "",
+    "- Writing route: `POST /gpt/:gptId`",
+    "- Job result polling: `GET /jobs/:id/result`",
+    "- Job stream: `GET /jobs/:id/stream`",
+    "- Queue and worker health: `GET /workers/status`, `GET /worker-helper/health`",
+    "- DAG trace: `GET /api/arcanos/dag/runs/{runId}/trace`",
     "",
   ];
 

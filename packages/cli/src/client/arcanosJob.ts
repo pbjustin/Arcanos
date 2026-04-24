@@ -109,7 +109,7 @@ export async function runArcanosJob(
       throw new Error("ARCANOS async response is missing jobId; cannot poll for completion.");
     }
 
-    return pollArcanosJob(initialResult.jobId, {
+    const finalResult = await pollArcanosJob(initialResult.jobId, {
       baseUrl: options.baseUrl,
       pollUrl: initialResult.poll,
       streamUrl: initialResult.stream,
@@ -122,6 +122,10 @@ export async function runArcanosJob(
       nowFn: options.nowFn,
       randomFn: options.randomFn,
     });
+    return {
+      ...finalResult,
+      timedOut: finalResult.timedOut || initialResult.timedOut,
+    };
   }
 
   if (isFailureStatus(initialResult.status)) {

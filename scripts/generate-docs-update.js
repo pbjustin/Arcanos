@@ -9,7 +9,7 @@ import { writeFileSync } from 'node:fs';
 import process from 'node:process';
 import { pathToFileURL } from 'node:url';
 
-import { generateDocsUpdate } from '@arcanos/cli/client';
+import { DocsGenerationError, generateDocsUpdate } from '@arcanos/cli/client';
 
 export const DEFAULTS = Object.freeze({
   baseUrl: 'http://localhost:8080',
@@ -127,9 +127,19 @@ function writeResult(outputPath, result) {
 
 async function main() {
   const config = parseArgs(process.argv.slice(2));
-  const result = await runDocsUpdate(config);
-  writeResult(config.output, result);
-  process.exitCode = result.ok || !config.strict ? 0 : 1;
+  try {
+    const result = await runDocsUpdate(config);
+    writeResult(config.output, result);
+    process.exitCode = result.ok || !config.strict ? 0 : 1;
+  } catch (error) {
+    if (error instanceof DocsGenerationError) {
+      writeResult(config.output, error.result);
+      process.exitCode = 1;
+      return;
+    }
+
+    throw error;
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

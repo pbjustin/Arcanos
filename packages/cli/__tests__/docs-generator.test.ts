@@ -6,6 +6,8 @@ import {
 } from "../src/client/arcanosJob.js";
 import {
   generateDocsUpdate,
+  DOCS_GENERATION_SECTIONS,
+  DocsGenerationError,
   type DocsGenerationSection,
 } from "../src/client/docsGenerator.js";
 
@@ -104,6 +106,25 @@ describe("docs generator", () => {
         runJob,
       })
     ).rejects.toThrow(ARCANOS_DEGRADED_FALLBACK_MESSAGE);
+
+    try {
+      await generateDocsUpdate({
+        baseUrl: "http://127.0.0.1:3000",
+        gptId: "arcanos-core",
+        sections: [TEST_SECTION],
+        strict: true,
+        runJob: jest.fn<(prompt: string) => Promise<ArcanosJobResult>>()
+          .mockResolvedValueOnce(degradedResult("job-first"))
+          .mockResolvedValueOnce(degradedResult("job-retry")),
+      });
+      throw new Error("Expected strict docs generation to fail.");
+    } catch (error) {
+      expect(error).toBeInstanceOf(DocsGenerationError);
+      expect((error as DocsGenerationError).result.failures[0]).toMatchObject({
+        id: "test-section",
+        degraded: true,
+      });
+    }
   });
 
   it("generates independent sections with bounded concurrency", async () => {
@@ -143,5 +164,28 @@ describe("docs generator", () => {
       "section-4",
     ]);
     expect(result.ok).toBe(true);
+  });
+
+  it("keeps guarded control-plane routes out of default prompts and restores placeholders in markdown", async () => {
+    const guardedPromptText = DOCS_GENERATION_SECTIONS.map((section) => section.prompt).join("\n");
+    expect(guardedPromptText).not.toContain("/jobs/:id/result");
+    expect(guardedPromptText).not.toContain("queue.inspect");
+    expect(guardedPromptText).not.toContain("/api/arcanos/dag");
+
+    const runJob = jest.fn<(prompt: string) => Promise<ArcanosJobResult>>()
+      .mockResolvedValue(completedResult("## Routes\n\nUse JOB_RESULT_ROUTE after GPT_WRITE_ROUTE.", "job-routes"));
+
+    const result = await generateDocsUpdate({
+      baseUrl: "http://127.0.0.1:3000",
+      gptId: "arcanos-core",
+      sections: [DOCS_GENERATION_SECTIONS[1] as DocsGenerationSection],
+      strict: true,
+      generatedAt: "2026-04-24T00:00:00.000Z",
+      runJob,
+    });
+
+    expect(result.updates[0]?.content).toContain("/jobs/:id/result");
+    expect(result.updates[0]?.content).toContain("/gpt/:gptId");
+    expect(result.updates[0]?.content).toContain("/api/arcanos/dag/runs/{runId}/trace");
   });
 });

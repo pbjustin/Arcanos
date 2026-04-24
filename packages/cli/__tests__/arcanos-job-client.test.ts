@@ -77,6 +77,7 @@ describe("ARCANOS async job client", () => {
       jobId: "job-timeout",
       poll: "http://127.0.0.1:3000/jobs/job-timeout/result",
       stream: "/jobs/job-timeout/stream",
+      timedOut: true,
       result: { text: "final" },
     });
     expect(fetchMock).toHaveBeenCalledTimes(3);
