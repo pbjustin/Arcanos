@@ -3,6 +3,7 @@ import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const mockRouteGptRequest = jest.fn();
+const mockResolveGptRouting = jest.fn();
 const findOrCreateGptJobMock = jest.fn();
 const getJobByIdMock = jest.fn();
 const planAutonomousWorkerJobMock = jest.fn();
@@ -15,6 +16,7 @@ class MockIdempotencyKeyConflictError extends Error {}
 class MockJobRepositoryUnavailableError extends Error {}
 
 jest.unstable_mockModule('../src/routes/_core/gptDispatch.js', () => ({
+  resolveGptRouting: mockResolveGptRouting,
   routeGptRequest: mockRouteGptRequest,
 }));
 
@@ -124,6 +126,26 @@ describe('async /gpt idempotency', () => {
     }
     process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = 'true';
     process.env.PRIORITY_QUEUE_ENABLED = 'false';
+    mockResolveGptRouting.mockImplementation(async (gptId: string) => ({
+      ok: true,
+      plan: {
+        matchedId: gptId,
+        module: 'ARCANOS:CORE',
+        route: 'core',
+        action: 'query',
+        availableActions: ['query'],
+        moduleVersion: null,
+        moduleDescription: null,
+        matchMethod: 'exact'
+      },
+      _route: {
+        gptId,
+        route: 'core',
+        module: 'ARCANOS:CORE',
+        action: 'query',
+        timestamp: '2026-04-24T00:00:00.000Z'
+      }
+    }));
     planAutonomousWorkerJobMock.mockResolvedValue({
       status: 'pending',
       retryCount: 0,
@@ -140,6 +162,42 @@ describe('async /gpt idempotency', () => {
 
   afterEach(() => {
     restoreEnv(originalAsyncIdempotencyEnv);
+  });
+
+  it('rejects unknown GPT IDs before creating async jobs', async () => {
+    mockResolveGptRouting.mockResolvedValueOnce({
+      ok: false,
+      error: {
+        code: 'UNKNOWN_GPT',
+        message: "gptId 'invalid-id' is not registered"
+      },
+      _route: {
+        gptId: 'invalid-id',
+        timestamp: '2026-04-24T00:00:00.000Z'
+      }
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/invalid-id')
+      .send({
+        action: 'query',
+        prompt: 'This should not enter the queue.'
+      });
+
+    expect(response.status).toBe(404);
+    expect(response.body).toMatchObject({
+      ok: false,
+      error: {
+        code: 'UNKNOWN_GPT'
+      },
+      _route: {
+        gptId: 'invalid-id'
+      }
+    });
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
   it('returns the canonical in-flight job when an equivalent async request is deduped', async () => {

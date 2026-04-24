@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import express from "express";
-import { routeGptRequest } from "./_core/gptDispatch.js";
+import { resolveGptRouting, routeGptRequest } from "./_core/gptDispatch.js";
 import { buildArcanosCoreTimeoutFallbackEnvelope } from "@services/arcanos-core.js";
 import {
   logGptConnection,
@@ -34,7 +34,8 @@ import {
   recordGptJobEvent,
   recordGptJobLookup,
   recordGptRequestEvent,
-  recordGptRouteDecision
+  recordGptRouteDecision,
+  recordUnknownGpt
 } from '@platform/observability/appMetrics.js';
 import { shouldTreatPromptAsDagExecution } from '@shared/dag/dagExecutionRouting.js';
 import {
@@ -1571,6 +1572,33 @@ router.post("/:gptId", async (req, res, next) => {
           gptId: incomingGptId,
           ...buildGptRequestAuthState(req),
         });
+
+        const routingValidation = await resolveGptRouting(incomingGptId, requestId);
+        if (!routingValidation.ok) {
+          const statusCode = routingValidation.error.code === 'UNKNOWN_GPT' ? 404 : 400;
+          requestLogger?.warn?.('gpt.request.route_result', {
+            endpoint: req.originalUrl,
+            gptId: incomingGptId,
+            statusCode,
+            ok: false,
+            errorCode: routingValidation.error.code,
+            queueBypassed: true
+          });
+          if (routingValidation.error.code === 'UNKNOWN_GPT') {
+            logGptConnectionFailed(incomingGptId);
+            recordUnknownGpt({
+              gptId: incomingGptId,
+              outcome: 'not_registered'
+            });
+          }
+          return sendGuardedGptJsonResponse(
+            req,
+            res,
+            routingValidation,
+            'gpt.response.route_error',
+            statusCode
+          );
+        }
 
         if (queryAndWaitRequested && !normalizedBody) {
           requestLogger?.warn?.('integration.job.query_and_wait_invalid_body', {

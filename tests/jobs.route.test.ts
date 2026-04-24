@@ -177,8 +177,11 @@ describe('/jobs routes', () => {
     expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toMatchObject({
       id: EXPIRED_JOB_ID,
+      jobId: EXPIRED_JOB_ID,
       status: 'expired',
       lifecycle_status: 'expired',
+      poll: `/jobs/${EXPIRED_JOB_ID}/result`,
+      stream: `/jobs/${EXPIRED_JOB_ID}/stream`,
       retention_until: '2026-04-06T10:04:00.000Z',
       idempotency_until: '2026-04-06T10:03:00.000Z',
       expires_at: '2026-04-06T10:05:00.000Z'

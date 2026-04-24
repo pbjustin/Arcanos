@@ -2,8 +2,10 @@ import express from 'express';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const mockRouteGptRequest = jest.fn();
+const mockResolveGptRouting = jest.fn();
 
 jest.unstable_mockModule('../src/routes/_core/gptDispatch.js', () => ({
+  resolveGptRouting: mockResolveGptRouting,
   routeGptRequest: mockRouteGptRequest,
 }));
 
@@ -28,6 +30,26 @@ function buildApp() {
 describe('canonical GPT route validation', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockResolveGptRouting.mockImplementation(async (gptId: string) => ({
+      ok: true,
+      plan: {
+        matchedId: gptId,
+        module: 'ARCANOS:CORE',
+        route: 'core',
+        action: 'query',
+        availableActions: ['query'],
+        moduleVersion: null,
+        moduleDescription: null,
+        matchMethod: 'exact'
+      },
+      _route: {
+        gptId,
+        route: 'core',
+        module: 'ARCANOS:CORE',
+        action: 'query',
+        timestamp: '2026-04-24T00:00:00.000Z'
+      }
+    }));
   });
 
   afterEach(() => {

@@ -110,7 +110,53 @@ describe('jobRepository.claimNextPendingJob', () => {
     expect(updateCalls[1]?.[1]).toEqual([12_000, 'worker-1']);
   });
 
-  it('does not serialize database claim round-trips when priority queue fairness is enabled', async () => {
+  it('claims five priority jobs before one normal job when both lanes have backlog', async () => {
+    const laneClaims: string[] = [];
+    clientQueryMock.mockImplementation(async (sql: unknown) => {
+      if (typeof sql === 'string' && sql.includes('UPDATE job_data')) {
+        const lane = sql.includes('$3') ? 'normal' : 'priority';
+        laneClaims.push(lane);
+        return {
+          rows: [{
+            id: `${lane}-job-${laneClaims.length}`,
+            job_type: lane === 'priority' ? 'gpt' : 'task',
+            priority: lane === 'priority' ? 0 : 85
+          }]
+        };
+      }
+
+      return { rows: [] };
+    });
+
+    const claimedJobs = [];
+    for (let index = 0; index < 6; index += 1) {
+      claimedJobs.push(await claimNextPendingJob({
+        workerId: `worker-${index}`,
+        leaseMs: 12_000,
+        priorityQueueEnabled: true,
+        priorityQueueWeight: 5
+      }));
+    }
+
+    expect(laneClaims).toEqual([
+      'priority',
+      'priority',
+      'priority',
+      'priority',
+      'priority',
+      'normal'
+    ]);
+    expect(claimedJobs.map(job => job?.id)).toEqual([
+      'priority-job-1',
+      'priority-job-2',
+      'priority-job-3',
+      'priority-job-4',
+      'priority-job-5',
+      'normal-job-6'
+    ]);
+  });
+
+  it('serializes database claims while updating priority fairness state', async () => {
     let updateQueryCount = 0;
     let resolveFirstUpdateStarted: () => void = () => {};
     let resolveFirstUpdate: () => void = () => {};
@@ -129,6 +175,10 @@ describe('jobRepository.claimNextPendingJob', () => {
           resolveFirstUpdateStarted();
           await firstUpdateAllowed;
           return { rows: [{ id: 'priority-job', job_type: 'gpt', priority: 0 }] };
+        }
+
+        if (updateQueryCount === 2) {
+          return { rows: [{ id: 'normal-job', job_type: 'task', priority: 85 }] };
         }
 
         return { rows: [] };
@@ -153,7 +203,8 @@ describe('jobRepository.claimNextPendingJob', () => {
     });
     await new Promise(resolve => setTimeout(resolve, 0));
 
-    expect(updateQueryCount).toBe(2);
+    expect(poolConnectMock).toHaveBeenCalledTimes(1);
+    expect(updateQueryCount).toBe(1);
 
     resolveFirstUpdate();
     await Promise.all([firstClaim, secondClaim]);

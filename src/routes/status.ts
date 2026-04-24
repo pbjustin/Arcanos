@@ -14,16 +14,18 @@ import { sendJsonError } from "@transport/http/responseHelpers.js";
 import { assessCoreServiceReadiness, mapReadinessToHealthStatus } from "@platform/resilience/healthChecks.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { getConfig } from "@platform/runtime/unifiedConfig.js";
+import { writePublicHealthResponse } from "@core/diagnostics.js";
 
 const router = express.Router();
 
 /**
- * GET /status - Retrieve current system state
+ * GET /status - Legacy health alias
  */
-router.get('/status', (_: Request, res: Response) => {
+router.get('/status', async (req: Request, res: Response) => {
   try {
-    const state = loadState();
-    res.json(state);
+    res.setHeader('x-status-endpoint', 'deprecated');
+    res.setHeader('x-status-replacement', '/health');
+    await writePublicHealthResponse(req, res);
   } catch (error) {
     //audit Assumption: state load failures should return 500; risk: leaking internal details; invariant: client gets structured error; handling: log and return error response.
     console.error('[STATUS] Error retrieving system state:', error);

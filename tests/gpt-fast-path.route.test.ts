@@ -3,6 +3,7 @@ import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const mockRouteGptRequest = jest.fn();
+const mockResolveGptRouting = jest.fn();
 const executeFastGptPromptMock = jest.fn();
 const findOrCreateGptJobMock = jest.fn();
 const getJobByIdMock = jest.fn();
@@ -15,6 +16,7 @@ class MockIdempotencyKeyConflictError extends Error {}
 class MockJobRepositoryUnavailableError extends Error {}
 
 jest.unstable_mockModule('../src/routes/_core/gptDispatch.js', () => ({
+  resolveGptRouting: mockResolveGptRouting,
   routeGptRequest: mockRouteGptRequest,
 }));
 
@@ -158,6 +160,26 @@ describe('GPT fast-path route branching', () => {
       delete process.env[key];
     }
     process.env.PRIORITY_QUEUE_ENABLED = 'false';
+    mockResolveGptRouting.mockImplementation(async (gptId: string) => ({
+      ok: true,
+      plan: {
+        matchedId: gptId,
+        module: 'ARCANOS:CORE',
+        route: 'core',
+        action: 'query',
+        availableActions: ['query'],
+        moduleVersion: null,
+        moduleDescription: null,
+        matchMethod: 'exact'
+      },
+      _route: {
+        gptId,
+        route: 'core',
+        module: 'ARCANOS:CORE',
+        action: 'query',
+        timestamp: '2026-04-24T00:00:00.000Z'
+      }
+    }));
     executeFastGptPromptMock.mockResolvedValue(buildFastPathEnvelope());
     planAutonomousWorkerJobMock.mockResolvedValue({
       status: 'pending',

@@ -248,6 +248,7 @@ export function parseGptJobStatusRequest(body: unknown): ParsedGptJobStatusReque
 export function buildStoredJobStatusPayload(job: JobData) {
   return {
     id: job.id,
+    jobId: job.id,
     job_type: job.job_type,
     status: job.status,
     lifecycle_status: resolveGptJobLifecycleStatus(job.status),
@@ -259,6 +260,8 @@ export function buildStoredJobStatusPayload(job: JobData) {
     retention_until: serializeJobTimestamp(job.retention_until),
     idempotency_until: serializeJobTimestamp(job.idempotency_until),
     expires_at: serializeJobTimestamp(job.expires_at),
+    poll: buildJobResultPollPath(job.id),
+    stream: `/jobs/${job.id}/stream`,
     error_message: job.error_message ?? null,
     output: job.output ?? null,
     result: job.output ?? null
