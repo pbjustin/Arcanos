@@ -34,7 +34,8 @@ jest.unstable_mockModule('@platform/observability/appMetrics.js', () => ({
 
 const {
   WorkerRuntimeSnapshotPipeline,
-  buildWorkerRuntimeSnapshotStateHash
+  buildWorkerRuntimeSnapshotStateHash,
+  normalizeWorkerRuntimeSnapshotForHash
 } = await import('../src/services/workerRuntimeSnapshotPipeline.js');
 
 function buildSnapshot(overrides: Partial<{
@@ -212,5 +213,127 @@ describe('WorkerRuntimeSnapshotPipeline', () => {
 
     expect(firstHash).toBe(secondHash);
     expect(changedHash).not.toBe(firstHash);
+  });
+
+  it('normalizes volatile inspector, watchdog, queue, and stats observations out of the state hash', () => {
+    const baseline = buildSnapshot({ source: 'inspector' });
+    const volatileOnly = {
+      ...baseline,
+      lastHeartbeatAt: '2026-04-23T20:04:30.000Z',
+      lastInspectorRunAt: '2026-04-23T20:04:30.000Z',
+      updatedAt: '2026-04-23T20:04:30.000Z',
+      snapshot: {
+        ...baseline.snapshot,
+        queueSummary: {
+          ...baseline.snapshot.queueSummary,
+          pending: 12,
+          running: 3,
+          lastUpdatedAt: '2026-04-23T20:04:30.000Z',
+          oldestPendingJobAgeMs: 240_000
+        },
+        stats: {
+          completed: 20,
+          failed: 1,
+          running: 3,
+          totalTerminal: 21,
+          aiCalls: 18
+        },
+        lastActivityAt: '2026-04-23T20:04:20.000Z',
+        lastProcessedJobAt: '2026-04-23T20:03:00.000Z',
+        lastWatchdogRunAt: '2026-04-23T20:04:25.000Z',
+        lastRecoveryActionAt: '2026-04-23T20:02:00.000Z',
+        maxObservedQueueDepth: 12,
+        alerts: ['No worker activity for 240000ms while queue work remained pending.'],
+        watchdog: {
+          ...baseline.snapshot.watchdog,
+          inactivityMs: 240_000,
+          lastHeartbeatAt: '2026-04-23T20:04:30.000Z',
+          lastActivityAt: '2026-04-23T20:04:20.000Z',
+          lastProcessedJobAt: '2026-04-23T20:03:00.000Z',
+          reason: 'No worker activity for 240000ms while queue work remained pending.'
+        },
+        lastPersistSource: 'watchdog'
+      }
+    };
+
+    const normalized = normalizeWorkerRuntimeSnapshotForHash(volatileOnly) as {
+      snapshot: Record<string, unknown>;
+    };
+
+    expect(buildWorkerRuntimeSnapshotStateHash(volatileOnly)).toBe(
+      buildWorkerRuntimeSnapshotStateHash(baseline)
+    );
+    expect(normalized).not.toHaveProperty('lastInspectorRunAt');
+    expect(normalized.snapshot).not.toHaveProperty('queueSummary');
+    expect(normalized.snapshot).not.toHaveProperty('stats');
+    expect(normalized.snapshot).not.toHaveProperty('alerts');
+    expect(normalized.snapshot).not.toHaveProperty('lastWatchdogRunAt');
+  });
+
+  it('keeps meaningful watchdog state changes in the state hash', () => {
+    const baseline = buildSnapshot({ source: 'watchdog' });
+    const watchdogTriggered = {
+      ...baseline,
+      snapshot: {
+        ...baseline.snapshot,
+        watchdog: {
+          ...baseline.snapshot.watchdog,
+          triggered: true,
+          stale: false,
+          restartRecommended: true,
+          inactivityMs: 180_000,
+          reason: 'No worker activity for 180000ms while queue work remained pending.'
+        }
+      }
+    };
+
+    expect(buildWorkerRuntimeSnapshotStateHash(watchdogTriggered)).not.toBe(
+      buildWorkerRuntimeSnapshotStateHash(baseline)
+    );
+  });
+
+  it('skips watchdog and inspector intents when only volatile observations changed', async () => {
+    const pipeline = new WorkerRuntimeSnapshotPipeline({ coalesceMs: 10_000 });
+    const baseline = buildSnapshot({ source: 'inspector' });
+    const volatileOnly = {
+      ...baseline,
+      lastInspectorRunAt: '2026-04-23T20:05:00.000Z',
+      updatedAt: '2026-04-23T20:05:00.000Z',
+      snapshot: {
+        ...baseline.snapshot,
+        queueSummary: {
+          ...baseline.snapshot.queueSummary,
+          pending: 4,
+          lastUpdatedAt: '2026-04-23T20:05:00.000Z',
+          oldestPendingJobAgeMs: 90_000
+        },
+        stats: {
+          completed: 4,
+          failed: 0,
+          running: 1,
+          totalTerminal: 4,
+          aiCalls: 4
+        },
+        lastWatchdogRunAt: '2026-04-23T20:05:00.000Z',
+        watchdog: {
+          ...baseline.snapshot.watchdog,
+          inactivityMs: 90_000,
+          lastHeartbeatAt: '2026-04-23T20:05:00.000Z'
+        },
+        lastPersistSource: 'watchdog'
+      }
+    };
+
+    pipeline.recordSnapshotIntent('async-queue-slot-1', 'inspector', baseline);
+    await pipeline.flushAll('first');
+    pipeline.recordSnapshotIntent('async-queue-slot-1', 'watchdog', volatileOnly);
+    await pipeline.flushAll('second');
+
+    expect(repositoryUpsertStateMock).toHaveBeenCalledTimes(1);
+    expect(repositoryAppendHistoryMock).toHaveBeenCalledTimes(1);
+    expect(recordWorkerRuntimeSnapshotSkippedMock).toHaveBeenCalledWith({
+      source: 'watchdog',
+      healthStatus: 'healthy'
+    });
   });
 });

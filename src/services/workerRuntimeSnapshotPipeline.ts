@@ -306,64 +306,54 @@ export class WorkerRuntimeSnapshotPipeline {
 export function buildWorkerRuntimeSnapshotStateHash(
   record: WorkerRuntimeSnapshotRecord
 ): string {
-  const stablePayload = stableStringify(buildMeaningfulStatePayload(record));
+  const stablePayload = stableStringify(normalizeWorkerRuntimeSnapshotForHash(record));
   return crypto.createHash('sha256').update(stablePayload).digest('hex');
 }
 
-function buildMeaningfulStatePayload(record: WorkerRuntimeSnapshotRecord): Record<string, unknown> {
+export function normalizeWorkerRuntimeSnapshotForHash(
+  record: WorkerRuntimeSnapshotRecord
+): Record<string, unknown> {
   return {
     workerType: record.workerType,
     healthStatus: record.healthStatus,
     currentJobId: record.currentJobId,
     lastError: record.lastError,
     startedAt: record.startedAt,
-    lastInspectorRunAt: record.lastInspectorRunAt,
-    snapshot: normalizeSnapshotForStateHash(record.snapshot)
+    snapshot: normalizeWorkerRuntimeSnapshotPayloadForHash(record.snapshot)
   };
 }
 
-function normalizeSnapshotForStateHash(snapshot: Record<string, unknown>): Record<string, unknown> {
-  return omitKeysRecursively(snapshot, {
-    root: new Set(['lastPersistSource']),
-    queueSummary: new Set(['lastUpdatedAt', 'oldestPendingJobAgeMs']),
-    watchdog: new Set(['inactivityMs', 'lastHeartbeatAt'])
-  });
+function normalizeWorkerRuntimeSnapshotPayloadForHash(
+  snapshot: Record<string, unknown>
+): Record<string, unknown> {
+  return {
+    activeJobs: snapshot.activeJobs,
+    processedJobs: snapshot.processedJobs,
+    scheduledRetries: snapshot.scheduledRetries,
+    terminalFailures: snapshot.terminalFailures,
+    recoveredJobs: snapshot.recoveredJobs,
+    staleWorkersDetected: snapshot.staleWorkersDetected,
+    stalledJobsDetected: snapshot.stalledJobsDetected,
+    deadLetterJobs: snapshot.deadLetterJobs,
+    recoveryActions: snapshot.recoveryActions,
+    lastBudgetPauseReason: snapshot.lastBudgetPauseReason,
+    statsWorkerId: snapshot.statsWorkerId,
+    watchdog: normalizeWatchdogSnapshotForHash(snapshot.watchdog)
+  };
 }
 
-function omitKeysRecursively(
-  value: Record<string, unknown>,
-  keysToOmit: {
-    root: ReadonlySet<string>;
-    queueSummary: ReadonlySet<string>;
-    watchdog: ReadonlySet<string>;
+function normalizeWatchdogSnapshotForHash(value: unknown): Record<string, unknown> | null {
+  if (!isPlainRecord(value)) {
+    return null;
   }
-): Record<string, unknown> {
-  const normalized: Record<string, unknown> = {};
-  for (const [key, entryValue] of Object.entries(value)) {
-    if (keysToOmit.root.has(key)) {
-      continue;
-    }
 
-    if (key === 'queueSummary' && isPlainRecord(entryValue)) {
-      normalized[key] = omitRecordKeys(entryValue, keysToOmit.queueSummary);
-      continue;
-    }
-
-    if (key === 'watchdog' && isPlainRecord(entryValue)) {
-      normalized[key] = omitRecordKeys(entryValue, keysToOmit.watchdog);
-      continue;
-    }
-
-    normalized[key] = entryValue;
-  }
-  return normalized;
-}
-
-function omitRecordKeys(
-  value: Record<string, unknown>,
-  keysToOmit: ReadonlySet<string>
-): Record<string, unknown> {
-  return Object.fromEntries(Object.entries(value).filter(([key]) => !keysToOmit.has(key)));
+  return {
+    triggered: value.triggered,
+    stale: value.stale,
+    restartRecommended: value.restartRecommended,
+    staleAfterMs: value.staleAfterMs,
+    idleThresholdMs: value.idleThresholdMs
+  };
 }
 
 function stableStringify(value: unknown): string {
