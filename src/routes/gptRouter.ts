@@ -63,6 +63,19 @@ import {
   resolveGptJobLifecycleStatus,
   summarizeGptJobTimings
 } from '@shared/gpt/gptJobLifecycle.js';
+import {
+  PRIORITY_GPT_JOB_PRIORITY,
+  isPriorityGpt,
+  isPriorityQueueEnabled,
+  mapGptJobStatusToClientStatus,
+  resolveGptDirectExecutionThresholdMs,
+  resolveGptWaitTimeoutMs
+} from '@shared/gpt/priorityGpt.js';
+import {
+  startReservedPriorityGptDirectExecution,
+  tryAcquirePriorityGptDirectExecutionSlot,
+  type PriorityGptDirectExecutionSlot
+} from '@services/priorityGptDirectExecutionService.js';
 import { getRequestActorKey } from '@platform/runtime/security.js';
 import {
   GPT_QUERY_ACTION,
@@ -107,10 +120,7 @@ const DEFAULT_GPT_ASYNC_HEAVY_PROMPT_CHARS = 1_200;
 const DEFAULT_GPT_ASYNC_HEAVY_MESSAGE_COUNT = 8;
 const DEFAULT_GPT_ASYNC_HEAVY_MAX_WORDS = 700;
 const DEFAULT_GPT_ASYNC_HEAVY_WAIT_FOR_RESULT_MS = 500;
-const DEFAULT_GPT_QUERY_AND_WAIT_TIMEOUT_MS = 25_000;
 const DIRECT_RETURN_ROUTE_TIMEOUT_HEADROOM_MS = 750;
-const DEFAULT_GPT_QUERY_AND_WAIT_ROUTE_TIMEOUT_MS =
-  DEFAULT_GPT_QUERY_AND_WAIT_TIMEOUT_MS + DIRECT_RETURN_ROUTE_TIMEOUT_HEADROOM_MS;
 const DEBUG_GPT_MAX_BYTES_HEADER = 'x-debug-max-bytes';
 const DIRECT_RETURN_WAIT_KEYS = [
   'waitForResultMs',
@@ -755,16 +765,24 @@ function buildDirectReturnTimeoutResponse(params: {
 }) {
   return {
     ...params.pendingResponse,
+    status: 'timeout' as const,
+    result: {},
+    poll: `/jobs/${params.jobId}/result`,
+    timedOut: true,
     instruction: `Direct wait timed out after ${params.waitForResultMs}ms. Use GET /jobs/${params.jobId}/result to retrieve the final result.`,
     directReturn: {
       requested: true,
       timedOut: true,
       waitForResultMs: params.waitForResultMs,
       pollIntervalMs: params.pollIntervalMs,
-      poll: `/jobs/${params.jobId}`,
+      poll: `/jobs/${params.jobId}/result`,
       result: `/jobs/${params.jobId}/result`
     }
   };
+}
+
+function resolveDefaultGptQueryAndWaitRouteTimeoutMs(): number {
+  return resolveGptWaitTimeoutMs() + DIRECT_RETURN_ROUTE_TIMEOUT_HEADROOM_MS;
 }
 
 function sendGuardedGptJsonResponse(
@@ -1408,10 +1426,12 @@ function buildAsyncJobResponseMetadata(input: {
   return {
     action: input.action,
     jobId: input.jobId,
-    status: input.jobStatus,
+    status: mapGptJobStatusToClientStatus(input.jobStatus),
+    jobStatus: input.jobStatus,
     lifecycleStatus: resolveGptJobLifecycleStatus(input.jobStatus),
-    poll: `/jobs/${input.jobId}`,
+    poll: `/jobs/${input.jobId}/result`,
     stream: `/jobs/${input.jobId}/stream`,
+    timedOut: false,
     ...(input.deduped ? { deduped: true } : {}),
     idempotencyKey: input.idempotencyKey,
     idempotencySource: input.idempotencySource
@@ -1436,6 +1456,8 @@ function applyGptQueueBypassedHeader(
 }
 
 router.post("/:gptId", async (req, res, next) => {
+  const routeGptId = req.params.gptId;
+  const priorityGpt = isPriorityGpt(routeGptId);
   const requestedAction = resolveRequestedAction(req.body);
   const queryRequested = requestedAction === GPT_QUERY_ACTION;
   const queryAndWaitRequested = requestedAction === GPT_QUERY_AND_WAIT_ACTION;
@@ -1448,13 +1470,13 @@ router.post("/:gptId", async (req, res, next) => {
   const explicitAsyncWaitForResultMs = readRequestedAsyncGptWaitForResultMs(req, req.body);
   const explicitAsyncPollIntervalMs = readRequestedAsyncGptPollIntervalMs(req, req.body);
   const queryAndWaitRequestedTimeoutMs =
-    explicitAsyncWaitForResultMs ?? DEFAULT_GPT_QUERY_AND_WAIT_TIMEOUT_MS;
+    explicitAsyncWaitForResultMs ?? resolveGptWaitTimeoutMs();
   const routeTimeoutMs = resolveGptRouteHardTimeoutMs({
     profile: routeTimeoutProfile,
     ...(queryAndWaitRequested && routeTimeoutProfile === 'default'
       ? {
           defaultMsOverride: Math.max(
-            DEFAULT_GPT_QUERY_AND_WAIT_ROUTE_TIMEOUT_MS,
+            resolveDefaultGptQueryAndWaitRouteTimeoutMs(),
             queryAndWaitRequestedTimeoutMs + DIRECT_RETURN_ROUTE_TIMEOUT_HEADROOM_MS
           )
         }
@@ -1486,6 +1508,7 @@ router.post("/:gptId", async (req, res, next) => {
       async () => {
         const incomingGptId = req.params.gptId;
         const requestLogger = (req as any).logger;
+        const priorityQueueActive = priorityGpt && isPriorityQueueEnabled();
         const normalizedBody = normalizeGptRequestBody(req.body);
         const bodyGptId = resolveBodyGptId(req.body);
         const effectiveRequestedAction = queryAndWaitRequested ? 'query' : requestedAction;
@@ -1516,7 +1539,9 @@ router.post("/:gptId", async (req, res, next) => {
         requestLogger?.info?.('gpt.request.action', {
           endpoint: req.originalUrl,
           gptId: incomingGptId,
-          action: requestedAction
+          action: requestedAction,
+          priorityGpt,
+          priorityQueueActive
         });
 
         if (bodyGptId) {
@@ -2030,19 +2055,26 @@ router.post("/:gptId", async (req, res, next) => {
           requestedAction: effectiveRequestedAction,
           routeTimeoutProfile
         });
+        const priorityDirectReturnRequested = priorityQueueActive;
         const directReturnRequested =
           queryAndWaitRequested ||
+          priorityDirectReturnRequested ||
           (
             !queryRequested &&
             explicitAsyncWaitForResultMs !== undefined &&
             executionPlan.mode === 'async'
           );
         let requestedAsyncWaitForResultMs = explicitAsyncWaitForResultMs;
-        if (queryRequested) {
+        if (priorityDirectReturnRequested && requestedAsyncWaitForResultMs === undefined) {
+          requestedAsyncWaitForResultMs = Math.min(
+            resolveGptDirectExecutionThresholdMs(),
+            resolveGptWaitTimeoutMs()
+          );
+        } else if (queryRequested) {
           requestedAsyncWaitForResultMs = 0;
         } else if (requestedAsyncWaitForResultMs === undefined) {
           if (queryAndWaitRequested) {
-            requestedAsyncWaitForResultMs = DEFAULT_GPT_QUERY_AND_WAIT_TIMEOUT_MS;
+            requestedAsyncWaitForResultMs = resolveGptWaitTimeoutMs();
           } else if (executionPlan.heavyPrompt) {
             requestedAsyncWaitForResultMs = readPositiveIntegerEnv(
               'GPT_ASYNC_HEAVY_WAIT_FOR_RESULT_MS',
@@ -2070,7 +2102,9 @@ router.post("/:gptId", async (req, res, next) => {
           requestedAsyncWaitForResultMs: requestedAsyncWaitForResultMs ?? null,
           requestedAsyncPollIntervalMs: explicitAsyncPollIntervalMs ?? null,
           asyncWaitForResultMs,
-          asyncPollIntervalMs
+          asyncPollIntervalMs,
+          priorityGpt,
+          priorityQueueActive
         });
         if (explicitAsyncWaitForResultMs !== undefined && !directReturnRequested) {
           requestLogger?.info?.('gpt.request.direct_return_ignored', {
@@ -2097,6 +2131,7 @@ router.post("/:gptId", async (req, res, next) => {
         }
 
         const shouldUseJobBackedExecution =
+          priorityDirectReturnRequested ||
           queryAndWaitRequested ||
           executionPlan.mode === 'async' ||
           fastPathFallbackToOrchestrated ||
@@ -2170,7 +2205,37 @@ router.post("/:gptId", async (req, res, next) => {
               requestPath: req.originalUrl,
               executionModeReason: executionPlan.reason
             });
-            const plannedJob = await planAutonomousWorkerJob('gpt', queuedGptJobInput);
+            const priorityDirectWorkerId = `${process.env.WORKER_ID || 'api'}:priority-gpt-direct`;
+            let priorityDirectSlot: PriorityGptDirectExecutionSlot | null = priorityQueueActive
+              ? tryAcquirePriorityGptDirectExecutionSlot()
+              : null;
+            const plannedJobBase = await planAutonomousWorkerJob('gpt', queuedGptJobInput);
+            const plannedJob = priorityQueueActive
+              ? {
+                  ...plannedJobBase,
+                  status: priorityDirectSlot ? 'running' : plannedJobBase.status,
+                  startedAt: priorityDirectSlot ? new Date() : plannedJobBase.startedAt,
+                  lastHeartbeatAt: priorityDirectSlot ? new Date() : plannedJobBase.lastHeartbeatAt,
+                  leaseExpiresAt: priorityDirectSlot
+                    ? new Date(
+                        Date.now() +
+                        Math.max(resolveGptWaitTimeoutMs(), asyncWaitForResultMs) +
+                        DIRECT_RETURN_ROUTE_TIMEOUT_HEADROOM_MS
+                      )
+                    : plannedJobBase.leaseExpiresAt,
+                  priority: PRIORITY_GPT_JOB_PRIORITY,
+                  lastWorkerId: priorityDirectSlot ? priorityDirectWorkerId : plannedJobBase.lastWorkerId,
+                  autonomyState: {
+                    ...(plannedJobBase.autonomyState ?? {}),
+                    priorityQueue: {
+                      enabled: true,
+                      gptId: incomingGptId,
+                      directExecution: priorityDirectSlot ? 'reserved' : 'queued',
+                      requestedAt: new Date().toISOString()
+                    }
+                  }
+                }
+              : plannedJobBase;
             let createResult;
             try {
               createResult = await findOrCreateGptJob({
@@ -2185,6 +2250,8 @@ router.post("/:gptId", async (req, res, next) => {
                 createOptions: plannedJob
               });
             } catch (error: unknown) {
+              priorityDirectSlot?.release();
+              priorityDirectSlot = null;
               if (error instanceof IdempotencyKeyConflictError) {
                 return sendGuardedGptJsonResponse(req, res, {
                   ok: false,
@@ -2246,6 +2313,27 @@ router.post("/:gptId", async (req, res, next) => {
             if (createResult) {
               const job = createResult.job;
               queuedJobId = job.id;
+              if (priorityDirectSlot) {
+                if (createResult.created) {
+                  startReservedPriorityGptDirectExecution({
+                    jobId: job.id,
+                    rawInput: queuedGptJobInput,
+                    workerId: priorityDirectWorkerId,
+                    slot: priorityDirectSlot,
+                    requestLogger
+                  });
+                  requestLogger?.info?.('gpt.priority_direct.reserved', {
+                    endpoint: req.originalUrl,
+                    gptId: incomingGptId,
+                    requestId,
+                    jobId: job.id,
+                    waitForResultMs: asyncWaitForResultMs
+                  });
+                } else {
+                  priorityDirectSlot.release();
+                }
+                priorityDirectSlot = null;
+              }
               queuedPendingResponse = buildQueuedGptPendingResponse({
                 action: asyncBridgeAction,
                 jobId: job.id,
@@ -2346,7 +2434,7 @@ router.post("/:gptId", async (req, res, next) => {
                       message: 'Async GPT job completed without a valid envelope.'
                     },
                     jobId: job.id,
-                    poll: `/jobs/${job.id}`,
+                    poll: `/jobs/${job.id}/result`,
                     stream: `/jobs/${job.id}/stream`,
                     _route: {
                       requestId,
@@ -2545,7 +2633,7 @@ router.post("/:gptId", async (req, res, next) => {
                     message: 'Async GPT job disappeared before completion.'
                   },
                   jobId: job.id,
-                  poll: `/jobs/${job.id}`,
+                  poll: `/jobs/${job.id}/result`,
                   stream: `/jobs/${job.id}/stream`,
                   _route: {
                     requestId,
@@ -2744,6 +2832,7 @@ router.post("/:gptId", async (req, res, next) => {
       });
       const responseOpen = !res.headersSent && !res.writableEnded && !res.destroyed;
       if (routeTimedOut && responseOpen && queuedPendingResponse) {
+        const pendingResponse = queuedPendingResponse as ReturnType<typeof buildQueuedGptPendingResponse>;
         req.logger?.warn?.('gpt.request.timeout_pending', {
           endpoint: req.originalUrl,
           gptId,
@@ -2754,7 +2843,12 @@ router.post("/:gptId", async (req, res, next) => {
         return sendGuardedGptJsonResponse(
           req,
           res,
-          queuedPendingResponse,
+          buildDirectReturnTimeoutResponse({
+            pendingResponse,
+            jobId: queuedJobId ?? pendingResponse.jobId,
+            waitForResultMs: routeTimeoutMs,
+            pollIntervalMs: resolveAsyncGptPollIntervalMs(explicitAsyncPollIntervalMs)
+          }),
           'gpt.response.timeout_pending',
           202
         );

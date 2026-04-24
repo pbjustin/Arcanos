@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import {
   ArcanosDagRunService,
+  buildDagNodeTraceEntries,
   type DagRunWaitResult
 } from '../src/services/arcanosDagRunService.js';
 import { runWithRequestAbortTimeout } from '@arcanos/runtime';
@@ -45,7 +46,8 @@ function buildStoredRunRecord(updatedAt: string) {
       wallClockDurationMs: 0,
       sumNodeDurationMs: 0,
       queueWaitMsP50: 0,
-      queueWaitMsP95: 0
+      queueWaitMsP95: 0,
+      slowNodeCount: 0
     },
     verification: {
       runCompleted: false,
@@ -83,8 +85,57 @@ function buildStoredRunRecord(updatedAt: string) {
       updatedAtIso: updatedAt
     },
     loopDetected: false
-  } as any;
+} as any;
 }
+
+describe('DAG node trace formatting', () => {
+  it('marks nodes slower than 5000ms with module, retry, error, and provider details', () => {
+    const [trace] = buildDagNodeTraceEntries([
+      {
+        nodeId: 'research-1',
+        runId: 'run-1',
+        parentNodeId: null,
+        agentRole: 'research',
+        jobType: 'analyze',
+        status: 'complete',
+        dependencyIds: [],
+        childNodeIds: [],
+        spawnDepth: 0,
+        attempt: 2,
+        maxRetries: 2,
+        input: {
+          moduleName: 'ARCANOS:RESEARCH'
+        },
+        output: {
+          provider: 'openai'
+        },
+        startedAt: '2026-03-07T00:00:00.000Z',
+        completedAt: '2026-03-07T00:00:06.250Z',
+        metrics: {
+          durationMs: 6250
+        },
+        error: {
+          message: 'retry recovered'
+        }
+      } as any
+    ]);
+
+    expect(trace).toEqual(expect.objectContaining({
+      nodeId: 'research-1',
+      moduleName: 'ARCANOS:RESEARCH',
+      module_name: 'ARCANOS:RESEARCH',
+      start_time: '2026-03-07T00:00:00.000Z',
+      end_time: '2026-03-07T00:00:06.250Z',
+      duration_ms: 6250,
+      retries: 1,
+      external_provider: 'openai',
+      slow: true,
+      error: {
+        message: 'retry recovered'
+      }
+    }));
+  });
+});
 
 describe('ArcanosDagRunService.waitForRunUpdate', () => {
   beforeEach(() => {

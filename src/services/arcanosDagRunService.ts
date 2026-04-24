@@ -22,6 +22,7 @@ import type {
   DagEventsData,
   DagLineageData,
   DagMetricsData,
+  DagNodeTraceEntry,
   DagRunError,
   DagRunMetrics,
   DagRunSummary,
@@ -107,6 +108,7 @@ const TRINITY_PIPELINE_NAME = 'trinity' as const;
 const TRINITY_PIPELINE_VERSION = '1.0' as const;
 const DEFAULT_DAG_TRACE_MAX_EVENTS = 200;
 const MAX_DAG_TRACE_MAX_EVENTS = 1000;
+const DAG_SLOW_NODE_THRESHOLD_MS = 5_000;
 
 export interface WaitForDagRunUpdateOptions {
   updatedAfter?: string;
@@ -256,6 +258,93 @@ function extractNodeDuration(metrics: NodeMetrics | undefined, output: Record<st
   return typeof resultMetrics?.durationMs === 'number' ? resultMetrics.durationMs : undefined;
 }
 
+function readTraceString(
+  source: Record<string, unknown> | undefined,
+  keys: string[]
+): string | null {
+  if (!source) {
+    return null;
+  }
+
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === 'string' && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+
+  return null;
+}
+
+function extractTraceModuleName(node: StoredNodeDetail): string {
+  return (
+    readTraceString(node.input, ['moduleName', 'module_name', 'module', 'name']) ??
+    readTraceString(node.output, ['moduleName', 'module_name', 'module']) ??
+    `${node.agentRole}:${node.jobType}`
+  );
+}
+
+function extractExternalProvider(node: StoredNodeDetail): string | null {
+  const outputMeta = node.output?.meta;
+  const outputMetaRecord =
+    outputMeta && typeof outputMeta === 'object' && !Array.isArray(outputMeta)
+      ? outputMeta as Record<string, unknown>
+      : undefined;
+
+  return (
+    readTraceString(node.input, ['externalProvider', 'external_provider', 'provider']) ??
+    readTraceString(node.output, ['externalProvider', 'external_provider', 'provider']) ??
+    readTraceString(outputMetaRecord, ['externalProvider', 'external_provider', 'provider']) ??
+    null
+  );
+}
+
+function calculateNodeDurationMs(node: StoredNodeDetail, snapshotUpdatedAt?: string): number | null {
+  const metricDuration = extractNodeDuration(node.metrics, node.output);
+  if (typeof metricDuration === 'number' && Number.isFinite(metricDuration)) {
+    return Math.max(0, Math.trunc(metricDuration));
+  }
+
+  const startedAtMs = toEpochMilliseconds(node.startedAt);
+  if (startedAtMs <= 0) {
+    return null;
+  }
+
+  const completedAtMs = node.completedAt
+    ? toEpochMilliseconds(node.completedAt)
+    : toEpochMilliseconds(snapshotUpdatedAt);
+  if (completedAtMs <= 0) {
+    return null;
+  }
+
+  return Math.max(0, completedAtMs - startedAtMs);
+}
+
+export function buildDagNodeTraceEntries(
+  nodes: StoredNodeDetail[],
+  options: { updatedAt?: string; slowThresholdMs?: number } = {}
+): DagNodeTraceEntry[] {
+  const slowThresholdMs = Math.max(1, options.slowThresholdMs ?? DAG_SLOW_NODE_THRESHOLD_MS);
+
+  return nodes.map((node) => {
+    const durationMs = calculateNodeDurationMs(node, options.updatedAt);
+    const moduleName = extractTraceModuleName(node);
+
+    return {
+      nodeId: node.nodeId,
+      moduleName,
+      module_name: moduleName,
+      start_time: node.startedAt ?? null,
+      end_time: node.completedAt ?? null,
+      duration_ms: durationMs,
+      retries: Math.max(0, (node.attempt ?? 1) - 1),
+      error: node.error ?? null,
+      external_provider: extractExternalProvider(node),
+      slow: durationMs !== null && durationMs > slowThresholdMs
+    };
+  });
+}
+
 function normalizeNodeStatus(status: NodeStatus): NodeStatus {
   return status;
 }
@@ -272,7 +361,8 @@ function createDefaultMetrics(totalNodes: number): DagRunMetrics {
     wallClockDurationMs: 0,
     sumNodeDurationMs: 0,
     queueWaitMsP50: 0,
-    queueWaitMsP95: 0
+    queueWaitMsP95: 0,
+    slowNodeCount: 0
   };
 }
 
@@ -701,8 +791,9 @@ function calculateLineageEntriesFromNodes(
 
 function recalculateMetrics(record: StoredDagRunRecord): DagRunMetrics {
   const nodeList = Array.from(record.nodesById.values());
+  const nodeTrace = buildDagNodeTraceEntries(nodeList, { updatedAt: record.updatedAt });
   const durationValues = nodeList
-    .map(node => node.metrics?.durationMs)
+    .map(node => calculateNodeDurationMs(node, record.updatedAt))
     .filter((value): value is number => typeof value === 'number');
   const queueWaitValues = nodeList
     .map(node => {
@@ -736,7 +827,8 @@ function recalculateMetrics(record: StoredDagRunRecord): DagRunMetrics {
     wallClockDurationMs,
     sumNodeDurationMs: durationValues.reduce((sum, value) => sum + value, 0),
     queueWaitMsP50: percentile(queueWaitValues, 50),
-    queueWaitMsP95: percentile(queueWaitValues, 95)
+    queueWaitMsP95: percentile(queueWaitValues, 95),
+    slowNodeCount: nodeTrace.filter(node => node.slow).length
   };
 }
 
@@ -1064,6 +1156,10 @@ export class ArcanosDagRunService {
       }))
     };
     buildMs.tree = Date.now() - treeStartedAtMs;
+    const nodeTrace = buildDagNodeTraceEntries(snapshot.nodes, {
+      updatedAt: snapshot.updatedAt
+    });
+    const slowNodes = nodeTrace.filter(node => node.slow);
 
     const eventsStartedAtMs = Date.now();
     const totalEvents = snapshot.events.length;
@@ -1083,9 +1179,13 @@ export class ArcanosDagRunService {
     const metricsStartedAtMs = Date.now();
     const metrics: DagMetricsData = {
       runId: snapshot.runId,
-      metrics: cloneSerializable(snapshot.metrics),
+      metrics: {
+        ...cloneSerializable(snapshot.metrics),
+        slowNodeCount: slowNodes.length
+      },
       limits: cloneSerializable(snapshot.limits),
-      guardViolations: cloneSerializable(snapshot.guardViolations)
+      guardViolations: cloneSerializable(snapshot.guardViolations),
+      slowNodes: cloneSerializable(slowNodes)
     };
     buildMs.metrics = Date.now() - metricsStartedAtMs;
 
@@ -1118,6 +1218,8 @@ export class ArcanosDagRunService {
         ...createTrinityRuntimeMetadata(),
         run,
         tree,
+        nodeTrace: cloneSerializable(nodeTrace),
+        slowNodes: cloneSerializable(slowNodes),
         events,
         metrics,
         errors,
@@ -1760,11 +1862,19 @@ export class ArcanosDagRunService {
     }
 
     const buildStartedAtMs = Date.now();
-    const response = {
+    const nodeTrace = buildDagNodeTraceEntries(snapshot.nodes, {
+      updatedAt: snapshot.updatedAt
+    });
+    const slowNodes = nodeTrace.filter(node => node.slow);
+    const response: DagMetricsData = {
       runId,
-      metrics: cloneSerializable(snapshot.metrics),
+      metrics: {
+        ...cloneSerializable(snapshot.metrics),
+        slowNodeCount: slowNodes.length
+      },
       limits: cloneSerializable(snapshot.limits),
-      guardViolations: cloneSerializable(snapshot.guardViolations)
+      guardViolations: cloneSerializable(snapshot.guardViolations),
+      slowNodes: cloneSerializable(slowNodes)
     };
     recordDagRunRequest({
       handler: 'metrics',
