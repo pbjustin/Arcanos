@@ -219,7 +219,7 @@ router.get(
     const asyncQueueSnapshot = workerStatus.workerService.health.workers[0];
     const activeQueueWorkers = workerStatus.workerService.health.workers
       .filter(worker => worker.healthStatus !== 'offline').length;
-    const activeWorkerSlots = Math.max(1, activeQueueWorkers);
+    const activeWorkerSlots = activeQueueWorkers;
     const queueRunning = queueSummary?.running ?? 0;
     const data: WorkersStatusData = {
       workers: [
@@ -268,7 +268,7 @@ router.get(
     const queueSummary = workerStatus.workerService.queueSummary;
     const activeQueueWorkers = workerStatus.workerService.health.workers
       .filter(worker => worker.healthStatus !== 'offline').length;
-    const activeWorkerSlots = Math.max(1, activeQueueWorkers);
+    const activeWorkerSlots = activeQueueWorkers;
     const data: QueueStatusData = {
       queue: {
         name: 'job_data',

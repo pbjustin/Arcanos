@@ -76,7 +76,6 @@ export interface JobQueueSummary {
   recentTotalTerminal?: number;
   priorityPending: number;
   priorityRunning: number;
-  priorityTotal: number;
   normalPending: number;
   priorityJobCount: number;
   lastUpdatedAt?: string;
@@ -1002,14 +1001,40 @@ export async function requestJobCancellation(
 type PriorityQueueClaimLane = 'priority' | 'normal';
 
 let priorityClaimsSinceNormal = 0;
+let priorityQueueFairnessLock: Promise<void> = Promise.resolve();
+
+async function withPriorityQueueFairnessLock<T>(operation: () => Promise<T>): Promise<T> {
+  const previousLock = priorityQueueFairnessLock;
+  let releaseLock: () => void = () => {};
+  priorityQueueFairnessLock = new Promise<void>(resolve => {
+    releaseLock = resolve;
+  });
+
+  await previousLock;
+  try {
+    return await operation();
+  } finally {
+    releaseLock();
+  }
+}
 
 function toRepositoryClaimLane(lane: QueueLane): PriorityQueueClaimLane {
   return lane === 'standard' ? 'normal' : 'priority';
 }
 
+function normalizePriorityLaneMaxPriority(value: number | undefined): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return PRIORITY_QUEUE_LANE_MAX_PRIORITY;
+  }
+
+  const normalized = Math.trunc(value);
+  return normalized > 0 ? normalized : PRIORITY_QUEUE_LANE_MAX_PRIORITY;
+}
+
 export function resolvePriorityQueueClaimLane(options: {
   priorityQueueEnabled?: boolean;
   priorityQueueWeight?: number;
+  priorityLaneMaxPriority?: number;
   priorityClaimsSinceNormal?: number;
   env?: NodeJS.ProcessEnv;
 } = {}): PriorityQueueClaimLane {
@@ -1031,12 +1056,15 @@ export function resolvePriorityQueueClaimLane(options: {
     0,
     Math.trunc(options.priorityClaimsSinceNormal ?? priorityClaimsSinceNormal)
   );
+  const priorityLaneMaxPriority = normalizePriorityLaneMaxPriority(
+    options.priorityLaneMaxPriority
+  );
 
   return toRepositoryClaimLane(resolveSchedulerClaimLane({
     policy: {
       priorityQueueEnabled: enabled,
       priorityQueueWeight: weight,
-      priorityLaneMaxPriority: PRIORITY_QUEUE_LANE_MAX_PRIORITY
+      priorityLaneMaxPriority
     },
     state: {
       priorityClaimsSinceStandard: claimsSinceNormal
@@ -1054,6 +1082,7 @@ async function claimPendingJobWithLane(
     leaseMs: number;
     workerId?: string | null;
     lane: PriorityQueueClaimLane;
+    priorityLaneMaxPriority: number;
   }
 ): Promise<JobData | null> {
   const queryParams: unknown[] = [params.leaseMs, params.workerId ?? null];
@@ -1061,7 +1090,7 @@ async function claimPendingJobWithLane(
     ? `AND NOT (job_type = 'gpt' AND priority <= $3)`
     : '';
   if (params.lane === 'normal') {
-    queryParams.push(PRIORITY_QUEUE_LANE_MAX_PRIORITY);
+    queryParams.push(params.priorityLaneMaxPriority);
   }
 
   const result = await client.query(
@@ -1090,14 +1119,17 @@ async function claimPendingJobWithLane(
   return (result.rows[0] as JobData | undefined) ?? null;
 }
 
-function updatePriorityQueueFairnessAfterClaim(job: JobData | null): void {
+function updatePriorityQueueFairnessAfterClaim(
+  job: JobData | null,
+  priorityLaneMaxPriority: number
+): void {
   if (!job) {
     return;
   }
 
   priorityClaimsSinceNormal = updateSchedulerClaimState(
     { priorityClaimsSinceStandard: priorityClaimsSinceNormal },
-    isPriorityQueueLaneJob(job) ? 'priority' : 'standard'
+    isPriorityQueueLaneJob(job, priorityLaneMaxPriority) ? 'priority' : 'standard'
   ).priorityClaimsSinceStandard;
 }
 
@@ -1118,39 +1150,56 @@ export async function claimNextPendingJob(
   }
 
   const leaseMs = Math.max(1_000, options.leaseMs ?? 30_000);
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
+  const priorityQueueEnabled = options.priorityQueueEnabled ?? isPriorityQueueEnabled();
+  const priorityLaneMaxPriority = normalizePriorityLaneMaxPriority(
+    options.priorityLaneMaxPriority
+  );
+  const claimOperation = async (): Promise<JobData | null> => {
+    const client = await pool.connect();
+    let claimedJob: JobData | null = null;
 
-    const firstLane = resolvePriorityQueueClaimLane({
-      priorityQueueEnabled: options.priorityQueueEnabled,
-      priorityQueueWeight: options.priorityQueueWeight
-    });
-    let claimedJob = await claimPendingJobWithLane(client, {
-      leaseMs,
-      workerId: options.workerId ?? null,
-      lane: firstLane
-    });
+    try {
+      await client.query('BEGIN');
 
-    if (!claimedJob) {
-      const secondLane = firstLane === 'normal' ? 'priority' : 'normal';
+      const firstLane = resolvePriorityQueueClaimLane({
+        priorityQueueEnabled,
+        priorityQueueWeight: options.priorityQueueWeight,
+        priorityLaneMaxPriority
+      });
       claimedJob = await claimPendingJobWithLane(client, {
         leaseMs,
         workerId: options.workerId ?? null,
-        lane: secondLane
+        lane: firstLane,
+        priorityLaneMaxPriority
       });
+
+      if (!claimedJob && firstLane === 'normal') {
+        claimedJob = await claimPendingJobWithLane(client, {
+          leaseMs,
+          workerId: options.workerId ?? null,
+          lane: 'priority',
+          priorityLaneMaxPriority
+        });
+      }
+
+      await client.query('COMMIT');
+    } catch (error: unknown) {
+      await client.query('ROLLBACK');
+      console.error('Error claiming pending job:', resolveErrorMessage(error));
+      throw error;
+    } finally {
+      client.release();
     }
 
-    await client.query('COMMIT');
-    updatePriorityQueueFairnessAfterClaim(claimedJob);
+    if (priorityQueueEnabled) {
+      updatePriorityQueueFairnessAfterClaim(claimedJob, priorityLaneMaxPriority);
+    }
     return claimedJob;
-  } catch (error: unknown) {
-    await client.query('ROLLBACK');
-    console.error('Error claiming pending job:', resolveErrorMessage(error));
-    throw error;
-  } finally {
-    client.release();
-  }
+  };
+
+  return priorityQueueEnabled
+    ? withPriorityQueueFairnessLock(claimOperation)
+    : claimOperation();
 }
 
 /**
@@ -1746,10 +1795,6 @@ export async function getJobQueueSummary(): Promise<JobQueueSummary | null> {
                AND priority <= $3
            )::int AS priority_running_count,
            COUNT(*) FILTER (
-             WHERE job_type = 'gpt'
-               AND priority <= $3
-           )::int AS priority_total_count,
-           COUNT(*) FILTER (
              WHERE status = 'pending'
                AND NOT (job_type = 'gpt' AND priority <= $3)
            )::int AS normal_pending_count,
@@ -1827,7 +1872,6 @@ export async function getJobQueueSummary(): Promise<JobQueueSummary | null> {
          summary.failed_count,
          summary.priority_pending_count,
          summary.priority_running_count,
-         summary.priority_total_count,
          summary.normal_pending_count,
          summary.priority_job_count,
          summary.total_count,
@@ -1877,7 +1921,6 @@ export async function getJobQueueSummary(): Promise<JobQueueSummary | null> {
       failed_count: number;
       priority_pending_count: number;
       priority_running_count: number;
-      priority_total_count: number;
       normal_pending_count: number;
       priority_job_count: number;
       total_count: number;
@@ -1921,7 +1964,6 @@ export async function getJobQueueSummary(): Promise<JobQueueSummary | null> {
         recentTotalTerminal: 0,
         priorityPending: 0,
         priorityRunning: 0,
-        priorityTotal: 0,
         normalPending: 0,
         priorityJobCount: 0
       };
@@ -1957,7 +1999,6 @@ export async function getJobQueueSummary(): Promise<JobQueueSummary | null> {
       recentTotalTerminal: Number(summaryRow.recent_terminal_count ?? 0),
       priorityPending: Number(summaryRow.priority_pending_count ?? 0),
       priorityRunning: Number(summaryRow.priority_running_count ?? 0),
-      priorityTotal: Number(summaryRow.priority_total_count ?? 0),
       normalPending: Number(summaryRow.normal_pending_count ?? 0),
       priorityJobCount: Number(summaryRow.priority_job_count ?? 0)
     };

@@ -43,14 +43,16 @@ describe('PostgresQueueSchedulerAdapter', () => {
       workerId: 'worker-1',
       leaseMs: 15_000,
       priorityQueueEnabled: true,
-      priorityQueueWeight: 5
+      priorityQueueWeight: 5,
+      priorityLaneMaxPriority: 3
     });
 
     expect(claimNextPendingJob).toHaveBeenCalledWith({
       workerId: 'worker-1',
       leaseMs: 15_000,
       priorityQueueEnabled: true,
-      priorityQueueWeight: 5
+      priorityQueueWeight: 5,
+      priorityLaneMaxPriority: 3
     });
     expect(result).toEqual({
       adapter: 'postgres',

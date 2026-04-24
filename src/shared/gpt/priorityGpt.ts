@@ -152,30 +152,40 @@ export function resolvePriorityGptDirectExecutionConcurrency(
 
 export function mapGptJobStatusToClientStatus(
   jobStatus: string | null | undefined
-): 'queued' | 'running' | 'completed' | 'timeout' {
+): 'queued' | 'running' | 'completed' | 'timeout' | 'failed' | 'cancelled' {
   switch (jobStatus) {
     case 'completed':
       return 'completed';
     case 'running':
       return 'running';
-    case 'failed':
-    case 'cancelled':
+    case 'timeout':
     case 'expired':
-      return 'completed';
+      return 'timeout';
+    case 'failed':
+      return 'failed';
+    case 'cancelled':
+      return 'cancelled';
     case 'pending':
     default:
       return 'queued';
   }
 }
 
-export function isPriorityQueueLaneJob(job: {
-  job_type?: string | null;
-  priority?: number | string | null;
-}): boolean {
+export function isPriorityQueueLaneJob(
+  job: {
+    job_type?: string | null;
+    priority?: number | string | null;
+  },
+  priorityLaneMaxPriority: number = PRIORITY_QUEUE_LANE_MAX_PRIORITY
+): boolean {
   const priority = Number(job.priority ?? Number.NaN);
+  const maxPriority =
+    Number.isFinite(priorityLaneMaxPriority) && priorityLaneMaxPriority > 0
+      ? Math.trunc(priorityLaneMaxPriority)
+      : PRIORITY_QUEUE_LANE_MAX_PRIORITY;
   return (
     job.job_type === 'gpt' &&
     Number.isFinite(priority) &&
-    priority <= PRIORITY_QUEUE_LANE_MAX_PRIORITY
+    priority <= maxPriority
   );
 }

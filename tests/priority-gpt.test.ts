@@ -1,6 +1,8 @@
 import { describe, expect, it } from '@jest/globals';
 import {
+  isPriorityQueueLaneJob,
   isPriorityGpt,
+  mapGptJobStatusToClientStatus,
   resolveGptDirectExecutionThresholdMs,
   resolveGptJobMaxRetries,
   resolveGptWaitTimeoutMs,
@@ -50,5 +52,26 @@ describe('priority GPT classification and scheduling config', () => {
       priorityQueueWeight: 5,
       priorityClaimsSinceNormal: 99
     })).toBe('priority');
+  });
+
+  it('maps terminal GPT job statuses without reporting failures as completed', () => {
+    expect(mapGptJobStatusToClientStatus('completed')).toBe('completed');
+    expect(mapGptJobStatusToClientStatus('running')).toBe('running');
+    expect(mapGptJobStatusToClientStatus('pending')).toBe('queued');
+    expect(mapGptJobStatusToClientStatus('timeout')).toBe('timeout');
+    expect(mapGptJobStatusToClientStatus('expired')).toBe('timeout');
+    expect(mapGptJobStatusToClientStatus('failed')).toBe('failed');
+    expect(mapGptJobStatusToClientStatus('cancelled')).toBe('cancelled');
+  });
+
+  it('classifies priority queue lane jobs with the configured priority threshold', () => {
+    expect(isPriorityQueueLaneJob({
+      job_type: 'gpt',
+      priority: 3
+    }, 3)).toBe(true);
+    expect(isPriorityQueueLaneJob({
+      job_type: 'gpt',
+      priority: 4
+    }, 3)).toBe(false);
   });
 });

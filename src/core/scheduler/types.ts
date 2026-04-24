@@ -44,6 +44,7 @@ export interface SchedulerClaimOptions {
   leaseMs?: number;
   priorityQueueEnabled?: boolean;
   priorityQueueWeight?: number;
+  priorityLaneMaxPriority?: number;
 }
 
 export type SchedulerBackendKind = "postgres" | "redis";
