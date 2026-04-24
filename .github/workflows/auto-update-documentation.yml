@@ -75,7 +75,8 @@ jobs:
             --output doc_analysis.json \
             --direct-timeout-ms 25000 \
             --timeout-ms 120000 \
-            --poll-interval-ms 1000
+            --poll-interval-ms 1000 \
+            --concurrency 2
           
           # Stop the server
           kill $SERVER_PID || true

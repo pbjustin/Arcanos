@@ -43,10 +43,13 @@ export interface GenerateDocsUpdateOptions extends RunArcanosJobOptions {
   strict?: boolean;
   outputFile?: string;
   generatedAt?: string;
+  maxConcurrency?: number;
   runJob?: (prompt: string, options: RunArcanosJobOptions) => Promise<ArcanosJobResult>;
 }
 
 export const DEFAULT_DOCS_UPDATE_FILE = "docs/GPT_ASYNC_DOCUMENTATION_WORKFLOW.md";
+const DEFAULT_DOCS_GENERATION_CONCURRENCY = 2;
+const MAX_DOCS_GENERATION_CONCURRENCY = 4;
 
 export const DOCS_GENERATION_SECTIONS: DocsGenerationSection[] = [
   createDocsSection({
@@ -116,26 +119,18 @@ export async function generateDocsUpdate(
   const sections = options.sections ?? DOCS_GENERATION_SECTIONS;
   const runJob = options.runJob ?? runArcanosJob;
   const strict = options.strict ?? true;
-  const sectionResults: DocsSectionGenerationResult[] = [];
-  const failures: DocsSectionGenerationResult[] = [];
-
-  for (const section of sections) {
+  const maxConcurrency = normalizeConcurrency(options.maxConcurrency);
+  const sectionResults = await mapWithConcurrency(sections, maxConcurrency, async (section) => {
     const initial = await runDocsSectionJob(section, section.prompt, 1, options, runJob);
 
     if (initial.degraded) {
       const retry = await runDocsSectionJob(section, section.retryPrompt, 2, options, runJob);
-      sectionResults.push(retry);
-      if (retry.degraded || retry.error) {
-        failures.push(retry);
-      }
-      continue;
+      return retry;
     }
 
-    sectionResults.push(initial);
-    if (initial.error) {
-      failures.push(initial);
-    }
-  }
+    return initial;
+  });
+  const failures = sectionResults.filter((section) => section.degraded || Boolean(section.error));
 
   if (strict && failures.length > 0) {
     const degradedFailure = failures.find((failure) => failure.degraded);
@@ -308,6 +303,38 @@ function stripMarkdownFence(markdown: string): string {
   const trimmed = markdown.trim();
   const fenceMatch = /^```(?:markdown|md)?\s*([\s\S]*?)\s*```$/i.exec(trimmed);
   return fenceMatch ? fenceMatch[1].trim() : trimmed;
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  if (items.length === 0) {
+    return [];
+  }
+
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.min(concurrency, items.length);
+
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await mapper(items[index] as T, index);
+    }
+  }));
+
+  return results;
+}
+
+function normalizeConcurrency(value: number | undefined): number {
+  if (!Number.isFinite(value) || Number(value) <= 0) {
+    return DEFAULT_DOCS_GENERATION_CONCURRENCY;
+  }
+
+  return Math.min(MAX_DOCS_GENERATION_CONCURRENCY, Math.max(1, Math.trunc(Number(value))));
 }
 
 function renderDocsUpdateMarkdown(input: {

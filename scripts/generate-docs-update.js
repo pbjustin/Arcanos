@@ -18,6 +18,7 @@ export const DEFAULTS = Object.freeze({
   directTimeoutMs: 25_000,
   totalTimeoutMs: 120_000,
   pollIntervalMs: 1_000,
+  concurrency: 2,
   strict: true
 });
 
@@ -71,6 +72,12 @@ export function parseArgs(argv) {
       continue;
     }
 
+    if (flag === '--concurrency' && typeof next === 'string' && next.trim().length > 0) {
+      config.concurrency = readPositiveInteger(next, DEFAULTS.concurrency);
+      index += 1;
+      continue;
+    }
+
     if (flag === '--allow-partial') {
       config.strict = false;
       continue;
@@ -100,6 +107,7 @@ export async function runDocsUpdate(config) {
     directTimeoutMs: config.directTimeoutMs,
     totalTimeoutMs: config.totalTimeoutMs,
     pollIntervalMs: config.pollIntervalMs,
+    maxConcurrency: config.concurrency,
     strict: config.strict,
     headers: buildAuthHeaders(),
     context: {

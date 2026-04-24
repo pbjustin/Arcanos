@@ -157,6 +157,77 @@ describe("ARCANOS async job client", () => {
     ).rejects.toThrow("polling timed out after 1000ms");
   });
 
+  it("jitters poll backoff delays", async () => {
+    const fetchMock = jest.fn<typeof fetch>()
+      .mockResolvedValueOnce(createJsonResponse({
+        jobId: "job-jitter",
+        status: "running",
+      }))
+      .mockResolvedValueOnce(createJsonResponse({
+        jobId: "job-jitter",
+        status: "running",
+      }))
+      .mockResolvedValueOnce(createJsonResponse({
+        jobId: "job-jitter",
+        status: "completed",
+        result: { text: "done" },
+      }));
+    const sleepCalls: number[] = [];
+
+    const result = await pollArcanosJob("job-jitter", {
+      baseUrl: "http://127.0.0.1:3000",
+      timeoutMs: 10_000,
+      intervalMs: 100,
+      maxIntervalMs: 1_000,
+      fetchFn: fetchMock,
+      sleepFn: async (ms) => {
+        sleepCalls.push(ms);
+      },
+      nowFn: () => 0,
+      randomFn: () => 0,
+    });
+
+    expect(result.status).toBe("completed");
+    expect(sleepCalls).toEqual([80, 120]);
+  });
+
+  it("retries HTTP 429 poll responses using Retry-After", async () => {
+    const fetchMock = jest.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: "rate limited" }), {
+        status: 429,
+        headers: {
+          "content-type": "application/json",
+          "retry-after": "2",
+        },
+      }))
+      .mockResolvedValueOnce(createJsonResponse({
+        jobId: "job-rate-limited",
+        status: "completed",
+        result: { text: "done" },
+      }));
+    const sleepCalls: number[] = [];
+
+    const result = await pollArcanosJob("job-rate-limited", {
+      baseUrl: "http://127.0.0.1:3000",
+      timeoutMs: 10_000,
+      intervalMs: 100,
+      fetchFn: fetchMock,
+      sleepFn: async (ms) => {
+        sleepCalls.push(ms);
+      },
+      nowFn: () => 0,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      status: "completed",
+      jobId: "job-rate-limited",
+      result: { text: "done" },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(sleepCalls).toEqual([2_000]);
+  });
+
   it("detects fallbackFlag fallback metadata", () => {
     expect(isPipelineFallback({ fallbackFlag: true })).toBe(true);
   });

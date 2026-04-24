@@ -105,4 +105,43 @@ describe("docs generator", () => {
       })
     ).rejects.toThrow(ARCANOS_DEGRADED_FALLBACK_MESSAGE);
   });
+
+  it("generates independent sections with bounded concurrency", async () => {
+    const sections: DocsGenerationSection[] = Array.from({ length: 4 }, (_, index) => ({
+      id: `section-${index + 1}`,
+      title: `Section ${index + 1}`,
+      prompt: `Write section ${index + 1}.`,
+      retryPrompt: `Retry section ${index + 1}.`,
+    }));
+    let activeJobs = 0;
+    let maxActiveJobs = 0;
+    const runJob = jest.fn(async (prompt: string): Promise<ArcanosJobResult> => {
+      activeJobs += 1;
+      maxActiveJobs = Math.max(maxActiveJobs, activeJobs);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      activeJobs -= 1;
+      const section = sections.find((candidate) => candidate.prompt === prompt);
+      return completedResult(`## ${section?.title ?? "Section"}\n\nDone.`, `job-${section?.id ?? "unknown"}`);
+    });
+
+    const result = await generateDocsUpdate({
+      baseUrl: "http://127.0.0.1:3000",
+      gptId: "arcanos-core",
+      sections,
+      strict: true,
+      maxConcurrency: 2,
+      generatedAt: "2026-04-24T00:00:00.000Z",
+      runJob,
+    });
+
+    expect(runJob).toHaveBeenCalledTimes(4);
+    expect(maxActiveJobs).toBe(2);
+    expect(result.sections.map((section) => section.id)).toEqual([
+      "section-1",
+      "section-2",
+      "section-3",
+      "section-4",
+    ]);
+    expect(result.ok).toBe(true);
+  });
 });

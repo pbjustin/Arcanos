@@ -34,6 +34,7 @@ export interface RunArcanosJobOptions {
   fetchFn?: typeof fetch;
   sleepFn?: (ms: number) => Promise<void>;
   nowFn?: () => number;
+  randomFn?: () => number;
 }
 
 export interface PollArcanosJobOptions {
@@ -47,6 +48,7 @@ export interface PollArcanosJobOptions {
   fetchFn?: typeof fetch;
   sleepFn?: (ms: number) => Promise<void>;
   nowFn?: () => number;
+  randomFn?: () => number;
 }
 
 export interface ArcanosJobResult {
@@ -118,6 +120,7 @@ export async function runArcanosJob(
       fetchFn: options.fetchFn,
       sleepFn: options.sleepFn,
       nowFn: options.nowFn,
+      randomFn: options.randomFn,
     });
   }
 
@@ -145,6 +148,7 @@ export async function pollArcanosJob(
   const fetchFn = options.fetchFn ?? fetch;
   const sleepFn = options.sleepFn ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const nowFn = options.nowFn ?? Date.now;
+  const randomFn = options.randomFn ?? Math.random;
   const timeoutMs = normalizePositiveInteger(options.timeoutMs, DEFAULT_TOTAL_TIMEOUT_MS);
   const maxIntervalMs = normalizePositiveInteger(options.maxIntervalMs, DEFAULT_MAX_POLL_INTERVAL_MS);
   let intervalMs = Math.min(
@@ -156,7 +160,26 @@ export async function pollArcanosJob(
   let lastStatus: string | undefined;
 
   while (nowFn() <= deadlineMs) {
-    const rawPayload = await getJson(fetchFn, resultUrl, options.headers);
+    let rawPayload: Record<string, unknown>;
+    try {
+      rawPayload = await getJson(fetchFn, resultUrl, options.headers);
+    } catch (error) {
+      if (!isRateLimitError(error)) {
+        throw error;
+      }
+
+      lastStatus = "rate_limited";
+      const remainingMs = deadlineMs - nowFn();
+      if (remainingMs <= 0) {
+        break;
+      }
+
+      const retryDelayMs = error.retryAfterMs ?? jitterDelayMs(intervalMs, maxIntervalMs, randomFn);
+      await sleepFn(Math.min(retryDelayMs, remainingMs));
+      intervalMs = nextBackoffIntervalMs(intervalMs, maxIntervalMs);
+      continue;
+    }
+
     const result = normalizeArcanosResult(rawPayload, {
       jobId: normalizedJobId,
       poll: resultUrl,
@@ -177,8 +200,8 @@ export async function pollArcanosJob(
       break;
     }
 
-    await sleepFn(Math.min(intervalMs, remainingMs));
-    intervalMs = Math.min(maxIntervalMs, Math.ceil(intervalMs * 1.5));
+    await sleepFn(Math.min(jitterDelayMs(intervalMs, maxIntervalMs, randomFn), remainingMs));
+    intervalMs = nextBackoffIntervalMs(intervalMs, maxIntervalMs);
   }
 
   throw new Error(
@@ -392,7 +415,14 @@ async function getJson(
   }
 
   if (!response.ok) {
-    throw new Error(`ARCANOS job poll failed with HTTP ${response.status}: ${formatPayloadForError(parsed, rawText)}`);
+    const retryAfterMs = response.status === 429
+      ? parseRetryAfterMs(response.headers.get("retry-after"))
+      : undefined;
+    throw new ArcanosHttpError(
+      `ARCANOS job poll failed with HTTP ${response.status}: ${formatPayloadForError(parsed, rawText)}`,
+      response.status,
+      retryAfterMs
+    );
   }
 
   if (!isRecord(parsed)) {
@@ -400,6 +430,52 @@ async function getJson(
   }
 
   return parsed;
+}
+
+class ArcanosHttpError extends Error {
+  status: number;
+  retryAfterMs: number | undefined;
+
+  constructor(message: string, status: number, retryAfterMs?: number) {
+    super(message);
+    this.name = "ArcanosHttpError";
+    this.status = status;
+    this.retryAfterMs = retryAfterMs;
+  }
+}
+
+function isRateLimitError(error: unknown): error is ArcanosHttpError {
+  return error instanceof ArcanosHttpError && error.status === 429;
+}
+
+function nextBackoffIntervalMs(intervalMs: number, maxIntervalMs: number): number {
+  return Math.min(maxIntervalMs, Math.ceil(intervalMs * 1.5));
+}
+
+function jitterDelayMs(intervalMs: number, maxIntervalMs: number, randomFn: () => number): number {
+  const rawRandom = randomFn();
+  const normalizedRandom = Number.isFinite(rawRandom)
+    ? Math.max(0, Math.min(1, rawRandom))
+    : 0.5;
+  const jitterFactor = 0.8 + normalizedRandom * 0.4;
+  return Math.min(maxIntervalMs, Math.max(1, Math.ceil(intervalMs * jitterFactor)));
+}
+
+function parseRetryAfterMs(value: string | null): number | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  const seconds = Number(trimmed);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.ceil(seconds * 1_000);
+  }
+
+  const retryAtMs = Date.parse(trimmed);
+  return Number.isFinite(retryAtMs)
+    ? Math.max(0, retryAtMs - Date.now())
+    : undefined;
 }
 
 function formatPayloadForError(parsed: unknown, rawText: string): string {
