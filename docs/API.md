@@ -80,7 +80,7 @@ Legacy compatibility:
 - Direct-return timeouts never enqueue a second job; they return the same canonical `jobId` and point callers to `GET /jobs/:id/result`.
 
 Job-backed `POST /gpt/:gptId` response shapes:
-- `202 Accepted` pending write: `{ ok:true, action:"query"|"query_and_wait", jobId, status:"pending", poll, stream, jobStatus, lifecycleStatus, deduped?, idempotencyKey, idempotencySource, _route }`
+- `202 Accepted` pending write: `{ ok:true, action:"query"|"query_and_wait", jobId, status:"queued"|"running"|"timeout", poll:"/jobs/:id/result", stream:"/jobs/:id/stream", timedOut?, jobStatus, lifecycleStatus, deduped?, idempotencyKey, idempotencySource, _route }`
 - `200 OK` completed write: `{ ok:true, action:"query_and_wait", jobId, status:"completed", result:{ text }, poll, stream, jobStatus, lifecycleStatus, deduped?, idempotencyKey, idempotencySource, _route }`
 - `200 OK` status retrieval: `{ ok:true, action:"get_status", jobId, status:"queued|running|completed|failed|cancelled|expired", ... }`
 - `200 OK` result retrieval: `{ ok:true, action:"get_result", jobId, status, output?, result?, error?, poll?, stream?, ... }`
@@ -88,6 +88,25 @@ Job-backed `POST /gpt/:gptId` response shapes:
 - Duplicate submissions set `deduped: true` and return the canonical `jobId`.
 - `200 OK` system-state retrieval/update: `POST /gpt/:gptId` with `{ "action": "system_state", "payload": { ... } }` is handled directly on the control plane for core GPT ids and never enters the writing dispatcher.
 - `400 Bad Request` control rejection: prompt-based job lookups, runtime inspection, DAG control, and MCP tool calls return deterministic JSON with `canonical` control routes.
+
+Canonical client-facing async acknowledgement:
+```json
+{
+  "ok": true,
+  "status": "completed | queued | running | timeout",
+  "jobId": "job-id",
+  "poll": "/jobs/job-id/result",
+  "stream": "/jobs/job-id/stream",
+  "timedOut": true
+}
+```
+
+Pipeline timeout fallback detection:
+- A completed job is degraded, not successful, when `fallbackFlag` is true.
+- It is also degraded when `timeoutKind` is `pipeline_timeout`.
+- It is also degraded when `activeModel` contains `static-timeout-fallback`.
+- It is also degraded when `auditSafe.auditFlags` contains `CORE_PIPELINE_TIMEOUT_FALLBACK`.
+- Documentation clients must retry with a narrower section prompt once, then fail with: `ARCANOS completed in degraded fallback mode; documentation generation must be split into smaller tasks.`
 
 Job status routes:
 - `GET /jobs/:id`: returns `{ id, job_type, status, lifecycle_status, created_at, updated_at, completed_at, cancel_requested_at, cancel_reason, retention_until, idempotency_until, expires_at, error_message, output, result }`

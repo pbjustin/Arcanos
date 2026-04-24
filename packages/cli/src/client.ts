@@ -77,6 +77,29 @@ export async function invokeTool(options: InvokeToolOptions): Promise<unknown> {
 }
 
 export {
+  ARCANOS_DEGRADED_FALLBACK_MESSAGE,
+  buildJobResultPollUrl,
+  isPipelineFallback,
+  normalizeArcanosResult,
+  pollArcanosJob,
+  runArcanosJob,
+  type ArcanosJobResult,
+  type PollArcanosJobOptions,
+  type RunArcanosJobOptions
+} from "./client/arcanosJob.js";
+
+export {
+  DEFAULT_DOCS_UPDATE_FILE,
+  DOCS_GENERATION_SECTIONS,
+  generateDocsUpdate,
+  type DocsGenerationSection,
+  type DocsSectionGenerationResult,
+  type DocsUpdateFile,
+  type GenerateDocsUpdateOptions,
+  type GenerateDocsUpdateResult
+} from "./client/docsGenerator.js";
+
+export {
   buildGptRouteRequestBody,
   createAsyncGptJob,
   generatePromptAndWait,
