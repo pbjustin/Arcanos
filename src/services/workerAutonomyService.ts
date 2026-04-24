@@ -16,15 +16,21 @@ import {
 } from '@core/db/repositories/jobRepository.js';
 import { computeGptJobLifecycleDeadlines } from '@shared/gpt/gptJobLifecycle.js';
 import {
+  listWorkerLiveness,
   listWorkerRuntimeSnapshots,
   upsertWorkerRuntimeSnapshot,
+  type WorkerLivenessSnapshotRecord,
   type WorkerRuntimeSnapshotRecord
 } from '@core/db/repositories/workerRuntimeRepository.js';
+import {
+  createWorkerRuntimeSnapshotPipelineFromEnv,
+  isWorkerSnapshotPipelineV2Enabled,
+  type WorkerRuntimeSnapshotPipeline
+} from './workerRuntimeSnapshotPipeline.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import {
   recordDependencyCall,
   recordWorkerRecoveredJobs,
-  recordWorkerRuntimeSnapshotSkipped,
   recordWorkerStaleDetection,
   recordWorkerStalledJobs
 } from '@platform/observability/appMetrics.js';
@@ -174,7 +180,11 @@ interface WorkerWatchdogState {
 
 const WORKER_RUNTIME_SNAPSHOT_MIN_INTERVAL_MS = 30_000;
 const WORKER_RUNTIME_SNAPSHOT_SLOW_LOG_MIN_MS = 250;
-const WORKER_RUNTIME_SNAPSHOT_SKIP_LOG_MIN_MS = 60_000;
+
+type WorkerRuntimeSnapshotPipelinePort = Pick<
+  WorkerRuntimeSnapshotPipeline,
+  'recordLiveness' | 'recordSnapshotIntent' | 'flushWorker' | 'shutdown'
+>;
 
 const DEFAULT_AUTONOMY_SETTINGS: WorkerAutonomySettings = {
   workerId: process.env.JOB_WORKER_ID?.trim() || process.env.WORKER_ID?.trim() || 'async-queue',
@@ -295,11 +305,14 @@ export async function planAutonomousWorkerJob(
 export async function getWorkerAutonomyHealthReport(
   settings: WorkerAutonomySettings = getWorkerAutonomySettings()
 ): Promise<WorkerAutonomyHealthReport> {
-  const [queueSummary, rawWorkers] = await Promise.all([
+  const [queueSummary, rawWorkers, livenessRecords] = await Promise.all([
     getJobQueueSummary(),
-    listWorkerRuntimeSnapshots()
+    listWorkerRuntimeSnapshots(),
+    listWorkerLiveness()
   ]);
-  const workers = filterLegacyAggregateWorkerSnapshots(rawWorkers);
+  const workers = filterLegacyAggregateWorkerSnapshots(
+    mergeWorkerLivenessSnapshots(rawWorkers, livenessRecords, settings.workerType)
+  );
   const alerts: string[] = [];
 
   if (queueSummary?.stalledRunning) {
@@ -350,14 +363,17 @@ export class WorkerAutonomyService {
   private readonly settings: WorkerAutonomySettings;
   private readonly startedAt: string;
   private readonly state: RuntimeSnapshotState;
+  private readonly snapshotPipeline: WorkerRuntimeSnapshotPipelinePort | null;
   private lastSnapshotPersistedAtMs = 0;
-  private lastSnapshotHealthStatus: WorkerAutonomyHealthStatus | null = null;
-  private lastSnapshotMeaningfulFingerprint: string | null = null;
-  private skippedSnapshotWriteCount = 0;
-  private lastSnapshotSkipLogAtMs = 0;
 
-  constructor(settings: WorkerAutonomySettings = getWorkerAutonomySettings()) {
+  constructor(
+    settings: WorkerAutonomySettings = getWorkerAutonomySettings(),
+    snapshotPipeline: WorkerRuntimeSnapshotPipelinePort | null = isWorkerSnapshotPipelineV2Enabled()
+      ? createWorkerRuntimeSnapshotPipelineFromEnv()
+      : null
+  ) {
     this.settings = settings;
+    this.snapshotPipeline = snapshotPipeline;
     this.startedAt = new Date().toISOString();
     this.state = {
       currentJobId: null,
@@ -425,6 +441,10 @@ export class WorkerAutonomyService {
 
   getWatchdogIntervalMs(): number {
     return this.settings.watchdogIntervalMs ?? this.settings.heartbeatIntervalMs;
+  }
+
+  async flushSnapshotPipeline(reason = 'manual'): Promise<void> {
+    await this.snapshotPipeline?.shutdown(reason);
   }
 
   /**
@@ -577,7 +597,13 @@ export class WorkerAutonomyService {
     reason: string,
     options: WorkerSnapshotPersistOptions & { persistSnapshot?: boolean } = {}
   ): Promise<WorkerInspectionResult['stalledRecovery']> {
-    const workerSnapshots = filterLegacyAggregateWorkerSnapshots(await listWorkerRuntimeSnapshots());
+    const [rawWorkerSnapshots, livenessRecords] = await Promise.all([
+      listWorkerRuntimeSnapshots(),
+      listWorkerLiveness()
+    ]);
+    const workerSnapshots = filterLegacyAggregateWorkerSnapshots(
+      mergeWorkerLivenessSnapshots(rawWorkerSnapshots, livenessRecords, this.settings.workerType)
+    );
     const staleWorkerIds = workerSnapshots
       .filter((worker) => isWorkerSnapshotStale(worker, this.settings.staleAfterMs))
       .map((worker) => worker.workerId);
@@ -993,6 +1019,7 @@ export class WorkerAutonomyService {
     const nowMs = Date.now();
     const source = options.source ?? 'unspecified';
     if (
+      !this.snapshotPipeline &&
       !options.force &&
       this.lastSnapshotPersistedAtMs > 0 &&
       nowMs - this.lastSnapshotPersistedAtMs < WORKER_RUNTIME_SNAPSHOT_MIN_INTERVAL_MS
@@ -1035,51 +1062,26 @@ export class WorkerAutonomyService {
         alerts: context.alerts
       }
     };
-    const meaningfulFingerprint = buildWorkerRuntimeSnapshotMeaningfulFingerprint(snapshotRecord);
-    const noopRefreshMs = Math.max(
-      this.settings.heartbeatIntervalMs,
-      Math.floor(this.settings.staleAfterMs / 2)
-    );
-    const isNoopSnapshot =
-      this.lastSnapshotHealthStatus === context.healthStatus &&
-      this.lastSnapshotMeaningfulFingerprint === meaningfulFingerprint;
-    const canSkipNoopSnapshot =
-      isNoopSnapshot &&
-      this.lastSnapshotPersistedAtMs > 0 &&
-      nowMs - this.lastSnapshotPersistedAtMs < noopRefreshMs;
 
-    if (canSkipNoopSnapshot) {
-      this.skippedSnapshotWriteCount += 1;
-      recordWorkerRuntimeSnapshotSkipped({
-        source,
-        healthStatus: context.healthStatus
-      });
-      if (
-        this.lastSnapshotSkipLogAtMs === 0 ||
-        nowMs - this.lastSnapshotSkipLogAtMs >= WORKER_RUNTIME_SNAPSHOT_SKIP_LOG_MIN_MS
-      ) {
-        this.lastSnapshotSkipLogAtMs = nowMs;
-        logger.info('worker.runtime_snapshot.persist.skipped', {
-          module: 'worker-autonomy',
-          workerId: this.settings.workerId,
-          source,
-          healthStatus: context.healthStatus,
-          skippedCount: this.skippedSnapshotWriteCount,
-          reason: 'no_meaningful_delta',
-          nextRefreshInMs: Math.max(0, noopRefreshMs - (nowMs - this.lastSnapshotPersistedAtMs))
-        });
+    if (this.snapshotPipeline) {
+      if (isWorkerLivenessSource(source)) {
+        await this.snapshotPipeline.recordLiveness(
+          this.settings.workerId,
+          context.healthStatus,
+          this.state.lastHeartbeatAt ?? snapshotRecord.updatedAt
+        );
+      }
+      this.snapshotPipeline.recordSnapshotIntent(this.settings.workerId, source, snapshotRecord);
+      if (shouldFlushSnapshotIntent(source, options.force === true)) {
+        await this.snapshotPipeline.flushWorker(this.settings.workerId, source);
       }
       return;
     }
 
     const persistStartedAtMs = Date.now();
     try {
-      await upsertWorkerRuntimeSnapshot(snapshotRecord);
+      await upsertWorkerRuntimeSnapshot(snapshotRecord, { source });
       this.lastSnapshotPersistedAtMs = nowMs;
-      this.lastSnapshotHealthStatus = context.healthStatus;
-      this.lastSnapshotMeaningfulFingerprint = meaningfulFingerprint;
-      this.skippedSnapshotWriteCount = 0;
-      this.lastSnapshotSkipLogAtMs = 0;
       const durationMs = Date.now() - persistStartedAtMs;
       const logContext = {
         module: 'worker-autonomy',
@@ -1232,41 +1234,66 @@ export class WorkerAutonomyService {
   }
 }
 
-function isPlainRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+function isWorkerLivenessSource(source: string): boolean {
+  return source === 'worker-heartbeat' || source === 'job-heartbeat';
 }
 
-function omitKeys(
-  value: Record<string, unknown>,
-  keysToOmit: ReadonlySet<string>
-): Record<string, unknown> {
-  return Object.fromEntries(
-    Object.entries(value).filter(([key]) => !keysToOmit.has(key))
-  );
+function shouldFlushSnapshotIntent(source: string, forced: boolean): boolean {
+  if (!forced) {
+    return false;
+  }
+  return source !== 'worker-heartbeat' && source !== 'job-heartbeat' && source !== 'worker-idle';
 }
 
-function buildWorkerRuntimeSnapshotMeaningfulFingerprint(
-  record: WorkerRuntimeSnapshotRecord
-): string {
-  const volatileSnapshotKeys = new Set(['lastPersistSource']);
-  const volatileWatchdogKeys = new Set(['inactivityMs', 'lastHeartbeatAt']);
-  const volatileQueueSummaryKeys = new Set(['lastUpdatedAt', 'oldestPendingJobAgeMs']);
-  const snapshot = omitKeys(record.snapshot, volatileSnapshotKeys);
-  if (isPlainRecord(snapshot.queueSummary)) {
-    snapshot.queueSummary = omitKeys(snapshot.queueSummary, volatileQueueSummaryKeys);
-  }
-  if (isPlainRecord(snapshot.watchdog)) {
-    snapshot.watchdog = omitKeys(snapshot.watchdog, volatileWatchdogKeys);
+function mergeWorkerLivenessSnapshots(
+  workers: WorkerRuntimeSnapshotRecord[],
+  livenessRecords: WorkerLivenessSnapshotRecord[],
+  fallbackWorkerType: WorkerAutonomySettings['workerType']
+): WorkerRuntimeSnapshotRecord[] {
+  if (livenessRecords.length === 0) {
+    return workers;
   }
 
-  return JSON.stringify({
-    workerType: record.workerType,
-    currentJobId: record.currentJobId,
-    lastError: record.lastError,
-    startedAt: record.startedAt,
-    lastInspectorRunAt: record.lastInspectorRunAt,
-    snapshot
-  });
+  const mergedWorkers = new Map<string, WorkerRuntimeSnapshotRecord>();
+  for (const worker of workers) {
+    mergedWorkers.set(worker.workerId, worker);
+  }
+
+  for (const liveness of livenessRecords) {
+    const existingWorker = mergedWorkers.get(liveness.workerId);
+    if (existingWorker) {
+      mergedWorkers.set(liveness.workerId, {
+        ...existingWorker,
+        healthStatus: liveness.healthStatus || existingWorker.healthStatus,
+        lastHeartbeatAt: liveness.lastSeenAt,
+        updatedAt: liveness.lastSeenAt,
+        snapshot: {
+          ...existingWorker.snapshot,
+          livenessLastSeenAt: liveness.lastSeenAt
+        }
+      });
+      continue;
+    }
+
+    mergedWorkers.set(liveness.workerId, {
+      workerId: liveness.workerId,
+      workerType: fallbackWorkerType,
+      healthStatus: liveness.healthStatus || 'healthy',
+      currentJobId: null,
+      lastError: null,
+      startedAt: null,
+      lastHeartbeatAt: liveness.lastSeenAt,
+      lastInspectorRunAt: null,
+      updatedAt: liveness.lastSeenAt,
+      snapshot: {
+        activeJobs: [],
+        alerts: [],
+        livenessLastSeenAt: liveness.lastSeenAt
+      }
+    });
+  }
+
+  return [...mergedWorkers.values()];
 }
 
 /**

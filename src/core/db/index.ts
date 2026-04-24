@@ -96,9 +96,14 @@ export {
 } from './repositories/dagRunRepository.js';
 
 export {
+  appendWorkerRuntimeHistory,
+  listWorkerLiveness,
   upsertWorkerRuntimeSnapshot,
+  upsertWorkerRuntimeState,
+  recordWorkerLiveness,
   getWorkerRuntimeSnapshotById,
   listWorkerRuntimeSnapshots,
+  type WorkerLivenessSnapshotRecord,
   type WorkerRuntimeSnapshotRecord
 } from './repositories/workerRuntimeRepository.js';
 

@@ -28,6 +28,25 @@ export interface UpsertWorkerRuntimeSnapshotOptions {
   source?: string;
 }
 
+export interface WorkerLivenessRecord {
+  workerId: string;
+  healthStatus: string;
+  lastSeenAt: string;
+}
+
+export type WorkerLivenessSnapshotRecord = WorkerLivenessRecord;
+
+export interface UpsertWorkerRuntimeStateOptions {
+  source?: string;
+  stateHash: string;
+  preserveLegacySnapshot?: boolean;
+}
+
+export interface AppendWorkerRuntimeHistoryOptions {
+  source?: string;
+  stateHash: string;
+}
+
 const WORKER_RUNTIME_REPOSITORY_WORKER_ID = 'worker-runtime-snapshots';
 const WORKER_RUNTIME_BOOTSTRAP_RETRY_COOLDOWN_MS = 30_000;
 const WORKER_RUNTIME_UPSERT_SLOW_LOG_MIN_MS = 250;
@@ -182,6 +201,279 @@ export async function upsertWorkerRuntimeSnapshot(
 }
 
 /**
+ * Record cheap worker liveness without touching rich snapshot payloads.
+ * Purpose: support frequent worker heartbeats without updating the indexed legacy snapshot timestamp.
+ */
+export async function recordWorkerLiveness(record: WorkerLivenessRecord): Promise<void> {
+  const startedAtMs = Date.now();
+  const persistenceReady = await ensureWorkerRuntimePersistenceReady();
+  if (!persistenceReady) {
+    throw new Error('Worker runtime persistence is unavailable');
+  }
+
+  let outcome: 'ok' | 'error' = 'ok';
+  try {
+    await query(
+      `INSERT INTO worker_liveness (
+         worker_id,
+         last_seen_at,
+         health_status
+       )
+       VALUES ($1, $2::timestamptz, $3)
+       ON CONFLICT (worker_id)
+       DO UPDATE SET
+         last_seen_at = EXCLUDED.last_seen_at,
+         health_status = EXCLUDED.health_status`,
+      [
+        record.workerId,
+        record.lastSeenAt,
+        record.healthStatus
+      ]
+    );
+  } catch (error) {
+    outcome = 'error';
+    throw error;
+  } finally {
+    const durationMs = Date.now() - startedAtMs;
+    const logContext = {
+      module: 'worker-runtime',
+      workerId: record.workerId,
+      healthStatus: record.healthStatus,
+      outcome,
+      durationMs
+    };
+    if (outcome === 'error' || durationMs >= WORKER_RUNTIME_UPSERT_SLOW_LOG_MIN_MS) {
+      logger.warn(
+        outcome === 'error' ? 'worker.liveness.upsert.failed' : 'worker.liveness.upsert.slow',
+        logContext
+      );
+    } else {
+      logger.debug('worker.liveness.upsert.completed', logContext);
+    }
+  }
+}
+
+/**
+ * Persist the latest meaningful runtime state.
+ * Purpose: keep rich worker state current only when the pipeline observes a meaningful state hash change.
+ */
+export async function upsertWorkerRuntimeState(
+  record: WorkerRuntimeSnapshotRecord,
+  options: UpsertWorkerRuntimeStateOptions
+): Promise<void> {
+  const source =
+    options.source ??
+    (typeof record.snapshot.lastPersistSource === 'string'
+      ? record.snapshot.lastPersistSource
+      : 'unspecified');
+  const startedAtMs = Date.now();
+  const persistenceReady = await ensureWorkerRuntimePersistenceReady();
+  if (!persistenceReady) {
+    throw new Error('Worker runtime persistence is unavailable');
+  }
+
+  const serializedSnapshot = safeJSONStringify(
+    record.snapshot,
+    'workerRuntimeRepository.upsertWorkerRuntimeState'
+  );
+
+  if (!serializedSnapshot) {
+    throw new Error('Failed to serialize worker runtime state snapshot');
+  }
+
+  let outcome: 'ok' | 'error' = 'ok';
+  try {
+    await query(
+      `INSERT INTO worker_runtime_state (
+         worker_id,
+         worker_type,
+         health_status,
+         current_job_id,
+         last_error,
+         started_at,
+         last_heartbeat_at,
+         last_inspector_run_at,
+         state_hash,
+         changed_at,
+         snapshot
+       )
+       VALUES ($1, $2, $3, $4, $5, $6::timestamptz, $7::timestamptz, $8::timestamptz, $9, $10::timestamptz, $11::jsonb)
+       ON CONFLICT (worker_id)
+       DO UPDATE SET
+         worker_type = EXCLUDED.worker_type,
+         health_status = EXCLUDED.health_status,
+         current_job_id = EXCLUDED.current_job_id,
+         last_error = EXCLUDED.last_error,
+         started_at = EXCLUDED.started_at,
+         last_heartbeat_at = EXCLUDED.last_heartbeat_at,
+         last_inspector_run_at = EXCLUDED.last_inspector_run_at,
+         state_hash = EXCLUDED.state_hash,
+         changed_at = EXCLUDED.changed_at,
+         snapshot = EXCLUDED.snapshot`,
+      [
+        record.workerId,
+        record.workerType,
+        record.healthStatus,
+        record.currentJobId,
+        record.lastError,
+        record.startedAt,
+        record.lastHeartbeatAt,
+        record.lastInspectorRunAt,
+        options.stateHash,
+        record.updatedAt,
+        serializedSnapshot
+      ]
+    );
+
+    if (options.preserveLegacySnapshot !== false) {
+      await upsertWorkerRuntimeSnapshot(record, { source });
+    }
+  } catch (error) {
+    outcome = 'error';
+    throw error;
+  } finally {
+    const durationMs = Date.now() - startedAtMs;
+    const logContext = {
+      module: 'worker-runtime',
+      workerId: record.workerId,
+      source,
+      outcome,
+      durationMs,
+      snapshotBytes: Buffer.byteLength(serializedSnapshot, 'utf8'),
+      stateHash: options.stateHash.slice(0, 12)
+    };
+    if (outcome === 'error' || durationMs >= WORKER_RUNTIME_UPSERT_SLOW_LOG_MIN_MS) {
+      logger.warn(
+        outcome === 'error' ? 'worker.runtime_state.upsert.failed' : 'worker.runtime_state.upsert.slow',
+        logContext
+      );
+    } else {
+      logger.debug('worker.runtime_state.upsert.completed', logContext);
+    }
+  }
+}
+
+/**
+ * Append meaningful runtime state history.
+ * Purpose: retain state-change history without writing one row per heartbeat.
+ */
+export async function appendWorkerRuntimeHistory(
+  record: WorkerRuntimeSnapshotRecord,
+  options: AppendWorkerRuntimeHistoryOptions
+): Promise<void> {
+  const source =
+    options.source ??
+    (typeof record.snapshot.lastPersistSource === 'string'
+      ? record.snapshot.lastPersistSource
+      : 'unspecified');
+  const startedAtMs = Date.now();
+  const persistenceReady = await ensureWorkerRuntimePersistenceReady();
+  if (!persistenceReady) {
+    throw new Error('Worker runtime persistence is unavailable');
+  }
+
+  const serializedSnapshot = safeJSONStringify(
+    record.snapshot,
+    'workerRuntimeRepository.appendWorkerRuntimeHistory'
+  );
+
+  if (!serializedSnapshot) {
+    throw new Error('Failed to serialize worker runtime history snapshot');
+  }
+
+  let outcome: 'ok' | 'error' = 'ok';
+  try {
+    await query(
+      `INSERT INTO worker_runtime_history (
+         worker_id,
+         state_hash,
+         source,
+         health_status,
+         current_job_id,
+         changed_at,
+         snapshot
+       )
+       VALUES ($1, $2, $3, $4, $5, $6::timestamptz, $7::jsonb)`,
+      [
+        record.workerId,
+        options.stateHash,
+        source,
+        record.healthStatus,
+        record.currentJobId,
+        record.updatedAt,
+        serializedSnapshot
+      ]
+    );
+  } catch (error) {
+    outcome = 'error';
+    throw error;
+  } finally {
+    const durationMs = Date.now() - startedAtMs;
+    const logContext = {
+      module: 'worker-runtime',
+      workerId: record.workerId,
+      source,
+      outcome,
+      durationMs,
+      snapshotBytes: Buffer.byteLength(serializedSnapshot, 'utf8'),
+      stateHash: options.stateHash.slice(0, 12)
+    };
+    if (outcome === 'error' || durationMs >= WORKER_RUNTIME_UPSERT_SLOW_LOG_MIN_MS) {
+      logger.warn(
+        outcome === 'error' ? 'worker.runtime_history.insert.failed' : 'worker.runtime_history.insert.slow',
+        logContext
+      );
+    } else {
+      logger.debug('worker.runtime_history.insert.completed', logContext);
+    }
+  }
+}
+
+/**
+ * List cheap liveness records for watchdog freshness checks.
+ * Purpose: let V2 heartbeat liveness drive stale-worker detection without reading rich snapshot churn.
+ */
+export async function listWorkerLiveness(): Promise<WorkerLivenessSnapshotRecord[]> {
+  const persistenceReady = await ensureWorkerRuntimePersistenceReady();
+
+  if (!persistenceReady) {
+    return [];
+  }
+
+  try {
+    const result = await query(
+      `SELECT
+         worker_id,
+         last_seen_at,
+         health_status
+       FROM worker_liveness
+       ORDER BY last_seen_at DESC`,
+      []
+    );
+
+    return result.rows.map((row) => ({
+      workerId: String((row as Record<string, unknown>).worker_id ?? ''),
+      lastSeenAt: normalizeIsoString((row as Record<string, unknown>).last_seen_at),
+      healthStatus: String((row as Record<string, unknown>).health_status ?? '')
+    })).filter((record) => record.workerId.length > 0);
+  } catch (error: unknown) {
+    if (readPostgresErrorCode(error) === '42P01') {
+      logger.debug('worker.liveness.list.unavailable', {
+        module: 'worker-runtime',
+        reason: 'missing_table'
+      });
+      return [];
+    }
+
+    logger.warn('worker.liveness.list.failed', {
+      module: 'worker-runtime',
+      error: resolveErrorMessage(error)
+    });
+    return [];
+  }
+}
+
+/**
  * Load one worker runtime snapshot by worker id.
  * Purpose: let app and helper routes inspect the latest async worker health state.
  * Inputs/outputs: accepts a worker id and returns the stored snapshot record or `null`.
@@ -317,4 +609,13 @@ function normalizeNullableIsoString(value: unknown): string | null {
 
 function normalizeIsoString(value: unknown): string {
   return normalizeNullableIsoString(value) ?? new Date().toISOString();
+}
+
+function readPostgresErrorCode(error: unknown): string | null {
+  if (typeof error === 'object' && error !== null && 'code' in error) {
+    const code = (error as { code?: unknown }).code;
+    return typeof code === 'string' ? code : null;
+  }
+
+  return null;
 }

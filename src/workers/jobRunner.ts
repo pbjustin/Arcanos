@@ -1140,6 +1140,7 @@ async function runWorkerConsumerSlot(
     }
   } finally {
     workerHeartbeatHandle.stop();
+    await autonomyService.flushSnapshotPipeline('worker-slot-shutdown');
   }
 }
 
@@ -1179,6 +1180,7 @@ async function run(): Promise<void> {
   } finally {
     clearInterval(watchdogHandle);
     clearInterval(inspectorHandle);
+    await inspectorAutonomyService.flushSnapshotPipeline('worker-process-shutdown');
   }
 }
 

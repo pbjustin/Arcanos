@@ -27,7 +27,10 @@ jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({
   }
 }));
 
-const { upsertWorkerRuntimeSnapshot } = await import('../src/core/db/repositories/workerRuntimeRepository.js');
+const {
+  listWorkerLiveness,
+  upsertWorkerRuntimeSnapshot
+} = await import('../src/core/db/repositories/workerRuntimeRepository.js');
 
 describe('workerRuntimeRepository', () => {
   beforeEach(() => {
@@ -68,6 +71,21 @@ describe('workerRuntimeRepository', () => {
         outcome: 'error',
         durationMs: expect.any(Number),
         snapshotBytes: expect.any(Number)
+      })
+    );
+  });
+
+  it('degrades liveness reads to empty when the V2 table is not migrated yet', async () => {
+    queryMock.mockRejectedValueOnce(Object.assign(new Error('relation "worker_liveness" does not exist'), {
+      code: '42P01'
+    }));
+
+    await expect(listWorkerLiveness()).resolves.toEqual([]);
+    expect(loggerDebugMock).toHaveBeenCalledWith(
+      'worker.liveness.list.unavailable',
+      expect.objectContaining({
+        module: 'worker-runtime',
+        reason: 'missing_table'
       })
     );
   });
