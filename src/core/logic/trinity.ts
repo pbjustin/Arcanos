@@ -265,7 +265,7 @@ function annotateRuntimeStageError(error: unknown, metadata: {
   timeoutMs?: number;
   recoveryFromStage?: string;
 }): void {
-  if (typeof error !== 'object' || error === null) {
+  if (typeof error !== 'object' || error === null || !Object.isExtensible(error)) {
     return;
   }
 

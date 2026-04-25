@@ -20,6 +20,13 @@ export interface DispatchIntentDecision {
 const VALID_TARGETS = new Set<DispatchTarget>(['gpt', 'dag', 'mcp', 'tool', 'auto']);
 const VALID_EXECUTION_MODES = new Set<DispatchExecutionMode>(['gpt', 'dag', 'tool', 'auto']);
 
+export const DAG_DISPATCH_CONFIDENCE_THRESHOLD = 0.85;
+const EMPTY_PROMPT_GPT_CONFIDENCE = 0.5;
+const CONTENT_OR_DIAGNOSTIC_GPT_CONFIDENCE = 0.78;
+const DAG_EXECUTION_CONFIDENCE = 0.88;
+const DAG_EXECUTION_WITH_QUALIFIER_CONFIDENCE = 0.92;
+const SAFE_DEFAULT_GPT_CONFIDENCE = 0.55;
+
 const NEGATIVE_DAG_INTENT_PATTERNS = [
   /\b(?:generate|draft|write|design|outline|describe|explain|document|propose|summarize|analyze)\b[\s\S]{0,80}\b(?:workflow|dag|orchestration|pipeline|job|trace|agent\s+process)\b/i,
   /\bcreate\b[\s\S]{0,80}\b(?:codex\s+prompt|prompt|workflow|plan)\b/i,
@@ -89,7 +96,7 @@ export function classifyDispatchIntent(input: {
   if (!prompt) {
     return {
       mode: 'gpt',
-      confidence: 0.5,
+      confidence: EMPTY_PROMPT_GPT_CONFIDENCE,
       reason: 'empty_prompt_default_gpt',
     };
   }
@@ -97,7 +104,7 @@ export function classifyDispatchIntent(input: {
   if (NEGATIVE_DAG_INTENT_PATTERNS.some((pattern) => pattern.test(prompt))) {
     return {
       mode: 'gpt',
-      confidence: 0.78,
+      confidence: CONTENT_OR_DIAGNOSTIC_GPT_CONFIDENCE,
       reason: 'content_or_diagnostic_workflow_prompt',
     };
   }
@@ -108,14 +115,16 @@ export function classifyDispatchIntent(input: {
   ) {
     return {
       mode: 'dag',
-      confidence: DAG_HIGH_CONFIDENCE_QUALIFIER_PATTERN.test(prompt) ? 0.92 : 0.88,
+      confidence: DAG_HIGH_CONFIDENCE_QUALIFIER_PATTERN.test(prompt)
+        ? DAG_EXECUTION_WITH_QUALIFIER_CONFIDENCE
+        : DAG_EXECUTION_CONFIDENCE,
       reason: 'explicit_dag_execution_intent',
     };
   }
 
   return {
     mode: 'gpt',
-    confidence: 0.55,
+    confidence: SAFE_DEFAULT_GPT_CONFIDENCE,
     reason: 'safe_default_gpt',
   };
 }

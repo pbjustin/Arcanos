@@ -6,6 +6,7 @@ import { generateRequestId } from '@shared/idGenerator.js';
 import { isRecord } from '@shared/typeGuards.js';
 import {
   classifyDispatchIntent,
+  DAG_DISPATCH_CONFIDENCE_THRESHOLD,
   isDagDispatchAction,
   normalizeDispatchAction,
   normalizeDispatchExecutionMode,
@@ -48,6 +49,24 @@ function readString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0
     ? value.trim()
     : null;
+}
+
+function readPositiveInteger(value: unknown): number | null {
+  if (typeof value === 'number') {
+    return Number.isInteger(value) && value > 0 ? value : null;
+  }
+
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) {
+    return null;
+  }
+
+  const parsed = Number(trimmed);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
 function buildGptBody(input: {
@@ -145,12 +164,12 @@ function buildDagInput(prompt: string, payload: Record<string, unknown>): Record
 
 function buildDagOptions(payload: Record<string, unknown>) {
   const explicitOptions = isRecord(payload.options) ? payload.options : {};
-  const maxConcurrency = Number(explicitOptions.maxConcurrency ?? payload.maxConcurrency);
+  const maxConcurrency = readPositiveInteger(explicitOptions.maxConcurrency ?? payload.maxConcurrency);
   const allowRecursiveSpawning = explicitOptions.allowRecursiveSpawning ?? payload.allowRecursiveSpawning;
   const debug = explicitOptions.debug ?? payload.debug;
 
   return {
-    ...(Number.isInteger(maxConcurrency) && maxConcurrency > 0
+    ...(maxConcurrency !== null
       ? { maxConcurrency }
       : {}),
     ...(typeof allowRecursiveSpawning === 'boolean'
@@ -327,7 +346,7 @@ export async function universalDispatch(req: Request, res: Response): Promise<Re
 
     if (executionMode === 'auto') {
       const decision = classifyDispatchIntent({ prompt, action, payload });
-      if (decision.mode === 'dag' && decision.confidence >= 0.85) {
+      if (decision.mode === 'dag' && decision.confidence >= DAG_DISPATCH_CONFIDENCE_THRESHOLD) {
         return runDagDispatch(req, res, {
           gptId,
           action,
