@@ -6,11 +6,11 @@ const jestArgs = [
   '--disable-warning=ExperimentalWarning',
   '--experimental-vm-modules',
   'node_modules/jest/bin/jest.js',
-  '--testPathIgnorePatterns=integration',
-  ...process.argv.slice(2),
+  ...process.argv.slice(2)
 ];
 
 const result = spawnSync(process.execPath, jestArgs, {
+  env: process.env,
   stdio: 'inherit'
 });
 

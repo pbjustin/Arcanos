@@ -19,6 +19,7 @@ import researchRouter from './research.js';
 import reinforcementRouter from './reinforcement.js';
 import bridgeRouter from './bridge.js';
 import debugConfirmationRouter from './debug-confirmation.js';
+import dispatchRouter from './dispatch.js';
 import mcpRouter from './mcp.js';
 import apiRouter from './api/index.js';
 import healthGroupRouter from './healthGroup.js';
@@ -109,6 +110,7 @@ export function registerRoutes(app: Express): void {
   app.use('/', introspectionRouter);
   app.use('/', trinityRouter);
   app.use('/', safetyRouter);
+  app.use('/', dispatchRouter);
   app.use('/', mcpRouter);
   app.use('/', jobsRouter);
   app.use('/', askRouter);

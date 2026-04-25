@@ -1019,6 +1019,20 @@ export function startSelfHealingControlLoop(app: Application): void {
   loopApp = app;
   const config = getLoopConfig();
   loopState.active = config.enabled;
+  if (
+    process.env.NODE_ENV === 'test' &&
+    process.env.ENABLE_SELF_HEAL_CONTROL_LOOP_IN_TESTS !== 'true'
+  ) {
+    loopApp = null;
+    loopState.active = false;
+    loopState.loopRunning = false;
+    logger.info('self_heal.loop.disabled_for_test', {
+      module: 'self_heal.loop',
+      reason: 'test_environment'
+    });
+    return;
+  }
+
   if (!config.enabled) {
     if (config.disabledForServiceRole) {
       logger.info('self_heal.loop.disabled_for_service_role', {

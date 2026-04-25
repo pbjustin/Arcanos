@@ -30,6 +30,7 @@ import {
 import { getMemoryContext, storePattern } from "@services/memoryAware.js";
 import { getGPT5Model } from "@services/openai.js";
 import { logger } from "@platform/logging/structuredLogging.js";
+import { getAiExecutionContext } from '@services/openai/aiExecutionContext.js';
 import type {
   TrinityResult,
   TrinityRunOptions,
@@ -204,6 +205,137 @@ function logCoreExecution(event: string, context: Record<string, unknown>): void
   });
 }
 
+function normalizeTraceString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function buildStageTracePhase(stage: string, status: 'started' | 'completed' | 'failed'): string {
+  if (stage === 'intake') {
+    return status === 'started' ? 'intake_started' : status === 'completed' ? 'intake_completed' : 'intake_failed';
+  }
+
+  if (stage === 'reasoning') {
+    return status === 'started'
+      ? 'model_request_started'
+      : status === 'completed'
+      ? 'model_response_received'
+      : 'model_request_failed';
+  }
+
+  if (stage === 'direct-answer-recovery') {
+    return status === 'started'
+      ? 'fallback_model_request_started'
+      : status === 'completed'
+      ? 'fallback_model_response_received'
+      : 'fallback_model_request_failed';
+  }
+
+  if (stage === 'model-validation' && status === 'completed') {
+    return 'gpt_config_loaded';
+  }
+
+  return `${stage}_${status}`;
+}
+
+function resolveRuntimeTimeoutPhase(error: unknown): string | undefined {
+  if (typeof error !== 'object' || error === null) {
+    return undefined;
+  }
+
+  const candidate = error as Record<string, unknown>;
+  return (
+    normalizeTraceString(candidate.timeoutPhase) ??
+    normalizeTraceString(candidate.trinityStage) ??
+    normalizeTraceString(candidate.stage)
+  );
+}
+
+function shouldEmitCoreRuntimeTrace(sourceEndpoint: string | undefined): boolean {
+  if (!sourceEndpoint) {
+    return false;
+  }
+
+  return sourceEndpoint.includes('arcanos-core') || sourceEndpoint.startsWith('api-arcanos');
+}
+
+function annotateRuntimeStageError(error: unknown, metadata: {
+  stage: string;
+  elapsedMs?: number;
+  remainingBudgetMs?: number;
+  timeoutMs?: number;
+  recoveryFromStage?: string;
+}): void {
+  if (typeof error !== 'object' || error === null || !Object.isExtensible(error)) {
+    return;
+  }
+
+  const candidate = error as Record<string, unknown>;
+  candidate.trinityStage = metadata.stage;
+  candidate.timeoutPhase = metadata.recoveryFromStage
+    ? `${metadata.recoveryFromStage}.${metadata.stage}`
+    : metadata.stage;
+  if (typeof metadata.elapsedMs === 'number') {
+    candidate.trinityStageElapsedMs = metadata.elapsedMs;
+  }
+  if (typeof metadata.remainingBudgetMs === 'number') {
+    candidate.remainingBudgetMs = metadata.remainingBudgetMs;
+  }
+  if (typeof metadata.timeoutMs === 'number') {
+    candidate.timeoutMs = metadata.timeoutMs;
+  }
+  if (metadata.recoveryFromStage) {
+    candidate.recoveryFromStage = metadata.recoveryFromStage;
+  }
+}
+
+function emitTrinityRuntimeTrace(params: {
+  requestId: string;
+  sourceEndpoint?: string;
+  stage: string;
+  phase: string;
+  startedAt: number;
+  runtimeBudget: RuntimeBudget;
+  timeoutMs?: number;
+  degradedReason?: string;
+  error?: unknown;
+  level?: 'info' | 'warn' | 'error';
+}): void {
+  const aiExecutionContext = getAiExecutionContext();
+  const sourceEndpoint = params.sourceEndpoint ?? normalizeTraceString(aiExecutionContext?.sourceName);
+  if (!shouldEmitCoreRuntimeTrace(sourceEndpoint)) {
+    return;
+  }
+
+  const payload = {
+    module: 'ARCANOS:CORE',
+    traceId: normalizeTraceString(aiExecutionContext?.traceId) ?? null,
+    requestId: params.requestId,
+    gptId: 'arcanos-core',
+    action: 'query',
+    route: 'core',
+    sourceEndpoint,
+    stage: params.stage,
+    phase: params.phase,
+    elapsedMs: Math.max(0, Date.now() - params.startedAt),
+    remainingBudgetMs: getSafeRemainingMs(params.runtimeBudget),
+    timeoutMs: typeof params.timeoutMs === 'number' ? Math.trunc(params.timeoutMs) : null,
+    degradedReason: params.degradedReason ?? null,
+    timeoutPhase: resolveRuntimeTimeoutPhase(params.error) ?? (params.level === 'warn' ? params.stage : null),
+    ...(params.error ? { error: resolveErrorMessage(params.error) } : {})
+  };
+
+  if (params.level === 'warn') {
+    logger.warn('core.runtime.trace', payload);
+    return;
+  }
+  if (params.level === 'error') {
+    logger.error('core.runtime.trace', payload);
+    return;
+  }
+
+  logger.info('core.runtime.trace', payload);
+}
+
 function resolveAuxiliaryStageTimeoutMs(
   envName: string,
   fallbackMs: number,
@@ -233,10 +365,22 @@ async function runLoggedStage<T>(params: {
   runtimeBudget: RuntimeBudget;
   operation: () => Promise<T>;
   timeoutMs?: number;
+  sourceEndpoint?: string;
 }): Promise<T> {
   const startedAt = Date.now();
+  const remainingBudgetAtStartMs = getSafeRemainingMs(params.runtimeBudget);
   logCoreExecution(`before ${params.stage}`, {
     requestId: params.requestId,
+    timeoutMs: params.timeoutMs,
+    remainingBudgetMs: remainingBudgetAtStartMs
+  });
+  emitTrinityRuntimeTrace({
+    requestId: params.requestId,
+    sourceEndpoint: params.sourceEndpoint,
+    stage: params.stage,
+    phase: buildStageTracePhase(params.stage, 'started'),
+    startedAt,
+    runtimeBudget: params.runtimeBudget,
     timeoutMs: params.timeoutMs
   });
 
@@ -254,17 +398,50 @@ async function runLoggedStage<T>(params: {
           )
         : await params.operation();
 
+    const durationMs = Date.now() - startedAt;
     logCoreExecution(`after ${params.stage}`, {
       requestId: params.requestId,
-      durationMs: Date.now() - startedAt
+      durationMs,
+      remainingBudgetMs: getSafeRemainingMs(params.runtimeBudget)
+    });
+    emitTrinityRuntimeTrace({
+      requestId: params.requestId,
+      sourceEndpoint: params.sourceEndpoint,
+      stage: params.stage,
+      phase: buildStageTracePhase(params.stage, 'completed'),
+      startedAt,
+      runtimeBudget: params.runtimeBudget,
+      timeoutMs: params.timeoutMs
     });
     return result;
   } catch (error) {
+    const durationMs = Date.now() - startedAt;
+    const remainingBudgetMs = getSafeRemainingMs(params.runtimeBudget);
+    annotateRuntimeStageError(error, {
+      stage: params.stage,
+      elapsedMs: durationMs,
+      remainingBudgetMs,
+      timeoutMs: params.timeoutMs
+    });
     logger.warn(`[core] ${params.stage} failed`, {
       module: 'ARCANOS:CORE',
       requestId: params.requestId,
-      durationMs: Date.now() - startedAt,
+      durationMs,
+      remainingBudgetMs,
+      timeoutMs: params.timeoutMs,
+      timeoutPhase: resolveRuntimeTimeoutPhase(error),
       error: resolveErrorMessage(error)
+    });
+    emitTrinityRuntimeTrace({
+      requestId: params.requestId,
+      sourceEndpoint: params.sourceEndpoint,
+      stage: params.stage,
+      phase: buildStageTracePhase(params.stage, 'failed'),
+      startedAt,
+      runtimeBudget: params.runtimeBudget,
+      timeoutMs: params.timeoutMs,
+      error,
+      level: 'warn'
     });
     throw error;
   }
@@ -701,23 +878,35 @@ export async function runThroughBrain(
             runtimeBudget
           )
         : undefined;
-      const directAnswerOutput = await runLoggedStage({
-        requestId,
-        stage: directAnswerOptions.recovery ? 'direct-answer-recovery' : 'direct-answer',
-        runtimeBudget,
-        timeoutMs: recoveryTimeoutMs,
-        operation: () =>
-          runDirectAnswerStage(
-            client,
-            memoryContext.contextSummary,
-            auditSafePrompt,
-            cognitiveDomain,
-            runtimeBudget,
-            requestId,
-            options.directAnswerModelOverride,
-            stageTimeoutOverrideMs
-          )
-      });
+      let directAnswerOutput: Awaited<ReturnType<typeof runDirectAnswerStage>>;
+      try {
+        directAnswerOutput = await runLoggedStage({
+          requestId,
+          stage: directAnswerOptions.recovery ? 'direct-answer-recovery' : 'direct-answer',
+          runtimeBudget,
+          timeoutMs: recoveryTimeoutMs,
+          sourceEndpoint: options.sourceEndpoint,
+          operation: () =>
+            runDirectAnswerStage(
+              client,
+              memoryContext.contextSummary,
+              auditSafePrompt,
+              cognitiveDomain,
+              runtimeBudget,
+              requestId,
+              options.directAnswerModelOverride,
+              stageTimeoutOverrideMs
+            )
+        });
+      } catch (error) {
+        if (directAnswerOptions.recovery) {
+          annotateRuntimeStageError(error, {
+            stage: 'direct-answer-recovery',
+            recoveryFromStage: resolveRuntimeTimeoutPhase(directAnswerOptions.recoveryError) ?? 'unknown'
+          });
+        }
+        throw error;
+      }
       checkWatchdog();
 
       const directAnswerReasoningHonesty = createDefaultTrinityReasoningHonesty();
@@ -918,6 +1107,7 @@ export async function runThroughBrain(
       requestId,
       stage: 'model-validation',
       runtimeBudget,
+      sourceEndpoint: options.sourceEndpoint,
       operation: () => validateModel(client, runtimeBudget, stageTimeoutOverrideMs)
     });
     logArcanosRouting('INTAKE', arcanosModel, `Tier: ${tier}, Input length: ${prompt.length}, Memory entries: ${memoryContext.relevantEntries.length}, AuditSafe: ${auditConfig.auditSafeMode}`);
@@ -930,6 +1120,7 @@ export async function runThroughBrain(
         requestId,
         stage: 'intake',
         runtimeBudget,
+        sourceEndpoint: options.sourceEndpoint,
         operation: () =>
           runIntakeStage(
             client,
@@ -982,6 +1173,7 @@ export async function runThroughBrain(
         requestId,
         stage: 'reasoning',
         runtimeBudget,
+        sourceEndpoint: options.sourceEndpoint,
         operation: () =>
           runReasoningStage(
             client,
@@ -1036,6 +1228,7 @@ export async function runThroughBrain(
           requestId,
           stage: 'clear-audit',
           runtimeBudget,
+          sourceEndpoint: options.sourceEndpoint,
           timeoutMs: resolveAuxiliaryStageTimeoutMs(
             'TRINITY_CLEAR_AUDIT_TIMEOUT_MS',
             DEFAULT_TRINITY_CLEAR_AUDIT_TIMEOUT_MS,
@@ -1122,6 +1315,7 @@ export async function runThroughBrain(
         requestId,
         stage: 'reflection',
         runtimeBudget,
+        sourceEndpoint: options.sourceEndpoint,
         operation: () => runReflection(client, gpt5Output, tier, runtimeBudget)
       });
       if (critique) {
@@ -1166,6 +1360,7 @@ export async function runThroughBrain(
           requestId,
           stage: 'final',
           runtimeBudget,
+          sourceEndpoint: options.sourceEndpoint,
           operation: () =>
             runFinalStage(
               client,

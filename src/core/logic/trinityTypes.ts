@@ -175,6 +175,7 @@ export interface TrinityResult {
   reasoningHonesty?: TrinityReasoningHonesty;
   pipelineDebug?: TrinityPipelineDebug;
   timeoutKind?: 'pipeline_timeout' | 'provider_timeout' | 'worker_timeout' | 'budget_abort';
+  timeoutPhase?: string;
   degradedModeReason?: string;
   bypassedSubsystems?: string[];
 }

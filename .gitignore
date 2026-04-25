@@ -17,9 +17,11 @@ src/**/*.js.map
 
 # Environment variables
 .env
+.env.test
 **/.env
 **/.env.*
 !.env.example
+!.env.test.example
 !**/*.env.example
 .env.local
 .env.development.local

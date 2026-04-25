@@ -1,5 +1,4 @@
 import { classifyRuntimeInspectionPrompt } from '@services/runtimeInspectionRoutingService.js';
-import { shouldTreatPromptAsDagExecution } from '@shared/dag/dagExecutionRouting.js';
 import { normalizeGptRequestBody } from '@shared/gpt/gptIdempotency.js';
 import {
   GPT_DIRECT_CONTROL_ACTIONS,
@@ -183,6 +182,24 @@ function readBodyMode(body: unknown): string | null {
     : null;
 }
 
+function readBodyStringField(body: unknown, key: string): string | null {
+  const normalizedBody = normalizeGptRequestBody(body);
+  if (!normalizedBody) {
+    return null;
+  }
+
+  const direct = normalizedBody[key];
+  if (typeof direct === 'string' && direct.trim().length > 0) {
+    return direct.trim().toLowerCase();
+  }
+
+  const payload = isRecord(normalizedBody.payload) ? normalizedBody.payload : null;
+  const payloadValue = payload?.[key];
+  return typeof payloadValue === 'string' && payloadValue.trim().length > 0
+    ? payloadValue.trim().toLowerCase()
+    : null;
+}
+
 function detectEmbeddedMcpAction(body: unknown): McpControlAction | null {
   const normalizedBody = normalizeGptRequestBody(body);
   if (!normalizedBody) {
@@ -218,6 +235,8 @@ export function classifyWritingPlaneInput(input: {
 }): WritingPlaneInputClassification {
   const normalizedAction = normalizeAction(input.requestedAction);
   const normalizedMode = readBodyMode(input.body);
+  const normalizedExecutionMode = readBodyStringField(input.body, 'executionMode');
+  const normalizedTarget = readBodyStringField(input.body, 'target');
   const explicitDirectControlAction = normalizeGptDirectControlAction(normalizedAction);
 
   if (normalizedAction === GPT_GET_STATUS_ACTION) {
@@ -366,40 +385,18 @@ export function classifyWritingPlaneInput(input: {
 
   const explicitDagAction =
     normalizeDagControlAction(normalizedAction) ?? detectEmbeddedDagAction(input.body);
-  if (explicitDagAction) {
+  if (explicitDagAction || normalizedExecutionMode === 'dag' || normalizedTarget === 'dag') {
     return {
       plane: 'control',
       kind: 'dag_control',
-      action: explicitDagAction,
+      action: explicitDagAction ?? normalizedAction ?? 'dag.run.create',
       reason: 'explicit_dag_control_action',
       errorCode: 'DAG_CONTROL_REQUIRES_DIRECT_ENDPOINT',
       message:
-        'DAG execution and trace retrieval must use /api/arcanos/dag/* or POST /mcp. Do not send DAG control requests through POST /gpt/{gptId}.',
+        "DAG execution must use /api/arcanos/dag/*, POST /mcp, or POST /dispatch with target='dag'.",
       canonical: {
         mcp: '/mcp',
-        dagRuns: '/api/arcanos/dag/runs/{runId}',
-        dagTrace: '/api/arcanos/dag/runs/{runId}/trace',
-      },
-    };
-  }
-
-  if (
-    isQueryLikeAction(normalizedAction) &&
-    input.promptText &&
-    shouldTreatPromptAsDagExecution(input.promptText, {
-      requireDagTokenForArtifact: true,
-    })
-  ) {
-    return {
-      plane: 'control',
-      kind: 'dag_control',
-      action: 'dag.run.create',
-      reason: 'dag_control_requires_direct_endpoint',
-      errorCode: 'DAG_CONTROL_REQUIRES_DIRECT_ENDPOINT',
-      message:
-        'DAG execution and trace retrieval must use /api/arcanos/dag/* or POST /mcp. Do not send DAG control requests through POST /gpt/{gptId}.',
-      canonical: {
-        mcp: '/mcp',
+        dispatch: '/dispatch',
         dagRuns: '/api/arcanos/dag/runs/{runId}',
         dagTrace: '/api/arcanos/dag/runs/{runId}/trace',
       },

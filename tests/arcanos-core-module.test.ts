@@ -25,6 +25,7 @@ beforeEach(async () => {
 
   jest.unstable_mockModule('@platform/resilience/runtimeBudget.js', () => ({
     createRuntimeBudgetWithLimit: mockCreateRuntimeBudget,
+    getSafeRemainingMs: jest.fn(() => 36_750),
   }));
 
   jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({
