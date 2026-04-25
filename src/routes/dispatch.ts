@@ -22,6 +22,19 @@ const router = express.Router();
 const DEFAULT_DISPATCH_GPT_ID = 'arcanos-core';
 
 type DispatchBody = Record<string, unknown>;
+type RequestLogger = {
+  error?: (message: string, meta?: Record<string, unknown>) => void;
+  info?: (message: string, meta?: Record<string, unknown>) => void;
+  warn?: (message: string, meta?: Record<string, unknown>) => void;
+};
+type DispatchRequestContext = Request & {
+  requestId?: string;
+  logger?: RequestLogger;
+};
+
+function dispatchRequestContext(req: Request): DispatchRequestContext {
+  return req as DispatchRequestContext;
+}
 
 function readDispatchBody(req: Request): DispatchBody {
   return isRecord(req.body) ? req.body : {};
@@ -66,7 +79,17 @@ function gptStatusCode(envelope: AskEnvelope): number {
     return 200;
   }
 
-  return envelope.error.code === 'UNKNOWN_GPT' ? 404 : 400;
+  const code = envelope.error.code;
+  if (code === 'UNKNOWN_GPT') {
+    return 404;
+  }
+  if (code === 'SYSTEM_STATE_CONFLICT') {
+    return 409;
+  }
+  if (code === 'MODULE_TIMEOUT') {
+    return 504;
+  }
+  return 400;
 }
 
 async function runGptDispatch(
@@ -84,11 +107,12 @@ async function runGptDispatch(
   }
 ) {
   const gptId = input.gptId ?? DEFAULT_DISPATCH_GPT_ID;
+  const requestContext = dispatchRequestContext(req);
   const envelope = await routeGptRequest({
     gptId,
     body: buildGptBody(input),
-    requestId: req.requestId,
-    logger: req.logger,
+    requestId: requestContext.requestId,
+    logger: requestContext.logger,
     request: req,
     bypassIntentRouting: true,
   });
@@ -162,6 +186,7 @@ async function runDagDispatch(
   }
 
   const dagInput = buildDagInput(input.prompt, input.payload);
+  const requestContext = dispatchRequestContext(req);
   if (Object.keys(dagInput).length === 0) {
     return res.status(400).json({
       ok: false,
@@ -176,7 +201,7 @@ async function runDagDispatch(
   const run = await arcanosDagRunService.createRun({
     sessionId:
       readString(input.payload.sessionId) ??
-      req.requestId ??
+      requestContext.requestId ??
       generateRequestId('dispatch-dag'),
     template: readString(input.payload.template) ?? TRINITY_CORE_DAG_TEMPLATE_NAME,
     input: dagInput,
@@ -317,7 +342,7 @@ export async function universalDispatch(req: Request, res: Response): Promise<Re
 
     return runGptDispatch(req, res, {
       gptId,
-      action: 'query',
+      action,
       prompt,
       payload,
       body,
@@ -327,7 +352,7 @@ export async function universalDispatch(req: Request, res: Response): Promise<Re
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    req.logger?.error?.('dispatch.universal.failed', {
+    dispatchRequestContext(req).logger?.error?.('dispatch.universal.failed', {
       target,
       gptId,
       action,
