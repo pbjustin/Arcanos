@@ -22,7 +22,10 @@ jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({
 }));
 
 jest.unstable_mockModule('@platform/resilience/runtimeBudget.js', () => ({
-  createRuntimeBudgetWithLimit: createRuntimeBudgetWithLimitMock
+  createRuntimeBudgetWithLimit: createRuntimeBudgetWithLimitMock,
+  getSafeRemainingMs: jest.fn((budget: { hardDeadline?: number; safetyBuffer?: number }) =>
+    Math.max(0, (budget.hardDeadline ?? 0) - (budget.safetyBuffer ?? 0))
+  )
 }));
 
 jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({
@@ -51,6 +54,24 @@ jest.unstable_mockModule('@services/openai/clientBridge.js', () => ({
   getOpenAIClientOrAdapter: jest.fn(() => ({ client: { mock: true } }))
 }));
 
+jest.unstable_mockModule('@services/openai/aiExecutionContext.js', () => ({
+  getAiExecutionContext: jest.fn(() => ({
+    provider: 'openai',
+    sourceType: 'route',
+    sourceName: 'gpt.arcanos-core.query',
+    requestId: 'req-ai-context',
+    traceId: 'trace-core-timeout-test',
+    totals: {
+      calls: 0,
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0
+    },
+    operationCounts: {},
+    models: {}
+  }))
+}));
+
 jest.unstable_mockModule('@services/systemState.js', () => ({
   executeSystemStateRequest: jest.fn()
 }));
@@ -63,7 +84,10 @@ jest.unstable_mockModule('@arcanos/runtime', () => ({
   isAbortError: isAbortErrorMock
 }));
 
-const { runArcanosCoreQuery } = await import('../src/services/arcanos-core.js');
+const {
+  buildArcanosCoreTimeoutFallbackEnvelope,
+  runArcanosCoreQuery
+} = await import('../src/services/arcanos-core.js');
 
 function createTrinityResult(overrides: Record<string, unknown> = {}) {
   return {
@@ -111,6 +135,39 @@ describe('runArcanosCoreQuery timeout clamp', () => {
     delete process.env.ARCANOS_CORE_DEGRADED_MAX_WORDS;
     getRequestRemainingMsMock.mockReturnValue(null);
     getRequestAbortContextMock.mockReturnValue(null);
+  });
+
+  it('returns a normal GPT result for a fast simple query without engaging fallback', async () => {
+    const trinityResult = createTrinityResult({
+      result: 'Hello.',
+      activeModel: 'gpt-4.1-mini',
+      fallbackFlag: false,
+      fallbackSummary: {
+        intakeFallbackUsed: false,
+        gpt5FallbackUsed: false,
+        finalFallbackUsed: false,
+        fallbackReasons: []
+      }
+    });
+    runWithRequestAbortTimeoutMock.mockImplementationOnce(
+      async (_options: unknown, callback: () => Promise<unknown>) => await callback()
+    );
+    runTrinityWritingPipelineMock.mockResolvedValueOnce(trinityResult);
+
+    const result = await runArcanosCoreQuery({
+      client: {} as never,
+      prompt: 'Say hello in one short sentence.',
+      sourceEndpoint: 'gpt.arcanos-core.query'
+    });
+
+    expect(result).toBe(trinityResult);
+    expect(result.degradedModeReason).toBeUndefined();
+    expect(result.timeoutKind).toBeUndefined();
+    expect(runWithRequestAbortTimeoutMock).toHaveBeenCalledTimes(1);
+    expect(loggerWarnMock).not.toHaveBeenCalledWith(
+      '[PIPELINE] static fallback engaged',
+      expect.any(Object)
+    );
   });
 
   it('recovers with a direct-answer degraded path when the shared core pipeline times out', async () => {
@@ -231,8 +288,10 @@ describe('runArcanosCoreQuery timeout clamp', () => {
     process.env.ARCANOS_CORE_PIPELINE_TIMEOUT_MS = '5000';
     const timeoutError = new Error('ARCANOS:CORE pipeline timeout after 3000ms');
     timeoutError.name = 'AbortError';
+    Object.assign(timeoutError, { timeoutPhase: 'reasoning' });
     const degradedError = new Error('Request was aborted.');
     degradedError.name = 'AbortError';
+    Object.assign(degradedError, { timeoutPhase: 'direct-answer-recovery' });
 
     runWithRequestAbortTimeoutMock
       .mockRejectedValueOnce(timeoutError)
@@ -247,11 +306,51 @@ describe('runArcanosCoreQuery timeout clamp', () => {
     expect(result).toEqual(expect.objectContaining({
       activeModel: 'arcanos-core:static-timeout-fallback',
       timeoutKind: 'pipeline_timeout',
+      timeoutPhase: 'reasoning.direct-answer-recovery',
       degradedModeReason: 'arcanos_core_pipeline_timeout_static_fallback',
       routingStages: ['ARCANOS-CORE-TIMEOUT-FALLBACK'],
       bypassedSubsystems: expect.arrayContaining(['trinity_intake', 'trinity_reasoning', 'trinity_final'])
     }));
+    expect(result.fallbackSummary.fallbackReasons).toEqual(expect.arrayContaining([
+      'Primary pipeline timed out during reasoning.direct-answer-recovery'
+    ]));
+    expect(loggerWarnMock).toHaveBeenCalledWith(
+      'core.runtime.trace',
+      expect.objectContaining({
+        traceId: 'trace-core-timeout-test',
+        gptId: 'arcanos-core',
+        action: 'query',
+        route: 'core',
+        phase: 'fallback_triggered',
+        degradedReason: 'arcanos_core_pipeline_timeout_static_fallback',
+        timeoutPhase: 'reasoning.direct-answer-recovery'
+      })
+    );
     expect(recordTraceEventMock).toHaveBeenCalledWith('core.pipeline.degraded_failure', expect.any(Object));
-    expect(recordTraceEventMock).toHaveBeenCalledWith('core.pipeline.static_fallback', expect.any(Object));
+    expect(recordTraceEventMock).toHaveBeenCalledWith('core.pipeline.static_fallback', expect.objectContaining({
+      timeoutPhase: 'reasoning.direct-answer-recovery'
+    }));
+  });
+
+  it('keeps GPT fallback route metadata authoritative in static timeout envelopes', () => {
+    const envelope = buildArcanosCoreTimeoutFallbackEnvelope({
+      prompt: 'Say hello.',
+      gptId: 'arcanos-core',
+      route: 'core',
+      requestId: 'req-timeout-envelope-1',
+      timeoutPhase: 'reasoning'
+    });
+
+    expect(envelope._route).toEqual(expect.objectContaining({
+      gptId: 'arcanos-core',
+      action: 'query',
+      route: 'core',
+      requestId: 'req-timeout-envelope-1'
+    }));
+    expect(envelope.result).toEqual(expect.objectContaining({
+      timeoutKind: 'pipeline_timeout',
+      timeoutPhase: 'reasoning',
+      degradedModeReason: 'arcanos_core_pipeline_timeout_static_fallback'
+    }));
   });
 });

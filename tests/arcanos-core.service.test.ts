@@ -24,6 +24,7 @@ jest.unstable_mockModule('@services/openai/clientBridge.js', () => ({
 
 jest.unstable_mockModule('@platform/resilience/runtimeBudget.js', () => ({
   createRuntimeBudgetWithLimit: mockCreateRuntimeBudget,
+  getSafeRemainingMs: jest.fn(() => 36_750),
 }));
 
 jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({
@@ -96,19 +97,19 @@ describe('ARCANOS:CORE service', () => {
     expect(runWithRequestAbortTimeoutMock).toHaveBeenCalledTimes(1);
     expect(runWithRequestAbortTimeoutMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        timeoutMs: 18_000,
-        abortMessage: 'ARCANOS:CORE pipeline timeout after 18000ms'
+        timeoutMs: 37_000,
+        abortMessage: 'ARCANOS:CORE pipeline timeout after 37000ms'
       }),
       expect.any(Function)
     );
-    expect(mockCreateRuntimeBudget).toHaveBeenCalledWith(18_000, 250);
+    expect(mockCreateRuntimeBudget).toHaveBeenCalledWith(37_000, 250);
     expect(loggerInfoMock).toHaveBeenCalledWith(
       '[core] handler.start',
       expect.objectContaining({
         sourceEndpoint: 'gpt.arcanos-core.query',
-        timeoutMs: 18_000,
-        totalTimeoutMs: 20_000,
-        degradedTimeoutMs: 2_000
+        timeoutMs: 37_000,
+        totalTimeoutMs: 45_000,
+        degradedTimeoutMs: 8_000
       })
     );
     expect(result).toBe(trinityResult);
@@ -127,7 +128,7 @@ describe('ARCANOS:CORE service', () => {
 
     expect(runWithRequestAbortTimeoutMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        timeoutMs: 18_000
+        timeoutMs: 37_000
       }),
       expect.any(Function)
     );

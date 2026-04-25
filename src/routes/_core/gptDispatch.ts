@@ -3,7 +3,10 @@ import getGptModuleMap, {
   validateGptRegistry,
   type GptModuleEntry
 } from "@platform/runtime/gptRouterConfig.js";
-import { buildArcanosCoreTimeoutFallbackEnvelope } from "@services/arcanos-core.js";
+import {
+  buildArcanosCoreTimeoutFallbackEnvelope,
+  resolveArcanosCoreTimeoutPhase
+} from "@services/arcanos-core.js";
 import { dispatchModuleAction, getModuleMetadata } from "../modules.js";
 import type { GptMatchMethod } from "@platform/logging/gptLogger.js";
 import { persistModuleConversation } from "@services/moduleConversationPersistence.js";
@@ -1627,11 +1630,13 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       typeof prompt === 'string' &&
       prompt.length > 0
     ) {
+      const timeoutPhase = resolveArcanosCoreTimeoutPhase(err) ?? 'module-dispatch';
       const timeoutFallback = buildArcanosCoreTimeoutFallbackEnvelope({
         prompt,
         gptId: trimmedGptId,
         requestId,
         route: activeEntry.route,
+        timeoutPhase,
       });
       recordDispatcherRoute({
         gptId: trimmedGptId,
@@ -1653,6 +1658,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         route: activeEntry.route,
         errorType: 'module_timeout_static_fallback',
         error: errorMessage,
+        timeoutPhase,
         timeoutMs,
         timeoutSource,
         durationMs: Date.now() - dispatchStartedAt,

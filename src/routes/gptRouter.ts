@@ -1,7 +1,10 @@
 import crypto from 'node:crypto';
 import express from "express";
 import { resolveGptRouting, routeGptRequest } from "./_core/gptDispatch.js";
-import { buildArcanosCoreTimeoutFallbackEnvelope } from "@services/arcanos-core.js";
+import {
+  buildArcanosCoreTimeoutFallbackEnvelope,
+  resolveArcanosCoreTimeoutPhase
+} from "@services/arcanos-core.js";
 import {
   logGptConnection,
   logGptConnectionFailed,
@@ -3409,17 +3412,20 @@ router.post("/:gptId", async (req, res, next) => {
         );
       }
       if (routeTimedOut && responseOpen && promptText && ARCANOS_CORE_GPT_IDS.has(gptId)) {
+        const timeoutPhase = resolveArcanosCoreTimeoutPhase(err) ?? 'gpt-route';
         const timeoutFallback = buildArcanosCoreTimeoutFallbackEnvelope({
           prompt: promptText,
           gptId,
           requestId,
-          route: 'core'
+          route: 'core',
+          timeoutPhase
         });
         applyAIDegradedResponseHeaders(res, extractAIDegradedResponseMetadata(timeoutFallback.result));
         req.logger?.warn?.('gpt.request.timeout_fallback', {
           endpoint: req.originalUrl,
           gptId,
           errorType: 'route_timeout_static_fallback',
+          timeoutPhase,
           timeoutMs: routeTimeoutMs,
           error: errorMessage,
         });
