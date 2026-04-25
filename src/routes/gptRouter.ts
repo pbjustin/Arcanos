@@ -36,7 +36,6 @@ import {
   recordGptRouteDecision,
   recordUnknownGpt
 } from '@platform/observability/appMetrics.js';
-import { shouldTreatPromptAsDagExecution } from '@shared/dag/dagExecutionRouting.js';
 import {
   IdempotencyKeyConflictError,
   JobRepositoryUnavailableError,
@@ -514,14 +513,6 @@ function buildGptRequestMetaLog(input: {
     promptLikeFields,
     messageCount: Array.isArray(bodyRecord?.messages) ? bodyRecord.messages.length : 0
   };
-}
-
-function shouldUseDagExecutionTimeoutProfile(prompt: string | null): boolean {
-  if (!prompt || !hasDagOrchestrationIntentCue(prompt)) {
-    return false;
-  }
-
-  return shouldTreatPromptAsDagExecution(prompt);
 }
 
 function resolveBodyGptId(body: unknown): string | null {
@@ -1746,9 +1737,7 @@ router.post("/:gptId", async (req, res, next) => {
   const bypassIntentRouting = queryRequested || queryAndWaitRequested;
   const asyncBridgeAction = resolveAsyncBridgeAction(queryAndWaitRequested);
   const promptText = extractPromptText(req.body);
-  const routeTimeoutProfile = shouldUseDagExecutionTimeoutProfile(promptText)
-    ? 'dag_execution'
-    : 'default';
+  const routeTimeoutProfile = 'default';
   const explicitAsyncWaitForResultMs = readRequestedAsyncGptWaitForResultMs(req, req.body);
   const explicitAsyncPollIntervalMs = readRequestedAsyncGptPollIntervalMs(req, req.body);
   const queryAndWaitRequestedTimeoutMs =

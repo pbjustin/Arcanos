@@ -188,29 +188,35 @@ describe('routeGptRequest write-plane guard', () => {
     expect(mockDispatchModuleAction).not.toHaveBeenCalled();
   });
 
-  it('rejects DAG execution prompts before they hit the write plane', async () => {
+  it('keeps workflow-like query prompts on the requested GPT write plane', async () => {
     const envelope = await routeGptRequest({
       gptId: 'arcanos-core',
       body: {
-        message: 'trigger a real DAG run and trace it live',
+        action: 'query',
+        message: 'Generate a phased workflow: inventory, classify, refactor, verify, report.',
       },
       requestId: 'req-dag-1',
     });
 
+    expect(mockDispatchModuleAction).toHaveBeenCalledWith(
+      'ARCANOS:CORE',
+      'query',
+      expect.objectContaining({
+        message: 'Generate a phased workflow: inventory, classify, refactor, verify, report.',
+        prompt: 'Generate a phased workflow: inventory, classify, refactor, verify, report.',
+      })
+    );
     expect(envelope).toEqual(
       expect.objectContaining({
-        ok: false,
-        error: expect.objectContaining({
-          code: 'DAG_CONTROL_REQUIRES_DIRECT_ENDPOINT',
-        }),
+        ok: true,
         _route: expect.objectContaining({
-          route: 'write_guard',
-          action: 'dag.run.create',
+          gptId: 'arcanos-core',
+          action: 'query',
+          route: 'core',
         }),
       })
     );
     expect(mockTryExecuteDeterministicDagTools).not.toHaveBeenCalled();
-    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
   });
 
   it('rejects leaked direct control actions inside the write dispatcher', async () => {

@@ -540,6 +540,7 @@ describe('gpt router auth logging', () => {
   });
 
   it('maps route-level timeout aborts onto bounded ARCANOS fallback envelopes', async () => {
+    process.env.GPT_ROUTE_HARD_TIMEOUT_MS = '6000';
     const abortError = new Error('GPT route timeout after 6000ms');
     abortError.name = 'AbortError';
     mockRouteGptRequest.mockRejectedValue(abortError);
@@ -638,7 +639,19 @@ describe('gpt router auth logging', () => {
     );
   });
 
-  it('rejects DAG control prompts before dispatching to the write plane', async () => {
+  it('keeps workflow-like query prompts on the canonical GPT route', async () => {
+    mockRouteGptRequest.mockResolvedValue({
+      ok: true,
+      result: { handledBy: 'module-dispatch' },
+      _route: {
+        gptId: 'arcanos-core',
+        module: 'ARCANOS:CORE',
+        route: 'core',
+        action: 'query',
+        availableActions: ['query'],
+      },
+    });
+
     const app = express();
     app.use(express.json());
     app.use(requestContext);
@@ -646,31 +659,31 @@ describe('gpt router auth logging', () => {
 
     const response = await request(app)
       .post('/gpt/arcanos-core')
-      .send({ prompt: 'trigger a real DAG run and trace it live', executionMode: 'sync' });
+      .send({
+        action: 'query',
+        prompt: 'Generate a phased workflow: inventory, classify, refactor, verify, report.',
+      });
 
-    expect(response.status).toBe(400);
+    expect(response.status).toBe(200);
     expect(response.body).toEqual(expect.objectContaining({
-      ok: false,
-      gptId: 'arcanos-core',
-      action: 'dag.run.create',
-      route: '/gpt/:gptId',
-      traceId: expect.any(String),
-      error: {
-        code: 'DAG_CONTROL_REQUIRES_DIRECT_ENDPOINT',
-        message: 'DAG execution and trace retrieval must use /api/arcanos/dag/* or POST /mcp. Do not send DAG control requests through POST /gpt/{gptId}.',
-      },
-      canonical: {
-        mcp: '/mcp',
-        dagRuns: '/api/arcanos/dag/runs/{runId}',
-        dagTrace: '/api/arcanos/dag/runs/{runId}/trace',
-      },
+      ok: true,
       _route: expect.objectContaining({
         gptId: 'arcanos-core',
-        route: 'control_guard',
-        action: 'dag.run.create',
+        route: 'core',
+        action: 'query',
       }),
     }));
-    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+    expect(JSON.parse(response.body.result)).toEqual({ handledBy: 'module-dispatch' });
+    expect(mockRouteGptRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        gptId: 'arcanos-core',
+        body: expect.objectContaining({
+          action: 'query',
+          prompt: 'Generate a phased workflow: inventory, classify, refactor, verify, report.',
+        }),
+        bypassIntentRouting: true,
+      })
+    );
   });
 
   it('rejects explicit embedded DAG control actions before dispatching to the write plane', async () => {
@@ -697,10 +710,11 @@ describe('gpt router auth logging', () => {
       traceId: expect.any(String),
       error: {
         code: 'DAG_CONTROL_REQUIRES_DIRECT_ENDPOINT',
-        message: 'DAG execution and trace retrieval must use /api/arcanos/dag/* or POST /mcp. Do not send DAG control requests through POST /gpt/{gptId}.',
+        message: "DAG execution must use /api/arcanos/dag/*, POST /mcp, or POST /dispatch with target='dag'.",
       },
       canonical: {
         mcp: '/mcp',
+        dispatch: '/dispatch',
         dagRuns: '/api/arcanos/dag/runs/{runId}',
         dagTrace: '/api/arcanos/dag/runs/{runId}/trace',
       },

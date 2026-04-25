@@ -265,36 +265,60 @@ describe('runTrinityWritingPipeline', () => {
     );
   });
 
-  it('rejects DAG control prompts before the Trinity engine executes', async () => {
-    await expect(
-      runTrinityWritingPipeline({
-        input: {
-          prompt: 'trigger a real DAG run and trace it live',
-          sourceEndpoint: 'write',
-          body: {
-            prompt: 'trigger a real DAG run and trace it live'
-          }
-        },
-        context: {
-          client: {} as never,
-          requestId: 'req-dag-leak-1'
+  it('treats DAG-like prompt text as writing content unless DAG execution is explicit', async () => {
+    const trinityResult = {
+      result: 'DAG guidance content',
+      module: 'trinity',
+      meta: { id: 'resp-dag-content', created: Date.now() },
+      activeModel: 'gpt-5.1',
+      fallbackFlag: false,
+      dryRun: false,
+      fallbackSummary: {
+        intakeFallbackUsed: false,
+        gpt5FallbackUsed: false,
+        finalFallbackUsed: false,
+        fallbackReasons: []
+      },
+      auditSafe: {
+        mode: true,
+        overrideUsed: false,
+        auditFlags: [],
+        processedSafely: true
+      },
+      memoryContext: {
+        entriesAccessed: 0,
+        contextSummary: '',
+        memoryEnhanced: false,
+        maxRelevanceScore: 0,
+        averageRelevanceScore: 0
+      },
+      taskLineage: {
+        requestId: 'req-dag-content-1',
+        logged: true
+      }
+    };
+    runThroughBrainMock.mockResolvedValue(trinityResult);
+
+    const result = await runTrinityWritingPipeline({
+      input: {
+        prompt: 'Generate a phased workflow: inventory, classify, refactor, verify, report.',
+        sourceEndpoint: 'write',
+        body: {
+          prompt: 'Generate a phased workflow: inventory, classify, refactor, verify, report.'
         }
-      })
-    ).rejects.toMatchObject({
-      name: 'TrinityControlLeakError',
-      classification: expect.objectContaining({
-        kind: 'dag_control'
-      })
+      },
+      context: {
+        client: {} as never,
+        requestId: 'req-dag-content-1'
+      }
     });
 
-    expect(runThroughBrainMock).not.toHaveBeenCalled();
-    expect(loggerErrorMock).toHaveBeenCalledWith(
+    expect(result).toBe(trinityResult);
+    expect(runThroughBrainMock).toHaveBeenCalledTimes(1);
+    expect(loggerErrorMock).not.toHaveBeenCalledWith(
       'trinity.control_leak_detected',
       expect.objectContaining({
-        requestId: 'req-dag-leak-1',
-        sourceEndpoint: 'write',
-        classification: 'dag_control',
-        action: 'dag.run.create'
+        classification: 'dag_control'
       })
     );
   });
