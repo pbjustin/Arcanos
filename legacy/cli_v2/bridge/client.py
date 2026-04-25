@@ -1,3 +1,5 @@
+import json
+
 import requests
 from .contracts import AnalysisRequest, RawBackendResponse
 
@@ -9,6 +11,42 @@ class BackendClient:
     def __init__(self, runtime):
         self.runtime = runtime
         self.base_url = runtime.backend_url
+
+    @staticmethod
+    def _parse_response_body(response):
+        text = response.text
+        if not text:
+            return None
+
+        try:
+            return response.json()
+        except ValueError:
+            return text
+
+    @staticmethod
+    def _format_body_for_message(body):
+        if body is None:
+            return "<empty response body>"
+        if isinstance(body, str):
+            return body
+        try:
+            return json.dumps(body, separators=(",", ":"))
+        except TypeError:
+            return str(body)
+
+    def _degraded_response(self, message: str, *, status=None, url=None, body=None):
+        self.runtime.mode = "DEGRADED"
+        meta = {
+            "status": status,
+            "url": url,
+            "body": body,
+        }
+
+        return RawBackendResponse(
+            result=message,
+            contract_version=self.EXPECTED_CONTRACT_VERSION,
+            meta={key: value for key, value in meta.items() if value is not None},
+        )
 
     def analyze(self, context_payload: dict, artifacts: list):
         """
@@ -38,8 +76,39 @@ class BackendClient:
                 timeout=60,
             )
 
-            response.raise_for_status()
-            parsed = RawBackendResponse(**response.json())
+            body = self._parse_response_body(response)
+            if response.status_code >= 400:
+                formatted_body = self._format_body_for_message(body)
+                message = (
+                    f"Backend request failed with HTTP {response.status_code}: "
+                    f"{formatted_body}"
+                )
+                print(
+                    f"[ERROR][{self.runtime.trace_id}] {message}; entering DEGRADED mode"
+                )
+                return self._degraded_response(
+                    message,
+                    status=response.status_code,
+                    url=response.url,
+                    body=body,
+                )
+
+            if not isinstance(body, dict):
+                message = (
+                    "Backend request returned a non-JSON or non-object JSON response: "
+                    f"{self._format_body_for_message(body)}"
+                )
+                print(
+                    f"[ERROR][{self.runtime.trace_id}] {message}; entering DEGRADED mode"
+                )
+                return self._degraded_response(
+                    message,
+                    status=response.status_code,
+                    url=response.url,
+                    body=body,
+                )
+
+            parsed = RawBackendResponse(**body)
 
             if (
                 parsed.contract_version
@@ -58,9 +127,6 @@ class BackendClient:
             print(
                 f"[ERROR][{self.runtime.trace_id}] Backend request failed, entering DEGRADED mode: {error}"
             )
-            self.runtime.mode = "DEGRADED"
-
-            return RawBackendResponse(
-                result="? Backend unavailable. Running in DEGRADED mode.",
-                contract_version=self.EXPECTED_CONTRACT_VERSION,
+            return self._degraded_response(
+                "? Backend unavailable. Running in DEGRADED mode."
             )

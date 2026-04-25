@@ -21,7 +21,6 @@ import {
 } from '@shared/http/aiDegradedHeaders.js';
 import { resolveGptRouteHardTimeoutMs } from '@shared/http/gptRouteTimeout.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
-import { getDiagnosticsSnapshot } from '@core/diagnostics.js';
 import {
   createAbortError,
   isAbortError,
@@ -114,9 +113,18 @@ import { executeFastGptPrompt } from '@services/gptFastPath.js';
 import { executeRuntimeInspection } from '@services/runtimeInspectionRoutingService.js';
 import { getWorkerControlStatus } from '@services/workerControlService.js';
 import { buildSafetySelfHealSnapshot } from '@services/selfHealRuntimeInspectionService.js';
+import { getConfig } from '@platform/runtime/unifiedConfig.js';
 
 const router = express.Router();
 const ARCANOS_CORE_GPT_IDS = new Set(['arcanos-core', 'core', 'arcanos-daemon']);
+const GPT_DISPATCHER_ROUTE = '/gpt/:gptId';
+const GPT_DISPATCHER_ACTIONS = [
+  GPT_QUERY_ACTION,
+  GPT_QUERY_AND_WAIT_ACTION,
+  'diagnostics',
+  GPT_GET_STATUS_ACTION,
+  GPT_GET_RESULT_ACTION
+] as const;
 const DEFAULT_GPT_ASYNC_HEAVY_PROMPT_CHARS = 1_200;
 const DEFAULT_GPT_ASYNC_HEAVY_MESSAGE_COUNT = 8;
 const DEFAULT_GPT_ASYNC_HEAVY_MAX_WORDS = 700;
@@ -143,6 +151,208 @@ type GptExecutionPlan = {
 };
 
 type GptJobLookupAction = typeof GPT_GET_STATUS_ACTION | typeof GPT_GET_RESULT_ACTION;
+
+const OPENAI_KEY_PLACEHOLDERS = new Set([
+  '',
+  'your-openai-api-key-here',
+  'your-openai-key-here',
+  'mock-api-key',
+  'sk-mock-for-ci-testing'
+]);
+
+const ARCANOS_MODEL_ENV_KEYS = [
+  'FINETUNED_MODEL_ID',
+  'FINE_TUNED_MODEL_ID',
+  'ARCANOS_FINE_TUNE',
+  'ARCANOS_MODEL',
+  'AI_MODEL',
+  'OPENAI_MODEL',
+  'RAILWAY_OPENAI_MODEL'
+] as const;
+
+function resolveDispatcherTraceId(req: express.Request, requestId: string | undefined): string {
+  const traceId = typeof req.traceId === 'string' && req.traceId.trim().length > 0
+    ? req.traceId.trim()
+    : '';
+  if (traceId) {
+    return traceId;
+  }
+
+  const fallbackRequestId = typeof requestId === 'string' && requestId.trim().length > 0
+    ? requestId.trim()
+    : '';
+  return fallbackRequestId || crypto.randomUUID();
+}
+
+function isConfiguredOpenAIKey(value: string | undefined): boolean {
+  const trimmed = value?.trim() ?? '';
+  return trimmed.length > 0 &&
+    !OPENAI_KEY_PLACEHOLDERS.has(trimmed) &&
+    !trimmed.startsWith('sk-mock-');
+}
+
+function hasConfiguredOpenAIKey(): boolean {
+  return isConfiguredOpenAIKey(getConfig().openaiApiKey);
+}
+
+function getConfiguredArcanosModelEnvValue(): string | null {
+  for (const envKey of ARCANOS_MODEL_ENV_KEYS) {
+    const value = process.env[envKey]?.trim();
+    if (value) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+function isArcanosModelIdentifier(model: string | null | undefined): boolean {
+  const normalized = model?.trim().toLowerCase() ?? '';
+  return normalized.length > 0 &&
+    (normalized.includes('arcanos') || normalized.startsWith('ft:'));
+}
+
+function buildDispatcherEnvStatus() {
+  const config = getConfig();
+  const configuredModel = getConfiguredArcanosModelEnvValue();
+  const model = config.defaultModel || configuredModel || '';
+  return {
+    hasOpenAIKey: hasConfiguredOpenAIKey(),
+    hasArcanosModel: isArcanosModelIdentifier(configuredModel ?? model),
+    model,
+    nodeEnv: config.nodeEnv
+  };
+}
+
+function logGptDispatcherOutcome(params: {
+  req: express.Request;
+  traceId: string;
+  gptId: string;
+  action: string;
+  status: number;
+  error?: {
+    name?: string;
+    message?: string;
+  };
+}): void {
+  const payload = {
+    traceId: params.traceId,
+    route: GPT_DISPATCHER_ROUTE,
+    action: params.action,
+    gptId: params.gptId,
+    status: params.status,
+    ...(params.error
+      ? {
+          errorName: params.error.name ?? 'Error',
+          errorMessage: params.error.message ?? ''
+        }
+      : {})
+  };
+
+  if (params.status >= 500) {
+    params.req.logger?.error('gpt.dispatcher.response', payload);
+  } else if (params.status >= 400) {
+    params.req.logger?.warn('gpt.dispatcher.response', payload);
+  } else {
+    params.req.logger?.info('gpt.dispatcher.response', payload);
+  }
+}
+
+function buildDispatcherRouteMeta(params: {
+  requestId: string | undefined;
+  traceId: string;
+  gptId: string;
+  action: string;
+  route: string;
+}) {
+  return {
+    requestId: params.requestId,
+    traceId: params.traceId,
+    gptId: params.gptId,
+    action: params.action,
+    route: params.route,
+    timestamp: new Date().toISOString()
+  };
+}
+
+function buildGptDispatcherErrorPayload(params: {
+  requestId: string | undefined;
+  traceId: string;
+  gptId: string;
+  action: string;
+  code: string;
+  message: string;
+  route?: string;
+  details?: Record<string, unknown>;
+}) {
+  return {
+    ok: false,
+    gptId: params.gptId,
+    action: params.action,
+    route: GPT_DISPATCHER_ROUTE,
+    traceId: params.traceId,
+    error: {
+      code: params.code,
+      message: params.message,
+      ...(params.details ? { details: params.details } : {})
+    },
+    _route: buildDispatcherRouteMeta({
+      requestId: params.requestId,
+      traceId: params.traceId,
+      gptId: params.gptId,
+      action: params.action,
+      route: params.route ?? 'dispatcher'
+    })
+  };
+}
+
+function buildGptDispatcherDiagnosticsPayload(params: {
+  requestId: string | undefined;
+  traceId: string;
+  gptId: string;
+}) {
+  return {
+    ok: true,
+    gptId: params.gptId,
+    route: GPT_DISPATCHER_ROUTE,
+    actions: [...GPT_DISPATCHER_ACTIONS],
+    env: buildDispatcherEnvStatus(),
+    traceId: params.traceId,
+    _route: buildDispatcherRouteMeta({
+      requestId: params.requestId,
+      traceId: params.traceId,
+      gptId: params.gptId,
+      action: 'diagnostics',
+      route: 'diagnostics'
+    })
+  };
+}
+
+function extractDispatcherResultText(result: unknown): string {
+  if (typeof result === 'string') {
+    return result.trim();
+  }
+
+  if (result && typeof result === 'object' && !Array.isArray(result)) {
+    const record = result as Record<string, unknown>;
+    const textCandidate =
+      record.result ??
+      record.outputText ??
+      record.output_text ??
+      record.text ??
+      record.answer ??
+      record.content;
+    if (typeof textCandidate === 'string' && textCandidate.trim().length > 0) {
+      return textCandidate.trim();
+    }
+  }
+
+  try {
+    return JSON.stringify(result);
+  } catch {
+    return String(result ?? '');
+  }
+}
 
 function readActionAlias(record: Record<string, unknown>): string | null {
   const actionValue = record.action;
@@ -704,6 +914,30 @@ function resolveGptExecutionPlan(params: {
   }
 
   if (params.requestedAction === GPT_QUERY_ACTION) {
+    if (ARCANOS_CORE_GPT_IDS.has(params.gptId)) {
+      if (shouldDefaultCoreQueriesToAsync(params.gptId, params.requestedAction)) {
+        return {
+          mode: 'async',
+          reason: 'explicit_query_action',
+          promptLength,
+          messageCount,
+          answerMode,
+          maxWords,
+          heavyPrompt
+        };
+      }
+
+      return {
+        mode: 'sync',
+        reason: 'explicit_core_query_action',
+        promptLength,
+        messageCount,
+        answerMode,
+        maxWords,
+        heavyPrompt: false
+      };
+    }
+
     return {
       mode: 'async',
       reason: 'explicit_query_action',
@@ -813,7 +1047,9 @@ function normalizeQueryAndWaitBody(
 
   const normalizedQueryBody = { ...normalizedBody };
   delete normalizedQueryBody.action;
-  normalizedQueryBody.executionMode = 'async';
+  if (readBooleanEnv('GPT_ROUTE_ASYNC_CORE_DEFAULT', false)) {
+    normalizedQueryBody.executionMode = 'async';
+  }
   return normalizedQueryBody;
 }
 
@@ -855,6 +1091,36 @@ function buildJobLookupRouteMeta(params: {
     route: params.route,
     timestamp: new Date().toISOString()
   };
+}
+
+function isInvalidJobIdentifierLookupError(error: unknown): boolean {
+  const message = resolveErrorMessage(error).toLowerCase();
+  return message.includes('invalid input syntax for type uuid') ||
+    message.includes('invalid uuid') ||
+    (message.includes('uuid') && message.includes('invalid'));
+}
+
+async function getJobByIdForGptLookup(
+  jobId: string
+): Promise<
+  | { ok: true; job: Awaited<ReturnType<typeof getJobById>> }
+  | { ok: false; error: string }
+> {
+  try {
+    return {
+      ok: true,
+      job: await getJobById(jobId)
+    };
+  } catch (error) {
+    if (isInvalidJobIdentifierLookupError(error)) {
+      return {
+        ok: false,
+        error: 'payload.jobId is not a valid job identifier.'
+      };
+    }
+
+    throw error;
+  }
 }
 
 function buildDirectControlRouteMeta(params: {
@@ -974,52 +1240,67 @@ async function dispatchDirectControlAction(params: {
   }
 
   if (params.action === 'diagnostics') {
-    const diagnostics = await getDiagnosticsSnapshot(params.req.app);
+    const traceId = resolveDispatcherTraceId(params.req, params.requestId);
+    if (!ARCANOS_CORE_GPT_IDS.has(params.gptId)) {
+      const errorPayload = buildGptDispatcherErrorPayload({
+        requestId: params.requestId,
+        traceId,
+        gptId: params.gptId,
+        action: 'diagnostics',
+        code: 'UNKNOWN_GPT',
+        message: `gptId '${params.gptId}' is not registered for the ARCANOS GPT dispatcher.`,
+        route: 'diagnostics'
+      });
+      logGptDispatcherOutcome({
+        req: params.req,
+        traceId,
+        gptId: params.gptId,
+        action: 'diagnostics',
+        status: 404,
+        error: {
+          name: 'UNKNOWN_GPT',
+          message: errorPayload.error.message
+        }
+      });
+      return {
+        kind: 'guarded',
+        statusCode: 404,
+        logEvent: 'gpt.response.dispatcher_unknown_gpt',
+        payload: errorPayload
+      };
+    }
+
+    const diagnosticsPayload = buildGptDispatcherDiagnosticsPayload({
+      requestId: params.requestId,
+      traceId,
+      gptId: params.gptId
+    });
     params.logger?.info?.('gpt.request.diagnostics', {
       endpoint: params.req.originalUrl,
       gptId: params.gptId,
-      internal: true,
-      registeredGpts: Array.isArray(diagnostics.registered_gpts)
-        ? diagnostics.registered_gpts.length
-        : diagnostics.registered_gpts,
-      routeCount: Array.isArray(diagnostics.active_routes)
-        ? diagnostics.active_routes.length
-        : diagnostics.active_routes
+      traceId,
+      route: GPT_DISPATCHER_ROUTE,
+      actions: GPT_DISPATCHER_ACTIONS.length,
+      hasOpenAIKey: diagnosticsPayload.env.hasOpenAIKey,
+      hasArcanosModel: diagnosticsPayload.env.hasArcanosModel
     });
     recordGptRequestEvent({
       event: 'control_direct',
       source: 'diagnostics'
     });
-
-    const diagnosticsSerializationStartedAt = Date.now();
-    const diagnosticsPayload = prepareBoundedClientJsonPayload(
-      diagnostics as unknown as Record<string, unknown>,
-      {
-        logger: (params.req as any).logger,
-        logEvent: 'gpt.response.diagnostics'
-      }
-    );
-    params.logger?.info?.('gpt.response.serialization', {
-      endpoint: params.req.originalUrl,
+    logGptDispatcherOutcome({
+      req: params.req,
+      traceId,
       gptId: params.gptId,
       action: 'diagnostics',
-      serializationMs: Date.now() - diagnosticsSerializationStartedAt,
-      responseBytes: diagnosticsPayload.responseBytes,
-      truncated: diagnosticsPayload.truncated,
+      status: 200
     });
 
-    const headers: Record<string, string> = {
-      'x-response-bytes': String(diagnosticsPayload.responseBytes)
-    };
-    if (diagnosticsPayload.truncated) {
-      headers['x-response-truncated'] = 'true';
-    }
-
     return {
-      kind: 'prepared',
+      kind: 'guarded',
       statusCode: 200,
-      payload: diagnosticsPayload.payload,
-      headers,
+      logEvent: 'gpt.response.dispatcher_diagnostics',
+      payload: diagnosticsPayload,
     };
   }
 
@@ -1484,6 +1765,7 @@ router.post("/:gptId", async (req, res, next) => {
       : {})
   });
   const requestId = (req as any).requestId;
+  const traceId = resolveDispatcherTraceId(req, requestId);
   let queuedJobId: string | null = null;
   let queuedPendingResponse:
     | ReturnType<typeof buildQueuedGptPendingResponse>
@@ -1547,24 +1829,49 @@ router.post("/:gptId", async (req, res, next) => {
           priorityQueueConfigured
         });
 
-        if (bodyGptId) {
+        if (bodyGptId && bodyGptId !== incomingGptId) {
           requestLogger?.warn?.('gpt.request.invalid_body_gpt_id', {
             endpoint: req.originalUrl,
             pathGptId: incomingGptId,
-            bodyGptId
+            bodyGptId,
+            traceId
           });
-          return sendGuardedGptJsonResponse(req, res, {
-            ok: false,
+          const errorPayload = buildGptDispatcherErrorPayload({
+            requestId,
+            traceId,
+            gptId: incomingGptId,
+            action: requestedAction ?? GPT_QUERY_ACTION,
+            code: 'BODY_GPT_ID_FORBIDDEN',
+            message: 'body gptId must match the /gpt/{gptId} path parameter.',
+            route: 'body_gpt_id_guard'
+          });
+          logGptDispatcherOutcome({
+            req,
+            traceId,
+            gptId: incomingGptId,
+            action: requestedAction ?? GPT_QUERY_ACTION,
+            status: 400,
             error: {
-              code: 'BODY_GPT_ID_FORBIDDEN',
-              message: 'gptId must be supplied by the /gpt/{gptId} path only.'
-            },
-            _route: {
-              requestId,
-              gptId: incomingGptId,
-              timestamp: new Date().toISOString()
+              name: 'BODY_GPT_ID_FORBIDDEN',
+              message: errorPayload.error.message
             }
-          }, 'gpt.response.body_gpt_id_forbidden', 400);
+          });
+          return sendGuardedGptJsonResponse(
+            req,
+            res,
+            errorPayload,
+            'gpt.response.body_gpt_id_forbidden',
+            400
+          );
+        }
+
+        if (bodyGptId) {
+          requestLogger?.info?.('gpt.request.body_gpt_id_accepted', {
+            endpoint: req.originalUrl,
+            pathGptId: incomingGptId,
+            bodyGptId,
+            traceId
+          });
         }
 
         requestLogger?.info?.("gpt.request.auth_state", {
@@ -1605,69 +1912,143 @@ router.post("/:gptId", async (req, res, next) => {
             endpoint: req.originalUrl,
             gptId: incomingGptId,
             requestId,
-            bodyType: typeof req.body
+            bodyType: typeof req.body,
+            traceId
           });
-          return sendGuardedGptJsonResponse(req, res, {
-            ok: false,
+          const errorPayload = buildGptDispatcherErrorPayload({
+            requestId,
+            traceId,
+            gptId: incomingGptId,
             action: GPT_QUERY_AND_WAIT_ACTION,
+            code: 'BAD_REQUEST',
+            message: 'query_and_wait requires a JSON object request body.',
+            route: 'validation'
+          });
+          logGptDispatcherOutcome({
+            req,
+            traceId,
+            gptId: incomingGptId,
+            action: GPT_QUERY_AND_WAIT_ACTION,
+            status: 400,
             error: {
-              code: 'BAD_REQUEST',
-              message: 'query_and_wait requires a JSON object request body.'
-            },
-            _route: {
-              requestId,
-              gptId: incomingGptId,
-              action: GPT_QUERY_AND_WAIT_ACTION,
-              route: 'async',
-              timestamp: new Date().toISOString()
+              name: 'BAD_REQUEST',
+              message: errorPayload.error.message
             }
-          }, 'gpt.response.query_and_wait_invalid_body', 400);
+          });
+          return sendGuardedGptJsonResponse(
+            req,
+            res,
+            errorPayload,
+            'gpt.response.query_and_wait_invalid_body',
+            400
+          );
         }
 
         if (queryRequested && !promptText) {
           requestLogger?.warn?.('integration.job.query_missing_prompt', {
             endpoint: req.originalUrl,
             gptId: incomingGptId,
-            requestId
+            requestId,
+            traceId
           });
-          return sendGuardedGptJsonResponse(req, res, {
-            ok: false,
+          const errorPayload = buildGptDispatcherErrorPayload({
+            requestId,
+            traceId,
+            gptId: incomingGptId,
             action: GPT_QUERY_ACTION,
+            code: 'PROMPT_REQUIRED',
+            message: 'query requires a non-empty prompt.',
+            route: 'validation'
+          });
+          logGptDispatcherOutcome({
+            req,
+            traceId,
+            gptId: incomingGptId,
+            action: GPT_QUERY_ACTION,
+            status: 400,
             error: {
-              code: 'PROMPT_REQUIRED',
-              message: 'query requires a non-empty prompt.'
-            },
-            _route: {
-              requestId,
-              gptId: incomingGptId,
-              action: GPT_QUERY_ACTION,
-              route: 'async',
-              timestamp: new Date().toISOString()
+              name: 'PROMPT_REQUIRED',
+              message: errorPayload.error.message
             }
-          }, 'gpt.response.query_prompt_required', 400);
+          });
+          return sendGuardedGptJsonResponse(
+            req,
+            res,
+            errorPayload,
+            'gpt.response.query_prompt_required',
+            400
+          );
         }
 
         if (queryAndWaitRequested && !promptText) {
           requestLogger?.warn?.('integration.job.query_and_wait_missing_prompt', {
             endpoint: req.originalUrl,
             gptId: incomingGptId,
-            requestId
+            requestId,
+            traceId
           });
-          return sendGuardedGptJsonResponse(req, res, {
-            ok: false,
+          const errorPayload = buildGptDispatcherErrorPayload({
+            requestId,
+            traceId,
+            gptId: incomingGptId,
             action: GPT_QUERY_AND_WAIT_ACTION,
+            code: 'PROMPT_REQUIRED',
+            message: 'query_and_wait requires a non-empty prompt.',
+            route: 'validation'
+          });
+          logGptDispatcherOutcome({
+            req,
+            traceId,
+            gptId: incomingGptId,
+            action: GPT_QUERY_AND_WAIT_ACTION,
+            status: 400,
             error: {
-              code: 'PROMPT_REQUIRED',
-              message: 'query_and_wait requires a non-empty prompt.'
-            },
-            _route: {
-              requestId,
-              gptId: incomingGptId,
-              action: GPT_QUERY_AND_WAIT_ACTION,
-              route: 'async',
-              timestamp: new Date().toISOString()
+              name: 'PROMPT_REQUIRED',
+              message: errorPayload.error.message
             }
-          }, 'gpt.response.query_and_wait_prompt_required', 400);
+          });
+          return sendGuardedGptJsonResponse(
+            req,
+            res,
+            errorPayload,
+            'gpt.response.query_and_wait_prompt_required',
+            400
+          );
+        }
+
+        if (
+          (queryRequested || queryAndWaitRequested) &&
+          process.env.NODE_ENV !== 'test' &&
+          !hasConfiguredOpenAIKey()
+        ) {
+          const action = queryAndWaitRequested ? GPT_QUERY_AND_WAIT_ACTION : GPT_QUERY_ACTION;
+          const errorPayload = buildGptDispatcherErrorPayload({
+            requestId,
+            traceId,
+            gptId: incomingGptId,
+            action,
+            code: 'OPENAI_API_KEY_MISSING',
+            message: 'OPENAI_API_KEY is required for GPT query actions.',
+            route: 'configuration'
+          });
+          logGptDispatcherOutcome({
+            req,
+            traceId,
+            gptId: incomingGptId,
+            action,
+            status: 503,
+            error: {
+              name: 'OPENAI_API_KEY_MISSING',
+              message: errorPayload.error.message
+            }
+          });
+          return sendGuardedGptJsonResponse(
+            req,
+            res,
+            errorPayload,
+            'gpt.response.openai_api_key_missing',
+            503
+          );
         }
 
         const planeClassification = classifyGptRequestPlane({
@@ -1721,25 +2102,39 @@ router.post("/:gptId", async (req, res, next) => {
             });
           }
 
-          return sendGuardedGptJsonResponse(req, res, {
-            ok: false,
-            action: planeClassification.action,
-            error: {
-              code: planeClassification.errorCode,
-              message: planeClassification.message
-            },
-            canonical: planeClassification.canonical,
-            _route: {
+          const errorPayload = {
+            ...buildGptDispatcherErrorPayload({
               requestId,
+              traceId,
               gptId: incomingGptId,
+              action: planeClassification.action,
+              code: planeClassification.errorCode,
+              message: planeClassification.message,
               route:
                 planeClassification.kind === 'job_lookup'
                   ? 'job_lookup_guard'
-                  : 'control_guard',
-              action: planeClassification.action,
-              timestamp: new Date().toISOString()
+                  : 'control_guard'
+            }),
+            canonical: planeClassification.canonical
+          };
+          logGptDispatcherOutcome({
+            req,
+            traceId,
+            gptId: incomingGptId,
+            action: planeClassification.action,
+            status: 400,
+            error: {
+              name: planeClassification.errorCode,
+              message: planeClassification.message
             }
-          }, 'gpt.response.control_rejected', 400);
+          });
+          return sendGuardedGptJsonResponse(
+            req,
+            res,
+            errorPayload,
+            'gpt.response.control_rejected',
+            400
+          );
         }
         if (planeClassification.plane === 'control' && planeClassification.kind === 'job_status') {
           const parsedJobStatusRequest = parseGptJobStatusRequest(effectiveBody);
@@ -1759,7 +2154,10 @@ router.post("/:gptId", async (req, res, next) => {
             });
             return sendGuardedGptJsonResponse(req, res, {
               ok: false,
+              gptId: incomingGptId,
               action: GPT_GET_STATUS_ACTION,
+              route: GPT_DISPATCHER_ROUTE,
+              traceId,
               error: {
                 code: 'JOB_ID_INVALID',
                 message: `get_status action requires payload.jobId. ${parsedJobStatusRequest.error}`
@@ -1768,7 +2166,31 @@ router.post("/:gptId", async (req, res, next) => {
             }, 'gpt.response.job_status_invalid', 400);
           }
 
-          const job = await getJobById(parsedJobStatusRequest.jobId);
+          const jobLookupResult = await getJobByIdForGptLookup(parsedJobStatusRequest.jobId);
+          if (!jobLookupResult.ok) {
+            requestLogger?.warn?.('gpt.request.status_lookup_invalid_job_id', {
+              endpoint: req.originalUrl,
+              gptId: incomingGptId,
+              requestId,
+              jobId: parsedJobStatusRequest.jobId,
+              error: jobLookupResult.error
+            });
+            return sendGuardedGptJsonResponse(req, res, {
+              ok: false,
+              gptId: incomingGptId,
+              action: GPT_GET_STATUS_ACTION,
+              route: GPT_DISPATCHER_ROUTE,
+              traceId,
+              jobId: parsedJobStatusRequest.jobId,
+              error: {
+                code: 'JOB_ID_INVALID',
+                message: `get_status action requires payload.jobId. ${jobLookupResult.error}`
+              },
+              _route: routeMeta
+            }, 'gpt.response.job_status_invalid', 400);
+          }
+
+          const job = jobLookupResult.job;
           requestLogger?.info?.('integration.job.status_lookup', {
             endpoint: req.originalUrl,
             gptId: incomingGptId,
@@ -1787,7 +2209,10 @@ router.post("/:gptId", async (req, res, next) => {
           if (!job) {
             return sendGuardedGptJsonResponse(req, res, {
               ok: false,
+              gptId: incomingGptId,
               action: GPT_GET_STATUS_ACTION,
+              route: GPT_DISPATCHER_ROUTE,
+              traceId,
               jobId: parsedJobStatusRequest.jobId,
               error: {
                 code: 'JOB_NOT_FOUND',
@@ -1800,6 +2225,9 @@ router.post("/:gptId", async (req, res, next) => {
           const jobStatusEnvelope = buildGptJobStatusBridgePayload(job);
           return sendGuardedGptJsonResponse(req, res, {
             ok: true,
+            gptId: incomingGptId,
+            route: GPT_DISPATCHER_ROUTE,
+            traceId,
             ...jobStatusEnvelope,
             _route: routeMeta
           }, 'gpt.response.job_status');
@@ -1823,7 +2251,10 @@ router.post("/:gptId", async (req, res, next) => {
             });
             return sendGuardedGptJsonResponse(req, res, {
               ok: false,
+              gptId: incomingGptId,
               action: GPT_GET_RESULT_ACTION,
+              route: GPT_DISPATCHER_ROUTE,
+              traceId,
               error: {
                 code: 'JOB_ID_INVALID',
                 message: `get_result action requires payload.jobId. ${parsedJobResultRequest.error}`
@@ -1832,9 +2263,33 @@ router.post("/:gptId", async (req, res, next) => {
             }, 'gpt.response.job_result_invalid', 400);
           }
 
+          const jobLookupResult = await getJobByIdForGptLookup(parsedJobResultRequest.jobId);
+          if (!jobLookupResult.ok) {
+            requestLogger?.warn?.('gpt.request.result_lookup_invalid_job_id', {
+              endpoint: req.originalUrl,
+              gptId: incomingGptId,
+              requestId,
+              jobId: parsedJobResultRequest.jobId,
+              error: jobLookupResult.error
+            });
+            return sendGuardedGptJsonResponse(req, res, {
+              ok: false,
+              gptId: incomingGptId,
+              action: GPT_GET_RESULT_ACTION,
+              route: GPT_DISPATCHER_ROUTE,
+              traceId,
+              jobId: parsedJobResultRequest.jobId,
+              error: {
+                code: 'JOB_ID_INVALID',
+                message: `get_result action requires payload.jobId. ${jobLookupResult.error}`
+              },
+              _route: routeMeta
+            }, 'gpt.response.job_result_invalid', 400);
+          }
+
           const jobLookup = buildGptJobResultBridgePayload(
             parsedJobResultRequest.jobId,
-            await getJobById(parsedJobResultRequest.jobId)
+            jobLookupResult.job
           );
           requestLogger?.info?.('integration.job.result_lookup', {
             endpoint: req.originalUrl,
@@ -1862,7 +2317,10 @@ router.post("/:gptId", async (req, res, next) => {
           });
 
           return sendGuardedGptJsonResponse(req, res, {
-            ok: true,
+            ok: jobLookup.error ? false : true,
+            gptId: incomingGptId,
+            route: GPT_DISPATCHER_ROUTE,
+            traceId,
             ...jobLookup,
             _route: routeMeta
           }, 'gpt.response.job_result');
@@ -2170,7 +2628,7 @@ router.post("/:gptId", async (req, res, next) => {
         }
 
         const shouldUseJobBackedExecution =
-          queryAndWaitRequested ||
+          (queryAndWaitRequested && executionPlan.mode === 'async') ||
           executionPlan.mode === 'async' ||
           fastPathFallbackToOrchestrated ||
           Boolean(explicitIdempotencyKey);
@@ -2755,6 +3213,17 @@ router.post("/:gptId", async (req, res, next) => {
 
         if (!envelope.ok) {
           applyAIDegradedResponseHeaders(res, extractAIDegradedResponseMetadata(envelope.error.details));
+          const publicErrorEnvelope = {
+            ...envelope,
+            gptId: incomingGptId,
+            action: requestedAction ?? GPT_QUERY_ACTION,
+            route: GPT_DISPATCHER_ROUTE,
+            traceId,
+            _route: {
+              ...envelope._route,
+              traceId
+            }
+          };
           const statusCode =
             envelope.error.code === "UNKNOWN_GPT"
               ? 404
@@ -2772,15 +3241,74 @@ router.post("/:gptId", async (req, res, next) => {
           });
           if (envelope.error.code === "UNKNOWN_GPT") {
             logGptConnectionFailed(incomingGptId);
-            return sendGuardedGptJsonResponse(req, res, envelope, 'gpt.response.route_error', 404);
+            logGptDispatcherOutcome({
+              req,
+              traceId,
+              gptId: incomingGptId,
+              action: requestedAction ?? GPT_QUERY_ACTION,
+              status: 404,
+              error: {
+                name: envelope.error.code,
+                message: envelope.error.message
+              }
+            });
+            return sendGuardedGptJsonResponse(req, res, publicErrorEnvelope, 'gpt.response.route_error', 404);
           }
           if (envelope.error.code === "SYSTEM_STATE_CONFLICT") {
-            return sendGuardedGptJsonResponse(req, res, envelope, 'gpt.response.route_error', 409);
+            return sendGuardedGptJsonResponse(req, res, publicErrorEnvelope, 'gpt.response.route_error', 409);
           }
           if (envelope.error.code === "MODULE_TIMEOUT") {
-            return sendGuardedGptJsonResponse(req, res, envelope, 'gpt.response.route_error', 504);
+            return sendGuardedGptJsonResponse(req, res, publicErrorEnvelope, 'gpt.response.route_error', 504);
           }
-          return sendGuardedGptJsonResponse(req, res, envelope, 'gpt.response.route_error', 400);
+          return sendGuardedGptJsonResponse(req, res, publicErrorEnvelope, 'gpt.response.route_error', 400);
+        }
+
+        if ((queryRequested || queryAndWaitRequested) && ARCANOS_CORE_GPT_IDS.has(incomingGptId)) {
+          const routingInfo: GptRoutingInfo = {
+            gptId: envelope._route.gptId,
+            moduleName: envelope._route.module ?? "unknown",
+            route: envelope._route.route ?? "unknown",
+            matchMethod: (envelope._route.matchMethod as any) ?? "none",
+          };
+          logGptConnection(routingInfo);
+          logGptAckSent(routingInfo, (envelope._route.availableActions ?? []).length);
+          applyAIDegradedResponseHeaders(res, extractAIDegradedResponseMetadata(envelope.result));
+          const resultText = extractDispatcherResultText(envelope.result);
+          requestLogger?.info?.("gpt.request.route_result", {
+            endpoint: req.originalUrl,
+            gptId: incomingGptId,
+            statusCode: 200,
+            ok: true,
+            module: envelope._route.module ?? "unknown",
+            route: envelope._route.route ?? "unknown",
+            traceId,
+            dispatcherAction: queryAndWaitRequested ? GPT_QUERY_AND_WAIT_ACTION : GPT_QUERY_ACTION
+          });
+          logGptDispatcherOutcome({
+            req,
+            traceId,
+            gptId: incomingGptId,
+            action: queryAndWaitRequested ? GPT_QUERY_AND_WAIT_ACTION : GPT_QUERY_ACTION,
+            status: 200
+          });
+          return sendGuardedGptJsonResponse(
+            req,
+            res,
+            {
+              ok: true,
+              gptId: incomingGptId,
+              action: GPT_QUERY_ACTION,
+              result: resultText,
+              traceId,
+              _route: {
+                ...envelope._route,
+                requestId,
+                traceId
+              }
+            },
+            'gpt.response.dispatcher_query',
+            200
+          );
         }
 
         const routingInfo: GptRoutingInfo = {
@@ -2953,8 +3481,41 @@ router.post("/:gptId", async (req, res, next) => {
     req.logger?.error?.('gpt.request.unexpected_failure', {
       endpoint: req.originalUrl,
       gptId: req.params.gptId,
+      action: requestedAction ?? GPT_QUERY_ACTION,
+      traceId,
       error: resolveErrorMessage(err)
     });
+    const responseOpen = !res.headersSent && !res.writableEnded && !res.destroyed;
+    if (responseOpen) {
+      const message = resolveErrorMessage(err);
+      const errorPayload = buildGptDispatcherErrorPayload({
+        requestId,
+        traceId,
+        gptId: req.params.gptId,
+        action: requestedAction ?? GPT_QUERY_ACTION,
+        code: 'GPT_DISPATCHER_UNEXPECTED_ERROR',
+        message,
+        route: 'unexpected_failure'
+      });
+      logGptDispatcherOutcome({
+        req,
+        traceId,
+        gptId: req.params.gptId,
+        action: requestedAction ?? GPT_QUERY_ACTION,
+        status: 500,
+        error: {
+          name: err instanceof Error ? err.name : 'Error',
+          message
+        }
+      });
+      return sendGuardedGptJsonResponse(
+        req,
+        res,
+        errorPayload,
+        'gpt.response.unexpected_failure',
+        500
+      );
+    }
     return next(err);
   } finally {
     res.off('close', abortForClosedClient);

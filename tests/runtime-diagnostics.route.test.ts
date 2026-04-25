@@ -51,7 +51,16 @@ describe('runtime diagnostics routes', () => {
     restoreEnvVar('SAFETY_EXPECTED_HASH_GPT_ROUTER_CONFIG', originalGptRouterHash);
   });
 
-  it('returns real diagnostics JSON through the GPT diagnostics action', async () => {
+  it('returns the live root response', async () => {
+    const app = await buildApp();
+
+    const response = await request(app).get('/');
+
+    expect(response.status).toBe(200);
+    expect(response.text).toBe('ARCANOS is live');
+  });
+
+  it('returns local dispatcher diagnostics JSON through the GPT diagnostics action', async () => {
     const app = await buildApp();
 
     const directBeforeResponse = await request(app).get('/diagnostics');
@@ -67,51 +76,32 @@ describe('runtime diagnostics routes', () => {
 
     expect(gptDiagnosticsResponse.status).toBe(200);
     expect(gptDiagnosticsResponse.body).toEqual(expect.objectContaining({
-      uptime: expect.any(Number),
-      memory: expect.objectContaining({
-        rss_mb: expect.any(Number),
-        heap_total_mb: expect.any(Number),
-        heap_used_mb: expect.any(Number),
-        external_mb: expect.any(Number),
-        array_buffers_mb: expect.any(Number)
+      ok: true,
+      gptId: 'arcanos-core',
+      route: '/gpt/:gptId',
+      actions: expect.arrayContaining([
+        'query',
+        'query_and_wait',
+        'diagnostics',
+        'get_status',
+        'get_result'
+      ]),
+      env: expect.objectContaining({
+        hasOpenAIKey: false,
+        hasArcanosModel: expect.any(Boolean),
+        model: expect.any(String),
+        nodeEnv: 'test'
       }),
-      active_routes: expect.anything(),
-      registered_gpts: expect.anything(),
-      requests_total: expect.any(Number),
-      errors_total: expect.any(Number),
-      error_rate: expect.anything(),
-      avg_latency_ms: expect.anything(),
-      recent_latency_ms: expect.anything(),
-      modules: expect.any(Object)
+      traceId: expect.any(String)
     }));
-    expect(gptDiagnosticsResponse.body).not.toHaveProperty('ok');
     expect(gptDiagnosticsResponse.body).not.toHaveProperty('result');
-    if (Array.isArray(gptDiagnosticsResponse.body.active_routes)) {
-      expect(gptDiagnosticsResponse.body.active_routes).toEqual(expect.arrayContaining([
-        'GET /diagnostics',
-        'POST /gpt/:gptId'
-      ]));
-    } else {
-      expect(gptDiagnosticsResponse.body.active_routes).toBe('DATA NOT EXPOSED: active_routes');
-    }
-    if (Array.isArray(gptDiagnosticsResponse.body.registered_gpts)) {
-      expect(gptDiagnosticsResponse.body.registered_gpts).toEqual(expect.arrayContaining([
-        'arcanos-core',
-        'core'
-      ]));
-    } else {
-      expect(gptDiagnosticsResponse.body.registered_gpts).toBe('DATA NOT EXPOSED: registered_gpts');
-    }
 
     const directAfterResponse = await request(app).get('/diagnostics');
     expect(directAfterResponse.status).toBe(200);
     expect(directAfterResponse.headers['x-response-bytes']).toBeTruthy();
     expect(directAfterResponse.headers['x-response-truncated']).toBeUndefined();
-    expect(gptDiagnosticsResponse.body.requests_total).toBeGreaterThan(
-      directBeforeResponse.body.requests_total
-    );
     expect(directAfterResponse.body.requests_total).toBeGreaterThan(
-      gptDiagnosticsResponse.body.requests_total
+      directBeforeResponse.body.requests_total
     );
   });
 
@@ -125,12 +115,16 @@ describe('runtime diagnostics routes', () => {
 
     expect(response.status).toBe(200);
     expect(response.body).toEqual(expect.objectContaining({
-      uptime: expect.any(Number),
-      requests_total: expect.any(Number),
-      errors_total: expect.any(Number),
-      modules: expect.any(Object)
+      ok: true,
+      gptId: 'arcanos-core',
+      route: '/gpt/:gptId',
+      actions: expect.arrayContaining(['diagnostics']),
+      env: expect.objectContaining({
+        hasOpenAIKey: false,
+        model: expect.any(String)
+      }),
+      traceId: expect.any(String)
     }));
-    expect(response.body).not.toHaveProperty('ok');
     expect(response.body).not.toHaveProperty('result');
   });
 

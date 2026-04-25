@@ -355,21 +355,26 @@ describe('gpt router auth logging', () => {
       .send({ prompt: 'Give me a walkthrough.' });
 
     expect(response.status).toBe(400);
-    expect(response.body).toEqual({
+    expect(response.body).toEqual(expect.objectContaining({
       ok: false,
-      _route: {
+      gptId: 'arcanos-gaming',
+      action: 'query',
+      route: '/gpt/:gptId',
+      traceId: expect.any(String),
+      _route: expect.objectContaining({
         gptId: 'arcanos-gaming',
         module: 'ARCANOS:GAMING',
         route: 'gaming',
-      },
+        traceId: expect.any(String),
+      }),
       error: {
         code: 'GAMEPLAY_MODE_REQUIRED',
         message: "Gameplay requests require explicit mode 'guide', 'build', or 'meta'.",
       },
-    });
+    }));
   });
 
-  it('rejects body-level gptId on the canonical route before dispatching', async () => {
+  it('rejects mismatched body-level gptId on the canonical route before dispatching', async () => {
     const app = express();
     app.use(express.json());
     app.use(requestContext);
@@ -388,7 +393,7 @@ describe('gpt router auth logging', () => {
         ok: false,
         error: {
           code: 'BODY_GPT_ID_FORBIDDEN',
-          message: 'gptId must be supplied by the /gpt/{gptId} path only.',
+          message: 'body gptId must match the /gpt/{gptId} path parameter.',
         },
         _route: expect.objectContaining({
           gptId: 'arcanos-gaming',
@@ -508,9 +513,12 @@ describe('gpt router auth logging', () => {
       .send({ prompt: 'verify in production on the live backend runtime that is currently active' });
 
     expect(response.status).toBe(400);
-    expect(response.body).toEqual({
+    expect(response.body).toEqual(expect.objectContaining({
       ok: false,
+      gptId: 'arcanos-core',
       action: 'runtime.inspect',
+      route: '/gpt/:gptId',
+      traceId: expect.any(String),
       error: {
         code: 'CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT',
         message: 'Runtime diagnostics, worker state, tracing, and queue inspection must use direct control-plane endpoints or POST /mcp. Do not send runtime control requests through POST /gpt/{gptId}.',
@@ -527,7 +535,7 @@ describe('gpt router auth logging', () => {
         route: 'control_guard',
         action: 'runtime.inspect',
       }),
-    });
+    }));
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
@@ -641,9 +649,12 @@ describe('gpt router auth logging', () => {
       .send({ prompt: 'trigger a real DAG run and trace it live', executionMode: 'sync' });
 
     expect(response.status).toBe(400);
-    expect(response.body).toEqual({
+    expect(response.body).toEqual(expect.objectContaining({
       ok: false,
+      gptId: 'arcanos-core',
       action: 'dag.run.create',
+      route: '/gpt/:gptId',
+      traceId: expect.any(String),
       error: {
         code: 'DAG_CONTROL_REQUIRES_DIRECT_ENDPOINT',
         message: 'DAG execution and trace retrieval must use /api/arcanos/dag/* or POST /mcp. Do not send DAG control requests through POST /gpt/{gptId}.',
@@ -658,7 +669,7 @@ describe('gpt router auth logging', () => {
         route: 'control_guard',
         action: 'dag.run.create',
       }),
-    });
+    }));
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
@@ -678,9 +689,12 @@ describe('gpt router auth logging', () => {
       });
 
     expect(response.status).toBe(400);
-    expect(response.body).toEqual({
+    expect(response.body).toEqual(expect.objectContaining({
       ok: false,
+      gptId: 'arcanos-core',
       action: 'dag.run.latest',
+      route: '/gpt/:gptId',
+      traceId: expect.any(String),
       error: {
         code: 'DAG_CONTROL_REQUIRES_DIRECT_ENDPOINT',
         message: 'DAG execution and trace retrieval must use /api/arcanos/dag/* or POST /mcp. Do not send DAG control requests through POST /gpt/{gptId}.',
@@ -695,7 +709,7 @@ describe('gpt router auth logging', () => {
         route: 'control_guard',
         action: 'dag.run.latest',
       }),
-    });
+    }));
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
@@ -715,9 +729,12 @@ describe('gpt router auth logging', () => {
       });
 
     expect(response.status).toBe(400);
-    expect(response.body).toEqual({
+    expect(response.body).toEqual(expect.objectContaining({
       ok: false,
+      gptId: 'arcanos-core',
       action: 'mcp.invoke',
+      route: '/gpt/:gptId',
+      traceId: expect.any(String),
       error: {
         code: 'MCP_CONTROL_REQUIRES_MCP_API',
         message: 'MCP tool calls must use POST /mcp. Do not send MCP control requests through POST /gpt/{gptId}.',
@@ -730,7 +747,7 @@ describe('gpt router auth logging', () => {
         route: 'control_guard',
         action: 'mcp.invoke',
       }),
-    });
+    }));
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 

@@ -596,15 +596,84 @@ describe('gpt router universal dispatch', () => {
   it('keeps diagnostics working through POST /gpt/{gptId}', async () => {
     const response = await request(buildApp())
       .post('/gpt/arcanos-core')
-      .send({ action: 'diagnostics' });
+      .send({
+        gptId: 'arcanos-core',
+        action: 'diagnostics',
+        gptVersion: '1.0.0',
+      });
 
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({
-      ok: true,
-      registered_gpts: ['arcanos-core'],
-      active_routes: ['/gpt/arcanos-core'],
-    });
-    expect(mockGetDiagnosticsSnapshot).toHaveBeenCalledTimes(1);
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        ok: true,
+        gptId: 'arcanos-core',
+        route: '/gpt/:gptId',
+        actions: expect.arrayContaining([
+          'query',
+          'query_and_wait',
+          'diagnostics',
+          'get_status',
+          'get_result',
+        ]),
+        env: expect.objectContaining({
+          hasOpenAIKey: expect.any(Boolean),
+          hasArcanosModel: expect.any(Boolean),
+          model: expect.any(String),
+          nodeEnv: expect.any(String),
+        }),
+        traceId: expect.any(String),
+      })
+    );
+    expect(mockGetDiagnosticsSnapshot).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('returns a structured validation error for query without a prompt', async () => {
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        gptId: 'arcanos-core',
+        action: 'query',
+        gptVersion: '1.0.0',
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        ok: false,
+        gptId: 'arcanos-core',
+        action: 'query',
+        route: '/gpt/:gptId',
+        traceId: expect.any(String),
+        error: expect.objectContaining({
+          code: 'PROMPT_REQUIRED',
+          message: expect.stringContaining('non-empty prompt'),
+        }),
+      })
+    );
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('returns a structured dispatcher error for unknown GPT diagnostics requests', async () => {
+    const response = await request(buildApp())
+      .post('/gpt/unknown')
+      .send({ action: 'diagnostics' });
+
+    expect(response.status).toBe(404);
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        ok: false,
+        gptId: 'unknown',
+        action: 'diagnostics',
+        route: '/gpt/:gptId',
+        traceId: expect.any(String),
+        error: expect.objectContaining({
+          code: 'UNKNOWN_GPT',
+          message: expect.stringContaining("gptId 'unknown' is not registered"),
+        }),
+      })
+    );
+    expect(mockGetDiagnosticsSnapshot).not.toHaveBeenCalled();
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
@@ -1022,7 +1091,10 @@ describe('gpt router universal dispatch', () => {
     expect(response.body).toEqual(
       expect.objectContaining({
         ok: false,
+        gptId: 'arcanos-core',
         action: 'runtime.unknown',
+        route: '/gpt/:gptId',
+        traceId: expect.any(String),
         error: expect.objectContaining({
           code: 'UNSUPPORTED_GPT_ACTION',
         }),

@@ -111,9 +111,12 @@ describe('natural-language job lookup guard on /gpt/:gptId', () => {
 
     expect(response.status).toBe(400);
     expect(response.headers['x-response-bytes']).toBeTruthy();
-    expect(response.body).toEqual({
+    expect(response.body).toEqual(expect.objectContaining({
       ok: false,
       action: 'result_lookup',
+      gptId: 'arcanos-core',
+      route: '/gpt/:gptId',
+      traceId: expect.any(String),
       error: {
         code: 'JOB_LOOKUP_REQUIRES_JOBS_API',
         message: 'Job retrieval requests must use the jobs API. Do not send result or status lookups through POST /gpt/{gptId}.'
@@ -127,7 +130,7 @@ describe('natural-language job lookup guard on /gpt/:gptId', () => {
         route: 'job_lookup_guard',
         action: 'result_lookup'
       })
-    });
+    }));
     expect(getJobByIdMock).not.toHaveBeenCalled();
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
     expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
@@ -144,9 +147,12 @@ describe('natural-language job lookup guard on /gpt/:gptId', () => {
 
     expect(response.status).toBe(400);
     expect(response.headers['x-response-bytes']).toBeTruthy();
-    expect(response.body).toEqual({
+    expect(response.body).toEqual(expect.objectContaining({
       ok: false,
       action: 'result_lookup',
+      gptId: 'arcanos-core',
+      route: '/gpt/:gptId',
+      traceId: expect.any(String),
       error: {
         code: 'JOB_LOOKUP_REQUIRES_JOBS_API',
         message: 'Job retrieval requests must use the jobs API. Do not send result or status lookups through POST /gpt/{gptId}.'
@@ -160,7 +166,7 @@ describe('natural-language job lookup guard on /gpt/:gptId', () => {
         route: 'job_lookup_guard',
         action: 'result_lookup'
       })
-    });
+    }));
     expect(getJobByIdMock).not.toHaveBeenCalled();
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
     expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
@@ -177,9 +183,12 @@ describe('natural-language job lookup guard on /gpt/:gptId', () => {
 
     expect(response.status).toBe(400);
     expect(response.headers['x-response-bytes']).toBeTruthy();
-    expect(response.body).toEqual({
+    expect(response.body).toEqual(expect.objectContaining({
       ok: false,
       action: 'status_lookup',
+      gptId: 'arcanos-core',
+      route: '/gpt/:gptId',
+      traceId: expect.any(String),
       error: {
         code: 'JOB_LOOKUP_REQUIRES_JOBS_API',
         message: 'Job retrieval requests must use the jobs API. Do not send result or status lookups through POST /gpt/{gptId}.'
@@ -193,7 +202,7 @@ describe('natural-language job lookup guard on /gpt/:gptId', () => {
         route: 'job_lookup_guard',
         action: 'status_lookup'
       })
-    });
+    }));
     expect(getJobByIdMock).not.toHaveBeenCalled();
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
     expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
@@ -210,9 +219,12 @@ describe('natural-language job lookup guard on /gpt/:gptId', () => {
 
     expect(response.status).toBe(400);
     expect(response.headers['x-response-bytes']).toBeTruthy();
-    expect(response.body).toEqual({
+    expect(response.body).toEqual(expect.objectContaining({
       ok: false,
       action: 'status_lookup',
+      gptId: 'arcanos-core',
+      route: '/gpt/:gptId',
+      traceId: expect.any(String),
       error: {
         code: 'JOB_LOOKUP_REQUIRES_JOBS_API',
         message: 'Job retrieval requests must use the jobs API. Do not send result or status lookups through POST /gpt/{gptId}.'
@@ -226,7 +238,7 @@ describe('natural-language job lookup guard on /gpt/:gptId', () => {
         route: 'job_lookup_guard',
         action: 'status_lookup'
       })
-    });
+    }));
     expect(getJobByIdMock).not.toHaveBeenCalled();
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
     expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
@@ -243,9 +255,12 @@ describe('natural-language job lookup guard on /gpt/:gptId', () => {
 
     expect(response.status).toBe(400);
     expect(response.headers['x-response-bytes']).toBeTruthy();
-    expect(response.body).toEqual({
+    expect(response.body).toEqual(expect.objectContaining({
       ok: false,
       action: 'result_lookup',
+      gptId: 'arcanos-core',
+      route: '/gpt/:gptId',
+      traceId: expect.any(String),
       error: {
         code: 'JOB_ID_REQUIRED',
         message: 'Job retrieval prompts sent to /gpt/{gptId} must include a concrete job ID. Use the jobs API instead of prompting the GPT route.'
@@ -259,7 +274,7 @@ describe('natural-language job lookup guard on /gpt/:gptId', () => {
         route: 'job_lookup_guard',
         action: 'result_lookup'
       })
-    });
+    }));
     expect(getJobByIdMock).not.toHaveBeenCalled();
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
     expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();

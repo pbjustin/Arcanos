@@ -19,6 +19,14 @@ describe('custom GPT OpenAPI contract route', () => {
     expect(response.body.openapi).toBe('3.1.0');
     expect(Object.keys(response.body.paths ?? {})).toEqual(['/gpt/{gptId}']);
     expect(response.body.paths?.['/gpt/{gptId}']?.post?.operationId).toBe('invokeGptRoute');
+    expect(response.body.info.description).toContain('may also echo the same gptId');
+    expect(response.body.info.description).not.toContain('must not duplicate gptId');
+    expect(response.body.components?.schemas?.GptRouteRequest?.properties?.gptId).toEqual(
+      expect.objectContaining({
+        type: 'string',
+        minLength: 1,
+      })
+    );
   });
 
   it('serves the canonical job-result contract with no-store caching', async () => {

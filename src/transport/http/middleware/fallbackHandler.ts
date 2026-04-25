@@ -77,6 +77,25 @@ function extractPromptFromRequest(req: Request, defaultPrompt: string = FALLBACK
   return typeof promptCandidate === 'string' ? promptCandidate : defaultPrompt;
 }
 
+function isGptDispatcherPath(path: string): boolean {
+  return path === '/gpt' || path.startsWith('/gpt/');
+}
+
+function isFallbackEligibleAiEndpoint(path: string): boolean {
+  if (isGptDispatcherPath(path)) {
+    return false;
+  }
+
+  return (
+    path === '/ask' ||
+    path.startsWith('/ask/') ||
+    path === '/arcanos' ||
+    path.startsWith('/arcanos/') ||
+    path.startsWith('/api/arcanos') ||
+    path.startsWith('/api/sim')
+  );
+}
+
 function logFallbackEvent(
   type: 'degraded' | 'preemptive',
   endpoint: string,
@@ -177,13 +196,7 @@ function getCacheSize(cache: unknown): number {
  */
 export function createHealthCheckMiddleware() {
   return async (req: Request, res: Response, next: NextFunction) => {
-    // Only apply to AI-related endpoints
-    const isAIEndpoint = (
-      req.path.includes('/api/arcanos') ||
-      req.path.includes('/api/sim') ||
-      req.path.includes('/ask') ||
-      req.path.includes('/arcanos')
-    );
+    const isAIEndpoint = isFallbackEligibleAiEndpoint(req.path);
 
     if (!isAIEndpoint) {
       return next();

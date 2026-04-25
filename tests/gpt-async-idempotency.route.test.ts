@@ -413,6 +413,43 @@ describe('async /gpt idempotency', () => {
     expect(getJobByIdMock).not.toHaveBeenCalled();
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
   });
+
+  it('returns structured validation errors when get_result job identifiers are rejected by storage', async () => {
+    getJobByIdMock.mockRejectedValueOnce(
+      new Error('invalid input syntax for type uuid: "missing-job-for-smoke"')
+    );
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        action: 'get_result',
+        payload: {
+          jobId: 'missing-job-for-smoke'
+        }
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.headers['x-response-bytes']).toBeTruthy();
+    expect(response.body).toMatchObject({
+      ok: false,
+      gptId: 'arcanos-core',
+      action: 'get_result',
+      route: '/gpt/:gptId',
+      traceId: expect.any(String),
+      jobId: 'missing-job-for-smoke',
+      error: {
+        code: 'JOB_ID_INVALID',
+        message: expect.stringContaining('valid job identifier')
+      },
+      _route: {
+        gptId: 'arcanos-core',
+        action: 'get_result',
+        route: 'job_result'
+      }
+    });
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  });
+
   it('returns explicit pending status for get_result without enqueueing work', async () => {
     getJobByIdMock.mockResolvedValue({
       id: 'job-lookup-pending',
@@ -593,8 +630,11 @@ describe('async /gpt idempotency', () => {
     expect(response.status).toBe(200);
     expect(response.headers['x-response-bytes']).toBeTruthy();
     expect(response.body).toEqual({
-      ok: true,
+      ok: false,
+      gptId: 'arcanos-core',
       action: 'get_result',
+      route: '/gpt/:gptId',
+      traceId: expect.any(String),
       jobId: 'missing-job',
       status: 'not_found',
       jobStatus: null,
@@ -756,6 +796,42 @@ describe('async /gpt idempotency', () => {
       }
     });
     expect(getJobByIdMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  });
+
+  it('returns structured validation errors when get_status job identifiers are rejected by storage', async () => {
+    getJobByIdMock.mockRejectedValueOnce(
+      new Error('invalid input syntax for type uuid: "missing-job-for-smoke"')
+    );
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        action: 'get_status',
+        payload: {
+          jobId: 'missing-job-for-smoke'
+        }
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.headers['x-response-bytes']).toBeTruthy();
+    expect(response.body).toMatchObject({
+      ok: false,
+      gptId: 'arcanos-core',
+      action: 'get_status',
+      route: '/gpt/:gptId',
+      traceId: expect.any(String),
+      jobId: 'missing-job-for-smoke',
+      error: {
+        code: 'JOB_ID_INVALID',
+        message: expect.stringContaining('valid job identifier')
+      },
+      _route: {
+        gptId: 'arcanos-core',
+        action: 'get_status',
+        route: 'job_status'
+      }
+    });
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
   });
 

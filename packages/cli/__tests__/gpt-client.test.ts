@@ -533,6 +533,35 @@ describe("GPT route OpenAPI contract and client", () => {
     ).rejects.toThrow("Backend /gpt/arcanos-gaming failed with HTTP 503: backend unavailable");
   });
 
+  it("preserves structured backend error bodies from GPT routes", async () => {
+    const payload = {
+      ok: false,
+      gptId: "arcanos-core",
+      action: "diagnostics",
+      route: "/gpt/:gptId",
+      traceId: "trace-prod-body-mismatch",
+      error: {
+        code: "BODY_GPT_ID_FORBIDDEN",
+        message: "body gptId must match the /gpt/{gptId} path parameter."
+      }
+    };
+    jest.spyOn(globalThis, "fetch").mockResolvedValue(
+      createJsonResponse(payload, {
+        status: 400
+      })
+    );
+
+    await expect(
+      invokeGptRoute({
+        baseUrl: "http://127.0.0.1:3000",
+        gptId: "arcanos-core",
+        action: "diagnostics"
+      })
+    ).rejects.toThrow(
+      `Backend /gpt/arcanos-core failed with HTTP 400: ${JSON.stringify(payload)}`
+    );
+  });
+
   it("preserves backend HTTP status details when the error body is empty", async () => {
     jest.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(null, {

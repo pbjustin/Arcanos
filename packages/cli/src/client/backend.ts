@@ -36,6 +36,7 @@ export interface BackendRecentLogsSnapshot {
 }
 
 export interface GptRouteRequestBody {
+  gptId?: string;
   prompt?: string;
   gptVersion?: string;
   action?: string;
@@ -326,7 +327,7 @@ export function buildGptRouteRequestBody(options: Omit<InvokeGptRouteOptions, "b
 /**
  * Invokes the canonical GPT route contract at `/gpt/{gptId}`.
  * Inputs/Outputs: base URL, path-bound gptId, and a prompt-first request body; returns the backend JSON payload.
- * Edge cases: rejects blank gpt ids locally and never duplicates gptId in the JSON body.
+ * Edge cases: rejects blank gpt ids locally and omits the optional body gptId echo by default.
  */
 export async function invokeGptRoute(options: InvokeGptRouteOptions): Promise<Record<string, unknown>> {
   const gptId = options.gptId.trim();
