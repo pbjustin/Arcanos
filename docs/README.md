@@ -26,8 +26,9 @@ Recommended reading order:
 15. `docs/RAILWAY_DEPLOYMENT.md`
 16. `docs/CI_CD.md`
 17. `docs/DOCUMENTATION.md`
-18. `docs/MEMORY_BACKEND_USAGE.md`
-19. `docs/WEB_SEARCH_AGENT.md`
+18. `docs/GPT_ASYNC_DOCUMENTATION_WORKFLOW.md`
+19. `docs/MEMORY_BACKEND_USAGE.md`
+20. `docs/WEB_SEARCH_AGENT.md`
 
 ## Configuration
 Configuration source files:
@@ -50,6 +51,7 @@ Use `docs/TROUBLESHOOTING.md` and include concrete errors, command output, and e
 - `docs/CLI_OVERVIEW.md`
 - `docs/SOLO_OPERATOR_RUNTIME_GUIDE.md`
 - `docs/TRINITY_PIPELINE.md`
+- `docs/GPT_ASYNC_DOCUMENTATION_WORKFLOW.md`
 - `docs/API.md`
 - `docs/CONFIGURATION.md`
 - `docs/CI_CD.md`

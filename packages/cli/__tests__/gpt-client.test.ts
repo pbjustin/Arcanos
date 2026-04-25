@@ -8,12 +8,9 @@ import {
   generateGptPrompt,
   generatePromptAndWait,
   fetchGptJobResult,
-  getGptRouteJobResult,
-  getGptRouteJobStatus,
   getJobResult,
   getJobStatus,
   invokeGptRoute,
-  queryAndWaitGptRoute,
   requestGptJobResult,
   requestGptJobStatus,
   requestQuery,
@@ -61,6 +58,35 @@ describe("GPT route OpenAPI contract and client", () => {
     });
     expect(body).not.toHaveProperty("gptId");
     expect(body).not.toHaveProperty("action");
+  });
+
+  it("uses an injected fetchFn for GPT route requests", async () => {
+    const globalFetchMock = jest.spyOn(globalThis, "fetch").mockRejectedValue(
+      new Error("global fetch should not be used")
+    );
+    const fetchMock = jest.fn<typeof fetch>().mockResolvedValue(
+      createJsonResponse({ ok: true, result: "injected route ok" })
+    );
+
+    const payload = await invokeGptRoute({
+      baseUrl: "http://127.0.0.1:3000",
+      gptId: "arcanos-core",
+      prompt: "Use injected transport.",
+      fetchFn: fetchMock,
+    });
+
+    expect(payload).toMatchObject({
+      ok: true,
+      result: "injected route ok",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      new URL("/gpt/arcanos-core", "http://127.0.0.1:3000/"),
+      expect.objectContaining({
+        method: "POST"
+      })
+    );
+    expect(globalFetchMock).not.toHaveBeenCalled();
   });
 
   it("preserves an explicit supported action without injecting unsupported defaults", async () => {
