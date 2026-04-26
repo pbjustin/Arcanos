@@ -43,6 +43,10 @@ import { acquireExecutionLock } from '@services/safety/executionLock.js';
 import { emitSafetyAuditEvent } from '@services/safety/auditEvents.js';
 import { executeFastGptPrompt } from '@services/gptFastPath.js';
 import { classifyGptFastPathRequest } from '@shared/gpt/gptFastPath.js';
+import {
+  executeControlPlaneRequest,
+  getControlPlaneCapabilities
+} from '@services/controlPlane/service.js';
 import { stripConfirmationFields, requireNonceOrIssue, notExposed, buildClearRecheckInput, wrapTool } from './helpers.js';
 import { registerDagMcpTools } from './dagTools.js';
 import { registerJobMcpTools } from './jobTools.js';
@@ -757,6 +761,105 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
     wrapTool('ops.health_report', ctx, async () => {
       const out = await runHealthCheck();
       return mcpText(out);
+    })
+  );
+
+  server.registerTool(
+    'ops.control_plane_capabilities',
+    {
+      title: 'Control Plane Capabilities',
+      description: 'Control plane: lists allowlisted Railway CLI, ARCANOS CLI, and ARCANOS MCP operations.',
+      annotations: { readOnlyHint: true },
+      inputSchema: z.object({}).passthrough(),
+    },
+    wrapTool('ops.control_plane_capabilities', ctx, async () => {
+      return mcpText(getControlPlaneCapabilities());
+    })
+  );
+
+  server.registerTool(
+    'ops.control_plane',
+    {
+      title: 'Control Plane',
+      description: 'Control plane: runs a schema-validated, allowlisted ARCANOS Core control-plane operation.',
+      annotations: { openWorldHint: true },
+      inputSchema: z
+        .object({
+          requestId: z.string().optional(),
+          phase: z.enum(['plan', 'execute', 'mutate']),
+          adapter: z.enum(['railway-cli', 'arcanos-cli', 'arcanos-mcp']),
+          operation: z.string().min(1),
+          input: z.record(z.any()).optional(),
+          context: z
+            .object({
+              sessionId: z.string().optional(),
+              cwd: z.string().optional(),
+              environment: z.enum(['workspace', 'remote']).optional(),
+              caller: z
+                .object({
+                  id: z.string(),
+                  type: z.string(),
+                  scopes: z.array(z.string()).optional(),
+                })
+                .optional(),
+            })
+            .optional(),
+          routePreference: z.enum(['prefer_trinity', 'direct']).optional(),
+          approval: z
+            .object({
+              approved: z.boolean(),
+              approvedBy: z.string().optional(),
+              reason: z.string().optional(),
+              confirmationId: z.string().optional(),
+            })
+            .optional(),
+          sessionId: z.string().optional(),
+          confirmationNonce: z.string().optional(),
+        })
+        .passthrough(),
+    },
+    wrapTool('ops.control_plane', ctx, async (args: any) => {
+      if (args.phase === 'mutate' && !MCP_FLAGS.exposeDestructive) {
+        return notExposed('ops.control_plane', ctx);
+      }
+
+      const requestPayload = stripConfirmationFields(args);
+      if (args.phase === 'mutate') {
+        const gate = requireNonceOrIssue(args, 'ops.control_plane', ctx, requestPayload);
+        if (!gate.ok) return gate.error;
+      }
+
+      const response = await executeControlPlaneRequest({
+        ...requestPayload,
+        requestId: typeof requestPayload.requestId === 'string' ? requestPayload.requestId : ctx.requestId,
+        context: {
+          ...(requestPayload.context ?? {}),
+          sessionId: requestPayload.context?.sessionId ?? args.sessionId ?? ctx.sessionId,
+          caller: requestPayload.context?.caller ?? {
+            id: ctx.sessionId ?? ctx.requestId,
+            type: 'mcp'
+          }
+        },
+        approval: args.phase === 'mutate'
+          ? {
+              approved: true,
+              approvedBy: requestPayload.approval?.approvedBy ?? `mcp:${ctx.sessionId ?? ctx.requestId}`,
+              reason: requestPayload.approval?.reason ?? 'MCP control-plane confirmation gate accepted.',
+              confirmationId: args.confirmationNonce ?? requestPayload.approval?.confirmationId
+            }
+          : requestPayload.approval
+      });
+
+      if (!response.ok) {
+        return mcpError({
+          code: 'ERR_GATED',
+          message: response.error?.message ?? 'Control-plane request failed.',
+          details: response as unknown as Record<string, unknown>,
+          requestId: ctx.requestId
+        });
+      }
+
+      return mcpText(response);
     })
   );
 
