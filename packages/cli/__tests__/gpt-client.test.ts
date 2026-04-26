@@ -508,7 +508,7 @@ describe("GPT route OpenAPI contract and client", () => {
       spec.paths?.["/gpt/{gptId}"]?.post?.requestBody?.content?.["application/json"]?.examples?.queryAndWait?.value
     ).toEqual({
       action: "query_and_wait",
-      prompt: "Wait briefly for a fast completion.",
+      prompt: "Return the final result synchronously.",
       timeoutMs: 25000,
       pollIntervalMs: 500
     });
