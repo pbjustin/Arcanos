@@ -3,6 +3,8 @@ import artifactStoreResponseSchema from "../schemas/v1/commands/artifact.store.r
 import envelopeSchema from "../schemas/v1/envelope.schema.json" with { type: "json" };
 import contextInspectRequestSchema from "../schemas/v1/commands/context.inspect.request.schema.json" with { type: "json" };
 import contextInspectResponseSchema from "../schemas/v1/commands/context.inspect.response.schema.json" with { type: "json" };
+import controlPlaneInvokeRequestSchema from "../schemas/v1/commands/control-plane.invoke.request.schema.json" with { type: "json" };
+import controlPlaneInvokeResponseSchema from "../schemas/v1/commands/control-plane.invoke.response.schema.json" with { type: "json" };
 import daemonCapabilitiesRequestSchema from "../schemas/v1/commands/daemon.capabilities.request.schema.json" with { type: "json" };
 import daemonCapabilitiesResponseSchema from "../schemas/v1/commands/daemon.capabilities.response.schema.json" with { type: "json" };
 import execStartRequestSchema from "../schemas/v1/commands/exec.start.request.schema.json" with { type: "json" };
@@ -85,6 +87,10 @@ export function getProtocolSchemaCatalog() {
       contextInspect: {
         request: contextInspectRequestSchema,
         response: contextInspectResponseSchema
+      },
+      controlPlaneInvoke: {
+        request: controlPlaneInvokeRequestSchema,
+        response: controlPlaneInvokeResponseSchema
       },
       daemonCapabilities: {
         request: daemonCapabilitiesRequestSchema,
