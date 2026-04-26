@@ -30,6 +30,7 @@ import {
   runWithRequestAbortTimeout
 } from '@arcanos/runtime';
 import { hasDagOrchestrationIntentCue } from '@services/naturalLanguageMemory.js';
+import { shouldTreatPromptAsDagExecution } from '@shared/dag/dagExecutionRouting.js';
 import {
   recordDagTraceTimeout,
   recordGptFastPathLatency,
@@ -111,7 +112,8 @@ import {
   type GptFastPathDecision,
   type GptFastPathModeHint
 } from '@shared/gpt/gptFastPath.js';
-import { executeFastGptPrompt } from '@services/gptFastPath.js';
+import { ARCANOS_SUPPRESS_TIMEOUT_FALLBACK_FLAG } from '@shared/gpt/gptDirectAction.js';
+import { executeDirectGptAction, executeFastGptPrompt } from '@services/gptFastPath.js';
 import { executeRuntimeInspection } from '@services/runtimeInspectionRoutingService.js';
 import { getWorkerControlStatus } from '@services/workerControlService.js';
 import { buildSafetySelfHealSnapshot } from '@services/selfHealRuntimeInspectionService.js';
@@ -133,6 +135,7 @@ const DEFAULT_GPT_ASYNC_HEAVY_MAX_WORDS = 700;
 const DEFAULT_GPT_ASYNC_HEAVY_WAIT_FOR_RESULT_MS = 500;
 const DIRECT_RETURN_ROUTE_TIMEOUT_HEADROOM_MS = 750;
 const DEBUG_GPT_MAX_BYTES_HEADER = 'x-debug-max-bytes';
+const QUERY_AND_WAIT_DIRECT_ACTION_REASON = 'query_and_wait_direct_action';
 const DIRECT_RETURN_WAIT_KEYS = [
   'waitForResultMs',
   'wait_for_result_ms',
@@ -292,6 +295,7 @@ function buildGptDispatcherErrorPayload(params: {
     gptId: params.gptId,
     action: params.action,
     route: GPT_DISPATCHER_ROUTE,
+    code: params.code,
     traceId: params.traceId,
     error: {
       code: params.code,
@@ -356,16 +360,77 @@ function extractDispatcherResultText(result: unknown): string {
   }
 }
 
-function readActionAlias(record: Record<string, unknown>): string | null {
-  const actionValue = record.action;
-  if (typeof actionValue === 'string' && actionValue.trim().length > 0) {
-    return actionValue.trim();
+function readFirstNonEmptyString(value: unknown): string | null {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
   }
 
-  const operationValue = record.operation;
-  return typeof operationValue === 'string' && operationValue.trim().length > 0
-    ? operationValue.trim()
-    : null;
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const normalizedEntry = readFirstNonEmptyString(entry);
+      if (normalizedEntry) {
+        return normalizedEntry;
+      }
+    }
+  }
+
+  return null;
+}
+
+function normalizeRequestedActionName(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const lowered = trimmed.toLowerCase();
+  const decamelized = trimmed.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
+  const compact = decamelized.replace(/[^a-z0-9]+/g, '');
+
+  if (compact === 'invokegptroute' || compact === 'gptroute' || compact === 'invokegpt') {
+    return null;
+  }
+
+  if (
+    compact === 'queryandwait' ||
+    compact === 'requestqueryandwait' ||
+    compact === 'gptqueryandwait'
+  ) {
+    return GPT_QUERY_AND_WAIT_ACTION;
+  }
+
+  if (compact === 'query') {
+    return GPT_QUERY_ACTION;
+  }
+
+  if (compact === 'getstatus') {
+    return GPT_GET_STATUS_ACTION;
+  }
+
+  if (compact === 'getresult') {
+    return GPT_GET_RESULT_ACTION;
+  }
+
+  if (compact === 'systemstate') {
+    return 'system_state';
+  }
+
+  return lowered;
+}
+
+function readActionAlias(record: Record<string, unknown>): string | null {
+  const actionValue =
+    readFirstNonEmptyString(record.action) ??
+    readFirstNonEmptyString(record.operation) ??
+    readFirstNonEmptyString(record.operationId) ??
+    readFirstNonEmptyString(record.operation_id) ??
+    readFirstNonEmptyString(record.toolAction) ??
+    readFirstNonEmptyString(record.tool_action) ??
+    readFirstNonEmptyString(record.gptAction) ??
+    readFirstNonEmptyString(record.gpt_action);
+
+  return actionValue ? normalizeRequestedActionName(actionValue) : null;
 }
 
 function resolveRequestedAction(body: unknown): string | null {
@@ -385,7 +450,19 @@ function resolveRequestedAction(body: unknown): string | null {
   }
 
   const payloadAction = readActionAlias(payload as Record<string, unknown>);
-  return payloadAction ? payloadAction.toLowerCase() : null;
+  return payloadAction;
+}
+
+function resolveRequestedActionFromRequest(req: express.Request): string | null {
+  return (
+    resolveRequestedAction(req.body) ??
+    readActionAlias(req.query as Record<string, unknown>) ??
+    normalizeRequestedActionName(
+      readFirstNonEmptyString(req.header('x-gpt-action')) ??
+      readFirstNonEmptyString(req.header('x-arcanos-action')) ??
+      ''
+    )
+  );
 }
 
 function readPayloadRecord(
@@ -439,6 +516,21 @@ function extractPromptText(body: unknown): string | null {
     extractPromptTextFromRecord(normalizedBody) ??
     extractPromptTextFromRecord(readPayloadRecord(normalizedBody))
   );
+}
+
+function extractPromptTextFromRequest(req: express.Request): string | null {
+  return (
+    extractPromptText(req.body) ??
+    extractPromptTextFromRecord(req.query as Record<string, unknown>)
+  );
+}
+
+function shouldUseDagExecutionTimeoutProfile(prompt: string | null): boolean {
+  if (!prompt || !hasDagOrchestrationIntentCue(prompt)) {
+    return false;
+  }
+
+  return shouldTreatPromptAsDagExecution(prompt);
 }
 
 function resolveDebugGptPublicResponseMaxBytes(req: express.Request): number | undefined {
@@ -1010,6 +1102,84 @@ function buildDirectReturnTimeoutResponse(params: {
   };
 }
 
+function shouldUseQueryAndWaitDirectActionLane(params: {
+  queryAndWaitRequested: boolean;
+  gptId: string;
+  promptText: string | null;
+}): boolean {
+  if (!params.queryAndWaitRequested || !params.promptText) {
+    return false;
+  }
+
+  return ARCANOS_CORE_GPT_IDS.has(params.gptId);
+}
+
+function resolveQueryAndWaitDirectActionTimeoutMs(params: {
+  requestedWaitForResultMs: number | undefined;
+  routeTimeoutMs: number;
+}): number {
+  const requestedWaitMs = params.requestedWaitForResultMs ?? resolveGptWaitTimeoutMs();
+  return Math.max(
+    1,
+    clampAsyncWaitForRouteTimeout(
+      resolveAsyncGptWaitForResultMs(requestedWaitMs),
+      params.routeTimeoutMs
+    )
+  );
+}
+
+function buildQueryAndWaitDirectRouteDecision(params: {
+  body: unknown;
+  promptText: string;
+  timeoutMs: number;
+  explicitMode: GptFastPathModeHint;
+}): GptFastPathDecision {
+  return {
+    path: 'fast_path',
+    eligible: true,
+    reason: QUERY_AND_WAIT_DIRECT_ACTION_REASON,
+    queueBypassed: true,
+    promptLength: params.promptText.length,
+    messageCount: extractMessageCount(params.body),
+    maxWords: extractMaxWords(params.body),
+    timeoutMs: params.timeoutMs,
+    action: GPT_QUERY_AND_WAIT_ACTION,
+    promptGenerationIntent: false,
+    explicitMode: params.explicitMode
+  };
+}
+
+function resolveDirectGptActionFailureStatus(error: unknown): number {
+  if (isAbortError(error)) {
+    return 504;
+  }
+
+  const message = resolveErrorMessage(error).toLowerCase();
+  if (message.includes('openai client unavailable') || message.includes('client unavailable')) {
+    return 503;
+  }
+
+  if (message.includes('returned empty output')) {
+    return 500;
+  }
+
+  const status = (error as { status?: unknown; statusCode?: unknown } | null)?.status;
+  const statusCode = typeof status === 'number'
+    ? status
+    : (error as { statusCode?: unknown } | null)?.statusCode;
+  if (typeof statusCode === 'number' && Number.isInteger(statusCode)) {
+    if (statusCode === 429) {
+      return 429;
+    }
+
+    if (statusCode >= 500 && statusCode <= 599) {
+      return 502;
+    }
+  }
+
+  return 502;
+}
+
 function resolveDefaultGptQueryAndWaitRouteTimeoutMs(): number {
   return resolveGptWaitTimeoutMs() + DIRECT_RETURN_ROUTE_TIMEOUT_HEADROOM_MS;
 }
@@ -1041,6 +1211,7 @@ function normalizeQueryAndWaitBody(
 
   const normalizedQueryBody = { ...normalizedBody };
   delete normalizedQueryBody.action;
+  normalizedQueryBody[ARCANOS_SUPPRESS_TIMEOUT_FALLBACK_FLAG] = true;
   if (readBooleanEnv('GPT_ROUTE_ASYNC_CORE_DEFAULT', false)) {
     normalizedQueryBody.executionMode = 'async';
   }
@@ -1734,13 +1905,15 @@ function applyGptQueueBypassedHeader(
 router.post("/:gptId", async (req, res, next) => {
   const routeGptId = req.params.gptId;
   const priorityGpt = isPriorityGpt(routeGptId);
-  const requestedAction = resolveRequestedAction(req.body);
+  const requestedAction = resolveRequestedActionFromRequest(req);
   const queryRequested = requestedAction === GPT_QUERY_ACTION;
   const queryAndWaitRequested = requestedAction === GPT_QUERY_AND_WAIT_ACTION;
   const bypassIntentRouting = queryRequested || queryAndWaitRequested;
   const asyncBridgeAction = resolveAsyncBridgeAction(queryAndWaitRequested);
-  const promptText = extractPromptText(req.body);
-  const routeTimeoutProfile = 'default';
+  const promptText = extractPromptTextFromRequest(req);
+  const routeTimeoutProfile = shouldUseDagExecutionTimeoutProfile(promptText)
+    ? 'dag_execution'
+    : 'default';
   const explicitAsyncWaitForResultMs = readRequestedAsyncGptWaitForResultMs(req, req.body);
   const explicitAsyncPollIntervalMs = readRequestedAsyncGptPollIntervalMs(req, req.body);
   const queryAndWaitRequestedTimeoutMs =
@@ -1875,6 +2048,15 @@ router.post("/:gptId", async (req, res, next) => {
         const routingValidation = await resolveGptRouting(incomingGptId, requestId);
         if (!routingValidation.ok) {
           const statusCode = routingValidation.error.code === 'UNKNOWN_GPT' ? 404 : 400;
+          const errorPayload = buildGptDispatcherErrorPayload({
+            requestId,
+            traceId,
+            gptId: incomingGptId,
+            action: requestedAction ?? GPT_QUERY_ACTION,
+            code: routingValidation.error.code,
+            message: routingValidation.error.message,
+            route: 'routing_validation'
+          });
           requestLogger?.warn?.('gpt.request.route_result', {
             endpoint: req.originalUrl,
             gptId: incomingGptId,
@@ -1893,7 +2075,7 @@ router.post("/:gptId", async (req, res, next) => {
           return sendGuardedGptJsonResponse(
             req,
             res,
-            routingValidation,
+            errorPayload,
             'gpt.response.route_error',
             statusCode
           );
@@ -2397,6 +2579,163 @@ router.post("/:gptId", async (req, res, next) => {
             event: 'idempotency_key_present',
             source: 'explicit'
           });
+        }
+
+        if (
+          shouldUseQueryAndWaitDirectActionLane({
+            queryAndWaitRequested,
+            gptId: incomingGptId,
+            promptText
+          })
+        ) {
+          const directActionTimeoutMs = resolveQueryAndWaitDirectActionTimeoutMs({
+            requestedWaitForResultMs: explicitAsyncWaitForResultMs,
+            routeTimeoutMs
+          });
+          const directActionRouteDecision = buildQueryAndWaitDirectRouteDecision({
+            body: effectiveBody,
+            promptText: promptText!,
+            timeoutMs: directActionTimeoutMs,
+            explicitMode: resolveRequestedFastPathMode(req, effectiveBody)
+          });
+          applyGptRouteDecisionHeaders(res, directActionRouteDecision);
+          applyGptQueueBypassedHeader(res, true);
+          recordGptRouteDecision({
+            path: directActionRouteDecision.path,
+            reason: directActionRouteDecision.reason,
+            queueBypassed: true
+          });
+          requestLogger?.info?.('gpt.request.route_decision', {
+            endpoint: req.originalUrl,
+            gptId: incomingGptId,
+            action: GPT_QUERY_AND_WAIT_ACTION,
+            path: directActionRouteDecision.path,
+            reason: directActionRouteDecision.reason,
+            queueBypassed: true,
+            promptLength: directActionRouteDecision.promptLength,
+            messageCount: directActionRouteDecision.messageCount,
+            maxWords: directActionRouteDecision.maxWords,
+            timeoutMs: directActionRouteDecision.timeoutMs,
+            promptGenerationIntent: directActionRouteDecision.promptGenerationIntent,
+            explicitMode: directActionRouteDecision.explicitMode
+          });
+
+          const directActionStartedAt = Date.now();
+          try {
+            const directEnvelope = await executeDirectGptAction({
+              gptId: incomingGptId,
+              prompt: promptText!,
+              requestId,
+              action: GPT_QUERY_AND_WAIT_ACTION,
+              timeoutMs: directActionTimeoutMs,
+              parentSignal: clientAbortController.signal,
+              logger: requestLogger
+            });
+            const totalLatencyMs = Date.now() - directActionStartedAt;
+            recordGptFastPathLatency({
+              gptId: incomingGptId,
+              outcome: 'completed',
+              durationMs: totalLatencyMs
+            });
+            const routingInfo: GptRoutingInfo = {
+              gptId: directEnvelope._route.gptId,
+              moduleName: directEnvelope._route.module,
+              route: directEnvelope._route.route,
+              matchMethod: 'exact'
+            };
+            logGptConnection(routingInfo);
+            logGptAckSent(routingInfo, 1);
+            requestLogger?.info?.('integration.job.query_and_wait_completed', {
+              endpoint: req.originalUrl,
+              gptId: incomingGptId,
+              requestId,
+              waitForResultMs: directActionTimeoutMs,
+              directExecution: true,
+              latencyMs: totalLatencyMs
+            });
+            logGptDispatcherOutcome({
+              req,
+              traceId,
+              gptId: incomingGptId,
+              action: GPT_QUERY_AND_WAIT_ACTION,
+              status: 200
+            });
+            return sendGuardedGptJsonResponse(
+              req,
+              res,
+              {
+                ok: true,
+                gptId: incomingGptId,
+                action: GPT_QUERY_AND_WAIT_ACTION,
+                status: 'completed',
+                result: extractDispatcherResultText(directEnvelope.result),
+                routeDecision: directActionRouteDecision,
+                directAction: directEnvelope.directAction,
+                traceId,
+                _route: {
+                  ...directEnvelope._route,
+                  requestId,
+                  traceId
+                }
+              },
+              'gpt.response.query_and_wait_direct_completed',
+              200
+            );
+          } catch (error) {
+            const errorMessage = resolveErrorMessage(error);
+            const directActionFailureStatus = resolveDirectGptActionFailureStatus(error);
+            const timedOut = directActionFailureStatus === 504;
+            recordGptFastPathLatency({
+              gptId: incomingGptId,
+              outcome: 'error',
+              durationMs: Date.now() - directActionStartedAt
+            });
+            requestLogger?.warn?.(
+              timedOut
+                ? 'gpt.request.query_and_wait_direct_timeout'
+                : 'gpt.request.query_and_wait_direct_failed',
+              {
+                endpoint: req.originalUrl,
+                gptId: incomingGptId,
+                requestId,
+                timeoutMs: directActionTimeoutMs,
+                statusCode: directActionFailureStatus,
+                error: errorMessage
+              }
+            );
+            const errorPayload = buildGptDispatcherErrorPayload({
+              requestId,
+              traceId,
+              gptId: incomingGptId,
+              action: GPT_QUERY_AND_WAIT_ACTION,
+              code: timedOut ? 'GPT_QUERY_AND_WAIT_TIMEOUT' : 'GPT_QUERY_AND_WAIT_FAILED',
+              message: errorMessage,
+              route: 'query_and_wait_direct'
+            });
+            logGptDispatcherOutcome({
+              req,
+              traceId,
+              gptId: incomingGptId,
+              action: GPT_QUERY_AND_WAIT_ACTION,
+              status: directActionFailureStatus,
+              error: {
+                name: error instanceof Error ? error.name : 'Error',
+                message: errorMessage
+              }
+            });
+            return sendGuardedGptJsonResponse(
+              req,
+              res,
+              {
+                ...errorPayload,
+                routeDecision: directActionRouteDecision
+              },
+              timedOut
+                ? 'gpt.response.query_and_wait_direct_timeout'
+                : 'gpt.response.query_and_wait_direct_failed',
+              directActionFailureStatus
+            );
+          }
         }
 
         const fastPathDecision = classifyGptFastPathRequest({
@@ -3411,7 +3750,13 @@ router.post("/:gptId", async (req, res, next) => {
           202
         );
       }
-      if (routeTimedOut && responseOpen && promptText && ARCANOS_CORE_GPT_IDS.has(gptId)) {
+      if (
+        routeTimedOut &&
+        responseOpen &&
+        promptText &&
+        ARCANOS_CORE_GPT_IDS.has(gptId) &&
+        requestedAction !== GPT_QUERY_AND_WAIT_ACTION
+      ) {
         const timeoutPhase = resolveArcanosCoreTimeoutPhase(err) ?? 'gpt-route';
         const timeoutFallback = buildArcanosCoreTimeoutFallbackEnvelope({
           prompt: promptText,

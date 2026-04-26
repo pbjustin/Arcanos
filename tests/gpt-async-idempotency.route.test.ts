@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals
 
 const mockRouteGptRequest = jest.fn();
 const mockResolveGptRouting = jest.fn();
+const executeFastGptPromptMock = jest.fn();
+const executeDirectGptActionMock = jest.fn();
 const findOrCreateGptJobMock = jest.fn();
 const getJobByIdMock = jest.fn();
 const planAutonomousWorkerJobMock = jest.fn();
@@ -18,6 +20,11 @@ class MockJobRepositoryUnavailableError extends Error {}
 jest.unstable_mockModule('../src/routes/_core/gptDispatch.js', () => ({
   resolveGptRouting: mockResolveGptRouting,
   routeGptRequest: mockRouteGptRequest,
+}));
+
+jest.unstable_mockModule('../src/services/gptFastPath.js', () => ({
+  executeFastGptPrompt: executeFastGptPromptMock,
+  executeDirectGptAction: executeDirectGptActionMock,
 }));
 
 jest.unstable_mockModule('../src/platform/logging/gptLogger.js', () => ({
@@ -116,6 +123,41 @@ function buildApp() {
   return app;
 }
 
+function buildDirectActionEnvelope(result = 'OK') {
+  return {
+    ok: true,
+    result: {
+      result,
+      module: 'direct_action',
+      activeModel: 'gpt-test',
+      routingStages: ['GPT-DIRECT-ACTION'],
+      directAction: {
+        inline: true,
+        queueBypassed: true,
+        orchestrationBypassed: true,
+        timeoutMs: 24_000,
+      },
+    },
+    directAction: {
+      inline: true,
+      queueBypassed: true,
+      orchestrationBypassed: true,
+      action: 'query_and_wait',
+      timeoutMs: 24_000,
+      modelLatencyMs: 1,
+      totalLatencyMs: 2,
+    },
+    _route: {
+      requestId: 'req-direct-action',
+      gptId: 'arcanos-core',
+      module: 'GPT:DIRECT_ACTION',
+      action: 'query_and_wait',
+      route: 'direct_action',
+      timestamp: '2026-04-24T00:00:00.000Z',
+    },
+  };
+}
+
 describe('async /gpt idempotency', () => {
   const originalAsyncIdempotencyEnv = captureEnv(ASYNC_IDEMPOTENCY_ENV_KEYS);
 
@@ -126,6 +168,7 @@ describe('async /gpt idempotency', () => {
     }
     process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = 'true';
     process.env.PRIORITY_QUEUE_ENABLED = 'false';
+    executeDirectGptActionMock.mockResolvedValue(buildDirectActionEnvelope());
     mockResolveGptRouting.mockImplementation(async (gptId: string) => ({
       ok: true,
       plan: {
@@ -1103,35 +1146,9 @@ describe('async /gpt idempotency', () => {
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
-  it('keeps query_and_wait prompt execution isolated from GPT control truncation limits', async () => {
+  it('keeps core query_and_wait prompt execution on the direct action lane', async () => {
     process.env.GPT_PUBLIC_RESPONSE_MAX_BYTES = '5000';
-    findOrCreateGptJobMock.mockResolvedValue({
-      job: {
-        id: 'job-query-and-wait-ok',
-        status: 'completed'
-      },
-      created: true,
-      deduped: false,
-      dedupeReason: 'new_job'
-    });
-    waitForQueuedGptJobCompletionMock.mockResolvedValue({
-      state: 'completed',
-      job: {
-        id: 'job-query-and-wait-ok',
-        status: 'completed',
-        output: {
-          ok: true,
-          result: 'OK',
-          _route: {
-            gptId: 'arcanos-core',
-            module: 'ARCANOS:CORE',
-            route: 'core',
-            action: 'query',
-            timestamp: '2026-04-11T10:00:03.000Z'
-          }
-        }
-      }
-    });
+    executeDirectGptActionMock.mockResolvedValueOnce(buildDirectActionEnvelope('OK'));
 
     const response = await request(buildApp())
       .post('/gpt/arcanos-core')
@@ -1144,22 +1161,39 @@ describe('async /gpt idempotency', () => {
     expect(response.headers['x-response-truncated']).toBeUndefined();
     expect(response.body).toMatchObject({
       ok: true,
-      jobId: 'job-query-and-wait-ok',
+      gptId: 'arcanos-core',
+      action: 'query_and_wait',
       status: 'completed',
-      lifecycleStatus: 'completed',
-      result: 'OK'
-    });
-    expect(response.body.meta).toBeUndefined();
-    expect(findOrCreateGptJobMock.mock.calls[0]?.[0]).toMatchObject({
-      input: {
+      result: 'OK',
+      routeDecision: {
+        path: 'fast_path',
+        reason: 'query_and_wait_direct_action',
+        queueBypassed: true,
+      },
+      directAction: {
+        inline: true,
+        queueBypassed: true,
+        orchestrationBypassed: true,
+        action: 'query_and_wait',
+      },
+      _route: {
         gptId: 'arcanos-core',
-        body: {
-          prompt: 'Reply with OK',
-          executionMode: 'async'
-        },
-        routeHint: 'query'
+        module: 'GPT:DIRECT_ACTION',
+        action: 'query_and_wait',
+        route: 'direct_action',
       }
     });
+    expect(response.body.meta).toBeUndefined();
+    expect(executeDirectGptActionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        gptId: 'arcanos-core',
+        prompt: 'Reply with OK',
+        action: 'query_and_wait',
+        timeoutMs: 24_000,
+      })
+    );
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
@@ -1393,13 +1427,13 @@ describe('async /gpt idempotency', () => {
     expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
   });
 
-  it('fails query_and_wait clearly when durable async jobs are unavailable instead of falling back to sync query routing', async () => {
+  it('fails non-core query_and_wait clearly when durable async jobs are unavailable instead of falling back to sync query routing', async () => {
     findOrCreateGptJobMock.mockRejectedValue(
       new MockJobRepositoryUnavailableError('jobs backend unavailable')
     );
 
     const response = await request(buildApp())
-      .post('/gpt/arcanos-core')
+      .post('/gpt/arcanos-gaming')
       .send({
         action: 'query_and_wait',
         prompt: 'Generate a Seth Rollins promo prompt'

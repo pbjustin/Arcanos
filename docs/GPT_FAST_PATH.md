@@ -4,9 +4,9 @@
 `POST /gpt/:gptId` now has two execution modes:
 
 - `fast_path`: inline prompt generation for small requests that look like prompt-generation work. It bypasses job creation, worker orchestration, DAG planning, memory overlays, research overlays, and audit overlays.
-- `orchestrated_path`: non-fast-path behavior. Execution planning may still return through bounded module dispatch, or it may use durable async jobs for explicit async requests, complex prompts, explicit actions, idempotent retries, and long-running work.
+- `orchestrated_path`: non-fast-path behavior. Execution planning may still return through bounded module dispatch, or it may use durable async jobs for `query`, non-core `query_and_wait`, explicit async requests, complex prompts, idempotent retries, and long-running work.
 
-The route keeps a single public endpoint so existing Custom GPT integrations do not need a new URL. The router branches internally before async job planning. Explicit async bridge actions (`query`, `query_and_wait`, `get_status`, `get_result`) always keep their current job-backed behavior; fast path is for prompt-generation requests that omit `action`.
+The route keeps a single public endpoint so existing Custom GPT integrations do not need a new URL. The router branches internally before async job planning. `query` keeps its job-backed behavior, `get_status` and `get_result` stay on the control plane, and core `query_and_wait` now uses the synchronous direct action lane by default. Fast path remains available for prompt-generation requests that omit `action`.
 
 Fast-path eligibility is implemented in `src/shared/gpt/gptFastPath.ts`. Inline execution is implemented in `src/services/gptFastPath.ts`.
 
@@ -19,7 +19,7 @@ A request is eligible when all of these are true:
 - General short-form generation that does not ask for a prompt, such as `Generate a launch email`, stays out of the fast path by design. Small unadorned core requests then use the bounded direct path unless explicit async mode, heavy-request thresholds, idempotency, or `GPT_ROUTE_ASYNC_CORE_DEFAULT=true` require a durable job.
 - If the caller explicitly sets fast mode, all other eligibility checks still apply.
 - There is no explicit idempotency key.
-- The action is omitted. Explicit async bridge actions stay orchestrated even if `executionMode` is `fast`.
+- The action is omitted for prompt-generation fast path. Explicit `query` and non-core `query_and_wait` stay orchestrated even if `executionMode` is `fast`; core `query_and_wait` uses the direct action lane.
 - The request does not carry heavy fields such as `tools`, `workflow`, `dag`, `files`, `images`, `research`, a non-object `payload`, or a non-empty object `payload`.
 - Prompt length, message count, and requested max words stay under configured limits.
 

@@ -12,6 +12,10 @@ import { generateMockResponse } from '@services/openai.js';
 import { getOpenAIClientOrAdapter } from '@services/openai/clientBridge.js';
 import { getAiExecutionContext } from '@services/openai/aiExecutionContext.js';
 import { APPLICATION_CONSTANTS } from '@shared/constants.js';
+import {
+  ARCANOS_SUPPRESS_TIMEOUT_FALLBACK_FLAG,
+  normalizeBooleanFlagValue
+} from '@shared/gpt/gptDirectAction.js';
 import type { ModuleDef } from './moduleLoader.js';
 import { executeSystemStateRequest } from './systemState.js';
 import {
@@ -35,6 +39,7 @@ type ArcanosCoreQueryPayload = {
   max_words?: number;
   maxWords?: number;
   __arcanosExecutionMode?: string;
+  [ARCANOS_SUPPRESS_TIMEOUT_FALLBACK_FLAG]?: boolean | string | number;
 };
 
 type ArcanosCoreExecutionMode = 'request' | 'background';
@@ -74,6 +79,7 @@ export interface RunArcanosCoreQueryParams {
   overrideAuditSafe?: string;
   runOptions?: Omit<TrinityRunOptions, 'sourceEndpoint'>;
   executionModeOverride?: ArcanosCoreExecutionMode;
+  allowTimeoutFallback?: boolean;
 }
 
 export interface BuildArcanosCoreTimeoutFallbackParams {
@@ -646,6 +652,48 @@ export async function runArcanosCoreQuery(
     const durationMs = Date.now() - startedAt;
     if (shouldRecoverViaCoreDegradedPath(error, durationMs, pipelinePlan)) {
       const primaryTimeoutPhase = resolveCoreFallbackTimeoutPhase(error);
+      if (params.allowTimeoutFallback === false) {
+        logger.warn('[PIPELINE] timeout fallback suppressed', {
+          module: 'ARCANOS:CORE',
+          sourceEndpoint: params.sourceEndpoint,
+          executionMode: pipelinePlan.executionMode,
+          durationMs,
+          timeoutKind: 'pipeline_timeout',
+          timeoutPhase: primaryTimeoutPhase,
+          primaryTimeoutMs: pipelinePlan.primaryTimeoutMs,
+          totalTimeoutMs: pipelinePlan.totalTimeoutMs,
+          degradedTimeoutMs: pipelinePlan.degradedTimeoutMs,
+          error: errorMessage
+        });
+        emitCoreRuntimeTrace({
+          phase: 'fallback_suppressed',
+          startedAt,
+          requestId: trinityRequestId ?? params.requestId,
+          sourceEndpoint: params.sourceEndpoint,
+          executionMode: pipelinePlan.executionMode,
+          runtimeBudget,
+          timeoutMs: pipelinePlan.primaryTimeoutMs,
+          totalTimeoutMs: pipelinePlan.totalTimeoutMs,
+          degradedReason: ARCANOS_CORE_PIPELINE_TIMEOUT_REASON,
+          timeoutPhase: primaryTimeoutPhase,
+          level: 'warn',
+          extra: {
+            error: errorMessage
+          }
+        });
+        recordTraceEvent('core.pipeline.timeout_fallback_suppressed', {
+          sourceEndpoint: params.sourceEndpoint,
+          executionMode: pipelinePlan.executionMode,
+          durationMs,
+          timeoutKind: 'pipeline_timeout',
+          timeoutPhase: primaryTimeoutPhase,
+          primaryTimeoutMs: pipelinePlan.primaryTimeoutMs,
+          totalTimeoutMs: pipelinePlan.totalTimeoutMs,
+          degradedTimeoutMs: pipelinePlan.degradedTimeoutMs
+        });
+        throw error;
+      }
+
       emitCoreRuntimeTrace({
         phase: 'fallback_triggered',
         startedAt,
@@ -907,6 +955,9 @@ export const ArcanosCore: ModuleDef = {
           : normalizedPayload.__arcanosExecutionMode === 'request'
           ? 'request'
           : undefined;
+      const allowTimeoutFallback = !normalizeBooleanFlagValue(
+        normalizedPayload[ARCANOS_SUPPRESS_TIMEOUT_FALLBACK_FLAG]
+      );
       const { client } = getOpenAIClientOrAdapter();
       emitCoreRuntimeTrace({
         phase: 'gpt_config_loaded',
@@ -944,7 +995,8 @@ export const ArcanosCore: ModuleDef = {
           ...(answerMode ? { answerMode } : {}),
           ...(maxWords ? { maxWords } : {})
         },
-        executionModeOverride
+        executionModeOverride,
+        allowTimeoutFallback
       });
     },
     async system_state(payload: unknown) {

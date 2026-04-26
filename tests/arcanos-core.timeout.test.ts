@@ -238,6 +238,38 @@ describe('runArcanosCoreQuery timeout clamp', () => {
     expect(recordTraceEventMock).toHaveBeenCalledWith('core.pipeline.degraded', expect.any(Object));
   });
 
+  it('rethrows pipeline timeouts when fallback recovery is disabled', async () => {
+    process.env.ARCANOS_CORE_PIPELINE_TIMEOUT_MS = '5000';
+    const timeoutError = new Error('ARCANOS:CORE pipeline timeout after 3000ms');
+    timeoutError.name = 'AbortError';
+
+    runWithRequestAbortTimeoutMock.mockRejectedValueOnce(timeoutError);
+
+    await expect(
+      runArcanosCoreQuery({
+        client: {} as never,
+        prompt: 'Return the direct GPT Action result.',
+        sourceEndpoint: 'gpt.arcanos-core.query',
+        allowTimeoutFallback: false
+      })
+    ).rejects.toThrow('ARCANOS:CORE pipeline timeout after 3000ms');
+
+    expect(runWithRequestAbortTimeoutMock).toHaveBeenCalledTimes(1);
+    expect(runTrinityWritingPipelineMock).not.toHaveBeenCalled();
+    expect(recordTraceEventMock).toHaveBeenCalledWith(
+      'core.pipeline.timeout_fallback_suppressed',
+      expect.any(Object)
+    );
+    expect(recordTraceEventMock).not.toHaveBeenCalledWith(
+      'core.pipeline.degraded',
+      expect.any(Object)
+    );
+    expect(recordTraceEventMock).not.toHaveBeenCalledWith(
+      'core.pipeline.static_fallback',
+      expect.any(Object)
+    );
+  });
+
   it('recovers when Trinity aborts near the shared pipeline deadline before the wrapper stamps its own timeout message', async () => {
     process.env.ARCANOS_CORE_PIPELINE_TIMEOUT_MS = '5000';
     const timeoutError = new Error('Request was aborted.');

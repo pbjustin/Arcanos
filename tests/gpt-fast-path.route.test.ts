@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals
 const mockRouteGptRequest = jest.fn();
 const mockResolveGptRouting = jest.fn();
 const executeFastGptPromptMock = jest.fn();
+const executeDirectGptActionMock = jest.fn();
 const findOrCreateGptJobMock = jest.fn();
 const getJobByIdMock = jest.fn();
 const planAutonomousWorkerJobMock = jest.fn();
@@ -22,6 +23,7 @@ jest.unstable_mockModule('../src/routes/_core/gptDispatch.js', () => ({
 
 jest.unstable_mockModule('../src/services/gptFastPath.js', () => ({
   executeFastGptPrompt: executeFastGptPromptMock,
+  executeDirectGptAction: executeDirectGptActionMock,
 }));
 
 jest.unstable_mockModule('../src/platform/logging/gptLogger.js', () => ({
@@ -120,6 +122,41 @@ function buildFastPathEnvelope() {
   };
 }
 
+function buildDirectActionEnvelope() {
+  return {
+    ok: true,
+    result: {
+      result: 'Direct action response.',
+      module: 'direct_action',
+      activeModel: 'gpt-test',
+      routingStages: ['GPT-DIRECT-ACTION'],
+      directAction: {
+        inline: true,
+        queueBypassed: true,
+        orchestrationBypassed: true,
+        timeoutMs: 24_000,
+      },
+    },
+    directAction: {
+      inline: true,
+      queueBypassed: true,
+      orchestrationBypassed: true,
+      action: 'query_and_wait',
+      timeoutMs: 24_000,
+      modelLatencyMs: 10,
+      totalLatencyMs: 12,
+    },
+    _route: {
+      requestId: 'req-direct-action',
+      gptId: 'arcanos-core',
+      module: 'GPT:DIRECT_ACTION',
+      action: 'query_and_wait',
+      route: 'direct_action',
+      timestamp: '2026-04-21T12:01:00.000Z',
+    },
+  };
+}
+
 const GPT_ROUTE_TEST_ENV_KEYS = [
   'GPT_ASYNC_HEAVY_PROMPT_CHARS',
   'GPT_ASYNC_HEAVY_MESSAGE_COUNT',
@@ -181,6 +218,7 @@ describe('GPT fast-path route branching', () => {
       }
     }));
     executeFastGptPromptMock.mockResolvedValue(buildFastPathEnvelope());
+    executeDirectGptActionMock.mockResolvedValue(buildDirectActionEnvelope());
     planAutonomousWorkerJobMock.mockResolvedValue({
       status: 'pending',
       retryCount: 0,
@@ -257,6 +295,259 @@ describe('GPT fast-path route branching', () => {
     );
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
     expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('runs core query_and_wait through the direct action lane by default', async () => {
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        action: 'query_and_wait',
+        prompt: 'Analyze this deployment timeout.',
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.headers['x-gpt-route-decision']).toBe('fast_path');
+    expect(response.headers['x-gpt-route-decision-reason']).toBe('query_and_wait_direct_action');
+    expect(response.headers['x-gpt-fast-path-queue-bypassed']).toBe('true');
+    expect(response.headers['x-gpt-queue-bypassed']).toBe('true');
+    expect(response.body).toMatchObject({
+      ok: true,
+      gptId: 'arcanos-core',
+      action: 'query_and_wait',
+      status: 'completed',
+      result: 'Direct action response.',
+      routeDecision: {
+        path: 'fast_path',
+        reason: 'query_and_wait_direct_action',
+        queueBypassed: true,
+        action: 'query_and_wait',
+      },
+      directAction: {
+        inline: true,
+        queueBypassed: true,
+        orchestrationBypassed: true,
+        action: 'query_and_wait',
+      },
+      _route: {
+        gptId: 'arcanos-core',
+        module: 'GPT:DIRECT_ACTION',
+        action: 'query_and_wait',
+        route: 'direct_action',
+      },
+    });
+    expect(executeDirectGptActionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        gptId: 'arcanos-core',
+        prompt: 'Analyze this deployment timeout.',
+        action: 'query_and_wait',
+        timeoutMs: 24_000,
+      })
+    );
+    expect(executeFastGptPromptMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('recognizes query_and_wait supplied as a request query parameter', async () => {
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core?action=query_and_wait')
+      .send({
+        prompt: 'Analyze this deployment timeout.',
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.headers['x-gpt-route-decision']).toBe('fast_path');
+    expect(response.headers['x-gpt-route-decision-reason']).toBe('query_and_wait_direct_action');
+    expect(response.body).toMatchObject({
+      ok: true,
+      gptId: 'arcanos-core',
+      action: 'query_and_wait',
+      status: 'completed',
+      _route: {
+        module: 'GPT:DIRECT_ACTION',
+        action: 'query_and_wait',
+        route: 'direct_action',
+      },
+    });
+    expect(executeDirectGptActionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        gptId: 'arcanos-core',
+        prompt: 'Analyze this deployment timeout.',
+        action: 'query_and_wait',
+      })
+    );
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('recognizes operation-style query_and_wait action aliases', async () => {
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        operationId: 'requestQueryAndWait',
+        prompt: 'Analyze this deployment timeout.',
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.headers['x-gpt-route-decision-reason']).toBe('query_and_wait_direct_action');
+    expect(response.body).toMatchObject({
+      ok: true,
+      action: 'query_and_wait',
+      _route: {
+        module: 'GPT:DIRECT_ACTION',
+        action: 'query_and_wait',
+        route: 'direct_action',
+      },
+    });
+    expect(executeDirectGptActionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: 'Analyze this deployment timeout.',
+        action: 'query_and_wait',
+      })
+    );
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('returns a traced unknown-GPT error for query_and_wait without creating jobs', async () => {
+    mockResolveGptRouting.mockResolvedValueOnce({
+      ok: false,
+      error: {
+        code: 'UNKNOWN_GPT',
+        message: "gptId 'invalid-id' is not registered",
+      },
+      _route: {
+        gptId: 'invalid-id',
+        timestamp: '2026-04-24T00:00:00.000Z',
+      },
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/invalid-id')
+      .send({
+        action: 'query_and_wait',
+        prompt: 'Analyze this deployment timeout.',
+      });
+
+    expect(response.status).toBe(404);
+    expect(response.body).toMatchObject({
+      ok: false,
+      gptId: 'invalid-id',
+      action: 'query_and_wait',
+      route: '/gpt/:gptId',
+      code: 'UNKNOWN_GPT',
+      traceId: expect.any(String),
+      error: {
+        code: 'UNKNOWN_GPT',
+        message: "gptId 'invalid-id' is not registered",
+      },
+      _route: {
+        gptId: 'invalid-id',
+        action: 'query_and_wait',
+        route: 'routing_validation',
+        traceId: expect.any(String),
+      },
+    });
+    expect(executeDirectGptActionMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('returns a typed error instead of bounded fallback when direct query_and_wait times out', async () => {
+    const timeoutError = new Error('GPT direct action timeout after 24000ms');
+    timeoutError.name = 'AbortError';
+    executeDirectGptActionMock.mockRejectedValueOnce(timeoutError);
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        action: 'query_and_wait',
+        prompt: 'Analyze this deployment timeout.',
+      });
+
+    expect(response.status).toBe(504);
+    expect(response.body).toMatchObject({
+      ok: false,
+      code: 'GPT_QUERY_AND_WAIT_TIMEOUT',
+      traceId: expect.any(String),
+      error: {
+        code: 'GPT_QUERY_AND_WAIT_TIMEOUT',
+        message: 'GPT direct action timeout after 24000ms',
+      },
+      routeDecision: {
+        reason: 'query_and_wait_direct_action',
+      },
+      _route: {
+        gptId: 'arcanos-core',
+        action: 'query_and_wait',
+        route: 'query_and_wait_direct',
+      },
+    });
+    expect(JSON.stringify(response.body)).not.toContain('bounded fallback response');
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('returns service unavailable when the direct action client is unavailable', async () => {
+    executeDirectGptActionMock.mockRejectedValueOnce(
+      new Error('OpenAI client unavailable for GPT direct action.')
+    );
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        action: 'query_and_wait',
+        prompt: 'Analyze this deployment timeout.',
+      });
+
+    expect(response.status).toBe(503);
+    expect(response.body).toMatchObject({
+      ok: false,
+      code: 'GPT_QUERY_AND_WAIT_FAILED',
+      traceId: expect.any(String),
+      error: {
+        code: 'GPT_QUERY_AND_WAIT_FAILED',
+        message: 'OpenAI client unavailable for GPT direct action.',
+      },
+      _route: {
+        action: 'query_and_wait',
+        route: 'query_and_wait_direct',
+      },
+    });
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('returns internal error when direct action execution produces no output', async () => {
+    executeDirectGptActionMock.mockRejectedValueOnce(
+      new Error('GPT direct action returned empty output.')
+    );
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        action: 'query_and_wait',
+        prompt: 'Analyze this deployment timeout.',
+      });
+
+    expect(response.status).toBe(500);
+    expect(response.body).toMatchObject({
+      ok: false,
+      code: 'GPT_QUERY_AND_WAIT_FAILED',
+      traceId: expect.any(String),
+      error: {
+        code: 'GPT_QUERY_AND_WAIT_FAILED',
+        message: 'GPT direct action returned empty output.',
+      },
+      _route: {
+        action: 'query_and_wait',
+        route: 'query_and_wait_direct',
+      },
+    });
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 

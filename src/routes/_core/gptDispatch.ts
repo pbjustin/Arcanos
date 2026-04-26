@@ -45,6 +45,10 @@ import {
   assertWritingPlaneClassification,
   classifyGptRequestPlane,
 } from "./gptPlaneClassification.js";
+import {
+  ARCANOS_SUPPRESS_TIMEOUT_FALLBACK_FLAG,
+  normalizeBooleanFlagValue
+} from "@shared/gpt/gptDirectAction.js";
 
 export type AskEnvelope =
   | { ok: true; result: unknown; _route: RouteMeta }
@@ -71,6 +75,7 @@ export type RouteGptRequestInput = {
   bypassIntentRouting?: boolean;
   runtimeExecutionMode?: 'request' | 'background';
   parentAbortSignal?: AbortSignal;
+  suppressTimeoutFallback?: boolean;
 };
 
 function extractPrompt(body: any): string | null {
@@ -124,6 +129,7 @@ const FORWARDED_TOP_LEVEL_PAYLOAD_KEYS = [
   'maxWords',
   'max_words',
   '__arcanosExecutionMode',
+  ARCANOS_SUPPRESS_TIMEOUT_FALLBACK_FLAG,
 ] as const;
 
 function mergeForwardedTopLevelPayloadFields(
@@ -197,6 +203,14 @@ function applyRuntimeExecutionModeOverride(
     ...payload,
     __arcanosExecutionMode: runtimeExecutionMode
   };
+}
+
+function readSuppressTimeoutFallbackFlag(payload: unknown): boolean {
+  if (!isRecord(payload)) {
+    return false;
+  }
+
+  return normalizeBooleanFlagValue(payload[ARCANOS_SUPPRESS_TIMEOUT_FALLBACK_FLAG]);
 }
 
 function actionRequiresPrompt(action: string): boolean {
@@ -828,7 +842,8 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     request,
     bypassIntentRouting,
     runtimeExecutionMode,
-    parentAbortSignal
+    parentAbortSignal,
+    suppressTimeoutFallback: suppressTimeoutFallbackInput
   } = input;
   const trimmedGptId = (gptId ?? "").trim();
   const requestEndpoint = request?.originalUrl ?? request?.url ?? request?.path;
@@ -836,6 +851,9 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     buildDispatchPayload(body),
     runtimeExecutionMode
   );
+  const suppressTimeoutFallback =
+    suppressTimeoutFallbackInput === true ||
+    readSuppressTimeoutFallbackFlag(preDispatchPayload);
   const diagnosticTextInput = extractPrompt(preDispatchPayload) ?? extractDiagnosticTextInput(body as Record<string, unknown> | undefined);
   const promptDebugRequestId = requestId ?? `gpt-${trimmedGptId || 'unknown'}`;
   const rawPrompt = extractPrompt(body) ?? diagnosticTextInput ?? '';
@@ -1625,71 +1643,72 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
 
       if (
         isDispatchTimeout &&
-      activeEntry.module === 'ARCANOS:CORE' &&
-      action === 'query' &&
-      typeof prompt === 'string' &&
-      prompt.length > 0
-    ) {
-      const timeoutPhase = resolveArcanosCoreTimeoutPhase(err) ?? 'module-dispatch';
-      const timeoutFallback = buildArcanosCoreTimeoutFallbackEnvelope({
-        prompt,
-        gptId: trimmedGptId,
-        requestId,
-        route: activeEntry.route,
-        timeoutPhase,
-      });
-      recordDispatcherRoute({
-        gptId: trimmedGptId,
-        module: activeEntry.module,
-        route: activeEntry.route,
-        handler: 'module-dispatcher',
-        outcome: 'timeout',
-      });
-      recordDispatcherFallback({
-        gptId: trimmedGptId,
-        module: activeEntry.module,
-        reason: 'module_timeout_static_fallback',
-      });
-      logger?.warn?.('gpt.dispatch.timeout_fallback', {
-        requestId,
-        gptId: trimmedGptId,
-        module: activeEntry.module,
-        action,
-        route: activeEntry.route,
-        errorType: 'module_timeout_static_fallback',
-        error: errorMessage,
-        timeoutPhase,
-        timeoutMs,
-        timeoutSource,
-        durationMs: Date.now() - dispatchStartedAt,
-      });
-      recordPromptDebugTrace(promptDebugRequestId, 'response', {
-        traceId: request?.traceId ?? null,
-        endpoint: requestEndpoint ?? '/gpt/:gptId',
-        method: request?.method ?? null,
-        rawPrompt,
-        normalizedPrompt,
-        selectedRoute: activeEntry.route,
-        selectedModule: activeEntry.module,
-        responseReturned: timeoutFallback.result,
-        fallbackPathUsed: 'module-timeout-static-fallback',
-        fallbackReason: dispatchErrorMessage,
-      });
-      return {
-        ok: true,
-        result: timeoutFallback.result,
-        _route: {
-          ...baseRoute,
-          ...timeoutFallback._route,
+        !suppressTimeoutFallback &&
+        activeEntry.module === 'ARCANOS:CORE' &&
+        action === 'query' &&
+        typeof prompt === 'string' &&
+        prompt.length > 0
+      ) {
+        const timeoutPhase = resolveArcanosCoreTimeoutPhase(err) ?? 'module-dispatch';
+        const timeoutFallback = buildArcanosCoreTimeoutFallbackEnvelope({
+          prompt,
+          gptId: trimmedGptId,
+          requestId,
+          route: activeEntry.route,
+          timeoutPhase,
+        });
+        recordDispatcherRoute({
+          gptId: trimmedGptId,
+          module: activeEntry.module,
+          route: activeEntry.route,
+          handler: 'module-dispatcher',
+          outcome: 'timeout',
+        });
+        recordDispatcherFallback({
+          gptId: trimmedGptId,
+          module: activeEntry.module,
+          reason: 'module_timeout_static_fallback',
+        });
+        logger?.warn?.('gpt.dispatch.timeout_fallback', {
+          requestId,
+          gptId: trimmedGptId,
           module: activeEntry.module,
           action,
-          matchMethod,
           route: activeEntry.route,
-          availableActions,
-          moduleVersion: (moduleMetadata as any)?.version ?? null,
-        },
-      };
-    }
+          errorType: 'module_timeout_static_fallback',
+          error: errorMessage,
+          timeoutPhase,
+          timeoutMs,
+          timeoutSource,
+          durationMs: Date.now() - dispatchStartedAt,
+        });
+        recordPromptDebugTrace(promptDebugRequestId, 'response', {
+          traceId: request?.traceId ?? null,
+          endpoint: requestEndpoint ?? '/gpt/:gptId',
+          method: request?.method ?? null,
+          rawPrompt,
+          normalizedPrompt,
+          selectedRoute: activeEntry.route,
+          selectedModule: activeEntry.module,
+          responseReturned: timeoutFallback.result,
+          fallbackPathUsed: 'module-timeout-static-fallback',
+          fallbackReason: dispatchErrorMessage,
+        });
+        return {
+          ok: true,
+          result: timeoutFallback.result,
+          _route: {
+            ...baseRoute,
+            ...timeoutFallback._route,
+            module: activeEntry.module,
+            action,
+            matchMethod,
+            route: activeEntry.route,
+            availableActions,
+            moduleVersion: (moduleMetadata as any)?.version ?? null,
+          },
+        };
+      }
 
     recordDispatcherRoute({
       gptId: trimmedGptId,
