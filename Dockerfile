@@ -6,7 +6,7 @@ ENV NODE_ENV=production
 ENV PYTHON=python3
 ENV ARCANOS_WORKSPACE_ROOT=/app
 ENV ARCANOS_PYTHON_RUNTIME_DIR=/app/daemon-python
-ENV RAILWAY_CLI_BIN=/usr/local/bin/railway
+ENV RAILWAY_CLI_BIN=/usr/local/lib/node_modules/@railway/cli/bin/railway
 
 # Install build-time VCS dependency required by git-based npm overrides,
 # OpenSSL for Prisma engine detection/runtime loading, and the minimal Python

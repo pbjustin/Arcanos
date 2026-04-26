@@ -27,7 +27,7 @@ const EXPECTED_HEALTHCHECK_PATH = '/health';
 const EXPECTED_DOCKERFILE_CMD = 'CMD ["node", "scripts/start-railway-service.mjs"]';
 const EXPECTED_DOCKERFILE_PRISMA_COPY = 'COPY prisma/ ./prisma/';
 const EXPECTED_DOCKERFILE_PRISMA_GENERATE = 'npx --yes prisma@5.22.0 generate --schema ./prisma/schema.prisma';
-const EXPECTED_DOCKERFILE_RAILWAY_CLI_BIN_ENV = 'ENV RAILWAY_CLI_BIN=/usr/local/bin/railway';
+const EXPECTED_DOCKERFILE_RAILWAY_CLI_BIN_ENV = 'ENV RAILWAY_CLI_BIN=/usr/local/lib/node_modules/@railway/cli/bin/railway';
 const EXPECTED_DOCKERFILE_RAILWAY_CLI_INSTALL = 'npm install --global @railway/cli@4.30.2 --no-audit --no-fund';
 const PROCESS_KIND_ENV = 'ARCANOS_PROCESS_KIND';
 const REQUIRED_PRODUCTION_VARIABLES = [
