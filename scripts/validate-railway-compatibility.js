@@ -27,8 +27,10 @@ const EXPECTED_HEALTHCHECK_PATH = '/health';
 const EXPECTED_DOCKERFILE_CMD = 'CMD ["node", "scripts/start-railway-service.mjs"]';
 const EXPECTED_DOCKERFILE_PRISMA_COPY = 'COPY prisma/ ./prisma/';
 const EXPECTED_DOCKERFILE_PRISMA_GENERATE = 'npx --yes prisma@5.22.0 generate --schema ./prisma/schema.prisma';
-const EXPECTED_DOCKERFILE_RAILWAY_CLI_BIN_ENV = 'ENV RAILWAY_CLI_BIN=/usr/local/lib/node_modules/@railway/cli/bin/railway';
+const EXPECTED_DOCKERFILE_RAILWAY_CLI_BIN_ENV = 'ENV RAILWAY_CLI_BIN=/usr/local/bin/railway-native';
 const EXPECTED_DOCKERFILE_RAILWAY_CLI_INSTALL = 'npm install --global @railway/cli@4.30.2 --no-audit --no-fund';
+const EXPECTED_DOCKERFILE_RAILWAY_CLI_MUSL_BINARY = 'railway-v4.30.2-x86_64-unknown-linux-musl.tar.gz';
+const EXPECTED_DOCKERFILE_RAILWAY_CLI_SMOKE_TEST = '/usr/local/bin/railway-native --version';
 const PROCESS_KIND_ENV = 'ARCANOS_PROCESS_KIND';
 const REQUIRED_PRODUCTION_VARIABLES = [
   'NODE_ENV',
@@ -258,6 +260,14 @@ export function validateDockerfile(dockerfileRaw) {
 
   if (!dockerfileRaw.includes(EXPECTED_DOCKERFILE_RAILWAY_CLI_INSTALL)) {
     errors.push(`Dockerfile must include ${EXPECTED_DOCKERFILE_RAILWAY_CLI_INSTALL}`);
+  }
+
+  if (!dockerfileRaw.includes(EXPECTED_DOCKERFILE_RAILWAY_CLI_MUSL_BINARY)) {
+    errors.push(`Dockerfile must install the pinned musl Railway CLI binary ${EXPECTED_DOCKERFILE_RAILWAY_CLI_MUSL_BINARY}`);
+  }
+
+  if (!dockerfileRaw.includes(EXPECTED_DOCKERFILE_RAILWAY_CLI_SMOKE_TEST)) {
+    errors.push(`Dockerfile must smoke test ${EXPECTED_DOCKERFILE_RAILWAY_CLI_SMOKE_TEST}`);
   }
 
   return errors;

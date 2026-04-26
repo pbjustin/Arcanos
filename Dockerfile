@@ -6,7 +6,7 @@ ENV NODE_ENV=production
 ENV PYTHON=python3
 ENV ARCANOS_WORKSPACE_ROOT=/app
 ENV ARCANOS_PYTHON_RUNTIME_DIR=/app/daemon-python
-ENV RAILWAY_CLI_BIN=/usr/local/lib/node_modules/@railway/cli/bin/railway
+ENV RAILWAY_CLI_BIN=/usr/local/bin/railway-native
 
 # Install build-time VCS dependency required by git-based npm overrides,
 # OpenSSL for Prisma engine detection/runtime loading, and the minimal Python
@@ -31,6 +31,13 @@ RUN NODE_OPTIONS=--max_old_space_size=256 npm ci --omit=dev --no-audit --no-fund
 
 # Install the Railway CLI binary required by the allowlisted control-plane adapter.
 RUN npm install --global @railway/cli@4.30.2 --no-audit --no-fund
+RUN mkdir -p /tmp/railway-cli && \
+    wget -qO /tmp/railway-cli.tar.gz https://github.com/railwayapp/cli/releases/download/v4.30.2/railway-v4.30.2-x86_64-unknown-linux-musl.tar.gz && \
+    tar -xzf /tmp/railway-cli.tar.gz -C /tmp/railway-cli && \
+    cp /tmp/railway-cli/railway /usr/local/bin/railway-native && \
+    chmod 755 /usr/local/bin/railway-native && \
+    rm -rf /tmp/railway-cli /tmp/railway-cli.tar.gz && \
+    /usr/local/bin/railway-native --version
 
 # Copy source code, workers, scripts, config, and build configuration
 COPY src/ ./src/
