@@ -206,6 +206,7 @@ export interface ControlPlaneTargetDescriptor {
 export interface ControlPlaneInvokeRequestPayload {
   operation: string;
   provider: ControlPlaneProvider;
+  gptId?: string;
   target: ControlPlaneTargetDescriptor;
   environment: string;
   scope: string | string[];

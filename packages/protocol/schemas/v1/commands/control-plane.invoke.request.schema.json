@@ -31,6 +31,11 @@
         "codex-ide"
       ]
     },
+    "gptId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
     "target": {
       "type": "object",
       "additionalProperties": {

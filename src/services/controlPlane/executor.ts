@@ -11,16 +11,29 @@ import {
 import { evaluateControlPlaneApproval } from './approval.js';
 import { emitControlPlaneAuditEvent } from './audit.js';
 import { defaultControlPlaneCommandRunner } from './commandRunner.js';
+import { evaluateControlPlaneGptPolicy } from './gptPolicy.js';
+import { verifyControlPlaneRouteMetadata } from './routeVerification.js';
 import { safeParseControlPlaneRequest } from './schema.js';
 import type {
   ControlPlaneApprovalStatus,
   ControlPlaneAuditEvent,
   ControlPlaneCommandPlan,
+  ControlPlaneDeniedCapability,
   ControlPlaneOperationSpec,
   ControlPlaneRequest,
   ControlPlaneResponse,
   ExecuteControlPlaneOperationOptions,
 } from './types.js';
+
+const CONTROL_PLANE_DENIED_CAPABILITY_VALUES = new Set<ControlPlaneDeniedCapability>([
+  'auth.bypass',
+  'credential.escalation',
+  'secrets.read.raw',
+  'audit.disable',
+  'production.mutate.unapproved',
+  'destructive.unapproved',
+  'mcp.undocumented_tools',
+]);
 
 function createAuditId(): string {
   return `cp_${crypto.randomUUID()}`;
@@ -158,6 +171,19 @@ function buildCommandFailureError(commandResult: { exitCode: number; signal?: st
   };
 }
 
+function resolveRequestedDeniedCapability(request: ControlPlaneRequest): ControlPlaneDeniedCapability | undefined {
+  const candidate = request.params.requestedCapability ?? request.params.capability;
+  if (typeof candidate !== 'string') {
+    return undefined;
+  }
+  const normalized = candidate.trim() as ControlPlaneDeniedCapability;
+  return CONTROL_PLANE_DENIED_CAPABILITY_VALUES.has(normalized) ? normalized : undefined;
+}
+
+function resolveRouteMetadata(request: ControlPlaneRequest): unknown {
+  return request.params.routeMetadata ?? request.params.metadata ?? {};
+}
+
 async function executeParsedControlPlaneOperation(
   request: ControlPlaneRequest,
   auditId: string,
@@ -179,18 +205,38 @@ async function executeParsedControlPlaneOperation(
     );
   }
 
-  const missingScopes = resolveMissingScopes(request, spec);
-  if (missingScopes.length > 0) {
-    const message = 'Control-plane request is missing required permission scope.';
-    emitAudit(request, auditId, 'denied', 'not_required', options, message, { missingScopes });
+  const gptPolicyDecision = evaluateControlPlaneGptPolicy({
+    gptId: request.gptId,
+    workflow: spec.workflow,
+    requestedCapability: resolveRequestedDeniedCapability(request),
+    policies: options.gptPolicies,
+  });
+  if (!gptPolicyDecision.ok) {
+    const message = `Control-plane GPT policy denied request: ${gptPolicyDecision.reason}.`;
+    emitAudit(request, auditId, 'denied', 'not_required', options, message, { gptPolicy: gptPolicyDecision });
     return buildBaseResponse(
       auditId,
       request,
       false,
       null,
       warnings,
-      { missingScopes },
-      { code: 'ERR_CONTROL_PLANE_SCOPE', message, details: { missingScopes } }
+      { gptPolicy: gptPolicyDecision },
+      { code: 'ERR_CONTROL_PLANE_GPT_POLICY', message, details: { gptPolicy: gptPolicyDecision } }
+    );
+  }
+
+  const missingScopes = resolveMissingScopes(request, spec);
+  if (missingScopes.length > 0) {
+    const message = 'Control-plane request is missing required permission scope.';
+    emitAudit(request, auditId, 'denied', 'not_required', options, message, { missingScopes, gptPolicy: gptPolicyDecision });
+    return buildBaseResponse(
+      auditId,
+      request,
+      false,
+      null,
+      warnings,
+      { missingScopes, gptPolicy: gptPolicyDecision },
+      { code: 'ERR_CONTROL_PLANE_SCOPE', message, details: { missingScopes, gptPolicy: gptPolicyDecision } }
     );
   }
 
@@ -225,7 +271,7 @@ async function executeParsedControlPlaneOperation(
   );
   if (!approvalDecision.ok) {
     const message = approvalDecision.reason ?? 'Control-plane approval was rejected.';
-    emitAudit(request, auditId, 'denied', approvalDecision.status, options, message);
+    emitAudit(request, auditId, 'denied', approvalDecision.status, options, message, { gptPolicy: gptPolicyDecision });
     return buildBaseResponse(
       auditId,
       request,
@@ -243,9 +289,11 @@ async function executeParsedControlPlaneOperation(
       allowed: true,
       operation: request.operation,
       provider: request.provider,
+      workflow: spec.workflow,
       readOnly: spec.readOnly,
       approvalStatus: approvalDecision.status,
       requiredScopes: spec.requiredScopes,
+      gptPolicy: gptPolicyDecision,
       plan:
         spec.kind === 'command' && plannedCommand
           ? redactCommandPlan(plannedCommand)
@@ -271,7 +319,12 @@ async function executeParsedControlPlaneOperation(
         approvalDecision.status,
         options,
         ok ? 'command completed' : 'command failed',
-        { exitCode: commandResult.exitCode, signal: commandResult.signal ?? null, command: redactCommandPlan(command) }
+        {
+          exitCode: commandResult.exitCode,
+          signal: commandResult.signal ?? null,
+          command: redactCommandPlan(command),
+          gptPolicy: gptPolicyDecision,
+        }
       );
       return buildBaseResponse(
         auditId,
@@ -290,7 +343,7 @@ async function executeParsedControlPlaneOperation(
       const mcp = await resolveMcpService(options);
       const result = await mcp.listTools({ request: resolveRequestForMcp(options.request) });
       const redactedResult = redactSensitive(result);
-      emitAudit(request, auditId, 'accepted', approvalDecision.status, options, 'mcp tools listed');
+      emitAudit(request, auditId, 'accepted', approvalDecision.status, options, 'mcp tools listed', { gptPolicy: gptPolicyDecision });
       return buildBaseResponse(auditId, request, true, redactedResult, warnings, redactedResult);
     }
 
@@ -302,13 +355,47 @@ async function executeParsedControlPlaneOperation(
         request: resolveRequestForMcp(options.request),
       });
       const redactedResult = redactSensitive(result);
-      emitAudit(request, auditId, 'accepted', approvalDecision.status, options, 'mcp tool invoked', { toolName: plannedMcpTool });
+      emitAudit(request, auditId, 'accepted', approvalDecision.status, options, 'mcp tool invoked', {
+        toolName: plannedMcpTool,
+        gptPolicy: gptPolicyDecision,
+      });
+      return buildBaseResponse(auditId, request, true, redactedResult, warnings, redactedResult);
+    }
+
+    if (spec.kind === 'route-trinity-request') {
+      const result = {
+        allowed: true,
+        trinityRequested: true,
+        trinityConfirmed: false,
+        routeStatus: 'REQUEST_ALLOWED_UNCONFIRMED',
+        gptPolicy: gptPolicyDecision,
+        reason: 'gpt_allowed_to_request_trinity_route_not_confirmed',
+      };
+      const redactedResult = redactSensitive(result);
+      emitAudit(request, auditId, 'accepted', approvalDecision.status, options, 'trinity route request allowed', {
+        gptPolicy: gptPolicyDecision,
+        routeStatus: result.routeStatus,
+      });
+      return buildBaseResponse(auditId, request, true, redactedResult, warnings, redactedResult);
+    }
+
+    if (spec.kind === 'route-verify') {
+      const routeVerification = verifyControlPlaneRouteMetadata({
+        gptId: request.gptId,
+        metadata: resolveRouteMetadata(request),
+        policies: options.gptPolicies,
+      });
+      const redactedResult = redactSensitive(routeVerification);
+      emitAudit(request, auditId, 'accepted', approvalDecision.status, options, 'route metadata verified', {
+        gptPolicy: gptPolicyDecision,
+        routeVerification,
+      });
       return buildBaseResponse(auditId, request, true, redactedResult, warnings, redactedResult);
     }
 
     const health = await runBackendHealthCheck(options);
     const redactedHealth = redactSensitive(health);
-    emitAudit(request, auditId, 'accepted', approvalDecision.status, options, 'backend health read');
+    emitAudit(request, auditId, 'accepted', approvalDecision.status, options, 'backend health read', { gptPolicy: gptPolicyDecision });
     return buildBaseResponse(auditId, request, true, redactedHealth, warnings, redactedHealth);
   } catch (error) {
     const message = resolveErrorMessage(error);

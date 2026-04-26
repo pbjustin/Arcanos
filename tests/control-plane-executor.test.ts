@@ -102,7 +102,7 @@ describe('executeControlPlaneOperation', () => {
 
     expect(response.ok).toBe(false);
     expect(response.error?.code).toBe('ERR_CONTROL_PLANE_SCOPE');
-    expect(response.error?.details).toEqual({ missingScopes: ['repo:read'] });
+    expect(response.error?.details).toEqual(expect.objectContaining({ missingScopes: ['repo:read'] }));
     expect(runner.run).not.toHaveBeenCalled();
   });
 

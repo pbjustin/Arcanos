@@ -56,13 +56,16 @@ export type ControlPlaneOperationKind =
   | 'command'
   | 'mcp-list-tools'
   | 'mcp-invoke'
-  | 'backend-health';
+  | 'backend-health'
+  | 'route-trinity-request'
+  | 'route-verify';
 
 export interface ControlPlaneOperationSpecBase {
   operation: string;
   provider: ControlPlaneProvider;
   description: string;
   kind: ControlPlaneOperationKind;
+  workflow: ControlPlaneWorkflow;
   requiredScopes: string[];
   readOnly: boolean;
   approvalRequired?: boolean;
@@ -87,20 +90,88 @@ export interface ControlPlaneBackendHealthOperationSpec extends ControlPlaneOper
   kind: 'backend-health';
 }
 
+export interface ControlPlaneRouteTrinityRequestOperationSpec extends ControlPlaneOperationSpecBase {
+  kind: 'route-trinity-request';
+}
+
+export interface ControlPlaneRouteVerifyOperationSpec extends ControlPlaneOperationSpecBase {
+  kind: 'route-verify';
+}
+
 export type ControlPlaneOperationSpec =
   | ControlPlaneCommandOperationSpec
   | ControlPlaneMcpListToolsOperationSpec
   | ControlPlaneMcpInvokeOperationSpec
-  | ControlPlaneBackendHealthOperationSpec;
+  | ControlPlaneBackendHealthOperationSpec
+  | ControlPlaneRouteTrinityRequestOperationSpec
+  | ControlPlaneRouteVerifyOperationSpec;
 
 export interface ControlPlaneAllowlistView {
   operation: string;
   provider: ControlPlaneProvider;
   description: string;
   kind: ControlPlaneOperationKind;
+  workflow: ControlPlaneWorkflow;
   requiredScopes: string[];
   readOnly: boolean;
   approvalRequired: boolean;
+}
+
+export type ControlPlaneWorkflow =
+  | 'control_plane.inspect'
+  | 'control_plane.route.trinity.request'
+  | 'control_plane.route.verify'
+  | 'railway.cli.readonly'
+  | 'railway.cli.approved_mutation'
+  | 'arcanos.cli.readonly'
+  | 'arcanos.cli.approved_mutation'
+  | 'arcanos.mcp.documented_tools'
+  | 'codex.ide.readonly'
+  | 'codex.ide.verify';
+
+export type ControlPlaneDeniedCapability =
+  | 'auth.bypass'
+  | 'credential.escalation'
+  | 'secrets.read.raw'
+  | 'audit.disable'
+  | 'production.mutate.unapproved'
+  | 'destructive.unapproved'
+  | 'mcp.undocumented_tools';
+
+export type ControlPlaneApprovalTrigger =
+  | 'deploy'
+  | 'rollback'
+  | 'delete'
+  | 'secret_change'
+  | 'production_mutation'
+  | 'service_restart'
+  | 'agent_reset'
+  | 'permission_change';
+
+export interface ControlPlaneGptPolicy {
+  gptId: string;
+  label: string;
+  enabled: boolean;
+  allowedWorkflows: ControlPlaneWorkflow[];
+  deniedCapabilities: ControlPlaneDeniedCapability[];
+  requiresApprovalFor: ControlPlaneApprovalTrigger[];
+  requiresAuditLog: boolean;
+  requiresSecretRedaction: boolean;
+  requiresRouteVerification: boolean;
+}
+
+export interface ControlPlaneGptPolicyDecision {
+  ok: boolean;
+  gptId: string | null;
+  whitelisted: boolean;
+  workflow?: ControlPlaneWorkflow;
+  label?: string;
+  reason: string;
+  deniedCapabilities: ControlPlaneDeniedCapability[];
+  requiresApprovalFor: ControlPlaneApprovalTrigger[];
+  requiresAuditLog: boolean;
+  requiresSecretRedaction: boolean;
+  requiresRouteVerification: boolean;
 }
 
 export interface ExecuteControlPlaneOperationOptions {
@@ -110,6 +181,7 @@ export interface ExecuteControlPlaneOperationOptions {
   healthCheck?: () => unknown;
   approvalTokenReader?: () => string | undefined;
   auditEmitter?: (event: ControlPlaneAuditEvent) => void;
+  gptPolicies?: readonly ControlPlaneGptPolicy[];
 }
 
 export interface ControlPlaneAuditEvent {

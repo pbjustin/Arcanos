@@ -25,6 +25,7 @@ export const controlPlaneTargetSchema = z
 export const controlPlaneInvokeRequestSchema = z.object({
   operation: z.string().trim().min(1).max(120),
   provider: z.enum(CONTROL_PLANE_PROVIDER_VALUES),
+  gptId: z.string().trim().min(1).max(200).optional(),
   target: controlPlaneTargetSchema,
   environment: z.string().trim().min(1).max(120),
   scope: z.union([
