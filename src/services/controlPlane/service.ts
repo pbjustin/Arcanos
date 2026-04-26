@@ -627,7 +627,7 @@ async function emitControlPlaneAudit(
 }
 
 function getResponseStatusFromProcessResult(result: ControlPlaneResult): boolean {
-  return result.exitCode === undefined || result.exitCode === null || result.exitCode === 0;
+  return result.exitCode === undefined || result.exitCode === 0;
 }
 
 function buildFailureResponse(params: {

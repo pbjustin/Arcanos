@@ -112,6 +112,32 @@ describe('executeControlPlaneRequest', () => {
     );
   });
 
+  it('treats null process exit codes as adapter failures', async () => {
+    const run = jest.fn(async () => ({
+      exitCode: null,
+      stdout: '',
+      stderr: 'terminated by SIGTERM'
+    }));
+
+    const response = await executeControlPlaneRequest({
+      requestId: 'control-exec-signal-1',
+      phase: 'execute',
+      adapter: 'railway-cli',
+      operation: 'status'
+    }, buildDeps({
+      processRunner: { run }
+    }) as never);
+
+    expect(response.ok).toBe(false);
+    expect(response.error).toMatchObject({
+      code: 'CONTROL_PLANE_ADAPTER_FAILED',
+      details: {
+        exitCode: null
+      }
+    });
+    expect(response.result?.exitCode).toBeNull();
+  });
+
   it('blocks Railway mutation without control-plane approval', async () => {
     const run = jest.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' }));
 

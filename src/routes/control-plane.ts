@@ -20,6 +20,23 @@ import type {
 } from '@services/controlPlane/types.js';
 
 const router = express.Router();
+type ControlPlaneRequestValidation = ReturnType<typeof validateControlPlaneRequestPayload>;
+const controlPlaneValidationKey = Symbol('controlPlaneValidation');
+
+type ControlPlaneValidationRequest = Request & {
+  [controlPlaneValidationKey]?: ControlPlaneRequestValidation;
+};
+
+function getControlPlaneRequestValidation(req: Request): ControlPlaneRequestValidation {
+  const validationRequest = req as ControlPlaneValidationRequest;
+  if (validationRequest[controlPlaneValidationKey]) {
+    return validationRequest[controlPlaneValidationKey];
+  }
+
+  const validation = validateControlPlaneRequestPayload(req.body);
+  validationRequest[controlPlaneValidationKey] = validation;
+  return validation;
+}
 
 const controlPlaneRateLimit = createRateLimitMiddleware({
   bucketName: 'control-plane',
@@ -27,7 +44,11 @@ const controlPlaneRateLimit = createRateLimitMiddleware({
   windowMs: 15 * 60 * 1000,
   keyGenerator: (req) => `${getRequestActorKey(req)}:control-plane`,
   policyResolver: (req, defaultPolicy) => {
-    const validation = validateControlPlaneRequestPayload(req.body);
+    if (req.method !== 'POST') {
+      return defaultPolicy;
+    }
+
+    const validation = getControlPlaneRequestValidation(req);
     if (validation.ok && validation.data.phase === 'mutate') {
       return {
         bucketName: 'control-plane-mutate',
@@ -41,7 +62,7 @@ const controlPlaneRateLimit = createRateLimitMiddleware({
 });
 
 function requiresControlPlaneConfirmation(req: Request): boolean {
-  const validation = validateControlPlaneRequestPayload(req.body);
+  const validation = getControlPlaneRequestValidation(req);
   return validation.ok && validation.data.phase === 'mutate';
 }
 
@@ -125,7 +146,7 @@ router.post(
   '/api/control-plane',
   confirmMutatingControlPlaneRequest,
   async (req: Request, res: Response) => {
-    const validation = validateControlPlaneRequestPayload(req.body);
+    const validation = getControlPlaneRequestValidation(req);
     if (!validation.ok) {
       res.status(400).json({
         ok: false,
