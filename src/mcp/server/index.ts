@@ -45,7 +45,8 @@ import { executeFastGptPrompt } from '@services/gptFastPath.js';
 import { classifyGptFastPathRequest } from '@shared/gpt/gptFastPath.js';
 import {
   executeControlPlaneRequest,
-  getControlPlaneCapabilities
+  getControlPlaneCapabilities,
+  requiresControlPlaneApproval
 } from '@services/controlPlane/service.js';
 import { stripConfirmationFields, requireNonceOrIssue, notExposed, buildClearRecheckInput, wrapTool } from './helpers.js';
 import { registerDagMcpTools } from './dagTools.js';
@@ -819,12 +820,14 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
         .passthrough(),
     },
     wrapTool('ops.control_plane', ctx, async (args: any) => {
-      if (args.phase === 'mutate' && !MCP_FLAGS.exposeDestructive) {
+      const requestPayload = stripConfirmationFields(args);
+      const approvalRequired = requiresControlPlaneApproval(requestPayload);
+
+      if (approvalRequired && !MCP_FLAGS.exposeDestructive) {
         return notExposed('ops.control_plane', ctx);
       }
 
-      const requestPayload = stripConfirmationFields(args);
-      if (args.phase === 'mutate') {
+      if (approvalRequired) {
         const gate = requireNonceOrIssue(args, 'ops.control_plane', ctx, requestPayload);
         if (!gate.ok) return gate.error;
       }
@@ -840,7 +843,7 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
             type: 'mcp'
           }
         },
-        approval: args.phase === 'mutate'
+        approval: approvalRequired
           ? {
               approved: true,
               approvedBy: requestPayload.approval?.approvedBy ?? `mcp:${ctx.sessionId ?? ctx.requestId}`,

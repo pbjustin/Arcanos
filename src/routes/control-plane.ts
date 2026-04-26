@@ -10,7 +10,8 @@ import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { sendInternalErrorPayload } from '@shared/http/index.js';
 import {
   executeControlPlaneRequest,
-  getControlPlaneCapabilities
+  getControlPlaneCapabilities,
+  requiresControlPlaneApproval
 } from '@services/controlPlane/service.js';
 import { validateControlPlaneRequestPayload } from '@services/controlPlane/schemas.js';
 import type {
@@ -63,7 +64,7 @@ const controlPlaneRateLimit = createRateLimitMiddleware({
 
 function requiresControlPlaneConfirmation(req: Request): boolean {
   const validation = getControlPlaneRequestValidation(req);
-  return validation.ok && validation.data.phase === 'mutate';
+  return validation.ok && requiresControlPlaneApproval(validation.data);
 }
 
 function confirmMutatingControlPlaneRequest(req: Request, res: Response, next: NextFunction): void {
@@ -150,6 +151,7 @@ router.post(
     if (!validation.ok) {
       res.status(400).json({
         ok: false,
+        requestId: req.requestId,
         error: {
           code: 'INVALID_CONTROL_PLANE_REQUEST',
           message: 'Control-plane request failed schema validation.',

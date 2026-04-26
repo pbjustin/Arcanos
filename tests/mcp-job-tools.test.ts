@@ -11,6 +11,9 @@ const mockRegisterResource = jest.fn();
 const mockRegisterResourceTemplate = jest.fn();
 const mockExecuteFastGptPrompt = jest.fn();
 const mockClassifyGptFastPathRequest = jest.fn();
+const mockExecuteControlPlaneRequest = jest.fn();
+const mockGetControlPlaneCapabilities = jest.fn();
+const mockRequiresControlPlaneApproval = jest.fn();
 
 class FakeMcpServer {
   public readonly tools = new Map<string, { config: Record<string, unknown>; handler: (args: unknown) => Promise<unknown> }>();
@@ -174,6 +177,12 @@ jest.unstable_mockModule('../src/mcp/modulesAllowlist.js', () => ({
   isModuleActionAllowed: jest.fn(() => true),
 }));
 
+jest.unstable_mockModule('@services/controlPlane/service.js', () => ({
+  executeControlPlaneRequest: mockExecuteControlPlaneRequest,
+  getControlPlaneCapabilities: mockGetControlPlaneCapabilities,
+  requiresControlPlaneApproval: mockRequiresControlPlaneApproval,
+}));
+
 const { createMcpServer } = await import('../src/mcp/server/index.js');
 
 function buildContext() {
@@ -228,6 +237,46 @@ describe('createMcpServer job control tools', () => {
         action: 'query',
         route: 'fast_path',
         timestamp: '2026-04-21T12:00:00.000Z',
+      },
+    });
+    mockGetControlPlaneCapabilities.mockReturnValue({
+      operations: [],
+      mcpTools: {
+        readOnly: ['memory.load'],
+        mutating: ['memory.save'],
+      },
+      routeStatuses: ['DIRECT_FAST_PATH'],
+    });
+    mockRequiresControlPlaneApproval.mockReturnValue(false);
+    mockExecuteControlPlaneRequest.mockResolvedValue({
+      ok: true,
+      requestId: 'mcp-req-1',
+      phase: 'execute',
+      adapter: 'arcanos-mcp',
+      operation: 'invokeTool',
+      route: {
+        requested: 'direct',
+        status: 'DIRECT_FAST_PATH',
+        eligibleForTrinity: false,
+        reason: 'test',
+        evidence: {},
+        requestedAt: '2026-04-26T00:00:00.000Z',
+        verifiedAt: '2026-04-26T00:00:00.000Z',
+      },
+      approval: {
+        required: false,
+        satisfied: true,
+        gate: 'none',
+      },
+      audit: {
+        auditId: 'audit-mcp-1',
+        logged: true,
+      },
+      result: {
+        status: 'completed',
+        adapter: 'arcanos-mcp',
+        operation: 'invokeTool',
+        data: { ok: true },
       },
     });
   });
@@ -426,5 +475,44 @@ describe('createMcpServer job control tools', () => {
     expect(mockRunARCANOS).not.toHaveBeenCalled();
     expect(mockRunTrinity).not.toHaveBeenCalled();
     expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+  });
+
+  it('marks approval-required execute control-plane requests before service invocation', async () => {
+    mockRequiresControlPlaneApproval.mockReturnValue(true);
+    const server = await createMcpServer(buildContext()) as FakeMcpServer;
+
+    const output = await server.tools.get('ops.control_plane')!.handler({
+      phase: 'execute',
+      adapter: 'arcanos-mcp',
+      operation: 'invokeTool',
+      input: {
+        toolName: 'memory.save',
+        toolArguments: {
+          key: 'mcp-route-test',
+          value: 'value',
+        },
+      },
+    });
+
+    expect(mockRequiresControlPlaneApproval).toHaveBeenCalledWith(expect.objectContaining({
+      phase: 'execute',
+      adapter: 'arcanos-mcp',
+      operation: 'invokeTool',
+    }));
+    expect(mockExecuteControlPlaneRequest).toHaveBeenCalledWith(expect.objectContaining({
+      phase: 'execute',
+      adapter: 'arcanos-mcp',
+      operation: 'invokeTool',
+      approval: expect.objectContaining({
+        approved: true,
+        approvedBy: 'mcp:mcp-session-1',
+        reason: 'MCP control-plane confirmation gate accepted.',
+      }),
+    }));
+    expect(output).toEqual(expect.objectContaining({
+      structuredContent: expect.objectContaining({
+        ok: true,
+      }),
+    }));
   });
 });

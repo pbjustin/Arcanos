@@ -101,6 +101,10 @@ const MUTATING_MCP_TOOLS = new Set([
   'rag.ingest_url',
   'research.run'
 ]);
+const CONTROL_PLANE_MCP_TOOLS = new Set([
+  ...READ_ONLY_MCP_TOOLS,
+  ...MUTATING_MCP_TOOLS
+]);
 
 const operationDefinitions: ControlPlaneOperationDefinition[] = [
   {
@@ -258,11 +262,13 @@ const defaultProcessRunner: ControlPlaneProcessRunner = {
     } catch (error) {
       const processError = error as {
         code?: number | string;
+        signal?: string | null;
         stdout?: string | Buffer;
         stderr?: string | Buffer;
       };
       return {
         exitCode: typeof processError.code === 'number' ? processError.code : 1,
+        signal: processError.signal ?? null,
         stdout: String(processError.stdout ?? ''),
         stderr: String(processError.stderr ?? resolveErrorMessage(error))
       };
@@ -361,8 +367,9 @@ function isPathInsideOrEqual(parentPath: string, candidatePath: string): boolean
 }
 
 function resolveRequestCwd(request: ControlPlaneRequestPayload, repositoryRoot: string): string {
-  const requestedCwd = request.context?.cwd
-    ? path.resolve(request.context.cwd)
+  const requestedCwdRaw = request.context?.cwd;
+  const requestedCwd = requestedCwdRaw
+    ? path.resolve(path.isAbsolute(requestedCwdRaw) ? requestedCwdRaw : path.join(repositoryRoot, requestedCwdRaw))
     : repositoryRoot;
 
   if (!isPathInsideOrEqual(repositoryRoot, requestedCwd)) {
@@ -481,7 +488,7 @@ function isControlPlaneError(error: unknown): error is Error & { code: string; d
   return error instanceof Error && typeof (error as { code?: unknown }).code === 'string';
 }
 
-function resolveOperation(request: ControlPlaneRequestPayload, cwd: string, repositoryRoot: string): OperationResolution {
+function resolveOperationDefinition(request: ControlPlaneRequestPayload): ControlPlaneOperationDefinition {
   const definition = operationDefinitionsByKey.get(buildOperationKey(request.adapter, request.operation));
   if (!definition) {
     throw buildControlPlaneError('UNSUPPORTED_CONTROL_PLANE_OPERATION', 'Control-plane operation is not allowlisted.', {
@@ -502,6 +509,12 @@ function resolveOperation(request: ControlPlaneRequestPayload, cwd: string, repo
       allowedPhases: definition.allowedPhases
     });
   }
+
+  return definition;
+}
+
+function resolveOperation(request: ControlPlaneRequestPayload, cwd: string, repositoryRoot: string): OperationResolution {
+  const definition = resolveOperationDefinition(request);
 
   return {
     definition,
@@ -534,6 +547,25 @@ function resolveMcpToolApproval(input: Record<string, unknown>): boolean {
   });
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function filterMcpToolList(data: unknown): unknown {
+  if (!isRecord(data) || !Array.isArray(data.tools)) {
+    return data;
+  }
+
+  return {
+    ...data,
+    tools: data.tools.filter((tool) => (
+      isRecord(tool)
+      && typeof tool.name === 'string'
+      && CONTROL_PLANE_MCP_TOOLS.has(tool.name)
+    ))
+  };
+}
+
 async function invokeMcpOperation(
   request: ControlPlaneRequestPayload & { requestId: string },
   mcpClient: ControlPlaneMcpClient
@@ -546,7 +578,7 @@ async function invokeMcpOperation(
       status: 'completed',
       adapter: request.adapter,
       operation: request.operation,
-      data: redactSensitive(data)
+      data: redactSensitive(filterMcpToolList(data))
     };
   }
 
@@ -591,6 +623,7 @@ async function invokeProcessOperation(
     operation: request.operation,
     command,
     exitCode: processResult.exitCode,
+    ...(processResult.signal !== undefined ? { signal: processResult.signal } : {}),
     stdout: sanitizeTextOutput(processResult.stdout),
     stderr: sanitizeTextOutput(processResult.stderr)
   };
@@ -627,6 +660,9 @@ async function emitControlPlaneAudit(
 }
 
 function getResponseStatusFromProcessResult(result: ControlPlaneResult): boolean {
+  if (result.signal !== undefined && result.signal !== null && result.signal !== '') {
+    return false;
+  }
   return result.exitCode === undefined || result.exitCode === 0;
 }
 
@@ -660,7 +696,7 @@ function buildFailureResponse(params: {
     },
     error: {
       code,
-      message: resolveErrorMessage(params.error),
+      message: redactString(resolveErrorMessage(params.error)),
       ...(details ? { details: redactSensitive(details) as Record<string, unknown> } : {})
     }
   });
@@ -691,6 +727,19 @@ export function getControlPlaneCapabilities(): {
       'UNKNOWN_ROUTE'
     ]
   };
+}
+
+export function requiresControlPlaneApproval(payload: ControlPlaneRequestPayload): boolean {
+  try {
+    const definition = resolveOperationDefinition(payload);
+    const mcpToolRequiresApproval =
+      payload.adapter === 'arcanos-mcp' && payload.operation === 'invokeTool'
+        ? resolveMcpToolApproval(payload.input ?? {})
+        : false;
+    return getApprovalRequirement(payload, definition, mcpToolRequiresApproval).required;
+  } catch {
+    return false;
+  }
 }
 
 export async function executeControlPlaneRequest(
@@ -802,7 +851,8 @@ export async function executeControlPlaneRequest(
               code: 'CONTROL_PLANE_ADAPTER_FAILED',
               message: 'Control-plane adapter command exited unsuccessfully.',
               details: {
-                exitCode: result.exitCode ?? null
+                exitCode: result.exitCode ?? null,
+                ...(result.signal !== undefined ? { signal: result.signal } : {})
               }
             }
           })

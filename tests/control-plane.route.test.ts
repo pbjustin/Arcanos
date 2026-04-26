@@ -2,10 +2,12 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const mockExecuteControlPlaneRequest = jest.fn();
 const mockGetControlPlaneCapabilities = jest.fn();
+const mockRequiresControlPlaneApproval = jest.fn();
 
 jest.unstable_mockModule('@services/controlPlane/service.js', () => ({
   executeControlPlaneRequest: mockExecuteControlPlaneRequest,
-  getControlPlaneCapabilities: mockGetControlPlaneCapabilities
+  getControlPlaneCapabilities: mockGetControlPlaneCapabilities,
+  requiresControlPlaneApproval: mockRequiresControlPlaneApproval
 }));
 
 const express = (await import('express')).default;
@@ -75,6 +77,7 @@ describe('control-plane route', () => {
       ]
     });
     mockExecuteControlPlaneRequest.mockResolvedValue(buildResponse());
+    mockRequiresControlPlaneApproval.mockReturnValue(false);
   });
 
   it('returns allowlisted capabilities for discovery', async () => {
@@ -95,6 +98,7 @@ describe('control-plane route', () => {
 
     expect(response.status).toBe(400);
     expect(response.body.error.code).toBe('INVALID_CONTROL_PLANE_REQUEST');
+    expect(response.body.requestId).toBe('req-http-1');
     expect(mockExecuteControlPlaneRequest).not.toHaveBeenCalled();
   });
 
@@ -152,5 +156,33 @@ describe('control-plane route', () => {
 
     expect(response.status).toBe(200);
     expect(mockExecuteControlPlaneRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs confirmation gate before approval-gated execute requests reach the executor', async () => {
+    mockRequiresControlPlaneApproval.mockReturnValue(true);
+
+    const response = await request(buildApp())
+      .post('/api/control-plane')
+      .send({
+        phase: 'execute',
+        adapter: 'arcanos-mcp',
+        operation: 'invokeTool',
+        input: {
+          toolName: 'memory.save',
+          toolArguments: {
+            key: 'route-test',
+            value: 'value'
+          }
+        },
+        approval: {
+          approved: true,
+          approvedBy: 'spoofed',
+          reason: 'spoofed body approval should not bypass confirmGate'
+        }
+      });
+
+    expect(response.status).toBe(403);
+    expect(response.body.code).toBe('CONFIRMATION_REQUIRED');
+    expect(mockExecuteControlPlaneRequest).not.toHaveBeenCalled();
   });
 });

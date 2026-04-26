@@ -82,6 +82,7 @@ export interface ControlPlaneResult {
   operation: string;
   command?: ControlPlaneCommandPreview;
   exitCode?: number | null;
+  signal?: string | null;
   stdout?: string;
   stderr?: string;
   data?: unknown;
@@ -108,6 +109,7 @@ export interface ControlPlaneResponse {
 
 export interface ControlPlaneProcessResult {
   exitCode: number | null;
+  signal?: string | null;
   stdout: string;
   stderr: string;
 }

@@ -24,7 +24,10 @@ jest.unstable_mockModule('@services/arcanosMcp.js', () => ({
   }
 }));
 
-const { executeControlPlaneRequest } = await import('../src/services/controlPlane/service.js');
+const {
+  executeControlPlaneRequest,
+  requiresControlPlaneApproval
+} = await import('../src/services/controlPlane/service.js');
 
 const repositoryRoot = process.cwd();
 const fixedNow = () => new Date('2026-04-26T00:00:00.000Z');
@@ -115,6 +118,7 @@ describe('executeControlPlaneRequest', () => {
   it('treats null process exit codes as adapter failures', async () => {
     const run = jest.fn(async () => ({
       exitCode: null,
+      signal: 'SIGTERM',
       stdout: '',
       stderr: 'terminated by SIGTERM'
     }));
@@ -132,10 +136,39 @@ describe('executeControlPlaneRequest', () => {
     expect(response.error).toMatchObject({
       code: 'CONTROL_PLANE_ADAPTER_FAILED',
       details: {
-        exitCode: null
+        exitCode: null,
+        signal: 'SIGTERM'
       }
     });
     expect(response.result?.exitCode).toBeNull();
+    expect(response.result?.signal).toBe('SIGTERM');
+  });
+
+  it('treats signaled process results as failures even with a zero exit code', async () => {
+    const run = jest.fn(async () => ({
+      exitCode: 0,
+      signal: 'SIGTERM',
+      stdout: 'terminated',
+      stderr: ''
+    }));
+
+    const response = await executeControlPlaneRequest({
+      requestId: 'control-exec-signal-2',
+      phase: 'execute',
+      adapter: 'railway-cli',
+      operation: 'status'
+    }, buildDeps({
+      processRunner: { run }
+    }) as never);
+
+    expect(response.ok).toBe(false);
+    expect(response.error).toMatchObject({
+      code: 'CONTROL_PLANE_ADAPTER_FAILED',
+      details: {
+        exitCode: 0,
+        signal: 'SIGTERM'
+      }
+    });
   });
 
   it('blocks Railway mutation without control-plane approval', async () => {
@@ -222,6 +255,33 @@ describe('executeControlPlaneRequest', () => {
     expect(run).not.toHaveBeenCalled();
   });
 
+  it('resolves relative cwd values against the configured repository root', async () => {
+    const nestedRepositoryRoot = path.join(repositoryRoot, 'packages');
+    const run = jest.fn(async () => ({ exitCode: 0, stdout: '{"ok":true}', stderr: '' }));
+
+    const response = await executeControlPlaneRequest({
+      requestId: 'control-cwd-2',
+      phase: 'execute',
+      adapter: 'arcanos-cli',
+      operation: 'status',
+      context: {
+        cwd: 'cli'
+      }
+    }, buildDeps({
+      repositoryRoot: nestedRepositoryRoot,
+      processRunner: { run }
+    }) as never);
+
+    expect(response.ok).toBe(true);
+    expect(run).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(Array),
+      expect.objectContaining({
+        cwd: path.join(nestedRepositoryRoot, 'cli')
+      })
+    );
+  });
+
   it('rejects MCP tool invocation outside the control-plane allowlist', async () => {
     const mcpClient = {
       listTools: jest.fn(),
@@ -243,5 +303,100 @@ describe('executeControlPlaneRequest', () => {
     expect(response.ok).toBe(false);
     expect(response.error?.code).toBe('MCP_TOOL_NOT_ALLOWLISTED');
     expect(mcpClient.invokeTool).not.toHaveBeenCalled();
+  });
+
+  it('requires approval for mutating MCP tools even when requested in execute phase', () => {
+    expect(requiresControlPlaneApproval({
+      phase: 'execute',
+      adapter: 'arcanos-mcp',
+      operation: 'invokeTool',
+      input: {
+        toolName: 'memory.save',
+        toolArguments: {
+          key: 'test',
+          value: 'value'
+        }
+      }
+    })).toBe(true);
+
+    expect(requiresControlPlaneApproval({
+      phase: 'execute',
+      adapter: 'railway-cli',
+      operation: 'status'
+    })).toBe(false);
+  });
+
+  it('filters MCP tool discovery to the control-plane allowlist', async () => {
+    const mcpClient = {
+      listTools: jest.fn(async () => ({
+        tools: [
+          { name: 'ops.health_report', description: 'allowed read-only tool' },
+          { name: 'memory.save', description: 'allowed approval-gated tool' },
+          { name: 'gpt.generate', description: 'not a control-plane tool' }
+        ],
+        nextCursor: 'cursor-1'
+      })),
+      invokeTool: jest.fn()
+    };
+
+    const response = await executeControlPlaneRequest({
+      requestId: 'control-mcp-list-1',
+      phase: 'execute',
+      adapter: 'arcanos-mcp',
+      operation: 'listTools'
+    }, buildDeps({
+      mcpClient
+    }) as never);
+
+    const data = response.result?.data as { tools: Array<{ name: string }> };
+    expect(response.ok).toBe(true);
+    expect(data.tools.map((tool) => tool.name)).toEqual([
+      'ops.health_report',
+      'memory.save'
+    ]);
+  });
+
+  it('redacts secret-like process output and thrown error messages', async () => {
+    const processRun = jest.fn(async () => ({
+      exitCode: 0,
+      stdout: 'Cookie: session=abcdef1234567890',
+      stderr: ''
+    }));
+
+    const processResponse = await executeControlPlaneRequest({
+      requestId: 'control-redact-1',
+      phase: 'execute',
+      adapter: 'railway-cli',
+      operation: 'status'
+    }, buildDeps({
+      processRunner: { run: processRun }
+    }) as never);
+
+    expect(processResponse.result?.stdout).toBe('[REDACTED]');
+
+    const mcpClient = {
+      listTools: jest.fn(),
+      invokeTool: jest.fn(async () => {
+        throw new Error('downstream failed with Cookie: session=abcdef1234567890');
+      })
+    };
+
+    const mcpResponse = await executeControlPlaneRequest({
+      requestId: 'control-redact-2',
+      phase: 'execute',
+      adapter: 'arcanos-mcp',
+      operation: 'invokeTool',
+      input: {
+        toolName: 'memory.load',
+        toolArguments: {
+          key: 'safe-key'
+        }
+      }
+    }, buildDeps({
+      mcpClient
+    }) as never);
+
+    expect(mcpResponse.ok).toBe(false);
+    expect(mcpResponse.error?.message).toBe('[REDACTED]');
   });
 });
