@@ -266,11 +266,12 @@ const defaultProcessRunner: ControlPlaneProcessRunner = {
         stdout?: string | Buffer;
         stderr?: string | Buffer;
       };
+      const stderr = String(processError.stderr ?? '');
       return {
         exitCode: typeof processError.code === 'number' ? processError.code : 1,
         signal: processError.signal ?? null,
         stdout: String(processError.stdout ?? ''),
-        stderr: String(processError.stderr ?? resolveErrorMessage(error))
+        stderr: stderr.trim().length > 0 ? stderr : resolveErrorMessage(error)
       };
     }
   }

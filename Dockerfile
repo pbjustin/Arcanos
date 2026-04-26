@@ -6,6 +6,7 @@ ENV NODE_ENV=production
 ENV PYTHON=python3
 ENV ARCANOS_WORKSPACE_ROOT=/app
 ENV ARCANOS_PYTHON_RUNTIME_DIR=/app/daemon-python
+ENV RAILWAY_CLI_BIN=/usr/local/bin/railway
 
 # Install build-time VCS dependency required by git-based npm overrides,
 # OpenSSL for Prisma engine detection/runtime loading, and the minimal Python
@@ -27,6 +28,9 @@ COPY prisma/ ./prisma/
 
 # Install dependencies with memory optimization
 RUN NODE_OPTIONS=--max_old_space_size=256 npm ci --omit=dev --no-audit --no-fund
+
+# Install the Railway CLI binary required by the allowlisted control-plane adapter.
+RUN npm install --global @railway/cli@4.30.2 --no-audit --no-fund
 
 # Copy source code, workers, scripts, config, and build configuration
 COPY src/ ./src/

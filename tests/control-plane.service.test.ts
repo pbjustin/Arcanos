@@ -171,6 +171,31 @@ describe('executeControlPlaneRequest', () => {
     });
   });
 
+  it('surfaces safe spawn diagnostics when the configured adapter binary is missing', async () => {
+    const originalRailwayCliBin = process.env.RAILWAY_CLI_BIN;
+    process.env.RAILWAY_CLI_BIN = path.join(repositoryRoot, 'missing-railway-cli-for-test');
+
+    try {
+      const response = await executeControlPlaneRequest({
+        requestId: 'control-spawn-error-1',
+        phase: 'execute',
+        adapter: 'railway-cli',
+        operation: 'status'
+      }, buildDeps() as never);
+
+      expect(response.ok).toBe(false);
+      expect(response.error?.code).toBe('CONTROL_PLANE_ADAPTER_FAILED');
+      expect(response.result?.exitCode).toBe(1);
+      expect(response.result?.stderr).toContain('ENOENT');
+    } finally {
+      if (originalRailwayCliBin === undefined) {
+        delete process.env.RAILWAY_CLI_BIN;
+      } else {
+        process.env.RAILWAY_CLI_BIN = originalRailwayCliBin;
+      }
+    }
+  });
+
   it('blocks Railway mutation without control-plane approval', async () => {
     const run = jest.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' }));
 

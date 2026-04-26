@@ -104,10 +104,14 @@ describe('validate-railway-compatibility', () => {
       expect.stringContaining('CMD ["node", "scripts/start-railway-service.mjs"]'),
       expect.stringContaining('COPY prisma/ ./prisma/'),
       expect.stringContaining('npx --yes prisma@5.22.0 generate --schema ./prisma/schema.prisma'),
+      expect.stringContaining('ENV RAILWAY_CLI_BIN=/usr/local/bin/railway'),
+      expect.stringContaining('npm install --global @railway/cli@4.30.2 --no-audit --no-fund'),
     ]);
 
     expect(
       validateDockerfile([
+        'ENV RAILWAY_CLI_BIN=/usr/local/bin/railway',
+        'RUN npm install --global @railway/cli@4.30.2 --no-audit --no-fund',
         'COPY prisma/ ./prisma/',
         'RUN npm install --include=dev --no-audit --no-fund && \\',
         '    npx --yes prisma@5.22.0 generate --schema ./prisma/schema.prisma && \\',
