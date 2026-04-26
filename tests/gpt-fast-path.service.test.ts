@@ -21,7 +21,7 @@ jest.unstable_mockModule('../src/platform/observability/appMetrics.js', () => ({
   recordAiOperation: recordAiOperationMock,
 }));
 
-const { executeFastGptPrompt } = await import('../src/services/gptFastPath.js');
+const { executeDirectGptAction, executeFastGptPrompt } = await import('../src/services/gptFastPath.js');
 
 function buildDecision(timeoutMs = 8_000) {
   return {
@@ -99,5 +99,58 @@ describe('executeFastGptPrompt', () => {
       expect.anything()
     );
     expect(result.result.activeModel).toBe('gpt-fast-override');
+  });
+
+  it('executes query_and_wait through the generic direct action instructions', async () => {
+    process.env.GPT_FAST_PATH_MODEL = 'gpt-direct-test';
+
+    const result = await executeDirectGptAction({
+      gptId: 'arcanos-core',
+      prompt: 'Summarize deployment health.',
+      action: 'query_and_wait',
+      timeoutMs: 24_000,
+      requestId: 'req-direct-action',
+    });
+
+    expect(callTextResponseMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        model: 'gpt-direct-test',
+        input: 'Summarize deployment health.',
+        store: false,
+        instructions: expect.stringContaining('direct GPT Action execution'),
+      }),
+      expect.anything()
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      result: {
+        result: 'Generated prompt text',
+        module: 'direct_action',
+        activeModel: 'gpt-direct-test',
+        fallbackFlag: false,
+        routingStages: ['GPT-DIRECT-ACTION'],
+      },
+      directAction: {
+        inline: true,
+        queueBypassed: true,
+        orchestrationBypassed: true,
+        action: 'query_and_wait',
+        timeoutMs: 24_000,
+      },
+      _route: {
+        gptId: 'arcanos-core',
+        module: 'GPT:DIRECT_ACTION',
+        action: 'query_and_wait',
+        route: 'direct_action',
+      },
+    });
+    expect(recordAiOperationMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceType: 'gpt_direct_action',
+        model: 'gpt-direct-test',
+        outcome: 'ok',
+      })
+    );
   });
 });

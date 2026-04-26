@@ -50,7 +50,7 @@ No API path changes are required for Railway. Ensure liveness (`/healthz`) and r
 `POST /gpt/:gptId` is the writing plane. It supports a typed async GPT bridge with idempotent retry handling for job-backed requests, but it must not be used for prompt-shaped control-plane retrieval.
 
 Writing vs control:
-- Writing plane: prompt generation, assistant responses, and explicit async write actions `query` and `query_and_wait`.
+- Writing plane: prompt generation, assistant responses, durable `query` jobs, non-core durable `query_and_wait` jobs, and core synchronous `query_and_wait` actions.
 - Direct control plane: `GET /jobs/:id`, `GET /jobs/:id/result`, `GET /workers/status`, `GET /worker-helper/health`, `GET /status`, `GET /status/safety/self-heal`, `POST /mcp`, and `/api/arcanos/dag/*`.
 - Router-handled compatibility control actions on `POST /gpt/:gptId`: `get_status`, `get_result`, `diagnostics`, and `system_state`. These are handled before write dispatch and never enqueue new GPT work.
 - Rejected on `POST /gpt/:gptId`: prompt-based job lookups, DAG execution/tracing prompts, runtime inspection prompts, and explicit MCP tool calls. The backend returns canonical control endpoints instead of routing them through generation.
@@ -67,11 +67,12 @@ Deduplication rules:
 - Transport-only retry hints such as `async`, `executionMode`, `responseMode`, `waitForResultMs`, and polling intervals do not create a new GPT job.
 - Reusing an explicit `Idempotency-Key` for a different semantic GPT request returns `409 IDEMPOTENCY_KEY_CONFLICT`.
 
-Canonical async bridge:
+Canonical GPT bridge:
 - `query`: `POST /gpt/:gptId` with `{ "action": "query", "prompt": "..." }` creates or reuses one durable GPT writing job and returns the canonical `jobId` without inline waiting.
-- `query_and_wait`: `POST /gpt/:gptId` with `{ "action": "query_and_wait", "prompt": "...", "timeoutMs": 25000, "pollIntervalMs": 500 }` creates or reuses one durable GPT writing job and waits briefly for fast completion.
+- `query_and_wait`: `POST /gpt/:gptId` with `{ "action": "query_and_wait", "prompt": "...", "timeoutMs": 25000 }` executes core GPT requests synchronously through the lightweight direct action lane and returns the final result inline. If direct execution fails or times out, the route returns a typed error instead of synthetic bounded fallback content. Non-core GPTs keep the durable job path.
 - `get_status`: `POST /gpt/:gptId` with `{ "action": "get_status", "payload": { "jobId": "..." } }` returns structured status from the control plane without creating work.
 - `get_result`: `POST /gpt/:gptId` with `{ "action": "get_result", "payload": { "jobId": "..." } }` returns structured job result state from the control plane without creating work.
+- Generated-client compatibility: body `action` is authoritative, but the router also accepts `?action=query_and_wait` and operation-style aliases such as `{ "operationId": "requestQueryAndWait" }` for clients that place GPT Action metadata outside the canonical body field.
 
 Legacy compatibility:
 - `POST /gpt/:gptId` with `{"prompt":"...","executionMode":"async","waitForResultMs":20000}` still supports one queue-backed request that either returns the final GPT result inline or times out safely with the canonical `jobId`.
@@ -80,8 +81,9 @@ Legacy compatibility:
 - Direct-return timeouts never enqueue a second job; they return the same canonical `jobId` and point callers to `GET /jobs/:id/result`.
 
 Job-backed `POST /gpt/:gptId` response shapes:
-- `202 Accepted` pending write: `{ ok:true, action:"query"|"query_and_wait", jobId, status:"queued"|"running"|"timeout", poll:"/jobs/:id/result", stream:"/jobs/:id/stream", timedOut?, jobStatus, lifecycleStatus, deduped?, idempotencyKey, idempotencySource, _route }`
-- `200 OK` completed write: `{ ok:true, action:"query_and_wait", jobId, status:"completed", result:{ text }, poll, stream, jobStatus, lifecycleStatus, deduped?, idempotencyKey, idempotencySource, _route }`
+- `202 Accepted` pending write: `{ ok:true, action:"query", jobId, status:"queued"|"running"|"timeout", poll:"/jobs/:id/result", stream:"/jobs/:id/stream", timedOut?, jobStatus, lifecycleStatus, deduped?, idempotencyKey, idempotencySource, _route }`
+- `200 OK` completed direct action: `{ ok:true, action:"query_and_wait", status:"completed", result:"...", directAction:{ inline:true, queueBypassed:true }, _route }`
+- `200 OK` completed async write for non-core durable jobs: `{ ok:true, action:"query_and_wait", jobId, status:"completed", result:{ text }, poll, stream, jobStatus, lifecycleStatus, deduped?, idempotencyKey, idempotencySource, _route }`
 - `200 OK` status retrieval: `{ ok:true, action:"get_status", jobId, status:"queued|running|completed|failed|cancelled|expired", ... }`
 - `200 OK` result retrieval: `{ ok:true, action:"get_result", jobId, status, output?, result?, error?, poll?, stream?, ... }`
 - Error shape: `{ ok:false, action, error:{ code, message } }`

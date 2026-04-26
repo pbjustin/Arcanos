@@ -13,7 +13,7 @@ Implementation rules:
 - `src/routes/gptRouter.ts` runs pre-dispatch classification through `src/routes/_core/gptPlaneClassification.ts`.
 - `src/routes/_core/gptDispatch.ts` is write-plane only and rejects leaked control requests with a fail-fast `write_guard`.
 - Control-plane compatibility actions such as `get_status`, `get_result`, `diagnostics`, and `system_state` are handled directly in the router and never enter the writing pipeline.
-- Canonical async write actions are `query` and `query_and_wait`. Canonical async read actions are `get_status` and `get_result`.
+- Canonical durable write actions are `query` and non-core `query_and_wait`. Core `query_and_wait` is synchronous direct action. Canonical async read actions are `get_status` and `get_result`.
 - Prompt-shaped control requests for job lookup, DAG execution/tracing, runtime inspection, or MCP tool calls are rejected with canonical control endpoints.
 
 ## Prerequisites
@@ -62,8 +62,8 @@ Long-running GPT requests are handled through the DB-backed `job_data` queue ins
 Execution model:
 1. `POST /gpt/:gptId` classifies the request as writing-plane or control-plane before dispatch.
 2. Control-plane reads (`get_status`, `get_result`, `diagnostics`, `system_state`) are served directly and never create GPT jobs.
-3. Writing-plane async requests (`query`, `query_and_wait`, or prompt-first async compatibility mode) persist a canonical GPT job row with hashed idempotency metadata.
-4. `query` returns the canonical `jobId` without inline waiting. `query_and_wait` waits briefly for inline completion and otherwise returns the same canonical `jobId`.
+3. Writing-plane durable requests (`query`, non-core `query_and_wait`, or prompt-first async compatibility mode) persist a canonical GPT job row with hashed idempotency metadata.
+4. `query` returns the canonical `jobId` without inline waiting. On core GPT IDs, `query_and_wait` uses the lightweight synchronous direct action lane and returns the final result inline.
 5. `src/workers/jobRunner.ts` claims `job_type='gpt'` rows and executes them in background mode.
 6. `GET /jobs/:id` and `GET /jobs/:id/stream` expose the canonical job lifecycle and terminal result.
 

@@ -3,20 +3,30 @@
   "info": {
     "title": "Arcanos GPT Route API",
     "version": "1.0.0",
-    "description": "Canonical public contract for GPT-routed module requests and allowlisted control-plane dispatch. GPT identity is path-bound at /gpt/{gptId}; generated tool clients may also echo the same gptId in the JSON body, and mismatched body/path IDs are rejected. POST /gpt/{gptId} accepts flexible request bodies with action as a string and payload as an open object so durable GPT actions, approved runtime inspection actions, and prompt-only fast-path generation can share one public endpoint. Simple prompt-generation requests that omit action can opt into inline fast-path execution with executionMode=fast. A bounded deterministic planner may normalize detail and section profiles for runtime inspection actions before execution, without inventing unsupported actions or bypassing response guards."
+    "description": "Canonical public contract for GPT-routed module requests and allowlisted control-plane dispatch. GPT identity is path-bound at /gpt/{gptId}; generated tool clients may also echo the same gptId in the JSON body, and mismatched body/path IDs are rejected. POST /gpt/{gptId} accepts flexible request bodies with action as a string and payload as an open object so durable GPT actions, approved runtime inspection actions, and prompt-only fast-path generation can share one public endpoint. For generated clients that place operation metadata outside the JSON body, the route also accepts action as a query parameter or operation-style body alias. Simple prompt-generation requests that omit action can opt into inline fast-path execution with executionMode=fast. A bounded deterministic planner may normalize detail and section profiles for runtime inspection actions before execution, without inventing unsupported actions or bypassing response guards."
   },
   "paths": {
     "/gpt/{gptId}": {
       "post": {
         "operationId": "invokeGptRoute",
         "summary": "Invoke a GPT-routed module request or universal control action",
-        "description": "POST /gpt/{gptId} is the universal public dispatcher. The path parameter is authoritative; a JSON body gptId is optional and must match the path when present. Use a prompt-only request with executionMode=fast for small prompt-generation work that should return inline. Use action=query to create one durable writing job, action=query_and_wait to create one durable writing job and wait briefly for fast completion, action=get_status to read status through the GPT compatibility bridge, action=get_result to read the final result through the GPT compatibility bridge, and approved control actions such as diagnostics, runtime.inspect, workers.status, queue.inspect, self_heal.status, and system_state for runtime inspection. For runtime.inspect and self_heal.status, payload.detail and payload.sections can request summary, standard, or full response profiles, and a deterministic bounded planner fills safe defaults when callers omit them. Unknown control-plane action names are rejected with a typed 400 error. Natural-language retrieval prompts, runtime inspection prompts without an explicit allowlisted action, DAG control prompts, and MCP control requests are still intentionally rejected on this route.",
+        "description": "POST /gpt/{gptId} is the universal public dispatcher. The path parameter is authoritative; a JSON body gptId is optional and must match the path when present. Use a prompt-only request with executionMode=fast for small prompt-generation work that should return inline. Use action=query to create one durable writing job, action=query_and_wait on core GPT IDs to execute synchronously through the lightweight direct action lane, action=get_status to read status through the GPT compatibility bridge, action=get_result to read the final result through the GPT compatibility bridge, and approved control actions such as diagnostics, runtime.inspect, workers.status, queue.inspect, self_heal.status, and system_state for runtime inspection. The action should be supplied in the JSON body when possible; generated-client compatibility also permits the same action in the query string or an operationId-style body alias. For runtime.inspect and self_heal.status, payload.detail and payload.sections can request summary, standard, or full response profiles, and a deterministic bounded planner fills safe defaults when callers omit them. Unknown control-plane action names are rejected with a typed 400 error. Natural-language retrieval prompts, runtime inspection prompts without an explicit allowlisted action, DAG control prompts, and MCP control requests are still intentionally rejected on this route.",
         "parameters": [
           {
             "name": "gptId",
             "in": "path",
             "required": true,
             "description": "GPT or module route identifier bound by the backend router.",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          {
+            "name": "action",
+            "in": "query",
+            "required": false,
+            "description": "Generated-client compatibility hint for the same requested action normally supplied in the JSON body. Body action takes precedence.",
             "schema": {
               "type": "string",
               "minLength": 1
@@ -52,10 +62,10 @@
                   }
                 },
                 "queryAndWait": {
-                  "summary": "Canonical async bridge create-and-wait operation",
+                  "summary": "Canonical synchronous direct action operation",
                   "value": {
                     "action": "query_and_wait",
-                    "prompt": "Wait briefly for a fast completion.",
+                    "prompt": "Return the final result synchronously.",
                     "timeoutMs": 25000,
                     "pollIntervalMs": 500
                   }
@@ -139,7 +149,7 @@
         },
         "responses": {
           "200": {
-            "description": "Completed fast-path inline response, async bridge response, control-plane bridge response, or generic GPT response",
+            "description": "Completed fast-path inline response, direct query_and_wait response, async bridge response, control-plane bridge response, or generic GPT response",
             "content": {
               "application/json": {
                 "schema": {
@@ -335,6 +345,16 @@
             "type": "string",
             "minLength": 1,
             "description": "Requested action name. Canonical built-ins include query, query_and_wait, get_status, get_result, diagnostics, runtime.inspect, workers.status, queue.inspect, self_heal.status, and system_state. Module-specific action names are also allowed. Unsupported reserved control action names are rejected with HTTP 400."
+          },
+          "operationId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Generated-client compatibility alias for action. Operation-style names such as requestQueryAndWait are normalized to their canonical action when recognized."
+          },
+          "operation": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Generated-client compatibility alias for action."
           },
           "prompt": {
             "type": "string",
@@ -594,6 +614,9 @@
       "GptRouteSuccessResponse": {
         "oneOf": [
           {
+            "$ref": "#/components/schemas/GptDirectActionCompletedResponse"
+          },
+          {
             "$ref": "#/components/schemas/GptAsyncCompletedResponse"
           },
           {
@@ -606,6 +629,45 @@
             "$ref": "#/components/schemas/GptRouteGenericResponse"
           }
         ]
+      },
+      "GptDirectActionCompletedResponse": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "ok",
+          "action",
+          "status",
+          "result"
+        ],
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "gptId": {
+            "type": "string"
+          },
+          "action": {
+            "const": "query_and_wait"
+          },
+          "status": {
+            "const": "completed"
+          },
+          "result": {},
+          "routeDecision": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "directAction": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "traceId": {
+            "type": "string"
+          },
+          "_route": {
+            "$ref": "#/components/schemas/GptRouteMeta"
+          }
+        }
       },
       "GptAsyncPendingResponse": {
         "type": "object",

@@ -1,9 +1,9 @@
 # ARCANOS GPT Async Documentation Workflow
 
 ## /gpt/:gptId API Behavior
-`POST /gpt/:gptId` is the writing plane. Use it to create GPT generation work with `query` or `query_and_wait`; do not use it to retrieve jobs, inspect queues, read DAG traces, or invoke MCP tools.
+`POST /gpt/:gptId` is the writing plane. Use it to create durable GPT generation work with `query` or non-core `query_and_wait`; core `query_and_wait` executes synchronously through the direct action lane. Do not use it to retrieve jobs, inspect queues, read DAG traces, or invoke MCP tools.
 
-`query_and_wait` may complete inside the direct execution window. If the job is still queued or running when that bounded window expires, the response returns job coordinates and the caller must poll the jobs API.
+Non-core `query_and_wait` may complete inside the direct execution window. If the job is still queued or running when that bounded window expires, the response returns job coordinates and the caller must poll the jobs API. Core `query_and_wait` returns the final inline result or a typed execution error; it does not synthesize bounded fallback content.
 
 Canonical async response shape:
 ```json

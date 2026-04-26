@@ -45,12 +45,55 @@ export interface FastGptPromptEnvelope {
   };
 }
 
+export interface ExecuteDirectGptActionInput {
+  gptId: string;
+  prompt: string;
+  requestId?: string;
+  action: 'query_and_wait';
+  timeoutMs: number;
+  parentSignal?: AbortSignal;
+  logger?: {
+    info?: (message: string, meta?: Record<string, unknown>) => void;
+    warn?: (message: string, meta?: Record<string, unknown>) => void;
+    error?: (message: string, meta?: Record<string, unknown>) => void;
+  };
+}
+
+export interface DirectGptActionEnvelope {
+  ok: true;
+  result: Record<string, unknown>;
+  directAction: {
+    inline: true;
+    queueBypassed: true;
+    orchestrationBypassed: true;
+    action: 'query_and_wait';
+    timeoutMs: number;
+    modelLatencyMs: number;
+    totalLatencyMs: number;
+  };
+  _route: {
+    requestId?: string;
+    gptId: string;
+    module: 'GPT:DIRECT_ACTION';
+    action: 'query_and_wait';
+    route: 'direct_action';
+    timestamp: string;
+  };
+}
+
 const FAST_PATH_ROUTING_STAGE = 'GPT-FAST-PATH';
 const FAST_PATH_SYSTEM_INSTRUCTIONS = [
   'You are ARCANOS fast-path prompt generation.',
   'Generate the requested prompt directly and concisely.',
   'Do not describe internal routing, queues, tools, memory, audits, or orchestration.',
   'Return only the user-facing prompt or prompt text requested by the caller.'
+].join(' ');
+const DIRECT_ACTION_ROUTING_STAGE = 'GPT-DIRECT-ACTION';
+const DIRECT_ACTION_SYSTEM_INSTRUCTIONS = [
+  'You are ARCANOS direct GPT Action execution.',
+  'Answer the caller request directly and concretely.',
+  'Do not describe internal routing, queues, tools, memory, audits, or orchestration.',
+  'Return only the final user-facing result.'
 ].join(' ');
 
 function readUsageNumber(usage: unknown, key: string): number {
@@ -142,6 +185,73 @@ function buildFastPathResult(input: {
         'queue',
         'worker_orchestration',
         'dag_planning',
+        'memory_overlay',
+        'research_overlay',
+        'audit_overlay'
+      ]
+    }
+  };
+}
+
+function buildDirectActionResult(input: {
+  outputText: string;
+  model: string;
+  requestId?: string;
+  responseId?: string | null;
+  createdAtMs: number;
+  modelLatencyMs: number;
+  totalLatencyMs: number;
+  timeoutMs: number;
+  usage: unknown;
+}): Record<string, unknown> {
+  const usage = normalizeUsage(input.usage);
+  const requestId =
+    input.requestId?.trim() ||
+    input.responseId?.trim() ||
+    `gpt-direct-action-${input.createdAtMs}`;
+
+  return {
+    result: input.outputText,
+    module: 'direct_action',
+    meta: {
+      id: requestId,
+      created: input.createdAtMs,
+      tokens: usage
+    },
+    activeModel: input.model,
+    fallbackFlag: false,
+    routingStages: [DIRECT_ACTION_ROUTING_STAGE],
+    auditSafe: {
+      mode: false,
+      overrideUsed: false,
+      auditFlags: ['DIRECT_ACTION_MINIMAL_PIPELINE'],
+      processedSafely: true
+    },
+    memoryContext: {
+      entriesAccessed: 0,
+      contextSummary: 'Bypassed for GPT direct action.',
+      memoryEnhanced: false
+    },
+    taskLineage: {
+      requestId,
+      logged: false
+    },
+    directAction: {
+      inline: true,
+      queueBypassed: true,
+      orchestrationBypassed: true,
+      modelLatencyMs: input.modelLatencyMs,
+      totalLatencyMs: input.totalLatencyMs,
+      timeoutMs: input.timeoutMs,
+      bypassedSubsystems: [
+        'queue',
+        'worker_orchestration',
+        'dag_planning',
+        'trinity_intake',
+        'trinity_reasoning',
+        'trinity_clear_audit',
+        'trinity_reflection',
+        'trinity_final',
         'memory_overlay',
         'research_overlay',
         'audit_overlay'
@@ -264,6 +374,127 @@ export async function executeFastGptPrompt(
       gptId: input.gptId,
       requestId: input.requestId,
       durationMs: Date.now() - startedAtMs,
+      timeoutMs: input.timeoutMs,
+      error: resolveErrorMessage(error)
+    });
+    throw error;
+  }
+}
+
+/**
+ * Execute a GPT Action query_and_wait request through the minimal synchronous lane.
+ * This path intentionally returns provider failures and timeout failures as errors
+ * instead of routing through Trinity's degraded/static fallback machinery.
+ */
+export async function executeDirectGptAction(
+  input: ExecuteDirectGptActionInput
+): Promise<DirectGptActionEnvelope> {
+  const startedAtMs = Date.now();
+  const { client } = getOpenAIClientOrAdapter();
+
+  if (!client) {
+    input.logger?.warn?.('gpt.direct_action.client_unavailable', {
+      gptId: input.gptId,
+      requestId: input.requestId,
+      action: input.action,
+      reason: 'openai_client_unavailable'
+    });
+    throw new Error('OpenAI client unavailable for GPT direct action.');
+  }
+
+  const model = resolveGptFastPathModel();
+  const parentSignal = input.parentSignal ?? getRequestAbortSignal();
+  let modelLatencyMs = 0;
+
+  try {
+    const { response, outputText } = await runWithRequestAbortTimeout(
+      {
+        timeoutMs: input.timeoutMs,
+        requestId: input.requestId,
+        parentSignal,
+        abortMessage: `GPT direct action timeout after ${input.timeoutMs}ms`
+      },
+      async () => {
+        const modelStartedAtMs = Date.now();
+        const activeSignal = getRequestAbortSignal() ?? parentSignal;
+        const result = await callTextResponse(
+          client,
+          {
+            model,
+            instructions: DIRECT_ACTION_SYSTEM_INSTRUCTIONS,
+            input: input.prompt,
+            store: false
+          },
+          { signal: activeSignal }
+        );
+        modelLatencyMs = Date.now() - modelStartedAtMs;
+        return result;
+      }
+    );
+    const normalizedOutputText = outputText.trim();
+    if (!normalizedOutputText) {
+      throw new Error('GPT direct action returned empty output.');
+    }
+
+    const totalLatencyMs = Date.now() - startedAtMs;
+    recordAiOperation({
+      provider: 'openai',
+      operation: 'responses.create',
+      sourceType: 'gpt_direct_action',
+      sourceName: input.gptId,
+      model,
+      outcome: 'ok',
+      durationMs: modelLatencyMs,
+      promptTokens: normalizeUsage(response.usage).prompt_tokens,
+      completionTokens: normalizeUsage(response.usage).completion_tokens,
+      totalTokens: normalizeUsage(response.usage).total_tokens
+    });
+
+    return {
+      ok: true,
+      result: buildDirectActionResult({
+        outputText: normalizedOutputText,
+        model,
+        requestId: input.requestId,
+        responseId: typeof response.id === 'string' ? response.id : null,
+        createdAtMs: Date.now(),
+        modelLatencyMs,
+        totalLatencyMs,
+        timeoutMs: input.timeoutMs,
+        usage: response.usage
+      }),
+      directAction: {
+        inline: true,
+        queueBypassed: true,
+        orchestrationBypassed: true,
+        action: input.action,
+        timeoutMs: input.timeoutMs,
+        modelLatencyMs,
+        totalLatencyMs
+      },
+      _route: {
+        ...(input.requestId ? { requestId: input.requestId } : {}),
+        gptId: input.gptId,
+        module: 'GPT:DIRECT_ACTION',
+        action: input.action,
+        route: 'direct_action',
+        timestamp: new Date().toISOString()
+      }
+    };
+  } catch (error) {
+    recordAiOperation({
+      provider: 'openai',
+      operation: 'responses.create',
+      sourceType: 'gpt_direct_action',
+      sourceName: input.gptId,
+      model,
+      outcome: 'error',
+      durationMs: modelLatencyMs
+    });
+    input.logger?.error?.('gpt.direct_action.failed', {
+      gptId: input.gptId,
+      requestId: input.requestId,
+      action: input.action,
       timeoutMs: input.timeoutMs,
       error: resolveErrorMessage(error)
     });
