@@ -295,6 +295,7 @@ function buildGptDispatcherErrorPayload(params: {
     gptId: params.gptId,
     action: params.action,
     route: GPT_DISPATCHER_ROUTE,
+    code: params.code,
     traceId: params.traceId,
     error: {
       code: params.code,
@@ -2047,6 +2048,15 @@ router.post("/:gptId", async (req, res, next) => {
         const routingValidation = await resolveGptRouting(incomingGptId, requestId);
         if (!routingValidation.ok) {
           const statusCode = routingValidation.error.code === 'UNKNOWN_GPT' ? 404 : 400;
+          const errorPayload = buildGptDispatcherErrorPayload({
+            requestId,
+            traceId,
+            gptId: incomingGptId,
+            action: requestedAction ?? GPT_QUERY_ACTION,
+            code: routingValidation.error.code,
+            message: routingValidation.error.message,
+            route: 'routing_validation'
+          });
           requestLogger?.warn?.('gpt.request.route_result', {
             endpoint: req.originalUrl,
             gptId: incomingGptId,
@@ -2065,7 +2075,7 @@ router.post("/:gptId", async (req, res, next) => {
           return sendGuardedGptJsonResponse(
             req,
             res,
-            routingValidation,
+            errorPayload,
             'gpt.response.route_error',
             statusCode
           );

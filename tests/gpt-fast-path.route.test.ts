@@ -411,6 +411,51 @@ describe('GPT fast-path route branching', () => {
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
+  it('returns a traced unknown-GPT error for query_and_wait without creating jobs', async () => {
+    mockResolveGptRouting.mockResolvedValueOnce({
+      ok: false,
+      error: {
+        code: 'UNKNOWN_GPT',
+        message: "gptId 'invalid-id' is not registered",
+      },
+      _route: {
+        gptId: 'invalid-id',
+        timestamp: '2026-04-24T00:00:00.000Z',
+      },
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/invalid-id')
+      .send({
+        action: 'query_and_wait',
+        prompt: 'Analyze this deployment timeout.',
+      });
+
+    expect(response.status).toBe(404);
+    expect(response.body).toMatchObject({
+      ok: false,
+      gptId: 'invalid-id',
+      action: 'query_and_wait',
+      route: '/gpt/:gptId',
+      code: 'UNKNOWN_GPT',
+      traceId: expect.any(String),
+      error: {
+        code: 'UNKNOWN_GPT',
+        message: "gptId 'invalid-id' is not registered",
+      },
+      _route: {
+        gptId: 'invalid-id',
+        action: 'query_and_wait',
+        route: 'routing_validation',
+        traceId: expect.any(String),
+      },
+    });
+    expect(executeDirectGptActionMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
   it('returns a typed error instead of bounded fallback when direct query_and_wait times out', async () => {
     const timeoutError = new Error('GPT direct action timeout after 24000ms');
     timeoutError.name = 'AbortError';
@@ -426,6 +471,8 @@ describe('GPT fast-path route branching', () => {
     expect(response.status).toBe(504);
     expect(response.body).toMatchObject({
       ok: false,
+      code: 'GPT_QUERY_AND_WAIT_TIMEOUT',
+      traceId: expect.any(String),
       error: {
         code: 'GPT_QUERY_AND_WAIT_TIMEOUT',
         message: 'GPT direct action timeout after 24000ms',
@@ -459,6 +506,8 @@ describe('GPT fast-path route branching', () => {
     expect(response.status).toBe(503);
     expect(response.body).toMatchObject({
       ok: false,
+      code: 'GPT_QUERY_AND_WAIT_FAILED',
+      traceId: expect.any(String),
       error: {
         code: 'GPT_QUERY_AND_WAIT_FAILED',
         message: 'OpenAI client unavailable for GPT direct action.',
@@ -487,6 +536,8 @@ describe('GPT fast-path route branching', () => {
     expect(response.status).toBe(500);
     expect(response.body).toMatchObject({
       ok: false,
+      code: 'GPT_QUERY_AND_WAIT_FAILED',
+      traceId: expect.any(String),
       error: {
         code: 'GPT_QUERY_AND_WAIT_FAILED',
         message: 'GPT direct action returned empty output.',
