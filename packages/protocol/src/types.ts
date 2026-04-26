@@ -187,6 +187,53 @@ export interface ContextInspectRequestPayload {
   includeAvailableEnvironments?: boolean;
 }
 
+export type ControlPlaneProvider =
+  | "railway-cli"
+  | "arcanos-cli"
+  | "arcanos-mcp"
+  | "backend-api"
+  | "local-command"
+  | "codex-ide";
+
+export interface ControlPlaneTargetDescriptor {
+  resource: string;
+  id?: string;
+  name?: string;
+  service?: string;
+  [key: string]: string | number | boolean | null | undefined;
+}
+
+export interface ControlPlaneInvokeRequestPayload {
+  operation: string;
+  provider: ControlPlaneProvider;
+  target: ControlPlaneTargetDescriptor;
+  environment: string;
+  scope: string | string[];
+  params: Record<string, unknown>;
+  approvalToken?: string;
+  dryRun?: boolean;
+  traceId: string;
+  requestedBy: string;
+}
+
+export interface ControlPlaneError {
+  code: string;
+  message: string;
+  details?: unknown;
+}
+
+export interface ControlPlaneInvokeResponseData {
+  ok: boolean;
+  operation: string;
+  provider: ControlPlaneProvider | string;
+  environment: string;
+  result: unknown;
+  auditId: string;
+  warnings: string[];
+  redactedOutput: unknown;
+  error?: ControlPlaneError;
+}
+
 export interface ContextInspectResponseData {
   context: ProtocolContext;
   project?: ProjectDescriptor;

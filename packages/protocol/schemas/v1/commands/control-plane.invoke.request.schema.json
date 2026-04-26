@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/commands/control-plane.invoke.request.schema.json",
+  "title": "control-plane.invoke request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "operation",
+    "provider",
+    "target",
+    "environment",
+    "scope",
+    "params",
+    "traceId",
+    "requestedBy"
+  ],
+  "properties": {
+    "operation": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "provider": {
+      "type": "string",
+      "enum": [
+        "railway-cli",
+        "arcanos-cli",
+        "arcanos-mcp",
+        "backend-api",
+        "local-command",
+        "codex-ide"
+      ]
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": {
+        "type": [
+          "string",
+          "number",
+          "boolean",
+          "null"
+        ]
+      },
+      "required": [
+        "resource"
+      ],
+      "properties": {
+        "resource": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "service": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        }
+      }
+    },
+    "environment": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "scope": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 20,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          }
+        }
+      ]
+    },
+    "params": {
+      "type": "object"
+    },
+    "approvalToken": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "dryRun": {
+      "type": "boolean",
+      "default": true
+    },
+    "traceId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "requestedBy": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    }
+  }
+}
