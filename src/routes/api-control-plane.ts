@@ -26,6 +26,7 @@ function resolveStatusCode(response: { ok: boolean; error?: { code?: string } })
     case 'ERR_CONTROL_PLANE_BAD_REQUEST':
       return 400;
     case 'ERR_CONTROL_PLANE_DENIED':
+    case 'ERR_CONTROL_PLANE_GPT_POLICY':
     case 'ERR_CONTROL_PLANE_SCOPE':
       return 403;
     case 'ERR_CONTROL_PLANE_APPROVAL':

@@ -132,32 +132,62 @@ describe('executeControlPlaneOperation', () => {
     }));
   });
 
-  it('requires approval for sensitive environment names with production prefixes or suffixes', async () => {
-    const audit = buildAuditSink();
+  it.each(['prod-us-east', 'production-api'])(
+    'requires approval for sensitive environment name %s',
+    async (environment) => {
+      const audit = buildAuditSink();
 
+      const response = await executeControlPlaneOperation(
+        buildRequest({
+          operation: 'npm.test',
+          provider: 'codex-ide',
+          environment,
+          scope: 'repo:verify',
+          dryRun: false,
+        }),
+        {
+          commandRunner: runner,
+          approvalTokenReader: () => undefined,
+          auditEmitter: audit.auditEmitter,
+        }
+      );
+
+      expect(response.ok).toBe(false);
+      expect(response.error?.code).toBe('ERR_CONTROL_PLANE_APPROVAL');
+      expect(runner.run).not.toHaveBeenCalled();
+      expect(audit.events[0]).toEqual(expect.objectContaining({
+        status: 'denied',
+        approvalStatus: 'unconfigured',
+        environment,
+      }));
+    }
+  );
+
+  it('allows gated operations to dry-run in sensitive environments without executing or requiring approval', async () => {
     const response = await executeControlPlaneOperation(
       buildRequest({
-        operation: 'npm.test',
+        operation: 'npm.run.build',
         provider: 'codex-ide',
-        environment: 'prod-us-east',
+        environment: 'production-api',
         scope: 'repo:verify',
-        dryRun: false,
+        dryRun: true,
       }),
       {
         commandRunner: runner,
         approvalTokenReader: () => undefined,
-        auditEmitter: audit.auditEmitter,
+        auditEmitter: buildAuditSink().auditEmitter,
       }
     );
 
-    expect(response.ok).toBe(false);
-    expect(response.error?.code).toBe('ERR_CONTROL_PLANE_APPROVAL');
-    expect(runner.run).not.toHaveBeenCalled();
-    expect(audit.events[0]).toEqual(expect.objectContaining({
-      status: 'denied',
-      approvalStatus: 'unconfigured',
-      environment: 'prod-us-east',
+    expect(response.ok).toBe(true);
+    expect(response.result).toEqual(expect.objectContaining({
+      dryRun: true,
+      approvalStatus: 'not_required',
+      plan: expect.objectContaining({
+        displayCommand: expect.stringContaining('npm'),
+      }),
     }));
+    expect(runner.run).not.toHaveBeenCalled();
   });
 
   it('redacts command stdout and stderr before returning output', async () => {
@@ -242,5 +272,56 @@ describe('executeControlPlaneOperation', () => {
     expect(response.ok).toBe(false);
     expect(response.error?.code).toBe('ERR_CONTROL_PLANE_BAD_REQUEST');
     expect(mcpService.invokeTool).not.toHaveBeenCalled();
+  });
+
+  it('plans allowlisted MCP tool invocation during dry-run without calling MCP', async () => {
+    const mcpService = {
+      invokeTool: jest.fn(),
+      listTools: jest.fn(),
+    };
+
+    const response = await executeControlPlaneOperation(
+      buildRequest({
+        operation: 'mcp.invoke',
+        provider: 'arcanos-mcp',
+        target: { resource: 'agents.list' },
+        scope: 'mcp:invoke',
+        dryRun: true,
+      }),
+      {
+        mcpService,
+        auditEmitter: buildAuditSink().auditEmitter,
+      }
+    );
+
+    expect(response.ok).toBe(true);
+    expect(response.result).toEqual(expect.objectContaining({
+      dryRun: true,
+      plan: expect.objectContaining({
+        toolName: 'agents.list',
+      }),
+    }));
+    expect(mcpService.invokeTool).not.toHaveBeenCalled();
+    expect(mcpService.listTools).not.toHaveBeenCalled();
+  });
+
+  it('denies unsafe Arcanos inspect targets before command execution', async () => {
+    const response = await executeControlPlaneOperation(
+      buildRequest({
+        operation: 'arcanos.inspect',
+        provider: 'arcanos-cli',
+        target: { resource: 'secrets' },
+        scope: 'arcanos:read',
+        dryRun: false,
+      }),
+      {
+        commandRunner: runner,
+        auditEmitter: buildAuditSink().auditEmitter,
+      }
+    );
+
+    expect(response.ok).toBe(false);
+    expect(response.error?.code).toBe('ERR_CONTROL_PLANE_BAD_REQUEST');
+    expect(runner.run).not.toHaveBeenCalled();
   });
 });

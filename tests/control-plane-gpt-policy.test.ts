@@ -97,19 +97,22 @@ describe('control-plane GPT policy', () => {
     }));
   });
 
-  it('denies raw secret access even for whitelisted GPT IDs', () => {
-    const decision = evaluateControlPlaneGptPolicy({
-      gptId: 'arcanos-core',
-      workflow: 'control_plane.inspect',
-      requestedCapability: 'secrets.read.raw',
-    });
+  it.each(['secrets.read.raw', 'auth.bypass', 'credential.escalation'] as const)(
+    'denies %s even for whitelisted GPT IDs',
+    (requestedCapability) => {
+      const decision = evaluateControlPlaneGptPolicy({
+        gptId: 'arcanos-core',
+        workflow: 'control_plane.inspect',
+        requestedCapability,
+      });
 
-    expect(decision).toEqual(expect.objectContaining({
-      ok: false,
-      gptId: 'arcanos-core',
-      reason: 'capability_denied:secrets.read.raw',
-    }));
-  });
+      expect(decision).toEqual(expect.objectContaining({
+        ok: false,
+        gptId: 'arcanos-core',
+        reason: `capability_denied:${requestedCapability}`,
+      }));
+    }
+  );
 
   it('allows arcanos-core to request Trinity routing without confirming Trinity success', async () => {
     const audit = buildAuditSink();
@@ -263,6 +266,27 @@ describe('control-plane GPT policy', () => {
       gptWhitelisted: true,
       trinityConfirmed: true,
       routeStatus: 'TRINITY_CONFIRMED',
+    }));
+  });
+
+  it('keeps orchestrated paths unconfirmed without Trinity pipeline evidence', () => {
+    const verification = verifyControlPlaneRouteMetadata({
+      gptId: 'arcanos-core',
+      metadata: {
+        _route: {
+          module: 'GPT:ORCHESTRATOR',
+          route: 'orchestrated',
+        },
+        routeDecision: {
+          path: 'orchestrated_path',
+        },
+      },
+    });
+
+    expect(verification).toEqual(expect.objectContaining({
+      gptWhitelisted: true,
+      trinityConfirmed: false,
+      routeStatus: 'ORCHESTRATED_PATH_UNCONFIRMED',
     }));
   });
 
