@@ -425,6 +425,10 @@ function buildLeastPrivilegeEnv(adapter: ControlPlaneAdapter, repositoryRoot: st
     }
   }
 
+  if (adapter === 'railway-cli' && allowedEnv.RAILWAY_TOKEN === undefined && allowedEnv.RAILWAY_API_TOKEN !== undefined) {
+    allowedEnv.RAILWAY_TOKEN = allowedEnv.RAILWAY_API_TOKEN;
+  }
+
   allowedEnv.ARCANOS_REPOSITORY_ROOT = allowedEnv.ARCANOS_REPOSITORY_ROOT ?? repositoryRoot;
   allowedEnv.ARCANOS_WORKSPACE_ROOT = allowedEnv.ARCANOS_WORKSPACE_ROOT ?? repositoryRoot;
 

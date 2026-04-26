@@ -255,8 +255,59 @@ describe('executeControlPlaneRequest', () => {
       const runOptions = run.mock.calls[0]?.[2] as { env: NodeJS.ProcessEnv };
       expect(runOptions.env.CONTROL_PLANE_TEST_UNRELATED).toBeUndefined();
     } finally {
-      process.env.RAILWAY_TOKEN = originalRailwayToken;
-      process.env.CONTROL_PLANE_TEST_UNRELATED = originalUnrelatedEnv;
+      if (originalRailwayToken === undefined) {
+        delete process.env.RAILWAY_TOKEN;
+      } else {
+        process.env.RAILWAY_TOKEN = originalRailwayToken;
+      }
+      if (originalUnrelatedEnv === undefined) {
+        delete process.env.CONTROL_PLANE_TEST_UNRELATED;
+      } else {
+        process.env.CONTROL_PLANE_TEST_UNRELATED = originalUnrelatedEnv;
+      }
+    }
+  });
+
+  it('maps host-provided RAILWAY_API_TOKEN to RAILWAY_TOKEN only for the Railway CLI adapter', async () => {
+    const originalRailwayToken = process.env.RAILWAY_TOKEN;
+    const originalRailwayApiToken = process.env.RAILWAY_API_TOKEN;
+    delete process.env.RAILWAY_TOKEN;
+    process.env.RAILWAY_API_TOKEN = 'railway-api-token-value';
+
+    try {
+      const run = jest.fn(async () => ({ exitCode: 0, stdout: 'ok', stderr: '' }));
+
+      const response = await executeControlPlaneRequest({
+        requestId: 'control-env-map-1',
+        phase: 'execute',
+        adapter: 'railway-cli',
+        operation: 'whoami'
+      }, buildDeps({
+        processRunner: { run }
+      }) as never);
+
+      expect(response.ok).toBe(true);
+      expect(run).toHaveBeenCalledWith(
+        'railway',
+        ['whoami'],
+        expect.objectContaining({
+          env: expect.objectContaining({
+            RAILWAY_API_TOKEN: 'railway-api-token-value',
+            RAILWAY_TOKEN: 'railway-api-token-value'
+          })
+        })
+      );
+    } finally {
+      if (originalRailwayToken === undefined) {
+        delete process.env.RAILWAY_TOKEN;
+      } else {
+        process.env.RAILWAY_TOKEN = originalRailwayToken;
+      }
+      if (originalRailwayApiToken === undefined) {
+        delete process.env.RAILWAY_API_TOKEN;
+      } else {
+        process.env.RAILWAY_API_TOKEN = originalRailwayApiToken;
+      }
     }
   });
 
