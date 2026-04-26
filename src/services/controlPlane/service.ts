@@ -415,6 +415,7 @@ function buildLeastPrivilegeEnv(adapter: ControlPlaneAdapter, repositoryRoot: st
         'ARCANOS_REPOSITORY_ROOT',
         'ARCANOS_WORKSPACE_ROOT',
         'ARCANOS_PYTHON_RUNTIME_DIR',
+        'RAILWAY_PUBLIC_DOMAIN',
         'PYTHON'
       ];
   const allowedEnv: NodeJS.ProcessEnv = {};
@@ -427,6 +428,12 @@ function buildLeastPrivilegeEnv(adapter: ControlPlaneAdapter, repositoryRoot: st
 
   if (adapter === 'railway-cli' && allowedEnv.RAILWAY_TOKEN === undefined && allowedEnv.RAILWAY_API_TOKEN !== undefined) {
     allowedEnv.RAILWAY_TOKEN = allowedEnv.RAILWAY_API_TOKEN;
+  }
+  if (adapter === 'arcanos-cli' && allowedEnv.ARCANOS_BACKEND_URL === undefined && allowedEnv.RAILWAY_PUBLIC_DOMAIN !== undefined) {
+    const domain = allowedEnv.RAILWAY_PUBLIC_DOMAIN.trim();
+    if (domain.length > 0) {
+      allowedEnv.ARCANOS_BACKEND_URL = /^https?:\/\//i.test(domain) ? domain : `https://${domain}`;
+    }
   }
 
   allowedEnv.ARCANOS_REPOSITORY_ROOT = allowedEnv.ARCANOS_REPOSITORY_ROOT ?? repositoryRoot;

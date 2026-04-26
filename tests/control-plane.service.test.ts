@@ -311,6 +311,49 @@ describe('executeControlPlaneRequest', () => {
     }
   });
 
+  it('derives Arcanos CLI backend URL from Railway public domain when explicit URL is absent', async () => {
+    const originalBackendUrl = process.env.ARCANOS_BACKEND_URL;
+    const originalRailwayPublicDomain = process.env.RAILWAY_PUBLIC_DOMAIN;
+    delete process.env.ARCANOS_BACKEND_URL;
+    process.env.RAILWAY_PUBLIC_DOMAIN = 'arcanos-v2-preview.example';
+
+    try {
+      const run = jest.fn(async () => ({ exitCode: 0, stdout: '{"ok":true}', stderr: '' }));
+
+      const response = await executeControlPlaneRequest({
+        requestId: 'control-env-map-2',
+        phase: 'execute',
+        adapter: 'arcanos-cli',
+        operation: 'status'
+      }, buildDeps({
+        processRunner: { run }
+      }) as never);
+
+      expect(response.ok).toBe(true);
+      const [, args, options] = run.mock.calls[0] as [
+        string,
+        string[],
+        { env: NodeJS.ProcessEnv }
+      ];
+      expect(args).toEqual(expect.arrayContaining(['status', '--json']));
+      expect(options.env).toEqual(expect.objectContaining({
+        ARCANOS_BACKEND_URL: 'https://arcanos-v2-preview.example',
+        RAILWAY_PUBLIC_DOMAIN: 'arcanos-v2-preview.example'
+      }));
+    } finally {
+      if (originalBackendUrl === undefined) {
+        delete process.env.ARCANOS_BACKEND_URL;
+      } else {
+        process.env.ARCANOS_BACKEND_URL = originalBackendUrl;
+      }
+      if (originalRailwayPublicDomain === undefined) {
+        delete process.env.RAILWAY_PUBLIC_DOMAIN;
+      } else {
+        process.env.RAILWAY_PUBLIC_DOMAIN = originalRailwayPublicDomain;
+      }
+    }
+  });
+
   it('rejects cwd values outside the workspace before adapter execution', async () => {
     const run = jest.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' }));
 
