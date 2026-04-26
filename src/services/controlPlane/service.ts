@@ -23,7 +23,7 @@ import type {
   ControlPlaneProcessResult,
   ControlPlaneProcessRunner,
   ControlPlaneRequestPayload,
-  ControlPlaneResponse,
+  ControlPlaneServiceResponse as ControlPlaneResponse,
   ControlPlaneResult,
   ControlPlaneTrinityPlanner
 } from './types.js';

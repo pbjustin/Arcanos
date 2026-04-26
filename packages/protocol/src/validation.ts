@@ -6,6 +6,7 @@ import { ARCANOS_PROTOCOL_VERSION } from "./constants.js";
 import { getProtocolSchemaCatalog } from "./schemaCatalog.js";
 import type {
   ArtifactStoreResponseData,
+  ControlPlaneInvokeResponseData,
   ContextInspectResponseData,
   DaemonCapabilitiesResponseData,
   ExecResumeResponseData,
@@ -33,6 +34,8 @@ const sharedSchemas: AnySchema[] = [
   ...Object.values(schemaCatalog.nouns),
   schemaCatalog.commands.artifactStore.request,
   schemaCatalog.commands.artifactStore.response,
+  schemaCatalog.commands.controlPlaneInvoke.request,
+  schemaCatalog.commands.controlPlaneInvoke.response,
   schemaCatalog.commands.contextInspect.request,
   schemaCatalog.commands.contextInspect.response,
   schemaCatalog.commands.daemonCapabilities.request,
@@ -77,6 +80,7 @@ const sharedSchemas: AnySchema[] = [
 
 const commandRequestSchemas: Record<ImplementedProtocolCommandId, AnySchema> = {
   "artifact.store": schemaCatalog.commands.artifactStore.request,
+  "control-plane.invoke": schemaCatalog.commands.controlPlaneInvoke.request,
   "context.inspect": schemaCatalog.commands.contextInspect.request,
   "daemon.capabilities": schemaCatalog.commands.daemonCapabilities.request,
   "plan.generate": schemaCatalog.commands.planGenerate.request,
@@ -92,6 +96,7 @@ const commandRequestSchemas: Record<ImplementedProtocolCommandId, AnySchema> = {
 
 const commandResponseSchemas: Record<ImplementedProtocolCommandId, AnySchema> = {
   "artifact.store": schemaCatalog.commands.artifactStore.response,
+  "control-plane.invoke": schemaCatalog.commands.controlPlaneInvoke.response,
   "context.inspect": schemaCatalog.commands.contextInspect.response,
   "daemon.capabilities": schemaCatalog.commands.daemonCapabilities.response,
   "plan.generate": schemaCatalog.commands.planGenerate.response,
@@ -287,6 +292,7 @@ export function assertTypedImplementedResponse(
   response: ProtocolResponse<unknown>
 ): ProtocolResponse<
   | ArtifactStoreResponseData
+  | ControlPlaneInvokeResponseData
   | ContextInspectResponseData
   | DaemonCapabilitiesResponseData
   | ExecResumeResponseData
@@ -301,6 +307,7 @@ export function assertTypedImplementedResponse(
 > {
   return assertValidProtocolResponse(command, response) as ProtocolResponse<
     | ArtifactStoreResponseData
+    | ControlPlaneInvokeResponseData
     | ContextInspectResponseData
     | DaemonCapabilitiesResponseData
     | ExecResumeResponseData
@@ -318,6 +325,7 @@ export function assertTypedImplementedResponse(
 function compileCommandValidators(commandSchemas: Record<ImplementedProtocolCommandId, AnySchema>): Record<ImplementedProtocolCommandId, ValidateFunction> {
   return {
     "artifact.store": protocolAjv.compile(commandSchemas["artifact.store"]),
+    "control-plane.invoke": protocolAjv.compile(commandSchemas["control-plane.invoke"]),
     "context.inspect": protocolAjv.compile(commandSchemas["context.inspect"]),
     "daemon.capabilities": protocolAjv.compile(commandSchemas["daemon.capabilities"]),
     "plan.generate": protocolAjv.compile(commandSchemas["plan.generate"]),

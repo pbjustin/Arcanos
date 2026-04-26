@@ -17,7 +17,7 @@ import { validateControlPlaneRequestPayload } from '@services/controlPlane/schem
 import type {
   ControlPlaneContext,
   ControlPlaneRequestPayload,
-  ControlPlaneResponse
+  ControlPlaneServiceResponse as ControlPlaneResponse
 } from '@services/controlPlane/types.js';
 
 const router = express.Router();

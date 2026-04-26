@@ -2,7 +2,7 @@ import { Ajv, type ErrorObject, type ValidateFunction } from 'ajv';
 
 import type {
   ControlPlaneRequestPayload,
-  ControlPlaneResponse
+  ControlPlaneServiceResponse as ControlPlaneResponse
 } from './types.js';
 
 export interface ControlPlaneSchemaIssue {

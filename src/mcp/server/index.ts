@@ -51,6 +51,7 @@ import {
 import { stripConfirmationFields, requireNonceOrIssue, notExposed, buildClearRecheckInput, wrapTool } from './helpers.js';
 import { registerDagMcpTools } from './dagTools.js';
 import { registerJobMcpTools } from './jobTools.js';
+import { registerControlPlaneMcpTools } from './controlPlaneTools.js';
 
 type AnyMcpServer = any;
 
@@ -221,6 +222,7 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
   );
 
   registerJobMcpTools(server, ctx);
+  registerControlPlaneMcpTools(server, ctx);
 
   // -------------------------
   // CLEAR + Plans
