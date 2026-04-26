@@ -31,7 +31,7 @@ function resolveStatusCode(response: { ok: boolean; error?: { code?: string } })
     case 'ERR_CONTROL_PLANE_APPROVAL':
       return 428;
     default:
-      return 502;
+      return 500;
   }
 }
 

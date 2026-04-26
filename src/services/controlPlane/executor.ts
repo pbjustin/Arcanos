@@ -22,8 +22,6 @@ import type {
   ExecuteControlPlaneOperationOptions,
 } from './types.js';
 
-const SENSITIVE_ENVIRONMENTS = new Set(['production', 'prod']);
-
 function createAuditId(): string {
   return `cp_${crypto.randomUUID()}`;
 }
@@ -37,6 +35,11 @@ function resolveMissingScopes(request: ControlPlaneRequest, spec: ControlPlaneOp
   return spec.requiredScopes.filter((scope) => !grantedScopes.has(scope));
 }
 
+function isSensitiveEnvironment(environmentName: string): boolean {
+  const environment = environmentName.trim().toLowerCase();
+  return environment.includes('prod') || environment.includes('production');
+}
+
 function requiresApproval(request: ControlPlaneRequest, spec: ControlPlaneOperationSpec): boolean {
   if (request.dryRun) {
     return false;
@@ -44,8 +47,7 @@ function requiresApproval(request: ControlPlaneRequest, spec: ControlPlaneOperat
   if (spec.approvalRequired) {
     return true;
   }
-  const environment = request.environment.trim().toLowerCase();
-  return !spec.readOnly && SENSITIVE_ENVIRONMENTS.has(environment);
+  return !spec.readOnly && isSensitiveEnvironment(request.environment);
 }
 
 function buildBaseResponse(
@@ -133,13 +135,27 @@ async function resolveMcpService(options: ExecuteControlPlaneOperationOptions) {
 }
 
 function resolveRequestForMcp(request: Request | undefined): Request | undefined {
-  return request && Object.keys(request).length > 0 ? request : undefined;
+  return request && typeof request === 'object' && 'headers' in request ? request : undefined;
 }
 
 function formatSchemaError(error: ZodError): string {
   return error.issues
     .map((issue) => `${issue.path.join('.') || '/'}: ${issue.message}`)
     .join('; ');
+}
+
+function buildCommandFailureError(commandResult: { exitCode: number; signal?: string | null }) {
+  const signal = commandResult.signal ?? null;
+  return {
+    code: 'ERR_CONTROL_PLANE_COMMAND_FAILED',
+    message: signal
+      ? `Command failed with signal ${signal}.`
+      : `Command failed with exit code ${commandResult.exitCode}.`,
+    details: {
+      exitCode: commandResult.exitCode,
+      signal,
+    },
+  };
 }
 
 async function executeParsedControlPlaneOperation(
@@ -255,7 +271,7 @@ async function executeParsedControlPlaneOperation(
         approvalDecision.status,
         options,
         ok ? 'command completed' : 'command failed',
-        { exitCode: commandResult.exitCode, command: redactCommandPlan(command) }
+        { exitCode: commandResult.exitCode, signal: commandResult.signal ?? null, command: redactCommandPlan(command) }
       );
       return buildBaseResponse(
         auditId,
@@ -266,11 +282,7 @@ async function executeParsedControlPlaneOperation(
         redactedResult,
         ok
           ? undefined
-          : {
-              code: 'ERR_CONTROL_PLANE_COMMAND_FAILED',
-              message: `Command exited with code ${commandResult.exitCode}.`,
-              details: { exitCode: commandResult.exitCode },
-            }
+          : buildCommandFailureError(commandResult)
       );
     }
 

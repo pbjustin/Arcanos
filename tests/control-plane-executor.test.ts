@@ -132,6 +132,34 @@ describe('executeControlPlaneOperation', () => {
     }));
   });
 
+  it('requires approval for sensitive environment names with production prefixes or suffixes', async () => {
+    const audit = buildAuditSink();
+
+    const response = await executeControlPlaneOperation(
+      buildRequest({
+        operation: 'npm.test',
+        provider: 'codex-ide',
+        environment: 'prod-us-east',
+        scope: 'repo:verify',
+        dryRun: false,
+      }),
+      {
+        commandRunner: runner,
+        approvalTokenReader: () => undefined,
+        auditEmitter: audit.auditEmitter,
+      }
+    );
+
+    expect(response.ok).toBe(false);
+    expect(response.error?.code).toBe('ERR_CONTROL_PLANE_APPROVAL');
+    expect(runner.run).not.toHaveBeenCalled();
+    expect(audit.events[0]).toEqual(expect.objectContaining({
+      status: 'denied',
+      approvalStatus: 'unconfigured',
+      environment: 'prod-us-east',
+    }));
+  });
+
   it('redacts command stdout and stderr before returning output', async () => {
     const audit = buildAuditSink();
     const bearerFixture = `Bearer ${'a'.repeat(24)}`;
@@ -160,6 +188,34 @@ describe('executeControlPlaneOperation', () => {
       exitCode: 0,
     }));
     expect(response.result).toEqual(response.redactedOutput);
+  });
+
+  it('reports command termination signals in failure responses', async () => {
+    runner.run.mockResolvedValue({
+      exitCode: 1,
+      stdout: '',
+      stderr: 'terminated',
+      signal: 'SIGTERM',
+      durationMs: 25,
+    });
+
+    const response = await executeControlPlaneOperation(
+      buildRequest({ dryRun: false }),
+      {
+        commandRunner: runner,
+        auditEmitter: buildAuditSink().auditEmitter,
+      }
+    );
+
+    expect(response.ok).toBe(false);
+    expect(response.error).toEqual({
+      code: 'ERR_CONTROL_PLANE_COMMAND_FAILED',
+      message: 'Command failed with signal SIGTERM.',
+      details: {
+        exitCode: 1,
+        signal: 'SIGTERM',
+      },
+    });
   });
 
   it('denies non-allowlisted MCP tool invocation before calling MCP', async () => {
