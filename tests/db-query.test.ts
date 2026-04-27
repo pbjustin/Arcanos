@@ -72,7 +72,17 @@ describe('db query helper', () => {
     const dateNowSpy = jest.spyOn(Date, 'now').mockImplementation(() => timestamps.shift() ?? 1_145);
 
     try {
-      await query('SELECT * FROM worker_runtime_snapshots WHERE worker_id = $1', ['worker-1']);
+      await query(
+        'SELECT * FROM worker_runtime_snapshots WHERE worker_id = $1',
+        ['worker-1'],
+        1,
+        false,
+        {
+          queryName: 'worker_runtime_snapshot_get',
+          workerId: 'worker-1',
+          source: 'worker-status'
+        }
+      );
     } finally {
       dateNowSpy.mockRestore();
     }
@@ -86,11 +96,15 @@ describe('db query helper', () => {
         executionMs: 85,
         poolWaitMs: 60,
         totalMs: 145,
-        rowCount: 1
+        rowCount: 1,
+        queryName: 'worker_runtime_snapshot_get',
+        workerId: 'worker-1',
+        source: 'worker-status'
       })
     );
     expect(dbLoggerWarnMock.mock.calls[0]?.[1]).not.toHaveProperty('text');
     expect(dbLoggerWarnMock.mock.calls[0]?.[1]).not.toHaveProperty('sql');
+    expect(dbLoggerWarnMock.mock.calls[0]?.[1]).not.toHaveProperty('params');
     expect(releaseMock).toHaveBeenCalledTimes(1);
   });
 });
