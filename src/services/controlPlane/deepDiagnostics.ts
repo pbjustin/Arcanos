@@ -9,7 +9,13 @@ import { sanitizeControlPlaneAuditEvent } from './audit.js';
 import { ARCANOS_CORE_GPT_ID, findControlPlaneGptPolicy } from './gptPolicy.js';
 import { verifyControlPlaneRouteMetadata } from './routeVerification.js';
 import { controlPlaneInvokeRequestSchema } from './schema.js';
-import { getControlPlaneCapabilities } from './service.js';
+
+let controlPlaneServiceModulePromise: Promise<typeof import('./service.js')> | undefined;
+
+async function loadControlPlaneServiceModule(): Promise<typeof import('./service.js')> {
+  controlPlaneServiceModulePromise ??= import('./service.js');
+  return controlPlaneServiceModulePromise;
+}
 
 const GPT_POLICY_PATH = 'src/services/controlPlane/gptPolicy.ts';
 const ROUTE_VERIFICATION_PATH = 'src/services/controlPlane/routeVerification.ts';
