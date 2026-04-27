@@ -61,17 +61,25 @@ function classifySqlOperation(text: string): string {
   return 'other';
 }
 
-function normalizeTraceValue(value: string | undefined): string | undefined {
-  const normalized = value?.trim();
+function normalizeTraceValue(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  const normalized = value.trim();
   return normalized ? normalized.slice(0, 120) : undefined;
 }
 
 function normalizeQueryTraceContext(
   traceContext: DbQueryTraceContext | undefined
 ): Record<string, string> {
-  const queryName = normalizeTraceValue(traceContext?.queryName);
-  const source = normalizeTraceValue(traceContext?.source);
-  const workerId = normalizeTraceValue(traceContext?.workerId);
+  if (!traceContext) {
+    return {};
+  }
+
+  const queryName = normalizeTraceValue(traceContext.queryName);
+  const source = normalizeTraceValue(traceContext.source);
+  const workerId = normalizeTraceValue(traceContext.workerId);
   return {
     ...(queryName ? { queryName } : {}),
     ...(source ? { source } : {}),
