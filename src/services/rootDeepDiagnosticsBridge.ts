@@ -57,6 +57,23 @@ interface RootDiagnosticsAuditInput {
   report?: RootDiagnosticsSubCheck[];
 }
 
+interface RootDiagnosticsRequestLogger {
+  info: (event: string, data: Record<string, unknown>) => void;
+  warn: (event: string, data: Record<string, unknown>) => void;
+}
+
+interface RootDiagnosticsAuthUser {
+  source?: unknown;
+  id?: unknown;
+  email?: unknown;
+  role?: unknown;
+}
+
+type RootDiagnosticsRequest = Request & {
+  logger?: RootDiagnosticsRequestLogger;
+  authUser?: RootDiagnosticsAuthUser;
+};
+
 function parseRootDiagnosticGpts(): Set<string> {
   return new Set(
     (process.env.ARCANOS_ROOT_DIAGNOSTIC_GPTS ?? '')
@@ -78,12 +95,14 @@ function constantTimeEquals(left: string, right: string): boolean {
 }
 
 function resolveRequesterIdentity(req: Request): Record<string, unknown> {
-  if (req.authUser) {
+  const authUser = (req as RootDiagnosticsRequest).authUser;
+
+  if (authUser) {
     return {
-      source: req.authUser.source,
-      id: req.authUser.id,
-      email: req.authUser.email,
-      role: req.authUser.role,
+      source: authUser.source,
+      id: authUser.id,
+      email: authUser.email,
+      role: authUser.role,
     };
   }
 
@@ -132,7 +151,7 @@ async function runCheck(
     return {
       ok: true,
       name,
-      data: await operation(),
+      data: (await operation()) ?? null,
       error: null,
     };
   } catch (error) {
@@ -197,7 +216,7 @@ export function logRootDeepDiagnosticsAttempt(input: RootDiagnosticsAuditInput):
 
   auditLogger.log(auditEntry);
 
-  const requestLogger = input.req.logger;
+  const requestLogger = (input.req as RootDiagnosticsRequest).logger;
   if (!requestLogger) {
     return;
   }
