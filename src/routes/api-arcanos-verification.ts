@@ -33,6 +33,7 @@ import { getWorkerControlStatus } from '../services/workerControlService.js';
 import { arcanosDagRunService } from '../services/arcanosDagRunService.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { sendBoundedJsonResponse } from '@shared/http/sendBoundedJsonResponse.js';
+import { UnsupportedDagTemplateError } from '@dag/templates.js';
 
 const router = express.Router();
 const API_VERSION = '1.0.0';
@@ -306,8 +307,8 @@ router.post(
     } catch (error: unknown) {
       const errorMessage = resolveErrorMessage(error);
 
-      //audit Assumption: unsupported templates and invalid DAG requests are caller errors; failure risk: contract consumers receive opaque 500s for invalid input; expected invariant: template validation failures map to `400`; handling strategy: branch on known validation text.
-      if (errorMessage.includes('Unsupported DAG template')) {
+      //audit Assumption: unsupported templates and invalid DAG requests are caller errors; failure risk: contract consumers receive opaque 500s for invalid input; expected invariant: template validation failures map to `400`; handling strategy: branch on the template validation error type.
+      if (error instanceof UnsupportedDagTemplateError) {
         sendBadRequest(res, 'DAG_TEMPLATE_UNSUPPORTED');
         return;
       }

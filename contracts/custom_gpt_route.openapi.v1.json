@@ -3,14 +3,14 @@
   "info": {
     "title": "Arcanos GPT Route API",
     "version": "1.0.0",
-    "description": "Canonical public contract for GPT-routed module requests and allowlisted control-plane dispatch. GPT identity is path-bound at /gpt/{gptId}; generated tool clients may also echo the same gptId in the JSON body, and mismatched body/path IDs are rejected. POST /gpt/{gptId} accepts flexible request bodies with action as a string and payload as an open object so durable GPT actions, approved runtime inspection actions, and prompt-only fast-path generation can share one public endpoint. For generated clients that place operation metadata outside the JSON body, the route also accepts action as a query parameter or operation-style body alias. Simple prompt-generation requests that omit action can opt into inline fast-path execution with executionMode=fast. A bounded deterministic planner may normalize detail and section profiles for runtime inspection actions before execution, without inventing unsupported actions or bypassing response guards."
+    "description": "Canonical public contract for GPT-routed module requests and the safe DAG bridge. GPT identity is path-bound at /gpt/{gptId}; generated tool clients may also echo the same gptId in the JSON body, and mismatched body/path IDs are rejected. POST /gpt/{gptId} accepts flexible request bodies with action as a string and payload as an open object so durable GPT actions, safe DAG bridge actions, and prompt-only fast-path generation can share one public endpoint. For generated clients that place operation metadata outside the JSON body, the route also accepts action as a query parameter or operation-style body alias. Simple prompt-generation requests that omit action can opt into inline fast-path execution with executionMode=fast. Runtime inspection, worker status, queue inspection, self-heal status, MCP calls, and arbitrary internal endpoint forwarding remain blocked on this route."
   },
   "paths": {
     "/gpt/{gptId}": {
       "post": {
         "operationId": "invokeGptRoute",
         "summary": "Invoke a GPT-routed module request or universal control action",
-        "description": "POST /gpt/{gptId} is the universal public dispatcher. The path parameter is authoritative; a JSON body gptId is optional and must match the path when present. Use a prompt-only request with executionMode=fast for small prompt-generation work that should return inline. Use action=query to create one durable writing job through the Trinity writing pipeline, action=query_and_wait on core GPT IDs to execute synchronously through the lightweight direct action lane, action=get_status to read status through the GPT compatibility bridge, action=get_result to read the final result through the GPT compatibility bridge, and approved control actions such as diagnostics, runtime.inspect, workers.status, queue.inspect, self_heal.status, and system_state for runtime inspection. The diagnostics action returns deterministic dispatcher metadata, including canonical DAG, Trinity, worker, and MCP bindings. The action should be supplied in the JSON body when possible; generated-client compatibility also permits the same action in the query string or an operationId-style body alias. For runtime.inspect and self_heal.status, payload.detail and payload.sections can request summary, standard, or full response profiles, and a deterministic bounded planner fills safe defaults when callers omit them. Unknown control-plane action names are rejected with a typed 400 error. Natural-language retrieval prompts, runtime inspection prompts without an explicit allowlisted action, DAG control prompts, and MCP control requests are still intentionally rejected on this route.",
+        "description": "POST /gpt/{gptId} is the universal public dispatcher. The path parameter is authoritative; a JSON body gptId is optional and must match the path when present. Use a prompt-only request with executionMode=fast for small prompt-generation work that should return inline. Use action=query to create one durable writing job through the Trinity writing pipeline, action=query_and_wait on core GPT IDs to execute synchronously through the lightweight direct action lane, action=get_status to read status through the GPT compatibility bridge, action=get_result to read the final result through the GPT compatibility bridge, action=diagnostics to read deterministic GPT route metadata, and the safe DAG bridge actions dag.capabilities, dag.dispatch, dag.status, and dag.trace. The action should be supplied in the JSON body when possible; generated-client compatibility also permits the same action in the query string or an operationId-style body alias. Unknown control-plane action names are rejected with a typed 400 error. Natural-language retrieval prompts, runtime inspection prompts, unsupported DAG actions, MCP control requests, and runtime.inspect/workers.status/queue.inspect/self_heal.status control actions are still intentionally rejected on this route.",
         "parameters": [
           {
             "name": "gptId",
@@ -88,41 +88,42 @@
                     }
                   }
                 },
-                "runtimeInspect": {
-                  "summary": "Inspect the live runtime through the universal dispatcher with planner defaults",
+                "dagCapabilities": {
+                  "summary": "Read safe DAG capabilities available to this GPT ID",
                   "value": {
-                    "action": "runtime.inspect"
+                    "action": "dag.capabilities"
                   }
                 },
-                "runtimeInspectStandard": {
-                  "summary": "Request standard runtime inspection detail explicitly",
+                "dagDispatch": {
+                  "summary": "Dispatch a safe asynchronous DAG run",
                   "value": {
-                    "action": "runtime.inspect",
+                    "action": "dag.dispatch",
+                    "prompt": "Validation run for GPT DAG bridge.",
                     "payload": {
-                      "detail": "standard"
+                      "graphId": "default",
+                      "input": {
+                        "validation": true
+                      },
+                      "async": true,
+                      "idempotencyKey": "gpt-dag-bridge-validation-001"
                     }
                   }
                 },
-                "runtimeInspectFull": {
-                  "summary": "Request full runtime inspection detail for selected sections",
+                "dagStatus": {
+                  "summary": "Read one DAG run status through the safe bridge",
                   "value": {
-                    "action": "runtime.inspect",
+                    "action": "dag.status",
                     "payload": {
-                      "detail": "full",
-                      "sections": [
-                        "workers",
-                        "queues",
-                        "memory"
-                      ]
+                      "runId": "dagrun_1714212000000_abc123"
                     }
                   }
                 },
-                "selfHealSummary": {
-                  "summary": "Request a compact self-heal summary through the universal dispatcher",
+                "dagTrace": {
+                  "summary": "Read one redacted DAG run trace through the safe bridge",
                   "value": {
-                    "action": "self_heal.status",
+                    "action": "dag.trace",
                     "payload": {
-                      "detail": "summary"
+                      "runId": "dagrun_1714212000000_abc123"
                     }
                   }
                 },
@@ -130,12 +131,6 @@
                   "summary": "Return deterministic dispatcher bindings for GPT, DAG, Trinity, workers, and MCP",
                   "value": {
                     "action": "diagnostics"
-                  }
-                },
-                "workersStatus": {
-                  "summary": "Inspect worker runtime and queue state through the universal dispatcher",
-                  "value": {
-                    "action": "workers.status"
                   }
                 },
                 "moduleAction": {
@@ -155,7 +150,7 @@
         },
         "responses": {
           "200": {
-            "description": "Completed fast-path inline response, direct query_and_wait response, async bridge response, control-plane bridge response, or generic GPT response",
+            "description": "Completed fast-path inline response, direct query_and_wait response, async bridge response, safe DAG bridge read response, or generic GPT response",
             "content": {
               "application/json": {
                 "schema": {
@@ -263,33 +258,25 @@
                       "action": "runtime.unknown",
                       "error": {
                         "code": "UNSUPPORTED_GPT_ACTION",
-                        "message": "Unsupported control action 'runtime.unknown'. Supported control actions: diagnostics, system_state, runtime.inspect, workers.status, queue.inspect, self_heal.status."
+                        "message": "Unsupported control action 'runtime.unknown'. Supported control actions: diagnostics, system_state."
                       },
                       "canonical": {
-                        "supportedActions": "diagnostics, system_state, runtime.inspect, workers.status, queue.inspect, self_heal.status"
+                        "supportedActions": "diagnostics, system_state"
                       }
                     }
                   },
                   "invalidDetail": {
-                    "summary": "Invalid planner detail is rejected safely",
+                    "summary": "Explicit runtime inspection payloads are rejected before planner validation",
                     "value": {
                       "ok": false,
                       "action": "runtime.inspect",
                       "error": {
-                        "code": "INVALID_GPT_DETAIL",
-                        "message": "Unsupported detail 'verbose'. Supported detail values: summary, standard, full."
+                        "code": "CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT",
+                        "message": "Runtime diagnostics, worker state, tracing, and queue inspection must use direct control-plane endpoints or POST /mcp. Do not send runtime control requests through POST /gpt/{gptId}."
                       },
                       "canonical": {
-                        "action": "runtime.inspect",
-                        "supportedDetail": "summary, standard, full",
-                        "availableSections": [
-                          "workers",
-                          "queues",
-                          "memory",
-                          "incidents",
-                          "events",
-                          "trace"
-                        ]
+                        "mcp": "/mcp",
+                        "workers": "/workers/status"
                       }
                     }
                   }
@@ -359,7 +346,7 @@
       "GptRouteRequest": {
         "type": "object",
         "additionalProperties": true,
-        "description": "Universal GPT-route request. action is an open string field so callers can send canonical async bridge actions, module actions, and approved control-plane/runtime inspection actions through POST /gpt/{gptId}. A body gptId is optional for generated tool clients and must match the path gptId when present. Runtime inspection actions may also use a bounded planner profile via payload.detail and payload.sections.",
+        "description": "Universal GPT-route request. action is an open string field so callers can send canonical async bridge actions, module actions, diagnostics, job lookup bridge actions, and the safe DAG bridge actions through POST /gpt/{gptId}. A body gptId is optional for generated tool clients and must match the path gptId when present. Runtime inspection, worker status, queue inspection, self-heal status, MCP calls, unsupported dag.* actions, and arbitrary internal endpoint forwarding are rejected.",
         "properties": {
           "gptId": {
             "type": "string",
@@ -369,7 +356,7 @@
           "action": {
             "type": "string",
             "minLength": 1,
-            "description": "Requested action name. Canonical built-ins include query, query_and_wait, get_status, get_result, diagnostics, runtime.inspect, workers.status, queue.inspect, self_heal.status, and system_state. Module-specific action names are also allowed. Unsupported reserved control action names are rejected with HTTP 400."
+            "description": "Requested action name. Canonical built-ins include query, query_and_wait, get_status, get_result, diagnostics, dag.capabilities, dag.dispatch, dag.status, and dag.trace. Module-specific action names are also allowed. Unsupported reserved control action names are rejected with HTTP 400."
           },
           "operationId": {
             "type": "string",
@@ -418,7 +405,7 @@
           "payload": {
             "type": "object",
             "additionalProperties": true,
-            "description": "Open payload object. For runtime.inspect and self_heal.status, payload.detail supports summary | standard | full. Valid payload.sections values are action-specific allowlisted strings: for example, runtime.inspect may use sections such as workers, queues, memory, incidents, events, or trace, while self_heal.status may use sections such as system or predictive."
+            "description": "Open payload object. For dag.dispatch, payload.graphId selects a supported graph and payload.input supplies DAG input; target, source, route, headers, auth, and endpoint fields are ignored by the bridge. For dag.status and dag.trace, payload.runId is required."
           },
           "context": {
             "type": "object",
@@ -701,11 +688,7 @@
             "items": {
               "enum": [
                 "diagnostics",
-                "system_state",
-                "runtime.inspect",
-                "workers.status",
-                "queue.inspect",
-                "self_heal.status"
+                "system_state"
               ]
             }
           },

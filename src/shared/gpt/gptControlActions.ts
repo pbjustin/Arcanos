@@ -1,10 +1,18 @@
-export const GPT_DIRECT_CONTROL_ACTIONS = [
+export const GPT_PUBLIC_DIRECT_CONTROL_ACTIONS = [
   'diagnostics',
   'system_state',
+] as const;
+
+export const GPT_BLOCKED_DIRECT_CONTROL_ACTIONS = [
   'runtime.inspect',
   'workers.status',
   'queue.inspect',
   'self_heal.status',
+] as const;
+
+export const GPT_DIRECT_CONTROL_ACTIONS = [
+  ...GPT_PUBLIC_DIRECT_CONTROL_ACTIONS,
+  ...GPT_BLOCKED_DIRECT_CONTROL_ACTIONS,
 ] as const;
 
 export type GptDirectControlAction = (typeof GPT_DIRECT_CONTROL_ACTIONS)[number];

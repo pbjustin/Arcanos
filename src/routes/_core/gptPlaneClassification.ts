@@ -50,6 +50,39 @@ export type GptWritingPlaneClassification = Extract<
   { plane: 'writing' }
 >;
 
+const GPT_ROUTE_BLOCKED_DIRECT_CONTROL_KINDS = new Set<GptDirectControlKind>([
+  'queue_inspection_action',
+  'runtime_inspection_action',
+  'self_heal_status_action',
+  'workers_status_action',
+]);
+
+function isBlockedDirectControlKind(kind: GptDirectControlKind): boolean {
+  return GPT_ROUTE_BLOCKED_DIRECT_CONTROL_KINDS.has(kind);
+}
+
+function buildDirectEndpointRequiredClassification(input: {
+  action: string;
+  reason: string;
+}): GptPlaneClassification {
+  return {
+    plane: 'reject',
+    kind: 'runtime_inspection',
+    action: input.action,
+    reason: input.reason,
+    errorCode: 'CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT',
+    message:
+      'Runtime diagnostics, worker state, tracing, and queue inspection must use direct control-plane endpoints or POST /mcp. Do not send runtime control requests through POST /gpt/{gptId}.',
+    canonical: {
+      status: '/status',
+      workers: '/workers/status',
+      workerHealth: '/worker-helper/health',
+      selfHeal: '/status/safety/self-heal',
+      mcp: '/mcp',
+    },
+  };
+}
+
 export function classifyGptRequestPlane(input: {
   body: unknown;
   promptText: string | null;
@@ -61,6 +94,13 @@ export function classifyGptRequestPlane(input: {
   }
 
   if (isDirectControlPlaneKind(classification.kind)) {
+    if (isBlockedDirectControlKind(classification.kind)) {
+      return buildDirectEndpointRequiredClassification({
+        action: classification.action,
+        reason: 'control_plane_requires_direct_endpoint',
+      });
+    }
+
     return {
       plane: 'control',
       kind: classification.kind,

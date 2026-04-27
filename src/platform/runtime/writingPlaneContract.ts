@@ -2,7 +2,6 @@ import { classifyRuntimeInspectionPrompt } from '@services/runtimeInspectionRout
 import { shouldTreatPromptAsDagExecution } from '@shared/dag/dagExecutionRouting.js';
 import { normalizeGptRequestBody } from '@shared/gpt/gptIdempotency.js';
 import {
-  GPT_DIRECT_CONTROL_ACTIONS,
   type GptDirectControlAction,
   isReservedGptControlNamespace,
   normalizeGptDirectControlAction,
@@ -123,6 +122,7 @@ const EXPLICIT_WRITING_PLANE_CONTROL_CLASSIFICATIONS: Record<
     },
   },
 };
+const GPT_PUBLIC_DIRECT_CONTROL_ACTIONS = ['diagnostics', 'system_state'] as const;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -171,7 +171,7 @@ function isExplicitWritingPlaneControlAction(
 
 function buildUnsupportedControlActionCanonical() {
   return {
-    supportedActions: GPT_DIRECT_CONTROL_ACTIONS.join(', '),
+    supportedActions: GPT_PUBLIC_DIRECT_CONTROL_ACTIONS.join(', '),
   };
 }
 
@@ -353,7 +353,7 @@ export function classifyWritingPlaneInput(input: {
       action: normalizedAction,
       reason: 'unsupported_reserved_control_action',
       errorCode: 'UNSUPPORTED_GPT_ACTION',
-      message: `Unsupported control action '${normalizedAction}'. Supported control actions: ${GPT_DIRECT_CONTROL_ACTIONS.join(', ')}.`,
+      message: `Unsupported control action '${normalizedAction}'. Supported control actions: ${GPT_PUBLIC_DIRECT_CONTROL_ACTIONS.join(', ')}.`,
       canonical: buildUnsupportedControlActionCanonical(),
     };
   }
