@@ -42,6 +42,7 @@ jest.unstable_mockModule('../src/services/runtimeInspectionRoutingService.js', (
 }));
 
 jest.unstable_mockModule('../src/services/workerControlService.js', () => ({
+  getWorkerControlHealth: jest.fn(),
   getWorkerControlStatus: jest.fn(),
 }));
 

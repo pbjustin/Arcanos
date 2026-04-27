@@ -7,6 +7,7 @@ const mockResolveGptRouting = jest.fn();
 const mockExecuteSystemStateRequest = jest.fn();
 const mockExecuteRuntimeInspection = jest.fn();
 const mockGetWorkerControlStatus = jest.fn();
+const mockGetWorkerControlHealth = jest.fn();
 const mockBuildSafetySelfHealSnapshot = jest.fn();
 const mockGetDiagnosticsSnapshot = jest.fn();
 
@@ -46,6 +47,7 @@ jest.unstable_mockModule('../src/services/runtimeInspectionRoutingService.js', (
 
 jest.unstable_mockModule('../src/services/workerControlService.js', () => ({
   getWorkerControlStatus: mockGetWorkerControlStatus,
+  getWorkerControlHealth: mockGetWorkerControlHealth,
 }));
 
 jest.unstable_mockModule('../src/services/selfHealRuntimeInspectionService.js', () => ({

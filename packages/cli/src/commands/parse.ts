@@ -48,6 +48,12 @@ export function parseCliInvocation(argv: string[]): CliInvocation {
         ...parseGenerateAndWaitArgs("query-and-wait", rest),
         options
       };
+    case "diagnostics":
+      return {
+        kind: "diagnostics",
+        ...parseDiagnosticsArgs(rest),
+        options
+      };
     case "generate-and-wait":
       return {
         kind: "generate-and-wait",
@@ -137,6 +143,7 @@ export function renderUsage(): string {
     "  arcanos generate --gpt <gpt-id> --prompt \"...\" [--mode fast|orchestrated] [--json]",
     "  arcanos query --gpt <gpt-id> --prompt \"...\" [--json]",
     "  arcanos query-and-wait --gpt <gpt-id> --prompt \"...\" [--timeout-ms <ms>] [--poll-interval-ms <ms>] [--json]",
+    "  arcanos diagnostics --gpt <gpt-id> [--root] [--json]",
     "  arcanos generate-and-wait --gpt <gpt-id> --prompt \"...\" [--timeout-ms <ms>] [--poll-interval-ms <ms>] [--json]",
     "  arcanos job-status <job-id> [--json]",
     "  arcanos job-result <job-id> [--json]",
@@ -270,6 +277,50 @@ function requireSingleArgument(command: string, args: string[]): string {
   }
 
   return args[0].trim();
+}
+
+function parseDiagnosticsArgs(args: string[]): {
+  gptId: string;
+  root: boolean;
+} {
+  let gptId: string | undefined;
+  let root = false;
+
+  for (let index = 0; index < args.length; index += 1) {
+    const currentArgument = args[index];
+    if (!currentArgument.startsWith("--")) {
+      throw new Error('`diagnostics` only accepts --gpt and --root.');
+    }
+
+    if (currentArgument === "--root") {
+      root = true;
+      continue;
+    }
+
+    const nextValue = args[index + 1];
+    if (!nextValue || nextValue.startsWith("--")) {
+      throw new Error(`Flag "${currentArgument}" requires a value.`);
+    }
+
+    switch (currentArgument) {
+      case "--gpt":
+        gptId = nextValue.trim();
+        break;
+      default:
+        throw new Error(`Unknown flag "${currentArgument}" for \`diagnostics\`.`);
+    }
+
+    index += 1;
+  }
+
+  if (!gptId) {
+    throw new Error('`diagnostics` requires --gpt <gpt-id>.');
+  }
+
+  return {
+    gptId,
+    root
+  };
 }
 
 function parseQueryArgs(args: string[]): {

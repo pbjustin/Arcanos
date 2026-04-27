@@ -52,6 +52,13 @@ export interface QueryAndWaitCommandInvocation {
   options: CliGlobalOptions;
 }
 
+export interface DiagnosticsCommandInvocation {
+  kind: "diagnostics";
+  gptId: string;
+  root: boolean;
+  options: CliGlobalOptions;
+}
+
 export interface JobStatusCommandInvocation {
   kind: "job-status";
   jobId: string;
@@ -119,6 +126,7 @@ export type CliInvocation =
   | GenerateAndWaitCommandInvocation
   | QueryCommandInvocation
   | QueryAndWaitCommandInvocation
+  | DiagnosticsCommandInvocation
   | JobStatusCommandInvocation
   | JobResultCommandInvocation
   | PlanCommandInvocation

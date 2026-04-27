@@ -116,10 +116,12 @@ export {
   getJobStatus,
   invokeGptRoute,
   queryAndWaitGptRoute,
+  requestGptDiagnostics,
   type FetchGptJobResultOptions,
   type FetchGptJobStatusOptions,
   type GeneratePromptAndWaitOptions,
   type GptRouteRequestBody,
+  type InvokeGptDiagnosticsOptions,
   type InvokeGptJobLookupActionOptions,
   type InvokeGptRouteOptions,
   type QueryAndWaitGptRouteOptions
