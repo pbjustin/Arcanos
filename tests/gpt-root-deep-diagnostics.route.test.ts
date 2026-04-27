@@ -369,7 +369,7 @@ describe('root.deep_diagnostics GPT bridge', () => {
         }),
       }),
     }));
-    expect(workerStatus.data.recentFailedJobs.items).toHaveLength(8);
+    expect(workerStatus.data.recentFailedJobs.items).toHaveLength(3);
     expect(JSON.stringify(response.body)).not.toContain('unit-test-secret-value');
   });
 });

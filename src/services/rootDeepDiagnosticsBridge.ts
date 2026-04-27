@@ -16,10 +16,10 @@ import { arcanosDagRunService } from '@services/arcanosDagRunService.js';
 export const ROOT_DEEP_DIAGNOSTICS_ACTION = 'root.deep_diagnostics';
 export const ROOT_DIAGNOSTICS_FORBIDDEN = 'ROOT_DIAGNOSTICS_FORBIDDEN';
 
-const ROOT_DIAGNOSTICS_MAX_OBJECT_KEYS = 32;
-const ROOT_DIAGNOSTICS_MAX_ARRAY_ITEMS = 8;
-const ROOT_DIAGNOSTICS_MAX_DEPTH = 5;
-const ROOT_DIAGNOSTICS_MAX_STRING_LENGTH = 1024;
+const ROOT_DIAGNOSTICS_MAX_OBJECT_KEYS = 12;
+const ROOT_DIAGNOSTICS_MAX_ARRAY_ITEMS = 3;
+const ROOT_DIAGNOSTICS_MAX_DEPTH = 4;
+const ROOT_DIAGNOSTICS_MAX_STRING_LENGTH = 240;
 const ROOT_DIAGNOSTICS_REDACTED = '[REDACTED]';
 const ROOT_DIAGNOSTICS_SENSITIVE_KEY_PATTERN =
   /(authorization|bearer|token|secret|password|api[_-]?key|credential)/i;
