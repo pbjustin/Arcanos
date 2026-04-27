@@ -100,6 +100,16 @@ export interface ControlPlaneDeepDiagnosticsResponse {
     secretRedactionEnabled: boolean;
     auditPath: string;
   };
+  safetyFlags: {
+    readOnly: true;
+    executesCli: false;
+    callsOpenAI: false;
+    mutatesState: false;
+    createsJobs: false;
+    deploys: false;
+    invokesMcpTools: false;
+    routesThroughWritingPipeline: false;
+  };
   tests: {
     present: boolean;
     commands: string[];
@@ -107,7 +117,27 @@ export interface ControlPlaneDeepDiagnosticsResponse {
   };
 }
 
-type CliProvider = 'railway-cli' | 'arcanos-cli';
+export type ControlPlaneCliProvider = 'railway-cli' | 'arcanos-cli';
+
+export interface ControlPlaneCliWrapperSource {
+  operation: string;
+  readOnly: boolean;
+  approvalRequired: boolean;
+}
+
+export interface ControlPlaneLegacyCliWrapperSource {
+  adapter: string;
+  operation: string;
+  requiresApproval: boolean;
+}
+
+export interface ControlPlaneCliWrapperSummary {
+  implemented: boolean;
+  allowlistEnabled: boolean;
+  restrictedCommandsRequireApproval: boolean;
+  readOnlyOperations: string[];
+  restrictedOperations: string[];
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -126,42 +156,51 @@ function legacyOperationName(adapter: string, operation: string): string {
   return `${prefix}.${operation}`;
 }
 
-function summarizeCliWrapper(provider: CliProvider) {
-  const allowlistEntries = listControlPlaneAllowlist().filter((entry) => entry.provider === provider);
-  const legacyEntries = getControlPlaneCapabilities().operations.filter((entry) => entry.adapter === provider);
-
+export function buildControlPlaneCliWrapperSummary(params: {
+  provider: ControlPlaneCliProvider;
+  allowlistEntries: readonly ControlPlaneCliWrapperSource[];
+  legacyEntries: readonly ControlPlaneLegacyCliWrapperSource[];
+}): ControlPlaneCliWrapperSummary {
   const readOnlyOperations = uniqueSorted([
-    ...allowlistEntries
+    ...params.allowlistEntries
       .filter((entry) => entry.readOnly)
       .map((entry) => entry.operation),
-    ...legacyEntries
+    ...params.legacyEntries
       .filter((entry) => !entry.requiresApproval)
-      .map((entry) => legacyOperationName(provider, entry.operation)),
+      .map((entry) => legacyOperationName(params.provider, entry.operation)),
   ]);
   const restrictedEntries = [
-    ...allowlistEntries
+    ...params.allowlistEntries
       .filter((entry) => !entry.readOnly || entry.approvalRequired)
       .map((entry) => ({
         operation: entry.operation,
         requiresApproval: entry.approvalRequired || !entry.readOnly,
       })),
-    ...legacyEntries
+    ...params.legacyEntries
       .filter((entry) => entry.requiresApproval)
       .map((entry) => ({
-        operation: legacyOperationName(provider, entry.operation),
+        operation: legacyOperationName(params.provider, entry.operation),
         requiresApproval: entry.requiresApproval,
       })),
   ];
   const restrictedOperations = uniqueSorted(restrictedEntries.map((entry) => entry.operation));
 
   return {
-    implemented: allowlistEntries.length > 0 || legacyEntries.length > 0,
-    allowlistEnabled: allowlistEntries.length > 0 || legacyEntries.length > 0,
+    implemented: params.allowlistEntries.length > 0 || params.legacyEntries.length > 0,
+    allowlistEnabled: params.allowlistEntries.length > 0 || params.legacyEntries.length > 0,
     restrictedCommandsRequireApproval: restrictedEntries.length > 0
       && restrictedEntries.every((entry) => entry.requiresApproval),
     readOnlyOperations,
     restrictedOperations,
   };
+}
+
+function summarizeCliWrapper(provider: ControlPlaneCliProvider): ControlPlaneCliWrapperSummary {
+  return buildControlPlaneCliWrapperSummary({
+    provider,
+    allowlistEntries: listControlPlaneAllowlist().filter((entry) => entry.provider === provider),
+    legacyEntries: getControlPlaneCapabilities().operations.filter((entry) => entry.adapter === provider),
+  });
 }
 
 function hasRedactionEnabled(): boolean {
@@ -242,6 +281,16 @@ export function getControlPlaneDeepDiagnostics(): ControlPlaneDeepDiagnosticsRes
       implemented: typeof sanitizeControlPlaneAuditEvent === 'function',
       secretRedactionEnabled: policy?.requiresSecretRedaction === true && hasRedactionEnabled(),
       auditPath: AUDIT_PATH,
+    },
+    safetyFlags: {
+      readOnly: true,
+      executesCli: false,
+      callsOpenAI: false,
+      mutatesState: false,
+      createsJobs: false,
+      deploys: false,
+      invokesMcpTools: false,
+      routesThroughWritingPipeline: false,
     },
     tests: {
       present: KNOWN_TEST_FILES.length > 0,

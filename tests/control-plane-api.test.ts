@@ -91,6 +91,16 @@ function buildDeepDiagnosticsResponse(overrides: Record<string, unknown> = {}) {
       secretRedactionEnabled: true,
       auditPath: 'src/services/controlPlane/audit.ts',
     },
+    safetyFlags: {
+      readOnly: true,
+      executesCli: false,
+      callsOpenAI: false,
+      mutatesState: false,
+      createsJobs: false,
+      deploys: false,
+      invokesMcpTools: false,
+      routesThroughWritingPipeline: false,
+    },
     tests: {
       present: true,
       commands: ['node scripts/run-jest.mjs --runTestsByPath tests/control-plane-deep-diagnostics.test.ts'],
@@ -171,6 +181,16 @@ describe('api-control-plane route', () => {
       auditLogging: expect.objectContaining({
         secretRedactionEnabled: true,
       }),
+      safetyFlags: {
+        readOnly: true,
+        executesCli: false,
+        callsOpenAI: false,
+        mutatesState: false,
+        createsJobs: false,
+        deploys: false,
+        invokesMcpTools: false,
+        routesThroughWritingPipeline: false,
+      },
     }));
     expect(JSON.stringify(response.body)).not.toContain('sk-');
     expect(JSON.stringify(response.body)).not.toContain('Bearer ');
@@ -181,6 +201,18 @@ describe('api-control-plane route', () => {
     expect(mockGetControlPlaneDeepDiagnostics).toHaveBeenCalledTimes(1);
     expect(mockExecuteControlPlaneOperation).not.toHaveBeenCalled();
   });
+
+  it.each(['post', 'put', 'patch', 'delete'] as const)(
+    'does not route %s requests to deep diagnostics',
+    async (method) => {
+      const response = await request(buildApp())[method]('/api/control-plane/deep-diagnostics')
+        .send({ action: 'mutate' });
+
+      expect(response.status).toBe(404);
+      expect(mockGetControlPlaneDeepDiagnostics).not.toHaveBeenCalled();
+      expect(mockExecuteControlPlaneOperation).not.toHaveBeenCalled();
+    }
+  );
 
   it.each([
     ['success', buildControlPlaneResponse(), 200],

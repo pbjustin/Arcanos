@@ -1,6 +1,9 @@
 import { describe, expect, it } from '@jest/globals';
 
-import { getControlPlaneDeepDiagnostics } from '@services/controlPlane/deepDiagnostics.js';
+import {
+  buildControlPlaneCliWrapperSummary,
+  getControlPlaneDeepDiagnostics,
+} from '@services/controlPlane/deepDiagnostics.js';
 
 describe('getControlPlaneDeepDiagnostics', () => {
   it('summarizes ARCANOS Core control-plane verification without claiming live Trinity confirmation', () => {
@@ -38,6 +41,16 @@ describe('getControlPlaneDeepDiagnostics', () => {
       'routingStages',
       'pipeline',
     ]));
+    expect(diagnostics.safetyFlags).toEqual({
+      readOnly: true,
+      executesCli: false,
+      callsOpenAI: false,
+      mutatesState: false,
+      createsJobs: false,
+      deploys: false,
+      invokesMcpTools: false,
+      routesThroughWritingPipeline: false,
+    });
   });
 
   it('summarizes CLI allowlists, MCP policy, approval gates, audit, redaction, and tests', () => {
@@ -106,5 +119,21 @@ describe('getControlPlaneDeepDiagnostics', () => {
     const serialized = JSON.stringify(diagnostics);
     expect(serialized).not.toContain('sk-');
     expect(serialized).not.toContain('Bearer ');
+  });
+
+  it('treats an empty CLI allowlist as unavailable rather than approval-gated or unsafe', () => {
+    const summary = buildControlPlaneCliWrapperSummary({
+      provider: 'railway-cli',
+      allowlistEntries: [],
+      legacyEntries: [],
+    });
+
+    expect(summary).toEqual({
+      implemented: false,
+      allowlistEnabled: false,
+      restrictedCommandsRequireApproval: false,
+      readOnlyOperations: [],
+      restrictedOperations: [],
+    });
   });
 });
