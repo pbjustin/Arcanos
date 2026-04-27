@@ -16,6 +16,12 @@ const DEFAULT_SLOW_QUERY_LOG_MIN_MS = 250;
 const SLOW_QUERY_LOG_MIN_MS = Math.max(50, getEnvNumber('DB_QUERY_LOG_MIN_MS', DEFAULT_SLOW_QUERY_LOG_MIN_MS));
 const SHOULD_LOG_EVERY_QUERY = getConfiguredLogLevel() === LogLevel.DEBUG;
 
+export interface DbQueryTraceContext {
+  queryName?: string;
+  source?: string;
+  workerId?: string;
+}
+
 /**
  * Creates a cache key for database queries
  */
@@ -55,12 +61,45 @@ function classifySqlOperation(text: string): string {
   return 'other';
 }
 
+function normalizeTraceValue(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  const normalized = value.trim();
+  return normalized ? normalized.slice(0, 120) : undefined;
+}
+
+function normalizeQueryTraceContext(
+  traceContext: DbQueryTraceContext | undefined
+): Record<string, string> {
+  if (!traceContext) {
+    return {};
+  }
+
+  const queryName = normalizeTraceValue(traceContext.queryName);
+  const source = normalizeTraceValue(traceContext.source);
+  const workerId = normalizeTraceValue(traceContext.workerId);
+  return {
+    ...(queryName ? { queryName } : {}),
+    ...(source ? { source } : {}),
+    ...(workerId ? { workerId } : {})
+  };
+}
+
 /**
  * Enhanced query helper with caching and optimization
  */
-export async function query(text: string, params: unknown[] = [], attempt = 1, useCache = false): Promise<QueryResult> {
+export async function query(
+  text: string,
+  params: unknown[] = [],
+  attempt = 1,
+  useCache = false,
+  traceContext?: DbQueryTraceContext
+): Promise<QueryResult> {
   const operation = classifySqlOperation(text);
   const queryHash = createQueryHash(text);
+  const normalizedTraceContext = normalizeQueryTraceContext(traceContext);
   if (!isDatabaseConnected()) {
     throw new Error('Database not configured or not connected');
   }
@@ -77,6 +116,7 @@ export async function query(text: string, params: unknown[] = [], attempt = 1, u
     if (cachedResult) {
       if (SHOULD_LOG_EVERY_QUERY) {
         dbLogger.debug('db.query.cache_hit', {
+          ...normalizedTraceContext,
           operation,
           queryHash,
         });
@@ -126,6 +166,7 @@ export async function query(text: string, params: unknown[] = [], attempt = 1, u
       totalMs >= SLOW_QUERY_LOG_MIN_MS
     ) {
       dbLogger.warn('db.query.slow', {
+        ...normalizedTraceContext,
         operation,
         queryHash,
         durationMs: executionMs,
@@ -136,6 +177,7 @@ export async function query(text: string, params: unknown[] = [], attempt = 1, u
       });
     } else if (SHOULD_LOG_EVERY_QUERY) {
       dbLogger.debug('db.query.executed', {
+        ...normalizedTraceContext,
         operation,
         queryHash,
         durationMs: executionMs,
@@ -162,6 +204,7 @@ export async function query(text: string, params: unknown[] = [], attempt = 1, u
     return result;
   } catch (error) {
     dbLogger.error('db.query.error', {
+      ...normalizedTraceContext,
       operation,
       queryHash,
       attempt,
@@ -177,13 +220,14 @@ export async function query(text: string, params: unknown[] = [], attempt = 1, u
 
     if (attempt < 3) {
       dbLogger.warn('db.query.retry', {
+        ...normalizedTraceContext,
         operation,
         queryHash,
         attempt,
       }, {
         nextAttempt: attempt + 1,
       });
-      return query(text, params, attempt + 1, useCache);
+      return query(text, params, attempt + 1, useCache, traceContext);
     }
 
     throw error;

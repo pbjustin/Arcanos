@@ -5,6 +5,7 @@ import { asyncHandler } from '@shared/http/index.js';
 import { confirmGate } from '@transport/http/middleware/confirmGate.js';
 import {
   executeControlPlaneOperation,
+  getControlPlaneDeepDiagnostics,
   listControlPlaneAllowlist,
 } from '@services/controlPlane/index.js';
 
@@ -43,6 +44,14 @@ router.get(
       ok: true,
       operations: listControlPlaneAllowlist(),
     });
+  }
+);
+
+router.get(
+  '/deep-diagnostics',
+  (_req: Request, res: Response) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(getControlPlaneDeepDiagnostics());
   }
 );
 

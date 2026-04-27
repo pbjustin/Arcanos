@@ -86,6 +86,62 @@ describe('runtime diagnostics routes', () => {
         'get_status',
         'get_result'
       ]),
+      controlActions: expect.arrayContaining([
+        'diagnostics',
+        'runtime.inspect',
+        'workers.status',
+        'queue.inspect',
+        'self_heal.status'
+      ]),
+      canonicalEndpoints: expect.objectContaining({
+        status: '/status',
+        workers: '/workers/status',
+        workerHealth: '/worker-helper/health',
+        selfHeal: '/status/safety/self-heal',
+        trinityStatus: '/trinity/status',
+        mcp: '/mcp',
+        dagCapabilities: '/api/arcanos/capabilities',
+        dagRuns: '/api/arcanos/dag/runs',
+        dagRunStatus: '/api/arcanos/dag/runs/{runId}',
+        dagTrace: '/api/arcanos/dag/runs/{runId}/trace',
+        dispatchDag: '/dispatch'
+      }),
+      policy: expect.objectContaining({
+        writingPlane: '/gpt/:gptId',
+        controlPlane: 'direct-endpoints',
+        trinityWritingAction: 'query',
+        trinityDirectActionBypass: 'query_and_wait',
+        systemOperationsThroughWritingPipeline: false
+      }),
+      subsystems: expect.objectContaining({
+        trinity: expect.objectContaining({
+          statusEndpoint: '/trinity/status',
+          writingEndpoint: '/gpt/:gptId',
+          writingAction: 'query',
+          sourceEndpoint: 'gpt.arcanos-core.query',
+          pipeline: 'runTrinityWritingPipeline',
+          directActionBypass: 'query_and_wait'
+        }),
+        dag: expect.objectContaining({
+          routePolicy: 'direct_endpoint_required',
+          controlGuard: 'DAG_CONTROL_REQUIRES_DIRECT_ENDPOINT',
+          dispatchEndpoint: '/dispatch',
+          dispatchTarget: 'dag',
+          capabilitiesEndpoint: '/api/arcanos/capabilities',
+          runsEndpoint: '/api/arcanos/dag/runs',
+          runStatusEndpoint: '/api/arcanos/dag/runs/{runId}',
+          traceEndpoint: '/api/arcanos/dag/runs/{runId}/trace',
+          mcpEndpoint: '/mcp'
+        }),
+        workers: expect.objectContaining({
+          statusEndpoint: '/workers/status',
+          helperHealthEndpoint: '/worker-helper/health'
+        }),
+        mcp: expect.objectContaining({
+          endpoint: '/mcp',
+          auth: 'bearer'
+        })
+      }),
       env: expect.objectContaining({
         hasOpenAIKey: false,
         hasArcanosModel: expect.any(Boolean),

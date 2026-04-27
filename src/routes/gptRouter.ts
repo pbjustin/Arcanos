@@ -91,6 +91,7 @@ import {
   parseGptJobResultRequest
 } from '@shared/gpt/gptJobResult.js';
 import {
+  GPT_DIRECT_CONTROL_ACTIONS,
   type GptDirectControlAction,
   normalizeGptDirectControlAction,
 } from '@shared/gpt/gptControlActions.js';
@@ -135,6 +136,26 @@ const GPT_DISPATCHER_ACTIONS = [
   GPT_GET_RESULT_ACTION,
   ...GPT_DAG_BRIDGE_ACTIONS
 ] as const;
+const GPT_DISPATCHER_CANONICAL_ENDPOINTS = {
+  status: '/status',
+  workers: '/workers/status',
+  workerHealth: '/worker-helper/health',
+  selfHeal: '/status/safety/self-heal',
+  trinityStatus: '/trinity/status',
+  mcp: '/mcp',
+  dagCapabilities: '/api/arcanos/capabilities',
+  dagRuns: '/api/arcanos/dag/runs',
+  dagRunStatus: '/api/arcanos/dag/runs/{runId}',
+  dagTrace: '/api/arcanos/dag/runs/{runId}/trace',
+  dispatchDag: '/dispatch'
+} as const;
+const GPT_DISPATCHER_POLICY = {
+  writingPlane: GPT_DISPATCHER_ROUTE,
+  controlPlane: 'direct-endpoints',
+  trinityWritingAction: GPT_QUERY_ACTION,
+  trinityDirectActionBypass: GPT_QUERY_AND_WAIT_ACTION,
+  systemOperationsThroughWritingPipeline: false
+} as const;
 const DEFAULT_GPT_ASYNC_HEAVY_PROMPT_CHARS = 1_200;
 const DEFAULT_GPT_ASYNC_HEAVY_MESSAGE_COUNT = 8;
 const DEFAULT_GPT_ASYNC_HEAVY_MAX_WORDS = 700;
@@ -318,6 +339,44 @@ function buildGptDispatcherErrorPayload(params: {
   };
 }
 
+function buildDispatcherSubsystemBindings() {
+  return {
+    trinity: {
+      statusEndpoint: GPT_DISPATCHER_CANONICAL_ENDPOINTS.trinityStatus,
+      writingEndpoint: GPT_DISPATCHER_ROUTE,
+      writingAction: GPT_QUERY_ACTION,
+      sourceEndpoint: 'gpt.arcanos-core.query',
+      pipeline: 'runTrinityWritingPipeline',
+      directActionBypass: GPT_QUERY_AND_WAIT_ACTION
+    },
+    dag: {
+      routePolicy: 'direct_endpoint_required',
+      controlGuard: 'DAG_CONTROL_REQUIRES_DIRECT_ENDPOINT',
+      dispatchEndpoint: GPT_DISPATCHER_CANONICAL_ENDPOINTS.dispatchDag,
+      dispatchTarget: 'dag',
+      capabilitiesEndpoint: GPT_DISPATCHER_CANONICAL_ENDPOINTS.dagCapabilities,
+      runsEndpoint: GPT_DISPATCHER_CANONICAL_ENDPOINTS.dagRuns,
+      runStatusEndpoint: GPT_DISPATCHER_CANONICAL_ENDPOINTS.dagRunStatus,
+      traceEndpoint: GPT_DISPATCHER_CANONICAL_ENDPOINTS.dagTrace,
+      mcpEndpoint: GPT_DISPATCHER_CANONICAL_ENDPOINTS.mcp
+    },
+    workers: {
+      statusEndpoint: GPT_DISPATCHER_CANONICAL_ENDPOINTS.workers,
+      helperHealthEndpoint: GPT_DISPATCHER_CANONICAL_ENDPOINTS.workerHealth,
+      controlActions: ['workers.status', 'queue.inspect']
+    },
+    controlPlane: {
+      statusEndpoint: GPT_DISPATCHER_CANONICAL_ENDPOINTS.status,
+      selfHealEndpoint: GPT_DISPATCHER_CANONICAL_ENDPOINTS.selfHeal,
+      controlActions: ['runtime.inspect', 'self_heal.status', 'system_state', 'diagnostics']
+    },
+    mcp: {
+      endpoint: GPT_DISPATCHER_CANONICAL_ENDPOINTS.mcp,
+      auth: 'bearer'
+    }
+  };
+}
+
 function buildGptDispatcherDiagnosticsPayload(params: {
   requestId: string | undefined;
   traceId: string;
@@ -328,6 +387,10 @@ function buildGptDispatcherDiagnosticsPayload(params: {
     gptId: params.gptId,
     route: GPT_DISPATCHER_ROUTE,
     actions: [...GPT_DISPATCHER_ACTIONS],
+    controlActions: [...GPT_DIRECT_CONTROL_ACTIONS],
+    canonicalEndpoints: { ...GPT_DISPATCHER_CANONICAL_ENDPOINTS },
+    policy: GPT_DISPATCHER_POLICY,
+    subsystems: buildDispatcherSubsystemBindings(),
     env: buildDispatcherEnvStatus(),
     traceId: params.traceId,
     _route: buildDispatcherRouteMeta({

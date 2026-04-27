@@ -72,7 +72,17 @@ describe('db query helper', () => {
     const dateNowSpy = jest.spyOn(Date, 'now').mockImplementation(() => timestamps.shift() ?? 1_145);
 
     try {
-      await query('SELECT * FROM worker_runtime_snapshots WHERE worker_id = $1', ['worker-1']);
+      await query(
+        'SELECT * FROM worker_runtime_snapshots WHERE worker_id = $1',
+        ['worker-1'],
+        1,
+        false,
+        {
+          queryName: 'worker_runtime_snapshot_get',
+          workerId: 'worker-1',
+          source: 'worker-status'
+        }
+      );
     } finally {
       dateNowSpy.mockRestore();
     }
@@ -86,11 +96,59 @@ describe('db query helper', () => {
         executionMs: 85,
         poolWaitMs: 60,
         totalMs: 145,
-        rowCount: 1
+        rowCount: 1,
+        queryName: 'worker_runtime_snapshot_get',
+        workerId: 'worker-1',
+        source: 'worker-status'
       })
     );
     expect(dbLoggerWarnMock.mock.calls[0]?.[1]).not.toHaveProperty('text');
     expect(dbLoggerWarnMock.mock.calls[0]?.[1]).not.toHaveProperty('sql');
+    expect(dbLoggerWarnMock.mock.calls[0]?.[1]).not.toHaveProperty('params');
+    expect(releaseMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores non-string trace context values without throwing', async () => {
+    const releaseMock = jest.fn();
+    const clientQueryMock = jest.fn().mockResolvedValue({
+      rows: [{ ok: true }],
+      rowCount: 1
+    });
+    getPoolMock.mockReturnValue({
+      connect: jest.fn().mockResolvedValue({
+        query: clientQueryMock,
+        release: releaseMock
+      })
+    });
+    const timestamps = [2_000, 2_000, 2_000, 2_060];
+    const dateNowSpy = jest.spyOn(Date, 'now').mockImplementation(() => timestamps.shift() ?? 2_060);
+    const unsafeTraceContext = {
+      queryName: 42,
+      source: { nested: true },
+      workerId: null
+    } as unknown as Parameters<typeof query>[4];
+
+    try {
+      await expect(query(
+        'SELECT 1',
+        [],
+        1,
+        false,
+        unsafeTraceContext
+      )).resolves.toMatchObject({ rowCount: 1 });
+    } finally {
+      dateNowSpy.mockRestore();
+    }
+
+    const slowLogContext = dbLoggerWarnMock.mock.calls[0]?.[1] as Record<string, unknown>;
+    expect(slowLogContext).not.toHaveProperty('queryName');
+    expect(slowLogContext).not.toHaveProperty('source');
+    expect(slowLogContext).not.toHaveProperty('workerId');
+    expect(slowLogContext).toEqual(expect.objectContaining({
+      operation: 'select',
+      durationMs: 60,
+      rowCount: 1
+    }));
     expect(releaseMock).toHaveBeenCalledTimes(1);
   });
 });
