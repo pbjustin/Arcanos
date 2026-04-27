@@ -42,6 +42,16 @@ const TEST_COMMANDS = [
   'node scripts/run-jest.mjs --runTestsByPath tests/control-plane-deep-diagnostics.test.ts tests/control-plane-api.test.ts --coverage=false --runInBand',
 ] as const;
 
+const IS_REDACTION_ENABLED = ((): boolean => {
+  const redacted = redactSensitive({
+    authorization: `Bearer ${'a'.repeat(24)}`,
+    nested: {
+      token: `sk-${'b'.repeat(24)}`,
+    },
+  });
+  return JSON.stringify(redacted).includes('[REDACTED]');
+})();
+
 type DeepDiagnosticsRouteStatus = 'TRINITY_CONFIRMED' | 'DIRECT_FAST_PATH' | 'UNKNOWN_ROUTE';
 
 export interface ControlPlaneDeepDiagnosticsResponse {
@@ -147,20 +157,15 @@ function summarizeCliWrapper(provider: CliProvider) {
   return {
     implemented: allowlistEntries.length > 0 || legacyEntries.length > 0,
     allowlistEnabled: allowlistEntries.length > 0 || legacyEntries.length > 0,
-    restrictedCommandsRequireApproval: restrictedEntries.every((entry) => entry.requiresApproval),
+    restrictedCommandsRequireApproval: restrictedEntries.length > 0
+      && restrictedEntries.every((entry) => entry.requiresApproval),
     readOnlyOperations,
     restrictedOperations,
   };
 }
 
 function hasRedactionEnabled(): boolean {
-  const redacted = redactSensitive({
-    authorization: `Bearer ${'a'.repeat(24)}`,
-    nested: {
-      token: `sk-${'b'.repeat(24)}`,
-    },
-  });
-  return JSON.stringify(redacted).includes('[REDACTED]');
+  return IS_REDACTION_ENABLED;
 }
 
 export function redactControlPlaneDeepDiagnosticsResponse(payload: unknown): unknown {

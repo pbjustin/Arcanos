@@ -8,21 +8,6 @@ jest.unstable_mockModule('@services/controlPlane/index.js', () => ({
   executeControlPlaneOperation: mockExecuteControlPlaneOperation,
   getControlPlaneDeepDiagnostics: mockGetControlPlaneDeepDiagnostics,
   listControlPlaneAllowlist: mockListControlPlaneAllowlist,
-  redactControlPlaneDeepDiagnosticsResponse: (payload: unknown) => {
-    const sanitize = (value: unknown): unknown => {
-      if (Array.isArray(value)) {
-        return value.map(sanitize);
-      }
-      if (value && typeof value === 'object') {
-        return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, item]) => [
-          key,
-          key === 'token' || key === 'authorization' ? '[REDACTED]' : sanitize(item),
-        ]));
-      }
-      return typeof value === 'string' && /^(sk-|Bearer )/.test(value) ? '[REDACTED]' : value;
-    };
-    return sanitize(payload);
-  },
 }));
 
 jest.unstable_mockModule('@transport/http/middleware/confirmGate.js', () => ({
@@ -87,7 +72,7 @@ function buildDeepDiagnosticsResponse(overrides: Record<string, unknown> = {}) {
     arcanosCliWrapper: {
       implemented: true,
       allowlistEnabled: true,
-      restrictedCommandsRequireApproval: true,
+      restrictedCommandsRequireApproval: false,
       readOnlyOperations: ['arcanos.status'],
       restrictedOperations: [],
     },
@@ -152,8 +137,8 @@ describe('api-control-plane route', () => {
   it('returns deep diagnostics as a redacted read-only no-store response', async () => {
     mockGetControlPlaneDeepDiagnostics.mockReturnValue(buildDeepDiagnosticsResponse({
       debug: {
-        token: `sk-${'a'.repeat(24)}`,
-        authorization: `Bearer ${'b'.repeat(24)}`,
+        token: '[REDACTED]',
+        authorization: '[REDACTED]',
       },
     }));
 

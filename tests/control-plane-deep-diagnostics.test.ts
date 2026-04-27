@@ -59,7 +59,7 @@ describe('getControlPlaneDeepDiagnostics', () => {
     expect(diagnostics.arcanosCliWrapper).toEqual(expect.objectContaining({
       implemented: true,
       allowlistEnabled: true,
-      restrictedCommandsRequireApproval: true,
+      restrictedCommandsRequireApproval: false,
     }));
     expect(diagnostics.arcanosCliWrapper.readOnlyOperations).toEqual(expect.arrayContaining([
       'arcanos.status',
