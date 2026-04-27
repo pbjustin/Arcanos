@@ -104,10 +104,18 @@ describe('validate-railway-compatibility', () => {
       expect.stringContaining('CMD ["node", "scripts/start-railway-service.mjs"]'),
       expect.stringContaining('COPY prisma/ ./prisma/'),
       expect.stringContaining('npx --yes prisma@5.22.0 generate --schema ./prisma/schema.prisma'),
+      expect.stringContaining('ENV RAILWAY_CLI_BIN=/usr/local/bin/railway-native'),
+      expect.stringContaining('npm install --global @railway/cli@4.30.2 --no-audit --no-fund'),
+      expect.stringContaining('railway-v4.30.2-x86_64-unknown-linux-musl.tar.gz'),
+      expect.stringContaining('/usr/local/bin/railway-native --version'),
     ]);
 
     expect(
       validateDockerfile([
+        'ENV RAILWAY_CLI_BIN=/usr/local/bin/railway-native',
+        'RUN npm install --global @railway/cli@4.30.2 --no-audit --no-fund',
+        'RUN wget -qO /tmp/railway-cli.tar.gz https://github.com/railwayapp/cli/releases/download/v4.30.2/railway-v4.30.2-x86_64-unknown-linux-musl.tar.gz && \\',
+        '    /usr/local/bin/railway-native --version',
         'COPY prisma/ ./prisma/',
         'RUN npm install --include=dev --no-audit --no-fund && \\',
         '    npx --yes prisma@5.22.0 generate --schema ./prisma/schema.prisma && \\',
