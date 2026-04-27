@@ -37,6 +37,7 @@ jest.unstable_mockModule('../src/services/arcanosDagRunService.js', () => ({
 
 const { default: requestContext } = await import('../src/middleware/requestContext.js');
 const { default: gptRouter } = await import('../src/routes/gptRouter.js');
+const { UnsupportedDagTemplateError } = await import('../src/dag/templates.js');
 
 function buildApp() {
   const app = express();
@@ -337,6 +338,26 @@ describe('GPT DAG bridge route', () => {
     expect(unauthorized.status).toBe(403);
     expect(unauthorized.body.error.code).toBe('GPT_DAG_BRIDGE_GPT_NOT_ALLOWED');
     expect(mockCreateRun).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('maps typed unsupported DAG template errors to graph validation responses', async () => {
+    mockCreateRun.mockRejectedValueOnce(new UnsupportedDagTemplateError('unexpected-template'));
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        action: 'dag.dispatch',
+        prompt: 'Validation run for typed DAG template errors.',
+        payload: { graphId: 'default', input: { validation: true } },
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe('DAG_GRAPH_UNSUPPORTED');
+    expect(response.body._route).toEqual(expect.objectContaining({
+      route: 'dag_dispatch_invalid_graph',
+      action: 'dag.dispatch',
+    }));
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 

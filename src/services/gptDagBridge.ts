@@ -3,6 +3,7 @@ import type express from 'express';
 
 import {
   TRINITY_CORE_DAG_TEMPLATE_NAME,
+  UnsupportedDagTemplateError,
   resolvePublicDagTemplateName,
 } from '@dag/templates.js';
 import { arcanosDagRunService } from '@services/arcanosDagRunService.js';
@@ -255,9 +256,8 @@ function getBridgeAsync(payload: Record<string, unknown>): boolean {
   return parseBooleanLike(payload.async) ?? parseBooleanLike(options.async) ?? true;
 }
 
-function getBridgePriority(payload: Record<string, unknown>): 'normal' {
-  const rawPriority = readString(payload.priority) ?? readString(getOptionsRecord(payload).priority);
-  return rawPriority === DEFAULT_DAG_PRIORITY ? DEFAULT_DAG_PRIORITY : DEFAULT_DAG_PRIORITY;
+function getBridgePriority(): 'normal' {
+  return DEFAULT_DAG_PRIORITY;
 }
 
 function getIdempotencyKey(payload: Record<string, unknown>): string | null {
@@ -455,7 +455,7 @@ export async function dispatchDagRun(ctx: GptDagBridgeContext): Promise<GptDagBr
 
   const idempotencyKey = getIdempotencyKey(payload);
   const bridgeAsync = getBridgeAsync(payload);
-  const bridgePriority = getBridgePriority(payload);
+  const bridgePriority = getBridgePriority();
   const dispatchPayload = {
     target: 'dag',
     source: `gpt.${ctx.gptId}`,
@@ -661,16 +661,25 @@ export async function handleGptDagBridge(ctx: GptDagBridgeContext): Promise<GptD
         break;
     }
   } catch (error) {
-    const message = resolveErrorMessage(error);
-    const unsupportedTemplate = message.includes('Unsupported DAG template');
-    response = buildErrorResponse(
-      ctx,
-      unsupportedTemplate ? 400 : 503,
-      unsupportedTemplate ? 'DAG_GRAPH_UNSUPPORTED' : 'DAG_BRIDGE_UNAVAILABLE',
-      unsupportedTemplate ? message : 'DAG bridge action failed.',
-      unsupportedTemplate ? 'dag_dispatch_invalid_graph' : 'dag_bridge_unavailable',
-      unsupportedTemplate ? undefined : { message }
-    );
+    if (error instanceof UnsupportedDagTemplateError) {
+      response = buildErrorResponse(
+        ctx,
+        400,
+        'DAG_GRAPH_UNSUPPORTED',
+        error.message,
+        'dag_dispatch_invalid_graph'
+      );
+    } else {
+      const message = resolveErrorMessage(error);
+      response = buildErrorResponse(
+        ctx,
+        503,
+        'DAG_BRIDGE_UNAVAILABLE',
+        'DAG bridge action failed.',
+        'dag_bridge_unavailable',
+        { message }
+      );
+    }
   }
 
   logBridgeAudit({

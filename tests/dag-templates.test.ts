@@ -3,7 +3,8 @@ import { describe, expect, it } from '@jest/globals';
 import {
   buildDagTemplate,
   resolvePublicDagTemplateName,
-  TRINITY_CORE_DAG_TEMPLATE_NAME
+  TRINITY_CORE_DAG_TEMPLATE_NAME,
+  UnsupportedDagTemplateError
 } from '../src/dag/templates.js';
 
 describe('DAG template normalization', () => {
@@ -37,6 +38,6 @@ describe('DAG template normalization', () => {
           goal: 'Reject unsupported templates.'
         }
       })
-    ).toThrow('Unsupported DAG template');
+    ).toThrow(UnsupportedDagTemplateError);
   });
 });

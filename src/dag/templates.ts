@@ -22,6 +22,16 @@ export interface DagTemplateDefinition {
 
 export const TRINITY_CORE_DAG_TEMPLATE_NAME = 'trinity-core';
 
+export class UnsupportedDagTemplateError extends Error {
+  readonly templateName: string;
+
+  constructor(templateName: string) {
+    super(`Unsupported DAG template "${templateName}".`);
+    this.name = 'UnsupportedDagTemplateError';
+    this.templateName = templateName;
+  }
+}
+
 const LEGACY_TRINITY_DAG_TEMPLATE_ALIASES = new Set([
   'default',
   'verification-default',
@@ -112,7 +122,7 @@ export function buildDagTemplate(request: CreateDagRunRequest): DagTemplateDefin
 
   //audit Assumption: the first public DAG contract only supports the verification pipeline; failure risk: callers believe arbitrary templates are available and receive a malformed graph; expected invariant: unknown templates are rejected explicitly; handling strategy: guard template selection before graph construction.
   if (normalizedTemplate !== TRINITY_CORE_DAG_TEMPLATE_NAME) {
-    throw new Error(`Unsupported DAG template "${request.template}".`);
+    throw new UnsupportedDagTemplateError(request.template);
   }
 
   const plannerPrompt =
