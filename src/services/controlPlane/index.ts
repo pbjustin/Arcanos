@@ -13,6 +13,11 @@ export {
   executeControlPlaneOperation,
 } from './executor.js';
 export {
+  getControlPlaneDeepDiagnostics,
+  redactControlPlaneDeepDiagnosticsResponse,
+  type ControlPlaneDeepDiagnosticsResponse,
+} from './deepDiagnostics.js';
+export {
   ARCANOS_CORE_CONTROL_PLANE_POLICY,
   ARCANOS_CORE_GPT_ID,
   DEFAULT_CONTROL_PLANE_GPT_POLICIES,
