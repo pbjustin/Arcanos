@@ -1,11 +1,28 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const mockExecuteControlPlaneOperation = jest.fn();
+const mockGetControlPlaneDeepDiagnostics = jest.fn();
 const mockListControlPlaneAllowlist = jest.fn();
 
 jest.unstable_mockModule('@services/controlPlane/index.js', () => ({
   executeControlPlaneOperation: mockExecuteControlPlaneOperation,
+  getControlPlaneDeepDiagnostics: mockGetControlPlaneDeepDiagnostics,
   listControlPlaneAllowlist: mockListControlPlaneAllowlist,
+  redactControlPlaneDeepDiagnosticsResponse: (payload: unknown) => {
+    const sanitize = (value: unknown): unknown => {
+      if (Array.isArray(value)) {
+        return value.map(sanitize);
+      }
+      if (value && typeof value === 'object') {
+        return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([key, item]) => [
+          key,
+          key === 'token' || key === 'authorization' ? '[REDACTED]' : sanitize(item),
+        ]));
+      }
+      return typeof value === 'string' && /^(sk-|Bearer )/.test(value) ? '[REDACTED]' : value;
+    };
+    return sanitize(payload);
+  },
 }));
 
 jest.unstable_mockModule('@transport/http/middleware/confirmGate.js', () => ({
@@ -42,6 +59,62 @@ function buildControlPlaneResponse(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function buildDeepDiagnosticsResponse(overrides: Record<string, unknown> = {}) {
+  return {
+    ok: true,
+    gptWhitelist: {
+      enabled: true,
+      containsArcanosCore: true,
+      policyPath: 'src/services/controlPlane/gptPolicy.ts',
+      gptId: 'arcanos-core',
+      allowedWorkflows: ['control_plane.route.verify'],
+      deniedCapabilities: ['secrets.read.raw'],
+    },
+    trinityRouting: {
+      implemented: true,
+      requestable: true,
+      lastRouteStatus: 'UNKNOWN_ROUTE',
+      metadataFields: ['_route', 'routingStages'],
+      verificationPath: 'src/services/controlPlane/routeVerification.ts',
+    },
+    railwayCliWrapper: {
+      implemented: true,
+      allowlistEnabled: true,
+      restrictedCommandsRequireApproval: true,
+      readOnlyOperations: ['railway.status'],
+      restrictedOperations: ['railway.deploy'],
+    },
+    arcanosCliWrapper: {
+      implemented: true,
+      allowlistEnabled: true,
+      restrictedCommandsRequireApproval: true,
+      readOnlyOperations: ['arcanos.status'],
+      restrictedOperations: [],
+    },
+    mcpPolicy: {
+      implemented: true,
+      documentedToolsOnly: true,
+      schemaValidationEnabled: true,
+      registeredTools: ['control_plane.invoke', 'agents.list'],
+    },
+    approvalGates: {
+      implemented: true,
+      protectedActions: ['deploy', 'secret_change'],
+    },
+    auditLogging: {
+      implemented: true,
+      secretRedactionEnabled: true,
+      auditPath: 'src/services/controlPlane/audit.ts',
+    },
+    tests: {
+      present: true,
+      commands: ['node scripts/run-jest.mjs --runTestsByPath tests/control-plane-deep-diagnostics.test.ts'],
+      knownTestFiles: ['tests/control-plane-deep-diagnostics.test.ts'],
+    },
+    ...overrides,
+  };
+}
+
 describe('api-control-plane route', () => {
   beforeEach(() => {
     jest.clearAllMocks();
@@ -54,6 +127,7 @@ describe('api-control-plane route', () => {
         approvalRequired: false,
       },
     ]);
+    mockGetControlPlaneDeepDiagnostics.mockReturnValue(buildDeepDiagnosticsResponse());
   });
 
   it('returns the allowlist without exposing execution output', async () => {
@@ -72,6 +146,54 @@ describe('api-control-plane route', () => {
         }),
       ],
     });
+    expect(mockExecuteControlPlaneOperation).not.toHaveBeenCalled();
+  });
+
+  it('returns deep diagnostics as a redacted read-only no-store response', async () => {
+    mockGetControlPlaneDeepDiagnostics.mockReturnValue(buildDeepDiagnosticsResponse({
+      debug: {
+        token: `sk-${'a'.repeat(24)}`,
+        authorization: `Bearer ${'b'.repeat(24)}`,
+      },
+    }));
+
+    const response = await request(buildApp()).get('/api/control-plane/deep-diagnostics');
+
+    expect(response.status).toBe(200);
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(response.body).toEqual(expect.objectContaining({
+      ok: true,
+      gptWhitelist: expect.objectContaining({
+        containsArcanosCore: true,
+        gptId: 'arcanos-core',
+      }),
+      trinityRouting: expect.objectContaining({
+        lastRouteStatus: 'UNKNOWN_ROUTE',
+      }),
+      railwayCliWrapper: expect.objectContaining({
+        readOnlyOperations: expect.arrayContaining(['railway.status']),
+        restrictedOperations: expect.arrayContaining(['railway.deploy']),
+      }),
+      arcanosCliWrapper: expect.objectContaining({
+        readOnlyOperations: expect.arrayContaining(['arcanos.status']),
+      }),
+      mcpPolicy: expect.objectContaining({
+        registeredTools: expect.arrayContaining(['control_plane.invoke']),
+      }),
+      approvalGates: expect.objectContaining({
+        protectedActions: expect.arrayContaining(['deploy']),
+      }),
+      auditLogging: expect.objectContaining({
+        secretRedactionEnabled: true,
+      }),
+    }));
+    expect(JSON.stringify(response.body)).not.toContain('sk-');
+    expect(JSON.stringify(response.body)).not.toContain('Bearer ');
+    expect(response.body.debug).toEqual({
+      token: '[REDACTED]',
+      authorization: '[REDACTED]',
+    });
+    expect(mockGetControlPlaneDeepDiagnostics).toHaveBeenCalledTimes(1);
     expect(mockExecuteControlPlaneOperation).not.toHaveBeenCalled();
   });
 
