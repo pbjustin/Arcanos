@@ -334,4 +334,42 @@ describe('root.deep_diagnostics GPT bridge', () => {
       }),
     }));
   });
+
+  it('bounds large sub-check data so the report contract is preserved', async () => {
+    mockGetWorkerControlStatus.mockResolvedValueOnce({
+      recentFailedJobs: Array.from({ length: 64 }, (_, index) => ({
+        id: `failed-${index}`,
+        apiKey: 'unit-test-secret-value',
+        error_message: 'worker failure detail '.repeat(300),
+      })),
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .set('Authorization', `Bearer ${TEST_ADMIN_TOKEN}`)
+      .send({ action: 'root.deep_diagnostics' });
+
+    const workerStatus = response.body.report.find(
+      (check: Record<string, unknown>) => check.name === '/workers/status'
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(expect.objectContaining({
+      ok: true,
+      report: expect.any(Array),
+    }));
+    expect(response.body).not.toHaveProperty('truncated');
+    expect(workerStatus).toEqual(expect.objectContaining({
+      ok: true,
+      data: expect.objectContaining({
+        recentFailedJobs: expect.objectContaining({
+          total: 64,
+          truncated: true,
+          items: expect.any(Array),
+        }),
+      }),
+    }));
+    expect(workerStatus.data.recentFailedJobs.items).toHaveLength(8);
+    expect(JSON.stringify(response.body)).not.toContain('unit-test-secret-value');
+  });
 });

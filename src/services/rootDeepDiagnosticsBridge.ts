@@ -16,6 +16,14 @@ import { arcanosDagRunService } from '@services/arcanosDagRunService.js';
 export const ROOT_DEEP_DIAGNOSTICS_ACTION = 'root.deep_diagnostics';
 export const ROOT_DIAGNOSTICS_FORBIDDEN = 'ROOT_DIAGNOSTICS_FORBIDDEN';
 
+const ROOT_DIAGNOSTICS_MAX_OBJECT_KEYS = 32;
+const ROOT_DIAGNOSTICS_MAX_ARRAY_ITEMS = 8;
+const ROOT_DIAGNOSTICS_MAX_DEPTH = 5;
+const ROOT_DIAGNOSTICS_MAX_STRING_LENGTH = 1024;
+const ROOT_DIAGNOSTICS_REDACTED = '[REDACTED]';
+const ROOT_DIAGNOSTICS_SENSITIVE_KEY_PATTERN =
+  /(authorization|bearer|token|secret|password|api[_-]?key|credential)/i;
+
 type RootDiagnosticsDenialReason =
   | 'disabled'
   | 'gpt_not_allowlisted'
@@ -73,6 +81,64 @@ type RootDiagnosticsRequest = Request & {
   logger?: RootDiagnosticsRequestLogger;
   authUser?: RootDiagnosticsAuthUser;
 };
+
+function truncateRootDiagnosticsString(value: string): string {
+  if (value.length <= ROOT_DIAGNOSTICS_MAX_STRING_LENGTH) {
+    return value;
+  }
+
+  return `${value.slice(0, ROOT_DIAGNOSTICS_MAX_STRING_LENGTH)}...[truncated]`;
+}
+
+function normalizeRootDiagnosticsData(value: unknown, depth = 0, keyHint = ''): unknown | null {
+  if (ROOT_DIAGNOSTICS_SENSITIVE_KEY_PATTERN.test(keyHint)) {
+    return ROOT_DIAGNOSTICS_REDACTED;
+  }
+
+  if (value === null || value === undefined) {
+    return null;
+  }
+
+  if (typeof value === 'string') {
+    return truncateRootDiagnosticsString(value);
+  }
+
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return value;
+  }
+
+  if (typeof value !== 'object') {
+    return String(value);
+  }
+
+  if (depth >= ROOT_DIAGNOSTICS_MAX_DEPTH) {
+    return Array.isArray(value)
+      ? { total: value.length, truncated: value.length > 0 }
+      : { keys: Object.keys(value as Record<string, unknown>).slice(0, ROOT_DIAGNOSTICS_MAX_OBJECT_KEYS), truncated: true };
+  }
+
+  if (Array.isArray(value)) {
+    return {
+      total: value.length,
+      items: value
+        .slice(0, ROOT_DIAGNOSTICS_MAX_ARRAY_ITEMS)
+        .map((entry) => normalizeRootDiagnosticsData(entry, depth + 1, keyHint)),
+      truncated: value.length > ROOT_DIAGNOSTICS_MAX_ARRAY_ITEMS,
+    };
+  }
+
+  const entries = Object.entries(value as Record<string, unknown>);
+  const output: Record<string, unknown> = {};
+  for (const [entryKey, entryValue] of entries.slice(0, ROOT_DIAGNOSTICS_MAX_OBJECT_KEYS)) {
+    output[entryKey] = normalizeRootDiagnosticsData(entryValue, depth + 1, entryKey);
+  }
+
+  if (entries.length > ROOT_DIAGNOSTICS_MAX_OBJECT_KEYS) {
+    output.truncatedKeys = entries.length - ROOT_DIAGNOSTICS_MAX_OBJECT_KEYS;
+  }
+
+  return output;
+}
 
 function parseRootDiagnosticGpts(): Set<string> {
   return new Set(
@@ -151,7 +217,7 @@ async function runCheck(
     return {
       ok: true,
       name,
-      data: (await operation()) ?? null,
+      data: normalizeRootDiagnosticsData(await operation()),
       error: null,
     };
   } catch (error) {
