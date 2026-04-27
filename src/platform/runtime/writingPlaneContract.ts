@@ -1,4 +1,5 @@
 import { classifyRuntimeInspectionPrompt } from '@services/runtimeInspectionRoutingService.js';
+import { shouldTreatPromptAsDagExecution } from '@shared/dag/dagExecutionRouting.js';
 import { normalizeGptRequestBody } from '@shared/gpt/gptIdempotency.js';
 import {
   GPT_DIRECT_CONTROL_ACTIONS,
@@ -77,6 +78,11 @@ export type WritingPlaneInputClassification =
       canonical: Record<string, string | null>;
       jobLookup?: NaturalLanguageJobLookupIntent;
     };
+
+type ControlWritingPlaneInputClassification = Extract<
+  WritingPlaneInputClassification,
+  { plane: 'control' }
+>;
 
 type McpControlAction = 'mcp.invoke' | 'mcp.list_tools';
 
@@ -166,6 +172,33 @@ function isExplicitWritingPlaneControlAction(
 function buildUnsupportedControlActionCanonical() {
   return {
     supportedActions: GPT_DIRECT_CONTROL_ACTIONS.join(', '),
+  };
+}
+
+function buildDagControlCanonical() {
+  return {
+    mcp: '/mcp',
+    dispatch: '/dispatch',
+    dagCapabilities: '/api/arcanos/capabilities',
+    dagRuns: '/api/arcanos/dag/runs',
+    dagRunStatus: '/api/arcanos/dag/runs/{runId}',
+    dagTrace: '/api/arcanos/dag/runs/{runId}/trace',
+  };
+}
+
+function buildDagControlClassification(params: {
+  action: string;
+  reason: string;
+}): ControlWritingPlaneInputClassification {
+  return {
+    plane: 'control',
+    kind: 'dag_control',
+    action: params.action,
+    reason: params.reason,
+    errorCode: 'DAG_CONTROL_REQUIRES_DIRECT_ENDPOINT',
+    message:
+      "DAG execution must use /api/arcanos/dag/*, POST /mcp, or POST /dispatch with target='dag'.",
+    canonical: buildDagControlCanonical(),
   };
 }
 
@@ -386,21 +419,21 @@ export function classifyWritingPlaneInput(input: {
   const explicitDagAction =
     normalizeDagControlAction(normalizedAction) ?? detectEmbeddedDagAction(input.body);
   if (explicitDagAction || normalizedExecutionMode === 'dag' || normalizedTarget === 'dag') {
-    return {
-      plane: 'control',
-      kind: 'dag_control',
+    return buildDagControlClassification({
       action: explicitDagAction ?? normalizedAction ?? 'dag.run.create',
       reason: 'explicit_dag_control_action',
-      errorCode: 'DAG_CONTROL_REQUIRES_DIRECT_ENDPOINT',
-      message:
-        "DAG execution must use /api/arcanos/dag/*, POST /mcp, or POST /dispatch with target='dag'.",
-      canonical: {
-        mcp: '/mcp',
-        dispatch: '/dispatch',
-        dagRuns: '/api/arcanos/dag/runs/{runId}',
-        dagTrace: '/api/arcanos/dag/runs/{runId}/trace',
-      },
-    };
+    });
+  }
+
+  if (
+    isQueryLikeAction(normalizedAction) &&
+    input.promptText &&
+    shouldTreatPromptAsDagExecution(input.promptText, { requireDagTokenForArtifact: true })
+  ) {
+    return buildDagControlClassification({
+      action: 'dag.run.create',
+      reason: 'prompt_dag_control_requires_direct_endpoint',
+    });
   }
 
   if (isQueryLikeAction(normalizedAction)) {

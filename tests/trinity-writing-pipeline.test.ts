@@ -360,4 +360,40 @@ describe('runTrinityWritingPipeline', () => {
       })
     );
   });
+
+  it('rejects natural-language DAG diagnostic prompts before the Trinity engine executes', async () => {
+    await expect(
+      runTrinityWritingPipeline({
+        input: {
+          prompt: 'Run live DAG diagnostics and inspect the Trinity worker pipeline status.',
+          sourceEndpoint: 'write',
+          body: {
+            action: 'query_and_wait',
+            prompt: 'Run live DAG diagnostics and inspect the Trinity worker pipeline status.'
+          }
+        },
+        context: {
+          client: {} as never,
+          requestId: 'req-dag-prompt-leak-1'
+        }
+      })
+    ).rejects.toMatchObject({
+      name: 'TrinityControlLeakError',
+      classification: expect.objectContaining({
+        kind: 'dag_control',
+        action: 'dag.run.create'
+      })
+    });
+
+    expect(runThroughBrainMock).not.toHaveBeenCalled();
+    expect(loggerErrorMock).toHaveBeenCalledWith(
+      'trinity.control_leak_detected',
+      expect.objectContaining({
+        requestId: 'req-dag-prompt-leak-1',
+        sourceEndpoint: 'write',
+        classification: 'dag_control',
+        action: 'dag.run.create'
+      })
+    );
+  });
 });
