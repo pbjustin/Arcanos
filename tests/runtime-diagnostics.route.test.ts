@@ -86,13 +86,7 @@ describe('runtime diagnostics routes', () => {
         'get_status',
         'get_result'
       ]),
-      controlActions: expect.arrayContaining([
-        'diagnostics',
-        'runtime.inspect',
-        'workers.status',
-        'queue.inspect',
-        'self_heal.status'
-      ]),
+      controlActions: ['diagnostics', 'system_state'],
       canonicalEndpoints: expect.objectContaining({
         status: '/status',
         workers: '/workers/status',

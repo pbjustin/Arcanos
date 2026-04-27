@@ -27,6 +27,25 @@ describe('custom GPT OpenAPI contract route', () => {
         minLength: 1,
       })
     );
+
+    const requestExamples =
+      response.body.paths?.['/gpt/{gptId}']?.post?.requestBody?.content?.['application/json']
+        ?.examples;
+    expect(requestExamples?.diagnostics?.value?.action).toBe('diagnostics');
+    const requestExampleActions = Object.values(requestExamples ?? {}).map((example) => {
+      const typedExample = example as { value?: { action?: unknown } };
+      return typedExample.value?.action;
+    });
+    expect(requestExampleActions).toEqual(
+      expect.arrayContaining(['dag.capabilities', 'dag.dispatch', 'dag.status', 'dag.trace'])
+    );
+
+    const diagnosticsControlActionEnum =
+      response.body.components?.schemas?.GptDispatcherDiagnosticsResponse?.properties?.controlActions
+        ?.items?.enum;
+    expect(diagnosticsControlActionEnum).toEqual(['diagnostics', 'system_state']);
+    expect(JSON.stringify(requestExamples)).not.toContain('runtime.inspect');
+    expect(JSON.stringify(requestExamples)).not.toContain('workers.status');
   });
 
   it('serves the canonical job-result contract with no-store caching', async () => {

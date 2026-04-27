@@ -688,11 +688,7 @@
             "items": {
               "enum": [
                 "diagnostics",
-                "system_state",
-                "runtime.inspect",
-                "workers.status",
-                "queue.inspect",
-                "self_heal.status"
+                "system_state"
               ]
             }
           },

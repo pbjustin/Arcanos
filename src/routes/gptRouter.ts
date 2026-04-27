@@ -91,7 +91,7 @@ import {
   parseGptJobResultRequest
 } from '@shared/gpt/gptJobResult.js';
 import {
-  GPT_DIRECT_CONTROL_ACTIONS,
+  GPT_PUBLIC_DIRECT_CONTROL_ACTIONS,
   type GptDirectControlAction,
   normalizeGptDirectControlAction,
 } from '@shared/gpt/gptControlActions.js';
@@ -387,7 +387,7 @@ function buildGptDispatcherDiagnosticsPayload(params: {
     gptId: params.gptId,
     route: GPT_DISPATCHER_ROUTE,
     actions: [...GPT_DISPATCHER_ACTIONS],
-    controlActions: [...GPT_DIRECT_CONTROL_ACTIONS],
+    controlActions: [...GPT_PUBLIC_DIRECT_CONTROL_ACTIONS],
     canonicalEndpoints: { ...GPT_DISPATCHER_CANONICAL_ENDPOINTS },
     policy: GPT_DISPATCHER_POLICY,
     subsystems: buildDispatcherSubsystemBindings(),
