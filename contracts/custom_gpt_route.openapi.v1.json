@@ -10,7 +10,7 @@
       "post": {
         "operationId": "invokeGptRoute",
         "summary": "Invoke a GPT-routed module request or universal control action",
-        "description": "POST /gpt/{gptId} is the universal public dispatcher. The path parameter is authoritative; a JSON body gptId is optional and must match the path when present. Use a prompt-only request with executionMode=fast for small prompt-generation work that should return inline. Use action=query to create one durable writing job, action=query_and_wait on core GPT IDs to execute synchronously through the lightweight direct action lane, action=get_status to read status through the GPT compatibility bridge, action=get_result to read the final result through the GPT compatibility bridge, and approved control actions such as diagnostics, runtime.inspect, workers.status, queue.inspect, self_heal.status, and system_state for runtime inspection. The action should be supplied in the JSON body when possible; generated-client compatibility also permits the same action in the query string or an operationId-style body alias. For runtime.inspect and self_heal.status, payload.detail and payload.sections can request summary, standard, or full response profiles, and a deterministic bounded planner fills safe defaults when callers omit them. Unknown control-plane action names are rejected with a typed 400 error. Natural-language retrieval prompts, runtime inspection prompts without an explicit allowlisted action, DAG control prompts, and MCP control requests are still intentionally rejected on this route.",
+        "description": "POST /gpt/{gptId} is the universal public dispatcher. The path parameter is authoritative; a JSON body gptId is optional and must match the path when present. Use a prompt-only request with executionMode=fast for small prompt-generation work that should return inline. Use action=query to create one durable writing job through the Trinity writing pipeline, action=query_and_wait on core GPT IDs to execute synchronously through the lightweight direct action lane, action=get_status to read status through the GPT compatibility bridge, action=get_result to read the final result through the GPT compatibility bridge, and approved control actions such as diagnostics, runtime.inspect, workers.status, queue.inspect, self_heal.status, and system_state for runtime inspection. The diagnostics action returns deterministic dispatcher metadata, including canonical DAG, Trinity, worker, and MCP bindings. The action should be supplied in the JSON body when possible; generated-client compatibility also permits the same action in the query string or an operationId-style body alias. For runtime.inspect and self_heal.status, payload.detail and payload.sections can request summary, standard, or full response profiles, and a deterministic bounded planner fills safe defaults when callers omit them. Unknown control-plane action names are rejected with a typed 400 error. Natural-language retrieval prompts, runtime inspection prompts without an explicit allowlisted action, DAG control prompts, and MCP control requests are still intentionally rejected on this route.",
         "parameters": [
           {
             "name": "gptId",
@@ -126,6 +126,12 @@
                     }
                   }
                 },
+                "diagnostics": {
+                  "summary": "Return deterministic dispatcher bindings for GPT, DAG, Trinity, workers, and MCP",
+                  "value": {
+                    "action": "diagnostics"
+                  }
+                },
                 "workersStatus": {
                   "summary": "Inspect worker runtime and queue state through the universal dispatcher",
                   "value": {
@@ -228,6 +234,23 @@
                         "workerHealth": "/worker-helper/health",
                         "selfHeal": "/status/safety/self-heal",
                         "mcp": "/mcp"
+                      }
+                    }
+                  },
+                  "dagControlPrompt": {
+                    "summary": "Natural-language DAG diagnostic prompts are rejected with DAG endpoint guidance",
+                    "value": {
+                      "ok": false,
+                      "action": "dag.run.create",
+                      "error": {
+                        "code": "DAG_CONTROL_REQUIRES_DIRECT_ENDPOINT",
+                        "message": "DAG execution must use /api/arcanos/dag/*, POST /mcp, or POST /dispatch with target='dag'."
+                      },
+                      "canonical": {
+                        "mcp": "/mcp",
+                        "dispatch": "/dispatch",
+                        "dagRuns": "/api/arcanos/dag/runs/{runId}",
+                        "dagTrace": "/api/arcanos/dag/runs/{runId}/trace"
                       }
                     }
                   },
@@ -626,9 +649,163 @@
             "$ref": "#/components/schemas/GptJobResultResponse"
           },
           {
+            "$ref": "#/components/schemas/GptDispatcherDiagnosticsResponse"
+          },
+          {
             "$ref": "#/components/schemas/GptRouteGenericResponse"
           }
         ]
+      },
+      "GptDispatcherDiagnosticsResponse": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "ok",
+          "gptId",
+          "route",
+          "actions",
+          "controlActions",
+          "canonicalEndpoints",
+          "policy",
+          "subsystems",
+          "env",
+          "traceId",
+          "_route"
+        ],
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "gptId": {
+            "type": "string"
+          },
+          "route": {
+            "const": "/gpt/:gptId"
+          },
+          "actions": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "query",
+                "query_and_wait",
+                "diagnostics",
+                "get_status",
+                "get_result"
+              ]
+            }
+          },
+          "controlActions": {
+            "type": "array",
+            "items": {
+              "enum": [
+                "diagnostics",
+                "system_state",
+                "runtime.inspect",
+                "workers.status",
+                "queue.inspect",
+                "self_heal.status"
+              ]
+            }
+          },
+          "canonicalEndpoints": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "properties": {
+              "status": {
+                "const": "/status"
+              },
+              "workers": {
+                "const": "/workers/status"
+              },
+              "workerHealth": {
+                "const": "/worker-helper/health"
+              },
+              "selfHeal": {
+                "const": "/status/safety/self-heal"
+              },
+              "trinityStatus": {
+                "const": "/trinity/status"
+              },
+              "mcp": {
+                "const": "/mcp"
+              },
+              "dagCapabilities": {
+                "const": "/api/arcanos/capabilities"
+              },
+              "dagRuns": {
+                "const": "/api/arcanos/dag/runs"
+              },
+              "dagRunStatus": {
+                "const": "/api/arcanos/dag/runs/{runId}"
+              },
+              "dagTrace": {
+                "const": "/api/arcanos/dag/runs/{runId}/trace"
+              },
+              "dispatchDag": {
+                "const": "/dispatch"
+              }
+            }
+          },
+          "policy": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "writingPlane": {
+                "const": "/gpt/:gptId"
+              },
+              "controlPlane": {
+                "const": "direct-endpoints"
+              },
+              "trinityWritingAction": {
+                "const": "query"
+              },
+              "trinityDirectActionBypass": {
+                "const": "query_and_wait"
+              },
+              "systemOperationsThroughWritingPipeline": {
+                "const": false
+              }
+            }
+          },
+          "subsystems": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "trinity": {
+                "type": "object",
+                "additionalProperties": true
+              },
+              "dag": {
+                "type": "object",
+                "additionalProperties": true
+              },
+              "workers": {
+                "type": "object",
+                "additionalProperties": true
+              },
+              "controlPlane": {
+                "type": "object",
+                "additionalProperties": true
+              },
+              "mcp": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          },
+          "env": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "traceId": {
+            "type": "string"
+          },
+          "_route": {
+            "$ref": "#/components/schemas/GptRouteMeta"
+          }
+        }
       },
       "GptDirectActionCompletedResponse": {
         "type": "object",

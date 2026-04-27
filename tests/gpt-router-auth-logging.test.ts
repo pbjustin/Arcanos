@@ -727,6 +727,45 @@ describe('gpt router auth logging', () => {
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
+  it('rejects natural-language DAG diagnostic prompts with DAG endpoint guidance', async () => {
+    const app = express();
+    app.use(express.json());
+    app.use(requestContext);
+    app.use('/gpt', gptRouter);
+
+    const response = await request(app)
+      .post('/gpt/arcanos-core')
+      .send({
+        action: 'query_and_wait',
+        prompt: 'Run live DAG diagnostics and inspect the Trinity worker pipeline status.',
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual(expect.objectContaining({
+      ok: false,
+      gptId: 'arcanos-core',
+      action: 'dag.run.create',
+      route: '/gpt/:gptId',
+      traceId: expect.any(String),
+      error: {
+        code: 'DAG_CONTROL_REQUIRES_DIRECT_ENDPOINT',
+        message: "DAG execution must use /api/arcanos/dag/*, POST /mcp, or POST /dispatch with target='dag'.",
+      },
+      canonical: {
+        mcp: '/mcp',
+        dispatch: '/dispatch',
+        dagRuns: '/api/arcanos/dag/runs/{runId}',
+        dagTrace: '/api/arcanos/dag/runs/{runId}/trace',
+      },
+      _route: expect.objectContaining({
+        gptId: 'arcanos-core',
+        route: 'control_guard',
+        action: 'dag.run.create',
+      }),
+    }));
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
   it('rejects explicit MCP control actions and points callers to /mcp', async () => {
     const app = express();
     app.use(express.json());
