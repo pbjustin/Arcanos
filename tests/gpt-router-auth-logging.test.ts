@@ -715,7 +715,9 @@ describe('gpt router auth logging', () => {
       canonical: {
         mcp: '/mcp',
         dispatch: '/dispatch',
-        dagRuns: '/api/arcanos/dag/runs/{runId}',
+        dagCapabilities: '/api/arcanos/capabilities',
+        dagRuns: '/api/arcanos/dag/runs',
+        dagRunStatus: '/api/arcanos/dag/runs/{runId}',
         dagTrace: '/api/arcanos/dag/runs/{runId}/trace',
       },
       _route: expect.objectContaining({
@@ -754,7 +756,9 @@ describe('gpt router auth logging', () => {
       canonical: {
         mcp: '/mcp',
         dispatch: '/dispatch',
-        dagRuns: '/api/arcanos/dag/runs/{runId}',
+        dagCapabilities: '/api/arcanos/capabilities',
+        dagRuns: '/api/arcanos/dag/runs',
+        dagRunStatus: '/api/arcanos/dag/runs/{runId}',
         dagTrace: '/api/arcanos/dag/runs/{runId}/trace',
       },
       _route: expect.objectContaining({

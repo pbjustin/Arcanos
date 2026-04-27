@@ -179,7 +179,9 @@ function buildDagControlCanonical() {
   return {
     mcp: '/mcp',
     dispatch: '/dispatch',
-    dagRuns: '/api/arcanos/dag/runs/{runId}',
+    dagCapabilities: '/api/arcanos/capabilities',
+    dagRuns: '/api/arcanos/dag/runs',
+    dagRunStatus: '/api/arcanos/dag/runs/{runId}',
     dagTrace: '/api/arcanos/dag/runs/{runId}/trace',
   };
 }
