@@ -430,9 +430,9 @@ describe("GPT route OpenAPI contract and client", () => {
       })
     );
     expect(requestSchema?.description).toContain("Universal GPT-route request");
-    expect(requestSchema?.properties?.action?.description).toContain("runtime.inspect");
-    expect(requestSchema?.properties?.payload?.description).toContain("payload.detail");
-    expect(requestSchema?.properties?.payload?.description).toContain("payload.sections");
+    expect(requestSchema?.properties?.action?.description).toContain("dag.dispatch");
+    expect(requestSchema?.properties?.payload?.description).toContain("payload.graphId");
+    expect(requestSchema?.properties?.payload?.description).toContain("payload.runId");
     expect(
       spec.paths?.["/gpt/{gptId}"]?.post?.requestBody?.content?.["application/json"]?.examples?.genericPrompt?.value
     ).toEqual({
@@ -470,39 +470,39 @@ describe("GPT route OpenAPI contract and client", () => {
       }
     });
     expect(
-      spec.paths?.["/gpt/{gptId}"]?.post?.requestBody?.content?.["application/json"]?.examples?.runtimeInspect?.value
+      spec.paths?.["/gpt/{gptId}"]?.post?.requestBody?.content?.["application/json"]?.examples?.dagCapabilities?.value
     ).toEqual({
-      action: "runtime.inspect"
+      action: "dag.capabilities"
     });
     expect(
-      spec.paths?.["/gpt/{gptId}"]?.post?.requestBody?.content?.["application/json"]?.examples?.runtimeInspectStandard?.value
+      spec.paths?.["/gpt/{gptId}"]?.post?.requestBody?.content?.["application/json"]?.examples?.dagDispatch?.value
     ).toEqual({
-      action: "runtime.inspect",
+      action: "dag.dispatch",
+      prompt: "Validation run for GPT DAG bridge.",
       payload: {
-        detail: "standard"
+        graphId: "default",
+        input: {
+          validation: true
+        },
+        async: true,
+        idempotencyKey: "gpt-dag-bridge-validation-001"
       }
     });
     expect(
-      spec.paths?.["/gpt/{gptId}"]?.post?.requestBody?.content?.["application/json"]?.examples?.runtimeInspectFull?.value
+      spec.paths?.["/gpt/{gptId}"]?.post?.requestBody?.content?.["application/json"]?.examples?.dagStatus?.value
     ).toEqual({
-      action: "runtime.inspect",
+      action: "dag.status",
       payload: {
-        detail: "full",
-        sections: ["workers", "queues", "memory"]
+        runId: "dagrun_1714212000000_abc123"
       }
     });
     expect(
-      spec.paths?.["/gpt/{gptId}"]?.post?.requestBody?.content?.["application/json"]?.examples?.selfHealSummary?.value
+      spec.paths?.["/gpt/{gptId}"]?.post?.requestBody?.content?.["application/json"]?.examples?.dagTrace?.value
     ).toEqual({
-      action: "self_heal.status",
+      action: "dag.trace",
       payload: {
-        detail: "summary"
+        runId: "dagrun_1714212000000_abc123"
       }
-    });
-    expect(
-      spec.paths?.["/gpt/{gptId}"]?.post?.requestBody?.content?.["application/json"]?.examples?.workersStatus?.value
-    ).toEqual({
-      action: "workers.status"
     });
     expect(
       spec.paths?.["/gpt/{gptId}"]?.post?.requestBody?.content?.["application/json"]?.examples?.queryAndWait?.value

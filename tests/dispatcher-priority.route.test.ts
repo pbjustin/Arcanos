@@ -154,7 +154,7 @@ describe('dispatcher priority routing', () => {
     expect(mockCreateDagRun).not.toHaveBeenCalled();
   });
 
-  it('rejects explicit DAG action on /gpt/{gptId}', async () => {
+  it('rejects unsupported explicit DAG bridge action on /gpt/{gptId}', async () => {
     const response = await request(buildApp())
       .post('/gpt/arcanos-core')
       .send({
@@ -168,7 +168,7 @@ describe('dispatcher priority routing', () => {
       gptId: 'arcanos-core',
       action: 'dag.run.create',
       error: expect.objectContaining({
-        code: 'DAG_CONTROL_REQUIRES_DIRECT_ENDPOINT',
+        code: 'GPT_DAG_ACTION_UNSUPPORTED',
       }),
     }));
     expect(mockRouteGptRequest).not.toHaveBeenCalled();

@@ -677,53 +677,36 @@ describe('gpt router universal dispatch', () => {
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
-  it('routes runtime.inspect through the universal public dispatcher', async () => {
+  it('blocks runtime.inspect through the GPT route', async () => {
     const response = await request(buildApp())
       .post('/gpt/arcanos-core')
       .send({ action: 'runtime.inspect' });
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(400);
     expect(response.body).toEqual(
       expect.objectContaining({
-        ok: true,
+        ok: false,
         action: 'runtime.inspect',
-        meta: expect.objectContaining({
-          detail: 'summary',
-          truncated: false,
-          source: 'planner',
-          availableSections: expect.arrayContaining(['workers', 'queues', 'memory', 'incidents']),
-          returnedSections: expect.arrayContaining(['workers', 'queues', 'memory', 'incidents']),
+        error: expect.objectContaining({
+          code: 'CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT',
         }),
-        result: {
-          handledBy: 'runtime-inspection',
-          runtimeInspection: expect.objectContaining({
-            status: 'ok',
-            summary: 'Collected live runtime state from 5 runtime sources.',
-            sections: expect.objectContaining({
-              workers: expect.any(Object),
-              queues: expect.any(Object),
-              memory: expect.any(Object),
-              incidents: expect.any(Object),
-            }),
-          }),
-        },
+        canonical: expect.objectContaining({
+          mcp: '/mcp',
+          workers: '/workers/status',
+          selfHeal: '/status/safety/self-heal',
+        }),
         _route: expect.objectContaining({
           gptId: 'arcanos-core',
           action: 'runtime.inspect',
-          route: 'runtime_inspect',
+          route: 'control_guard',
         }),
       })
     );
-    expect(mockExecuteRuntimeInspection).toHaveBeenCalledWith(
-      expect.objectContaining({
-        rawPrompt: 'runtime inspect live runtime status',
-        normalizedPrompt: 'runtime inspect live runtime status',
-      })
-    );
+    expect(mockExecuteRuntimeInspection).not.toHaveBeenCalled();
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
-  it('honors explicit full detail and section filtering for runtime.inspect', async () => {
+  it('blocks runtime.inspect detail and section payloads through the GPT route', async () => {
     const response = await request(buildApp())
       .post('/gpt/arcanos-core')
       .send({
@@ -734,105 +717,67 @@ describe('gpt router universal dispatch', () => {
         },
       });
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(400);
     expect(response.body).toEqual(
       expect.objectContaining({
-        ok: true,
+        ok: false,
         action: 'runtime.inspect',
-        meta: expect.objectContaining({
-          detail: 'full',
-          truncated: false,
-          source: 'explicit',
-          returnedSections: ['workers', 'memory'],
+        error: expect.objectContaining({
+          code: 'CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT',
         }),
-        result: {
-          handledBy: 'runtime-inspection',
-          runtimeInspection: expect.objectContaining({
-            sections: {
-              workers: expect.any(Object),
-              memory: expect.any(Object),
-            },
-          }),
-        },
       }),
     );
-    expect(response.body.result.runtimeInspection.sections.queues).toBeUndefined();
-    expect(response.body.result.runtimeInspection.sections.incidents).toBeUndefined();
+    expect(mockExecuteRuntimeInspection).not.toHaveBeenCalled();
   });
 
-  it('defaults self_heal.status to a shaped summary response', async () => {
+  it('blocks self_heal.status through the GPT route', async () => {
     const response = await request(buildApp())
       .post('/gpt/arcanos-core')
       .send({ action: 'self_heal.status' });
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(400);
     expect(response.body).toEqual(
       expect.objectContaining({
-        ok: true,
+        ok: false,
         action: 'self_heal.status',
-        meta: expect.objectContaining({
-          detail: 'summary',
-          truncated: false,
-          source: 'planner',
-          availableSections: expect.arrayContaining(['system', 'workers', 'memory', 'incidents']),
-        }),
-        result: expect.objectContaining({
-          status: 'ok',
-          enabled: true,
-          active: false,
-          summary: expect.any(String),
-          sections: expect.objectContaining({
-            system: expect.any(Object),
-            incidents: expect.any(Object),
-            workers: expect.any(Object),
-            memory: expect.any(Object),
-          }),
+        error: expect.objectContaining({
+          code: 'CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT',
         }),
         _route: expect.objectContaining({
           gptId: 'arcanos-core',
           action: 'self_heal.status',
-          route: 'self_heal_status',
+          route: 'control_guard',
         }),
       }),
     );
+    expect(mockBuildSafetySelfHealSnapshot).not.toHaveBeenCalled();
   });
 
-  it('routes workers.status through the universal public dispatcher', async () => {
+  it('blocks workers.status through the GPT route', async () => {
     const response = await request(buildApp())
       .post('/gpt/arcanos-core')
       .send({ action: 'workers.status' });
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(400);
     expect(response.body).toEqual(
       expect.objectContaining({
-        ok: true,
+        ok: false,
         action: 'workers.status',
-        meta: expect.objectContaining({
-          detail: 'standard',
-          truncated: false,
-          source: 'planner',
-        }),
-        result: expect.objectContaining({
-          timestamp: '2026-04-15T00:00:00.000Z',
-          workerService: expect.objectContaining({
-            queueSummary: expect.objectContaining({
-              pending: 2,
-              running: 1,
-            }),
-          }),
+        error: expect.objectContaining({
+          code: 'CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT',
         }),
         _route: expect.objectContaining({
           gptId: 'arcanos-core',
           action: 'workers.status',
-          route: 'workers_status',
+          route: 'control_guard',
         }),
       })
     );
-    expect(mockGetWorkerControlStatus).toHaveBeenCalledTimes(1);
+    expect(mockGetWorkerControlStatus).not.toHaveBeenCalled();
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
-  it('rejects invalid explicit detail values with a typed 400 error', async () => {
+  it('rejects explicit runtime control action payloads before planner validation', async () => {
     const response = await request(buildApp())
       .post('/gpt/arcanos-core')
       .send({
@@ -848,104 +793,19 @@ describe('gpt router universal dispatch', () => {
         ok: false,
         action: 'runtime.inspect',
         error: expect.objectContaining({
-          code: 'INVALID_GPT_DETAIL',
+          code: 'CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT',
         }),
         canonical: expect.objectContaining({
-          supportedDetail: 'summary, standard, full',
+          mcp: '/mcp',
         }),
       }),
     );
     expect(mockExecuteRuntimeInspection).not.toHaveBeenCalled();
   });
 
-  it('marks truncated runtime inspection responses explicitly before the public response guard', async () => {
+  it('does not run runtime inspection or public truncation for blocked runtime.inspect', async () => {
     process.env.GPT_PUBLIC_RESPONSE_MAX_BYTES = '5000';
-    mockExecuteRuntimeInspection.mockResolvedValueOnce({
-      ok: true,
-      responsePayload: {
-        handledBy: 'runtime-inspection',
-        runtimeInspection: {
-          status: 'ok',
-          summary: 'Collected live runtime state from 5 runtime sources.',
-          detectedIntent: 'RUNTIME_INSPECTION_REQUIRED',
-          toolsSelected: [
-            '/worker-helper/health',
-            '/workers/status',
-            'system.metrics',
-            '/api/self-heal/events',
-            '/api/self-heal/inspection',
-          ],
-          runtimeEndpointsQueried: ['/worker-helper/health', '/workers/status'],
-          sources: [
-            {
-              sourceType: 'worker-health',
-              tool: '/worker-helper/health',
-              data: {
-                alerts: Array.from({ length: 20 }, (_, index) => `alert-${index}`),
-                workers: Array.from({ length: 20 }, (_, index) => ({
-                  workerId: `worker-${index}`,
-                  healthStatus: 'healthy',
-                })),
-              },
-            },
-            {
-              sourceType: 'metrics',
-              tool: 'system.metrics',
-              data: {
-                diagnostics: {
-                  recent_latency_ms: Array.from({ length: 40 }, (_, index) => index),
-                },
-              },
-            },
-            {
-              sourceType: 'runtime-endpoint',
-              tool: '/api/self-heal/events',
-              data: {
-                events: Array.from({ length: 50 }, (_, index) => ({
-                  id: `evt-${index}`,
-                  type: 'HEAL_RESULT',
-                  message: 'x'.repeat(200),
-                })),
-              },
-            },
-            {
-              sourceType: 'runtime-endpoint',
-              tool: '/api/self-heal/inspection',
-              data: {
-                evidence: {
-                  traces: Array.from({ length: 40 }, (_, index) => ({
-                    id: `trace-${index}`,
-                    detail: 'y'.repeat(200),
-                  })),
-                },
-              },
-            },
-          ],
-          failures: Array.from({ length: 20 }, (_, index) => ({
-            tool: `tool-${index}`,
-            error: 'z'.repeat(160),
-          })),
-        },
-      },
-      routingDebug: {
-        requestId: 'req-runtime-oversized',
-        timestamp: '2026-04-15T00:00:00.000Z',
-        rawPrompt: 'full raw runtime inspection with everything included',
-        normalizedPrompt: 'full raw runtime inspection with everything included',
-        detectedIntent: 'RUNTIME_INSPECTION_REQUIRED',
-        routingDecision: 'runtime_inspection_completed',
-        toolsAvailable: ['system.metrics'],
-        toolsSelected: ['system.metrics'],
-        cliUsed: false,
-        runtimeEndpointsQueried: ['/workers/status'],
-        repoFallbackUsed: false,
-        constraintViolations: [],
-      },
-      repoFallbackAllowed: false,
-      selectedTools: ['system.metrics'],
-      runtimeEndpointsQueried: ['/workers/status'],
-      cliUsed: false,
-    });
+    mockExecuteRuntimeInspection.mockResolvedValueOnce(buildOversizedRuntimeInspectionResponse());
 
     const response = await request(buildApp())
       .post('/gpt/arcanos-core')
@@ -957,32 +817,23 @@ describe('gpt router universal dispatch', () => {
         },
       });
 
-    expect(response.status).toBe(200);
-    expect(response.headers['x-response-truncated']).toBe('true');
+    expect(response.status).toBe(400);
+    expect(response.headers['x-response-truncated']).toBeUndefined();
     expect(response.body).toEqual(
       expect.objectContaining({
-        ok: true,
+        ok: false,
         action: 'runtime.inspect',
-        status: 'partial',
-        message: 'Response exceeded public route bounds. Narrow sections or reduce detail.',
-        meta: expect.objectContaining({
-          detail: 'full',
-          truncated: true,
-          source: 'explicit',
-          returnedSections: expect.any(Array),
-          omittedSections: expect.any(Array),
-          availableSections: expect.arrayContaining(['workers', 'queues', 'memory', 'incidents']),
+        error: expect.objectContaining({
+          code: 'CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT',
         }),
       }),
     );
-    expect(response.body.meta.returnedSections.length).toBeGreaterThan(0);
-    expect(response.body.meta.omittedSections.length).toBeGreaterThan(0);
+    expect(mockExecuteRuntimeInspection).not.toHaveBeenCalled();
   });
 
-  it('keeps section filtering bounded when a filtered runtime inspection response is truncated', async () => {
+  it('does not apply runtime section filtering for blocked runtime.inspect', async () => {
     process.env.GPT_PUBLIC_RESPONSE_MAX_BYTES = '5000';
     mockExecuteRuntimeInspection.mockResolvedValueOnce(buildOversizedRuntimeInspectionResponse());
-    const requestedSections = ['workers', 'queues'];
 
     const response = await request(buildApp())
       .post('/gpt/arcanos-core')
@@ -990,36 +841,25 @@ describe('gpt router universal dispatch', () => {
         action: 'runtime.inspect',
         payload: {
           detail: 'full',
-          sections: requestedSections,
+          sections: ['workers', 'queues'],
         },
       });
 
-    expect(response.status).toBe(200);
-    expect(response.headers['x-response-truncated']).toBe('true');
+    expect(response.status).toBe(400);
+    expect(response.headers['x-response-truncated']).toBeUndefined();
     expect(response.body).toEqual(
       expect.objectContaining({
-        ok: true,
+        ok: false,
         action: 'runtime.inspect',
-        status: 'partial',
-        meta: expect.objectContaining({
-          detail: 'full',
-          truncated: true,
-          source: 'explicit',
-          returnedSections: expect.any(Array),
-          omittedSections: expect.any(Array),
-          availableSections: expect.arrayContaining(['workers', 'queues']),
+        error: expect.objectContaining({
+          code: 'CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT',
         }),
       }),
     );
-
-    const returnedSections = response.body.meta.returnedSections as string[];
-    const omittedSections = response.body.meta.omittedSections as string[];
-    expect(returnedSections.every((section) => requestedSections.includes(section))).toBe(true);
-    expect(omittedSections.every((section) => requestedSections.includes(section))).toBe(true);
-    expect(new Set([...returnedSections, ...omittedSections])).toEqual(new Set(requestedSections));
+    expect(mockExecuteRuntimeInspection).not.toHaveBeenCalled();
   });
 
-  it('marks truncated self_heal.status responses explicitly before the public response guard', async () => {
+  it('does not build or truncate self-heal snapshots for blocked self_heal.status', async () => {
     process.env.GPT_PUBLIC_RESPONSE_MAX_BYTES = '5000';
     mockBuildSafetySelfHealSnapshot.mockReturnValueOnce(buildOversizedSelfHealSnapshot());
 
@@ -1032,28 +872,21 @@ describe('gpt router universal dispatch', () => {
         },
       });
 
-    expect(response.status).toBe(200);
-    expect(response.headers['x-response-truncated']).toBe('true');
+    expect(response.status).toBe(400);
+    expect(response.headers['x-response-truncated']).toBeUndefined();
     expect(response.body).toEqual(
       expect.objectContaining({
-        ok: true,
+        ok: false,
         action: 'self_heal.status',
-        status: 'partial',
-        message: 'Response exceeded public route bounds. Narrow sections or reduce detail.',
-        meta: expect.objectContaining({
-          detail: 'full',
-          truncated: true,
-          source: 'explicit',
-          returnedSections: expect.any(Array),
-          omittedSections: expect.any(Array),
-          availableSections: expect.arrayContaining(['system', 'workers', 'memory', 'incidents']),
+        error: expect.objectContaining({
+          code: 'CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT',
         }),
       }),
     );
-    expect(response.body.meta.omittedSections.length).toBeGreaterThan(0);
+    expect(mockBuildSafetySelfHealSnapshot).not.toHaveBeenCalled();
   });
 
-  it('allows guarded non-production debug headers to lower GPT control response bounds', async () => {
+  it('ignores guarded debug truncation headers for blocked runtime control actions', async () => {
     process.env.NODE_ENV = 'test';
     process.env.ARCANOS_ENABLE_DEBUG_GPT_CONTROLS = 'true';
     mockExecuteRuntimeInspection.mockResolvedValueOnce(buildOversizedRuntimeInspectionResponse());
@@ -1068,18 +901,18 @@ describe('gpt router universal dispatch', () => {
         },
       });
 
-    expect(response.status).toBe(200);
-    expect(response.headers['x-response-truncated']).toBe('true');
+    expect(response.status).toBe(400);
+    expect(response.headers['x-response-truncated']).toBeUndefined();
     expect(response.body).toEqual(
       expect.objectContaining({
-        ok: true,
+        ok: false,
         action: 'runtime.inspect',
-        status: 'partial',
-        meta: expect.objectContaining({
-          truncated: true,
+        error: expect.objectContaining({
+          code: 'CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT',
         }),
       }),
     );
+    expect(mockExecuteRuntimeInspection).not.toHaveBeenCalled();
   });
 
   it('rejects unknown reserved control actions with a typed 400 error', async () => {
@@ -1099,7 +932,7 @@ describe('gpt router universal dispatch', () => {
           code: 'UNSUPPORTED_GPT_ACTION',
         }),
         canonical: expect.objectContaining({
-          supportedActions: expect.stringContaining('runtime.inspect'),
+          supportedActions: 'diagnostics, system_state',
         }),
         _route: expect.objectContaining({
           gptId: 'arcanos-core',

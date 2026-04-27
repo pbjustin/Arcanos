@@ -686,7 +686,7 @@ describe('gpt router auth logging', () => {
     );
   });
 
-  it('rejects explicit embedded DAG control actions before dispatching to the write plane', async () => {
+  it('rejects unsupported embedded DAG bridge actions before dispatching to the write plane', async () => {
     const app = express();
     app.use(express.json());
     app.use(requestContext);
@@ -708,19 +708,16 @@ describe('gpt router auth logging', () => {
       action: 'dag.run.latest',
       route: '/gpt/:gptId',
       traceId: expect.any(String),
-      error: {
-        code: 'DAG_CONTROL_REQUIRES_DIRECT_ENDPOINT',
-        message: "DAG execution must use /api/arcanos/dag/*, POST /mcp, or POST /dispatch with target='dag'.",
-      },
-      canonical: {
-        mcp: '/mcp',
-        dispatch: '/dispatch',
-        dagRuns: '/api/arcanos/dag/runs/{runId}',
-        dagTrace: '/api/arcanos/dag/runs/{runId}/trace',
-      },
+      error: expect.objectContaining({
+        code: 'GPT_DAG_ACTION_UNSUPPORTED',
+        message: "Unsupported DAG bridge action 'dag.run.latest'.",
+        details: expect.objectContaining({
+          supportedActions: ['dag.capabilities', 'dag.dispatch', 'dag.status', 'dag.trace'],
+        }),
+      }),
       _route: expect.objectContaining({
         gptId: 'arcanos-core',
-        route: 'control_guard',
+        route: 'dag_bridge_unsupported_action',
         action: 'dag.run.latest',
       }),
     }));

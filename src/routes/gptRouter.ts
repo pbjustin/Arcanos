@@ -118,6 +118,11 @@ import { executeRuntimeInspection } from '@services/runtimeInspectionRoutingServ
 import { getWorkerControlStatus } from '@services/workerControlService.js';
 import { buildSafetySelfHealSnapshot } from '@services/selfHealRuntimeInspectionService.js';
 import { getConfig } from '@platform/runtime/unifiedConfig.js';
+import { handleGptDagBridge } from '@services/gptDagBridge.js';
+import {
+  GPT_DAG_BRIDGE_ACTIONS,
+  isGptDagAction,
+} from '@shared/gpt/gptDagBridgeActions.js';
 
 const router = express.Router();
 const ARCANOS_CORE_GPT_IDS = new Set(['arcanos-core', 'core', 'arcanos-daemon']);
@@ -127,7 +132,8 @@ const GPT_DISPATCHER_ACTIONS = [
   GPT_QUERY_AND_WAIT_ACTION,
   'diagnostics',
   GPT_GET_STATUS_ACTION,
-  GPT_GET_RESULT_ACTION
+  GPT_GET_RESULT_ACTION,
+  ...GPT_DAG_BRIDGE_ACTIONS
 ] as const;
 const DEFAULT_GPT_ASYNC_HEAVY_PROMPT_CHARS = 1_200;
 const DEFAULT_GPT_ASYNC_HEAVY_MESSAGE_COUNT = 8;
@@ -2115,6 +2121,48 @@ router.post("/:gptId", async (req, res, next) => {
             errorPayload,
             'gpt.response.query_and_wait_invalid_body',
             400
+          );
+        }
+
+        if (isGptDagAction(requestedAction)) {
+          const dagBridgeResponse = await handleGptDagBridge({
+            req,
+            requestId,
+            traceId,
+            gptId: incomingGptId,
+            action: requestedAction!,
+            normalizedBody,
+            promptText,
+            logger: requestLogger,
+          });
+
+          logGptDispatcherOutcome({
+            req,
+            traceId,
+            gptId: incomingGptId,
+            action: requestedAction!,
+            status: dagBridgeResponse.statusCode,
+            ...(dagBridgeResponse.statusCode >= 400
+              ? {
+                  error: {
+                    name: String(dagBridgeResponse.payload.code ?? 'GPT_DAG_BRIDGE_ERROR'),
+                    message:
+                      typeof dagBridgeResponse.payload.error === 'object' &&
+                      dagBridgeResponse.payload.error !== null &&
+                      typeof (dagBridgeResponse.payload.error as Record<string, unknown>).message === 'string'
+                        ? String((dagBridgeResponse.payload.error as Record<string, unknown>).message)
+                        : 'DAG bridge action failed.'
+                  }
+                }
+              : {})
+          });
+
+          return sendGuardedGptJsonResponse(
+            req,
+            res,
+            dagBridgeResponse.payload,
+            dagBridgeResponse.logEvent,
+            dagBridgeResponse.statusCode
           );
         }
 
