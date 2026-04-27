@@ -123,7 +123,7 @@ describe('workerAutonomyService', () => {
     recordWorkerLivenessMock.mockResolvedValue(undefined);
     upsertWorkerRuntimeStateMock.mockResolvedValue(undefined);
     appendWorkerRuntimeHistoryMock.mockResolvedValue(undefined);
-    delete process.env.WORKER_SNAPSHOT_PIPELINE_V2;
+    process.env.WORKER_SNAPSHOT_PIPELINE_V2 = 'false';
     delete process.env.WORKER_SNAPSHOT_PRESERVE_LEGACY_TABLE;
   });
 
@@ -1322,6 +1322,42 @@ describe('workerAutonomyService', () => {
         error: 'database write timeout'
       })
     );
+  });
+
+  it('routes worker heartbeat through V2 liveness by default when the env flag is unset', async () => {
+    delete process.env.WORKER_SNAPSHOT_PIPELINE_V2;
+
+    const service = new WorkerAutonomyService({
+      workerId: 'async-queue-slot-1',
+      workerType: 'async_queue',
+      heartbeatIntervalMs: 30_000,
+      leaseMs: 30_000,
+      inspectorIntervalMs: 30_000,
+      staleAfterMs: 90_000,
+      watchdogIdleMs: 120_000,
+      defaultMaxRetries: 2,
+      retryBackoffBaseMs: 2_000,
+      retryBackoffMaxMs: 60_000,
+      maxJobsPerHour: 120,
+      maxAiCallsPerHour: 120,
+      maxRssMb: 2_048,
+      queueDepthDeferralThreshold: 25,
+      queueDepthDeferralMs: 5_000,
+      failureWebhookUrl: null,
+      failureWebhookThreshold: 3,
+      failureWebhookCooldownMs: 300_000
+    });
+
+    await service.recordWorkerHeartbeat({ source: 'worker-heartbeat' });
+
+    expect(recordWorkerLivenessMock).toHaveBeenCalledWith({
+      workerId: 'async-queue-slot-1',
+      healthStatus: 'healthy',
+      lastSeenAt: expect.any(String)
+    });
+    expect(upsertWorkerRuntimeSnapshotMock).not.toHaveBeenCalled();
+
+    await service.flushSnapshotPipeline('test-cleanup');
   });
 
   it('routes worker heartbeat through V2 liveness without forcing rich snapshot persistence', async () => {

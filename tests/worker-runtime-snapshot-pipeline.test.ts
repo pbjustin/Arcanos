@@ -35,6 +35,7 @@ jest.unstable_mockModule('@platform/observability/appMetrics.js', () => ({
 const {
   WorkerRuntimeSnapshotPipeline,
   buildWorkerRuntimeSnapshotStateHash,
+  isWorkerSnapshotPipelineV2Enabled,
   normalizeWorkerRuntimeSnapshotForHash
 } = await import('../src/services/workerRuntimeSnapshotPipeline.js');
 
@@ -84,6 +85,13 @@ describe('WorkerRuntimeSnapshotPipeline', () => {
     repositoryRecordLivenessMock.mockResolvedValue(undefined);
     repositoryUpsertStateMock.mockResolvedValue(undefined);
     repositoryAppendHistoryMock.mockResolvedValue(undefined);
+  });
+
+  it('defaults the V2 pipeline on unless explicitly disabled', () => {
+    expect(isWorkerSnapshotPipelineV2Enabled({} as NodeJS.ProcessEnv)).toBe(true);
+    expect(isWorkerSnapshotPipelineV2Enabled({
+      WORKER_SNAPSHOT_PIPELINE_V2: 'false'
+    } as NodeJS.ProcessEnv)).toBe(false);
   });
 
   it('records heartbeat liveness without forcing rich snapshot persistence', async () => {

@@ -57,7 +57,7 @@ const defaultDependencies: WorkerRuntimeSnapshotPipelineDependencies = {
 };
 
 export function isWorkerSnapshotPipelineV2Enabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return readBooleanEnv(env.WORKER_SNAPSHOT_PIPELINE_V2, false);
+  return readBooleanEnv(env.WORKER_SNAPSHOT_PIPELINE_V2, true);
 }
 
 export function isWorkerSnapshotLegacyPreservationEnabled(env: NodeJS.ProcessEnv = process.env): boolean {

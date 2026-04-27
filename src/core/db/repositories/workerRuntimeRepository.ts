@@ -183,7 +183,14 @@ export async function upsertWorkerRuntimeSnapshot(
         record.lastInspectorRunAt,
         record.updatedAt,
         serializedSnapshot
-      ]
+      ],
+      1,
+      false,
+      {
+        queryName: 'worker_runtime_snapshot_upsert',
+        workerId: record.workerId,
+        source
+      }
     );
   } catch (error) {
     outcome = 'error';
@@ -237,7 +244,14 @@ export async function recordWorkerLiveness(record: WorkerLivenessRecord): Promis
         record.workerId,
         record.lastSeenAt,
         record.healthStatus
-      ]
+      ],
+      1,
+      false,
+      {
+        queryName: 'worker_liveness_upsert',
+        workerId: record.workerId,
+        source: 'worker-liveness'
+      }
     );
   } catch (error) {
     outcome = 'error';
@@ -372,10 +386,27 @@ export async function upsertWorkerRuntimeState(
            last_inspector_run_at = EXCLUDED.last_inspector_run_at,
            updated_at = EXCLUDED.updated_at,
            snapshot = EXCLUDED.snapshot`,
-        params
+        params,
+        1,
+        false,
+        {
+          queryName: 'worker_runtime_state_with_legacy_upsert',
+          workerId: record.workerId,
+          source
+        }
       );
     } else {
-      await query(stateUpsertSql, params);
+      await query(
+        stateUpsertSql,
+        params,
+        1,
+        false,
+        {
+          queryName: 'worker_runtime_state_upsert',
+          workerId: record.workerId,
+          source
+        }
+      );
     }
   } catch (error) {
     outcome = 'error';
@@ -451,7 +482,14 @@ export async function appendWorkerRuntimeHistory(
         record.currentJobId,
         record.updatedAt,
         serializedSnapshot
-      ]
+      ],
+      1,
+      false,
+      {
+        queryName: 'worker_runtime_history_insert',
+        workerId: record.workerId,
+        source
+      }
     );
   } catch (error) {
     outcome = 'error';
@@ -497,7 +535,12 @@ export async function listWorkerLiveness(): Promise<WorkerLivenessSnapshotRecord
          health_status
        FROM worker_liveness
        ORDER BY last_seen_at DESC`,
-      []
+      [],
+      1,
+      false,
+      {
+        queryName: 'worker_liveness_list'
+      }
     );
 
     return result.rows.map((row) => ({
@@ -549,7 +592,12 @@ export async function listWorkerRuntimeStateSnapshots(): Promise<WorkerRuntimeSn
          snapshot
        FROM worker_runtime_state
        ORDER BY changed_at DESC`,
-      []
+      [],
+      1,
+      false,
+      {
+        queryName: 'worker_runtime_state_list'
+      }
     );
 
     return result.rows
@@ -603,7 +651,13 @@ export async function getWorkerRuntimeSnapshotById(
      FROM worker_runtime_snapshots
      WHERE worker_id = $1
      LIMIT 1`,
-    [workerId]
+    [workerId],
+    1,
+    false,
+    {
+      queryName: 'worker_runtime_snapshot_get',
+      workerId
+    }
   );
 
   const row = result.rows[0] as Record<string, unknown> | undefined;
@@ -642,7 +696,12 @@ export async function listWorkerRuntimeSnapshots(): Promise<WorkerRuntimeSnapsho
        snapshot
      FROM worker_runtime_snapshots
      ORDER BY updated_at DESC`,
-    []
+    [],
+    1,
+    false,
+    {
+      queryName: 'worker_runtime_snapshot_list'
+    }
   );
 
   return result.rows
