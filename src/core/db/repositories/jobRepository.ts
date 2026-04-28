@@ -378,6 +378,8 @@ export const DEFAULT_QUEUE_DIAGNOSTICS_FAILURE_WINDOW_MS = 60 * 60 * 1000;
 export const DEFAULT_JOB_WORKER_STALE_AFTER_MS = 10_000;
 export const DEFAULT_FAILED_JOB_RETENTION_COUNT = 50;
 export const DEFAULT_FAILED_JOB_CLEANUP_MIN_AGE_MS = 24 * 60 * 60 * 1000;
+export const MAX_FAILED_JOB_RETENTION_COUNT = 500;
+export const MAX_FAILED_JOB_CLEANUP_MIN_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 export function resolveQueueDiagnosticsFailureWindowMs(
   env: NodeJS.ProcessEnv = process.env
@@ -411,7 +413,7 @@ function normalizeFailedJobRetentionCount(value: number | undefined): number {
     return DEFAULT_FAILED_JOB_RETENTION_COUNT;
   }
 
-  return Math.min(500, Math.max(1, Math.trunc(parsedValue)));
+  return Math.min(MAX_FAILED_JOB_RETENTION_COUNT, Math.max(1, Math.trunc(parsedValue)));
 }
 
 function normalizeFailedJobCleanupMinAgeMs(value: number | undefined): number {
@@ -420,7 +422,7 @@ function normalizeFailedJobCleanupMinAgeMs(value: number | undefined): number {
     return DEFAULT_FAILED_JOB_CLEANUP_MIN_AGE_MS;
   }
 
-  return Math.min(30 * 24 * 60 * 60 * 1000, Math.max(0, Math.trunc(parsedValue)));
+  return Math.min(MAX_FAILED_JOB_CLEANUP_MIN_AGE_MS, Math.max(0, Math.trunc(parsedValue)));
 }
 
 function buildEmptyFailureBreakdown(): JobFailureBreakdown {

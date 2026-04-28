@@ -114,7 +114,7 @@ async function sleepUntilWorkerProcessSignal(milliseconds: number): Promise<void
   try {
     await sleep(milliseconds, { signal: workerProcessShutdownController.signal });
   } catch (error: unknown) {
-    if (isAbortError(error) || workerProcessShutdownController.signal.aborted) {
+    if (isAbortError(error)) {
       return;
     }
     throw error;

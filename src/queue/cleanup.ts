@@ -2,6 +2,8 @@ import {
   cleanupRetainedFailedJobs,
   DEFAULT_FAILED_JOB_CLEANUP_MIN_AGE_MS,
   DEFAULT_FAILED_JOB_RETENTION_COUNT,
+  MAX_FAILED_JOB_CLEANUP_MIN_AGE_MS,
+  MAX_FAILED_JOB_RETENTION_COUNT,
   type CleanupRetainedFailedJobsResult
 } from '@core/db/repositories/jobRepository.js';
 import { logger } from '@platform/logging/structuredLogging.js';
@@ -54,12 +56,12 @@ export function resolveFailedJobCleanupPolicy(
     keep: parsePositiveIntegerEnv(
       env.QUEUE_FAILED_JOB_RETENTION_COUNT,
       DEFAULT_FAILED_JOB_RETENTION_COUNT,
-      { min: 1, max: 500 }
+      { min: 1, max: MAX_FAILED_JOB_RETENTION_COUNT }
     ),
     minAgeMs: parsePositiveIntegerEnv(
       env.QUEUE_FAILED_JOB_CLEANUP_MIN_AGE_MS,
       DEFAULT_FAILED_JOB_CLEANUP_MIN_AGE_MS,
-      { min: 0, max: 30 * 24 * 60 * 60 * 1000 }
+      { min: 0, max: MAX_FAILED_JOB_CLEANUP_MIN_AGE_MS }
     )
   };
 }

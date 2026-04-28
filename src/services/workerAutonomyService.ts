@@ -537,11 +537,11 @@ export class WorkerAutonomyService {
       maxRetries: this.settings.defaultMaxRetries
     });
     const expiredGptJobs = await cleanupExpiredGptJobs();
-    const cleanedFailedJobs = await runFailedJobCleanup(source);
+    const { deletedFailed, retainedFailed } = await runFailedJobCleanup(source);
     const cleaned = {
       ...expiredGptJobs,
-      deletedFailed: cleanedFailedJobs.deletedFailed,
-      retainedFailed: cleanedFailedJobs.retainedFailed
+      deletedFailed,
+      retainedFailed
     };
     const stats = await getJobExecutionStatsSince(
       new Date(Date.now() - 60 * 60 * 1000),
