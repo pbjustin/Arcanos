@@ -122,6 +122,13 @@ export interface ScheduleJobRetryOptions {
   autonomyState?: Record<string, unknown>;
 }
 
+export interface DeferJobForProviderRecoveryOptions {
+  workerId?: string;
+  delayMs: number;
+  errorMessage: string;
+  autonomyState?: Record<string, unknown>;
+}
+
 export interface RecoverStaleJobsOptions {
   staleAfterMs: number;
   maxRetries?: number;
@@ -1366,6 +1373,47 @@ export async function scheduleJobRetry(
       normalizeJsonbInput(
         normalizeAutonomyState(options.autonomyState),
         'jobRepository.scheduleJobRetry.autonomyState'
+      ),
+      jobId
+    ]
+  );
+
+  return result.rows[0] as JobData;
+}
+
+/**
+ * Defer a claimed job until provider recovery without consuming retry budget.
+ * Purpose: keep the queue claim loop alive when an upstream provider/circuit is unavailable while avoiding retry exhaustion before recovery.
+ * Inputs/outputs: accepts a running job id, delay, and provider context; returns the re-pending job row.
+ * Edge case behavior: clears the lease like a retry, but intentionally leaves retry_count unchanged.
+ */
+export async function deferJobForProviderRecovery(
+  jobId: string,
+  options: DeferJobForProviderRecoveryOptions
+): Promise<JobData> {
+  assertDatabaseReady();
+
+  const result = await query(
+    `UPDATE job_data
+     SET
+       status = 'pending',
+       error_message = $1,
+       next_run_at = NOW() + ($2::bigint * INTERVAL '1 millisecond'),
+       updated_at = NOW(),
+       completed_at = NULL,
+       last_heartbeat_at = NULL,
+       lease_expires_at = NULL,
+       last_worker_id = COALESCE($3, last_worker_id),
+       autonomy_state = COALESCE(autonomy_state, '{}'::jsonb) || $4::jsonb
+     WHERE id = $5
+     RETURNING *`,
+    [
+      options.errorMessage,
+      Math.max(0, options.delayMs),
+      options.workerId ?? null,
+      normalizeJsonbInput(
+        normalizeAutonomyState(options.autonomyState),
+        'jobRepository.deferJobForProviderRecovery.autonomyState'
       ),
       jobId
     ]

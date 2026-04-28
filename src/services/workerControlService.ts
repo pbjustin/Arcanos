@@ -154,6 +154,12 @@ export interface WorkerControlWorkerSnapshot {
   healthStatus: string;
   operationalStatus: WorkerAutonomyHealthReport['overallStatus'];
   activeJobs: string[];
+  dispatcherStarted: boolean;
+  activeListeners: number;
+  lastPollAt: string | null;
+  lastClaimAttemptAt: string | null;
+  lastClaimResult: string | null;
+  disabledReason: string | null;
   currentJobId: string | null;
   lastError: string | null;
   lastHeartbeatAt: string | null;
@@ -510,6 +516,13 @@ function readSnapshotNumber(
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
+function readSnapshotBoolean(
+  snapshot: Record<string, unknown>,
+  key: string
+): boolean {
+  return snapshot[key] === true;
+}
+
 function readSnapshotStringArray(
   snapshot: Record<string, unknown>,
   key: string
@@ -629,6 +642,8 @@ function buildWorkerControlWorkerSnapshot(
   const lastProcessedJobAt = readSnapshotString(snapshot, 'lastProcessedJobAt');
   const lastRecoveryActionAt = readSnapshotString(snapshot, 'lastRecoveryActionAt');
   const lastWatchdogRunAt = readSnapshotString(snapshot, 'lastWatchdogRunAt');
+  const dispatcherStarted = readSnapshotBoolean(snapshot, 'dispatcherStarted');
+  const activeListeners = readSnapshotNumber(snapshot, 'activeListeners') ?? 0;
   const activeJobs = readSnapshotStringArray(snapshot, 'activeJobs');
   const heartbeatAgeMs = deriveObservationAgeMs({
     lastHeartbeatAt: workerSnapshot.lastHeartbeatAt,
@@ -651,6 +666,12 @@ function buildWorkerControlWorkerSnapshot(
       : workerSnapshot.currentJobId
       ? [workerSnapshot.currentJobId]
       : [],
+    dispatcherStarted,
+    activeListeners,
+    lastPollAt: readSnapshotString(snapshot, 'lastPollAt'),
+    lastClaimAttemptAt: readSnapshotString(snapshot, 'lastClaimAttemptAt'),
+    lastClaimResult: readSnapshotString(snapshot, 'lastClaimResult'),
+    disabledReason: readSnapshotString(snapshot, 'disabledReason'),
     currentJobId: workerSnapshot.currentJobId,
     lastError: workerSnapshot.lastError,
     lastHeartbeatAt: workerSnapshot.lastHeartbeatAt,

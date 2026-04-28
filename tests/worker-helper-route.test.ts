@@ -20,6 +20,7 @@ jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
   getJobQueueSummary: getJobQueueSummaryMock,
   getLatestJob: getLatestJobMock,
   listFailedJobs: listFailedJobsMock,
+  deferJobForProviderRecovery: jest.fn(),
   requeueFailedJob: requeueFailedJobMock
 }));
 
@@ -443,6 +444,12 @@ describe('/worker-helper routes', () => {
             healthStatus: 'healthy',
             operationalStatus: 'healthy',
             activeJobs: [],
+            dispatcherStarted: false,
+            activeListeners: 0,
+            lastPollAt: null,
+            lastClaimAttemptAt: null,
+            lastClaimResult: null,
+            disabledReason: null,
             currentJobId: null,
             lastError: null,
             lastHeartbeatAt: '2026-03-06T10:00:00.000Z',

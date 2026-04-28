@@ -345,6 +345,10 @@ function normalizeWorkerRuntimeSnapshotPayloadForHash(
 ): Record<string, unknown> {
   return {
     activeJobs: snapshot.activeJobs,
+    dispatcherStarted: snapshot.dispatcherStarted,
+    activeListeners: snapshot.activeListeners,
+    lastClaimResult: snapshot.lastClaimResult,
+    disabledReason: snapshot.disabledReason,
     processedJobs: snapshot.processedJobs,
     scheduledRetries: snapshot.scheduledRetries,
     terminalFailures: snapshot.terminalFailures,

@@ -20,6 +20,7 @@ jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
   getJobQueueSummary: jest.fn(),
   getLatestJob: getLatestJobMock,
   listFailedJobs: listFailedJobsMock,
+  deferJobForProviderRecovery: jest.fn(),
   requeueFailedJob: requeueFailedJobMock
 }));
 

@@ -6,6 +6,7 @@ const recordJobHeartbeatMock = jest.fn();
 const recoverStalledJobsForWorkersMock = jest.fn();
 const recoverStaleJobsMock = jest.fn();
 const scheduleJobRetryMock = jest.fn();
+const deferJobForProviderRecoveryMock = jest.fn();
 const updateJobMock = jest.fn();
 const cleanupExpiredGptJobsMock = jest.fn();
 const listWorkerLivenessMock = jest.fn();
@@ -28,6 +29,7 @@ jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
   recoverStalledJobsForWorkers: recoverStalledJobsForWorkersMock,
   recoverStaleJobs: recoverStaleJobsMock,
   scheduleJobRetry: scheduleJobRetryMock,
+  deferJobForProviderRecovery: deferJobForProviderRecoveryMock,
   updateJob: updateJobMock,
   cleanupExpiredGptJobs: cleanupExpiredGptJobsMock
 }));
@@ -125,6 +127,9 @@ describe('workerAutonomyService', () => {
       deletedJobIds: []
     });
     scheduleJobRetryMock.mockResolvedValue({
+      id: 'job-1'
+    });
+    deferJobForProviderRecoveryMock.mockResolvedValue({
       id: 'job-1'
     });
     updateJobMock.mockResolvedValue({
@@ -541,6 +546,111 @@ describe('workerAutonomyService', () => {
       })
     );
     expect(updateJobMock).not.toHaveBeenCalled();
+  });
+
+  it('defers provider-unavailable jobs without consuming retry budget', async () => {
+    const service = new WorkerAutonomyService({
+      workerId: 'async-queue',
+      workerType: 'async_queue',
+      heartbeatIntervalMs: 10_000,
+      leaseMs: 30_000,
+      inspectorIntervalMs: 30_000,
+      staleAfterMs: 60_000,
+      defaultMaxRetries: 2,
+      retryBackoffBaseMs: 2_000,
+      retryBackoffMaxMs: 60_000,
+      maxJobsPerHour: 120,
+      maxAiCallsPerHour: 120,
+      maxRssMb: 2_048,
+      queueDepthDeferralThreshold: 25,
+      queueDepthDeferralMs: 5_000,
+      failureWebhookUrl: null,
+      failureWebhookThreshold: 3,
+      failureWebhookCooldownMs: 300_000
+    });
+
+    const result = await service.deferJobForProviderRecovery(
+      {
+        id: 'job-provider',
+        job_type: 'ask',
+        worker_id: 'async-queue',
+        status: 'running',
+        input: { prompt: 'test' },
+        retry_count: 2,
+        max_retries: 2,
+        created_at: new Date(),
+        updated_at: new Date()
+      } as any,
+      {
+        delayMs: 60_000,
+        errorMessage: 'OpenAI provider unavailable before job execution; job deferred until provider recovery.',
+        providerNextRetryAt: '2026-03-07T12:01:00.000Z',
+        providerFailureCategory: 'circuit_open'
+      }
+    );
+
+    expect(result).toEqual({
+      action: 'deferred',
+      delayMs: 60_000
+    });
+    expect(deferJobForProviderRecoveryMock).toHaveBeenCalledWith(
+      'job-provider',
+      expect.objectContaining({
+        delayMs: 60_000,
+        workerId: 'async-queue',
+        autonomyState: expect.objectContaining({
+          providerDeferral: expect.objectContaining({
+            retryBudgetConsumed: false,
+            failureCategory: 'circuit_open'
+          })
+        })
+      })
+    );
+    expect(scheduleJobRetryMock).not.toHaveBeenCalled();
+    expect(updateJobMock).not.toHaveBeenCalled();
+  });
+
+  it('persists dispatcher diagnostics for startup and empty-queue polling', async () => {
+    const service = new WorkerAutonomyService({
+      workerId: 'async-queue-slot-1',
+      statsWorkerId: 'async-queue',
+      workerType: 'async_queue',
+      heartbeatIntervalMs: 10_000,
+      leaseMs: 30_000,
+      inspectorIntervalMs: 30_000,
+      staleAfterMs: 60_000,
+      defaultMaxRetries: 2,
+      retryBackoffBaseMs: 2_000,
+      retryBackoffMaxMs: 60_000,
+      maxJobsPerHour: 120,
+      maxAiCallsPerHour: 120,
+      maxRssMb: 2_048,
+      queueDepthDeferralThreshold: 25,
+      queueDepthDeferralMs: 5_000,
+      failureWebhookUrl: null,
+      failureWebhookThreshold: 3,
+      failureWebhookCooldownMs: 300_000
+    });
+
+    await service.markDispatcherStarted(2);
+    service.recordClaimAttempt();
+    service.recordClaimResult('no_job_available');
+    await service.markIdle();
+
+    expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        workerId: 'async-queue-slot-1',
+        snapshot: expect.objectContaining({
+          dispatcherStarted: true,
+          activeListeners: 2,
+          lastPollAt: expect.any(String),
+          lastClaimAttemptAt: expect.any(String),
+          lastClaimResult: 'no_job_available',
+          disabledReason: null
+        })
+      }),
+      { source: 'worker-idle' }
+    );
   });
 
   it('marks retry-exhausted transient failures as dead-lettered', async () => {
