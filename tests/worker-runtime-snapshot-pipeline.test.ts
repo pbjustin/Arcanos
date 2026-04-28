@@ -45,6 +45,8 @@ function buildSnapshot(overrides: Partial<{
   currentJobId: string | null;
   lastError: string | null;
   lastHeartbeatAt: string | null;
+  lastPollAt: string | null;
+  lastClaimAttemptAt: string | null;
   source: string;
   processedJobs: number;
 }> = {}) {
@@ -73,6 +75,8 @@ function buildSnapshot(overrides: Partial<{
         inactivityMs: 30_000,
         lastHeartbeatAt: overrides.lastHeartbeatAt ?? '2026-04-23T20:00:30.000Z'
       },
+      lastPollAt: overrides.lastPollAt ?? null,
+      lastClaimAttemptAt: overrides.lastClaimAttemptAt ?? null,
       lastPersistSource: source,
       alerts: []
     }
@@ -221,6 +225,24 @@ describe('WorkerRuntimeSnapshotPipeline', () => {
 
     expect(firstHash).toBe(secondHash);
     expect(changedHash).not.toBe(firstHash);
+  });
+
+  it('keeps periodic poll diagnostic buckets in the state hash', () => {
+    const firstHash = buildWorkerRuntimeSnapshotStateHash(buildSnapshot({
+      lastPollAt: '2026-04-23T20:00:05.000Z',
+      lastClaimAttemptAt: '2026-04-23T20:00:05.000Z'
+    }));
+    const sameBucketHash = buildWorkerRuntimeSnapshotStateHash(buildSnapshot({
+      lastPollAt: '2026-04-23T20:00:25.000Z',
+      lastClaimAttemptAt: '2026-04-23T20:00:25.000Z'
+    }));
+    const nextBucketHash = buildWorkerRuntimeSnapshotStateHash(buildSnapshot({
+      lastPollAt: '2026-04-23T20:00:35.000Z',
+      lastClaimAttemptAt: '2026-04-23T20:00:35.000Z'
+    }));
+
+    expect(firstHash).toBe(sameBucketHash);
+    expect(firstHash).not.toBe(nextBucketHash);
   });
 
   it('normalizes volatile inspector, watchdog, queue, and stats observations out of the state hash', () => {

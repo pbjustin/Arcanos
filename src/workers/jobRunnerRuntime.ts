@@ -73,6 +73,34 @@ function readNonNegativeIntegerEnvValue(
 }
 
 /**
+ * Resolve how long a claimed job should be deferred while the provider recovers.
+ * Purpose: keep claimed jobs out of immediate re-claim churn until the provider retry window opens.
+ * Inputs/outputs: accepts the provider retry timestamp plus a local fallback, returns a positive delay in ms.
+ * Edge case behavior: stale or invalid retry timestamps fall back to at least one second.
+ */
+export function resolveProviderPauseMs(
+  nextRetryAt: string | null,
+  fallbackMs: number,
+  nowMs = Date.now()
+): number {
+  const normalizedFallbackMs =
+    Number.isFinite(fallbackMs) && fallbackMs > 0
+      ? Math.max(1_000, Math.trunc(fallbackMs))
+      : 1_000;
+
+  if (!nextRetryAt) {
+    return normalizedFallbackMs;
+  }
+
+  const remainingMs = Math.ceil(Date.parse(nextRetryAt) - nowMs);
+  if (!Number.isFinite(remainingMs) || remainingMs <= 0) {
+    return normalizedFallbackMs;
+  }
+
+  return Math.max(normalizedFallbackMs, remainingMs);
+}
+
+/**
  * Resolve a stable per-worker offset for interval work.
  * Purpose: spread same-frequency worker tasks without relying on non-deterministic randomness.
  * Inputs/outputs: accepts a worker id and interval, returns an offset in [0, intervalMs).

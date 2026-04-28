@@ -605,12 +605,18 @@ function deriveWorkerOperationalStatus(
   workerSnapshot: WorkerRuntimeSnapshotRecord,
   queueSummary: JobQueueSummary | null,
   watchdog: WorkerControlWorkerSnapshot['watchdog'],
-  stale: boolean
+  stale: boolean,
+  dispatcherStarted: boolean,
+  activeListeners: number
 ): WorkerAutonomyHealthReport['overallStatus'] {
   const activeQueueWork = hasActiveQueueWork(queueSummary);
 
   if (workerSnapshot.healthStatus === 'offline') {
     return 'offline';
+  }
+
+  if (activeQueueWork && (!dispatcherStarted || activeListeners <= 0)) {
+    return 'unhealthy';
   }
 
   if (watchdog.triggered || workerSnapshot.healthStatus === 'unhealthy') {
@@ -653,7 +659,14 @@ function buildWorkerControlWorkerSnapshot(
     workerId: workerSnapshot.workerId,
     workerType: workerSnapshot.workerType,
     healthStatus: workerSnapshot.healthStatus,
-    operationalStatus: deriveWorkerOperationalStatus(workerSnapshot, queueSummary, watchdog, stale),
+    operationalStatus: deriveWorkerOperationalStatus(
+      workerSnapshot,
+      queueSummary,
+      watchdog,
+      stale,
+      dispatcherStarted,
+      activeListeners
+    ),
     activeJobs: activeJobs.length > 0
       ? activeJobs
       : workerSnapshot.currentJobId
@@ -715,6 +728,13 @@ function buildWorkerOperationalAlerts(
   if (activeQueueWork) {
     for (const worker of workers) {
       if (worker.operationalStatus === 'healthy' || worker.operationalStatus === 'offline') {
+        continue;
+      }
+      if (!worker.dispatcherStarted || worker.activeListeners <= 0) {
+        const reasonSuffix = worker.disabledReason ? `: ${worker.disabledReason}` : '.';
+        alerts.add(
+          `Worker ${worker.workerId} dispatcher is not active while queue work is active${reasonSuffix}`
+        );
         continue;
       }
       alerts.add(

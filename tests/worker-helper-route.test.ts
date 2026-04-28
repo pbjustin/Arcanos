@@ -252,6 +252,8 @@ describe('/worker-helper routes', () => {
           lastHeartbeatAt: '2026-03-06T10:00:00.000Z',
           updatedAt: '2026-03-06T10:00:00.000Z',
           snapshot: {
+            dispatcherStarted: true,
+            activeListeners: 2,
             lastActivityAt: '2026-03-06T10:00:00.000Z',
             lastProcessedJobAt: '2026-03-06T09:59:30.000Z',
             watchdog: {
@@ -444,8 +446,8 @@ describe('/worker-helper routes', () => {
             healthStatus: 'healthy',
             operationalStatus: 'healthy',
             activeJobs: [],
-            dispatcherStarted: false,
-            activeListeners: 0,
+            dispatcherStarted: true,
+            activeListeners: 2,
             lastPollAt: null,
             lastClaimAttemptAt: null,
             lastClaimResult: null,

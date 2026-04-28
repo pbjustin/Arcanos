@@ -41,6 +41,7 @@ import {
   isEntrypointModule,
   isRetryableJobRunnerDatabaseBootstrapError,
   resolveJobRunnerDatabaseBootstrapSettings,
+  resolveProviderPauseMs,
   resolveJobRunnerRuntimeSettings,
   type JobRunnerDatabaseBootstrapSettings,
   type JobRunnerRuntimeSettings,
@@ -357,19 +358,6 @@ function hydrateQueuedGptBodyPrompt(
     ...body,
     prompt
   };
-}
-
-function resolveProviderPauseMs(nextRetryAt: string | null, fallbackMs: number): number {
-  if (!nextRetryAt) {
-    return fallbackMs;
-  }
-
-  const remainingMs = Date.parse(nextRetryAt) - Date.now();
-  if (!Number.isFinite(remainingMs) || remainingMs <= 0) {
-    return fallbackMs;
-  }
-
-  return Math.max(1_000, Math.min(Math.max(fallbackMs, 1_000), remainingMs));
 }
 
 async function ensureOpenAIClientForSlot(params: {

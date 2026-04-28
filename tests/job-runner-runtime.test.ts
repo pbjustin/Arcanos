@@ -10,6 +10,7 @@ import {
   isEntrypointModule,
   isRetryableJobRunnerDatabaseBootstrapError,
   resolveJobRunnerDatabaseBootstrapSettings,
+  resolveProviderPauseMs,
   resolveJobRunnerRuntimeSettings
 } from '../src/workers/jobRunnerRuntime.js';
 
@@ -111,6 +112,25 @@ describe('jobRunnerRuntime', () => {
       maxRetryMs: 30000,
       maxAttempts: null
     });
+  });
+
+  it('defers provider-unavailable jobs until the provider retry window instead of idle backoff', () => {
+    const nowMs = Date.parse('2026-04-28T20:00:00.000Z');
+
+    expect(
+      resolveProviderPauseMs('2026-04-28T20:01:00.000Z', 1_000, nowMs)
+    ).toBe(60_000);
+    expect(
+      resolveProviderPauseMs('2026-04-28T20:00:00.500Z', 1_000, nowMs)
+    ).toBe(1_000);
+  });
+
+  it('falls back to a positive provider pause when retry timestamps are absent or stale', () => {
+    const nowMs = Date.parse('2026-04-28T20:00:00.000Z');
+
+    expect(resolveProviderPauseMs(null, 250, nowMs)).toBe(1_000);
+    expect(resolveProviderPauseMs('2026-04-28T19:59:59.000Z', 2_500, nowMs)).toBe(2_500);
+    expect(resolveProviderPauseMs('not-a-date', Number.NaN, nowMs)).toBe(1_000);
   });
 
   it('classifies transient database bootstrap reachability errors as retryable', () => {
