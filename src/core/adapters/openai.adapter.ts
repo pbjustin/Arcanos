@@ -451,7 +451,7 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): OpenAIAdapter 
       callback: () => originalResponsesCreate(normalizedResponsePayload, options),
       extractUsage: (result) => (result as { usage?: unknown } | null)?.usage,
     });
-    return convertResponseToLegacyChatCompletion(response, String(nonStreamingParams.model || 'gpt-4.1-mini'));
+    return convertResponseToLegacyChatCompletion(response, nonStreamingParams.model);
   };
 
   const safeResponsesParse = async (
@@ -514,7 +514,7 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): OpenAIAdapter 
         callback: () => originalResponsesCreate(normalizedResponsePayload, options),
         extractUsage: (result) => (result as { usage?: unknown } | null)?.usage,
       });
-      return convertResponseToLegacyChatCompletion(response, String(nonStreamingParams.model || 'gpt-4.1-mini'));
+      return convertResponseToLegacyChatCompletion(response, nonStreamingParams.model);
     }
 
     //audit Assumption: canonical responses payloads should pass through unchanged; risk: accidental mutation of advanced params; invariant: direct responses API path remains available; handling: forward params/options directly.

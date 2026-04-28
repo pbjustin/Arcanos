@@ -953,47 +953,49 @@ async function runWorkerConsumerSlot(
           );
         }
       };
-      if (gptCancellationController) {
-        if (workerProcessShutdownController.signal.aborted) {
-          abortGptOnProcessShutdown();
-        } else {
-          workerProcessShutdownController.signal.addEventListener(
-            'abort',
-            abortGptOnProcessShutdown,
-            { once: true }
-          );
-        }
-      }
-      const heartbeatHandle = startHeartbeatLoop(
-        autonomyService,
-        job.id,
-        slotDefinition.workerId,
-        (updatedJob) => {
-          if (
-            gptCancellationController &&
-            updatedJob?.cancel_requested_at &&
-            !gptCancellationController.signal.aborted
-          ) {
-            gptCancellationController.abort(
-              createAbortError(updatedJob.cancel_reason ?? 'GPT job cancellation requested.')
+      let heartbeatHandle: NodeJS.Timeout | null = null;
+      const jobStartedAtMs = Date.now();
+
+      try {
+        if (gptCancellationController) {
+          if (workerProcessShutdownController.signal.aborted) {
+            abortGptOnProcessShutdown();
+          } else {
+            workerProcessShutdownController.signal.addEventListener(
+              'abort',
+              abortGptOnProcessShutdown,
+              { once: true }
             );
           }
         }
-      );
-      const jobStartedAtMs = Date.now();
-      const queueWaitMs = Math.max(
-        0,
-        jobStartedAtMs - new Date(job.created_at as string | Date).getTime()
-      );
-      if (job.job_type === 'gpt') {
-        recordGptJobTiming({
-          phase: 'queue_wait',
-          outcome: 'claimed',
-          durationMs: queueWaitMs
-        });
-      }
+        heartbeatHandle = startHeartbeatLoop(
+          autonomyService,
+          job.id,
+          slotDefinition.workerId,
+          (updatedJob) => {
+            if (
+              gptCancellationController &&
+              updatedJob?.cancel_requested_at &&
+              !gptCancellationController.signal.aborted
+            ) {
+              gptCancellationController.abort(
+                createAbortError(updatedJob.cancel_reason ?? 'GPT job cancellation requested.')
+              );
+            }
+          }
+        );
+        const queueWaitMs = Math.max(
+          0,
+          jobStartedAtMs - new Date(job.created_at as string | Date).getTime()
+        );
+        if (job.job_type === 'gpt') {
+          recordGptJobTiming({
+            phase: 'queue_wait',
+            outcome: 'claimed',
+            durationMs: queueWaitMs
+          });
+        }
 
-      try {
         const aiExecutionContext = createAiExecutionContext({
           sourceType: 'job',
           sourceName: job.job_type,
@@ -1244,7 +1246,9 @@ async function runWorkerConsumerSlot(
           'abort',
           abortGptOnProcessShutdown
         );
-        clearInterval(heartbeatHandle);
+        if (heartbeatHandle) {
+          clearInterval(heartbeatHandle);
+        }
       }
 
       await sleepUntilWorkerProcessSignal(runtimeSettings.pollMs);
