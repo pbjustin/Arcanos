@@ -863,6 +863,26 @@ function buildAutonomyServiceForSlot(
   );
 }
 
+async function pauseClaimIfBudgetDisallowed(
+  autonomyService: WorkerAutonomyService,
+  slotDefinition: JobRunnerSlotDefinition
+): Promise<boolean> {
+  const budgetDecision = await autonomyService.evaluateBudgetsBeforeClaim();
+  if (budgetDecision.allowed) {
+    return false;
+  }
+
+  autonomyService.recordClaimResult('budget_paused');
+  logger.warn('worker.claim.paused_budget', {
+    module: 'job-runner',
+    workerId: slotDefinition.workerId,
+    reason: budgetDecision.reason,
+    sleepMs: budgetDecision.sleepMs
+  });
+  await sleepUntilWorkerProcessSignal(budgetDecision.sleepMs);
+  return true;
+}
+
 /**
  * Run one queue-consumer slot inside the Railway worker process.
  * Purpose: allow one deployed worker container to claim and execute multiple queue jobs concurrently.
@@ -900,16 +920,7 @@ async function runWorkerConsumerSlot(
   try {
     while (!isWorkerProcessShutdownRequested()) {
       try {
-        const budgetDecision = await autonomyService.evaluateBudgetsBeforeClaim();
-        if (!budgetDecision.allowed) {
-          autonomyService.recordClaimResult('budget_paused');
-          logger.warn('worker.claim.paused_budget', {
-            module: 'job-runner',
-            workerId: slotDefinition.workerId,
-            reason: budgetDecision.reason,
-            sleepMs: budgetDecision.sleepMs
-          });
-          await sleepUntilWorkerProcessSignal(budgetDecision.sleepMs);
+        if (await pauseClaimIfBudgetDisallowed(autonomyService, slotDefinition)) {
           continue;
         }
 

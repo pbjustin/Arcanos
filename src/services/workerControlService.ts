@@ -516,13 +516,6 @@ function readSnapshotNumber(
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
 }
 
-function readSnapshotBoolean(
-  snapshot: Record<string, unknown>,
-  key: string
-): boolean {
-  return snapshot[key] === true;
-}
-
 function readSnapshotStringArray(
   snapshot: Record<string, unknown>,
   key: string
@@ -642,7 +635,7 @@ function buildWorkerControlWorkerSnapshot(
   const lastProcessedJobAt = readSnapshotString(snapshot, 'lastProcessedJobAt');
   const lastRecoveryActionAt = readSnapshotString(snapshot, 'lastRecoveryActionAt');
   const lastWatchdogRunAt = readSnapshotString(snapshot, 'lastWatchdogRunAt');
-  const dispatcherStarted = readSnapshotBoolean(snapshot, 'dispatcherStarted');
+  const dispatcherStarted = snapshot.dispatcherStarted === true;
   const activeListeners = readSnapshotNumber(snapshot, 'activeListeners') ?? 0;
   const activeJobs = readSnapshotStringArray(snapshot, 'activeJobs');
   const heartbeatAgeMs = deriveObservationAgeMs({

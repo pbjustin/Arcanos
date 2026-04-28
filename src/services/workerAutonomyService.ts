@@ -511,7 +511,7 @@ export class WorkerAutonomyService {
   async markDispatcherStarted(activeListeners: number): Promise<void> {
     const startedAt = new Date().toISOString();
     this.state.dispatcherStarted = true;
-    this.state.activeListeners = Math.max(1, Math.trunc(activeListeners));
+    this.state.activeListeners = Math.max(1, activeListeners);
     this.state.disabledReason = null;
     this.state.lastHeartbeatAt = this.state.lastHeartbeatAt ?? startedAt;
     this.state.lastActivityAt = this.state.lastActivityAt ?? startedAt;
