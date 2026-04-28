@@ -96,6 +96,16 @@ const environmentChecks: EnvironmentCheck[] = [
     ]
   },
   {
+    name: 'ARCANOS_GPT_ACCESS_TOKEN',
+    required: false,
+    description: 'Bearer token for /gpt-access control/read gateway',
+    validator: (value) => value.trim().length >= 24,
+    suggestions: [
+      'Generate a high-entropy token and set ARCANOS_GPT_ACCESS_TOKEN in Railway',
+      'Use ARCANOS_GPT_ACCESS_SCOPES to restrict access; include jobs.create only when needed'
+    ]
+  },
+  {
     name: 'AI_MODEL',
     required: false,
     description: 'Default AI model to use',
@@ -170,6 +180,70 @@ function isSensitiveEnvironmentVariable(name: string): boolean {
   return /(key|token|secret|password|credential|database_url|connection|dsn)/i.test(name);
 }
 
+function parseBooleanEnvValue(value: string | undefined): boolean | null {
+  if (!value || value.trim().length === 0) {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (['true', '1', 'yes', 'on'].includes(normalized)) {
+    return true;
+  }
+  if (['false', '0', 'no', 'off'].includes(normalized)) {
+    return false;
+  }
+
+  return null;
+}
+
+export function isOpenAIApiKeyRequiredForStartup(): boolean {
+  const explicitRequired = parseBooleanEnvValue(getEnv('OPENAI_API_KEY_REQUIRED'));
+  if (explicitRequired !== null) {
+    return explicitRequired;
+  }
+
+  if (
+    getEnv('NODE_ENV') === 'test' ||
+    parseBooleanEnvValue(getEnv('ALLOW_MOCK_OPENAI')) === true ||
+    parseBooleanEnvValue(getEnv('FORCE_MOCK')) === true
+  ) {
+    return false;
+  }
+
+  const config = getConfig();
+  return config.isProduction || config.isRailway;
+}
+
+function isGptAccessTokenRequiredForStartup(): boolean {
+  if (
+    getEnv('NODE_ENV') === 'test' ||
+    parseBooleanEnvValue(getEnv('ALLOW_MOCK_OPENAI')) === true ||
+    parseBooleanEnvValue(getEnv('FORCE_MOCK')) === true
+  ) {
+    return false;
+  }
+
+  return getConfig().isProduction;
+}
+
+function isCheckRequired(check: EnvironmentCheck): boolean {
+  if (check.name === 'OPENAI_API_KEY') {
+    return isOpenAIApiKeyRequiredForStartup();
+  }
+  if (check.name === 'ARCANOS_GPT_ACCESS_TOKEN') {
+    return isGptAccessTokenRequiredForStartup();
+  }
+  return check.required;
+}
+
+function resolveEnvironmentCheckValue(checkName: string): string | undefined {
+  if (checkName === 'OPENAI_API_KEY') {
+    return getConfig().openaiApiKey;
+  }
+
+  return getEnv(checkName);
+}
+
 function buildValidationLogContext(checkName: string, value: string): ValidationLogContext {
   const isSensitive = isSensitiveEnvironmentVariable(checkName);
 
@@ -205,10 +279,11 @@ export function validateEnvironment(): ValidationResult {
 
   for (const check of environmentChecks) {
     // Use config layer for env access (adapter boundary pattern)
-    const value = getEnv(check.name);
+    const value = resolveEnvironmentCheckValue(check.name);
+    const required = isCheckRequired(check);
     
     if (!value || value.trim() === '') {
-      if (check.required) {
+      if (required) {
         result.errors.push(`❌ Required environment variable ${check.name} is not set`);
         result.isValid = false;
         
@@ -233,7 +308,10 @@ export function validateEnvironment(): ValidationResult {
 
     // Validate the value if validator is provided
     if (check.validator && !check.validator(value)) {
-      result.errors.push(`❌ Invalid value for ${check.name}: "${value}"`);
+      const invalidValueDescription = isSensitiveEnvironmentVariable(check.name)
+        ? `set but invalid (${value.length} characters)`
+        : `"${value}"`;
+      result.errors.push(`❌ Invalid value for ${check.name}: ${invalidValueDescription}`);
       result.isValid = false;
       
       if (check.suggestions) {

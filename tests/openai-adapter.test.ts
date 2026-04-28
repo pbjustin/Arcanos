@@ -128,4 +128,17 @@ describe('openai adapter', () => {
     expect(responsesCreateMock).toHaveBeenCalledTimes(1);
     expect(result).toEqual(expect.objectContaining({ output_parsed: { ok: true } }));
   });
+
+  it('rejects invalid responses payloads before calling the SDK', async () => {
+    const adapter = createOpenAIAdapter({ apiKey: 'test-key' });
+
+    await expect(
+      adapter.responses.create({ model: 'gpt-4.1-mini', input: '' } as any)
+    ).rejects.toMatchObject({
+      name: 'OpenAIRequestValidationError',
+      retryable: false
+    });
+
+    expect(responsesCreateMock).not.toHaveBeenCalled();
+  });
 });

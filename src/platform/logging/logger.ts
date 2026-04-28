@@ -186,6 +186,7 @@ class StructuredLogger {
       metadata: entry.metadata
         ? (redactSensitive(entry.metadata) as Record<string, unknown>)
         : undefined,
+      error: sanitizeLogError(entry.error)
     };
 
     //audit Assumption: production logs should be structured JSON
@@ -292,6 +293,14 @@ function parseLogLevel(raw: string | undefined): LogLevel {
     default:
       return LogLevel.INFO;
   }
+}
+
+function sanitizeLogError(error: LogEntry['error']): LogEntry['error'] {
+  if (!error) {
+    return undefined;
+  }
+
+  return redactSensitive(error) as LogEntry['error'];
 }
 
 export function getConfiguredLogLevel(): LogLevel {

@@ -44,6 +44,7 @@ import {
   recordWorkerStalledJobs
 } from '@platform/observability/appMetrics.js';
 import { logger } from '@platform/logging/structuredLogging.js';
+import { runFailedJobCleanup } from '../queue/cleanup.js';
 
 export type WorkerAutonomyHealthStatus = 'healthy' | 'degraded' | 'unhealthy' | 'offline';
 
@@ -131,6 +132,8 @@ export interface WorkerInspectionResult {
     expiredPending: number;
     expiredTerminal: number;
     deletedExpired: number;
+    deletedFailed: number;
+    retainedFailed: number;
   };
   queueSummary: JobQueueSummary | null;
   stats: JobExecutionStats;
@@ -194,6 +197,27 @@ type WorkerRuntimeSnapshotPipelinePort = Pick<
   WorkerRuntimeSnapshotPipeline,
   'recordLiveness' | 'recordSnapshotIntent' | 'flushWorker' | 'shutdown'
 >;
+
+function resolveWorkerLivenessRetentionMs(settings: WorkerAutonomySettings): number {
+  return Math.max(
+    settings.watchdogIdleMs,
+    settings.staleAfterMs * 6,
+    settings.heartbeatIntervalMs * 6
+  );
+}
+
+function filterFreshWorkerLivenessRecords(
+  records: WorkerLivenessSnapshotRecord[],
+  settings: WorkerAutonomySettings
+): WorkerLivenessSnapshotRecord[] {
+  const retentionMs = resolveWorkerLivenessRetentionMs(settings);
+  const cutoffMs = Date.now() - retentionMs;
+
+  return records.filter((record) => {
+    const seenAtMs = Date.parse(record.lastSeenAt);
+    return Number.isFinite(seenAtMs) && seenAtMs >= cutoffMs;
+  });
+}
 
 const DEFAULT_AUTONOMY_SETTINGS: WorkerAutonomySettings = {
   workerId: process.env.JOB_WORKER_ID?.trim() || process.env.WORKER_ID?.trim() || 'async-queue',
@@ -324,7 +348,11 @@ export async function getWorkerAutonomyHealthReport(
     listWorkerLiveness()
   ]);
   const workers = filterLegacyAggregateWorkerSnapshots(
-    mergeWorkerLivenessSnapshots(rawWorkers, livenessRecords, settings.workerType)
+    mergeWorkerLivenessSnapshots(
+      rawWorkers,
+      filterFreshWorkerLivenessRecords(livenessRecords, settings),
+      settings.workerType
+    )
   );
   const alerts: string[] = [];
 
@@ -508,7 +536,13 @@ export class WorkerAutonomyService {
       staleAfterMs: this.settings.staleAfterMs,
       maxRetries: this.settings.defaultMaxRetries
     });
-    const cleaned = await cleanupExpiredGptJobs();
+    const expiredGptJobs = await cleanupExpiredGptJobs();
+    const cleanedFailedJobs = await runFailedJobCleanup(source);
+    const cleaned = {
+      ...expiredGptJobs,
+      deletedFailed: cleanedFailedJobs.deletedFailed,
+      retainedFailed: cleanedFailedJobs.retainedFailed
+    };
     const stats = await getJobExecutionStatsSince(
       new Date(Date.now() - 60 * 60 * 1000),
       this.getStatsWorkerId()
@@ -580,6 +614,11 @@ export class WorkerAutonomyService {
         `Expired ${cleaned.expiredPending + cleaned.expiredTerminal} GPT job(s) during lifecycle maintenance.`
       );
     }
+    if (cleaned.deletedFailed > 0) {
+      alerts.push(
+        `Cleaned ${cleaned.deletedFailed} retained failed job(s); ${cleaned.retainedFailed} failed job(s) remain.`
+      );
+    }
 
     const healthStatus = this.deriveHealthStatus(queueSummary, alerts);
     await this.persistSnapshot({
@@ -617,7 +656,11 @@ export class WorkerAutonomyService {
       listWorkerLiveness()
     ]);
     const workerSnapshots = filterLegacyAggregateWorkerSnapshots(
-      mergeWorkerLivenessSnapshots(rawWorkerSnapshots, livenessRecords, this.settings.workerType)
+      mergeWorkerLivenessSnapshots(
+        rawWorkerSnapshots,
+        filterFreshWorkerLivenessRecords(livenessRecords, this.settings),
+        this.settings.workerType
+      )
     );
     const staleWorkerIds = workerSnapshots
       .filter((worker) => isWorkerSnapshotStale(worker, this.settings.staleAfterMs))
@@ -938,7 +981,8 @@ export class WorkerAutonomyService {
       {
         lastFailure: buildFailureSnapshot(errorMessage, {
           retryable,
-          retryExhausted: retryable && retryCount >= maxRetries
+          retryExhausted: retryable && retryCount >= maxRetries,
+          deadLetter: retryable && retryCount >= maxRetries
         })
       },
       lifecycleDeadlines
@@ -1244,7 +1288,12 @@ export class WorkerAutonomyService {
         durationMs: Date.now() - webhookStartedAtMs,
         error,
       });
-      console.warn('[Worker Autonomy] Failure webhook send failed:', resolveErrorMessage(error));
+      logger.warn(
+        'worker.failure_webhook.send_failed',
+        { module: 'worker-autonomy', workerId: this.settings.workerId },
+        { errorMessage: resolveErrorMessage(error) },
+        error instanceof Error ? error : undefined
+      );
     }
   }
 }
@@ -1533,6 +1582,7 @@ function buildFailureSnapshot(
   options: {
     retryable: boolean;
     retryExhausted: boolean;
+    deadLetter?: boolean;
   }
 ): Record<string, unknown> {
   return {
@@ -1540,7 +1590,8 @@ function buildFailureSnapshot(
     reason: errorMessage,
     category: classifyWorkerFailureCategory(errorMessage),
     retryable: options.retryable,
-    retryExhausted: options.retryExhausted
+    retryExhausted: options.retryExhausted,
+    deadLetter: options.deadLetter ?? false
   };
 }
 

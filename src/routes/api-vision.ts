@@ -5,7 +5,10 @@ import { aiLogger } from "@platform/logging/structuredLogging.js";
 import { recordTraceEvent } from "@platform/logging/telemetry.js";
 import type { ErrorResponseDTO } from "@shared/types/dto.js";
 import { asyncHandler } from "@shared/http/index.js";
-import { buildVisionRequest } from "@services/openai/requestBuilders/index.js";
+import {
+  buildVisionResponsesRequest,
+  convertResponseToLegacyChatCompletion
+} from "@services/openai/requestBuilders/index.js";
 import { getOpenAIClientOrAdapter } from "@services/openai/clientBridge.js";
 import { sendOpenAIProcessingFailed, sendOpenAIServiceUnavailable } from "@platform/resilience/serviceUnavailable.js";
 
@@ -116,7 +119,7 @@ router.post('/api/vision', visionValidation, asyncHandler(async (req: Request<{}
       imageBytes: imageBuffer.length
     });
 
-    const requestPayload = buildVisionRequest({
+    const requestPayload = buildVisionResponsesRequest({
       prompt: visionPrompt,
       imageBase64: base64,
       mimeType,
@@ -124,7 +127,10 @@ router.post('/api/vision', visionValidation, asyncHandler(async (req: Request<{}
       temperature: visionTemperature,
       maxTokens: maxTokens || 1024
     });
-    const completion = await adapter.responses.create(requestPayload);
+    const response = await adapter.responses.create(requestPayload, {
+      headers: req.requestId ? { 'x-request-id': req.requestId } : undefined
+    });
+    const completion = convertResponseToLegacyChatCompletion(response, visionModel);
 
     const responseText = completion.choices[0]?.message?.content || '';
     const tokens = completion.usage?.total_tokens || 0;

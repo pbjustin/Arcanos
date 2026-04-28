@@ -29,7 +29,12 @@ describe('environment validation', () => {
     DATABASE_URL: process.env.DATABASE_URL,
     AI_MODEL: process.env.AI_MODEL,
     PORT: process.env.PORT,
-    RAILWAY_ENVIRONMENT: process.env.RAILWAY_ENVIRONMENT
+    RAILWAY_ENVIRONMENT: process.env.RAILWAY_ENVIRONMENT,
+    NODE_ENV: process.env.NODE_ENV,
+    ALLOW_MOCK_OPENAI: process.env.ALLOW_MOCK_OPENAI,
+    FORCE_MOCK: process.env.FORCE_MOCK,
+    OPENAI_API_KEY_REQUIRED: process.env.OPENAI_API_KEY_REQUIRED,
+    ARCANOS_GPT_ACCESS_TOKEN: process.env.ARCANOS_GPT_ACCESS_TOKEN
   };
 
   beforeEach(() => {
@@ -43,6 +48,11 @@ describe('environment validation', () => {
     process.env.DATABASE_URL = 'postgresql://postgres:super-secret-password@db.example.com:5432/arcanos';
     process.env.AI_MODEL = 'gpt-4.1';
     process.env.PORT = '8080';
+    process.env.NODE_ENV = 'development';
+    process.env.ARCANOS_GPT_ACCESS_TOKEN = 'test-gpt-access-token-1234567890';
+    delete process.env.OPENAI_API_KEY_REQUIRED;
+    delete process.env.ALLOW_MOCK_OPENAI;
+    delete process.env.FORCE_MOCK;
   });
 
   afterEach(() => {
@@ -73,5 +83,31 @@ describe('environment validation', () => {
     expect(result.isValid).toBe(true);
     expect(result.warnings).toContain('⚠️  RAILWAY_ENVIRONMENT not set, using default: production');
     expect(process.env.RAILWAY_ENVIRONMENT).toBe('production');
+  });
+
+  it('requires OpenAI and GPT access credentials in production by default', () => {
+    process.env.NODE_ENV = 'production';
+    process.env.OPENAI_API_KEY = '';
+    process.env.ARCANOS_GPT_ACCESS_TOKEN = '';
+
+    const result = validateEnvironment();
+
+    expect(result.isValid).toBe(false);
+    expect(result.errors).toEqual(
+      expect.arrayContaining([
+        '❌ Required environment variable OPENAI_API_KEY is not set',
+        '❌ Required environment variable ARCANOS_GPT_ACCESS_TOKEN is not set'
+      ])
+    );
+  });
+
+  it('allows an explicit OpenAI startup requirement override for rollback', () => {
+    process.env.NODE_ENV = 'production';
+    process.env.OPENAI_API_KEY = '';
+    process.env.OPENAI_API_KEY_REQUIRED = 'false';
+
+    const result = validateEnvironment();
+
+    expect(result.errors).not.toContain('❌ Required environment variable OPENAI_API_KEY is not set');
   });
 });

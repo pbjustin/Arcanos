@@ -36,7 +36,12 @@ function isJsonSchemaParseError(err: unknown): boolean {
  * Inputs/Outputs: Express error middleware; writes JSON error payload and status code.
  * Edge cases: Falls back to 500/internal message for unknown error types.
  */
-const errorHandler = (err: unknown, req: Request, res: Response, _next: NextFunction) => {
+const errorHandler = (err: unknown, req: Request, res: Response, next: NextFunction) => {
+  if (res.headersSent) {
+    next(err);
+    return;
+  }
+
   const requestId = req.requestId ?? 'unknown';
   const traceId = req.traceId ?? requestId;
   const requestPath = resolveSafeRequestPath(req);

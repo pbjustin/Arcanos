@@ -86,6 +86,7 @@ interface WorkerHeartbeatLoopHandle {
 
 let workerProcessShutdownRequested = false;
 let workerProcessShutdownSignal: NodeJS.Signals | null = null;
+const workerProcessShutdownController = new AbortController();
 
 function requestWorkerProcessShutdown(signal: NodeJS.Signals): void {
   if (workerProcessShutdownRequested) {
@@ -94,6 +95,7 @@ function requestWorkerProcessShutdown(signal: NodeJS.Signals): void {
 
   workerProcessShutdownRequested = true;
   workerProcessShutdownSignal = signal;
+  workerProcessShutdownController.abort(createAbortError(`Worker process shutdown requested by ${signal}`));
   logger.warn('job_runner.shutdown.requested', {
     module: 'worker',
     signal
@@ -102,6 +104,21 @@ function requestWorkerProcessShutdown(signal: NodeJS.Signals): void {
 
 function isWorkerProcessShutdownRequested(): boolean {
   return workerProcessShutdownRequested;
+}
+
+async function sleepUntilWorkerProcessSignal(milliseconds: number): Promise<void> {
+  if (isWorkerProcessShutdownRequested()) {
+    return;
+  }
+
+  try {
+    await sleep(milliseconds, { signal: workerProcessShutdownController.signal });
+  } catch (error: unknown) {
+    if (isAbortError(error) || workerProcessShutdownController.signal.aborted) {
+      return;
+    }
+    throw error;
+  }
 }
 
 process.once('SIGTERM', () => requestWorkerProcessShutdown('SIGTERM'));
@@ -190,17 +207,24 @@ async function initializeJobRunnerDatabaseWithRetry(
       }
 
       const delayMs = computeDatabaseBootstrapRetryDelayMs(attempt, settings);
-      console.warn(
-        `[jobRunner] database bootstrap attempt ${attempt} threw (${message}); retrying in ${delayMs}ms`
-      );
-      await sleep(delayMs);
+      logger.warn('worker.database_bootstrap.retry_after_exception', {
+        module: 'job-runner',
+        workerId,
+        attempt,
+        delayMs
+      }, { errorMessage: message }, error instanceof Error ? error : undefined);
+      await sleepUntilWorkerProcessSignal(delayMs);
       continue;
     }
     const dbStatus = getDatabaseStatus();
 
     if (dbInitialized && dbStatus.connected) {
       if (attempt > 1) {
-        console.log(`[jobRunner] database bootstrap recovered after ${attempt} attempt(s)`);
+        logger.info('worker.database_bootstrap.recovered', {
+          module: 'job-runner',
+          workerId,
+          attempt
+        });
       }
       return;
     }
@@ -211,10 +235,13 @@ async function initializeJobRunnerDatabaseWithRetry(
     }
 
     const delayMs = computeDatabaseBootstrapRetryDelayMs(attempt, settings);
-    console.warn(
-      `[jobRunner] database bootstrap attempt ${attempt} failed (${statusMessage}); retrying in ${delayMs}ms`
-    );
-    await sleep(delayMs);
+    logger.warn('worker.database_bootstrap.retry_after_failed_status', {
+      module: 'job-runner',
+      workerId,
+      attempt,
+      delayMs
+    }, { statusMessage });
+    await sleepUntilWorkerProcessSignal(delayMs);
   }
 }
 
@@ -230,7 +257,11 @@ async function bootstrapWorkerAutonomyWithRetry(
     try {
       const bootstrapResult = await autonomyService.bootstrap(notes);
       if (attempt > 1) {
-        console.log(`[jobRunner] worker autonomy bootstrap recovered after ${attempt} attempt(s)`);
+        logger.info('worker.autonomy_bootstrap.recovered', {
+          module: 'job-runner',
+          workerId: autonomyService.getWorkerId(),
+          attempt
+        });
       }
       return bootstrapResult;
     } catch (error: unknown) {
@@ -243,10 +274,13 @@ async function bootstrapWorkerAutonomyWithRetry(
       }
 
       const delayMs = computeDatabaseBootstrapRetryDelayMs(attempt, settings);
-      console.warn(
-        `[jobRunner] worker autonomy bootstrap attempt ${attempt} failed (${message}); retrying in ${delayMs}ms`
-      );
-      await sleep(delayMs);
+      logger.warn('worker.autonomy_bootstrap.retry_after_failed_status', {
+        module: 'job-runner',
+        workerId: autonomyService.getWorkerId(),
+        attempt,
+        delayMs
+      }, { errorMessage: message }, error instanceof Error ? error : undefined);
+      await sleepUntilWorkerProcessSignal(delayMs);
     }
   }
 }
@@ -371,9 +405,14 @@ async function ensureOpenAIClientForSlot(params: {
       pausedUntil: providerProbe.runtime.nextRetryAt
     };
   } catch (error: unknown) {
-    console.error(
-      `[jobRunner] worker=${params.workerId} failed to initialize OpenAI client after a healthy probe:`,
-      resolveErrorMessage(error)
+    logger.error(
+      'worker.openai_client.initialization_failed_after_healthy_probe',
+      {
+        module: 'job-runner',
+        workerId: params.workerId
+      },
+      { errorMessage: resolveErrorMessage(error) },
+      error instanceof Error ? error : undefined
     );
     return {
       client: null,
@@ -645,9 +684,11 @@ function startHeartbeatLoop(
 
   const intervalHandle = setInterval(() => {
     void runHeartbeat().catch((error: unknown) => {
-      console.warn(
-        `[jobRunner] worker=${workerId} heartbeat failed:`,
-        resolveErrorMessage(error)
+      logger.warn(
+        'worker.job_heartbeat.failed',
+        { module: 'job-runner', workerId, jobId },
+        { errorMessage: resolveErrorMessage(error) },
+        error instanceof Error ? error : undefined
       );
     });
   }, autonomyService.getClaimOptions().leaseMs
@@ -680,9 +721,11 @@ function startWorkerHeartbeatLoop(
 
   const executeHeartbeat = () => {
     void runHeartbeat().catch((error: unknown) => {
-      console.warn(
-        `[jobRunner] worker=${workerId} worker heartbeat failed:`,
-        resolveErrorMessage(error)
+      logger.warn(
+        'worker.heartbeat.failed',
+        { module: 'job-runner', workerId },
+        { errorMessage: resolveErrorMessage(error) },
+        error instanceof Error ? error : undefined
       );
     });
   };
@@ -740,9 +783,11 @@ function startWatchdogLoop(autonomyService: WorkerAutonomyService): NodeJS.Timeo
 
   const intervalHandle = setInterval(() => {
     void runWatchdog().catch((error: unknown) => {
-      console.warn(
-        `[jobRunner] worker=${autonomyService.getWorkerId()} watchdog failed:`,
-        resolveErrorMessage(error)
+      logger.warn(
+        'worker.watchdog.failed',
+        { module: 'job-runner', workerId: autonomyService.getWorkerId() },
+        { errorMessage: resolveErrorMessage(error) },
+        error instanceof Error ? error : undefined
       );
     });
   }, intervalMs);
@@ -770,9 +815,11 @@ function startInspectorLoop(autonomyService: WorkerAutonomyService): NodeJS.Time
 
   const intervalHandle = setInterval(() => {
     void runInspector().catch((error: unknown) => {
-      console.warn(
-        `[jobRunner] worker=${autonomyService.getWorkerId()} inspector failed:`,
-        resolveErrorMessage(error)
+      logger.warn(
+        'worker.inspector.failed',
+        { module: 'job-runner', workerId: autonomyService.getWorkerId() },
+        { errorMessage: resolveErrorMessage(error) },
+        error instanceof Error ? error : undefined
       );
     });
   }, intervalMs);
@@ -818,9 +865,12 @@ async function runWorkerConsumerSlot(
   openai = initialClientState.client;
   providerConfigVersion = initialClientState.configVersion;
 
-  console.log(
-    `[jobRunner] worker=${slotDefinition.workerId} slot=${slotDefinition.slotNumber}/${runtimeSettings.concurrency} started`
-  );
+  logger.info('worker.slot.started', {
+    module: 'job-runner',
+    workerId: slotDefinition.workerId,
+    slotNumber: slotDefinition.slotNumber,
+    concurrency: runtimeSettings.concurrency
+  });
   const workerHeartbeatHandle = startWorkerHeartbeatLoop(autonomyService, slotDefinition.workerId);
 
   try {
@@ -837,22 +887,29 @@ async function runWorkerConsumerSlot(
       if (!openai) {
         const nowMs = Date.now();
         if (nowMs - lastProviderPauseLogAtMs >= 10_000) {
-          console.warn(
-            `[jobRunner] worker=${slotDefinition.workerId} claim paused: openai_provider_unavailable nextRetryAt=${ensuredClientState.pausedUntil ?? 'unknown'}`
-          );
+          logger.warn('worker.claim.paused_provider_unavailable', {
+            module: 'job-runner',
+            workerId: slotDefinition.workerId,
+            nextRetryAt: ensuredClientState.pausedUntil ?? null
+          });
           lastProviderPauseLogAtMs = nowMs;
         }
         await autonomyService.markIdle();
-        await sleep(resolveProviderPauseMs(ensuredClientState.pausedUntil, runtimeSettings.idleBackoffMs));
+        await sleepUntilWorkerProcessSignal(
+          resolveProviderPauseMs(ensuredClientState.pausedUntil, runtimeSettings.idleBackoffMs)
+        );
         continue;
       }
 
       const budgetDecision = await autonomyService.evaluateBudgetsBeforeClaim();
       if (!budgetDecision.allowed) {
-        console.warn(
-          `[jobRunner] worker=${slotDefinition.workerId} claim paused: ${budgetDecision.reason}`
-        );
-        await sleep(budgetDecision.sleepMs);
+        logger.warn('worker.claim.paused_budget', {
+          module: 'job-runner',
+          workerId: slotDefinition.workerId,
+          reason: budgetDecision.reason,
+          sleepMs: budgetDecision.sleepMs
+        });
+        await sleepUntilWorkerProcessSignal(budgetDecision.sleepMs);
         continue;
       }
 
@@ -862,12 +919,30 @@ async function runWorkerConsumerSlot(
 
       if (!job) {
         await autonomyService.markIdle();
-        await sleep(runtimeSettings.idleBackoffMs);
+        await sleepUntilWorkerProcessSignal(runtimeSettings.idleBackoffMs);
         continue;
       }
 
       await autonomyService.markJobStarted(job);
       const gptCancellationController = job.job_type === 'gpt' ? new AbortController() : null;
+      const abortGptOnProcessShutdown = () => {
+        if (gptCancellationController && !gptCancellationController.signal.aborted) {
+          gptCancellationController.abort(
+            createAbortError('Worker process shutdown requested while GPT job was running.')
+          );
+        }
+      };
+      if (gptCancellationController) {
+        if (workerProcessShutdownController.signal.aborted) {
+          abortGptOnProcessShutdown();
+        } else {
+          workerProcessShutdownController.signal.addEventListener(
+            'abort',
+            abortGptOnProcessShutdown,
+            { once: true }
+          );
+        }
+      }
       const heartbeatHandle = startHeartbeatLoop(
         autonomyService,
         job.id,
@@ -939,15 +1014,12 @@ async function runWorkerConsumerSlot(
         });
         const aiUsageSummary = summarizeAiExecutionContext(aiExecutionContext);
         if (aiUsageSummary && aiUsageSummary.totals.calls > 0) {
-          console.log(JSON.stringify({
-            timestamp: new Date().toISOString(),
-            level: 'info',
-            event: 'worker.ai.summary',
+          logger.info('worker.ai.summary', {
+            module: 'job-runner',
             workerId: slotDefinition.workerId,
             jobId: job.id,
-            jobType: job.job_type,
-            aiUsage: aiUsageSummary
-          }));
+            jobType: job.job_type
+          }, { aiUsage: aiUsageSummary });
         }
         
 
@@ -1147,18 +1219,28 @@ async function runWorkerConsumerSlot(
         });
       }
       } finally {
+        workerProcessShutdownController.signal.removeEventListener(
+          'abort',
+          abortGptOnProcessShutdown
+        );
         clearInterval(heartbeatHandle);
       }
 
-      await sleep(runtimeSettings.pollMs);
+      await sleepUntilWorkerProcessSignal(runtimeSettings.pollMs);
       } catch (error: unknown) {
         if (isRetryableJobRunnerDatabaseBootstrapError(error)) {
           const backoffMs = Math.max(runtimeSettings.idleBackoffMs, 5_000);
-          console.warn(
-            `[jobRunner] worker=${slotDefinition.workerId} transient database error; retrying in ${backoffMs}ms:`,
-            resolveErrorMessage(error)
+          logger.warn(
+            'worker.database.transient_error_retry',
+            {
+              module: 'job-runner',
+              workerId: slotDefinition.workerId,
+              backoffMs
+            },
+            { errorMessage: resolveErrorMessage(error) },
+            error instanceof Error ? error : undefined
           );
-          await sleep(backoffMs);
+          await sleepUntilWorkerProcessSignal(backoffMs);
           continue;
         }
 
@@ -1184,14 +1266,21 @@ async function run(): Promise<void> {
     [`Worker bootstrap completed with ${slotDefinitions.length} consumer slot(s).`],
     databaseBootstrapSettings
   );
-  console.log(
-    `[jobRunner] bootstrap status=${bootstrapResult.healthStatus} slots=${slotDefinitions.length} recovered=${bootstrapResult.recovered.recoveredJobs.length} failed=${bootstrapResult.recovered.failedJobs.length}`
-  );
+  logger.info('worker.bootstrap.completed', {
+    module: 'job-runner',
+    workerId: inspectorAutonomyService.getWorkerId(),
+    healthStatus: bootstrapResult.healthStatus,
+    slots: slotDefinitions.length,
+    recovered: bootstrapResult.recovered.recoveredJobs.length,
+    failed: bootstrapResult.recovered.failedJobs.length
+  });
 
   if (isWorkerProcessShutdownRequested()) {
-    console.log(
-      `[jobRunner] shutdown requested before worker slots started (${workerProcessShutdownSignal ?? 'unknown'}); skipping consumer startup`
-    );
+    logger.info('worker.shutdown.before_slot_start', {
+      module: 'job-runner',
+      workerId: inspectorAutonomyService.getWorkerId(),
+      signal: workerProcessShutdownSignal ?? 'unknown'
+    });
     await inspectorAutonomyService.flushSnapshotPipeline('worker-process-shutdown');
     return;
   }
@@ -1221,7 +1310,12 @@ async function run(): Promise<void> {
 
 if (isEntrypointModule(import.meta.url)) {
   run().catch(error => {
-    console.error(`[jobRunner] fatal: ${resolveErrorMessage(error)}`);
+    logger.error(
+      'worker.fatal',
+      { module: 'job-runner' },
+      { errorMessage: resolveErrorMessage(error) },
+      error instanceof Error ? error : undefined
+    );
     process.exit(1);
   });
 }

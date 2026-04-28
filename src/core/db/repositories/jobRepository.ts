@@ -26,6 +26,7 @@ import {
   updateSchedulerClaimState
 } from '@core/scheduler/scheduler.js';
 import type { QueueLane, SchedulerClaimOptions } from '@core/scheduler/types.js';
+import { dbLogger } from '@platform/logging/structuredLogging.js';
 
 export type JobFailureCategory =
   | 'authentication'
@@ -91,6 +92,7 @@ export interface CreateJobOptions {
   leaseExpiresAt?: Date | string | null;
   priority?: number;
   lastWorkerId?: string | null;
+  correlationId?: string | null;
   autonomyState?: Record<string, unknown>;
   requestFingerprintHash?: string | null;
   idempotencyKeyHash?: string | null;
@@ -159,6 +161,7 @@ export interface FailedJobSnapshot {
   id: string;
   worker_id: string;
   last_worker_id: string | null;
+  correlation_id?: string | null;
   job_type: string;
   status: 'failed';
   error_message: string | null;
@@ -199,6 +202,19 @@ export interface CleanupGptJobsResult {
   expiredPending: number;
   expiredTerminal: number;
   deletedExpired: number;
+}
+
+export interface CleanupRetainedFailedJobsOptions {
+  keep?: number;
+  minAgeMs?: number;
+}
+
+export interface CleanupRetainedFailedJobsResult {
+  keep: number;
+  minAgeMs: number;
+  deletedFailed: number;
+  retainedFailed: number;
+  deletedJobIds: string[];
 }
 
 export interface RequeueFailedJobOptions {
@@ -267,6 +283,55 @@ function normalizeNullableString(value: string | null | undefined): string | nul
   return trimmedValue.length > 0 ? trimmedValue : null;
 }
 
+function logJobRepositoryError(operation: string, error: unknown): void {
+  dbLogger.error(
+    'job_repository.operation_failed',
+    { module: 'job-repository', operation },
+    { errorMessage: resolveErrorMessage(error) },
+    error instanceof Error ? error : undefined
+  );
+}
+
+function readStringPath(value: unknown, path: string[]): string | null {
+  let current: unknown = value;
+  for (const segment of path) {
+    if (!current || typeof current !== 'object' || Array.isArray(current)) {
+      return null;
+    }
+    current = (current as Record<string, unknown>)[segment];
+  }
+
+  return typeof current === 'string' && current.trim().length > 0 ? current.trim() : null;
+}
+
+function readCorrelationIdFromInput(input: unknown): string | null {
+  const candidatePaths = [
+    ['correlationId'],
+    ['correlation_id'],
+    ['requestId'],
+    ['request_id'],
+    ['traceId'],
+    ['trace_id'],
+    ['body', 'correlationId'],
+    ['body', 'correlation_id'],
+    ['body', 'requestId'],
+    ['body', 'request_id'],
+    ['body', 'traceId'],
+    ['body', 'trace_id'],
+    ['clientContext', 'requestId'],
+    ['clientContext', 'traceId']
+  ];
+
+  for (const path of candidatePaths) {
+    const candidate = readStringPath(input, path);
+    if (candidate) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
 function applyGptLifecycleDefaults(jobType: string, status: string, options: CreateJobOptions): {
   idempotencyUntil: string | null;
   retentionUntil: string | null;
@@ -311,6 +376,8 @@ function resolveReusableFingerprintStatuses(idempotencyOrigin: 'explicit' | 'der
 
 export const DEFAULT_QUEUE_DIAGNOSTICS_FAILURE_WINDOW_MS = 60 * 60 * 1000;
 export const DEFAULT_JOB_WORKER_STALE_AFTER_MS = 10_000;
+export const DEFAULT_FAILED_JOB_RETENTION_COUNT = 50;
+export const DEFAULT_FAILED_JOB_CLEANUP_MIN_AGE_MS = 24 * 60 * 60 * 1000;
 
 export function resolveQueueDiagnosticsFailureWindowMs(
   env: NodeJS.ProcessEnv = process.env
@@ -336,6 +403,24 @@ export function resolveJobWorkerStaleAfterMs(
   }
 
   return Math.max(1_000, Math.trunc(parsedValue));
+}
+
+function normalizeFailedJobRetentionCount(value: number | undefined): number {
+  const parsedValue = Number(value ?? DEFAULT_FAILED_JOB_RETENTION_COUNT);
+  if (!Number.isFinite(parsedValue) || parsedValue <= 0) {
+    return DEFAULT_FAILED_JOB_RETENTION_COUNT;
+  }
+
+  return Math.min(500, Math.max(1, Math.trunc(parsedValue)));
+}
+
+function normalizeFailedJobCleanupMinAgeMs(value: number | undefined): number {
+  const parsedValue = Number(value ?? DEFAULT_FAILED_JOB_CLEANUP_MIN_AGE_MS);
+  if (!Number.isFinite(parsedValue) || parsedValue < 0) {
+    return DEFAULT_FAILED_JOB_CLEANUP_MIN_AGE_MS;
+  }
+
+  return Math.min(30 * 24 * 60 * 60 * 1000, Math.max(0, Math.trunc(parsedValue)));
 }
 
 function buildEmptyFailureBreakdown(): JobFailureBreakdown {
@@ -439,6 +524,7 @@ export async function createJob(
        lease_expires_at,
        priority,
        last_worker_id,
+       correlation_id,
        autonomy_state,
        request_fingerprint_hash,
        idempotency_key_hash,
@@ -463,16 +549,17 @@ export async function createJob(
        $10::timestamptz,
        $11,
        $12,
-       $13::jsonb,
-       $14,
+       $13,
+       $14::jsonb,
        $15,
        $16,
        $17,
-       $18::timestamptz,
+       $18,
        $19::timestamptz,
        $20::timestamptz,
        $21::timestamptz,
-       $22
+       $22::timestamptz,
+       $23
      )
      RETURNING *`,
     [
@@ -488,6 +575,7 @@ export async function createJob(
       normalizeNullableDate(options.leaseExpiresAt),
       options.priority ?? 100,
       options.lastWorkerId ?? null,
+      normalizeNullableString(options.correlationId ?? readCorrelationIdFromInput(input)),
       normalizeJsonbInput(
         normalizeAutonomyState(options.autonomyState),
         'jobRepository.createJob.autonomyState'
@@ -797,6 +885,7 @@ export async function findOrCreateGptJob(
          lease_expires_at,
          priority,
          last_worker_id,
+         correlation_id,
          autonomy_state,
          request_fingerprint_hash,
          idempotency_key_hash,
@@ -821,16 +910,17 @@ export async function findOrCreateGptJob(
          $9::timestamptz,
          $10,
          $11,
-         $12::jsonb,
-         $13,
+         $12,
+         $13::jsonb,
          $14,
          $15,
          $16,
-         $17::timestamptz,
+         $17,
          $18::timestamptz,
          $19::timestamptz,
          $20::timestamptz,
-         $21
+         $21::timestamptz,
+         $22
        )
        RETURNING *`,
       [
@@ -845,6 +935,7 @@ export async function findOrCreateGptJob(
         normalizeNullableDate(createOptions.leaseExpiresAt),
         createOptions.priority ?? 100,
         createOptions.lastWorkerId ?? null,
+        normalizeNullableString(createOptions.correlationId ?? readCorrelationIdFromInput(options.input)),
         normalizeJsonbInput(
           normalizeAutonomyState(createOptions.autonomyState),
           'jobRepository.findOrCreateGptJob.autonomyState'
@@ -1188,7 +1279,7 @@ export async function claimNextPendingJob(
       await client.query('COMMIT');
     } catch (error: unknown) {
       await client.query('ROLLBACK');
-      console.error('Error claiming pending job:', resolveErrorMessage(error));
+      logJobRepositoryError('claim_pending_job', error);
       throw error;
     } finally {
       client.release();
@@ -1445,7 +1536,7 @@ export async function recoverStaleJobs(
     return { recoveredJobs, failedJobs };
   } catch (error: unknown) {
     await client.query('ROLLBACK');
-    console.error('Error recovering stale jobs:', resolveErrorMessage(error));
+    logJobRepositoryError('recover_stale_jobs', error);
     throw error;
   } finally {
     client.release();
@@ -1678,7 +1769,7 @@ export async function recoverStalledJobsForWorkers(
     };
   } catch (error: unknown) {
     await client.query('ROLLBACK');
-    console.error('Error recovering stalled worker jobs:', resolveErrorMessage(error));
+    logJobRepositoryError('recover_stalled_worker_jobs', error);
     throw error;
   } finally {
     client.release();
@@ -1701,7 +1792,7 @@ export async function getLatestJob(): Promise<JobData | null> {
     return (result.rows[0] as JobData | undefined) ?? null;
   } catch (error: unknown) {
     //audit Assumption: latest job lookup failure should degrade observability rather than crash helper routes; failure risk: status endpoints fail on transient query issues; expected invariant: lookup errors are logged and return `null`; handling strategy: fail closed.
-    console.error('Error fetching latest job:', resolveErrorMessage(error));
+    logJobRepositoryError('fetch_latest_job', error);
     return null;
   }
 }
@@ -1889,6 +1980,7 @@ export async function getJobQueueSummary(): Promise<JobQueueSummary | null> {
          failure_breakdown.retryable_count,
          failure_breakdown.permanent_count,
          failure_breakdown.retry_exhausted_count,
+         failure_breakdown.dead_letter_count,
          failure_breakdown.authentication_count,
          failure_breakdown.network_count,
          failure_breakdown.provider_count,
@@ -2013,7 +2105,7 @@ export async function getJobQueueSummary(): Promise<JobQueueSummary | null> {
     return summary;
   } catch (error: unknown) {
     //audit Assumption: queue summary failures should degrade observability, not crash request handling; failure risk: operator status endpoints return 500 on transient query issues; expected invariant: errors are logged and summary becomes unavailable; handling strategy: return `null`.
-    console.error('Error fetching job queue summary:', resolveErrorMessage(error));
+    logJobRepositoryError('fetch_job_queue_summary', error);
     return null;
   }
 }
@@ -2126,6 +2218,83 @@ export async function cleanupExpiredGptJobs(): Promise<CleanupGptJobsResult> {
     expiredPending: expiredPendingResult.rowCount ?? expiredPendingResult.rows.length,
     expiredTerminal: expiredTerminalResult.rowCount ?? expiredTerminalResult.rows.length,
     deletedExpired: deletedExpiredResult.rowCount ?? deletedExpiredResult.rows.length
+  };
+}
+
+/**
+ * Delete older retained failed jobs while preserving the most recent failure context.
+ * Purpose: prevent terminal failure buildup from making queue health unreadable or expensive.
+ * Inputs/outputs: accepts a retention count and minimum age; returns deleted/retained counters.
+ * Edge case behavior: GPT rows still inside retention/idempotency windows are preserved.
+ */
+export async function cleanupRetainedFailedJobs(
+  options: CleanupRetainedFailedJobsOptions = {}
+): Promise<CleanupRetainedFailedJobsResult> {
+  if (!isDatabaseConnected()) {
+    return {
+      keep: normalizeFailedJobRetentionCount(options.keep),
+      minAgeMs: normalizeFailedJobCleanupMinAgeMs(options.minAgeMs),
+      deletedFailed: 0,
+      retainedFailed: 0,
+      deletedJobIds: []
+    };
+  }
+
+  const keep = normalizeFailedJobRetentionCount(options.keep);
+  const minAgeMs = normalizeFailedJobCleanupMinAgeMs(options.minAgeMs);
+
+  const result = await query(
+    `WITH ranked_failed AS (
+       SELECT
+         id,
+         ROW_NUMBER() OVER (ORDER BY updated_at DESC, created_at DESC, id DESC) AS retained_rank
+       FROM job_data
+       WHERE status = 'failed'
+     ),
+     delete_candidates AS (
+       SELECT job_data.id
+       FROM job_data
+       INNER JOIN ranked_failed ON ranked_failed.id = job_data.id
+       WHERE ranked_failed.retained_rank > $1
+         AND job_data.updated_at < NOW() - ($2::bigint * INTERVAL '1 millisecond')
+         AND (
+           job_data.job_type <> 'gpt'
+           OR job_data.retention_until IS NULL
+           OR job_data.retention_until <= NOW()
+         )
+         AND (
+           job_data.idempotency_until IS NULL
+           OR job_data.idempotency_until <= NOW()
+         )
+     ),
+     deleted AS (
+       DELETE FROM job_data
+       WHERE id IN (SELECT id FROM delete_candidates)
+       RETURNING id
+     )
+     SELECT
+       COALESCE(jsonb_agg(deleted.id), '[]'::jsonb) AS deleted_job_ids,
+       (SELECT COUNT(*) FROM deleted)::int AS deleted_failed,
+       (SELECT COUNT(*) FROM job_data WHERE status = 'failed')::int AS retained_failed
+     FROM deleted`,
+    [keep, minAgeMs]
+  );
+
+  const row = result.rows[0] as {
+    deleted_job_ids?: unknown;
+    deleted_failed?: number;
+    retained_failed?: number;
+  } | undefined;
+  const deletedJobIds = Array.isArray(row?.deleted_job_ids)
+    ? row.deleted_job_ids.flatMap((value) => typeof value === 'string' ? [value] : [])
+    : [];
+
+  return {
+    keep,
+    minAgeMs,
+    deletedFailed: Number(row?.deleted_failed ?? 0),
+    retainedFailed: Number(row?.retained_failed ?? 0),
+    deletedJobIds
   };
 }
 
@@ -2274,6 +2443,7 @@ export async function listFailedJobs(limit = 10): Promise<FailedJobSnapshot[]> {
          id,
          worker_id,
          last_worker_id,
+         correlation_id,
          job_type,
          status,
          error_message,
@@ -2292,7 +2462,7 @@ export async function listFailedJobs(limit = 10): Promise<FailedJobSnapshot[]> {
     return result.rows as FailedJobSnapshot[];
   } catch (error: unknown) {
     //audit Assumption: failed-job inspection should degrade observability rather than break helper and health endpoints; failure risk: one query failure cascades into probe failures; expected invariant: inspection errors are logged and return an empty list; handling strategy: fail closed.
-    console.error('Error listing failed jobs:', resolveErrorMessage(error));
+    logJobRepositoryError('list_failed_jobs', error);
     return [];
   }
 }

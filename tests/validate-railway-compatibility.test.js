@@ -27,6 +27,7 @@ function buildMinimalRailwayConfig(overrides = {}) {
           PORT: '$PORT',
           DATABASE_URL: '$DATABASE_URL',
           OPENAI_API_KEY: '$OPENAI_API_KEY',
+          ARCANOS_GPT_ACCESS_TOKEN: '$ARCANOS_GPT_ACCESS_TOKEN',
           RAILWAY_ENVIRONMENT: 'production',
           ARCANOS_PROCESS_KIND: '$ARCANOS_PROCESS_KIND',
         },
@@ -61,6 +62,7 @@ describe('validate-railway-compatibility', () => {
               PORT: '$PORT',
               DATABASE_URL: '$DATABASE_URL',
               OPENAI_API_KEY: '$OPENAI_API_KEY',
+              ARCANOS_GPT_ACCESS_TOKEN: '$ARCANOS_GPT_ACCESS_TOKEN',
               RAILWAY_ENVIRONMENT: 'production',
               ARCANOS_PROCESS_KIND: 'sometimes',
             },
@@ -83,6 +85,7 @@ describe('validate-railway-compatibility', () => {
 # PORT=$PORT
 # DATABASE_URL=$DATABASE_URL
 # OPENAI_API_KEY=$OPENAI_API_KEY
+# ARCANOS_GPT_ACCESS_TOKEN=$ARCANOS_GPT_ACCESS_TOKEN
 # RAILWAY_ENVIRONMENT=production
 # ARCANOS_PROCESS_KIND=web
 # RUN_WORKERS=false

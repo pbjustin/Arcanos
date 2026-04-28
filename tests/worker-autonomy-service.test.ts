@@ -15,6 +15,7 @@ const upsertWorkerRuntimeSnapshotMock = jest.fn();
 const recordWorkerLivenessMock = jest.fn();
 const upsertWorkerRuntimeStateMock = jest.fn();
 const appendWorkerRuntimeHistoryMock = jest.fn();
+const runFailedJobCleanupMock = jest.fn();
 const fetchMock = jest.fn();
 const loggerDebugMock = jest.fn();
 const loggerInfoMock = jest.fn();
@@ -39,6 +40,10 @@ jest.unstable_mockModule('@core/db/repositories/workerRuntimeRepository.js', () 
   recordWorkerLiveness: recordWorkerLivenessMock,
   upsertWorkerRuntimeState: upsertWorkerRuntimeStateMock,
   appendWorkerRuntimeHistory: appendWorkerRuntimeHistoryMock
+}));
+
+jest.unstable_mockModule('../src/queue/cleanup.js', () => ({
+  runFailedJobCleanup: runFailedJobCleanupMock
 }));
 
 jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({
@@ -109,6 +114,15 @@ describe('workerAutonomyService', () => {
       expiredPending: 0,
       expiredTerminal: 0,
       deletedExpired: 0
+    });
+    runFailedJobCleanupMock.mockResolvedValue({
+      enabled: true,
+      skipped: false,
+      keep: 50,
+      minAgeMs: 86_400_000,
+      deletedFailed: 0,
+      retainedFailed: 0,
+      deletedJobIds: []
     });
     scheduleJobRetryMock.mockResolvedValue({
       id: 'job-1'
@@ -527,6 +541,61 @@ describe('workerAutonomyService', () => {
       })
     );
     expect(updateJobMock).not.toHaveBeenCalled();
+  });
+
+  it('marks retry-exhausted transient failures as dead-lettered', async () => {
+    const service = new WorkerAutonomyService({
+      workerId: 'async-queue',
+      workerType: 'async_queue',
+      heartbeatIntervalMs: 10_000,
+      leaseMs: 30_000,
+      inspectorIntervalMs: 30_000,
+      staleAfterMs: 60_000,
+      defaultMaxRetries: 2,
+      retryBackoffBaseMs: 2_000,
+      retryBackoffMaxMs: 60_000,
+      maxJobsPerHour: 120,
+      maxAiCallsPerHour: 120,
+      maxRssMb: 2_048,
+      queueDepthDeferralThreshold: 25,
+      queueDepthDeferralMs: 5_000,
+      failureWebhookUrl: null,
+      failureWebhookThreshold: 3,
+      failureWebhookCooldownMs: 300_000
+    });
+
+    const result = await service.handleJobFailure(
+      {
+        id: 'job-dead-letter',
+        job_type: 'ask',
+        worker_id: 'async-queue',
+        status: 'running',
+        input: { prompt: 'test' },
+        retry_count: 2,
+        max_retries: 2,
+        created_at: new Date(),
+        updated_at: new Date()
+      } as any,
+      'OpenAI upstream timeout',
+      true
+    );
+
+    expect(result).toEqual({ action: 'failed' });
+    expect(scheduleJobRetryMock).not.toHaveBeenCalled();
+    expect(updateJobMock).toHaveBeenCalledWith(
+      'job-dead-letter',
+      'failed',
+      null,
+      'OpenAI upstream timeout',
+      expect.objectContaining({
+        lastFailure: expect.objectContaining({
+          retryable: true,
+          retryExhausted: true,
+          deadLetter: true
+        })
+      }),
+      expect.anything()
+    );
   });
 
   it('recovers idle slot health after a retryable failure is handed off for retry', async () => {

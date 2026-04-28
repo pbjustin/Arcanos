@@ -90,6 +90,7 @@ import {
   recordPromptDebugTrace,
   shouldInspectRuntimePrompt,
 } from '@services/promptDebugTraceService.js';
+import { logger } from '@platform/logging/structuredLogging.js';
 
 const router = express.Router();
 
@@ -630,7 +631,7 @@ export const handleAIRequest = async (
     const validation = validateAIRequest(req as Request, res as Response, endpointName);
     if (!validation) return; // validateAIRequest has already sent a response
 
-    const { client } = validation;
+    const { adapter } = validation;
     let reviewInput = validation.input;
 
     // Sanitize user input to reduce prompt-injection surface
@@ -643,7 +644,7 @@ export const handleAIRequest = async (
     };
 
     try {
-      const modelResponse = await client.responses.create({
+      const modelResponse = await adapter.responses.create({
         model: getGPT5Model(),
         store: shouldStoreOpenAIResponses(),
         input: [
@@ -814,7 +815,12 @@ export const handleAIRequest = async (
       finalConfidence = 0.9;
     } catch (error) {
       // Keep heuristic result on classifier failure, but log for observability
-      console.warn('[⚠️ DOMAIN] GPT fallback classifier failed; using heuristic result instead.', error);
+      logger.warn(
+        'ask.domain_classifier.fallback_failed',
+        { module: 'ask-route', requestId, endpointName, sessionId },
+        { finalDomain, finalConfidence, errorMessage: error instanceof Error ? error.message : String(error) },
+        error instanceof Error ? error : undefined
+      );
     }
   }
 
@@ -829,11 +835,26 @@ export const handleAIRequest = async (
       trackedSessionId
     );
     if (!domainUpdate.ok) {
-      console.warn(`[⚠️ DOMAIN] Intent version conflict during domain update (expected=${activeIntent.version}, current=${domainUpdate.conflict.currentVersion})`);
+      logger.warn('ask.intent.version_conflict', {
+        module: 'ask-route',
+        requestId,
+        endpointName,
+        sessionId,
+        expectedVersion: activeIntent.version,
+        currentVersion: domainUpdate.conflict.currentVersion
+      });
     }
   }
 
-  console.log(`[📨 ${endpointName.toUpperCase()}] Processing with sessionId: ${sessionId || 'none'}, auditOverride: ${overrideAuditSafe || 'none'}, domain: ${finalDomain} (${finalConfidence})`);
+  logger.info('ask.request.processing', {
+    module: 'ask-route',
+    requestId,
+    endpointName,
+    sessionId: sessionId || undefined,
+    auditOverride: overrideAuditSafe || undefined,
+    domain: finalDomain,
+    confidence: finalConfidence
+  });
   // Log request for feedback loop
   logRequestFeedback(prompt, endpointName);
   const routeTrace = beginAiRouteTrace(req, endpointName, prompt, getGPT5Model());

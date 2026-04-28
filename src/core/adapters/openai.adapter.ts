@@ -181,12 +181,6 @@ export interface OpenAIAdapter {
   getClient: () => OpenAI;
 }
 
-interface LegacyUsageShape {
-  input_tokens?: number;
-  output_tokens?: number;
-  total_tokens?: number;
-}
-
 function normalizeMessageContent(content: unknown): string {
   if (typeof content === 'string') return content;
   return extractTextFromContentParts(content, { includeOutputText: false });
@@ -202,6 +196,48 @@ function normalizeUsage(usage: unknown): { promptTokens: number; completionToken
 
 
 const MIN_RESPONSE_TOKENS = 16;
+
+export class OpenAIRequestValidationError extends Error {
+  readonly code = 'OPENAI_REQUEST_VALIDATION_ERROR';
+  readonly retryable = false;
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'OpenAIRequestValidationError';
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+function assertValidResponsesCreateParams(params: unknown): asserts params is Record<string, unknown> {
+  if (!params || typeof params !== 'object' || Array.isArray(params)) {
+    throw new OpenAIRequestValidationError('OpenAI Responses request must be an object.');
+  }
+
+  const record = params as Record<string, unknown>;
+  const model = record.model;
+  if (typeof model !== 'string' || model.trim().length === 0) {
+    throw new OpenAIRequestValidationError('OpenAI Responses request requires a non-empty model.');
+  }
+
+  const input = record.input;
+  const messages = record.messages;
+  const hasInput =
+    (typeof input === 'string' && input.trim().length > 0) ||
+    (Array.isArray(input) && input.length > 0);
+  const hasLegacyMessages = Array.isArray(messages) && messages.length > 0;
+
+  if (!hasInput && !hasLegacyMessages) {
+    throw new OpenAIRequestValidationError('OpenAI Responses request requires input or messages.');
+  }
+
+  const maxOutputTokens = record.max_output_tokens;
+  if (
+    maxOutputTokens !== undefined &&
+    (typeof maxOutputTokens !== 'number' || !Number.isFinite(maxOutputTokens) || maxOutputTokens <= 0)
+  ) {
+    throw new OpenAIRequestValidationError('OpenAI Responses request max_output_tokens must be a positive number.');
+  }
+}
 
 export function normalizeResponsesCreateParams(
   params: ResponseCreateParamsNonStreaming
@@ -373,10 +409,6 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): OpenAIAdapter 
   const originalImagesGenerate = client.images.generate.bind(client.images);
   const originalAudioTranscriptionsCreate =
     client.audio.transcriptions.create.bind(client.audio.transcriptions);
-  const originalModelsRetrieve = client.models.retrieve.bind(client.models);
-  const originalAssistantsList = client.beta.assistants.list.bind(client.beta.assistants);
-  const originalThreadsCreate = client.beta.threads.create.bind(client.beta.threads);
-  const originalThreadRunsCreate = client.beta.threads.runs.create.bind(client.beta.threads.runs);
 
   const responsesBackedChatCreate = async (
     params: ChatCompletionCreateParams,
@@ -419,6 +451,7 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): OpenAIAdapter 
     params: Record<string, unknown>,
     options?: OpenAIResponsesRequestOptions
   ): Promise<any> => {
+    assertValidResponsesCreateParams(params);
     const normalizedParams = normalizeResponsesCreateParams(params as ResponseCreateParamsNonStreaming);
     const requestedModel =
       typeof normalizedParams.model === 'string' && normalizedParams.model.trim().length > 0
@@ -454,6 +487,7 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): OpenAIAdapter 
         params: any,
         options?: OpenAIResponsesRequestOptions
       ): Promise<any> => {
+        assertValidResponsesCreateParams(params);
         const hasLegacyMessages =
           params &&
           typeof params === 'object' &&
@@ -462,7 +496,7 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): OpenAIAdapter 
         //audit Assumption: some call sites still pass chat-completions-shaped payloads to responses surface; risk: runtime schema mismatch on responses.create; invariant: adapter accepts both legacy and responses payloads during migration; handling: normalize legacy messages payloads through responses mapper then backfill legacy chat shape.
         if (hasLegacyMessages) {
           const nonStreamingParams = {
-            ...(params as ChatCompletionCreateParams),
+            ...(params as unknown as ChatCompletionCreateParams),
             stream: false
           } as ChatCompletionCreateParams & { stream: false };
           const responsePayload = buildResponsesRequestFromChatParams(nonStreamingParams);
