@@ -511,7 +511,7 @@ export class WorkerAutonomyService {
   async markDispatcherStarted(activeListeners: number): Promise<void> {
     const startedAt = new Date().toISOString();
     this.state.dispatcherStarted = true;
-    this.state.activeListeners = Math.max(1, activeListeners);
+    this.state.activeListeners = activeListeners;
     this.state.disabledReason = null;
     this.state.lastHeartbeatAt = this.state.lastHeartbeatAt ?? startedAt;
     this.state.lastActivityAt = this.state.lastActivityAt ?? startedAt;
@@ -1059,7 +1059,7 @@ export class WorkerAutonomyService {
       providerNextRetryAt?: string | null;
       providerFailureCategory?: string | null;
     }
-  ): Promise<{ action: 'deferred'; delayMs: number }> {
+  ): Promise<{ action: 'deferred' | 'skipped'; delayMs: number }> {
     const deferredAt = new Date().toISOString();
     const delayMs = Math.max(0, Math.trunc(options.delayMs));
     this.state.currentJobId = null;
@@ -1067,7 +1067,7 @@ export class WorkerAutonomyService {
     this.state.lastActivityAt = deferredAt;
     this.state.lastClaimResult = 'provider_unavailable';
 
-    await deferJobForProviderRecoveryInRepository(job.id, {
+    const deferredJob = await deferJobForProviderRecoveryInRepository(job.id, {
       workerId: this.settings.workerId,
       delayMs,
       errorMessage: options.errorMessage,
@@ -1082,6 +1082,22 @@ export class WorkerAutonomyService {
         }
       }
     });
+    if (!deferredJob) {
+      this.state.lastError = null;
+      logger.warn('worker.provider_recovery_defer.skipped_status_mismatch', {
+        module: 'worker-autonomy',
+        workerId: this.settings.workerId,
+        jobId: job.id
+      });
+      await this.persistSnapshot({
+        healthStatus: 'degraded',
+        alerts: [`Provider deferral skipped for job ${job.id}; job was no longer running.`]
+      }, { force: true, source: 'provider-deferred-skipped' });
+      return {
+        action: 'skipped',
+        delayMs
+      };
+    }
     await this.persistSnapshot({
       healthStatus: 'degraded',
       alerts: [`Provider unavailable; deferred job ${job.id} for ${delayMs}ms without consuming retry budget.`]

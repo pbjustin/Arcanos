@@ -610,6 +610,65 @@ describe('workerAutonomyService', () => {
     expect(updateJobMock).not.toHaveBeenCalled();
   });
 
+  it('skips provider deferral when the claimed job is no longer running', async () => {
+    deferJobForProviderRecoveryMock.mockResolvedValueOnce(null);
+    const service = new WorkerAutonomyService({
+      workerId: 'async-queue',
+      workerType: 'async_queue',
+      heartbeatIntervalMs: 10_000,
+      leaseMs: 30_000,
+      inspectorIntervalMs: 30_000,
+      staleAfterMs: 60_000,
+      defaultMaxRetries: 2,
+      retryBackoffBaseMs: 2_000,
+      retryBackoffMaxMs: 60_000,
+      maxJobsPerHour: 120,
+      maxAiCallsPerHour: 120,
+      maxRssMb: 2_048,
+      queueDepthDeferralThreshold: 25,
+      queueDepthDeferralMs: 5_000,
+      failureWebhookUrl: null,
+      failureWebhookThreshold: 3,
+      failureWebhookCooldownMs: 300_000
+    });
+
+    const result = await service.deferJobForProviderRecovery(
+      {
+        id: 'job-provider',
+        job_type: 'ask',
+        worker_id: 'async-queue',
+        status: 'completed',
+        input: { prompt: 'test' },
+        retry_count: 2,
+        max_retries: 2,
+        created_at: new Date(),
+        updated_at: new Date()
+      } as any,
+      {
+        delayMs: 60_000,
+        errorMessage: 'OpenAI provider unavailable before job execution; job deferred until provider recovery.',
+        providerFailureCategory: 'circuit_open'
+      }
+    );
+
+    expect(result).toEqual({
+      action: 'skipped',
+      delayMs: 60_000
+    });
+    expect(scheduleJobRetryMock).not.toHaveBeenCalled();
+    expect(updateJobMock).not.toHaveBeenCalled();
+    expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        workerId: 'async-queue',
+        healthStatus: 'degraded',
+        snapshot: expect.objectContaining({
+          alerts: ['Provider deferral skipped for job job-provider; job was no longer running.']
+        })
+      }),
+      { source: 'provider-deferred-skipped' }
+    );
+  });
+
   it('persists dispatcher diagnostics for startup and empty-queue polling', async () => {
     const service = new WorkerAutonomyService({
       workerId: 'async-queue-slot-1',
@@ -650,6 +709,42 @@ describe('workerAutonomyService', () => {
         })
       }),
       { source: 'worker-idle' }
+    );
+  });
+
+  it('preserves a zero active-listener dispatcher diagnostic', async () => {
+    const service = new WorkerAutonomyService({
+      workerId: 'async-queue-slot-1',
+      statsWorkerId: 'async-queue',
+      workerType: 'async_queue',
+      heartbeatIntervalMs: 10_000,
+      leaseMs: 30_000,
+      inspectorIntervalMs: 30_000,
+      staleAfterMs: 60_000,
+      defaultMaxRetries: 2,
+      retryBackoffBaseMs: 2_000,
+      retryBackoffMaxMs: 60_000,
+      maxJobsPerHour: 120,
+      maxAiCallsPerHour: 120,
+      maxRssMb: 2_048,
+      queueDepthDeferralThreshold: 25,
+      queueDepthDeferralMs: 5_000,
+      failureWebhookUrl: null,
+      failureWebhookThreshold: 3,
+      failureWebhookCooldownMs: 300_000
+    });
+
+    await service.markDispatcherStarted(0);
+
+    expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        workerId: 'async-queue-slot-1',
+        snapshot: expect.objectContaining({
+          dispatcherStarted: true,
+          activeListeners: 0
+        })
+      }),
+      { source: 'dispatcher-started' }
     );
   });
 

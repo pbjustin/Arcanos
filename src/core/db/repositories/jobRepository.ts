@@ -1390,7 +1390,7 @@ export async function scheduleJobRetry(
 export async function deferJobForProviderRecovery(
   jobId: string,
   options: DeferJobForProviderRecoveryOptions
-): Promise<JobData> {
+): Promise<JobData | null> {
   assertDatabaseReady();
 
   const result = await query(
@@ -1406,6 +1406,7 @@ export async function deferJobForProviderRecovery(
        last_worker_id = COALESCE($3, last_worker_id),
        autonomy_state = COALESCE(autonomy_state, '{}'::jsonb) || $4::jsonb
      WHERE id = $5
+       AND status = 'running'
      RETURNING *`,
     [
       options.errorMessage,
@@ -1419,7 +1420,7 @@ export async function deferJobForProviderRecovery(
     ]
   );
 
-  return result.rows[0] as JobData;
+  return (result.rows[0] as JobData | undefined) ?? null;
 }
 
 /**
