@@ -121,6 +121,15 @@ async function sleepUntilWorkerProcessSignal(milliseconds: number): Promise<void
   }
 }
 
+function logWorkerShutdownDuringBootstrap(workerId: string, phase: string): void {
+  logger.info('worker.shutdown.during_bootstrap_retry', {
+    module: 'job-runner',
+    workerId,
+    phase,
+    signal: workerProcessShutdownSignal ?? 'unknown'
+  });
+}
+
 process.once('SIGTERM', () => requestWorkerProcessShutdown('SIGTERM'));
 process.once('SIGINT', () => requestWorkerProcessShutdown('SIGINT'));
 
@@ -214,6 +223,10 @@ async function initializeJobRunnerDatabaseWithRetry(
         delayMs
       }, { errorMessage: message }, error instanceof Error ? error : undefined);
       await sleepUntilWorkerProcessSignal(delayMs);
+      if (isWorkerProcessShutdownRequested()) {
+        logWorkerShutdownDuringBootstrap(workerId, 'database_exception_retry');
+        return;
+      }
       continue;
     }
     const dbStatus = getDatabaseStatus();
@@ -242,6 +255,10 @@ async function initializeJobRunnerDatabaseWithRetry(
       delayMs
     }, { statusMessage });
     await sleepUntilWorkerProcessSignal(delayMs);
+    if (isWorkerProcessShutdownRequested()) {
+      logWorkerShutdownDuringBootstrap(workerId, 'database_status_retry');
+      return;
+    }
   }
 }
 
@@ -281,6 +298,10 @@ async function bootstrapWorkerAutonomyWithRetry(
         delayMs
       }, { errorMessage: message }, error instanceof Error ? error : undefined);
       await sleepUntilWorkerProcessSignal(delayMs);
+      if (isWorkerProcessShutdownRequested()) {
+        logWorkerShutdownDuringBootstrap(autonomyService.getWorkerId(), 'autonomy_retry');
+        throw createAbortError('Worker process shutdown requested during autonomy bootstrap retry.');
+      }
     }
   }
 }
@@ -1257,6 +1278,14 @@ async function run(): Promise<void> {
   const runtimeSettings = resolveJobRunnerRuntimeSettings();
   const databaseBootstrapSettings = resolveJobRunnerDatabaseBootstrapSettings();
   await initializeJobRunnerDatabaseWithRetry('job-runner', databaseBootstrapSettings);
+
+  if (isWorkerProcessShutdownRequested()) {
+    logger.info('worker.shutdown.before_autonomy_bootstrap', {
+      module: 'job-runner',
+      signal: workerProcessShutdownSignal ?? 'unknown'
+    });
+    return;
+  }
 
   const slotDefinitions = buildJobRunnerSlotDefinitions(runtimeSettings);
   const inspectorSlot = slotDefinitions[0];

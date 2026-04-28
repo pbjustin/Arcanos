@@ -1,5 +1,10 @@
 import type OpenAI from 'openai';
-import type { OpenAIAdapter } from "@core/adapters/openai.adapter.js";
+import type { ResponseCreateParamsNonStreaming } from 'openai/resources/responses/responses';
+import {
+  assertValidResponsesCreateParams,
+  normalizeResponsesCreateParams,
+  type OpenAIAdapter
+} from "@core/adapters/openai.adapter.js";
 import { prepareGPT5Request } from './requestTransforms.js';
 import { getDefaultModel, getFallbackModel, getGPT5Model } from './credentialProvider.js';
 import { RESILIENCE_CONSTANTS } from './resilience.js';
@@ -34,6 +39,26 @@ type ChatCompletionParams = Omit<OpenAI.Chat.Completions.ChatCompletionCreatePar
   signal?: AbortSignal;
   timeoutMs?: number;
 };
+
+function isOpenAIAdapter(candidate: OpenAI | OpenAIAdapter): candidate is OpenAIAdapter {
+  return typeof (candidate as OpenAIAdapter).getClient === 'function';
+}
+
+async function createResponsesWithBoundary(
+  clientOrAdapter: OpenAI | OpenAIAdapter,
+  requestPayload: ReturnType<typeof buildResponsesRequest>,
+  options: { signal?: AbortSignal }
+): Promise<any> {
+  if (isOpenAIAdapter(clientOrAdapter)) {
+    return clientOrAdapter.responses.create(requestPayload, options);
+  }
+
+  assertValidResponsesCreateParams(requestPayload);
+  return (clientOrAdapter as OpenAI).responses.create(
+    normalizeResponsesCreateParams(requestPayload as ResponseCreateParamsNonStreaming),
+    options
+  );
+}
 
 type ChatCompletionResponse = OpenAI.Chat.Completions.ChatCompletion;
 
@@ -114,12 +139,9 @@ const executeChatCompletionRequest = async (
     parentSignal: requestSignal,
     abortMessage: `OpenAI chat completion timed out after ${requestTimeoutMs}ms`
   });
-  const usesAdapter = 'responses' in clientOrAdapter && typeof (clientOrAdapter as OpenAIAdapter).responses === 'object';
   try {
-    //audit Assumption: fallback orchestration should execute against Responses API across client types; risk: mixed endpoint behavior across stages; invariant: one Responses call per attempt; handling: branch on adapter/client Responses surface.
-    const response = usesAdapter
-      ? await (clientOrAdapter as OpenAIAdapter).responses.create(requestPayload, { signal: requestScope.signal })
-      : await (clientOrAdapter as OpenAI).responses.create(requestPayload, { signal: requestScope.signal });
+    //audit Assumption: fallback orchestration should execute against Responses API across client types; risk: mixed endpoint behavior across stages; invariant: one Responses call per attempt; handling: enforce adapter validation before any raw-client fallback.
+    const response = await createResponsesWithBoundary(clientOrAdapter, requestPayload, { signal: requestScope.signal });
 
     return convertResponseToLegacyChatCompletion(response, payload.model);
   } finally {

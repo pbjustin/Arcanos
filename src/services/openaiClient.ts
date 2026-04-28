@@ -7,6 +7,7 @@ import {
 } from '@core/adapters/openai.adapter.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { getConfig } from '@platform/runtime/unifiedConfig.js';
+import { redactString } from '@shared/redaction.js';
 
 export interface NormalizedOpenAIError {
   name: string;
@@ -53,8 +54,9 @@ function readErrorCode(error: unknown): string | null {
 export function normalizeOpenAIError(error: unknown): NormalizedOpenAIError {
   const status = readErrorStatus(error);
   const code = readErrorCode(error);
-  const message = resolveErrorMessage(error);
-  const normalizedMessage = message.toLowerCase();
+  const rawMessage = resolveErrorMessage(error);
+  const message = redactString(rawMessage);
+  const normalizedMessage = rawMessage.toLowerCase();
 
   return {
     name: error instanceof Error && error.name ? error.name : 'OpenAIError',
@@ -115,9 +117,10 @@ export async function createResponses(
       headers: options.headers
     });
   } catch (error: unknown) {
-    throw Object.assign(new Error(normalizeOpenAIError(error).message), {
-      openai: normalizeOpenAIError(error),
-      cause: error
+    const normalized = normalizeOpenAIError(error);
+    throw Object.assign(new Error(normalized.message), {
+      openai: normalized,
+      cause: normalized
     });
   }
 }

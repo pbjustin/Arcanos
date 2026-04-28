@@ -31,6 +31,7 @@ export const SENSITIVE_VALUE_PATTERNS: RegExp[] = [
   /\beyJ[a-zA-Z0-9_-]{8,}\.[a-zA-Z0-9_-]{8,}\.[a-zA-Z0-9_-]{8,}\b/,
   /\b(?:postgres|postgresql|mysql|mongodb|redis):\/\/[^\s]+/i,
   /\b(?:set-cookie|cookie)\s*[:=]\s*[^\r\n]{8,}/i,
+  /\b[a-zA-Z0-9_-]*dsn[a-zA-Z0-9_-]*\s*[:=]\s*["']?[^\s"']+/i,
   /\b(?:api[_-]?key|token|secret|password)\s*[:=]\s*["']?[a-zA-Z0-9._-]{12,}/i
 ];
 

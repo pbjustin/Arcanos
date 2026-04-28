@@ -12,7 +12,12 @@ import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { buildSystemPromptMessages } from "@shared/messageBuilderUtils.js";
 import { runtime } from "@services/openaiRuntime.js";
 import type OpenAI from 'openai';
-import type { OpenAIAdapter } from "@core/adapters/openai.adapter.js";
+import type { ResponseCreateParamsNonStreaming } from 'openai/resources/responses/responses';
+import {
+  assertValidResponsesCreateParams,
+  normalizeResponsesCreateParams,
+  type OpenAIAdapter
+} from "@core/adapters/openai.adapter.js";
 import type {
   CallOpenAIOptions,
   CallOpenAIResult,
@@ -196,6 +201,26 @@ function resolveResponsesTimeoutMs(explicitTimeoutMs?: number): number {
   return Math.max(1, Math.min(baseTimeoutMs, remainingRequestMs));
 }
 
+function isOpenAIAdapter(candidate: OpenAI | OpenAIAdapter): candidate is OpenAIAdapter {
+  return typeof (candidate as OpenAIAdapter).getClient === 'function';
+}
+
+async function createResponsesWithBoundary(
+  clientOrAdapter: OpenAI | OpenAIAdapter,
+  payload: ReturnType<typeof buildResponsesRequest>,
+  options: OpenAIResponsesRequestOptions
+): Promise<any> {
+  if (isOpenAIAdapter(clientOrAdapter)) {
+    return clientOrAdapter.responses.create(payload, options);
+  }
+
+  assertValidResponsesCreateParams(payload);
+  return (clientOrAdapter as OpenAI).responses.create(
+    normalizeResponsesCreateParams(payload as ResponseCreateParamsNonStreaming),
+    options
+  );
+}
+
 async function invokeResponsesCompletion(
   clientOrAdapter: OpenAI | OpenAIAdapter,
   payload: ReturnType<typeof buildResponsesRequest>,
@@ -216,9 +241,7 @@ async function invokeResponsesCompletion(
       signal: requestScope.signal,
       headers: options.headers
     };
-    const responsesResult = 'responses' in clientOrAdapter && typeof (clientOrAdapter as OpenAIAdapter).responses === 'object'
-      ? await (clientOrAdapter as OpenAIAdapter).responses.create(payload, requestOptions)
-      : await (clientOrAdapter as OpenAI).responses.create(payload, requestOptions);
+    const responsesResult = await createResponsesWithBoundary(clientOrAdapter, payload, requestOptions);
     return convertResponseToLegacyChatCompletion(responsesResult, expectedModel);
   } finally {
     requestScope.cleanup();
