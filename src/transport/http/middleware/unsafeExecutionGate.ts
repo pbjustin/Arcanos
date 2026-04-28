@@ -7,6 +7,13 @@ import {
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const SAFETY_RELEASE_PATH_PATTERN = /^\/status\/safety\/quarantine\/[^/]+\/release$/;
 const GPT_PATH_PATTERN = /^\/gpt\/[^/]+$/;
+const GPT_ACCESS_READONLY_POST_PATHS = new Set([
+  '/gpt-access/jobs/result',
+  '/gpt-access/diagnostics/deep',
+  '/gpt-access/db/explain',
+  '/gpt-access/logs/query',
+  '/gpt-access/mcp'
+]);
 
 function tryParseBodyRecord(value: string): Record<string, unknown> | null {
   try {
@@ -54,6 +61,10 @@ function isDiagnosticsActionRequest(req: Request): boolean {
   return typeof action === 'string' && action.trim().toLowerCase() === 'diagnostics';
 }
 
+function isGptAccessReadOnlyRequest(req: Request): boolean {
+  return req.method.toUpperCase() === 'POST' && GPT_ACCESS_READONLY_POST_PATHS.has(req.path);
+}
+
 /**
  * Purpose: Block mutating requests when unsafe safety conditions are active.
  * Inputs/Outputs: Express middleware; returns 503 unsafe contract on block.
@@ -76,6 +87,15 @@ export function unsafeExecutionGate(req: Request, res: Response, next: NextFunct
   if (isDiagnosticsActionRequest(req)) {
     req.logger?.info?.('unsafe_execution_gate.bypass', {
       reason: 'gpt_diagnostics',
+      path: req.path
+    });
+    next();
+    return;
+  }
+
+  if (isGptAccessReadOnlyRequest(req)) {
+    req.logger?.info?.('unsafe_execution_gate.bypass', {
+      reason: 'gpt_access_readonly',
       path: req.path
     });
     next();

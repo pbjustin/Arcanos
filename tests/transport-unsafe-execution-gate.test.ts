@@ -89,6 +89,36 @@ describe('transport/http/middleware/unsafeExecutionGate', () => {
     });
   });
 
+  it('bypasses approved read-only GPT access POST paths', () => {
+    const logger = { info: jest.fn() };
+
+    for (const path of [
+      '/gpt-access/jobs/result',
+      '/gpt-access/diagnostics/deep',
+      '/gpt-access/db/explain',
+      '/gpt-access/logs/query',
+      '/gpt-access/mcp'
+    ]) {
+      const next = jest.fn();
+      const response = createResponse();
+
+      unsafeExecutionGate({
+        method: 'POST',
+        path,
+        body: {},
+        logger
+      } as MockRequest as any, response as any, next);
+
+      expect(next).toHaveBeenCalledTimes(1);
+      expect(response.status).not.toHaveBeenCalled();
+    }
+
+    expect(logger.info).toHaveBeenCalledWith('unsafe_execution_gate.bypass', {
+      reason: 'gpt_access_readonly',
+      path: '/gpt-access/jobs/result'
+    });
+  });
+
   it('falls through when GPT request bodies are invalid JSON or blank strings', () => {
     hasUnsafeBlockingConditionsMock.mockReturnValue(false);
 

@@ -21,6 +21,7 @@ import bridgeRouter from './bridge.js';
 import debugConfirmationRouter from './debug-confirmation.js';
 import dispatchRouter from './dispatch.js';
 import mcpRouter from './mcp.js';
+import gptAccessRouter from './gpt-access.js';
 import controlPlaneRouter from './control-plane.js';
 import apiRouter from './api/index.js';
 import healthGroupRouter from './healthGroup.js';
@@ -113,6 +114,7 @@ export function registerRoutes(app: Express): void {
   app.use('/', safetyRouter);
   app.use('/', dispatchRouter);
   app.use('/', mcpRouter);
+  app.use('/', gptAccessRouter);
   app.use('/', controlPlaneRouter);
   app.use('/', jobsRouter);
   app.use('/', askRouter);
