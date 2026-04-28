@@ -96,6 +96,14 @@ export interface InvokeGptJobLookupActionOptions {
   fetchFn?: typeof fetch;
 }
 
+export interface InvokeGptDiagnosticsOptions {
+  baseUrl: string;
+  gptId: string;
+  root?: boolean;
+  headers?: Record<string, string>;
+  fetchFn?: typeof fetch;
+}
+
 export interface FetchGptJobResultOptions {
   baseUrl: string;
   jobId: string;
@@ -531,6 +539,30 @@ export async function requestQueryAndWait(
   options: QueryAndWaitGptRouteOptions
 ): Promise<Record<string, unknown>> {
   return queryAndWaitGptRoute(options);
+}
+
+export async function requestGptDiagnostics(
+  options: InvokeGptDiagnosticsOptions
+): Promise<Record<string, unknown>> {
+  const headers = {
+    ...(options.headers ?? {}),
+  };
+
+  if (options.root) {
+    const adminToken = process.env.ARCANOS_ADMIN_TOKEN;
+    if (typeof adminToken !== "string" || adminToken.length === 0) {
+      throw new Error("ARCANOS_ADMIN_TOKEN is required for root diagnostics.");
+    }
+    headers.authorization = `Bearer ${adminToken}`;
+  }
+
+  return invokeGptRoute({
+    baseUrl: options.baseUrl,
+    gptId: options.gptId,
+    action: options.root ? "root.deep_diagnostics" : "diagnostics",
+    headers,
+    fetchFn: options.fetchFn
+  });
 }
 
 export async function requestGptJobStatus(

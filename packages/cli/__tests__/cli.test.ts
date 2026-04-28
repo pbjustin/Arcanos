@@ -118,6 +118,23 @@ describe("Arcanos CLI", () => {
       pollIntervalMs: 500
     });
 
+    expect(
+      parseCliInvocation([
+        "diagnostics",
+        "--gpt",
+        "arcanos-core",
+        "--root",
+        "--json",
+      ])
+    ).toMatchObject({
+      kind: "diagnostics",
+      gptId: "arcanos-core",
+      root: true,
+      options: {
+        json: true,
+      },
+    });
+
     expect(parseCliInvocation(["job-status", "job-123", "--json"])).toMatchObject({
       kind: "job-status",
       jobId: "job-123",
@@ -254,6 +271,79 @@ describe("Arcanos CLI", () => {
         body: expect.stringContaining("\"prompt\":\"ship it\"")
       })
     );
+  });
+
+  it("sends root diagnostics with an env-sourced redacted Bearer token", async () => {
+    const originalAdminToken = process.env.ARCANOS_ADMIN_TOKEN;
+    const cliToken = "cli-unit-test-admin-token";
+    process.env.ARCANOS_ADMIN_TOKEN = cliToken;
+    const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(
+      createJsonResponse({
+        ok: true,
+        gptId: "arcanos-core",
+        action: "root.deep_diagnostics",
+        traceId: "trace-cli-root",
+        timestamp: "2026-04-27T00:00:00.000Z",
+        report: []
+      })
+    );
+    const stdout = createWritableCapture();
+    const stderr = createWritableCapture();
+
+    try {
+      const exitCode = await runCli(
+        [
+          "diagnostics",
+          "--gpt",
+          "arcanos-core",
+          "--root",
+          "--json",
+          "--base-url",
+          "http://127.0.0.1:3000"
+        ],
+        stdout.stream,
+        stderr.stream
+      );
+
+      expect(exitCode).toBe(0);
+      expect(stderr.read()).toBe("");
+      const output = stdout.read();
+      expect(output).not.toContain(cliToken);
+      expect(JSON.parse(output)).toMatchObject({
+        ok: true,
+        data: {
+          command: "gpt.root_deep_diagnostics",
+          request: {
+            action: "root.deep_diagnostics",
+            authorization: "Bearer [REDACTED]",
+            gptId: "arcanos-core"
+          },
+          response: {
+            ok: true,
+            data: {
+              action: "root.deep_diagnostics",
+              traceId: "trace-cli-root"
+            }
+          }
+        }
+      });
+      expect(fetchMock).toHaveBeenCalledWith(
+        new URL("/gpt/arcanos-core", "http://127.0.0.1:3000/"),
+        expect.objectContaining({
+          method: "POST",
+          headers: expect.objectContaining({
+            authorization: `Bearer ${cliToken}`
+          }),
+          body: JSON.stringify({ action: "root.deep_diagnostics" })
+        })
+      );
+    } finally {
+      if (originalAdminToken === undefined) {
+        delete process.env.ARCANOS_ADMIN_TOKEN;
+      } else {
+        process.env.ARCANOS_ADMIN_TOKEN = originalAdminToken;
+      }
+    }
   });
 
   it("sends generate requests through the GPT fast path and prints route diagnostics", async () => {

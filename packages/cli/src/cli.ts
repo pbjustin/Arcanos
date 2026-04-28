@@ -1,4 +1,5 @@
 import { runAskCommand } from "./commands/ask.js";
+import { runDiagnosticsCommand } from "./commands/diagnostics.js";
 import { runDoctorCommand } from "./commands/doctor.js";
 import { runExecCommand } from "./commands/exec.js";
 import { runGenerateCommand } from "./commands/generate.js";
@@ -73,6 +74,8 @@ async function runCommand(invocation: Exclude<ReturnType<typeof parseCliInvocati
       return runQueryCommand(invocation);
     case "query-and-wait":
       return runQueryAndWaitCommand(invocation);
+    case "diagnostics":
+      return runDiagnosticsCommand(invocation);
     case "generate-and-wait":
       return runGenerateAndWaitCommand(invocation);
     case "job-status":
