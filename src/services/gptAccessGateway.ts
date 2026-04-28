@@ -42,20 +42,37 @@ const GPT_ACCESS_JOB_RESULT_ENDPOINT = '/gpt-access/jobs/result';
 const MAX_CREATE_AI_JOB_VALIDATION_DEPTH = 64;
 export const GPT_ACCESS_SUPPRESS_PROMPT_DEBUG_TRACE_FLAG = '__arcanosSuppressPromptDebugTrace';
 const UNSAFE_CREATE_AI_JOB_FIELDS = new Set([
+  '__proto__',
+  'admin_key',
+  'apikey',
+  'api-key',
+  'api_key',
   'sql',
+  'command',
+  'constructor',
+  'exec',
   'target',
   'endpoint',
   'headers',
   'auth',
+  'authorization',
+  'bearer',
   'cookie',
   'cookies',
+  'openai_api_key',
+  'password',
+  'prototype',
   'proxy',
+  'railway_token',
+  'secret',
+  'shell',
+  'token',
   'url'
 ]);
 const GPT_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,127}$/i;
 
 type CreateAiJobPayloadValidationIssue =
-  | { kind: 'unsafe_field'; path: string }
+  | { kind: 'unsafe_field'; field: string }
   | { kind: 'depth_exceeded'; maxDepth: number };
 
 export const GPT_ACCESS_SCOPES = [
@@ -198,7 +215,7 @@ function inspectCreateAiJobPayload(value: unknown): CreateAiJobPayloadValidation
       if (UNSAFE_CREATE_AI_JOB_FIELDS.has(normalizedKey)) {
         return {
           kind: 'unsafe_field',
-          path: currentPath.join('.')
+          field: normalizedKey
         };
       }
 
@@ -785,7 +802,7 @@ export async function createGptAccessAiJob(body: unknown, context: CreateGptAcce
       traceId,
       requestType: 'createAiJob',
       status: 'validation_failed',
-      unsafeField: payloadIssue.path
+      unsafeField: payloadIssue.field
     });
     return {
       statusCode: 400,
@@ -793,7 +810,7 @@ export async function createGptAccessAiJob(body: unknown, context: CreateGptAcce
         ok: false,
         error: {
           code: 'GPT_ACCESS_VALIDATION_ERROR',
-          message: `Unsafe field '${payloadIssue.path}' is not allowed for AI job creation.`
+          message: 'Unsafe field is not allowed for AI job creation.'
         }
       }
     };

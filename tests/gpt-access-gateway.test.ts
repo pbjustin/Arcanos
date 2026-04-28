@@ -402,13 +402,163 @@ describe('/gpt-access gateway', () => {
     expect(unsafeTopLevelResponse.status).toBe(400);
     expect(unsafeTopLevelResponse.body.error).toEqual({
       code: 'GPT_ACCESS_VALIDATION_ERROR',
-      message: "Unsafe field 'url' is not allowed for AI job creation."
+      message: 'Unsafe field is not allowed for AI job creation.'
     });
     expect(unsafeNestedResponse.status).toBe(400);
     expect(unsafeNestedResponse.body.error).toEqual({
       code: 'GPT_ACCESS_VALIDATION_ERROR',
-      message: "Unsafe field 'input.headers' is not allowed for AI job creation."
+      message: 'Unsafe field is not allowed for AI job creation.'
     });
+    expect(resolveGptRoutingMock).not.toHaveBeenCalled();
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects unsafe AI job fields in nested objects, arrays, and prototype keys', async () => {
+    allowCreateJobs();
+    const unsafeRequests = [
+      {
+        input: {
+          command: 'rm -rf /'
+        }
+      },
+      {
+        input: {
+          tools: [
+            {
+              shell: 'powershell'
+            }
+          ]
+        }
+      },
+      {
+        input: {
+          steps: [
+            {
+              exec: 'node -e process.exit(1)'
+            }
+          ]
+        }
+      },
+      {
+        input: {
+          credentials: {
+            ' Token ': 'Bearer live-token-value'
+          }
+        }
+      },
+      {
+        input: {
+          Password: 'do-not-log'
+        }
+      },
+      {
+        input: {
+          nested: {
+            SECRET: 'sk-test-placeholder-value'
+          }
+        }
+      }
+    ];
+
+    for (const unsafeRequest of unsafeRequests) {
+      const response = await authorized(request(buildApp()).post('/gpt-access/jobs/create'))
+        .send({
+          gptId: 'arcanos-core',
+          task: 'Generate a Codex IDE prompt.',
+          ...unsafeRequest
+        });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error.code).toBe('GPT_ACCESS_VALIDATION_ERROR');
+      expect(response.body.error.message).toBe('Unsafe field is not allowed for AI job creation.');
+    }
+    expect(resolveGptRoutingMock).not.toHaveBeenCalled();
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+
+    const prototypeInput: Record<string, unknown> = {};
+    Object.defineProperty(prototypeInput, '__proto__', {
+      enumerable: true,
+      configurable: true,
+      value: {
+        polluted: true
+      }
+    });
+    const constructorResponse = await createGptAccessAiJob(
+      {
+        gptId: 'arcanos-core',
+        task: 'Generate a Codex IDE prompt.',
+        input: {
+          constructor: {
+            prototype: {
+              polluted: true
+            }
+          }
+        }
+      },
+      { actorKey: 'test-actor' }
+    );
+    const protoResponse = await createGptAccessAiJob(
+      {
+        gptId: 'arcanos-core',
+        task: 'Generate a Codex IDE prompt.',
+        input: prototypeInput
+      },
+      { actorKey: 'test-actor' }
+    );
+
+    expect(constructorResponse.statusCode).toBe(400);
+    expect(protoResponse.statusCode).toBe(400);
+    expect(JSON.stringify({ constructorResponse, protoResponse })).not.toContain('polluted');
+    expect(resolveGptRoutingMock).not.toHaveBeenCalled();
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  });
+
+  it('does not echo attacker-controlled unsafe field paths in errors or logs', async () => {
+    allowCreateJobs();
+    const secretKeySegment = 'sk-test-secret-in-key-name';
+    const logger = {
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn()
+    };
+
+    const response = await createGptAccessAiJob(
+      {
+        gptId: 'arcanos-core',
+        task: 'Generate a Codex IDE prompt.',
+        input: {
+          [secretKeySegment]: {
+            url: 'https://internal.example/metadata'
+          }
+        }
+      },
+      {
+        actorKey: 'test-actor',
+        requestId: 'req-unsafe-path',
+        traceId: 'trace-unsafe-path',
+        logger
+      }
+    );
+    const rendered = JSON.stringify({
+      response,
+      logs: [
+        ...logger.info.mock.calls,
+        ...logger.warn.mock.calls,
+        ...logger.error.mock.calls
+      ]
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.payload.error).toEqual({
+      code: 'GPT_ACCESS_VALIDATION_ERROR',
+      message: 'Unsafe field is not allowed for AI job creation.'
+    });
+    expect(rendered).toContain('url');
+    expect(rendered).not.toContain(secretKeySegment);
+    expect(rendered).not.toContain('https://internal.example/metadata');
     expect(resolveGptRoutingMock).not.toHaveBeenCalled();
     expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
@@ -642,7 +792,6 @@ describe('/gpt-access gateway', () => {
         gptId: 'arcanos-core',
         task: `Generate a Codex prompt and do not expose ${fakeOpenAiCredential}`,
         input: {
-          token: 'Bearer live-token-value',
           purpose: 'documentation update prompt'
         }
       },
@@ -665,7 +814,6 @@ describe('/gpt-access gateway', () => {
     expect(renderedLogs).toContain('arcanos-core');
     expect(renderedLogs).not.toContain(fakeOpenAiCredential);
     expect(renderedLogs).not.toContain('Generate a Codex prompt');
-    expect(renderedLogs).not.toContain('live-token-value');
   });
 
   it('allows approved MCP tools only', async () => {
@@ -851,5 +999,30 @@ describe('/gpt-access gateway', () => {
     }));
     expect(response.body.paths['/gpt-access/jobs/result'].post.operationId).toBe('getJobResult');
     expect(response.body.paths['/gpt-access/mcp'].post.operationId).toBe('arcanosMcpControl');
+  });
+
+  it('rate limits invalid bearer attempts by client address, not rotating token value', async () => {
+    const app = buildApp();
+    let lastResponse: request.Response | null = null;
+
+    for (let index = 0; index < 121; index += 1) {
+      lastResponse = await request(app)
+        .post('/gpt-access/jobs/create')
+        .set('Authorization', `Bearer invalid-token-${index}`)
+        .set('X-Forwarded-For', '203.0.113.240')
+        .send({
+          gptId: 'arcanos-core',
+          task: 'Generate a Codex IDE prompt.'
+        });
+    }
+
+    expect(lastResponse?.status).toBe(429);
+    expect(lastResponse?.body).toEqual(expect.objectContaining({
+      error: 'Rate limit exceeded',
+      message: 'Too many requests for gpt-access. Try again later.'
+    }));
+    expect(resolveGptRoutingMock).not.toHaveBeenCalled();
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
   });
 });

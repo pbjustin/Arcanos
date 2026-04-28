@@ -1,10 +1,10 @@
-import crypto from 'node:crypto';
 import express from 'express';
 
 import { writePublicHealthResponse } from '@core/diagnostics.js';
 import {
   createRateLimitMiddleware,
   getRequestActorKey,
+  getRequestClientAddress,
   securityHeaders
 } from '@platform/runtime/security.js';
 import { asyncHandler } from '@shared/http/index.js';
@@ -26,12 +26,7 @@ import {
 const router = express.Router();
 
 function getGptAccessRateLimitActorKey(req: express.Request): string {
-  const authorization = req.header('authorization')?.trim();
-  if (authorization) {
-    return `auth:${crypto.createHash('sha256').update(authorization, 'utf8').digest('hex')}`;
-  }
-
-  return getRequestActorKey(req);
+  return `ip:${getRequestClientAddress(req)}`;
 }
 
 const gptAccessRateLimit = createRateLimitMiddleware({
