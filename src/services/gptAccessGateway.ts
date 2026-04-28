@@ -3,11 +3,24 @@ import type { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 
 import { getPool, isDatabaseConnected, query, transaction } from '@core/db/index.js';
-import { getJobById, getJobQueueSummary } from '@core/db/repositories/jobRepository.js';
-import { buildGptJobResultLookupPayload } from '@shared/gpt/gptJobResult.js';
+import {
+  findOrCreateGptJob,
+  getJobById,
+  getJobQueueSummary,
+  IdempotencyKeyConflictError,
+  JobRepositoryUnavailableError
+} from '@core/db/repositories/jobRepository.js';
+import { buildQueuedGptJobInput } from '@shared/gpt/asyncGptJob.js';
+import {
+  buildGptIdempotencyDescriptor,
+  normalizeExplicitIdempotencyKey,
+  summarizeFingerprintHash
+} from '@shared/gpt/gptIdempotency.js';
+import { buildGptJobResultLookupPayload, GPT_QUERY_ACTION } from '@shared/gpt/gptJobResult.js';
 import { redactSensitive } from '@shared/redaction.js';
 import { runtimeDiagnosticsService } from '@services/runtimeDiagnosticsService.js';
 import { getWorkerControlHealth, getWorkerControlStatus } from '@services/workerControlService.js';
+import { planAutonomousWorkerJob } from '@services/workerAutonomyService.js';
 import { buildSafetySelfHealSnapshot } from '@services/selfHealRuntimeInspectionService.js';
 import { getWorkerRuntimeStatus } from '@platform/runtime/workerConfig.js';
 
@@ -19,11 +32,32 @@ const LOG_LIMIT_MAX = 500;
 const LOG_LIMIT_DEFAULT = 100;
 const LOG_SINCE_MINUTES_MAX = 24 * 60;
 const EXPLAIN_TIMEOUT_MS = 5000;
+const MAX_AI_JOB_TASK_LENGTH = 8000;
+const MAX_AI_JOB_CONTEXT_LENGTH = 12000;
+const MAX_AI_JOB_INPUT_JSON_LENGTH = 12000;
+const DEFAULT_AI_JOB_OUTPUT_TOKENS = 2048;
+const MAX_AI_JOB_OUTPUT_TOKENS = 4096;
+const MAX_AI_JOB_WORDS = 2000;
+const GPT_ACCESS_JOB_RESULT_ENDPOINT = '/gpt-access/jobs/result';
+export const GPT_ACCESS_SUPPRESS_PROMPT_DEBUG_TRACE_FLAG = '__arcanosSuppressPromptDebugTrace';
+const UNSAFE_CREATE_AI_JOB_FIELDS = new Set([
+  'sql',
+  'target',
+  'endpoint',
+  'headers',
+  'auth',
+  'cookie',
+  'cookies',
+  'proxy',
+  'url'
+]);
+const GPT_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,127}$/i;
 
 export const GPT_ACCESS_SCOPES = [
   'runtime.read',
   'workers.read',
   'queue.read',
+  'jobs.create',
   'jobs.result',
   'logs.read_sanitized',
   'db.explain_approved',
@@ -56,6 +90,8 @@ type GatewayErrorCode =
   | 'UNAUTHORIZED_GPT_ACCESS'
   | 'GPT_ACCESS_SCOPE_DENIED'
   | 'GPT_ACCESS_INTERNAL_ERROR'
+  | 'GPT_ACCESS_JOBS_UNAVAILABLE'
+  | 'GPT_ACCESS_IDEMPOTENCY_CONFLICT'
   | 'LOG_QUERY_BACKEND_NOT_CONFIGURED'
   | 'DB_EXPLAIN_BACKEND_NOT_CONFIGURED'
   | 'GPT_ACCESS_VALIDATION_ERROR';
@@ -72,6 +108,85 @@ export interface ApprovedExplainTemplate {
   sql: string;
   params: unknown[];
   summary: string;
+}
+
+interface GptAccessLogger {
+  info?: (event: string, data?: Record<string, unknown>) => void;
+  warn?: (event: string, data?: Record<string, unknown>) => void;
+  error?: (event: string, data?: Record<string, unknown>) => void;
+}
+
+export interface CreateGptAccessAiJobContext {
+  actorKey: string;
+  requestId?: string;
+  traceId?: string;
+  idempotencyKey?: string | null;
+  logger?: GptAccessLogger;
+}
+
+const jsonValueSchema: z.ZodType<unknown> = z.lazy(() =>
+  z.union([
+    z.string(),
+    z.number(),
+    z.boolean(),
+    z.null(),
+    z.array(jsonValueSchema),
+    z.record(jsonValueSchema)
+  ])
+);
+
+const createAiJobRequestSchema = z.object({
+  gptId: z.string().trim().min(1).max(128).regex(GPT_ID_PATTERN),
+  task: z.string().trim().min(1).max(MAX_AI_JOB_TASK_LENGTH),
+  input: z.record(jsonValueSchema).optional().default({}),
+  context: z.string().trim().max(MAX_AI_JOB_CONTEXT_LENGTH).optional(),
+  maxOutputTokens: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(MAX_AI_JOB_OUTPUT_TOKENS)
+    .optional()
+    .default(DEFAULT_AI_JOB_OUTPUT_TOKENS),
+  idempotencyKey: z.string().trim().min(1).max(256).optional()
+}).strict().superRefine((value, ctx) => {
+  if (getJsonStringLength(value.input) > MAX_AI_JOB_INPUT_JSON_LENGTH) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['input'],
+      message: `input JSON must be ${MAX_AI_JOB_INPUT_JSON_LENGTH} characters or fewer`
+    });
+  }
+});
+
+function findUnsafeCreateAiJobField(value: unknown, path: string[] = []): string | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  if (Array.isArray(value)) {
+    for (let index = 0; index < value.length; index += 1) {
+      const nestedPath = findUnsafeCreateAiJobField(value[index], [...path, String(index)]);
+      if (nestedPath) {
+        return nestedPath;
+      }
+    }
+    return null;
+  }
+
+  for (const [key, entryValue] of Object.entries(value as Record<string, unknown>)) {
+    const normalizedKey = key.trim().toLowerCase();
+    const currentPath = [...path, key];
+    if (UNSAFE_CREATE_AI_JOB_FIELDS.has(normalizedKey)) {
+      return currentPath.join('.');
+    }
+
+    const nestedPath = findUnsafeCreateAiJobField(entryValue, currentPath);
+    if (nestedPath) {
+      return nestedPath;
+    }
+  }
+
+  return null;
 }
 
 const mcpRequestSchema = z.object({
@@ -119,6 +234,105 @@ function sendGatewayError(
     }
   };
   res.status(statusCode).json(payload);
+}
+
+function getJsonStringLength(value: unknown): number {
+  try {
+    return JSON.stringify(value)?.length ?? 0;
+  } catch {
+    return Number.POSITIVE_INFINITY;
+  }
+}
+
+function normalizeTraceId(value: string | undefined): string {
+  const trimmedValue = typeof value === 'string' ? value.trim() : '';
+  return trimmedValue.length > 0 && trimmedValue.length <= 128 ? trimmedValue : crypto.randomUUID();
+}
+
+function hashPromptForGatewayLog(prompt: string): string {
+  return crypto
+    .createHash('sha256')
+    .update(prompt.replace(/\s+/g, ' ').trim(), 'utf8')
+    .digest('hex')
+    .slice(0, 12);
+}
+
+function getCreateAiJobValidationMessage(error: z.ZodError): string {
+  const firstIssue = error.issues[0];
+  const firstPath = firstIssue?.path.join('.') ?? '';
+
+  if (firstPath === 'task') {
+    return `task must be a non-empty string with at most ${MAX_AI_JOB_TASK_LENGTH} characters.`;
+  }
+
+  if (firstPath === 'gptId') {
+    return 'gptId must be a non-empty string with at most 128 characters.';
+  }
+
+  if (firstPath === 'input') {
+    return `input must be a JSON object no larger than ${MAX_AI_JOB_INPUT_JSON_LENGTH} characters.`;
+  }
+
+  if (firstPath === 'context') {
+    return `context must be at most ${MAX_AI_JOB_CONTEXT_LENGTH} characters.`;
+  }
+
+  if (firstPath === 'maxOutputTokens') {
+    return `maxOutputTokens must be an integer between 1 and ${MAX_AI_JOB_OUTPUT_TOKENS}.`;
+  }
+
+  if (firstPath === 'idempotencyKey') {
+    return 'idempotencyKey must be a non-empty string with at most 256 characters.';
+  }
+
+  return 'Invalid AI job request.';
+}
+
+function mapStoredJobStatusToCreateStatus(
+  status: unknown
+): 'queued' | 'running' | 'completed' | 'failed' {
+  switch (status) {
+    case 'running':
+      return 'running';
+    case 'completed':
+      return 'completed';
+    case 'failed':
+    case 'cancelled':
+    case 'expired':
+      return 'failed';
+    case 'pending':
+    default:
+      return 'queued';
+  }
+}
+
+function buildGatewayAiJobBody(input: z.infer<typeof createAiJobRequestSchema>): Record<string, unknown> {
+  const maxWords = Math.min(MAX_AI_JOB_WORDS, input.maxOutputTokens);
+  const payload: Record<string, unknown> = {
+    task: input.task,
+    input: input.input,
+    source: 'gpt-access',
+    maxOutputTokens: input.maxOutputTokens,
+    maxWords
+  };
+
+  if (input.context && input.context.length > 0) {
+    payload.context = input.context;
+  }
+
+  return {
+    action: GPT_QUERY_ACTION,
+    prompt: input.task,
+    payload,
+    executionMode: 'async',
+    maxWords,
+    [GPT_ACCESS_SUPPRESS_PROMPT_DEBUG_TRACE_FLAG]: true
+  };
+}
+
+async function resolveGatewayGptRouting(gptId: string, requestId: string) {
+  const { resolveGptRouting } = await import('@routes/_core/gptDispatch.js');
+  return resolveGptRouting(gptId, requestId);
 }
 
 function isProductionEnvironment(): boolean {
@@ -191,8 +405,26 @@ function resolveConfiguredAccessScopes(): Set<GptAccessScope> {
   return new Set(GPT_ACCESS_SCOPES.filter((scope) => requestedScopes.has(scope)));
 }
 
+function isGptAccessScopeExplicitlyConfigured(scope: GptAccessScope): boolean {
+  const rawScopes = process.env.ARCANOS_GPT_ACCESS_SCOPES;
+  if (!rawScopes) {
+    return false;
+  }
+
+  return rawScopes
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .includes(scope);
+}
+
 export function requireGptAccessScope(scope: GptAccessScope) {
   return (_req: Request, res: Response, next: NextFunction): void => {
+    if (scope === 'jobs.create' && !isGptAccessScopeExplicitlyConfigured(scope)) {
+      sendGatewayError(res, 403, 'GPT_ACCESS_SCOPE_DENIED', 'GPT access scope denied.');
+      return;
+    }
+
     const configuredScopes = resolveConfiguredAccessScopes();
     if (!configuredScopes.has(scope)) {
       sendGatewayError(res, 403, 'GPT_ACCESS_SCOPE_DENIED', 'GPT access scope denied.');
@@ -403,6 +635,7 @@ const STRING_REDACTIONS: Array<[RegExp, string]> = [
   [/\b(?:authorization|cookie|set-cookie|api[_-]?key|token|secret|password|session(?:id)?|database_url)\s*[:=]\s*["']?[^"'\s,;}]+/gi, '$1=[REDACTED]'],
   [/\b(email|password)\s*[:=]\s*["']?[^"'\s,;}]+/gi, '$1=[REDACTED]']
 ];
+const PROMPT_LOG_FIELD_KEYS = new Set(['prompt', 'rawprompt', 'normalizedprompt', 'task']);
 
 export function sanitizeGptAccessString(value: string): string {
   return STRING_REDACTIONS.reduce(
@@ -429,8 +662,12 @@ function sanitizeStringsDeep(value: unknown): unknown {
 
   return Object.fromEntries(
     Object.entries(value as Record<string, unknown>).map(([key, entry]) => {
-      if (key.toLowerCase() === 'email' || key.toLowerCase().includes('password')) {
+      const normalizedKey = key.toLowerCase();
+      if (normalizedKey === 'email' || normalizedKey.includes('password')) {
         return [key, '[REDACTED]'];
+      }
+      if (PROMPT_LOG_FIELD_KEYS.has(normalizedKey)) {
+        return [key, '[REDACTED_PROMPT]'];
       }
       return [key, sanitizeStringsDeep(entry)];
     })
@@ -514,6 +751,231 @@ export async function getGptAccessJobResult(body: unknown) {
       ...buildGptJobResultLookupPayload(parsed.data.jobId, job)
     })
   };
+}
+
+export async function createGptAccessAiJob(body: unknown, context: CreateGptAccessAiJobContext) {
+  const traceId = normalizeTraceId(context.traceId);
+  const unsafeFieldPath = findUnsafeCreateAiJobField(body);
+  if (unsafeFieldPath) {
+    context.logger?.warn?.('gpt_access.ai_job.rejected', {
+      traceId,
+      requestType: 'createAiJob',
+      status: 'validation_failed',
+      unsafeField: unsafeFieldPath
+    });
+    return {
+      statusCode: 400,
+      payload: {
+        ok: false,
+        error: {
+          code: 'GPT_ACCESS_VALIDATION_ERROR',
+          message: `Unsafe field '${unsafeFieldPath}' is not allowed for AI job creation.`
+        }
+      }
+    };
+  }
+
+  const parsed = createAiJobRequestSchema.safeParse(body);
+  if (!parsed.success) {
+    context.logger?.warn?.('gpt_access.ai_job.rejected', {
+      traceId,
+      requestType: 'createAiJob',
+      status: 'validation_failed'
+    });
+    return {
+      statusCode: 400,
+      payload: {
+        ok: false,
+        error: {
+          code: 'GPT_ACCESS_VALIDATION_ERROR',
+          message: getCreateAiJobValidationMessage(parsed.error)
+        }
+      }
+    };
+  }
+
+  const request = parsed.data;
+  const bodyIdempotencyKey = normalizeExplicitIdempotencyKey(request.idempotencyKey);
+  const headerIdempotencyKey = normalizeExplicitIdempotencyKey(context.idempotencyKey);
+  if (bodyIdempotencyKey && headerIdempotencyKey && bodyIdempotencyKey !== headerIdempotencyKey) {
+    context.logger?.warn?.('gpt_access.ai_job.rejected', {
+      traceId,
+      requestType: 'createAiJob',
+      gptId: request.gptId,
+      status: 'idempotency_key_mismatch'
+    });
+    return {
+      statusCode: 400,
+      payload: {
+        ok: false,
+        error: {
+          code: 'GPT_ACCESS_VALIDATION_ERROR',
+          message: 'idempotencyKey must match the Idempotency-Key header when both are supplied.'
+        }
+      }
+    };
+  }
+  const explicitIdempotencyKey = headerIdempotencyKey ?? bodyIdempotencyKey;
+  context.logger?.info?.('gpt_access.ai_job.requested', {
+    traceId,
+    requestType: 'createAiJob',
+    gptId: request.gptId,
+    promptLength: request.task.length,
+    promptHash: hashPromptForGatewayLog(request.task),
+    status: 'validating'
+  });
+
+  const routeResolution = await resolveGatewayGptRouting(request.gptId, context.requestId ?? traceId);
+  if (!routeResolution.ok) {
+    context.logger?.warn?.('gpt_access.ai_job.rejected', {
+      traceId,
+      requestType: 'createAiJob',
+      gptId: request.gptId,
+      status: 'unknown_gpt'
+    });
+    return {
+      statusCode: 400,
+      payload: {
+        ok: false,
+        error: {
+          code: 'GPT_ACCESS_VALIDATION_ERROR',
+          message: 'Unknown or unauthorized gptId.'
+        }
+      }
+    };
+  }
+
+  const aiJobBody = buildGatewayAiJobBody(request);
+  const descriptor = buildGptIdempotencyDescriptor({
+    gptId: request.gptId,
+    action: GPT_QUERY_ACTION,
+    body: aiJobBody,
+    actorKey: context.actorKey,
+    explicitIdempotencyKey
+  });
+  const queuedInput = buildQueuedGptJobInput({
+    gptId: request.gptId,
+    body: aiJobBody,
+    prompt: request.task,
+    bypassIntentRouting: true,
+    requestId: context.requestId ?? traceId,
+    routeHint: GPT_QUERY_ACTION,
+    requestPath: '/gpt-access/jobs/create',
+    executionModeReason: 'gpt_access_create_ai_job'
+  });
+
+  try {
+    const plannedJob = await planAutonomousWorkerJob('gpt', queuedInput);
+    const createResult = await findOrCreateGptJob({
+      workerId: process.env.WORKER_ID || 'gpt-access',
+      input: queuedInput,
+      requestFingerprintHash: descriptor.fingerprintHash,
+      idempotencyScopeHash: descriptor.scopeHash,
+      idempotencyKeyHash: descriptor.source === 'explicit' ? descriptor.idempotencyKeyHash : null,
+      idempotencyOrigin: descriptor.source,
+      createOptions: plannedJob
+    });
+
+    context.logger?.info?.('gpt_access.ai_job.enqueued', {
+      traceId,
+      requestType: 'createAiJob',
+      gptId: request.gptId,
+      jobId: createResult.job.id,
+      status: mapStoredJobStatusToCreateStatus(createResult.job.status),
+      deduped: createResult.deduped,
+      fingerprintHash: summarizeFingerprintHash(descriptor.fingerprintHash),
+      scopeHash: summarizeFingerprintHash(descriptor.scopeHash)
+    });
+
+    if (!UUID_PATTERN.test(createResult.job.id)) {
+      context.logger?.error?.('gpt_access.ai_job.failed', {
+        traceId,
+        requestType: 'createAiJob',
+        gptId: request.gptId,
+        jobId: createResult.job.id,
+        status: 'invalid_job_id'
+      });
+      return {
+        statusCode: 500,
+        payload: {
+          ok: false,
+          error: {
+            code: 'GPT_ACCESS_INTERNAL_ERROR',
+            message: 'Created AI job did not return a valid UUID jobId.'
+          }
+        }
+      };
+    }
+
+    return {
+      statusCode: 202,
+      payload: {
+        ok: true,
+        jobId: createResult.job.id,
+        traceId,
+        status: mapStoredJobStatusToCreateStatus(createResult.job.status),
+        deduped: Boolean(createResult.deduped),
+        resultEndpoint: GPT_ACCESS_JOB_RESULT_ENDPOINT
+      }
+    };
+  } catch (error: unknown) {
+    if (error instanceof IdempotencyKeyConflictError) {
+      context.logger?.warn?.('gpt_access.ai_job.rejected', {
+        traceId,
+        requestType: 'createAiJob',
+        gptId: request.gptId,
+        status: 'idempotency_conflict'
+      });
+      return {
+        statusCode: 409,
+        payload: {
+          ok: false,
+          error: {
+            code: 'GPT_ACCESS_IDEMPOTENCY_CONFLICT',
+            message: 'The supplied idempotency key is already bound to a different GPT request.'
+          }
+        }
+      };
+    }
+
+    if (error instanceof JobRepositoryUnavailableError) {
+      context.logger?.error?.('gpt_access.ai_job.failed', {
+        traceId,
+        requestType: 'createAiJob',
+        gptId: request.gptId,
+        status: 'jobs_unavailable',
+        errorType: error.name
+      });
+      return {
+        statusCode: 503,
+        payload: {
+          ok: false,
+          error: {
+            code: 'GPT_ACCESS_JOBS_UNAVAILABLE',
+            message: 'Durable GPT job persistence is unavailable.'
+          }
+        }
+      };
+    }
+
+    context.logger?.error?.('gpt_access.ai_job.failed', {
+      traceId,
+      requestType: 'createAiJob',
+      gptId: request.gptId,
+      status: 'failed',
+      errorType: error instanceof Error ? error.name : 'unknown'
+    });
+    return {
+      statusCode: 500,
+      payload: {
+        ok: false,
+        error: {
+          code: 'GPT_ACCESS_INTERNAL_ERROR',
+          message: 'Failed to create AI job.'
+        }
+      }
+    };
+  }
 }
 
 export async function runGptAccessMcpTool(body: unknown) {
@@ -774,7 +1236,7 @@ export function buildGptAccessOpenApiDocument() {
     info: {
       title: 'ARCANOS GPT Access Gateway',
       version: SERVICE_VERSION,
-      description: 'Scoped read-only gateway for approved ARCANOS runtime, worker, queue, job, log, database explain, MCP, and diagnostics actions.'
+      description: 'Scoped gateway for approved ARCANOS runtime, worker, queue, async AI job, job-result, log, database explain, MCP, and diagnostics actions.'
     },
     servers: [
       {
@@ -808,7 +1270,57 @@ export function buildGptAccessOpenApiDocument() {
               required: ['code', 'message']
             }
           },
-          required: ['ok', 'error']
+          required: ['ok', 'error'],
+          additionalProperties: false
+        },
+        CreateAiJobRequest: {
+          type: 'object',
+          description: 'Strict async AI job creation request. Unsafe transport/proxy fields such as sql, target, endpoint, headers, auth, cookies, proxy, and url are rejected at runtime, including inside input.',
+          properties: {
+            gptId: {
+              type: 'string',
+              minLength: 1,
+              maxLength: 128,
+              pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$'
+            },
+            task: { type: 'string', minLength: 1, maxLength: MAX_AI_JOB_TASK_LENGTH },
+            input: {
+              type: 'object',
+              additionalProperties: true,
+              description: `Optional JSON object, serialized length limited to ${MAX_AI_JOB_INPUT_JSON_LENGTH} characters. Unsafe transport/proxy keys are not allowed.`
+            },
+            context: { type: 'string', maxLength: MAX_AI_JOB_CONTEXT_LENGTH },
+            maxOutputTokens: {
+              type: 'integer',
+              minimum: 1,
+              maximum: MAX_AI_JOB_OUTPUT_TOKENS,
+              default: DEFAULT_AI_JOB_OUTPUT_TOKENS
+            },
+            idempotencyKey: {
+              type: 'string',
+              minLength: 1,
+              maxLength: 256,
+              description: 'Optional client idempotency key. Equivalent to the Idempotency-Key header.'
+            }
+          },
+          required: ['gptId', 'task'],
+          additionalProperties: false
+        },
+        CreateAiJobResponse: {
+          type: 'object',
+          properties: {
+            ok: { type: 'boolean', const: true },
+            jobId: { type: 'string', format: 'uuid' },
+            traceId: { type: 'string' },
+            status: {
+              type: 'string',
+              enum: ['queued', 'running', 'completed', 'failed']
+            },
+            deduped: { type: 'boolean' },
+            resultEndpoint: { type: 'string', const: GPT_ACCESS_JOB_RESULT_ENDPOINT }
+          },
+          required: ['ok', 'jobId', 'traceId', 'status', 'deduped', 'resultEndpoint'],
+          additionalProperties: false
         }
       }
     },
@@ -844,6 +1356,37 @@ export function buildGptAccessOpenApiDocument() {
           operationId: 'getWorkerHelperHealth',
           summary: 'Get worker helper health.',
           responses: { '200': { description: 'Worker helper health.' } }
+        }
+      },
+      '/gpt-access/jobs/create': {
+        post: {
+          operationId: 'createAiJob',
+          summary: 'Create an async backend AI generation job.',
+          description: 'Queues one protected backend AI generation request through the approved GPT access gateway. Use /gpt-access/jobs/result with the returned jobId to read completion.',
+          security: [{ bearerAuth: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: { '$ref': '#/components/schemas/CreateAiJobRequest' }
+              }
+            }
+          },
+          responses: {
+            '202': {
+              description: 'AI job queued.',
+              content: {
+                'application/json': {
+                  schema: { '$ref': '#/components/schemas/CreateAiJobResponse' }
+                }
+              }
+            },
+            '400': { description: 'Invalid request.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '401': { description: 'Unauthorized.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '403': { description: 'Scope denied.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '409': { description: 'Idempotency conflict.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '503': { description: 'Jobs backend unavailable.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } }
+          }
         }
       },
       '/gpt-access/jobs/result': {

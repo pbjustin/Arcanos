@@ -1250,6 +1250,48 @@ describe('async /gpt idempotency', () => {
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
+  it('normalizes createAiJob operation aliases to canonical async query jobs', async () => {
+    findOrCreateGptJobMock.mockResolvedValue({
+      job: {
+        id: 'job-create-ai-operation',
+        status: 'pending'
+      },
+      created: true,
+      deduped: false,
+      dedupeReason: 'new_job'
+    });
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        operationId: 'createAiJob',
+        prompt: 'Draft a repository documentation update prompt.'
+      });
+
+    expect(response.status).toBe(202);
+    expect(response.body).toMatchObject({
+      ok: true,
+      action: 'query',
+      status: 'queued',
+      jobId: 'job-create-ai-operation'
+    });
+    expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
+    expect(findOrCreateGptJobMock.mock.calls[0]?.[0]).toMatchObject({
+      input: {
+        gptId: 'arcanos-core',
+        prompt: 'Draft a repository documentation update prompt.',
+        bypassIntentRouting: true,
+        routeHint: 'query',
+        body: {
+          operationId: 'createAiJob',
+          prompt: 'Draft a repository documentation update prompt.'
+        }
+      }
+    });
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
   it('keeps the exact prompt on async query jobs when callers provide transport hints inside payload', async () => {
     findOrCreateGptJobMock.mockResolvedValue({
       job: {

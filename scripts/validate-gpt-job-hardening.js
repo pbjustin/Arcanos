@@ -6,14 +6,16 @@
  */
 
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import process from 'node:process';
 
 const DEFAULTS = Object.freeze({
   baseUrl: process.env.ARCANOS_BACKEND_URL || process.env.SERVER_URL || process.env.BACKEND_URL || '',
-  healthPath: '/health',
+  healthPath: '/gpt-access/health',
   gptId: 'arcanos-core',
+  gatewayCredential: process.env.ARCANOS_GPT_ACCESS_TOKEN || process.env.GPT_ACCESS_TOKEN || '',
   environment: '',
   service: '',
   workerService: '',
@@ -21,8 +23,7 @@ const DEFAULTS = Object.freeze({
   logLines: 80,
   requestTimeoutMs: 30000,
   pollAttempts: 45,
-  pollIntervalMs: 2000,
-  heavyWordCount: 500
+  pollIntervalMs: 2000
 });
 
 function parseArgs(argv) {
@@ -46,6 +47,12 @@ function parseArgs(argv) {
 
     if (flag === '--gpt-id' && typeof next === 'string' && next.trim().length > 0) {
       config.gptId = next.trim();
+      index += 1;
+      continue;
+    }
+
+    if (flag === '--access-token' && typeof next === 'string' && next.trim().length > 0) {
+      config.gatewayCredential = next.trim();
       index += 1;
       continue;
     }
@@ -102,11 +109,6 @@ function parseArgs(argv) {
       continue;
     }
 
-    if (flag === '--heavy-word-count' && typeof next === 'string' && next.trim().length > 0) {
-      const parsed = Number(next);
-      config.heavyWordCount = Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : DEFAULTS.heavyWordCount;
-      index += 1;
-    }
   }
 
   return config;
@@ -166,8 +168,22 @@ function buildJsonHeaders(extraHeaders = {}) {
   };
 }
 
-function buildHeavyPrompt(marker, heavyWordCount) {
-  return `${marker} ${new Array(heavyWordCount).fill('Long workload').join(' ')}`.trim();
+function buildAuthorizedJsonHeaders(gatewayCredential, extraHeaders = {}) {
+  const headers = buildJsonHeaders(extraHeaders);
+  if (gatewayCredential) {
+    headers.authorization = `Bearer ${gatewayCredential}`;
+  }
+  return headers;
+}
+
+function buildAuthorizedHeaders(gatewayCredential, extraHeaders = {}) {
+  return gatewayCredential
+    ? { authorization: `Bearer ${gatewayCredential}`, ...extraHeaders }
+    : { ...extraHeaders };
+}
+
+function hashValue(value) {
+  return createHash('sha256').update(String(value), 'utf8').digest('hex').slice(0, 12);
 }
 
 function extractJobId(payload) {
@@ -186,48 +202,23 @@ function extractStatus(payload) {
   return String(payload.status || payload.jobStatus || payload.lifecycleStatus || '').trim();
 }
 
-function extractOutput(payload) {
-  if (!payload || typeof payload !== 'object') {
-    return null;
-  }
-
-  if (payload.output && typeof payload.output === 'object' && payload.output.result && typeof payload.output.result === 'object') {
-    return payload.output.result;
-  }
-
-  if (payload.result && typeof payload.result === 'object' && payload.result.result && typeof payload.result.result === 'object') {
-    return payload.result.result;
-  }
-
-  if (payload.result && typeof payload.result === 'object') {
-    return payload.result;
-  }
-
-  if (payload.output && typeof payload.output === 'object') {
-    return payload.output;
-  }
-
-  return payload;
-}
-
-function extractErrorCode(payload) {
-  if (!payload || typeof payload !== 'object') {
-    return '';
-  }
-
-  if (payload.error && typeof payload.error === 'object' && typeof payload.error.code === 'string') {
-    return payload.error.code;
-  }
-
-  return typeof payload.code === 'string' ? payload.code : '';
-}
-
-async function pollJob(baseUrl, jobId, config) {
-  const jobUrl = `${baseUrl}/jobs/${encodeURIComponent(jobId)}`;
+async function pollGptAccessJobResult(baseUrl, jobId, traceId, config, gatewayCredential) {
+  const resultUrl = `${baseUrl}/gpt-access/jobs/result`;
   let lastResponse = null;
 
   for (let attempt = 0; attempt < config.pollAttempts; attempt += 1) {
-    lastResponse = await requestJson(jobUrl, { method: 'GET' }, config.requestTimeoutMs);
+    lastResponse = await requestJson(
+      resultUrl,
+      {
+        method: 'POST',
+        headers: buildAuthorizedJsonHeaders(gatewayCredential),
+        body: JSON.stringify({
+          jobId,
+          ...(traceId ? { traceId } : {})
+        })
+      },
+      config.requestTimeoutMs
+    );
 
     if (lastResponse.ok && isTerminalStatus(extractStatus(lastResponse.json))) {
       return {
@@ -301,7 +292,7 @@ function searchLogs(serviceName, environmentName, filter, since, lines) {
   if (!serviceName || !environmentName) {
     return {
       skipped: true,
-      filter,
+      filterHash: hashValue(filter),
       matches: false,
       output: ''
     };
@@ -322,12 +313,13 @@ function searchLogs(serviceName, environmentName, filter, since, lines) {
   ]);
 
   const normalized = rawOutput.trim();
+  const sanitizedOutput = normalized.split(filter).join('[REDACTED_MARKER]');
 
   return {
     skipped: false,
-    filter,
+    filterHash: hashValue(filter),
     matches: normalized.length > 0,
-    output: truncate(normalized, 1200)
+    output: truncate(sanitizedOutput, 1200)
   };
 }
 
@@ -338,12 +330,13 @@ function truncate(value, limit) {
 async function runValidation(config) {
   const baseUrl = normalizeBaseUrl(config.baseUrl);
   const timestamp = Date.now();
-  const heavyMarker = `QA-LIVE-HEAVY-${timestamp}`;
-  const leakMarker = `QA-LIVE-LEAK-${timestamp}`;
-  const idemKey = `qa-live-idem-${timestamp}`;
-  const idemPrompt = `QA IDEM CHECK ${timestamp}`;
-  const conflictPrompt = `DIFFERENT PAYLOAD ${timestamp}`;
-  const endpoint = `${baseUrl}/gpt/${encodeURIComponent(config.gptId)}`;
+  const promptMarker = `QA-GPT-ACCESS-CREATE-${timestamp}`;
+  const fakeSecretMarker = `sk-test-gpt-access-hardening-${timestamp}`;
+  const idemKey = `qa-gpt-access-create-${timestamp}`;
+  const createEndpoint = `${baseUrl}/gpt-access/jobs/create`;
+  const resultEndpoint = '/gpt-access/jobs/result';
+  const openApiEndpoint = `${baseUrl}/gpt-access/openapi.json`;
+  const gatewayCredential = typeof config.gatewayCredential === 'string' ? config.gatewayCredential.trim() : '';
 
   const report = {
     target: {
@@ -351,17 +344,38 @@ async function runValidation(config) {
       gptId: config.gptId,
       environment: config.environment,
       service: config.service,
-      workerService: config.workerService
+      workerService: config.workerService,
+      authConfigured: gatewayCredential.length > 0
     },
     markers: {
-      heavyMarker,
-      leakMarker,
-      idemKey
+      promptMarkerHash: hashValue(promptMarker),
+      fakeSecretMarkerHash: hashValue(fakeSecretMarker),
+      idemKeyHash: hashValue(idemKey)
     },
     checks: []
   };
 
-  const healthResponse = await requestJson(`${baseUrl}${config.healthPath}`, { method: 'GET' }, config.requestTimeoutMs);
+  if (!gatewayCredential) {
+    report.checks.push(createCheck('access_token_configured', false, {
+      env: 'ARCANOS_GPT_ACCESS_TOKEN'
+    }));
+    report.summary = {
+      overall: 'FAIL',
+      failedChecks: 1
+    };
+    return report;
+  }
+
+  report.checks.push(createCheck('access_token_configured', true));
+
+  const healthResponse = await requestJson(
+    `${baseUrl}${config.healthPath}`,
+    {
+      method: 'GET',
+      headers: buildAuthorizedHeaders(gatewayCredential)
+    },
+    config.requestTimeoutMs
+  );
   report.checks.push(
     createCheck('health', healthResponse.status === 200, {
       status: healthResponse.status,
@@ -369,184 +383,113 @@ async function runValidation(config) {
     })
   );
 
-  const heavySubmitResponse = await requestJson(
-    endpoint,
+  const openApiResponse = await requestJson(
+    openApiEndpoint,
     {
-      method: 'POST',
-      headers: buildJsonHeaders(),
-      body: JSON.stringify({
-        prompt: buildHeavyPrompt(heavyMarker, config.heavyWordCount),
-        action: 'query'
-      })
+      method: 'GET',
+      headers: buildAuthorizedHeaders(gatewayCredential)
     },
     config.requestTimeoutMs
   );
-  const heavySubmitPayload = heavySubmitResponse.json;
-  const heavyJobId = extractJobId(heavySubmitPayload);
-  const heavyPoll = heavyJobId ? await pollJob(baseUrl, heavyJobId, config) : null;
-  const heavyJobPayload = heavyPoll?.response?.json ?? null;
-  const heavyOutput = extractOutput(heavyJobPayload);
-
-  report.checks.push(
-    createCheck(
-      'heavy_async_no_fallback',
-      heavySubmitResponse.status === 202
-        && heavyJobId.length > 0
-        && Boolean(heavyPoll?.completed)
-        && extractStatus(heavyJobPayload) === 'completed'
-        && heavyOutput?.fallbackFlag === false
-        && !heavyOutput?.timeoutKind,
-      {
-        submitStatus: heavySubmitResponse.status,
-        jobId: heavyJobId,
-        polled: Boolean(heavyPoll?.completed),
-        terminalStatus: extractStatus(heavyJobPayload),
-        fallbackFlag: heavyOutput?.fallbackFlag ?? null,
-        timeoutKind: heavyOutput?.timeoutKind ?? null,
-        activeModel: heavyOutput?.activeModel ?? null
-      }
-    )
-  );
-
-  const cancelResponse = heavyJobId
-    ? await requestJson(
-        `${baseUrl}/jobs/${encodeURIComponent(heavyJobId)}/cancel`,
-        {
-          method: 'POST',
-          headers: buildJsonHeaders({
-            'x-confirmed': 'yes'
-          }),
-          body: JSON.stringify({})
-        },
-        config.requestTimeoutMs
-      )
+  const createOperation = openApiResponse.json?.paths?.['/gpt-access/jobs/create']?.post;
+  const createRequestSchemaRef = createOperation?.requestBody?.content?.['application/json']?.schema?.$ref;
+  const createRequestSchemaName = typeof createRequestSchemaRef === 'string'
+    ? createRequestSchemaRef.replace('#/components/schemas/', '')
+    : '';
+  const createRequestSchema = createRequestSchemaName
+    ? openApiResponse.json?.components?.schemas?.[createRequestSchemaName]
     : null;
-
+  const unsafeSchemaFields = ['sql', 'target', 'endpoint', 'headers', 'auth', 'cookies', 'proxy', 'url']
+    .filter((field) => Object.prototype.hasOwnProperty.call(createRequestSchema?.properties ?? {}, field));
   report.checks.push(
-    createCheck(
-      'cancel_requires_auth',
-      Boolean(cancelResponse) && [401, 403].includes(cancelResponse.status),
+    createCheck('openapi_createAiJob_contract', openApiResponse.status === 200
+      && createOperation?.operationId === 'createAiJob'
+      && JSON.stringify(createOperation?.security ?? openApiResponse.json?.security ?? []).includes('bearerAuth')
+      && createRequestSchema?.additionalProperties === false
+      && unsafeSchemaFields.length === 0,
       {
-        status: cancelResponse?.status ?? null,
-        body: cancelResponse?.json || cancelResponse?.text || null
+        status: openApiResponse.status,
+        operationId: createOperation?.operationId ?? null,
+        requestAdditionalProperties: createRequestSchema?.additionalProperties ?? null,
+        unsafeSchemaFields
       }
     )
   );
 
-  const leakSubmitResponse = await requestJson(
-    endpoint,
+  const createResponse = await requestJson(
+    createEndpoint,
     {
       method: 'POST',
-      headers: buildJsonHeaders(),
-      body: JSON.stringify({
-        prompt: leakMarker,
-        action: 'query'
-      })
-    },
-    config.requestTimeoutMs
-  );
-
-  const firstIdemResponse = await requestJson(
-    endpoint,
-    {
-      method: 'POST',
-      headers: buildJsonHeaders({
+      headers: buildAuthorizedJsonHeaders(gatewayCredential, {
         'Idempotency-Key': idemKey
       }),
       body: JSON.stringify({
-        prompt: idemPrompt,
-        action: 'query'
+        gptId: config.gptId,
+        task: `${promptMarker} Generate a concise Codex IDE validation prompt. Do not expose ${fakeSecretMarker}.`,
+        input: {
+          purpose: 'gpt access createAiJob hardening validation',
+          promptMarkerHash: hashValue(promptMarker)
+        }
       })
     },
     config.requestTimeoutMs
   );
-  const secondIdemResponse = await requestJson(
-    endpoint,
-    {
-      method: 'POST',
-      headers: buildJsonHeaders({
-        'Idempotency-Key': idemKey
-      }),
-      body: JSON.stringify({
-        prompt: idemPrompt,
-        action: 'query'
-      })
-    },
-    config.requestTimeoutMs
-  );
-
-  const firstIdemPayload = firstIdemResponse.json;
-  const secondIdemPayload = secondIdemResponse.json;
-
+  const createPayload = createResponse.json;
+  const createdJobId = extractJobId(createPayload);
+  const traceId = typeof createPayload?.traceId === 'string' ? createPayload.traceId : '';
   report.checks.push(
-    createCheck(
-      'explicit_idempotency_dedupes',
-      [200, 202].includes(firstIdemResponse.status)
-        && [200, 202].includes(secondIdemResponse.status)
-        && extractJobId(firstIdemPayload).length > 0
-        && extractJobId(firstIdemPayload) === extractJobId(secondIdemPayload)
-        && secondIdemPayload?.deduped === true,
+    createCheck('createAiJob_submit', createResponse.status === 202
+      && createdJobId.length > 0
+      && typeof createPayload?.traceId === 'string'
+      && ['queued', 'running', 'completed', 'failed'].includes(String(createPayload?.status ?? '')),
       {
-        firstStatus: firstIdemResponse.status,
-        secondStatus: secondIdemResponse.status,
-        firstJobId: extractJobId(firstIdemPayload),
-        secondJobId: extractJobId(secondIdemPayload),
-        secondDeduped: secondIdemPayload?.deduped ?? null
+        status: createResponse.status,
+        jobId: createdJobId,
+        traceIdPresent: typeof createPayload?.traceId === 'string',
+        createStatus: createPayload?.status ?? null,
+        resultEndpoint
       }
     )
   );
 
-  const conflictResponse = await requestJson(
-    endpoint,
-    {
-      method: 'POST',
-      headers: buildJsonHeaders({
-        'Idempotency-Key': idemKey
-      }),
-      body: JSON.stringify({
-        prompt: conflictPrompt,
-        action: 'query'
-      })
-    },
-    config.requestTimeoutMs
-  );
+  const resultPoll = createdJobId
+    ? await pollGptAccessJobResult(baseUrl, createdJobId, traceId, config, gatewayCredential)
+    : null;
+  const resultPayload = resultPoll?.response?.json ?? null;
 
   report.checks.push(
-    createCheck(
-      'idempotency_conflict_409',
-      conflictResponse.status === 409 && extractErrorCode(conflictResponse.json).includes('IDEMPOTENCY_KEY_CONFLICT'),
+    createCheck('job_result_endpoint_read',
+      Boolean(resultPoll?.response?.ok)
+        && extractJobId(resultPayload) === createdJobId,
       {
-        status: conflictResponse.status,
-        body: conflictResponse.json || conflictResponse.text
+        status: resultPoll?.response?.status ?? null,
+        attempts: resultPoll?.attempts ?? null,
+        terminal: Boolean(resultPoll?.completed),
+        jobId: extractJobId(resultPayload),
+        resultStatus: extractStatus(resultPayload)
       }
     )
   );
 
-  const webLeakLogs = searchLogs(config.service, config.environment, leakMarker, config.logSince, config.logLines);
-  const workerLeakLogs = searchLogs(config.workerService, config.environment, leakMarker, config.logSince, config.logLines);
+  const webPromptLogs = searchLogs(config.service, config.environment, promptMarker, config.logSince, config.logLines);
+  const workerPromptLogs = searchLogs(config.workerService, config.environment, promptMarker, config.logSince, config.logLines);
+  const webSecretLogs = searchLogs(config.service, config.environment, fakeSecretMarker, config.logSince, config.logLines);
+  const workerSecretLogs = searchLogs(config.workerService, config.environment, fakeSecretMarker, config.logSince, config.logLines);
   report.checks.push(
-    createCheck(
-      'prompt_marker_absent_from_logs',
-      !webLeakLogs.matches && !workerLeakLogs.matches,
+    createCheck('prompt_marker_absent_from_logs',
+      !webPromptLogs.matches && !workerPromptLogs.matches,
       {
-        web: webLeakLogs,
-        worker: workerLeakLogs,
-        leakSubmitStatus: leakSubmitResponse.status,
-        leakJobId: extractJobId(leakSubmitResponse.json)
+        web: webPromptLogs,
+        worker: workerPromptLogs
       }
     )
   );
-
-  const heavyJobLogSearch = heavyJobId
-    ? searchLogs(config.workerService, config.environment, heavyJobId, config.logSince, config.logLines)
-    : { skipped: true, matches: false, output: '' };
   report.checks.push(
-    createCheck(
-      'heavy_job_logs_show_no_timeout_fallback',
-      heavyJobLogSearch.skipped
-        || !/timeout_fallback|pipeline_timeout|openai_call_aborted_due_to_budget/i.test(heavyJobLogSearch.output),
+    createCheck('fake_secret_marker_absent_from_logs',
+      !webSecretLogs.matches && !workerSecretLogs.matches,
       {
-        worker: heavyJobLogSearch
+        web: webSecretLogs,
+        worker: workerSecretLogs
       }
     )
   );

@@ -119,6 +119,24 @@ describe('transport/http/middleware/unsafeExecutionGate', () => {
     });
   });
 
+  it('does not treat GPT access AI job creation as a read-only bypass', () => {
+    const next = jest.fn();
+    const response = createResponse();
+    const logger = { info: jest.fn() };
+    hasUnsafeBlockingConditionsMock.mockReturnValue(true);
+
+    unsafeExecutionGate({
+      method: 'POST',
+      path: '/gpt-access/jobs/create',
+      body: {},
+      logger
+    } as MockRequest as any, response as any, next);
+
+    expect(logger.info).not.toHaveBeenCalledWith('unsafe_execution_gate.bypass', expect.anything());
+    expect(next).not.toHaveBeenCalled();
+    expect(response.status).toHaveBeenCalledWith(503);
+  });
+
   it('falls through when GPT request bodies are invalid JSON or blank strings', () => {
     hasUnsafeBlockingConditionsMock.mockReturnValue(false);
 
