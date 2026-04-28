@@ -4,6 +4,7 @@ import { writePublicHealthResponse } from '@core/diagnostics.js';
 import {
   createRateLimitMiddleware,
   getRequestActorKey,
+  getRequestClientAddress,
   securityHeaders
 } from '@platform/runtime/security.js';
 import { asyncHandler } from '@shared/http/index.js';
@@ -11,6 +12,7 @@ import { getWorkerControlHealth, getWorkerControlStatus } from '@services/worker
 import {
   buildGptAccessHealthPayload,
   buildGptAccessOpenApiDocument,
+  createGptAccessAiJob,
   explainApprovedQuery,
   getGptAccessJobResult,
   gptAccessAuthMiddleware,
@@ -22,16 +24,21 @@ import {
 } from '@services/gptAccessGateway.js';
 
 const router = express.Router();
+
+function getGptAccessRateLimitActorKey(req: express.Request): string {
+  return `ip:${getRequestClientAddress(req)}`;
+}
+
 const gptAccessRateLimit = createRateLimitMiddleware({
   bucketName: 'gpt-access',
   maxRequests: 120,
   windowMs: 5 * 60 * 1000,
-  keyGenerator: (req) => `${getRequestActorKey(req)}:gpt-access`
+  keyGenerator: (req) => `${getGptAccessRateLimitActorKey(req)}:gpt-access`
 });
 
 router.use('/gpt-access', securityHeaders);
 router.use('/gpt-access', gptAccessRateLimit);
-router.use(gptAccessAuthMiddleware);
+router.use('/gpt-access', gptAccessAuthMiddleware);
 
 router.get('/gpt-access/health', requireGptAccessScope('diagnostics.read'), (_req, res) => {
   res.json(buildGptAccessHealthPayload());
@@ -58,6 +65,23 @@ router.get(
   requireGptAccessScope('workers.read'),
   asyncHandler(async (_req, res) => {
     res.json(await getWorkerControlHealth());
+  })
+);
+
+router.post(
+  '/gpt-access/jobs/create',
+  requireGptAccessScope('jobs.create'),
+  asyncHandler(async (req, res) => {
+    sendGptAccessResult(
+      res,
+      await createGptAccessAiJob(req.body, {
+        actorKey: getRequestActorKey(req),
+        requestId: req.requestId,
+        traceId: req.traceId,
+        idempotencyKey: req.header('idempotency-key') ?? null,
+        logger: req.logger
+      })
+    );
   })
 );
 

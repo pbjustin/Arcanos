@@ -1,6 +1,6 @@
 # ARCANOS GPT Access Gateway
 
-The GPT access gateway exposes scoped, authenticated, read-only backend/control-plane access under `/gpt-access/*`. It is intentionally separate from `/gpt/:gptId` so job result lookups and runtime inspection do not enter the writing plane guards.
+The GPT access gateway exposes scoped, authenticated backend/control-plane access under `/gpt-access/*`. It is intentionally separate from `/gpt/:gptId` so job creation, job result lookups, and runtime inspection do not enter the public GPT route as HTTP requests.
 
 ## Production URL
 
@@ -45,10 +45,10 @@ $env:ARCANOS_GPT_ACCESS_TOKEN = [Convert]::ToBase64String($bytes)
 npm run dev
 ```
 
-Optionally restrict gateway operations with a comma-separated scope list:
+Optionally restrict gateway operations with a comma-separated scope list. `jobs.create` is never granted by an empty scope setting; list it explicitly before `/gpt-access/jobs/create` can enqueue work.
 
 ```bash
-ARCANOS_GPT_ACCESS_SCOPES=runtime.read,workers.read,queue.read,jobs.result,logs.read_sanitized,db.explain_approved,mcp.approved_readonly,diagnostics.read
+ARCANOS_GPT_ACCESS_SCOPES=runtime.read,workers.read,queue.read,jobs.create,jobs.result,logs.read_sanitized,db.explain_approved,mcp.approved_readonly,diagnostics.read
 ```
 
 ## Validation
@@ -93,7 +93,7 @@ SERVICE="<SERVICE>"
 ENVIRONMENT="<ENVIRONMENT>"
 GATEWAY_CREDENTIAL="$(openssl rand -base64 48)"
 printf "%s" "$GATEWAY_CREDENTIAL" | railway variable set ARCANOS_GPT_ACCESS_TOKEN --stdin --skip-deploys --service "$SERVICE" --environment "$ENVIRONMENT"
-railway variable set "ARCANOS_GPT_ACCESS_SCOPES=runtime.read,workers.read,queue.read,jobs.result,logs.read_sanitized,db.explain_approved,mcp.approved_readonly,diagnostics.read" --skip-deploys --service "$SERVICE" --environment "$ENVIRONMENT"
+railway variable set "ARCANOS_GPT_ACCESS_SCOPES=runtime.read,workers.read,queue.read,jobs.create,jobs.result,logs.read_sanitized,db.explain_approved,mcp.approved_readonly,diagnostics.read" --skip-deploys --service "$SERVICE" --environment "$ENVIRONMENT"
 railway variable list --service "$SERVICE" --environment "$ENVIRONMENT"
 ```
 
@@ -106,7 +106,7 @@ $bytes = New-Object byte[] 48
 [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
 $gatewayCredential = [Convert]::ToBase64String($bytes)
 $gatewayCredential | railway variable set ARCANOS_GPT_ACCESS_TOKEN --stdin --skip-deploys --service $SERVICE --environment $ENVIRONMENT
-railway variable set "ARCANOS_GPT_ACCESS_SCOPES=runtime.read,workers.read,queue.read,jobs.result,logs.read_sanitized,db.explain_approved,mcp.approved_readonly,diagnostics.read" --skip-deploys --service $SERVICE --environment $ENVIRONMENT
+railway variable set "ARCANOS_GPT_ACCESS_SCOPES=runtime.read,workers.read,queue.read,jobs.create,jobs.result,logs.read_sanitized,db.explain_approved,mcp.approved_readonly,diagnostics.read" --skip-deploys --service $SERVICE --environment $ENVIRONMENT
 railway variable list --service $SERVICE --environment $ENVIRONMENT
 ```
 
@@ -126,10 +126,14 @@ curl -sS https://acranos-production.up.railway.app/gpt-access/status \
   -H "Authorization: Bearer $GATEWAY_CREDENTIAL"
 curl -sS https://acranos-production.up.railway.app/gpt-access/openapi.json \
   -H "Authorization: Bearer $GATEWAY_CREDENTIAL"
+curl -sS https://acranos-production.up.railway.app/gpt-access/jobs/create \
+  -H "Authorization: Bearer $GATEWAY_CREDENTIAL" \
+  -H "Content-Type: application/json" \
+  -d '{"gptId":"arcanos-core","task":"Generate a concise Codex IDE prompt for a documentation update.","input":{"purpose":"documentation update prompt","includeSuccessCriteria":true,"allowSubAgents":true}}'
 curl -i https://acranos-production.up.railway.app/gpt-access/status
 ```
 
-Expected results: authenticated calls return JSON successfully, and the unauthenticated protected status call returns `401 UNAUTHORIZED_GPT_ACCESS`.
+Expected results: authenticated calls return JSON successfully, `createAiJob` returns `202` with a `jobId`, and the unauthenticated protected status call returns `401 UNAUTHORIZED_GPT_ACCESS`.
 
 ## Custom GPT Action Setup
 
@@ -144,12 +148,13 @@ Configure authentication as API Key / Bearer and paste the token only into the G
 Add this GPT instruction:
 
 ```text
-Use the ARCANOS GPT Access Gateway for backend diagnostics and operator workflows. For protected backend calls, use the configured Bearer authentication in the GPT Action. Never ask the user to paste the token into chat. Never route worker status, runtime inspection, queue inspection, MCP diagnostics, or job-result lookup through `/gpt/:gptId`; use `/gpt-access/*` action operations instead. For privileged operations, use the confirmation/operator gate first and execute only after explicit user approval.
+Use the ARCANOS GPT Access Gateway for backend diagnostics, async backend AI job creation, and operator workflows. For protected backend calls, use the configured Bearer authentication in the GPT Action. Never ask the user to paste the token into chat. Use `createAiJob` for backend AI generation, then `getJobResult` with the returned `jobId`. Never route worker status, runtime inspection, queue inspection, MCP diagnostics, or job-result lookup through `/gpt/:gptId`; use `/gpt-access/*` action operations instead. For privileged operations, use the confirmation/operator gate first and execute only after explicit user approval.
 ```
 
 ## Safety Rules
 
-- Do not route control-plane or job-result operations through `/gpt/:gptId`.
+- Do not route control-plane, GPT-access job creation, or job-result operations through `/gpt/:gptId` as an HTTP hop.
 - Do not expose shell execution, raw SQL, arbitrary URL proxying, arbitrary internal path proxying, deploy/restart/rollback, or destructive self-heal actions through this gateway.
 - Keep DB explain requests limited to approved templates and SELECT-only equivalents in production.
 - Sanitize logs before returning them to a GPT Action.
+- Keep `POST /gpt-access/jobs/create` limited to async GPT job creation with strict schema validation and bearer auth.

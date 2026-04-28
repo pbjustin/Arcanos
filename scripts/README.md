@@ -26,7 +26,7 @@ Common scripts:
 - `./scripts/doc_audit.sh`
 - `node scripts/validate-railway-compatibility.js`
 - `node scripts/check-railway-timeout-regressions.js --since 30m --lines 400`
-- `node scripts/validate-gpt-job-hardening.js --base-url https://acranos-production.up.railway.app --environment production --service "ARCANOS V2" --worker-service "ARCANOS Worker"`
+- `ARCANOS_GPT_ACCESS_TOKEN=<token> node scripts/validate-gpt-job-hardening.js --base-url https://acranos-production.up.railway.app --environment production --service "ARCANOS V2" --worker-service "ARCANOS Worker"`
 - `npm run railway:alert:timeouts`
 - `npm run railway:alert:budget-abort` (fails on any BUDGET_ABORT signal in the last 15 minutes)
 
