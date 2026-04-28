@@ -99,6 +99,19 @@ function allowCreateJobs(scopes = 'jobs.create,jobs.result'): void {
   process.env.ARCANOS_GPT_ACCESS_SCOPES = scopes;
 }
 
+function buildNestedObject(depth: number): Record<string, unknown> {
+  const root: Record<string, unknown> = {};
+  let cursor = root;
+
+  for (let index = 0; index < depth; index += 1) {
+    const next: Record<string, unknown> = {};
+    cursor.child = next;
+    cursor = next;
+  }
+
+  return root;
+}
+
 describe('/gpt-access gateway', () => {
   const previousToken = process.env.ARCANOS_GPT_ACCESS_TOKEN;
   const previousScopes = process.env.ARCANOS_GPT_ACCESS_SCOPES;
@@ -395,6 +408,26 @@ describe('/gpt-access gateway', () => {
     expect(unsafeNestedResponse.body.error).toEqual({
       code: 'GPT_ACCESS_VALIDATION_ERROR',
       message: "Unsafe field 'input.headers' is not allowed for AI job creation."
+    });
+    expect(resolveGptRoutingMock).not.toHaveBeenCalled();
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects excessively nested payloads before recursive schema parsing', async () => {
+    allowCreateJobs();
+
+    const response = await authorized(request(buildApp()).post('/gpt-access/jobs/create'))
+      .send({
+        gptId: 'arcanos-core',
+        task: 'Generate a Codex IDE prompt.',
+        input: buildNestedObject(80)
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toEqual({
+      code: 'GPT_ACCESS_VALIDATION_ERROR',
+      message: 'AI job request nesting depth must be 64 levels or fewer.'
     });
     expect(resolveGptRoutingMock).not.toHaveBeenCalled();
     expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();

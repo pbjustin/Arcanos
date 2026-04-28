@@ -39,6 +39,7 @@ const DEFAULT_AI_JOB_OUTPUT_TOKENS = 2048;
 const MAX_AI_JOB_OUTPUT_TOKENS = 4096;
 const MAX_AI_JOB_WORDS = 2000;
 const GPT_ACCESS_JOB_RESULT_ENDPOINT = '/gpt-access/jobs/result';
+const MAX_CREATE_AI_JOB_VALIDATION_DEPTH = 64;
 export const GPT_ACCESS_SUPPRESS_PROMPT_DEBUG_TRACE_FLAG = '__arcanosSuppressPromptDebugTrace';
 const UNSAFE_CREATE_AI_JOB_FIELDS = new Set([
   'sql',
@@ -52,6 +53,10 @@ const UNSAFE_CREATE_AI_JOB_FIELDS = new Set([
   'url'
 ]);
 const GPT_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,127}$/i;
+
+type CreateAiJobPayloadValidationIssue =
+  | { kind: 'unsafe_field'; path: string }
+  | { kind: 'depth_exceeded'; maxDepth: number };
 
 export const GPT_ACCESS_SCOPES = [
   'runtime.read',
@@ -158,31 +163,50 @@ const createAiJobRequestSchema = z.object({
   }
 });
 
-function findUnsafeCreateAiJobField(value: unknown, path: string[] = []): string | null {
-  if (!value || typeof value !== 'object') {
-    return null;
-  }
+function inspectCreateAiJobPayload(value: unknown): CreateAiJobPayloadValidationIssue | null {
+  const stack: Array<{ value: unknown; path: string[]; depth: number }> = [{ value, path: [], depth: 0 }];
 
-  if (Array.isArray(value)) {
-    for (let index = 0; index < value.length; index += 1) {
-      const nestedPath = findUnsafeCreateAiJobField(value[index], [...path, String(index)]);
-      if (nestedPath) {
-        return nestedPath;
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current || !current.value || typeof current.value !== 'object') {
+      continue;
+    }
+
+    if (current.depth > MAX_CREATE_AI_JOB_VALIDATION_DEPTH) {
+      return {
+        kind: 'depth_exceeded',
+        maxDepth: MAX_CREATE_AI_JOB_VALIDATION_DEPTH
+      };
+    }
+
+    if (Array.isArray(current.value)) {
+      for (let index = current.value.length - 1; index >= 0; index -= 1) {
+        stack.push({
+          value: current.value[index],
+          path: [...current.path, String(index)],
+          depth: current.depth + 1
+        });
       }
-    }
-    return null;
-  }
-
-  for (const [key, entryValue] of Object.entries(value as Record<string, unknown>)) {
-    const normalizedKey = key.trim().toLowerCase();
-    const currentPath = [...path, key];
-    if (UNSAFE_CREATE_AI_JOB_FIELDS.has(normalizedKey)) {
-      return currentPath.join('.');
+      continue;
     }
 
-    const nestedPath = findUnsafeCreateAiJobField(entryValue, currentPath);
-    if (nestedPath) {
-      return nestedPath;
+    const entries = Object.entries(current.value as Record<string, unknown>);
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const [key, entryValue] = entries[index];
+      const normalizedKey = key.trim().toLowerCase();
+      const currentPath = [...current.path, key];
+      if (UNSAFE_CREATE_AI_JOB_FIELDS.has(normalizedKey)) {
+        return {
+          kind: 'unsafe_field',
+          path: currentPath.join('.')
+        };
+      }
+
+      stack.push({
+        value: entryValue,
+        path: currentPath,
+        depth: current.depth + 1
+      });
     }
   }
 
@@ -755,13 +779,13 @@ export async function getGptAccessJobResult(body: unknown) {
 
 export async function createGptAccessAiJob(body: unknown, context: CreateGptAccessAiJobContext) {
   const traceId = normalizeTraceId(context.traceId);
-  const unsafeFieldPath = findUnsafeCreateAiJobField(body);
-  if (unsafeFieldPath) {
+  const payloadIssue = inspectCreateAiJobPayload(body);
+  if (payloadIssue?.kind === 'unsafe_field') {
     context.logger?.warn?.('gpt_access.ai_job.rejected', {
       traceId,
       requestType: 'createAiJob',
       status: 'validation_failed',
-      unsafeField: unsafeFieldPath
+      unsafeField: payloadIssue.path
     });
     return {
       statusCode: 400,
@@ -769,7 +793,27 @@ export async function createGptAccessAiJob(body: unknown, context: CreateGptAcce
         ok: false,
         error: {
           code: 'GPT_ACCESS_VALIDATION_ERROR',
-          message: `Unsafe field '${unsafeFieldPath}' is not allowed for AI job creation.`
+          message: `Unsafe field '${payloadIssue.path}' is not allowed for AI job creation.`
+        }
+      }
+    };
+  }
+
+  if (payloadIssue?.kind === 'depth_exceeded') {
+    context.logger?.warn?.('gpt_access.ai_job.rejected', {
+      traceId,
+      requestType: 'createAiJob',
+      status: 'validation_failed',
+      reason: 'payload_depth_exceeded',
+      maxDepth: payloadIssue.maxDepth
+    });
+    return {
+      statusCode: 400,
+      payload: {
+        ok: false,
+        error: {
+          code: 'GPT_ACCESS_VALIDATION_ERROR',
+          message: `AI job request nesting depth must be ${payloadIssue.maxDepth} levels or fewer.`
         }
       }
     };
