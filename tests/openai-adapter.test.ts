@@ -115,7 +115,7 @@ describe('openai adapter', () => {
 
     const adapter = createOpenAIAdapter({ apiKey: 'test-key' });
     const client = adapter.getClient() as any;
-    expect(client.responses.create).toBe(responsesCreateMock);
+    expect(client.responses.create).not.toBe(responsesCreateMock);
     expect(client.responses.parse).not.toBe(sdkResponsesParseMock);
 
     const result = await client.responses['parse']({
@@ -127,5 +127,66 @@ describe('openai adapter', () => {
     expect(sdkResponsesParseMock).not.toHaveBeenCalled();
     expect(responsesCreateMock).toHaveBeenCalledTimes(1);
     expect(result).toEqual(expect.objectContaining({ output_parsed: { ok: true } }));
+  });
+
+  it('patches the raw SDK client create helper through adapter validation', async () => {
+    const adapter = createOpenAIAdapter({ apiKey: 'test-key' });
+    const client = adapter.getClient() as any;
+
+    await expect(
+      client.responses.create({ model: 'gpt-4.1-mini', input: '' })
+    ).rejects.toMatchObject({
+      name: 'OpenAIRequestValidationError',
+      retryable: false
+    });
+
+    expect(responsesCreateMock).not.toHaveBeenCalled();
+  });
+
+  it('allows canonical Responses prompt-template and continuation payloads', async () => {
+    responsesCreateMock.mockResolvedValue({
+      id: 'resp_prompt_1',
+      created_at: 1,
+      model: 'gpt-4.1-mini',
+      output_text: 'hello',
+      output: [],
+      usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 }
+    });
+
+    const adapter = createOpenAIAdapter({ apiKey: 'test-key' });
+    await adapter.responses.create({
+      model: 'gpt-4.1-mini',
+      prompt: {
+        id: 'pmpt_123',
+        variables: { topic: 'queues' }
+      }
+    } as any);
+    await adapter.responses.create({
+      model: 'gpt-4.1-mini',
+      previous_response_id: 'resp_previous_1'
+    } as any);
+
+    expect(responsesCreateMock).toHaveBeenCalledTimes(2);
+    expect(responsesCreateMock.mock.calls[0][0]).toEqual(expect.objectContaining({
+      model: 'gpt-4.1-mini',
+      prompt: expect.objectContaining({ id: 'pmpt_123' })
+    }));
+    expect(responsesCreateMock.mock.calls[1][0]).toEqual(expect.objectContaining({
+      model: 'gpt-4.1-mini',
+      previous_response_id: 'resp_previous_1'
+    }));
+  });
+
+  it('rejects invalid responses payloads before calling the SDK', async () => {
+    const adapter = createOpenAIAdapter({ apiKey: 'test-key' });
+
+    await expect(
+      adapter.responses.create({ model: 'gpt-4.1-mini', input: '' } as any)
+    ).rejects.toMatchObject({
+      name: 'OpenAIRequestValidationError',
+      retryable: false
+    });
+
+    expect(responsesCreateMock).not.toHaveBeenCalled();
   });
 });

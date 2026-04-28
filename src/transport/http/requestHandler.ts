@@ -5,6 +5,7 @@ import { sendInternalErrorPayload } from '@shared/http/index.js';
  */
 
 import type OpenAI from 'openai';
+import type { OpenAIAdapter } from '@core/adapters/openai.adapter.js';
 import { Request, Response } from 'express';
 import path from 'node:path';
 import { generateMockResponse, hasValidAPIKey } from "@services/openai.js";
@@ -16,6 +17,7 @@ import {
   type ErrorResponseDTO
 } from "@shared/types/dto.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { logger } from "@platform/logging/structuredLogging.js";
 import { AsyncSnapshotFileWriter } from '@platform/runtime/asyncFileWriters.js';
 import {
   extractPromptText,
@@ -130,7 +132,11 @@ export function sendMockAIResponse<T extends AIResponseDTO | ErrorResponseDTO>(
     payload?: AIResponseDTO;
   } = {}
 ): null {
-  console.log(`🤖 Returning mock response for /${endpointName} (${reason})`);
+  logger.info('ai.request.mock_response', {
+    module: 'http-request-handler',
+    endpointName,
+    reason
+  });
   const payload = options.payload ?? createMockAIResponse(input, endpointName, options);
   res.json(payload as T);
   return null;
@@ -156,9 +162,14 @@ export function validateAIRequest(
   req: Request<{}, AIResponseDTO | ErrorResponseDTO, AIRequestDTO>,
   res: Response<AIResponseDTO | ErrorResponseDTO>,
   endpointName: string
-): { client: OpenAI; input: string; body: AIRequestDTO } | null {
-  console.log(`📨 /${endpointName} received`);
+): { adapter: OpenAIAdapter; client: OpenAI; input: string; body: AIRequestDTO } | null {
   const requestId = req.requestId ?? `prompt-debug-${endpointName}`;
+  logger.info('ai.request.received', {
+    module: 'http-request-handler',
+    requestId,
+    endpointName,
+    method: req.method
+  });
   const rawPrompt = extractPromptText(req.body, false) ?? '';
 
   const clientContext = (req.body as AIRequestDTO).clientContext;
@@ -267,7 +278,7 @@ export function validateAIRequest(
 
   req.body = parsed.data;
 
-  return { client: openai, input, body: parsed.data };
+  return { adapter, client: openai, input, body: parsed.data };
 }
 
 export function isBudgetAbort(err: unknown): boolean {
@@ -331,7 +342,15 @@ export function handleAIError(
 ): void {
   //audit Assumption: error message should be safely derived; Handling: stringify
   const errorMessage = resolveErrorMessage(err);
-  console.error(`❌ ${endpointName} processing error:`, errorMessage);
+  logger.error(
+    'ai.request.processing_error',
+    {
+      module: 'http-request-handler',
+      endpointName
+    },
+    { errorMessage },
+    err instanceof Error ? err : undefined
+  );
 
   const allowMockFallback = process.env.ALLOW_MOCK_FALLBACK === 'true';
   if (allowMockFallback) {
@@ -374,7 +393,12 @@ export function logRequestFeedback(input: string, endpointName: string): void {
     requestFeedbackWriter.enqueue(JSON.stringify(feedbackData));
   } catch (error: unknown) {
     //audit Assumption: feedback logging failures should not break request; Handling: log only
-    console.log('Could not write feedback file:', resolveErrorMessage(error));
+    logger.warn(
+      'ai.request.feedback_write_failed',
+      { module: 'http-request-handler', endpointName },
+      { errorMessage: resolveErrorMessage(error) },
+      error instanceof Error ? error : undefined
+    );
   }
 }
 

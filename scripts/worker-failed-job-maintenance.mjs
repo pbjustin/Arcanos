@@ -5,9 +5,11 @@ import { listFailedJobs } from '../dist/core/db/repositories/jobRepository.js';
 
 function parseArgs(argv) {
   const [commandRaw, ...rest] = argv;
-  const command = commandRaw === 'requeue' ? 'requeue' : 'inspect';
+  const command = commandRaw === 'requeue' || commandRaw === 'cleanup' ? commandRaw : 'inspect';
   let jobId = null;
   let limit = 20;
+  let keep = null;
+  let minAgeMs = null;
   let requestedBy = 'codex-cli';
   let resetRetryCount = true;
 
@@ -28,6 +30,22 @@ function parseArgs(argv) {
       index += 1;
       continue;
     }
+    if (arg === '--keep' && nextArg) {
+      const parsed = Number.parseInt(nextArg, 10);
+      if (Number.isFinite(parsed) && parsed > 0) {
+        keep = parsed;
+      }
+      index += 1;
+      continue;
+    }
+    if (arg === '--min-age-ms' && nextArg) {
+      const parsed = Number.parseInt(nextArg, 10);
+      if (Number.isFinite(parsed) && parsed >= 0) {
+        minAgeMs = parsed;
+      }
+      index += 1;
+      continue;
+    }
     if (arg === '--requested-by' && nextArg) {
       requestedBy = nextArg.trim() || requestedBy;
       index += 1;
@@ -42,6 +60,8 @@ function parseArgs(argv) {
     command,
     jobId,
     limit,
+    keep,
+    minAgeMs,
     requestedBy,
     resetRetryCount
   };
@@ -61,6 +81,23 @@ async function run() {
       command: parsed.command,
       count: jobs.length,
       jobs
+    }, null, 2));
+    return;
+  }
+
+  if (parsed.command === 'cleanup') {
+    const { runFailedJobCleanup, resolveFailedJobCleanupPolicy } = await import('../dist/queue/cleanup.js');
+    const basePolicy = resolveFailedJobCleanupPolicy();
+    const result = await runFailedJobCleanup('manual-cli', {
+      ...basePolicy,
+      enabled: true,
+      keep: parsed.keep ?? basePolicy.keep,
+      minAgeMs: parsed.minAgeMs ?? basePolicy.minAgeMs
+    });
+    process.stdout.write(JSON.stringify({
+      ok: true,
+      command: parsed.command,
+      ...result
     }, null, 2));
     return;
   }

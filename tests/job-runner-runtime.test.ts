@@ -1,4 +1,5 @@
 import { describe, expect, it } from '@jest/globals';
+import fs from 'fs';
 import path from 'path';
 import { pathToFileURL } from 'url';
 
@@ -196,6 +197,15 @@ describe('jobRunnerRuntime', () => {
     expect(runner.isRunning()).toBe(false);
     shouldFail = false;
     await expect(runner()).resolves.toBe(true);
+  });
+
+  it('guards bootstrap retry sleeps with shutdown checks', () => {
+    const source = fs.readFileSync(path.resolve('src/workers/jobRunner.ts'), 'utf8');
+
+    expect(source).toContain('worker.shutdown.before_autonomy_bootstrap');
+    expect(source).toContain("logWorkerShutdownDuringBootstrap(workerId, 'database_exception_retry')");
+    expect(source).toContain("logWorkerShutdownDuringBootstrap(workerId, 'database_status_retry')");
+    expect(source).toContain("logWorkerShutdownDuringBootstrap(autonomyService.getWorkerId(), 'autonomy_retry')");
   });
 
   it('caps delayed worker interval work at one active task per slot and source', async () => {

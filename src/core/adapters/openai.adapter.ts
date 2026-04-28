@@ -181,12 +181,6 @@ export interface OpenAIAdapter {
   getClient: () => OpenAI;
 }
 
-interface LegacyUsageShape {
-  input_tokens?: number;
-  output_tokens?: number;
-  total_tokens?: number;
-}
-
 function normalizeMessageContent(content: unknown): string {
   if (typeof content === 'string') return content;
   return extractTextFromContentParts(content, { includeOutputText: false });
@@ -202,6 +196,55 @@ function normalizeUsage(usage: unknown): { promptTokens: number; completionToken
 
 
 const MIN_RESPONSE_TOKENS = 16;
+
+export class OpenAIRequestValidationError extends Error {
+  readonly code = 'OPENAI_REQUEST_VALIDATION_ERROR';
+  readonly retryable = false;
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'OpenAIRequestValidationError';
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+export function assertValidResponsesCreateParams(params: unknown): asserts params is Record<string, unknown> {
+  if (!params || typeof params !== 'object' || Array.isArray(params)) {
+    throw new OpenAIRequestValidationError('OpenAI Responses request must be an object.');
+  }
+
+  const record = params as Record<string, unknown>;
+  const model = record.model;
+  if (typeof model !== 'string' || model.trim().length === 0) {
+    throw new OpenAIRequestValidationError('OpenAI Responses request requires a non-empty model.');
+  }
+
+  const input = record.input;
+  const messages = record.messages;
+  const prompt = record.prompt;
+  const previousResponseId = record.previous_response_id;
+  const hasInput =
+    (typeof input === 'string' && input.trim().length > 0) ||
+    (Array.isArray(input) && input.length > 0);
+  const hasLegacyMessages = Array.isArray(messages) && messages.length > 0;
+  const hasPromptTemplate = Boolean(prompt && typeof prompt === 'object' && !Array.isArray(prompt));
+  const hasPreviousResponseId =
+    typeof previousResponseId === 'string' && previousResponseId.trim().length > 0;
+
+  if (!hasInput && !hasLegacyMessages && !hasPromptTemplate && !hasPreviousResponseId) {
+    throw new OpenAIRequestValidationError(
+      'OpenAI Responses request requires input, messages, prompt, or previous_response_id.'
+    );
+  }
+
+  const maxOutputTokens = record.max_output_tokens;
+  if (
+    maxOutputTokens !== undefined &&
+    (typeof maxOutputTokens !== 'number' || !Number.isFinite(maxOutputTokens) || maxOutputTokens <= 0)
+  ) {
+    throw new OpenAIRequestValidationError('OpenAI Responses request max_output_tokens must be a positive number.');
+  }
+}
 
 export function normalizeResponsesCreateParams(
   params: ResponseCreateParamsNonStreaming
@@ -373,10 +416,6 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): OpenAIAdapter 
   const originalImagesGenerate = client.images.generate.bind(client.images);
   const originalAudioTranscriptionsCreate =
     client.audio.transcriptions.create.bind(client.audio.transcriptions);
-  const originalModelsRetrieve = client.models.retrieve.bind(client.models);
-  const originalAssistantsList = client.beta.assistants.list.bind(client.beta.assistants);
-  const originalThreadsCreate = client.beta.threads.create.bind(client.beta.threads);
-  const originalThreadRunsCreate = client.beta.threads.runs.create.bind(client.beta.threads.runs);
 
   const responsesBackedChatCreate = async (
     params: ChatCompletionCreateParams,
@@ -412,13 +451,14 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): OpenAIAdapter 
       callback: () => originalResponsesCreate(normalizedResponsePayload, options),
       extractUsage: (result) => (result as { usage?: unknown } | null)?.usage,
     });
-    return convertResponseToLegacyChatCompletion(response, String(nonStreamingParams.model || 'gpt-4.1-mini'));
+    return convertResponseToLegacyChatCompletion(response, nonStreamingParams.model);
   };
 
   const safeResponsesParse = async (
     params: Record<string, unknown>,
     options?: OpenAIResponsesRequestOptions
   ): Promise<any> => {
+    assertValidResponsesCreateParams(params);
     const normalizedParams = normalizeResponsesCreateParams(params as ResponseCreateParamsNonStreaming);
     const requestedModel =
       typeof normalizedParams.model === 'string' && normalizedParams.model.trim().length > 0
@@ -446,53 +486,57 @@ export function createOpenAIAdapter(config: OpenAIAdapterConfig): OpenAIAdapter 
     });
   };
 
+  const safeResponsesCreate = async (
+    params: any,
+    options?: OpenAIResponsesRequestOptions
+  ): Promise<any> => {
+    assertValidResponsesCreateParams(params);
+    const hasLegacyMessages =
+      params &&
+      typeof params === 'object' &&
+      Array.isArray((params as { messages?: unknown }).messages);
+
+    //audit Assumption: some call sites still pass chat-completions-shaped payloads to responses surface; risk: runtime schema mismatch on responses.create; invariant: adapter accepts both legacy and responses payloads during migration; handling: normalize legacy messages payloads through responses mapper then backfill legacy chat shape.
+    if (hasLegacyMessages) {
+      const nonStreamingParams = {
+        ...(params as unknown as ChatCompletionCreateParams),
+        stream: false
+      } as ChatCompletionCreateParams & { stream: false };
+      const responsePayload = buildResponsesRequestFromChatParams(nonStreamingParams);
+      const normalizedResponsePayload = normalizeResponsesCreateParams(responsePayload);
+      const requestedModel =
+        typeof normalizedResponsePayload.model === 'string' && normalizedResponsePayload.model.trim().length > 0
+          ? normalizedResponsePayload.model.trim()
+          : null;
+      const response = await instrumentOpenAIOperation({
+        operation: 'responses_create',
+        model: requestedModel,
+        callback: () => originalResponsesCreate(normalizedResponsePayload, options),
+        extractUsage: (result) => (result as { usage?: unknown } | null)?.usage,
+      });
+      return convertResponseToLegacyChatCompletion(response, nonStreamingParams.model);
+    }
+
+    //audit Assumption: canonical responses payloads should pass through unchanged; risk: accidental mutation of advanced params; invariant: direct responses API path remains available; handling: forward params/options directly.
+    const normalizedParams = normalizeResponsesCreateParams(params as ResponseCreateParamsNonStreaming);
+    const requestedModel =
+      typeof normalizedParams.model === 'string' && normalizedParams.model.trim().length > 0
+        ? normalizedParams.model.trim()
+        : null;
+    return instrumentOpenAIOperation({
+      operation: 'responses_create',
+      model: requestedModel,
+      callback: () => originalResponsesCreate(normalizedParams, options),
+      extractUsage: (result) => (result as { usage?: unknown } | null)?.usage,
+    });
+  };
+
+  (client.responses as { create: typeof safeResponsesCreate; parse: typeof safeResponsesParse }).create = safeResponsesCreate;
   (client.responses as { parse: typeof safeResponsesParse }).parse = safeResponsesParse;
 
   return {
     responses: {
-      create: async (
-        params: any,
-        options?: OpenAIResponsesRequestOptions
-      ): Promise<any> => {
-        const hasLegacyMessages =
-          params &&
-          typeof params === 'object' &&
-          Array.isArray((params as { messages?: unknown }).messages);
-
-        //audit Assumption: some call sites still pass chat-completions-shaped payloads to responses surface; risk: runtime schema mismatch on responses.create; invariant: adapter accepts both legacy and responses payloads during migration; handling: normalize legacy messages payloads through responses mapper then backfill legacy chat shape.
-        if (hasLegacyMessages) {
-          const nonStreamingParams = {
-            ...(params as ChatCompletionCreateParams),
-            stream: false
-          } as ChatCompletionCreateParams & { stream: false };
-          const responsePayload = buildResponsesRequestFromChatParams(nonStreamingParams);
-          const normalizedResponsePayload = normalizeResponsesCreateParams(responsePayload);
-          const requestedModel =
-            typeof normalizedResponsePayload.model === 'string' && normalizedResponsePayload.model.trim().length > 0
-              ? normalizedResponsePayload.model.trim()
-              : null;
-          const response = await instrumentOpenAIOperation({
-            operation: 'responses_create',
-            model: requestedModel,
-            callback: () => originalResponsesCreate(normalizedResponsePayload, options),
-            extractUsage: (result) => (result as { usage?: unknown } | null)?.usage,
-          });
-          return convertResponseToLegacyChatCompletion(response, String(nonStreamingParams.model || 'gpt-4.1-mini'));
-        }
-
-        //audit Assumption: canonical responses payloads should pass through unchanged; risk: accidental mutation of advanced params; invariant: direct responses API path remains available; handling: forward params/options directly.
-        const normalizedParams = normalizeResponsesCreateParams(params as ResponseCreateParamsNonStreaming);
-        const requestedModel =
-          typeof normalizedParams.model === 'string' && normalizedParams.model.trim().length > 0
-            ? normalizedParams.model.trim()
-            : null;
-        return instrumentOpenAIOperation({
-          operation: 'responses_create',
-          model: requestedModel,
-          callback: () => originalResponsesCreate(normalizedParams, options),
-          extractUsage: (result) => (result as { usage?: unknown } | null)?.usage,
-        });
-      },
+      create: safeResponsesCreate,
       parse: async (
         params: Record<string, unknown>,
         options?: OpenAIResponsesRequestOptions

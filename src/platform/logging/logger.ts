@@ -5,7 +5,7 @@
 
 import { type NextFunction, type Request, type Response } from 'express';
 import { generateRequestId } from "@shared/idGenerator.js";
-import { redactSensitive } from "@shared/redaction.js";
+import { redactSensitive, redactString } from "@shared/redaction.js";
 import { recordLogEvent, recordTraceEvent } from "@platform/logging/telemetry.js";
 import { getEnv } from "@platform/runtime/env.js";
 
@@ -182,10 +182,12 @@ class StructuredLogger {
 
     const sanitizedEntry: LogEntry = {
       ...entry,
+      message: redactString(entry.message),
       context: entry.context ? (redactSensitive(entry.context) as LogContext) : undefined,
       metadata: entry.metadata
         ? (redactSensitive(entry.metadata) as Record<string, unknown>)
         : undefined,
+      error: sanitizeLogError(entry.error)
     };
 
     //audit Assumption: production logs should be structured JSON
@@ -292,6 +294,14 @@ function parseLogLevel(raw: string | undefined): LogLevel {
     default:
       return LogLevel.INFO;
   }
+}
+
+function sanitizeLogError(error: LogEntry['error']): LogEntry['error'] {
+  if (!error) {
+    return undefined;
+  }
+
+  return redactSensitive(error) as LogEntry['error'];
 }
 
 export function getConfiguredLogLevel(): LogLevel {

@@ -16,6 +16,11 @@ export const SENSITIVE_KEYS = [
   'private_key',
   'connectionstring',
   'connection_string',
+  'database_url',
+  'databaseurl',
+  'redis_url',
+  'redisurl',
+  'dsn',
   'credential',
   'session'
 ] as const;
@@ -24,8 +29,9 @@ export const SENSITIVE_VALUE_PATTERNS: RegExp[] = [
   /\bsk-[a-zA-Z0-9]{20,}\b/,
   /\bBearer\s+[a-zA-Z0-9._-]{12,}\b/i,
   /\beyJ[a-zA-Z0-9_-]{8,}\.[a-zA-Z0-9_-]{8,}\.[a-zA-Z0-9_-]{8,}\b/,
-  /\b(?:postgres|postgresql|mysql|mongodb):\/\/[^@\s]+:[^@\s]+@/i,
+  /\b(?:postgres|postgresql|mysql|mongodb|redis):\/\/[^\s]+/i,
   /\b(?:set-cookie|cookie)\s*[:=]\s*[^\r\n]{8,}/i,
+  /\b[a-zA-Z0-9_-]*dsn[a-zA-Z0-9_-]*\s*[:=]\s*["']?[^\s"']+/i,
   /\b(?:api[_-]?key|token|secret|password)\s*[:=]\s*["']?[a-zA-Z0-9._-]{12,}/i
 ];
 

@@ -33,4 +33,25 @@ describe('structured logging sanitization', () => {
     expect(payload).not.toContain('sk-1234567890abcdefghijklmnop');
     expect(payload).not.toContain('postgres://user:password@example.com/db');
   });
+
+  it('redacts sensitive values embedded in top-level messages and DSN strings', () => {
+    const logSpy = jest.spyOn(console, 'log').mockImplementation(() => undefined);
+    const bearerPrefix = 'Bear' + 'er';
+    const opaqueAuthValue = ['abcdefghijkl', 'mnopqrstuvwxyz', '123456'].join('');
+    const dsnValue = 'https://public:secret@' + 'example.invalid/123';
+
+    logger.info(
+      `request failed with ${bearerPrefix} ${opaqueAuthValue}`,
+      undefined,
+      {
+        errorMessage: `SENTRY_DSN=${dsnValue}`
+      }
+    );
+
+    expect(logSpy).toHaveBeenCalledTimes(1);
+    const payload = String(logSpy.mock.calls[0][0]);
+    expect(payload).toContain('[REDACTED]');
+    expect(payload).not.toContain(opaqueAuthValue);
+    expect(payload).not.toContain(dsnValue);
+  });
 });

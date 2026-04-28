@@ -138,7 +138,18 @@ jest.unstable_mockModule('../src/core/db/repositories/jobRepository.js', () => (
   getLatestJob: jest.fn(),
   getJobQueueSummary: jest.fn(async () => null),
   getJobExecutionStatsSince: jest.fn(async () => null),
+  DEFAULT_FAILED_JOB_RETENTION_COUNT: 50,
+  DEFAULT_FAILED_JOB_CLEANUP_MIN_AGE_MS: 86_400_000,
+  MAX_FAILED_JOB_RETENTION_COUNT: 500,
+  MAX_FAILED_JOB_CLEANUP_MIN_AGE_MS: 2_592_000_000,
   cleanupExpiredGptJobs: jest.fn(async () => ({ deletedJobIds: [], deletedCount: 0 })),
+  cleanupRetainedFailedJobs: jest.fn(async () => ({
+    keep: 50,
+    minAgeMs: 86_400_000,
+    deletedFailed: 0,
+    retainedFailed: 0,
+    deletedJobIds: []
+  })),
   requeueFailedJob: jest.fn(),
   listFailedJobs: jest.fn(async () => []),
 }));
