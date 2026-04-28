@@ -481,15 +481,6 @@ function normalizeRequestedActionName(value: string): string | null {
     return GPT_QUERY_ACTION;
   }
 
-  if (
-    compact === 'createaijob' ||
-    compact === 'createasyncaijob' ||
-    compact === 'creategptjob' ||
-    compact === 'createasyncgptjob'
-  ) {
-    return GPT_QUERY_ACTION;
-  }
-
   if (compact === 'getstatus') {
     return GPT_GET_STATUS_ACTION;
   }
