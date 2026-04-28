@@ -1,6 +1,6 @@
 # Arcanos OpenAI API and Railway Compatibility
 
-> **Last Updated:** 2026-02-28 | **Version:** 1.1.0 | **OpenAI SDK:** Node v6.x, Python v2.24.0+
+> **Last Updated:** 2026-04-28 | **Version:** 1.2.0 | **OpenAI SDK:** Node v6.x, Python v2.30.0+
 
 ## Overview
 This document captures the deployed architecture and compatibility constraints for Railway.
@@ -23,7 +23,7 @@ Constructor policy:
 ## API Surface
 Core endpoints:
 ```text
-/api/ask
+/api/arcanos/ask
 /api/vision
 /api/transcribe
 /api/update
@@ -40,20 +40,21 @@ Railway config source of truth: `railway.json`
 
 Build command:
 ```bash
-npm ci --include=dev && npm run build
+npm ci --include=dev --no-audit --no-fund && npm run build
 ```
 
 Start command:
 ```bash
-node --max-old-space-size=7168 dist/start-server.js
+node scripts/start-railway-service.mjs
 ```
 
 Locked behavior:
 - Build-phase-first remains enabled.
 - Start command does not execute a build.
+- Runtime role selection is explicit through `ARCANOS_PROCESS_KIND`.
 
 Health check:
-- Path: `GET /healthz`
+- Path: `GET /health`
 - Timeout: `300` seconds
 - Restart policy: `ON_FAILURE`, max retries `10`
 
@@ -66,11 +67,15 @@ Railway-provided variables:
 Required for live AI responses:
 - `OPENAI_API_KEY`
 
+Required for Railway launcher role selection:
+- `ARCANOS_PROCESS_KIND=web` on the API service
+- `ARCANOS_PROCESS_KIND=worker` on the async worker service
+
 Common optional overrides:
 - `OPENAI_BASE_URL`
 - `OPENAI_MODEL`
 - `AI_MODEL`
-- `RUN_WORKERS` (typically `false` on Railway)
+- `RUN_WORKERS` (launcher-managed on Railway)
 
 ## CI and Validation Compatibility
 Authoritative required workflow: `.github/workflows/ci-cd.yml`

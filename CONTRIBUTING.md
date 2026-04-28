@@ -26,7 +26,7 @@ cd daemon-python
 python -m venv venv
 # Windows PowerShell:  .\venv\Scripts\Activate.ps1
 # macOS/Linux:         source venv/bin/activate
-python -m pip install -e .
+python -m pip install -e ".[dev]"
 cp .env.example .env
 cd ..
 
@@ -51,7 +51,7 @@ cd daemon-python
 python -m venv venv
 # Windows PowerShell
 .\venv\Scripts\Activate.ps1
-python -m pip install -e .
+python -m pip install -e ".[dev]"
 cp .env.example .env
 ```
 
@@ -100,8 +100,9 @@ python daemon-python/scripts/continuous_audit.py --max-depth=1 --no-recursive --
 
 ## Deploy (Railway)
 Contributors must keep Railway build/start behavior unchanged:
-- Build in build phase (`npm ci --include=dev && npm run build`)
-- Start only runs compiled output (`node --max-old-space-size=7168 --loader ./scripts/esm-alias-loader.mjs dist/start-server.js`)
+- Build in build phase (`npm ci --include=dev --no-audit --no-fund && npm run build`)
+- Start runs the shared launcher only (`node scripts/start-railway-service.mjs`)
+- Railway services must set `ARCANOS_PROCESS_KIND=web` or `ARCANOS_PROCESS_KIND=worker`
 
 Validate Railway compatibility before merge:
 ```bash

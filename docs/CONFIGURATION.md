@@ -1,7 +1,7 @@
 # Configuration Guide
 
 ## Overview
-This document captures active backend and daemon configuration used by current code. Defaults and precedence are derived from `src/config/unifiedConfig.ts`, `src/config/env.ts`, and daemon config modules.
+This document captures active backend and daemon configuration used by current code. Defaults and precedence are derived from `src/platform/runtime/unifiedConfig.ts`, `src/platform/runtime/env.ts`, compatibility re-exports under `src/config/`, and daemon config modules.
 
 ## Prerequisites
 - Copy `.env.example` to `.env` for backend.
@@ -24,23 +24,27 @@ cp .env.example .env
 
 | Variable | Required | Default | Notes |
 | --- | --- | --- | --- |
-| `PORT` | Yes | none | Required by `validateRequiredEnv()` at startup. |
+| `PORT` | No locally; Railway-managed in deploys | direct server `3000`; validation fallback `8080` | `.env.example` sets `3000`. Railway injects `PORT`; do not hard-code it in Railway Variables. |
 | `NODE_ENV` | No | `development` | Affects host binding and runtime behavior. |
 | `OPENAI_API_KEY` | No* | none | Needed for live AI responses. |
 | `OPENAI_BASE_URL` | No | none | Optional OpenAI endpoint override. |
 | `OPENAI_MODEL` | No | fallback chain | Participates in default model resolution chain. |
 | `DATABASE_URL` | No | none | Enables PostgreSQL persistence. |
-| `RUN_WORKERS` | No | `true` (non-test) | Background workers toggle. |
+| `REDIS_URL` | No | none | Preferred Redis connection string; discrete `REDISHOST`/`REDISPORT`/`REDISUSER`/`REDISPASSWORD` are fallback inputs. |
+| `ARCANOS_PROCESS_KIND` | Yes for Railway launcher | none | Must be `web` or `worker` when using `scripts/start-railway-service.mjs`; omit for direct local `npm start`. |
+| `RUN_WORKERS` | No | `true` (non-test) | Local/direct background worker toggle. Ignored by Railway launcher role selection when `ARCANOS_PROCESS_KIND` is set. |
 | `WORKER_API_TIMEOUT_MS` | No | `30000` | Unified config default; some worker adapters fallback to `60000` if unset. |
 | `ARC_LOG_PATH` | No | `/tmp/arc/log` | Runtime log path. |
 | `ARC_MEMORY_PATH` | No | `/tmp/arc/memory` | Runtime memory path. |
 | `RAILWAY_ENVIRONMENT` | No | none | Set by Railway and used for environment detection. |
 | `RAILWAY_API_TOKEN` | No | none | Only required for Railway management/API tooling, not normal app runtime. |
 
+`OPENAI_API_KEY` is optional for startup because the API can return mock responses in non-live paths, but live AI behavior and the dedicated worker require a valid key.
+
 | Variable | Default | Notes |
 | --- | --- | --- |
 | `NODE_ENV` | `development` | Controls logging and worker defaults. |
-| `PORT` | `8080` | HTTP port (Railway overrides with `PORT`). |
+| `PORT` | `3000` direct server / `8080` validation fallback | `src/server.ts` binds `process.env.PORT || 3000`; `environmentValidation.ts` backfills missing `PORT` with `8080` during startup validation. Prefer setting `PORT=3000` locally. Railway supplies the live port. |
 | `HOST` | `127.0.0.1` (dev) / `0.0.0.0` (prod) | Bind address for the HTTP server. In development, defaults to localhost for security. Set to `0.0.0.0` to allow network access (e.g., Docker, WSL2, testing from other devices). |
 | `SERVER_URL` | `http://127.0.0.1:<port>` | Base URL used for internal callbacks. |
 | `BACKEND_STATUS_ENDPOINT` | `/status` | Status endpoint path for internal checks. |
@@ -55,7 +59,7 @@ cp .env.example .env
 
 *Without an API key, AI routes return mock responses by design.*
 
-The OpenAI client resolves keys in this order, skipping placeholders:
+The OpenAI client resolves keys in this order:
 
 ### OpenAI key resolution order
 1. `OPENAI_API_KEY`
@@ -69,13 +73,15 @@ The OpenAI client resolves keys in this order, skipping placeholders:
 3. `AI_MODEL`
 4. `OPENAI_MODEL`
 5. `RAILWAY_OPENAI_MODEL`
-6. `gpt-4o-mini`
+6. `gpt-4.1-mini`
 
 ### Fallback model resolution order
 1. `FALLBACK_MODEL`
 2. `AI_FALLBACK_MODEL`
 3. `RAILWAY_OPENAI_FALLBACK_MODEL`
-4. `gpt-4`
+4. `FINETUNED_MODEL_ID`
+5. `FINE_TUNED_MODEL_ID`
+6. `gpt-4.1`
 
 ### Confirmation and automation
 | Variable | Default | Purpose |
@@ -83,6 +89,27 @@ The OpenAI client resolves keys in this order, skipping placeholders:
 | `TRUSTED_GPT_IDS` | empty | Trusted GPT IDs that can bypass manual confirmation. |
 | `ARCANOS_AUTOMATION_SECRET` | empty | Shared secret for automation bypass. |
 | `ARCANOS_AUTOMATION_HEADER` | `x-arcanos-automation` | Header carrying automation secret. |
+| `ASK_ROUTE_MODE` | `gone` | Legacy ask-style migration switch. Set `compat` only while temporarily supporting old `/brain` callers. |
+
+### Railway service role
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `ARCANOS_PROCESS_KIND=web` | Railway web service | Starts the compiled API runtime with `RUN_WORKERS=false` through `scripts/start-railway-service.mjs`. |
+| `ARCANOS_PROCESS_KIND=worker` | Railway worker service | Starts `dist/workers/jobRunner.js` and exposes a minimal health server on `/health`, `/healthz`, and `/readyz`. |
+
+If `ARCANOS_PROCESS_KIND` is missing or not `web`/`worker`, the Railway launcher exits with a fatal startup error by design.
+
+### Dedicated job runner
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `JOB_WORKER_ID` | `async-queue` | Base worker identity used in logs, heartbeats, and queue claiming. |
+| `JOB_WORKER_STATS_ID` | `JOB_WORKER_ID` | Stable stats/inspection identity. |
+| `JOB_WORKER_CONCURRENCY` | `WORKER_COUNT` or `1` | Number of queue-consumer slots in one worker process. |
+| `JOB_WORKER_POLL_MS` | `250` | Poll delay after a claimed job cycle. |
+| `JOB_WORKER_IDLE_BACKOFF_MS` | `1000` | Sleep interval when no job is available. |
+| `JOB_WORKER_DB_BOOTSTRAP_RETRY_MS` | `5000` | Initial retry delay while waiting for database connectivity. |
+| `JOB_WORKER_DB_BOOTSTRAP_MAX_RETRY_MS` | `30000` | Max DB bootstrap retry delay. |
+| `JOB_WORKER_DB_BOOTSTRAP_MAX_ATTEMPTS` | `0` | `0` means retry indefinitely. |
 
 ### Self reflections and judged feedback
 | Variable | Default | Purpose |
@@ -106,6 +133,12 @@ The OpenAI client resolves keys in this order, skipping placeholders:
 | `MCP_EXPOSE_DESTRUCTIVE` | `false` | Expose destructive MCP tools when set to true. |
 | `MCP_ENABLE_SESSIONS` | `false` | Enable transport session ID generation in MCP HTTP transport. |
 | `MCP_ALLOW_MODULE_ACTIONS` | empty | CSV allowlist controlling `modules.invoke` (`module:action` or `module:*`). |
+
+### Metrics
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `METRICS_ENABLED` | enabled unless `false` | Controls `GET /metrics`. |
+| `METRICS_AUTH_TOKEN` | none | Optional bearer or `x-metrics-token` secret for `GET /metrics`; no token means the metrics endpoint is public. |
 
 ### Daemon-specific core variables
 
@@ -147,9 +180,11 @@ arcanos
 - Keep required runtime values in Railway Variables.
 - Keep production and development variables separated.
 - Railway injects `PORT` and optionally `DATABASE_URL` when PostgreSQL is attached.
+- Set `ARCANOS_PROCESS_KIND=web` on the web service and `ARCANOS_PROCESS_KIND=worker` on the worker service.
 
 ## Troubleshooting
-- Startup exits immediately: `PORT` missing or invalid.
+- Local server uses an unexpected port: set `PORT=3000` in `.env` explicitly.
+- Railway launcher fatal startup error: set `ARCANOS_PROCESS_KIND` to `web` or `worker` on that service.
 - Unexpected model in use: verify model precedence chain and remove conflicting variables.
 - Confirmation bypass not working: verify header name and secret match exactly.
 
@@ -171,8 +206,8 @@ These directories are created at runtime or during builds and must **not** be co
 ## References
 - `../.env.example`
 - `../config/env/core.env.example`
-- `../src/config/unifiedConfig.ts`
-- `../src/config/env.ts`
+- `../src/platform/runtime/unifiedConfig.ts`
+- `../src/platform/runtime/env.ts`
 - `../daemon-python/.env.example`
 
 
@@ -187,13 +222,17 @@ These control how long the backend waits for the daemon to report tool results b
 - `DAEMON_RESULT_POLL_MS` (default: `250`)
 
 ## Complete environment variable reference
-This table mirrors `.env.example` and is the source-of-truth reference for deploy configuration.
+This table mirrors the highest-impact runtime keys in `.env.example`. Use `.env.example` for the current operator template and update this section when a new deploy-relevant variable is added.
 | Variable | Default (example) | Purpose |
 |---|---:|---|
 | `PORT` | `3000` | HTTP port the server binds to. |
 | `NODE_ENV` | `development` | Runtime mode. |
 | `OPENAI_API_KEY` | `your-openai-api-key-here` | OpenAI API key used by server/runtime. |
-| `OPENAI_MODEL` | `gpt-4o-mini` | Default model name. |
+| `OPENAI_MODEL` | `gpt-4.1-mini` | Default model name. |
+| `ARCANOS_BACKEND_URL` | `http://127.0.0.1:3000` (commented) | Backend base URL used by CLI/scripts before fallback variables. |
+| `OPENAI_ACTION_SHARED_SECRET` | `replace-with-a-strong-shared-secret` | Shared secret for `/api/bridge/gpt`. |
+| `DEFAULT_GPT_ID` | `arcanos-core` | Default GPT id for bridge requests that omit `gptId`. |
+| `ARCANOS_PROCESS_KIND` | `web` (commented) | Explicit Railway launcher role: `web` or `worker`. |
 | `ALLOW_MOCK_FALLBACK` | `false` | Allow fallback to mocked providers in non-prod. |
 | `BUDGET_DISABLED` | `false` | Disable runtime budget enforcement (not recommended in prod). |
 | `WATCHDOG_LIMIT_MS` | `120000` | Hard watchdog limit for long-running operations. |
@@ -207,6 +246,10 @@ This table mirrors `.env.example` and is the source-of-truth reference for deplo
 | `ARC_MEMORY_PATH` | `/tmp/arc/memory` | Filesystem path for memory persistence. |
 | `RUN_WORKERS` | `true` | Whether to run background workers in this process. |
 | `WORKER_API_TIMEOUT_MS` | `60000` | Timeout for worker-to-server API calls. |
+| `JOB_WORKER_ID` | `async-queue` (commented) | Dedicated worker identity. |
+| `JOB_WORKER_CONCURRENCY` | `1` (commented) | Queue-consumer slots per worker process. |
+| `JOB_WORKER_POLL_MS` | `250` (commented) | Worker polling delay after claim cycles. |
+| `REDIS_URL` | `redis://localhost:6379` (commented) | Preferred Redis connection string. |
 | `SAFETY_HEARTBEAT_TIMEOUT_MS` | `15000` | Worker heartbeat timeout window. |
 | `SAFETY_HEARTBEAT_MISS_THRESHOLD` | `3` | Missed heartbeats before marking unhealthy. |
 | `SAFETY_HEALTHY_CYCLES_TO_RECOVER` | `3` | Healthy cycles required to recover from unhealthy state. |
@@ -216,5 +259,8 @@ This table mirrors `.env.example` and is the source-of-truth reference for deplo
 | `DISPATCH_V9_POLICY_TIMEOUT_MS` | `5000` | Timeout for dispatch policy evaluation. |
 | `SAFETY_FAIL_CLOSED_INTEGRITY` | `true` | Fail closed when integrity checks cannot be satisfied. |
 | `OPENAI_STORE` | `false` | If true, allow OpenAI to store Responses; default false (stateless). |
+| `MCP_BEARER_TOKEN` | commented placeholder | Required for `POST /mcp`. |
+| `METRICS_AUTH_TOKEN` | commented empty | Optional token for `GET /metrics`. |
+| `ASK_ROUTE_MODE` | `gone` (commented) | Legacy `/brain` migration switch. |
 | `DAEMON_RESULT_WAIT_MS` | `8000` | How long (ms) to poll for daemon command results before continuing without them. |
 | `DAEMON_RESULT_POLL_MS` | `250` | Poll interval (ms) when waiting for daemon results. |

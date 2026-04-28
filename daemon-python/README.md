@@ -2,7 +2,7 @@
 
 ## What it is
 `daemon-python/` is the **local companion** to the Arcanos backend. It gives you an interactive CLI that can:
-- chat with your backend using generic `/ask` for daemon chat and `/gpt/:gptId` for module-bound GPT traffic
+- chat with your backend through canonical `/gpt/:gptId` module-bound traffic
 - **detect inline patches** (unified diffs) in AI responses and immediately prompt **“Apply patch? [y/N]”**
 - **detect command proposals** and prompt **“Run? [y/N]”** (allowlisted)
 - maintain **repo awareness** (light repo indexing injected into backend requests)
@@ -12,7 +12,7 @@
 
 ## Where it fits in the overall codebase
 - Backend (TypeScript/Express): `src/`  
-  - Primary endpoints: `/ask`, `/gpt/:gptId`, `/api/ask`, `/query-finetune`
+  - Primary endpoints: `/gpt/:gptId`, `/api/arcanos/ask`, `/query-finetune`, `/api/daemon/*`, `/api/update`
 - Local daemon (Python): `daemon-python/`  
   - CLI runtime: `daemon-python/arcanos/cli/`
   - Agentic coding loop: `daemon-python/arcanos/agentic/`
@@ -26,8 +26,7 @@ You (terminal)
 Arcanos CLI shell (daemon-python/arcanos/cli)
   ↓
 Backend request with:
-  - generic daemon chat → `/ask`
-  - GPT/module-bound traffic → `/gpt/<gpt-id>`
+  - daemon chat and GPT/module-bound traffic → `/gpt/<gpt-id>`
   - sessionId=<machine/user instance>
   - context.repoIndex (optional)
   ↓
@@ -56,6 +55,8 @@ python -m venv venv
 # Windows PowerShell
 .\venv\Scripts\Activate.ps1
 python -m pip install -e .
+# For daemon test/development work:
+# python -m pip install -e ".[dev]"
 cp .env.example .env
 ```
 
@@ -153,6 +154,7 @@ When the assistant proposes patches/commands, the CLI:
 
 ## Troubleshooting
 - Backend route failures: verify `BACKEND_URL`, backend health, and auth headers.
+- `410 Gone` from `/brain` or old ask-style routes: migrate the caller to `/gpt/<gpt-id>`; `ASK_ROUTE_MODE=compat` is only a temporary backend migration switch.
 - Patch apply fails: ensure repo is a `git` repo and patch paths are correct.
 - Safe mode triggered: use `/safemode off` after reviewing failures and logs.
 - History DB location: controlled by `HISTORY_DB_PATH`.

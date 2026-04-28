@@ -9,6 +9,9 @@ This repo keeps documentation close to the code it describes.
 - **Env vars** → `docs/CONFIGURATION.md` + `.env.example`
 - **Deployment behavior** (Railway/start/healthchecks) → `docs/RAILWAY_DEPLOYMENT.md` + `RAILWAY_COMPATIBILITY_GUIDE.md`
 - **OpenAI integration** (Requests, Responses, tools, streaming) → `docs/OPENAI_RESPONSES_TOOLS.md`
+- **Workspace package/API changes** → `docs/WORKSPACE_PACKAGES.md`
+- **Protocol or schema changes** → `docs/SCHEMA_PROTOCOL_GUIDE.md`
+- **Database or migration changes** → `docs/DATABASE_MIGRATIONS.md`
 - **Large refactors** → add a short entry to `CHANGELOG.md` (or a dedicated doc under `docs/` if multi-step)
 
 ## Generated docs

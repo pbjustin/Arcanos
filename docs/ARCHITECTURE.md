@@ -97,6 +97,6 @@ Production remains split into dedicated Railway services:
 - Worker service: queued GPT execution and background job processing.
 
 Environment separation must remain explicit:
-- Web processes keep `RUN_WORKERS=false`.
+- Web processes use `ARCANOS_PROCESS_KIND=web`, and the launcher sets `RUN_WORKERS=false`.
 - Worker processes use `ARCANOS_PROCESS_KIND=worker`.
 - Logging must make the selected plane visible (`gpt.request.classified`, `gpt.write.entry`, `gpt.dispatch.write_guard_rejected`).

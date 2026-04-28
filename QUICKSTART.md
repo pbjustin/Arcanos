@@ -6,7 +6,7 @@ This quickstart gets the backend running first, then optionally starts the Pytho
 ## Prerequisites
 - Node.js 18+ and npm 8+
 - Optional: Python 3.10+ for `daemon-python/`
-- OpenAI API key
+- OpenAI API key for live AI calls; tests can use mock-mode configuration
 
 ## Setup
 Backend:
@@ -22,6 +22,8 @@ python -m venv venv
 # Windows PowerShell
 .\venv\Scripts\Activate.ps1
 python -m pip install -e .
+# For daemon contributors/testers:
+# python -m pip install -e ".[dev]"
 cp .env.example .env
 ```
 
@@ -58,8 +60,9 @@ OPENAI_STORE=false
 
 Minimum daemon config (`daemon-python/.env`):
 ```env
+# Required only for direct local OpenAI routing:
 OPENAI_API_KEY=sk-...
-# Optional backend routing:
+# Recommended backend routing:
 # BACKEND_URL=http://localhost:3000
 ```
 
@@ -76,6 +79,11 @@ npm run build
 npm start
 ```
 
+Development rebuild + run:
+```bash
+npm run dev
+```
+
 Daemon (optional):
 ```bash
 cd daemon-python
@@ -85,8 +93,23 @@ arcanos
 ## Quick checks
 ```bash
 curl http://localhost:3000/healthz
+curl http://localhost:3000/health
 ```
+
+## Common commands
+```bash
+npm run build:packages
+npm run build
+node scripts/run-jest.mjs --testPathPatterns=<pattern> --coverage=false
+npm run test:unit
+npm run type-check
+npm run lint
+npm run validate:railway
+```
+
+Run `npm run build:packages` before full backend validation when package contracts changed.
 
 Next:
 - API catalog: `docs/API.md`
 - OpenAI tooling/continuation: `docs/OPENAI_RESPONSES_TOOLS.md`
+- Full local runbook: `docs/RUN_LOCAL.md`

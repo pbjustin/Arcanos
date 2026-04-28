@@ -15,7 +15,9 @@ Before debugging, collect:
 
 ## Configuration
 Quick config checks:
-- Backend startup requires `PORT`.
+- Local backend defaults to port `3000` if `PORT` is unset; set `PORT=3000` in `.env` for deterministic local runs.
+- Railway injects `PORT`; do not hard-code it in Railway variables.
+- Railway launcher requires `ARCANOS_PROCESS_KIND=web` or `ARCANOS_PROCESS_KIND=worker`.
 - Live AI requires `OPENAI_API_KEY`.
 - PostgreSQL persistence requires `DATABASE_URL`.
 - Daemon debug server should have `DEBUG_SERVER_TOKEN` when enabled.
@@ -37,6 +39,8 @@ python validate_backend_cli.py
 ## Deploy (Railway)
 Post-deploy checks:
 ```bash
+railway status
+railway logs --service <web-service> --environment production
 curl https://<your-service>.up.railway.app/healthz
 curl https://<your-service>.up.railway.app/health
 curl https://<your-service>.up.railway.app/readyz
@@ -45,11 +49,16 @@ curl https://<your-service>.up.railway.app/readyz
 If failing, inspect Railway build/deploy logs first.
 
 ## Troubleshooting
-- `PORT is required`: set `PORT` locally or check Railway variable injection.
+- `ARCANOS_PROCESS_KIND is required`: set `ARCANOS_PROCESS_KIND=web` on the API service or `ARCANOS_PROCESS_KIND=worker` on the worker service, then redeploy.
+- Web service starts as the wrong role: run `railway variable list --service <service> --environment production` and verify `ARCANOS_PROCESS_KIND`.
+- Worker health is green but jobs stay queued: confirm `DATABASE_URL`, `OPENAI_API_KEY`, worker logs, and `GET /worker-helper/health`.
+- Local port confusion: use `PORT=3000` in `.env`; Railway probes the injected `PORT` and `/health`.
 - Mock responses in production: `OPENAI_API_KEY` missing/invalid.
 - Confirmation-required 403: include `x-confirmed` or trusted automation headers.
 - Daemon auth errors: validate backend token/bootstrap settings.
 - Health degraded for database: attach/configure PostgreSQL or accept in-memory mode.
+- `MCP_BEARER_TOKEN not configured`: set `MCP_BEARER_TOKEN` before calling `POST /mcp`.
+- `/brain` returns `410 Gone`: migrate the caller to `/gpt/:gptId`; set `ASK_ROUTE_MODE=compat` only as a temporary migration bridge.
 
 ## References
 - `RUN_LOCAL.md`

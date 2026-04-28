@@ -153,7 +153,7 @@ Reasoning stage (`createGPT5Reasoning`) is GPT-5.1-first and validates response 
 
 ## Where Trinity Is Used
 Main call sites:
-- `src/routes/ask.ts` (`/ask`, `/brain`)
+- `src/routes/ask.ts` (`/brain` legacy ask-style compatibility; default `ASK_ROUTE_MODE=gone`)
 - `src/routes/siri.ts`
 - `src/transport/http/controllers/aiController.ts` (`/write`, `/guide`, `/audit`, `/sim`)
 - `src/routes/gptRouter.ts`
@@ -161,7 +161,7 @@ Main call sites:
 - `src/platform/runtime/workerContext.ts`
 
 Behavior difference worth noting:
-- `src/routes/ask.ts` is the only route that currently passes `options.cognitiveDomain` into Trinity; most other call sites use default stage temperature behavior.
+- `src/routes/ask.ts` is the ask-style compatibility route that passes `options.cognitiveDomain` into Trinity; most other call sites use default stage temperature behavior.
 
 ## Trinity vs Legacy Pipeline Route
 There is also a separate legacy pipeline route:
@@ -173,7 +173,7 @@ That route uses a different multi-step pipeline and is not the same as `runThrou
 ## Quick Test Plan
 Minimal verification checklist:
 1. Happy path
-   - Call `/ask` with a normal prompt and confirm `routingStages`, `fallbackSummary`, `auditSafe`, and `memoryContext` fields are present.
+   - When temporarily testing ask compatibility, set `ASK_ROUTE_MODE=compat`, call `/brain` with a normal prompt, and confirm `routingStages`, `fallbackSummary`, `auditSafe`, and `memoryContext` fields are present.
 2. Dry run
    - Invoke Trinity with `{ dryRun: true }` and confirm no model calls are made and `module === "dry_run"`.
 3. Failure/fallback

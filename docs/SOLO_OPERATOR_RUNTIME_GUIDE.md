@@ -14,7 +14,7 @@ Arcanos is a Railway-hosted backend with four practical runtime pieces:
 - a Postgres database
 - a Redis instance
 
-The main app is the public API surface. It handles `/ask`, health routes, and the operator helper routes under `/worker-helper/*`.
+The main app is the public API surface. It handles canonical GPT writing routes under `/gpt/:gptId`, health routes, and the operator helper routes under `/worker-helper/*`.
 
 The dedicated worker service is a separate process that pulls queued jobs from Postgres and executes them in the background.
 
@@ -88,8 +88,8 @@ Behavior:
 - `/health` includes `dependencies.redis`
 - live `/health` and router-based health handling now agree about Redis status
 
-### What changed in `/ask`
-The `/ask` route contains tool dispatch logic for worker and daemon actions.
+### What changed in ask-style routing
+The legacy ask-style implementation now lives behind `/brain` and defaults to `ASK_ROUTE_MODE=gone`. Canonical daemon and GPT traffic should use `/gpt/:gptId`; operator control reads should use direct endpoints such as `/jobs/*`, `/workers/status`, and `/worker-helper/*`.
 
 Relevant code:
 - `src/routes/ask/workerTools.ts`
@@ -107,7 +107,7 @@ Now Arcanos builds one canonical tool definition and emits:
 - Chat Completions format when using `chat.completions.create`
 - Responses API format when using `responses.create`
 
-This is why worker-related `/ask` prompts now execute instead of failing before tool selection.
+This is why the remaining ask-style compatibility code builds tool payloads correctly when temporarily enabled, while new callers should use canonical GPT and control-plane routes.
 
 ### What changed in worker/operator auth
 Route-level helper/admin token requirements were removed from the worker helper surface and the lightweight agent capability grant path.
@@ -131,7 +131,7 @@ The practical tradeoff is simple:
 For the end user, the main visible changes are operational, not UI-facing.
 
 ### 1. Worker-backed requests are more reliable
-When a prompt needs worker inspection or worker actions, `/ask` can now reach the tool layer instead of failing early on malformed tool payloads.
+When a prompt needs worker inspection or worker actions, canonical GPT and compatibility routes can reach the tool layer instead of failing early on malformed tool payloads.
 
 ### 2. Background jobs are observable
 The system can report:
@@ -218,7 +218,7 @@ If the queue worker is down:
 - `GET /readyz` includes a Redis check
 - `GET /health` includes `dependencies.redis`
 - `GET /worker-helper/status` returns queue and runtime state
-- `/ask` worker prompts no longer fail with `tools[0].name`
+- canonical GPT/compatibility worker prompts no longer fail with `tools[0].name`
 - queued jobs appear in Postgres-backed worker job inspection routes
 
 ## Summary

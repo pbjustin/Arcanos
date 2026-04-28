@@ -119,7 +119,7 @@ Arcanos uses three retrieval modes in responses:
 ### `POST /api/save-conversation`
 Structured persistence endpoint for deterministic log/conversation saves.
 
-Use this instead of `/ask` when the caller needs a machine-verifiable persistence receipt.
+Use this instead of prompt/GPT routes when the caller needs a machine-verifiable persistence receipt.
 
 Request body:
 ```json

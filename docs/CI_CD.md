@@ -11,9 +11,11 @@ This repository uses GitHub Actions workflows in `.github/workflows/` for build/
 ## Setup
 Core workflows to review first:
 - `.github/workflows/ci-cd.yml`
+- `.github/workflows/pr-ci.yml`
 - `.github/workflows/doc-audit.yml`
 - `.github/workflows/arcanos-release.yml`
 - `.github/workflows/arcanos-deploy.yml`
+- `.github/workflows/railway-auto-deploy.yml`
 
 ## Configuration
 Common secrets referenced in workflows:
@@ -46,9 +48,10 @@ Deployment workflows are repository-specific; verify current trigger and require
 
 ## References
 - `../.github/workflows/ci-cd.yml`
+- `../.github/workflows/pr-ci.yml`
 - `../.github/workflows/doc-audit.yml`
 - `../.github/workflows/arcanos-deploy.yml`
-- `../.github/workflows/arcanos-ci-cd-pipeline.yml`
+- `../.github/workflows/railway-auto-deploy.yml`
 - `../railway.json`
 - `RAILWAY_DEPLOYMENT.md`
 

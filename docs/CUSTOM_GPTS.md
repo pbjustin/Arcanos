@@ -168,8 +168,8 @@ For async bridge callers, prefer the generated OpenAPI schema instead of hand-wr
 - What was broken: older integrations still modeled GPT requests as `/ask` plus body-level `gptId`, and some wrappers injected an implicit `"action": "ask"` even though GPT routes are module-specific.
 - What changed: the canonical contract is now `POST /gpt/{gptId}` with `gptId` as a required path parameter and `action` omitted unless the caller explicitly sets a backend-supported value.
 - How to call it now: send `prompt` in the JSON body, optionally add `gptVersion`, `action`, `payload`, or `context`, and never duplicate `gptId` in the body.
-- Legacy `/ask` responses now advertise migration state with `Deprecation`, `Sunset`, `x-canonical-route`, and `x-ask-route-mode` headers.
-- Safe removal path: leave `ASK_ROUTE_MODE` unset for compatibility mode, then switch to `ASK_ROUTE_MODE=gone` when you are ready for `/ask` to return `410 Gone`.
+- Legacy ask-style responses advertise migration state with `Deprecation`, `Sunset`, `x-canonical-route`, and `x-ask-route-mode` headers.
+- Safe migration path: the default `ASK_ROUTE_MODE` is `gone`, which returns `410 Gone` for `/brain`. Set `ASK_ROUTE_MODE=compat` only as a temporary migration bridge for older callers, then remove the override.
 
 ## Custom GPT Catalog
 

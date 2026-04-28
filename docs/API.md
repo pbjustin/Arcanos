@@ -30,11 +30,12 @@ Confirmation gate behavior (`src/middleware/confirmGate.ts`):
 Quick probes:
 ```bash
 curl http://localhost:3000/healthz
-curl -X POST http://localhost:3000/api/ask -H "Content-Type: application/json" -d '{"message":"hello"}'
+curl http://localhost:3000/health
+curl -X POST http://localhost:3000/api/arcanos/ask -H "Content-Type: application/json" -H "x-confirmed: yes" -d '{"message":"hello"}'
 ```
 
 ## Deploy (Railway)
-No API path changes are required for Railway. Ensure liveness (`/healthz`) and readiness (`/health`) and confirmation-gated flows are validated after deploy.
+No API path changes are required for Railway. Validate liveness (`/healthz`), readiness (`/readyz`), the Railway health probe (`/health`), and confirmation-gated flows after deploy.
 
 ## Troubleshooting
 - 403 with `CONFIRMATION_REQUIRED`: use confirmation flow headers.
@@ -153,14 +154,13 @@ Client retry guidance:
 - `GET /api/fallback/test`
 
 ### Core AI interaction
-- `GET|POST /ask`
-- `GET|POST /brain` (confirmation required)
+- `POST /gpt/:gptId` (canonical GPT writing plane)
+- `GET|POST /brain` (legacy ask-compatible route; returns `410 Gone` by default; `ASK_ROUTE_MODE=compat` enables the compatibility handler and then requires confirmation)
 - `GET /trinity/status`
 - `POST /arcanos` (confirmation required)
 - `POST /arcanos-pipeline`
 - `POST /arcanos-query`
 - `POST /siri` (confirmation required)
-- `POST /api/ask`
 - `POST /api/arcanos/ask` (confirmation required)
 - `POST /api/ask-hrc`
 
@@ -266,11 +266,14 @@ Client retry guidance:
 - `GET /sdk/diagnostics`
 - `POST /sdk/system-test` (confirmation required)
 
-## TODO (verified route-order ambiguities)
+## Verified route-order ambiguities
 - `POST /audit` is defined in multiple routers; current mount order means AI utility handling executes first.
 - `POST /api/update` has a public route and a daemon-authenticated route; current mount order executes the public route first.
 - `GET /health` is defined in multiple routers; health-group handler executes first because it is mounted before reinforcement and status routes.
 - `/api/reusables*` routes are mounted both through `api/index.ts` and directly in `register.ts`; first matching handler responds and the second mount is effectively redundant.
+
+## Legacy ask-route mode
+`src/routes/ask/index.ts` currently mounts only `/brain` for the old ask-style Trinity route. The default `ASK_ROUTE_MODE` is `gone`, so `/brain` returns `410 Gone` with canonical `/gpt/{gptId}` migration metadata. Set `ASK_ROUTE_MODE=compat` only when temporarily supporting an older caller during migration.
 
 
 ## Daemon command result reporting

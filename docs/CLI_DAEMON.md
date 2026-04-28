@@ -12,10 +12,9 @@ It is designed to behave like a coding assistant:
 ## Contracts (what the daemon sends to the backend)
 
 The daemon calls the backend with this routing split:
-- generic daemon chat/state → `/ask`
-- module-bound writing traffic → `/gpt/:gptId`
+- daemon chat/state and module-bound writing traffic → `/gpt/:gptId`
 - control-plane reads and ops → direct endpoints such as `/jobs/:id`, `/jobs/:id/result`, `/status`, `/workers/status`, `/worker-helper/health`, `/status/safety/self-heal`, `/api/arcanos/dag/*`, and `/mcp`
-- legacy compatibility callers may still use `/api/ask` when intentionally targeting that compatibility layer
+- legacy ask-style callers may temporarily use `/brain` only when the backend has `ASK_ROUTE_MODE=compat`; the default is `gone`
 
 CLI examples:
 - `arcanos query --gpt arcanos-core --prompt "Draft the release summary"` → writing plane through `/gpt/:gptId` with canonical `action: "query"`
@@ -24,10 +23,10 @@ CLI examples:
 - `arcanos job-status <job-id>` → direct control read through `GET /jobs/:id`
 - `arcanos job-result <job-id>` → direct control read through `GET /jobs/:id/result`
 
-Do **not** send Custom GPT payloads with `gptId` to `/ask`; the backend rejects that contract on purpose.
+Do **not** send Custom GPT payloads with `gptId` to ask-style routes; the backend rejects that contract on purpose.
 Do **not** send job lookups, DAG traces, runtime diagnostics, or MCP tool calls through `/gpt/:gptId` as prompt text; that route is reserved for the writing plane, and retrieval must stay structured through `action + jobId`.
 
-For generic daemon chat, the daemon sends:
+For daemon chat, the daemon sends the canonical GPT route:
 - `sessionId`: stable local instance id (machine/user)
 - `prompt`: the user’s message
 - `context.repoIndex`: lightweight repository index (when enabled)

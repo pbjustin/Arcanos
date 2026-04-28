@@ -75,7 +75,27 @@ arcanos workers
 - Calls backend routes for worker/runtime health (`/workers/status` and `/worker-helper/health`).
 - Useful for quick operational checks.
 
-### 6) Read recent self-heal/runtime events (`logs --recent`)
+### 6) Inspect GPT diagnostics (`diagnostics`)
+
+```bash
+arcanos diagnostics --gpt arcanos-core
+arcanos diagnostics --gpt arcanos-core --root --json
+```
+
+- Calls GPT diagnostics actions through the backend HTTP client.
+- `--root` requests root deep diagnostics and requires the configured backend authorization path.
+
+### 7) Read async job state (`job-status`, `job-result`)
+
+```bash
+arcanos job-status <job-id>
+arcanos job-result <job-id>
+```
+
+- Reads `GET /jobs/:id` and `GET /jobs/:id/result` directly.
+- These commands do not route job lookups through `/gpt/{gptId}`.
+
+### 8) Read recent self-heal/runtime events (`logs --recent`)
 
 ```bash
 arcanos logs --recent
@@ -84,7 +104,7 @@ arcanos logs --recent
 - Calls `/api/self-heal/events` and reports recent runtime event count.
 - Currently supports only `--recent` form.
 
-### 7) Inspect self-heal state (`inspect self-heal`)
+### 9) Inspect self-heal state (`inspect self-heal`)
 
 ```bash
 arcanos inspect self-heal
@@ -93,7 +113,7 @@ arcanos inspect self-heal
 - Calls `/status/safety/self-heal` and summarizes status.
 - Currently supports only the `self-heal` subject.
 
-### 8) Run implementation doctor check (`doctor implementation`)
+### 10) Run implementation doctor check (`doctor implementation`)
 
 ```bash
 arcanos doctor implementation
@@ -102,7 +122,7 @@ arcanos doctor implementation
 - Dispatches protocol `tool.invoke` with tool id `doctor.implementation`.
 - Returns doctor status summary.
 
-### 9) Dispatch raw protocol commands (`protocol`)
+### 11) Dispatch raw protocol commands (`protocol`)
 
 ```bash
 arcanos protocol exec.status --payload-json '{"executionId":"exec-123"}'
@@ -157,7 +177,10 @@ arcanos ask <prompt> [--json]
 arcanos generate --gpt <gpt-id> --prompt <prompt> [--mode fast|orchestrated] [--json]
 arcanos query --gpt <gpt-id> --prompt <prompt> [--json]
 arcanos query-and-wait --gpt <gpt-id> --prompt <prompt> [--timeout-ms <ms>] [--poll-interval-ms <ms>] [--json]
+arcanos diagnostics --gpt <gpt-id> [--root] [--json]
 arcanos generate-and-wait --gpt <gpt-id> --prompt <prompt> [--timeout-ms <ms>] [--poll-interval-ms <ms>] [--json]
+arcanos job-status <job-id> [--json]
+arcanos job-result <job-id> [--json]
 arcanos plan <prompt> [--json]
 arcanos exec [<prompt>] [--json]
 arcanos status [--json]

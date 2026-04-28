@@ -23,7 +23,7 @@ Use `RUN_LOCAL.md` for command sequences.
 Use `RAILWAY_DEPLOYMENT.md` for deployment and rollback procedures.
 
 ## Troubleshooting
-If an external reference conflicts with repository behavior, prefer repository code and mark docs with `TODO` until resolved.
+If an external reference conflicts with repository behavior, prefer repository code and mark the affected docs with a tracked follow-up until resolved.
 
 ## References
 - OpenAI Node SDK: https://github.com/openai/openai-node

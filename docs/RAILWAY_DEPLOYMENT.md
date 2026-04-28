@@ -11,7 +11,7 @@ This runbook documents the active Railway deployment workflow for Arcanos using 
 ## Setup
 Pre-deploy checks:
 ```bash
-npm ci
+npm ci --include=dev --no-audit --no-fund
 npm run build
 npm test
 npm run validate:railway
@@ -32,8 +32,8 @@ Active Railway config (source: `railway.json`):
 
 Launcher behavior:
 - `scripts/start-railway-service.mjs` is the only supported Railway start command.
-- Web services start the compiled API runtime.
-- Worker services expose a minimal health server and then start `npm run start:worker`.
+- Web services start the compiled API runtime with `ARCANOS_PROCESS_KIND=web` and `RUN_WORKERS=false`.
+- Worker services expose a minimal health server and then start `dist/workers/jobRunner.js` with `ARCANOS_PROCESS_KIND=worker` and `RUN_WORKERS=true`.
 - The application keeps `/health`, `/healthz`, and `/readyz` available; Railway should probe `/health`.
 
 Environment variables:
@@ -43,7 +43,8 @@ Environment variables:
 | `OPENAI_API_KEY` | Yes | Required for live AI behavior. |
 | `PORT` | Railway-managed | Automatically injected. |
 | `NODE_ENV` | Railway-managed | Set to `production` by config. |
-| `RUN_WORKERS` | Recommended `false` | Defaults to `false` in deploy config. |
+| `ARCANOS_PROCESS_KIND` | Yes | `web` for the API service, `worker` for the async worker service. The launcher exits if missing or invalid. |
+| `RUN_WORKERS` | Launcher-managed | Set by `scripts/start-railway-service.mjs` from `ARCANOS_PROCESS_KIND`. |
 | `DATABASE_URL` | Optional | Attach Railway PostgreSQL for persistence. |
 | `ARC_LOG_PATH` | Optional | Defaults to `/tmp/arc/log`. |
 | `GPT_FAST_PATH_ENABLED` | Optional | Defaults to `true`; disables inline prompt-generation fast path when set to `false`. |
@@ -54,6 +55,8 @@ Environment variables:
 Environment separation:
 - `railway.json` defines `production` and `development` variable blocks.
 - Keep secrets per environment in Railway Variables.
+- Configure separate Railway services for web and worker when async GPT jobs must complete in the background.
+- Confirm each service role with `railway variable list --service <service> --environment production` before release.
 
 ## Run locally
 Mirror Railway locally before deploy:
@@ -80,6 +83,8 @@ railway link
 railway status
 railway env production
 railway variable list --service <web-service> --environment production
+railway variable set ARCANOS_PROCESS_KIND=web --service <web-service> --environment production
+railway variable set ARCANOS_PROCESS_KIND=worker --service <worker-service> --environment production
 railway variable set GPT_FAST_PATH_ENABLED=true --service <web-service> --environment production
 railway variable set GPT_FAST_PATH_MODEL=gpt-4.1-mini --service <web-service> --environment production
 railway run --service <web-service> --environment production npm run dev
@@ -106,10 +111,12 @@ Rollback:
 3. Redeploy that version.
 
 ## Troubleshooting
-- Build fails: run `npm ci --include=dev && npm run build` locally first.
+- Build fails: run `npm ci --include=dev --no-audit --no-fund && npm run build` locally first.
+- Launcher fails with `ARCANOS_PROCESS_KIND is required`: set `ARCANOS_PROCESS_KIND=web` on the API service or `ARCANOS_PROCESS_KIND=worker` on the worker service.
 - Repeated restarts: inspect `/health`, `/healthz`, and `/readyz` along with Railway logs.
 - App boots without AI output: validate `OPENAI_API_KEY` is present and valid.
 - Persistence degraded: attach PostgreSQL or set valid `DATABASE_URL`.
+- Async jobs stay queued: verify the worker service is deployed, has `ARCANOS_PROCESS_KIND=worker`, can reach `DATABASE_URL`, and has `OPENAI_API_KEY`.
 
 ## References
 - `../railway.json`
