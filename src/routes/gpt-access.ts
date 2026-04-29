@@ -89,7 +89,15 @@ router.post(
   '/gpt-access/jobs/result',
   requireGptAccessScope('jobs.result'),
   asyncHandler(async (req, res) => {
-    sendGptAccessResult(res, await getGptAccessJobResult(req.body));
+    sendGptAccessResult(
+      res,
+      await getGptAccessJobResult(req.body, {
+        actorKey: getRequestActorKey(req),
+        requestId: req.requestId,
+        traceId: req.traceId,
+        logger: req.logger
+      })
+    );
   })
 );
 

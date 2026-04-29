@@ -26,6 +26,7 @@ const MIN_NESTED_GPT_ACCESS_WORKER_SLOTS = 2;
 
 type GatewayResult = Awaited<ReturnType<typeof createGptAccessAiJob>>;
 type GatewayJobResult = Awaited<ReturnType<typeof getGptAccessJobResult>>;
+type GatewayContext = Parameters<typeof createGptAccessAiJob>[1];
 
 export interface TrinityPipelineAdapterConfig {
   defaultGptId?: string;
@@ -37,8 +38,9 @@ export interface TrinityPipelineAdapterConfig {
   waitForResultMs?: number;
   pollIntervalMs?: number;
   maxOutputTokens?: number;
-  createAiJob?: (body: unknown, context: Parameters<typeof createGptAccessAiJob>[1]) => Promise<GatewayResult>;
-  getJobResult?: (body: unknown) => Promise<GatewayJobResult>;
+  abortSignal?: AbortSignal;
+  createAiJob?: (body: unknown, context: GatewayContext) => Promise<GatewayResult>;
+  getJobResult?: (body: unknown, context: GatewayContext) => Promise<GatewayJobResult>;
   createDagRun?: (request: CreateDagRunRequest) => Promise<DagRunSummary>;
 }
 
@@ -230,11 +232,48 @@ function readGatewayErrorMessage(payload: Record<string, unknown>, fallback: str
 }
 
 function unwrapCompletedGptAccessResult(result: unknown): unknown {
-  if (isRecord(result) && result.ok === true && Object.prototype.hasOwnProperty.call(result, 'result')) {
-    return result.result;
+  if (isRecord(result)) {
+    if (result.ok === true && Object.prototype.hasOwnProperty.call(result, 'result')) {
+      return result.result;
+    }
+
+    if (result.ok === false) {
+      throw new TrinityPipelineAdapterError(
+        'TRINITY_INNER_EXECUTION_FAILED',
+        readGatewayErrorMessage(result, 'The inner Trinity execution failed.')
+      );
+    }
   }
 
   return result;
+}
+
+function buildGatewayContext(
+  config: TrinityPipelineAdapterConfig,
+  idempotencyKey?: string | null
+): GatewayContext {
+  return {
+    actorKey: normalizeOptionalString(config.actorKey) ?? DEFAULT_GPT_ACCESS_ACTOR_KEY,
+    requestId: config.requestId,
+    traceId: normalizeOptionalString(config.traceId) ?? undefined,
+    ...(idempotencyKey !== undefined ? { idempotencyKey } : {})
+  };
+}
+
+function readAbortMessage(signal: AbortSignal): string {
+  return resolveErrorMessage(signal.reason) || 'Trinity DAG node polling was aborted.';
+}
+
+function throwIfAbortRequested(signal: AbortSignal | undefined, jobId?: string): void {
+  if (!signal?.aborted) {
+    return;
+  }
+
+  const jobSuffix = jobId ? ` for Arcanos core job ${jobId}` : '';
+  throw new TrinityPipelineAdapterError(
+    'GPT_ACCESS_JOB_POLL_ABORTED',
+    `Stopped polling${jobSuffix}: ${readAbortMessage(signal)}`
+  );
 }
 
 function buildDagNodeMetadata(
@@ -340,7 +379,6 @@ export async function createArcanosCoreJob(
 ): Promise<CreatedArcanosCoreJob> {
   const gptId = resolveAdapterGptId(input.gptId, config);
   const createAiJob = config.createAiJob ?? createGptAccessAiJob;
-  const traceId = normalizeOptionalString(config.traceId) ?? undefined;
   const result = await createAiJob({
     gptId,
     task: input.task,
@@ -351,12 +389,7 @@ export async function createArcanosCoreJob(
       DEFAULT_MAX_OUTPUT_TOKENS
     ),
     ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {})
-  }, {
-    actorKey: normalizeOptionalString(config.actorKey) ?? DEFAULT_GPT_ACCESS_ACTOR_KEY,
-    requestId: config.requestId,
-    traceId,
-    idempotencyKey: input.idempotencyKey ?? null
-  });
+  }, buildGatewayContext(config, input.idempotencyKey ?? null));
   const payload = readGatewayPayload(result.payload);
 
   if (result.statusCode >= 400 || payload.ok !== true) {
@@ -390,6 +423,8 @@ export async function routeDagNodeToGptAccess(
   input: RouteDagNodeToGptAccessInput
 ): Promise<unknown> {
   const config = input.config ?? {};
+  throwIfAbortRequested(config.abortSignal);
+
   const nodeMetadata = buildDagNodeMetadata(input.options, input.node);
   const createdJob = await createArcanosCoreJob({
     gptId: input.gptId,
@@ -413,14 +448,18 @@ export async function routeDagNodeToGptAccess(
     config.pollIntervalMs,
     DEFAULT_GPT_ACCESS_POLL_INTERVAL_MS
   );
-  const getJobResult = config.getJobResult ?? getGptAccessJobResult;
+  const getJobResult: NonNullable<TrinityPipelineAdapterConfig['getJobResult']> =
+    config.getJobResult ?? ((body, context) => getGptAccessJobResult(body, context));
+  const gatewayContext = buildGatewayContext(config);
   const startedAtMs = Date.now();
 
   while (Date.now() - startedAtMs <= waitForResultMs) {
+    throwIfAbortRequested(config.abortSignal, createdJob.jobId);
+
     const result = await getJobResult({
       jobId: createdJob.jobId,
       ...(config.traceId ? { traceId: config.traceId } : {})
-    });
+    }, gatewayContext);
     const payload = readGatewayPayload(result.payload);
     if (payload.ok !== true) {
       throw new TrinityPipelineAdapterError(
@@ -442,7 +481,14 @@ export async function routeDagNodeToGptAccess(
       );
     }
 
-    await sleep(pollIntervalMs);
+    try {
+      await sleep(pollIntervalMs, { signal: config.abortSignal });
+    } catch (error: unknown) {
+      if (config.abortSignal?.aborted) {
+        throwIfAbortRequested(config.abortSignal, createdJob.jobId);
+      }
+      throw error;
+    }
   }
 
   throw new TrinityPipelineAdapterError(

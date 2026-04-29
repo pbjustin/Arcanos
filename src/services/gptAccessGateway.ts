@@ -146,6 +146,13 @@ export interface CreateGptAccessAiJobContext {
   logger?: GptAccessLogger;
 }
 
+export interface GptAccessJobResultContext {
+  actorKey: string;
+  requestId?: string;
+  traceId?: string;
+  logger?: GptAccessLogger;
+}
+
 const jsonValueSchema: z.ZodType<unknown> = z.lazy(() =>
   z.union([
     z.string(),
@@ -768,7 +775,7 @@ export async function querySanitizedBackendLogs(input: z.infer<typeof logsQueryS
   };
 }
 
-export async function getGptAccessJobResult(body: unknown) {
+export async function getGptAccessJobResult(body: unknown, context?: GptAccessJobResultContext) {
   const parsed = jobResultRequestSchema.safeParse(body);
   if (!parsed.success) {
     return {
@@ -784,11 +791,16 @@ export async function getGptAccessJobResult(body: unknown) {
   }
 
   const job = await getJobById(parsed.data.jobId);
+  const traceId =
+    parsed.data.traceId ??
+    (typeof context?.traceId === 'string' && context.traceId.trim().length > 0
+      ? context.traceId.trim()
+      : null);
   return {
     statusCode: 200,
     payload: sanitizeGptAccessPayload({
       ok: true,
-      traceId: parsed.data.traceId ?? null,
+      traceId,
       ...buildGptJobResultLookupPayload(parsed.data.jobId, job)
     })
   };

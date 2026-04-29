@@ -251,6 +251,106 @@ describe('trinity pipeline adapter', () => {
     expect(getJobResultMock).toHaveBeenCalledWith({
       jobId: '22222222-2222-4222-8222-222222222222',
       traceId: 'trace-456'
+    }, expect.objectContaining({
+      actorKey: 'system:trinity-pipeline-adapter',
+      requestId: 'req-456',
+      traceId: 'trace-456'
+    }));
+  });
+
+  it('throws when the completed GPT Access result contains a failed inner envelope', async () => {
+    const createAiJobMock = jest.fn(async () => ({
+      statusCode: 202,
+      payload: {
+        ok: true,
+        jobId: '33333333-3333-4333-8333-333333333333',
+        traceId: 'trace-789',
+        status: 'queued',
+        deduped: false,
+        resultEndpoint: '/gpt-access/jobs/result'
+      }
+    }));
+    const getJobResultMock = jest.fn(async () => ({
+      statusCode: 200,
+      payload: {
+        ok: true,
+        jobId: '33333333-3333-4333-8333-333333333333',
+        status: 'completed',
+        result: {
+          ok: false,
+          error: {
+            code: 'MODULE_TIMEOUT',
+            message: 'The inner dispatcher timed out.'
+          }
+        },
+        error: null
+      }
+    }));
+
+    await expect(routeDagNodeToGptAccess({
+      prompt: 'Audit the DAG output.',
+      options: {
+        sourceEndpoint: 'dag.agent.audit'
+      },
+      config: {
+        requestId: 'req-789',
+        traceId: 'trace-789',
+        waitForResultMs: 10,
+        pollIntervalMs: 1,
+        createAiJob: createAiJobMock,
+        getJobResult: getJobResultMock
+      }
+    })).rejects.toMatchObject({
+      code: 'TRINITY_INNER_EXECUTION_FAILED',
+      message: 'The inner dispatcher timed out.'
     });
+  });
+
+  it('stops polling when the worker shutdown signal is aborted', async () => {
+    const shutdownController = new AbortController();
+    const createAiJobMock = jest.fn(async () => ({
+      statusCode: 202,
+      payload: {
+        ok: true,
+        jobId: '44444444-4444-4444-8444-444444444444',
+        traceId: 'trace-abort',
+        status: 'queued',
+        deduped: false,
+        resultEndpoint: '/gpt-access/jobs/result'
+      }
+    }));
+    const getJobResultMock = jest.fn(async () => {
+      setTimeout(() => shutdownController.abort(new Error('worker shutdown')), 0);
+      return {
+        statusCode: 200,
+        payload: {
+          ok: true,
+          jobId: '44444444-4444-4444-8444-444444444444',
+          status: 'pending',
+          result: null,
+          error: null
+        }
+      };
+    });
+
+    await expect(routeDagNodeToGptAccess({
+      prompt: 'Wait for a core result.',
+      options: {
+        sourceEndpoint: 'dag.agent.writer'
+      },
+      config: {
+        requestId: 'req-abort',
+        traceId: 'trace-abort',
+        waitForResultMs: 60_000,
+        pollIntervalMs: 60_000,
+        abortSignal: shutdownController.signal,
+        createAiJob: createAiJobMock,
+        getJobResult: getJobResultMock
+      }
+    })).rejects.toMatchObject({
+      code: 'GPT_ACCESS_JOB_POLL_ABORTED'
+    });
+
+    expect(getJobResultMock).toHaveBeenCalledTimes(1);
   });
 });
