@@ -186,6 +186,37 @@ describe('gpt dispatch compatibility', () => {
     );
   });
 
+  it('accepts structured message content parts and forwards the original messages', async () => {
+    const messages = [
+      { role: 'system', content: 'You write compact operator notes.' },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Draft a release note for Trinity facade routing.' }
+        ]
+      }
+    ];
+
+    const response = await routeGptRequest({
+      gptId: 'arcanos-core',
+      body: {
+        action: 'query',
+        messages
+      },
+      requestId: 'req_structured_messages_query'
+    });
+
+    expect(response.ok).toBe(true);
+    expect(mockDispatchModuleAction).toHaveBeenCalledWith(
+      'ARCANOS:CORE',
+      'query',
+      expect.objectContaining({
+        messages,
+        prompt: 'Draft a release note for Trinity facade routing.'
+      })
+    );
+  });
+
   it('resolves normalized GPT IDs without executing a module action', async () => {
     const response = await resolveGptRouting(' ARCANOS-CORE ', 'req_resolve_normalized');
 

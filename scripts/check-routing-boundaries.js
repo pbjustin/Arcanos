@@ -22,6 +22,7 @@ const BOUNDARY_GROUPS = [
     filePatterns: [
       /^src\/services\/runtimeInspectionRoutingService\.ts$/i,
       /^src\/services\/systemState\.ts$/i,
+      /^src\/services\/controlPlane\/.*\.(?:ts|js)$/i,
       /^src\/routes\/ask\/dagTools\.ts$/i,
       /^src\/mcp\/server\/jobTools\.ts$/i,
     ],
@@ -31,7 +32,7 @@ const BOUNDARY_GROUPS = [
         reason: 'control-plane modules must not import the writing dispatcher',
       },
       {
-        pattern: /\bfrom ['"][^'"]*(?:@core\/logic\/trinityWritingPipeline|\/core\/logic\/trinityWritingPipeline)(?:\.js)?['"]|\brequire\(['"][^'"]*(?:@core\/logic\/trinityWritingPipeline|\/core\/logic\/trinityWritingPipeline)(?:\.js)?['"]\)/,
+        pattern: /\bfrom ['"][^'"]*(?:@core\/logic\/trinityWritingPipeline|\/core\/logic\/trinityWritingPipeline|@core\/logic\/trinityGenerationFacade|\/core\/logic\/trinityGenerationFacade)(?:\.js)?['"]|\brequire\(['"][^'"]*(?:@core\/logic\/trinityWritingPipeline|\/core\/logic\/trinityWritingPipeline|@core\/logic\/trinityGenerationFacade|\/core\/logic\/trinityGenerationFacade)(?:\.js)?['"]\)/,
         reason: 'control-plane modules must not invoke the Trinity writing facade',
       },
     ],

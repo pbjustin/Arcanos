@@ -54,7 +54,8 @@ function hasConfirmedTrinityStages(evidence: ControlPlaneRouteEvidence): boolean
 }
 
 export function isControlPlaneTrinityEligible(request: Pick<ControlPlaneRequestPayload, 'phase'>): boolean {
-  return request.phase === 'plan';
+  void request;
+  return false;
 }
 
 export function verifyControlPlaneRoute(params: {

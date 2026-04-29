@@ -481,6 +481,34 @@ describe('runTrinityWritingPipeline', () => {
     );
   });
 
+  it('rejects empty prompt input when no message content can be resolved', async () => {
+    await expect(
+      runTrinityWritingPipeline({
+        input: {
+          prompt: '   ',
+          messages: [
+            { role: 'system', content: '   ' },
+            { role: 'user', content: '' }
+          ],
+          sourceEndpoint: 'write.empty',
+          body: {
+            prompt: '   ',
+            messages: [
+              { role: 'system', content: '   ' },
+              { role: 'user', content: '' }
+            ]
+          }
+        },
+        context: {
+          client: {} as never,
+          requestId: 'req-empty-prompt'
+        }
+      })
+    ).rejects.toThrow('Trinity generation requires a non-empty prompt or messages array.');
+
+    expect(runThroughBrainMock).not.toHaveBeenCalled();
+  });
+
   it('normalizes fractional token limits to positive integers without mutating the source result', () => {
     const sourceResult = {
       result: 'ok',
@@ -527,5 +555,76 @@ describe('runTrinityWritingPipeline', () => {
       tokenLimit: 1,
       outputLimit: 1
     }));
+  });
+
+  it('preserves source meta and clones background metadata into the invariant envelope', () => {
+    const background = {
+      reason: 'arcanos_core_background',
+      requestedBy: 'worker'
+    };
+    const sourceResult = {
+      result: 'ok',
+      module: 'trinity',
+      meta: {
+        id: 'resp-background',
+        created: 2,
+        existing: 'preserved'
+      },
+      activeModel: 'gpt-5.1',
+      fallbackFlag: false,
+      dryRun: false,
+      fallbackSummary: {
+        intakeFallbackUsed: false,
+        gpt5FallbackUsed: false,
+        finalFallbackUsed: false,
+        fallbackReasons: []
+      },
+      auditSafe: {
+        mode: true,
+        overrideUsed: false,
+        auditFlags: [],
+        processedSafely: true
+      },
+      memoryContext: {
+        entriesAccessed: 0,
+        contextSummary: '',
+        memoryEnhanced: false,
+        maxRelevanceScore: 0,
+        averageRelevanceScore: 0
+      },
+      taskLineage: {
+        requestId: 'req-background',
+        logged: true
+      }
+    };
+
+    const stamped = applyTrinityGenerationInvariant(sourceResult, {
+      sourceEndpoint: 'write.background',
+      executionMode: 'background',
+      background
+    });
+
+    expect(stamped).not.toBe(sourceResult);
+    expect(sourceResult.meta).toEqual({
+      id: 'resp-background',
+      created: 2,
+      existing: 'preserved'
+    });
+    expect(stamped.meta).toEqual(expect.objectContaining({
+      id: 'resp-background',
+      created: 2,
+      existing: 'preserved',
+      pipeline: 'trinity',
+      sourceEndpoint: 'write.background',
+      executionMode: 'background',
+      background
+    }));
+    expect((stamped.meta as Record<string, unknown>).background).not.toBe(background);
+
+    background.reason = 'mutated-after-stamp';
+    expect((stamped.meta as { background?: Record<string, unknown> }).background).toEqual({
+      reason: 'arcanos_core_background',
+      requestedBy: 'worker'
+    });
   });
 });

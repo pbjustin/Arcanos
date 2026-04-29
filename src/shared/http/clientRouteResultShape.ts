@@ -27,7 +27,66 @@ function pickTrinitySummary(value: Record<string, unknown>): Record<string, unkn
     ...(readString(value.gpt5Model) ? { gpt5Model: readString(value.gpt5Model) } : {}),
     ...(readBoolean(value.dryRun) !== undefined ? { dryRun: readBoolean(value.dryRun) } : {}),
     ...(readString(value.error) ? { error: readString(value.error) } : {}),
+    ...(pickTrinityPublicMeta(value.meta) ? { meta: pickTrinityPublicMeta(value.meta) } : {}),
   };
+}
+
+function pickTrinityPublicMeta(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const output: Record<string, unknown> = {
+    ...(readString(value.pipeline) ? { pipeline: readString(value.pipeline) } : {}),
+    ...(readBoolean(value.bypass) !== undefined ? { bypass: readBoolean(value.bypass) } : {}),
+    ...(readString(value.sourceEndpoint) ? { sourceEndpoint: readString(value.sourceEndpoint) } : {}),
+    ...(readString(value.classification) ? { classification: readString(value.classification) } : {}),
+    ...(readString(value.gptId) ? { gptId: readString(value.gptId) } : {}),
+    ...(readString(value.moduleId) ? { moduleId: readString(value.moduleId) } : {}),
+    ...(readString(value.requestedAction) ? { requestedAction: readString(value.requestedAction) } : {}),
+    ...(readString(value.executionMode) ? { executionMode: readString(value.executionMode) } : {}),
+    ...(readNumber(value.tokenLimit) !== undefined ? { tokenLimit: readNumber(value.tokenLimit) } : {}),
+    ...(readNumber(value.outputLimit) !== undefined ? { outputLimit: readNumber(value.outputLimit) } : {}),
+    ...(readBoolean(value.cached) !== undefined ? { cached: readBoolean(value.cached) } : {}),
+    ...(readBoolean(value.cacheHit) !== undefined ? { cacheHit: readBoolean(value.cacheHit) } : {}),
+  };
+
+  const tokens = pickTrinityPublicTokenMeta(value.tokens);
+  if (tokens) {
+    output.tokens = tokens;
+  }
+
+  const cache = pickTrinityPublicCacheMeta(value.cache);
+  if (cache) {
+    output.cache = cache;
+  }
+
+  return Object.keys(output).length > 0 ? output : null;
+}
+
+function pickTrinityPublicTokenMeta(value: unknown): Record<string, number> | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const output: Record<string, number> = {};
+  for (const key of ['prompt_tokens', 'completion_tokens', 'total_tokens'] as const) {
+    const numberValue = readNumber(value[key]);
+    if (numberValue !== undefined) {
+      output[key] = numberValue;
+    }
+  }
+
+  return Object.keys(output).length > 0 ? output : null;
+}
+
+function pickTrinityPublicCacheMeta(value: unknown): Record<string, boolean> | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const hit = readBoolean(value.hit);
+  return hit === undefined ? null : { hit };
 }
 
 function pickHealthSummary(value: Record<string, unknown>): Record<string, unknown> | null {

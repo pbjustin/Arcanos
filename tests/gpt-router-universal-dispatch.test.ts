@@ -595,6 +595,30 @@ describe('gpt router universal dispatch', () => {
     expect(mockExecuteRuntimeInspection).not.toHaveBeenCalled();
   });
 
+  it('accepts structured message content parts for normal writing dispatch', async () => {
+    const messages = [
+      { role: 'system', content: 'You write compact operator notes.' },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Draft a release note for Trinity facade routing.' }
+        ]
+      }
+    ];
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({ messages });
+
+    expect(response.status).toBe(200);
+    expect(mockRouteGptRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        gptId: 'arcanos-core',
+        body: expect.objectContaining({ messages })
+      })
+    );
+  });
+
   it('keeps diagnostics working through POST /gpt/{gptId}', async () => {
     const response = await request(buildApp())
       .post('/gpt/arcanos-core')

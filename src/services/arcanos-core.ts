@@ -4,6 +4,7 @@ import {
   applyTrinityGenerationInvariant,
   runTrinityWritingPipeline
 } from '@core/logic/trinityWritingPipeline.js';
+import type { TrinityGenerationMessage } from '@core/logic/trinityGenerationFacade.js';
 import {
   createRuntimeBudgetWithLimit,
   getSafeRemainingMs,
@@ -38,6 +39,7 @@ type ArcanosCoreQueryPayload = {
   query?: string;
   text?: string;
   content?: string;
+  messages?: TrinityGenerationMessage[];
   sessionId?: string;
   overrideAuditSafe?: string;
   answerMode?: string;
@@ -92,6 +94,7 @@ export interface RunArcanosCoreQueryParams {
   sessionId?: string;
   overrideAuditSafe?: string;
   maxOutputTokens?: number;
+  messages?: TrinityGenerationMessage[];
   runOptions?: Omit<TrinityRunOptions, 'sourceEndpoint'>;
   executionModeOverride?: ArcanosCoreExecutionMode;
   executionModeReason?: string;
@@ -223,7 +226,7 @@ function resolveCoreFallbackTimeoutPhase(
   return degradedPhase ?? primaryPhase ?? 'pipeline';
 }
 
-function extractPrompt(payload: ArcanosCoreQueryPayload): string {
+function extractDirectPrompt(payload: ArcanosCoreQueryPayload): string | null {
   for (const candidate of [
     payload.prompt,
     payload.message,
@@ -236,16 +239,89 @@ function extractPrompt(payload: ArcanosCoreQueryPayload): string {
     }
   }
 
+  return null;
+}
+
+function extractTextFromMessageContent(content: unknown): string | null {
+  if (typeof content === 'string' && content.trim().length > 0) {
+    return content.trim();
+  }
+
+  if (!Array.isArray(content)) {
+    return null;
+  }
+
+  const parts = content
+    .map((part) => {
+      if (typeof part === 'string') {
+        return part;
+      }
+
+      if (part && typeof part === 'object' && !Array.isArray(part)) {
+        const record = part as Record<string, unknown>;
+        return typeof record.text === 'string' ? record.text : '';
+      }
+
+      return '';
+    })
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  return parts.length > 0 ? parts.join('\n') : null;
+}
+
+function extractPromptFromMessages(messages: unknown): string | null {
+  if (!Array.isArray(messages)) {
+    return null;
+  }
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (!message || typeof message !== 'object' || Array.isArray(message)) {
+      continue;
+    }
+
+    const record = message as Record<string, unknown>;
+    if (record.role !== 'user') {
+      continue;
+    }
+
+    const text = extractTextFromMessageContent(record.content);
+    if (text) {
+      return text;
+    }
+  }
+
+  return null;
+}
+
+function readTrinityMessages(messages: unknown): TrinityGenerationMessage[] | undefined {
+  return Array.isArray(messages) && extractPromptFromMessages(messages)
+    ? (messages as TrinityGenerationMessage[])
+    : undefined;
+}
+
+function extractPrompt(payload: ArcanosCoreQueryPayload): string {
+  const directPrompt = extractDirectPrompt(payload);
+  if (directPrompt) {
+    return directPrompt;
+  }
+
+  const messagePrompt = extractPromptFromMessages(payload.messages);
+  if (messagePrompt) {
+    return messagePrompt;
+  }
+
   throw new Error('Prompt is required');
 }
 
 function normalizePositiveInteger(value: unknown): number | undefined {
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
     return undefined;
   }
 
   const normalized = Math.trunc(value);
-  return normalized > 0 ? normalized : undefined;
+  return normalized > 0 ? normalized : 1;
 }
 
 function normalizeAnswerMode(value: unknown): TrinityAnswerMode | undefined {
@@ -584,6 +660,8 @@ export async function runArcanosCoreQuery(
     sourceEndpoint: primarySourceEndpoint = params.sourceEndpoint,
     ...primaryRunOptionsWithoutSource
   } = primaryRunOptions;
+  const structuredMessages =
+    params.messages && params.messages.length > 0 ? params.messages : undefined;
 
   emitCoreRuntimeTrace({
     phase: 'route_resolved',
@@ -641,14 +719,14 @@ export async function runArcanosCoreQuery(
       () =>
         runTrinityWritingPipeline({
           input: {
-            prompt: params.prompt,
+            ...(structuredMessages ? { messages: structuredMessages } : { prompt: params.prompt }),
             gptId: params.gptId,
             moduleId: params.moduleId ?? 'ARCANOS:CORE',
             sessionId: params.sessionId,
             overrideAuditSafe: params.overrideAuditSafe,
             sourceEndpoint: primarySourceEndpoint,
             requestedAction: params.requestedAction,
-            body: params.body ?? { prompt: params.prompt },
+            body: params.body ?? (structuredMessages ? { messages: structuredMessages } : { prompt: params.prompt }),
             maxOutputTokens: params.maxOutputTokens,
             executionMode: pipelinePlan.executionMode,
             background: pipelinePlan.executionMode === 'background'
@@ -818,14 +896,14 @@ export async function runArcanosCoreQuery(
 
             return runTrinityWritingPipeline({
               input: {
-                prompt: params.prompt,
+                ...(structuredMessages ? { messages: structuredMessages } : { prompt: params.prompt }),
                 gptId: params.gptId,
                 moduleId: params.moduleId ?? 'ARCANOS:CORE',
                 sessionId: params.sessionId,
                 overrideAuditSafe: params.overrideAuditSafe,
                 sourceEndpoint: degradedSourceEndpoint,
                 requestedAction: params.requestedAction,
-                body: params.body ?? { prompt: params.prompt },
+                body: params.body ?? (structuredMessages ? { messages: structuredMessages } : { prompt: params.prompt }),
                 maxOutputTokens: params.maxOutputTokens,
                 executionMode: pipelinePlan.executionMode,
                 background: pipelinePlan.executionMode === 'background'
@@ -984,6 +1062,8 @@ export const ArcanosCore: ModuleDef = {
         payload && typeof payload === 'object' && !Array.isArray(payload)
           ? (payload as ArcanosCoreQueryPayload)
           : {};
+      const directPrompt = extractDirectPrompt(normalizedPayload);
+      const messages = directPrompt ? undefined : readTrinityMessages(normalizedPayload.messages);
       const prompt = extractPrompt(normalizedPayload);
       emitCoreRuntimeTrace({
         phase: 'prompt_normalization',
@@ -1061,6 +1141,7 @@ export const ArcanosCore: ModuleDef = {
         moduleId: 'ARCANOS:CORE',
         requestedAction,
         body: normalizedPayload,
+        messages,
         sessionId,
         overrideAuditSafe,
         sourceEndpoint,

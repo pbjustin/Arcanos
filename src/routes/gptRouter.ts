@@ -551,6 +551,34 @@ function readPayloadRecord(
     : null;
 }
 
+function extractMessageContentText(content: unknown): string | null {
+  if (typeof content === 'string' && content.trim().length > 0) {
+    return content.trim();
+  }
+
+  if (!Array.isArray(content)) {
+    return null;
+  }
+
+  const parts = content
+    .map((part) => {
+      if (typeof part === 'string') {
+        return part;
+      }
+
+      if (part && typeof part === 'object' && !Array.isArray(part)) {
+        const record = part as Record<string, unknown>;
+        return typeof record.text === 'string' ? record.text : '';
+      }
+
+      return '';
+    })
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  return parts.length > 0 ? parts.join('\n') : null;
+}
+
 function extractPromptTextFromRecord(record: Record<string, unknown> | null): string | null {
   const candidate =
     record?.message ??
@@ -575,12 +603,11 @@ function extractPromptTextFromRecord(record: Record<string, unknown> | null): st
         ? (entry as Record<string, unknown>)
         : null;
 
-    if (
-      normalizedEntry?.role === 'user' &&
-      typeof normalizedEntry.content === 'string' &&
-      normalizedEntry.content.trim().length > 0
-    ) {
-      return normalizedEntry.content.trim();
+    if (normalizedEntry?.role === 'user') {
+      const messageText = extractMessageContentText(normalizedEntry.content);
+      if (messageText) {
+        return messageText;
+      }
     }
   }
 

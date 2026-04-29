@@ -3,9 +3,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
-import { getOpenAIClientOrAdapter } from '@services/openai/clientBridge.js';
-import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
-import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { logExecution } from '@core/db/repositories/executionLogRepository.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { generateRequestId } from '@shared/idGenerator.js';
@@ -280,48 +277,6 @@ const defaultProcessRunner: ControlPlaneProcessRunner = {
 const defaultMcpClient: ControlPlaneMcpClient = {
   listTools: (options) => arcanosMcpService.listTools(options),
   invokeTool: (options) => arcanosMcpService.invokeTool(options)
-};
-
-const defaultTrinityPlanner: ControlPlaneTrinityPlanner = {
-  async plan(request) {
-    const { client } = getOpenAIClientOrAdapter();
-    if (!client) {
-      throw new Error('OpenAI client unavailable for Trinity control-plane planning.');
-    }
-
-    const prompt = [
-      'Summarize this ARCANOS control-plane plan request as deterministic JSON.',
-      'Do not execute commands. Do not claim system changes.',
-      JSON.stringify({
-        adapter: request.adapter,
-        operation: request.operation,
-        phase: request.phase,
-        inputKeys: Object.keys(request.input ?? {}).sort()
-      })
-    ].join('\n');
-
-    return runTrinityWritingPipeline({
-      input: {
-        prompt,
-        sourceEndpoint: 'control-plane.trinity-plan',
-        body: { prompt }
-      },
-      context: {
-        client,
-        requestId: `${request.requestId}:trinity`,
-        runtimeBudget: createRuntimeBudget(),
-        runOptions: {
-          requestedVerbosity: 'minimal',
-          maxWords: 160,
-          answerMode: 'audit',
-          strictUserVisibleOutput: true,
-          toolBackedCapabilities: {
-            verifyProvidedData: true
-          }
-        }
-      }
-    });
-  }
 };
 
 function buildOperationKey(adapter: ControlPlaneAdapter, operation: string): string {
@@ -766,7 +721,6 @@ export async function executeControlPlaneRequest(
   const repositoryRoot = resolveRepositoryRoot(dependencies.repositoryRoot);
   const processRunner = dependencies.processRunner ?? defaultProcessRunner;
   const mcpClient = dependencies.mcpClient ?? defaultMcpClient;
-  const trinityPlanner = dependencies.trinityPlanner ?? defaultTrinityPlanner;
   const auditLogger = dependencies.auditLogger ?? logExecution;
   const auditId = generateRequestId('control_audit');
   let auditLogged = false;
@@ -796,23 +750,8 @@ export async function executeControlPlaneRequest(
       cwd
     }, auditLogger);
 
-    let trinityResponse: unknown;
-    let trinityUnavailable = false;
-    let trinityError: string | undefined;
-    if (request.routePreference !== 'direct' && request.phase === 'plan') {
-      try {
-        trinityResponse = await trinityPlanner.plan(request);
-      } catch (error) {
-        trinityUnavailable = true;
-        trinityError = resolveErrorMessage(error);
-      }
-    }
-
     const route = verifyControlPlaneRoute({
       request,
-      trinityResponse,
-      trinityUnavailable,
-      trinityError,
       now
     });
 

@@ -147,6 +147,32 @@ describe('ARCANOS:CORE service', () => {
     );
   });
 
+  it('forwards structured messages into Trinity when no explicit prompt is supplied', async () => {
+    const client = { id: 'openai-client' };
+    const messages = [
+      { role: 'system', content: 'You write compact operator notes.' },
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Draft a release note for Trinity facade routing.' }
+        ]
+      }
+    ];
+
+    mockGetOpenAIClientOrAdapter.mockReturnValue({ client });
+    mockRunTrinityWritingPipeline.mockResolvedValue({ result: 'core-response' });
+
+    await ArcanosCore.actions.query({
+      messages,
+      maxOutputTokens: 0.2
+    });
+
+    const [{ input }] = mockRunTrinityWritingPipeline.mock.calls[0] as Array<[{ input: Record<string, unknown> }]>;
+    expect(input.prompt).toBeUndefined();
+    expect(input.messages).toBe(messages);
+    expect(input.maxOutputTokens).toBe(1);
+  });
+
   it('falls back to a mock response when the OpenAI client is unavailable', async () => {
     mockGetOpenAIClientOrAdapter.mockReturnValue({ client: null });
     mockGenerateMockResponse.mockReturnValue({ result: 'mock-core-response' });

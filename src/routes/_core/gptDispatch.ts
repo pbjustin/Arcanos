@@ -82,6 +82,34 @@ export type RouteGptRequestInput = {
   suppressTimeoutFallback?: boolean;
 };
 
+function extractMessageContentText(content: unknown): string | null {
+  if (typeof content === "string" && content.trim().length > 0) {
+    return content.trim();
+  }
+
+  if (!Array.isArray(content)) {
+    return null;
+  }
+
+  const parts = content
+    .map((part) => {
+      if (typeof part === "string") {
+        return part;
+      }
+
+      if (part && typeof part === "object" && !Array.isArray(part)) {
+        const record = part as Record<string, unknown>;
+        return typeof record.text === "string" ? record.text : "";
+      }
+
+      return "";
+    })
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  return parts.length > 0 ? parts.join("\n") : null;
+}
+
 function extractPrompt(body: any): string | null {
   const direct =
     body?.message ||
@@ -95,7 +123,8 @@ function extractPrompt(body: any): string | null {
 
   if (Array.isArray(body?.messages)) {
     const lastUser = [...body.messages].reverse().find((m: any) => m?.role === "user");
-    if (typeof lastUser?.content === "string" && lastUser.content.trim().length > 0) return lastUser.content.trim();
+    const messageText = extractMessageContentText(lastUser?.content);
+    if (messageText) return messageText;
   }
 
   return null;

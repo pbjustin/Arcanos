@@ -207,6 +207,28 @@ describe('client response guards', () => {
       gpt5Used: true,
       gpt5Model: 'gpt-5.1',
       dryRun: false,
+      meta: {
+        id: 'resp-hidden',
+        created: 1,
+        pipeline: 'trinity',
+        bypass: false,
+        sourceEndpoint: 'gpt.arcanos-core.query',
+        classification: 'writing',
+        gptId: 'arcanos-core',
+        moduleId: 'ARCANOS:CORE',
+        requestedAction: 'query',
+        executionMode: 'request',
+        tokenLimit: 300,
+        tokens: {
+          prompt_tokens: 10,
+          completion_tokens: 5,
+          total_tokens: 15,
+          private_field: 99,
+        },
+        background: {
+          reason: 'hidden',
+        },
+      },
       taskLineage: { requestId: 'secret' },
       memoryContext: { entriesAccessed: 99 },
       auditSafe: { mode: true },
@@ -222,6 +244,22 @@ describe('client response guards', () => {
       gpt5Used: true,
       gpt5Model: 'gpt-5.1',
       dryRun: false,
+      meta: {
+        pipeline: 'trinity',
+        bypass: false,
+        sourceEndpoint: 'gpt.arcanos-core.query',
+        classification: 'writing',
+        gptId: 'arcanos-core',
+        moduleId: 'ARCANOS:CORE',
+        requestedAction: 'query',
+        executionMode: 'request',
+        tokenLimit: 300,
+        tokens: {
+          prompt_tokens: 10,
+          completion_tokens: 5,
+          total_tokens: 15,
+        },
+      },
     });
   });
 
