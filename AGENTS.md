@@ -14,16 +14,22 @@
 ## Setup
 - Install Node dependencies with `npm install`.
 - Build workspace packages before full backend validation with `npm run build:packages`.
+- Build the full backend artifact with `npm run build` before deployment-oriented validation or startup checks.
 
 ## Validation
 - Run focused Jest suites with `node scripts/run-jest.mjs --testPathPatterns=<pattern> --coverage=false`.
 - Run unit tests with `npm run test:unit`.
+- Run integration coverage with `npm run test:integration` when changes touch backend flows or adapters.
 - Run type checks with `npm run type-check`.
 - Run lint with `npm run lint`.
+- Validate the TypeScript/Python backend CLI contract with `npm run validate:backend-cli:contract` and `npm run validate:backend-cli:offline`.
+- Use `npm run validate:all` for the full local readiness sweep before release-sensitive changes.
 
 ## Railway
 - Confirm the linked project, service, and environment before release with `railway status` or `railway link`.
 - Validate Railway compatibility with `npm run validate:railway`.
+- Run the production smoke check with `npm run railway:smoke:production` when verifying a live Railway deployment.
+- Run the post-deploy timeout watchdog with `npm run railway:alert:timeouts -- --since 15m --lines 500 --fail-on-budget-abort` after `railway up`.
 - Deploy only after validation with `railway up`.
 
 ## Security
