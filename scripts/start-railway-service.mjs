@@ -40,6 +40,7 @@ const DEFAULT_HEALTH_PORT = 8080;
 const DEFAULT_HEALTH_HOST = '0.0.0.0';
 const SHUTDOWN_SIGNALS = new Set(['SIGTERM', 'SIGINT']);
 const WORKER_BOOTSTRAP_READY_MARKER = 'worker.bootstrap.completed';
+const WORKER_BOOTSTRAP_MARKER_OVERLAP_LENGTH = Math.max(0, WORKER_BOOTSTRAP_READY_MARKER.length - 1);
 
 /**
  * Resolve the explicit runtime process kind from environment.
@@ -234,13 +235,17 @@ export function createWorkerReadinessState(env = process.env) {
     database: 'unknown',
     provider: providerConfigured ? 'configured' : 'missing',
     ready: false,
-    reason: providerConfigured ? 'worker_bootstrap_pending' : 'openai_api_key_missing'
+    reason: providerConfigured ? 'worker_bootstrap_pending' : 'openai_api_key_missing',
+    outputOverlap: ''
   };
 }
 
 export function recordWorkerOutput(readinessState, chunk) {
   const text = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
-  if (!text.includes(WORKER_BOOTSTRAP_READY_MARKER)) {
+  const searchableText = `${readinessState.outputOverlap ?? ''}${text}`;
+  readinessState.outputOverlap = searchableText.slice(-WORKER_BOOTSTRAP_MARKER_OVERLAP_LENGTH);
+
+  if (!searchableText.includes(WORKER_BOOTSTRAP_READY_MARKER)) {
     return readinessState;
   }
 
@@ -280,10 +285,15 @@ export function buildWorkerReadinessResponse(readinessState) {
   };
 }
 
-function mirrorAndObserveWorkerOutput(stream, destination, readinessState) {
+export function mirrorAndObserveWorkerOutput(stream, destination, readinessState) {
   stream?.on('data', chunk => {
     recordWorkerOutput(readinessState, chunk);
-    destination.write(chunk);
+    if (!destination.write(chunk)) {
+      stream.pause?.();
+      destination.once('drain', () => {
+        stream.resume?.();
+      });
+    }
   });
 }
 

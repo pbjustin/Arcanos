@@ -62,6 +62,21 @@ function createJob(overrides: Record<string, unknown> = {}): Record<string, unkn
   };
 }
 
+function createDeferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+} {
+  let resolveDeferred!: (value: T) => void;
+  const promise = new Promise<T>((resolve) => {
+    resolveDeferred = resolve;
+  });
+
+  return {
+    promise,
+    resolve: resolveDeferred
+  };
+}
+
 async function waitForMockCall(
   predicate: () => boolean,
   label: string
@@ -155,5 +170,113 @@ describe('priorityGptDirectExecutionService', () => {
     expect(recordGptJobEventMock).not.toHaveBeenCalledWith(
       expect.objectContaining({ event: 'completed' })
     );
+  });
+
+  it('cancels a running priority direct GPT job when the heartbeat loses the job lease', async () => {
+    const slot = { release: jest.fn() };
+    getJobByIdMock.mockResolvedValue(createJob());
+    recordJobHeartbeatMock.mockResolvedValue(null);
+    updateJobMock.mockResolvedValue(createJob({ status: 'cancelled' }));
+    routeGptRequestMock.mockImplementation((input: { parentAbortSignal?: AbortSignal }) => {
+      return new Promise((_resolve, reject) => {
+        input.parentAbortSignal?.addEventListener(
+          'abort',
+          () => reject(input.parentAbortSignal?.reason ?? new Error('aborted')),
+          { once: true }
+        );
+      });
+    });
+
+    startReservedPriorityGptDirectExecution({
+      jobId: 'job-priority-direct-lease-lost',
+      workerId: 'api-priority-worker',
+      rawInput: {
+        gptId: 'arcanos-build',
+        body: { prompt: 'Keep working until lease is lost.' },
+        requestId: 'req-priority-direct-lease-lost'
+      },
+      slot
+    });
+
+    await waitForMockCall(
+      () => routeGptRequestMock.mock.calls.length === 1,
+      'priority direct route start'
+    );
+
+    await jest.advanceTimersByTimeAsync(5_000);
+    await waitForMockCall(
+      () => updateJobMock.mock.calls.some((call) => call[1] === 'cancelled'),
+      'priority direct lease-loss update'
+    );
+
+    const statuses = updateJobMock.mock.calls.map((call) => call[1]);
+    expect(statuses).toContain('cancelled');
+    expect(statuses).not.toContain('completed');
+
+    const cancelledCall = updateJobMock.mock.calls.find((call) => call[1] === 'cancelled');
+    expect(cancelledCall?.[3]).toBe('GPT job lease lost or job completed elsewhere.');
+    expect(slot.release).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not start overlapping priority direct heartbeat requests', async () => {
+    const slot = { release: jest.fn() };
+    const firstHeartbeat = createDeferred<Record<string, unknown> | null>();
+    getJobByIdMock.mockResolvedValue(createJob());
+    recordJobHeartbeatMock
+      .mockReturnValueOnce(firstHeartbeat.promise)
+      .mockResolvedValueOnce(
+        createJob({
+          cancel_requested_at: new Date('2026-04-29T10:00:00.000Z'),
+          cancel_reason: 'Stop after serialized heartbeat'
+        })
+      );
+    updateJobMock.mockResolvedValue(createJob({ status: 'cancelled' }));
+    routeGptRequestMock.mockImplementation((input: { parentAbortSignal?: AbortSignal }) => {
+      return new Promise((_resolve, reject) => {
+        input.parentAbortSignal?.addEventListener(
+          'abort',
+          () => reject(input.parentAbortSignal?.reason ?? new Error('aborted')),
+          { once: true }
+        );
+      });
+    });
+
+    startReservedPriorityGptDirectExecution({
+      jobId: 'job-priority-direct-serialized-heartbeat',
+      workerId: 'api-priority-worker',
+      rawInput: {
+        gptId: 'arcanos-build',
+        body: { prompt: 'Keep working while heartbeat is slow.' },
+        requestId: 'req-priority-direct-serialized-heartbeat'
+      },
+      slot
+    });
+
+    await waitForMockCall(
+      () => routeGptRequestMock.mock.calls.length === 1,
+      'priority direct route start'
+    );
+
+    await jest.advanceTimersByTimeAsync(5_000);
+    expect(recordJobHeartbeatMock).toHaveBeenCalledTimes(1);
+
+    await jest.advanceTimersByTimeAsync(15_000);
+    expect(recordJobHeartbeatMock).toHaveBeenCalledTimes(1);
+
+    firstHeartbeat.resolve(createJob());
+    await jest.advanceTimersByTimeAsync(0);
+    expect(recordJobHeartbeatMock).toHaveBeenCalledTimes(1);
+
+    await jest.advanceTimersByTimeAsync(4_999);
+    expect(recordJobHeartbeatMock).toHaveBeenCalledTimes(1);
+
+    await jest.advanceTimersByTimeAsync(1);
+    await waitForMockCall(
+      () => updateJobMock.mock.calls.some((call) => call[1] === 'cancelled'),
+      'priority direct serialized heartbeat cancellation'
+    );
+
+    expect(recordJobHeartbeatMock).toHaveBeenCalledTimes(2);
+    expect(slot.release).toHaveBeenCalledTimes(1);
   });
 });

@@ -133,29 +133,59 @@ async function executeReservedPriorityGptDirectExecution(params: {
   const startedAtMs = Date.now();
   const leaseMs = Math.max(15_000, resolveGptWaitTimeoutMs() + 5_000);
   const cancellationController = new AbortController();
-  const heartbeatHandle = setInterval(() => {
-    void recordJobHeartbeat(params.jobId, {
-      workerId: params.workerId,
-      leaseMs
-    })
-      .then((updatedJob) => {
-        if (
-          updatedJob?.cancel_requested_at &&
-          !cancellationController.signal.aborted
-        ) {
-          cancellationController.abort(
-            createAbortError(updatedJob.cancel_reason ?? 'GPT job cancellation requested.')
-          );
-        }
-      })
-      .catch((error: unknown) => {
+  let heartbeatTimeout: NodeJS.Timeout | null = null;
+  let heartbeatStopped = false;
+  const abortExecution = (message: string): void => {
+    if (!cancellationController.signal.aborted) {
+      cancellationController.abort(createAbortError(message));
+    }
+  };
+  const scheduleNextHeartbeat = (): void => {
+    if (heartbeatStopped || cancellationController.signal.aborted) {
+      return;
+    }
+
+    heartbeatTimeout = setTimeout(() => {
+      void runHeartbeat();
+    }, DIRECT_HEARTBEAT_INTERVAL_MS);
+  };
+  const runHeartbeat = async (): Promise<void> => {
+    if (heartbeatStopped || cancellationController.signal.aborted) {
+      return;
+    }
+
+    try {
+      const updatedJob = await recordJobHeartbeat(params.jobId, {
+        workerId: params.workerId,
+        leaseMs
+      });
+
+      if (heartbeatStopped || cancellationController.signal.aborted) {
+        return;
+      }
+
+      if (!updatedJob) {
+        abortExecution('GPT job lease lost or job completed elsewhere.');
+        return;
+      }
+
+      if (updatedJob.cancel_requested_at) {
+        abortExecution(updatedJob.cancel_reason ?? 'GPT job cancellation requested.');
+        return;
+      }
+    } catch (error: unknown) {
+      if (!heartbeatStopped) {
         logger.warn('gpt.priority_direct.heartbeat_failed', {
           jobId: params.jobId,
           workerId: params.workerId,
           error: resolveErrorMessage(error)
         });
-      });
-  }, DIRECT_HEARTBEAT_INTERVAL_MS);
+      }
+    }
+
+    scheduleNextHeartbeat();
+  };
+  scheduleNextHeartbeat();
 
   try {
     if (!parsedGptJobInput.ok) {
@@ -346,7 +376,10 @@ async function executeReservedPriorityGptDirectExecution(params: {
       error: errorMessage
     });
   } finally {
-    clearInterval(heartbeatHandle);
+    heartbeatStopped = true;
+    if (heartbeatTimeout) {
+      clearTimeout(heartbeatTimeout);
+    }
     params.slot.release();
   }
 }

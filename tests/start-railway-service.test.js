@@ -1,7 +1,9 @@
-import { describe, expect, it } from '@jest/globals';
+import { describe, expect, it, jest } from '@jest/globals';
+import { EventEmitter } from 'node:events';
 import {
   buildWorkerReadinessResponse,
   createWorkerReadinessState,
+  mirrorAndObserveWorkerOutput,
   recordWorkerExit,
   recordWorkerOutput,
   resolveHealthListenerConfig,
@@ -60,6 +62,27 @@ describe('start-railway-service launcher helpers', () => {
     });
   });
 
+  it('detects worker readiness markers split across output chunks', () => {
+    const readiness = createWorkerReadinessState({ OPENAI_API_KEY: 'sk-test' });
+
+    recordWorkerOutput(readiness, 'worker.boot');
+    expect(buildWorkerReadinessResponse(readiness).statusCode).toBe(503);
+
+    recordWorkerOutput(readiness, 'strap.completed');
+    expect(buildWorkerReadinessResponse(readiness)).toMatchObject({
+      statusCode: 200,
+      body: {
+        ready: true,
+        reason: null,
+        checks: {
+          bootstrap: 'ready',
+          database: 'ready',
+          provider: 'configured',
+        },
+      },
+    });
+  });
+
   it('does not mark worker ready when provider configuration is missing', () => {
     const readiness = createWorkerReadinessState({});
 
@@ -93,5 +116,25 @@ describe('start-railway-service launcher helpers', () => {
         reason: 'worker_exited_code_1',
       },
     });
+  });
+
+  it('pauses worker output mirroring until the destination drains under backpressure', () => {
+    const readiness = createWorkerReadinessState({ OPENAI_API_KEY: 'sk-test' });
+    const source = new EventEmitter();
+    source.pause = jest.fn();
+    source.resume = jest.fn();
+    const destination = new EventEmitter();
+    destination.write = jest.fn().mockReturnValueOnce(false);
+
+    mirrorAndObserveWorkerOutput(source, destination, readiness);
+    const chunk = Buffer.from('worker output');
+    source.emit('data', chunk);
+
+    expect(destination.write).toHaveBeenCalledWith(chunk);
+    expect(source.pause).toHaveBeenCalledTimes(1);
+    expect(source.resume).not.toHaveBeenCalled();
+
+    destination.emit('drain');
+    expect(source.resume).toHaveBeenCalledTimes(1);
   });
 });
