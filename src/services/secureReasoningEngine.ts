@@ -7,8 +7,9 @@
  */
 
 import type OpenAI from 'openai';
-import { getDefaultModel, createChatCompletionWithFallback } from './openai.js';
-import { getTokenParameter } from "@shared/tokenParameterHelper.js";
+import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
+import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
+import { getDefaultModel } from './openai.js';
 import { generateRequestId } from "@shared/idGenerator.js";
 import { APPLICATION_CONSTANTS } from "@shared/constants.js";
 import {
@@ -74,15 +75,48 @@ export async function executeSecureReasoning(
   console.log(`[🧠 SECURE REASONING] Using model: ${model}`);
 
   try {
-    // Execute reasoning with enhanced error handling
-    const tokenParams = getTokenParameter(model, APPLICATION_CONSTANTS.EXTENDED_TOKEN_LIMIT);
-    const response = await createChatCompletionWithFallback(client, {
-      messages: buildSecureReasoningMessages(fullPrompt),
-      temperature: 0.3, // Balanced for reasoning consistency
-      ...tokenParams
+    const trinityPrompt = [
+      'SYSTEM:',
+      SECURE_REASONING_SYSTEM_PROMPT,
+      '',
+      'USER:',
+      fullPrompt
+    ].join('\n');
+
+    const response = await runTrinityWritingPipeline({
+      input: {
+        prompt: trinityPrompt,
+        moduleId: 'SECURE_REASONING',
+        sourceEndpoint: 'secureReasoning.execute',
+        requestedAction: 'query',
+        body: {
+          userInput: request.userInput,
+          sessionId: request.sessionId,
+          context: request.context,
+          requireDeepAnalysis: request.requireDeepAnalysis,
+          requestedModel: model,
+          maxTokens: APPLICATION_CONSTANTS.EXTENDED_TOKEN_LIMIT
+        },
+        sessionId: request.sessionId,
+        maxOutputTokens: APPLICATION_CONSTANTS.EXTENDED_TOKEN_LIMIT,
+        executionMode: 'request',
+        background: {
+          requestedModel: model,
+          secureReasoning: true
+        }
+      },
+      context: {
+        client,
+        requestId,
+        runtimeBudget: createRuntimeBudget(),
+        runOptions: {
+          answerMode: 'direct',
+          strictUserVisibleOutput: true
+        }
+      }
     });
 
-    const rawAnalysis = response.choices[0]?.message?.content || '';
+    const rawAnalysis = response.result || '';
     const actualModel = response.activeModel || model;
     
     console.log(`[🧠 SECURE REASONING] Analysis completed using ${actualModel}`);
@@ -247,19 +281,6 @@ export async function executeQuickSecureAnalysis(
       compliant: fallbackAnalysis.complianceStatus === 'COMPLIANT'
     };
   }
-}
-
-function buildSecureReasoningMessages(fullPrompt: string): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
-  return [
-    {
-      role: 'system',
-      content: SECURE_REASONING_SYSTEM_PROMPT
-    },
-    {
-      role: 'user',
-      content: fullPrompt
-    }
-  ];
 }
 
 /**

@@ -46,7 +46,7 @@ describe('executeControlPlaneRequest', () => {
     jest.clearAllMocks();
   });
 
-  it('plans Railway deploy through confirmed Trinity without executing a command', async () => {
+  it('plans Railway deploy directly without executing a command or entering Trinity', async () => {
     const run = jest.fn(async () => ({ exitCode: 0, stdout: '', stderr: '' }));
     const trinityPlanner = {
       plan: jest.fn(async () => ({
@@ -76,8 +76,9 @@ describe('executeControlPlaneRequest', () => {
       cwd: repositoryRoot
     });
     expect(response.approval.required).toBe(false);
-    expect(response.route.status).toBe('TRINITY_CONFIRMED');
-    expect(trinityPlanner.plan).toHaveBeenCalledTimes(1);
+    expect(response.route.status).toBe('DIRECT_FAST_PATH');
+    expect(response.route.eligibleForTrinity).toBe(false);
+    expect(trinityPlanner.plan).not.toHaveBeenCalled();
     expect(run).not.toHaveBeenCalled();
   });
 

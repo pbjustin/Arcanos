@@ -57,7 +57,6 @@ import { detectCognitiveDomain } from '@dispatcher/detectCognitiveDomain.js';
 import { gptFallbackClassifier } from '@dispatcher/gptDomainClassifier.js';
 import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { buildPromptShortcutTelemetry } from '@routes/_core/promptShortcutResponse.js';
-import { shouldStoreOpenAIResponses } from '@config/openaiStore.js';
 import { planAutonomousWorkerJob } from '@services/workerAutonomyService.js';
 import {
   waitForQueuedAskJobCompletion,
@@ -631,7 +630,7 @@ export const handleAIRequest = async (
     const validation = validateAIRequest(req as Request, res as Response, endpointName);
     if (!validation) return; // validateAIRequest has already sent a response
 
-    const { adapter } = validation;
+    const { client: openai } = validation;
     let reviewInput = validation.input;
 
     // Sanitize user input to reduce prompt-injection surface
@@ -644,30 +643,42 @@ export const handleAIRequest = async (
     };
 
     try {
-      const modelResponse = await adapter.responses.create({
-        model: getGPT5Model(),
-        store: shouldStoreOpenAIResponses(),
-        input: [
-          { role: 'developer', content: SYSTEM_REVIEW_PROMPT },
-          {
-            role: 'user',
-            content: [
-              'Subject: intent_system',
-              '',
-              'Input:',
-              '',
-              String.fromCharCode(96,96,96),
-              sanitizeForPrompt(reviewInput),
-              String.fromCharCode(96,96,96),
-              ''
-            ].join('\n')
+      const reviewPrompt = [
+        SYSTEM_REVIEW_PROMPT,
+        '',
+        'Subject: intent_system',
+        '',
+        'Input:',
+        '',
+        String.fromCharCode(96,96,96),
+        sanitizeForPrompt(reviewInput),
+        String.fromCharCode(96,96,96),
+        ''
+      ].join('\n');
+      const modelResponse = await runTrinityWritingPipeline({
+        input: {
+          prompt: reviewPrompt,
+          sessionId: typeof req.body.sessionId === 'string' ? req.body.sessionId : undefined,
+          overrideAuditSafe: req.body.overrideAuditSafe,
+          sourceEndpoint: `${endpointName}.system_review`,
+          requestedAction: 'query',
+          body: req.body,
+          executionMode: 'request'
+        },
+        context: {
+          client: openai,
+          requestId,
+          runtimeBudget: createRuntimeBudget(),
+          runOptions: {
+            answerMode: 'audit',
+            requestedVerbosity: 'minimal',
+            maxWords: 600,
+            strictUserVisibleOutput: true
           }
-        ],
-        temperature: 0,
-        stream: false
+        }
       });
 
-      const rawContent = (modelResponse as any)?.output_text ?? (modelResponse as any)?.outputText ?? (modelResponse as any)?.output_text;
+      const rawContent = modelResponse.result;
       //audit Assumption: strict review requires textual JSON payload; failure risk: empty model content; expected invariant: parseable JSON string; handling strategy: hard fail missing content.
       if (typeof rawContent !== 'string' || rawContent.trim().length === 0) {
         return sendGuardedAskResponse(req, res, {

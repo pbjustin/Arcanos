@@ -361,6 +361,26 @@ function hydrateQueuedGptBodyPrompt(
   };
 }
 
+function attachQueuedGptExecutionMetadata(
+  body: Record<string, unknown>,
+  params: {
+    requestPath?: string;
+    executionModeReason?: string;
+    routeHint?: string;
+  }
+): Record<string, unknown> {
+  return {
+    ...body,
+    __arcanosSourceEndpoint: params.requestPath ?? 'worker.gpt.background',
+    ...(params.executionModeReason
+      ? { __arcanosExecutionReason: params.executionModeReason }
+      : {}),
+    ...(params.routeHint
+      ? { __arcanosRequestedAction: params.routeHint }
+      : {})
+  };
+}
+
 async function ensureOpenAIClientForSlot(params: {
   workerId: string;
   currentClient: OpenAIClient | null;
@@ -561,8 +581,24 @@ async function executeQueuedGptRequest(params: {
   }
 
   const routeStartedAtMs = Date.now();
-  const { gptId, body, requestId, prompt, bypassIntentRouting } = parsedGptJobInput.value;
-  const hydratedBody = hydrateQueuedGptBodyPrompt(body, prompt);
+  const {
+    gptId,
+    body,
+    requestId,
+    prompt,
+    bypassIntentRouting,
+    requestPath,
+    executionModeReason,
+    routeHint
+  } = parsedGptJobInput.value;
+  const hydratedBody = attachQueuedGptExecutionMetadata(
+    hydrateQueuedGptBodyPrompt(body, prompt),
+    {
+      requestPath,
+      executionModeReason,
+      routeHint
+    }
+  );
   const latestJob = await getJobById(params.jobId);
   const resolveCancellationReason = async (
     fallbackMessage: string,

@@ -1,6 +1,7 @@
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 
 const callOpenAI = jest.fn() as jest.MockedFunction<any>;
+const runTrinityWritingPipeline = jest.fn() as jest.MockedFunction<any>;
 const getDefaultModel = jest.fn() as jest.MockedFunction<any>;
 const validateAIRequest = jest.fn() as jest.MockedFunction<any>;
 const handleAIError = jest.fn() as jest.MockedFunction<any>;
@@ -35,8 +36,35 @@ let DEFAULT_PROMPT_ROUTE_PIPELINE_TIMEOUT_MS: number;
 let DEFAULT_PROMPT_ROUTE_PROVIDER_TIMEOUT_MS: number;
 let originalNodeEnv: string | undefined;
 
+function buildTrinityPromptResult(result: string, activeModel: string) {
+  return {
+    result,
+    module: 'trinity',
+    activeModel,
+    fallbackFlag: false,
+    routingStages: ['TRINITY'],
+    auditSafe: { mode: 'true', passed: true, flags: [] },
+    taskLineage: [],
+    fallbackSummary: {
+      intakeFallbackUsed: false,
+      gpt5FallbackUsed: false,
+      finalFallbackUsed: false,
+      fallbackReasons: [],
+    },
+    meta: {
+      id: 'prompt_test',
+      created: 1_234,
+      pipeline: 'trinity',
+      bypass: false,
+      sourceEndpoint: '/api/openai/prompt',
+      classification: 'writing',
+    },
+  };
+}
+
 beforeEach(async () => {
   jest.resetModules();
+  jest.clearAllMocks();
   originalNodeEnv = process.env.NODE_ENV;
   process.env.NODE_ENV = 'test';
 
@@ -49,6 +77,10 @@ beforeEach(async () => {
     getOpenAIKeySource
   }));
 
+  jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({
+    runTrinityWritingPipeline
+  }));
+
   jest.unstable_mockModule('../src/transport/http/requestHandler.js', () => ({
     validateAIRequest,
     handleAIError,
@@ -56,6 +88,9 @@ beforeEach(async () => {
   }));
 
   jest.unstable_mockModule('@arcanos/runtime', () => ({
+    OpenAIAbortError: class OpenAIAbortError extends Error {},
+    createAbortError: jest.fn((message: string) => new Error(message)),
+    isAbortError: jest.fn((error: unknown) => error instanceof Error && /abort/i.test(error.message)),
     runWithRequestAbortTimeout: runWithRequestAbortTimeoutMock,
     getRequestAbortSignal: getRequestAbortSignalMock
   }));
@@ -94,27 +129,38 @@ afterEach(() => {
 describe('handlePrompt', () => {
   it('uses provided model when specified', async () => {
     validateAIRequest.mockReturnValue({ input: 'hi', client: {} });
-    callOpenAI.mockResolvedValue({ response: {}, output: 'ok', model: 'ft:custom-model', cached: false });
+    runTrinityWritingPipeline.mockResolvedValue(buildTrinityPromptResult('ok', 'ft:custom-model'));
 
     const req: any = { body: { prompt: 'hi', model: 'ft:custom-model' } };
     const res: any = { json: jest.fn() };
 
     await handlePrompt(req, res);
 
-    expect(callOpenAI).toHaveBeenCalledWith(
-      'ft:custom-model',
-      'hi',
-      256,
-      true,
-      expect.objectContaining({
-        timeoutMs: DEFAULT_PROMPT_ROUTE_PROVIDER_TIMEOUT_MS,
-        maxRetries: 1,
-        metadata: expect.objectContaining({
-          route: '/api/openai/prompt',
-          mitigationMode: 'normal'
+    expect(runTrinityWritingPipeline).toHaveBeenCalledWith({
+      input: expect.objectContaining({
+        prompt: 'hi',
+        moduleId: 'OPENAI:PROMPT',
+        sourceEndpoint: '/api/openai/prompt',
+        requestedAction: 'query',
+        tokenLimit: 256,
+        body: expect.objectContaining({
+          model: 'ft:custom-model',
+          tokenLimit: 256,
+          mitigation: expect.objectContaining({
+            route: '/api/openai/prompt',
+            mitigationMode: 'normal'
+          })
+        })
+      }),
+      context: expect.objectContaining({
+        client: expect.anything(),
+        runOptions: expect.objectContaining({
+          answerMode: 'direct',
+          strictUserVisibleOutput: true,
+          watchdogModelTimeoutMs: DEFAULT_PROMPT_ROUTE_PROVIDER_TIMEOUT_MS
         })
       })
-    );
+    });
     expect(runWithRequestAbortTimeoutMock).toHaveBeenCalledWith(
       expect.objectContaining({
         timeoutMs: DEFAULT_PROMPT_ROUTE_PIPELINE_TIMEOUT_MS,
@@ -141,23 +187,21 @@ describe('handlePrompt', () => {
 
   it('trims provided model names before sending to OpenAI', async () => {
     validateAIRequest.mockReturnValue({ input: 'hi', client: {} });
-    callOpenAI.mockResolvedValue({ response: {}, output: 'ok', model: 'ft:custom-model', cached: false });
+    runTrinityWritingPipeline.mockResolvedValue(buildTrinityPromptResult('ok', 'ft:custom-model'));
 
     const req: any = { body: { prompt: 'hi', model: '  ft:custom-model  ' } };
     const res: any = { json: jest.fn() };
 
     await handlePrompt(req, res);
 
-    expect(callOpenAI).toHaveBeenCalledWith(
-      'ft:custom-model',
-      'hi',
-      256,
-      true,
-      expect.objectContaining({
-        timeoutMs: DEFAULT_PROMPT_ROUTE_PROVIDER_TIMEOUT_MS,
-        maxRetries: 1
+    expect(runTrinityWritingPipeline).toHaveBeenCalledWith(expect.objectContaining({
+      input: expect.objectContaining({
+        body: expect.objectContaining({
+          model: 'ft:custom-model',
+          tokenLimit: 256
+        })
       })
-    );
+    }));
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({
         model: 'ft:custom-model',
@@ -169,7 +213,7 @@ describe('handlePrompt', () => {
   it('falls back to default model when none provided', async () => {
     validateAIRequest.mockReturnValue({ input: 'hello', client: {} });
     getDefaultModel.mockReturnValue('ft:default-model');
-    callOpenAI.mockResolvedValue({ response: {}, output: 'ok', model: 'ft:default-model', cached: false });
+    runTrinityWritingPipeline.mockResolvedValue(buildTrinityPromptResult('ok', 'ft:default-model'));
 
     const req: any = { body: { prompt: 'hello' } };
     const res: any = { json: jest.fn() };
@@ -177,16 +221,15 @@ describe('handlePrompt', () => {
     await handlePrompt(req, res);
 
     expect(getDefaultModel).toHaveBeenCalled();
-    expect(callOpenAI).toHaveBeenCalledWith(
-      'ft:default-model',
-      'hello',
-      256,
-      true,
-      expect.objectContaining({
-        timeoutMs: DEFAULT_PROMPT_ROUTE_PROVIDER_TIMEOUT_MS,
-        maxRetries: 1
+    expect(runTrinityWritingPipeline).toHaveBeenCalledWith(expect.objectContaining({
+      input: expect.objectContaining({
+        prompt: 'hello',
+        body: expect.objectContaining({
+          model: 'ft:default-model',
+          tokenLimit: 256
+        })
       })
-    );
+    }));
     const payload = res.json.mock.calls[0][0];
     expect(payload).toEqual(
       expect.objectContaining({
@@ -218,7 +261,7 @@ describe('handlePrompt', () => {
 
     await handlePrompt(req, res);
 
-    expect(callOpenAI).not.toHaveBeenCalled();
+    expect(runTrinityWritingPipeline).not.toHaveBeenCalled();
     expect(generateDegradedResponse).toHaveBeenCalledWith('hello', 'prompt');
     expect(req.logger.warn).toHaveBeenCalledWith('prompt.route.mitigated', expect.objectContaining({
       mitigationMode: 'degraded_response',
@@ -251,7 +294,7 @@ describe('handlePrompt', () => {
   it('uses the reduced-latency prompt-route policy when mitigation is active', async () => {
     validateAIRequest.mockReturnValue({ input: 'hello', client: {} });
     activatePromptRouteReducedLatencyMode('timeout storm detected', 256);
-    callOpenAI.mockResolvedValue({ response: {}, output: 'ok', model: 'ft:fallback-model', cached: false });
+    runTrinityWritingPipeline.mockResolvedValue(buildTrinityPromptResult('ok', 'ft:fallback-model'));
 
     const req: any = {
       body: { prompt: 'hello' },
@@ -263,21 +306,26 @@ describe('handlePrompt', () => {
 
     await handlePrompt(req, res);
 
-    expect(callOpenAI).toHaveBeenCalledWith(
-      'ft:fallback-model',
-      'hello',
-      96,
-      true,
-      expect.objectContaining({
-        timeoutMs: 3200,
-        maxRetries: 0,
-        metadata: expect.objectContaining({
-          route: '/api/openai/prompt',
-          mitigationMode: 'reduced_latency',
-          bypassedSubsystems: expect.arrayContaining(['provider_retry', 'long_generation_tail'])
+    expect(runTrinityWritingPipeline).toHaveBeenCalledWith(expect.objectContaining({
+      input: expect.objectContaining({
+        prompt: 'hello',
+        tokenLimit: 96,
+        body: expect.objectContaining({
+          model: 'ft:fallback-model',
+          tokenLimit: 96,
+          mitigation: expect.objectContaining({
+            route: '/api/openai/prompt',
+            mitigationMode: 'reduced_latency',
+            bypassedSubsystems: expect.arrayContaining(['provider_retry', 'long_generation_tail'])
+          })
+        })
+      }),
+      context: expect.objectContaining({
+        runOptions: expect.objectContaining({
+          watchdogModelTimeoutMs: 3200
         })
       })
-    );
+    }));
     expect(req.logger.warn).toHaveBeenCalledWith(
       'prompt.route.reduced_latency',
       expect.objectContaining({
@@ -311,7 +359,7 @@ describe('handlePrompt', () => {
   it('fast-trips into reduced latency mode after repeated prompt timeout incidents', async () => {
     validateAIRequest.mockReturnValue({ input: 'hello', client: {} });
     classifyBudgetAbortKind.mockReturnValue('budget_abort');
-    callOpenAI.mockRejectedValue(new Error('Request was aborted.'));
+    runTrinityWritingPipeline.mockRejectedValue(new Error('Request was aborted.'));
 
     const reqFactory = () => ({
       body: { prompt: 'hello' },

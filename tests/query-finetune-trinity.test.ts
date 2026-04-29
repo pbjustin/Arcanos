@@ -1,153 +1,112 @@
-import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
-const runResponseMock = jest.fn();
-const getFallbackModelMock = jest.fn(() => 'gpt-4.1');
-const loggerWarnMock = jest.fn();
+const runTrinityWritingPipelineMock = jest.fn();
+const getOpenAIClientOrAdapterMock = jest.fn();
+const createRuntimeBudgetMock = jest.fn(() => ({ remainingMs: () => 30_000 }));
 
-jest.unstable_mockModule('../src/lib/runResponse.js', () => ({
-  runResponse: runResponseMock
+jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({
+  runTrinityWritingPipeline: runTrinityWritingPipelineMock
 }));
 
-jest.unstable_mockModule('../src/services/openai.js', () => ({
-  getFallbackModel: getFallbackModelMock
+jest.unstable_mockModule('../src/services/openai/clientBridge.js', () => ({
+  getOpenAIClientOrAdapter: getOpenAIClientOrAdapterMock
 }));
 
-jest.unstable_mockModule('../src/platform/logging/structuredLogging.js', () => ({
-  aiLogger: {
-    info: jest.fn(),
-    warn: jest.fn(),
-    error: jest.fn()
-  },
-  logger: {
-    warn: loggerWarnMock
-  }
+jest.unstable_mockModule('../src/platform/resilience/runtimeBudget.js', () => ({
+  createRuntimeBudget: createRuntimeBudgetMock
 }));
 
 const { runTrinity } = await import('../src/trinity/trinity.js');
 
-describe('runTrinity fine-tuned route fallback', () => {
+function buildTrinityResult(overrides: Record<string, unknown> = {}) {
+  return {
+    result: '{"status":"ok"}',
+    module: 'trinity',
+    activeModel: 'trinity-model',
+    fallbackFlag: false,
+    routingStages: ['TRINITY'],
+    auditSafe: { mode: 'true', passed: true, flags: [] },
+    taskLineage: [],
+    fallbackSummary: {
+      intakeFallbackUsed: false,
+      gpt5FallbackUsed: false,
+      finalFallbackUsed: false,
+      fallbackReasons: [],
+    },
+    meta: {
+      pipeline: 'trinity',
+      bypass: false,
+      sourceEndpoint: 'query-finetune',
+      classification: 'writing',
+    },
+    ...overrides,
+  };
+}
+
+describe('runTrinity fine-tuned route compatibility facade', () => {
   beforeEach(() => {
-    runResponseMock.mockReset();
-    getFallbackModelMock.mockClear();
-    loggerWarnMock.mockClear();
+    jest.clearAllMocks();
+    getOpenAIClientOrAdapterMock.mockReturnValue({ client: { responses: {} } });
+    runTrinityWritingPipelineMock.mockResolvedValue(buildTrinityResult());
   });
 
-  afterEach(() => {
-    jest.useRealTimers();
-  });
-
-  it('includes json wording in structured prompts and falls back to the base model on primary failure', async () => {
-    runResponseMock
-      .mockRejectedValueOnce(new Error('fine-tuned model unavailable'))
-      .mockResolvedValueOnce({
-        model: 'gpt-4.1',
-        output: [
-          {
-            type: 'message',
-            content: [
-              {
-                type: 'output_text',
-                text: '{"status":"ok"}'
-              }
-            ]
-          }
-        ]
-      });
-
+  it('preserves structured JSON prompting while executing through Trinity', async () => {
     const result = await runTrinity({
       prompt: 'health check',
       model: 'ft:custom-model',
       structured: true
     });
 
-    expect(runResponseMock).toHaveBeenCalledTimes(2);
-    expect(runResponseMock.mock.calls[0][0]).toEqual(expect.objectContaining({
-      model: 'ft:custom-model',
-      json: true,
-      input: [
-        {
-          role: 'user',
-          content: expect.stringMatching(/json/i)
-        }
-      ]
-    }));
-    expect(runResponseMock.mock.calls[1][0]).toEqual(expect.objectContaining({
-      model: 'gpt-4.1',
-      json: true
-    }));
+    expect(runTrinityWritingPipelineMock).toHaveBeenCalledTimes(1);
+    expect(runTrinityWritingPipelineMock).toHaveBeenCalledWith({
+      input: expect.objectContaining({
+        prompt: expect.stringMatching(/json/i),
+        moduleId: 'QUERY:FINETUNE',
+        sourceEndpoint: 'query-finetune',
+        requestedAction: 'query',
+        body: expect.objectContaining({
+          prompt: 'health check',
+          model: 'ft:custom-model',
+          structured: true,
+        }),
+      }),
+      context: expect.objectContaining({
+        client: expect.anything(),
+        runOptions: expect.objectContaining({
+          answerMode: 'audit',
+          strictUserVisibleOutput: true,
+        }),
+      }),
+    });
     expect(result).toEqual(expect.objectContaining({
       requestedModel: 'ft:custom-model',
-      activeModel: 'gpt-4.1',
-      fallbackFlag: true,
-      fallbackReason: 'fine-tuned model unavailable',
-      output: '{"status":"ok"}'
-    }));
-    expect(loggerWarnMock).toHaveBeenCalledWith('MODEL_FALLBACK_TRIGGERED', expect.objectContaining({
-      requestedModel: 'ft:custom-model',
-      fallbackModel: 'gpt-4.1'
+      model: 'trinity-model',
+      activeModel: 'trinity-model',
+      fallbackFlag: false,
+      output: '{"status":"ok"}',
+      raw: expect.objectContaining({
+        meta: expect.objectContaining({
+          pipeline: 'trinity',
+          bypass: false,
+        }),
+      }),
     }));
   });
 
-  it('aborts slow primary calls at the latency budget and retries the fallback with its own bounded attempt', async () => {
-    jest.useFakeTimers();
-    runResponseMock
-      .mockImplementationOnce(() => new Promise(() => undefined))
-      .mockResolvedValueOnce({
-        model: 'gpt-4.1',
-        output: [
-          {
-            type: 'message',
-            content: [
-              {
-                type: 'output_text',
-                text: '{"status":"fallback-ok"}'
-              }
-            ]
-          }
-        ]
-      });
-
-    const resultPromise = runTrinity({
+  it('passes latency budgets into Trinity watchdog options', async () => {
+    await runTrinity({
       prompt: 'health check',
       model: 'ft:slow-model',
       structured: true,
       latencyBudgetMs: 25
     });
 
-    await jest.advanceTimersByTimeAsync(25);
-    const result = await resultPromise;
-
-    expect(runResponseMock).toHaveBeenCalledTimes(2);
-    expect(runResponseMock.mock.calls[0][0]).toEqual(expect.objectContaining({
-      model: 'ft:slow-model',
-      requestOptions: expect.objectContaining({
-        signal: expect.objectContaining({
-          aborted: true
+    expect(runTrinityWritingPipelineMock).toHaveBeenCalledWith(expect.objectContaining({
+      context: expect.objectContaining({
+        runOptions: expect.objectContaining({
+          watchdogModelTimeoutMs: 25
         })
       })
-    }));
-    expect(runResponseMock.mock.calls[1][0]).toEqual(expect.objectContaining({
-      model: 'gpt-4.1',
-      requestOptions: expect.objectContaining({
-        signal: expect.any(Object)
-      })
-    }));
-    expect(result).toEqual(expect.objectContaining({
-      requestedModel: 'ft:slow-model',
-      activeModel: 'gpt-4.1',
-      fallbackFlag: true,
-      output: '{"status":"fallback-ok"}'
-    }));
-    expect(loggerWarnMock).toHaveBeenCalledWith('MODEL_LATENCY_BUDGET_EXCEEDED', expect.objectContaining({
-      requestedModel: 'ft:slow-model',
-      activeModel: 'ft:slow-model',
-      attempt: 'primary',
-      latencyBudgetMs: 25
-    }));
-    expect(loggerWarnMock).toHaveBeenCalledWith('MODEL_FALLBACK_TRIGGERED', expect.objectContaining({
-      requestedModel: 'ft:slow-model',
-      fallbackModel: 'gpt-4.1',
-      latencyBudgetMs: 25
     }));
   });
 });

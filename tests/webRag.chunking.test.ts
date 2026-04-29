@@ -75,6 +75,11 @@ beforeEach(async () => {
 
   jest.unstable_mockModule('../src/services/openai/clientBridge.js', () => ({
     requireOpenAIClientOrAdapter: requireOpenAIClientOrAdapterMock,
+    getOpenAIClientOrAdapter: jest.fn(() => requireOpenAIClientOrAdapterMock()),
+  }));
+
+  jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({
+    runTrinityWritingPipeline: jest.fn(),
   }));
 
   jest.unstable_mockModule('../src/services/openai.js', () => ({
@@ -99,8 +104,18 @@ beforeEach(async () => {
   }));
 
   jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({
+    aiLogger: {
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+      debug: jest.fn(),
+    },
     logger: {
       child: () => loggerChildMock,
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+      debug: jest.fn(),
     },
   }));
 

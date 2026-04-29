@@ -5,7 +5,7 @@ import { verifyControlPlaneRoute } from '../src/services/controlPlane/routeVerif
 const fixedNow = () => new Date('2026-04-26T00:00:00.000Z');
 
 describe('control-plane route verification', () => {
-  it('confirms Trinity only when trace metadata contains the required pipeline stages', () => {
+  it('keeps control-plane planning on the direct fast path even when Trinity is requested', () => {
     const route = verifyControlPlaneRoute({
       request: {
         phase: 'plan',
@@ -22,12 +22,13 @@ describe('control-plane route verification', () => {
       now: fixedNow
     });
 
-    expect(route.status).toBe('TRINITY_CONFIRMED');
-    expect(route.eligibleForTrinity).toBe(true);
-    expect(route.evidence.routingStages).toHaveLength(3);
+    expect(route.requested).toBe('trinity');
+    expect(route.status).toBe('DIRECT_FAST_PATH');
+    expect(route.eligibleForTrinity).toBe(false);
+    expect(route.evidence).toEqual({});
   });
 
-  it('does not claim Trinity when requested metadata is missing Trinity stages', () => {
+  it('does not claim Trinity when requested metadata is present for control-plane planning', () => {
     const route = verifyControlPlaneRoute({
       request: {
         phase: 'plan',
@@ -40,8 +41,9 @@ describe('control-plane route verification', () => {
       now: fixedNow
     });
 
-    expect(route.status).toBe('TRINITY_REQUESTED_BUT_NOT_CONFIRMED');
-    expect(route.reason).toContain('did not prove Trinity pipeline involvement');
+    expect(route.status).toBe('DIRECT_FAST_PATH');
+    expect(route.eligibleForTrinity).toBe(false);
+    expect(route.reason).toContain('system operations');
   });
 
   it('uses the direct fast path for execution and mutation because those are system operations', () => {
@@ -57,7 +59,7 @@ describe('control-plane route verification', () => {
     expect(route.eligibleForTrinity).toBe(false);
   });
 
-  it('reports Trinity as unavailable when planning cannot run the planner', () => {
+  it('does not surface Trinity planner availability for control-plane planning', () => {
     const route = verifyControlPlaneRoute({
       request: {
         phase: 'plan',
@@ -68,11 +70,11 @@ describe('control-plane route verification', () => {
       now: fixedNow
     });
 
-    expect(route.status).toBe('TRINITY_UNAVAILABLE');
-    expect(route.reason).toBe('planner unavailable');
+    expect(route.status).toBe('DIRECT_FAST_PATH');
+    expect(route.eligibleForTrinity).toBe(false);
   });
 
-  it('uses UNKNOWN_ROUTE when planning produced no route metadata and no explicit failure', () => {
+  it('uses the direct fast path when planning produced no route metadata', () => {
     const route = verifyControlPlaneRoute({
       request: {
         phase: 'plan',
@@ -81,6 +83,7 @@ describe('control-plane route verification', () => {
       now: fixedNow
     });
 
-    expect(route.status).toBe('UNKNOWN_ROUTE');
+    expect(route.status).toBe('DIRECT_FAST_PATH');
+    expect(route.eligibleForTrinity).toBe(false);
   });
 });

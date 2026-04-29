@@ -1,6 +1,10 @@
 import OpenAI from 'openai';
 import type { TrinityAnswerMode, TrinityResult, TrinityRunOptions } from '@core/logic/trinity.js';
-import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
+import {
+  applyTrinityGenerationInvariant,
+  runTrinityWritingPipeline
+} from '@core/logic/trinityWritingPipeline.js';
+import type { TrinityGenerationMessage } from '@core/logic/trinityGenerationFacade.js';
 import {
   createRuntimeBudgetWithLimit,
   getSafeRemainingMs,
@@ -16,6 +20,7 @@ import {
   ARCANOS_SUPPRESS_TIMEOUT_FALLBACK_FLAG,
   normalizeBooleanFlagValue
 } from '@shared/gpt/gptDirectAction.js';
+import { extractLastUserMessageText } from '@shared/gpt/messageContentText.js';
 import type { ModuleDef } from './moduleLoader.js';
 import { executeSystemStateRequest } from './systemState.js';
 import {
@@ -28,17 +33,25 @@ import {
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 
 type ArcanosCoreQueryPayload = {
+  action?: string;
+  operation?: string;
   prompt?: string;
   message?: string;
   query?: string;
   text?: string;
   content?: string;
+  messages?: TrinityGenerationMessage[];
   sessionId?: string;
   overrideAuditSafe?: string;
   answerMode?: string;
   max_words?: number;
   maxWords?: number;
+  maxOutputTokens?: number;
+  __arcanosGptId?: string;
+  __arcanosSourceEndpoint?: string;
+  __arcanosRequestedAction?: string;
   __arcanosExecutionMode?: string;
+  __arcanosExecutionReason?: string;
   [ARCANOS_SUPPRESS_TIMEOUT_FALLBACK_FLAG]?: boolean | string | number;
 };
 
@@ -75,16 +88,28 @@ export interface RunArcanosCoreQueryParams {
   prompt: string;
   sourceEndpoint: string;
   requestId?: string;
+  gptId?: string;
+  moduleId?: string;
+  requestedAction?: string | null;
+  body?: unknown;
   sessionId?: string;
   overrideAuditSafe?: string;
+  maxOutputTokens?: number;
+  messages?: TrinityGenerationMessage[];
   runOptions?: Omit<TrinityRunOptions, 'sourceEndpoint'>;
   executionModeOverride?: ArcanosCoreExecutionMode;
+  executionModeReason?: string;
   allowTimeoutFallback?: boolean;
 }
 
 export interface BuildArcanosCoreTimeoutFallbackParams {
   prompt: string;
   requestId?: string | null;
+  sourceEndpoint?: string | null;
+  gptId?: string | null;
+  moduleId?: string | null;
+  requestedAction?: string | null;
+  executionMode?: string | null;
   createdAtMs?: number;
   timeoutPhase?: string | null;
 }
@@ -202,7 +227,7 @@ function resolveCoreFallbackTimeoutPhase(
   return degradedPhase ?? primaryPhase ?? 'pipeline';
 }
 
-function extractPrompt(payload: ArcanosCoreQueryPayload): string {
+function extractDirectPrompt(payload: ArcanosCoreQueryPayload): string | null {
   for (const candidate of [
     payload.prompt,
     payload.message,
@@ -215,16 +240,40 @@ function extractPrompt(payload: ArcanosCoreQueryPayload): string {
     }
   }
 
+  return null;
+}
+
+function extractPromptFromMessages(messages: unknown): string | null {
+  return extractLastUserMessageText(messages);
+}
+
+function readTrinityMessages(messages: unknown): TrinityGenerationMessage[] | undefined {
+  return Array.isArray(messages) && extractPromptFromMessages(messages)
+    ? (messages as TrinityGenerationMessage[])
+    : undefined;
+}
+
+function extractPrompt(payload: ArcanosCoreQueryPayload): string {
+  const directPrompt = extractDirectPrompt(payload);
+  if (directPrompt) {
+    return directPrompt;
+  }
+
+  const messagePrompt = extractPromptFromMessages(payload.messages);
+  if (messagePrompt) {
+    return messagePrompt;
+  }
+
   throw new Error('Prompt is required');
 }
 
 function normalizePositiveInteger(value: unknown): number | undefined {
-  if (typeof value !== 'number' || !Number.isFinite(value)) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
     return undefined;
   }
 
   const normalized = Math.trunc(value);
-  return normalized > 0 ? normalized : undefined;
+  return Math.max(1, normalized);
 }
 
 function normalizeAnswerMode(value: unknown): TrinityAnswerMode | undefined {
@@ -342,7 +391,7 @@ function buildCoreStaticFallbackResult(params: BuildArcanosCoreTimeoutFallbackPa
       ? params.requestId.trim()
       : `arcanos-core-timeout-${created}`;
 
-  return {
+  const result: TrinityResult = {
     result: [
       'The full ARCANOS analysis path hit its latency guard and returned a bounded fallback response.',
       `Request summary: ${promptPreview}`,
@@ -389,6 +438,14 @@ function buildCoreStaticFallbackResult(params: BuildArcanosCoreTimeoutFallbackPa
     degradedModeReason: ARCANOS_CORE_STATIC_FALLBACK_REASON,
     bypassedSubsystems: [...ARCANOS_CORE_PIPELINE_BYPASSED_SUBSYSTEMS]
   };
+
+  return applyTrinityGenerationInvariant(result, {
+    sourceEndpoint: normalizeTraceString(params.sourceEndpoint) ?? 'gpt.arcanos-core.query',
+    gptId: normalizeTraceString(params.gptId),
+    moduleId: normalizeTraceString(params.moduleId) ?? 'ARCANOS:CORE',
+    requestedAction: params.requestedAction,
+    executionMode: normalizeTraceString(params.executionMode),
+  });
 }
 
 export function buildArcanosCoreTimeoutFallbackResult(
@@ -409,6 +466,10 @@ export function buildArcanosCoreTimeoutFallbackEnvelope(params: {
   const result = buildCoreStaticFallbackResult({
     prompt: params.prompt,
     requestId: params.requestId,
+    sourceEndpoint: 'gpt.arcanos-core.query',
+    gptId: params.gptId,
+    moduleId: 'ARCANOS:CORE',
+    requestedAction: 'query',
     createdAtMs: params.createdAtMs,
     timeoutPhase: params.timeoutPhase
   });
@@ -551,6 +612,8 @@ export async function runArcanosCoreQuery(
     sourceEndpoint: primarySourceEndpoint = params.sourceEndpoint,
     ...primaryRunOptionsWithoutSource
   } = primaryRunOptions;
+  const structuredMessages =
+    params.messages && params.messages.length > 0 ? params.messages : undefined;
 
   emitCoreRuntimeTrace({
     phase: 'route_resolved',
@@ -608,11 +671,21 @@ export async function runArcanosCoreQuery(
       () =>
         runTrinityWritingPipeline({
           input: {
-            prompt: params.prompt,
+            ...(structuredMessages ? { messages: structuredMessages } : { prompt: params.prompt }),
+            gptId: params.gptId,
+            moduleId: params.moduleId ?? 'ARCANOS:CORE',
             sessionId: params.sessionId,
             overrideAuditSafe: params.overrideAuditSafe,
             sourceEndpoint: primarySourceEndpoint,
-            body: { prompt: params.prompt }
+            requestedAction: params.requestedAction,
+            body: params.body ?? (structuredMessages ? { messages: structuredMessages } : { prompt: params.prompt }),
+            maxOutputTokens: params.maxOutputTokens,
+            executionMode: pipelinePlan.executionMode,
+            background: pipelinePlan.executionMode === 'background'
+              ? {
+                  reason: params.executionModeReason ?? 'arcanos_core_background'
+                }
+              : undefined
           },
           context: {
             client: params.client,
@@ -775,11 +848,21 @@ export async function runArcanosCoreQuery(
 
             return runTrinityWritingPipeline({
               input: {
-                prompt: params.prompt,
+                ...(structuredMessages ? { messages: structuredMessages } : { prompt: params.prompt }),
+                gptId: params.gptId,
+                moduleId: params.moduleId ?? 'ARCANOS:CORE',
                 sessionId: params.sessionId,
                 overrideAuditSafe: params.overrideAuditSafe,
                 sourceEndpoint: degradedSourceEndpoint,
-                body: { prompt: params.prompt }
+                requestedAction: params.requestedAction,
+                body: params.body ?? (structuredMessages ? { messages: structuredMessages } : { prompt: params.prompt }),
+                maxOutputTokens: params.maxOutputTokens,
+                executionMode: pipelinePlan.executionMode,
+                background: pipelinePlan.executionMode === 'background'
+                  ? {
+                      reason: params.executionModeReason ?? 'arcanos_core_background_degraded'
+                    }
+                  : undefined
               },
               context: {
                 client: params.client,
@@ -846,6 +929,11 @@ export async function runArcanosCoreQuery(
         const staticFallback = buildCoreStaticFallbackResult({
           prompt: params.prompt,
           requestId: getRequestAbortContext()?.requestId ?? null,
+          sourceEndpoint: params.sourceEndpoint,
+          gptId: params.gptId,
+          moduleId: params.moduleId ?? 'ARCANOS:CORE',
+          requestedAction: params.requestedAction,
+          executionMode: pipelinePlan.executionMode,
           timeoutPhase,
         });
         logger.warn('[PIPELINE] static fallback engaged', {
@@ -926,6 +1014,8 @@ export const ArcanosCore: ModuleDef = {
         payload && typeof payload === 'object' && !Array.isArray(payload)
           ? (payload as ArcanosCoreQueryPayload)
           : {};
+      const directPrompt = extractDirectPrompt(normalizedPayload);
+      const messages = directPrompt ? undefined : readTrinityMessages(normalizedPayload.messages);
       const prompt = extractPrompt(normalizedPayload);
       emitCoreRuntimeTrace({
         phase: 'prompt_normalization',
@@ -955,6 +1045,16 @@ export const ArcanosCore: ModuleDef = {
           : normalizedPayload.__arcanosExecutionMode === 'request'
           ? 'request'
           : undefined;
+      const gptId = normalizeTraceString(normalizedPayload.__arcanosGptId);
+      const sourceEndpoint =
+        normalizeTraceString(normalizedPayload.__arcanosSourceEndpoint) ??
+        'gpt.arcanos-core.query';
+      const requestedAction =
+        normalizeTraceString(normalizedPayload.__arcanosRequestedAction) ??
+        normalizeTraceString(normalizedPayload.action) ??
+        normalizeTraceString(normalizedPayload.operation) ??
+        'query';
+      const maxOutputTokens = normalizePositiveInteger(normalizedPayload.maxOutputTokens);
       const allowTimeoutFallback = !normalizeBooleanFlagValue(
         normalizedPayload[ARCANOS_SUPPRESS_TIMEOUT_FALLBACK_FLAG]
       );
@@ -962,9 +1062,10 @@ export const ArcanosCore: ModuleDef = {
       emitCoreRuntimeTrace({
         phase: 'gpt_config_loaded',
         startedAt: actionStartedAt,
-        sourceEndpoint: 'gpt.arcanos-core.query',
+        sourceEndpoint,
         extra: {
           hasClient: !!client,
+          gptId: gptId ?? null,
           sessionId: sessionId ?? null,
           answerMode: answerMode ?? null
         }
@@ -978,7 +1079,7 @@ export const ArcanosCore: ModuleDef = {
         emitCoreRuntimeTrace({
           phase: 'response_sent',
           startedAt: actionStartedAt,
-          sourceEndpoint: 'gpt.arcanos-core.query',
+          sourceEndpoint,
           degradedReason: 'mock_response'
         });
         return generateMockResponse(prompt, 'gpt/arcanos-core');
@@ -988,14 +1089,21 @@ export const ArcanosCore: ModuleDef = {
         client,
         prompt,
         requestId: getRequestAbortContext()?.requestId,
+        gptId,
+        moduleId: 'ARCANOS:CORE',
+        requestedAction,
+        body: normalizedPayload,
+        messages,
         sessionId,
         overrideAuditSafe,
-        sourceEndpoint: 'gpt.arcanos-core.query',
+        sourceEndpoint,
+        maxOutputTokens,
         runOptions: {
           ...(answerMode ? { answerMode } : {}),
           ...(maxWords ? { maxWords } : {})
         },
         executionModeOverride,
+        executionModeReason: normalizeTraceString(normalizedPayload.__arcanosExecutionReason),
         allowTimeoutFallback
       });
     },

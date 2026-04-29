@@ -1,5 +1,8 @@
 import { sanitizeInput } from '@platform/runtime/security.js';
-import { createCentralizedCompletion, generateMockResponse, hasValidAPIKey } from '@services/openai.js';
+import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
+import { generateMockResponse, hasValidAPIKey } from '@services/openai.js';
+import { getOpenAIClientOrAdapter } from '@services/openai/clientBridge.js';
+import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { dispatchValidatedHandler, enforceAllowedHandlerMethod } from '../handlerRuntime.js';
 import type { CefHandlerContext, WhitelistedHandlerDispatchResult } from '../types.js';
 import { buildCommandError } from '../commandErrors.js';
@@ -104,28 +107,36 @@ const allowedHandlerActions = {
         throw buildMissingApiKeyError();
       }
 
-      const response = await createCentralizedCompletion([
-        { role: 'user', content: sanitizedPrompt }
-      ]);
-
-      if ('choices' in response) {
-        const firstChoice = response.choices[0];
-        const content = firstChoice?.message?.content ?? '';
-        return {
-          message: 'AI command executed successfully.',
-          output: {
-            result: content,
-            usage: response.usage ?? null,
-            model: response.model
-          }
-        };
+      const { client } = getOpenAIClientOrAdapter();
+      if (!client) {
+        throw buildMissingApiKeyError();
       }
+      const response = await runTrinityWritingPipeline({
+        input: {
+          prompt: sanitizedPrompt,
+          moduleId: 'CEF:AI',
+          sourceEndpoint: 'cef.ai.prompt',
+          requestedAction: 'prompt',
+          body: payload,
+          executionMode: 'request'
+        },
+        context: {
+          client,
+          runtimeBudget: createRuntimeBudget(),
+          runOptions: {
+            answerMode: 'direct',
+            strictUserVisibleOutput: true
+          }
+        }
+      });
 
       return {
-        message: 'Streaming response started.',
+        message: 'AI command executed successfully.',
         output: {
-          result: null,
-          streaming: true
+          result: response.result,
+          usage: response.meta.tokens ?? null,
+          model: response.activeModel,
+          meta: response.meta
         }
       };
     },

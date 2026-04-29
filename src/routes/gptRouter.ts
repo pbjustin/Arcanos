@@ -114,6 +114,7 @@ import {
   type GptFastPathModeHint
 } from '@shared/gpt/gptFastPath.js';
 import { ARCANOS_SUPPRESS_TIMEOUT_FALLBACK_FLAG } from '@shared/gpt/gptDirectAction.js';
+import { extractLastUserMessageText } from '@shared/gpt/messageContentText.js';
 import { executeDirectGptAction, executeFastGptPrompt } from '@services/gptFastPath.js';
 import { executeRuntimeInspection } from '@services/runtimeInspectionRoutingService.js';
 import { getWorkerControlStatus } from '@services/workerControlService.js';
@@ -564,27 +565,7 @@ function extractPromptTextFromRecord(record: Record<string, unknown> | null): st
     return candidate.trim();
   }
 
-  if (!Array.isArray(record?.messages)) {
-    return null;
-  }
-
-  for (let index = record.messages.length - 1; index >= 0; index -= 1) {
-    const entry = record.messages[index];
-    const normalizedEntry =
-      typeof entry === 'object' && entry !== null && !Array.isArray(entry)
-        ? (entry as Record<string, unknown>)
-        : null;
-
-    if (
-      normalizedEntry?.role === 'user' &&
-      typeof normalizedEntry.content === 'string' &&
-      normalizedEntry.content.trim().length > 0
-    ) {
-      return normalizedEntry.content.trim();
-    }
-  }
-
-  return null;
+  return extractLastUserMessageText(record?.messages);
 }
 
 function extractPromptText(body: unknown): string | null {
@@ -2838,6 +2819,7 @@ router.post("/:gptId", async (req, res, next) => {
               action: GPT_QUERY_AND_WAIT_ACTION,
               status: 200
             });
+            const shapedDirectResult = shapeClientRouteResult(directEnvelope.result) as Record<string, unknown>;
             return sendGuardedGptJsonResponse(
               req,
               res,
@@ -2847,6 +2829,14 @@ router.post("/:gptId", async (req, res, next) => {
                 action: GPT_QUERY_AND_WAIT_ACTION,
                 status: 'completed',
                 result: extractDispatcherResultText(directEnvelope.result),
+                ...(shapedDirectResult.meta ? { meta: shapedDirectResult.meta } : {}),
+                ...(shapedDirectResult.activeModel ? { activeModel: shapedDirectResult.activeModel } : {}),
+                ...(typeof shapedDirectResult.fallbackFlag === 'boolean'
+                  ? { fallbackFlag: shapedDirectResult.fallbackFlag }
+                  : {}),
+                ...(Array.isArray(shapedDirectResult.routingStages)
+                  ? { routingStages: shapedDirectResult.routingStages }
+                  : {}),
                 routeDecision: directActionRouteDecision,
                 directAction: directEnvelope.directAction,
                 traceId,
@@ -3783,6 +3773,10 @@ router.post("/:gptId", async (req, res, next) => {
           logGptAckSent(routingInfo, (envelope._route.availableActions ?? []).length);
           applyAIDegradedResponseHeaders(res, extractAIDegradedResponseMetadata(envelope.result));
           const resultText = extractDispatcherResultText(envelope.result);
+          const shapedCoreResult =
+            typeof envelope.result === 'object' && envelope.result !== null
+              ? (shapeClientRouteResult(envelope.result) as Record<string, unknown>)
+              : {};
           requestLogger?.info?.("gpt.request.route_result", {
             endpoint: req.originalUrl,
             gptId: incomingGptId,
@@ -3808,6 +3802,14 @@ router.post("/:gptId", async (req, res, next) => {
               gptId: incomingGptId,
               action: GPT_QUERY_ACTION,
               result: resultText,
+              ...(shapedCoreResult.meta ? { meta: shapedCoreResult.meta } : {}),
+              ...(shapedCoreResult.activeModel ? { activeModel: shapedCoreResult.activeModel } : {}),
+              ...(typeof shapedCoreResult.fallbackFlag === 'boolean'
+                ? { fallbackFlag: shapedCoreResult.fallbackFlag }
+                : {}),
+              ...(Array.isArray(shapedCoreResult.routingStages)
+                ? { routingStages: shapedCoreResult.routingStages }
+                : {}),
               traceId,
               _route: {
                 ...envelope._route,

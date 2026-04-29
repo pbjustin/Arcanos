@@ -1,12 +1,16 @@
 import { createHash } from 'node:crypto';
 import { load } from 'cheerio';
 import { fetchAndCleanDocument } from '@shared/webFetcher.js';
+import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
+import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { buildClear2Summary } from '@services/clear2.js';
-import { createCentralizedCompletion, getDefaultModel, hasValidAPIKey } from '@services/openai.js';
+import { getDefaultModel, hasValidAPIKey } from '@services/openai.js';
+import { getOpenAIClientOrAdapter } from '@services/openai/clientBridge.js';
 import { getEnv, getEnvBoolean, getEnvNumber } from '@platform/runtime/env.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import type { ClearScore } from '@shared/types/actionPlan.js';
 import type { FetchAndCleanLinkSummary } from '@shared/webFetcher.js';
+import type OpenAI from 'openai';
 
 export type SearchProviderName =
   | 'auto'
@@ -193,15 +197,6 @@ interface SearxngSearchResult {
 
 interface SearxngSearchResponse {
   results?: SearxngSearchResult[];
-}
-
-interface CompletionResponseLike {
-  content?: unknown;
-  choices?: Array<{
-    message?: {
-      content?: unknown;
-    };
-  }>;
 }
 
 interface FetchedSourcePacketResult {
@@ -551,16 +546,6 @@ function isLikelyTraversableUrl(url: string): boolean {
   }
 }
 
-function extractCompletionText(response: unknown): string {
-  const completion = response as CompletionResponseLike | null | undefined;
-  if (typeof completion?.content === 'string') {
-    return completion.content;
-  }
-
-  const content = completion?.choices?.[0]?.message?.content;
-  return typeof content === 'string' ? content : '';
-}
-
 function escapePromptData(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -799,7 +784,8 @@ function buildSearchClearScore(query: string, options: Required<Omit<WebSearchAg
 async function synthesizeSources(
   query: string,
   sources: SearchSourcePacket[],
-  model: string
+  model: string,
+  client: OpenAI
 ): Promise<SearchSynthesisResult> {
   const usableSources = sources.filter((source) => (source.content ?? source.snapshot.excerpt) && source.metadata.fetchStatus === 'ok');
   const packetText = usableSources.map((source) => {
@@ -848,13 +834,42 @@ async function synthesizeSources(
     }
   ];
 
-  const response = await createCentralizedCompletion(messages, {
-    model,
-    temperature: 0.2,
-    max_tokens: 700
+  const prompt = messages
+    .map((message) => `${message.role.toUpperCase()}:\n${message.content}`)
+    .join('\n\n');
+
+  const response = await runTrinityWritingPipeline({
+    input: {
+      prompt,
+      moduleId: 'WEB_SEARCH:SYNTHESIS',
+      sourceEndpoint: 'webSearchAgent.synthesize',
+      requestedAction: 'query',
+      body: {
+        query,
+        messages,
+        requestedModel: model,
+        sourceCount: usableSources.length,
+        maxTokens: 700
+      },
+      maxOutputTokens: 700,
+      executionMode: 'request',
+      background: {
+        requestedModel: model,
+        sourceCount: usableSources.length
+      }
+    },
+    context: {
+      client,
+      runtimeBudget: createRuntimeBudget(),
+      runOptions: {
+        answerMode: 'direct',
+        strictUserVisibleOutput: true,
+        requestedVerbosity: 'minimal'
+      }
+    }
   });
 
-  const text = extractCompletionText(response);
+  const text = response.result;
 
   return {
     text: text.trim(),
@@ -1175,14 +1190,15 @@ export async function webSearchAgent(query: string, options: WebSearchAgentOptio
 
   let answer: SearchSynthesisResult | null = null;
   if (normalizedOptions.synthesize) {
-    if (!hasValidAPIKey()) {
+    const { client } = getOpenAIClientOrAdapter();
+    if (!hasValidAPIKey() || !client) {
       notes.push('Synthesis skipped because OpenAI credentials are not configured.');
     } else if (clear.decision === 'block') {
       notes.push('Synthesis skipped because CLEAR blocked this search plan.');
     } else {
       const synthesisModel = options.synthesisModel?.trim() || getDefaultModel();
       try {
-        answer = await synthesizeSources(query, sources, synthesisModel);
+        answer = await synthesizeSources(query, sources, synthesisModel, client);
     } catch (error) {
       //audit Assumption: synthesis is an optional enrichment layer; failure risk: upstream model issues hide otherwise useful grounded packets; expected invariant: raw search packets remain available even when synthesis fails; handling strategy: append a note and return answer as null.
       notes.push(`Synthesis failed: ${resolveErrorMessage(error)}`);

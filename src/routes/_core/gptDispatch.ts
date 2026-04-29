@@ -26,6 +26,7 @@ import {
 import { extractDiagnosticTextInput, isDiagnosticRequest } from "@shared/http/diagnosticRequest.js";
 import { isRecord } from "@shared/typeGuards.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { TrinityControlLeakError } from "@core/logic/trinityWritingPipeline.js";
 import type { Request } from "express";
 import {
   getRequestAbortContext,
@@ -46,13 +47,13 @@ import {
   type PromptDebugTracePatch,
 } from "@services/promptDebugTraceService.js";
 import {
-  assertWritingPlaneClassification,
   classifyGptRequestPlane,
 } from "./gptPlaneClassification.js";
 import {
   ARCANOS_SUPPRESS_TIMEOUT_FALLBACK_FLAG,
   normalizeBooleanFlagValue
 } from "@shared/gpt/gptDirectAction.js";
+import { extractLastUserMessageText } from "@shared/gpt/messageContentText.js";
 
 export type AskEnvelope =
   | { ok: true; result: unknown; _route: RouteMeta }
@@ -93,10 +94,8 @@ function extractPrompt(body: any): string | null {
 
   if (typeof direct === "string" && direct.trim().length > 0) return direct.trim();
 
-  if (Array.isArray(body?.messages)) {
-    const lastUser = [...body.messages].reverse().find((m: any) => m?.role === "user");
-    if (typeof lastUser?.content === "string" && lastUser.content.trim().length > 0) return lastUser.content.trim();
-  }
+  const messageText = extractLastUserMessageText(body?.messages);
+  if (messageText) return messageText;
 
   return null;
 }
@@ -516,6 +515,9 @@ const DEFAULT_BACKGROUND_MODULE_DISPATCH_TIMEOUT_MS = 180000;
 const SUPPRESS_PROMPT_DEBUG_TRACE_FLAG = '__arcanosSuppressPromptDebugTrace';
 const REDACTED_GPT_ACCESS_PROMPT = '[REDACTED_GPT_ACCESS_PROMPT]';
 const REDACTED_GPT_ACCESS_PAYLOAD = '[REDACTED_GPT_ACCESS_PAYLOAD]';
+const INTERNAL_GPT_ID_FIELD = '__arcanosGptId';
+const INTERNAL_SOURCE_ENDPOINT_FIELD = '__arcanosSourceEndpoint';
+const INTERNAL_REQUESTED_ACTION_FIELD = '__arcanosRequestedAction';
 
 function readPromptDebugSuppressionFlag(value: unknown): boolean {
   if (!isRecord(value)) {
@@ -528,6 +530,48 @@ function readPromptDebugSuppressionFlag(value: unknown): boolean {
 
 function shouldSuppressPromptDebugTrace(body: unknown, preDispatchPayload: unknown): boolean {
   return readPromptDebugSuppressionFlag(body) || readPromptDebugSuppressionFlag(preDispatchPayload);
+}
+
+function readInternalStringField(value: unknown, key: string): string | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const candidate = value[key];
+  return typeof candidate === 'string' && candidate.trim().length > 0
+    ? candidate.trim()
+    : undefined;
+}
+
+function resolveDispatchSourceEndpoint(body: unknown, requestEndpoint: string | undefined): string {
+  return (
+    readInternalStringField(body, INTERNAL_SOURCE_ENDPOINT_FIELD) ??
+    (typeof requestEndpoint === 'string' && requestEndpoint.trim().length > 0
+      ? requestEndpoint.trim()
+      : '/gpt/:gptId')
+  );
+}
+
+function enrichWritingDispatchPayload(
+  payload: unknown,
+  params: {
+    gptId: string;
+    sourceEndpoint: string;
+    requestedAction?: string | null;
+  }
+): unknown {
+  if (!isRecord(payload)) {
+    return payload;
+  }
+
+  return {
+    ...payload,
+    [INTERNAL_GPT_ID_FIELD]: params.gptId,
+    [INTERNAL_SOURCE_ENDPOINT_FIELD]: params.sourceEndpoint,
+    ...(params.requestedAction
+      ? { [INTERNAL_REQUESTED_ACTION_FIELD]: params.requestedAction }
+      : {})
+  };
 }
 
 function sanitizePromptDebugExecutorPayload(value: unknown): unknown {
@@ -999,28 +1043,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     requestedAction: rawRequestedAction ?? null,
   });
   if (writePlaneClassification.plane !== "writing") {
-    const controlError =
-      writePlaneClassification.plane === "reject"
-        ? {
-            code: writePlaneClassification.errorCode,
-            message: writePlaneClassification.message,
-            details: {
-              canonical: writePlaneClassification.canonical,
-              reason: writePlaneClassification.reason,
-              kind: writePlaneClassification.kind,
-            },
-          }
-        : {
-            code: "WRITING_PLANE_ONLY",
-            message:
-              "Control-plane requests must be handled by direct control handlers before entering the writing dispatcher.",
-            details: {
-              reason: writePlaneClassification.reason,
-              kind: writePlaneClassification.kind,
-            },
-          };
-
-    logger?.warn?.("gpt.dispatch.write_guard_rejected", {
+    logger?.warn?.("gpt.dispatch.write_guard.deferred_to_trinity", {
       requestId,
       gptId: trimmedGptId,
       endpoint: requestEndpoint,
@@ -1029,62 +1052,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       kind: writePlaneClassification.kind,
       reason: writePlaneClassification.reason,
     });
-    if (writePlaneClassification.kind === "mcp_control") {
-      logger?.error?.("gpt.dispatch.write_guard.mcp_violation", {
-        requestId,
-        gptId: trimmedGptId,
-        endpoint: requestEndpoint,
-        action: writePlaneClassification.action,
-        plane: writePlaneClassification.plane,
-        kind: writePlaneClassification.kind,
-        reason: writePlaneClassification.reason,
-      });
-    }
-    if (writePlaneClassification.kind === "dag_control") {
-      logger?.error?.("gpt.dispatch.write_guard.dag_violation", {
-        requestId,
-        gptId: trimmedGptId,
-        endpoint: requestEndpoint,
-        action: writePlaneClassification.action,
-        plane: writePlaneClassification.plane,
-        kind: writePlaneClassification.kind,
-        reason: writePlaneClassification.reason,
-      });
-    }
-    recordDispatcherMisroute({
-      gptId: trimmedGptId,
-      module: "write-guard",
-      reason: writePlaneClassification.reason,
-    });
-    recordDispatcherRoute({
-      gptId: trimmedGptId,
-      module: "write-guard",
-      route: "write_guard",
-      handler: "write-guard",
-      outcome: "rejected",
-    });
-    recordDispatchPromptDebugTrace(promptDebugRequestId, "fallback", {
-      traceId: request?.traceId ?? null,
-      endpoint: requestEndpoint ?? "/gpt/:gptId",
-      method: request?.method ?? null,
-      rawPrompt,
-      normalizedPrompt,
-      selectedRoute: "write_guard",
-      selectedModule: "write-guard",
-      fallbackPathUsed: "write-guard",
-      fallbackReason: controlError.message,
-    }, suppressPromptDebugTrace);
-    return {
-      ok: false,
-      error: controlError,
-      _route: {
-        ...baseRoute,
-        action: writePlaneClassification.action,
-        route: "write_guard",
-      },
-    };
   }
-  assertWritingPlaneClassification(writePlaneClassification);
 
   logger?.info?.("gpt.write.entry", {
     requestId,
@@ -1146,13 +1114,21 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     forcedDirectRoute: forceDirectModuleRouting,
     bypassIntentRouting: bypassIntentRouting === true,
   });
-  const payload = preDispatchPayload;
+  const dispatchSourceEndpoint = resolveDispatchSourceEndpoint(body, requestEndpoint);
+  const payload = enrichWritingDispatchPayload(preDispatchPayload, {
+    gptId: trimmedGptId,
+    sourceEndpoint: dispatchSourceEndpoint,
+    requestedAction: rawRequestedAction ?? writePlaneClassification.action
+  });
   const prompt = extractPrompt(payload);
   const requestedMode = extractMode(body, payload);
   let activeEntry = entry;
   let moduleMetadata = getModuleMetadata(activeEntry.module);
   let availableActions = moduleMetadata?.actions ?? [];
   let requestedAction = resolveRequestedActionAlias(rawRequestedAction, availableActions);
+  if (writePlaneClassification.plane !== 'writing' && activeEntry.module === 'ARCANOS:CORE') {
+    requestedAction = 'query';
+  }
 
   //audit Assumption: gameplay generation must be explicit and never inferred from a GPT binding alone; failure risk: minimal or context-free prompts fall into the gaming simulation pipeline; expected invariant: ARCANOS:GAMING executes only when callers send `mode:"gameplay"`; handling strategy: fail closed before memory, repo inspection, HRC, and module dispatch.
   if (activeEntry.module === "ARCANOS:GAMING" && requestedMode !== "gameplay") {
@@ -1688,6 +1664,53 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         timeoutSource,
         durationMs: Date.now() - dispatchStartedAt,
       });
+      }
+
+      if (err instanceof TrinityControlLeakError) {
+        recordDispatcherMisroute({
+          gptId: trimmedGptId,
+          module: activeEntry.module,
+          reason: err.classification.reason,
+        });
+        recordDispatcherRoute({
+          gptId: trimmedGptId,
+          module: activeEntry.module,
+          route: activeEntry.route,
+          handler: 'trinity-control-guard',
+          outcome: 'rejected',
+        });
+        recordDispatchPromptDebugTrace(promptDebugRequestId, 'fallback', {
+          traceId: request?.traceId ?? null,
+          endpoint: requestEndpoint ?? '/gpt/:gptId',
+          method: request?.method ?? null,
+          rawPrompt,
+          normalizedPrompt,
+          selectedRoute: activeEntry.route,
+          selectedModule: activeEntry.module,
+          fallbackPathUsed: 'trinity-control-guard',
+          fallbackReason: err.message,
+        }, suppressPromptDebugTrace);
+        return {
+          ok: false,
+          error: {
+            code: err.classification.errorCode,
+            message: err.message,
+            details: {
+              canonical: err.classification.canonical,
+              reason: err.classification.reason,
+              kind: err.classification.kind,
+            },
+          },
+          _route: {
+            ...baseRoute,
+            module: activeEntry.module,
+            action,
+            matchMethod,
+            route: 'trinity_control_guard',
+            availableActions,
+            moduleVersion: (moduleMetadata as any)?.version ?? null,
+          },
+        };
       }
 
       if (isDispatchCancellation) {

@@ -56,9 +56,9 @@ router.post(
   '/api/reusables',
   createValidationMiddleware(reusableCodeRequestSchema),
   asyncHandler(async (req: Request, res: Response) => {
-    const { adapter } = getOpenAIClientOrAdapter();
-    if (!adapter) {
-      sendCodegenServiceUnavailable(res, 'adapter');
+    const { client } = getOpenAIClientOrAdapter();
+    if (!client) {
+      sendCodegenServiceUnavailable(res, 'client');
       return;
     }
 
@@ -67,7 +67,7 @@ router.post(
     const includeDocs = requestBody.includeDocs ?? true;
     const language = requestBody.language ?? 'typescript';
 
-    const result = await generateReusableCodeSnippets(adapter, {
+    const result = await generateReusableCodeSnippets(client, {
       target: target as ReusableCodeTarget,
       includeDocs,
       language
@@ -76,7 +76,8 @@ router.post(
     res.json({
       success: true,
       model: result.model,
-      snippets: result.snippets
+      snippets: result.snippets,
+      meta: result.meta
     });
   })
 );

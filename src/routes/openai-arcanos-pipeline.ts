@@ -13,10 +13,22 @@ router.post('/arcanos-pipeline', async (req: Request, res: Response) => {
     const pipelineResult = await executeArcanosPipeline(messages);
 
     if (pipelineResult.fallback) {
-      return res.json({ result: pipelineResult.result, fallback: true });
+      return res.json({
+        result: pipelineResult.result,
+        fallback: true,
+        meta: pipelineResult.meta,
+        activeModel: pipelineResult.activeModel,
+        routingStages: pipelineResult.routingStages
+      });
     }
 
-    res.json({ result: pipelineResult.result, stages: pipelineResult.stages });
+    res.json({
+      result: pipelineResult.result,
+      stages: pipelineResult.stages,
+      meta: pipelineResult.meta,
+      activeModel: pipelineResult.activeModel,
+      routingStages: pipelineResult.routingStages
+    });
   } catch (err: unknown) {
     //audit Assumption: pipeline errors should return 500
     console.error('Pipeline error:', resolveErrorMessage(err));

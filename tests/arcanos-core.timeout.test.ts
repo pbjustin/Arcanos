@@ -18,7 +18,17 @@ const getRequestAbortContextMock = jest.fn(() => null);
 const isAbortErrorMock = jest.fn((error: unknown) => error instanceof Error && error.name === 'AbortError');
 
 jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({
-  runTrinityWritingPipeline: runTrinityWritingPipelineMock
+  runTrinityWritingPipeline: runTrinityWritingPipelineMock,
+  applyTrinityGenerationInvariant: (result: any, params: any) => ({
+    ...result,
+    meta: {
+      ...(result.meta ?? {}),
+      pipeline: 'trinity',
+      bypass: false,
+      sourceEndpoint: params.sourceEndpoint,
+      classification: 'writing'
+    }
+  })
 }));
 
 jest.unstable_mockModule('@platform/resilience/runtimeBudget.js', () => ({
@@ -206,14 +216,16 @@ describe('runArcanosCoreQuery timeout clamp', () => {
     expect(createRuntimeBudgetWithLimitMock).toHaveBeenNthCalledWith(1, 3000, 250);
     expect(createRuntimeBudgetWithLimitMock).toHaveBeenNthCalledWith(2, 2000, 250);
     expect(runTrinityWritingPipelineMock).toHaveBeenCalledWith({
-      input: {
+      input: expect.objectContaining({
         prompt: 'Summarize the service health quickly.',
         sessionId: undefined,
         overrideAuditSafe: undefined,
         sourceEndpoint: 'api-arcanos.ask.degraded',
+        moduleId: 'ARCANOS:CORE',
+        executionMode: 'request',
         body: { prompt: 'Summarize the service health quickly.' }
-      },
-      context: {
+      }),
+      context: expect.objectContaining({
         client: {} as never,
         requestId: 'req-core-timeout-1',
         runtimeBudget: expect.objectContaining({
@@ -227,7 +239,7 @@ describe('runArcanosCoreQuery timeout clamp', () => {
           strictUserVisibleOutput: true,
           directAnswerModelOverride: 'gpt-4.1-mini'
         })
-      }
+      })
     });
     expect(result).toEqual(expect.objectContaining({
       timeoutKind: 'pipeline_timeout',

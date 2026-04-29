@@ -1,4 +1,7 @@
 import type OpenAI from 'openai';
+import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
+import { getOpenAIClientOrAdapter } from '@services/openai/clientBridge.js';
+import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { createCentralizedCompletion } from "@services/openai.js";
 import { generateRequestId } from "@shared/idGenerator.js";
 import type { ModuleDef } from './moduleLoader.js';
@@ -113,14 +116,8 @@ function isStreamingCompletionResult(
   return !!response && typeof response === 'object' && Symbol.asyncIterator in response;
 }
 
-function isChatCompletionResult(
-  response: CentralizedCompletionResult
-): response is OpenAI.Chat.Completions.ChatCompletion {
-  return !!response && typeof response === 'object' && 'choices' in response;
-}
-
 /**
- * Execute one simulation request using the centralized OpenAI routing layer.
+ * Execute one simulation request using the Trinity generation facade.
  * Inputs/Outputs: simulation payload -> completed result payload or streaming result descriptor.
  * Edge cases: accepts prompt-style aliases when `scenario` is absent and throws explicit validation errors for malformed payloads.
  */
@@ -151,22 +148,28 @@ export async function executeSimulationRequest(
     };
   }
 
-  const response = await createCentralizedCompletion(
-    [
-      {
-        role: 'user',
-        content: buildSimulationPrompt(scenario, context)
-      }
-    ],
-    {
-      temperature: parameters.temperature,
-      max_tokens: parameters.maxTokens,
-      stream: parameters.stream
-    }
-  );
+  const prompt = buildSimulationPrompt(scenario, context);
 
-  //audit Assumption: streaming callers expect an async-iterable completion result when `stream` is true; failure risk: route emits malformed SSE or hangs on non-stream responses; expected invariant: stream mode returns an async iterable; handling strategy: validate and fail loudly when provider response shape mismatches.
+  const { client } = getOpenAIClientOrAdapter();
+  if (!client) {
+    throw new Error('OpenAI client unavailable for Trinity simulation.');
+  }
+
   if (parameters.stream) {
+    const response = await createCentralizedCompletion(
+      [
+        {
+          role: 'user',
+          content: prompt
+        }
+      ],
+      {
+        temperature: parameters.temperature,
+        max_tokens: parameters.maxTokens,
+        stream: true
+      }
+    );
+
     if (!isStreamingCompletionResult(response)) {
       throw new Error('Simulation stream requested but provider returned a non-stream response.');
     }
@@ -179,19 +182,34 @@ export async function executeSimulationRequest(
     };
   }
 
-  //audit Assumption: non-stream requests should resolve to a chat completion payload; failure risk: unexpected SDK shape leaks into HTTP response formatting; expected invariant: completed simulation requests expose `choices`; handling strategy: validate the response shape before reading content.
-  if (!isChatCompletionResult(response)) {
-    throw new Error('Simulation completion returned an unexpected payload.');
-  }
+  const response = await runTrinityWritingPipeline({
+    input: {
+      prompt,
+      moduleId: 'ARCANOS:SIM',
+      sourceEndpoint: 'arcanos-sim',
+      requestedAction: 'run',
+      body: normalizedPayload,
+      tokenLimit: parameters.maxTokens,
+      executionMode: 'request'
+    },
+    context: {
+      client,
+      runtimeBudget: createRuntimeBudget(),
+      runOptions: {
+        answerMode: 'direct',
+        strictUserVisibleOutput: true
+      }
+    }
+  });
 
   return {
     mode: 'complete',
     scenario,
-    result: response.choices[0]?.message?.content || '',
+    result: response.result,
     metadata: {
       ...metadata,
-      model: response.model,
-      tokensUsed: response.usage?.total_tokens || 0
+      model: response.activeModel,
+      tokensUsed: response.meta.tokens?.total_tokens || 0
     }
   };
 }

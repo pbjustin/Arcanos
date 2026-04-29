@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 const callOpenAIMock = jest.fn();
+const runTrinityWritingPipelineMock = jest.fn();
 const validateAIRequestMock = jest.fn();
 const handleAIErrorMock = jest.fn();
 
@@ -26,6 +27,10 @@ jest.unstable_mockModule('@transport/http/requestHandler.js', () => ({
   validateAIRequest: validateAIRequestMock,
   handleAIError: handleAIErrorMock,
   classifyBudgetAbortKind: () => null,
+}));
+
+jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({
+  runTrinityWritingPipeline: runTrinityWritingPipelineMock,
 }));
 
 jest.unstable_mockModule('@services/openai/promptRouteMitigation.js', () => ({
@@ -87,6 +92,9 @@ jest.unstable_mockModule('@platform/runtime/env.js', () => ({
 }));
 
 jest.unstable_mockModule('@arcanos/runtime', () => ({
+  OpenAIAbortError: class OpenAIAbortError extends Error {},
+  createAbortError: jest.fn((message: string) => new Error(message)),
+  isAbortError: jest.fn((error: unknown) => error instanceof Error && /abort/i.test(error.message)),
   runWithRequestAbortTimeout: async (_options: unknown, operation: () => Promise<unknown>) => operation(),
   getRequestAbortSignal: () => undefined,
 }));
@@ -127,9 +135,25 @@ describe('prompt debug routes', () => {
         prompt: 'verify in production on the live backend runtime that is currently active',
       },
     });
-    callOpenAIMock.mockResolvedValue({
-      output: 'Observed a response.',
-      model: 'gpt-5',
+    runTrinityWritingPipelineMock.mockResolvedValue({
+      result: 'Observed a response.',
+      activeModel: 'gpt-5',
+      fallbackFlag: false,
+      routingStages: ['TRINITY'],
+      auditSafe: { mode: 'true', passed: true, flags: [] },
+      taskLineage: [],
+      fallbackSummary: {
+        intakeFallbackUsed: false,
+        gpt5FallbackUsed: false,
+        finalFallbackUsed: false,
+        fallbackReasons: [],
+      },
+      meta: {
+        pipeline: 'trinity',
+        bypass: false,
+        sourceEndpoint: '/api/openai/prompt',
+        classification: 'writing',
+      },
     });
   });
 
@@ -167,7 +191,7 @@ describe('prompt debug routes', () => {
       preservedConstraints: ['live backend', 'runtime', 'currently active', 'verify in production'],
       droppedConstraints: [],
       finalExecutorPayload: expect.objectContaining({
-        executor: 'callOpenAI',
+        executor: 'runTrinityWritingPipeline',
         model: 'gpt-5',
       }),
       responseReturned: expect.objectContaining({

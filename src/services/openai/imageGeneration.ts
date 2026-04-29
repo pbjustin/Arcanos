@@ -1,6 +1,5 @@
 import crypto from 'crypto';
 import { getOpenAIClientOrAdapter } from './clientBridge.js';
-import { callOpenAI } from './chatFlow/index.js';
 import { generateMockResponse } from './mock.js';
 import { logOpenAIEvent } from "@platform/logging/openaiLogger.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
@@ -9,14 +8,46 @@ import { OPENAI_LOG_MESSAGES } from "@platform/runtime/openaiLogMessages.js";
 import { DEFAULT_IMAGE_SIZE, IMAGE_GENERATION_MODEL } from './config.js';
 import type { ImageSize } from './types.js';
 import { buildImageRequest } from './requestBuilders/index.js';
-import { getDefaultModel } from './credentialProvider.js';
 import { IMAGE_PROMPT_TOKEN_LIMIT } from "./constants.js";
 
 const buildEnhancedImagePrompt = async (input: string): Promise<string> => {
   try {
-    const { output } = await callOpenAI(getDefaultModel(), input, IMAGE_PROMPT_TOKEN_LIMIT, false);
-    if (hasContent(output)) {
-      return output.trim();
+    const { client } = getOpenAIClientOrAdapter();
+    if (!client) {
+      return input;
+    }
+
+    const [{ runTrinityWritingPipeline }, { createRuntimeBudget }] = await Promise.all([
+      import('@core/logic/trinityWritingPipeline.js'),
+      import('@platform/resilience/runtimeBudget.js')
+    ]);
+
+    const response = await runTrinityWritingPipeline({
+      input: {
+        prompt: input,
+        moduleId: 'IMAGE_PROMPT',
+        sourceEndpoint: 'openai.imageGeneration.promptEnhancement',
+        requestedAction: 'query',
+        body: {
+          prompt: input,
+          purpose: 'image_prompt_enhancement'
+        },
+        maxOutputTokens: IMAGE_PROMPT_TOKEN_LIMIT,
+        executionMode: 'request'
+      },
+      context: {
+        client,
+        runtimeBudget: createRuntimeBudget(),
+        runOptions: {
+          answerMode: 'direct',
+          strictUserVisibleOutput: true,
+          requestedVerbosity: 'minimal'
+        }
+      }
+    });
+
+    if (hasContent(response.result)) {
+      return response.result.trim();
     }
   } catch (err) {
     logOpenAIEvent('error', OPENAI_LOG_MESSAGES.IMAGE.PROMPT_GENERATION_ERROR, undefined, err as Error);
