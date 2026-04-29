@@ -89,6 +89,113 @@ describe('DatabaseBackedDagJobQueue', () => {
     expect(jobInput.waitingTimeoutMs).toBe(DEFAULT_DAG_NODE_TIMEOUT_MS);
   });
 
+  it('enqueues DAG node jobs through the shared job table with a schema-safe payload', async () => {
+    const queue = new DatabaseBackedDagJobQueue('dag-orchestrator-test');
+    planAutonomousWorkerJobMock.mockResolvedValue({
+      status: 'pending',
+      retryCount: 1,
+      maxRetries: 3,
+      priority: 42,
+      autonomyState: {
+        planner: {
+          reasons: ['test-plan']
+        }
+      },
+      planningReasons: ['test-plan']
+    });
+    createJobMock.mockImplementation(async (workerId, jobType, input, createOptions) => ({
+      ...buildJobRow({
+        id: 'job-created-dag-node',
+        worker_id: workerId,
+        job_type: jobType,
+        status: 'pending',
+        input,
+        retry_count: input.attempt,
+        max_retries: input.maxRetries,
+        priority: createOptions.priority,
+        created_at: new Date('2026-03-07T16:00:00.000Z'),
+        updated_at: new Date('2026-03-07T16:00:00.000Z')
+      }),
+      last_worker_id: null
+    }));
+
+    const record = await queue.enqueueDagNodeJob({
+      dagId: 'dag-create-1',
+      node: {
+        id: 'planner',
+        type: 'agent',
+        dependencies: [],
+        executionKey: 'planner',
+        metadata: {
+          role: 'plan'
+        },
+        execute: async () => {
+          throw new Error('not used by queue creation');
+        }
+      },
+      payload: {
+        goal: 'Plan the Trinity DAG execution.'
+      },
+      sharedState: {
+        sessionId: 'session-1'
+      },
+      depth: 0,
+      attempt: 1,
+      maxRetries: 3,
+      waitingTimeoutMs: 90_000,
+      workerId: 'dag-worker-1'
+    });
+
+    expect(planAutonomousWorkerJobMock).toHaveBeenCalledWith(
+      'dag-node',
+      expect.objectContaining({
+        dagId: 'dag-create-1',
+        node: expect.objectContaining({
+          id: 'planner',
+          executionKey: 'planner'
+        }),
+        payload: {
+          goal: 'Plan the Trinity DAG execution.'
+        },
+        sharedState: {
+          sessionId: 'session-1'
+        },
+        attempt: 1,
+        maxRetries: 3,
+        waitingTimeoutMs: 90_000
+      }),
+      { maxRetries: 0 }
+    );
+    const persistedInput = createJobMock.mock.calls[0]?.[2];
+    expect(persistedInput.node).not.toHaveProperty('execute');
+    expect(createJobMock).toHaveBeenCalledWith(
+      'dag-worker-1',
+      'dag-node',
+      persistedInput,
+      expect.objectContaining({
+        maxRetries: 0,
+        priority: 42,
+        planningReasons: ['test-plan']
+      })
+    );
+    expect(record).toMatchObject({
+      jobId: 'job-created-dag-node',
+      dagId: 'dag-create-1',
+      nodeId: 'planner',
+      status: 'queued',
+      workerId: 'dag-worker-1',
+      retries: 1,
+      maxRetries: 3,
+      waitingTimeoutMs: 90_000,
+      payload: {
+        goal: 'Plan the Trinity DAG execution.'
+      },
+      sharedState: {
+        sessionId: 'session-1'
+      }
+    });
+  });
+
   it('times out queued jobs using queue wait plus claim grace instead of immediate wall-clock failure', async () => {
     const queue = new DatabaseBackedDagJobQueue();
     const createdAt = new Date(

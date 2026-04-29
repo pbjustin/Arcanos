@@ -49,6 +49,7 @@ import {
 } from './jobRunnerRuntime.js';
 import { createDagNodeRunPromptBridge } from './dagNodePromptBridge.js';
 import { runWorkerTrinityPrompt } from './trinityWorkerPipeline.js';
+import { isTrinityDagGptAccessEnabled } from '@services/trinity/adapter.js';
 import { sleep } from '@shared/sleep.js';
 import {
   recordGptJobEvent,
@@ -495,7 +496,8 @@ async function executeQueuedPrompt(
  */
 async function executeQueuedDagNode(
   openai: ReturnType<typeof initOpenAIClient>,
-  rawInput: unknown
+  rawInput: unknown,
+  cancellationSignal?: AbortSignal
 ): Promise<JobExecutionOutcome> {
   const parsedDagJobInput = parseDagNodeJobInput(rawInput ?? {});
 
@@ -511,7 +513,11 @@ async function executeQueuedDagNode(
 
   const dagResult = await runDagNodeJob(parsedDagJobInput.value, {
     runPrompt: createDagNodeRunPromptBridge(openai, {
-      runWorkerPrompt: runWorkerTrinityPrompt
+      runWorkerPrompt: runWorkerTrinityPrompt,
+      useGptAccess: isTrinityDagGptAccessEnabled(),
+      gptAccessConfig: {
+        abortSignal: cancellationSignal
+      }
     })
   });
 
@@ -1073,7 +1079,7 @@ async function runWorkerConsumerSlot(
             return executeQueuedPrompt(openai, job.input ?? {});
           }
           if (job.job_type === 'dag-node') {
-            return executeQueuedDagNode(openai, job.input ?? {});
+            return executeQueuedDagNode(openai, job.input ?? {}, workerProcessShutdownController.signal);
           }
           if (job.job_type === 'gpt') {
             return executeQueuedGptRequest({

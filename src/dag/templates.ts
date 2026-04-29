@@ -10,6 +10,8 @@ export interface DagTemplateNodeMetadata {
   parentNodeId: string | null;
   agentRole: AgentRole;
   jobType: JobType;
+  pipeline: 'trinity';
+  pipelineTemplate: typeof TRINITY_CORE_DAG_TEMPLATE_NAME;
 }
 
 export interface DagTemplateDefinition {
@@ -145,27 +147,37 @@ export function buildDagTemplate(request: CreateDagRunRequest): DagTemplateDefin
     planner: {
       parentNodeId: null,
       agentRole: 'planner',
-      jobType: 'plan'
+      jobType: 'plan',
+      pipeline: 'trinity',
+      pipelineTemplate: TRINITY_CORE_DAG_TEMPLATE_NAME
     },
     research: {
       parentNodeId: 'planner',
       agentRole: 'research',
-      jobType: 'search'
+      jobType: 'search',
+      pipeline: 'trinity',
+      pipelineTemplate: TRINITY_CORE_DAG_TEMPLATE_NAME
     },
     build: {
       parentNodeId: 'planner',
       agentRole: 'build',
-      jobType: 'execute'
+      jobType: 'execute',
+      pipeline: 'trinity',
+      pipelineTemplate: TRINITY_CORE_DAG_TEMPLATE_NAME
     },
     audit: {
       parentNodeId: 'planner',
       agentRole: 'audit',
-      jobType: 'verify'
+      jobType: 'verify',
+      pipeline: 'trinity',
+      pipelineTemplate: TRINITY_CORE_DAG_TEMPLATE_NAME
     },
     writer: {
       parentNodeId: 'planner',
       agentRole: 'writer',
-      jobType: 'synthesize'
+      jobType: 'synthesize',
+      pipeline: 'trinity',
+      pipelineTemplate: TRINITY_CORE_DAG_TEMPLATE_NAME
     }
   };
 

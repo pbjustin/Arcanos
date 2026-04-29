@@ -38,6 +38,7 @@ const MAX_AI_JOB_INPUT_JSON_LENGTH = 12000;
 const DEFAULT_AI_JOB_OUTPUT_TOKENS = 2048;
 const MAX_AI_JOB_OUTPUT_TOKENS = 4096;
 const MAX_AI_JOB_WORDS = 2000;
+const GPT_ACCESS_JOB_CREATE_ENDPOINT = '/gpt-access/jobs/create';
 const GPT_ACCESS_JOB_RESULT_ENDPOINT = '/gpt-access/jobs/result';
 const MAX_CREATE_AI_JOB_VALIDATION_DEPTH = 64;
 export const GPT_ACCESS_SUPPRESS_PROMPT_DEBUG_TRACE_FLAG = '__arcanosSuppressPromptDebugTrace';
@@ -143,6 +144,13 @@ export interface CreateGptAccessAiJobContext {
   requestId?: string;
   traceId?: string;
   idempotencyKey?: string | null;
+  logger?: GptAccessLogger;
+}
+
+export interface GptAccessJobResultContext {
+  actorKey: string;
+  requestId?: string;
+  traceId?: string;
   logger?: GptAccessLogger;
 }
 
@@ -529,6 +537,21 @@ function readOptionalString(params: Record<string, unknown>, key: string, fallba
   return value.trim().slice(0, 200);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isGptAccessCreatedJob(job: Awaited<ReturnType<typeof getJobById>>): boolean {
+  if (!job || job.job_type !== 'gpt' || !isRecord(job.input)) {
+    return false;
+  }
+
+  return (
+    job.input.requestPath === GPT_ACCESS_JOB_CREATE_ENDPOINT &&
+    job.input.executionModeReason === 'gpt_access_create_ai_job'
+  );
+}
+
 function readOptionalUuid(params: Record<string, unknown>, key: string): string {
   const value = params[key];
   if (typeof value === 'string' && UUID_PATTERN.test(value.trim())) {
@@ -768,7 +791,7 @@ export async function querySanitizedBackendLogs(input: z.infer<typeof logsQueryS
   };
 }
 
-export async function getGptAccessJobResult(body: unknown) {
+export async function getGptAccessJobResult(body: unknown, context?: GptAccessJobResultContext) {
   const parsed = jobResultRequestSchema.safeParse(body);
   if (!parsed.success) {
     return {
@@ -783,13 +806,56 @@ export async function getGptAccessJobResult(body: unknown) {
     };
   }
 
-  const job = await getJobById(parsed.data.jobId);
+  const traceId =
+    parsed.data.traceId ??
+    (typeof context?.traceId === 'string' && context.traceId.trim().length > 0
+      ? context.traceId.trim()
+      : null);
+
+  if (!isDatabaseConnected()) {
+    return {
+      statusCode: 503,
+      payload: {
+        ok: false,
+        traceId,
+        error: {
+          code: 'GPT_ACCESS_JOBS_UNAVAILABLE',
+          message: 'Durable GPT job persistence is unavailable.'
+        }
+      }
+    };
+  }
+
+  let job: Awaited<ReturnType<typeof getJobById>>;
+  try {
+    job = await getJobById(parsed.data.jobId);
+  } catch (error: unknown) {
+    context?.logger?.error?.('gpt_access.job_result.failed', {
+      traceId,
+      requestType: 'getJobResult',
+      status: 'jobs_unavailable',
+      errorType: error instanceof Error ? error.name : 'unknown'
+    });
+    return {
+      statusCode: 503,
+      payload: {
+        ok: false,
+        traceId,
+        error: {
+          code: 'GPT_ACCESS_JOBS_UNAVAILABLE',
+          message: 'Durable GPT job persistence is unavailable.'
+        }
+      }
+    };
+  }
+
+  const gatewayJob = isGptAccessCreatedJob(job) ? job : null;
   return {
     statusCode: 200,
     payload: sanitizeGptAccessPayload({
       ok: true,
-      traceId: parsed.data.traceId ?? null,
-      ...buildGptJobResultLookupPayload(parsed.data.jobId, job)
+      traceId,
+      ...buildGptJobResultLookupPayload(parsed.data.jobId, gatewayJob)
     })
   };
 }
@@ -921,7 +987,7 @@ export async function createGptAccessAiJob(body: unknown, context: CreateGptAcce
     bypassIntentRouting: true,
     requestId: context.requestId ?? traceId,
     routeHint: GPT_QUERY_ACTION,
-    requestPath: '/gpt-access/jobs/create',
+    requestPath: GPT_ACCESS_JOB_CREATE_ENDPOINT,
     executionModeReason: 'gpt_access_create_ai_job'
   });
 
