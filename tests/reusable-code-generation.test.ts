@@ -127,6 +127,33 @@ describe('reusable code generation', () => {
     ]);
   });
 
+  it('falls back to deterministic snippets after invalid primary and repair outputs', async () => {
+    const client = { responses: { create: jest.fn() } } as any;
+    runTrinityWritingPipelineMock
+      .mockResolvedValueOnce({
+        result: 'I cannot verify external state.',
+        activeModel: 'trinity-model',
+      })
+      .mockResolvedValueOnce({
+        result: 'Still not JSON.',
+        activeModel: 'repair-model',
+      });
+
+    const result = await generateReusableCodeSnippets(
+      client,
+      { target: 'idGenerator', includeDocs: false, language: 'typescript' }
+    );
+
+    expect(runTrinityWritingPipelineMock).toHaveBeenCalledTimes(2);
+    expect(result.model).toBe('repair-model:deterministic-json-fallback');
+    expect(result.snippets).toHaveLength(1);
+    expect(result.snippets[0]).toEqual(expect.objectContaining({
+      name: 'idGenerator',
+      language: 'typescript',
+    }));
+    expect(result.raw).toContain('"snippets"');
+  });
+
   it('keeps explicit schema parsing for raw JSON helper usage', () => {
     const parsed = parseReusableCodeResponse(
       '{"snippets":[{"name":"idGenerator","description":"IDs","language":"typescript","code":"export const id=() => 1;"}]}'

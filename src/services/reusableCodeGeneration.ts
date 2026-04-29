@@ -72,7 +72,7 @@ export function buildReusableCodePrompt(request: ReusableCodeGenerationRequest):
     `Generate ${language} code for these reusable utilities: ${targetList}.`,
     'Return JSON only with shape:',
     '{"snippets":[{"name":"","description":"","language":"","code":""}]}',
-    'Each snippet must be complete, runnable, and Railway-ready (no hardcoded ports, use envs).',
+    'Each snippet must be complete, runnable TypeScript with no hardcoded ports; use environment variables where a value is environment-specific.',
     'Include //audit comments on conditionals, error handling, security checks, and data transforms.',
     includeDocs
       ? 'Add JSDoc for every public function: purpose, inputs/outputs, edge cases.'
@@ -109,6 +109,77 @@ function buildReusableCodeRepairPrompt(request: ReusableCodeGenerationRequest, i
     'Invalid prior output:',
     invalidPreview
   ].join('\n\n');
+}
+
+function buildDeterministicReusableCodeSnippets(
+  request: ReusableCodeGenerationRequest
+): ReusableCodeSnippet[] {
+  const language = request.language ?? 'typescript';
+  const includeDocs = request.includeDocs ?? true;
+  const snippets: Record<ReusableCodeTarget, ReusableCodeSnippet> = {
+    asyncHandler: {
+      name: 'asyncHandler',
+      description: 'Wrap Express async route handlers and forward rejected promises to next().',
+      language,
+      code: [
+        includeDocs
+          ? '/** Wraps an async Express handler so rejected promises reach the error middleware. */'
+          : '',
+        'export function asyncHandler<TReq, TRes, TNext extends (error?: unknown) => void>(',
+        '  handler: (req: TReq, res: TRes, next: TNext) => Promise<unknown>',
+        ') {',
+        '  return (req: TReq, res: TRes, next: TNext): void => {',
+        '    //audit Assumption: the framework owns final error serialization; invariant: async failures are never dropped.',
+        '    Promise.resolve(handler(req, res, next)).catch(next);',
+        '  };',
+        '}'
+      ].filter(Boolean).join('\n')
+    },
+    errorResponse: {
+      name: 'errorResponse',
+      description: 'Build a stable JSON error envelope for HTTP responses.',
+      language,
+      code: [
+        includeDocs
+          ? '/** Builds a deterministic, client-safe error response body. */'
+          : '',
+        'export function errorResponse(code: string, message: string, details?: unknown) {',
+        '  //audit Assumption: callers pass already-redacted details; invariant: error shape is stable for clients.',
+        '  return {',
+        '    ok: false,',
+        '    error: {',
+        '      code,',
+        '      message,',
+        '      ...(details === undefined ? {} : { details })',
+        '    }',
+        '  };',
+        '}'
+      ].filter(Boolean).join('\n')
+    },
+    idGenerator: {
+      name: 'idGenerator',
+      description: 'Generate sortable, prefixed IDs without relying on external services.',
+      language,
+      code: [
+        includeDocs
+          ? '/** Generates a prefixed, time-sortable identifier for logs and records. */'
+          : '',
+        'export function idGenerator(prefix = "id"): string {',
+        '  //audit Assumption: crypto.randomUUID is available in supported Node runtimes; invariant: IDs are unique enough for request-scale records.',
+        '  const randomPart = crypto.randomUUID().replace(/-/g, "").slice(0, 12);',
+        '  return `${prefix}_${Date.now().toString(36)}_${randomPart}`;',
+        '}'
+      ].filter(Boolean).join('\n')
+    },
+    all: {
+      name: 'all',
+      description: 'Internal aggregate placeholder.',
+      language,
+      code: ''
+    }
+  };
+
+  return resolveReusableTargets(request.target).map((target) => snippets[target]);
 }
 
 /**
@@ -175,7 +246,13 @@ export async function generateReusableCodeSnippets(
     });
     raw = repairResult.result;
     model = repairResult.activeModel;
-    snippets = parseReusableCodeResponse(raw);
+    try {
+      snippets = parseReusableCodeResponse(raw);
+    } catch {
+      snippets = buildDeterministicReusableCodeSnippets(request);
+      raw = JSON.stringify({ snippets });
+      model = `${model}:deterministic-json-fallback`;
+    }
   }
 
   return {
