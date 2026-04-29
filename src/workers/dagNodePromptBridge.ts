@@ -1,6 +1,5 @@
 import type OpenAI from 'openai';
 
-import type { TrinityResult } from '@core/logic/trinity.js';
 import type { DagAgentPromptOptions } from '../agents/registry.js';
 import { routeDagNodeToGptAccess, type TrinityPipelineAdapterConfig } from '@services/trinity/adapter.js';
 import { runWorkerTrinityPrompt } from './trinityWorkerPipeline.js';
@@ -28,18 +27,18 @@ export interface DagNodePromptBridgeDependencies {
 export function createDagNodeRunPromptBridge(
   openaiClient: OpenAI,
   dependencies: DagNodePromptBridgeDependencies = {}
-): (prompt: string, options: DagAgentPromptOptions) => Promise<TrinityResult> {
+): (prompt: string, options: DagAgentPromptOptions) => Promise<unknown> {
   const activeRunWorkerPrompt = dependencies.runWorkerPrompt ?? runWorkerTrinityPrompt;
   const activeRouteViaGptAccess = dependencies.routeViaGptAccess ?? routeDagNodeToGptAccess;
 
-  return async (prompt: string, options: DagAgentPromptOptions): Promise<TrinityResult> => {
+  return async (prompt: string, options: DagAgentPromptOptions): Promise<unknown> => {
     const useGptAccess = dependencies.useGptAccess ?? false;
     if (useGptAccess) {
       return activeRouteViaGptAccess({
         prompt,
         options,
         config: dependencies.gptAccessConfig
-      }) as Promise<TrinityResult>;
+      });
     }
 
     const workerRequest = {

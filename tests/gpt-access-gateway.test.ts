@@ -84,8 +84,11 @@ const TEST_TOKEN = 'test-gpt-access-token';
 const COMPLETED_JOB_ID = '11111111-1111-4111-8111-111111111111';
 const CREATED_JOB_ID = '22222222-2222-4222-8222-222222222222';
 
-function buildApp() {
+function buildApp(options: { trustProxy?: boolean } = {}) {
   const app = express();
+  if (options.trustProxy) {
+    app.set('trust proxy', true);
+  }
   app.use(express.json());
   app.use('/', gptAccessRouter);
   return app;
@@ -1138,5 +1141,40 @@ describe('/gpt-access gateway', () => {
     expect(resolveGptRoutingMock).not.toHaveBeenCalled();
     expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  });
+
+  it('uses Express client IP semantics for GPT Access rate limiting behind trusted proxies', async () => {
+    const app = buildApp({ trustProxy: true });
+
+    for (let index = 0; index < 120; index += 1) {
+      await request(app)
+        .post('/gpt-access/jobs/create')
+        .set('Authorization', `Bearer invalid-token-${index}`)
+        .set('X-Forwarded-For', '203.0.113.240')
+        .send({
+          gptId: 'arcanos-core',
+          task: 'Generate a Codex IDE prompt.'
+        });
+    }
+
+    const sameClientResponse = await request(app)
+      .post('/gpt-access/jobs/create')
+      .set('Authorization', `Bearer ${'invalid-token-same-client'}`)
+      .set('X-Forwarded-For', '203.0.113.240')
+      .send({
+        gptId: 'arcanos-core',
+        task: 'Generate a Codex IDE prompt.'
+      });
+    const differentClientResponse = await request(app)
+      .post('/gpt-access/jobs/create')
+      .set('Authorization', `Bearer ${'invalid-token-different-client'}`)
+      .set('X-Forwarded-For', '203.0.113.241')
+      .send({
+        gptId: 'arcanos-core',
+        task: 'Generate a Codex IDE prompt.'
+      });
+
+    expect(sameClientResponse.status).toBe(429);
+    expect(differentClientResponse.status).toBe(401);
   });
 });

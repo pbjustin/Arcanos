@@ -26,16 +26,11 @@ import {
 const router = express.Router();
 
 function getGptAccessRateLimitActorKey(req: express.Request): string {
-  const socketAddress =
-    typeof req.socket?.remoteAddress === 'string' && req.socket.remoteAddress.trim().length > 0
-      ? req.socket.remoteAddress.trim()
-      : typeof req.connection?.remoteAddress === 'string' && req.connection.remoteAddress.trim().length > 0
-        ? req.connection.remoteAddress.trim()
-        : typeof req.ip === 'string' && req.ip.trim().length > 0
-          ? req.ip.trim()
-          : 'unknown';
+  const expressClientIp = typeof req.ip === 'string' && req.ip.trim().length > 0
+    ? req.ip.trim()
+    : null;
 
-  return `socket:${socketAddress}`;
+  return expressClientIp ? `ip:${expressClientIp}` : getRequestActorKey(req);
 }
 
 const gptAccessRateLimit = createRateLimitMiddleware({
