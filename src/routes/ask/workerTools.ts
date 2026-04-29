@@ -137,8 +137,12 @@ const workerControlToolDefinitions: FunctionToolDefinition[] = [
   }
 ];
 
+const modelSelectableWorkerControlToolDefinitions = workerControlToolDefinitions.filter(
+  toolDefinition => toolDefinition.name !== 'heal_worker_runtime'
+);
+
 const { chatCompletionTools: workerControlChatCompletionTools, responsesTools: workerControlResponsesTools } =
-  buildFunctionToolSet(workerControlToolDefinitions);
+  buildFunctionToolSet(modelSelectableWorkerControlToolDefinitions);
 
 const getWorkerJobArgsSchema = z.object({
   jobId: z.string().trim().min(1)
@@ -177,6 +181,10 @@ type WorkerControlToolName =
 
 interface DeterministicWorkerOperation extends DeterministicToolOperation<WorkerControlToolName> {}
 
+interface WorkerToolExecutionOptions {
+  allowPrivilegedMutation?: boolean;
+}
+
 const latestWorkerJobPattern =
   /\b(?:latest|recent|most recent)\b[^.!?\n]{0,40}\bjob\b|\bjob\b[^.!?\n]{0,40}\b(?:latest|recent|most recent)\b/i;
 const workerHealthPattern =
@@ -185,6 +193,8 @@ const workerStatusPattern =
   /\b(?:worker|workers|queue)\b[^.!?\n]{0,40}\bstatus\b|\bstatus\b[^.!?\n]{0,40}\b(?:worker|workers|queue)\b/i;
 const workerHealPattern =
   /\b(?:restart|heal|bootstrap)\b[^.!?\n]{0,40}\b(?:worker|workers|runtime)\b|\b(?:worker|workers|runtime)\b[^.!?\n]{0,40}\b(?:restart|heal|bootstrap)\b/i;
+const workerHealExplicitGatePattern =
+  /\b(?:confirm|confirmed|operator-approved|operator approved)\b[^.!?\n]{0,60}\b(?:restart|heal|bootstrap)\b[^.!?\n]{0,40}\b(?:worker|workers|runtime)\b|\b(?:restart|heal|bootstrap)\b[^.!?\n]{0,40}\b(?:worker|workers|runtime)\b[^.!?\n]{0,60}\b(?:confirm|confirmed|operator-approved|operator approved)\b/i;
 const workerJobIdPattern = /\bjob(?:\s+id)?\s*[:#]?\s*([0-9a-f]{8}[0-9a-f-]{0,})\b/i;
 const queueWorkerPromptPattern = /\b(?:queue|enqueue)(?:\s+(?:this|prompt|ask|job))?\s*:\s*(.+)$/is;
 const dispatchWorkerPromptPattern = /\b(?:dispatch|run directly|run now)(?:\s+(?:this|task|worker))?\s*:\s*(.+)$/is;
@@ -208,6 +218,10 @@ function looksLikeWorkerControlPrompt(prompt: string): boolean {
   ];
 
   return workerControlPatterns.some(pattern => pattern.test(normalizedPrompt));
+}
+
+function hasExplicitWorkerHealGate(prompt: string): boolean {
+  return workerHealExplicitGatePattern.test(prompt);
 }
 
 /**
@@ -304,7 +318,7 @@ function collectDeterministicWorkerOperations(prompt: string): DeterministicWork
   );
   appendUniqueDeterministicOperation(
     operations,
-    workerHealMatch?.index,
+    workerHealMatch && hasExplicitWorkerHealGate(prompt) ? workerHealMatch.index : undefined,
     'heal_worker_runtime',
     { force: true }
   );
@@ -363,7 +377,8 @@ function summarizeToolExecution(toolName: string, payload: Record<string, unknow
 
 async function executeWorkerTool(
   toolName: string,
-  rawArgs: string
+  rawArgs: string,
+  options: WorkerToolExecutionOptions = {}
 ): Promise<ToolExecutionResult> {
   switch (toolName) {
     case 'get_worker_health': {
@@ -432,6 +447,10 @@ async function executeWorkerTool(
       };
     }
     case 'heal_worker_runtime': {
+      if (!options.allowPrivilegedMutation) {
+        throw new Error('Worker runtime heal requires an explicit operator gate.');
+      }
+
       const parsedArgs = parseToolArgumentsWithSchema(rawArgs, healWorkerRuntimeArgsSchema, 'workerTools.heal_worker_runtime');
       const output = await healWorkerRuntime(parsedArgs.force, 'ask_tool');
       return {
@@ -467,7 +486,9 @@ export async function tryDispatchWorkerTools(
 
   const deterministicSummary = await executeDeterministicToolOperations(
     collectDeterministicWorkerOperations(prompt),
-    executeWorkerTool
+    (toolName, rawArgs) => executeWorkerTool(toolName, rawArgs, {
+      allowPrivilegedMutation: true
+    })
   );
   if (deterministicSummary) {
     return buildToolAskResponse('worker-tools', null, deterministicSummary, 'worker-tool');
@@ -481,7 +502,7 @@ export async function tryDispatchWorkerTools(
     responseIdPrefix: 'worker-tool',
     chatCompletionTools: workerControlChatCompletionTools,
     responsesTools: workerControlResponsesTools,
-    executeTool: executeWorkerTool,
+    executeTool: (toolName, rawArgs) => executeWorkerTool(toolName, rawArgs),
     maxOutputTokens: 512
   });
 }

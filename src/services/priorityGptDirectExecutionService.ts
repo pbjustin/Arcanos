@@ -16,7 +16,7 @@ import {
   resolveGptWaitTimeoutMs,
   resolvePriorityGptDirectExecutionConcurrency
 } from '@shared/gpt/priorityGpt.js';
-import { isAbortError } from '@arcanos/runtime';
+import { createAbortError, isAbortError } from '@arcanos/runtime';
 
 export interface PriorityGptDirectExecutionSlot {
   release: () => void;
@@ -132,17 +132,29 @@ async function executeReservedPriorityGptDirectExecution(params: {
   const parsedGptJobInput = parseQueuedGptJobInput(params.rawInput ?? {});
   const startedAtMs = Date.now();
   const leaseMs = Math.max(15_000, resolveGptWaitTimeoutMs() + 5_000);
+  const cancellationController = new AbortController();
   const heartbeatHandle = setInterval(() => {
     void recordJobHeartbeat(params.jobId, {
       workerId: params.workerId,
       leaseMs
-    }).catch((error: unknown) => {
-      logger.warn('gpt.priority_direct.heartbeat_failed', {
-        jobId: params.jobId,
-        workerId: params.workerId,
-        error: resolveErrorMessage(error)
+    })
+      .then((updatedJob) => {
+        if (
+          updatedJob?.cancel_requested_at &&
+          !cancellationController.signal.aborted
+        ) {
+          cancellationController.abort(
+            createAbortError(updatedJob.cancel_reason ?? 'GPT job cancellation requested.')
+          );
+        }
+      })
+      .catch((error: unknown) => {
+        logger.warn('gpt.priority_direct.heartbeat_failed', {
+          jobId: params.jobId,
+          workerId: params.workerId,
+          error: resolveErrorMessage(error)
+        });
       });
-    });
   }, DIRECT_HEARTBEAT_INTERVAL_MS);
 
   try {
@@ -214,8 +226,16 @@ async function executeReservedPriorityGptDirectExecution(params: {
       requestId,
       logger: routeLogger,
       bypassIntentRouting,
-      runtimeExecutionMode: 'background'
+      runtimeExecutionMode: 'background',
+      parentAbortSignal: cancellationController.signal
     });
+
+    if (cancellationController.signal.aborted) {
+      const reason = cancellationController.signal.reason;
+      throw reason instanceof Error
+        ? reason
+        : createAbortError('GPT job cancellation requested.');
+    }
 
     if (!envelope.ok) {
       const errorMessage = `${envelope.error.code}: ${envelope.error.message}`;
@@ -309,7 +329,15 @@ async function executeReservedPriorityGptDirectExecution(params: {
           priorityDirectExecution: true
         }
       },
-      computeGptJobLifecycleDeadlines(aborted ? 'cancelled' : 'failed')
+      {
+        ...computeGptJobLifecycleDeadlines(aborted ? 'cancelled' : 'failed'),
+        ...(aborted
+          ? {
+              cancelRequestedAt: new Date().toISOString(),
+              cancelReason: errorMessage
+            }
+          : {})
+      }
     );
     params.requestLogger?.warn?.('gpt.priority_direct.failed', {
       jobId: params.jobId,

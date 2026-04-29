@@ -281,6 +281,25 @@ function normalizeAutonomyState(state?: Record<string, unknown>): Record<string,
   return state ?? {};
 }
 
+function resolveMaxRetriesForPersistedJob(
+  persistedMaxRetries: unknown,
+  fallbackMaxRetries: number | undefined
+): number {
+  if (persistedMaxRetries !== null && persistedMaxRetries !== undefined) {
+    const normalizedPersistedValue = Number(persistedMaxRetries);
+    if (Number.isFinite(normalizedPersistedValue)) {
+      return Math.max(0, Math.trunc(normalizedPersistedValue));
+    }
+  }
+
+  const normalizedFallbackValue = Number(fallbackMaxRetries);
+  if (Number.isFinite(normalizedFallbackValue)) {
+    return Math.max(0, Math.trunc(normalizedFallbackValue));
+  }
+
+  return 2;
+}
+
 function normalizeNullableString(value: string | null | undefined): string | null {
   if (typeof value !== 'string') {
     return null;
@@ -1354,15 +1373,15 @@ export async function recordJobHeartbeat(
 }
 
 /**
- * Reschedule a failed job for retry.
+ * Reschedule a running job for retry.
  * Purpose: implement exponential backoff without dropping queue state or losing prior attempts.
- * Inputs/outputs: accepts a job id, retry delay, and failure context; returns the rescheduled job.
- * Edge case behavior: preserves existing job input/output while clearing running lease metadata.
+ * Inputs/outputs: accepts a job id, retry delay, and failure context; returns the rescheduled job or `null`.
+ * Edge case behavior: preserves existing job input/output while clearing running lease metadata; terminal or lost-lease races no-op.
  */
 export async function scheduleJobRetry(
   jobId: string,
   options: ScheduleJobRetryOptions
-): Promise<JobData> {
+): Promise<JobData | null> {
   assertDatabaseReady();
 
   const result = await query(
@@ -1385,6 +1404,17 @@ export async function scheduleJobRetry(
        last_worker_id = COALESCE($3, last_worker_id),
        autonomy_state = COALESCE(autonomy_state, '{}'::jsonb) || $4::jsonb
      WHERE id = $5
+       AND status = 'running'
+       AND (
+         $3::text IS NULL
+         OR last_worker_id IS NULL
+         OR last_worker_id = $3::text
+       )
+       AND (
+         $3::text IS NULL
+         OR lease_expires_at IS NULL
+         OR lease_expires_at >= NOW()
+       )
      RETURNING *`,
     [
       options.errorMessage,
@@ -1398,7 +1428,7 @@ export async function scheduleJobRetry(
     ]
   );
 
-  return result.rows[0] as JobData;
+  return (result.rows[0] as JobData | undefined) ?? null;
 }
 
 /**
@@ -1490,7 +1520,7 @@ export async function recoverStaleJobs(
       cancel_reason: string | null;
     }>) {
       const retryCount = Number(row.retry_count ?? 0);
-      const maxRetries = Number(options.maxRetries ?? row.max_retries ?? 2);
+      const maxRetries = resolveMaxRetriesForPersistedJob(row.max_retries, options.maxRetries);
       const normalizedAutonomyState = buildRecoveredAutonomyState(row.autonomy_state, retryCount);
 
       if (row.cancel_requested_at) {
@@ -1693,7 +1723,7 @@ export async function recoverStalledJobsForWorkers(
     }>) {
       stalledJobIds.push(row.id);
       const retryCount = Number(row.retry_count ?? 0);
-      const maxRetries = Number(options.maxRetries ?? row.max_retries ?? 2);
+      const maxRetries = resolveMaxRetriesForPersistedJob(row.max_retries, options.maxRetries);
       const detectedAt = new Date().toISOString();
       const baseAutonomyState = buildRecoveredAutonomyState(row.autonomy_state, retryCount, {
         recoveredFromStaleLeaseAt: null,

@@ -53,4 +53,26 @@ describe('jobRepository.updateJob', () => {
 
     expect(sql).toContain('started_at = NULL');
   });
+
+  it.each(['failed', 'cancelled', 'timed-out'])(
+    'does not schedule retry after a terminal %s race',
+    async () => {
+      queryMock.mockResolvedValueOnce({
+        rows: []
+      });
+
+      const result = await scheduleJobRetry('job-1', {
+        delayMs: 500,
+        errorMessage: 'retry this job',
+        workerId: 'worker-1'
+      });
+
+      const [sql] = queryMock.mock.calls[0] as [string, unknown[]];
+
+      expect(result).toBeNull();
+      expect(sql).toContain("AND status = 'running'");
+      expect(sql).toContain('OR last_worker_id = $3::text');
+      expect(sql).toContain('OR lease_expires_at >= NOW()');
+    }
+  );
 });
