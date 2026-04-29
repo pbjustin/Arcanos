@@ -3,12 +3,14 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 const mockRunTrinityWritingPipeline = jest.fn();
 const mockGetOpenAIClientOrAdapter = jest.fn();
 const mockGenerateRequestId = jest.fn();
+const mockCreateCentralizedCompletion = jest.fn();
 
 jest.unstable_mockModule('@services/openai.js', () => ({
   getDefaultModel: jest.fn(() => 'gpt-4.1-mini'),
   getFallbackModel: jest.fn(() => 'gpt-4.1'),
   getGPT5Model: jest.fn(() => 'gpt-5'),
-  generateMockResponse: jest.fn()
+  generateMockResponse: jest.fn(),
+  createCentralizedCompletion: mockCreateCentralizedCompletion
 }));
 
 jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({
@@ -30,6 +32,7 @@ describe('ARCANOS:SIM module', () => {
     jest.clearAllMocks();
     mockGenerateRequestId.mockReturnValue('sim_test_id');
     mockGetOpenAIClientOrAdapter.mockReturnValue({ client: { responses: {} } });
+    mockCreateCentralizedCompletion.mockReset();
     mockRunTrinityWritingPipeline.mockResolvedValue({
       result: 'no-simulation',
       activeModel: 'trinity-sim',
@@ -128,6 +131,45 @@ describe('ARCANOS:SIM module', () => {
       metadata: {
         model: 'exact-literal-shortcut',
         tokensUsed: 0,
+        simulationId: 'sim_test_id'
+      }
+    });
+  });
+
+  it('preserves streaming simulation compatibility without invoking completed Trinity generation', async () => {
+    async function* streamChunks() {
+      yield { choices: [{ delta: { content: 'chunk' } }] };
+    }
+    const stream = streamChunks();
+    mockCreateCentralizedCompletion.mockResolvedValue(stream);
+
+    const result = await executeSimulationRequest({
+      scenario: 'Stream the simulated result.',
+      parameters: {
+        stream: true,
+        temperature: 0.4,
+        maxTokens: 77
+      }
+    });
+
+    expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
+    expect(mockCreateCentralizedCompletion).toHaveBeenCalledWith(
+      [
+        {
+          role: 'user',
+          content: 'Simulate the following scenario: Stream the simulated result.'
+        }
+      ],
+      {
+        temperature: 0.4,
+        max_tokens: 77,
+        stream: true
+      }
+    );
+    expect(result).toMatchObject({
+      mode: 'stream',
+      scenario: 'Stream the simulated result.',
+      metadata: {
         simulationId: 'sim_test_id'
       }
     });

@@ -216,11 +216,12 @@ These control-plane routes must not enter Trinity:
 - `/gpt-access/jobs/result`
 - `/trinity/status`
 
-`/ask` tool runtimes, daemon tools, DAG tooling, worker status tools, HRC scoring, memory validation, audit-safe mode interpretation, auto-heal planning, daily summaries, self-improve patch proposal generation, idle/provider probes, vision, embeddings, and adapter wrappers are intentionally outside the writing facade because they are control/evaluation/infrastructure paths or non-text-generation SDK boundaries. They must not be exposed as arbitrary user writing routes, and they must not call back through `/gpt/:gptId`.
+`/ask` tool runtimes, daemon tools, DAG tooling, worker status tools, HRC scoring, memory validation, audit-safe mode interpretation, auto-heal planning, daily summaries, self-improve patch proposal generation, idle/provider probes, vision, embeddings, simulation streaming compatibility, and adapter wrappers are intentionally outside the writing facade because they are control/evaluation/infrastructure paths, non-text-generation SDK boundaries, or stream transports Trinity does not yet expose. They must not be exposed as arbitrary user writing routes, and they must not call back through `/gpt/:gptId`.
 
 Raw SDK calls are allowed only at these boundaries:
 - OpenAI adapter and shared OpenAI service helpers (`src/core/adapters/openai.adapter.ts`, `src/services/openai/*`, `src/services/openaiClient.ts`)
 - Embeddings, vision, and image generation SDK surfaces where the operation is not text writing
+- Simulation streaming requests while Trinity exposes only completed `TrinityResult` generation
 - Control/evaluation utilities listed above
 - Standalone `workers/` package OpenAI handler and SDK wrapper, which are separate worker-package infrastructure; backend GPT jobs use `src/workers/jobRunner.ts` and the Trinity worker path
 

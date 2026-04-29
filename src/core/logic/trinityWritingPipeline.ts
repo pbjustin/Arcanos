@@ -7,7 +7,9 @@ import {
   runTrinityGenerationFacade,
   TrinityControlLeakError,
   applyTrinityGenerationInvariant,
-  classifyTrinityGenerationInput
+  buildPromptFromTrinityMessages,
+  classifyTrinityGenerationInput,
+  resolveTrinityGenerationPrompt
 } from './trinityGenerationFacade.js';
 import type { TrinityResult } from './trinity.js';
 
@@ -20,7 +22,9 @@ export interface TrinityWritingPipelineRequest extends TrinityGenerationFacadeRe
 export {
   TrinityControlLeakError,
   applyTrinityGenerationInvariant,
+  buildPromptFromTrinityMessages,
   classifyTrinityGenerationInput,
+  resolveTrinityGenerationPrompt,
   runTrinityGenerationFacade
 };
 

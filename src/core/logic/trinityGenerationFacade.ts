@@ -12,8 +12,11 @@ import { generateRequestId } from '@shared/idGenerator.js';
 import { runThroughBrain, type TrinityResult, type TrinityRunOptions } from './trinity.js';
 import { readIntentMode, resolveIntentMode } from './trinityHonesty.js';
 
+export type TrinityGenerationMessage = OpenAI.Chat.Completions.ChatCompletionMessageParam;
+
 export interface TrinityGenerationInput {
-  prompt: string;
+  prompt?: string;
+  messages?: TrinityGenerationMessage[];
   gptId?: string;
   moduleId?: string;
   sessionId?: string;
@@ -103,17 +106,90 @@ function readRequestedAction(body: unknown): string | null {
 }
 
 function normalizePositiveInteger(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) && value > 0
-    ? Math.trunc(value)
-    : undefined;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return undefined;
+  }
+
+  const truncated = Math.trunc(value);
+  return truncated > 0 ? truncated : 1;
+}
+
+function serializeMessageContentPart(part: unknown): string {
+  if (typeof part === 'string') {
+    return part;
+  }
+
+  if (!part || typeof part !== 'object') {
+    return '';
+  }
+
+  const partRecord = part as Record<string, unknown>;
+  if (typeof partRecord.text === 'string') {
+    return partRecord.text;
+  }
+
+  try {
+    return JSON.stringify(partRecord);
+  } catch {
+    return String(part);
+  }
+}
+
+function serializeMessageContent(content: unknown): string {
+  if (typeof content === 'string') {
+    return content.trim();
+  }
+
+  if (Array.isArray(content)) {
+    return content
+      .map(serializeMessageContentPart)
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .join('\n');
+  }
+
+  return '';
+}
+
+export function buildPromptFromTrinityMessages(
+  messages: readonly TrinityGenerationMessage[] | undefined
+): string {
+  if (!Array.isArray(messages) || messages.length === 0) {
+    return '';
+  }
+
+  return messages
+    .map((message) => {
+      const role = typeof message.role === 'string' ? message.role : 'message';
+      const name =
+        'name' in message && typeof message.name === 'string' && message.name.trim().length > 0
+          ? `:${message.name.trim()}`
+          : '';
+      const content = serializeMessageContent(message.content).trim();
+      return content ? `[${role}${name}]\n${content}` : '';
+    })
+    .filter(Boolean)
+    .join('\n\n')
+    .trim();
+}
+
+export function resolveTrinityGenerationPrompt(input: TrinityGenerationInput): string {
+  const explicitPrompt = typeof input.prompt === 'string' ? input.prompt.trim() : '';
+  if (explicitPrompt) {
+    return explicitPrompt;
+  }
+
+  return buildPromptFromTrinityMessages(input.messages);
 }
 
 export function classifyTrinityGenerationInput(
   params: TrinityGenerationFacadeRequest
 ): WritingPlaneInputClassification {
+  const prompt = resolveTrinityGenerationPrompt(params.input);
+
   return classifyWritingPlaneInput({
     body: params.input.body,
-    promptText: params.input.prompt,
+    promptText: prompt || null,
     requestedAction: params.input.requestedAction ?? readRequestedAction(params.input.body),
   });
 }
@@ -137,22 +213,23 @@ export function applyTrinityGenerationInvariant(
     normalizePositiveInteger(params.outputLimit) ??
     normalizePositiveInteger(params.maxOutputTokens);
 
-  result.meta = {
-    ...result.meta,
-    pipeline: 'trinity',
-    bypass: false,
-    sourceEndpoint: params.sourceEndpoint,
-    classification: 'writing',
-    ...(params.gptId ? { gptId: params.gptId } : {}),
-    ...(params.moduleId ? { moduleId: params.moduleId } : {}),
-    ...(params.requestedAction !== undefined ? { requestedAction: params.requestedAction } : {}),
-    ...(params.executionMode ? { executionMode: params.executionMode } : {}),
-    ...(tokenLimit !== undefined ? { tokenLimit } : {}),
-    ...(outputLimit !== undefined ? { outputLimit } : {}),
-    ...(params.background ? { background: params.background } : {}),
+  return {
+    ...result,
+    meta: {
+      ...result.meta,
+      pipeline: 'trinity',
+      bypass: false,
+      sourceEndpoint: params.sourceEndpoint,
+      classification: 'writing',
+      ...(params.gptId ? { gptId: params.gptId } : {}),
+      ...(params.moduleId ? { moduleId: params.moduleId } : {}),
+      ...(params.requestedAction !== undefined ? { requestedAction: params.requestedAction } : {}),
+      ...(params.executionMode ? { executionMode: params.executionMode } : {}),
+      ...(tokenLimit !== undefined ? { tokenLimit } : {}),
+      ...(outputLimit !== undefined ? { outputLimit } : {}),
+      ...(params.background ? { background: { ...params.background } } : {}),
+    },
   };
-
-  return result;
 }
 
 /**
@@ -187,7 +264,11 @@ export async function runTrinityGenerationFacade(
     });
   }
 
-  const prompt = params.input.prompt.trim();
+  const prompt = resolveTrinityGenerationPrompt(params.input);
+  if (!prompt) {
+    throw new Error('Trinity generation requires a non-empty prompt or messages array.');
+  }
+
   const runtimeBudget = params.context.runtimeBudget ?? createRuntimeBudget();
   const startedAt = Date.now();
   const intentMode = resolveIntentMode(prompt, params.context.runOptions ?? {});

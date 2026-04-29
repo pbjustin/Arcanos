@@ -2,6 +2,7 @@ import type OpenAI from 'openai';
 import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
 import { getOpenAIClientOrAdapter } from '@services/openai/clientBridge.js';
 import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
+import { createCentralizedCompletion } from "@services/openai.js";
 import { generateRequestId } from "@shared/idGenerator.js";
 import type { ModuleDef } from './moduleLoader.js';
 import { tryExtractExactLiteralPromptShortcut } from "@services/exactLiteralPromptShortcut.js";
@@ -49,6 +50,8 @@ export interface StreamingSimulationResult {
 export type SimulationExecutionResult =
   | CompletedSimulationResult
   | StreamingSimulationResult;
+
+type CentralizedCompletionResult = Awaited<ReturnType<typeof createCentralizedCompletion>>;
 
 function normalizeSimulationPayload(payload: unknown): SimulationRequestPayload {
   //audit Assumption: dispatcher/module callers should provide structured objects for simulation requests; failure risk: scalar payloads bypass validation and break downstream field extraction; expected invariant: simulation executor receives an object payload; handling strategy: reject non-object inputs with a structured error.
@@ -107,6 +110,12 @@ function buildSimulationPrompt(scenario: string, context?: string): string {
   return `Simulate the following scenario: ${scenario}${context ? `\n\nContext: ${context}` : ''}`;
 }
 
+function isStreamingCompletionResult(
+  response: CentralizedCompletionResult
+): response is AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk> {
+  return !!response && typeof response === 'object' && Symbol.asyncIterator in response;
+}
+
 /**
  * Execute one simulation request using the Trinity generation facade.
  * Inputs/Outputs: simulation payload -> completed result payload or streaming result descriptor.
@@ -139,15 +148,40 @@ export async function executeSimulationRequest(
     };
   }
 
-  if (parameters.stream) {
-    throw new Error('Simulation streaming is not available through the Trinity generation facade.');
-  }
+  const prompt = buildSimulationPrompt(scenario, context);
 
   const { client } = getOpenAIClientOrAdapter();
   if (!client) {
     throw new Error('OpenAI client unavailable for Trinity simulation.');
   }
-  const prompt = buildSimulationPrompt(scenario, context);
+
+  if (parameters.stream) {
+    const response = await createCentralizedCompletion(
+      [
+        {
+          role: 'user',
+          content: prompt
+        }
+      ],
+      {
+        temperature: parameters.temperature,
+        max_tokens: parameters.maxTokens,
+        stream: true
+      }
+    );
+
+    if (!isStreamingCompletionResult(response)) {
+      throw new Error('Simulation stream requested but provider returned a non-stream response.');
+    }
+
+    return {
+      mode: 'stream',
+      scenario,
+      stream: response,
+      metadata
+    };
+  }
+
   const response = await runTrinityWritingPipeline({
     input: {
       prompt,

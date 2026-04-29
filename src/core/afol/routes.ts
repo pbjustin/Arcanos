@@ -41,6 +41,23 @@ function getMessageContent(message: unknown): string | undefined {
   return typeof record.content === 'string' ? record.content : undefined;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function readTrinityCacheStatus(result: { meta?: unknown }): boolean {
+  if (!isRecord(result.meta)) {
+    return false;
+  }
+
+  if (result.meta.cached === true || result.meta.cacheHit === true) {
+    return true;
+  }
+
+  const cache = result.meta.cache;
+  return isRecord(cache) && cache.hit === true;
+}
+
 async function executeModelRoute(
   route: RouteSelection,
   intent: string | undefined,
@@ -87,11 +104,12 @@ async function executeModelRoute(
         }
       }
     });
+    const cached = readTrinityCacheStatus(result);
 
     recordTraceEvent('afol.route.success', {
       route: route.name,
       model: result.activeModel,
-      cached: false
+      cached
     });
 
     return {
@@ -99,7 +117,7 @@ async function executeModelRoute(
       input: prompt,
       output: result.result,
       model: result.activeModel,
-      cached: false,
+      cached,
       metadata: {
         routeReason: route.reason,
         intent

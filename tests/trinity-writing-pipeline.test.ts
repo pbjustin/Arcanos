@@ -47,7 +47,8 @@ jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({
 
 const {
   runTrinityWritingPipeline,
-  TrinityControlLeakError
+  TrinityControlLeakError,
+  applyTrinityGenerationInvariant
 } = await import('../src/core/logic/trinityWritingPipeline.js');
 
 describe('runTrinityWritingPipeline', () => {
@@ -110,7 +111,17 @@ describe('runTrinityWritingPipeline', () => {
       }
     });
 
-    expect(result).toBe(trinityResult);
+    expect(result).toEqual(expect.objectContaining({
+      ...trinityResult,
+      meta: expect.objectContaining({
+        id: 'resp-1',
+        pipeline: 'trinity',
+        bypass: false,
+        sourceEndpoint: 'write',
+        classification: 'writing'
+      })
+    }));
+    expect(trinityResult.meta).toEqual({ id: 'resp-1', created: expect.any(Number) });
     expect(runThroughBrainMock).toHaveBeenCalledWith(
       client,
       'Write a concise release summary.',
@@ -313,7 +324,15 @@ describe('runTrinityWritingPipeline', () => {
       }
     });
 
-    expect(result).toBe(trinityResult);
+    expect(result).toEqual(expect.objectContaining({
+      ...trinityResult,
+      meta: expect.objectContaining({
+        pipeline: 'trinity',
+        bypass: false,
+        sourceEndpoint: 'write',
+        classification: 'writing'
+      })
+    }));
     expect(runThroughBrainMock).toHaveBeenCalledTimes(1);
     expect(loggerErrorMock).not.toHaveBeenCalledWith(
       'trinity.control_leak_detected',
@@ -395,5 +414,118 @@ describe('runTrinityWritingPipeline', () => {
         action: 'dag.run.create'
       })
     );
+  });
+
+  it('accepts structured chat messages and resolves them at the facade boundary', async () => {
+    runThroughBrainMock.mockResolvedValue({
+      result: 'structured chat output',
+      module: 'trinity',
+      meta: { id: 'resp-messages', created: Date.now() },
+      activeModel: 'gpt-5.1',
+      fallbackFlag: false,
+      dryRun: false,
+      fallbackSummary: {
+        intakeFallbackUsed: false,
+        gpt5FallbackUsed: false,
+        finalFallbackUsed: false,
+        fallbackReasons: []
+      },
+      auditSafe: {
+        mode: true,
+        overrideUsed: false,
+        auditFlags: [],
+        processedSafely: true
+      },
+      memoryContext: {
+        entriesAccessed: 0,
+        contextSummary: '',
+        memoryEnhanced: false,
+        maxRelevanceScore: 0,
+        averageRelevanceScore: 0
+      },
+      taskLineage: {
+        requestId: 'req-messages',
+        logged: true
+      }
+    });
+
+    await runTrinityWritingPipeline({
+      input: {
+        messages: [
+          { role: 'system', content: 'Preserve the policy frame.' },
+          { role: 'user', content: 'Write the response from these chat messages.' }
+        ],
+        sourceEndpoint: 'write.messages',
+        body: {
+          messages: [
+            { role: 'system', content: 'Preserve the policy frame.' },
+            { role: 'user', content: 'Write the response from these chat messages.' }
+          ]
+        }
+      },
+      context: {
+        client: {} as never,
+        requestId: 'req-messages'
+      }
+    });
+
+    expect(runThroughBrainMock).toHaveBeenCalledWith(
+      expect.anything(),
+      '[system]\nPreserve the policy frame.\n\n[user]\nWrite the response from these chat messages.',
+      undefined,
+      undefined,
+      {
+        sourceEndpoint: 'write.messages'
+      },
+      expect.anything()
+    );
+  });
+
+  it('normalizes fractional token limits to positive integers without mutating the source result', () => {
+    const sourceResult = {
+      result: 'ok',
+      module: 'trinity',
+      meta: { id: 'resp-positive', created: 1 },
+      activeModel: 'gpt-5.1',
+      fallbackFlag: false,
+      dryRun: false,
+      fallbackSummary: {
+        intakeFallbackUsed: false,
+        gpt5FallbackUsed: false,
+        finalFallbackUsed: false,
+        fallbackReasons: []
+      },
+      auditSafe: {
+        mode: true,
+        overrideUsed: false,
+        auditFlags: [],
+        processedSafely: true
+      },
+      memoryContext: {
+        entriesAccessed: 0,
+        contextSummary: '',
+        memoryEnhanced: false,
+        maxRelevanceScore: 0,
+        averageRelevanceScore: 0
+      },
+      taskLineage: {
+        requestId: 'req-positive',
+        logged: true
+      }
+    };
+
+    const stamped = applyTrinityGenerationInvariant(sourceResult, {
+      sourceEndpoint: 'write',
+      tokenLimit: 0.5,
+      outputLimit: 0.25
+    });
+
+    expect(stamped).not.toBe(sourceResult);
+    expect(sourceResult.meta).toEqual({ id: 'resp-positive', created: 1 });
+    expect(stamped.meta).toEqual(expect.objectContaining({
+      pipeline: 'trinity',
+      tokenLimit: 1,
+      outputLimit: 1
+    }));
   });
 });
