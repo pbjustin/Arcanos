@@ -7,6 +7,7 @@ import {
 import type { DAGNode } from '@dag/dagNode.js';
 import { createGptAccessAiJob, getGptAccessJobResult } from '@services/gptAccessGateway.js';
 import { arcanosDagRunService } from '@services/arcanosDagRunService.js';
+import { requestJobCancellation } from '@core/db/repositories/jobRepository.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { sleep } from '@shared/sleep.js';
 import type {
@@ -22,11 +23,12 @@ const DEFAULT_GPT_ACCESS_ACTOR_KEY = 'system:trinity-pipeline-adapter';
 const DEFAULT_GPT_ACCESS_WAIT_FOR_RESULT_MS = 420_000;
 const DEFAULT_GPT_ACCESS_POLL_INTERVAL_MS = 500;
 const DEFAULT_MAX_OUTPUT_TOKENS = 2048;
-const MIN_NESTED_GPT_ACCESS_WORKER_SLOTS = 2;
+const DEFAULT_DAG_MAX_CONCURRENT_NODES = 5;
 
 type GatewayResult = Awaited<ReturnType<typeof createGptAccessAiJob>>;
 type GatewayJobResult = Awaited<ReturnType<typeof getGptAccessJobResult>>;
 type GatewayContext = Parameters<typeof createGptAccessAiJob>[1];
+type CancelChildJob = (jobId: string, reason: string) => Promise<unknown>;
 
 export interface TrinityPipelineAdapterConfig {
   defaultGptId?: string;
@@ -41,6 +43,7 @@ export interface TrinityPipelineAdapterConfig {
   abortSignal?: AbortSignal;
   createAiJob?: (body: unknown, context: GatewayContext) => Promise<GatewayResult>;
   getJobResult?: (body: unknown, context: GatewayContext) => Promise<GatewayJobResult>;
+  cancelJob?: CancelChildJob;
   createDagRun?: (request: CreateDagRunRequest) => Promise<DagRunSummary>;
 }
 
@@ -144,13 +147,29 @@ function readPositiveInteger(value: unknown): number | null {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
-function hasNestedGptAccessWorkerCapacity(env: NodeJS.ProcessEnv): boolean {
+function readNestedGptAccessCapacity(env: NodeJS.ProcessEnv): {
+  workerSlots: number;
+  maxConcurrentDagNodes: number;
+  requiredWorkerSlots: number;
+} {
   const workerSlots =
     readPositiveInteger(env.JOB_WORKER_CONCURRENCY) ??
     readPositiveInteger(env.WORKER_COUNT) ??
     1;
+  const maxConcurrentDagNodes =
+    readPositiveInteger(env.DAG_MAX_CONCURRENT_NODES) ??
+    DEFAULT_DAG_MAX_CONCURRENT_NODES;
 
-  return workerSlots >= MIN_NESTED_GPT_ACCESS_WORKER_SLOTS;
+  return {
+    workerSlots,
+    maxConcurrentDagNodes,
+    requiredWorkerSlots: maxConcurrentDagNodes + 1
+  };
+}
+
+function hasNestedGptAccessWorkerCapacity(env: NodeJS.ProcessEnv): boolean {
+  const capacity = readNestedGptAccessCapacity(env);
+  return capacity.workerSlots >= capacity.requiredWorkerSlots;
 }
 
 function normalizeAllowedGptIds(config: TrinityPipelineAdapterConfig): string[] {
@@ -276,6 +295,20 @@ function throwIfAbortRequested(signal: AbortSignal | undefined, jobId?: string):
   );
 }
 
+async function requestChildJobCancellation(
+  jobId: string,
+  reason: string,
+  config: TrinityPipelineAdapterConfig
+): Promise<void> {
+  const cancelJob = config.cancelJob ?? requestJobCancellation;
+
+  try {
+    await cancelJob(jobId, reason);
+  } catch {
+    // Best effort only: preserve the original timeout/abort/failure surfaced to the DAG node.
+  }
+}
+
 function buildDagNodeMetadata(
   options: TrinityDagPromptOptions,
   node?: Pick<DAGNode, 'id' | 'executionKey' | 'metadata'>
@@ -304,14 +337,31 @@ export function isTrinityDagGptAccessEnabled(env: NodeJS.ProcessEnv = process.en
     return hasNestedGptAccessWorkerCapacity(env);
   }
 
-  return !['0', 'false', 'no', 'off'].includes(rawValue.trim().toLowerCase());
+  const normalizedValue = rawValue.trim().toLowerCase();
+  if (['0', 'false', 'no', 'off'].includes(normalizedValue)) {
+    return false;
+  }
+
+  if (!hasNestedGptAccessWorkerCapacity(env)) {
+    const capacity = readNestedGptAccessCapacity(env);
+    throw new TrinityPipelineAdapterError(
+      'TRINITY_GPT_ACCESS_WORKER_CAPACITY_UNSAFE',
+      `Trinity DAG GPT Access routing requires JOB_WORKER_CONCURRENCY or WORKER_COUNT to be at least DAG_MAX_CONCURRENT_NODES + 1 (${capacity.requiredWorkerSlots}) so DAG nodes can wait while another worker slot claims child GPT jobs. Current worker slots: ${capacity.workerSlots}.`
+    );
+  }
+
+  return true;
 }
 
 export function resolveTrinityPipeline(
   input: ResolveTrinityPipelineInput = {},
   config: TrinityPipelineAdapterConfig = {}
 ): ResolvedTrinityPipeline {
-  const template = resolveAdapterTemplateName(input.template ?? input.pipelineId, config);
+  const requestedPipelineId = normalizeOptionalString(input.pipelineId);
+  const requestedTemplate =
+    input.template ??
+    (requestedPipelineId?.toLowerCase() === TRINITY_PIPELINE_ID ? undefined : requestedPipelineId ?? undefined);
+  const template = resolveAdapterTemplateName(requestedTemplate, config);
   const gptId = resolveAdapterGptId(input.gptId, config);
   const sessionId =
     normalizeOptionalString(input.sessionId) ??
@@ -452,9 +502,17 @@ export async function routeDagNodeToGptAccess(
     config.getJobResult ?? ((body, context) => getGptAccessJobResult(body, context));
   const gatewayContext = buildGatewayContext(config);
   const startedAtMs = Date.now();
+  const deadlineAtMs = startedAtMs + waitForResultMs;
 
-  while (Date.now() - startedAtMs <= waitForResultMs) {
-    throwIfAbortRequested(config.abortSignal, createdJob.jobId);
+  while (Date.now() <= deadlineAtMs) {
+    if (config.abortSignal?.aborted) {
+      await requestChildJobCancellation(
+        createdJob.jobId,
+        `Trinity DAG node polling aborted: ${readAbortMessage(config.abortSignal)}`,
+        config
+      );
+      throwIfAbortRequested(config.abortSignal, createdJob.jobId);
+    }
 
     const result = await getJobResult({
       jobId: createdJob.jobId,
@@ -481,16 +539,31 @@ export async function routeDagNodeToGptAccess(
       );
     }
 
+    const remainingMs = deadlineAtMs - Date.now();
+    if (remainingMs <= 0) {
+      break;
+    }
+
     try {
-      await sleep(pollIntervalMs, { signal: config.abortSignal });
+      await sleep(Math.min(pollIntervalMs, remainingMs), { signal: config.abortSignal });
     } catch (error: unknown) {
       if (config.abortSignal?.aborted) {
+        await requestChildJobCancellation(
+          createdJob.jobId,
+          `Trinity DAG node polling aborted: ${readAbortMessage(config.abortSignal)}`,
+          config
+        );
         throwIfAbortRequested(config.abortSignal, createdJob.jobId);
       }
       throw error;
     }
   }
 
+  await requestChildJobCancellation(
+    createdJob.jobId,
+    `Trinity DAG node polling timed out after ${waitForResultMs}ms.`,
+    config
+  );
   throw new TrinityPipelineAdapterError(
     'GPT_ACCESS_JOB_TIMEOUT',
     `Timed out after ${waitForResultMs}ms waiting for Arcanos core job ${createdJob.jobId}.`

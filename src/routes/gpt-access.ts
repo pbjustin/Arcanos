@@ -4,7 +4,6 @@ import { writePublicHealthResponse } from '@core/diagnostics.js';
 import {
   createRateLimitMiddleware,
   getRequestActorKey,
-  getRequestClientAddress,
   securityHeaders
 } from '@platform/runtime/security.js';
 import { asyncHandler } from '@shared/http/index.js';
@@ -20,13 +19,23 @@ import {
   requireGptAccessScope,
   runDeepDiagnostics,
   runGptAccessMcpTool,
+  sanitizeGptAccessPayload,
   sendGptAccessResult
 } from '@services/gptAccessGateway.js';
 
 const router = express.Router();
 
 function getGptAccessRateLimitActorKey(req: express.Request): string {
-  return `ip:${getRequestClientAddress(req)}`;
+  const socketAddress =
+    typeof req.socket?.remoteAddress === 'string' && req.socket.remoteAddress.trim().length > 0
+      ? req.socket.remoteAddress.trim()
+      : typeof req.connection?.remoteAddress === 'string' && req.connection.remoteAddress.trim().length > 0
+        ? req.connection.remoteAddress.trim()
+        : typeof req.ip === 'string' && req.ip.trim().length > 0
+          ? req.ip.trim()
+          : 'unknown';
+
+  return `socket:${socketAddress}`;
 }
 
 const gptAccessRateLimit = createRateLimitMiddleware({
@@ -56,7 +65,7 @@ router.get(
   '/gpt-access/workers/status',
   requireGptAccessScope('workers.read'),
   asyncHandler(async (_req, res) => {
-    res.json(await getWorkerControlStatus());
+    res.json(sanitizeGptAccessPayload(await getWorkerControlStatus()));
   })
 );
 
@@ -64,7 +73,7 @@ router.get(
   '/gpt-access/worker-helper/health',
   requireGptAccessScope('workers.read'),
   asyncHandler(async (_req, res) => {
-    res.json(await getWorkerControlHealth());
+    res.json(sanitizeGptAccessPayload(await getWorkerControlHealth()));
   })
 );
 

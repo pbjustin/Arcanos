@@ -291,6 +291,67 @@ describe('/gpt-access gateway', () => {
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
   });
 
+  it('requires bearer auth before reading AI job results', async () => {
+    const response = await request(buildApp())
+      .post('/gpt-access/jobs/result')
+      .send({
+        jobId: COMPLETED_JOB_ID
+      });
+
+    expect(response.status).toBe(401);
+    expect(response.body.error.code).toBe('UNAUTHORIZED_GPT_ACCESS');
+    expect(getJobByIdMock).not.toHaveBeenCalled();
+  });
+
+  it('enforces the jobs.result scope before reading AI job results', async () => {
+    process.env.ARCANOS_GPT_ACCESS_SCOPES = 'jobs.create';
+
+    const response = await authorized(request(buildApp()).post('/gpt-access/jobs/result'))
+      .send({
+        jobId: COMPLETED_JOB_ID
+      });
+
+    expect(response.status).toBe(403);
+    expect(response.body.error.code).toBe('GPT_ACCESS_SCOPE_DENIED');
+    expect(getJobByIdMock).not.toHaveBeenCalled();
+  });
+
+  it('sanitizes worker status payloads returned through GPT Access', async () => {
+    process.env.ARCANOS_GPT_ACCESS_SCOPES = 'workers.read';
+    getWorkerControlStatusMock.mockResolvedValueOnce({
+      workerService: {
+        health: {
+          workers: [{
+            workerId: 'worker-1',
+            lastError: 'Authorization: Bearer abcdefghijklmnop DATABASE_URL=postgres://user:pass@host/db'
+          }]
+        },
+        recentFailedJobs: [{
+          id: 'job-1',
+          error_message: 'OPENAI_API_KEY=sk-test-placeholder-value'
+        }]
+      }
+    });
+    getWorkerControlHealthMock.mockResolvedValueOnce({
+      overallStatus: 'degraded',
+      alerts: [`${'token'}=railway_abcdefghijklmnop`]
+    });
+
+    const statusResponse = await authorized(request(buildApp()).get('/gpt-access/workers/status'));
+    const healthResponse = await authorized(request(buildApp()).get('/gpt-access/worker-helper/health'));
+
+    expect(statusResponse.status).toBe(200);
+    expect(healthResponse.status).toBe(200);
+    const rendered = JSON.stringify({
+      status: statusResponse.body,
+      health: healthResponse.body
+    });
+    expect(rendered).not.toContain('abcdefghijklmnop');
+    expect(rendered).not.toContain('postgres://user:pass@host/db');
+    expect(rendered).not.toContain('sk-test-placeholder-value');
+    expect(rendered).toContain('[REDACTED');
+  });
+
   it('rejects missing task text before enqueueing AI jobs', async () => {
     allowCreateJobs();
 
@@ -658,6 +719,10 @@ describe('/gpt-access gateway', () => {
       id: CREATED_JOB_ID,
       job_type: 'gpt',
       status: 'completed',
+      input: {
+        requestPath: '/gpt-access/jobs/create',
+        executionModeReason: 'gpt_access_create_ai_job'
+      },
       created_at: '2026-04-27T10:00:00.000Z',
       updated_at: '2026-04-27T10:01:00.000Z',
       completed_at: '2026-04-27T10:01:00.000Z',
@@ -863,6 +928,10 @@ describe('/gpt-access gateway', () => {
       id: COMPLETED_JOB_ID,
       job_type: 'gpt',
       status: 'completed',
+      input: {
+        requestPath: '/gpt-access/jobs/create',
+        executionModeReason: 'gpt_access_create_ai_job'
+      },
       created_at: '2026-04-27T10:00:00.000Z',
       updated_at: '2026-04-27T10:01:00.000Z',
       completed_at: '2026-04-27T10:01:00.000Z',
@@ -885,6 +954,51 @@ describe('/gpt-access gateway', () => {
     }));
     expect(getJobByIdMock).toHaveBeenCalledWith(COMPLETED_JOB_ID);
     expect(gptRouteCalled).toBe(false);
+  });
+
+  it('does not expose non-gateway or non-GPT job outputs through GPT Access result polling', async () => {
+    getJobByIdMock.mockResolvedValue({
+      id: COMPLETED_JOB_ID,
+      job_type: 'dag-node',
+      status: 'completed',
+      input: {
+        dagId: 'dag-1'
+      },
+      created_at: '2026-04-27T10:00:00.000Z',
+      updated_at: '2026-04-27T10:01:00.000Z',
+      completed_at: '2026-04-27T10:01:00.000Z',
+      retention_until: null,
+      idempotency_until: null,
+      expires_at: null,
+      error_message: null,
+      output: { answer: 'should not leak' }
+    });
+
+    const response = await authorized(request(buildApp()).post('/gpt-access/jobs/result'))
+      .send({ jobId: COMPLETED_JOB_ID });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(expect.objectContaining({
+      ok: true,
+      jobId: COMPLETED_JOB_ID,
+      status: 'not_found',
+      result: null
+    }));
+    expect(JSON.stringify(response.body)).not.toContain('should not leak');
+  });
+
+  it('returns unavailable instead of not_found when result storage is disconnected', async () => {
+    isDatabaseConnectedMock.mockReturnValueOnce(false);
+
+    const response = await authorized(request(buildApp()).post('/gpt-access/jobs/result'))
+      .send({ jobId: COMPLETED_JOB_ID });
+
+    expect(response.status).toBe(503);
+    expect(response.body.error).toEqual({
+      code: 'GPT_ACCESS_JOBS_UNAVAILABLE',
+      message: 'Durable GPT job persistence is unavailable.'
+    });
+    expect(getJobByIdMock).not.toHaveBeenCalled();
   });
 
   it('redacts obvious secrets from log-shaped payloads', () => {

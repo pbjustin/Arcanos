@@ -124,13 +124,16 @@ export class DatabaseBackedDagJobQueue implements DagJobQueue {
       waitingTimeoutMs: request.waitingTimeoutMs
     });
     const plannedJob = await planAutonomousWorkerJob('dag-node', jobInput, {
-      maxRetries: request.maxRetries
+      maxRetries: 0
     });
     const createdJob = await createJob(
       request.workerId || this.defaultWorkerId,
       'dag-node',
       jobInput,
-      plannedJob
+      {
+        ...plannedJob,
+        maxRetries: 0
+      }
     );
 
     return buildDagQueueJobRecord(createdJob);

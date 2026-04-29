@@ -620,7 +620,13 @@ export async function updateJob(
     status === 'expired';
   const runningStatus = status === 'running';
   const result = await query(
-    `UPDATE job_data
+    `WITH current_job AS (
+       SELECT *
+       FROM job_data
+       WHERE id = $12
+     ),
+     updated_job AS (
+       UPDATE job_data
      SET
       status = $1::varchar(50),
        output = $2::jsonb,
@@ -657,7 +663,20 @@ export async function updateJob(
        END,
        cancel_reason = COALESCE($11, cancel_reason)
      WHERE id = $12
-     RETURNING *`,
+       AND (
+         NOT $4::boolean
+         OR status NOT IN ('completed', 'failed', 'cancelled', 'expired')
+         OR status = $1::varchar(50)
+       )
+     RETURNING *
+     )
+     SELECT *
+     FROM updated_job
+     UNION ALL
+     SELECT *
+     FROM current_job
+     WHERE NOT EXISTS (SELECT 1 FROM updated_job)
+     LIMIT 1`,
     [
       status,
       normalizeJsonbInput(output, 'jobRepository.updateJob.output'),
@@ -1348,6 +1367,7 @@ export async function scheduleJobRetry(
        next_run_at = NOW() + ($2::bigint * INTERVAL '1 millisecond'),
        updated_at = NOW(),
        completed_at = NULL,
+       started_at = NULL,
        last_heartbeat_at = NULL,
        lease_expires_at = NULL,
        idempotency_until = NULL,

@@ -74,7 +74,7 @@ Use placeholders in docs, scripts, and tickets. Never paste real bearer tokens, 
 | `WORKER_TRINITY_STAGE_TIMEOUT_MS` | Optional worker Trinity stage guardrail | Defaults to `180000`. |
 | `ARCANOS_CORE_BACKGROUND_HANDLER_TIMEOUT_MS` | Optional background core timeout tuning | Defaults to the background profile in `src/services/arcanos-core.ts`. |
 | `ARCANOS_CORE_BACKGROUND_PIPELINE_TIMEOUT_MS` | Optional background Trinity timeout tuning | Defaults to `120000`, clamped by code. |
-| `TRINITY_DAG_GPT_ACCESS_ENABLED` | Optional DAG worker routing toggle | If unset, auto-enables only when worker concurrency is at least `2`; queued DAG node prompts use `src/services/trinity/adapter.ts` to create/poll Arcanos core jobs through GPT Access. |
+| `TRINITY_DAG_GPT_ACCESS_ENABLED` | Optional DAG worker routing toggle | If unset, auto-enables only when worker slots exceed `DAG_MAX_CONCURRENT_NODES`; unsafe forced routing fails clearly. Queued DAG node prompts use `src/services/trinity/adapter.ts` to create/poll Arcanos core jobs through GPT Access. |
 | `GPT_MODULE_MAP` | Optional registry override | Defaults are auto-discovered from module definitions. Use only for explicit registry overrides. |
 
 ## Triggering Trinity

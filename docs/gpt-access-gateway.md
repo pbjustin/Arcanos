@@ -85,7 +85,7 @@ resolveTrinityPipeline -> compilePipelineToDag -> enqueueDagRun
 dag-node worker -> routeDagNodeToGptAccess -> createArcanosCoreJob -> /gpt-access jobs create/result
 ```
 
-`TRINITY_DAG_GPT_ACCESS_ENABLED` can force this path on or off. When unset, the worker auto-enables it only with at least two consumer slots, so one slot can wait on the child GPT job while another claims it. Set it to `false` for local debugging of the legacy direct worker Trinity bridge.
+`TRINITY_DAG_GPT_ACCESS_ENABLED` can force this path on or off. When unset, the worker auto-enables it only when worker slots exceed `DAG_MAX_CONCURRENT_NODES`, so DAG node slots can wait while at least one additional slot claims child GPT jobs. Unsafe forced routing fails clearly instead of risking nested queue deadlock. Set it to `false` for local debugging of the legacy direct worker Trinity bridge.
 
 ## Trigger Trinity
 Create an async Trinity job:

@@ -164,7 +164,7 @@ describe('DatabaseBackedDagJobQueue', () => {
         maxRetries: 3,
         waitingTimeoutMs: 90_000
       }),
-      { maxRetries: 3 }
+      { maxRetries: 0 }
     );
     const persistedInput = createJobMock.mock.calls[0]?.[2];
     expect(persistedInput.node).not.toHaveProperty('execute');
@@ -173,6 +173,7 @@ describe('DatabaseBackedDagJobQueue', () => {
       'dag-node',
       persistedInput,
       expect.objectContaining({
+        maxRetries: 0,
         priority: 42,
         planningReasons: ['test-plan']
       })

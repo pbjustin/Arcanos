@@ -17,14 +17,21 @@ describe('trinity pipeline adapter', () => {
   it('enables DAG GPT Access routing only when explicitly enabled or worker capacity is safe', () => {
     expect(isTrinityDagGptAccessEnabled({} as NodeJS.ProcessEnv)).toBe(false);
     expect(isTrinityDagGptAccessEnabled({
-      JOB_WORKER_CONCURRENCY: '2'
+      JOB_WORKER_CONCURRENCY: '2',
+      DAG_MAX_CONCURRENT_NODES: '1'
     } as NodeJS.ProcessEnv)).toBe(true);
     expect(isTrinityDagGptAccessEnabled({
       TRINITY_DAG_GPT_ACCESS_ENABLED: 'false'
     } as NodeJS.ProcessEnv)).toBe(false);
     expect(isTrinityDagGptAccessEnabled({
-      TRINITY_PIPELINE_GPT_ACCESS_ENABLED: '1'
+      TRINITY_PIPELINE_GPT_ACCESS_ENABLED: '1',
+      JOB_WORKER_CONCURRENCY: '2',
+      DAG_MAX_CONCURRENT_NODES: '1'
     } as NodeJS.ProcessEnv)).toBe(true);
+    expect(() => isTrinityDagGptAccessEnabled({
+      TRINITY_DAG_GPT_ACCESS_ENABLED: 'true',
+      WORKER_COUNT: '1'
+    } as NodeJS.ProcessEnv)).toThrow('requires JOB_WORKER_CONCURRENCY or WORKER_COUNT to be at least DAG_MAX_CONCURRENT_NODES + 1');
   });
 
   it('resolves the canonical Trinity pipeline and default core GPT IDs', () => {
@@ -48,6 +55,10 @@ describe('trinity pipeline adapter', () => {
     }));
 
     expect(resolveTrinityPipeline({ gptId: 'core' }).gptId).toBe('core');
+    expect(resolveTrinityPipeline({ pipelineId: 'trinity' })).toEqual(expect.objectContaining({
+      pipelineId: 'trinity',
+      template: TRINITY_CORE_DAG_TEMPLATE_NAME
+    }));
   });
 
   it('fails clearly for unknown Trinity GPT IDs', () => {
@@ -306,6 +317,99 @@ describe('trinity pipeline adapter', () => {
     });
   });
 
+  it('propagates GPT Access job-result gateway failures', async () => {
+    const createAiJobMock = jest.fn(async () => ({
+      statusCode: 202,
+      payload: {
+        ok: true,
+        jobId: '44444444-4444-4444-8444-444444444444',
+        traceId: 'trace-result-failure',
+        status: 'queued',
+        deduped: false,
+        resultEndpoint: '/gpt-access/jobs/result'
+      }
+    }));
+    const getJobResultMock = jest.fn(async () => ({
+      statusCode: 503,
+      payload: {
+        ok: false,
+        error: {
+          code: 'GPT_ACCESS_JOBS_UNAVAILABLE',
+          message: 'Result backend unavailable.'
+        }
+      }
+    }));
+
+    await expect(routeDagNodeToGptAccess({
+      prompt: 'Audit the DAG output.',
+      options: {
+        sourceEndpoint: 'dag.agent.audit'
+      },
+      config: {
+        requestId: 'req-result-failure',
+        traceId: 'trace-result-failure',
+        waitForResultMs: 10,
+        pollIntervalMs: 1,
+        createAiJob: createAiJobMock,
+        getJobResult: getJobResultMock
+      }
+    })).rejects.toMatchObject({
+      code: 'GPT_ACCESS_JOB_RESULT_FAILED',
+      statusCode: 503,
+      message: 'Result backend unavailable.'
+    });
+  });
+
+  it('times out polling when the GPT Access job never reaches a terminal state', async () => {
+    const createAiJobMock = jest.fn(async () => ({
+      statusCode: 202,
+      payload: {
+        ok: true,
+        jobId: '55555555-5555-4555-8555-555555555555',
+        traceId: 'trace-timeout',
+        status: 'queued',
+        deduped: false,
+        resultEndpoint: '/gpt-access/jobs/result'
+      }
+    }));
+    const getJobResultMock = jest.fn(async () => ({
+      statusCode: 200,
+      payload: {
+        ok: true,
+        jobId: '55555555-5555-4555-8555-555555555555',
+        status: 'pending',
+        result: null,
+        error: null
+      }
+    }));
+    const cancelJobMock = jest.fn(async () => null);
+
+    await expect(routeDagNodeToGptAccess({
+      prompt: 'Wait for a core result.',
+      options: {
+        sourceEndpoint: 'dag.agent.writer'
+      },
+      config: {
+        requestId: 'req-timeout',
+        traceId: 'trace-timeout',
+        waitForResultMs: 1,
+        pollIntervalMs: 1,
+        createAiJob: createAiJobMock,
+        getJobResult: getJobResultMock,
+        cancelJob: cancelJobMock
+      }
+    })).rejects.toMatchObject({
+      code: 'GPT_ACCESS_JOB_TIMEOUT',
+      message: expect.stringContaining('Timed out after 1ms')
+    });
+
+    expect(getJobResultMock).toHaveBeenCalled();
+    expect(cancelJobMock).toHaveBeenCalledWith(
+      '55555555-5555-4555-8555-555555555555',
+      expect.stringContaining('timed out')
+    );
+  });
+
   it('stops polling when the worker shutdown signal is aborted', async () => {
     const shutdownController = new AbortController();
     const createAiJobMock = jest.fn(async () => ({
@@ -319,6 +423,7 @@ describe('trinity pipeline adapter', () => {
         resultEndpoint: '/gpt-access/jobs/result'
       }
     }));
+    const cancelJobMock = jest.fn(async () => null);
     const getJobResultMock = jest.fn(async () => {
       setTimeout(() => shutdownController.abort(new Error('worker shutdown')), 0);
       return {
@@ -345,12 +450,17 @@ describe('trinity pipeline adapter', () => {
         pollIntervalMs: 60_000,
         abortSignal: shutdownController.signal,
         createAiJob: createAiJobMock,
-        getJobResult: getJobResultMock
+        getJobResult: getJobResultMock,
+        cancelJob: cancelJobMock
       }
     })).rejects.toMatchObject({
       code: 'GPT_ACCESS_JOB_POLL_ABORTED'
     });
 
     expect(getJobResultMock).toHaveBeenCalledTimes(1);
+    expect(cancelJobMock).toHaveBeenCalledWith(
+      '44444444-4444-4444-8444-444444444444',
+      expect.stringContaining('aborted')
+    );
   });
 });

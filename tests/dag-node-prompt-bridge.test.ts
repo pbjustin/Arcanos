@@ -103,10 +103,18 @@ describe('createDagNodeRunPromptBridge', () => {
   it('only enables implicit GPT Access routing when nested queue capacity is available', () => {
     expect(isTrinityDagGptAccessEnabled({} as NodeJS.ProcessEnv)).toBe(false);
     expect(isTrinityDagGptAccessEnabled({ WORKER_COUNT: '1' } as NodeJS.ProcessEnv)).toBe(false);
-    expect(isTrinityDagGptAccessEnabled({ JOB_WORKER_CONCURRENCY: '2' } as NodeJS.ProcessEnv)).toBe(true);
+    expect(isTrinityDagGptAccessEnabled({
+      JOB_WORKER_CONCURRENCY: '2',
+      DAG_MAX_CONCURRENT_NODES: '1'
+    } as NodeJS.ProcessEnv)).toBe(true);
     expect(isTrinityDagGptAccessEnabled({
       TRINITY_DAG_GPT_ACCESS_ENABLED: 'true',
-      WORKER_COUNT: '1'
+      WORKER_COUNT: '2',
+      DAG_MAX_CONCURRENT_NODES: '1'
     } as NodeJS.ProcessEnv)).toBe(true);
+    expect(() => isTrinityDagGptAccessEnabled({
+      TRINITY_DAG_GPT_ACCESS_ENABLED: 'true',
+      WORKER_COUNT: '1'
+    } as NodeJS.ProcessEnv)).toThrow('requires JOB_WORKER_CONCURRENCY or WORKER_COUNT to be at least DAG_MAX_CONCURRENT_NODES + 1');
   });
 });

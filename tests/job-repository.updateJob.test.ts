@@ -13,7 +13,7 @@ jest.unstable_mockModule('@core/db/query.js', () => ({
   query: queryMock
 }));
 
-const { updateJob } = await import('../src/core/db/repositories/jobRepository.js');
+const { scheduleJobRetry, updateJob } = await import('../src/core/db/repositories/jobRepository.js');
 
 describe('jobRepository.updateJob', () => {
   beforeEach(() => {
@@ -39,5 +39,18 @@ describe('jobRepository.updateJob', () => {
     expect(sql).toContain('status = $1::varchar(50)');
     expect(sql).toContain("WHEN $1::varchar(50) = 'expired'::varchar(50)");
     expect(sql).toContain("WHEN $1::varchar(50) = 'cancelled'::varchar(50)");
+    expect(sql).toContain("status NOT IN ('completed', 'failed', 'cancelled', 'expired')");
+  });
+
+  it('clears stale started_at when scheduling a retry', async () => {
+    await scheduleJobRetry('job-1', {
+      delayMs: 500,
+      errorMessage: 'retry this job',
+      workerId: 'worker-1'
+    });
+
+    const [sql] = queryMock.mock.calls[0] as [string, unknown[]];
+
+    expect(sql).toContain('started_at = NULL');
   });
 });
