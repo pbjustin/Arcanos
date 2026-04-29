@@ -70,6 +70,16 @@ describe('reusable code generation', () => {
     }));
     expect(client.responses.create).not.toHaveBeenCalled();
     expect(result.model).toBe('trinity-model');
+    expect(result.meta).toEqual(expect.objectContaining({
+      pipeline: 'trinity',
+      bypass: false,
+      sourceEndpoint: 'api.reusables',
+      classification: 'writing',
+      moduleId: 'REUSABLE:CODE',
+      requestedAction: 'query',
+      executionMode: 'request',
+      fallbackFlag: false,
+    }));
     expect(result.snippets).toEqual([
       {
         name: 'asyncHandler',
@@ -117,6 +127,16 @@ describe('reusable code generation', () => {
       })
     );
     expect(result.model).toBe('repair-model');
+    expect(result.meta).toEqual(expect.objectContaining({
+      pipeline: 'trinity',
+      bypass: false,
+      sourceEndpoint: 'api.reusables.repair',
+      classification: 'writing',
+      moduleId: 'REUSABLE:CODE',
+      requestedAction: 'query',
+      executionMode: 'request',
+      repairAttempted: true,
+    }));
     expect(result.snippets).toEqual([
       {
         name: 'idGenerator',
@@ -146,6 +166,18 @@ describe('reusable code generation', () => {
 
     expect(runTrinityWritingPipelineMock).toHaveBeenCalledTimes(2);
     expect(result.model).toBe('repair-model:deterministic-json-fallback');
+    expect(result.meta).toEqual(expect.objectContaining({
+      pipeline: 'trinity',
+      bypass: false,
+      sourceEndpoint: 'api.reusables.repair',
+      classification: 'writing',
+      moduleId: 'REUSABLE:CODE',
+      requestedAction: 'query',
+      executionMode: 'request',
+      repairAttempted: true,
+      deterministicJsonFallback: true,
+      degraded: true,
+    }));
     expect(result.snippets).toHaveLength(1);
     expect(result.snippets[0]).toEqual(expect.objectContaining({
       name: 'idGenerator',

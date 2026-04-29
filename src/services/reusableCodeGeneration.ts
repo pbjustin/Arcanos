@@ -1,5 +1,6 @@
 import type OpenAI from 'openai';
 import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
+import type { TrinityResult } from '@core/logic/trinity.js';
 import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { z } from 'zod';
 import { parseModelOutputWithSchema } from './safety/aiOutputBoundary.js';
@@ -23,6 +24,26 @@ export interface ReusableCodeGenerationResult {
   model: string;
   snippets: ReusableCodeSnippet[];
   raw: string;
+  meta: ReusableCodeGenerationMeta;
+}
+
+export interface ReusableCodeGenerationMeta {
+  pipeline: 'trinity';
+  bypass: false;
+  sourceEndpoint: string;
+  classification: 'writing';
+  moduleId: 'REUSABLE:CODE';
+  requestedAction: 'query';
+  executionMode: 'request';
+  tokens?: TrinityResult['meta']['tokens'];
+  id?: string;
+  created?: number;
+  tokenLimit?: number;
+  outputLimit?: number;
+  fallbackFlag?: boolean;
+  repairAttempted?: boolean;
+  deterministicJsonFallback?: boolean;
+  degraded?: boolean;
 }
 
 const SUPPORTED_TARGETS: ReusableCodeTarget[] = ['asyncHandler', 'errorResponse', 'idGenerator'];
@@ -182,6 +203,39 @@ function buildDeterministicReusableCodeSnippets(
   return resolveReusableTargets(request.target).map((target) => snippets[target]);
 }
 
+function buildReusableCodeMeta(
+  trinityResult: Partial<TrinityResult> | undefined,
+  fallbackSourceEndpoint: string,
+  extras: Partial<ReusableCodeGenerationMeta> = {}
+): ReusableCodeGenerationMeta {
+  const rawMeta: Partial<TrinityResult['meta']> =
+    trinityResult?.meta && typeof trinityResult.meta === 'object'
+      ? trinityResult.meta
+      : {};
+
+  return {
+    ...(rawMeta.tokens ? { tokens: rawMeta.tokens } : {}),
+    ...(typeof rawMeta.id === 'string' ? { id: rawMeta.id } : {}),
+    ...(typeof rawMeta.created === 'number' ? { created: rawMeta.created } : {}),
+    ...(typeof rawMeta.tokenLimit === 'number' ? { tokenLimit: rawMeta.tokenLimit } : {}),
+    ...(typeof rawMeta.outputLimit === 'number' ? { outputLimit: rawMeta.outputLimit } : {}),
+    pipeline: 'trinity',
+    bypass: false,
+    sourceEndpoint:
+      typeof rawMeta.sourceEndpoint === 'string' && rawMeta.sourceEndpoint.trim().length > 0
+        ? rawMeta.sourceEndpoint
+        : fallbackSourceEndpoint,
+    classification: 'writing',
+    moduleId: 'REUSABLE:CODE',
+    requestedAction: 'query',
+    executionMode: 'request',
+    ...(typeof trinityResult?.fallbackFlag === 'boolean'
+      ? { fallbackFlag: trinityResult.fallbackFlag }
+      : {}),
+    ...extras
+  };
+}
+
 /**
  * Generate reusable code snippets using the Trinity generation facade.
  *
@@ -219,6 +273,7 @@ export async function generateReusableCodeSnippets(
   let raw = trinityResult.result;
   let model = trinityResult.activeModel;
   let snippets: ReusableCodeSnippet[];
+  let meta = buildReusableCodeMeta(trinityResult, 'api.reusables');
 
   try {
     snippets = parseReusableCodeResponse(raw);
@@ -246,18 +301,27 @@ export async function generateReusableCodeSnippets(
     });
     raw = repairResult.result;
     model = repairResult.activeModel;
+    meta = buildReusableCodeMeta(repairResult, 'api.reusables.repair', {
+      repairAttempted: true
+    });
     try {
       snippets = parseReusableCodeResponse(raw);
     } catch {
       snippets = buildDeterministicReusableCodeSnippets(request);
       raw = JSON.stringify({ snippets });
       model = `${model}:deterministic-json-fallback`;
+      meta = buildReusableCodeMeta(repairResult, 'api.reusables.repair', {
+        repairAttempted: true,
+        deterministicJsonFallback: true,
+        degraded: true
+      });
     }
   }
 
   return {
     model,
     snippets,
-    raw
+    raw,
+    meta
   };
 }

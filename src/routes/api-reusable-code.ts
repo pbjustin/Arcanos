@@ -76,7 +76,8 @@ router.post(
     res.json({
       success: true,
       model: result.model,
-      snippets: result.snippets
+      snippets: result.snippets,
+      meta: result.meta
     });
   })
 );
