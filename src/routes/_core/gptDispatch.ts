@@ -53,6 +53,7 @@ import {
   ARCANOS_SUPPRESS_TIMEOUT_FALLBACK_FLAG,
   normalizeBooleanFlagValue
 } from "@shared/gpt/gptDirectAction.js";
+import { extractLastUserMessageText } from "@shared/gpt/messageContentText.js";
 
 export type AskEnvelope =
   | { ok: true; result: unknown; _route: RouteMeta }
@@ -82,34 +83,6 @@ export type RouteGptRequestInput = {
   suppressTimeoutFallback?: boolean;
 };
 
-function extractMessageContentText(content: unknown): string | null {
-  if (typeof content === "string" && content.trim().length > 0) {
-    return content.trim();
-  }
-
-  if (!Array.isArray(content)) {
-    return null;
-  }
-
-  const parts = content
-    .map((part) => {
-      if (typeof part === "string") {
-        return part;
-      }
-
-      if (part && typeof part === "object" && !Array.isArray(part)) {
-        const record = part as Record<string, unknown>;
-        return typeof record.text === "string" ? record.text : "";
-      }
-
-      return "";
-    })
-    .map((part) => part.trim())
-    .filter(Boolean);
-
-  return parts.length > 0 ? parts.join("\n") : null;
-}
-
 function extractPrompt(body: any): string | null {
   const direct =
     body?.message ||
@@ -121,11 +94,8 @@ function extractPrompt(body: any): string | null {
 
   if (typeof direct === "string" && direct.trim().length > 0) return direct.trim();
 
-  if (Array.isArray(body?.messages)) {
-    const lastUser = [...body.messages].reverse().find((m: any) => m?.role === "user");
-    const messageText = extractMessageContentText(lastUser?.content);
-    if (messageText) return messageText;
-  }
+  const messageText = extractLastUserMessageText(body?.messages);
+  if (messageText) return messageText;
 
   return null;
 }

@@ -17,6 +17,8 @@ function pickTrinitySummary(value: Record<string, unknown>): Record<string, unkn
     return null;
   }
 
+  const trinityMeta = pickTrinityPublicMeta(value.meta);
+
   return {
     result,
     module: moduleName,
@@ -27,7 +29,7 @@ function pickTrinitySummary(value: Record<string, unknown>): Record<string, unkn
     ...(readString(value.gpt5Model) ? { gpt5Model: readString(value.gpt5Model) } : {}),
     ...(readBoolean(value.dryRun) !== undefined ? { dryRun: readBoolean(value.dryRun) } : {}),
     ...(readString(value.error) ? { error: readString(value.error) } : {}),
-    ...(pickTrinityPublicMeta(value.meta) ? { meta: pickTrinityPublicMeta(value.meta) } : {}),
+    ...(trinityMeta ? { meta: trinityMeta } : {}),
   };
 }
 

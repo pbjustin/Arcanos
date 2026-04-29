@@ -182,12 +182,14 @@ function buildDeterministicReusableCodeSnippets(
       description: 'Generate sortable, prefixed IDs without relying on external services.',
       language,
       code: [
+        'import { randomUUID } from "node:crypto";',
+        '',
         includeDocs
           ? '/** Generates a prefixed, time-sortable identifier for logs and records. */'
           : '',
         'export function idGenerator(prefix = "id"): string {',
-        '  //audit Assumption: crypto.randomUUID is available in supported Node runtimes; invariant: IDs are unique enough for request-scale records.',
-        '  const randomPart = crypto.randomUUID().replace(/-/g, "").slice(0, 12);',
+        '  //audit Assumption: randomUUID is available from node:crypto in supported Node runtimes; invariant: IDs are unique enough for request-scale records.',
+        '  const randomPart = randomUUID().replace(/-/g, "").slice(0, 12);',
         '  return `${prefix}_${Date.now().toString(36)}_${randomPart}`;',
         '}'
       ].filter(Boolean).join('\n')

@@ -165,11 +165,7 @@ async function runGameplayPipeline(params: GameplayPipelineInput): Promise<Gamin
     mode: params.mode,
     data: {
       response: finalized,
-      sources,
-      auditTrace: {
-        draft: finalized,
-        finalized
-      }
+      sources
     }
   });
 }

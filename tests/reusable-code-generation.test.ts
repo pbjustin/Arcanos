@@ -183,6 +183,8 @@ describe('reusable code generation', () => {
       name: 'idGenerator',
       language: 'typescript',
     }));
+    expect(result.snippets[0]?.code).toContain('import { randomUUID } from "node:crypto";');
+    expect(result.snippets[0]?.code).toContain('randomUUID().replace');
     expect(result.raw).toContain('"snippets"');
   });
 

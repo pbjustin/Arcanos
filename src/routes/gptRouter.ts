@@ -114,6 +114,7 @@ import {
   type GptFastPathModeHint
 } from '@shared/gpt/gptFastPath.js';
 import { ARCANOS_SUPPRESS_TIMEOUT_FALLBACK_FLAG } from '@shared/gpt/gptDirectAction.js';
+import { extractLastUserMessageText } from '@shared/gpt/messageContentText.js';
 import { executeDirectGptAction, executeFastGptPrompt } from '@services/gptFastPath.js';
 import { executeRuntimeInspection } from '@services/runtimeInspectionRoutingService.js';
 import { getWorkerControlStatus } from '@services/workerControlService.js';
@@ -551,34 +552,6 @@ function readPayloadRecord(
     : null;
 }
 
-function extractMessageContentText(content: unknown): string | null {
-  if (typeof content === 'string' && content.trim().length > 0) {
-    return content.trim();
-  }
-
-  if (!Array.isArray(content)) {
-    return null;
-  }
-
-  const parts = content
-    .map((part) => {
-      if (typeof part === 'string') {
-        return part;
-      }
-
-      if (part && typeof part === 'object' && !Array.isArray(part)) {
-        const record = part as Record<string, unknown>;
-        return typeof record.text === 'string' ? record.text : '';
-      }
-
-      return '';
-    })
-    .map((part) => part.trim())
-    .filter(Boolean);
-
-  return parts.length > 0 ? parts.join('\n') : null;
-}
-
 function extractPromptTextFromRecord(record: Record<string, unknown> | null): string | null {
   const candidate =
     record?.message ??
@@ -592,26 +565,7 @@ function extractPromptTextFromRecord(record: Record<string, unknown> | null): st
     return candidate.trim();
   }
 
-  if (!Array.isArray(record?.messages)) {
-    return null;
-  }
-
-  for (let index = record.messages.length - 1; index >= 0; index -= 1) {
-    const entry = record.messages[index];
-    const normalizedEntry =
-      typeof entry === 'object' && entry !== null && !Array.isArray(entry)
-        ? (entry as Record<string, unknown>)
-        : null;
-
-    if (normalizedEntry?.role === 'user') {
-      const messageText = extractMessageContentText(normalizedEntry.content);
-      if (messageText) {
-        return messageText;
-      }
-    }
-  }
-
-  return null;
+  return extractLastUserMessageText(record?.messages);
 }
 
 function extractPromptText(body: unknown): string | null {

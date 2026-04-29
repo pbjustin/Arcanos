@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const mockResponsesCreate = jest.fn();
 const mockGetOpenAIClientOrAdapter = jest.fn();
-const mockGetPrompt = jest.fn();
+const mockGetPrompt = jest.fn((_section: string, key: string) => `${key}-prompt`);
 const mockGetDefaultModel = jest.fn();
 const mockGetGPT5Model = jest.fn();
 const mockGenerateMockResponse = jest.fn();
@@ -122,5 +122,27 @@ describe('gaming direct-answer hardening', () => {
     });
     expect(mockResponsesCreate).not.toHaveBeenCalled();
     expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
+  });
+
+  it('does not emit a misleading audit trace when audit is folded into the Trinity prompt', async () => {
+    const result = await runGuidePipeline({
+      prompt: 'Give a direct guide to defensive positioning.',
+      guideUrls: [],
+      auditEnabled: true
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      data: expect.not.objectContaining({
+        auditTrace: expect.anything()
+      })
+    }));
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({
+          prompt: expect.stringContaining('audit_system-prompt')
+        })
+      })
+    );
   });
 });
