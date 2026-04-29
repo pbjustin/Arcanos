@@ -273,7 +273,7 @@ function normalizePositiveInteger(value: unknown): number | undefined {
   }
 
   const normalized = Math.trunc(value);
-  return normalized > 0 ? normalized : 1;
+  return Math.max(1, normalized);
 }
 
 function normalizeAnswerMode(value: unknown): TrinityAnswerMode | undefined {
