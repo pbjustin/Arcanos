@@ -1,5 +1,6 @@
 import path from 'path';
 import { fileURLToPath } from 'url';
+import type { WorkerRuntimeModeResolution } from '@platform/runtime/unifiedConfig.js';
 
 export interface JobRunnerRuntimeSettings {
   pollMs: number;
@@ -21,6 +22,12 @@ export interface JobRunnerSlotDefinition {
   workerId: string;
   statsWorkerId: string;
   isInspectorSlot: boolean;
+}
+
+export interface JobRunnerEntrypointRuntimeMode {
+  enabled: boolean;
+  disabledReason: string | null;
+  reason: string;
 }
 
 export interface NonOverlappingTaskSkipEvent {
@@ -54,6 +61,19 @@ const RETRYABLE_DATABASE_BOOTSTRAP_ERROR_MARKERS = [
   'enetwork',
   'enetunreach',
   'ehostunreach'
+];
+
+const DATABASE_ERROR_CONTEXT_MARKERS = [
+  'database',
+  'postgres',
+  'postgresql',
+  'pool',
+  'sql',
+  'job_data',
+  'worker_runtime',
+  'database_url',
+  'database_private_url',
+  'database_public_url'
 ];
 
 function readPositiveIntegerEnvValue(
@@ -209,6 +229,38 @@ export function resolveJobRunnerRuntimeSettings(
 }
 
 /**
+ * Resolve whether the direct job-runner entrypoint may start mutation loops.
+ * Purpose: keep standalone worker startup aligned with the stable process-role resolver.
+ * Inputs/outputs: accepts the stable worker runtime mode and returns a logging-friendly decision.
+ * Edge case behavior: explicit web role wins even when RUN_WORKERS was requested.
+ */
+export function resolveJobRunnerEntrypointRuntimeMode(
+  workerRuntimeMode: Pick<
+    WorkerRuntimeModeResolution,
+    'resolvedRunWorkers' | 'reason'
+  >
+): JobRunnerEntrypointRuntimeMode {
+  if (workerRuntimeMode.resolvedRunWorkers) {
+    return {
+      enabled: true,
+      disabledReason: null,
+      reason: 'ARCANOS_PROCESS_KIND=worker starts the dedicated async queue dispatcher'
+    };
+  }
+
+  const disabledReason =
+    workerRuntimeMode.reason === 'process_kind_web'
+      ? 'RUN_WORKERS disabled for explicit web process role; workers not started.'
+      : 'RUN_WORKERS disabled; workers not started.';
+
+  return {
+    enabled: false,
+    disabledReason,
+    reason: disabledReason
+  };
+}
+
+/**
  * Resolve database bootstrap retry settings for the worker process.
  * Purpose: prevent transient Railway database reachability failures from permanently crashing the worker.
  * Inputs/outputs: accepts an optional environment object and returns normalized retry settings.
@@ -242,6 +294,30 @@ export function isRetryableJobRunnerDatabaseBootstrapError(error: unknown): bool
   return RETRYABLE_DATABASE_BOOTSTRAP_ERROR_MARKERS.some(marker =>
     normalizedMessage.includes(marker)
   );
+}
+
+/**
+ * Select the outer slot retry log event for a retryable transient error.
+ * Purpose: keep the retry/backoff behavior while avoiding database labels for generic provider/network failures.
+ * Inputs/outputs: accepts an error value and returns the structured log event name.
+ * Edge case behavior: retryable transport errors without database context use a generic worker event.
+ */
+export function selectJobRunnerSlotTransientRetryEvent(error: unknown):
+  | 'worker.database.transient_error_retry'
+  | 'worker.transient_error_retry' {
+  const message = error instanceof Error
+    ? error.message
+    : typeof error === 'string'
+      ? error
+      : String(error ?? '');
+  const normalizedMessage = message.toLowerCase();
+  const hasDatabaseContext = DATABASE_ERROR_CONTEXT_MARKERS.some(marker =>
+    normalizedMessage.includes(marker)
+  ) || /\bpg\b/.test(normalizedMessage);
+
+  return hasDatabaseContext
+    ? 'worker.database.transient_error_retry'
+    : 'worker.transient_error_retry';
 }
 
 /**
