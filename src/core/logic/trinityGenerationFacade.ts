@@ -111,7 +111,7 @@ function normalizePositiveInteger(value: unknown): number | undefined {
   }
 
   const truncated = Math.trunc(value);
-  return truncated > 0 ? truncated : 1;
+  return Math.max(1, truncated);
 }
 
 function serializeMessageContentPart(part: unknown): string {
