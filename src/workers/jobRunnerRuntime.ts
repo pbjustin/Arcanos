@@ -70,7 +70,6 @@ const DATABASE_ERROR_CONTEXT_MARKERS = [
   'pool',
   'sql',
   'job_data',
-  'worker_runtime',
   'database_url',
   'database_private_url',
   'database_public_url'

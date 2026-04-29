@@ -205,6 +205,14 @@ describe('jobRunnerRuntime', () => {
     ).toBe('worker.transient_error_retry');
   });
 
+  it('does not infer database context from broad worker runtime labels', () => {
+    expect(
+      selectJobRunnerSlotTransientRetryEvent(
+        new Error('worker_runtime slot failed during provider connect timeout')
+      )
+    ).toBe('worker.transient_error_retry');
+  });
+
   it('skips overlapping interval work while a task is still running', async () => {
     let nowMs = 0;
     let resolveFirstTask: (() => void) | null = null;
