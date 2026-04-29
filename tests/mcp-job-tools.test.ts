@@ -133,6 +133,7 @@ jest.unstable_mockModule('../src/core/db/repositories/jobRepository.js', () => (
   claimNextPendingJob: jest.fn(),
   recordJobHeartbeat: jest.fn(),
   scheduleJobRetry: jest.fn(),
+  deferJobForProviderRecovery: jest.fn(),
   recoverStaleJobs: jest.fn(async () => ({ recoveredJobIds: [], skippedJobIds: [] })),
   recoverStalledJobsForWorkers: jest.fn(async () => ({ recoveredJobIds: [], skippedJobIds: [] })),
   getLatestJob: jest.fn(),

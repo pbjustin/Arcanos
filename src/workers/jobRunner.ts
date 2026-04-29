@@ -41,6 +41,7 @@ import {
   isEntrypointModule,
   isRetryableJobRunnerDatabaseBootstrapError,
   resolveJobRunnerDatabaseBootstrapSettings,
+  resolveProviderPauseMs,
   resolveJobRunnerRuntimeSettings,
   type JobRunnerDatabaseBootstrapSettings,
   type JobRunnerRuntimeSettings,
@@ -357,19 +358,6 @@ function hydrateQueuedGptBodyPrompt(
     ...body,
     prompt
   };
-}
-
-function resolveProviderPauseMs(nextRetryAt: string | null, fallbackMs: number): number {
-  if (!nextRetryAt) {
-    return fallbackMs;
-  }
-
-  const remainingMs = Date.parse(nextRetryAt) - Date.now();
-  if (!Number.isFinite(remainingMs) || remainingMs <= 0) {
-    return fallbackMs;
-  }
-
-  return Math.max(1_000, Math.min(Math.max(fallbackMs, 1_000), remainingMs));
 }
 
 async function ensureOpenAIClientForSlot(params: {
@@ -863,6 +851,26 @@ function buildAutonomyServiceForSlot(
   );
 }
 
+async function pauseClaimIfBudgetDisallowed(
+  autonomyService: WorkerAutonomyService,
+  slotDefinition: JobRunnerSlotDefinition
+): Promise<boolean> {
+  const budgetDecision = await autonomyService.evaluateBudgetsBeforeClaim();
+  if (budgetDecision.allowed) {
+    return false;
+  }
+
+  autonomyService.recordClaimResult('budget_paused');
+  logger.warn('worker.claim.paused_budget', {
+    module: 'job-runner',
+    workerId: slotDefinition.workerId,
+    reason: budgetDecision.reason,
+    sleepMs: budgetDecision.sleepMs
+  });
+  await sleepUntilWorkerProcessSignal(budgetDecision.sleepMs);
+  return true;
+}
+
 /**
  * Run one queue-consumer slot inside the Railway worker process.
  * Purpose: allow one deployed worker container to claim and execute multiple queue jobs concurrently.
@@ -877,14 +885,8 @@ async function runWorkerConsumerSlot(
   let openai: OpenAIClient | null = null;
   let providerConfigVersion: string | null = null;
   let lastProviderPauseLogAtMs = 0;
-
-  const initialClientState = await ensureOpenAIClientForSlot({
-    workerId: slotDefinition.workerId,
-    currentClient: null,
-    currentConfigVersion: null
-  });
-  openai = initialClientState.client;
-  providerConfigVersion = initialClientState.configVersion;
+  let lastNoJobLogAtMs = 0;
+  let lastClaimAttemptLogAtMs = 0;
 
   logger.info('worker.slot.started', {
     module: 'job-runner',
@@ -892,46 +894,38 @@ async function runWorkerConsumerSlot(
     slotNumber: slotDefinition.slotNumber,
     concurrency: runtimeSettings.concurrency
   });
+  logger.info('[worker-runtime] polling loop started', {
+    module: 'job-runner',
+    workerId: slotDefinition.workerId,
+    slotNumber: slotDefinition.slotNumber,
+    activeListeners: runtimeSettings.concurrency,
+    pollMs: runtimeSettings.pollMs,
+    idleBackoffMs: runtimeSettings.idleBackoffMs
+  });
+  await autonomyService.markDispatcherStarted(runtimeSettings.concurrency);
   const workerHeartbeatHandle = startWorkerHeartbeatLoop(autonomyService, slotDefinition.workerId);
 
   try {
     while (!isWorkerProcessShutdownRequested()) {
       try {
-        const ensuredClientState = await ensureOpenAIClientForSlot({
-          workerId: slotDefinition.workerId,
-          currentClient: openai,
-          currentConfigVersion: providerConfigVersion
-        });
-        openai = ensuredClientState.client;
-        providerConfigVersion = ensuredClientState.configVersion;
-
-      if (!openai) {
-        const nowMs = Date.now();
-        if (nowMs - lastProviderPauseLogAtMs >= 10_000) {
-          logger.warn('worker.claim.paused_provider_unavailable', {
-            module: 'job-runner',
-            workerId: slotDefinition.workerId,
-            nextRetryAt: ensuredClientState.pausedUntil ?? null
-          });
-          lastProviderPauseLogAtMs = nowMs;
+        if (await pauseClaimIfBudgetDisallowed(autonomyService, slotDefinition)) {
+          continue;
         }
-        await autonomyService.markIdle();
-        await sleepUntilWorkerProcessSignal(
-          resolveProviderPauseMs(ensuredClientState.pausedUntil, runtimeSettings.idleBackoffMs)
-        );
-        continue;
-      }
 
-      const budgetDecision = await autonomyService.evaluateBudgetsBeforeClaim();
-      if (!budgetDecision.allowed) {
-        logger.warn('worker.claim.paused_budget', {
+      const claimLogNowMs = Date.now();
+      autonomyService.recordClaimAttempt();
+      if (claimLogNowMs - lastClaimAttemptLogAtMs >= 30_000) {
+        logger.info('[worker-runtime] claim attempt', {
           module: 'job-runner',
           workerId: slotDefinition.workerId,
-          reason: budgetDecision.reason,
-          sleepMs: budgetDecision.sleepMs
+          leaseMs: autonomyService.getClaimOptions().leaseMs ?? null
         });
-        await sleepUntilWorkerProcessSignal(budgetDecision.sleepMs);
-        continue;
+        lastClaimAttemptLogAtMs = claimLogNowMs;
+      } else {
+        logger.debug('[worker-runtime] claim attempt', {
+          module: 'job-runner',
+          workerId: slotDefinition.workerId
+        });
       }
 
       const { job } = await postgresQueueSchedulerAdapter.claimNext(
@@ -939,12 +933,72 @@ async function runWorkerConsumerSlot(
       );
 
       if (!job) {
+        autonomyService.recordClaimResult('no_job_available');
+        const nowMs = Date.now();
+        if (nowMs - lastNoJobLogAtMs >= 30_000) {
+          logger.info('[worker-runtime] no job available', {
+            module: 'job-runner',
+            workerId: slotDefinition.workerId,
+            idleBackoffMs: runtimeSettings.idleBackoffMs
+          });
+          lastNoJobLogAtMs = nowMs;
+        } else {
+          logger.debug('[worker-runtime] no job available', {
+            module: 'job-runner',
+            workerId: slotDefinition.workerId
+          });
+        }
         await autonomyService.markIdle();
         await sleepUntilWorkerProcessSignal(runtimeSettings.idleBackoffMs);
         continue;
       }
 
+      autonomyService.recordClaimResult('claimed_job');
+      logger.info('[worker-runtime] claimed job', {
+        module: 'job-runner',
+        workerId: slotDefinition.workerId,
+        jobId: job.id,
+        jobType: job.job_type,
+        retryCount: job.retry_count ?? 0,
+        maxRetries: job.max_retries ?? null
+      });
       await autonomyService.markJobStarted(job);
+      const ensuredClientState = await ensureOpenAIClientForSlot({
+        workerId: slotDefinition.workerId,
+        currentClient: openai,
+        currentConfigVersion: providerConfigVersion
+      });
+      openai = ensuredClientState.client;
+      providerConfigVersion = ensuredClientState.configVersion;
+
+      if (!openai) {
+        const delayMs = resolveProviderPauseMs(
+          ensuredClientState.pausedUntil,
+          runtimeSettings.idleBackoffMs
+        );
+        const nowMs = Date.now();
+        if (nowMs - lastProviderPauseLogAtMs >= 10_000) {
+          logger.warn('[worker-runtime] circuit open: execution blocked, polling continues', {
+            module: 'job-runner',
+            workerId: slotDefinition.workerId,
+            jobId: job.id,
+            jobType: job.job_type,
+            nextRetryAt: ensuredClientState.pausedUntil ?? null,
+            providerFailureCategory: getOpenAIProviderRuntimeStatus().lastFailureCategory,
+            delayMs,
+            pollingContinues: true
+          });
+          lastProviderPauseLogAtMs = nowMs;
+        }
+        await autonomyService.deferJobForProviderRecovery(job, {
+          delayMs,
+          errorMessage: 'OpenAI provider unavailable before job execution; job deferred until provider recovery.',
+          providerNextRetryAt: ensuredClientState.pausedUntil,
+          providerFailureCategory: getOpenAIProviderRuntimeStatus().lastFailureCategory
+        });
+        await sleepUntilWorkerProcessSignal(runtimeSettings.pollMs);
+        continue;
+      }
       const gptCancellationController = job.job_type === 'gpt' ? new AbortController() : null;
       const abortGptOnProcessShutdown = () => {
         if (gptCancellationController && !gptCancellationController.signal.aborted) {
@@ -1281,6 +1335,30 @@ async function runWorkerConsumerSlot(
 async function run(): Promise<void> {
   const runtimeSettings = resolveJobRunnerRuntimeSettings();
   const databaseBootstrapSettings = resolveJobRunnerDatabaseBootstrapSettings();
+  logger.info('[worker-runtime] boot config', {
+    module: 'job-runner',
+    enabled: true,
+    disabledReason: null,
+    pollMs: runtimeSettings.pollMs,
+    idleBackoffMs: runtimeSettings.idleBackoffMs,
+    concurrency: runtimeSettings.concurrency,
+    workerId: runtimeSettings.baseWorkerId,
+    statsWorkerId: runtimeSettings.statsWorkerId,
+    databaseBootstrapRetryMs: databaseBootstrapSettings.retryMs,
+    databaseBootstrapMaxRetryMs: databaseBootstrapSettings.maxRetryMs,
+    databaseBootstrapMaxAttempts: databaseBootstrapSettings.maxAttempts
+  });
+  logger.info('[worker-runtime] enabled/disabled reason', {
+    module: 'job-runner',
+    enabled: true,
+    disabledReason: null,
+    reason: 'ARCANOS_PROCESS_KIND=worker starts the dedicated async queue dispatcher'
+  });
+  logger.info('[worker-runtime] start requested', {
+    module: 'job-runner',
+    workerId: runtimeSettings.baseWorkerId,
+    concurrency: runtimeSettings.concurrency
+  });
   await initializeJobRunnerDatabaseWithRetry('job-runner', databaseBootstrapSettings);
 
   if (isWorkerProcessShutdownRequested()) {

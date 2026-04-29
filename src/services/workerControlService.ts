@@ -154,6 +154,12 @@ export interface WorkerControlWorkerSnapshot {
   healthStatus: string;
   operationalStatus: WorkerAutonomyHealthReport['overallStatus'];
   activeJobs: string[];
+  dispatcherStarted: boolean;
+  activeListeners: number;
+  lastPollAt: string | null;
+  lastClaimAttemptAt: string | null;
+  lastClaimResult: string | null;
+  disabledReason: string | null;
   currentJobId: string | null;
   lastError: string | null;
   lastHeartbeatAt: string | null;
@@ -599,12 +605,18 @@ function deriveWorkerOperationalStatus(
   workerSnapshot: WorkerRuntimeSnapshotRecord,
   queueSummary: JobQueueSummary | null,
   watchdog: WorkerControlWorkerSnapshot['watchdog'],
-  stale: boolean
+  stale: boolean,
+  dispatcherStarted: boolean,
+  activeListeners: number
 ): WorkerAutonomyHealthReport['overallStatus'] {
   const activeQueueWork = hasActiveQueueWork(queueSummary);
 
   if (workerSnapshot.healthStatus === 'offline') {
     return 'offline';
+  }
+
+  if (activeQueueWork && (!dispatcherStarted || activeListeners <= 0)) {
+    return 'unhealthy';
   }
 
   if (watchdog.triggered || workerSnapshot.healthStatus === 'unhealthy') {
@@ -629,6 +641,8 @@ function buildWorkerControlWorkerSnapshot(
   const lastProcessedJobAt = readSnapshotString(snapshot, 'lastProcessedJobAt');
   const lastRecoveryActionAt = readSnapshotString(snapshot, 'lastRecoveryActionAt');
   const lastWatchdogRunAt = readSnapshotString(snapshot, 'lastWatchdogRunAt');
+  const dispatcherStarted = snapshot.dispatcherStarted === true;
+  const activeListeners = readSnapshotNumber(snapshot, 'activeListeners') ?? 0;
   const activeJobs = readSnapshotStringArray(snapshot, 'activeJobs');
   const heartbeatAgeMs = deriveObservationAgeMs({
     lastHeartbeatAt: workerSnapshot.lastHeartbeatAt,
@@ -645,12 +659,25 @@ function buildWorkerControlWorkerSnapshot(
     workerId: workerSnapshot.workerId,
     workerType: workerSnapshot.workerType,
     healthStatus: workerSnapshot.healthStatus,
-    operationalStatus: deriveWorkerOperationalStatus(workerSnapshot, queueSummary, watchdog, stale),
+    operationalStatus: deriveWorkerOperationalStatus(
+      workerSnapshot,
+      queueSummary,
+      watchdog,
+      stale,
+      dispatcherStarted,
+      activeListeners
+    ),
     activeJobs: activeJobs.length > 0
       ? activeJobs
       : workerSnapshot.currentJobId
       ? [workerSnapshot.currentJobId]
       : [],
+    dispatcherStarted,
+    activeListeners,
+    lastPollAt: readSnapshotString(snapshot, 'lastPollAt'),
+    lastClaimAttemptAt: readSnapshotString(snapshot, 'lastClaimAttemptAt'),
+    lastClaimResult: readSnapshotString(snapshot, 'lastClaimResult'),
+    disabledReason: readSnapshotString(snapshot, 'disabledReason'),
     currentJobId: workerSnapshot.currentJobId,
     lastError: workerSnapshot.lastError,
     lastHeartbeatAt: workerSnapshot.lastHeartbeatAt,
@@ -701,6 +728,13 @@ function buildWorkerOperationalAlerts(
   if (activeQueueWork) {
     for (const worker of workers) {
       if (worker.operationalStatus === 'healthy' || worker.operationalStatus === 'offline') {
+        continue;
+      }
+      if (!worker.dispatcherStarted || worker.activeListeners <= 0) {
+        const reasonSuffix = worker.disabledReason ? `: ${worker.disabledReason}` : '.';
+        alerts.add(
+          `Worker ${worker.workerId} dispatcher is not active while queue work is active${reasonSuffix}`
+        );
         continue;
       }
       alerts.add(

@@ -26,6 +26,7 @@ jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
   claimNextPendingJob: claimNextPendingJobMock,
   recordJobHeartbeat: recordJobHeartbeatMock,
   scheduleJobRetry: scheduleJobRetryMock,
+  deferJobForProviderRecovery: jest.fn(),
   recoverStaleJobs: recoverStaleJobsMock,
   updateJob: updateJobMock,
   getJobById: getJobByIdMock,

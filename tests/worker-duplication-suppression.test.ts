@@ -90,8 +90,39 @@ describe('worker duplication suppression', () => {
     expect(workerConfig.getWorkerRuntimeStatus()).toEqual(expect.objectContaining({
       enabled: false,
       started: false,
+      dispatcherStarted: false,
       activeListeners: 0,
-      workerIds: []
+      workerIds: [],
+      disabledReason: 'RUN_WORKERS disabled for explicit web process role; workers not started.',
+      lastClaimResult: 'disabled'
     }));
+  });
+
+  it('starts and reports active listeners when worker runtime is enabled', async () => {
+    process.env.NODE_ENV = 'test';
+    process.env.RUN_WORKERS = 'true';
+    delete process.env.ARCANOS_PROCESS_KIND;
+
+    jest.resetModules();
+    jest.unstable_mockModule('@services/safety/auditEvents.js', () => ({
+      emitSafetyAuditEvent: jest.fn()
+    }));
+    jest.unstable_mockModule('../src/services/safety/executionLock.js', () => ({
+      acquireExecutionLock: async () => ({
+        release: async () => undefined
+      })
+    }));
+
+    const workerConfig = await import('../src/config/workerConfig.js');
+    await workerConfig.startWorkers(true);
+
+    expect(workerConfig.getWorkerRuntimeStatus()).toEqual(expect.objectContaining({
+      enabled: true,
+      started: true,
+      dispatcherStarted: true,
+      activeListeners: expect.any(Number),
+      disabledReason: null
+    }));
+    expect(workerConfig.getWorkerRuntimeStatus().activeListeners).toBeGreaterThan(0);
   });
 });

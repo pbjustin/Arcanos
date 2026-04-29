@@ -20,6 +20,7 @@ jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
   getJobQueueSummary: getJobQueueSummaryMock,
   getLatestJob: getLatestJobMock,
   listFailedJobs: listFailedJobsMock,
+  deferJobForProviderRecovery: jest.fn(),
   requeueFailedJob: requeueFailedJobMock
 }));
 
@@ -251,6 +252,8 @@ describe('/worker-helper routes', () => {
           lastHeartbeatAt: '2026-03-06T10:00:00.000Z',
           updatedAt: '2026-03-06T10:00:00.000Z',
           snapshot: {
+            dispatcherStarted: true,
+            activeListeners: 2,
             lastActivityAt: '2026-03-06T10:00:00.000Z',
             lastProcessedJobAt: '2026-03-06T09:59:30.000Z',
             watchdog: {
@@ -443,6 +446,12 @@ describe('/worker-helper routes', () => {
             healthStatus: 'healthy',
             operationalStatus: 'healthy',
             activeJobs: [],
+            dispatcherStarted: true,
+            activeListeners: 2,
+            lastPollAt: null,
+            lastClaimAttemptAt: null,
+            lastClaimResult: null,
+            disabledReason: null,
             currentJobId: null,
             lastError: null,
             lastHeartbeatAt: '2026-03-06T10:00:00.000Z',

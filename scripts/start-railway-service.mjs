@@ -185,6 +185,11 @@ async function repairDistAliases(processKind) {
  */
 async function runWebRuntime() {
   console.log(`[railway-launcher] starting web runtime ${PROCESS_KIND_ENV}=web RUN_WORKERS=false`);
+  console.log('[worker-runtime] enabled/disabled reason', JSON.stringify({
+    module: 'railway-launcher',
+    enabled: false,
+    disabledReason: 'ARCANOS_PROCESS_KIND=web disables in-process workers; dedicated async workers must run in a separate worker service.'
+  }));
   const webProcess = spawnProcess('node', [
     '--max-old-space-size=7168',
     '--import',
@@ -208,6 +213,12 @@ async function runWebRuntime() {
  */
 async function runWorkerRuntimeWithHealthServer() {
   console.log(`[railway-launcher] starting worker runtime ${PROCESS_KIND_ENV}=worker RUN_WORKERS=true`);
+  console.log('[worker-runtime] start requested', JSON.stringify({
+    module: 'railway-launcher',
+    enabled: true,
+    disabledReason: null,
+    entrypoint: 'dist/workers/jobRunner.js'
+  }));
   await repairDistAliases('worker');
   const workerProcess = spawnProcess('node', [
     '--import',

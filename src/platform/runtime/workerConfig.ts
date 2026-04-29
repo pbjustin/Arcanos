@@ -103,10 +103,15 @@ export interface WorkerRuntimeStatus {
   maxActiveWorkers: number;
   surgeWorkerCount: number;
   started: boolean;
+  dispatcherStarted?: boolean;
   startedAt?: string;
   activeListeners: number;
   workerIds: string[];
   totalDispatched: number;
+  lastPollAt?: string;
+  lastClaimAttemptAt?: string;
+  lastClaimResult?: string;
+  disabledReason?: string | null;
   lastDispatchAt?: string;
   lastInputPreview?: string;
   lastResult?: WorkerResult | null;
@@ -305,6 +310,14 @@ function buildWorkersDisabledSummary(): WorkerBootstrapSummary {
       ? 'RUN_WORKERS disabled for explicit web process role; workers not started.'
       : 'RUN_WORKERS disabled; workers not started.';
 
+  logger.warn('[worker-runtime] enabled/disabled reason', {
+    module: 'worker-runtime',
+    enabled: false,
+    disabledReason: message,
+    processKind: workerRuntimeMode.processKind,
+    requestedRunWorkers: workerRuntimeMode.requestedRunWorkers
+  });
+
   return {
     started: false,
     alreadyRunning: false,
@@ -380,6 +393,13 @@ function startWorkersUnsafe(force = false): WorkerBootstrapSummary {
 
   runtimeState.started = true;
   runtimeState.startedAt = new Date().toISOString();
+  logger.info('[worker-runtime] polling loop started', {
+    module: 'worker-runtime',
+    enabled: true,
+    started: true,
+    activeListeners: workerTaskQueue.listenerCount('task'),
+    workerIds: runtimeState.workerIds
+  });
 
   return {
     started: true,
@@ -394,6 +414,13 @@ function startWorkersUnsafe(force = false): WorkerBootstrapSummary {
 }
 
 export async function startWorkers(force = false): Promise<WorkerBootstrapSummary> {
+  logger.info('[worker-runtime] start requested', {
+    module: 'worker-runtime',
+    force,
+    enabled: workerSettings.runWorkers,
+    configuredCount: workerSettings.count,
+    processKind: workerRuntimeMode.processKind
+  });
   const lock = await acquireExecutionLock('worker-runtime:start');
   //audit Assumption: worker runtime spawn/restart must be single-active; failure risk: duplicate listeners and double execution; expected invariant: lock collision suppresses duplicate start; handling strategy: return duplicate-suppressed summary.
   if (!lock) {
@@ -488,6 +515,13 @@ export async function dispatchArcanosTask(
 }
 
 export function getWorkerRuntimeStatus(): WorkerRuntimeStatus {
+  const activeListeners = workerTaskQueue.listenerCount('task');
+  const disabledReason = workerSettings.runWorkers
+    ? null
+    : workerRuntimeMode.reason === 'process_kind_web'
+    ? 'RUN_WORKERS disabled for explicit web process role; workers not started.'
+    : 'RUN_WORKERS disabled; workers not started.';
+
   return {
     enabled: workerSettings.runWorkers,
     model: workerSettings.model,
@@ -495,10 +529,13 @@ export function getWorkerRuntimeStatus(): WorkerRuntimeStatus {
     maxActiveWorkers: getMaxActiveWorkers(),
     surgeWorkerCount: Math.max(0, runtimeState.workerIds.length - workerSettings.count),
     started: runtimeState.started,
+    dispatcherStarted: runtimeState.started && activeListeners > 0,
     startedAt: runtimeState.startedAt,
-    activeListeners: workerTaskQueue.listenerCount('task'),
+    activeListeners,
     workerIds: runtimeState.workerIds,
     totalDispatched: runtimeState.totalDispatched,
+    lastClaimResult: workerSettings.runWorkers ? undefined : 'disabled',
+    disabledReason,
     lastDispatchAt: runtimeState.lastDispatchAt,
     lastInputPreview: runtimeState.lastInputPreview,
     lastResult: runtimeState.lastResult ?? undefined,
@@ -627,5 +664,19 @@ export async function recycleWorker(workerId: string): Promise<WorkerRecycleResu
 }
 
 if (workerSettings.runWorkers) {
-  void startWorkers();
+  void startWorkers().catch((error: unknown) => {
+    logger.error(
+      '[worker-runtime] startup failed',
+      {
+        module: 'worker-runtime',
+        processKind: workerRuntimeMode.processKind,
+        configuredCount: workerSettings.count
+      },
+      { errorMessage: resolveErrorMessage(error) },
+      error instanceof Error ? error : undefined
+    );
+    setImmediate(() => {
+      throw error;
+    });
+  });
 }

@@ -20,6 +20,7 @@ jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
   getJobQueueSummary: jest.fn(),
   getLatestJob: getLatestJobMock,
   listFailedJobs: listFailedJobsMock,
+  deferJobForProviderRecovery: jest.fn(),
   requeueFailedJob: requeueFailedJobMock
 }));
 
@@ -75,6 +76,10 @@ describe('workerControlService', () => {
         completed_at: '2026-04-01T09:58:00.000Z'
       }
     ]);
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
   });
 
   it('reports healthy operational status while preserving historical failure debt', async () => {
@@ -196,6 +201,100 @@ describe('workerControlService', () => {
         workerId: 'async-queue-slot-1',
         healthStatus: 'degraded',
         operationalStatus: 'healthy'
+      })
+    ]);
+  });
+
+  it('marks a worker unhealthy when queue work is active but the dispatcher is inactive', async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2026-04-28T20:00:30.000Z'));
+
+    getWorkerAutonomyHealthReportMock.mockResolvedValue({
+      timestamp: '2026-04-28T20:00:00.000Z',
+      overallStatus: 'healthy',
+      alerts: [],
+      queueSummary: {
+        pending: 1,
+        running: 0,
+        completed: 0,
+        failed: 0,
+        total: 1,
+        delayed: 0,
+        stalledRunning: 0,
+        oldestPendingJobAgeMs: 0,
+        recentFailed: 0,
+        recentCompleted: 0,
+        recentTotalTerminal: 0,
+        recentTerminalWindowMs: 3600000,
+        failureBreakdown: {
+          retryable: 0,
+          permanent: 0,
+          retryScheduled: 0,
+          retryExhausted: 0,
+          authentication: 0,
+          network: 0,
+          provider: 0,
+          rateLimited: 0,
+          timeout: 0,
+          validation: 0,
+          unknown: 0
+        },
+        recentFailureReasons: [],
+        lastUpdatedAt: '2026-04-28T20:00:00.000Z'
+      },
+      workers: [
+        {
+          workerId: 'async-queue-slot-1',
+          workerType: 'async_queue',
+          healthStatus: 'healthy',
+          currentJobId: null,
+          lastError: null,
+          startedAt: '2026-04-28T19:59:00.000Z',
+          lastHeartbeatAt: '2026-04-28T20:00:00.000Z',
+          lastInspectorRunAt: null,
+          updatedAt: '2026-04-28T20:00:00.000Z',
+          snapshot: {
+            dispatcherStarted: false,
+            activeListeners: 0,
+            lastActivityAt: '2026-04-28T20:00:00.000Z',
+            watchdog: {
+              triggered: false,
+              reason: null,
+              restartRecommended: false,
+              idleThresholdMs: 120000
+            }
+          }
+        }
+      ],
+      settings: {
+        heartbeatIntervalMs: 10000,
+        leaseMs: 30000,
+        inspectorIntervalMs: 30000,
+        staleAfterMs: 60000,
+        watchdogIdleMs: 120000,
+        defaultMaxRetries: 2,
+        maxJobsPerHour: 120,
+        maxAiCallsPerHour: 120,
+        maxRssMb: 2048
+      }
+    });
+
+    const health = await getWorkerControlHealth();
+
+    expect(health.overallStatus).toBe('unhealthy');
+    expect(health.alerts).toEqual([
+      'Worker async-queue-slot-1 dispatcher is not active while queue work is active.'
+    ]);
+    expect(health.operationalHealth).toEqual(expect.objectContaining({
+      overallStatus: 'unhealthy',
+      unhealthyWorkerIds: ['async-queue-slot-1']
+    }));
+    expect(health.workers).toEqual([
+      expect.objectContaining({
+        workerId: 'async-queue-slot-1',
+        operationalStatus: 'unhealthy',
+        dispatcherStarted: false,
+        activeListeners: 0
       })
     ]);
   });

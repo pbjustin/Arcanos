@@ -1,6 +1,7 @@
 import type { JobData } from '@core/db/schema.js';
 import {
   cleanupExpiredGptJobs,
+  deferJobForProviderRecovery as deferJobForProviderRecoveryInRepository,
   getJobExecutionStatsSince,
   getJobQueueSummary,
   recordJobHeartbeat,
@@ -145,6 +146,12 @@ interface RuntimeSnapshotState {
   currentJobId: string | null;
   lastError: string | null;
   lastHeartbeatAt: string | null;
+  dispatcherStarted: boolean;
+  activeListeners: number;
+  lastPollAt: string | null;
+  lastClaimAttemptAt: string | null;
+  lastClaimResult: string | null;
+  disabledReason: string | null;
   lastInspectorRunAt: string | null;
   lastWatchdogRunAt: string | null;
   lastActivityAt: string | null;
@@ -406,6 +413,7 @@ export class WorkerAutonomyService {
   private readonly state: RuntimeSnapshotState;
   private readonly snapshotPipeline: WorkerRuntimeSnapshotPipelinePort | null;
   private lastSnapshotPersistedAtMs = 0;
+  private lastPersistedIdleClaimResult: string | null = null;
 
   constructor(
     settings: WorkerAutonomySettings = getWorkerAutonomySettings(),
@@ -420,6 +428,12 @@ export class WorkerAutonomyService {
       currentJobId: null,
       lastError: null,
       lastHeartbeatAt: null,
+      dispatcherStarted: false,
+      activeListeners: 0,
+      lastPollAt: null,
+      lastClaimAttemptAt: null,
+      lastClaimResult: null,
+      disabledReason: null,
       lastInspectorRunAt: null,
       lastWatchdogRunAt: null,
       lastActivityAt: this.startedAt,
@@ -488,6 +502,34 @@ export class WorkerAutonomyService {
 
   async flushSnapshotPipeline(reason = 'manual'): Promise<void> {
     await this.snapshotPipeline?.shutdown(reason);
+  }
+
+  /**
+   * Persist that this queue-consumer slot reached the dispatcher loop.
+   * Purpose: distinguish live idle workers from processes that only completed bootstrap.
+   */
+  async markDispatcherStarted(activeListeners: number): Promise<void> {
+    const startedAt = new Date().toISOString();
+    this.state.dispatcherStarted = true;
+    this.state.activeListeners = activeListeners;
+    this.state.disabledReason = null;
+    this.state.lastHeartbeatAt = this.state.lastHeartbeatAt ?? startedAt;
+    this.state.lastActivityAt = this.state.lastActivityAt ?? startedAt;
+    await this.persistSnapshot({
+      healthStatus: 'healthy',
+      alerts: []
+    }, { force: true, source: 'dispatcher-started' });
+  }
+
+  recordClaimAttempt(): void {
+    const attemptedAt = new Date().toISOString();
+    this.state.lastPollAt = attemptedAt;
+    this.state.lastClaimAttemptAt = attemptedAt;
+    this.state.lastClaimResult = 'claim_attempt';
+  }
+
+  recordClaimResult(result: string): void {
+    this.state.lastClaimResult = result;
   }
 
   /**
@@ -829,6 +871,7 @@ export class WorkerAutonomyService {
     this.state.lastError = null;
     this.state.lastHeartbeatAt = new Date().toISOString();
     this.state.lastActivityAt = this.state.lastHeartbeatAt;
+    this.state.lastClaimResult = 'claimed_job';
     await this.persistSnapshot({
       healthStatus: 'healthy',
       alerts: []
@@ -1005,6 +1048,69 @@ export class WorkerAutonomyService {
   }
 
   /**
+   * Re-pend a claimed job while the provider circuit/backoff is open without consuming retry budget.
+   * Purpose: keep claim polling visible and fair while preventing transient provider outages from exhausting job retries.
+   */
+  async deferJobForProviderRecovery(
+    job: JobData,
+    options: {
+      delayMs: number;
+      errorMessage: string;
+      providerNextRetryAt?: string | null;
+      providerFailureCategory?: string | null;
+    }
+  ): Promise<{ action: 'deferred' | 'skipped'; delayMs: number }> {
+    const deferredAt = new Date().toISOString();
+    const delayMs = Math.max(0, Math.trunc(options.delayMs));
+    this.state.currentJobId = null;
+    this.state.lastError = options.errorMessage;
+    this.state.lastActivityAt = deferredAt;
+    this.state.lastClaimResult = 'provider_unavailable';
+
+    const deferredJob = await deferJobForProviderRecoveryInRepository(job.id, {
+      workerId: this.settings.workerId,
+      delayMs,
+      errorMessage: options.errorMessage,
+      autonomyState: {
+        providerDeferral: {
+          at: deferredAt,
+          reason: options.errorMessage,
+          delayMs,
+          nextRetryAt: options.providerNextRetryAt ?? null,
+          failureCategory: options.providerFailureCategory ?? null,
+          retryBudgetConsumed: false
+        }
+      }
+    });
+    if (!deferredJob) {
+      this.state.lastError = null;
+      logger.warn('worker.provider_recovery_defer.skipped_status_mismatch', {
+        module: 'worker-autonomy',
+        workerId: this.settings.workerId,
+        jobId: job.id
+      });
+      await this.persistSnapshot({
+        healthStatus: 'degraded',
+        alerts: [`Provider deferral skipped for job ${job.id}; job was no longer running.`]
+      }, { force: true, source: 'provider-deferred-skipped' });
+      return {
+        action: 'skipped',
+        delayMs
+      };
+    }
+    await this.persistSnapshot({
+      healthStatus: 'degraded',
+      alerts: [`Provider unavailable; deferred job ${job.id} for ${delayMs}ms without consuming retry budget.`]
+    }, { force: true, source: 'provider-deferred' });
+    this.state.lastError = null;
+
+    return {
+      action: 'deferred',
+      delayMs
+    };
+  }
+
+  /**
    * Record an idle snapshot when the worker has no job to process.
    * Purpose: keep heartbeat freshness visible even while the queue is empty.
    * Inputs/outputs: no inputs, returns once the snapshot is persisted.
@@ -1025,15 +1131,22 @@ export class WorkerAutonomyService {
       alerts.push(inactivitySignal.reason);
     }
 
+    const claimResultChanged =
+      this.state.lastClaimResult !== null &&
+      this.state.lastClaimResult !== this.lastPersistedIdleClaimResult;
+
     await this.persistSnapshot({
       healthStatus,
       alerts,
       queueSummary,
       watchdogState
     }, {
-      force: healthStatus !== 'healthy' || alerts.length > 0,
+      force: healthStatus !== 'healthy' || alerts.length > 0 || claimResultChanged,
       source: 'worker-idle'
     });
+    if (claimResultChanged) {
+      this.lastPersistedIdleClaimResult = this.state.lastClaimResult;
+    }
   }
 
   private deriveHealthStatus(
@@ -1099,6 +1212,12 @@ export class WorkerAutonomyService {
       updatedAt: new Date().toISOString(),
       snapshot: {
         activeJobs: this.state.currentJobId ? [this.state.currentJobId] : [],
+        dispatcherStarted: this.state.dispatcherStarted,
+        activeListeners: this.state.activeListeners,
+        lastPollAt: this.state.lastPollAt,
+        lastClaimAttemptAt: this.state.lastClaimAttemptAt,
+        lastClaimResult: this.state.lastClaimResult,
+        disabledReason: this.state.disabledReason,
         queueSummary: context.queueSummary ?? null,
         stats: context.stats ?? null,
         processedJobs: this.state.processedJobs,
