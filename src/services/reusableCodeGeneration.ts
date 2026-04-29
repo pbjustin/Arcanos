@@ -1,10 +1,8 @@
-import { getDefaultModel } from './openai/credentialProvider.js';
+import type OpenAI from 'openai';
+import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
+import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { z } from 'zod';
 import { parseModelOutputWithSchema } from './safety/aiOutputBoundary.js';
-import {
-  callStructuredResponse,
-  type OpenAIResponsesClientLike,
-} from '@arcanos/openai';
 
 export type ReusableCodeTarget = 'all' | 'asyncHandler' | 'errorResponse' | 'idGenerator';
 
@@ -38,12 +36,6 @@ const reusableCodeResponseSchema = z.object({
     })
   )
 });
-type ReusableCodeResponsePayload = z.infer<typeof reusableCodeResponseSchema>;
-
-function isReusableCodeResponsePayload(value: unknown): value is ReusableCodeResponsePayload {
-  return reusableCodeResponseSchema.safeParse(value).success;
-}
-
 /**
  * Resolve the requested targets for code generation.
  *
@@ -104,7 +96,7 @@ export function parseReusableCodeResponse(raw: string): ReusableCodeSnippet[] {
 }
 
 /**
- * Generate reusable code snippets using the OpenAI SDK.
+ * Generate reusable code snippets using the Trinity generation facade.
  *
  * @param client - OpenAI SDK client instance.
  * @param request - Generation request details.
@@ -112,39 +104,36 @@ export function parseReusableCodeResponse(raw: string): ReusableCodeSnippet[] {
  * @edgeCases Throws when OpenAI returns invalid JSON.
  */
 export async function generateReusableCodeSnippets(
-  client: OpenAIResponsesClientLike,
+  client: OpenAI,
   request: ReusableCodeGenerationRequest
 ): Promise<ReusableCodeGenerationResult> {
-  const model = getDefaultModel();
   const prompt = buildReusableCodePrompt(request);
-
-  const { response, outputText, outputParsed } = await callStructuredResponse<ReusableCodeResponsePayload>(
-    client,
-    {
-      model,
-      input: [
-        {
-          role: 'system',
-          content: [{ type: 'input_text', text: 'You are a senior TypeScript engineer who responds with JSON only.' }]
-        },
-        {
-          role: 'user',
-          content: [{ type: 'input_text', text: prompt }]
-        }
-      ],
-      text: { format: { type: 'json_object' } },
-      temperature: 0.2
+  const trinityResult = await runTrinityWritingPipeline({
+    input: {
+      prompt: [
+        'You are a senior TypeScript engineer who responds with JSON only.',
+        prompt
+      ].join('\n\n'),
+      moduleId: 'REUSABLE:CODE',
+      sourceEndpoint: 'api.reusables',
+      requestedAction: 'query',
+      body: request,
+      executionMode: 'request'
     },
-    undefined,
-    {
-      validate: isReusableCodeResponsePayload,
-      source: 'reusable code generation'
+    context: {
+      client,
+      runtimeBudget: createRuntimeBudget(),
+      runOptions: {
+        answerMode: 'audit',
+        strictUserVisibleOutput: true
+      }
     }
-  );
+  });
+  const snippets = parseReusableCodeResponse(trinityResult.result);
 
   return {
-    model: response.model ?? model,
-    snippets: outputParsed.snippets,
-    raw: outputText
+    model: trinityResult.activeModel,
+    snippets,
+    raw: trinityResult.result
   };
 }

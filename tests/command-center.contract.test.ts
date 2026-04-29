@@ -7,6 +7,8 @@ let mockedAuditSafeMode: 'true' | 'false' | 'passive' | 'log-only' = 'false';
 
 const mockLogExecution = jest.fn(async () => undefined);
 const mockCreateCentralizedCompletion = jest.fn();
+const mockRunTrinityWritingPipeline = jest.fn();
+const mockGetOpenAIClientOrAdapter = jest.fn(() => ({ client: { responses: {} } }));
 const mockGenerateMockResponse = jest.fn(() => ({
   result: 'mocked-ai-response',
   meta: {
@@ -25,7 +27,8 @@ const mockInterpretCommand = jest.fn(async (instruction: string) => {
 });
 
 jest.unstable_mockModule('@core/db/repositories/executionLogRepository.js', () => ({
-  logExecution: mockLogExecution
+  logExecution: mockLogExecution,
+  logExecutionBatch: jest.fn(async () => undefined)
 }));
 
 jest.unstable_mockModule('@services/openai.js', () => ({
@@ -46,9 +49,18 @@ jest.unstable_mockModule('@services/openai.js', () => ({
   getCircuitBreakerSnapshot: jest.fn(),
   validateClientHealth: jest.fn(),
   createChatCompletionWithFallback: jest.fn(),
+  createSingleChatCompletion: jest.fn(),
   getOpenAIClient: jest.fn(),
   getOpenAIKeySource: jest.fn(),
   runStructuredReasoning: jest.fn()
+}));
+
+jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({
+  runTrinityWritingPipeline: mockRunTrinityWritingPipeline
+}));
+
+jest.unstable_mockModule('@services/openai/clientBridge.js', () => ({
+  getOpenAIClientOrAdapter: mockGetOpenAIClientOrAdapter
 }));
 
 jest.unstable_mockModule('@services/auditSafeToggle.js', () => ({
@@ -70,6 +82,28 @@ describe('commandCenter contracts and tracing', () => {
     jest.clearAllMocks();
     mockedAuditSafeMode = 'false';
     mockHasValidApiKey.mockReturnValue(false);
+    mockGetOpenAIClientOrAdapter.mockReturnValue({ client: { responses: {} } });
+    mockRunTrinityWritingPipeline.mockResolvedValue({
+      result: 'mocked-ai-response',
+      activeModel: 'gpt-test',
+      fallbackFlag: false,
+      routingStages: ['TRINITY'],
+      auditSafe: { mode: 'true', passed: true, flags: [] },
+      taskLineage: [],
+      fallbackSummary: {
+        intakeFallbackUsed: false,
+        gpt5FallbackUsed: false,
+        finalFallbackUsed: false,
+        fallbackReasons: [],
+      },
+      meta: {
+        pipeline: 'trinity',
+        bypass: false,
+        sourceEndpoint: 'cef.ai.prompt',
+        classification: 'writing',
+        tokens: { total_tokens: 42 }
+      },
+    });
     mockGenerateMockResponse.mockReturnValue({
       result: 'mocked-ai-response',
       meta: {
@@ -207,20 +241,12 @@ describe('commandCenter contracts and tracing', () => {
 
   it('traces retry and success after a transient AI failure', async () => {
     mockHasValidApiKey.mockReturnValue(true);
-    mockCreateCentralizedCompletion
+    mockRunTrinityWritingPipeline
       .mockRejectedValueOnce(Object.assign(new Error('timeout while calling OpenAI'), { code: 'ETIMEDOUT' }))
       .mockResolvedValueOnce({
-        choices: [
-          {
-            message: {
-              content: 'retried-ai-response'
-            }
-          }
-        ],
-        usage: {
-          total_tokens: 42
-        },
-        model: 'gpt-test'
+        result: 'retried-ai-response',
+        activeModel: 'gpt-test',
+        meta: { tokens: { total_tokens: 42 } }
       });
 
     const result = await executeCommand('ai:prompt', { prompt: 'Retry the AI handler once.' }, {
@@ -238,7 +264,7 @@ describe('commandCenter contracts and tracing', () => {
         model: 'gpt-test'
       })
     );
-    expect(mockCreateCentralizedCompletion).toHaveBeenCalledTimes(2);
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(2);
 
     const retryTraceCall = mockLogExecution.mock.calls.find(call => call[2] === 'cef.handler.retry');
     expect(retryTraceCall?.[3]).toEqual(expect.objectContaining({

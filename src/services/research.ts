@@ -1,10 +1,9 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import { fetchAndClean } from "@shared/webFetcher.js";
-import {
-  createCentralizedCompletion,
-  getDefaultModel
-} from './openai.js';
+import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
+import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
+import { getDefaultModel } from './openai.js';
 import { getOpenAIClientOrAdapter } from './openai/clientBridge.js';
 import { setMemory } from './memory.js';
 import { RESEARCH_SUMMARIZER_PROMPT, RESEARCH_SYNTHESIS_PROMPT } from "@platform/runtime/researchPrompts.js";
@@ -39,6 +38,11 @@ const SUSPICIOUS_INSTRUCTION_PATTERNS = [
   /\breveal\b.+\bsecret\b/i
 ];
 
+type ResearchCompletionMessage = {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+};
+
 function resolveResearchModel(): string {
   const configuredModel = getEnv('RESEARCH_MODEL_ID')?.trim();
   return configuredModel && configuredModel.length > 0 ? configuredModel : getDefaultModel();
@@ -66,18 +70,48 @@ function resolveSourcesDir(topic: string): string {
 }
 
 async function runResearchCompletion(
-  messages: Parameters<typeof createCentralizedCompletion>[0],
+  client: OpenAI,
+  messages: ResearchCompletionMessage[],
   model: string,
   temperature: number,
-  maxTokens: number
+  maxTokens: number,
+  sourceEndpoint: string
 ): Promise<string> {
-  const response = await createCentralizedCompletion(messages, {
-    temperature,
-    max_tokens: maxTokens,
-    model
+  const prompt = messages
+    .map((message) => `${message.role.toUpperCase()}:\n${message.content}`)
+    .join('\n\n');
+
+  const response = await runTrinityWritingPipeline({
+    input: {
+      prompt,
+      moduleId: 'RESEARCH',
+      sourceEndpoint,
+      requestedAction: 'query',
+      body: {
+        messages,
+        requestedModel: model,
+        temperature,
+        maxTokens
+      },
+      maxOutputTokens: maxTokens,
+      executionMode: 'request',
+      background: {
+        requestedModel: model,
+        temperature
+      }
+    },
+    context: {
+      client,
+      runtimeBudget: createRuntimeBudget(),
+      runOptions: {
+        answerMode: 'direct',
+        strictUserVisibleOutput: true,
+        requestedVerbosity: 'minimal'
+      }
+    }
   });
 
-  return extractCompletionText(response);
+  return response.result.trim();
 }
 
 function buildSummariesForSynthesis(summaries: ResearchSourceSummary[]): string {
@@ -127,6 +161,7 @@ function hasSuspiciousInstructions(text: string): boolean {
 }
 
 async function runSynthesisAudit(
+  client: OpenAI,
   topic: string,
   summaries: ResearchSourceSummary[],
   synthesizedInsight: string,
@@ -153,7 +188,14 @@ async function runSynthesisAudit(
   ];
 
   try {
-    const auditRaw = await runResearchCompletion(auditMessages, model, 0, 120);
+    const auditRaw = await runResearchCompletion(
+      client,
+      auditMessages,
+      model,
+      0,
+      120,
+      'research.audit'
+    );
     return parseAuditVerdict(auditRaw);
   } catch {
     //audit Assumption: failed audits must not silently approve potentially compromised synthesis; risk: unsafe insight leak; invariant: audit failure blocks trust; handling: fail closed.
@@ -194,10 +236,10 @@ export async function researchTopic(topic: string, urls: string[] = []): Promise
   }
 
   const generatedAt = new Date().toISOString();
-  const { adapter } = getOpenAIClientOrAdapter();
+  const { client } = getOpenAIClientOrAdapter();
   // Use config for mock detection (adapter boundary pattern)
   const apiKey = getEnv('OPENAI_API_KEY');
-  const useMock = !adapter || apiKey === 'test_key_for_mocking';
+  const useMock = !client || apiKey === 'test_key_for_mocking';
   const researchModel = resolveResearchModel();
 
   //audit Assumption: mock mode when client missing or test key
@@ -224,7 +266,14 @@ export async function researchTopic(topic: string, urls: string[] = []): Promise
           content: `Topic: ${topic}\nSource URL: ${url}\n\nContent (truncated):\n${content}`
         }
       ];
-      const summary = await runResearchCompletion(messages, researchModel, 0.2, 600);
+      const summary = await runResearchCompletion(
+        client,
+        messages,
+        researchModel,
+        0.2,
+        600,
+        'research.summarizeSource'
+      );
       if (summary) {
         summaries.push({ url, summary });
       } else {
@@ -248,11 +297,18 @@ export async function researchTopic(topic: string, urls: string[] = []): Promise
     }
   ];
 
-  const insight = await runResearchCompletion(synthesisMessages, researchModel, 0.25, 900);
+  const insight = await runResearchCompletion(
+    client,
+    synthesisMessages,
+    researchModel,
+    0.25,
+    900,
+    'research.synthesize'
+  );
   let finalInsight = insight || `No insight generated for ${topic}.`;
 
   if (summaries.length > 0) {
-    const auditResult = await runSynthesisAudit(topic, summaries, finalInsight, researchModel);
+    const auditResult = await runSynthesisAudit(client, topic, summaries, finalInsight, researchModel);
     //audit Assumption: synthesis output may still contain injected instructions; risk: compromised downstream guidance; invariant: only audited-safe text is returned; handling: combine heuristic + model audit and fail closed to safe fallback.
     if (!auditResult.safe || hasSuspiciousInstructions(finalInsight)) {
       finalInsight = buildUnsafeInsightFallback(topic, auditResult.reason);
@@ -272,17 +328,6 @@ export async function researchTopic(topic: string, urls: string[] = []): Promise
   await persistResearch(topic, result);
 
   return result;
-}
-
-function extractCompletionText(
-  response: Awaited<ReturnType<typeof createCentralizedCompletion>>
-): string {
-  //audit Assumption: non-stream responses contain choices[0].message.content
-  if (response && typeof response === 'object' && 'choices' in response) {
-    const completion = response as OpenAI.Chat.Completions.ChatCompletion;
-    return completion.choices?.[0]?.message?.content?.trim() || '';
-  }
-  return '';
 }
 
 async function persistResearch(topic: string, result: ResearchResult): Promise<void> {

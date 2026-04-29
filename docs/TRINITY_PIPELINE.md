@@ -6,7 +6,8 @@ The Trinity pipeline is the main AI writing path in this codebase. It accepts pr
 Current entrypoints:
 - Protected GPT Action gateway: `POST /gpt-access/jobs/create` in `src/routes/gpt-access.ts`
 - Canonical writing plane: `POST /gpt/:gptId` in `src/routes/gptRouter.ts`
-- Shared writing facade: `src/core/logic/trinityWritingPipeline.ts` (`runTrinityWritingPipeline`)
+- Canonical generation facade: `src/core/logic/trinityGenerationFacade.ts` (`runTrinityGenerationFacade`)
+- Backward-compatible writing facade: `src/core/logic/trinityWritingPipeline.ts` (`runTrinityWritingPipeline`)
 - Low-level engine: `src/core/logic/trinity.ts` (`runThroughBrain`)
 
 Use `/gpt-access/*` for protected backend calls from Custom GPTs and operator integrations. Do not route job result lookup, worker status, queue inspection, MCP diagnostics, or runtime inspection through `/gpt/:gptId`.
@@ -44,6 +45,7 @@ Protected async Trinity execution follows this path:
    - It classifies input with `classifyWritingPlaneInput(...)`.
    - Non-writing/control requests throw `TrinityControlLeakError` before the low-level engine runs.
    - Valid writing requests are logged with `sourceEndpoint` and passed to `runThroughBrain(...)`.
+   - Successful writing results are stamped with `meta.pipeline: "trinity"`, `meta.bypass: false`, `meta.sourceEndpoint`, and `meta.classification: "writing"`.
 
 7. `runThroughBrain(...)` runs the Trinity stages.
    - Pre-flight: request ID, tier detection, audit-safe config, memory context, guardrails, and runtime budget.
@@ -182,6 +184,46 @@ Treat completed output as degraded when any of these are present:
 - `activeModel` contains `static-timeout-fallback`
 - `auditSafe.auditFlags` contains `CORE_PIPELINE_TIMEOUT_FALLBACK`
 
+Successful writing/generation output must include this invariant in `meta`:
+
+```json
+{
+  "pipeline": "trinity",
+  "bypass": false,
+  "sourceEndpoint": "<caller>",
+  "classification": "writing"
+}
+```
+
+The invariant is applied by `applyTrinityGenerationInvariant(...)` in `src/core/logic/trinityGenerationFacade.ts`. Callers should preserve it when adapting older response envelopes.
+
+## Writing and Control Boundaries
+Writing/generation requests must enter the generation facade. Current writing-plane callers include:
+- `/gpt-access/jobs/create` queued GPT execution via `src/workers/jobRunner.ts`
+- `/gpt/:gptId` module dispatch, fast path, and direct `query_and_wait`
+- `/ask` normal generation and system-review generation paths
+- `/arcanos-pipeline`
+- `/api/openai/prompt`
+- Research/web search/RAG synthesis, secure reasoning, tutor/gaming/booker generation, CEF AI prompt execution, image prompt enhancement, reusable-code generation, AFOL, GPT sync, and simulation completion
+
+These control-plane routes must not enter Trinity:
+- `/mcp`
+- `/status`
+- `/healthz`
+- `/workers/status`
+- `/worker-helper/health`
+- `/gpt-access/status`
+- `/gpt-access/jobs/result`
+- `/trinity/status`
+
+`/ask` tool runtimes, daemon tools, DAG tooling, worker status tools, HRC scoring, memory validation, audit-safe mode interpretation, auto-heal planning, daily summaries, self-improve patch proposal generation, idle/provider probes, vision, embeddings, and adapter wrappers are intentionally outside the writing facade because they are control/evaluation/infrastructure paths or non-text-generation SDK boundaries. They must not be exposed as arbitrary user writing routes, and they must not call back through `/gpt/:gptId`.
+
+Raw SDK calls are allowed only at these boundaries:
+- OpenAI adapter and shared OpenAI service helpers (`src/core/adapters/openai.adapter.ts`, `src/services/openai/*`, `src/services/openaiClient.ts`)
+- Embeddings, vision, and image generation SDK surfaces where the operation is not text writing
+- Control/evaluation utilities listed above
+- Standalone `workers/` package OpenAI handler and SDK wrapper, which are separate worker-package infrastructure; backend GPT jobs use `src/workers/jobRunner.ts` and the Trinity worker path
+
 ## Related Routes
 - `POST /gpt-access/jobs/create`: protected async Trinity/GPT job creation.
 - `POST /gpt-access/jobs/result`: protected job result lookup.
@@ -193,5 +235,5 @@ Treat completed output as degraded when any of these are present:
 
 ## Legacy Notes
 - `GET|POST /brain` is a legacy ask-compatible route and returns `410 Gone` unless `ASK_ROUTE_MODE=compat`.
-- `POST /arcanos-pipeline` is a separate legacy multi-step route and is not the same as `runThroughBrain`.
+- `POST /arcanos-pipeline` is a legacy compatibility route, but its text generation now enters the Trinity generation facade.
 - System operations must not be sent through the writing pipeline.

@@ -13,7 +13,17 @@ const mockTryExecutePromptRouteShortcut = jest.fn();
 const verificationRouter = express.Router();
 
 jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({
-  runTrinityWritingPipeline: mockRunThroughBrain
+  runTrinityWritingPipeline: mockRunThroughBrain,
+  applyTrinityGenerationInvariant: (result: any, params: any) => ({
+    ...result,
+    meta: {
+      ...(result.meta ?? {}),
+      pipeline: 'trinity',
+      bypass: false,
+      sourceEndpoint: params.sourceEndpoint,
+      classification: 'writing'
+    }
+  })
 }));
 
 jest.unstable_mockModule('@transport/http/middleware/confirmGate.js', () => ({

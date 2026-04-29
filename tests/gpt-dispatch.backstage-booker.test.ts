@@ -116,11 +116,11 @@ describe('routeGptRequest backstage booker auto-routing', () => {
       requestId: 'req-booker-1'
     });
 
-    expect(mockDispatchModuleAction).toHaveBeenCalledWith('BACKSTAGE:BOOKER', 'generateBooking', {
+    expect(mockDispatchModuleAction).toHaveBeenCalledWith('BACKSTAGE:BOOKER', 'generateBooking', expect.objectContaining({
       message: 'Generate three rivalries for RAW after WrestleMania.',
       sessionId: 'RAW_RIVALRY_TEST',
       prompt: 'Generate three rivalries for RAW after WrestleMania.'
-    });
+    }));
     expect(envelope).toEqual(
       expect.objectContaining({
         ok: true,
@@ -143,9 +143,9 @@ describe('routeGptRequest backstage booker auto-routing', () => {
       requestId: 'req-booker-2'
     });
 
-    expect(mockDispatchModuleAction).toHaveBeenCalledWith('BACKSTAGE:BOOKER', 'generateBooking', {
+    expect(mockDispatchModuleAction).toHaveBeenCalledWith('BACKSTAGE:BOOKER', 'generateBooking', expect.objectContaining({
       prompt: 'Book a WWE Raw title-picture rivalry map for the next month.'
-    });
+    }));
     expect(envelope).toEqual(
       expect.objectContaining({
         ok: true,
@@ -169,9 +169,9 @@ describe('routeGptRequest backstage booker auto-routing', () => {
       requestId: 'req-booker-3'
     });
 
-    expect(mockDispatchModuleAction).toHaveBeenCalledWith('BACKSTAGE:BOOKER', 'generateBooking', {
+    expect(mockDispatchModuleAction).toHaveBeenCalledWith('BACKSTAGE:BOOKER', 'generateBooking', expect.objectContaining({
       prompt: 'Answer directly. Do not simulate, role-play, or describe a hypothetical run. Say exactly: backstage-check.'
-    });
+    }));
     expect(envelope).toEqual(
       expect.objectContaining({
         ok: true,

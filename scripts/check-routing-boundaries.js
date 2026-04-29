@@ -52,6 +52,7 @@ const BOUNDARY_GROUPS = [
 
 const DIRECT_TRINITY_IMPORT_ALLOWED_FILES = new Set([
   'src/core/logic/trinity.ts',
+  'src/core/logic/trinityGenerationFacade.ts',
   'src/core/logic/trinityWritingPipeline.ts',
 ]);
 

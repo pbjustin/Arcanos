@@ -36,7 +36,6 @@ export const codecovCoverageScopeFiles = [
   'src/modules/arcanos-gaming.ts',
   'src/platform/logging/structuredLogging.ts',
   'src/platform/resilience/runtimeErrors.ts',
-  'src/platform/runtime/arcanosPipelinePrompts.ts',
   'src/platform/runtime/auditSafe.ts',
   'src/platform/runtime/daemonRegistry.ts',
   'src/platform/runtime/dispatchMessages.ts',

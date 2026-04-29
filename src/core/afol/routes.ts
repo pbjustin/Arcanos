@@ -1,8 +1,11 @@
-import { callOpenAI, getDefaultModel, getFallbackModel, generateMockResponse } from "@services/openai.js";
+import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
+import { getDefaultModel, getFallbackModel, generateMockResponse } from "@services/openai.js";
+import { getOpenAIClientOrAdapter } from '@services/openai/clientBridge.js';
 import { recordTraceEvent } from "@platform/logging/telemetry.js";
 import { DecideInput, RouteExecutionResult, RouteSelection } from './types.js';
 import { getEnvNumber } from "@platform/runtime/env.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 
 // Use config layer for env access (adapter boundary pattern)
 const PRIMARY_TOKEN_LIMIT = getEnvNumber('AFOL_PRIMARY_TOKEN_LIMIT', 1024);
@@ -53,26 +56,50 @@ async function executeModelRoute(
   });
 
   try {
-    const result = await callOpenAI(model, prompt, tokenLimit, true, {
-      metadata: {
-        route: route.name,
-        reason: route.reason,
-        intent
+    const { client } = getOpenAIClientOrAdapter();
+    if (!client) {
+      throw new Error('OpenAI client unavailable for AFOL Trinity route.');
+    }
+
+    const result = await runTrinityWritingPipeline({
+      input: {
+        prompt,
+        moduleId: 'AFOL',
+        sourceEndpoint: `afol.${route.name}`,
+        requestedAction: 'query',
+        body: {
+          prompt,
+          model,
+          tokenLimit,
+          route: route.name,
+          reason: route.reason,
+          intent
+        },
+        tokenLimit,
+        executionMode: 'request'
+      },
+      context: {
+        client,
+        runtimeBudget: createRuntimeBudget(),
+        runOptions: {
+          answerMode: 'direct',
+          strictUserVisibleOutput: true
+        }
       }
     });
 
     recordTraceEvent('afol.route.success', {
       route: route.name,
-      model: result.model,
-      cached: result.cached
+      model: result.activeModel,
+      cached: false
     });
 
     return {
       route: route.name,
       input: prompt,
-      output: result.output,
-      model: result.model,
-      cached: result.cached,
+      output: result.result,
+      model: result.activeModel,
+      cached: false,
       metadata: {
         routeReason: route.reason,
         intent

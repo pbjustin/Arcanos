@@ -8,8 +8,8 @@
  */
 
 import { Request, Response } from 'express';
+import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
 import {
-  callOpenAI,
   getDefaultModel,
   getFallbackModel,
   getGPT5Model,
@@ -34,6 +34,7 @@ import { getConfirmGateConfiguration } from "@transport/http/middleware/confirmG
 import { config } from "@platform/runtime/config.js";
 import { getEnv } from "@platform/runtime/env.js";
 import { runWithRequestAbortTimeout, getRequestAbortSignal } from '@arcanos/runtime';
+import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import {
   extractPromptText,
   recordPromptDebugTrace,
@@ -100,7 +101,7 @@ export async function handlePrompt(
     return;
   }
 
-  const { input: prompt } = validation;
+  const { client: openai, input: prompt, body } = validation;
   const modelOverride = typeof req.body.model === 'string' ? req.body.model.trim() : undefined;
   const model = modelOverride && modelOverride.length > 0 ? modelOverride : getDefaultModel();
   const promptRouteMitigation = getPromptRouteMitigationState();
@@ -233,7 +234,7 @@ export async function handlePrompt(
       });
     }
 
-    const { output, model: activeModel } = await runWithRequestAbortTimeout(
+    const trinityResult = await runWithRequestAbortTimeout(
       {
         timeoutMs: promptRoutePolicy.pipelineTimeoutMs,
         requestId: (req as Request & { requestId?: string }).requestId,
@@ -256,14 +257,30 @@ export async function handlePrompt(
         }
       },
       async () =>
-        callOpenAI(effectiveModel, prompt, effectiveTokenLimit, true, {
-          signal: getRequestAbortSignal(),
-          timeoutMs: promptRoutePolicy.providerTimeoutMs ?? undefined,
-          maxRetries: promptRoutePolicy.maxRetries,
-          metadata: {
-            ...mitigationMetadata,
-            providerTimeoutMs: promptRoutePolicy.providerTimeoutMs,
-            pipelineTimeoutMs: promptRoutePolicy.pipelineTimeoutMs
+        runTrinityWritingPipeline({
+          input: {
+            prompt,
+            moduleId: 'OPENAI:PROMPT',
+            sourceEndpoint: PROMPT_ROUTE_PATH,
+            requestedAction: 'query',
+            body: {
+              ...body,
+              model: effectiveModel,
+              tokenLimit: effectiveTokenLimit,
+              mitigation: mitigationMetadata
+            },
+            tokenLimit: effectiveTokenLimit,
+            executionMode: 'request'
+          },
+          context: {
+            client: openai,
+            requestId,
+            runtimeBudget: createRuntimeBudget(),
+            runOptions: {
+              answerMode: 'direct',
+              strictUserVisibleOutput: true,
+              watchdogModelTimeoutMs: promptRoutePolicy.providerTimeoutMs ?? undefined
+            }
           }
         })
     );
@@ -276,28 +293,25 @@ export async function handlePrompt(
       selectedRoute: PROMPT_ROUTE_PATH,
       selectedModule: 'openai.prompt',
       finalExecutorPayload: {
-        executor: 'callOpenAI',
+        executor: 'runTrinityWritingPipeline',
         model: effectiveModel,
         prompt,
         tokenLimit: effectiveTokenLimit,
-        useCache: true,
         options: {
           timeoutMs: promptRoutePolicy.providerTimeoutMs ?? null,
-          maxRetries: promptRoutePolicy.maxRetries,
           metadata: mitigationMetadata,
         },
       },
     });
     const successPayload = {
-      result: output,
-      model: activeModel,
+      result: trinityResult.result,
+      model: trinityResult.activeModel,
       meta: {
-        id: `prompt_${timestamp}`,
-        created: timestamp,
-        tokens: undefined
+        ...trinityResult.meta,
+        created: trinityResult.meta.created ?? timestamp
       },
-      activeModel,
-      fallbackFlag: promptRoutePolicy.useFallbackModel
+      activeModel: trinityResult.activeModel,
+      fallbackFlag: trinityResult.fallbackFlag || promptRoutePolicy.useFallbackModel
     };
     recordPromptDebugTrace(requestId, 'response', {
       endpoint: PROMPT_ROUTE_PATH,

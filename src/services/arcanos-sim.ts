@@ -1,5 +1,7 @@
 import type OpenAI from 'openai';
-import { createCentralizedCompletion } from "@services/openai.js";
+import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
+import { getOpenAIClientOrAdapter } from '@services/openai/clientBridge.js';
+import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { generateRequestId } from "@shared/idGenerator.js";
 import type { ModuleDef } from './moduleLoader.js';
 import { tryExtractExactLiteralPromptShortcut } from "@services/exactLiteralPromptShortcut.js";
@@ -47,8 +49,6 @@ export interface StreamingSimulationResult {
 export type SimulationExecutionResult =
   | CompletedSimulationResult
   | StreamingSimulationResult;
-
-type CentralizedCompletionResult = Awaited<ReturnType<typeof createCentralizedCompletion>>;
 
 function normalizeSimulationPayload(payload: unknown): SimulationRequestPayload {
   //audit Assumption: dispatcher/module callers should provide structured objects for simulation requests; failure risk: scalar payloads bypass validation and break downstream field extraction; expected invariant: simulation executor receives an object payload; handling strategy: reject non-object inputs with a structured error.
@@ -107,20 +107,8 @@ function buildSimulationPrompt(scenario: string, context?: string): string {
   return `Simulate the following scenario: ${scenario}${context ? `\n\nContext: ${context}` : ''}`;
 }
 
-function isStreamingCompletionResult(
-  response: CentralizedCompletionResult
-): response is AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk> {
-  return !!response && typeof response === 'object' && Symbol.asyncIterator in response;
-}
-
-function isChatCompletionResult(
-  response: CentralizedCompletionResult
-): response is OpenAI.Chat.Completions.ChatCompletion {
-  return !!response && typeof response === 'object' && 'choices' in response;
-}
-
 /**
- * Execute one simulation request using the centralized OpenAI routing layer.
+ * Execute one simulation request using the Trinity generation facade.
  * Inputs/Outputs: simulation payload -> completed result payload or streaming result descriptor.
  * Edge cases: accepts prompt-style aliases when `scenario` is absent and throws explicit validation errors for malformed payloads.
  */
@@ -151,47 +139,43 @@ export async function executeSimulationRequest(
     };
   }
 
-  const response = await createCentralizedCompletion(
-    [
-      {
-        role: 'user',
-        content: buildSimulationPrompt(scenario, context)
-      }
-    ],
-    {
-      temperature: parameters.temperature,
-      max_tokens: parameters.maxTokens,
-      stream: parameters.stream
-    }
-  );
-
-  //audit Assumption: streaming callers expect an async-iterable completion result when `stream` is true; failure risk: route emits malformed SSE or hangs on non-stream responses; expected invariant: stream mode returns an async iterable; handling strategy: validate and fail loudly when provider response shape mismatches.
   if (parameters.stream) {
-    if (!isStreamingCompletionResult(response)) {
-      throw new Error('Simulation stream requested but provider returned a non-stream response.');
+    throw new Error('Simulation streaming is not available through the Trinity generation facade.');
+  }
+
+  const { client } = getOpenAIClientOrAdapter();
+  if (!client) {
+    throw new Error('OpenAI client unavailable for Trinity simulation.');
+  }
+  const prompt = buildSimulationPrompt(scenario, context);
+  const response = await runTrinityWritingPipeline({
+    input: {
+      prompt,
+      moduleId: 'ARCANOS:SIM',
+      sourceEndpoint: 'arcanos-sim',
+      requestedAction: 'run',
+      body: normalizedPayload,
+      tokenLimit: parameters.maxTokens,
+      executionMode: 'request'
+    },
+    context: {
+      client,
+      runtimeBudget: createRuntimeBudget(),
+      runOptions: {
+        answerMode: 'direct',
+        strictUserVisibleOutput: true
+      }
     }
-
-    return {
-      mode: 'stream',
-      scenario,
-      stream: response,
-      metadata
-    };
-  }
-
-  //audit Assumption: non-stream requests should resolve to a chat completion payload; failure risk: unexpected SDK shape leaks into HTTP response formatting; expected invariant: completed simulation requests expose `choices`; handling strategy: validate the response shape before reading content.
-  if (!isChatCompletionResult(response)) {
-    throw new Error('Simulation completion returned an unexpected payload.');
-  }
+  });
 
   return {
     mode: 'complete',
     scenario,
-    result: response.choices[0]?.message?.content || '',
+    result: response.result,
     metadata: {
       ...metadata,
-      model: response.model,
-      tokensUsed: response.usage?.total_tokens || 0
+      model: response.activeModel,
+      tokensUsed: response.meta.tokens?.total_tokens || 0
     }
   };
 }

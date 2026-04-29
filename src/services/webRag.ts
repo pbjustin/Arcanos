@@ -1,5 +1,7 @@
 import { createHash, randomUUID } from 'crypto';
-import { getDefaultModel, hasValidAPIKey } from './openai.js';
+import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
+import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
+import { hasValidAPIKey } from './openai.js';
 import { createEmbedding } from './openai/embeddings.js';
 import { fetchAndClean } from "@shared/webFetcher.js";
 import { cosineSimilarity } from "@shared/vectorUtils.js";
@@ -12,6 +14,7 @@ import {
 } from "@core/db/index.js";
 import { logger } from "@platform/logging/structuredLogging.js";
 import { requireOpenAIClientOrAdapter } from './openai/clientBridge.js';
+import type OpenAI from 'openai';
 
 interface Doc {
   id: string;
@@ -738,6 +741,37 @@ export async function recordPersistentMemorySnippet(options: PersistentMemorySni
   }
 }
 
+async function runRagTrinityText(params: {
+  client: OpenAI;
+  sourceEndpoint: string;
+  prompt: string;
+  maxOutputTokens: number;
+  body: Record<string, unknown>;
+}): Promise<string> {
+  const result = await runTrinityWritingPipeline({
+    input: {
+      prompt: params.prompt,
+      moduleId: 'WEB_RAG',
+      sourceEndpoint: params.sourceEndpoint,
+      requestedAction: 'query',
+      body: params.body,
+      maxOutputTokens: params.maxOutputTokens,
+      executionMode: 'request'
+    },
+    context: {
+      client: params.client,
+      runtimeBudget: createRuntimeBudget(),
+      runOptions: {
+        answerMode: 'direct',
+        strictUserVisibleOutput: true,
+        requestedVerbosity: 'minimal'
+      }
+    }
+  });
+
+  return result.result.trim();
+}
+
 export async function answerQuestion(question: string): Promise<{ answer: string; sources: string[]; verification: string; sourceDetails: SourceDetail[] }> {
   const retrieval = await queryRagDocuments(question, {
     limit: 3,
@@ -763,21 +797,27 @@ export async function answerQuestion(question: string): Promise<{ answer: string
     })
     .join('\n---\n');
 
-  const { adapter } = requireOpenAIClientOrAdapter('OpenAI adapter not initialized');
+  const { client } = requireOpenAIClientOrAdapter('OpenAI adapter not initialized');
 
   let answer = '';
   try {
-    const answerRes = await adapter.responses.create({
-      model: getDefaultModel(),
-      messages: [
-        {
-          role: 'system',
-          content: 'Answer using only the provided context. If context is insufficient, say that explicitly.'
-        },
-        { role: 'user', content: `Question: ${question}\n\nContext:\n${context}` },
-      ],
+    answer = await runRagTrinityText({
+      client,
+      sourceEndpoint: 'webRag.answerQuestion',
+      maxOutputTokens: 700,
+      prompt: [
+        'SYSTEM:',
+        'Answer using only the provided context. If context is insufficient, say that explicitly.',
+        '',
+        'USER:',
+        `Question: ${question}\n\nContext:\n${context}`
+      ].join('\n'),
+      body: {
+        question,
+        contextDocCount: topDocs.length,
+        maxTokens: 700
+      }
     });
-    answer = answerRes.choices[0]?.message?.content || '';
   } catch (error: unknown) {
     ragLogger.warn('Failed to generate RAG answer', {
       operation: 'answerQuestion',
@@ -788,17 +828,24 @@ export async function answerQuestion(question: string): Promise<{ answer: string
 
   let verification = '';
   try {
-    const verifyRes = await adapter.responses.create({
-      model: getDefaultModel(),
-      messages: [
-        {
-          role: 'system',
-          content: 'Verify if the answer is supported by the context. Reply yes or no with a brief reason.'
-        },
-        { role: 'user', content: `Answer: ${answer}\n\nContext:\n${context}` },
-      ],
+    verification = await runRagTrinityText({
+      client,
+      sourceEndpoint: 'webRag.verifyAnswer',
+      maxOutputTokens: 180,
+      prompt: [
+        'SYSTEM:',
+        'Verify if the answer is supported by the context. Reply yes or no with a brief reason.',
+        '',
+        'USER:',
+        `Answer: ${answer}\n\nContext:\n${context}`
+      ].join('\n'),
+      body: {
+        question,
+        answer,
+        contextDocCount: topDocs.length,
+        maxTokens: 180
+      }
     });
-    verification = verifyRes.choices[0]?.message?.content || '';
   } catch (error: unknown) {
     ragLogger.warn('Failed to verify RAG answer', {
       operation: 'answerQuestion',

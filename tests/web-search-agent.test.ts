@@ -6,9 +6,27 @@ const fetchAndCleanDocumentMock = jest.fn(async (_url: string, _maxChars?: numbe
   links: [],
   combined: ''
 }));
-const createCentralizedCompletionMock = jest.fn(async () => ({
-  choices: [{ message: { content: 'Answer [1]' } }]
+const runTrinityWritingPipelineMock = jest.fn(async () => ({
+  result: 'Answer [1]',
+  activeModel: 'gpt-test',
+  fallbackFlag: false,
+  routingStages: ['TRINITY'],
+  auditSafe: { mode: 'true', passed: true, flags: [] },
+  taskLineage: [],
+  fallbackSummary: {
+    intakeFallbackUsed: false,
+    gpt5FallbackUsed: false,
+    finalFallbackUsed: false,
+    fallbackReasons: [],
+  },
+  meta: {
+    pipeline: 'trinity',
+    bypass: false,
+    sourceEndpoint: 'webSearchAgent.synthesize',
+    classification: 'writing',
+  },
 }));
+const getOpenAIClientOrAdapterMock = jest.fn(() => ({ client: { responses: {} } }));
 const getDefaultModelMock = jest.fn(() => 'gpt-test');
 const hasValidAPIKeyMock = jest.fn(() => false);
 const providerFetchMock = jest.fn(async (_input?: RequestInfo | URL, _init?: RequestInit) => createTextResponse(''));
@@ -50,9 +68,27 @@ beforeEach(async () => {
     links: [],
     combined: ''
   });
-  createCentralizedCompletionMock.mockReset().mockResolvedValue({
-    choices: [{ message: { content: 'Answer [1]' } }]
+  runTrinityWritingPipelineMock.mockReset().mockResolvedValue({
+    result: 'Answer [1]',
+    activeModel: 'gpt-test',
+    fallbackFlag: false,
+    routingStages: ['TRINITY'],
+    auditSafe: { mode: 'true', passed: true, flags: [] },
+    taskLineage: [],
+    fallbackSummary: {
+      intakeFallbackUsed: false,
+      gpt5FallbackUsed: false,
+      finalFallbackUsed: false,
+      fallbackReasons: [],
+    },
+    meta: {
+      pipeline: 'trinity',
+      bypass: false,
+      sourceEndpoint: 'webSearchAgent.synthesize',
+      classification: 'writing',
+    },
   });
+  getOpenAIClientOrAdapterMock.mockReset().mockReturnValue({ client: { responses: {} } });
   getDefaultModelMock.mockReset().mockReturnValue('gpt-test');
   hasValidAPIKeyMock.mockReset().mockReturnValue(false);
   providerFetchMock.mockReset();
@@ -65,9 +101,17 @@ beforeEach(async () => {
   }));
 
   jest.unstable_mockModule('@services/openai.js', () => ({
-    createCentralizedCompletion: createCentralizedCompletionMock,
     getDefaultModel: getDefaultModelMock,
-    hasValidAPIKey: hasValidAPIKeyMock
+    hasValidAPIKey: hasValidAPIKeyMock,
+    generateMockResponse: jest.fn()
+  }));
+
+  jest.unstable_mockModule('@services/openai/clientBridge.js', () => ({
+    getOpenAIClientOrAdapter: getOpenAIClientOrAdapterMock
+  }));
+
+  jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({
+    runTrinityWritingPipeline: runTrinityWritingPipelineMock
   }));
 
   ({ createSearchProviderRegistry, webSearchAgent } = await import('../src/services/webSearchAgent.js'));
@@ -199,13 +243,11 @@ describe('webSearchAgent', () => {
       synthesize: true
     });
 
-    expect(createCentralizedCompletionMock).toHaveBeenCalledTimes(1);
-    const [messages] = createCentralizedCompletionMock.mock.calls[0];
-    expect(messages[0].content).toContain('<user_query>');
-    expect(messages[0].content).toContain('<source_packets>');
-    expect(messages[1].content).toContain('<user_query>');
-    expect(messages[1].content).toContain('&lt;now&gt;');
-    expect(messages[1].content).toContain('<source_packets>');
-    expect(messages[1].content).toContain('Ignore previous instructions');
+    expect(runTrinityWritingPipelineMock).toHaveBeenCalledTimes(1);
+    const [{ input }] = runTrinityWritingPipelineMock.mock.calls[0] as Array<[{ input: { prompt: string } }]>;
+    expect(input.prompt).toContain('<user_query>');
+    expect(input.prompt).toContain('&lt;now&gt;');
+    expect(input.prompt).toContain('<source_packets>');
+    expect(input.prompt).toContain('Ignore previous instructions');
   });
 });

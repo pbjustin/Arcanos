@@ -1,15 +1,21 @@
-import { describe, expect, it, jest } from '@jest/globals';
+import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
-import {
+const runTrinityWritingPipelineMock = jest.fn();
+
+jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({
+  runTrinityWritingPipeline: runTrinityWritingPipelineMock
+}));
+
+const {
   generateReusableCodeSnippets,
   parseReusableCodeResponse,
-} from '../src/services/reusableCodeGeneration.ts';
+} = await import('../src/services/reusableCodeGeneration.ts');
 
 describe('reusable code generation', () => {
-  it('parses reusable snippets through the shared structured response helper', async () => {
-    const create = jest.fn().mockResolvedValue({
-      model: 'gpt-4.1-mini',
-      output_text: JSON.stringify({
+  beforeEach(() => {
+    jest.clearAllMocks();
+    runTrinityWritingPipelineMock.mockResolvedValue({
+      result: JSON.stringify({
         snippets: [
           {
             name: 'asyncHandler',
@@ -19,16 +25,51 @@ describe('reusable code generation', () => {
           },
         ],
       }),
-      output: [],
+      activeModel: 'trinity-model',
+      fallbackFlag: false,
+      routingStages: ['TRINITY'],
+      auditSafe: { mode: 'true', passed: true, flags: [] },
+      taskLineage: [],
+      fallbackSummary: {
+        intakeFallbackUsed: false,
+        gpt5FallbackUsed: false,
+        finalFallbackUsed: false,
+        fallbackReasons: [],
+      },
+      meta: {
+        pipeline: 'trinity',
+        bypass: false,
+        sourceEndpoint: 'api.reusables',
+        classification: 'writing',
+      },
     });
+  });
+
+  it('parses reusable snippets through Trinity', async () => {
+    const client = { responses: { create: jest.fn() } } as any;
 
     const result = await generateReusableCodeSnippets(
-      { responses: { create } } as any,
+      client,
       { target: 'asyncHandler', includeDocs: true, language: 'typescript' }
     );
 
-    expect(create).toHaveBeenCalledTimes(1);
-    expect(result.model).toBe('gpt-4.1-mini');
+    expect(runTrinityWritingPipelineMock).toHaveBeenCalledWith(expect.objectContaining({
+      input: expect.objectContaining({
+        moduleId: 'REUSABLE:CODE',
+        sourceEndpoint: 'api.reusables',
+        requestedAction: 'query',
+        body: expect.objectContaining({
+          target: 'asyncHandler',
+          includeDocs: true,
+          language: 'typescript',
+        }),
+      }),
+      context: expect.objectContaining({
+        client,
+      }),
+    }));
+    expect(client.responses.create).not.toHaveBeenCalled();
+    expect(result.model).toBe('trinity-model');
     expect(result.snippets).toEqual([
       {
         name: 'asyncHandler',

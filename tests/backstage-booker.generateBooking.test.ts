@@ -1,23 +1,31 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
-const mockCallOpenAI = jest.fn();
+const mockRunTrinityWritingPipeline = jest.fn();
 const mockGetGPT5Model = jest.fn();
+const mockGetOpenAIClientOrAdapter = jest.fn();
 const mockQuery = jest.fn();
 const mockSaveMemory = jest.fn();
 const mockGetEnv = jest.fn();
 const mockGetEnvNumber = jest.fn();
+const mockGetEnvBoolean = jest.fn();
 
 jest.unstable_mockModule('@services/openai.js', () => ({
-  callOpenAI: mockCallOpenAI,
   getGPT5Model: mockGetGPT5Model,
   getDefaultModel: jest.fn(() => 'gpt-4.1-mini'),
   getFallbackModel: jest.fn(() => 'gpt-4.1'),
   getComplexModel: jest.fn(() => 'gpt-4.1'),
   hasValidAPIKey: jest.fn(() => true),
   default: {
-    callOpenAI: mockCallOpenAI,
     getGPT5Model: mockGetGPT5Model
   }
+}));
+
+jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({
+  runTrinityWritingPipeline: mockRunTrinityWritingPipeline
+}));
+
+jest.unstable_mockModule('@services/openai/clientBridge.js', () => ({
+  getOpenAIClientOrAdapter: mockGetOpenAIClientOrAdapter
 }));
 
 jest.unstable_mockModule('@core/db/index.js', () => ({
@@ -27,7 +35,8 @@ jest.unstable_mockModule('@core/db/index.js', () => ({
 
 jest.unstable_mockModule('@platform/runtime/env.js', () => ({
   getEnv: mockGetEnv,
-  getEnvNumber: mockGetEnvNumber
+  getEnvNumber: mockGetEnvNumber,
+  getEnvBoolean: mockGetEnvBoolean
 }));
 
 const { generateBooking } = await import('../src/services/backstage-booker.js');
@@ -37,21 +46,56 @@ describe('backstage-booker generateBooking', () => {
     jest.clearAllMocks();
     mockGetEnv.mockReturnValue(undefined);
     mockGetEnvNumber.mockReturnValue(512);
+    mockGetEnvBoolean.mockReturnValue(false);
     mockGetGPT5Model.mockReturnValue('gpt-5.1-test');
+    mockGetOpenAIClientOrAdapter.mockReturnValue({ client: { responses: {} } });
     mockQuery.mockResolvedValue({ rows: [] });
     mockSaveMemory.mockResolvedValue(undefined);
-    mockCallOpenAI.mockResolvedValue({ output: 'Rivalry matrix output' });
+    mockRunTrinityWritingPipeline.mockResolvedValue({
+      result: 'Rivalry matrix output',
+      activeModel: 'trinity-model',
+      fallbackFlag: false,
+      routingStages: ['TRINITY'],
+      auditSafe: { mode: 'true', passed: true, flags: [] },
+      taskLineage: [],
+      fallbackSummary: {
+        intakeFallbackUsed: false,
+        gpt5FallbackUsed: false,
+        finalFallbackUsed: false,
+        fallbackReasons: [],
+      },
+      meta: {
+        pipeline: 'trinity',
+        bypass: false,
+        sourceEndpoint: 'backstage-booker.generateBooking',
+        classification: 'writing',
+      },
+    });
   });
 
   it('falls back to the shared GPT-5 model when USER_GPT_ID is absent', async () => {
     await expect(generateBooking('Generate three rivalries for RAW after WrestleMania.')).resolves.toBe('Rivalry matrix output');
 
-    expect(mockCallOpenAI).toHaveBeenCalledWith(
-      'gpt-5.1-test',
-      expect.stringContaining('Generate three rivalries for RAW after WrestleMania.'),
-      512,
-      false
-    );
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith({
+      input: expect.objectContaining({
+        prompt: expect.stringContaining('Generate three rivalries for RAW after WrestleMania.'),
+        moduleId: 'BACKSTAGE:BOOKER',
+        sourceEndpoint: 'backstage-booker.generateBooking',
+        requestedAction: 'generateBooking',
+        tokenLimit: 512,
+        body: expect.objectContaining({
+          model: 'gpt-5.1-test',
+          tokenLimit: 512,
+        }),
+      }),
+      context: expect.objectContaining({
+        client: expect.anything(),
+        runOptions: expect.objectContaining({
+          answerMode: 'direct',
+          strictUserVisibleOutput: true,
+        }),
+      }),
+    });
   });
 
   it('short-circuits exact-literal anti-simulation prompts before OpenAI executes', async () => {
@@ -61,7 +105,7 @@ describe('backstage-booker generateBooking', () => {
       )
     ).resolves.toBe('backstage-check');
 
-    expect(mockCallOpenAI).not.toHaveBeenCalled();
+    expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
   });
 
   it('switches to direct-answer execution mode for anti-simulation booking prompts', async () => {
@@ -71,13 +115,13 @@ describe('backstage-booker generateBooking', () => {
       )
     ).resolves.toBe('Rivalry matrix output');
 
-    expect(mockCallOpenAI).toHaveBeenCalledWith(
-      'gpt-5.1-test',
-      expect.stringContaining('<<EXECUTION_MODE>>'),
-      400,
-      false
-    );
-    const dispatchedPrompt = mockCallOpenAI.mock.calls[0][1] as string;
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(expect.objectContaining({
+      input: expect.objectContaining({
+        prompt: expect.stringContaining('<<EXECUTION_MODE>>'),
+        tokenLimit: 400,
+      })
+    }));
+    const dispatchedPrompt = (mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } }).input.prompt;
     expect(dispatchedPrompt).not.toContain('<<PERSONA>>');
     expect(dispatchedPrompt).toContain('Return only 5 top-level numbered bullets.');
     expect(dispatchedPrompt).toContain('No sub-bullets, no production notes, no consequences section, and no meta commentary.');
@@ -85,8 +129,8 @@ describe('backstage-booker generateBooking', () => {
   });
 
   it('removes preambles and trims direct-answer output to the requested short bullet count', async () => {
-    mockCallOpenAI.mockResolvedValue({
-      output: [
+    mockRunTrinityWritingPipeline.mockResolvedValue({
+      result: [
         'Gut read: center Punk vs. Drew immediately.',
         '',
         '---',
@@ -121,15 +165,14 @@ describe('backstage-booker generateBooking', () => {
       ].join('\n')
     );
 
-    const dispatchedPrompt = mockCallOpenAI.mock.calls[0][1] as string;
+    const dispatchedPrompt = (mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } }).input.prompt;
     expect(dispatchedPrompt).toContain('Return only 5 top-level numbered bullets.');
     expect(dispatchedPrompt).toContain('No preamble, headings, divider lines, or conclusion.');
     expect(dispatchedPrompt).toContain('Each bullet must be one compact sentence.');
-    expect(mockCallOpenAI).toHaveBeenCalledWith(
-      'gpt-5.1-test',
-      expect.any(String),
-      240,
-      false
-    );
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(expect.objectContaining({
+      input: expect.objectContaining({
+        tokenLimit: 240
+      })
+    }));
   });
 });

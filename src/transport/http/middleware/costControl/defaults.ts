@@ -1,5 +1,6 @@
-import { callOpenAI } from "@services/openai.js";
-import { getDefaultModel } from "@services/openai/credentialProvider.js";
+import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
+import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
+import { getOpenAIClientOrAdapter } from '@services/openai/clientBridge.js';
 import type { CostControlConfig, OpenAIClient, OpenAIRequestPayload } from './types.js';
 
 export const DEFAULT_CONFIG: CostControlConfig = {
@@ -13,11 +14,45 @@ export const DEFAULT_CONFIG: CostControlConfig = {
 
 export function createDefaultOpenAIClient(config: CostControlConfig): OpenAIClient {
   const call = async (payload: OpenAIRequestPayload) => {
-    const model = payload.model ?? getDefaultModel();
+    const { client } = getOpenAIClientOrAdapter();
+    if (!client) {
+      throw new Error('OpenAI client unavailable for cost-control Trinity execution.');
+    }
+
     const tokenLimit = payload.maxTokens ?? config.defaultTokenLimit;
-    //audit Assumption: model/tokenLimit are valid inputs; risk: invalid configuration; invariant: callOpenAI returns a result or throws; handling: propagate errors.
-    return callOpenAI(model, payload.prompt, tokenLimit, true, {
-      metadata: payload.metadata
+    const sourceEndpoint =
+      typeof payload.metadata?.route === 'string' && payload.metadata.route.trim().length > 0
+        ? payload.metadata.route.trim()
+        : 'costControl.defaultOpenAIClient';
+
+    //audit Assumption: prompt middleware traffic is user-facing generation; risk: bypassing write-plane controls; invariant: default cost-control execution enters Trinity; handling: route through the generation facade.
+    return runTrinityWritingPipeline({
+      input: {
+        prompt: payload.prompt,
+        moduleId: 'COST_CONTROL',
+        sourceEndpoint,
+        requestedAction: 'query',
+        body: {
+          prompt: payload.prompt,
+          requestedModel: payload.model,
+          maxTokens: tokenLimit,
+          metadata: payload.metadata
+        },
+        maxOutputTokens: tokenLimit,
+        executionMode: 'request',
+        background: {
+          requestedModel: payload.model ?? null,
+          costControl: true
+        }
+      },
+      context: {
+        client,
+        runtimeBudget: createRuntimeBudget(),
+        runOptions: {
+          answerMode: 'direct',
+          strictUserVisibleOutput: true
+        }
+      }
     });
   };
   const batch = async (payloads: OpenAIRequestPayload[]) => {

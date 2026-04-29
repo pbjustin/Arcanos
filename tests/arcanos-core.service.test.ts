@@ -12,6 +12,16 @@ const getRequestAbortContextMock = jest.fn(() => null);
 
 jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({
   runTrinityWritingPipeline: mockRunTrinityWritingPipeline,
+  applyTrinityGenerationInvariant: (result: any, params: any) => ({
+    ...result,
+    meta: {
+      ...(result.meta ?? {}),
+      pipeline: 'trinity',
+      bypass: false,
+      sourceEndpoint: params.sourceEndpoint,
+      classification: 'writing'
+    }
+  }),
 }));
 
 jest.unstable_mockModule('@services/openai.js', () => ({
@@ -77,22 +87,25 @@ describe('ARCANOS:CORE service', () => {
     });
 
     expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith({
-      input: {
+      input: expect.objectContaining({
         prompt: 'Explain the main pipeline.',
         sessionId: 'sess-core-1',
         overrideAuditSafe: 'allow',
         sourceEndpoint: 'gpt.arcanos-core.query',
-        body: { prompt: 'Explain the main pipeline.' }
-      },
-      context: {
+        moduleId: 'ARCANOS:CORE',
+        requestedAction: 'query',
+        executionMode: 'request',
+        body: expect.objectContaining({ prompt: 'Explain the main pipeline.' })
+      }),
+      context: expect.objectContaining({
         client,
         requestId: 'req-core-1',
         runtimeBudget: { budget: 'runtime' },
-        runOptions: {
+        runOptions: expect.objectContaining({
           answerMode: 'direct',
           maxWords: 42,
-        }
-      }
+        })
+      })
     });
     expect(runWithRequestAbortTimeoutMock).toHaveBeenCalledTimes(1);
     expect(runWithRequestAbortTimeoutMock).toHaveBeenCalledWith(
@@ -168,21 +181,25 @@ describe('ARCANOS:CORE service', () => {
     );
     expect(mockCreateRuntimeBudget).toHaveBeenCalledWith(110_000, 250);
     expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith({
-      input: {
+      input: expect.objectContaining({
         prompt: 'Process this in worker mode.',
         sessionId: undefined,
         overrideAuditSafe: undefined,
         sourceEndpoint: 'gpt.arcanos-core.query',
-        body: { prompt: 'Process this in worker mode.' }
-      },
-      context: {
+        moduleId: 'ARCANOS:CORE',
+        requestedAction: 'query',
+        executionMode: 'background',
+        background: { reason: 'arcanos_core_background' },
+        body: expect.objectContaining({ prompt: 'Process this in worker mode.' })
+      }),
+      context: expect.objectContaining({
         client,
         requestId: 'req-core-background-1',
         runtimeBudget: { budget: 'runtime' },
-        runOptions: {
+        runOptions: expect.objectContaining({
           watchdogModelTimeoutMs: 110_000
-        }
-      }
+        })
+      })
     });
     expect(loggerInfoMock).toHaveBeenCalledWith(
       '[core] handler.start',

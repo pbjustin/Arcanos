@@ -4,14 +4,15 @@
  */
 
 import { getBackendState, SystemState } from './stateManager.js';
-import { getTokenParameter } from "@shared/tokenParameterHelper.js";
+import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
 import { config } from "@platform/runtime/config.js";
 import { GPT_SYNC_CONFIG } from "@platform/runtime/gptSyncConfig.js";
 import { GPT_SYNC_ERRORS, GPT_SYNC_LOG_MESSAGES, GPT_SYNC_STRINGS } from "@platform/runtime/gptSyncMessages.js";
 import { requireOpenAIClientOrAdapter } from './openai/clientBridge.js';
+import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 
-function getRequiredAdapter() {
-  return requireOpenAIClientOrAdapter(GPT_SYNC_ERRORS.clientUnavailable).adapter;
+function getRequiredClient() {
+  return requireOpenAIClientOrAdapter(GPT_SYNC_ERRORS.clientUnavailable).client;
 }
 
 function logSyncInfo(message: string, data?: unknown): void {
@@ -48,20 +49,33 @@ function buildSystemPrompt(
 }
 
 async function createSyncedCompletion(systemPrompt: string, userPrompt: string, model: string) {
-  const adapter = getRequiredAdapter();
-  const tokenParams = getTokenParameter(model, GPT_SYNC_CONFIG.maxCompletionTokens);
+  const client = getRequiredClient();
 
-  const response = await adapter.responses.create({
-    model: model,
-    messages: [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: userPrompt }
-    ],
-    ...tokenParams,
-    temperature: GPT_SYNC_CONFIG.temperature
+  const response = await runTrinityWritingPipeline({
+    input: {
+      prompt: [systemPrompt, userPrompt].join('\n\n'),
+      moduleId: 'GPT:SYNC',
+      sourceEndpoint: 'gpt-sync',
+      requestedAction: 'query',
+      body: {
+        model,
+        maxCompletionTokens: GPT_SYNC_CONFIG.maxCompletionTokens,
+        temperature: GPT_SYNC_CONFIG.temperature
+      },
+      tokenLimit: GPT_SYNC_CONFIG.maxCompletionTokens,
+      executionMode: 'request'
+    },
+    context: {
+      client,
+      runtimeBudget: createRuntimeBudget(),
+      runOptions: {
+        answerMode: 'direct',
+        strictUserVisibleOutput: true
+      }
+    }
   });
 
-  return response.choices[0]?.message?.content || GPT_SYNC_CONFIG.fallbackResponse;
+  return response.result || GPT_SYNC_CONFIG.fallbackResponse;
 }
 
 /**

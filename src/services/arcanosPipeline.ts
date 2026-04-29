@@ -1,83 +1,106 @@
 import type OpenAI from 'openai';
-import { getDefaultModel, getGPT5Model } from './openai.js';
-import { ARCANOS_PIPELINE_PROMPTS } from "@platform/runtime/arcanosPipelinePrompts.js";
+
+import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
+import type { TrinityResult } from '@core/logic/trinity.js';
+import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { requireOpenAIClientOrAdapter } from './openai/clientBridge.js';
 
-const ARC_V2 = getDefaultModel();
-const ARC_V2_FALLBACK = 'gpt-4o-mini';
-const GPT5 = getGPT5Model();
-const GPT35_SUBAGENT = 'gpt-4o-mini';
-
 export interface PipelineStages {
-  arcFirst: OpenAI.Chat.Completions.ChatCompletionMessage;
-  subAgent: OpenAI.Chat.Completions.ChatCompletionMessage;
-  gpt5Reasoning: OpenAI.Chat.Completions.ChatCompletionMessage;
+  trinity: OpenAI.Chat.Completions.ChatCompletionMessage;
 }
 
 export interface PipelineResult {
   result: OpenAI.Chat.Completions.ChatCompletionMessage;
   stages?: PipelineStages;
   fallback: boolean;
+  meta: TrinityResult['meta'];
+  activeModel: string;
+  routingStages?: string[];
+}
+
+function extractMessageContent(message: OpenAI.Chat.Completions.ChatCompletionMessageParam): string {
+  const content = message.content;
+  if (typeof content === 'string') {
+    return content;
+  }
+
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (typeof part === 'string') {
+          return part;
+        }
+        if (part && typeof part === 'object' && 'text' in part && typeof part.text === 'string') {
+          return part.text;
+        }
+        return '';
+      })
+      .filter(Boolean)
+      .join('\n');
+  }
+
+  return '';
+}
+
+function messagesToPrompt(messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]): string {
+  return messages
+    .map((message) => {
+      const role = typeof message.role === 'string' ? message.role : 'message';
+      const content = extractMessageContent(message).trim();
+      return content ? `${role}: ${content}` : '';
+    })
+    .filter(Boolean)
+    .join('\n\n')
+    .trim();
+}
+
+function buildAssistantMessage(content: string): OpenAI.Chat.Completions.ChatCompletionMessage {
+  return {
+    role: 'assistant',
+    content,
+    refusal: null
+  };
 }
 
 export async function executeArcanosPipeline(
   messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]
 ): Promise<PipelineResult> {
-  const { adapter } = requireOpenAIClientOrAdapter('OpenAI adapter not available');
+  const { client } = requireOpenAIClientOrAdapter('OpenAI adapter not available');
+  const prompt = messagesToPrompt(messages);
 
-  try {
-    const arcFirst = await adapter.responses.create({
-      model: ARC_V2,
-      messages
-    });
-    const arcFirstOutput = arcFirst.choices[0].message;
-
-    const subAgentResp = await adapter.responses.create({
-      model: GPT35_SUBAGENT,
-      messages: [
-        { role: 'system', content: ARCANOS_PIPELINE_PROMPTS.subAgent },
-        { role: 'assistant', content: arcFirstOutput.content || '' }
-      ]
-    });
-    const subAgentOutput = subAgentResp.choices[0].message;
-
-    const gpt5Response = await adapter.responses.create({
-      model: GPT5,
-      messages: [
-        { role: 'system', content: ARCANOS_PIPELINE_PROMPTS.overseer },
-        { role: 'assistant', content: arcFirstOutput.content || '' },
-        { role: 'assistant', content: subAgentOutput.content || '' }
-      ]
-    });
-    const gpt5Reasoning = gpt5Response.choices[0].message;
-
-    const arcFinal = await adapter.responses.create({
-      model: ARC_V2,
-      messages: [
-        ...messages,
-        { role: 'assistant', content: arcFirstOutput.content || '' },
-        { role: 'assistant', content: subAgentOutput.content || '' },
-        { role: 'assistant', content: gpt5Reasoning.content || '' }
-      ]
-    });
-    const finalOutput = arcFinal.choices[0].message;
-
-    return {
-      result: finalOutput,
-      stages: {
-        arcFirst: arcFirstOutput,
-        subAgent: subAgentOutput,
-        gpt5Reasoning
-      },
-      fallback: false
-    };
-  } catch (err) {
-    console.warn('Primary ARCANOS pipeline failed, using fallback model', err);
-    const fallback = await adapter.responses.create({
-      model: ARC_V2_FALLBACK,
-      messages
-    });
-
-    return { result: fallback.choices[0].message, fallback: true };
+  if (!prompt) {
+    throw new Error('Legacy ARCANOS pipeline requires at least one text message.');
   }
+
+  const trinityResult = await runTrinityWritingPipeline({
+    input: {
+      prompt,
+      moduleId: 'ARCANOS:PIPELINE',
+      sourceEndpoint: 'arcanos-pipeline',
+      requestedAction: 'query',
+      body: {
+        messages
+      }
+    },
+    context: {
+      client,
+      runtimeBudget: createRuntimeBudget(),
+      runOptions: {
+        answerMode: 'direct',
+        strictUserVisibleOutput: true
+      }
+    }
+  });
+
+  const result = buildAssistantMessage(trinityResult.result);
+  return {
+    result,
+    stages: {
+      trinity: result
+    },
+    fallback: trinityResult.fallbackFlag,
+    meta: trinityResult.meta,
+    activeModel: trinityResult.activeModel,
+    routingStages: trinityResult.routingStages
+  };
 }

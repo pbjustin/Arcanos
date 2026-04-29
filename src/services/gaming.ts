@@ -1,14 +1,13 @@
 import { getPrompt } from "@platform/runtime/prompts.js";
-import { getDefaultModel, getGPT5Model, generateMockResponse } from "./openai.js";
+import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
+import { generateMockResponse } from "./openai.js";
 import { fetchAndClean } from "@shared/webFetcher.js";
 import { getOpenAIClientOrAdapter } from "./openai/clientBridge.js";
-import { getEnv } from "@platform/runtime/env.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { buildDirectAnswerModeSystemInstruction } from "@services/directAnswerMode.js";
 import { tryExtractExactLiteralPromptShortcut } from "@services/exactLiteralPromptShortcut.js";
 import { formatGamingSuccess, type GamingMode, type GamingSuccessEnvelope, type ValidatedGamingRequest } from "@services/gamingModes.js";
-
-const FINETUNE_MODEL = getEnv("FINETUNE_MODEL") || getDefaultModel();
+import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 
 type WebSource = GamingSuccessEnvelope["data"]["sources"][number];
 
@@ -114,9 +113,9 @@ async function runGameplayPipeline(params: GameplayPipelineInput): Promise<Gamin
   ];
   const { context: webContext, sources } = await buildWebContext(allUrls);
   const enrichedPrompt = buildGameplayPrompt(params, webContext, allUrls.length > 0);
-  const { adapter } = getOpenAIClientOrAdapter();
+  const { client } = getOpenAIClientOrAdapter();
 
-  if (!adapter) {
+  if (!client) {
     const mock = generateMockResponse(params.prompt, params.mode);
     return formatGamingSuccess({
       mode: params.mode,
@@ -127,34 +126,40 @@ async function runGameplayPipeline(params: GameplayPipelineInput): Promise<Gamin
     });
   }
 
-  const draftResponse = await adapter.responses.create({
-    model: getGPT5Model(),
-    messages: [
-      { role: "system", content: buildGameplaySystemPrompt(params.mode) },
-      { role: "user", content: enrichedPrompt }
-    ],
-    temperature: 0.2
+  const trinityResult = await runTrinityWritingPipeline({
+    input: {
+      prompt: [
+        buildGameplaySystemPrompt(params.mode),
+        '',
+        enrichedPrompt,
+        ...(params.auditEnabled ? ['', gamingPrompts.auditSystem] : [])
+      ].join('\n'),
+      moduleId: 'ARCANOS:GAMING',
+      sourceEndpoint: `arcanos-gaming.${params.mode}`,
+      requestedAction: 'query',
+      body: params,
+      executionMode: 'request'
+    },
+    context: {
+      client,
+      runtimeBudget: createRuntimeBudget(),
+      runOptions: {
+        answerMode: 'direct',
+        strictUserVisibleOutput: true
+      }
+    }
   });
-  const draft = draftResponse.choices[0].message?.content || "";
+  const finalized = trinityResult.result;
 
   if (!params.auditEnabled) {
     return formatGamingSuccess({
       mode: params.mode,
       data: {
-        response: draft,
+        response: finalized,
         sources
       }
     });
   }
-
-  const auditResponse = await adapter.responses.create({
-    model: FINETUNE_MODEL,
-    messages: [
-      { role: "system", content: gamingPrompts.auditSystem },
-      { role: "user", content: draft }
-    ]
-  });
-  const finalized = auditResponse.choices[0].message?.content || draft;
 
   return formatGamingSuccess({
     mode: params.mode,
@@ -162,7 +167,7 @@ async function runGameplayPipeline(params: GameplayPipelineInput): Promise<Gamin
       response: finalized,
       sources,
       auditTrace: {
-        draft,
+        draft: finalized,
         finalized
       }
     }

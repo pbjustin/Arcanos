@@ -139,12 +139,12 @@ describe('routeGptRequest gaming routing', () => {
       requestId: 'req-gaming-1',
     });
 
-    expect(mockDispatchModuleAction).toHaveBeenCalledWith('ARCANOS:GAMING', 'query', {
+    expect(mockDispatchModuleAction).toHaveBeenCalledWith('ARCANOS:GAMING', 'query', expect.objectContaining({
       prompt: 'Ping the gaming backend and inspect whether repo tools exist before SWTOR tips ingestion.',
       schema: 'gaming',
       target: 'gaming_guides',
       game: 'SWTOR',
-    });
+    }));
     expect(mockCollectRepoImplementationEvidence).not.toHaveBeenCalled();
     expect(envelope).toEqual(
       expect.objectContaining({
@@ -183,9 +183,9 @@ describe('routeGptRequest gaming routing', () => {
       requestId: 'req-gaming-override-1',
     });
 
-    expect(mockDispatchModuleAction).toHaveBeenCalledWith('ARCANOS:GAMING', 'query', {
+    expect(mockDispatchModuleAction).toHaveBeenCalledWith('ARCANOS:GAMING', 'query', expect.objectContaining({
       prompt: 'Inspect the repo tools before answering my SWTOR guide question.',
-    });
+    }));
     expect(mockCollectRepoImplementationEvidence).not.toHaveBeenCalled();
     expect(envelope).toEqual(
       expect.objectContaining({
@@ -492,9 +492,9 @@ describe('routeGptRequest gaming routing', () => {
       requestId: 'req-gaming-legacy-ask-1',
     });
 
-    expect(mockDispatchModuleAction).toHaveBeenCalledWith('ARCANOS:GAMING', 'query', {
+    expect(mockDispatchModuleAction).toHaveBeenCalledWith('ARCANOS:GAMING', 'query', expect.objectContaining({
       prompt: 'Give me SWTOR gearing help.'
-    });
+    }));
     expect(envelope).toEqual(
       expect.objectContaining({
         ok: true,

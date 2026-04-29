@@ -63,7 +63,7 @@ jest.unstable_mockModule('../src/routes/ask/dagTools.js', () => ({
 
 const { routeGptRequest } = await import('../src/routes/_core/gptDispatch.js');
 
-describe('routeGptRequest write-plane guard', () => {
+describe('routeGptRequest write-plane classification', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockGetGptModuleMap.mockResolvedValue({
@@ -109,11 +109,12 @@ describe('routeGptRequest write-plane guard', () => {
     });
   });
 
-  it('rejects explicit MCP dispatch requests before module routing', async () => {
+  it('defers explicit MCP dispatch requests to the core Trinity boundary', async () => {
     const envelope = await routeGptRequest({
       gptId: 'arcanos-core',
       body: {
         action: 'mcp.invoke',
+        prompt: 'Invoke the modules.list MCP tool.',
         payload: {
           toolName: 'modules.list',
         },
@@ -121,26 +122,33 @@ describe('routeGptRequest write-plane guard', () => {
       requestId: 'req-mcp-1',
     });
 
+    expect(mockDispatchModuleAction).toHaveBeenCalledWith(
+      'ARCANOS:CORE',
+      'query',
+      expect.objectContaining({
+        toolName: 'modules.list',
+        prompt: 'Invoke the modules.list MCP tool.',
+        __arcanosRequestedAction: 'mcp.invoke',
+      })
+    );
     expect(envelope).toEqual(
       expect.objectContaining({
-        ok: false,
-        error: expect.objectContaining({
-          code: 'MCP_CONTROL_REQUIRES_MCP_API',
-        }),
+        ok: true,
         _route: expect.objectContaining({
-          route: 'write_guard',
-          action: 'mcp.invoke',
+          route: 'core',
+          action: 'query',
         }),
       })
     );
-    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+    expect(mockMcpInvokeTool).not.toHaveBeenCalled();
   });
 
-  it('rejects embedded payload.mcp envelopes before module routing', async () => {
+  it('defers embedded payload.mcp envelopes to the core Trinity boundary', async () => {
     const envelope = await routeGptRequest({
       gptId: 'arcanos-core',
       body: {
         payload: {
+          prompt: 'List the available MCP tools.',
           mcp: {
             action: 'mcp.listTools',
           },
@@ -149,22 +157,30 @@ describe('routeGptRequest write-plane guard', () => {
       requestId: 'req-mcp-2',
     });
 
+    expect(mockDispatchModuleAction).toHaveBeenCalledWith(
+      'ARCANOS:CORE',
+      'query',
+      expect.objectContaining({
+        prompt: 'List the available MCP tools.',
+        mcp: expect.objectContaining({
+          action: 'mcp.listTools',
+        }),
+        __arcanosRequestedAction: 'mcp.list_tools',
+      })
+    );
     expect(envelope).toEqual(
       expect.objectContaining({
-        ok: false,
-        error: expect.objectContaining({
-          code: 'MCP_CONTROL_REQUIRES_MCP_API',
-        }),
+        ok: true,
         _route: expect.objectContaining({
-          route: 'write_guard',
-          action: 'mcp.list_tools',
+          route: 'core',
+          action: 'query',
         }),
       })
     );
-    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+    expect(mockMcpListTools).not.toHaveBeenCalled();
   });
 
-  it('rejects runtime inspection prompts before they hit the write plane', async () => {
+  it('defers runtime inspection prompts to the core Trinity boundary', async () => {
     const envelope = await routeGptRequest({
       gptId: 'arcanos-core',
       body: {
@@ -173,19 +189,23 @@ describe('routeGptRequest write-plane guard', () => {
       requestId: 'req-runtime-1',
     });
 
+    expect(mockDispatchModuleAction).toHaveBeenCalledWith(
+      'ARCANOS:CORE',
+      'query',
+      expect.objectContaining({
+        message: 'verify in production on the live backend runtime that is currently active',
+        prompt: 'verify in production on the live backend runtime that is currently active',
+      })
+    );
     expect(envelope).toEqual(
       expect.objectContaining({
-        ok: false,
-        error: expect.objectContaining({
-          code: 'CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT',
-        }),
+        ok: true,
         _route: expect.objectContaining({
-          route: 'write_guard',
-          action: 'runtime.inspect',
+          route: 'core',
+          action: 'query',
         }),
       })
     );
-    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
   });
 
   it('keeps workflow-like query prompts on the requested GPT write plane', async () => {
@@ -219,28 +239,34 @@ describe('routeGptRequest write-plane guard', () => {
     expect(mockTryExecuteDeterministicDagTools).not.toHaveBeenCalled();
   });
 
-  it('rejects leaked direct control actions inside the write dispatcher', async () => {
+  it('defers leaked direct control actions to the core Trinity boundary', async () => {
     const envelope = await routeGptRequest({
       gptId: 'arcanos-core',
       body: {
         action: 'system_state',
+        prompt: 'Inspect the current system state.',
       },
       requestId: 'req-control-1',
     });
 
+    expect(mockDispatchModuleAction).toHaveBeenCalledWith(
+      'ARCANOS:CORE',
+      'query',
+      expect.objectContaining({
+        action: 'system_state',
+        prompt: 'Inspect the current system state.',
+        __arcanosRequestedAction: 'system_state',
+      })
+    );
     expect(envelope).toEqual(
       expect.objectContaining({
-        ok: false,
-        error: expect.objectContaining({
-          code: 'WRITING_PLANE_ONLY',
-        }),
+        ok: true,
         _route: expect.objectContaining({
-          route: 'write_guard',
-          action: 'system_state',
+          route: 'core',
+          action: 'query',
         }),
       })
     );
-    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
   });
 
   it('keeps normal writing prompts on module dispatch', async () => {

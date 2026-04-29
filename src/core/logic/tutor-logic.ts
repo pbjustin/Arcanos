@@ -1,8 +1,5 @@
-import {
-  getDefaultModel,
-  getGPT5Model,
-  generateMockResponse
-} from "@services/openai.js";
+import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
+import { generateMockResponse } from "@services/openai.js";
 import { searchScholarly } from "@services/scholarlyFetcher.js";
 import {
   DEFAULT_AUDIT_SYSTEM_PROMPT,
@@ -17,6 +14,7 @@ import { getOpenAIClientOrAdapter } from "@services/openai/clientBridge.js";
 import { getEnv, getEnvNumber } from "@platform/runtime/env.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { tryExtractExactLiteralPromptShortcut } from "@services/exactLiteralPromptShortcut.js";
+import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 
 const DEFAULT_TOKEN_LIMIT = getEnvNumber('TUTOR_DEFAULT_TOKEN_LIMIT', 200);
 
@@ -128,12 +126,12 @@ async function runTutorPipeline(
     temperature?: number;
   } = {}
 ): Promise<TutorPipelineOutput> {
-  const { adapter } = getOpenAIClientOrAdapter();
+  const { client } = getOpenAIClientOrAdapter();
   // Use config layer for env access (adapter boundary pattern)
   const testMode = getEnv('OPENAI_API_KEY') === 'test_key_for_mocking';
 
   //audit Assumption: missing adapter or test mode uses mock pipeline
-  if (!adapter || testMode) {
+  if (!client || testMode) {
     const mock = generateMockResponse(prompt, 'query');
     return {
       tutor_response: mock.result || '',
@@ -151,63 +149,52 @@ async function runTutorPipeline(
   }
 
   try {
-    const intakeModel = getDefaultModel();
-    const reasoningModel = getGPT5Model();
-    const auditModel = getDefaultModel();
-    //audit Assumption: token limit is required; Handling: default if absent
     const tokenLimit = options.tokenLimit ?? DEFAULT_TOKEN_LIMIT;
+    const tutorPrompt = [
+      options.intakePrompt || DEFAULT_INTAKE_SYSTEM_PROMPT,
+      options.reasoningPrompt || DEFAULT_REASONING_SYSTEM_PROMPT,
+      options.auditPrompt || DEFAULT_AUDIT_SYSTEM_PROMPT,
+      '',
+      prompt
+    ].join('\n\n');
 
-    const intakeResponse = await adapter.responses.create({
-      model: intakeModel,
-      messages: [
-        { role: 'system', content: options.intakePrompt || DEFAULT_INTAKE_SYSTEM_PROMPT },
-        { role: 'user', content: prompt }
-      ],
-      max_tokens: tokenLimit
-    });
-
-    const refinedPrompt = intakeResponse.choices[0]?.message?.content?.trim() || prompt;
-
-    const reasoningResponse = await adapter.responses.create({
-      model: reasoningModel,
-      messages: [
-        {
-          role: 'system',
-          content: options.reasoningPrompt || DEFAULT_REASONING_SYSTEM_PROMPT
+    const trinityResult = await runTrinityWritingPipeline({
+      input: {
+        prompt: tutorPrompt,
+        moduleId: 'ARCANOS:TUTOR',
+        sourceEndpoint: 'tutor.pipeline',
+        requestedAction: 'query',
+        body: {
+          prompt,
+          tokenLimit,
+          temperature: options.temperature ?? 0.3
         },
-        { role: 'user', content: refinedPrompt }
-      ],
-      temperature: options.temperature ?? 0.3,
-      max_tokens: tokenLimit
+        tokenLimit,
+        executionMode: 'request'
+      },
+      context: {
+        client,
+        runtimeBudget: createRuntimeBudget(),
+        runOptions: {
+          answerMode: 'direct',
+          strictUserVisibleOutput: true
+        }
+      }
     });
 
-    const reasoningOutput = reasoningResponse.choices[0]?.message?.content?.trim() || '';
-
-    const auditResponse = await adapter.responses.create({
-      model: auditModel,
-      messages: [
-        {
-          role: 'system',
-          content: options.auditPrompt || DEFAULT_AUDIT_SYSTEM_PROMPT
-        },
-        { role: 'user', content: reasoningOutput }
-      ],
-      max_tokens: tokenLimit
-    });
-
-    const finalized = auditResponse.choices[0]?.message?.content?.trim() || reasoningOutput;
+    const finalized = trinityResult.result.trim();
 
     return {
       tutor_response: finalized,
       pipeline_trace: {
-        intake: refinedPrompt,
-        reasoning: reasoningOutput,
+        intake: prompt,
+        reasoning: finalized,
         finalized
       },
       model: {
-        intake: intakeModel,
-        reasoning: reasoningModel,
-        audit: auditModel
+        intake: trinityResult.activeModel,
+        reasoning: trinityResult.activeModel,
+        audit: trinityResult.activeModel
       }
     };
   } catch (error: unknown) {

@@ -1,5 +1,7 @@
 import { randomUUID } from 'crypto';
-import { callOpenAI, getGPT5Model } from "@services/openai.js";
+import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
+import { getGPT5Model } from "@services/openai.js";
+import { getOpenAIClientOrAdapter } from '@services/openai/clientBridge.js';
 import { saveWithAuditCheck } from "@services/persistenceManager.js";
 import {
   BACKSTAGE_BOOKER_PERSONA,
@@ -11,6 +13,7 @@ import { getEnv, getEnvNumber } from "@platform/runtime/env.js";
 import { evaluateWithHRC, withHRC } from './hrcWrapper.js';
 import { buildDirectAnswerModeSystemInstruction, shouldPreferDirectAnswerMode } from '@services/directAnswerMode.js';
 import { tryExtractExactLiteralPromptShortcut } from '@services/exactLiteralPromptShortcut.js';
+import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 
 export interface Wrestler {
   name: string;
@@ -571,7 +574,34 @@ export async function generateBooking(prompt: string): Promise<string> {
   );
   const instructions = await buildStructuredBookingPrompt(prompt);
   try {
-    const { output } = await callOpenAI(model, instructions, tokenLimit, false);
+    const { client } = getOpenAIClientOrAdapter();
+    if (!client) {
+      throw new Error('OpenAI client unavailable for backstage booking.');
+    }
+    const trinityResult = await runTrinityWritingPipeline({
+      input: {
+        prompt: instructions,
+        moduleId: 'BACKSTAGE:BOOKER',
+        sourceEndpoint: 'backstage-booker.generateBooking',
+        requestedAction: 'generateBooking',
+        body: {
+          prompt,
+          model,
+          tokenLimit
+        },
+        tokenLimit,
+        executionMode: 'request'
+      },
+      context: {
+        client,
+        runtimeBudget: createRuntimeBudget(),
+        runOptions: {
+          answerMode: 'direct',
+          strictUserVisibleOutput: true
+        }
+      }
+    });
+    const output = trinityResult.result;
     const clean = output.replace(/\b(meta|reflection)[:].*$/gi, '').trim();
     //audit Assumption: direct-answer backstage prompts may still pick up model preambles or overlong list structures despite stricter prompt instructions; failure risk: live responses ignore “five short bullets” and reopen simulation-style framing; expected invariant: direct-answer output respects the caller's requested list shape; handling strategy: apply a prompt-aware cleanup pass only when direct-answer mode is active.
     if (shouldPreferDirectAnswerMode(prompt)) {

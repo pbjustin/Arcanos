@@ -1,185 +1,36 @@
-import type OpenAI from 'openai';
-
-import { resolveErrorMessage } from '@core/lib/errors/index.js';
-import { logger } from '@platform/logging/structuredLogging.js';
-import { createRuntimeBudget, type RuntimeBudget } from '@platform/resilience/runtimeBudget.js';
+import type {
+  TrinityGenerationContext,
+  TrinityGenerationFacadeRequest,
+  TrinityGenerationInput
+} from './trinityGenerationFacade.js';
 import {
-  classifyWritingPlaneInput,
-  type WritingPlaneInputClassification,
-} from '@platform/runtime/writingPlaneContract.js';
-import { generateRequestId } from '@shared/idGenerator.js';
+  runTrinityGenerationFacade,
+  TrinityControlLeakError,
+  applyTrinityGenerationInvariant,
+  classifyTrinityGenerationInput
+} from './trinityGenerationFacade.js';
+import type { TrinityResult } from './trinity.js';
 
-import { runThroughBrain, type TrinityResult, type TrinityRunOptions } from './trinity.js';
-import { readIntentMode, resolveIntentMode } from './trinityHonesty.js';
+export interface TrinityWritingInput extends TrinityGenerationInput {}
 
-export interface TrinityWritingInput {
-  prompt: string;
-  sessionId?: string;
-  overrideAuditSafe?: string;
-  sourceEndpoint: string;
-  requestedAction?: string | null;
-  body?: unknown;
-}
+export interface TrinityWritingContext extends TrinityGenerationContext {}
 
-export interface TrinityWritingContext {
-  client: OpenAI;
-  requestId?: string;
-  runtimeBudget?: RuntimeBudget;
-  runOptions?: Omit<TrinityRunOptions, 'sourceEndpoint'>;
-}
+export interface TrinityWritingPipelineRequest extends TrinityGenerationFacadeRequest {}
 
-export interface TrinityWritingPipelineRequest {
-  input: TrinityWritingInput;
-  context: TrinityWritingContext;
-}
-
-type TrinityControlLeakClassification = Extract<
-  WritingPlaneInputClassification,
-  { plane: 'control' }
->;
-
-export class TrinityControlLeakError extends Error {
-  code = 'TRINITY_CONTROL_LEAK';
-  classification: TrinityControlLeakClassification;
-  requestId: string;
-  sourceEndpoint: string;
-
-  constructor(params: {
-    classification: TrinityControlLeakClassification;
-    requestId: string;
-    sourceEndpoint: string;
-  }) {
-    super(params.classification.message);
-    this.name = 'TrinityControlLeakError';
-    this.classification = params.classification;
-    this.requestId = params.requestId;
-    this.sourceEndpoint = params.sourceEndpoint;
-  }
-}
-
-function resolveRequestId(params: TrinityWritingPipelineRequest): string {
-  return (
-    params.context.requestId?.trim() ||
-    generateRequestId('trinity')
-  );
-}
-
-function readActionAlias(record: Record<string, unknown>): string | null {
-  const directAction = record.action;
-  if (typeof directAction === 'string' && directAction.trim().length > 0) {
-    return directAction.trim();
-  }
-
-  const operation = record.operation;
-  return typeof operation === 'string' && operation.trim().length > 0
-    ? operation.trim()
-    : null;
-}
-
-function readRequestedAction(body: unknown): string | null {
-  if (!body || typeof body !== 'object' || Array.isArray(body)) {
-    return null;
-  }
-
-  const bodyRecord = body as Record<string, unknown>;
-  const directAction = readActionAlias(bodyRecord);
-  if (directAction) {
-    return directAction;
-  }
-
-  const payload = bodyRecord.payload;
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-    return null;
-  }
-
-  return readActionAlias(payload as Record<string, unknown>);
-}
-
-function classifyTrinityInput(params: TrinityWritingPipelineRequest): WritingPlaneInputClassification {
-  return classifyWritingPlaneInput({
-    body: params.input.body,
-    promptText: params.input.prompt,
-    requestedAction: params.input.requestedAction ?? readRequestedAction(params.input.body),
-  });
-}
+export {
+  TrinityControlLeakError,
+  applyTrinityGenerationInvariant,
+  classifyTrinityGenerationInput,
+  runTrinityGenerationFacade
+};
 
 /**
- * Execute the Trinity pipeline from the writing plane only.
+ * Backward-compatible alias for the canonical Trinity generation facade.
  * Inputs/outputs: normalized writing input plus execution context -> structured TrinityResult.
- * Edge cases: control-plane leakage is rejected before the low-level Trinity engine executes.
+ * Edge cases: control-plane leakage is rejected by `runTrinityGenerationFacade` before the low-level engine executes.
  */
 export async function runTrinityWritingPipeline(
   params: TrinityWritingPipelineRequest
 ): Promise<TrinityResult> {
-  const requestId = resolveRequestId(params);
-  const sourceEndpoint = params.input.sourceEndpoint.trim();
-  const classification = classifyTrinityInput(params);
-
-  if (classification.plane !== 'writing') {
-    logger.error('trinity.control_leak_detected', {
-      module: 'trinity',
-      requestId,
-      sourceEndpoint,
-      plane: classification.plane,
-      classification: classification.kind,
-      action: classification.action,
-      reason: classification.reason,
-      errorCode: classification.errorCode,
-      canonical: classification.canonical,
-    });
-    throw new TrinityControlLeakError({
-      classification,
-      requestId,
-      sourceEndpoint,
-    });
-  }
-
-  const prompt = params.input.prompt.trim();
-  const runtimeBudget = params.context.runtimeBudget ?? createRuntimeBudget();
-  const startedAt = Date.now();
-  const intentMode = resolveIntentMode(prompt, params.context.runOptions ?? {});
-
-  logger.info('trinity.entry', {
-    module: 'trinity',
-    requestId,
-    sourceEndpoint,
-    action: classification.action ?? 'query',
-    intentMode,
-    promptLength: prompt.length,
-  });
-
-  try {
-    const result = await runThroughBrain(
-      params.context.client,
-      prompt,
-      params.input.sessionId,
-      params.input.overrideAuditSafe,
-      {
-        ...(params.context.runOptions ?? {}),
-        sourceEndpoint,
-      },
-      runtimeBudget
-    );
-
-    logger.info('trinity.exit', {
-      module: 'trinity',
-      requestId,
-      sourceEndpoint,
-      durationMs: Date.now() - startedAt,
-      activeModel: result.activeModel,
-      fallbackFlag: result.fallbackFlag,
-      intentMode: result.outputControls ? readIntentMode(result.outputControls) : intentMode,
-    });
-
-    return result;
-  } catch (error) {
-    logger.error('trinity.error', {
-      module: 'trinity',
-      requestId,
-      sourceEndpoint,
-      durationMs: Date.now() - startedAt,
-      error: resolveErrorMessage(error),
-    });
-    throw error;
-  }
+  return runTrinityGenerationFacade(params);
 }

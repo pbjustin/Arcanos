@@ -2838,6 +2838,7 @@ router.post("/:gptId", async (req, res, next) => {
               action: GPT_QUERY_AND_WAIT_ACTION,
               status: 200
             });
+            const shapedDirectResult = shapeClientRouteResult(directEnvelope.result) as Record<string, unknown>;
             return sendGuardedGptJsonResponse(
               req,
               res,
@@ -2847,6 +2848,14 @@ router.post("/:gptId", async (req, res, next) => {
                 action: GPT_QUERY_AND_WAIT_ACTION,
                 status: 'completed',
                 result: extractDispatcherResultText(directEnvelope.result),
+                ...(shapedDirectResult.meta ? { meta: shapedDirectResult.meta } : {}),
+                ...(shapedDirectResult.activeModel ? { activeModel: shapedDirectResult.activeModel } : {}),
+                ...(typeof shapedDirectResult.fallbackFlag === 'boolean'
+                  ? { fallbackFlag: shapedDirectResult.fallbackFlag }
+                  : {}),
+                ...(Array.isArray(shapedDirectResult.routingStages)
+                  ? { routingStages: shapedDirectResult.routingStages }
+                  : {}),
                 routeDecision: directActionRouteDecision,
                 directAction: directEnvelope.directAction,
                 traceId,
@@ -3783,6 +3792,10 @@ router.post("/:gptId", async (req, res, next) => {
           logGptAckSent(routingInfo, (envelope._route.availableActions ?? []).length);
           applyAIDegradedResponseHeaders(res, extractAIDegradedResponseMetadata(envelope.result));
           const resultText = extractDispatcherResultText(envelope.result);
+          const shapedCoreResult =
+            typeof envelope.result === 'object' && envelope.result !== null
+              ? (shapeClientRouteResult(envelope.result) as Record<string, unknown>)
+              : {};
           requestLogger?.info?.("gpt.request.route_result", {
             endpoint: req.originalUrl,
             gptId: incomingGptId,
@@ -3808,6 +3821,14 @@ router.post("/:gptId", async (req, res, next) => {
               gptId: incomingGptId,
               action: GPT_QUERY_ACTION,
               result: resultText,
+              ...(shapedCoreResult.meta ? { meta: shapedCoreResult.meta } : {}),
+              ...(shapedCoreResult.activeModel ? { activeModel: shapedCoreResult.activeModel } : {}),
+              ...(typeof shapedCoreResult.fallbackFlag === 'boolean'
+                ? { fallbackFlag: shapedCoreResult.fallbackFlag }
+                : {}),
+              ...(Array.isArray(shapedCoreResult.routingStages)
+                ? { routingStages: shapedCoreResult.routingStages }
+                : {}),
               traceId,
               _route: {
                 ...envelope._route,

@@ -89,6 +89,17 @@ export interface TrinityResult {
     tokens?: TrinityMetaTokens | undefined;
     id: string;
     created: number;
+    pipeline?: 'trinity';
+    bypass?: false;
+    sourceEndpoint?: string;
+    classification?: 'writing';
+    gptId?: string;
+    moduleId?: string;
+    requestedAction?: string | null;
+    executionMode?: string;
+    tokenLimit?: number;
+    outputLimit?: number;
+    background?: Record<string, unknown>;
   };
   activeModel: string;
   fallbackFlag: boolean;
