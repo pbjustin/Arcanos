@@ -95,6 +95,22 @@ export function parseReusableCodeResponse(raw: string): ReusableCodeSnippet[] {
   return parsed.snippets;
 }
 
+function buildReusableCodeRepairPrompt(request: ReusableCodeGenerationRequest, invalidOutput: string): string {
+  const invalidPreview =
+    invalidOutput.length > 2_000 ? `${invalidOutput.slice(0, 2_000)}...[truncated]` : invalidOutput;
+
+  return [
+    'The previous reusable-code response failed JSON parsing.',
+    'Regenerate the requested snippets and return strict JSON only.',
+    'Required shape: {"snippets":[{"name":"","description":"","language":"","code":""}]}',
+    'Do not include markdown fences, prose, caveats, or external-state claims.',
+    'Original request:',
+    buildReusableCodePrompt(request),
+    'Invalid prior output:',
+    invalidPreview
+  ].join('\n\n');
+}
+
 /**
  * Generate reusable code snippets using the Trinity generation facade.
  *
@@ -124,16 +140,47 @@ export async function generateReusableCodeSnippets(
       client,
       runtimeBudget: createRuntimeBudget(),
       runOptions: {
-        answerMode: 'audit',
+        answerMode: 'direct',
         strictUserVisibleOutput: true
       }
     }
   });
-  const snippets = parseReusableCodeResponse(trinityResult.result);
+  let raw = trinityResult.result;
+  let model = trinityResult.activeModel;
+  let snippets: ReusableCodeSnippet[];
+
+  try {
+    snippets = parseReusableCodeResponse(raw);
+  } catch {
+    const repairResult = await runTrinityWritingPipeline({
+      input: {
+        prompt: buildReusableCodeRepairPrompt(request, raw),
+        moduleId: 'REUSABLE:CODE',
+        sourceEndpoint: 'api.reusables.repair',
+        requestedAction: 'query',
+        body: {
+          request,
+          invalidOutputPreview: raw.slice(0, 2_000)
+        },
+        executionMode: 'request'
+      },
+      context: {
+        client,
+        runtimeBudget: createRuntimeBudget(),
+        runOptions: {
+          answerMode: 'direct',
+          strictUserVisibleOutput: true
+        }
+      }
+    });
+    raw = repairResult.result;
+    model = repairResult.activeModel;
+    snippets = parseReusableCodeResponse(raw);
+  }
 
   return {
-    model: trinityResult.activeModel,
+    model,
     snippets,
-    raw: trinityResult.result
+    raw
   };
 }

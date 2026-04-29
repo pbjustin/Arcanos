@@ -80,6 +80,53 @@ describe('reusable code generation', () => {
     ]);
   });
 
+  it('repairs invalid reusable-code JSON through Trinity before parsing', async () => {
+    const client = { responses: { create: jest.fn() } } as any;
+    runTrinityWritingPipelineMock
+      .mockResolvedValueOnce({
+        result: 'I cannot verify external state.',
+        activeModel: 'trinity-model',
+      })
+      .mockResolvedValueOnce({
+        result: JSON.stringify({
+          snippets: [
+            {
+              name: 'idGenerator',
+              description: 'ID generator',
+              language: 'typescript',
+              code: 'export const id = () => crypto.randomUUID();',
+            },
+          ],
+        }),
+        activeModel: 'repair-model',
+      });
+
+    const result = await generateReusableCodeSnippets(
+      client,
+      { target: 'idGenerator', includeDocs: false, language: 'typescript' }
+    );
+
+    expect(runTrinityWritingPipelineMock).toHaveBeenCalledTimes(2);
+    expect(runTrinityWritingPipelineMock).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        input: expect.objectContaining({
+          sourceEndpoint: 'api.reusables.repair',
+          moduleId: 'REUSABLE:CODE',
+        }),
+      })
+    );
+    expect(result.model).toBe('repair-model');
+    expect(result.snippets).toEqual([
+      {
+        name: 'idGenerator',
+        description: 'ID generator',
+        language: 'typescript',
+        code: 'export const id = () => crypto.randomUUID();',
+      },
+    ]);
+  });
+
   it('keeps explicit schema parsing for raw JSON helper usage', () => {
     const parsed = parseReusableCodeResponse(
       '{"snippets":[{"name":"idGenerator","description":"IDs","language":"typescript","code":"export const id=() => 1;"}]}'
