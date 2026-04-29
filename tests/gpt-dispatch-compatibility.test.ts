@@ -93,7 +93,7 @@ jest.unstable_mockModule('../src/routes/modules.js', () => ({
   dispatchModuleAction: mockDispatchModuleAction
 }));
 
-const { routeGptRequest } = await import('../src/routes/_core/gptDispatch.js');
+const { resolveGptRouting, routeGptRequest } = await import('../src/routes/_core/gptDispatch.js');
 
 describe('gpt dispatch compatibility', () => {
   beforeEach(() => {
@@ -184,5 +184,32 @@ describe('gpt dispatch compatibility', () => {
         extra: 'kept'
       })
     );
+  });
+
+  it('resolves normalized GPT IDs without executing a module action', async () => {
+    const response = await resolveGptRouting(' ARCANOS-CORE ', 'req_resolve_normalized');
+
+    expect(response).toEqual(
+      expect.objectContaining({
+        ok: true,
+        plan: expect.objectContaining({
+          matchedId: 'arcanos-core',
+          module: 'ARCANOS:CORE',
+          route: 'core',
+          action: 'query',
+          availableActions: ['query', 'system_state'],
+          matchMethod: 'normalized'
+        }),
+        _route: expect.objectContaining({
+          requestId: 'req_resolve_normalized',
+          gptId: 'ARCANOS-CORE',
+          module: 'ARCANOS:CORE',
+          route: 'core',
+          action: 'query',
+          matchMethod: 'normalized'
+        })
+      })
+    );
+    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
   });
 });

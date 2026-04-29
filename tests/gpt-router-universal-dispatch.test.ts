@@ -617,6 +617,39 @@ describe('gpt router universal dispatch', () => {
           'get_status',
           'get_result',
         ]),
+        canonicalEndpoints: expect.objectContaining({
+          trinityStatus: '/trinity/status',
+          dagRuns: '/api/arcanos/dag/runs',
+          dagRunStatus: '/api/arcanos/dag/runs/{runId}',
+          mcp: '/mcp',
+        }),
+        policy: {
+          writingPlane: '/gpt/:gptId',
+          controlPlane: 'direct-endpoints',
+          trinityWritingAction: 'query',
+          trinityDirectActionBypass: 'query_and_wait',
+          systemOperationsThroughWritingPipeline: false,
+        },
+        subsystems: expect.objectContaining({
+          trinity: {
+            statusEndpoint: '/trinity/status',
+            writingEndpoint: '/gpt/:gptId',
+            writingAction: 'query',
+            sourceEndpoint: 'gpt.arcanos-core.query',
+            pipeline: 'runTrinityWritingPipeline',
+            directActionBypass: 'query_and_wait',
+          },
+          dag: expect.objectContaining({
+            routePolicy: 'direct_endpoint_required',
+            dispatchEndpoint: '/dispatch',
+            runsEndpoint: '/api/arcanos/dag/runs',
+            mcpEndpoint: '/mcp',
+          }),
+          workers: expect.objectContaining({
+            statusEndpoint: '/workers/status',
+            controlActions: ['workers.status', 'queue.inspect'],
+          }),
+        }),
         env: expect.objectContaining({
           hasOpenAIKey: expect.any(Boolean),
           hasArcanosModel: expect.any(Boolean),

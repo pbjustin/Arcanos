@@ -8,6 +8,11 @@ export interface DagAgentPromptOptions {
   overrideAuditSafe?: string;
   cognitiveDomain?: CognitiveDomain;
   toolBackedCapabilities?: TrinityToolBackedCapabilities;
+  dagId?: string;
+  nodeId?: string;
+  executionKey?: string;
+  nodeMetadata?: Record<string, unknown>;
+  attempt?: number;
   sourceEndpoint: string;
 }
 
@@ -214,6 +219,11 @@ function createPromptAgent(agentKey: string): DagAgentHandler {
       toolBackedCapabilities: agentKey === 'audit'
         ? { verifyProvidedData: true }
         : undefined,
+      dagId: context.dagId,
+      nodeId: context.node.id,
+      executionKey: context.node.executionKey,
+      nodeMetadata: context.node.metadata,
+      attempt: context.attempt,
       sourceEndpoint: `dag.agent.${agentKey}`
     });
   };

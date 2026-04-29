@@ -27,6 +27,12 @@ describe('DAG template normalization', () => {
     expect(template.graph.id).toBe(TRINITY_CORE_DAG_TEMPLATE_NAME);
     expect(template.graph.entrypoints).toEqual(['planner']);
     expect(template.nodeMetadataById.writer.agentRole).toBe('writer');
+    expect(template.graph.nodes.planner.metadata).toEqual(expect.objectContaining({
+      pipeline: 'trinity',
+      pipelineTemplate: TRINITY_CORE_DAG_TEMPLATE_NAME,
+      agentRole: 'planner',
+      jobType: 'plan'
+    }));
   });
 
   it('rejects unknown template names after normalization', () => {

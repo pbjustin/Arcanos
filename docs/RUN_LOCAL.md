@@ -16,10 +16,7 @@ cp .env.example .env
 ```
 
 Set minimum backend values:
-```env
-PORT=3000
-OPENAI_API_KEY=sk-...
-```
+Set `PORT` to `3000` and set `OPENAI_API_KEY` to your local key in `.env`.
 
 `PORT=3000` matches `.env.example` and the direct local server default. Railway injects `PORT`, and the Railway launcher also validates `ARCANOS_PROCESS_KIND`.
 

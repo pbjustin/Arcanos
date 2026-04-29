@@ -178,4 +178,61 @@ describe('runDagNodeJob', () => {
       })
     });
   });
+
+  it('fails closed when a queued DAG node references an unknown execution key', async () => {
+    const runPromptMock = jest.fn();
+    const writeArtifactMock = jest.fn().mockResolvedValue('missing-handler-artifact');
+
+    const result = await runDagNodeJob(
+      {
+        ...buildDagNodeJobInput(),
+        node: {
+          id: 'missing-handler',
+          type: 'agent',
+          dependencies: [],
+          executionKey: 'missing-handler-regression-test'
+        },
+        payload: {},
+        dependencyResults: {}
+      },
+      {
+        runPrompt: runPromptMock,
+        logger: {
+          debug: jest.fn(),
+          info: jest.fn(),
+          warn: jest.fn(),
+          error: jest.fn()
+        },
+        metrics: {
+          incrementCounter: jest.fn(),
+          recordGauge: jest.fn(),
+          recordDuration: jest.fn(),
+          snapshot: jest.fn(() => ({
+            counters: {},
+            gauges: {},
+            durationsMs: {}
+          }))
+        },
+        artifactStore: {
+          writeArtifact: writeArtifactMock,
+          readArtifact: jest.fn()
+        }
+      }
+    );
+
+    expect(result).toMatchObject({
+      nodeId: 'missing-handler',
+      status: 'failed',
+      errorMessage: 'No DAG agent handler registered for executionKey="missing-handler-regression-test".',
+      artifactRef: 'missing-handler-artifact'
+    });
+    expect(runPromptMock).not.toHaveBeenCalled();
+    expect(writeArtifactMock).toHaveBeenCalledWith(expect.objectContaining({
+      artifactKind: 'failure',
+      nodeId: 'missing-handler',
+      payload: expect.objectContaining({
+        errorMessage: 'No DAG agent handler registered for executionKey="missing-handler-regression-test".'
+      })
+    }));
+  });
 });

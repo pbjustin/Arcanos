@@ -31,6 +31,8 @@ cp .env.example .env
 | `OPENAI_MODEL` | No | fallback chain | Participates in default model resolution chain. |
 | `DATABASE_URL` | No | none | Enables PostgreSQL persistence. |
 | `REDIS_URL` | No | none | Preferred Redis connection string; discrete `REDISHOST`/`REDISPORT`/`REDISUSER`/`REDISPASSWORD` are fallback inputs. |
+| `ARCANOS_GPT_ACCESS_TOKEN` | Yes for `/gpt-access/*` | none | Bearer token for the protected GPT access gateway. Store real values only in runtime variables or GPT Action auth. |
+| `ARCANOS_GPT_ACCESS_SCOPES` | Yes for `/gpt-access/jobs/create` | all scopes except `jobs.create` is denied unless explicit | Comma-separated gateway scope allowlist. Include `jobs.create` and `jobs.result` for protected async Trinity execution. |
 | `ARCANOS_PROCESS_KIND` | Yes for Railway launcher | none | Must be `web` or `worker` when using `scripts/start-railway-service.mjs`; omit for direct local `npm start`. |
 | `RUN_WORKERS` | No | `true` (non-test) | Local/direct background worker toggle. Ignored by Railway launcher role selection when `ARCANOS_PROCESS_KIND` is set. |
 | `WORKER_API_TIMEOUT_MS` | No | `30000` | Unified config default; some worker adapters fallback to `60000` if unset. |
@@ -98,6 +100,40 @@ The OpenAI client resolves keys in this order:
 | `ARCANOS_PROCESS_KIND=worker` | Railway worker service | Starts `dist/workers/jobRunner.js` and exposes a minimal health server on `/health`, `/healthz`, and `/readyz`. |
 
 If `ARCANOS_PROCESS_KIND` is missing or not `web`/`worker`, the Railway launcher exits with a fatal startup error by design.
+
+### GPT access and Trinity async execution
+Protected GPT Action and operator calls must use `/gpt-access/*` for backend operations. Do not ask `/gpt/:gptId` to inspect runtime state, read queue/job results, call MCP tools, or proxy protected backend actions.
+
+| Variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `ARCANOS_GPT_ACCESS_TOKEN` | Yes for `/gpt-access/*` | none | Gateway bearer token. The gateway returns an auth/config error when this is missing. |
+| `ARCANOS_GPT_ACCESS_SCOPES` | Yes for job creation | all recognized scopes are granted when unset, except `jobs.create` remains denied unless explicitly listed | Scope allowlist. Use `runtime.read,workers.read,queue.read,jobs.create,jobs.result,diagnostics.read` for the minimal protected async Trinity flow. |
+| `OPENAI_API_KEY` | Yes for live worker execution | none | Preferred OpenAI key setting. The config layer also supports the fallback key names listed above. |
+| `DATABASE_URL` or complete `PG*` set | Yes for durable async jobs | none | Required by `/gpt-access/jobs/create` persistence and by the worker queue. Web and worker services must share the same database. |
+| `JOB_WORKER_ID` | No | `async-queue` | Base worker identity for queue claims, logs, and heartbeat state. |
+| `JOB_WORKER_STATS_ID` | No | `JOB_WORKER_ID` | Stable aggregate identity for worker inspection. |
+| `JOB_WORKER_CONCURRENCY` | No | `WORKER_COUNT` or `1` | Number of queue-consumer slots in one worker process. |
+| `WORKER_TRINITY_RUNTIME_BUDGET_MS` | No | `420000` | Max worker Trinity runtime budget. |
+| `WORKER_TRINITY_STAGE_TIMEOUT_MS` | No | `180000` | Per-stage/model timeout passed from worker-originated Trinity calls. |
+| `PLANNER_TIMEOUT_MS` | No | `WORKER_TRINITY_STAGE_TIMEOUT_MS` | Planner DAG node timeout. |
+| `PLANNER_MAX_RETRIES` | No | `2` | Planner retry count after the first attempt. |
+| `PLANNER_RETRY_BACKOFF_MS` | No | `1000` | Planner retry backoff base. |
+| `ARCANOS_CORE_BACKGROUND_HANDLER_TIMEOUT_MS` | No | background profile default | Handler timeout for background `ARCANOS:CORE` execution. |
+| `ARCANOS_CORE_BACKGROUND_PIPELINE_TIMEOUT_MS` | No | `120000` | Primary Trinity timeout for background `ARCANOS:CORE` execution, clamped by code. |
+| `ARCANOS_CORE_BACKGROUND_DEGRADED_HEADROOM_MS` | No | background profile default | Time reserved for degraded fallback after a background pipeline timeout. |
+| `TRINITY_DAG_GPT_ACCESS_ENABLED` | No | auto-enabled when worker concurrency is at least `2` | Routes queued DAG node execution through `/gpt-access/jobs/create` and `/gpt-access/jobs/result`. Set `true` with `JOB_WORKER_CONCURRENCY>=2` for Railway worker services; set `false` for local legacy direct-worker debugging. |
+| `GPT_MODULE_MAP` | No | auto-discovered module definitions | JSON override/extension for GPT ID to module bindings. |
+
+Protected async Trinity flow:
+1. `POST /gpt-access/jobs/create` validates bearer auth and the `jobs.create` scope.
+2. The gateway writes one durable `gpt` job and returns `jobId`.
+3. The worker claims the job, calls the GPT dispatcher in-process, and routes `arcanos-core` to `ARCANOS:CORE`.
+4. `ARCANOS:CORE` calls `runTrinityWritingPipeline(...)`, which rejects control-plane leakage before `runThroughBrain(...)`.
+5. The worker stores terminal output and protected clients poll `POST /gpt-access/jobs/result`.
+
+Queued Trinity DAG nodes use `src/services/trinity/adapter.ts` to create and poll Arcanos core GPT jobs through the same GPT Access job path. The adapter accepts injected config/dependencies for tests and non-Railway runtimes; production code reads the role toggle from `TRINITY_DAG_GPT_ACCESS_ENABLED` and otherwise only auto-enables when the worker has at least two consumer slots to avoid nested queue deadlock.
+
+Use `docs/TRINITY_PIPELINE.md` for the full execution flow and `docs/gpt-access-gateway.md` for curl examples.
 
 ### Dedicated job runner
 | Variable | Default | Purpose |
@@ -231,6 +267,8 @@ This table mirrors the highest-impact runtime keys in `.env.example`. Use `.env.
 | `OPENAI_MODEL` | `gpt-4.1-mini` | Default model name. |
 | `ARCANOS_BACKEND_URL` | `http://127.0.0.1:3000` (commented) | Backend base URL used by CLI/scripts before fallback variables. |
 | `OPENAI_ACTION_SHARED_SECRET` | `replace-with-a-strong-shared-secret` | Shared secret for `/api/bridge/gpt`. |
+| `ARCANOS_GPT_ACCESS_TOKEN` | commented placeholder | Bearer token for `/gpt-access/*`; real values must not be committed or logged. |
+| `ARCANOS_GPT_ACCESS_SCOPES` | commented full scope list | Gateway scope allowlist. `jobs.create` must be explicit for protected async job creation. |
 | `DEFAULT_GPT_ID` | `arcanos-core` | Default GPT id for bridge requests that omit `gptId`. |
 | `ARCANOS_PROCESS_KIND` | `web` (commented) | Explicit Railway launcher role: `web` or `worker`. |
 | `ALLOW_MOCK_FALLBACK` | `false` | Allow fallback to mocked providers in non-prod. |
@@ -249,6 +287,9 @@ This table mirrors the highest-impact runtime keys in `.env.example`. Use `.env.
 | `JOB_WORKER_ID` | `async-queue` (commented) | Dedicated worker identity. |
 | `JOB_WORKER_CONCURRENCY` | `1` (commented) | Queue-consumer slots per worker process. |
 | `JOB_WORKER_POLL_MS` | `250` (commented) | Worker polling delay after claim cycles. |
+| `WORKER_TRINITY_RUNTIME_BUDGET_MS` | `420000` (code default) | Worker Trinity runtime budget. |
+| `WORKER_TRINITY_STAGE_TIMEOUT_MS` | `180000` (code default) | Worker Trinity stage/model timeout. |
+| `TRINITY_DAG_GPT_ACCESS_ENABLED` | unset in `.env.example`; code auto-enables when concurrency is at least `2` if unset | Queue DAG node prompts through GPT Access job creation/result polling. |
 | `REDIS_URL` | `redis://localhost:6379` (commented) | Preferred Redis connection string. |
 | `SAFETY_HEARTBEAT_TIMEOUT_MS` | `15000` | Worker heartbeat timeout window. |
 | `SAFETY_HEARTBEAT_MISS_THRESHOLD` | `3` | Missed heartbeats before marking unhealthy. |

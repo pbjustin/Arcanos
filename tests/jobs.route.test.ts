@@ -116,6 +116,45 @@ describe('/jobs routes', () => {
     });
   });
 
+  it('returns a pending polling payload for unfinished canonical result lookups', async () => {
+    getJobByIdMock.mockResolvedValue({
+      id: RUNNING_JOB_ID,
+      job_type: 'gpt',
+      status: 'running',
+      created_at: '2026-04-06T10:00:00.000Z',
+      updated_at: '2026-04-06T10:00:15.000Z',
+      completed_at: null,
+      retention_until: null,
+      idempotency_until: '2026-04-06T11:00:00.000Z',
+      expires_at: '2026-04-06T12:00:00.000Z',
+      error_message: null,
+      output: null,
+      cancel_requested_at: null,
+      cancel_reason: null
+    });
+
+    const response = await request(buildApp()).get(`/jobs/${RUNNING_JOB_ID}/result`);
+
+    expect(response.status).toBe(200);
+    expect(response.headers['x-response-bytes']).toBeTruthy();
+    expect(response.body).toEqual({
+      jobId: RUNNING_JOB_ID,
+      status: 'pending',
+      jobStatus: 'running',
+      lifecycleStatus: 'running',
+      createdAt: '2026-04-06T10:00:00.000Z',
+      updatedAt: '2026-04-06T10:00:15.000Z',
+      completedAt: null,
+      retentionUntil: null,
+      idempotencyUntil: '2026-04-06T11:00:00.000Z',
+      expiresAt: '2026-04-06T12:00:00.000Z',
+      poll: `/jobs/${RUNNING_JOB_ID}/result`,
+      stream: `/jobs/${RUNNING_JOB_ID}/stream`,
+      result: null,
+      error: null
+    });
+  });
+
   it('rejects whitespace-only job identifiers for the canonical result route', async () => {
     const response = await request(buildApp()).get('/jobs/%20/result');
 

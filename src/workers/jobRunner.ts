@@ -48,6 +48,7 @@ import {
 } from './jobRunnerRuntime.js';
 import { createDagNodeRunPromptBridge } from './dagNodePromptBridge.js';
 import { runWorkerTrinityPrompt } from './trinityWorkerPipeline.js';
+import { isTrinityDagGptAccessEnabled } from '@services/trinity/adapter.js';
 import { sleep } from '@shared/sleep.js';
 import {
   recordGptJobEvent,
@@ -523,7 +524,8 @@ async function executeQueuedDagNode(
 
   const dagResult = await runDagNodeJob(parsedDagJobInput.value, {
     runPrompt: createDagNodeRunPromptBridge(openai, {
-      runWorkerPrompt: runWorkerTrinityPrompt
+      runWorkerPrompt: runWorkerTrinityPrompt,
+      useGptAccess: isTrinityDagGptAccessEnabled()
     })
   });
 
