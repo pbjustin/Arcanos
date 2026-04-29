@@ -557,6 +557,32 @@ describe('/worker-helper routes', () => {
     expect(createJobMock).not.toHaveBeenCalled();
   });
 
+  it('rejects invalid worker helper token and bearer token mutation requests', async () => {
+    const invalidHeaderResponse = await request(buildApp())
+      .post('/worker-helper/queue/ask')
+      .set('x-arcanos-worker-helper-token', 'wrong-token')
+      .send({ prompt: 'Explain this stack trace.' });
+    const invalidBearerResponse = await request(buildApp())
+      .post('/worker-helper/dispatch')
+      .set('authorization', 'Bearer wrong-token')
+      .send({ input: 'Run a direct worker check.' });
+
+    expect(invalidHeaderResponse.status).toBe(401);
+    expect(invalidBearerResponse.status).toBe(401);
+    expect(createJobMock).not.toHaveBeenCalled();
+    expect(dispatchArcanosTaskMock).not.toHaveBeenCalled();
+  });
+
+  it('allows valid bearer worker helper token mutation requests', async () => {
+    const response = await request(buildApp())
+      .post('/worker-helper/queue/ask')
+      .set('authorization', `Bearer ${workerHelperToken}`)
+      .send({ prompt: 'Explain this stack trace.' });
+
+    expect(response.status).toBe(202);
+    expect(createJobMock).toHaveBeenCalledTimes(1);
+  });
+
   it('queues ask work with detected domain metadata', async () => {
     const response = await withWorkerHelperToken(request(buildApp())
       .post('/worker-helper/queue/ask')
@@ -676,6 +702,36 @@ describe('/worker-helper routes', () => {
       ]
     });
     expect(listFailedJobsMock).toHaveBeenCalledWith(1);
+  });
+
+  it('requires helper auth for worker job detail routes', async () => {
+    getJobByIdMock.mockResolvedValue({
+      id: 'job-latest',
+      worker_id: 'worker-helper',
+      job_type: 'ask',
+      status: 'completed',
+      created_at: '2026-03-06T09:59:00.000Z',
+      updated_at: '2026-03-06T10:00:00.000Z',
+      completed_at: '2026-03-06T10:00:00.000Z',
+      error_message: null,
+      output: { result: 'ok' }
+    });
+
+    const unauthenticatedLatestResponse = await request(buildApp()).get('/worker-helper/jobs/latest');
+    const unauthenticatedSpecificResponse = await request(buildApp()).get('/worker-helper/jobs/job-latest');
+    const latestResponse = await withWorkerHelperToken(
+      request(buildApp()).get('/worker-helper/jobs/latest')
+    );
+    const specificResponse = await withWorkerHelperToken(
+      request(buildApp()).get('/worker-helper/jobs/job-latest')
+    );
+
+    expect(unauthenticatedLatestResponse.status).toBe(401);
+    expect(unauthenticatedSpecificResponse.status).toBe(401);
+    expect(latestResponse.status).toBe(200);
+    expect(specificResponse.status).toBe(200);
+    expect(latestResponse.body).toEqual(expect.objectContaining({ id: 'job-latest' }));
+    expect(specificResponse.body).toEqual(expect.objectContaining({ id: 'job-latest' }));
   });
 
   it('returns autonomous worker health', async () => {

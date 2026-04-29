@@ -137,6 +137,7 @@ export interface RecoverStaleJobsOptions {
 export interface RecoverStaleJobsResult {
   recoveredJobs: string[];
   failedJobs: string[];
+  cancelledJobs: string[];
 }
 
 export type StalledJobRecoveryAction = 'requeue' | 'dead_letter';
@@ -1347,7 +1348,7 @@ export async function claimNextPendingJob(
  * Extend the lease and heartbeat for one running job.
  * Purpose: prevent active work from being mistaken for a stalled job by the inspector.
  * Inputs/outputs: accepts a job id plus optional worker id and lease duration; returns the updated job or `null`.
- * Edge case behavior: returns `null` when the job is no longer running.
+ * Edge case behavior: returns `null` when the job is no longer running or the supplied worker no longer owns a live lease.
  */
 export async function recordJobHeartbeat(
   jobId: string,
@@ -1365,6 +1366,14 @@ export async function recordJobHeartbeat(
        last_worker_id = COALESCE($2, last_worker_id)
      WHERE id = $3
        AND status = 'running'
+       AND (
+         $2::text IS NULL
+         OR last_worker_id = $2::text
+       )
+       AND (
+         $2::text IS NULL
+         OR lease_expires_at >= NOW()
+       )
      RETURNING *`,
     [leaseMs, options.workerId ?? null, jobId]
   );
@@ -1407,12 +1416,10 @@ export async function scheduleJobRetry(
        AND status = 'running'
        AND (
          $3::text IS NULL
-         OR last_worker_id IS NULL
          OR last_worker_id = $3::text
        )
        AND (
          $3::text IS NULL
-         OR lease_expires_at IS NULL
          OR lease_expires_at >= NOW()
        )
      RETURNING *`,
@@ -1509,6 +1516,7 @@ export async function recoverStaleJobs(
 
     const recoveredJobs: string[] = [];
     const failedJobs: string[] = [];
+    const cancelledJobs: string[] = [];
 
     for (const row of staleResult.rows as Array<{
       id: string;
@@ -1554,7 +1562,7 @@ export async function recoverStaleJobs(
             row.id
           ]
         );
-        failedJobs.push(row.id);
+        cancelledJobs.push(row.id);
         continue;
       }
 
@@ -1634,7 +1642,7 @@ export async function recoverStaleJobs(
     }
 
     await client.query('COMMIT');
-    return { recoveredJobs, failedJobs };
+    return { recoveredJobs, failedJobs, cancelledJobs };
   } catch (error: unknown) {
     await client.query('ROLLBACK');
     logJobRepositoryError('recover_stale_jobs', error);
@@ -2003,6 +2011,7 @@ export async function getJobQueueSummary(): Promise<JobQueueSummary | null> {
              WHERE status = 'running'
                AND (
                  (lease_expires_at IS NOT NULL AND lease_expires_at < NOW())
+                 OR (last_heartbeat_at IS NULL AND started_at < NOW() - ($2::bigint * INTERVAL '1 millisecond'))
                  OR (last_heartbeat_at IS NOT NULL AND last_heartbeat_at < NOW() - ($2::bigint * INTERVAL '1 millisecond'))
                )
            )::int AS stalled_running_count,

@@ -87,7 +87,7 @@ P1 risks:
 P2 risks:
 
 - Queue summary undercounts stale running jobs with null heartbeat/lease.
-- Cancelled stale jobs can be reported as failed/dead-letter work.
+- Baseline audit found cancelled stale jobs could be reported as failed/dead-letter work; this PR now separates cancelled stale recovery from failed/dead-letter recovery.
 - Worker health categories do not yet match the target model: alive, idle, busy, stale, degraded, unhealthy, disabled.
 
 ## Railway Readiness Map

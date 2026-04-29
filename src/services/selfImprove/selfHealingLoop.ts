@@ -3065,14 +3065,18 @@ async function executeActionPlan(
         staleAfterMs: settings.staleAfterMs,
         maxRetries: settings.defaultMaxRetries
       });
+      const cancelledJobs = recoverResult.cancelledJobs?.length ?? 0;
       const action = `recoverStaleJobs:recovered=${recoverResult.recoveredJobs.length}:failed=${recoverResult.failedJobs.length}`;
+      const recoveryMessage = cancelledJobs > 0
+        ? `Recovered ${recoverResult.recoveredJobs.length} stale jobs; failed ${recoverResult.failedJobs.length}; cancelled ${cancelledJobs}.`
+        : `Recovered ${recoverResult.recoveredJobs.length} stale jobs; failed ${recoverResult.failedJobs.length}.`;
       recordActionDispatchResult({
         runtime,
         diagnosis,
         action,
         target: actionTarget,
         outcome: 'success',
-        message: `Recovered ${recoverResult.recoveredJobs.length} stale jobs; failed ${recoverResult.failedJobs.length}.`
+        message: recoveryMessage
       });
       recordCooldown(runtime.actionCooldowns, actionPlan.cooldownKey, actionPlan.cooldownMs);
       recordDiagnosisAttempt(runtime, diagnosis.type);
@@ -3084,7 +3088,8 @@ async function executeActionPlan(
         executionSource: 'self_heal_execute_action',
         details: {
           recoveredJobs: recoverResult.recoveredJobs.length,
-          failedJobs: recoverResult.failedJobs.length
+          failedJobs: recoverResult.failedJobs.length,
+          cancelledJobs
         }
       });
       recordSelfHealEvent({
@@ -3096,7 +3101,8 @@ async function executeActionPlan(
         healedComponent: actionTarget,
         details: {
           failedJobs: recoverResult.failedJobs.length,
-          recoveredJobs: recoverResult.recoveredJobs.length
+          recoveredJobs: recoverResult.recoveredJobs.length,
+          cancelledJobs
         }
       });
       recordHealResult({
@@ -3105,7 +3111,7 @@ async function executeActionPlan(
         action,
         target: actionTarget,
         outcome: 'success',
-        message: `Recovered ${recoverResult.recoveredJobs.length} stale jobs; failed ${recoverResult.failedJobs.length}.`
+        message: recoveryMessage
       });
       console.log(`[SELF-HEAL] action ${action}`);
       return {

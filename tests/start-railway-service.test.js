@@ -102,11 +102,44 @@ describe('start-railway-service launcher helpers', () => {
     });
   });
 
+  it('accepts supported OpenAI key aliases for worker provider readiness', () => {
+    const readiness = createWorkerReadinessState({ RAILWAY_OPENAI_API_KEY: 'sk-railway-test' });
+
+    recordWorkerOutput(readiness, 'worker.bootstrap.completed');
+
+    expect(buildWorkerReadinessResponse(readiness)).toMatchObject({
+      statusCode: 200,
+      body: {
+        ready: true,
+        reason: null,
+        checks: {
+          provider: 'configured',
+        },
+      },
+    });
+  });
+
   it('marks readiness unavailable after worker exit', () => {
     const readiness = createWorkerReadinessState({ OPENAI_API_KEY: 'sk-test' });
     recordWorkerOutput(readiness, 'worker.bootstrap.completed');
 
     recordWorkerExit(readiness, 1, null);
+
+    expect(buildWorkerReadinessResponse(readiness)).toMatchObject({
+      statusCode: 503,
+      body: {
+        ready: false,
+        child: 'exited',
+        reason: 'worker_exited_code_1',
+      },
+    });
+  });
+
+  it('keeps worker readiness unavailable when late output arrives after child exit', () => {
+    const readiness = createWorkerReadinessState({ OPENAI_API_KEY: 'sk-test' });
+
+    recordWorkerExit(readiness, 1, null);
+    recordWorkerOutput(readiness, 'worker.bootstrap.completed');
 
     expect(buildWorkerReadinessResponse(readiness)).toMatchObject({
       statusCode: 503,

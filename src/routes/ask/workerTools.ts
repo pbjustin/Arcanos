@@ -30,6 +30,12 @@ const WORKER_TOOL_SYSTEM_PROMPT = [
   'Use heal_worker_runtime only for explicit restart, heal, or bootstrap requests.',
   'If the prompt is not about worker control, do not call any tools.'
 ].join(' ');
+const READ_ONLY_WORKER_TOOL_SYSTEM_PROMPT = [
+  'You are ARCANOS in worker-operations read-only mode.',
+  'Use worker control tools only when the operator is asking about worker status, queue state, or jobs.',
+  'Do not queue work, dispatch work, restart workers, heal workers, or mutate worker state.',
+  'If the prompt is not about worker control, do not call any tools.'
+].join(' ');
 
 const workerControlToolDefinitions: FunctionToolDefinition[] = [
   {
@@ -137,12 +143,20 @@ const workerControlToolDefinitions: FunctionToolDefinition[] = [
   }
 ];
 
-const modelSelectableWorkerControlToolDefinitions = workerControlToolDefinitions.filter(
-  toolDefinition => toolDefinition.name !== 'heal_worker_runtime'
+const mutatingWorkerControlToolNames = new Set([
+  'queue_worker_ask',
+  'dispatch_worker_task',
+  'heal_worker_runtime'
+]);
+
+const readOnlyWorkerControlToolDefinitions = workerControlToolDefinitions.filter(
+  toolDefinition => !mutatingWorkerControlToolNames.has(toolDefinition.name)
 );
 
-const { chatCompletionTools: workerControlChatCompletionTools, responsesTools: workerControlResponsesTools } =
-  buildFunctionToolSet(modelSelectableWorkerControlToolDefinitions);
+const { chatCompletionTools: readOnlyWorkerControlChatCompletionTools, responsesTools: readOnlyWorkerControlResponsesTools } =
+  buildFunctionToolSet(readOnlyWorkerControlToolDefinitions);
+const { chatCompletionTools: allWorkerControlChatCompletionTools, responsesTools: allWorkerControlResponsesTools } =
+  buildFunctionToolSet(workerControlToolDefinitions);
 
 const getWorkerJobArgsSchema = z.object({
   jobId: z.string().trim().min(1)
@@ -196,8 +210,8 @@ const workerHealPattern =
 const workerHealExplicitGatePattern =
   /\b(?:confirm|confirmed|operator-approved|operator approved)\b[^.!?\n]{0,60}\b(?:restart|heal|bootstrap)\b[^.!?\n]{0,40}\b(?:worker|workers|runtime)\b|\b(?:restart|heal|bootstrap)\b[^.!?\n]{0,40}\b(?:worker|workers|runtime)\b[^.!?\n]{0,60}\b(?:confirm|confirmed|operator-approved|operator approved)\b/i;
 const workerJobIdPattern = /\bjob(?:\s+id)?\s*[:#]?\s*([0-9a-f]{8}[0-9a-f-]{0,})\b/i;
-const queueWorkerPromptPattern = /\b(?:queue|enqueue)(?:\s+(?:this|prompt|ask|job))?\s*:\s*(.+)$/is;
-const dispatchWorkerPromptPattern = /\b(?:dispatch|run directly|run now)(?:\s+(?:this|task|worker))?\s*:\s*(.+)$/is;
+const queueWorkerPromptPattern = /\b(?:queue|enqueue)(?:\s+(?:this|prompt|ask|job))?\s*:\s*([^\r\n]+)/i;
+const dispatchWorkerPromptPattern = /\b(?:dispatch|run directly|run now)(?:\s+(?:this|task|worker))?\s*:\s*([^\r\n]+)/i;
 
 function looksLikeWorkerControlPrompt(prompt: string): boolean {
   const normalizedPrompt = prompt.toLowerCase();
@@ -293,7 +307,10 @@ function extractDispatchWorkerPrompt(prompt: string): { input: string; matchInde
  * Edge case behavior:
  * - Returns an empty list when no stable command pattern is found so the model-based tool path can still run.
  */
-function collectDeterministicWorkerOperations(prompt: string): DeterministicWorkerOperation[] {
+function collectDeterministicWorkerOperations(
+  prompt: string,
+  options: WorkerToolExecutionOptions = {}
+): DeterministicWorkerOperation[] {
   const operations: DeterministicWorkerOperation[] = [];
   const jobIdMatch = workerJobIdPattern.exec(prompt);
   const workerHealthMatch = workerHealthPattern.exec(prompt);
@@ -318,7 +335,9 @@ function collectDeterministicWorkerOperations(prompt: string): DeterministicWork
   );
   appendUniqueDeterministicOperation(
     operations,
-    workerHealMatch && hasExplicitWorkerHealGate(prompt) ? workerHealMatch.index : undefined,
+    options.allowPrivilegedMutation && workerHealMatch && hasExplicitWorkerHealGate(prompt)
+      ? workerHealMatch.index
+      : undefined,
     'heal_worker_runtime',
     { force: true }
   );
@@ -330,7 +349,7 @@ function collectDeterministicWorkerOperations(prompt: string): DeterministicWork
   }
 
   const queuedPrompt = extractQueueWorkerPrompt(prompt);
-  if (queuedPrompt) {
+  if (queuedPrompt && options.allowPrivilegedMutation) {
     appendUniqueDeterministicOperation(operations, queuedPrompt.matchIndex, 'queue_worker_ask', {
       prompt: queuedPrompt.input,
       endpointName: 'ask.worker-tools'
@@ -338,7 +357,7 @@ function collectDeterministicWorkerOperations(prompt: string): DeterministicWork
   }
 
   const dispatchedPrompt = extractDispatchWorkerPrompt(prompt);
-  if (dispatchedPrompt) {
+  if (dispatchedPrompt && options.allowPrivilegedMutation) {
     appendUniqueDeterministicOperation(operations, dispatchedPrompt.matchIndex, 'dispatch_worker_task', {
       input: dispatchedPrompt.input,
       sourceEndpoint: 'ask.worker-tools.dispatch'
@@ -417,6 +436,10 @@ async function executeWorkerTool(
       };
     }
     case 'queue_worker_ask': {
+      if (!options.allowPrivilegedMutation) {
+        throw new Error('Worker mutation tools require an explicit operator gate.');
+      }
+
       const parsedArgs = parseToolArgumentsWithSchema(rawArgs, queueWorkerAskArgsSchema, 'workerTools.queue_worker_ask');
       const output = await queueWorkerAsk({
         prompt: parsedArgs.prompt,
@@ -431,6 +454,10 @@ async function executeWorkerTool(
       };
     }
     case 'dispatch_worker_task': {
+      if (!options.allowPrivilegedMutation) {
+        throw new Error('Worker mutation tools require an explicit operator gate.');
+      }
+
       const parsedArgs = parseToolArgumentsWithSchema(rawArgs, dispatchWorkerTaskArgsSchema, 'workerTools.dispatch_worker_task');
       const output = await dispatchWorkerInput({
         input: parsedArgs.input,
@@ -478,17 +505,28 @@ async function executeWorkerTool(
  */
 export async function tryDispatchWorkerTools(
   client: OpenAI,
-  prompt: string
+  prompt: string,
+  options: WorkerToolExecutionOptions = {}
 ): Promise<AskResponse | null> {
   if (!looksLikeWorkerControlPrompt(prompt)) {
     return null;
   }
 
+  const toolSet = options.allowPrivilegedMutation
+    ? {
+        instructions: WORKER_TOOL_SYSTEM_PROMPT,
+        chatCompletionTools: allWorkerControlChatCompletionTools,
+        responsesTools: allWorkerControlResponsesTools
+      }
+    : {
+        instructions: READ_ONLY_WORKER_TOOL_SYSTEM_PROMPT,
+        chatCompletionTools: readOnlyWorkerControlChatCompletionTools,
+        responsesTools: readOnlyWorkerControlResponsesTools
+      };
+
   const deterministicSummary = await executeDeterministicToolOperations(
-    collectDeterministicWorkerOperations(prompt),
-    (toolName, rawArgs) => executeWorkerTool(toolName, rawArgs, {
-      allowPrivilegedMutation: true
-    })
+    collectDeterministicWorkerOperations(prompt, options),
+    (toolName, rawArgs) => executeWorkerTool(toolName, rawArgs, options)
   );
   if (deterministicSummary) {
     return buildToolAskResponse('worker-tools', null, deterministicSummary, 'worker-tool');
@@ -497,12 +535,12 @@ export async function tryDispatchWorkerTools(
   return runAskToolMode({
     client,
     prompt,
-    instructions: WORKER_TOOL_SYSTEM_PROMPT,
+    instructions: toolSet.instructions,
     moduleName: 'worker-tools',
     responseIdPrefix: 'worker-tool',
-    chatCompletionTools: workerControlChatCompletionTools,
-    responsesTools: workerControlResponsesTools,
-    executeTool: (toolName, rawArgs) => executeWorkerTool(toolName, rawArgs),
+    chatCompletionTools: toolSet.chatCompletionTools,
+    responsesTools: toolSet.responsesTools,
+    executeTool: (toolName, rawArgs) => executeWorkerTool(toolName, rawArgs, options),
     maxOutputTokens: 512
   });
 }

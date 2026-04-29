@@ -13,7 +13,7 @@ jest.unstable_mockModule('@core/db/query.js', () => ({
   query: queryMock
 }));
 
-const { scheduleJobRetry, updateJob } = await import('../src/core/db/repositories/jobRepository.js');
+const { recordJobHeartbeat, scheduleJobRetry, updateJob } = await import('../src/core/db/repositories/jobRepository.js');
 
 describe('jobRepository.updateJob', () => {
   beforeEach(() => {
@@ -54,6 +54,19 @@ describe('jobRepository.updateJob', () => {
     expect(sql).toContain('started_at = NULL');
   });
 
+  it('only heartbeats a job still owned by the supplied worker lease', async () => {
+    await recordJobHeartbeat('job-1', {
+      workerId: 'worker-1',
+      leaseMs: 15_000
+    });
+
+    const [sql] = queryMock.mock.calls[0] as [string, unknown[]];
+
+    expect(sql).toContain("AND status = 'running'");
+    expect(sql).toContain('OR last_worker_id = $2::text');
+    expect(sql).toContain('OR lease_expires_at >= NOW()');
+  });
+
   it.each(['failed', 'cancelled', 'timed-out'])(
     'does not schedule retry after a terminal %s race',
     async () => {
@@ -72,7 +85,9 @@ describe('jobRepository.updateJob', () => {
       expect(result).toBeNull();
       expect(sql).toContain("AND status = 'running'");
       expect(sql).toContain('OR last_worker_id = $3::text');
+      expect(sql).not.toContain('OR last_worker_id IS NULL');
       expect(sql).toContain('OR lease_expires_at >= NOW()');
+      expect(sql).not.toContain('OR lease_expires_at IS NULL');
     }
   );
 });

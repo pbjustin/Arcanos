@@ -118,6 +118,54 @@ describe('tryDispatchWorkerTools', () => {
     expect(response?.result).toContain('Job status: id=job-123');
   });
 
+  it('does not execute deterministic queue or dispatch mutations without a privileged gate', async () => {
+    const response = await tryDispatchWorkerTools(
+      {
+        responses: {
+          create: jest.fn().mockResolvedValue({
+            id: 'resp-readonly-mutation',
+            model: 'gpt-4.1-mini',
+            output: [],
+            output_text: ''
+          })
+        }
+      } as any,
+      'queue: explain this stack trace\n dispatch: run this now'
+    );
+
+    expect(response).toBeNull();
+    expect(queueWorkerAskMock).not.toHaveBeenCalled();
+    expect(dispatchWorkerInputMock).not.toHaveBeenCalled();
+  });
+
+  it('executes deterministic worker mutations only when a privileged gate is supplied', async () => {
+    queueWorkerAskMock.mockResolvedValue({
+      jobId: 'job-queued-1',
+      status: 'pending'
+    });
+    dispatchWorkerInputMock.mockResolvedValue({
+      resultCount: 1,
+      results: [{ ok: true }]
+    });
+
+    const response = await tryDispatchWorkerTools(
+      {} as any,
+      'queue: explain this stack trace\n dispatch: run this now',
+      { allowPrivilegedMutation: true }
+    );
+
+    expect(queueWorkerAskMock).toHaveBeenCalledWith(expect.objectContaining({
+      prompt: 'explain this stack trace'
+    }));
+    expect(dispatchWorkerInputMock).toHaveBeenCalledWith(expect.objectContaining({
+      input: 'run this now'
+    }));
+    expect(response).toEqual(expect.objectContaining({
+      module: 'worker-tools',
+      result: expect.stringContaining('Queued async worker job job-queued-1')
+    }));
+  });
+
   it('falls back to OpenAI tool-calling for non-deterministic worker prompts', async () => {
     getWorkerControlStatusMock.mockResolvedValue({
       timestamp: '2026-03-06T12:00:00.000Z',
@@ -357,6 +405,63 @@ describe('tryDispatchWorkerTools', () => {
     }));
   });
 
+  it('does not expose or execute model-selected worker queue mutations without a privileged gate', async () => {
+    const createMock = jest
+      .fn()
+      .mockResolvedValueOnce({
+        id: 'resp-queue-1',
+        model: 'gpt-4.1-mini',
+        output: [
+          {
+            type: 'function_call',
+            name: 'queue_worker_ask',
+            call_id: 'call-queue-1',
+            arguments: '{"prompt":"run this in background"}'
+          }
+        ]
+      })
+      .mockResolvedValueOnce({
+        id: 'resp-queue-2',
+        model: 'gpt-4.1-mini',
+        output: [],
+        output_text: 'Worker queue mutation was not executed.'
+      });
+
+    const response = await tryDispatchWorkerTools(
+      {
+        responses: {
+          create: createMock
+        }
+      } as any,
+      'inspect worker operations and decide what tool to call'
+    );
+
+    expect(createMock.mock.calls[0]?.[0]?.tools).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: 'queue_worker_ask'
+        }),
+        expect.objectContaining({
+          name: 'dispatch_worker_task'
+        })
+      ])
+    );
+    expect(createMock.mock.calls[1]?.[0]?.input).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'function_call_output',
+          call_id: 'call-queue-1',
+          output: expect.stringContaining('explicit operator gate')
+        })
+      ])
+    );
+    expect(queueWorkerAskMock).not.toHaveBeenCalled();
+    expect(response).toEqual(expect.objectContaining({
+      module: 'worker-tools',
+      result: 'Worker queue mutation was not executed.'
+    }));
+  });
+
   it('requires explicit confirmation language before deterministic worker heal runs', async () => {
     const ungatedResponse = await tryDispatchWorkerTools(
       {
@@ -377,7 +482,8 @@ describe('tryDispatchWorkerTools', () => {
 
     const gatedResponse = await tryDispatchWorkerTools(
       {} as any,
-      'confirm restart the worker runtime'
+      'confirm restart the worker runtime',
+      { allowPrivilegedMutation: true }
     );
 
     expect(healWorkerRuntimeMock).toHaveBeenCalledWith(true, 'ask_tool');

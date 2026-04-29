@@ -165,6 +165,7 @@ interface RuntimeSnapshotState {
   staleWorkersDetected: number;
   stalledJobsDetected: number;
   deadLetterJobs: number;
+  cancelledJobs: number;
   recoveryActions: number;
   maxObservedQueueDepth: number;
   lastBudgetPauseReason: string | null;
@@ -447,6 +448,7 @@ export class WorkerAutonomyService {
       staleWorkersDetected: 0,
       stalledJobsDetected: 0,
       deadLetterJobs: 0,
+      cancelledJobs: 0,
       recoveryActions: 0,
       maxObservedQueueDepth: 0,
       lastBudgetPauseReason: null,
@@ -592,22 +594,32 @@ export class WorkerAutonomyService {
     const queueSummary = await getJobQueueSummary();
 
     this.state.lastInspectorRunAt = new Date().toISOString();
+    const recoveredJobIds = recovered.recoveredJobs ?? [];
+    const failedJobIds = recovered.failedJobs ?? [];
+    const cancelledJobIds = recovered.cancelledJobs ?? [];
     this.state.recoveredJobs += recovered.recoveredJobs.length;
-    this.state.deadLetterJobs += recovered.failedJobs.length;
-    this.state.recoveryActions += recovered.recoveredJobs.length + recovered.failedJobs.length;
-    if (recovered.recoveredJobs.length > 0 || recovered.failedJobs.length > 0) {
+    this.state.deadLetterJobs += failedJobIds.length;
+    this.state.cancelledJobs += cancelledJobIds.length;
+    this.state.recoveryActions += recoveredJobIds.length + failedJobIds.length + cancelledJobIds.length;
+    if (recoveredJobIds.length > 0 || failedJobIds.length > 0 || cancelledJobIds.length > 0) {
       this.state.lastRecoveryActionAt = new Date().toISOString();
     }
-    if (recovered.recoveredJobs.length > 0) {
+    if (recoveredJobIds.length > 0) {
       recordWorkerRecoveredJobs({
         action: 'lease_requeue',
-        count: recovered.recoveredJobs.length
+        count: recoveredJobIds.length
       });
     }
-    if (recovered.failedJobs.length > 0) {
+    if (failedJobIds.length > 0) {
       recordWorkerRecoveredJobs({
         action: 'lease_dead_letter',
-        count: recovered.failedJobs.length
+        count: failedJobIds.length
+      });
+    }
+    if (cancelledJobIds.length > 0) {
+      recordWorkerRecoveredJobs({
+        action: 'lease_cancelled',
+        count: cancelledJobIds.length
       });
     }
     this.state.maxObservedQueueDepth = Math.max(
@@ -625,11 +637,14 @@ export class WorkerAutonomyService {
       this.state.watchdogTriggeredAt = null;
       this.state.watchdogReason = null;
     }
-    if (recovered.recoveredJobs.length > 0) {
-      alerts.push(`Recovered ${recovered.recoveredJobs.length} stale job(s).`);
+    if (recoveredJobIds.length > 0) {
+      alerts.push(`Recovered ${recoveredJobIds.length} stale job(s).`);
     }
-    if (recovered.failedJobs.length > 0) {
-      alerts.push(`Marked ${recovered.failedJobs.length} stale job(s) failed after retry exhaustion.`);
+    if (failedJobIds.length > 0) {
+      alerts.push(`Marked ${failedJobIds.length} stale job(s) failed after retry exhaustion.`);
+    }
+    if (cancelledJobIds.length > 0) {
+      alerts.push(`Cancelled ${cancelledJobIds.length} stale job(s) during recovery.`);
     }
     if (stalledRecovery.staleWorkers > 0) {
       alerts.push(
@@ -736,6 +751,7 @@ export class WorkerAutonomyService {
     this.state.stalledJobsDetected += stalledRecovery.stalledJobs;
     this.state.recoveredJobs += stalledRecovery.requeuedJobs;
     this.state.deadLetterJobs += stalledRecovery.deadLetterJobs;
+    this.state.cancelledJobs += stalledRecovery.cancelledJobs;
     this.state.recoveryActions +=
       stalledRecovery.requeuedJobs + stalledRecovery.deadLetterJobs + stalledRecovery.cancelledJobs;
     if (stalledRecovery.staleWorkers > 0) {
@@ -950,6 +966,23 @@ export class WorkerAutonomyService {
       healthStatus: this.state.lastBudgetPauseReason ? 'degraded' : 'healthy',
       alerts: this.state.lastBudgetPauseReason ? [`Budget pause active: ${this.state.lastBudgetPauseReason}`] : []
     }, { force: true, source: 'job-cancelled' });
+  }
+
+  /**
+   * Clear local job ownership after the database lease is lost.
+   * Purpose: stop stale workers from writing terminal state over work reclaimed by another owner.
+   * Inputs/outputs: accepts the local job id and reason; persists a degraded snapshot without mutating the job row.
+   * Edge case behavior: does not increment processed/terminal counters because the job outcome is owned elsewhere.
+   */
+  async markJobLeaseLost(_jobId: string, reason: string): Promise<void> {
+    const stoppedAt = new Date().toISOString();
+    this.state.currentJobId = null;
+    this.state.lastError = reason;
+    this.state.lastActivityAt = stoppedAt;
+    await this.persistSnapshot({
+      healthStatus: 'degraded',
+      alerts: [reason]
+    }, { force: true, source: 'job-lease-lost' });
   }
 
   /**
@@ -1227,6 +1260,7 @@ export class WorkerAutonomyService {
         staleWorkersDetected: this.state.staleWorkersDetected,
         stalledJobsDetected: this.state.stalledJobsDetected,
         deadLetterJobs: this.state.deadLetterJobs,
+        cancelledJobs: this.state.cancelledJobs,
         recoveryActions: this.state.recoveryActions,
         lastRecoveryActionAt: this.state.lastRecoveryActionAt,
         maxObservedQueueDepth: this.state.maxObservedQueueDepth,

@@ -41,6 +41,12 @@ const DEFAULT_HEALTH_HOST = '0.0.0.0';
 const SHUTDOWN_SIGNALS = new Set(['SIGTERM', 'SIGINT']);
 const WORKER_BOOTSTRAP_READY_MARKER = 'worker.bootstrap.completed';
 const WORKER_BOOTSTRAP_MARKER_OVERLAP_LENGTH = Math.max(0, WORKER_BOOTSTRAP_READY_MARKER.length - 1);
+const OPENAI_API_KEY_ENV_NAMES = [
+  'OPENAI_API_KEY',
+  'RAILWAY_OPENAI_API_KEY',
+  'API_KEY',
+  'OPENAI_KEY'
+];
 
 /**
  * Resolve the explicit runtime process kind from environment.
@@ -227,7 +233,7 @@ async function runWebRuntime() {
 }
 
 export function createWorkerReadinessState(env = process.env) {
-  const providerConfigured = Boolean(env.OPENAI_API_KEY?.trim());
+  const providerConfigured = OPENAI_API_KEY_ENV_NAMES.some((envName) => Boolean(env[envName]?.trim()));
 
   return {
     child: 'starting',
@@ -241,6 +247,10 @@ export function createWorkerReadinessState(env = process.env) {
 }
 
 export function recordWorkerOutput(readinessState, chunk) {
+  if (readinessState.child === 'exited') {
+    return readinessState;
+  }
+
   const text = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
   const searchableText = `${readinessState.outputOverlap ?? ''}${text}`;
   readinessState.outputOverlap = searchableText.slice(-WORKER_BOOTSTRAP_MARKER_OVERLAP_LENGTH);
@@ -316,6 +326,7 @@ async function runWorkerRuntimeWithHealthServer() {
     disabledReason: null,
     entrypoint: 'dist/workers/jobRunner.js'
   }));
+  const healthListenerConfig = resolveHealthListenerConfig();
   await repairDistAliases('worker');
   const readinessState = createWorkerReadinessState();
   const workerProcess = spawnProcess('node', [
@@ -325,7 +336,6 @@ async function runWorkerRuntimeWithHealthServer() {
   ], 'worker', {
     stdio: ['inherit', 'pipe', 'pipe']
   });
-  const healthListenerConfig = resolveHealthListenerConfig();
   let shutdownRequested = false;
 
   mirrorAndObserveWorkerOutput(workerProcess.stdout, process.stdout, readinessState);
@@ -372,10 +382,22 @@ async function runWorkerRuntimeWithHealthServer() {
   process.once('SIGTERM', () => shutdownWorker('SIGTERM'));
   process.once('SIGINT', () => shutdownWorker('SIGINT'));
 
-  await new Promise((resolve, reject) => {
-    healthServer.once('error', reject);
-    healthServer.listen(healthListenerConfig.port, healthListenerConfig.host, resolve);
-  });
+  try {
+    await new Promise((resolve, reject) => {
+      healthServer.once('error', reject);
+      healthServer.listen(healthListenerConfig.port, healthListenerConfig.host, resolve);
+    });
+  } catch (error) {
+    workerProcess.kill('SIGTERM');
+    await new Promise((resolve) => {
+      if (!healthServer.listening) {
+        resolve();
+        return;
+      }
+      healthServer.close(() => resolve());
+    });
+    throw error;
+  }
 
   const exitCode = await waitForExit(workerProcess, {
     isExpectedShutdownSignal: (signal) => shutdownRequested && SHUTDOWN_SIGNALS.has(signal)

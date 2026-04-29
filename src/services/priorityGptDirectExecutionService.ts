@@ -135,6 +135,7 @@ async function executeReservedPriorityGptDirectExecution(params: {
   const cancellationController = new AbortController();
   let heartbeatTimeout: NodeJS.Timeout | null = null;
   let heartbeatStopped = false;
+  let leaseLost = false;
   const abortExecution = (message: string): void => {
     if (!cancellationController.signal.aborted) {
       cancellationController.abort(createAbortError(message));
@@ -165,6 +166,7 @@ async function executeReservedPriorityGptDirectExecution(params: {
       }
 
       if (!updatedJob) {
+        leaseLost = true;
         abortExecution('GPT job lease lost or job completed elsewhere.');
         return;
       }
@@ -339,6 +341,16 @@ async function executeReservedPriorityGptDirectExecution(params: {
   } catch (error: unknown) {
     const errorMessage = resolveErrorMessage(error);
     const aborted = isAbortError(error);
+    if (leaseLost) {
+      params.requestLogger?.warn?.('gpt.priority_direct.lease_lost', {
+        jobId: params.jobId,
+        workerId: params.workerId,
+        durationMs: Date.now() - startedAtMs,
+        error: errorMessage
+      });
+      return;
+    }
+
     await updateJob(
       params.jobId,
       aborted ? 'cancelled' : 'failed',

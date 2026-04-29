@@ -73,7 +73,8 @@ describe('jobRepository lifecycle recovery', () => {
 
     expect(result).toEqual({
       recoveredJobs: [],
-      failedJobs: ['job-max-zero']
+      failedJobs: ['job-max-zero'],
+      cancelledJobs: []
     });
     expect(getJobUpdateSql()).toContain("status = 'failed'");
   });
@@ -98,7 +99,8 @@ describe('jobRepository lifecycle recovery', () => {
 
     expect(result).toEqual({
       recoveredJobs: ['job-max-one'],
-      failedJobs: []
+      failedJobs: [],
+      cancelledJobs: []
     });
     expect(getJobUpdateSql()).toContain("status = 'pending'");
     expect(getJobUpdateSql()).toContain('retry_count = retry_count + 1');
@@ -124,8 +126,49 @@ describe('jobRepository lifecycle recovery', () => {
 
     expect(result).toEqual({
       recoveredJobs: [],
-      failedJobs: ['job-null-max']
+      failedJobs: ['job-null-max'],
+      cancelledJobs: []
     });
     expect(getJobUpdateSql()).toContain("status = 'failed'");
+  });
+
+  it('reports cancellation-requested stale jobs separately from failed dead-letter jobs', async () => {
+    mockStaleRows([
+      {
+        id: 'job-cancelled-stale',
+        job_type: 'gpt',
+        retry_count: 0,
+        max_retries: 0,
+        autonomy_state: {},
+        cancel_requested_at: new Date('2026-04-29T10:00:00.000Z'),
+        cancel_reason: 'Operator cancelled stale job'
+      }
+    ]);
+
+    const result = await recoverStaleJobs({
+      staleAfterMs: 60_000,
+      maxRetries: 2
+    });
+
+    expect(result).toEqual({
+      recoveredJobs: [],
+      failedJobs: [],
+      cancelledJobs: ['job-cancelled-stale']
+    });
+    expect(getJobUpdateSql()).toContain("status = 'cancelled'");
+  });
+
+  it('counts null-heartbeat stale running jobs in the queue summary predicate', async () => {
+    const { getJobQueueSummary } = await import('../src/core/db/repositories/jobRepository.js');
+    queryMock.mockResolvedValueOnce({
+      rows: []
+    });
+
+    await getJobQueueSummary();
+
+    const [sql] = queryMock.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain(
+      'OR (last_heartbeat_at IS NULL AND started_at < NOW() - ($2::bigint * INTERVAL'
+    );
   });
 });

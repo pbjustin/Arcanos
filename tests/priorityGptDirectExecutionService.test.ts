@@ -172,7 +172,7 @@ describe('priorityGptDirectExecutionService', () => {
     );
   });
 
-  it('cancels a running priority direct GPT job when the heartbeat loses the job lease', async () => {
+  it('stops local priority direct GPT execution without terminal mutation when the heartbeat loses the job lease', async () => {
     const slot = { release: jest.fn() };
     getJobByIdMock.mockResolvedValue(createJob());
     recordJobHeartbeatMock.mockResolvedValue(null);
@@ -205,16 +205,13 @@ describe('priorityGptDirectExecutionService', () => {
 
     await jest.advanceTimersByTimeAsync(5_000);
     await waitForMockCall(
-      () => updateJobMock.mock.calls.some((call) => call[1] === 'cancelled'),
-      'priority direct lease-loss update'
+      () => slot.release.mock.calls.length === 1,
+      'priority direct lease-loss local stop'
     );
 
     const statuses = updateJobMock.mock.calls.map((call) => call[1]);
-    expect(statuses).toContain('cancelled');
+    expect(statuses).not.toContain('cancelled');
     expect(statuses).not.toContain('completed');
-
-    const cancelledCall = updateJobMock.mock.calls.find((call) => call[1] === 'cancelled');
-    expect(cancelledCall?.[3]).toBe('GPT job lease lost or job completed elsewhere.');
     expect(slot.release).toHaveBeenCalledTimes(1);
   });
 

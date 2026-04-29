@@ -116,13 +116,13 @@ function isOperatorLightRole(role: string | undefined): boolean {
   return role?.trim().toLowerCase() === 'operator-light';
 }
 
-function requireWorkerMutationAuth(req: Request, res: Response, next: NextFunction): void {
+function requireWorkerHelperPrivilegedAuth(req: Request, res: Response, next: NextFunction): void {
   const authUserRole = typeof req.authUser?.role === 'string' ? req.authUser.role.trim().toLowerCase() : undefined;
 
   if (isOperatorLightRole(authUserRole)) {
     res.status(403).json({
       error: 'WORKER_HELPER_OPERATOR_FORBIDDEN',
-      message: 'Worker mutation routes require full operator privileges.'
+      message: 'Worker helper privileged routes require full operator privileges.'
     });
     return;
   }
@@ -139,7 +139,7 @@ function requireWorkerMutationAuth(req: Request, res: Response, next: NextFuncti
 
   res.status(401).json({
     error: 'WORKER_HELPER_AUTH_REQUIRED',
-    message: 'Worker mutation routes require authenticated operator or trusted internal access.'
+    message: 'Worker helper privileged routes require authenticated operator or trusted internal access.'
   });
 }
 
@@ -212,6 +212,7 @@ router.get(
  */
 router.get(
   '/worker-helper/jobs/latest',
+  requireWorkerHelperPrivilegedAuth,
   asyncHandler(async (_req, res) => {
     try {
       const latestJob = await getLatestWorkerJobDetail();
@@ -281,6 +282,7 @@ router.get(
  */
 router.get(
   '/worker-helper/jobs/:id',
+  requireWorkerHelperPrivilegedAuth,
   validateParams(workerHelperJobIdSchema, { errorCode: 'JOB_ID_INVALID' }),
   asyncHandler(async (req, res) => {
     try {
@@ -317,7 +319,7 @@ router.get(
  */
 router.post(
   '/worker-helper/queue/ask',
-  requireWorkerMutationAuth,
+  requireWorkerHelperPrivilegedAuth,
   validateBody(queueAskRequestSchema),
   asyncHandler(async (req, res) => {
     try {
@@ -363,7 +365,7 @@ router.post(
  */
 router.post(
   '/worker-helper/dispatch',
-  requireWorkerMutationAuth,
+  requireWorkerHelperPrivilegedAuth,
   validateBody(dispatchRequestSchema),
   asyncHandler(async (req, res) => {
     try {
@@ -393,7 +395,7 @@ router.post(
  */
 router.post(
   '/worker-helper/heal',
-  requireWorkerMutationAuth,
+  requireWorkerHelperPrivilegedAuth,
   asyncHandler(async (req, res) => {
     try {
       const healRequest = parseWorkerHealRequest(req.body, req.query);

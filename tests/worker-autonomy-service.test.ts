@@ -1447,6 +1447,83 @@ describe('workerAutonomyService', () => {
     }
   });
 
+  it('counts cancelled stalled jobs in watchdog snapshots', async () => {
+    jest.useFakeTimers();
+
+    try {
+      jest.setSystemTime(new Date('2026-03-07T12:00:00.000Z'));
+      listWorkerRuntimeSnapshotsMock.mockResolvedValue([
+        {
+          workerId: 'async-queue-slot-4',
+          workerType: 'async_queue',
+          healthStatus: 'healthy',
+          currentJobId: 'job-cancelled-stalled',
+          lastError: null,
+          startedAt: '2026-03-07T11:55:00.000Z',
+          lastHeartbeatAt: '2026-03-07T11:59:45.000Z',
+          lastInspectorRunAt: '2026-03-07T11:59:45.000Z',
+          updatedAt: '2026-03-07T11:59:45.000Z',
+          snapshot: {
+            activeJobs: ['job-cancelled-stalled'],
+            lastActivityAt: '2026-03-07T11:59:45.000Z'
+          }
+        }
+      ]);
+      recoverStalledJobsForWorkersMock.mockResolvedValue({
+        staleWorkerIds: ['async-queue-slot-4'],
+        stalledJobIds: ['job-cancelled-stalled'],
+        requeuedJobIds: [],
+        deadLetterJobIds: [],
+        cancelledJobIds: ['job-cancelled-stalled']
+      });
+
+      const service = new WorkerAutonomyService({
+        workerId: 'async-queue-slot-1',
+        workerType: 'async_queue',
+        heartbeatIntervalMs: 5_000,
+        leaseMs: 15_000,
+        inspectorIntervalMs: 30_000,
+        watchdogIntervalMs: 5_000,
+        staleAfterMs: 10_000,
+        watchdogIdleMs: 120_000,
+        stalledJobAction: 'requeue',
+        defaultMaxRetries: 2,
+        retryBackoffBaseMs: 2_000,
+        retryBackoffMaxMs: 60_000,
+        maxJobsPerHour: 120,
+        maxAiCallsPerHour: 120,
+        maxRssMb: 2_048,
+        queueDepthDeferralThreshold: 25,
+        queueDepthDeferralMs: 5_000,
+        failureWebhookUrl: null,
+        failureWebhookThreshold: 3,
+        failureWebhookCooldownMs: 300_000
+      });
+
+      const result = await service.runWatchdogCycle('watchdog');
+
+      expect(result).toEqual({
+        staleWorkers: 1,
+        stalledJobs: 1,
+        requeuedJobs: 0,
+        deadLetterJobs: 0,
+        cancelledJobs: 1
+      });
+      expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          snapshot: expect.objectContaining({
+            cancelledJobs: 1,
+            recoveryActions: 1,
+            alerts: expect.arrayContaining(['Cancelled 1 stalled job(s) during recovery.'])
+          })
+        }),
+        { source: 'watchdog' }
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('does not force idle watchdog-only snapshots when no work is pending', async () => {
     jest.useFakeTimers();
 
