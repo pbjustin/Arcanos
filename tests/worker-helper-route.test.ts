@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterAll, afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const createJobMock = jest.fn();
 const getJobByIdMock = jest.fn();
@@ -72,12 +72,32 @@ jest.unstable_mockModule('@services/workerAutonomyService.js', () => ({
 const express = (await import('express')).default;
 const request = (await import('supertest')).default;
 const workerHelperRouter = (await import('../src/routes/worker-helper.js')).default;
+const workerHelperToken = 'worker-helper-test-token';
+const originalWorkerHelperToken = process.env.ARCANOS_WORKER_HELPER_TOKEN;
 
-function buildApp() {
+function buildApp(options: { authUser?: any; daemonToken?: string; operatorActor?: string } = {}) {
   const app = express();
   app.use(express.json({ limit: '5mb' }));
+  if (options.authUser || options.daemonToken || options.operatorActor) {
+    app.use((req, _res, next) => {
+      if (options.authUser) {
+        req.authUser = options.authUser;
+      }
+      if (options.daemonToken) {
+        req.daemonToken = options.daemonToken;
+      }
+      if (options.operatorActor) {
+        req.operatorActor = options.operatorActor;
+      }
+      next();
+    });
+  }
   app.use('/', workerHelperRouter);
   return app;
+}
+
+function withWorkerHelperToken(requestBuilder: any): any {
+  return requestBuilder.set('x-arcanos-worker-helper-token', workerHelperToken);
 }
 
 describe('/worker-helper routes', () => {
@@ -88,6 +108,7 @@ describe('/worker-helper routes', () => {
     delete process.env.WORKER_ID;
     delete process.env.RAILWAY_ENVIRONMENT;
     delete process.env.RAILWAY_ENVIRONMENT_NAME;
+    process.env.ARCANOS_WORKER_HELPER_TOKEN = workerHelperToken;
 
     getDatabaseStatusMock.mockReturnValue({
       connected: true,
@@ -497,9 +518,75 @@ describe('/worker-helper routes', () => {
     );
   });
 
-  it('queues ask work with detected domain metadata', async () => {
+  it('rejects unauthenticated worker mutation requests while preserving read-only status', async () => {
+    const statusResponse = await request(buildApp()).get('/worker-helper/status');
+    const queueResponse = await request(buildApp())
+      .post('/worker-helper/queue/ask')
+      .send({ prompt: 'Explain this stack trace.' });
+    const dispatchResponse = await request(buildApp())
+      .post('/worker-helper/dispatch')
+      .send({ input: 'Run a direct worker check.' });
+    const healResponse = await request(buildApp()).post('/worker-helper/heal?mode=plan');
+
+    expect(statusResponse.status).toBe(200);
+    expect(queueResponse.status).toBe(401);
+    expect(dispatchResponse.status).toBe(401);
+    expect(healResponse.status).toBe(401);
+    expect(queueResponse.body.error).toBe('WORKER_HELPER_AUTH_REQUIRED');
+    expect(createJobMock).not.toHaveBeenCalled();
+    expect(dispatchArcanosTaskMock).not.toHaveBeenCalled();
+    expect(startWorkersMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects operator-light worker mutation requests', async () => {
+    const response = await request(buildApp({
+      authUser: {
+        id: 7,
+        email: 'operator-light@example.test',
+        role: 'operator-light',
+        plan: 'internal',
+        profileId: null,
+        source: 'header'
+      }
+    }))
+      .post('/worker-helper/queue/ask')
+      .send({ prompt: 'Explain this stack trace.' });
+
+    expect(response.status).toBe(403);
+    expect(response.body.error).toBe('WORKER_HELPER_OPERATOR_FORBIDDEN');
+    expect(createJobMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid worker helper token and bearer token mutation requests', async () => {
+    const invalidHeaderResponse = await request(buildApp())
+      .post('/worker-helper/queue/ask')
+      .set('x-arcanos-worker-helper-token', 'wrong-token')
+      .send({ prompt: 'Explain this stack trace.' });
+    const invalidBearerResponse = await request(buildApp())
+      .post('/worker-helper/dispatch')
+      .set('authorization', 'Bearer wrong-token')
+      .send({ input: 'Run a direct worker check.' });
+
+    expect(invalidHeaderResponse.status).toBe(401);
+    expect(invalidBearerResponse.status).toBe(401);
+    expect(createJobMock).not.toHaveBeenCalled();
+    expect(dispatchArcanosTaskMock).not.toHaveBeenCalled();
+  });
+
+  it('allows valid bearer worker helper token mutation requests', async () => {
     const response = await request(buildApp())
       .post('/worker-helper/queue/ask')
+      .set('authorization', `Bearer ${workerHelperToken}`)
+      .send({ prompt: 'Explain this stack trace.' });
+
+    expect(response.status).toBe(202);
+    expect(createJobMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('queues ask work with detected domain metadata', async () => {
+    const response = await withWorkerHelperToken(request(buildApp())
+      .post('/worker-helper/queue/ask')
+    )
       .send({
         prompt: 'Explain this stack trace.',
         sessionId: 'session-42',
@@ -540,8 +627,9 @@ describe('/worker-helper routes', () => {
   it('rejects preview chaos hooks outside Railway preview environments', async () => {
     process.env.RAILWAY_ENVIRONMENT = 'production';
 
-    const response = await request(buildApp())
+    const response = await withWorkerHelperToken(request(buildApp())
       .post('/worker-helper/queue/ask')
+    )
       .send({
         prompt: 'Explain this stack trace.',
         previewChaosHook: {
@@ -562,8 +650,9 @@ describe('/worker-helper routes', () => {
   it('allows preview chaos hooks in Railway preview environments', async () => {
     process.env.RAILWAY_ENVIRONMENT = 'Arcanos-pr-1283';
 
-    const response = await request(buildApp())
+    const response = await withWorkerHelperToken(request(buildApp())
       .post('/worker-helper/queue/ask')
+    )
       .send({
         prompt: 'Explain this stack trace.',
         previewChaosHook: {
@@ -613,6 +702,36 @@ describe('/worker-helper routes', () => {
       ]
     });
     expect(listFailedJobsMock).toHaveBeenCalledWith(1);
+  });
+
+  it('requires helper auth for worker job detail routes', async () => {
+    getJobByIdMock.mockResolvedValue({
+      id: 'job-latest',
+      worker_id: 'worker-helper',
+      job_type: 'ask',
+      status: 'completed',
+      created_at: '2026-03-06T09:59:00.000Z',
+      updated_at: '2026-03-06T10:00:00.000Z',
+      completed_at: '2026-03-06T10:00:00.000Z',
+      error_message: null,
+      output: { result: 'ok' }
+    });
+
+    const unauthenticatedLatestResponse = await request(buildApp()).get('/worker-helper/jobs/latest');
+    const unauthenticatedSpecificResponse = await request(buildApp()).get('/worker-helper/jobs/job-latest');
+    const latestResponse = await withWorkerHelperToken(
+      request(buildApp()).get('/worker-helper/jobs/latest')
+    );
+    const specificResponse = await withWorkerHelperToken(
+      request(buildApp()).get('/worker-helper/jobs/job-latest')
+    );
+
+    expect(unauthenticatedLatestResponse.status).toBe(401);
+    expect(unauthenticatedSpecificResponse.status).toBe(401);
+    expect(latestResponse.status).toBe(200);
+    expect(specificResponse.status).toBe(200);
+    expect(latestResponse.body).toEqual(expect.objectContaining({ id: 'job-latest' }));
+    expect(specificResponse.body).toEqual(expect.objectContaining({ id: 'job-latest' }));
   });
 
   it('returns autonomous worker health', async () => {
@@ -761,8 +880,9 @@ describe('/worker-helper routes', () => {
   });
 
   it('dispatches direct commands through the in-process worker runtime', async () => {
-    const response = await request(buildApp())
+    const response = await withWorkerHelperToken(request(buildApp())
       .post('/worker-helper/dispatch')
+    )
       .send({
         input: 'Run a direct worker check.',
         attempts: 2,
@@ -789,7 +909,7 @@ describe('/worker-helper routes', () => {
   });
 
   it('returns a bounded noop plan for worker-helper heal when mode=plan is requested', async () => {
-    const response = await request(buildApp()).post('/worker-helper/heal?mode=plan');
+    const response = await withWorkerHelperToken(request(buildApp()).post('/worker-helper/heal?mode=plan'));
 
     expect(response.status).toBe(200);
     expect(startWorkersMock).not.toHaveBeenCalled();
@@ -830,8 +950,9 @@ describe('/worker-helper routes', () => {
       totalDispatched: 5
     });
 
-    const response = await request(buildApp())
+    const response = await withWorkerHelperToken(request(buildApp())
       .post('/worker-helper/heal')
+    )
       .set('x-confirmed', 'yes')
       .send({});
 
@@ -862,5 +983,13 @@ describe('/worker-helper routes', () => {
       actionTaken: 'healWorkerRuntime:blocked',
       healedComponent: 'worker_runtime'
     }));
+  });
+
+  afterAll(() => {
+    if (originalWorkerHelperToken === undefined) {
+      delete process.env.ARCANOS_WORKER_HELPER_TOKEN;
+    } else {
+      process.env.ARCANOS_WORKER_HELPER_TOKEN = originalWorkerHelperToken;
+    }
   });
 });

@@ -21,21 +21,32 @@
  *
  * Edge cases:
  * - Missing or invalid `ARCANOS_PROCESS_KIND` is a hard startup failure.
- * - If `PORT` is missing/invalid in worker mode, falls back to `8080`.
+ * - If `PORT` is missing in worker mode, falls back to `8080`; invalid ports fail fast.
  * - If worker process exits, health server is shut down and this launcher exits.
  */
 
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:http';
 import process from 'node:process';
+import { pathToFileURL } from 'node:url';
 
 const PROCESS_KIND_ENV = 'ARCANOS_PROCESS_KIND';
 const VALID_PROCESS_KINDS = new Set(['web', 'worker']);
-const HEALTH_PATHS = new Set(['/health', '/healthz', '/readyz']);
+const LIVENESS_PATHS = new Set(['/health', '/healthz']);
+const READINESS_PATH = '/readyz';
 const HEALTH_OK_BODY = 'ok';
 const HEALTH_NOT_FOUND_BODY = 'not found';
 const DEFAULT_HEALTH_PORT = 8080;
+const DEFAULT_HEALTH_HOST = '0.0.0.0';
 const SHUTDOWN_SIGNALS = new Set(['SIGTERM', 'SIGINT']);
+const WORKER_BOOTSTRAP_READY_MARKER = 'worker.bootstrap.completed';
+const WORKER_BOOTSTRAP_MARKER_OVERLAP_LENGTH = Math.max(0, WORKER_BOOTSTRAP_READY_MARKER.length - 1);
+const OPENAI_API_KEY_ENV_NAMES = [
+  'OPENAI_API_KEY',
+  'RAILWAY_OPENAI_API_KEY',
+  'API_KEY',
+  'OPENAI_KEY'
+];
 
 /**
  * Resolve the explicit runtime process kind from environment.
@@ -47,7 +58,7 @@ const SHUTDOWN_SIGNALS = new Set(['SIGTERM', 'SIGINT']);
  * Edge case behavior:
  * - Missing or invalid values throw to prevent ambiguous service boot.
  */
-function resolveProcessKindOrThrow() {
+export function resolveProcessKindOrThrow() {
   const rawProcessKind = process.env[PROCESS_KIND_ENV];
   const normalizedProcessKind = String(rawProcessKind ?? '').trim().toLowerCase();
 
@@ -86,25 +97,30 @@ function logStartup(processKind) {
 }
 
 /**
- * Resolve the health server port for worker mode.
+ * Resolve the health server listener for worker mode.
  *
  * Inputs/outputs:
- * - Input: `PORT` from environment.
- * - Output: numeric TCP port.
+ * - Input: `PORT` and `HOST` from environment.
+ * - Output: validated TCP port and host.
  *
  * Edge case behavior:
- * - Invalid values fall back to `DEFAULT_HEALTH_PORT`.
+ * - Missing PORT falls back to `DEFAULT_HEALTH_PORT`; invalid PORT throws.
  */
-function resolveHealthPort() {
-  const rawPort = process.env.PORT;
-  const parsedPort = Number.parseInt(String(rawPort ?? ''), 10);
+export function resolveHealthListenerConfig(env = process.env) {
+  const rawPort = env.PORT?.trim();
+  const port = rawPort ? Number.parseInt(rawPort, 10) : DEFAULT_HEALTH_PORT;
 
-  //audit Assumption: Railway injects a valid PORT for service health checks; risk: malformed or missing PORT causes bind failures; invariant: health server binds a positive integer port; handling: fallback to DEFAULT_HEALTH_PORT.
-  if (!Number.isFinite(parsedPort) || parsedPort <= 0) {
-    return DEFAULT_HEALTH_PORT;
+  //audit Assumption: Railway injects a valid PORT for service health checks; risk: malformed PORT binds an unexpected port and masks deployment drift; invariant: health server binds one validated address; handling: use a reviewed fallback only when PORT is absent, otherwise fail fast.
+  if (!Number.isInteger(port) || port < 1 || port > 65535 || String(port) !== String(rawPort ?? DEFAULT_HEALTH_PORT)) {
+    throw new Error(`PORT must be an integer between 1 and 65535, received "${String(env.PORT ?? '')}".`);
   }
 
-  return parsedPort;
+  const host = env.HOST?.trim() || DEFAULT_HEALTH_HOST;
+  if (host.length === 0) {
+    throw new Error('HOST must be a non-empty string when provided.');
+  }
+
+  return { port, host };
 }
 
 /**
@@ -125,9 +141,9 @@ function buildChildEnvironment(processKind) {
   };
 }
 
-function spawnProcess(command, args, processKind) {
+function spawnProcess(command, args, processKind, options = {}) {
   return spawn(command, args, {
-    stdio: 'inherit',
+    stdio: options.stdio ?? 'inherit',
     env: buildChildEnvironment(processKind)
   });
 }
@@ -196,8 +212,99 @@ async function runWebRuntime() {
     './scripts/register-esm-loader.mjs',
     'dist/start-server.js',
   ], 'web');
-  const exitCode = await waitForExit(webProcess);
+  let shutdownRequested = false;
+  const shutdownWeb = (signal) => {
+    if (shutdownRequested) {
+      return;
+    }
+
+    shutdownRequested = true;
+    console.log(`[railway-launcher] received ${signal}; forwarding shutdown to web runtime`);
+    webProcess.kill(signal);
+  };
+
+  process.once('SIGTERM', () => shutdownWeb('SIGTERM'));
+  process.once('SIGINT', () => shutdownWeb('SIGINT'));
+
+  const exitCode = await waitForExit(webProcess, {
+    isExpectedShutdownSignal: (signal) => shutdownRequested && SHUTDOWN_SIGNALS.has(signal)
+  });
   process.exit(exitCode);
+}
+
+export function createWorkerReadinessState(env = process.env) {
+  const providerConfigured = OPENAI_API_KEY_ENV_NAMES.some((envName) => Boolean(env[envName]?.trim()));
+
+  return {
+    child: 'starting',
+    bootstrap: 'unknown',
+    database: 'unknown',
+    provider: providerConfigured ? 'configured' : 'missing',
+    ready: false,
+    reason: providerConfigured ? 'worker_bootstrap_pending' : 'openai_api_key_missing',
+    outputOverlap: ''
+  };
+}
+
+export function recordWorkerOutput(readinessState, chunk) {
+  if (readinessState.child === 'exited') {
+    return readinessState;
+  }
+
+  const text = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk);
+  const searchableText = `${readinessState.outputOverlap ?? ''}${text}`;
+  readinessState.outputOverlap = searchableText.slice(-WORKER_BOOTSTRAP_MARKER_OVERLAP_LENGTH);
+
+  if (!searchableText.includes(WORKER_BOOTSTRAP_READY_MARKER)) {
+    return readinessState;
+  }
+
+  readinessState.child = 'running';
+  readinessState.bootstrap = 'ready';
+  readinessState.database = 'ready';
+  readinessState.ready = readinessState.provider === 'configured';
+  readinessState.reason = readinessState.ready ? null : 'openai_api_key_missing';
+  return readinessState;
+}
+
+export function recordWorkerExit(readinessState, exitCode, signal) {
+  readinessState.child = 'exited';
+  readinessState.ready = false;
+  readinessState.reason = signal
+    ? `worker_exited_signal_${signal}`
+    : `worker_exited_code_${typeof exitCode === 'number' ? exitCode : 'unknown'}`;
+  return readinessState;
+}
+
+export function buildWorkerReadinessResponse(readinessState) {
+  const statusCode = readinessState.ready ? 200 : 503;
+  return {
+    statusCode,
+    body: {
+      ready: readinessState.ready,
+      status: readinessState.ready ? 'ready' : 'not_ready',
+      child: readinessState.child,
+      checks: {
+        bootstrap: readinessState.bootstrap,
+        database: readinessState.database,
+        provider: readinessState.provider
+      },
+      reason: readinessState.reason,
+      timestamp: new Date().toISOString()
+    }
+  };
+}
+
+export function mirrorAndObserveWorkerOutput(stream, destination, readinessState) {
+  stream?.on('data', chunk => {
+    recordWorkerOutput(readinessState, chunk);
+    if (!destination.write(chunk)) {
+      stream.pause?.();
+      destination.once('drain', () => {
+        stream.resume?.();
+      });
+    }
+  });
 }
 
 /**
@@ -219,23 +326,40 @@ async function runWorkerRuntimeWithHealthServer() {
     disabledReason: null,
     entrypoint: 'dist/workers/jobRunner.js'
   }));
+  const healthListenerConfig = resolveHealthListenerConfig();
   await repairDistAliases('worker');
+  const readinessState = createWorkerReadinessState();
   const workerProcess = spawnProcess('node', [
     '--import',
     './scripts/register-esm-loader.mjs',
     'dist/workers/jobRunner.js'
-  ], 'worker');
-  const healthPort = resolveHealthPort();
+  ], 'worker', {
+    stdio: ['inherit', 'pipe', 'pipe']
+  });
   let shutdownRequested = false;
+
+  mirrorAndObserveWorkerOutput(workerProcess.stdout, process.stdout, readinessState);
+  mirrorAndObserveWorkerOutput(workerProcess.stderr, process.stderr, readinessState);
+  workerProcess.once('exit', (code, signal) => {
+    recordWorkerExit(readinessState, code, signal);
+  });
 
   const healthServer = createServer((request, response) => {
     const requestPath = request.url ?? '';
 
-    //audit Assumption: Railway probes configured liveness paths only; risk: non-health paths masking app state; invariant: health paths return 200, all others return 404; handling: explicit route allowlist.
-    if (HEALTH_PATHS.has(requestPath)) {
+    //audit Assumption: Railway probes the liveness path for process supervision; risk: strict dependency readiness causes restarts during worker bootstrap; invariant: /health and /healthz only prove the launcher is alive; handling: keep liveness independent from readiness.
+    if (LIVENESS_PATHS.has(requestPath)) {
       response.statusCode = 200;
       response.setHeader('content-type', 'text/plain; charset=utf-8');
       response.end(HEALTH_OK_BODY);
+      return;
+    }
+
+    if (requestPath === READINESS_PATH) {
+      const readiness = buildWorkerReadinessResponse(readinessState);
+      response.statusCode = readiness.statusCode;
+      response.setHeader('content-type', 'application/json; charset=utf-8');
+      response.end(JSON.stringify(readiness.body));
       return;
     }
 
@@ -258,10 +382,22 @@ async function runWorkerRuntimeWithHealthServer() {
   process.once('SIGTERM', () => shutdownWorker('SIGTERM'));
   process.once('SIGINT', () => shutdownWorker('SIGINT'));
 
-  await new Promise((resolve, reject) => {
-    healthServer.once('error', reject);
-    healthServer.listen(healthPort, '0.0.0.0', resolve);
-  });
+  try {
+    await new Promise((resolve, reject) => {
+      healthServer.once('error', reject);
+      healthServer.listen(healthListenerConfig.port, healthListenerConfig.host, resolve);
+    });
+  } catch (error) {
+    workerProcess.kill('SIGTERM');
+    await new Promise((resolve) => {
+      if (!healthServer.listening) {
+        resolve();
+        return;
+      }
+      healthServer.close(() => resolve());
+    });
+    throw error;
+  }
 
   const exitCode = await waitForExit(workerProcess, {
     isExpectedShutdownSignal: (signal) => shutdownRequested && SHUTDOWN_SIGNALS.has(signal)
@@ -304,4 +440,6 @@ async function main() {
   }
 }
 
-await main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  await main();
+}

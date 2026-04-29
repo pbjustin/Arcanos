@@ -137,6 +137,7 @@ export interface RecoverStaleJobsOptions {
 export interface RecoverStaleJobsResult {
   recoveredJobs: string[];
   failedJobs: string[];
+  cancelledJobs: string[];
 }
 
 export type StalledJobRecoveryAction = 'requeue' | 'dead_letter';
@@ -279,6 +280,25 @@ function normalizeJsonbInput(value: unknown, context: string): string {
 
 function normalizeAutonomyState(state?: Record<string, unknown>): Record<string, unknown> {
   return state ?? {};
+}
+
+function resolveMaxRetriesForPersistedJob(
+  persistedMaxRetries: unknown,
+  fallbackMaxRetries: number | undefined
+): number {
+  if (persistedMaxRetries !== null && persistedMaxRetries !== undefined) {
+    const normalizedPersistedValue = Number(persistedMaxRetries);
+    if (Number.isFinite(normalizedPersistedValue)) {
+      return Math.max(0, Math.trunc(normalizedPersistedValue));
+    }
+  }
+
+  const normalizedFallbackValue = Number(fallbackMaxRetries);
+  if (Number.isFinite(normalizedFallbackValue)) {
+    return Math.max(0, Math.trunc(normalizedFallbackValue));
+  }
+
+  return 2;
 }
 
 function normalizeNullableString(value: string | null | undefined): string | null {
@@ -1328,7 +1348,7 @@ export async function claimNextPendingJob(
  * Extend the lease and heartbeat for one running job.
  * Purpose: prevent active work from being mistaken for a stalled job by the inspector.
  * Inputs/outputs: accepts a job id plus optional worker id and lease duration; returns the updated job or `null`.
- * Edge case behavior: returns `null` when the job is no longer running.
+ * Edge case behavior: returns `null` when the job is no longer running or the supplied worker no longer owns a live lease.
  */
 export async function recordJobHeartbeat(
   jobId: string,
@@ -1346,6 +1366,14 @@ export async function recordJobHeartbeat(
        last_worker_id = COALESCE($2, last_worker_id)
      WHERE id = $3
        AND status = 'running'
+       AND (
+         $2::text IS NULL
+         OR last_worker_id = $2::text
+       )
+       AND (
+         $2::text IS NULL
+         OR lease_expires_at >= NOW()
+       )
      RETURNING *`,
     [leaseMs, options.workerId ?? null, jobId]
   );
@@ -1354,15 +1382,15 @@ export async function recordJobHeartbeat(
 }
 
 /**
- * Reschedule a failed job for retry.
+ * Reschedule a running job for retry.
  * Purpose: implement exponential backoff without dropping queue state or losing prior attempts.
- * Inputs/outputs: accepts a job id, retry delay, and failure context; returns the rescheduled job.
- * Edge case behavior: preserves existing job input/output while clearing running lease metadata.
+ * Inputs/outputs: accepts a job id, retry delay, and failure context; returns the rescheduled job or `null`.
+ * Edge case behavior: preserves existing job input/output while clearing running lease metadata; terminal or lost-lease races no-op.
  */
 export async function scheduleJobRetry(
   jobId: string,
   options: ScheduleJobRetryOptions
-): Promise<JobData> {
+): Promise<JobData | null> {
   assertDatabaseReady();
 
   const result = await query(
@@ -1385,6 +1413,15 @@ export async function scheduleJobRetry(
        last_worker_id = COALESCE($3, last_worker_id),
        autonomy_state = COALESCE(autonomy_state, '{}'::jsonb) || $4::jsonb
      WHERE id = $5
+       AND status = 'running'
+       AND (
+         $3::text IS NULL
+         OR last_worker_id = $3::text
+       )
+       AND (
+         $3::text IS NULL
+         OR lease_expires_at >= NOW()
+       )
      RETURNING *`,
     [
       options.errorMessage,
@@ -1398,7 +1435,7 @@ export async function scheduleJobRetry(
     ]
   );
 
-  return result.rows[0] as JobData;
+  return (result.rows[0] as JobData | undefined) ?? null;
 }
 
 /**
@@ -1479,6 +1516,7 @@ export async function recoverStaleJobs(
 
     const recoveredJobs: string[] = [];
     const failedJobs: string[] = [];
+    const cancelledJobs: string[] = [];
 
     for (const row of staleResult.rows as Array<{
       id: string;
@@ -1490,7 +1528,7 @@ export async function recoverStaleJobs(
       cancel_reason: string | null;
     }>) {
       const retryCount = Number(row.retry_count ?? 0);
-      const maxRetries = Number(options.maxRetries ?? row.max_retries ?? 2);
+      const maxRetries = resolveMaxRetriesForPersistedJob(row.max_retries, options.maxRetries);
       const normalizedAutonomyState = buildRecoveredAutonomyState(row.autonomy_state, retryCount);
 
       if (row.cancel_requested_at) {
@@ -1524,7 +1562,7 @@ export async function recoverStaleJobs(
             row.id
           ]
         );
-        failedJobs.push(row.id);
+        cancelledJobs.push(row.id);
         continue;
       }
 
@@ -1604,7 +1642,7 @@ export async function recoverStaleJobs(
     }
 
     await client.query('COMMIT');
-    return { recoveredJobs, failedJobs };
+    return { recoveredJobs, failedJobs, cancelledJobs };
   } catch (error: unknown) {
     await client.query('ROLLBACK');
     logJobRepositoryError('recover_stale_jobs', error);
@@ -1693,7 +1731,7 @@ export async function recoverStalledJobsForWorkers(
     }>) {
       stalledJobIds.push(row.id);
       const retryCount = Number(row.retry_count ?? 0);
-      const maxRetries = Number(options.maxRetries ?? row.max_retries ?? 2);
+      const maxRetries = resolveMaxRetriesForPersistedJob(row.max_retries, options.maxRetries);
       const detectedAt = new Date().toISOString();
       const baseAutonomyState = buildRecoveredAutonomyState(row.autonomy_state, retryCount, {
         recoveredFromStaleLeaseAt: null,
@@ -1973,6 +2011,7 @@ export async function getJobQueueSummary(): Promise<JobQueueSummary | null> {
              WHERE status = 'running'
                AND (
                  (lease_expires_at IS NOT NULL AND lease_expires_at < NOW())
+                 OR (last_heartbeat_at IS NULL AND started_at < NOW() - ($2::bigint * INTERVAL '1 millisecond'))
                  OR (last_heartbeat_at IS NOT NULL AND last_heartbeat_at < NOW() - ($2::bigint * INTERVAL '1 millisecond'))
                )
            )::int AS stalled_running_count,

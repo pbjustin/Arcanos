@@ -1015,6 +1015,7 @@ async function runWorkerConsumerSlot(
       };
       let heartbeatHandle: NodeJS.Timeout | null = null;
       const jobStartedAtMs = Date.now();
+      let jobLeaseLost = false;
 
       try {
         if (gptCancellationController) {
@@ -1033,9 +1034,19 @@ async function runWorkerConsumerSlot(
           job.id,
           slotDefinition.workerId,
           (updatedJob) => {
+            if (!updatedJob) {
+              jobLeaseLost = true;
+              if (gptCancellationController && !gptCancellationController.signal.aborted) {
+                gptCancellationController.abort(
+                  createAbortError('GPT job lease lost or job completed elsewhere.')
+                );
+              }
+              return;
+            }
+
             if (
               gptCancellationController &&
-              updatedJob?.cancel_requested_at &&
+              updatedJob.cancel_requested_at &&
               !gptCancellationController.signal.aborted
             ) {
               gptCancellationController.abort(
@@ -1103,6 +1114,26 @@ async function runWorkerConsumerSlot(
             jobId: job.id,
             jobType: job.job_type
           }, { aiUsage: aiUsageSummary });
+        }
+
+        if (jobLeaseLost) {
+          logger.warn('worker.job_lease_lost.local_stop', {
+            module: 'job-runner',
+            workerId: slotDefinition.workerId,
+            jobId: job.id,
+            jobType: job.job_type,
+            durationMs: Date.now() - jobStartedAtMs
+          });
+          await autonomyService.markJobLeaseLost(
+            job.id,
+            'Job lease lost or job completed elsewhere.'
+          );
+          recordWorkerJobDuration({
+            jobType: job.job_type,
+            outcome: 'lease_lost',
+            durationMs: Date.now() - jobStartedAtMs,
+          });
+          continue;
         }
         
 
@@ -1389,7 +1420,8 @@ async function run(): Promise<void> {
     healthStatus: bootstrapResult.healthStatus,
     slots: slotDefinitions.length,
     recovered: bootstrapResult.recovered.recoveredJobs.length,
-    failed: bootstrapResult.recovered.failedJobs.length
+    failed: bootstrapResult.recovered.failedJobs.length,
+    cancelled: bootstrapResult.recovered.cancelledJobs?.length ?? 0
   });
 
   if (isWorkerProcessShutdownRequested()) {

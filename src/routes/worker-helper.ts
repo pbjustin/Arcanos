@@ -15,6 +15,8 @@
  */
 
 import express from 'express';
+import type { NextFunction, Request, Response } from 'express';
+import crypto from 'node:crypto';
 import { z } from 'zod';
 import {
   asyncHandler,
@@ -44,10 +46,14 @@ import {
   listRecentFailedWorkerJobs,
   queueWorkerAsk
 } from '@services/workerControlService.js';
+import { getEnv } from '@platform/runtime/env.js';
+import { resolveHeader } from '@transport/http/requestHeaders.js';
 
 const router = express.Router();
 
 const cognitiveDomainSchema = z.enum(['diagnostic', 'code', 'creative', 'natural', 'execution']);
+const workerHelperTokenHeader = 'x-arcanos-worker-helper-token';
+const allowedOperatorRoles = new Set(['admin', 'operator', 'owner']);
 
 const workerHelperJobIdSchema = z.object({
   id: z.string().trim().min(1)
@@ -76,6 +82,66 @@ const dispatchRequestSchema = z.object({
   backoffMs: z.number().int().min(0).max(60000).optional(),
   sourceEndpoint: z.string().trim().min(1).max(64).optional()
 });
+
+function timingSafeEqualString(left: string, right: string): boolean {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+  return leftBuffer.length === rightBuffer.length && crypto.timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function extractBearerToken(req: Request): string | null {
+  const authHeader = resolveHeader(req.headers, 'authorization')?.trim();
+  if (!authHeader) {
+    return null;
+  }
+
+  const match = /^Bearer\s+(.+)$/i.exec(authHeader);
+  return match?.[1]?.trim() || null;
+}
+
+function hasTrustedWorkerHelperToken(req: Request): boolean {
+  const configuredToken = getEnv('ARCANOS_WORKER_HELPER_TOKEN')?.trim();
+  if (!configuredToken) {
+    return false;
+  }
+
+  const providedToken =
+    resolveHeader(req.headers, workerHelperTokenHeader)?.trim()
+    ?? extractBearerToken(req);
+
+  return Boolean(providedToken && timingSafeEqualString(providedToken, configuredToken));
+}
+
+function isOperatorLightRole(role: string | undefined): boolean {
+  return role?.trim().toLowerCase() === 'operator-light';
+}
+
+function requireWorkerHelperPrivilegedAuth(req: Request, res: Response, next: NextFunction): void {
+  const authUserRole = typeof req.authUser?.role === 'string' ? req.authUser.role.trim().toLowerCase() : undefined;
+
+  if (isOperatorLightRole(authUserRole)) {
+    res.status(403).json({
+      error: 'WORKER_HELPER_OPERATOR_FORBIDDEN',
+      message: 'Worker helper privileged routes require full operator privileges.'
+    });
+    return;
+  }
+
+  if (
+    req.daemonToken
+    || hasTrustedWorkerHelperToken(req)
+    || (authUserRole && allowedOperatorRoles.has(authUserRole))
+    || (typeof req.operatorActor === 'string' && req.operatorActor.trim().length > 0)
+  ) {
+    next();
+    return;
+  }
+
+  res.status(401).json({
+    error: 'WORKER_HELPER_AUTH_REQUIRED',
+    message: 'Worker helper privileged routes require authenticated operator or trusted internal access.'
+  });
+}
 
 /**
  * GET /worker-helper/status
@@ -146,6 +212,7 @@ router.get(
  */
 router.get(
   '/worker-helper/jobs/latest',
+  requireWorkerHelperPrivilegedAuth,
   asyncHandler(async (_req, res) => {
     try {
       const latestJob = await getLatestWorkerJobDetail();
@@ -215,6 +282,7 @@ router.get(
  */
 router.get(
   '/worker-helper/jobs/:id',
+  requireWorkerHelperPrivilegedAuth,
   validateParams(workerHelperJobIdSchema, { errorCode: 'JOB_ID_INVALID' }),
   asyncHandler(async (req, res) => {
     try {
@@ -251,6 +319,7 @@ router.get(
  */
 router.post(
   '/worker-helper/queue/ask',
+  requireWorkerHelperPrivilegedAuth,
   validateBody(queueAskRequestSchema),
   asyncHandler(async (req, res) => {
     try {
@@ -296,6 +365,7 @@ router.post(
  */
 router.post(
   '/worker-helper/dispatch',
+  requireWorkerHelperPrivilegedAuth,
   validateBody(dispatchRequestSchema),
   asyncHandler(async (req, res) => {
     try {
@@ -325,6 +395,7 @@ router.post(
  */
 router.post(
   '/worker-helper/heal',
+  requireWorkerHelperPrivilegedAuth,
   asyncHandler(async (req, res) => {
     try {
       const healRequest = parseWorkerHealRequest(req.body, req.query);

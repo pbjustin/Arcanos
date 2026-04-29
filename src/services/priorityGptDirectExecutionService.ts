@@ -16,7 +16,7 @@ import {
   resolveGptWaitTimeoutMs,
   resolvePriorityGptDirectExecutionConcurrency
 } from '@shared/gpt/priorityGpt.js';
-import { isAbortError } from '@arcanos/runtime';
+import { createAbortError, isAbortError } from '@arcanos/runtime';
 
 export interface PriorityGptDirectExecutionSlot {
   release: () => void;
@@ -132,18 +132,62 @@ async function executeReservedPriorityGptDirectExecution(params: {
   const parsedGptJobInput = parseQueuedGptJobInput(params.rawInput ?? {});
   const startedAtMs = Date.now();
   const leaseMs = Math.max(15_000, resolveGptWaitTimeoutMs() + 5_000);
-  const heartbeatHandle = setInterval(() => {
-    void recordJobHeartbeat(params.jobId, {
-      workerId: params.workerId,
-      leaseMs
-    }).catch((error: unknown) => {
-      logger.warn('gpt.priority_direct.heartbeat_failed', {
-        jobId: params.jobId,
+  const cancellationController = new AbortController();
+  let heartbeatTimeout: NodeJS.Timeout | null = null;
+  let heartbeatStopped = false;
+  let leaseLost = false;
+  const abortExecution = (message: string): void => {
+    if (!cancellationController.signal.aborted) {
+      cancellationController.abort(createAbortError(message));
+    }
+  };
+  const scheduleNextHeartbeat = (): void => {
+    if (heartbeatStopped || cancellationController.signal.aborted) {
+      return;
+    }
+
+    heartbeatTimeout = setTimeout(() => {
+      void runHeartbeat();
+    }, DIRECT_HEARTBEAT_INTERVAL_MS);
+  };
+  const runHeartbeat = async (): Promise<void> => {
+    if (heartbeatStopped || cancellationController.signal.aborted) {
+      return;
+    }
+
+    try {
+      const updatedJob = await recordJobHeartbeat(params.jobId, {
         workerId: params.workerId,
-        error: resolveErrorMessage(error)
+        leaseMs
       });
-    });
-  }, DIRECT_HEARTBEAT_INTERVAL_MS);
+
+      if (heartbeatStopped || cancellationController.signal.aborted) {
+        return;
+      }
+
+      if (!updatedJob) {
+        leaseLost = true;
+        abortExecution('GPT job lease lost or job completed elsewhere.');
+        return;
+      }
+
+      if (updatedJob.cancel_requested_at) {
+        abortExecution(updatedJob.cancel_reason ?? 'GPT job cancellation requested.');
+        return;
+      }
+    } catch (error: unknown) {
+      if (!heartbeatStopped) {
+        logger.warn('gpt.priority_direct.heartbeat_failed', {
+          jobId: params.jobId,
+          workerId: params.workerId,
+          error: resolveErrorMessage(error)
+        });
+      }
+    }
+
+    scheduleNextHeartbeat();
+  };
+  scheduleNextHeartbeat();
 
   try {
     if (!parsedGptJobInput.ok) {
@@ -214,8 +258,16 @@ async function executeReservedPriorityGptDirectExecution(params: {
       requestId,
       logger: routeLogger,
       bypassIntentRouting,
-      runtimeExecutionMode: 'background'
+      runtimeExecutionMode: 'background',
+      parentAbortSignal: cancellationController.signal
     });
+
+    if (cancellationController.signal.aborted) {
+      const reason = cancellationController.signal.reason;
+      throw reason instanceof Error
+        ? reason
+        : createAbortError('GPT job cancellation requested.');
+    }
 
     if (!envelope.ok) {
       const errorMessage = `${envelope.error.code}: ${envelope.error.message}`;
@@ -289,6 +341,16 @@ async function executeReservedPriorityGptDirectExecution(params: {
   } catch (error: unknown) {
     const errorMessage = resolveErrorMessage(error);
     const aborted = isAbortError(error);
+    if (leaseLost) {
+      params.requestLogger?.warn?.('gpt.priority_direct.lease_lost', {
+        jobId: params.jobId,
+        workerId: params.workerId,
+        durationMs: Date.now() - startedAtMs,
+        error: errorMessage
+      });
+      return;
+    }
+
     await updateJob(
       params.jobId,
       aborted ? 'cancelled' : 'failed',
@@ -309,7 +371,15 @@ async function executeReservedPriorityGptDirectExecution(params: {
           priorityDirectExecution: true
         }
       },
-      computeGptJobLifecycleDeadlines(aborted ? 'cancelled' : 'failed')
+      {
+        ...computeGptJobLifecycleDeadlines(aborted ? 'cancelled' : 'failed'),
+        ...(aborted
+          ? {
+              cancelRequestedAt: new Date().toISOString(),
+              cancelReason: errorMessage
+            }
+          : {})
+      }
     );
     params.requestLogger?.warn?.('gpt.priority_direct.failed', {
       jobId: params.jobId,
@@ -318,7 +388,10 @@ async function executeReservedPriorityGptDirectExecution(params: {
       error: errorMessage
     });
   } finally {
-    clearInterval(heartbeatHandle);
+    heartbeatStopped = true;
+    if (heartbeatTimeout) {
+      clearTimeout(heartbeatTimeout);
+    }
     params.slot.release();
   }
 }
