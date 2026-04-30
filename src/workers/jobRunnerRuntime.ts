@@ -67,6 +67,7 @@ const DATABASE_ERROR_CONTEXT_MARKERS = [
   'database',
   'postgres',
   'postgresql',
+  'pg_hba.conf',
   'pool',
   'sql',
   'job_data',
@@ -74,6 +75,49 @@ const DATABASE_ERROR_CONTEXT_MARKERS = [
   'database_private_url',
   'database_public_url'
 ];
+
+const POSTGRES_TRANSIENT_ERROR_CONTEXT_MARKERS = [
+  'timeout exceeded when trying to connect',
+  'connection terminated unexpectedly',
+  'server closed the connection unexpectedly',
+  'terminating connection due to administrator command',
+  'remaining connection slots are reserved'
+];
+
+const POSTGRES_TRANSIENT_ERROR_CODES = new Set([
+  '08000',
+  '08001',
+  '08003',
+  '08004',
+  '08006',
+  '08007',
+  '08p01',
+  '53300',
+  '57p01',
+  '57p02',
+  '57p03'
+]);
+
+const NON_DATABASE_TRANSIENT_CONTEXT_MARKERS = [
+  'openai',
+  'provider',
+  'provider probe',
+  'provider request',
+  'provider unavailable',
+  'probing provider',
+  'api key',
+  'authentication',
+  'circuit breaker'
+];
+
+function readStringProperty(value: unknown, propertyName: string): string | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const candidate = (value as Record<string, unknown>)[propertyName];
+  return typeof candidate === 'string' ? candidate : null;
+}
 
 function readPositiveIntegerEnvValue(
   rawValue: string | undefined,
@@ -240,10 +284,17 @@ export function resolveJobRunnerEntrypointRuntimeMode(
   >
 ): JobRunnerEntrypointRuntimeMode {
   if (workerRuntimeMode.resolvedRunWorkers) {
+    const enabledReason =
+      workerRuntimeMode.reason === 'process_kind_worker'
+        ? 'ARCANOS_PROCESS_KIND=worker starts the dedicated async queue dispatcher'
+        : workerRuntimeMode.reason === 'requested'
+          ? 'RUN_WORKERS requested the dedicated async queue dispatcher'
+          : 'Workers enabled; starting the dedicated async queue dispatcher';
+
     return {
       enabled: true,
       disabledReason: null,
-      reason: 'ARCANOS_PROCESS_KIND=worker starts the dedicated async queue dispatcher'
+      reason: enabledReason
     };
   }
 
@@ -310,11 +361,23 @@ export function selectJobRunnerSlotTransientRetryEvent(error: unknown):
       ? error
       : String(error ?? '');
   const normalizedMessage = message.toLowerCase();
-  const hasDatabaseContext = DATABASE_ERROR_CONTEXT_MARKERS.some(marker =>
-    normalizedMessage.includes(marker)
-  ) || /\bpg\b/.test(normalizedMessage);
+  const normalizedCode = (readStringProperty(error, 'code') ?? '').trim().toLowerCase();
+  const hasDirectDatabaseContext =
+    DATABASE_ERROR_CONTEXT_MARKERS.some(marker => normalizedMessage.includes(marker)) ||
+    /\bpg\b/.test(normalizedMessage) ||
+    POSTGRES_TRANSIENT_ERROR_CODES.has(normalizedCode);
+  if (hasDirectDatabaseContext) {
+    return 'worker.database.transient_error_retry';
+  }
 
-  return hasDatabaseContext
+  const hasNonDatabaseContext = NON_DATABASE_TRANSIENT_CONTEXT_MARKERS.some(marker =>
+    normalizedMessage.includes(marker)
+  );
+  const hasPostgresTransientContext = POSTGRES_TRANSIENT_ERROR_CONTEXT_MARKERS.some(marker =>
+    normalizedMessage.includes(marker)
+  );
+
+  return hasPostgresTransientContext && !hasNonDatabaseContext
     ? 'worker.database.transient_error_retry'
     : 'worker.transient_error_retry';
 }

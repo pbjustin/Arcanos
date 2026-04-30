@@ -145,6 +145,19 @@ describe('jobRunnerRuntime', () => {
     });
   });
 
+  it('reports requested RUN_WORKERS as the direct job runner enablement reason', () => {
+    const mode = resolveJobRunnerEntrypointRuntimeMode({
+      resolvedRunWorkers: true,
+      reason: 'requested'
+    });
+
+    expect(mode).toEqual({
+      enabled: true,
+      disabledReason: null,
+      reason: 'RUN_WORKERS requested the dedicated async queue dispatcher'
+    });
+  });
+
   it('uses indefinite database bootstrap retries by default', () => {
     const retrySettings = resolveJobRunnerDatabaseBootstrapSettings({} as NodeJS.ProcessEnv);
 
@@ -192,6 +205,24 @@ describe('jobRunnerRuntime', () => {
     ).toBe('worker.database.transient_error_retry');
   });
 
+  it('keeps database context for common pg transient connection failures', () => {
+    expect(
+      selectJobRunnerSlotTransientRetryEvent(
+        new Error('timeout exceeded when trying to connect')
+      )
+    ).toBe('worker.database.transient_error_retry');
+    expect(
+      selectJobRunnerSlotTransientRetryEvent(
+        new Error('server closed the connection unexpectedly')
+      )
+    ).toBe('worker.database.transient_error_retry');
+    expect(
+      selectJobRunnerSlotTransientRetryEvent(
+        Object.assign(new Error('terminating connection during claim'), { code: '57P01' })
+      )
+    ).toBe('worker.database.transient_error_retry');
+  });
+
   it('uses a generic outer slot retry log for non-database provider/network transients', () => {
     expect(
       selectJobRunnerSlotTransientRetryEvent(
@@ -201,6 +232,11 @@ describe('jobRunnerRuntime', () => {
     expect(
       selectJobRunnerSlotTransientRetryEvent(
         new Error('socket connect timeout while probing provider')
+      )
+    ).toBe('worker.transient_error_retry');
+    expect(
+      selectJobRunnerSlotTransientRetryEvent(
+        new Error('OpenAI timeout exceeded when trying to connect')
       )
     ).toBe('worker.transient_error_retry');
   });
