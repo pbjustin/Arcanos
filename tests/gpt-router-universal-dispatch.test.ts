@@ -774,6 +774,41 @@ describe('gpt router universal dispatch', () => {
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['job_status', 'get_status'],
+    ['job_result', 'get_result'],
+  ])('blocks %s aliases through the GPT route with the canonical job guard', async (aliasAction, canonicalAction) => {
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        action: aliasAction,
+        payload: {
+          jobId: 'job-123',
+        },
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        ok: false,
+        action: canonicalAction,
+        error: expect.objectContaining({
+          code: 'CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT',
+        }),
+        canonical: expect.objectContaining({
+          jobStatus: '/jobs/{jobId}',
+          jobResult: '/jobs/{jobId}/result',
+        }),
+        _route: expect.objectContaining({
+          route: 'control_guard',
+          action: canonicalAction,
+        }),
+      })
+    );
+    expect(mockResolveGptRouting).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
   it('blocks runtime.inspect through the GPT route', async () => {
     const response = await request(buildApp())
       .post('/gpt/arcanos-core')

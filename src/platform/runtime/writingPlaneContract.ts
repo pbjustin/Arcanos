@@ -272,7 +272,7 @@ export function classifyWritingPlaneInput(input: {
   const normalizedTarget = readBodyStringField(input.body, 'target');
   const explicitDirectControlAction = normalizeGptDirectControlAction(normalizedAction);
 
-  if (normalizedAction === GPT_GET_STATUS_ACTION) {
+  if (normalizedAction === GPT_GET_STATUS_ACTION || normalizedAction === 'job_status') {
     return {
       plane: 'control',
       kind: 'job_status',
@@ -286,7 +286,7 @@ export function classifyWritingPlaneInput(input: {
     };
   }
 
-  if (normalizedAction === GPT_GET_RESULT_ACTION) {
+  if (normalizedAction === GPT_GET_RESULT_ACTION || normalizedAction === 'job_result') {
     return {
       plane: 'control',
       kind: 'job_result',
