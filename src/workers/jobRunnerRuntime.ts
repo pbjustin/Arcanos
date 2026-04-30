@@ -52,8 +52,10 @@ const RETRYABLE_DATABASE_BOOTSTRAP_ERROR_MARKERS = [
   'connect timeout',
   'connection timeout',
   'connection terminated',
+  'connection reset',
   'connection refused',
   'could not connect',
+  'econnreset',
   'econnrefused',
   'etimedout',
   'enotfound',
@@ -68,7 +70,6 @@ const DATABASE_ERROR_CONTEXT_MARKERS = [
   'postgres',
   'postgresql',
   'pg_hba.conf',
-  'pool',
   'sql',
   'job_data',
   'database_url',
@@ -96,6 +97,17 @@ const POSTGRES_TRANSIENT_ERROR_CODES = new Set([
   '57p01',
   '57p02',
   '57p03'
+]);
+
+const RETRYABLE_TRANSPORT_ERROR_CODES = new Set([
+  'econnreset',
+  'econnrefused',
+  'etimedout',
+  'enotfound',
+  'eai_again',
+  'enetwork',
+  'enetunreach',
+  'ehostunreach'
 ]);
 
 const NON_DATABASE_TRANSIENT_CONTEXT_MARKERS = [
@@ -341,8 +353,17 @@ export function isRetryableJobRunnerDatabaseBootstrapError(error: unknown): bool
       ? error
       : String(error ?? '');
   const normalizedMessage = message.toLowerCase();
-  return RETRYABLE_DATABASE_BOOTSTRAP_ERROR_MARKERS.some(marker =>
-    normalizedMessage.includes(marker)
+  const normalizedCode = (readStringProperty(error, 'code') ?? '').trim().toLowerCase();
+
+  return (
+    RETRYABLE_DATABASE_BOOTSTRAP_ERROR_MARKERS.some(marker =>
+      normalizedMessage.includes(marker)
+    ) ||
+    POSTGRES_TRANSIENT_ERROR_CONTEXT_MARKERS.some(marker =>
+      normalizedMessage.includes(marker)
+    ) ||
+    POSTGRES_TRANSIENT_ERROR_CODES.has(normalizedCode) ||
+    RETRYABLE_TRANSPORT_ERROR_CODES.has(normalizedCode)
   );
 }
 

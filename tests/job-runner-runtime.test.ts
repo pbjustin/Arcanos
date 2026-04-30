@@ -194,6 +194,21 @@ describe('jobRunnerRuntime', () => {
       )
     ).toBe(true);
     expect(isRetryableJobRunnerDatabaseBootstrapError(new Error('ENOTFOUND railway.internal'))).toBe(true);
+    expect(
+      isRetryableJobRunnerDatabaseBootstrapError(
+        Object.assign(new Error(''), { code: '57P01' })
+      )
+    ).toBe(true);
+    expect(
+      isRetryableJobRunnerDatabaseBootstrapError(
+        Object.assign(new Error(''), { code: '08006' })
+      )
+    ).toBe(true);
+    expect(
+      isRetryableJobRunnerDatabaseBootstrapError(
+        Object.assign(new Error('OpenAI provider ECONNRESET'), { code: 'ECONNRESET' })
+      )
+    ).toBe(true);
     expect(isRetryableJobRunnerDatabaseBootstrapError(new Error('relation "job_data" does not exist'))).toBe(false);
   });
 
@@ -221,6 +236,26 @@ describe('jobRunnerRuntime', () => {
         Object.assign(new Error('terminating connection during claim'), { code: '57P01' })
       )
     ).toBe('worker.database.transient_error_retry');
+    expect(
+      selectJobRunnerSlotTransientRetryEvent(
+        Object.assign(new Error(''), { code: '08006' })
+      )
+    ).toBe('worker.database.transient_error_retry');
+    expect(
+      selectJobRunnerSlotTransientRetryEvent(
+        new Error('DATABASE_URL connection failed')
+      )
+    ).toBe('worker.database.transient_error_retry');
+    expect(
+      selectJobRunnerSlotTransientRetryEvent(
+        new Error('DATABASE_PRIVATE_URL connection failed')
+      )
+    ).toBe('worker.database.transient_error_retry');
+    expect(
+      selectJobRunnerSlotTransientRetryEvent(
+        new Error('no pg_hba.conf entry for host')
+      )
+    ).toBe('worker.database.transient_error_retry');
   });
 
   it('uses a generic outer slot retry log for non-database provider/network transients', () => {
@@ -239,12 +274,40 @@ describe('jobRunnerRuntime', () => {
         new Error('OpenAI timeout exceeded when trying to connect')
       )
     ).toBe('worker.transient_error_retry');
+    expect(
+      selectJobRunnerSlotTransientRetryEvent(
+        Object.assign(new Error('OpenAI provider ECONNRESET'), { code: 'ECONNRESET' })
+      )
+    ).toBe('worker.transient_error_retry');
   });
 
   it('does not infer database context from broad worker runtime labels', () => {
     expect(
       selectJobRunnerSlotTransientRetryEvent(
         new Error('worker_runtime slot failed during provider connect timeout')
+      )
+    ).toBe('worker.transient_error_retry');
+  });
+
+  it('keeps ambiguous transient retry labels generic without database context', () => {
+    expect(
+      selectJobRunnerSlotTransientRetryEvent(
+        new Error('socket timeout while claiming work')
+      )
+    ).toBe('worker.transient_error_retry');
+    expect(
+      selectJobRunnerSlotTransientRetryEvent(
+        new Error('worker thread pool timeout')
+      )
+    ).toBe('worker.transient_error_retry');
+    expect(
+      selectJobRunnerSlotTransientRetryEvent(
+        new Error('pg connection reset')
+      )
+    ).toBe('worker.database.transient_error_retry');
+    expect(
+      selectJobRunnerSlotTransientRetryEvent(
+        Object.assign(new Error(''), { code: 'ECONNRESET' })
       )
     ).toBe('worker.transient_error_retry');
   });
