@@ -1,5 +1,6 @@
 import path from 'path';
 import { fileURLToPath } from 'url';
+import type { WorkerRuntimeModeResolution } from '@platform/runtime/unifiedConfig.js';
 
 export interface JobRunnerRuntimeSettings {
   pollMs: number;
@@ -21,6 +22,12 @@ export interface JobRunnerSlotDefinition {
   workerId: string;
   statsWorkerId: string;
   isInspectorSlot: boolean;
+}
+
+export interface JobRunnerEntrypointRuntimeMode {
+  enabled: boolean;
+  disabledReason: string | null;
+  reason: string;
 }
 
 export interface NonOverlappingTaskSkipEvent {
@@ -45,8 +52,10 @@ const RETRYABLE_DATABASE_BOOTSTRAP_ERROR_MARKERS = [
   'connect timeout',
   'connection timeout',
   'connection terminated',
+  'connection reset',
   'connection refused',
   'could not connect',
+  'econnreset',
   'econnrefused',
   'etimedout',
   'enotfound',
@@ -55,6 +64,72 @@ const RETRYABLE_DATABASE_BOOTSTRAP_ERROR_MARKERS = [
   'enetunreach',
   'ehostunreach'
 ];
+
+const DATABASE_ERROR_CONTEXT_MARKERS = [
+  'database',
+  'postgres',
+  'postgresql',
+  'pg_hba.conf',
+  'sql',
+  'job_data',
+  'database_url',
+  'database_private_url',
+  'database_public_url'
+];
+
+const POSTGRES_TRANSIENT_ERROR_CONTEXT_MARKERS = [
+  'timeout exceeded when trying to connect',
+  'connection terminated unexpectedly',
+  'server closed the connection unexpectedly',
+  'terminating connection due to administrator command',
+  'remaining connection slots are reserved'
+];
+
+const POSTGRES_TRANSIENT_ERROR_CODES = new Set([
+  '08000',
+  '08001',
+  '08003',
+  '08004',
+  '08006',
+  '08007',
+  '08p01',
+  '53300',
+  '57p01',
+  '57p02',
+  '57p03'
+]);
+
+const RETRYABLE_TRANSPORT_ERROR_CODES = new Set([
+  'econnreset',
+  'econnrefused',
+  'etimedout',
+  'enotfound',
+  'eai_again',
+  'enetwork',
+  'enetunreach',
+  'ehostunreach'
+]);
+
+const NON_DATABASE_TRANSIENT_CONTEXT_MARKERS = [
+  'openai',
+  'provider',
+  'provider probe',
+  'provider request',
+  'provider unavailable',
+  'probing provider',
+  'api key',
+  'authentication',
+  'circuit breaker'
+];
+
+function readStringProperty(value: unknown, propertyName: string): string | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const candidate = (value as Record<string, unknown>)[propertyName];
+  return typeof candidate === 'string' ? candidate : null;
+}
 
 function readPositiveIntegerEnvValue(
   rawValue: string | undefined,
@@ -209,6 +284,45 @@ export function resolveJobRunnerRuntimeSettings(
 }
 
 /**
+ * Resolve whether the direct job-runner entrypoint may start mutation loops.
+ * Purpose: keep standalone worker startup aligned with the stable process-role resolver.
+ * Inputs/outputs: accepts the stable worker runtime mode and returns a logging-friendly decision.
+ * Edge case behavior: explicit web role wins even when RUN_WORKERS was requested.
+ */
+export function resolveJobRunnerEntrypointRuntimeMode(
+  workerRuntimeMode: Pick<
+    WorkerRuntimeModeResolution,
+    'resolvedRunWorkers' | 'reason'
+  >
+): JobRunnerEntrypointRuntimeMode {
+  if (workerRuntimeMode.resolvedRunWorkers) {
+    const enabledReason =
+      workerRuntimeMode.reason === 'process_kind_worker'
+        ? 'ARCANOS_PROCESS_KIND=worker starts the dedicated async queue dispatcher'
+        : workerRuntimeMode.reason === 'requested'
+          ? 'RUN_WORKERS requested the dedicated async queue dispatcher'
+          : 'Workers enabled; starting the dedicated async queue dispatcher';
+
+    return {
+      enabled: true,
+      disabledReason: null,
+      reason: enabledReason
+    };
+  }
+
+  const disabledReason =
+    workerRuntimeMode.reason === 'process_kind_web'
+      ? 'RUN_WORKERS disabled for explicit web process role; workers not started.'
+      : 'RUN_WORKERS disabled; workers not started.';
+
+  return {
+    enabled: false,
+    disabledReason,
+    reason: disabledReason
+  };
+}
+
+/**
  * Resolve database bootstrap retry settings for the worker process.
  * Purpose: prevent transient Railway database reachability failures from permanently crashing the worker.
  * Inputs/outputs: accepts an optional environment object and returns normalized retry settings.
@@ -239,9 +353,54 @@ export function isRetryableJobRunnerDatabaseBootstrapError(error: unknown): bool
       ? error
       : String(error ?? '');
   const normalizedMessage = message.toLowerCase();
-  return RETRYABLE_DATABASE_BOOTSTRAP_ERROR_MARKERS.some(marker =>
+  const normalizedCode = (readStringProperty(error, 'code') ?? '').trim().toLowerCase();
+
+  return (
+    RETRYABLE_DATABASE_BOOTSTRAP_ERROR_MARKERS.some(marker =>
+      normalizedMessage.includes(marker)
+    ) ||
+    POSTGRES_TRANSIENT_ERROR_CONTEXT_MARKERS.some(marker =>
+      normalizedMessage.includes(marker)
+    ) ||
+    POSTGRES_TRANSIENT_ERROR_CODES.has(normalizedCode) ||
+    RETRYABLE_TRANSPORT_ERROR_CODES.has(normalizedCode)
+  );
+}
+
+/**
+ * Select the outer slot retry log event for a retryable transient error.
+ * Purpose: keep the retry/backoff behavior while avoiding database labels for generic provider/network failures.
+ * Inputs/outputs: accepts an error value and returns the structured log event name.
+ * Edge case behavior: retryable transport errors without database context use a generic worker event.
+ */
+export function selectJobRunnerSlotTransientRetryEvent(error: unknown):
+  | 'worker.database.transient_error_retry'
+  | 'worker.transient_error_retry' {
+  const message = error instanceof Error
+    ? error.message
+    : typeof error === 'string'
+      ? error
+      : String(error ?? '');
+  const normalizedMessage = message.toLowerCase();
+  const normalizedCode = (readStringProperty(error, 'code') ?? '').trim().toLowerCase();
+  const hasDirectDatabaseContext =
+    DATABASE_ERROR_CONTEXT_MARKERS.some(marker => normalizedMessage.includes(marker)) ||
+    /\bpg\b/.test(normalizedMessage) ||
+    POSTGRES_TRANSIENT_ERROR_CODES.has(normalizedCode);
+  if (hasDirectDatabaseContext) {
+    return 'worker.database.transient_error_retry';
+  }
+
+  const hasNonDatabaseContext = NON_DATABASE_TRANSIENT_CONTEXT_MARKERS.some(marker =>
     normalizedMessage.includes(marker)
   );
+  const hasPostgresTransientContext = POSTGRES_TRANSIENT_ERROR_CONTEXT_MARKERS.some(marker =>
+    normalizedMessage.includes(marker)
+  );
+
+  return hasPostgresTransientContext && !hasNonDatabaseContext
+    ? 'worker.database.transient_error_retry'
+    : 'worker.transient_error_retry';
 }
 
 /**

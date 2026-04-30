@@ -9,9 +9,11 @@ import {
   createNonOverlappingTaskRunner,
   isEntrypointModule,
   isRetryableJobRunnerDatabaseBootstrapError,
+  resolveJobRunnerEntrypointRuntimeMode,
   resolveJobRunnerDatabaseBootstrapSettings,
   resolveProviderPauseMs,
-  resolveJobRunnerRuntimeSettings
+  resolveJobRunnerRuntimeSettings,
+  selectJobRunnerSlotTransientRetryEvent
 } from '../src/workers/jobRunnerRuntime.js';
 
 describe('jobRunnerRuntime', () => {
@@ -104,6 +106,58 @@ describe('jobRunnerRuntime', () => {
     });
   });
 
+  it('disables the direct job runner entrypoint for explicit web runtime mode', () => {
+    const mode = resolveJobRunnerEntrypointRuntimeMode({
+      resolvedRunWorkers: false,
+      reason: 'process_kind_web'
+    });
+
+    expect(mode).toEqual({
+      enabled: false,
+      disabledReason: 'RUN_WORKERS disabled for explicit web process role; workers not started.',
+      reason: 'RUN_WORKERS disabled for explicit web process role; workers not started.'
+    });
+  });
+
+  it('disables the direct job runner entrypoint when RUN_WORKERS resolves false', () => {
+    const mode = resolveJobRunnerEntrypointRuntimeMode({
+      resolvedRunWorkers: false,
+      reason: 'requested'
+    });
+
+    expect(mode).toEqual({
+      enabled: false,
+      disabledReason: 'RUN_WORKERS disabled; workers not started.',
+      reason: 'RUN_WORKERS disabled; workers not started.'
+    });
+  });
+
+  it('enables the direct job runner entrypoint when worker runtime resolves enabled', () => {
+    const mode = resolveJobRunnerEntrypointRuntimeMode({
+      resolvedRunWorkers: true,
+      reason: 'process_kind_worker'
+    });
+
+    expect(mode).toEqual({
+      enabled: true,
+      disabledReason: null,
+      reason: 'ARCANOS_PROCESS_KIND=worker starts the dedicated async queue dispatcher'
+    });
+  });
+
+  it('reports requested RUN_WORKERS as the direct job runner enablement reason', () => {
+    const mode = resolveJobRunnerEntrypointRuntimeMode({
+      resolvedRunWorkers: true,
+      reason: 'requested'
+    });
+
+    expect(mode).toEqual({
+      enabled: true,
+      disabledReason: null,
+      reason: 'RUN_WORKERS requested the dedicated async queue dispatcher'
+    });
+  });
+
   it('uses indefinite database bootstrap retries by default', () => {
     const retrySettings = resolveJobRunnerDatabaseBootstrapSettings({} as NodeJS.ProcessEnv);
 
@@ -140,7 +194,122 @@ describe('jobRunnerRuntime', () => {
       )
     ).toBe(true);
     expect(isRetryableJobRunnerDatabaseBootstrapError(new Error('ENOTFOUND railway.internal'))).toBe(true);
+    expect(
+      isRetryableJobRunnerDatabaseBootstrapError(
+        Object.assign(new Error(''), { code: '57P01' })
+      )
+    ).toBe(true);
+    expect(
+      isRetryableJobRunnerDatabaseBootstrapError(
+        Object.assign(new Error(''), { code: '08006' })
+      )
+    ).toBe(true);
+    expect(
+      isRetryableJobRunnerDatabaseBootstrapError(
+        Object.assign(new Error('OpenAI provider ECONNRESET'), { code: 'ECONNRESET' })
+      )
+    ).toBe(true);
     expect(isRetryableJobRunnerDatabaseBootstrapError(new Error('relation "job_data" does not exist'))).toBe(false);
+  });
+
+  it('keeps database context on outer slot transient retry logs', () => {
+    expect(
+      selectJobRunnerSlotTransientRetryEvent(
+        new Error('Postgres pool connection timeout while claiming from job_data')
+      )
+    ).toBe('worker.database.transient_error_retry');
+  });
+
+  it('keeps database context for common pg transient connection failures', () => {
+    expect(
+      selectJobRunnerSlotTransientRetryEvent(
+        new Error('timeout exceeded when trying to connect')
+      )
+    ).toBe('worker.database.transient_error_retry');
+    expect(
+      selectJobRunnerSlotTransientRetryEvent(
+        new Error('server closed the connection unexpectedly')
+      )
+    ).toBe('worker.database.transient_error_retry');
+    expect(
+      selectJobRunnerSlotTransientRetryEvent(
+        Object.assign(new Error('terminating connection during claim'), { code: '57P01' })
+      )
+    ).toBe('worker.database.transient_error_retry');
+    expect(
+      selectJobRunnerSlotTransientRetryEvent(
+        Object.assign(new Error(''), { code: '08006' })
+      )
+    ).toBe('worker.database.transient_error_retry');
+    expect(
+      selectJobRunnerSlotTransientRetryEvent(
+        new Error('DATABASE_URL connection failed')
+      )
+    ).toBe('worker.database.transient_error_retry');
+    expect(
+      selectJobRunnerSlotTransientRetryEvent(
+        new Error('DATABASE_PRIVATE_URL connection failed')
+      )
+    ).toBe('worker.database.transient_error_retry');
+    expect(
+      selectJobRunnerSlotTransientRetryEvent(
+        new Error('no pg_hba.conf entry for host')
+      )
+    ).toBe('worker.database.transient_error_retry');
+  });
+
+  it('uses a generic outer slot retry log for non-database provider/network transients', () => {
+    expect(
+      selectJobRunnerSlotTransientRetryEvent(
+        new Error('OpenAI provider request ETIMEDOUT')
+      )
+    ).toBe('worker.transient_error_retry');
+    expect(
+      selectJobRunnerSlotTransientRetryEvent(
+        new Error('socket connect timeout while probing provider')
+      )
+    ).toBe('worker.transient_error_retry');
+    expect(
+      selectJobRunnerSlotTransientRetryEvent(
+        new Error('OpenAI timeout exceeded when trying to connect')
+      )
+    ).toBe('worker.transient_error_retry');
+    expect(
+      selectJobRunnerSlotTransientRetryEvent(
+        Object.assign(new Error('OpenAI provider ECONNRESET'), { code: 'ECONNRESET' })
+      )
+    ).toBe('worker.transient_error_retry');
+  });
+
+  it('does not infer database context from broad worker runtime labels', () => {
+    expect(
+      selectJobRunnerSlotTransientRetryEvent(
+        new Error('worker_runtime slot failed during provider connect timeout')
+      )
+    ).toBe('worker.transient_error_retry');
+  });
+
+  it('keeps ambiguous transient retry labels generic without database context', () => {
+    expect(
+      selectJobRunnerSlotTransientRetryEvent(
+        new Error('socket timeout while claiming work')
+      )
+    ).toBe('worker.transient_error_retry');
+    expect(
+      selectJobRunnerSlotTransientRetryEvent(
+        new Error('worker thread pool timeout')
+      )
+    ).toBe('worker.transient_error_retry');
+    expect(
+      selectJobRunnerSlotTransientRetryEvent(
+        new Error('pg connection reset')
+      )
+    ).toBe('worker.database.transient_error_retry');
+    expect(
+      selectJobRunnerSlotTransientRetryEvent(
+        Object.assign(new Error(''), { code: 'ECONNRESET' })
+      )
+    ).toBe('worker.transient_error_retry');
   });
 
   it('skips overlapping interval work while a task is still running', async () => {

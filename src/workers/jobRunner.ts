@@ -14,7 +14,7 @@ import {
   initializeDatabaseWithSchema as initializeDatabase,
   getStatus as getDatabaseStatus
 } from '@core/db/index.js';
-import { getConfig } from '@platform/runtime/unifiedConfig.js';
+import { getConfig, getStableWorkerRuntimeMode } from '@platform/runtime/unifiedConfig.js';
 import { getOpenAIAdapter } from '@core/adapters/openai.adapter.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import {
@@ -40,9 +40,11 @@ import {
   createNonOverlappingTaskRunner,
   isEntrypointModule,
   isRetryableJobRunnerDatabaseBootstrapError,
+  resolveJobRunnerEntrypointRuntimeMode,
   resolveJobRunnerDatabaseBootstrapSettings,
   resolveProviderPauseMs,
   resolveJobRunnerRuntimeSettings,
+  selectJobRunnerSlotTransientRetryEvent,
   type JobRunnerDatabaseBootstrapSettings,
   type JobRunnerRuntimeSettings,
   type JobRunnerSlotDefinition
@@ -1382,8 +1384,9 @@ async function runWorkerConsumerSlot(
       } catch (error: unknown) {
         if (isRetryableJobRunnerDatabaseBootstrapError(error)) {
           const backoffMs = Math.max(runtimeSettings.idleBackoffMs, 5_000);
+          const retryLogEvent = selectJobRunnerSlotTransientRetryEvent(error);
           logger.warn(
-            'worker.database.transient_error_retry',
+            retryLogEvent,
             {
               module: 'job-runner',
               workerId: slotDefinition.workerId,
@@ -1406,12 +1409,14 @@ async function runWorkerConsumerSlot(
 }
 
 async function run(): Promise<void> {
+  const workerRuntimeMode = getStableWorkerRuntimeMode();
+  const entrypointRuntimeMode = resolveJobRunnerEntrypointRuntimeMode(workerRuntimeMode);
   const runtimeSettings = resolveJobRunnerRuntimeSettings();
   const databaseBootstrapSettings = resolveJobRunnerDatabaseBootstrapSettings();
   logger.info('[worker-runtime] boot config', {
     module: 'job-runner',
-    enabled: true,
-    disabledReason: null,
+    enabled: entrypointRuntimeMode.enabled,
+    disabledReason: entrypointRuntimeMode.disabledReason,
     pollMs: runtimeSettings.pollMs,
     idleBackoffMs: runtimeSettings.idleBackoffMs,
     concurrency: runtimeSettings.concurrency,
@@ -1423,10 +1428,22 @@ async function run(): Promise<void> {
   });
   logger.info('[worker-runtime] enabled/disabled reason', {
     module: 'job-runner',
-    enabled: true,
-    disabledReason: null,
-    reason: 'ARCANOS_PROCESS_KIND=worker starts the dedicated async queue dispatcher'
+    enabled: entrypointRuntimeMode.enabled,
+    disabledReason: entrypointRuntimeMode.disabledReason,
+    reason: entrypointRuntimeMode.reason,
+    processKind: workerRuntimeMode.processKind,
+    requestedRunWorkers: workerRuntimeMode.requestedRunWorkers
   });
+  if (!entrypointRuntimeMode.enabled) {
+    logger.info('[worker-runtime] start skipped', {
+      module: 'job-runner',
+      disabledReason: entrypointRuntimeMode.disabledReason,
+      processKind: workerRuntimeMode.processKind,
+      requestedRunWorkers: workerRuntimeMode.requestedRunWorkers
+    });
+    return;
+  }
+
   logger.info('[worker-runtime] start requested', {
     module: 'job-runner',
     workerId: runtimeSettings.baseWorkerId,
