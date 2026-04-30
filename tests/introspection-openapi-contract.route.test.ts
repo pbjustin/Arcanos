@@ -41,11 +41,13 @@ describe('custom GPT OpenAPI contract route', () => {
     expect(requestExampleActions).toEqual(
       expect.arrayContaining(['dag.capabilities', 'dag.dispatch', 'dag.status', 'dag.trace'])
     );
+    expect(requestExampleActions).not.toContain('system_state');
 
-    const diagnosticsControlActionEnum =
-      response.body.components?.schemas?.GptDispatcherDiagnosticsResponse?.properties?.controlActions
-        ?.items?.enum;
-    expect(diagnosticsControlActionEnum).toEqual(['diagnostics', 'system_state']);
+    const diagnosticsControlActionsSchema =
+      response.body.components?.schemas?.GptDispatcherDiagnosticsResponse?.properties
+        ?.controlActions;
+    expect(diagnosticsControlActionsSchema?.maxItems).toBe(0);
+    expect(diagnosticsControlActionsSchema?.items?.enum).toBeUndefined();
     expect(JSON.stringify(requestExamples)).not.toContain('runtime.inspect');
     expect(JSON.stringify(requestExamples)).not.toContain('workers.status');
   });

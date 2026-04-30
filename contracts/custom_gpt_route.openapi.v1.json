@@ -166,12 +166,13 @@
                       "action": "get_status",
                       "error": {
                         "code": "CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT",
-                        "message": "Runtime diagnostics, worker state, tracing, queue inspection, and job lookups must use direct control-plane endpoints, /gpt-access/*, or POST /mcp. Do not send control requests through POST /gpt/{gptId}."
+                        "message": "Runtime diagnostics, worker state, tracing, queue inspection, system state, and job lookups must use direct control-plane endpoints, /gpt-access/*, /brain, or POST /mcp. Do not send control requests through POST /gpt/{gptId}."
                       },
                       "canonical": {
                         "jobStatus": "/jobs/{jobId}",
                         "jobResult": "/jobs/{jobId}/result",
-                        "gptAccessJobResult": "/gpt-access/jobs/result"
+                        "gptAccessJobResult": "/gpt-access/jobs/result",
+                        "systemState": "/brain"
                       }
                     }
                   },
@@ -208,12 +209,16 @@
                       "action": "runtime.inspect",
                       "error": {
                         "code": "CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT",
-                        "message": "Runtime diagnostics, worker state, tracing, and queue inspection must use direct control-plane endpoints or POST /mcp. Do not send runtime control requests through POST /gpt/{gptId}."
+                        "message": "Runtime diagnostics, worker state, tracing, queue inspection, system state, and job lookups must use direct control-plane endpoints, /gpt-access/*, /brain, or POST /mcp. Do not send control requests through POST /gpt/{gptId}."
                       },
                       "canonical": {
                         "status": "/status",
                         "workers": "/workers/status",
                         "workerHealth": "/worker-helper/health",
+                        "systemState": "/brain",
+                        "jobStatus": "/jobs/{jobId}",
+                        "jobResult": "/jobs/{jobId}/result",
+                        "gptAccessJobResult": "/gpt-access/jobs/result",
                         "selfHeal": "/status/safety/self-heal",
                         "mcp": "/mcp"
                       }
@@ -245,10 +250,10 @@
                       "action": "runtime.unknown",
                       "error": {
                         "code": "UNSUPPORTED_GPT_ACTION",
-                        "message": "Unsupported control action 'runtime.unknown'. Supported control actions: diagnostics, system_state."
+                        "message": "Unsupported control action 'runtime.unknown'. Supported control actions: none."
                       },
                       "canonical": {
-                        "supportedActions": "diagnostics, system_state"
+                        "supportedActions": "none"
                       }
                     }
                   },
@@ -352,7 +357,7 @@
       "GptRouteRequest": {
         "type": "object",
         "additionalProperties": true,
-        "description": "Universal GPT-route request for writing actions. action is an open string field so callers can send canonical async bridge actions, module actions, and the safe DAG bridge actions through POST /gpt/{gptId}. A body gptId is optional for generated tool clients and must match the path gptId when present. Diagnostics, job lookups, runtime inspection, worker status, queue inspection, self-heal status, MCP calls, unsupported dag.* actions, and arbitrary internal endpoint forwarding are rejected. root.deep_diagnostics is private, root-only, and authorized exclusively with the configured Bearer token.",
+        "description": "Universal GPT-route request for writing actions. action is an open string field so callers can send canonical async bridge actions, module actions, and the safe DAG bridge actions through POST /gpt/{gptId}. A body gptId is optional for generated tool clients and must match the path gptId when present. Diagnostics, system_state, job lookups, runtime inspection, worker status, queue inspection, self-heal status, MCP calls, unsupported dag.* actions, and arbitrary internal endpoint forwarding are rejected. root.deep_diagnostics is private, root-only, and authorized exclusively with the configured Bearer token.",
         "properties": {
           "gptId": {
             "type": "string",
@@ -362,7 +367,7 @@
           "action": {
             "type": "string",
             "minLength": 1,
-            "description": "Requested action name. Canonical writing-plane built-ins include query, query_and_wait, dag.capabilities, dag.dispatch, dag.status, and dag.trace. Module-specific action names are also allowed. Diagnostics, job lookup, and unsupported reserved control action names are rejected with HTTP 400. Private root.deep_diagnostics is available only to the configured root diagnostics allowlist."
+            "description": "Requested action name. Canonical writing-plane built-ins include query, query_and_wait, dag.capabilities, dag.dispatch, dag.status, and dag.trace. Module-specific action names are also allowed. Diagnostics, system_state, job lookup, and unsupported reserved control action names are rejected with HTTP 400. Private root.deep_diagnostics is available only to the configured root diagnostics allowlist."
           },
           "operationId": {
             "type": "string",
@@ -540,54 +545,6 @@
           }
         ]
       },
-      "GetStatusActionRequest": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "action",
-          "payload"
-        ],
-        "properties": {
-          "action": {
-            "const": "get_status"
-          },
-          "payload": {
-            "$ref": "#/components/schemas/JobLookupPayload"
-          }
-        }
-      },
-      "GetResultActionRequest": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "action",
-          "payload"
-        ],
-        "properties": {
-          "action": {
-            "const": "get_result"
-          },
-          "payload": {
-            "$ref": "#/components/schemas/JobLookupPayload"
-          }
-        }
-      },
-      "SystemStateActionRequest": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "action"
-        ],
-        "properties": {
-          "action": {
-            "const": "system_state"
-          },
-          "payload": {
-            "type": "object",
-            "additionalProperties": true
-          }
-        }
-      },
       "ModuleActionRequest": {
         "allOf": [
           {
@@ -677,19 +634,19 @@
               "enum": [
                 "query",
                 "query_and_wait",
-                "diagnostics",
-                "get_status",
-                "get_result"
+                "dag.capabilities",
+                "dag.dispatch",
+                "dag.status",
+                "dag.trace"
               ]
             }
           },
           "controlActions": {
             "type": "array",
+            "description": "No public direct control actions are exposed through /gpt/{gptId}; control-plane reads use direct endpoints.",
+            "maxItems": 0,
             "items": {
-              "enum": [
-                "diagnostics",
-                "system_state"
-              ]
+              "type": "string"
             }
           },
           "canonicalEndpoints": {

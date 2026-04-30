@@ -263,12 +263,11 @@ def request_system_state(
     gpt_id: Optional[str] = None,
 ) -> BackendResponse[dict[str, Any]]:
     """
-    Purpose: Request governed backend system state from the canonical daemon GPT route.
+    Purpose: Request governed backend system state from the direct `/brain` system_state endpoint.
     Inputs/Outputs: optional metadata and optimistic-lock update payload; returns raw state JSON.
-    Edge cases: update writes require both expected_version and patch fields together; blank GPT ids fall back to the configured daemon GPT.
+    Edge cases: update writes require both expected_version and patch fields together; gpt_id is accepted for signature compatibility but does not affect routing.
     """
-    route = resolve_backend_chat_route(gpt_id)
-    payload = _build_backend_payload(action="system_state")
+    payload = _build_backend_payload(mode="system_state")
 
     normalized_metadata = client._normalize_metadata(metadata)
     if normalized_metadata is not None:
@@ -297,7 +296,7 @@ def request_system_state(
         payload["expectedVersion"] = expected_version
         payload["patch"] = dict(patch)
 
-    response = client._request_json("post", route.endpoint, payload)
+    response = client._request_json("post", "/brain", payload)
     if not response.ok or not response.value:
         # //audit assumption: response must be ok; risk: backend failure; invariant: ok response; strategy: return structured error.
         return BackendResponse(ok=False, error=response.error)

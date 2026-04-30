@@ -490,7 +490,7 @@ class BackendApiClient:
         gpt_id: Optional[str] = None,
     ) -> BackendResponse[dict[str, Any]]:
         """
-        Purpose: Request backend system state through the canonical daemon GPT route.
+        Purpose: Request backend system state through the direct `/brain` system_state endpoint.
         Inputs/Outputs: optional metadata and optimistic-lock patch fields; returns raw state payload.
         Edge cases: returns structured validation errors for partial update payloads.
         """

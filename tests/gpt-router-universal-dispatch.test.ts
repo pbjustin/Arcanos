@@ -1029,7 +1029,7 @@ describe('gpt router universal dispatch', () => {
           code: 'UNSUPPORTED_GPT_ACTION',
         }),
         canonical: expect.objectContaining({
-          supportedActions: 'diagnostics, system_state',
+          supportedActions: 'none',
         }),
         _route: expect.objectContaining({
           gptId: 'arcanos-core',

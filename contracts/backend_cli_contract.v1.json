@@ -45,6 +45,13 @@
       "plane": "control",
       "canonicalAction": "get_result",
       "preferredClientSurface": "Direct canonical job-result endpoint for agent and tool clients."
+    },
+    "request_system_state": {
+      "endpoint": "/brain",
+      "method": "POST",
+      "plane": "control",
+      "canonicalAction": "system_state",
+      "preferredClientSurface": "Direct system-state endpoint using mode=system_state. Never route system-state reads or writes through /gpt/{gptId}."
     }
   },
   "endpoints": {
@@ -55,8 +62,7 @@
         "request_ask_with_domain",
         "request_chat_completion",
         "request_query",
-        "request_query_and_wait",
-        "request_system_state"
+        "request_query_and_wait"
       ],
       "requestFields": [
         "action",
@@ -72,6 +78,21 @@
         "timeoutMs",
         "waitForResultMs",
         "payload"
+      ]
+    },
+    "/brain": {
+      "method": "POST",
+      "tsRouteFile": "src/routes/ask/index.ts",
+      "pythonClientMethods": [
+        "request_system_state"
+      ],
+      "requestFields": [
+        "mode",
+        "metadata",
+        "sessionId",
+        "context",
+        "expectedVersion",
+        "patch"
       ]
     },
     "/jobs/{id}": {

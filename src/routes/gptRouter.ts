@@ -362,13 +362,16 @@ function buildDispatcherSubsystemBindings() {
     workers: {
       statusEndpoint: GPT_DISPATCHER_CANONICAL_ENDPOINTS.workers,
       helperHealthEndpoint: GPT_DISPATCHER_CANONICAL_ENDPOINTS.workerHealth,
-      controlActions: ['workers.status', 'queue.inspect']
+      controlActions: [],
+      blockedActions: ['workers.status', 'queue.inspect']
     },
     controlPlane: {
       statusEndpoint: GPT_DISPATCHER_CANONICAL_ENDPOINTS.status,
       selfHealEndpoint: GPT_DISPATCHER_CANONICAL_ENDPOINTS.selfHeal,
-      controlActions: ['runtime.inspect', 'self_heal.status', 'system_state', 'diagnostics'],
+      controlActions: [],
+      blockedActions: ['runtime.inspect', 'self_heal.status', 'system_state', 'diagnostics'],
       gptAccessEndpoint: '/gpt-access/diagnostics/deep',
+      systemStateEndpoint: '/brain',
       jobStatusEndpoint: '/jobs/{jobId}',
       jobResultEndpoint: '/jobs/{jobId}/result'
     },

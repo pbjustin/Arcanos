@@ -154,7 +154,7 @@ When the assistant proposes patches/commands, the CLI:
 
 ## Troubleshooting
 - Backend route failures: verify `BACKEND_URL`, backend health, and auth headers.
-- `410 Gone` from `/brain` or old ask-style routes: migrate the caller to `/gpt/<gpt-id>`; `ASK_ROUTE_MODE=compat` is only a temporary backend migration switch.
+- `410 Gone` from old ask-style routes: migrate writing calls to `/gpt/<gpt-id>`. `request_system_state` remains a direct `/brain` call with `mode=system_state`.
 - Patch apply fails: ensure repo is a `git` repo and patch paths are correct.
 - Safe mode triggered: use `/safemode off` after reviewing failures and logs.
 - History DB location: controlled by `HISTORY_DB_PATH`.

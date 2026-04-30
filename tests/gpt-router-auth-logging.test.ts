@@ -403,7 +403,7 @@ describe('gpt router auth logging', () => {
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
-  it('maps system state conflicts to HTTP 409 on the canonical route', async () => {
+  it('rejects system_state actions on the GPT writing route before state execution', async () => {
     mockExecuteSystemStateRequest.mockImplementation(() => {
       throw new MockSystemStateConflictError({
         expectedVersion: 1,
@@ -420,27 +420,31 @@ describe('gpt router auth logging', () => {
       .post('/gpt/arcanos-daemon')
       .send({ action: 'system_state' });
 
-    expect(response.status).toBe(409);
-    expect(response.body).toEqual({
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual(expect.objectContaining({
       ok: false,
+      gptId: 'arcanos-daemon',
+      action: 'system_state',
+      route: '/gpt/:gptId',
+      traceId: expect.any(String),
+      error: expect.objectContaining({
+        code: 'CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT',
+        message: expect.stringContaining('/brain'),
+      }),
+      canonical: expect.objectContaining({
+        systemState: '/brain',
+      }),
       _route: expect.objectContaining({
         gptId: 'arcanos-daemon',
         action: 'system_state',
-        route: 'system_state',
+        route: 'control_guard',
       }),
-      error: {
-        code: 'SYSTEM_STATE_CONFLICT',
-        message: 'system_state update conflict',
-        details: {
-          expectedVersion: 1,
-          currentVersion: 2,
-        },
-      },
-    });
+    }));
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
+    expect(mockExecuteSystemStateRequest).not.toHaveBeenCalled();
   });
 
-  it('allows system_state reads without update fields on the canonical route', async () => {
+  it('rejects system_state reads on the GPT writing route', async () => {
     mockExecuteSystemStateRequest.mockResolvedValue({
       mode: 'system_state',
     });
@@ -454,24 +458,32 @@ describe('gpt router auth logging', () => {
       .post('/gpt/arcanos-daemon')
       .send({ action: 'system_state' });
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(400);
     expect(response.body).toEqual(
       expect.objectContaining({
-        ok: true,
-        result: {
-          mode: 'system_state',
-        },
+        ok: false,
+        gptId: 'arcanos-daemon',
+        action: 'system_state',
+        route: '/gpt/:gptId',
+        traceId: expect.any(String),
+        error: expect.objectContaining({
+          code: 'CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT',
+        }),
+        canonical: expect.objectContaining({
+          systemState: '/brain',
+        }),
         _route: expect.objectContaining({
           gptId: 'arcanos-daemon',
           action: 'system_state',
-          route: 'system_state',
+          route: 'control_guard',
         }),
       })
     );
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
+    expect(mockExecuteSystemStateRequest).not.toHaveBeenCalled();
   });
 
-  it('accepts operation aliases for system_state on the canonical control route', async () => {
+  it('rejects operation aliases for system_state on the GPT writing route', async () => {
     mockExecuteSystemStateRequest.mockResolvedValue({
       mode: 'system_state',
     });
@@ -485,21 +497,29 @@ describe('gpt router auth logging', () => {
       .post('/gpt/arcanos-daemon')
       .send({ operation: 'system_state' });
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(400);
     expect(response.body).toEqual(
       expect.objectContaining({
-        ok: true,
-        result: {
-          mode: 'system_state',
-        },
+        ok: false,
+        gptId: 'arcanos-daemon',
+        action: 'system_state',
+        route: '/gpt/:gptId',
+        traceId: expect.any(String),
+        error: expect.objectContaining({
+          code: 'CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT',
+        }),
+        canonical: expect.objectContaining({
+          systemState: '/brain',
+        }),
         _route: expect.objectContaining({
           gptId: 'arcanos-daemon',
           action: 'system_state',
-          route: 'system_state',
+          route: 'control_guard',
         }),
       })
     );
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
+    expect(mockExecuteSystemStateRequest).not.toHaveBeenCalled();
   });
 
   it('rejects runtime control prompts before dispatching to the write plane', async () => {
@@ -521,15 +541,15 @@ describe('gpt router auth logging', () => {
       traceId: expect.any(String),
       error: {
         code: 'CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT',
-        message: 'Runtime diagnostics, worker state, tracing, and queue inspection must use direct control-plane endpoints or POST /mcp. Do not send runtime control requests through POST /gpt/{gptId}.',
+        message: expect.stringContaining('direct control-plane endpoints'),
       },
-      canonical: {
+      canonical: expect.objectContaining({
         status: '/status',
         workers: '/workers/status',
         workerHealth: '/worker-helper/health',
         selfHeal: '/status/safety/self-heal',
         mcp: '/mcp',
-      },
+      }),
       _route: expect.objectContaining({
         gptId: 'arcanos-core',
         route: 'control_guard',

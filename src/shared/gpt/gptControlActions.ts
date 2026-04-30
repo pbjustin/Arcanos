@@ -1,9 +1,8 @@
-export const GPT_PUBLIC_DIRECT_CONTROL_ACTIONS = [
-  'diagnostics',
-  'system_state',
-] as const;
+export const GPT_PUBLIC_DIRECT_CONTROL_ACTIONS: readonly [] = [];
 
 export const GPT_BLOCKED_DIRECT_CONTROL_ACTIONS = [
+  'diagnostics',
+  'system_state',
   'runtime.inspect',
   'workers.status',
   'queue.inspect',
