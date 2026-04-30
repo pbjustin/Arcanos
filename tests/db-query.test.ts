@@ -92,8 +92,8 @@ describe('db query helper', () => {
       expect.objectContaining({
         operation: 'select',
         queryHash: expect.any(String),
-        durationMs: 145,
-        durationKind: 'app_wall_clock',
+        durationMs: 85,
+        durationKind: 'client_query_round_trip',
         measurementKind: 'client_wall_clock',
         slowThresholdMs: 50,
         slowReasons: ['connection_acquisition', 'client_query_round_trip', 'app_wall_clock'],
@@ -186,6 +186,8 @@ describe('db query helper', () => {
       'db.query.slow',
       expect.objectContaining({
         connectionAcquireMs: 80,
+        durationMs: 10,
+        durationKind: 'client_query_round_trip',
         clientQueryRoundTripMs: 10,
         appWallClockMs: 90,
         slowReasons: ['connection_acquisition', 'app_wall_clock'],

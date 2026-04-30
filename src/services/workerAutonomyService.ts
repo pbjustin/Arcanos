@@ -504,7 +504,7 @@ export class WorkerAutonomyService {
       return baseIntervalMs;
     }
 
-    const staleBackoffMs = Math.max(baseIntervalMs, this.settings.staleAfterMs * 3);
+    const staleBackoffMs = Math.max(baseIntervalMs, Math.floor(this.settings.staleAfterMs * 0.8));
     const idleCeilingMs = Math.max(baseIntervalMs, Math.floor(this.settings.watchdogIdleMs / 2));
     return Math.min(staleBackoffMs, idleCeilingMs);
   }

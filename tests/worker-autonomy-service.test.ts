@@ -1658,7 +1658,7 @@ describe('workerAutonomyService', () => {
       failureWebhookCooldownMs: 300_000
     });
 
-    expect(service.getRecommendedWorkerHeartbeatDelayMs()).toBe(30_000);
+    expect(service.getRecommendedWorkerHeartbeatDelayMs()).toBe(8_000);
 
     await service.markJobStarted({
       id: 'job-active',

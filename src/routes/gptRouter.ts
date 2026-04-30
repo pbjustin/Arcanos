@@ -2162,26 +2162,22 @@ router.post("/:gptId", async (req, res, next) => {
           );
         }
 
-        const shouldRunEarlyPlaneClassification = !isGptDagAction(requestedAction);
-        const planeClassification = shouldRunEarlyPlaneClassification
-          ? classifyGptRequestPlane({
-              body: effectiveBody,
-              promptText,
-              requestedAction
-            })
-          : null;
-        if (planeClassification) {
-          requestLogger?.info?.('gpt.request.classified', {
-            endpoint: req.originalUrl,
-            gptId: incomingGptId,
-            action: planeClassification.action,
-            plane: planeClassification.plane,
-            kind: planeClassification.kind,
-            reason: planeClassification.reason
-          });
-        }
+        const planeClassification = classifyGptRequestPlane({
+          body: effectiveBody,
+          promptText,
+          requestedAction
+        });
+        requestLogger?.info?.('gpt.request.classified', {
+          endpoint: req.originalUrl,
+          gptId: incomingGptId,
+          action: planeClassification.action,
+          plane: planeClassification.plane,
+          kind: planeClassification.kind,
+          reason: planeClassification.reason
+        });
 
-        if (planeClassification?.plane === 'reject') {
+        // DAG bridge actions classify as control-plane, but this route owns their bridge-specific responses.
+        if (planeClassification.plane === 'reject' && !isGptDagAction(requestedAction)) {
           if (planeClassification.kind === 'job_lookup' && planeClassification.jobLookup) {
             const jobLookup = planeClassification.jobLookup;
             const outcome = jobLookup.ok ? 'rejected' : 'missing_job_id';
@@ -2366,22 +2362,6 @@ router.post("/:gptId", async (req, res, next) => {
             dagBridgeResponse.logEvent,
             dagBridgeResponse.statusCode
           );
-        }
-
-        if (!planeClassification) {
-          requestLogger?.error?.('gpt.request.classification_missing_after_dag_guard', {
-            endpoint: req.originalUrl,
-            gptId: incomingGptId,
-            requestId,
-            requestedAction
-          });
-          return res.status(500).json({
-            ok: false,
-            error: {
-              code: 'GPT_ROUTE_CLASSIFICATION_MISSING',
-              message: 'GPT route classification was unavailable after DAG guard.'
-            }
-          });
         }
 
         if (queryRequested && !promptText) {
