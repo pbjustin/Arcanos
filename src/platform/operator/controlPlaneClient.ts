@@ -126,6 +126,10 @@ export type OperatorFetchLike = (
 }>;
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const APPROVED_GPT_ACCESS_ENDPOINT_VALUES = new Set<string>([
+  ...Object.values(APPROVED_CONTROL_PLANE_ENDPOINTS),
+  ...Object.values(APPROVED_GPT_REASONING_ENDPOINTS)
+]);
 const UNSAFE_TRANSPORT_FIELDS = new Set([
   'proto',
   'apikey',
@@ -159,6 +163,35 @@ const UNSAFE_TRANSPORT_FIELDS = new Set([
   'uri',
   'url'
 ]);
+const UNSAFE_TRANSPORT_FIELD_FRAGMENTS = [
+  'apikey',
+  'authorization',
+  'bearer',
+  'callbackurl',
+  'cookie',
+  'endpoint',
+  'header',
+  'href',
+  'password',
+  'proxy',
+  'rawheader',
+  'rawsql',
+  'secret',
+  'sql',
+  'target',
+  'transport',
+  'uri',
+  'url'
+];
+const UNSAFE_TOKEN_FIELD_FRAGMENTS = [
+  'accesstoken',
+  'authtoken',
+  'bearertoken',
+  'openaitoken',
+  'railwaytoken',
+  'refreshtoken',
+  'sessiontoken'
+];
 
 export class OperatorControlPlaneRequestError extends Error {
   readonly code = 'OPERATOR_CONTROL_PLANE_REQUEST_REJECTED';
@@ -181,8 +214,29 @@ function normalizeFieldName(key: string): string {
   return key.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
+function isUnsafeTransportFieldName(key: string): boolean {
+  const normalizedKey = normalizeFieldName(key);
+  return UNSAFE_TRANSPORT_FIELDS.has(normalizedKey) ||
+    UNSAFE_TRANSPORT_FIELD_FRAGMENTS.some((fragment) => normalizedKey.includes(fragment)) ||
+    UNSAFE_TOKEN_FIELD_FRAGMENTS.some((fragment) => normalizedKey.includes(fragment));
+}
+
 function formatPath(path: string[]): string {
   return path.length > 0 ? path.join('.') : '<root>';
+}
+
+function assertApprovedGptAccessPath(path: unknown): asserts path is ApprovedGptAccessEndpoint {
+  if (typeof path !== 'string' || path.length === 0) {
+    fail('GPT access request path must be an approved relative endpoint.');
+  }
+
+  if (/^[a-z][a-z0-9+.-]*:/i.test(path) || path.startsWith('//')) {
+    fail('GPT access request path must not be an absolute URL.');
+  }
+
+  if (!APPROVED_GPT_ACCESS_ENDPOINT_VALUES.has(path)) {
+    fail(`GPT access request path "${path}" is not approved.`);
+  }
 }
 
 export function assertNoUnsafeTransportFields(value: unknown, label: string = 'request'): void {
@@ -212,8 +266,7 @@ export function assertNoUnsafeTransportFields(value: unknown, label: string = 'r
     }
 
     Object.entries(current.value as Record<string, unknown>).forEach(([key, entry]) => {
-      const normalizedKey = normalizeFieldName(key);
-      if (UNSAFE_TRANSPORT_FIELDS.has(normalizedKey)) {
+      if (isUnsafeTransportFieldName(key)) {
         fail(`${label} contains unsafe transport field "${key}".`);
       }
       stack.push({ value: entry, path: [...current.path, key], ancestors: nextAncestors });
@@ -292,6 +345,7 @@ export function createFetchGptAccessTransport(
     async request<TPayload = unknown>(
       request: GptAccessTransportRequest
     ): Promise<GptAccessClientResult<TPayload>> {
+      assertApprovedGptAccessPath(request.path);
       const url = new URL(request.path, baseUrl);
       const headers: Record<string, string> = {
         accept: 'application/json',

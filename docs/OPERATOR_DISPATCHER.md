@@ -105,3 +105,45 @@ npm run validate:railway
 ```
 
 Deploy only after validation passes.
+
+## Railway Preview Verification
+
+For PR previews, do not use production URLs. Locate the preview environment and web service URL from the Railway bot PR comment or GitHub status contexts:
+
+```bash
+gh pr view <pr-number> --json comments,statusCheckRollup
+gh pr checks <pr-number>
+```
+
+Use the web/API service URL from the preview environment for backend smoke tests. The worker service may also have a Railway URL, but it is not the primary API surface unless a specific worker health probe is being checked.
+
+Basic preview health probes:
+
+```bash
+PREVIEW_URL="https://<web-service>-<preview-environment>.up.railway.app"
+curl -sS "$PREVIEW_URL/health"
+curl -sS "$PREVIEW_URL/healthz"
+```
+
+Run authenticated GPT access probes through Railway-provided preview variables so the bearer token is not printed or stored in shell history:
+
+```bash
+railway run --project <project-id> --environment <preview-environment> --service <web-service> -- \
+  node -e "console.log(Boolean(process.env.ARCANOS_GPT_ACCESS_TOKEN))"
+```
+
+Manual preview smoke targets:
+
+```text
+GET  /gpt-access/status
+GET  /gpt-access/workers/status
+GET  /gpt-access/worker-helper/health
+POST /gpt-access/diagnostics/deep
+POST /gpt-access/db/explain
+POST /gpt-access/logs/query
+POST /gpt-access/mcp
+POST /gpt-access/jobs/create
+POST /gpt-access/jobs/result
+```
+
+`OperatorIntentDispatcher` is a TypeScript library adapter, not a public HTTP route. End-to-end preview verification should run the built dispatcher locally with a `FetchGptAccessTransport` pointed at the preview URL, using `railway run` to inject `ARCANOS_GPT_ACCESS_TOKEN`. Verify the control-plane matrix resolves to `/gpt-access/*`, GPT reasoning requests create jobs through `/gpt-access/jobs/create`, and hybrid requests call the control-plane endpoint before creating the GPT job with sanitized context.

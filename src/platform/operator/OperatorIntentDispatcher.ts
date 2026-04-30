@@ -148,17 +148,51 @@ const HYBRID_CONNECTOR_PATTERN = /\b(?:and|then|after|with)\b/i;
 const SENSITIVE_KEY_PATTERN = /\b(?:authorization|cookie|set-cookie|api[_-]?key|token|secret|password|session(?:id)?|database[_-]?url|headers?|rawheaders?)\b/i;
 const FULL_ENV_KEY_PATTERN = /^(?:env|fullenv|rawenv|processenv|environmentvariables)$/i;
 const UNSAFE_OBJECT_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+const SENSITIVE_NORMALIZED_KEY_FRAGMENTS = [
+  'apikey',
+  'authorization',
+  'bearer',
+  'cookie',
+  'databaseurl',
+  'header',
+  'openaiapikey',
+  'password',
+  'rawheader',
+  'secret',
+  'sessionid'
+];
+const SENSITIVE_NORMALIZED_TOKEN_KEY_FRAGMENTS = [
+  'accesstoken',
+  'authtoken',
+  'bearertoken',
+  'openaitoken',
+  'railwaytoken',
+  'refreshtoken',
+  'sessiontoken'
+];
 const STRING_REDACTIONS: Array<[RegExp, string]> = [
   [/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi, 'Bearer [REDACTED]'],
   [/\bsk-[A-Za-z0-9_-]{16,}\b/g, '[REDACTED_OPENAI_KEY]'],
   [/\b(?:railway|rwy)[_-]?[A-Za-z0-9]{16,}\b/gi, '[REDACTED_RAILWAY_TOKEN]'],
   [/\b(?:postgres|postgresql|mysql|mongodb):\/\/[^\s"'<>]+/gi, '[REDACTED_DATABASE_URL]'],
   [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, '[REDACTED_JWT]'],
-  [/\b(authorization|cookie|set-cookie|api[_-]?key|token|secret|password|session(?:id)?|database_url)\s*[:=]\s*["']?[^"'\s,;}]+/gi, '$1=[REDACTED]']
+  [/\b(authorization(?:[_-]?header)?|cookie(?:[_-]?header)?|set-cookie|api[_-]?key|openai[_-]?api[_-]?key|access[_-]?token|auth[_-]?token|bearer[_-]?token|openai[_-]?token|railway[_-]?token|refresh[_-]?token|session[_-]?token|token|secret|password|session(?:id)?|database[_-]?url)\s*[:=]\s*["']?[^"'\s,;}]+/gi, '$1=[REDACTED]']
 ];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizePayloadKey(key: string): string {
+  return key.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function isSensitivePayloadKey(key: string): boolean {
+  const normalizedKey = normalizePayloadKey(key);
+  return SENSITIVE_KEY_PATTERN.test(key) ||
+    FULL_ENV_KEY_PATTERN.test(normalizedKey) ||
+    SENSITIVE_NORMALIZED_KEY_FRAGMENTS.some((fragment) => normalizedKey.includes(fragment)) ||
+    SENSITIVE_NORMALIZED_TOKEN_KEY_FRAGMENTS.some((fragment) => normalizedKey.includes(fragment));
 }
 
 function toJsonValue(value: unknown): JsonValue {
@@ -502,7 +536,7 @@ export function sanitizeOperatorControlPlaneResult(payload: unknown): unknown {
       return '[REDACTED_DEPTH]';
     }
 
-    if (typeof key === 'string' && (SENSITIVE_KEY_PATTERN.test(key) || FULL_ENV_KEY_PATTERN.test(key))) {
+    if (typeof key === 'string' && isSensitivePayloadKey(key)) {
       return '[REDACTED]';
     }
 
@@ -607,15 +641,21 @@ function buildReasoningJobRequest(
       operatorRequest: redactString(request.input),
       controlPlane: toJsonValue({
         selectedTool: hybridContext.controlPlane.selectedTool,
-        endpoint: hybridContext.controlPlane.endpoint,
-        trace: hybridContext.controlPlane.trace,
-        sanitizedResult: hybridContext.controlPlane.sanitizedSummary
+        gatewayPath: hybridContext.controlPlane.endpoint,
+        trace: {
+          selectedTool: hybridContext.controlPlane.trace.selectedTool,
+          gatewayPath: hybridContext.controlPlane.trace.endpoint,
+          traceId: hybridContext.controlPlane.trace.traceId,
+          requestId: hybridContext.controlPlane.trace.requestId,
+          status: hybridContext.controlPlane.trace.status,
+          timestamp: hybridContext.controlPlane.trace.timestamp
+        }
       })
     };
     const context = [
       'Sanitized control-plane observation for operator reasoning.',
       `Route: ${hybridContext.classification.selectedTool}`,
-      `Endpoint: ${hybridContext.controlPlane.endpoint}`,
+      `Gateway path: ${hybridContext.controlPlane.endpoint}`,
       hybridContext.sanitizedContext
     ].join('\n');
 

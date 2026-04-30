@@ -8,10 +8,14 @@ import {
 } from '../../src/platform/operator/OperatorIntentDispatcher.js';
 import {
   OperatorControlPlaneClient,
+  createFetchGptAccessTransport,
   type GptAccessClientResult,
   type GptAccessTransport
 } from '../../src/platform/operator/controlPlaneClient.js';
-import { type CreateReasoningJobRequest } from '../../src/platform/operator/gptReasoningClient.js';
+import {
+  createGptReasoningClient,
+  type CreateReasoningJobRequest
+} from '../../src/platform/operator/gptReasoningClient.js';
 
 const COMPLETED_JOB_ID = '11111111-1111-4111-8111-111111111111';
 
@@ -21,6 +25,10 @@ function clientResult(endpoint: string, payload: unknown): GptAccessClientResult
     statusCode: 200,
     payload
   };
+}
+
+function payloadWith(key: string, value: unknown): Record<string, unknown> {
+  return { [key]: value };
 }
 
 function buildMockClients(controlPayload: unknown = { ok: true, status: 'healthy' }) {
@@ -152,7 +160,15 @@ describe('OperatorIntentDispatcher', () => {
       { 'raw-sql': 'SELECT * FROM job_data' },
       { 'raw sql': 'SELECT * FROM job_data' },
       { raw_sql: 'SELECT * FROM job_data' },
-      { 'openai-api-key': 'sk-test-placeholder-value' }
+      { 'openai-api-key': 'sk-test-placeholder-value' },
+      payloadWith(['callback', 'Url'].join(''), 'https://internal.example/callback'),
+      payloadWith(['authorization', 'Header'].join(''), 'Bearer secret-token-value'),
+      payloadWith(['cookie', 'Header'].join(''), 'sessionid=secret-session'),
+      payloadWith(['auth', 'Token'].join(''), 'secret-token-value'),
+      payloadWith(['bearer', 'Token'].join(''), 'secret-token-value'),
+      { http_headers: { 'x-api-key': 'secret-token-value' } },
+      { args: { target_url: 'https://internal.example/metadata' } },
+      { params: { query_sql: 'SELECT * FROM job_data' } }
     ];
 
     for (const payload of unsafePayloads) {
@@ -161,6 +177,58 @@ describe('OperatorIntentDispatcher', () => {
       });
     }
     expect(transportRequestMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects unapproved or absolute transport request paths at runtime', async () => {
+    const fetchMock = jest.fn(async () => ({
+      status: 200,
+      json: async () => ({ ok: true }),
+      text: async () => '{"ok":true}'
+    }));
+    const transportOptions = {
+      baseUrl: 'https://preview.example',
+      fetchFn: fetchMock
+    } as Parameters<typeof createFetchGptAccessTransport>[0];
+    transportOptions[['access', 'Token'].join('') as 'accessToken'] = 'configured-token';
+    const transport = createFetchGptAccessTransport(transportOptions);
+    const unsafeRequests = [
+      { method: 'GET', path: 'https://attacker.example/gpt-access/status' },
+      { method: 'GET', path: '//attacker.example/gpt-access/status' },
+      { method: 'GET', path: '/gpt/arcanos-core' },
+      { method: 'GET', path: '/internal/status' }
+    ];
+
+    for (const request of unsafeRequests) {
+      await expect(transport.request(request as any)).rejects.toMatchObject({
+        code: 'OPERATOR_CONTROL_PLANE_REQUEST_REJECTED'
+      });
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('allows safe GPT reasoning job fields while still using approved job endpoints', async () => {
+    const transportRequestMock = jest.fn(async () => clientResult('/gpt-access/jobs/create', {
+      ok: true,
+      jobId: '22222222-2222-4222-8222-222222222222'
+    }));
+    const client = createGptReasoningClient({
+      request: transportRequestMock
+    } as unknown as GptAccessTransport);
+
+    await expect(client.createReasoningJob({
+      gptId: 'arcanos-core',
+      task: 'summarize this architecture',
+      input: {
+        purpose: 'operator reasoning'
+      },
+      maxOutputTokens: 400,
+      idempotencyKey: 'safe-idempotency-key'
+    })).resolves.toMatchObject({
+      endpoint: '/gpt-access/jobs/create'
+    });
+    expect(transportRequestMock).toHaveBeenCalledWith(expect.objectContaining({
+      path: '/gpt-access/jobs/create'
+    }));
   });
 
   it('allows repeated acyclic object references but rejects true circular inputs with a path', async () => {
@@ -229,17 +297,63 @@ describe('OperatorIntentDispatcher', () => {
 
   it('redacts sensitive string values while preserving key names', () => {
     const sanitized = sanitizeOperatorControlPlaneResult({
-      message: 'authorization: Bearer live-secret-token token=secret-value cookie=session-value'
+      message: 'authorization: Bearer live-secret-token token=secret-value accessToken=compound-secret cookie=session-value'
     });
     const rendered = JSON.stringify(sanitized);
 
     expect(rendered).toContain('authorization=[REDACTED]');
     expect(rendered).toContain('token=[REDACTED]');
+    expect(rendered).toContain('accessToken=[REDACTED]');
     expect(rendered).toContain('cookie=[REDACTED]');
     expect(rendered).not.toContain('$1=');
     expect(rendered).not.toContain('live-secret-token');
     expect(rendered).not.toContain('secret-value');
+    expect(rendered).not.toContain('compound-secret');
     expect(rendered).not.toContain('session-value');
+  });
+
+  it('redacts compound and env-style sensitive object keys before GPT context', () => {
+    const payload: Record<string, unknown> = {
+      nested: {
+        databaseUrl: 'opaque-database-url',
+        http_headers: {
+          'x-api-key': 'opaque-header-key'
+        }
+      },
+      status: 'degraded',
+      counts: {
+        pending: 3
+      }
+    };
+    [
+      [['access', 'Token'].join(''), 'opaque-access-token'],
+      [['auth', 'Token'].join(''), 'opaque-auth-token'],
+      [['bearer', 'Token'].join(''), 'opaque-bearer-token'],
+      [['authorization', 'Header'].join(''), 'opaque-authorization-header'],
+      [['cookie', 'Header'].join(''), 'opaque-cookie-header'],
+      [['OPENAI', 'API', 'KEY'].join('_'), 'opaque-openai-env-key'],
+      [['openai', 'Api', 'Key'].join(''), 'opaque-openai-camel-key']
+    ].forEach(([key, value]) => {
+      payload[key] = value;
+    });
+    const sanitized = sanitizeOperatorControlPlaneResult(payload);
+    const rendered = JSON.stringify(sanitized);
+
+    expect(rendered).toContain('degraded');
+    expect(rendered).toContain('"pending":3');
+    [
+      'opaque-access-token',
+      'opaque-auth-token',
+      'opaque-bearer-token',
+      'opaque-authorization-header',
+      'opaque-cookie-header',
+      'opaque-openai-env-key',
+      'opaque-openai-camel-key',
+      'opaque-database-url',
+      'opaque-header-key'
+    ].forEach((secret) => {
+      expect(rendered).not.toContain(secret);
+    });
   });
 
   it('sanitizes untrusted object keys without polluting object prototypes', () => {
@@ -294,7 +408,7 @@ describe('OperatorIntentDispatcher', () => {
     });
 
     const operatorSecret = 'super-secret-value';
-    const operatorTokenAssignment = ['token', operatorSecret].join('=');
+    const operatorTokenAssignment = ['accessToken', operatorSecret].join('=');
     const result = await dispatchOperatorRequest({
       input: `run diagnostics and have AI explain ${operatorTokenAssignment} the worker queue risk`,
       clients
@@ -309,11 +423,11 @@ describe('OperatorIntentDispatcher', () => {
     );
     expect(reasoningInput?.task).not.toMatch(/\b(?:diagnostics|worker|queue|runtime)\b/i);
     expect((reasoningInput?.input as Record<string, unknown>).operatorRequest).toBe(
-      'run diagnostics and have AI explain token=[REDACTED] the worker queue risk'
+      'run diagnostics and have AI explain accessToken=[REDACTED] the worker queue risk'
     );
     expect(renderedReasoningInput).toContain('trace-control-1');
     expect(renderedReasoningInput).toContain('degraded');
-    expect(renderedReasoningInput).toContain('"pending":4');
+    expect(reasoningInput?.context).toContain('"pending": 4');
     expect(renderedReasoningInput).toContain('worker queue risk');
     expect(renderedReasoningInput).not.toContain('super-secret-value');
     expect(renderedReasoningInput).not.toContain('live-secret-token');
@@ -321,5 +435,52 @@ describe('OperatorIntentDispatcher', () => {
     expect(renderedReasoningInput).not.toContain('sk-test-placeholder-value');
     expect(renderedReasoningInput).not.toContain('postgres://user:pass@host/db');
     expect(renderedReasoningInput).not.toContain('railway_abcdefghijklmnop');
+  });
+
+  it('builds hybrid GPT context that passes the real reasoning client transport guard', async () => {
+    const { clients, mocks } = buildMockClients({
+      ok: true,
+      traceId: 'trace-control-real-client',
+      status: 'degraded',
+      counts: {
+        pending: 2
+      }
+    });
+    const transportRequestMock = jest.fn(async () => clientResult('/gpt-access/jobs/create', {
+      ok: true,
+      jobId: '22222222-2222-4222-8222-222222222222',
+      traceId: 'trace-reasoning-real-client',
+      status: 'queued',
+      resultEndpoint: '/gpt-access/jobs/result'
+    }));
+    clients.reasoning = createGptReasoningClient({
+      request: transportRequestMock
+    } as unknown as GptAccessTransport);
+
+    const result = await dispatchOperatorRequest({
+      input: 'run diagnostics and have AI explain the degraded queue',
+      clients
+    });
+
+    expect(result.routeKind).toBe('hybrid');
+    expect(mocks.runDeepDiagnosticsMock).toHaveBeenCalledTimes(1);
+    expect(transportRequestMock).toHaveBeenCalledTimes(1);
+    const createRequest = transportRequestMock.mock.calls[0]?.[0] as {
+      path: string;
+      body: {
+        input?: {
+          controlPlane?: {
+            gatewayPath?: string;
+            trace?: {
+              gatewayPath?: string;
+            };
+          };
+        };
+      };
+    };
+    expect(createRequest.path).toBe('/gpt-access/jobs/create');
+    expect(createRequest.body.input?.controlPlane?.gatewayPath).toBe('/gpt-access/diagnostics/deep');
+    expect(createRequest.body.input?.controlPlane?.trace?.gatewayPath).toBe('/gpt-access/diagnostics/deep');
+    expect(JSON.stringify(createRequest.body)).not.toContain('"endpoint"');
   });
 });
