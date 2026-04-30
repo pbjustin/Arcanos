@@ -292,591 +292,74 @@ describe('async /gpt idempotency', () => {
     expect(response.headers['x-response-truncated']).toBeUndefined();
   });
 
-  it('returns stored completed job results for explicit get_result actions without enqueueing work', async () => {
-    getJobByIdMock.mockResolvedValue({
-      id: 'job-lookup-complete',
-      job_type: 'gpt',
-      status: 'completed',
-      created_at: '2026-04-06T10:00:00.000Z',
-      updated_at: '2026-04-06T10:00:03.000Z',
-      completed_at: '2026-04-06T10:00:03.000Z',
-      retention_until: null,
-      idempotency_until: null,
-      expires_at: null,
-      output: {
-        ok: true,
-        result: {
-          answer: 'stored output'
-        }
-      },
-      error_message: null
-    });
-
-    const response = await request(buildApp())
-      .post('/gpt/arcanos-core')
-      .send({
-        action: 'get_result',
-        payload: {
-          jobId: 'job-lookup-complete'
-        }
-      });
-
-    expect(response.status).toBe(200);
-    expect(response.headers['x-response-bytes']).toBeTruthy();
-    expect(response.body).toMatchObject({
-      ok: true,
-      action: 'get_result',
-      jobId: 'job-lookup-complete',
-      status: 'completed',
-      jobStatus: 'completed',
-      lifecycleStatus: 'completed',
-      createdAt: '2026-04-06T10:00:00.000Z',
-      updatedAt: '2026-04-06T10:00:03.000Z',
-      completedAt: '2026-04-06T10:00:03.000Z',
-      retentionUntil: null,
-      idempotencyUntil: null,
-      expiresAt: null,
-      poll: '/jobs/job-lookup-complete/result',
-      stream: '/jobs/job-lookup-complete/stream',
-      output: {
-        ok: true,
-        result: {
-          answer: 'stored output'
-        }
-      },
-      error: null,
-      result: {
-        jobId: 'job-lookup-complete',
-        status: 'completed',
-        jobStatus: 'completed',
-        lifecycleStatus: 'completed',
-        createdAt: '2026-04-06T10:00:00.000Z',
-        updatedAt: '2026-04-06T10:00:03.000Z',
-        completedAt: '2026-04-06T10:00:03.000Z',
-        retentionUntil: null,
-        idempotencyUntil: null,
-        expiresAt: null,
-        poll: '/jobs/job-lookup-complete/result',
-        stream: '/jobs/job-lookup-complete/stream',
-        result: {
-          ok: true,
-          result: {
-            answer: 'stored output'
+  describe('deprecated GPT-route job lookup compatibility', () => {
+    async function expectGptJobLookupControlRejected(options: {
+      gptId?: string;
+      action: string;
+      expectedAction?: string;
+      jobId?: string;
+    }) {
+      const gptId = options.gptId ?? 'arcanos-core';
+      const expectedAction = options.expectedAction ?? options.action.trim().toLowerCase();
+      const response = await request(buildApp())
+        .post(`/gpt/${gptId}`)
+        .send({
+          action: options.action,
+          payload: {
+            jobId: options.jobId ?? 'job-lookup-control'
           }
+        });
+
+      expect(response.status).toBe(400);
+      expect(response.headers['x-response-bytes']).toBeTruthy();
+      expect(response.body).toMatchObject({
+        ok: false,
+        gptId,
+        action: expectedAction,
+        route: '/gpt/:gptId',
+        traceId: expect.any(String),
+        error: {
+          code: 'CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT',
+          message: expect.stringContaining('/gpt-access/*')
         },
-        error: null
-      },
-      _route: expect.objectContaining({
-        gptId: 'arcanos-core',
-        action: 'get_result',
-        route: 'job_result'
-      })
-    });
-    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
-    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
-    expect(mockRouteGptRequest).not.toHaveBeenCalled();
-  });
-
-  it('accepts normalized get_result action variants without enqueueing work', async () => {
-    getJobByIdMock.mockResolvedValue({
-      id: 'job-lookup-normalized',
-      job_type: 'gpt',
-      status: 'completed',
-      created_at: '2026-04-06T10:00:00.000Z',
-      updated_at: '2026-04-06T10:00:03.000Z',
-      completed_at: '2026-04-06T10:00:03.000Z',
-      output: {
-        ok: true,
-        result: {
-          answer: 'normalized output'
-        }
-      },
-      error_message: null
-    });
-
-    const response = await request(buildApp())
-      .post('/gpt/arcanos-core')
-      .send({
-        action: ' Get_Result ',
-        payload: {
-          jobId: 'job-lookup-normalized'
-        }
+        canonical: expect.objectContaining({
+          jobStatus: '/jobs/{jobId}',
+          jobResult: '/jobs/{jobId}/result',
+          gptAccessJobResult: '/gpt-access/jobs/result'
+        }),
+        _route: expect.objectContaining({
+          gptId,
+          action: expectedAction,
+          route: 'control_guard'
+        })
       });
+      expect(response.body).not.toHaveProperty('result');
+      expect(getJobByIdMock).not.toHaveBeenCalled();
+      expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+      expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+      expect(mockRouteGptRequest).not.toHaveBeenCalled();
+    }
 
-    expect(response.status).toBe(200);
-    expect(response.headers['x-response-bytes']).toBeTruthy();
-    expect(response.body).toMatchObject({
-      action: 'get_result',
-      jobId: 'job-lookup-normalized',
-      status: 'completed',
-      output: {
-        ok: true,
-        result: {
-          answer: 'normalized output'
-        }
-      },
+    it.each([
+      ['completed result lookup', { action: 'get_result', jobId: 'job-lookup-complete' }],
+      ['pending result lookup', { action: 'get_result', jobId: 'job-lookup-pending' }],
+      ['failed result lookup', { action: 'get_result', jobId: 'job-lookup-failed' }],
+      ['missing result lookup', { action: 'get_result', jobId: 'missing-job' }],
+      ['whitespace result job id', { action: 'get_result', jobId: '   ' }],
+      [
+        'normalized result action variant',
+        { action: ' Get_Result ', expectedAction: 'get_result', jobId: 'job-lookup-normalized' }
+      ],
+      [
+        'status lookup for another GPT id',
+        { gptId: 'backstage-booker', action: 'get_status', jobId: 'job-status-running' }
+      ],
+      ['missing status lookup', { action: 'get_status', jobId: 'missing-status-job' }],
+      ['whitespace status job id', { action: 'get_status', jobId: '   ' }],
+      ['storage-invalid status job id shape', { action: 'get_status', jobId: 'missing-job-for-smoke' }]
+    ])('rejects %s through /gpt/:gptId before storage lookup', async (_label, options) => {
+      await expectGptJobLookupControlRejected(options);
     });
-    expect(response.body.result).toMatchObject({
-      jobId: 'job-lookup-normalized',
-      status: 'completed',
-      result: {
-        ok: true,
-        result: {
-          answer: 'normalized output'
-        }
-      }
-    });
-    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
-    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
-    expect(mockRouteGptRequest).not.toHaveBeenCalled();
-  });
-
-  it('rejects whitespace-only job identifiers for get_result actions', async () => {
-    const response = await request(buildApp())
-      .post('/gpt/arcanos-core')
-      .send({
-        action: 'get_result',
-        payload: {
-          jobId: '   '
-        }
-      });
-
-    expect(response.status).toBe(400);
-    expect(response.headers['x-response-bytes']).toBeTruthy();
-    expect(response.body).toMatchObject({
-      ok: false,
-      error: {
-        code: 'JOB_ID_INVALID'
-      },
-      _route: {
-        gptId: 'arcanos-core',
-        action: 'get_result',
-        route: 'job_result'
-      }
-    });
-    expect(getJobByIdMock).not.toHaveBeenCalled();
-    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
-  });
-
-  it('returns structured validation errors when get_result job identifiers are rejected by storage', async () => {
-    getJobByIdMock.mockRejectedValueOnce(
-      new Error('invalid input syntax for type uuid: "missing-job-for-smoke"')
-    );
-
-    const response = await request(buildApp())
-      .post('/gpt/arcanos-core')
-      .send({
-        action: 'get_result',
-        payload: {
-          jobId: 'missing-job-for-smoke'
-        }
-      });
-
-    expect(response.status).toBe(400);
-    expect(response.headers['x-response-bytes']).toBeTruthy();
-    expect(response.body).toMatchObject({
-      ok: false,
-      gptId: 'arcanos-core',
-      action: 'get_result',
-      route: '/gpt/:gptId',
-      traceId: expect.any(String),
-      jobId: 'missing-job-for-smoke',
-      error: {
-        code: 'JOB_ID_INVALID',
-        message: expect.stringContaining('valid job identifier')
-      },
-      _route: {
-        gptId: 'arcanos-core',
-        action: 'get_result',
-        route: 'job_result'
-      }
-    });
-    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
-  });
-
-  it('returns explicit pending status for get_result without enqueueing work', async () => {
-    getJobByIdMock.mockResolvedValue({
-      id: 'job-lookup-pending',
-      job_type: 'gpt',
-      status: 'running',
-      created_at: '2026-04-06T10:00:00.000Z',
-      updated_at: '2026-04-06T10:00:01.000Z',
-      completed_at: null,
-      output: null,
-      error_message: null
-    });
-
-    const response = await request(buildApp())
-      .post('/gpt/arcanos-core')
-      .send({
-        action: 'get_result',
-        payload: {
-          jobId: 'job-lookup-pending'
-        }
-      });
-
-    expect(response.status).toBe(200);
-    expect(response.headers['x-response-bytes']).toBeTruthy();
-    expect(response.body).toMatchObject({
-      action: 'get_result',
-      jobId: 'job-lookup-pending',
-      status: 'pending',
-      jobStatus: 'running',
-      lifecycleStatus: 'running',
-      output: null,
-      error: null,
-      result: {
-        jobId: 'job-lookup-pending',
-        status: 'pending',
-        jobStatus: 'running',
-        lifecycleStatus: 'running',
-        result: null,
-        error: null
-      }
-    });
-    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
-  });
-
-  it('returns explicit expired status and preserved retained output for get_result without enqueueing work', async () => {
-    getJobByIdMock.mockResolvedValue({
-      id: 'job-lookup-expired',
-      job_type: 'gpt',
-      status: 'expired',
-      created_at: '2026-04-06T10:00:00.000Z',
-      updated_at: '2026-04-06T10:15:00.000Z',
-      completed_at: '2026-04-06T10:01:30.000Z',
-      retention_until: '2026-04-06T10:10:00.000Z',
-      idempotency_until: '2026-04-06T10:05:00.000Z',
-      expires_at: '2026-04-06T10:15:00.000Z',
-      output: {
-        ok: true,
-        result: {
-          answer: 'retained expired output'
-        }
-      },
-      error_message: 'Expired after retention window.'
-    });
-
-    const response = await request(buildApp())
-      .post('/gpt/arcanos-core')
-      .send({
-        action: 'get_result',
-        payload: {
-          jobId: 'job-lookup-expired'
-        }
-      });
-
-    expect(response.status).toBe(200);
-    expect(response.headers['x-response-bytes']).toBeTruthy();
-    expect(response.body).toMatchObject({
-      action: 'get_result',
-      jobId: 'job-lookup-expired',
-      status: 'expired',
-      jobStatus: 'expired',
-      lifecycleStatus: 'expired',
-      retentionUntil: '2026-04-06T10:10:00.000Z',
-      idempotencyUntil: '2026-04-06T10:05:00.000Z',
-      expiresAt: '2026-04-06T10:15:00.000Z',
-      output: {
-        ok: true,
-        result: {
-          answer: 'retained expired output'
-        }
-      },
-      error: {
-        code: 'JOB_EXPIRED',
-        message: 'Expired after retention window.'
-      },
-      result: {
-        jobId: 'job-lookup-expired',
-        status: 'expired',
-        jobStatus: 'expired',
-        lifecycleStatus: 'expired',
-        retentionUntil: '2026-04-06T10:10:00.000Z',
-        idempotencyUntil: '2026-04-06T10:05:00.000Z',
-        expiresAt: '2026-04-06T10:15:00.000Z',
-        result: {
-          ok: true,
-          result: {
-            answer: 'retained expired output'
-          }
-        },
-        error: {
-          code: 'JOB_EXPIRED',
-          message: 'Expired after retention window.'
-        }
-      }
-    });
-    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
-    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
-  });
-
-  it('returns explicit failed status for terminal get_result lookups without enqueueing work', async () => {
-    getJobByIdMock.mockResolvedValue({
-      id: 'job-lookup-failed',
-      job_type: 'gpt',
-      status: 'failed',
-      created_at: '2026-04-06T10:00:00.000Z',
-      updated_at: '2026-04-06T10:00:02.000Z',
-      completed_at: '2026-04-06T10:00:02.000Z',
-      output: null,
-      error_message: 'OpenAI upstream timed out'
-    });
-
-    const response = await request(buildApp())
-      .post('/gpt/arcanos-core')
-      .send({
-        action: 'get_result',
-        payload: {
-          jobId: 'job-lookup-failed'
-        }
-      });
-
-    expect(response.status).toBe(200);
-    expect(response.body).toMatchObject({
-      action: 'get_result',
-      jobId: 'job-lookup-failed',
-      status: 'failed',
-      jobStatus: 'failed',
-      lifecycleStatus: 'failed',
-      output: null,
-      error: {
-        code: 'JOB_FAILED',
-        message: 'OpenAI upstream timed out'
-      },
-      result: {
-        jobId: 'job-lookup-failed',
-        status: 'failed',
-        jobStatus: 'failed',
-        lifecycleStatus: 'failed',
-        result: null,
-        error: {
-          code: 'JOB_FAILED',
-          message: 'OpenAI upstream timed out'
-        }
-      }
-    });
-    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
-  });
-
-  it('returns explicit not_found status for missing get_result lookups without enqueueing work', async () => {
-    getJobByIdMock.mockResolvedValue(null);
-
-    const response = await request(buildApp())
-      .post('/gpt/arcanos-core')
-      .send({
-        action: 'get_result',
-        payload: {
-          jobId: 'missing-job'
-        }
-      });
-
-    expect(response.status).toBe(200);
-    expect(response.headers['x-response-bytes']).toBeTruthy();
-    expect(response.body).toEqual({
-      ok: false,
-      gptId: 'arcanos-core',
-      action: 'get_result',
-      route: '/gpt/:gptId',
-      traceId: expect.any(String),
-      jobId: 'missing-job',
-      status: 'not_found',
-      jobStatus: null,
-      lifecycleStatus: 'not_found',
-      createdAt: null,
-      updatedAt: null,
-      completedAt: null,
-      retentionUntil: null,
-      idempotencyUntil: null,
-      expiresAt: null,
-      poll: '/jobs/missing-job/result',
-      stream: '/jobs/missing-job/stream',
-      output: null,
-      error: {
-        code: 'JOB_NOT_FOUND',
-        message: 'Async GPT job was not found.'
-      },
-      result: {
-        jobId: 'missing-job',
-        status: 'not_found',
-        jobStatus: null,
-        lifecycleStatus: 'not_found',
-        createdAt: null,
-        updatedAt: null,
-        completedAt: null,
-        retentionUntil: null,
-        idempotencyUntil: null,
-        expiresAt: null,
-        poll: '/jobs/missing-job/result',
-        stream: '/jobs/missing-job/stream',
-        result: null,
-        error: {
-          code: 'JOB_NOT_FOUND',
-          message: 'Async GPT job was not found.'
-        }
-      },
-      _route: expect.objectContaining({
-        gptId: 'arcanos-core',
-        action: 'get_result',
-        route: 'job_result'
-      })
-    });
-    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
-  });
-
-  it('returns canonical job status for explicit get_status actions without enqueueing work', async () => {
-    getJobByIdMock.mockResolvedValue({
-      id: 'job-status-running',
-      job_type: 'gpt',
-      status: 'running',
-      created_at: '2026-04-11T10:00:00.000Z',
-      updated_at: '2026-04-11T10:00:02.000Z',
-      completed_at: null,
-      cancel_requested_at: null,
-      cancel_reason: null,
-      retention_until: null,
-      idempotency_until: null,
-      expires_at: null,
-      output: null,
-      error_message: null
-    });
-
-    const response = await request(buildApp())
-      .post('/gpt/backstage-booker')
-      .send({
-        action: 'get_status',
-        payload: {
-          jobId: 'job-status-running'
-        }
-      });
-
-    expect(response.status).toBe(200);
-    expect(response.headers['x-response-bytes']).toBeTruthy();
-    expect(response.body).toMatchObject({
-      ok: true,
-      action: 'get_status',
-      jobId: 'job-status-running',
-      status: 'running',
-      lifecycleStatus: 'running',
-      result: {
-        id: 'job-status-running',
-        job_type: 'gpt',
-        status: 'running',
-        lifecycle_status: 'running',
-        created_at: '2026-04-11T10:00:00.000Z',
-        updated_at: '2026-04-11T10:00:02.000Z',
-        completed_at: null,
-        cancel_requested_at: null,
-        cancel_reason: null,
-        retention_until: null,
-        idempotency_until: null,
-        expires_at: null,
-        error_message: null,
-        output: null,
-        result: null
-      },
-      _route: expect.objectContaining({
-        gptId: 'backstage-booker',
-        action: 'get_status',
-        route: 'job_status'
-      })
-    });
-    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
-    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
-    expect(mockRouteGptRequest).not.toHaveBeenCalled();
-  });
-
-  it('returns 404 for missing get_status lookups without enqueueing work', async () => {
-    getJobByIdMock.mockResolvedValue(null);
-
-    const response = await request(buildApp())
-      .post('/gpt/arcanos-core')
-      .send({
-        action: 'get_status',
-        payload: {
-          jobId: 'missing-status-job'
-        }
-      });
-
-    expect(response.status).toBe(404);
-    expect(response.headers['x-response-bytes']).toBeTruthy();
-    expect(response.body).toMatchObject({
-      ok: false,
-      error: {
-        code: 'JOB_NOT_FOUND',
-        message: 'Async GPT job was not found.'
-      },
-      _route: {
-        gptId: 'arcanos-core',
-        action: 'get_status',
-        route: 'job_status'
-      }
-    });
-    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
-    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
-  });
-
-  it('rejects whitespace-only job identifiers for get_status actions', async () => {
-    const response = await request(buildApp())
-      .post('/gpt/arcanos-core')
-      .send({
-        action: 'get_status',
-        payload: {
-          jobId: '   '
-        }
-      });
-
-    expect(response.status).toBe(400);
-    expect(response.headers['x-response-bytes']).toBeTruthy();
-    expect(response.body).toMatchObject({
-      ok: false,
-      error: {
-        code: 'JOB_ID_INVALID'
-      },
-      _route: {
-        gptId: 'arcanos-core',
-        action: 'get_status',
-        route: 'job_status'
-      }
-    });
-    expect(getJobByIdMock).not.toHaveBeenCalled();
-    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
-  });
-
-  it('returns structured validation errors when get_status job identifiers are rejected by storage', async () => {
-    getJobByIdMock.mockRejectedValueOnce(
-      new Error('invalid input syntax for type uuid: "missing-job-for-smoke"')
-    );
-
-    const response = await request(buildApp())
-      .post('/gpt/arcanos-core')
-      .send({
-        action: 'get_status',
-        payload: {
-          jobId: 'missing-job-for-smoke'
-        }
-      });
-
-    expect(response.status).toBe(400);
-    expect(response.headers['x-response-bytes']).toBeTruthy();
-    expect(response.body).toMatchObject({
-      ok: false,
-      gptId: 'arcanos-core',
-      action: 'get_status',
-      route: '/gpt/:gptId',
-      traceId: expect.any(String),
-      jobId: 'missing-job-for-smoke',
-      error: {
-        code: 'JOB_ID_INVALID',
-        message: expect.stringContaining('valid job identifier')
-      },
-      _route: {
-        gptId: 'arcanos-core',
-        action: 'get_status',
-        route: 'job_status'
-      }
-    });
-    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
   });
 
   it('uses a short inline wait budget for heavy async core requests', async () => {
