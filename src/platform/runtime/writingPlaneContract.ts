@@ -326,7 +326,7 @@ export function classifyWritingPlaneInput(input: {
       errorCode: 'TRINITY_CONTROL_LEAK',
       message: 'System state inspection is a control-plane operation and must not execute inside Trinity.',
       canonical: {
-        systemState: '/brain',
+        systemState: '/system-state',
       },
     };
   }

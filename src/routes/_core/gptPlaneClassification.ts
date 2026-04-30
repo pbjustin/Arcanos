@@ -76,12 +76,12 @@ function buildDirectEndpointRequiredClassification(input: {
     reason: input.reason,
     errorCode: 'CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT',
     message:
-      'Runtime diagnostics, worker state, tracing, queue inspection, system state, and job lookups must use direct control-plane endpoints, /gpt-access/*, /brain, or POST /mcp. Do not send control requests through POST /gpt/{gptId}.',
+      'Runtime diagnostics, worker state, tracing, queue inspection, system state, and job lookups must use direct control-plane endpoints, /gpt-access/*, /system-state, or POST /mcp. Do not send control requests through POST /gpt/{gptId}.',
     canonical: {
       status: '/status',
       workers: '/workers/status',
       workerHealth: '/worker-helper/health',
-      systemState: '/brain',
+      systemState: '/system-state',
       jobStatus: '/jobs/{jobId}',
       jobResult: '/jobs/{jobId}/result',
       gptAccessJobResult: '/gpt-access/jobs/result',

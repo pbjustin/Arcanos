@@ -7,7 +7,7 @@ Arcanos is split into a TypeScript backend and an optional Python daemon client.
 ARCANOS now enforces two planes before any module dispatch occurs:
 
 - Writing plane: `POST /gpt/:gptId` for generative work only. This lane is limited to prompt generation, assistant responses, and other true write/query actions.
-- Control plane: direct handlers and explicit control endpoints for system operations. This includes `GET /jobs/:id`, `GET /jobs/:id/result`, `GET /workers/status`, `GET /worker-helper/health`, `GET /status`, `GET /status/safety/self-heal`, `GET /gpt-access/diagnostics/deep`, `POST /brain` with `mode:"system_state"`, `POST /mcp`, and `GET /api/arcanos/dag/*`.
+- Control plane: direct handlers and explicit control endpoints for system operations. This includes `GET /jobs/:id`, `GET /jobs/:id/result`, `GET /workers/status`, `GET /worker-helper/health`, `GET /status`, `GET /status/safety/self-heal`, `GET /gpt-access/diagnostics/deep`, `POST /system-state`, `POST /mcp`, and `GET /api/arcanos/dag/*`.
 
 Implementation rules:
 - `src/routes/gptRouter.ts` runs pre-dispatch classification through `src/routes/_core/gptPlaneClassification.ts`.
@@ -61,7 +61,7 @@ Long-running GPT requests are handled through the DB-backed `job_data` queue ins
 
 Execution model:
 1. `POST /gpt/:gptId` classifies the request as writing-plane or control-plane before dispatch.
-2. Control-plane reads use direct endpoints (`GET /jobs/:id`, `GET /jobs/:id/result`, `GET /gpt-access/diagnostics/deep`, `POST /brain` with `mode:"system_state"`) and never create GPT jobs.
+2. Control-plane reads use direct endpoints (`GET /jobs/:id`, `GET /jobs/:id/result`, `GET /gpt-access/diagnostics/deep`, `GET /system-state`, `POST /system-state`) and never create GPT jobs.
 3. Writing-plane durable requests (`query`, non-core `query_and_wait`, or prompt-first async compatibility mode) persist a canonical GPT job row with hashed idempotency metadata.
 4. `query` returns the canonical `jobId` without inline waiting. On core GPT IDs, `query_and_wait` uses the lightweight synchronous direct action lane and returns the final result inline.
 5. `src/workers/jobRunner.ts` claims `job_type='gpt'` rows and executes them in background mode.

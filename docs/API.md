@@ -52,7 +52,7 @@ No API path changes are required for Railway. Validate liveness (`/healthz`), re
 
 Writing vs control:
 - Writing plane: prompt generation, assistant responses, durable `query` jobs, non-core durable `query_and_wait` jobs, and core synchronous `query_and_wait` actions.
-- Direct control plane: `GET /jobs/:id`, `GET /jobs/:id/result`, `GET /workers/status`, `GET /worker-helper/health`, `GET /status`, `GET /status/safety/self-heal`, `GET /gpt-access/diagnostics/deep`, `POST /brain` with `mode:"system_state"`, `POST /mcp`, and `/api/arcanos/dag/*`.
+- Direct control plane: `GET /jobs/:id`, `GET /jobs/:id/result`, `GET /workers/status`, `GET /worker-helper/health`, `GET /status`, `GET /status/safety/self-heal`, `GET /gpt-access/diagnostics/deep`, `POST /system-state`, `POST /mcp`, and `/api/arcanos/dag/*`.
 - No public control actions are served by `POST /gpt/:gptId`; `get_status`, `get_result`, `diagnostics`, `system_state`, runtime inspection, worker status, queue inspection, self-heal status, MCP calls, and prompt-based job lookups are rejected with canonical control endpoints.
 
 Request guidance:
@@ -86,7 +86,7 @@ Job-backed `POST /gpt/:gptId` response shapes:
 - `200 OK` completed async write for non-core durable jobs: `{ ok:true, action:"query_and_wait", jobId, status:"completed", result:{ text }, poll, stream, jobStatus, lifecycleStatus, deduped?, idempotencyKey, idempotencySource, _route }`
 - Error shape: `{ ok:false, action, error:{ code, message } }`
 - Duplicate submissions set `deduped: true` and return the canonical `jobId`.
-- `200 OK` system-state retrieval/update: `POST /brain` with `{ "mode": "system_state", ... }` is handled directly on the control plane and never enters the GPT writing dispatcher.
+- `200 OK` system-state retrieval/update: `POST /system-state` with `{ "sessionId": "...", "expectedVersion": 1, "patch": { ... } }` is handled directly on the control plane and never enters the GPT writing dispatcher.
 - `400 Bad Request` control rejection: prompt-based job lookups, explicit job lookup actions, diagnostics, system_state, runtime inspection, DAG control, and MCP tool calls return deterministic JSON with `canonical` control routes.
 
 Canonical client-facing async acknowledgement:

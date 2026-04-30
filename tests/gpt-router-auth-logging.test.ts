@@ -429,10 +429,10 @@ describe('gpt router auth logging', () => {
       traceId: expect.any(String),
       error: expect.objectContaining({
         code: 'CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT',
-        message: expect.stringContaining('/brain'),
+        message: expect.stringContaining('/system-state'),
       }),
       canonical: expect.objectContaining({
-        systemState: '/brain',
+        systemState: '/system-state',
       }),
       _route: expect.objectContaining({
         gptId: 'arcanos-daemon',
@@ -470,7 +470,7 @@ describe('gpt router auth logging', () => {
           code: 'CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT',
         }),
         canonical: expect.objectContaining({
-          systemState: '/brain',
+          systemState: '/system-state',
         }),
         _route: expect.objectContaining({
           gptId: 'arcanos-daemon',
@@ -509,7 +509,7 @@ describe('gpt router auth logging', () => {
           code: 'CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT',
         }),
         canonical: expect.objectContaining({
-          systemState: '/brain',
+          systemState: '/system-state',
         }),
         _route: expect.objectContaining({
           gptId: 'arcanos-daemon',

@@ -116,7 +116,7 @@ def test_request_chat_completion_routes_explicit_gpt_ids_to_gpt_endpoint() -> No
     assert payload["prompt"] == "ping gaming"
 
 
-def test_request_system_state_uses_direct_brain_route_with_update_fields() -> None:
+def test_request_system_state_uses_direct_system_state_route_with_update_fields() -> None:
     client = SimpleNamespace()
     client._normalize_metadata = MagicMock(return_value={"instanceId": "cli-123"})
     client._request_json = MagicMock(
@@ -134,9 +134,9 @@ def test_request_system_state_uses_direct_brain_route_with_update_fields() -> No
     assert response.value == {"state": {"ok": True}}
     client._request_json.assert_called_once()
     _, path, payload = client._request_json.call_args.args
-    assert path == "/brain"
+    assert path == "/system-state"
     assert "gptId" not in payload
-    assert payload["mode"] == "system_state"
+    assert "mode" not in payload
     assert payload["metadata"] == {"instanceId": "cli-123"}
     assert payload["sessionId"] == "cli-123"
     assert payload["expectedVersion"] == 4
@@ -154,9 +154,9 @@ def test_request_system_state_ignores_explicit_gpt_id_on_direct_route() -> None:
 
     assert response.ok is True
     _, path, payload = client._request_json.call_args.args
-    assert path == "/brain"
+    assert path == "/system-state"
     assert "gptId" not in payload
-    assert payload["mode"] == "system_state"
+    assert "mode" not in payload
 
 
 def test_request_query_uses_canonical_gpt_bridge_action_and_normalizes_response() -> None:

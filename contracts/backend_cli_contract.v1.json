@@ -47,11 +47,11 @@
       "preferredClientSurface": "Direct canonical job-result endpoint for agent and tool clients."
     },
     "request_system_state": {
-      "endpoint": "/brain",
+      "endpoint": "/system-state",
       "method": "POST",
       "plane": "control",
       "canonicalAction": "system_state",
-      "preferredClientSurface": "Direct system-state endpoint using mode=system_state. Never route system-state reads or writes through /gpt/{gptId}."
+      "preferredClientSurface": "Direct system-state endpoint. Never route system-state reads or writes through /gpt/{gptId}."
     }
   },
   "endpoints": {
@@ -80,14 +80,13 @@
         "payload"
       ]
     },
-    "/brain": {
+    "/system-state": {
       "method": "POST",
-      "tsRouteFile": "src/routes/ask/index.ts",
+      "tsRouteFile": "src/routes/system-state.ts",
       "pythonClientMethods": [
         "request_system_state"
       ],
       "requestFields": [
-        "mode",
         "metadata",
         "sessionId",
         "context",

@@ -371,7 +371,7 @@ function buildDispatcherSubsystemBindings() {
       controlActions: [],
       blockedActions: ['runtime.inspect', 'self_heal.status', 'system_state', 'diagnostics'],
       gptAccessEndpoint: '/gpt-access/diagnostics/deep',
-      systemStateEndpoint: '/brain',
+      systemStateEndpoint: '/system-state',
       jobStatusEndpoint: '/jobs/{jobId}',
       jobResultEndpoint: '/jobs/{jobId}/result'
     },

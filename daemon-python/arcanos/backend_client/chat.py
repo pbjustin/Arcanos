@@ -263,11 +263,11 @@ def request_system_state(
     gpt_id: Optional[str] = None,
 ) -> BackendResponse[dict[str, Any]]:
     """
-    Purpose: Request governed backend system state from the direct `/brain` system_state endpoint.
+    Purpose: Request governed backend system state from the direct `/system-state` endpoint.
     Inputs/Outputs: optional metadata and optimistic-lock update payload; returns raw state JSON.
     Edge cases: update writes require both expected_version and patch fields together; gpt_id is accepted for signature compatibility but does not affect routing.
     """
-    payload = _build_backend_payload(mode="system_state")
+    payload = _build_backend_payload()
 
     normalized_metadata = client._normalize_metadata(metadata)
     if normalized_metadata is not None:
@@ -296,7 +296,7 @@ def request_system_state(
         payload["expectedVersion"] = expected_version
         payload["patch"] = dict(patch)
 
-    response = client._request_json("post", "/brain", payload)
+    response = client._request_json("post", "/system-state", payload)
     if not response.ok or not response.value:
         # //audit assumption: response must be ok; risk: backend failure; invariant: ok response; strategy: return structured error.
         return BackendResponse(ok=False, error=response.error)

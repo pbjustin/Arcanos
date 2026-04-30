@@ -166,13 +166,13 @@
                       "action": "get_status",
                       "error": {
                         "code": "CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT",
-                        "message": "Runtime diagnostics, worker state, tracing, queue inspection, system state, and job lookups must use direct control-plane endpoints, /gpt-access/*, /brain, or POST /mcp. Do not send control requests through POST /gpt/{gptId}."
+                        "message": "Runtime diagnostics, worker state, tracing, queue inspection, system state, and job lookups must use direct control-plane endpoints, /gpt-access/*, /system-state, or POST /mcp. Do not send control requests through POST /gpt/{gptId}."
                       },
                       "canonical": {
                         "jobStatus": "/jobs/{jobId}",
                         "jobResult": "/jobs/{jobId}/result",
                         "gptAccessJobResult": "/gpt-access/jobs/result",
-                        "systemState": "/brain"
+                        "systemState": "/system-state"
                       }
                     }
                   },
@@ -209,13 +209,13 @@
                       "action": "runtime.inspect",
                       "error": {
                         "code": "CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT",
-                        "message": "Runtime diagnostics, worker state, tracing, queue inspection, system state, and job lookups must use direct control-plane endpoints, /gpt-access/*, /brain, or POST /mcp. Do not send control requests through POST /gpt/{gptId}."
+                        "message": "Runtime diagnostics, worker state, tracing, queue inspection, system state, and job lookups must use direct control-plane endpoints, /gpt-access/*, /system-state, or POST /mcp. Do not send control requests through POST /gpt/{gptId}."
                       },
                       "canonical": {
                         "status": "/status",
                         "workers": "/workers/status",
                         "workerHealth": "/worker-helper/health",
-                        "systemState": "/brain",
+                        "systemState": "/system-state",
                         "jobStatus": "/jobs/{jobId}",
                         "jobResult": "/jobs/{jobId}/result",
                         "gptAccessJobResult": "/gpt-access/jobs/result",
