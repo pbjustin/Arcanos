@@ -192,7 +192,7 @@ export async function testModelTokenParameter(
   const normalizedModelName = (modelName || '').toLowerCase().trim();
   tokenLogger.info(`[TOKEN-TEST] Testing token parameter capability for model: ${modelName}`);
 
-  // Try max_tokens first (most common)
+  // Probe Responses API output-token support, then infer the chat-compatible parameter.
   try {
     await (client.responses as any).create({
       model: modelName,

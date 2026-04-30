@@ -43,7 +43,6 @@ import {
 import {
   IdempotencyKeyConflictError,
   JobRepositoryUnavailableError,
-  getJobById,
   findOrCreateGptJob
 } from '@core/db/repositories/jobRepository.js';
 import { planAutonomousWorkerJob } from '@services/workerAutonomyService.js';
@@ -84,11 +83,7 @@ import {
   GPT_QUERY_ACTION,
   GPT_GET_STATUS_ACTION,
   GPT_GET_RESULT_ACTION,
-  GPT_QUERY_AND_WAIT_ACTION,
-  buildGptJobStatusBridgePayload,
-  buildGptJobResultBridgePayload,
-  parseGptJobStatusRequest,
-  parseGptJobResultRequest
+  GPT_QUERY_AND_WAIT_ACTION
 } from '@shared/gpt/gptJobResult.js';
 import {
   GPT_PUBLIC_DIRECT_CONTROL_ACTIONS,
@@ -187,8 +182,6 @@ type GptExecutionPlan = {
   maxWords: number | null;
   heavyPrompt: boolean;
 };
-
-type GptJobLookupAction = typeof GPT_GET_STATUS_ACTION | typeof GPT_GET_RESULT_ACTION;
 
 const OPENAI_KEY_PLACEHOLDERS = new Set([
   '',
@@ -1299,51 +1292,6 @@ function resolveAsyncBridgeAction(queryAndWaitRequested: boolean) {
   return queryAndWaitRequested
     ? GPT_QUERY_AND_WAIT_ACTION
     : GPT_QUERY_ACTION;
-}
-
-function buildJobLookupRouteMeta(params: {
-  requestId: string | undefined;
-  gptId: string;
-  action: GptJobLookupAction;
-  route: 'job_status' | 'job_result';
-}) {
-  return {
-    requestId: params.requestId,
-    gptId: params.gptId,
-    action: params.action,
-    route: params.route,
-    timestamp: new Date().toISOString()
-  };
-}
-
-function isInvalidJobIdentifierLookupError(error: unknown): boolean {
-  const message = resolveErrorMessage(error).toLowerCase();
-  return message.includes('invalid input syntax for type uuid') ||
-    message.includes('invalid uuid') ||
-    (message.includes('uuid') && message.includes('invalid'));
-}
-
-async function getJobByIdForGptLookup(
-  jobId: string
-): Promise<
-  | { ok: true; job: Awaited<ReturnType<typeof getJobById>> }
-  | { ok: false; error: string }
-> {
-  try {
-    return {
-      ok: true,
-      job: await getJobById(jobId)
-    };
-  } catch (error) {
-    if (isInvalidJobIdentifierLookupError(error)) {
-      return {
-        ok: false,
-        error: 'payload.jobId is not a valid job identifier.'
-      };
-    }
-
-    throw error;
-  }
 }
 
 function buildDirectControlRouteMeta(params: {
@@ -2469,196 +2417,6 @@ router.post("/:gptId", async (req, res, next) => {
             'gpt.response.openai_api_key_missing',
             503
           );
-        }
-
-        if (planeClassification.plane === 'control' && planeClassification.kind === 'job_status') {
-          const parsedJobStatusRequest = parseGptJobStatusRequest(effectiveBody);
-          const routeMeta = buildJobLookupRouteMeta({
-            requestId,
-            gptId: incomingGptId,
-            action: GPT_GET_STATUS_ACTION,
-            route: 'job_status'
-          });
-
-          if (!parsedJobStatusRequest.ok) {
-            requestLogger?.warn?.('gpt.request.status_lookup_invalid', {
-              endpoint: req.originalUrl,
-              gptId: incomingGptId,
-              requestId,
-              error: parsedJobStatusRequest.error
-            });
-            return sendGuardedGptJsonResponse(req, res, {
-              ok: false,
-              gptId: incomingGptId,
-              action: GPT_GET_STATUS_ACTION,
-              route: GPT_DISPATCHER_ROUTE,
-              traceId,
-              error: {
-                code: 'JOB_ID_INVALID',
-                message: `get_status action requires payload.jobId. ${parsedJobStatusRequest.error}`
-              },
-              _route: routeMeta
-            }, 'gpt.response.job_status_invalid', 400);
-          }
-
-          const jobLookupResult = await getJobByIdForGptLookup(parsedJobStatusRequest.jobId);
-          if (!jobLookupResult.ok) {
-            requestLogger?.warn?.('gpt.request.status_lookup_invalid_job_id', {
-              endpoint: req.originalUrl,
-              gptId: incomingGptId,
-              requestId,
-              jobId: parsedJobStatusRequest.jobId,
-              error: jobLookupResult.error
-            });
-            return sendGuardedGptJsonResponse(req, res, {
-              ok: false,
-              gptId: incomingGptId,
-              action: GPT_GET_STATUS_ACTION,
-              route: GPT_DISPATCHER_ROUTE,
-              traceId,
-              jobId: parsedJobStatusRequest.jobId,
-              error: {
-                code: 'JOB_ID_INVALID',
-                message: `get_status action requires payload.jobId. ${jobLookupResult.error}`
-              },
-              _route: routeMeta
-            }, 'gpt.response.job_status_invalid', 400);
-          }
-
-          const job = jobLookupResult.job;
-          requestLogger?.info?.('integration.job.status_lookup', {
-            endpoint: req.originalUrl,
-            gptId: incomingGptId,
-            requestId,
-            jobId: parsedJobStatusRequest.jobId,
-            lookupStatus: job ? 'found' : 'not_found',
-            jobStatus: job?.status ?? null,
-            canonicalPath: `/jobs/${parsedJobStatusRequest.jobId}`
-          });
-          recordGptJobLookup({
-            channel: 'gpt_action',
-            lookup: 'status',
-            outcome: job?.status ?? 'not_found'
-          });
-
-          if (!job) {
-            return sendGuardedGptJsonResponse(req, res, {
-              ok: false,
-              gptId: incomingGptId,
-              action: GPT_GET_STATUS_ACTION,
-              route: GPT_DISPATCHER_ROUTE,
-              traceId,
-              jobId: parsedJobStatusRequest.jobId,
-              error: {
-                code: 'JOB_NOT_FOUND',
-                message: 'Async GPT job was not found.'
-              },
-              _route: routeMeta
-            }, 'gpt.response.job_status_not_found', 404);
-          }
-
-          const jobStatusEnvelope = buildGptJobStatusBridgePayload(job);
-          return sendGuardedGptJsonResponse(req, res, {
-            ok: true,
-            gptId: incomingGptId,
-            route: GPT_DISPATCHER_ROUTE,
-            traceId,
-            ...jobStatusEnvelope,
-            _route: routeMeta
-          }, 'gpt.response.job_status');
-        }
-
-        if (planeClassification.plane === 'control' && planeClassification.kind === 'job_result') {
-          const parsedJobResultRequest = parseGptJobResultRequest(effectiveBody);
-          const routeMeta = buildJobLookupRouteMeta({
-            requestId,
-            gptId: incomingGptId,
-            action: GPT_GET_RESULT_ACTION,
-            route: 'job_result'
-          });
-
-          if (!parsedJobResultRequest.ok) {
-            requestLogger?.warn?.('gpt.request.result_lookup_invalid', {
-              endpoint: req.originalUrl,
-              gptId: incomingGptId,
-              requestId,
-              error: parsedJobResultRequest.error
-            });
-            return sendGuardedGptJsonResponse(req, res, {
-              ok: false,
-              gptId: incomingGptId,
-              action: GPT_GET_RESULT_ACTION,
-              route: GPT_DISPATCHER_ROUTE,
-              traceId,
-              error: {
-                code: 'JOB_ID_INVALID',
-                message: `get_result action requires payload.jobId. ${parsedJobResultRequest.error}`
-              },
-              _route: routeMeta
-            }, 'gpt.response.job_result_invalid', 400);
-          }
-
-          const jobLookupResult = await getJobByIdForGptLookup(parsedJobResultRequest.jobId);
-          if (!jobLookupResult.ok) {
-            requestLogger?.warn?.('gpt.request.result_lookup_invalid_job_id', {
-              endpoint: req.originalUrl,
-              gptId: incomingGptId,
-              requestId,
-              jobId: parsedJobResultRequest.jobId,
-              error: jobLookupResult.error
-            });
-            return sendGuardedGptJsonResponse(req, res, {
-              ok: false,
-              gptId: incomingGptId,
-              action: GPT_GET_RESULT_ACTION,
-              route: GPT_DISPATCHER_ROUTE,
-              traceId,
-              jobId: parsedJobResultRequest.jobId,
-              error: {
-                code: 'JOB_ID_INVALID',
-                message: `get_result action requires payload.jobId. ${jobLookupResult.error}`
-              },
-              _route: routeMeta
-            }, 'gpt.response.job_result_invalid', 400);
-          }
-
-          const jobLookup = buildGptJobResultBridgePayload(
-            parsedJobResultRequest.jobId,
-            jobLookupResult.job
-          );
-          requestLogger?.info?.('integration.job.result_lookup', {
-            endpoint: req.originalUrl,
-            gptId: incomingGptId,
-            requestId,
-            jobId: jobLookup.jobId,
-            lookupStatus: jobLookup.status,
-            jobStatus: jobLookup.jobStatus,
-            lifecycleStatus: jobLookup.lifecycleStatus,
-            canonicalPath: `/jobs/${jobLookup.jobId}/result`
-          });
-          requestLogger?.info?.('gpt.request.result_lookup', {
-            endpoint: req.originalUrl,
-            gptId: incomingGptId,
-            requestId,
-            jobId: jobLookup.jobId,
-            lookupStatus: jobLookup.status,
-            jobStatus: jobLookup.jobStatus,
-            lifecycleStatus: jobLookup.lifecycleStatus
-          });
-          recordGptJobLookup({
-            channel: 'gpt_action',
-            lookup: 'result',
-            outcome: jobLookup.status
-          });
-
-          return sendGuardedGptJsonResponse(req, res, {
-            ok: jobLookup.error ? false : true,
-            gptId: incomingGptId,
-            route: GPT_DISPATCHER_ROUTE,
-            traceId,
-            ...jobLookup,
-            _route: routeMeta
-          }, 'gpt.response.job_result');
         }
 
         if (planeClassification.plane === 'control') {

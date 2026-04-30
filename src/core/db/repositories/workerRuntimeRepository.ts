@@ -231,8 +231,9 @@ export async function recordWorkerLiveness(record: WorkerLivenessRecord): Promis
 
   let outcome: 'ok' | 'error' = 'ok';
   let queryCallWallMs: number | null = null;
+  let queryStartedAtMs: number | null = null;
   try {
-    const queryStartedAtMs = Date.now();
+    queryStartedAtMs = Date.now();
     await query(
       `INSERT INTO worker_liveness (
          worker_id,
@@ -261,7 +262,9 @@ export async function recordWorkerLiveness(record: WorkerLivenessRecord): Promis
   } catch (error) {
     outcome = 'error';
     if (queryCallWallMs === null) {
-      queryCallWallMs = Date.now() - startedAtMs - persistenceReadyMs;
+      queryCallWallMs = queryStartedAtMs === null
+        ? Date.now() - startedAtMs - persistenceReadyMs
+        : Date.now() - queryStartedAtMs;
     }
     throw error;
   } finally {
