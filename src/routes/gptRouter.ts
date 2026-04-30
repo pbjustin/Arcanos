@@ -140,9 +140,6 @@ const GPT_DISPATCHER_ROUTE = '/gpt/:gptId';
 const GPT_DISPATCHER_ACTIONS = [
   GPT_QUERY_ACTION,
   GPT_QUERY_AND_WAIT_ACTION,
-  'diagnostics',
-  GPT_GET_STATUS_ACTION,
-  GPT_GET_RESULT_ACTION,
   ...GPT_DAG_BRIDGE_ACTIONS
 ] as const;
 const GPT_DISPATCHER_CANONICAL_ENDPOINTS = {
@@ -377,7 +374,10 @@ function buildDispatcherSubsystemBindings() {
     controlPlane: {
       statusEndpoint: GPT_DISPATCHER_CANONICAL_ENDPOINTS.status,
       selfHealEndpoint: GPT_DISPATCHER_CANONICAL_ENDPOINTS.selfHeal,
-      controlActions: ['runtime.inspect', 'self_heal.status', 'system_state', 'diagnostics']
+      controlActions: ['runtime.inspect', 'self_heal.status', 'system_state', 'diagnostics'],
+      gptAccessEndpoint: '/gpt-access/diagnostics/deep',
+      jobStatusEndpoint: '/jobs/{jobId}',
+      jobResultEndpoint: '/jobs/{jobId}/result'
     },
     mcp: {
       endpoint: GPT_DISPATCHER_CANONICAL_ENDPOINTS.mcp,
@@ -2162,6 +2162,97 @@ router.post("/:gptId", async (req, res, next) => {
           );
         }
 
+        const shouldRunEarlyPlaneClassification = !isGptDagAction(requestedAction);
+        const planeClassification = shouldRunEarlyPlaneClassification
+          ? classifyGptRequestPlane({
+              body: effectiveBody,
+              promptText,
+              requestedAction
+            })
+          : null;
+        if (planeClassification) {
+          requestLogger?.info?.('gpt.request.classified', {
+            endpoint: req.originalUrl,
+            gptId: incomingGptId,
+            action: planeClassification.action,
+            plane: planeClassification.plane,
+            kind: planeClassification.kind,
+            reason: planeClassification.reason
+          });
+        }
+
+        if (planeClassification?.plane === 'reject') {
+          if (planeClassification.kind === 'job_lookup' && planeClassification.jobLookup) {
+            const jobLookup = planeClassification.jobLookup;
+            const outcome = jobLookup.ok ? 'rejected' : 'missing_job_id';
+            requestLogger?.warn?.(
+              jobLookup.ok
+                ? 'gpt.request.job_lookup_guard_rejected'
+                : 'gpt.request.job_lookup_guard_missing_job_id',
+              {
+                endpoint: req.originalUrl,
+                gptId: incomingGptId,
+                requestId,
+                lookup: jobLookup.kind,
+                source: jobLookup.source,
+                jobId: jobLookup.ok ? jobLookup.jobId : null
+              }
+            );
+            recordGptJobLookup({
+              channel: 'prompt_guard',
+              lookup: jobLookup.kind,
+              outcome
+            });
+          } else {
+            requestLogger?.warn?.('gpt.request.control_rejected', {
+              endpoint: req.originalUrl,
+              gptId: incomingGptId,
+              requestId,
+              kind: planeClassification.kind,
+              reason: planeClassification.reason,
+              canonical: planeClassification.canonical
+            });
+            recordGptRequestEvent({
+              event: 'control_rejected',
+              source: planeClassification.kind
+            });
+          }
+
+          const errorPayload = {
+            ...buildGptDispatcherErrorPayload({
+              requestId,
+              traceId,
+              gptId: incomingGptId,
+              action: planeClassification.action,
+              code: planeClassification.errorCode,
+              message: planeClassification.message,
+              route:
+                planeClassification.kind === 'job_lookup'
+                  ? 'job_lookup_guard'
+                  : 'control_guard'
+            }),
+            canonical: planeClassification.canonical
+          };
+          logGptDispatcherOutcome({
+            req,
+            traceId,
+            gptId: incomingGptId,
+            action: planeClassification.action,
+            status: 400,
+            error: {
+              name: planeClassification.errorCode,
+              message: planeClassification.message
+            }
+          });
+          return sendGuardedGptJsonResponse(
+            req,
+            res,
+            errorPayload,
+            'gpt.response.control_rejected',
+            400
+          );
+        }
+
         const routingValidation = await resolveGptRouting(incomingGptId, requestId);
         if (!routingValidation.ok) {
           const statusCode = routingValidation.error.code === 'UNKNOWN_GPT' ? 404 : 400;
@@ -2277,6 +2368,22 @@ router.post("/:gptId", async (req, res, next) => {
           );
         }
 
+        if (!planeClassification) {
+          requestLogger?.error?.('gpt.request.classification_missing_after_dag_guard', {
+            endpoint: req.originalUrl,
+            gptId: incomingGptId,
+            requestId,
+            requestedAction
+          });
+          return res.status(500).json({
+            ok: false,
+            error: {
+              code: 'GPT_ROUTE_CLASSIFICATION_MISSING',
+              message: 'GPT route classification was unavailable after DAG guard.'
+            }
+          });
+        }
+
         if (queryRequested && !promptText) {
           requestLogger?.warn?.('integration.job.query_missing_prompt', {
             endpoint: req.originalUrl,
@@ -2384,91 +2491,6 @@ router.post("/:gptId", async (req, res, next) => {
           );
         }
 
-        const planeClassification = classifyGptRequestPlane({
-          body: effectiveBody,
-          promptText,
-          requestedAction
-        });
-        requestLogger?.info?.('gpt.request.classified', {
-          endpoint: req.originalUrl,
-          gptId: incomingGptId,
-          action: planeClassification.action,
-          plane: planeClassification.plane,
-          kind: planeClassification.kind,
-          reason: planeClassification.reason
-        });
-
-        if (planeClassification.plane === 'reject') {
-          if (planeClassification.kind === 'job_lookup' && planeClassification.jobLookup) {
-            const jobLookup = planeClassification.jobLookup;
-            const outcome = jobLookup.ok ? 'rejected' : 'missing_job_id';
-            requestLogger?.warn?.(
-              jobLookup.ok
-                ? 'gpt.request.job_lookup_guard_rejected'
-                : 'gpt.request.job_lookup_guard_missing_job_id',
-              {
-                endpoint: req.originalUrl,
-                gptId: incomingGptId,
-                requestId,
-                lookup: jobLookup.kind,
-                source: jobLookup.source,
-                jobId: jobLookup.ok ? jobLookup.jobId : null
-              }
-            );
-            recordGptJobLookup({
-              channel: 'prompt_guard',
-              lookup: jobLookup.kind,
-              outcome
-            });
-          } else {
-            requestLogger?.warn?.('gpt.request.control_rejected', {
-              endpoint: req.originalUrl,
-              gptId: incomingGptId,
-              requestId,
-              kind: planeClassification.kind,
-              reason: planeClassification.reason,
-              canonical: planeClassification.canonical
-            });
-            recordGptRequestEvent({
-              event: 'control_rejected',
-              source: planeClassification.kind
-            });
-          }
-
-          const errorPayload = {
-            ...buildGptDispatcherErrorPayload({
-              requestId,
-              traceId,
-              gptId: incomingGptId,
-              action: planeClassification.action,
-              code: planeClassification.errorCode,
-              message: planeClassification.message,
-              route:
-                planeClassification.kind === 'job_lookup'
-                  ? 'job_lookup_guard'
-                  : 'control_guard'
-            }),
-            canonical: planeClassification.canonical
-          };
-          logGptDispatcherOutcome({
-            req,
-            traceId,
-            gptId: incomingGptId,
-            action: planeClassification.action,
-            status: 400,
-            error: {
-              name: planeClassification.errorCode,
-              message: planeClassification.message
-            }
-          });
-          return sendGuardedGptJsonResponse(
-            req,
-            res,
-            errorPayload,
-            'gpt.response.control_rejected',
-            400
-          );
-        }
         if (planeClassification.plane === 'control' && planeClassification.kind === 'job_status') {
           const parsedJobStatusRequest = parseGptJobStatusRequest(effectiveBody);
           const routeMeta = buildJobLookupRouteMeta({

@@ -16,13 +16,15 @@ describe('custom GPT route OpenAPI contract', () => {
 
     expect(requestExampleActions).toEqual(
       expect.arrayContaining([
-        'diagnostics',
         'dag.capabilities',
         'dag.dispatch',
         'dag.status',
         'dag.trace'
       ])
     );
+    expect(requestExampleActions).not.toContain('diagnostics');
+    expect(requestExampleActions).not.toContain('get_status');
+    expect(requestExampleActions).not.toContain('get_result');
     expect(JSON.stringify(requestExamples)).not.toContain('runtime.inspect');
     expect(JSON.stringify(requestExamples)).not.toContain('workers.status');
 

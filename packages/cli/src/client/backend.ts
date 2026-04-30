@@ -128,6 +128,7 @@ const DEFAULT_BACKEND_GPT_ID =
   process.env.ARCANOS_BACKEND_GPT_ID?.trim() ||
   process.env.BACKEND_GPT_ID?.trim() ||
   "arcanos-daemon";
+const GPT_ACCESS_TOKEN_ENV_NAME = "ARCANOS_GPT_ACCESS_TOKEN";
 
 function resolveDefaultBackendGptId(): string {
   return DEFAULT_BACKEND_GPT_ID;
@@ -440,58 +441,26 @@ export async function queryAndWaitGptRoute(
   return normalizeGptAsyncBridgePayload(payload, "query_and_wait");
 }
 
-/**
- * Executes the compatibility `get_status` control action over `/gpt/{gptId}`.
- * Inputs/Outputs: GPT route id plus job id; returns the control-plane envelope without enqueueing new work.
- * Edge cases: blank job ids fail locally so callers never fall back to prompt routing. Prefer `getJobStatus` when `/jobs/{jobId}` is available.
- */
 export async function getGptRouteJobStatus(
   options: InvokeGptJobLookupActionOptions
 ): Promise<Record<string, unknown>> {
-  const normalizedJobId = options.jobId.trim();
-  if (!normalizedJobId) {
-    throw new Error("Job lookup jobId is required.");
-  }
-
-  const payload = await invokeGptRoute({
+  return getJobStatus({
     baseUrl: options.baseUrl,
-    gptId: options.gptId,
-    action: "get_status",
-    payload: {
-      jobId: normalizedJobId
-    },
+    jobId: options.jobId,
     headers: options.headers,
     fetchFn: options.fetchFn
   });
-
-  return normalizeGptAsyncBridgePayload(payload, "get_status");
 }
 
-/**
- * Executes the compatibility `get_result` control action over `/gpt/{gptId}`.
- * Inputs/Outputs: GPT route id plus job id; returns the control-plane envelope without enqueueing new work.
- * Edge cases: blank job ids fail locally so callers never fall back to prompt routing. Prefer `getJobResult` when `/jobs/{jobId}/result` is available.
- */
 export async function getGptRouteJobResult(
   options: InvokeGptJobLookupActionOptions
 ): Promise<Record<string, unknown>> {
-  const normalizedJobId = options.jobId.trim();
-  if (!normalizedJobId) {
-    throw new Error("Job lookup jobId is required.");
-  }
-
-  const payload = await invokeGptRoute({
+  return getJobResult({
     baseUrl: options.baseUrl,
-    gptId: options.gptId,
-    action: "get_result",
-    payload: {
-      jobId: normalizedJobId
-    },
+    jobId: options.jobId,
     headers: options.headers,
     fetchFn: options.fetchFn
   });
-
-  return normalizeGptAsyncBridgePayload(payload, "get_result");
 }
 
 function normalizeJobLookupId(jobId: string): string {
@@ -544,25 +513,21 @@ export async function requestQueryAndWait(
 export async function requestGptDiagnostics(
   options: InvokeGptDiagnosticsOptions
 ): Promise<Record<string, unknown>> {
-  const headers = {
-    ...(options.headers ?? {}),
-  };
-
-  if (options.root) {
-    const adminToken = process.env.ARCANOS_ADMIN_TOKEN;
-    if (typeof adminToken !== "string" || adminToken.length === 0) {
-      throw new Error("ARCANOS_ADMIN_TOKEN is required for root diagnostics.");
-    }
-    headers.authorization = `Bearer ${adminToken}`;
-  }
-
-  return invokeGptRoute({
-    baseUrl: options.baseUrl,
-    gptId: options.gptId,
-    action: options.root ? "root.deep_diagnostics" : "diagnostics",
-    headers,
-    fetchFn: options.fetchFn
-  });
+  return postJson(
+    options.baseUrl,
+    "/gpt-access/diagnostics/deep",
+    {
+      focus: options.root
+        ? `root diagnostics for ${options.gptId}`
+        : `diagnostics for ${options.gptId}`,
+      includeDb: true,
+      includeWorkers: true,
+      includeLogs: true,
+      includeQueue: true
+    },
+    buildGptAccessHeaders(options.headers),
+    options.fetchFn
+  );
 }
 
 export async function requestGptJobStatus(
@@ -668,6 +633,28 @@ function readNullableString(value: unknown): string | null | undefined {
   }
 
   return readString(value);
+}
+
+function hasHeader(headers: Record<string, string>, name: string): boolean {
+  const normalizedName = name.toLowerCase();
+  return Object.keys(headers).some((key) => key.toLowerCase() === normalizedName);
+}
+
+function buildGptAccessHeaders(extraHeaders: Record<string, string> = {}): Record<string, string> {
+  const headers = { ...extraHeaders };
+  if (hasHeader(headers, "authorization")) {
+    return headers;
+  }
+
+  const token = process.env[GPT_ACCESS_TOKEN_ENV_NAME]?.trim();
+  if (!token) {
+    throw new Error(`${GPT_ACCESS_TOKEN_ENV_NAME} is required for GPT access diagnostics.`);
+  }
+
+  return {
+    ...headers,
+    authorization: `Bearer ${token}`
+  };
 }
 
 async function postJson(

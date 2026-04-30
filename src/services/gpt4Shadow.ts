@@ -5,7 +5,7 @@ import { validateAuditSafeOutput, createAuditSummary } from './auditSafe.js';
 import { ensureShadowReady, disableShadowMode } from './shadowControl.js';
 import { getTokenParameter } from "@shared/tokenParameterHelper.js";
 import type { OpenAIAdapter } from "@core/adapters/openai.adapter.js";
-import type { ChatCompletion } from './openai/types.js';
+import { extractResponseOutputText } from '@arcanos/openai/responseParsing';
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 
 export type ShadowTag = 'content_generation' | 'agent_role_check';
@@ -18,33 +18,22 @@ async function routeToModule(clientOrAdapter: OpenAI | OpenAIAdapter, tag: Shado
 
   const model = 'gpt-4o';
   const tokenParams = getTokenParameter(model, 500);
-  
-  // Support both adapter and legacy client
-  const response = 'chat' in clientOrAdapter && typeof clientOrAdapter.chat === 'object'
-    ? await (clientOrAdapter.responses as any).create({
-        model,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content }
-        ],
-        temperature: 0.2,
-        ...tokenParams
-      })
-    : await ((clientOrAdapter as OpenAI).responses as any).create({
-        model,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content }
-        ],
-        temperature: 0.2,
-        ...tokenParams
-      });
+  const maxOutputTokens =
+    typeof tokenParams.max_tokens === 'number'
+      ? tokenParams.max_tokens
+      : typeof tokenParams.max_completion_tokens === 'number'
+        ? tokenParams.max_completion_tokens
+        : 500;
 
-  // Handle both ChatCompletion and Stream types
-  if (response && typeof response === 'object' && 'choices' in response) {
-    return (response as ChatCompletion).choices[0]?.message?.content || '';
-  }
-  return '';
+  const response = await (clientOrAdapter.responses as any).create({
+    model,
+    instructions: systemPrompt,
+    input: [{ role: 'user', content: [{ type: 'input_text', text: content }] }],
+    temperature: 0.2,
+    max_output_tokens: maxOutputTokens
+  });
+
+  return extractResponseOutputText(response, '');
 }
 
 export async function mirrorDecisionEvent(
@@ -88,5 +77,4 @@ export async function mirrorDecisionEvent(
     disableShadowMode(msg);
   }
 }
-
 

@@ -6,7 +6,9 @@ const CURRENT_GPT_ROUTER_HASH = 'e02a4e9739fe4772aac59afe24a99f45348090434c90d7a
 async function buildApp() {
   jest.resetModules();
   const { createApp } = await import('../src/app.js');
+  const { resetSafetyRuntimeStateForTests } = await import('../src/services/safety/runtimeState.js');
   const { resetRuntimeDiagnosticsState } = await import('../src/services/runtimeDiagnosticsService.js');
+  resetSafetyRuntimeStateForTests();
   resetRuntimeDiagnosticsState();
   return createApp();
 }
@@ -60,7 +62,7 @@ describe('runtime diagnostics routes', () => {
     expect(response.text).toBe('ARCANOS is live');
   });
 
-  it('returns local dispatcher diagnostics JSON through the GPT diagnostics action', async () => {
+  it('keeps local diagnostics on direct endpoints and blocks the GPT diagnostics action', async () => {
     const app = await buildApp();
 
     const directBeforeResponse = await request(app).get('/diagnostics');
@@ -74,73 +76,25 @@ describe('runtime diagnostics routes', () => {
         action: 'diagnostics'
       });
 
-    expect(gptDiagnosticsResponse.status).toBe(200);
+    expect(gptDiagnosticsResponse.status).toBe(400);
     expect(gptDiagnosticsResponse.body).toEqual(expect.objectContaining({
-      ok: true,
+      ok: false,
       gptId: 'arcanos-core',
+      action: 'diagnostics',
       route: '/gpt/:gptId',
-      actions: expect.arrayContaining([
-        'query',
-        'query_and_wait',
-        'diagnostics',
-        'get_status',
-        'get_result'
-      ]),
-      controlActions: ['diagnostics', 'system_state'],
-      canonicalEndpoints: expect.objectContaining({
+      error: expect.objectContaining({
+        code: 'CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT',
+        message: expect.stringContaining('/gpt-access/*')
+      }),
+      canonical: expect.objectContaining({
         status: '/status',
         workers: '/workers/status',
         workerHealth: '/worker-helper/health',
-        selfHeal: '/status/safety/self-heal',
-        trinityStatus: '/trinity/status',
+        jobStatus: '/jobs/{jobId}',
+        jobResult: '/jobs/{jobId}/result',
+        gptAccessJobResult: '/gpt-access/jobs/result',
         mcp: '/mcp',
-        dagCapabilities: '/api/arcanos/capabilities',
-        dagRuns: '/api/arcanos/dag/runs',
-        dagRunStatus: '/api/arcanos/dag/runs/{runId}',
-        dagTrace: '/api/arcanos/dag/runs/{runId}/trace',
-        dispatchDag: '/dispatch'
-      }),
-      policy: expect.objectContaining({
-        writingPlane: '/gpt/:gptId',
-        controlPlane: 'direct-endpoints',
-        trinityWritingAction: 'query',
-        trinityDirectActionBypass: 'query_and_wait',
-        systemOperationsThroughWritingPipeline: false
-      }),
-      subsystems: expect.objectContaining({
-        trinity: expect.objectContaining({
-          statusEndpoint: '/trinity/status',
-          writingEndpoint: '/gpt/:gptId',
-          writingAction: 'query',
-          sourceEndpoint: 'gpt.arcanos-core.query',
-          pipeline: 'runTrinityWritingPipeline',
-          directActionBypass: 'query_and_wait'
-        }),
-        dag: expect.objectContaining({
-          routePolicy: 'direct_endpoint_required',
-          controlGuard: 'DAG_CONTROL_REQUIRES_DIRECT_ENDPOINT',
-          dispatchEndpoint: '/dispatch',
-          dispatchTarget: 'dag',
-          capabilitiesEndpoint: '/api/arcanos/capabilities',
-          runsEndpoint: '/api/arcanos/dag/runs',
-          runStatusEndpoint: '/api/arcanos/dag/runs/{runId}',
-          traceEndpoint: '/api/arcanos/dag/runs/{runId}/trace',
-          mcpEndpoint: '/mcp'
-        }),
-        workers: expect.objectContaining({
-          statusEndpoint: '/workers/status',
-          helperHealthEndpoint: '/worker-helper/health'
-        }),
-        mcp: expect.objectContaining({
-          endpoint: '/mcp',
-          auth: 'bearer'
-        })
-      }),
-      env: expect.objectContaining({
-        hasOpenAIKey: false,
-        hasArcanosModel: expect.any(Boolean),
-        model: expect.any(String),
-        nodeEnv: 'test'
+        selfHeal: '/status/safety/self-heal'
       }),
       traceId: expect.any(String)
     }));
@@ -155,7 +109,7 @@ describe('runtime diagnostics routes', () => {
     );
   });
 
-  it('parses diagnostics action from non-json request bodies', async () => {
+  it('blocks diagnostics action from non-json request bodies', async () => {
     const app = await buildApp();
 
     const response = await request(app)
@@ -163,15 +117,15 @@ describe('runtime diagnostics routes', () => {
       .set('content-type', 'application/x-www-form-urlencoded')
       .send('{"action":"diagnostics"}');
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(400);
     expect(response.body).toEqual(expect.objectContaining({
-      ok: true,
+      ok: false,
       gptId: 'arcanos-core',
+      action: 'diagnostics',
       route: '/gpt/:gptId',
-      actions: expect.arrayContaining(['diagnostics']),
-      env: expect.objectContaining({
-        hasOpenAIKey: false,
-        model: expect.any(String)
+      error: expect.objectContaining({
+        code: 'CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT',
+        message: expect.stringContaining('/gpt-access/*')
       }),
       traceId: expect.any(String)
     }));

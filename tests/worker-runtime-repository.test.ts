@@ -107,6 +107,39 @@ describe('workerRuntimeRepository', () => {
     );
   });
 
+  it('labels slow liveness upserts as repository wall-clock timing', async () => {
+    const timestamps = [1_000, 1_010, 1_010, 1_310, 1_310, 1_310];
+    const dateNowSpy = jest.spyOn(Date, 'now').mockImplementation(() => timestamps.shift() ?? 1_310);
+
+    try {
+      await recordWorkerLiveness({
+        workerId: 'async-queue-1',
+        healthStatus: 'healthy',
+        lastSeenAt: '2026-04-23T01:00:30.000Z'
+      });
+    } finally {
+      dateNowSpy.mockRestore();
+    }
+
+    expect(loggerWarnMock).toHaveBeenCalledWith(
+      'worker.liveness.upsert.app_slow',
+      expect.objectContaining({
+        module: 'worker-runtime',
+        workerId: 'async-queue-1',
+        healthStatus: 'healthy',
+        durationKind: 'repository_wall_clock',
+        measurementKind: 'repository_wall_clock',
+        slowThresholdMs: 250,
+        totalWallMs: expect.any(Number),
+        persistenceReadyMs: expect.any(Number),
+        queryCallWallMs: expect.any(Number),
+        dbQueryName: 'worker_liveness_upsert'
+      })
+    );
+    expect(loggerWarnMock.mock.calls[0]?.[1]).not.toHaveProperty('sql');
+    expect(loggerWarnMock.mock.calls[0]?.[1]).not.toHaveProperty('params');
+  });
+
   it('persists V2 state and legacy compatibility snapshot atomically in one query', async () => {
     await upsertWorkerRuntimeState(
       buildSnapshotRecord(),

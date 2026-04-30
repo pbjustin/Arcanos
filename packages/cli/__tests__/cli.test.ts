@@ -273,18 +273,16 @@ describe("Arcanos CLI", () => {
     );
   });
 
-  it("sends root diagnostics with an env-sourced redacted Bearer token", async () => {
-    const originalAdminToken = process.env.ARCANOS_ADMIN_TOKEN;
-    const cliToken = "cli-unit-test-admin-token";
-    process.env.ARCANOS_ADMIN_TOKEN = cliToken;
+  it("sends root diagnostics through GPT access with an env-sourced redacted Bearer token", async () => {
+    const originalAccessToken = process.env.ARCANOS_GPT_ACCESS_TOKEN;
+    const cliToken = "cli-unit-test-gpt-access-token";
+    process.env.ARCANOS_GPT_ACCESS_TOKEN = cliToken;
     const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(
       createJsonResponse({
         ok: true,
-        gptId: "arcanos-core",
-        action: "root.deep_diagnostics",
         traceId: "trace-cli-root",
-        timestamp: "2026-04-27T00:00:00.000Z",
-        report: []
+        summary: "Read-only diagnostics collected.",
+        observations: []
       })
     );
     const stdout = createWritableCapture();
@@ -312,36 +310,43 @@ describe("Arcanos CLI", () => {
       expect(JSON.parse(output)).toMatchObject({
         ok: true,
         data: {
-          command: "gpt.root_deep_diagnostics",
+          command: "gpt_access.root_deep_diagnostics",
           request: {
-            action: "root.deep_diagnostics",
+            action: "diagnostics.deep",
             authorization: "Bearer [REDACTED]",
+            endpoint: "/gpt-access/diagnostics/deep",
             gptId: "arcanos-core"
           },
           response: {
             ok: true,
             data: {
-              action: "root.deep_diagnostics",
               traceId: "trace-cli-root"
             }
           }
         }
       });
       expect(fetchMock).toHaveBeenCalledWith(
-        new URL("/gpt/arcanos-core", "http://127.0.0.1:3000/"),
+        new URL("/gpt-access/diagnostics/deep", "http://127.0.0.1:3000/"),
         expect.objectContaining({
           method: "POST",
           headers: expect.objectContaining({
+            "content-type": "application/json",
             authorization: `Bearer ${cliToken}`
           }),
-          body: JSON.stringify({ action: "root.deep_diagnostics" })
+          body: JSON.stringify({
+            focus: "root diagnostics for arcanos-core",
+            includeDb: true,
+            includeWorkers: true,
+            includeLogs: true,
+            includeQueue: true
+          })
         })
       );
     } finally {
-      if (originalAdminToken === undefined) {
-        delete process.env.ARCANOS_ADMIN_TOKEN;
+      if (originalAccessToken === undefined) {
+        delete process.env.ARCANOS_GPT_ACCESS_TOKEN;
       } else {
-        process.env.ARCANOS_ADMIN_TOKEN = originalAdminToken;
+        process.env.ARCANOS_GPT_ACCESS_TOKEN = originalAccessToken;
       }
     }
   });

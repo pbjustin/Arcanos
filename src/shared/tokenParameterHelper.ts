@@ -197,34 +197,37 @@ export async function testModelTokenParameter(
     await (client.responses as any).create({
       model: modelName,
       input: [{ role: 'user', content: [{ type: 'input_text', text: 'test' }] }],
-      max_tokens: 16,
+      max_output_tokens: 16,
       stream: false
     });
     
-    // If successful, cache and return max_tokens
-    modelCapabilityCache.set(normalizedModelName, 'max_tokens');
-    tokenLogger.info(`[TOKEN-TEST] Model ${modelName} supports max_tokens`);
-    return 'max_tokens';
+    const inferredParameter = getTokenParameter(modelName, 16).max_completion_tokens !== undefined
+      ? 'max_completion_tokens'
+      : 'max_tokens';
+    modelCapabilityCache.set(normalizedModelName, inferredParameter);
+    tokenLogger.info(`[TOKEN-TEST] Model ${modelName} supports Responses max_output_tokens; inferred ${inferredParameter} for chat compatibility`);
+    return inferredParameter;
     
   } catch (error: unknown) {
     // Check if the error is specifically about the token parameter
     //audit Assumption: error message indicates unsupported param; Handling: fallback
     const errorMessage = getErrorMessage(error).toLowerCase();
-    if (errorMessage.includes('max_tokens') || errorMessage.includes('unrecognized')) {
+    if (errorMessage.includes('max_output_tokens') || errorMessage.includes('unrecognized')) {
       
-      // Try max_completion_tokens as fallback
+      // Retry without an output-token cap so provider availability failures are not mistaken for token semantics.
       try {
         await (client.responses as any).create({
           model: modelName,
           input: [{ role: 'user', content: [{ type: 'input_text', text: 'test' }] }],
-          max_completion_tokens: 16,
           stream: false
         });
         
-        // If successful, cache and return max_completion_tokens
-        modelCapabilityCache.set(normalizedModelName, 'max_completion_tokens');
-        tokenLogger.info(`[TOKEN-TEST] Model ${modelName} supports max_completion_tokens`);
-        return 'max_completion_tokens';
+        const inferredParameter = getTokenParameter(modelName, 16).max_completion_tokens !== undefined
+          ? 'max_completion_tokens'
+          : 'max_tokens';
+        modelCapabilityCache.set(normalizedModelName, inferredParameter);
+        tokenLogger.info(`[TOKEN-TEST] Model ${modelName} does not accept Responses max_output_tokens; inferred ${inferredParameter} for chat compatibility`);
+        return inferredParameter;
         
       } catch (fallbackError: unknown) {
         //audit Assumption: both params failed; Handling: default to max_tokens

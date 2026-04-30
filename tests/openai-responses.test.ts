@@ -1,6 +1,7 @@
 import { describe, expect, it, jest } from '@jest/globals';
 
 import {
+  callTextResponse,
   callStructuredResponse,
   createSafeResponsesParse,
   OpenAIResponseMalformedJsonError,
@@ -36,6 +37,65 @@ describe('openai responses helpers', () => {
     expect(create).toHaveBeenCalledTimes(1);
     expect(result.outputParsed).toEqual({ answer: 'ok' });
     expect(result.outputText).toBe('{"answer":"ok"}');
+  });
+
+  it('extracts structured text from nested Responses API output parts', async () => {
+    const create = jest.fn().mockResolvedValue({
+      id: 'resp_nested_1',
+      model: 'gpt-4.1-mini',
+      output: [
+        {
+          type: 'message',
+          content: [
+            { type: 'output_text', text: '{"answer":"nested"}' },
+          ],
+        },
+      ],
+    });
+
+    const result = await callStructuredResponse<{ answer: string }>(
+      { responses: { create } } as any,
+      {
+        model: 'gpt-4.1-mini',
+        input: 'hello',
+        text: { format: { type: 'json_object' } },
+      },
+      undefined,
+      {
+        validate: (value: unknown): value is { answer: string } =>
+          typeof value === 'object' &&
+          value !== null &&
+          typeof (value as { answer?: unknown }).answer === 'string',
+        source: 'test nested response',
+      }
+    );
+
+    expect(result.outputText).toBe('{"answer":"nested"}');
+    expect(result.outputParsed).toEqual({ answer: 'nested' });
+  });
+
+  it('does not call private OpenAI SDK promise unwrap helpers', async () => {
+    const privateUnwrap = jest.fn(() => {
+      throw new Error('private unwrap helper should not be called');
+    });
+    const create = jest.fn().mockResolvedValue({
+      id: 'resp_private_helper_1',
+      model: 'gpt-4.1-mini',
+      output_text: 'plain text',
+      output: [],
+      _thenUnwrap: privateUnwrap,
+    });
+
+    const result = await callTextResponse(
+      { responses: { create } } as any,
+      {
+        model: 'gpt-4.1-mini',
+        input: 'hello',
+      }
+    );
+
+    expect(result.outputText).toBe('plain text');
+    expect(privateUnwrap).not.toHaveBeenCalled();
   });
 
   it('surfaces refusals explicitly', async () => {

@@ -2,6 +2,7 @@ import type OpenAI from 'openai';
 import type { CognitiveDomain } from '@shared/types/cognitiveDomain.js';
 import { normalizeResponsesCreateParams } from '@core/adapters/openai.adapter.js';
 import { aiLogger } from '@platform/logging/structuredLogging.js';
+import { extractResponseOutputText } from '@arcanos/openai/responseParsing';
 
 const VALID_DOMAINS: ReadonlySet<string> = new Set([
   'diagnostic', 'code', 'creative', 'natural', 'execution'
@@ -69,9 +70,7 @@ export async function gptFallbackClassifier(
 
   const response: any = await (openai.responses as any).create(payload);
 
-  const rawText = typeof response?.output_text === 'string'
-    ? response.output_text
-    : response?.choices?.[0]?.message?.content ?? '';
+  const rawText = extractResponseOutputText(response, '');
   const label = rawText.trim().toLowerCase();
 
   //audit Assumption: classifier output must match the allowed domain set exactly; failure risk: unexpected labels route requests incorrectly; expected invariant: only validated labels escape this function; handling strategy: warn and coerce invalid output to the conservative `natural` fallback.

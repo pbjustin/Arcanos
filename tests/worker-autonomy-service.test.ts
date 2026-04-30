@@ -1373,6 +1373,67 @@ describe('workerAutonomyService', () => {
     }
   });
 
+  it('does not recover stale idle workers when the queue has no running work', async () => {
+    jest.useFakeTimers();
+
+    try {
+      jest.setSystemTime(new Date('2026-03-07T12:00:00.000Z'));
+      listWorkerRuntimeSnapshotsMock.mockResolvedValue([
+        {
+          workerId: 'async-queue-slot-idle',
+          workerType: 'async_queue',
+          healthStatus: 'healthy',
+          currentJobId: null,
+          lastError: null,
+          startedAt: '2026-03-07T11:00:00.000Z',
+          lastHeartbeatAt: '2026-03-07T11:55:00.000Z',
+          lastInspectorRunAt: null,
+          updatedAt: '2026-03-07T11:55:00.000Z',
+          snapshot: {
+            activeJobs: [],
+            lastActivityAt: '2026-03-07T11:55:00.000Z'
+          }
+        }
+      ]);
+
+      const service = new WorkerAutonomyService({
+        workerId: 'async-queue-slot-1',
+        workerType: 'async_queue',
+        heartbeatIntervalMs: 5_000,
+        leaseMs: 15_000,
+        inspectorIntervalMs: 30_000,
+        watchdogIntervalMs: 5_000,
+        staleAfterMs: 10_000,
+        watchdogIdleMs: 120_000,
+        stalledJobAction: 'requeue',
+        defaultMaxRetries: 2,
+        retryBackoffBaseMs: 2_000,
+        retryBackoffMaxMs: 60_000,
+        maxJobsPerHour: 120,
+        maxAiCallsPerHour: 120,
+        maxRssMb: 2_048,
+        queueDepthDeferralThreshold: 25,
+        queueDepthDeferralMs: 5_000,
+        failureWebhookUrl: null,
+        failureWebhookThreshold: 3,
+        failureWebhookCooldownMs: 300_000
+      });
+
+      const result = await service.runWatchdogCycle('watchdog');
+
+      expect(recoverStalledJobsForWorkersMock).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        staleWorkers: 0,
+        stalledJobs: 0,
+        requeuedJobs: 0,
+        deadLetterJobs: 0,
+        cancelledJobs: 0
+      });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('dead-letters stalled jobs when watchdog recovery is configured to stop retrying', async () => {
     jest.useFakeTimers();
 
@@ -1573,6 +1634,45 @@ describe('workerAutonomyService', () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  it('backs off idle worker heartbeats while keeping active job heartbeats frequent', async () => {
+    const service = new WorkerAutonomyService({
+      workerId: 'async-queue',
+      workerType: 'async_queue',
+      heartbeatIntervalMs: 5_000,
+      leaseMs: 15_000,
+      inspectorIntervalMs: 30_000,
+      staleAfterMs: 10_000,
+      watchdogIdleMs: 120_000,
+      defaultMaxRetries: 2,
+      retryBackoffBaseMs: 2_000,
+      retryBackoffMaxMs: 60_000,
+      maxJobsPerHour: 120,
+      maxAiCallsPerHour: 120,
+      maxRssMb: 2_048,
+      queueDepthDeferralThreshold: 25,
+      queueDepthDeferralMs: 5_000,
+      failureWebhookUrl: null,
+      failureWebhookThreshold: 3,
+      failureWebhookCooldownMs: 300_000
+    });
+
+    expect(service.getRecommendedWorkerHeartbeatDelayMs()).toBe(30_000);
+
+    await service.markJobStarted({
+      id: 'job-active',
+      job_type: 'ask',
+      worker_id: 'async-queue',
+      status: 'running',
+      input: { prompt: 'test' },
+      retry_count: 0,
+      max_retries: 2,
+      created_at: new Date(),
+      updated_at: new Date()
+    } as any);
+
+    expect(service.getRecommendedWorkerHeartbeatDelayMs()).toBe(5_000);
   });
 
   it('marks blocked queue work as degraded when inactivity exceeds the watchdog threshold', async () => {

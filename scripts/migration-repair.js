@@ -1,6 +1,19 @@
 import OpenAI from 'openai';
 import { Client } from 'pg';
 
+function extractResponseOutputText(response) {
+  if (typeof response?.output_text === 'string' && response.output_text.trim().length > 0) {
+    return response.output_text;
+  }
+
+  const outputItems = Array.isArray(response?.output) ? response.output : [];
+  return outputItems
+    .flatMap((item) => Array.isArray(item?.content) ? item.content : [])
+    .map((part) => typeof part?.text === 'string' ? part.text : '')
+    .filter(Boolean)
+    .join('');
+}
+
 async function main() {
   const databaseUrl = process.env.DATABASE_URL;
   const apiKey = process.env.OPENAI_API_KEY;
@@ -62,19 +75,11 @@ async function main() {
     const response = await openai.responses.create({
       model: process.env.FINETUNED_MODEL_ID || process.env.AI_MODEL || process.env.OPENAI_MODEL || 'gpt-4o-mini',
       temperature: 0,
-      messages: [
-        {
-          role: 'system',
-          content: 'You are a PostgreSQL schema repair assistant. Output a JSON array of objects with keys `issue` and `repair_sql`. Each `repair_sql` must be idempotent.'
-        },
-        {
-          role: 'user',
-          content: JSON.stringify(issues)
-        }
-      ]
+      instructions: 'You are a PostgreSQL schema repair assistant. Output a JSON array of objects with keys `issue` and `repair_sql`. Each `repair_sql` must be idempotent.',
+      input: [{ role: 'user', content: [{ type: 'input_text', text: JSON.stringify(issues) }] }]
     });
 
-    console.log(response.choices[0].message.content);
+    console.log(extractResponseOutputText(response));
   } catch (err) {
     console.error('Migration repair failed:', err);
   } finally {

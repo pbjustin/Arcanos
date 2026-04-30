@@ -619,7 +619,7 @@ describe('gpt router universal dispatch', () => {
     );
   });
 
-  it('keeps diagnostics working through POST /gpt/{gptId}', async () => {
+  it('blocks diagnostics through POST /gpt/{gptId}', async () => {
     const response = await request(buildApp())
       .post('/gpt/arcanos-core')
       .send({
@@ -628,62 +628,35 @@ describe('gpt router universal dispatch', () => {
         gptVersion: '1.0.0',
       });
 
-    expect(response.status).toBe(200);
+    expect(response.status).toBe(400);
     expect(response.body).toEqual(
       expect.objectContaining({
-        ok: true,
+        ok: false,
         gptId: 'arcanos-core',
+        action: 'diagnostics',
         route: '/gpt/:gptId',
-        actions: expect.arrayContaining([
-          'query',
-          'query_and_wait',
-          'diagnostics',
-          'get_status',
-          'get_result',
-        ]),
-        canonicalEndpoints: expect.objectContaining({
-          trinityStatus: '/trinity/status',
-          dagRuns: '/api/arcanos/dag/runs',
-          dagRunStatus: '/api/arcanos/dag/runs/{runId}',
+        error: expect.objectContaining({
+          code: 'CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT',
+          message: expect.stringContaining('/gpt-access/*'),
+        }),
+        canonical: expect.objectContaining({
+          status: '/status',
+          workers: '/workers/status',
+          jobStatus: '/jobs/{jobId}',
+          jobResult: '/jobs/{jobId}/result',
+          gptAccessJobResult: '/gpt-access/jobs/result',
           mcp: '/mcp',
         }),
-        policy: {
-          writingPlane: '/gpt/:gptId',
-          controlPlane: 'direct-endpoints',
-          trinityWritingAction: 'query',
-          trinityDirectActionBypass: 'query_and_wait',
-          systemOperationsThroughWritingPipeline: false,
-        },
-        subsystems: expect.objectContaining({
-          trinity: {
-            statusEndpoint: '/trinity/status',
-            writingEndpoint: '/gpt/:gptId',
-            writingAction: 'query',
-            sourceEndpoint: 'gpt.arcanos-core.query',
-            pipeline: 'runTrinityWritingPipeline',
-            directActionBypass: 'query_and_wait',
-          },
-          dag: expect.objectContaining({
-            routePolicy: 'direct_endpoint_required',
-            dispatchEndpoint: '/dispatch',
-            runsEndpoint: '/api/arcanos/dag/runs',
-            mcpEndpoint: '/mcp',
-          }),
-          workers: expect.objectContaining({
-            statusEndpoint: '/workers/status',
-            controlActions: ['workers.status', 'queue.inspect'],
-          }),
-        }),
-        env: expect.objectContaining({
-          hasOpenAIKey: expect.any(Boolean),
-          hasArcanosModel: expect.any(Boolean),
-          model: expect.any(String),
-          nodeEnv: expect.any(String),
+        _route: expect.objectContaining({
+          gptId: 'arcanos-core',
+          action: 'diagnostics',
+          route: 'control_guard',
         }),
         traceId: expect.any(String),
       })
     );
     expect(mockGetDiagnosticsSnapshot).not.toHaveBeenCalled();
+    expect(mockResolveGptRouting).not.toHaveBeenCalled();
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
@@ -713,12 +686,12 @@ describe('gpt router universal dispatch', () => {
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
-  it('returns a structured dispatcher error for unknown GPT diagnostics requests', async () => {
+  it('blocks unknown GPT diagnostics requests before GPT routing', async () => {
     const response = await request(buildApp())
       .post('/gpt/unknown')
       .send({ action: 'diagnostics' });
 
-    expect(response.status).toBe(404);
+    expect(response.status).toBe(400);
     expect(response.body).toEqual(
       expect.objectContaining({
         ok: false,
@@ -727,12 +700,77 @@ describe('gpt router universal dispatch', () => {
         route: '/gpt/:gptId',
         traceId: expect.any(String),
         error: expect.objectContaining({
-          code: 'UNKNOWN_GPT',
-          message: expect.stringContaining("gptId 'unknown' is not registered"),
+          code: 'CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT',
+          message: expect.stringContaining('/gpt-access/*'),
         }),
       })
     );
     expect(mockGetDiagnosticsSnapshot).not.toHaveBeenCalled();
+    expect(mockResolveGptRouting).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('blocks get_status through the GPT route before job lookup', async () => {
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        action: 'get_status',
+        payload: {
+          jobId: 'job-123',
+        },
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        ok: false,
+        action: 'get_status',
+        error: expect.objectContaining({
+          code: 'CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT',
+        }),
+        canonical: expect.objectContaining({
+          jobStatus: '/jobs/{jobId}',
+          jobResult: '/jobs/{jobId}/result',
+        }),
+        _route: expect.objectContaining({
+          route: 'control_guard',
+          action: 'get_status',
+        }),
+      })
+    );
+    expect(mockResolveGptRouting).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('blocks get_result through the GPT route before job lookup', async () => {
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        action: 'get_result',
+        payload: {
+          jobId: 'job-123',
+        },
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        ok: false,
+        action: 'get_result',
+        error: expect.objectContaining({
+          code: 'CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT',
+        }),
+        canonical: expect.objectContaining({
+          jobStatus: '/jobs/{jobId}',
+          jobResult: '/jobs/{jobId}/result',
+        }),
+        _route: expect.objectContaining({
+          route: 'control_guard',
+          action: 'get_result',
+        }),
+      })
+    );
+    expect(mockResolveGptRouting).not.toHaveBeenCalled();
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 

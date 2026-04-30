@@ -61,8 +61,9 @@ describe('transport/http/middleware/unsafeExecutionGate', () => {
     expect(response.status).not.toHaveBeenCalled();
   });
 
-  it('bypasses diagnostics GPT calls for object, string, and reparsed form bodies', () => {
+  it('does not bypass diagnostics actions sent through /gpt', () => {
     const logger = { info: jest.fn() };
+    hasUnsafeBlockingConditionsMock.mockReturnValue(true);
 
     for (const body of [
       { action: 'diagnostics' },
@@ -79,14 +80,11 @@ describe('transport/http/middleware/unsafeExecutionGate', () => {
         logger
       } as MockRequest as any, response as any, next);
 
-      expect(next).toHaveBeenCalledTimes(1);
-      expect(response.status).not.toHaveBeenCalled();
+      expect(next).not.toHaveBeenCalled();
+      expect(response.status).toHaveBeenCalledWith(503);
     }
 
-    expect(logger.info).toHaveBeenCalledWith('unsafe_execution_gate.bypass', {
-      reason: 'gpt_diagnostics',
-      path: '/gpt/arcanos-core'
-    });
+    expect(logger.info).not.toHaveBeenCalledWith('unsafe_execution_gate.bypass', expect.anything());
   });
 
   it('bypasses approved read-only GPT access POST paths', () => {

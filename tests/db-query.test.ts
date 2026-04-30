@@ -92,10 +92,16 @@ describe('db query helper', () => {
       expect.objectContaining({
         operation: 'select',
         queryHash: expect.any(String),
-        durationMs: 85,
-        executionMs: 85,
-        poolWaitMs: 60,
-        totalMs: 145,
+        durationMs: 145,
+        durationKind: 'app_wall_clock',
+        measurementKind: 'client_wall_clock',
+        slowThresholdMs: 50,
+        slowReasons: ['connection_acquisition', 'client_query_round_trip', 'app_wall_clock'],
+        connectionAcquireMs: 60,
+        clientQueryRoundTripMs: 85,
+        appWallClockMs: 145,
+        postgresExecutionMs: null,
+        postgresExecutionKnown: false,
         rowCount: 1,
         queryName: 'worker_runtime_snapshot_get',
         workerId: 'worker-1',
@@ -147,8 +153,48 @@ describe('db query helper', () => {
     expect(slowLogContext).toEqual(expect.objectContaining({
       operation: 'select',
       durationMs: 60,
+      clientQueryRoundTripMs: 60,
+      appWallClockMs: 60,
+      slowReasons: ['client_query_round_trip', 'app_wall_clock'],
       rowCount: 1
     }));
+    expect(releaseMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('labels slow connection acquisition separately from query round trip', async () => {
+    const releaseMock = jest.fn();
+    const clientQueryMock = jest.fn().mockResolvedValue({
+      rows: [],
+      rowCount: null
+    });
+    getPoolMock.mockReturnValue({
+      connect: jest.fn().mockResolvedValue({
+        query: clientQueryMock,
+        release: releaseMock
+      })
+    });
+    const timestamps = [3_000, 3_080, 3_080, 3_090];
+    const dateNowSpy = jest.spyOn(Date, 'now').mockImplementation(() => timestamps.shift() ?? 3_090);
+
+    try {
+      await query('SELECT 1');
+    } finally {
+      dateNowSpy.mockRestore();
+    }
+
+    expect(dbLoggerWarnMock).toHaveBeenCalledWith(
+      'db.query.slow',
+      expect.objectContaining({
+        connectionAcquireMs: 80,
+        clientQueryRoundTripMs: 10,
+        appWallClockMs: 90,
+        slowReasons: ['connection_acquisition', 'app_wall_clock'],
+        postgresExecutionKnown: false,
+        postgresExecutionMs: null,
+        rowCount: null
+      })
+    );
+    expect(dbLoggerWarnMock.mock.calls[0]?.[1]).not.toHaveProperty('sql');
     expect(releaseMock).toHaveBeenCalledTimes(1);
   });
 });

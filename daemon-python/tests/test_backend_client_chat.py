@@ -226,7 +226,7 @@ def test_request_query_and_wait_uses_bridge_wait_controls_and_normalizes_respons
     assert response.value.result == {"text": "Generated Seth Rollins prompt"}
 
 
-def test_request_gpt_job_status_uses_structured_bridge_payload() -> None:
+def test_request_gpt_job_status_uses_canonical_jobs_route() -> None:
     client = SimpleNamespace()
     client._request_json = MagicMock(
         return_value=BackendResponse(
@@ -247,11 +247,8 @@ def test_request_gpt_job_status_uses_structured_bridge_payload() -> None:
     assert response.ok is True
     assert response.value is not None
     _, path, payload = client._request_json.call_args.args
-    assert path == "/gpt/backstage-booker"
-    assert payload == {
-        "action": "get_status",
-        "payload": {"jobId": "job-123"},
-    }
+    assert path == "/jobs/job-123"
+    assert payload is None
     assert response.value.action == "get_status"
     assert response.value.job_id == "job-123"
     assert response.value.status == "running"
@@ -259,7 +256,7 @@ def test_request_gpt_job_status_uses_structured_bridge_payload() -> None:
     assert response.value.result == {"id": "job-123", "status": "running", "lifecycle_status": "running"}
 
 
-def test_request_gpt_job_result_uses_structured_bridge_payload() -> None:
+def test_request_gpt_job_result_uses_canonical_jobs_route() -> None:
     client = SimpleNamespace()
     client._request_json = MagicMock(
         return_value=BackendResponse(
@@ -288,11 +285,8 @@ def test_request_gpt_job_result_uses_structured_bridge_payload() -> None:
     assert response.ok is True
     assert response.value is not None
     _, path, payload = client._request_json.call_args.args
-    assert path == "/gpt/backstage-booker"
-    assert payload == {
-        "action": "get_result",
-        "payload": {"jobId": "job-123"},
-    }
+    assert path == "/jobs/job-123/result"
+    assert payload is None
     assert response.value.action == "get_result"
     assert response.value.job_id == "job-123"
     assert response.value.status == "completed"

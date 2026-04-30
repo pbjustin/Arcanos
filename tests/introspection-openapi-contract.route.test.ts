@@ -31,7 +31,9 @@ describe('custom GPT OpenAPI contract route', () => {
     const requestExamples =
       response.body.paths?.['/gpt/{gptId}']?.post?.requestBody?.content?.['application/json']
         ?.examples;
-    expect(requestExamples?.diagnostics?.value?.action).toBe('diagnostics');
+    expect(requestExamples).not.toHaveProperty('diagnostics');
+    expect(requestExamples).not.toHaveProperty('getStatus');
+    expect(requestExamples).not.toHaveProperty('getResult');
     const requestExampleActions = Object.values(requestExamples ?? {}).map((example) => {
       const typedExample = example as { value?: { action?: unknown } };
       return typedExample.value?.action;

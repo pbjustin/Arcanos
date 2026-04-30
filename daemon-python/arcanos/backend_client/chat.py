@@ -382,9 +382,9 @@ def request_gpt_job_status(
     gpt_id: Optional[str] = None,
 ) -> BackendResponse[BackendGptAsyncBridgeResult]:
     """
-    Purpose: Read async job status through the GPT compatibility bridge without enqueueing new work.
+    Purpose: Read async job status through the canonical jobs API without enqueueing new work.
     Inputs/Outputs: required job_id and optional gpt_id; returns typed async bridge status metadata.
-    Edge cases: blank job ids fail locally so control reads never degrade into prompt-based lookups.
+    Edge cases: blank job ids fail locally and the deprecated gpt_id parameter is ignored so control reads never use `/gpt`.
     """
     normalized_job_id = job_id.strip()
     if not normalized_job_id:
@@ -396,16 +396,18 @@ def request_gpt_job_status(
             ),
         )
 
-    route = resolve_backend_chat_route(gpt_id)
-    payload = _build_backend_payload(
-        action="get_status",
-        payload={"jobId": normalized_job_id},
+    _ = gpt_id
+    response = client._request_json(
+        "get",
+        f"/jobs/{quote(normalized_job_id, safe='')}",
+        None,
     )
-    return _request_gpt_async_bridge(
-        client,
-        action="get_status",
-        route=route,
-        payload=payload,
+    if not response.ok or not response.value:
+        return BackendResponse(ok=False, error=response.error)
+
+    return BackendResponse(
+        ok=True,
+        value=_normalize_gpt_async_bridge_payload(response.value, "get_status"),
     )
 
 
@@ -415,9 +417,9 @@ def request_gpt_job_result(
     gpt_id: Optional[str] = None,
 ) -> BackendResponse[BackendGptAsyncBridgeResult]:
     """
-    Purpose: Read async job results through the GPT compatibility bridge without enqueueing new work.
+    Purpose: Read async job results through the canonical jobs API without enqueueing new work.
     Inputs/Outputs: required job_id and optional gpt_id; returns typed async bridge result metadata.
-    Edge cases: blank job ids fail locally so control reads never degrade into prompt-based lookups.
+    Edge cases: blank job ids fail locally and the deprecated gpt_id parameter is ignored so control reads never use `/gpt`.
     """
     normalized_job_id = job_id.strip()
     if not normalized_job_id:
@@ -429,16 +431,18 @@ def request_gpt_job_result(
             ),
         )
 
-    route = resolve_backend_chat_route(gpt_id)
-    payload = _build_backend_payload(
-        action="get_result",
-        payload={"jobId": normalized_job_id},
+    _ = gpt_id
+    response = client._request_json(
+        "get",
+        f"/jobs/{quote(normalized_job_id, safe='')}/result",
+        None,
     )
-    return _request_gpt_async_bridge(
-        client,
-        action="get_result",
-        route=route,
-        payload=payload,
+    if not response.ok or not response.value:
+        return BackendResponse(ok=False, error=response.error)
+
+    return BackendResponse(
+        ok=True,
+        value=_normalize_gpt_async_bridge_payload(response.value, "get_result"),
     )
 
 

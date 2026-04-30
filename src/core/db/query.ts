@@ -87,6 +87,29 @@ function normalizeQueryTraceContext(
   };
 }
 
+function getRowCount(result: QueryResult): number | null {
+  return typeof result.rowCount === 'number' ? result.rowCount : null;
+}
+
+function buildSlowReasons(timings: {
+  connectionAcquireMs: number;
+  clientQueryRoundTripMs: number;
+  appWallClockMs: number;
+  thresholdMs: number;
+}): string[] {
+  const reasons: string[] = [];
+  if (timings.connectionAcquireMs >= timings.thresholdMs) {
+    reasons.push('connection_acquisition');
+  }
+  if (timings.clientQueryRoundTripMs >= timings.thresholdMs) {
+    reasons.push('client_query_round_trip');
+  }
+  if (timings.appWallClockMs >= timings.thresholdMs) {
+    reasons.push('app_wall_clock');
+  }
+  return reasons;
+}
+
 /**
  * Enhanced query helper with caching and optimization
  */
@@ -131,17 +154,18 @@ export async function query(
     }
   }
 
-  const connectStartedAtMs = Date.now();
-  let poolWaitMs = 0;
+  const operationStartedAtMs = Date.now();
+  const connectStartedAtMs = operationStartedAtMs;
+  let connectionAcquireMs = 0;
   let client: PoolClient;
   try {
     client = await pool.connect();
-    poolWaitMs = Date.now() - connectStartedAtMs;
+    connectionAcquireMs = Date.now() - connectStartedAtMs;
     recordDependencyCall({
       dependency: 'postgres',
       operation: 'pool_connect',
       outcome: 'ok',
-      durationMs: poolWaitMs,
+      durationMs: connectionAcquireMs,
     });
   } catch (error) {
     recordDependencyCall({
@@ -155,43 +179,50 @@ export async function query(
   }
 
   try {
-    const start = Date.now();
+    const queryStartedAtMs = Date.now();
     const result = await client.query(text, params);
-    const executionMs = Date.now() - start;
-    const totalMs = poolWaitMs + executionMs;
+    const completedAtMs = Date.now();
+    const clientQueryRoundTripMs = completedAtMs - queryStartedAtMs;
+    const appWallClockMs = completedAtMs - operationStartedAtMs;
+    const slowReasons = buildSlowReasons({
+      connectionAcquireMs,
+      clientQueryRoundTripMs,
+      appWallClockMs,
+      thresholdMs: SLOW_QUERY_LOG_MIN_MS
+    });
+    const rowCount = getRowCount(result);
+    const logContext = {
+      ...normalizedTraceContext,
+      operation,
+      queryHash,
+      durationMs: appWallClockMs,
+      durationKind: 'app_wall_clock',
+      measurementKind: 'client_wall_clock',
+      slowThresholdMs: SLOW_QUERY_LOG_MIN_MS,
+      slowReasons,
+      connectionAcquireMs,
+      clientQueryRoundTripMs,
+      appWallClockMs,
+      postgresExecutionMs: null,
+      postgresExecutionKnown: false,
+      postgresExecutionSource: 'not_measured_by_pg_client_query',
+      rowCount,
+      // Compatibility aliases for existing dashboards. Prefer the explicit fields above.
+      executionMs: clientQueryRoundTripMs,
+      poolWaitMs: connectionAcquireMs,
+      totalMs: appWallClockMs,
+    };
 
-    if (
-      executionMs >= SLOW_QUERY_LOG_MIN_MS ||
-      poolWaitMs >= SLOW_QUERY_LOG_MIN_MS ||
-      totalMs >= SLOW_QUERY_LOG_MIN_MS
-    ) {
-      dbLogger.warn('db.query.slow', {
-        ...normalizedTraceContext,
-        operation,
-        queryHash,
-        durationMs: executionMs,
-        executionMs,
-        poolWaitMs,
-        totalMs,
-        rowCount: result.rowCount || 0,
-      });
+    if (slowReasons.length > 0) {
+      dbLogger.warn('db.query.slow', logContext);
     } else if (SHOULD_LOG_EVERY_QUERY) {
-      dbLogger.debug('db.query.executed', {
-        ...normalizedTraceContext,
-        operation,
-        queryHash,
-        durationMs: executionMs,
-        executionMs,
-        poolWaitMs,
-        totalMs,
-        rowCount: result.rowCount || 0,
-      });
+      dbLogger.debug('db.query.executed', logContext);
     }
     recordDependencyCall({
       dependency: 'postgres',
       operation,
       outcome: 'ok',
-      durationMs: executionMs,
+      durationMs: clientQueryRoundTripMs,
     });
     
     // Cache SELECT queries that return data
