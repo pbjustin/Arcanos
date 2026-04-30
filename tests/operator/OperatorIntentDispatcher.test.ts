@@ -3,6 +3,7 @@ import { describe, expect, it, jest } from '@jest/globals';
 import {
   classifyOperatorIntent,
   dispatchOperatorRequest,
+  sanitizeOperatorControlPlaneResult,
   type OperatorIntentDispatcherClients
 } from '../../src/platform/operator/OperatorIntentDispatcher.js';
 import {
@@ -147,7 +148,11 @@ describe('OperatorIntentDispatcher', () => {
       { url: 'https://internal.example' },
       { headers: { authorization: 'Bearer secret-token-value' } },
       { proxy: 'http://127.0.0.1:8080' },
-      { auth: { bearer: 'secret-token-value' } }
+      { auth: { bearer: 'secret-token-value' } },
+      { 'raw-sql': 'SELECT * FROM job_data' },
+      { 'raw sql': 'SELECT * FROM job_data' },
+      { raw_sql: 'SELECT * FROM job_data' },
+      { 'openai-api-key': 'sk-test-placeholder-value' }
     ];
 
     for (const payload of unsafePayloads) {
@@ -156,6 +161,28 @@ describe('OperatorIntentDispatcher', () => {
       });
     }
     expect(transportRequestMock).not.toHaveBeenCalled();
+  });
+
+  it('allows repeated acyclic object references but rejects true circular inputs with a path', async () => {
+    const transportRequestMock = jest.fn(async () => clientResult('/gpt-access/logs/query', { ok: true }));
+    const client = new OperatorControlPlaneClient({
+      request: transportRequestMock
+    } as unknown as GptAccessTransport);
+    const shared = { safe: 'value' };
+
+    await expect(client.queryLogs({
+      service: 'web',
+      nestedA: shared,
+      nestedB: shared
+    } as any)).resolves.toMatchObject({
+      endpoint: '/gpt-access/logs/query'
+    });
+
+    const circular: Record<string, unknown> = { service: 'web' };
+    circular.nested = circular;
+
+    await expect(client.queryLogs(circular as any)).rejects.toThrow(/nested/);
+    expect(transportRequestMock).toHaveBeenCalledTimes(1);
   });
 
   it('does not call createReasoningJob for control-plane requests', async () => {
@@ -169,6 +196,64 @@ describe('OperatorIntentDispatcher', () => {
     expect(result.routeKind).toBe('control_plane');
     expect(mocks.getWorkersStatusMock).toHaveBeenCalledTimes(1);
     expect(mocks.createReasoningJobMock).not.toHaveBeenCalled();
+  });
+
+  it('extracts a job UUID from natural-language control-plane lookup requests', async () => {
+    const { clients, mocks } = buildMockClients();
+
+    const result = await dispatchOperatorRequest({
+      input: `please look up job result for ${COMPLETED_JOB_ID}`,
+      clients
+    });
+
+    expect(result.routeKind).toBe('control_plane');
+    expect(mocks.getJobResultMock).toHaveBeenCalledWith({
+      jobId: COMPLETED_JOB_ID,
+      traceId: undefined
+    });
+    expect(mocks.createReasoningJobMock).not.toHaveBeenCalled();
+  });
+
+  it('throws a typed dispatcher error for job lookups without a UUID', async () => {
+    const { clients, mocks } = buildMockClients();
+
+    await expect(dispatchOperatorRequest({
+      input: 'look up job result',
+      clients
+    })).rejects.toMatchObject({
+      code: 'OPERATOR_JOB_RESULT_ID_REQUIRED'
+    });
+    expect(mocks.getJobResultMock).not.toHaveBeenCalled();
+    expect(mocks.createReasoningJobMock).not.toHaveBeenCalled();
+  });
+
+  it('redacts sensitive string values while preserving key names', () => {
+    const sanitized = sanitizeOperatorControlPlaneResult({
+      message: 'authorization: Bearer live-secret-token token=secret-value cookie=session-value'
+    });
+    const rendered = JSON.stringify(sanitized);
+
+    expect(rendered).toContain('authorization=[REDACTED]');
+    expect(rendered).toContain('token=[REDACTED]');
+    expect(rendered).toContain('cookie=[REDACTED]');
+    expect(rendered).not.toContain('$1=');
+    expect(rendered).not.toContain('live-secret-token');
+    expect(rendered).not.toContain('secret-value');
+    expect(rendered).not.toContain('session-value');
+  });
+
+  it('sanitizes untrusted object keys without polluting object prototypes', () => {
+    const payload = JSON.parse(
+      '{"ok":true,"__proto__":{"polluted":true},"constructor":{"prototype":{"polluted":true}},"nested":{"prototype":{"polluted":true}}}'
+    );
+    const sanitized = sanitizeOperatorControlPlaneResult(payload) as Record<string, unknown>;
+
+    expect(Object.getPrototypeOf(sanitized)).toBeNull();
+    expect((sanitized as any).__proto__).toBe('[REDACTED]');
+    expect((sanitized as any).constructor).toBe('[REDACTED]');
+    expect((sanitized.nested as any).prototype).toBe('[REDACTED]');
+    expect(({} as any).polluted).toBeUndefined();
+    expect(JSON.stringify(sanitized)).not.toContain('"polluted":true');
   });
 
   it('sanitizes hybrid control-plane results before creating GPT context', async () => {
@@ -208,8 +293,10 @@ describe('OperatorIntentDispatcher', () => {
       });
     });
 
+    const operatorSecret = 'super-secret-value';
+    const operatorTokenAssignment = ['token', operatorSecret].join('=');
     const result = await dispatchOperatorRequest({
-      input: 'run diagnostics and have AI explain the worker queue risk',
+      input: `run diagnostics and have AI explain ${operatorTokenAssignment} the worker queue risk`,
       clients
     });
 
@@ -221,10 +308,14 @@ describe('OperatorIntentDispatcher', () => {
       'Interpret the provided sanitized operational observation and produce concise guidance for the operator.'
     );
     expect(reasoningInput?.task).not.toMatch(/\b(?:diagnostics|worker|queue|runtime)\b/i);
+    expect((reasoningInput?.input as Record<string, unknown>).operatorRequest).toBe(
+      'run diagnostics and have AI explain token=[REDACTED] the worker queue risk'
+    );
     expect(renderedReasoningInput).toContain('trace-control-1');
     expect(renderedReasoningInput).toContain('degraded');
     expect(renderedReasoningInput).toContain('"pending":4');
-    expect(renderedReasoningInput).not.toContain('worker queue risk');
+    expect(renderedReasoningInput).toContain('worker queue risk');
+    expect(renderedReasoningInput).not.toContain('super-secret-value');
     expect(renderedReasoningInput).not.toContain('live-secret-token');
     expect(renderedReasoningInput).not.toContain('secret-session');
     expect(renderedReasoningInput).not.toContain('sk-test-placeholder-value');

@@ -79,6 +79,18 @@ export interface OperatorDispatchResult {
   gptReasoning?: GptAccessClientResult;
 }
 
+export type OperatorIntentDispatcherErrorCode = 'OPERATOR_JOB_RESULT_ID_REQUIRED';
+
+export class OperatorIntentDispatcherError extends Error {
+  constructor(
+    readonly code: OperatorIntentDispatcherErrorCode,
+    message: string
+  ) {
+    super(message);
+    this.name = 'OperatorIntentDispatcherError';
+  }
+}
+
 interface SignalDefinition {
   signal: string;
   pattern: RegExp;
@@ -86,7 +98,7 @@ interface SignalDefinition {
 
 const DEFAULT_GPT_ID = 'arcanos-core';
 const MAX_SANITIZED_SUMMARY_CHARS = 10_000;
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const UUID_PATTERN = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 
 const CONTROL_PLANE_SIGNALS: SignalDefinition[] = [
   { signal: 'runtime', pattern: /\bruntime\b/i },
@@ -135,13 +147,14 @@ const HYBRID_INTERPRET_PATTERN = /\b(?:explain|summari[sz]e|interpret|recommend|
 const HYBRID_CONNECTOR_PATTERN = /\b(?:and|then|after|with)\b/i;
 const SENSITIVE_KEY_PATTERN = /\b(?:authorization|cookie|set-cookie|api[_-]?key|token|secret|password|session(?:id)?|database[_-]?url|headers?|rawheaders?)\b/i;
 const FULL_ENV_KEY_PATTERN = /^(?:env|fullenv|rawenv|processenv|environmentvariables)$/i;
+const UNSAFE_OBJECT_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 const STRING_REDACTIONS: Array<[RegExp, string]> = [
   [/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi, 'Bearer [REDACTED]'],
   [/\bsk-[A-Za-z0-9_-]{16,}\b/g, '[REDACTED_OPENAI_KEY]'],
   [/\b(?:railway|rwy)[_-]?[A-Za-z0-9]{16,}\b/gi, '[REDACTED_RAILWAY_TOKEN]'],
   [/\b(?:postgres|postgresql|mysql|mongodb):\/\/[^\s"'<>]+/gi, '[REDACTED_DATABASE_URL]'],
   [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, '[REDACTED_JWT]'],
-  [/\b(?:authorization|cookie|set-cookie|api[_-]?key|token|secret|password|session(?:id)?|database_url)\s*[:=]\s*["']?[^"'\s,;}]+/gi, '$1=[REDACTED]']
+  [/\b(authorization|cookie|set-cookie|api[_-]?key|token|secret|password|session(?:id)?|database_url)\s*[:=]\s*["']?[^"'\s,;}]+/gi, '$1=[REDACTED]']
 ];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -407,7 +420,10 @@ function buildJobResultInput(
 ): GptAccessJobResultRequest {
   const jobId = pickString(controlPlaneInput, 'jobId') ?? extractUuid(request.input);
   if (!jobId) {
-    throw new Error('Operator job result lookup requires a UUID jobId.');
+    throw new OperatorIntentDispatcherError(
+      'OPERATOR_JOB_RESULT_ID_REQUIRED',
+      'Operator job result lookup requires a UUID jobId.'
+    );
   }
 
   return {
@@ -512,12 +528,13 @@ export function sanitizeOperatorControlPlaneResult(payload: unknown): unknown {
       return value.slice(0, 50).map((entry) => sanitize(entry, null, depth + 1));
     }
 
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).map(([entryKey, entryValue]) => [
-        entryKey,
-        sanitize(entryValue, entryKey, depth + 1)
-      ])
-    );
+    const sanitizedRecord: Record<string, unknown> = Object.create(null);
+    Object.entries(value as Record<string, unknown>).forEach(([entryKey, entryValue]) => {
+      sanitizedRecord[entryKey] = UNSAFE_OBJECT_KEYS.has(entryKey)
+        ? '[REDACTED]'
+        : sanitize(entryValue, entryKey, depth + 1);
+    });
+    return sanitizedRecord;
   }
 
   return sanitize(payload, null, 0);
@@ -587,6 +604,7 @@ function buildReasoningJobRequest(
 
   if (hybridContext) {
     const input: Record<string, JsonValue> = {
+      operatorRequest: redactString(request.input),
       controlPlane: toJsonValue({
         selectedTool: hybridContext.controlPlane.selectedTool,
         endpoint: hybridContext.controlPlane.endpoint,

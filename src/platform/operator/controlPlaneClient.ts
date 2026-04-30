@@ -127,11 +127,9 @@ export type OperatorFetchLike = (
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const UNSAFE_TRANSPORT_FIELDS = new Set([
-  '__proto__',
-  'admin_key',
+  'proto',
   'apikey',
-  'api-key',
-  'api_key',
+  'adminkey',
   'auth',
   'authorization',
   'bearer',
@@ -144,14 +142,14 @@ const UNSAFE_TRANSPORT_FIELDS = new Set([
   'headers',
   'header',
   'href',
-  'openai_api_key',
+  'openaiapikey',
   'password',
   'prototype',
   'proxy',
-  'proxy_url',
+  'proxyurl',
   'rawheaders',
   'rawsql',
-  'railway_token',
+  'railwaytoken',
   'secret',
   'shell',
   'sql',
@@ -180,12 +178,19 @@ function fail(message: string): never {
 }
 
 function normalizeFieldName(key: string): string {
-  return key.trim().toLowerCase().replace(/[-\s]/g, '_');
+  return key.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function formatPath(path: string[]): string {
+  return path.length > 0 ? path.join('.') : '<root>';
 }
 
 export function assertNoUnsafeTransportFields(value: unknown, label: string = 'request'): void {
-  const stack: Array<{ value: unknown; path: string[] }> = [{ value, path: [] }];
-  const seen = new WeakSet<object>();
+  const stack: Array<{ value: unknown; path: string[]; ancestors: object[] }> = [{
+    value,
+    path: [],
+    ancestors: []
+  }];
 
   while (stack.length > 0) {
     const current = stack.pop();
@@ -194,14 +199,14 @@ export function assertNoUnsafeTransportFields(value: unknown, label: string = 'r
     }
 
     const objectValue = current.value as object;
-    if (seen.has(objectValue)) {
-      fail(`${label} must not contain circular objects.`);
+    if (current.ancestors.includes(objectValue)) {
+      fail(`${label} must not contain circular objects at ${formatPath(current.path)}.`);
     }
-    seen.add(objectValue);
+    const nextAncestors = [...current.ancestors, objectValue];
 
     if (Array.isArray(current.value)) {
       current.value.forEach((entry, index) => {
-        stack.push({ value: entry, path: [...current.path, String(index)] });
+        stack.push({ value: entry, path: [...current.path, String(index)], ancestors: nextAncestors });
       });
       continue;
     }
@@ -211,7 +216,7 @@ export function assertNoUnsafeTransportFields(value: unknown, label: string = 'r
       if (UNSAFE_TRANSPORT_FIELDS.has(normalizedKey)) {
         fail(`${label} contains unsafe transport field "${key}".`);
       }
-      stack.push({ value: entry, path: [...current.path, key] });
+      stack.push({ value: entry, path: [...current.path, key], ancestors: nextAncestors });
     });
   }
 }
