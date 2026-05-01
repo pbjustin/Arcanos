@@ -16,6 +16,9 @@ const getWorkerRuntimeStatusMock = jest.fn();
 const buildSafetySelfHealSnapshotMock = jest.fn();
 const planAutonomousWorkerJobMock = jest.fn();
 const resolveGptRoutingMock = jest.fn();
+const getModulesForRegistryMock = jest.fn();
+const getModuleMetadataMock = jest.fn();
+const dispatchModuleActionMock = jest.fn();
 
 class MockIdempotencyKeyConflictError extends Error {}
 class MockJobRepositoryUnavailableError extends Error {}
@@ -41,6 +44,12 @@ jest.unstable_mockModule('../src/core/db/repositories/jobRepository.js', () => (
 
 jest.unstable_mockModule('../src/routes/_core/gptDispatch.js', () => ({
   resolveGptRouting: resolveGptRoutingMock
+}));
+
+jest.unstable_mockModule('../src/routes/modules.js', () => ({
+  getModulesForRegistry: getModulesForRegistryMock,
+  getModuleMetadata: getModuleMetadataMock,
+  dispatchModuleAction: dispatchModuleActionMock
 }));
 
 jest.unstable_mockModule('../src/services/runtimeDiagnosticsService.js', () => ({
@@ -102,6 +111,11 @@ function allowCreateJobs(scopes = 'jobs.create,jobs.result'): void {
   process.env.ARCANOS_GPT_ACCESS_SCOPES = scopes;
 }
 
+function allowCapabilityRun(scopes = 'capabilities.run', allowedModuleActions = 'ARCANOS:CORE:query'): void {
+  process.env.ARCANOS_GPT_ACCESS_SCOPES = scopes;
+  process.env.MCP_ALLOW_MODULE_ACTIONS = allowedModuleActions;
+}
+
 function buildNestedObject(depth: number): Record<string, unknown> {
   const root: Record<string, unknown> = {};
   let cursor = root;
@@ -118,11 +132,38 @@ function buildNestedObject(depth: number): Record<string, unknown> {
 describe('/gpt-access gateway', () => {
   const previousToken = process.env.ARCANOS_GPT_ACCESS_TOKEN;
   const previousScopes = process.env.ARCANOS_GPT_ACCESS_SCOPES;
+  const previousModuleActionAllowlist = process.env.MCP_ALLOW_MODULE_ACTIONS;
 
   beforeEach(() => {
     jest.clearAllMocks();
     process.env.ARCANOS_GPT_ACCESS_TOKEN = TEST_TOKEN;
     delete process.env.ARCANOS_GPT_ACCESS_SCOPES;
+    delete process.env.MCP_ALLOW_MODULE_ACTIONS;
+    getModulesForRegistryMock.mockReturnValue([
+      {
+        id: 'ARCANOS:CORE',
+        description: 'Core runtime capability',
+        route: 'core',
+        actions: ['query', 'diagnostics']
+      }
+    ]);
+    getModuleMetadataMock.mockImplementation((capabilityId: unknown) => {
+      if (capabilityId !== 'ARCANOS:CORE' && capabilityId !== 'core') {
+        return null;
+      }
+
+      return {
+        name: 'ARCANOS:CORE',
+        description: 'Core runtime capability',
+        route: 'core',
+        actions: ['query', 'diagnostics'],
+        defaultAction: 'query',
+        defaultTimeoutMs: 30000
+      };
+    });
+    dispatchModuleActionMock.mockResolvedValue({
+      message: 'capability ran'
+    });
     getPoolMock.mockReturnValue({});
     isDatabaseConnectedMock.mockReturnValue(true);
     getWorkerControlStatusMock.mockResolvedValue({
@@ -205,6 +246,12 @@ describe('/gpt-access gateway', () => {
     } else {
       process.env.ARCANOS_GPT_ACCESS_SCOPES = previousScopes;
     }
+
+    if (previousModuleActionAllowlist === undefined) {
+      delete process.env.MCP_ALLOW_MODULE_ACTIONS;
+    } else {
+      process.env.MCP_ALLOW_MODULE_ACTIONS = previousModuleActionAllowlist;
+    }
   });
 
   it('rejects missing bearer token', async () => {
@@ -245,6 +292,180 @@ describe('/gpt-access gateway', () => {
     expect(deniedResponse.body.error.code).toBe('GPT_ACCESS_SCOPE_DENIED');
     expect(allowedResponse.status).toBe(200);
     expect(allowedResponse.body).toEqual({ status: 'ok', service: 'arcanos-backend' });
+  });
+
+  it('lists capabilities from the existing module registry without implementation details', async () => {
+    const response = await authorized(request(buildApp()).get('/gpt-access/capabilities/v1'));
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      ok: true,
+      capabilities: [
+        {
+          id: 'ARCANOS:CORE',
+          description: 'Core runtime capability',
+          route: 'core',
+          actions: ['diagnostics', 'query']
+        }
+      ]
+    });
+    expect(getModulesForRegistryMock).toHaveBeenCalledTimes(1);
+    const rendered = JSON.stringify(response.body);
+    expect(rendered).not.toContain('gptIds');
+    expect(rendered).not.toContain('handler');
+    expect(rendered).not.toContain('function');
+  });
+
+  it('inspects a known registered capability', async () => {
+    const response = await authorized(request(buildApp()).get('/gpt-access/capabilities/v1/ARCANOS%3ACORE'));
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      ok: true,
+      exists: true,
+      capability: {
+        id: 'ARCANOS:CORE',
+        name: 'ARCANOS:CORE',
+        description: 'Core runtime capability',
+        route: 'core',
+        actions: ['diagnostics', 'query'],
+        defaultAction: 'query',
+        defaultTimeoutMs: 30000
+      }
+    });
+    expect(getModuleMetadataMock).toHaveBeenCalledWith('ARCANOS:CORE');
+  });
+
+  it('returns exists false when inspecting an unknown capability', async () => {
+    const response = await authorized(request(buildApp()).get('/gpt-access/capabilities/v1/arcanos-core'));
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      ok: true,
+      exists: false,
+      capability: null
+    });
+    expect(getModuleMetadataMock).toHaveBeenCalledWith('arcanos-core');
+  });
+
+  it('returns direct JSON for compatibility module aliases', async () => {
+    const listResponse = await authorized(request(buildApp()).get('/gpt-access/modules'));
+    const detailResponse = await authorized(request(buildApp()).get('/gpt-access/modules/core'));
+
+    expect(listResponse.status).toBe(200);
+    expect(listResponse.body).toEqual(expect.objectContaining({
+      ok: true,
+      capabilities: expect.any(Array)
+    }));
+    expect(detailResponse.status).toBe(200);
+    expect(detailResponse.body).toEqual(expect.objectContaining({
+      ok: true,
+      exists: true,
+      capability: expect.objectContaining({ id: 'ARCANOS:CORE' })
+    }));
+    expect(getModuleMetadataMock).toHaveBeenCalledWith('core');
+  });
+
+  it('rejects capability runs without a non-empty action before dispatch', async () => {
+    allowCapabilityRun();
+
+    const response = await authorized(request(buildApp()).post('/gpt-access/capabilities/v1/core/run'))
+      .send({ payload: {} });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toEqual({
+      code: 'GPT_ACCESS_VALIDATION_ERROR',
+      message: 'action must be a non-empty string.'
+    });
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
+  it('runs capability actions through the existing module dispatch boundary', async () => {
+    allowCapabilityRun();
+    dispatchModuleActionMock.mockResolvedValueOnce({
+      message: 'capability ran',
+      authorization: 'Bearer abcdefghijklmnop'
+    });
+
+    const response = await authorized(request(buildApp()).post('/gpt-access/capabilities/v1/core/run'))
+      .send({
+        action: 'query',
+        payload: {
+          prompt: 'status'
+        }
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(expect.objectContaining({
+      ok: true,
+      result: expect.objectContaining({
+        message: 'capability ran'
+      })
+    }));
+    expect(getModuleMetadataMock).toHaveBeenCalledWith('core');
+    expect(dispatchModuleActionMock).toHaveBeenCalledWith('ARCANOS:CORE', 'query', {
+      prompt: 'status'
+    });
+    expect(JSON.stringify(response.body)).not.toContain('abcdefghijklmnop');
+  });
+
+  it('denies capability runs when the module action is not allowlisted', async () => {
+    process.env.ARCANOS_GPT_ACCESS_SCOPES = 'capabilities.run';
+    delete process.env.MCP_ALLOW_MODULE_ACTIONS;
+
+    const response = await authorized(request(buildApp()).post('/gpt-access/capabilities/v1/core/run'))
+      .send({
+        action: 'query',
+        payload: {}
+      });
+
+    expect(response.status).toBe(403);
+    expect(response.body.error).toEqual({
+      code: 'GPT_ACCESS_CAPABILITY_ACTION_DENIED',
+      message: 'Capability action is not allowlisted for GPT Access execution.'
+    });
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
+  it('requires capabilities.run to be explicitly configured before running actions', async () => {
+    delete process.env.ARCANOS_GPT_ACCESS_SCOPES;
+
+    const response = await authorized(request(buildApp()).post('/gpt-access/capabilities/v1/core/run'))
+      .send({
+        action: 'query',
+        payload: {}
+      });
+
+    expect(response.status).toBe(403);
+    expect(response.body.error.code).toBe('GPT_ACCESS_SCOPE_DENIED');
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
+  it('uses the existing module registry functions instead of caching a second registry', async () => {
+    getModulesForRegistryMock
+      .mockReturnValueOnce([
+        {
+          id: 'first-capability',
+          description: null,
+          route: 'first',
+          actions: ['query']
+        }
+      ])
+      .mockReturnValueOnce([
+        {
+          id: 'second-capability',
+          description: null,
+          route: 'second',
+          actions: ['query']
+        }
+      ]);
+
+    const firstResponse = await authorized(request(buildApp()).get('/gpt-access/capabilities/v1'));
+    const secondResponse = await authorized(request(buildApp()).get('/gpt-access/capabilities/v1'));
+
+    expect(firstResponse.body.capabilities[0].id).toBe('first-capability');
+    expect(secondResponse.body.capabilities[0].id).toBe('second-capability');
+    expect(getModulesForRegistryMock).toHaveBeenCalledTimes(2);
   });
 
   it('requires bearer auth before creating AI jobs', async () => {
@@ -1112,6 +1333,25 @@ describe('/gpt-access gateway', () => {
     ]));
     expect(response.body.components.schemas.CreateAiJobResponse).toEqual(expect.objectContaining({
       required: ['ok', 'jobId', 'traceId', 'status', 'deduped', 'resultEndpoint'],
+      additionalProperties: false
+    }));
+    expect(response.body.paths['/gpt-access/capabilities/v1'].get.operationId).toBe('listCapabilitiesV1');
+    expect(response.body.paths['/gpt-access/capabilities/v1'].get.responses['200'].content['application/json'].schema).toEqual({
+      '$ref': '#/components/schemas/CapabilitiesV1Response'
+    });
+    expect(response.body.paths['/gpt-access/capabilities/v1/{id}'].get.operationId).toBe('getCapabilityV1');
+    expect(response.body.paths['/gpt-access/capabilities/v1/{id}/run'].post.operationId).toBe('runCapabilityV1');
+    expect(response.body.paths['/gpt-access/capabilities/v1/{id}/run'].post.requestBody.content['application/json'].schema).toEqual({
+      '$ref': '#/components/schemas/CapabilityRunRequest'
+    });
+    expect(response.body.paths['/gpt-access/modules'].get.operationId).toBe('listGptAccessModulesAlias');
+    expect(response.body.paths['/gpt-access/modules/{id}'].get.operationId).toBe('getGptAccessModuleAlias');
+    expect(response.body.components.schemas.CapabilityRunRequest).toEqual(expect.objectContaining({
+      required: ['action'],
+      additionalProperties: false
+    }));
+    expect(response.body.components.schemas.CapabilitiesV1Response).toEqual(expect.objectContaining({
+      required: ['ok', 'capabilities'],
       additionalProperties: false
     }));
     expect(response.body.paths['/gpt-access/jobs/result'].post.operationId).toBe('getJobResult');

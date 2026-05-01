@@ -6,7 +6,13 @@ import {
   getRequestActorKey,
   securityHeaders
 } from '@platform/runtime/security.js';
-import { asyncHandler } from '@shared/http/index.js';
+import { isModuleActionAllowed } from '../mcp/modulesAllowlist.js';
+import {
+  asyncHandler,
+  sendBadRequestPayload,
+  sendInternalErrorPayload,
+  sendNotFoundPayload
+} from '@shared/http/index.js';
 import { getWorkerControlHealth, getWorkerControlStatus } from '@services/workerControlService.js';
 import {
   buildGptAccessHealthPayload,
@@ -25,6 +31,22 @@ import {
 
 const router = express.Router();
 
+type CapabilityRegistryEntry = {
+  id: string;
+  description: string | null;
+  route: string | null;
+  actions: string[];
+};
+
+type CapabilityMetadata = {
+  name: string;
+  description: string | null;
+  route: string | null;
+  actions: string[];
+  defaultAction?: string;
+  defaultTimeoutMs?: number;
+};
+
 function getGptAccessRateLimitActorKey(req: express.Request): string {
   const expressClientIp = typeof req.ip === 'string' && req.ip.trim().length > 0
     ? req.ip.trim()
@@ -40,9 +62,209 @@ const gptAccessRateLimit = createRateLimitMiddleware({
   keyGenerator: (req) => `${getGptAccessRateLimitActorKey(req)}:gpt-access`
 });
 
+async function loadModuleBridge() {
+  return import('./modules.js');
+}
+
+function sortStrings(values: string[]): string[] {
+  return [...values].sort((left, right) => left.localeCompare(right));
+}
+
+function toCapabilitySummary(entry: CapabilityRegistryEntry) {
+  return {
+    id: entry.id,
+    description: entry.description ?? null,
+    route: entry.route ?? null,
+    actions: sortStrings(entry.actions)
+  };
+}
+
+function toCapabilityDetail(metadata: CapabilityMetadata) {
+  return {
+    id: metadata.name,
+    name: metadata.name,
+    description: metadata.description ?? null,
+    route: metadata.route ?? null,
+    actions: sortStrings(metadata.actions),
+    defaultAction: metadata.defaultAction ?? null,
+    defaultTimeoutMs: metadata.defaultTimeoutMs ?? null
+  };
+}
+
+function readCapabilityRunBody(body: unknown): { action: unknown; payload: unknown } {
+  const record = body && typeof body === 'object' && !Array.isArray(body)
+    ? body as Record<string, unknown>
+    : {};
+
+  return {
+    action: record.action,
+    payload: Object.prototype.hasOwnProperty.call(record, 'payload') ? record.payload : {}
+  };
+}
+
+function sendGptAccessBadRequest(res: express.Response, message: string): void {
+  sendBadRequestPayload(res, {
+    ok: false,
+    error: {
+      code: 'GPT_ACCESS_VALIDATION_ERROR',
+      message
+    }
+  });
+}
+
+function sendGptAccessNotFound(res: express.Response, code: string, message: string): void {
+  sendNotFoundPayload(res, {
+    ok: false,
+    error: {
+      code,
+      message
+    }
+  });
+}
+
+function sendGptAccessForbidden(res: express.Response, code: string, message: string): void {
+  sendGptAccessResult(res, {
+    statusCode: 403,
+    payload: {
+      ok: false,
+      error: {
+        code,
+        message
+      }
+    }
+  });
+}
+
+function sendGptAccessInternalError(res: express.Response, message: string): void {
+  sendInternalErrorPayload(res, {
+    ok: false,
+    error: {
+      code: 'GPT_ACCESS_INTERNAL_ERROR',
+      message
+    }
+  });
+}
+
+function isModuleDispatchNotFoundError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  return error.message.startsWith('Module not found:') || error.message.startsWith('Action not found:');
+}
+
+const listGptAccessCapabilities = asyncHandler(async (_req, res) => {
+  const { getModulesForRegistry } = await loadModuleBridge();
+  const capabilities = getModulesForRegistry()
+    .map(toCapabilitySummary)
+    .sort((left, right) => left.id.localeCompare(right.id));
+
+  res.json({
+    ok: true,
+    capabilities
+  });
+});
+
+const getGptAccessCapability = asyncHandler(async (req, res) => {
+  const { getModuleMetadata } = await loadModuleBridge();
+  const metadata = getModuleMetadata(req.params.id);
+
+  if (!metadata) {
+    res.json({
+      ok: true,
+      exists: false,
+      capability: null
+    });
+    return;
+  }
+
+  res.json({
+    ok: true,
+    exists: true,
+    capability: toCapabilityDetail(metadata)
+  });
+});
+
+const runGptAccessCapability = asyncHandler(async (req, res) => {
+  const { action, payload } = readCapabilityRunBody(req.body);
+
+  if (typeof action !== 'string' || action.trim().length === 0) {
+    sendGptAccessBadRequest(res, 'action must be a non-empty string.');
+    return;
+  }
+
+  const normalizedAction = action.trim();
+  const { dispatchModuleAction, getModuleMetadata } = await loadModuleBridge();
+  const metadata = getModuleMetadata(req.params.id);
+
+  if (!metadata) {
+    sendGptAccessNotFound(res, 'GPT_ACCESS_CAPABILITY_NOT_FOUND', 'Capability not found.');
+    return;
+  }
+
+  if (!metadata.actions.includes(normalizedAction)) {
+    sendGptAccessNotFound(res, 'GPT_ACCESS_ACTION_NOT_FOUND', 'Capability action not found.');
+    return;
+  }
+
+  if (!isModuleActionAllowed(metadata.name, normalizedAction)) {
+    sendGptAccessForbidden(
+      res,
+      'GPT_ACCESS_CAPABILITY_ACTION_DENIED',
+      'Capability action is not allowlisted for GPT Access execution.'
+    );
+    return;
+  }
+
+  try {
+    const result = await dispatchModuleAction(metadata.name, normalizedAction, payload);
+    res.json({
+      ok: true,
+      result: sanitizeGptAccessPayload(result)
+    });
+  } catch (error) {
+    if (isModuleDispatchNotFoundError(error)) {
+      sendGptAccessNotFound(res, 'GPT_ACCESS_CAPABILITY_NOT_FOUND', 'Capability or action not found.');
+      return;
+    }
+
+    sendGptAccessInternalError(res, 'Capability execution failed.');
+  }
+});
+
 router.use('/gpt-access', securityHeaders);
 router.use('/gpt-access', gptAccessRateLimit);
 router.use('/gpt-access', gptAccessAuthMiddleware);
+
+router.get(
+  '/gpt-access/capabilities/v1',
+  requireGptAccessScope('capabilities.read'),
+  listGptAccessCapabilities
+);
+
+router.get(
+  '/gpt-access/capabilities/v1/:id',
+  requireGptAccessScope('capabilities.read'),
+  getGptAccessCapability
+);
+
+router.post(
+  '/gpt-access/capabilities/v1/:id/run',
+  requireGptAccessScope('capabilities.run'),
+  runGptAccessCapability
+);
+
+router.get(
+  '/gpt-access/modules',
+  requireGptAccessScope('capabilities.read'),
+  listGptAccessCapabilities
+);
+
+router.get(
+  '/gpt-access/modules/:id',
+  requireGptAccessScope('capabilities.read'),
+  getGptAccessCapability
+);
 
 router.get('/gpt-access/health', requireGptAccessScope('diagnostics.read'), (_req, res) => {
   res.json(buildGptAccessHealthPayload());

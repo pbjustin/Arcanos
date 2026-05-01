@@ -116,9 +116,9 @@ export function getModulesForRegistry(): Array<{
 }
 
 /**
- * Purpose: Look up metadata for a single module by name.
- * Inputs/Outputs: Module name string; returns metadata or null.
- * Edge cases: Returns null when module name is not registered.
+ * Purpose: Look up metadata for a single module by name or route.
+ * Inputs/Outputs: Module identifier string; returns metadata or null.
+ * Edge cases: Returns null when the identifier is not registered.
  */
 export function getModuleMetadata(moduleName: string): {
   name: string;
@@ -128,12 +128,22 @@ export function getModuleMetadata(moduleName: string): {
   defaultAction?: string;
   defaultTimeoutMs?: number;
 } | null {
-  const mod = registryByName.get(moduleName);
+  let mod = registryByName.get(moduleName);
+  let route = moduleRoutes.get(moduleName) ?? null;
+
+  if (!mod) {
+    mod = registryByRoute.get(moduleName);
+    if (mod) {
+      route = moduleRoutes.get(mod.name) ?? moduleName;
+    }
+  }
+
   if (!mod) return null;
+
   return {
     name: mod.name,
     description: mod.description ?? null,
-    route: moduleRoutes.get(mod.name) ?? null,
+    route,
     actions: Object.keys(mod.actions),
     defaultAction: mod.defaultAction,
     defaultTimeoutMs: mod.defaultTimeoutMs,
