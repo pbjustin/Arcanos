@@ -11,7 +11,8 @@ const GPT_ACCESS_READONLY_POST_PATHS = new Set([
   '/gpt-access/diagnostics/deep',
   '/gpt-access/db/explain',
   '/gpt-access/logs/query',
-  '/gpt-access/mcp'
+  '/gpt-access/mcp',
+  '/gpt-access/operator/run'
 ]);
 
 function isGptAccessReadOnlyRequest(req: Request): boolean {

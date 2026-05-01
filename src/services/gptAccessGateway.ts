@@ -23,6 +23,10 @@ import { getWorkerControlHealth, getWorkerControlStatus } from '@services/worker
 import { planAutonomousWorkerJob } from '@services/workerAutonomyService.js';
 import { buildSafetySelfHealSnapshot } from '@services/selfHealRuntimeInspectionService.js';
 import { getWorkerRuntimeStatus } from '@platform/runtime/workerConfig.js';
+import {
+  GPT_ACCESS_OPERATOR_COMMAND_IDS,
+  GPT_ACCESS_OPERATOR_NO_ARGS_SCHEMA
+} from '@services/gptAccessOperatorRegistry.js';
 
 const SERVICE_VERSION = '1.0.0';
 const TOKEN_ENV_NAME = 'ARCANOS_GPT_ACCESS_TOKEN';
@@ -85,6 +89,7 @@ export const GPT_ACCESS_SCOPES = [
   'logs.read_sanitized',
   'db.explain_approved',
   'mcp.approved_readonly',
+  'operator.run_safe',
   'diagnostics.read'
 ] as const;
 
@@ -1363,7 +1368,7 @@ export function buildGptAccessOpenApiDocument() {
     info: {
       title: 'ARCANOS GPT Access Gateway',
       version: SERVICE_VERSION,
-      description: 'Scoped gateway for approved ARCANOS runtime, worker, queue, async AI job, job-result, log, database explain, MCP, and diagnostics actions.'
+      description: 'Scoped gateway for approved ARCANOS runtime, worker, queue, async AI job, job-result, log, database explain, MCP, operator, and diagnostics actions.'
     },
     servers: [
       {
@@ -1447,6 +1452,43 @@ export function buildGptAccessOpenApiDocument() {
             resultEndpoint: { type: 'string', const: GPT_ACCESS_JOB_RESULT_ENDPOINT }
           },
           required: ['ok', 'jobId', 'traceId', 'status', 'deduped', 'resultEndpoint'],
+          additionalProperties: false
+        },
+        OperatorRunRequest: {
+          type: 'object',
+          description: 'Runs one safe read-only operator command by command ID only. Raw shell strings, shell metacharacters, and arbitrary command arguments are rejected.',
+          properties: {
+            command: {
+              type: 'string',
+              enum: [...GPT_ACCESS_OPERATOR_COMMAND_IDS]
+            },
+            args: GPT_ACCESS_OPERATOR_NO_ARGS_SCHEMA
+          },
+          required: ['command'],
+          additionalProperties: false
+        },
+        OperatorRunResponse: {
+          type: 'object',
+          properties: {
+            ok: { type: 'boolean', const: true },
+            command: {
+              type: 'string',
+              enum: [...GPT_ACCESS_OPERATOR_COMMAND_IDS]
+            },
+            readOnly: { type: 'boolean', const: true },
+            result: {},
+            audit: {
+              type: 'object',
+              properties: {
+                requestId: { type: 'string' },
+                traceId: { type: 'string' },
+                adapter: { type: 'string' }
+              },
+              required: ['requestId', 'traceId', 'adapter'],
+              additionalProperties: false
+            }
+          },
+          required: ['ok', 'command', 'readOnly', 'result', 'audit'],
           additionalProperties: false
         }
       }
@@ -1647,6 +1689,36 @@ export function buildGptAccessOpenApiDocument() {
           responses: {
             '200': { description: 'Tool result.' },
             '403': { description: 'Tool denied.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } }
+          }
+        }
+      },
+      '/gpt-access/operator/run': {
+        post: {
+          operationId: 'runSafeOperatorCommand',
+          summary: 'Run one safe read-only operator command by command ID.',
+          description: 'Accepts only structured command IDs from the safe operator registry. Does not accept raw shell strings, shell syntax, or arbitrary command arguments.',
+          security: [{ bearerAuth: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: { '$ref': '#/components/schemas/OperatorRunRequest' }
+              }
+            }
+          },
+          responses: {
+            '200': {
+              description: 'Operator command completed.',
+              content: {
+                'application/json': {
+                  schema: { '$ref': '#/components/schemas/OperatorRunResponse' }
+                }
+              }
+            },
+            '400': { description: 'Invalid command request.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '401': { description: 'Unauthorized.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '403': { description: 'Command or scope denied.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '502': { description: 'Approved backing adapter failed.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } }
           }
         }
       },

@@ -95,7 +95,8 @@ describe('transport/http/middleware/unsafeExecutionGate', () => {
       '/gpt-access/diagnostics/deep',
       '/gpt-access/db/explain',
       '/gpt-access/logs/query',
-      '/gpt-access/mcp'
+      '/gpt-access/mcp',
+      '/gpt-access/operator/run'
     ]) {
       const next = jest.fn();
       const response = createResponse();

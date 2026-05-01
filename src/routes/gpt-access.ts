@@ -22,6 +22,7 @@ import {
   sanitizeGptAccessPayload,
   sendGptAccessResult
 } from '@services/gptAccessGateway.js';
+import { runGptAccessOperatorCommand } from '@services/gptAccessOperator.js';
 
 const router = express.Router();
 
@@ -134,6 +135,21 @@ router.post(
   requireGptAccessScope('mcp.approved_readonly'),
   asyncHandler(async (req, res) => {
     sendGptAccessResult(res, await runGptAccessMcpTool(req.body));
+  })
+);
+
+router.post(
+  '/gpt-access/operator/run',
+  requireGptAccessScope('operator.run_safe'),
+  asyncHandler(async (req, res) => {
+    sendGptAccessResult(
+      res,
+      await runGptAccessOperatorCommand(req.body, {
+        requestId: req.requestId,
+        traceId: req.traceId,
+        request: req
+      })
+    );
   })
 );
 

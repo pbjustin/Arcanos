@@ -16,6 +16,8 @@ const getWorkerRuntimeStatusMock = jest.fn();
 const buildSafetySelfHealSnapshotMock = jest.fn();
 const planAutonomousWorkerJobMock = jest.fn();
 const resolveGptRoutingMock = jest.fn();
+const executeControlPlaneOperationMock = jest.fn();
+const getControlPlaneOperationSpecMock = jest.fn();
 
 class MockIdempotencyKeyConflictError extends Error {}
 class MockJobRepositoryUnavailableError extends Error {}
@@ -73,12 +75,19 @@ jest.unstable_mockModule('../src/services/selfHealRuntimeInspectionService.js', 
   buildSafetySelfHealSnapshot: buildSafetySelfHealSnapshotMock
 }));
 
+jest.unstable_mockModule('@services/controlPlane/index.js', () => ({
+  executeControlPlaneOperation: executeControlPlaneOperationMock,
+  getControlPlaneOperationSpec: getControlPlaneOperationSpecMock
+}));
+
 jest.unstable_mockModule('../src/platform/runtime/workerConfig.js', () => ({
   getWorkerRuntimeStatus: getWorkerRuntimeStatusMock
 }));
 
 const { default: gptAccessRouter } = await import('../src/routes/gpt-access.js');
 const { createGptAccessAiJob, sanitizeGptAccessPayload } = await import('../src/services/gptAccessGateway.js');
+const { runGptAccessOperatorCommand } = await import('../src/services/gptAccessOperator.js');
+const { getGptAccessOperatorCommandSpec } = await import('../src/services/gptAccessOperatorRegistry.js');
 
 const TEST_TOKEN = 'test-gpt-access-token';
 const COMPLETED_JOB_ID = '11111111-1111-4111-8111-111111111111';
@@ -147,6 +156,16 @@ describe('/gpt-access gateway', () => {
       status: 'ok',
       active: false
     });
+    getControlPlaneOperationSpecMock.mockImplementation((provider, operation) => ({
+      operation,
+      provider,
+      description: 'mock read-only operation',
+      kind: 'command',
+      workflow: 'control_plane.inspect',
+      requiredScopes: [],
+      readOnly: true,
+      approvalRequired: false
+    }));
     writePublicHealthResponseMock.mockImplementation(async (_req, res) => {
       res.json({ status: 'ok', service: 'arcanos-backend' });
     });
@@ -905,6 +924,195 @@ describe('/gpt-access gateway', () => {
     expect(getWorkerControlStatusMock).not.toHaveBeenCalled();
   });
 
+  it('runs an allowlisted internal operator command through GPT Access', async () => {
+    process.env.ARCANOS_GPT_ACCESS_SCOPES = 'operator.run_safe';
+
+    const response = await authorized(request(buildApp()).post('/gpt-access/operator/run'))
+      .send({
+        command: 'workers.status',
+        args: {}
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(expect.objectContaining({
+      ok: true,
+      command: 'workers.status',
+      readOnly: true,
+      result: expect.objectContaining({
+        timestamp: '2026-04-27T10:00:00.000Z'
+      }),
+      audit: expect.objectContaining({
+        requestId: expect.any(String),
+        traceId: expect.any(String),
+        adapter: 'gpt-access-internal'
+      })
+    }));
+    expect(getWorkerControlStatusMock).toHaveBeenCalledTimes(1);
+    expect(executeControlPlaneOperationMock).not.toHaveBeenCalled();
+  });
+
+  it('routes safe git operator commands through the control-plane allowlist', async () => {
+    process.env.ARCANOS_GPT_ACCESS_SCOPES = 'operator.run_safe';
+    executeControlPlaneOperationMock.mockResolvedValueOnce({
+      ok: true,
+      operation: 'git.status',
+      provider: 'local-command',
+      environment: 'local',
+      result: { stdout: '## main\n', stderr: '', exitCode: 0 },
+      auditId: 'cp_audit_test',
+      warnings: [],
+      redactedOutput: { stdout: '## main\n', stderr: '', exitCode: 0 }
+    });
+
+    const response = await authorized(request(buildApp()).post('/gpt-access/operator/run'))
+      .send({
+        command: 'git.status',
+        args: {}
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(expect.objectContaining({
+      ok: true,
+      command: 'git.status',
+      readOnly: true,
+      result: { stdout: '## main\n', stderr: '', exitCode: 0 },
+      audit: expect.objectContaining({
+        adapter: 'local-command'
+      })
+    }));
+    expect(getControlPlaneOperationSpecMock).toHaveBeenCalledWith('local-command', 'git.status');
+    expect(executeControlPlaneOperationMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: 'git.status',
+        provider: 'local-command',
+        target: { resource: 'repository' },
+        environment: 'local',
+        scope: 'repo:read',
+        params: {},
+        dryRun: false,
+        requestedBy: 'gpt-access-operator'
+      }),
+      expect.objectContaining({
+        request: expect.any(Object),
+        commandRunner: expect.any(Object)
+      })
+    );
+  });
+
+  it('rejects unknown operator commands', async () => {
+    process.env.ARCANOS_GPT_ACCESS_SCOPES = 'operator.run_safe';
+
+    const response = await authorized(request(buildApp()).post('/gpt-access/operator/run'))
+      .send({
+        command: 'deploy',
+        args: {}
+      });
+
+    expect(response.status).toBe(403);
+    expect(response.body.error.code).toBe('GPT_ACCESS_SCOPE_DENIED');
+    expect(executeControlPlaneOperationMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects raw shell content in operator command requests', async () => {
+    process.env.ARCANOS_GPT_ACCESS_SCOPES = 'operator.run_safe';
+
+    const response = await authorized(request(buildApp()).post('/gpt-access/operator/run'))
+      .send({
+        command: 'git.status && railway up',
+        args: {}
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toEqual({
+      code: 'GPT_ACCESS_VALIDATION_ERROR',
+      message: 'Raw shell content is not allowed for GPT access operator commands.'
+    });
+    expect(executeControlPlaneOperationMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects non-read-only operator specs before execution', async () => {
+    const baseSpec = getGptAccessOperatorCommandSpec('git.status');
+    expect(baseSpec).toBeDefined();
+    const response = await runGptAccessOperatorCommand(
+      {
+        command: 'npm.run.build',
+        args: {}
+      },
+      {
+        requestId: 'req-operator-non-readonly',
+        traceId: 'trace-operator-non-readonly'
+      },
+      {
+        registry: new Map([
+          [
+            'npm.run.build',
+            {
+              ...baseSpec!,
+              commandId: 'npm.run.build',
+              operation: 'npm.run.build',
+              readOnly: false
+            }
+          ]
+        ])
+      }
+    );
+
+    expect(response.statusCode).toBe(403);
+    expect(response.payload).toEqual(expect.objectContaining({
+      ok: false,
+      error: {
+        code: 'GPT_ACCESS_SCOPE_DENIED',
+        message: 'Operator command is not read-only.'
+      }
+    }));
+    expect(executeControlPlaneOperationMock).not.toHaveBeenCalled();
+  });
+
+  it('requires the operator.run_safe scope', async () => {
+    process.env.ARCANOS_GPT_ACCESS_SCOPES = 'runtime.read';
+
+    const response = await authorized(request(buildApp()).post('/gpt-access/operator/run'))
+      .send({
+        command: 'workers.status',
+        args: {}
+      });
+
+    expect(response.status).toBe(403);
+    expect(response.body.error.code).toBe('GPT_ACCESS_SCOPE_DENIED');
+    expect(getWorkerControlStatusMock).not.toHaveBeenCalled();
+  });
+
+  it('does not allow arbitrary args for git and railway operator commands', async () => {
+    process.env.ARCANOS_GPT_ACCESS_SCOPES = 'operator.run_safe';
+
+    for (const command of ['git.status', 'git.diff', 'railway.status', 'railway.logs']) {
+      const spec = getGptAccessOperatorCommandSpec(command);
+      expect(spec?.allowedArgs).toEqual({
+        policy: 'no-args',
+        schema: expect.objectContaining({
+          maxProperties: 0,
+          additionalProperties: false
+        })
+      });
+
+      const response = await authorized(request(buildApp()).post('/gpt-access/operator/run'))
+        .send({
+          command,
+          args: {
+            argv: ['--help']
+          }
+        });
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toEqual({
+        code: 'GPT_ACCESS_VALIDATION_ERROR',
+        message: 'Operator command does not accept arbitrary arguments.'
+      });
+    }
+
+    expect(executeControlPlaneOperationMock).not.toHaveBeenCalled();
+  });
+
   it('rejects raw SQL and unknown db explain query keys', async () => {
     const rawSqlResponse = await authorized(request(buildApp()).post('/gpt-access/db/explain'))
       .send({ sql: 'SELECT * FROM job_data' });
@@ -1116,6 +1324,25 @@ describe('/gpt-access gateway', () => {
     }));
     expect(response.body.paths['/gpt-access/jobs/result'].post.operationId).toBe('getJobResult');
     expect(response.body.paths['/gpt-access/mcp'].post.operationId).toBe('arcanosMcpControl');
+    expect(response.body.paths['/gpt-access/operator/run'].post.operationId).toBe('runSafeOperatorCommand');
+    expect(response.body.paths['/gpt-access/operator/run'].post.security).toEqual([{ bearerAuth: [] }]);
+    expect(response.body.paths['/gpt-access/operator/run'].post.requestBody.content['application/json'].schema).toEqual({
+      '$ref': '#/components/schemas/OperatorRunRequest'
+    });
+    expect(response.body.components.schemas.OperatorRunRequest).toEqual(expect.objectContaining({
+      required: ['command'],
+      additionalProperties: false
+    }));
+    expect(response.body.components.schemas.OperatorRunRequest.properties.command.enum).toEqual(expect.arrayContaining([
+      'runtime.inspect',
+      'git.status',
+      'railway.status',
+      'arcanos.mcp.list-tools'
+    ]));
+    expect(response.body.components.schemas.OperatorRunRequest.properties.args).toEqual(expect.objectContaining({
+      maxProperties: 0,
+      additionalProperties: false
+    }));
   });
 
   it('rate limits invalid bearer attempts by client address, not rotating token value', async () => {
