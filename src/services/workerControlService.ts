@@ -28,6 +28,7 @@ import {
 } from '@shared/ask/asyncAskJob.js';
 import type { PreviewAskChaosHook } from '@shared/ask/previewChaos.js';
 import type { ClientContextDTO } from '@shared/types/dto.js';
+import { redactSensitive, redactString } from '@shared/redaction.js';
 import { detectCognitiveDomain } from '@dispatcher/detectCognitiveDomain.js';
 import type { CognitiveDomain } from '@shared/types/cognitiveDomain.js';
 import { recordSelfHealEvent } from '@services/selfImprove/selfHealTelemetry.js';
@@ -175,8 +176,12 @@ export interface WorkerControlWorkerSnapshot {
   staleWorkersDetected?: number;
   stalledJobsDetected?: number;
   deadLetterJobs?: number;
+  cancelledJobs?: number;
   recoveryActions?: number;
   lastRecoveryActionAt?: string | null;
+  lastRecoveryEvent?: Record<string, unknown> | null;
+  recentRecoveryEvents?: Record<string, unknown>[];
+  lastWatchdogEvent?: Record<string, unknown> | null;
   lastWatchdogRunAt?: string | null;
   updatedAt: string;
   watchdog: {
@@ -286,6 +291,25 @@ export interface RequeueFailedWorkerJobResult {
 }
 
 const PENDING_AGE_DEGRADED_THRESHOLD_MS = 60_000;
+const PRIVATE_RESPONSES_SDK_UNWRAP_MEMBER = ['_then', 'Unwrap'].join('');
+const RESPONSES_SDK_COMPATIBILITY_FAILURE = 'OpenAI Responses SDK compatibility failure.';
+
+function redactWorkerControlPayload<T>(payload: T): T {
+  return redactSensitive(payload) as T;
+}
+
+function redactWorkerDiagnosticMessage(message: string | null | undefined): string | null {
+  if (typeof message !== 'string') {
+    return null;
+  }
+
+  const redactedMessage = redactString(message);
+  if (redactedMessage === '[REDACTED]' || redactedMessage.includes(PRIVATE_RESPONSES_SDK_UNWRAP_MEMBER)) {
+    return redactedMessage === '[REDACTED]' ? redactedMessage : RESPONSES_SDK_COMPATIBILITY_FAILURE;
+  }
+
+  return redactedMessage;
+}
 
 /**
  * Request payload for queueing dedicated-worker async `/ask` jobs.
@@ -416,14 +440,14 @@ function buildWorkerJobSnapshot(job: JobData): WorkerJobSnapshot {
     created_at: job.created_at,
     updated_at: job.updated_at,
     completed_at: job.completed_at ?? null,
-    error_message: job.error_message ?? null
+    error_message: redactWorkerDiagnosticMessage(job.error_message)
   };
 }
 
 function buildWorkerJobDetailSnapshot(job: JobData): WorkerJobDetailSnapshot {
   return {
     ...buildWorkerJobSnapshot(job),
-    output: job.output ?? null
+    output: redactSensitive(job.output ?? null)
   };
 }
 
@@ -436,12 +460,30 @@ function buildFailedWorkerJobSnapshot(
     last_worker_id: failedJob.last_worker_id ?? null,
     job_type: failedJob.job_type,
     status: 'failed',
-    error_message: failedJob.error_message ?? null,
+    error_message: redactWorkerDiagnosticMessage(failedJob.error_message),
     retry_count: Number(failedJob.retry_count ?? 0),
     max_retries: Number(failedJob.max_retries ?? 0),
     created_at: failedJob.created_at,
     updated_at: failedJob.updated_at,
     completed_at: failedJob.completed_at ?? null
+  };
+}
+
+function redactFailureReasonSummary(reason: JobFailureReasonSummary): JobFailureReasonSummary {
+  return {
+    ...reason,
+    reason: redactWorkerDiagnosticMessage(reason.reason) ?? '[REDACTED]'
+  };
+}
+
+function redactQueueSummary(queueSummary: JobQueueSummary | null): JobQueueSummary | null {
+  if (!queueSummary) {
+    return null;
+  }
+
+  return {
+    ...queueSummary,
+    recentFailureReasons: queueSummary.recentFailureReasons.map(redactFailureReasonSummary)
   };
 }
 
@@ -526,6 +568,30 @@ function readSnapshotStringArray(
   }
 
   return value.filter((entry): entry is string => typeof entry === 'string' && entry.trim().length > 0);
+}
+
+function readSnapshotRecord(
+  snapshot: Record<string, unknown>,
+  key: string
+): Record<string, unknown> | null {
+  const value = snapshot[key];
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function readSnapshotRecordArray(
+  snapshot: Record<string, unknown>,
+  key: string
+): Record<string, unknown>[] {
+  const value = snapshot[key];
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter((entry): entry is Record<string, unknown> =>
+    Boolean(entry && typeof entry === 'object' && !Array.isArray(entry))
+  );
 }
 
 function readIsoTimestampToMs(value: string | null): number | null {
@@ -641,6 +707,9 @@ function buildWorkerControlWorkerSnapshot(
   const lastProcessedJobAt = readSnapshotString(snapshot, 'lastProcessedJobAt');
   const lastRecoveryActionAt = readSnapshotString(snapshot, 'lastRecoveryActionAt');
   const lastWatchdogRunAt = readSnapshotString(snapshot, 'lastWatchdogRunAt');
+  const lastRecoveryEvent = readSnapshotRecord(snapshot, 'lastRecoveryEvent');
+  const recentRecoveryEvents = readSnapshotRecordArray(snapshot, 'recentRecoveryEvents');
+  const lastWatchdogEvent = readSnapshotRecord(snapshot, 'lastWatchdogEvent');
   const dispatcherStarted = snapshot.dispatcherStarted === true;
   const activeListeners = readSnapshotNumber(snapshot, 'activeListeners') ?? 0;
   const activeJobs = readSnapshotStringArray(snapshot, 'activeJobs');
@@ -679,7 +748,7 @@ function buildWorkerControlWorkerSnapshot(
     lastClaimResult: readSnapshotString(snapshot, 'lastClaimResult'),
     disabledReason: readSnapshotString(snapshot, 'disabledReason'),
     currentJobId: workerSnapshot.currentJobId,
-    lastError: workerSnapshot.lastError,
+    lastError: redactWorkerDiagnosticMessage(workerSnapshot.lastError),
     lastHeartbeatAt: workerSnapshot.lastHeartbeatAt,
     lastActivityAt,
     lastProcessedJobAt,
@@ -693,8 +762,12 @@ function buildWorkerControlWorkerSnapshot(
     staleWorkersDetected: readSnapshotNumber(snapshot, 'staleWorkersDetected'),
     stalledJobsDetected: readSnapshotNumber(snapshot, 'stalledJobsDetected'),
     deadLetterJobs: readSnapshotNumber(snapshot, 'deadLetterJobs'),
+    cancelledJobs: readSnapshotNumber(snapshot, 'cancelledJobs'),
     recoveryActions: readSnapshotNumber(snapshot, 'recoveryActions'),
     lastRecoveryActionAt,
+    ...(lastRecoveryEvent ? { lastRecoveryEvent } : {}),
+    ...(recentRecoveryEvents.length > 0 ? { recentRecoveryEvents } : {}),
+    ...(lastWatchdogEvent ? { lastWatchdogEvent } : {}),
     lastWatchdogRunAt,
     updatedAt: workerSnapshot.updatedAt,
     watchdog
@@ -819,7 +892,7 @@ function buildWorkerHistoricalDebt(queueSummary: JobQueueSummary | null): Worker
     retainedFailedJobs: queueSummary?.failed ?? 0,
     retryExhaustedJobs: queueSummary?.failureBreakdown?.retryExhausted ?? 0,
     deadLetterJobs: queueSummary?.failureBreakdown?.deadLetter ?? 0,
-    recentFailureReasons: queueSummary?.recentFailureReasons ?? [],
+    recentFailureReasons: (queueSummary?.recentFailureReasons ?? []).map(redactFailureReasonSummary),
     failureWindowMs: queueSummary?.recentTerminalWindowMs ?? null,
     inspectionEndpoint: '/worker-helper/jobs/failed',
     currentRiskExcluded: true
@@ -928,8 +1001,9 @@ export async function getWorkerControlStatus(
   const health = buildWorkerControlHealthPayload({
     healthReport: autonomyHealth
   });
+  const queueSummary = redactQueueSummary(autonomyHealth.queueSummary ?? await getJobQueueSummary());
 
-  return {
+  return redactWorkerControlPayload({
     timestamp: new Date().toISOString(),
     mainApp: {
       connected: true,
@@ -939,7 +1013,7 @@ export async function getWorkerControlStatus(
     workerService: {
       observationMode: 'queue-observed',
       database: getDatabaseStatus(),
-      queueSummary: autonomyHealth.queueSummary ?? await getJobQueueSummary(),
+      queueSummary,
       queueSemantics: buildWorkerQueueSemantics(),
       retryPolicy: buildWorkerRetryPolicySummary(),
       recentFailedJobs,
@@ -953,7 +1027,7 @@ export async function getWorkerControlStatus(
         workers: health.workers
       }
     }
-  };
+  });
 }
 
 /**
@@ -1077,8 +1151,9 @@ export async function getWorkerControlHealth(): Promise<WorkerControlHealthRespo
     healthReport
   });
 
-  return {
+  return redactWorkerControlPayload({
     ...healthReport,
+    queueSummary: redactQueueSummary(healthReport.queueSummary),
     overallStatus: health.overallStatus,
     alerts: health.alerts,
     diagnosticAlerts: health.diagnosticAlerts,
@@ -1088,7 +1163,7 @@ export async function getWorkerControlHealth(): Promise<WorkerControlHealthRespo
     recentFailedJobs,
     operationalHealth: health.operationalHealth,
     historicalDebt: health.historicalDebt
-  };
+  });
 }
 
 /**

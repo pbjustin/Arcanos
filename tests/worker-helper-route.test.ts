@@ -488,6 +488,7 @@ describe('/worker-helper routes', () => {
             staleWorkersDetected: 0,
             stalledJobsDetected: 0,
             deadLetterJobs: 0,
+            cancelledJobs: 0,
             recoveryActions: 0,
             lastRecoveryActionAt: null,
             lastWatchdogRunAt: null,
@@ -502,6 +503,122 @@ describe('/worker-helper routes', () => {
         ]
       }
     }));
+  });
+
+  it('redacts sensitive diagnostic strings from worker helper status and failed-job payloads', async () => {
+    const privateSdkMember = ['_then', 'Unwrap'].join('');
+    const privateSdkFailure = `this._client.responses.create(...).${privateSdkMember} is not a function`;
+    const sensitiveFailure =
+      '401 Incorrect API key provided: sk-svcac********ZygA. Authorization: Bearer abcdefghijklmnop';
+    const sensitiveFailedJob = {
+      id: 'job-failed-sensitive',
+      worker_id: 'worker-helper',
+      last_worker_id: 'async-queue-slot-1',
+      job_type: 'ask',
+      status: 'failed',
+      error_message: sensitiveFailure,
+      retry_count: 2,
+      max_retries: 2,
+      created_at: '2026-03-06T09:55:00.000Z',
+      updated_at: '2026-03-06T09:58:00.000Z',
+      completed_at: '2026-03-06T09:58:00.000Z'
+    };
+
+    getWorkerControlHealthMock.mockResolvedValueOnce({
+      overallStatus: 'healthy',
+      alerts: [],
+      queueSummary: null,
+      workers: [],
+      settings: {
+        heartbeatIntervalMs: 10000,
+        leaseMs: 30000,
+        inspectorIntervalMs: 30000,
+        staleAfterMs: 60000,
+        watchdogIdleMs: 120000,
+        defaultMaxRetries: 2,
+        maxJobsPerHour: 120,
+        maxAiCallsPerHour: 120,
+        maxRssMb: 2048
+      }
+    });
+    getJobQueueSummaryMock.mockResolvedValueOnce({
+      pending: 0,
+      running: 0,
+      completed: 3,
+      failed: 1,
+      total: 4,
+      delayed: 0,
+      stalledRunning: 0,
+      oldestPendingJobAgeMs: 0,
+      failureBreakdown: {
+        retryable: 0,
+        permanent: 1,
+        retryScheduled: 0,
+        retryExhausted: 1,
+        authentication: 1,
+        network: 0,
+        provider: 0,
+        rateLimited: 0,
+        timeout: 0,
+        validation: 0,
+        unknown: 0
+      },
+      recentFailureReasons: [
+        {
+          reason: sensitiveFailure,
+          category: 'authentication',
+          retryable: false,
+          count: 1,
+          lastSeenAt: '2026-03-06T09:58:00.000Z'
+        },
+        {
+          reason: privateSdkFailure,
+          category: 'unknown',
+          retryable: false,
+          count: 1,
+          lastSeenAt: '2026-03-06T09:57:00.000Z'
+        }
+      ],
+      recentTerminalWindowMs: 3600000,
+      recentFailed: 0,
+      recentCompleted: 0,
+      recentTotalTerminal: 0,
+      lastUpdatedAt: '2026-03-06T10:00:00.000Z'
+    });
+    getLatestJobMock.mockResolvedValueOnce({
+      id: 'job-latest-sensitive',
+      worker_id: 'worker-helper',
+      job_type: 'ask',
+      status: 'failed',
+      created_at: '2026-03-06T09:59:00.000Z',
+      updated_at: '2026-03-06T10:00:00.000Z',
+      completed_at: '2026-03-06T10:00:00.000Z',
+      error_message: sensitiveFailure,
+      output: { result: 'failed' }
+    });
+    listFailedJobsMock
+      .mockResolvedValueOnce([sensitiveFailedJob])
+      .mockResolvedValueOnce([sensitiveFailedJob]);
+
+    const statusResponse = await request(buildApp()).get('/worker-helper/status');
+    const failedJobsResponse = await request(buildApp()).get('/worker-helper/jobs/failed?limit=1');
+    const rendered = JSON.stringify({
+      status: statusResponse.body,
+      failedJobs: failedJobsResponse.body
+    });
+
+    expect(statusResponse.status).toBe(200);
+    expect(failedJobsResponse.status).toBe(200);
+    expect(statusResponse.body.workerService.queueSummary.recentFailureReasons[0].reason).toBe('[REDACTED]');
+    expect(statusResponse.body.workerService.latestJob.error_message).toBe('[REDACTED]');
+    expect(statusResponse.body.workerService.recentFailedJobs[0].error_message).toBe('[REDACTED]');
+    expect(failedJobsResponse.body.jobs[0].error_message).toBe('[REDACTED]');
+    expect(rendered).not.toContain('sk-svcac');
+    expect(rendered).not.toContain('ZygA');
+    expect(rendered).not.toContain('Bearer abcdefghijklmnop');
+    expect(rendered).not.toContain(privateSdkMember);
+    expect(statusResponse.body.workerService.queueSummary.recentFailureReasons[1].reason)
+      .toBe('OpenAI Responses SDK compatibility failure.');
   });
 
   it('ignores legacy auth headers and still serves worker helper requests', async () => {

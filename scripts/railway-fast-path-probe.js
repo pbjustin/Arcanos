@@ -13,12 +13,15 @@ export const PROBE_STATUS = Object.freeze({
   FAIL: 'FAIL',
 });
 
+export const RAILWAY_PRODUCTION_BASE_URL = 'https://acranos-production.up.railway.app';
+
 export const DEFAULTS = Object.freeze({
   baseUrl:
     process.env.ARCANOS_BACKEND_URL ||
     process.env.RAILWAY_SERVICE_ARCANOS_V2_URL ||
     process.env.RAILWAY_STATIC_URL ||
-    'https://arcanos-production.up.railway.app',
+    // Railway assigned this service the "acranos" production domain; keep it aligned with the async and smoke probes.
+    RAILWAY_PRODUCTION_BASE_URL,
   gptId: 'arcanos-core',
   prompt: 'Generate a concise prompt for a deployment smoke test.',
   requestTimeoutMs: 15_000,

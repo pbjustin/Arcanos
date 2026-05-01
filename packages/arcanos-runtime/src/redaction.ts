@@ -27,6 +27,7 @@ export const SENSITIVE_KEYS = [
 
 export const SENSITIVE_VALUE_PATTERNS: RegExp[] = [
   /\bsk-[a-zA-Z0-9]{20,}\b/,
+  /\bsk-[a-zA-Z0-9_*_-]{6,}\b/,
   /\bBearer\s+[a-zA-Z0-9._-]{12,}\b/i,
   /\beyJ[a-zA-Z0-9_-]{8,}\.[a-zA-Z0-9_-]{8,}\.[a-zA-Z0-9_-]{8,}\b/,
   /\b(?:postgres|postgresql|mysql|mongodb|redis):\/\/[^\s]+/i,

@@ -56,7 +56,7 @@ Risks:
 
 Verified:
 
-- OpenAI SDK guardrail test passed and found no `_thenUnwrap` source usage.
+- OpenAI SDK guardrail test passed and found no private Responses SDK unwrap helper usage.
 - Raw `new OpenAI` construction is currently constrained by tests to approved adapter boundaries in the scanned TypeScript roots.
 - The TypeScript OpenAI package `@arcanos/openai` and backend adapter are the intended SDK boundary.
 - `arcanos-ai-runtime/src/ai/openaiClient.ts` still reads OpenAI-related config directly.

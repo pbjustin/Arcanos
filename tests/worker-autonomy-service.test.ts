@@ -545,7 +545,89 @@ describe('workerAutonomyService', () => {
         workerId: 'async-queue'
       })
     );
+    expect(loggerInfoMock).toHaveBeenCalledWith(
+      'worker.job.retry_scheduled',
+      expect.objectContaining({
+        module: 'worker-autonomy',
+        workerId: 'async-queue',
+        jobId: 'job-1',
+        delayMs: 2000
+      })
+    );
+    expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        snapshot: expect.objectContaining({
+          scheduledRetries: 1,
+          recoveryActions: 1,
+          lastRecoveryEvent: expect.objectContaining({
+            action: 'retry_scheduled',
+            jobIds: ['job-1']
+          })
+        })
+      }),
+      { source: 'job-retry' }
+    );
     expect(updateJobMock).not.toHaveBeenCalled();
+  });
+
+  it('does not report a retry as scheduled when the running job lease was already lost', async () => {
+    scheduleJobRetryMock.mockResolvedValueOnce(null);
+    const service = new WorkerAutonomyService({
+      workerId: 'async-queue',
+      workerType: 'async_queue',
+      heartbeatIntervalMs: 10_000,
+      leaseMs: 30_000,
+      inspectorIntervalMs: 30_000,
+      staleAfterMs: 60_000,
+      defaultMaxRetries: 2,
+      retryBackoffBaseMs: 2_000,
+      retryBackoffMaxMs: 60_000,
+      maxJobsPerHour: 120,
+      maxAiCallsPerHour: 120,
+      maxRssMb: 2_048,
+      queueDepthDeferralThreshold: 25,
+      queueDepthDeferralMs: 5_000,
+      failureWebhookUrl: null,
+      failureWebhookThreshold: 3,
+      failureWebhookCooldownMs: 300_000
+    });
+
+    const result = await service.handleJobFailure(
+      {
+        id: 'job-lost-lease',
+        job_type: 'ask',
+        worker_id: 'async-queue',
+        status: 'running',
+        input: { prompt: 'test' },
+        retry_count: 0,
+        max_retries: 2,
+        created_at: new Date(),
+        updated_at: new Date()
+      } as any,
+      'OpenAI rate limit timeout',
+      true
+    );
+
+    expect(result).toEqual({ action: 'failed' });
+    expect(loggerWarnMock).toHaveBeenCalledWith(
+      'worker.job.retry_schedule.skipped',
+      expect.objectContaining({
+        module: 'worker-autonomy',
+        workerId: 'async-queue',
+        jobId: 'job-lost-lease'
+      })
+    );
+    expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        snapshot: expect.objectContaining({
+          scheduledRetries: 0,
+          recoveryActions: 0,
+          lastRecoveryEvent: null,
+          alerts: ['Retry scheduling skipped for job job-lost-lease; live lease was no longer owned by this worker.']
+        })
+      }),
+      { source: 'job-retry-skipped' }
+    );
   });
 
   it('defers provider-unavailable jobs without consuming retry budget', async () => {
@@ -608,6 +690,25 @@ describe('workerAutonomyService', () => {
     );
     expect(scheduleJobRetryMock).not.toHaveBeenCalled();
     expect(updateJobMock).not.toHaveBeenCalled();
+    expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        snapshot: expect.objectContaining({
+          recoveryActions: 1,
+          lastRecoveryEvent: expect.objectContaining({
+            action: 'provider_deferred',
+            jobIds: ['job-provider']
+          })
+        })
+      }),
+      { source: 'provider-deferred' }
+    );
+    expect(loggerInfoMock).toHaveBeenCalledWith(
+      'worker.circuit_breaker.cooldown.defer',
+      expect.objectContaining({
+        jobId: 'job-provider',
+        providerFailureCategory: 'circuit_open'
+      })
+    );
   });
 
   it('skips provider deferral when the claimed job is no longer running', async () => {
@@ -666,6 +767,55 @@ describe('workerAutonomyService', () => {
         })
       }),
       { source: 'provider-deferred-skipped' }
+    );
+  });
+
+  it('records circuit breaker reset as an observable recovery action', async () => {
+    const service = new WorkerAutonomyService({
+      workerId: 'async-queue',
+      workerType: 'async_queue',
+      heartbeatIntervalMs: 10_000,
+      leaseMs: 30_000,
+      inspectorIntervalMs: 30_000,
+      staleAfterMs: 60_000,
+      defaultMaxRetries: 2,
+      retryBackoffBaseMs: 2_000,
+      retryBackoffMaxMs: 60_000,
+      maxJobsPerHour: 120,
+      maxAiCallsPerHour: 120,
+      maxRssMb: 2_048,
+      queueDepthDeferralThreshold: 25,
+      queueDepthDeferralMs: 5_000,
+      failureWebhookUrl: null,
+      failureWebhookThreshold: 3,
+      failureWebhookCooldownMs: 300_000
+    });
+
+    await service.recordProviderCircuitBreakerReset({
+      providerFailureCategory: 'circuit_open',
+      providerNextRetryAt: '2026-03-07T12:01:00.000Z',
+      source: 'job-runner'
+    });
+
+    expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        healthStatus: 'healthy',
+        snapshot: expect.objectContaining({
+          recoveryActions: 1,
+          lastRecoveryEvent: expect.objectContaining({
+            action: 'circuit_breaker_reset',
+            source: 'job-runner'
+          }),
+          alerts: ['Provider circuit breaker reset; worker execution can resume.']
+        })
+      }),
+      { source: 'circuit-breaker-reset' }
+    );
+    expect(loggerInfoMock).toHaveBeenCalledWith(
+      'worker.circuit_breaker.reset',
+      expect.objectContaining({
+        providerFailureCategory: 'circuit_open'
+      })
     );
   });
 
@@ -1071,6 +1221,97 @@ describe('workerAutonomyService', () => {
     expect(fetchMock.mock.calls[0]?.[1]?.body).toContain('Recovered 1 stale job');
   });
 
+  it('caps recovered job ids persisted in recovery events', async () => {
+    const recoveredJobIds = Array.from({ length: 25 }, (_, index) => `job-stale-${index + 1}`);
+    recoverStaleJobsMock.mockResolvedValue({
+      recoveredJobs: recoveredJobIds,
+      failedJobs: []
+    });
+
+    const service = new WorkerAutonomyService({
+      workerId: 'async-queue',
+      workerType: 'async_queue',
+      heartbeatIntervalMs: 10_000,
+      leaseMs: 30_000,
+      inspectorIntervalMs: 30_000,
+      staleAfterMs: 60_000,
+      defaultMaxRetries: 2,
+      retryBackoffBaseMs: 2_000,
+      retryBackoffMaxMs: 60_000,
+      maxJobsPerHour: 120,
+      maxAiCallsPerHour: 120,
+      maxRssMb: 2_048,
+      queueDepthDeferralThreshold: 25,
+      queueDepthDeferralMs: 5_000,
+      failureWebhookUrl: null,
+      failureWebhookThreshold: 3,
+      failureWebhookCooldownMs: 1
+    });
+
+    await service.inspect('scheduled');
+
+    expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        snapshot: expect.objectContaining({
+          lastRecoveryEvent: expect.objectContaining({
+            jobIds: recoveredJobIds.slice(0, 20),
+            jobIdsTotal: 25,
+            jobIdsTruncated: true,
+            workerIds: [],
+            workerIdsTotal: 0,
+            workerIdsTruncated: false
+          })
+        })
+      }),
+      { source: 'inspector' }
+    );
+    expect(loggerInfoMock).toHaveBeenCalledWith(
+      'worker.recovery.action',
+      expect.objectContaining({
+        jobIds: recoveredJobIds.slice(0, 20),
+        jobIdsTotal: 25,
+        jobIdsTruncated: true
+      })
+    );
+  });
+
+  it('treats missing stale recovery result arrays as empty', async () => {
+    recoverStaleJobsMock.mockResolvedValue({} as any);
+
+    const service = new WorkerAutonomyService({
+      workerId: 'async-queue',
+      workerType: 'async_queue',
+      heartbeatIntervalMs: 10_000,
+      leaseMs: 30_000,
+      inspectorIntervalMs: 30_000,
+      staleAfterMs: 60_000,
+      defaultMaxRetries: 2,
+      retryBackoffBaseMs: 2_000,
+      retryBackoffMaxMs: 60_000,
+      maxJobsPerHour: 120,
+      maxAiCallsPerHour: 120,
+      maxRssMb: 2_048,
+      queueDepthDeferralThreshold: 25,
+      queueDepthDeferralMs: 5_000,
+      failureWebhookUrl: null,
+      failureWebhookThreshold: 3,
+      failureWebhookCooldownMs: 1
+    });
+
+    await expect(service.inspect('scheduled')).resolves.toBeDefined();
+    expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        snapshot: expect.objectContaining({
+          recoveredJobs: 0,
+          deadLetterJobs: 0,
+          cancelledJobs: 0,
+          recoveryActions: 0
+        })
+      }),
+      { source: 'inspector' }
+    );
+  });
+
   it('uses the shared stats worker id for slot-level budget evaluation', async () => {
     const service = new WorkerAutonomyService({
       workerId: 'async-queue-slot-2',
@@ -1233,6 +1474,189 @@ describe('workerAutonomyService', () => {
     }
   });
 
+  it('surfaces stale worker restart recommendations even when no stalled job rows are recovered', async () => {
+    jest.useFakeTimers();
+
+    try {
+      jest.setSystemTime(new Date('2026-03-07T12:00:00.000Z'));
+      listWorkerRuntimeSnapshotsMock.mockResolvedValue([
+        {
+          workerId: 'async-queue-slot-stale',
+          workerType: 'async_queue',
+          healthStatus: 'healthy',
+          currentJobId: 'job-already-reclaimed',
+          lastError: null,
+          startedAt: '2026-03-07T11:55:00.000Z',
+          lastHeartbeatAt: '2026-03-07T11:59:45.000Z',
+          lastInspectorRunAt: '2026-03-07T11:59:45.000Z',
+          updatedAt: '2026-03-07T11:59:45.000Z',
+          snapshot: {
+            activeJobs: ['job-already-reclaimed'],
+            lastActivityAt: '2026-03-07T11:59:45.000Z'
+          }
+        }
+      ]);
+      recoverStalledJobsForWorkersMock.mockResolvedValueOnce({
+        staleWorkerIds: [],
+        stalledJobIds: [],
+        requeuedJobIds: [],
+        deadLetterJobIds: [],
+        cancelledJobIds: []
+      });
+
+      const service = new WorkerAutonomyService({
+        workerId: 'async-queue-slot-1',
+        workerType: 'async_queue',
+        heartbeatIntervalMs: 5_000,
+        leaseMs: 15_000,
+        inspectorIntervalMs: 30_000,
+        watchdogIntervalMs: 5_000,
+        staleAfterMs: 10_000,
+        watchdogIdleMs: 120_000,
+        stalledJobAction: 'requeue',
+        defaultMaxRetries: 2,
+        retryBackoffBaseMs: 2_000,
+        retryBackoffMaxMs: 60_000,
+        maxJobsPerHour: 120,
+        maxAiCallsPerHour: 120,
+        maxRssMb: 2_048,
+        queueDepthDeferralThreshold: 25,
+        queueDepthDeferralMs: 5_000,
+        failureWebhookUrl: null,
+        failureWebhookThreshold: 3,
+        failureWebhookCooldownMs: 300_000
+      });
+
+      const result = await service.runWatchdogCycle('watchdog');
+
+      expect(result).toEqual({
+        staleWorkers: 1,
+        stalledJobs: 0,
+        requeuedJobs: 0,
+        deadLetterJobs: 0,
+        cancelledJobs: 0
+      });
+      expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          snapshot: expect.objectContaining({
+            staleWorkersDetected: 1,
+            recoveryActions: 0,
+            lastRecoveryEvent: null,
+            lastWatchdogEvent: expect.objectContaining({
+              reason: 'stale worker restart recommended',
+              staleWorkerIds: ['async-queue-slot-stale'],
+              restartRecommended: true
+            })
+          })
+        }),
+        { source: 'watchdog' }
+      );
+      expect(loggerWarnMock).toHaveBeenCalledWith(
+        'worker.watchdog.triggered',
+        expect.objectContaining({
+          staleWorkerIds: ['async-queue-slot-stale'],
+          restartRecommended: true
+        })
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('caps watchdog event id arrays in snapshots and logs', async () => {
+    jest.useFakeTimers();
+
+    try {
+      jest.setSystemTime(new Date('2026-03-07T12:00:00.000Z'));
+      const staleWorkerIds = Array.from({ length: 25 }, (_, index) => `async-queue-slot-${index + 1}`);
+      const stalledJobIds = Array.from({ length: 25 }, (_, index) => `job-stalled-${index + 1}`);
+      listWorkerRuntimeSnapshotsMock.mockResolvedValue(
+        staleWorkerIds.map((workerId, index) => ({
+          workerId,
+          workerType: 'async_queue',
+          healthStatus: 'healthy',
+          currentJobId: stalledJobIds[index],
+          lastError: null,
+          startedAt: '2026-03-07T11:55:00.000Z',
+          lastHeartbeatAt: '2026-03-07T11:59:45.000Z',
+          lastInspectorRunAt: '2026-03-07T11:59:45.000Z',
+          updatedAt: '2026-03-07T11:59:45.000Z',
+          snapshot: {
+            activeJobs: [stalledJobIds[index]],
+            lastActivityAt: '2026-03-07T11:59:45.000Z'
+          }
+        }))
+      );
+      recoverStalledJobsForWorkersMock.mockResolvedValue({
+        staleWorkerIds,
+        stalledJobIds,
+        requeuedJobIds: stalledJobIds,
+        deadLetterJobIds: [],
+        cancelledJobIds: []
+      });
+
+      const service = new WorkerAutonomyService({
+        workerId: 'async-queue-slot-1',
+        workerType: 'async_queue',
+        heartbeatIntervalMs: 5_000,
+        leaseMs: 15_000,
+        inspectorIntervalMs: 30_000,
+        watchdogIntervalMs: 5_000,
+        staleAfterMs: 10_000,
+        watchdogIdleMs: 120_000,
+        stalledJobAction: 'requeue',
+        defaultMaxRetries: 2,
+        retryBackoffBaseMs: 2_000,
+        retryBackoffMaxMs: 60_000,
+        maxJobsPerHour: 120,
+        maxAiCallsPerHour: 120,
+        maxRssMb: 2_048,
+        queueDepthDeferralThreshold: 25,
+        queueDepthDeferralMs: 5_000,
+        failureWebhookUrl: null,
+        failureWebhookThreshold: 3,
+        failureWebhookCooldownMs: 300_000
+      });
+
+      await service.runWatchdogCycle('watchdog');
+
+      expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          snapshot: expect.objectContaining({
+            lastWatchdogEvent: expect.objectContaining({
+              staleWorkerIds: staleWorkerIds.slice(0, 20),
+              staleWorkerIdsTotal: 25,
+              staleWorkerIdsTruncated: true,
+              stalledJobIds: stalledJobIds.slice(0, 20),
+              stalledJobIdsTotal: 25,
+              stalledJobIdsTruncated: true,
+              requeuedJobIds: stalledJobIds.slice(0, 20),
+              requeuedJobIdsTotal: 25,
+              requeuedJobIdsTruncated: true
+            })
+          })
+        }),
+        { source: 'watchdog' }
+      );
+      expect(loggerWarnMock).toHaveBeenCalledWith(
+        'worker.watchdog.triggered',
+        expect.objectContaining({
+          staleWorkerIds: staleWorkerIds.slice(0, 20),
+          staleWorkerIdsTotal: 25,
+          staleWorkerIdsTruncated: true,
+          stalledJobIds: stalledJobIds.slice(0, 20),
+          stalledJobIdsTotal: 25,
+          stalledJobIdsTruncated: true,
+          requeuedJobIds: stalledJobIds.slice(0, 20),
+          requeuedJobIdsTotal: 25,
+          requeuedJobIdsTruncated: true
+        })
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('uses fresh liveness records to avoid false stale-worker recovery in V2', async () => {
     jest.useFakeTimers();
 
@@ -1368,6 +1792,112 @@ describe('workerAutonomyService', () => {
         deadLetterJobs: 0,
         cancelledJobs: 0
       });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('reports stale workers for restart recommendation even when no job row is reclaimed', async () => {
+    jest.useFakeTimers();
+
+    try {
+      jest.setSystemTime(new Date('2026-03-07T12:00:00.000Z'));
+      getJobQueueSummaryMock.mockResolvedValue({
+        pending: 0,
+        running: 1,
+        completed: 0,
+        failed: 0,
+        total: 1,
+        delayed: 0,
+        stalledRunning: 0,
+        oldestPendingJobAgeMs: 0,
+        lastUpdatedAt: '2026-03-07T12:00:00.000Z'
+      });
+      listWorkerRuntimeSnapshotsMock.mockResolvedValue([
+        {
+          workerId: 'async-queue-slot-stale',
+          workerType: 'async_queue',
+          healthStatus: 'healthy',
+          currentJobId: null,
+          lastError: null,
+          startedAt: '2026-03-07T11:55:00.000Z',
+          lastHeartbeatAt: '2026-03-07T11:58:00.000Z',
+          lastInspectorRunAt: '2026-03-07T11:58:00.000Z',
+          updatedAt: '2026-03-07T11:58:00.000Z',
+          snapshot: {
+            activeJobs: [],
+            lastActivityAt: '2026-03-07T11:58:00.000Z'
+          }
+        }
+      ]);
+      recoverStalledJobsForWorkersMock.mockResolvedValue({
+        staleWorkerIds: [],
+        stalledJobIds: [],
+        requeuedJobIds: [],
+        deadLetterJobIds: [],
+        cancelledJobIds: []
+      });
+
+      const service = new WorkerAutonomyService({
+        workerId: 'async-queue-slot-1',
+        workerType: 'async_queue',
+        heartbeatIntervalMs: 5_000,
+        leaseMs: 15_000,
+        inspectorIntervalMs: 30_000,
+        watchdogIntervalMs: 5_000,
+        staleAfterMs: 10_000,
+        watchdogIdleMs: 120_000,
+        stalledJobAction: 'requeue',
+        defaultMaxRetries: 2,
+        retryBackoffBaseMs: 2_000,
+        retryBackoffMaxMs: 60_000,
+        maxJobsPerHour: 120,
+        maxAiCallsPerHour: 120,
+        maxRssMb: 2_048,
+        queueDepthDeferralThreshold: 25,
+        queueDepthDeferralMs: 5_000,
+        failureWebhookUrl: null,
+        failureWebhookThreshold: 3,
+        failureWebhookCooldownMs: 300_000
+      });
+
+      const result = await service.runWatchdogCycle('watchdog');
+
+      expect(recoverStalledJobsForWorkersMock).toHaveBeenCalledWith({
+        workerIds: ['async-queue-slot-stale'],
+        staleAfterMs: 10_000,
+        maxRetries: 2,
+        stalledJobAction: 'requeue'
+      });
+      expect(result).toEqual({
+        staleWorkers: 1,
+        stalledJobs: 0,
+        requeuedJobs: 0,
+        deadLetterJobs: 0,
+        cancelledJobs: 0
+      });
+      expect(loggerWarnMock).toHaveBeenCalledWith(
+        'worker.watchdog.stale_worker_detected',
+        expect.objectContaining({
+          module: 'worker-autonomy',
+          workerId: 'async-queue-slot-1',
+          staleWorkers: 1,
+          stalledJobs: 0,
+          recoveryActions: 0,
+          restartRecommended: true
+        })
+      );
+      expect(upsertWorkerRuntimeSnapshotMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          healthStatus: 'degraded',
+          snapshot: expect.objectContaining({
+            staleWorkersDetected: 1,
+            recoveryActions: 0,
+            alerts: ['Detected 1 stale worker(s); restart recommended.']
+          })
+        }),
+        { source: 'watchdog' }
+      );
     } finally {
       jest.useRealTimers();
     }

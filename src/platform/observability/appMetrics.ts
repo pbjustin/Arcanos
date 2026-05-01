@@ -250,6 +250,13 @@ const workerRecoveredJobsTotal = new Counter({
   registers: [metricsRegistry],
 });
 
+const workerRecoveryActionsTotal = new Counter({
+  name: 'worker_recovery_actions_total',
+  help: 'Total observable worker recovery actions by action and source.',
+  labelNames: ['action', 'source'] as const,
+  registers: [metricsRegistry],
+});
+
 const workerRuntimeSnapshotSkippedTotal = new Counter({
   name: 'worker_runtime_snapshot_skipped_total',
   help: 'Total worker runtime snapshot persistence attempts skipped because no meaningful state changed.',
@@ -406,13 +413,7 @@ type WorkerSnapshotCounterTotals = {
   recoveredJobs: number;
   deadLetterJobs: number;
   cancelledJobs: number;
-};
-const DEFAULT_WORKER_SNAPSHOT_COUNTER_TOTALS: WorkerSnapshotCounterTotals = {
-  staleWorkersDetected: 0,
-  stalledJobsDetected: 0,
-  recoveredJobs: 0,
-  deadLetterJobs: 0,
-  cancelledJobs: 0
+  recoveryActions: number;
 };
 const lastWorkerSnapshotCounterTotalsByWorkerId = new Map<string, WorkerSnapshotCounterTotals>();
 
@@ -695,18 +696,25 @@ function getWorkerSnapshotCounterTotals(worker: {
   stalledJobsDetected?: number;
   recoveredJobs?: number;
   deadLetterJobs?: number;
+  cancelledJobs?: number;
   recoveryActions?: number;
 }): WorkerSnapshotCounterTotals {
   const recoveredJobs = readWorkerSnapshotCounter(worker.recoveredJobs);
   const deadLetterJobs = readWorkerSnapshotCounter(worker.deadLetterJobs);
   const recoveryActions = readWorkerSnapshotCounter(worker.recoveryActions);
+  const hasExplicitCancelledJobs =
+    typeof worker.cancelledJobs === 'number' && Number.isFinite(worker.cancelledJobs);
+  const explicitCancelledJobs = readWorkerSnapshotCounter(worker.cancelledJobs);
 
   return {
     staleWorkersDetected: readWorkerSnapshotCounter(worker.staleWorkersDetected),
     stalledJobsDetected: readWorkerSnapshotCounter(worker.stalledJobsDetected),
     recoveredJobs,
     deadLetterJobs,
-    cancelledJobs: Math.max(0, recoveryActions - recoveredJobs - deadLetterJobs)
+    cancelledJobs: hasExplicitCancelledJobs
+      ? explicitCancelledJobs
+      : Math.max(0, recoveryActions - recoveredJobs - deadLetterJobs),
+    recoveryActions
   };
 }
 
@@ -716,7 +724,7 @@ function resolveWorkerSnapshotCounterDelta(current: number, previous: number | u
   }
 
   if (!Number.isFinite(previous) || previous === undefined || previous < 0) {
-    return current;
+    return 0;
   }
 
   return current >= previous ? current - previous : current;
@@ -728,6 +736,7 @@ function recordObservedWorkerSnapshotCounters(workers: Array<{
   stalledJobsDetected?: number;
   recoveredJobs?: number;
   deadLetterJobs?: number;
+  cancelledJobs?: number;
   recoveryActions?: number;
 }>): void {
   const observedWorkerIds = new Set<string>();
@@ -762,7 +771,6 @@ function recordObservedWorkerSnapshotCounters(workers: Array<{
       current.stalledJobsDetected,
       previous?.stalledJobsDetected
     );
-
     if (requeuedJobsDelta > 0) {
       workerStalledJobsTotal.inc({ action: 'requeue' }, requeuedJobsDelta);
       workerRecoveredJobsTotal.inc({ action: 'requeue' }, requeuedJobsDelta);
@@ -820,6 +828,20 @@ export function recordWorkerRecoveredJobs(input: {
 }): void {
   workerRecoveredJobsTotal.inc(
     { action: normalizeLabel(input.action) },
+    Math.max(0, input.count ?? 1)
+  );
+}
+
+export function recordWorkerRecoveryAction(input: {
+  action: string;
+  source: string;
+  count?: number;
+}): void {
+  workerRecoveryActionsTotal.inc(
+    {
+      action: normalizeLabel(input.action),
+      source: normalizeLabel(input.source),
+    },
     Math.max(0, input.count ?? 1)
   );
 }

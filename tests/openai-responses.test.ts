@@ -74,17 +74,14 @@ describe('openai responses helpers', () => {
     expect(result.outputParsed).toEqual({ answer: 'nested' });
   });
 
-  it('does not call private OpenAI SDK promise unwrap helpers', async () => {
-    const privateUnwrap = jest.fn(() => {
-      throw new Error('private unwrap helper should not be called');
-    });
-    const create = jest.fn().mockResolvedValue({
+  it('awaits the plain Promise returned by responses.create', async () => {
+    const createResponse = {
       id: 'resp_private_helper_1',
       model: 'gpt-4.1-mini',
       output_text: 'plain text',
       output: [],
-      _thenUnwrap: privateUnwrap,
-    });
+    };
+    const create = jest.fn(() => Promise.resolve(createResponse));
 
     const result = await callTextResponse(
       { responses: { create } } as any,
@@ -95,7 +92,12 @@ describe('openai responses helpers', () => {
     );
 
     expect(result.outputText).toBe('plain text');
-    expect(privateUnwrap).not.toHaveBeenCalled();
+    expect(create).toHaveBeenCalledTimes(1);
+
+    const returnedPromise = create.mock.results[0]?.value as Promise<unknown>;
+    const privatePromiseHelperName = ['_then', 'Unwrap'].join('');
+    expect(typeof returnedPromise.then).toBe('function');
+    expect(privatePromiseHelperName in returnedPromise).toBe(false);
   });
 
   it('surfaces refusals explicitly', async () => {

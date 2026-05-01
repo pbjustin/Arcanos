@@ -2,6 +2,7 @@ import { describe, expect, it } from '@jest/globals';
 import {
   DEFAULTS,
   PROBE_STATUS,
+  RAILWAY_PRODUCTION_BASE_URL,
   parseArgs,
   runFastPathProbe,
 } from '../scripts/railway-fast-path-probe.js';
@@ -15,6 +16,10 @@ function buildHeaders(entries = {}) {
 }
 
 describe('railway-fast-path-probe', () => {
+  it('documents the Railway-assigned production fallback host', () => {
+    expect(RAILWAY_PRODUCTION_BASE_URL).toBe('https://acranos-production.up.railway.app');
+  });
+
   it('parses explicit CLI overrides', () => {
     const parsed = parseArgs([
       '--base-url', 'https://example.com',

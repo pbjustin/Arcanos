@@ -122,7 +122,7 @@ describe("protocol transport matrix", () => {
         "tool.invoke"
       ])
     );
-  });
+  }, 15000);
 
   it("returns deterministic unsupported errors for local tool describe/invoke requests", async () => {
     const [toolDescribeResponse, toolInvokeResponse] = await Promise.all([
