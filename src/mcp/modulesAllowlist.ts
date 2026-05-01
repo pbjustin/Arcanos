@@ -1,5 +1,5 @@
 /**
- * Hardening for modules.invoke:
+ * Hardening for modules.invoke and GPT Access capability runs:
  * Allowlist is explicit and deny-by-default.
  *
  * Format (CSV):

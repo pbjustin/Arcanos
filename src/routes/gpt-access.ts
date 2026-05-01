@@ -6,6 +6,7 @@ import {
   getRequestActorKey,
   securityHeaders
 } from '@platform/runtime/security.js';
+import { confirmGate } from '@transport/http/middleware/confirmGate.js';
 import { isModuleActionAllowed } from '../mcp/modulesAllowlist.js';
 import {
   dispatchModuleAction,
@@ -40,6 +41,52 @@ const router = express.Router();
 
 type CapabilityRegistryEntry = ReturnType<typeof getModulesForRegistry>[number];
 type CapabilityMetadata = NonNullable<ReturnType<typeof getModuleMetadata>>;
+type CapabilityRunBody =
+  | { ok: true; action: unknown; payload: unknown }
+  | { ok: false; message: string };
+
+const CAPABILITY_RUN_BODY_KEYS = new Set(['action', 'payload']);
+const CAPABILITY_PAYLOAD_MAX_DEPTH = 32;
+const UNSAFE_CAPABILITY_PAYLOAD_FIELDS = new Set([
+  '__arcanosExecutionMode',
+  '__arcanosExecutionReason',
+  '__arcanosGptId',
+  '__arcanosRequestedAction',
+  '__arcanosSourceEndpoint',
+  '__arcanosSuppressPromptDebugTrace',
+  '__proto__',
+  'admin_key',
+  'api-key',
+  'api_key',
+  'apikey',
+  'auth',
+  'authorization',
+  'bearer',
+  'command',
+  'constructor',
+  'cookie',
+  'cookies',
+  'endpoint',
+  'exec',
+  'headers',
+  'maxOutputTokens',
+  'maxWords',
+  'openai_api_key',
+  'overrideAuditSafe',
+  'password',
+  'prototype',
+  'proxy',
+  'railway_token',
+  'secret',
+  'shell',
+  'sql',
+  'suppressTimeoutFallback',
+  'target',
+  'timeout_ms',
+  'timeoutMs',
+  'token',
+  'url'
+].map((field) => field.toLowerCase()));
 
 function getGptAccessRateLimitActorKey(req: express.Request): string {
   const expressClientIp = typeof req.ip === 'string' && req.ip.trim().length > 0
@@ -81,14 +128,60 @@ function toCapabilityDetail(metadata: CapabilityMetadata) {
   };
 }
 
-function readCapabilityRunBody(body: unknown): { action: unknown; payload: unknown } {
-  const record = body && typeof body === 'object' && !Array.isArray(body)
-    ? body as Record<string, unknown>
-    : {};
+function findUnsafeCapabilityPayloadIssue(value: unknown, depth = 0): 'unsafe_field' | 'depth_exceeded' | null {
+  if (depth > CAPABILITY_PAYLOAD_MAX_DEPTH) {
+    return 'depth_exceeded';
+  }
+
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const issue = findUnsafeCapabilityPayloadIssue(item, depth + 1);
+      if (issue) return issue;
+    }
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  for (const key of Object.keys(record)) {
+    if (UNSAFE_CAPABILITY_PAYLOAD_FIELDS.has(key.toLowerCase())) {
+      return 'unsafe_field';
+    }
+
+    const issue = findUnsafeCapabilityPayloadIssue(record[key], depth + 1);
+    if (issue) return issue;
+  }
+
+  return null;
+}
+
+function readCapabilityRunBody(body: unknown): CapabilityRunBody {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return { ok: false, message: 'request body must be a JSON object.' };
+  }
+
+  const record = body as Record<string, unknown>;
+  const unsupportedKey = Object.keys(record).find((key) => !CAPABILITY_RUN_BODY_KEYS.has(key));
+  if (unsupportedKey) {
+    return { ok: false, message: 'request body may only include action and payload.' };
+  }
+
+  const payload = Object.prototype.hasOwnProperty.call(record, 'payload') ? record.payload : {};
+  const payloadIssue = findUnsafeCapabilityPayloadIssue(payload);
+  if (payloadIssue === 'unsafe_field') {
+    return { ok: false, message: 'payload contains fields that are not allowed for capability execution.' };
+  }
+  if (payloadIssue === 'depth_exceeded') {
+    return { ok: false, message: 'payload exceeds maximum nesting depth for capability execution.' };
+  }
 
   return {
+    ok: true,
     action: record.action,
-    payload: Object.prototype.hasOwnProperty.call(record, 'payload') ? record.payload : {}
+    payload
   };
 }
 
@@ -170,7 +263,13 @@ const getGptAccessCapability = asyncHandler(async (req, res) => {
 });
 
 const runGptAccessCapability = asyncHandler(async (req, res) => {
-  const { action, payload } = readCapabilityRunBody(req.body);
+  const body = readCapabilityRunBody(req.body);
+  if (!body.ok) {
+    sendGptAccessBadRequest(res, body.message);
+    return;
+  }
+
+  const { action, payload } = body;
 
   if (typeof action !== 'string' || action.trim().length === 0) {
     sendGptAccessBadRequest(res, 'action must be a non-empty string.');
@@ -234,6 +333,7 @@ router.get(
 router.post(
   '/gpt-access/capabilities/v1/:id/run',
   requireGptAccessScope('capabilities.run'),
+  confirmGate,
   runGptAccessCapability
 );
 

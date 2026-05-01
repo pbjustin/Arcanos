@@ -92,6 +92,12 @@ export const GPT_ACCESS_SCOPES = [
 
 export type GptAccessScope = (typeof GPT_ACCESS_SCOPES)[number];
 
+const GPT_ACCESS_SCOPES_REQUIRING_EXPLICIT_CONFIG = new Set<GptAccessScope>([
+  'jobs.create',
+  'capabilities.read',
+  'capabilities.run'
+]);
+
 export const GPT_ACCESS_MCP_TOOLS = [
   'runtime.inspect',
   'workers.status',
@@ -440,10 +446,27 @@ export function gptAccessAuthMiddleware(req: Request, res: Response, next: NextF
   next();
 }
 
-function resolveConfiguredAccessScopes(): Set<GptAccessScope> {
+type GptAccessScopeConfig = {
+  configuredScopes: Set<GptAccessScope>;
+  explicitScopes: Set<GptAccessScope>;
+};
+
+let cachedRawGptAccessScopes: string | undefined;
+let cachedGptAccessScopeConfig: GptAccessScopeConfig | null = null;
+
+function resolveConfiguredAccessScopes(): GptAccessScopeConfig {
   const rawScopes = process.env.ARCANOS_GPT_ACCESS_SCOPES;
+  if (cachedGptAccessScopeConfig && rawScopes === cachedRawGptAccessScopes) {
+    return cachedGptAccessScopeConfig;
+  }
+
+  cachedRawGptAccessScopes = rawScopes;
   if (!rawScopes) {
-    return new Set(GPT_ACCESS_SCOPES);
+    cachedGptAccessScopeConfig = {
+      configuredScopes: new Set(GPT_ACCESS_SCOPES),
+      explicitScopes: new Set()
+    };
+    return cachedGptAccessScopeConfig;
   }
 
   const requestedScopes = new Set(
@@ -453,33 +476,29 @@ function resolveConfiguredAccessScopes(): Set<GptAccessScope> {
       .filter(Boolean)
   );
 
-  return new Set(GPT_ACCESS_SCOPES.filter((scope) => requestedScopes.has(scope)));
+  const explicitScopes = new Set(GPT_ACCESS_SCOPES.filter((scope) => requestedScopes.has(scope)));
+  cachedGptAccessScopeConfig = {
+    configuredScopes: explicitScopes,
+    explicitScopes
+  };
+  return cachedGptAccessScopeConfig;
 }
 
 function isGptAccessScopeExplicitlyConfigured(scope: GptAccessScope): boolean {
-  const rawScopes = process.env.ARCANOS_GPT_ACCESS_SCOPES;
-  if (!rawScopes) {
-    return false;
-  }
-
-  return rawScopes
-    .split(',')
-    .map((entry) => entry.trim())
-    .filter(Boolean)
-    .includes(scope);
+  return resolveConfiguredAccessScopes().explicitScopes.has(scope);
 }
 
 export function requireGptAccessScope(scope: GptAccessScope) {
   return (_req: Request, res: Response, next: NextFunction): void => {
     if (
-      (scope === 'jobs.create' || scope === 'capabilities.run')
+      GPT_ACCESS_SCOPES_REQUIRING_EXPLICIT_CONFIG.has(scope)
       && !isGptAccessScopeExplicitlyConfigured(scope)
     ) {
       sendGatewayError(res, 403, 'GPT_ACCESS_SCOPE_DENIED', 'GPT access scope denied.');
       return;
     }
 
-    const configuredScopes = resolveConfiguredAccessScopes();
+    const { configuredScopes } = resolveConfiguredAccessScopes();
     if (!configuredScopes.has(scope)) {
       sendGatewayError(res, 403, 'GPT_ACCESS_SCOPE_DENIED', 'GPT access scope denied.');
       return;
@@ -1621,7 +1640,7 @@ export function buildGptAccessOpenApiDocument() {
         post: {
           operationId: 'runCapabilityV1',
           summary: 'Run one action on a GPT Access capability.',
-          description: 'Executes through the existing module dispatch boundary. The capabilities.run scope must be explicitly configured before this endpoint can execute actions.',
+          description: 'Executes through the existing module dispatch boundary. The capabilities.run scope must be explicitly configured, the module action must be allowlisted, and the request must pass the confirmation gate before this endpoint can execute actions.',
           security: [{ bearerAuth: [] }],
           parameters: [
             {
@@ -1629,6 +1648,13 @@ export function buildGptAccessOpenApiDocument() {
               in: 'path',
               required: true,
               schema: { type: 'string', minLength: 1 }
+            },
+            {
+              name: 'x-confirmed',
+              in: 'header',
+              required: false,
+              schema: { type: 'string' },
+              description: 'Use "yes" for explicit operator approval, or the confirmGate challenge response format when retrying a challenged request.'
             }
           ],
           requestBody: {

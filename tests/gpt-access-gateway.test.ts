@@ -111,7 +111,15 @@ function authorized(requestBuilder: request.Test): request.Test {
   return requestBuilder.set('Authorization', `Bearer ${TEST_TOKEN}`);
 }
 
+function confirmed(requestBuilder: request.Test): request.Test {
+  return requestBuilder.set('x-confirmed', 'yes');
+}
+
 function allowCreateJobs(scopes = 'jobs.create,jobs.result'): void {
+  process.env.ARCANOS_GPT_ACCESS_SCOPES = scopes;
+}
+
+function allowCapabilityRead(scopes = 'capabilities.read'): void {
   process.env.ARCANOS_GPT_ACCESS_SCOPES = scopes;
 }
 
@@ -299,6 +307,8 @@ describe('/gpt-access gateway', () => {
   });
 
   it('lists capabilities from the existing module registry without implementation details', async () => {
+    allowCapabilityRead();
+
     const response = await authorized(request(buildApp()).get('/gpt-access/capabilities/v1'));
 
     expect(response.status).toBe(200);
@@ -321,6 +331,8 @@ describe('/gpt-access gateway', () => {
   });
 
   it('inspects a known registered capability', async () => {
+    allowCapabilityRead();
+
     const response = await authorized(request(buildApp()).get('/gpt-access/capabilities/v1/ARCANOS%3ACORE'));
 
     expect(response.status).toBe(200);
@@ -341,6 +353,8 @@ describe('/gpt-access gateway', () => {
   });
 
   it('returns exists false when inspecting an unknown capability', async () => {
+    allowCapabilityRead();
+
     const response = await authorized(request(buildApp()).get('/gpt-access/capabilities/v1/arcanos-core'));
 
     expect(response.status).toBe(200);
@@ -353,6 +367,8 @@ describe('/gpt-access gateway', () => {
   });
 
   it('returns direct JSON for compatibility module aliases', async () => {
+    allowCapabilityRead();
+
     const listResponse = await authorized(request(buildApp()).get('/gpt-access/modules'));
     const detailResponse = await authorized(request(buildApp()).get('/gpt-access/modules/core'));
 
@@ -370,10 +386,20 @@ describe('/gpt-access gateway', () => {
     expect(getModuleMetadataMock).toHaveBeenCalledWith('core');
   });
 
+  it('requires capabilities.read to be explicitly configured before discovery', async () => {
+    delete process.env.ARCANOS_GPT_ACCESS_SCOPES;
+
+    const response = await authorized(request(buildApp()).get('/gpt-access/capabilities/v1'));
+
+    expect(response.status).toBe(403);
+    expect(response.body.error.code).toBe('GPT_ACCESS_SCOPE_DENIED');
+    expect(getModulesForRegistryMock).not.toHaveBeenCalled();
+  });
+
   it('rejects capability runs without a non-empty action before dispatch', async () => {
     allowCapabilityRun();
 
-    const response = await authorized(request(buildApp()).post('/gpt-access/capabilities/v1/core/run'))
+    const response = await confirmed(authorized(request(buildApp()).post('/gpt-access/capabilities/v1/core/run')))
       .send({ payload: {} });
 
     expect(response.status).toBe(400);
@@ -384,6 +410,60 @@ describe('/gpt-access gateway', () => {
     expect(dispatchModuleActionMock).not.toHaveBeenCalled();
   });
 
+  it('rejects capability run bodies with unsupported top-level fields', async () => {
+    allowCapabilityRun();
+
+    const response = await confirmed(authorized(request(buildApp()).post('/gpt-access/capabilities/v1/core/run')))
+      .send({
+        action: 'query',
+        payload: {},
+        gptId: 'arcanos-core'
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toEqual({
+      code: 'GPT_ACCESS_VALIDATION_ERROR',
+      message: 'request body may only include action and payload.'
+    });
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects unsafe capability payload control fields before dispatch', async () => {
+    allowCapabilityRun();
+
+    const response = await confirmed(authorized(request(buildApp()).post('/gpt-access/capabilities/v1/core/run')))
+      .send({
+        action: 'query',
+        payload: {
+          prompt: 'status',
+          options: {
+            overrideAuditSafe: true
+          }
+        }
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toEqual({
+      code: 'GPT_ACCESS_VALIDATION_ERROR',
+      message: 'payload contains fields that are not allowed for capability execution.'
+    });
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
+  it('requires explicit confirmation before dispatching allowlisted capability actions', async () => {
+    allowCapabilityRun();
+
+    const response = await authorized(request(buildApp()).post('/gpt-access/capabilities/v1/core/run'))
+      .send({
+        action: 'query',
+        payload: {}
+      });
+
+    expect(response.status).toBe(403);
+    expect(response.body.code).toBe('CONFIRMATION_REQUIRED');
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
   it('runs capability actions through the existing module dispatch boundary', async () => {
     allowCapabilityRun();
     dispatchModuleActionMock.mockResolvedValueOnce({
@@ -391,7 +471,7 @@ describe('/gpt-access gateway', () => {
       authorization: 'Bearer abcdefghijklmnop'
     });
 
-    const response = await authorized(request(buildApp()).post('/gpt-access/capabilities/v1/core/run'))
+    const response = await confirmed(authorized(request(buildApp()).post('/gpt-access/capabilities/v1/core/run')))
       .send({
         action: 'query',
         payload: {
@@ -417,7 +497,7 @@ describe('/gpt-access gateway', () => {
     process.env.ARCANOS_GPT_ACCESS_SCOPES = 'capabilities.run';
     delete process.env.MCP_ALLOW_MODULE_ACTIONS;
 
-    const response = await authorized(request(buildApp()).post('/gpt-access/capabilities/v1/core/run'))
+    const response = await confirmed(authorized(request(buildApp()).post('/gpt-access/capabilities/v1/core/run')))
       .send({
         action: 'query',
         payload: {}
@@ -435,7 +515,7 @@ describe('/gpt-access gateway', () => {
     allowCapabilityRun();
     dispatchModuleActionMock.mockRejectedValueOnce(new MockModuleNotFoundError('Module not found: ARCANOS:CORE'));
 
-    const response = await authorized(request(buildApp()).post('/gpt-access/capabilities/v1/core/run'))
+    const response = await confirmed(authorized(request(buildApp()).post('/gpt-access/capabilities/v1/core/run')))
       .send({
         action: 'query',
         payload: {}
@@ -451,7 +531,7 @@ describe('/gpt-access gateway', () => {
   it('requires capabilities.run to be explicitly configured before running actions', async () => {
     delete process.env.ARCANOS_GPT_ACCESS_SCOPES;
 
-    const response = await authorized(request(buildApp()).post('/gpt-access/capabilities/v1/core/run'))
+    const response = await confirmed(authorized(request(buildApp()).post('/gpt-access/capabilities/v1/core/run')))
       .send({
         action: 'query',
         payload: {}
@@ -463,6 +543,8 @@ describe('/gpt-access gateway', () => {
   });
 
   it('uses the existing module registry functions instead of caching a second registry', async () => {
+    allowCapabilityRead();
+
     getModulesForRegistryMock
       .mockReturnValueOnce([
         {
