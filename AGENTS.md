@@ -17,6 +17,7 @@
 - Build the full backend artifact with `npm run build` before deployment-oriented validation or startup checks.
 
 ## Validation
+- For protocol-boundary or backend CLI changes, run `npm run build:packages` before `npm run validate:backend-cli:contract` and `npm run validate:backend-cli:offline`.
 - Run focused Jest suites with `node scripts/run-jest.mjs --testPathPatterns=<pattern> --coverage=false`.
 - Run the default TypeScript Jest sweep with `npm test` when focused suites pass and you need the broader Node-side check.
 - Run unit tests with `npm run test:unit`.
@@ -31,6 +32,7 @@
 - Confirm the linked project, service, and environment before release with `railway status` or `railway link`.
 - Validate Railway compatibility with `npm run validate:railway`.
 - Use `npm run railway:probe:async` and `npm run railway:probe:fast-path` when checking Railway job execution paths or investigating production path regressions.
+- For release verification, use this order: `npm run build`, `npm run validate:railway`, `railway up`, `npm run railway:smoke:production`, then `npm run railway:alert:timeouts -- --since 15m --lines 500 --fail-on-budget-abort`.
 - Run the production smoke check with `npm run railway:smoke:production` when verifying a live Railway deployment.
 - Run the post-deploy timeout watchdog with `npm run railway:alert:timeouts -- --since 15m --lines 500 --fail-on-budget-abort` after `railway up`.
 - Deploy only after validation with `railway up`.
