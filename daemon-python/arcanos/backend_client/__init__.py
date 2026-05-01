@@ -490,7 +490,7 @@ class BackendApiClient:
         gpt_id: Optional[str] = None,
     ) -> BackendResponse[dict[str, Any]]:
         """
-        Purpose: Request backend system state through the canonical daemon GPT route.
+        Purpose: Request backend system state through the direct `/system-state` endpoint.
         Inputs/Outputs: optional metadata and optimistic-lock patch fields; returns raw state payload.
         Edge cases: returns structured validation errors for partial update payloads.
         """
@@ -537,7 +537,7 @@ class BackendApiClient:
         gpt_id: Optional[str] = None,
     ) -> BackendResponse[BackendGptAsyncBridgeResult]:
         """
-        Purpose: Read async job status through the GPT compatibility bridge without enqueueing new work.
+        Purpose: Read async job status through the canonical jobs API without enqueueing new work.
         Inputs/Outputs: required job_id and optional gpt_id; returns typed async bridge status metadata.
         Edge cases: blank ids fail fast as validation errors.
         """
@@ -549,7 +549,7 @@ class BackendApiClient:
         gpt_id: Optional[str] = None,
     ) -> BackendResponse[BackendGptAsyncBridgeResult]:
         """
-        Purpose: Read async job results through the GPT compatibility bridge without enqueueing new work.
+        Purpose: Read async job results through the canonical jobs API without enqueueing new work.
         Inputs/Outputs: required job_id and optional gpt_id; returns typed async bridge result metadata.
         Edge cases: blank ids fail fast as validation errors.
         """

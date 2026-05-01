@@ -498,6 +498,17 @@ export class WorkerAutonomyService {
     return this.settings.heartbeatIntervalMs;
   }
 
+  getRecommendedWorkerHeartbeatDelayMs(): number {
+    const baseIntervalMs = Math.max(1_000, this.settings.heartbeatIntervalMs);
+    if (this.state.currentJobId) {
+      return baseIntervalMs;
+    }
+
+    const staleBackoffMs = Math.max(baseIntervalMs, Math.floor(this.settings.staleAfterMs * 0.8));
+    const idleCeilingMs = Math.max(baseIntervalMs, Math.floor(this.settings.watchdogIdleMs / 2));
+    return Math.min(staleBackoffMs, idleCeilingMs);
+  }
+
   getWatchdogIntervalMs(): number {
     return this.settings.watchdogIntervalMs ?? this.settings.heartbeatIntervalMs;
   }
@@ -708,9 +719,10 @@ export class WorkerAutonomyService {
     reason: string,
     options: WorkerSnapshotPersistOptions & { persistSnapshot?: boolean } = {}
   ): Promise<WorkerInspectionResult['stalledRecovery']> {
-    const [rawWorkerSnapshots, livenessRecords] = await Promise.all([
+    const [rawWorkerSnapshots, livenessRecords, watchdogQueueSummary] = await Promise.all([
       listWorkerRuntimeSnapshotsForAutonomyRead(),
-      listWorkerLiveness()
+      listWorkerLiveness(),
+      getJobQueueSummary()
     ]);
     const workerSnapshots = filterLegacyAggregateWorkerSnapshots(
       mergeWorkerLivenessSnapshots(
@@ -720,7 +732,7 @@ export class WorkerAutonomyService {
       )
     );
     const staleWorkerIds = workerSnapshots
-      .filter((worker) => isWorkerSnapshotStale(worker, this.settings.staleAfterMs))
+      .filter((worker) => shouldRecoverStaleWorker(worker, this.settings, watchdogQueueSummary))
       .map((worker) => worker.workerId);
     const recovery =
       staleWorkerIds.length > 0
@@ -807,14 +819,13 @@ export class WorkerAutonomyService {
     }
 
     if (options.persistSnapshot !== false) {
-      const queueSummary = await getJobQueueSummary();
       const alerts = buildWatchdogRecoveryAlerts(stalledRecovery);
       await this.persistSnapshot({
-        queueSummary,
+        queueSummary: watchdogQueueSummary,
         healthStatus:
           alerts.length > 0 || this.state.lastBudgetPauseReason ? 'degraded' : 'healthy',
         alerts,
-        watchdogState: this.buildWatchdogState(queueSummary)
+        watchdogState: this.buildWatchdogState(watchdogQueueSummary)
       }, { force: true, source: options.source ?? 'watchdog' });
     }
 
@@ -1884,6 +1895,31 @@ function isWorkerSnapshotStale(
   }
 
   return Date.now() - Date.parse(heartbeatCandidate) > staleAfterMs;
+}
+
+function workerHasAssignedWork(worker: WorkerRuntimeSnapshotRecord): boolean {
+  if (worker.currentJobId) {
+    return true;
+  }
+
+  const activeJobs = worker.snapshot?.activeJobs;
+  return Array.isArray(activeJobs) && activeJobs.length > 0;
+}
+
+function shouldRecoverStaleWorker(
+  worker: WorkerRuntimeSnapshotRecord,
+  settings: WorkerAutonomySettings,
+  queueSummary: JobQueueSummary | null
+): boolean {
+  if (!isWorkerSnapshotStale(worker, settings.staleAfterMs)) {
+    return false;
+  }
+
+  if (workerHasAssignedWork(worker)) {
+    return true;
+  }
+
+  return Boolean((queueSummary?.running ?? 0) > 0 || (queueSummary?.stalledRunning ?? 0) > 0);
 }
 
 function buildWatchdogRecoveryAlerts(

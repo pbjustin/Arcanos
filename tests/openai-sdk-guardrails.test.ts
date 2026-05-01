@@ -24,6 +24,12 @@ const ALLOWED_PATTERN_FILES = new Map<string, Set<string>>([
       path.resolve(REPO_ROOT, 'tests', 'openai-adapter.test.ts'),
     ]),
   ],
+  [
+    '_thenUnwrap',
+    new Set([
+      path.resolve(REPO_ROOT, 'tests', 'openai-responses.test.ts'),
+    ]),
+  ],
 ]);
 
 const FORBIDDEN_PATTERNS = [

@@ -47,6 +47,13 @@ export interface NonOverlappingTaskRunnerOptions {
   nowMs?: () => number;
 }
 
+export interface JobRunnerIdleBackoffDelayOptions {
+  baseIdleBackoffMs: number;
+  workerId: string;
+  idleStreak: number;
+  maxIdleBackoffMs?: number;
+}
+
 const RETRYABLE_DATABASE_BOOTSTRAP_ERROR_MARKERS = [
   'timeout exceeded when trying to connect',
   'connect timeout',
@@ -197,6 +204,34 @@ export function computeDeterministicIntervalJitterMs(
   }
 
   return (hash >>> 0) % normalizedIntervalMs;
+}
+
+export function resolveJobRunnerIdleBackoffDelayMs(
+  options: JobRunnerIdleBackoffDelayOptions
+): number {
+  const baseIdleBackoffMs =
+    Number.isFinite(options.baseIdleBackoffMs) && options.baseIdleBackoffMs > 0
+      ? Math.max(1, Math.trunc(options.baseIdleBackoffMs))
+      : 1_000;
+  const maxIdleBackoffMs =
+    Number.isFinite(options.maxIdleBackoffMs) && (options.maxIdleBackoffMs ?? 0) > 0
+      ? Math.max(baseIdleBackoffMs, Math.trunc(options.maxIdleBackoffMs ?? baseIdleBackoffMs))
+      : Math.max(baseIdleBackoffMs, 30_000);
+  const idleStreak = Number.isFinite(options.idleStreak)
+    ? Math.max(0, Math.trunc(options.idleStreak))
+    : 0;
+  const exponent = Math.min(idleStreak, 6);
+  const exponentialDelayMs = Math.min(
+    maxIdleBackoffMs,
+    baseIdleBackoffMs * (2 ** exponent)
+  );
+  const jitterRangeMs = Math.max(
+    1,
+    Math.min(5_000, Math.floor(exponentialDelayMs * 0.2))
+  );
+  const jitterMs = computeDeterministicIntervalJitterMs(options.workerId, jitterRangeMs);
+
+  return Math.min(maxIdleBackoffMs, exponentialDelayMs + jitterMs);
 }
 
 /**

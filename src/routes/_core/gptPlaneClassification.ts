@@ -51,9 +51,13 @@ export type GptWritingPlaneClassification = Extract<
 >;
 
 const GPT_ROUTE_BLOCKED_DIRECT_CONTROL_KINDS = new Set<GptDirectControlKind>([
+  'diagnostics',
+  'job_result',
+  'job_status',
   'queue_inspection_action',
   'runtime_inspection_action',
   'self_heal_status_action',
+  'system_state',
   'workers_status_action',
 ]);
 
@@ -72,11 +76,15 @@ function buildDirectEndpointRequiredClassification(input: {
     reason: input.reason,
     errorCode: 'CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT',
     message:
-      'Runtime diagnostics, worker state, tracing, and queue inspection must use direct control-plane endpoints or POST /mcp. Do not send runtime control requests through POST /gpt/{gptId}.',
+      'Runtime diagnostics, worker state, tracing, queue inspection, system state, and job lookups must use direct control-plane endpoints, /gpt-access/*, /system-state, or POST /mcp. Do not send control requests through POST /gpt/{gptId}.',
     canonical: {
       status: '/status',
       workers: '/workers/status',
       workerHealth: '/worker-helper/health',
+      systemState: '/system-state',
+      jobStatus: '/jobs/{jobId}',
+      jobResult: '/jobs/{jobId}/result',
+      gptAccessJobResult: '/gpt-access/jobs/result',
       selfHeal: '/status/safety/self-heal',
       mcp: '/mcp',
     },

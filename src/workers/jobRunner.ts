@@ -40,6 +40,7 @@ import {
   createNonOverlappingTaskRunner,
   isEntrypointModule,
   isRetryableJobRunnerDatabaseBootstrapError,
+  resolveJobRunnerIdleBackoffDelayMs,
   resolveJobRunnerEntrypointRuntimeMode,
   resolveJobRunnerDatabaseBootstrapSettings,
   resolveProviderPauseMs,
@@ -760,7 +761,7 @@ function startWorkerHeartbeatLoop(
   workerId: string
 ): WorkerHeartbeatLoopHandle {
   const intervalMs = Math.max(1_000, autonomyService.getHeartbeatIntervalMs());
-  const jitterMs = computeDeterministicIntervalJitterMs(workerId, intervalMs);
+  const initialJitterMs = computeDeterministicIntervalJitterMs(workerId, intervalMs);
   const runHeartbeat = createNonOverlappingTaskRunner(
     () => autonomyService.recordWorkerHeartbeat({ source: 'worker-heartbeat' }),
     {
@@ -769,11 +770,35 @@ function startWorkerHeartbeatLoop(
     }
   );
   let stopped = false;
-  let startTimeoutHandle: NodeJS.Timeout | null = null;
-  let intervalHandle: NodeJS.Timeout | null = null;
+  let timeoutHandle: NodeJS.Timeout | null = null;
 
-  const executeHeartbeat = () => {
-    void runHeartbeat().catch((error: unknown) => {
+  const computeNextDelayMs = (initial: boolean): number => {
+    if (initial) {
+      return initialJitterMs;
+    }
+
+    const recommendedDelayMs = Math.max(1_000, autonomyService.getRecommendedWorkerHeartbeatDelayMs());
+    const jitterRangeMs = Math.max(1, Math.min(5_000, Math.floor(recommendedDelayMs * 0.2)));
+    return recommendedDelayMs + computeDeterministicIntervalJitterMs(workerId, jitterRangeMs);
+  };
+
+  const scheduleNextHeartbeat = (initial = false) => {
+    if (stopped) {
+      return;
+    }
+
+    const delayMs = computeNextDelayMs(initial);
+    timeoutHandle = setTimeout(() => {
+      timeoutHandle = null;
+      void executeHeartbeat().finally(() => scheduleNextHeartbeat(false));
+    }, delayMs);
+    if (typeof timeoutHandle.unref === 'function') {
+      timeoutHandle.unref();
+    }
+  };
+
+  const executeHeartbeat = async () => {
+    await runHeartbeat().catch((error: unknown) => {
       logger.warn(
         'worker.heartbeat.failed',
         { module: 'job-runner', workerId },
@@ -783,38 +808,22 @@ function startWorkerHeartbeatLoop(
     });
   };
 
-  startTimeoutHandle = setTimeout(() => {
-    if (stopped) {
-      return;
-    }
-
-    executeHeartbeat();
-    intervalHandle = setInterval(executeHeartbeat, intervalMs);
-    if (typeof intervalHandle.unref === 'function') {
-      intervalHandle.unref();
-    }
-  }, jitterMs);
-  if (typeof startTimeoutHandle.unref === 'function') {
-    startTimeoutHandle.unref();
-  }
+  scheduleNextHeartbeat(true);
 
   logger.info('worker.heartbeat.stagger_scheduled', {
     module: 'worker',
     workerId,
     intervalMs,
-    jitterMs
+    idleIntervalMs: autonomyService.getRecommendedWorkerHeartbeatDelayMs(),
+    jitterMs: initialJitterMs
   });
 
   return {
     stop() {
       stopped = true;
-      if (startTimeoutHandle) {
-        clearTimeout(startTimeoutHandle);
-        startTimeoutHandle = null;
-      }
-      if (intervalHandle) {
-        clearInterval(intervalHandle);
-        intervalHandle = null;
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+        timeoutHandle = null;
       }
     }
   };
@@ -931,6 +940,7 @@ async function runWorkerConsumerSlot(
   let lastProviderPauseLogAtMs = 0;
   let lastNoJobLogAtMs = 0;
   let lastClaimAttemptLogAtMs = 0;
+  let consecutiveIdleClaims = 0;
 
   logger.info('worker.slot.started', {
     module: 'job-runner',
@@ -977,26 +987,37 @@ async function runWorkerConsumerSlot(
       );
 
       if (!job) {
+        consecutiveIdleClaims += 1;
         autonomyService.recordClaimResult('no_job_available');
+        const idleSleepMs = resolveJobRunnerIdleBackoffDelayMs({
+          baseIdleBackoffMs: runtimeSettings.idleBackoffMs,
+          workerId: slotDefinition.workerId,
+          idleStreak: consecutiveIdleClaims
+        });
         const nowMs = Date.now();
         if (nowMs - lastNoJobLogAtMs >= 30_000) {
           logger.info('[worker-runtime] no job available', {
             module: 'job-runner',
             workerId: slotDefinition.workerId,
-            idleBackoffMs: runtimeSettings.idleBackoffMs
+            idleBackoffMs: idleSleepMs,
+            baseIdleBackoffMs: runtimeSettings.idleBackoffMs,
+            idleStreak: consecutiveIdleClaims
           });
           lastNoJobLogAtMs = nowMs;
         } else {
           logger.debug('[worker-runtime] no job available', {
             module: 'job-runner',
-            workerId: slotDefinition.workerId
+            workerId: slotDefinition.workerId,
+            idleBackoffMs: idleSleepMs,
+            idleStreak: consecutiveIdleClaims
           });
         }
         await autonomyService.markIdle();
-        await sleepUntilWorkerProcessSignal(runtimeSettings.idleBackoffMs);
+        await sleepUntilWorkerProcessSignal(idleSleepMs);
         continue;
       }
 
+      consecutiveIdleClaims = 0;
       autonomyService.recordClaimResult('claimed_job');
       logger.info('[worker-runtime] claimed job', {
         module: 'job-runner',

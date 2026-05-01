@@ -19,18 +19,18 @@
       "preferredClientSurface": "Async GPT bridge create-and-wait operation. Use this when the caller can wait briefly for fast completion but still needs the same durable job id on timeout."
     },
     "request_gpt_job_status": {
-      "endpoint": "/gpt/{gptId}",
-      "method": "POST",
+      "endpoint": "/jobs/{id}",
+      "method": "GET",
       "plane": "control",
       "canonicalAction": "get_status",
-      "preferredClientSurface": "GPT-route compatibility status read. Prefer direct /jobs/{id} when the caller can reach jobs endpoints."
+      "preferredClientSurface": "Compatibility method name over the direct canonical job-status endpoint. Never route job-status reads through /gpt/{gptId}."
     },
     "request_gpt_job_result": {
-      "endpoint": "/gpt/{gptId}",
-      "method": "POST",
+      "endpoint": "/jobs/{id}/result",
+      "method": "GET",
       "plane": "control",
       "canonicalAction": "get_result",
-      "preferredClientSurface": "GPT-route compatibility result read. Prefer direct /jobs/{id}/result when the caller can reach jobs endpoints."
+      "preferredClientSurface": "Compatibility method name over the direct canonical job-result endpoint. Never route job-result reads through /gpt/{gptId}."
     },
     "request_job_status": {
       "endpoint": "/jobs/{id}",
@@ -45,6 +45,13 @@
       "plane": "control",
       "canonicalAction": "get_result",
       "preferredClientSurface": "Direct canonical job-result endpoint for agent and tool clients."
+    },
+    "request_system_state": {
+      "endpoint": "/system-state",
+      "method": "POST",
+      "plane": "control",
+      "canonicalAction": "system_state",
+      "preferredClientSurface": "Direct system-state endpoint. Never route system-state reads or writes through /gpt/{gptId}."
     }
   },
   "endpoints": {
@@ -55,10 +62,7 @@
         "request_ask_with_domain",
         "request_chat_completion",
         "request_query",
-        "request_query_and_wait",
-        "request_gpt_job_status",
-        "request_gpt_job_result",
-        "request_system_state"
+        "request_query_and_wait"
       ],
       "requestFields": [
         "action",
@@ -76,10 +80,25 @@
         "payload"
       ]
     },
+    "/system-state": {
+      "method": "POST",
+      "tsRouteFile": "src/routes/system-state.ts",
+      "pythonClientMethods": [
+        "request_system_state"
+      ],
+      "requestFields": [
+        "metadata",
+        "sessionId",
+        "context",
+        "expectedVersion",
+        "patch"
+      ]
+    },
     "/jobs/{id}": {
       "method": "GET",
       "tsRouteFile": "src/routes/jobs.ts",
       "pythonClientMethods": [
+        "request_gpt_job_status",
         "request_job_status"
       ],
       "requestFields": [
@@ -90,6 +109,7 @@
       "method": "GET",
       "tsRouteFile": "src/routes/jobs.ts",
       "pythonClientMethods": [
+        "request_gpt_job_result",
         "request_job_result"
       ],
       "requestFields": [

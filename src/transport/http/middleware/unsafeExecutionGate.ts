@@ -6,7 +6,6 @@ import {
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const SAFETY_RELEASE_PATH_PATTERN = /^\/status\/safety\/quarantine\/[^/]+\/release$/;
-const GPT_PATH_PATTERN = /^\/gpt\/[^/]+$/;
 const GPT_ACCESS_READONLY_POST_PATHS = new Set([
   '/gpt-access/jobs/result',
   '/gpt-access/diagnostics/deep',
@@ -14,52 +13,6 @@ const GPT_ACCESS_READONLY_POST_PATHS = new Set([
   '/gpt-access/logs/query',
   '/gpt-access/mcp'
 ]);
-
-function tryParseBodyRecord(value: string): Record<string, unknown> | null {
-  try {
-    const parsed = JSON.parse(value);
-    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
-    }
-  } catch {
-    return null;
-  }
-
-  return null;
-}
-
-function normalizeRequestBody(body: unknown): Record<string, unknown> | null {
-  if (typeof body === 'object' && body !== null && !Array.isArray(body)) {
-    const recordBody = body as Record<string, unknown>;
-    const entries = Object.entries(recordBody);
-    if (entries.length === 1) {
-      const [candidateJson, candidateValue] = entries[0];
-      if (candidateValue === '' || candidateValue === null) {
-        const reparsedBody = tryParseBodyRecord(candidateJson);
-        if (reparsedBody) {
-          return reparsedBody;
-        }
-      }
-    }
-    return recordBody;
-  }
-
-  if (typeof body === 'string' && body.trim().length > 0) {
-    return tryParseBodyRecord(body);
-  }
-
-  return null;
-}
-
-function isDiagnosticsActionRequest(req: Request): boolean {
-  if (req.method.toUpperCase() !== 'POST' || !GPT_PATH_PATTERN.test(req.path)) {
-    return false;
-  }
-
-  const normalizedBody = normalizeRequestBody(req.body);
-  const action = normalizedBody?.action;
-  return typeof action === 'string' && action.trim().toLowerCase() === 'diagnostics';
-}
 
 function isGptAccessReadOnlyRequest(req: Request): boolean {
   return req.method.toUpperCase() === 'POST' && GPT_ACCESS_READONLY_POST_PATHS.has(req.path);
@@ -80,15 +33,6 @@ export function unsafeExecutionGate(req: Request, res: Response, next: NextFunct
 
   //audit Assumption: operator release endpoint must remain reachable during unsafe state; failure risk: deadlocked recovery; expected invariant: release path bypasses global mutating block; handling strategy: regex-based allowlist.
   if (SAFETY_RELEASE_PATH_PATTERN.test(req.path)) {
-    next();
-    return;
-  }
-
-  if (isDiagnosticsActionRequest(req)) {
-    req.logger?.info?.('unsafe_execution_gate.bypass', {
-      reason: 'gpt_diagnostics',
-      path: req.path
-    });
     next();
     return;
   }

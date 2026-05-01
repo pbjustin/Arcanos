@@ -1043,7 +1043,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     requestedAction: rawRequestedAction ?? null,
   });
   if (writePlaneClassification.plane !== "writing") {
-    logger?.warn?.("gpt.dispatch.write_guard.deferred_to_trinity", {
+    logger?.warn?.("gpt.dispatch.write_guard.control_rejected", {
       requestId,
       gptId: trimmedGptId,
       endpoint: requestEndpoint,
@@ -1052,6 +1052,32 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       kind: writePlaneClassification.kind,
       reason: writePlaneClassification.reason,
     });
+    return {
+      ok: false,
+      error: {
+        code: 'errorCode' in writePlaneClassification
+          ? writePlaneClassification.errorCode
+          : 'CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT',
+        message: 'message' in writePlaneClassification
+          ? writePlaneClassification.message
+          : 'Control-plane requests must use direct endpoints, /gpt-access/*, or POST /mcp.',
+        details: {
+          kind: writePlaneClassification.kind,
+          reason: writePlaneClassification.reason,
+          ...('canonical' in writePlaneClassification
+            ? { canonical: writePlaneClassification.canonical }
+            : {})
+        }
+      },
+      _route: {
+        ...baseRoute,
+        module: 'control',
+        action: writePlaneClassification.action,
+        route: 'control_guard',
+        availableActions: [],
+        moduleVersion: null
+      }
+    };
   }
 
   logger?.info?.("gpt.write.entry", {

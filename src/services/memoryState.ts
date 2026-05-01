@@ -7,6 +7,7 @@ import { query } from "@core/db/index.js";
 import { getDefaultModel } from './openai.js';
 import { getOpenAIClientOrAdapter } from './openai/clientBridge.js';
 import { buildMemoryValidationMessages } from "@shared/memoryValidationMessages.js";
+import { extractResponseOutputText } from '@arcanos/openai/responseParsing';
 
 /**
  * Register or update memory state in PostgreSQL.
@@ -72,12 +73,27 @@ export async function validateMemory(
     return 'OpenAI adapter unavailable';
   }
 
+  const messages = buildMemoryValidationMessages(entryKey, stateVersion, entryData);
+  const instructions = messages
+    .filter((message) => message.role !== 'user')
+    .map((message) => message.content)
+    .join('\n\n');
+  const input = messages
+    .filter((message) => message.role === 'user')
+    .map((message) => ({
+      role: 'user' as const,
+      content: [{ type: 'input_text' as const, text: message.content }]
+    }));
+
   const response = await adapter.responses.create({
     model: getDefaultModel(),
-    messages: buildMemoryValidationMessages(entryKey, stateVersion, entryData)
+    ...(instructions ? { instructions } : {}),
+    input: input.length > 0
+      ? input
+      : [{ role: 'user', content: [{ type: 'input_text', text: 'Validate memory state.' }] }]
   });
 
-  const validation = response.choices[0]?.message?.content || '';
+  const validation = extractResponseOutputText(response, '');
   console.log('🧠 Memory Validation Result:', validation);
   return validation;
 }

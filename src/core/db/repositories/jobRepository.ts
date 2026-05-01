@@ -1718,6 +1718,7 @@ export async function recoverStalledJobsForWorkers(
     const requeuedJobIds: string[] = [];
     const deadLetterJobIds: string[] = [];
     const cancelledJobIds: string[] = [];
+    const affectedWorkerIds = new Set<string>();
 
     for (const row of stalledResult.rows as Array<{
       id: string;
@@ -1730,6 +1731,9 @@ export async function recoverStalledJobsForWorkers(
       last_worker_id: string | null;
     }>) {
       stalledJobIds.push(row.id);
+      if (row.last_worker_id) {
+        affectedWorkerIds.add(row.last_worker_id);
+      }
       const retryCount = Number(row.retry_count ?? 0);
       const maxRetries = resolveMaxRetriesForPersistedJob(row.max_retries, options.maxRetries);
       const detectedAt = new Date().toISOString();
@@ -1870,7 +1874,7 @@ export async function recoverStalledJobsForWorkers(
 
     await client.query('COMMIT');
     return {
-      staleWorkerIds: normalizedWorkerIds,
+      staleWorkerIds: [...affectedWorkerIds],
       stalledJobIds,
       requeuedJobIds,
       deadLetterJobIds,

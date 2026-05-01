@@ -222,13 +222,18 @@ export async function upsertWorkerRuntimeSnapshot(
  */
 export async function recordWorkerLiveness(record: WorkerLivenessRecord): Promise<void> {
   const startedAtMs = Date.now();
+  const persistenceReadyStartedAtMs = startedAtMs;
   const persistenceReady = await ensureWorkerRuntimePersistenceReady();
+  const persistenceReadyMs = Date.now() - persistenceReadyStartedAtMs;
   if (!persistenceReady) {
     throw new Error('Worker runtime persistence is unavailable');
   }
 
   let outcome: 'ok' | 'error' = 'ok';
+  let queryCallWallMs: number | null = null;
+  let queryStartedAtMs: number | null = null;
   try {
+    queryStartedAtMs = Date.now();
     await query(
       `INSERT INTO worker_liveness (
          worker_id,
@@ -253,21 +258,34 @@ export async function recordWorkerLiveness(record: WorkerLivenessRecord): Promis
         source: 'worker-liveness'
       }
     );
+    queryCallWallMs = Date.now() - queryStartedAtMs;
   } catch (error) {
     outcome = 'error';
+    if (queryCallWallMs === null) {
+      queryCallWallMs = queryStartedAtMs === null
+        ? Date.now() - startedAtMs - persistenceReadyMs
+        : Date.now() - queryStartedAtMs;
+    }
     throw error;
   } finally {
-    const durationMs = Date.now() - startedAtMs;
+    const totalWallMs = Date.now() - startedAtMs;
     const logContext = {
       module: 'worker-runtime',
       workerId: record.workerId,
       healthStatus: record.healthStatus,
       outcome,
-      durationMs
+      durationMs: totalWallMs,
+      durationKind: 'repository_wall_clock',
+      measurementKind: 'repository_wall_clock',
+      slowThresholdMs: WORKER_RUNTIME_UPSERT_SLOW_LOG_MIN_MS,
+      totalWallMs,
+      persistenceReadyMs,
+      queryCallWallMs: Math.max(0, queryCallWallMs ?? 0),
+      dbQueryName: 'worker_liveness_upsert'
     };
-    if (outcome === 'error' || durationMs >= WORKER_RUNTIME_UPSERT_SLOW_LOG_MIN_MS) {
+    if (outcome === 'error' || totalWallMs >= WORKER_RUNTIME_UPSERT_SLOW_LOG_MIN_MS) {
       logger.warn(
-        outcome === 'error' ? 'worker.liveness.upsert.failed' : 'worker.liveness.upsert.slow',
+        outcome === 'error' ? 'worker.liveness.upsert.failed' : 'worker.liveness.upsert.app_slow',
         logContext
       );
     } else {

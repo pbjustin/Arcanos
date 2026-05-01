@@ -11,6 +11,7 @@ import {
   getJobResult,
   getJobStatus,
   invokeGptRoute,
+  requestGptDiagnostics,
   requestGptJobResult,
   requestGptJobStatus,
   requestQuery,
@@ -251,7 +252,7 @@ describe("GPT route OpenAPI contract and client", () => {
     });
   });
 
-  it("builds the explicit get_status GPT action contract", async () => {
+  it("reads get_status through the canonical jobs status route", async () => {
     const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(
       createJsonResponse({ ok: true, action: "get_status", jobId: "job-123", status: "running" })
     );
@@ -262,15 +263,12 @@ describe("GPT route OpenAPI contract and client", () => {
       jobId: "job-123"
     });
 
-    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
-    const body = JSON.parse(String(requestInit.body));
-
-    expect(body).toEqual({
-      action: "get_status",
-      payload: {
-        jobId: "job-123"
-      }
-    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      new URL("/jobs/job-123", "http://127.0.0.1:3000/"),
+      expect.objectContaining({
+        headers: {}
+      })
+    );
     expect(payload).toMatchObject({
       ok: true,
       action: "get_status",
@@ -279,7 +277,7 @@ describe("GPT route OpenAPI contract and client", () => {
     });
   });
 
-  it("builds the explicit get_result GPT action contract", async () => {
+  it("reads get_result through the canonical jobs result route", async () => {
     const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(
       createJsonResponse({ ok: true, action: "get_result", jobId: "job-123", status: "completed", output: { text: "done" } })
     );
@@ -290,15 +288,12 @@ describe("GPT route OpenAPI contract and client", () => {
       jobId: "job-123"
     });
 
-    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
-    const body = JSON.parse(String(requestInit.body));
-
-    expect(body).toEqual({
-      action: "get_result",
-      payload: {
-        jobId: "job-123"
-      }
-    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      new URL("/jobs/job-123/result", "http://127.0.0.1:3000/"),
+      expect.objectContaining({
+        headers: {}
+      })
+    );
     expect(payload).toMatchObject({
       ok: true,
       action: "get_result",
@@ -308,6 +303,38 @@ describe("GPT route OpenAPI contract and client", () => {
         text: "done"
       }
     });
+  });
+
+  it("reads diagnostics through /gpt-access instead of /gpt/{gptId}", async () => {
+    const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(
+      createJsonResponse({ ok: true, summary: "Read-only diagnostics collected." })
+    );
+
+    await requestGptDiagnostics({
+      baseUrl: "http://127.0.0.1:3000",
+      gptId: "arcanos-core",
+      headers: {
+        authorization: "Bearer unit-test"
+      }
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      new URL("/gpt-access/diagnostics/deep", "http://127.0.0.1:3000/"),
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          "content-type": "application/json",
+          authorization: "Bearer unit-test"
+        }),
+        body: JSON.stringify({
+          focus: "diagnostics for arcanos-core",
+          includeDb: true,
+          includeWorkers: true,
+          includeLogs: true,
+          includeQueue: true
+        })
+      })
+    );
   });
 
   it("reads job results from the canonical /jobs/{jobId}/result route", async () => {
@@ -454,21 +481,11 @@ describe("GPT route OpenAPI contract and client", () => {
       prompt: "Create the writing job and return its identifier."
     });
     expect(
-      spec.paths?.["/gpt/{gptId}"]?.post?.requestBody?.content?.["application/json"]?.examples?.getResult?.value
-    ).toEqual({
-      action: "get_result",
-      payload: {
-        jobId: "59dbfb2b-0c64-4eda-8a1e-b950a63f7fe0"
-      }
-    });
+      spec.paths?.["/gpt/{gptId}"]?.post?.requestBody?.content?.["application/json"]?.examples
+    ).not.toHaveProperty("getResult");
     expect(
-      spec.paths?.["/gpt/{gptId}"]?.post?.requestBody?.content?.["application/json"]?.examples?.getStatus?.value
-    ).toEqual({
-      action: "get_status",
-      payload: {
-        jobId: "59dbfb2b-0c64-4eda-8a1e-b950a63f7fe0"
-      }
-    });
+      spec.paths?.["/gpt/{gptId}"]?.post?.requestBody?.content?.["application/json"]?.examples
+    ).not.toHaveProperty("getStatus");
     expect(
       spec.paths?.["/gpt/{gptId}"]?.post?.requestBody?.content?.["application/json"]?.examples?.dagCapabilities?.value
     ).toEqual({

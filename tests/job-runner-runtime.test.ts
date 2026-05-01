@@ -11,6 +11,7 @@ import {
   isRetryableJobRunnerDatabaseBootstrapError,
   resolveJobRunnerEntrypointRuntimeMode,
   resolveJobRunnerDatabaseBootstrapSettings,
+  resolveJobRunnerIdleBackoffDelayMs,
   resolveProviderPauseMs,
   resolveJobRunnerRuntimeSettings,
   selectJobRunnerSlotTransientRetryEvent
@@ -81,6 +82,40 @@ describe('jobRunnerRuntime', () => {
     expect(other).toBeGreaterThanOrEqual(0);
     expect(other).toBeLessThan(intervalMs);
     expect(other).not.toBe(first);
+  });
+
+  it('backs off empty-queue polling with deterministic per-worker jitter', () => {
+    const first = resolveJobRunnerIdleBackoffDelayMs({
+      baseIdleBackoffMs: 1_000,
+      workerId: 'async-queue-slot-1',
+      idleStreak: 1,
+      maxIdleBackoffMs: 30_000
+    });
+    const repeated = resolveJobRunnerIdleBackoffDelayMs({
+      baseIdleBackoffMs: 1_000,
+      workerId: 'async-queue-slot-1',
+      idleStreak: 1,
+      maxIdleBackoffMs: 30_000
+    });
+    const later = resolveJobRunnerIdleBackoffDelayMs({
+      baseIdleBackoffMs: 1_000,
+      workerId: 'async-queue-slot-1',
+      idleStreak: 6,
+      maxIdleBackoffMs: 30_000
+    });
+    const otherWorker = resolveJobRunnerIdleBackoffDelayMs({
+      baseIdleBackoffMs: 1_000,
+      workerId: 'async-queue-slot-2',
+      idleStreak: 1,
+      maxIdleBackoffMs: 30_000
+    });
+
+    expect(first).toBe(repeated);
+    expect(first).toBeGreaterThanOrEqual(2_000);
+    expect(first).toBeLessThanOrEqual(2_400);
+    expect(later).toBe(30_000);
+    expect(otherWorker).toBeGreaterThanOrEqual(2_000);
+    expect(otherWorker).toBeLessThanOrEqual(2_400);
   });
 
   it('detects direct job runner entrypoint execution without matching imports', () => {

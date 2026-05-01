@@ -13,6 +13,7 @@
 import { getDefaultModel } from './openai.js';
 import { getOpenAIClientOrAdapter } from './openai/clientBridge.js';
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { extractResponseOutputText } from '@arcanos/openai/responseParsing';
 
 let auditSafeMode: 'true' | 'false' | 'passive' | 'log-only' = 'true'; // default mode
 
@@ -84,13 +85,12 @@ export async function interpretCommand(userCommand: string) {
   try {
     const response = await adapter.responses.create({
       model: getDefaultModel(),
-      messages: [
-        { role: 'system', content: 'You are an AI that maps natural language commands to audit-safe mode toggles.' },
-        { role: 'user', content: userCommand }
-      ]
+      instructions: 'You are an AI that maps natural language commands to audit-safe mode toggles. Return only one of: true, false, passive, log-only.',
+      input: [{ role: 'user', content: [{ type: 'input_text', text: userCommand }] }],
+      max_output_tokens: 16
     });
 
-    const raw = response.choices[0].message?.content?.trim().toLowerCase();
+    const raw = extractResponseOutputText(response, '').trim().toLowerCase();
     const mode = raw as 'true' | 'false' | 'passive' | 'log-only' | undefined;
 
     if (mode && ['true', 'false', 'passive', 'log-only'].includes(mode)) {

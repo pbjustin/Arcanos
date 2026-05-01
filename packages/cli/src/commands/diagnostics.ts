@@ -12,13 +12,14 @@ export async function runDiagnosticsCommand(
   });
 
   return {
-    command: invocation.root ? "gpt.root_deep_diagnostics" : "gpt.diagnostics",
+    command: invocation.root ? "gpt_access.root_deep_diagnostics" : "gpt_access.diagnostics",
     request: {
-      command: invocation.root ? "gpt.root_deep_diagnostics" : "gpt.diagnostics",
+      command: invocation.root ? "gpt_access.root_deep_diagnostics" : "gpt_access.diagnostics",
       baseUrl: invocation.options.baseUrl,
+      endpoint: "/gpt-access/diagnostics/deep",
       gptId: invocation.gptId,
-      action: invocation.root ? "root.deep_diagnostics" : "diagnostics",
-      ...(invocation.root ? { authorization: "Bearer [REDACTED]" } : {})
+      action: "diagnostics.deep",
+      authorization: "Bearer [REDACTED]"
     },
     response: {
       ok: true,

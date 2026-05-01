@@ -23,6 +23,7 @@ import dispatchRouter from './dispatch.js';
 import mcpRouter from './mcp.js';
 import gptAccessRouter from './gpt-access.js';
 import controlPlaneRouter from './control-plane.js';
+import systemStateRouter from './system-state.js';
 import apiRouter from './api/index.js';
 import healthGroupRouter from './healthGroup.js';
 import reusableCodeRouter from './api-reusable-code.js';
@@ -116,6 +117,7 @@ export function registerRoutes(app: Express): void {
   app.use('/', mcpRouter);
   app.use('/', gptAccessRouter);
   app.use('/', controlPlaneRouter);
+  app.use('/', systemStateRouter);
   app.use('/', jobsRouter);
   app.use('/', askRouter);
   app.use('/', queryFinetuneRouter);
