@@ -4,7 +4,7 @@ import path from 'node:path';
 import { describe, expect, it } from '@jest/globals';
 
 const REPO_ROOT = process.cwd();
-const SCAN_ROOTS = ['src', 'packages', 'tests'];
+const SCAN_ROOTS = ['src', 'packages', 'workers', 'tests'];
 const SELF_FILE = path.resolve(REPO_ROOT, 'tests', 'openai-sdk-guardrails.test.ts');
 const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']);
 const ALLOWED_OPENAI_CONSTRUCTORS = new Set([
@@ -24,13 +24,9 @@ const ALLOWED_PATTERN_FILES = new Map<string, Set<string>>([
       path.resolve(REPO_ROOT, 'tests', 'openai-adapter.test.ts'),
     ]),
   ],
-  [
-    '_thenUnwrap',
-    new Set([
-      path.resolve(REPO_ROOT, 'tests', 'openai-responses.test.ts'),
-    ]),
-  ],
 ]);
+
+const PRIVATE_UNWRAP_MEMBER = ['_then', 'Unwrap'].join('');
 
 const FORBIDDEN_PATTERNS = [
   {
@@ -50,8 +46,8 @@ const FORBIDDEN_PATTERNS = [
     regex: /\bchat\.completions\s*\[\s*(['"])parse\1\s*\]\s*\(/,
   },
   {
-    label: '_thenUnwrap',
-    regex: /\b_thenUnwrap\b/,
+    label: 'private SDK unwrap helper',
+    regex: new RegExp(`\\b${PRIVATE_UNWRAP_MEMBER}\\b`),
   },
 ] as const;
 

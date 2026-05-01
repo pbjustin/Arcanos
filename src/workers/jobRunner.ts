@@ -393,6 +393,9 @@ async function ensureOpenAIClientForSlot(params: {
   client: OpenAIClient | null;
   configVersion: string | null;
   pausedUntil: string | null;
+  providerRecovered: boolean;
+  providerRecoveryCategory: string | null;
+  providerRecoveryNextRetryAt: string | null;
 }> {
   const sync = syncOpenAIProviderRuntime({
     forceReload: params.forceReload ?? false,
@@ -400,12 +403,16 @@ async function ensureOpenAIClientForSlot(params: {
   });
   const configVersion = sync.runtime.configVersion;
   const configChanged = configVersion !== params.currentConfigVersion;
+  const runtimeBeforeProbe = sync.runtime;
 
   if (params.currentClient && !configChanged && !params.forceReload) {
     return {
       client: params.currentClient,
       configVersion,
-      pausedUntil: sync.runtime.nextRetryAt
+      pausedUntil: sync.runtime.nextRetryAt,
+      providerRecovered: false,
+      providerRecoveryCategory: null,
+      providerRecoveryNextRetryAt: null
     };
   }
 
@@ -416,8 +423,25 @@ async function ensureOpenAIClientForSlot(params: {
     return {
       client: null,
       configVersion,
-      pausedUntil: sync.runtime.nextRetryAt
+      pausedUntil: sync.runtime.nextRetryAt,
+      providerRecovered: false,
+      providerRecoveryCategory: null,
+      providerRecoveryNextRetryAt: null
     };
+  }
+
+  const probingAfterProviderFailure = Boolean(
+    runtimeBeforeProbe.lastFailureAt ||
+    runtimeBeforeProbe.lastFailureCategory ||
+    runtimeBeforeProbe.consecutiveFailures > 0
+  );
+  if (probingAfterProviderFailure) {
+    logger.info('worker.circuit_breaker.reset_probe', {
+      module: 'job-runner',
+      workerId: params.workerId,
+      providerFailureCategory: runtimeBeforeProbe.lastFailureCategory,
+      providerNextRetryAt: runtimeBeforeProbe.nextRetryAt
+    });
   }
 
   const providerProbe = await probeOpenAIProviderHealth({
@@ -427,15 +451,31 @@ async function ensureOpenAIClientForSlot(params: {
     return {
       client: null,
       configVersion: providerProbe.runtime.configVersion,
-      pausedUntil: providerProbe.runtime.nextRetryAt
+      pausedUntil: providerProbe.runtime.nextRetryAt,
+      providerRecovered: false,
+      providerRecoveryCategory: null,
+      providerRecoveryNextRetryAt: null
     };
   }
 
   try {
+    const client = initOpenAIClient();
+    if (probingAfterProviderFailure) {
+      logger.info('worker.circuit_breaker.reset', {
+        module: 'job-runner',
+        workerId: params.workerId,
+        providerFailureCategory: runtimeBeforeProbe.lastFailureCategory,
+        providerNextRetryAt: runtimeBeforeProbe.nextRetryAt
+      });
+    }
+
     return {
-      client: initOpenAIClient(),
+      client,
       configVersion: providerProbe.runtime.configVersion,
-      pausedUntil: providerProbe.runtime.nextRetryAt
+      pausedUntil: providerProbe.runtime.nextRetryAt,
+      providerRecovered: probingAfterProviderFailure,
+      providerRecoveryCategory: runtimeBeforeProbe.lastFailureCategory,
+      providerRecoveryNextRetryAt: runtimeBeforeProbe.nextRetryAt
     };
   } catch (error: unknown) {
     logger.error(
@@ -450,7 +490,10 @@ async function ensureOpenAIClientForSlot(params: {
     return {
       client: null,
       configVersion: providerProbe.runtime.configVersion,
-      pausedUntil: getOpenAIProviderRuntimeStatus().nextRetryAt
+      pausedUntil: getOpenAIProviderRuntimeStatus().nextRetryAt,
+      providerRecovered: false,
+      providerRecoveryCategory: null,
+      providerRecoveryNextRetryAt: null
     };
   }
 }
@@ -1035,6 +1078,13 @@ async function runWorkerConsumerSlot(
       });
       openai = ensuredClientState.client;
       providerConfigVersion = ensuredClientState.configVersion;
+      if (ensuredClientState.providerRecovered) {
+        await autonomyService.recordProviderCircuitBreakerReset({
+          providerFailureCategory: ensuredClientState.providerRecoveryCategory,
+          providerNextRetryAt: ensuredClientState.providerRecoveryNextRetryAt,
+          source: 'job-runner'
+        });
+      }
 
       if (!openai) {
         const delayMs = resolveProviderPauseMs(

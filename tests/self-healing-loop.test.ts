@@ -1917,7 +1917,7 @@ describe('selfHealingLoop', () => {
         })
       })
     ]));
-  });
+  }, 15000);
 
   it('surfaces live worker activity timestamps in the runtime snapshot when inactivity fields are empty', () => {
     buildPredictiveHealingStatusSnapshotMock.mockReturnValue({

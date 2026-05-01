@@ -40,6 +40,7 @@ import {
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import {
   recordDependencyCall,
+  recordWorkerRecoveryAction,
   recordWorkerRecoveredJobs,
   recordWorkerStaleDetection,
   recordWorkerStalledJobs
@@ -167,6 +168,9 @@ interface RuntimeSnapshotState {
   deadLetterJobs: number;
   cancelledJobs: number;
   recoveryActions: number;
+  lastRecoveryEvent: WorkerRecoveryActionEvent | null;
+  recentRecoveryEvents: WorkerRecoveryActionEvent[];
+  lastWatchdogEvent: WorkerWatchdogRecoveryEvent | null;
   maxObservedQueueDepth: number;
   lastBudgetPauseReason: string | null;
   lastRecoveryActionAt: string | null;
@@ -198,8 +202,46 @@ interface WorkerWatchdogState {
   restartRecommended: boolean;
 }
 
+interface WorkerRecoveryActionEvent {
+  at: string;
+  action: string;
+  source: string;
+  count: number;
+  jobIds: string[];
+  jobIdsTotal: number;
+  jobIdsTruncated: boolean;
+  workerIds: string[];
+  workerIdsTotal: number;
+  workerIdsTruncated: boolean;
+  reason: string | null;
+}
+
+interface WorkerWatchdogRecoveryEvent {
+  at: string;
+  source: string;
+  reason: string;
+  staleWorkerIds: string[];
+  staleWorkerIdsTotal?: number;
+  staleWorkerIdsTruncated?: boolean;
+  stalledJobIds: string[];
+  stalledJobIdsTotal?: number;
+  stalledJobIdsTruncated?: boolean;
+  requeuedJobIds: string[];
+  requeuedJobIdsTotal?: number;
+  requeuedJobIdsTruncated?: boolean;
+  deadLetterJobIds: string[];
+  deadLetterJobIdsTotal?: number;
+  deadLetterJobIdsTruncated?: boolean;
+  cancelledJobIds: string[];
+  cancelledJobIdsTotal?: number;
+  cancelledJobIdsTruncated?: boolean;
+  restartRecommended: boolean;
+}
+
 const WORKER_RUNTIME_SNAPSHOT_MIN_INTERVAL_MS = 30_000;
 const WORKER_RUNTIME_SNAPSHOT_SLOW_LOG_MIN_MS = 250;
+const WORKER_RECOVERY_EVENT_HISTORY_LIMIT = 10;
+const WORKER_RECOVERY_EVENT_ID_SAMPLE_LIMIT = 20;
 
 type WorkerRuntimeSnapshotPipelinePort = Pick<
   WorkerRuntimeSnapshotPipeline,
@@ -225,6 +267,22 @@ function filterFreshWorkerLivenessRecords(
     const seenAtMs = Date.parse(record.lastSeenAt);
     return Number.isFinite(seenAtMs) && seenAtMs >= cutoffMs;
   });
+}
+
+function buildWorkerEventIdSample(ids: string[] | undefined): {
+  ids: string[];
+  total: number;
+  truncated: boolean;
+} {
+  const normalizedIds = Array.isArray(ids)
+    ? ids.filter((id): id is string => typeof id === 'string' && id.length > 0)
+    : [];
+
+  return {
+    ids: normalizedIds.slice(0, WORKER_RECOVERY_EVENT_ID_SAMPLE_LIMIT),
+    total: normalizedIds.length,
+    truncated: normalizedIds.length > WORKER_RECOVERY_EVENT_ID_SAMPLE_LIMIT
+  };
 }
 
 const DEFAULT_AUTONOMY_SETTINGS: WorkerAutonomySettings = {
@@ -450,6 +508,9 @@ export class WorkerAutonomyService {
       deadLetterJobs: 0,
       cancelledJobs: 0,
       recoveryActions: 0,
+      lastRecoveryEvent: null,
+      recentRecoveryEvents: [],
+      lastWatchdogEvent: null,
       maxObservedQueueDepth: 0,
       lastBudgetPauseReason: null,
       lastRecoveryActionAt: null
@@ -608,26 +669,43 @@ export class WorkerAutonomyService {
     const recoveredJobIds = recovered.recoveredJobs ?? [];
     const failedJobIds = recovered.failedJobs ?? [];
     const cancelledJobIds = recovered.cancelledJobs ?? [];
-    this.state.recoveredJobs += recovered.recoveredJobs.length;
+    this.state.recoveredJobs += recoveredJobIds.length;
     this.state.deadLetterJobs += failedJobIds.length;
     this.state.cancelledJobs += cancelledJobIds.length;
-    this.state.recoveryActions += recoveredJobIds.length + failedJobIds.length + cancelledJobIds.length;
-    if (recoveredJobIds.length > 0 || failedJobIds.length > 0 || cancelledJobIds.length > 0) {
-      this.state.lastRecoveryActionAt = new Date().toISOString();
-    }
     if (recoveredJobIds.length > 0) {
+      this.recordRecoveryAction({
+        action: 'lease_requeue',
+        source,
+        count: recoveredJobIds.length,
+        jobIds: recoveredJobIds,
+        reason: 'stale lease recovery requeued expired running job'
+      });
       recordWorkerRecoveredJobs({
         action: 'lease_requeue',
         count: recoveredJobIds.length
       });
     }
     if (failedJobIds.length > 0) {
+      this.recordRecoveryAction({
+        action: 'lease_dead_letter',
+        source,
+        count: failedJobIds.length,
+        jobIds: failedJobIds,
+        reason: 'stale lease recovery exhausted retry budget'
+      });
       recordWorkerRecoveredJobs({
         action: 'lease_dead_letter',
         count: failedJobIds.length
       });
     }
     if (cancelledJobIds.length > 0) {
+      this.recordRecoveryAction({
+        action: 'lease_cancelled',
+        source,
+        count: cancelledJobIds.length,
+        jobIds: cancelledJobIds,
+        reason: 'stale lease recovery honored cancellation request'
+      });
       recordWorkerRecoveredJobs({
         action: 'lease_cancelled',
         count: cancelledJobIds.length
@@ -734,10 +812,11 @@ export class WorkerAutonomyService {
     const staleWorkerIds = workerSnapshots
       .filter((worker) => shouldRecoverStaleWorker(worker, this.settings, watchdogQueueSummary))
       .map((worker) => worker.workerId);
+    const detectedStaleWorkerIds = [...new Set(staleWorkerIds)];
     const recovery =
-      staleWorkerIds.length > 0
+      detectedStaleWorkerIds.length > 0
         ? await recoverStalledJobsForWorkers({
-            workerIds: staleWorkerIds,
+            workerIds: detectedStaleWorkerIds,
             staleAfterMs: this.settings.staleAfterMs,
             maxRetries: this.settings.defaultMaxRetries,
             stalledJobAction: this.settings.stalledJobAction
@@ -750,13 +829,19 @@ export class WorkerAutonomyService {
             cancelledJobIds: []
           };
     const nowIso = new Date().toISOString();
+    const observedStaleWorkerIds = [...new Set([
+      ...detectedStaleWorkerIds,
+      ...recovery.staleWorkerIds
+    ])];
     const stalledRecovery = {
-      staleWorkers: recovery.staleWorkerIds.length,
+      staleWorkers: observedStaleWorkerIds.length,
       stalledJobs: recovery.stalledJobIds.length,
       requeuedJobs: recovery.requeuedJobIds.length,
       deadLetterJobs: recovery.deadLetterJobIds.length,
       cancelledJobs: recovery.cancelledJobIds.length
     };
+    const watchdogRecoveryActionCount =
+      stalledRecovery.requeuedJobs + stalledRecovery.deadLetterJobs + stalledRecovery.cancelledJobs;
 
     this.state.lastWatchdogRunAt = nowIso;
     this.state.staleWorkersDetected += stalledRecovery.staleWorkers;
@@ -764,57 +849,110 @@ export class WorkerAutonomyService {
     this.state.recoveredJobs += stalledRecovery.requeuedJobs;
     this.state.deadLetterJobs += stalledRecovery.deadLetterJobs;
     this.state.cancelledJobs += stalledRecovery.cancelledJobs;
-    this.state.recoveryActions +=
-      stalledRecovery.requeuedJobs + stalledRecovery.deadLetterJobs + stalledRecovery.cancelledJobs;
     if (stalledRecovery.staleWorkers > 0) {
       recordWorkerStaleDetection({
         reason,
         count: stalledRecovery.staleWorkers
       });
-    }
-    if (stalledRecovery.stalledJobs > 0) {
-      recordWorkerStalledJobs({
-        action:
-          stalledRecovery.deadLetterJobs > 0 && stalledRecovery.requeuedJobs === 0
-            ? 'dead_letter'
-            : stalledRecovery.requeuedJobs > 0
-            ? 'requeue'
-            : 'cancelled',
-        count: stalledRecovery.stalledJobs
-      });
-    }
-    if (stalledRecovery.requeuedJobs > 0) {
-      recordWorkerRecoveredJobs({
-        action: 'requeue',
-        count: stalledRecovery.requeuedJobs
-      });
-    }
-    if (stalledRecovery.deadLetterJobs > 0) {
-      recordWorkerRecoveredJobs({
-        action: 'dead_letter',
-        count: stalledRecovery.deadLetterJobs
-      });
-    }
-    if (stalledRecovery.cancelledJobs > 0) {
-      recordWorkerRecoveredJobs({
-        action: 'cancelled',
-        count: stalledRecovery.cancelledJobs
-      });
-    }
-    if (
-      stalledRecovery.requeuedJobs > 0 ||
-      stalledRecovery.deadLetterJobs > 0 ||
-      stalledRecovery.cancelledJobs > 0
-    ) {
-      this.state.lastRecoveryActionAt = nowIso;
-      logger.warn('worker.watchdog.recovery', {
+      logger.warn('worker.watchdog.stale_worker_detected', {
+        module: 'worker-autonomy',
         workerId: this.settings.workerId,
         reason,
         staleWorkers: stalledRecovery.staleWorkers,
         stalledJobs: stalledRecovery.stalledJobs,
-        requeuedJobs: stalledRecovery.requeuedJobs,
-        deadLetterJobs: stalledRecovery.deadLetterJobs,
-        cancelledJobs: stalledRecovery.cancelledJobs
+        recoveryActions: watchdogRecoveryActionCount,
+        restartRecommended: true,
+        queuePending: watchdogQueueSummary?.pending ?? null,
+        queueRunning: watchdogQueueSummary?.running ?? null,
+        queueStalledRunning: watchdogQueueSummary?.stalledRunning ?? null
+      });
+    }
+    if (stalledRecovery.requeuedJobs > 0) {
+      recordWorkerStalledJobs({
+        action: 'requeue',
+        count: stalledRecovery.requeuedJobs
+      });
+      recordWorkerRecoveredJobs({
+        action: 'requeue',
+        count: stalledRecovery.requeuedJobs
+      });
+      this.recordRecoveryAction({
+        action: 'stalled_requeue',
+        source: options.source ?? 'watchdog',
+        count: stalledRecovery.requeuedJobs,
+        jobIds: recovery.requeuedJobIds,
+        workerIds: observedStaleWorkerIds,
+        reason: 'watchdog requeued stalled jobs from stale workers'
+      });
+    }
+    if (stalledRecovery.deadLetterJobs > 0) {
+      recordWorkerStalledJobs({
+        action: 'dead_letter',
+        count: stalledRecovery.deadLetterJobs
+      });
+      recordWorkerRecoveredJobs({
+        action: 'dead_letter',
+        count: stalledRecovery.deadLetterJobs
+      });
+      this.recordRecoveryAction({
+        action: 'stalled_dead_letter',
+        source: options.source ?? 'watchdog',
+        count: stalledRecovery.deadLetterJobs,
+        jobIds: recovery.deadLetterJobIds,
+        workerIds: observedStaleWorkerIds,
+        reason: 'watchdog dead-lettered stalled jobs from stale workers'
+      });
+    }
+    if (stalledRecovery.cancelledJobs > 0) {
+      recordWorkerStalledJobs({
+        action: 'cancelled',
+        count: stalledRecovery.cancelledJobs
+      });
+      recordWorkerRecoveredJobs({
+        action: 'cancelled',
+        count: stalledRecovery.cancelledJobs
+      });
+      this.recordRecoveryAction({
+        action: 'stalled_cancelled',
+        source: options.source ?? 'watchdog',
+        count: stalledRecovery.cancelledJobs,
+        jobIds: recovery.cancelledJobIds,
+        workerIds: observedStaleWorkerIds,
+        reason: 'watchdog resolved cancelled stalled jobs from stale workers'
+      });
+    }
+    const detectedOnlyStalledJobs = Math.max(
+      0,
+      stalledRecovery.stalledJobs -
+        stalledRecovery.requeuedJobs -
+        stalledRecovery.deadLetterJobs -
+        stalledRecovery.cancelledJobs
+    );
+    if (detectedOnlyStalledJobs > 0) {
+      recordWorkerStalledJobs({
+        action: 'detected',
+        count: detectedOnlyStalledJobs
+      });
+    }
+    if (
+      stalledRecovery.staleWorkers > 0 ||
+      stalledRecovery.stalledJobs > 0 ||
+      stalledRecovery.requeuedJobs > 0 ||
+      stalledRecovery.deadLetterJobs > 0 ||
+      stalledRecovery.cancelledJobs > 0
+    ) {
+      this.recordWatchdogEvent({
+        at: nowIso,
+        source: options.source ?? 'watchdog',
+        reason: watchdogRecoveryActionCount > 0
+          ? 'stalled worker recovery completed'
+          : 'stale worker restart recommended',
+        staleWorkerIds: observedStaleWorkerIds,
+        stalledJobIds: recovery.stalledJobIds,
+        requeuedJobIds: recovery.requeuedJobIds,
+        deadLetterJobIds: recovery.deadLetterJobIds,
+        cancelledJobIds: recovery.cancelledJobIds,
+        restartRecommended: watchdogRecoveryActionCount === 0 && observedStaleWorkerIds.length > 0
       });
     }
 
@@ -1023,8 +1161,7 @@ export class WorkerAutonomyService {
       this.state.lastError = errorMessage;
       this.state.lastActivityAt = failedAt;
       this.state.lastProcessedJobAt = failedAt;
-      this.state.scheduledRetries += 1;
-      await scheduleJobRetry(job.id, {
+      const retriedJob = await scheduleJobRetry(job.id, {
         workerId: this.settings.workerId,
         delayMs,
         errorMessage,
@@ -1037,6 +1174,41 @@ export class WorkerAutonomyService {
           lastRetryDelayMs: delayMs,
           retryReason: errorMessage
         }
+      });
+      if (!retriedJob) {
+        logger.warn('worker.job.retry_schedule.skipped', {
+          module: 'worker-autonomy',
+          workerId: this.settings.workerId,
+          jobId: job.id,
+          reason: 'job no longer had a live running lease',
+          retryCount,
+          maxRetries,
+          delayMs
+        });
+        await this.persistSnapshot({
+          healthStatus: 'degraded',
+          alerts: [`Retry scheduling skipped for job ${job.id}; live lease was no longer owned by this worker.`]
+        }, { force: true, source: 'job-retry-skipped' });
+        this.state.lastError = null;
+        return {
+          action: 'failed'
+        };
+      }
+      this.state.scheduledRetries += 1;
+      this.recordRecoveryAction({
+        action: 'retry_scheduled',
+        source: 'job-failure',
+        count: 1,
+        jobIds: [job.id],
+        reason: errorMessage
+      });
+      logger.info('worker.job.retry_scheduled', {
+        module: 'worker-autonomy',
+        workerId: this.settings.workerId,
+        jobId: job.id,
+        delayMs,
+        retryCount,
+        maxRetries
       });
       await this.persistSnapshot({
         healthStatus: 'degraded',
@@ -1074,6 +1246,25 @@ export class WorkerAutonomyService {
       },
       lifecycleDeadlines
     );
+    if (retryable && retryCount >= maxRetries) {
+      this.state.deadLetterJobs += 1;
+      this.recordRecoveryAction({
+        action: 'job_dead_letter',
+        source: 'job-failure',
+        count: 1,
+        jobIds: [job.id],
+        reason: errorMessage
+      });
+    }
+    logger.warn('worker.job_failure.terminal', {
+      module: 'worker-autonomy',
+      workerId: this.settings.workerId,
+      jobId: job.id,
+      retryable,
+      retryCount,
+      maxRetries,
+      deadLetter: retryable && retryCount >= maxRetries
+    });
     await this.persistSnapshot({
       healthStatus: this.state.terminalFailures >= this.settings.failureWebhookThreshold ? 'unhealthy' : 'degraded',
       alerts: [`Job ${job.id} failed: ${errorMessage}`]
@@ -1131,7 +1322,8 @@ export class WorkerAutonomyService {
       logger.warn('worker.provider_recovery_defer.skipped_status_mismatch', {
         module: 'worker-autonomy',
         workerId: this.settings.workerId,
-        jobId: job.id
+        jobId: job.id,
+        providerFailureCategory: options.providerFailureCategory ?? null
       });
       await this.persistSnapshot({
         healthStatus: 'degraded',
@@ -1142,6 +1334,26 @@ export class WorkerAutonomyService {
         delayMs
       };
     }
+    this.recordRecoveryAction({
+      action: 'provider_deferred',
+      source: 'provider-recovery',
+      count: 1,
+      jobIds: [job.id],
+      reason: options.providerFailureCategory ?? options.errorMessage
+    });
+    logger.info(
+      options.providerFailureCategory === 'circuit_open'
+        ? 'worker.circuit_breaker.cooldown.defer'
+        : 'worker.provider_recovery.defer_scheduled',
+      {
+        module: 'worker-autonomy',
+        workerId: this.settings.workerId,
+        jobId: job.id,
+        delayMs,
+        providerNextRetryAt: options.providerNextRetryAt ?? null,
+        providerFailureCategory: options.providerFailureCategory ?? null
+      }
+    );
     await this.persistSnapshot({
       healthStatus: 'degraded',
       alerts: [`Provider unavailable; deferred job ${job.id} for ${delayMs}ms without consuming retry budget.`]
@@ -1152,6 +1364,35 @@ export class WorkerAutonomyService {
       action: 'deferred',
       delayMs
     };
+  }
+
+  /**
+   * Persist that a provider circuit/backoff recovered and worker execution can resume.
+   * Purpose: make circuit-breaker cooldown resets visible in worker health and metrics.
+   */
+  async recordProviderCircuitBreakerReset(options: {
+    providerFailureCategory?: string | null;
+    providerNextRetryAt?: string | null;
+    source?: string;
+  } = {}): Promise<void> {
+    this.state.lastError = null;
+    this.state.lastActivityAt = new Date().toISOString();
+    this.recordRecoveryAction({
+      action: 'circuit_breaker_reset',
+      source: options.source ?? 'provider-recovery',
+      count: 1,
+      reason: options.providerFailureCategory ?? 'provider circuit breaker reset'
+    });
+    logger.info('worker.circuit_breaker.reset', {
+      module: 'worker-autonomy',
+      workerId: this.settings.workerId,
+      providerFailureCategory: options.providerFailureCategory ?? null,
+      providerNextRetryAt: options.providerNextRetryAt ?? null
+    });
+    await this.persistSnapshot({
+      healthStatus: this.state.lastBudgetPauseReason ? 'degraded' : 'healthy',
+      alerts: ['Provider circuit breaker reset; worker execution can resume.']
+    }, { force: true, source: 'circuit-breaker-reset' });
   }
 
   /**
@@ -1228,6 +1469,113 @@ export class WorkerAutonomyService {
     return 'healthy';
   }
 
+  private recordRecoveryAction(input: {
+    action: string;
+    source: string;
+    count: number;
+    jobIds?: string[];
+    workerIds?: string[];
+    reason?: string | null;
+  }): void {
+    const count = Math.max(0, Math.trunc(input.count));
+    if (count <= 0) {
+      return;
+    }
+
+    const jobIdSample = buildWorkerEventIdSample(input.jobIds);
+    const workerIdSample = buildWorkerEventIdSample(input.workerIds);
+    const event: WorkerRecoveryActionEvent = {
+      at: new Date().toISOString(),
+      action: input.action,
+      source: input.source,
+      count,
+      jobIds: jobIdSample.ids,
+      jobIdsTotal: jobIdSample.total,
+      jobIdsTruncated: jobIdSample.truncated,
+      workerIds: workerIdSample.ids,
+      workerIdsTotal: workerIdSample.total,
+      workerIdsTruncated: workerIdSample.truncated,
+      reason: input.reason ?? null
+    };
+
+    this.state.recoveryActions += count;
+    this.state.lastRecoveryActionAt = event.at;
+    this.state.lastRecoveryEvent = event;
+    this.state.recentRecoveryEvents = [
+      event,
+      ...this.state.recentRecoveryEvents
+    ].slice(0, WORKER_RECOVERY_EVENT_HISTORY_LIMIT);
+    recordWorkerRecoveryAction({
+      action: event.action,
+      source: event.source,
+      count: event.count
+    });
+    logger.info('worker.recovery.action', {
+      module: 'worker-autonomy',
+      workerId: this.settings.workerId,
+      action: event.action,
+      source: event.source,
+      count: event.count,
+      jobIds: event.jobIds,
+      jobIdsTotal: event.jobIdsTotal,
+      jobIdsTruncated: event.jobIdsTruncated,
+      workerIds: event.workerIds,
+      workerIdsTotal: event.workerIdsTotal,
+      workerIdsTruncated: event.workerIdsTruncated,
+      reason: event.reason
+    });
+  }
+
+  private recordWatchdogEvent(event: WorkerWatchdogRecoveryEvent): void {
+    const staleWorkerIdSample = buildWorkerEventIdSample(event.staleWorkerIds);
+    const stalledJobIdSample = buildWorkerEventIdSample(event.stalledJobIds);
+    const requeuedJobIdSample = buildWorkerEventIdSample(event.requeuedJobIds);
+    const deadLetterJobIdSample = buildWorkerEventIdSample(event.deadLetterJobIds);
+    const cancelledJobIdSample = buildWorkerEventIdSample(event.cancelledJobIds);
+    const sampledEvent: WorkerWatchdogRecoveryEvent = {
+      ...event,
+      staleWorkerIds: staleWorkerIdSample.ids,
+      staleWorkerIdsTotal: staleWorkerIdSample.total,
+      staleWorkerIdsTruncated: staleWorkerIdSample.truncated,
+      stalledJobIds: stalledJobIdSample.ids,
+      stalledJobIdsTotal: stalledJobIdSample.total,
+      stalledJobIdsTruncated: stalledJobIdSample.truncated,
+      requeuedJobIds: requeuedJobIdSample.ids,
+      requeuedJobIdsTotal: requeuedJobIdSample.total,
+      requeuedJobIdsTruncated: requeuedJobIdSample.truncated,
+      deadLetterJobIds: deadLetterJobIdSample.ids,
+      deadLetterJobIdsTotal: deadLetterJobIdSample.total,
+      deadLetterJobIdsTruncated: deadLetterJobIdSample.truncated,
+      cancelledJobIds: cancelledJobIdSample.ids,
+      cancelledJobIdsTotal: cancelledJobIdSample.total,
+      cancelledJobIdsTruncated: cancelledJobIdSample.truncated
+    };
+
+    this.state.lastWatchdogEvent = sampledEvent;
+    logger.warn('worker.watchdog.triggered', {
+      module: 'worker-autonomy',
+      workerId: this.settings.workerId,
+      source: sampledEvent.source,
+      reason: sampledEvent.reason,
+      staleWorkerIds: sampledEvent.staleWorkerIds,
+      staleWorkerIdsTotal: sampledEvent.staleWorkerIdsTotal,
+      staleWorkerIdsTruncated: sampledEvent.staleWorkerIdsTruncated,
+      stalledJobIds: sampledEvent.stalledJobIds,
+      stalledJobIdsTotal: sampledEvent.stalledJobIdsTotal,
+      stalledJobIdsTruncated: sampledEvent.stalledJobIdsTruncated,
+      requeuedJobIds: sampledEvent.requeuedJobIds,
+      requeuedJobIdsTotal: sampledEvent.requeuedJobIdsTotal,
+      requeuedJobIdsTruncated: sampledEvent.requeuedJobIdsTruncated,
+      deadLetterJobIds: sampledEvent.deadLetterJobIds,
+      deadLetterJobIdsTotal: sampledEvent.deadLetterJobIdsTotal,
+      deadLetterJobIdsTruncated: sampledEvent.deadLetterJobIdsTruncated,
+      cancelledJobIds: sampledEvent.cancelledJobIds,
+      cancelledJobIdsTotal: sampledEvent.cancelledJobIdsTotal,
+      cancelledJobIdsTruncated: sampledEvent.cancelledJobIdsTruncated,
+      restartRecommended: sampledEvent.restartRecommended
+    });
+  }
+
   private async persistSnapshot(
     context: WorkerSnapshotContext,
     options: WorkerSnapshotPersistOptions = {}
@@ -1274,6 +1622,9 @@ export class WorkerAutonomyService {
         cancelledJobs: this.state.cancelledJobs,
         recoveryActions: this.state.recoveryActions,
         lastRecoveryActionAt: this.state.lastRecoveryActionAt,
+        lastRecoveryEvent: this.state.lastRecoveryEvent,
+        recentRecoveryEvents: this.state.recentRecoveryEvents,
+        lastWatchdogEvent: this.state.lastWatchdogEvent,
         maxObservedQueueDepth: this.state.maxObservedQueueDepth,
         lastBudgetPauseReason: this.state.lastBudgetPauseReason,
         lastActivityAt: this.state.lastActivityAt,
@@ -1929,7 +2280,9 @@ function buildWatchdogRecoveryAlerts(
 
   if (stalledRecovery.staleWorkers > 0) {
     alerts.push(
-      `Detected ${stalledRecovery.staleWorkers} stale worker(s) and ${stalledRecovery.stalledJobs} stalled job(s).`
+      stalledRecovery.stalledJobs > 0
+        ? `Detected ${stalledRecovery.staleWorkers} stale worker(s) and ${stalledRecovery.stalledJobs} stalled job(s).`
+        : `Detected ${stalledRecovery.staleWorkers} stale worker(s); restart recommended.`
     );
   }
   if (stalledRecovery.requeuedJobs > 0) {

@@ -240,28 +240,30 @@ describe('app metrics registry', () => {
     const { getMetricsText } = await loadMetricsModule();
 
     let metricsText = await getMetricsText();
-    expect(metricsText).toMatch(/worker_stale_total\{[^}]*reason="persisted_snapshot"[^}]*\} 2/);
-    expect(metricsText).toMatch(/worker_stalled_jobs_total\{[^}]*action="requeue"[^}]*\} 2/);
-    expect(metricsText).toMatch(/worker_stalled_jobs_total\{[^}]*action="dead_letter"[^}]*\} 1/);
-    expect(metricsText).toMatch(/worker_recovered_jobs_total\{[^}]*action="requeue"[^}]*\} 2/);
-    expect(metricsText).toMatch(/worker_recovered_jobs_total\{[^}]*action="dead_letter"[^}]*\} 1/);
+    expect(metricsText).not.toMatch(/worker_stale_total\{[^}]*reason="persisted_snapshot"/);
+    expect(metricsText).not.toMatch(/worker_stalled_jobs_total\{[^}]*action="requeue"/);
+    expect(metricsText).not.toMatch(/worker_stalled_jobs_total\{[^}]*action="dead_letter"/);
+    expect(metricsText).not.toMatch(/worker_recovered_jobs_total\{[^}]*action="requeue"/);
+    expect(metricsText).not.toMatch(/worker_recovered_jobs_total\{[^}]*action="dead_letter"/);
+    expect(metricsText).not.toMatch(/worker_recovery_actions_total\{[^}]*action="persisted_snapshot"[^}]*source="worker_health"/);
 
     metricsText = await getMetricsText();
-    expect(metricsText).toMatch(/worker_stale_total\{[^}]*reason="persisted_snapshot"[^}]*\} 2/);
+    expect(metricsText).not.toMatch(/worker_stale_total\{[^}]*reason="persisted_snapshot"/);
     expect(getWorkerControlHealthMock).toHaveBeenCalledTimes(1);
 
     jest.advanceTimersByTime(6_000);
     metricsText = await getMetricsText();
-    expect(metricsText).toMatch(/worker_stale_total\{[^}]*reason="persisted_snapshot"[^}]*\} 3/);
-    expect(metricsText).toMatch(/worker_stalled_jobs_total\{[^}]*action="requeue"[^}]*\} 3/);
-    expect(metricsText).toMatch(/worker_stalled_jobs_total\{[^}]*action="dead_letter"[^}]*\} 1/);
-    expect(metricsText).toMatch(/worker_recovered_jobs_total\{[^}]*action="requeue"[^}]*\} 3/);
-    expect(metricsText).toMatch(/worker_recovered_jobs_total\{[^}]*action="dead_letter"[^}]*\} 1/);
+    expect(metricsText).toMatch(/worker_stale_total\{[^}]*reason="persisted_snapshot"[^}]*\} 1/);
+    expect(metricsText).toMatch(/worker_stalled_jobs_total\{[^}]*action="requeue"[^}]*\} 1/);
+    expect(metricsText).not.toMatch(/worker_stalled_jobs_total\{[^}]*action="dead_letter"/);
+    expect(metricsText).toMatch(/worker_recovered_jobs_total\{[^}]*action="requeue"[^}]*\} 1/);
+    expect(metricsText).not.toMatch(/worker_recovered_jobs_total\{[^}]*action="dead_letter"/);
+    expect(metricsText).not.toMatch(/worker_recovery_actions_total\{[^}]*action="persisted_snapshot"[^}]*source="worker_health"/);
 
     jest.advanceTimersByTime(6_000);
     metricsText = await getMetricsText();
-    expect(metricsText).toMatch(/worker_stale_total\{[^}]*reason="persisted_snapshot"[^}]*\} 3/);
-    expect(metricsText).toMatch(/worker_stalled_jobs_total\{[^}]*action="requeue"[^}]*\} 4/);
-    expect(metricsText).toMatch(/worker_recovered_jobs_total\{[^}]*action="requeue"[^}]*\} 4/);
+    expect(metricsText).toMatch(/worker_stale_total\{[^}]*reason="persisted_snapshot"[^}]*\} 1/);
+    expect(metricsText).toMatch(/worker_stalled_jobs_total\{[^}]*action="requeue"[^}]*\} 2/);
+    expect(metricsText).toMatch(/worker_recovered_jobs_total\{[^}]*action="requeue"[^}]*\} 2/);
   });
 });

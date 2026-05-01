@@ -24,6 +24,7 @@ jest.unstable_mockModule('@platform/observability/appMetrics.js', () => ({
   recordUnknownGpt: jest.fn(),
   recordWorkerFailureTotal: jest.fn(),
   recordWorkerRecoveredJobs: jest.fn(),
+  recordWorkerRecoveryAction: jest.fn(),
   recordWorkerJobDuration: jest.fn(),
   recordWorkerJobTotal: jest.fn(),
   recordWorkerQueueDepth: jest.fn(),
