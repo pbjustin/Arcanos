@@ -53,6 +53,7 @@ export const ArcanosGaming = {
   name: "ARCANOS:GAMING",
   description: "Deterministic gameplay guide, build, and meta advisor.",
   gptIds: ["arcanos-gaming", "gaming"],
+  defaultAction: "query",
   defaultTimeoutMs: 60000,
   actions: {
     async query(payload: unknown) {

@@ -24,6 +24,13 @@ describe('ArcanosGaming module', () => {
     jest.clearAllMocks();
   });
 
+  it('declares query as its default non-privileged module action', () => {
+    expect(ArcanosGaming.name).toBe('ARCANOS:GAMING');
+    expect(ArcanosGaming.gptIds).toEqual(['arcanos-gaming', 'gaming']);
+    expect(ArcanosGaming.defaultAction).toBe('query');
+    expect(Object.keys(ArcanosGaming.actions)).toEqual(['query']);
+  });
+
   it('accepts guide mode, message alias, and a single guide url', async () => {
     const payload = {
       mode: 'guide',

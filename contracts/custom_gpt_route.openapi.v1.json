@@ -61,6 +61,17 @@
                     "prompt": "Create the writing job and return its identifier."
                   }
                 },
+                "gamingGuideQuery": {
+                  "summary": "ARCANOS Gaming guide query with module-owned payload",
+                  "value": {
+                    "action": "query",
+                    "payload": {
+                      "mode": "guide",
+                      "prompt": "Give me beginner tips for surviving the first night.",
+                      "game": "Minecraft"
+                    }
+                  }
+                },
                 "queryAndWait": {
                   "summary": "Canonical synchronous direct action operation",
                   "value": {
@@ -416,7 +427,7 @@
           "payload": {
             "type": "object",
             "additionalProperties": true,
-            "description": "Open payload object. For dag.dispatch, payload.graphId selects a supported graph and payload.input supplies DAG input; target, source, route, headers, auth, and endpoint fields are ignored by the bridge. For dag.status and dag.trace, payload.runId is required."
+            "description": "Open payload object. Module-specific GPTs may own their payload contracts; for ARCANOS Gaming, payload.mode is guide, build, or meta and payload.prompt supplies the user request. For dag.dispatch, payload.graphId selects a supported graph and payload.input supplies DAG input; target, source, route, headers, auth, and endpoint fields are ignored by the bridge. For dag.status and dag.trace, payload.runId is required."
           },
           "context": {
             "type": "object",

@@ -100,16 +100,6 @@ function extractPrompt(body: any): string | null {
   return null;
 }
 
-function extractMode(body: unknown, payload: unknown): string | null {
-  const bodyMode = isRecord(body) && typeof body.mode === "string" ? body.mode.trim().toLowerCase() : "";
-  if (bodyMode) {
-    return bodyMode;
-  }
-
-  const payloadMode = isRecord(payload) && typeof payload.mode === "string" ? payload.mode.trim().toLowerCase() : "";
-  return payloadMode || null;
-}
-
 function buildDiagnosticRouteResult(): { ok: true; route: "diagnostic"; message: "backend operational" } {
   return {
     ok: true,
@@ -710,6 +700,7 @@ type GptMapEntry = GptModuleEntry;
 
 const FORCED_DIRECT_GPT_BINDINGS: Record<string, GptMapEntry> = {
   "arcanos-gaming": { module: "ARCANOS:GAMING", route: "gaming" },
+  "gaming": { module: "ARCANOS:GAMING", route: "gaming" },
 };
 
 function normalize(s: string): string {
@@ -1147,33 +1138,12 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     requestedAction: rawRequestedAction ?? writePlaneClassification.action
   });
   const prompt = extractPrompt(payload);
-  const requestedMode = extractMode(body, payload);
   let activeEntry = entry;
   let moduleMetadata = getModuleMetadata(activeEntry.module);
   let availableActions = moduleMetadata?.actions ?? [];
   let requestedAction = resolveRequestedActionAlias(rawRequestedAction, availableActions);
   if (writePlaneClassification.plane !== 'writing' && activeEntry.module === 'ARCANOS:CORE') {
     requestedAction = 'query';
-  }
-
-  //audit Assumption: gameplay generation must be explicit and never inferred from a GPT binding alone; failure risk: minimal or context-free prompts fall into the gaming simulation pipeline; expected invariant: ARCANOS:GAMING executes only when callers send `mode:"gameplay"`; handling strategy: fail closed before memory, repo inspection, HRC, and module dispatch.
-  if (activeEntry.module === "ARCANOS:GAMING" && requestedMode !== "gameplay") {
-    return {
-      ok: false,
-      error: {
-        code: "GAMEPLAY_MODE_REQUIRED",
-        message: "Gameplay requests require explicit mode 'gameplay'."
-      },
-      _route: {
-        ...baseRoute,
-        module: activeEntry.module,
-        action: requestedAction ?? undefined,
-        matchMethod,
-        route: activeEntry.route,
-        availableActions,
-        moduleVersion: (moduleMetadata as any)?.version ?? null,
-      }
-    };
   }
 
   const parsedMemoryCommand =
