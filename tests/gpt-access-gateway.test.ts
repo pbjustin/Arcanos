@@ -1371,6 +1371,11 @@ describe('/gpt-access gateway', () => {
       required: ['action'],
       additionalProperties: false
     }));
+    expect(response.body.components.schemas.CapabilityRunRequest.properties.action).toEqual({
+      type: 'string',
+      minLength: 1,
+      pattern: '.*\\S.*'
+    });
     expect(response.body.components.schemas.CapabilitiesV1Response).toEqual(expect.objectContaining({
       required: ['ok', 'capabilities'],
       additionalProperties: false

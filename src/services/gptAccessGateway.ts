@@ -1515,7 +1515,7 @@ export function buildGptAccessOpenApiDocument() {
         CapabilityRunRequest: {
           type: 'object',
           properties: {
-            action: { type: 'string', minLength: 1 },
+            action: { type: 'string', minLength: 1, pattern: '.*\\S.*' },
             payload: {
               description: 'Optional JSON payload passed to the selected capability action.'
             }
