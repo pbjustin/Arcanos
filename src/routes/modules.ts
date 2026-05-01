@@ -23,6 +23,20 @@ type ModuleDispatchRequestBody = {
   payload?: unknown;
 };
 
+export class ModuleNotFoundError extends Error {
+  constructor(moduleName: string) {
+    super(`Module not found: ${moduleName}`);
+    this.name = 'ModuleNotFoundError';
+  }
+}
+
+export class ModuleActionNotFoundError extends Error {
+  constructor(action: string) {
+    super(`Action not found: ${action}`);
+    this.name = 'ModuleActionNotFoundError';
+  }
+}
+
 function resolveRegisteredModule(moduleName: string | undefined): ModuleDef | undefined {
   return typeof moduleName === 'string'
     ? (registryByName.get(moduleName) ?? registryByRoute.get(moduleName))
@@ -165,9 +179,9 @@ export async function dispatchModuleAction(
   payload: unknown
 ): Promise<unknown> {
   const mod = registryByName.get(moduleName);
-  if (!mod) throw new Error(`Module not found: ${moduleName}`);
+  if (!mod) throw new ModuleNotFoundError(moduleName);
   const handler = mod.actions[action];
-  if (!handler) throw new Error(`Action not found: ${action}`);
+  if (!handler) throw new ModuleActionNotFoundError(action);
   return handler(payload);
 }
 

@@ -28,8 +28,21 @@ function parseAllowlist(raw: string | undefined): Array<{ module: string; action
     .filter(x => x.module.length > 0 && x.action.length > 0);
 }
 
+let cachedRawAllowlist: string | undefined;
+let cachedAllowlist: Array<{ module: string; action: string }> = [];
+
+function getModuleActionAllowlist(): Array<{ module: string; action: string }> {
+  const rawAllowlist = process.env.MCP_ALLOW_MODULE_ACTIONS;
+  if (rawAllowlist !== cachedRawAllowlist) {
+    cachedRawAllowlist = rawAllowlist;
+    cachedAllowlist = parseAllowlist(rawAllowlist);
+  }
+
+  return cachedAllowlist;
+}
+
 export function isModuleActionAllowed(moduleName: string, action: string): boolean {
-  const allow = parseAllowlist(process.env.MCP_ALLOW_MODULE_ACTIONS);
+  const allow = getModuleActionAllowlist();
   if (allow.length === 0) return false;
 
   for (const rule of allow) {

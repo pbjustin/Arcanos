@@ -22,6 +22,8 @@ const dispatchModuleActionMock = jest.fn();
 
 class MockIdempotencyKeyConflictError extends Error {}
 class MockJobRepositoryUnavailableError extends Error {}
+class MockModuleNotFoundError extends Error {}
+class MockModuleActionNotFoundError extends Error {}
 
 jest.unstable_mockModule('../src/core/diagnostics.js', () => ({
   writePublicHealthResponse: writePublicHealthResponseMock
@@ -49,7 +51,9 @@ jest.unstable_mockModule('../src/routes/_core/gptDispatch.js', () => ({
 jest.unstable_mockModule('../src/routes/modules.js', () => ({
   getModulesForRegistry: getModulesForRegistryMock,
   getModuleMetadata: getModuleMetadataMock,
-  dispatchModuleAction: dispatchModuleActionMock
+  dispatchModuleAction: dispatchModuleActionMock,
+  ModuleNotFoundError: MockModuleNotFoundError,
+  ModuleActionNotFoundError: MockModuleActionNotFoundError
 }));
 
 jest.unstable_mockModule('../src/services/runtimeDiagnosticsService.js', () => ({
@@ -425,6 +429,23 @@ describe('/gpt-access gateway', () => {
       message: 'Capability action is not allowlisted for GPT Access execution.'
     });
     expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
+  it('maps typed module dispatch misses to not found responses', async () => {
+    allowCapabilityRun();
+    dispatchModuleActionMock.mockRejectedValueOnce(new MockModuleNotFoundError('Module not found: ARCANOS:CORE'));
+
+    const response = await authorized(request(buildApp()).post('/gpt-access/capabilities/v1/core/run'))
+      .send({
+        action: 'query',
+        payload: {}
+      });
+
+    expect(response.status).toBe(404);
+    expect(response.body.error).toEqual({
+      code: 'GPT_ACCESS_CAPABILITY_NOT_FOUND',
+      message: 'Capability or action not found.'
+    });
   });
 
   it('requires capabilities.run to be explicitly configured before running actions', async () => {

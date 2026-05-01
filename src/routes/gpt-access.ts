@@ -8,6 +8,13 @@ import {
 } from '@platform/runtime/security.js';
 import { isModuleActionAllowed } from '../mcp/modulesAllowlist.js';
 import {
+  dispatchModuleAction,
+  getModuleMetadata,
+  getModulesForRegistry,
+  ModuleActionNotFoundError,
+  ModuleNotFoundError
+} from './modules.js';
+import {
   asyncHandler,
   sendBadRequestPayload,
   sendInternalErrorPayload,
@@ -31,21 +38,8 @@ import {
 
 const router = express.Router();
 
-type CapabilityRegistryEntry = {
-  id: string;
-  description: string | null;
-  route: string | null;
-  actions: string[];
-};
-
-type CapabilityMetadata = {
-  name: string;
-  description: string | null;
-  route: string | null;
-  actions: string[];
-  defaultAction?: string;
-  defaultTimeoutMs?: number;
-};
+type CapabilityRegistryEntry = ReturnType<typeof getModulesForRegistry>[number];
+type CapabilityMetadata = NonNullable<ReturnType<typeof getModuleMetadata>>;
 
 function getGptAccessRateLimitActorKey(req: express.Request): string {
   const expressClientIp = typeof req.ip === 'string' && req.ip.trim().length > 0
@@ -61,10 +55,6 @@ const gptAccessRateLimit = createRateLimitMiddleware({
   windowMs: 5 * 60 * 1000,
   keyGenerator: (req) => `${getGptAccessRateLimitActorKey(req)}:gpt-access`
 });
-
-async function loadModuleBridge() {
-  return import('./modules.js');
-}
 
 function sortStrings(values: string[]): string[] {
   return [...values].sort((left, right) => left.localeCompare(right));
@@ -146,15 +136,10 @@ function sendGptAccessInternalError(res: express.Response, message: string): voi
 }
 
 function isModuleDispatchNotFoundError(error: unknown): boolean {
-  if (!(error instanceof Error)) {
-    return false;
-  }
-
-  return error.message.startsWith('Module not found:') || error.message.startsWith('Action not found:');
+  return error instanceof ModuleNotFoundError || error instanceof ModuleActionNotFoundError;
 }
 
 const listGptAccessCapabilities = asyncHandler(async (_req, res) => {
-  const { getModulesForRegistry } = await loadModuleBridge();
   const capabilities = getModulesForRegistry()
     .map(toCapabilitySummary)
     .sort((left, right) => left.id.localeCompare(right.id));
@@ -166,7 +151,6 @@ const listGptAccessCapabilities = asyncHandler(async (_req, res) => {
 });
 
 const getGptAccessCapability = asyncHandler(async (req, res) => {
-  const { getModuleMetadata } = await loadModuleBridge();
   const metadata = getModuleMetadata(req.params.id);
 
   if (!metadata) {
@@ -194,7 +178,6 @@ const runGptAccessCapability = asyncHandler(async (req, res) => {
   }
 
   const normalizedAction = action.trim();
-  const { dispatchModuleAction, getModuleMetadata } = await loadModuleBridge();
   const metadata = getModuleMetadata(req.params.id);
 
   if (!metadata) {
