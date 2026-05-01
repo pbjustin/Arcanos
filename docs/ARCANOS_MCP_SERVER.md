@@ -70,7 +70,7 @@ Destructive tools:
 
 ### `modules.invoke` allowlist
 - Deny-by-default.
-- Controlled by `MCP_ALLOW_MODULE_ACTIONS` (`module:action` or `module:*`).
+- Controlled by `MCP_ALLOW_MODULE_ACTIONS` (`module:action` or `module:*`). The same allowlist also gates GPT Access capability runs, so keep entries narrow.
 - Disallowed call returns `ERR_GATED`.
 
 ## Tool Catalog
@@ -154,7 +154,7 @@ Agents:
 | `MCP_CONFIRM_TTL_MS` | `60000` | Nonce expiration in milliseconds. |
 | `MCP_EXPOSE_DESTRUCTIVE` | `false` | Expose destructive tools when true. |
 | `MCP_ENABLE_SESSIONS` | `false` | Generate MCP transport session IDs in HTTP mode. |
-| `MCP_ALLOW_MODULE_ACTIONS` | empty | CSV allowlist for `modules.invoke`. |
+| `MCP_ALLOW_MODULE_ACTIONS` | empty | CSV allowlist for `modules.invoke` and `/gpt-access/capabilities/v1/:id/run`. |
 
 ## Quick Verification (HTTP)
 

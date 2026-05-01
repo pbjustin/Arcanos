@@ -31,7 +31,9 @@ jest.unstable_mockModule('@services/moduleLoader.js', () => ({
   ])
 }));
 
-const modulesRouter = (await import('../src/routes/modules.js')).default;
+const modulesModule = await import('../src/routes/modules.js');
+const modulesRouter = modulesModule.default;
+const { getModuleMetadata } = modulesModule;
 
 function buildApp() {
   const app = express();
@@ -115,6 +117,20 @@ describe('module legacy route compatibility', () => {
     });
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
     expect(moduleActionHandler).not.toHaveBeenCalled();
+  });
+
+  it('resolves module metadata by module name and route without using GPT ids', () => {
+    expect(getModuleMetadata('TEST:MODULE')).toEqual(expect.objectContaining({
+      name: 'TEST:MODULE',
+      route: 'test-route',
+      actions: ['query']
+    }));
+    expect(getModuleMetadata('test-route')).toEqual(expect.objectContaining({
+      name: 'TEST:MODULE',
+      route: 'test-route',
+      actions: ['query']
+    }));
+    expect(getModuleMetadata('test-legacy-gpt')).toBeNull();
   });
 
   it('proxies /queryroute traffic through the canonical GPT dispatcher', async () => {

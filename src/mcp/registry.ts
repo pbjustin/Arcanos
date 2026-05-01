@@ -4,7 +4,7 @@
  * - MCP_EXPOSE_DESTRUCTIVE: set 'true' to expose destructive tools (execute/block/expire/delete)
  * - MCP_REQUIRE_CONFIRMATION: set 'true' to require a server-issued confirmation nonce for gated tools
  * - MCP_ENABLE_SESSIONS: set 'true' to enable MCP transport session IDs (HTTP). Useful for per-session throttles.
- * - MCP_ALLOW_MODULE_ACTIONS: CSV allowlist for modules.invoke, e.g. "rag:*,billing:charge"
+ * - MCP_ALLOW_MODULE_ACTIONS: CSV allowlist for modules.invoke and GPT Access capability runs, e.g. "rag:*,billing:charge"
  *
  * Public defaults are conservative.
  */

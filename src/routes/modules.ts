@@ -23,6 +23,20 @@ type ModuleDispatchRequestBody = {
   payload?: unknown;
 };
 
+export class ModuleNotFoundError extends Error {
+  constructor(moduleName: string) {
+    super(`Module not found: ${moduleName}`);
+    this.name = 'ModuleNotFoundError';
+  }
+}
+
+export class ModuleActionNotFoundError extends Error {
+  constructor(action: string) {
+    super(`Action not found: ${action}`);
+    this.name = 'ModuleActionNotFoundError';
+  }
+}
+
 function resolveRegisteredModule(moduleName: string | undefined): ModuleDef | undefined {
   return typeof moduleName === 'string'
     ? (registryByName.get(moduleName) ?? registryByRoute.get(moduleName))
@@ -116,9 +130,9 @@ export function getModulesForRegistry(): Array<{
 }
 
 /**
- * Purpose: Look up metadata for a single module by name.
- * Inputs/Outputs: Module name string; returns metadata or null.
- * Edge cases: Returns null when module name is not registered.
+ * Purpose: Look up metadata for a single module by name or route.
+ * Inputs/Outputs: Module identifier string; returns metadata or null.
+ * Edge cases: Returns null when the identifier is not registered.
  */
 export function getModuleMetadata(moduleName: string): {
   name: string;
@@ -128,12 +142,22 @@ export function getModuleMetadata(moduleName: string): {
   defaultAction?: string;
   defaultTimeoutMs?: number;
 } | null {
-  const mod = registryByName.get(moduleName);
+  let mod = registryByName.get(moduleName);
+  let route = moduleRoutes.get(moduleName) ?? null;
+
+  if (!mod) {
+    mod = registryByRoute.get(moduleName);
+    if (mod) {
+      route = moduleRoutes.get(mod.name) ?? moduleName;
+    }
+  }
+
   if (!mod) return null;
+
   return {
     name: mod.name,
     description: mod.description ?? null,
-    route: moduleRoutes.get(mod.name) ?? null,
+    route,
     actions: Object.keys(mod.actions),
     defaultAction: mod.defaultAction,
     defaultTimeoutMs: mod.defaultTimeoutMs,
@@ -155,9 +179,9 @@ export async function dispatchModuleAction(
   payload: unknown
 ): Promise<unknown> {
   const mod = registryByName.get(moduleName);
-  if (!mod) throw new Error(`Module not found: ${moduleName}`);
+  if (!mod) throw new ModuleNotFoundError(moduleName);
   const handler = mod.actions[action];
-  if (!handler) throw new Error(`Action not found: ${action}`);
+  if (!handler) throw new ModuleActionNotFoundError(action);
   return handler(payload);
 }
 

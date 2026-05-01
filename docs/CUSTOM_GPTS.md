@@ -1,7 +1,7 @@
 # Custom GPTs and Backend Integration
 
 ## Overview
-Arcanos routes Custom GPT requests through the `/gpt/:gptId` gateway. This gateway is the writing plane: it resolves a GPT ID to a backend module, forwards generative work to the matched module, and returns an acknowledgement payload describing the matched module/action set. The routing table is built from module definitions (including their `gptIds`), with optional overrides via environment configuration. The canonical Custom GPT contract is path-based: call `/gpt/<gpt-id>` with either a prompt-first generative request or the typed GPT bridge actions `query`, `query_and_wait`, `get_status`, and `get_result`. Use direct control endpoints for jobs, DAG traces, runtime diagnostics, and MCP tools when those surfaces are available.【F:src/routes/gptRouter.ts†L16-L159】【F:src/config/gptRouterConfig.ts†L1-L92】【F:src/modules/moduleLoader.ts†L1-L64】
+Arcanos routes Custom GPT requests through the `/gpt/:gptId` gateway. This gateway is the writing plane: it resolves a GPT ID to a backend module, forwards generative work to the matched module, and returns an acknowledgement payload describing the matched module/action set. The routing table is built from module definitions (including their `gptIds`), with optional overrides via environment configuration. The canonical Custom GPT contract is path-based: call `/gpt/<gpt-id>` with either a prompt-first generative request or the typed GPT bridge actions `query` and `query_and_wait`. Use direct control endpoints for job status/results, DAG traces, runtime diagnostics, and MCP tools. Legacy `get_status` and `get_result` aliases are reserved and rejected by `/gpt/:gptId` so control-plane reads do not enter the writing route.【F:src/routes/gptRouter.ts†L16-L159】【F:src/config/gptRouterConfig.ts†L1-L92】【F:src/modules/moduleLoader.ts†L1-L64】
 
 ## Why We Use Custom GPTs
 Custom GPTs let Arcanos ship specialized assistants (Backstage Booker, Arcanos Gaming, Tutor) that:
@@ -11,7 +11,7 @@ Custom GPTs let Arcanos ship specialized assistants (Backstage Booker, Arcanos G
 
 ## How Custom GPT Routing Works
 1. The GPT calls `POST /gpt/:gptId` with a request body that contains `prompt` and optional `gptVersion`, `action`, `payload`, and `context`.
-2. Async job status/results must be fetched explicitly, either through `GET /jobs/:id` / `GET /jobs/:id/result`, or through `POST /gpt/:gptId` with `action: "get_status"` / `action: "get_result"` plus `payload.jobId`.
+2. Async job status/results must be fetched explicitly through `GET /jobs/:id`, `GET /jobs/:id/result`, or the authenticated GPT Access job-result endpoint.
 3. Prompt-based control requests are rejected: job lookup prompts, DAG execution/tracing prompts, runtime inspection prompts, and explicit MCP tool calls must use their canonical control-plane endpoints.
 4. Control actions are intercepted in the router and handled on the control plane before any writing dispatch or Trinity entry.
 5. Simple prompt-generation requests may be handled by the inline GPT fast path. These return directly with `routeDecision.path: "fast_path"` and do not create a job.
@@ -63,7 +63,7 @@ Rules:
 - Use `action: "query"` with a non-empty `prompt` when the caller wants a durable writing job immediately and will poll later.
 - Use `action: "query_and_wait"` with a non-empty `prompt` when the caller wants the core GPT to complete synchronously through the lightweight direct action lane. The route returns a typed error if direct execution fails or times out; it does not synthesize bounded fallback content for latency guard events. Non-core GPT IDs keep the durable job plus bounded wait behavior.
 - Body `action` is canonical. The router also accepts `?action=query_and_wait` and operation-style aliases such as `operationId: "requestQueryAndWait"` for generated GPT Action clients that separate operation metadata from body arguments.
-- Use `action: "get_status"` or `action: "get_result"` with `payload.jobId` when you need to fetch canonical async GPT job state without creating new work.
+- Use `GET /jobs/:id`, `GET /jobs/:id/result`, or `POST /gpt-access/jobs/result` when you need to fetch canonical async GPT job state without creating new work.
 - Use direct control endpoints instead of `/gpt/:gptId` for runtime inspection, DAG tracing/execution, and MCP tool calls.
 - Retrieval by natural-language prompt is intentionally blocked. Do not ask the GPT route to “look up job 123” in `prompt`; use the structured `action + payload.jobId` contract.
 - Do **not** inject a default action like `"ask"`; only send `action` when the caller explicitly selects a supported backend action.
@@ -112,31 +112,10 @@ Execute a core GPT action synchronously:
 }
 ```
 
-Check status without creating work:
-```json
-{
-  "action": "get_status",
-  "payload": {
-    "jobId": "job_123"
-  }
-}
-```
-
-Fetch result without creating work:
-```json
-{
-  "action": "get_result",
-  "payload": {
-    "jobId": "job_123"
-  }
-}
-```
-
 Canonical response guidance:
 - Pending write: `{ "ok": true, "action": "query", "jobId": "job_123", "status": "pending" }`
 - Completed `query_and_wait`: `{ "ok": true, "action": "query_and_wait", "status": "completed", "result": "..." }`
-- Status read: `{ "ok": true, "action": "get_status", "jobId": "job_123", "status": "queued|running|completed|failed|cancelled|expired" }`
-- Result read: `{ "ok": true, "action": "get_result", "jobId": "job_123", "status": "completed", "output": { "text": "..." } }`
+- Status/result read: use the canonical direct job endpoints; `/gpt/:gptId` rejects `get_status` and `get_result`.
 - Error: `{ "ok": false, "action": "...", "error": { "code": "...", "message": "..." } }`
 
 For a full architecture and operations runbook, see [GPT_FAST_PATH.md](GPT_FAST_PATH.md).
@@ -277,6 +256,6 @@ success_response:
 - **Happy path:** Call `/gpt/<gpt-id>` with a valid `action` and `payload` and confirm `_gptAck` metadata returns for the matched module.【F:src/routes/gptRouter.ts†L96-L159】
 - **Edge case:** Use an unknown GPT ID and confirm a `404` with `Unknown GPTID` is returned.【F:src/routes/gptRouter.ts†L70-L104】
 - **Failure mode:** Call a valid GPT ID with an invalid action and confirm the module returns `Action not found` or `Module not found` as appropriate.【F:src/routes/modules.ts†L16-L56】
-- **Async bridge:** Confirm `query` creates one job, core `query_and_wait` completes through the direct action lane without bounded fallback text, non-core durable writes still use jobs, and `get_status` / `get_result` never create work.
+- **Async bridge:** Confirm `query` creates one job, core `query_and_wait` completes through the direct action lane without bounded fallback text, non-core durable writes still use jobs, and `get_status` / `get_result` are rejected with direct endpoint guidance.
 - **Fast path:** Confirm `executionMode: "fast"` for a prompt-generation request returns `200`, `routeDecision.path: "fast_path"`, `x-gpt-fast-path-queue-bypassed: true`, and `x-gpt-queue-bypassed: true`.
 - **Guardrail:** Confirm prompt-based job retrieval is rejected and callers are pointed at structured control actions or `/jobs/*`.

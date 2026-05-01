@@ -85,10 +85,18 @@ export const GPT_ACCESS_SCOPES = [
   'logs.read_sanitized',
   'db.explain_approved',
   'mcp.approved_readonly',
+  'capabilities.read',
+  'capabilities.run',
   'diagnostics.read'
 ] as const;
 
 export type GptAccessScope = (typeof GPT_ACCESS_SCOPES)[number];
+
+const GPT_ACCESS_SCOPES_REQUIRING_EXPLICIT_CONFIG = new Set<GptAccessScope>([
+  'jobs.create',
+  'capabilities.read',
+  'capabilities.run'
+]);
 
 export const GPT_ACCESS_MCP_TOOLS = [
   'runtime.inspect',
@@ -438,10 +446,27 @@ export function gptAccessAuthMiddleware(req: Request, res: Response, next: NextF
   next();
 }
 
-function resolveConfiguredAccessScopes(): Set<GptAccessScope> {
+type GptAccessScopeConfig = {
+  configuredScopes: Set<GptAccessScope>;
+  explicitScopes: Set<GptAccessScope>;
+};
+
+let cachedRawGptAccessScopes: string | undefined;
+let cachedGptAccessScopeConfig: GptAccessScopeConfig | null = null;
+
+function resolveConfiguredAccessScopes(): GptAccessScopeConfig {
   const rawScopes = process.env.ARCANOS_GPT_ACCESS_SCOPES;
+  if (cachedGptAccessScopeConfig && rawScopes === cachedRawGptAccessScopes) {
+    return cachedGptAccessScopeConfig;
+  }
+
+  cachedRawGptAccessScopes = rawScopes;
   if (!rawScopes) {
-    return new Set(GPT_ACCESS_SCOPES);
+    cachedGptAccessScopeConfig = {
+      configuredScopes: new Set(GPT_ACCESS_SCOPES),
+      explicitScopes: new Set()
+    };
+    return cachedGptAccessScopeConfig;
   }
 
   const requestedScopes = new Set(
@@ -451,30 +476,29 @@ function resolveConfiguredAccessScopes(): Set<GptAccessScope> {
       .filter(Boolean)
   );
 
-  return new Set(GPT_ACCESS_SCOPES.filter((scope) => requestedScopes.has(scope)));
+  const explicitScopes = new Set(GPT_ACCESS_SCOPES.filter((scope) => requestedScopes.has(scope)));
+  cachedGptAccessScopeConfig = {
+    configuredScopes: explicitScopes,
+    explicitScopes
+  };
+  return cachedGptAccessScopeConfig;
 }
 
 function isGptAccessScopeExplicitlyConfigured(scope: GptAccessScope): boolean {
-  const rawScopes = process.env.ARCANOS_GPT_ACCESS_SCOPES;
-  if (!rawScopes) {
-    return false;
-  }
-
-  return rawScopes
-    .split(',')
-    .map((entry) => entry.trim())
-    .filter(Boolean)
-    .includes(scope);
+  return resolveConfiguredAccessScopes().explicitScopes.has(scope);
 }
 
 export function requireGptAccessScope(scope: GptAccessScope) {
   return (_req: Request, res: Response, next: NextFunction): void => {
-    if (scope === 'jobs.create' && !isGptAccessScopeExplicitlyConfigured(scope)) {
+    if (
+      GPT_ACCESS_SCOPES_REQUIRING_EXPLICIT_CONFIG.has(scope)
+      && !isGptAccessScopeExplicitlyConfigured(scope)
+    ) {
       sendGatewayError(res, 403, 'GPT_ACCESS_SCOPE_DENIED', 'GPT access scope denied.');
       return;
     }
 
-    const configuredScopes = resolveConfiguredAccessScopes();
+    const { configuredScopes } = resolveConfiguredAccessScopes();
     if (!configuredScopes.has(scope)) {
       sendGatewayError(res, 403, 'GPT_ACCESS_SCOPE_DENIED', 'GPT access scope denied.');
       return;
@@ -1363,7 +1387,7 @@ export function buildGptAccessOpenApiDocument() {
     info: {
       title: 'ARCANOS GPT Access Gateway',
       version: SERVICE_VERSION,
-      description: 'Scoped gateway for approved ARCANOS runtime, worker, queue, async AI job, job-result, log, database explain, MCP, and diagnostics actions.'
+      description: 'Scoped gateway for approved ARCANOS runtime, worker, queue, async AI job, job-result, log, database explain, MCP, capability, and diagnostics actions.'
     },
     servers: [
       {
@@ -1448,6 +1472,86 @@ export function buildGptAccessOpenApiDocument() {
           },
           required: ['ok', 'jobId', 'traceId', 'status', 'deduped', 'resultEndpoint'],
           additionalProperties: false
+        },
+        CapabilityV1Summary: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            description: { type: ['string', 'null'] },
+            route: { type: ['string', 'null'] },
+            actions: {
+              type: 'array',
+              items: { type: 'string' }
+            }
+          },
+          required: ['id', 'description', 'route', 'actions'],
+          additionalProperties: false
+        },
+        CapabilityV1Detail: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+            name: { type: 'string' },
+            description: { type: ['string', 'null'] },
+            route: { type: ['string', 'null'] },
+            actions: {
+              type: 'array',
+              items: { type: 'string' }
+            },
+            defaultAction: { type: ['string', 'null'] },
+            defaultTimeoutMs: { type: ['integer', 'null'] }
+          },
+          required: ['id', 'name', 'description', 'route', 'actions', 'defaultAction', 'defaultTimeoutMs'],
+          additionalProperties: false
+        },
+        CapabilitiesV1Response: {
+          type: 'object',
+          properties: {
+            ok: { type: 'boolean', const: true },
+            capabilities: {
+              type: 'array',
+              items: { '$ref': '#/components/schemas/CapabilityV1Summary' }
+            }
+          },
+          required: ['ok', 'capabilities'],
+          additionalProperties: false
+        },
+        CapabilityV1DetailResponse: {
+          type: 'object',
+          properties: {
+            ok: { type: 'boolean', const: true },
+            exists: { type: 'boolean' },
+            capability: {
+              anyOf: [
+                { '$ref': '#/components/schemas/CapabilityV1Detail' },
+                { type: 'null' }
+              ]
+            }
+          },
+          required: ['ok', 'exists', 'capability'],
+          additionalProperties: false
+        },
+        CapabilityRunRequest: {
+          type: 'object',
+          properties: {
+            action: { type: 'string', minLength: 1, pattern: '.*\\S.*' },
+            payload: {
+              description: 'Optional JSON payload passed to the selected capability action.'
+            }
+          },
+          required: ['action'],
+          additionalProperties: false
+        },
+        CapabilityRunResponse: {
+          type: 'object',
+          properties: {
+            ok: { type: 'boolean', const: true },
+            result: {
+              description: 'Capability action result.'
+            }
+          },
+          required: ['ok', 'result'],
+          additionalProperties: false
         }
       }
     },
@@ -1483,6 +1587,147 @@ export function buildGptAccessOpenApiDocument() {
           operationId: 'getWorkerHelperHealth',
           summary: 'Get worker helper health.',
           responses: { '200': { description: 'Worker helper health.' } }
+        }
+      },
+      '/gpt-access/capabilities/v1': {
+        get: {
+          operationId: 'listCapabilitiesV1',
+          summary: 'List GPT Access capabilities backed by connected runtime modules.',
+          description: 'Returns a safe capability projection from the existing module registry. Handlers, secrets, GPT bindings, and implementation details are not exposed.',
+          security: [{ bearerAuth: [] }],
+          responses: {
+            '200': {
+              description: 'Capability list.',
+              content: {
+                'application/json': {
+                  schema: { '$ref': '#/components/schemas/CapabilitiesV1Response' }
+                }
+              }
+            },
+            '401': { description: 'Unauthorized.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '403': { description: 'Scope denied.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } }
+          }
+        }
+      },
+      '/gpt-access/capabilities/v1/{id}': {
+        get: {
+          operationId: 'getCapabilityV1',
+          summary: 'Inspect one GPT Access capability.',
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              name: 'id',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', minLength: 1 }
+            }
+          ],
+          responses: {
+            '200': {
+              description: 'Capability lookup payload. Unknown capabilities return exists=false.',
+              content: {
+                'application/json': {
+                  schema: { '$ref': '#/components/schemas/CapabilityV1DetailResponse' }
+                }
+              }
+            },
+            '401': { description: 'Unauthorized.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '403': { description: 'Scope denied.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } }
+          }
+        }
+      },
+      '/gpt-access/capabilities/v1/{id}/run': {
+        post: {
+          operationId: 'runCapabilityV1',
+          summary: 'Run one action on a GPT Access capability.',
+          description: 'Executes through the existing module dispatch boundary. The capabilities.run scope must be explicitly configured, the module action must be allowlisted, and the request must pass the confirmation gate before this endpoint can execute actions.',
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              name: 'id',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', minLength: 1 }
+            },
+            {
+              name: 'x-confirmed',
+              in: 'header',
+              required: false,
+              schema: { type: 'string' },
+              description: 'Use "yes" for explicit operator approval, or the confirmGate challenge response format when retrying a challenged request.'
+            }
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: { '$ref': '#/components/schemas/CapabilityRunRequest' }
+              }
+            }
+          },
+          responses: {
+            '200': {
+              description: 'Capability action result.',
+              content: {
+                'application/json': {
+                  schema: { '$ref': '#/components/schemas/CapabilityRunResponse' }
+                }
+              }
+            },
+            '400': { description: 'Invalid request.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '401': { description: 'Unauthorized.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '403': { description: 'Scope denied or module action not allowlisted.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '404': { description: 'Capability or action not found.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '500': { description: 'Unexpected capability execution failure.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } }
+          }
+        }
+      },
+      '/gpt-access/modules': {
+        get: {
+          operationId: 'listGptAccessModulesAlias',
+          summary: 'Compatibility alias for listing GPT Access capabilities.',
+          description: 'Returns the same JSON as /gpt-access/capabilities/v1.',
+          security: [{ bearerAuth: [] }],
+          responses: {
+            '200': {
+              description: 'Capability list.',
+              content: {
+                'application/json': {
+                  schema: { '$ref': '#/components/schemas/CapabilitiesV1Response' }
+                }
+              }
+            },
+            '401': { description: 'Unauthorized.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '403': { description: 'Scope denied.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } }
+          }
+        }
+      },
+      '/gpt-access/modules/{id}': {
+        get: {
+          operationId: 'getGptAccessModuleAlias',
+          summary: 'Compatibility alias for inspecting one GPT Access capability.',
+          description: 'Returns the same JSON shape as /gpt-access/capabilities/v1/{id}.',
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              name: 'id',
+              in: 'path',
+              required: true,
+              schema: { type: 'string', minLength: 1 }
+            }
+          ],
+          responses: {
+            '200': {
+              description: 'Capability lookup payload. Unknown capabilities return exists=false.',
+              content: {
+                'application/json': {
+                  schema: { '$ref': '#/components/schemas/CapabilityV1DetailResponse' }
+                }
+              }
+            },
+            '401': { description: 'Unauthorized.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '403': { description: 'Scope denied.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } }
+          }
         }
       },
       '/gpt-access/jobs/create': {

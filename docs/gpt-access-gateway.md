@@ -25,12 +25,19 @@ Authorization: Bearer <ARCANOS_GPT_ACCESS_TOKEN>
 
 `ARCANOS_GPT_ACCESS_TOKEN` must be set out of band in the runtime environment or in the Custom GPT Action authentication field. Do not paste the token into chat, source, docs, logs, or shell history.
 
-`ARCANOS_GPT_ACCESS_SCOPES` is a comma-separated allowlist. `jobs.create` is special: it must be listed explicitly before `/gpt-access/jobs/create` can enqueue work.
+`ARCANOS_GPT_ACCESS_SCOPES` is a comma-separated allowlist. `jobs.create`, `capabilities.read`, and `capabilities.run` are special: they must be listed explicitly before `/gpt-access/jobs/create` can enqueue work, capability discovery can enumerate modules, or `/gpt-access/capabilities/v1/{id}/run` can execute a module action. Capability runs also require the existing `MCP_ALLOW_MODULE_ACTIONS` module-action allowlist and the confirmation gate (`x-confirmed: yes` or a confirmation challenge token).
 
 Recommended scopes for the protected Trinity async flow:
 
 ```bash
 ARCANOS_GPT_ACCESS_SCOPES=runtime.read,workers.read,queue.read,jobs.create,jobs.result,logs.read_sanitized,db.explain_approved,mcp.approved_readonly,diagnostics.read
+```
+
+Optional capability discovery and direct action execution:
+
+```bash
+ARCANOS_GPT_ACCESS_SCOPES=capabilities.read,capabilities.run
+MCP_ALLOW_MODULE_ACTIONS=ARCANOS:CORE:query
 ```
 
 ## Local Setup
@@ -44,7 +51,7 @@ Generate a local token and start the API:
 
 ```bash
 export ARCANOS_GPT_ACCESS_TOKEN="$(openssl rand -base64 48)"
-export ARCANOS_GPT_ACCESS_SCOPES="runtime.read,workers.read,queue.read,jobs.create,jobs.result,diagnostics.read"
+export ARCANOS_GPT_ACCESS_SCOPES="runtime.read,workers.read,queue.read,jobs.create,jobs.result,capabilities.read,diagnostics.read"
 npm run dev
 ```
 
@@ -54,7 +61,7 @@ PowerShell:
 $bytes = New-Object byte[] 48
 [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
 $env:ARCANOS_GPT_ACCESS_TOKEN = [Convert]::ToBase64String($bytes)
-$env:ARCANOS_GPT_ACCESS_SCOPES = "runtime.read,workers.read,queue.read,jobs.create,jobs.result,diagnostics.read"
+$env:ARCANOS_GPT_ACCESS_SCOPES = "runtime.read,workers.read,queue.read,jobs.create,jobs.result,capabilities.read,diagnostics.read"
 npm run dev
 ```
 
@@ -181,6 +188,8 @@ printf "%s" "$GATEWAY_CREDENTIAL" | railway variable set ARCANOS_GPT_ACCESS_TOKE
 railway variable set "ARCANOS_GPT_ACCESS_SCOPES=runtime.read,workers.read,queue.read,jobs.create,jobs.result,logs.read_sanitized,db.explain_approved,mcp.approved_readonly,diagnostics.read" --skip-deploys --service "$SERVICE" --environment "$ENVIRONMENT"
 railway variable list --service "$SERVICE" --environment "$ENVIRONMENT"
 ```
+
+Add `capabilities.read,capabilities.run` and a narrow `MCP_ALLOW_MODULE_ACTIONS` value only when direct capability execution is required.
 
 PowerShell:
 
