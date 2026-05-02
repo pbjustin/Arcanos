@@ -341,6 +341,17 @@ describe('GPT DAG bridge route', () => {
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
+  it('rejects Gaming DAG dispatch before module routing', async () => {
+    const response = await request(buildApp())
+      .post('/gpt/gaming')
+      .send({ action: 'dag.dispatch', prompt: 'Should not run.' });
+
+    expect(response.status).toBe(403);
+    expect(response.body.error.code).toBe('GPT_DAG_BRIDGE_GPT_NOT_ALLOWED');
+    expect(mockCreateRun).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
   it('maps typed unsupported DAG template errors to graph validation responses', async () => {
     mockCreateRun.mockRejectedValueOnce(new UnsupportedDagTemplateError('unexpected-template'));
 

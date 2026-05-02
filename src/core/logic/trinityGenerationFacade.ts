@@ -315,6 +315,14 @@ export async function runTrinityGenerationFacade(
       activeModel: output.activeModel,
       fallbackFlag: output.fallbackFlag,
       intentMode: output.outputControls ? readIntentMode(output.outputControls) : intentMode,
+      finishReason: output.meta.provider?.finishReason ?? 'unknown',
+      responseStatus: output.meta.provider?.responseStatus ?? 'unknown',
+      incompleteReason: output.meta.provider?.incompleteReason ?? 'none',
+      truncated: output.meta.provider?.truncated === true,
+      lengthTruncated: output.meta.provider?.lengthTruncated === true,
+      usagePrompt: output.meta.tokens?.prompt_tokens ?? 0,
+      usageCompletion: output.meta.tokens?.completion_tokens ?? 0,
+      usageTotal: output.meta.tokens?.total_tokens ?? 0,
     });
 
     return output;

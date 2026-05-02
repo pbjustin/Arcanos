@@ -331,6 +331,74 @@ describe('gpt router auth logging', () => {
     });
   });
 
+  it('routes explicit Gaming query actions directly through the module dispatcher', async () => {
+    mockRouteGptRequest.mockResolvedValue({
+      ok: true,
+      result: {
+        ok: true,
+        route: 'gaming',
+        mode: 'guide',
+        data: {
+          response: 'Guide response',
+          sources: [],
+        },
+      },
+      _route: {
+        gptId: 'arcanos-gaming',
+        module: 'ARCANOS:GAMING',
+        action: 'query',
+        route: 'gaming',
+        availableActions: ['query'],
+      },
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use(requestContext);
+    app.use('/gpt', gptRouter);
+
+    const response = await request(app)
+      .post('/gpt/arcanos-gaming')
+      .send({
+        action: 'query',
+        payload: {
+          mode: 'guide',
+          prompt: 'Give one beginner-safe Minecraft first-night survival tip.',
+          game: 'Minecraft',
+        },
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      ok: true,
+      _route: {
+        gptId: 'arcanos-gaming',
+        module: 'ARCANOS:GAMING',
+        action: 'query',
+        route: 'gaming',
+      },
+      result: {
+        ok: true,
+        route: 'gaming',
+        mode: 'guide',
+      },
+    });
+    expect(mockRouteGptRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        gptId: 'arcanos-gaming',
+        bypassIntentRouting: true,
+        body: expect.objectContaining({
+          action: 'query',
+          payload: expect.objectContaining({
+            mode: 'guide',
+            prompt: 'Give one beginner-safe Minecraft first-night survival tip.',
+            game: 'Minecraft',
+          }),
+        }),
+      })
+    );
+  });
+
   it('returns structured gaming errors when explicit mode is missing', async () => {
     mockRouteGptRequest.mockResolvedValue({
       ok: false,

@@ -24,6 +24,13 @@ describe('ArcanosGaming module', () => {
     jest.clearAllMocks();
   });
 
+  it('declares query as its default non-privileged module action', () => {
+    expect(ArcanosGaming.name).toBe('ARCANOS:GAMING');
+    expect(ArcanosGaming.gptIds).toEqual(['arcanos-gaming', 'gaming']);
+    expect(ArcanosGaming.defaultAction).toBe('query');
+    expect(Object.keys(ArcanosGaming.actions)).toEqual(['query']);
+  });
+
   it('accepts guide mode, message alias, and a single guide url', async () => {
     const payload = {
       mode: 'guide',
@@ -74,6 +81,21 @@ describe('ArcanosGaming module', () => {
     });
   });
 
+  it('returns a structured error when mode is invalid', async () => {
+    await expect(ArcanosGaming.actions.query({
+      mode: 'gameplay',
+      prompt: 'Give me a generic gameplay answer.'
+    } as any)).resolves.toEqual({
+      ok: false,
+      route: 'gaming',
+      mode: null,
+      error: {
+        code: 'GAMEPLAY_MODE_REQUIRED',
+        message: "Gameplay requests require explicit mode 'guide', 'build', or 'meta'.",
+      },
+    });
+  });
+
   it('returns a structured error when build mode omits game', async () => {
     await expect(ArcanosGaming.actions.query({
       mode: 'build',
@@ -85,6 +107,21 @@ describe('ArcanosGaming module', () => {
       error: {
         code: 'BAD_REQUEST',
         message: "Gaming mode 'build' requires a game field.",
+      },
+    });
+  });
+
+  it('returns a structured error when meta mode omits game', async () => {
+    await expect(ArcanosGaming.actions.query({
+      mode: 'meta',
+      prompt: 'Summarize the current raid meta'
+    } as any)).resolves.toEqual({
+      ok: false,
+      route: 'gaming',
+      mode: 'meta',
+      error: {
+        code: 'BAD_REQUEST',
+        message: "Gaming mode 'meta' requires a game field.",
       },
     });
   });

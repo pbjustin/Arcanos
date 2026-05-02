@@ -80,6 +80,48 @@ describe('openai adapter', () => {
     expect(responsesCreateMock.mock.calls[0][1]).toEqual({ signal, headers });
   });
 
+  it('preserves Responses incomplete metadata when converting adapter chat results', async () => {
+    const rawUsage = { input_tokens: 3, output_tokens: 16, total_tokens: 19 };
+    responsesCreateMock.mockResolvedValue({
+      id: 'resp_incomplete_1',
+      created_at: 1,
+      model: 'gpt-4.1-mini',
+      status: 'incomplete',
+      incomplete_details: { reason: 'max_output_tokens' },
+      output_text: 'partial answer',
+      output: [],
+      usage: rawUsage,
+    });
+
+    const adapter = createOpenAIAdapter({ apiKey: 'test-key' });
+    const result = await adapter.chat.completions.create({
+      model: 'gpt-4.1-mini',
+      messages: [{ role: 'user', content: 'hello' }],
+    } as any) as any;
+
+    expect(result.choices[0].finish_reason).toBe('length');
+    expect(result.usage).toEqual({
+      prompt_tokens: 3,
+      completion_tokens: 16,
+      total_tokens: 19
+    });
+    expect(result.provider_metadata).toEqual(expect.objectContaining({
+      provider: 'openai',
+      api: 'responses',
+      status: 'incomplete',
+      incomplete_details: { reason: 'max_output_tokens' },
+      usage: rawUsage,
+      finish_reason: 'length',
+      incomplete: true,
+      truncated: true,
+      length_truncated: true,
+      content_filtered: false
+    }));
+    expect(result.response_status).toBe('incomplete');
+    expect(result.incomplete).toBe(true);
+    expect(result.truncated).toBe(true);
+  });
+
   it('routes image generation through adapter images surface with options', async () => {
     imagesGenerateMock.mockResolvedValue({
       created: 1700000000,

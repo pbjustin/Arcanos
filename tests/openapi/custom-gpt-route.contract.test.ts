@@ -34,4 +34,26 @@ describe('custom GPT route OpenAPI contract', () => {
     expect(controlActionsSchema?.maxItems).toBe(0);
     expect(controlActionsSchema?.items?.enum).toBeUndefined();
   });
+
+  it('documents ARCANOS Gaming as a module-owned query payload contract', () => {
+    const contract = JSON.parse(
+      readFileSync(join(process.cwd(), 'contracts/custom_gpt_route.openapi.v1.json'), 'utf8')
+    );
+
+    const requestExamples =
+      contract.paths?.['/gpt/{gptId}']?.post?.requestBody?.content?.['application/json']?.examples;
+    expect(requestExamples?.gamingGuideQuery?.value).toEqual({
+      action: 'query',
+      payload: {
+        mode: 'guide',
+        prompt: 'Give me beginner tips for surviving the first night.',
+        game: 'Minecraft',
+      },
+    });
+
+    const payloadDescription =
+      contract.components?.schemas?.GptRouteRequest?.properties?.payload?.description;
+    expect(payloadDescription).toContain('ARCANOS Gaming');
+    expect(payloadDescription).toContain('guide, build, or meta');
+  });
 });

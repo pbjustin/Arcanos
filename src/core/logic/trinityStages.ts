@@ -14,6 +14,7 @@ import {
 } from "@services/openai.js";
 import { getTokenParameter } from "@shared/tokenParameterHelper.js";
 import { APPLICATION_CONSTANTS } from "@shared/constants.js";
+import { countWords } from '@shared/text/countWords.js';
 import {
   ARCANOS_SYSTEM_PROMPTS,
   buildFinalGpt5AnalysisMessage,
@@ -32,6 +33,7 @@ import type {
   TrinityFinalOutput,
   TrinityDryRunPreview,
   TrinityOutputControls,
+  TrinityProviderCompletionMetadata,
   ReasoningLedger
 } from './trinityTypes.js';
 import type { CognitiveDomain } from "@shared/types/cognitiveDomain.js";
@@ -91,6 +93,70 @@ const DEFAULT_TRINITY_REASONING_STAGE_TIMEOUT_MS = 20_000;
 const DEFAULT_TRINITY_FINAL_STAGE_TIMEOUT_MS = 4_000;
 const MODEL_VALIDATION_CACHE_TTL_MS = 10 * 60_000;
 const validatedModelCache = new Map<string, number>();
+
+function normalizeCompletionProviderMetadata(response: unknown): TrinityProviderCompletionMetadata {
+  const candidate = response && typeof response === 'object'
+    ? response as Record<string, unknown>
+    : {};
+  const providerMetadata = candidate.provider_metadata && typeof candidate.provider_metadata === 'object'
+    ? candidate.provider_metadata as Record<string, unknown>
+    : {};
+  const choice = Array.isArray(candidate.choices) && candidate.choices[0] && typeof candidate.choices[0] === 'object'
+    ? candidate.choices[0] as Record<string, unknown>
+    : {};
+  const incompleteDetails = providerMetadata.incomplete_details && typeof providerMetadata.incomplete_details === 'object'
+    ? providerMetadata.incomplete_details as Record<string, unknown>
+    : candidate.incomplete_details && typeof candidate.incomplete_details === 'object'
+      ? candidate.incomplete_details as Record<string, unknown>
+      : {};
+
+  const finishReason = typeof providerMetadata.finish_reason === 'string'
+    ? providerMetadata.finish_reason
+    : typeof choice.finish_reason === 'string'
+      ? choice.finish_reason
+      : null;
+
+  return {
+    finishReason,
+    responseStatus: typeof providerMetadata.status === 'string'
+      ? providerMetadata.status
+      : typeof candidate.response_status === 'string'
+        ? candidate.response_status
+        : null,
+    incompleteReason: typeof incompleteDetails.reason === 'string' ? incompleteDetails.reason : null,
+    incomplete: providerMetadata.incomplete === true || candidate.incomplete === true,
+    truncated: providerMetadata.truncated === true || candidate.truncated === true || finishReason === 'length',
+    lengthTruncated: providerMetadata.length_truncated === true || candidate.length_truncated === true || finishReason === 'length',
+    contentFiltered: providerMetadata.content_filtered === true || candidate.content_filtered === true || finishReason === 'content_filter'
+  };
+}
+
+function logProviderCompletionMetadata(eventName: string, params: {
+  requestId?: string;
+  model: string;
+  provider: TrinityProviderCompletionMetadata;
+  usage?: TrinityFinalOutput['usage'];
+  output: string;
+}): void {
+  logger.info(eventName, {
+    module: 'trinity',
+    operation: 'provider-completion',
+    requestId: params.requestId,
+    model: params.model,
+    finishReason: params.provider.finishReason ?? 'unknown',
+    responseStatus: params.provider.responseStatus ?? 'unknown',
+    incompleteReason: params.provider.incompleteReason ?? 'none',
+    incomplete: params.provider.incomplete === true,
+    truncated: params.provider.truncated === true,
+    lengthTruncated: params.provider.lengthTruncated === true,
+    contentFiltered: params.provider.contentFiltered === true,
+    usagePrompt: params.usage?.prompt_tokens ?? 0,
+    usageCompletion: params.usage?.completion_tokens ?? 0,
+    usageTotal: params.usage?.total_tokens ?? 0,
+    outputChars: params.output.length,
+    outputWords: countWords(params.output)
+  });
+}
 
 function resolveStageTimeoutMs(
   envName: string,
@@ -515,6 +581,13 @@ export async function runFinalStage(
   const finalText = finalResponse.choices[0]?.message?.content || '';
   const finalModel = finalResponse.activeModel || complexModel;
   const finalFallback = finalResponse.fallbackFlag || false;
+  const provider = normalizeCompletionProviderMetadata(finalResponse);
+  logProviderCompletionMetadata('trinity.final.provider_metadata', {
+    model: finalModel,
+    provider,
+    usage: finalResponse.usage || undefined,
+    output: finalText
+  });
 
   if (finalFallback) {
     logFallbackEvent('ARCANOS-FINAL', complexModel, finalModel, 'Fallback flag set by final completion');
@@ -526,7 +599,8 @@ export async function runFinalStage(
     fallbackUsed: finalFallback,
     usage: finalResponse.usage || undefined,
     responseId: finalResponse.id,
-    created: finalResponse.created
+    created: finalResponse.created,
+    provider
   };
 }
 
@@ -610,6 +684,14 @@ export async function runDirectAnswerStage(
   const directAnswerText = directAnswerResponse.choices[0]?.message?.content || '';
   const actualModel = directAnswerResponse.activeModel || directAnswerModel;
   const fallbackUsed = directAnswerResponse.fallbackFlag || false;
+  const provider = normalizeCompletionProviderMetadata(directAnswerResponse);
+  logProviderCompletionMetadata('trinity.direct_answer.provider_metadata', {
+    requestId,
+    model: actualModel,
+    provider,
+    usage: directAnswerResponse.usage || undefined,
+    output: directAnswerText
+  });
 
   if (fallbackUsed) {
     logFallbackEvent(
@@ -626,7 +708,8 @@ export async function runDirectAnswerStage(
     fallbackUsed,
     usage: directAnswerResponse.usage || undefined,
     responseId: directAnswerResponse.id,
-    created: directAnswerResponse.created
+    created: directAnswerResponse.created,
+    provider
   };
 }
 

@@ -38,6 +38,36 @@ describe('trinityDirectAnswerMode', () => {
     ].join('\n'));
   });
 
+  it('keeps SWTOR numbered guide answers top-level and sequential when the model adds nested detail', () => {
+    const normalizedOutput = applyTrinityDirectAnswerOutputContract(
+      [
+        'Here is the direct answer:',
+        '1. Start with class-story quests on the starter planet.',
+        '   - Treat exploration missions as optional XP padding, not required progression.',
+        '2. Move to fleet once the story sends you there.',
+        '   - Pick up crew skill trainers only if you actually plan to craft.',
+        '3. Keep your companion in healing stance while soloing heroics.',
+        '4. Replace gear at major level brackets instead of after every drop.',
+        '5. Use quick travel and stronghold travel to cut planet downtime.',
+        '6. Extra note that should not leak into a five-step answer.'
+      ].join('\n'),
+      'SWTOR leveling guide for a returning solo player. Answer directly in five short numbered bullets.'
+    );
+
+    const lines = normalizedOutput.split('\n');
+    expect(lines).toHaveLength(5);
+    expect(lines.map((line) => line.match(/^\d+\./)?.[0])).toEqual([
+      '1.',
+      '2.',
+      '3.',
+      '4.',
+      '5.'
+    ]);
+    expect(normalizedOutput).toContain('optional XP padding');
+    expect(normalizedOutput).not.toContain('6. Extra note');
+    expect(normalizedOutput).not.toMatch(/^\s+[-*]/m);
+  });
+
   it('parses bullet contracts and reduces token budgets for compact direct-answer prompts', () => {
     expect(
       parseTrinityDirectAnswerOutputContract('Do not simulate. Answer directly in five short bullets.')

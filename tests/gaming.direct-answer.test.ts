@@ -43,14 +43,28 @@ jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({
 }));
 
 const { runGuidePipeline } = await import('../src/services/gaming.js');
+const { runWithRequestAbortContext } = await import('@arcanos/runtime');
 
-describe('gaming direct-answer hardening', () => {
+describe('gaming guide output hardening', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    delete process.env.ARCANOS_GAMING_PIPELINE_TIMEOUT_MS;
+    delete process.env.ARCANOS_GAMING_GUIDE_PIPELINE_TIMEOUT_MS;
+    delete process.env.ARCANOS_GAMING_STAGE_TIMEOUT_MS;
+    delete process.env.ARCANOS_GAMING_GUIDE_STAGE_TIMEOUT_MS;
 
     mockGetEnv.mockReturnValue(undefined);
     mockGetEnvNumber.mockReturnValue(512);
-    mockGetEnvIntegerAtLeast.mockReturnValue(512);
+    mockGetEnvIntegerAtLeast.mockImplementation((key: string, defaultValue: number, minValue: number) => {
+      const rawValue = process.env[key];
+      const parsed = rawValue === undefined
+        ? key === 'ARCANOS_GAMING_WEB_CONTEXT_CHARS'
+          ? 512
+          : defaultValue
+        : Number(rawValue);
+      const value = Math.trunc(parsed);
+      return Number.isFinite(value) && value >= minValue ? value : defaultValue;
+    });
     mockGetEnvBoolean.mockReturnValue(false);
     mockGetDefaultModel.mockReturnValue('ft:test-intake');
     mockGetGPT5Model.mockReturnValue('gpt-5.1-test');
@@ -68,13 +82,13 @@ describe('gaming direct-answer hardening', () => {
     });
   });
 
-  it('bypasses the hotline persona pipeline for anti-simulation prompts', async () => {
+  it('routes anti-simulation guide prompts without enabling the implicit direct-answer cap', async () => {
     mockResponsesCreate.mockResolvedValue({
       choices: [{ message: { content: 'Direct gameplay answer' } }]
     });
 
     const result = await runGuidePipeline({
-      prompt: 'Answer directly. Do not simulate, role-play, or describe a hypothetical run. How do I beat the temple boss?',
+      prompt: 'Answer directly. Do not simulate, no role-play, no hypothetical runs. How do I beat the temple boss?',
       guideUrls: [],
       auditEnabled: false
     });
@@ -95,16 +109,280 @@ describe('gaming direct-answer hardening', () => {
           moduleId: 'ARCANOS:GAMING',
           sourceEndpoint: 'arcanos-gaming.guide',
           requestedAction: 'query',
-          prompt: expect.stringContaining('add hotline banter or theatrical framing')
+          prompt: expect.stringContaining('Avoid gameplay reenactment')
         }),
         context: expect.objectContaining({
           runOptions: expect.objectContaining({
-            answerMode: 'direct',
+            answerMode: 'explained',
+            requestedVerbosity: 'detailed',
             strictUserVisibleOutput: true
           })
         })
       })
     );
+    const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
+    expect(trinityRequest.input.prompt).not.toContain('Answer directly');
+    expect(trinityRequest.input.prompt).not.toContain('Do not simulate');
+    expect(trinityRequest.input.prompt).toContain('avoid hypothetical run narration');
+    expect(trinityRequest.input.prompt).not.toContain('avoid run narration narration');
+  });
+
+  it('keeps SWTOR guide requests on an uncapped guide output path', async () => {
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce({
+      result: [
+        '1. Set your role and discipline.',
+        '2. Gear around your current item rating.',
+        '3. Practice interrupts and defensive cooldowns.',
+        '4. Use companions and travel unlocks to reduce downtime.'
+      ].join('\n')
+    });
+
+    const result = await runGuidePipeline({
+      prompt: 'Answer directly. Do not simulate. Give me a complete SWTOR guide for gearing, combat basics, and daily progression.',
+      game: 'SWTOR',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(result.data.response).toContain('1. Set your role and discipline.');
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(
+      expect.objectContaining({
+        context: expect.objectContaining({
+          runOptions: expect.objectContaining({
+            answerMode: 'explained',
+            requestedVerbosity: 'detailed',
+            strictUserVisibleOutput: true
+          })
+        })
+      })
+    );
+  });
+
+  it('preserves the original SWTOR guide request as direct guide output without fallback splicing', async () => {
+    const swtorGuide = [
+      '1. Mechanics: face enemies away from the group and learn boss swap tells before they matter.',
+      '2. Threat: open with high-threat tools, tab through packs, and save taunts for swaps or loose enemies.',
+      '3. Mitigation: rotate cooldowns before spikes and keep defensive buffs active instead of panic-stacking everything.',
+      '4. Positioning: hold enemies still, move early out of ground effects, and keep cleaves away from allies.',
+      '5. Group play: communicate swaps, protect healers, mark priority targets, and ask damage dealers for a setup beat.'
+    ].join('\n');
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce({ result: swtorGuide });
+
+    const result = await runGuidePipeline({
+      game: 'Star Wars: The Old Republic',
+      prompt: 'Beginner to intermediate guide for tanking in Star Wars The Old Republic including mechanics, threat management, mitigation, positioning, and group play tips.',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      mode: 'guide',
+      data: {
+        response: swtorGuide,
+        sources: []
+      }
+    }));
+    expect(result.data.response).not.toContain('bounded fallback response');
+    expect(result.data.response).not.toContain('Retry with a narrower scope');
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({
+          prompt: expect.stringContaining('Beginner to intermediate guide for tanking in Star Wars The Old Republic'),
+          sourceEndpoint: 'arcanos-gaming.guide'
+        }),
+        context: expect.objectContaining({
+          runOptions: expect.objectContaining({
+            answerMode: 'explained',
+            requestedVerbosity: 'detailed',
+            strictUserVisibleOutput: true,
+            watchdogModelTimeoutMs: 15_000
+          })
+        })
+      })
+    );
+    expect(mockResponsesCreate).not.toHaveBeenCalled();
+  });
+
+  it('uses a bounded guide budget for the reported SWTOR regression prompt', async () => {
+    const swtorGuide = [
+      '1. Mechanics: learn swap cues, cleaves, interrupts, and avoidable ground effects before they hit the group.',
+      '2. Threat: open decisively, tab through packs, and reserve taunts for swaps or enemies that peel away.',
+      '3. Mitigation: rotate short cooldowns before spikes and keep class mitigation active instead of panic-stacking.',
+      '4. Positioning: face enemies away, hold them still when possible, and move early when mechanics force movement.',
+      '5. Group play: mark priorities, communicate defensive gaps, and protect healers during add waves.'
+    ].join('\n');
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce({
+      result: swtorGuide,
+      activeModel: 'gpt-test',
+      meta: { provider: { finishReason: 'stop' } }
+    });
+
+    const result = await runGuidePipeline({
+      game: 'Star Wars: The Old Republic',
+      prompt: 'Regression check only: Beginner to intermediate guide for tanking in Star Wars The Old Republic including mechanics, threat management, mitigation, positioning, and group play tips. Return a complete coherent answer with valid numbering.',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(result.data.response).toBe(swtorGuide);
+    const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as {
+      input: { prompt: string };
+      context: {
+        runtimeBudget: { watchdogLimit: number; safetyBuffer: number };
+        runOptions: { watchdogModelTimeoutMs?: number };
+      };
+    };
+    expect(trinityRequest.input.prompt).toContain('Regression check only');
+    expect(trinityRequest.context.runtimeBudget).toEqual(expect.objectContaining({
+      watchdogLimit: 50_000,
+      safetyBuffer: 500
+    }));
+    expect(trinityRequest.context.runOptions).toEqual(expect.objectContaining({
+      watchdogModelTimeoutMs: 15_000
+    }));
+  });
+
+  it('passes a small guide smoke request through the bounded guide path', async () => {
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce({
+      result: '1. Hold threat. 2. Face enemies away. 3. Use mitigation before spikes.',
+      activeModel: 'gpt-test',
+      meta: { provider: { finishReason: 'stop' } }
+    });
+
+    const result = await runGuidePipeline({
+      game: 'Star Wars: The Old Republic',
+      prompt: 'Smoke test: give three short tanking tips with valid numbering.',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      mode: 'guide',
+      data: expect.objectContaining({
+        response: '1. Hold threat. 2. Face enemies away. 3. Use mitigation before spikes.'
+      })
+    }));
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(
+      expect.objectContaining({
+        context: expect.objectContaining({
+          runOptions: expect.objectContaining({
+            watchdogModelTimeoutMs: 15_000
+          })
+        })
+      })
+    );
+  });
+
+  it('converts a provider abort into a bounded gaming timeout error', async () => {
+    const providerAbort = Object.assign(new Error('Request was aborted.'), {
+      name: 'AbortError',
+      timeoutPhase: 'intake'
+    });
+    mockRunTrinityWritingPipeline.mockRejectedValueOnce(providerAbort);
+
+    await expect(runGuidePipeline({
+      game: 'Star Wars: The Old Republic',
+      prompt: 'Regression check only: Beginner to intermediate guide for tanking in Star Wars The Old Republic including mechanics, threat management, mitigation, positioning, and group play tips. Return a complete coherent answer with valid numbering.',
+      guideUrls: [],
+      auditEnabled: false
+    })).rejects.toMatchObject({
+      code: 'GAMING_PROVIDER_TIMEOUT',
+      timeoutMs: 50_000,
+      stageTimeoutMs: 15_000,
+      timeoutPhase: 'intake'
+    });
+  });
+
+  it('converts runtime budget exhaustion into a bounded gaming timeout error', async () => {
+    const budgetError = Object.assign(new Error('runtime_budget_exhausted'), {
+      name: 'RuntimeBudgetExceededError',
+      timeoutPhase: 'reasoning'
+    });
+    mockRunTrinityWritingPipeline.mockRejectedValueOnce(budgetError);
+
+    await expect(runGuidePipeline({
+      game: 'Star Wars: The Old Republic',
+      prompt: 'Regression check only: Beginner to intermediate guide for tanking in Star Wars The Old Republic including mechanics, threat management, mitigation, positioning, and group play tips. Return a complete coherent answer with valid numbering.',
+      guideUrls: [],
+      auditEnabled: false
+    })).rejects.toMatchObject({
+      code: 'GAMING_PROVIDER_TIMEOUT',
+      timeoutMs: 50_000,
+      stageTimeoutMs: 15_000,
+      timeoutPhase: 'reasoning'
+    });
+  });
+
+  it('defaults missing provider timeout phase consistently', async () => {
+    const providerAbort = Object.assign(new Error('Request was aborted.'), {
+      name: 'AbortError'
+    });
+    mockRunTrinityWritingPipeline.mockRejectedValueOnce(providerAbort);
+
+    await expect(runGuidePipeline({
+      game: 'Star Wars: The Old Republic',
+      prompt: 'Smoke test: give three short tanking tips with valid numbering.',
+      guideUrls: [],
+      auditEnabled: false
+    })).rejects.toMatchObject({
+      code: 'GAMING_PROVIDER_TIMEOUT',
+      timeoutPhase: 'provider'
+    });
+  });
+
+  it('preserves parent request aborts instead of reporting provider timeouts', async () => {
+    const parentAbort = Object.assign(new Error('Outer request was aborted.'), {
+      name: 'AbortError'
+    });
+    const controller = new AbortController();
+    controller.abort(parentAbort);
+
+    await expect(runWithRequestAbortContext({
+      requestId: 'req-gaming-parent-abort',
+      controller,
+      signal: controller.signal,
+      deadlineAt: Date.now(),
+      timeoutMs: 1
+    }, () => runGuidePipeline({
+      game: 'Star Wars: The Old Republic',
+      prompt: 'Smoke test: give three short tanking tips with valid numbering.',
+      guideUrls: [],
+      auditEnabled: false
+    }))).rejects.toBe(parentAbort);
+    expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
+  });
+
+  it('clamps guide stage timeout below the guide pipeline timeout when env overrides exceed the budget', async () => {
+    process.env.ARCANOS_GAMING_GUIDE_PIPELINE_TIMEOUT_MS = '9000';
+    process.env.ARCANOS_GAMING_GUIDE_STAGE_TIMEOUT_MS = '25000';
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce({
+      result: '1. Hold threat. 2. Face enemies away. 3. Use mitigation before spikes.',
+      activeModel: 'gpt-test',
+      meta: { provider: { finishReason: 'stop' } }
+    });
+
+    await runGuidePipeline({
+      game: 'Star Wars: The Old Republic',
+      prompt: 'Smoke test: give three short tanking tips with valid numbering.',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as {
+      context: {
+        runtimeBudget: { watchdogLimit: number; safetyBuffer: number };
+        runOptions: { watchdogModelTimeoutMs?: number };
+      };
+    };
+    expect(trinityRequest.context.runtimeBudget).toEqual(expect.objectContaining({
+      watchdogLimit: 9000,
+      safetyBuffer: 500
+    }));
+    expect(trinityRequest.context.runOptions).toEqual(expect.objectContaining({
+      watchdogModelTimeoutMs: 8000
+    }));
   });
 
   it('deduplicates guide URLs and uses the configured gaming context size', async () => {
