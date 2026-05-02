@@ -16,8 +16,10 @@ $env:ARCANOS_BASE_URL = "http://localhost:3000"
 
 For deployed environments, set `ARCANOS_BASE_URL` to that service's HTTPS origin. Do not hard-code production URLs into reusable docs or scripts.
 
+For Custom GPT OpenAPI metadata, the gateway derives the server URL from `ARCANOS_GPT_ACCESS_BASE_URL` first, then `ARCANOS_BASE_URL`, `ARCANOS_BACKEND_URL`, `SERVER_URL`, `BACKEND_URL`, public Railway URL/domain variables, or the incoming request origin. Set `ARCANOS_GPT_ACCESS_BASE_URL` in deployment when the gateway is reached through a stable public origin.
+
 ## Authentication
-All `/gpt-access/*` routes require bearer auth:
+Protected `/gpt-access/*` operations require bearer auth. `/gpt-access/openapi.json` is public metadata so GPT Action import can retrieve the schema, but every protected operation in that schema still declares bearer auth:
 
 ```bash
 Authorization: Bearer <ARCANOS_GPT_ACCESS_TOKEN>
@@ -157,13 +159,19 @@ curl -sS "$ARCANOS_BASE_URL/gpt-access/status" \
   -H "Authorization: Bearer $ARCANOS_GPT_ACCESS_TOKEN"
 curl -sS "$ARCANOS_BASE_URL/gpt-access/workers/status" \
   -H "Authorization: Bearer $ARCANOS_GPT_ACCESS_TOKEN"
-curl -sS "$ARCANOS_BASE_URL/gpt-access/openapi.json" \
+curl -sS "$ARCANOS_BASE_URL/gpt-access/queue/inspect" \
   -H "Authorization: Bearer $ARCANOS_GPT_ACCESS_TOKEN"
+curl -sS "$ARCANOS_BASE_URL/gpt-access/self-heal/status" \
+  -H "Authorization: Bearer $ARCANOS_GPT_ACCESS_TOKEN"
+curl -sS "$ARCANOS_BASE_URL/gpt-access/openapi.json"
 ```
 
 Expected signals:
 - Authenticated gateway probes return JSON.
 - Unauthenticated protected probes return `401 UNAUTHORIZED_GPT_ACCESS`.
+- `/gpt-access/openapi.json` returns importable metadata without auth and advertises bearer auth for protected operations.
+- `/gpt-access/queue/inspect` returns queue state, or a clear degraded/unavailable JSON error if the queue backend is unavailable.
+- `/gpt-access/self-heal/status` returns self-heal status plus self-reflection persistence status; disabled, unavailable, or disconnected subsystems are reported explicitly instead of failing through `/gpt/:gptId`.
 - `/gpt-access/jobs/create` returns `202` with a UUID-like `jobId`.
 - `/gpt-access/jobs/result` reads that job without using `/gpt/:gptId`.
 - `/trinity/status` exposes sanitized worker, queue, memory sync, and limit details.

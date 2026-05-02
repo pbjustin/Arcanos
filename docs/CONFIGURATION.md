@@ -32,6 +32,7 @@ cp .env.example .env
 | `DATABASE_URL` | No | none | Enables PostgreSQL persistence. |
 | `REDIS_URL` | No | none | Preferred Redis connection string; discrete `REDISHOST`/`REDISPORT`/`REDISUSER`/`REDISPASSWORD` are fallback inputs. |
 | `ARCANOS_GPT_ACCESS_TOKEN` | Yes for `/gpt-access/*` | none | Bearer token for the protected GPT access gateway. Store real values only in runtime variables or GPT Action auth. |
+| `ARCANOS_GPT_ACCESS_BASE_URL` | No | request origin or other public base URL variables | Public origin advertised by `/gpt-access/openapi.json`; set this when the deployed gateway is behind a stable public URL. |
 | `ARCANOS_GPT_ACCESS_SCOPES` | Yes for `/gpt-access/jobs/create`, capability discovery, and capability runs | all recognized read/control scopes are granted when unset, except `jobs.create`, `capabilities.read`, and `capabilities.run` remain denied unless explicitly listed | Comma-separated gateway scope allowlist. Include `jobs.create` and `jobs.result` for protected async Trinity execution; include `capabilities.read` for discovery and `capabilities.run` only with a matching `MCP_ALLOW_MODULE_ACTIONS` allowlist and confirmation. |
 | `ARCANOS_PROCESS_KIND` | Yes for Railway launcher | none | Must be `web` or `worker` when using `scripts/start-railway-service.mjs`; omit for direct local `npm start`. |
 | `RUN_WORKERS` | No | `true` (non-test) | Local/direct background worker toggle. Ignored by Railway launcher role selection when `ARCANOS_PROCESS_KIND` is set. |
@@ -107,6 +108,7 @@ Protected GPT Action and operator calls must use `/gpt-access/*` for backend ope
 | Variable | Required | Default | Purpose |
 | --- | --- | --- | --- |
 | `ARCANOS_GPT_ACCESS_TOKEN` | Yes for `/gpt-access/*` | none | Gateway bearer token. The gateway returns an auth/config error when this is missing. |
+| `ARCANOS_GPT_ACCESS_BASE_URL` | No | first valid configured public URL/domain or request origin | Public origin for GPT Action OpenAPI metadata. Supported fallbacks include `ARCANOS_BASE_URL`, `ARCANOS_BACKEND_URL`, `SERVER_URL`, `BACKEND_URL`, `PUBLIC_BASE_URL`, `RAILWAY_PUBLIC_URL`, `RAILWAY_STATIC_URL`, `RAILWAY_PUBLIC_DOMAIN`, and `RAILWAY_STATIC_URL`. |
 | `ARCANOS_GPT_ACCESS_SCOPES` | Yes for job creation, capability discovery, and capability runs | all recognized scopes are granted when unset, except `jobs.create`, `capabilities.read`, and `capabilities.run` remain denied unless explicitly listed | Scope allowlist. Use `runtime.read,workers.read,queue.read,jobs.create,jobs.result,diagnostics.read` for the minimal protected async Trinity flow; add `capabilities.read` for discovery and `capabilities.run` only with `MCP_ALLOW_MODULE_ACTIONS` and confirmation. |
 | `OPENAI_API_KEY` | Yes for live worker execution | none | Preferred OpenAI key setting. The config layer also supports the fallback key names listed above. |
 | `DATABASE_URL` or complete `PG*` set | Yes for durable async jobs | none | Required by `/gpt-access/jobs/create` persistence and by the worker queue. Web and worker services must share the same database. |

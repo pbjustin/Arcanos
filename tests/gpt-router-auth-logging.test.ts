@@ -609,14 +609,15 @@ describe('gpt router auth logging', () => {
       traceId: expect.any(String),
       error: {
         code: 'CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT',
-        message: expect.stringContaining('direct control-plane endpoints'),
+        message: expect.stringContaining('/gpt-access/*'),
       },
       canonical: expect.objectContaining({
-        status: '/status',
-        workers: '/workers/status',
-        workerHealth: '/worker-helper/health',
-        selfHeal: '/status/safety/self-heal',
-        mcp: '/mcp',
+        status: '/gpt-access/status',
+        workers: '/gpt-access/workers/status',
+        workerHealth: '/gpt-access/worker-helper/health',
+        queueInspect: '/gpt-access/queue/inspect',
+        selfHeal: '/gpt-access/self-heal/status',
+        mcp: '/gpt-access/mcp',
       }),
       _route: expect.objectContaining({
         gptId: 'arcanos-core',
@@ -877,10 +878,10 @@ describe('gpt router auth logging', () => {
       traceId: expect.any(String),
       error: {
         code: 'MCP_CONTROL_REQUIRES_MCP_API',
-        message: 'MCP tool calls must use POST /mcp. Do not send MCP control requests through POST /gpt/{gptId}.',
+        message: 'MCP tool calls from GPT Access integrations must use POST /gpt-access/mcp. Do not send MCP control requests through POST /gpt/{gptId}.',
       },
       canonical: {
-        mcp: '/mcp',
+        mcp: '/gpt-access/mcp',
       },
       _route: expect.objectContaining({
         gptId: 'arcanos-core',

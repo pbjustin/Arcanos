@@ -21,6 +21,8 @@ export const APPROVED_CONTROL_PLANE_ENDPOINTS = {
   status: '/gpt-access/status',
   workersStatus: '/gpt-access/workers/status',
   workerHelperHealth: '/gpt-access/worker-helper/health',
+  queueInspect: '/gpt-access/queue/inspect',
+  selfHealStatus: '/gpt-access/self-heal/status',
   diagnosticsDeep: '/gpt-access/diagnostics/deep',
   dbExplain: '/gpt-access/db/explain',
   logsQuery: '/gpt-access/logs/query',

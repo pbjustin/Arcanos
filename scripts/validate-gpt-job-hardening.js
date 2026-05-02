@@ -12,7 +12,15 @@ import { join } from 'node:path';
 import process from 'node:process';
 
 const DEFAULTS = Object.freeze({
-  baseUrl: process.env.ARCANOS_BACKEND_URL || process.env.SERVER_URL || process.env.BACKEND_URL || '',
+  baseUrl: process.env.ARCANOS_GPT_ACCESS_BASE_URL ||
+    process.env.ARCANOS_BASE_URL ||
+    process.env.ARCANOS_BACKEND_URL ||
+    process.env.SERVER_URL ||
+    process.env.BACKEND_URL ||
+    process.env.PUBLIC_BASE_URL ||
+    process.env.RAILWAY_PUBLIC_URL ||
+    process.env.RAILWAY_STATIC_URL ||
+    '',
   healthPath: '/gpt-access/health',
   gptId: 'arcanos-core',
   gatewayCredential: process.env.ARCANOS_GPT_ACCESS_TOKEN || process.env.GPT_ACCESS_TOKEN || '',

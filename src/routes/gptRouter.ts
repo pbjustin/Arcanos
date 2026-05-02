@@ -139,12 +139,13 @@ const GPT_DISPATCHER_ACTIONS = [
   ...GPT_DAG_BRIDGE_ACTIONS
 ] as const;
 const GPT_DISPATCHER_CANONICAL_ENDPOINTS = {
-  status: '/status',
-  workers: '/workers/status',
-  workerHealth: '/worker-helper/health',
-  selfHeal: '/status/safety/self-heal',
+  status: '/gpt-access/status',
+  workers: '/gpt-access/workers/status',
+  workerHealth: '/gpt-access/worker-helper/health',
+  queueInspect: '/gpt-access/queue/inspect',
+  selfHeal: '/gpt-access/self-heal/status',
   trinityStatus: '/trinity/status',
-  mcp: '/mcp',
+  mcp: '/gpt-access/mcp',
   dagCapabilities: '/api/arcanos/capabilities',
   dagRuns: '/api/arcanos/dag/runs',
   dagRunStatus: '/api/arcanos/dag/runs/{runId}',
