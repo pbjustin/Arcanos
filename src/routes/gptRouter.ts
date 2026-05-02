@@ -131,6 +131,7 @@ import {
 
 const router = express.Router();
 const ARCANOS_CORE_GPT_IDS = new Set(['arcanos-core', 'core', 'arcanos-daemon']);
+const DIRECT_MODULE_QUERY_GPT_IDS = new Set(['arcanos-gaming', 'gaming']);
 const GPT_DISPATCHER_ROUTE = '/gpt/:gptId';
 const GPT_DISPATCHER_ACTIONS = [
   GPT_QUERY_ACTION,
@@ -983,6 +984,10 @@ function shouldDefaultCoreQueriesToAsync(
     readBooleanEnv('GPT_ROUTE_ASYNC_CORE_DEFAULT', false);
 }
 
+function isDirectModuleQueryGpt(gptId: string): boolean {
+  return DIRECT_MODULE_QUERY_GPT_IDS.has(gptId.trim().toLowerCase());
+}
+
 function resolveGptExecutionPlan(params: {
   req: express.Request;
   gptId: string;
@@ -1054,6 +1059,18 @@ function resolveGptExecutionPlan(params: {
   }
 
   if (params.requestedAction === GPT_QUERY_ACTION) {
+    if (isDirectModuleQueryGpt(params.gptId)) {
+      return {
+        mode: 'sync',
+        reason: 'explicit_module_query_action',
+        promptLength,
+        messageCount,
+        answerMode,
+        maxWords,
+        heavyPrompt: false
+      };
+    }
+
     if (ARCANOS_CORE_GPT_IDS.has(params.gptId)) {
       if (shouldDefaultCoreQueriesToAsync(params.gptId, params.requestedAction)) {
         return {

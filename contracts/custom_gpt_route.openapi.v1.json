@@ -10,7 +10,7 @@
       "post": {
         "operationId": "invokeGptRoute",
         "summary": "Invoke a GPT-routed writing request",
-        "description": "POST /gpt/{gptId} is the public writing-plane dispatcher. The path parameter is authoritative; a JSON body gptId is optional and must match the path when present. Use a prompt-only request with executionMode=fast for small prompt-generation work that should return inline. Use action=query to create one durable writing job through the Trinity writing pipeline, action=query_and_wait on core GPT IDs to execute synchronously through the lightweight direct action lane, and the safe DAG bridge actions dag.capabilities, dag.dispatch, dag.status, and dag.trace. The action should be supplied in the JSON body when possible; generated-client compatibility also permits the same action in the query string or an operationId-style body alias. Control-plane diagnostics, job status/result lookups, runtime inspection prompts, unsupported DAG actions, MCP control requests, and runtime.inspect/workers.status/queue.inspect/self_heal.status actions are intentionally rejected on this route. Use /jobs/{jobId}, /jobs/{jobId}/result, /gpt-access/*, or POST /mcp for those operations. The private action root.deep_diagnostics is a root-only diagnostics bridge for allowlisted GPT IDs and requires ENABLE_ROOT_DEEP_DIAGNOSTICS=true plus an exact Bearer token match against ARCANOS_ADMIN_TOKEN.",
+        "description": "POST /gpt/{gptId} is the public writing-plane dispatcher. The path parameter is authoritative; a JSON body gptId is optional and must match the path when present. Use a prompt-only request with executionMode=fast for small prompt-generation work that should return inline. Use action=query for canonical module query actions: durable Trinity writing requests are queued, while direct module GPTs such as ARCANOS Gaming execute their module-owned query action inline. Use action=query_and_wait on core GPT IDs to execute synchronously through the lightweight direct action lane, and the safe DAG bridge actions dag.capabilities, dag.dispatch, dag.status, and dag.trace. The action should be supplied in the JSON body when possible; generated-client compatibility also permits the same action in the query string or an operationId-style body alias. Control-plane diagnostics, job status/result lookups, runtime inspection prompts, unsupported DAG actions, MCP control requests, and runtime.inspect/workers.status/queue.inspect/self_heal.status actions are intentionally rejected on this route. Use /jobs/{jobId}, /jobs/{jobId}/result, /gpt-access/*, or POST /mcp for those operations. The private action root.deep_diagnostics is a root-only diagnostics bridge for allowlisted GPT IDs and requires ENABLE_ROOT_DEEP_DIAGNOSTICS=true plus an exact Bearer token match against ARCANOS_ADMIN_TOKEN.",
         "parameters": [
           {
             "name": "gptId",
@@ -59,6 +59,17 @@
                   "value": {
                     "action": "query",
                     "prompt": "Create the writing job and return its identifier."
+                  }
+                },
+                "gamingGuideQuery": {
+                  "summary": "ARCANOS Gaming guide query with module-owned payload",
+                  "value": {
+                    "action": "query",
+                    "payload": {
+                      "mode": "guide",
+                      "prompt": "Give me beginner tips for surviving the first night.",
+                      "game": "Minecraft"
+                    }
                   }
                 },
                 "queryAndWait": {
@@ -416,7 +427,7 @@
           "payload": {
             "type": "object",
             "additionalProperties": true,
-            "description": "Open payload object. For dag.dispatch, payload.graphId selects a supported graph and payload.input supplies DAG input; target, source, route, headers, auth, and endpoint fields are ignored by the bridge. For dag.status and dag.trace, payload.runId is required."
+            "description": "Open payload object. Module-specific GPTs may own their payload contracts; for ARCANOS Gaming, payload.mode is guide, build, or meta and payload.prompt supplies the user request. For dag.dispatch, payload.graphId selects a supported graph and payload.input supplies DAG input; target, source, route, headers, auth, and endpoint fields are ignored by the bridge. For dag.status and dag.trace, payload.runId is required."
           },
           "context": {
             "type": "object",

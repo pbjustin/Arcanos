@@ -16,6 +16,7 @@ import { arcanosDagRunService } from '@services/arcanosDagRunService.js';
 export const ROOT_DEEP_DIAGNOSTICS_ACTION = 'root.deep_diagnostics';
 export const ROOT_DIAGNOSTICS_FORBIDDEN = 'ROOT_DIAGNOSTICS_FORBIDDEN';
 
+const ROOT_DEEP_DIAGNOSTICS_ALLOWED_GPT_IDS = new Set(['arcanos-core', 'core', 'arcanos-daemon']);
 const ROOT_DIAGNOSTICS_MAX_OBJECT_KEYS = 12;
 const ROOT_DIAGNOSTICS_MAX_ARRAY_ITEMS = 3;
 const ROOT_DIAGNOSTICS_MAX_DEPTH = 4;
@@ -144,7 +145,7 @@ function parseRootDiagnosticGpts(): Set<string> {
   return new Set(
     (process.env.ARCANOS_ROOT_DIAGNOSTIC_GPTS ?? '')
       .split(',')
-      .map((value) => value.trim())
+      .map((value) => value.trim().toLowerCase())
       .filter((value) => value.length > 0)
   );
 }
@@ -187,7 +188,11 @@ export function authorizeRootDeepDiagnosticsRequest(req: Request, gptId: string)
     return { allowed: false, reason: 'disabled' };
   }
 
-  if (!parseRootDiagnosticGpts().has(gptId)) {
+  const normalizedGptId = gptId.trim().toLowerCase();
+  if (
+    !ROOT_DEEP_DIAGNOSTICS_ALLOWED_GPT_IDS.has(normalizedGptId) ||
+    !parseRootDiagnosticGpts().has(normalizedGptId)
+  ) {
     return { allowed: false, reason: 'gpt_not_allowlisted' };
   }
 
