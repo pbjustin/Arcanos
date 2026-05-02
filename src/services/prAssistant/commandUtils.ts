@@ -37,6 +37,7 @@ export function runCommand(command: string, args: string[], options: SpawnOption
     let timedOut = false;
     let settled = false;
     let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    let cleanupKillHandle: ReturnType<typeof setTimeout> | undefined;
 
     proc.stdout?.on('data', d => { stdout += d; });
     proc.stderr?.on('data', d => { stderr += d; });
@@ -48,6 +49,7 @@ export function runCommand(command: string, args: string[], options: SpawnOption
       settled = true;
       if (timeoutHandle) {
         clearTimeout(timeoutHandle);
+        timeoutHandle = undefined;
       }
       action();
     }
@@ -56,14 +58,30 @@ export function runCommand(command: string, args: string[], options: SpawnOption
       timeoutHandle = setTimeout(() => {
         timedOut = true;
         proc.kill();
+        cleanupKillHandle = setTimeout(() => {
+          if (proc.exitCode === null && proc.signalCode === null) {
+            proc.kill('SIGKILL');
+          }
+        }, 1000);
+        settle(() => reject(new Error(`Command timed out after ${timeoutMs}ms: ${command} ${args.join(' ')}`)));
       }, timeoutMs);
     }
 
     proc.on('error', error => {
+      if (cleanupKillHandle) {
+        clearTimeout(cleanupKillHandle);
+      }
       settle(() => reject(error));
     });
 
     proc.on('close', (code, signal) => {
+      if (cleanupKillHandle) {
+        clearTimeout(cleanupKillHandle);
+      }
+      if (settled) {
+        return;
+      }
+
       if (code === 0) {
         settle(() => resolve({ stdout, stderr }));
         return;

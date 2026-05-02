@@ -21,4 +21,19 @@ describe('PR Assistant command utilities', () => {
       'console.error("stderr details"); process.exit(7)'
     ])).rejects.toThrow(/stderr details[\s\S]*Command failed with exit code 7:/);
   });
+
+  it('rejects at the timeout even if the child delays termination', async () => {
+    const timeoutMs = 50;
+    const startedAt = Date.now();
+
+    await expect(runCommand(process.execPath, [
+      '-e',
+      [
+        'process.on("SIGTERM", () => setTimeout(() => process.exit(0), 1000));',
+        'setInterval(() => {}, 100);'
+      ].join('')
+    ], { timeout: timeoutMs })).rejects.toThrow(`Command timed out after ${timeoutMs}ms:`);
+
+    expect(Date.now() - startedAt).toBeLessThan(500);
+  });
 });
