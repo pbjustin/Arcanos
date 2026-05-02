@@ -917,8 +917,27 @@ export async function runThroughBrain(
         capabilityFlags,
         readIntentMode(outputControls)
       );
+      const directAnswerNeedsCurrentStateLimitation =
+        (!capabilityFlags.canVerifyLiveData || !capabilityFlags.canConfirmExternalState) &&
+        /\b(verify|verified|check|checked|confirm|confirmed|latest|current|recent|today|this week|as of now)\b/i.test(prompt) &&
+        /\b(competitors?|market|news|pricing|release|launch|moves?|external|trends?|compan(?:y|ies)|regulation|stocks?|status|events?)\b/i.test(prompt);
+      if (honestyFilteredFinal.blocked || directAnswerNeedsCurrentStateLimitation) {
+        directAnswerReasoningHonesty.responseMode = 'partial_refusal';
+        if (
+          directAnswerNeedsCurrentStateLimitation ||
+          honestyFilteredFinal.blockedCategories.includes('live_verification') ||
+          honestyFilteredFinal.blockedCategories.includes('current_external_state')
+        ) {
+          directAnswerReasoningHonesty.blockedSubtasks.push('verify current external state');
+          directAnswerReasoningHonesty.userVisibleCaveats.push("I can't verify current external state here without live access.");
+        }
+        if (honestyFilteredFinal.blockedCategories.includes('backend_action')) {
+          directAnswerReasoningHonesty.blockedSubtasks.push('confirm backend state or run backend actions');
+          directAnswerReasoningHonesty.userVisibleCaveats.push("I can't confirm backend state or run backend actions here.");
+        }
+      }
       const enforcedFinalOutput = enforceFinalStageHonestyAndMinimalism({
-        text: directAnswerOutput.output,
+        text: honestyFilteredFinal.text,
         userPrompt: prompt,
         capabilityFlags,
         outputControls,
