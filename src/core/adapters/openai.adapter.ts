@@ -26,6 +26,11 @@ import type { CreateEmbeddingResponse, EmbeddingCreateParams } from 'openai/reso
 import type { Transcription, TranscriptionCreateParamsNonStreaming } from 'openai/resources/audio/transcriptions.js';
 import type { ImageGenerateParamsNonStreaming, ImagesResponse } from 'openai/resources/images.js';
 import type { Response as OpenAIResponse, ResponseCreateParamsNonStreaming } from 'openai/resources/responses/responses';
+import {
+  attachOpenAIResponsesMetadataToChatCompletion,
+  resolveOpenAIResponsesLegacyFinishReason,
+  type OpenAIResponsesLegacyChatCompletion
+} from './openaiResponsesMetadata.js';
 import { recordDependencyCall } from '@platform/observability/appMetrics.js';
 import {
   assertAiBudgetAllowsCall,
@@ -356,13 +361,14 @@ function buildResponsesRequestFromChatParams(
 function convertResponseToLegacyChatCompletion(
   response: OpenAIResponse,
   requestedModel: string
-): ChatCompletion {
+): OpenAIResponsesLegacyChatCompletion {
   const usage = normalizeUsage(response.usage);
   const outputText = extractResponseText(response);
   const createdAt = (response as { created_at?: unknown }).created_at;
   const created = typeof createdAt === 'number' ? Math.floor(createdAt) : Math.floor(Date.now() / 1000);
+  const finishReason = resolveOpenAIResponsesLegacyFinishReason(response);
 
-  return {
+  const legacyResponse: ChatCompletion = {
     id: response.id || `legacy_${Date.now()}`,
     object: 'chat.completion',
     created,
@@ -375,7 +381,7 @@ function convertResponseToLegacyChatCompletion(
           content: outputText,
           refusal: null
         },
-        finish_reason: 'stop',
+        finish_reason: finishReason,
         logprobs: null
       }
     ],
@@ -385,6 +391,8 @@ function convertResponseToLegacyChatCompletion(
       total_tokens: usage.totalTokens
     }
   };
+
+  return attachOpenAIResponsesMetadataToChatCompletion(legacyResponse, response, finishReason);
 }
 
 /**

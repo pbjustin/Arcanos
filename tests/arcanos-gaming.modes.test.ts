@@ -143,4 +143,40 @@ describe("ArcanosGaming mode routing", () => {
       },
     });
   });
+
+  it("returns an incomplete generation error instead of a partial guide when the provider truncates", async () => {
+    const incompleteError = Object.assign(new Error("provider output incomplete"), {
+      code: "OPENAI_COMPLETION_INCOMPLETE",
+      finishReason: "length",
+      incompleteReason: "max_output_tokens",
+      truncated: true,
+      lengthTruncated: true,
+      contentFiltered: false
+    });
+    mockRunGuidePipeline.mockRejectedValueOnce(incompleteError);
+
+    const result = await ArcanosGaming.actions.query({
+      mode: "guide",
+      game: "Star Wars: The Old Republic",
+      prompt: "Beginner to intermediate guide for tanking in Star Wars The Old Republic including mechanics, threat management, mitigation, positioning, and group play tips."
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      route: "gaming",
+      mode: "guide",
+      error: {
+        code: "GENERATION_INCOMPLETE",
+        message: "Gaming generation did not complete cleanly; no partial answer was returned.",
+        details: {
+          finishReason: "length",
+          incompleteReason: "max_output_tokens",
+          truncated: true,
+          lengthTruncated: true,
+          contentFiltered: false,
+          integrityIssues: undefined
+        }
+      }
+    });
+  });
 });

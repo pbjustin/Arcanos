@@ -42,7 +42,7 @@ jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({
 
 const { runGuidePipeline } = await import('../src/services/gaming.js');
 
-describe('gaming direct-answer hardening', () => {
+describe('gaming guide output hardening', () => {
   beforeEach(() => {
     jest.clearAllMocks();
 
@@ -65,13 +65,13 @@ describe('gaming direct-answer hardening', () => {
     });
   });
 
-  it('bypasses the hotline persona pipeline for anti-simulation prompts', async () => {
+  it('routes anti-simulation guide prompts without enabling the implicit direct-answer cap', async () => {
     mockResponsesCreate.mockResolvedValue({
       choices: [{ message: { content: 'Direct gameplay answer' } }]
     });
 
     const result = await runGuidePipeline({
-      prompt: 'Answer directly. Do not simulate, role-play, or describe a hypothetical run. How do I beat the temple boss?',
+      prompt: 'Answer directly. Do not simulate, no role-play, no hypothetical runs. How do I beat the temple boss?',
       guideUrls: [],
       auditEnabled: false
     });
@@ -92,16 +92,98 @@ describe('gaming direct-answer hardening', () => {
           moduleId: 'ARCANOS:GAMING',
           sourceEndpoint: 'arcanos-gaming.guide',
           requestedAction: 'query',
-          prompt: expect.stringContaining('add hotline banter or theatrical framing')
+          prompt: expect.stringContaining('Avoid gameplay reenactment')
         }),
         context: expect.objectContaining({
           runOptions: expect.objectContaining({
-            answerMode: 'direct',
+            answerMode: 'explained',
+            requestedVerbosity: 'detailed',
             strictUserVisibleOutput: true
           })
         })
       })
     );
+    const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
+    expect(trinityRequest.input.prompt).not.toContain('Answer directly');
+    expect(trinityRequest.input.prompt).not.toContain('Do not simulate');
+    expect(trinityRequest.input.prompt).toContain('avoid hypothetical run narration');
+    expect(trinityRequest.input.prompt).not.toContain('avoid run narration narration');
+  });
+
+  it('keeps SWTOR guide requests on an uncapped guide output path', async () => {
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce({
+      result: [
+        '1. Set your role and discipline.',
+        '2. Gear around your current item rating.',
+        '3. Practice interrupts and defensive cooldowns.',
+        '4. Use companions and travel unlocks to reduce downtime.'
+      ].join('\n')
+    });
+
+    const result = await runGuidePipeline({
+      prompt: 'Answer directly. Do not simulate. Give me a complete SWTOR guide for gearing, combat basics, and daily progression.',
+      game: 'SWTOR',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(result.data.response).toContain('1. Set your role and discipline.');
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(
+      expect.objectContaining({
+        context: expect.objectContaining({
+          runOptions: {
+            answerMode: 'explained',
+            requestedVerbosity: 'detailed',
+            strictUserVisibleOutput: true
+          }
+        })
+      })
+    );
+  });
+
+  it('preserves the original SWTOR guide request as direct guide output without fallback splicing', async () => {
+    const swtorGuide = [
+      '1. Mechanics: face enemies away from the group and learn boss swap tells before they matter.',
+      '2. Threat: open with high-threat tools, tab through packs, and save taunts for swaps or loose enemies.',
+      '3. Mitigation: rotate cooldowns before spikes and keep defensive buffs active instead of panic-stacking everything.',
+      '4. Positioning: hold enemies still, move early out of ground effects, and keep cleaves away from allies.',
+      '5. Group play: communicate swaps, protect healers, mark priority targets, and ask damage dealers for a setup beat.'
+    ].join('\n');
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce({ result: swtorGuide });
+
+    const result = await runGuidePipeline({
+      game: 'Star Wars: The Old Republic',
+      prompt: 'Beginner to intermediate guide for tanking in Star Wars The Old Republic including mechanics, threat management, mitigation, positioning, and group play tips.',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      mode: 'guide',
+      data: {
+        response: swtorGuide,
+        sources: []
+      }
+    }));
+    expect(result.data.response).not.toContain('bounded fallback response');
+    expect(result.data.response).not.toContain('Retry with a narrower scope');
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({
+          prompt: expect.stringContaining('Beginner to intermediate guide for tanking in Star Wars The Old Republic'),
+          sourceEndpoint: 'arcanos-gaming.guide'
+        }),
+        context: expect.objectContaining({
+          runOptions: expect.objectContaining({
+            answerMode: 'explained',
+            requestedVerbosity: 'detailed',
+            strictUserVisibleOutput: true
+          })
+        })
+      })
+    );
+    expect(mockResponsesCreate).not.toHaveBeenCalled();
   });
 
   it('short-circuits exact-literal prompts before any provider call', async () => {

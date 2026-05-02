@@ -10,6 +10,7 @@ import {
   readIntentMode,
   resolveIntentMode,
   shouldExposePipelineDebug,
+  validateTrinityAnswerIntegrity,
   type TrinityReasoningHonesty
 } from '../src/core/logic/trinityHonesty.js';
 
@@ -703,5 +704,142 @@ describe('Trinity honesty controls', () => {
     expect(enforcementResult.text.match(/I can't verify current competitor moves without live browsing\./g)).toHaveLength(1);
     expect(enforcementResult.text).not.toContain('I can help with that.');
     expect(enforcementResult.text).toContain('Roll out behind a feature flag.');
+  });
+
+  it('keeps numbered list markers attached to their item text during compression', () => {
+    const enforcementResult = enforceFinalStageHonestyAndMinimalism({
+      text: [
+        '1. Choose your SWTOR class and discipline before chasing gear.',
+        '2. Finish the current story chapter, then run conquest and flashpoints.',
+        '3. Upgrade only the pieces that raise your item rating efficiently.'
+      ].join('\n'),
+      userPrompt: 'Give me SWTOR guide steps under 18 words.',
+      capabilityFlags: deriveTrinityCapabilityFlags(),
+      outputControls: {
+        requestedVerbosity: 'minimal',
+        maxWords: 18,
+        answerMode: 'direct',
+        debugPipeline: false,
+        strictUserVisibleOutput: true
+      },
+      reasoningHonesty: {
+        responseMode: 'answer',
+        achievableSubtasks: ['Give SWTOR guide steps'],
+        blockedSubtasks: [],
+        userVisibleCaveats: [],
+        evidenceTags: []
+      }
+    });
+
+    expect(enforcementResult.text).not.toMatch(/(?:^|\s)\d+\.$/);
+    expect(enforcementResult.text).toMatch(/1\. Choose your SWTOR class/);
+  });
+
+  it('does not apply an implicit short cap merely because answerMode is direct', () => {
+    const longGuide = [
+      '1. Mechanics: learn boss tells, face enemies away from the group, and interrupt dangerous casts before they hit healers.',
+      '2. Threat: open with high-threat abilities, tab through packs, and save taunts for swaps or enemies leaving your control.',
+      '3. Mitigation: rotate cooldowns before damage spikes, keep defensive buffs active, and avoid spending every tool at once.',
+      '4. Positioning: hold enemies still, keep cleaves pointed away from the group, and move early when ground effects appear.',
+      '5. Group play: communicate swaps, protect healers, mark priority targets, and let damage dealers know when threat is unstable.',
+      '6. Practice: run veteran flashpoints with patient groups, review deaths after each boss, and adjust one habit at a time.',
+      '7. Mindset: your job is to make enemy behavior predictable so the healer and damage dealers can make clean decisions.'
+    ].join('\n');
+
+    const enforcementResult = enforceFinalStageHonestyAndMinimalism({
+      text: longGuide,
+      userPrompt: 'Beginner to intermediate guide for tanking in Star Wars The Old Republic including mechanics, threat management, mitigation, positioning, and group play tips.',
+      capabilityFlags: deriveTrinityCapabilityFlags(),
+      outputControls: {
+        requestedVerbosity: 'normal',
+        maxWords: null,
+        answerMode: 'direct',
+        debugPipeline: false,
+        strictUserVisibleOutput: true
+      },
+      reasoningHonesty: {
+        responseMode: 'answer',
+        achievableSubtasks: ['Give the SWTOR tanking guide'],
+        blockedSubtasks: [],
+        userVisibleCaveats: [],
+        evidenceTags: []
+      }
+    });
+
+    expect(countWords(enforcementResult.text)).toBeGreaterThan(90);
+    expect(enforcementResult.text).toContain('5. Group play');
+    expect(enforcementResult.text).not.toMatch(/\b3\.\s+4\./);
+  });
+
+  it('preserves numbered-list line breaks when no compression or rewrite is needed', () => {
+    const guide = [
+      '1. Pick a tank discipline and learn its defensive resource.',
+      '2. Use taunts for swaps, loose enemies, or planned threat windows.',
+      '3. Keep enemies faced away from allies and move early for ground effects.'
+    ].join('\n');
+
+    const enforcementResult = enforceFinalStageHonestyAndMinimalism({
+      text: guide,
+      userPrompt: 'Give me SWTOR tanking guide steps.',
+      capabilityFlags: deriveTrinityCapabilityFlags(),
+      outputControls: {
+        requestedVerbosity: 'normal',
+        maxWords: null,
+        answerMode: 'direct',
+        debugPipeline: false,
+        strictUserVisibleOutput: true
+      },
+      reasoningHonesty: {
+        responseMode: 'answer',
+        achievableSubtasks: ['Give SWTOR tanking guide steps'],
+        blockedSubtasks: [],
+        userVisibleCaveats: [],
+        evidenceTags: []
+      }
+    });
+
+    expect(enforcementResult.text).toBe(guide);
+  });
+
+  it('does not splice generic fallback text into a partial answer that still has useful content', () => {
+    const honestyResult = enforceFinalStageHonesty(
+      'I verified the latest SWTOR patch state today. Start with your class discipline, then follow the conquest and flashpoint gearing loop.',
+      createDefaultTrinityReasoningHonesty(),
+      deriveTrinityCapabilityFlags()
+    );
+    const enforcementResult = enforceFinalStageHonestyAndMinimalism({
+      text: honestyResult.text,
+      userPrompt: 'Give me a SWTOR progression guide.',
+      capabilityFlags: deriveTrinityCapabilityFlags(),
+      outputControls: deriveTrinityOutputControls('Give me a SWTOR progression guide.', {}),
+      reasoningHonesty: createDefaultTrinityReasoningHonesty()
+    });
+
+    expect(enforcementResult.text).toContain('Start with your class discipline');
+    expect(enforcementResult.text).not.toContain('I can help with general guidance, but I cannot verify live or current external information here.');
+  });
+
+  it('flags malformed generated answers before they are treated as complete', () => {
+    const integrity = validateTrinityAnswerIntegrity({
+      text: "1. Mechanics: face enemies away. 3. 4. I can't verify current external state here without live access.",
+      reasoningHonesty: createDefaultTrinityReasoningHonesty()
+    });
+
+    expect(integrity.valid).toBe(false);
+    expect(integrity.issues).toEqual(expect.arrayContaining([
+      'broken_numbering',
+      'fallback_spliced_mid_answer'
+    ]));
+  });
+
+  it('flags abrupt endings that stop on auxiliary verbs', () => {
+    const integrity = validateTrinityAnswerIntegrity({
+      text: 'The tank should'
+    });
+
+    expect(integrity).toEqual({
+      valid: false,
+      issues: ['abrupt_mid_sentence_ending']
+    });
   });
 });

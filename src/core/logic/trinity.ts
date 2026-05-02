@@ -78,6 +78,7 @@ import {
   deriveTrinityOutputControls,
   enforceFinalStageHonesty,
   enforceFinalStageHonestyAndMinimalism,
+  validateTrinityAnswerIntegrity,
   readIntentMode
 } from './trinityHonesty.js';
 import { resolveTrinityDirectAnswerPreference } from '@services/directAnswerMode.js';
@@ -916,14 +917,53 @@ export async function runThroughBrain(
         capabilityFlags,
         readIntentMode(outputControls)
       );
+      const directAnswerNeedsCurrentStateLimitation =
+        (!capabilityFlags.canVerifyLiveData || !capabilityFlags.canConfirmExternalState) &&
+        /\b(verify|verified|check|checked|confirm|confirmed|latest|current|recent|today|this week|as of now)\b/i.test(prompt) &&
+        /\b(competitors?|market|news|pricing|release|launch|moves?|external|trends?|compan(?:y|ies)|regulation|stocks?|status|events?)\b/i.test(prompt);
+      if (honestyFilteredFinal.blocked || directAnswerNeedsCurrentStateLimitation) {
+        directAnswerReasoningHonesty.responseMode = 'partial_refusal';
+        if (
+          directAnswerNeedsCurrentStateLimitation ||
+          honestyFilteredFinal.blockedCategories.includes('live_verification') ||
+          honestyFilteredFinal.blockedCategories.includes('current_external_state')
+        ) {
+          directAnswerReasoningHonesty.blockedSubtasks.push('verify current external state');
+          directAnswerReasoningHonesty.userVisibleCaveats.push("I can't verify current external state here without live access.");
+        }
+        if (honestyFilteredFinal.blockedCategories.includes('backend_action')) {
+          directAnswerReasoningHonesty.blockedSubtasks.push('confirm backend state or run backend actions');
+          directAnswerReasoningHonesty.userVisibleCaveats.push("I can't confirm backend state or run backend actions here.");
+        }
+      }
       const enforcedFinalOutput = enforceFinalStageHonestyAndMinimalism({
-        text: directAnswerOutput.output,
+        text: honestyFilteredFinal.text,
         userPrompt: prompt,
         capabilityFlags,
         outputControls,
         reasoningHonesty: directAnswerReasoningHonesty
       });
       const finalText = applyTrinityDirectAnswerOutputContract(enforcedFinalOutput.text, prompt);
+      const integrity = validateTrinityAnswerIntegrity({
+        text: finalText,
+        reasoningHonesty: directAnswerReasoningHonesty
+      });
+      if (!integrity.valid) {
+        logger.warn('trinity.direct_answer.integrity_failed', {
+          module: 'trinity',
+          operation: 'direct-answer-integrity',
+          requestId,
+          sourceEndpoint: options.sourceEndpoint,
+          issues: integrity.issues,
+          outputChars: finalText.length
+        });
+        const integrityError = new Error('Trinity direct-answer output failed integrity validation.');
+        Object.assign(integrityError, {
+          code: 'TRINITY_OUTPUT_INTEGRITY_FAILED',
+          integrityIssues: integrity.issues
+        });
+        throw integrityError;
+      }
 
       if (honestyFilteredFinal.blocked) {
         auditFlags.push('FINAL_UNSUPPORTED_CLAIM_BLOCKED');
@@ -1014,6 +1054,9 @@ export async function runThroughBrain(
         outputControls,
         directAnswerReasoningHonesty
       );
+      if (directAnswerOutput.provider) {
+        result.meta.provider = directAnswerOutput.provider;
+      }
 
       result.tierInfo = {
         tier,
@@ -1535,6 +1578,9 @@ export async function runThroughBrain(
       reasoningLedger,
       clearAudit
     );
+    if (finalOutput.provider) {
+      result.meta.provider = finalOutput.provider;
+    }
 
     result.tierInfo = {
       tier,

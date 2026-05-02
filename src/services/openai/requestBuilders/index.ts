@@ -66,6 +66,10 @@ import {
 } from './validate.js';
 
 export type { ChatParams, VisionParams, TranscriptionParams, ImageParams, EmbeddingParams };
+export type {
+  OpenAIResponsesLegacyChatCompletion,
+  OpenAIResponsesProviderMetadata
+} from './convert.js';
 
 /**
  * Build a Responses API payload from chat-style params.
