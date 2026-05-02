@@ -44,7 +44,7 @@ export async function buildGamingWebContext(urls: string[]): Promise<GamingWebCo
     uniqueUrls.map(async (url): Promise<GamingWebSource> => {
       const sourceUrl = redactUrlCredentials(url);
       try {
-        const snippet = await fetchAndClean(url, maxContextChars);
+        const snippet = await fetchAndClean(sourceUrl, maxContextChars);
         return { url: sourceUrl, snippet };
       } catch (error) {
         return { url: sourceUrl, error: resolveErrorMessage(error, "Unknown fetch error") };

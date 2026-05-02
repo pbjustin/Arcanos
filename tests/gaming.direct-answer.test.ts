@@ -545,6 +545,7 @@ describe('gaming guide output hardening', () => {
     expect(result.data.sources).toEqual([
       { url: 'https://example.com/guide', snippet: 'clean snippet' }
     ]);
+    expect(mockFetchAndClean).toHaveBeenCalledWith('https://example.com/guide', 512);
     expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(
       expect.objectContaining({
         input: expect.objectContaining({

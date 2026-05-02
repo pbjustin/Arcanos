@@ -1,4 +1,6 @@
-import { spawn, type SpawnOptions } from 'child_process';
+import { spawn, type ChildProcess, type SpawnOptions } from 'child_process';
+
+const FORCE_KILL_DELAY_MS = 1000;
 
 function resolvePlatformCommand(command: string): string {
   //audit Assumption: Windows resolves npm/npx through .cmd shims; risk: ENOENT when spawning bare command; invariant: equivalent command executable is selected per platform; handling: map npm/npx/node-gyp to .cmd on win32.
@@ -23,6 +25,33 @@ function formatCommandFailure(command: string, args: string[], failureReason: st
   return stderrDetails ? `${stderrDetails}\n${commandDetails}` : commandDetails;
 }
 
+function killProcessTree(proc: ChildProcess, signal: NodeJS.Signals): void {
+  const pid = proc.pid;
+  if (!pid) {
+    return;
+  }
+
+  if (process.platform === 'win32') {
+    try {
+      const killer = spawn('taskkill', ['/PID', String(pid), '/T', '/F'], {
+        stdio: 'ignore',
+        windowsHide: true
+      });
+      killer.on('error', () => undefined);
+      killer.unref();
+    } catch {
+      proc.kill(signal);
+    }
+    return;
+  }
+
+  try {
+    process.kill(-pid, signal);
+  } catch {
+    proc.kill(signal);
+  }
+}
+
 export function runCommand(command: string, args: string[], options: SpawnOptions = {}): Promise<{ stdout: string; stderr: string; }> {
   return new Promise((resolve, reject) => {
     const executable = resolvePlatformCommand(command);
@@ -31,6 +60,9 @@ export function runCommand(command: string, args: string[], options: SpawnOption
       : undefined;
     const spawnOptions: SpawnOptions = { ...options, shell: false };
     delete spawnOptions.timeout;
+    if (process.platform !== 'win32' && spawnOptions.detached === undefined) {
+      spawnOptions.detached = true;
+    }
     const proc = spawn(executable, args, spawnOptions);
     let stdout = '';
     let stderr = '';
@@ -57,12 +89,12 @@ export function runCommand(command: string, args: string[], options: SpawnOption
     if (timeoutMs && timeoutMs > 0) {
       timeoutHandle = setTimeout(() => {
         timedOut = true;
-        proc.kill();
+        killProcessTree(proc, 'SIGTERM');
         cleanupKillHandle = setTimeout(() => {
           if (proc.exitCode === null && proc.signalCode === null) {
-            proc.kill('SIGKILL');
+            killProcessTree(proc, 'SIGKILL');
           }
-        }, 1000);
+        }, FORCE_KILL_DELAY_MS);
         settle(() => reject(new Error(`Command timed out after ${timeoutMs}ms: ${command} ${args.join(' ')}`)));
       }, timeoutMs);
     }
