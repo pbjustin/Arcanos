@@ -1306,6 +1306,8 @@ describe('/gpt-access gateway', () => {
 
   it('exposes self-heal and self-reflection status through a read-only GPT Access endpoint', async () => {
     process.env.ARCANOS_GPT_ACCESS_SCOPES = 'mcp.approved_readonly';
+    const latestSelfReflectionAt = new Date('2026-04-27T10:00:00.000Z');
+    const latestCategoryAt = new Date('2026-04-27T09:55:00.000Z');
     buildSafetySelfHealSnapshotMock.mockReturnValueOnce({
       status: 'degraded',
       loopRunning: false,
@@ -1317,7 +1319,7 @@ describe('/gpt-access gateway', () => {
         rows: [
           {
             total: 2,
-            latest_created_at: '2026-04-27T10:00:00.000Z'
+            latest_created_at: latestSelfReflectionAt
           }
         ]
       })
@@ -1326,7 +1328,7 @@ describe('/gpt-access gateway', () => {
           {
             category: 'healing',
             total: 2,
-            latest_created_at: '2026-04-27T10:00:00.000Z'
+            latest_created_at: latestCategoryAt
           }
         ]
       });
@@ -1352,7 +1354,7 @@ describe('/gpt-access gateway', () => {
           {
             category: 'healing',
             total: 2,
-            latestCreatedAt: '2026-04-27T10:00:00.000Z'
+            latestCreatedAt: '2026-04-27T09:55:00.000Z'
           }
         ]
       }

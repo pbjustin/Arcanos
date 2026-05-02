@@ -1273,6 +1273,14 @@ function normalizeDbCount(value: unknown): number {
   return 0;
 }
 
+function normalizeDbTimestamp(value: unknown): string | null {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString();
+  }
+
+  return typeof value === 'string' && value.trim().length > 0 ? value : null;
+}
+
 async function getSelfReflectionStorageStatus() {
   if (!isDatabaseConnected()) {
     return {
@@ -1286,33 +1294,35 @@ async function getSelfReflectionStorageStatus() {
   }
 
   try {
-    const summaryResult = await query(
-      `SELECT COUNT(*)::int AS total, MAX(created_at) AS latest_created_at
-         FROM self_reflections`
-    );
-    const categoryResult = await query(
-      `SELECT category, COUNT(*)::int AS total, MAX(created_at) AS latest_created_at
-         FROM self_reflections
-         GROUP BY category
-         ORDER BY latest_created_at DESC NULLS LAST
-         LIMIT 10`
-    );
+    const [summaryResult, categoryResult] = await Promise.all([
+      query(
+        `SELECT COUNT(*)::int AS total, MAX(created_at) AS latest_created_at
+           FROM self_reflections`
+      ),
+      query(
+        `SELECT category, COUNT(*)::int AS total, MAX(created_at) AS latest_created_at
+           FROM self_reflections
+           GROUP BY category
+           ORDER BY latest_created_at DESC NULLS LAST
+           LIMIT 10`
+      )
+    ]);
     const summaryRow = summaryResult.rows[0] as Record<string, unknown> | undefined;
 
-    return sanitizeGptAccessPayload({
+    return {
       configured: true,
       status: 'ok',
       total: normalizeDbCount(summaryRow?.total),
-      latestCreatedAt: summaryRow?.latest_created_at ?? null,
+      latestCreatedAt: normalizeDbTimestamp(summaryRow?.latest_created_at),
       categories: categoryResult.rows.map((rowRaw: unknown) => {
         const row = rowRaw as Record<string, unknown>;
         return {
           category: typeof row.category === 'string' ? row.category : 'unknown',
           total: normalizeDbCount(row.total),
-          latestCreatedAt: row.latest_created_at ?? null
+          latestCreatedAt: normalizeDbTimestamp(row.latest_created_at)
         };
       })
-    });
+    };
   } catch {
     return {
       configured: true,
@@ -1327,14 +1337,14 @@ async function getSelfReflectionStorageStatus() {
 
 export async function getGptAccessSelfHealStatus() {
   try {
-    const selfHeal = sanitizeGptAccessPayload(buildSafetySelfHealSnapshot());
+    const selfReflection = await getSelfReflectionStorageStatus();
     return {
       statusCode: 200,
       payload: sanitizeGptAccessPayload({
         ok: true,
         tool: 'self_heal.status',
-        result: selfHeal,
-        selfReflection: await getSelfReflectionStorageStatus()
+        result: buildSafetySelfHealSnapshot(),
+        selfReflection
       })
     };
   } catch {
@@ -1429,6 +1439,12 @@ export async function runGptAccessMcpTool(body: unknown) {
       return getGptAccessSelfHealStatus();
     case 'diagnostics':
       try {
+        const [workers, queue, selfHealResult] = await Promise.all([
+          getWorkerControlStatus(),
+          getJobQueueSummary(),
+          getGptAccessSelfHealStatus()
+        ]);
+
         return {
           statusCode: 200,
           payload: sanitizeGptAccessPayload({
@@ -1436,9 +1452,9 @@ export async function runGptAccessMcpTool(body: unknown) {
             tool,
             result: {
               runtime: runtimeDiagnosticsService.getHealthSnapshot(),
-              workers: await getWorkerControlStatus(),
-              queue: await getJobQueueSummary(),
-              selfHeal: (await getGptAccessSelfHealStatus()).payload
+              workers,
+              queue,
+              selfHeal: selfHealResult.payload
             }
           })
         };
