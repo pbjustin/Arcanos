@@ -191,6 +191,28 @@ describe('ARCANOS PR Assistant', () => {
       process.chdir(originalCwd);
     });
 
+    it('should not let warnings hide failed checks', async () => {
+      runCommandMock.mockRejectedValueOnce(new Error('Command timed out after 900000ms: npm test'));
+
+      const result = await prAssistant.analyzePR(mockPRDiff, mockPRFiles);
+
+      expect(result.status).toBe('❌');
+      expect(result.summary).toContain('REJECTED');
+      expect(result.checks.deadCodeRemoval.status).toBe('⚠️');
+      expect(result.checks.automatedValidation.status).toBe('❌');
+    });
+
+    it('should not treat passing stderr output as an automated validation failure', async () => {
+      runCommandMock.mockResolvedValue({
+        stdout: '',
+        stderr: 'PASS tests/example.test.ts\n  ● Console\n\n    console.log test output'
+      });
+
+      const result = await prAssistant.analyzePR(mockPRDiff, mockPRFiles);
+
+      expect(result.checks.automatedValidation.status).toBe('✅');
+    });
+
     it('should format results as markdown', async () => {
       const mockResult = {
         status: '✅' as const,

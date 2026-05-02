@@ -80,10 +80,11 @@ export class PRAssistant {
     } as const;
 
     const allChecksPass = Object.values(checks).every(check => check.status === '✅');
+    const hasFailures = Object.values(checks).some(check => check.status === '❌');
     const hasWarnings = Object.values(checks).some(check => check.status === '⚠️');
 
     //audit Assumption: check statuses are limited to ✅/⚠️/❌; risk: unknown status; invariant: status derived from checks; handling: map to worst-case.
-    const status: '✅' | '❌' | '⚠️' = allChecksPass ? '✅' : (hasWarnings ? '⚠️' : '❌');
+    const status: '✅' | '❌' | '⚠️' = hasFailures ? '❌' : (allChecksPass ? '✅' : '⚠️');
     const summary = generateSummary(checks, allChecksPass, hasWarnings);
     const reasoning = generateReasoning(checks);
     const recommendations = generateRecommendations(checks);

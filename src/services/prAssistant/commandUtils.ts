@@ -24,18 +24,56 @@ function resolvePlatformCommand(command: string): string {
 export function runCommand(command: string, args: string[], options: SpawnOptions = {}): Promise<{ stdout: string; stderr: string; }> {
   return new Promise((resolve, reject) => {
     const executable = resolvePlatformCommand(command);
-    const proc = spawn(executable, sanitizeArgs(args), { ...options, shell: false });
+    const timeoutMs = typeof options.timeout === 'number' && Number.isFinite(options.timeout)
+      ? options.timeout
+      : undefined;
+    const spawnOptions: SpawnOptions = { ...options, shell: false };
+    delete spawnOptions.timeout;
+    const proc = spawn(executable, sanitizeArgs(args), spawnOptions);
     let stdout = '';
     let stderr = '';
+    let timedOut = false;
+    let settled = false;
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
 
     proc.stdout?.on('data', d => { stdout += d; });
     proc.stderr?.on('data', d => { stderr += d; });
-    proc.on('close', code => {
-      if (code === 0) {
-        resolve({ stdout, stderr });
-      } else {
-        reject(new Error(stderr || `Command failed: ${command} ${args.join(' ')}`));
+
+    function settle(action: () => void): void {
+      if (settled) {
+        return;
       }
+      settled = true;
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
+      action();
+    }
+
+    if (timeoutMs && timeoutMs > 0) {
+      timeoutHandle = setTimeout(() => {
+        timedOut = true;
+        proc.kill();
+      }, timeoutMs);
+    }
+
+    proc.on('error', error => {
+      settle(() => reject(error));
+    });
+
+    proc.on('close', (code, signal) => {
+      if (code === 0) {
+        settle(() => resolve({ stdout, stderr }));
+        return;
+      }
+
+      if (timedOut) {
+        settle(() => reject(new Error(`Command timed out after ${timeoutMs}ms: ${command} ${args.join(' ')}`)));
+        return;
+      }
+
+      const failureReason = signal ? `signal ${signal}` : `exit code ${code ?? 'unknown'}`;
+      settle(() => reject(new Error(stderr || `Command failed with ${failureReason}: ${command} ${args.join(' ')}`)));
     });
   });
 }
