@@ -3,11 +3,15 @@ import { load } from 'cheerio';
 import { lookup } from 'node:dns/promises';
 import { Agent as HttpsAgent } from 'node:https';
 import { isIP } from 'node:net';
+import { getEnv, getEnvNumber } from '@platform/runtime/env.js';
 
 const DEFAULT_MAX_CHARS = 12000;
 const LOCALHOST_FETCH_FLAG = 'ARCANOS_ALLOW_LOCALHOST_FETCH';
-const MAX_FETCH_BYTES = 1_500_000;
-const FETCH_TIMEOUT_MS = 8000;
+const DEFAULT_MAX_FETCH_BYTES = 1_500_000;
+const DEFAULT_FETCH_TIMEOUT_MS = 8000;
+const DEFAULT_MAX_LINKS = 15;
+const DEFAULT_MAX_REDIRECTS = 0;
+const DEFAULT_USER_AGENT = 'Arcanos-WebFetcher/1.0';
 
 type IpFamily = 4 | 6;
 
@@ -16,6 +20,35 @@ interface ResolvedFetchTarget {
   requestUrl: URL;
   hostHeader: string;
   tlsServerName: string;
+}
+
+function readIntegerEnv(key: string, defaultValue: number, minValue: number): number {
+  const value = Math.trunc(getEnvNumber(key, defaultValue));
+  return Number.isFinite(value) && value >= minValue ? value : defaultValue;
+}
+
+function getConfiguredMaxChars(): number {
+  return readIntegerEnv('WEB_FETCH_MAX_CHARS', DEFAULT_MAX_CHARS, 0);
+}
+
+function getConfiguredFetchTimeoutMs(): number {
+  return readIntegerEnv('WEB_FETCH_TIMEOUT_MS', DEFAULT_FETCH_TIMEOUT_MS, 1);
+}
+
+function getConfiguredMaxFetchBytes(): number {
+  return readIntegerEnv('WEB_FETCH_MAX_BYTES', DEFAULT_MAX_FETCH_BYTES, 1);
+}
+
+function getConfiguredMaxLinks(): number {
+  return readIntegerEnv('WEB_FETCH_MAX_LINKS', DEFAULT_MAX_LINKS, 0);
+}
+
+function getConfiguredMaxRedirects(): number {
+  return readIntegerEnv('WEB_FETCH_MAX_REDIRECTS', DEFAULT_MAX_REDIRECTS, 0);
+}
+
+function getConfiguredUserAgent(): string {
+  return getEnv('WEB_FETCH_USER_AGENT') || DEFAULT_USER_AGENT;
 }
 
 export interface FetchAndCleanLinkSummary {
@@ -67,7 +100,7 @@ function buildLinkBlock(links: FetchAndCleanLinkSummary[]): string {
  */
 export function serializeFetchAndCleanDocument(
   document: Pick<FetchAndCleanDocument, 'text' | 'links'>,
-  maxChars = DEFAULT_MAX_CHARS
+  maxChars = getConfiguredMaxChars()
 ): string {
   const linkBlock = buildLinkBlock(document.links);
   return `${document.text}${linkBlock}`.slice(0, Math.max(0, maxChars));
@@ -79,8 +112,12 @@ export function serializeFetchAndCleanDocument(
  * Edge cases: Blocks private/internal IP targets, enforces DNS-rebinding-safe host pinning,
  * and allows localhost only with explicit non-production opt-in.
  */
-export async function fetchAndCleanDocument(url: string, maxChars = DEFAULT_MAX_CHARS): Promise<FetchAndCleanDocument> {
+export async function fetchAndCleanDocument(
+  url: string,
+  maxChars = getConfiguredMaxChars()
+): Promise<FetchAndCleanDocument> {
   const target = await resolveFetchTarget(url);
+  const maxFetchBytes = getConfiguredMaxFetchBytes();
   const httpsAgent =
     target.parsedUrl.protocol === 'https:'
       ? new HttpsAgent({
@@ -90,14 +127,14 @@ export async function fetchAndCleanDocument(url: string, maxChars = DEFAULT_MAX_
       : undefined;
 
   const { data } = await axios.get<string>(target.requestUrl.toString(), {
-    timeout: FETCH_TIMEOUT_MS,
-    maxContentLength: MAX_FETCH_BYTES,
-    maxBodyLength: MAX_FETCH_BYTES,
-    maxRedirects: 0,
+    timeout: getConfiguredFetchTimeoutMs(),
+    maxContentLength: maxFetchBytes,
+    maxBodyLength: maxFetchBytes,
+    maxRedirects: getConfiguredMaxRedirects(),
     responseType: 'text',
     headers: {
       Host: target.hostHeader,
-      'User-Agent': 'Arcanos-WebFetcher/1.0',
+      'User-Agent': getConfiguredUserAgent(),
       Accept: 'text/html,text/plain;q=0.9,*/*;q=0.8'
     },
     httpsAgent
@@ -133,7 +170,7 @@ export async function fetchAndCleanDocument(url: string, maxChars = DEFAULT_MAX_
     }
   });
 
-  const limitedLinks = links.slice(0, 15);
+  const limitedLinks = links.slice(0, getConfiguredMaxLinks());
 
   return {
     text: cleanedText,
@@ -147,7 +184,7 @@ export async function fetchAndCleanDocument(url: string, maxChars = DEFAULT_MAX_
  * Inputs/Outputs: URL + optional max chars -> cleaned page text string.
  * Edge cases: Preserves the historical compact string payload for existing callers.
  */
-export async function fetchAndClean(url: string, maxChars = DEFAULT_MAX_CHARS): Promise<string> {
+export async function fetchAndClean(url: string, maxChars = getConfiguredMaxChars()): Promise<string> {
   const document = await fetchAndCleanDocument(url, maxChars);
   return document.combined;
 }

@@ -1,6 +1,14 @@
 import http from 'http';
 import { fetchAndClean, fetchAndCleanDocument } from '../src/shared/webFetcher.js';
 
+function restoreEnvValue(key: string, previousValue: string | undefined): void {
+  if (typeof previousValue === 'string') {
+    process.env[key] = previousValue;
+  } else {
+    delete process.env[key];
+  }
+}
+
 describe('fetchAndClean', () => {
   let server: http.Server;
   let baseUrl: string;
@@ -60,6 +68,18 @@ describe('fetchAndClean', () => {
   it('truncates content when maxChars is provided', async () => {
     const cleaned = await fetchAndClean(baseUrl, 5);
     expect(cleaned).toBe('Hello');
+  });
+
+  it('uses WEB_FETCH_MAX_CHARS when no explicit maxChars value is provided', async () => {
+    const previousMaxChars = process.env.WEB_FETCH_MAX_CHARS;
+    process.env.WEB_FETCH_MAX_CHARS = '5';
+
+    try {
+      const cleaned = await fetchAndClean(baseUrl);
+      expect(cleaned).toBe('Hello');
+    } finally {
+      restoreEnvValue('WEB_FETCH_MAX_CHARS', previousMaxChars);
+    }
   });
 
   it('appends a compact link directory', async () => {

@@ -104,10 +104,30 @@ describe('gaming direct-answer hardening', () => {
     );
   });
 
+  it('deduplicates guide URLs and uses the configured gaming context size', async () => {
+    await runGuidePipeline({
+      prompt: 'Use the linked guides for a direct boss strategy.',
+      guideUrl: 'https://example.com/guide-a',
+      guideUrls: ['https://example.com/guide-a', 'https://example.com/guide-b'],
+      auditEnabled: false
+    });
+
+    expect(mockFetchAndClean).toHaveBeenNthCalledWith(1, 'https://example.com/guide-a', 512);
+    expect(mockFetchAndClean).toHaveBeenNthCalledWith(2, 'https://example.com/guide-b', 512);
+    expect(mockFetchAndClean).toHaveBeenCalledTimes(2);
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({
+          prompt: expect.stringContaining('[Source 1] https://example.com/guide-a')
+        })
+      })
+    );
+  });
+
   it('short-circuits exact-literal prompts before any provider call', async () => {
     const result = await runGuidePipeline({
       prompt: 'Answer directly. Do not simulate, role-play, or describe a hypothetical run. Say exactly: no-simulation.',
-      guideUrls: [],
+      guideUrls: ['https://example.com/guide'],
       auditEnabled: false
     });
 
@@ -120,6 +140,7 @@ describe('gaming direct-answer hardening', () => {
         sources: []
       }
     });
+    expect(mockFetchAndClean).not.toHaveBeenCalled();
     expect(mockResponsesCreate).not.toHaveBeenCalled();
     expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
   });
