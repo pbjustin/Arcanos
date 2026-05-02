@@ -534,6 +534,29 @@ describe('gaming guide output hardening', () => {
     );
   });
 
+  it('redacts guide URL credentials from returned sources and prompt context', async () => {
+    const result = await runGuidePipeline({
+      prompt: 'Use the linked guide for a direct boss strategy.',
+      guideUrl: 'https://user:pass@example.com/guide',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(result.data.sources).toEqual([
+      { url: 'https://example.com/guide', snippet: 'clean snippet' }
+    ]);
+    expect(mockFetchAndClean).toHaveBeenCalledWith('https://example.com/guide', 512);
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({
+          prompt: expect.stringContaining('[Source 1] https://example.com/guide')
+        })
+      })
+    );
+    const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
+    expect(trinityRequest.input.prompt).not.toContain('user:pass');
+  });
+
   it('short-circuits exact-literal prompts before any provider call', async () => {
     const result = await runGuidePipeline({
       prompt: 'Answer directly. Do not simulate, role-play, or describe a hypothetical run. Say exactly: no-simulation.',

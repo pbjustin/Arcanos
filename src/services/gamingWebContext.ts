@@ -19,6 +19,20 @@ export function collectGamingGuideUrls(params: GamingGuideUrlInput): string[] {
   ];
 }
 
+function redactUrlCredentials(url: string): string {
+  try {
+    const parsedUrl = new URL(url);
+    if (!parsedUrl.username && !parsedUrl.password) {
+      return url;
+    }
+    parsedUrl.username = "";
+    parsedUrl.password = "";
+    return parsedUrl.toString();
+  } catch {
+    return url;
+  }
+}
+
 export async function buildGamingWebContext(urls: string[]): Promise<GamingWebContext> {
   if (urls.length === 0) {
     return { context: "", sources: [] };
@@ -28,11 +42,12 @@ export async function buildGamingWebContext(urls: string[]): Promise<GamingWebCo
   const uniqueUrls = Array.from(new Set(urls)).slice(0, getGamingWebContextMaxUrls());
   const sources: GamingWebSource[] = await Promise.all(
     uniqueUrls.map(async (url): Promise<GamingWebSource> => {
+      const sourceUrl = redactUrlCredentials(url);
       try {
-        const snippet = await fetchAndClean(url, maxContextChars);
-        return { url, snippet };
+        const snippet = await fetchAndClean(sourceUrl, maxContextChars);
+        return { url: sourceUrl, snippet };
       } catch (error) {
-        return { url, error: resolveErrorMessage(error, "Unknown fetch error") };
+        return { url: sourceUrl, error: resolveErrorMessage(error, "Unknown fetch error") };
       }
     })
   );

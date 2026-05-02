@@ -13,6 +13,11 @@ export function generateSummary(checks: PRAnalysisResult['checks'], allPass: boo
     return PR_ASSISTANT_MESSAGES.summary.approved;
   }
 
+  const hasFailures = Object.values(checks).some(check => check.status === '❌');
+  if (hasFailures) {
+    return PR_ASSISTANT_MESSAGES.summary.rejected;
+  }
+
   //audit assumption: warnings allowed without failures; failure risk: misclassification; expected invariant: hasWarnings reflects checks; handling: warning branch.
   if (hasWarnings) {
     return PR_ASSISTANT_MESSAGES.summary.conditional;

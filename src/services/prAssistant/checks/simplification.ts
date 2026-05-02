@@ -1,5 +1,4 @@
 import { CHECK_THRESHOLDS, SIMPLIFICATION_PATTERNS } from "@services/prAssistant/analysisRules.js";
-import { createCheckResult } from "@services/prAssistant/checkResults.js";
 import type { CheckContext, CheckResult } from "@services/prAssistant/types.js";
 import { collectMatches, hasLongFunctionAddition, uniqueStrings } from "@services/prAssistant/utils.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
@@ -43,14 +42,19 @@ export async function checkSimplification(
 
     const detailMessages = issues.length === 0 ? ['Good separation of concerns and readable code structure'] : uniqueStrings(details);
 
-    return createCheckResult(
-      issues.length,
-      'Code follows simplification best practices',
-      `Minor complexity concerns: ${issues.length} areas for improvement`,
-      `Significant complexity issues: ${issues.length} problems`,
-      3,
-      detailMessages
-    );
+    if (issues.length === 0) {
+      return {
+        status: '✅',
+        message: 'Code follows simplification best practices',
+        details: detailMessages
+      };
+    }
+
+    return {
+      status: '⚠️',
+      message: `Complexity review found advisory concerns: ${issues.length} areas for improvement`,
+      details: detailMessages
+    };
   } catch (error) {
     return {
       status: '❌',
