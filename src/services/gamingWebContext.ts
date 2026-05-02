@@ -26,16 +26,16 @@ export async function buildGamingWebContext(urls: string[]): Promise<GamingWebCo
 
   const maxContextChars = getGamingWebContextMaxChars();
   const uniqueUrls = Array.from(new Set(urls));
-  const sources: GamingWebSource[] = [];
-
-  for (const url of uniqueUrls) {
-    try {
-      const snippet = await fetchAndClean(url, maxContextChars);
-      sources.push({ url, snippet });
-    } catch (error) {
-      sources.push({ url, error: resolveErrorMessage(error, "Unknown fetch error") });
-    }
-  }
+  const sources: GamingWebSource[] = await Promise.all(
+    uniqueUrls.map(async (url): Promise<GamingWebSource> => {
+      try {
+        const snippet = await fetchAndClean(url, maxContextChars);
+        return { url, snippet };
+      } catch (error) {
+        return { url, error: resolveErrorMessage(error, "Unknown fetch error") };
+      }
+    })
+  );
 
   const context = sources
     .filter((source) => Boolean(source.snippet))

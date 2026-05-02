@@ -3,14 +3,13 @@ import { load } from 'cheerio';
 import { lookup } from 'node:dns/promises';
 import { Agent as HttpsAgent } from 'node:https';
 import { isIP } from 'node:net';
-import { getEnv, getEnvNumber } from '@platform/runtime/env.js';
+import { getEnv, getEnvIntegerAtLeast } from '@platform/runtime/env.js';
 
 const DEFAULT_MAX_CHARS = 12000;
 const LOCALHOST_FETCH_FLAG = 'ARCANOS_ALLOW_LOCALHOST_FETCH';
 const DEFAULT_MAX_FETCH_BYTES = 1_500_000;
 const DEFAULT_FETCH_TIMEOUT_MS = 8000;
 const DEFAULT_MAX_LINKS = 15;
-const DEFAULT_MAX_REDIRECTS = 0;
 const DEFAULT_USER_AGENT = 'Arcanos-WebFetcher/1.0';
 
 type IpFamily = 4 | 6;
@@ -22,29 +21,20 @@ interface ResolvedFetchTarget {
   tlsServerName: string;
 }
 
-function readIntegerEnv(key: string, defaultValue: number, minValue: number): number {
-  const value = Math.trunc(getEnvNumber(key, defaultValue));
-  return Number.isFinite(value) && value >= minValue ? value : defaultValue;
-}
-
 function getConfiguredMaxChars(): number {
-  return readIntegerEnv('WEB_FETCH_MAX_CHARS', DEFAULT_MAX_CHARS, 0);
+  return getEnvIntegerAtLeast('WEB_FETCH_MAX_CHARS', DEFAULT_MAX_CHARS, 0);
 }
 
 function getConfiguredFetchTimeoutMs(): number {
-  return readIntegerEnv('WEB_FETCH_TIMEOUT_MS', DEFAULT_FETCH_TIMEOUT_MS, 1);
+  return getEnvIntegerAtLeast('WEB_FETCH_TIMEOUT_MS', DEFAULT_FETCH_TIMEOUT_MS, 1);
 }
 
 function getConfiguredMaxFetchBytes(): number {
-  return readIntegerEnv('WEB_FETCH_MAX_BYTES', DEFAULT_MAX_FETCH_BYTES, 1);
+  return getEnvIntegerAtLeast('WEB_FETCH_MAX_BYTES', DEFAULT_MAX_FETCH_BYTES, 1);
 }
 
 function getConfiguredMaxLinks(): number {
-  return readIntegerEnv('WEB_FETCH_MAX_LINKS', DEFAULT_MAX_LINKS, 0);
-}
-
-function getConfiguredMaxRedirects(): number {
-  return readIntegerEnv('WEB_FETCH_MAX_REDIRECTS', DEFAULT_MAX_REDIRECTS, 0);
+  return getEnvIntegerAtLeast('WEB_FETCH_MAX_LINKS', DEFAULT_MAX_LINKS, 0);
 }
 
 function getConfiguredUserAgent(): string {
@@ -130,7 +120,8 @@ export async function fetchAndCleanDocument(
     timeout: getConfiguredFetchTimeoutMs(),
     maxContentLength: maxFetchBytes,
     maxBodyLength: maxFetchBytes,
-    maxRedirects: getConfiguredMaxRedirects(),
+    // SSRF safety: redirects would bypass resolveFetchTarget IP pinning and Host/SNI controls.
+    maxRedirects: 0,
     responseType: 'text',
     headers: {
       Host: target.hostHeader,

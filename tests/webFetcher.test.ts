@@ -12,13 +12,20 @@ function restoreEnvValue(key: string, previousValue: string | undefined): void {
 describe('fetchAndClean', () => {
   let server: http.Server;
   let baseUrl: string;
+  let redirectUrl: string;
   let previousLocalhostFetchFlag: string | undefined;
 
   beforeAll(async () => {
     previousLocalhostFetchFlag = process.env.ARCANOS_ALLOW_LOCALHOST_FETCH;
     process.env.ARCANOS_ALLOW_LOCALHOST_FETCH = 'true';
 
-    server = http.createServer((_, res) => {
+    server = http.createServer((req, res) => {
+      if (req.url === '/redirect') {
+        res.writeHead(302, { Location: '/' });
+        res.end();
+        return;
+      }
+
       res.writeHead(200, { 'Content-Type': 'text/html' });
       res.end(`
         <html>
@@ -41,6 +48,7 @@ describe('fetchAndClean', () => {
         const address = server.address();
         if (address && typeof address === 'object') {
           baseUrl = `http://127.0.0.1:${address.port}`;
+          redirectUrl = `${baseUrl}/redirect`;
         }
         resolve();
       });
@@ -79,6 +87,17 @@ describe('fetchAndClean', () => {
       expect(cleaned).toBe('Hello');
     } finally {
       restoreEnvValue('WEB_FETCH_MAX_CHARS', previousMaxChars);
+    }
+  });
+
+  it('does not allow environment variables to enable redirects', async () => {
+    const previousMaxRedirects = process.env.WEB_FETCH_MAX_REDIRECTS;
+    process.env.WEB_FETCH_MAX_REDIRECTS = '1';
+
+    try {
+      await expect(fetchAndClean(redirectUrl)).rejects.toThrow('302');
+    } finally {
+      restoreEnvValue('WEB_FETCH_MAX_REDIRECTS', previousMaxRedirects);
     }
   });
 

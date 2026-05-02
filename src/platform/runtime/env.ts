@@ -232,6 +232,11 @@ export function getEnvNumber(key: string, defaultValue: number): number {
   return Number.isFinite(parsed) ? parsed : defaultValue;
 }
 
+export function getEnvIntegerAtLeast(key: string, defaultValue: number, minValue: number): number {
+  const value = Math.trunc(getEnvNumber(key, defaultValue));
+  return Number.isFinite(value) && value >= minValue ? value : defaultValue;
+}
+
 /**
  * Gets an environment variable as a boolean
  * 

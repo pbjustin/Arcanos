@@ -9,6 +9,7 @@ const mockGenerateMockResponse = jest.fn();
 const mockFetchAndClean = jest.fn();
 const mockGetEnv = jest.fn();
 const mockGetEnvNumber = jest.fn();
+const mockGetEnvIntegerAtLeast = jest.fn();
 const mockGetEnvBoolean = jest.fn();
 const mockRunTrinityWritingPipeline = jest.fn();
 
@@ -33,6 +34,7 @@ jest.unstable_mockModule('@shared/webFetcher.js', () => ({
 jest.unstable_mockModule('@platform/runtime/env.js', () => ({
   getEnv: mockGetEnv,
   getEnvNumber: mockGetEnvNumber,
+  getEnvIntegerAtLeast: mockGetEnvIntegerAtLeast,
   getEnvBoolean: mockGetEnvBoolean
 }));
 
@@ -48,6 +50,7 @@ describe('gaming direct-answer hardening', () => {
 
     mockGetEnv.mockReturnValue(undefined);
     mockGetEnvNumber.mockReturnValue(512);
+    mockGetEnvIntegerAtLeast.mockReturnValue(512);
     mockGetEnvBoolean.mockReturnValue(false);
     mockGetDefaultModel.mockReturnValue('ft:test-intake');
     mockGetGPT5Model.mockReturnValue('gpt-5.1-test');
@@ -119,6 +122,42 @@ describe('gaming direct-answer hardening', () => {
       expect.objectContaining({
         input: expect.objectContaining({
           prompt: expect.stringContaining('[Source 1] https://example.com/guide-a')
+        })
+      })
+    );
+  });
+
+  it('preserves source ordering when guide fetches resolve out of order', async () => {
+    mockFetchAndClean.mockImplementation(async (url: string) => {
+      if (url.endsWith('/slow')) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      return `snippet for ${url}`;
+    });
+
+    const result = await runGuidePipeline({
+      prompt: 'Use both linked guides for a direct answer.',
+      guideUrl: 'https://example.com/slow',
+      guideUrls: ['https://example.com/fast'],
+      auditEnabled: false
+    });
+
+    expect(result.data.sources).toEqual([
+      {
+        url: 'https://example.com/slow',
+        snippet: 'snippet for https://example.com/slow'
+      },
+      {
+        url: 'https://example.com/fast',
+        snippet: 'snippet for https://example.com/fast'
+      }
+    ]);
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({
+          prompt: expect.stringMatching(
+            /\[Source 1\] https:\/\/example\.com\/slow[\s\S]*\[Source 2\] https:\/\/example\.com\/fast/
+          )
         })
       })
     );
