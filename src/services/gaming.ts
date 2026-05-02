@@ -109,24 +109,25 @@ function createGamingProviderTimeoutError(
   mode: GamingMode,
   error: unknown,
   timeoutMs: number,
-  stageTimeoutMs: number
+  stageTimeoutMs: number,
+  timeoutPhase = readTimeoutPhase(error) ?? "provider"
 ): Error {
   const timeoutError = new Error(`Gaming ${mode} generation timed out before a complete response was available.`);
   Object.assign(timeoutError, {
     code: "GAMING_PROVIDER_TIMEOUT",
     timeoutMs,
     stageTimeoutMs,
-    timeoutPhase: readTimeoutPhase(error)
+    timeoutPhase
   });
   return timeoutError;
 }
 
-function estimateResponseBytes(response: GamingSuccessEnvelope): number | null {
-  try {
-    return Buffer.byteLength(JSON.stringify(response), "utf8");
-  } catch {
-    return null;
-  }
+function estimateResponsePayloadChars(response: string, sources: WebSource[]): number {
+  return sources.reduce(
+    (total, source) =>
+      total + source.url.length + (source.snippet?.length ?? 0) + (source.error?.length ?? 0),
+    response.length
+  );
 }
 
 function formatGameplaySuccessWithLogs(params: {
@@ -159,11 +160,11 @@ function formatGameplaySuccessWithLogs(params: {
   });
 
   const serializationStartedAt = Date.now();
-  const responseBytes = estimateResponseBytes(envelope);
+  const responsePayloadChars = estimateResponsePayloadChars(params.response, params.sources);
   logger.info("gaming.response.serialization", {
     ...params.logContext,
     serializationMs: Date.now() - serializationStartedAt,
-    responseBytes
+    responsePayloadChars
   });
   logger.info("gaming.request.end", {
     ...params.logContext,
@@ -298,7 +299,7 @@ async function runGameplayPipeline(params: GameplayPipelineInput): Promise<Gamin
   const requestStartedAt = Date.now();
   const sourceEndpoint = `arcanos-gaming.${params.mode}`;
   const requestId = getRequestAbortContext()?.requestId;
-  const initialGuideSourceCount = (params.guideUrl ? 1 : 0) + params.guideUrls.length;
+  const initialGuideSourceCount = (params.guideUrl ? 1 : 0) + (params.guideUrls?.length ?? 0);
   const baseLogContext: GamingLogContext = {
     module: "ARCANOS:GAMING",
     route: "gaming",
@@ -325,7 +326,7 @@ async function runGameplayPipeline(params: GameplayPipelineInput): Promise<Gamin
 
   const allUrls = [
     ...(params.guideUrl ? [params.guideUrl] : []),
-    ...params.guideUrls
+    ...(params.guideUrls ?? [])
   ];
   const { context: webContext, sources } = await buildWebContext(allUrls);
   const enrichedPrompt = buildGameplayPrompt(params, webContext, allUrls.length > 0);
@@ -411,13 +412,14 @@ async function runGameplayPipeline(params: GameplayPipelineInput): Promise<Gamin
     });
 
     if (isAbortError(error)) {
+      const timeoutPhase = readTimeoutPhase(error) ?? "provider";
       logger.warn("gaming.provider.timeout", {
         ...baseLogContext,
         provider: "trinity",
         timeoutMs: pipelineTimeoutMs,
         stageTimeoutMs,
         elapsedMs,
-        timeoutPhase: readTimeoutPhase(error) ?? "provider",
+        timeoutPhase,
         errorName: error instanceof Error ? error.name : typeof error,
         errorCode: readErrorString(error, "code")
       });
@@ -427,7 +429,7 @@ async function runGameplayPipeline(params: GameplayPipelineInput): Promise<Gamin
         totalElapsedMs: Date.now() - requestStartedAt,
         errorCode: "GAMING_PROVIDER_TIMEOUT"
       });
-      throw createGamingProviderTimeoutError(params.mode, error, pipelineTimeoutMs, stageTimeoutMs);
+      throw createGamingProviderTimeoutError(params.mode, error, pipelineTimeoutMs, stageTimeoutMs, timeoutPhase);
     }
 
     logger.error("gaming.provider.error", {

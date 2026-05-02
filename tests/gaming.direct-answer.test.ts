@@ -282,6 +282,23 @@ describe('gaming guide output hardening', () => {
     });
   });
 
+  it('defaults missing provider timeout phase consistently', async () => {
+    const providerAbort = Object.assign(new Error('Request was aborted.'), {
+      name: 'AbortError'
+    });
+    mockRunTrinityWritingPipeline.mockRejectedValueOnce(providerAbort);
+
+    await expect(runGuidePipeline({
+      game: 'Star Wars: The Old Republic',
+      prompt: 'Smoke test: give three short tanking tips with valid numbering.',
+      guideUrls: [],
+      auditEnabled: false
+    })).rejects.toMatchObject({
+      code: 'GAMING_PROVIDER_TIMEOUT',
+      timeoutPhase: 'provider'
+    });
+  });
+
   it('short-circuits exact-literal prompts before any provider call', async () => {
     const result = await runGuidePipeline({
       prompt: 'Answer directly. Do not simulate, role-play, or describe a hypothetical run. Say exactly: no-simulation.',
