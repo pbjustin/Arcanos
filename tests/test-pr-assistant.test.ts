@@ -213,6 +213,38 @@ describe('ARCANOS PR Assistant', () => {
       expect(result.checks.automatedValidation.status).toBe('✅');
     });
 
+    it('should treat simplification-only findings as advisory instead of rejected', async () => {
+      await fs.mkdir(path.join(tempDir, 'src', 'services'), { recursive: true });
+      await fs.writeFile(path.join(tempDir, 'src', 'server.ts'), 'export {};\n');
+      await fs.writeFile(path.join(tempDir, 'src', 'services', 'openai.ts'), 'export {};\n');
+
+      const longText = 'x'.repeat(120);
+      const advisoryComplexityDiff = `
+diff --git a/src/advisory.ts b/src/advisory.ts
+new file mode 100644
+index 0000000..1234567
+--- /dev/null
++++ b/src/advisory.ts
+@@ -0,0 +1,14 @@
++export function advisoryExample(enabled: boolean, nested: boolean) {
++  if (enabled) { if (nested) { return 1000; } }
++  if (enabled) { if (!nested) { return 1001; } }
++  if (!enabled) { if (nested) { return 1002; } }
++  const largeText = '${longText}';
++  const firstLimit = 1000;
++  const secondLimit = 2000;
++  const thirdLimit = 3000;
++  return firstLimit + secondLimit + thirdLimit;
++}
+`;
+
+      const result = await prAssistant.analyzePR(advisoryComplexityDiff, ['src/advisory.ts']);
+
+      expect(result.checks.simplification.status).toBe('⚠️');
+      expect(result.status).toBe('⚠️');
+      expect(result.summary).toContain('CONDITIONAL');
+    });
+
     it('should format results as markdown', async () => {
       const mockResult = {
         status: '✅' as const,
