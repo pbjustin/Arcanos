@@ -1,4 +1,5 @@
 import { runBuildPipeline, runGuidePipeline, runMetaPipeline } from "@services/gaming.js";
+import { getGamingModuleTimeoutMs } from "@services/gamingConfig.js";
 import { evaluateWithHRC } from "./hrcWrapper.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { getRequestAbortSignal, isAbortError } from "@arcanos/runtime";
@@ -138,7 +139,7 @@ export const ArcanosGaming = {
   description: "Deterministic gameplay guide, build, and meta advisor.",
   gptIds: ["arcanos-gaming", "gaming"],
   defaultAction: "query",
-  defaultTimeoutMs: 60000,
+  defaultTimeoutMs: getGamingModuleTimeoutMs(),
   actions: {
     async query(payload: unknown) {
       return handleGamingRequest(payload);

@@ -186,6 +186,25 @@ jobs:
                 console.log('Invalid PR number, skipping comment');
                 return;
               }
+
+              const workflowRunUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+              const footer = `\n\n---\n*Analysis triggered by: ${context.actor}*\n*Workflow run: [${context.runId}](${workflowRunUrl})*`;
+              const COMMENT_BODY_TARGET = 64000;
+
+              function buildBoundedPrComment(report) {
+                const fullBody = `${report}${footer}`;
+                if (fullBody.length <= COMMENT_BODY_TARGET) {
+                  return fullBody;
+                }
+
+                const truncationNotice = [
+                  '',
+                  '> ⚠️ Full ARCANOS report exceeded GitHub comment size limits, so this PR comment was truncated.',
+                  `> Download the complete \`analysis_report.md\` artifact from [workflow run ${context.runId}](${workflowRunUrl}).`
+                ].join('\n');
+                const maxReportLength = Math.max(0, COMMENT_BODY_TARGET - footer.length - truncationNotice.length);
+                return `${report.slice(0, maxReportLength).trimEnd()}${truncationNotice}${footer}`;
+              }
               
               // Check if we already have an ARCANOS comment
               const comments = await github.rest.issues.listComments({
@@ -199,7 +218,8 @@ jobs:
                 comment.body.includes('ARCANOS PR Analysis')
               );
               
-              const commentBody = `${analysisReport}\n\n---\n*Analysis triggered by: ${context.actor}*\n*Workflow run: [${context.runId}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})*`;
+              const commentBody = buildBoundedPrComment(analysisReport);
+              console.log(`ARCANOS PR comment length: ${commentBody.length}/${COMMENT_BODY_TARGET}`);
               
               if (existingComment) {
                 // Update existing comment
@@ -245,12 +265,33 @@ jobs:
                 console.log('Invalid PR number, skipping issue creation');
                 return;
               }
+
+              const workflowRunUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+              const prUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/pull/${prNumber}`;
+              const ISSUE_BODY_TARGET = 64000;
+
+              function buildBoundedIssueBody(report) {
+                const header = `Critical issues detected by ARCANOS PR Assistant in PR #${prNumber}.\n\n`;
+                const footer = `\n\n[View PR #${prNumber}](${prUrl})\n\n[Full workflow artifacts](${workflowRunUrl})`;
+                const fullBody = `${header}${report}${footer}`;
+                if (fullBody.length <= ISSUE_BODY_TARGET) {
+                  return fullBody;
+                }
+
+                const truncationNotice = [
+                  '',
+                  '> Full ARCANOS report exceeded GitHub issue size limits, so this tracking issue was truncated.',
+                  `> Download the complete \`analysis_report.md\` artifact from [workflow run ${context.runId}](${workflowRunUrl}).`
+                ].join('\n');
+                const maxReportLength = Math.max(0, ISSUE_BODY_TARGET - header.length - footer.length - truncationNotice.length);
+                return `${header}${report.slice(0, maxReportLength).trimEnd()}${truncationNotice}${footer}`;
+              }
               
               await github.rest.issues.create({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 title: `🚨 ARCANOS: Critical Issues in PR #${prNumber}`,
-                body: `Critical issues detected by ARCANOS PR Assistant in PR #${prNumber}.\n\n${analysisReport}\n\n[View PR #${prNumber}](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/pull/${prNumber})`,
+                body: buildBoundedIssueBody(analysisReport),
                 labels: ['arcanos', 'critical', 'pr-analysis', 'needs-attention']
               });
               
@@ -293,7 +334,7 @@ jobs:
                   summary = 'All ARCANOS checks passed - Ready for merge';
                   break;
                 case '⚠️':
-                  checkStatus = 'neutral';
+                  checkStatus = 'success';
                   summary = 'ARCANOS found minor issues - Review recommended';
                   break;
                 case '❌':

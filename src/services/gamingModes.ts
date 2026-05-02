@@ -136,7 +136,7 @@ export function validateGamingRequest(payload: unknown): { ok: true; value: Vali
       mode,
       prompt,
       game,
-      guideUrl: getStringField(payload, "url"),
+      guideUrl: getStringField(payload, "guideUrl") ?? getStringField(payload, "url"),
       guideUrls: normalizeStringList(
         isRecord(payload) ? payload.urls : undefined,
         isRecord(payload) ? payload.guideUrls : undefined

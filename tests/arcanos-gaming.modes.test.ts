@@ -78,6 +78,38 @@ describe("ArcanosGaming mode routing", () => {
     });
   });
 
+  it("accepts guideUrl as the single guide URL field", async () => {
+    await ArcanosGaming.actions.query({
+      mode: "guide",
+      prompt: "Use this guide.",
+      guideUrl: "https://example.com/guide"
+    });
+
+    expect(mockRunGuidePipeline).toHaveBeenCalledWith({
+      prompt: "Use this guide.",
+      game: undefined,
+      guideUrl: "https://example.com/guide",
+      guideUrls: [],
+      auditEnabled: false,
+    });
+  });
+
+  it("keeps url as a backward-compatible guide URL field", async () => {
+    await ArcanosGaming.actions.query({
+      mode: "guide",
+      prompt: "Use this guide.",
+      url: "https://example.com/guide"
+    });
+
+    expect(mockRunGuidePipeline).toHaveBeenCalledWith({
+      prompt: "Use this guide.",
+      game: undefined,
+      guideUrl: "https://example.com/guide",
+      guideUrls: [],
+      auditEnabled: false,
+    });
+  });
+
   it("routes build mode to the build pipeline only", async () => {
     const result = await ArcanosGaming.actions.query({
       mode: "build",

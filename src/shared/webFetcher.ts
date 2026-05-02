@@ -3,11 +3,14 @@ import { load } from 'cheerio';
 import { lookup } from 'node:dns/promises';
 import { Agent as HttpsAgent } from 'node:https';
 import { isIP } from 'node:net';
+import { getEnv, getEnvIntegerAtLeast } from '@platform/runtime/env.js';
 
 const DEFAULT_MAX_CHARS = 12000;
 const LOCALHOST_FETCH_FLAG = 'ARCANOS_ALLOW_LOCALHOST_FETCH';
-const MAX_FETCH_BYTES = 1_500_000;
-const FETCH_TIMEOUT_MS = 8000;
+const DEFAULT_MAX_FETCH_BYTES = 1_500_000;
+const DEFAULT_FETCH_TIMEOUT_MS = 8000;
+const DEFAULT_MAX_LINKS = 15;
+const DEFAULT_USER_AGENT = 'Arcanos-WebFetcher/1.0';
 
 type IpFamily = 4 | 6;
 
@@ -16,6 +19,26 @@ interface ResolvedFetchTarget {
   requestUrl: URL;
   hostHeader: string;
   tlsServerName: string;
+}
+
+function getConfiguredMaxChars(): number {
+  return getEnvIntegerAtLeast('WEB_FETCH_MAX_CHARS', DEFAULT_MAX_CHARS, 0);
+}
+
+function getConfiguredFetchTimeoutMs(): number {
+  return getEnvIntegerAtLeast('WEB_FETCH_TIMEOUT_MS', DEFAULT_FETCH_TIMEOUT_MS, 1);
+}
+
+function getConfiguredMaxFetchBytes(): number {
+  return getEnvIntegerAtLeast('WEB_FETCH_MAX_BYTES', DEFAULT_MAX_FETCH_BYTES, 1);
+}
+
+export function getConfiguredWebFetchMaxLinks(): number {
+  return getEnvIntegerAtLeast('WEB_FETCH_MAX_LINKS', DEFAULT_MAX_LINKS, 0);
+}
+
+function getConfiguredUserAgent(): string {
+  return getEnv('WEB_FETCH_USER_AGENT') || DEFAULT_USER_AGENT;
 }
 
 export interface FetchAndCleanLinkSummary {
@@ -67,7 +90,7 @@ function buildLinkBlock(links: FetchAndCleanLinkSummary[]): string {
  */
 export function serializeFetchAndCleanDocument(
   document: Pick<FetchAndCleanDocument, 'text' | 'links'>,
-  maxChars = DEFAULT_MAX_CHARS
+  maxChars = getConfiguredMaxChars()
 ): string {
   const linkBlock = buildLinkBlock(document.links);
   return `${document.text}${linkBlock}`.slice(0, Math.max(0, maxChars));
@@ -79,8 +102,12 @@ export function serializeFetchAndCleanDocument(
  * Edge cases: Blocks private/internal IP targets, enforces DNS-rebinding-safe host pinning,
  * and allows localhost only with explicit non-production opt-in.
  */
-export async function fetchAndCleanDocument(url: string, maxChars = DEFAULT_MAX_CHARS): Promise<FetchAndCleanDocument> {
+export async function fetchAndCleanDocument(
+  url: string,
+  maxChars = getConfiguredMaxChars()
+): Promise<FetchAndCleanDocument> {
   const target = await resolveFetchTarget(url);
+  const maxFetchBytes = getConfiguredMaxFetchBytes();
   const httpsAgent =
     target.parsedUrl.protocol === 'https:'
       ? new HttpsAgent({
@@ -90,14 +117,17 @@ export async function fetchAndCleanDocument(url: string, maxChars = DEFAULT_MAX_
       : undefined;
 
   const { data } = await axios.get<string>(target.requestUrl.toString(), {
-    timeout: FETCH_TIMEOUT_MS,
-    maxContentLength: MAX_FETCH_BYTES,
-    maxBodyLength: MAX_FETCH_BYTES,
+    timeout: getConfiguredFetchTimeoutMs(),
+    maxContentLength: maxFetchBytes,
+    maxBodyLength: maxFetchBytes,
+    // SSRF safety: redirects would bypass resolveFetchTarget IP pinning and Host/SNI controls.
     maxRedirects: 0,
+    // SSRF safety: environment proxies can reroute a pinned request through an unvalidated target.
+    proxy: false,
     responseType: 'text',
     headers: {
       Host: target.hostHeader,
-      'User-Agent': 'Arcanos-WebFetcher/1.0',
+      'User-Agent': getConfiguredUserAgent(),
       Accept: 'text/html,text/plain;q=0.9,*/*;q=0.8'
     },
     httpsAgent
@@ -133,7 +163,7 @@ export async function fetchAndCleanDocument(url: string, maxChars = DEFAULT_MAX_
     }
   });
 
-  const limitedLinks = links.slice(0, 15);
+  const limitedLinks = links.slice(0, getConfiguredWebFetchMaxLinks());
 
   return {
     text: cleanedText,
@@ -147,7 +177,7 @@ export async function fetchAndCleanDocument(url: string, maxChars = DEFAULT_MAX_
  * Inputs/Outputs: URL + optional max chars -> cleaned page text string.
  * Edge cases: Preserves the historical compact string payload for existing callers.
  */
-export async function fetchAndClean(url: string, maxChars = DEFAULT_MAX_CHARS): Promise<string> {
+export async function fetchAndClean(url: string, maxChars = getConfiguredMaxChars()): Promise<string> {
   const document = await fetchAndCleanDocument(url, maxChars);
   return document.combined;
 }
@@ -186,7 +216,7 @@ export async function webFetcher<T = unknown>(
 export default webFetcher;
 
 function isLocalhostIdentifier(hostname: string): boolean {
-  const normalizedHostname = hostname.toLowerCase();
+  const normalizedHostname = normalizeIpAddress(hostname).toLowerCase();
   return normalizedHostname === 'localhost' || normalizedHostname === '127.0.0.1' || normalizedHostname === '::1';
 }
 
@@ -210,73 +240,111 @@ function parseIpv4Octets(ipv4Address: string): number[] | null {
   return octets;
 }
 
+function normalizeIpAddress(ipAddress: string): string {
+  return ipAddress.startsWith('[') && ipAddress.endsWith(']')
+    ? ipAddress.slice(1, -1)
+    : ipAddress;
+}
+
 function isInternalIpv4(ipv4Address: string): boolean {
   const octets = parseIpv4Octets(ipv4Address);
   if (!octets) {
     return true;
   }
 
-  const [first, second] = octets;
+  const [first, second, third] = octets;
 
   //audit assumption: reserved/private IPv4 ranges are not safe fetch targets; failure risk: SSRF into internal services; expected invariant: externally routable destination; handling strategy: block known internal/reserved ranges.
   if (first === 0 || first === 10 || first === 127) return true;
   if (first === 169 && second === 254) return true;
   if (first === 172 && second >= 16 && second <= 31) return true;
+  if (first === 192 && second === 0 && (third === 0 || third === 2)) return true; // IETF special-use and TEST-NET-1.
   if (first === 192 && second === 168) return true;
   if (first === 100 && second >= 64 && second <= 127) return true; // RFC 6598 carrier-grade NAT.
   if (first === 198 && (second === 18 || second === 19)) return true; // RFC 2544 benchmarking.
+  if (first === 198 && second === 51 && third === 100) return true; // TEST-NET-2.
+  if (first === 203 && second === 0 && third === 113) return true; // TEST-NET-3.
+  if (first >= 224) return true; // Multicast, reserved, and limited broadcast ranges.
 
   return false;
 }
 
+function extractIpv4MappedIpv6(ipv6Address: string): string | null {
+  const normalized = normalizeIpAddress(ipv6Address).toLowerCase();
+  if (!normalized.startsWith('::ffff:')) {
+    return null;
+  }
+
+  const mappedIpv4 = normalized.slice('::ffff:'.length);
+  if (isIP(mappedIpv4) === 4) {
+    return mappedIpv4;
+  }
+
+  const hexWords = mappedIpv4.split(':');
+  if (hexWords.length !== 2) {
+    return null;
+  }
+
+  const [high, low] = hexWords.map((word) => Number.parseInt(word, 16));
+  if ([high, low].some((word) => !Number.isInteger(word) || word < 0 || word > 0xffff)) {
+    return null;
+  }
+
+  return [
+    (high >> 8) & 0xff,
+    high & 0xff,
+    (low >> 8) & 0xff,
+    low & 0xff
+  ].join('.');
+}
+
 function isLoopbackIpv6(ipv6Address: string): boolean {
-  const normalized = ipv6Address.toLowerCase();
+  const normalized = normalizeIpAddress(ipv6Address).toLowerCase();
   if (normalized === '::1') {
     return true;
   }
-  if (!normalized.startsWith('::ffff:')) {
-    return false;
-  }
-  const mappedIpv4 = normalized.slice('::ffff:'.length);
-  return isIP(mappedIpv4) === 4 && parseIpv4Octets(mappedIpv4)?.[0] === 127;
+  const mappedIpv4 = extractIpv4MappedIpv6(normalized);
+  return mappedIpv4 !== null && parseIpv4Octets(mappedIpv4)?.[0] === 127;
 }
 
 function isInternalIpv6(ipv6Address: string): boolean {
-  const normalized = ipv6Address.toLowerCase();
+  const normalized = normalizeIpAddress(ipv6Address).toLowerCase();
 
   //audit assumption: link-local, loopback, unspecified, and ULA IPv6 ranges are internal; failure risk: SSRF to local infrastructure; expected invariant: globally routable address; handling strategy: block internal IPv6 prefixes.
   if (normalized === '::' || normalized === '::1') return true;
   if (normalized.startsWith('fc') || normalized.startsWith('fd')) return true; // fc00::/7
   if (/^fe[89ab]/.test(normalized)) return true; // fe80::/10
+  if (normalized.startsWith('ff')) return true; // ff00::/8 multicast.
+  if (normalized === '2001:db8' || normalized.startsWith('2001:db8:')) return true; // Documentation prefix.
 
-  if (normalized.startsWith('::ffff:')) {
-    const mappedIpv4 = normalized.slice('::ffff:'.length);
-    if (isIP(mappedIpv4) === 4) {
-      return isInternalIpv4(mappedIpv4);
-    }
+  const mappedIpv4 = extractIpv4MappedIpv6(normalized);
+  if (mappedIpv4 !== null) {
+    return isInternalIpv4(mappedIpv4);
   }
 
   return false;
 }
 
 function isInternalIpAddress(ipAddress: string): boolean {
-  const ipFamily = isIP(ipAddress);
+  const normalizedIpAddress = normalizeIpAddress(ipAddress);
+  const ipFamily = isIP(normalizedIpAddress);
   if (ipFamily === 4) {
-    return isInternalIpv4(ipAddress);
+    return isInternalIpv4(normalizedIpAddress);
   }
   if (ipFamily === 6) {
-    return isInternalIpv6(ipAddress);
+    return isInternalIpv6(normalizedIpAddress);
   }
   return true;
 }
 
 function isLoopbackAddress(ipAddress: string): boolean {
-  const ipFamily = isIP(ipAddress);
+  const normalizedIpAddress = normalizeIpAddress(ipAddress);
+  const ipFamily = isIP(normalizedIpAddress);
   if (ipFamily === 4) {
-    return parseIpv4Octets(ipAddress)?.[0] === 127;
+    return parseIpv4Octets(normalizedIpAddress)?.[0] === 127;
   }
   if (ipFamily === 6) {
-    return isLoopbackIpv6(ipAddress);
+    return isLoopbackIpv6(normalizedIpAddress);
   }
   return false;
 }
@@ -299,9 +367,14 @@ function choosePreferredAddress(addresses: Array<{ address: string; family: IpFa
   return preferredIpv4 || addresses[0];
 }
 
+function formatPinnedHostname(address: string, family: IpFamily): string {
+  const normalizedAddress = normalizeIpAddress(address);
+  return family === 6 ? `[${normalizedAddress}]` : normalizedAddress;
+}
+
 async function resolveFetchTarget(rawUrl: string): Promise<ResolvedFetchTarget> {
   const parsedUrl = assertHttpUrl(rawUrl);
-  const normalizedHostname = parsedUrl.hostname.toLowerCase();
+  const normalizedHostname = normalizeIpAddress(parsedUrl.hostname).toLowerCase();
   const allowLoopbackForLocalDevelopment = isLocalDevelopmentBypassEnabled(normalizedHostname);
 
   const ipFamily = isIP(normalizedHostname);
@@ -322,7 +395,7 @@ async function resolveFetchTarget(rawUrl: string): Promise<ResolvedFetchTarget> 
 
   const selectedAddress = choosePreferredAddress(resolvedAddresses);
   const requestUrl = new URL(parsedUrl.toString());
-  requestUrl.hostname = selectedAddress.address;
+  requestUrl.hostname = formatPinnedHostname(selectedAddress.address, selectedAddress.family);
 
   return {
     parsedUrl,
