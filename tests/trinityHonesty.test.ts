@@ -771,6 +771,36 @@ describe('Trinity honesty controls', () => {
     expect(enforcementResult.text).not.toMatch(/\b3\.\s+4\./);
   });
 
+  it('preserves numbered-list line breaks when no compression or rewrite is needed', () => {
+    const guide = [
+      '1. Pick a tank discipline and learn its defensive resource.',
+      '2. Use taunts for swaps, loose enemies, or planned threat windows.',
+      '3. Keep enemies faced away from allies and move early for ground effects.'
+    ].join('\n');
+
+    const enforcementResult = enforceFinalStageHonestyAndMinimalism({
+      text: guide,
+      userPrompt: 'Give me SWTOR tanking guide steps.',
+      capabilityFlags: deriveTrinityCapabilityFlags(),
+      outputControls: {
+        requestedVerbosity: 'normal',
+        maxWords: null,
+        answerMode: 'direct',
+        debugPipeline: false,
+        strictUserVisibleOutput: true
+      },
+      reasoningHonesty: {
+        responseMode: 'answer',
+        achievableSubtasks: ['Give SWTOR tanking guide steps'],
+        blockedSubtasks: [],
+        userVisibleCaveats: [],
+        evidenceTags: []
+      }
+    });
+
+    expect(enforcementResult.text).toBe(guide);
+  });
+
   it('does not splice generic fallback text into a partial answer that still has useful content', () => {
     const honestyResult = enforceFinalStageHonesty(
       'I verified the latest SWTOR patch state today. Start with your class discipline, then follow the conquest and flashpoint gearing loop.',

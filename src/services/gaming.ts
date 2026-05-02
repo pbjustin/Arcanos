@@ -54,7 +54,7 @@ function rewriteGuideDirectAnswerCues(prompt: string): string {
     .replace(/\b(?:do\s+not|don't|no|without)\s+role-?play\b/gi, 'avoid roleplay framing')
     .replace(/\b(?:do\s+not|don't|no|without)\s+pretend\b/gi, 'avoid pretending to play')
     .replace(/\bno\s+hypothetical(?:\s+runs?)?\b/gi, 'avoid hypothetical run narration')
-    .replace(/\bhypothetical\s+run\b/gi, 'run narration')
+    .replace(/\bhypothetical\s+run\b(?!\s+narration)/gi, 'run narration')
     .trim();
 }
 

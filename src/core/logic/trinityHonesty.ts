@@ -968,6 +968,13 @@ function rewriteUnsupportedClaims(params: {
     rewrittenSegments.push(segment);
   }
 
+  if (blockedOrRewrittenClaims.length === sectionRewrite.blockedOrRewrittenClaims.length) {
+    return {
+      text: normalizeWhitespace(sectionRewrite.text),
+      blockedOrRewrittenClaims
+    };
+  }
+
   return {
     text: normalizeWhitespace(rewrittenSegments.join(' ')),
     blockedOrRewrittenClaims
@@ -999,11 +1006,8 @@ function removeOpeningPadding(text: string): string {
     return normalizeWhitespace(text);
   }
   //audit Assumption: disposable opening fillers can appear after an injected limitation sentence, not just as the first segment; failure risk: hard word-limit compression keeps filler instead of the actual answer; expected invariant: standalone padding lines are removed whenever substantive content remains elsewhere; handling strategy: drop only narrow filler segments that match the padding patterns and preserve all other content.
-  return normalizeWhitespace(
-    segments
-      .filter(segment => !isOpeningPaddingSegment(segment))
-      .join(' ')
-  );
+  const keptSegments = segments.filter(segment => !isOpeningPaddingSegment(segment));
+  return keptSegments.length === segments.length ? normalizeWhitespace(text) : normalizeWhitespace(keptSegments.join(' '));
 }
 
 function trimUnrequestedScopeDrift(text: string, userPrompt: string, reasoningHonesty: TrinityReasoningHonesty): string {
@@ -1054,6 +1058,7 @@ function compressLimitationSegments(text: string, reasoningHonesty: TrinityReaso
   const segments = splitIntoSegments(text);
   const seenCategories = new Set<LimitationCategory>();
   const keptSegments: string[] = [];
+  let changed = false;
   for (const segment of segments) {
     const limitationCategory = classifyLimitationCategory(segment);
     if (!limitationCategory) {
@@ -1062,10 +1067,18 @@ function compressLimitationSegments(text: string, reasoningHonesty: TrinityReaso
     }
     //audit Assumption: the final answer should keep at most one concise limitation per limitation category; failure risk: stacked caveats crowd out the achievable answer; expected invariant: duplicate live/backend/persistence limitations collapse to one preferred sentence; handling strategy: keep the first category instance and replace it with the most specific caveat available from reasoning metadata.
     if (seenCategories.has(limitationCategory)) {
+      changed = true;
       continue;
     }
     seenCategories.add(limitationCategory);
-    keptSegments.push(buildPreferredLimitationSegment(limitationCategory, reasoningHonesty) ?? ensureSingleSentence(segment));
+    const preferredSegment = buildPreferredLimitationSegment(limitationCategory, reasoningHonesty) ?? ensureSingleSentence(segment);
+    if (normalizeSegmentForComparison(preferredSegment) !== normalizeSegmentForComparison(segment)) {
+      changed = true;
+    }
+    keptSegments.push(preferredSegment);
+  }
+  if (!changed) {
+    return normalizeWhitespace(text);
   }
   return normalizeWhitespace(keptSegments.join(' '));
 }
@@ -1098,12 +1111,17 @@ function areNearDuplicateSegments(leftSegment: string, rightSegment: string): bo
 
 function dedupeNearDuplicateSegments(text: string): string {
   const keptSegments: string[] = [];
+  let removedDuplicate = false;
   for (const segment of splitIntoSegments(text)) {
     //audit Assumption: near-duplicate segments are accidental padding, not distinct user value; failure risk: repeated caveats or answer lines make the final output sound verbose and unnatural; expected invariant: only the first materially distinct sentence survives; handling strategy: compare normalized token overlap and drop later repeats.
     if (keptSegments.some(existingSegment => areNearDuplicateSegments(existingSegment, segment))) {
+      removedDuplicate = true;
       continue;
     }
     keptSegments.push(segment);
+  }
+  if (!removedDuplicate) {
+    return normalizeWhitespace(text);
   }
   return normalizeWhitespace(keptSegments.join(' '));
 }
@@ -1143,12 +1161,9 @@ function removeFallbackSplicesFromPartialAnswer(text: string, reasoningHonesty: 
 
   const reasoningFallbacks = buildReasoningFallbackSet(reasoningHonesty);
   const genericFallbacks = buildGenericFallbackSet();
+  const keptSegments = segments.filter(segment => !isUnrequestedFallbackSplice(segment, reasoningFallbacks, genericFallbacks));
 
-  return normalizeWhitespace(
-    segments
-      .filter(segment => !isUnrequestedFallbackSplice(segment, reasoningFallbacks, genericFallbacks))
-      .join(' ')
-  );
+  return keptSegments.length === segments.length ? normalizeWhitespace(text) : normalizeWhitespace(keptSegments.join(' '));
 }
 
 function removeUnrequestedMetaSections(text: string, outputControls: TrinityOutputControls): { text: string; removedMetaSections: string[] } {
@@ -1175,7 +1190,7 @@ function resolveEffectiveWordLimit(outputControls: TrinityOutputControls): numbe
 function compressToWordLimit(text: string, outputControls: TrinityOutputControls): string {
   const effectiveWordLimit = resolveEffectiveWordLimit(outputControls);
   if (!effectiveWordLimit || countWords(text) <= effectiveWordLimit) {
-    return repairOrphanNumberedListMarkers(normalizeWhitespace(text));
+    return normalizeWhitespace(text);
   }
 
   const indexedSegments = splitIntoSegments(text).map((segment, index) => ({

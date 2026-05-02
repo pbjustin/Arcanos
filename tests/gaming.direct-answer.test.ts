@@ -71,7 +71,7 @@ describe('gaming guide output hardening', () => {
     });
 
     const result = await runGuidePipeline({
-      prompt: 'Answer directly. Do not simulate, role-play, or describe a hypothetical run. How do I beat the temple boss?',
+      prompt: 'Answer directly. Do not simulate, no role-play, no hypothetical runs. How do I beat the temple boss?',
       guideUrls: [],
       auditEnabled: false
     });
@@ -106,6 +106,8 @@ describe('gaming guide output hardening', () => {
     const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
     expect(trinityRequest.input.prompt).not.toContain('Answer directly');
     expect(trinityRequest.input.prompt).not.toContain('Do not simulate');
+    expect(trinityRequest.input.prompt).toContain('avoid hypothetical run narration');
+    expect(trinityRequest.input.prompt).not.toContain('avoid run narration narration');
   });
 
   it('keeps SWTOR guide requests on an uncapped guide output path', async () => {
