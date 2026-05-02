@@ -1,9 +1,5 @@
 import { spawn, type SpawnOptions } from 'child_process';
 
-function sanitizeArgs(args: string[]): string[] {
-  return args.map(a => a.replace(/[^\w:/.-]/g, ''));
-}
-
 function resolvePlatformCommand(command: string): string {
   //audit Assumption: Windows resolves npm/npx through .cmd shims; risk: ENOENT when spawning bare command; invariant: equivalent command executable is selected per platform; handling: map npm/npx/node-gyp to .cmd on win32.
   if (process.platform !== 'win32') {
@@ -21,6 +17,12 @@ function resolvePlatformCommand(command: string): string {
   return commandMap[command] || command;
 }
 
+function formatCommandFailure(command: string, args: string[], failureReason: string, stderr: string): string {
+  const commandDetails = `Command failed with ${failureReason}: ${command} ${args.join(' ')}`;
+  const stderrDetails = stderr.trimEnd();
+  return stderrDetails ? `${stderrDetails}\n${commandDetails}` : commandDetails;
+}
+
 export function runCommand(command: string, args: string[], options: SpawnOptions = {}): Promise<{ stdout: string; stderr: string; }> {
   return new Promise((resolve, reject) => {
     const executable = resolvePlatformCommand(command);
@@ -29,7 +31,7 @@ export function runCommand(command: string, args: string[], options: SpawnOption
       : undefined;
     const spawnOptions: SpawnOptions = { ...options, shell: false };
     delete spawnOptions.timeout;
-    const proc = spawn(executable, sanitizeArgs(args), spawnOptions);
+    const proc = spawn(executable, args, spawnOptions);
     let stdout = '';
     let stderr = '';
     let timedOut = false;
@@ -73,7 +75,7 @@ export function runCommand(command: string, args: string[], options: SpawnOption
       }
 
       const failureReason = signal ? `signal ${signal}` : `exit code ${code ?? 'unknown'}`;
-      settle(() => reject(new Error(stderr || `Command failed with ${failureReason}: ${command} ${args.join(' ')}`)));
+      settle(() => reject(new Error(formatCommandFailure(command, args, failureReason, stderr))));
     });
   });
 }
