@@ -7,7 +7,15 @@ import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { buildDirectAnswerModeSystemInstruction } from "@services/directAnswerMode.js";
 import { tryExtractExactLiteralPromptShortcut } from "@services/exactLiteralPromptShortcut.js";
 import { formatGamingSuccess, type GamingMode, type GamingSuccessEnvelope, type ValidatedGamingRequest } from "@services/gamingModes.js";
-import { createRuntimeBudget } from '@platform/resilience/runtimeBudget.js';
+import { logger } from "@platform/logging/structuredLogging.js";
+import { createRuntimeBudgetWithLimit } from '@platform/resilience/runtimeBudget.js';
+import {
+  getRequestAbortContext,
+  getRequestAbortSignal,
+  getRequestRemainingMs,
+  isAbortError,
+  runWithRequestAbortTimeout
+} from "@arcanos/runtime";
 
 type WebSource = GamingSuccessEnvelope["data"]["sources"][number];
 
@@ -15,6 +23,186 @@ type GameplayPipelineInput = Pick<
   ValidatedGamingRequest,
   "mode" | "prompt" | "game" | "guideUrl" | "guideUrls" | "auditEnabled"
 >;
+
+const DEFAULT_GAMING_PIPELINE_TIMEOUT_MS = 35_000;
+const DEFAULT_GAMING_GUIDE_PIPELINE_TIMEOUT_MS = 50_000;
+const DEFAULT_GAMING_STAGE_TIMEOUT_MS = 12_000;
+const DEFAULT_GAMING_GUIDE_STAGE_TIMEOUT_MS = 15_000;
+const GAMING_REQUEST_TIMEOUT_HEADROOM_MS = 1_000;
+const GAMING_RUNTIME_BUDGET_SAFETY_BUFFER_MS = 500;
+
+type GamingLogContext = {
+  module: "ARCANOS:GAMING";
+  route: "gaming";
+  mode: GamingMode;
+  sourceEndpoint: string;
+  requestId?: string;
+  promptLength: number;
+  gameProvided: boolean;
+  guideSourceCount: number;
+};
+
+function readPositiveIntegerEnv(name: string, fallback: number): number {
+  const value = Number.parseInt(process.env[name] ?? "", 10);
+  return Number.isFinite(value) && value > 0 ? Math.trunc(value) : fallback;
+}
+
+function clampToRequestRemaining(timeoutMs: number, headroomMs = 0): number {
+  const remainingRequestMs = getRequestRemainingMs();
+  if (remainingRequestMs === null) {
+    return timeoutMs;
+  }
+
+  return Math.max(1, Math.min(timeoutMs, remainingRequestMs - headroomMs));
+}
+
+function resolveGamingPipelineTimeoutMs(mode: GamingMode): number {
+  const fallback =
+    mode === "guide" ? DEFAULT_GAMING_GUIDE_PIPELINE_TIMEOUT_MS : DEFAULT_GAMING_PIPELINE_TIMEOUT_MS;
+  const genericTimeoutMs = readPositiveIntegerEnv("ARCANOS_GAMING_PIPELINE_TIMEOUT_MS", fallback);
+  const modeTimeoutMs = readPositiveIntegerEnv(
+    `ARCANOS_GAMING_${mode.toUpperCase()}_PIPELINE_TIMEOUT_MS`,
+    genericTimeoutMs
+  );
+
+  return clampToRequestRemaining(modeTimeoutMs, GAMING_REQUEST_TIMEOUT_HEADROOM_MS);
+}
+
+function resolveGamingStageTimeoutMs(mode: GamingMode, pipelineTimeoutMs: number): number {
+  const fallback =
+    mode === "guide" ? DEFAULT_GAMING_GUIDE_STAGE_TIMEOUT_MS : DEFAULT_GAMING_STAGE_TIMEOUT_MS;
+  const genericTimeoutMs = readPositiveIntegerEnv("ARCANOS_GAMING_STAGE_TIMEOUT_MS", fallback);
+  const modeTimeoutMs = readPositiveIntegerEnv(
+    `ARCANOS_GAMING_${mode.toUpperCase()}_STAGE_TIMEOUT_MS`,
+    genericTimeoutMs
+  );
+
+  return Math.max(1, Math.min(modeTimeoutMs, Math.max(1, pipelineTimeoutMs - GAMING_REQUEST_TIMEOUT_HEADROOM_MS)));
+}
+
+function readTimeoutPhase(error: unknown): string | undefined {
+  if (!error || typeof error !== "object") {
+    return undefined;
+  }
+
+  const candidate = error as Record<string, unknown>;
+  for (const key of ["timeoutPhase", "trinityStage", "stage"]) {
+    const value = candidate[key];
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+
+  return undefined;
+}
+
+function readErrorString(error: unknown, key: string): string | undefined {
+  if (!error || typeof error !== "object") {
+    return undefined;
+  }
+
+  const value = (error as Record<string, unknown>)[key];
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+const PROVIDER_TIMEOUT_ERROR_MARKERS = [
+  "openai_call_aborted_due_to_budget",
+  "runtime_budget_exhausted",
+  "runtimebudgetexceeded",
+  "budgetexceeded",
+  "watchdog threshold",
+  "execution aborted by watchdog"
+];
+
+function isGamingProviderTimeoutError(error: unknown): boolean {
+  if (isAbortError(error)) {
+    return true;
+  }
+
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const candidate = error as { name?: unknown; code?: unknown; message?: unknown };
+  const values = [candidate.name, candidate.code, candidate.message]
+    .filter((value): value is string => typeof value === "string")
+    .map((value) => value.toLowerCase());
+
+  return values.some((value) =>
+    PROVIDER_TIMEOUT_ERROR_MARKERS.some((marker) => value.includes(marker))
+  );
+}
+
+function createGamingProviderTimeoutError(
+  mode: GamingMode,
+  error: unknown,
+  timeoutMs: number,
+  stageTimeoutMs: number,
+  timeoutPhase = readTimeoutPhase(error) ?? "provider"
+): Error {
+  const timeoutError = new Error(`Gaming ${mode} generation timed out before a complete response was available.`);
+  Object.assign(timeoutError, {
+    code: "GAMING_PROVIDER_TIMEOUT",
+    timeoutMs,
+    stageTimeoutMs,
+    timeoutPhase
+  });
+  return timeoutError;
+}
+
+function estimateResponsePayloadChars(response: string, sources: WebSource[]): number {
+  return sources.reduce(
+    (total, source) =>
+      total + source.url.length + (source.snippet?.length ?? 0) + (source.error?.length ?? 0),
+    response.length
+  );
+}
+
+function formatGameplaySuccessWithLogs(params: {
+  mode: GamingMode;
+  response: string;
+  sources: WebSource[];
+  logContext: GamingLogContext;
+  requestStartedAt: number;
+}): GamingSuccessEnvelope {
+  const postprocessStartedAt = Date.now();
+  logger.info("gaming.postprocess.start", {
+    ...params.logContext,
+    responseChars: params.response.length,
+    sourceCount: params.sources.length
+  });
+
+  const envelope = formatGamingSuccess({
+    mode: params.mode,
+    data: {
+      response: params.response,
+      sources: params.sources
+    }
+  });
+
+  logger.info("gaming.postprocess.end", {
+    ...params.logContext,
+    postprocessMs: Date.now() - postprocessStartedAt,
+    responseChars: params.response.length,
+    sourceCount: params.sources.length
+  });
+
+  const payloadEstimateStartedAt = Date.now();
+  const responsePayloadChars = estimateResponsePayloadChars(params.response, params.sources);
+  logger.info("gaming.response.serialization", {
+    ...params.logContext,
+    serializedByTransport: true,
+    payloadEstimateMs: Date.now() - payloadEstimateStartedAt,
+    responsePayloadChars
+  });
+  logger.info("gaming.request.end", {
+    ...params.logContext,
+    ok: true,
+    totalElapsedMs: Date.now() - params.requestStartedAt
+  });
+
+  return envelope;
+}
 
 function stringifyMockResult(result: unknown): string {
   if (typeof result === "string") {
@@ -137,74 +325,200 @@ function buildGameplayRunOptions(mode: GamingMode) {
 }
 
 async function runGameplayPipeline(params: GameplayPipelineInput): Promise<GamingSuccessEnvelope> {
+  const requestStartedAt = Date.now();
+  const sourceEndpoint = `arcanos-gaming.${params.mode}`;
+  const requestId = getRequestAbortContext()?.requestId;
+  const initialGuideSourceCount = (params.guideUrl ? 1 : 0) + (params.guideUrls?.length ?? 0);
+  const baseLogContext: GamingLogContext = {
+    module: "ARCANOS:GAMING",
+    route: "gaming",
+    mode: params.mode,
+    sourceEndpoint,
+    ...(requestId ? { requestId } : {}),
+    promptLength: params.prompt.length,
+    gameProvided: Boolean(params.game),
+    guideSourceCount: initialGuideSourceCount
+  };
+
+  logger.info("gaming.request.start", baseLogContext);
+
   const exactLiteralShortcut = tryExtractExactLiteralPromptShortcut(params.prompt);
   if (exactLiteralShortcut) {
-    return formatGamingSuccess({
+    return formatGameplaySuccessWithLogs({
       mode: params.mode,
-      data: {
-        response: exactLiteralShortcut.literal,
-        sources: []
-      }
+      response: exactLiteralShortcut.literal,
+      sources: [],
+      logContext: baseLogContext,
+      requestStartedAt
     });
   }
 
   const allUrls = [
     ...(params.guideUrl ? [params.guideUrl] : []),
-    ...params.guideUrls
+    ...(params.guideUrls ?? [])
   ];
   const { context: webContext, sources } = await buildWebContext(allUrls);
   const enrichedPrompt = buildGameplayPrompt(params, webContext, allUrls.length > 0);
   const { client } = getOpenAIClientOrAdapter();
 
   if (!client) {
+    logger.warn("gaming.provider.unavailable", {
+      ...baseLogContext,
+      provider: "openai",
+      fallback: "mock"
+    });
     const mock = generateMockResponse(params.prompt, params.mode);
-    return formatGamingSuccess({
+    return formatGameplaySuccessWithLogs({
       mode: params.mode,
-      data: {
-        response: stringifyMockResult(mock.result),
-        sources
-      }
+      response: stringifyMockResult(mock.result),
+      sources,
+      logContext: baseLogContext,
+      requestStartedAt
     });
   }
 
-  const trinityResult = await runTrinityWritingPipeline({
-    input: {
-      prompt: [
-        buildGameplaySystemPrompt(params.mode),
-        '',
-        enrichedPrompt,
-        ...(params.auditEnabled ? ['', gamingPrompts.auditSystem] : [])
-      ].join('\n'),
-      moduleId: 'ARCANOS:GAMING',
-      sourceEndpoint: `arcanos-gaming.${params.mode}`,
-      requestedAction: 'query',
-      body: params,
-      executionMode: 'request'
-    },
-    context: {
-      client,
-      runtimeBudget: createRuntimeBudget(),
-      runOptions: buildGameplayRunOptions(params.mode)
+  const pipelineTimeoutMs = resolveGamingPipelineTimeoutMs(params.mode);
+  const stageTimeoutMs = resolveGamingStageTimeoutMs(params.mode, pipelineTimeoutMs);
+  const providerStartedAt = Date.now();
+  logger.info("gaming.provider.start", {
+    ...baseLogContext,
+    provider: "trinity",
+    timeoutMs: pipelineTimeoutMs,
+    stageTimeoutMs
+  });
+  logger.info("gaming.stream.start", {
+    ...baseLogContext,
+    provider: "trinity",
+    streaming: false
+  });
+
+  let trinityResult: Awaited<ReturnType<typeof runTrinityWritingPipeline>>;
+  try {
+    trinityResult = await runWithRequestAbortTimeout(
+      {
+        timeoutMs: pipelineTimeoutMs,
+        requestId,
+        parentSignal: getRequestAbortSignal(),
+        abortMessage: `Gaming ${params.mode} pipeline timed out after ${pipelineTimeoutMs}ms`
+      },
+      () =>
+        runTrinityWritingPipeline({
+          input: {
+            prompt: [
+              buildGameplaySystemPrompt(params.mode),
+              '',
+              enrichedPrompt,
+              ...(params.auditEnabled ? ['', gamingPrompts.auditSystem] : [])
+            ].join('\n'),
+            moduleId: 'ARCANOS:GAMING',
+            sourceEndpoint,
+            requestedAction: 'query',
+            body: params,
+            executionMode: 'request'
+          },
+          context: {
+            client,
+            ...(requestId ? { requestId } : {}),
+            runtimeBudget: createRuntimeBudgetWithLimit(
+              pipelineTimeoutMs,
+              GAMING_RUNTIME_BUDGET_SAFETY_BUFFER_MS
+            ),
+            runOptions: {
+              ...buildGameplayRunOptions(params.mode),
+              watchdogModelTimeoutMs: stageTimeoutMs
+            }
+          }
+        })
+    );
+  } catch (error) {
+    const elapsedMs = Date.now() - providerStartedAt;
+    logger.info("gaming.stream.end", {
+      ...baseLogContext,
+      provider: "trinity",
+      streaming: false,
+      ok: false,
+      elapsedMs
+    });
+
+    if (isGamingProviderTimeoutError(error)) {
+      if (getRequestAbortSignal()?.aborted) {
+        logger.info("gaming.request.end", {
+          ...baseLogContext,
+          ok: false,
+          totalElapsedMs: Date.now() - requestStartedAt,
+          errorCode: "REQUEST_ABORTED"
+        });
+        throw error;
+      }
+
+      const timeoutPhase = readTimeoutPhase(error) ?? "provider";
+      logger.warn("gaming.provider.timeout", {
+        ...baseLogContext,
+        provider: "trinity",
+        timeoutMs: pipelineTimeoutMs,
+        stageTimeoutMs,
+        elapsedMs,
+        timeoutPhase,
+        errorName: error instanceof Error ? error.name : typeof error,
+        errorCode: readErrorString(error, "code")
+      });
+      logger.info("gaming.request.end", {
+        ...baseLogContext,
+        ok: false,
+        totalElapsedMs: Date.now() - requestStartedAt,
+        errorCode: "GAMING_PROVIDER_TIMEOUT"
+      });
+      throw createGamingProviderTimeoutError(params.mode, error, pipelineTimeoutMs, stageTimeoutMs, timeoutPhase);
     }
+
+    logger.error("gaming.provider.error", {
+      ...baseLogContext,
+      provider: "trinity",
+      elapsedMs,
+      errorName: error instanceof Error ? error.name : typeof error,
+      errorCode: readErrorString(error, "code")
+    });
+    logger.info("gaming.request.end", {
+      ...baseLogContext,
+      ok: false,
+      totalElapsedMs: Date.now() - requestStartedAt,
+      errorCode: "GAMING_PROVIDER_ERROR"
+    });
+    throw error;
+  }
+
+  logger.info("gaming.stream.end", {
+    ...baseLogContext,
+    provider: "trinity",
+    streaming: false,
+    ok: true,
+    elapsedMs: Date.now() - providerStartedAt
+  });
+  logger.info("gaming.provider.end", {
+    ...baseLogContext,
+    provider: "trinity",
+    elapsedMs: Date.now() - providerStartedAt,
+    activeModel: trinityResult.activeModel,
+    finishReason: trinityResult.meta?.provider?.finishReason ?? "unknown"
   });
   const finalized = trinityResult.result;
 
   if (!params.auditEnabled) {
-    return formatGamingSuccess({
+    return formatGameplaySuccessWithLogs({
       mode: params.mode,
-      data: {
-        response: finalized,
-        sources
-      }
+      response: finalized,
+      sources,
+      logContext: baseLogContext,
+      requestStartedAt
     });
   }
 
-  return formatGamingSuccess({
+  return formatGameplaySuccessWithLogs({
     mode: params.mode,
-    data: {
-      response: finalized,
-      sources
-    }
+    response: finalized,
+    sources,
+    logContext: baseLogContext,
+    requestStartedAt
   });
 }
 

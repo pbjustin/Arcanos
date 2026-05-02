@@ -413,7 +413,12 @@ function isDispatchCancellationError(err: unknown): boolean {
   }
 
   const normalizedMessage = resolveErrorMessage(err).toLowerCase();
-  return normalizedMessage.includes('cancel');
+  return (
+    normalizedMessage.includes('cancel') ||
+    normalizedMessage.includes('client disconnected') ||
+    normalizedMessage.includes('request_aborted') ||
+    normalizedMessage.includes('outer request was aborted')
+  );
 }
 
 function buildDispatchTimeoutMessage(timeoutMs?: number, scope: 'module' | 'mcp' = 'module'): string {
