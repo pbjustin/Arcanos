@@ -238,6 +238,49 @@ describe('routeGptRequest gaming routing', () => {
     );
   });
 
+  it.each([
+    ['ARCANOS-GAMING', 'arcanos-gaming'],
+    ['Gaming', 'gaming'],
+  ])('forces %s requests to Gaming before generic normalized map fallback', async (incomingGptId, matchedId) => {
+    mockGetGptModuleMap.mockResolvedValue({
+      'arcanos-gaming': { route: 'tutor', module: 'ARCANOS:TUTOR' },
+      gaming: { route: 'tutor', module: 'ARCANOS:TUTOR' },
+      tutor: { route: 'tutor', module: 'ARCANOS:TUTOR' },
+    });
+
+    const envelope = await routeGptRequest({
+      gptId: incomingGptId,
+      body: {
+        action: 'query',
+        payload: {
+          mode: 'guide',
+          prompt: 'Give me Minecraft first-night survival tips.',
+          game: 'Minecraft',
+        },
+      },
+      requestId: `req-gaming-normalized-${matchedId}`,
+    });
+
+    expect(mockDispatchModuleAction).toHaveBeenCalledWith('ARCANOS:GAMING', 'query', expect.objectContaining({
+      mode: 'guide',
+      prompt: 'Give me Minecraft first-night survival tips.',
+      game: 'Minecraft',
+    }));
+    expect(mockCollectRepoImplementationEvidence).not.toHaveBeenCalled();
+    expect(envelope).toEqual(
+      expect.objectContaining({
+        ok: true,
+        _route: expect.objectContaining({
+          gptId: incomingGptId,
+          module: 'ARCANOS:GAMING',
+          action: 'query',
+          route: 'gaming',
+          matchMethod: 'normalized',
+        }),
+      })
+    );
+  });
+
   it('fails validation when query payload has no prompt', async () => {
     const envelope = await routeGptRequest({
       gptId: 'arcanos-gaming',
@@ -485,6 +528,106 @@ describe('routeGptRequest gaming routing', () => {
     );
   });
 
+  it('merges top-level Gaming mode into explicit payloads that omit mode', async () => {
+    const envelope = await routeGptRequest({
+      gptId: 'arcanos-gaming',
+      body: {
+        action: 'query',
+        mode: 'guide',
+        game: 'SWTOR',
+        payload: {
+          prompt: 'Give me SWTOR gearing help.',
+        },
+      },
+      requestId: 'req-gaming-merged-mode-1',
+    });
+
+    expect(mockDispatchModuleAction).toHaveBeenCalledWith('ARCANOS:GAMING', 'query', expect.objectContaining({
+      mode: 'guide',
+      game: 'SWTOR',
+      prompt: 'Give me SWTOR gearing help.',
+    }));
+    expect(envelope).toEqual(
+      expect.objectContaining({
+        ok: true,
+        _route: expect.objectContaining({
+          module: 'ARCANOS:GAMING',
+          action: 'query',
+          route: 'gaming',
+        }),
+      })
+    );
+  });
+
+  it('preserves explicit payload Gaming mode over conflicting top-level mode', async () => {
+    const envelope = await routeGptRequest({
+      gptId: 'arcanos-gaming',
+      body: {
+        action: 'query',
+        mode: 'meta',
+        game: 'SWTOR',
+        payload: {
+          mode: 'guide',
+          prompt: 'Give me SWTOR movement tips.',
+        },
+      },
+      requestId: 'req-gaming-payload-mode-wins-1',
+    });
+
+    expect(mockDispatchModuleAction).toHaveBeenCalledWith('ARCANOS:GAMING', 'query', expect.objectContaining({
+      mode: 'guide',
+      game: 'SWTOR',
+      prompt: 'Give me SWTOR movement tips.',
+    }));
+    expect(envelope).toEqual(
+      expect.objectContaining({
+        ok: true,
+        _route: expect.objectContaining({
+          module: 'ARCANOS:GAMING',
+          action: 'query',
+          route: 'gaming',
+        }),
+      })
+    );
+  });
+
+  it('keeps explicit payload prompt aliases ahead of top-level prompt aliases', async () => {
+    const envelope = await routeGptRequest({
+      gptId: 'arcanos-gaming',
+      body: {
+        action: 'query',
+        mode: 'guide',
+        message: 'ping',
+        payload: {
+          prompt: 'Give me SWTOR gearing help.',
+        },
+      },
+      requestId: 'req-gaming-payload-prompt-wins-1',
+    });
+
+    expect(mockDispatchModuleAction).toHaveBeenCalledWith('ARCANOS:GAMING', 'query', expect.objectContaining({
+      mode: 'guide',
+      prompt: 'Give me SWTOR gearing help.',
+    }));
+    expect(mockDispatchModuleAction).not.toHaveBeenCalledWith(
+      'ARCANOS:GAMING',
+      'query',
+      expect.objectContaining({
+        message: 'ping',
+      })
+    );
+    expect(envelope).toEqual(
+      expect.objectContaining({
+        ok: true,
+        _route: expect.objectContaining({
+          module: 'ARCANOS:GAMING',
+          action: 'query',
+          route: 'gaming',
+        }),
+      })
+    );
+  });
+
   it('uses the Gaming default query action when action is omitted', async () => {
     const envelope = await routeGptRequest({
       gptId: 'arcanos-gaming',
@@ -524,6 +667,7 @@ describe('routeGptRequest gaming routing', () => {
     ['get_status', 'CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT'],
     ['get_result', 'CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT'],
     ['mcp.invoke', 'MCP_CONTROL_REQUIRES_MCP_API'],
+    ['dag.dispatch', 'DAG_CONTROL_REQUIRES_DIRECT_ENDPOINT'],
   ])('rejects %s before Gaming module dispatch', async (action, errorCode) => {
     const envelope = await routeGptRequest({
       gptId: 'arcanos-gaming',

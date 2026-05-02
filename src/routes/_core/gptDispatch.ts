@@ -117,6 +117,15 @@ const FORWARDED_TOP_LEVEL_PAYLOAD_KEYS = [
   'query',
   'messages',
   'sessionId',
+  'mode',
+  'game',
+  'url',
+  'urls',
+  'guideUrls',
+  'audit',
+  'enableAudit',
+  'hrc',
+  'enableHrc',
   'overrideAuditSafe',
   'answerMode',
   'maxWords',
@@ -125,13 +134,29 @@ const FORWARDED_TOP_LEVEL_PAYLOAD_KEYS = [
   ARCANOS_SUPPRESS_TIMEOUT_FALLBACK_FLAG,
 ] as const;
 
+const FORWARDED_PROMPT_ALIAS_KEYS = new Set<string>([
+  'message',
+  'prompt',
+  'userInput',
+  'content',
+  'text',
+  'query',
+  'messages',
+]);
+
 function mergeForwardedTopLevelPayloadFields(
   body: Record<string, unknown>,
   explicitPayload: Record<string, unknown>
 ): Record<string, unknown> {
   const mergedPayload = { ...explicitPayload };
+  const explicitPayloadHasPromptAlias = Array.from(FORWARDED_PROMPT_ALIAS_KEYS)
+    .some((key) => Object.prototype.hasOwnProperty.call(explicitPayload, key));
 
   for (const key of FORWARDED_TOP_LEVEL_PAYLOAD_KEYS) {
+    if (explicitPayloadHasPromptAlias && FORWARDED_PROMPT_ALIAS_KEYS.has(key)) {
+      continue;
+    }
+
     if (Object.prototype.hasOwnProperty.call(mergedPayload, key)) {
       continue;
     }
@@ -718,6 +743,16 @@ function resolveForcedDirectGptEntry(incomingGptId: string): {
       entry: exactEntry,
       matchMethod: "exact",
       matchedId: incomingGptId,
+    };
+  }
+
+  const normalizedGptId = normalize(incomingGptId);
+  const normalizedEntry = FORCED_DIRECT_GPT_BINDINGS[normalizedGptId];
+  if (normalizedEntry) {
+    return {
+      entry: normalizedEntry,
+      matchMethod: "normalized",
+      matchedId: normalizedGptId,
     };
   }
 

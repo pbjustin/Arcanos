@@ -250,6 +250,29 @@ describe('root.deep_diagnostics GPT bridge', () => {
     }));
   });
 
+  it('denies Gaming even when the environment allowlist includes it', async () => {
+    process.env.ARCANOS_ROOT_DIAGNOSTIC_GPTS = 'arcanos-core,gaming';
+
+    const response = await request(buildApp())
+      .post('/gpt/gaming')
+      .set('Authorization', `Bearer ${TEST_ADMIN_TOKEN}`)
+      .send({ action: 'root.deep_diagnostics' });
+
+    expect(response.status).toBe(403);
+    expect(response.body).toEqual({
+      ok: false,
+      error: 'ROOT_DIAGNOSTICS_FORBIDDEN',
+    });
+    expect(mockAuditLog).toHaveBeenCalledWith(expect.objectContaining({
+      allowed: false,
+      denialReason: 'gpt_not_allowlisted',
+      gptId: 'gaming',
+      action: 'root.deep_diagnostics',
+    }));
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+    expect(mockGetWorkerControlHealth).not.toHaveBeenCalled();
+  });
+
   it('lets wrong actions follow normal GPT route behavior', async () => {
     const response = await request(buildApp())
       .post('/gpt/arcanos-core')
