@@ -213,6 +213,36 @@ describe("ArcanosGaming mode routing", () => {
     });
   });
 
+  it("returns a controlled generation timeout when the runtime budget expires before module dispatch", async () => {
+    const timeoutError = Object.assign(new Error("Gaming guide generation timed out."), {
+      code: "GAMING_PROVIDER_TIMEOUT",
+      timeoutMs: 50_000,
+      stageTimeoutMs: 15_000,
+      timeoutPhase: "reasoning"
+    });
+    mockRunGuidePipeline.mockRejectedValueOnce(timeoutError);
+
+    const result = await ArcanosGaming.actions.query({
+      mode: "guide",
+      game: "Star Wars: The Old Republic",
+      prompt: "Regression check only: Beginner to intermediate guide for tanking in Star Wars The Old Republic including mechanics, threat management, mitigation, positioning, and group play tips. Return a complete coherent answer with valid numbering."
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      route: "gaming",
+      mode: "guide",
+      error: expect.objectContaining({
+        code: "GENERATION_TIMEOUT",
+        details: {
+          timeoutMs: 50_000,
+          stageTimeoutMs: 15_000,
+          timeoutPhase: "reasoning"
+        }
+      })
+    }));
+  });
+
   it("preserves parent request aborts instead of mapping them to generation timeouts", async () => {
     const timeoutError = Object.assign(new Error("Outer request was aborted."), {
       name: "AbortError",

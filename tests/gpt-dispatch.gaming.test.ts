@@ -387,6 +387,110 @@ describe('routeGptRequest gaming routing', () => {
     }
   });
 
+  it('preserves a controlled gaming generation timeout envelope instead of surfacing MODULE_TIMEOUT', async () => {
+    mockDispatchModuleAction.mockResolvedValueOnce({
+      ok: false,
+      route: 'gaming',
+      mode: 'guide',
+      error: {
+        code: 'GENERATION_TIMEOUT',
+        message: 'Gaming generation timed out before a complete answer was available.',
+        details: {
+          timeoutMs: 50_000,
+          stageTimeoutMs: 15_000,
+          timeoutPhase: 'reasoning',
+        },
+      },
+    });
+
+    const envelope = await routeGptRequest({
+      gptId: 'arcanos-gaming',
+      body: {
+        action: 'query',
+        payload: {
+          mode: 'guide',
+          prompt: 'Give me SWTOR gearing help.',
+        },
+      },
+      requestId: 'req-gaming-generation-timeout-envelope',
+    });
+
+    expect(envelope).toEqual(
+      expect.objectContaining({
+        ok: true,
+        result: expect.objectContaining({
+          ok: false,
+          route: 'gaming',
+          mode: 'guide',
+          error: expect.objectContaining({
+            code: 'GENERATION_TIMEOUT',
+          }),
+        }),
+        _route: expect.objectContaining({
+          module: 'ARCANOS:GAMING',
+          action: 'query',
+          route: 'gaming',
+        }),
+      })
+    );
+    expect(envelope).not.toEqual(
+      expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({
+          code: 'MODULE_TIMEOUT',
+        }),
+      })
+    );
+  });
+
+  it('preserves parent request aborts instead of classifying them as module timeouts', async () => {
+    const logger = {
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+    };
+    const controller = new AbortController();
+    controller.abort(Object.assign(new Error('GPT route client disconnected'), {
+      name: 'AbortError',
+    }));
+
+    const envelope = await routeGptRequest({
+      gptId: 'arcanos-gaming',
+      body: {
+        action: 'query',
+        payload: {
+          mode: 'guide',
+          prompt: 'Give me SWTOR gearing help.',
+        },
+      },
+      requestId: 'req-gaming-parent-abort-dispatch',
+      logger,
+      parentAbortSignal: controller.signal,
+    });
+
+    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+    expect(envelope).toEqual(
+      expect.objectContaining({
+        ok: false,
+        error: expect.objectContaining({
+          code: 'REQUEST_ABORTED',
+        }),
+        _route: expect.objectContaining({
+          module: 'ARCANOS:GAMING',
+          action: 'query',
+          route: 'gaming',
+        }),
+      })
+    );
+    expect(envelope).not.toEqual(
+      expect.objectContaining({
+        error: expect.objectContaining({
+          code: 'MODULE_TIMEOUT',
+        }),
+      })
+    );
+  });
+
   it('rejects missing gptId before dispatch resolution', async () => {
     const envelope = await routeGptRequest({
       gptId: '',

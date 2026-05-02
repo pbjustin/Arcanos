@@ -105,6 +105,34 @@ function readErrorString(error: unknown, key: string): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
+const PROVIDER_TIMEOUT_ERROR_MARKERS = [
+  "openai_call_aborted_due_to_budget",
+  "runtime_budget_exhausted",
+  "runtimebudgetexceeded",
+  "budgetexceeded",
+  "watchdog threshold",
+  "execution aborted by watchdog"
+];
+
+function isGamingProviderTimeoutError(error: unknown): boolean {
+  if (isAbortError(error)) {
+    return true;
+  }
+
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const candidate = error as { name?: unknown; code?: unknown; message?: unknown };
+  const values = [candidate.name, candidate.code, candidate.message]
+    .filter((value): value is string => typeof value === "string")
+    .map((value) => value.toLowerCase());
+
+  return values.some((value) =>
+    PROVIDER_TIMEOUT_ERROR_MARKERS.some((marker) => value.includes(marker))
+  );
+}
+
 function createGamingProviderTimeoutError(
   mode: GamingMode,
   error: unknown,
@@ -412,7 +440,7 @@ async function runGameplayPipeline(params: GameplayPipelineInput): Promise<Gamin
       elapsedMs
     });
 
-    if (isAbortError(error)) {
+    if (isGamingProviderTimeoutError(error)) {
       if (getRequestAbortSignal()?.aborted) {
         logger.info("gaming.request.end", {
           ...baseLogContext,
