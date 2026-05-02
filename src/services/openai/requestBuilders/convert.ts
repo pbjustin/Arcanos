@@ -9,6 +9,11 @@ import {
   extractResponseOutputText as extractResponseText
 } from '@arcanos/openai/responseParsing';
 import { shouldStoreOpenAIResponses } from '@config/openaiStore.js';
+import {
+  attachOpenAIResponsesMetadataToChatCompletion,
+  resolveOpenAIResponsesLegacyFinishReason,
+  type OpenAIResponsesLegacyChatCompletion
+} from '@core/adapters/openaiResponsesMetadata.js';
 
 import type {
   NormalizedResponsesRequest,
@@ -29,6 +34,11 @@ function isReasoningModel(model: string): boolean {
 function extractUsage(usage: unknown): { promptTokens: number; completionTokens: number; totalTokens: number } {
   return normalizeOpenAIUsage(usage);
 }
+
+export type {
+  OpenAIResponsesLegacyChatCompletion,
+  OpenAIResponsesProviderMetadata
+} from '@core/adapters/openaiResponsesMetadata.js';
 
 export function convertNormalizedResponsesToRequest(
   normalized: NormalizedResponsesRequest
@@ -192,15 +202,16 @@ export function extractResponseOutputText(response: unknown, fallback = ''): str
 export function convertResponseToLegacyChatCompletion(
   response: OpenAIResponse,
   requestedModel: string
-): OpenAI.Chat.Completions.ChatCompletion {
+): OpenAIResponsesLegacyChatCompletion {
   const outputText = extractResponseOutputText(response, '');
   const usage = extractUsage((response as unknown as { usage?: unknown }).usage);
   const createdSource = (response as { created_at?: unknown }).created_at;
   const created = typeof createdSource === 'number'
     ? Math.floor(createdSource)
     : Math.floor(Date.now() / 1000);
+  const finishReason = resolveOpenAIResponsesLegacyFinishReason(response);
 
-  return {
+  const legacyResponse: OpenAI.Chat.Completions.ChatCompletion = {
     id: response.id || `legacy_${Date.now()}`,
     object: 'chat.completion',
     created,
@@ -213,7 +224,7 @@ export function convertResponseToLegacyChatCompletion(
           content: outputText,
           refusal: null
         },
-        finish_reason: 'stop',
+        finish_reason: finishReason,
         logprobs: null
       }
     ],
@@ -223,4 +234,6 @@ export function convertResponseToLegacyChatCompletion(
       total_tokens: usage.totalTokens
     }
   };
+
+  return attachOpenAIResponsesMetadataToChatCompletion(legacyResponse, response, finishReason);
 }

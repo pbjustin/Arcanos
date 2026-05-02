@@ -27,6 +27,16 @@ export interface TrinityMetaTokens {
   total_tokens: number;
 }
 
+export interface TrinityProviderCompletionMetadata {
+  finishReason?: string | null;
+  responseStatus?: string | null;
+  incompleteReason?: string | null;
+  incomplete?: boolean;
+  truncated?: boolean;
+  lengthTruncated?: boolean;
+  contentFiltered?: boolean;
+}
+
 export type TrinityRequestedVerbosity = 'minimal' | 'normal' | 'detailed';
 export type TrinityAnswerMode = 'direct' | 'explained' | 'audit' | 'debug';
 export type TrinityIntentMode = IntentMode;
@@ -100,6 +110,7 @@ export interface TrinityResult {
     tokenLimit?: number;
     outputLimit?: number;
     background?: Record<string, unknown>;
+    provider?: TrinityProviderCompletionMetadata;
   };
   activeModel: string;
   fallbackFlag: boolean;
@@ -252,4 +263,5 @@ export interface TrinityFinalOutput {
   usage?: TrinityMetaTokens | undefined;
   responseId?: string;
   created?: number;
+  provider?: TrinityProviderCompletionMetadata;
 }

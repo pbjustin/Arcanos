@@ -13,6 +13,7 @@ import { getTokenParameter } from "@shared/tokenParameterHelper.js";
 import { formatErrorMessage } from "@core/lib/errors/reusable.js";
 import { aiLogger } from "@platform/logging/structuredLogging.js";
 import { buildResponsesRequest, convertResponseToLegacyChatCompletion } from './requestBuilders/index.js';
+import type { OpenAIResponsesProviderMetadata } from './requestBuilders/index.js';
 import {
   buildFailureContext,
   buildFinalFallbackReason,
@@ -68,6 +69,130 @@ interface ChatCompletionWithFallback extends ChatCompletionResponse {
   retryUsed?: boolean;
   fallbackReason?: string;
   gpt5Used?: boolean;
+}
+
+const ALLOWED_FINISH_REASONS = new Set(['stop', 'length', 'tool_calls', 'content_filter', 'function_call']);
+const ALLOWED_INCOMPLETE_REASONS = new Set(['max_output_tokens', 'content_filter', 'unknown', 'none']);
+
+type CompletionMetadataSnapshot = {
+  finishReason: string;
+  responseStatus: string;
+  incompleteReason: string;
+  incomplete: boolean;
+  truncated: boolean;
+  lengthTruncated: boolean;
+  contentFiltered: boolean;
+  usage: {
+    prompt: number;
+    completion: number;
+    total: number;
+  };
+};
+
+function normalizeSafeEnum(value: unknown, allowed: Set<string>, fallback: string): string {
+  if (typeof value !== 'string' || value.length === 0) {
+    return fallback;
+  }
+  return allowed.has(value) ? value : fallback;
+}
+
+function readUsageCounters(response: ChatCompletionResponse): CompletionMetadataSnapshot['usage'] {
+  return {
+    prompt: response.usage?.prompt_tokens ?? 0,
+    completion: response.usage?.completion_tokens ?? 0,
+    total: response.usage?.total_tokens ?? 0
+  };
+}
+
+function readCompletionMetadata(response: ChatCompletionResponse): CompletionMetadataSnapshot {
+  const candidate = response as ChatCompletionResponse & {
+    provider_metadata?: Partial<OpenAIResponsesProviderMetadata>;
+    response_status?: unknown;
+    incomplete_details?: unknown;
+    incomplete?: unknown;
+    truncated?: unknown;
+    length_truncated?: unknown;
+    content_filtered?: unknown;
+  };
+  const providerMetadata = candidate.provider_metadata ?? {};
+  const incompleteDetails = providerMetadata.incomplete_details && typeof providerMetadata.incomplete_details === 'object'
+    ? providerMetadata.incomplete_details as { reason?: unknown }
+    : candidate.incomplete_details && typeof candidate.incomplete_details === 'object'
+      ? candidate.incomplete_details as { reason?: unknown }
+      : {};
+  const finishReason = normalizeSafeEnum(
+    providerMetadata.finish_reason ?? response.choices[0]?.finish_reason,
+    ALLOWED_FINISH_REASONS,
+    'unknown'
+  );
+  const incompleteReason = normalizeSafeEnum(
+    incompleteDetails.reason,
+    ALLOWED_INCOMPLETE_REASONS,
+    incompleteDetails.reason ? 'unknown' : 'none'
+  );
+
+  return {
+    finishReason,
+    responseStatus: typeof providerMetadata.status === 'string'
+      ? providerMetadata.status
+      : typeof candidate.response_status === 'string'
+        ? candidate.response_status
+        : 'unknown',
+    incompleteReason,
+    incomplete: providerMetadata.incomplete === true || candidate.incomplete === true,
+    truncated: providerMetadata.truncated === true || candidate.truncated === true || finishReason === 'length',
+    lengthTruncated: providerMetadata.length_truncated === true || candidate.length_truncated === true || finishReason === 'length',
+    contentFiltered: providerMetadata.content_filtered === true || candidate.content_filtered === true || finishReason === 'content_filter',
+    usage: readUsageCounters(response)
+  };
+}
+
+function buildCompletionLogContext(model: string, startedAt: number, response: ChatCompletionResponse) {
+  const metadata = readCompletionMetadata(response);
+  return {
+    model,
+    latencyMs: Date.now() - startedAt,
+    finishReason: metadata.finishReason,
+    responseStatus: metadata.responseStatus,
+    incompleteReason: metadata.incompleteReason,
+    incomplete: metadata.incomplete,
+    truncated: metadata.truncated,
+    lengthTruncated: metadata.lengthTruncated,
+    contentFiltered: metadata.contentFiltered,
+    usagePrompt: metadata.usage.prompt,
+    usageCompletion: metadata.usage.completion,
+    usageTotal: metadata.usage.total
+  };
+}
+
+function createIncompleteProviderOutputError(model: string, metadata: CompletionMetadataSnapshot): Error {
+  const error = new Error(
+    `OpenAI completion for ${model} ended before a complete answer was available.`
+  );
+  Object.assign(error, {
+    code: 'OPENAI_COMPLETION_INCOMPLETE',
+    providerStatus: metadata.responseStatus,
+    finishReason: metadata.finishReason,
+    incompleteReason: metadata.incompleteReason,
+    truncated: metadata.truncated,
+    lengthTruncated: metadata.lengthTruncated,
+    contentFiltered: metadata.contentFiltered
+  });
+  return error;
+}
+
+function throwIfCompletionIncomplete(model: string, response: ChatCompletionResponse): void {
+  const metadata = readCompletionMetadata(response);
+  if (
+    metadata.incomplete ||
+    metadata.truncated ||
+    metadata.lengthTruncated ||
+    metadata.contentFiltered ||
+    metadata.finishReason === 'length' ||
+    metadata.finishReason === 'content_filter'
+  ) {
+    throw createIncompleteProviderOutputError(model, metadata);
+  }
 }
 
 const getTokensFromParams = (params: ChatCompletionParams): number =>
@@ -163,10 +288,14 @@ async function attemptModelCall(
       model,
     })
   );
-  aiLogger.info(`${logPrefix} Success with ${model}`, {
-    model,
-    latencyMs: Date.now() - startedAt
-  });
+  const logContext = buildCompletionLogContext(model, startedAt, response);
+  try {
+    throwIfCompletionIncomplete(model, response);
+  } catch (error) {
+    aiLogger.warn(`${logPrefix} Incomplete response from ${model}`, logContext);
+    throw error;
+  }
+  aiLogger.info(`${logPrefix} Success with ${model}`, logContext);
   return { response, model };
 }
 
@@ -188,10 +317,14 @@ async function attemptGPT5Call(
   const response = await executeWithResilience(() =>
     executeChatCompletionRequest(clientOrAdapter, gpt5Payload)
   );
-  aiLogger.info(buildGpt5SuccessLog(gpt5Model), {
-    model: gpt5Model,
-    latencyMs: Date.now() - startedAt
-  });
+  const logContext = buildCompletionLogContext(gpt5Model, startedAt, response);
+  try {
+    throwIfCompletionIncomplete(gpt5Model, response);
+  } catch (error) {
+    aiLogger.warn(`${CHAT_FALLBACK_LOG_PREFIXES.gpt5} Incomplete response from ${gpt5Model}`, logContext);
+    throw error;
+  }
+  aiLogger.info(buildGpt5SuccessLog(gpt5Model), logContext);
   return { response, model: gpt5Model };
 }
 

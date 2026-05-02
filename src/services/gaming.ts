@@ -44,6 +44,20 @@ const modeInstructions: Record<GamingMode, string> = {
   meta: "Return a meta overview with current assumptions, tradeoffs, counters, and explicit uncertainty when patch/version context is missing."
 };
 
+function rewriteGuideDirectAnswerCues(prompt: string): string {
+  return prompt
+    .replace(/\b(?:answer|respond|reply)\s+directly\b/gi, 'give practical guidance')
+    .replace(/\bjust\s+answer\b/gi, 'focus on the answer')
+    .replace(/\b(?:do\s+not|don't)\s+simulate\b/gi, 'avoid gameplay reenactment')
+    .replace(/\bno\s+simulation\b/gi, 'avoid gameplay reenactment')
+    .replace(/\bwithout\s+simulation\b/gi, 'without gameplay reenactment')
+    .replace(/\b(?:do\s+not|don't|no|without)\s+role-?play\b/gi, 'avoid roleplay framing')
+    .replace(/\b(?:do\s+not|don't|no|without)\s+pretend\b/gi, 'avoid pretending to play')
+    .replace(/\bno\s+hypothetical(?:\s+runs?)?\b/gi, 'avoid hypothetical run narration')
+    .replace(/\bhypothetical\s+run\b/gi, 'run narration')
+    .trim();
+}
+
 async function buildWebContext(urls: string[]): Promise<{ context: string; sources: WebSource[] }> {
   if (urls.length === 0) {
     return { context: "", sources: [] };
@@ -70,6 +84,17 @@ async function buildWebContext(urls: string[]): Promise<{ context: string; sourc
 }
 
 function buildGameplaySystemPrompt(mode: GamingMode): string {
+  if (mode === "guide") {
+    return [
+      "You are ARCANOS:GAMING:GUIDE.",
+      modeInstructions.guide,
+      "Give concrete guidance with enough structure to complete the requested guide.",
+      "Avoid gameplay reenactment, roleplay framing, invented live patch details, hotline banter, and theatrical framing.",
+      "If the user requests an exact literal response, return only that literal.",
+      "State missing game, platform, class, or version details plainly instead of guessing."
+    ].join(" ");
+  }
+
   return buildDirectAnswerModeSystemInstruction({
     moduleLabel: `ARCANOS:GAMING:${mode.toUpperCase()}`,
     domainGuidance: modeInstructions[mode],
@@ -86,13 +111,29 @@ function buildGameplaySystemPrompt(mode: GamingMode): string {
 function buildGameplayPrompt(params: GameplayPipelineInput, webContext: string, hadSources: boolean): string {
   const modeLabel = `[MODE]\n${params.mode}`;
   const gameLabel = params.game ? `\n\n[GAME]\n${params.game}` : "";
+  const requestPrompt = params.mode === "guide" ? rewriteGuideDirectAnswerCues(params.prompt) : params.prompt;
   const webLabel = webContext
     ? `\n\n[WEB CONTEXT]\n${webContext}\n\n${gamingPrompts.webContextInstruction}`
     : hadSources
     ? `\n\n[WEB CONTEXT]\nGuides were provided but no usable snippets were retrieved.\n\n${gamingPrompts.webUncertaintyGuidance}`
     : "";
 
-  return `${modeLabel}${gameLabel}\n\n[REQUEST]\n${params.prompt}${webLabel}`;
+  return `${modeLabel}${gameLabel}\n\n[REQUEST]\n${requestPrompt}${webLabel}`;
+}
+
+function buildGameplayRunOptions(mode: GamingMode) {
+  if (mode === "guide") {
+    return {
+      answerMode: "explained" as const,
+      requestedVerbosity: "detailed" as const,
+      strictUserVisibleOutput: true
+    };
+  }
+
+  return {
+    answerMode: "direct" as const,
+    strictUserVisibleOutput: true
+  };
 }
 
 async function runGameplayPipeline(params: GameplayPipelineInput): Promise<GamingSuccessEnvelope> {
@@ -143,10 +184,7 @@ async function runGameplayPipeline(params: GameplayPipelineInput): Promise<Gamin
     context: {
       client,
       runtimeBudget: createRuntimeBudget(),
-      runOptions: {
-        answerMode: 'direct',
-        strictUserVisibleOutput: true
-      }
+      runOptions: buildGameplayRunOptions(params.mode)
     }
   });
   const finalized = trinityResult.result;

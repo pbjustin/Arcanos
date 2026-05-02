@@ -78,6 +78,7 @@ import {
   deriveTrinityOutputControls,
   enforceFinalStageHonesty,
   enforceFinalStageHonestyAndMinimalism,
+  validateTrinityAnswerIntegrity,
   readIntentMode
 } from './trinityHonesty.js';
 import { resolveTrinityDirectAnswerPreference } from '@services/directAnswerMode.js';
@@ -924,6 +925,26 @@ export async function runThroughBrain(
         reasoningHonesty: directAnswerReasoningHonesty
       });
       const finalText = applyTrinityDirectAnswerOutputContract(enforcedFinalOutput.text, prompt);
+      const integrity = validateTrinityAnswerIntegrity({
+        text: finalText,
+        reasoningHonesty: directAnswerReasoningHonesty
+      });
+      if (!integrity.valid) {
+        logger.warn('trinity.direct_answer.integrity_failed', {
+          module: 'trinity',
+          operation: 'direct-answer-integrity',
+          requestId,
+          sourceEndpoint: options.sourceEndpoint,
+          issues: integrity.issues,
+          outputChars: finalText.length
+        });
+        const integrityError = new Error('Trinity direct-answer output failed integrity validation.');
+        Object.assign(integrityError, {
+          code: 'TRINITY_OUTPUT_INTEGRITY_FAILED',
+          integrityIssues: integrity.issues
+        });
+        throw integrityError;
+      }
 
       if (honestyFilteredFinal.blocked) {
         auditFlags.push('FINAL_UNSUPPORTED_CLAIM_BLOCKED');
@@ -1014,6 +1035,9 @@ export async function runThroughBrain(
         outputControls,
         directAnswerReasoningHonesty
       );
+      if (directAnswerOutput.provider) {
+        result.meta.provider = directAnswerOutput.provider;
+      }
 
       result.tierInfo = {
         tier,
@@ -1535,6 +1559,9 @@ export async function runThroughBrain(
       reasoningLedger,
       clearAudit
     );
+    if (finalOutput.provider) {
+      result.meta.provider = finalOutput.provider;
+    }
 
     result.tierInfo = {
       tier,

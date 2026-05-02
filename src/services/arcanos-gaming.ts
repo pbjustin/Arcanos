@@ -4,11 +4,53 @@ import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import {
   formatGamingError,
   type GamingErrorEnvelope,
+  type GamingMode,
   type GamingSuccessEnvelope,
   validateGamingRequest
 } from "@services/gamingModes.js";
 
 type GamingEnvelope = GamingSuccessEnvelope | GamingErrorEnvelope;
+
+function readSafeErrorString(error: unknown, key: string): string | undefined {
+  if (!error || typeof error !== "object") {
+    return undefined;
+  }
+  const value = (error as Record<string, unknown>)[key];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function readSafeErrorBoolean(error: unknown, key: string): boolean | undefined {
+  if (!error || typeof error !== "object") {
+    return undefined;
+  }
+  const value = (error as Record<string, unknown>)[key];
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function formatKnownGenerationFailure(mode: GamingMode, error: unknown): GamingErrorEnvelope | null {
+  const code = readSafeErrorString(error, "code");
+  if (code !== "OPENAI_COMPLETION_INCOMPLETE" && code !== "TRINITY_OUTPUT_INTEGRITY_FAILED") {
+    return null;
+  }
+
+  return formatGamingError({
+    mode,
+    error: {
+      code: code === "OPENAI_COMPLETION_INCOMPLETE" ? "GENERATION_INCOMPLETE" : "GENERATION_INTEGRITY_FAILED",
+      message: "Gaming generation did not complete cleanly; no partial answer was returned.",
+      details: {
+        finishReason: readSafeErrorString(error, "finishReason"),
+        incompleteReason: readSafeErrorString(error, "incompleteReason"),
+        truncated: readSafeErrorBoolean(error, "truncated"),
+        lengthTruncated: readSafeErrorBoolean(error, "lengthTruncated"),
+        contentFiltered: readSafeErrorBoolean(error, "contentFiltered"),
+        integrityIssues: Array.isArray((error as { integrityIssues?: unknown }).integrityIssues)
+          ? (error as { integrityIssues: unknown[] }).integrityIssues.filter((issue): issue is string => typeof issue === "string")
+          : undefined
+      }
+    }
+  });
+}
 
 async function handleGamingRequest(payload: unknown): Promise<GamingEnvelope> {
   const validation = validateGamingRequest(payload);
@@ -18,12 +60,21 @@ async function handleGamingRequest(payload: unknown): Promise<GamingEnvelope> {
 
   const { mode, prompt, game, guideUrl, guideUrls, auditEnabled, hrcEnabled } = validation.value;
 
-  let response =
-    mode === "guide"
-      ? await runGuidePipeline({ prompt, game, guideUrl, guideUrls, auditEnabled })
-      : mode === "build"
-      ? await runBuildPipeline({ prompt, game, guideUrl, guideUrls, auditEnabled })
-      : await runMetaPipeline({ prompt, game, guideUrl, guideUrls, auditEnabled });
+  let response: GamingSuccessEnvelope;
+  try {
+    response =
+      mode === "guide"
+        ? await runGuidePipeline({ prompt, game, guideUrl, guideUrls, auditEnabled })
+        : mode === "build"
+        ? await runBuildPipeline({ prompt, game, guideUrl, guideUrls, auditEnabled })
+        : await runMetaPipeline({ prompt, game, guideUrl, guideUrls, auditEnabled });
+  } catch (error: unknown) {
+    const knownGenerationFailure = formatKnownGenerationFailure(mode, error);
+    if (knownGenerationFailure) {
+      return knownGenerationFailure;
+    }
+    throw error;
+  }
 
   if (!hrcEnabled) {
     return response;

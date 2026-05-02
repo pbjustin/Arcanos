@@ -109,6 +109,13 @@ const CURRENT_EXTERNAL_FACT_VERB_PATTERN =
 const SUBSTRING_DUPLICATE_OVERLAP_THRESHOLD = 0.65;
 const SAME_CATEGORY_LIMITATION_DUPLICATE_OVERLAP_THRESHOLD = 0.72;
 const GENERAL_DUPLICATE_OVERLAP_THRESHOLD = 0.9;
+const LIVE_EXTERNAL_STATE_LIMITATION_FALLBACK = "I can't verify current external state here without live access";
+const BACKEND_STATE_LIMITATION_FALLBACK = "I can't confirm backend state or run backend actions here";
+const PERSISTENCE_ACTION_LIMITATION_FALLBACK = "I haven't saved or persisted anything here";
+const GENERIC_LIVE_EXTERNAL_INFORMATION_FALLBACK =
+  'I can help with general guidance, but I cannot verify live or current external information here.';
+const GENERIC_BACKEND_ACTION_FALLBACK =
+  'I have not executed any backend or persistence action here.';
 const SCOPE_DRIFT_QUALIFIER_PATTERN =
   /\s+or your(?: actual)?\s+(tooling|backend|stack|database|systems?|service|services)\b/gi;
 const PROMPT_GENERATION_ACCESS_LIMITATION_FRAGMENT =
@@ -273,6 +280,16 @@ function isNumericSentencePeriod(line: string, index: number): boolean {
   return /\d/.test(previousCharacter) && /\d/.test(nextCharacter);
 }
 
+function isNumberedListMarkerPeriod(line: string, index: number): boolean {
+  const prefix = line.slice(0, index + 1);
+  const nextCharacter = line[index + 1] ?? '';
+  return /^\s*\d+\.$/.test(prefix) && (!nextCharacter || /\s/.test(nextCharacter));
+}
+
+function isCurrentSegmentNumberedListMarker(segment: string, nextCharacter: string): boolean {
+  return /^\d+\.$/.test(segment.trim()) && (!nextCharacter || /\s/.test(nextCharacter));
+}
+
 function splitLineIntoSegments(line: string): string[] {
   const segments: string[] = [];
   let currentSegment = '';
@@ -287,6 +304,14 @@ function splitLineIntoSegments(line: string): string[] {
 
     //audit Assumption: decimal or version-style periods like "GPT-5.1" belong inside a single sentence; failure risk: sentence splitting turns one truthful limitation into a caveat plus an orphaned fragment like "1 system here."; expected invariant: punctuation between digits never creates a new sentence boundary; handling strategy: keep the segment open when a period is flanked by digits.
     if (character === '.' && isNumericSentencePeriod(line, index)) {
+      continue;
+    }
+
+    //audit Assumption: a top-level numbered-list marker is structural text, not a sentence; failure risk: splitting at "1." creates orphaned markers that later compression can return without the item body; expected invariant: "1. Do the thing." is handled as one segment; handling strategy: keep the segment open when the period is the marker delimiter.
+    if (
+      character === '.' &&
+      (isNumberedListMarkerPeriod(line, index) || isCurrentSegmentNumberedListMarker(currentSegment, line[index + 1] ?? ''))
+    ) {
       continue;
     }
 
@@ -379,7 +404,7 @@ function rewriteUnsupportedCurrentExternalStateSections(params: {
       blockedOrRewrittenClaims.push(line);
       if (!liveLimitationAdded) {
         keptLines.push(ensureSingleSentence(buildLimitationSentence({
-          fallbackText: "I can't verify current external state here without live access",
+          fallbackText: LIVE_EXTERNAL_STATE_LIMITATION_FALLBACK,
           existingCaveats: params.reasoningHonesty.userVisibleCaveats,
           blockedSubtasks: params.reasoningHonesty.blockedSubtasks,
           matcher: /\b(live|browse|current|latest|verify|external|competitor|market|news)\b/i
@@ -925,7 +950,7 @@ function rewriteUnsupportedClaims(params: {
     if (impliesBackendAction && !supportsBackendAction) {
       blockedOrRewrittenClaims.push(segment);
       if (!backendLimitationAdded) {
-        rewrittenSegments.push("I can't confirm backend state or run backend actions here.");
+        rewrittenSegments.push(`${BACKEND_STATE_LIMITATION_FALLBACK}.`);
         backendLimitationAdded = true;
       }
       continue;
@@ -934,7 +959,7 @@ function rewriteUnsupportedClaims(params: {
     if (impliesPersistenceAction && !supportsBackendAction && !params.capabilityFlags.canPersistData) {
       blockedOrRewrittenClaims.push(segment);
       if (!persistenceLimitationAdded) {
-        rewrittenSegments.push("I haven't saved or persisted anything here.");
+        rewrittenSegments.push(`${PERSISTENCE_ACTION_LIMITATION_FALLBACK}.`);
         persistenceLimitationAdded = true;
       }
       continue;
@@ -999,21 +1024,21 @@ function buildPreferredLimitationSegment(
   switch (category) {
     case 'live_verification':
       return ensureSingleSentence(buildLimitationSentence({
-        fallbackText: "I can't verify current external state here without live access",
+        fallbackText: LIVE_EXTERNAL_STATE_LIMITATION_FALLBACK,
         existingCaveats: reasoningHonesty.userVisibleCaveats,
         blockedSubtasks: reasoningHonesty.blockedSubtasks,
         matcher: /\b(live|browse|current|latest|verify|external|competitor|market|news)\b/i
       }));
     case 'backend_action':
       return ensureSingleSentence(buildLimitationSentence({
-        fallbackText: "I can't confirm backend state or run backend actions here",
+        fallbackText: BACKEND_STATE_LIMITATION_FALLBACK,
         existingCaveats: reasoningHonesty.userVisibleCaveats,
         blockedSubtasks: reasoningHonesty.blockedSubtasks,
         matcher: /\b(backend|api|endpoint|service|services|call|run)\b/i
       }));
     case 'persistence_action':
       return ensureSingleSentence(buildLimitationSentence({
-        fallbackText: "I haven't saved or persisted anything here",
+        fallbackText: PERSISTENCE_ACTION_LIMITATION_FALLBACK,
         existingCaveats: reasoningHonesty.userVisibleCaveats,
         blockedSubtasks: reasoningHonesty.blockedSubtasks,
         matcher: /\b(save|persist|store|write|database|db|update|insert)\b/i
@@ -1083,6 +1108,49 @@ function dedupeNearDuplicateSegments(text: string): string {
   return normalizeWhitespace(keptSegments.join(' '));
 }
 
+function buildReasoningFallbackSet(reasoningHonesty: TrinityReasoningHonesty): Set<string> {
+  return new Set(
+    [...reasoningHonesty.userVisibleCaveats, ...reasoningHonesty.blockedSubtasks]
+      .map(entry => normalizeSegmentForComparison(entry))
+      .filter(Boolean)
+  );
+}
+
+function buildGenericFallbackSet(): Set<string> {
+  return new Set([
+    normalizeSegmentForComparison(GENERIC_LIVE_EXTERNAL_INFORMATION_FALLBACK),
+    normalizeSegmentForComparison(GENERIC_BACKEND_ACTION_FALLBACK),
+    normalizeSegmentForComparison(LIVE_EXTERNAL_STATE_LIMITATION_FALLBACK),
+    normalizeSegmentForComparison(BACKEND_STATE_LIMITATION_FALLBACK),
+    normalizeSegmentForComparison(PERSISTENCE_ACTION_LIMITATION_FALLBACK)
+  ]);
+}
+
+function isUnrequestedFallbackSplice(
+  segment: string,
+  reasoningFallbacks: Set<string>,
+  genericFallbacks: Set<string>
+): boolean {
+  const normalizedSegment = normalizeSegmentForComparison(segment);
+  return genericFallbacks.has(normalizedSegment) && !reasoningFallbacks.has(normalizedSegment);
+}
+
+function removeFallbackSplicesFromPartialAnswer(text: string, reasoningHonesty: TrinityReasoningHonesty): string {
+  const segments = splitIntoSegments(text);
+  if (segments.length <= 1 || !segments.some(segment => classifyLimitationCategory(segment) === null)) {
+    return normalizeWhitespace(text);
+  }
+
+  const reasoningFallbacks = buildReasoningFallbackSet(reasoningHonesty);
+  const genericFallbacks = buildGenericFallbackSet();
+
+  return normalizeWhitespace(
+    segments
+      .filter(segment => !isUnrequestedFallbackSplice(segment, reasoningFallbacks, genericFallbacks))
+      .join(' ')
+  );
+}
+
 function removeUnrequestedMetaSections(text: string, outputControls: TrinityOutputControls): { text: string; removedMetaSections: string[] } {
   if (outputControls.answerMode === 'audit' || outputControls.answerMode === 'debug') {
     return { text, removedMetaSections: [] };
@@ -1101,13 +1169,13 @@ function resolveEffectiveWordLimit(outputControls: TrinityOutputControls): numbe
   if (typeof outputControls.maxWords === 'number' && outputControls.maxWords > 0) {
     return outputControls.maxWords;
   }
-  return outputControls.requestedVerbosity === 'minimal' || outputControls.answerMode === 'direct' ? 90 : null;
+  return outputControls.requestedVerbosity === 'minimal' ? 90 : null;
 }
 
 function compressToWordLimit(text: string, outputControls: TrinityOutputControls): string {
   const effectiveWordLimit = resolveEffectiveWordLimit(outputControls);
   if (!effectiveWordLimit || countWords(text) <= effectiveWordLimit) {
-    return normalizeWhitespace(text);
+    return repairOrphanNumberedListMarkers(normalizeWhitespace(text));
   }
 
   const indexedSegments = splitIntoSegments(text).map((segment, index) => ({
@@ -1132,15 +1200,92 @@ function compressToWordLimit(text: string, outputControls: TrinityOutputControls
   }
 
   if (selectedIndexes.size === 0 && indexedSegments.length > 0) {
-    return normalizeWhitespace(indexedSegments[0]!.segment.split(/\s+/).slice(0, effectiveWordLimit).join(' '));
+    return repairOrphanNumberedListMarkers(
+      normalizeWhitespace(indexedSegments[0]!.segment.split(/\s+/).slice(0, effectiveWordLimit).join(' '))
+    );
   }
 
-  return normalizeWhitespace(
-    indexedSegments
-      .filter(item => selectedIndexes.has(item.index))
-      .map(item => item.segment)
-      .join(' ')
+  return repairOrphanNumberedListMarkers(
+    normalizeWhitespace(
+      indexedSegments
+        .filter(item => selectedIndexes.has(item.index))
+        .map(item => item.segment)
+        .join(' ')
+    )
   );
+}
+
+function repairOrphanNumberedListMarkers(text: string): string {
+  const segments = splitIntoSegments(text);
+  const repairedSegments = mergeOrphanListMarkerSegments(segments).filter(segment => !/^\d+\.$/.test(segment.trim()));
+  const repairedText = normalizeWhitespace(repairedSegments.join(' '));
+  return /^\d+\.$/.test(repairedText) ? '' : repairedText;
+}
+
+export type TrinityAnswerIntegrityIssue =
+  | 'abrupt_mid_sentence_ending'
+  | 'broken_numbering'
+  | 'fallback_spliced_mid_answer';
+
+export interface TrinityAnswerIntegrityResult {
+  valid: boolean;
+  issues: TrinityAnswerIntegrityIssue[];
+}
+
+function hasAbruptEnding(text: string): boolean {
+  const normalizedText = normalizeWhitespace(text);
+  if (!normalizedText) return true;
+  if (/[.!?)]$/.test(normalizedText)) return false;
+  return /(?:[,;:]|\b(?:and|or|but|because|including|with|for|to|the|a|an|of|in|on|at|by|as|from|while|when|if|is|are|was|were|can|could|should|would|will|must|may|might))$/i
+    .test(normalizedText);
+}
+
+function hasBrokenNumbering(text: string): boolean {
+  const normalizedText = normalizeWhitespace(text);
+  if (/(?:^|\s)\d+\.\s*(?=\d+\.|$)/.test(normalizedText)) {
+    return true;
+  }
+
+  const markers = Array.from(normalizedText.matchAll(/(?:^|\s)(\d+)\.\s+/g))
+    .map(match => Number.parseInt(match[1] ?? '', 10))
+    .filter(Number.isFinite);
+  if (markers.length < 2) {
+    return false;
+  }
+
+  return markers.some((marker, index) => marker !== index + 1);
+}
+
+function hasFallbackSplice(text: string, reasoningHonesty: TrinityReasoningHonesty): boolean {
+  const segments = splitIntoSegments(text);
+  if (segments.length <= 1 || !segments.some(segment => classifyLimitationCategory(segment) === null)) {
+    return false;
+  }
+
+  const reasoningFallbacks = buildReasoningFallbackSet(reasoningHonesty);
+  const genericFallbacks = buildGenericFallbackSet();
+  return segments.some(segment => isUnrequestedFallbackSplice(segment, reasoningFallbacks, genericFallbacks));
+}
+
+export function validateTrinityAnswerIntegrity(params: {
+  text: string;
+  reasoningHonesty?: TrinityReasoningHonesty;
+}): TrinityAnswerIntegrityResult {
+  const issues: TrinityAnswerIntegrityIssue[] = [];
+  if (hasAbruptEnding(params.text)) {
+    issues.push('abrupt_mid_sentence_ending');
+  }
+  if (hasBrokenNumbering(params.text)) {
+    issues.push('broken_numbering');
+  }
+  if (params.reasoningHonesty && hasFallbackSplice(params.text, params.reasoningHonesty)) {
+    issues.push('fallback_spliced_mid_answer');
+  }
+
+  return {
+    valid: issues.length === 0,
+    issues
+  };
 }
 
 /**
@@ -1343,10 +1488,10 @@ export function enforceFinalStageHonesty(
     leadingDisclaimers.push(partialRefusalLead);
   }
   if ((blockedCategories.has('live_verification') || blockedCategories.has('current_external_state')) && !/live or current external information/i.test(text)) {
-    leadingDisclaimers.push('I can help with general guidance, but I cannot verify live or current external information here.');
+    leadingDisclaimers.push(GENERIC_LIVE_EXTERNAL_INFORMATION_FALLBACK);
   }
   if (blockedCategories.has('backend_action') && !/backend or persistence action/i.test(text)) {
-    leadingDisclaimers.push('I have not executed any backend or persistence action here.');
+    leadingDisclaimers.push(GENERIC_BACKEND_ACTION_FALLBACK);
   }
   if (leadingDisclaimers.length > 0) {
     text = `${dedupePreservingOrder(leadingDisclaimers).join(' ')}${text ? `\n\n${text}` : ''}`.trim();
@@ -1533,7 +1678,8 @@ export function enforceFinalStageHonestyAndMinimalism(params: {
     !promptGeneration || shouldPreservePromptGenerationLimitation
       ? compressLimitationSegments(scopeTightenedText, params.reasoningHonesty)
       : scopeTightenedText;
-  const dedupedText = dedupeNearDuplicateSegments(limitationCompressedText);
+  const fallbackSpliceRemovedText = removeFallbackSplicesFromPartialAnswer(limitationCompressedText, params.reasoningHonesty);
+  const dedupedText = dedupeNearDuplicateSegments(fallbackSpliceRemovedText);
   return {
     text: normalizeWhitespace(compressToWordLimit(dedupedText, params.outputControls)),
     removedMetaSections: withoutMetaSections.removedMetaSections,
