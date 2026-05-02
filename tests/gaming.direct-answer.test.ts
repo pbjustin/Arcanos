@@ -7,7 +7,6 @@ const mockGetDefaultModel = jest.fn();
 const mockGetGPT5Model = jest.fn();
 const mockGenerateMockResponse = jest.fn();
 const mockFetchAndClean = jest.fn();
-const mockGetConfiguredWebFetchMaxLinks = jest.fn();
 const mockGetEnv = jest.fn();
 const mockGetEnvNumber = jest.fn();
 const mockGetEnvIntegerAtLeast = jest.fn();
@@ -30,8 +29,7 @@ jest.unstable_mockModule('@platform/runtime/prompts.js', () => ({
 }));
 
 jest.unstable_mockModule('@shared/webFetcher.js', () => ({
-  fetchAndClean: mockFetchAndClean,
-  getConfiguredWebFetchMaxLinks: mockGetConfiguredWebFetchMaxLinks
+  fetchAndClean: mockFetchAndClean
 }));
 
 jest.unstable_mockModule('@platform/runtime/env.js', () => ({
@@ -57,7 +55,7 @@ describe('gaming guide output hardening', () => {
     delete process.env.ARCANOS_GAMING_STAGE_TIMEOUT_MS;
     delete process.env.ARCANOS_GAMING_GUIDE_STAGE_TIMEOUT_MS;
     delete process.env.ARCANOS_GAMING_MODULE_TIMEOUT_MS;
-    delete process.env.WEB_FETCH_MAX_LINKS;
+    delete process.env.ARCANOS_GAMING_WEB_CONTEXT_MAX_URLS;
 
     mockGetEnv.mockImplementation((key: string, defaultValue?: string) => process.env[key] ?? defaultValue);
     mockGetEnvNumber.mockReturnValue(512);
@@ -78,11 +76,6 @@ describe('gaming guide output hardening', () => {
       }
       const parsed = Number.parseInt(rawValue, 10);
       return Number.isFinite(parsed) && parsed >= minValue ? parsed : undefined;
-    });
-    mockGetConfiguredWebFetchMaxLinks.mockImplementation(() => {
-      const rawValue = process.env.WEB_FETCH_MAX_LINKS;
-      const parsed = rawValue === undefined ? 15 : Number.parseInt(rawValue, 10);
-      return Number.isFinite(parsed) && parsed >= 0 ? parsed : 15;
     });
     mockGetEnvBoolean.mockReturnValue(false);
     mockGetDefaultModel.mockReturnValue('ft:test-intake');
@@ -426,7 +419,37 @@ describe('gaming guide output hardening', () => {
       };
     };
     expect(trinityRequest.context.runtimeBudget).toEqual(expect.objectContaining({
-      watchdogLimit: 89_000,
+      watchdogLimit: 85_000,
+      safetyBuffer: 500
+    }));
+    expect(trinityRequest.context.runOptions).toEqual(expect.objectContaining({
+      watchdogModelTimeoutMs: 15_000
+    }));
+  });
+
+  it('preserves the default guide provider budget when the module timeout is explicitly set to its default', async () => {
+    process.env.ARCANOS_GAMING_MODULE_TIMEOUT_MS = '60000';
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce({
+      result: '1. Hold threat. 2. Face enemies away. 3. Use mitigation before spikes.',
+      activeModel: 'gpt-test',
+      meta: { provider: { finishReason: 'stop' } }
+    });
+
+    await runGuidePipeline({
+      game: 'Star Wars: The Old Republic',
+      prompt: 'Smoke test: give three short tanking tips with valid numbering.',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as {
+      context: {
+        runtimeBudget: { watchdogLimit: number; safetyBuffer: number };
+        runOptions: { watchdogModelTimeoutMs?: number };
+      };
+    };
+    expect(trinityRequest.context.runtimeBudget).toEqual(expect.objectContaining({
+      watchdogLimit: 50_000,
       safetyBuffer: 500
     }));
     expect(trinityRequest.context.runOptions).toEqual(expect.objectContaining({
@@ -455,7 +478,7 @@ describe('gaming guide output hardening', () => {
   });
 
   it('caps user-provided guide URLs before parallel fetches', async () => {
-    process.env.WEB_FETCH_MAX_LINKS = '2';
+    process.env.ARCANOS_GAMING_WEB_CONTEXT_MAX_URLS = '2';
 
     const result = await runGuidePipeline({
       prompt: 'Use the linked guides for a direct boss strategy.',
