@@ -232,9 +232,19 @@ export function getEnvNumber(key: string, defaultValue: number): number {
   return Number.isFinite(parsed) ? parsed : defaultValue;
 }
 
+export function getOptionalEnvIntegerAtLeast(key: string, minValue: number): number | undefined {
+  const rawValue = readRuntimeEnv(key);
+  if (!rawValue) {
+    return undefined;
+  }
+
+  // Preserve legacy integer env parsing semantics for numeric-prefix values such as "12000ms".
+  const parsed = Number.parseInt(rawValue, 10);
+  return Number.isFinite(parsed) && parsed >= minValue ? parsed : undefined;
+}
+
 export function getEnvIntegerAtLeast(key: string, defaultValue: number, minValue: number): number {
-  const value = Math.trunc(getEnvNumber(key, defaultValue));
-  return Number.isFinite(value) && value >= minValue ? value : defaultValue;
+  return getOptionalEnvIntegerAtLeast(key, minValue) ?? defaultValue;
 }
 
 /**

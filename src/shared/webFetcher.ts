@@ -33,7 +33,7 @@ function getConfiguredMaxFetchBytes(): number {
   return getEnvIntegerAtLeast('WEB_FETCH_MAX_BYTES', DEFAULT_MAX_FETCH_BYTES, 1);
 }
 
-function getConfiguredMaxLinks(): number {
+export function getConfiguredWebFetchMaxLinks(): number {
   return getEnvIntegerAtLeast('WEB_FETCH_MAX_LINKS', DEFAULT_MAX_LINKS, 0);
 }
 
@@ -161,7 +161,7 @@ export async function fetchAndCleanDocument(
     }
   });
 
-  const limitedLinks = links.slice(0, getConfiguredMaxLinks());
+  const limitedLinks = links.slice(0, getConfiguredWebFetchMaxLinks());
 
   return {
     text: cleanedText,

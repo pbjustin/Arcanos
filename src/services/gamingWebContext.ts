@@ -1,5 +1,5 @@
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
-import { fetchAndClean } from "@shared/webFetcher.js";
+import { fetchAndClean, getConfiguredWebFetchMaxLinks } from "@shared/webFetcher.js";
 import { getGamingWebContextMaxChars } from "@services/gamingConfig.js";
 import type { GamingSuccessEnvelope, ValidatedGamingRequest } from "@services/gamingModes.js";
 
@@ -25,7 +25,7 @@ export async function buildGamingWebContext(urls: string[]): Promise<GamingWebCo
   }
 
   const maxContextChars = getGamingWebContextMaxChars();
-  const uniqueUrls = Array.from(new Set(urls));
+  const uniqueUrls = Array.from(new Set(urls)).slice(0, getConfiguredWebFetchMaxLinks());
   const sources: GamingWebSource[] = await Promise.all(
     uniqueUrls.map(async (url): Promise<GamingWebSource> => {
       try {

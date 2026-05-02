@@ -1,4 +1,4 @@
-import { getEnvIntegerAtLeast } from "@platform/runtime/env.js";
+import { getEnvIntegerAtLeast, getOptionalEnvIntegerAtLeast } from "@platform/runtime/env.js";
 import type { GamingMode } from "@services/gamingModes.js";
 
 export const DEFAULT_GAMING_MODULE_TIMEOUT_MS = 60_000;
@@ -34,12 +34,20 @@ function clampToRequestRemaining(timeoutMs: number, remainingRequestMs: number |
   return Math.max(1, Math.min(timeoutMs, remainingRequestMs - GAMING_REQUEST_TIMEOUT_HEADROOM_MS));
 }
 
+function getDefaultGamingPipelineTimeoutMs(mode: GamingMode): number {
+  const configuredModuleTimeoutMs = getOptionalEnvIntegerAtLeast("ARCANOS_GAMING_MODULE_TIMEOUT_MS", 1);
+  if (configuredModuleTimeoutMs !== undefined) {
+    return Math.max(1, configuredModuleTimeoutMs - GAMING_REQUEST_TIMEOUT_HEADROOM_MS);
+  }
+
+  return mode === "guide" ? DEFAULT_GAMING_GUIDE_PIPELINE_TIMEOUT_MS : DEFAULT_GAMING_PIPELINE_TIMEOUT_MS;
+}
+
 export function getGamingPipelineTimeoutMs(
   mode: GamingMode,
   remainingRequestMs: number | null
 ): number {
-  const fallback =
-    mode === "guide" ? DEFAULT_GAMING_GUIDE_PIPELINE_TIMEOUT_MS : DEFAULT_GAMING_PIPELINE_TIMEOUT_MS;
+  const fallback = getDefaultGamingPipelineTimeoutMs(mode);
   const genericTimeoutMs = getEnvIntegerAtLeast("ARCANOS_GAMING_PIPELINE_TIMEOUT_MS", fallback, 1);
   const modeTimeoutMs = getEnvIntegerAtLeast(
     `ARCANOS_GAMING_${mode.toUpperCase()}_PIPELINE_TIMEOUT_MS`,
