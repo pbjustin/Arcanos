@@ -16,6 +16,7 @@ jest.unstable_mockModule("../src/services/hrcWrapper.js", () => ({
 }));
 
 const { ArcanosGaming } = await import("../src/services/arcanos-gaming.js");
+const { runWithRequestAbortContext } = await import("@arcanos/runtime");
 
 describe("ArcanosGaming mode routing", () => {
   beforeEach(() => {
@@ -210,5 +211,30 @@ describe("ArcanosGaming mode routing", () => {
         }
       }
     });
+  });
+
+  it("preserves parent request aborts instead of mapping them to generation timeouts", async () => {
+    const timeoutError = Object.assign(new Error("Outer request was aborted."), {
+      name: "AbortError",
+      code: "GAMING_PROVIDER_TIMEOUT",
+      timeoutMs: 50_000,
+      stageTimeoutMs: 15_000,
+      timeoutPhase: "request"
+    });
+    mockRunGuidePipeline.mockRejectedValueOnce(timeoutError);
+    const controller = new AbortController();
+    controller.abort(timeoutError);
+
+    await expect(runWithRequestAbortContext({
+      requestId: "req-gaming-parent-abort",
+      controller,
+      signal: controller.signal,
+      deadlineAt: Date.now(),
+      timeoutMs: 1
+    }, () => ArcanosGaming.actions.query({
+      mode: "guide",
+      game: "Star Wars: The Old Republic",
+      prompt: "Smoke test: give three short tanking tips with valid numbering."
+    }))).rejects.toBe(timeoutError);
   });
 });

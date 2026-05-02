@@ -53,11 +53,12 @@ function formatGenerationTimeout(mode: GamingMode, error: unknown): GamingErrorE
 
 function formatKnownGenerationFailure(mode: GamingMode, error: unknown): GamingErrorEnvelope | null {
   const code = readSafeErrorString(error, "code");
-  if (code === "GAMING_PROVIDER_TIMEOUT") {
+  const requestAborted = getRequestAbortSignal()?.aborted === true;
+  if (code === "GAMING_PROVIDER_TIMEOUT" && !requestAborted) {
     return formatGenerationTimeout(mode, error);
   }
 
-  if (isAbortError(error) && !getRequestAbortSignal()?.aborted) {
+  if (isAbortError(error) && !requestAborted) {
     return formatGenerationTimeout(mode, error);
   }
 

@@ -41,6 +41,7 @@ jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({
 }));
 
 const { runGuidePipeline } = await import('../src/services/gaming.js');
+const { runWithRequestAbortContext } = await import('@arcanos/runtime');
 
 describe('gaming guide output hardening', () => {
   beforeEach(() => {
@@ -297,6 +298,28 @@ describe('gaming guide output hardening', () => {
       code: 'GAMING_PROVIDER_TIMEOUT',
       timeoutPhase: 'provider'
     });
+  });
+
+  it('preserves parent request aborts instead of reporting provider timeouts', async () => {
+    const parentAbort = Object.assign(new Error('Outer request was aborted.'), {
+      name: 'AbortError'
+    });
+    const controller = new AbortController();
+    controller.abort(parentAbort);
+
+    await expect(runWithRequestAbortContext({
+      requestId: 'req-gaming-parent-abort',
+      controller,
+      signal: controller.signal,
+      deadlineAt: Date.now(),
+      timeoutMs: 1
+    }, () => runGuidePipeline({
+      game: 'Star Wars: The Old Republic',
+      prompt: 'Smoke test: give three short tanking tips with valid numbering.',
+      guideUrls: [],
+      auditEnabled: false
+    }))).rejects.toBe(parentAbort);
+    expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
   });
 
   it('short-circuits exact-literal prompts before any provider call', async () => {

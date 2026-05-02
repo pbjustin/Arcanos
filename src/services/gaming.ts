@@ -159,11 +159,12 @@ function formatGameplaySuccessWithLogs(params: {
     sourceCount: params.sources.length
   });
 
-  const serializationStartedAt = Date.now();
+  const payloadEstimateStartedAt = Date.now();
   const responsePayloadChars = estimateResponsePayloadChars(params.response, params.sources);
   logger.info("gaming.response.serialization", {
     ...params.logContext,
-    serializationMs: Date.now() - serializationStartedAt,
+    serializedByTransport: true,
+    payloadEstimateMs: Date.now() - payloadEstimateStartedAt,
     responsePayloadChars
   });
   logger.info("gaming.request.end", {
@@ -412,6 +413,16 @@ async function runGameplayPipeline(params: GameplayPipelineInput): Promise<Gamin
     });
 
     if (isAbortError(error)) {
+      if (getRequestAbortSignal()?.aborted) {
+        logger.info("gaming.request.end", {
+          ...baseLogContext,
+          ok: false,
+          totalElapsedMs: Date.now() - requestStartedAt,
+          errorCode: "REQUEST_ABORTED"
+        });
+        throw error;
+      }
+
       const timeoutPhase = readTimeoutPhase(error) ?? "provider";
       logger.warn("gaming.provider.timeout", {
         ...baseLogContext,
