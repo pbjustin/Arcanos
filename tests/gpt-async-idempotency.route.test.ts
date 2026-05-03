@@ -323,8 +323,8 @@ describe('async /gpt idempotency', () => {
           message: expect.stringContaining('/gpt-access/*')
         },
         canonical: expect.objectContaining({
-          jobStatus: '/jobs/{jobId}',
-          jobResult: '/jobs/{jobId}/result',
+          jobStatus: '/gpt-access/jobs/result',
+          jobResult: '/gpt-access/jobs/result',
           gptAccessJobResult: '/gpt-access/jobs/result'
         }),
         _route: expect.objectContaining({

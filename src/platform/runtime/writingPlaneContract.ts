@@ -281,7 +281,7 @@ export function classifyWritingPlaneInput(input: {
       errorCode: 'TRINITY_CONTROL_LEAK',
       message: 'Job status retrieval is control-plane only and must bypass the Trinity writing pipeline.',
       canonical: {
-        poll: '/jobs/{jobId}/result',
+        poll: '/gpt-access/jobs/result',
       },
     };
   }
@@ -295,7 +295,7 @@ export function classifyWritingPlaneInput(input: {
       errorCode: 'TRINITY_CONTROL_LEAK',
       message: 'Job result retrieval is control-plane only and must bypass the Trinity writing pipeline.',
       canonical: {
-        result: '/jobs/{jobId}/result',
+        result: '/gpt-access/jobs/result',
       },
     };
   }

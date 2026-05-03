@@ -35,6 +35,8 @@ function buildMockClients(controlPayload: unknown = { ok: true, status: 'healthy
   const getStatusMock = jest.fn(async () => clientResult('/gpt-access/status', controlPayload));
   const getWorkersStatusMock = jest.fn(async () => clientResult('/gpt-access/workers/status', controlPayload));
   const getWorkerHelperHealthMock = jest.fn(async () => clientResult('/gpt-access/worker-helper/health', controlPayload));
+  const getQueueInspectionMock = jest.fn(async () => clientResult('/gpt-access/queue/inspect', controlPayload));
+  const getSelfHealStatusMock = jest.fn(async () => clientResult('/gpt-access/self-heal/status', controlPayload));
   const runDeepDiagnosticsMock = jest.fn(async () => clientResult('/gpt-access/diagnostics/deep', controlPayload));
   const explainApprovedQueryMock = jest.fn(async () => clientResult('/gpt-access/db/explain', controlPayload));
   const queryLogsMock = jest.fn(async () => clientResult('/gpt-access/logs/query', controlPayload));
@@ -63,6 +65,8 @@ function buildMockClients(controlPayload: unknown = { ok: true, status: 'healthy
       getStatus: getStatusMock,
       getWorkersStatus: getWorkersStatusMock,
       getWorkerHelperHealth: getWorkerHelperHealthMock,
+      getQueueInspection: getQueueInspectionMock,
+      getSelfHealStatus: getSelfHealStatusMock,
       runDeepDiagnostics: runDeepDiagnosticsMock,
       explainApprovedQuery: explainApprovedQueryMock,
       queryLogs: queryLogsMock,
@@ -81,6 +85,8 @@ function buildMockClients(controlPayload: unknown = { ok: true, status: 'healthy
       getStatusMock,
       getWorkersStatusMock,
       getWorkerHelperHealthMock,
+      getQueueInspectionMock,
+      getSelfHealStatusMock,
       runDeepDiagnosticsMock,
       explainApprovedQueryMock,
       queryLogsMock,
@@ -95,19 +101,22 @@ function buildMockClients(controlPayload: unknown = { ok: true, status: 'healthy
 describe('OperatorIntentDispatcher', () => {
   it('routes worker, runtime, queue, logs, and job lookup requests to the control plane', () => {
     const prompts = [
-      'show worker status',
-      'inspect runtime health',
-      'inspect queue depth',
-      'query backend logs for errors',
-      'look up job result for 11111111-1111-4111-8111-111111111111',
-      'Railway deployment status for ARCANOS_PROCESS_KIND'
+      ['show worker status', 'workers.status'],
+      ['inspect runtime health', 'worker_helper.health'],
+      ['inspect queue depth', 'queue.inspect'],
+      ['show self heal status', 'self_heal.status'],
+      ['query backend logs for errors', 'logs.query'],
+      ['look up job result for 11111111-1111-4111-8111-111111111111', 'jobs.result'],
+      ['Railway deployment status for ARCANOS_PROCESS_KIND', 'diagnostics.deep']
     ];
 
-    for (const prompt of prompts) {
-      expect(classifyOperatorIntent(prompt)).toEqual(expect.objectContaining({
+    for (const [prompt, selectedTool] of prompts) {
+      const classification = classifyOperatorIntent(prompt);
+      expect(classification).toEqual(expect.objectContaining({
         routeKind: 'control_plane',
-        selectedTool: expect.not.stringContaining('/gpt/')
+        selectedTool
       }));
+      expect(classification.selectedTool).toEqual(expect.not.stringContaining('/gpt/'));
     }
   });
 

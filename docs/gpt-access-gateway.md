@@ -16,7 +16,7 @@ $env:ARCANOS_BASE_URL = "http://localhost:3000"
 
 For deployed environments, set `ARCANOS_BASE_URL` to that service's HTTPS origin. Do not hard-code production URLs into reusable docs or scripts.
 
-For Custom GPT OpenAPI metadata, the gateway derives the server URL from `ARCANOS_GPT_ACCESS_BASE_URL` first, then `ARCANOS_BASE_URL`, `ARCANOS_BACKEND_URL`, `SERVER_URL`, `BACKEND_URL`, public Railway URL/domain variables, or the incoming request origin. Set `ARCANOS_GPT_ACCESS_BASE_URL` in deployment when the gateway is reached through a stable public origin.
+For Custom GPT OpenAPI metadata, the gateway derives the server URL from `ARCANOS_GPT_ACCESS_BASE_URL` first, then `ARCANOS_BASE_URL`, `ARCANOS_BACKEND_URL`, `SERVER_URL`, `BACKEND_URL`, public Railway URL/domain variables, or a local development request origin. Non-local request hosts are ignored so public metadata cannot be poisoned by spoofed headers. Set `ARCANOS_GPT_ACCESS_BASE_URL` in deployment when the gateway is reached through a stable public origin.
 
 ## Authentication
 Protected `/gpt-access/*` operations require bearer auth. `/gpt-access/openapi.json` is public metadata so GPT Action import can retrieve the schema, but every protected operation in that schema still declares bearer auth:
@@ -193,6 +193,7 @@ SERVICE="<web-service>"
 ENVIRONMENT="<environment>"
 GATEWAY_CREDENTIAL="$(openssl rand -base64 48)"
 printf "%s" "$GATEWAY_CREDENTIAL" | railway variable set ARCANOS_GPT_ACCESS_TOKEN --stdin --skip-deploys --service "$SERVICE" --environment "$ENVIRONMENT"
+railway variable set "ARCANOS_GPT_ACCESS_BASE_URL=https://<public-web-origin>" --skip-deploys --service "$SERVICE" --environment "$ENVIRONMENT"
 railway variable set "ARCANOS_GPT_ACCESS_SCOPES=runtime.read,workers.read,queue.read,jobs.create,jobs.result,logs.read_sanitized,db.explain_approved,mcp.approved_readonly,diagnostics.read" --skip-deploys --service "$SERVICE" --environment "$ENVIRONMENT"
 railway variable list --service "$SERVICE" --environment "$ENVIRONMENT"
 ```
@@ -208,6 +209,7 @@ $bytes = New-Object byte[] 48
 [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
 $gatewayCredential = [Convert]::ToBase64String($bytes)
 $gatewayCredential | railway variable set ARCANOS_GPT_ACCESS_TOKEN --stdin --skip-deploys --service $SERVICE --environment $ENVIRONMENT
+railway variable set "ARCANOS_GPT_ACCESS_BASE_URL=https://<public-web-origin>" --skip-deploys --service $SERVICE --environment $ENVIRONMENT
 railway variable set "ARCANOS_GPT_ACCESS_SCOPES=runtime.read,workers.read,queue.read,jobs.create,jobs.result,logs.read_sanitized,db.explain_approved,mcp.approved_readonly,diagnostics.read" --skip-deploys --service $SERVICE --environment $ENVIRONMENT
 railway variable list --service $SERVICE --environment $ENVIRONMENT
 ```

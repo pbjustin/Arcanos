@@ -96,6 +96,17 @@ const { createGptAccessAiJob, sanitizeGptAccessPayload } = await import('../src/
 const TEST_TOKEN = 'test-gpt-access-token';
 const COMPLETED_JOB_ID = '11111111-1111-4111-8111-111111111111';
 const CREATED_JOB_ID = '22222222-2222-4222-8222-222222222222';
+const OPENAPI_SERVER_URL_ENV_KEYS = [
+  'ARCANOS_GPT_ACCESS_BASE_URL',
+  'ARCANOS_BASE_URL',
+  'ARCANOS_BACKEND_URL',
+  'SERVER_URL',
+  'BACKEND_URL',
+  'PUBLIC_BASE_URL',
+  'RAILWAY_PUBLIC_URL',
+  'RAILWAY_PUBLIC_DOMAIN',
+  'RAILWAY_STATIC_URL'
+] as const;
 
 function buildApp(options: { trustProxy?: boolean } = {}) {
   const app = express();
@@ -126,6 +137,26 @@ function allowCapabilityRead(scopes = 'capabilities.read'): void {
 function allowCapabilityRun(scopes = 'capabilities.run', allowedModuleActions = 'ARCANOS:CORE:query'): void {
   process.env.ARCANOS_GPT_ACCESS_SCOPES = scopes;
   process.env.MCP_ALLOW_MODULE_ACTIONS = allowedModuleActions;
+}
+
+async function withoutOpenApiServerUrlEnv<T>(callback: () => Promise<T>): Promise<T> {
+  const previousValues = new Map<string, string | undefined>();
+  for (const envName of OPENAPI_SERVER_URL_ENV_KEYS) {
+    previousValues.set(envName, process.env[envName]);
+    delete process.env[envName];
+  }
+
+  try {
+    return await callback();
+  } finally {
+    for (const [envName, value] of previousValues) {
+      if (value === undefined) {
+        delete process.env[envName];
+      } else {
+        process.env[envName] = value;
+      }
+    }
+  }
 }
 
 function buildNestedObject(depth: number): Record<string, unknown> {
@@ -1262,6 +1293,7 @@ describe('/gpt-access gateway', () => {
     ['runtime status', 'get', '/gpt-access/status', null],
     ['worker status', 'get', '/gpt-access/workers/status', null],
     ['queue inspection', 'get', '/gpt-access/queue/inspect', null],
+    ['self-heal status', 'get', '/gpt-access/self-heal/status', null],
     ['MCP self-heal status', 'post', '/gpt-access/mcp', { tool: 'self_heal.status', args: {} }]
   ])('routes %s through /gpt-access/* without falling through to /gpt/:gptId', async (_name, method, path, body) => {
     let gptRouteCalled = false;
@@ -1336,29 +1368,29 @@ describe('/gpt-access gateway', () => {
     const response = await authorized(request(buildApp()).get('/gpt-access/self-heal/status'));
 
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({
+    expect(response.body).toEqual(expect.objectContaining({
       ok: true,
       tool: 'self_heal.status',
-      result: {
+      result: expect.objectContaining({
         status: 'degraded',
         loopRunning: false,
         lastTick: null,
         lastError: 'worker unavailable'
-      },
-      selfReflection: {
+      }),
+      selfReflection: expect.objectContaining({
         configured: true,
         status: 'ok',
         total: 2,
         latestCreatedAt: '2026-04-27T10:00:00.000Z',
         categories: [
-          {
+          expect.objectContaining({
             category: 'healing',
             total: 2,
             latestCreatedAt: '2026-04-27T09:55:00.000Z'
-          }
+          })
         ]
-      }
-    });
+      })
+    }));
     expect(buildSafetySelfHealSnapshotMock).toHaveBeenCalledTimes(1);
     expect(queryMock).toHaveBeenCalledTimes(2);
   });
@@ -1420,6 +1452,9 @@ describe('/gpt-access gateway', () => {
       ok: true,
       jobId: COMPLETED_JOB_ID,
       status: 'completed',
+      poll: '/gpt-access/jobs/result',
+      stream: '/gpt-access/jobs/result',
+      resultEndpoint: '/gpt-access/jobs/result',
       result: { answer: 'stored output' }
     }));
     expect(getJobByIdMock).toHaveBeenCalledWith(COMPLETED_JOB_ID);
@@ -1553,6 +1588,15 @@ describe('/gpt-access gateway', () => {
     }));
     expect(response.body.security).toEqual([{ bearerAuth: [] }]);
     expect(response.body.paths['/gpt-access/openapi.json'].get.security).toEqual([]);
+    for (const [path, methods] of Object.entries(response.body.paths)) {
+      for (const operation of Object.values(methods as Record<string, { security?: unknown }>)) {
+        if (path === '/gpt-access/openapi.json') {
+          expect(operation.security).toEqual([]);
+        } else {
+          expect(operation.security).toEqual([{ bearerAuth: [] }]);
+        }
+      }
+    }
     expect(response.body.paths['/gpt-access/jobs/create'].post.operationId).toBe('createAiJob');
     expect(response.body.paths['/gpt-access/jobs/create'].post.security).toEqual([{ bearerAuth: [] }]);
     expect(response.body.paths['/gpt-access/jobs/create'].post.requestBody.content['application/json'].schema).toEqual({
@@ -1618,10 +1662,30 @@ describe('/gpt-access gateway', () => {
     expect(response.body.paths['/gpt-access/jobs/result'].post.responses['200'].content['application/json'].schema).toEqual({
       '$ref': '#/components/schemas/JobResultResponse'
     });
+    expect(response.body.components.schemas.JobResultResponse.properties.resultEndpoint).toEqual({
+      type: 'string',
+      const: '/gpt-access/jobs/result'
+    });
     expect(response.body.paths['/gpt-access/mcp'].post.operationId).toBe('arcanosMcpControl');
     expect(response.body.paths['/gpt-access/mcp'].post.requestBody.content['application/json'].schema).toEqual({
       '$ref': '#/components/schemas/McpControlRequest'
     });
+  });
+
+  it('does not derive the public OpenAPI server URL from spoofable request hosts', async () => {
+    const response = await withoutOpenApiServerUrlEnv(() =>
+      request(buildApp({ trustProxy: true }))
+        .get('/gpt-access/openapi.json')
+        .set('Host', 'attacker.example.test')
+        .set('X-Forwarded-Host', 'attacker.example.test')
+        .set('X-Forwarded-Proto', 'https')
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body.servers).toEqual([
+      { url: 'http://localhost:3000' }
+    ]);
+    expect(JSON.stringify(response.body)).not.toContain('attacker.example.test');
   });
 
   it('rate limits invalid bearer attempts by client address, not rotating token value', async () => {

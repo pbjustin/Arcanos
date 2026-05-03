@@ -67,6 +67,8 @@ export type OperatorControlPlaneTool =
   | 'status'
   | 'workers.status'
   | 'worker_helper.health'
+  | 'queue.inspect'
+  | 'self_heal.status'
   | 'diagnostics.deep'
   | 'db.explain'
   | 'logs.query'
@@ -403,6 +405,20 @@ export class OperatorControlPlaneClient {
     return this.transport.request({
       method: 'GET',
       path: APPROVED_CONTROL_PLANE_ENDPOINTS.workerHelperHealth
+    });
+  }
+
+  async getQueueInspection(): Promise<GptAccessClientResult> {
+    return this.transport.request({
+      method: 'GET',
+      path: APPROVED_CONTROL_PLANE_ENDPOINTS.queueInspect
+    });
+  }
+
+  async getSelfHealStatus(): Promise<GptAccessClientResult> {
+    return this.transport.request({
+      method: 'GET',
+      path: APPROVED_CONTROL_PLANE_ENDPOINTS.selfHealStatus
     });
   }
 

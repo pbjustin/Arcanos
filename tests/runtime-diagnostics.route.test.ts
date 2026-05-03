@@ -91,8 +91,8 @@ describe('runtime diagnostics routes', () => {
         workers: '/gpt-access/workers/status',
         workerHealth: '/gpt-access/worker-helper/health',
         queueInspect: '/gpt-access/queue/inspect',
-        jobStatus: '/jobs/{jobId}',
-        jobResult: '/jobs/{jobId}/result',
+        jobStatus: '/gpt-access/jobs/result',
+        jobResult: '/gpt-access/jobs/result',
         gptAccessJobResult: '/gpt-access/jobs/result',
         mcp: '/gpt-access/mcp',
         selfHeal: '/gpt-access/self-heal/status'

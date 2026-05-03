@@ -407,8 +407,20 @@ async function runValidation(config) {
   const createRequestSchema = createRequestSchemaName
     ? openApiResponse.json?.components?.schemas?.[createRequestSchemaName]
     : null;
+  const advertisedServerUrl = openApiResponse.json?.servers?.[0]?.url ?? null;
   const unsafeSchemaFields = ['sql', 'target', 'endpoint', 'headers', 'auth', 'cookies', 'proxy', 'url']
     .filter((field) => Object.prototype.hasOwnProperty.call(createRequestSchema?.properties ?? {}, field));
+  report.checks.push(
+    createCheck('openapi_server_url_matches_target',
+      openApiResponse.status === 200
+        && advertisedServerUrl === baseUrl,
+      {
+        status: openApiResponse.status,
+        advertisedServerUrl,
+        expectedServerUrl: baseUrl
+      }
+    )
+  );
   report.checks.push(
     createCheck('openapi_createAiJob_contract', openApiResponse.status === 200
       && createOperation?.operationId === 'createAiJob'

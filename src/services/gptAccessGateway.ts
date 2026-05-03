@@ -573,10 +573,6 @@ const GPT_ACCESS_PUBLIC_BASE_URL_ENV_KEYS = [
   'BACKEND_URL',
   'PUBLIC_BASE_URL',
   'RAILWAY_PUBLIC_URL',
-  'RAILWAY_STATIC_URL'
-] as const;
-
-const GPT_ACCESS_PUBLIC_DOMAIN_ENV_KEYS = [
   'RAILWAY_PUBLIC_DOMAIN',
   'RAILWAY_STATIC_URL'
 ] as const;
@@ -605,6 +601,9 @@ function normalizeOpenApiServerUrl(value: string | undefined | null): string | n
     if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
       return null;
     }
+    if (parsed.protocol === 'http:' && !isLocalOpenApiHostname(parsed.hostname)) {
+      return null;
+    }
     parsed.username = '';
     parsed.password = '';
     parsed.hash = '';
@@ -613,6 +612,22 @@ function normalizeOpenApiServerUrl(value: string | undefined | null): string | n
     return parsed.toString().replace(/\/$/u, '');
   } catch {
     return null;
+  }
+}
+
+function isLocalOpenApiHostname(hostname: string): boolean {
+  const normalized = hostname.toLowerCase().replace(/^\[|\]$/gu, '');
+  return normalized === 'localhost'
+    || normalized.endsWith('.localhost')
+    || normalized === '127.0.0.1'
+    || normalized === '::1';
+}
+
+function isLocalOpenApiServerUrl(value: string): boolean {
+  try {
+    return isLocalOpenApiHostname(new URL(value).hostname);
+  } catch {
+    return false;
   }
 }
 
@@ -628,7 +643,8 @@ function resolveRequestOrigin(req: Request | undefined): string | null {
 
   const proto = firstHeaderValue(req.header('x-forwarded-proto')) ?? req.protocol ?? 'https';
   const normalizedProto = proto.toLowerCase() === 'http' ? 'http' : 'https';
-  return normalizeOpenApiServerUrl(`${normalizedProto}://${host}`);
+  const origin = normalizeOpenApiServerUrl(`${normalizedProto}://${host}`);
+  return origin && isLocalOpenApiServerUrl(origin) ? origin : null;
 }
 
 export function resolveGptAccessOpenApiServerUrl(req?: Request): string {
@@ -636,13 +652,6 @@ export function resolveGptAccessOpenApiServerUrl(req?: Request): string {
     const configuredUrl = normalizeOpenApiServerUrl(process.env[envName]);
     if (configuredUrl) {
       return configuredUrl;
-    }
-  }
-
-  for (const envName of GPT_ACCESS_PUBLIC_DOMAIN_ENV_KEYS) {
-    const configuredDomain = normalizeOpenApiServerUrl(process.env[envName]);
-    if (configuredDomain) {
-      return configuredDomain;
     }
   }
 
@@ -1010,8 +1019,20 @@ export async function getGptAccessJobResult(body: unknown, context?: GptAccessJo
     payload: sanitizeGptAccessPayload({
       ok: true,
       traceId,
-      ...buildGptJobResultLookupPayload(parsed.data.jobId, gatewayJob)
+      ...buildGptAccessJobResultLookupPayload(parsed.data.jobId, gatewayJob)
     })
+  };
+}
+
+function buildGptAccessJobResultLookupPayload(
+  jobId: string,
+  job: Awaited<ReturnType<typeof getJobById>> | null
+) {
+  return {
+    ...buildGptJobResultLookupPayload(jobId, job),
+    poll: GPT_ACCESS_JOB_RESULT_ENDPOINT,
+    stream: GPT_ACCESS_JOB_RESULT_ENDPOINT,
+    resultEndpoint: GPT_ACCESS_JOB_RESULT_ENDPOINT
   };
 }
 
@@ -1789,6 +1810,7 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
             expiresAt: { type: ['string', 'null'] },
             poll: { type: 'string' },
             stream: { type: 'string' },
+            resultEndpoint: { type: 'string', const: GPT_ACCESS_JOB_RESULT_ENDPOINT },
             result: {},
             error: {
               anyOf: [
@@ -1811,6 +1833,7 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
             'expiresAt',
             'poll',
             'stream',
+            'resultEndpoint',
             'result',
             'error'
           ],

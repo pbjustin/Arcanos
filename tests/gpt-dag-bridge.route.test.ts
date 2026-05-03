@@ -381,7 +381,7 @@ describe('GPT DAG bridge route', () => {
       expect(response.status).toBe(400);
       expect(response.body.error.code).toBe('CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT');
       expect(response.body.canonical).toEqual(expect.objectContaining({
-        mcp: '/mcp',
+        mcp: '/gpt-access/mcp',
       }));
     }
 

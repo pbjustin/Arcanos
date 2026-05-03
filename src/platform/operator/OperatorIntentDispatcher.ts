@@ -31,6 +31,8 @@ export interface OperatorControlPlanePort {
   getStatus(): Promise<GptAccessClientResult>;
   getWorkersStatus(): Promise<GptAccessClientResult>;
   getWorkerHelperHealth(): Promise<GptAccessClientResult>;
+  getQueueInspection(): Promise<GptAccessClientResult>;
+  getSelfHealStatus(): Promise<GptAccessClientResult>;
   runDeepDiagnostics(input?: GptAccessDeepDiagnosticsRequest): Promise<GptAccessClientResult>;
   explainApprovedQuery(input: GptAccessDbExplainRequest): Promise<GptAccessClientResult>;
   queryLogs(input?: GptAccessLogsQueryRequest): Promise<GptAccessClientResult>;
@@ -256,11 +258,11 @@ function selectControlPlaneTool(input: string, signals: string[]): OperatorContr
   }
 
   if (hasSignal(signals, 'queue')) {
-    return 'mcp.queue.inspect';
+    return 'queue.inspect';
   }
 
   if (hasSignal(signals, 'self heal')) {
-    return 'mcp.self_heal.status';
+    return 'self_heal.status';
   }
 
   if (hasAnySignal(signals, ['health', 'heartbeat', 'stalled'])) {
@@ -337,6 +339,10 @@ function endpointForTool(tool: OperatorControlPlaneTool): string {
       return APPROVED_CONTROL_PLANE_ENDPOINTS.workersStatus;
     case 'worker_helper.health':
       return APPROVED_CONTROL_PLANE_ENDPOINTS.workerHelperHealth;
+    case 'queue.inspect':
+      return APPROVED_CONTROL_PLANE_ENDPOINTS.queueInspect;
+    case 'self_heal.status':
+      return APPROVED_CONTROL_PLANE_ENDPOINTS.selfHealStatus;
     case 'diagnostics.deep':
       return APPROVED_CONTROL_PLANE_ENDPOINTS.diagnosticsDeep;
     case 'db.explain':
@@ -485,6 +491,12 @@ async function runControlPlaneTool(
       break;
     case 'worker_helper.health':
       result = await request.clients.controlPlane.getWorkerHelperHealth();
+      break;
+    case 'queue.inspect':
+      result = await request.clients.controlPlane.getQueueInspection();
+      break;
+    case 'self_heal.status':
+      result = await request.clients.controlPlane.getSelfHealStatus();
       break;
     case 'diagnostics.deep':
       result = await request.clients.controlPlane.runDeepDiagnostics(
