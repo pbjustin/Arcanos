@@ -80,6 +80,12 @@ describe('runtime diagnostics routes', () => {
     expect(openApiResponse.body.openapi).toBe('3.1.0');
     expect(openApiResponse.body.servers).toEqual([{ url: 'https://gateway.example.test' }]);
     expect(openApiResponse.body.paths['/gpt-access/status'].get.security).toEqual([{ bearerAuth: [] }]);
+    expect(Object.keys(openApiResponse.body.paths)).toEqual(expect.arrayContaining([
+      '/gpt-access/status',
+      '/gpt-access/workers/status',
+      '/gpt-access/jobs/result'
+    ]));
+    expect(Object.keys(openApiResponse.body.paths).some((routePath) => routePath.includes('/gpt/{gptId}'))).toBe(false);
     expect(JSON.stringify(openApiResponse.body)).not.toContain('test-runtime-diagnostics-gpt-access-token');
 
     const missingAuthResponse = await request(app).get('/gpt-access/status');

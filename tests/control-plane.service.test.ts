@@ -116,6 +116,36 @@ describe('executeControlPlaneRequest', () => {
     );
   });
 
+  it('allows read-only Railway logs without approval', async () => {
+    const run = jest.fn(async () => ({
+      exitCode: 0,
+      stdout: 'request.completed',
+      stderr: ''
+    }));
+
+    const response = await executeControlPlaneRequest({
+      requestId: 'control-exec-logs-1',
+      phase: 'execute',
+      adapter: 'railway-cli',
+      operation: 'logs'
+    }, buildDeps({
+      processRunner: { run }
+    }) as never);
+
+    expect(response.ok).toBe(true);
+    expect(response.approval).toEqual(expect.objectContaining({
+      required: false,
+      satisfied: true
+    }));
+    expect(run).toHaveBeenCalledWith(
+      'railway',
+      ['logs'],
+      expect.objectContaining({
+        cwd: repositoryRoot
+      })
+    );
+  });
+
   it('treats null process exit codes as adapter failures', async () => {
     const run = jest.fn(async () => ({
       exitCode: null,

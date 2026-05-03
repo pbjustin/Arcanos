@@ -16,6 +16,10 @@ import {
   healWorkerRuntime,
   type HealWorkerRuntimeResponse
 } from '@services/workerControlService.js';
+import {
+  evaluateSelfHealOperatorApproval,
+  type SelfHealOperatorApproval
+} from './operatorApproval.js';
 
 export type WorkerRepairActuatorMode =
   | 'local_in_process'
@@ -351,12 +355,24 @@ export function buildWorkerRepairActuatorStatus(): WorkerRepairActuatorStatus {
 export async function executeWorkerRepairActuator(params: {
   force?: boolean;
   source: string;
+  approval?: SelfHealOperatorApproval;
 }): Promise<WorkerRepairActuatorResult> {
   const actuator = buildWorkerRepairActuatorStatus();
   const requestedForce = params.force ?? true;
 
   if (!actuator.available || actuator.mode === 'unavailable') {
     throw new Error(actuator.reason);
+  }
+
+  const privilegedRemoteRepair =
+    actuator.mode === 'railway_service_deploy' || actuator.mode === 'remote_worker_helper';
+  const approval = evaluateSelfHealOperatorApproval({
+    action: `worker repair actuator ${actuator.mode}`,
+    required: privilegedRemoteRepair,
+    approval: params.approval
+  });
+  if (!approval.satisfied) {
+    throw new Error(approval.reason ?? 'Worker repair actuator requires explicit operator approval.');
   }
 
   try {

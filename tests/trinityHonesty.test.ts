@@ -2,6 +2,8 @@ import { describe, expect, it } from '@jest/globals';
 
 import { countWords } from '../src/shared/text/countWords.js';
 import {
+  buildIntakeCapabilityEnvelope,
+  buildTrinityStageContractBlock,
   createDefaultTrinityReasoningHonesty,
   deriveTrinityCapabilityFlags,
   deriveTrinityOutputControls,
@@ -13,8 +15,39 @@ import {
   validateTrinityAnswerIntegrity,
   type TrinityReasoningHonesty
 } from '../src/core/logic/trinityHonesty.js';
+import { findMissingPromptGuidanceSections } from '../src/shared/promptGuidance.js';
 
 describe('Trinity honesty controls', () => {
+  it('renders OpenAI-guided prompt sections for Trinity stage contracts', () => {
+    const outputControls = deriveTrinityOutputControls('Validate the provided dependency outputs.', {
+      answerMode: 'audit',
+      strictUserVisibleOutput: true
+    });
+    const prompt = buildTrinityStageContractBlock({
+      stage: 'reasoning',
+      capabilityFlags: deriveTrinityCapabilityFlags({ verifyProvidedData: true }),
+      outputControls
+    });
+
+    expect(findMissingPromptGuidanceSections(prompt)).toEqual([]);
+    expect(prompt).toContain('Protected backend diagnostics must use /gpt-access/* direct endpoints, never /gpt/:gptId.');
+    expect(prompt).toContain('Privileged Railway or operator mutations require explicit approval');
+    expect(prompt).toContain('can_verify_provided_data=true');
+  });
+
+  it('renders intake prompts with evidence and stop rules', () => {
+    const prompt = buildIntakeCapabilityEnvelope(
+      'Inspect the repo and verify the Railway status.',
+      deriveTrinityCapabilityFlags({ verifyProvidedData: true }),
+      'EXECUTE_TASK'
+    );
+
+    expect(findMissingPromptGuidanceSections(prompt)).toEqual([]);
+    expect(prompt).toContain('<original_request>');
+    expect(prompt).toContain('Stop rules:');
+    expect(prompt).toContain('Do not answer the user directly in the intake stage.');
+  });
+
   it('defaults every capability flag to false unless explicitly tool-backed', () => {
     expect(deriveTrinityCapabilityFlags()).toEqual({
       canBrowse: false,

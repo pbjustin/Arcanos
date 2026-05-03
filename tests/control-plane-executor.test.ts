@@ -89,6 +89,42 @@ describe('executeControlPlaneOperation', () => {
     }));
   });
 
+  it('allows read-only Railway logs through the command allowlist without approval', async () => {
+    const audit = buildAuditSink();
+    runner.run.mockResolvedValue({
+      exitCode: 0,
+      stdout: 'request.completed',
+      stderr: '',
+      signal: null,
+      durationMs: 10
+    });
+
+    const response = await executeControlPlaneOperation(
+      buildRequest({
+        operation: 'railway.logs',
+        provider: 'railway-cli',
+        target: { resource: 'logs' },
+        environment: 'production',
+        scope: 'railway:read',
+        dryRun: false
+      }),
+      {
+        commandRunner: runner,
+        auditEmitter: audit.auditEmitter
+      }
+    );
+
+    expect(response.ok).toBe(true);
+    expect(runner.run).toHaveBeenCalledWith(expect.objectContaining({
+      executable: expect.stringContaining('railway'),
+      args: ['logs']
+    }));
+    expect(audit.events[0]).toEqual(expect.objectContaining({
+      status: 'accepted',
+      approvalStatus: 'not_required'
+    }));
+  });
+
   it('denies requests missing required scopes', async () => {
     const audit = buildAuditSink();
 

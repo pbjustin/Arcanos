@@ -95,4 +95,83 @@ describe('DAG agent registry', () => {
     expect(prompt).toContain('[truncated');
     expect(prompt.length).toBeLessThan(5000);
   });
+
+  it('exposes planner, code, validation, Railway ops, and reviewer sub-agent profiles', async () => {
+    const runPromptMock = jest.fn().mockResolvedValue({ ok: true });
+
+    await AGENTS.railway_ops(
+      buildExecutionContext({
+        node: {
+          id: 'railway',
+          type: 'agent',
+          dependencies: ['planner'],
+          executionKey: 'railway_ops',
+          metadata: {}
+        },
+        payload: {
+          prompt: 'Inspect Railway status and logs without mutating the environment.'
+        }
+      }),
+      { runPrompt: runPromptMock }
+    );
+
+    const prompt = runPromptMock.mock.calls[0]?.[0] as string;
+    const options = runPromptMock.mock.calls[0]?.[1] as Record<string, unknown>;
+
+    expect(Object.keys(AGENTS)).toEqual(expect.arrayContaining([
+      'planner',
+      'code',
+      'validation',
+      'railway_ops',
+      'reviewer'
+    ]));
+    expect(prompt).toContain('Role:');
+    expect(prompt).toContain('Railway ops sub-agent');
+    expect(prompt).toContain('Inspect files first');
+    expect(prompt).toContain('railway status');
+    expect(prompt).toContain('railway logs');
+    expect(prompt).toContain('require explicit approval');
+    expect(options).toEqual(expect.objectContaining({
+      cognitiveDomain: 'diagnostic',
+      sourceEndpoint: 'dag.agent.railway_ops',
+      toolBackedCapabilities: {
+        verifyProvidedData: true
+      }
+    }));
+  });
+
+  it('keeps reviewer agents scoped to provided evidence and protected GPT access routes', async () => {
+    const runPromptMock = jest.fn().mockResolvedValue({ ok: true });
+
+    await AGENTS.reviewer(
+      buildExecutionContext({
+        node: {
+          id: 'reviewer',
+          type: 'agent',
+          dependencies: ['code', 'validation'],
+          executionKey: 'reviewer',
+          metadata: {}
+        },
+        payload: {
+          prompt: 'Review the implementation for prompt compliance and routing safety.'
+        }
+      }),
+      { runPrompt: runPromptMock }
+    );
+
+    const prompt = runPromptMock.mock.calls[0]?.[0] as string;
+
+    expect(prompt).toContain('Treat the provided dependency outputs as the only available evidence.');
+    expect(prompt).toContain('/gpt-access/*');
+    expect(prompt).toContain('/gpt/:gptId');
+    expect(runPromptMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        sourceEndpoint: 'dag.agent.reviewer',
+        toolBackedCapabilities: {
+          verifyProvidedData: true
+        }
+      })
+    );
+  });
 });

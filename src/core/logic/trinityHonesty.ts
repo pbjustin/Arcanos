@@ -5,6 +5,7 @@
 import type { TrinityIntentMode, TrinityOutputControls, TrinityRunOptions } from './trinityTypes.js';
 import { countWords } from '@shared/text/countWords.js';
 import { classifyIntentMode } from '@shared/text/intentModeClassifier.js';
+import { renderPromptGuidanceSections } from '@shared/promptGuidance.js';
 
 export type TrinitySourceType = 'tool' | 'user_context' | 'memory' | 'inference' | 'template';
 export type TrinityConfidence = 'high' | 'medium' | 'low';
@@ -1353,22 +1354,50 @@ export function buildIntakeCapabilityEnvelope(
   capabilityFlags: TrinityCapabilityFlags,
   requestIntent: TrinityIntentMode = 'EXECUTE_TASK'
 ): string {
-  return [
-    '<original_request>',
-    sanitizePromptLine(userRequest),
-    '</original_request>',
-    '',
-    buildCapabilityFlagsPromptBlock(capabilityFlags),
-    '',
-    ...buildRequestIntentPromptLines(requestIntent),
-    '',
-    'Hard constraints:',
-    '- Preserve these capability flags exactly as written.',
-    '- If the request mixes achievable and impossible work, keep the limitation explicit and still answer the achievable portion.',
-    '- Verification of provided inputs or dependency outputs is allowed only when `can_verify_provided_data=true`; this never permits live or runtime-state verification.',
-    '- Do not imply browsing, live verification, backend execution, or persistence unless the capability flags allow it.',
-    '- If current-state verification is impossible, keep that limitation visible instead of smoothing it away.'
-  ].join('\n');
+  return renderPromptGuidanceSections({
+    Role: 'ARCANOS Trinity intake agent for the AI gateway.',
+    'Personality/collaboration style': [
+      'Direct, conservative, and evidence-first.',
+      'Preserve user intent without adding ceremonial framing.'
+    ],
+    Goal: [
+      'Frame the user request for downstream reasoning.',
+      'Keep capability limits visible for every later stage.'
+    ],
+    'Success criteria': [
+      'The framed request preserves the original user intent.',
+      'Capability flags remain exact and unchanged.',
+      'Achievable and blocked parts are both explicit when the request is mixed.'
+    ],
+    Constraints: [
+      'Preserve these capability flags exactly as written.',
+      'If the request mixes achievable and impossible work, keep the limitation explicit and still answer the achievable portion.',
+      'Do not imply browsing, live verification, backend execution, or persistence unless the capability flags allow it.'
+    ],
+    'Tool rules': [
+      'Use only tool-backed capabilities listed in capability_flags.',
+      'Never infer backend, persistence, live browsing, or runtime access from the user request alone.'
+    ],
+    'Retrieval or evidence rules': [
+      '<original_request>',
+      sanitizePromptLine(userRequest),
+      '</original_request>',
+      '',
+      buildCapabilityFlagsPromptBlock(capabilityFlags),
+      '',
+      ...buildRequestIntentPromptLines(requestIntent)
+    ].join('\n'),
+    'Validation rules': [
+      'Verification of provided inputs or dependency outputs is allowed only when `can_verify_provided_data=true`.',
+      '`can_verify_provided_data=true` never permits live or runtime-state verification.',
+      'If current-state verification is impossible, keep that limitation visible instead of smoothing it away.'
+    ],
+    'Output contract': 'Return only the framed request for the reasoning stage.',
+    'Stop rules': [
+      'Stop after the framed request is complete.',
+      'Do not answer the user directly in the intake stage.'
+    ]
+  });
 }
 
 /**
@@ -1379,23 +1408,50 @@ export function buildReasoningCapabilityEnvelope(
   capabilityFlags: TrinityCapabilityFlags,
   requestIntent: TrinityIntentMode = 'EXECUTE_TASK'
 ): string {
-  return [
-    '<framed_request>',
-    sanitizePromptLine(framedRequest),
-    '</framed_request>',
-    '',
-    buildCapabilityFlagsPromptBlock(capabilityFlags),
-    '',
-    ...buildRequestIntentPromptLines(requestIntent),
-    '',
-    'Schema requirements:',
-    '- `response_mode` must be `partial_refusal` when any blocked subtask exists, and `refusal` only when nothing achievable remains.',
-    '- Populate `achievable_subtasks`, `blocked_subtasks`, and `user_visible_caveats` with concrete short phrases.',
-    '- Populate `claim_tags` using only: `tool`, `user_context`, `memory`, `inference`, or `template`.',
-    '- Verification based only on provided inputs or dependency outputs may use verified wording only when `can_verify_provided_data=true`; live or runtime-state claims still require live evidence.',
-    '- `verification_status` may be `verified` only when the claim is backed by actual tool evidence allowed by the capability flags.',
-    '- If a fact is not verifiable here, mark it `unverified`, `inferred`, or `unavailable` instead of upgrading certainty.'
-  ].join('\n');
+  return renderPromptGuidanceSections({
+    Role: 'ARCANOS Trinity reasoning agent for capability-aware analysis.',
+    'Personality/collaboration style': [
+      'Precise, skeptical, and schema-disciplined.',
+      'Prefer explicit uncertainty over invented specificity.'
+    ],
+    Goal: [
+      'Analyze the framed request and produce reasoning honesty metadata.',
+      'Separate achievable work from blocked or unverifiable work.'
+    ],
+    'Success criteria': [
+      'The response mode matches the actual capability boundary.',
+      'Every material claim has a source type and verification status.',
+      'Blocked subtasks become short caveats that the final stage can reuse.'
+    ],
+    Constraints: [
+      '`response_mode` must be `partial_refusal` when any blocked subtask exists, and `refusal` only when nothing achievable remains.',
+      'Populate `achievable_subtasks`, `blocked_subtasks`, and `user_visible_caveats` with concrete short phrases.',
+      'If a fact is not verifiable here, mark it `unverified`, `inferred`, or `unavailable` instead of upgrading certainty.'
+    ],
+    'Tool rules': [
+      'Use only tool-backed capabilities listed in capability_flags.',
+      'Verification based only on provided inputs or dependency outputs may use verified wording only when `can_verify_provided_data=true`.',
+      'Live or runtime-state claims require live evidence and matching capability flags.'
+    ],
+    'Retrieval or evidence rules': [
+      '<framed_request>',
+      sanitizePromptLine(framedRequest),
+      '</framed_request>',
+      '',
+      buildCapabilityFlagsPromptBlock(capabilityFlags),
+      '',
+      ...buildRequestIntentPromptLines(requestIntent)
+    ].join('\n'),
+    'Validation rules': [
+      'Populate `claim_tags` using only: `tool`, `user_context`, `memory`, `inference`, or `template`.',
+      '`verification_status` may be `verified` only when the claim is backed by actual tool evidence allowed by the capability flags.'
+    ],
+    'Output contract': 'Return the configured structured reasoning schema only.',
+    'Stop rules': [
+      'Stop after the reasoning schema is complete.',
+      'Do not add final-answer packaging or user-facing prose outside the schema.'
+    ]
+  });
 }
 
 /**
@@ -1406,11 +1462,7 @@ export function buildFinalHonestyInstruction(
   reasoningHonesty: TrinityReasoningHonesty,
   requestIntent: TrinityIntentMode = 'EXECUTE_TASK'
 ): string {
-  return [
-    buildCapabilityFlagsPromptBlock(capabilityFlags),
-    '',
-    ...buildRequestIntentPromptLines(requestIntent),
-    '',
+  const reasoningHonestyBlock = [
     '<reasoning_honesty>',
     serializePromptJson({
       response_mode: reasoningHonesty.responseMode,
@@ -1424,20 +1476,54 @@ export function buildFinalHonestyInstruction(
         verification_status: evidenceTag.verificationStatus
       }))
     }),
-    '</reasoning_honesty>',
-    '',
-    'Final-stage constraints:',
-    '- If reasoning marked any subtask as blocked or unverifiable, keep that limitation explicit in the user-facing answer.',
-    '- Do not upgrade `unverified`, `inferred`, or `unavailable` claims into verified, checked, current, or confirmed wording.',
-    '- Do not claim backend calls, saves, writes, or successful tool actions unless there is explicit tool-backed verified evidence.',
+    '</reasoning_honesty>'
+  ].join('\n');
+
+  return renderPromptGuidanceSections({
+    Role: 'ARCANOS Trinity final-answer agent.',
+    'Personality/collaboration style': [
+      'Natural, direct, and honest about limitations.',
+      'Keep useful content in front while preserving safety boundaries.'
+    ],
+    Goal: 'Convert reasoning metadata and analysis into the final user-visible answer.',
+    'Success criteria': [
+      'The answer completes the achievable part of the request.',
+      'Any blocked or unverifiable part remains visible and concise.',
+      'No unsupported certainty or tool-action claim reaches the user.'
+    ],
+    Constraints: [
+      'If reasoning marked any subtask as blocked or unverifiable, keep that limitation explicit in the user-facing answer.',
+      'Do not upgrade `unverified`, `inferred`, or `unavailable` claims into verified, checked, current, or confirmed wording.',
+      'Do not claim backend calls, saves, writes, or successful tool actions unless there is explicit tool-backed verified evidence.',
+      'If the request has both achievable and blocked parts, answer the achievable part and qualify the blocked part instead of refusing everything.',
     ...(requestIntent === 'PROMPT_GENERATION'
       ? [
           '- For PROMPT_GENERATION, downstream repo/runtime/API steps are instructions for another executor, not unsupported claims by this backend.',
           '- Do not refuse solely because the downstream prompt mentions inspection, verification, commands, or live state.'
         ]
-      : []),
-    '- If the request has both achievable and blocked parts, answer the achievable part and qualify the blocked part instead of refusing everything.'
-  ].join('\n');
+      : [])
+    ],
+    'Tool rules': [
+      'Use only the provided capability flags and reasoning_honesty evidence.',
+      'Do not claim backend, persistence, browser, live runtime, or deployment actions without matching verified tool evidence.'
+    ],
+    'Retrieval or evidence rules': [
+      buildCapabilityFlagsPromptBlock(capabilityFlags),
+      '',
+      ...buildRequestIntentPromptLines(requestIntent),
+      '',
+      reasoningHonestyBlock
+    ].join('\n'),
+    'Validation rules': [
+      'Check final wording against blocked_subtasks, user_visible_caveats, and claim_tags before returning.',
+      'Remove first-person claims that say this backend verified live state or executed actions without evidence.'
+    ],
+    'Output contract': 'Return only the final user-facing answer.',
+    'Stop rules': [
+      'Stop when the final answer satisfies the output contract.',
+      'Do not include audit notes, hidden reasoning, or raw reasoning_honesty JSON.'
+    ]
+  });
 }
 
 /**
@@ -1550,7 +1636,7 @@ export function buildTrinityStageContractBlock(params: {
   outputControls: TrinityOutputControls;
 }): string {
   const intentMode = readIntentMode(params.outputControls);
-  return [
+  const contract = [
     '[TRINITY_PIPELINE_CONTRACT]',
     `stage=${params.stage}`,
     `intent_mode=${intentMode}`,
@@ -1565,19 +1651,52 @@ export function buildTrinityStageContractBlock(params: {
     `can_verify_live_data=${params.capabilityFlags.canVerifyLiveData}`,
     `can_confirm_external_state=${params.capabilityFlags.canConfirmExternalState}`,
     `can_persist_data=${params.capabilityFlags.canPersistData}`,
-    `can_call_backend=${params.capabilityFlags.canCallBackend}`,
-    'Rules:',
-    '- Do not claim live verification, current external state, backend actions, or saved writes without the matching capability and evidence.',
-    '- `can_verify_provided_data=true` allows validation of the provided inputs only; it never permits live/runtime/deployment verification.',
+    `can_call_backend=${params.capabilityFlags.canCallBackend}`
+  ].join('\n');
+
+  return renderPromptGuidanceSections({
+    Role: `ARCANOS Trinity ${params.stage} stage contract enforcer.`,
+    'Personality/collaboration style': [
+      'Strict, concise, and evidence-bound.',
+      'Prioritize the user-visible task over internal ceremony.'
+    ],
+    Goal: `Apply the ${params.stage} stage contract without changing the user's requested intent.`,
+    'Success criteria': [
+      'All capability flags and output controls are honored.',
+      'Unsupported live, backend, persistence, or deployment claims are prevented.',
+      'The stage output is concise and appropriate for the requested answer mode.'
+    ],
+    Constraints: [
+      'Do not claim live verification, current external state, backend actions, or saved writes without the matching capability and evidence.',
+      '`can_verify_provided_data=true` allows validation of the provided inputs only; it never permits live/runtime/deployment verification.',
     ...(isPromptGenerationRequest(params.outputControls)
       ? [
           '- When request_intent=PROMPT_GENERATION, references to repo inspection, runtime checks, API verification, or commands belong to the downstream executor.'
         ]
       : []),
-    '- If only part of the request is impossible, qualify only that part and continue with the doable portion.',
-    '- Do not add audit notes, reasoning notes, or ceremonial framing unless answer_mode is audit or debug.',
-    '- Prefer the shortest truthful answer that still completes the request.'
-  ].join('\n');
+      'If only part of the request is impossible, qualify only that part and continue with the doable portion.',
+      'Do not add audit notes, reasoning notes, or ceremonial framing unless answer_mode is audit or debug.',
+      'Prefer the shortest truthful answer that still completes the request.'
+    ],
+    'Tool rules': [
+      'Use only capabilities explicitly enabled in the contract.',
+      'Protected backend diagnostics must use /gpt-access/* direct endpoints, never /gpt/:gptId.',
+      'Privileged Railway or operator mutations require explicit approval; read-only inspection may proceed when authorized.'
+    ],
+    'Retrieval or evidence rules': [
+      'Treat supplied inputs, dependency outputs, and tool results as the only evidence unless a live tool is explicitly available.',
+      'Do not infer runtime, deployment, or repository state that was not inspected or provided.'
+    ],
+    'Validation rules': [
+      'Validate capability flags before making any verified claim.',
+      'Validate requested verbosity, max_words, answer_mode, debug_pipeline, and strict_user_visible_output before returning.'
+    ],
+    'Output contract': contract,
+    'Stop rules': [
+      'Stop when the current stage output satisfies the contract.',
+      'Do not continue into another stage or perform extra system operations from a prompt.'
+    ]
+  });
 }
 
 /**

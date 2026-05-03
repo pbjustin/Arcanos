@@ -310,7 +310,10 @@ describe('selfHealingLoop', () => {
     'SELF_HEAL_CONTROLLER_COOLDOWN_MS',
     'SELF_HEAL_VERIFICATION_DELAY_MS',
     'SELF_HEAL_DEBUG_FORCE_AI_HEAL_ONCE',
-    'SELF_HEAL_WORKER_SERVICE_URL'
+    'SELF_HEAL_WORKER_SERVICE_URL',
+    'SELF_HEAL_OPERATOR_ACTION_APPROVED',
+    'SELF_HEAL_OPERATOR_ACTION_APPROVED_BY',
+    'SELF_HEAL_OPERATOR_ACTION_REASON'
   ] as const;
   const originalEnv = new Map<string, string | undefined>();
   let trinityActiveAction: string | null;
@@ -696,6 +699,9 @@ describe('selfHealingLoop', () => {
     (globalThis as typeof globalThis & { fetch: typeof remoteHealFetchMock }).fetch =
       remoteHealFetchMock as any;
     process.env.SELF_HEAL_WORKER_SERVICE_URL = 'https://worker.example.test';
+    process.env.SELF_HEAL_OPERATOR_ACTION_APPROVED = 'true';
+    process.env.SELF_HEAL_OPERATOR_ACTION_APPROVED_BY = 'operator:test';
+    process.env.SELF_HEAL_OPERATOR_ACTION_REASON = 'test approval for remote worker helper repair';
 
     getWorkerControlHealthMock.mockResolvedValueOnce(createWorkerHealth({
       overallStatus: 'degraded',

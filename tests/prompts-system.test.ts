@@ -13,6 +13,7 @@ import {
   getPromptsConfig,
   getSecurityReasoningEnginePrompt
 } from '../src/config/prompts.js';
+import { findMissingPromptGuidanceSections } from '../src/shared/promptGuidance.js';
 
 describe('Prompts System', () => {
   test('should load backstage prompts correctly', () => {
@@ -33,6 +34,8 @@ describe('Prompts System', () => {
     expect(intake).toContain('Test memory context');
     expect(reasoning).toContain('reasoning');
     expect(fallback).toContain('Test prompt');
+    expect(findMissingPromptGuidanceSections(intake)).toEqual([]);
+    expect(findMissingPromptGuidanceSections(reasoning)).toEqual([]);
   });
 
   test('should provide generic prompt access', () => {

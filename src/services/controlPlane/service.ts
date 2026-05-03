@@ -134,6 +134,20 @@ const operationDefinitions: ControlPlaneOperationDefinition[] = [
   },
   {
     adapter: 'railway-cli',
+    operation: 'logs',
+    description: 'Read recent Railway CLI logs.',
+    kind: 'process',
+    allowedPhases: ['plan', 'execute'],
+    requiresApproval: false,
+    scopes: ['railway:read'],
+    buildProcessCommand: (_input, cwd) => ({
+      executable: resolveRailwayExecutable(),
+      args: ['logs'],
+      cwd
+    })
+  },
+  {
+    adapter: 'railway-cli',
     operation: 'deploy',
     description: 'Deploy the current project through `railway up --detach`.',
     kind: 'process',

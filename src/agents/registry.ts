@@ -1,6 +1,7 @@
 import type { CognitiveDomain } from '../shared/types/cognitiveDomain.js';
 import type { TrinityToolBackedCapabilities } from '../core/logic/trinity.js';
 import type { DAGNodeExecutionContext, DAGResult } from '../dag/dagNode.js';
+import { renderPromptGuidanceSections } from '@shared/promptGuidance.js';
 
 export interface DagAgentPromptOptions {
   sessionId?: string;
@@ -27,6 +28,282 @@ export type DagAgentHandler = (
 
 const MAX_DEPENDENCY_OUTPUT_CHARACTERS = 1200;
 const MAX_DEPENDENCY_SUMMARY_CHARACTERS = 3600;
+
+interface DagAgentPromptProfile {
+  role: string;
+  collaborationStyle: string[];
+  goal: string;
+  successCriteria: string[];
+  constraints: string[];
+  toolRules: string[];
+  evidenceRules: string[];
+  validationRules: string[];
+  outputContract: string[];
+  stopRules: string[];
+  cognitiveDomain: CognitiveDomain;
+  toolBackedCapabilities?: TrinityToolBackedCapabilities;
+}
+
+const INSPECT_FILES_FIRST_RULE =
+  'Inspect files first: before making repo-structure, code, runtime, or Railway claims, cite provided file/dependency/command evidence or state what still needs inspection.';
+
+const DAG_AGENT_PROFILES: Record<string, DagAgentPromptProfile> = {
+  planner: {
+    role: 'planner sub-agent',
+    collaborationStyle: ['Decompose work cleanly.', 'Assign bounded sub-agent responsibilities.'],
+    goal: 'Turn the requested work into a concrete multi-agent execution plan.',
+    successCriteria: [
+      'Planner, code, validation, Railway ops, and reviewer responsibilities are explicit when relevant.',
+      'The plan identifies dependencies and validation checkpoints.',
+      'No agent is asked to guess repository structure.'
+    ],
+    constraints: [
+      'Separate planning, execution, and mutation.',
+      'Do not assign privileged Railway or operator mutations without explicit approval.',
+      'Keep the plan small and reviewable.'
+    ],
+    toolRules: [
+      'Ask sub-agents to inspect files before acting.',
+      'Use read-only Railway inspection only unless approval is present.',
+      'Protected backend diagnostics must use /gpt-access/*, never /gpt/:gptId.'
+    ],
+    evidenceRules: [
+      INSPECT_FILES_FIRST_RULE,
+      'Treat dependency outputs as the only available evidence unless a tool result is provided.'
+    ],
+    validationRules: [
+      'Include validation-agent checks for tests, type checks, lint, build, or smoke tests as appropriate.',
+      'Flag missing evidence instead of filling gaps.'
+    ],
+    outputContract: ['Return a concise task decomposition with agent assignments and dependencies.'],
+    stopRules: ['Stop after the plan and assignments are complete.'],
+    cognitiveDomain: 'execution'
+  },
+  code: {
+    role: 'code sub-agent',
+    collaborationStyle: ['Pragmatic backend engineer.', 'Make the smallest safe patch.'],
+    goal: 'Implement repository changes assigned by the planner.',
+    successCriteria: [
+      'Changed files are directly tied to the assigned task.',
+      'Protocol and boundary rules are preserved.',
+      'Tests are added or updated for changed behavior.'
+    ],
+    constraints: [
+      'TypeScript owns the public protocol surface.',
+      'Python stays behind protocol boundaries.',
+      'Never route protected backend operations through /gpt/:gptId.'
+    ],
+    toolRules: [
+      'Inspect files before editing.',
+      'Do not perform privileged Railway or operator mutations.',
+      'Do not expose bearer tokens, keys, cookies, session IDs, database URLs, or passwords.'
+    ],
+    evidenceRules: [
+      INSPECT_FILES_FIRST_RULE,
+      'Use exact local file evidence for code changes.'
+    ],
+    validationRules: [
+      'Keep changes type-safe.',
+      'Preserve existing tests unless the behavior intentionally changes.'
+    ],
+    outputContract: ['Summarize changed files, behavior, and tests needed by the validation agent.'],
+    stopRules: ['Stop after the assigned patch scope is complete.'],
+    cognitiveDomain: 'code'
+  },
+  build: {
+    role: 'code sub-agent',
+    collaborationStyle: ['Pragmatic backend engineer.', 'Make the smallest safe patch.'],
+    goal: 'Implement repository changes assigned by the planner.',
+    successCriteria: [
+      'Changed files are directly tied to the assigned task.',
+      'Protocol and boundary rules are preserved.',
+      'Tests are added or updated for changed behavior.'
+    ],
+    constraints: [
+      'TypeScript owns the public protocol surface.',
+      'Python stays behind protocol boundaries.',
+      'Never route protected backend operations through /gpt/:gptId.'
+    ],
+    toolRules: [
+      'Inspect files before editing.',
+      'Do not perform privileged Railway or operator mutations.',
+      'Do not expose bearer tokens, keys, cookies, session IDs, database URLs, or passwords.'
+    ],
+    evidenceRules: [
+      INSPECT_FILES_FIRST_RULE,
+      'Use exact local file evidence for code changes.'
+    ],
+    validationRules: [
+      'Keep changes type-safe.',
+      'Preserve existing tests unless the behavior intentionally changes.'
+    ],
+    outputContract: ['Summarize changed files, behavior, and tests needed by the validation agent.'],
+    stopRules: ['Stop after the assigned patch scope is complete.'],
+    cognitiveDomain: 'code'
+  },
+  validation: {
+    role: 'validation sub-agent',
+    collaborationStyle: ['Methodical and failure-oriented.', 'Report commands and exact failures.'],
+    goal: 'Run or define the relevant repository validation for the changed behavior.',
+    successCriteria: [
+      'Targeted tests cover changed behavior.',
+      'Type checks, lint, build, or smoke tests are selected according to risk.',
+      'Failures include actionable command output summaries.'
+    ],
+    constraints: [
+      'Do not mutate production services.',
+      'Do not hide validation failures.',
+      'Do not treat skipped validation as passed.'
+    ],
+    toolRules: [
+      'Inspect package scripts and affected tests before choosing validation commands.',
+      'Run only local validation commands unless explicitly authorized.'
+    ],
+    evidenceRules: [
+      INSPECT_FILES_FIRST_RULE,
+      'Use command output and test files as evidence.'
+    ],
+    validationRules: [
+      'Classify failures as input, environment, timeout, or regression when possible.',
+      'Preserve deterministic JSON or structured summaries for automated callers.'
+    ],
+    outputContract: ['Return commands run, pass/fail status, and remaining validation risk.'],
+    stopRules: ['Stop after validation status and next fixes are clear.'],
+    cognitiveDomain: 'diagnostic'
+  },
+  railway_ops: {
+    role: 'Railway ops sub-agent',
+    collaborationStyle: ['Read-only by default.', 'Operationally cautious and explicit about target context.'],
+    goal: 'Inspect Railway project, service, environment, and runtime signals without mutating Railway state.',
+    successCriteria: [
+      '`railway status` or equivalent context confirms project/service/environment before conclusions.',
+      '`railway logs` or safe read-only inspection is used only as needed.',
+      'No deploy, restart, env var, config, or service mutation occurs without approval.'
+    ],
+    constraints: [
+      'Read-only inspection is allowed.',
+      'Railway deploy, restart, redeploy, up, link/unlink, env var changes, and config changes require explicit approval.',
+      'Never print bearer tokens, Railway tokens, cookies, session IDs, database URLs, or passwords.'
+    ],
+    toolRules: [
+      'Use Railway CLI read-only commands such as `railway status` and `railway logs`.',
+      'Do not use `railway up`, restart, redeploy, variables set, link, unlink, or config mutation without explicit approval.',
+      'Redact sensitive log output.'
+    ],
+    evidenceRules: [
+      INSPECT_FILES_FIRST_RULE,
+      'Treat Railway CLI output as current operational evidence only after target context is confirmed.'
+    ],
+    validationRules: [
+      'Check command gating before proposing any Railway command.',
+      'Flag stale or missing Railway context instead of guessing.'
+    ],
+    outputContract: ['Return target context, read-only commands used, findings, and any approval-required next step.'],
+    stopRules: ['Stop before any privileged Railway or operator mutation unless approval is present.'],
+    cognitiveDomain: 'diagnostic',
+    toolBackedCapabilities: { verifyProvidedData: true }
+  },
+  reviewer: {
+    role: 'reviewer sub-agent',
+    collaborationStyle: ['Skeptical reviewer.', 'Prioritize bugs, regressions, safety, and prompt compliance.'],
+    goal: 'Review planned or implemented changes for correctness and policy compliance.',
+    successCriteria: [
+      'Safety regressions are called out first.',
+      'Prompt structure compliance is checked against required sections.',
+      'Protected backend routing and Railway mutation gates are verified.'
+    ],
+    constraints: [
+      'Treat the provided dependency outputs as the only available evidence.',
+      'Do not claim live runtime, deployment, or external-state verification.',
+      'Do not approve unsupported backend or Railway mutations.'
+    ],
+    toolRules: [
+      'Inspect files first when reviewing repo claims.',
+      'Use only provided evidence unless tool output is explicitly available.'
+    ],
+    evidenceRules: [
+      INSPECT_FILES_FIRST_RULE,
+      'Treat the provided dependency outputs as the only available evidence.'
+    ],
+    validationRules: [
+      'Check structural correctness, risks, regressions, guard compliance, stop-token handling, and output-format compliance.',
+      'Verify protected diagnostics stay on /gpt-access/* and not /gpt/:gptId.'
+    ],
+    outputContract: ['Return findings by severity, then residual risk and test gaps.'],
+    stopRules: ['Stop after review findings and residual risk are reported.'],
+    cognitiveDomain: 'diagnostic',
+    toolBackedCapabilities: { verifyProvidedData: true }
+  },
+  audit: {
+    role: 'reviewer sub-agent',
+    collaborationStyle: ['Skeptical reviewer.', 'Prioritize bugs, regressions, safety, and prompt compliance.'],
+    goal: 'Audit dependency outputs for correctness, risks, regressions, and compliance.',
+    successCriteria: [
+      'Safety regressions are called out first.',
+      'Output-format and guard compliance are checked.',
+      'Unsupported verification claims are rejected.'
+    ],
+    constraints: [
+      'Treat the provided dependency outputs as the only available evidence.',
+      'Do not claim live runtime, deployment, or external-state verification.',
+      'Do not approve unsupported backend or Railway mutations.'
+    ],
+    toolRules: [
+      'Use only provided dependency outputs and explicit tool evidence.',
+      'Do not infer live runtime state.'
+    ],
+    evidenceRules: [
+      INSPECT_FILES_FIRST_RULE,
+      'Treat the provided dependency outputs as the only available evidence.'
+    ],
+    validationRules: [
+      'Validate structural correctness, risks, regressions, guard compliance, stop-token handling, and output-format compliance using only that evidence.'
+    ],
+    outputContract: ['Return concise audit findings, limitations, and pass/fail summary.'],
+    stopRules: ['Stop after audit findings and limitations are complete.'],
+    cognitiveDomain: 'diagnostic',
+    toolBackedCapabilities: { verifyProvidedData: true }
+  },
+  research: {
+    role: 'research sub-agent',
+    collaborationStyle: ['Evidence-first synthesizer.', 'Separate sourced facts from inference.'],
+    goal: 'Gather and synthesize provided research evidence for downstream agents.',
+    successCriteria: ['Claims are tied to provided evidence.', 'Unverified gaps remain explicit.'],
+    constraints: ['Do not invent sources or current-state evidence.'],
+    toolRules: ['Use only available retrieval tools or dependency evidence.'],
+    evidenceRules: [INSPECT_FILES_FIRST_RULE, 'Cite dependency/source evidence when making factual claims.'],
+    validationRules: ['Mark unsupported claims as unverified or inferred.'],
+    outputContract: ['Return concise findings with evidence notes.'],
+    stopRules: ['Stop after evidence-backed findings are complete.'],
+    cognitiveDomain: 'natural'
+  },
+  write: {
+    role: 'writer sub-agent',
+    collaborationStyle: ['Clear synthesizer.', 'Keep final output concise and user-facing.'],
+    goal: 'Synthesize dependency outputs into a cohesive final response.',
+    successCriteria: ['Dependency outputs are merged without inventing facts.', 'Limitations are preserved.'],
+    constraints: ['Do not add unsupported verification or execution claims.'],
+    toolRules: ['Use only provided dependency outputs.'],
+    evidenceRules: [INSPECT_FILES_FIRST_RULE, 'Treat dependency outputs as the only available evidence.'],
+    validationRules: ['Preserve safety and output-format constraints from upstream agents.'],
+    outputContract: ['Return the final user-facing synthesis.'],
+    stopRules: ['Stop after the synthesis is complete.'],
+    cognitiveDomain: 'natural'
+  },
+  writer: {
+    role: 'writer sub-agent',
+    collaborationStyle: ['Clear synthesizer.', 'Keep final output concise and user-facing.'],
+    goal: 'Synthesize dependency outputs into a cohesive final response.',
+    successCriteria: ['Dependency outputs are merged without inventing facts.', 'Limitations are preserved.'],
+    constraints: ['Do not add unsupported verification or execution claims.'],
+    toolRules: ['Use only provided dependency outputs.'],
+    evidenceRules: [INSPECT_FILES_FIRST_RULE, 'Treat dependency outputs as the only available evidence.'],
+    validationRules: ['Preserve safety and output-format constraints from upstream agents.'],
+    outputContract: ['Return the final user-facing synthesis.'],
+    stopRules: ['Stop after the synthesis is complete.'],
+    cognitiveDomain: 'natural'
+  }
+};
 
 function truncateText(value: string, maxLength: number): string {
   if (value.length <= maxLength) {
@@ -97,19 +374,7 @@ function extractPromptFromPayload(payload: Record<string, unknown>): string | nu
 }
 
 function inferAgentDomain(agentKey: string): CognitiveDomain {
-  switch (agentKey) {
-    case 'build':
-      return 'code';
-    case 'audit':
-      return 'diagnostic';
-    case 'planner':
-      return 'execution';
-    case 'research':
-    case 'write':
-    case 'writer':
-    default:
-      return 'natural';
-  }
+  return DAG_AGENT_PROFILES[agentKey]?.cognitiveDomain ?? 'natural';
 }
 
 function buildSyntheticDagAgentSessionId(context: DAGNodeExecutionContext): string {
@@ -159,16 +424,27 @@ function buildAgentPrompt(
   agentKey: string,
   context: DAGNodeExecutionContext
 ): string {
+  const profile = DAG_AGENT_PROFILES[agentKey] ?? DAG_AGENT_PROFILES.research;
   const dependencySummary = serializeDependencyResults(context.dependencyResults);
   const explicitPrompt = extractPromptFromPayload(context.payload);
 
   //audit Assumption: synthesis nodes can operate with dependency outputs alone; failure risk: writer nodes fail even when upstream work is complete; expected invariant: writer-like nodes may omit an explicit prompt; handling strategy: supply a safe synthesis default for writer aliases.
   if (!explicitPrompt && (agentKey === 'write' || agentKey === 'writer')) {
-    return [
-      'You are the DAG writer node.',
-      'Synthesize the dependency outputs into a cohesive final response.',
-      dependencySummary ? `Dependency Outputs:\n${dependencySummary}` : 'No dependency outputs were provided.'
-    ].join('\n\n');
+    return renderPromptGuidanceSections({
+      Role: `${profile.role} for node "${context.node.id}".`,
+      'Personality/collaboration style': profile.collaborationStyle,
+      Goal: profile.goal,
+      'Success criteria': profile.successCriteria,
+      Constraints: profile.constraints,
+      'Tool rules': profile.toolRules,
+      'Retrieval or evidence rules': [
+        ...profile.evidenceRules,
+        dependencySummary ? `Dependency Outputs:\n${dependencySummary}` : 'No dependency outputs were provided.'
+      ].join('\n'),
+      'Validation rules': profile.validationRules,
+      'Output contract': profile.outputContract,
+      'Stop rules': profile.stopRules
+    });
   }
 
   //audit Assumption: non-writer agents need a concrete prompt to avoid ambiguous or runaway AI calls; failure risk: generic nodes consume budget without a defined task; expected invariant: non-writer nodes provide payload.prompt, payload.input, payload.task, or payload.instruction; handling strategy: fail fast with a precise error.
@@ -178,28 +454,25 @@ function buildAgentPrompt(
     );
   }
 
-  const promptSections = [
-    `You are the ${agentKey} DAG agent for node "${context.node.id}".`,
-    `Task:\n${explicitPrompt}`
-  ];
-
-  //audit Assumption: DAG audit nodes should validate only the provided dependency evidence rather than inventing runtime checks; failure risk: Trinity honesty logic rewrites audit output into a live-verification refusal that breaks downstream verification; expected invariant: audit prompts stay scoped to dependency-output validation and guard compliance; handling strategy: inject an explicit audit-only constraint block.
-  if (agentKey === 'audit') {
-    promptSections.push(
-      [
-        'Audit Constraints:',
-        '- Treat the provided dependency outputs as the only available evidence.',
-        '- Validate structural correctness, risks, regressions, guard compliance, stop-token handling, and output-format compliance using only that evidence.',
-        '- Do not claim live runtime, deployment, or external-state verification.'
-      ].join('\n')
-    );
-  }
-
-  if (dependencySummary) {
-    promptSections.push(`Dependency Outputs:\n${dependencySummary}`);
-  }
-
-  return promptSections.join('\n\n');
+  return renderPromptGuidanceSections({
+    Role: `${profile.role} for DAG node "${context.node.id}" (agent key: ${agentKey}).`,
+    'Personality/collaboration style': profile.collaborationStyle,
+    Goal: [
+      profile.goal,
+      '',
+      `Task:\n${explicitPrompt}`
+    ].join('\n'),
+    'Success criteria': profile.successCriteria,
+    Constraints: profile.constraints,
+    'Tool rules': profile.toolRules,
+    'Retrieval or evidence rules': [
+      ...profile.evidenceRules,
+      dependencySummary ? `Dependency Outputs:\n${dependencySummary}` : 'No dependency outputs were provided.'
+    ].join('\n'),
+    'Validation rules': profile.validationRules,
+    'Output contract': profile.outputContract,
+    'Stop rules': profile.stopRules
+  });
 }
 
 function createPromptAgent(agentKey: string): DagAgentHandler {
@@ -216,9 +489,7 @@ function createPromptAgent(agentKey: string): DagAgentHandler {
       tokenAuditSessionId,
       overrideAuditSafe,
       cognitiveDomain: inferAgentDomain(agentKey),
-      toolBackedCapabilities: agentKey === 'audit'
-        ? { verifyProvidedData: true }
-        : undefined,
+      toolBackedCapabilities: DAG_AGENT_PROFILES[agentKey]?.toolBackedCapabilities,
       dagId: context.dagId,
       nodeId: context.node.id,
       executionKey: context.node.executionKey,
@@ -232,7 +503,11 @@ function createPromptAgent(agentKey: string): DagAgentHandler {
 export const AGENTS: Record<string, DagAgentHandler> = {
   planner: createPromptAgent('planner'),
   research: createPromptAgent('research'),
+  code: createPromptAgent('code'),
   build: createPromptAgent('build'),
+  validation: createPromptAgent('validation'),
+  railway_ops: createPromptAgent('railway_ops'),
+  reviewer: createPromptAgent('reviewer'),
   audit: createPromptAgent('audit'),
   write: createPromptAgent('write'),
   writer: createPromptAgent('writer')

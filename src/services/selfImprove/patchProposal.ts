@@ -7,6 +7,7 @@ import { callOpenAI, getDefaultModel } from "@services/openai.js";
 import { getEnv, getEnvNumber } from "@platform/runtime/env.js";
 import { getConfig } from "@platform/runtime/unifiedConfig.js";
 import { applySecurityCompliance } from "@services/securityCompliance.js";
+import { renderPromptGuidanceSections } from "@shared/promptGuidance.js";
 
 const execAsync = promisify(execCallback);
 
@@ -236,39 +237,68 @@ function buildPatchProposalPrompt(args: {
     2
   );
 
-  return [
-    "You are the ARCANOS patch-proposal engine.",
-    "Output ONLY valid JSON that matches this contract example exactly (same keys and value types):",
-    outputContractExample,
-    "",
-    "Constraints:",
-    `- Environment: ${cfg.selfImproveEnvironment}`,
-    "- Provide a SMALL unified diff (git apply compatible).",
-    "- The diff MUST pass `git apply --check` against the current repository state.",
-    "- Use exact real code context lines from existing files; do not invent placeholder context.",
-    "- NEVER output placeholder lines such as `...`, `<existing code>`, or `[existing code]`.",
-    "- Only modify files that are necessary.",
-    `- DO NOT touch prohibited paths/patterns: ${args.prohibitedPaths.join(", ") || "(none)"}`,
-    "- If you cannot safely propose a patch, still output JSON but use risk='high' and an empty diff is NOT allowed; instead propose a minimal safe no-op change (e.g., add tests or docs) that improves observability.",
-    "- Include a short list of commands to validate the change (e.g., npm test).",
-    "",
-    "Signals:",
-    `- trigger: ${args.trigger}`,
-    args.component ? `- component: ${args.component}` : "- component: (none)",
-    typeof args.clearOverall === "number" ? `- CLEAR overall: ${args.clearOverall}` : "",
-    typeof args.clearMin === "number" ? `- CLEAR min: ${args.clearMin}` : "",
-    "",
-    "Context (sanitized):",
-    safeContext,
-    args.retryFeedback ? "" : "",
-    args.retryFeedback ? "Previous attempt failed validation. Fix the patch based on this feedback:" : "",
-    args.retryFeedback ? `- ${args.retryFeedback}` : "",
-  ].filter(Boolean).join("\n");
+  return renderPromptGuidanceSections({
+    Role: "ARCANOS patch-proposal engine for self-improvement.",
+    "Personality/collaboration style": [
+      "Careful senior engineer.",
+      "Small, reviewable, and schema-disciplined."
+    ],
+    Goal: "Propose one minimal repository patch that improves the diagnosed condition.",
+    "Success criteria": [
+      "The proposal is valid JSON matching the contract exactly.",
+      "The unified diff is small, real, and `git apply --check` compatible.",
+      "The proposal includes concrete validation commands and success metrics."
+    ],
+    Constraints: [
+      `Environment: ${cfg.selfImproveEnvironment}`,
+      "Provide a SMALL unified diff (git apply compatible).",
+      "The diff MUST pass `git apply --check` against the current repository state.",
+      "Use exact real code context lines from existing files; do not invent placeholder context.",
+      "NEVER output placeholder lines such as `...`, `<existing code>`, or `[existing code]`.",
+      "Only modify files that are necessary.",
+      `DO NOT touch prohibited paths/patterns: ${args.prohibitedPaths.join(", ") || "(none)"}`,
+      "If you cannot safely propose a patch, still output JSON but use risk='high' and an empty diff is NOT allowed; instead propose a minimal safe no-op change that improves observability."
+    ],
+    "Tool rules": [
+      "Do not claim a command was run; only list commands that should validate the patch.",
+      "Never expose credentials, bearer tokens, cookies, database URLs, or passwords.",
+      "Never route protected backend diagnostics through /gpt/:gptId."
+    ],
+    "Retrieval or evidence rules": [
+      "Use only sanitized context and exact file context present in the repository.",
+      "Do not guess repo structure or invent file paths.",
+      "Signals:",
+      `trigger: ${args.trigger}`,
+      args.component ? `component: ${args.component}` : "component: (none)",
+      typeof args.clearOverall === "number" ? `CLEAR overall: ${args.clearOverall}` : "",
+      typeof args.clearMin === "number" ? `CLEAR min: ${args.clearMin}` : "",
+      "",
+      "Context (sanitized):",
+      safeContext,
+      args.retryFeedback ? "" : "",
+      args.retryFeedback ? "Previous attempt failed validation. Fix the patch based on this feedback:" : "",
+      args.retryFeedback ? args.retryFeedback : ""
+    ].filter(Boolean).join("\n"),
+    "Validation rules": [
+      "Output must parse as one JSON object.",
+      "The diff must contain real hunk headers and no placeholders.",
+      "Include a short list of commands to validate the change."
+    ],
+    "Output contract": [
+      "Output ONLY valid JSON that matches this contract example exactly (same keys and value types):",
+      outputContractExample
+    ].join("\n"),
+    "Stop rules": [
+      "Stop immediately after the JSON object.",
+      "Do not wrap the JSON in markdown fences or explanatory prose."
+    ]
+  });
 }
 
 export const patchProposalTestUtils = {
   parseJsonObjectFromModelOutput,
   validateUnifiedDiffShape,
+  buildPatchProposalPrompt,
 };
 
 export async function generatePatchProposal(args: {
@@ -292,7 +322,25 @@ export async function generatePatchProposal(args: {
 
     try {
       const resp = await callOpenAI(model, prompt, tokenLimit, true, {
-        systemPrompt: "You are a careful senior engineer. Follow the schema. Output only JSON.",
+        systemPrompt: renderPromptGuidanceSections({
+          Role: "Careful senior engineer for ARCANOS self-improvement patch proposals.",
+          "Personality/collaboration style": "Conservative, concise, and schema-disciplined.",
+          Goal: "Return one JSON patch proposal that follows the user prompt contract.",
+          "Success criteria": [
+            "Valid JSON only.",
+            "No prose outside the JSON object.",
+            "No invented files or placeholder diff context."
+          ],
+          Constraints: [
+            "Follow the schema exactly.",
+            "Keep the patch minimal and reviewable."
+          ],
+          "Tool rules": "Do not claim tool execution or command results.",
+          "Retrieval or evidence rules": "Use only evidence provided in the user prompt.",
+          "Validation rules": "Validate the JSON shape before returning.",
+          "Output contract": "Return only the JSON object requested by the user prompt.",
+          "Stop rules": "Stop after the closing JSON brace."
+        }),
         temperature: 0.1,
         top_p: 1,
         metadata: {

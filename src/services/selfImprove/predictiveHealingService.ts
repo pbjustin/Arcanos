@@ -33,6 +33,7 @@ import { getEnvNumber } from '@platform/runtime/env.js';
 import { runArcanosCoreQuery } from '@services/arcanos-core.js';
 import { getOpenAIClientOrAdapter } from '@services/openai/clientBridge.js';
 import { createSingleChatCompletion, getFallbackModel } from '@services/openai.js';
+import { renderPromptGuidanceSections } from '@shared/promptGuidance.js';
 import {
   getOpenAIServiceHealth,
   reinitializeOpenAIProvider
@@ -1596,24 +1597,41 @@ function buildAiDecisionPrompt(params: {
     details: candidate.details
   }));
 
-  return [
-    'You are ARCANOS:CORE making a bounded production self-healing decision.',
-    'Return JSON only with this schema:',
-    '{"selectedCandidateIndex":number|null,"chooseNoAction":boolean,"reason":string,"safeToExecute":boolean,"confidence":number}',
-    'Rules:',
-    '- Only pick a candidate index from the provided list.',
-    '- Never invent an action or target.',
-    '- Prefer no action over an unsafe or weak action.',
-    '- If selectedCandidateIndex is null, set chooseNoAction to true.',
-    '- The runtime may execute the selected action automatically.',
-    `Actuator=${JSON.stringify({
+  return renderPromptGuidanceSections({
+    Role: 'ARCANOS:CORE bounded production self-healing decision agent.',
+    'Personality/collaboration style': [
+      'Conservative, deterministic, and safety-first.',
+      'Prefer no action over weak or unsafe automation.'
+    ],
+    Goal: 'Select at most one provided self-healing candidate, or choose no action.',
+    'Success criteria': [
+      'The selected candidate index exists in Candidates.',
+      'Unsafe or low-confidence candidates are refused.',
+      'The response is valid JSON matching the schema exactly.'
+    ],
+    Constraints: [
+      'Only pick a candidate index from the provided list.',
+      'Never invent an action or target.',
+      'Prefer no action over an unsafe or weak action.',
+      'If selectedCandidateIndex is null, set chooseNoAction to true.',
+      'The runtime may execute the selected action automatically.'
+    ],
+    'Tool rules': [
+      'Do not request or imply new tools.',
+      'Do not mutate Railway, restart services, deploy, or change environment variables from this prompt.',
+      'Privileged Railway or operator actions require explicit approval outside this prompt.'
+    ],
+    'Retrieval or evidence rules': [
+      'Use only the Actuator, Observation, Trends, RulesDecision, and Candidates JSON provided below.',
+      'Do not infer live state that is absent from the observation snapshot.',
+      `Actuator=${JSON.stringify({
       mode: params.actuator.mode,
       available: params.actuator.available,
       reason: params.actuator.reason,
       baseUrl: params.actuator.baseUrl,
       path: params.actuator.path
-    })}`,
-    `Observation=${JSON.stringify({
+      })}`,
+      `Observation=${JSON.stringify({
       source: params.source,
       collectedAt: params.observation.collectedAt,
       requestCount: params.observation.requestCount,
@@ -1639,11 +1657,11 @@ function buildAiDecisionPrompt(params: {
         enabled: params.observation.trinity.enabled,
         activeStage: params.observation.trinity.activeStage,
         activeAction: params.observation.trinity.activeAction,
-        verified: params.observation.trinity.verified
-      }
-    })}`,
-    `Trends=${JSON.stringify(params.trends)}`,
-    `RulesDecision=${JSON.stringify({
+          verified: params.observation.trinity.verified
+        }
+      })}`,
+      `Trends=${JSON.stringify(params.trends)}`,
+      `RulesDecision=${JSON.stringify({
       advisor: params.rulesDecision.advisor,
       action: params.rulesDecision.action,
       target: params.rulesDecision.target,
@@ -1651,9 +1669,20 @@ function buildAiDecisionPrompt(params: {
       confidence: params.rulesDecision.confidence,
       matchedRule: params.rulesDecision.matchedRule,
       safeToExecute: params.rulesDecision.safeToExecute
-    })}`,
-    `Candidates=${JSON.stringify(candidatePreview)}`
-  ].join('\n');
+      })}`,
+      `Candidates=${JSON.stringify(candidatePreview)}`
+    ].join('\n'),
+    'Validation rules': [
+      'Validate selectedCandidateIndex against the Candidates array before returning.',
+      'Set safeToExecute=false when actuator availability, candidate evidence, or confidence is insufficient.',
+      'Set confidence between 0 and 1.'
+    ],
+    'Output contract': 'Return JSON only with this schema: {"selectedCandidateIndex":number|null,"chooseNoAction":boolean,"reason":string,"safeToExecute":boolean,"confidence":number}',
+    'Stop rules': [
+      'Stop immediately after the JSON object.',
+      'Do not include markdown, prose, logs, or analysis outside JSON.'
+    ]
+  });
 }
 
 async function resolveAiDecision(params: {

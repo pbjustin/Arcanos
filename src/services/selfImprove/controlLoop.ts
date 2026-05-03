@@ -10,6 +10,7 @@ import {
   type ExecStartResponseData
 } from '@arcanos/protocol';
 import type { Tier } from '@core/logic/trinityTier.js';
+import { redactString } from '@shared/redaction.js';
 import { runtimeDiagnosticsService } from '@services/runtimeDiagnosticsService.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { getEnvNumber } from '@platform/runtime/env.js';
@@ -25,6 +26,7 @@ import {
   type SelfHealingSignal,
   type SelfHealingSignalCluster
 } from './signals.js';
+import { evaluateSelfHealOperatorApproval } from './operatorApproval.js';
 
 type LoopAction = TrinitySelfHealingAction | 'restart_service' | 'redeploy_service';
 type LoopResult = 'idle' | 'improved' | 'failed' | 'unchanged' | 'blocked';
@@ -578,7 +580,7 @@ async function readRailwayCliLogSummary(): Promise<string | null> {
     return null;
   }
 
-  return interesting.slice(-5).join(' | ');
+  return redactString(interesting.slice(-5).join(' | '));
 }
 
 async function collectObservation(app: Application): Promise<ObservationSummary> {
@@ -721,6 +723,18 @@ async function executeLoopAction(action: LoopAction, cluster: ClusterSummary): P
   }
 
   const serviceName = process.env.RAILWAY_SERVICE_NAME?.trim() || 'ARCANOS V2';
+  const approval = evaluateSelfHealOperatorApproval({
+    action,
+    required: true
+  });
+  if (!approval.satisfied) {
+    return {
+      ok: false,
+      layer: 'railway-cli',
+      detail: approval.reason ?? `${action} requires explicit operator approval.`
+    };
+  }
+
   const railwayArgs = action === 'restart_service'
     ? ['restart', '--service', serviceName, '-y']
     : ['redeploy', '--service', serviceName, '-y'];

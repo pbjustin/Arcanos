@@ -1,5 +1,6 @@
 import { describe, expect, it } from '@jest/globals';
 import { patchProposalTestUtils } from '@services/selfImprove/patchProposal.js';
+import { findMissingPromptGuidanceSections } from '../src/shared/promptGuidance.js';
 
 describe('patchProposalTestUtils.parseJsonObjectFromModelOutput', () => {
   it('parses strict JSON output', () => {
@@ -19,6 +20,25 @@ describe('patchProposalTestUtils.parseJsonObjectFromModelOutput', () => {
 
   it('throws when no valid JSON object exists', () => {
     expect(() => patchProposalTestUtils.parseJsonObjectFromModelOutput('not-json')).toThrow('Patch proposal is not valid JSON.');
+  });
+});
+
+describe('patchProposalTestUtils.buildPatchProposalPrompt', () => {
+  it('renders the OpenAI-guided prompt contract and evidence rules', () => {
+    const prompt = patchProposalTestUtils.buildPatchProposalPrompt({
+      trigger: 'test-trigger',
+      component: 'ai-gateway',
+      context: {
+        file: 'src/example.ts'
+      },
+      prohibitedPaths: ['.env', 'secrets/']
+    });
+
+    expect(findMissingPromptGuidanceSections(prompt)).toEqual([]);
+    expect(prompt).toContain('Output ONLY valid JSON');
+    expect(prompt).toContain('Do not guess repo structure');
+    expect(prompt).toContain('Never route protected backend diagnostics through /gpt/:gptId.');
+    expect(prompt).toContain('test-trigger');
   });
 });
 
