@@ -16,7 +16,11 @@ jest.unstable_mockModule('@core/db/query.js', () => ({
   query: queryMock
 }));
 
-const { recoverStaleJobs } = await import('../src/core/db/repositories/jobRepository.js');
+const {
+  DEFAULT_JOB_WORKER_STALE_AFTER_MS,
+  recoverStaleJobs,
+  resolveJobWorkerStaleAfterMs
+} = await import('../src/core/db/repositories/jobRepository.js');
 
 function mockStaleRows(rows: Array<Record<string, unknown>>): void {
   clientQueryMock.mockImplementation(async (sql: unknown) => {
@@ -51,6 +55,16 @@ describe('jobRepository lifecycle recovery', () => {
     getPoolMock.mockReturnValue({
       connect: poolConnectMock
     });
+  });
+
+  it('defaults worker stale recovery to the quieter env-backed threshold', () => {
+    expect(DEFAULT_JOB_WORKER_STALE_AFTER_MS).toBe(45_000);
+    expect(resolveJobWorkerStaleAfterMs({} as NodeJS.ProcessEnv)).toBe(45_000);
+    expect(
+      resolveJobWorkerStaleAfterMs({
+        JOB_WORKER_STALE_AFTER_MS: '70000'
+      } as NodeJS.ProcessEnv)
+    ).toBe(70_000);
   });
 
   it('dead-letters stale jobs with persisted max_retries=0 even when the global default allows retries', async () => {

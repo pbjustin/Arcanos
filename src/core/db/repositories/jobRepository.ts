@@ -402,7 +402,7 @@ function resolveReusableFingerprintStatuses(idempotencyOrigin: 'explicit' | 'der
 }
 
 export const DEFAULT_QUEUE_DIAGNOSTICS_FAILURE_WINDOW_MS = 60 * 60 * 1000;
-export const DEFAULT_JOB_WORKER_STALE_AFTER_MS = 10_000;
+export const DEFAULT_JOB_WORKER_STALE_AFTER_MS = 45_000;
 export const DEFAULT_FAILED_JOB_RETENTION_COUNT = 50;
 export const DEFAULT_FAILED_JOB_CLEANUP_MIN_AGE_MS = 24 * 60 * 60 * 1000;
 export const MAX_FAILED_JOB_RETENTION_COUNT = 500;

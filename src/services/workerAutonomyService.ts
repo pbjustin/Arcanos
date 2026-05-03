@@ -285,36 +285,43 @@ function buildWorkerEventIdSample(ids: string[] | undefined): {
   };
 }
 
-const DEFAULT_AUTONOMY_SETTINGS: WorkerAutonomySettings = {
-  workerId: process.env.JOB_WORKER_ID?.trim() || process.env.WORKER_ID?.trim() || 'async-queue',
-  statsWorkerId:
-    process.env.JOB_WORKER_STATS_ID?.trim() ||
-    process.env.JOB_WORKER_ID?.trim() ||
-    process.env.WORKER_ID?.trim() ||
-    'async-queue',
-  workerType: 'async_queue',
-  heartbeatIntervalMs: readNumberEnv('JOB_WORKER_HEARTBEAT_MS', 5_000),
-  leaseMs: readNumberEnv('JOB_WORKER_LEASE_MS', 15_000),
-  inspectorIntervalMs: readNumberEnv('JOB_WORKER_INSPECTOR_MS', 30_000),
-  watchdogIntervalMs: readNumberEnv('JOB_WORKER_WATCHDOG_MS', 5_000),
-  staleAfterMs: readNumberEnv('JOB_WORKER_STALE_AFTER_MS', 10_000),
-  watchdogIdleMs: readNumberEnv('JOB_WORKER_WATCHDOG_IDLE_MS', 120_000),
-  stalledJobAction:
-    process.env.JOB_WORKER_STALLED_JOB_ACTION?.trim().toLowerCase() === 'dead_letter'
-      ? 'dead_letter'
-      : 'requeue',
-  defaultMaxRetries: readNumberEnv('JOB_WORKER_MAX_RETRIES', 2),
-  retryBackoffBaseMs: readNumberEnv('JOB_WORKER_RETRY_BASE_MS', 2_000),
-  retryBackoffMaxMs: readNumberEnv('JOB_WORKER_RETRY_MAX_MS', 60_000),
-  maxJobsPerHour: readNumberEnv('JOB_WORKER_MAX_JOBS_PER_HOUR', 120),
-  maxAiCallsPerHour: readNumberEnv('JOB_WORKER_MAX_AI_CALLS_PER_HOUR', 120),
-  maxRssMb: readNumberEnv('JOB_WORKER_MAX_RSS_MB', 2_048),
-  queueDepthDeferralThreshold: readNumberEnv('JOB_WORKER_PLAN_QUEUE_THRESHOLD', 25),
-  queueDepthDeferralMs: readNumberEnv('JOB_WORKER_PLAN_DEFER_MS', 5_000),
-  failureWebhookUrl: process.env.WORKER_FAILURE_WEBHOOK_URL?.trim() || null,
-  failureWebhookThreshold: readNumberEnv('JOB_WORKER_FAILURE_WEBHOOK_THRESHOLD', 3),
-  failureWebhookCooldownMs: readNumberEnv('JOB_WORKER_FAILURE_WEBHOOK_COOLDOWN_MS', 300_000)
-};
+const DEFAULT_JOB_WORKER_HEARTBEAT_MS = 5_000;
+const DEFAULT_JOB_WORKER_STALE_AFTER_MS = 45_000;
+const DEFAULT_JOB_WORKER_WATCHDOG_MS = 10_000;
+const DEFAULT_JOB_WORKER_WATCHDOG_IDLE_MS = 120_000;
+
+function buildDefaultAutonomySettings(): WorkerAutonomySettings {
+  return {
+    workerId: process.env.JOB_WORKER_ID?.trim() || process.env.WORKER_ID?.trim() || 'async-queue',
+    statsWorkerId:
+      process.env.JOB_WORKER_STATS_ID?.trim() ||
+      process.env.JOB_WORKER_ID?.trim() ||
+      process.env.WORKER_ID?.trim() ||
+      'async-queue',
+    workerType: 'async_queue',
+    heartbeatIntervalMs: readNumberEnv('JOB_WORKER_HEARTBEAT_MS', DEFAULT_JOB_WORKER_HEARTBEAT_MS),
+    leaseMs: readNumberEnv('JOB_WORKER_LEASE_MS', 15_000),
+    inspectorIntervalMs: readNumberEnv('JOB_WORKER_INSPECTOR_MS', 30_000),
+    watchdogIntervalMs: readNumberEnv('JOB_WORKER_WATCHDOG_MS', DEFAULT_JOB_WORKER_WATCHDOG_MS),
+    staleAfterMs: readNumberEnv('JOB_WORKER_STALE_AFTER_MS', DEFAULT_JOB_WORKER_STALE_AFTER_MS),
+    watchdogIdleMs: readNumberEnv('JOB_WORKER_WATCHDOG_IDLE_MS', DEFAULT_JOB_WORKER_WATCHDOG_IDLE_MS),
+    stalledJobAction:
+      process.env.JOB_WORKER_STALLED_JOB_ACTION?.trim().toLowerCase() === 'dead_letter'
+        ? 'dead_letter'
+        : 'requeue',
+    defaultMaxRetries: readNumberEnv('JOB_WORKER_MAX_RETRIES', 2),
+    retryBackoffBaseMs: readNumberEnv('JOB_WORKER_RETRY_BASE_MS', 2_000),
+    retryBackoffMaxMs: readNumberEnv('JOB_WORKER_RETRY_MAX_MS', 60_000),
+    maxJobsPerHour: readNumberEnv('JOB_WORKER_MAX_JOBS_PER_HOUR', 120),
+    maxAiCallsPerHour: readNumberEnv('JOB_WORKER_MAX_AI_CALLS_PER_HOUR', 120),
+    maxRssMb: readNumberEnv('JOB_WORKER_MAX_RSS_MB', 2_048),
+    queueDepthDeferralThreshold: readNumberEnv('JOB_WORKER_PLAN_QUEUE_THRESHOLD', 25),
+    queueDepthDeferralMs: readNumberEnv('JOB_WORKER_PLAN_DEFER_MS', 5_000),
+    failureWebhookUrl: process.env.WORKER_FAILURE_WEBHOOK_URL?.trim() || null,
+    failureWebhookThreshold: readNumberEnv('JOB_WORKER_FAILURE_WEBHOOK_THRESHOLD', 3),
+    failureWebhookCooldownMs: readNumberEnv('JOB_WORKER_FAILURE_WEBHOOK_COOLDOWN_MS', 300_000)
+  };
+}
 
 const failureWebhookHistory = new Map<string, number>();
 
@@ -334,7 +341,7 @@ export function getWorkerAutonomySettings(
   overrides: Partial<WorkerAutonomySettings> = {}
 ): WorkerAutonomySettings {
   return {
-    ...DEFAULT_AUTONOMY_SETTINGS,
+    ...buildDefaultAutonomySettings(),
     ...overrides
   };
 }

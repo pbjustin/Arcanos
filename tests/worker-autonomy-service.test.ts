@@ -71,8 +71,47 @@ const {
   WorkerAutonomyService,
   classifyWorkerExecutionError,
   getWorkerAutonomyHealthReport,
+  getWorkerAutonomySettings,
   planAutonomousWorkerJob
 } = await import('../src/services/workerAutonomyService.js');
+
+const workerTimingEnvKeys = [
+  'JOB_WORKER_HEARTBEAT_MS',
+  'JOB_WORKER_STALE_AFTER_MS',
+  'JOB_WORKER_WATCHDOG_MS',
+  'JOB_WORKER_WATCHDOG_IDLE_MS'
+] as const;
+
+function withWorkerTimingEnv<T>(
+  values: Partial<Record<(typeof workerTimingEnvKeys)[number], string>>,
+  callback: () => T
+): T {
+  const previousValues = new Map<(typeof workerTimingEnvKeys)[number], string | undefined>();
+
+  for (const key of workerTimingEnvKeys) {
+    previousValues.set(key, process.env[key]);
+
+    if (Object.prototype.hasOwnProperty.call(values, key)) {
+      process.env[key] = values[key];
+    } else {
+      delete process.env[key];
+    }
+  }
+
+  try {
+    return callback();
+  } finally {
+    for (const key of workerTimingEnvKeys) {
+      const previousValue = previousValues.get(key);
+
+      if (previousValue === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = previousValue;
+      }
+    }
+  }
+}
 
 describe('workerAutonomyService', () => {
   beforeEach(() => {
@@ -144,6 +183,38 @@ describe('workerAutonomyService', () => {
     appendWorkerRuntimeHistoryMock.mockResolvedValue(undefined);
     process.env.WORKER_SNAPSHOT_PIPELINE_V2 = 'false';
     delete process.env.WORKER_SNAPSHOT_PRESERVE_LEGACY_TABLE;
+  });
+
+  it('uses quieter worker timing defaults when env is unset', () => {
+    withWorkerTimingEnv({}, () => {
+      const settings = getWorkerAutonomySettings();
+
+      expect(settings.heartbeatIntervalMs).toBe(5_000);
+      expect(settings.staleAfterMs).toBe(45_000);
+      expect(settings.staleAfterMs).not.toBe(10_000);
+      expect(settings.watchdogIntervalMs).toBe(10_000);
+      expect(settings.watchdogIntervalMs).not.toBe(5_000);
+      expect(settings.watchdogIdleMs).toBe(120_000);
+    });
+  });
+
+  it('honors worker timing env overrides', () => {
+    withWorkerTimingEnv(
+      {
+        JOB_WORKER_HEARTBEAT_MS: '7000',
+        JOB_WORKER_STALE_AFTER_MS: '70000',
+        JOB_WORKER_WATCHDOG_MS: '15000',
+        JOB_WORKER_WATCHDOG_IDLE_MS: '180000'
+      },
+      () => {
+        const settings = getWorkerAutonomySettings();
+
+        expect(settings.heartbeatIntervalMs).toBe(7_000);
+        expect(settings.staleAfterMs).toBe(70_000);
+        expect(settings.watchdogIntervalMs).toBe(15_000);
+        expect(settings.watchdogIdleMs).toBe(180_000);
+      }
+    );
   });
 
   it('defers low-priority jobs when queue pressure is high', async () => {
