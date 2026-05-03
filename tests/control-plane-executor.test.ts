@@ -117,7 +117,7 @@ describe('executeControlPlaneOperation', () => {
     expect(response.ok).toBe(true);
     expect(runner.run).toHaveBeenCalledWith(expect.objectContaining({
       executable: expect.stringContaining('railway'),
-      args: ['logs']
+      args: ['logs', '--since', '10m', '--lines', '160']
     }));
     expect(audit.events[0]).toEqual(expect.objectContaining({
       status: 'accepted',

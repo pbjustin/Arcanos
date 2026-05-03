@@ -37,14 +37,16 @@ describe('self-heal operator approval gate', () => {
     expect(decision.reason).toContain('requires explicit operator approval');
   });
 
-  it('accepts explicit approval only when approvedBy and reason are present', () => {
+  it('accepts explicit approval only when approver, reason, action, and expiry are present', () => {
     const decision = evaluateSelfHealOperatorApproval({
       action: 'redeploy_service',
       required: true,
       approval: {
         approved: true,
         approvedBy: 'operator:test',
-        reason: 'manual incident response approval'
+        reason: 'manual incident response approval',
+        action: 'redeploy_service',
+        expiresAt: new Date(Date.now() + 60_000).toISOString()
       }
     });
 
@@ -55,6 +57,40 @@ describe('self-heal operator approval gate', () => {
       reason: 'manual incident response approval',
       approvedBy: 'operator:test'
     });
+  });
+
+  it('rejects direct approvals scoped to a different action', () => {
+    const decision = evaluateSelfHealOperatorApproval({
+      action: 'restart_service',
+      required: true,
+      approval: {
+        approved: true,
+        approvedBy: 'operator:test',
+        reason: 'manual incident response approval',
+        action: 'redeploy_service',
+        expiresAt: new Date(Date.now() + 60_000).toISOString()
+      }
+    });
+
+    expect(decision.satisfied).toBe(false);
+    expect(decision.reason).toContain('requires explicit operator approval');
+  });
+
+  it('rejects direct approvals after expiry', () => {
+    const decision = evaluateSelfHealOperatorApproval({
+      action: 'restart_service',
+      required: true,
+      approval: {
+        approved: true,
+        approvedBy: 'operator:test',
+        reason: 'manual incident response approval',
+        action: 'restart_service',
+        expiresAt: new Date(Date.now() - 60_000).toISOString()
+      }
+    });
+
+    expect(decision.satisfied).toBe(false);
+    expect(decision.reason).toContain('requires explicit operator approval');
   });
 
   it('reads explicit approval from the environment without exposing tokens', () => {
@@ -85,6 +121,23 @@ describe('self-heal operator approval gate', () => {
         SELF_HEAL_OPERATOR_ACTION_REASON: 'approved for restart only',
         SELF_HEAL_OPERATOR_ACTION_NAME: 'redeploy_service',
         SELF_HEAL_OPERATOR_ACTION_EXPIRES_AT: future
+      }
+    });
+
+    expect(decision.satisfied).toBe(false);
+    expect(decision.reason).toContain('requires explicit operator approval');
+  });
+
+  it('rejects expired environment approvals', () => {
+    const decision = evaluateSelfHealOperatorApproval({
+      action: 'restart_service',
+      required: true,
+      env: {
+        SELF_HEAL_OPERATOR_ACTION_APPROVED: 'true',
+        SELF_HEAL_OPERATOR_ACTION_APPROVED_BY: 'operator:test',
+        SELF_HEAL_OPERATOR_ACTION_REASON: 'approved for restart only',
+        SELF_HEAL_OPERATOR_ACTION_NAME: 'restart_service',
+        SELF_HEAL_OPERATOR_ACTION_EXPIRES_AT: new Date(Date.now() - 60_000).toISOString()
       }
     });
 

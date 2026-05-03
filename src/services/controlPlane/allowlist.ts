@@ -8,6 +8,9 @@ import type {
 
 const CONTROL_PLANE_COMMAND_TIMEOUT_MS = 20_000;
 const CONTROL_PLANE_COMMAND_MAX_BUFFER_BYTES = 512 * 1024;
+const DEFAULT_RAILWAY_LOG_SINCE = '10m';
+const DEFAULT_RAILWAY_LOG_LINES = 160;
+const MAX_RAILWAY_LOG_LINES = 500;
 const SAFE_INSPECT_TARGETS = new Set(['self-heal', 'runtime', 'health', 'mcp', 'agents']);
 
 function executableName(baseName: string): string {
@@ -33,6 +36,54 @@ function requireSafeInspectTarget(request: ControlPlaneRequest): string {
     throw new Error(`arcanos.inspect target "${candidate}" is not allowlisted.`);
   }
   return candidate;
+}
+
+function normalizeOptionalCliValue(value: unknown): string | null {
+  const normalized = typeof value === 'string' ? value.trim() : '';
+  return normalized.length > 0 ? normalized : null;
+}
+
+function resolveRailwayLogSince(value: unknown): string {
+  const normalized = normalizeOptionalCliValue(value);
+  if (normalized && /^[1-9]\d{0,3}[smhd]$/i.test(normalized)) {
+    return normalized;
+  }
+
+  return DEFAULT_RAILWAY_LOG_SINCE;
+}
+
+function resolveRailwayLogLines(value: unknown): number {
+  const numericValue = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(numericValue) || numericValue <= 0) {
+    return DEFAULT_RAILWAY_LOG_LINES;
+  }
+
+  return Math.min(MAX_RAILWAY_LOG_LINES, Math.floor(numericValue));
+}
+
+function buildRailwayLogsCommand(request: ControlPlaneRequest): ControlPlaneCommandPlan {
+  const serviceName =
+    normalizeOptionalCliValue(request.params.service) ??
+    normalizeOptionalCliValue(request.params.serviceName);
+  const environmentName =
+    normalizeOptionalCliValue(request.params.environment) ??
+    normalizeOptionalCliValue(request.params.environmentName);
+  const args = [
+    'logs',
+    '--since',
+    resolveRailwayLogSince(request.params.since ?? request.params.logSince),
+    '--lines',
+    String(resolveRailwayLogLines(request.params.lines ?? request.params.logLines))
+  ];
+
+  if (serviceName) {
+    args.push('--service', serviceName);
+  }
+  if (environmentName) {
+    args.push('--environment', environmentName);
+  }
+
+  return commandPlan(executableName('railway'), args);
 }
 
 function resolveMcpToolName(request: ControlPlaneRequest): string {
@@ -97,7 +148,7 @@ export const CONTROL_PLANE_OPERATION_ALLOWLIST: readonly ControlPlaneOperationSp
     workflow: 'railway.cli.readonly',
     requiredScopes: ['railway:read'],
     readOnly: true,
-    buildCommand: () => commandPlan(executableName('railway'), ['logs']),
+    buildCommand: buildRailwayLogsCommand,
   },
   {
     operation: 'railway.whoami',

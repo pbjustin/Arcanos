@@ -558,7 +558,20 @@ async function readRailwayCliLogSummary(): Promise<string | null> {
     return null;
   }
 
-  const result = await runRailwayCli(['logs', '--since', '2m', '--lines', '120', '--json'], 20_000);
+  const args = ['logs', '--since', '2m', '--lines', '120', '--json'];
+  const serviceName = process.env.RAILWAY_SERVICE_NAME?.trim();
+  const environmentName =
+    process.env.RAILWAY_ENVIRONMENT_NAME?.trim() ||
+    process.env.RAILWAY_ENVIRONMENT?.trim();
+
+  if (serviceName) {
+    args.push('--service', serviceName);
+  }
+  if (environmentName) {
+    args.push('--environment', environmentName);
+  }
+
+  const result = await runRailwayCli(args, 20_000);
   if (!result.ok || result.stdout.trim().length === 0) {
     return null;
   }

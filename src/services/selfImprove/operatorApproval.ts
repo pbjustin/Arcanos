@@ -72,13 +72,12 @@ export function evaluateSelfHealOperatorApproval(params: {
   }
 
   const approval = params.approval ?? readSelfHealOperatorApprovalFromEnv(params.env);
-  const fromEnvironment = params.approval === undefined;
   const approvedBy = normalizeText(approval?.approvedBy);
   const reason = normalizeText(approval?.reason);
   const action = normalizeText(approval?.action);
   const expiresAt = normalizeText(approval?.expiresAt);
-  const actionMatches = !fromEnvironment || action === params.action;
-  const approvalFresh = !fromEnvironment || isFutureTimestamp(expiresAt);
+  const actionMatches = action === params.action;
+  const approvalFresh = isFutureTimestamp(expiresAt);
   const satisfied =
     approval?.approved === true &&
     approvedBy.length > 0 &&

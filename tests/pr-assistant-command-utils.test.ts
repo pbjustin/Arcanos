@@ -29,7 +29,7 @@ describe('PR Assistant command utilities', () => {
     ], { timeout: 60_000 });
 
     expect(result.stdout).toBe(complexArg);
-  });
+  }, 70_000);
 
   it('fails closed when Windows npm CLI resolution is unavailable', async () => {
     if (process.platform !== 'win32') {

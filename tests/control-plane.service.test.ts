@@ -117,6 +117,60 @@ describe('executeControlPlaneRequest', () => {
   });
 
   it('allows read-only Railway logs without approval', async () => {
+    const originalRailwayServiceName = process.env.RAILWAY_SERVICE_NAME;
+    const originalRailwayEnvironmentName = process.env.RAILWAY_ENVIRONMENT_NAME;
+    const originalRailwayEnvironment = process.env.RAILWAY_ENVIRONMENT;
+    delete process.env.RAILWAY_SERVICE_NAME;
+    delete process.env.RAILWAY_ENVIRONMENT_NAME;
+    delete process.env.RAILWAY_ENVIRONMENT;
+    const run = jest.fn(async () => ({
+      exitCode: 0,
+      stdout: 'request.completed',
+      stderr: ''
+    }));
+
+    try {
+      const response = await executeControlPlaneRequest({
+        requestId: 'control-exec-logs-1',
+        phase: 'execute',
+        adapter: 'railway-cli',
+        operation: 'logs'
+      }, buildDeps({
+        processRunner: { run }
+      }) as never);
+
+      expect(response.ok).toBe(true);
+      expect(response.approval).toEqual(expect.objectContaining({
+        required: false,
+        satisfied: true
+      }));
+      expect(run).toHaveBeenCalledWith(
+        'railway',
+        ['logs', '--since', '10m', '--lines', '160'],
+        expect.objectContaining({
+          cwd: repositoryRoot
+        })
+      );
+    } finally {
+      if (originalRailwayServiceName === undefined) {
+        delete process.env.RAILWAY_SERVICE_NAME;
+      } else {
+        process.env.RAILWAY_SERVICE_NAME = originalRailwayServiceName;
+      }
+      if (originalRailwayEnvironmentName === undefined) {
+        delete process.env.RAILWAY_ENVIRONMENT_NAME;
+      } else {
+        process.env.RAILWAY_ENVIRONMENT_NAME = originalRailwayEnvironmentName;
+      }
+      if (originalRailwayEnvironment === undefined) {
+        delete process.env.RAILWAY_ENVIRONMENT;
+      } else {
+        process.env.RAILWAY_ENVIRONMENT = originalRailwayEnvironment;
+      }
+    }
+  });
+
+  it('targets bounded Railway logs from explicit input without approval', async () => {
     const run = jest.fn(async () => ({
       exitCode: 0,
       stdout: 'request.completed',
@@ -124,22 +178,34 @@ describe('executeControlPlaneRequest', () => {
     }));
 
     const response = await executeControlPlaneRequest({
-      requestId: 'control-exec-logs-1',
+      requestId: 'control-exec-logs-2',
       phase: 'execute',
       adapter: 'railway-cli',
-      operation: 'logs'
+      operation: 'logs',
+      input: {
+        service: 'ARCANOS V2',
+        environment: 'Arcanos-pr-1337',
+        since: '5m',
+        lines: 80
+      }
     }, buildDeps({
       processRunner: { run }
     }) as never);
 
     expect(response.ok).toBe(true);
-    expect(response.approval).toEqual(expect.objectContaining({
-      required: false,
-      satisfied: true
-    }));
     expect(run).toHaveBeenCalledWith(
       'railway',
-      ['logs'],
+      [
+        'logs',
+        '--since',
+        '5m',
+        '--lines',
+        '80',
+        '--service',
+        'ARCANOS V2',
+        '--environment',
+        'Arcanos-pr-1337'
+      ],
       expect.objectContaining({
         cwd: repositoryRoot
       })

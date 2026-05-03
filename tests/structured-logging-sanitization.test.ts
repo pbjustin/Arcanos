@@ -39,12 +39,13 @@ describe('structured logging sanitization', () => {
     const bearerPrefix = 'Bear' + 'er';
     const opaqueAuthValue = ['abcdefghijkl', 'mnopqrstuvwxyz', '123456'].join('');
     const dsnValue = 'https://public:secret@' + 'example.invalid/123';
+    const railwayTokenValue = ['rwy', 'abcdefghijklmnop12345678'].join('_');
 
     logger.info(
       `request failed with ${bearerPrefix} ${opaqueAuthValue}`,
       undefined,
       {
-        errorMessage: `SENTRY_DSN=${dsnValue}`
+        errorMessage: `SENTRY_DSN=${dsnValue} railwayToken=${railwayTokenValue}`
       }
     );
 
@@ -53,5 +54,6 @@ describe('structured logging sanitization', () => {
     expect(payload).toContain('[REDACTED]');
     expect(payload).not.toContain(opaqueAuthValue);
     expect(payload).not.toContain(dsnValue);
+    expect(payload).not.toContain(railwayTokenValue);
   });
 });

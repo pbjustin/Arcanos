@@ -59,6 +59,9 @@ interface OperationResolution {
 const execFileAsync = promisify(execFile);
 const DEFAULT_PROCESS_TIMEOUT_MS = 30_000;
 const MAX_CAPTURED_OUTPUT_CHARS = 20_000;
+const DEFAULT_RAILWAY_LOG_SINCE = '10m';
+const DEFAULT_RAILWAY_LOG_LINES = 160;
+const MAX_RAILWAY_LOG_LINES = 500;
 const READ_ONLY_MCP_TOOLS = new Set([
   'agents.get',
   'agents.list',
@@ -140,9 +143,9 @@ const operationDefinitions: ControlPlaneOperationDefinition[] = [
     allowedPhases: ['plan', 'execute'],
     requiresApproval: false,
     scopes: ['railway:read'],
-    buildProcessCommand: (_input, cwd) => ({
+    buildProcessCommand: (input, cwd) => ({
       executable: resolveRailwayExecutable(),
-      args: ['logs'],
+      args: buildRailwayLogsArgs(input),
       cwd
     })
   },
@@ -299,6 +302,57 @@ function buildOperationKey(adapter: ControlPlaneAdapter, operation: string): str
 
 function resolveRailwayExecutable(): string {
   return process.env.RAILWAY_CLI_BIN?.trim() || 'railway';
+}
+
+function normalizeOptionalCliValue(value: unknown): string | null {
+  const normalized = typeof value === 'string' ? value.trim() : '';
+  return normalized.length > 0 ? normalized : null;
+}
+
+function resolveRailwayLogSince(value: unknown): string {
+  const normalized = normalizeOptionalCliValue(value);
+  if (normalized && /^[1-9]\d{0,3}[smhd]$/i.test(normalized)) {
+    return normalized;
+  }
+
+  return DEFAULT_RAILWAY_LOG_SINCE;
+}
+
+function resolveRailwayLogLines(value: unknown): number {
+  const numericValue = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(numericValue) || numericValue <= 0) {
+    return DEFAULT_RAILWAY_LOG_LINES;
+  }
+
+  return Math.min(MAX_RAILWAY_LOG_LINES, Math.floor(numericValue));
+}
+
+function buildRailwayLogsArgs(input: Record<string, unknown>): string[] {
+  const serviceName =
+    normalizeOptionalCliValue(input.service) ??
+    normalizeOptionalCliValue(input.serviceName) ??
+    normalizeOptionalCliValue(process.env.RAILWAY_SERVICE_NAME);
+  const environmentName =
+    normalizeOptionalCliValue(input.environment) ??
+    normalizeOptionalCliValue(input.environmentName) ??
+    normalizeOptionalCliValue(process.env.RAILWAY_ENVIRONMENT_NAME) ??
+    normalizeOptionalCliValue(process.env.RAILWAY_ENVIRONMENT);
+  const args = [
+    'logs',
+    '--since',
+    resolveRailwayLogSince(input.since ?? input.logSince),
+    '--lines',
+    String(resolveRailwayLogLines(input.lines ?? input.logLines))
+  ];
+
+  if (serviceName) {
+    args.push('--service', serviceName);
+  }
+  if (environmentName) {
+    args.push('--environment', environmentName);
+  }
+
+  return args;
 }
 
 function buildArcanosCliCommand(args: string[], cwd: string, repositoryRoot: string): ControlPlaneCommandPreview {
