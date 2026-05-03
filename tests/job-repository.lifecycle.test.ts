@@ -62,9 +62,14 @@ describe('jobRepository lifecycle recovery', () => {
     expect(resolveJobWorkerStaleAfterMs({} as NodeJS.ProcessEnv)).toBe(45_000);
     expect(
       resolveJobWorkerStaleAfterMs({
-        JOB_WORKER_STALE_AFTER_MS: '70000'
+        JOB_WORKER_STALE_AFTER_MS: '70000.9'
       } as NodeJS.ProcessEnv)
     ).toBe(70_000);
+    expect(
+      resolveJobWorkerStaleAfterMs({
+        JOB_WORKER_STALE_AFTER_MS: '999.9'
+      } as NodeJS.ProcessEnv)
+    ).toBe(1_000);
   });
 
   it('dead-letters stale jobs with persisted max_retries=0 even when the global default allows retries', async () => {

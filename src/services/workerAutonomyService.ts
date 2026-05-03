@@ -7,6 +7,7 @@ import {
   recordJobHeartbeat,
   recoverStalledJobsForWorkers,
   recoverStaleJobs,
+  resolveJobWorkerStaleAfterMs,
   scheduleJobRetry,
   updateJob,
   type CreateJobOptions,
@@ -286,9 +287,10 @@ function buildWorkerEventIdSample(ids: string[] | undefined): {
 }
 
 const DEFAULT_JOB_WORKER_HEARTBEAT_MS = 5_000;
-const DEFAULT_JOB_WORKER_STALE_AFTER_MS = 45_000;
 const DEFAULT_JOB_WORKER_WATCHDOG_MS = 10_000;
 const DEFAULT_JOB_WORKER_WATCHDOG_IDLE_MS = 120_000;
+
+let defaultAutonomySettingsCache: WorkerAutonomySettings | null = null;
 
 function buildDefaultAutonomySettings(): WorkerAutonomySettings {
   return {
@@ -303,7 +305,7 @@ function buildDefaultAutonomySettings(): WorkerAutonomySettings {
     leaseMs: readNumberEnv('JOB_WORKER_LEASE_MS', 15_000),
     inspectorIntervalMs: readNumberEnv('JOB_WORKER_INSPECTOR_MS', 30_000),
     watchdogIntervalMs: readNumberEnv('JOB_WORKER_WATCHDOG_MS', DEFAULT_JOB_WORKER_WATCHDOG_MS),
-    staleAfterMs: readNumberEnv('JOB_WORKER_STALE_AFTER_MS', DEFAULT_JOB_WORKER_STALE_AFTER_MS),
+    staleAfterMs: resolveJobWorkerStaleAfterMs(),
     watchdogIdleMs: readNumberEnv('JOB_WORKER_WATCHDOG_IDLE_MS', DEFAULT_JOB_WORKER_WATCHDOG_IDLE_MS),
     stalledJobAction:
       process.env.JOB_WORKER_STALLED_JOB_ACTION?.trim().toLowerCase() === 'dead_letter'
@@ -331,17 +333,26 @@ function readNumberEnv(name: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+export interface WorkerAutonomySettingsLoadOptions {
+  refreshEnv?: boolean;
+}
+
 /**
  * Load the async worker autonomy settings.
  * Purpose: centralize environment-driven autonomy policy for queue planning and worker recovery.
  * Inputs/outputs: optional overrides plus an optional worker id override; returns normalized settings.
- * Edge case behavior: invalid or missing env values fall back to safe defaults.
+ * Edge case behavior: invalid or missing env values fall back to safe defaults; pass refreshEnv to re-read env.
  */
 export function getWorkerAutonomySettings(
-  overrides: Partial<WorkerAutonomySettings> = {}
+  overrides: Partial<WorkerAutonomySettings> = {},
+  options: WorkerAutonomySettingsLoadOptions = {}
 ): WorkerAutonomySettings {
+  if (!defaultAutonomySettingsCache || options.refreshEnv) {
+    defaultAutonomySettingsCache = buildDefaultAutonomySettings();
+  }
+
   return {
-    ...buildDefaultAutonomySettings(),
+    ...defaultAutonomySettingsCache,
     ...overrides
   };
 }

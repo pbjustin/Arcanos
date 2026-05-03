@@ -21,6 +21,16 @@ const fetchMock = jest.fn();
 const loggerDebugMock = jest.fn();
 const loggerInfoMock = jest.fn();
 const loggerWarnMock = jest.fn();
+const resolveJobWorkerStaleAfterMsMock = jest.fn((env: NodeJS.ProcessEnv = process.env) => {
+  const rawValue = env.JOB_WORKER_STALE_AFTER_MS;
+  const parsedValue = rawValue ? Number(rawValue) : Number.NaN;
+
+  if (!Number.isFinite(parsedValue) || parsedValue <= 0) {
+    return 45_000;
+  }
+
+  return Math.max(1_000, Math.trunc(parsedValue));
+});
 
 jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
   getJobQueueSummary: getJobQueueSummaryMock,
@@ -28,6 +38,7 @@ jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
   recordJobHeartbeat: recordJobHeartbeatMock,
   recoverStalledJobsForWorkers: recoverStalledJobsForWorkersMock,
   recoverStaleJobs: recoverStaleJobsMock,
+  resolveJobWorkerStaleAfterMs: resolveJobWorkerStaleAfterMsMock,
   scheduleJobRetry: scheduleJobRetryMock,
   deferJobForProviderRecovery: deferJobForProviderRecoveryMock,
   updateJob: updateJobMock,
@@ -183,11 +194,15 @@ describe('workerAutonomyService', () => {
     appendWorkerRuntimeHistoryMock.mockResolvedValue(undefined);
     process.env.WORKER_SNAPSHOT_PIPELINE_V2 = 'false';
     delete process.env.WORKER_SNAPSHOT_PRESERVE_LEGACY_TABLE;
+    for (const key of workerTimingEnvKeys) {
+      delete process.env[key];
+    }
+    getWorkerAutonomySettings({}, { refreshEnv: true });
   });
 
   it('uses quieter worker timing defaults when env is unset', () => {
     withWorkerTimingEnv({}, () => {
-      const settings = getWorkerAutonomySettings();
+      const settings = getWorkerAutonomySettings({}, { refreshEnv: true });
 
       expect(settings.heartbeatIntervalMs).toBe(5_000);
       expect(settings.staleAfterMs).toBe(45_000);
@@ -202,17 +217,50 @@ describe('workerAutonomyService', () => {
     withWorkerTimingEnv(
       {
         JOB_WORKER_HEARTBEAT_MS: '7000',
-        JOB_WORKER_STALE_AFTER_MS: '70000',
+        JOB_WORKER_STALE_AFTER_MS: '70000.9',
         JOB_WORKER_WATCHDOG_MS: '15000',
         JOB_WORKER_WATCHDOG_IDLE_MS: '180000'
       },
       () => {
-        const settings = getWorkerAutonomySettings();
+        const settings = getWorkerAutonomySettings({}, { refreshEnv: true });
 
         expect(settings.heartbeatIntervalMs).toBe(7_000);
         expect(settings.staleAfterMs).toBe(70_000);
         expect(settings.watchdogIntervalMs).toBe(15_000);
         expect(settings.watchdogIdleMs).toBe(180_000);
+      }
+    );
+  });
+
+  it('caches worker timing defaults until env refresh is requested', () => {
+    withWorkerTimingEnv(
+      {
+        JOB_WORKER_STALE_AFTER_MS: '70000',
+        JOB_WORKER_WATCHDOG_MS: '15000'
+      },
+      () => {
+        expect(getWorkerAutonomySettings({}, { refreshEnv: true })).toEqual(
+          expect.objectContaining({
+            staleAfterMs: 70_000,
+            watchdogIntervalMs: 15_000
+          })
+        );
+
+        process.env.JOB_WORKER_STALE_AFTER_MS = '90000';
+        process.env.JOB_WORKER_WATCHDOG_MS = '30000';
+
+        expect(getWorkerAutonomySettings()).toEqual(
+          expect.objectContaining({
+            staleAfterMs: 70_000,
+            watchdogIntervalMs: 15_000
+          })
+        );
+        expect(getWorkerAutonomySettings({}, { refreshEnv: true })).toEqual(
+          expect.objectContaining({
+            staleAfterMs: 90_000,
+            watchdogIntervalMs: 30_000
+          })
+        );
       }
     );
   });
