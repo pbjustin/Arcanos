@@ -1499,9 +1499,13 @@ describe('/gpt-access gateway', () => {
       .send({ jobId: COMPLETED_JOB_ID });
 
     expect(response.status).toBe(503);
-    expect(response.body.error).toEqual({
-      code: 'GPT_ACCESS_JOBS_UNAVAILABLE',
-      message: 'Durable GPT job persistence is unavailable.'
+    expect(response.body).toEqual({
+      ok: false,
+      traceId: null,
+      error: {
+        code: 'GPT_ACCESS_JOBS_UNAVAILABLE',
+        message: 'Durable GPT job persistence is unavailable.'
+      }
     });
     expect(getJobByIdMock).not.toHaveBeenCalled();
   });
@@ -1586,6 +1590,13 @@ describe('/gpt-access gateway', () => {
       type: 'http',
       scheme: 'bearer'
     }));
+    expect(response.body.components.schemas.ErrorResponse).toEqual(expect.objectContaining({
+      required: ['ok', 'error'],
+      additionalProperties: false
+    }));
+    expect(response.body.components.schemas.ErrorResponse.properties.traceId).toEqual({
+      type: ['string', 'null']
+    });
     expect(response.body.security).toEqual([{ bearerAuth: [] }]);
     expect(response.body.paths['/gpt-access/openapi.json'].get.security).toEqual([]);
     for (const [path, methods] of Object.entries(response.body.paths)) {

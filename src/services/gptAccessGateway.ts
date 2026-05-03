@@ -1707,6 +1707,7 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
           type: 'object',
           properties: {
             ok: { type: 'boolean', const: false },
+            traceId: { type: ['string', 'null'] },
             error: {
               type: 'object',
               properties: {
