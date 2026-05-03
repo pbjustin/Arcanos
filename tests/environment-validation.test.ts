@@ -31,6 +31,7 @@ describe('environment validation', () => {
     PORT: process.env.PORT,
     RAILWAY_ENVIRONMENT: process.env.RAILWAY_ENVIRONMENT,
     NODE_ENV: process.env.NODE_ENV,
+    CI: process.env.CI,
     ALLOW_MOCK_OPENAI: process.env.ALLOW_MOCK_OPENAI,
     FORCE_MOCK: process.env.FORCE_MOCK,
     OPENAI_API_KEY_REQUIRED: process.env.OPENAI_API_KEY_REQUIRED,
@@ -107,6 +108,20 @@ describe('environment validation', () => {
         '❌ Required environment variable ARCANOS_GPT_ACCESS_SCOPES is not set'
       ])
     );
+  });
+
+  it('accepts CI production startup env with mock OpenAI and local GPT access gateway config', () => {
+    process.env.CI = 'true';
+    process.env.NODE_ENV = 'production';
+    process.env.OPENAI_API_KEY = 'mock-api-key';
+    process.env.ARCANOS_GPT_ACCESS_TOKEN = 'ci-gpt-access-token-for-local-workflow-only';
+    process.env.ARCANOS_GPT_ACCESS_BASE_URL = 'http://localhost:8080';
+    process.env.ARCANOS_GPT_ACCESS_SCOPES = 'runtime.read,workers.read,queue.read,jobs.create,jobs.result,logs.read_sanitized,db.explain_approved,mcp.approved_readonly,diagnostics.read';
+
+    const result = validateEnvironment();
+
+    expect(result.isValid).toBe(true);
+    expect(result.errors).toEqual([]);
   });
 
   it('rejects invalid GPT access OpenAPI origin and scope config', () => {

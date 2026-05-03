@@ -90,6 +90,8 @@ jobs:
           export NODE_ENV=production
           export OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY || 'sk-mock-for-ci-testing' }}"
           export ARCANOS_GPT_ACCESS_TOKEN="${{ secrets.ARCANOS_GPT_ACCESS_TOKEN || 'ci-gpt-access-token-for-local-workflow-only' }}"
+          export ARCANOS_GPT_ACCESS_BASE_URL="http://localhost:8080"
+          export ARCANOS_GPT_ACCESS_SCOPES="runtime.read,workers.read,queue.read,jobs.create,jobs.result,logs.read_sanitized,db.explain_approved,mcp.approved_readonly,diagnostics.read"
           CI_API_KEY="${OPENAI_API_KEY}"
           
           # Start the ARCANOS server in background
