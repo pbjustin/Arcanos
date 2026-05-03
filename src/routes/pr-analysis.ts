@@ -38,6 +38,7 @@ interface PRAnalysisRequest {
     prNumber?: number;
     prTitle?: string;
     repository?: string;
+    validationAlreadyRun?: boolean;
   };
 }
 
@@ -112,6 +113,9 @@ router.post('/analyze', validateCustom((data: any) => {
       if (metadata.repository !== undefined && typeof metadata.repository !== 'string') {
         errors.push('metadata.repository must be a string');
       }
+      if (metadata.validationAlreadyRun !== undefined && typeof metadata.validationAlreadyRun !== 'boolean') {
+        errors.push('metadata.validationAlreadyRun must be a boolean');
+      }
     }
   }
   
@@ -130,7 +134,14 @@ router.post('/analyze', validateCustom((data: any) => {
     }
 
     const assistant = new PRAssistant();
-    const analysisResult = await assistant.analyzePR(prDiff, prFiles);
+    const automatedValidation = metadata?.validationAlreadyRun === true
+      ? {
+          status: '✅' as const,
+          message: 'Automated validation completed before PR analysis',
+          details: ['Workflow completed lint, build, and test steps before invoking analysis']
+        }
+      : undefined;
+    const analysisResult = await assistant.analyzePR(prDiff, prFiles, { automatedValidation });
     
     const markdownOutput = assistant.formatAsMarkdown(analysisResult);
 
@@ -197,7 +208,8 @@ router.get('/schema', (req: Request, res: Response) => {
           properties: {
             prNumber: { type: 'number' },
             prTitle: { type: 'string' },
-            repository: { type: 'string' }
+            repository: { type: 'string' },
+            validationAlreadyRun: { type: 'boolean' }
           }
         }
       }
