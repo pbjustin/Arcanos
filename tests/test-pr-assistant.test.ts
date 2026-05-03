@@ -124,6 +124,34 @@ describe('ARCANOS PR Assistant', () => {
       expect(result.details).toContain('Consider breaking down src/large.ts into smaller, focused modules');
     });
 
+    it('does not reject a pre-existing large file for a small scoped edit', async () => {
+      await fs.mkdir(path.join(tempDir, 'src'), { recursive: true });
+      await fs.writeFile(
+        path.join(tempDir, 'src', 'existing-large.ts'),
+        Array.from({ length: 600 }, (_, index) => `export const value${index} = ${index};`).join('\n')
+      );
+
+      const smallEditDiff = [
+        'diff --git a/src/existing-large.ts b/src/existing-large.ts',
+        'index 1111111..2222222 100644',
+        '--- a/src/existing-large.ts',
+        '+++ b/src/existing-large.ts',
+        '@@ -1,3 +1,4 @@',
+        '+export const scopedChange = true;',
+        ' export const value0 = 0;',
+        ' export const value1 = 1;',
+        ' export const value2 = 2;'
+      ].join('\n');
+
+      const result = await prAssistant['checkDeadCodeRemoval'](
+        ['src/existing-large.ts'],
+        smallEditDiff
+      );
+
+      expect(result.status).toBe('✅');
+      expect(result.details).toEqual(['PR maintains clean codebase standards']);
+    });
+
     it('should detect TODO comments', async () => {
       const result = await prAssistant['checkDeadCodeRemoval'](mockPRFiles, mockBadDiff);
       

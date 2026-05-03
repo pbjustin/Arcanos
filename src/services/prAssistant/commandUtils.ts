@@ -2,10 +2,15 @@ import { spawn, type ChildProcess, type SpawnOptions } from 'child_process';
 
 const FORCE_KILL_DELAY_MS = 1000;
 
-function resolvePlatformCommand(command: string): string {
+interface ResolvedCommand {
+  executable: string;
+  args: string[];
+}
+
+function resolvePlatformCommand(command: string, args: string[]): ResolvedCommand {
   //audit Assumption: Windows resolves npm/npx through .cmd shims; risk: ENOENT when spawning bare command; invariant: equivalent command executable is selected per platform; handling: map npm/npx/node-gyp to .cmd on win32.
   if (process.platform !== 'win32') {
-    return command;
+    return { executable: command, args };
   }
   const commandMap: Record<string, string> = {
     npm: 'npm.cmd',
@@ -16,7 +21,15 @@ function resolvePlatformCommand(command: string): string {
     eslint: 'eslint.cmd',
     'ts-node': 'ts-node.cmd'
   };
-  return commandMap[command] || command;
+  const shimCommand = commandMap[command];
+  if (!shimCommand) {
+    return { executable: command, args };
+  }
+
+  return {
+    executable: 'cmd.exe',
+    args: ['/d', '/s', '/c', shimCommand, ...args]
+  };
 }
 
 function formatCommandFailure(command: string, args: string[], failureReason: string, stderr: string): string {
@@ -54,16 +67,19 @@ function killProcessTree(proc: ChildProcess, signal: NodeJS.Signals): void {
 
 export function runCommand(command: string, args: string[], options: SpawnOptions = {}): Promise<{ stdout: string; stderr: string; }> {
   return new Promise((resolve, reject) => {
-    const executable = resolvePlatformCommand(command);
+    const resolved = resolvePlatformCommand(command, args);
     const timeoutMs = typeof options.timeout === 'number' && Number.isFinite(options.timeout)
       ? options.timeout
       : undefined;
     const spawnOptions: SpawnOptions = { ...options, shell: false };
     delete spawnOptions.timeout;
+    if (process.platform === 'win32' && spawnOptions.windowsHide === undefined) {
+      spawnOptions.windowsHide = true;
+    }
     if (process.platform !== 'win32' && spawnOptions.detached === undefined) {
       spawnOptions.detached = true;
     }
-    const proc = spawn(executable, args, spawnOptions);
+    const proc = spawn(resolved.executable, resolved.args, spawnOptions);
     let stdout = '';
     let stderr = '';
     let timedOut = false;

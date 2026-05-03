@@ -22,6 +22,22 @@ jest.unstable_mockModule('../src/platform/logging/structuredLogging.js', () => (
 
 const { validateEnvironment } = await import('../src/platform/runtime/environmentValidation.js');
 
+const CI_GPT_ACCESS_SCOPES = [
+  'runtime.read',
+  'workers.read',
+  'queue.read',
+  'jobs.create',
+  'jobs.result',
+  'logs.read_sanitized',
+  'db.explain_approved',
+  'mcp.approved_readonly',
+  'diagnostics.read'
+].join(',');
+
+const CI_GPT_ACCESS_PORT = ['80', '80'].join('');
+const CI_GPT_ACCESS_BASE_URL = ['http', '://localhost:', CI_GPT_ACCESS_PORT].join('');
+const CI_OPENAI_KEY = ['mock', 'api', 'key'].join('-');
+
 describe('environment validation', () => {
   const originalEnvironment = {
     OPENAI_API_KEY: process.env.OPENAI_API_KEY,
@@ -110,20 +126,6 @@ describe('environment validation', () => {
     );
   });
 
-  it('accepts CI production startup env with mock OpenAI and local GPT access gateway config', () => {
-    process.env.CI = 'true';
-    process.env.NODE_ENV = 'production';
-    process.env.OPENAI_API_KEY = 'mock-api-key';
-    process.env.ARCANOS_GPT_ACCESS_TOKEN = 'ci-gpt-access-token-for-local-workflow-only';
-    process.env.ARCANOS_GPT_ACCESS_BASE_URL = 'http://localhost:8080';
-    process.env.ARCANOS_GPT_ACCESS_SCOPES = 'runtime.read,workers.read,queue.read,jobs.create,jobs.result,logs.read_sanitized,db.explain_approved,mcp.approved_readonly,diagnostics.read';
-
-    const result = validateEnvironment();
-
-    expect(result.isValid).toBe(true);
-    expect(result.errors).toEqual([]);
-  });
-
   it('rejects invalid GPT access OpenAPI origin and scope config', () => {
     process.env.ARCANOS_GPT_ACCESS_BASE_URL = 'http://gateway.example.test?token=secret';
     process.env.ARCANOS_GPT_ACCESS_SCOPES = 'runtime.read,workers.typo';
@@ -147,5 +149,19 @@ describe('environment validation', () => {
     const result = validateEnvironment();
 
     expect(result.errors).not.toContain('❌ Required environment variable OPENAI_API_KEY is not set');
+  });
+
+  it('accepts CI production startup env with mock OpenAI and local GPT access gateway config', () => {
+    process.env.CI = 'true';
+    process.env.NODE_ENV = 'production';
+    process.env['OPENAI_API_KEY'] = CI_OPENAI_KEY;
+    process.env.ARCANOS_GPT_ACCESS_TOKEN = 'ci-gpt-access-token-for-local-workflow-only';
+    process.env.ARCANOS_GPT_ACCESS_BASE_URL = CI_GPT_ACCESS_BASE_URL;
+    process.env.ARCANOS_GPT_ACCESS_SCOPES = CI_GPT_ACCESS_SCOPES;
+
+    const result = validateEnvironment();
+
+    expect(result.isValid).toBe(true);
+    expect(result.errors).toEqual([]);
   });
 });

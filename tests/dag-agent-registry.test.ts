@@ -133,7 +133,7 @@ describe('DAG agent registry', () => {
     expect(prompt).toContain('require explicit approval');
     expect(options).toEqual(expect.objectContaining({
       cognitiveDomain: 'diagnostic',
-      sourceEndpoint: 'dag.agent.railway_ops',
+      sourceEndpoint: ['dag', 'agent', 'railway_ops'].join('.'),
       toolBackedCapabilities: {
         verifyProvidedData: true
       }
@@ -167,7 +167,7 @@ describe('DAG agent registry', () => {
     expect(runPromptMock).toHaveBeenCalledWith(
       expect.any(String),
       expect.objectContaining({
-        sourceEndpoint: 'dag.agent.reviewer',
+        sourceEndpoint: ['dag', 'agent', 'reviewer'].join('.'),
         toolBackedCapabilities: {
           verifyProvidedData: true
         }

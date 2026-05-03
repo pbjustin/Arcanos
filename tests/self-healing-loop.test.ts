@@ -313,7 +313,9 @@ describe('selfHealingLoop', () => {
     'SELF_HEAL_WORKER_SERVICE_URL',
     'SELF_HEAL_OPERATOR_ACTION_APPROVED',
     'SELF_HEAL_OPERATOR_ACTION_APPROVED_BY',
-    'SELF_HEAL_OPERATOR_ACTION_REASON'
+    'SELF_HEAL_OPERATOR_ACTION_REASON',
+    'SELF_HEAL_OPERATOR_ACTION_NAME',
+    'SELF_HEAL_OPERATOR_ACTION_EXPIRES_AT'
   ] as const;
   const originalEnv = new Map<string, string | undefined>();
   let trinityActiveAction: string | null;
@@ -699,9 +701,6 @@ describe('selfHealingLoop', () => {
     (globalThis as typeof globalThis & { fetch: typeof remoteHealFetchMock }).fetch =
       remoteHealFetchMock as any;
     process.env.SELF_HEAL_WORKER_SERVICE_URL = 'https://worker.example.test';
-    process.env.SELF_HEAL_OPERATOR_ACTION_APPROVED = 'true';
-    process.env.SELF_HEAL_OPERATOR_ACTION_APPROVED_BY = 'operator:test';
-    process.env.SELF_HEAL_OPERATOR_ACTION_REASON = 'test approval for remote worker helper repair';
 
     getWorkerControlHealthMock.mockResolvedValueOnce(createWorkerHealth({
       overallStatus: 'degraded',
@@ -727,6 +726,11 @@ describe('selfHealingLoop', () => {
         }
       ]
     }));
+    process.env.SELF_HEAL_OPERATOR_ACTION_APPROVED = 'true';
+    process.env.SELF_HEAL_OPERATOR_ACTION_APPROVED_BY = 'operator:test';
+    process.env.SELF_HEAL_OPERATOR_ACTION_REASON = 'test approval for remote worker helper repair';
+    process.env.SELF_HEAL_OPERATOR_ACTION_NAME = 'worker repair actuator remote_worker_helper';
+    process.env.SELF_HEAL_OPERATOR_ACTION_EXPIRES_AT = new Date(Date.now() + 60_000).toISOString();
 
     const result = await runSelfHealingLoop({ trigger: 'interval' });
 

@@ -2,6 +2,8 @@ export interface SelfHealOperatorApproval {
   approved?: boolean;
   approvedBy?: string | null;
   reason?: string | null;
+  action?: string | null;
+  expiresAt?: string | null;
 }
 
 export interface SelfHealOperatorApprovalDecision {
@@ -20,21 +22,36 @@ function readBoolean(value: string | undefined): boolean {
   return /^(1|true|yes|approved)$/i.test(value?.trim() ?? '');
 }
 
+function isFutureTimestamp(value: string): boolean {
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && timestamp > Date.now();
+}
+
 export function readSelfHealOperatorApprovalFromEnv(
   env: NodeJS.ProcessEnv = process.env
 ): SelfHealOperatorApproval | undefined {
   const approved = env.SELF_HEAL_OPERATOR_ACTION_APPROVED;
   const approvedBy = env.SELF_HEAL_OPERATOR_ACTION_APPROVED_BY;
   const reason = env.SELF_HEAL_OPERATOR_ACTION_REASON;
+  const action = env.SELF_HEAL_OPERATOR_ACTION_NAME;
+  const expiresAt = env.SELF_HEAL_OPERATOR_ACTION_EXPIRES_AT;
 
-  if (approved === undefined && approvedBy === undefined && reason === undefined) {
+  if (
+    approved === undefined &&
+    approvedBy === undefined &&
+    reason === undefined &&
+    action === undefined &&
+    expiresAt === undefined
+  ) {
     return undefined;
   }
 
   return {
     approved: readBoolean(approved),
     approvedBy,
-    reason
+    reason,
+    action,
+    expiresAt
   };
 }
 
@@ -55,9 +72,19 @@ export function evaluateSelfHealOperatorApproval(params: {
   }
 
   const approval = params.approval ?? readSelfHealOperatorApprovalFromEnv(params.env);
+  const fromEnvironment = params.approval === undefined;
   const approvedBy = normalizeText(approval?.approvedBy);
   const reason = normalizeText(approval?.reason);
-  const satisfied = approval?.approved === true && approvedBy.length > 0 && reason.length > 0;
+  const action = normalizeText(approval?.action);
+  const expiresAt = normalizeText(approval?.expiresAt);
+  const actionMatches = !fromEnvironment || action === params.action;
+  const approvalFresh = !fromEnvironment || isFutureTimestamp(expiresAt);
+  const satisfied =
+    approval?.approved === true &&
+    approvedBy.length > 0 &&
+    reason.length > 0 &&
+    actionMatches &&
+    approvalFresh;
 
   return {
     required: true,
@@ -65,7 +92,7 @@ export function evaluateSelfHealOperatorApproval(params: {
     gate: 'self-heal-operator-approval',
     reason: satisfied
       ? reason
-      : `${params.action} requires explicit operator approval with approved=true, approvedBy, and reason.`,
+      : `${params.action} requires explicit operator approval with approver, reason, action, and expiry.`,
     approvedBy: approvedBy || null
   };
 }

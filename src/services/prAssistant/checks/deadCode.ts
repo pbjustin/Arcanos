@@ -16,8 +16,14 @@ export async function checkDeadCodeRemoval(
     for (const file of files) {
       try {
         const lineCount = await getFileLineCount(context.workingDir, file);
+        const fileDiff = getUnifiedDiffSection(diff, file);
+        const addedLineCount = countAddedLines(fileDiff);
+        const isNewFile = fileDiff?.includes('\nnew file mode ') ?? false;
 
-        if (lineCount > context.validationConstants.LARGE_FILE_THRESHOLD) {
+        if (
+          lineCount > context.validationConstants.LARGE_FILE_THRESHOLD &&
+          (isNewFile || addedLineCount > context.validationConstants.LARGE_FILE_THRESHOLD)
+        ) {
           issues.push(`Large file detected: ${file} (${lineCount} lines)`);
           details.push(`Consider breaking down ${file} into smaller, focused modules`);
         }
@@ -61,4 +67,37 @@ export async function checkDeadCodeRemoval(
       details: [`Analysis failed: ${resolveErrorMessage(error)}`]
     };
   }
+}
+
+function getUnifiedDiffSection(diff: string, file: string): string | null {
+  const sections = diff.split(/^diff --git /gm);
+  const normalizedFile = file.replace(/\\/gu, '/');
+
+  for (const section of sections) {
+    if (!section.trim()) {
+      continue;
+    }
+
+    const headerLine = section.split('\n', 1)[0] ?? '';
+    if (
+      headerLine.includes(` a/${normalizedFile} b/${normalizedFile}`) ||
+      headerLine.endsWith(` b/${normalizedFile}`) ||
+      headerLine.includes(` b/${normalizedFile} `)
+    ) {
+      return `diff --git ${section}`;
+    }
+  }
+
+  return null;
+}
+
+function countAddedLines(fileDiff: string | null): number {
+  if (!fileDiff) {
+    return 0;
+  }
+
+  return fileDiff
+    .split('\n')
+    .filter(line => line.startsWith('+') && !line.startsWith('+++'))
+    .length;
 }

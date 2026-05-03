@@ -61,13 +61,34 @@ describe('self-heal operator approval gate', () => {
     const approval = readSelfHealOperatorApprovalFromEnv({
       SELF_HEAL_OPERATOR_ACTION_APPROVED: 'true',
       SELF_HEAL_OPERATOR_ACTION_APPROVED_BY: 'operator:test',
-      SELF_HEAL_OPERATOR_ACTION_REASON: 'approved for controlled recovery'
+      SELF_HEAL_OPERATOR_ACTION_REASON: 'approved for controlled recovery',
+      SELF_HEAL_OPERATOR_ACTION_NAME: 'restart_service',
+      SELF_HEAL_OPERATOR_ACTION_EXPIRES_AT: new Date(Date.now() + 60_000).toISOString()
     });
 
-    expect(approval).toEqual({
+    expect(approval).toEqual(expect.objectContaining({
       approved: true,
       approvedBy: 'operator:test',
-      reason: 'approved for controlled recovery'
+      reason: 'approved for controlled recovery',
+      action: 'restart_service'
+    }));
+  });
+
+  it('requires environment approvals to match the action and remain unexpired', () => {
+    const future = new Date(Date.now() + 60_000).toISOString();
+    const decision = evaluateSelfHealOperatorApproval({
+      action: 'restart_service',
+      required: true,
+      env: {
+        SELF_HEAL_OPERATOR_ACTION_APPROVED: 'true',
+        SELF_HEAL_OPERATOR_ACTION_APPROVED_BY: 'operator:test',
+        SELF_HEAL_OPERATOR_ACTION_REASON: 'approved for restart only',
+        SELF_HEAL_OPERATOR_ACTION_NAME: 'redeploy_service',
+        SELF_HEAL_OPERATOR_ACTION_EXPIRES_AT: future
+      }
     });
+
+    expect(decision.satisfied).toBe(false);
+    expect(decision.reason).toContain('requires explicit operator approval');
   });
 });

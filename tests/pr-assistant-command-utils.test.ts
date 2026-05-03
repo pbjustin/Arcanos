@@ -10,6 +10,12 @@ function delay(ms: number): Promise<void> {
 }
 
 describe('PR Assistant command utilities', () => {
+  it('runs package manager commands through the platform resolver', async () => {
+    const result = await runCommand('npm', ['--version'], { timeout: 60_000 });
+
+    expect(result.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
+  });
+
   it('preserves complex CLI arguments when spawning without a shell', async () => {
     const complexArg = '(test-pr-assistant|gaming.direct-answer)\\.test\\.ts$';
 
