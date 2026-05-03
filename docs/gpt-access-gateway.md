@@ -53,7 +53,7 @@ Generate a local token and start the API:
 
 ```bash
 export ARCANOS_GPT_ACCESS_TOKEN="$(openssl rand -base64 48)"
-export ARCANOS_GPT_ACCESS_SCOPES="runtime.read,workers.read,queue.read,jobs.create,jobs.result,capabilities.read,diagnostics.read"
+export ARCANOS_GPT_ACCESS_SCOPES="runtime.read,workers.read,queue.read,jobs.create,jobs.result,mcp.approved_readonly,capabilities.read,diagnostics.read"
 npm run dev
 ```
 
@@ -63,7 +63,7 @@ PowerShell:
 $bytes = New-Object byte[] 48
 [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($bytes)
 $env:ARCANOS_GPT_ACCESS_TOKEN = [Convert]::ToBase64String($bytes)
-$env:ARCANOS_GPT_ACCESS_SCOPES = "runtime.read,workers.read,queue.read,jobs.create,jobs.result,capabilities.read,diagnostics.read"
+$env:ARCANOS_GPT_ACCESS_SCOPES = "runtime.read,workers.read,queue.read,jobs.create,jobs.result,mcp.approved_readonly,capabilities.read,diagnostics.read"
 npm run dev
 ```
 
