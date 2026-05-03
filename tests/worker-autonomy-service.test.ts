@@ -21,16 +21,7 @@ const fetchMock = jest.fn();
 const loggerDebugMock = jest.fn();
 const loggerInfoMock = jest.fn();
 const loggerWarnMock = jest.fn();
-const resolveJobWorkerStaleAfterMsMock = jest.fn((env: NodeJS.ProcessEnv = process.env) => {
-  const rawValue = env.JOB_WORKER_STALE_AFTER_MS;
-  const parsedValue = rawValue ? Number(rawValue) : Number.NaN;
-
-  if (!Number.isFinite(parsedValue) || parsedValue <= 0) {
-    return 45_000;
-  }
-
-  return Math.max(1_000, Math.trunc(parsedValue));
-});
+const resolveJobWorkerStaleAfterMsMock = jest.fn(() => 45_000);
 
 jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
   getJobQueueSummary: getJobQueueSummaryMock,
@@ -127,6 +118,8 @@ function withWorkerTimingEnv<T>(
 describe('workerAutonomyService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    resolveJobWorkerStaleAfterMsMock.mockReset();
+    resolveJobWorkerStaleAfterMsMock.mockReturnValue(45_000);
     fetchMock.mockResolvedValue({
       ok: true,
       status: 200
@@ -213,7 +206,7 @@ describe('workerAutonomyService', () => {
     });
   });
 
-  it('honors worker timing env overrides', () => {
+  it('uses the repository-resolved stale threshold with worker timing env overrides', () => {
     withWorkerTimingEnv(
       {
         JOB_WORKER_HEARTBEAT_MS: '7000',
@@ -222,6 +215,8 @@ describe('workerAutonomyService', () => {
         JOB_WORKER_WATCHDOG_IDLE_MS: '180000'
       },
       () => {
+        resolveJobWorkerStaleAfterMsMock.mockReturnValueOnce(70_000);
+
         const settings = getWorkerAutonomySettings({}, { refreshEnv: true });
 
         expect(settings.heartbeatIntervalMs).toBe(7_000);
@@ -239,6 +234,10 @@ describe('workerAutonomyService', () => {
         JOB_WORKER_WATCHDOG_MS: '15000'
       },
       () => {
+        resolveJobWorkerStaleAfterMsMock
+          .mockReturnValueOnce(70_000)
+          .mockReturnValueOnce(90_000);
+
         expect(getWorkerAutonomySettings({}, { refreshEnv: true })).toEqual(
           expect.objectContaining({
             staleAfterMs: 70_000,
