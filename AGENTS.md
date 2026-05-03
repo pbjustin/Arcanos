@@ -18,11 +18,13 @@
 
 ## Validation
 - For protocol-boundary or backend CLI changes, run `npm run build:packages` before `npm run validate:backend-cli:contract` and `npm run validate:backend-cli:offline`.
+- Run `npm run check:boundaries`, `npm run check:cef-layer-access`, and `npm run check:routing-boundaries` when changes affect protocol/layer boundaries or route handlers.
 - Build worker artifacts with `npm run build:workers` when changes touch `workers/`, job runners, or worker startup paths.
 - Run focused Jest suites with `node scripts/run-jest.mjs --testPathPatterns=<pattern> --coverage=false`.
 - Run the default TypeScript Jest sweep with `npm test` when focused suites pass and you need the broader Node-side check.
 - Run unit tests with `npm run test:unit`.
 - Run integration coverage with `npm run test:integration` when changes touch backend flows or adapters.
+- Run `npm run test:runtime-integration` when changes touch `arcanos-ai-runtime` integration behavior.
 - Run `npm run test:all:stacks` when a change spans both the TypeScript workspace and `daemon-python`.
 - Run type checks with `npm run type-check`.
 - Run lint with `npm run lint`.
