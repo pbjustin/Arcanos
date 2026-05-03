@@ -138,7 +138,7 @@ router.post('/analyze', validateCustom((data: any) => {
       ? {
           status: '✅' as const,
           message: 'Automated validation completed before PR analysis',
-          details: ['Workflow completed lint, build, and test steps before invoking analysis']
+          details: ['Workflow completed lint, build, and PR Assistant test steps before invoking analysis']
         }
       : undefined;
     const analysisResult = await assistant.analyzePR(prDiff, prFiles, { automatedValidation });

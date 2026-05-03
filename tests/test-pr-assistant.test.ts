@@ -245,7 +245,7 @@ describe('ARCANOS PR Assistant', () => {
       const precomputedValidation = {
         status: '✅' as const,
         message: 'Automated validation completed before PR analysis',
-        details: ['Workflow completed lint, build, and test steps before invoking analysis']
+        details: ['Workflow completed lint, build, and PR Assistant test steps before invoking analysis']
       };
 
       const result = await prAssistant.analyzePR(mockPRDiff, mockPRFiles, {

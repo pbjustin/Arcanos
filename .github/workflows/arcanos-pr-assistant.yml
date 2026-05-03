@@ -56,7 +56,7 @@ jobs:
       - name: 🧪 Run tests
         id: pr-tests
         continue-on-error: true
-        run: npm test
+        run: node scripts/run-jest.mjs --testPathPatterns="tests/test-pr-assistant.test.ts" --coverage=false
 
       - name: 🔧 Install GitHub CLI
         run: |
