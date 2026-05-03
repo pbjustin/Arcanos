@@ -241,20 +241,6 @@ describe('ARCANOS PR Assistant', () => {
       expect(result.checks.automatedValidation.status).toBe('✅');
     });
 
-    it('uses precomputed automated validation when workflow validation already ran', async () => {
-      const precomputedValidation = {
-        status: '✅' as const,
-        message: 'Automated validation completed before PR analysis',
-        details: ['Workflow completed lint, build, and PR Assistant test steps before invoking analysis']
-      };
-
-      const result = await prAssistant.analyzePR(mockPRDiff, mockPRFiles, {
-        automatedValidation: precomputedValidation
-      });
-
-      expect(result.checks.automatedValidation).toEqual(precomputedValidation);
-    });
-
     it('should treat simplification-only findings as advisory instead of rejected', async () => {
       await fs.mkdir(path.join(tempDir, 'src', 'services'), { recursive: true });
       await fs.writeFile(path.join(tempDir, 'src', 'server.ts'), 'export {};\n');

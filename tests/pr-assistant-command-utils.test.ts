@@ -16,6 +16,57 @@ describe('PR Assistant command utilities', () => {
     expect(result.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
   });
 
+  it('preserves package manager shim arguments containing shell metacharacters', async () => {
+    const complexArg = '(test-pr-assistant|gaming.direct-answer)&safe';
+
+    const result = await runCommand('npm', [
+      'exec',
+      '--',
+      'node',
+      '-e',
+      'process.stdout.write(process.argv[1])',
+      complexArg
+    ], { timeout: 60_000 });
+
+    expect(result.stdout).toBe(complexArg);
+  });
+
+  it('fails closed when Windows npm CLI resolution is unavailable', async () => {
+    if (process.platform !== 'win32') {
+      return;
+    }
+
+    const originalNpmExecPath = process.env.npm_execpath;
+    const originalPath = process.env.Path;
+    const originalUpperPath = process.env.PATH;
+
+    try {
+      delete process.env.npm_execpath;
+      process.env.Path = '';
+      process.env.PATH = '';
+
+      await expect(runCommand('npm', ['--version'])).rejects.toThrow(
+        'Unable to resolve npm CLI without invoking cmd.exe'
+      );
+    } finally {
+      if (originalNpmExecPath === undefined) {
+        delete process.env.npm_execpath;
+      } else {
+        process.env.npm_execpath = originalNpmExecPath;
+      }
+      if (originalPath === undefined) {
+        delete process.env.Path;
+      } else {
+        process.env.Path = originalPath;
+      }
+      if (originalUpperPath === undefined) {
+        delete process.env.PATH;
+      } else {
+        process.env.PATH = originalUpperPath;
+      }
+    }
+  });
+
   it('preserves complex CLI arguments when spawning without a shell', async () => {
     const complexArg = '(test-pr-assistant|gaming.direct-answer)\\.test\\.ts$';
 

@@ -54,9 +54,8 @@ jobs:
         run: npm run build
 
       - name: 🧪 Run tests
-        id: pr-tests
         continue-on-error: true
-        run: node scripts/run-jest.mjs --testPathPatterns="tests/test-pr-assistant.test.ts" --coverage=false
+        run: npm test
 
       - name: 🔧 Install GitHub CLI
         run: |
@@ -127,20 +126,17 @@ jobs:
           
           # Prepare analysis request payload in a file so large diffs do not exceed shell argument limits.
           PR_FILES=$(cat changed_files.txt | jq -Rs 'split("\n") | map(select(. != ""))' || echo '[]')
-          VALIDATION_ALREADY_RUN="${{ steps.pr-tests.outcome == 'success' && 'true' || 'false' }}"
           jq -n \
             --rawfile prDiff pr.diff \
             --argjson prFiles "$PR_FILES" \
             --arg prNumber "${{ steps.pr-details.outputs.pr_number }}" \
             --arg repository "${{ github.repository }}" \
-            --argjson validationAlreadyRun "$VALIDATION_ALREADY_RUN" \
             '{
               prDiff: $prDiff,
               prFiles: $prFiles,
               metadata: {
                 prNumber: ($prNumber | tonumber),
-                repository: $repository,
-                validationAlreadyRun: $validationAlreadyRun
+                repository: $repository
               }
             }' > analysis_request.json
           

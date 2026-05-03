@@ -13,10 +13,6 @@ import { generateReasoning, generateRecommendations, generateSummary } from './p
 import type { CheckContext, PRAnalysisResult, ValidationConfig } from './prAssistant/types.js';
 import type { CheckResult } from './prAssistant/types.js';
 
-export interface PRAssistantAnalyzeOptions {
-  automatedValidation?: CheckResult;
-}
-
 export class PRAssistant {
   private workingDir: string;
   private validationConstants: ValidationConfig;
@@ -66,11 +62,7 @@ export class PRAssistant {
    * returns PRAnalysisResult with status, summary, checks, reasoning, recommendations.
    * Edge cases: Empty diffs still run checks; results rely on check fallbacks.
    */
-  async analyzePR(
-    prDiff: string,
-    prFiles: string[],
-    options: PRAssistantAnalyzeOptions = {}
-  ): Promise<PRAnalysisResult> {
+  async analyzePR(prDiff: string, prFiles: string[]): Promise<PRAnalysisResult> {
     logger.info('ARCANOS PR Assistant - Starting comprehensive analysis', {
       operation: 'analyzePR',
       filesCount: prFiles.length
@@ -83,7 +75,7 @@ export class PRAssistant {
       simplification: await checkSimplification(context, prDiff),
       openaiCompatibility: await checkOpenAICompatibility(context, prDiff),
       railwayReadiness: await checkRailwayReadiness(context, prFiles, prDiff),
-      automatedValidation: options.automatedValidation ?? await runAutomatedValidation(context),
+      automatedValidation: await runAutomatedValidation(context),
       finalDoubleCheck: await performFinalDoubleCheck(context)
     } as const;
 
