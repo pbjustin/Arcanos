@@ -94,7 +94,7 @@ const EXPLICIT_WRITING_PLANE_CONTROL_CLASSIFICATIONS: Record<
     reason: 'explicit_action_runtime_inspect',
     message: 'Runtime inspection is a control-plane operation and must not execute inside Trinity.',
     canonical: {
-      runtimeInspect: '/gpt/{gptId}',
+      runtimeInspect: '/gpt-access/mcp',
     },
   },
   'workers.status': {
@@ -102,7 +102,7 @@ const EXPLICIT_WRITING_PLANE_CONTROL_CLASSIFICATIONS: Record<
     reason: 'explicit_action_workers_status',
     message: 'Worker status inspection is a control-plane operation and must not execute inside Trinity.',
     canonical: {
-      workers: '/gpt/{gptId}',
+      workers: '/gpt-access/workers/status',
     },
   },
   'queue.inspect': {
@@ -110,7 +110,7 @@ const EXPLICIT_WRITING_PLANE_CONTROL_CLASSIFICATIONS: Record<
     reason: 'explicit_action_queue_inspect',
     message: 'Queue inspection is a control-plane operation and must not execute inside Trinity.',
     canonical: {
-      queueInspect: '/gpt/{gptId}',
+      queueInspect: '/gpt-access/queue/inspect',
     },
   },
   'self_heal.status': {
@@ -118,7 +118,7 @@ const EXPLICIT_WRITING_PLANE_CONTROL_CLASSIFICATIONS: Record<
     reason: 'explicit_action_self_heal_status',
     message: 'Self-heal status inspection is a control-plane operation and must not execute inside Trinity.',
     canonical: {
-      selfHealStatus: '/gpt/{gptId}',
+      selfHealStatus: '/gpt-access/self-heal/status',
     },
   },
 };
@@ -281,7 +281,7 @@ export function classifyWritingPlaneInput(input: {
       errorCode: 'TRINITY_CONTROL_LEAK',
       message: 'Job status retrieval is control-plane only and must bypass the Trinity writing pipeline.',
       canonical: {
-        poll: '/jobs/{jobId}/result',
+        poll: '/gpt-access/jobs/result',
       },
     };
   }
@@ -295,7 +295,7 @@ export function classifyWritingPlaneInput(input: {
       errorCode: 'TRINITY_CONTROL_LEAK',
       message: 'Job result retrieval is control-plane only and must bypass the Trinity writing pipeline.',
       canonical: {
-        result: '/jobs/{jobId}/result',
+        result: '/gpt-access/jobs/result',
       },
     };
   }
@@ -409,9 +409,9 @@ export function classifyWritingPlaneInput(input: {
       reason: 'mcp_control_requires_mcp_transport',
       errorCode: 'MCP_CONTROL_REQUIRES_MCP_API',
       message:
-        'MCP tool calls must use POST /mcp. Do not send MCP control requests through POST /gpt/{gptId}.',
+        'MCP tool calls from GPT Access integrations must use POST /gpt-access/mcp. Do not send MCP control requests through POST /gpt/{gptId}.',
       canonical: {
-        mcp: '/mcp',
+        mcp: '/gpt-access/mcp',
       },
     };
   }
@@ -446,13 +446,14 @@ export function classifyWritingPlaneInput(input: {
         reason: 'runtime_control_requires_direct_endpoint',
         errorCode: 'CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT',
         message:
-          'Runtime diagnostics, worker state, tracing, and queue inspection must use direct control-plane endpoints or POST /mcp. Do not send runtime control requests through POST /gpt/{gptId}.',
+          'Runtime diagnostics, worker state, tracing, and queue inspection must use /gpt-access/* or POST /gpt-access/mcp. Do not send runtime control requests through POST /gpt/{gptId}.',
         canonical: {
-          status: '/status',
-          workers: '/workers/status',
-          workerHealth: '/worker-helper/health',
-          selfHeal: '/status/safety/self-heal',
-          mcp: '/mcp',
+          status: '/gpt-access/status',
+          workers: '/gpt-access/workers/status',
+          workerHealth: '/gpt-access/worker-helper/health',
+          queueInspect: '/gpt-access/queue/inspect',
+          selfHeal: '/gpt-access/self-heal/status',
+          mcp: '/gpt-access/mcp',
         },
       };
     }

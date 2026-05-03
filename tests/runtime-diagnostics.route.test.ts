@@ -87,14 +87,15 @@ describe('runtime diagnostics routes', () => {
         message: expect.stringContaining('/gpt-access/*')
       }),
       canonical: expect.objectContaining({
-        status: '/status',
-        workers: '/workers/status',
-        workerHealth: '/worker-helper/health',
-        jobStatus: '/jobs/{jobId}',
-        jobResult: '/jobs/{jobId}/result',
+        status: '/gpt-access/status',
+        workers: '/gpt-access/workers/status',
+        workerHealth: '/gpt-access/worker-helper/health',
+        queueInspect: '/gpt-access/queue/inspect',
+        jobStatus: '/gpt-access/jobs/result',
+        jobResult: '/gpt-access/jobs/result',
         gptAccessJobResult: '/gpt-access/jobs/result',
-        mcp: '/mcp',
-        selfHeal: '/status/safety/self-heal'
+        mcp: '/gpt-access/mcp',
+        selfHeal: '/gpt-access/self-heal/status'
       }),
       traceId: expect.any(String)
     }));

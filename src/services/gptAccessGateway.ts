@@ -120,8 +120,14 @@ export type GptAccessExplainQueryKey = (typeof GPT_ACCESS_EXPLAIN_QUERY_KEYS)[nu
 type GatewayErrorCode =
   | 'UNAUTHORIZED_GPT_ACCESS'
   | 'GPT_ACCESS_SCOPE_DENIED'
+  | 'GPT_ACCESS_ROUTE_NOT_FOUND'
   | 'GPT_ACCESS_INTERNAL_ERROR'
   | 'GPT_ACCESS_JOBS_UNAVAILABLE'
+  | 'GPT_ACCESS_WORKER_UNAVAILABLE'
+  | 'GPT_ACCESS_QUEUE_UNAVAILABLE'
+  | 'GPT_ACCESS_DB_UNAVAILABLE'
+  | 'GPT_ACCESS_MCP_TOOL_UNAVAILABLE'
+  | 'GPT_ACCESS_SELF_HEAL_UNAVAILABLE'
   | 'GPT_ACCESS_IDEMPOTENCY_CONFLICT'
   | 'LOG_QUERY_BACKEND_NOT_CONFIGURED'
   | 'DB_EXPLAIN_BACKEND_NOT_CONFIGURED'
@@ -427,19 +433,60 @@ function readBearerToken(req: Request): string | null {
   return bearerValue && bearerValue.length <= MAX_TOKEN_LENGTH ? bearerValue : null;
 }
 
+function readBearerTokenStatus(req: Request):
+  | { ok: true; bearerValue: string }
+  | { ok: false; reason: 'missing_auth' | 'invalid_auth' } {
+  const authorization = req.header('authorization');
+  if (!authorization || authorization.trim().length === 0) {
+    return { ok: false, reason: 'missing_auth' };
+  }
+
+  const bearerValue = readBearerToken(req);
+  return bearerValue
+    ? { ok: true, bearerValue }
+    : { ok: false, reason: 'invalid_auth' };
+}
+
 export function gptAccessAuthMiddleware(req: Request, res: Response, next: NextFunction): void {
   const expectedToken = readConfiguredAccessToken();
   if (!expectedToken) {
     const message = isProductionEnvironment()
       ? `${TOKEN_ENV_NAME} is required.`
       : `${TOKEN_ENV_NAME} is not configured.`;
+    req.logger?.error?.('gpt_access.auth.failed', {
+      route: req.originalUrl,
+      reason: 'missing_server_token',
+      statusCode: 500
+    });
     sendGatewayError(res, 500, 'GPT_ACCESS_INTERNAL_ERROR', message);
     return;
   }
 
-  const providedToken = readBearerToken(req);
-  if (!providedToken || !timingSafeTokenEquals(providedToken, expectedToken)) {
-    sendGatewayError(res, 401, 'UNAUTHORIZED_GPT_ACCESS', 'Valid GPT access bearer token required.');
+  const providedToken = readBearerTokenStatus(req);
+  if (!providedToken.ok) {
+    req.logger?.warn?.('gpt_access.auth.failed', {
+      route: req.originalUrl,
+      reason: providedToken.reason,
+      statusCode: 401
+    });
+    sendGatewayError(
+      res,
+      401,
+      'UNAUTHORIZED_GPT_ACCESS',
+      providedToken.reason === 'missing_auth'
+        ? 'Missing GPT access bearer token.'
+        : 'Invalid GPT access authorization header.'
+    );
+    return;
+  }
+
+  if (!timingSafeTokenEquals(providedToken.bearerValue, expectedToken)) {
+    req.logger?.warn?.('gpt_access.auth.failed', {
+      route: req.originalUrl,
+      reason: 'invalid_auth',
+      statusCode: 401
+    });
+    sendGatewayError(res, 401, 'UNAUTHORIZED_GPT_ACCESS', 'Invalid GPT access bearer token.');
     return;
   }
 
@@ -516,6 +563,99 @@ export function buildGptAccessHealthPayload() {
     authRequired: true,
     version: SERVICE_VERSION
   };
+}
+
+const GPT_ACCESS_PUBLIC_BASE_URL_ENV_KEYS = [
+  'ARCANOS_GPT_ACCESS_BASE_URL',
+  'ARCANOS_BASE_URL',
+  'ARCANOS_BACKEND_URL',
+  'SERVER_URL',
+  'BACKEND_URL',
+  'PUBLIC_BASE_URL',
+  'RAILWAY_PUBLIC_URL',
+  'RAILWAY_PUBLIC_DOMAIN',
+  'RAILWAY_STATIC_URL'
+] as const;
+
+function firstHeaderValue(value: string | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const first = value.split(',')[0]?.trim();
+  return first && first.length > 0 ? first : null;
+}
+
+function normalizeOpenApiServerUrl(value: string | undefined | null): string | null {
+  const trimmedValue = value?.trim();
+  if (!trimmedValue) {
+    return null;
+  }
+
+  const candidate = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmedValue)
+    ? trimmedValue
+    : `https://${trimmedValue}`;
+
+  try {
+    const parsed = new URL(candidate);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      return null;
+    }
+    if (parsed.protocol === 'http:' && !isLocalOpenApiHostname(parsed.hostname)) {
+      return null;
+    }
+    parsed.username = '';
+    parsed.password = '';
+    parsed.hash = '';
+    parsed.search = '';
+    parsed.pathname = parsed.pathname.replace(/\/+$/u, '');
+    return parsed.toString().replace(/\/$/u, '');
+  } catch {
+    return null;
+  }
+}
+
+function isLocalOpenApiHostname(hostname: string): boolean {
+  const normalized = hostname.toLowerCase().replace(/^\[|\]$/gu, '');
+  return normalized === 'localhost'
+    || normalized.endsWith('.localhost')
+    || normalized === '127.0.0.1'
+    || normalized === '::1';
+}
+
+function isLocalOpenApiServerUrl(value: string): boolean {
+  try {
+    return isLocalOpenApiHostname(new URL(value).hostname);
+  } catch {
+    return false;
+  }
+}
+
+function resolveRequestOrigin(req: Request | undefined): string | null {
+  if (!req) {
+    return null;
+  }
+
+  const host = firstHeaderValue(req.header('x-forwarded-host')) ?? firstHeaderValue(req.header('host'));
+  if (!host) {
+    return null;
+  }
+
+  const proto = firstHeaderValue(req.header('x-forwarded-proto')) ?? req.protocol ?? 'https';
+  const normalizedProto = proto.toLowerCase() === 'http' ? 'http' : 'https';
+  const origin = normalizeOpenApiServerUrl(`${normalizedProto}://${host}`);
+  return origin && isLocalOpenApiServerUrl(origin) ? origin : null;
+}
+
+export function resolveGptAccessOpenApiServerUrl(req?: Request): string {
+  for (const envName of GPT_ACCESS_PUBLIC_BASE_URL_ENV_KEYS) {
+    const configuredUrl = normalizeOpenApiServerUrl(process.env[envName]);
+    if (configuredUrl) {
+      return configuredUrl;
+    }
+  }
+
+  return resolveRequestOrigin(req) ?? 'http://localhost:3000';
 }
 
 function isAllowedMcpTool(tool: string): tool is GptAccessMcpTool {
@@ -879,8 +1019,20 @@ export async function getGptAccessJobResult(body: unknown, context?: GptAccessJo
     payload: sanitizeGptAccessPayload({
       ok: true,
       traceId,
-      ...buildGptJobResultLookupPayload(parsed.data.jobId, gatewayJob)
+      ...buildGptAccessJobResultLookupPayload(parsed.data.jobId, gatewayJob)
     })
+  };
+}
+
+function buildGptAccessJobResultLookupPayload(
+  jobId: string,
+  job: Awaited<ReturnType<typeof getJobById>> | null
+) {
+  return {
+    ...buildGptJobResultLookupPayload(jobId, job),
+    poll: GPT_ACCESS_JOB_RESULT_ENDPOINT,
+    stream: GPT_ACCESS_JOB_RESULT_ENDPOINT,
+    resultEndpoint: GPT_ACCESS_JOB_RESULT_ENDPOINT
   };
 }
 
@@ -1129,6 +1281,131 @@ export async function createGptAccessAiJob(body: unknown, context: CreateGptAcce
   }
 }
 
+function normalizeDbCount(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.trunc(value);
+  }
+
+  if (typeof value === 'string') {
+    const parsed = Number.parseInt(value, 10);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  return 0;
+}
+
+function normalizeDbTimestamp(value: unknown): string | null {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString();
+  }
+
+  return typeof value === 'string' && value.trim().length > 0 ? value : null;
+}
+
+async function getSelfReflectionStorageStatus() {
+  if (!isDatabaseConnected()) {
+    return {
+      configured: false,
+      status: 'unavailable',
+      message: 'Self-reflection persistence is unavailable because the database is not connected.',
+      total: 0,
+      latestCreatedAt: null,
+      categories: []
+    };
+  }
+
+  try {
+    const [summaryResult, categoryResult] = await Promise.all([
+      query(
+        `SELECT COUNT(*)::int AS total, MAX(created_at) AS latest_created_at
+           FROM self_reflections`
+      ),
+      query(
+        `SELECT category, COUNT(*)::int AS total, MAX(created_at) AS latest_created_at
+           FROM self_reflections
+           GROUP BY category
+           ORDER BY latest_created_at DESC NULLS LAST
+           LIMIT 10`
+      )
+    ]);
+    const summaryRow = summaryResult.rows[0] as Record<string, unknown> | undefined;
+
+    return {
+      configured: true,
+      status: 'ok',
+      total: normalizeDbCount(summaryRow?.total),
+      latestCreatedAt: normalizeDbTimestamp(summaryRow?.latest_created_at),
+      categories: categoryResult.rows.map((rowRaw: unknown) => {
+        const row = rowRaw as Record<string, unknown>;
+        return {
+          category: typeof row.category === 'string' ? row.category : 'unknown',
+          total: normalizeDbCount(row.total),
+          latestCreatedAt: normalizeDbTimestamp(row.latest_created_at)
+        };
+      })
+    };
+  } catch {
+    return {
+      configured: true,
+      status: 'unavailable',
+      message: 'Self-reflection persistence could not be inspected.',
+      total: null,
+      latestCreatedAt: null,
+      categories: []
+    };
+  }
+}
+
+export async function getGptAccessSelfHealStatus() {
+  try {
+    const selfReflection = await getSelfReflectionStorageStatus();
+    return {
+      statusCode: 200,
+      payload: sanitizeGptAccessPayload({
+        ok: true,
+        tool: 'self_heal.status',
+        result: buildSafetySelfHealSnapshot(),
+        selfReflection
+      })
+    };
+  } catch {
+    return {
+      statusCode: 503,
+      payload: {
+        ok: false,
+        error: {
+          code: 'GPT_ACCESS_SELF_HEAL_UNAVAILABLE',
+          message: 'Self-heal status is unavailable.'
+        }
+      }
+    };
+  }
+}
+
+export async function getGptAccessQueueInspection() {
+  try {
+    return {
+      statusCode: 200,
+      payload: sanitizeGptAccessPayload({
+        ok: true,
+        tool: 'queue.inspect',
+        result: await getJobQueueSummary()
+      })
+    };
+  } catch {
+    return {
+      statusCode: 503,
+      payload: {
+        ok: false,
+        error: {
+          code: 'GPT_ACCESS_QUEUE_UNAVAILABLE',
+          message: 'Queue inspection is unavailable.'
+        }
+      }
+    };
+  }
+}
+
 export async function runGptAccessMcpTool(body: unknown) {
   const parsed = mcpRequestSchema.safeParse(body);
   if (!parsed.success || !isAllowedMcpTool(parsed.data.tool)) {
@@ -1156,45 +1433,64 @@ export async function runGptAccessMcpTool(body: unknown) {
         }
       };
     case 'workers.status':
-      return {
-        statusCode: 200,
-        payload: {
-          ok: true,
-          tool,
-          result: await getWorkerControlStatus()
-        }
-      };
-    case 'queue.inspect':
-      return {
-        statusCode: 200,
-        payload: {
-          ok: true,
-          tool,
-          result: await getJobQueueSummary()
-        }
-      };
-    case 'self_heal.status':
-      return {
-        statusCode: 200,
-        payload: {
-          ok: true,
-          tool,
-          result: sanitizeGptAccessPayload(buildSafetySelfHealSnapshot())
-        }
-      };
-    case 'diagnostics':
-      return {
-        statusCode: 200,
-        payload: {
-          ok: true,
-          tool,
-          result: {
-            runtime: runtimeDiagnosticsService.getHealthSnapshot(),
-            workers: await getWorkerControlStatus(),
-            selfHeal: sanitizeGptAccessPayload(buildSafetySelfHealSnapshot())
+      try {
+        return {
+          statusCode: 200,
+          payload: sanitizeGptAccessPayload({
+            ok: true,
+            tool,
+            result: await getWorkerControlStatus()
+          })
+        };
+      } catch {
+        return {
+          statusCode: 503,
+          payload: {
+            ok: false,
+            error: {
+              code: 'GPT_ACCESS_WORKER_UNAVAILABLE',
+              message: 'Worker status is unavailable.'
+            }
           }
-        }
-      };
+        };
+      }
+    case 'queue.inspect':
+      return getGptAccessQueueInspection();
+    case 'self_heal.status':
+      return getGptAccessSelfHealStatus();
+    case 'diagnostics':
+      try {
+        const [workers, queue, selfHealResult] = await Promise.all([
+          getWorkerControlStatus(),
+          getJobQueueSummary(),
+          getGptAccessSelfHealStatus()
+        ]);
+
+        return {
+          statusCode: 200,
+          payload: sanitizeGptAccessPayload({
+            ok: true,
+            tool,
+            result: {
+              runtime: runtimeDiagnosticsService.getHealthSnapshot(),
+              workers,
+              queue,
+              selfHeal: selfHealResult.payload
+            }
+          })
+        };
+      } catch {
+        return {
+          statusCode: 503,
+          payload: {
+            ok: false,
+            error: {
+              code: 'GPT_ACCESS_MCP_TOOL_UNAVAILABLE',
+              message: 'Requested MCP diagnostic tool is unavailable.'
+            }
+          }
+        };
+      }
   }
 }
 
@@ -1381,7 +1677,10 @@ export async function queryBackendLogs(body: unknown) {
   }
 }
 
-export function buildGptAccessOpenApiDocument() {
+export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = {}) {
+  const serverUrl = normalizeOpenApiServerUrl(options.serverUrl) ?? resolveGptAccessOpenApiServerUrl();
+  const protectedSecurity = [{ bearerAuth: [] }];
+
   return {
     openapi: '3.1.0',
     info: {
@@ -1391,14 +1690,10 @@ export function buildGptAccessOpenApiDocument() {
     },
     servers: [
       {
-        url: 'https://acranos-production.up.railway.app'
+        url: serverUrl
       }
     ],
-    security: [
-      {
-        bearerAuth: []
-      }
-    ],
+    security: protectedSecurity,
     components: {
       securitySchemes: {
         bearerAuth: {
@@ -1412,6 +1707,7 @@ export function buildGptAccessOpenApiDocument() {
           type: 'object',
           properties: {
             ok: { type: 'boolean', const: false },
+            traceId: { type: ['string', 'null'] },
             error: {
               type: 'object',
               properties: {
@@ -1472,6 +1768,103 @@ export function buildGptAccessOpenApiDocument() {
           },
           required: ['ok', 'jobId', 'traceId', 'status', 'deduped', 'resultEndpoint'],
           additionalProperties: false
+        },
+        JobResultRequest: {
+          type: 'object',
+          properties: {
+            jobId: { type: 'string', format: 'uuid' },
+            traceId: { type: 'string' }
+          },
+          required: ['jobId'],
+          additionalProperties: false
+        },
+        JobResultError: {
+          type: 'object',
+          properties: {
+            code: { type: 'string' },
+            message: { type: 'string' },
+            details: {
+              type: 'object',
+              additionalProperties: true
+            }
+          },
+          required: ['code', 'message'],
+          additionalProperties: true
+        },
+        JobResultResponse: {
+          type: 'object',
+          properties: {
+            ok: { type: 'boolean', const: true },
+            traceId: { type: ['string', 'null'] },
+            jobId: { type: 'string', format: 'uuid' },
+            status: {
+              type: 'string',
+              enum: ['pending', 'completed', 'failed', 'expired', 'not_found']
+            },
+            jobStatus: { type: ['string', 'null'] },
+            lifecycleStatus: { type: 'string' },
+            createdAt: { type: ['string', 'null'] },
+            updatedAt: { type: ['string', 'null'] },
+            completedAt: { type: ['string', 'null'] },
+            retentionUntil: { type: ['string', 'null'] },
+            idempotencyUntil: { type: ['string', 'null'] },
+            expiresAt: { type: ['string', 'null'] },
+            poll: { type: 'string' },
+            stream: { type: 'string' },
+            resultEndpoint: { type: 'string', const: GPT_ACCESS_JOB_RESULT_ENDPOINT },
+            result: {},
+            error: {
+              anyOf: [
+                { '$ref': '#/components/schemas/JobResultError' },
+                { type: 'null' }
+              ]
+            }
+          },
+          required: [
+            'ok',
+            'jobId',
+            'status',
+            'jobStatus',
+            'lifecycleStatus',
+            'createdAt',
+            'updatedAt',
+            'completedAt',
+            'retentionUntil',
+            'idempotencyUntil',
+            'expiresAt',
+            'poll',
+            'stream',
+            'resultEndpoint',
+            'result',
+            'error'
+          ],
+          additionalProperties: true
+        },
+        McpControlRequest: {
+          type: 'object',
+          properties: {
+            tool: {
+              type: 'string',
+              enum: [...GPT_ACCESS_MCP_TOOLS]
+            },
+            args: { type: 'object', additionalProperties: true }
+          },
+          required: ['tool'],
+          additionalProperties: false
+        },
+        GatewayToolResponse: {
+          type: 'object',
+          properties: {
+            ok: { type: 'boolean', const: true },
+            tool: { type: 'string' },
+            result: {},
+            selfReflection: {
+              type: 'object',
+              additionalProperties: true
+            }
+          },
+          required: ['ok', 'tool'],
+          additionalProperties: true
         },
         CapabilityV1Summary: {
           type: 'object',
@@ -1560,6 +1953,7 @@ export function buildGptAccessOpenApiDocument() {
         get: {
           operationId: 'arcanosAccessHealth',
           summary: 'Check the GPT access gateway health.',
+          security: protectedSecurity,
           responses: {
             '200': {
               description: 'Gateway health payload.'
@@ -1572,6 +1966,7 @@ export function buildGptAccessOpenApiDocument() {
         get: {
           operationId: 'getRuntimeStatus',
           summary: 'Get sanitized runtime status.',
+          security: protectedSecurity,
           responses: { '200': { description: 'Runtime status.' } }
         }
       },
@@ -1579,6 +1974,7 @@ export function buildGptAccessOpenApiDocument() {
         get: {
           operationId: 'getWorkersStatus',
           summary: 'Get worker and queue-observed status.',
+          security: protectedSecurity,
           responses: { '200': { description: 'Worker status.' } }
         }
       },
@@ -1586,7 +1982,48 @@ export function buildGptAccessOpenApiDocument() {
         get: {
           operationId: 'getWorkerHelperHealth',
           summary: 'Get worker helper health.',
+          security: protectedSecurity,
           responses: { '200': { description: 'Worker helper health.' } }
+        }
+      },
+      '/gpt-access/queue/inspect': {
+        get: {
+          operationId: 'inspectQueue',
+          summary: 'Inspect the durable GPT/job queue without using /gpt/:gptId.',
+          security: protectedSecurity,
+          responses: {
+            '200': {
+              description: 'Queue inspection payload.',
+              content: {
+                'application/json': {
+                  schema: { '$ref': '#/components/schemas/GatewayToolResponse' }
+                }
+              }
+            },
+            '401': { description: 'Unauthorized.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '403': { description: 'Scope denied.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '503': { description: 'Queue unavailable.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } }
+          }
+        }
+      },
+      '/gpt-access/self-heal/status': {
+        get: {
+          operationId: 'getSelfHealStatus',
+          summary: 'Read self-heal and self-reflection status without using /gpt/:gptId.',
+          security: protectedSecurity,
+          responses: {
+            '200': {
+              description: 'Self-heal and self-reflection status payload.',
+              content: {
+                'application/json': {
+                  schema: { '$ref': '#/components/schemas/GatewayToolResponse' }
+                }
+              }
+            },
+            '401': { description: 'Unauthorized.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '403': { description: 'Scope denied.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '503': { description: 'Self-heal unavailable.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } }
+          }
         }
       },
       '/gpt-access/capabilities/v1': {
@@ -1594,7 +2031,7 @@ export function buildGptAccessOpenApiDocument() {
           operationId: 'listCapabilitiesV1',
           summary: 'List GPT Access capabilities backed by connected runtime modules.',
           description: 'Returns a safe capability projection from the existing module registry. Handlers, secrets, GPT bindings, and implementation details are not exposed.',
-          security: [{ bearerAuth: [] }],
+          security: protectedSecurity,
           responses: {
             '200': {
               description: 'Capability list.',
@@ -1613,7 +2050,7 @@ export function buildGptAccessOpenApiDocument() {
         get: {
           operationId: 'getCapabilityV1',
           summary: 'Inspect one GPT Access capability.',
-          security: [{ bearerAuth: [] }],
+          security: protectedSecurity,
           parameters: [
             {
               name: 'id',
@@ -1641,7 +2078,7 @@ export function buildGptAccessOpenApiDocument() {
           operationId: 'runCapabilityV1',
           summary: 'Run one action on a GPT Access capability.',
           description: 'Executes through the existing module dispatch boundary. The capabilities.run scope must be explicitly configured, the module action must be allowlisted, and the request must pass the confirmation gate before this endpoint can execute actions.',
-          security: [{ bearerAuth: [] }],
+          security: protectedSecurity,
           parameters: [
             {
               name: 'id',
@@ -1687,7 +2124,7 @@ export function buildGptAccessOpenApiDocument() {
           operationId: 'listGptAccessModulesAlias',
           summary: 'Compatibility alias for listing GPT Access capabilities.',
           description: 'Returns the same JSON as /gpt-access/capabilities/v1.',
-          security: [{ bearerAuth: [] }],
+          security: protectedSecurity,
           responses: {
             '200': {
               description: 'Capability list.',
@@ -1707,7 +2144,7 @@ export function buildGptAccessOpenApiDocument() {
           operationId: 'getGptAccessModuleAlias',
           summary: 'Compatibility alias for inspecting one GPT Access capability.',
           description: 'Returns the same JSON shape as /gpt-access/capabilities/v1/{id}.',
-          security: [{ bearerAuth: [] }],
+          security: protectedSecurity,
           parameters: [
             {
               name: 'id',
@@ -1735,7 +2172,7 @@ export function buildGptAccessOpenApiDocument() {
           operationId: 'createAiJob',
           summary: 'Create an async backend AI generation job.',
           description: 'Queues one protected backend AI generation request through the approved GPT access gateway. Use /gpt-access/jobs/result with the returned jobId to read completion.',
-          security: [{ bearerAuth: [] }],
+          security: protectedSecurity,
           requestBody: {
             required: true,
             content: {
@@ -1765,29 +2202,36 @@ export function buildGptAccessOpenApiDocument() {
         post: {
           operationId: 'getJobResult',
           summary: 'Read an async job result without using /gpt/:gptId.',
+          security: protectedSecurity,
           requestBody: {
             required: true,
             content: {
               'application/json': {
-                schema: {
-                  type: 'object',
-                  properties: {
-                    jobId: { type: 'string' },
-                    traceId: { type: 'string' }
-                  },
-                  required: ['jobId'],
-                  additionalProperties: false
-                }
+                schema: { '$ref': '#/components/schemas/JobResultRequest' }
               }
             }
           },
-          responses: { '200': { description: 'Job result lookup payload.' } }
+          responses: {
+            '200': {
+              description: 'Job result lookup payload.',
+              content: {
+                'application/json': {
+                  schema: { '$ref': '#/components/schemas/JobResultResponse' }
+                }
+              }
+            },
+            '400': { description: 'Invalid request.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '401': { description: 'Unauthorized.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '403': { description: 'Scope denied.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '503': { description: 'Jobs backend unavailable.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } }
+          }
         }
       },
       '/gpt-access/diagnostics/deep': {
         post: {
           operationId: 'runDeepDiagnostics',
           summary: 'Run approved read-only deep diagnostics.',
+          security: protectedSecurity,
           requestBody: {
             required: false,
             content: {
@@ -1813,6 +2257,7 @@ export function buildGptAccessOpenApiDocument() {
         post: {
           operationId: 'explainApprovedQuery',
           summary: 'Run EXPLAIN for an approved read-only query template.',
+          security: protectedSecurity,
           requestBody: {
             required: true,
             content: {
@@ -1842,6 +2287,7 @@ export function buildGptAccessOpenApiDocument() {
         post: {
           operationId: 'queryBackendLogs',
           summary: 'Query sanitized backend logs if an internal log store is configured.',
+          security: protectedSecurity,
           requestBody: {
             required: true,
             content: {
@@ -1870,28 +2316,27 @@ export function buildGptAccessOpenApiDocument() {
         post: {
           operationId: 'arcanosMcpControl',
           summary: 'Run an approved read-only MCP-style control tool.',
+          security: protectedSecurity,
           requestBody: {
             required: true,
             content: {
               'application/json': {
-                schema: {
-                  type: 'object',
-                  properties: {
-                    tool: {
-                      type: 'string',
-                      enum: [...GPT_ACCESS_MCP_TOOLS]
-                    },
-                    args: { type: 'object', additionalProperties: true }
-                  },
-                  required: ['tool'],
-                  additionalProperties: false
-                }
+                schema: { '$ref': '#/components/schemas/McpControlRequest' }
               }
             }
           },
           responses: {
-            '200': { description: 'Tool result.' },
-            '403': { description: 'Tool denied.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } }
+            '200': {
+              description: 'Tool result.',
+              content: {
+                'application/json': {
+                  schema: { '$ref': '#/components/schemas/GatewayToolResponse' }
+                }
+              }
+            },
+            '401': { description: 'Unauthorized.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '403': { description: 'Tool denied.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '503': { description: 'Tool unavailable.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } }
           }
         }
       },
@@ -1899,6 +2344,7 @@ export function buildGptAccessOpenApiDocument() {
         get: {
           operationId: 'getGptAccessOpenApi',
           summary: 'Get the GPT access OpenAPI document.',
+          security: [],
           responses: { '200': { description: 'OpenAPI document.' } }
         }
       }

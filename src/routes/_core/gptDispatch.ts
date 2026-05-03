@@ -1091,7 +1091,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
           : 'CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT',
         message: 'message' in writePlaneClassification
           ? writePlaneClassification.message
-          : 'Control-plane requests must use direct endpoints, /gpt-access/*, or POST /mcp.',
+          : 'Control-plane requests must use direct endpoints, /gpt-access/*, or POST /gpt-access/mcp.',
         details: {
           kind: writePlaneClassification.kind,
           reason: writePlaneClassification.reason,

@@ -640,12 +640,13 @@ describe('gpt router universal dispatch', () => {
           message: expect.stringContaining('/gpt-access/*'),
         }),
         canonical: expect.objectContaining({
-          status: '/status',
-          workers: '/workers/status',
-          jobStatus: '/jobs/{jobId}',
-          jobResult: '/jobs/{jobId}/result',
+          status: '/gpt-access/status',
+          workers: '/gpt-access/workers/status',
+          queueInspect: '/gpt-access/queue/inspect',
+          jobStatus: '/gpt-access/jobs/result',
+          jobResult: '/gpt-access/jobs/result',
           gptAccessJobResult: '/gpt-access/jobs/result',
-          mcp: '/mcp',
+          mcp: '/gpt-access/mcp',
         }),
         _route: expect.objectContaining({
           gptId: 'arcanos-core',
@@ -729,8 +730,8 @@ describe('gpt router universal dispatch', () => {
           code: 'CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT',
         }),
         canonical: expect.objectContaining({
-          jobStatus: '/jobs/{jobId}',
-          jobResult: '/jobs/{jobId}/result',
+          jobStatus: '/gpt-access/jobs/result',
+          jobResult: '/gpt-access/jobs/result',
         }),
         _route: expect.objectContaining({
           route: 'control_guard',
@@ -761,8 +762,8 @@ describe('gpt router universal dispatch', () => {
           code: 'CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT',
         }),
         canonical: expect.objectContaining({
-          jobStatus: '/jobs/{jobId}',
-          jobResult: '/jobs/{jobId}/result',
+          jobStatus: '/gpt-access/jobs/result',
+          jobResult: '/gpt-access/jobs/result',
         }),
         _route: expect.objectContaining({
           route: 'control_guard',
@@ -796,8 +797,8 @@ describe('gpt router universal dispatch', () => {
           code: 'CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT',
         }),
         canonical: expect.objectContaining({
-          jobStatus: '/jobs/{jobId}',
-          jobResult: '/jobs/{jobId}/result',
+          jobStatus: '/gpt-access/jobs/result',
+          jobResult: '/gpt-access/jobs/result',
         }),
         _route: expect.objectContaining({
           route: 'control_guard',
@@ -823,9 +824,10 @@ describe('gpt router universal dispatch', () => {
           code: 'CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT',
         }),
         canonical: expect.objectContaining({
-          mcp: '/mcp',
-          workers: '/workers/status',
-          selfHeal: '/status/safety/self-heal',
+          mcp: '/gpt-access/mcp',
+          workers: '/gpt-access/workers/status',
+          queueInspect: '/gpt-access/queue/inspect',
+          selfHeal: '/gpt-access/self-heal/status',
         }),
         _route: expect.objectContaining({
           gptId: 'arcanos-core',
@@ -928,7 +930,7 @@ describe('gpt router universal dispatch', () => {
           code: 'CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT',
         }),
         canonical: expect.objectContaining({
-          mcp: '/mcp',
+          mcp: '/gpt-access/mcp',
         }),
       }),
     );

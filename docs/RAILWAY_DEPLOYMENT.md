@@ -6,7 +6,7 @@ This runbook documents the active Railway deployment workflow for Arcanos using 
 ## Prerequisites
 - Railway account and project access.
 - Repository connected to Railway.
-- Required secrets available (`OPENAI_API_KEY`; optionally `DATABASE_URL` if external DB).
+- Required secrets available (`OPENAI_API_KEY`; `DATABASE_URL` for durable async jobs; GPT Access variables when Custom GPT diagnostics are enabled).
 
 ## Setup
 Pre-deploy checks:
@@ -45,7 +45,10 @@ Environment variables:
 | `NODE_ENV` | Railway-managed | Set to `production` by config. |
 | `ARCANOS_PROCESS_KIND` | Yes | `web` for the API service, `worker` for the async worker service. The launcher exits if missing or invalid. |
 | `RUN_WORKERS` | Launcher-managed | Set by `scripts/start-railway-service.mjs` from `ARCANOS_PROCESS_KIND`. |
-| `DATABASE_URL` | Optional | Attach Railway PostgreSQL for persistence. |
+| `DATABASE_URL` | Required for async GPT jobs | Attach Railway PostgreSQL for persistence; web and worker services must share it. |
+| `ARCANOS_GPT_ACCESS_TOKEN` | Required for `/gpt-access/*` | Strong bearer token stored only in Railway Variables and GPT Action auth. |
+| `ARCANOS_GPT_ACCESS_BASE_URL` | Required for GPT Action import | Public HTTPS origin advertised by `/gpt-access/openapi.json`; do not rely on request headers in production. |
+| `ARCANOS_GPT_ACCESS_SCOPES` | Required for async GPT access | Include `runtime.read,workers.read,queue.read,jobs.create,jobs.result,logs.read_sanitized,db.explain_approved,mcp.approved_readonly,diagnostics.read`; add capability scopes only when intentionally enabled. |
 | `ARC_LOG_PATH` | Optional | Defaults to `/tmp/arc/log`. |
 | `GPT_FAST_PATH_ENABLED` | Optional | Defaults to `true`; disables inline prompt-generation fast path when set to `false`. |
 | `GPT_FAST_PATH_MODEL` | Optional | Defaults to `gpt-4.1-mini`; use a low-latency model for inline fast-path requests. |
@@ -116,7 +119,8 @@ Rollback:
 - Repeated restarts: inspect `/health`, `/healthz`, and `/readyz` along with Railway logs.
 - App boots without AI output: validate `OPENAI_API_KEY` is present and valid.
 - Persistence degraded: attach PostgreSQL or set valid `DATABASE_URL`.
-- Async jobs stay queued: verify the worker service is deployed, has `ARCANOS_PROCESS_KIND=worker`, can reach `DATABASE_URL`, and has `OPENAI_API_KEY`.
+- Async jobs stay queued: verify the worker service is deployed, has `ARCANOS_PROCESS_KIND=worker`, can reach `DATABASE_URL`, has `OPENAI_API_KEY`, and the web service has `ARCANOS_GPT_ACCESS_SCOPES` including `jobs.create,jobs.result`.
+- Custom GPT cannot import or calls the wrong host: set `ARCANOS_GPT_ACCESS_BASE_URL` to the public web service origin and redeploy.
 
 ## References
 - `../railway.json`

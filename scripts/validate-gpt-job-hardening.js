@@ -12,7 +12,15 @@ import { join } from 'node:path';
 import process from 'node:process';
 
 const DEFAULTS = Object.freeze({
-  baseUrl: process.env.ARCANOS_BACKEND_URL || process.env.SERVER_URL || process.env.BACKEND_URL || '',
+  baseUrl: process.env.ARCANOS_GPT_ACCESS_BASE_URL ||
+    process.env.ARCANOS_BASE_URL ||
+    process.env.ARCANOS_BACKEND_URL ||
+    process.env.SERVER_URL ||
+    process.env.BACKEND_URL ||
+    process.env.PUBLIC_BASE_URL ||
+    process.env.RAILWAY_PUBLIC_URL ||
+    process.env.RAILWAY_STATIC_URL ||
+    '',
   healthPath: '/gpt-access/health',
   gptId: 'arcanos-core',
   gatewayCredential: process.env.ARCANOS_GPT_ACCESS_TOKEN || process.env.GPT_ACCESS_TOKEN || '',
@@ -399,8 +407,20 @@ async function runValidation(config) {
   const createRequestSchema = createRequestSchemaName
     ? openApiResponse.json?.components?.schemas?.[createRequestSchemaName]
     : null;
+  const advertisedServerUrl = openApiResponse.json?.servers?.[0]?.url ?? null;
   const unsafeSchemaFields = ['sql', 'target', 'endpoint', 'headers', 'auth', 'cookies', 'proxy', 'url']
     .filter((field) => Object.prototype.hasOwnProperty.call(createRequestSchema?.properties ?? {}, field));
+  report.checks.push(
+    createCheck('openapi_server_url_matches_target',
+      openApiResponse.status === 200
+        && advertisedServerUrl === baseUrl,
+      {
+        status: openApiResponse.status,
+        advertisedServerUrl,
+        expectedServerUrl: baseUrl
+      }
+    )
+  );
   report.checks.push(
     createCheck('openapi_createAiJob_contract', openApiResponse.status === 200
       && createOperation?.operationId === 'createAiJob'

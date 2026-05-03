@@ -26,11 +26,14 @@ import {
   buildGptAccessHealthPayload,
   buildGptAccessOpenApiDocument,
   createGptAccessAiJob,
+  getGptAccessQueueInspection,
+  getGptAccessSelfHealStatus,
   explainApprovedQuery,
   getGptAccessJobResult,
   gptAccessAuthMiddleware,
   queryBackendLogs,
   requireGptAccessScope,
+  resolveGptAccessOpenApiServerUrl,
   runDeepDiagnostics,
   runGptAccessMcpTool,
   sanitizeGptAccessPayload,
@@ -316,6 +319,14 @@ const runGptAccessCapability = asyncHandler(async (req, res) => {
 
 router.use('/gpt-access', securityHeaders);
 router.use('/gpt-access', gptAccessRateLimit);
+
+router.get('/gpt-access/openapi.json', (req, res) => {
+  res.set('cache-control', 'no-store, max-age=0');
+  res.json(buildGptAccessOpenApiDocument({
+    serverUrl: resolveGptAccessOpenApiServerUrl(req)
+  }));
+});
+
 router.use('/gpt-access', gptAccessAuthMiddleware);
 
 router.get(
@@ -374,6 +385,22 @@ router.get(
   requireGptAccessScope('workers.read'),
   asyncHandler(async (_req, res) => {
     res.json(sanitizeGptAccessPayload(await getWorkerControlHealth()));
+  })
+);
+
+router.get(
+  '/gpt-access/queue/inspect',
+  requireGptAccessScope('queue.read'),
+  asyncHandler(async (_req, res) => {
+    sendGptAccessResult(res, await getGptAccessQueueInspection());
+  })
+);
+
+router.get(
+  '/gpt-access/self-heal/status',
+  requireGptAccessScope('mcp.approved_readonly'),
+  asyncHandler(async (_req, res) => {
+    sendGptAccessResult(res, await getGptAccessSelfHealStatus());
   })
 );
 
@@ -442,9 +469,17 @@ router.post(
   })
 );
 
-router.get('/gpt-access/openapi.json', (_req, res) => {
-  res.set('cache-control', 'no-store, max-age=0');
-  res.json(buildGptAccessOpenApiDocument());
+router.use('/gpt-access', (req, res) => {
+  sendGptAccessResult(res, {
+    statusCode: 404,
+    payload: {
+      ok: false,
+      error: {
+        code: 'GPT_ACCESS_ROUTE_NOT_FOUND',
+        message: `GPT access route not found: ${req.method} ${req.path}`
+      }
+    }
+  });
 });
 
 export default router;
