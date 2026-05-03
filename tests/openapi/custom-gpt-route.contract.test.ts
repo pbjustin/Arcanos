@@ -28,6 +28,8 @@ describe('custom GPT route OpenAPI contract', () => {
     expect(requestExampleActions).not.toContain('get_result');
     expect(JSON.stringify(requestExamples)).not.toContain('runtime.inspect');
     expect(JSON.stringify(requestExamples)).not.toContain('workers.status');
+    expect(JSON.stringify(contract)).not.toContain('root.deep_diagnostics');
+    expect(JSON.stringify(contract)).not.toContain('ROOT_DIAGNOSTICS_FORBIDDEN');
 
     const controlActionsSchema =
       contract.components?.schemas?.GptDispatcherDiagnosticsResponse?.properties?.controlActions;

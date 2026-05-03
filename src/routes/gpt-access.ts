@@ -231,14 +231,43 @@ function sendGptAccessInternalError(res: express.Response, message: string): voi
   });
 }
 
+function sendGptAccessUnavailable(
+  res: express.Response,
+  code: string,
+  message: string
+): void {
+  sendGptAccessResult(res, {
+    statusCode: 503,
+    payload: {
+      ok: false,
+      status: 'unavailable',
+      service: 'gpt-access',
+      error: {
+        code,
+        message
+      }
+    }
+  });
+}
+
 function isModuleDispatchNotFoundError(error: unknown): boolean {
   return error instanceof ModuleNotFoundError || error instanceof ModuleActionNotFoundError;
 }
 
 const listGptAccessCapabilities = asyncHandler(async (_req, res) => {
-  const capabilities = getModulesForRegistry()
-    .map(toCapabilitySummary)
-    .sort((left, right) => left.id.localeCompare(right.id));
+  let capabilities;
+  try {
+    capabilities = getModulesForRegistry()
+      .map(toCapabilitySummary)
+      .sort((left, right) => left.id.localeCompare(right.id));
+  } catch {
+    sendGptAccessUnavailable(
+      res,
+      'GPT_ACCESS_MCP_TOOL_UNAVAILABLE',
+      'Capability registry is unavailable.'
+    );
+    return;
+  }
 
   res.json({
     ok: true,
@@ -247,7 +276,17 @@ const listGptAccessCapabilities = asyncHandler(async (_req, res) => {
 });
 
 const getGptAccessCapability = asyncHandler(async (req, res) => {
-  const metadata = getModuleMetadata(req.params.id);
+  let metadata;
+  try {
+    metadata = getModuleMetadata(req.params.id);
+  } catch {
+    sendGptAccessUnavailable(
+      res,
+      'GPT_ACCESS_MCP_TOOL_UNAVAILABLE',
+      'Capability registry is unavailable.'
+    );
+    return;
+  }
 
   if (!metadata) {
     res.json({
@@ -280,7 +319,17 @@ const runGptAccessCapability = asyncHandler(async (req, res) => {
   }
 
   const normalizedAction = action.trim();
-  const metadata = getModuleMetadata(req.params.id);
+  let metadata;
+  try {
+    metadata = getModuleMetadata(req.params.id);
+  } catch {
+    sendGptAccessUnavailable(
+      res,
+      'GPT_ACCESS_MCP_TOOL_UNAVAILABLE',
+      'Capability registry is unavailable.'
+    );
+    return;
+  }
 
   if (!metadata) {
     sendGptAccessNotFound(res, 'GPT_ACCESS_CAPABILITY_NOT_FOUND', 'Capability not found.');
@@ -368,7 +417,15 @@ router.get(
   '/gpt-access/status',
   requireGptAccessScope('runtime.read'),
   asyncHandler(async (req, res) => {
-    await writePublicHealthResponse(req, res);
+    try {
+      await writePublicHealthResponse(req, res);
+    } catch {
+      sendGptAccessUnavailable(
+        res,
+        'GPT_ACCESS_RUNTIME_UNAVAILABLE',
+        'Runtime status is unavailable.'
+      );
+    }
   })
 );
 
@@ -376,7 +433,15 @@ router.get(
   '/gpt-access/workers/status',
   requireGptAccessScope('workers.read'),
   asyncHandler(async (_req, res) => {
-    res.json(sanitizeGptAccessPayload(await getWorkerControlStatus()));
+    try {
+      res.json(sanitizeGptAccessPayload(await getWorkerControlStatus()));
+    } catch {
+      sendGptAccessUnavailable(
+        res,
+        'GPT_ACCESS_WORKER_UNAVAILABLE',
+        'Worker status is unavailable.'
+      );
+    }
   })
 );
 
@@ -384,7 +449,15 @@ router.get(
   '/gpt-access/worker-helper/health',
   requireGptAccessScope('workers.read'),
   asyncHandler(async (_req, res) => {
-    res.json(sanitizeGptAccessPayload(await getWorkerControlHealth()));
+    try {
+      res.json(sanitizeGptAccessPayload(await getWorkerControlHealth()));
+    } catch {
+      sendGptAccessUnavailable(
+        res,
+        'GPT_ACCESS_WORKER_UNAVAILABLE',
+        'Worker helper health is unavailable.'
+      );
+    }
   })
 );
 

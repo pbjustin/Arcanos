@@ -4,6 +4,7 @@ import {
   validateConfig,
   validateDockerfile,
   validateEnvTemplate,
+  validateRailwayIgnore,
 } from '../scripts/validate-railway-compatibility.js';
 
 function buildMinimalRailwayConfig(overrides = {}) {
@@ -112,6 +113,7 @@ describe('validate-railway-compatibility', () => {
     ).toEqual([
       expect.stringContaining('CMD ["node", "scripts/start-railway-service.mjs"]'),
       expect.stringContaining('COPY prisma/ ./prisma/'),
+      expect.stringContaining('COPY vendor/ ./vendor/'),
       expect.stringContaining('npx --yes prisma@5.22.0 generate --schema ./prisma/schema.prisma'),
       expect.stringContaining('ENV RAILWAY_CLI_BIN=/usr/local/bin/railway-native'),
       expect.stringContaining('npm install --global @railway/cli@4.30.2 --no-audit --no-fund'),
@@ -126,11 +128,20 @@ describe('validate-railway-compatibility', () => {
         'RUN wget -qO /tmp/railway-cli.tar.gz https://github.com/railwayapp/cli/releases/download/v4.30.2/railway-v4.30.2-x86_64-unknown-linux-musl.tar.gz && \\',
         '    /usr/local/bin/railway-native --version',
         'COPY prisma/ ./prisma/',
+        'COPY vendor/ ./vendor/',
         'RUN npm install --include=dev --no-audit --no-fund && \\',
         '    npx --yes prisma@5.22.0 generate --schema ./prisma/schema.prisma && \\',
         '    npm run build',
         'CMD ["node", "scripts/start-railway-service.mjs"]',
       ].join('\n'))
     ).toEqual([]);
+  });
+
+  it('rejects Railway build contexts that omit vendored npm file dependencies', () => {
+    expect(validateRailwayIgnore('node_modules/\nvendor/\n')).toEqual([
+      expect.stringContaining('vendor/')
+    ]);
+
+    expect(validateRailwayIgnore('node_modules/\nlogs/\n')).toEqual([]);
   });
 });

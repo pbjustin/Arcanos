@@ -34,7 +34,9 @@ describe('environment validation', () => {
     ALLOW_MOCK_OPENAI: process.env.ALLOW_MOCK_OPENAI,
     FORCE_MOCK: process.env.FORCE_MOCK,
     OPENAI_API_KEY_REQUIRED: process.env.OPENAI_API_KEY_REQUIRED,
-    ARCANOS_GPT_ACCESS_TOKEN: process.env.ARCANOS_GPT_ACCESS_TOKEN
+    ARCANOS_GPT_ACCESS_TOKEN: process.env.ARCANOS_GPT_ACCESS_TOKEN,
+    ARCANOS_GPT_ACCESS_BASE_URL: process.env.ARCANOS_GPT_ACCESS_BASE_URL,
+    ARCANOS_GPT_ACCESS_SCOPES: process.env.ARCANOS_GPT_ACCESS_SCOPES
   };
 
   beforeEach(() => {
@@ -50,6 +52,8 @@ describe('environment validation', () => {
     process.env.PORT = '8080';
     process.env.NODE_ENV = 'development';
     process.env.ARCANOS_GPT_ACCESS_TOKEN = 'test-gpt-access-token-1234567890';
+    process.env.ARCANOS_GPT_ACCESS_BASE_URL = 'https://gateway.example.test';
+    process.env.ARCANOS_GPT_ACCESS_SCOPES = 'runtime.read,workers.read,queue.read,jobs.create,jobs.result,logs.read_sanitized,db.explain_approved,mcp.approved_readonly,diagnostics.read';
     delete process.env.OPENAI_API_KEY_REQUIRED;
     delete process.env.ALLOW_MOCK_OPENAI;
     delete process.env.FORCE_MOCK;
@@ -89,6 +93,8 @@ describe('environment validation', () => {
     process.env.NODE_ENV = 'production';
     process.env.OPENAI_API_KEY = '';
     process.env.ARCANOS_GPT_ACCESS_TOKEN = '';
+    process.env.ARCANOS_GPT_ACCESS_BASE_URL = '';
+    process.env.ARCANOS_GPT_ACCESS_SCOPES = '';
 
     const result = validateEnvironment();
 
@@ -96,7 +102,24 @@ describe('environment validation', () => {
     expect(result.errors).toEqual(
       expect.arrayContaining([
         '❌ Required environment variable OPENAI_API_KEY is not set',
-        '❌ Required environment variable ARCANOS_GPT_ACCESS_TOKEN is not set'
+        '❌ Required environment variable ARCANOS_GPT_ACCESS_TOKEN is not set',
+        '❌ Required environment variable ARCANOS_GPT_ACCESS_BASE_URL is not set',
+        '❌ Required environment variable ARCANOS_GPT_ACCESS_SCOPES is not set'
+      ])
+    );
+  });
+
+  it('rejects invalid GPT access OpenAPI origin and scope config', () => {
+    process.env.ARCANOS_GPT_ACCESS_BASE_URL = 'http://gateway.example.test?token=secret';
+    process.env.ARCANOS_GPT_ACCESS_SCOPES = 'runtime.read,workers.typo';
+
+    const result = validateEnvironment();
+
+    expect(result.isValid).toBe(false);
+    expect(result.errors).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('❌ Invalid value for ARCANOS_GPT_ACCESS_BASE_URL: set but invalid'),
+        '❌ Invalid value for ARCANOS_GPT_ACCESS_SCOPES: "runtime.read,workers.typo"'
       ])
     );
   });

@@ -59,10 +59,8 @@ function parseArgs(argv) {
       continue;
     }
 
-    if (flag === '--access-token' && typeof next === 'string' && next.trim().length > 0) {
-      config.gatewayCredential = next.trim();
-      index += 1;
-      continue;
+    if (flag === '--access-token') {
+      throw new Error('Do not pass GPT Access tokens as CLI arguments. Set ARCANOS_GPT_ACCESS_TOKEN in the local environment or Railway secret store.');
     }
 
     if (flag === '--environment' && typeof next === 'string' && next.trim().length > 0) {
@@ -194,6 +192,48 @@ function hashValue(value) {
   return createHash('sha256').update(String(value), 'utf8').digest('hex').slice(0, 12);
 }
 
+const OUTPUT_REDACTIONS = Object.freeze([
+  [/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi, 'Bearer [REDACTED]'],
+  [/\bsk-[A-Za-z0-9_-]{16,}\b/g, '[REDACTED_OPENAI_KEY]'],
+  [/\b(?:railway|rwy)[_-]?[A-Za-z0-9]{16,}\b/gi, '[REDACTED_RAILWAY_TOKEN]'],
+  [/\b(?:postgres|postgresql|mysql|mongodb):\/\/[^\s"'<>]+/gi, '[REDACTED_DATABASE_URL]'],
+  [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, '[REDACTED_JWT]'],
+  [/\b(?:authorization|cookie|set-cookie|api[_-]?key|openai[_-]?api[_-]?key|access[_-]?token|auth[_-]?token|bearer[_-]?token|openai[_-]?token|railway[_-]?token|refresh[_-]?token|session[_-]?token|token|secret|password|session(?:id)?|database[_-]?url)\s*[:=]\s*["']?[^"'\s,;}]+/gi, '$1=[REDACTED]']
+]);
+
+function sanitizeOutputString(value, knownSecrets = []) {
+  let output = String(value);
+  for (const secret of knownSecrets) {
+    if (typeof secret === 'string' && secret.length >= 8) {
+      output = output.split(secret).join('[REDACTED_SECRET_VALUE]');
+    }
+  }
+  for (const [pattern, replacement] of OUTPUT_REDACTIONS) {
+    output = output.replace(pattern, replacement);
+  }
+  return output;
+}
+
+function sanitizeReportValue(value, knownSecrets = []) {
+  if (typeof value === 'string') {
+    return sanitizeOutputString(value, knownSecrets);
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeReportValue(item, knownSecrets));
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [
+        key,
+        /(authorization|cookie|token|secret|password|database[_-]?url|api[_-]?key)/i.test(key)
+          ? '[REDACTED]'
+          : sanitizeReportValue(entry, knownSecrets)
+      ])
+    );
+  }
+  return value;
+}
+
 function extractJobId(payload) {
   if (!payload || typeof payload !== 'object') {
     return '';
@@ -296,7 +336,7 @@ function executeRailwayCommand(args) {
   throw lastError || new Error('Failed to execute Railway CLI.');
 }
 
-function searchLogs(serviceName, environmentName, filter, since, lines) {
+function searchLogs(serviceName, environmentName, filter, since, lines, knownSecrets = []) {
   if (!serviceName || !environmentName) {
     return {
       skipped: true,
@@ -321,7 +361,10 @@ function searchLogs(serviceName, environmentName, filter, since, lines) {
   ]);
 
   const normalized = rawOutput.trim();
-  const sanitizedOutput = normalized.split(filter).join('[REDACTED_MARKER]');
+  const sanitizedOutput = sanitizeOutputString(
+    normalized.split(filter).join('[REDACTED_MARKER]'),
+    knownSecrets
+  );
 
   return {
     skipped: false,
@@ -491,10 +534,11 @@ async function runValidation(config) {
     )
   );
 
-  const webPromptLogs = searchLogs(config.service, config.environment, promptMarker, config.logSince, config.logLines);
-  const workerPromptLogs = searchLogs(config.workerService, config.environment, promptMarker, config.logSince, config.logLines);
-  const webSecretLogs = searchLogs(config.service, config.environment, fakeSecretMarker, config.logSince, config.logLines);
-  const workerSecretLogs = searchLogs(config.workerService, config.environment, fakeSecretMarker, config.logSince, config.logLines);
+  const knownSecrets = [gatewayCredential, fakeSecretMarker, promptMarker].filter(Boolean);
+  const webPromptLogs = searchLogs(config.service, config.environment, promptMarker, config.logSince, config.logLines, knownSecrets);
+  const workerPromptLogs = searchLogs(config.workerService, config.environment, promptMarker, config.logSince, config.logLines, knownSecrets);
+  const webSecretLogs = searchLogs(config.service, config.environment, fakeSecretMarker, config.logSince, config.logLines, knownSecrets);
+  const workerSecretLogs = searchLogs(config.workerService, config.environment, fakeSecretMarker, config.logSince, config.logLines, knownSecrets);
   report.checks.push(
     createCheck('prompt_marker_absent_from_logs',
       !webPromptLogs.matches && !workerPromptLogs.matches,
@@ -526,7 +570,7 @@ async function runValidation(config) {
 async function main() {
   const config = parseArgs(process.argv.slice(2));
   const report = await runValidation(config);
-  process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify(sanitizeReportValue(report, [config.gatewayCredential]), null, 2)}\n`);
   process.exitCode = report.summary.overall === 'PASS' ? 0 : 1;
 }
 
@@ -536,7 +580,7 @@ main().catch((error) => {
       overall: 'FAIL',
       failedChecks: 1
     },
-    error: error instanceof Error ? error.message : String(error)
+    error: sanitizeOutputString(error instanceof Error ? error.message : String(error))
   };
 
   process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);

@@ -314,6 +314,20 @@ export function classifyWritingPlaneInput(input: {
     };
   }
 
+  if (normalizedAction === 'root.deep_diagnostics') {
+    return {
+      plane: 'control',
+      kind: 'diagnostics',
+      action: 'root.deep_diagnostics',
+      reason: 'explicit_action_root_deep_diagnostics',
+      errorCode: 'TRINITY_CONTROL_LEAK',
+      message: 'Root diagnostics are control-plane operations and must not execute through POST /gpt/{gptId}.',
+      canonical: {
+        diagnostics: '/gpt-access/diagnostics/deep',
+      },
+    };
+  }
+
   if (normalizedAction === 'system_state' || normalizedMode === 'system_state') {
     return {
       plane: 'control',

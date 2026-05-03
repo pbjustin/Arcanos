@@ -32,6 +32,9 @@ describe('runtime diagnostics routes', () => {
   const originalOpenAiKey = process.env.OPENAI_KEY;
   const originalDiagnosticsSharedMetrics = process.env.DIAGNOSTICS_SHARED_METRICS;
   const originalGptRouterHash = process.env.SAFETY_EXPECTED_HASH_GPT_ROUTER_CONFIG;
+  const originalGptAccessToken = process.env.ARCANOS_GPT_ACCESS_TOKEN;
+  const originalGptAccessScopes = process.env.ARCANOS_GPT_ACCESS_SCOPES;
+  const originalGptAccessBaseUrl = process.env.ARCANOS_GPT_ACCESS_BASE_URL;
 
   beforeEach(() => {
     process.env.NODE_ENV = 'test';
@@ -41,6 +44,9 @@ describe('runtime diagnostics routes', () => {
     process.env.OPENAI_KEY = '';
     process.env.DIAGNOSTICS_SHARED_METRICS = 'false';
     process.env.SAFETY_EXPECTED_HASH_GPT_ROUTER_CONFIG = CURRENT_GPT_ROUTER_HASH;
+    process.env.ARCANOS_GPT_ACCESS_TOKEN = 'test-runtime-diagnostics-gpt-access-token';
+    process.env.ARCANOS_GPT_ACCESS_SCOPES = 'runtime.read,workers.read,queue.read,jobs.result,mcp.approved_readonly,diagnostics.read';
+    process.env.ARCANOS_GPT_ACCESS_BASE_URL = 'https://gateway.example.test';
   });
 
   afterEach(() => {
@@ -51,6 +57,9 @@ describe('runtime diagnostics routes', () => {
     restoreEnvVar('OPENAI_KEY', originalOpenAiKey);
     restoreEnvVar('DIAGNOSTICS_SHARED_METRICS', originalDiagnosticsSharedMetrics);
     restoreEnvVar('SAFETY_EXPECTED_HASH_GPT_ROUTER_CONFIG', originalGptRouterHash);
+    restoreEnvVar('ARCANOS_GPT_ACCESS_TOKEN', originalGptAccessToken);
+    restoreEnvVar('ARCANOS_GPT_ACCESS_SCOPES', originalGptAccessScopes);
+    restoreEnvVar('ARCANOS_GPT_ACCESS_BASE_URL', originalGptAccessBaseUrl);
   });
 
   it('returns the live root response', async () => {
@@ -60,6 +69,55 @@ describe('runtime diagnostics routes', () => {
 
     expect(response.status).toBe(200);
     expect(response.text).toBe('ARCANOS is live');
+  });
+
+  it('mounts GPT Access metadata and protected diagnostics through the full app as JSON', async () => {
+    const app = await buildApp();
+
+    const openApiResponse = await request(app).get('/gpt-access/openapi.json');
+    expect(openApiResponse.status).toBe(200);
+    expect(openApiResponse.headers['content-type']).toContain('application/json');
+    expect(openApiResponse.body.openapi).toBe('3.1.0');
+    expect(openApiResponse.body.servers).toEqual([{ url: 'https://gateway.example.test' }]);
+    expect(openApiResponse.body.paths['/gpt-access/status'].get.security).toEqual([{ bearerAuth: [] }]);
+    expect(JSON.stringify(openApiResponse.body)).not.toContain('test-runtime-diagnostics-gpt-access-token');
+
+    const missingAuthResponse = await request(app).get('/gpt-access/status');
+    expect(missingAuthResponse.status).toBe(401);
+    expect(missingAuthResponse.headers['content-type']).toContain('application/json');
+    expect(missingAuthResponse.body).toEqual(expect.objectContaining({
+      ok: false,
+      error: {
+        code: 'UNAUTHORIZED_GPT_ACCESS',
+        message: 'Missing GPT access bearer token.'
+      }
+    }));
+
+    const invalidAuthResponse = await request(app)
+      .get('/gpt-access/status')
+      .set('Authorization', 'Bearer wrong-token');
+    expect(invalidAuthResponse.status).toBe(401);
+    expect(invalidAuthResponse.headers['content-type']).toContain('application/json');
+    expect(invalidAuthResponse.body.error.code).toBe('UNAUTHORIZED_GPT_ACCESS');
+
+    const statusResponse = await request(app)
+      .get('/gpt-access/status')
+      .set('Authorization', 'Bearer test-runtime-diagnostics-gpt-access-token');
+    expect(statusResponse.status).toBe(200);
+    expect(statusResponse.headers['content-type']).toContain('application/json');
+    expect(statusResponse.body).toEqual(expect.objectContaining({
+      status: 'ok',
+      service: 'arcanos-backend'
+    }));
+
+    const rendered = JSON.stringify([
+      openApiResponse.body,
+      missingAuthResponse.body,
+      invalidAuthResponse.body,
+      statusResponse.body
+    ]);
+    expect(rendered).not.toContain('ClientResponseError');
+    expect(rendered).not.toContain('<html');
   });
 
   it('keeps local diagnostics on direct endpoints and blocks the GPT diagnostics action', async () => {

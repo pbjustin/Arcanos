@@ -22,10 +22,12 @@ const PROJECT_ROOT = process.cwd();
 const RAILWAY_CONFIG_PATH = path.join(PROJECT_ROOT, 'railway.json');
 const ENV_TEMPLATE_PATH = path.join(PROJECT_ROOT, '.env.example');
 const DOCKERFILE_PATH = path.join(PROJECT_ROOT, 'Dockerfile');
+const RAILWAYIGNORE_PATH = path.join(PROJECT_ROOT, '.railwayignore');
 const EXPECTED_START_COMMAND = 'node scripts/start-railway-service.mjs';
 const EXPECTED_HEALTHCHECK_PATH = '/health';
 const EXPECTED_DOCKERFILE_CMD = 'CMD ["node", "scripts/start-railway-service.mjs"]';
 const EXPECTED_DOCKERFILE_PRISMA_COPY = 'COPY prisma/ ./prisma/';
+const EXPECTED_DOCKERFILE_VENDOR_COPY = 'COPY vendor/ ./vendor/';
 const EXPECTED_DOCKERFILE_PRISMA_GENERATE = 'npx --yes prisma@5.22.0 generate --schema ./prisma/schema.prisma';
 const EXPECTED_DOCKERFILE_RAILWAY_CLI_BIN_ENV = 'ENV RAILWAY_CLI_BIN=/usr/local/bin/railway-native';
 const EXPECTED_DOCKERFILE_RAILWAY_CLI_INSTALL = 'npm install --global @railway/cli@4.30.2 --no-audit --no-fund';
@@ -95,6 +97,10 @@ async function readEnvTemplate() {
 
 async function readDockerfile() {
   return readProjectFile(DOCKERFILE_PATH);
+}
+
+async function readRailwayIgnore() {
+  return readProjectFile(RAILWAYIGNORE_PATH);
 }
 
 /**
@@ -260,6 +266,11 @@ export function validateDockerfile(dockerfileRaw) {
     errors.push(`Dockerfile must include ${EXPECTED_DOCKERFILE_PRISMA_COPY}`);
   }
 
+  //audit Assumption: npm lockfile file: dependencies under vendor/ must be present before npm ci; risk: Railway image builds fail even though local installs pass; invariant: Dockerfile copies vendor before dependency install; handling: fail validation when the copy is absent.
+  if (!dockerfileRaw.includes(EXPECTED_DOCKERFILE_VENDOR_COPY)) {
+    errors.push(`Dockerfile must include ${EXPECTED_DOCKERFILE_VENDOR_COPY}`);
+  }
+
   if (!dockerfileRaw.includes(EXPECTED_DOCKERFILE_PRISMA_GENERATE)) {
     errors.push(`Dockerfile must include ${EXPECTED_DOCKERFILE_PRISMA_GENERATE}`);
   }
@@ -284,17 +295,35 @@ export function validateDockerfile(dockerfileRaw) {
   return errors;
 }
 
+export function validateRailwayIgnore(railwayIgnoreRaw) {
+  const errors = [];
+  const ignoredVendor = railwayIgnoreRaw
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith('#'))
+    .some((line) => line === 'vendor/' || line === '/vendor/' || line === 'vendor' || line === '/vendor');
+
+  //audit Assumption: Railway build context must include vendored npm file dependencies referenced by package-lock; risk: deploy build fails before app startup; invariant: .railwayignore does not exclude vendor/; handling: fail validation when vendor is ignored.
+  if (ignoredVendor) {
+    errors.push('.railwayignore must not exclude vendor/ because package-lock references vendored npm file dependencies');
+  }
+
+  return errors;
+}
+
 async function main() {
   try {
-    const [config, envTemplateRaw, dockerfileRaw] = await Promise.all([
+    const [config, envTemplateRaw, dockerfileRaw, railwayIgnoreRaw] = await Promise.all([
       readRailwayConfig(),
       readEnvTemplate(),
       readDockerfile(),
+      readRailwayIgnore(),
     ]);
     const errors = [
       ...validateConfig(config),
       ...validateEnvTemplate(extractEnvTemplateKeys(envTemplateRaw)),
       ...validateDockerfile(dockerfileRaw),
+      ...validateRailwayIgnore(railwayIgnoreRaw),
     ];
 
     //audit Assumption: any compatibility error should block CI/deploy; risk: shipping invalid platform config; invariant: zero validation errors required; handling: print all errors and exit 1.

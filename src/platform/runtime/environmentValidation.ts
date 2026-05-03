@@ -26,6 +26,20 @@ export interface ValidationResult {
   suggestions: string[];
 }
 
+const GPT_ACCESS_SCOPE_NAMES = new Set([
+  'runtime.read',
+  'workers.read',
+  'queue.read',
+  'jobs.create',
+  'jobs.result',
+  'logs.read_sanitized',
+  'db.explain_approved',
+  'mcp.approved_readonly',
+  'capabilities.read',
+  'capabilities.run',
+  'diagnostics.read'
+]);
+
 type ValidationLogContext = Record<string, unknown> & {
   state: 'set';
   sensitivity: 'public' | 'sensitive';
@@ -52,6 +66,40 @@ function isValidRailwayEnvironmentName(value: string): boolean {
 
   //audit Assumption: Railway operators can create arbitrary non-empty environment labels; failure risk: strict allowlists reject valid environments like `DEBUG` and block startup before the listener binds; expected invariant: only blank names are rejected while custom labels remain valid; handling strategy: validate presence instead of enumerating a closed set.
   return normalizedValue.length > 0;
+}
+
+function isLocalHostname(hostname: string): boolean {
+  const normalized = hostname.toLowerCase().replace(/^\[|\]$/gu, '');
+  return normalized === 'localhost'
+    || normalized.endsWith('.localhost')
+    || normalized === '127.0.0.1'
+    || normalized === '::1';
+}
+
+function isValidGptAccessBaseUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+      return false;
+    }
+
+    if (parsed.protocol === 'https:') {
+      return true;
+    }
+
+    return parsed.protocol === 'http:' && isLocalHostname(parsed.hostname);
+  } catch {
+    return false;
+  }
+}
+
+function isValidGptAccessScopes(value: string): boolean {
+  const scopes = value
+    .split(',')
+    .map((scope) => scope.trim())
+    .filter(Boolean);
+
+  return scopes.length > 0 && scopes.every((scope) => GPT_ACCESS_SCOPE_NAMES.has(scope));
 }
 
 // Environment variable definitions
@@ -103,6 +151,28 @@ const environmentChecks: EnvironmentCheck[] = [
     suggestions: [
       'Generate a high-entropy token and set ARCANOS_GPT_ACCESS_TOKEN in Railway',
       'Use ARCANOS_GPT_ACCESS_SCOPES to restrict access; include jobs.create only when needed'
+    ]
+  },
+  {
+    name: 'ARCANOS_GPT_ACCESS_BASE_URL',
+    required: false,
+    description: 'Public HTTPS origin advertised by /gpt-access/openapi.json',
+    validator: isValidGptAccessBaseUrl,
+    suggestions: [
+      'Set ARCANOS_GPT_ACCESS_BASE_URL to the public web service origin in Railway',
+      'Use https:// for deployed environments; http:// is accepted only for localhost development',
+      'Do not include credentials, query strings, or fragments in the public origin'
+    ]
+  },
+  {
+    name: 'ARCANOS_GPT_ACCESS_SCOPES',
+    required: false,
+    description: 'Comma-separated /gpt-access bearer scope allowlist',
+    validator: isValidGptAccessScopes,
+    suggestions: [
+      'For diagnostics and async jobs use runtime.read,workers.read,queue.read,jobs.create,jobs.result,logs.read_sanitized,db.explain_approved,mcp.approved_readonly,diagnostics.read',
+      'Add capabilities.read or capabilities.run only when capability discovery/execution is intentionally enabled',
+      'Remove misspelled or unknown scopes; unknown values are denied at runtime'
     ]
   },
   {
@@ -177,7 +247,7 @@ const environmentChecks: EnvironmentCheck[] = [
 ];
 
 function isSensitiveEnvironmentVariable(name: string): boolean {
-  return /(key|token|secret|password|credential|database_url|connection|dsn)/i.test(name);
+  return /(key|token|secret|password|credential|database_url|connection|dsn|url)/i.test(name);
 }
 
 function parseBooleanEnvValue(value: string | undefined): boolean | null {
@@ -231,6 +301,9 @@ function isCheckRequired(check: EnvironmentCheck): boolean {
     return isOpenAIApiKeyRequiredForStartup();
   }
   if (check.name === 'ARCANOS_GPT_ACCESS_TOKEN') {
+    return isGptAccessTokenRequiredForStartup();
+  }
+  if (check.name === 'ARCANOS_GPT_ACCESS_BASE_URL' || check.name === 'ARCANOS_GPT_ACCESS_SCOPES') {
     return isGptAccessTokenRequiredForStartup();
   }
   return check.required;

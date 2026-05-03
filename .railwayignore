@@ -21,7 +21,6 @@ tmp-*
 coverage/
 *.log
 *.tmp
-vendor/
 /.mypy_cache/
 /memory/
 

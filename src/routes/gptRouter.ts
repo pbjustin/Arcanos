@@ -99,14 +99,6 @@ import { handleGptDagBridge } from '@services/gptDagBridge.js';
 import {
   isGptDagAction,
 } from '@shared/gpt/gptDagBridgeActions.js';
-import {
-  ROOT_DEEP_DIAGNOSTICS_ACTION,
-  ROOT_DIAGNOSTICS_FORBIDDEN,
-  authorizeRootDeepDiagnosticsRequest,
-  buildRootDeepDiagnosticsReport,
-  isRootDeepDiagnosticsAction,
-  logRootDeepDiagnosticsAttempt,
-} from '@services/rootDeepDiagnosticsBridge.js';
 
 const router = express.Router();
 const ARCANOS_CORE_GPT_IDS = new Set(['arcanos-core', 'core', 'arcanos-daemon']);
@@ -1422,65 +1414,6 @@ router.post("/:gptId", async (req, res, next) => {
           gptId: incomingGptId,
           ...buildGptRequestAuthState(req),
         });
-
-        if (isRootDeepDiagnosticsAction(requestedAction)) {
-          const rootDiagnosticsAuth = authorizeRootDeepDiagnosticsRequest(req, incomingGptId);
-          if (!rootDiagnosticsAuth.allowed) {
-            logRootDeepDiagnosticsAttempt({
-              req,
-              timestamp: new Date().toISOString(),
-              traceId,
-              gptId: incomingGptId,
-              action: ROOT_DEEP_DIAGNOSTICS_ACTION,
-              allowed: false,
-              denialReason: rootDiagnosticsAuth.reason,
-            });
-            logGptDispatcherOutcome({
-              req,
-              traceId,
-              gptId: incomingGptId,
-              action: ROOT_DEEP_DIAGNOSTICS_ACTION,
-              status: 403,
-              error: {
-                name: ROOT_DIAGNOSTICS_FORBIDDEN,
-                message: ROOT_DIAGNOSTICS_FORBIDDEN,
-              },
-            });
-            return res.status(403).json({
-              ok: false,
-              error: ROOT_DIAGNOSTICS_FORBIDDEN,
-            });
-          }
-
-          const diagnosticsPayload = await buildRootDeepDiagnosticsReport({
-            req,
-            gptId: incomingGptId,
-            traceId,
-          });
-          logRootDeepDiagnosticsAttempt({
-            req,
-            timestamp: diagnosticsPayload.timestamp,
-            traceId,
-            gptId: incomingGptId,
-            action: ROOT_DEEP_DIAGNOSTICS_ACTION,
-            allowed: true,
-            report: diagnosticsPayload.report,
-          });
-          logGptDispatcherOutcome({
-            req,
-            traceId,
-            gptId: incomingGptId,
-            action: ROOT_DEEP_DIAGNOSTICS_ACTION,
-            status: 200,
-          });
-          return sendGuardedGptJsonResponse(
-            req,
-            res,
-            diagnosticsPayload,
-            'gpt.response.root_deep_diagnostics',
-            200
-          );
-        }
 
         const planeClassification = classifyGptRequestPlane({
           body: effectiveBody,

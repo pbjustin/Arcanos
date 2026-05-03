@@ -18,6 +18,7 @@ import {
 } from '@shared/gpt/gptIdempotency.js';
 import { buildGptJobResultLookupPayload, GPT_QUERY_ACTION } from '@shared/gpt/gptJobResult.js';
 import { redactSensitive } from '@shared/redaction.js';
+import { sanitizeRequestPath } from '@shared/requestPathSanitizer.js';
 import { runtimeDiagnosticsService } from '@services/runtimeDiagnosticsService.js';
 import { getWorkerControlHealth, getWorkerControlStatus } from '@services/workerControlService.js';
 import { planAutonomousWorkerJob } from '@services/workerAutonomyService.js';
@@ -122,6 +123,7 @@ type GatewayErrorCode =
   | 'GPT_ACCESS_SCOPE_DENIED'
   | 'GPT_ACCESS_ROUTE_NOT_FOUND'
   | 'GPT_ACCESS_INTERNAL_ERROR'
+  | 'GPT_ACCESS_RUNTIME_UNAVAILABLE'
   | 'GPT_ACCESS_JOBS_UNAVAILABLE'
   | 'GPT_ACCESS_WORKER_UNAVAILABLE'
   | 'GPT_ACCESS_QUEUE_UNAVAILABLE'
@@ -140,6 +142,23 @@ export interface GptAccessErrorPayload {
     message: string;
   };
 }
+
+interface GptAccessUnavailableDependency {
+  status: 'unavailable';
+  error: {
+    code: GatewayErrorCode;
+    message: string;
+  };
+}
+
+interface GptAccessHealthyDependency<T = unknown> {
+  status: 'healthy';
+  result: T;
+}
+
+type GptAccessDependencySnapshot<T = unknown> =
+  | GptAccessHealthyDependency<T>
+  | GptAccessUnavailableDependency;
 
 export interface ApprovedExplainTemplate {
   sql: string;
@@ -299,6 +318,39 @@ function sendGatewayError(
   res.status(statusCode).json(payload);
 }
 
+function buildGptAccessErrorResult(
+  statusCode: number,
+  code: GatewayErrorCode,
+  message: string,
+  status: 'degraded' | 'unavailable' = 'unavailable'
+) {
+  return {
+    statusCode,
+    payload: {
+      ok: false,
+      status,
+      service: 'gpt-access',
+      error: {
+        code,
+        message
+      }
+    }
+  };
+}
+
+function buildGptAccessDependencyUnavailable(
+  code: GatewayErrorCode,
+  message: string
+): GptAccessUnavailableDependency {
+  return {
+    status: 'unavailable',
+    error: {
+      code,
+      message
+    }
+  };
+}
+
 function getJsonStringLength(value: unknown): number {
   try {
     return JSON.stringify(value)?.length ?? 0;
@@ -448,13 +500,14 @@ function readBearerTokenStatus(req: Request):
 }
 
 export function gptAccessAuthMiddleware(req: Request, res: Response, next: NextFunction): void {
+  const route = sanitizeRequestPath(req.originalUrl);
   const expectedToken = readConfiguredAccessToken();
   if (!expectedToken) {
     const message = isProductionEnvironment()
       ? `${TOKEN_ENV_NAME} is required.`
       : `${TOKEN_ENV_NAME} is not configured.`;
     req.logger?.error?.('gpt_access.auth.failed', {
-      route: req.originalUrl,
+      route,
       reason: 'missing_server_token',
       statusCode: 500
     });
@@ -465,7 +518,7 @@ export function gptAccessAuthMiddleware(req: Request, res: Response, next: NextF
   const providedToken = readBearerTokenStatus(req);
   if (!providedToken.ok) {
     req.logger?.warn?.('gpt_access.auth.failed', {
-      route: req.originalUrl,
+      route,
       reason: providedToken.reason,
       statusCode: 401
     });
@@ -482,7 +535,7 @@ export function gptAccessAuthMiddleware(req: Request, res: Response, next: NextF
 
   if (!timingSafeTokenEquals(providedToken.bearerValue, expectedToken)) {
     req.logger?.warn?.('gpt_access.auth.failed', {
-      route: req.originalUrl,
+      route,
       reason: 'invalid_auth',
       statusCode: 401
     });
@@ -1128,7 +1181,24 @@ export async function createGptAccessAiJob(body: unknown, context: CreateGptAcce
     status: 'validating'
   });
 
-  const routeResolution = await resolveGatewayGptRouting(request.gptId, context.requestId ?? traceId);
+  let routeResolution: Awaited<ReturnType<typeof resolveGatewayGptRouting>>;
+  try {
+    routeResolution = await resolveGatewayGptRouting(request.gptId, context.requestId ?? traceId);
+  } catch (error: unknown) {
+    context.logger?.error?.('gpt_access.ai_job.failed', {
+      traceId,
+      requestType: 'createAiJob',
+      gptId: request.gptId,
+      status: 'routing_unavailable',
+      errorType: error instanceof Error ? error.name : 'unknown'
+    });
+    return buildGptAccessErrorResult(
+      503,
+      'GPT_ACCESS_JOBS_UNAVAILABLE',
+      'GPT routing is unavailable for job creation.',
+      'degraded'
+    );
+  }
   if (!routeResolution.ok) {
     context.logger?.warn?.('gpt_access.ai_job.rejected', {
       traceId,
@@ -1356,54 +1426,140 @@ async function getSelfReflectionStorageStatus() {
   }
 }
 
+async function getWorkerStatusDependencySnapshot(): Promise<GptAccessDependencySnapshot> {
+  try {
+    return {
+      status: 'healthy',
+      result: sanitizeGptAccessPayload(await getWorkerControlStatus())
+    };
+  } catch {
+    return buildGptAccessDependencyUnavailable(
+      'GPT_ACCESS_WORKER_UNAVAILABLE',
+      'Worker status is unavailable.'
+    );
+  }
+}
+
+async function getWorkerHelperHealthDependencySnapshot(): Promise<GptAccessDependencySnapshot> {
+  try {
+    return {
+      status: 'healthy',
+      result: sanitizeGptAccessPayload(await getWorkerControlHealth())
+    };
+  } catch {
+    return buildGptAccessDependencyUnavailable(
+      'GPT_ACCESS_WORKER_UNAVAILABLE',
+      'Worker helper health is unavailable.'
+    );
+  }
+}
+
+async function getQueueDependencySnapshot(): Promise<GptAccessDependencySnapshot> {
+  try {
+    const summary = await getJobQueueSummary();
+    if (!summary) {
+      return buildGptAccessDependencyUnavailable(
+        'GPT_ACCESS_QUEUE_UNAVAILABLE',
+        'Queue subsystem is unavailable.'
+      );
+    }
+
+    return {
+      status: 'healthy',
+      result: sanitizeGptAccessPayload(summary)
+    };
+  } catch {
+    return buildGptAccessDependencyUnavailable(
+      'GPT_ACCESS_QUEUE_UNAVAILABLE',
+      'Queue inspection is unavailable.'
+    );
+  }
+}
+
+function isUnavailableDependency(value: unknown): value is GptAccessUnavailableDependency {
+  return isRecord(value)
+    && value.status === 'unavailable'
+    && isRecord(value.error)
+    && typeof value.error.code === 'string'
+    && typeof value.error.message === 'string';
+}
+
+function dependencyStatusOf(value: unknown): 'healthy' | 'unavailable' {
+  if (isRecord(value) && value.status === 'unavailable') {
+    return 'unavailable';
+  }
+
+  return isUnavailableDependency(value) ? 'unavailable' : 'healthy';
+}
+
+function hasUnavailableDependency(values: unknown[]): boolean {
+  return values.some((value) => dependencyStatusOf(value) === 'unavailable');
+}
+
+function getRuntimeDependencySnapshot(): GptAccessDependencySnapshot<ReturnType<typeof runtimeDiagnosticsService.getHealthSnapshot>> {
+  try {
+    return {
+      status: 'healthy',
+      result: runtimeDiagnosticsService.getHealthSnapshot()
+    };
+  } catch {
+    return buildGptAccessDependencyUnavailable(
+      'GPT_ACCESS_RUNTIME_UNAVAILABLE',
+      'Runtime diagnostics are unavailable.'
+    );
+  }
+}
+
 export async function getGptAccessSelfHealStatus() {
   try {
-    const selfReflection = await getSelfReflectionStorageStatus();
+    const [selfReflection, worker, queue] = await Promise.all([
+      getSelfReflectionStorageStatus(),
+      getWorkerStatusDependencySnapshot(),
+      getQueueDependencySnapshot()
+    ]);
+    const status = hasUnavailableDependency([worker, queue, selfReflection])
+      ? 'degraded'
+      : 'healthy';
     return {
       statusCode: 200,
       payload: sanitizeGptAccessPayload({
         ok: true,
+        status,
         tool: 'self_heal.status',
         result: buildSafetySelfHealSnapshot(),
-        selfReflection
+        selfReflection,
+        worker,
+        queue
       })
     };
   } catch {
-    return {
-      statusCode: 503,
-      payload: {
-        ok: false,
-        error: {
-          code: 'GPT_ACCESS_SELF_HEAL_UNAVAILABLE',
-          message: 'Self-heal status is unavailable.'
-        }
-      }
-    };
+    return buildGptAccessErrorResult(
+      503,
+      'GPT_ACCESS_SELF_HEAL_UNAVAILABLE',
+      'Self-heal status is unavailable.'
+    );
   }
 }
 
 export async function getGptAccessQueueInspection() {
-  try {
-    return {
-      statusCode: 200,
-      payload: sanitizeGptAccessPayload({
-        ok: true,
-        tool: 'queue.inspect',
-        result: await getJobQueueSummary()
-      })
-    };
-  } catch {
-    return {
-      statusCode: 503,
-      payload: {
-        ok: false,
-        error: {
-          code: 'GPT_ACCESS_QUEUE_UNAVAILABLE',
-          message: 'Queue inspection is unavailable.'
-        }
-      }
-    };
+  const queue = await getQueueDependencySnapshot();
+  if (isUnavailableDependency(queue)) {
+    return buildGptAccessErrorResult(
+      503,
+      'GPT_ACCESS_QUEUE_UNAVAILABLE',
+      queue.error.message
+    );
   }
+
+  return {
+    statusCode: 200,
+    payload: sanitizeGptAccessPayload({
+      ok: true,
+      status: 'healthy',
+      tool: 'queue.inspect',
+      result: queue.result
+    })
+  };
 }
 
 export async function runGptAccessMcpTool(body: unknown) {
@@ -1424,34 +1580,45 @@ export async function runGptAccessMcpTool(body: unknown) {
   const { tool } = parsed.data;
   switch (tool) {
     case 'runtime.inspect':
-      return {
-        statusCode: 200,
-        payload: {
-          ok: true,
-          tool,
-          result: runtimeDiagnosticsService.getHealthSnapshot()
+      {
+        const runtime = getRuntimeDependencySnapshot();
+        if (isUnavailableDependency(runtime)) {
+          return buildGptAccessErrorResult(
+            503,
+            'GPT_ACCESS_RUNTIME_UNAVAILABLE',
+            runtime.error.message
+          );
         }
-      };
+
+        return {
+          statusCode: 200,
+          payload: {
+            ok: true,
+            status: 'healthy',
+            tool,
+            result: runtime.result
+          }
+        };
+      }
     case 'workers.status':
-      try {
+      {
+        const worker = await getWorkerStatusDependencySnapshot();
+        if (isUnavailableDependency(worker)) {
+          return buildGptAccessErrorResult(
+            503,
+            'GPT_ACCESS_WORKER_UNAVAILABLE',
+            worker.error.message
+          );
+        }
+
         return {
           statusCode: 200,
           payload: sanitizeGptAccessPayload({
             ok: true,
+            status: 'healthy',
             tool,
-            result: await getWorkerControlStatus()
+            result: worker.result
           })
-        };
-      } catch {
-        return {
-          statusCode: 503,
-          payload: {
-            ok: false,
-            error: {
-              code: 'GPT_ACCESS_WORKER_UNAVAILABLE',
-              message: 'Worker status is unavailable.'
-            }
-          }
         };
       }
     case 'queue.inspect':
@@ -1459,36 +1626,31 @@ export async function runGptAccessMcpTool(body: unknown) {
     case 'self_heal.status':
       return getGptAccessSelfHealStatus();
     case 'diagnostics':
-      try {
-        const [workers, queue, selfHealResult] = await Promise.all([
-          getWorkerControlStatus(),
-          getJobQueueSummary(),
+      {
+        const runtime = getRuntimeDependencySnapshot();
+        const [workers, workerHelperHealth, queue, selfHealResult] = await Promise.all([
+          getWorkerStatusDependencySnapshot(),
+          getWorkerHelperHealthDependencySnapshot(),
+          getQueueDependencySnapshot(),
           getGptAccessSelfHealStatus()
         ]);
+        const dependencies = [runtime, workers, workerHelperHealth, queue, selfHealResult.payload];
+        const status = hasUnavailableDependency(dependencies) ? 'degraded' : 'healthy';
 
         return {
           statusCode: 200,
           payload: sanitizeGptAccessPayload({
             ok: true,
+            status,
             tool,
             result: {
-              runtime: runtimeDiagnosticsService.getHealthSnapshot(),
+              runtime,
               workers,
+              workerHelperHealth,
               queue,
               selfHeal: selfHealResult.payload
             }
           })
-        };
-      } catch {
-        return {
-          statusCode: 503,
-          payload: {
-            ok: false,
-            error: {
-              code: 'GPT_ACCESS_MCP_TOOL_UNAVAILABLE',
-              message: 'Requested MCP diagnostic tool is unavailable.'
-            }
-          }
         };
       }
   }
@@ -1707,6 +1869,11 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
           type: 'object',
           properties: {
             ok: { type: 'boolean', const: false },
+            status: {
+              type: 'string',
+              enum: ['degraded', 'unavailable']
+            },
+            service: { type: 'string' },
             traceId: { type: ['string', 'null'] },
             error: {
               type: 'object',

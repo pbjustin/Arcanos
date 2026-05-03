@@ -338,6 +338,31 @@ describe('/gpt-access gateway', () => {
     });
   });
 
+  it('logs auth failures with sanitized paths instead of query strings', async () => {
+    const warn = jest.fn();
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      req.logger = {
+        warn,
+        error: jest.fn(),
+        info: jest.fn()
+      };
+      next();
+    });
+    app.use('/', gptAccessRouter);
+
+    const response = await request(app)
+      .get('/gpt-access/health?trace=should-not-log');
+
+    expect(response.status).toBe(401);
+    expect(warn).toHaveBeenCalledWith('gpt_access.auth.failed', expect.objectContaining({
+      route: '/gpt-access/health',
+      reason: 'missing_auth'
+    }));
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('should-not-log');
+  });
+
   it('allows valid bearer token and returns gateway health', async () => {
     const response = await authorized(request(buildApp()).get('/gpt-access/health'));
 
@@ -1325,6 +1350,7 @@ describe('/gpt-access gateway', () => {
     expect(response.status).toBe(200);
     expect(response.body).toEqual({
       ok: true,
+      status: 'healthy',
       tool: 'queue.inspect',
       result: {
         pending: 0,
@@ -1334,6 +1360,65 @@ describe('/gpt-access gateway', () => {
     });
     expect(getJobQueueSummaryMock).toHaveBeenCalledTimes(1);
     expect(gptRouteCalled).toBe(false);
+  });
+
+  it('returns explicit unavailable JSON when the queue backend cannot be inspected', async () => {
+    process.env.ARCANOS_GPT_ACCESS_SCOPES = 'queue.read';
+    getJobQueueSummaryMock.mockResolvedValueOnce(null);
+
+    const response = await authorized(request(buildApp()).get('/gpt-access/queue/inspect'));
+
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({
+      ok: false,
+      status: 'unavailable',
+      service: 'gpt-access',
+      error: {
+        code: 'GPT_ACCESS_QUEUE_UNAVAILABLE',
+        message: 'Queue subsystem is unavailable.'
+      }
+    });
+  });
+
+  it('returns explicit unavailable JSON when runtime status collection throws', async () => {
+    process.env.ARCANOS_GPT_ACCESS_SCOPES = 'runtime.read';
+    writePublicHealthResponseMock.mockRejectedValueOnce(new Error('runtime exploded'));
+
+    const response = await authorized(request(buildApp()).get('/gpt-access/status'));
+
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({
+      ok: false,
+      status: 'unavailable',
+      service: 'gpt-access',
+      error: {
+        code: 'GPT_ACCESS_RUNTIME_UNAVAILABLE',
+        message: 'Runtime status is unavailable.'
+      }
+    });
+  });
+
+  it('returns explicit unavailable JSON when worker diagnostics throw', async () => {
+    process.env.ARCANOS_GPT_ACCESS_SCOPES = 'workers.read';
+    getWorkerControlStatusMock.mockRejectedValueOnce(new Error('worker table missing'));
+    getWorkerControlHealthMock.mockRejectedValueOnce(new Error('worker health missing'));
+
+    const statusResponse = await authorized(request(buildApp()).get('/gpt-access/workers/status'));
+    const healthResponse = await authorized(request(buildApp()).get('/gpt-access/worker-helper/health'));
+
+    expect(statusResponse.status).toBe(503);
+    expect(statusResponse.body.error).toEqual({
+      code: 'GPT_ACCESS_WORKER_UNAVAILABLE',
+      message: 'Worker status is unavailable.'
+    });
+    expect(statusResponse.body.status).toBe('unavailable');
+
+    expect(healthResponse.status).toBe(503);
+    expect(healthResponse.body.error).toEqual({
+      code: 'GPT_ACCESS_WORKER_UNAVAILABLE',
+      message: 'Worker helper health is unavailable.'
+    });
+    expect(healthResponse.body.status).toBe('unavailable');
   });
 
   it('exposes self-heal and self-reflection status through a read-only GPT Access endpoint', async () => {
@@ -1393,6 +1478,94 @@ describe('/gpt-access gateway', () => {
     }));
     expect(buildSafetySelfHealSnapshotMock).toHaveBeenCalledTimes(1);
     expect(queryMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps self-heal status readable when worker or queue dependencies are unavailable', async () => {
+    process.env.ARCANOS_GPT_ACCESS_SCOPES = 'mcp.approved_readonly';
+    getWorkerControlStatusMock.mockRejectedValueOnce(new Error('worker unavailable'));
+    getJobQueueSummaryMock.mockResolvedValueOnce(null);
+
+    const response = await authorized(request(buildApp()).get('/gpt-access/self-heal/status'));
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(expect.objectContaining({
+      ok: true,
+      status: 'degraded',
+      tool: 'self_heal.status',
+      worker: {
+        status: 'unavailable',
+        error: {
+          code: 'GPT_ACCESS_WORKER_UNAVAILABLE',
+          message: 'Worker status is unavailable.'
+        }
+      },
+      queue: {
+        status: 'unavailable',
+        error: {
+          code: 'GPT_ACCESS_QUEUE_UNAVAILABLE',
+          message: 'Queue subsystem is unavailable.'
+        }
+      }
+    }));
+  });
+
+  it('marks self-heal status degraded when self-reflection persistence is unavailable', async () => {
+    process.env.ARCANOS_GPT_ACCESS_SCOPES = 'mcp.approved_readonly';
+    isDatabaseConnectedMock.mockReturnValueOnce(false);
+
+    const response = await authorized(request(buildApp()).get('/gpt-access/self-heal/status'));
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(expect.objectContaining({
+      ok: true,
+      status: 'degraded',
+      tool: 'self_heal.status',
+      selfReflection: expect.objectContaining({
+        configured: false,
+        status: 'unavailable',
+        message: 'Self-reflection persistence is unavailable because the database is not connected.'
+      })
+    }));
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it('returns degraded MCP diagnostics instead of failing all sections when dependencies are unavailable', async () => {
+    getWorkerControlStatusMock.mockRejectedValue(new Error('worker unavailable'));
+    getWorkerControlHealthMock.mockRejectedValue(new Error('worker helper unavailable'));
+    getJobQueueSummaryMock.mockResolvedValue(null);
+
+    const response = await authorized(request(buildApp()).post('/gpt-access/mcp'))
+      .send({ tool: 'diagnostics', args: {} });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(expect.objectContaining({
+      ok: true,
+      status: 'degraded',
+      tool: 'diagnostics',
+      result: expect.objectContaining({
+        workers: {
+          status: 'unavailable',
+          error: {
+            code: 'GPT_ACCESS_WORKER_UNAVAILABLE',
+            message: 'Worker status is unavailable.'
+          }
+        },
+        workerHelperHealth: {
+          status: 'unavailable',
+          error: {
+            code: 'GPT_ACCESS_WORKER_UNAVAILABLE',
+            message: 'Worker helper health is unavailable.'
+          }
+        },
+        queue: {
+          status: 'unavailable',
+          error: {
+            code: 'GPT_ACCESS_QUEUE_UNAVAILABLE',
+            message: 'Queue subsystem is unavailable.'
+          }
+        }
+      })
+    }));
   });
 
   it('rejects unknown MCP tools', async () => {
@@ -1510,6 +1683,31 @@ describe('/gpt-access gateway', () => {
     expect(getJobByIdMock).not.toHaveBeenCalled();
   });
 
+  it('returns structured JSON when GPT job routing is unavailable', async () => {
+    allowCreateJobs();
+    resolveGptRoutingMock.mockRejectedValueOnce(new Error('Authorization: Bearer should-not-leak'));
+
+    const response = await authorized(request(buildApp()).post('/gpt-access/jobs/create'))
+      .send({
+        gptId: 'arcanos-core',
+        task: 'Generate a Codex IDE prompt.'
+      });
+
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({
+      ok: false,
+      status: 'degraded',
+      service: 'gpt-access',
+      error: {
+        code: 'GPT_ACCESS_JOBS_UNAVAILABLE',
+        message: 'GPT routing is unavailable for job creation.'
+      }
+    });
+    expect(JSON.stringify(response.body)).not.toContain('should-not-leak');
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  });
+
   it('redacts obvious secrets from log-shaped payloads', () => {
     const fakeOpenAiCredential = 'sk-test-placeholder-value';
     const fakeJwt = ['eyJmock12345', 'eyJmock67890', 'eyJmock12345'].join('.');
@@ -1596,6 +1794,13 @@ describe('/gpt-access gateway', () => {
     }));
     expect(response.body.components.schemas.ErrorResponse.properties.traceId).toEqual({
       type: ['string', 'null']
+    });
+    expect(response.body.components.schemas.ErrorResponse.properties.status).toEqual({
+      type: 'string',
+      enum: ['degraded', 'unavailable']
+    });
+    expect(response.body.components.schemas.ErrorResponse.properties.service).toEqual({
+      type: 'string'
     });
     expect(response.body.security).toEqual([{ bearerAuth: [] }]);
     expect(response.body.paths['/gpt-access/openapi.json'].get.security).toEqual([]);
