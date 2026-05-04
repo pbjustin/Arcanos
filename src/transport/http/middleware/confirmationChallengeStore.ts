@@ -12,7 +12,7 @@
  * @module confirmationChallengeStore
  */
 
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { getEnvNumber } from "@platform/runtime/env.js";
 
 /**
@@ -23,6 +23,7 @@ export interface ConfirmationChallenge {
   method: string;
   path: string;
   gptId: string | null;
+  requestFingerprintHash: string | null;
   issuedAt: number;
   expiresAt: number;
 }
@@ -53,6 +54,50 @@ function resolveChallengeTtl(): number {
 const challengeTtlMs = resolveChallengeTtl();
 const pendingChallenges = new Map<string, ConfirmationChallenge>();
 
+function compareStringKeys(leftKey: string, rightKey: string): number {
+  if (leftKey < rightKey) {
+    return -1;
+  }
+
+  if (leftKey > rightKey) {
+    return 1;
+  }
+
+  return 0;
+}
+
+function stableStringify(value: unknown): string {
+  if (value === undefined) {
+    return 'undefined';
+  }
+
+  if (value === null) {
+    return 'null';
+  }
+
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? JSON.stringify(value) : 'null';
+  }
+
+  if (typeof value !== 'object') {
+    return JSON.stringify(value);
+  }
+
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableStringify(entry)).join(',')}]`;
+  }
+
+  const normalizedEntries = Object.entries(value as Record<string, unknown>)
+    .sort(([leftKey], [rightKey]) => compareStringKeys(leftKey, rightKey))
+    .map(([key, entryValue]) => `${JSON.stringify(key)}:${stableStringify(entryValue)}`);
+
+  return `{${normalizedEntries.join(',')}}`;
+}
+
+export function buildConfirmationRequestFingerprintHash(body: unknown): string {
+  return createHash('sha256').update(stableStringify(body)).digest('hex');
+}
+
 /**
  * Removes expired challenges from the pending challenge map.
  * Called automatically before creating or verifying challenges.
@@ -76,7 +121,12 @@ function purgeExpiredChallenges(now: number = Date.now()): void {
  * @param gptId - Optional GPT identifier making the request
  * @returns The newly created challenge with UUID token
  */
-export function createConfirmationChallenge(method: string, path: string, gptId: string | null): ConfirmationChallenge {
+export function createConfirmationChallenge(
+  method: string,
+  path: string,
+  gptId: string | null,
+  requestFingerprintHash: string | null = null
+): ConfirmationChallenge {
   const now = Date.now();
   purgeExpiredChallenges(now);
 
@@ -85,6 +135,7 @@ export function createConfirmationChallenge(method: string, path: string, gptId:
     method,
     path,
     gptId,
+    requestFingerprintHash,
     issuedAt: now,
     expiresAt: now + challengeTtlMs,
   };
@@ -103,7 +154,12 @@ export function createConfirmationChallenge(method: string, path: string, gptId:
  * @param path - Path of the current request
  * @returns True if the challenge is valid and matches, false otherwise
  */
-export function verifyConfirmationChallenge(token: string, method: string, path: string): boolean {
+export function verifyConfirmationChallenge(
+  token: string,
+  method: string,
+  path: string,
+  requestFingerprintHash: string | null = null
+): boolean {
   const now = Date.now();
   purgeExpiredChallenges(now);
 
@@ -118,6 +174,12 @@ export function verifyConfirmationChallenge(token: string, method: string, path:
   }
 
   if (challenge.method !== method || challenge.path !== path) {
+    pendingChallenges.delete(token);
+    return false;
+  }
+
+  if (challenge.requestFingerprintHash && challenge.requestFingerprintHash !== requestFingerprintHash) {
+    pendingChallenges.delete(token);
     return false;
   }
 

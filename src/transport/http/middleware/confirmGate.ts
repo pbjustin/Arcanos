@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import {
+  buildConfirmationRequestFingerprintHash,
   createConfirmationChallenge,
   getChallengeTtlMs,
   verifyConfirmationChallenge,
@@ -173,6 +174,7 @@ export function confirmGate(req: Request, res: Response, next: NextFunction): vo
   const normalizedConfirmation = confirmationHeader?.toString().trim();
   const confirmationHeaderLower = normalizedConfirmation?.toLowerCase();
   const manualConfirmation = confirmationHeaderLower === 'yes';
+  const requestFingerprintHash = buildConfirmationRequestFingerprintHash(req.body);
   const providedToken =
     normalizedConfirmation && confirmationHeaderLower?.startsWith(confirmationTokenPrefix)
       ? normalizedConfirmation.slice(confirmationTokenPrefix.length).trim()
@@ -184,7 +186,12 @@ export function confirmGate(req: Request, res: Response, next: NextFunction): vo
   let hasValidToken = false;
   if (!allowAllGpts && providedToken) {
     try {
-      hasValidToken = verifyConfirmationChallenge(providedToken, req.method, req.path);
+      hasValidToken = verifyConfirmationChallenge(
+        providedToken,
+        req.method,
+        req.path,
+        requestFingerprintHash
+      );
     } catch (error: unknown) {
       console.error('[🛡️ CONFIRM-GATE] Confirmation challenge verification failed.', error);
       sendInternalErrorPayload(res, {
@@ -223,7 +230,7 @@ export function confirmGate(req: Request, res: Response, next: NextFunction): vo
   // Check if user has explicitly confirmed the action
   //audit Assumption: request body fields are user-controlled and must not independently authorize privileged execution; failure risk: spoofed gptId bypassing confirmation controls; expected invariant: bypass relies on cryptographically strong or operator-controlled approvals; handling strategy: require explicit confirmation, challenge token, one-time token, automation secret, or allow-all override.
   if (!manualConfirmation && !hasValidToken && !oneTimeTokenApproved && !automationBypassApproved && !trustedGptBypassApproved && !allowAllGpts) {
-    const challenge = createConfirmationChallenge(req.method, req.path, gptId || null);
+    const challenge = createConfirmationChallenge(req.method, req.path, gptId || null, requestFingerprintHash);
     const tokenStatus = providedToken ? 'invalid' : 'missing';
     const canonicalRouteHeader = getOptionalResponseHeader(res, 'x-canonical-route');
     const routeDeprecatedHeader = getOptionalResponseHeader(res, 'x-route-deprecated');

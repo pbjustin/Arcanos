@@ -48,6 +48,7 @@ type CapabilityRunBody =
   | { ok: true; action: unknown; payload: unknown }
   | { ok: false; message: string };
 
+const CAPABILITY_CONFIRMATION_TOKEN_BODY_KEY = 'confirmation_token';
 const CAPABILITY_RUN_BODY_KEYS = new Set(['action', 'payload']);
 const CAPABILITY_PAYLOAD_MAX_DEPTH = 32;
 const UNSAFE_CAPABILITY_PAYLOAD_FIELDS = new Set([
@@ -186,6 +187,58 @@ function readCapabilityRunBody(body: unknown): CapabilityRunBody {
     action: record.action,
     payload
   };
+}
+
+function readCapabilityConfirmationTokenField(value: unknown):
+  | { ok: true; confirmationChallengeId: string }
+  | { ok: false; message: string } {
+  if (typeof value !== 'string') {
+    return { ok: false, message: 'confirmation_token must be a non-empty string when provided.' };
+  }
+
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return { ok: false, message: 'confirmation_token must be a non-empty string when provided.' };
+  }
+
+  if (/\s/u.test(trimmed)) {
+    return { ok: false, message: 'confirmation_token must be a single non-empty token value.' };
+  }
+
+  return { ok: true, confirmationChallengeId: trimmed };
+}
+
+function mapCapabilityRunConfirmationToken(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction
+): void {
+  if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) {
+    next();
+    return;
+  }
+
+  const record = req.body as Record<string, unknown>;
+  if (!Object.prototype.hasOwnProperty.call(record, CAPABILITY_CONFIRMATION_TOKEN_BODY_KEY)) {
+    next();
+    return;
+  }
+
+  const tokenResult = readCapabilityConfirmationTokenField(record[CAPABILITY_CONFIRMATION_TOKEN_BODY_KEY]);
+  const sanitizedBody = { ...record };
+  delete sanitizedBody[CAPABILITY_CONFIRMATION_TOKEN_BODY_KEY];
+  req.body = sanitizedBody;
+
+  if (!tokenResult.ok) {
+    sendGptAccessBadRequest(res, tokenResult.message);
+    return;
+  }
+
+  if (!req.header('x-confirmed')) {
+    req.headers['x-confirmed'] = `token:${tokenResult.confirmationChallengeId}`;
+  }
+
+  next();
 }
 
 function sendGptAccessBadRequest(res: express.Response, message: string): void {
@@ -393,6 +446,7 @@ router.get(
 router.post(
   '/gpt-access/capabilities/v1/:id/run',
   requireGptAccessScope('capabilities.run'),
+  mapCapabilityRunConfirmationToken,
   confirmGate,
   runGptAccessCapability
 );

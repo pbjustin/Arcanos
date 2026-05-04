@@ -11,6 +11,88 @@
 - Prefer deterministic JSON outputs
 - Never route system operations through the writing pipeline
 
+## Code Change Policy (Surgical Edits Only)
+
+### Prime Directive
+
+Solve the requested problem with the smallest safe change.
+
+Assume the existing codebase structure is intentional. Do not redesign, reorganize, or refactor unless explicitly instructed.
+
+---
+
+### Required Behavior
+
+* Make **surgical, minimal changes only**
+
+* Preserve:
+
+  * Architecture and file structure
+  * Public APIs and contracts
+  * Naming conventions
+  * Formatting and style
+  * Control flow and patterns already in use
+
+* Match the surrounding code style, even if it is not ideal
+
+---
+
+### Strict Prohibitions
+
+Do NOT:
+
+* Perform broad refactors or rewrites
+* Introduce new frameworks, libraries, or patterns without approval
+* Rename files, functions, classes, variables, or exports unnecessarily
+* Modify unrelated code
+* Perform formatting-only or cleanup-only changes
+* Change configs, lockfiles, migrations, or generated files unless required
+* "Improve" code outside the scope of the task
+
+---
+
+### Before Making Changes
+
+1. Identify the **smallest possible set of edits**
+2. Prefer editing existing code over adding new abstractions
+3. Reuse existing utilities and patterns
+4. Avoid moving or restructuring code
+
+---
+
+### If a Large Change Seems Necessary
+
+You MUST:
+
+1. Stop
+2. Explain why a minimal change is insufficient
+3. Propose the smallest viable alternative
+4. Wait for approval before proceeding
+
+---
+
+### After Changes
+
+* Summarize:
+
+  * What changed
+  * Why it was necessary
+* Call out:
+
+  * Risks
+  * Assumptions
+* Keep explanations concise and focused only on the change
+
+---
+
+### Decision Rule
+
+If multiple approaches are possible, choose the one that:
+
+1. Produces the smallest diff
+2. Minimizes risk of breaking existing behavior
+3. Requires the fewest new concepts or changes
+
 ## Setup
 - Install Node dependencies with `npm install`.
 - Build workspace packages before full backend validation with `npm run build:packages`.

@@ -1865,6 +1865,53 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
         }
       },
       schemas: {
+        ConfirmationChallenge: {
+          type: 'object',
+          description: 'Short-lived confirmation challenge returned by confirmGate when an operation requires approval.',
+          properties: {
+            id: {
+              type: 'string',
+              minLength: 1,
+              description: 'Challenge ID. Retry the same method, path, and action/payload once; Custom GPT sends it as confirmation_token.'
+            },
+            issuedAt: { type: 'string', format: 'date-time' },
+            expiresAt: { type: 'string', format: 'date-time' },
+            ttlMs: { type: 'integer', minimum: 1 },
+            instructions: {
+              type: 'array',
+              items: { type: 'string' }
+            },
+            gptIdTrusted: { type: 'boolean' },
+            allowedGptIds: {
+              type: 'array',
+              items: { type: 'string' }
+            },
+            providedTokenStatus: {
+              type: 'string',
+              enum: ['missing', 'invalid']
+            }
+          },
+          required: ['id'],
+          additionalProperties: true
+        },
+        ConfirmationRequiredResponse: {
+          type: 'object',
+          description: 'Confirmation gate response. Extract confirmationChallenge.id and retry once with the same action/payload plus confirmation_token.',
+          properties: {
+            error: { type: 'string' },
+            message: { type: 'string' },
+            code: { type: 'string', const: 'CONFIRMATION_REQUIRED' },
+            endpoint: { type: 'string' },
+            method: { type: 'string' },
+            gptId: { type: ['string', 'null'] },
+            confirmationRequired: { type: 'boolean', const: true },
+            confirmationStatus: { type: 'string', const: 'pending' },
+            confirmationChallenge: { '$ref': '#/components/schemas/ConfirmationChallenge' },
+            timestamp: { type: 'string', format: 'date-time' }
+          },
+          required: ['code', 'confirmationRequired', 'confirmationChallenge'],
+          additionalProperties: true
+        },
         ErrorResponse: {
           type: 'object',
           properties: {
@@ -2097,6 +2144,11 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
             action: { type: 'string', minLength: 1, pattern: '.*\\S.*' },
             payload: {
               description: 'Optional JSON payload passed to the selected capability action.'
+            },
+            confirmation_token: {
+              type: 'string',
+              minLength: 1,
+              description: 'Raw confirmationChallenge.id for one retry. Custom GPT Actions cannot set headers; the gateway maps this to x-confirmed: token:<value> and strips it before dispatch.'
             }
           },
           required: ['action'],
@@ -2244,7 +2296,7 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
         post: {
           operationId: 'runCapabilityV1',
           summary: 'Run one action on a GPT Access capability.',
-          description: 'Executes through the existing module dispatch boundary. The capabilities.run scope must be explicitly configured, the module action must be allowlisted, and the request must pass the confirmation gate before this endpoint can execute actions.',
+          description: 'Run an allowlisted capability action. On CONFIRMATION_REQUIRED, retry this exact POST once with the same action/payload and confirmation_token=<confirmationChallenge.id>; gateway maps it to x-confirmed: token:<id> and strips it. Do not retry again.',
           security: protectedSecurity,
           parameters: [
             {
@@ -2252,13 +2304,6 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
               in: 'path',
               required: true,
               schema: { type: 'string', minLength: 1 }
-            },
-            {
-              name: 'x-confirmed',
-              in: 'header',
-              required: false,
-              schema: { type: 'string' },
-              description: 'Use "yes" for explicit operator approval, or the confirmGate challenge response format when retrying a challenged request.'
             }
           ],
           requestBody: {
@@ -2280,7 +2325,19 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
             },
             '400': { description: 'Invalid request.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
             '401': { description: 'Unauthorized.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
-            '403': { description: 'Scope denied or module action not allowlisted.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '403': {
+              description: 'Scope denied, module action not allowlisted, or confirmation required.',
+              content: {
+                'application/json': {
+                  schema: {
+                    oneOf: [
+                      { '$ref': '#/components/schemas/ErrorResponse' },
+                      { '$ref': '#/components/schemas/ConfirmationRequiredResponse' }
+                    ]
+                  }
+                }
+              }
+            },
             '404': { description: 'Capability or action not found.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
             '500': { description: 'Unexpected capability execution failure.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } }
           }
