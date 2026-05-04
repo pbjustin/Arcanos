@@ -322,4 +322,23 @@ describe('getTrinityStatus', () => {
       sessionTokenLimit: 250000
     });
   });
+
+  it('uses the shared stale-worker default when worker-control telemetry is unavailable', async () => {
+    delete process.env.JOB_WORKER_STALE_AFTER_MS;
+    mockGetWorkerControlStatus.mockRejectedValue(new Error('worker-control unavailable'));
+    mockGetSnapshot.mockRejectedValue(new Error('snapshot unavailable'));
+
+    const status = await getTrinityStatus();
+
+    expect(status.status).toBe('offline');
+    expect(status.queue.retryPolicy).toEqual(
+      expect.objectContaining({
+        defaultMaxRetries: 2,
+        retryBackoffBaseMs: 2000,
+        retryBackoffMaxMs: 60000,
+        staleAfterMs: 45_000,
+        watchdogIdleMs: 120_000
+      })
+    );
+  });
 });

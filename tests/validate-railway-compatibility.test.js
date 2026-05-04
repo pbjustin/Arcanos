@@ -104,6 +104,10 @@ describe('validate-railway-compatibility', () => {
       expect.stringContaining('OPENAI_BASE_URL'),
     ]);
     expect(validationErrors[0]).toContain('GPT5_MODEL');
+    expect(validationErrors[0]).toContain('JOB_WORKER_HEARTBEAT_MS');
+    expect(validationErrors[0]).toContain('JOB_WORKER_STALE_AFTER_MS');
+    expect(validationErrors[0]).toContain('JOB_WORKER_WATCHDOG_MS');
+    expect(validationErrors[0]).toContain('JOB_WORKER_WATCHDOG_IDLE_MS');
     expect(validationErrors[0]).toContain('ENABLE_CLEAR_2');
   });
 

@@ -6,6 +6,7 @@ import {
   type WorkerControlStatusResponse
 } from './workerControlService.js';
 import { getConfiguredTrinitySessionTokenLimit } from '@core/logic/trinityGuards.js';
+import { resolveJobWorkerStaleAfterMs } from '@core/db/repositories/jobRepository.js';
 import { getWorkerExecutionLimits } from '../workers/workerExecutionLimits.js';
 
 export type TrinityStatusHealth = 'healthy' | 'degraded' | 'offline';
@@ -264,7 +265,7 @@ function buildFallbackRetryPolicy(): WorkerControlStatusResponse['workerService'
     defaultMaxRetries: readPositiveIntegerEnv('JOB_WORKER_MAX_RETRIES', 2),
     retryBackoffBaseMs: readPositiveIntegerEnv('JOB_WORKER_RETRY_BASE_MS', 2_000),
     retryBackoffMaxMs: readPositiveIntegerEnv('JOB_WORKER_RETRY_MAX_MS', 60_000),
-    staleAfterMs: readPositiveIntegerEnv('JOB_WORKER_STALE_AFTER_MS', 60_000),
+    staleAfterMs: resolveJobWorkerStaleAfterMs(),
     watchdogIdleMs: readPositiveIntegerEnv('JOB_WORKER_WATCHDOG_IDLE_MS', 120_000)
   };
 }

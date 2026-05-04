@@ -192,6 +192,64 @@ describe('ARCANOS PR Assistant', () => {
       expect(result.status).toMatch(/❌|⚠️/);
       expect(result.details.some(d => d.includes('hardcoded') || d.includes('environment'))).toBe(true);
     });
+
+    it('ignores lockfile and test-only values that look hardcoded', async () => {
+      const nonRuntimeDiff = [
+        'diff --git a/package-lock.json b/package-lock.json',
+        'index 1111111..2222222 100644',
+        '--- a/package-lock.json',
+        '+++ b/package-lock.json',
+        '@@ -1,3 +1,3 @@',
+        '+      "version": "6.25.0",',
+        '+      "resolved": "https://registry.npmjs.org/openai/-/openai-6.25.0.tgz",',
+        'diff --git a/tests/worker-autonomy-service.test.ts b/tests/worker-autonomy-service.test.ts',
+        'index 1111111..2222222 100644',
+        '--- a/tests/worker-autonomy-service.test.ts',
+        '+++ b/tests/worker-autonomy-service.test.ts',
+        '@@ -1,3 +1,3 @@',
+        '+        JOB_WORKER_WATCHDOG_MS: "15000",',
+        '+        expect(settings.watchdogIntervalMs).toBe(15_000);'
+      ].join('\n');
+
+      const result = await prAssistant['checkRailwayReadiness'](
+        ['package-lock.json', 'tests/worker-autonomy-service.test.ts'],
+        nonRuntimeDiff
+      );
+
+      expect(result.status).toBe('✅');
+    });
+
+    it('does not require env docs for moved existing environment reads', async () => {
+      const movedEnvDiff = [
+        'diff --git a/src/services/worker.ts b/src/services/worker.ts',
+        'index 1111111..2222222 100644',
+        '--- a/src/services/worker.ts',
+        '+++ b/src/services/worker.ts',
+        '@@ -1,4 +1,4 @@',
+        '-const webhook = process.env.WORKER_FAILURE_WEBHOOK_URL?.trim() || null;',
+        '+const webhookUrl = process.env.WORKER_FAILURE_WEBHOOK_URL?.trim() || null;'
+      ].join('\n');
+
+      const result = await prAssistant['checkRailwayReadiness'](['src/services/worker.ts'], movedEnvDiff);
+
+      expect(result.status).toBe('✅');
+    });
+
+    it('still requires env docs for newly added production environment reads', async () => {
+      const newEnvDiff = [
+        'diff --git a/src/services/worker.ts b/src/services/worker.ts',
+        'index 1111111..2222222 100644',
+        '--- a/src/services/worker.ts',
+        '+++ b/src/services/worker.ts',
+        '@@ -1,3 +1,4 @@',
+        '+const workerFlag = process.env.ARCANOS_UNDOCUMENTED_WORKER_FLAG;'
+      ].join('\n');
+
+      const result = await prAssistant['checkRailwayReadiness'](['src/services/worker.ts'], newEnvDiff);
+
+      expect(result.status).toMatch(/❌|⚠️/);
+      expect(result.details).toContain('Update .env.example with new environment variables');
+    });
   });
 
   describe('Full PR Analysis', () => {
