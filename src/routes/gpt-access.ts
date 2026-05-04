@@ -49,6 +49,7 @@ type CapabilityRunBody =
   | { ok: false; message: string };
 
 const CAPABILITY_CONFIRMATION_TOKEN_BODY_KEY = 'confirmation_token';
+const CAPABILITY_CONFIRMATION_HEADER_TOKEN_PREFIX = 'token:';
 const CAPABILITY_RUN_BODY_KEYS = new Set(['action', 'payload']);
 const CAPABILITY_PAYLOAD_MAX_DEPTH = 32;
 const UNSAFE_CAPABILITY_PAYLOAD_FIELDS = new Set([
@@ -205,7 +206,32 @@ function readCapabilityConfirmationTokenField(value: unknown):
     return { ok: false, message: 'confirmation_token must be a single non-empty token value.' };
   }
 
-  return { ok: true, confirmationChallengeId: trimmed };
+  const confirmationChallengeId = trimmed.toLowerCase().startsWith(CAPABILITY_CONFIRMATION_HEADER_TOKEN_PREFIX)
+    ? trimmed.slice(CAPABILITY_CONFIRMATION_HEADER_TOKEN_PREFIX.length).trim()
+    : trimmed;
+
+  if (confirmationChallengeId.length === 0 || /\s/u.test(confirmationChallengeId)) {
+    return { ok: false, message: 'confirmation_token must be a single non-empty token value.' };
+  }
+
+  return { ok: true, confirmationChallengeId };
+}
+
+function normalizeCapabilityRunBodyForConfirmation(record: Record<string, unknown>): Record<string, unknown> {
+  const bodyKeys = Object.keys(record);
+  const onlySupportedRunKeys = bodyKeys.every((key) => CAPABILITY_RUN_BODY_KEYS.has(key));
+  if (
+    onlySupportedRunKeys
+    && Object.prototype.hasOwnProperty.call(record, 'action')
+    && !Object.prototype.hasOwnProperty.call(record, 'payload')
+  ) {
+    return {
+      ...record,
+      payload: {}
+    };
+  }
+
+  return record;
 }
 
 function mapCapabilityRunConfirmationToken(
@@ -219,15 +245,23 @@ function mapCapabilityRunConfirmationToken(
   }
 
   const record = req.body as Record<string, unknown>;
-  if (!Object.prototype.hasOwnProperty.call(record, CAPABILITY_CONFIRMATION_TOKEN_BODY_KEY)) {
+  const hasConfirmationToken = Object.prototype.hasOwnProperty.call(
+    record,
+    CAPABILITY_CONFIRMATION_TOKEN_BODY_KEY
+  );
+  const sanitizedBody = hasConfirmationToken ? { ...record } : record;
+  if (hasConfirmationToken) {
+    delete sanitizedBody[CAPABILITY_CONFIRMATION_TOKEN_BODY_KEY];
+  }
+
+  req.body = normalizeCapabilityRunBodyForConfirmation(sanitizedBody);
+
+  if (!hasConfirmationToken) {
     next();
     return;
   }
 
   const tokenResult = readCapabilityConfirmationTokenField(record[CAPABILITY_CONFIRMATION_TOKEN_BODY_KEY]);
-  const sanitizedBody = { ...record };
-  delete sanitizedBody[CAPABILITY_CONFIRMATION_TOKEN_BODY_KEY];
-  req.body = sanitizedBody;
 
   if (!tokenResult.ok) {
     sendGptAccessBadRequest(res, tokenResult.message);
