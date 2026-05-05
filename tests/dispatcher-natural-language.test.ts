@@ -5,6 +5,7 @@ import {
   createCapabilityRegistry,
   createGptAccessDispatchRegistry,
   evaluateDispatchPolicy,
+  readDispatchConfirmationTokenField,
   resolveDispatchPlan
 } from '../src/dispatcher/naturalLanguage/index.js';
 
@@ -58,6 +59,61 @@ describe('natural-language dispatcher', () => {
 
     expect(policy.allowed).toBe(false);
     expect(policy.code).toBe('DISPATCH_ACTION_PROHIBITED');
+  });
+
+  it.each([
+    'self_heal.status',
+    'show_sql_stats',
+    'fetch_url_content'
+  ])('allows registered read-only action name %s through policy', async (action) => {
+    const registry = createCapabilityRegistry([
+      {
+        action,
+        risk: 'readonly',
+        runner: {
+          kind: 'gpt-access-mcp',
+          tool: action
+        }
+      }
+    ]);
+    const plan = await resolveDispatchPlan({ utterance: action, registry });
+
+    const policy = evaluateDispatchPolicy({ plan, registry });
+
+    expect(policy.allowed).toBe(true);
+    expect(policy.status).toBe('allowed');
+  });
+
+  it.each([
+    'raw_sql.query',
+    'self_heal.execute'
+  ])('blocks prohibited action name %s before execution', async (action) => {
+    const registry = createCapabilityRegistry([
+      {
+        action,
+        risk: 'privileged',
+        runner: {
+          kind: 'gpt-access-capability',
+          capabilityId: 'ARCANOS:CORE',
+          capabilityAction: 'query'
+        }
+      }
+    ]);
+    const plan = await resolveDispatchPlan({ utterance: action, registry });
+
+    const policy = evaluateDispatchPolicy({ plan, registry });
+
+    expect(policy.allowed).toBe(false);
+    expect(policy.code).toBe('DISPATCH_ACTION_PROHIBITED');
+  });
+
+  it('normalizes token-prefixed confirmation values before validating the challenge token', () => {
+    const prefixedChallengeId = ['tok', 'en: ', 'challenge-id'].join('');
+
+    expect(readDispatchConfirmationTokenField(prefixedChallengeId)).toEqual({
+      ok: true,
+      confirmationChallengeId: 'challenge-id'
+    });
   });
 
   it('requires confirmation for registered GPT Access capability actions', async () => {

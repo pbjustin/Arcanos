@@ -16,8 +16,8 @@ export function readDispatchConfirmationTokenField(value: unknown):
   }
 
   const trimmed = value.trim();
-  if (trimmed.length === 0 || /\s/u.test(trimmed)) {
-    return { ok: false, message: 'confirmation_token must be a single non-empty token value.' };
+  if (trimmed.length === 0) {
+    return { ok: false, message: 'confirmation_token must be a non-empty string when provided.' };
   }
 
   const confirmationChallengeId = trimmed.toLowerCase().startsWith(CONFIRMATION_HEADER_TOKEN_PREFIX)

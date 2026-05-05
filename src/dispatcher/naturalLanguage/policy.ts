@@ -7,8 +7,17 @@ import {
   type DispatchRegistryAction
 } from './types.js';
 
-const PROHIBITED_ACTION_PATTERN =
-  /\b(shell|terminal|exec|execute_command|raw_sql|sql|deploy|restart|rollback|delete|self[-_.]?heal|proxy|url|file|filesystem)\b/iu;
+const PROHIBITED_ACTION_PATTERNS = [
+  /\b(?:shell|terminal|exec|execute_command|raw[-_.]?sql|filesystem)\b/iu,
+  /\b(?:deploy|restart|rollback|delete)\b/iu,
+  /(?:^|[._:-])(?:sql[-_.]?(?:exec|execute|run|write|delete|mutate)|(?:exec|execute|run|write|delete|mutate)[-_.]?sql)(?:$|[._:-])/iu,
+  /(?:^|[._:-])(?:proxy[-_.]?url|url[-_.]?proxy|file[-_.]?(?:access|system|write|delete)|(?:read|write|delete)[-_.]?file)(?:$|[._:-])/iu,
+  /(?:^|[._:-])self[-_.]?heal(?:$|[._:-](?:run|execute|exec|apply|repair|restart|rollback|delete|mutate|write|fix)(?:$|[._:-]))/iu
+];
+
+function isProhibitedActionName(action: string): boolean {
+  return PROHIBITED_ACTION_PATTERNS.some((pattern) => pattern.test(action));
+}
 
 function buildDecision(input: {
   status: DispatchPolicyDecision['status'];
@@ -58,7 +67,7 @@ export function evaluateDispatchPolicy(input: {
     });
   }
 
-  if (registryAction.risk === 'destructive' || PROHIBITED_ACTION_PATTERN.test(registryAction.action)) {
+  if (registryAction.risk === 'destructive' || isProhibitedActionName(registryAction.action)) {
     return buildDecision({
       status: 'blocked',
       allowed: false,

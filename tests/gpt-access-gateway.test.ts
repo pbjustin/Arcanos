@@ -994,7 +994,7 @@ describe('/gpt-access gateway', () => {
     const response = await authorized(request(app).post('/gpt-access/dispatch/run'))
       .send({
         utterance: 'ARCANOS:CORE.query',
-        confirmation_token: challengeId
+        confirmation_token: `token: ${challengeId}`
       });
 
     expect(response.status).toBe(200);
