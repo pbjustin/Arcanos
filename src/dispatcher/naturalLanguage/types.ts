@@ -1,4 +1,5 @@
 export const DISPATCH_CONFIDENCE_THRESHOLD = 0.8;
+export const DISPATCH_UTTERANCE_MAX_LENGTH = 1000;
 export const INTENT_CLARIFICATION_REQUIRED = 'INTENT_CLARIFICATION_REQUIRED';
 
 export type DispatchPlanSource = 'rules' | 'llm' | 'legacy';

@@ -24,9 +24,11 @@ import { getWorkerControlHealth, getWorkerControlStatus } from '@services/worker
 import { planAutonomousWorkerJob } from '@services/workerAutonomyService.js';
 import { buildSafetySelfHealSnapshot } from '@services/selfHealRuntimeInspectionService.js';
 import { getWorkerRuntimeStatus } from '@platform/runtime/workerConfig.js';
+import { DISPATCH_UTTERANCE_MAX_LENGTH } from '@dispatcher/naturalLanguage/types.js';
 
 const SERVICE_VERSION = '1.0.0';
 const TOKEN_ENV_NAME = 'ARCANOS_GPT_ACCESS_TOKEN';
+const DISPATCH_CONFIRMATION_TOKEN_PREFIX = 'token:';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_TOKEN_LENGTH = 4096;
 const LOG_LIMIT_MAX = 500;
@@ -2130,7 +2132,7 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
           type: 'object',
           description: 'Natural-language dispatch request. The utterance is resolved into a DispatchPlan, policy checked, and only then executed through GPT Access capability/control runners. This replaces natural-language dispatch behavior without restoring /ask.',
           properties: {
-            utterance: { type: 'string', minLength: 1, maxLength: 1000 },
+            utterance: { type: 'string', minLength: 1, maxLength: DISPATCH_UTTERANCE_MAX_LENGTH },
             context: {
               type: 'object',
               additionalProperties: true
@@ -2143,7 +2145,11 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
             confirmation_token: {
               type: 'string',
               minLength: 1,
-              description: 'Raw confirmationChallenge.id for one retry when a privileged dispatch returns CONFIRMATION_REQUIRED.'
+              description: `Confirmation token for one retry when a privileged dispatch returns CONFIRMATION_REQUIRED. Accepted formats are either the raw confirmationChallenge.id or the prefixed form ${DISPATCH_CONFIRMATION_TOKEN_PREFIX}<confirmationChallenge.id>.`,
+              examples: [
+                'example-confirmation-challenge-id',
+                `${DISPATCH_CONFIRMATION_TOKEN_PREFIX}example-confirmation-challenge-id`
+              ]
             }
           },
           required: ['utterance'],

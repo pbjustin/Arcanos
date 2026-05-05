@@ -9,6 +9,7 @@ import {
 import { confirmGate } from '@transport/http/middleware/confirmGate.js';
 import {
   DISPATCH_RUN_BODY_KEYS,
+  DISPATCH_UTTERANCE_MAX_LENGTH,
   INTENT_CLARIFICATION_REQUIRED,
   createGptAccessDispatchRegistry,
   evaluateDispatchPolicy,
@@ -75,7 +76,6 @@ const CAPABILITY_CONFIRMATION_TOKEN_BODY_KEY = 'confirmation_token';
 const CAPABILITY_CONFIRMATION_HEADER_TOKEN_PREFIX = 'token:';
 const CAPABILITY_RUN_BODY_KEYS = new Set(['action', 'payload']);
 const GPT_ACCESS_SCOPE_NAMES = new Set<string>(GPT_ACCESS_SCOPES);
-const DISPATCH_UTTERANCE_MAX_LENGTH = 1000;
 const CAPABILITY_PAYLOAD_MAX_DEPTH = 32;
 const UNSAFE_CAPABILITY_PAYLOAD_FIELDS = new Set([
   '__arcanosExecutionMode',
@@ -611,6 +611,25 @@ function toDispatchPolicyResponse(policy: DispatchPolicyDecision) {
   };
 }
 
+function toDispatchPolicyErrorMessage(policy: DispatchPolicyDecision): string {
+  switch (policy.code) {
+    case INTENT_CLARIFICATION_REQUIRED:
+      return 'Dispatch intent could not be resolved confidently. Please clarify the requested action.';
+    case 'DISPATCH_ACTION_NOT_REGISTERED':
+      return 'Dispatch action is not registered for GPT Access.';
+    case 'DISPATCH_ACTION_PROHIBITED':
+      return 'Dispatch action is prohibited by GPT Access policy.';
+    case 'GPT_ACCESS_SCOPE_DENIED':
+      return 'GPT Access scope is not allowed for this dispatch action.';
+    case 'GPT_ACCESS_CAPABILITY_ACTION_DENIED':
+      return 'GPT Access capability action is not allowlisted.';
+    default:
+      return policy.status === 'clarification_required'
+        ? 'Dispatch intent could not be resolved confidently. Please clarify the requested action.'
+        : 'Dispatch request was denied by policy.';
+  }
+}
+
 function sendDispatchPolicyBlock(
   res: express.Response,
   plan: DispatchPlan,
@@ -627,7 +646,7 @@ function sendDispatchPolicyBlock(
             ? INTENT_CLARIFICATION_REQUIRED
             : 'DISPATCH_POLICY_DENIED'
         ),
-        message: policy.reason
+        message: toDispatchPolicyErrorMessage(policy)
       },
       plan,
       policy: toDispatchPolicyResponse(policy)
@@ -708,10 +727,14 @@ const runGptAccessDispatch = asyncHandler(async (req, res) => {
 
   if (policy.requiresConfirmation) {
     confirmGate(req, res, () => {
-      void executeDispatchRun(req, res, plan, {
+      const confirmedPolicy: DispatchPolicyDecision = {
         ...policy,
-        shouldExecute: true
-      }).catch((error) => {
+        status: 'allowed',
+        requiresConfirmation: false,
+        shouldExecute: true,
+        reason: 'confirmation_satisfied'
+      };
+      void executeDispatchRun(req, res, plan, confirmedPolicy).catch((error) => {
         req.logger?.error?.('gpt_access.dispatch.failed', {
           error: error instanceof Error ? error.message : String(error)
         });

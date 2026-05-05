@@ -942,6 +942,9 @@ describe('/gpt-access gateway', () => {
 
     expect(response.status).toBe(422);
     expect(response.body.error.code).toBe('INTENT_CLARIFICATION_REQUIRED');
+    expect(response.body.error.message).toBe(
+      'Dispatch intent could not be resolved confidently. Please clarify the requested action.'
+    );
     expect(response.body.plan.action).toBe('INTENT_CLARIFICATION_REQUIRED');
     expect(dispatchModuleActionMock).not.toHaveBeenCalled();
   });
@@ -958,8 +961,9 @@ describe('/gpt-access gateway', () => {
     expect(response.status).toBe(403);
     expect(response.body.error).toEqual({
       code: 'GPT_ACCESS_CAPABILITY_ACTION_DENIED',
-      message: 'module_action_not_allowlisted'
+      message: 'GPT Access capability action is not allowlisted.'
     });
+    expect(response.body.policy.reason).toBe('module_action_not_allowlisted');
     expect(dispatchModuleActionMock).not.toHaveBeenCalled();
   });
 
@@ -999,7 +1003,12 @@ describe('/gpt-access gateway', () => {
 
     expect(response.status).toBe(200);
     expect(response.body.plan.action).toBe('ARCANOS:CORE.query');
-    expect(response.body.policy.requiresConfirmation).toBe(true);
+    expect(response.body.policy).toEqual(expect.objectContaining({
+      status: 'allowed',
+      requiresConfirmation: false,
+      shouldExecute: true,
+      reason: 'confirmation_satisfied'
+    }));
     expect(dispatchModuleActionMock).toHaveBeenCalledWith('ARCANOS:CORE', 'query', {});
   });
 
@@ -2327,6 +2336,13 @@ describe('/gpt-access gateway', () => {
       required: ['utterance'],
       additionalProperties: false
     }));
+    const confirmationTokenExamplePrefix = ['tok', 'en:'].join('');
+    expect(response.body.components.schemas.DispatchRunRequest.properties.utterance.maxLength).toBe(1000);
+    expect(response.body.components.schemas.DispatchRunRequest.properties.confirmation_token.description).toContain(`${confirmationTokenExamplePrefix}<confirmationChallenge.id>`);
+    expect(response.body.components.schemas.DispatchRunRequest.properties.confirmation_token.examples).toEqual([
+      'example-confirmation-challenge-id',
+      `${confirmationTokenExamplePrefix}example-confirmation-challenge-id`
+    ]);
     expect(response.body.components.schemas.DispatchRunResponse.properties.plan).toEqual({
       '$ref': '#/components/schemas/DispatchPlan'
     });
