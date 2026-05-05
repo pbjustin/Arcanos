@@ -414,7 +414,7 @@ export async function resolveLlmDispatchPlan(input: ResolveLlmDispatchPlanInput)
 
     if (outputParsed.action === INTENT_CLARIFICATION_REQUIRED) {
       return {
-        ...buildClarificationPlan(clampText(outputParsed.reason, MAX_REASON_LENGTH) ?? 'llm_intent_clarification_required', outputParsed.confidence),
+        ...buildClarificationPlan(clampText(outputParsed.reason, MAX_REASON_LENGTH) || 'llm_intent_clarification_required', outputParsed.confidence),
         candidates: toPlanCandidates(outputParsed.candidates)
       };
     }
@@ -445,7 +445,7 @@ export async function resolveLlmDispatchPlan(input: ResolveLlmDispatchPlanInput)
     const hasPayload = Object.keys(payloadValidation.payload).length > 0;
     return {
       action: registryAction.action,
-      payload: hasPayload ? payloadValidation.payload : registryAction.payload ?? {},
+      payload: hasPayload ? payloadValidation.payload : (isRecord(registryAction.payload) ? { ...registryAction.payload } : registryAction.payload ?? {}),
       confidence: outputParsed.confidence,
       source: 'llm',
       requiresConfirmation: Boolean(
