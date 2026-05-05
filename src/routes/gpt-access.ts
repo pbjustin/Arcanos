@@ -7,6 +7,20 @@ import {
   securityHeaders
 } from '@platform/runtime/security.js';
 import { confirmGate } from '@transport/http/middleware/confirmGate.js';
+import {
+  DISPATCH_RUN_BODY_KEYS,
+  DISPATCH_UTTERANCE_MAX_LENGTH,
+  INTENT_CLARIFICATION_REQUIRED,
+  createGptAccessDispatchRegistry,
+  evaluateDispatchPolicy,
+  readDispatchConfirmationTokenField,
+  resolveDispatchPlan,
+  runDispatchPlan,
+  stripDispatchConfirmationToken,
+  type DispatchExecutionResult,
+  type DispatchPolicyDecision,
+  type DispatchPlan
+} from '@dispatcher/naturalLanguage/index.js';
 import { isModuleActionAllowed } from '../mcp/modulesAllowlist.js';
 import {
   dispatchModuleAction,
@@ -18,8 +32,7 @@ import {
 import {
   asyncHandler,
   sendBadRequestPayload,
-  sendInternalErrorPayload,
-  sendNotFoundPayload
+  sendInternalErrorPayload
 } from '@shared/http/index.js';
 import { getWorkerControlHealth, getWorkerControlStatus } from '@services/workerControlService.js';
 import {
@@ -30,14 +43,17 @@ import {
   getGptAccessSelfHealStatus,
   explainApprovedQuery,
   getGptAccessJobResult,
+  GPT_ACCESS_SCOPES,
   gptAccessAuthMiddleware,
+  isGptAccessScopeAllowed,
   queryBackendLogs,
   requireGptAccessScope,
   resolveGptAccessOpenApiServerUrl,
   runDeepDiagnostics,
   runGptAccessMcpTool,
   sanitizeGptAccessPayload,
-  sendGptAccessResult
+  sendGptAccessResult,
+  type GptAccessScope
 } from '@services/gptAccessGateway.js';
 
 const router = express.Router();
@@ -47,10 +63,19 @@ type CapabilityMetadata = NonNullable<ReturnType<typeof getModuleMetadata>>;
 type CapabilityRunBody =
   | { ok: true; action: unknown; payload: unknown }
   | { ok: false; message: string };
+type DispatchRunBody =
+  | {
+      ok: true;
+      utterance: string;
+      context?: Record<string, unknown>;
+      dryRun: boolean;
+    }
+  | { ok: false; message: string };
 
 const CAPABILITY_CONFIRMATION_TOKEN_BODY_KEY = 'confirmation_token';
 const CAPABILITY_CONFIRMATION_HEADER_TOKEN_PREFIX = 'token:';
 const CAPABILITY_RUN_BODY_KEYS = new Set(['action', 'payload']);
+const GPT_ACCESS_SCOPE_NAMES = new Set<string>(GPT_ACCESS_SCOPES);
 const CAPABILITY_PAYLOAD_MAX_DEPTH = 32;
 const UNSAFE_CAPABILITY_PAYLOAD_FIELDS = new Set([
   '__arcanosExecutionMode',
@@ -190,6 +215,54 @@ function readCapabilityRunBody(body: unknown): CapabilityRunBody {
   };
 }
 
+function readDispatchRunBody(body: unknown): DispatchRunBody {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return { ok: false, message: 'request body must be a JSON object.' };
+  }
+
+  const record = body as Record<string, unknown>;
+  const unsupportedKey = Object.keys(record).find((key) => !DISPATCH_RUN_BODY_KEYS.has(key));
+  if (unsupportedKey) {
+    return {
+      ok: false,
+      message: 'request body may only include utterance, context, dryRun, and confirmation_token.'
+    };
+  }
+
+  if (typeof record.utterance !== 'string' || record.utterance.trim().length === 0) {
+    return { ok: false, message: 'utterance must be a non-empty string.' };
+  }
+
+  const utterance = record.utterance.trim();
+  if (utterance.length > DISPATCH_UTTERANCE_MAX_LENGTH) {
+    return {
+      ok: false,
+      message: `utterance must be ${DISPATCH_UTTERANCE_MAX_LENGTH} characters or fewer.`
+    };
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(record, 'context')
+    && (!record.context || typeof record.context !== 'object' || Array.isArray(record.context))
+  ) {
+    return { ok: false, message: 'context must be a JSON object when provided.' };
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(record, 'dryRun')
+    && typeof record.dryRun !== 'boolean'
+  ) {
+    return { ok: false, message: 'dryRun must be a boolean when provided.' };
+  }
+
+  return {
+    ok: true,
+    utterance,
+    context: record.context as Record<string, unknown> | undefined,
+    dryRun: record.dryRun === true
+  };
+}
+
 function readCapabilityConfirmationTokenField(value: unknown):
   | { ok: true; confirmationChallengeId: string }
   | { ok: false; message: string } {
@@ -275,35 +348,43 @@ function mapCapabilityRunConfirmationToken(
   next();
 }
 
+function mapDispatchRunConfirmationToken(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction
+): void {
+  if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) {
+    next();
+    return;
+  }
+
+  const { body, confirmationToken } = stripDispatchConfirmationToken(req.body as Record<string, unknown>);
+  req.body = body;
+
+  if (confirmationToken === undefined) {
+    next();
+    return;
+  }
+
+  const tokenResult = readDispatchConfirmationTokenField(confirmationToken);
+  if (!tokenResult.ok) {
+    sendGptAccessBadRequest(res, tokenResult.message);
+    return;
+  }
+
+  if (!req.header('x-confirmed')) {
+    req.headers['x-confirmed'] = `token:${tokenResult.confirmationChallengeId}`;
+  }
+
+  next();
+}
+
 function sendGptAccessBadRequest(res: express.Response, message: string): void {
   sendBadRequestPayload(res, {
     ok: false,
     error: {
       code: 'GPT_ACCESS_VALIDATION_ERROR',
       message
-    }
-  });
-}
-
-function sendGptAccessNotFound(res: express.Response, code: string, message: string): void {
-  sendNotFoundPayload(res, {
-    ok: false,
-    error: {
-      code,
-      message
-    }
-  });
-}
-
-function sendGptAccessForbidden(res: express.Response, code: string, message: string): void {
-  sendGptAccessResult(res, {
-    statusCode: 403,
-    payload: {
-      ok: false,
-      error: {
-        code,
-        message
-      }
     }
   });
 }
@@ -339,6 +420,10 @@ function sendGptAccessUnavailable(
 
 function isModuleDispatchNotFoundError(error: unknown): boolean {
   return error instanceof ModuleNotFoundError || error instanceof ModuleActionNotFoundError;
+}
+
+function isDispatchGptAccessScopeAllowed(scope: string): boolean {
+  return GPT_ACCESS_SCOPE_NAMES.has(scope) && isGptAccessScopeAllowed(scope as GptAccessScope);
 }
 
 const listGptAccessCapabilities = asyncHandler(async (_req, res) => {
@@ -391,6 +476,104 @@ const getGptAccessCapability = asyncHandler(async (req, res) => {
   });
 });
 
+async function runGptAccessCapabilityAction(input: {
+  capabilityId: string;
+  action: string;
+  payload: unknown;
+}): Promise<DispatchExecutionResult> {
+  let metadata;
+  try {
+    metadata = getModuleMetadata(input.capabilityId);
+  } catch {
+    return {
+      statusCode: 503,
+      payload: {
+        ok: false,
+        status: 'unavailable',
+        service: 'gpt-access',
+        error: {
+          code: 'GPT_ACCESS_MCP_TOOL_UNAVAILABLE',
+          message: 'Capability registry is unavailable.'
+        }
+      }
+    };
+  }
+
+  if (!metadata) {
+    return {
+      statusCode: 404,
+      payload: {
+        ok: false,
+        error: {
+          code: 'GPT_ACCESS_CAPABILITY_NOT_FOUND',
+          message: 'Capability not found.'
+        }
+      }
+    };
+  }
+
+  if (!metadata.actions.includes(input.action)) {
+    return {
+      statusCode: 404,
+      payload: {
+        ok: false,
+        error: {
+          code: 'GPT_ACCESS_ACTION_NOT_FOUND',
+          message: 'Capability action not found.'
+        }
+      }
+    };
+  }
+
+  if (!isModuleActionAllowed(metadata.name, input.action)) {
+    return {
+      statusCode: 403,
+      payload: {
+        ok: false,
+        error: {
+          code: 'GPT_ACCESS_CAPABILITY_ACTION_DENIED',
+          message: 'Capability action is not allowlisted for GPT Access execution.'
+        }
+      }
+    };
+  }
+
+  try {
+    const result = await dispatchModuleAction(metadata.name, input.action, input.payload);
+    return {
+      statusCode: 200,
+      payload: {
+        ok: true,
+        result: sanitizeGptAccessPayload(result)
+      }
+    };
+  } catch (error) {
+    if (isModuleDispatchNotFoundError(error)) {
+      return {
+        statusCode: 404,
+        payload: {
+          ok: false,
+          error: {
+            code: 'GPT_ACCESS_CAPABILITY_NOT_FOUND',
+            message: 'Capability or action not found.'
+          }
+        }
+      };
+    }
+
+    return {
+      statusCode: 500,
+      payload: {
+        ok: false,
+        error: {
+          code: 'GPT_ACCESS_INTERNAL_ERROR',
+          message: 'Capability execution failed.'
+        }
+      }
+    };
+  }
+}
+
 const runGptAccessCapability = asyncHandler(async (req, res) => {
   const body = readCapabilityRunBody(req.body);
   if (!body.ok) {
@@ -405,52 +588,165 @@ const runGptAccessCapability = asyncHandler(async (req, res) => {
     return;
   }
 
-  const normalizedAction = action.trim();
-  let metadata;
-  try {
-    metadata = getModuleMetadata(req.params.id);
-  } catch {
-    sendGptAccessUnavailable(
-      res,
-      'GPT_ACCESS_MCP_TOOL_UNAVAILABLE',
-      'Capability registry is unavailable.'
-    );
+  sendGptAccessResult(
+    res,
+    await runGptAccessCapabilityAction({
+      capabilityId: req.params.id,
+      action: action.trim(),
+      payload
+    })
+  );
+});
+
+function toDispatchPolicyResponse(policy: DispatchPolicyDecision) {
+  return {
+    status: policy.status,
+    allowed: policy.allowed,
+    requiresConfirmation: policy.requiresConfirmation,
+    shouldExecute: policy.shouldExecute,
+    action: policy.action,
+    reason: policy.reason,
+    code: policy.code,
+    requiredScope: policy.requiredScope ?? null
+  };
+}
+
+function toDispatchPolicyErrorMessage(policy: DispatchPolicyDecision): string {
+  switch (policy.code) {
+    case INTENT_CLARIFICATION_REQUIRED:
+      return 'Dispatch intent could not be resolved confidently. Please clarify the requested action.';
+    case 'DISPATCH_ACTION_NOT_REGISTERED':
+      return 'Dispatch action is not registered for GPT Access.';
+    case 'DISPATCH_ACTION_PROHIBITED':
+      return 'Dispatch action is prohibited by GPT Access policy.';
+    case 'GPT_ACCESS_SCOPE_DENIED':
+      return 'GPT Access scope is not allowed for this dispatch action.';
+    case 'GPT_ACCESS_CAPABILITY_ACTION_DENIED':
+      return 'GPT Access capability action is not allowlisted.';
+    default:
+      return policy.status === 'clarification_required'
+        ? 'Dispatch intent could not be resolved confidently. Please clarify the requested action.'
+        : 'Dispatch request was denied by policy.';
+  }
+}
+
+function sendDispatchPolicyBlock(
+  res: express.Response,
+  plan: DispatchPlan,
+  policy: DispatchPolicyDecision
+): void {
+  const statusCode = policy.status === 'clarification_required' ? 422 : 403;
+  sendGptAccessResult(res, {
+    statusCode,
+    payload: {
+      ok: false,
+      error: {
+        code: policy.code ?? (
+          policy.status === 'clarification_required'
+            ? INTENT_CLARIFICATION_REQUIRED
+            : 'DISPATCH_POLICY_DENIED'
+        ),
+        message: toDispatchPolicyErrorMessage(policy)
+      },
+      plan,
+      policy: toDispatchPolicyResponse(policy)
+    }
+  });
+}
+
+async function executeDispatchRun(
+  req: express.Request,
+  res: express.Response,
+  plan: DispatchPlan,
+  policy: DispatchPolicyDecision
+): Promise<void> {
+  if (!policy.registryAction) {
+    sendDispatchPolicyBlock(res, plan, policy);
     return;
   }
 
-  if (!metadata) {
-    sendGptAccessNotFound(res, 'GPT_ACCESS_CAPABILITY_NOT_FOUND', 'Capability not found.');
+  const result = await runDispatchPlan({
+    plan,
+    registry: createGptAccessDispatchRegistry(getModulesForRegistry()),
+    handlers: {
+      runMcpTool: (body) => runGptAccessMcpTool(body),
+      runDiagnostics: (payload) => runDeepDiagnostics(payload),
+      runCapability: (input) => runGptAccessCapabilityAction({
+        capabilityId: input.capabilityId,
+        action: input.action,
+        payload: input.payload
+      })
+    }
+  });
+
+  sendGptAccessResult(res, {
+    statusCode: result.statusCode,
+    payload: {
+      ok: result.statusCode >= 200 && result.statusCode < 300,
+      plan,
+      policy: toDispatchPolicyResponse(policy),
+      result: sanitizeGptAccessPayload(result.payload)
+    }
+  });
+}
+
+const runGptAccessDispatch = asyncHandler(async (req, res) => {
+  const body = readDispatchRunBody(req.body);
+  if (!body.ok) {
+    sendGptAccessBadRequest(res, body.message);
     return;
   }
 
-  if (!metadata.actions.includes(normalizedAction)) {
-    sendGptAccessNotFound(res, 'GPT_ACCESS_ACTION_NOT_FOUND', 'Capability action not found.');
-    return;
-  }
+  const registry = createGptAccessDispatchRegistry(getModulesForRegistry());
+  const plan = await resolveDispatchPlan({
+    utterance: body.utterance,
+    registry,
+    context: body.context
+  });
+  const policy = evaluateDispatchPolicy({
+    plan,
+    registry,
+    isScopeAllowed: isDispatchGptAccessScopeAllowed,
+    isModuleActionAllowed
+  });
 
-  if (!isModuleActionAllowed(metadata.name, normalizedAction)) {
-    sendGptAccessForbidden(
-      res,
-      'GPT_ACCESS_CAPABILITY_ACTION_DENIED',
-      'Capability action is not allowlisted for GPT Access execution.'
-    );
-    return;
-  }
-
-  try {
-    const result = await dispatchModuleAction(metadata.name, normalizedAction, payload);
+  if (body.dryRun) {
     res.json({
       ok: true,
-      result: sanitizeGptAccessPayload(result)
+      dryRun: true,
+      plan,
+      policy: toDispatchPolicyResponse(policy)
     });
-  } catch (error) {
-    if (isModuleDispatchNotFoundError(error)) {
-      sendGptAccessNotFound(res, 'GPT_ACCESS_CAPABILITY_NOT_FOUND', 'Capability or action not found.');
-      return;
-    }
-
-    sendGptAccessInternalError(res, 'Capability execution failed.');
+    return;
   }
+
+  if (!policy.allowed) {
+    sendDispatchPolicyBlock(res, plan, policy);
+    return;
+  }
+
+  if (policy.requiresConfirmation) {
+    confirmGate(req, res, () => {
+      const confirmedPolicy: DispatchPolicyDecision = {
+        ...policy,
+        status: 'allowed',
+        requiresConfirmation: false,
+        shouldExecute: true,
+        reason: 'confirmation_satisfied'
+      };
+      void executeDispatchRun(req, res, plan, confirmedPolicy).catch((error) => {
+        req.logger?.error?.('gpt_access.dispatch.failed', {
+          error: error instanceof Error ? error.message : String(error)
+        });
+        if (!res.headersSent) {
+          sendGptAccessInternalError(res, 'Dispatch execution failed.');
+        }
+      });
+    });
+    return;
+  }
+
+  await executeDispatchRun(req, res, plan, policy);
 });
 
 router.use('/gpt-access', securityHeaders);
@@ -628,6 +924,12 @@ router.post(
   asyncHandler(async (req, res) => {
     sendGptAccessResult(res, await runGptAccessMcpTool(req.body));
   })
+);
+
+router.post(
+  '/gpt-access/dispatch/run',
+  mapDispatchRunConfirmationToken,
+  runGptAccessDispatch
 );
 
 router.use('/gpt-access', (req, res) => {

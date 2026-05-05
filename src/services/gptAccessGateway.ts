@@ -24,9 +24,11 @@ import { getWorkerControlHealth, getWorkerControlStatus } from '@services/worker
 import { planAutonomousWorkerJob } from '@services/workerAutonomyService.js';
 import { buildSafetySelfHealSnapshot } from '@services/selfHealRuntimeInspectionService.js';
 import { getWorkerRuntimeStatus } from '@platform/runtime/workerConfig.js';
+import { DISPATCH_UTTERANCE_MAX_LENGTH } from '@dispatcher/naturalLanguage/types.js';
 
 const SERVICE_VERSION = '1.0.0';
 const TOKEN_ENV_NAME = 'ARCANOS_GPT_ACCESS_TOKEN';
+const DISPATCH_CONFIRMATION_TOKEN_PREFIX = 'token:';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_TOKEN_LENGTH = 4096;
 const LOG_LIMIT_MAX = 500;
@@ -590,22 +592,24 @@ function isGptAccessScopeExplicitlyConfigured(scope: GptAccessScope): boolean {
 
 export function requireGptAccessScope(scope: GptAccessScope) {
   return (_req: Request, res: Response, next: NextFunction): void => {
-    if (
-      GPT_ACCESS_SCOPES_REQUIRING_EXPLICIT_CONFIG.has(scope)
-      && !isGptAccessScopeExplicitlyConfigured(scope)
-    ) {
-      sendGatewayError(res, 403, 'GPT_ACCESS_SCOPE_DENIED', 'GPT access scope denied.');
-      return;
-    }
-
-    const { configuredScopes } = resolveConfiguredAccessScopes();
-    if (!configuredScopes.has(scope)) {
+    if (!isGptAccessScopeAllowed(scope)) {
       sendGatewayError(res, 403, 'GPT_ACCESS_SCOPE_DENIED', 'GPT access scope denied.');
       return;
     }
 
     next();
   };
+}
+
+export function isGptAccessScopeAllowed(scope: GptAccessScope): boolean {
+  if (
+    GPT_ACCESS_SCOPES_REQUIRING_EXPLICIT_CONFIG.has(scope)
+    && !isGptAccessScopeExplicitlyConfigured(scope)
+  ) {
+    return false;
+  }
+
+  return resolveConfiguredAccessScopes().configuredScopes.has(scope);
 }
 
 export function buildGptAccessHealthPayload() {
@@ -2080,6 +2084,89 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
           required: ['ok', 'tool'],
           additionalProperties: true
         },
+        DispatchPlan: {
+          type: 'object',
+          properties: {
+            action: { type: 'string' },
+            payload: {},
+            confidence: { type: 'number', minimum: 0, maximum: 1 },
+            source: { type: 'string', enum: ['rules', 'llm', 'legacy'] },
+            requiresConfirmation: { type: 'boolean' },
+            reason: { type: 'string' },
+            candidates: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  action: { type: 'string' },
+                  confidence: { type: 'number', minimum: 0, maximum: 1 },
+                  reason: { type: 'string' }
+                },
+                required: ['action', 'confidence'],
+                additionalProperties: false
+              }
+            }
+          },
+          required: ['action', 'payload', 'confidence', 'source', 'requiresConfirmation'],
+          additionalProperties: false
+        },
+        DispatchPolicyDecision: {
+          type: 'object',
+          properties: {
+            status: {
+              type: 'string',
+              enum: ['allowed', 'blocked', 'confirmation_required', 'clarification_required']
+            },
+            allowed: { type: 'boolean' },
+            requiresConfirmation: { type: 'boolean' },
+            shouldExecute: { type: 'boolean' },
+            action: { type: 'string' },
+            reason: { type: 'string' },
+            code: { type: 'string' },
+            requiredScope: { type: ['string', 'null'] }
+          },
+          required: ['status', 'allowed', 'requiresConfirmation', 'shouldExecute', 'action', 'reason', 'requiredScope'],
+          additionalProperties: false
+        },
+        DispatchRunRequest: {
+          type: 'object',
+          description: 'Natural-language dispatch request. The utterance is resolved into a DispatchPlan, policy checked, and only then executed through GPT Access capability/control runners. This replaces natural-language dispatch behavior without restoring /ask.',
+          properties: {
+            utterance: { type: 'string', minLength: 1, maxLength: DISPATCH_UTTERANCE_MAX_LENGTH },
+            context: {
+              type: 'object',
+              additionalProperties: true
+            },
+            dryRun: {
+              type: 'boolean',
+              default: false,
+              description: 'When true, returns the DispatchPlan and policy decision without executing.'
+            },
+            confirmation_token: {
+              type: 'string',
+              minLength: 1,
+              description: `Confirmation token for one retry when a privileged dispatch returns CONFIRMATION_REQUIRED. Accepted formats are either the raw confirmationChallenge.id or the prefixed form ${DISPATCH_CONFIRMATION_TOKEN_PREFIX}<confirmationChallenge.id>.`,
+              examples: [
+                'example-confirmation-challenge-id',
+                `${DISPATCH_CONFIRMATION_TOKEN_PREFIX}example-confirmation-challenge-id`
+              ]
+            }
+          },
+          required: ['utterance'],
+          additionalProperties: false
+        },
+        DispatchRunResponse: {
+          type: 'object',
+          properties: {
+            ok: { type: 'boolean' },
+            dryRun: { type: 'boolean' },
+            plan: { '$ref': '#/components/schemas/DispatchPlan' },
+            policy: { '$ref': '#/components/schemas/DispatchPolicyDecision' },
+            result: {}
+          },
+          required: ['ok', 'plan', 'policy'],
+          additionalProperties: true
+        },
         CapabilityV1Summary: {
           type: 'object',
           properties: {
@@ -2561,6 +2648,50 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
             '401': { description: 'Unauthorized.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
             '403': { description: 'Tool denied.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
             '503': { description: 'Tool unavailable.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } }
+          }
+        }
+      },
+      '/gpt-access/dispatch/run': {
+        post: {
+          operationId: 'runDispatch',
+          summary: 'Resolve and run a natural-language GPT Access dispatch.',
+          description: 'Canonical natural-language dispatch entryway. Resolves utterance -> DispatchPlan -> registry validation -> scope/allowlist/risk policy -> confirmation when required -> existing GPT Access capability/control runner. This replaces old natural-language dispatch behavior without restoring /ask.',
+          security: protectedSecurity,
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: { '$ref': '#/components/schemas/DispatchRunRequest' }
+              }
+            }
+          },
+          responses: {
+            '200': {
+              description: 'Dispatch dry-run or successful execution response.',
+              content: {
+                'application/json': {
+                  schema: { '$ref': '#/components/schemas/DispatchRunResponse' }
+                }
+              }
+            },
+            '400': { description: 'Invalid request.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '401': { description: 'Unauthorized.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '403': {
+              description: 'Policy denied, scope denied, allowlist denied, or confirmation required.',
+              content: {
+                'application/json': {
+                  schema: {
+                    oneOf: [
+                      { '$ref': '#/components/schemas/ErrorResponse' },
+                      { '$ref': '#/components/schemas/ConfirmationRequiredResponse' },
+                      { '$ref': '#/components/schemas/DispatchRunResponse' }
+                    ]
+                  }
+                }
+              }
+            },
+            '422': { description: 'Intent clarification required.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/DispatchRunResponse' } } } },
+            '500': { description: 'Unexpected dispatch execution failure.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } }
           }
         }
       },
