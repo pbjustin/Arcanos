@@ -893,6 +893,116 @@ describe('/gpt-access gateway', () => {
     expect(dispatchModuleActionMock).not.toHaveBeenCalled();
   });
 
+  it('dry-runs natural-language dispatch without executing the resolved action', async () => {
+    const response = await authorized(request(buildApp()).post('/gpt-access/dispatch/run'))
+      .send({
+        utterance: 'are workers alive',
+        dryRun: true
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(expect.objectContaining({
+      ok: true,
+      dryRun: true,
+      plan: expect.objectContaining({
+        action: 'workers.status',
+        confidence: expect.any(Number)
+      }),
+      policy: expect.objectContaining({
+        status: 'allowed',
+        allowed: true,
+        shouldExecute: true
+      })
+    }));
+    expect(getWorkerControlStatusMock).not.toHaveBeenCalled();
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
+  it('runs read-only natural-language dispatch through GPT Access control runners', async () => {
+    const response = await authorized(request(buildApp()).post('/gpt-access/dispatch/run'))
+      .send({
+        utterance: 'show queue'
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.plan.action).toBe('queue.inspect');
+    expect(response.body.policy.status).toBe('allowed');
+    expect(response.body.result).toEqual(expect.objectContaining({
+      ok: true,
+      tool: 'queue.inspect'
+    }));
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
+  it('returns clarification for low-confidence natural-language dispatch', async () => {
+    const response = await authorized(request(buildApp()).post('/gpt-access/dispatch/run'))
+      .send({
+        utterance: 'please handle whatever seems appropriate'
+      });
+
+    expect(response.status).toBe(422);
+    expect(response.body.error.code).toBe('INTENT_CLARIFICATION_REQUIRED');
+    expect(response.body.plan.action).toBe('INTENT_CLARIFICATION_REQUIRED');
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
+  it('blocks dispatch capability actions that are not allowlisted', async () => {
+    process.env.ARCANOS_GPT_ACCESS_SCOPES = 'capabilities.run';
+    delete process.env.MCP_ALLOW_MODULE_ACTIONS;
+
+    const response = await authorized(request(buildApp()).post('/gpt-access/dispatch/run'))
+      .send({
+        utterance: 'ARCANOS:CORE.query'
+      });
+
+    expect(response.status).toBe(403);
+    expect(response.body.error).toEqual({
+      code: 'GPT_ACCESS_CAPABILITY_ACTION_DENIED',
+      message: 'module_action_not_allowlisted'
+    });
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
+  it('returns the existing confirmation challenge for privileged dispatch actions', async () => {
+    allowCapabilityRun();
+
+    const response = await authorized(request(buildApp()).post('/gpt-access/dispatch/run'))
+      .send({
+        utterance: 'ARCANOS:CORE.query'
+      });
+
+    expect(response.status).toBe(403);
+    expect(response.body.code).toBe('CONFIRMATION_REQUIRED');
+    expect(response.body.confirmationChallenge).toEqual(expect.objectContaining({
+      id: expect.any(String)
+    }));
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
+  it('uses the existing confirmation retry mechanism before privileged dispatch execution', async () => {
+    allowCapabilityRun();
+    const app = buildApp();
+
+    const challengeResponse = await authorized(request(app).post('/gpt-access/dispatch/run'))
+      .send({
+        utterance: 'ARCANOS:CORE.query'
+      });
+    const challengeId = challengeResponse.body.confirmationChallenge?.id;
+    expect(challengeResponse.status).toBe(403);
+    expect(typeof challengeId).toBe('string');
+
+    const response = await authorized(request(app).post('/gpt-access/dispatch/run'))
+      .send({
+        utterance: 'ARCANOS:CORE.query',
+        confirmation_token: challengeId
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.plan.action).toBe('ARCANOS:CORE.query');
+    expect(response.body.policy.requiresConfirmation).toBe(true);
+    expect(dispatchModuleActionMock).toHaveBeenCalledWith('ARCANOS:CORE', 'query', {});
+  });
+
   it('maps typed module dispatch misses to not found responses', async () => {
     allowCapabilityRun();
     dispatchModuleActionMock.mockRejectedValueOnce(new MockModuleNotFoundError('Module not found: ARCANOS:CORE'));
@@ -2207,6 +2317,27 @@ describe('/gpt-access gateway', () => {
     expect(response.body.paths['/gpt-access/mcp'].post.requestBody.content['application/json'].schema).toEqual({
       '$ref': '#/components/schemas/McpControlRequest'
     });
+    expect(response.body.paths['/gpt-access/dispatch/run'].post.operationId).toBe('runDispatch');
+    expect(response.body.paths['/gpt-access/dispatch/run'].post.description).toContain('DispatchPlan');
+    expect(response.body.paths['/gpt-access/dispatch/run'].post.description).toContain('without restoring /ask');
+    expect(response.body.paths['/gpt-access/dispatch/run'].post.requestBody.content['application/json'].schema).toEqual({
+      '$ref': '#/components/schemas/DispatchRunRequest'
+    });
+    expect(response.body.components.schemas.DispatchRunRequest).toEqual(expect.objectContaining({
+      required: ['utterance'],
+      additionalProperties: false
+    }));
+    expect(response.body.components.schemas.DispatchRunResponse.properties.plan).toEqual({
+      '$ref': '#/components/schemas/DispatchPlan'
+    });
+    expect(response.body.components.schemas.DispatchPlan.required).toEqual([
+      'action',
+      'payload',
+      'confidence',
+      'source',
+      'requiresConfirmation'
+    ]);
+    expect(response.body.paths['/ask']).toBeUndefined();
   });
 
   it('does not derive the public OpenAPI server URL from spoofable request hosts', async () => {
