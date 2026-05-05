@@ -172,6 +172,13 @@ Use `docs/TRINITY_PIPELINE.md` for the full execution flow and `docs/gpt-access-
 | `MCP_ENABLE_SESSIONS` | `false` | Enable transport session ID generation in MCP HTTP transport. |
 | `MCP_ALLOW_MODULE_ACTIONS` | empty | CSV allowlist controlling `modules.invoke` and GPT Access capability runs (`module:action` or `module:*`; the final colon separates module from action). |
 
+### GPT Access natural-language dispatch
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `GPT_ACCESS_NL_DISPATCH_MODE` | `rules` | Natural-language dispatch resolver mode: `rules`, `hybrid`, or `llm_first`. |
+| `GPT_ACCESS_DISPATCH_MODEL` | `gpt-4.1-mini` | OpenAI Responses API model for the optional semantic planner. |
+| `GPT_ACCESS_DISPATCH_LLM_TIMEOUT_MS` | `1500` | Timeout for LLM dispatch planning; failures return clarification or fall back to rules without execution. |
+
 ### Metrics
 | Variable | Default | Purpose |
 | --- | --- | --- |

@@ -1,6 +1,7 @@
 export * from './types.js';
 export * from './registry.js';
 export * from './resolver.js';
+export * from './llmResolver.js';
 export * from './planner.js';
 export * from './policy.js';
 export * from './confirmation.js';
