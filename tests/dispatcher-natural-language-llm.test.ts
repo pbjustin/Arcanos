@@ -11,6 +11,13 @@ jest.unstable_mockModule('@arcanos/openai/unifiedClient', () => ({
   getOrCreateClient: jest.fn(() => fakeOpenAIClient)
 }));
 
+jest.unstable_mockModule('@services/openai/credentialProvider.js', () => ({
+  hasValidAPIKey: jest.fn(() => {
+    const key = process.env.OPENAI_API_KEY?.trim() ?? '';
+    return key.length > 0 && !key.startsWith('sk-mock-') && key !== 'sk-mock-for-ci-testing';
+  })
+}));
+
 const {
   INTENT_CLARIFICATION_REQUIRED,
   createCapabilityRegistry,
@@ -123,6 +130,25 @@ describe('LLM natural-language dispatch resolver', () => {
       includeQueue: true
     });
     expect(responsesCreateMock).toHaveBeenCalledTimes(1);
+    expect(responsesCreateMock.mock.calls[0]?.[0]).toMatchObject({
+      instructions: expect.stringContaining('Do not invent capabilities'),
+      input: expect.stringContaining("what's wrong with the backend?")
+    });
+    expect(String(responsesCreateMock.mock.calls[0]?.[0]?.input)).not.toContain('Do not invent capabilities');
+  });
+
+  it('does not call the LLM when only a mock OpenAI key is configured', async () => {
+    process.env.OPENAI_API_KEY = 'sk-mock-for-ci-testing';
+    const registry = createGptAccessDispatchRegistry();
+
+    const plan = await resolveDispatchPlan({
+      utterance: 'please fix the vague worker thing',
+      registry
+    });
+
+    expect(plan.action).toBe(INTENT_CLARIFICATION_REQUIRED);
+    expect(plan.source).toBe('rules');
+    expect(responsesCreateMock).not.toHaveBeenCalled();
   });
 
   it('falls back to rules in llm_first mode when the LLM asks for clarification', async () => {
@@ -277,6 +303,30 @@ describe('LLM natural-language dispatch resolver', () => {
 
     const plan = await resolveLlmDispatchPlan({
       utterance: 'run diagnostics with these headers',
+      registry,
+      client: fakeOpenAIClient
+    });
+
+    expect(plan.action).toBe(INTENT_CLARIFICATION_REQUIRED);
+    expect(plan.reason).toBe('llm_payload_unsafe_field');
+  });
+
+  it('rejects GPT Access capability control fields blocked by direct capability runs', async () => {
+    const registry = createGptAccessDispatchRegistry();
+    mockLlmResponse(buildLlmPlanResponse({
+      action: 'diagnostics.run',
+      payload: {
+        filters: {
+          __arcanosGptId: 'arcanos-core',
+          overrideAuditSafe: true,
+          timeoutMs: 1
+        }
+      },
+      reason: 'unsafe_control_field_attempt'
+    }));
+
+    const plan = await resolveLlmDispatchPlan({
+      utterance: 'run diagnostics with runtime overrides',
       registry,
       client: fakeOpenAIClient
     });

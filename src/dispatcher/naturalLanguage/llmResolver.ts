@@ -8,6 +8,7 @@ import {
 } from '@arcanos/openai/responses';
 import { getOrCreateClient } from '@arcanos/openai/unifiedClient';
 import { getEnv } from '@platform/runtime/env.js';
+import { hasValidAPIKey } from '@services/openai/credentialProvider.js';
 
 import {
   DISPATCH_CONFIDENCE_THRESHOLD,
@@ -55,7 +56,15 @@ const MAX_LLM_PAYLOAD_CHARS = 4096;
 const MAX_REASON_LENGTH = 240;
 
 const DANGEROUS_PAYLOAD_KEYS = new Set([
+  '__arcanosexecutionmode',
+  '__arcanosexecutionreason',
+  '__arcanosgptid',
+  '__arcanosrequestedaction',
+  '__arcanossourceendpoint',
+  '__arcanossuppresspromptdebugtrace',
   '__proto__',
+  'admin_key',
+  'api-key',
   'api_key',
   'apikey',
   'auth',
@@ -68,33 +77,52 @@ const DANGEROUS_PAYLOAD_KEYS = new Set([
   'endpoint',
   'exec',
   'headers',
+  'maxoutputtokens',
+  'maxwords',
+  'openai_api_key',
+  'overrideauditsafe',
   'password',
   'prototype',
   'proxy',
+  'railway_token',
   'risk',
   'runner',
   'scope',
   'secret',
   'shell',
   'sql',
+  'suppresstimeoutfallback',
+  'target',
+  'timeout_ms',
+  'timeoutms',
   'token',
   'url'
 ]);
 const DANGEROUS_PAYLOAD_KEY_FRAGMENTS = [
   'apikey',
+  'arcanos',
   'auth',
   'authorization',
   'bearer',
   'command',
   'cookie',
+  'credential',
   'endpoint',
   'exec',
   'header',
+  'maxoutputtokens',
+  'maxwords',
+  'openaiapikey',
+  'overrideauditsafe',
   'password',
   'proxy',
+  'railwaytoken',
   'secret',
   'shell',
   'sql',
+  'suppresstimeoutfallback',
+  'target',
+  'timeout',
   'token',
   'url'
 ];
@@ -146,12 +174,7 @@ function readDispatchTimeoutMs(): number {
 }
 
 export function hasConfiguredLlmDispatchCredentials(): boolean {
-  return Boolean(
-    getEnv('OPENAI_API_KEY')
-    || getEnv('RAILWAY_OPENAI_API_KEY')
-    || getEnv('API_KEY')
-    || getEnv('OPENAI_KEY')
-  );
+  return hasValidAPIKey();
 }
 
 function resolveDispatchClient(client?: OpenAIResponsesClientLike | null): OpenAIResponsesClientLike | null {
@@ -239,8 +262,7 @@ function buildDispatchSchema(actions: readonly string[]): Record<string, unknown
   };
 }
 
-function buildPlannerPrompt(input: {
-  utterance: string;
+function buildPlannerInstructions(input: {
   actions: readonly Record<string, unknown>[];
 }): string {
   return [
@@ -260,9 +282,12 @@ function buildPlannerPrompt(input: {
     '- "run a deep diagnostic": choose diagnostics.run and include includeDb/includeWorkers/includeLogs/includeQueue when available.',
     '- If the requested operation is not registered, return INTENT_CLARIFICATION_REQUIRED.',
     '',
-    `Registered action catalog JSON: ${JSON.stringify(input.actions)}`,
-    `Operator utterance: ${input.utterance}`
+    `Registered action catalog JSON: ${JSON.stringify(input.actions)}`
   ].join('\n');
+}
+
+function buildPlannerInput(utterance: string): string {
+  return `Operator utterance: ${utterance}`;
 }
 
 function isLlmDispatchCandidate(value: unknown): value is LlmDispatchCandidate {
@@ -390,10 +415,10 @@ export async function resolveLlmDispatchPlan(input: ResolveLlmDispatchPlanInput)
       client,
       {
         model: input.model ?? readDispatchModel(),
-        input: buildPlannerPrompt({
-          utterance: input.utterance,
+        instructions: buildPlannerInstructions({
           actions: actions.map(toCatalogAction)
         }),
+        input: buildPlannerInput(input.utterance),
         max_output_tokens: 700,
         temperature: 0,
         text: {
