@@ -290,19 +290,34 @@ function buildPlannerInput(utterance: string): string {
   return `Operator utterance: ${utterance}`;
 }
 
-function isLlmDispatchCandidate(value: unknown): value is LlmDispatchCandidate {
+function isAllowedLlmAction(action: string, actionNames: ReadonlySet<string>): boolean {
+  return action === INTENT_CLARIFICATION_REQUIRED || actionNames.has(action);
+}
+
+function isLlmReason(value: unknown): value is string {
+  return typeof value === 'string' && Boolean(clampText(value, MAX_REASON_LENGTH));
+}
+
+function isLlmDispatchCandidate(
+  value: unknown,
+  actionNames: ReadonlySet<string>
+): value is LlmDispatchCandidate {
   return (
     isRecord(value)
     && typeof value.action === 'string'
+    && isAllowedLlmAction(value.action, actionNames)
     && typeof value.confidence === 'number'
     && Number.isFinite(value.confidence)
     && value.confidence >= 0
     && value.confidence <= 1
-    && (value.reason === undefined || typeof value.reason === 'string')
+    && isLlmReason(value.reason)
   );
 }
 
-function isLlmDispatchResponse(value: unknown): value is LlmDispatchResponse {
+function isLlmDispatchResponse(
+  value: unknown,
+  actionNames: ReadonlySet<string>
+): value is LlmDispatchResponse {
   return (
     isRecord(value)
     && typeof value.action === 'string'
@@ -313,9 +328,9 @@ function isLlmDispatchResponse(value: unknown): value is LlmDispatchResponse {
     && value.confidence <= 1
     && typeof value.requiresConfirmation === 'boolean'
     && typeof value.reason === 'string'
-    && value.reason.trim().length > 0
     && Array.isArray(value.candidates)
-    && value.candidates.every(isLlmDispatchCandidate)
+    && value.candidates.length <= 5
+    && value.candidates.every((candidate) => isLlmDispatchCandidate(candidate, actionNames))
   );
 }
 
@@ -425,14 +440,14 @@ export async function resolveLlmDispatchPlan(input: ResolveLlmDispatchPlanInput)
           format: {
             type: 'json_schema',
             name: 'gpt_access_dispatch_plan',
-            strict: true,
+            strict: false,
             schema: buildDispatchSchema(actionNames)
           }
         }
       },
       { signal: controller.signal },
       {
-        validate: isLlmDispatchResponse,
+        validate: (value): value is LlmDispatchResponse => isLlmDispatchResponse(value, new Set(actionNames)),
         source: 'GPT Access natural-language dispatch'
       }
     );

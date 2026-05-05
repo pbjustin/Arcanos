@@ -36,7 +36,7 @@ export async function resolveDispatchPlan(input: ResolveDispatchPlanInput): Prom
   if (mode === 'llm_first') {
     const llmPlan = await resolveLlmDispatchPlan({
       utterance: input.utterance,
-      registry: input.registry
+      registry: input.llmRegistry ?? input.registry
     });
 
     return requiresClarification(llmPlan) ? rulePlan : llmPlan;
@@ -48,7 +48,7 @@ export async function resolveDispatchPlan(input: ResolveDispatchPlanInput): Prom
 
   const llmPlan = await resolveLlmDispatchPlan({
     utterance: input.utterance,
-    registry: input.registry
+    registry: input.llmRegistry ?? input.registry
   });
 
   return shouldFallBackToRulePlanAfterLlm(llmPlan) ? rulePlan : llmPlan;

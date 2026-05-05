@@ -81,8 +81,8 @@ The optional LLM resolver is a semantic planner only. It never calls backend rou
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `GPT_ACCESS_NL_DISPATCH_MODE` | `rules` | `rules` keeps deterministic rule-only behavior. `hybrid` tries rules first, then LLM only when rules need clarification. `llm_first` tries LLM first and falls back to rules on clarification or LLM failure. |
-| `GPT_ACCESS_DISPATCH_MODEL` | `gpt-4.1-mini` | Responses API model used by the semantic planner. |
-| `GPT_ACCESS_DISPATCH_LLM_TIMEOUT_MS` | `1500` | Per-dispatch LLM planning timeout, capped in code. Timeout fails closed and does not execute anything. |
+| `GPT_ACCESS_DISPATCH_MODEL` | `gpt-4.1-mini` | Responses API model used by the optional semantic planner. |
+| `GPT_ACCESS_DISPATCH_LLM_TIMEOUT_MS` | `1500` | Per-dispatch LLM planning timeout, capped in code. Timeout/failure never executes an LLM plan; execution can continue only through a deterministic rule plan that passes policy and confirmation. |
 
 Examples:
 
@@ -93,6 +93,8 @@ Examples:
 | `run a deep diagnostic` | `diagnostics.run` with diagnostic include flags when available. |
 | `check what is wrong with workers` | `workers.status` when registered. |
 | `kick stale workers`, `fix slot 8`, `recycle 3 and 8` | A registered worker recover/recycle action if one exists; otherwise clarification. Slot numbers normalize to IDs such as `async-queue-slot-8` only inside a safe registered action payload. |
+
+Worker recycle/recover examples are conditional. The default dispatcher registers read-only worker status, queue, runtime, and diagnostics actions; recycle/recover can execute only when a capability module registers that action and the request passes scope, `MCP_ALLOW_MODULE_ACTIONS`, and confirmation checks.
 
 ## Final Trinity Flow
 The protected Trinity job path is:
@@ -220,6 +222,8 @@ railway variable list --service "$SERVICE" --environment "$ENVIRONMENT"
 ```
 
 Add `capabilities.read,capabilities.run` and a narrow `MCP_ALLOW_MODULE_ACTIONS` value only when direct capability execution is required.
+
+Natural-language dispatch defaults to `rules` and needs no extra Railway variables. If enabling `hybrid` or `llm_first`, set `GPT_ACCESS_NL_DISPATCH_MODE`, `GPT_ACCESS_DISPATCH_MODEL`, and `GPT_ACCESS_DISPATCH_LLM_TIMEOUT_MS` on the web service, ensure `OPENAI_API_KEY` is present there, and deploy/restart the web service before validating. These settings do not change the worker service or guarantee worker recycle behavior.
 
 PowerShell:
 

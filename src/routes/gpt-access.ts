@@ -11,11 +11,13 @@ import {
   DISPATCH_RUN_BODY_KEYS,
   DISPATCH_UTTERANCE_MAX_LENGTH,
   INTENT_CLARIFICATION_REQUIRED,
+  createCapabilityRegistry,
   createGptAccessDispatchRegistry,
   evaluateDispatchPolicy,
   readDispatchConfirmationTokenField,
   resolveDispatchPlan,
   runDispatchPlan,
+  type CapabilityRegistry,
   stripDispatchConfirmationToken,
   type DispatchExecutionResult,
   type DispatchPolicyDecision,
@@ -426,6 +428,30 @@ function isDispatchGptAccessScopeAllowed(scope: string): boolean {
   return GPT_ACCESS_SCOPE_NAMES.has(scope) && isGptAccessScopeAllowed(scope as GptAccessScope);
 }
 
+function createDispatchLlmPlanningRegistry(registry: CapabilityRegistry): CapabilityRegistry {
+  return createCapabilityRegistry(
+    registry.listActions().filter((registryAction) => {
+      const policy = evaluateDispatchPolicy({
+        plan: {
+          action: registryAction.action,
+          payload: {},
+          confidence: 1,
+          source: 'rules',
+          requiresConfirmation: Boolean(
+            registryAction.requiresConfirmation || registryAction.risk !== 'readonly'
+          ),
+          reason: 'llm_planning_catalog_filter'
+        },
+        registry,
+        isScopeAllowed: isDispatchGptAccessScopeAllowed,
+        isModuleActionAllowed
+      });
+
+      return policy.status === 'allowed' || policy.status === 'confirmation_required';
+    })
+  );
+}
+
 const listGptAccessCapabilities = asyncHandler(async (_req, res) => {
   let capabilities;
   try {
@@ -701,6 +727,7 @@ const runGptAccessDispatch = asyncHandler(async (req, res) => {
   const plan = await resolveDispatchPlan({
     utterance: body.utterance,
     registry,
+    llmRegistry: createDispatchLlmPlanningRegistry(registry),
     context: body.context
   });
   const policy = evaluateDispatchPolicy({
