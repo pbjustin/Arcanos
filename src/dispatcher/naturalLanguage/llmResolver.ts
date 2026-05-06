@@ -56,6 +56,8 @@ export const LLM_DISPATCH_FALLBACK_REASONS = new Set([
 const DEFAULT_DISPATCH_MODEL = 'gpt-4.1-mini';
 const DEFAULT_DISPATCH_LLM_TIMEOUT_MS = 1500;
 const MAX_DISPATCH_LLM_TIMEOUT_MS = 10000;
+const MAX_DISPATCH_LLM_OUTPUT_TOKENS = 700;
+const DISPATCH_LLM_TEMPERATURE = 0;
 const MAX_LLM_PAYLOAD_DEPTH = 8;
 const MAX_LLM_PAYLOAD_CHARS = 4096;
 const MAX_REASON_LENGTH = 240;
@@ -448,8 +450,8 @@ export async function resolveLlmDispatchPlan(input: ResolveLlmDispatchPlanInput)
           utterance: input.utterance,
           context: input.context
         }),
-        max_output_tokens: 700,
-        temperature: 0,
+        max_output_tokens: MAX_DISPATCH_LLM_OUTPUT_TOKENS,
+        temperature: DISPATCH_LLM_TEMPERATURE,
         text: {
           format: {
             type: 'json_schema',

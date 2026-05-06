@@ -55,23 +55,42 @@ function readDispatchMode(): NaturalLanguageDispatchMode {
   return hasConfiguredLlmDispatchCredentials() ? 'hybrid' : 'rules';
 }
 
+function getReasonIfDispatchLlmDisabled(input: {
+  configured: ReturnType<typeof readConfiguredDispatchMode>;
+  effectiveMode: NaturalLanguageDispatchMode;
+  llmCredentialsConfigured: boolean;
+  llmEnabled: boolean;
+}): string | null {
+  if (input.llmEnabled) {
+    return null;
+  }
+
+  if (input.effectiveMode !== 'rules') {
+    return 'openai_credentials_unavailable';
+  }
+
+  if (input.configured.validMode === 'rules') {
+    return 'mode_rules';
+  }
+
+  if (input.configured.invalidMode) {
+    return 'invalid_mode';
+  }
+
+  return input.llmCredentialsConfigured ? null : 'openai_credentials_unavailable';
+}
+
 export function getNaturalLanguageDispatchRuntimeStatus() {
   const configured = readConfiguredDispatchMode();
   const llmCredentialsConfigured = hasConfiguredLlmDispatchCredentials();
   const effectiveMode = readDispatchMode();
   const llmEnabled = effectiveMode !== 'rules' && llmCredentialsConfigured;
-  const reasonIfDisabled =
-    effectiveMode === 'rules'
-      ? configured.validMode === 'rules'
-        ? 'mode_rules'
-        : configured.invalidMode
-          ? 'invalid_mode'
-          : llmCredentialsConfigured
-            ? null
-            : 'openai_credentials_unavailable'
-      : llmEnabled
-        ? null
-        : 'openai_credentials_unavailable';
+  const reasonIfDisabled = getReasonIfDispatchLlmDisabled({
+    configured,
+    effectiveMode,
+    llmCredentialsConfigured,
+    llmEnabled
+  });
 
   return {
     mode: configured.rawMode ?? 'unset',
