@@ -63,6 +63,7 @@ Environment separation:
 - Keep secrets per environment in Railway Variables.
 - Configure separate Railway services for web and worker when async GPT jobs must complete in the background.
 - `GPT_ACCESS_*` natural-language dispatch variables do not change or recycle the worker service. Worker recycle/recover dispatch uses registered privileged actions, requires explicit `workers.recover` scope plus confirmation, and reclaims stale queue jobs through the approved recovery runner.
+- Dispatch confidence thresholds are fixed code policy, not Railway variables: readonly `0.65`, privileged `0.78`, and destructive `0.90`.
 - Confirm each service role with `railway variable list --service <service> --environment production` before release.
 
 ## Run locally

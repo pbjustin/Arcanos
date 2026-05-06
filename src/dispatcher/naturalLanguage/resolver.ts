@@ -37,6 +37,10 @@ const DISPATCH_RULES: DispatchRule[] = [
     test: (utterance) =>
       /\b(full|deep|complete)\b.*\b(health|diagnostic|check)\b/u.test(utterance)
       || /\b(run|perform)\b.*\b(diagnostics?|health check)\b/u.test(utterance)
+      || /\bwhat(?:s|\s+is)?\s+(?:wrong|going\s+on)\b.*\b(?:backend|runtime)\b/u.test(utterance)
+      || /\b(?:what(?:s|\s+is)?\s+(?:wrong|going\s+on)|analy[sz]e|explain|review)\b.*\b(?:backend|runtime)\b.*\b(?:errors?|wrong|broken|failing|failure|diagnostics?)\b/u.test(utterance)
+      || /\b(?:analy[sz]e|explain|review)\b.*\b(?:errors?|wrong|broken|failing|failure|diagnostics?)\b.*\b(?:backend|runtime)\b/u.test(utterance)
+      || /\b(?:backend|runtime)\b.*\b(?:errors?|wrong|broken|failing|failure|diagnostics?)\b.*\b(?:analy[sz]e|explain|review)\b/u.test(utterance)
   },
   {
     action: 'workers.status',
@@ -53,6 +57,7 @@ const DISPATCH_RULES: DispatchRule[] = [
     test: (utterance) =>
       /\b(queue|backlog|pending jobs?)\b.*\b(backed up|inspect|show|status|pending|depth)\b/u.test(utterance)
       || /\b(show|inspect|check|get)\b.*\b(queue|backlog|pending jobs?)\b/u.test(utterance)
+      || /\bwhat(?:s|\s+is)?\s+(?:going\s+on|status)\b.*\b(queue|backlog|pending jobs?)\b/u.test(utterance)
   },
   {
     action: 'runtime.inspect',

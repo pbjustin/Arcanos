@@ -11,12 +11,12 @@ import { getEnv } from '@platform/runtime/env.js';
 import { hasValidAPIKey } from '@services/openai/credentialProvider.js';
 
 import {
-  DISPATCH_CONFIDENCE_THRESHOLD,
   INTENT_CLARIFICATION_REQUIRED,
   type CapabilityRegistry,
   type DispatchPlan,
   type DispatchRegistryAction
 } from './types.js';
+import { getDispatchConfidenceThreshold } from './policy.js';
 import {
   dispatchActionRequiresConfirmation,
   isUnsafeLlmDispatchPayloadKey
@@ -509,7 +509,7 @@ export async function resolveLlmDispatchPlan(input: ResolveLlmDispatchPlanInput)
         candidates: toPlanCandidates(outputParsed.candidates)
       };
     }
-    const belowConfidenceThreshold = outputParsed.confidence < DISPATCH_CONFIDENCE_THRESHOLD;
+    const belowConfidenceThreshold = outputParsed.confidence < getDispatchConfidenceThreshold(registryAction.risk);
 
     const payloadValidation = validateLlmDispatchPayload(outputParsed.payload);
     if (!payloadValidation.ok) {

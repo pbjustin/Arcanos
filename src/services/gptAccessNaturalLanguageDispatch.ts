@@ -226,29 +226,45 @@ function isOperatorBackendCommand(utterance: string): boolean {
     .replace(/\s+/gu, ' ')
     .trim();
 
+  if (isWritingPrompt(normalized)) {
+    return false;
+  }
+
+  if (isAdvisoryAnalysisPrompt(normalized)) {
+    return isOperationalAnalysisPrompt(normalized);
+  }
+
   if (isExplicitWorkerControlCommand(normalized)) {
     return true;
   }
 
-  if (isAdvisoryAnalysisPrompt(normalized)) {
-    return false;
-  }
+  const explicitOperatorCommand = isExplicitOperatorCommand(normalized);
+  return explicitOperatorCommand;
+}
 
-  return isExplicitOperatorCommand(normalized);
+function isWritingPrompt(normalized: string): boolean {
+  return /\b(?:write|draft|compose|story|poem|essay|blog)\b/u.test(normalized);
 }
 
 function isAdvisoryAnalysisPrompt(normalized: string): boolean {
   return (
     /\b(?:improve|improvements?|recommend|suggest|review|analy[sz]e|opinion|advice|architecture|design|plan|refine|explain)\b/u.test(normalized)
-    || /\b(?:how|what)\s+should\b/u.test(normalized)
-    || /\bhow\s+(?:do|can)\s+i\b/u.test(normalized)
+    || /\b(?:how|what)\s+should\b.*\b(?:improve|fix|recycle|recover|unstick|architecture|design|plan|recommend|suggest|review|analy[sz]e)\b/u.test(normalized)
+  );
+}
+
+function isOperationalAnalysisPrompt(normalized: string): boolean {
+  return (
+    /\b(?:analy[sz]e|explain|review)\b/u.test(normalized)
+    && /\b(?:backend|runtime|workers?|job runners?|queue|backlog|pending jobs?)\b/u.test(normalized)
+    && /\b(?:status|health|healthy|alive|up|down|okay|ok|broken|failing|failure|errors?|wrong|backed up|diagnostics?)\b/u.test(normalized)
   );
 }
 
 function isExplicitOperatorCommand(normalized: string): boolean {
   return (
     /\b(?:run|perform|start|do|deep|full)\s+(?:a\s+)?(?:diagnostics?|diagnostic|health check)\b/u.test(normalized)
-    || /\b(?:check(?:\s+on)?|inspect|show\s+me|look\s+(?:at|into)|diagnose|troubleshoot|what(?:s|\s+is)?\s+(?:wrong|going\s+on)|is|are)\b.*\b(?:backend|runtime|workers?|job runners?|queue|backlog|pending jobs?)\b/u.test(normalized)
+    || /\b(?:check(?:\s+on)?|inspect|show(?:\s+me)?|look\s+(?:at|into)|diagnose|troubleshoot|what(?:s|\s+is)?\s+(?:wrong|going\s+on)|is|are)\b.*\b(?:backend|runtime|workers?|job runners?|queue|backlog|pending jobs?)\b/u.test(normalized)
     || /\b(?:backend|runtime|workers?|job runners?|queue|backlog|pending jobs?)\b.*\b(?:status|health|healthy|alive|up|down|okay|ok|broken|failing|failure|errors?|wrong|stale|backed up|diagnostics?)\b/u.test(normalized)
     || /\b(?:server|app)\s+(?:status|health|healthy|alive|up|down|broken|failing|failure|errors?)\b/u.test(normalized)
     || /\b(?:status|health|healthy|alive|up|down)\s+(?:server|app)\b/u.test(normalized)

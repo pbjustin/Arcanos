@@ -12,7 +12,7 @@ Current entrypoints:
 
 Use `/gpt-access/*` for protected backend calls from Custom GPTs and operator integrations. Do not route job result lookup, worker status, queue inspection, MCP diagnostics, or runtime inspection through `/gpt/:gptId`.
 
-ARCANOS AI treats backend-operator language as control-plane work. When `ARCANOS:CORE` receives commands such as "what is wrong with the backend?", "check on the workers", or "what is going on with the queue?", it routes them through GPT Access natural-language dispatch before Trinity writing. That path produces a strict `DispatchPlan`, applies registered-action validation, scopes, allowlists, policy, and confirmation gates, then runs only existing `/gpt-access/*` runners. Privileged plans return confirmation state instead of executing from the writing path.
+ARCANOS AI treats explicit backend-operator language as control-plane work. When `ARCANOS:CORE` receives commands such as "what is wrong with the backend?", "check on the workers", or "what is going on with the queue?", it routes them through GPT Access natural-language dispatch before Trinity writing. Advisory, recommendation, review, explanation, planning, architecture, design, and "how should I..." prompts remain in the Trinity writing path unless they contain explicit inspect/status/diagnose/control intent. The dispatch path produces a strict `DispatchPlan`, applies registered-action validation, risk-aware confidence policy, scopes, allowlists, and confirmation gates, then runs only existing `/gpt-access/*` runners. Privileged plans return confirmation state instead of executing from the writing path.
 
 ## Final Execution Flow
 Protected async Trinity execution follows this path:
