@@ -100,6 +100,7 @@ describe('GPT Access natural-language dispatch service', () => {
     'review worker status and tell me what we should improve',
     'what should we do about queue backlog',
     'can you review how to improve backend worker reliability?',
+    'could you review backend worker reliability?',
     'how do I design a queue monitor',
     'how should I fix stale workers?',
     'suggest how to fix stale workers',

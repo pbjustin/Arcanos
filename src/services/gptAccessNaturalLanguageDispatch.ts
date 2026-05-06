@@ -264,7 +264,7 @@ function isOperationalAnalysisPrompt(normalized: string): boolean {
 function isConversationalAdvisoryPrompt(normalized: string): boolean {
   return (
     /\b(?:improve|improvements?|recommend|suggest|opinion|advice|architecture|design|plan|refine)\b/u.test(normalized)
-    || /\b(?:how\s+should|what\s+should|should\s+(?:i|we)|could\s+(?:i|we)|would\s+you)\b/u.test(normalized)
+    || /\b(?:how\s+should|what\s+should|should\s+(?:i|we)|can\s+you|could\s+(?:you|i|we)|would\s+you)\b/u.test(normalized)
   );
 }
 
