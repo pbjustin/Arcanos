@@ -4,6 +4,7 @@ const {
   createCapabilityRegistry
 } = await import('../src/dispatcher/naturalLanguage/index.js');
 const {
+  routeOperatorCommandThroughDispatch,
   runGptAccessNaturalLanguageDispatch
 } = await import('../src/services/gptAccessNaturalLanguageDispatch.js');
 
@@ -55,5 +56,11 @@ describe('GPT Access natural-language dispatch service', () => {
       })
     }));
     expect(runCapability).not.toHaveBeenCalled();
+  });
+
+  it('does not intercept general fix questions as backend operator commands', async () => {
+    await expect(routeOperatorCommandThroughDispatch({
+      utterance: 'how do I fix a TypeScript bug in my app?'
+    })).resolves.toBeNull();
   });
 });

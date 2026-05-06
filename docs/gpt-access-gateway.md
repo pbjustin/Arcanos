@@ -84,7 +84,7 @@ The optional LLM resolver is a semantic planner only. It never calls backend rou
 | `GPT_ACCESS_DISPATCH_MODEL` | `gpt-4.1-mini` | Responses API model used only by the semantic planner. This does not follow the general `OPENAI_MODEL` fallback chain. |
 | `GPT_ACCESS_DISPATCH_LLM_TIMEOUT_MS` | `5000` | Per-dispatch LLM planning timeout, capped at `10000`. Invalid or non-positive values use `5000`. Timeout/failure never executes an LLM plan; execution can continue only through a deterministic rule plan that passes policy and confirmation. |
 
-`GET /gpt-access/health`, `runtime.inspect`, and deep diagnostics include sanitized `nlDispatch` fields: `mode`, `effectiveMode`, `llmEnabled`, `model`, `timeoutMs`, `reasonIfDisabled`, and `lastResolverSource` when known. They do not expose keys, prompts, headers, or raw utterances.
+`GET /gpt-access/health`, `runtime.inspect`, and deep diagnostics include sanitized `nlDispatch` fields: `mode`, `effectiveMode`, `llmEnabled`, `model`, `timeoutMs`, and `reasonIfDisabled`. They do not expose keys, prompts, headers, raw utterances, or cross-request resolver state.
 
 Examples:
 

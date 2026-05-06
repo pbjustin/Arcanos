@@ -222,7 +222,16 @@ function isOperatorBackendCommand(utterance: string): boolean {
     .replace(/\s+/gu, ' ')
     .trim();
 
-  return /\b(?:backend|runtime|server|workers?|job runners?|queue|backlog|diagnostics?|health|stale workers?|slot \d+|recycle|recover|kick|fix)\b/u.test(normalized);
+  return (
+    /\b(?:backend|runtime)\b/u.test(normalized)
+    || /\b(?:workers?|job runners?)\b/u.test(normalized)
+    || /\b(?:queue|backlog|pending jobs?)\b/u.test(normalized)
+    || /\b(?:diagnostics?|health check)\b/u.test(normalized)
+    || /\b(?:server|app)\s+(?:status|health|healthy|alive|up|down|broken|failing|failure|errors?)\b/u.test(normalized)
+    || /\b(?:status|health|healthy|alive|up|down)\s+(?:server|app)\b/u.test(normalized)
+    || /\b(?:fix|kick|recycle|recover|unstick)\s+(?:stale\s+)?(?:workers?|job runners?|slots?|slot\s+\d+|async queue|queue slot)\b/u.test(normalized)
+    || /\b(?:recycle|recover|unstick)\s+(?:slot\s+)?\d+(?:\s+(?:and|or)\s+(?:slot\s+)?\d+)*\b/u.test(normalized)
+  );
 }
 
 export async function routeOperatorCommandThroughDispatch(input: {

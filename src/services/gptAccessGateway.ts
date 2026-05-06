@@ -2016,10 +2016,9 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
             llmEnabled: { type: 'boolean' },
             model: { type: 'string' },
             timeoutMs: { type: 'integer', minimum: 1 },
-            reasonIfDisabled: { type: ['string', 'null'] },
-            lastResolverSource: { type: ['string', 'null'], enum: ['rules', 'llm', 'legacy', null] }
+            reasonIfDisabled: { type: ['string', 'null'] }
           },
-          required: ['mode', 'effectiveMode', 'llmEnabled', 'model', 'timeoutMs', 'reasonIfDisabled', 'lastResolverSource'],
+          required: ['mode', 'effectiveMode', 'llmEnabled', 'model', 'timeoutMs', 'reasonIfDisabled'],
           additionalProperties: false
         },
         CreateAiJobRequest: {

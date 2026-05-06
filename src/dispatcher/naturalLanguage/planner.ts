@@ -10,14 +10,11 @@ import {
 import { resolveRuleBasedDispatchPlan } from './resolver.js';
 import {
   INTENT_CLARIFICATION_REQUIRED,
-  type DispatchPlanSource,
   type DispatchPlan,
   type ResolveDispatchPlanInput
 } from './types.js';
 
 export type NaturalLanguageDispatchMode = 'rules' | 'hybrid' | 'llm_first';
-
-let lastResolverSource: DispatchPlanSource | null = null;
 
 function readConfiguredDispatchMode(): {
   rawMode: string | null;
@@ -109,8 +106,7 @@ export function getNaturalLanguageDispatchRuntimeStatus() {
     llmEnabled,
     model: getLlmDispatchModel(),
     timeoutMs: getLlmDispatchTimeoutMs(),
-    reasonIfDisabled,
-    lastResolverSource
+    reasonIfDisabled
   };
 }
 
@@ -126,7 +122,6 @@ export async function resolveDispatchPlan(input: ResolveDispatchPlanInput): Prom
   });
 
   if (mode === 'rules') {
-    lastResolverSource = rulePlan.source;
     return rulePlan;
   }
 
@@ -138,12 +133,10 @@ export async function resolveDispatchPlan(input: ResolveDispatchPlanInput): Prom
     });
 
     const plan = shouldFallBackToRulePlanAfterLlm(llmPlan) ? rulePlan : llmPlan;
-    lastResolverSource = plan.source;
     return plan;
   }
 
   if (!requiresClarification(rulePlan)) {
-    lastResolverSource = rulePlan.source;
     return rulePlan;
   }
 
@@ -154,6 +147,5 @@ export async function resolveDispatchPlan(input: ResolveDispatchPlanInput): Prom
   });
 
   const plan = shouldFallBackToRulePlanAfterLlm(llmPlan) ? rulePlan : llmPlan;
-  lastResolverSource = plan.source;
   return plan;
 }

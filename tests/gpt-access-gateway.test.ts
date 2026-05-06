@@ -1996,7 +1996,6 @@ describe('/gpt-access gateway', () => {
       timeoutMs: expect.any(Number)
     }));
     expect(response.body.result.nlDispatch).toHaveProperty('reasonIfDisabled');
-    expect(response.body.result.nlDispatch).toHaveProperty('lastResolverSource');
     expect(JSON.stringify(response.body.result.nlDispatch)).not.toContain('OPENAI_API_KEY');
   });
 
