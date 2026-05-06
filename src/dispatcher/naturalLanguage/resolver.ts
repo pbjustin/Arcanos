@@ -64,8 +64,8 @@ const DISPATCH_RULES: DispatchRule[] = [
     confidence: 0.9,
     reason: 'matched_runtime_status',
     test: (utterance) =>
-      /\b(runtime|backend|server|app)\b.*\b(status|health|healthy|alive|up)\b/u.test(utterance)
-      || /\b(status|health)\b.*\b(runtime|backend|server|app)\b/u.test(utterance)
+      /\b(runtime|backend|server|app)\b.*\b(status|health|healthy|alive|up|down)\b/u.test(utterance)
+      || /\b(status|health|down)\b.*\b(runtime|backend|server|app)\b/u.test(utterance)
   }
 ];
 

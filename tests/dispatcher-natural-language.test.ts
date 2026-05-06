@@ -36,6 +36,7 @@ describe('natural-language dispatcher', () => {
     ['show queue', 'queue.inspect'],
     ['runtime status', 'runtime.inspect'],
     ['health of backend', 'runtime.inspect'],
+    ['is the app down', 'runtime.inspect'],
     ['what is wrong with the backend', 'diagnostics.run'],
     ['analyze backend errors', 'diagnostics.run'],
     ['explain what is wrong with the backend', 'diagnostics.run'],
@@ -189,7 +190,7 @@ describe('natural-language dispatcher', () => {
     ['privileged', 'workers.recover', 0.7, 'clarification_required', 'dispatch_confidence_in_clarification_band'],
     ['privileged', 'workers.recover', 0.77, 'clarification_required', 'dispatch_confidence_in_clarification_band'],
     ['privileged', 'workers.recover', 0.78, 'confirmation_required', 'confirmation_required'],
-    ['destructive', 'data.purge', 0.89, 'clarification_required', 'dispatch_confidence_below_threshold'],
+    ['destructive', 'data.purge', 0.89, 'blocked', 'dispatch_action_prohibited'],
     ['destructive', 'data.purge', 0.9, 'blocked', 'dispatch_action_prohibited']
   ] as const)('applies %s policy threshold at %s confidence', (risk, action, confidence, status, reason) => {
     const registry = createCapabilityRegistry([

@@ -563,7 +563,7 @@ describe('LLM natural-language dispatch resolver', () => {
     expect(policy.shouldExecute).toBe(false);
   });
 
-  it('uses destructive risk threshold for destructive LLM reason metadata', async () => {
+  it('blocks destructive LLM plans before confidence clarification', async () => {
     const registry = createCapabilityRegistry([
       {
         action: 'data.purge',
@@ -596,7 +596,8 @@ describe('LLM natural-language dispatch resolver', () => {
 
     expect(plan.action).toBe('data.purge');
     expect(plan.reason).toBe('llm_confidence_below_threshold');
-    expect(policy.status).toBe('clarification_required');
+    expect(policy.status).toBe('blocked');
+    expect(policy.code).toBe('DISPATCH_ACTION_PROHIBITED');
     expect(policy.shouldExecute).toBe(false);
   });
 
