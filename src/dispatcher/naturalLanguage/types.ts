@@ -71,6 +71,7 @@ export type DispatchPolicyDecision = {
 export type ResolveDispatchPlanInput = {
   utterance: string;
   registry: CapabilityRegistry;
+  llmRegistry?: CapabilityRegistry;
   context?: Record<string, unknown>;
 };
 

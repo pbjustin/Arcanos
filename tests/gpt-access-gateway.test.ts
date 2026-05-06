@@ -19,6 +19,13 @@ const resolveGptRoutingMock = jest.fn();
 const getModulesForRegistryMock = jest.fn();
 const getModuleMetadataMock = jest.fn();
 const dispatchModuleActionMock = jest.fn();
+const hasValidOpenAiKeyMock = jest.fn();
+const responsesCreateMock = jest.fn();
+const fakeOpenAIClient = {
+  responses: {
+    create: responsesCreateMock
+  }
+};
 
 class MockIdempotencyKeyConflictError extends Error {}
 class MockJobRepositoryUnavailableError extends Error {}
@@ -54,6 +61,23 @@ jest.unstable_mockModule('../src/routes/modules.js', () => ({
   dispatchModuleAction: dispatchModuleActionMock,
   ModuleNotFoundError: MockModuleNotFoundError,
   ModuleActionNotFoundError: MockModuleActionNotFoundError
+}));
+
+jest.unstable_mockModule('@arcanos/openai/unifiedClient', () => ({
+  getOrCreateClient: jest.fn(() => fakeOpenAIClient)
+}));
+
+jest.unstable_mockModule('@services/openai/credentialProvider.js', () => ({
+  resolveOpenAIBaseURL: jest.fn(() => undefined),
+  resolveOpenAIKey: jest.fn(() => null),
+  getOpenAIKeySource: jest.fn(() => null),
+  resetCredentialCache: jest.fn(),
+  hasValidAPIKey: hasValidOpenAiKeyMock,
+  setDefaultModel: jest.fn(),
+  getDefaultModel: jest.fn(() => 'gpt-4.1-mini'),
+  getFallbackModel: jest.fn(() => 'gpt-4.1'),
+  getComplexModel: jest.fn(() => 'gpt-4.1'),
+  getGPT5Model: jest.fn(() => 'gpt-5')
 }));
 
 jest.unstable_mockModule('../src/services/runtimeDiagnosticsService.js', () => ({
@@ -177,12 +201,16 @@ describe('/gpt-access gateway', () => {
   const previousScopes = process.env.ARCANOS_GPT_ACCESS_SCOPES;
   const previousModuleActionAllowlist = process.env.MCP_ALLOW_MODULE_ACTIONS;
   const previousGptAccessBaseUrl = process.env.ARCANOS_GPT_ACCESS_BASE_URL;
+  const previousDispatchMode = process.env.GPT_ACCESS_NL_DISPATCH_MODE;
 
   beforeEach(() => {
     jest.clearAllMocks();
+    responsesCreateMock.mockReset();
+    hasValidOpenAiKeyMock.mockReturnValue(false);
     process.env.ARCANOS_GPT_ACCESS_TOKEN = TEST_TOKEN;
     delete process.env.ARCANOS_GPT_ACCESS_SCOPES;
     delete process.env.MCP_ALLOW_MODULE_ACTIONS;
+    delete process.env.GPT_ACCESS_NL_DISPATCH_MODE;
     getModulesForRegistryMock.mockReturnValue([
       {
         id: 'ARCANOS:CORE',
@@ -302,6 +330,12 @@ describe('/gpt-access gateway', () => {
       delete process.env.ARCANOS_GPT_ACCESS_BASE_URL;
     } else {
       process.env.ARCANOS_GPT_ACCESS_BASE_URL = previousGptAccessBaseUrl;
+    }
+
+    if (previousDispatchMode === undefined) {
+      delete process.env.GPT_ACCESS_NL_DISPATCH_MODE;
+    } else {
+      process.env.GPT_ACCESS_NL_DISPATCH_MODE = previousDispatchMode;
     }
   });
 
@@ -542,6 +576,49 @@ describe('/gpt-access gateway', () => {
       message: 'payload contains fields that are not allowed for capability execution.'
     });
     expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects unknown internal Arcanos capability payload control fields before dispatch', async () => {
+    allowCapabilityRun();
+
+    const response = await confirmed(authorized(request(buildApp()).post('/gpt-access/capabilities/v1/core/run')))
+      .send({
+        action: 'query',
+        payload: {
+          prompt: 'status',
+          options: {
+            __arcanosFutureControl: true
+          }
+        }
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toEqual({
+      code: 'GPT_ACCESS_VALIDATION_ERROR',
+      message: 'payload contains fields that are not allowed for capability execution.'
+    });
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
+  it('allows safe capability payload keys that contain blocked words as substrings', async () => {
+    allowCapabilityRun();
+    const payload = {
+      prompt: 'status',
+      callbackUrl: 'https://example.invalid/callback',
+      invitationToken: 'opaque-public-reference',
+      targetId: 'worker-8',
+      connectionTimeout: 250,
+      tableHeader: 'worker'
+    };
+
+    const response = await confirmed(authorized(request(buildApp()).post('/gpt-access/capabilities/v1/core/run')))
+      .send({
+        action: 'query',
+        payload
+      });
+
+    expect(response.status).toBe(200);
+    expect(dispatchModuleActionMock).toHaveBeenCalledWith('ARCANOS:CORE', 'query', payload);
   });
 
   it('requires explicit confirmation before dispatching allowlisted capability actions', async () => {
@@ -964,6 +1041,36 @@ describe('/gpt-access gateway', () => {
       message: 'GPT Access capability action is not allowlisted.'
     });
     expect(response.body.policy.reason).toBe('module_action_not_allowlisted');
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps unallowlisted module actions out of the LLM planning catalog', async () => {
+    process.env.GPT_ACCESS_NL_DISPATCH_MODE = 'hybrid';
+    hasValidOpenAiKeyMock.mockReturnValue(true);
+    delete process.env.MCP_ALLOW_MODULE_ACTIONS;
+    responsesCreateMock.mockResolvedValueOnce({
+      output_text: JSON.stringify({
+        action: 'INTENT_CLARIFICATION_REQUIRED',
+        payload: {},
+        confidence: 0.2,
+        requiresConfirmation: false,
+        reason: 'capability_not_available_for_planning',
+        candidates: []
+      })
+    });
+
+    const response = await authorized(request(buildApp()).post('/gpt-access/dispatch/run'))
+      .send({
+        utterance: 'ask core to inspect itself',
+        dryRun: true
+      });
+
+    expect(response.status).toBe(200);
+    expect(responsesCreateMock).toHaveBeenCalledTimes(1);
+    const instructions = String(responsesCreateMock.mock.calls[0]?.[0]?.instructions ?? '');
+    expect(instructions).not.toContain('ARCANOS:CORE.query');
+    expect(instructions).not.toContain('ARCANOS:CORE.diagnostics');
+    expect(instructions).toContain('queue.inspect');
     expect(dispatchModuleActionMock).not.toHaveBeenCalled();
   });
 

@@ -62,6 +62,8 @@ Custom GPT Actions should call the HTTP bridge, not Railway CLI. The runtime pat
 
 `POST /gpt/:gptId` remains the writing plane for module-bound generative work. Job-result lookups, runtime diagnostics, queue inspection, worker status, and MCP diagnostics must use direct control endpoints or `/gpt-access/*`, not prompt-shaped requests through `/gpt/:gptId`.
 
+See `docs/gpt-access-gateway.md` for protected gateway auth/scopes, natural-language dispatch, fallback semantics, and safety/deployment notes.
+
 Required environment:
 - `OPENAI_ACTION_SHARED_SECRET` for inbound bridge auth.
 - `DEFAULT_GPT_ID` as the fallback GPT ID when callers omit `gptId`.

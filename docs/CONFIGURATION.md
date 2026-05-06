@@ -172,6 +172,15 @@ Use `docs/TRINITY_PIPELINE.md` for the full execution flow and `docs/gpt-access-
 | `MCP_ENABLE_SESSIONS` | `false` | Enable transport session ID generation in MCP HTTP transport. |
 | `MCP_ALLOW_MODULE_ACTIONS` | empty | CSV allowlist controlling `modules.invoke` and GPT Access capability runs (`module:action` or `module:*`; the final colon separates module from action). |
 
+### GPT Access natural-language dispatch
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `GPT_ACCESS_NL_DISPATCH_MODE` | `rules` | `rules` never calls the LLM; `hybrid` runs rules first and calls the LLM only when rules require clarification; `llm_first` calls the LLM first and falls back to deterministic rules when the LLM asks for clarification or fails. Invalid values resolve to `rules`. |
+| `GPT_ACCESS_DISPATCH_MODEL` | `gpt-4.1-mini` | OpenAI Responses API model for the optional semantic planner; used only in `hybrid`/`llm_first` when OpenAI credentials are configured. |
+| `GPT_ACCESS_DISPATCH_LLM_TIMEOUT_MS` | `1500` | Per-dispatch LLM planning timeout. Invalid values use the default and positive values are capped in code. Timeout/failure never executes an LLM plan; execution can continue only through a deterministic rule plan that still passes policy and confirmation. |
+
+The semantic planner can only propose one registered action plus a JSON-object payload. The gateway still enforces registry lookup, GPT Access scopes, `MCP_ALLOW_MODULE_ACTIONS`, confidence threshold, unsafe payload-field rejection, prohibited action names, and confirmation. Worker recycle/recover wording is not a built-in process recycle guarantee; it dispatches only to a registered capability action and otherwise returns clarification.
+
 ### Metrics
 | Variable | Default | Purpose |
 | --- | --- | --- |
@@ -219,6 +228,7 @@ arcanos
 - Keep production and development variables separated.
 - Railway injects `PORT` and optionally `DATABASE_URL` when PostgreSQL is attached.
 - Set `ARCANOS_PROCESS_KIND=web` on the web service and `ARCANOS_PROCESS_KIND=worker` on the worker service.
+- Configure optional `GPT_ACCESS_*` dispatch variables on the web service only when enabling `hybrid` or `llm_first`; verify `OPENAI_API_KEY` is present there and deploy/restart the web service before validation. These variables do not recycle worker processes.
 
 ## Troubleshooting
 - Local server uses an unexpected port: set `PORT=3000` in `.env` explicitly.
@@ -272,6 +282,9 @@ This table mirrors the highest-impact runtime keys in `.env.example`. Use `.env.
 | `ARCANOS_GPT_ACCESS_TOKEN` | commented placeholder | Bearer token for `/gpt-access/*`; real values must not be committed or logged. |
 | `ARCANOS_GPT_ACCESS_BASE_URL` | commented HTTPS placeholder | Public origin advertised by `/gpt-access/openapi.json`; set this in deployed environments. |
 | `ARCANOS_GPT_ACCESS_SCOPES` | commented full scope list | Gateway scope allowlist. `jobs.create`, `capabilities.read`, and `capabilities.run` must be explicit before they enqueue, discover, or execute capability work. |
+| `GPT_ACCESS_NL_DISPATCH_MODE` | `rules` (commented) | Optional `/gpt-access/dispatch/run` resolver mode: `rules`, `hybrid`, or `llm_first`. |
+| `GPT_ACCESS_DISPATCH_MODEL` | `gpt-4.1-mini` (commented) | Model used only by the optional semantic dispatcher. |
+| `GPT_ACCESS_DISPATCH_LLM_TIMEOUT_MS` | `1500` (commented) | Optional semantic dispatcher timeout; failures fall back only through deterministic rules and policy checks. |
 | `DEFAULT_GPT_ID` | `arcanos-core` | Default GPT id for bridge requests that omit `gptId`. |
 | `ARCANOS_PROCESS_KIND` | `web` (commented) | Explicit Railway launcher role: `web` or `worker`. |
 | `ALLOW_MOCK_FALLBACK` | `false` | Allow fallback to mocked providers in non-prod. |
