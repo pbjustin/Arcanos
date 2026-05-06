@@ -13,14 +13,13 @@ import {
   type DispatchRunnerHandlers
 } from '@dispatcher/naturalLanguage/index.js';
 import { isModuleActionAllowed } from '../mcp/modulesAllowlist.js';
+import { GPT_ACCESS_SCOPES, type GptAccessScope } from '@services/gptAccessScopes.js';
 import {
-  GPT_ACCESS_SCOPES,
   isGptAccessScopeAllowed,
   runDeepDiagnostics,
   runGptAccessWorkerRecovery,
   runGptAccessMcpTool,
-  sanitizeGptAccessPayload,
-  type GptAccessScope
+  sanitizeGptAccessPayload
 } from '@services/gptAccessGateway.js';
 
 const GPT_ACCESS_SCOPE_NAMES = new Set<string>(GPT_ACCESS_SCOPES);

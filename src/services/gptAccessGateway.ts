@@ -29,6 +29,8 @@ import { buildSafetySelfHealSnapshot } from '@services/selfHealRuntimeInspection
 import { getWorkerRuntimeStatus } from '@platform/runtime/workerConfig.js';
 import { getNaturalLanguageDispatchRuntimeStatus } from '@dispatcher/naturalLanguage/planner.js';
 import { DISPATCH_UTTERANCE_MAX_LENGTH } from '@dispatcher/naturalLanguage/types.js';
+export { GPT_ACCESS_SCOPES, type GptAccessScope } from '@services/gptAccessScopes.js';
+import { GPT_ACCESS_SCOPES, type GptAccessScope } from '@services/gptAccessScopes.js';
 
 const SERVICE_VERSION = '1.0.0';
 const TOKEN_ENV_NAME = 'ARCANOS_GPT_ACCESS_TOKEN';
@@ -82,23 +84,6 @@ const GPT_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,127}$/i;
 type CreateAiJobPayloadValidationIssue =
   | { kind: 'unsafe_field'; field: string }
   | { kind: 'depth_exceeded'; maxDepth: number };
-
-export const GPT_ACCESS_SCOPES = [
-  'runtime.read',
-  'workers.read',
-  'queue.read',
-  'jobs.create',
-  'jobs.result',
-  'logs.read_sanitized',
-  'db.explain_approved',
-  'mcp.approved_readonly',
-  'capabilities.read',
-  'capabilities.run',
-  'diagnostics.read',
-  'workers.recover'
-] as const;
-
-export type GptAccessScope = (typeof GPT_ACCESS_SCOPES)[number];
 
 const GPT_ACCESS_SCOPES_REQUIRING_EXPLICIT_CONFIG = new Set<GptAccessScope>([
   'jobs.create',
