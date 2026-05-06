@@ -380,6 +380,7 @@ describe('LLM natural-language dispatch resolver', () => {
       payload: {
         filters: {
           __arcanosGptId: 'arcanos-core',
+          __arcanosFutureControl: true,
           overrideAuditSafe: true,
           timeoutMs: 1
         }

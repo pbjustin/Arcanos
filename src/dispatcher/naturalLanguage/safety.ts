@@ -59,9 +59,16 @@ export function normalizePayloadKey(value: string): string {
   return value.toLowerCase().replace(/[\s._-]+/gu, '');
 }
 
+function normalizePayloadKeyForControlPrefix(value: string): string {
+  return value.toLowerCase().replace(/[\s.-]+/gu, '');
+}
+
 export function isUnsafeGptAccessPayloadKey(key: string): boolean {
   const normalized = normalizePayloadKey(key);
-  return UNSAFE_GPT_ACCESS_PAYLOAD_KEYS.has(normalized) || normalized.startsWith('__arcanos');
+  return (
+    UNSAFE_GPT_ACCESS_PAYLOAD_KEYS.has(normalized)
+    || normalizePayloadKeyForControlPrefix(key).startsWith('__arcanos')
+  );
 }
 
 export function isUnsafeLlmDispatchPayloadKey(key: string): boolean {

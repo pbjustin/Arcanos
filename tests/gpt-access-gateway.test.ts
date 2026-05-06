@@ -578,6 +578,28 @@ describe('/gpt-access gateway', () => {
     expect(dispatchModuleActionMock).not.toHaveBeenCalled();
   });
 
+  it('rejects unknown internal Arcanos capability payload control fields before dispatch', async () => {
+    allowCapabilityRun();
+
+    const response = await confirmed(authorized(request(buildApp()).post('/gpt-access/capabilities/v1/core/run')))
+      .send({
+        action: 'query',
+        payload: {
+          prompt: 'status',
+          options: {
+            __arcanosFutureControl: true
+          }
+        }
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toEqual({
+      code: 'GPT_ACCESS_VALIDATION_ERROR',
+      message: 'payload contains fields that are not allowed for capability execution.'
+    });
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
   it('allows safe capability payload keys that contain blocked words as substrings', async () => {
     allowCapabilityRun();
     const payload = {
