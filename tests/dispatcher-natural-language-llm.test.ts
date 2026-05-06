@@ -472,7 +472,7 @@ describe('LLM natural-language dispatch resolver', () => {
     expect(plan.reason).toBe('llm_action_not_registered');
   });
 
-  it('rejects low-confidence LLM results', async () => {
+  it('returns low-confidence LLM results for policy evaluation', async () => {
     const registry = createGptAccessDispatchRegistry();
     mockLlmResponse(buildLlmPlanResponse({
       action: 'runtime.inspect',
@@ -486,8 +486,118 @@ describe('LLM natural-language dispatch resolver', () => {
       client: fakeOpenAIClient
     });
 
-    expect(plan.action).toBe(INTENT_CLARIFICATION_REQUIRED);
+    expect(plan.action).toBe('runtime.inspect');
+    expect(plan.confidence).toBe(0.5);
     expect(plan.reason).toBe('llm_confidence_below_threshold');
+
+    const policy = evaluateDispatchPolicy({ plan, registry });
+
+    expect(policy.status).toBe('clarification_required');
+    expect(policy.shouldExecute).toBe(false);
+  });
+
+  it('does not mark a readonly LLM plan below the old global threshold when risk policy allows it', async () => {
+    const registry = createGptAccessDispatchRegistry();
+    mockLlmResponse(buildLlmPlanResponse({
+      action: 'runtime.inspect',
+      confidence: 0.7,
+      reason: 'runtime_status_request'
+    }));
+
+    const plan = await resolveLlmDispatchPlan({
+      utterance: 'runtime status',
+      registry,
+      client: fakeOpenAIClient
+    });
+
+    expect(plan.action).toBe('runtime.inspect');
+    expect(plan.confidence).toBe(0.7);
+    expect(plan.reason).toBe('runtime_status_request');
+
+    const policy = evaluateDispatchPolicy({ plan, registry });
+
+    expect(policy.status).toBe('allowed');
+    expect(policy.shouldExecute).toBe(true);
+  });
+
+  it.each([
+    [0.77, 'llm_confidence_below_threshold', 'clarification_required'],
+    [0.78, 'registered_worker_recycle_request', 'confirmation_required']
+  ] as const)('uses privileged risk threshold for workers.recycle LLM confidence %s', async (confidence, reason, status) => {
+    const registry = createCapabilityRegistry([
+      ...createGptAccessDispatchRegistry().listActions(),
+      {
+        action: 'workers.recycle',
+        description: 'Recycle async queue worker slots by workerIds.',
+        requiredScope: 'workers.recover',
+        risk: 'privileged',
+        requiresConfirmation: true,
+        runner: {
+          kind: 'gpt-access-worker-recovery',
+          mode: 'recycle'
+        }
+      }
+    ]);
+    mockLlmResponse(buildLlmPlanResponse({
+      action: 'workers.recycle',
+      payload: {},
+      confidence,
+      requiresConfirmation: false,
+      reason: 'registered_worker_recycle_request'
+    }));
+
+    const plan = await resolveLlmDispatchPlan({
+      utterance: 'recycle stale workers',
+      registry,
+      client: fakeOpenAIClient
+    });
+    const policy = evaluateDispatchPolicy({
+      plan,
+      registry,
+      isScopeAllowed: () => true
+    });
+
+    expect(plan.action).toBe('workers.recycle');
+    expect(plan.reason).toBe(reason);
+    expect(policy.status).toBe(status);
+    expect(policy.shouldExecute).toBe(false);
+  });
+
+  it('uses destructive risk threshold for destructive LLM reason metadata', async () => {
+    const registry = createCapabilityRegistry([
+      {
+        action: 'data.purge',
+        description: 'Purge data.',
+        risk: 'destructive',
+        runner: {
+          kind: 'gpt-access-capability',
+          capabilityId: 'DATA',
+          capabilityAction: 'purge'
+        }
+      }
+    ]);
+    mockLlmResponse(buildLlmPlanResponse({
+      action: 'data.purge',
+      confidence: 0.85,
+      reason: 'destructive_purge_request'
+    }));
+
+    const plan = await resolveLlmDispatchPlan({
+      utterance: 'run destructive purge',
+      registry,
+      client: fakeOpenAIClient
+    });
+    const policy = evaluateDispatchPolicy({
+      plan,
+      registry,
+      isScopeAllowed: () => true,
+      isModuleActionAllowed: () => true
+    });
+
+    expect(plan.action).toBe('data.purge');
+    expect(plan.reason).toBe('llm_confidence_below_threshold');
+    expect(policy.status).toBe('clarification_required');
+    expect(policy.shouldExecute).toBe(false);
   });
 
   it('rejects unsafe LLM payload fields recursively', async () => {

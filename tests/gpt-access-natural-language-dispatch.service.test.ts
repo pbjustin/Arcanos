@@ -77,5 +77,47 @@ describe('GPT Access natural-language dispatch service', () => {
     await expect(routeOperatorCommandThroughDispatch({
       utterance: 'Write me a story about broken workers.'
     })).resolves.toBeNull();
+
+    await expect(routeOperatorCommandThroughDispatch({
+      utterance: 'draft a backend health report'
+    })).resolves.toBeNull();
+
+    await expect(routeOperatorCommandThroughDispatch({
+      utterance: 'compose a queue status update'
+    })).resolves.toBeNull();
+  });
+
+  it.each([
+    'ask my AI for improvements',
+    'suggest improvements to worker reliability',
+    'review backend architecture',
+    'what should I improve about worker reliability',
+    'how do I design a queue monitor',
+    'how should I fix stale workers?',
+    'suggest how to fix stale workers',
+    'review whether we should recycle stale workers'
+  ])('does not intercept advisory prompt "%s"', async (utterance) => {
+    await expect(routeOperatorCommandThroughDispatch({ utterance })).resolves.toBeNull();
+  });
+
+  it.each([
+    ['what is wrong with the backend', 'diagnostics.run'],
+    ['analyze backend errors', 'diagnostics.run'],
+    ['explain what is wrong with the backend', 'diagnostics.run'],
+    ['review worker status', 'workers.status'],
+    ['check the workers', 'workers.status'],
+    ['how do i check the workers', 'workers.status'],
+    ['inspect the queue', 'queue.inspect'],
+    ['how can i inspect the queue', 'queue.inspect'],
+    ['what should the queue status be', 'queue.inspect'],
+    ['what is going on with the queue', 'queue.inspect'],
+    ['show queue', 'queue.inspect'],
+    ['run diagnostics', 'diagnostics.run']
+  ])('routes explicit operator prompt "%s" to %s', async (utterance, action) => {
+    const response = await routeOperatorCommandThroughDispatch({ utterance, dryRun: true });
+
+    expect(response).not.toBeNull();
+    expect(response?.plan.action).toBe(action);
+    expect(response?.policy.shouldExecute).toBe(true);
   });
 });
