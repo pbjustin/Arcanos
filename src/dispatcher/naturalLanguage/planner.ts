@@ -16,8 +16,6 @@ import {
 
 export type NaturalLanguageDispatchMode = 'rules' | 'hybrid' | 'llm_first';
 
-let lastResolverSource: DispatchPlan['source'] | null = null;
-
 function readConfiguredDispatchMode(): {
   rawMode: string | null;
   validMode: NaturalLanguageDispatchMode | null;
@@ -82,7 +80,7 @@ export function getNaturalLanguageDispatchRuntimeStatus() {
     model: getLlmDispatchModel(),
     timeoutMs: getLlmDispatchTimeoutMs(),
     reasonIfDisabled,
-    lastResolverSource
+    lastResolverSource: null
   };
 }
 
@@ -98,7 +96,6 @@ export async function resolveDispatchPlan(input: ResolveDispatchPlanInput): Prom
   });
 
   if (mode === 'rules') {
-    lastResolverSource = rulePlan.source;
     return rulePlan;
   }
 
@@ -109,13 +106,10 @@ export async function resolveDispatchPlan(input: ResolveDispatchPlanInput): Prom
       context: input.context
     });
 
-    const plan = requiresClarification(llmPlan) ? rulePlan : llmPlan;
-    lastResolverSource = plan.source;
-    return plan;
+    return requiresClarification(llmPlan) ? rulePlan : llmPlan;
   }
 
   if (!requiresClarification(rulePlan)) {
-    lastResolverSource = rulePlan.source;
     return rulePlan;
   }
 
@@ -125,7 +119,5 @@ export async function resolveDispatchPlan(input: ResolveDispatchPlanInput): Prom
     context: input.context
   });
 
-  const plan = shouldFallBackToRulePlanAfterLlm(llmPlan) ? rulePlan : llmPlan;
-  lastResolverSource = plan.source;
-  return plan;
+  return shouldFallBackToRulePlanAfterLlm(llmPlan) ? rulePlan : llmPlan;
 }

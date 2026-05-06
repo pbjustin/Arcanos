@@ -399,8 +399,12 @@ function isWorkerRecoveryRequest(utterance: string): boolean {
     .replace(/\s+/gu, ' ')
     .trim();
   const requestsMutation = /\b(?:kick|fix|recycle|recover|heal|unstick)\b/u.test(normalized);
-  const targetsWorkerOrSlot = /\b(?:workers?|stale|slots?|async queue|queue slot|\d+)\b/u.test(normalized);
-  return requestsMutation && targetsWorkerOrSlot;
+  if (!requestsMutation) return false;
+
+  const targetsWorkerOrSlot = /\b(?:workers?|stale|slots?|async queue|queue slot)\b/u.test(normalized);
+  if (targetsWorkerOrSlot) return true;
+
+  return /\b(?:kick|recycle|recover|unstick)\b\s+(?:slot\s+)?\d+(?:\s+(?:and|or)\s+(?:slot\s+)?\d+)*$/u.test(normalized);
 }
 
 function hasRegisteredWorkerRecoveryAction(actions: readonly DispatchRegistryAction[]): boolean {
@@ -424,6 +428,7 @@ export async function resolveLlmDispatchPlan(input: ResolveLlmDispatchPlanInput)
   }
 
   const actionNames = actions.map((action) => action.action);
+  const actionNamesSet = new Set(actionNames);
   const timeoutMs = input.timeoutMs ?? getLlmDispatchTimeoutMs();
   const workerRecoveryUnavailable =
     isWorkerRecoveryRequest(input.utterance)
@@ -456,7 +461,7 @@ export async function resolveLlmDispatchPlan(input: ResolveLlmDispatchPlanInput)
       },
       { signal: controller.signal },
       {
-        validate: (value): value is LlmDispatchResponse => isLlmDispatchResponse(value, new Set(actionNames)),
+        validate: (value): value is LlmDispatchResponse => isLlmDispatchResponse(value, actionNamesSet),
         source: 'GPT Access natural-language dispatch'
       }
     );

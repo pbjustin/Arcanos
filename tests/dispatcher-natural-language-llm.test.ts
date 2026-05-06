@@ -327,7 +327,11 @@ describe('LLM natural-language dispatch resolver', () => {
     expect(policy.status).toBe('confirmation_required');
   });
 
-  it('clarifies worker recovery language when no safe recovery action is registered', async () => {
+  it.each([
+    'kick the stale workers',
+    'fix slot 8',
+    'recycle 3 and 8'
+  ])('clarifies worker recovery language when no safe recovery action is registered: %s', async (utterance) => {
     const registry = createGptAccessDispatchRegistry();
     mockLlmResponse(buildLlmPlanResponse({
       action: 'diagnostics.run',
@@ -338,13 +342,36 @@ describe('LLM natural-language dispatch resolver', () => {
     }));
 
     const plan = await resolveDispatchPlan({
-      utterance: 'kick the stale workers',
+      utterance,
       registry
     });
 
     expect(plan.action).toBe(INTENT_CLARIFICATION_REQUIRED);
     expect(plan.source).toBe('llm');
     expect(plan.reason).toBe('requested_worker_recovery_action_not_registered');
+  });
+
+  it('does not classify unrelated numeric fix language as worker recovery', async () => {
+    const registry = createGptAccessDispatchRegistry();
+    mockLlmResponse(buildLlmPlanResponse({
+      action: 'diagnostics.run',
+      payload: {
+        includeDb: true,
+        includeWorkers: false,
+        includeLogs: false,
+        includeQueue: false
+      },
+      reason: 'non_worker_numeric_fix_request'
+    }));
+
+    const plan = await resolveDispatchPlan({
+      utterance: 'fix 5 records',
+      registry
+    });
+
+    expect(plan.action).toBe('diagnostics.run');
+    expect(plan.source).toBe('llm');
+    expect(plan.reason).toBe('non_worker_numeric_fix_request');
   });
 
   it('rejects an LLM-selected action that is not registered', async () => {
