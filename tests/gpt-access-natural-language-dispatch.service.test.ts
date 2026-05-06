@@ -46,6 +46,11 @@ describe('GPT Access natural-language dispatch service', () => {
         code: 'CONFIRMATION_REQUIRED',
         message: 'Dispatch confirmation is required before execution.'
       },
+      confirmationRequired: true,
+      confirmation: {
+        retryEndpoint: '/gpt-access/dispatch/run',
+        confirmationTokenField: 'confirmation_token'
+      },
       plan: expect.objectContaining({
         action: 'ARCANOS:CORE.query'
       }),
@@ -61,6 +66,16 @@ describe('GPT Access natural-language dispatch service', () => {
   it('does not intercept general fix questions as backend operator commands', async () => {
     await expect(routeOperatorCommandThroughDispatch({
       utterance: 'how do I fix a TypeScript bug in my app?'
+    })).resolves.toBeNull();
+  });
+
+  it('does not intercept explanatory writing prompts that mention backend or queue terms', async () => {
+    await expect(routeOperatorCommandThroughDispatch({
+      utterance: 'Explain the backend architecture for a queue-based app.'
+    })).resolves.toBeNull();
+
+    await expect(routeOperatorCommandThroughDispatch({
+      utterance: 'Write me a story about broken workers.'
     })).resolves.toBeNull();
   });
 });

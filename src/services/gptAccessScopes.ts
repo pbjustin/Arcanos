@@ -14,4 +14,3 @@ export const GPT_ACCESS_SCOPES = [
 ] as const;
 
 export type GptAccessScope = (typeof GPT_ACCESS_SCOPES)[number];
-

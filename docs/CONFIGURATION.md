@@ -175,7 +175,7 @@ Use `docs/TRINITY_PIPELINE.md` for the full execution flow and `docs/gpt-access-
 ### GPT Access natural-language dispatch
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `GPT_ACCESS_NL_DISPATCH_MODE` | unset | When unset, effective mode is `hybrid` if a real resolved OpenAI key is configured, using the OpenAI key resolution order above, and `rules` otherwise. `rules` never calls the LLM; `hybrid` runs rules first and calls the LLM only when rules require clarification; `llm_first` calls the LLM first and falls back to deterministic rules when the LLM asks for clarification or fails. Invalid values resolve to `rules`. |
+| `GPT_ACCESS_NL_DISPATCH_MODE` | unset | When unset, effective mode is `hybrid` if a real resolved OpenAI key is configured, using the OpenAI key resolution order above, and `rules` otherwise. `rules` never calls the LLM; `hybrid` runs rules first and calls the LLM only when rules require clarification; `llm_first` calls the LLM first and returns semantic LLM clarification as-is, falling back to deterministic rules only when the LLM is unavailable, fails, times out, or returns invalid output. Invalid values resolve to `rules`. |
 | `GPT_ACCESS_DISPATCH_MODEL` | `gpt-4.1-mini` | OpenAI Responses API model for the semantic planner only; it does not follow the general `OPENAI_MODEL` precedence chain. |
 | `GPT_ACCESS_DISPATCH_LLM_TIMEOUT_MS` | `5000` | Per-dispatch LLM planning timeout. Invalid or non-positive values use the default and positive values are capped at `10000`. Timeout/failure never executes an LLM plan; execution can continue only through a deterministic rule plan that still passes policy and confirmation. |
 

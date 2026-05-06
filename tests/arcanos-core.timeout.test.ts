@@ -39,6 +39,13 @@ jest.unstable_mockModule('@platform/resilience/runtimeBudget.js', () => ({
 }));
 
 jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({
+  LogLevel: {
+    DEBUG: 'debug',
+    INFO: 'info',
+    WARN: 'warn',
+    ERROR: 'error'
+  },
+  getConfiguredLogLevel: jest.fn(() => 'info'),
   logger: {
     info: loggerInfoMock,
     warn: loggerWarnMock,
@@ -84,6 +91,10 @@ jest.unstable_mockModule('@services/openai/aiExecutionContext.js', () => ({
 
 jest.unstable_mockModule('@services/systemState.js', () => ({
   executeSystemStateRequest: jest.fn()
+}));
+
+jest.unstable_mockModule('@services/gptAccessNaturalLanguageDispatch.js', () => ({
+  routeOperatorCommandThroughDispatch: jest.fn(async () => null)
 }));
 
 jest.unstable_mockModule('@arcanos/runtime', () => ({

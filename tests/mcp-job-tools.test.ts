@@ -14,6 +14,8 @@ const mockClassifyGptFastPathRequest = jest.fn();
 const mockExecuteControlPlaneRequest = jest.fn();
 const mockGetControlPlaneCapabilities = jest.fn();
 const mockRequiresControlPlaneApproval = jest.fn();
+class MockIdempotencyKeyConflictError extends Error {}
+class MockJobRepositoryUnavailableError extends Error {}
 
 class FakeMcpServer {
   public readonly tools = new Map<string, { config: Record<string, unknown>; handler: (args: unknown) => Promise<unknown> }>();
@@ -125,6 +127,8 @@ jest.unstable_mockModule('../src/core/db/index.js', () => ({
 }));
 
 jest.unstable_mockModule('../src/core/db/repositories/jobRepository.js', () => ({
+  IdempotencyKeyConflictError: MockIdempotencyKeyConflictError,
+  JobRepositoryUnavailableError: MockJobRepositoryUnavailableError,
   getJobById: mockGetJobById,
   createJob: jest.fn(),
   updateJob: jest.fn(),
