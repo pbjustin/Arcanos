@@ -417,6 +417,21 @@ describe('/gpt-access gateway', () => {
     }));
   });
 
+  it('reports an enum-safe invalid natural-language dispatch mode in gateway health', async () => {
+    process.env.GPT_ACCESS_NL_DISPATCH_MODE = 'invalid-value-with-secret-shaped-text';
+
+    const response = await authorized(request(buildApp()).get('/gpt-access/health'));
+
+    expect(response.status).toBe(200);
+    expect(response.body.nlDispatch).toEqual(expect.objectContaining({
+      mode: 'invalid',
+      effectiveMode: 'rules',
+      llmEnabled: false,
+      reasonIfDisabled: 'invalid_mode'
+    }));
+    expect(JSON.stringify(response.body)).not.toContain('invalid-value-with-secret-shaped-text');
+  });
+
   it('returns explicit JSON for unknown GPT Access routes after auth', async () => {
     const response = await authorized(request(buildApp()).get('/gpt-access/not-a-route'));
 

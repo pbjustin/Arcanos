@@ -42,6 +42,14 @@ function readConfiguredDispatchMode(): {
   };
 }
 
+function toRuntimeStatusMode(configured: ReturnType<typeof readConfiguredDispatchMode>): NaturalLanguageDispatchMode | 'unset' | 'invalid' {
+  if (configured.validMode) {
+    return configured.validMode;
+  }
+
+  return configured.invalidMode ? 'invalid' : 'unset';
+}
+
 function readDispatchMode(): NaturalLanguageDispatchMode {
   const configured = readConfiguredDispatchMode();
   if (configured.validMode) {
@@ -93,7 +101,7 @@ export function getNaturalLanguageDispatchRuntimeStatus() {
   });
 
   return {
-    mode: configured.rawMode ?? 'unset',
+    mode: toRuntimeStatusMode(configured),
     effectiveMode,
     llmEnabled,
     model: getLlmDispatchModel(),

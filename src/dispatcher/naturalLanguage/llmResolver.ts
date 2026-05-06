@@ -54,7 +54,7 @@ export const LLM_DISPATCH_FALLBACK_REASONS = new Set([
 ]);
 
 const DEFAULT_DISPATCH_MODEL = 'gpt-4.1-mini';
-const DEFAULT_DISPATCH_LLM_TIMEOUT_MS = 1500;
+const DEFAULT_DISPATCH_LLM_TIMEOUT_MS = 3000;
 const MAX_DISPATCH_LLM_TIMEOUT_MS = 10000;
 const MAX_DISPATCH_LLM_OUTPUT_TOKENS = 700;
 const DISPATCH_LLM_TEMPERATURE = 0;
@@ -76,6 +76,7 @@ const LLM_DISPATCH_CANDIDATE_KEYS = new Set([
   'reason'
 ]);
 const WORKER_RECOVERY_ACTION_PATTERN = /^workers\.(?:recycle|recover)$/iu;
+const WORKER_SLOT_ID_PATTERN = /^async-queue-slot-\d+$/u;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -403,7 +404,7 @@ function isWorkerRecoveryRequest(utterance: string): boolean {
   const requestsMutation = /\b(?:kick|fix|recycle|recover|heal|unstick)\b/u.test(normalized);
   if (!requestsMutation) return false;
 
-  const targetsWorkerOrSlot = /\b(?:workers?|stale|slots?|async queue|queue slot)\b/u.test(normalized);
+  const targetsWorkerOrSlot = /\b(?:workers?|job runners?|runners?|slots?|async queue|queue slot)\b/u.test(normalized);
   if (targetsWorkerOrSlot) return true;
 
   return /\b(?:kick|recycle|recover|unstick)\b\s+(?:slot\s+)?\d+(?:\s+(?:and|or)\s+(?:slot\s+)?\d+)*$/u.test(normalized);
@@ -411,6 +412,21 @@ function isWorkerRecoveryRequest(utterance: string): boolean {
 
 function hasRegisteredWorkerRecoveryAction(actions: readonly DispatchRegistryAction[]): boolean {
   return actions.some((action) => WORKER_RECOVERY_ACTION_PATTERN.test(action.action));
+}
+
+function validateWorkerRecoveryPayload(action: string, payload: Record<string, unknown>): string | null {
+  if (!WORKER_RECOVERY_ACTION_PATTERN.test(action)) {
+    return null;
+  }
+
+  const workerIds = payload.workerIds;
+  if (!Array.isArray(workerIds) || workerIds.length === 0) {
+    return 'llm_worker_recovery_payload_invalid';
+  }
+
+  return workerIds.every((workerId) => typeof workerId === 'string' && WORKER_SLOT_ID_PATTERN.test(workerId))
+    ? null
+    : 'llm_worker_recovery_payload_invalid';
 }
 
 export function shouldFallBackToRulePlanAfterLlm(plan: DispatchPlan): boolean {
@@ -498,6 +514,14 @@ export async function resolveLlmDispatchPlan(input: ResolveLlmDispatchPlanInput)
     if (!payloadValidation.ok) {
       return {
         ...buildClarificationPlan(payloadValidation.reason, outputParsed.confidence),
+        candidates: toPlanCandidates(outputParsed.candidates)
+      };
+    }
+
+    const workerRecoveryPayloadIssue = validateWorkerRecoveryPayload(registryAction.action, payloadValidation.payload);
+    if (workerRecoveryPayloadIssue) {
+      return {
+        ...buildClarificationPlan(workerRecoveryPayloadIssue, outputParsed.confidence),
         candidates: toPlanCandidates(outputParsed.candidates)
       };
     }

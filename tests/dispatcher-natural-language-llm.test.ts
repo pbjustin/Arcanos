@@ -23,6 +23,7 @@ const {
   createCapabilityRegistry,
   createGptAccessDispatchRegistry,
   evaluateDispatchPolicy,
+  getLlmDispatchTimeoutMs,
   resolveDispatchPlan,
   resolveLlmDispatchPlan
 } = await import('../src/dispatcher/naturalLanguage/index.js');
@@ -141,6 +142,16 @@ describe('LLM natural-language dispatch resolver', () => {
       }
     });
     expect(String(responsesCreateMock.mock.calls[0]?.[0]?.input)).not.toContain('Do not invent capabilities');
+  });
+
+  it('uses a deployment-safe default LLM dispatch timeout and caps overrides', () => {
+    expect(getLlmDispatchTimeoutMs()).toBe(3000);
+
+    process.env.GPT_ACCESS_DISPATCH_LLM_TIMEOUT_MS = '20000';
+    expect(getLlmDispatchTimeoutMs()).toBe(10000);
+
+    process.env.GPT_ACCESS_DISPATCH_LLM_TIMEOUT_MS = '0';
+    expect(getLlmDispatchTimeoutMs()).toBe(3000);
   });
 
   it('defaults to hybrid mode when OpenAI is configured and dispatch mode is unset', async () => {
@@ -366,6 +377,63 @@ describe('LLM natural-language dispatch resolver', () => {
     expect(plan.action).toBe('diagnostics.run');
     expect(plan.source).toBe('llm');
     expect(plan.reason).toBe('non_worker_numeric_fix_request');
+  });
+
+  it('does not classify unrelated stale fix language as worker recovery', async () => {
+    const registry = createGptAccessDispatchRegistry();
+    mockLlmResponse(buildLlmPlanResponse({
+      action: 'diagnostics.run',
+      payload: {
+        includeDb: true,
+        includeWorkers: false,
+        includeLogs: false,
+        includeQueue: false
+      },
+      reason: 'non_worker_stale_fix_request'
+    }));
+
+    const plan = await resolveDispatchPlan({
+      utterance: 'fix stale cache diagnostics',
+      registry
+    });
+
+    expect(plan.action).toBe('diagnostics.run');
+    expect(plan.source).toBe('llm');
+    expect(plan.reason).toBe('non_worker_stale_fix_request');
+  });
+
+  it('rejects malformed worker recovery payloads from registered LLM actions', async () => {
+    const registry = createCapabilityRegistry([
+      ...createGptAccessDispatchRegistry().listActions(),
+      {
+        action: 'workers.recycle',
+        description: 'Recycle async queue worker slots by workerIds.',
+        requiredScope: 'workers.write',
+        risk: 'privileged',
+        requiresConfirmation: true,
+        runner: {
+          kind: 'gpt-access-capability',
+          capabilityId: 'workers',
+          capabilityAction: 'recycle'
+        }
+      }
+    ]);
+    mockLlmResponse(buildLlmPlanResponse({
+      action: 'workers.recycle',
+      payload: {
+        workerIds: ['3']
+      },
+      reason: 'malformed_worker_recovery_payload'
+    }));
+
+    const plan = await resolveDispatchPlan({
+      utterance: 'recycle 3',
+      registry
+    });
+
+    expect(plan.action).toBe(INTENT_CLARIFICATION_REQUIRED);
+    expect(plan.source).toBe('llm');
+    expect(plan.reason).toBe('llm_worker_recovery_payload_invalid');
   });
 
   it('rejects an LLM-selected action that is not registered', async () => {

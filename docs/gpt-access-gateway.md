@@ -80,11 +80,11 @@ The optional LLM resolver is a semantic planner only. It never calls backend rou
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `GPT_ACCESS_NL_DISPATCH_MODE` | unset | When unset, the gateway uses `hybrid` if a real OpenAI key is configured, otherwise `rules`. `rules` keeps deterministic rule-only behavior. `hybrid` tries rules first, then LLM only when rules need clarification. `llm_first` tries LLM first and falls back to rules on clarification or LLM failure. Invalid values resolve to `rules`. |
+| `GPT_ACCESS_NL_DISPATCH_MODE` | unset | When unset, the gateway uses `hybrid` if a real resolved OpenAI key is configured, otherwise `rules`. `rules` keeps deterministic rule-only behavior. `hybrid` tries rules first, then LLM only when rules need clarification. `llm_first` tries LLM first and falls back to rules on clarification or LLM failure. Invalid values resolve to `rules`. |
 | `GPT_ACCESS_DISPATCH_MODEL` | `gpt-4.1-mini` | Responses API model used only by the semantic planner. This does not follow the general `OPENAI_MODEL` fallback chain. |
-| `GPT_ACCESS_DISPATCH_LLM_TIMEOUT_MS` | `1500` | Per-dispatch LLM planning timeout, capped at `10000`. Invalid or non-positive values use `1500`. Timeout/failure never executes an LLM plan; execution can continue only through a deterministic rule plan that passes policy and confirmation. |
+| `GPT_ACCESS_DISPATCH_LLM_TIMEOUT_MS` | `3000` | Per-dispatch LLM planning timeout, capped at `10000`. Invalid or non-positive values use `3000`. Timeout/failure never executes an LLM plan; execution can continue only through a deterministic rule plan that passes policy and confirmation. |
 
-`GET /gpt-access/health` includes sanitized `nlDispatch` fields: configured mode, effective mode, whether LLM planning is enabled, model, timeout, and disabled reason. It does not expose keys, prompts, headers, or raw utterances.
+`GET /gpt-access/health` includes sanitized `nlDispatch` fields: `mode`, `effectiveMode`, `llmEnabled`, `model`, `timeoutMs`, and `reasonIfDisabled`. It does not expose keys, prompts, headers, or raw utterances.
 
 Examples:
 
@@ -225,7 +225,7 @@ railway variable list --service "$SERVICE" --environment "$ENVIRONMENT"
 
 Add `capabilities.read,capabilities.run` and a narrow `MCP_ALLOW_MODULE_ACTIONS` value only when direct capability execution is required.
 
-Natural-language dispatch defaults from the web service credential state: unset mode becomes `hybrid` when `OPENAI_API_KEY` is real, and `rules` when it is missing or a mock placeholder. Set `GPT_ACCESS_NL_DISPATCH_MODE=rules` to force deterministic dispatch. Set `hybrid` or `llm_first` only on the web service when semantic planning is intentionally enabled, and deploy/restart the web service before validating. These settings do not change the worker service or guarantee worker recycle behavior.
+Natural-language dispatch defaults from the web service credential state: unset mode becomes `hybrid` when the resolved OpenAI key is real, and `rules` when it is missing or a mock/placeholder. Set `GPT_ACCESS_NL_DISPATCH_MODE=rules` to force deterministic dispatch. Set `hybrid` or `llm_first` only on the web service when semantic planning is intentionally enabled, and deploy/restart the web service before validating. These settings do not change the worker service or guarantee worker recycle behavior.
 
 Dry-run verification:
 
