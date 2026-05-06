@@ -98,8 +98,7 @@ export function getNaturalLanguageDispatchRuntimeStatus() {
     llmEnabled,
     model: getLlmDispatchModel(),
     timeoutMs: getLlmDispatchTimeoutMs(),
-    reasonIfDisabled,
-    lastResolverSource: null
+    reasonIfDisabled
   };
 }
 

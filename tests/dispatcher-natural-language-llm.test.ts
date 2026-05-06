@@ -333,13 +333,6 @@ describe('LLM natural-language dispatch resolver', () => {
     'recycle 3 and 8'
   ])('clarifies worker recovery language when no safe recovery action is registered: %s', async (utterance) => {
     const registry = createGptAccessDispatchRegistry();
-    mockLlmResponse(buildLlmPlanResponse({
-      action: 'diagnostics.run',
-      payload: {
-        includeWorkers: true
-      },
-      reason: 'worker_recovery_request_without_registered_action'
-    }));
 
     const plan = await resolveDispatchPlan({
       utterance,
@@ -349,6 +342,7 @@ describe('LLM natural-language dispatch resolver', () => {
     expect(plan.action).toBe(INTENT_CLARIFICATION_REQUIRED);
     expect(plan.source).toBe('llm');
     expect(plan.reason).toBe('requested_worker_recovery_action_not_registered');
+    expect(responsesCreateMock).not.toHaveBeenCalled();
   });
 
   it('does not classify unrelated numeric fix language as worker recovery', async () => {
@@ -512,7 +506,7 @@ describe('LLM natural-language dispatch resolver', () => {
     responsesCreateMock.mockRejectedValueOnce(new Error('network unavailable'));
 
     const plan = await resolveDispatchPlan({
-      utterance: 'please fix the vague worker thing',
+      utterance: 'please interpret this unclear operator request',
       registry
     });
 
@@ -528,7 +522,7 @@ describe('LLM natural-language dispatch resolver', () => {
     });
 
     const plan = await resolveDispatchPlan({
-      utterance: 'please fix the vague worker thing',
+      utterance: 'please interpret this unclear operator request',
       registry
     });
 

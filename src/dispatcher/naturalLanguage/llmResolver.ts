@@ -435,6 +435,10 @@ export async function resolveLlmDispatchPlan(input: ResolveLlmDispatchPlanInput)
   const workerRecoveryUnavailable =
     isWorkerRecoveryRequest(input.utterance)
     && !hasRegisteredWorkerRecoveryAction(actions);
+  if (workerRecoveryUnavailable) {
+    return buildClarificationPlan('requested_worker_recovery_action_not_registered');
+  }
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -467,13 +471,6 @@ export async function resolveLlmDispatchPlan(input: ResolveLlmDispatchPlanInput)
         source: 'GPT Access natural-language dispatch'
       }
     );
-
-    if (workerRecoveryUnavailable) {
-      return {
-        ...buildClarificationPlan('requested_worker_recovery_action_not_registered', outputParsed.confidence),
-        candidates: toPlanCandidates(outputParsed.candidates)
-      };
-    }
 
     if (outputParsed.action === INTENT_CLARIFICATION_REQUIRED) {
       return {

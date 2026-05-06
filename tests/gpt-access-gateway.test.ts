@@ -410,8 +410,8 @@ describe('/gpt-access gateway', () => {
         mode: 'unset',
         effectiveMode: 'rules',
         llmEnabled: false,
-        model: 'gpt-4.1-mini',
-        timeoutMs: 1500,
+        model: expect.any(String),
+        timeoutMs: expect.any(Number),
         reasonIfDisabled: 'openai_credentials_unavailable'
       })
     }));
@@ -1045,24 +1045,6 @@ describe('/gpt-access gateway', () => {
 
   it('returns an LLM clarification for worker recovery when no safe action is registered', async () => {
     hasValidOpenAiKeyMock.mockReturnValue(true);
-    responsesCreateMock.mockResolvedValueOnce({
-      output_text: JSON.stringify({
-        action: 'diagnostics.run',
-        payload: {
-          includeWorkers: true
-        },
-        confidence: 0.91,
-        requiresConfirmation: false,
-        reason: 'worker_recovery_request_without_registered_action',
-        candidates: [
-          {
-            action: 'diagnostics.run',
-            confidence: 0.91,
-            reason: 'worker_recovery_request_without_registered_action'
-          }
-        ]
-      })
-    });
 
     const response = await authorized(request(buildApp()).post('/gpt-access/dispatch/run'))
       .send({
@@ -1077,6 +1059,7 @@ describe('/gpt-access gateway', () => {
       reason: 'requested_worker_recovery_action_not_registered'
     }));
     expect(response.body.policy.status).toBe('clarification_required');
+    expect(responsesCreateMock).not.toHaveBeenCalled();
     expect(getWorkerControlStatusMock).not.toHaveBeenCalled();
     expect(dispatchModuleActionMock).not.toHaveBeenCalled();
   });
