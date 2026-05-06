@@ -405,8 +405,31 @@ describe('/gpt-access gateway', () => {
       ok: true,
       service: 'arcanos-gpt-access',
       authRequired: true,
-      version: '1.0.0'
+      version: '1.0.0',
+      nlDispatch: expect.objectContaining({
+        mode: 'unset',
+        effectiveMode: 'rules',
+        llmEnabled: false,
+        model: expect.any(String),
+        timeoutMs: expect.any(Number),
+        reasonIfDisabled: 'openai_credentials_unavailable'
+      })
     }));
+  });
+
+  it('reports an enum-safe invalid natural-language dispatch mode in gateway health', async () => {
+    process.env.GPT_ACCESS_NL_DISPATCH_MODE = 'invalid-value-with-secret-shaped-text';
+
+    const response = await authorized(request(buildApp()).get('/gpt-access/health'));
+
+    expect(response.status).toBe(200);
+    expect(response.body.nlDispatch).toEqual(expect.objectContaining({
+      mode: 'invalid',
+      effectiveMode: 'rules',
+      llmEnabled: false,
+      reasonIfDisabled: 'invalid_mode'
+    }));
+    expect(JSON.stringify(response.body)).not.toContain('invalid-value-with-secret-shaped-text');
   });
 
   it('returns explicit JSON for unknown GPT Access routes after auth', async () => {
@@ -991,6 +1014,67 @@ describe('/gpt-access gateway', () => {
         shouldExecute: true
       })
     }));
+    expect(getWorkerControlStatusMock).not.toHaveBeenCalled();
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
+  it('dry-runs an LLM-sourced natural-language dispatch without executing it', async () => {
+    hasValidOpenAiKeyMock.mockReturnValue(true);
+    responsesCreateMock.mockResolvedValueOnce({
+      output_text: JSON.stringify({
+        action: 'diagnostics.run',
+        payload: {
+          includeDb: true,
+          includeWorkers: true,
+          includeLogs: true,
+          includeQueue: true
+        },
+        confidence: 0.93,
+        requiresConfirmation: false,
+        reason: 'backend_troubleshooting_request',
+        candidates: [
+          {
+            action: 'diagnostics.run',
+            confidence: 0.93,
+            reason: 'backend_troubleshooting_request'
+          }
+        ]
+      })
+    });
+
+    const response = await authorized(request(buildApp()).post('/gpt-access/dispatch/run'))
+      .send({
+        utterance: "what's wrong with the backend?",
+        dryRun: true
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.plan).toEqual(expect.objectContaining({
+      action: 'diagnostics.run',
+      source: 'llm'
+    }));
+    expect(response.body.policy.status).toBe('allowed');
+    expect(getWorkerControlStatusMock).not.toHaveBeenCalled();
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
+  it('returns an LLM clarification for worker recovery when no safe action is registered', async () => {
+    hasValidOpenAiKeyMock.mockReturnValue(true);
+
+    const response = await authorized(request(buildApp()).post('/gpt-access/dispatch/run'))
+      .send({
+        utterance: 'kick the stale workers',
+        dryRun: true
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.plan).toEqual(expect.objectContaining({
+      action: 'INTENT_CLARIFICATION_REQUIRED',
+      source: 'llm',
+      reason: 'requested_worker_recovery_action_not_registered'
+    }));
+    expect(response.body.policy.status).toBe('clarification_required');
+    expect(responsesCreateMock).not.toHaveBeenCalled();
     expect(getWorkerControlStatusMock).not.toHaveBeenCalled();
     expect(dispatchModuleActionMock).not.toHaveBeenCalled();
   });

@@ -49,9 +49,9 @@ Environment variables:
 | `ARCANOS_GPT_ACCESS_TOKEN` | Required for `/gpt-access/*` | Strong bearer token stored only in Railway Variables and GPT Action auth. |
 | `ARCANOS_GPT_ACCESS_BASE_URL` | Required for GPT Action import | Public HTTPS origin advertised by `/gpt-access/openapi.json`; do not rely on request headers in production. |
 | `ARCANOS_GPT_ACCESS_SCOPES` | Required for async GPT access | Include `runtime.read,workers.read,queue.read,jobs.create,jobs.result,logs.read_sanitized,db.explain_approved,mcp.approved_readonly,diagnostics.read`; add capability scopes only when intentionally enabled. |
-| `GPT_ACCESS_NL_DISPATCH_MODE` | Optional | Defaults to `rules` for deterministic `/gpt-access/dispatch/run`; set `hybrid` or `llm_first` only on the web service when semantic planning is intentionally enabled. |
-| `GPT_ACCESS_DISPATCH_MODEL` | Optional | Defaults to `gpt-4.1-mini`; used only by the optional semantic dispatch planner. |
-| `GPT_ACCESS_DISPATCH_LLM_TIMEOUT_MS` | Optional | Defaults to `1500`; timeout/failure never executes an LLM plan and can only fall back through deterministic rules and policy checks. |
+| `GPT_ACCESS_NL_DISPATCH_MODE` | Optional, web service only | When unset, `/gpt-access/dispatch/run` uses `hybrid` if the web service has a real resolved OpenAI key and `rules` otherwise. Valid values are `rules`, `hybrid`, and `llm_first`; invalid values resolve to `rules`. Set `rules` to force deterministic dispatch. |
+| `GPT_ACCESS_DISPATCH_MODEL` | Optional | Defaults to `gpt-4.1-mini`; used only by the semantic dispatch planner. |
+| `GPT_ACCESS_DISPATCH_LLM_TIMEOUT_MS` | Optional | Defaults to `5000` and caps at `10000`; timeout/failure never executes an LLM plan and can only fall back through deterministic rules and policy checks. |
 | `ARC_LOG_PATH` | Optional | Defaults to `/tmp/arc/log`. |
 | `GPT_FAST_PATH_ENABLED` | Optional | Defaults to `true`; disables inline prompt-generation fast path when set to `false`. |
 | `GPT_FAST_PATH_MODEL` | Optional | Defaults to `gpt-4.1-mini`; use a low-latency model for inline fast-path requests. |
@@ -62,6 +62,7 @@ Environment separation:
 - `railway.json` defines `production` and `development` variable blocks.
 - Keep secrets per environment in Railway Variables.
 - Configure separate Railway services for web and worker when async GPT jobs must complete in the background.
+- `GPT_ACCESS_*` natural-language dispatch variables do not change or recycle the worker service. Worker recycle/recover dispatch is unsupported unless a safe registered capability action exists and passes scopes, `MCP_ALLOW_MODULE_ACTIONS`, and confirmation.
 - Confirm each service role with `railway variable list --service <service> --environment production` before release.
 
 ## Run locally

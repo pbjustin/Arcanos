@@ -24,6 +24,7 @@ import { getWorkerControlHealth, getWorkerControlStatus } from '@services/worker
 import { planAutonomousWorkerJob } from '@services/workerAutonomyService.js';
 import { buildSafetySelfHealSnapshot } from '@services/selfHealRuntimeInspectionService.js';
 import { getWorkerRuntimeStatus } from '@platform/runtime/workerConfig.js';
+import { getNaturalLanguageDispatchRuntimeStatus } from '@dispatcher/naturalLanguage/planner.js';
 import { DISPATCH_UTTERANCE_MAX_LENGTH } from '@dispatcher/naturalLanguage/types.js';
 
 const SERVICE_VERSION = '1.0.0';
@@ -618,7 +619,8 @@ export function buildGptAccessHealthPayload() {
     service: 'arcanos-gpt-access',
     time: new Date().toISOString(),
     authRequired: true,
-    version: SERVICE_VERSION
+    version: SERVICE_VERSION,
+    nlDispatch: getNaturalLanguageDispatchRuntimeStatus()
   };
 }
 

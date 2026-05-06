@@ -1,4 +1,4 @@
-import { describe, expect, it } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 
 import {
   INTENT_CLARIFICATION_REQUIRED,
@@ -9,7 +9,21 @@ import {
   resolveDispatchPlan
 } from '../src/dispatcher/naturalLanguage/index.js';
 
+const savedDispatchMode = process.env.GPT_ACCESS_NL_DISPATCH_MODE;
+
 describe('natural-language dispatcher', () => {
+  beforeEach(() => {
+    process.env.GPT_ACCESS_NL_DISPATCH_MODE = 'rules';
+  });
+
+  afterEach(() => {
+    if (savedDispatchMode === undefined) {
+      delete process.env.GPT_ACCESS_NL_DISPATCH_MODE;
+    } else {
+      process.env.GPT_ACCESS_NL_DISPATCH_MODE = savedDispatchMode;
+    }
+  });
+
   it.each([
     ['check workers', 'workers.status'],
     ['are workers alive', 'workers.status'],
