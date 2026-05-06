@@ -143,6 +143,45 @@ describe('LLM natural-language dispatch resolver', () => {
     expect(String(responsesCreateMock.mock.calls[0]?.[0]?.input)).not.toContain('Do not invent capabilities');
   });
 
+  it('defaults to hybrid mode when OpenAI is configured and dispatch mode is unset', async () => {
+    delete process.env.GPT_ACCESS_NL_DISPATCH_MODE;
+    const registry = createGptAccessDispatchRegistry();
+    mockLlmResponse(buildLlmPlanResponse({
+      action: 'diagnostics.run',
+      payload: {
+        includeDb: true,
+        includeWorkers: true,
+        includeLogs: true,
+        includeQueue: true
+      },
+      reason: 'backend_troubleshooting_request'
+    }));
+
+    const plan = await resolveDispatchPlan({
+      utterance: "what's wrong with the backend?",
+      registry
+    });
+
+    expect(plan.action).toBe('diagnostics.run');
+    expect(plan.source).toBe('llm');
+    expect(responsesCreateMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('defaults to rules mode when OpenAI is not configured and dispatch mode is unset', async () => {
+    delete process.env.GPT_ACCESS_NL_DISPATCH_MODE;
+    process.env.OPENAI_API_KEY = 'sk-mock-for-ci-testing';
+    const registry = createGptAccessDispatchRegistry();
+
+    const plan = await resolveDispatchPlan({
+      utterance: 'please fix the vague worker thing',
+      registry
+    });
+
+    expect(plan.action).toBe(INTENT_CLARIFICATION_REQUIRED);
+    expect(plan.source).toBe('rules');
+    expect(responsesCreateMock).not.toHaveBeenCalled();
+  });
+
   it('does not call the LLM when only a mock OpenAI key is configured', async () => {
     process.env.OPENAI_API_KEY = 'sk-mock-for-ci-testing';
     const registry = createGptAccessDispatchRegistry();
@@ -286,6 +325,53 @@ describe('LLM natural-language dispatch resolver', () => {
     });
     expect(plan.requiresConfirmation).toBe(true);
     expect(policy.status).toBe('confirmation_required');
+  });
+
+  it.each([
+    'kick the stale workers',
+    'fix slot 8',
+    'recycle 3 and 8'
+  ])('clarifies worker recovery language when no safe recovery action is registered: %s', async (utterance) => {
+    const registry = createGptAccessDispatchRegistry();
+    mockLlmResponse(buildLlmPlanResponse({
+      action: 'diagnostics.run',
+      payload: {
+        includeWorkers: true
+      },
+      reason: 'worker_recovery_request_without_registered_action'
+    }));
+
+    const plan = await resolveDispatchPlan({
+      utterance,
+      registry
+    });
+
+    expect(plan.action).toBe(INTENT_CLARIFICATION_REQUIRED);
+    expect(plan.source).toBe('llm');
+    expect(plan.reason).toBe('requested_worker_recovery_action_not_registered');
+  });
+
+  it('does not classify unrelated numeric fix language as worker recovery', async () => {
+    const registry = createGptAccessDispatchRegistry();
+    mockLlmResponse(buildLlmPlanResponse({
+      action: 'diagnostics.run',
+      payload: {
+        includeDb: true,
+        includeWorkers: false,
+        includeLogs: false,
+        includeQueue: false
+      },
+      reason: 'non_worker_numeric_fix_request'
+    }));
+
+    const plan = await resolveDispatchPlan({
+      utterance: 'fix 5 records',
+      registry
+    });
+
+    expect(plan.action).toBe('diagnostics.run');
+    expect(plan.source).toBe('llm');
+    expect(plan.reason).toBe('non_worker_numeric_fix_request');
   });
 
   it('rejects an LLM-selected action that is not registered', async () => {

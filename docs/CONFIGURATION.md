@@ -175,11 +175,11 @@ Use `docs/TRINITY_PIPELINE.md` for the full execution flow and `docs/gpt-access-
 ### GPT Access natural-language dispatch
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `GPT_ACCESS_NL_DISPATCH_MODE` | `rules` | `rules` never calls the LLM; `hybrid` runs rules first and calls the LLM only when rules require clarification; `llm_first` calls the LLM first and falls back to deterministic rules when the LLM asks for clarification or fails. Invalid values resolve to `rules`. |
-| `GPT_ACCESS_DISPATCH_MODEL` | `gpt-4.1-mini` | OpenAI Responses API model for the optional semantic planner; used only in `hybrid`/`llm_first` when OpenAI credentials are configured. |
-| `GPT_ACCESS_DISPATCH_LLM_TIMEOUT_MS` | `1500` | Per-dispatch LLM planning timeout. Invalid values use the default and positive values are capped in code. Timeout/failure never executes an LLM plan; execution can continue only through a deterministic rule plan that still passes policy and confirmation. |
+| `GPT_ACCESS_NL_DISPATCH_MODE` | unset | When unset, effective mode is `hybrid` if a real OpenAI key is configured and `rules` otherwise. `rules` never calls the LLM; `hybrid` runs rules first and calls the LLM only when rules require clarification; `llm_first` calls the LLM first and falls back to deterministic rules when the LLM asks for clarification or fails. Invalid values resolve to `rules`. |
+| `GPT_ACCESS_DISPATCH_MODEL` | `gpt-4.1-mini` | OpenAI Responses API model for the semantic planner only; it does not follow the general `OPENAI_MODEL` precedence chain. |
+| `GPT_ACCESS_DISPATCH_LLM_TIMEOUT_MS` | `1500` | Per-dispatch LLM planning timeout. Invalid or non-positive values use the default and positive values are capped at `10000`. Timeout/failure never executes an LLM plan; execution can continue only through a deterministic rule plan that still passes policy and confirmation. |
 
-The semantic planner can only propose one registered action plus a JSON-object payload. The gateway still enforces registry lookup, GPT Access scopes, `MCP_ALLOW_MODULE_ACTIONS`, confidence threshold, unsafe payload-field rejection, prohibited action names, and confirmation. Worker recycle/recover wording is not a built-in process recycle guarantee; it dispatches only to a registered capability action and otherwise returns clarification.
+The semantic planner can only propose one registered action plus a JSON-object payload. The gateway still enforces registry lookup, GPT Access scopes, `MCP_ALLOW_MODULE_ACTIONS`, confidence threshold, unsafe payload-field rejection, prohibited action names, and confirmation. Worker recycle/recover wording is not a built-in process recycle guarantee; it dispatches only to a registered `workers.recycle` or `workers.recover` capability action and otherwise returns clarification. `GET /gpt-access/health` exposes sanitized `nlDispatch` configuration for deployment verification.
 
 ### Metrics
 | Variable | Default | Purpose |
@@ -282,9 +282,9 @@ This table mirrors the highest-impact runtime keys in `.env.example`. Use `.env.
 | `ARCANOS_GPT_ACCESS_TOKEN` | commented placeholder | Bearer token for `/gpt-access/*`; real values must not be committed or logged. |
 | `ARCANOS_GPT_ACCESS_BASE_URL` | commented HTTPS placeholder | Public origin advertised by `/gpt-access/openapi.json`; set this in deployed environments. |
 | `ARCANOS_GPT_ACCESS_SCOPES` | commented full scope list | Gateway scope allowlist. `jobs.create`, `capabilities.read`, and `capabilities.run` must be explicit before they enqueue, discover, or execute capability work. |
-| `GPT_ACCESS_NL_DISPATCH_MODE` | `rules` (commented) | Optional `/gpt-access/dispatch/run` resolver mode: `rules`, `hybrid`, or `llm_first`. |
+| `GPT_ACCESS_NL_DISPATCH_MODE` | unset (commented) | Optional `/gpt-access/dispatch/run` resolver mode: `rules`, `hybrid`, or `llm_first`; unset defaults from real OpenAI credential availability. |
 | `GPT_ACCESS_DISPATCH_MODEL` | `gpt-4.1-mini` (commented) | Model used only by the optional semantic dispatcher. |
-| `GPT_ACCESS_DISPATCH_LLM_TIMEOUT_MS` | `1500` (commented) | Optional semantic dispatcher timeout; failures fall back only through deterministic rules and policy checks. |
+| `GPT_ACCESS_DISPATCH_LLM_TIMEOUT_MS` | `1500` (commented) | Optional semantic dispatcher timeout, capped at `10000`; failures fall back only through deterministic rules and policy checks. |
 | `DEFAULT_GPT_ID` | `arcanos-core` | Default GPT id for bridge requests that omit `gptId`. |
 | `ARCANOS_PROCESS_KIND` | `web` (commented) | Explicit Railway launcher role: `web` or `worker`. |
 | `ALLOW_MOCK_FALLBACK` | `false` | Allow fallback to mocked providers in non-prod. |
