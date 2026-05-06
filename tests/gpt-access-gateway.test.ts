@@ -578,6 +578,27 @@ describe('/gpt-access gateway', () => {
     expect(dispatchModuleActionMock).not.toHaveBeenCalled();
   });
 
+  it('allows safe capability payload keys that contain blocked words as substrings', async () => {
+    allowCapabilityRun();
+    const payload = {
+      prompt: 'status',
+      callbackUrl: 'https://example.invalid/callback',
+      invitationToken: 'opaque-public-reference',
+      targetId: 'worker-8',
+      connectionTimeout: 250,
+      tableHeader: 'worker'
+    };
+
+    const response = await confirmed(authorized(request(buildApp()).post('/gpt-access/capabilities/v1/core/run')))
+      .send({
+        action: 'query',
+        payload
+      });
+
+    expect(response.status).toBe(200);
+    expect(dispatchModuleActionMock).toHaveBeenCalledWith('ARCANOS:CORE', 'query', payload);
+  });
+
   it('requires explicit confirmation before dispatching allowlisted capability actions', async () => {
     allowCapabilityRun();
 

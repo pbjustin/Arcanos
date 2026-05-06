@@ -6,6 +6,7 @@ import {
   type DispatchPolicyDecision,
   type DispatchRegistryAction
 } from './types.js';
+import { dispatchActionRequiresConfirmation } from './safety.js';
 
 const PROHIBITED_ACTION_PATTERNS = [
   /\b(?:shell|terminal|exec|execute_command|raw[-_.]?sql|filesystem)\b/iu,
@@ -114,10 +115,9 @@ export function evaluateDispatchPolicy(input: {
     }
   }
 
-  const requiresConfirmation = Boolean(
+  const requiresConfirmation = dispatchActionRequiresConfirmation(
+    registryAction,
     input.plan.requiresConfirmation
-    || registryAction.requiresConfirmation
-    || registryAction.risk !== 'readonly'
   );
 
   return buildDecision({

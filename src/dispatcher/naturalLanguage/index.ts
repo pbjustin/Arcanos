@@ -5,4 +5,5 @@ export * from './llmResolver.js';
 export * from './planner.js';
 export * from './policy.js';
 export * from './confirmation.js';
+export * from './safety.js';
 export * from './runner.js';

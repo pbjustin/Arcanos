@@ -227,9 +227,8 @@ describe('LLM natural-language dispatch resolver', () => {
     expect(plan.reason).toBe('llm_intent_clarification_required');
   });
 
-  it('clones default registry payload objects before returning LLM plans', async () => {
+  it('treats an empty LLM payload as an explicit override of registry defaults', async () => {
     const registry = createGptAccessDispatchRegistry();
-    const registryPayload = registry.getAction('diagnostics.run')?.payload;
     mockLlmResponse(buildLlmPlanResponse({
       action: 'diagnostics.run',
       payload: {},
@@ -243,8 +242,7 @@ describe('LLM natural-language dispatch resolver', () => {
     });
 
     expect(plan.action).toBe('diagnostics.run');
-    expect(plan.payload).toEqual(registryPayload);
-    expect(plan.payload).not.toBe(registryPayload);
+    expect(plan.payload).toEqual({});
   });
 
   it('maps vague worker recycle language to a registered privileged action', async () => {
@@ -348,6 +346,31 @@ describe('LLM natural-language dispatch resolver', () => {
 
     expect(plan.action).toBe(INTENT_CLARIFICATION_REQUIRED);
     expect(plan.reason).toBe('llm_payload_unsafe_field');
+  });
+
+  it('allows safe payload keys that only contain unsafe words as substrings', async () => {
+    const registry = createGptAccessDispatchRegistry();
+    const payload = {
+      callbackUrl: 'https://example.invalid/callback',
+      invitationToken: 'opaque-public-reference',
+      targetId: 'async-queue-slot-8',
+      connectionTimeout: 250,
+      tableHeader: 'worker'
+    };
+    mockLlmResponse(buildLlmPlanResponse({
+      action: 'diagnostics.run',
+      payload,
+      reason: 'safe_payload_key_substrings'
+    }));
+
+    const plan = await resolveLlmDispatchPlan({
+      utterance: 'run diagnostics with safe filters',
+      registry,
+      client: fakeOpenAIClient
+    });
+
+    expect(plan.action).toBe('diagnostics.run');
+    expect(plan.payload).toEqual(payload);
   });
 
   it('rejects GPT Access capability control fields blocked by direct capability runs', async () => {

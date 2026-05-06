@@ -13,7 +13,9 @@ import {
   INTENT_CLARIFICATION_REQUIRED,
   createCapabilityRegistry,
   createGptAccessDispatchRegistry,
+  dispatchActionRequiresConfirmation,
   evaluateDispatchPolicy,
+  isUnsafeGptAccessPayloadKey,
   readDispatchConfirmationTokenField,
   resolveDispatchPlan,
   runDispatchPlan,
@@ -79,46 +81,6 @@ const CAPABILITY_CONFIRMATION_HEADER_TOKEN_PREFIX = 'token:';
 const CAPABILITY_RUN_BODY_KEYS = new Set(['action', 'payload']);
 const GPT_ACCESS_SCOPE_NAMES = new Set<string>(GPT_ACCESS_SCOPES);
 const CAPABILITY_PAYLOAD_MAX_DEPTH = 32;
-const UNSAFE_CAPABILITY_PAYLOAD_FIELDS = new Set([
-  '__arcanosExecutionMode',
-  '__arcanosExecutionReason',
-  '__arcanosGptId',
-  '__arcanosRequestedAction',
-  '__arcanosSourceEndpoint',
-  '__arcanosSuppressPromptDebugTrace',
-  '__proto__',
-  'admin_key',
-  'api-key',
-  'api_key',
-  'apikey',
-  'auth',
-  'authorization',
-  'bearer',
-  'command',
-  'constructor',
-  'cookie',
-  'cookies',
-  'endpoint',
-  'exec',
-  'headers',
-  'maxOutputTokens',
-  'maxWords',
-  'openai_api_key',
-  'overrideAuditSafe',
-  'password',
-  'prototype',
-  'proxy',
-  'railway_token',
-  'secret',
-  'shell',
-  'sql',
-  'suppressTimeoutFallback',
-  'target',
-  'timeout_ms',
-  'timeoutMs',
-  'token',
-  'url'
-].map((field) => field.toLowerCase()));
 
 function getGptAccessRateLimitActorKey(req: express.Request): string {
   const expressClientIp = typeof req.ip === 'string' && req.ip.trim().length > 0
@@ -179,7 +141,7 @@ function findUnsafeCapabilityPayloadIssue(value: unknown, depth = 0): 'unsafe_fi
 
   const record = value as Record<string, unknown>;
   for (const key of Object.keys(record)) {
-    if (UNSAFE_CAPABILITY_PAYLOAD_FIELDS.has(key.toLowerCase())) {
+    if (isUnsafeGptAccessPayloadKey(key)) {
       return 'unsafe_field';
     }
 
@@ -437,9 +399,7 @@ function createDispatchLlmPlanningRegistry(registry: CapabilityRegistry): Capabi
           payload: {},
           confidence: 1,
           source: 'rules',
-          requiresConfirmation: Boolean(
-            registryAction.requiresConfirmation || registryAction.risk !== 'readonly'
-          ),
+          requiresConfirmation: dispatchActionRequiresConfirmation(registryAction),
           reason: 'llm_planning_catalog_filter'
         },
         registry,
