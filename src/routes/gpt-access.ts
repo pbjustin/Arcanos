@@ -10,16 +10,10 @@ import { confirmGate } from '@transport/http/middleware/confirmGate.js';
 import {
   DISPATCH_RUN_BODY_KEYS,
   DISPATCH_UTTERANCE_MAX_LENGTH,
-  INTENT_CLARIFICATION_REQUIRED,
-  createCapabilityRegistry,
   createGptAccessDispatchRegistry,
-  dispatchActionRequiresConfirmation,
-  evaluateDispatchPolicy,
   isUnsafeGptAccessPayloadKey,
   readDispatchConfirmationTokenField,
-  resolveDispatchPlan,
   runDispatchPlan,
-  type CapabilityRegistry,
   stripDispatchConfirmationToken,
   type DispatchExecutionResult,
   type DispatchPolicyDecision,
@@ -47,18 +41,21 @@ import {
   getGptAccessSelfHealStatus,
   explainApprovedQuery,
   getGptAccessJobResult,
-  GPT_ACCESS_SCOPES,
   gptAccessAuthMiddleware,
-  isGptAccessScopeAllowed,
   queryBackendLogs,
   requireGptAccessScope,
   resolveGptAccessOpenApiServerUrl,
   runDeepDiagnostics,
+  runGptAccessWorkerRecovery,
   runGptAccessMcpTool,
   sanitizeGptAccessPayload,
   sendGptAccessResult,
-  type GptAccessScope
 } from '@services/gptAccessGateway.js';
+import {
+  buildDispatchPolicyBlockPayload,
+  resolveGptAccessNaturalLanguageDispatch,
+  toDispatchPolicyResponse
+} from '@services/gptAccessNaturalLanguageDispatch.js';
 
 const router = express.Router();
 
@@ -79,7 +76,6 @@ type DispatchRunBody =
 const CAPABILITY_CONFIRMATION_TOKEN_BODY_KEY = 'confirmation_token';
 const CAPABILITY_CONFIRMATION_HEADER_TOKEN_PREFIX = 'token:';
 const CAPABILITY_RUN_BODY_KEYS = new Set(['action', 'payload']);
-const GPT_ACCESS_SCOPE_NAMES = new Set<string>(GPT_ACCESS_SCOPES);
 const CAPABILITY_PAYLOAD_MAX_DEPTH = 32;
 
 function getGptAccessRateLimitActorKey(req: express.Request): string {
@@ -386,32 +382,6 @@ function isModuleDispatchNotFoundError(error: unknown): boolean {
   return error instanceof ModuleNotFoundError || error instanceof ModuleActionNotFoundError;
 }
 
-function isDispatchGptAccessScopeAllowed(scope: string): boolean {
-  return GPT_ACCESS_SCOPE_NAMES.has(scope) && isGptAccessScopeAllowed(scope as GptAccessScope);
-}
-
-function createDispatchLlmPlanningRegistry(registry: CapabilityRegistry): CapabilityRegistry {
-  return createCapabilityRegistry(
-    registry.listActions().filter((registryAction) => {
-      const policy = evaluateDispatchPolicy({
-        plan: {
-          action: registryAction.action,
-          payload: {},
-          confidence: 1,
-          source: 'rules',
-          requiresConfirmation: dispatchActionRequiresConfirmation(registryAction),
-          reason: 'llm_planning_catalog_filter'
-        },
-        registry,
-        isScopeAllowed: isDispatchGptAccessScopeAllowed,
-        isModuleActionAllowed
-      });
-
-      return policy.status === 'allowed' || policy.status === 'confirmation_required';
-    })
-  );
-}
-
 const listGptAccessCapabilities = asyncHandler(async (_req, res) => {
   let capabilities;
   try {
@@ -584,38 +554,6 @@ const runGptAccessCapability = asyncHandler(async (req, res) => {
   );
 });
 
-function toDispatchPolicyResponse(policy: DispatchPolicyDecision) {
-  return {
-    status: policy.status,
-    allowed: policy.allowed,
-    requiresConfirmation: policy.requiresConfirmation,
-    shouldExecute: policy.shouldExecute,
-    action: policy.action,
-    reason: policy.reason,
-    code: policy.code,
-    requiredScope: policy.requiredScope ?? null
-  };
-}
-
-function toDispatchPolicyErrorMessage(policy: DispatchPolicyDecision): string {
-  switch (policy.code) {
-    case INTENT_CLARIFICATION_REQUIRED:
-      return 'Dispatch intent could not be resolved confidently. Please clarify the requested action.';
-    case 'DISPATCH_ACTION_NOT_REGISTERED':
-      return 'Dispatch action is not registered for GPT Access.';
-    case 'DISPATCH_ACTION_PROHIBITED':
-      return 'Dispatch action is prohibited by GPT Access policy.';
-    case 'GPT_ACCESS_SCOPE_DENIED':
-      return 'GPT Access scope is not allowed for this dispatch action.';
-    case 'GPT_ACCESS_CAPABILITY_ACTION_DENIED':
-      return 'GPT Access capability action is not allowlisted.';
-    default:
-      return policy.status === 'clarification_required'
-        ? 'Dispatch intent could not be resolved confidently. Please clarify the requested action.'
-        : 'Dispatch request was denied by policy.';
-  }
-}
-
 function sendDispatchPolicyBlock(
   res: express.Response,
   plan: DispatchPlan,
@@ -624,19 +562,7 @@ function sendDispatchPolicyBlock(
   const statusCode = policy.status === 'clarification_required' ? 422 : 403;
   sendGptAccessResult(res, {
     statusCode,
-    payload: {
-      ok: false,
-      error: {
-        code: policy.code ?? (
-          policy.status === 'clarification_required'
-            ? INTENT_CLARIFICATION_REQUIRED
-            : 'DISPATCH_POLICY_DENIED'
-        ),
-        message: toDispatchPolicyErrorMessage(policy)
-      },
-      plan,
-      policy: toDispatchPolicyResponse(policy)
-    }
+    payload: buildDispatchPolicyBlockPayload(plan, policy)
   });
 }
 
@@ -657,6 +583,7 @@ async function executeDispatchRun(
     handlers: {
       runMcpTool: (body) => runGptAccessMcpTool(body),
       runDiagnostics: (payload) => runDeepDiagnostics(payload),
+      runWorkerRecovery: (payload) => runGptAccessWorkerRecovery(payload),
       runCapability: (input) => runGptAccessCapabilityAction({
         capabilityId: input.capabilityId,
         action: input.action,
@@ -684,16 +611,10 @@ const runGptAccessDispatch = asyncHandler(async (req, res) => {
   }
 
   const registry = createGptAccessDispatchRegistry(getModulesForRegistry());
-  const plan = await resolveDispatchPlan({
+  const { plan, policy } = await resolveGptAccessNaturalLanguageDispatch({
     utterance: body.utterance,
     registry,
-    llmRegistry: createDispatchLlmPlanningRegistry(registry),
-    context: body.context
-  });
-  const policy = evaluateDispatchPolicy({
-    plan,
-    registry,
-    isScopeAllowed: isDispatchGptAccessScopeAllowed,
+    context: body.context,
     isModuleActionAllowed
   });
 

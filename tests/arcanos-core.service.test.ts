@@ -9,6 +9,7 @@ const loggerErrorMock = jest.fn();
 const runWithRequestAbortTimeoutMock = jest.fn(async (_config: unknown, operation: () => Promise<unknown>) => operation());
 const getRequestRemainingMsMock = jest.fn(() => null);
 const getRequestAbortContextMock = jest.fn(() => null);
+const routeOperatorCommandThroughDispatchMock = jest.fn();
 
 jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({
   runTrinityWritingPipeline: mockRunTrinityWritingPipeline,
@@ -30,6 +31,10 @@ jest.unstable_mockModule('@services/openai.js', () => ({
 
 jest.unstable_mockModule('@services/openai/clientBridge.js', () => ({
   getOpenAIClientOrAdapter: mockGetOpenAIClientOrAdapter,
+}));
+
+jest.unstable_mockModule('@services/gptAccessNaturalLanguageDispatch.js', () => ({
+  routeOperatorCommandThroughDispatch: routeOperatorCommandThroughDispatchMock
 }));
 
 jest.unstable_mockModule('@platform/resilience/runtimeBudget.js', () => ({
@@ -68,6 +73,7 @@ describe('ARCANOS:CORE service', () => {
     getRequestRemainingMsMock.mockReturnValue(null);
     getRequestAbortContextMock.mockReturnValue(null);
     mockCreateRuntimeBudget.mockReturnValue({ budget: 'runtime' });
+    routeOperatorCommandThroughDispatchMock.mockResolvedValue(null);
   });
 
   it('routes query requests through Trinity with the core source endpoint', async () => {
@@ -126,6 +132,70 @@ describe('ARCANOS:CORE service', () => {
       })
     );
     expect(result).toBe(trinityResult);
+  });
+
+  it('routes backend operator commands through GPT Access dispatch before Trinity', async () => {
+    routeOperatorCommandThroughDispatchMock.mockResolvedValue({
+      statusCode: 200,
+      plan: {
+        action: 'diagnostics.run',
+        payload: {
+          includeDb: true,
+          includeWorkers: true,
+          includeLogs: true,
+          includeQueue: true
+        },
+        confidence: 0.93,
+        source: 'llm',
+        requiresConfirmation: false,
+        reason: 'backend_troubleshooting_request'
+      },
+      policy: {
+        status: 'allowed',
+        allowed: true,
+        requiresConfirmation: false,
+        shouldExecute: true,
+        action: 'diagnostics.run',
+        reason: 'policy_allowed'
+      },
+      payload: {
+        ok: true,
+        plan: {
+          action: 'diagnostics.run',
+          source: 'llm'
+        },
+        policy: {
+          status: 'allowed'
+        },
+        result: {
+          ok: true
+        }
+      }
+    });
+
+    const result = await ArcanosCore.actions.query({
+      prompt: "what's wrong with the backend?"
+    });
+
+    expect(routeOperatorCommandThroughDispatchMock).toHaveBeenCalledWith({
+      utterance: "what's wrong with the backend?",
+      context: {
+        sourceEndpoint: 'gpt.arcanos-core.query',
+        moduleId: 'ARCANOS:CORE',
+        requestedAction: 'query'
+      }
+    });
+    expect(mockGetOpenAIClientOrAdapter).not.toHaveBeenCalled();
+    expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      handledBy: 'gpt-access-dispatch',
+      statusCode: 200,
+      plan: expect.objectContaining({
+        action: 'diagnostics.run',
+        source: 'llm'
+      })
+    }));
   });
 
   it('keeps the default handler timeout aligned with the route budget instead of aborting after five seconds', async () => {

@@ -242,12 +242,15 @@ function buildPlannerInstructions(input: {
     'Return only the structured JSON object matching the schema.',
     '',
     '# Operator language examples',
-    '- "kick stale workers": choose a registered worker recovery/recycle action if present; otherwise return INTENT_CLARIFICATION_REQUIRED.',
-    '- "fix slot 8": if the selected registered action supports worker IDs, use async-queue-slot-8.',
-    '- "recycle 3 and 8": if a worker recycle/recover action is registered, normalize to async-queue-slot-3 and async-queue-slot-8.',
+    '- "what is wrong with the backend?" or "what\'s wrong with the backend?": choose diagnostics.run when troubleshooting, problem investigation, failure, stuck, broken, or error language is implied.',
+    '- "is the backend okay?": choose runtime.inspect for simple status/health wording; choose diagnostics.run when the wording asks to investigate a problem.',
+    '- "check on the workers": choose workers.status when registered.',
+    '- "kick stale workers": choose workers.recover when registered with payload {}; otherwise return INTENT_CLARIFICATION_REQUIRED with reason requested_worker_recovery_action_not_registered.',
+    '- "fix slot 8": only when workers.recycle or workers.recover is registered, normalize to workerIds ["async-queue-slot-8"]; otherwise return INTENT_CLARIFICATION_REQUIRED with reason requested_worker_recovery_action_not_registered.',
+    '- "recycle 3 and 8": only when workers.recycle or workers.recover is registered, normalize to workerIds ["async-queue-slot-3","async-queue-slot-8"]; otherwise return INTENT_CLARIFICATION_REQUIRED with reason requested_worker_recovery_action_not_registered.',
     '- "check the queue": choose queue.inspect when registered.',
-    '- "what is wrong with the backend?": choose diagnostics.run for troubleshooting/deep issue language, or runtime.inspect for simple status/health wording.',
-    '- "run a deep diagnostic": choose diagnostics.run and include includeDb/includeWorkers/includeLogs/includeQueue when available.',
+    '- "what is going on with the queue?": choose queue.inspect when registered.',
+    '- "run a deep diagnostic" or "run full diagnostics": choose diagnostics.run and include includeDb/includeWorkers/includeLogs/includeQueue when available.',
     '- If the requested operation is not registered, return INTENT_CLARIFICATION_REQUIRED.',
     '',
     `Registered action catalog JSON: ${JSON.stringify(input.actions)}`
@@ -420,7 +423,11 @@ function validateWorkerRecoveryPayload(action: string, payload: Record<string, u
   }
 
   const workerIds = payload.workerIds;
-  if (!Array.isArray(workerIds) || workerIds.length === 0) {
+  if (workerIds === undefined) {
+    return null;
+  }
+
+  if (!Array.isArray(workerIds)) {
     return 'llm_worker_recovery_payload_invalid';
   }
 

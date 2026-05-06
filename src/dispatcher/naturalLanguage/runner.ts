@@ -8,6 +8,7 @@ import {
 export type DispatchRunnerHandlers = {
   runMcpTool: (body: { tool: string; args: Record<string, unknown> }) => Promise<DispatchExecutionResult>;
   runDiagnostics: (payload: unknown) => Promise<DispatchExecutionResult>;
+  runWorkerRecovery: (payload: unknown) => Promise<DispatchExecutionResult>;
   runCapability: (input: {
     capabilityId: string;
     action: string;
@@ -63,6 +64,8 @@ export async function runDispatchPlan(input: {
       });
     case 'gpt-access-diagnostics':
       return input.handlers.runDiagnostics(input.plan.payload);
+    case 'gpt-access-worker-recovery':
+      return input.handlers.runWorkerRecovery(input.plan.payload);
     case 'gpt-access-capability':
       return input.handlers.runCapability({
         capabilityId: action.runner.capabilityId,

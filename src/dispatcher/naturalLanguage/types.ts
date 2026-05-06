@@ -29,6 +29,10 @@ export type DispatchRunner =
       kind: 'gpt-access-diagnostics';
     }
   | {
+      kind: 'gpt-access-worker-recovery';
+      mode: 'recover' | 'recycle';
+    }
+  | {
       kind: 'gpt-access-capability';
       capabilityId: string;
       capabilityAction: string;

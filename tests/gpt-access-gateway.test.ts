@@ -10,6 +10,8 @@ const transactionMock = jest.fn();
 const findOrCreateGptJobMock = jest.fn();
 const getJobByIdMock = jest.fn();
 const getJobQueueSummaryMock = jest.fn();
+const recoverStaleJobsMock = jest.fn();
+const recoverStalledJobsForWorkersMock = jest.fn();
 const getWorkerControlHealthMock = jest.fn();
 const getWorkerControlStatusMock = jest.fn();
 const getWorkerRuntimeStatusMock = jest.fn();
@@ -48,7 +50,10 @@ jest.unstable_mockModule('../src/core/db/repositories/jobRepository.js', () => (
   JobRepositoryUnavailableError: MockJobRepositoryUnavailableError,
   findOrCreateGptJob: findOrCreateGptJobMock,
   getJobById: getJobByIdMock,
-  getJobQueueSummary: getJobQueueSummaryMock
+  getJobQueueSummary: getJobQueueSummaryMock,
+  recoverStaleJobs: recoverStaleJobsMock,
+  recoverStalledJobsForWorkers: recoverStalledJobsForWorkersMock,
+  resolveJobWorkerStaleAfterMs: jest.fn(() => 45_000)
 }));
 
 jest.unstable_mockModule('../src/routes/_core/gptDispatch.js', () => ({
@@ -252,6 +257,18 @@ describe('/gpt-access gateway', () => {
       pending: 0,
       running: 0,
       failed: 0
+    });
+    recoverStaleJobsMock.mockResolvedValue({
+      recoveredJobs: [],
+      failedJobs: [],
+      cancelledJobs: []
+    });
+    recoverStalledJobsForWorkersMock.mockResolvedValue({
+      staleWorkerIds: ['async-queue-slot-8'],
+      stalledJobIds: ['job-8'],
+      requeuedJobIds: ['job-8'],
+      deadLetterJobIds: [],
+      cancelledJobIds: []
     });
     getWorkerRuntimeStatusMock.mockReturnValue({
       enabled: true,
@@ -1058,8 +1075,25 @@ describe('/gpt-access gateway', () => {
     expect(dispatchModuleActionMock).not.toHaveBeenCalled();
   });
 
-  it('returns an LLM clarification for worker recovery when no safe action is registered', async () => {
+  it('maps worker recovery language to a privileged registered recovery action', async () => {
+    process.env.ARCANOS_GPT_ACCESS_SCOPES = 'workers.recover';
     hasValidOpenAiKeyMock.mockReturnValue(true);
+    responsesCreateMock.mockResolvedValueOnce({
+      output_text: JSON.stringify({
+        action: 'workers.recover',
+        payload: {},
+        confidence: 0.91,
+        requiresConfirmation: true,
+        reason: 'stale_worker_recovery_request',
+        candidates: [
+          {
+            action: 'workers.recover',
+            confidence: 0.91,
+            reason: 'stale_worker_recovery_request'
+          }
+        ]
+      })
+    });
 
     const response = await authorized(request(buildApp()).post('/gpt-access/dispatch/run'))
       .send({
@@ -1069,12 +1103,14 @@ describe('/gpt-access gateway', () => {
 
     expect(response.status).toBe(200);
     expect(response.body.plan).toEqual(expect.objectContaining({
-      action: 'INTENT_CLARIFICATION_REQUIRED',
+      action: 'workers.recover',
       source: 'llm',
-      reason: 'requested_worker_recovery_action_not_registered'
+      reason: 'stale_worker_recovery_request',
+      requiresConfirmation: true
     }));
-    expect(response.body.policy.status).toBe('clarification_required');
-    expect(responsesCreateMock).not.toHaveBeenCalled();
+    expect(response.body.policy.status).toBe('confirmation_required');
+    expect(responsesCreateMock).toHaveBeenCalledTimes(1);
+    expect(recoverStaleJobsMock).not.toHaveBeenCalled();
     expect(getWorkerControlStatusMock).not.toHaveBeenCalled();
     expect(dispatchModuleActionMock).not.toHaveBeenCalled();
   });
@@ -1201,6 +1237,41 @@ describe('/gpt-access gateway', () => {
       reason: 'confirmation_satisfied'
     }));
     expect(dispatchModuleActionMock).toHaveBeenCalledWith('ARCANOS:CORE', 'query', {});
+  });
+
+  it('executes confirmed worker recovery dispatch through the approved recovery runner', async () => {
+    process.env.ARCANOS_GPT_ACCESS_SCOPES = 'workers.recover';
+
+    const response = await confirmed(authorized(request(buildApp()).post('/gpt-access/dispatch/run')))
+      .send({
+        utterance: 'workers.recycle',
+        context: {
+          operator: 'test'
+        }
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.plan).toEqual(expect.objectContaining({
+      action: 'workers.recycle',
+      requiresConfirmation: true
+    }));
+    expect(response.body.policy).toEqual(expect.objectContaining({
+      status: 'allowed',
+      requiresConfirmation: false,
+      shouldExecute: true,
+      reason: 'confirmation_satisfied'
+    }));
+    expect(response.body.result).toEqual(expect.objectContaining({
+      ok: true,
+      tool: 'workers.recover',
+      mode: 'staleJobs'
+    }));
+    expect(recoverStaleJobsMock).toHaveBeenCalledWith({
+      staleAfterMs: 45_000,
+      maxRetries: undefined
+    });
+    expect(recoverStalledJobsForWorkersMock).not.toHaveBeenCalled();
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
   });
 
   it('maps typed module dispatch misses to not found responses', async () => {
@@ -1910,6 +1981,23 @@ describe('/gpt-access gateway', () => {
       tool: 'workers.status'
     }));
     expect(getWorkerControlStatusMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('exposes sanitized natural-language dispatch status in runtime inspection', async () => {
+    const response = await authorized(request(buildApp()).post('/gpt-access/mcp'))
+      .send({ tool: 'runtime.inspect', args: {} });
+
+    expect(response.status).toBe(200);
+    expect(response.body.result.nlDispatch).toEqual(expect.objectContaining({
+      mode: expect.any(String),
+      effectiveMode: expect.any(String),
+      llmEnabled: expect.any(Boolean),
+      model: expect.any(String),
+      timeoutMs: expect.any(Number)
+    }));
+    expect(response.body.result.nlDispatch).toHaveProperty('reasonIfDisabled');
+    expect(response.body.result.nlDispatch).toHaveProperty('lastResolverSource');
+    expect(JSON.stringify(response.body.result.nlDispatch)).not.toContain('OPENAI_API_KEY');
   });
 
   it.each([

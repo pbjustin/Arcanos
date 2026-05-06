@@ -15,6 +15,7 @@ import { recordTraceEvent } from '@platform/logging/telemetry.js';
 import { generateMockResponse } from '@services/openai.js';
 import { getOpenAIClientOrAdapter } from '@services/openai/clientBridge.js';
 import { getAiExecutionContext } from '@services/openai/aiExecutionContext.js';
+import { routeOperatorCommandThroughDispatch } from '@services/gptAccessNaturalLanguageDispatch.js';
 import { APPLICATION_CONSTANTS } from '@shared/constants.js';
 import {
   ARCANOS_SUPPRESS_TIMEOUT_FALLBACK_FLAG,
@@ -1058,6 +1059,41 @@ export const ArcanosCore: ModuleDef = {
       const allowTimeoutFallback = !normalizeBooleanFlagValue(
         normalizedPayload[ARCANOS_SUPPRESS_TIMEOUT_FALLBACK_FLAG]
       );
+      if (requestedAction === 'query') {
+        const dispatchResult = await routeOperatorCommandThroughDispatch({
+          utterance: prompt,
+          context: {
+            sourceEndpoint,
+            moduleId: 'ARCANOS:CORE',
+            requestedAction
+          }
+        });
+
+        if (dispatchResult) {
+          emitCoreRuntimeTrace({
+            phase: 'response_sent',
+            startedAt: actionStartedAt,
+            sourceEndpoint,
+            extra: {
+              handledBy: 'gpt-access-dispatch',
+              statusCode: dispatchResult.statusCode,
+              planAction: dispatchResult.plan.action,
+              planSource: dispatchResult.plan.source,
+              policyStatus: dispatchResult.policy.status
+            }
+          });
+          return {
+            ok: dispatchResult.statusCode >= 200 && dispatchResult.statusCode < 300,
+            handledBy: 'gpt-access-dispatch',
+            statusCode: dispatchResult.statusCode,
+            ...(
+              dispatchResult.payload && typeof dispatchResult.payload === 'object' && !Array.isArray(dispatchResult.payload)
+                ? dispatchResult.payload as Record<string, unknown>
+                : { payload: dispatchResult.payload }
+            )
+          };
+        }
+      }
       const { client } = getOpenAIClientOrAdapter();
       emitCoreRuntimeTrace({
         phase: 'gpt_config_loaded',
