@@ -25,12 +25,15 @@ describe('natural-language dispatcher', () => {
   });
 
   it.each([
+    ['check the workers', 'workers.status'],
     ['check workers', 'workers.status'],
     ['are workers alive', 'workers.status'],
+    ['inspect the queue', 'queue.inspect'],
     ['is the queue backed up', 'queue.inspect'],
     ['show queue', 'queue.inspect'],
     ['runtime status', 'runtime.inspect'],
     ['health of backend', 'runtime.inspect'],
+    ['run diagnostics', 'diagnostics.run'],
     ['run full health check', 'diagnostics.run']
   ])('resolves "%s" to %s', async (utterance, action) => {
     const registry = createGptAccessDispatchRegistry();
@@ -52,6 +55,18 @@ describe('natural-language dispatcher', () => {
 
     expect(plan.action).toBe(INTENT_CLARIFICATION_REQUIRED);
     expect(plan.requiresConfirmation).toBe(false);
+  });
+
+  it.each([
+    'ask my AI for improvements',
+    'suggest improvements to worker reliability',
+    'review backend architecture'
+  ])('returns clarification for advisory prompt "%s"', async (utterance) => {
+    const registry = createGptAccessDispatchRegistry();
+
+    const plan = await resolveDispatchPlan({ utterance, registry });
+
+    expect(plan.action).toBe(INTENT_CLARIFICATION_REQUIRED);
   });
 
   it('blocks prohibited registered actions before execution', async () => {
@@ -152,5 +167,89 @@ describe('natural-language dispatcher', () => {
     expect(policy.allowed).toBe(true);
     expect(policy.status).toBe('confirmation_required');
     expect(policy.requiresConfirmation).toBe(true);
+  });
+
+  it('allows readonly dispatch at 0.70 confidence', () => {
+    const registry = createCapabilityRegistry([
+      {
+        action: 'workers.status',
+        risk: 'readonly',
+        runner: {
+          kind: 'gpt-access-mcp',
+          tool: 'workers.status'
+        }
+      }
+    ]);
+
+    const policy = evaluateDispatchPolicy({
+      plan: {
+        action: 'workers.status',
+        payload: {},
+        confidence: 0.7,
+        source: 'llm',
+        requiresConfirmation: false
+      },
+      registry
+    });
+
+    expect(policy.status).toBe('allowed');
+    expect(policy.shouldExecute).toBe(true);
+  });
+
+  it('clarifies privileged dispatch at 0.70 confidence without executing', () => {
+    const registry = createCapabilityRegistry([
+      {
+        action: 'workers.recover',
+        risk: 'privileged',
+        runner: {
+          kind: 'gpt-access-worker-recovery',
+          mode: 'recover'
+        }
+      }
+    ]);
+
+    const policy = evaluateDispatchPolicy({
+      plan: {
+        action: 'workers.recover',
+        payload: {},
+        confidence: 0.7,
+        source: 'llm',
+        requiresConfirmation: false
+      },
+      registry
+    });
+
+    expect(policy.status).toBe('clarification_required');
+    expect(policy.shouldExecute).toBe(false);
+  });
+
+  it('does not execute destructive dispatch below 0.90 confidence', () => {
+    const registry = createCapabilityRegistry([
+      {
+        action: 'data.purge',
+        risk: 'destructive',
+        runner: {
+          kind: 'gpt-access-capability',
+          capabilityId: 'DATA',
+          capabilityAction: 'purge'
+        }
+      }
+    ]);
+
+    const policy = evaluateDispatchPolicy({
+      plan: {
+        action: 'data.purge',
+        payload: {},
+        confidence: 0.89,
+        source: 'llm',
+        requiresConfirmation: false
+      },
+      registry,
+      isScopeAllowed: () => true,
+      isModuleActionAllowed: () => true
+    });
+
+    expect(policy.allowed).toBe(false);
+    expect(policy.shouldExecute).toBe(false);
   });
 });

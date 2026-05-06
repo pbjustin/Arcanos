@@ -472,7 +472,7 @@ describe('LLM natural-language dispatch resolver', () => {
     expect(plan.reason).toBe('llm_action_not_registered');
   });
 
-  it('rejects low-confidence LLM results', async () => {
+  it('returns low-confidence LLM results for policy evaluation', async () => {
     const registry = createGptAccessDispatchRegistry();
     mockLlmResponse(buildLlmPlanResponse({
       action: 'runtime.inspect',
@@ -486,8 +486,14 @@ describe('LLM natural-language dispatch resolver', () => {
       client: fakeOpenAIClient
     });
 
-    expect(plan.action).toBe(INTENT_CLARIFICATION_REQUIRED);
+    expect(plan.action).toBe('runtime.inspect');
+    expect(plan.confidence).toBe(0.5);
     expect(plan.reason).toBe('llm_confidence_below_threshold');
+
+    const policy = evaluateDispatchPolicy({ plan, registry });
+
+    expect(policy.status).toBe('clarification_required');
+    expect(policy.shouldExecute).toBe(false);
   });
 
   it('rejects unsafe LLM payload fields recursively', async () => {

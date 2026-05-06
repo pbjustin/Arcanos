@@ -1,7 +1,7 @@
 import {
-  DISPATCH_CONFIDENCE_THRESHOLD,
   INTENT_CLARIFICATION_REQUIRED,
   type CapabilityRegistry,
+  type DispatchRiskLevel,
   type DispatchPlan,
   type DispatchPolicyDecision,
   type DispatchRegistryAction
@@ -34,6 +34,28 @@ function buildDecision(input: {
   return input;
 }
 
+export function getDispatchConfidenceThreshold(risk: DispatchRiskLevel): number {
+  switch (risk) {
+    case 'readonly':
+      return 0.65;
+    case 'privileged':
+      return 0.78;
+    case 'destructive':
+      return 0.9;
+  }
+}
+
+export function getDispatchClarificationBand(risk: DispatchRiskLevel): { min: number; max: number } | null {
+  switch (risk) {
+    case 'readonly':
+      return { min: 0.55, max: 0.65 };
+    case 'privileged':
+      return { min: 0.7, max: 0.78 };
+    case 'destructive':
+      return null;
+  }
+}
+
 export function evaluateDispatchPolicy(input: {
   plan: DispatchPlan;
   registry: CapabilityRegistry;
@@ -41,9 +63,7 @@ export function evaluateDispatchPolicy(input: {
   isScopeAllowed?: (scope: string) => boolean;
   isModuleActionAllowed?: (moduleName: string, action: string) => boolean;
 }): DispatchPolicyDecision {
-  const threshold = input.confidenceThreshold ?? DISPATCH_CONFIDENCE_THRESHOLD;
-
-  if (input.plan.action === INTENT_CLARIFICATION_REQUIRED || input.plan.confidence < threshold) {
+  if (input.plan.action === INTENT_CLARIFICATION_REQUIRED) {
     return buildDecision({
       status: 'clarification_required',
       allowed: false,
@@ -65,6 +85,23 @@ export function evaluateDispatchPolicy(input: {
       action: input.plan.action,
       reason: 'dispatch_action_not_registered',
       code: 'DISPATCH_ACTION_NOT_REGISTERED'
+    });
+  }
+
+  const threshold = input.confidenceThreshold ?? getDispatchConfidenceThreshold(registryAction.risk);
+  if (input.plan.confidence < threshold) {
+    const band = getDispatchClarificationBand(registryAction.risk);
+    return buildDecision({
+      status: 'clarification_required',
+      allowed: false,
+      requiresConfirmation: false,
+      shouldExecute: false,
+      action: input.plan.action,
+      reason: band && input.plan.confidence >= band.min && input.plan.confidence < band.max
+        ? 'dispatch_confidence_in_clarification_band'
+        : 'dispatch_confidence_below_threshold',
+      code: INTENT_CLARIFICATION_REQUIRED,
+      registryAction
     });
   }
 

@@ -78,4 +78,24 @@ describe('GPT Access natural-language dispatch service', () => {
       utterance: 'Write me a story about broken workers.'
     })).resolves.toBeNull();
   });
+
+  it.each([
+    'ask my AI for improvements',
+    'suggest improvements to worker reliability',
+    'review backend architecture'
+  ])('does not intercept advisory prompt "%s"', async (utterance) => {
+    await expect(routeOperatorCommandThroughDispatch({ utterance })).resolves.toBeNull();
+  });
+
+  it.each([
+    ['check the workers', 'workers.status'],
+    ['inspect the queue', 'queue.inspect'],
+    ['run diagnostics', 'diagnostics.run']
+  ])('routes explicit operator prompt "%s" to %s', async (utterance, action) => {
+    const response = await routeOperatorCommandThroughDispatch({ utterance, dryRun: true });
+
+    expect(response).not.toBeNull();
+    expect(response?.plan.action).toBe(action);
+    expect(response?.policy.shouldExecute).toBe(true);
+  });
 });

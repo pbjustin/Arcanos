@@ -4,6 +4,7 @@ import {
   type CapabilityRegistry,
   type DispatchPlan
 } from './types.js';
+import { getDispatchConfidenceThreshold } from './policy.js';
 
 type RuleMatch = {
   action: string;
@@ -175,7 +176,11 @@ export function resolveRuleBasedDispatchPlan(input: {
   }
 
   const [topMatch, secondMatch] = matches;
-  if (!topMatch || topMatch.confidence < DISPATCH_CONFIDENCE_THRESHOLD) {
+  const registryAction = topMatch ? input.registry.getAction(topMatch.action) : null;
+  const confidenceThreshold = registryAction
+    ? getDispatchConfidenceThreshold(registryAction.risk)
+    : DISPATCH_CONFIDENCE_THRESHOLD;
+  if (!topMatch || topMatch.confidence < confidenceThreshold) {
     return buildClarificationPlan('confidence_below_threshold', matches);
   }
 
@@ -183,7 +188,6 @@ export function resolveRuleBasedDispatchPlan(input: {
     return buildClarificationPlan('multiple_close_intent_candidates', matches);
   }
 
-  const registryAction = input.registry.getAction(topMatch.action);
   return {
     action: topMatch.action,
     payload: topMatch.payload ?? registryAction?.payload ?? {},

@@ -226,27 +226,39 @@ function isOperatorBackendCommand(utterance: string): boolean {
     .replace(/\s+/gu, ' ')
     .trim();
 
-  if (
-    /\b(?:fix|kick|recycle|recover|unstick)\s+(?:stale\s+)?(?:workers?|job runners?|slots?|slot\s+\d+|async queue|queue slot)\b/u.test(normalized)
-    || /\b(?:recycle|recover|unstick)\s+(?:slot\s+)?\d+(?:\s+(?:and|or)\s+(?:slot\s+)?\d+)*\b/u.test(normalized)
-  ) {
+  if (isExplicitWorkerControlCommand(normalized)) {
     return true;
   }
 
-  if (/\b(?:write|draft|compose|story|poem|essay|blog)\b/u.test(normalized)) {
+  if (isAdvisoryAnalysisPrompt(normalized)) {
     return false;
   }
 
-  if (/\b(?:how\s+(?:do|should|can)\s+i|explain)\b/u.test(normalized)) {
-    return /\b(?:status|health|diagnostics?|wrong|broken|failing|failure|errors?)\b/u.test(normalized);
-  }
+  return isExplicitOperatorCommand(normalized);
+}
 
+function isAdvisoryAnalysisPrompt(normalized: string): boolean {
+  return (
+    /\b(?:improve|improvements?|recommend|suggest|review|analy[sz]e|opinion|advice|architecture|design|plan|refine|explain)\b/u.test(normalized)
+    || /\b(?:how|what)\s+should\b/u.test(normalized)
+    || /\bhow\s+(?:do|can)\s+i\b/u.test(normalized)
+  );
+}
+
+function isExplicitOperatorCommand(normalized: string): boolean {
   return (
     /\b(?:run|perform|start|do|deep|full)\s+(?:a\s+)?(?:diagnostics?|diagnostic|health check)\b/u.test(normalized)
     || /\b(?:check(?:\s+on)?|inspect|show\s+me|look\s+(?:at|into)|diagnose|troubleshoot|what(?:s|\s+is)?\s+(?:wrong|going\s+on)|is|are)\b.*\b(?:backend|runtime|workers?|job runners?|queue|backlog|pending jobs?)\b/u.test(normalized)
     || /\b(?:backend|runtime|workers?|job runners?|queue|backlog|pending jobs?)\b.*\b(?:status|health|healthy|alive|up|down|okay|ok|broken|failing|failure|errors?|wrong|stale|backed up|diagnostics?)\b/u.test(normalized)
     || /\b(?:server|app)\s+(?:status|health|healthy|alive|up|down|broken|failing|failure|errors?)\b/u.test(normalized)
     || /\b(?:status|health|healthy|alive|up|down)\s+(?:server|app)\b/u.test(normalized)
+  );
+}
+
+function isExplicitWorkerControlCommand(normalized: string): boolean {
+  return (
+    /\b(?:fix|kick|recycle|recover|unstick)\s+(?:stale\s+)?(?:workers?|job runners?|slots?|slot\s+\d+|async queue|queue slot)\b/u.test(normalized)
+    || /\b(?:recycle|recover|unstick)\s+(?:slot\s+)?\d+(?:\s+(?:and|or)\s+(?:slot\s+)?\d+)*\b/u.test(normalized)
   );
 }
 

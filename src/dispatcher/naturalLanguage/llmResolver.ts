@@ -509,13 +509,7 @@ export async function resolveLlmDispatchPlan(input: ResolveLlmDispatchPlanInput)
         candidates: toPlanCandidates(outputParsed.candidates)
       };
     }
-
-    if (outputParsed.confidence < DISPATCH_CONFIDENCE_THRESHOLD) {
-      return {
-        ...buildClarificationPlan('llm_confidence_below_threshold', outputParsed.confidence),
-        candidates: toPlanCandidates(outputParsed.candidates)
-      };
-    }
+    const belowConfidenceThreshold = outputParsed.confidence < DISPATCH_CONFIDENCE_THRESHOLD;
 
     const payloadValidation = validateLlmDispatchPayload(outputParsed.payload);
     if (!payloadValidation.ok) {
@@ -539,7 +533,9 @@ export async function resolveLlmDispatchPlan(input: ResolveLlmDispatchPlanInput)
       confidence: outputParsed.confidence,
       source: 'llm',
       requiresConfirmation: dispatchActionRequiresConfirmation(registryAction, outputParsed.requiresConfirmation),
-      reason: clampText(outputParsed.reason, MAX_REASON_LENGTH),
+      reason: belowConfidenceThreshold
+        ? 'llm_confidence_below_threshold'
+        : clampText(outputParsed.reason, MAX_REASON_LENGTH),
       candidates: toPlanCandidates(outputParsed.candidates)
     };
   } catch (error) {
