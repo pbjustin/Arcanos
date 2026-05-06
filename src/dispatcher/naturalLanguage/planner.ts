@@ -132,7 +132,8 @@ export async function resolveDispatchPlan(input: ResolveDispatchPlanInput): Prom
       context: input.context
     });
 
-    return requiresClarification(llmPlan) ? rulePlan : llmPlan;
+    const plan = shouldFallBackToRulePlanAfterLlm(llmPlan) ? rulePlan : llmPlan;
+    return plan;
   }
 
   if (!requiresClarification(rulePlan)) {
@@ -145,5 +146,6 @@ export async function resolveDispatchPlan(input: ResolveDispatchPlanInput): Prom
     context: input.context
   });
 
-  return shouldFallBackToRulePlanAfterLlm(llmPlan) ? rulePlan : llmPlan;
+  const plan = shouldFallBackToRulePlanAfterLlm(llmPlan) ? rulePlan : llmPlan;
+  return plan;
 }

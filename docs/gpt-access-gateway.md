@@ -74,17 +74,17 @@ Set `OPENAI_API_KEY` and `DATABASE_URL` in the API and worker runtime environmen
 Use placeholders in docs. Store real values only in local `.env` files, deployment variables, or secret managers.
 
 ## Natural-language Dispatch
-`POST /gpt-access/dispatch/run` accepts an operator utterance, resolves it to a strict `DispatchPlan`, validates the selected action against the registered GPT Access capability catalog, evaluates scope/risk policy, then uses the existing confirmation gate and runner.
+`POST /gpt-access/dispatch/run` accepts an operator utterance, resolves it to a strict `DispatchPlan`, validates the selected action against the registered GPT Access capability catalog, evaluates scope/risk policy, then uses the existing confirmation gate and runner. ARCANOS AI routes backend-operator language such as worker, queue, runtime, and diagnostics requests through this same path instead of sending protected backend work through the writing pipeline.
 
 The optional LLM resolver is a semantic planner only. It never calls backend routes, tools, MCP, shell, SQL, URLs, or module actions. It can only propose one registered action plus a sanitized JSON-object payload. The gateway still rejects unregistered actions, unsafe payload fields, low confidence, denied scopes, prohibited action names, and privileged actions without confirmation.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `GPT_ACCESS_NL_DISPATCH_MODE` | unset | When unset, the gateway uses `hybrid` if a real resolved OpenAI key is configured, otherwise `rules`. `rules` keeps deterministic rule-only behavior. `hybrid` tries rules first, then LLM only when rules need clarification. `llm_first` tries LLM first and falls back to rules on clarification or LLM failure. Invalid values resolve to `rules`. |
+| `GPT_ACCESS_NL_DISPATCH_MODE` | unset | When unset, the gateway uses `hybrid` if a real resolved OpenAI key is configured, otherwise `rules`. `rules` keeps deterministic rule-only behavior. `hybrid` tries rules first, then LLM only when rules need clarification. `llm_first` tries LLM first and falls back to rules only when the LLM cannot run or returns invalid output. Invalid values resolve to `rules`. |
 | `GPT_ACCESS_DISPATCH_MODEL` | `gpt-4.1-mini` | Responses API model used only by the semantic planner. This does not follow the general `OPENAI_MODEL` fallback chain. |
 | `GPT_ACCESS_DISPATCH_LLM_TIMEOUT_MS` | `5000` | Per-dispatch LLM planning timeout, capped at `10000`. Invalid or non-positive values use `5000`. Timeout/failure never executes an LLM plan; execution can continue only through a deterministic rule plan that passes policy and confirmation. |
 
-`GET /gpt-access/health` includes sanitized `nlDispatch` fields: `mode`, `effectiveMode`, `llmEnabled`, `model`, `timeoutMs`, and `reasonIfDisabled`. It does not expose keys, prompts, headers, or raw utterances.
+`GET /gpt-access/health`, `runtime.inspect`, and deep diagnostics include sanitized `nlDispatch` fields: `mode`, `effectiveMode`, `llmEnabled`, `model`, `timeoutMs`, and `reasonIfDisabled`. They do not expose keys, prompts, headers, raw utterances, or cross-request resolver state.
 
 Examples:
 
@@ -94,9 +94,9 @@ Examples:
 | `what is wrong with the backend?` | `diagnostics.run` for troubleshooting language, or `runtime.inspect` for simple status language. |
 | `run a deep diagnostic` | `diagnostics.run` with diagnostic include flags when available. |
 | `check what is wrong with workers` | `workers.status` when registered. |
-| `kick stale workers`, `fix slot 8`, `recycle 3 and 8` | A registered worker recover/recycle action if one exists; otherwise clarification. Slot numbers normalize to IDs such as `async-queue-slot-8` only inside a safe registered action payload. |
+| `kick stale workers`, `fix slot 8`, `recycle 3 and 8` | `workers.recover` or `workers.recycle` with confirmation. Slot numbers normalize to IDs such as `async-queue-slot-8`. |
 
-Worker recycle/recover examples are conditional. The default dispatcher registers read-only worker status, queue, runtime, and diagnostics actions; recycle/recover can execute only when a capability module registers that action and the request passes scope, `MCP_ALLOW_MODULE_ACTIONS`, and confirmation checks.
+Worker recycle/recover dispatch is privileged and requires explicit `workers.recover` scope plus confirmation. It does not run shell commands or restart containers. It uses the approved queue recovery runner to reclaim stale running jobs globally or for specific `async-queue-slot-N` worker IDs.
 
 ## Final Trinity Flow
 The protected Trinity job path is:
@@ -234,6 +234,20 @@ curl -sS -X POST "$ARCANOS_GPT_ACCESS_BASE_URL/gpt-access/dispatch/run" \
   -H "Authorization: Bearer $ARCANOS_GPT_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"utterance":"what is wrong with the backend?","dryRun":true}'
+```
+
+Additional dry-run checks:
+
+```bash
+curl -sS -X POST "$ARCANOS_GPT_ACCESS_BASE_URL/gpt-access/dispatch/run" \
+  -H "Authorization: Bearer $ARCANOS_GPT_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"utterance":"run a deep diagnostic","dryRun":true}'
+
+curl -sS -X POST "$ARCANOS_GPT_ACCESS_BASE_URL/gpt-access/dispatch/run" \
+  -H "Authorization: Bearer $ARCANOS_GPT_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"utterance":"kick the stale workers","dryRun":true}'
 ```
 
 PowerShell:

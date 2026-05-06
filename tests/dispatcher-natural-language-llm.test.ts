@@ -207,7 +207,7 @@ describe('LLM natural-language dispatch resolver', () => {
     expect(responsesCreateMock).not.toHaveBeenCalled();
   });
 
-  it('falls back to rules in llm_first mode when the LLM asks for clarification', async () => {
+  it('returns semantic LLM clarification in llm_first mode instead of replacing it with rules', async () => {
     process.env.GPT_ACCESS_NL_DISPATCH_MODE = 'llm_first';
     const registry = createGptAccessDispatchRegistry();
     mockLlmResponse(buildLlmPlanResponse({
@@ -222,8 +222,9 @@ describe('LLM natural-language dispatch resolver', () => {
       registry
     });
 
-    expect(plan.action).toBe('queue.inspect');
-    expect(plan.source).toBe('rules');
+    expect(plan.action).toBe(INTENT_CLARIFICATION_REQUIRED);
+    expect(plan.source).toBe('llm');
+    expect(plan.reason).toBe('llm_needs_clarification');
   });
 
   it('uses a valid LLM plan first in llm_first mode', async () => {
@@ -343,7 +344,24 @@ describe('LLM natural-language dispatch resolver', () => {
     'fix slot 8',
     'recycle 3 and 8'
   ])('clarifies worker recovery language when no safe recovery action is registered: %s', async (utterance) => {
-    const registry = createGptAccessDispatchRegistry();
+    const registry = createCapabilityRegistry([
+      {
+        action: 'workers.status',
+        risk: 'readonly',
+        runner: {
+          kind: 'gpt-access-mcp',
+          tool: 'workers.status'
+        }
+      },
+      {
+        action: 'queue.inspect',
+        risk: 'readonly',
+        runner: {
+          kind: 'gpt-access-mcp',
+          tool: 'queue.inspect'
+        }
+      }
+    ]);
 
     const plan = await resolveDispatchPlan({
       utterance,

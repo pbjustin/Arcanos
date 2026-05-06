@@ -55,6 +55,34 @@ const DEFAULT_GPT_ACCESS_ACTIONS: DispatchRegistryAction[] = [
     runner: {
       kind: 'gpt-access-diagnostics'
     }
+  },
+  {
+    action: 'workers.recover',
+    description: 'Recover stale or stalled async queue worker jobs through GPT Access worker recovery.',
+    payload: {
+      workerIds: []
+    },
+    requiredScope: 'workers.recover',
+    risk: 'privileged',
+    requiresConfirmation: true,
+    runner: {
+      kind: 'gpt-access-worker-recovery',
+      mode: 'recover'
+    }
+  },
+  {
+    action: 'workers.recycle',
+    description: 'Recycle stalled async queue worker ownership by requeueing recoverable stale jobs through GPT Access worker recovery.',
+    payload: {
+      workerIds: []
+    },
+    requiredScope: 'workers.recover',
+    risk: 'privileged',
+    requiresConfirmation: true,
+    runner: {
+      kind: 'gpt-access-worker-recovery',
+      mode: 'recycle'
+    }
   }
 ];
 

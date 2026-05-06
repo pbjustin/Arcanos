@@ -24,17 +24,18 @@ Recommended reading order:
 13. `docs/ARCANOS_MCP_SERVER.md`
 14. `docs/CUSTOM_GPTS.md`
 15. `docs/gpt-access-gateway.md`
-16. `docs/GPT_FAST_PATH.md`
-17. `docs/GPT_ASYNC_DOCUMENTATION_WORKFLOW.md`
-18. `docs/MEMORY_BACKEND_USAGE.md`
-19. `docs/DATABASE_MIGRATIONS.md`
-20. `docs/FINE_TUNING.md`
-21. `docs/CLEAR_METHOD_2_0.md`
-22. `docs/RAILWAY_DEPLOYMENT.md`
-23. `docs/RAILWAY_RATIONALE.md`
-24. `docs/CI_CD.md`
-25. `docs/DOCUMENTATION.md`
-26. `docs/WEB_SEARCH_AGENT.md`
+16. `docs/OPERATOR_DISPATCHER.md`
+17. `docs/GPT_FAST_PATH.md`
+18. `docs/GPT_ASYNC_DOCUMENTATION_WORKFLOW.md`
+19. `docs/MEMORY_BACKEND_USAGE.md`
+20. `docs/DATABASE_MIGRATIONS.md`
+21. `docs/FINE_TUNING.md`
+22. `docs/CLEAR_METHOD_2_0.md`
+23. `docs/RAILWAY_DEPLOYMENT.md`
+24. `docs/RAILWAY_RATIONALE.md`
+25. `docs/CI_CD.md`
+26. `docs/DOCUMENTATION.md`
+27. `docs/WEB_SEARCH_AGENT.md`
 
 ## Configuration
 Configuration source files:
@@ -72,6 +73,7 @@ Use `docs/TROUBLESHOOTING.md` and include concrete errors, command output, and e
 - `docs/SELF_REFLECTIONS.md`
 - `docs/ARCANOS_MCP_SERVER.md`
 - `docs/gpt-access-gateway.md`
+- `docs/OPERATOR_DISPATCHER.md`
 - `docs/BACKEND_INDEX.md` (generated)
 - `docs/CLI_AGENT_INDEX.md` (generated/reference)
 - `docs/ASYNC_GPT_JOB_BOARD_BACKEND_SPEC.md` (spec)

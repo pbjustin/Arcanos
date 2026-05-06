@@ -20,14 +20,27 @@ const tryDispatchDagToolsMock = jest.fn();
 const tryDispatchWorkerToolsMock = jest.fn();
 const detectCognitiveDomainMock = jest.fn();
 const gptFallbackClassifierMock = jest.fn();
+class MockIdempotencyKeyConflictError extends Error {}
+class MockJobRepositoryUnavailableError extends Error {}
 
 jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
+  IdempotencyKeyConflictError: MockIdempotencyKeyConflictError,
+  JobRepositoryUnavailableError: MockJobRepositoryUnavailableError,
+  findOrCreateGptJob: jest.fn(),
   createJob: createJobMock,
   claimNextPendingJob: claimNextPendingJobMock,
   recordJobHeartbeat: recordJobHeartbeatMock,
   scheduleJobRetry: scheduleJobRetryMock,
   deferJobForProviderRecovery: jest.fn(),
   recoverStaleJobs: recoverStaleJobsMock,
+  recoverStalledJobsForWorkers: jest.fn(async () => ({
+    staleWorkerIds: [],
+    stalledJobIds: [],
+    requeuedJobIds: [],
+    deadLetterJobIds: [],
+    cancelledJobIds: []
+  })),
+  resolveJobWorkerStaleAfterMs: jest.fn(() => 45_000),
   updateJob: updateJobMock,
   getJobById: getJobByIdMock,
   getLatestJob: getLatestJobMock,

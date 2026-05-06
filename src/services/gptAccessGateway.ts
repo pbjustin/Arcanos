@@ -8,7 +8,10 @@ import {
   getJobById,
   getJobQueueSummary,
   IdempotencyKeyConflictError,
-  JobRepositoryUnavailableError
+  JobRepositoryUnavailableError,
+  recoverStaleJobs,
+  recoverStalledJobsForWorkers,
+  resolveJobWorkerStaleAfterMs
 } from '@core/db/repositories/jobRepository.js';
 import { buildQueuedGptJobInput } from '@shared/gpt/asyncGptJob.js';
 import {
@@ -26,6 +29,8 @@ import { buildSafetySelfHealSnapshot } from '@services/selfHealRuntimeInspection
 import { getWorkerRuntimeStatus } from '@platform/runtime/workerConfig.js';
 import { getNaturalLanguageDispatchRuntimeStatus } from '@dispatcher/naturalLanguage/planner.js';
 import { DISPATCH_UTTERANCE_MAX_LENGTH } from '@dispatcher/naturalLanguage/types.js';
+export { GPT_ACCESS_SCOPES, type GptAccessScope } from '@services/gptAccessScopes.js';
+import { GPT_ACCESS_SCOPES, type GptAccessScope } from '@services/gptAccessScopes.js';
 
 const SERVICE_VERSION = '1.0.0';
 const TOKEN_ENV_NAME = 'ARCANOS_GPT_ACCESS_TOKEN';
@@ -80,26 +85,11 @@ type CreateAiJobPayloadValidationIssue =
   | { kind: 'unsafe_field'; field: string }
   | { kind: 'depth_exceeded'; maxDepth: number };
 
-export const GPT_ACCESS_SCOPES = [
-  'runtime.read',
-  'workers.read',
-  'queue.read',
-  'jobs.create',
-  'jobs.result',
-  'logs.read_sanitized',
-  'db.explain_approved',
-  'mcp.approved_readonly',
-  'capabilities.read',
-  'capabilities.run',
-  'diagnostics.read'
-] as const;
-
-export type GptAccessScope = (typeof GPT_ACCESS_SCOPES)[number];
-
 const GPT_ACCESS_SCOPES_REQUIRING_EXPLICIT_CONFIG = new Set<GptAccessScope>([
   'jobs.create',
   'capabilities.read',
-  'capabilities.run'
+  'capabilities.run',
+  'workers.recover'
 ]);
 
 export const GPT_ACCESS_MCP_TOOLS = [
@@ -129,6 +119,7 @@ type GatewayErrorCode =
   | 'GPT_ACCESS_RUNTIME_UNAVAILABLE'
   | 'GPT_ACCESS_JOBS_UNAVAILABLE'
   | 'GPT_ACCESS_WORKER_UNAVAILABLE'
+  | 'GPT_ACCESS_WORKER_RECOVERY_UNAVAILABLE'
   | 'GPT_ACCESS_QUEUE_UNAVAILABLE'
   | 'GPT_ACCESS_DB_UNAVAILABLE'
   | 'GPT_ACCESS_MCP_TOOL_UNAVAILABLE'
@@ -298,6 +289,11 @@ const deepDiagnosticsSchema = z.object({
   includeWorkers: z.boolean().optional().default(true),
   includeLogs: z.boolean().optional().default(true),
   includeQueue: z.boolean().optional().default(true)
+}).strict();
+
+const workerRecoverySchema = z.object({
+  workerIds: z.array(z.string().trim().regex(/^async-queue-slot-\d+$/u)).max(20).optional(),
+  maxRetries: z.coerce.number().int().min(0).max(10).optional()
 }).strict();
 
 const explainRequestSchema = z.object({
@@ -1502,11 +1498,14 @@ function hasUnavailableDependency(values: unknown[]): boolean {
   return values.some((value) => dependencyStatusOf(value) === 'unavailable');
 }
 
-function getRuntimeDependencySnapshot(): GptAccessDependencySnapshot<ReturnType<typeof runtimeDiagnosticsService.getHealthSnapshot>> {
+function getRuntimeDependencySnapshot() {
   try {
     return {
       status: 'healthy',
-      result: runtimeDiagnosticsService.getHealthSnapshot()
+      result: {
+        ...runtimeDiagnosticsService.getHealthSnapshot(),
+        nlDispatch: getNaturalLanguageDispatchRuntimeStatus()
+      }
     };
   } catch {
     return buildGptAccessDependencyUnavailable(
@@ -1662,6 +1661,56 @@ export async function runGptAccessMcpTool(body: unknown) {
   }
 }
 
+export async function runGptAccessWorkerRecovery(body: unknown) {
+  const parsed = workerRecoverySchema.safeParse(body);
+  if (!parsed.success) {
+    return {
+      statusCode: 400,
+      payload: {
+        ok: false,
+        error: {
+          code: 'GPT_ACCESS_VALIDATION_ERROR',
+          message: 'Invalid worker recovery request.'
+        }
+      }
+    };
+  }
+
+  const workerIds = [...new Set(parsed.data.workerIds ?? [])];
+  const staleAfterMs = resolveJobWorkerStaleAfterMs();
+  try {
+    const recovery = workerIds.length > 0
+      ? await recoverStalledJobsForWorkers({
+          workerIds,
+          staleAfterMs,
+          maxRetries: parsed.data.maxRetries
+        })
+      : await recoverStaleJobs({
+          staleAfterMs,
+          maxRetries: parsed.data.maxRetries
+        });
+
+    return {
+      statusCode: 200,
+      payload: sanitizeGptAccessPayload({
+        ok: true,
+        status: 'completed',
+        tool: 'workers.recover',
+        mode: workerIds.length > 0 ? 'workerIds' : 'staleJobs',
+        workerIds,
+        staleAfterMs,
+        result: recovery
+      })
+    };
+  } catch {
+    return buildGptAccessErrorResult(
+      503,
+      'GPT_ACCESS_WORKER_RECOVERY_UNAVAILABLE',
+      'Worker recovery is unavailable.'
+    );
+  }
+}
+
 export async function runDeepDiagnostics(body: unknown) {
   const parsed = deepDiagnosticsSchema.safeParse(body);
   if (!parsed.success) {
@@ -1758,7 +1807,10 @@ export async function runDeepDiagnostics(body: unknown) {
       risks,
       recommendedNextActions,
       data: {
-        runtime,
+        runtime: {
+          ...runtime,
+          nlDispatch: getNaturalLanguageDispatchRuntimeStatus()
+        },
         workers,
         workerHelperHealth: helperHealth,
         queue,
@@ -1938,6 +1990,20 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
             }
           },
           required: ['ok', 'error'],
+          additionalProperties: false
+        },
+        NaturalLanguageDispatchStatus: {
+          type: 'object',
+          description: 'Sanitized natural-language dispatch configuration and last resolver source. Does not expose prompts, utterances, headers, tokens, or API keys.',
+          properties: {
+            mode: { type: 'string', enum: ['rules', 'hybrid', 'llm_first', 'unset', 'invalid'] },
+            effectiveMode: { type: 'string', enum: ['rules', 'hybrid', 'llm_first'] },
+            llmEnabled: { type: 'boolean' },
+            model: { type: 'string' },
+            timeoutMs: { type: 'integer', minimum: 1 },
+            reasonIfDisabled: { type: ['string', 'null'] }
+          },
+          required: ['mode', 'effectiveMode', 'llmEnabled', 'model', 'timeoutMs', 'reasonIfDisabled'],
           additionalProperties: false
         },
         CreateAiJobRequest: {
@@ -2132,7 +2198,7 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
         },
         DispatchRunRequest: {
           type: 'object',
-          description: 'Natural-language dispatch request. The utterance is resolved into a DispatchPlan, policy checked, and only then executed through GPT Access capability/control runners. This replaces natural-language dispatch behavior without restoring /ask.',
+          description: 'Natural-language operator dispatch request. ARCANOS AI and Custom GPT Actions should send backend operator commands here. The utterance is resolved into a DispatchPlan, policy checked, and only then executed through GPT Access capability/control runners. This replaces natural-language dispatch behavior without restoring /ask.',
           properties: {
             utterance: { type: 'string', minLength: 1, maxLength: DISPATCH_UTTERANCE_MAX_LENGTH },
             context: {
@@ -2264,7 +2330,24 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
           security: protectedSecurity,
           responses: {
             '200': {
-              description: 'Gateway health payload.'
+              description: 'Gateway health payload with sanitized nlDispatch status.',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      ok: { type: 'boolean', const: true },
+                      service: { type: 'string' },
+                      time: { type: 'string', format: 'date-time' },
+                      authRequired: { type: 'boolean' },
+                      version: { type: 'string' },
+                      nlDispatch: { '$ref': '#/components/schemas/NaturalLanguageDispatchStatus' }
+                    },
+                    required: ['ok', 'service', 'time', 'authRequired', 'version', 'nlDispatch'],
+                    additionalProperties: true
+                  }
+                }
+              }
             },
             '401': { description: 'Unauthorized.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } }
           }
@@ -2657,7 +2740,7 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
         post: {
           operationId: 'runDispatch',
           summary: 'Resolve and run a natural-language GPT Access dispatch.',
-          description: 'Canonical natural-language dispatch entryway. Resolves utterance -> DispatchPlan -> registry validation -> scope/allowlist/risk policy -> confirmation when required -> existing GPT Access capability/control runner. This replaces old natural-language dispatch behavior without restoring /ask.',
+          description: 'Canonical natural-language dispatch entryway for ARCANOS AI and operator backend commands. Resolves utterance -> DispatchPlan -> registry validation -> scope/allowlist/risk policy -> confirmation when required -> existing GPT Access capability/control runner. This replaces old natural-language dispatch behavior without restoring /ask.',
           security: protectedSecurity,
           requestBody: {
             required: true,
