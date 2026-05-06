@@ -145,13 +145,13 @@ describe('LLM natural-language dispatch resolver', () => {
   });
 
   it('uses a deployment-safe default LLM dispatch timeout and caps overrides', () => {
-    expect(getLlmDispatchTimeoutMs()).toBe(3000);
+    expect(getLlmDispatchTimeoutMs()).toBe(5000);
 
     process.env.GPT_ACCESS_DISPATCH_LLM_TIMEOUT_MS = '20000';
     expect(getLlmDispatchTimeoutMs()).toBe(10000);
 
     process.env.GPT_ACCESS_DISPATCH_LLM_TIMEOUT_MS = '0';
-    expect(getLlmDispatchTimeoutMs()).toBe(3000);
+    expect(getLlmDispatchTimeoutMs()).toBe(5000);
   });
 
   it('defaults to hybrid mode when OpenAI is configured and dispatch mode is unset', async () => {
