@@ -198,6 +198,45 @@ describe('ARCANOS:CORE service', () => {
     }));
   });
 
+  it('passes advisory improvement prompts through Trinity instead of GPT Access dispatch', async () => {
+    const client = { id: 'openai-client' };
+    const trinityResult = { result: 'advisory-response' };
+
+    mockGetOpenAIClientOrAdapter.mockReturnValue({ client });
+    mockRunTrinityWritingPipeline.mockResolvedValue(trinityResult);
+
+    const result = await ArcanosCore.actions.query({
+      prompt: 'ask my AI for improvements'
+    });
+
+    expect(routeOperatorCommandThroughDispatchMock).toHaveBeenCalledWith({
+      utterance: 'ask my AI for improvements',
+      context: {
+        sourceEndpoint: 'gpt.arcanos-core.query',
+        moduleId: 'ARCANOS:CORE',
+        requestedAction: 'query'
+      }
+    });
+    expect(mockGetOpenAIClientOrAdapter).toHaveBeenCalled();
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(expect.objectContaining({
+      input: expect.objectContaining({
+        prompt: 'ask my AI for improvements',
+        sourceEndpoint: 'gpt.arcanos-core.query',
+        moduleId: 'ARCANOS:CORE',
+        requestedAction: 'query'
+      })
+    }));
+    expect(result).toBe(trinityResult);
+    expect(result).not.toEqual(expect.objectContaining({
+      handledBy: 'gpt-access-dispatch'
+    }));
+    expect(result).not.toEqual(expect.objectContaining({
+      error: expect.objectContaining({
+        code: 'INTENT_CLARIFICATION_REQUIRED'
+      })
+    }));
+  });
+
   it('keeps the default handler timeout aligned with the route budget instead of aborting after five seconds', async () => {
     const client = { id: 'openai-client' };
     mockGetOpenAIClientOrAdapter.mockReturnValue({ client });
