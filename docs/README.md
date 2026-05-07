@@ -36,6 +36,10 @@ Recommended reading order:
 25. `docs/CI_CD.md`
 26. `docs/DOCUMENTATION.md`
 27. `docs/WEB_SEARCH_AGENT.md`
+28. `docs/CLI_CONSOLIDATION.md`
+29. `docs/execution_contract.md`
+30. `docs/PREDICTIVE_SELF_HEALING.md`
+31. `docs/refactor-audit.md`
 
 ## Configuration
 Configuration source files:
@@ -68,6 +72,10 @@ Use `docs/TROUBLESHOOTING.md` and include concrete errors, command output, and e
 - `docs/CI_CD.md`
 - `docs/MEMORY_BACKEND_USAGE.md`
 - `docs/WEB_SEARCH_AGENT.md`
+- `docs/CLI_CONSOLIDATION.md`
+- `docs/execution_contract.md`
+- `docs/PREDICTIVE_SELF_HEALING.md`
+- `docs/refactor-audit.md`
 - `docs/REFERENCES.md`
 - `docs/CLEAR_METHOD_2_0.md`
 - `docs/SELF_REFLECTIONS.md`

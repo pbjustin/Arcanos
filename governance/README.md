@@ -2,9 +2,9 @@
 
 This folder contains human-readable governance artifacts for ARCANOS self-improving loops.
 
-- `loop_contract.yaml` — policy contract (human-friendly)
+- `../contracts/loop_contract.v1.json` — machine-readable policy contract used at runtime
 - `versioning.md` — required versioning practices for prompts/policies/controllers
 - `rollback_rules.md` — rollback triggers and procedures
-- `evidence_packs/` — immutable evidence for each self-improve decision cycle
+- `governance/evidence_packs/` — intended evidence-pack location when self-improve cycles produce immutable evidence; the directory is not present until evidence is generated
 
 > Runtime uses `contracts/loop_contract.v1.json` as the machine-readable source of truth.

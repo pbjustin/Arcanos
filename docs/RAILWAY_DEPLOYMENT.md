@@ -1,7 +1,7 @@
 # Railway Deployment Guide
 
 ## Overview
-This runbook documents the active Railway deployment workflow for Arcanos using `railway.json` and `Procfile`.
+This runbook documents the active Railway deployment workflow for Arcanos using `railway.json` and the shared Railway launcher.
 
 ## Prerequisites
 - Railway account and project access.
@@ -35,6 +35,7 @@ Launcher behavior:
 - Web services start the compiled API runtime with `ARCANOS_PROCESS_KIND=web` and `RUN_WORKERS=false`.
 - Worker services expose a minimal health server and then start `dist/workers/jobRunner.js` with `ARCANOS_PROCESS_KIND=worker` and `RUN_WORKERS=true`.
 - The application keeps `/health`, `/healthz`, and `/readyz` available; Railway should probe `/health`.
+- `Procfile` remains in the repository as a historical fallback artifact and must not be treated as the canonical Railway start path.
 
 Environment variables:
 
@@ -129,7 +130,6 @@ Rollback:
 
 ## References
 - `../railway.json`
-- `../Procfile`
 - `CONFIGURATION.md`
 - `CI_CD.md`
 - `RAILWAY_RATIONALE.md`

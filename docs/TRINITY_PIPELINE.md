@@ -203,7 +203,7 @@ The invariant is applied by `applyTrinityGenerationInvariant(...)` in `src/core/
 Writing/generation requests must enter the generation facade. Current writing-plane callers include:
 - `/gpt-access/jobs/create` queued GPT execution via `src/workers/jobRunner.ts`
 - `/gpt/:gptId` module dispatch, fast path, and direct `query_and_wait`
-- `/ask` normal generation and system-review generation paths
+- `/brain` legacy ask-compatible generation paths when `ASK_ROUTE_MODE=compat`
 - `/arcanos-pipeline`
 - `/api/openai/prompt`
 - Research/web search/RAG synthesis, secure reasoning, tutor/gaming/booker generation, CEF AI prompt execution, image prompt enhancement, reusable-code generation, AFOL, GPT sync, and simulation completion
@@ -218,7 +218,7 @@ These control-plane routes must not enter Trinity:
 - `/gpt-access/jobs/result`
 - `/trinity/status`
 
-`/ask` tool runtimes, daemon tools, DAG tooling, worker status tools, HRC scoring, memory validation, audit-safe mode interpretation, auto-heal planning, daily summaries, self-improve patch proposal generation, idle/provider probes, vision, embeddings, simulation streaming compatibility, and adapter wrappers are intentionally outside the writing facade because they are control/evaluation/infrastructure paths, non-text-generation SDK boundaries, or stream transports Trinity does not yet expose. They must not be exposed as arbitrary user writing routes, and they must not call back through `/gpt/:gptId`.
+Legacy ask tool runtimes, daemon tools, DAG tooling, worker status tools, HRC scoring, memory validation, audit-safe mode interpretation, auto-heal planning, daily summaries, self-improve patch proposal generation, idle/provider probes, vision, embeddings, simulation streaming compatibility, and adapter wrappers are intentionally outside the writing facade because they are control/evaluation/infrastructure paths, non-text-generation SDK boundaries, or stream transports Trinity does not yet expose. They must not be exposed as arbitrary user writing routes, and they must not call back through `/gpt/:gptId`.
 
 Raw SDK calls are allowed only at these boundaries:
 - OpenAI adapter and shared OpenAI service helpers (`src/core/adapters/openai.adapter.ts`, `src/services/openai/*`, `src/services/openaiClient.ts`)

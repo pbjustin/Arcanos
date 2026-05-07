@@ -27,7 +27,7 @@ See: `daemon-python/README.md`
 
 
 ## Prerequisites
-- Node.js 18+ and npm 8+
+- Node.js 20.19.0 recommended; current dependencies require Node 20.18.1+ despite the older root `engines` floor. npm 8+.
 - Optional: Python 3.10+ for daemon work in `daemon-python/`
 - Optional: OpenAI API key for non-mock model calls
 
@@ -36,6 +36,8 @@ See: `daemon-python/README.md`
 npm install
 cp .env.example .env
 ```
+
+Use `npm install` for local development. CI, Docker, and Railway use reproducible `npm ci` installs.
 
 ## Configuration
 - Backend minimum:

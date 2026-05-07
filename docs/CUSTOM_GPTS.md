@@ -1,13 +1,13 @@
 # Custom GPTs and Backend Integration
 
 ## Overview
-Arcanos routes Custom GPT requests through the `/gpt/:gptId` gateway. This gateway is the writing plane: it resolves a GPT ID to a backend module, forwards generative work to the matched module, and returns route metadata describing the matched module/action set. The routing table is built from module definitions (including their `gptIds`), with optional overrides via environment configuration. The canonical Custom GPT contract is path-based: call `/gpt/<gpt-id>` with either a prompt-first generative request or the typed GPT bridge actions `query` and `query_and_wait`. Use direct control endpoints for job status/results, DAG traces, runtime diagnostics, and MCP tools. Legacy `get_status` and `get_result` aliases are reserved and rejected by `/gpt/:gptId` so control-plane reads do not enter the writing route.【F:src/routes/gptRouter.ts†L16-L159】【F:src/platform/runtime/gptRouterConfig.ts†L1-L180】【F:src/services/moduleLoader.ts†L1-L64】
+Arcanos routes Custom GPT requests through the `/gpt/:gptId` gateway. This gateway is the writing plane: it resolves a GPT ID to a backend module, forwards generative work to the matched module, and returns route metadata describing the matched module/action set. The routing table is built from module definitions (including their `gptIds`), with optional overrides via environment configuration. The canonical Custom GPT contract is path-based: call `/gpt/<gpt-id>` with either a prompt-first generative request or the typed GPT bridge actions `query` and `query_and_wait`. Use direct control endpoints for job status/results, DAG traces, runtime diagnostics, and MCP tools. Legacy `get_status` and `get_result` aliases are reserved and rejected by `/gpt/:gptId` so control-plane reads do not enter the writing route. (`src/routes/gptRouter.ts`) (`src/platform/runtime/gptRouterConfig.ts`) (`src/services/moduleLoader.ts`)
 
 ## Why We Use Custom GPTs
 Custom GPTs let Arcanos ship specialized assistants (Backstage Booker, Arcanos Gaming, Tutor) that:
-- **Map cleanly to backend modules** so each assistant uses its own action surface (book events, run tutoring flows, etc.). The GPT router and module registry enforce this boundary and keep action lists explicit per module.【F:src/routes/gptRouter.ts†L16-L159】【F:src/routes/modules.ts†L1-L83】
-- **Provide traceable acknowledgements** back to the caller, including matched module, action inventory, and routing metadata for auditability and debugging.【F:src/routes/gptRouter.ts†L96-L159】
-- **Support secure automation** by allowing trusted GPT IDs to bypass manual confirmations when required, while still honoring confirmation gates for sensitive endpoints.【F:src/middleware/confirmGate.ts†L1-L200】
+- **Map cleanly to backend modules** so each assistant uses its own action surface (book events, run tutoring flows, etc.). The GPT router and module registry enforce this boundary and keep action lists explicit per module. (`src/routes/gptRouter.ts`) (`src/routes/modules.ts`)
+- **Provide traceable acknowledgements** back to the caller, including matched module, action inventory, and routing metadata for auditability and debugging. (`src/routes/gptRouter.ts`)
+- **Support secure automation** by allowing trusted GPT IDs to bypass manual confirmations when required, while still honoring confirmation gates for sensitive endpoints. (`src/transport/http/middleware/confirmGate.ts`)
 
 ## How Custom GPT Routing Works
 1. The GPT calls `POST /gpt/:gptId` with a request body that contains `prompt` and optional `gptVersion`, `action`, `payload`, and `context`.
@@ -17,7 +17,7 @@ Custom GPTs let Arcanos ship specialized assistants (Backstage Booker, Arcanos G
 5. Simple prompt-generation requests may be handled by the inline GPT fast path. These return directly with `routeDecision.path: "fast_path"` and do not create a job.
 6. Complex requests continue through the existing orchestrated path. The GPT router resolves the incoming GPT ID to a module route using the module map and fuzzy matching strategy if needed.
 7. The writing request is forwarded to `/modules/:route`, and the response is wrapped with a `_route` metadata block.
-8. The module handler calls the action implementation and returns the result as JSON.【F:src/routes/gptRouter.ts†L16-L159】【F:src/routes/modules.ts†L1-L83】
+8. The module handler calls the action implementation and returns the result as JSON. (`src/routes/gptRouter.ts`) (`src/routes/modules.ts`)
 
 ## Setup: Connect a Custom GPT to the Backend
 
@@ -26,13 +26,13 @@ Each module declares a name, description, and `gptIds`. The router auto-discover
 - Module discovery and routes: `src/services/moduleLoader.ts`.
 - GPT ID routing map: `src/platform/runtime/gptRouterConfig.ts`.
 - Module definitions: `src/services/*.ts` with compatibility shims in `src/modules/*.ts` where needed.
-【F:src/services/moduleLoader.ts†L1-L64】【F:src/platform/runtime/gptRouterConfig.ts†L1-L180】
+(`src/services/moduleLoader.ts`) (`src/platform/runtime/gptRouterConfig.ts`)
 
 ### 2) (Optional) Override GPT ID routing
-If you want a custom GPT ID that is not in the module’s `gptIds`, set `GPT_MODULE_MAP` to a JSON mapping of GPT IDs to `{ route, module }`. Legacy environment variables (`GPTID_*`) are still supported for Backstage Booker, Arcanos Gaming, and Tutor if required.【F:src/platform/runtime/gptRouterConfig.ts†L1-L180】
+If you want a custom GPT ID that is not in the module’s `gptIds`, set `GPT_MODULE_MAP` to a JSON mapping of GPT IDs to `{ route, module }`. Legacy environment variables (`GPTID_*`) are still supported for Backstage Booker, Arcanos Gaming, and Tutor if required. (`src/platform/runtime/gptRouterConfig.ts`)
 
 ### 3) Keep writing-plane and control-plane access separate
-`/gpt/:gptId` module traffic does not grant control-plane privileges. Sensitive direct endpoints require their own approved auth and confirmation flow. Do not add non-core module GPTs such as `arcanos-gaming` or `gaming` to control-plane trust lists just to make writing requests work; Gaming should remain a non-privileged module client.【F:src/routes/_core/gptPlaneClassification.ts†L1-L107】【F:src/services/controlPlane/gptPolicy.ts†L1-L158】
+`/gpt/:gptId` module traffic does not grant control-plane privileges. Sensitive direct endpoints require their own approved auth and confirmation flow. Do not add non-core module GPTs such as `arcanos-gaming` or `gaming` to control-plane trust lists just to make writing requests work; Gaming should remain a non-privileged module client. (`src/routes/_core/gptPlaneClassification.ts`) (`src/services/controlPlane/gptPolicy.ts`)
 
 ### 4) Configure the Custom GPT action
 Use a single HTTP action in your Custom GPT definition:
@@ -64,7 +64,7 @@ Rules:
 - Retrieval by natural-language prompt is intentionally blocked. Do not ask the GPT route to “look up job 123” in `prompt`; use the structured `action + payload.jobId` contract.
 - Do **not** inject a default action like `"ask"`; only send `action` when the caller explicitly selects a supported backend action.
 
-The router injects the module name server-side, so your Custom GPT does not need to specify `module` in the payload.【F:src/routes/gptRouter.ts†L16-L159】
+The router injects the module name server-side, so your Custom GPT does not need to specify `module` in the payload. (`src/routes/gptRouter.ts`)
 
 ### Canonical OpenAPI Contract
 The machine-readable contract lives at [contracts/custom_gpt_route.openapi.v1.json](../contracts/custom_gpt_route.openapi.v1.json).
@@ -149,9 +149,9 @@ For async bridge callers, prefer the generated OpenAPI schema instead of hand-wr
 ## Custom GPT Catalog
 
 ### Backstage Booker
-**What it is:** A pro wrestling booking assistant that handles event scheduling, roster updates, storyline tracking, match simulation, and GPT-generated booking narratives. It is implemented as the `BACKSTAGE:BOOKER` module and exposes multiple actions for booking workflows.【F:src/modules/backstage-booker.ts†L1-L44】【F:src/routes/backstage.ts†L1-L91】
+**What it is:** A pro wrestling booking assistant that handles event scheduling, roster updates, storyline tracking, match simulation, and GPT-generated booking narratives. It is implemented as the `BACKSTAGE:BOOKER` module and exposes multiple actions for booking workflows. (`src/modules/backstage-booker.ts`) (`src/routes/backstage.ts`)
 
-**Known GPT IDs:** `backstage-booker`, `backstage`. The module route is derived from `backstage-booker.ts`, so the default route is `backstage-booker` and both GPT IDs map to it automatically.【F:src/modules/backstage-booker.ts†L1-L18】【F:src/services/moduleLoader.ts†L19-L52】
+**Known GPT IDs:** `backstage-booker`, `backstage`. The module route is derived from `backstage-booker.ts`, so the default route is `backstage-booker` and both GPT IDs map to it automatically. (`src/modules/backstage-booker.ts`) (`src/services/moduleLoader.ts`)
 
 **Available actions (via `/gpt/<gpt-id>`):**
 - `bookEvent`
@@ -160,7 +160,7 @@ For async bridge callers, prefer the generated OpenAPI schema instead of hand-wr
 - `simulateMatch`
 - `generateBooking`
 - `saveStoryline`
-【F:src/modules/backstage-booker.ts†L1-L44】
+(`src/modules/backstage-booker.ts`)
 
 **Spec sheet example:**
 ```yaml
@@ -178,13 +178,13 @@ success_response:
 ```
 
 ### Arcanos Gaming
-**What it is:** A Core-managed, non-privileged Custom GPT module for gameplay guides, builds, and meta advice. The `ARCANOS:GAMING` module exposes only the `query` action, validates `mode` as `guide`, `build`, or `meta`, and forwards the validated request to the Gaming pipelines without exposing Core control-plane capabilities.【F:src/services/arcanos-gaming.ts†L1-L65】【F:src/services/gamingModes.ts†L1-L122】
+**What it is:** A Core-managed, non-privileged Custom GPT module for gameplay guides, builds, and meta advice. The `ARCANOS:GAMING` module exposes only the `query` action, validates `mode` as `guide`, `build`, or `meta`, and forwards the validated request to the Gaming pipelines without exposing Core control-plane capabilities. (`src/services/arcanos-gaming.ts`) (`src/services/gamingModes.ts`)
 
-**Known GPT IDs:** `arcanos-gaming`, `gaming`. The module route is derived from `arcanos-gaming.ts` (route: `gaming`) and both GPT IDs are pinned to `ARCANOS:GAMING` in direct dispatch so environment overrides cannot route them to Core.【F:src/services/arcanos-gaming.ts†L52-L65】【F:src/routes/_core/gptDispatch.ts†L701-L735】【F:src/services/moduleLoader.ts†L19-L52】
+**Known GPT IDs:** `arcanos-gaming`, `gaming`. The module route is derived from `arcanos-gaming.ts` (route: `gaming`) and both GPT IDs are pinned to `ARCANOS:GAMING` in direct dispatch so environment overrides cannot route them to Core. (`src/services/arcanos-gaming.ts`) (`src/routes/_core/gptDispatch.ts`) (`src/services/moduleLoader.ts`)
 
 **Available actions (via `/gpt/<gpt-id>`):**
 - `query`
-【F:src/services/arcanos-gaming.ts†L52-L65】
+(`src/services/arcanos-gaming.ts`)
 
 **Spec sheet example:**
 ```yaml
@@ -233,13 +233,13 @@ success_response:
 ```
 
 ### Arcanos Tutor
-**What it is:** A professional tutoring kernel with modular learning flows, research augmentation, and auditing traces. The `ARCANOS:TUTOR` module accepts a `TutorQuery` that selects a domain/module pipeline and returns a structured response with audit traces.【F:src/modules/arcanos-tutor.ts†L1-L16】【F:src/logic/tutor-logic.ts†L14-L205】
+**What it is:** A professional tutoring kernel with modular learning flows, research augmentation, and auditing traces. The `ARCANOS:TUTOR` module accepts a `TutorQuery` that selects a domain/module pipeline and returns a structured response with audit traces. (`src/modules/arcanos-tutor.ts`) (`src/logic/tutor-logic.ts`)
 
-**Known GPT IDs:** `arcanos-tutor`, `tutor`. The module route is derived from `arcanos-tutor.ts` (route: `tutor`).【F:src/modules/arcanos-tutor.ts†L1-L13】【F:src/services/moduleLoader.ts†L19-L52】
+**Known GPT IDs:** `arcanos-tutor`, `tutor`. The module route is derived from `arcanos-tutor.ts` (route: `tutor`). (`src/modules/arcanos-tutor.ts`) (`src/services/moduleLoader.ts`)
 
 **Available actions (via `/gpt/<gpt-id>`):**
 - `query`
-【F:src/modules/arcanos-tutor.ts†L1-L13】
+(`src/modules/arcanos-tutor.ts`)
 
 **Spec sheet example:**
 ```yaml
@@ -257,9 +257,9 @@ success_response:
 ```
 
 ## Validation Checklist (Minimal Test Plan)
-- **Happy path:** Call `/gpt/<gpt-id>` with a valid `action` and `payload` and confirm `_route` metadata returns for the matched module.【F:src/routes/gptRouter.ts†L96-L159】
-- **Edge case:** Use an unknown GPT ID and confirm a `404` with `Unknown GPTID` is returned.【F:src/routes/gptRouter.ts†L70-L104】
-- **Failure mode:** Call a valid GPT ID with an invalid action and confirm the module returns `Action not found` or `Module not found` as appropriate.【F:src/routes/modules.ts†L16-L56】
+- **Happy path:** Call `/gpt/<gpt-id>` with a valid `action` and `payload` and confirm `_route` metadata returns for the matched module. (`src/routes/gptRouter.ts`)
+- **Edge case:** Use an unknown GPT ID and confirm a `404` with `Unknown GPTID` is returned. (`src/routes/gptRouter.ts`)
+- **Failure mode:** Call a valid GPT ID with an invalid action and confirm the module returns `Action not found` or `Module not found` as appropriate. (`src/routes/modules.ts`)
 - **Async bridge:** Confirm `query` creates one job, core `query_and_wait` completes through the direct action lane without bounded fallback text, non-core durable writes still use jobs, and `get_status` / `get_result` are rejected with direct endpoint guidance.
 - **Fast path:** Confirm `executionMode: "fast"` for a prompt-generation request returns `200`, `routeDecision.path: "fast_path"`, `x-gpt-fast-path-queue-bypassed: true`, and `x-gpt-queue-bypassed: true`.
 - **Guardrail:** Confirm prompt-based job retrieval is rejected and callers are pointed at structured control actions or `/jobs/*`.

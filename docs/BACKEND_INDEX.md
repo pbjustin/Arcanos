@@ -200,7 +200,7 @@ This index is copy-path friendly for IDE navigation and shell usage.
 | `src/mcp/server/index.ts` |
 | `src/memory/store.ts` |
 | `src/middleware/capabilityGate.ts` |
-| `src/middleware/confirmGate.ts` |
+| `src/transport/http/middleware/confirmGate.ts` |
 | `src/middleware/memoryConsistencyGate.ts` |
 | `src/middleware/requestContext.ts` |
 | `src/middleware/requestId.ts` |

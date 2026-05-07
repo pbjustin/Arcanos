@@ -20,7 +20,7 @@ Base URLs:
 - Railway: `https://<your-service>.up.railway.app`
 
 ## Configuration
-Confirmation gate behavior (`src/middleware/confirmGate.ts`):
+Confirmation gate behavior (`src/transport/http/middleware/confirmGate.ts`):
 - Manual: `x-confirmed: yes`
 - Challenge retry: `x-confirmed: token:<challengeId>`
 - Trusted GPT: `x-gpt-id` + configured `TRUSTED_GPT_IDS`
@@ -31,7 +31,7 @@ Quick probes:
 ```bash
 curl http://localhost:3000/healthz
 curl http://localhost:3000/health
-curl -X POST http://localhost:3000/api/arcanos/ask -H "Content-Type: application/json" -H "x-confirmed: yes" -d '{"message":"hello"}'
+curl -X POST http://localhost:3000/gpt/arcanos-core -H "Content-Type: application/json" -d '{"action":"query","prompt":"hello"}'
 ```
 
 ## Deploy (Railway)
@@ -45,7 +45,7 @@ No API path changes are required for Railway. Validate liveness (`/healthz`), re
 ## References
 - Route registry: `../src/routes/register.ts`
 - API mount index: `../src/routes/api/index.ts`
-- Validation and auth middleware: `../src/middleware/confirmGate.ts`
+- Validation and auth middleware: `../src/transport/http/middleware/confirmGate.ts`
 
 ## GPT Async Contract
 `POST /gpt/:gptId` is the writing plane. It supports a typed async GPT bridge with idempotent retry handling for job-backed requests, but it must not be used for prompt-shaped control-plane retrieval.
@@ -138,6 +138,8 @@ Client retry guidance:
 
 ## Active Endpoint Groups
 
+The groups below include stable public routes, operator/control routes, compatibility routes, and internal diagnostics. Treat `/gpt/:gptId`, `/api/bridge/*`, `/jobs/*`, `/gpt-access/*`, `/mcp`, `/metrics`, `/api/web/search`, and documented health/status routes as the primary integration surfaces. Test/debug routes such as `/api/test`, `/api/fallback/test`, `/diag/*`, `/debug/*`, bridge/IPC compatibility probes, dynamic `/modules/:moduleRoute`, and `/queryroute` are implementation or operator diagnostics unless a dedicated contract says otherwise.
+
 ### Core health and status
 - `GET /`
 - `GET /health`
@@ -156,10 +158,9 @@ Client retry guidance:
 - `GET /trinity/status`
 - `POST /arcanos` (confirmation required)
 - `POST /arcanos-pipeline`
-- `POST /arcanos-query`
 - `POST /siri` (confirmation required)
-- `POST /api/arcanos/ask` (confirmation required)
 - `POST /api/ask-hrc`
+- `POST /api/arcanos/ask` (deprecated compatibility route; prefer `/gpt/:gptId`)
 
 ### Reinforcement and reflection feedback
 - `POST /reinforce`
@@ -168,6 +169,8 @@ Client retry guidance:
 - `GET /reinforcement/metrics`
 - `GET /memory/digest`
 - `GET /memory`
+- `POST /api/web/search`
+- `GET /metrics` (Prometheus metrics; enabled unless `METRICS_ENABLED=false`)
 
 ### AI utility and media
 - `POST /write` (confirmation required)
@@ -193,7 +196,6 @@ Client retry guidance:
 - `GET /api/memory/search`
 - `POST /api/memory/nl`
 - `POST /api/memory/bulk` (confirmation required)
-- `POST /memory/resolve`
 - `GET /api/codebase/tree`
 - `GET /api/codebase/file`
 - `POST /api/reusables`
@@ -203,6 +205,14 @@ Client retry guidance:
 - `GET /workers/status`
 - `POST /workers/heal` (confirmation required)
 - `POST /workers/run/:workerId` (confirmation required)
+- `GET /worker-helper/status`
+- `GET /worker-helper/health`
+- `GET /worker-helper/jobs/latest` (privileged auth required)
+- `GET /worker-helper/jobs/failed`
+- `GET /worker-helper/jobs/:id` (privileged auth required)
+- `POST /worker-helper/queue/ask` (privileged auth required)
+- `POST /worker-helper/dispatch` (privileged auth required)
+- `POST /worker-helper/heal` (privileged auth required)
 - `GET /jobs/:id`
 - `GET /jobs/:id/stream`
 - `POST /jobs/:id/cancel`
@@ -216,6 +226,9 @@ Client retry guidance:
 - `GET /api/commands`
 - `GET /api/commands/health`
 - `POST /api/commands/execute` (confirmation required)
+- `GET /api/control-plane/allowlist`
+- `GET /api/control-plane/deep-diagnostics`
+- `POST /api/control-plane/operations` (confirmation required)
 - `POST /commands/research` (confirmation required)
 - `POST /sdk/research` (confirmation required)
 - `POST /rag/fetch`
@@ -239,6 +252,24 @@ Client retry guidance:
 - `POST /queryroute`
 - `POST /modules/:moduleRoute` (dynamic module route from runtime module loader)
 - `POST /gpt/:gptId` (writing plane; control compatibility actions are intercepted before write dispatch)
+
+### GPT Access protected gateway
+- `GET /gpt-access/openapi.json`
+- `GET /gpt-access/health`
+- `GET /gpt-access/status`
+- `GET /gpt-access/workers/status`
+- `GET /gpt-access/queue/inspect`
+- `GET /gpt-access/self-heal/status`
+- `POST /gpt-access/jobs/create`
+- `POST /gpt-access/jobs/result`
+- `POST /gpt-access/diagnostics/deep`
+- `POST /gpt-access/db/explain`
+- `POST /gpt-access/logs/query`
+- `POST /gpt-access/mcp/run`
+- `GET /gpt-access/capabilities/v1`
+- `GET /gpt-access/capabilities/v1/:id`
+- `POST /gpt-access/capabilities/v1/:id/run`
+- `POST /gpt-access/dispatch/run`
 
 ### API submodules mounted under `/api`
 - `GET /api/assistants`

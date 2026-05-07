@@ -4,7 +4,7 @@
 This runbook covers local backend startup, optional daemon startup, and quick validation checks.
 
 ## Prerequisites
-- Node.js 18+, npm 8+
+- Node.js 20.19.0 recommended; current dependencies require Node 20.18.1+ despite the older root `engines` floor. npm 8+.
 - Optional Python 3.10+ for daemon
 - OpenAI API key for live AI calls; mock-mode tests do not require a real key
 
@@ -14,6 +14,8 @@ Backend:
 npm install
 cp .env.example .env
 ```
+
+Use `npm install` for local development. CI, Docker, and Railway use reproducible `npm ci` installs.
 
 Set minimum backend values:
 Set `PORT` to `3000` and set `OPENAI_API_KEY` to your local key in `.env`.
@@ -95,6 +97,7 @@ Then follow `RAILWAY_DEPLOYMENT.md`.
 - Daemon exits immediately: ensure daemon `.env` has `OPENAI_API_KEY`.
 - Backend calls from daemon fail: verify `BACKEND_URL` and backend health endpoint.
 - Worker exits with database bootstrap errors: configure `DATABASE_URL`, `DATABASE_PRIVATE_URL`, `DATABASE_PUBLIC_URL`, or the full `PG*` connection set.
+- Docker Compose note: `docker-compose.yml` builds the Railway-style image for `arcanos-core`, but the service definition does not set `ARCANOS_PROCESS_KIND`. If you use Compose before that config is repaired, set `ARCANOS_PROCESS_KIND=web` for the API container or use the direct `npm run build && npm start` flow above.
 
 ## References
 - `../README.md`

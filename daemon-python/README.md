@@ -12,7 +12,8 @@
 
 ## Where it fits in the overall codebase
 - Backend (TypeScript/Express): `src/`  
-  - Primary endpoints: `/gpt/:gptId`, `/api/arcanos/ask`, `/query-finetune`, `/api/daemon/*`, `/api/update`
+  - Primary daemon/backend endpoints: `/gpt/:gptId`, `/api/daemon/*`, and `/api/update`
+  - Compatibility endpoints: `/api/arcanos/ask` and `/query-finetune`
 - Local daemon (Python): `daemon-python/`  
   - CLI runtime: `daemon-python/arcanos/cli/`
   - Agentic coding loop: `daemon-python/arcanos/agentic/`
@@ -64,7 +65,7 @@ cp .env.example .env
 
 ### Minimal (backend-routed assistant)
 ```env
-BACKEND_URL=https://acranos-production.up.railway.app
+BACKEND_URL=https://<your-service>.up.railway.app
 BACKEND_GPT_ID=arcanos-daemon
 BACKEND_ALLOW_GPT_ID_AUTH=true
 ```

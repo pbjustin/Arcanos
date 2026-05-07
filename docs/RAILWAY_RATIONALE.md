@@ -9,7 +9,8 @@ Railway is the preferred deployment target because it offers a low-friction path
 ## Key Reasons
 
 ### 1) Source-controlled deployment configuration
-- Railway reads `railway.json` and `Procfile`, which keeps build and start behavior versioned alongside the application.
+- Railway reads `railway.json`, which keeps build, start, and health-check behavior versioned alongside the application.
+- The historical `Procfile` is retained in the repository but bypasses the canonical launcher; Railway deployments should use `node scripts/start-railway-service.mjs` from `railway.json`.
 - This improves auditability and reduces drift between local, staging, and production environments.
 
 ### 2) Runtime environment consistency

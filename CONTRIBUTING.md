@@ -10,7 +10,7 @@ OpenAI integrations are adapter-first and centralized. New runtime code should n
 
 ## Prerequisites
 - Git
-- Node.js 18+, npm 8+
+- Node.js 20.19.0 recommended; current dependencies require Node 20.18.1+ despite the older root `engines` floor. npm 8+.
 - Optional: Python 3.10+ for daemon changes
 
 ## Quick Start (Full Stack)
@@ -36,6 +36,8 @@ npm test
 ```
 
 If you only work on the TypeScript backend, skip the Python steps above.
+
+Use `npm install` for local development. CI, Docker, and Railway use reproducible `npm ci` installs.
 
 ## Setup (Step by Step)
 ```bash
@@ -95,8 +97,9 @@ pytest daemon-python/tests/test_debug_server.py -q
 pytest daemon-python/tests/test_openai_adapter.py -q
 pytest daemon-python/tests/test_openai_unified_client.py -q
 pytest daemon-python/tests/test_telemetry_sanitization.py -q
-python daemon-python/scripts/continuous_audit.py --max-depth=1 --no-recursive --no-railway-check
 ```
+
+The historical daemon continuous-audit script referenced by older command lists is not present in this checkout.
 
 ## Deploy (Railway)
 Contributors must keep Railway build/start behavior unchanged:

@@ -24,6 +24,30 @@ npm install
 | Backend/CLI OpenAPI contracts | `contracts/*.openapi.v1.json` and `contracts/backend_cli_contract.v1.json` |
 | Custom GPT bridge OpenAPI | `openapi/custom-gpt-bridge.yaml` |
 
+Protocol v1 distinguishes protocol-visible command ids from implemented command ids. `ARCANOS_PROTOCOL_COMMAND_IDS` includes forward-compatible reserved commands so clients can reason about future surfaces. `ARCANOS_PROTOCOL_IMPLEMENTED_COMMAND_IDS` is the supported set with concrete schemas and dispatcher behavior in this checkout.
+
+Implemented protocol commands:
+- `task.create`
+- `plan.generate`
+- `artifact.store`
+- `control-plane.invoke`
+- `context.inspect`
+- `daemon.capabilities`
+- `tool.registry`
+- `tool.describe`
+- `tool.invoke`
+- `exec.start`
+- `exec.resume`
+- `exec.status`
+- `state.snapshot`
+
+Reserved but not implemented in the current protocol runtime:
+- `patch.create`
+- `patch.apply`
+- `run.start`
+- `event.stream`
+- `artifact.fetch`
+
 ## Change Workflow
 1. Add or update the JSON schema first.
 2. Register new implemented command schemas in `packages/protocol/src/schemaCatalog.ts`.
@@ -76,7 +100,7 @@ Railway builds packages through the root build. Validate schema changes locally 
 ## Compatibility Rules
 - Keep command outputs deterministic JSON.
 - Do not route system operations through writing-plane GPT prompts.
-- Prefer direct control endpoints or `/gpt-access/*` for job-result and runtime inspection. `/gpt/:gptId` supports typed compatibility actions for clients that cannot reach the direct endpoints, but those actions must stay structured and must not become prompt-shaped system operations.
+- Prefer direct control endpoints or `/gpt-access/*` for job-result and runtime inspection. `/gpt/:gptId` is the writing plane and rejects job lookup, runtime inspection, worker status, queue inspection, MCP calls, and other control actions.
 - Do not expose raw shell execution, raw SQL, arbitrary proxying, or destructive self-heal operations through GPT access routes.
 - If a command is listed but not implemented, document it as reserved rather than presenting it as supported.
 

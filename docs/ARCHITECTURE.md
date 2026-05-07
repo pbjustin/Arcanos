@@ -43,8 +43,10 @@ npm start
 ## Deploy (Railway)
 Deployment control lives in:
 - `railway.json`
-- `Procfile`
+- `scripts/start-railway-service.mjs`
 - `docs/RAILWAY_DEPLOYMENT.md`
+
+`Procfile` remains as a historical fallback artifact; it is not the canonical Railway start path.
 
 ## Troubleshooting
 - Routing ambiguity: inspect `src/routes/register.ts` mount order first.

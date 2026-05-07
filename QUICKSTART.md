@@ -4,7 +4,7 @@
 This quickstart gets the backend running first, then optionally starts the Python daemon CLI.
 
 ## Prerequisites
-- Node.js 18+ and npm 8+
+- Node.js 20.19.0 recommended; current dependencies require Node 20.18.1+ despite the older root `engines` floor. npm 8+.
 - Optional: Python 3.10+ for `daemon-python/`
 - OpenAI API key for live AI calls; tests can use mock-mode configuration
 
@@ -14,6 +14,7 @@ Backend:
 npm install
 cp .env.example .env
 ```
+Use `npm install` for local development. CI, Docker, and Railway use reproducible `npm ci` installs.
 
 Daemon (optional, local coding assistant):
 ```bash

@@ -22,7 +22,6 @@ Automation token flows require backend `ARCANOS_AUTOMATION_SECRET`.
 ## Run locally
 Common scripts:
 - `node scripts/probe.js`
-- `node scripts/continuous-audit.js`
 - `./scripts/doc_audit.sh`
 - `node scripts/validate-railway-compatibility.js`
 - `node scripts/check-railway-timeout-regressions.js --since 30m --lines 400`
@@ -34,8 +33,18 @@ Post-deploy behavior:
 - `scripts/deploy-backend.ps1` now runs `npm run railway:alert:timeouts -- --since 15m --lines 500 --fail-on-budget-abort` automatically after `railway up`.
 
 ## Deploy (Railway)
-- `scripts/railway-set-secret.sh` can help set Railway variables.
 - `scripts/deploy-backend.ps1` is available for manual PowerShell deployment workflows.
+
+The older `scripts/continuous-audit.js` and `scripts/railway-set-secret.sh` command references are historical; those files are not present in this checkout.
+
+## Known unavailable package-script targets
+The root `package.json` still lists several scripts whose target files are missing in this checkout. Treat these as unavailable until their targets are restored or the package scripts are replaced:
+- `db:patch` -> `scripts/schema-sync.js`
+- `guide:generate` -> `scripts/generate-tagged-guide.js`
+- `test:doc-workflow` -> `scripts/test-doc-workflow.js`
+- `audit`, `audit:continuous`, `audit:sdk-compliance`, `audit:fix`, `audit:recursive`, `audit:railway`, `audit:full` -> `scripts/continuous-audit.js`
+- `audit:python`, `audit:python:fix` -> `daemon-python/scripts/continuous_audit.py`
+- `sync:auto` -> `scripts/auto-sync-watcher.js`
 
 ## Troubleshooting
 - Script not found: confirm exact script name in this folder.

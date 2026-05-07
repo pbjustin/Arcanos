@@ -17,7 +17,7 @@ Railway context observed during authoring:
 | Hypothesis | Command | Result | Interpretation | Next Step |
 | --- | --- | --- | --- | --- |
 | ARCANOS production is split into web and worker planes. | `railway whoami` | Authenticated as the active Railway account. | Railway CLI context is valid. | Target production explicitly. |
-| The active environment is production and the project wiring is intact. | `railway environment production` | Production environment activated. | The remaining inspection should use production-scoped data. | Inspect service status and deployments. |
+| The active environment is production and the project wiring is intact. | `railway env production` | Production environment activated. | The remaining inspection should use production-scoped data. | Inspect service status and deployments. |
 | The current live backend shape includes separate web, worker, Postgres, and Redis services. | `railway status --json` | Returned project and service metadata for `ARCANOS V2`, `ARCANOS Worker`, `Postgres-BTrN`, and `Redis-lQbV`. | The job board must read shared durable state, not in-memory process state. | Inspect recent web and worker deployments. |
 | The web plane owns GPT enqueue and GPT read-path routing. | `railway deployment list --service "ARCANOS V2" --environment production --limit 3 --json` | Latest web deployment is healthy. | The web plane is the right home for a read-only job-board API. | Inspect live web logs for job events. |
 | The worker plane owns execution, retry, timing, and expiry events. | `railway deployment list --service "ARCANOS Worker" --environment production --limit 3 --json` | Latest worker deployment is healthy. | The worker remains execution-only; the job board should not move there. | Inspect live worker logs. |
@@ -31,12 +31,12 @@ Railway context observed during authoring:
 ARCANOS already has the critical primitives needed for a real-time async GPT job board:
 - async GPT job creation through `POST /gpt/:gptId`
 - canonical per-job result retrieval through `GET /jobs/:id/result`
-- GPT-route read-only retrieval through `POST /gpt/:gptId` with `action: "get_result"`
+- protected read-only retrieval through `/gpt-access/*` and direct `/jobs/*` control endpoints
 - worker-side lifecycle, retry, timing, and expiry signals
 - queue and worker summaries via existing helper routes
 - Prometheus-compatible metrics
 
-The recommended design is a read-only backend projection over the current durable job and worker state. It should live on the web service, expose canonical `/job-board/*` APIs for operators and internal services, and add explicit read-only `/gpt/:gptId` actions for ChatGPT-style agents that can only reach the GPT route. No frontend is required.
+The recommended design is a read-only backend projection over the current durable job and worker state. It should live on the web service and expose canonical `/job-board/*` APIs for operators and internal services. ChatGPT-style agents should use GPT Access or direct job-control endpoints for reads; the `/gpt/:gptId` writing route must not be expanded into a control-plane read surface. No frontend is required.
 
 ## 2. Current ARCANOS Job Architecture
 
@@ -46,7 +46,7 @@ Current live behavior:
 3. The route either returns a pending payload quickly or waits briefly for fast completion before returning.
 4. The worker service claims `job_type = 'gpt'` rows from the queue and executes them asynchronously.
 5. The system stores result or error data back into durable state.
-6. Clients retrieve state or results via `GET /jobs/:id`, `GET /jobs/:id/result`, `GET /jobs/:id/stream`, or GPT read-only `action: "get_result"`.
+6. Clients retrieve state or results via `GET /jobs/:id`, `GET /jobs/:id/result`, `GET /jobs/:id/stream`, or protected GPT Access result routes.
 
 Current live observability:
 - Web logs emit `gpt.request.async_enqueued`, `gpt.request.async_pending`, and `gpt.request.result_lookup`.
@@ -68,7 +68,7 @@ Current live storage:
 - Expose retry state, retry exhaustion, terminal failure classification, and expiry semantics.
 - Expose result-availability and retrieval metadata without forcing callers to know all HTTP routes.
 - Preserve the current async job creation and execution behavior.
-- Preserve GPT read-only result lookup semantics and extend that pattern for broader job-board reads.
+- Preserve direct control-plane result lookup semantics and keep job-board reads out of the GPT writing route.
 
 ### Non-Goals
 
@@ -184,12 +184,7 @@ Recommended naming convention for new `/job-board/*` and GPT job-board read payl
   "retrieval": {
     "http_result": "/jobs/uuid/result",
     "http_stream": "/jobs/uuid/stream",
-    "gpt_read_action": {
-      "action": "get_result",
-      "payload": {
-        "jobId": "uuid"
-      }
-    }
+    "protected_result": "/gpt-access/jobs/result"
   }
 }
 ```
@@ -297,7 +292,7 @@ The job board should live under a dedicated read-only route group on the web ser
 
 - `scope` should default to `gpt`, not `all`, because the shared queue contains more than GPT jobs.
 - `GET /job-board/jobs/:id` should return summary, timings, correlation, error metadata, and retrieval pointers, but not large stored outputs by default.
-- The full stored result should remain canonical at `GET /jobs/:id/result` and GPT `action: "get_result"`.
+- The full stored result should remain canonical at `GET /jobs/:id/result` and protected `POST /gpt-access/jobs/result`.
 - The job board should reuse current helper logic rather than duplicate queue and worker calculations.
 
 ### 6.3 Example Request and Response Payloads
@@ -396,12 +391,7 @@ Response:
   "retrieval": {
     "http_result": "/jobs/ac021f69-9bc4-4e5a-9186-36f0048ed03f/result",
     "http_stream": "/jobs/ac021f69-9bc4-4e5a-9186-36f0048ed03f/stream",
-    "gpt_read_action": {
-      "action": "get_result",
-      "payload": {
-        "jobId": "ac021f69-9bc4-4e5a-9186-36f0048ed03f"
-      }
-    }
+    "protected_result": "/gpt-access/jobs/result"
   }
 }
 ```
@@ -458,7 +448,7 @@ Recommended model: hybrid polling plus SSE.
 
 Why:
 - Polling already matches the existing `/jobs/:id`, `/jobs/:id/result`, and `/jobs/:id/stream` mental model.
-- ChatGPT-style agents on `/gpt/:gptId` need bounded request-response reads, not sockets.
+- ChatGPT-style agents should use bounded GPT Access or direct job-control reads, not sockets and not the `/gpt/:gptId` writing route.
 - ARCANOS already supports SSE for per-job streaming, so extending to summary streaming is low-friction.
 - Railway is a good fit for standard HTTP and SSE without forcing a bidirectional socket architecture.
 
@@ -469,78 +459,57 @@ Recommendation:
 
 ## 8. Retrieval Model for ChatGPT and Other AI Agents
 
-This is the critical compatibility requirement. ChatGPT-style callers that only have access to `POST /gpt/:gptId` need bounded read-only actions that bypass async generation and return machine-readable payloads directly.
+ChatGPT-style agents must keep writing and control access separate. Use `/gpt/:gptId` only to create or run writing work. Use `/gpt-access/*`, direct `/jobs/*`, or the future `/job-board/*` read-only endpoints for job state, worker state, queue summaries, and result lookup.
 
-### 8.1 Recommended GPT Read Actions
+### 8.1 Recommended Protected Read Endpoints
 
-| GPT Action | Purpose | Payload | Response |
+| Endpoint | Purpose | Payload or parameters | Response |
 | --- | --- | --- | --- |
-| `get_result` | Existing full per-job result lookup. | legacy backward-compatible `jobId` | current canonical stored result payload |
-| `get_job_status` | One job detail lookup without large output by default. | `job_id`, `include` | `JobBoardJobDetail` |
-| `get_job_board_snapshot` | One bounded board snapshot for queue, workers, active jobs, and recent failures. | `scope`, `window`, `active_limit`, `include` | `JobBoardSnapshot` |
-| `get_queue_status` | Queue-only summary. | `scope`, `window` | `JobBoardQueueSummary` |
-| `get_worker_status` | Worker summary or filtered subset. | `health`, `limit`, `worker_id` | worker summary payload |
-| `get_recent_failures` | Recent retained failures and grouped reasons. | `scope`, `category`, `limit` | failure summary payload |
+| `POST /gpt-access/jobs/result` | Protected full per-job result lookup. | `jobId` | Current canonical stored result payload |
+| `GET /jobs/:id` | Direct job status. | path `id` | Current job status payload |
+| `GET /jobs/:id/result` | Direct job result. | path `id` | Current job result payload |
+| `GET /job-board/jobs/:id` | Proposed bounded job detail lookup without large output by default. | `include` | `JobBoardJobDetail` |
+| `GET /job-board/summary` | Proposed bounded board snapshot for queue, workers, active jobs, and recent failures. | `scope`, `window`, `active_limit`, `include` | `JobBoardSnapshot` |
+| `GET /job-board/queue` | Proposed queue-only summary. | `scope`, `window` | `JobBoardQueueSummary` |
+| `GET /job-board/workers` | Proposed worker summary or filtered subset. | `health`, `limit`, `worker_id` | worker summary payload |
+| `GET /job-board/failures` | Proposed recent retained failures and grouped reasons. | `scope`, `category`, `limit` | failure summary payload |
 
-### 8.2 GPT Read-Action Rules
+### 8.2 Read-Path Rules
 
-- Every read action must bypass normal async generation.
-- No read action may enqueue a new job.
-- Every read action should return deterministic JSON.
-- Every read action should emit an explicit read-path log event.
-- Every read action should reuse shared lookup helpers where possible.
-- Validation failures should be machine-readable and not silently fall through to normal GPT generation.
+- Read endpoints must not enqueue GPT work.
+- Read endpoints should return deterministic JSON.
+- Read endpoints should emit explicit read-path log events.
+- Read endpoints should reuse shared lookup helpers where possible.
+- Validation failures should be machine-readable and must not fall through to normal GPT generation.
+- `/gpt/:gptId` must continue rejecting job lookup, worker status, queue inspection, runtime diagnostics, and MCP control actions.
 
-### 8.3 Example `/gpt/:gptId` Read-Action Payloads
+### 8.3 Example Protected Read Payloads
 
-#### Example 1: Job board snapshot
+#### Example 1: Protected job result lookup
 
 ```http
-POST /gpt/arcanos-core
+POST /gpt-access/jobs/result
+Authorization: Bearer <token>
 Content-Type: application/json
 
 {
-  "action": "get_job_board_snapshot",
-  "payload": {
-    "scope": "gpt",
-    "window": "1h",
-    "active_limit": 10,
-    "include": ["queue", "workers", "recent_failures"]
-  }
+  "jobId": "ac021f69-9bc4-4e5a-9186-36f0048ed03f"
 }
 ```
 
-#### Example 2: Specific job status
+#### Example 2: Proposed job board snapshot
 
 ```http
-POST /gpt/arcanos-core
-Content-Type: application/json
-
-{
-  "action": "get_job_status",
-  "payload": {
-    "job_id": "ac021f69-9bc4-4e5a-9186-36f0048ed03f",
-    "include": ["correlation", "retrieval", "retry"]
-  }
-}
+GET /job-board/summary?scope=gpt&window=1h&active_limit=10&include=queue,workers,recent_failures
 ```
 
-#### Example 3: Queue status
+#### Example 3: Proposed queue status
 
 ```http
-POST /gpt/arcanos-core
-Content-Type: application/json
-
-{
-  "action": "get_queue_status",
-  "payload": {
-    "scope": "gpt",
-    "window": "15m"
-  }
-}
+GET /job-board/queue?scope=gpt&window=15m
 ```
 
-### 8.4 Recommended GPT Response Envelope
+### 8.4 Recommended Protected Response Envelope
 
 ```json
 {
@@ -551,8 +520,8 @@ Content-Type: application/json
   },
   "_route": {
     "request_id": "req_123",
-    "gpt_id": "arcanos-core",
-    "action": "get_job_board_snapshot",
+    "surface": "job_board",
+    "resource": "summary",
     "route": "job_board",
     "timestamp": "2026-04-10T20:30:00.000Z"
   }
@@ -643,7 +612,7 @@ Existing metrics already present in production:
 
 - `job_board_reads_total{surface,resource,outcome}`
 - `job_board_snapshot_duration_ms{resource}`
-- `gpt_read_actions_total{action,outcome}`
+- `job_board_reads_total{surface,resource,outcome}`
 - `job_board_stream_clients`
 - `job_board_scope_totals{scope,status}`
 
@@ -741,7 +710,7 @@ Recent failures should clearly distinguish:
 ## 14. Security, Auth, and Access Boundaries
 
 - `/job-board/*` should require operator or service authorization.
-- GPT read actions should follow the existing GPT auth boundary and action allow-list.
+- Protected job-board reads should follow the existing GPT Access or operator/service auth boundary.
 - Large result payloads should stay behind the canonical result retrieval path.
 - Summary APIs should default to bounded payloads and redacted error content.
 - Internal correlation identifiers should remain available to operators and internal services, but not necessarily to anonymous callers.
@@ -765,9 +734,7 @@ Recent failures should clearly distinguish:
    - `GET /job-board/jobs/:id`
    - `GET /job-board/workers`
    - `GET /job-board/failures`
-3. Add GPT read-only actions:
-   - `get_job_board_snapshot`
-   - `get_job_status`
+3. Add protected read endpoints or GPT Access runners for job-board snapshots and job detail.
    - `get_worker_status`
 4. Add structured read-path logs and board-read metrics.
 
@@ -775,7 +742,7 @@ Recent failures should clearly distinguish:
 
 1. Add `GET /job-board/jobs` with filtering and cursor pagination.
 2. Add `GET /job-board/queue`.
-3. Add `get_queue_status` and `get_recent_failures` GPT read actions.
+3. Add queue-status and recent-failure protected read endpoints.
 4. Add `GET /job-board/events` backed by an optional `job_board_events` table.
 5. Add `GET /job-board/stream` SSE summary streaming.
 6. Preserve explicit final execution outcome for expired and purged lifecycle views.
@@ -786,7 +753,7 @@ Recent failures should clearly distinguish:
 
 ```text
 railway whoami
-railway environment production
+railway env production
 railway status --json
 railway deployment list --service "ARCANOS V2" --environment production --limit 3 --json
 railway deployment list --service "ARCANOS Worker" --environment production --limit 3 --json
@@ -797,9 +764,9 @@ railway logs --service "ARCANOS Worker" --environment production --since 30m --l
 ### 17.2 Validation Checks for the Job Board Rollout
 
 - Confirm `/job-board/summary` agrees with current helper queue and worker summaries during rollout.
-- Confirm GPT read actions return machine-readable payloads and do not enqueue work.
+- Confirm protected read endpoints return machine-readable payloads and do not enqueue work.
 - Confirm normal GPT async creation still emits exactly one enqueue event per new job.
-- Confirm `/job-board/jobs/:id` and `action: "get_job_status"` agree with `GET /jobs/:id/result` on status, lifecycle, and result availability.
+- Confirm `/job-board/jobs/:id` and `GET /jobs/:id/result` agree on status, lifecycle, and result availability.
 - Confirm worker and queue counts reconcile with logs and metrics within a defined lag window.
 - Confirm no regression in existing `/jobs/:id`, `/jobs/:id/result`, or `/jobs/:id/stream` behavior.
 

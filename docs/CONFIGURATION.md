@@ -277,7 +277,7 @@ These control how long the backend waits for the daemon to report tool results b
 - `DAEMON_RESULT_POLL_MS` (default: `250`)
 
 ## Complete environment variable reference
-This table mirrors the highest-impact runtime keys in `.env.example`. Use `.env.example` for the current operator template and update this section when a new deploy-relevant variable is added.
+This table mirrors the highest-impact runtime keys in `.env.example`. Earlier sections group variables by runtime area; this section is a compact operator template mirror. Use `.env.example` for the current full template and update this section when a new deploy-relevant variable is added.
 | Variable | Default (example) | Purpose |
 |---|---:|---|
 | `PORT` | `3000` | HTTP port the server binds to. |
@@ -336,3 +336,17 @@ This table mirrors the highest-impact runtime keys in `.env.example`. Use `.env.
 | `ASK_ROUTE_MODE` | `gone` (commented) | Legacy `/brain` migration switch. |
 | `DAEMON_RESULT_WAIT_MS` | `8000` | How long (ms) to poll for daemon command results before continuing without them. |
 | `DAEMON_RESULT_POLL_MS` | `250` | Poll interval (ms) when waiting for daemon results. |
+| `WEB_SEARCH_PROVIDER` | `auto` | Provider selector for `POST /api/web/search`; supported values are `auto`, `duckduckgo-lite`, `brave`, `tavily`, `serpapi`, and `searxng`. |
+| `WEB_SEARCH_TIMEOUT_MS` | `10000` | Overall web-search timeout. |
+| `WEB_SEARCH_RATE_LIMIT_MAX` | `30` | Web-search rate-limit request count. |
+| `WEB_SEARCH_RATE_LIMIT_WINDOW_MS` | `600000` | Web-search rate-limit window. |
+| `WEB_SEARCH_SNAPSHOT_CHARS` | `2000` | Maximum response snapshot characters per result. |
+| `TRAVERSE_LINKS_DEFAULT` | `false` | Default link traversal setting for web search. |
+| `WEB_SEARCH_TRAVERSAL_DEPTH` | `1` | Link traversal depth. |
+| `WEB_SEARCH_MAX_TRAVERSAL_PAGES` | `2` | Maximum pages traversed. |
+| `WEB_SEARCH_SAME_DOMAIN_ONLY` | `true` | Restrict traversal to the result domain. |
+| `WEB_SEARCH_TRAVERSAL_LINK_LIMIT` | `3` | Maximum links followed per traversal step. |
+| `BRAVE_SEARCH_API_KEY` | empty | Optional Brave Search provider key. |
+| `TAVILY_API_KEY` | empty | Optional Tavily provider key. |
+| `SERPAPI_API_KEY` | empty | Optional SerpAPI provider key. |
+| `SEARXNG_BASE_URL` | empty | Optional SearXNG instance URL. |
