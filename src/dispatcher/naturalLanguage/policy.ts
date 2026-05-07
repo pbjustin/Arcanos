@@ -88,6 +88,19 @@ export function evaluateDispatchPolicy(input: {
     });
   }
 
+  if (registryAction.risk === 'destructive' || isProhibitedActionName(registryAction.action)) {
+    return buildDecision({
+      status: 'blocked',
+      allowed: false,
+      requiresConfirmation: false,
+      shouldExecute: false,
+      action: input.plan.action,
+      reason: 'dispatch_action_prohibited',
+      code: 'DISPATCH_ACTION_PROHIBITED',
+      registryAction
+    });
+  }
+
   const threshold = input.confidenceThreshold ?? getDispatchConfidenceThreshold(registryAction.risk);
   if (input.plan.confidence < threshold) {
     const band = getDispatchClarificationBand(registryAction.risk);
@@ -101,19 +114,6 @@ export function evaluateDispatchPolicy(input: {
         ? 'dispatch_confidence_in_clarification_band'
         : 'dispatch_confidence_below_threshold',
       code: INTENT_CLARIFICATION_REQUIRED,
-      registryAction
-    });
-  }
-
-  if (registryAction.risk === 'destructive' || isProhibitedActionName(registryAction.action)) {
-    return buildDecision({
-      status: 'blocked',
-      allowed: false,
-      requiresConfirmation: false,
-      shouldExecute: false,
-      action: input.plan.action,
-      reason: 'dispatch_action_prohibited',
-      code: 'DISPATCH_ACTION_PROHIBITED',
       registryAction
     });
   }

@@ -231,7 +231,7 @@ function isOperatorBackendCommand(utterance: string): boolean {
   }
 
   if (isAdvisoryAnalysisPrompt(normalized)) {
-    return isOperationalAnalysisPrompt(normalized);
+    return isOperationalAnalysisPrompt(normalized) && !isConversationalAdvisoryPrompt(normalized);
   }
 
   if (isExplicitWorkerControlCommand(normalized)) {
@@ -261,11 +261,20 @@ function isOperationalAnalysisPrompt(normalized: string): boolean {
   );
 }
 
+function isConversationalAdvisoryPrompt(normalized: string): boolean {
+  return (
+    /\b(?:improve|improvements?|recommend|suggest|opinion|advice|architecture|design|plan|refine|reliability)\b/u.test(normalized)
+    || /\b(?:how\s+should|what\s+should|should\s+(?:i|we)|could\s+(?:i|we))\b/u.test(normalized)
+    || /\b(?:can|could|would)\s+you\b.*\b(?:improve|improvements?|recommend|suggest|opinion|advice|architecture|design|plan|refine|reliability)\b/u.test(normalized)
+  );
+}
+
 function isExplicitOperatorCommand(normalized: string): boolean {
   return (
     /\b(?:run|perform|start|do|deep|full)\s+(?:a\s+)?(?:diagnostics?|diagnostic|health check)\b/u.test(normalized)
     || /\b(?:check(?:\s+on)?|inspect|show(?:\s+me)?|look\s+(?:at|into)|diagnose|troubleshoot|what(?:s|\s+is)?\s+(?:wrong|going\s+on)|is|are)\b.*\b(?:backend|runtime|workers?|job runners?|queue|backlog|pending jobs?)\b/u.test(normalized)
     || /\b(?:backend|runtime|workers?|job runners?|queue|backlog|pending jobs?)\b.*\b(?:status|health|healthy|alive|up|down|okay|ok|broken|failing|failure|errors?|wrong|stale|backed up|diagnostics?)\b/u.test(normalized)
+    || /\b(?:status|health|healthy|alive|up|down)\s+(?:of\s+)?(?:backend|runtime|workers?|job runners?|queue|backlog|pending jobs?)\b/u.test(normalized)
     || /\b(?:server|app)\s+(?:status|health|healthy|alive|up|down|broken|failing|failure|errors?)\b/u.test(normalized)
     || /\b(?:status|health|healthy|alive|up|down)\s+(?:server|app)\b/u.test(normalized)
   );
