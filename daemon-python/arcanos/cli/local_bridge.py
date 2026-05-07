@@ -12,14 +12,18 @@ import queue
 import subprocess
 import threading
 import time
-import tempfile
 import uuid
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 from arcanos.debug import log_audit_event
-from ..terminal import TerminalController
+from .cli_policy import (
+    command_to_argv,
+    evaluate_command_policy,
+    redact_output,
+    validate_patch_text,
+)
 
 
 DEFAULT_BRIDGE_HOST = "127.0.0.1"
@@ -39,6 +43,7 @@ BRIDGE_TOKEN_HEADER = "x-arcanos-cli-bridge-token"
 class BridgeJob:
     audit_id: str
     command: str
+    proposal_id: str
     timeout: int
     cwd: str | None
     done: threading.Event
@@ -49,6 +54,7 @@ class BridgeJob:
 class BridgePatchJob:
     audit_id: str
     patch: str
+    proposal_id: str
     timeout: int
     cwd: str | None
     done: threading.Event
@@ -103,7 +109,6 @@ class LocalBridge:
         self.port = int(port)
         self.bridge_token = os.environ.get(BRIDGE_TOKEN_ENV, "").strip()
         self.jobs: queue.Queue[BridgeJob | BridgePatchJob | None] = queue.Queue(maxsize=MAX_PENDING_JOBS)
-        self.terminal = TerminalController()
         self._worker = threading.Thread(target=self._worker_loop, daemon=True, name="local-bridge-worker")
 
     def serve_forever(self) -> None:
@@ -146,6 +151,7 @@ class LocalBridge:
                         audit_id=f"bridge-{uuid.uuid4().hex[:12]}",
                     ),
                 )
+                log_audit_event("daemon.health.checked", status="ready")
 
             def do_POST(self) -> None:
                 start = time.perf_counter()
@@ -173,6 +179,20 @@ class LocalBridge:
                             duration_ms=_elapsed_ms(start),
                             audit_id=audit_id,
                             stderr="Bridge token is required",
+                        ),
+                    )
+                    return
+                content_type = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+                if content_type != "application/json":
+                    self._send_json(
+                        415,
+                        _empty_response(
+                            ok=False,
+                            status="unsupported_media_type",
+                            exit_code=1,
+                            duration_ms=_elapsed_ms(start),
+                            audit_id=audit_id,
+                            stderr="Content-Type must be application/json",
                         ),
                     )
                     return
@@ -208,6 +228,7 @@ class LocalBridge:
 
                 command = payload.get("command")
                 patch = payload.get("patch")
+                proposal_id = payload.get("proposalId")
                 is_patch_apply = self.path == "/patches/apply"
                 if not is_patch_apply and (not isinstance(command, str) or not command.strip()):
                     self._send_json(
@@ -232,6 +253,19 @@ class LocalBridge:
                             duration_ms=_elapsed_ms(start),
                             audit_id=audit_id,
                             stderr="Missing patch",
+                        ),
+                    )
+                    return
+                if not isinstance(proposal_id, str) or not proposal_id.strip():
+                    self._send_json(
+                        400,
+                        _empty_response(
+                            ok=False,
+                            status="proposal_required",
+                            exit_code=1,
+                            duration_ms=_elapsed_ms(start),
+                            audit_id=audit_id,
+                            stderr="proposalId is required",
                         ),
                     )
                     return
@@ -268,19 +302,111 @@ class LocalBridge:
                     return
                 job: BridgeJob | BridgePatchJob
                 if is_patch_apply:
+                    patch_decision = validate_patch_text(patch, resolved_cwd)
+                    expected_proposal_id = _hash_proposal({"kind": "patch", "patch": patch, "cwd": resolved_cwd})
+                    if proposal_id.strip() != expected_proposal_id:
+                        self._send_json(
+                            400,
+                            _empty_response(
+                                ok=False,
+                                status="proposal_mismatch",
+                                exit_code=1,
+                                duration_ms=_elapsed_ms(start),
+                                audit_id=audit_id,
+                                stderr="proposalId does not match patch and cwd",
+                            ),
+                        )
+                        return
+                    if not patch_decision.allowed:
+                        log_audit_event(
+                            "daemon.patch.denied",
+                            audit_id=audit_id,
+                            proposal_id=proposal_id.strip(),
+                            patch_hash=patch_decision.patch_hash,
+                            reason=patch_decision.reason,
+                            file_count=len(patch_decision.files),
+                        )
+                        self._send_json(
+                            400,
+                            _empty_response(
+                                ok=False,
+                                status="denied",
+                                exit_code=1,
+                                duration_ms=_elapsed_ms(start),
+                                audit_id=audit_id,
+                                stderr=patch_decision.reason or "Patch denied by policy",
+                            ),
+                        )
+                        return
+                    log_audit_event(
+                        "daemon.patch.proposed",
+                        audit_id=audit_id,
+                        proposal_id=proposal_id.strip(),
+                        patch_hash=patch_decision.patch_hash,
+                        file_count=len(patch_decision.files),
+                    )
                     job = BridgePatchJob(
                         audit_id=audit_id,
                         patch=patch,
+                        proposal_id=proposal_id.strip(),
                         timeout=timeout,
                         cwd=resolved_cwd,
                         done=threading.Event(),
                     )
                 else:
+                    command_decision = evaluate_command_policy(command.strip(), resolved_cwd, timeout * 1000)
+                    expected_proposal_id = _hash_proposal({"kind": "command", "command": command.strip(), "cwd": command_decision.cwd})
+                    if proposal_id.strip() != expected_proposal_id:
+                        self._send_json(
+                            400,
+                            _empty_response(
+                                ok=False,
+                                status="proposal_mismatch",
+                                exit_code=1,
+                                duration_ms=_elapsed_ms(start),
+                                audit_id=audit_id,
+                                stderr="proposalId does not match command and cwd",
+                            ),
+                        )
+                        return
+                    if not command_decision.allowed:
+                        log_audit_event(
+                            "daemon.command.denied",
+                            audit_id=audit_id,
+                            proposal_id=proposal_id.strip(),
+                            command_hash=hashlib.sha256(command.strip().encode("utf-8")).hexdigest(),
+                            reason=command_decision.reason,
+                        )
+                        self._send_json(
+                            400,
+                            _empty_response(
+                                ok=False,
+                                status="denied",
+                                exit_code=1,
+                                duration_ms=_elapsed_ms(start),
+                                audit_id=audit_id,
+                                stderr=command_decision.reason or "Command denied by policy",
+                            ),
+                        )
+                        return
+                    log_audit_event(
+                        "daemon.command.proposed",
+                        audit_id=audit_id,
+                        proposal_id=proposal_id.strip(),
+                        command_hash=hashlib.sha256(command.strip().encode("utf-8")).hexdigest(),
+                    )
+                    log_audit_event(
+                        "daemon.command.confirmation_required",
+                        audit_id=audit_id,
+                        proposal_id=proposal_id.strip(),
+                        command_hash=hashlib.sha256(command.strip().encode("utf-8")).hexdigest(),
+                    )
                     job = BridgeJob(
                         audit_id=audit_id,
                         command=command.strip(),
+                        proposal_id=proposal_id.strip(),
                         timeout=timeout,
-                        cwd=resolved_cwd,
+                        cwd=command_decision.cwd,
                         done=threading.Event(),
                     )
                 try:
@@ -376,13 +502,19 @@ class LocalBridge:
                     audit_id=job.audit_id,
                 )
             except Exception as exc:
+                failed_event = "daemon.patch.failed" if isinstance(job, BridgePatchJob) else "daemon.command.failed"
+                log_audit_event(
+                    failed_event,
+                    audit_id=job.audit_id,
+                    error_type=type(exc).__name__,
+                )
                 job.result = _empty_response(
                     ok=False,
                     status="error",
                     exit_code=1,
                     duration_ms=_elapsed_ms(start),
                     audit_id=job.audit_id,
-                    stderr=str(exc),
+                    stderr="Bridge execution failed",
                 )
             finally:
                 job.done.set()
@@ -392,51 +524,65 @@ class LocalBridge:
 
     def _apply_patch(self, job: BridgePatchJob) -> tuple[str | None, str | None, int]:
         cwd = _resolve_sandboxed_cwd(job.cwd)
-        fd, patch_path = tempfile.mkstemp(suffix=".patch", prefix="arcanos_bridge_")
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8", errors="replace") as handle:
-                handle.write(job.patch)
-            safe_patch_path = patch_path.replace('"', "")
-            return self._execute_bounded(
-                f'git apply --whitespace=nowarn "{safe_patch_path}"',
-                cwd,
-                job.timeout,
-            )
-        finally:
-            try:
-                os.unlink(patch_path)
-            except OSError:
-                pass
+        patch_decision = validate_patch_text(job.patch, cwd)
+        if not patch_decision.allowed:
+            raise ValueError(patch_decision.reason or "Patch denied by policy")
+        log_audit_event(
+            "daemon.patch.confirmation_required",
+            audit_id=job.audit_id,
+            proposal_id=job.proposal_id,
+            patch_hash=patch_decision.patch_hash,
+        )
+        start = time.perf_counter()
+        process = subprocess.run(
+            ["git", "apply", "--whitespace=nowarn", "-"],
+            input=job.patch,
+            text=True,
+            capture_output=True,
+            cwd=cwd,
+            timeout=job.timeout,
+            encoding="utf-8",
+            errors="replace",
+        )
+        stdout = redact_output((process.stdout or "").strip())
+        stderr = redact_output((process.stderr or "").strip())
+        event = "daemon.patch.applied" if process.returncode == 0 else "daemon.patch.failed"
+        log_audit_event(
+            event,
+            audit_id=job.audit_id,
+            proposal_id=job.proposal_id,
+            patch_hash=patch_decision.patch_hash,
+            duration_ms=_elapsed_ms(start),
+            return_code=process.returncode,
+        )
+        return stdout, stderr, process.returncode
 
     def _execute_bounded(self, command: str, cwd: str, timeout: int) -> tuple[str | None, str | None, int]:
         command_hash = hashlib.sha256(command.encode("utf-8")).hexdigest()
-        is_safe, reason = self.terminal.is_command_safe(command)
-        if not is_safe:
+        decision = evaluate_command_policy(command, cwd, timeout * 1000)
+        if not decision.allowed:
             log_audit_event(
-                "command_attempt",
+                "daemon.command.denied",
                 command_hash=command_hash,
                 command_length=len(command),
-                safe=False,
-                reason_if_blocked=reason,
+                reason=decision.reason,
                 source="local_bridge",
                 outcome="blocked",
             )
-            raise ValueError(reason)
+            raise ValueError(decision.reason or "Command denied by policy")
 
         log_audit_event(
-            "command_attempt",
+            "daemon.command.started",
             command_hash=command_hash,
             command_length=len(command),
-            safe=True,
+            cwd=decision.cwd,
             source="local_bridge",
             outcome="attempting",
         )
-        shell = self.terminal._detect_shell()
-        full_command = self.terminal._build_shell_command(shell, command)
         try:
             process = subprocess.Popen(
-                full_command,
-                cwd=cwd,
+                command_to_argv(command),
+                cwd=decision.cwd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -445,10 +591,9 @@ class LocalBridge:
             )
         except Exception as exc:
             log_audit_event(
-                "command_executed",
+                "daemon.command.failed",
                 command_hash=command_hash,
                 command_length=len(command),
-                safe=True,
                 source="local_bridge",
                 outcome="error",
                 error_type=type(exc).__name__,
@@ -489,10 +634,9 @@ class LocalBridge:
             except subprocess.TimeoutExpired:
                 pass
             log_audit_event(
-                "command_executed",
+                "daemon.command.timeout",
                 command_hash=command_hash,
                 command_length=len(command),
-                safe=True,
                 source="local_bridge",
                 outcome="timeout",
                 return_code=None,
@@ -500,17 +644,16 @@ class LocalBridge:
             raise TimeoutError(f"Command timed out after {timeout} seconds")
         stdout_thread.join(timeout=1)
         stderr_thread.join(timeout=1)
-        stdout = "".join(stdout_chunks).strip()
-        stderr = "".join(stderr_chunks).strip()
+        stdout = redact_output("".join(stdout_chunks).strip())
+        stderr = redact_output("".join(stderr_chunks).strip())
         if stdout_truncated:
             stdout = f"{stdout}\n[truncated]"
         if stderr_truncated:
             stderr = f"{stderr}\n[truncated]"
         log_audit_event(
-            "command_executed",
+            "daemon.command.completed",
             command_hash=command_hash,
             command_length=len(command),
-            safe=True,
             source="local_bridge",
             outcome="completed",
             return_code=return_code,
@@ -520,8 +663,8 @@ class LocalBridge:
 
 def _coerce_timeout(raw_timeout: Any) -> int:
     if isinstance(raw_timeout, int) and raw_timeout > 0:
-        return min(raw_timeout, DEFAULT_TIMEOUT_SECONDS)
-    return DEFAULT_TIMEOUT_SECONDS
+        return max(1, int(evaluate_command_policy("git status", timeout_ms=raw_timeout * 1000).timeout_ms / 1000))
+    return max(1, int(evaluate_command_policy("git status").timeout_ms / 1000))
 
 
 def _elapsed_ms(start: float) -> int:
@@ -529,19 +672,15 @@ def _elapsed_ms(start: float) -> int:
 
 
 def _resolve_sandboxed_cwd(cwd: str | None) -> str:
-    sandbox_root = os.path.realpath(os.path.abspath(
-        os.environ.get("ARCANOS_CLI_SANDBOX_ROOT")
-        or os.environ.get("ARCANOS_WORKSPACE_ROOT")
-        or os.getcwd()
-    ))
-    requested = os.path.realpath(os.path.abspath(cwd or sandbox_root))
-    try:
-        common = os.path.commonpath([sandbox_root, requested])
-    except ValueError:
-        common = ""
-    if common != sandbox_root:
+    decision = evaluate_command_policy("git status", cwd=cwd)
+    if not decision.allowed and decision.reason == "cwd_outside_workspace":
         raise ValueError("cwd outside ARCANOS CLI sandbox")
-    return requested
+    return decision.cwd
+
+
+def _hash_proposal(value: dict[str, Any]) -> str:
+    body = json.dumps(value, separators=(",", ":"), ensure_ascii=False)
+    return f"cli-{hashlib.sha256(body.encode('utf-8')).hexdigest()[:16]}"
 
 
 def run_local_bridge(host: str = DEFAULT_BRIDGE_HOST, port: int = DEFAULT_BRIDGE_PORT) -> None:

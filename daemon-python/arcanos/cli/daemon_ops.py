@@ -4,6 +4,9 @@ Daemon heartbeat, polling, and command lifecycle operations.
 
 from __future__ import annotations
 
+import hashlib
+import json
+import os
 import threading
 import time
 from typing import TYPE_CHECKING
@@ -220,7 +223,13 @@ def handle_daemon_command(cli: "ArcanosCLI", command: DaemonCommand) -> None:
 
     elif command_name == "run":
         command_text = command_payload.get("command") if isinstance(command_payload, dict) else None
+        proposal_id = command_payload.get("proposalId") if isinstance(command_payload, dict) else None
         if isinstance(command_text, str) and command_text.strip():
+            cwd = os.path.realpath(os.getcwd())
+            expected_proposal_id = _hash_command_proposal(command_text.strip(), cwd)
+            if proposal_id != expected_proposal_id:
+                cli.console.print("[yellow]Run command rejected: proposalId mismatch or missing[/yellow]")
+                return
             cli.handle_run(command_text.strip())
         else:
             cli.console.print("[yellow]Run command missing 'command' payload[/yellow]")
@@ -255,6 +264,14 @@ def handle_daemon_command(cli: "ArcanosCLI", command: DaemonCommand) -> None:
 
     else:
         cli.console.print(f"[yellow]Unsupported command: {command_name}[/yellow]")
+
+
+def _hash_command_proposal(command_text: str, cwd: str) -> str:
+    payload = json.dumps(
+        {"kind": "command", "command": command_text, "cwd": cwd},
+        separators=(",", ":"),
+    )
+    return f"cli-{hashlib.sha256(payload.encode('utf-8')).hexdigest()[:16]}"
 
 
 def stop_daemon_service(cli: "ArcanosCLI") -> None:

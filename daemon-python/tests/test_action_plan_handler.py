@@ -46,13 +46,24 @@ class TestHandleActionPlan:
             },
         }
 
-    def test_executes_allowed_plan(self):
+    def test_terminal_run_allowed_plan_still_requires_confirmation(self):
         plan_data = self._make_plan_data("allow")
         handle_action_plan(
             plan_data, self.console, self.backend_client,
             "inst-1", self.run_handler, self.confirm_prompt,
         )
+        self.confirm_prompt.assert_called_once()
         self.run_handler.assert_called_once_with("echo hello")
+
+    def test_terminal_run_rejects_without_confirmation(self):
+        plan_data = self._make_plan_data("allow")
+        self.confirm_prompt.return_value = False
+        handle_action_plan(
+            plan_data, self.console, self.backend_client,
+            "inst-1", self.run_handler, self.confirm_prompt,
+        )
+        self.confirm_prompt.assert_called_once()
+        self.run_handler.assert_not_called()
 
     def test_rejects_blocked_plan(self):
         plan_data = self._make_plan_data("block")
@@ -73,7 +84,7 @@ class TestHandleActionPlan:
             plan_data, self.console, self.backend_client,
             "inst-1", self.run_handler, self.confirm_prompt,
         )
-        self.confirm_prompt.assert_called_once()
+        assert self.confirm_prompt.call_count == 2
         self.run_handler.assert_called_once()
 
     def test_user_can_reject_confirmation(self):

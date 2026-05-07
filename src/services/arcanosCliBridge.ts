@@ -16,13 +16,11 @@ const SERVICE_VERSION = '0.1.0';
 const DEFAULT_BRIDGE_URL = 'http://127.0.0.1:8765';
 const DEFAULT_OUTPUT_MAX_BYTES = 20000;
 const DEFAULT_TIMEOUT_MS = 30000;
-const MAX_PATCH_BYTES = 200_000;
 const POLICY_PATH = path.resolve(process.cwd(), 'config', 'cli-policy.json');
 const LOOPBACK_BRIDGE_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
 const BRIDGE_TOKEN_HEADER = 'x-arcanos-cli-bridge-token';
 const BIDI_CONTROL_PATTERN = /[\u202A-\u202E\u2066-\u2069]/u;
 const SECRET_VALUE_KEY_PATTERN = /(?:authorization|cookie|password|secret|token|api[_-]?key|private[_-]?key|database[_-]?url|railway[_-]?token|openai[_-]?api[_-]?key)/iu;
-const SECRET_PATCH_PATH_PATTERN = /(?:^|\/)(?:\.env(?:\..*)?|\.npmrc|\.pypirc|\.netrc|\.ssh\/.+|[^/]*(?:secret|token|credential|private[_-]?key)[^/]*)$/iu;
 
 const READONLY_REPO_TOOLS = new Set([
   'doctor.implementation',
@@ -185,6 +183,7 @@ export async function runArcanosCliApprovedCommand(payload: unknown) {
   const commandPayload = normalizeCommandPayload(payload);
   return redactAndCap(await postBridgeJson('/commands/run', {
     command: commandPayload.command,
+    proposalId: proposal.proposalId,
     cwd: proposal.cwd,
     timeoutSeconds: Math.ceil(proposal.timeoutMs / 1000)
   }));
@@ -199,7 +198,7 @@ export function proposeArcanosCliPatch(payload: unknown) {
     timeoutMs: patchPayload.timeoutMs,
     policy: loadCliPolicy()
   });
-  const safePatch = validatePatchText(patchPayload.patch);
+  const safePatch = validatePatchText(patchPayload.patch, loadCliPolicy());
   const proposalId = hashProposal({ kind: 'patch', patch: patchPayload.patch, cwd: cwdDecision.cwd });
 
   return {
@@ -236,6 +235,7 @@ export async function applyArcanosCliApprovedPatch(payload: unknown) {
   const patchPayload = normalizePatchPayload(payload);
   return redactAndCap(await postBridgeJson('/patches/apply', {
     patch: patchPayload.patch,
+    proposalId: proposal.proposalId,
     cwd: proposal.cwd,
     timeoutSeconds: Math.ceil(proposal.timeoutMs / 1000)
   }));
@@ -318,30 +318,36 @@ function normalizePatchPayload(payload: unknown): NormalizedPatchPayload {
   };
 }
 
-function validatePatchText(patch: string): { allowed: boolean; reason?: string } {
+function validatePatchText(patch: string, policy: CliPolicyConfig = loadCliPolicy()): { allowed: boolean; reason?: string } {
   if (BIDI_CONTROL_PATTERN.test(patch)) {
     return { allowed: false, reason: 'patch_contains_unsupported_control_character' };
   }
-  if (Buffer.byteLength(patch, 'utf8') > MAX_PATCH_BYTES) {
+  if (Buffer.byteLength(patch, 'utf8') > policy.patchPolicy.maxBytes) {
     return { allowed: false, reason: 'patch_too_large' };
   }
-  const unsafePathReason = validatePatchPaths(patch);
+  const unsafePathReason = validatePatchPaths(patch, policy);
   if (unsafePathReason) {
     return { allowed: false, reason: unsafePathReason };
   }
-  if (/^diff --git a\/\.env\b|^\+\+\+ b\/\.env\b|^--- a\/\.env\b/im.test(patch)) {
-    return { allowed: false, reason: 'patch_targets_env_file' };
-  }
-  if (/BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY/i.test(patch)) {
-    return { allowed: false, reason: 'patch_contains_private_key' };
-  }
-  if (/^new file mode 120000$/im.test(patch)) {
-    return { allowed: false, reason: 'patch_symlink_not_allowed' };
+  for (const pattern of policy.patchPolicy.denyContentPatterns) {
+    const expression = new RegExp(pattern, 'imu');
+    if (expression.test(patch)) {
+      if (/binary/iu.test(pattern)) {
+        return { allowed: false, reason: 'patch_binary_not_allowed' };
+      }
+      if (/120000/u.test(pattern)) {
+        return { allowed: false, reason: 'patch_symlink_not_allowed' };
+      }
+      if (/PRIVATE KEY/iu.test(pattern)) {
+        return { allowed: false, reason: 'patch_contains_private_key' };
+      }
+      return { allowed: false, reason: 'patch_denied_by_policy' };
+    }
   }
   return { allowed: true };
 }
 
-function validatePatchPaths(patch: string): string | null {
+function validatePatchPaths(patch: string, policy: CliPolicyConfig): string | null {
   for (const line of patch.split(/\r?\n/u)) {
     const match = /^(?:diff --git a\/(.+?) b\/(.+)|(?:---|\+\+\+) (?:a|b)\/(.+))$/u.exec(line);
     const headerMatch = /^(?:---|\+\+\+) ([^\t ]+)/u.exec(line);
@@ -362,14 +368,10 @@ function validatePatchPaths(patch: string): string | null {
       ) {
         return 'patch_path_outside_sandbox';
       }
-      if (SECRET_PATCH_PATH_PATTERN.test(normalizedPath)) {
+      if (policy.patchPolicy.secretPathPatterns.some((pattern) => new RegExp(pattern, 'iu').test(normalizedPath))) {
         return 'patch_targets_secret_file';
       }
     }
-  }
-
-  if (/^GIT binary patch$/im.test(patch) || /^literal \d+$/im.test(patch)) {
-    return 'patch_binary_not_allowed';
   }
 
   return null;
@@ -464,6 +466,10 @@ function mergeCliPolicyConfig(partial: Partial<CliPolicyConfig>): CliPolicyConfi
     redactionPolicy: {
       ...DEFAULT_CLI_POLICY.redactionPolicy,
       ...(partial.redactionPolicy ?? {})
+    },
+    patchPolicy: {
+      ...DEFAULT_CLI_POLICY.patchPolicy,
+      ...(partial.patchPolicy ?? {})
     }
   };
 }

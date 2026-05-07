@@ -23,6 +23,11 @@ export interface CliPolicyConfig {
     replacement: string;
     envNames: string[];
   };
+  patchPolicy: {
+    maxBytes: number;
+    secretPathPatterns: string[];
+    denyContentPatterns: string[];
+  };
 }
 
 export interface CliCommandPolicyInput {
@@ -104,6 +109,18 @@ export const DEFAULT_CLI_POLICY: CliPolicyConfig = {
       "DATABASE_URL",
       "OPENAI_API_KEY",
       "RAILWAY_TOKEN"
+    ]
+  },
+  patchPolicy: {
+    maxBytes: 200000,
+    secretPathPatterns: [
+      "(?:^|/)(?:\\.env(?:\\..*)?|\\.npmrc|\\.pypirc|\\.netrc|\\.ssh/.+|id_rsa|id_ed25519|[^/]*(?:secret|token|credential|private[_-]?key)[^/]*|[^/]*\\.(?:pem|key|p12|pfx))$"
+    ],
+    denyContentPatterns: [
+      "BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY",
+      "^GIT binary patch$",
+      "^Binary files ",
+      "^new file mode 120000$"
     ]
   }
 };

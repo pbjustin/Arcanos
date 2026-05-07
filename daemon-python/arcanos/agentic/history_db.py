@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from ..config import Config
+from ..cli.cli_policy import redact_output, redact_patch_preview
 from ..utils.text import sanitize_utf8_text
 
 
@@ -25,7 +26,7 @@ def _sanitize_json_value(value: Any) -> Any:
     Edge cases: Non-container values pass through unchanged.
     """
     if isinstance(value, str):
-        return sanitize_utf8_text(value)
+        return sanitize_utf8_text(redact_output(value))
     if isinstance(value, list):
         return [_sanitize_json_value(item) for item in value]
     if isinstance(value, dict):
@@ -174,10 +175,10 @@ class HistoryDB:
     ) -> str:
         cmd_id = str(uuid.uuid4())
         normalized_session_id = sanitize_utf8_text(session_id)
-        normalized_command = sanitize_utf8_text(command)
+        normalized_command = sanitize_utf8_text(redact_output(command))
         normalized_status = sanitize_utf8_text(status)
-        normalized_stdout = sanitize_utf8_text(stdout)
-        normalized_stderr = sanitize_utf8_text(stderr)
+        normalized_stdout = sanitize_utf8_text(redact_output(stdout))
+        normalized_stderr = sanitize_utf8_text(redact_output(stderr))
         with self._conn() as c:
             c.execute(
                 "INSERT INTO commands(id, session_id, ts_ms, command, status, return_code, stdout, stderr) "
@@ -210,14 +211,15 @@ class HistoryDB:
         patch_sha256: Optional[str] = None,
         error: Optional[str] = None,
     ) -> None:
-        normalized_patch_text = sanitize_utf8_text(patch_text or "")
+        raw_patch_text = patch_text or ""
+        normalized_patch_text = sanitize_utf8_text(redact_patch_preview(raw_patch_text))
         normalized_summary = sanitize_utf8_text(summary)
         normalized_error = sanitize_utf8_text(error) if isinstance(error, str) else None
         normalized_session_id = sanitize_utf8_text(session_id)
         sanitized_files = _sanitize_json_value(files)
         sanitized_backups = _sanitize_json_value(backups)
         if patch_sha256 is None:
-            patch_sha256 = hashlib.sha256(normalized_patch_text.encode("utf-8")).hexdigest()
+            patch_sha256 = hashlib.sha256(raw_patch_text.encode("utf-8")).hexdigest()
         with self._conn() as c:
             c.execute(
                 "INSERT OR REPLACE INTO patches(rollback_id, session_id, ts_ms, status, summary, files_json, backups_json, patch_text, patch_sha256, error) "
@@ -261,7 +263,7 @@ class HistoryDB:
     def get_patch(self, rollback_id: str) -> Optional[dict[str, Any]]:
         with self._conn() as c:
             row = c.execute(
-                "SELECT rollback_id, files_json, backups_json, patch_text FROM patches WHERE rollback_id=?",
+                "SELECT rollback_id, files_json, backups_json, patch_sha256 FROM patches WHERE rollback_id=?",
                 (rollback_id,),
             ).fetchone()
         if not row:
@@ -270,7 +272,7 @@ class HistoryDB:
             "rollback_id": row[0],
             "files": json.loads(row[1] or "[]"),
             "backups": json.loads(row[2] or "{}"),
-            "patch_text": row[3] or "",
+            "patch_sha256": row[3] or "",
         }
 
     # -----------------------

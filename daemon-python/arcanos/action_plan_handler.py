@@ -10,6 +10,9 @@ Handles action_plan commands from the backend:
 from __future__ import annotations
 
 import uuid
+import hashlib
+import json
+import os
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional, TYPE_CHECKING
 
@@ -70,7 +73,7 @@ def handle_action_plan(
             return
 
     # Execute plan
-    _execute_plan(plan, console, backend_client, instance_id, run_handler)
+    _execute_plan(plan, console, backend_client, instance_id, run_handler, confirm_prompt)
 
 
 def _reject_plan(
@@ -150,6 +153,7 @@ def _execute_plan(
     backend_client: Optional["BackendApiClient"],
     instance_id: str,
     run_handler: Callable[[str], None],
+    confirm_prompt: Callable[[str], bool],
 ) -> None:
     """Execute each action in the plan sequentially."""
     console.print(
@@ -170,8 +174,22 @@ def _execute_plan(
             if action.capability == "terminal.run":
                 command = action.params.get("command", "")
                 if isinstance(command, str) and command.strip():
-                    run_handler(command.strip())
-                    result_output = {"command": command}
+                    cwd = os.path.realpath(os.getcwd())
+                    normalized_command = command.strip()
+                    proposal_id = _hash_action_proposal(plan.plan_id, action.action_id, normalized_command, cwd)
+                    approved = confirm_prompt(
+                        "Run terminal command? "
+                        f"proposal_id={proposal_id} "
+                        f"command_sha256={hashlib.sha256(normalized_command.encode('utf-8')).hexdigest()} "
+                        f"cwd={cwd}"
+                    )
+                    if not approved:
+                        result_status = "failure"
+                        result_error = {"reason": "terminal.run confirmation denied", "proposal_id": proposal_id}
+                        console.print("    [yellow]terminal.run rejected by user[/yellow]")
+                    else:
+                        run_handler(normalized_command)
+                        result_output = {"command_sha256": hashlib.sha256(normalized_command.encode("utf-8")).hexdigest(), "proposal_id": proposal_id}
                 else:
                     result_status = "failure"
                     result_error = {"reason": "Missing or empty command param"}
@@ -214,3 +232,12 @@ def _execute_plan(
         console.print(f"    [{status_color}]{result_status}[/{status_color}]")
 
     console.print(f"[green]ActionPlan {plan.plan_id} completed[/green]")
+
+
+def _hash_action_proposal(plan_id: str, action_id: str, command: str, cwd: str) -> str:
+    payload = json.dumps(
+        {"plan_id": plan_id, "action_id": action_id, "command": command, "cwd": cwd},
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return f"action-{hashlib.sha256(payload.encode('utf-8')).hexdigest()[:16]}"

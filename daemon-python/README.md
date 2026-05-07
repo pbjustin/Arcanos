@@ -120,9 +120,12 @@ diff --git a/path/to/file.py b/path/to/file.py
 
 The CLI will:
 1) extract patches
-2) show a preview
-3) prompt: **Apply patch? [y/N]**
-4) on approval: create backups in `PATCH_BACKUP_DIR/<rollback_id>/...` and apply via `git apply`
+2) validate target paths and patch content against `../config/cli-policy.json`
+3) show only a redacted preview plus the patch SHA-256
+4) require the exact patch SHA-256 before the final **Apply patch? [y/N]** prompt
+5) on approval: create backups in `PATCH_BACKUP_DIR/<rollback_id>/...` and apply via `git apply`
+
+Patch proposals targeting secret-like paths such as `.env`, `.npmrc`, `.ssh/*`, token/credential/private-key files, `.git`, absolute paths, path traversal, symlinks, or binary patches are rejected before preview. History stores the proposal id/rollback id, patch hash, file summary, redacted preview, approval state, timestamp, and backups metadata. Raw patch text is not stored.
 
 Rollback:
 ```text
@@ -134,7 +137,36 @@ Commands are detected from:
 - ```bash fenced blocks
 - a simple `Command:` suggestion
 
-The CLI prompts **Run? [y/N]** and executes only allowlisted commands.
+The CLI prompts **Run? [y/N]** and executes only allowlisted commands. ActionPlan `terminal.run`, backend-polled `run`, natural-language run intents, and local bridge `/commands/run` all require proposal binding before execution. Bridge command confirmations bind to the exact command, cwd, and `proposalId`; changed commands or cwd values are rejected.
+
+Command policy is loaded from `../config/cli-policy.json`, shared with the TypeScript backend. The policy defines:
+- sandbox root behavior
+- allowed command prefixes
+- deny regexes
+- default and maximum timeouts
+- output redaction and truncation
+- patch safety rules
+
+If the policy cannot be loaded, daemon command and patch execution fail closed.
+
+## Local bridge safety
+
+The HTTP bridge is local-only:
+- binds only to `127.0.0.1`, `localhost`, or `::1`
+- requires `ARCANOS_CLI_BRIDGE_TOKEN` for POST requests
+- accepts only `application/json`
+- enforces request body limits, sandboxed cwd, per-command timeout caps, output caps, redaction, and deterministic JSON errors
+- never returns raw tracebacks
+
+Rotate the bridge token by replacing `ARCANOS_CLI_BRIDGE_TOKEN` in the local daemon environment and restarting the daemon and any backend process that calls it. Disable bridge execution by omitting the token, stopping the bridge, or setting backend `ARCANOS_CLI_BRIDGE_ENABLED=false`.
+
+## Audit and history safety
+
+Daemon audit events use sanitized metadata only. Command output is redacted and truncated before history storage. Patch history stores redacted previews and SHA-256 hashes instead of raw patch text. Audit exports omit command output and raw patch text.
+
+Useful events include `daemon.health.checked`, `daemon.policy.loaded`, `daemon.command.proposed`, `daemon.command.denied`, `daemon.command.started`, `daemon.command.completed`, `daemon.command.failed`, `daemon.command.timeout`, `daemon.patch.proposed`, `daemon.patch.denied`, `daemon.patch.applied`, and `daemon.patch.failed`.
+
+To add an allowlisted command, update `../config/cli-policy.json` under `commandPolicy.allowPrefixes`, then run the daemon and backend CLI validation tests. Keep commands read-only by default and add mutating commands only with an explicit confirmation workflow.
 
 ## Multi-step reasoning loop
 When the assistant proposes patches/commands, the CLI:

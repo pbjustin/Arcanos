@@ -380,8 +380,9 @@ def process_input(cli: "ArcanosCLI", user_input: str) -> None:
     if intent:
         intent_name, intent_payload = intent
         if intent_name == "run" and intent_payload:
-            # //audit assumption: run intent with payload should execute command; risk: empty payload; invariant: execute when present; strategy: guard.
-            cli.handle_run(intent_payload)
+            # //audit assumption: natural-language run intents are sensitive; risk: bypassing slash-run confirmation; invariant: use the same safety gate as /run; strategy: route through preflight.
+            if _allow_slash_run_command(cli, intent_payload):
+                cli.handle_run(intent_payload)
         elif intent_name == "see_screen":
             cli.handle_see([])
         elif intent_name == "see_camera":

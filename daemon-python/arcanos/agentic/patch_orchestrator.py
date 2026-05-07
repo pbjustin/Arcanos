@@ -13,6 +13,7 @@ from rich.console import Console
 from rich.syntax import Syntax
 
 from ..config import Config
+from ..cli.cli_policy import validate_patch_text
 from .history_db import HistoryDB
 from .policy_guard import PolicyGuard
 
@@ -66,6 +67,25 @@ class PatchOrchestrator:
 
     def apply_with_approval(self, session_id: str, patch_text: str, summary: str = "") -> ApplyResult:
         rollback_id = str(uuid.uuid4())
+        repo_root = _find_repo_root(Path.cwd())
+        patch_decision = validate_patch_text(patch_text, str(repo_root))
+        files = patch_decision.files or _parse_files_from_patch(patch_text)
+
+        if not patch_decision.allowed:
+            self.console.print(f"[red]Patch blocked:[/red] {patch_decision.reason}")
+            self.history.log_patch(
+                session_id=session_id,
+                rollback_id=rollback_id,
+                status="blocked",
+                summary=summary or "blocked",
+                files=files,
+                backups={},
+                patch_text=patch_text,
+                patch_sha256=patch_decision.patch_hash,
+                error=patch_decision.reason,
+            )
+            self.guard.record_failure(session_id, "patch", {"reason": patch_decision.reason, "rollback_id": rollback_id})
+            return ApplyResult(ok=False, rollback_id=rollback_id, files=files, backups={}, error=patch_decision.reason)
 
         decision = self.guard.check_patch(session_id, patch_text)
         if not decision.allowed:
@@ -78,15 +98,15 @@ class PatchOrchestrator:
                 files=[],
                 backups={},
                 patch_text=patch_text,
+                patch_sha256=patch_decision.patch_hash,
                 error=decision.reason,
             )
             self.guard.record_failure(session_id, "patch", {"reason": decision.reason, "rollback_id": rollback_id})
-            return ApplyResult(ok=False, rollback_id=rollback_id, files=[], backups={}, error=decision.reason)
-
-        files = _parse_files_from_patch(patch_text)
+            return ApplyResult(ok=False, rollback_id=rollback_id, files=files, backups={}, error=decision.reason)
 
         self.console.print("\n[bold]=== ARCANOS PATCH PROPOSAL ===[/bold]")
-        self.console.print(Syntax(patch_text, "diff", line_numbers=False))
+        self.console.print(f"[dim]patch_sha256={patch_decision.patch_hash} files={len(files)}[/dim]")
+        self.console.print(Syntax(patch_decision.redacted_preview, "diff", line_numbers=False))
 
         # //audit assumption: patch application requires explicit operator confirmation; failure risk: non-interactive sessions apply changes without review; expected invariant: patches are denied when confirmation input is unavailable; handling strategy: fail closed before prompts.
         if not sys.stdin or not sys.stdin.isatty():
@@ -100,23 +120,58 @@ class PatchOrchestrator:
                 files,
                 {},
                 patch_text,
+                patch_sha256=patch_decision.patch_hash,
                 error=denial_reason,
             )
             return ApplyResult(ok=False, rollback_id=rollback_id, files=files, backups={}, error=denial_reason)
 
         if decision.requires_extra_confirm:
             self.console.print("[yellow]Large patch detected — extra confirmation required.[/yellow]")
-            extra = input("Type APPLY to continue: ").strip()
-            if extra != "APPLY":
-                self.history.log_patch(session_id, rollback_id, "denied", summary or "user denied", files, {}, patch_text, error="denied")
-                return ApplyResult(ok=False, rollback_id=rollback_id, files=files, backups={}, error="denied")
+            extra = input(f"Type patch SHA-256 to continue ({patch_decision.patch_hash}): ").strip()
+            if extra != patch_decision.patch_hash:
+                self.history.log_patch(
+                    session_id,
+                    rollback_id,
+                    "denied",
+                    summary or "user denied",
+                    files,
+                    {},
+                    patch_text,
+                    patch_sha256=patch_decision.patch_hash,
+                    error="patch_hash_mismatch",
+                )
+                return ApplyResult(ok=False, rollback_id=rollback_id, files=files, backups={}, error="patch_hash_mismatch")
+        else:
+            exact = input(f"Confirm patch SHA-256 ({patch_decision.patch_hash}): ").strip()
+            if exact != patch_decision.patch_hash:
+                self.history.log_patch(
+                    session_id,
+                    rollback_id,
+                    "denied",
+                    summary or "user denied",
+                    files,
+                    {},
+                    patch_text,
+                    patch_sha256=patch_decision.patch_hash,
+                    error="patch_hash_mismatch",
+                )
+                return ApplyResult(ok=False, rollback_id=rollback_id, files=files, backups={}, error="patch_hash_mismatch")
 
         ans = input("\nApply patch? [y/N] ").strip().lower()
         if ans not in ("y", "yes"):
-            self.history.log_patch(session_id, rollback_id, "denied", summary or "user denied", files, {}, patch_text, error="denied")
+            self.history.log_patch(
+                session_id,
+                rollback_id,
+                "denied",
+                summary or "user denied",
+                files,
+                {},
+                patch_text,
+                patch_sha256=patch_decision.patch_hash,
+                error="denied",
+            )
             return ApplyResult(ok=False, rollback_id=rollback_id, files=files, backups={}, error="denied")
 
-        repo_root = _find_repo_root(Path.cwd())
         backup_root = Config.PATCH_BACKUP_DIR / rollback_id
         backup_root.mkdir(parents=True, exist_ok=True)
 
@@ -138,11 +193,30 @@ class PatchOrchestrator:
         )
         if proc.returncode != 0:
             err = (proc.stderr or proc.stdout or "").strip() or f"git apply failed rc={proc.returncode}"
-            self.history.log_patch(session_id, rollback_id, "failed", summary or "apply failed", files, backups, patch_text, error=err)
+            self.history.log_patch(
+                session_id,
+                rollback_id,
+                "failed",
+                summary or "apply failed",
+                files,
+                backups,
+                patch_text,
+                patch_sha256=patch_decision.patch_hash,
+                error=err,
+            )
             self.guard.record_failure(session_id, "patch", {"error": err, "rollback_id": rollback_id})
             return ApplyResult(ok=False, rollback_id=rollback_id, files=files, backups=backups, error=err)
 
-        self.history.log_patch(session_id, rollback_id, "applied", summary or "applied", files, backups, patch_text)
+        self.history.log_patch(
+            session_id,
+            rollback_id,
+            "applied",
+            summary or "applied",
+            files,
+            backups,
+            patch_text,
+            patch_sha256=patch_decision.patch_hash,
+        )
         self.guard.record_success()
         self.console.print(f"[green]Patch applied.[/green] rollback_id={rollback_id}")
         return ApplyResult(ok=True, rollback_id=rollback_id, files=files, backups=backups)
