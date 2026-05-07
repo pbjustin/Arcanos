@@ -28,6 +28,7 @@ DEFAULT_TIMEOUT_SECONDS = 30
 MAX_OUTPUT_CHARS = 16000
 MAX_REQUEST_BYTES = 1024 * 1024
 MAX_PENDING_JOBS = 8
+REQUEST_READ_TIMEOUT_SECONDS = 5
 REQUEST_TOO_LARGE = object()
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 BRIDGE_TOKEN_ENV = "ARCANOS_CLI_BRIDGE_TOKEN"
@@ -327,7 +328,13 @@ class LocalBridge:
                     return None
                 if content_length > MAX_REQUEST_BYTES:
                     return REQUEST_TOO_LARGE
-                raw = self.rfile.read(content_length)
+                self.connection.settimeout(REQUEST_READ_TIMEOUT_SECONDS)
+                try:
+                    raw = self.rfile.read(content_length)
+                except OSError:
+                    return None
+                if len(raw) != content_length:
+                    return None
                 try:
                     return json.loads(raw.decode("utf-8"))
                 except (UnicodeDecodeError, json.JSONDecodeError):

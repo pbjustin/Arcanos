@@ -945,6 +945,7 @@ describe('/gpt-access gateway', () => {
 
   it.each([
     ['secret file patch', 'diff --git a/packages/app/.env b/packages/app/.env\nnew file mode 100644\n--- /dev/null\n+++ b/packages/app/.env\n@@ -0,0 +1 @@\n+OPENAI_API_KEY=sk-test\n', 'patch_targets_secret_file'],
+    ['windows absolute path patch', 'diff --git a/C:/outside.txt b/C:/outside.txt\nnew file mode 100644\n--- /dev/null\n+++ b/C:/outside.txt\n@@ -0,0 +1 @@\n+outside\n', 'patch_path_outside_sandbox'],
     ['binary patch', 'diff --git a/bin.dat b/bin.dat\nnew file mode 100644\nGIT binary patch\nliteral 1\nKcmZQzU|?Wm\n', 'patch_binary_not_allowed'],
     ['symlink patch', 'diff --git a/link b/link\nnew file mode 120000\n--- /dev/null\n+++ b/link\n@@ -0,0 +1 @@\n+../outside\n', 'patch_symlink_not_allowed']
   ])('denies unsafe ARCANOS:CLI patch proposals: %s', async (_caseName, patch, reason) => {

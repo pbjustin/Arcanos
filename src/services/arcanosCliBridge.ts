@@ -299,6 +299,7 @@ function validatePatchPaths(patch: string): string | null {
       const normalizedPath = rawPath.replace(/\\/gu, '/');
       if (
         normalizedPath.startsWith('/')
+        || /^[a-zA-Z]:/u.test(normalizedPath)
         || normalizedPath.includes('../')
         || normalizedPath === '..'
       ) {
@@ -424,7 +425,11 @@ function limitBytes(value: string, maxBytes: number): string {
   if (buffer.byteLength <= maxBytes) {
     return value;
   }
-  return `${buffer.subarray(0, maxBytes).toString('utf8')}\n[truncated]`;
+  let end = maxBytes;
+  while (end > 0 && (buffer[end] & 0xc0) === 0x80) {
+    end -= 1;
+  }
+  return `${buffer.toString('utf8', 0, end)}\n[truncated]`;
 }
 
 function getDefaultTimeoutMs(policy: CliPolicyConfig): number {
