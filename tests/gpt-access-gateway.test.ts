@@ -772,6 +772,37 @@ describe('/gpt-access gateway', () => {
     });
   });
 
+  it('maps token-prefixed body confirmation_token values with header-style spacing before dispatch', async () => {
+    allowCapabilityRun();
+    const app = buildApp();
+
+    const challengeResponse = await authorized(request(app).post('/gpt-access/capabilities/v1/core/run'))
+      .send({
+        action: 'query',
+        payload: {
+          prompt: 'status'
+        }
+      });
+
+    const challengeId = challengeResponse.body.confirmationChallenge?.id;
+    expect(challengeResponse.status).toBe(403);
+    expect(typeof challengeId).toBe('string');
+
+    const response = await authorized(request(app).post('/gpt-access/capabilities/v1/core/run'))
+      .send({
+        action: 'query',
+        payload: {
+          prompt: 'status'
+        },
+        confirmation_token: `token: ${challengeId}`
+      });
+
+    expect(response.status).toBe(200);
+    expect(dispatchModuleActionMock).toHaveBeenCalledWith('ARCANOS:CORE', 'query', {
+      prompt: 'status'
+    });
+  });
+
   it('rejects a non-matching confirmation_token before dispatch', async () => {
     allowCapabilityRun();
     const app = buildApp();
@@ -801,6 +832,49 @@ describe('/gpt-access gateway', () => {
     expect(wrongTokenResponse.body.code).toBe('CONFIRMATION_REQUIRED');
     expect(wrongTokenResponse.body.confirmationChallenge.providedTokenStatus).toBe('invalid');
     expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
+  it('allows retry with the replacement challenge after an invalid confirmation_token', async () => {
+    allowCapabilityRun();
+    const app = buildApp();
+
+    const challengeResponse = await authorized(request(app).post('/gpt-access/capabilities/v1/core/run'))
+      .send({
+        action: 'query',
+        payload: {
+          prompt: 'status'
+        }
+      });
+
+    expect(challengeResponse.status).toBe(403);
+
+    const wrongTokenResponse = await authorized(request(app).post('/gpt-access/capabilities/v1/core/run'))
+      .send({
+        action: 'query',
+        payload: {
+          prompt: 'status'
+        },
+        confirmation_token: '00000000-0000-4000-8000-000000000000'
+      });
+
+    const replacementChallengeId = wrongTokenResponse.body.confirmationChallenge?.id;
+    expect(wrongTokenResponse.status).toBe(403);
+    expect(wrongTokenResponse.body.confirmationChallenge.providedTokenStatus).toBe('invalid');
+    expect(typeof replacementChallengeId).toBe('string');
+
+    const response = await authorized(request(app).post('/gpt-access/capabilities/v1/core/run'))
+      .send({
+        action: 'query',
+        payload: {
+          prompt: 'status'
+        },
+        confirmation_token: replacementChallengeId
+      });
+
+    expect(response.status).toBe(200);
+    expect(dispatchModuleActionMock).toHaveBeenCalledWith('ARCANOS:CORE', 'query', {
+      prompt: 'status'
+    });
   });
 
   it('rejects replay of a consumed confirmation_token before dispatch', async () => {

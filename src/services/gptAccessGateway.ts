@@ -1234,6 +1234,8 @@ export async function createGptAccessAiJob(body: unknown, context: CreateGptAcce
     prompt: request.task,
     bypassIntentRouting: true,
     requestId: context.requestId ?? traceId,
+    traceId,
+    correlationId: traceId,
     routeHint: GPT_QUERY_ACTION,
     requestPath: GPT_ACCESS_JOB_CREATE_ENDPOINT,
     executionModeReason: 'gpt_access_create_ai_job'
@@ -1248,7 +1250,10 @@ export async function createGptAccessAiJob(body: unknown, context: CreateGptAcce
       idempotencyScopeHash: descriptor.scopeHash,
       idempotencyKeyHash: descriptor.source === 'explicit' ? descriptor.idempotencyKeyHash : null,
       idempotencyOrigin: descriptor.source,
-      createOptions: plannedJob
+      createOptions: {
+        ...plannedJob,
+        correlationId: traceId
+      }
     });
 
     context.logger?.info?.('gpt_access.ai_job.enqueued', {

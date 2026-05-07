@@ -90,6 +90,14 @@ export {
 } from './repositories/jobRepository.js';
 
 export {
+  recordJobEvent,
+  JOB_EVENT_TYPES,
+  type JobEventType,
+  type RecordJobEventInput,
+  type RecordJobEventResult
+} from './repositories/jobEventRepository.js';
+
+export {
   upsertDagRunSnapshot,
   getDagRunSnapshotById,
   type DagRunSnapshotRecord

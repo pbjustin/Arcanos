@@ -27,6 +27,16 @@ import {
 } from '@core/scheduler/scheduler.js';
 import type { QueueLane, SchedulerClaimOptions } from '@core/scheduler/types.js';
 import { dbLogger } from '@platform/logging/structuredLogging.js';
+import { recordJobEvent, type JobEventType } from './jobEventRepository.js';
+
+interface JobEventSource {
+  id: string;
+  worker_id: string;
+  last_worker_id?: string | null;
+  correlation_id?: string | null;
+  job_type: string;
+  status: string;
+}
 
 export type JobFailureCategory =
   | 'authentication'
@@ -359,6 +369,32 @@ function readCorrelationIdFromInput(input: unknown): string | null {
   return null;
 }
 
+function normalizeJobEventTraceId(job: Pick<JobData, 'correlation_id'> | null | undefined): string | null {
+  return normalizeNullableString(job?.correlation_id ?? null);
+}
+
+function emitJobEvent(
+  job: JobEventSource | null | undefined,
+  eventType: JobEventType,
+  metadata: Record<string, unknown> = {}
+): void {
+  if (!job) {
+    return;
+  }
+
+  void recordJobEvent({
+    jobId: job.id,
+    eventType,
+    traceId: normalizeJobEventTraceId(job),
+    workerId: normalizeNullableString(job.last_worker_id ?? null) ?? normalizeNullableString(job.worker_id),
+    metadata: {
+      jobType: job.job_type,
+      status: job.status,
+      ...metadata
+    }
+  });
+}
+
 function applyGptLifecycleDefaults(jobType: string, status: string, options: CreateJobOptions): {
   idempotencyUntil: string | null;
   retentionUntil: string | null;
@@ -621,7 +657,12 @@ export async function createJob(
     ]
   );
 
-  return result.rows[0] as JobData;
+  const createdJob = result.rows[0] as JobData;
+  emitJobEvent(createdJob, 'job.created');
+  if (createdJob.status === 'pending') {
+    emitJobEvent(createdJob, 'job.queued');
+  }
+  return createdJob;
 }
 
 /**
@@ -723,7 +764,15 @@ export async function updateJob(
     ]
   );
 
-  return result.rows[0] as JobData;
+  const updatedJob = result.rows[0] as JobData;
+  if (status === 'completed') {
+    emitJobEvent(updatedJob, 'job.completed');
+  } else if (status === 'failed') {
+    emitJobEvent(updatedJob, 'job.failed', {
+      errorMessage: normalizeNullableString(errorMessage)
+    });
+  }
+  return updatedJob;
 }
 
 /**
@@ -1000,9 +1049,18 @@ export async function findOrCreateGptJob(
       ]
     );
 
+    const createdJob = result.rows[0] as JobData;
     await client.query('COMMIT');
+    emitJobEvent(createdJob, 'job.created');
+    if (createdJob.status === 'pending') {
+      emitJobEvent(createdJob, 'job.queued');
+    } else if (createdJob.status === 'running') {
+      emitJobEvent(createdJob, 'job.claimed', {
+        source: 'find_or_create_gpt_job'
+      });
+    }
     return {
-      job: result.rows[0] as JobData,
+      job: createdJob,
       created: true,
       deduped: false,
       dedupeReason: 'new_job'
@@ -1336,6 +1394,10 @@ export async function claimNextPendingJob(
     if (priorityQueueEnabled) {
       updatePriorityQueueFairnessAfterClaim(claimedJob, priorityLaneMaxPriority);
     }
+    emitJobEvent(claimedJob, 'job.claimed', {
+      leaseMs,
+      priorityQueueEnabled
+    });
     return claimedJob;
   };
 
@@ -1378,7 +1440,11 @@ export async function recordJobHeartbeat(
     [leaseMs, options.workerId ?? null, jobId]
   );
 
-  return (result.rows[0] as JobData | undefined) ?? null;
+  const heartbeatJob = (result.rows[0] as JobData | undefined) ?? null;
+  emitJobEvent(heartbeatJob, 'worker.heartbeat', {
+    leaseMs
+  });
+  return heartbeatJob;
 }
 
 /**
@@ -1435,7 +1501,12 @@ export async function scheduleJobRetry(
     ]
   );
 
-  return (result.rows[0] as JobData | undefined) ?? null;
+  const retriedJob = (result.rows[0] as JobData | undefined) ?? null;
+  emitJobEvent(retriedJob, 'job.retry.scheduled', {
+    delayMs: Math.max(0, options.delayMs),
+    errorMessage: normalizeNullableString(options.errorMessage)
+  });
+  return retriedJob;
 }
 
 /**
@@ -1502,7 +1573,7 @@ export async function recoverStaleJobs(
     await client.query('BEGIN');
 
     const staleResult = await client.query(
-      `SELECT id, job_type, retry_count, max_retries, autonomy_state, cancel_requested_at, cancel_reason
+      `SELECT id, worker_id, last_worker_id, correlation_id, job_type, status, retry_count, max_retries, autonomy_state, cancel_requested_at, cancel_reason
        FROM job_data
        WHERE status = 'running'
          AND (
@@ -1520,13 +1591,20 @@ export async function recoverStaleJobs(
 
     for (const row of staleResult.rows as Array<{
       id: string;
+      worker_id: string;
+      last_worker_id: string | null;
+      correlation_id: string | null;
       job_type: string;
+      status: string;
       retry_count: number;
       max_retries: number;
       autonomy_state: Record<string, unknown> | string | null;
       cancel_requested_at: Date | string | null;
       cancel_reason: string | null;
     }>) {
+      emitJobEvent(row, 'worker.stale_detected', {
+        staleAfterMs
+      });
       const retryCount = Number(row.retry_count ?? 0);
       const maxRetries = resolveMaxRetriesForPersistedJob(row.max_retries, options.maxRetries);
       const normalizedAutonomyState = buildRecoveredAutonomyState(row.autonomy_state, retryCount);
@@ -1563,6 +1641,9 @@ export async function recoverStaleJobs(
           ]
         );
         cancelledJobs.push(row.id);
+        emitJobEvent({ ...row, status: 'cancelled' }, 'worker.recovered', {
+          action: 'cancelled'
+        });
         continue;
       }
 
@@ -1610,6 +1691,9 @@ export async function recoverStaleJobs(
           ]
         );
         failedJobs.push(row.id);
+        emitJobEvent({ ...row, status: 'failed' }, 'job.failed', {
+          errorMessage: deadLetterMessage
+        });
         continue;
       }
 
@@ -1639,6 +1723,9 @@ export async function recoverStaleJobs(
         ]
       );
       recoveredJobs.push(row.id);
+      emitJobEvent({ ...row, status: 'pending' }, 'worker.recovered', {
+        action: 'requeued'
+      });
     }
 
     await client.query('COMMIT');
@@ -1695,12 +1782,15 @@ export async function recoverStalledJobsForWorkers(
     const stalledResult = await client.query(
       `SELECT
          id,
+         worker_id,
          job_type,
+         status,
          retry_count,
          max_retries,
          autonomy_state,
          cancel_requested_at,
          cancel_reason,
+         correlation_id,
          last_worker_id
        FROM job_data
        WHERE status = 'running'
@@ -1722,18 +1812,25 @@ export async function recoverStalledJobsForWorkers(
 
     for (const row of stalledResult.rows as Array<{
       id: string;
+      worker_id: string;
       job_type: string;
+      status: string;
       retry_count: number;
       max_retries: number;
       autonomy_state: Record<string, unknown> | string | null;
       cancel_requested_at: Date | string | null;
       cancel_reason: string | null;
+      correlation_id: string | null;
       last_worker_id: string | null;
     }>) {
       stalledJobIds.push(row.id);
       if (row.last_worker_id) {
         affectedWorkerIds.add(row.last_worker_id);
       }
+      emitJobEvent(row, 'worker.stale_detected', {
+        staleAfterMs,
+        staleWorkerId: row.last_worker_id
+      });
       const retryCount = Number(row.retry_count ?? 0);
       const maxRetries = resolveMaxRetriesForPersistedJob(row.max_retries, options.maxRetries);
       const detectedAt = new Date().toISOString();
@@ -1783,6 +1880,9 @@ export async function recoverStalledJobsForWorkers(
           ]
         );
         cancelledJobIds.push(row.id);
+        emitJobEvent({ ...row, status: 'cancelled' }, 'worker.recovered', {
+          action: 'cancelled'
+        });
         continue;
       }
 
@@ -1834,6 +1934,9 @@ export async function recoverStalledJobsForWorkers(
           ]
         );
         deadLetterJobIds.push(row.id);
+        emitJobEvent({ ...row, status: 'failed' }, 'job.failed', {
+          errorMessage: deadLetterMessage
+        });
         continue;
       }
 
@@ -1870,6 +1973,9 @@ export async function recoverStalledJobsForWorkers(
         ]
       );
       requeuedJobIds.push(row.id);
+      emitJobEvent({ ...row, status: 'pending' }, 'worker.recovered', {
+        action: 'requeued'
+      });
     }
 
     await client.query('COMMIT');

@@ -235,10 +235,6 @@ function readCapabilityConfirmationTokenField(value: unknown):
     return { ok: false, message: 'confirmation_token must be a non-empty string when provided.' };
   }
 
-  if (/\s/u.test(trimmed)) {
-    return { ok: false, message: 'confirmation_token must be a single non-empty token value.' };
-  }
-
   const confirmationChallengeId = trimmed.toLowerCase().startsWith(CAPABILITY_CONFIRMATION_HEADER_TOKEN_PREFIX)
     ? trimmed.slice(CAPABILITY_CONFIRMATION_HEADER_TOKEN_PREFIX.length).trim()
     : trimmed;

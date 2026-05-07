@@ -2229,6 +2229,8 @@ router.post("/:gptId", async (req, res, next) => {
               prompt: promptText,
               bypassIntentRouting,
               requestId,
+              traceId,
+              correlationId: traceId,
               routeHint: effectiveRequestedAction ?? 'query',
               requestPath: req.originalUrl,
               executionModeReason: executionPlan.reason
@@ -2275,7 +2277,10 @@ router.post("/:gptId", async (req, res, next) => {
                   ? idempotencyDescriptor.idempotencyKeyHash
                   : null,
                 idempotencyOrigin: idempotencyDescriptor.source,
-                createOptions: plannedJob
+                createOptions: {
+                  ...plannedJob,
+                  correlationId: traceId
+                }
               });
             } catch (error: unknown) {
               priorityDirectSlot?.release();

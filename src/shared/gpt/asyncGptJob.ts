@@ -25,6 +25,8 @@ const queuedGptJobInputSchema = z.object({
   prompt: z.string().trim().min(1).optional(),
   bypassIntentRouting: z.boolean().optional(),
   requestId: z.string().trim().min(1).max(128).optional(),
+  traceId: z.string().trim().min(1).max(128).optional(),
+  correlationId: z.string().trim().min(1).max(128).optional(),
   routeHint: z.string().trim().min(1).max(64).optional(),
   requestPath: z.string().trim().min(1).max(256).optional(),
   executionModeReason: z.string().trim().min(1).max(128).optional(),
@@ -38,6 +40,8 @@ export interface QueuedGptJobInput {
   prompt?: string;
   bypassIntentRouting?: boolean;
   requestId?: string;
+  traceId?: string;
+  correlationId?: string;
   routeHint?: string;
   requestPath?: string;
   executionModeReason?: string;
@@ -88,6 +92,8 @@ export function buildQueuedGptJobInput(input: {
   prompt?: string | null;
   bypassIntentRouting?: boolean;
   requestId?: string | null;
+  traceId?: string | null;
+  correlationId?: string | null;
   routeHint?: string | null;
   requestPath?: string | null;
   executionModeReason?: string | null;
@@ -111,6 +117,16 @@ export function buildQueuedGptJobInput(input: {
   const normalizedRequestId = normalizeOptionalString(input.requestId ?? undefined);
   if (normalizedRequestId) {
     normalizedJobInput.requestId = normalizedRequestId;
+  }
+
+  const normalizedTraceId = normalizeOptionalString(input.traceId ?? undefined);
+  if (normalizedTraceId) {
+    normalizedJobInput.traceId = normalizedTraceId;
+  }
+
+  const normalizedCorrelationId = normalizeOptionalString(input.correlationId ?? undefined);
+  if (normalizedCorrelationId) {
+    normalizedJobInput.correlationId = normalizedCorrelationId;
   }
 
   const normalizedRouteHint = normalizeOptionalString(input.routeHint ?? undefined);
