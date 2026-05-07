@@ -1,8 +1,24 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const aiLoggerWarnMock = jest.fn();
+const loggerMock = {
+  child: jest.fn(() => loggerMock),
+  debug: jest.fn(),
+  info: jest.fn(),
+  warn: jest.fn(),
+  error: jest.fn()
+};
 
 jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({
+  LogLevel: {
+    DEBUG: 'debug',
+    INFO: 'info',
+    WARN: 'warn',
+    ERROR: 'error'
+  },
+  logger: loggerMock,
+  dbLogger: loggerMock,
+  getConfiguredLogLevel: jest.fn(() => 'info'),
   aiLogger: {
     debug: jest.fn(),
     info: jest.fn(),

@@ -24,7 +24,11 @@ const {
 
 function mockStaleRows(rows: Array<Record<string, unknown>>): void {
   clientQueryMock.mockImplementation(async (sql: unknown) => {
-    if (typeof sql === 'string' && sql.includes('SELECT id, job_type, retry_count, max_retries')) {
+    if (
+      typeof sql === 'string' &&
+      sql.includes('FROM job_data') &&
+      sql.includes('FOR UPDATE')
+    ) {
       return { rows };
     }
 
