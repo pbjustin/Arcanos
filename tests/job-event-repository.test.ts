@@ -77,7 +77,7 @@ describe('jobEventRepository.recordJobEvent', () => {
     })).resolves.toEqual({ inserted: true });
 
     const params = queryMock.mock.calls[0]?.[1] as unknown[];
-    expect(queryMock.mock.calls[0]?.[2]).toBe(3);
+    expect(queryMock.mock.calls[0]?.[2]).toBe(1);
     expect(params[1]).toBeNull();
     expect(params[3]).toBeNull();
     expect(params[4]).toBe(0);

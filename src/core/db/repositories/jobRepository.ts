@@ -373,6 +373,11 @@ function normalizeJobEventTraceId(job: Pick<JobData, 'correlation_id'> | null | 
   return normalizeNullableString(job?.correlation_id ?? null);
 }
 
+function shouldRecordHeartbeatJobEvents(): boolean {
+  const value = process.env.JOB_EVENT_RECORD_HEARTBEATS;
+  return typeof value === 'string' && /^(1|true|yes)$/iu.test(value.trim());
+}
+
 function emitJobEvent(
   job: JobEventSource | null | undefined,
   eventType: JobEventType,
@@ -1466,9 +1471,11 @@ export async function recordJobHeartbeat(
   );
 
   const heartbeatJob = (result.rows[0] as JobData | undefined) ?? null;
-  emitJobEvent(heartbeatJob, 'worker.heartbeat', {
-    leaseMs
-  });
+  if (shouldRecordHeartbeatJobEvents()) {
+    emitJobEvent(heartbeatJob, 'worker.heartbeat', {
+      leaseMs
+    });
+  }
   return heartbeatJob;
 }
 

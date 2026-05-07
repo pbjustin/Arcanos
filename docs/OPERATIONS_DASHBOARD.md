@@ -39,3 +39,4 @@ npm run job-events:timeline -- --trace-id <trace-id> --limit 200
 ```
 
 The timeline utility returns redacted metadata, chronological events, trace and worker summaries, queue wait, execution, and provider latency. It is read-only and bounded by `MAX_JOB_EVENT_TIMELINE_LIMIT`.
+High-frequency `worker.heartbeat` timeline events are disabled by default; use `job_data.last_heartbeat_at` and worker heartbeat metrics for normal liveness dashboards, and enable `JOB_EVENT_RECORD_HEARTBEATS=true` only for short debugging windows.

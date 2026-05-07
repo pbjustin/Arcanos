@@ -29,6 +29,7 @@ export const DEFAULT_JOB_EVENT_CLEANUP_BATCH_SIZE = 1_000;
 export const MAX_JOB_EVENT_CLEANUP_BATCH_SIZE = 10_000;
 export const DEFAULT_JOB_EVENT_TIMELINE_LIMIT = 100;
 export const MAX_JOB_EVENT_TIMELINE_LIMIT = 1_000;
+const JOB_EVENT_INSERT_RETRY_COUNT = 1;
 
 export interface RecordJobEventInput {
   jobId: string;
@@ -184,7 +185,7 @@ export async function recordJobEvent(input: RecordJobEventInput): Promise<Record
         normalizeDurationMs(input.durationMs),
         serializedMetadata
       ],
-      3,
+      JOB_EVENT_INSERT_RETRY_COUNT,
       false,
       {
         queryName: 'record_job_event',

@@ -152,6 +152,7 @@ Use `docs/TRINITY_PIPELINE.md` for the full execution flow and `docs/gpt-access-
 | `JOB_EVENT_RETENTION_DAYS` | `30` | Retains recent job timeline events for operational forensics. Values are bounded to 1-365 days. |
 | `JOB_EVENT_CLEANUP_BATCH_SIZE` | `1000` | Maximum `job_events` rows matched or deleted per cleanup run. Values are bounded to 1-10000 to avoid long table locks. |
 | `JOB_EVENT_CLEANUP_DRY_RUN` | `true` | When true, cleanup counts eligible old events without deleting them. Set to `false` after reviewing cleanup metrics/logs. |
+| `JOB_EVENT_RECORD_HEARTBEATS` | `false` | When true, records high-frequency `worker.heartbeat` timeline events. Leave false unless debugging a specific lease issue because `job_data.last_heartbeat_at` already tracks liveness. |
 
 Use `npm run build` before `npm run job-events:timeline -- --job-id <uuid> --output text` to reconstruct a redacted chronological job timeline from the compiled backend.
 
