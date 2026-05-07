@@ -875,4 +875,15 @@ describe('Trinity honesty controls', () => {
       issues: ['abrupt_mid_sentence_ending']
     });
   });
+
+  it('accepts bounded atomic smoke-test literals as complete direct-answer output', () => {
+    const integrity = validateTrinityAnswerIntegrity({
+      text: 'OBSERVABILITY_SMOKE_TEST_OK'
+    });
+
+    expect(integrity).toEqual({
+      valid: true,
+      issues: []
+    });
+  });
 });

@@ -971,7 +971,17 @@ const STRING_REDACTIONS: Array<[RegExp, string]> = [
   [/\b(?:authorization|cookie|set-cookie|api[_-]?key|token|secret|password|session(?:id)?|database_url)\s*[:=]\s*["']?[^"'\s,;}]+/gi, '$1=[REDACTED]'],
   [/\b(email|password)\s*[:=]\s*["']?[^"'\s,;}]+/gi, '$1=[REDACTED]']
 ];
-const PROMPT_LOG_FIELD_KEYS = new Set(['prompt', 'rawprompt', 'normalizedprompt', 'task']);
+const PROMPT_LOG_FIELD_KEYS = new Set([
+  'prompt',
+  'promptpreview',
+  'rawprompt',
+  'normalizedprompt',
+  'task',
+  'taskpreview',
+  'summarypreview',
+  'inputpreview',
+  'outputpreview'
+]);
 const DIAGNOSTIC_PAYLOAD_FIELD_KEYS = new Set([
   'completion',
   'completions',

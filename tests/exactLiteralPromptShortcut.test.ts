@@ -31,6 +31,15 @@ describe('exactLiteralPromptShortcut', () => {
     });
   });
 
+  it('extracts compact return-exactly directives used by observability smokes', () => {
+    expect(
+      tryExtractExactLiteralPromptShortcut('Return exactly OBSERVABILITY_SMOKE_TEST_OK.')
+    ).toEqual({
+      literal: 'OBSERVABILITY_SMOKE_TEST_OK',
+      matchedPattern: 'reply_with_exactly'
+    });
+  });
+
   it('extracts word-only literal directives used by GPT bridge health checks', () => {
     expect(
       tryExtractExactLiteralPromptShortcut('Return the word OK only.')

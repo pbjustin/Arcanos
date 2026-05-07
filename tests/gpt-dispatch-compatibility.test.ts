@@ -219,6 +219,45 @@ describe('gpt dispatch compatibility', () => {
     );
   });
 
+  it('returns safe Trinity integrity diagnostics without exposing output text', async () => {
+    const integrityError = new Error('Trinity direct-answer output failed integrity validation.');
+    Object.assign(integrityError, {
+      code: 'TRINITY_OUTPUT_INTEGRITY_FAILED',
+      integrityIssues: ['abrupt_mid_sentence_ending']
+    });
+    mockDispatchModuleAction.mockRejectedValueOnce(integrityError);
+
+    const response = await routeGptRequest({
+      gptId: 'arcanos-core',
+      body: {
+        action: 'query',
+        prompt: 'Return exactly OBSERVABILITY_SMOKE_TEST_OK.'
+      },
+      requestId: 'req_integrity_failed',
+      traceId: 'trace_integrity_failed'
+    });
+
+    expect(response).toEqual(expect.objectContaining({
+      ok: false,
+      error: expect.objectContaining({
+        code: 'MODULE_ERROR',
+        message: 'Trinity direct-answer output failed integrity validation.',
+        details: {
+          validator: 'validateTrinityAnswerIntegrity',
+          failureCode: 'TRINITY_OUTPUT_INTEGRITY_FAILED',
+          expectedShape: 'complete_user_visible_answer_text',
+          receivedShape: 'redacted_text',
+          issues: ['abrupt_mid_sentence_ending']
+        }
+      })
+    }));
+    expect(response._route).toEqual(expect.objectContaining({
+      requestId: 'req_integrity_failed',
+      traceId: 'trace_integrity_failed'
+    }));
+    expect(JSON.stringify(response)).not.toContain('OBSERVABILITY_SMOKE_TEST_OK');
+  });
+
   it('resolves normalized GPT IDs without executing a module action', async () => {
     const response = await resolveGptRouting(' ARCANOS-CORE ', 'req_resolve_normalized');
 

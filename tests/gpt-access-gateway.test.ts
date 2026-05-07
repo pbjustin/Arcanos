@@ -2588,6 +2588,21 @@ describe('/gpt-access gateway', () => {
     expect(rendered).not.toContain('person@example.com');
   });
 
+  it('redacts prompt and output preview fields from sanitized log payloads', () => {
+    const sanitized = sanitizeGptAccessPayload({
+      promptPreview: 'ordinary user prompt preview should not leak',
+      taskPreview: 'ordinary task preview should not leak',
+      summaryPreview: 'ordinary summary preview should not leak',
+      inputPreview: 'ordinary input preview should not leak',
+      outputPreview: 'ordinary output preview should not leak'
+    });
+    const rendered = JSON.stringify(sanitized);
+
+    expect(rendered).toContain('[REDACTED_PROMPT]');
+    expect(rendered).not.toContain('ordinary user prompt preview should not leak');
+    expect(rendered).not.toContain('ordinary output preview should not leak');
+  });
+
   it('returns sanitized logs from the GPT access log query endpoint', async () => {
     process.env.ARCANOS_GPT_ACCESS_SCOPES = 'logs.read_sanitized';
     queryMock.mockResolvedValueOnce({

@@ -144,6 +144,9 @@ POST /gpt-access/logs/query
 POST /gpt-access/mcp
 POST /gpt-access/jobs/create
 POST /gpt-access/jobs/result
+POST /gpt-access/jobs/timeline
 ```
+
+Use `/gpt-access/jobs/timeline` with a known `jobId` to confirm terminal lifecycle state and trace correlation after an async failure. Use `/gpt-access/logs/query` for sanitized operational context; responses redact prompts, completions, provider payloads, raw headers, cookies, bearer credentials, API keys, and database URLs. `MODULE_ERROR` validation failures should be interpreted by the safe diagnostic fields when present: `validator`, `failureCode`, `expectedShape`, `receivedShape`, and `issues`.
 
 `OperatorIntentDispatcher` is a TypeScript library adapter, not a public HTTP route. End-to-end preview verification should run the built dispatcher locally with a `FetchGptAccessTransport` pointed at the preview URL, using `railway run` to inject `ARCANOS_GPT_ACCESS_TOKEN`. Verify the control-plane matrix resolves to `/gpt-access/*`, GPT reasoning requests create jobs through `/gpt-access/jobs/create`, and hybrid requests call the control-plane endpoint before creating the GPT job with sanitized context.

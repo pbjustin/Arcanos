@@ -40,6 +40,12 @@ const EXACT_LITERAL_PROMPT_PATTERNS: ExactLiteralPromptPattern[] = [
     trimTerminalSentencePunctuation: true
   },
   {
+    matchedPattern: 'reply_with_exactly',
+    expression: /^\s*(?:reply|respond|return|write|output|say)\s+exactly\s+(?<literal>"[^"\r\n]+"|'[^'\r\n]+'|`[^`\r\n]+`|[A-Za-z0-9][A-Za-z0-9._:@/+\\=-]{0,159})[.!?]?\s*$/i,
+    preserveWrappingDelimiters: false,
+    trimTerminalSentencePunctuation: true
+  },
+  {
     matchedPattern: 'reply_with_only',
     expression: /^\s*(?:reply|respond|return|write|output)\s+with\s+(?<literal>"[^"\r\n]+"|'[^'\r\n]+'|`[^`\r\n]+`|[A-Za-z0-9][A-Za-z0-9._:@/+\\=-]{0,159})\s+only[.!?]?\s*$/i,
     preserveWrappingDelimiters: false

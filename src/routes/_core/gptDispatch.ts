@@ -61,6 +61,7 @@ export type AskEnvelope =
 
 export type RouteMeta = {
   requestId?: string;
+  traceId?: string | null;
   gptId: string;
   module?: string;
   action?: string;
@@ -447,6 +448,44 @@ function buildDispatchTimeoutDetails(moduleName: string, errorMessage: string): 
   }
 
   return undefined;
+}
+
+function buildDispatchErrorDetails(
+  moduleName: string,
+  error: unknown,
+  errorMessage: string
+): Record<string, unknown> | undefined {
+  const timeoutDetails = buildDispatchTimeoutDetails(moduleName, errorMessage);
+  if (timeoutDetails) {
+    return timeoutDetails;
+  }
+
+  if (
+    moduleName !== 'ARCANOS:CORE' ||
+    typeof error !== 'object' ||
+    error === null
+  ) {
+    return undefined;
+  }
+
+  const candidate = error as Record<string, unknown>;
+  if (candidate.code !== 'TRINITY_OUTPUT_INTEGRITY_FAILED') {
+    return undefined;
+  }
+
+  const integrityIssues = Array.isArray(candidate.integrityIssues)
+    ? candidate.integrityIssues
+        .filter((issue): issue is string => typeof issue === 'string' && issue.trim().length > 0)
+        .slice(0, 8)
+    : [];
+
+  return {
+    validator: 'validateTrinityAnswerIntegrity',
+    failureCode: 'TRINITY_OUTPUT_INTEGRITY_FAILED',
+    expectedShape: 'complete_user_visible_answer_text',
+    receivedShape: 'redacted_text',
+    issues: integrityIssues
+  };
 }
 
 function logTrinityExecution(
@@ -1020,6 +1059,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
 
   const baseRoute: RouteMeta = {
     requestId,
+    traceId,
     gptId: trimmedGptId,
     timestamp: new Date().toISOString(),
   };
@@ -1863,8 +1903,8 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       error: {
         code: isDispatchTimeout ? "MODULE_TIMEOUT" : "MODULE_ERROR",
         message: dispatchErrorMessage,
-        ...(buildDispatchTimeoutDetails(activeEntry.module, errorMessage)
-          ? { details: buildDispatchTimeoutDetails(activeEntry.module, errorMessage) }
+        ...(buildDispatchErrorDetails(activeEntry.module, err, errorMessage)
+          ? { details: buildDispatchErrorDetails(activeEntry.module, err, errorMessage) }
           : {})
       },
       _route: {

@@ -217,6 +217,10 @@ success_response:
 **Available actions (via `/gpt/<gpt-id>`):**
 - `query`
 
+**Direct-answer output contract:** Trinity direct-answer mode returns a user-visible text string inside the route JSON envelope. Plain strings such as `OK` or `OBSERVABILITY_SMOKE_TEST_OK` are valid inner `result` values when the caller requested an exact literal, but callers should not expect the entire HTTP response body to be raw text. Exact-literal smoke prompts should use compact phrasing such as `Return exactly OBSERVABILITY_SMOKE_TEST_OK.` so the deterministic literal shortcut can bypass generative formatting while preserving the normal route envelope.
+
+**Observability smoke:** Use `action: "health_echo"` through `/api/bridge/gpt` when the goal is to exercise request handling, queueing, worker execution, and job-result retrieval without invoking Trinity. Use `action: "query"` only when the smoke must exercise the AI module itself.
+
 **Spec sheet example:**
 ```yaml
 name: Arcanos Core
@@ -261,5 +265,6 @@ success_response:
 - **Edge case:** Use an unknown GPT ID and confirm a `404` with `Unknown GPTID` is returned. (`src/routes/gptRouter.ts`)
 - **Failure mode:** Call a valid GPT ID with an invalid action and confirm the module returns `Action not found` or `Module not found` as appropriate. (`src/routes/modules.ts`)
 - **Async bridge:** Confirm `query` creates one job, core `query_and_wait` completes through the direct action lane without bounded fallback text, non-core durable writes still use jobs, and `get_status` / `get_result` are rejected with direct endpoint guidance.
+- **Failed async job inspection:** Query `/gpt-access/jobs/timeline` with the job id to inspect lifecycle events, and `/gpt-access/logs/query` for sanitized operational logs. `MODULE_ERROR` validation failures should expose safe fields such as validator name and issue codes, not prompts, completions, provider payloads, headers, or secrets.
 - **Fast path:** Confirm `executionMode: "fast"` for a prompt-generation request returns `200`, `routeDecision.path: "fast_path"`, `x-gpt-fast-path-queue-bypassed: true`, and `x-gpt-queue-bypassed: true`.
 - **Guardrail:** Confirm prompt-based job retrieval is rejected and callers are pointed at structured control actions or `/jobs/*`.

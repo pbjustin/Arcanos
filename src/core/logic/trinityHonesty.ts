@@ -1251,6 +1251,7 @@ export interface TrinityAnswerIntegrityResult {
 function hasAbruptEnding(text: string): boolean {
   const normalizedText = normalizeWhitespace(text);
   if (!normalizedText) return true;
+  if (/^[A-Za-z0-9][A-Za-z0-9._:@/+\\=-]{0,159}$/.test(normalizedText)) return false;
   if (/[.!?)]$/.test(normalizedText)) return false;
   return /(?:[,;:]|\b(?:and|or|but|because|including|with|for|to|the|a|an|of|in|on|at|by|as|from|while|when|if|is|are|was|were|can|could|should|would|will|must|may|might))$/i
     .test(normalizedText);
