@@ -43,7 +43,7 @@ MCP_ALLOW_MODULE_ACTIONS=ARCANOS:CORE:query
 ```
 
 ## Optional ARCANOS:CLI Capability
-`ARCANOS:CLI` is disabled by default and appears in `GET /gpt-access/capabilities/v1` only when `ARCANOS_CLI_BRIDGE_ENABLED=true`. It is a control-plane capability under `/gpt-access/capabilities/v1`, not a `/gpt/:gptId` writing-plane route.
+`ARCANOS:CLI` is disabled by default but remains visible in `GET /gpt-access/capabilities/v1` with `enabled:false` when `ARCANOS_CLI_BRIDGE_ENABLED` is not `true`. It is a control-plane capability under `/gpt-access/capabilities/v1`, not a `/gpt/:gptId` writing-plane route.
 
 Actions:
 
@@ -53,14 +53,14 @@ Actions:
 | `policy` | No | Returns safe policy metadata only. |
 | `repoContext` | No | Calls read-only Python protocol repo tools such as `repo.getStatus`, `repo.search`, and `doctor.implementation`. |
 | `proposeCommand` | No | Validates command intent and returns a proposal; it never executes. |
-| `runApprovedCommand` | Yes | Executes only after the confirmation challenge retry and policy approval. |
+| `runApprovedCommand` | Yes | Executes only after the confirmation challenge retry, policy approval, and matching `proposalId`. |
 | `proposePatch` | No | Validates patch intent and returns a proposal; it never applies. |
-| `applyApprovedPatch` | Yes | Applies only after the confirmation challenge retry and patch policy approval. |
+| `applyApprovedPatch` | Yes | Applies only after the confirmation challenge retry, patch policy approval, and matching `proposalId`. |
 | `tailAudit` | No | Returns safe audit-tail metadata. |
 
-The bridge uses the local Python daemon HTTP bridge at `ARCANOS_CLI_BRIDGE_URL` and expects it to bind to `127.0.0.1` by default. Command and patch POSTs require `ARCANOS_CLI_BRIDGE_TOKEN` between the TypeScript gateway and local daemon; confirmation tokens still belong only at the top level of the GPT Access request, never inside action payloads. Command and patch operations are constrained by command allowlists, deny patterns, cwd sandboxing under `ARCANOS_CLI_SANDBOX_ROOT`, timeouts, output caps, redaction, and audit records. Secrets, authorization headers, cookies, private keys, OpenAI keys, Railway tokens, database URLs, and `.env` contents must not be emitted in logs or outputs.
+The bridge uses the local Python daemon HTTP bridge at `ARCANOS_CLI_BRIDGE_URL` and expects it to bind to `127.0.0.1` by default. Production Railway does not start the daemon bridge unless a separate process/supervisor is added; in that case `status` can report `enabled:true`, `daemonReachable:false`, and `mode:"localhost-http-python-daemon"` without crashing. Command and patch POSTs require `ARCANOS_CLI_BRIDGE_TOKEN` between the TypeScript gateway and local daemon; confirmation tokens still belong only at the top level of the GPT Access request, never inside action payloads. Command and patch operations are constrained by command allowlists, deny patterns, cwd sandboxing under `ARCANOS_CLI_SANDBOX_ROOT`, timeouts, output caps, redaction, and audit records. Secrets, authorization headers, cookies, private keys, OpenAI keys, Railway tokens, database URLs, and `.env` contents must not be emitted in logs or outputs.
 
-On `CONFIRMATION_REQUIRED`, retry the same `/gpt-access/capabilities/v1/ARCANOS:CLI/run` request once with the same `action` and `payload` plus top-level `confirmation_token`. Do not put confirmation tokens inside `payload`.
+On `CONFIRMATION_REQUIRED`, retry the same `/gpt-access/capabilities/v1/ARCANOS:CLI/run` request once with the same `action` and `payload` plus top-level `confirmation_token`. Do not put confirmation tokens inside `payload`. Approval payloads for `runApprovedCommand` and `applyApprovedPatch` must include the `proposalId` returned by the matching proposal action.
 
 ## Local Setup
 

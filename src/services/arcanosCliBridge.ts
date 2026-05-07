@@ -49,12 +49,16 @@ interface NormalizedPatchPayload {
 interface BridgeRunResponse {
   ok: boolean;
   status: string;
-  stdout: string;
-  stderr: string;
-  exitCode: number | null;
-  durationMs: number;
-  truncated: boolean;
-  auditId: string;
+  stdout?: string;
+  stderr?: string;
+  exitCode?: number | null;
+  durationMs?: number;
+  truncated?: boolean;
+  auditId?: string;
+  error?: {
+    code: string;
+    message: string;
+  };
 }
 
 export const CLI_READONLY_ACTIONS = new Set([
@@ -102,6 +106,7 @@ export function getArcanosCliPolicyMetadata() {
 }
 
 export async function getArcanosCliRepoContext(payload: unknown) {
+  assertArcanosCliBridgeEnabled();
   const record = isRecord(payload) ? payload : {};
   const toolId = typeof record.toolId === 'string' && record.toolId.trim().length > 0
     ? record.toolId.trim()
@@ -159,6 +164,7 @@ export function proposeArcanosCliCommand(payload: unknown) {
 }
 
 export async function runArcanosCliApprovedCommand(payload: unknown) {
+  assertArcanosCliBridgeEnabled();
   const proposal = proposeArcanosCliCommand(payload);
   if (!proposal.allowed) {
     return {
@@ -170,6 +176,10 @@ export async function runArcanosCliApprovedCommand(payload: unknown) {
         message: 'Command is denied by ARCANOS CLI policy.'
       }
     };
+  }
+  const proposalCheck = verifyApprovedProposalId(payload, proposal.proposalId);
+  if (!proposalCheck.ok) {
+    return proposalCheck.response;
   }
 
   const commandPayload = normalizeCommandPayload(payload);
@@ -205,6 +215,7 @@ export function proposeArcanosCliPatch(payload: unknown) {
 }
 
 export async function applyArcanosCliApprovedPatch(payload: unknown) {
+  assertArcanosCliBridgeEnabled();
   const proposal = proposeArcanosCliPatch(payload);
   if (!proposal.allowed) {
     return {
@@ -216,6 +227,10 @@ export async function applyArcanosCliApprovedPatch(payload: unknown) {
         message: 'Patch is denied by ARCANOS CLI policy.'
       }
     };
+  }
+  const proposalCheck = verifyApprovedProposalId(payload, proposal.proposalId);
+  if (!proposalCheck.ok) {
+    return proposalCheck.response;
   }
 
   const patchPayload = normalizePatchPayload(payload);
@@ -247,6 +262,48 @@ function normalizeCommandPayload(payload: unknown): NormalizedCommandPayload {
     cwd: typeof payload.cwd === 'string' && payload.cwd.trim().length > 0 ? payload.cwd.trim() : undefined,
     timeoutMs: typeof payload.timeoutMs === 'number' ? payload.timeoutMs : DEFAULT_TIMEOUT_MS
   };
+}
+
+function assertArcanosCliBridgeEnabled(): void {
+  if (!isArcanosCliBridgeEnabled()) {
+    throw new Error('ARCANOS CLI bridge is disabled.');
+  }
+}
+
+function verifyApprovedProposalId(
+  payload: unknown,
+  expectedProposalId: string
+): { ok: true } | { ok: false; response: Record<string, unknown> } {
+  const proposalId = isRecord(payload) && typeof payload.proposalId === 'string'
+    ? payload.proposalId.trim()
+    : '';
+  if (proposalId.length === 0) {
+    return {
+      ok: false,
+      response: {
+        ok: false,
+        status: 'proposal_required',
+        error: {
+          code: 'ARCANOS_CLI_PROPOSAL_REQUIRED',
+          message: 'Approval requires the proposalId returned by the matching proposal action.'
+        }
+      }
+    };
+  }
+  if (proposalId !== expectedProposalId) {
+    return {
+      ok: false,
+      response: {
+        ok: false,
+        status: 'proposal_mismatch',
+        error: {
+          code: 'ARCANOS_CLI_PROPOSAL_MISMATCH',
+          message: 'Approval proposalId does not match the approved payload.'
+        }
+      }
+    };
+  }
+  return { ok: true };
 }
 
 function normalizePatchPayload(payload: unknown): NormalizedPatchPayload {
@@ -333,13 +390,25 @@ async function postBridgeJson(pathname: string, body: Record<string, unknown>): 
   if (bridgeToken) {
     headers[BRIDGE_TOKEN_HEADER] = bridgeToken;
   }
-  const response = await fetch(`${getBridgeUrl()}${pathname}`, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(body)
-  });
-  const payload = await response.json() as BridgeRunResponse;
-  return payload;
+  const bridgeUrl = getBridgeUrl();
+  try {
+    const response = await fetch(`${bridgeUrl}${pathname}`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body)
+    });
+    const payload = await response.json() as BridgeRunResponse;
+    return payload;
+  } catch {
+    return {
+      ok: false,
+      status: 'unavailable',
+      error: {
+        code: 'ARCANOS_CLI_DAEMON_UNREACHABLE',
+        message: 'ARCANOS CLI daemon bridge is unreachable.'
+      }
+    };
+  }
 }
 
 function getBridgeUrl(): string {

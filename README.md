@@ -28,7 +28,7 @@ See: `daemon-python/README.md`
 ### Optional CLI Bridge
 `ARCANOS:CLI` is an optional protected GPT Access capability for inspecting and safely interacting with the local Python daemon. It is disabled unless `ARCANOS_CLI_BRIDGE_ENABLED=true`.
 
-When enabled, it is exposed only under `/gpt-access/capabilities/v1`; it does not route through `/gpt/:gptId` and is not a raw shell endpoint. Read-only actions include `status`, `policy`, `repoContext`, `proposeCommand`, `proposePatch`, and `tailAudit`. Execution and patch application require the existing confirmation flow and still pass command policy, cwd sandboxing, timeout, output cap, redaction, and daemon-side audit checks.
+It is exposed only under `/gpt-access/capabilities/v1`; it does not route through `/gpt/:gptId` and is not a raw shell endpoint. When disabled, discovery still lists it with `enabled:false` for operator visibility. Read-only actions include `status`, `policy`, `repoContext`, `proposeCommand`, `proposePatch`, and `tailAudit`. Execution and patch application require the existing confirmation flow, the matching proposal id, and still pass command policy, cwd sandboxing, timeout, output cap, redaction, and daemon-side audit checks.
 
 Start the local daemon bridge with `arcanos bridge`; it binds to `127.0.0.1` by default. Configure `ARCANOS_CLI_BRIDGE_URL`, `ARCANOS_CLI_BRIDGE_TOKEN`, `ARCANOS_CLI_SANDBOX_ROOT`, `ARCANOS_CLI_COMMAND_TIMEOUT_MS`, and `ARCANOS_CLI_OUTPUT_MAX_BYTES` as needed. Command and patch POSTs require the bridge token; keep it local and do not paste it into GPT payloads.
 

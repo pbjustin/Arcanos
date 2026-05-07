@@ -124,6 +124,7 @@ function isCliCapabilityId(value: string): boolean {
 function getCliCapabilitySummary() {
   return {
     id: CLI_CAPABILITY_ID,
+    enabled: isArcanosCliBridgeEnabled(),
     description: 'Protected control-plane bridge for the optional local ARCANOS Python CLI daemon.',
     route: CLI_CAPABILITY_ROUTE,
     actions: sortStrings(CLI_CAPABILITY_ACTIONS)
@@ -134,6 +135,7 @@ function getCliCapabilityDetail() {
   return {
     id: CLI_CAPABILITY_ID,
     name: CLI_CAPABILITY_ID,
+    enabled: isArcanosCliBridgeEnabled(),
     description: 'Protected control-plane bridge for the optional local ARCANOS Python CLI daemon.',
     route: CLI_CAPABILITY_ROUTE,
     actions: sortStrings(CLI_CAPABILITY_ACTIONS),
@@ -143,16 +145,19 @@ function getCliCapabilityDetail() {
 }
 
 function toCapabilitySummary(entry: CapabilityRegistryEntry) {
-  return {
+  const summary = {
     id: entry.id,
     description: entry.description ?? null,
     route: entry.route ?? null,
     actions: sortStrings(entry.actions)
   };
+  return entry.id === CLI_CAPABILITY_ID
+    ? { ...summary, enabled: isArcanosCliBridgeEnabled() }
+    : summary;
 }
 
 function toCapabilityDetail(metadata: CapabilityMetadata) {
-  return {
+  const detail = {
     id: metadata.name,
     name: metadata.name,
     description: metadata.description ?? null,
@@ -161,6 +166,9 @@ function toCapabilityDetail(metadata: CapabilityMetadata) {
     defaultAction: metadata.defaultAction ?? null,
     defaultTimeoutMs: metadata.defaultTimeoutMs ?? null
   };
+  return metadata.name === CLI_CAPABILITY_ID
+    ? { ...detail, enabled: isArcanosCliBridgeEnabled() }
+    : detail;
 }
 
 function findUnsafeCapabilityPayloadIssue(
@@ -243,6 +251,10 @@ function capabilityRunNeedsConfirmation(req: express.Request): boolean {
 
   const action = (req.body as Record<string, unknown>).action;
   return typeof action !== 'string' || !CLI_READONLY_ACTIONS.has(action.trim());
+}
+
+function cliActionNeedsModuleAllowlist(moduleName: string, action: string): boolean {
+  return moduleName !== CLI_CAPABILITY_ID || !CLI_READONLY_ACTIONS.has(action);
 }
 
 function confirmCapabilityRunWhenRequired(
@@ -471,8 +483,7 @@ const listGptAccessCapabilities = asyncHandler(async (_req, res) => {
       .map(toCapabilitySummary)
       .sort((left, right) => left.id.localeCompare(right.id));
     if (
-      isArcanosCliBridgeEnabled()
-      && !capabilities.some((capability) => capability.id === CLI_CAPABILITY_ID)
+      !capabilities.some((capability) => capability.id === CLI_CAPABILITY_ID)
     ) {
       capabilities.push(getCliCapabilitySummary());
       capabilities.sort((left, right) => left.id.localeCompare(right.id));
@@ -493,7 +504,7 @@ const listGptAccessCapabilities = asyncHandler(async (_req, res) => {
 });
 
 const getGptAccessCapability = asyncHandler(async (req, res) => {
-  if (isArcanosCliBridgeEnabled() && isCliCapabilityId(req.params.id)) {
+  if (isCliCapabilityId(req.params.id)) {
     res.json({
       ok: true,
       exists: true,
@@ -553,7 +564,7 @@ async function runGptAccessCapabilityAction(input: {
     };
   }
 
-  if (!metadata && isArcanosCliBridgeEnabled() && isCliCapabilityId(input.capabilityId)) {
+  if (!metadata && isCliCapabilityId(input.capabilityId)) {
     return runFallbackArcanosCliCapabilityAction(input.action, input.payload);
   }
 
@@ -583,7 +594,10 @@ async function runGptAccessCapabilityAction(input: {
     };
   }
 
-  if (!isModuleActionAllowed(metadata.name, input.action)) {
+  if (
+    cliActionNeedsModuleAllowlist(metadata.name, input.action)
+    && !isModuleActionAllowed(metadata.name, input.action)
+  ) {
     return {
       statusCode: 403,
       payload: {
@@ -649,7 +663,10 @@ async function runFallbackArcanosCliCapabilityAction(
     };
   }
 
-  if (!isModuleActionAllowed(CLI_CAPABILITY_ID, action)) {
+  if (
+    cliActionNeedsModuleAllowlist(CLI_CAPABILITY_ID, action)
+    && !isModuleActionAllowed(CLI_CAPABILITY_ID, action)
+  ) {
     return {
       statusCode: 403,
       payload: {
