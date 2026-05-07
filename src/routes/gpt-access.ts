@@ -188,6 +188,9 @@ function findUnsafeCapabilityPayloadIssue(
   for (const key of Object.keys(record)) {
     const isCliCommandField = options.allowCliCommandFields
       && ['command', 'cwd', 'timeoutMs', 'patch'].includes(key);
+    if (key.trim().toLowerCase() === CAPABILITY_CONFIRMATION_TOKEN_BODY_KEY) {
+      return 'unsafe_field';
+    }
     if (!isCliCommandField && isUnsafeGptAccessPayloadKey(key)) {
       return 'unsafe_field';
     }
@@ -567,8 +570,6 @@ async function runGptAccessCapabilityAction(input: {
     };
   }
 
-  const isCliBridgeCapability = isArcanosCliBridgeEnabled() && metadata.name === CLI_CAPABILITY_ID;
-
   if (!metadata.actions.includes(input.action)) {
     return {
       statusCode: 404,
@@ -582,7 +583,7 @@ async function runGptAccessCapabilityAction(input: {
     };
   }
 
-  if (!isCliBridgeCapability && !isModuleActionAllowed(metadata.name, input.action)) {
+  if (!isModuleActionAllowed(metadata.name, input.action)) {
     return {
       statusCode: 403,
       payload: {
@@ -643,6 +644,19 @@ async function runFallbackArcanosCliCapabilityAction(
         error: {
           code: 'GPT_ACCESS_ACTION_NOT_FOUND',
           message: 'Capability action not found.'
+        }
+      }
+    };
+  }
+
+  if (!isModuleActionAllowed(CLI_CAPABILITY_ID, action)) {
+    return {
+      statusCode: 403,
+      payload: {
+        ok: false,
+        error: {
+          code: 'GPT_ACCESS_CAPABILITY_ACTION_DENIED',
+          message: 'Capability action is not allowlisted for GPT Access execution.'
         }
       }
     };

@@ -5,8 +5,11 @@ Local daemon HTTP bridge for web-to-daemon command handoff.
 from __future__ import annotations
 
 import json
+import hashlib
+import hmac
 import os
 import queue
+import subprocess
 import threading
 import time
 import tempfile
@@ -15,6 +18,7 @@ from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
+from arcanos.debug import log_audit_event
 from ..terminal import TerminalController
 
 
@@ -23,7 +27,11 @@ DEFAULT_BRIDGE_PORT = 8765
 DEFAULT_TIMEOUT_SECONDS = 30
 MAX_OUTPUT_CHARS = 16000
 MAX_REQUEST_BYTES = 1024 * 1024
+MAX_PENDING_JOBS = 8
 REQUEST_TOO_LARGE = object()
+LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+BRIDGE_TOKEN_ENV = "ARCANOS_CLI_BRIDGE_TOKEN"
+BRIDGE_TOKEN_HEADER = "x-arcanos-cli-bridge-token"
 
 
 @dataclass
@@ -89,8 +97,11 @@ class LocalBridge:
 
     def __init__(self, host: str = DEFAULT_BRIDGE_HOST, port: int = DEFAULT_BRIDGE_PORT):
         self.host = host or DEFAULT_BRIDGE_HOST
+        if self.host not in LOOPBACK_HOSTS:
+            raise ValueError("Local bridge host must be loopback")
         self.port = int(port)
-        self.jobs: queue.Queue[BridgeJob | BridgePatchJob | None] = queue.Queue()
+        self.bridge_token = os.environ.get(BRIDGE_TOKEN_ENV, "").strip()
+        self.jobs: queue.Queue[BridgeJob | BridgePatchJob | None] = queue.Queue(maxsize=MAX_PENDING_JOBS)
         self.terminal = TerminalController()
         self._worker = threading.Thread(target=self._worker_loop, daemon=True, name="local-bridge-worker")
 
@@ -100,7 +111,10 @@ class LocalBridge:
         try:
             server.serve_forever()
         finally:
-            self.jobs.put(None)
+            try:
+                self.jobs.put_nowait(None)
+            except queue.Full:
+                pass
             server.server_close()
 
     def _build_server(self) -> ThreadingHTTPServer:
@@ -145,6 +159,19 @@ class LocalBridge:
                             duration_ms=_elapsed_ms(start),
                             audit_id=audit_id,
                             stderr="Endpoint not found",
+                        ),
+                    )
+                    return
+                if not bridge._is_authorized(self.headers.get(BRIDGE_TOKEN_HEADER)):
+                    self._send_json(
+                        403,
+                        _empty_response(
+                            ok=False,
+                            status="forbidden",
+                            exit_code=1,
+                            duration_ms=_elapsed_ms(start),
+                            audit_id=audit_id,
+                            stderr="Bridge token is required",
                         ),
                     )
                     return
@@ -223,13 +250,28 @@ class LocalBridge:
                         ),
                     )
                     return
+                try:
+                    resolved_cwd = _resolve_sandboxed_cwd(cwd)
+                except ValueError as exc:
+                    self._send_json(
+                        400,
+                        _empty_response(
+                            ok=False,
+                            status="invalid_request",
+                            exit_code=1,
+                            duration_ms=_elapsed_ms(start),
+                            audit_id=audit_id,
+                            stderr=str(exc),
+                        ),
+                    )
+                    return
                 job: BridgeJob | BridgePatchJob
                 if is_patch_apply:
                     job = BridgePatchJob(
                         audit_id=audit_id,
                         patch=patch,
                         timeout=timeout,
-                        cwd=cwd,
+                        cwd=resolved_cwd,
                         done=threading.Event(),
                     )
                 else:
@@ -237,10 +279,24 @@ class LocalBridge:
                         audit_id=audit_id,
                         command=command.strip(),
                         timeout=timeout,
-                        cwd=cwd,
+                        cwd=resolved_cwd,
                         done=threading.Event(),
                     )
-                bridge.jobs.put(job)
+                try:
+                    bridge.jobs.put_nowait(job)
+                except queue.Full:
+                    self._send_json(
+                        503,
+                        _empty_response(
+                            ok=False,
+                            status="queue_full",
+                            exit_code=1,
+                            duration_ms=_elapsed_ms(start),
+                            audit_id=audit_id,
+                            stderr="Local bridge queue is full",
+                        ),
+                    )
+                    return
                 job.done.wait(timeout + 1)
 
                 if job.result is None:
@@ -267,6 +323,8 @@ class LocalBridge:
                     content_length = int(self.headers.get("Content-Length") or "0")
                 except ValueError:
                     return None
+                if content_length <= 0:
+                    return None
                 if content_length > MAX_REQUEST_BYTES:
                     return REQUEST_TOO_LARGE
                 raw = self.rfile.read(content_length)
@@ -284,6 +342,9 @@ class LocalBridge:
                 self.wfile.write(body)
 
         return ThreadingHTTPServer((self.host, self.port), Handler)
+
+    def _is_authorized(self, provided_token: str | None) -> bool:
+        return bool(self.bridge_token and provided_token and hmac.compare_digest(provided_token, self.bridge_token))
 
     def _worker_loop(self) -> None:
         while True:
@@ -320,13 +381,7 @@ class LocalBridge:
                 job.done.set()
 
     def _run_command(self, job: BridgeJob) -> tuple[str | None, str | None, int]:
-        with _temporary_cwd(_resolve_sandboxed_cwd(job.cwd)):
-            return self.terminal.execute(
-                job.command,
-                timeout=job.timeout,
-                check_safety=True,
-                elevated=False,
-            )
+        return self._execute_bounded(job.command, _resolve_sandboxed_cwd(job.cwd), job.timeout)
 
     def _apply_patch(self, job: BridgePatchJob) -> tuple[str | None, str | None, int]:
         cwd = _resolve_sandboxed_cwd(job.cwd)
@@ -335,18 +390,125 @@ class LocalBridge:
             with os.fdopen(fd, "w", encoding="utf-8", errors="replace") as handle:
                 handle.write(job.patch)
             safe_patch_path = patch_path.replace('"', "")
-            with _temporary_cwd(cwd):
-                return self.terminal.execute(
-                    f'git apply --whitespace=nowarn "{safe_patch_path}"',
-                    timeout=job.timeout,
-                    check_safety=True,
-                    elevated=False,
-                )
+            return self._execute_bounded(
+                f'git apply --whitespace=nowarn "{safe_patch_path}"',
+                cwd,
+                job.timeout,
+            )
         finally:
             try:
                 os.unlink(patch_path)
             except OSError:
                 pass
+
+    def _execute_bounded(self, command: str, cwd: str, timeout: int) -> tuple[str | None, str | None, int]:
+        command_hash = hashlib.sha256(command.encode("utf-8")).hexdigest()
+        is_safe, reason = self.terminal.is_command_safe(command)
+        if not is_safe:
+            log_audit_event(
+                "command_attempt",
+                command_hash=command_hash,
+                command_length=len(command),
+                safe=False,
+                reason_if_blocked=reason,
+                source="local_bridge",
+                outcome="blocked",
+            )
+            raise ValueError(reason)
+
+        log_audit_event(
+            "command_attempt",
+            command_hash=command_hash,
+            command_length=len(command),
+            safe=True,
+            source="local_bridge",
+            outcome="attempting",
+        )
+        shell = self.terminal._detect_shell()
+        full_command = self.terminal._build_shell_command(shell, command)
+        try:
+            process = subprocess.Popen(
+                full_command,
+                cwd=cwd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+        except Exception as exc:
+            log_audit_event(
+                "command_executed",
+                command_hash=command_hash,
+                command_length=len(command),
+                safe=True,
+                source="local_bridge",
+                outcome="error",
+                error_type=type(exc).__name__,
+            )
+            raise
+        stdout_chunks: list[str] = []
+        stderr_chunks: list[str] = []
+        stdout_truncated = False
+        stderr_truncated = False
+
+        def reader(stream: Any, chunks: list[str], truncated_flag: str) -> None:
+            nonlocal stdout_truncated, stderr_truncated
+            stored = 0
+            while True:
+                chunk = stream.read(4096)
+                if not chunk:
+                    return
+                remaining = MAX_OUTPUT_CHARS - stored
+                if remaining > 0:
+                    chunks.append(chunk[:remaining])
+                    stored += min(len(chunk), remaining)
+                if len(chunk) > remaining:
+                    if truncated_flag == "stdout":
+                        stdout_truncated = True
+                    else:
+                        stderr_truncated = True
+
+        stdout_thread = threading.Thread(target=reader, args=(process.stdout, stdout_chunks, "stdout"), daemon=True)
+        stderr_thread = threading.Thread(target=reader, args=(process.stderr, stderr_chunks, "stderr"), daemon=True)
+        stdout_thread.start()
+        stderr_thread.start()
+        try:
+            return_code = process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            try:
+                process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                pass
+            log_audit_event(
+                "command_executed",
+                command_hash=command_hash,
+                command_length=len(command),
+                safe=True,
+                source="local_bridge",
+                outcome="timeout",
+                return_code=None,
+            )
+            raise TimeoutError(f"Command timed out after {timeout} seconds")
+        stdout_thread.join(timeout=1)
+        stderr_thread.join(timeout=1)
+        stdout = "".join(stdout_chunks).strip()
+        stderr = "".join(stderr_chunks).strip()
+        if stdout_truncated:
+            stdout = f"{stdout}\n[truncated]"
+        if stderr_truncated:
+            stderr = f"{stderr}\n[truncated]"
+        log_audit_event(
+            "command_executed",
+            command_hash=command_hash,
+            command_length=len(command),
+            safe=True,
+            source="local_bridge",
+            outcome="completed",
+            return_code=return_code,
+        )
+        return stdout, stderr, return_code
 
 
 def _coerce_timeout(raw_timeout: Any) -> int:
@@ -360,12 +522,12 @@ def _elapsed_ms(start: float) -> int:
 
 
 def _resolve_sandboxed_cwd(cwd: str | None) -> str:
-    sandbox_root = os.path.abspath(
+    sandbox_root = os.path.realpath(os.path.abspath(
         os.environ.get("ARCANOS_CLI_SANDBOX_ROOT")
         or os.environ.get("ARCANOS_WORKSPACE_ROOT")
         or os.getcwd()
-    )
-    requested = os.path.abspath(cwd or sandbox_root)
+    ))
+    requested = os.path.realpath(os.path.abspath(cwd or sandbox_root))
     try:
         common = os.path.commonpath([sandbox_root, requested])
     except ValueError:
@@ -373,18 +535,6 @@ def _resolve_sandboxed_cwd(cwd: str | None) -> str:
     if common != sandbox_root:
         raise ValueError("cwd outside ARCANOS CLI sandbox")
     return requested
-
-
-class _temporary_cwd:
-    def __init__(self, cwd: str):
-        self.cwd = cwd
-        self.previous = os.getcwd()
-
-    def __enter__(self) -> None:
-        os.chdir(self.cwd)
-
-    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
-        os.chdir(self.previous)
 
 
 def run_local_bridge(host: str = DEFAULT_BRIDGE_HOST, port: int = DEFAULT_BRIDGE_PORT) -> None:

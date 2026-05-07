@@ -58,7 +58,7 @@ Actions:
 | `applyApprovedPatch` | Yes | Applies only after the confirmation challenge retry and patch policy approval. |
 | `tailAudit` | No | Returns safe audit-tail metadata. |
 
-The bridge uses the local Python daemon HTTP bridge at `ARCANOS_CLI_BRIDGE_URL` and expects it to bind to `127.0.0.1` by default. Command and patch operations are constrained by command allowlists, deny patterns, cwd sandboxing under `ARCANOS_CLI_SANDBOX_ROOT`, timeouts, output caps, redaction, and audit records. Secrets, authorization headers, cookies, private keys, OpenAI keys, Railway tokens, database URLs, and `.env` contents must not be emitted in logs or outputs.
+The bridge uses the local Python daemon HTTP bridge at `ARCANOS_CLI_BRIDGE_URL` and expects it to bind to `127.0.0.1` by default. Command and patch POSTs require `ARCANOS_CLI_BRIDGE_TOKEN` between the TypeScript gateway and local daemon; confirmation tokens still belong only at the top level of the GPT Access request, never inside action payloads. Command and patch operations are constrained by command allowlists, deny patterns, cwd sandboxing under `ARCANOS_CLI_SANDBOX_ROOT`, timeouts, output caps, redaction, and audit records. Secrets, authorization headers, cookies, private keys, OpenAI keys, Railway tokens, database URLs, and `.env` contents must not be emitted in logs or outputs.
 
 On `CONFIRMATION_REQUIRED`, retry the same `/gpt-access/capabilities/v1/ARCANOS:CLI/run` request once with the same `action` and `payload` plus top-level `confirmation_token`. Do not put confirmation tokens inside `payload`.
 

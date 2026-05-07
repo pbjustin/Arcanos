@@ -1,4 +1,5 @@
 import path from "node:path";
+import { existsSync, realpathSync } from "node:fs";
 
 export interface CliPolicyConfig {
   version: number;
@@ -78,7 +79,14 @@ export const DEFAULT_CLI_POLICY: CliPolicyConfig = {
       "\\bmkfs(\\.|\\s)",
       "\\bshutdown\\b",
       "\\breboot\\b",
-      "\\breg\\s+delete\\b"
+      "\\breg\\s+delete\\b",
+      "(?:&&|\\|\\||[;|<>`]|\\$\\()",
+      "[\\r\\n]",
+      "\\.\\.[/\\\\]",
+      "\\b(?:curl|wget|Invoke-WebRequest|iwr)\\b",
+      "\\b(?:cat|type|Get-Content)\\s+\\.env\\b",
+      "(?:^|\\s)--require\\b",
+      "\\bchild_process\\b"
     ]
   },
   outputPolicy: {
@@ -157,7 +165,13 @@ function isAllowedCommandPrefix(command: string, policy: CliPolicyConfig): boole
   }
 
   const normalizedCommand = command.trim().toLowerCase();
-  return allowPrefixes.some((prefix) => normalizedCommand.startsWith(prefix.trim().toLowerCase()));
+  return allowPrefixes.some((prefix) => {
+    const normalizedPrefix = prefix.trim().toLowerCase();
+    return (
+      normalizedCommand === normalizedPrefix
+      || normalizedCommand.startsWith(`${normalizedPrefix} `)
+    );
+  });
 }
 
 export function resolveCliTimeoutMs(timeoutMs: number | undefined, policy: CliPolicyConfig = DEFAULT_CLI_POLICY): number {
@@ -177,7 +191,13 @@ export function redactCliOutput(value: string, policy: CliPolicyConfig = DEFAULT
   redacted = redacted
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{12,}/g, `Bearer ${policy.redactionPolicy.replacement}`)
     .replace(/\bsk-[A-Za-z0-9_-]{12,}\b/g, policy.redactionPolicy.replacement)
-    .replace(/\bpostgres(?:ql)?:\/\/[^\s"'`]+/gi, policy.redactionPolicy.replacement);
+    .replace(/\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{20,}\b/g, policy.redactionPolicy.replacement)
+    .replace(/\brwy_[A-Za-z0-9_=-]{20,}\b/gi, policy.redactionPolicy.replacement)
+    .replace(/\b[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s"'`]*:[^\s"'`@]+@[^\s"'`]+/g, policy.redactionPolicy.replacement)
+    .replace(/\b((?:token|secret|password|api[_-]?key|authorization|cookie)\s*=\s*)(["']?)[^\s"'`]+\2/gi, (_match, prefix: string, quote: string) => {
+      return `${prefix}${quote}${policy.redactionPolicy.replacement}${quote}`;
+    })
+    .replace(/BEGIN [A-Z ]*PRIVATE KEY[\s\S]*?END [A-Z ]*PRIVATE KEY/gi, policy.redactionPolicy.replacement);
 
   return truncateCliOutput(redacted, policy);
 }
@@ -232,26 +252,34 @@ function resolveSandboxedCwd(input: {
 }): { allowed: boolean; cwd: string; reason?: string } {
   const workspaceRoot = path.resolve(input.workspaceRoot);
   const requestedCwd = path.resolve(workspaceRoot, input.cwd ?? input.policy.cwdSandbox.defaultRoot);
-  const relativePath = path.relative(workspaceRoot, requestedCwd);
+  const realWorkspaceRoot = resolveExistingRealPath(workspaceRoot);
+  const realRequestedCwd = resolveExistingRealPath(requestedCwd);
+  const relativePath = path.relative(realWorkspaceRoot, realRequestedCwd);
   const insideWorkspace = relativePath === "" || (!relativePath.startsWith("..") && !path.isAbsolute(relativePath));
 
   if (input.policy.cwdSandbox.allowSubdirectoriesOnly && !insideWorkspace) {
     return {
       allowed: false,
-      cwd: requestedCwd,
+      cwd: realRequestedCwd,
       reason: "cwd_outside_workspace"
     };
   }
 
   return {
     allowed: true,
-    cwd: requestedCwd
+    cwd: realRequestedCwd
   };
 }
 
+function resolveExistingRealPath(value: string): string {
+  return existsSync(value) ? realpathSync(value) : path.resolve(value);
+}
+
 function redactNamedAssignment(value: string, envName: string, replacement: string): string {
-  const pattern = new RegExp("\\b(" + escapeRegExp(envName) + "\\s*=\\s*)([^\\s\"'`]+)", "gi");
-  return value.replace(pattern, `$1${replacement}`);
+  const pattern = new RegExp("\\b(" + escapeRegExp(envName) + "\\s*=\\s*)([\"']?)([^\\s\"'`]+)([\"']?)", "gi");
+  return value.replace(pattern, (_match, prefix: string, openQuote: string, _secret: string, closeQuote: string) => (
+    `${prefix}${openQuote}${replacement}${closeQuote}`
+  ));
 }
 
 function escapeRegExp(value: string): string {

@@ -16,14 +16,18 @@ const SERVICE_VERSION = '0.1.0';
 const DEFAULT_BRIDGE_URL = 'http://127.0.0.1:8765';
 const DEFAULT_OUTPUT_MAX_BYTES = 20000;
 const DEFAULT_TIMEOUT_MS = 30000;
+const MAX_PATCH_BYTES = 200_000;
 const POLICY_PATH = path.resolve(process.cwd(), 'config', 'cli-policy.json');
+const LOOPBACK_BRIDGE_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
+const BRIDGE_TOKEN_HEADER = 'x-arcanos-cli-bridge-token';
+const BIDI_CONTROL_PATTERN = /[\u202A-\u202E\u2066-\u2069]/u;
+const SECRET_VALUE_KEY_PATTERN = /(?:authorization|cookie|password|secret|token|api[_-]?key|private[_-]?key|database[_-]?url|railway[_-]?token|openai[_-]?api[_-]?key)/iu;
+const SECRET_PATCH_PATH_PATTERN = /(?:^|\/)(?:\.env(?:\..*)?|\.npmrc|\.pypirc|\.netrc|\.ssh\/.+|[^/]*(?:secret|token|credential|private[_-]?key)[^/]*)$/iu;
 
 const READONLY_REPO_TOOLS = new Set([
   'doctor.implementation',
   'repo.list',
-  'repo.read_file',
   'repo.listTree',
-  'repo.readFile',
   'repo.search',
   'repo.getStatus',
   'repo.getLog',
@@ -234,6 +238,9 @@ function normalizeCommandPayload(payload: unknown): NormalizedCommandPayload {
   if (!isRecord(payload) || typeof payload.command !== 'string' || payload.command.trim().length === 0) {
     throw new Error('command must be a non-empty string.');
   }
+  if (/[\r\n]/u.test(payload.command) || BIDI_CONTROL_PATTERN.test(payload.command)) {
+    throw new Error('command contains unsupported control characters.');
+  }
 
   return {
     command: payload.command.trim(),
@@ -255,8 +262,15 @@ function normalizePatchPayload(payload: unknown): NormalizedPatchPayload {
 }
 
 function validatePatchText(patch: string): { allowed: boolean; reason?: string } {
-  if (Buffer.byteLength(patch, 'utf8') > 200_000) {
+  if (BIDI_CONTROL_PATTERN.test(patch)) {
+    return { allowed: false, reason: 'patch_contains_unsupported_control_character' };
+  }
+  if (Buffer.byteLength(patch, 'utf8') > MAX_PATCH_BYTES) {
     return { allowed: false, reason: 'patch_too_large' };
+  }
+  const unsafePathReason = validatePatchPaths(patch);
+  if (unsafePathReason) {
+    return { allowed: false, reason: unsafePathReason };
   }
   if (/^diff --git a\/\.env\b|^\+\+\+ b\/\.env\b|^--- a\/\.env\b/im.test(patch)) {
     return { allowed: false, reason: 'patch_targets_env_file' };
@@ -264,7 +278,43 @@ function validatePatchText(patch: string): { allowed: boolean; reason?: string }
   if (/BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY/i.test(patch)) {
     return { allowed: false, reason: 'patch_contains_private_key' };
   }
+  if (/^new file mode 120000$/im.test(patch)) {
+    return { allowed: false, reason: 'patch_symlink_not_allowed' };
+  }
   return { allowed: true };
+}
+
+function validatePatchPaths(patch: string): string | null {
+  for (const line of patch.split(/\r?\n/u)) {
+    const match = /^(?:diff --git a\/(.+?) b\/(.+)|(?:---|\+\+\+) (?:a|b)\/(.+))$/u.exec(line);
+    const headerMatch = /^(?:---|\+\+\+) ([^\t ]+)/u.exec(line);
+    if (headerMatch && headerMatch[1] !== '/dev/null' && !/^[ab]\//u.test(headerMatch[1])) {
+      return 'patch_path_outside_sandbox';
+    }
+    if (!match) {
+      continue;
+    }
+    const paths = match.slice(1).filter((value): value is string => Boolean(value));
+    for (const rawPath of paths) {
+      const normalizedPath = rawPath.replace(/\\/gu, '/');
+      if (
+        normalizedPath.startsWith('/')
+        || normalizedPath.includes('../')
+        || normalizedPath === '..'
+      ) {
+        return 'patch_path_outside_sandbox';
+      }
+      if (SECRET_PATCH_PATH_PATTERN.test(normalizedPath)) {
+        return 'patch_targets_secret_file';
+      }
+    }
+  }
+
+  if (/^GIT binary patch$/im.test(patch) || /^literal \d+$/im.test(patch)) {
+    return 'patch_binary_not_allowed';
+  }
+
+  return null;
 }
 
 async function isDaemonBridgeReachable(): Promise<boolean> {
@@ -277,9 +327,14 @@ async function isDaemonBridgeReachable(): Promise<boolean> {
 }
 
 async function postBridgeJson(pathname: string, body: Record<string, unknown>): Promise<BridgeRunResponse> {
+  const bridgeToken = process.env.ARCANOS_CLI_BRIDGE_TOKEN?.trim();
+  const headers: Record<string, string> = { 'content-type': 'application/json' };
+  if (bridgeToken) {
+    headers[BRIDGE_TOKEN_HEADER] = bridgeToken;
+  }
   const response = await fetch(`${getBridgeUrl()}${pathname}`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers,
     body: JSON.stringify(body)
   });
   const payload = await response.json() as BridgeRunResponse;
@@ -287,7 +342,22 @@ async function postBridgeJson(pathname: string, body: Record<string, unknown>): 
 }
 
 function getBridgeUrl(): string {
-  return (process.env.ARCANOS_CLI_BRIDGE_URL || DEFAULT_BRIDGE_URL).replace(/\/+$/u, '');
+  const rawBridgeUrl = process.env.ARCANOS_CLI_BRIDGE_URL || DEFAULT_BRIDGE_URL;
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(rawBridgeUrl);
+  } catch {
+    throw new Error('ARCANOS CLI bridge URL is invalid.');
+  }
+
+  if (parsedUrl.protocol !== 'http:' || !LOOPBACK_BRIDGE_HOSTS.has(parsedUrl.hostname)) {
+    throw new Error('ARCANOS CLI bridge URL must use HTTP loopback.');
+  }
+
+  parsedUrl.pathname = parsedUrl.pathname.replace(/\/+$/u, '');
+  parsedUrl.search = '';
+  parsedUrl.hash = '';
+  return parsedUrl.toString().replace(/\/+$/u, '');
 }
 
 function loadCliPolicy(): CliPolicyConfig {
@@ -295,29 +365,55 @@ function loadCliPolicy(): CliPolicyConfig {
     return DEFAULT_CLI_POLICY;
   }
   try {
-    return {
-      ...DEFAULT_CLI_POLICY,
-      ...(JSON.parse(readFileSync(POLICY_PATH, 'utf8')) as Partial<CliPolicyConfig>)
-    };
+    return mergeCliPolicyConfig(JSON.parse(readFileSync(POLICY_PATH, 'utf8')) as Partial<CliPolicyConfig>);
   } catch {
     return DEFAULT_CLI_POLICY;
   }
 }
 
+function mergeCliPolicyConfig(partial: Partial<CliPolicyConfig>): CliPolicyConfig {
+  return {
+    ...DEFAULT_CLI_POLICY,
+    ...partial,
+    commandPolicy: {
+      ...DEFAULT_CLI_POLICY.commandPolicy,
+      ...(partial.commandPolicy ?? {})
+    },
+    cwdSandbox: {
+      ...DEFAULT_CLI_POLICY.cwdSandbox,
+      ...(partial.cwdSandbox ?? {})
+    },
+    timeoutPolicy: {
+      ...DEFAULT_CLI_POLICY.timeoutPolicy,
+      ...(partial.timeoutPolicy ?? {})
+    },
+    outputPolicy: {
+      ...DEFAULT_CLI_POLICY.outputPolicy,
+      ...(partial.outputPolicy ?? {})
+    },
+    redactionPolicy: {
+      ...DEFAULT_CLI_POLICY.redactionPolicy,
+      ...(partial.redactionPolicy ?? {})
+    }
+  };
+}
+
 function redactAndCap(value: unknown): unknown {
   const policy = loadCliPolicy();
   if (typeof value === 'string') {
-    return redactCliOutput(limitBytes(value, getOutputMaxBytes(policy)), policy);
+    return limitBytes(redactCliOutput(value, policy), getOutputMaxBytes(policy));
   }
   if (Array.isArray(value)) {
     return value.map(redactAndCap);
   }
   if (value && typeof value === 'object') {
     return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>).map(([key, entryValue]) => [
-        key,
-        redactAndCap(entryValue)
-      ])
+      Object.entries(value as Record<string, unknown>).map(([key, entryValue]) => {
+        if (SECRET_VALUE_KEY_PATTERN.test(key)) {
+          return [key, policy.redactionPolicy.replacement];
+        }
+        return [key, redactAndCap(entryValue)];
+      })
     );
   }
   return value;

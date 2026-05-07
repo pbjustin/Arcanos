@@ -216,6 +216,8 @@ describe('/gpt-access gateway', () => {
   const previousRailwayPublicDomain = process.env.RAILWAY_PUBLIC_DOMAIN;
   const previousDispatchMode = process.env.GPT_ACCESS_NL_DISPATCH_MODE;
   const previousCliBridgeEnabled = process.env.ARCANOS_CLI_BRIDGE_ENABLED;
+  const previousCliBridgeUrl = process.env.ARCANOS_CLI_BRIDGE_URL;
+  const previousCliBridgeToken = process.env.ARCANOS_CLI_BRIDGE_TOKEN;
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -226,6 +228,8 @@ describe('/gpt-access gateway', () => {
     delete process.env.MCP_ALLOW_MODULE_ACTIONS;
     delete process.env.GPT_ACCESS_NL_DISPATCH_MODE;
     delete process.env.ARCANOS_CLI_BRIDGE_ENABLED;
+    delete process.env.ARCANOS_CLI_BRIDGE_URL;
+    delete process.env.ARCANOS_CLI_BRIDGE_TOKEN;
     getModulesForRegistryMock.mockReturnValue([
       {
         id: 'ARCANOS:CORE',
@@ -407,6 +411,18 @@ describe('/gpt-access gateway', () => {
       delete process.env.ARCANOS_CLI_BRIDGE_ENABLED;
     } else {
       process.env.ARCANOS_CLI_BRIDGE_ENABLED = previousCliBridgeEnabled;
+    }
+
+    if (previousCliBridgeUrl === undefined) {
+      delete process.env.ARCANOS_CLI_BRIDGE_URL;
+    } else {
+      process.env.ARCANOS_CLI_BRIDGE_URL = previousCliBridgeUrl;
+    }
+
+    if (previousCliBridgeToken === undefined) {
+      delete process.env.ARCANOS_CLI_BRIDGE_TOKEN;
+    } else {
+      process.env.ARCANOS_CLI_BRIDGE_TOKEN = previousCliBridgeToken;
     }
   });
 
@@ -795,7 +811,7 @@ describe('/gpt-access gateway', () => {
 
   it('runs ARCANOS:CLI read-only actions without confirmation when the bridge is enabled', async () => {
     process.env.ARCANOS_CLI_BRIDGE_ENABLED = 'true';
-    allowCapabilityRun();
+    allowCapabilityRun('capabilities.run', 'ARCANOS:CLI:status');
 
     const response = await authorized(request(buildApp({ trustProxy: true })).post('/gpt-access/capabilities/v1/ARCANOS%3ACLI/run'))
       .set('X-Forwarded-For', '203.0.113.11')
@@ -821,7 +837,7 @@ describe('/gpt-access gateway', () => {
 
   it('requires confirmation before ARCANOS:CLI execution actions', async () => {
     process.env.ARCANOS_CLI_BRIDGE_ENABLED = 'true';
-    allowCapabilityRun();
+    allowCapabilityRun('capabilities.run', 'ARCANOS:CLI:runApprovedCommand');
 
     const response = await authorized(request(buildApp({ trustProxy: true })).post('/gpt-access/capabilities/v1/ARCANOS%3ACLI/run'))
       .set('X-Forwarded-For', '203.0.113.12')
@@ -844,7 +860,7 @@ describe('/gpt-access gateway', () => {
 
   it('denies dangerous ARCANOS:CLI commands even after confirmation', async () => {
     process.env.ARCANOS_CLI_BRIDGE_ENABLED = 'true';
-    allowCapabilityRun();
+    allowCapabilityRun('capabilities.run', 'ARCANOS:CLI:runApprovedCommand');
 
     const response = await confirmed(authorized(request(buildApp({ trustProxy: true })).post('/gpt-access/capabilities/v1/ARCANOS%3ACLI/run')))
       .set('X-Forwarded-For', '203.0.113.13')
@@ -867,6 +883,106 @@ describe('/gpt-access gateway', () => {
         })
       })
     }));
+  });
+
+  it('requires MCP action allowlisting for ARCANOS:CLI fallback actions', async () => {
+    process.env.ARCANOS_CLI_BRIDGE_ENABLED = 'true';
+    allowCapabilityRun('capabilities.run', 'ARCANOS:CORE:query');
+
+    const response = await authorized(request(buildApp({ trustProxy: true })).post('/gpt-access/capabilities/v1/ARCANOS%3ACLI/run'))
+      .set('X-Forwarded-For', '203.0.113.14')
+      .send({
+        action: 'status',
+        payload: {}
+      });
+
+    expect(response.status).toBe(403);
+    expect(response.body.error).toEqual(expect.objectContaining({
+      code: 'GPT_ACCESS_CAPABILITY_ACTION_DENIED'
+    }));
+  });
+
+  it('rejects confirmation tokens nested inside ARCANOS:CLI payloads', async () => {
+    process.env.ARCANOS_CLI_BRIDGE_ENABLED = 'true';
+    allowCapabilityRun('capabilities.run', 'ARCANOS:CLI:status');
+
+    const response = await authorized(request(buildApp({ trustProxy: true })).post('/gpt-access/capabilities/v1/ARCANOS%3ACLI/run'))
+      .set('X-Forwarded-For', '203.0.113.15')
+      .send({
+        action: 'status',
+        payload: {
+          confirmation_token: '00000000-0000-4000-8000-000000000000'
+        }
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toEqual(expect.objectContaining({
+      code: 'GPT_ACCESS_VALIDATION_ERROR'
+    }));
+  });
+
+  it('rejects file-read repoContext tools for ARCANOS:CLI', async () => {
+    process.env.ARCANOS_CLI_BRIDGE_ENABLED = 'true';
+    allowCapabilityRun('capabilities.run', 'ARCANOS:CLI:repoContext');
+
+    const response = await authorized(request(buildApp({ trustProxy: true })).post('/gpt-access/capabilities/v1/ARCANOS%3ACLI/run'))
+      .set('X-Forwarded-For', '203.0.113.16')
+      .send({
+        action: 'repoContext',
+        payload: {
+          toolId: 'repo.readFile',
+          input: {
+            path: '.env'
+          }
+        }
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toEqual(expect.objectContaining({
+      code: 'GPT_ACCESS_VALIDATION_ERROR'
+    }));
+  });
+
+  it.each([
+    ['secret file patch', 'diff --git a/packages/app/.env b/packages/app/.env\nnew file mode 100644\n--- /dev/null\n+++ b/packages/app/.env\n@@ -0,0 +1 @@\n+OPENAI_API_KEY=sk-test\n', 'patch_targets_secret_file'],
+    ['binary patch', 'diff --git a/bin.dat b/bin.dat\nnew file mode 100644\nGIT binary patch\nliteral 1\nKcmZQzU|?Wm\n', 'patch_binary_not_allowed'],
+    ['symlink patch', 'diff --git a/link b/link\nnew file mode 120000\n--- /dev/null\n+++ b/link\n@@ -0,0 +1 @@\n+../outside\n', 'patch_symlink_not_allowed']
+  ])('denies unsafe ARCANOS:CLI patch proposals: %s', async (_caseName, patch, reason) => {
+    process.env.ARCANOS_CLI_BRIDGE_ENABLED = 'true';
+    allowCapabilityRun('capabilities.run', 'ARCANOS:CLI:proposePatch');
+
+    const response = await authorized(request(buildApp({ trustProxy: true })).post('/gpt-access/capabilities/v1/ARCANOS%3ACLI/run'))
+      .set('X-Forwarded-For', '203.0.113.17')
+      .send({
+        action: 'proposePatch',
+        payload: { patch }
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.result).toEqual(expect.objectContaining({
+      allowed: false,
+      reason
+    }));
+  });
+
+  it('fails closed for non-loopback ARCANOS:CLI bridge URLs before POSTing to the bridge', async () => {
+    process.env.ARCANOS_CLI_BRIDGE_ENABLED = 'true';
+    process.env.ARCANOS_CLI_BRIDGE_URL = 'http://169.254.169.254:8765';
+    allowCapabilityRun('capabilities.run', 'ARCANOS:CLI:runApprovedCommand');
+
+    const fetchSpy = jest.spyOn(globalThis, 'fetch');
+    const response = await confirmed(authorized(request(buildApp({ trustProxy: true })).post('/gpt-access/capabilities/v1/ARCANOS%3ACLI/run')))
+      .set('X-Forwarded-For', '203.0.113.18')
+      .send({
+        action: 'runApprovedCommand',
+        payload: {
+          command: 'git status'
+        }
+      });
+
+    expect(response.status).toBe(400);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    fetchSpy.mockRestore();
   });
 
   it('maps body confirmation_token to the confirmation header and strips it before dispatch', async () => {

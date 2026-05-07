@@ -26,7 +26,14 @@
       "\\bmkfs(\\.|\\s)",
       "\\bshutdown\\b",
       "\\breboot\\b",
-      "\\breg\\s+delete\\b"
+      "\\breg\\s+delete\\b",
+      "(?:&&|\\|\\||[;|<>`]|\\$\\()",
+      "[\\r\\n]",
+      "\\.\\.[/\\\\]",
+      "\\b(?:curl|wget|Invoke-WebRequest|iwr)\\b",
+      "\\b(?:cat|type|Get-Content)\\s+\\.env\\b",
+      "(?:^|\\s)--require\\b",
+      "\\bchild_process\\b"
     ]
   },
   "outputPolicy": {
