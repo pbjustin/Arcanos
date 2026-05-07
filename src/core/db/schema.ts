@@ -524,6 +524,7 @@ export const TABLE_DEFINITIONS = [
   `CREATE INDEX IF NOT EXISTS idx_job_events_trace_id ON job_events(trace_id)`,
   `CREATE INDEX IF NOT EXISTS idx_job_events_event_type_occurred ON job_events(event_type, occurred_at)`,
   `CREATE INDEX IF NOT EXISTS idx_job_events_worker_occurred ON job_events(worker_id, occurred_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_job_events_occurred_at ON job_events(occurred_at)`,
   `CREATE INDEX IF NOT EXISTS idx_dag_runs_session_updated ON dag_runs(session_id, updated_at DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_dag_runs_status_updated ON dag_runs(status, updated_at DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_dag_runs_updated_at_desc ON dag_runs(updated_at DESC)`,

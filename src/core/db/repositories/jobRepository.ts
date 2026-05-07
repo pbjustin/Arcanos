@@ -395,6 +395,31 @@ function emitJobEvent(
   });
 }
 
+interface PendingJobEvent {
+  job: JobEventSource;
+  eventType: JobEventType;
+  metadata: Record<string, unknown>;
+}
+
+function enqueueJobEvent(
+  events: PendingJobEvent[],
+  job: JobEventSource | null | undefined,
+  eventType: JobEventType,
+  metadata: Record<string, unknown> = {}
+): void {
+  if (!job) {
+    return;
+  }
+
+  events.push({ job, eventType, metadata });
+}
+
+function flushJobEvents(events: PendingJobEvent[]): void {
+  for (const event of events) {
+    emitJobEvent(event.job, event.eventType, event.metadata);
+  }
+}
+
 function applyGptLifecycleDefaults(jobType: string, status: string, options: CreateJobOptions): {
   idempotencyUntil: string | null;
   retentionUntil: string | null;
@@ -1588,6 +1613,7 @@ export async function recoverStaleJobs(
     const recoveredJobs: string[] = [];
     const failedJobs: string[] = [];
     const cancelledJobs: string[] = [];
+    const pendingJobEvents: PendingJobEvent[] = [];
 
     for (const row of staleResult.rows as Array<{
       id: string;
@@ -1602,7 +1628,7 @@ export async function recoverStaleJobs(
       cancel_requested_at: Date | string | null;
       cancel_reason: string | null;
     }>) {
-      emitJobEvent(row, 'worker.stale_detected', {
+      enqueueJobEvent(pendingJobEvents, row, 'worker.stale_detected', {
         staleAfterMs
       });
       const retryCount = Number(row.retry_count ?? 0);
@@ -1641,7 +1667,7 @@ export async function recoverStaleJobs(
           ]
         );
         cancelledJobs.push(row.id);
-        emitJobEvent({ ...row, status: 'cancelled' }, 'worker.recovered', {
+        enqueueJobEvent(pendingJobEvents, { ...row, status: 'cancelled' }, 'worker.recovered', {
           action: 'cancelled'
         });
         continue;
@@ -1691,8 +1717,9 @@ export async function recoverStaleJobs(
           ]
         );
         failedJobs.push(row.id);
-        emitJobEvent({ ...row, status: 'failed' }, 'job.failed', {
-          errorMessage: deadLetterMessage
+        enqueueJobEvent(pendingJobEvents, { ...row, status: 'failed' }, 'job.failed', {
+          hasError: true,
+          recoverySource: 'lease_expired'
         });
         continue;
       }
@@ -1723,12 +1750,13 @@ export async function recoverStaleJobs(
         ]
       );
       recoveredJobs.push(row.id);
-      emitJobEvent({ ...row, status: 'pending' }, 'worker.recovered', {
+      enqueueJobEvent(pendingJobEvents, { ...row, status: 'pending' }, 'worker.recovered', {
         action: 'requeued'
       });
     }
 
     await client.query('COMMIT');
+    flushJobEvents(pendingJobEvents);
     return { recoveredJobs, failedJobs, cancelledJobs };
   } catch (error: unknown) {
     await client.query('ROLLBACK');
@@ -1809,6 +1837,7 @@ export async function recoverStalledJobsForWorkers(
     const deadLetterJobIds: string[] = [];
     const cancelledJobIds: string[] = [];
     const affectedWorkerIds = new Set<string>();
+    const pendingJobEvents: PendingJobEvent[] = [];
 
     for (const row of stalledResult.rows as Array<{
       id: string;
@@ -1827,7 +1856,7 @@ export async function recoverStalledJobsForWorkers(
       if (row.last_worker_id) {
         affectedWorkerIds.add(row.last_worker_id);
       }
-      emitJobEvent(row, 'worker.stale_detected', {
+      enqueueJobEvent(pendingJobEvents, row, 'worker.stale_detected', {
         staleAfterMs,
         staleWorkerId: row.last_worker_id
       });
@@ -1880,7 +1909,7 @@ export async function recoverStalledJobsForWorkers(
           ]
         );
         cancelledJobIds.push(row.id);
-        emitJobEvent({ ...row, status: 'cancelled' }, 'worker.recovered', {
+        enqueueJobEvent(pendingJobEvents, { ...row, status: 'cancelled' }, 'worker.recovered', {
           action: 'cancelled'
         });
         continue;
@@ -1934,8 +1963,9 @@ export async function recoverStalledJobsForWorkers(
           ]
         );
         deadLetterJobIds.push(row.id);
-        emitJobEvent({ ...row, status: 'failed' }, 'job.failed', {
-          errorMessage: deadLetterMessage
+        enqueueJobEvent(pendingJobEvents, { ...row, status: 'failed' }, 'job.failed', {
+          hasError: true,
+          recoverySource: 'stale_worker_watchdog'
         });
         continue;
       }
@@ -1973,12 +2003,13 @@ export async function recoverStalledJobsForWorkers(
         ]
       );
       requeuedJobIds.push(row.id);
-      emitJobEvent({ ...row, status: 'pending' }, 'worker.recovered', {
+      enqueueJobEvent(pendingJobEvents, { ...row, status: 'pending' }, 'worker.recovered', {
         action: 'requeued'
       });
     }
 
     await client.query('COMMIT');
+    flushJobEvents(pendingJobEvents);
     return {
       staleWorkerIds: [...affectedWorkerIds],
       stalledJobIds,

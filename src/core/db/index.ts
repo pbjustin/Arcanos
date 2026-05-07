@@ -90,9 +90,19 @@ export {
 } from './repositories/jobRepository.js';
 
 export {
+  cleanupJobEvents,
+  listJobEventTimeline,
   recordJobEvent,
+  DEFAULT_JOB_EVENT_CLEANUP_BATCH_SIZE,
+  DEFAULT_JOB_EVENT_RETENTION_DAYS,
+  DEFAULT_JOB_EVENT_TIMELINE_LIMIT,
   JOB_EVENT_TYPES,
+  type CleanupJobEventsOptions,
+  type CleanupJobEventsResult,
+  type JobEventTimelineRow,
   type JobEventType,
+  type ListJobEventTimelineInput,
+  type ListJobEventTimelineResult,
   type RecordJobEventInput,
   type RecordJobEventResult
 } from './repositories/jobEventRepository.js';

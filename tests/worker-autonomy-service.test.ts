@@ -17,6 +17,7 @@ const recordWorkerLivenessMock = jest.fn();
 const upsertWorkerRuntimeStateMock = jest.fn();
 const appendWorkerRuntimeHistoryMock = jest.fn();
 const runFailedJobCleanupMock = jest.fn();
+const runJobEventCleanupMock = jest.fn();
 const fetchMock = jest.fn();
 const loggerDebugMock = jest.fn();
 const loggerInfoMock = jest.fn();
@@ -47,7 +48,8 @@ jest.unstable_mockModule('@core/db/repositories/workerRuntimeRepository.js', () 
 }));
 
 jest.unstable_mockModule('../src/queue/cleanup.js', () => ({
-  runFailedJobCleanup: runFailedJobCleanupMock
+  runFailedJobCleanup: runFailedJobCleanupMock,
+  runJobEventCleanup: runJobEventCleanupMock
 }));
 
 jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({
@@ -168,6 +170,19 @@ describe('workerAutonomyService', () => {
       deletedFailed: 0,
       retainedFailed: 0,
       deletedJobIds: []
+    });
+    runJobEventCleanupMock.mockResolvedValue({
+      enabled: true,
+      skipped: false,
+      failed: false,
+      databaseAvailable: true,
+      dryRun: true,
+      retentionDays: 30,
+      batchSize: 1_000,
+      cutoffBefore: '2026-02-06T12:00:00.000Z',
+      matchedRows: 0,
+      deletedRows: 0,
+      eventIds: []
     });
     scheduleJobRetryMock.mockResolvedValue({
       id: 'job-1'

@@ -36,6 +36,7 @@
     "daily-summary": "node --import ./scripts/register-esm-loader.mjs dist/commands/runDailySummary.js",
     "worker:helper": "node scripts/worker-helper.mjs",
     "worker:jobs:maintenance": "npm run build && node scripts/worker-failed-job-maintenance.mjs",
+    "job-events:timeline": "node scripts/job-events-timeline.mjs",
     "validate:railway": "node scripts/validate-railway-compatibility.js",
     "railway:smoke:production": "node scripts/railway-production-smoke-check.js --environment production",
     "railway:probe:async": "node scripts/railway-async-job-probe.js",

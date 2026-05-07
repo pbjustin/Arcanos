@@ -16,7 +16,7 @@ $env:ARCANOS_BASE_URL = "http://localhost:3000"
 
 For deployed environments, set `ARCANOS_BASE_URL` to that service's HTTPS origin. Do not hard-code production URLs into reusable docs or scripts.
 
-For Custom GPT OpenAPI metadata, the gateway derives the server URL from `ARCANOS_GPT_ACCESS_BASE_URL` first, then `ARCANOS_BASE_URL`, `ARCANOS_BACKEND_URL`, `SERVER_URL`, `BACKEND_URL`, public Railway URL/domain variables, or a local development request origin. Non-local request hosts are ignored so public metadata cannot be poisoned by spoofed headers. Set `ARCANOS_GPT_ACCESS_BASE_URL` in deployment when the gateway is reached through a stable public origin.
+For Custom GPT OpenAPI metadata, the gateway derives the server URL from `ARCANOS_GPT_ACCESS_BASE_URL` first, then `ARCANOS_BASE_URL`, `ARCANOS_BACKEND_URL`, `SERVER_URL`, `BACKEND_URL`, public Railway URL/domain variables, or a local development request origin. Railway PR previews named `Arcanos-pr-<number>` advertise their Railway preview URL variables before inherited production URLs. Non-local request hosts are ignored so public metadata cannot be poisoned by spoofed headers. Set `ARCANOS_GPT_ACCESS_BASE_URL` in stable deployments when the gateway is reached through a public origin.
 
 ## Authentication
 Protected `/gpt-access/*` operations require bearer auth. `/gpt-access/openapi.json` is public metadata so GPT Action import can retrieve the schema, but every protected operation in that schema still declares bearer auth:

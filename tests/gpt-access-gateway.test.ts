@@ -206,6 +206,9 @@ describe('/gpt-access gateway', () => {
   const previousScopes = process.env.ARCANOS_GPT_ACCESS_SCOPES;
   const previousModuleActionAllowlist = process.env.MCP_ALLOW_MODULE_ACTIONS;
   const previousGptAccessBaseUrl = process.env.ARCANOS_GPT_ACCESS_BASE_URL;
+  const previousRailwayEnvironment = process.env.RAILWAY_ENVIRONMENT;
+  const previousRailwayEnvironmentName = process.env.RAILWAY_ENVIRONMENT_NAME;
+  const previousRailwayPublicDomain = process.env.RAILWAY_PUBLIC_DOMAIN;
   const previousDispatchMode = process.env.GPT_ACCESS_NL_DISPATCH_MODE;
 
   beforeEach(() => {
@@ -347,6 +350,24 @@ describe('/gpt-access gateway', () => {
       delete process.env.ARCANOS_GPT_ACCESS_BASE_URL;
     } else {
       process.env.ARCANOS_GPT_ACCESS_BASE_URL = previousGptAccessBaseUrl;
+    }
+
+    if (previousRailwayEnvironment === undefined) {
+      delete process.env.RAILWAY_ENVIRONMENT;
+    } else {
+      process.env.RAILWAY_ENVIRONMENT = previousRailwayEnvironment;
+    }
+
+    if (previousRailwayEnvironmentName === undefined) {
+      delete process.env.RAILWAY_ENVIRONMENT_NAME;
+    } else {
+      process.env.RAILWAY_ENVIRONMENT_NAME = previousRailwayEnvironmentName;
+    }
+
+    if (previousRailwayPublicDomain === undefined) {
+      delete process.env.RAILWAY_PUBLIC_DOMAIN;
+    } else {
+      process.env.RAILWAY_PUBLIC_DOMAIN = previousRailwayPublicDomain;
     }
 
     if (previousDispatchMode === undefined) {
@@ -2587,6 +2608,8 @@ describe('/gpt-access gateway', () => {
 
   it('returns a Custom GPT compatible OpenAPI document', async () => {
     process.env.ARCANOS_GPT_ACCESS_BASE_URL = 'https://gateway.example.test/';
+    process.env.RAILWAY_ENVIRONMENT = 'production';
+    process.env.RAILWAY_PUBLIC_DOMAIN = 'preview-ignored.up.railway.app';
 
     const response = await request(buildApp()).get('/gpt-access/openapi.json');
 
@@ -2761,6 +2784,35 @@ describe('/gpt-access gateway', () => {
     expect(response.body.paths['/ask']).toBeUndefined();
   });
 
+  it('advertises the Railway PR preview domain before inherited production OpenAPI URLs', async () => {
+    process.env.RAILWAY_ENVIRONMENT = 'Arcanos-pr-1355';
+    process.env.ARCANOS_GPT_ACCESS_BASE_URL = 'https://gateway.example.test/';
+    process.env.RAILWAY_PUBLIC_DOMAIN = 'arcanos-v2-arcanos-pr-1355.up.railway.app';
+
+    const response = await request(buildApp()).get('/gpt-access/openapi.json');
+
+    expect(response.status).toBe(200);
+    expect(response.body.servers).toEqual([
+      { url: 'https://arcanos-v2-arcanos-pr-1355.up.railway.app' }
+    ]);
+  });
+
+  it('derives local development OpenAPI server URLs from localhost request hosts', async () => {
+    process.env.RAILWAY_ENVIRONMENT = 'development';
+    const response = await withoutOpenApiServerUrlEnv(() =>
+      request(buildApp({ trustProxy: true }))
+        .get('/gpt-access/openapi.json')
+        .set('Host', 'localhost:4173')
+        .set('X-Forwarded-Proto', 'http')
+        .set('X-Forwarded-For', '203.0.113.201')
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body.servers).toEqual([
+      { url: 'http://localhost:4173' }
+    ]);
+  });
+
   it('does not derive the public OpenAPI server URL from spoofable request hosts', async () => {
     const response = await withoutOpenApiServerUrlEnv(() =>
       request(buildApp({ trustProxy: true }))
@@ -2768,6 +2820,7 @@ describe('/gpt-access gateway', () => {
         .set('Host', 'attacker.example.test')
         .set('X-Forwarded-Host', 'attacker.example.test')
         .set('X-Forwarded-Proto', 'https')
+        .set('X-Forwarded-For', '203.0.113.202')
     );
 
     expect(response.status).toBe(200);

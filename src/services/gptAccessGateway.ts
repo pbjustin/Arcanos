@@ -632,6 +632,12 @@ const GPT_ACCESS_PUBLIC_BASE_URL_ENV_KEYS = [
   'RAILWAY_STATIC_URL'
 ] as const;
 
+const RAILWAY_PREVIEW_PUBLIC_BASE_URL_ENV_KEYS = [
+  'RAILWAY_PUBLIC_DOMAIN',
+  'RAILWAY_PUBLIC_URL',
+  'RAILWAY_STATIC_URL'
+] as const;
+
 function firstHeaderValue(value: string | undefined): string | null {
   if (!value) {
     return null;
@@ -686,6 +692,26 @@ function isLocalOpenApiServerUrl(value: string): boolean {
   }
 }
 
+function isRailwayPreviewEnvironment(env: NodeJS.ProcessEnv = process.env): boolean {
+  const environmentName = (env.RAILWAY_ENVIRONMENT_NAME ?? env.RAILWAY_ENVIRONMENT ?? '').trim();
+  return /^Arcanos-pr-\d+$/iu.test(environmentName);
+}
+
+function resolveRailwayPreviewOpenApiServerUrl(env: NodeJS.ProcessEnv = process.env): string | null {
+  if (!isRailwayPreviewEnvironment(env)) {
+    return null;
+  }
+
+  for (const envName of RAILWAY_PREVIEW_PUBLIC_BASE_URL_ENV_KEYS) {
+    const configuredUrl = normalizeOpenApiServerUrl(env[envName]);
+    if (configuredUrl) {
+      return configuredUrl;
+    }
+  }
+
+  return null;
+}
+
 function resolveRequestOrigin(req: Request | undefined): string | null {
   if (!req) {
     return null;
@@ -703,6 +729,11 @@ function resolveRequestOrigin(req: Request | undefined): string | null {
 }
 
 export function resolveGptAccessOpenApiServerUrl(req?: Request): string {
+  const previewUrl = resolveRailwayPreviewOpenApiServerUrl();
+  if (previewUrl) {
+    return previewUrl;
+  }
+
   for (const envName of GPT_ACCESS_PUBLIC_BASE_URL_ENV_KEYS) {
     const configuredUrl = normalizeOpenApiServerUrl(process.env[envName]);
     if (configuredUrl) {
