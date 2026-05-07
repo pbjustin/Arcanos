@@ -51,6 +51,22 @@ describe('control-plane GPT policy', () => {
     }));
   });
 
+  it('accepts arcanos-core for ARCANOS CLI read-only workflows', () => {
+    const decision = evaluateControlPlaneGptPolicy({
+      gptId: 'arcanos-core',
+      workflow: 'arcanos.cli.readonly',
+    });
+
+    expect(decision).toEqual(expect.objectContaining({
+      ok: true,
+      gptId: 'arcanos-core',
+      whitelisted: true,
+      reason: 'gpt_control_plane_whitelisted',
+    }));
+    expect(decision.requiresAuditLog).toBe(true);
+    expect(decision.requiresSecretRedaction).toBe(true);
+  });
+
   it('denies unknown GPT IDs', () => {
     const decision = evaluateControlPlaneGptPolicy({
       gptId: 'unknown-gpt',
@@ -95,6 +111,39 @@ describe('control-plane GPT policy', () => {
       gptId: 'arcanos-core',
       reason: 'gpt_control_plane_policy_disabled',
     }));
+  });
+
+  it('denies ARCANOS CLI workflows when the GPT policy kill switch is disabled', async () => {
+    const runner = { run: jest.fn() };
+
+    const response = await executeControlPlaneOperation(
+      buildRequest({
+        operation: 'arcanos.status',
+        provider: 'arcanos-cli',
+        target: { resource: 'status' },
+        scope: 'arcanos:read',
+        dryRun: false,
+      }),
+      {
+        commandRunner: runner,
+        auditEmitter: buildAuditSink().auditEmitter,
+        gptPolicies: [
+          {
+            ...ARCANOS_CORE_CONTROL_PLANE_POLICY,
+            enabled: false,
+          },
+        ],
+      }
+    );
+
+    expect(response.ok).toBe(false);
+    expect(response.error?.code).toBe('ERR_CONTROL_PLANE_GPT_POLICY');
+    expect(response.error?.details).toEqual(expect.objectContaining({
+      gptPolicy: expect.objectContaining({
+        reason: 'gpt_control_plane_policy_disabled',
+      }),
+    }));
+    expect(runner.run).not.toHaveBeenCalled();
   });
 
   it.each(['secrets.read.raw', 'auth.bypass', 'credential.escalation'] as const)(

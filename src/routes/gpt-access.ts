@@ -53,6 +53,18 @@ import {
   sendGptAccessResult,
 } from '@services/gptAccessGateway.js';
 import {
+  CLI_READONLY_ACTIONS,
+  applyArcanosCliApprovedPatch,
+  getArcanosCliPolicyMetadata,
+  getArcanosCliRepoContext,
+  getArcanosCliStatus,
+  isArcanosCliBridgeEnabled,
+  proposeArcanosCliCommand,
+  proposeArcanosCliPatch,
+  runArcanosCliApprovedCommand,
+  tailArcanosCliAudit
+} from '@services/arcanosCliBridge.js';
+import {
   buildDispatchPolicyBlockPayload,
   resolveGptAccessNaturalLanguageDispatch,
   toDispatchPolicyResponse
@@ -78,6 +90,13 @@ const CAPABILITY_CONFIRMATION_TOKEN_BODY_KEY = 'confirmation_token';
 const CAPABILITY_CONFIRMATION_HEADER_TOKEN_PREFIX = 'token:';
 const CAPABILITY_RUN_BODY_KEYS = new Set(['action', 'payload']);
 const CAPABILITY_PAYLOAD_MAX_DEPTH = 32;
+const CLI_CAPABILITY_ID = 'ARCANOS:CLI';
+const CLI_CAPABILITY_ROUTE = 'cli';
+const CLI_GATED_ACTIONS = new Set(['runApprovedCommand', 'applyApprovedPatch']);
+const CLI_CAPABILITY_ACTIONS = [
+  ...CLI_READONLY_ACTIONS,
+  ...CLI_GATED_ACTIONS
+];
 
 function getGptAccessRateLimitActorKey(req: express.Request): string {
   const expressClientIp = typeof req.ip === 'string' && req.ip.trim().length > 0
@@ -96,6 +115,31 @@ const gptAccessRateLimit = createRateLimitMiddleware({
 
 function sortStrings(values: string[]): string[] {
   return [...values].sort((left, right) => left.localeCompare(right));
+}
+
+function isCliCapabilityId(value: string): boolean {
+  return value === CLI_CAPABILITY_ID || value === CLI_CAPABILITY_ROUTE;
+}
+
+function getCliCapabilitySummary() {
+  return {
+    id: CLI_CAPABILITY_ID,
+    description: 'Protected control-plane bridge for the optional local ARCANOS Python CLI daemon.',
+    route: CLI_CAPABILITY_ROUTE,
+    actions: sortStrings(CLI_CAPABILITY_ACTIONS)
+  };
+}
+
+function getCliCapabilityDetail() {
+  return {
+    id: CLI_CAPABILITY_ID,
+    name: CLI_CAPABILITY_ID,
+    description: 'Protected control-plane bridge for the optional local ARCANOS Python CLI daemon.',
+    route: CLI_CAPABILITY_ROUTE,
+    actions: sortStrings(CLI_CAPABILITY_ACTIONS),
+    defaultAction: 'status',
+    defaultTimeoutMs: 30000
+  };
 }
 
 function toCapabilitySummary(entry: CapabilityRegistryEntry) {
@@ -119,7 +163,11 @@ function toCapabilityDetail(metadata: CapabilityMetadata) {
   };
 }
 
-function findUnsafeCapabilityPayloadIssue(value: unknown, depth = 0): 'unsafe_field' | 'depth_exceeded' | null {
+function findUnsafeCapabilityPayloadIssue(
+  value: unknown,
+  depth = 0,
+  options: { allowCliCommandFields?: boolean } = {}
+): 'unsafe_field' | 'depth_exceeded' | null {
   if (depth > CAPABILITY_PAYLOAD_MAX_DEPTH) {
     return 'depth_exceeded';
   }
@@ -130,7 +178,7 @@ function findUnsafeCapabilityPayloadIssue(value: unknown, depth = 0): 'unsafe_fi
 
   if (Array.isArray(value)) {
     for (const item of value) {
-      const issue = findUnsafeCapabilityPayloadIssue(item, depth + 1);
+      const issue = findUnsafeCapabilityPayloadIssue(item, depth + 1, options);
       if (issue) return issue;
     }
     return null;
@@ -138,11 +186,13 @@ function findUnsafeCapabilityPayloadIssue(value: unknown, depth = 0): 'unsafe_fi
 
   const record = value as Record<string, unknown>;
   for (const key of Object.keys(record)) {
-    if (isUnsafeGptAccessPayloadKey(key)) {
+    const isCliCommandField = options.allowCliCommandFields
+      && ['command', 'cwd', 'timeoutMs', 'patch'].includes(key);
+    if (!isCliCommandField && isUnsafeGptAccessPayloadKey(key)) {
       return 'unsafe_field';
     }
 
-    const issue = findUnsafeCapabilityPayloadIssue(record[key], depth + 1);
+    const issue = findUnsafeCapabilityPayloadIssue(record[key], depth + 1, options);
     if (issue) return issue;
   }
 
@@ -161,7 +211,10 @@ function readCapabilityRunBody(body: unknown): CapabilityRunBody {
   }
 
   const payload = Object.prototype.hasOwnProperty.call(record, 'payload') ? record.payload : {};
-  const payloadIssue = findUnsafeCapabilityPayloadIssue(payload);
+  const allowCliCommandFields =
+    typeof record.action === 'string'
+    && ['proposeCommand', 'runApprovedCommand', 'proposePatch', 'applyApprovedPatch'].includes(record.action.trim());
+  const payloadIssue = findUnsafeCapabilityPayloadIssue(payload, 0, { allowCliCommandFields });
   if (payloadIssue === 'unsafe_field') {
     return { ok: false, message: 'payload contains fields that are not allowed for capability execution.' };
   }
@@ -174,6 +227,32 @@ function readCapabilityRunBody(body: unknown): CapabilityRunBody {
     action: record.action,
     payload
   };
+}
+
+function capabilityRunNeedsConfirmation(req: express.Request): boolean {
+  if (!isCliCapabilityId(req.params.id)) {
+    return true;
+  }
+
+  if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) {
+    return true;
+  }
+
+  const action = (req.body as Record<string, unknown>).action;
+  return typeof action !== 'string' || !CLI_READONLY_ACTIONS.has(action.trim());
+}
+
+function confirmCapabilityRunWhenRequired(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction
+): void {
+  if (!capabilityRunNeedsConfirmation(req)) {
+    next();
+    return;
+  }
+
+  confirmGate(req, res, next);
 }
 
 function readDispatchRunBody(body: unknown): DispatchRunBody {
@@ -388,6 +467,13 @@ const listGptAccessCapabilities = asyncHandler(async (_req, res) => {
     capabilities = getModulesForRegistry()
       .map(toCapabilitySummary)
       .sort((left, right) => left.id.localeCompare(right.id));
+    if (
+      isArcanosCliBridgeEnabled()
+      && !capabilities.some((capability) => capability.id === CLI_CAPABILITY_ID)
+    ) {
+      capabilities.push(getCliCapabilitySummary());
+      capabilities.sort((left, right) => left.id.localeCompare(right.id));
+    }
   } catch {
     sendGptAccessUnavailable(
       res,
@@ -404,6 +490,15 @@ const listGptAccessCapabilities = asyncHandler(async (_req, res) => {
 });
 
 const getGptAccessCapability = asyncHandler(async (req, res) => {
+  if (isArcanosCliBridgeEnabled() && isCliCapabilityId(req.params.id)) {
+    res.json({
+      ok: true,
+      exists: true,
+      capability: getCliCapabilityDetail()
+    });
+    return;
+  }
+
   let metadata;
   try {
     metadata = getModuleMetadata(req.params.id);
@@ -455,6 +550,10 @@ async function runGptAccessCapabilityAction(input: {
     };
   }
 
+  if (!metadata && isArcanosCliBridgeEnabled() && isCliCapabilityId(input.capabilityId)) {
+    return runFallbackArcanosCliCapabilityAction(input.action, input.payload);
+  }
+
   if (!metadata) {
     return {
       statusCode: 404,
@@ -467,6 +566,8 @@ async function runGptAccessCapabilityAction(input: {
       }
     };
   }
+
+  const isCliBridgeCapability = isArcanosCliBridgeEnabled() && metadata.name === CLI_CAPABILITY_ID;
 
   if (!metadata.actions.includes(input.action)) {
     return {
@@ -481,7 +582,7 @@ async function runGptAccessCapabilityAction(input: {
     };
   }
 
-  if (!isModuleActionAllowed(metadata.name, input.action)) {
+  if (!isCliBridgeCapability && !isModuleActionAllowed(metadata.name, input.action)) {
     return {
       statusCode: 403,
       payload: {
@@ -527,6 +628,68 @@ async function runGptAccessCapabilityAction(input: {
         }
       }
     };
+  }
+}
+
+async function runFallbackArcanosCliCapabilityAction(
+  action: string,
+  payload: unknown
+): Promise<DispatchExecutionResult> {
+  if (!CLI_CAPABILITY_ACTIONS.includes(action)) {
+    return {
+      statusCode: 404,
+      payload: {
+        ok: false,
+        error: {
+          code: 'GPT_ACCESS_ACTION_NOT_FOUND',
+          message: 'Capability action not found.'
+        }
+      }
+    };
+  }
+
+  try {
+    return {
+      statusCode: 200,
+      payload: {
+        ok: true,
+        result: sanitizeGptAccessPayload(await runFallbackArcanosCliAction(action, payload))
+      }
+    };
+  } catch {
+    return {
+      statusCode: 400,
+      payload: {
+        ok: false,
+        error: {
+          code: 'GPT_ACCESS_VALIDATION_ERROR',
+          message: 'ARCANOS CLI action payload is invalid or denied by policy.'
+        }
+      }
+    };
+  }
+}
+
+async function runFallbackArcanosCliAction(action: string, payload: unknown): Promise<unknown> {
+  switch (action) {
+    case 'status':
+      return getArcanosCliStatus();
+    case 'policy':
+      return getArcanosCliPolicyMetadata();
+    case 'repoContext':
+      return getArcanosCliRepoContext(payload);
+    case 'proposeCommand':
+      return proposeArcanosCliCommand(payload);
+    case 'runApprovedCommand':
+      return runArcanosCliApprovedCommand(payload);
+    case 'proposePatch':
+      return proposeArcanosCliPatch(payload);
+    case 'applyApprovedPatch':
+      return applyArcanosCliApprovedPatch(payload);
+    case 'tailAudit':
+      return tailArcanosCliAudit();
+    default:
+      throw new Error('Unsupported ARCANOS CLI action.');
   }
 }
 
@@ -685,7 +848,7 @@ router.post(
   '/gpt-access/capabilities/v1/:id/run',
   requireGptAccessScope('capabilities.run'),
   mapCapabilityRunConfirmationToken,
-  confirmGate,
+  confirmCapabilityRunWhenRequired,
   runGptAccessCapability
 );
 
