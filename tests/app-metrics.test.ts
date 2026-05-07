@@ -29,20 +29,22 @@ describe('app metrics registry', () => {
   it('emits dispatcher, DAG, dependency, and worker metrics with bounded labels', async () => {
     const {
       metricsRegistry,
+      recordAiOperation,
       recordDagRunRequest,
-    recordDagRunStatus,
-    recordDependencyCall,
-    recordDispatcherFallback,
-    recordDispatcherRoute,
-    recordJobEventCleanup,
-    recordMemoryDispatchIgnored,
-    recordUnknownGpt,
-    recordWorkerFailureTotal,
-    recordWorkerJobDuration,
+      recordDagRunStatus,
+      recordDependencyCall,
+      recordDispatcherFallback,
+      recordDispatcherRoute,
+      recordJobEventCleanup,
+      recordJobEventInsertFailure,
+      recordMemoryDispatchIgnored,
+      recordUnknownGpt,
+      recordWorkerFailureTotal,
+      recordWorkerJobDuration,
       recordWorkerJobTotal,
       recordWorkerQueueLatency,
       recordWorkerQueueDepth,
-    recordWorkerRetryTotal,
+      recordWorkerRetryTotal,
     } = await loadMetricsModule();
 
     recordDispatcherRoute({
@@ -117,6 +119,16 @@ describe('app metrics registry', () => {
       deletedRows: 4,
       durationMs: 25
     });
+    recordJobEventInsertFailure('insert_failed');
+    recordAiOperation({
+      provider: 'openai',
+      operation: 'responses.create',
+      sourceType: 'job',
+      sourceName: 'gpt',
+      model: 'gpt-5',
+      outcome: 'timeout',
+      durationMs: 30000
+    });
 
     const metricsText = await metricsRegistry.metrics();
 
@@ -132,7 +144,10 @@ describe('app metrics registry', () => {
     expect(metricsText).toMatch(/job_events_cleanup_runs_total\{[^}]*outcome="completed"[^}]*dry_run="false"[^}]*\} 1/);
     expect(metricsText).toMatch(/job_events_cleanup_rows_total\{[^}]*mode="deleted"[^}]*\} 4/);
     expect(metricsText).toMatch(/job_events_cleanup_duration_ms_bucket\{[^}]*outcome="completed"[^}]*dry_run="false"[^}]*\} \d+/);
+    expect(metricsText).toMatch(/job_event_insert_failures_total\{[^}]*reason="insert_failed"[^}]*\} 1/);
+    expect(metricsText).toMatch(/ai_timeouts_total\{[^}]*provider="openai"[^}]*operation="responses.create"[^}]*\} 1/);
     expect(metricsText).toContain('process_heap_used_bytes');
+    expect(metricsText).toContain('ai_circuit_breaker_state');
     expect(metricsText).toContain('event_loop_lag_ms');
   });
 
@@ -155,7 +170,8 @@ describe('app metrics registry', () => {
         operationalHealth: {
           overallStatus: 'healthy',
           recentFailed: 0,
-          workerHeartbeatAgeMs: 2500
+          workerHeartbeatAgeMs: 2500,
+          staleWorkers: 2
         },
         alerts: ['Detected 1 stale worker heartbeat(s).'],
         diagnosticAlerts: ['Retry exhaustion is elevated (1 terminal failure(s)).'],
@@ -193,7 +209,8 @@ describe('app metrics registry', () => {
         operationalHealth: {
           overallStatus: 'healthy',
           recentFailed: 0,
-          workerHeartbeatAgeMs: 1800
+          workerHeartbeatAgeMs: 1800,
+          staleWorkers: 1
         },
         alerts: [],
         diagnosticAlerts: [],
@@ -231,7 +248,8 @@ describe('app metrics registry', () => {
         operationalHealth: {
           overallStatus: 'healthy',
           recentFailed: 0,
-          workerHeartbeatAgeMs: 900
+          workerHeartbeatAgeMs: 900,
+          staleWorkers: 0
         },
         alerts: [],
         diagnosticAlerts: [],
@@ -269,6 +287,7 @@ describe('app metrics registry', () => {
     expect(metricsText).toMatch(/worker_alert_recommendations\{[^}]*recommendation="operational_alerts"[^}]*\} 1/);
     expect(metricsText).toMatch(/worker_alert_recommendations\{[^}]*recommendation="diagnostic_alerts"[^}]*\} 1/);
     expect(metricsText).toMatch(/worker_alert_recommendations\{[^}]*recommendation="restart_recommended_workers"[^}]*\} 1/);
+    expect(metricsText).toMatch(/worker_stale_workers\{[^}]*\} 2/);
     expect(metricsText).not.toMatch(/worker_stale_total\{[^}]*reason="persisted_snapshot"/);
     expect(metricsText).not.toMatch(/worker_stalled_jobs_total\{[^}]*action="requeue"/);
     expect(metricsText).not.toMatch(/worker_stalled_jobs_total\{[^}]*action="dead_letter"/);

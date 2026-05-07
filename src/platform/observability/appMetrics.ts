@@ -209,6 +209,12 @@ const workerHeartbeatAgeMs = new Gauge({
   registers: [metricsRegistry],
 });
 
+const workerStaleWorkers = new Gauge({
+  name: 'worker_stale_workers',
+  help: 'Current number of stale worker snapshots observed by worker control health.',
+  registers: [metricsRegistry],
+});
+
 const workerHealthStatus = new Gauge({
   name: 'worker_health_status',
   help: 'Current operational worker health status as a numeric gauge (healthy=0, degraded=1, unhealthy=2, offline=-1).',
@@ -336,6 +342,13 @@ const jobEventsCleanupDurationMs = new Histogram({
   registers: [metricsRegistry],
 });
 
+const jobEventInsertFailuresTotal = new Counter({
+  name: 'job_event_insert_failures_total',
+  help: 'Job event insert failures by reason.',
+  labelNames: ['reason'] as const,
+  registers: [metricsRegistry],
+});
+
 const gptJobLookupTotal = new Counter({
   name: 'gpt_job_lookup_total',
   help: 'Job status/result lookup requests by channel and outcome.',
@@ -394,11 +407,31 @@ const aiCallsTotal = new Counter({
   registers: [metricsRegistry],
 });
 
+const aiTimeoutsTotal = new Counter({
+  name: 'ai_timeouts_total',
+  help: 'AI provider timeout outcomes by provider and operation.',
+  labelNames: ['provider', 'operation'] as const,
+  registers: [metricsRegistry],
+});
+
 const aiCallDurationMs = new Histogram({
   name: 'ai_call_duration_ms',
   help: 'AI provider call duration in milliseconds.',
   labelNames: ['provider', 'operation', 'source_type', 'source_name', 'model', 'outcome'] as const,
   buckets: [1, 5, 10, 25, 50, 100, 250, 500, 1_000, 2_500, 5_000, 10_000, 20_000, 30_000, 60_000, 120_000],
+  registers: [metricsRegistry],
+});
+
+const aiCircuitBreakerState = new Gauge({
+  name: 'ai_circuit_breaker_state',
+  help: 'AI provider circuit breaker state as one-hot labels.',
+  labelNames: ['state'] as const,
+  registers: [metricsRegistry],
+});
+
+const aiCircuitBreakerFailures = new Gauge({
+  name: 'ai_circuit_breaker_failures',
+  help: 'AI provider circuit breaker failure count.',
   registers: [metricsRegistry],
 });
 
@@ -998,6 +1031,10 @@ export function recordJobEventCleanup(input: {
   }
 }
 
+export function recordJobEventInsertFailure(reason: string): void {
+  jobEventInsertFailuresTotal.inc({ reason: normalizeLabel(reason) });
+}
+
 export function recordGptJobLookup(input: {
   channel: string;
   lookup: 'status' | 'result';
@@ -1114,6 +1151,10 @@ export function recordAiOperation(input: {
     outcome,
   });
 
+  if (outcome.includes('timeout')) {
+    aiTimeoutsTotal.inc({ provider, operation });
+  }
+
   if (typeof input.durationMs === 'number' && Number.isFinite(input.durationMs)) {
     aiCallDurationMs.observe(
       {
@@ -1207,6 +1248,7 @@ function resetWorkerSnapshotMetrics(): void {
   recordWorkerFailureTotal('recent_failed_jobs', 0);
   recordWorkerRetryTotal('scheduled', 0);
   workerHeartbeatAgeMs.set(0);
+  workerStaleWorkers.set(0);
   workerHealthStatus.set(-1);
   workerAlertRecommendations.set({ recommendation: 'operational_alerts' }, 0);
   workerAlertRecommendations.set({ recommendation: 'diagnostic_alerts' }, 0);
@@ -1284,6 +1326,7 @@ async function refreshWorkerMetrics(): Promise<void> {
       recordWorkerFailureTotal('recent_failed_jobs', operationalHealth.recentFailed);
       recordWorkerRetryTotal('scheduled', scheduledRetries);
       workerHeartbeatAgeMs.set(Math.max(0, operationalHealth.workerHeartbeatAgeMs ?? 0));
+      workerStaleWorkers.set(Math.max(0, operationalHealth.staleWorkers ?? 0));
       workerHealthStatus.set(encodeWorkerHealthStatus(operationalHealth.overallStatus));
       workerAlertRecommendations.set({ recommendation: 'operational_alerts' }, health.alerts?.length ?? 0);
       workerAlertRecommendations.set({ recommendation: 'diagnostic_alerts' }, health.diagnosticAlerts?.length ?? 0);
@@ -1301,6 +1344,22 @@ async function refreshWorkerMetrics(): Promise<void> {
   })();
 
   return pendingWorkerMetricsRefresh;
+}
+
+async function refreshAiProviderMetrics(): Promise<void> {
+  try {
+    const { getOpenAIServiceHealth } = await import('@services/openai/serviceHealth.js');
+    const health = getOpenAIServiceHealth();
+    const currentState = normalizeLabel(health.circuitBreaker?.state, 'unknown').toLowerCase();
+
+    for (const state of ['closed', 'open', 'half_open', 'unknown']) {
+      aiCircuitBreakerState.set({ state }, state === currentState ? 1 : 0);
+    }
+    aiCircuitBreakerFailures.set(Math.max(0, Number(health.circuitBreaker?.failureCount ?? 0)));
+  } catch {
+    aiCircuitBreakerState.set({ state: 'unknown' }, 1);
+    aiCircuitBreakerFailures.set(0);
+  }
 }
 
 function isMetricsEnabled(): boolean {
@@ -1334,6 +1393,7 @@ export async function writeMetricsResponse(req: Request, res: Response): Promise
   }
 
   refreshProcessMetrics();
+  await refreshAiProviderMetrics();
   await refreshWorkerMetrics();
 
   res.setHeader('Content-Type', metricsRegistry.contentType);
@@ -1343,6 +1403,7 @@ export async function writeMetricsResponse(req: Request, res: Response): Promise
 
 export async function getMetricsText(): Promise<string> {
   refreshProcessMetrics();
+  await refreshAiProviderMetrics();
   await refreshWorkerMetrics();
   return metricsRegistry.metrics();
 }

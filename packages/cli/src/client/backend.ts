@@ -31,8 +31,9 @@ export interface BackendWorkersSnapshot {
 }
 
 export interface BackendRecentLogsSnapshot {
-  source: "runtime-events";
-  events: Record<string, unknown>;
+  source: "gpt-access-logs-query";
+  query: Record<string, unknown>;
+  logs: Record<string, unknown>;
 }
 
 export interface GptRouteRequestBody {
@@ -238,11 +239,22 @@ export async function fetchWorkersSnapshot(options: CliGlobalOptions): Promise<B
 
 export async function fetchRecentLogsSnapshot(options: CliGlobalOptions, limit = 20): Promise<BackendRecentLogsSnapshot> {
   const boundedLimit = Number.isFinite(limit) ? Math.max(1, Math.min(50, Math.floor(limit))) : 20;
-  const events = await getJson(options.baseUrl, `/api/self-heal/events?limit=${boundedLimit}`);
+  const query = {
+    level: "info",
+    sinceMinutes: 60,
+    limit: boundedLimit
+  };
+  const logs = await postJson(
+    options.baseUrl,
+    "/gpt-access/logs/query",
+    query,
+    buildGptAccessHeaders()
+  );
 
   return {
-    source: "runtime-events",
-    events
+    source: "gpt-access-logs-query",
+    query,
+    logs
   };
 }
 

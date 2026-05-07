@@ -973,24 +973,40 @@ const STRING_REDACTIONS: Array<[RegExp, string]> = [
 ];
 const PROMPT_LOG_FIELD_KEYS = new Set([
   'prompt',
+  'prompttext',
+  'prompt_text',
   'promptpreview',
+  'prompt_preview',
   'rawprompt',
+  'raw_prompt',
   'normalizedprompt',
+  'normalized_prompt',
   'task',
   'taskpreview',
+  'task_preview',
   'summarypreview',
+  'summary_preview',
   'inputpreview',
-  'outputpreview'
+  'input_preview',
+  'outputpreview',
+  'output_preview',
+  'messages'
 ]);
 const DIAGNOSTIC_PAYLOAD_FIELD_KEYS = new Set([
   'completion',
+  'completiontext',
+  'completion_text',
   'completions',
   'providerpayload',
   'provider_payload',
+  'providerpayloads',
+  'provider_payloads',
   'providerrequest',
   'provider_request',
   'providerresponse',
-  'provider_response'
+  'provider_response',
+  'providerraw',
+  'provider_raw'
 ]);
 
 export function sanitizeGptAccessString(value: string): string {

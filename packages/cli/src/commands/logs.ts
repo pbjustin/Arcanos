@@ -6,10 +6,10 @@ export async function runLogsCommand(
 ): Promise<CliProtocolCommandResult<BackendRecentLogsSnapshot>> {
   const snapshot = await fetchRecentLogsSnapshot(invocation.options, invocation.recent ? 20 : 20);
   const eventCount =
-    typeof snapshot.events.count === "number"
-      ? snapshot.events.count
-      : Array.isArray(snapshot.events.events)
-      ? snapshot.events.events.length
+    typeof snapshot.logs.count === "number"
+      ? snapshot.logs.count
+      : Array.isArray(snapshot.logs.logs)
+      ? snapshot.logs.logs.length
       : 0;
 
   return {
@@ -27,7 +27,7 @@ export async function runLogsCommand(
         executedBy: "http-backend-cli"
       }
     },
-    humanOutput: `Logs: recent runtime events=${eventCount}`,
+    humanOutput: `Logs: sanitized backend events=${eventCount}`,
     extraJson: {
       backendLogs: snapshot,
     }

@@ -2927,9 +2927,14 @@ describe('/gpt-access gateway', () => {
           message: 'prompt marker SECRET-PROMPT authorization=Bearer live-token OPENAI_API_KEY=sk-test-placeholder-value',
           metadata: {
             prompt: 'SECRET-PROMPT raw prompt text',
+            prompt_text: 'SECRET-PROMPT raw prompt alias',
             cookie: 'sessionid=secret-session',
             nested: {
-              database_url: 'postgres://user:pass@host/db'
+              database_url: 'postgres://user:pass@host/db',
+              providerPayloads: {
+                messages: [{ content: 'SECRET-PROMPT provider message' }],
+                completion_text: 'SECRET-COMPLETION alias'
+              }
             }
           }
         }
@@ -2953,7 +2958,11 @@ describe('/gpt-access gateway', () => {
     }));
     expect(rendered).toContain('[REDACTED]');
     expect(rendered).toContain('[REDACTED_PROMPT]');
+    expect(rendered).toContain('[REDACTED_DIAGNOSTIC_PAYLOAD]');
     expect(rendered).not.toContain('SECRET-PROMPT raw prompt text');
+    expect(rendered).not.toContain('SECRET-PROMPT raw prompt alias');
+    expect(rendered).not.toContain('SECRET-PROMPT provider message');
+    expect(rendered).not.toContain('SECRET-COMPLETION alias');
     expect(rendered).not.toContain('live-token');
     expect(rendered).not.toContain('sk-test-placeholder-value');
     expect(rendered).not.toContain('sessionid=secret-session');

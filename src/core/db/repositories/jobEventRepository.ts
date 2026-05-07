@@ -4,6 +4,7 @@ import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { safeJSONStringify } from '@shared/jsonHelpers.js';
 import { redactSensitive } from '@shared/redaction.js';
 import { dbLogger } from '@platform/logging/structuredLogging.js';
+import { recordJobEventInsertFailure } from '@platform/observability/appMetrics.js';
 
 export const JOB_EVENT_TYPES = [
   'job.created',
@@ -142,6 +143,7 @@ function normalizeJsonbInput(value: Record<string, unknown> | undefined): string
 
 export async function recordJobEvent(input: RecordJobEventInput): Promise<RecordJobEventResult> {
   if (!isDatabaseConnected()) {
+    recordJobEventInsertFailure('database_unavailable');
     dbLogger.warn('job_events.insert_skipped', {
       module: 'job-events',
       jobId: input.jobId,
@@ -156,6 +158,7 @@ export async function recordJobEvent(input: RecordJobEventInput): Promise<Record
   try {
     const serializedMetadata = normalizeJsonbInput(input.metadata);
     if (!serializedMetadata) {
+      recordJobEventInsertFailure('serialization_failed');
       dbLogger.warn('job_events.insert_skipped', {
         module: 'job-events',
         jobId: input.jobId,
@@ -195,6 +198,7 @@ export async function recordJobEvent(input: RecordJobEventInput): Promise<Record
     );
     return { inserted: true };
   } catch (error: unknown) {
+    recordJobEventInsertFailure('insert_failed');
     const errorMetadata = redactSensitive({
       errorMessage: resolveErrorMessage(error)
     }) as Record<string, unknown>;

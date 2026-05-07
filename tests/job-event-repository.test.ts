@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 const isDatabaseConnectedMock = jest.fn();
 const queryMock = jest.fn();
 const dbLoggerWarnMock = jest.fn();
+const recordJobEventInsertFailureMock = jest.fn();
 const loggerMock = {
   warn: jest.fn(),
   info: jest.fn(),
@@ -26,6 +27,10 @@ jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({
   },
   aiLogger: loggerMock,
   workerLogger: loggerMock
+}));
+
+jest.unstable_mockModule('@platform/observability/appMetrics.js', () => ({
+  recordJobEventInsertFailure: recordJobEventInsertFailureMock
 }));
 
 const {
@@ -52,6 +57,7 @@ describe('jobEventRepository.recordJobEvent', () => {
     })).resolves.toEqual({ inserted: false, reason: 'database_unavailable' });
 
     expect(queryMock).not.toHaveBeenCalled();
+    expect(recordJobEventInsertFailureMock).toHaveBeenCalledWith('database_unavailable');
   });
 
   it('redacts metadata and normalizes optional fields before insert', async () => {
@@ -110,6 +116,7 @@ describe('jobEventRepository.recordJobEvent', () => {
     })).resolves.toEqual({ inserted: false, reason: 'serialization_failed' });
 
     expect(queryMock).not.toHaveBeenCalled();
+    expect(recordJobEventInsertFailureMock).toHaveBeenCalledWith('serialization_failed');
   });
 
   it('handles insert failure without logging raw credential-like error text', async () => {
@@ -127,6 +134,7 @@ describe('jobEventRepository.recordJobEvent', () => {
     const warningPayload = JSON.stringify(dbLoggerWarnMock.mock.calls);
     expect(warningPayload).not.toContain(bearerLikeValue);
     expect(warningPayload).not.toContain(assignmentLikeValue);
+    expect(recordJobEventInsertFailureMock).toHaveBeenCalledWith('insert_failed');
   });
 });
 

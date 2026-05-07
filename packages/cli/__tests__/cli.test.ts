@@ -658,6 +658,8 @@ describe("Arcanos CLI", () => {
   });
 
   it("queries runtime routes for workers and self-heal inspection commands", async () => {
+    const originalAccessToken = process.env.ARCANOS_GPT_ACCESS_TOKEN;
+    process.env.ARCANOS_GPT_ACCESS_TOKEN = "test-gpt-access-token";
     const fetchMock = jest.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
       const pathname = url instanceof URL ? url.pathname : String(url);
       if (pathname.endsWith("/workers/status")) {
@@ -669,8 +671,8 @@ describe("Arcanos CLI", () => {
       if (pathname.endsWith("/status/safety/self-heal")) {
         return createJsonResponse({ status: "ok", lastHealResult: "success" });
       }
-      if (pathname.includes("/api/self-heal/events")) {
-        return createJsonResponse({ count: 1, events: [{ id: "evt-1" }] });
+      if (pathname.endsWith("/gpt-access/logs/query")) {
+        return createJsonResponse({ ok: true, count: 1, logs: [{ message: "evt-1" }] });
       }
       throw new Error(`Unexpected URL: ${pathname}`);
     });
@@ -734,8 +736,8 @@ describe("Arcanos CLI", () => {
         response: {
           ok: true,
           data: {
-            source: "runtime-events",
-            events: {
+            source: "gpt-access-logs-query",
+            logs: {
               count: 1,
             }
           }
@@ -743,6 +745,11 @@ describe("Arcanos CLI", () => {
       }
     });
     expect(fetchMock).toHaveBeenCalled();
+    if (originalAccessToken === undefined) {
+      delete process.env.ARCANOS_GPT_ACCESS_TOKEN;
+    } else {
+      process.env.ARCANOS_GPT_ACCESS_TOKEN = originalAccessToken;
+    }
   });
 
   it("prints a friendly human error for doctor implementation on explicit local transport", async () => {
