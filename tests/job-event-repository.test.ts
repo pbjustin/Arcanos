@@ -179,6 +179,9 @@ describe('jobEventRepository.cleanupJobEvents', () => {
       eventIds: ['event-1', 'event-2']
     }));
     expect(queryMock.mock.calls[0]?.[0]).toContain('SELECT id');
+    expect(queryMock.mock.calls[0]?.[0]).toContain('WHERE occurred_at < NOW() - ($1::int * INTERVAL \'1 day\')');
+    expect(queryMock.mock.calls[0]?.[0]).toContain('ORDER BY occurred_at ASC, id ASC');
+    expect(queryMock.mock.calls[0]?.[0]).toContain('LIMIT $2');
     expect(queryMock.mock.calls[0]?.[0]).not.toContain('DELETE FROM job_events');
   });
 

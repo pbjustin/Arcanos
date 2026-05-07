@@ -17,6 +17,7 @@ const getWorkerControlStatusMock = jest.fn();
 const getWorkerRuntimeStatusMock = jest.fn();
 const buildSafetySelfHealSnapshotMock = jest.fn();
 const planAutonomousWorkerJobMock = jest.fn();
+const getJobEventTimelineMock = jest.fn();
 const resolveGptRoutingMock = jest.fn();
 const getModulesForRegistryMock = jest.fn();
 const getModuleMetadataMock = jest.fn();
@@ -113,6 +114,10 @@ jest.unstable_mockModule('../src/services/workerAutonomyService.js', () => ({
 
 jest.unstable_mockModule('../src/services/selfHealRuntimeInspectionService.js', () => ({
   buildSafetySelfHealSnapshot: buildSafetySelfHealSnapshotMock
+}));
+
+jest.unstable_mockModule('../src/services/jobEventTimelineService.js', () => ({
+  getJobEventTimeline: getJobEventTimelineMock
 }));
 
 jest.unstable_mockModule('../src/platform/runtime/workerConfig.js', () => ({
@@ -324,6 +329,26 @@ describe('/gpt-access gateway', () => {
       created: true,
       deduped: false,
       dedupeReason: 'new_job'
+    });
+    getJobEventTimelineMock.mockResolvedValue({
+      available: true,
+      summary: {
+        eventCount: 0,
+        firstOccurredAt: null,
+        lastOccurredAt: null,
+        spanMs: null,
+        eventTypes: {},
+        traceIds: [],
+        workerIds: [],
+        retryCount: 0,
+        terminalState: null,
+        latencyMs: {
+          queueWait: null,
+          execution: null,
+          provider: null
+        }
+      },
+      events: []
     });
   });
 
@@ -2583,7 +2608,8 @@ describe('/gpt-access gateway', () => {
       ]
     });
 
-    const response = await authorized(request(buildApp()).post('/gpt-access/logs/query'))
+    const response = await authorized(request(buildApp({ trustProxy: true })).post('/gpt-access/logs/query'))
+      .set('X-Forwarded-For', '203.0.113.50')
       .send({
         level: 'info',
         contains: 'SECRET-PROMPT',
@@ -2604,6 +2630,163 @@ describe('/gpt-access gateway', () => {
     expect(rendered).not.toContain('sk-test-placeholder-value');
     expect(rendered).not.toContain('sessionid=secret-session');
     expect(rendered).not.toContain('postgres://user:pass@host/db');
+  });
+
+  it('applies log query limit and explicit time range filters', async () => {
+    process.env.ARCANOS_GPT_ACCESS_SCOPES = 'logs.read_sanitized';
+    queryMock.mockResolvedValueOnce({ rows: [] });
+
+    const response = await authorized(request(buildApp({ trustProxy: true })).post('/gpt-access/logs/query'))
+      .set('X-Forwarded-For', '203.0.113.51')
+      .send({
+        service: 'api',
+        level: 'warn',
+        text: 'timeout',
+        from: '2026-05-07T10:00:00.000Z',
+        to: '2026-05-07T11:00:00.000Z',
+        limit: 2
+      });
+
+    expect(response.status).toBe(200);
+    expect(queryMock.mock.calls[0]?.[0]).toContain('timestamp >= $5::timestamptz');
+    expect(queryMock.mock.calls[0]?.[0]).toContain('timestamp <= $6::timestamptz');
+    expect(queryMock.mock.calls[0]?.[0]).toContain('LIMIT $7');
+    expect(queryMock.mock.calls[0]?.[1]).toEqual([
+      60,
+      'warn',
+      'api',
+      '%timeout%',
+      '2026-05-07T10:00:00.000Z',
+      '2026-05-07T11:00:00.000Z',
+      2
+    ]);
+  });
+
+  it('returns a graceful response when sanitized log storage is unavailable', async () => {
+    process.env.ARCANOS_GPT_ACCESS_SCOPES = 'logs.read_sanitized';
+    getPoolMock.mockReturnValueOnce(null);
+
+    const response = await authorized(request(buildApp({ trustProxy: true })).post('/gpt-access/logs/query'))
+      .set('X-Forwarded-For', '203.0.113.52')
+      .send({ level: 'info', limit: 1 });
+
+    expect(response.status).toBe(501);
+    expect(response.body.error.code).toBe('LOG_QUERY_BACKEND_NOT_CONFIGURED');
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it('queries sanitized job event timelines through the diagnostics scope', async () => {
+    process.env.ARCANOS_GPT_ACCESS_SCOPES = 'diagnostics.read';
+    getJobEventTimelineMock.mockResolvedValueOnce({
+      available: true,
+      summary: {
+        eventCount: 3,
+        firstOccurredAt: '2026-05-07T10:00:00.000Z',
+        lastOccurredAt: '2026-05-07T10:00:05.000Z',
+        spanMs: 5_000,
+        eventTypes: {
+          'job.queued': 1,
+          'job.retry.scheduled': 1,
+          'job.completed': 1
+        },
+        traceIds: ['trace-1'],
+        workerIds: ['worker-1'],
+        retryCount: 1,
+        terminalState: 'completed',
+        latencyMs: {
+          queueWait: 1_000,
+          execution: 4_000,
+          provider: 250
+        }
+      },
+      events: [
+        {
+          id: 'event-1',
+          jobId: COMPLETED_JOB_ID,
+          traceId: 'trace-1',
+          eventType: 'job.queued',
+          workerId: null,
+          occurredAt: '2026-05-07T10:00:00.000Z',
+          durationMs: null,
+          metadata: {
+            prompt: 'raw prompt should not leak',
+            completion: 'raw completion should not leak',
+            provider_payload: {
+              authorization: 'Bearer live-token-value',
+              database_url: 'postgres://user:pass@host/db'
+            }
+          },
+          offsetMs: 0
+        }
+      ]
+    });
+
+    const response = await authorized(request(buildApp({ trustProxy: true })).post('/gpt-access/jobs/timeline'))
+      .set('X-Forwarded-For', '203.0.113.53')
+      .send({
+        job_id: COMPLETED_JOB_ID,
+        trace_id: 'trace-1',
+        worker_id: 'worker-1',
+        event_type: 'job.queued',
+        occurred_after: '2026-05-07T09:00:00.000Z',
+        occurred_before: '2026-05-07T11:00:00.000Z',
+        limit: 10
+      });
+    const rendered = JSON.stringify(response.body);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(expect.objectContaining({
+      ok: true,
+      count: 3,
+      summary: expect.objectContaining({
+        eventCount: 3,
+        retryCount: 1,
+        terminalState: 'completed',
+        latencyMs: {
+          queueWait: 1_000,
+          execution: 4_000,
+          provider: 250
+        }
+      })
+    }));
+    expect(getJobEventTimelineMock).toHaveBeenCalledWith({
+      jobId: COMPLETED_JOB_ID,
+      traceId: 'trace-1',
+      workerId: 'worker-1',
+      eventType: 'job.queued',
+      occurredAfter: '2026-05-07T09:00:00.000Z',
+      occurredBefore: '2026-05-07T11:00:00.000Z',
+      limit: 10
+    });
+    expect(rendered).toContain('[REDACTED_PROMPT]');
+    expect(rendered).toContain('[REDACTED_DIAGNOSTIC_PAYLOAD]');
+    expect(rendered).not.toContain('raw prompt should not leak');
+    expect(rendered).not.toContain('raw completion should not leak');
+    expect(rendered).not.toContain('live-token-value');
+    expect(rendered).not.toContain('postgres://user:pass@host/db');
+  });
+
+  it('rejects unauthenticated job timeline queries', async () => {
+    const response = await request(buildApp({ trustProxy: true }))
+      .post('/gpt-access/jobs/timeline')
+      .set('X-Forwarded-For', '203.0.113.54')
+      .send({ job_id: COMPLETED_JOB_ID });
+
+    expect(response.status).toBe(401);
+    expect(response.body.error.code).toBe('UNAUTHORIZED_GPT_ACCESS');
+    expect(getJobEventTimelineMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects job timeline queries without the diagnostics operator scope', async () => {
+    process.env.ARCANOS_GPT_ACCESS_SCOPES = 'logs.read_sanitized';
+
+    const response = await authorized(request(buildApp({ trustProxy: true })).post('/gpt-access/jobs/timeline'))
+      .set('X-Forwarded-For', '203.0.113.55')
+      .send({ job_id: COMPLETED_JOB_ID });
+
+    expect(response.status).toBe(403);
+    expect(response.body.error.code).toBe('GPT_ACCESS_SCOPE_DENIED');
+    expect(getJobEventTimelineMock).not.toHaveBeenCalled();
   });
 
   it('returns a Custom GPT compatible OpenAPI document', async () => {
@@ -2794,6 +2977,38 @@ describe('/gpt-access gateway', () => {
     expect(response.status).toBe(200);
     expect(response.body.servers).toEqual([
       { url: 'https://arcanos-v2-arcanos-pr-1355.up.railway.app' }
+    ]);
+  });
+
+  it('advertises the Railway preview domain for preview environments even with inherited production URLs', async () => {
+    process.env.RAILWAY_ENVIRONMENT = 'preview';
+    process.env.ARCANOS_GPT_ACCESS_BASE_URL = 'https://gateway.example.test/';
+    process.env.RAILWAY_PUBLIC_DOMAIN = 'arcanos-v2-preview.up.railway.app';
+
+    const response = await request(buildApp()).get('/gpt-access/openapi.json');
+
+    expect(response.status).toBe(200);
+    expect(response.body.servers).toEqual([
+      { url: 'https://arcanos-v2-preview.up.railway.app' }
+    ]);
+  });
+
+  it('advertises the Railway preview domain when Railway marks the deploy as a pull request', async () => {
+    process.env.RAILWAY_ENVIRONMENT = 'production';
+    process.env.RAILWAY_GIT_PR_NUMBER = '1355';
+    process.env.ARCANOS_GPT_ACCESS_BASE_URL = 'https://gateway.example.test/';
+    process.env.RAILWAY_PUBLIC_DOMAIN = 'arcanos-v2-pr-1355.up.railway.app';
+
+    let response;
+    try {
+      response = await request(buildApp()).get('/gpt-access/openapi.json');
+    } finally {
+      delete process.env.RAILWAY_GIT_PR_NUMBER;
+    }
+
+    expect(response.status).toBe(200);
+    expect(response.body.servers).toEqual([
+      { url: 'https://arcanos-v2-pr-1355.up.railway.app' }
     ]);
   });
 

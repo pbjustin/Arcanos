@@ -157,6 +157,8 @@ describe('app metrics registry', () => {
           recentFailed: 0,
           workerHeartbeatAgeMs: 2500
         },
+        alerts: ['Detected 1 stale worker heartbeat(s).'],
+        diagnosticAlerts: ['Retry exhaustion is elevated (1 terminal failure(s)).'],
         historicalDebt: {
           retryExhaustedJobs: 1,
           deadLetterJobs: 1
@@ -171,7 +173,10 @@ describe('app metrics registry', () => {
             stalledJobsDetected: 3,
             recoveredJobs: 2,
             deadLetterJobs: 1,
-            recoveryActions: 3
+            recoveryActions: 3,
+            watchdog: {
+              restartRecommended: true
+            }
           }
         ]
       },
@@ -190,6 +195,8 @@ describe('app metrics registry', () => {
           recentFailed: 0,
           workerHeartbeatAgeMs: 1800
         },
+        alerts: [],
+        diagnosticAlerts: [],
         historicalDebt: {
           retryExhaustedJobs: 1,
           deadLetterJobs: 1
@@ -204,7 +211,10 @@ describe('app metrics registry', () => {
             stalledJobsDetected: 4,
             recoveredJobs: 3,
             deadLetterJobs: 1,
-            recoveryActions: 4
+            recoveryActions: 4,
+            watchdog: {
+              restartRecommended: false
+            }
           }
         ]
       },
@@ -223,6 +233,8 @@ describe('app metrics registry', () => {
           recentFailed: 0,
           workerHeartbeatAgeMs: 900
         },
+        alerts: [],
+        diagnosticAlerts: [],
         historicalDebt: {
           retryExhaustedJobs: 1,
           deadLetterJobs: 1
@@ -237,7 +249,10 @@ describe('app metrics registry', () => {
             stalledJobsDetected: 1,
             recoveredJobs: 1,
             deadLetterJobs: 0,
-            recoveryActions: 1
+            recoveryActions: 1,
+            watchdog: {
+              restartRecommended: false
+            }
           }
         ]
       }
@@ -251,6 +266,9 @@ describe('app metrics registry', () => {
     const { getMetricsText } = await loadMetricsModule();
 
     let metricsText = await getMetricsText();
+    expect(metricsText).toMatch(/worker_alert_recommendations\{[^}]*recommendation="operational_alerts"[^}]*\} 1/);
+    expect(metricsText).toMatch(/worker_alert_recommendations\{[^}]*recommendation="diagnostic_alerts"[^}]*\} 1/);
+    expect(metricsText).toMatch(/worker_alert_recommendations\{[^}]*recommendation="restart_recommended_workers"[^}]*\} 1/);
     expect(metricsText).not.toMatch(/worker_stale_total\{[^}]*reason="persisted_snapshot"/);
     expect(metricsText).not.toMatch(/worker_stalled_jobs_total\{[^}]*action="requeue"/);
     expect(metricsText).not.toMatch(/worker_stalled_jobs_total\{[^}]*action="dead_letter"/);

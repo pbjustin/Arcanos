@@ -13,6 +13,8 @@ export interface JobEventTimelineSummary {
   eventTypes: Record<string, number>;
   traceIds: string[];
   workerIds: string[];
+  retryCount: number;
+  terminalState: string | null;
   latencyMs: {
     queueWait: number | null;
     execution: number | null;
@@ -46,6 +48,8 @@ function emptySummary(): JobEventTimelineSummary {
     eventTypes: {},
     traceIds: [],
     workerIds: [],
+    retryCount: 0,
+    terminalState: null,
     latencyMs: {
       queueWait: null,
       execution: null,
@@ -74,6 +78,24 @@ function firstEventAt(events: JobEventTimelineRow[], eventType: string): string 
 
 function lastEventAt(events: JobEventTimelineRow[], eventType: string): string | null {
   return [...events].reverse().find((event) => event.eventType === eventType)?.occurredAt ?? null;
+}
+
+function resolveTerminalState(events: JobEventTimelineRow[]): string | null {
+  const terminalEvent = [...events].reverse().find((event) =>
+    event.eventType === 'job.completed'
+    || event.eventType === 'job.failed'
+  );
+
+  if (!terminalEvent) {
+    return null;
+  }
+
+  return terminalEvent.eventType === 'job.completed' ? 'completed' : 'failed';
+}
+
+function firstDurationMs(events: JobEventTimelineRow[], eventType: string): number | null {
+  const durationMs = events.find((event) => event.eventType === eventType)?.durationMs;
+  return typeof durationMs === 'number' && Number.isFinite(durationMs) ? Math.max(0, durationMs) : null;
 }
 
 function summarize(events: JobEventTimelineRow[]): JobEventTimelineSummary {
@@ -105,10 +127,14 @@ function summarize(events: JobEventTimelineRow[]): JobEventTimelineSummary {
     eventTypes,
     traceIds: [...traceIds].sort(),
     workerIds: [...workerIds].sort(),
+    retryCount: eventTypes['job.retry.scheduled'] ?? 0,
+    terminalState: resolveTerminalState(events),
     latencyMs: {
       queueWait: diffMs(firstEventAt(events, 'job.queued'), firstEventAt(events, 'job.claimed')),
       execution: diffMs(firstEventAt(events, 'job.started'), lastEventAt(events, 'job.completed') ?? lastEventAt(events, 'job.failed')),
-      provider: diffMs(firstEventAt(events, 'ai.request.started'), lastEventAt(events, 'ai.request.completed') ?? lastEventAt(events, 'ai.request.failed'))
+      provider: firstDurationMs(events, 'ai.request.completed')
+        ?? firstDurationMs(events, 'ai.request.failed')
+        ?? diffMs(firstEventAt(events, 'ai.request.started'), lastEventAt(events, 'ai.request.completed') ?? lastEventAt(events, 'ai.request.failed'))
     }
   };
 }

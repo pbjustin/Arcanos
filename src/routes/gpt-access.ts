@@ -43,6 +43,7 @@ import {
   getGptAccessJobResult,
   gptAccessAuthMiddleware,
   queryBackendLogs,
+  queryJobEventTimeline,
   requireGptAccessScope,
   resolveGptAccessOpenApiServerUrl,
   runDeepDiagnostics,
@@ -798,6 +799,14 @@ router.post(
         logger: req.logger
       })
     );
+  })
+);
+
+router.post(
+  '/gpt-access/jobs/timeline',
+  requireGptAccessScope('diagnostics.read'),
+  asyncHandler(async (req, res) => {
+    sendGptAccessResult(res, await queryJobEventTimeline(req.body));
   })
 );
 

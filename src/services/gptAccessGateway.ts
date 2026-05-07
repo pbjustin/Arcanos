@@ -26,6 +26,7 @@ import { runtimeDiagnosticsService } from '@services/runtimeDiagnosticsService.j
 import { getWorkerControlHealth, getWorkerControlStatus } from '@services/workerControlService.js';
 import { planAutonomousWorkerJob } from '@services/workerAutonomyService.js';
 import { buildSafetySelfHealSnapshot } from '@services/selfHealRuntimeInspectionService.js';
+import { getJobEventTimeline } from '@services/jobEventTimelineService.js';
 import { getWorkerRuntimeStatus } from '@platform/runtime/workerConfig.js';
 import { getNaturalLanguageDispatchRuntimeStatus } from '@dispatcher/naturalLanguage/planner.js';
 import { DISPATCH_UTTERANCE_MAX_LENGTH } from '@dispatcher/naturalLanguage/types.js';
@@ -279,8 +280,27 @@ const logsQuerySchema = z.object({
   service: z.string().trim().min(1).max(128).optional(),
   level: z.enum(['error', 'warn', 'info', 'debug']).optional().default('info'),
   contains: z.string().trim().min(1).max(256).optional(),
+  text: z.string().trim().min(1).max(256).optional(),
   sinceMinutes: z.coerce.number().int().min(1).max(LOG_SINCE_MINUTES_MAX).optional().default(60),
+  from: z.string().datetime().optional(),
+  to: z.string().datetime().optional(),
   limit: z.coerce.number().int().min(1).max(LOG_LIMIT_MAX).optional().default(LOG_LIMIT_DEFAULT)
+}).strict();
+
+const jobTimelineQuerySchema = z.object({
+  jobId: z.string().trim().min(1).max(128).optional(),
+  job_id: z.string().trim().min(1).max(128).optional(),
+  traceId: z.string().trim().min(1).max(128).optional(),
+  trace_id: z.string().trim().min(1).max(128).optional(),
+  workerId: z.string().trim().min(1).max(128).optional(),
+  worker_id: z.string().trim().min(1).max(128).optional(),
+  eventType: z.string().trim().min(1).max(128).optional(),
+  event_type: z.string().trim().min(1).max(128).optional(),
+  occurredAfter: z.string().datetime().optional(),
+  occurred_after: z.string().datetime().optional(),
+  occurredBefore: z.string().datetime().optional(),
+  occurred_before: z.string().datetime().optional(),
+  limit: z.coerce.number().int().min(1).max(1000).optional()
 }).strict();
 
 const deepDiagnosticsSchema = z.object({
@@ -694,7 +714,9 @@ function isLocalOpenApiServerUrl(value: string): boolean {
 
 function isRailwayPreviewEnvironment(env: NodeJS.ProcessEnv = process.env): boolean {
   const environmentName = (env.RAILWAY_ENVIRONMENT_NAME ?? env.RAILWAY_ENVIRONMENT ?? '').trim();
-  return /^Arcanos-pr-\d+$/iu.test(environmentName);
+  return /^Arcanos-pr-\d+$/iu.test(environmentName)
+    || /^preview$/iu.test(environmentName)
+    || Boolean(env.RAILWAY_GIT_PR_NUMBER?.trim());
 }
 
 function resolveRailwayPreviewOpenApiServerUrl(env: NodeJS.ProcessEnv = process.env): string | null {
@@ -950,6 +972,16 @@ const STRING_REDACTIONS: Array<[RegExp, string]> = [
   [/\b(email|password)\s*[:=]\s*["']?[^"'\s,;}]+/gi, '$1=[REDACTED]']
 ];
 const PROMPT_LOG_FIELD_KEYS = new Set(['prompt', 'rawprompt', 'normalizedprompt', 'task']);
+const DIAGNOSTIC_PAYLOAD_FIELD_KEYS = new Set([
+  'completion',
+  'completions',
+  'providerpayload',
+  'provider_payload',
+  'providerrequest',
+  'provider_request',
+  'providerresponse',
+  'provider_response'
+]);
 
 export function sanitizeGptAccessString(value: string): string {
   return STRING_REDACTIONS.reduce(
@@ -982,6 +1014,9 @@ function sanitizeStringsDeep(value: unknown): unknown {
       }
       if (PROMPT_LOG_FIELD_KEYS.has(normalizedKey)) {
         return [key, '[REDACTED_PROMPT]'];
+      }
+      if (DIAGNOSTIC_PAYLOAD_FIELD_KEYS.has(normalizedKey)) {
+        return [key, '[REDACTED_DIAGNOSTIC_PAYLOAD]'];
       }
       return [key, sanitizeStringsDeep(entry)];
     })
@@ -1019,10 +1054,35 @@ export async function querySanitizedBackendLogs(input: z.infer<typeof logsQueryS
     filters.push(`(message ILIKE $${params.length} OR metadata::text ILIKE $${params.length})`);
   }
 
+  if (input.text) {
+    params.push(`%${input.text}%`);
+    filters.push(`(message ILIKE $${params.length} OR metadata::text ILIKE $${params.length})`);
+  }
+
+  if (input.from) {
+    params.push(input.from);
+    filters.push(`timestamp >= $${params.length}::timestamptz`);
+  }
+
+  if (input.to) {
+    params.push(input.to);
+    filters.push(`timestamp <= $${params.length}::timestamptz`);
+  }
+
   params.push(input.limit);
   const limitIndex = params.length;
   const result = await query(
-    `SELECT worker_id, timestamp, level, message, metadata
+    `SELECT
+         worker_id AS service,
+         worker_id,
+         timestamp,
+         level,
+         message,
+         metadata->>'trace_id' AS trace_id,
+         metadata->>'job_id' AS job_id,
+         metadata->>'request_id' AS request_id,
+         metadata->>'error_type' AS error_type,
+         metadata
        FROM execution_logs
        WHERE ${filters.join(' AND ')}
        ORDER BY timestamp DESC
@@ -1697,6 +1757,72 @@ export async function runGptAccessMcpTool(body: unknown) {
   }
 }
 
+export async function queryJobEventTimeline(body: unknown) {
+  const parsed = jobTimelineQuerySchema.safeParse(body ?? {});
+  if (!parsed.success) {
+    return {
+      statusCode: 400,
+      payload: {
+        ok: false,
+        error: {
+          code: 'GPT_ACCESS_VALIDATION_ERROR',
+          message: 'Invalid job event timeline query request.'
+        }
+      }
+    };
+  }
+
+  try {
+    const data = parsed.data;
+    const result = await getJobEventTimeline({
+      jobId: data.jobId ?? data.job_id,
+      traceId: data.traceId ?? data.trace_id,
+      workerId: data.workerId ?? data.worker_id,
+      eventType: data.eventType ?? data.event_type,
+      occurredAfter: data.occurredAfter ?? data.occurred_after,
+      occurredBefore: data.occurredBefore ?? data.occurred_before,
+      limit: data.limit
+    });
+
+    if (!result.available) {
+      return {
+        statusCode: 503,
+        payload: {
+          ok: false,
+          status: 'unavailable',
+          service: 'gpt-access',
+          error: {
+            code: 'GPT_ACCESS_JOBS_UNAVAILABLE',
+            message: 'Job event timeline storage is unavailable.'
+          },
+          reason: result.reason
+        }
+      };
+    }
+
+    return {
+      statusCode: 200,
+      payload: {
+        ok: true,
+        count: result.summary.eventCount,
+        summary: result.summary,
+        events: sanitizeGptAccessPayload(result.events)
+      }
+    };
+  } catch {
+    return {
+      statusCode: 500,
+      payload: {
+        ok: false,
+        error: {
+          code: 'GPT_ACCESS_INTERNAL_ERROR',
+          message: 'Job event timeline query failed.'
+        }
+      }
+    };
+  }
+}
+
 export async function runGptAccessWorkerRecovery(body: unknown) {
   const parsed = workerRecoverySchema.safeParse(body);
   if (!parsed.success) {
@@ -2098,6 +2224,19 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
             traceId: { type: 'string' }
           },
           required: ['jobId'],
+          additionalProperties: false
+        },
+        JobTimelineRequest: {
+          type: 'object',
+          properties: {
+            job_id: { type: 'string' },
+            trace_id: { type: 'string' },
+            worker_id: { type: 'string' },
+            event_type: { type: 'string' },
+            occurred_after: { type: 'string', format: 'date-time' },
+            occurred_before: { type: 'string', format: 'date-time' },
+            limit: { type: 'integer', minimum: 1, maximum: 1000 }
+          },
           additionalProperties: false
         },
         JobResultError: {
@@ -2659,6 +2798,28 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
           }
         }
       },
+      '/gpt-access/jobs/timeline': {
+        post: {
+          operationId: 'queryJobEventTimeline',
+          summary: 'Query a sanitized chronological job event timeline.',
+          security: protectedSecurity,
+          requestBody: {
+            required: false,
+            content: {
+              'application/json': {
+                schema: { '$ref': '#/components/schemas/JobTimelineRequest' }
+              }
+            }
+          },
+          responses: {
+            '200': { description: 'Sanitized chronological job event timeline.' },
+            '400': { description: 'Invalid request.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '401': { description: 'Unauthorized.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '403': { description: 'Scope denied.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '503': { description: 'Timeline unavailable.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } }
+          }
+        }
+      },
       '/gpt-access/diagnostics/deep': {
         post: {
           operationId: 'runDeepDiagnostics',
@@ -2730,7 +2891,10 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
                     service: { type: 'string' },
                     level: { type: 'string', enum: ['error', 'warn', 'info', 'debug'] },
                     contains: { type: 'string' },
+                    text: { type: 'string' },
                     sinceMinutes: { type: 'integer', minimum: 1, maximum: LOG_SINCE_MINUTES_MAX },
+                    from: { type: 'string', format: 'date-time' },
+                    to: { type: 'string', format: 'date-time' },
                     limit: { type: 'integer', minimum: 1, maximum: LOG_LIMIT_MAX }
                   },
                   additionalProperties: false

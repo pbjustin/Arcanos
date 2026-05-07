@@ -215,6 +215,13 @@ const workerHealthStatus = new Gauge({
   registers: [metricsRegistry],
 });
 
+const workerAlertRecommendations = new Gauge({
+  name: 'worker_alert_recommendations',
+  help: 'Current worker dashboard alert recommendations by recommendation type.',
+  labelNames: ['recommendation'] as const,
+  registers: [metricsRegistry],
+});
+
 const workerFailuresTotal = new Gauge({
   name: 'worker_failures_total',
   help: 'Worker failure totals from persisted queue-worker snapshots.',
@@ -1201,6 +1208,9 @@ function resetWorkerSnapshotMetrics(): void {
   recordWorkerRetryTotal('scheduled', 0);
   workerHeartbeatAgeMs.set(0);
   workerHealthStatus.set(-1);
+  workerAlertRecommendations.set({ recommendation: 'operational_alerts' }, 0);
+  workerAlertRecommendations.set({ recommendation: 'diagnostic_alerts' }, 0);
+  workerAlertRecommendations.set({ recommendation: 'restart_recommended_workers' }, 0);
   lastWorkerSnapshotCounterTotalsByWorkerId.clear();
 }
 
@@ -1275,6 +1285,12 @@ async function refreshWorkerMetrics(): Promise<void> {
       recordWorkerRetryTotal('scheduled', scheduledRetries);
       workerHeartbeatAgeMs.set(Math.max(0, operationalHealth.workerHeartbeatAgeMs ?? 0));
       workerHealthStatus.set(encodeWorkerHealthStatus(operationalHealth.overallStatus));
+      workerAlertRecommendations.set({ recommendation: 'operational_alerts' }, health.alerts?.length ?? 0);
+      workerAlertRecommendations.set({ recommendation: 'diagnostic_alerts' }, health.diagnosticAlerts?.length ?? 0);
+      workerAlertRecommendations.set(
+        { recommendation: 'restart_recommended_workers' },
+        health.workers.filter(worker => worker.watchdog?.restartRecommended).length
+      );
       recordObservedWorkerSnapshotCounters(health.workers);
     } catch {
       resetWorkerSnapshotMetrics();

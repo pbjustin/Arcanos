@@ -86,6 +86,7 @@ describe('/metrics route', () => {
     expect(metricsResponse.text).toContain('process_heap_used_bytes');
     expect(metricsResponse.text).toContain('worker_queue_depth');
     expect(metricsResponse.text).toContain('worker_queue_latency_ms');
+    expect(metricsResponse.text).toContain('worker_alert_recommendations');
   });
 
   it('requires a metrics token when METRICS_AUTH_TOKEN is configured', async () => {

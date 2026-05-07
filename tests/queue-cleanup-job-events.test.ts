@@ -58,16 +58,63 @@ describe('queue job event cleanup', () => {
 
   it('resolves bounded retention policy from environment', () => {
     expect(resolveJobEventCleanupPolicy({
-      JOB_EVENT_CLEANUP_ENABLED: 'true',
-      JOB_EVENT_CLEANUP_DRY_RUN: 'false',
-      JOB_EVENT_RETENTION_DAYS: '999',
-      JOB_EVENT_CLEANUP_BATCH_SIZE: '99999'
+      JOB_EVENTS_CLEANUP_ENABLED: 'true',
+      JOB_EVENTS_CLEANUP_DRY_RUN: 'false',
+      JOB_EVENTS_RETENTION_DAYS: '999',
+      JOB_EVENTS_CLEANUP_BATCH_SIZE: '99999'
     } as NodeJS.ProcessEnv)).toEqual({
       enabled: true,
       dryRun: false,
       retentionDays: 365,
       batchSize: 10_000
     });
+  });
+
+  it('falls back safely for invalid plural cleanup config', () => {
+    expect(resolveJobEventCleanupPolicy({
+      JOB_EVENTS_CLEANUP_ENABLED: 'maybe',
+      JOB_EVENTS_CLEANUP_DRY_RUN: 'maybe',
+      JOB_EVENTS_RETENTION_DAYS: 'not-a-number',
+      JOB_EVENTS_CLEANUP_BATCH_SIZE: 'not-a-number'
+    } as NodeJS.ProcessEnv)).toEqual({
+      enabled: true,
+      dryRun: true,
+      retentionDays: 30,
+      batchSize: 1_000
+    });
+  });
+
+  it('supports legacy singular cleanup config names', () => {
+    expect(resolveJobEventCleanupPolicy({
+      JOB_EVENT_CLEANUP_ENABLED: 'false',
+      JOB_EVENT_CLEANUP_DRY_RUN: 'false',
+      JOB_EVENT_RETENTION_DAYS: '14',
+      JOB_EVENT_CLEANUP_BATCH_SIZE: '25'
+    } as NodeJS.ProcessEnv)).toEqual({
+      enabled: false,
+      dryRun: false,
+      retentionDays: 14,
+      batchSize: 25
+    });
+  });
+
+  it('skips cleanup when disabled', async () => {
+    const result = await runJobEventCleanup('test', {
+      enabled: false,
+      dryRun: true,
+      retentionDays: 30,
+      batchSize: 1_000
+    });
+
+    expect(result).toEqual(expect.objectContaining({
+      enabled: false,
+      skipped: true,
+      failed: false,
+      matchedRows: 0,
+      deletedRows: 0
+    }));
+    expect(cleanupJobEventsMock).not.toHaveBeenCalled();
+    expect(recordJobEventCleanupMock).not.toHaveBeenCalled();
   });
 
   it('runs cleanup in dry-run mode and records metrics', async () => {

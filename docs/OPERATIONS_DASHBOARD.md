@@ -9,6 +9,7 @@ This dashboard is for queue and GPT job operations. Do not include raw prompts, 
 | Queue depth | `worker_queue_depth{state="pending"}` | warn above 25 for 10m; critical above 100 for 5m |
 | Oldest pending age | `worker_queue_latency_ms{scope="oldest_pending"}` | warn above 60000ms for 10m; critical above 300000ms for 5m |
 | Worker health | `worker_health_status` and `worker_heartbeat_age_ms` | heartbeat age above `2 * JOB_WORKER_STALE_AFTER_MS` |
+| Worker alert recommendations | `worker_alert_recommendations{recommendation="operational_alerts"}`, `worker_alert_recommendations{recommendation="diagnostic_alerts"}`, `worker_alert_recommendations{recommendation="restart_recommended_workers"}` | any non-zero value for 10m; page on restart recommendations |
 | Stale recovery | `worker_stale_total`, `worker_stalled_jobs_total`, `worker_recovery_actions_total` | any sustained increase for 10m |
 | AI provider latency | `ai_call_duration_ms` by provider/model/operation | p95 above 30000ms for 10m |
 | AI failures/timeouts | `ai_calls_total{outcome!="ok"}`, `dependency_failures_total`, `dependency_timeouts_total` | error ratio above 5% for 10m |

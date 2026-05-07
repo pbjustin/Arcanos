@@ -18,6 +18,7 @@ jest.unstable_mockModule('@core/db/query.js', () => ({
 
 const {
   DEFAULT_JOB_WORKER_STALE_AFTER_MS,
+  recoverStalledJobsForWorkers,
   recoverStaleJobs,
   resolveJobWorkerStaleAfterMs
 } = await import('../src/core/db/repositories/jobRepository.js');
@@ -250,6 +251,204 @@ describe('jobRepository lifecycle recovery', () => {
     const firstEventOrder = queryMock.mock.invocationCallOrder[0];
 
     expect(commitOrder).toBeLessThan(firstEventOrder);
+    expect(queryMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('flushes stalled-worker recovery events once after commit succeeds', async () => {
+    clientQueryMock.mockImplementation(async (sql: unknown) => {
+      if (
+        typeof sql === 'string' &&
+        sql.includes('FROM job_data') &&
+        sql.includes('last_worker_id = ANY')
+      ) {
+        return {
+          rows: [
+            {
+              id: 'job-stalled-post-commit',
+              worker_id: 'worker-2',
+              last_worker_id: 'worker-2',
+              correlation_id: 'trace-2',
+              job_type: 'ask',
+              status: 'running',
+              retry_count: 0,
+              max_retries: 1,
+              autonomy_state: {},
+              cancel_requested_at: null,
+              cancel_reason: null
+            }
+          ]
+        };
+      }
+
+      return { rows: [] };
+    });
+
+    const result = await recoverStalledJobsForWorkers({
+      workerIds: ['worker-2'],
+      staleAfterMs: 60_000,
+      maxRetries: 2,
+      stalledJobAction: 'requeue'
+    });
+
+    const commitOrder = clientQueryMock.mock.invocationCallOrder[
+      clientQueryMock.mock.calls.findIndex(([sql]) => sql === 'COMMIT')
+    ];
+    const firstEventOrder = queryMock.mock.invocationCallOrder[0];
+
+    expect(result).toEqual({
+      staleWorkerIds: ['worker-2'],
+      stalledJobIds: ['job-stalled-post-commit'],
+      requeuedJobIds: ['job-stalled-post-commit'],
+      deadLetterJobIds: [],
+      cancelledJobIds: []
+    });
+    expect(commitOrder).toBeLessThan(firstEventOrder);
+    expect(queryMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not emit stalled-worker recovery events when the transaction rolls back', async () => {
+    clientQueryMock.mockImplementation(async (sql: unknown) => {
+      if (
+        typeof sql === 'string' &&
+        sql.includes('FROM job_data') &&
+        sql.includes('last_worker_id = ANY')
+      ) {
+        return {
+          rows: [
+            {
+              id: 'job-stalled-rollback',
+              worker_id: 'worker-3',
+              last_worker_id: 'worker-3',
+              correlation_id: 'trace-3',
+              job_type: 'ask',
+              status: 'running',
+              retry_count: 0,
+              max_retries: 1,
+              autonomy_state: {},
+              cancel_requested_at: null,
+              cancel_reason: null
+            }
+          ]
+        };
+      }
+      if (sql === 'COMMIT') {
+        throw new Error('commit failed');
+      }
+
+      return { rows: [] };
+    });
+
+    await expect(recoverStalledJobsForWorkers({
+      workerIds: ['worker-3'],
+      staleAfterMs: 60_000,
+      maxRetries: 2,
+      stalledJobAction: 'requeue'
+    })).rejects.toThrow('commit failed');
+
+    expect(queryMock).not.toHaveBeenCalled();
+    expect(clientQueryMock).toHaveBeenCalledWith('ROLLBACK');
+  });
+
+  it('does not duplicate stalled-worker recovery events across concurrent recovery attempts', async () => {
+    const firstClientQueryMock = jest.fn(async (sql: unknown) => {
+      if (
+        typeof sql === 'string' &&
+        sql.includes('FROM job_data') &&
+        sql.includes('last_worker_id = ANY')
+      ) {
+        return {
+          rows: [
+            {
+              id: 'job-stalled-concurrent',
+              worker_id: 'worker-4',
+              last_worker_id: 'worker-4',
+              correlation_id: 'trace-4',
+              job_type: 'ask',
+              status: 'running',
+              retry_count: 0,
+              max_retries: 1,
+              autonomy_state: {},
+              cancel_requested_at: null,
+              cancel_reason: null
+            }
+          ]
+        };
+      }
+
+      return { rows: [] };
+    });
+    const secondClientQueryMock = jest.fn(async () => ({ rows: [] }));
+
+    poolConnectMock
+      .mockResolvedValueOnce({
+        query: firstClientQueryMock,
+        release: clientReleaseMock
+      })
+      .mockResolvedValueOnce({
+        query: secondClientQueryMock,
+        release: clientReleaseMock
+      });
+
+    const [firstResult, secondResult] = await Promise.all([
+      recoverStalledJobsForWorkers({
+        workerIds: ['worker-4'],
+        staleAfterMs: 60_000,
+        maxRetries: 2,
+        stalledJobAction: 'requeue'
+      }),
+      recoverStalledJobsForWorkers({
+        workerIds: ['worker-4'],
+        staleAfterMs: 60_000,
+        maxRetries: 2,
+        stalledJobAction: 'requeue'
+      })
+    ]);
+
+    expect(firstResult.stalledJobIds).toEqual(['job-stalled-concurrent']);
+    expect(secondResult.stalledJobIds).toEqual([]);
+    expect(queryMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not roll back stalled-worker recovery when job event insert fails', async () => {
+    queryMock.mockRejectedValue(new Error('job event insert failed'));
+    clientQueryMock.mockImplementation(async (sql: unknown) => {
+      if (
+        typeof sql === 'string' &&
+        sql.includes('FROM job_data') &&
+        sql.includes('last_worker_id = ANY')
+      ) {
+        return {
+          rows: [
+            {
+              id: 'job-stalled-telemetry-failure',
+              worker_id: 'worker-5',
+              last_worker_id: 'worker-5',
+              correlation_id: 'trace-5',
+              job_type: 'ask',
+              status: 'running',
+              retry_count: 0,
+              max_retries: 1,
+              autonomy_state: {},
+              cancel_requested_at: null,
+              cancel_reason: null
+            }
+          ]
+        };
+      }
+
+      return { rows: [] };
+    });
+
+    const result = await recoverStalledJobsForWorkers({
+      workerIds: ['worker-5'],
+      staleAfterMs: 60_000,
+      maxRetries: 2,
+      stalledJobAction: 'requeue'
+    });
+
+    expect(result.requeuedJobIds).toEqual(['job-stalled-telemetry-failure']);
+    expect(clientQueryMock).toHaveBeenCalledWith('COMMIT');
+    expect(clientQueryMock).not.toHaveBeenCalledWith('ROLLBACK');
     expect(queryMock).toHaveBeenCalledTimes(2);
   });
 

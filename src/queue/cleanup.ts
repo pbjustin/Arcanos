@@ -70,6 +70,14 @@ function parsePositiveIntegerEnv(
   return Math.min(options.max, Math.max(options.min, Math.trunc(parsed)));
 }
 
+function readEnvAlias(
+  env: NodeJS.ProcessEnv,
+  primary: string,
+  fallback: string
+): string | undefined {
+  return env[primary] ?? env[fallback];
+}
+
 export function resolveFailedJobCleanupPolicy(
   env: NodeJS.ProcessEnv = process.env
 ): FailedJobCleanupPolicy {
@@ -92,15 +100,21 @@ export function resolveJobEventCleanupPolicy(
   env: NodeJS.ProcessEnv = process.env
 ): JobEventCleanupPolicy {
   return {
-    enabled: parseBooleanEnv(env.JOB_EVENT_CLEANUP_ENABLED, true),
-    dryRun: parseBooleanEnv(env.JOB_EVENT_CLEANUP_DRY_RUN, true),
+    enabled: parseBooleanEnv(
+      readEnvAlias(env, 'JOB_EVENTS_CLEANUP_ENABLED', 'JOB_EVENT_CLEANUP_ENABLED'),
+      true
+    ),
+    dryRun: parseBooleanEnv(
+      readEnvAlias(env, 'JOB_EVENTS_CLEANUP_DRY_RUN', 'JOB_EVENT_CLEANUP_DRY_RUN'),
+      true
+    ),
     retentionDays: parsePositiveIntegerEnv(
-      env.JOB_EVENT_RETENTION_DAYS,
+      readEnvAlias(env, 'JOB_EVENTS_RETENTION_DAYS', 'JOB_EVENT_RETENTION_DAYS'),
       DEFAULT_JOB_EVENT_RETENTION_DAYS,
       { min: 1, max: MAX_JOB_EVENT_RETENTION_DAYS }
     ),
     batchSize: parsePositiveIntegerEnv(
-      env.JOB_EVENT_CLEANUP_BATCH_SIZE,
+      readEnvAlias(env, 'JOB_EVENTS_CLEANUP_BATCH_SIZE', 'JOB_EVENT_CLEANUP_BATCH_SIZE'),
       DEFAULT_JOB_EVENT_CLEANUP_BATCH_SIZE,
       { min: 1, max: MAX_JOB_EVENT_CLEANUP_BATCH_SIZE }
     )
