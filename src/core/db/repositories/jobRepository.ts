@@ -769,7 +769,7 @@ export async function updateJob(
     emitJobEvent(updatedJob, 'job.completed');
   } else if (status === 'failed') {
     emitJobEvent(updatedJob, 'job.failed', {
-      errorMessage: normalizeNullableString(errorMessage)
+      hasError: normalizeNullableString(errorMessage) !== null
     });
   }
   return updatedJob;
@@ -1504,7 +1504,7 @@ export async function scheduleJobRetry(
   const retriedJob = (result.rows[0] as JobData | undefined) ?? null;
   emitJobEvent(retriedJob, 'job.retry.scheduled', {
     delayMs: Math.max(0, options.delayMs),
-    errorMessage: normalizeNullableString(options.errorMessage)
+    hasError: normalizeNullableString(options.errorMessage) !== null
   });
   return retriedJob;
 }

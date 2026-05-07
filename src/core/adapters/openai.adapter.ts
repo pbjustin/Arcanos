@@ -149,7 +149,7 @@ async function instrumentOpenAIOperation<T>(input: {
           model: input.model ?? null,
           sourceType: aiExecutionContext.sourceType,
           sourceName: aiExecutionContext.sourceName,
-          errorMessage: error instanceof Error ? error.message : String(error ?? 'unknown error')
+          errorType: error instanceof Error ? error.name : typeof error
         }
       });
     }

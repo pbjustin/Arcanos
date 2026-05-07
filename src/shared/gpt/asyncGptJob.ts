@@ -80,6 +80,11 @@ function normalizeOptionalString(value: string | undefined): string | undefined 
   return trimmed ? trimmed : undefined;
 }
 
+function normalizeBoundedOptionalString(value: string | undefined, maxLength: number): string | undefined {
+  const trimmed = normalizeOptionalString(value);
+  return trimmed ? trimmed.slice(0, maxLength) : undefined;
+}
+
 /**
  * Build the persisted payload for an async `/gpt/:gptId` job.
  * Purpose: keep the queue contract centralized and schema-backed for worker execution.
@@ -114,33 +119,34 @@ export function buildQueuedGptJobInput(input: {
     normalizedJobInput.bypassIntentRouting = true;
   }
 
-  const normalizedRequestId = normalizeOptionalString(input.requestId ?? undefined);
+  const normalizedRequestId = normalizeBoundedOptionalString(input.requestId ?? undefined, 128);
   if (normalizedRequestId) {
     normalizedJobInput.requestId = normalizedRequestId;
   }
 
-  const normalizedTraceId = normalizeOptionalString(input.traceId ?? undefined);
+  const normalizedTraceId = normalizeBoundedOptionalString(input.traceId ?? undefined, 128);
   if (normalizedTraceId) {
     normalizedJobInput.traceId = normalizedTraceId;
   }
 
-  const normalizedCorrelationId = normalizeOptionalString(input.correlationId ?? undefined);
+  const normalizedCorrelationId = normalizeBoundedOptionalString(input.correlationId ?? undefined, 128);
   if (normalizedCorrelationId) {
     normalizedJobInput.correlationId = normalizedCorrelationId;
   }
 
-  const normalizedRouteHint = normalizeOptionalString(input.routeHint ?? undefined);
+  const normalizedRouteHint = normalizeBoundedOptionalString(input.routeHint ?? undefined, 64);
   if (normalizedRouteHint) {
     normalizedJobInput.routeHint = normalizedRouteHint;
   }
 
-  const normalizedRequestPath = normalizeOptionalString(input.requestPath ?? undefined);
+  const normalizedRequestPath = normalizeBoundedOptionalString(input.requestPath ?? undefined, 256);
   if (normalizedRequestPath) {
     normalizedJobInput.requestPath = normalizedRequestPath;
   }
 
-  const normalizedExecutionModeReason = normalizeOptionalString(
-    input.executionModeReason ?? undefined
+  const normalizedExecutionModeReason = normalizeBoundedOptionalString(
+    input.executionModeReason ?? undefined,
+    128
   );
   if (normalizedExecutionModeReason) {
     normalizedJobInput.executionModeReason = normalizedExecutionModeReason;

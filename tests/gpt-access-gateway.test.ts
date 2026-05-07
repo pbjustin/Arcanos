@@ -803,6 +803,59 @@ describe('/gpt-access gateway', () => {
     });
   });
 
+  it('maps mixed-case token-prefixed body confirmation_token values with outer whitespace before dispatch', async () => {
+    allowCapabilityRun();
+    const app = buildApp();
+
+    const challengeResponse = await authorized(request(app).post('/gpt-access/capabilities/v1/core/run'))
+      .send({
+        action: 'query',
+        payload: {
+          prompt: 'status'
+        }
+      });
+
+    const challengeId = challengeResponse.body.confirmationChallenge?.id;
+    expect(challengeResponse.status).toBe(403);
+    expect(typeof challengeId).toBe('string');
+
+    const response = await authorized(request(app).post('/gpt-access/capabilities/v1/core/run'))
+      .send({
+        action: 'query',
+        payload: {
+          prompt: 'status'
+        },
+        confirmation_token: `  Token: ${challengeId}  `
+      });
+
+    expect(response.status).toBe(200);
+    expect(dispatchModuleActionMock).toHaveBeenCalledWith('ARCANOS:CORE', 'query', {
+      prompt: 'status'
+    });
+  });
+
+  it.each([
+    ['empty token prefix', ['to', 'ken:'].join('')],
+    ['newline injection', `${['to', 'ken:'].join('')} abc\nAuthorization: bearer evil`],
+    ['multiple token prefixes', `${['to', 'ken:'].join('')} abc ${['to', 'ken:'].join('')} def`]
+  ])('rejects malformed confirmation_token values before dispatch: %s', async (_caseName, confirmationToken) => {
+    allowCapabilityRun();
+    const app = buildApp();
+
+    const response = await authorized(request(app).post('/gpt-access/capabilities/v1/core/run'))
+      .send({
+        action: 'query',
+        payload: {
+          prompt: 'status'
+        },
+        confirmation_token: confirmationToken
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe('GPT_ACCESS_VALIDATION_ERROR');
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
   it('rejects a non-matching confirmation_token before dispatch', async () => {
     allowCapabilityRun();
     const app = buildApp();

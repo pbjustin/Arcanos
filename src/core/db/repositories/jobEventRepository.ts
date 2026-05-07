@@ -113,7 +113,7 @@ export async function recordJobEvent(input: RecordJobEventInput): Promise<Record
         normalizeDurationMs(input.durationMs),
         serializedMetadata
       ],
-      1,
+      3,
       false,
       {
         queryName: 'record_job_event',
@@ -123,6 +123,9 @@ export async function recordJobEvent(input: RecordJobEventInput): Promise<Record
     );
     return { inserted: true };
   } catch (error: unknown) {
+    const errorMetadata = redactSensitive({
+      errorMessage: resolveErrorMessage(error)
+    }) as Record<string, unknown>;
     dbLogger.warn(
       'job_events.insert_failed',
       {
@@ -132,8 +135,7 @@ export async function recordJobEvent(input: RecordJobEventInput): Promise<Record
         workerId: normalizeNullableString(input.workerId),
         traceId: normalizeNullableString(input.traceId)
       },
-      { errorMessage: resolveErrorMessage(error) },
-      error instanceof Error ? error : undefined
+      errorMetadata
     );
     return { inserted: false, reason: 'insert_failed' };
   }

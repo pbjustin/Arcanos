@@ -9,6 +9,10 @@ import {
   recordGptJobEvent,
   recordGptJobTiming
 } from '@platform/observability/appMetrics.js';
+import {
+  createAiExecutionContext,
+  runWithAiExecutionContext
+} from '@services/openai/aiExecutionContext.js';
 import type { routeGptRequest as routeGptRequestType } from '@routes/_core/gptDispatch.js';
 import { parseQueuedGptJobInput } from '@shared/gpt/asyncGptJob.js';
 import { computeGptJobLifecycleDeadlines } from '@shared/gpt/gptJobLifecycle.js';
@@ -207,7 +211,7 @@ async function executeReservedPriorityGptDirectExecution(params: {
       return;
     }
 
-    const { gptId, body, prompt, requestId, bypassIntentRouting } = parsedGptJobInput.value;
+    const { gptId, body, prompt, requestId, traceId, correlationId, bypassIntentRouting } = parsedGptJobInput.value;
     const latestJob = await getJobById(params.jobId);
     if (!latestJob) {
       params.requestLogger?.warn?.('gpt.priority_direct.job_missing', {
@@ -252,15 +256,26 @@ async function executeReservedPriorityGptDirectExecution(params: {
     });
 
     const routeGptRequest = await loadRouteGptRequest();
-    const envelope = await routeGptRequest({
+    const aiExecutionContext = createAiExecutionContext({
+      sourceType: 'job',
+      sourceName: 'gpt',
+      requestId: requestId ?? correlationId ?? params.jobId,
+      traceId: traceId ?? correlationId ?? requestId,
+      jobId: params.jobId,
+      budget: {
+        maxCalls: 24
+      }
+    });
+    const envelope = await runWithAiExecutionContext(aiExecutionContext, () => routeGptRequest({
       gptId,
       body: hydrateQueuedGptBodyPrompt(body, prompt),
       requestId,
+      traceId: traceId ?? correlationId ?? requestId ?? null,
       logger: routeLogger,
       bypassIntentRouting,
       runtimeExecutionMode: 'background',
       parentAbortSignal: cancellationController.signal
-    });
+    }));
 
     if (cancellationController.signal.aborted) {
       const reason = cancellationController.signal.reason;
