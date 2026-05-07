@@ -34,6 +34,7 @@ describe('app metrics registry', () => {
     recordDependencyCall,
     recordDispatcherFallback,
     recordDispatcherRoute,
+    recordJobEventCleanup,
     recordMemoryDispatchIgnored,
     recordUnknownGpt,
     recordWorkerFailureTotal,
@@ -41,7 +42,7 @@ describe('app metrics registry', () => {
       recordWorkerJobTotal,
       recordWorkerQueueLatency,
       recordWorkerQueueDepth,
-      recordWorkerRetryTotal,
+    recordWorkerRetryTotal,
     } = await loadMetricsModule();
 
     recordDispatcherRoute({
@@ -109,6 +110,13 @@ describe('app metrics registry', () => {
     recordWorkerQueueLatency('oldest_pending', 1250);
     recordWorkerFailureTotal('terminal', 1);
     recordWorkerRetryTotal('scheduled', 2);
+    recordJobEventCleanup({
+      outcome: 'completed',
+      dryRun: false,
+      matchedRows: 4,
+      deletedRows: 4,
+      durationMs: 25
+    });
 
     const metricsText = await metricsRegistry.metrics();
 
@@ -121,6 +129,9 @@ describe('app metrics registry', () => {
     expect(metricsText).toMatch(/worker_job_duration_ms_bucket\{[^}]*job_type="dag-node"[^}]*outcome="completed"[^}]*\} \d+/);
     expect(metricsText).toMatch(/worker_queue_depth\{[^}]*state="pending"[^}]*\} 3/);
     expect(metricsText).toMatch(/worker_queue_latency_ms\{[^}]*scope="oldest_pending"[^}]*\} 1250/);
+    expect(metricsText).toMatch(/job_events_cleanup_runs_total\{[^}]*outcome="completed"[^}]*dry_run="false"[^}]*\} 1/);
+    expect(metricsText).toMatch(/job_events_cleanup_rows_total\{[^}]*mode="deleted"[^}]*\} 4/);
+    expect(metricsText).toMatch(/job_events_cleanup_duration_ms_bucket\{[^}]*outcome="completed"[^}]*dry_run="false"[^}]*\} \d+/);
     expect(metricsText).toContain('process_heap_used_bytes');
     expect(metricsText).toContain('event_loop_lag_ms');
   });

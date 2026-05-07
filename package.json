@@ -36,6 +36,7 @@
     "daily-summary": "node --import ./scripts/register-esm-loader.mjs dist/commands/runDailySummary.js",
     "worker:helper": "node scripts/worker-helper.mjs",
     "worker:jobs:maintenance": "npm run build && node scripts/worker-failed-job-maintenance.mjs",
+    "job-events:timeline": "node scripts/job-events-timeline.mjs",
     "validate:railway": "node scripts/validate-railway-compatibility.js",
     "railway:smoke:production": "node scripts/railway-production-smoke-check.js --environment production",
     "railway:probe:async": "node scripts/railway-async-job-probe.js",
@@ -142,7 +143,7 @@
   },
   "overrides": {
     "express-rate-limit": "https://codeload.github.com/express-rate-limit/express-rate-limit/tar.gz/refs/tags/v8.3.0",
-    "hono": "https://codeload.github.com/honojs/hono/tar.gz/refs/tags/v4.12.15",
+    "hono": "https://codeload.github.com/honojs/hono/tar.gz/refs/tags/v4.12.17",
     "ip-address": "10.1.1",
     "proxy-from-env": "https://codeload.github.com/Rob--W/proxy-from-env/tar.gz/refs/tags/v2.1.0",
     "undici": "https://codeload.github.com/nodejs/undici/tar.gz/refs/tags/v7.24.3",

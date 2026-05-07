@@ -206,6 +206,9 @@ describe('/gpt-access gateway', () => {
   const previousScopes = process.env.ARCANOS_GPT_ACCESS_SCOPES;
   const previousModuleActionAllowlist = process.env.MCP_ALLOW_MODULE_ACTIONS;
   const previousGptAccessBaseUrl = process.env.ARCANOS_GPT_ACCESS_BASE_URL;
+  const previousRailwayEnvironment = process.env.RAILWAY_ENVIRONMENT;
+  const previousRailwayEnvironmentName = process.env.RAILWAY_ENVIRONMENT_NAME;
+  const previousRailwayPublicDomain = process.env.RAILWAY_PUBLIC_DOMAIN;
   const previousDispatchMode = process.env.GPT_ACCESS_NL_DISPATCH_MODE;
 
   beforeEach(() => {
@@ -347,6 +350,24 @@ describe('/gpt-access gateway', () => {
       delete process.env.ARCANOS_GPT_ACCESS_BASE_URL;
     } else {
       process.env.ARCANOS_GPT_ACCESS_BASE_URL = previousGptAccessBaseUrl;
+    }
+
+    if (previousRailwayEnvironment === undefined) {
+      delete process.env.RAILWAY_ENVIRONMENT;
+    } else {
+      process.env.RAILWAY_ENVIRONMENT = previousRailwayEnvironment;
+    }
+
+    if (previousRailwayEnvironmentName === undefined) {
+      delete process.env.RAILWAY_ENVIRONMENT_NAME;
+    } else {
+      process.env.RAILWAY_ENVIRONMENT_NAME = previousRailwayEnvironmentName;
+    }
+
+    if (previousRailwayPublicDomain === undefined) {
+      delete process.env.RAILWAY_PUBLIC_DOMAIN;
+    } else {
+      process.env.RAILWAY_PUBLIC_DOMAIN = previousRailwayPublicDomain;
     }
 
     if (previousDispatchMode === undefined) {
@@ -772,6 +793,90 @@ describe('/gpt-access gateway', () => {
     });
   });
 
+  it('maps token-prefixed body confirmation_token values with header-style spacing before dispatch', async () => {
+    allowCapabilityRun();
+    const app = buildApp();
+
+    const challengeResponse = await authorized(request(app).post('/gpt-access/capabilities/v1/core/run'))
+      .send({
+        action: 'query',
+        payload: {
+          prompt: 'status'
+        }
+      });
+
+    const challengeId = challengeResponse.body.confirmationChallenge?.id;
+    expect(challengeResponse.status).toBe(403);
+    expect(typeof challengeId).toBe('string');
+
+    const response = await authorized(request(app).post('/gpt-access/capabilities/v1/core/run'))
+      .send({
+        action: 'query',
+        payload: {
+          prompt: 'status'
+        },
+        confirmation_token: `token: ${challengeId}`
+      });
+
+    expect(response.status).toBe(200);
+    expect(dispatchModuleActionMock).toHaveBeenCalledWith('ARCANOS:CORE', 'query', {
+      prompt: 'status'
+    });
+  });
+
+  it('maps mixed-case token-prefixed body confirmation_token values with outer whitespace before dispatch', async () => {
+    allowCapabilityRun();
+    const app = buildApp();
+
+    const challengeResponse = await authorized(request(app).post('/gpt-access/capabilities/v1/core/run'))
+      .send({
+        action: 'query',
+        payload: {
+          prompt: 'status'
+        }
+      });
+
+    const challengeId = challengeResponse.body.confirmationChallenge?.id;
+    expect(challengeResponse.status).toBe(403);
+    expect(typeof challengeId).toBe('string');
+
+    const response = await authorized(request(app).post('/gpt-access/capabilities/v1/core/run'))
+      .send({
+        action: 'query',
+        payload: {
+          prompt: 'status'
+        },
+        confirmation_token: `  Token: ${challengeId}  `
+      });
+
+    expect(response.status).toBe(200);
+    expect(dispatchModuleActionMock).toHaveBeenCalledWith('ARCANOS:CORE', 'query', {
+      prompt: 'status'
+    });
+  });
+
+  it.each([
+    ['empty token prefix', ['to', 'ken:'].join('')],
+    ['newline injection', `${['to', 'ken:'].join('')} abc\nAuthorization: bearer evil`],
+    ['multiple token prefixes', `${['to', 'ken:'].join('')} abc ${['to', 'ken:'].join('')} def`]
+  ])('rejects malformed confirmation_token values before dispatch: %s', async (_caseName, confirmationToken) => {
+    allowCapabilityRun();
+    const app = buildApp();
+
+    const response = await authorized(request(app).post('/gpt-access/capabilities/v1/core/run'))
+      .send({
+        action: 'query',
+        payload: {
+          prompt: 'status'
+        },
+        confirmation_token: confirmationToken
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe('GPT_ACCESS_VALIDATION_ERROR');
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
   it('rejects a non-matching confirmation_token before dispatch', async () => {
     allowCapabilityRun();
     const app = buildApp();
@@ -801,6 +906,49 @@ describe('/gpt-access gateway', () => {
     expect(wrongTokenResponse.body.code).toBe('CONFIRMATION_REQUIRED');
     expect(wrongTokenResponse.body.confirmationChallenge.providedTokenStatus).toBe('invalid');
     expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
+  it('allows retry with the replacement challenge after an invalid confirmation_token', async () => {
+    allowCapabilityRun();
+    const app = buildApp();
+
+    const challengeResponse = await authorized(request(app).post('/gpt-access/capabilities/v1/core/run'))
+      .send({
+        action: 'query',
+        payload: {
+          prompt: 'status'
+        }
+      });
+
+    expect(challengeResponse.status).toBe(403);
+
+    const wrongTokenResponse = await authorized(request(app).post('/gpt-access/capabilities/v1/core/run'))
+      .send({
+        action: 'query',
+        payload: {
+          prompt: 'status'
+        },
+        confirmation_token: '00000000-0000-4000-8000-000000000000'
+      });
+
+    const replacementChallengeId = wrongTokenResponse.body.confirmationChallenge?.id;
+    expect(wrongTokenResponse.status).toBe(403);
+    expect(wrongTokenResponse.body.confirmationChallenge.providedTokenStatus).toBe('invalid');
+    expect(typeof replacementChallengeId).toBe('string');
+
+    const response = await authorized(request(app).post('/gpt-access/capabilities/v1/core/run'))
+      .send({
+        action: 'query',
+        payload: {
+          prompt: 'status'
+        },
+        confirmation_token: replacementChallengeId
+      });
+
+    expect(response.status).toBe(200);
+    expect(dispatchModuleActionMock).toHaveBeenCalledWith('ARCANOS:CORE', 'query', {
+      prompt: 'status'
+    });
   });
 
   it('rejects replay of a consumed confirmation_token before dispatch', async () => {
@@ -2460,6 +2608,8 @@ describe('/gpt-access gateway', () => {
 
   it('returns a Custom GPT compatible OpenAPI document', async () => {
     process.env.ARCANOS_GPT_ACCESS_BASE_URL = 'https://gateway.example.test/';
+    process.env.RAILWAY_ENVIRONMENT = 'production';
+    process.env.RAILWAY_PUBLIC_DOMAIN = 'preview-ignored.up.railway.app';
 
     const response = await request(buildApp()).get('/gpt-access/openapi.json');
 
@@ -2634,6 +2784,35 @@ describe('/gpt-access gateway', () => {
     expect(response.body.paths['/ask']).toBeUndefined();
   });
 
+  it('advertises the Railway PR preview domain before inherited production OpenAPI URLs', async () => {
+    process.env.RAILWAY_ENVIRONMENT = 'Arcanos-pr-1355';
+    process.env.ARCANOS_GPT_ACCESS_BASE_URL = 'https://gateway.example.test/';
+    process.env.RAILWAY_PUBLIC_DOMAIN = 'arcanos-v2-arcanos-pr-1355.up.railway.app';
+
+    const response = await request(buildApp()).get('/gpt-access/openapi.json');
+
+    expect(response.status).toBe(200);
+    expect(response.body.servers).toEqual([
+      { url: 'https://arcanos-v2-arcanos-pr-1355.up.railway.app' }
+    ]);
+  });
+
+  it('derives local development OpenAPI server URLs from localhost request hosts', async () => {
+    process.env.RAILWAY_ENVIRONMENT = 'development';
+    const response = await withoutOpenApiServerUrlEnv(() =>
+      request(buildApp({ trustProxy: true }))
+        .get('/gpt-access/openapi.json')
+        .set('Host', 'localhost:4173')
+        .set('X-Forwarded-Proto', 'http')
+        .set('X-Forwarded-For', '203.0.113.201')
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body.servers).toEqual([
+      { url: 'http://localhost:4173' }
+    ]);
+  });
+
   it('does not derive the public OpenAPI server URL from spoofable request hosts', async () => {
     const response = await withoutOpenApiServerUrlEnv(() =>
       request(buildApp({ trustProxy: true }))
@@ -2641,6 +2820,7 @@ describe('/gpt-access gateway', () => {
         .set('Host', 'attacker.example.test')
         .set('X-Forwarded-Host', 'attacker.example.test')
         .set('X-Forwarded-Proto', 'https')
+        .set('X-Forwarded-For', '203.0.113.202')
     );
 
     expect(response.status).toBe(200);

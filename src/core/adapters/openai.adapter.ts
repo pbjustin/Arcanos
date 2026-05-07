@@ -34,8 +34,10 @@ import {
 import { recordDependencyCall } from '@platform/observability/appMetrics.js';
 import {
   assertAiBudgetAllowsCall,
+  getAiExecutionContext,
   recordAiOperationResult,
 } from '@services/openai/aiExecutionContext.js';
+import { recordJobEvent } from '@core/db/repositories/jobEventRepository.js';
 
 /**
  * OpenAI adapter configuration
@@ -63,6 +65,21 @@ async function instrumentOpenAIOperation<T>(input: {
 ): Promise<T> {
   assertAiBudgetAllowsCall(input.operation, input.model);
   const startedAtMs = Date.now();
+  const aiExecutionContext = getAiExecutionContext();
+  if (aiExecutionContext?.jobId) {
+    void recordJobEvent({
+      jobId: aiExecutionContext.jobId,
+      eventType: 'ai.request.started',
+      traceId: aiExecutionContext.traceId ?? aiExecutionContext.requestId ?? null,
+      metadata: {
+        provider: aiExecutionContext.provider,
+        operation: input.operation,
+        model: input.model ?? null,
+        sourceType: aiExecutionContext.sourceType,
+        sourceName: aiExecutionContext.sourceName
+      }
+    });
+  }
   try {
     const result = await input.callback();
     const normalizedUsage = normalizeUsage(
@@ -87,6 +104,24 @@ async function instrumentOpenAIOperation<T>(input: {
         totalTokens: normalizedUsage.totalTokens,
       }
     });
+    if (aiExecutionContext?.jobId) {
+      void recordJobEvent({
+        jobId: aiExecutionContext.jobId,
+        eventType: 'ai.request.completed',
+        traceId: aiExecutionContext.traceId ?? aiExecutionContext.requestId ?? null,
+        durationMs: Date.now() - startedAtMs,
+        metadata: {
+          provider: aiExecutionContext.provider,
+          operation: input.operation,
+          model: input.model ?? null,
+          sourceType: aiExecutionContext.sourceType,
+          sourceName: aiExecutionContext.sourceName,
+          promptTokens: normalizedUsage.promptTokens,
+          completionTokens: normalizedUsage.completionTokens,
+          totalTokens: normalizedUsage.totalTokens
+        }
+      });
+    }
     return result;
   } catch (error) {
     recordDependencyCall({
@@ -102,6 +137,22 @@ async function instrumentOpenAIOperation<T>(input: {
       outcome: 'error',
       durationMs: Date.now() - startedAtMs,
     });
+    if (aiExecutionContext?.jobId) {
+      void recordJobEvent({
+        jobId: aiExecutionContext.jobId,
+        eventType: 'ai.request.failed',
+        traceId: aiExecutionContext.traceId ?? aiExecutionContext.requestId ?? null,
+        durationMs: Date.now() - startedAtMs,
+        metadata: {
+          provider: aiExecutionContext.provider,
+          operation: input.operation,
+          model: input.model ?? null,
+          sourceType: aiExecutionContext.sourceType,
+          sourceName: aiExecutionContext.sourceName,
+          errorType: error instanceof Error ? error.name : typeof error
+        }
+      });
+    }
     throw error;
   }
 }

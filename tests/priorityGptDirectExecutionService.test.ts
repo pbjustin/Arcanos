@@ -40,6 +40,8 @@ jest.unstable_mockModule('@platform/logging/structuredLogging.js', () => ({
 }));
 
 jest.unstable_mockModule('@platform/observability/appMetrics.js', () => ({
+  recordAiBudgetExceeded: jest.fn(),
+  recordAiOperation: jest.fn(),
   recordGptJobEvent: recordGptJobEventMock,
   recordGptJobTiming: recordGptJobTimingMock
 }));

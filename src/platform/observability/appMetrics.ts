@@ -307,6 +307,28 @@ const gptJobTimingMs = new Histogram({
   registers: [metricsRegistry],
 });
 
+const jobEventsCleanupRunsTotal = new Counter({
+  name: 'job_events_cleanup_runs_total',
+  help: 'Job event retention cleanup runs by outcome and dry-run mode.',
+  labelNames: ['outcome', 'dry_run'] as const,
+  registers: [metricsRegistry],
+});
+
+const jobEventsCleanupRowsTotal = new Counter({
+  name: 'job_events_cleanup_rows_total',
+  help: 'Job event retention cleanup rows matched or deleted.',
+  labelNames: ['mode'] as const,
+  registers: [metricsRegistry],
+});
+
+const jobEventsCleanupDurationMs = new Histogram({
+  name: 'job_events_cleanup_duration_ms',
+  help: 'Job event retention cleanup duration in milliseconds.',
+  labelNames: ['outcome', 'dry_run'] as const,
+  buckets: [1, 5, 10, 25, 50, 100, 250, 500, 1_000, 2_500, 5_000, 10_000],
+  registers: [metricsRegistry],
+});
+
 const gptJobLookupTotal = new Counter({
   name: 'gpt_job_lookup_total',
   help: 'Job status/result lookup requests by channel and outcome.',
@@ -942,6 +964,31 @@ export function recordGptJobTiming(input: {
     phase: normalizeLabel(input.phase),
     outcome: normalizeLabel(input.outcome)
   }, input.durationMs);
+}
+
+export function recordJobEventCleanup(input: {
+  outcome: string;
+  dryRun: boolean;
+  matchedRows?: number | null;
+  deletedRows?: number | null;
+  durationMs?: number | null;
+}): void {
+  const labels = {
+    outcome: normalizeLabel(input.outcome),
+    dry_run: input.dryRun ? 'true' : 'false'
+  };
+  jobEventsCleanupRunsTotal.inc(labels);
+
+  if (typeof input.durationMs === 'number' && Number.isFinite(input.durationMs) && input.durationMs >= 0) {
+    jobEventsCleanupDurationMs.observe(labels, input.durationMs);
+  }
+
+  if (typeof input.matchedRows === 'number' && Number.isFinite(input.matchedRows) && input.matchedRows > 0) {
+    jobEventsCleanupRowsTotal.inc({ mode: 'matched' }, Math.trunc(input.matchedRows));
+  }
+  if (typeof input.deletedRows === 'number' && Number.isFinite(input.deletedRows) && input.deletedRows > 0) {
+    jobEventsCleanupRowsTotal.inc({ mode: 'deleted' }, Math.trunc(input.deletedRows));
+  }
 }
 
 export function recordGptJobLookup(input: {

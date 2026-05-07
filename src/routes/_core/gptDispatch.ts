@@ -77,6 +77,7 @@ export type RouteGptRequestInput = {
   requestId?: string;
   logger?: any;
   request?: Request;
+  traceId?: string | null;
   bypassIntentRouting?: boolean;
   runtimeExecutionMode?: 'request' | 'background';
   parentAbortSignal?: AbortSignal;
@@ -982,12 +983,14 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     requestId,
     logger,
     request,
+    traceId: inputTraceId,
     bypassIntentRouting,
     runtimeExecutionMode,
     parentAbortSignal,
     suppressTimeoutFallback: suppressTimeoutFallbackInput
   } = input;
   const trimmedGptId = (gptId ?? "").trim();
+  const traceId = inputTraceId ?? request?.traceId ?? null;
   const requestEndpoint = request?.originalUrl ?? request?.url ?? request?.path;
   const preDispatchPayload = applyRuntimeExecutionModeOverride(
     buildDispatchPayload(body),
@@ -1002,13 +1005,13 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
   const rawPrompt = extractPrompt(body) ?? diagnosticTextInput ?? '';
   const normalizedPrompt = extractPrompt(preDispatchPayload) ?? diagnosticTextInput ?? '';
   recordDispatchPromptDebugTrace(promptDebugRequestId, 'ingress', {
-    traceId: request?.traceId ?? null,
+    traceId,
     endpoint: requestEndpoint ?? '/gpt/:gptId',
     method: request?.method ?? null,
     rawPrompt,
   }, suppressPromptDebugTrace);
   recordDispatchPromptDebugTrace(promptDebugRequestId, 'preprocess', {
-    traceId: request?.traceId ?? null,
+    traceId,
     endpoint: requestEndpoint ?? '/gpt/:gptId',
     method: request?.method ?? null,
     rawPrompt,
@@ -1037,7 +1040,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
   //audit Assumption: diagnostic probes must never enter module resolution or gameplay dispatch; failure risk: lightweight health checks trigger simulation, HRC, or persistence side effects; expected invariant: `action:"ping"` or `prompt:"ping"` returns the fixed diagnostic payload immediately; handling strategy: short-circuit before GPT map lookup and before any action inference.
   if (isDiagnosticRequest(body as Record<string, unknown> | undefined, diagnosticTextInput)) {
     recordDispatchPromptDebugTrace(promptDebugRequestId, 'response', {
-      traceId: request?.traceId ?? null,
+      traceId,
       endpoint: requestEndpoint ?? '/gpt/:gptId',
       method: request?.method ?? null,
       rawPrompt,
@@ -1212,7 +1215,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     fallbackReason: null,
   });
   recordDispatchPromptDebugTrace(promptDebugRequestId, 'routing', {
-    traceId: request?.traceId ?? null,
+    traceId,
     endpoint: requestEndpoint ?? '/gpt/:gptId',
     method: request?.method ?? null,
     rawPrompt,
@@ -1291,7 +1294,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
         outcome: memoryResult.operation === 'ignored' ? 'ignored' : 'ok',
       });
       recordDispatchPromptDebugTrace(promptDebugRequestId, 'response', {
-        traceId: request?.traceId ?? null,
+        traceId,
         endpoint: requestEndpoint ?? '/gpt/:gptId',
         method: request?.method ?? null,
         rawPrompt,
@@ -1468,7 +1471,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       outcome: 'ok',
     });
     recordDispatchPromptDebugTrace(promptDebugRequestId, 'response', {
-      traceId: request?.traceId ?? null,
+      traceId,
       endpoint: requestEndpoint ?? '/gpt/:gptId',
       method: request?.method ?? null,
       rawPrompt,
@@ -1559,7 +1562,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
     timeoutSource,
   });
   recordDispatchPromptDebugTrace(promptDebugRequestId, 'executor', {
-    traceId: request?.traceId ?? null,
+    traceId,
     endpoint: requestEndpoint ?? '/gpt/:gptId',
     method: request?.method ?? null,
     rawPrompt,
@@ -1644,7 +1647,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       outcome: 'ok',
     });
     recordDispatchPromptDebugTrace(promptDebugRequestId, 'response', {
-      traceId: request?.traceId ?? null,
+      traceId,
       endpoint: requestEndpoint ?? '/gpt/:gptId',
       method: request?.method ?? null,
       rawPrompt,
@@ -1716,7 +1719,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
           outcome: 'rejected',
         });
         recordDispatchPromptDebugTrace(promptDebugRequestId, 'fallback', {
-          traceId: request?.traceId ?? null,
+          traceId,
           endpoint: requestEndpoint ?? '/gpt/:gptId',
           method: request?.method ?? null,
           rawPrompt,
@@ -1810,7 +1813,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
           durationMs: Date.now() - dispatchStartedAt,
         });
         recordDispatchPromptDebugTrace(promptDebugRequestId, 'response', {
-          traceId: request?.traceId ?? null,
+          traceId,
           endpoint: requestEndpoint ?? '/gpt/:gptId',
           method: request?.method ?? null,
           rawPrompt,
@@ -1845,7 +1848,7 @@ export async function routeGptRequest(input: RouteGptRequestInput): Promise<AskE
       outcome: isDispatchTimeout ? 'timeout' : 'error',
     });
     recordDispatchPromptDebugTrace(promptDebugRequestId, 'fallback', {
-      traceId: request?.traceId ?? null,
+      traceId,
       endpoint: requestEndpoint ?? '/gpt/:gptId',
       method: request?.method ?? null,
       rawPrompt,

@@ -24,7 +24,11 @@ const {
 
 function mockStaleRows(rows: Array<Record<string, unknown>>): void {
   clientQueryMock.mockImplementation(async (sql: unknown) => {
-    if (typeof sql === 'string' && sql.includes('SELECT id, job_type, retry_count, max_retries')) {
+    if (
+      typeof sql === 'string' &&
+      sql.includes('FROM job_data') &&
+      sql.includes('FOR UPDATE')
+    ) {
       return { rows };
     }
 
@@ -175,6 +179,78 @@ describe('jobRepository lifecycle recovery', () => {
       cancelledJobs: ['job-cancelled-stale']
     });
     expect(getJobUpdateSql()).toContain("status = 'cancelled'");
+  });
+
+  it('does not emit stale recovery events when the transaction rolls back', async () => {
+    clientQueryMock.mockImplementation(async (sql: unknown) => {
+      if (
+        typeof sql === 'string' &&
+        sql.includes('FROM job_data') &&
+        sql.includes('FOR UPDATE')
+      ) {
+        return {
+          rows: [
+            {
+              id: 'job-rollback-stale',
+              worker_id: 'worker-1',
+              last_worker_id: 'worker-1',
+              correlation_id: 'trace-1',
+              job_type: 'ask',
+              status: 'running',
+              retry_count: 0,
+              max_retries: 1,
+              autonomy_state: {},
+              cancel_requested_at: null,
+              cancel_reason: null
+            }
+          ]
+        };
+      }
+      if (sql === 'COMMIT') {
+        throw new Error('commit failed');
+      }
+
+      return { rows: [] };
+    });
+
+    await expect(recoverStaleJobs({
+      staleAfterMs: 60_000,
+      maxRetries: 2
+    })).rejects.toThrow('commit failed');
+
+    expect(queryMock).not.toHaveBeenCalled();
+    expect(clientQueryMock).toHaveBeenCalledWith('ROLLBACK');
+  });
+
+  it('flushes stale recovery events only after commit succeeds', async () => {
+    mockStaleRows([
+      {
+        id: 'job-post-commit',
+        worker_id: 'worker-1',
+        last_worker_id: 'worker-1',
+        correlation_id: 'trace-1',
+        job_type: 'ask',
+        status: 'running',
+        retry_count: 0,
+        max_retries: 1,
+        autonomy_state: {},
+        cancel_requested_at: null,
+        cancel_reason: null
+      }
+    ]);
+
+    await recoverStaleJobs({
+      staleAfterMs: 60_000,
+      maxRetries: 2
+    });
+
+    const commitOrder = clientQueryMock.mock.invocationCallOrder[
+      clientQueryMock.mock.calls.findIndex(([sql]) => sql === 'COMMIT')
+    ];
+    const firstEventOrder = queryMock.mock.invocationCallOrder[0];
+
+    expect(commitOrder).toBeLessThan(firstEventOrder);
+    expect(queryMock).toHaveBeenCalledTimes(2);
   });
 
   it('counts null-heartbeat stale running jobs in the queue summary predicate', async () => {

@@ -47,7 +47,7 @@ import {
   recordWorkerStalledJobs
 } from '@platform/observability/appMetrics.js';
 import { logger } from '@platform/logging/structuredLogging.js';
-import { runFailedJobCleanup } from '../queue/cleanup.js';
+import { runFailedJobCleanup, runJobEventCleanup } from '../queue/cleanup.js';
 
 export type WorkerAutonomyHealthStatus = 'healthy' | 'degraded' | 'unhealthy' | 'offline';
 
@@ -137,6 +137,9 @@ export interface WorkerInspectionResult {
     deletedExpired: number;
     deletedFailed: number;
     retainedFailed: number;
+    matchedJobEvents: number;
+    deletedJobEvents: number;
+    jobEventCleanupDryRun: boolean;
   };
   queueSummary: JobQueueSummary | null;
   stats: JobExecutionStats;
@@ -671,12 +674,16 @@ export class WorkerAutonomyService {
       maxRetries: this.settings.defaultMaxRetries
     });
     const expiredGptJobs = await cleanupExpiredGptJobs();
-    const { deletedFailed, retainedFailed } = await runFailedJobCleanup(source);
-    const cleaned = {
-      ...expiredGptJobs,
-      deletedFailed,
-      retainedFailed
-    };
+      const { deletedFailed, retainedFailed } = await runFailedJobCleanup(source);
+      const jobEventCleanup = await runJobEventCleanup(source);
+      const cleaned = {
+        ...expiredGptJobs,
+        deletedFailed,
+        retainedFailed,
+        matchedJobEvents: jobEventCleanup.matchedRows,
+        deletedJobEvents: jobEventCleanup.deletedRows,
+        jobEventCleanupDryRun: jobEventCleanup.dryRun
+      };
     const stats = await getJobExecutionStatsSince(
       new Date(Date.now() - 60 * 60 * 1000),
       this.getStatsWorkerId()

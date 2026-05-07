@@ -73,6 +73,7 @@ import {
 } from '@services/openai/serviceHealth.js';
 import { routeGptRequest } from '@routes/_core/gptDispatch.js';
 import { logger } from '@platform/logging/structuredLogging.js';
+import { recordJobEvent } from '@core/db/repositories/jobEventRepository.js';
 
 interface JobExecutionOutcome {
   status: 'completed' | 'failed' | 'cancelled';
@@ -631,6 +632,7 @@ async function executeQueuedGptRequest(params: {
     gptId,
     body,
     requestId,
+    traceId,
     prompt,
     bypassIntentRouting,
     requestPath,
@@ -700,6 +702,7 @@ async function executeQueuedGptRequest(params: {
       gptId,
       body: hydratedBody,
       requestId,
+      traceId: traceId ?? requestId ?? null,
       logger: routeLogger,
       bypassIntentRouting,
       runtimeExecutionMode: 'background',
@@ -1071,6 +1074,17 @@ async function runWorkerConsumerSlot(
         maxRetries: job.max_retries ?? null
       });
       await autonomyService.markJobStarted(job);
+      void recordJobEvent({
+        jobId: job.id,
+        eventType: 'job.started',
+        traceId: job.correlation_id ?? null,
+        workerId: slotDefinition.workerId,
+        metadata: {
+          jobType: job.job_type,
+          retryCount: job.retry_count ?? 0,
+          maxRetries: job.max_retries ?? null
+        }
+      });
       const ensuredClientState = await ensureOpenAIClientForSlot({
         workerId: slotDefinition.workerId,
         currentClient: openai,
@@ -1179,7 +1193,8 @@ async function runWorkerConsumerSlot(
         const aiExecutionContext = createAiExecutionContext({
           sourceType: 'job',
           sourceName: job.job_type,
-          requestId: job.id,
+          requestId: job.correlation_id ?? job.id,
+          traceId: job.correlation_id ?? undefined,
           jobId: job.id,
           budget: {
             maxCalls: 24

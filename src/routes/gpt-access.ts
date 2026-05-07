@@ -234,8 +234,7 @@ function readCapabilityConfirmationTokenField(value: unknown):
   if (trimmed.length === 0) {
     return { ok: false, message: 'confirmation_token must be a non-empty string when provided.' };
   }
-
-  if (/\s/u.test(trimmed)) {
+  if (/[\r\n\u0000-\u001F\u007F]/u.test(trimmed)) {
     return { ok: false, message: 'confirmation_token must be a single non-empty token value.' };
   }
 

@@ -6,6 +6,15 @@ import {
   MAX_FAILED_JOB_RETENTION_COUNT,
   type CleanupRetainedFailedJobsResult
 } from '@core/db/repositories/jobRepository.js';
+import {
+  cleanupJobEvents,
+  DEFAULT_JOB_EVENT_CLEANUP_BATCH_SIZE,
+  DEFAULT_JOB_EVENT_RETENTION_DAYS,
+  MAX_JOB_EVENT_CLEANUP_BATCH_SIZE,
+  MAX_JOB_EVENT_RETENTION_DAYS,
+  type CleanupJobEventsResult
+} from '@core/db/repositories/jobEventRepository.js';
+import { recordJobEventCleanup } from '@platform/observability/appMetrics.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 
 export interface FailedJobCleanupPolicy {
@@ -17,6 +26,19 @@ export interface FailedJobCleanupPolicy {
 export interface FailedJobCleanupRunResult extends CleanupRetainedFailedJobsResult {
   enabled: boolean;
   skipped: boolean;
+}
+
+export interface JobEventCleanupPolicy {
+  enabled: boolean;
+  dryRun: boolean;
+  retentionDays: number;
+  batchSize: number;
+}
+
+export interface JobEventCleanupRunResult extends CleanupJobEventsResult {
+  enabled: boolean;
+  skipped: boolean;
+  failed: boolean;
 }
 
 function parseBooleanEnv(value: string | undefined, fallback: boolean): boolean {
@@ -62,6 +84,25 @@ export function resolveFailedJobCleanupPolicy(
       env.QUEUE_FAILED_JOB_CLEANUP_MIN_AGE_MS,
       DEFAULT_FAILED_JOB_CLEANUP_MIN_AGE_MS,
       { min: 0, max: MAX_FAILED_JOB_CLEANUP_MIN_AGE_MS }
+    )
+  };
+}
+
+export function resolveJobEventCleanupPolicy(
+  env: NodeJS.ProcessEnv = process.env
+): JobEventCleanupPolicy {
+  return {
+    enabled: parseBooleanEnv(env.JOB_EVENT_CLEANUP_ENABLED, true),
+    dryRun: parseBooleanEnv(env.JOB_EVENT_CLEANUP_DRY_RUN, true),
+    retentionDays: parsePositiveIntegerEnv(
+      env.JOB_EVENT_RETENTION_DAYS,
+      DEFAULT_JOB_EVENT_RETENTION_DAYS,
+      { min: 1, max: MAX_JOB_EVENT_RETENTION_DAYS }
+    ),
+    batchSize: parsePositiveIntegerEnv(
+      env.JOB_EVENT_CLEANUP_BATCH_SIZE,
+      DEFAULT_JOB_EVENT_CLEANUP_BATCH_SIZE,
+      { min: 1, max: MAX_JOB_EVENT_CLEANUP_BATCH_SIZE }
     )
   };
 }
@@ -113,4 +154,106 @@ export async function runFailedJobCleanup(
     skipped: false,
     ...result
   };
+}
+
+export async function runJobEventCleanup(
+  reason = 'scheduled',
+  policy: JobEventCleanupPolicy = resolveJobEventCleanupPolicy()
+): Promise<JobEventCleanupRunResult> {
+  if (!policy.enabled) {
+    logger.debug('queue.job_events.cleanup.skipped', {
+      module: 'queue-cleanup',
+      reason,
+      retentionDays: policy.retentionDays,
+      batchSize: policy.batchSize,
+      dryRun: policy.dryRun
+    });
+    return {
+      enabled: false,
+      skipped: true,
+      failed: false,
+      databaseAvailable: true,
+      dryRun: policy.dryRun,
+      retentionDays: policy.retentionDays,
+      batchSize: policy.batchSize,
+      cutoffBefore: new Date(Date.now() - policy.retentionDays * 24 * 60 * 60 * 1_000).toISOString(),
+      matchedRows: 0,
+      deletedRows: 0,
+      eventIds: []
+    };
+  }
+
+  const startedAt = Date.now();
+  try {
+    const result = await cleanupJobEvents({
+      dryRun: policy.dryRun,
+      retentionDays: policy.retentionDays,
+      batchSize: policy.batchSize
+    });
+    const durationMs = Date.now() - startedAt;
+    const outcome = result.failed
+      ? 'failed'
+      : result.databaseAvailable
+      ? 'completed'
+      : 'database_unavailable';
+    recordJobEventCleanup({
+      outcome,
+      dryRun: result.dryRun,
+      matchedRows: result.matchedRows,
+      deletedRows: result.deletedRows,
+      durationMs
+    });
+
+    const logPayload = {
+      module: 'queue-cleanup',
+      reason,
+      dryRun: result.dryRun,
+      retentionDays: result.retentionDays,
+      batchSize: result.batchSize,
+      cutoffBefore: result.cutoffBefore,
+      matchedRows: result.matchedRows,
+      deletedRows: result.deletedRows,
+      deletedEventIdSample: result.eventIds.slice(0, 20)
+    };
+    if (result.failed) {
+      logger.warn('queue.job_events.cleanup.failed', logPayload);
+    } else if (result.matchedRows > 0 || result.deletedRows > 0) {
+      logger.info('queue.job_events.cleanup.completed', logPayload);
+    } else {
+      logger.debug('queue.job_events.cleanup.completed', logPayload);
+    }
+
+    return {
+      enabled: true,
+      skipped: false,
+      ...result
+    };
+  } catch {
+    const durationMs = Date.now() - startedAt;
+    recordJobEventCleanup({
+      outcome: 'failed',
+      dryRun: policy.dryRun,
+      durationMs
+    });
+    logger.warn('queue.job_events.cleanup.failed', {
+      module: 'queue-cleanup',
+      reason,
+      dryRun: policy.dryRun,
+      retentionDays: policy.retentionDays,
+      batchSize: policy.batchSize
+    });
+    return {
+      enabled: true,
+      skipped: false,
+      failed: true,
+      databaseAvailable: true,
+      dryRun: policy.dryRun,
+      retentionDays: policy.retentionDays,
+      batchSize: policy.batchSize,
+      cutoffBefore: new Date(Date.now() - policy.retentionDays * 24 * 60 * 60 * 1_000).toISOString(),
+      matchedRows: 0,
+      deletedRows: 0,
+      eventIds: []
+    };
+  }
 }

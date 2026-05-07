@@ -42,7 +42,7 @@ export const JobDataSchema = z.object({
   last_heartbeat_at: z.date().optional(),
   lease_expires_at: z.date().optional(),
   priority: z.number().int().optional(),
-  last_worker_id: z.string().optional(),
+  last_worker_id: z.string().nullable().optional(),
   correlation_id: z.string().nullable().optional(),
   autonomy_state: z.unknown().optional(),
   request_fingerprint_hash: z.string().nullable().optional(),
@@ -323,6 +323,18 @@ export const TABLE_DEFINITIONS = [
   `ALTER TABLE job_data ADD COLUMN IF NOT EXISTS cancel_requested_at TIMESTAMPTZ`,
   `ALTER TABLE job_data ADD COLUMN IF NOT EXISTS cancel_reason TEXT`,
 
+  // Append-only operational timeline for queue and worker visibility
+  `CREATE TABLE IF NOT EXISTS job_events (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    job_id UUID NOT NULL,
+    trace_id TEXT,
+    event_type TEXT NOT NULL,
+    worker_id TEXT,
+    occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    duration_ms INTEGER,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb
+  )`,
+
   // DAG verification snapshot storage for cross-instance orchestration inspection
   `CREATE TABLE IF NOT EXISTS dag_runs (
     run_id TEXT PRIMARY KEY,
@@ -508,6 +520,11 @@ export const TABLE_DEFINITIONS = [
   `CREATE INDEX IF NOT EXISTS idx_job_data_gpt_idempotency_lookup ON job_data(job_type, idempotency_scope_hash, idempotency_key_hash, created_at DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_job_data_gpt_retention ON job_data(job_type, status, retention_until ASC, expires_at ASC)`,
   `CREATE INDEX IF NOT EXISTS idx_job_data_cancel_requested ON job_data(status, cancel_requested_at ASC)`,
+  `CREATE INDEX IF NOT EXISTS idx_job_events_job_occurred ON job_events(job_id, occurred_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_job_events_trace_id ON job_events(trace_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_job_events_event_type_occurred ON job_events(event_type, occurred_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_job_events_worker_occurred ON job_events(worker_id, occurred_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_job_events_occurred_at ON job_events(occurred_at)`,
   `CREATE INDEX IF NOT EXISTS idx_dag_runs_session_updated ON dag_runs(session_id, updated_at DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_dag_runs_status_updated ON dag_runs(status, updated_at DESC)`,
   `CREATE INDEX IF NOT EXISTS idx_dag_runs_updated_at_desc ON dag_runs(updated_at DESC)`,

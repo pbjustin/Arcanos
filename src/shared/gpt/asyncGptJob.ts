@@ -25,6 +25,8 @@ const queuedGptJobInputSchema = z.object({
   prompt: z.string().trim().min(1).optional(),
   bypassIntentRouting: z.boolean().optional(),
   requestId: z.string().trim().min(1).max(128).optional(),
+  traceId: z.string().trim().min(1).max(128).optional(),
+  correlationId: z.string().trim().min(1).max(128).optional(),
   routeHint: z.string().trim().min(1).max(64).optional(),
   requestPath: z.string().trim().min(1).max(256).optional(),
   executionModeReason: z.string().trim().min(1).max(128).optional(),
@@ -38,6 +40,8 @@ export interface QueuedGptJobInput {
   prompt?: string;
   bypassIntentRouting?: boolean;
   requestId?: string;
+  traceId?: string;
+  correlationId?: string;
   routeHint?: string;
   requestPath?: string;
   executionModeReason?: string;
@@ -76,6 +80,11 @@ function normalizeOptionalString(value: string | undefined): string | undefined 
   return trimmed ? trimmed : undefined;
 }
 
+function normalizeBoundedOptionalString(value: string | undefined, maxLength: number): string | undefined {
+  const trimmed = normalizeOptionalString(value);
+  return trimmed ? trimmed.slice(0, maxLength) : undefined;
+}
+
 /**
  * Build the persisted payload for an async `/gpt/:gptId` job.
  * Purpose: keep the queue contract centralized and schema-backed for worker execution.
@@ -88,6 +97,8 @@ export function buildQueuedGptJobInput(input: {
   prompt?: string | null;
   bypassIntentRouting?: boolean;
   requestId?: string | null;
+  traceId?: string | null;
+  correlationId?: string | null;
   routeHint?: string | null;
   requestPath?: string | null;
   executionModeReason?: string | null;
@@ -108,23 +119,34 @@ export function buildQueuedGptJobInput(input: {
     normalizedJobInput.bypassIntentRouting = true;
   }
 
-  const normalizedRequestId = normalizeOptionalString(input.requestId ?? undefined);
+  const normalizedRequestId = normalizeBoundedOptionalString(input.requestId ?? undefined, 128);
   if (normalizedRequestId) {
     normalizedJobInput.requestId = normalizedRequestId;
   }
 
-  const normalizedRouteHint = normalizeOptionalString(input.routeHint ?? undefined);
+  const normalizedTraceId = normalizeBoundedOptionalString(input.traceId ?? undefined, 128);
+  if (normalizedTraceId) {
+    normalizedJobInput.traceId = normalizedTraceId;
+  }
+
+  const normalizedCorrelationId = normalizeBoundedOptionalString(input.correlationId ?? undefined, 128);
+  if (normalizedCorrelationId) {
+    normalizedJobInput.correlationId = normalizedCorrelationId;
+  }
+
+  const normalizedRouteHint = normalizeBoundedOptionalString(input.routeHint ?? undefined, 64);
   if (normalizedRouteHint) {
     normalizedJobInput.routeHint = normalizedRouteHint;
   }
 
-  const normalizedRequestPath = normalizeOptionalString(input.requestPath ?? undefined);
+  const normalizedRequestPath = normalizeBoundedOptionalString(input.requestPath ?? undefined, 256);
   if (normalizedRequestPath) {
     normalizedJobInput.requestPath = normalizedRequestPath;
   }
 
-  const normalizedExecutionModeReason = normalizeOptionalString(
-    input.executionModeReason ?? undefined
+  const normalizedExecutionModeReason = normalizeBoundedOptionalString(
+    input.executionModeReason ?? undefined,
+    128
   );
   if (normalizedExecutionModeReason) {
     normalizedJobInput.executionModeReason = normalizedExecutionModeReason;
