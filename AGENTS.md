@@ -95,12 +95,14 @@ If multiple approaches are possible, choose the one that:
 
 ## Setup
 - Install Node dependencies with `npm install`.
+- Use `npm run probe` for a quick runtime/environment diagnostic before deeper startup or validation work.
 - Use `npm run dev` for the full local TypeScript server bootstrap; it rebuilds packages/workers, repairs aliases, checks dist aliases, copies assets, and starts the server.
 - Build workspace packages before full backend validation with `npm run build:packages`.
 - Build the full backend artifact with `npm run build` before deployment-oriented validation or startup checks.
 
 ## Validation
 - Use `npm run start:worker` when validating local worker-only flows, async pipelines, or job runner startup behavior.
+- Run `npm run self-test` when changes touch the self-test pipeline, `/devops/self-test`, or scheduled operational checks.
 - For protocol-boundary or backend CLI changes, run `npm run build:packages` before `npm run validate:backend-cli:contract` and `npm run validate:backend-cli:offline`.
 - Run `npm run check:boundaries`, `npm run check:cef-layer-access`, and `npm run check:routing-boundaries` when changes affect protocol/layer boundaries or route handlers.
 - Build worker artifacts with `npm run build:workers` when changes touch `workers/`, job runners, or worker startup paths.
@@ -114,11 +116,13 @@ If multiple approaches are possible, choose the one that:
 - Run type checks with `npm run type-check`.
 - Run lint with `npm run lint`.
 - Run `npm run mcp:stdio` when changes touch the MCP stdio transport or GPT fast-path MCP bridge.
+- Use `npm run mcp:stdio:dev` for TypeScript-level MCP stdio iteration before validating the compiled entrypoint with `npm run mcp:stdio`.
 - Run `npm run validate:gpt:job-hardening` when changes touch `/gpt-access`, async job polling, or GPT job/result hardening.
 - Run `npm run guard:commit` when changes affect commit-guarded governance or release-readiness checks and you do not want to wait for the full `npm run validate:all` sweep.
 - Validate the TypeScript/Python backend CLI contract with `npm run validate:backend-cli:contract` and `npm run validate:backend-cli:offline`.
 - Run `npm run sync:check` when changes touch cross-codebase sync-enforced files shared with `daemon-python`.
 - Use `npm run validate:all` for the full local readiness sweep before release-sensitive changes.
+- TODO: `db:init` and `db:patch` remain listed in `package.json`, but `docs/DATABASE_MIGRATIONS.md` marks them unavailable in this checkout until their script targets are repaired or replaced.
 
 ## Railway
 - Confirm the linked project, service, and environment before release with `railway status` or `railway link`.
