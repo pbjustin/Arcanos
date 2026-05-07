@@ -10,7 +10,7 @@ import {
 } from "../src/security/cliPolicy.js";
 
 describe("CLI security policy helpers", () => {
-  const workspaceRoot = path.resolve("C:/pbjustin/Arcanos");
+  const workspaceRoot = path.resolve(process.cwd(), "test-workspace");
 
   it.each([
     "rm -rf /",

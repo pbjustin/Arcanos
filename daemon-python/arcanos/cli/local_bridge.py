@@ -22,6 +22,8 @@ DEFAULT_BRIDGE_HOST = "127.0.0.1"
 DEFAULT_BRIDGE_PORT = 8765
 DEFAULT_TIMEOUT_SECONDS = 30
 MAX_OUTPUT_CHARS = 16000
+MAX_REQUEST_BYTES = 1024 * 1024
+REQUEST_TOO_LARGE = object()
 
 
 @dataclass
@@ -148,6 +150,20 @@ class LocalBridge:
                     return
 
                 payload = self._read_payload()
+                if payload is REQUEST_TOO_LARGE:
+                    self._send_json(
+                        413,
+                        _empty_response(
+                            ok=False,
+                            status="payload_too_large",
+                            exit_code=1,
+                            duration_ms=_elapsed_ms(start),
+                            audit_id=audit_id,
+                            stderr=f"Request body must be {MAX_REQUEST_BYTES} bytes or fewer",
+                        ),
+                    )
+                    return
+
                 if not isinstance(payload, dict):
                     self._send_json(
                         400,
@@ -247,7 +263,12 @@ class LocalBridge:
                 return
 
             def _read_payload(self) -> Any:
-                content_length = int(self.headers.get("Content-Length") or "0")
+                try:
+                    content_length = int(self.headers.get("Content-Length") or "0")
+                except ValueError:
+                    return None
+                if content_length > MAX_REQUEST_BYTES:
+                    return REQUEST_TOO_LARGE
                 raw = self.rfile.read(content_length)
                 try:
                     return json.loads(raw.decode("utf-8"))
