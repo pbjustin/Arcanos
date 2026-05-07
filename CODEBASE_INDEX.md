@@ -18,6 +18,7 @@ Primary runtime/config files:
 - `src/config/index.ts`
 - `src/config/unifiedConfig.ts`
 - `src/config/env.ts`
+- `config/cli-policy.json` (optional ARCANOS:CLI bridge command/sandbox policy)
 - `.env.example`
 - `railway.json`
 
@@ -25,7 +26,10 @@ Primary runtime/config files:
 Key executable entry points:
 - Backend startup: `src/start-server.ts`
 - Route registry: `src/routes/register.ts`
+- Optional GPT Access CLI bridge module: `src/services/arcanos-cli.ts`
+- CLI bridge security/runtime helpers: `src/services/arcanosCliBridge.ts`
 - Python daemon entry: `daemon-python/arcanos/cli/` (interactive shell via `arcanos` console script)
+- Python daemon local bridge: `daemon-python/arcanos/cli/local_bridge.py` (`arcanos bridge`)
 
 ## Deploy (Railway)
 Deployment sources of truth:
@@ -65,4 +69,3 @@ Generate the full indices:
 ### CLI Agent (Python)
 - Markdown output: `docs/CLI_AGENT_INDEX.md`
 - JSON output: `cli-agent-index.json`
-

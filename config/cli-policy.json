@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "cwdSandbox": {
+    "defaultRoot": ".",
+    "allowSubdirectoriesOnly": true
+  },
+  "commandPolicy": {
+    "allowPrefixes": [
+      "git status",
+      "git diff",
+      "git log",
+      "git show",
+      "npm run probe",
+      "npm run build:packages",
+      "npm run validate:backend-cli:contract",
+      "npm run validate:backend-cli:offline",
+      "python validate_backend_cli_offline.py",
+      "python -m pytest tests/"
+    ],
+    "denyPatterns": [
+      "\\brm\\s+-rf\\b",
+      "\\bRemove-Item\\b.*\\s-(Recurse|r)\\b.*\\s-(Force|f)\\b",
+      "\\bdel\\s+/[sfq]\\b",
+      "\\bformat\\b",
+      "\\bdd\\s+if=",
+      "\\bmkfs(\\.|\\s)",
+      "\\bshutdown\\b",
+      "\\breboot\\b",
+      "\\breg\\s+delete\\b",
+      "(?:&&|\\|\\||[;|<>`]|\\$\\()",
+      "[\\r\\n]",
+      "\\.\\.[/\\\\]",
+      "\\b(?:curl|wget|Invoke-WebRequest|iwr)\\b",
+      "\\b(?:cat|type|Get-Content)\\s+\\.env\\b",
+      "(?:^|\\s)--require\\b",
+      "\\bchild_process\\b"
+    ]
+  },
+  "outputPolicy": {
+    "maxChars": 12000,
+    "truncationMarker": "\n[truncated]"
+  },
+  "timeoutPolicy": {
+    "defaultMs": 30000,
+    "maxMs": 120000
+  },
+  "redactionPolicy": {
+    "replacement": "[REDACTED]",
+    "envNames": [
+      "ARCANOS_GPT_ACCESS_TOKEN",
+      "DATABASE_URL",
+      "OPENAI_API_KEY",
+      "RAILWAY_TOKEN"
+    ]
+  }
+}

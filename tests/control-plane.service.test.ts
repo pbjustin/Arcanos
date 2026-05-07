@@ -26,6 +26,7 @@ jest.unstable_mockModule('@services/arcanosMcp.js', () => ({
 
 const {
   executeControlPlaneRequest,
+  getControlPlaneCapabilities,
   requiresControlPlaneApproval
 } = await import('../src/services/controlPlane/service.js');
 
@@ -44,6 +45,39 @@ function buildDeps(overrides: Record<string, unknown> = {}) {
 describe('executeControlPlaneRequest', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+  });
+
+  it('registers ARCANOS CLI read-only status and repo context operations', () => {
+    const capabilities = getControlPlaneCapabilities();
+    const arcanosOperations = capabilities.operations
+      .filter((operation) => operation.adapter === 'arcanos-cli')
+      .map((operation) => ({
+        operation: operation.operation,
+        scopes: operation.scopes,
+        requiresApproval: operation.requiresApproval,
+        allowedPhases: operation.allowedPhases
+      }));
+
+    expect(arcanosOperations).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        operation: 'status',
+        scopes: ['arcanos:read'],
+        requiresApproval: false,
+        allowedPhases: ['plan', 'execute']
+      }),
+      expect.objectContaining({
+        operation: 'doctor.implementation',
+        scopes: ['arcanos:read', 'repo:read'],
+        requiresApproval: false,
+        allowedPhases: ['plan', 'execute']
+      }),
+      expect.objectContaining({
+        operation: 'protocol.capabilities',
+        scopes: ['arcanos:read', 'protocol:read'],
+        requiresApproval: false,
+        allowedPhases: ['plan', 'execute']
+      })
+    ]));
   });
 
   it('plans Railway deploy directly without executing a command or entering Trinity', async () => {
@@ -449,6 +483,38 @@ describe('executeControlPlaneRequest', () => {
         process.env.RAILWAY_PUBLIC_DOMAIN = originalRailwayPublicDomain;
       }
     }
+  });
+
+  it('executes read-only ARCANOS CLI repo context diagnostics without approval', async () => {
+    const run = jest.fn(async () => ({
+      exitCode: 0,
+      stdout: '{"ok":true,"repoContext":{"summary":"read-only"}}',
+      stderr: ''
+    }));
+
+    const response = await executeControlPlaneRequest({
+      requestId: 'control-arcanos-repo-context-1',
+      phase: 'execute',
+      adapter: 'arcanos-cli',
+      operation: 'doctor.implementation'
+    }, buildDeps({
+      processRunner: { run }
+    }) as never);
+
+    expect(response.ok).toBe(true);
+    expect(response.approval).toEqual({
+      required: false,
+      satisfied: true,
+      gate: 'none'
+    });
+    expect(response.route.status).toBe('DIRECT_FAST_PATH');
+    expect(run).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.arrayContaining(['doctor', 'implementation', '--json']),
+      expect.objectContaining({
+        cwd: repositoryRoot
+      })
+    );
   });
 
   it('rejects cwd values outside the workspace before adapter execution', async () => {

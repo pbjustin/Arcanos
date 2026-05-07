@@ -1,7 +1,10 @@
 import { describe, expect, it, jest } from '@jest/globals';
 
 const {
-  createCapabilityRegistry
+  createCapabilityRegistry,
+  createGptAccessDispatchRegistry,
+  evaluateDispatchPolicy,
+  resolveRuleBasedDispatchPlan
 } = await import('../src/dispatcher/naturalLanguage/index.js');
 const {
   routeOperatorCommandThroughDispatch,
@@ -9,6 +12,112 @@ const {
 } = await import('../src/services/gptAccessNaturalLanguageDispatch.js');
 
 describe('GPT Access natural-language dispatch service', () => {
+  it('registers ARCANOS:CLI module actions as privileged capability dispatch targets', () => {
+    const registry = createGptAccessDispatchRegistry([
+      {
+        id: 'ARCANOS:CLI',
+        description: 'ARCANOS CLI bridge',
+        route: 'arcanos-cli',
+        actions: ['repoContext', 'status']
+      }
+    ]);
+
+    const actions = registry.listActions();
+    const cliStatus = registry.getAction('ARCANOS:CLI.status');
+    const cliRepoContext = registry.getAction('ARCANOS:CLI.repoContext');
+
+    expect(actions.map((entry) => entry.action)).toEqual(expect.arrayContaining([
+      'ARCANOS:CLI.repoContext',
+      'ARCANOS:CLI.status'
+    ]));
+    expect(cliStatus).toEqual(expect.objectContaining({
+      requiredScope: 'capabilities.run',
+      risk: 'privileged',
+      requiresConfirmation: true,
+      runner: {
+        kind: 'gpt-access-capability',
+        capabilityId: 'ARCANOS:CLI',
+        capabilityAction: 'status'
+      }
+    }));
+    expect(cliRepoContext).toEqual(expect.objectContaining({
+      requiredScope: 'capabilities.run',
+      risk: 'privileged',
+      requiresConfirmation: true,
+      runner: {
+        kind: 'gpt-access-capability',
+        capabilityId: 'ARCANOS:CLI',
+        capabilityAction: 'repoContext'
+      }
+    }));
+  });
+
+  it('requires policy confirmation before ARCANOS:CLI dispatch execution', () => {
+    const registry = createGptAccessDispatchRegistry([
+      {
+        id: 'ARCANOS:CLI',
+        description: 'ARCANOS CLI bridge',
+        route: 'arcanos-cli',
+        actions: ['status']
+      }
+    ]);
+    const plan = resolveRuleBasedDispatchPlan({
+      utterance: 'ARCANOS:CLI.status',
+      registry
+    });
+
+    const decision = evaluateDispatchPolicy({
+      plan,
+      registry,
+      isScopeAllowed: () => true,
+      isModuleActionAllowed: () => true
+    });
+
+    expect(plan).toEqual(expect.objectContaining({
+      action: 'ARCANOS:CLI.status',
+      confidence: 1,
+      requiresConfirmation: true
+    }));
+    expect(decision).toEqual(expect.objectContaining({
+      status: 'confirmation_required',
+      allowed: true,
+      requiresConfirmation: true,
+      shouldExecute: false,
+      reason: 'confirmation_required'
+    }));
+  });
+
+  it('blocks ARCANOS:CLI dispatch when the capability scope kill switch is disabled', () => {
+    const registry = createGptAccessDispatchRegistry([
+      {
+        id: 'ARCANOS:CLI',
+        description: 'ARCANOS CLI bridge',
+        route: 'arcanos-cli',
+        actions: ['status']
+      }
+    ]);
+    const plan = resolveRuleBasedDispatchPlan({
+      utterance: 'ARCANOS:CLI.status',
+      registry
+    });
+
+    const decision = evaluateDispatchPolicy({
+      plan,
+      registry,
+      isScopeAllowed: () => false,
+      isModuleActionAllowed: () => true
+    });
+
+    expect(decision).toEqual(expect.objectContaining({
+      status: 'blocked',
+      allowed: false,
+      requiresConfirmation: false,
+      shouldExecute: false,
+      reason: 'gpt_access_scope_denied',
+      code: 'GPT_ACCESS_SCOPE_DENIED'
+    }));
+  });
+
   it('returns confirmation_required for privileged plans instead of executing', async () => {
     const runCapability = jest.fn();
     const registry = createCapabilityRegistry([

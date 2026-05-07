@@ -73,6 +73,7 @@ from . import (
     ui_ops,
 )
 from .context import ConversationResult, _UNSET_FILTER, get_or_create_instance_id, resolve_persona
+from .local_bridge import DEFAULT_BRIDGE_HOST, DEFAULT_BRIDGE_PORT, run_local_bridge
 from ..cli_midlayer import translate
 
 try:
@@ -829,7 +830,7 @@ def main() -> None:
     parser.add_argument(
         "command",
         nargs="?",
-        help="Run a one-shot command such as `status` or a protocol command and exit.",
+        help="Run a one-shot command such as `status`, `bridge`, or a protocol command and exit.",
     )
     parser.add_argument(
         "protocol_target",
@@ -879,6 +880,17 @@ def main() -> None:
         action="store_true",
         help="Emit deterministic JSON for one-shot diagnostic commands.",
     )
+    parser.add_argument(
+        "--bridge-host",
+        default=DEFAULT_BRIDGE_HOST,
+        help="Host for the local daemon bridge.",
+    )
+    parser.add_argument(
+        "--bridge-port",
+        type=int,
+        default=DEFAULT_BRIDGE_PORT,
+        help="Port for the local daemon bridge.",
+    )
 
     try:
         import argcomplete
@@ -893,6 +905,9 @@ def main() -> None:
         raise SystemExit(_run_protocol_cli_command(args))
     if _is_doctor_cli_command(args):
         raise SystemExit(_run_doctor_cli_command(args))
+    if args.command == "bridge":
+        run_local_bridge(host=args.bridge_host, port=args.bridge_port)
+        return
 
     try:
         bootstrap_credentials()
