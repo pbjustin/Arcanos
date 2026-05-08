@@ -13,6 +13,7 @@ import subprocess
 import threading
 import time
 import uuid
+import argparse
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -108,12 +109,22 @@ class LocalBridge:
             raise ValueError("Local bridge host must be loopback")
         self.port = int(port)
         self.bridge_token = os.environ.get(BRIDGE_TOKEN_ENV, "").strip()
+        if os.environ.get("ARCANOS_CLI_BRIDGE_ENABLED") == "true" and not self.bridge_token:
+            raise ValueError("ARCANOS_CLI_BRIDGE_TOKEN is required when the local bridge is enabled")
         self.jobs: queue.Queue[BridgeJob | BridgePatchJob | None] = queue.Queue(maxsize=MAX_PENDING_JOBS)
         self._worker = threading.Thread(target=self._worker_loop, daemon=True, name="local-bridge-worker")
 
     def serve_forever(self) -> None:
         self._worker.start()
         server = self._build_server()
+        log_audit_event(
+            "daemon.started",
+            host=self.host,
+            port=self.port,
+            token_required=True,
+            queue_max_size=MAX_PENDING_JOBS,
+            request_max_bytes=MAX_REQUEST_BYTES,
+        )
         try:
             server.serve_forever()
         finally:
@@ -685,6 +696,18 @@ def _hash_proposal(value: dict[str, Any]) -> str:
 
 def run_local_bridge(host: str = DEFAULT_BRIDGE_HOST, port: int = DEFAULT_BRIDGE_PORT) -> None:
     LocalBridge(host=host, port=port).serve_forever()
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="ARCANOS local loopback CLI bridge")
+    parser.add_argument("--host", default=os.environ.get("ARCANOS_CLI_BRIDGE_HOST", DEFAULT_BRIDGE_HOST))
+    parser.add_argument("--port", type=int, default=int(os.environ.get("ARCANOS_CLI_BRIDGE_PORT", DEFAULT_BRIDGE_PORT)))
+    args = parser.parse_args()
+    run_local_bridge(host=args.host, port=args.port)
+
+
+if __name__ == "__main__":
+    main()
 
 
 __all__ = [

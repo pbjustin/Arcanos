@@ -6,6 +6,7 @@ import {
   mirrorAndObserveWorkerOutput,
   recordWorkerExit,
   recordWorkerOutput,
+  resolveCliBridgeListenerConfig,
   resolveHealthListenerConfig,
 } from '../scripts/start-railway-service.mjs';
 
@@ -26,6 +27,48 @@ describe('start-railway-service launcher helpers', () => {
     expect(() => resolveHealthListenerConfig({ PORT: 'abc' })).toThrow(/PORT must be an integer/);
     expect(() => resolveHealthListenerConfig({ PORT: '70000' })).toThrow(/PORT must be an integer/);
     expect(() => resolveHealthListenerConfig({ PORT: '08080' })).toThrow(/PORT must be an integer/);
+  });
+
+  it('resolves the CLI daemon listener as loopback-only with a required token', () => {
+    expect(resolveCliBridgeListenerConfig({
+      ARCANOS_CLI_BRIDGE_TOKEN: 'test-token',
+    })).toEqual({
+      host: '127.0.0.1',
+      port: 8765,
+      tokenPresent: true,
+    });
+
+    expect(resolveCliBridgeListenerConfig({
+      ARCANOS_CLI_BRIDGE_URL: 'http://localhost:9999',
+      ARCANOS_CLI_BRIDGE_TOKEN: 'test-token',
+    })).toEqual({
+      host: 'localhost',
+      port: 9999,
+      tokenPresent: true,
+    });
+
+    expect(resolveCliBridgeListenerConfig({
+      ARCANOS_CLI_BRIDGE_URL: 'http://[::1]:9876',
+      ARCANOS_CLI_BRIDGE_TOKEN: 'test-token',
+    })).toEqual({
+      host: '::1',
+      port: 9876,
+      tokenPresent: true,
+    });
+  });
+
+  it('rejects unsafe CLI daemon listener configuration', () => {
+    expect(() => resolveCliBridgeListenerConfig({
+      ARCANOS_CLI_BRIDGE_URL: 'http://0.0.0.0:8765',
+      ARCANOS_CLI_BRIDGE_TOKEN: 'test-token',
+    })).toThrow(/HTTP loopback/);
+    expect(() => resolveCliBridgeListenerConfig({
+      ARCANOS_CLI_BRIDGE_URL: 'https://127.0.0.1:8765',
+      ARCANOS_CLI_BRIDGE_TOKEN: 'test-token',
+    })).toThrow(/HTTP loopback/);
+    expect(() => resolveCliBridgeListenerConfig({
+      ARCANOS_CLI_BRIDGE_URL: 'http://127.0.0.1:8765',
+    })).toThrow(/ARCANOS_CLI_BRIDGE_TOKEN/);
   });
 
   it('keeps worker readiness unavailable until bootstrap evidence is observed', () => {

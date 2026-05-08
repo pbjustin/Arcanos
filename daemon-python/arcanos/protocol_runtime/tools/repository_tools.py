@@ -322,6 +322,16 @@ def get_repository_status(_tool_input: dict[str, Any]) -> dict[str, Any]:
     """Return repository status using fixed, read-only git arguments."""
 
     workspace_root = resolve_workspace_root()
+    if not ((workspace_root / ".git").exists() or (workspace_root / ".git").is_file()):
+        return {
+            "rootPath": str(workspace_root),
+            "clean": True,
+            "changes": [],
+            "gitAvailable": False,
+            "workspaceType": "deployed-artifact",
+            "message": "Git metadata is not available in this production container.",
+        }
+
     output = _run_git_readonly(
         workspace_root,
         ["status", "--porcelain=v1", "--branch", "--untracked-files=all"],
@@ -361,6 +371,8 @@ def get_repository_status(_tool_input: dict[str, Any]) -> dict[str, Any]:
         "head": _run_git_readonly(workspace_root, ["rev-parse", "HEAD"]).strip(),
         "clean": len(changes) == 0,
         "changes": changes,
+        "gitAvailable": True,
+        "workspaceType": "git",
     }
 
 

@@ -170,7 +170,10 @@ def validate_patch_text(patch_text: str, cwd: str | None = None) -> PatchDecisio
             if re.search(pattern, normalized, re.IGNORECASE):
                 return PatchDecision(False, "patch_targets_secret_file", patch_hash, files, added, removed, preview)
         root = Path(cwd or resolve_workspace_root(policy)).resolve()
-        target = (root / normalized).resolve()
+        candidate = root / normalized
+        if candidate.is_symlink():
+            return PatchDecision(False, "patch_symlink_not_allowed", patch_hash, files, added, removed, preview)
+        target = candidate.resolve()
         try:
             target.relative_to(root)
         except ValueError:

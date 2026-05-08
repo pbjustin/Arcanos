@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from arcanos.cli.cli import main
+from arcanos.protocol_runtime.tools.repository_tools import get_repository_status
 
 
 def test_cli_tool_invoke_repo_list_tree(monkeypatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -40,6 +41,24 @@ def test_cli_tool_invoke_repo_list_tree(monkeypatch, tmp_path: Path, capsys: pyt
     assert response["ok"] is True
     assert response["data"]["toolId"] == "repo.listTree"
     assert any(entry["path"] == "docs/README.md" for entry in response["data"]["result"]["entries"])
+
+
+def test_repo_get_status_degrades_without_git_metadata(monkeypatch, tmp_path: Path) -> None:
+    """Production artifact workspaces do not ship `.git`; status should remain structured."""
+
+    (tmp_path / "app.py").write_text("print('ok')\n", encoding="utf-8")
+    monkeypatch.setenv("ARCANOS_WORKSPACE_ROOT", str(tmp_path))
+
+    status = get_repository_status({})
+
+    assert status == {
+        "rootPath": str(tmp_path.resolve()),
+        "clean": True,
+        "changes": [],
+        "gitAvailable": False,
+        "workspaceType": "deployed-artifact",
+        "message": "Git metadata is not available in this production container.",
+    }
 
 
 def test_cli_doctor_implementation_json(monkeypatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

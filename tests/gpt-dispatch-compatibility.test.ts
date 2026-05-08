@@ -20,6 +20,7 @@ jest.unstable_mockModule('@platform/observability/appMetrics.js', () => ({
   recordHttpRequestEnd: jest.fn(),
   recordHttpRequestStart: jest.fn(),
   recordJobEventCleanup: jest.fn(),
+  recordJobEventInsertFailure: jest.fn(),
   recordMcpAutoInvoke: jest.fn(),
   recordMemoryDispatchIgnored: jest.fn(),
   recordUnknownGpt: jest.fn(),

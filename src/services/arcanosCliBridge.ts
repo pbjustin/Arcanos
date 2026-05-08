@@ -5,11 +5,12 @@ import path from 'node:path';
 import { invokeTool } from '@arcanos/cli/client';
 import {
   DEFAULT_CLI_POLICY,
-  buildCliPolicyAuditEvent,
   evaluateCliCommandPolicy,
   redactCliOutput,
+  type CliPolicyDecision,
   type CliPolicyConfig
 } from '@arcanos/cli/security/cliPolicy';
+import { logExecution } from '@core/db/repositories/executionLogRepository.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 
 const SERVICE_VERSION = '0.1.0';
@@ -21,6 +22,8 @@ const LOOPBACK_BRIDGE_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
 const BRIDGE_TOKEN_HEADER = 'x-arcanos-cli-bridge-token';
 const BIDI_CONTROL_PATTERN = /[\u202A-\u202E\u2066-\u2069]/u;
 const SECRET_VALUE_KEY_PATTERN = /(?:authorization|cookie|password|secret|token|api[_-]?key|private[_-]?key|database[_-]?url|railway[_-]?token|openai[_-]?api[_-]?key)/iu;
+let lastDaemonReachable: boolean | null = null;
+let daemonStartPersisted = false;
 
 const READONLY_REPO_TOOLS = new Set([
   'doctor.implementation',
@@ -79,6 +82,11 @@ export function getArcanosCliSandboxRoot(): string {
 export async function getArcanosCliStatus() {
   const enabled = isArcanosCliBridgeEnabled();
   const daemonReachable = enabled ? await isDaemonBridgeReachable() : false;
+  logger.info('arcanos.cli.status.checked', {
+    enabled,
+    daemonReachable,
+    mode: 'localhost-http-python-daemon'
+  });
   return {
     enabled,
     daemonReachable,
@@ -91,6 +99,10 @@ export async function getArcanosCliStatus() {
 
 export function getArcanosCliPolicyMetadata() {
   const policy = loadCliPolicy();
+  logger.info('arcanos.cli.policy.read', {
+    version: policy.version,
+    sandboxRootConfigured: Boolean(process.env.ARCANOS_CLI_SANDBOX_ROOT || process.env.ARCANOS_WORKSPACE_ROOT)
+  });
   return {
     version: policy.version,
     sandboxRoot: getArcanosCliSandboxRoot(),
@@ -146,8 +158,22 @@ export function proposeArcanosCliCommand(payload: unknown) {
 
   logger.info('arcanos.cli.command.proposed', {
     proposalId,
-    policy: buildCliPolicyAuditEvent(commandPayload.command, decision, new Date(), policy)
+    policy: buildPersistedPolicyMetadata(decision, policy)
   });
+  persistCliEvent('info', 'arcanos.cli.command.proposed', {
+    proposalId,
+    policy: buildPersistedPolicyMetadata(decision, policy)
+  });
+  if (!decision.allowed) {
+    logger.warn('arcanos.cli.command.denied', {
+      proposalId,
+      reason: decision.reason ?? 'denied'
+    });
+    persistCliEvent('warn', 'arcanos.cli.command.denied', {
+      proposalId,
+      reason: decision.reason ?? 'denied'
+    });
+  }
 
   return {
     proposalId,
@@ -191,17 +217,17 @@ export async function runArcanosCliApprovedCommand(payload: unknown) {
 
 export function proposeArcanosCliPatch(payload: unknown) {
   const patchPayload = normalizePatchPayload(payload);
+  const policy = loadCliPolicy();
   const cwdDecision = evaluateCliCommandPolicy({
     command: 'git diff',
     cwd: patchPayload.cwd,
     workspaceRoot: getArcanosCliSandboxRoot(),
     timeoutMs: patchPayload.timeoutMs,
-    policy: loadCliPolicy()
+    policy
   });
-  const safePatch = validatePatchText(patchPayload.patch, loadCliPolicy());
+  const safePatch = validatePatchText(patchPayload.patch, policy);
   const proposalId = hashProposal({ kind: 'patch', patch: patchPayload.patch, cwd: cwdDecision.cwd });
-
-  return {
+  const proposal = {
     proposalId,
     allowed: cwdDecision.allowed && safePatch.allowed,
     reason: cwdDecision.reason ?? safePatch.reason ?? null,
@@ -211,6 +237,28 @@ export function proposeArcanosCliPatch(payload: unknown) {
     approvalAction: 'applyApprovedPatch',
     confirmationRequiredForApproval: true
   };
+
+  const persistedMetadata = {
+    proposalId,
+    allowed: proposal.allowed,
+    reason: proposal.reason,
+    patchBytes: proposal.patchBytes
+  };
+  logger.info('arcanos.cli.patch.proposed', persistedMetadata);
+  persistCliEvent('info', 'arcanos.cli.patch.proposed', persistedMetadata);
+  if (!proposal.allowed) {
+    logger.warn('arcanos.cli.patch.denied', {
+      proposalId,
+      reason: proposal.reason ?? 'denied'
+    });
+    persistCliEvent('warn', 'arcanos.cli.patch.denied', {
+      proposalId,
+      reason: proposal.reason ?? 'denied',
+      patchBytes: proposal.patchBytes
+    });
+  }
+
+  return proposal;
 }
 
 export async function applyArcanosCliApprovedPatch(payload: unknown) {
@@ -378,12 +426,51 @@ function validatePatchPaths(patch: string, policy: CliPolicyConfig): string | nu
 }
 
 async function isDaemonBridgeReachable(): Promise<boolean> {
+  let reachable = false;
   try {
     const response = await fetch(`${getBridgeUrl()}/health`, { method: 'GET' });
-    return response.ok;
+    reachable = response.ok;
   } catch {
-    return false;
+    reachable = false;
   }
+  logger.info('arcanos.daemon.health.checked', { reachable });
+  if (reachable && !daemonStartPersisted) {
+    daemonStartPersisted = true;
+    persistCliEvent('info', 'daemon.started', {
+      mode: 'localhost-http-python-daemon',
+      host: '127.0.0.1'
+    });
+  }
+  if (lastDaemonReachable === true && !reachable) {
+    logger.warn('arcanos.daemon.unreachable', { reachable });
+    persistCliEvent('warn', 'arcanos.daemon.unreachable', { reachable });
+  }
+  if (lastDaemonReachable === false && reachable) {
+    logger.info('arcanos.daemon.recovered', { reachable });
+    persistCliEvent('info', 'arcanos.daemon.recovered', { reachable });
+  }
+  lastDaemonReachable = reachable;
+  return reachable;
+}
+
+function persistCliEvent(level: 'info' | 'warn' | 'error' | 'debug', message: string, metadata: Record<string, unknown>): void {
+  void logExecution('arcanos-cli', level, message, {
+    ...redactAndCap(metadata) as Record<string, unknown>,
+    source: 'gpt-access-cli-bridge'
+  }).catch((error: unknown) => {
+    logger.warn('arcanos.cli.audit_persist_failed', {
+      errorType: error instanceof Error ? error.name : 'Error'
+    });
+  });
+}
+
+function buildPersistedPolicyMetadata(decision: CliPolicyDecision, policy: CliPolicyConfig): Record<string, unknown> {
+  return {
+    decision: decision.allowed ? 'allowed' : 'denied',
+    reason: decision.reason ?? null,
+    timeoutMs: decision.timeoutMs,
+    policyVersion: policy.version
+  };
 }
 
 async function postBridgeJson(pathname: string, body: Record<string, unknown>): Promise<BridgeRunResponse> {
@@ -422,7 +509,7 @@ function getBridgeUrl(): string {
     throw new Error('ARCANOS CLI bridge URL is invalid.');
   }
 
-  if (parsedUrl.protocol !== 'http:' || !LOOPBACK_BRIDGE_HOSTS.has(parsedUrl.hostname)) {
+  if (parsedUrl.protocol !== 'http:' || !LOOPBACK_BRIDGE_HOSTS.has(normalizeBridgeHostname(parsedUrl.hostname))) {
     throw new Error('ARCANOS CLI bridge URL must use HTTP loopback.');
   }
 
@@ -430,6 +517,10 @@ function getBridgeUrl(): string {
   parsedUrl.search = '';
   parsedUrl.hash = '';
   return parsedUrl.toString().replace(/\/+$/u, '');
+}
+
+function normalizeBridgeHostname(hostname: string): string {
+  return hostname.replace(/^\[(.*)\]$/u, '$1');
 }
 
 function loadCliPolicy(): CliPolicyConfig {

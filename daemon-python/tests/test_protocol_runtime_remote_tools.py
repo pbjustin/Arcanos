@@ -400,6 +400,37 @@ def test_tool_invoke_gets_status_log_and_diff(monkeypatch, tmp_path: Path) -> No
     assert "@@" in diff_response["data"]["result"]["diff"]
 
 
+def test_tool_invoke_get_status_degrades_without_git_metadata(monkeypatch, tmp_path: Path) -> None:
+    """Deployed artifact workspaces without `.git` still return structured status."""
+
+    monkeypatch.setenv("ARCANOS_WORKSPACE_ROOT", str(tmp_path))
+    (tmp_path / "app.py").write_text("print('ok')\n", encoding="utf-8")
+    handler = ProtocolRuntimeHandler(load_protocol_contract(), InMemoryProtocolStateStore())
+
+    response = handler.handle_request(
+        {
+            "protocol": "arcanos-v1",
+            "requestId": "req-tool-status-no-git",
+            "command": "tool.invoke",
+            "context": _caller_context(tmp_path, scopes=["repo:read", "git-read"]),
+            "payload": {
+                "toolId": "repo.getStatus",
+                "input": {},
+            },
+        }
+    )
+
+    assert response["ok"] is True
+    assert response["data"]["result"] == {
+        "rootPath": str(tmp_path.resolve()),
+        "clean": True,
+        "changes": [],
+        "gitAvailable": False,
+        "workspaceType": "deployed-artifact",
+        "message": "Git metadata is not available in this production container.",
+    }
+
+
 def test_tool_invoke_doctor_implementation(monkeypatch, tmp_path: Path) -> None:
     """tool.invoke doctor.implementation reports bounded implementation evidence from the workspace."""
 

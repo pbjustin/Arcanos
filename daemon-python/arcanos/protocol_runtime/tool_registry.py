@@ -155,12 +155,12 @@ def build_tool_registry(contract: ProtocolContract) -> list[dict[str, Any]]:
         ),
         _tool_definition_from_schema_ids(
             "repo.getStatus",
-            "Read repository status using read-only git inspection.",
+            "Read repository status, degrading when git metadata is unavailable.",
             contract.tools["repo.getStatus"].input["$id"],
             contract.tools["repo.getStatus"].output["$id"],
             False,
             ["repo:read"],
-            ["protocol-validation", "fs-read", "git-read"],
+            ["protocol-validation", "fs-read"],
             "workspace",
         ),
         _tool_definition_from_schema_ids(
