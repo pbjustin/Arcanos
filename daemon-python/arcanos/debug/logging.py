@@ -71,6 +71,7 @@ def get_debug_logger() -> logging.Logger:
         log_path = log_dir / "debug_server.log"
 
         logger = logging.getLogger("arcanos.debug_server")
+        logger.propagate = False
 
         # Avoid configuring multiple times if something else already did.
         if not logger.handlers:

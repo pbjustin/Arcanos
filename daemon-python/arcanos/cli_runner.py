@@ -186,6 +186,7 @@ def _build_command_handlers(cli: "ArcanosCLI", args: str) -> dict[str, Callable[
         "safemode": lambda: cli.handle_safemode(args),
         "feedback": lambda: cli.handle_feedback(args),
         "speak": cli.handle_speak,
+        "context": cli.handle_context,
         "status": cli.handle_status,
         "stats": cli.handle_stats,
         "clear": cli.handle_clear,

@@ -248,6 +248,128 @@ describe("Arcanos CLI", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("prints execution context details for status", async () => {
+    const fetchMock = jest.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      const pathname = url instanceof URL ? url.pathname : String(url);
+      if (pathname.endsWith("/status")) {
+        return createJsonResponse({ ok: true });
+      }
+      if (pathname.endsWith("/health")) {
+        return createJsonResponse({ status: "healthy" });
+      }
+      throw new Error(`Unexpected URL: ${pathname}`);
+    });
+    const stdout = createWritableCapture();
+    const stderr = createWritableCapture();
+
+    const exitCode = await runCli(
+      ["status", "--transport", "local", "--cwd", path.resolve("tmp", "arcanos-status-test")],
+      stdout.stream,
+      stderr.stream
+    );
+
+    const output = stdout.read();
+    expect(exitCode).toBe(0);
+    expect(stderr.read()).toBe("");
+    expect(output).toContain("Execution Context");
+    expect(output).toContain("Daemon: Connected");
+    expect(output.split(/\r?\n/).find((line) => line.startsWith("Execution: "))).toBeTruthy();
+    expect(output).not.toContain("Execution: Confirmation required for CLI daemon actions");
+    expect(output).toContain("Can access your personal desktop: No");
+    expect(output).toContain("Cannot access:");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not infer desktop access from a bridge token alone", async () => {
+    const previousToken = process.env.ARCANOS_CLI_BRIDGE_TOKEN;
+    const previousEnabled = process.env.ARCANOS_CLI_BRIDGE_ENABLED;
+    process.env.ARCANOS_CLI_BRIDGE_TOKEN = "test-token";
+    delete process.env.ARCANOS_CLI_BRIDGE_ENABLED;
+    const fetchMock = jest.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      const pathname = url instanceof URL ? url.pathname : String(url);
+      if (pathname.endsWith("/status")) {
+        return createJsonResponse({ ok: true });
+      }
+      if (pathname.endsWith("/health")) {
+        return createJsonResponse({ status: "healthy" });
+      }
+      throw new Error(`Unexpected URL: ${pathname}`);
+    });
+    const stdout = createWritableCapture();
+    const stderr = createWritableCapture();
+
+    try {
+      const exitCode = await runCli(
+        ["status", "--transport", "local", "--cwd", path.resolve("tmp", "arcanos-status-test")],
+        stdout.stream,
+        stderr.stream
+      );
+
+      expect(exitCode).toBe(0);
+      expect(stderr.read()).toBe("");
+      const output = stdout.read();
+      expect(output).toContain("Mode: Local CLI Runtime");
+      expect(output).toContain("Can access your personal desktop: No");
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    } finally {
+      if (previousToken === undefined) {
+        delete process.env.ARCANOS_CLI_BRIDGE_TOKEN;
+      } else {
+        process.env.ARCANOS_CLI_BRIDGE_TOKEN = previousToken;
+      }
+      if (previousEnabled === undefined) {
+        delete process.env.ARCANOS_CLI_BRIDGE_ENABLED;
+      } else {
+        process.env.ARCANOS_CLI_BRIDGE_ENABLED = previousEnabled;
+      }
+    }
+  });
+
+  it("prints runtime-provided execution context details for status when available", async () => {
+    const fetchMock = jest.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      const pathname = url instanceof URL ? url.pathname : String(url);
+      if (pathname.endsWith("/status")) {
+        return createJsonResponse({
+          ok: true,
+          executionContext: {
+            mode: "Production Runtime",
+            daemon: "Connected",
+            sandbox: "/app",
+            execution: "Confirmation required",
+            canAccess: ["deployed runtime", "/app workspace"],
+            cannotAccess: ["your personal desktop", "unrestricted shell"],
+            environmentWarning: "Railway production runtime: this can operate only inside the deployed container sandbox.",
+            canAccessPersonalDesktop: false,
+            localDesktopDaemonReady: false
+          }
+        });
+      }
+      if (pathname.endsWith("/health")) {
+        return createJsonResponse({ status: "healthy" });
+      }
+      throw new Error(`Unexpected URL: ${pathname}`);
+    });
+    const stdout = createWritableCapture();
+    const stderr = createWritableCapture();
+
+    const exitCode = await runCli(
+      ["status", "--transport", "local", "--cwd", path.resolve("tmp", "arcanos-status-test")],
+      stdout.stream,
+      stderr.stream
+    );
+
+    const output = stdout.read();
+    expect(exitCode).toBe(0);
+    expect(stderr.read()).toBe("");
+    expect(output).toContain("Mode: Production Runtime");
+    expect(output).toContain("Sandbox: /app");
+    expect(output.split(/\r?\n/)).toContain("Execution: Confirmation required");
+    expect(output).toContain("Warning: Railway production runtime");
+    expect(output).toContain("+ deployed runtime");
+    expect(output).not.toContain("Execution: Confirmation required for CLI daemon actions");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("sends ask requests to the canonical backend GPT route", async () => {
     const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(
       createJsonResponse({ result: "backend ok" })

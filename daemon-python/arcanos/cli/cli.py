@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 import uuid
+from types import SimpleNamespace
 from typing import Any, Callable, Mapping, Optional
 
 if sys.platform == "win32":
@@ -239,6 +240,9 @@ class ArcanosCLI:
     def _render_system_state_table(self, state_payload: Mapping[str, Any]) -> None:
         return ui_ops.render_system_state_table(self, state_payload)
 
+    def _render_execution_context_summary(self) -> None:
+        return ui_ops.render_execution_context_summary(self)
+
     def _is_working_context_query(self, message: str) -> bool:
         return state.is_working_context_query(message)
 
@@ -262,6 +266,14 @@ class ArcanosCLI:
         state.hydrate_session_from_backend_state(self, state_payload)
         ui_ops.render_system_state_table(self, state_payload)
         return True
+
+    def handle_context(self) -> None:
+        """
+        Purpose: Show local daemon execution context and safety boundaries.
+        Inputs/Outputs: None; renders user-facing summary.
+        Edge cases: Does not require backend connectivity.
+        """
+        return ui_ops.handle_context(self)
 
     def _registry_cache_is_valid(self) -> bool:
         return state.registry_cache_is_valid(self)
@@ -830,7 +842,7 @@ def main() -> None:
     parser.add_argument(
         "command",
         nargs="?",
-        help="Run a one-shot command such as `status`, `bridge`, or a protocol command and exit.",
+        help="Run a one-shot command such as `status`, `context`, `bridge`, or a protocol command and exit.",
     )
     parser.add_argument(
         "protocol_target",
@@ -908,6 +920,11 @@ def main() -> None:
     if args.command == "bridge":
         run_local_bridge(host=args.bridge_host, port=args.bridge_port)
         return
+    if args.command == "context" and args.json:
+        summary = ui_ops.build_execution_context_summary(SimpleNamespace(_daemon_running=False))
+        sys.stdout.write(json.dumps(summary, sort_keys=True))
+        sys.stdout.write("\n")
+        return
 
     try:
         bootstrap_credentials()
@@ -923,6 +940,9 @@ def main() -> None:
     if args.command == "status":
         succeeded = cli.handle_status()
         sys.exit(0 if succeeded else 1)
+    if args.command == "context":
+        cli.handle_context()
+        sys.exit(0)
 
     cli.run(debug_mode=args.debug_mode)
 

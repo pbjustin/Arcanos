@@ -96,6 +96,7 @@ Just type naturally — ask me anything, and I'll do my best to help.
   Example: `/run Get-Process` or `/run ls -la`
 
 ### Housekeeping
+- **/context** — Show where daemon actions run and what they can access
 - **/status** — Show backend-governed system state
 - **/stats** — See usage stats
 - **/clear** — Clear conversation history

@@ -8,6 +8,7 @@ from rich.markdown import Markdown
 
 from ..config import Config
 from ..assistant.translator import translate_response
+from ..cli.cli_policy import redact_output
 from .history_db import HistoryDB
 from .patch_orchestrator import PatchOrchestrator
 from .policy_guard import PolicyGuard
@@ -96,30 +97,32 @@ def run_agentic_loop(cli: Any, user_message: str, *, domain: Optional[str], from
             results.append(ToolResult("patch", res.ok, {"rollback_id": res.rollback_id, "files": res.files, "error": res.error}))
 
         for c in commands:
+            display_command = redact_output(c.command)
             cli.console.print("\n[bold]=== ARCANOS COMMAND PROPOSAL ===[/bold]")
-            cli.console.print(f"Command:\n{c.command}\nReason: {c.reason}")
+            cli.console.print(f"Command:\n{display_command}\nReason: {c.reason}")
+            cli.console.print("[dim]Safety: policy checked, explicit confirmation required, output redacted in history.[/dim]")
             if _contains_high_risk_shell_tokens(c.command):
                 # //audit assumption: agentic commands should be single-step and non-chained; risk: prompt-injected multi-command execution; invariant: high-risk shell token commands are blocked; strategy: deny and require manual rewrite.
                 reason = "High-risk shell chaining token detected in command proposal"
                 cli.console.print(f"[red]Blocked:[/red] {reason}")
-                results.append(ToolResult("command", False, {"command": c.command, "blocked": reason}))
+                results.append(ToolResult("command", False, {"command": display_command, "blocked": reason}))
                 continue
             is_safe, reason = cli.terminal.is_command_safe(c.command)
             if not is_safe:
                 cli.console.print(f"[red]Blocked:[/red] {reason}")
-                results.append(ToolResult("command", False, {"command": c.command, "blocked": reason}))
+                results.append(ToolResult("command", False, {"command": display_command, "blocked": reason}))
                 continue
 
             # //audit assumption: command execution proposals require explicit human confirmation; failure risk: piped/non-interactive sessions auto-run commands; expected invariant: commands are denied when TTY confirmation is unavailable; handling strategy: fail closed with structured denial.
             if not sys.stdin or not sys.stdin.isatty():
                 denial_reason = "non_interactive_confirmation_unavailable"
                 cli.console.print("[yellow]Non-interactive session: command proposal auto-denied.[/yellow]")
-                results.append(ToolResult("command", False, {"command": c.command, "denied": True, "reason": denial_reason}))
+                results.append(ToolResult("command", False, {"command": display_command, "denied": True, "reason": denial_reason}))
                 continue
 
             ans = input("\nRun command? [y/N] ").strip().lower()
             if ans not in ("y", "yes"):
-                results.append(ToolResult("command", False, {"command": c.command, "denied": True}))
+                results.append(ToolResult("command", False, {"command": display_command, "denied": True}))
                 continue
 
             out, err, rc = cli.terminal.execute(
@@ -134,7 +137,18 @@ def run_agentic_loop(cli: Any, user_message: str, *, domain: Optional[str], from
             else:
                 guard.record_failure(cli.instance_id, "command", {"command": c.command, "return_code": rc})
             cli.console.print(f"[green]Command finished[/green] rc={rc}")
-            results.append(ToolResult("command", rc == 0, {"command": c.command, "return_code": rc, "stdout": out, "stderr": err}))
+            results.append(
+                ToolResult(
+                    "command",
+                    rc == 0,
+                    {
+                        "command": display_command,
+                        "return_code": rc,
+                        "stdout": redact_output(out or ""),
+                        "stderr": redact_output(err or ""),
+                    },
+                )
+            )
 
         prompt = _format_followup(results)
         # snapshot state for audit/replay
