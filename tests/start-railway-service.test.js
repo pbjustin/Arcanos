@@ -46,6 +46,15 @@ describe('start-railway-service launcher helpers', () => {
       port: 9999,
       tokenPresent: true,
     });
+
+    expect(resolveCliBridgeListenerConfig({
+      ARCANOS_CLI_BRIDGE_URL: 'http://[::1]:9876',
+      ARCANOS_CLI_BRIDGE_TOKEN: 'test-token',
+    })).toEqual({
+      host: '::1',
+      port: 9876,
+      tokenPresent: true,
+    });
   });
 
   it('rejects unsafe CLI daemon listener configuration', () => {

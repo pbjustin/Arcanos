@@ -217,17 +217,17 @@ export async function runArcanosCliApprovedCommand(payload: unknown) {
 
 export function proposeArcanosCliPatch(payload: unknown) {
   const patchPayload = normalizePatchPayload(payload);
+  const policy = loadCliPolicy();
   const cwdDecision = evaluateCliCommandPolicy({
     command: 'git diff',
     cwd: patchPayload.cwd,
     workspaceRoot: getArcanosCliSandboxRoot(),
     timeoutMs: patchPayload.timeoutMs,
-    policy: loadCliPolicy()
+    policy
   });
-  const safePatch = validatePatchText(patchPayload.patch, loadCliPolicy());
+  const safePatch = validatePatchText(patchPayload.patch, policy);
   const proposalId = hashProposal({ kind: 'patch', patch: patchPayload.patch, cwd: cwdDecision.cwd });
-
-  return {
+  const proposal = {
     proposalId,
     allowed: cwdDecision.allowed && safePatch.allowed,
     reason: cwdDecision.reason ?? safePatch.reason ?? null,
@@ -237,6 +237,28 @@ export function proposeArcanosCliPatch(payload: unknown) {
     approvalAction: 'applyApprovedPatch',
     confirmationRequiredForApproval: true
   };
+
+  const persistedMetadata = {
+    proposalId,
+    allowed: proposal.allowed,
+    reason: proposal.reason,
+    patchBytes: proposal.patchBytes
+  };
+  logger.info('arcanos.cli.patch.proposed', persistedMetadata);
+  persistCliEvent('info', 'arcanos.cli.patch.proposed', persistedMetadata);
+  if (!proposal.allowed) {
+    logger.warn('arcanos.cli.patch.denied', {
+      proposalId,
+      reason: proposal.reason ?? 'denied'
+    });
+    persistCliEvent('warn', 'arcanos.cli.patch.denied', {
+      proposalId,
+      reason: proposal.reason ?? 'denied',
+      patchBytes: proposal.patchBytes
+    });
+  }
+
+  return proposal;
 }
 
 export async function applyArcanosCliApprovedPatch(payload: unknown) {
@@ -487,7 +509,7 @@ function getBridgeUrl(): string {
     throw new Error('ARCANOS CLI bridge URL is invalid.');
   }
 
-  if (parsedUrl.protocol !== 'http:' || !LOOPBACK_BRIDGE_HOSTS.has(parsedUrl.hostname)) {
+  if (parsedUrl.protocol !== 'http:' || !LOOPBACK_BRIDGE_HOSTS.has(normalizeBridgeHostname(parsedUrl.hostname))) {
     throw new Error('ARCANOS CLI bridge URL must use HTTP loopback.');
   }
 
@@ -495,6 +517,10 @@ function getBridgeUrl(): string {
   parsedUrl.search = '';
   parsedUrl.hash = '';
   return parsedUrl.toString().replace(/\/+$/u, '');
+}
+
+function normalizeBridgeHostname(hostname: string): string {
+  return hostname.replace(/^\[(.*)\]$/u, '$1');
 }
 
 function loadCliPolicy(): CliPolicyConfig {

@@ -159,6 +159,10 @@ function isCliBridgeEnabled(env = process.env) {
   return env[CLI_BRIDGE_ENABLED_ENV] === 'true';
 }
 
+function normalizeCliBridgeHostname(hostname) {
+  return hostname.replace(/^\[(.*)\]$/u, '$1');
+}
+
 export function resolveCliBridgeListenerConfig(env = process.env) {
   const rawUrl = env[CLI_BRIDGE_URL_ENV]?.trim() || `http://${DEFAULT_CLI_BRIDGE_HOST}:${DEFAULT_CLI_BRIDGE_PORT}`;
   let parsedUrl;
@@ -168,7 +172,8 @@ export function resolveCliBridgeListenerConfig(env = process.env) {
     throw new Error(`${CLI_BRIDGE_URL_ENV} must be a valid HTTP loopback URL.`);
   }
 
-  if (parsedUrl.protocol !== 'http:' || !LOOPBACK_CLI_BRIDGE_HOSTS.has(parsedUrl.hostname)) {
+  const hostname = normalizeCliBridgeHostname(parsedUrl.hostname);
+  if (parsedUrl.protocol !== 'http:' || !LOOPBACK_CLI_BRIDGE_HOSTS.has(hostname)) {
     throw new Error(`${CLI_BRIDGE_URL_ENV} must use HTTP loopback.`);
   }
 
@@ -183,7 +188,7 @@ export function resolveCliBridgeListenerConfig(env = process.env) {
   }
 
   return {
-    host: parsedUrl.hostname,
+    host: hostname,
     port,
     tokenPresent
   };
