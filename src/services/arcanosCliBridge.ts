@@ -87,11 +87,6 @@ export async function getArcanosCliStatus() {
     daemonReachable,
     mode: 'localhost-http-python-daemon'
   });
-  persistCliEvent('info', 'arcanos.cli.status.checked', {
-    enabled,
-    daemonReachable,
-    mode: 'localhost-http-python-daemon'
-  });
   return {
     enabled,
     daemonReachable,
@@ -107,11 +102,6 @@ export function getArcanosCliPolicyMetadata() {
   logger.info('arcanos.cli.policy.read', {
     version: policy.version,
     sandboxRootConfigured: Boolean(process.env.ARCANOS_CLI_SANDBOX_ROOT || process.env.ARCANOS_WORKSPACE_ROOT)
-  });
-  persistCliEvent('info', 'arcanos.cli.policy.read', {
-    version: policy.version,
-    sandboxRootConfigured: Boolean(process.env.ARCANOS_CLI_SANDBOX_ROOT || process.env.ARCANOS_WORKSPACE_ROOT),
-    commandDenyPatternCount: policy.commandPolicy.denyPatterns.length
   });
   return {
     version: policy.version,
@@ -422,7 +412,6 @@ async function isDaemonBridgeReachable(): Promise<boolean> {
     reachable = false;
   }
   logger.info('arcanos.daemon.health.checked', { reachable });
-  persistCliEvent('info', 'arcanos.daemon.health.checked', { reachable });
   if (reachable && !daemonStartPersisted) {
     daemonStartPersisted = true;
     persistCliEvent('info', 'daemon.started', {
