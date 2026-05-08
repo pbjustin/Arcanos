@@ -13,6 +13,8 @@ from arcanos.debug import log_audit_event
 
 BIDI_CONTROL_PATTERN = re.compile(r"[\u202A-\u202E\u2066-\u2069]")
 DEFAULT_POLICY_PATH = Path(__file__).resolve().parents[3] / "config" / "cli-policy.json"
+_POLICY_CACHE: dict[str, Any] | None = None
+_POLICY_CACHE_KEY: tuple[str, int, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -36,7 +38,13 @@ class PatchDecision:
 
 
 def load_cli_policy() -> dict[str, Any]:
+    global _POLICY_CACHE, _POLICY_CACHE_KEY
     policy_path = Path(os.environ.get("ARCANOS_CLI_POLICY_PATH") or DEFAULT_POLICY_PATH)
+    policy_stat = policy_path.stat()
+    cache_key = (str(policy_path.resolve()), policy_stat.st_mtime_ns, policy_stat.st_size)
+    if _POLICY_CACHE is not None and _POLICY_CACHE_KEY == cache_key:
+        return _POLICY_CACHE
+
     raw = policy_path.read_text(encoding="utf-8")
     policy = json.loads(raw)
     log_audit_event(
@@ -47,6 +55,8 @@ def load_cli_policy() -> dict[str, Any]:
         allow_prefix_count=len(policy.get("commandPolicy", {}).get("allowPrefixes") or []),
         deny_pattern_count=len(policy.get("commandPolicy", {}).get("denyPatterns") or []),
     )
+    _POLICY_CACHE = policy
+    _POLICY_CACHE_KEY = cache_key
     return policy
 
 

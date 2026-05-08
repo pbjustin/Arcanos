@@ -105,7 +105,11 @@ class PatchOrchestrator:
             return ApplyResult(ok=False, rollback_id=rollback_id, files=files, backups={}, error=decision.reason)
 
         self.console.print("\n[bold]=== ARCANOS PATCH PROPOSAL ===[/bold]")
-        self.console.print(f"[dim]patch_sha256={patch_decision.patch_hash} files={len(files)}[/dim]")
+        self.console.print(
+            f"[dim]patch_sha256={patch_decision.patch_hash} files={len(files)} "
+            f"added={patch_decision.added_lines} removed={patch_decision.removed_lines}[/dim]"
+        )
+        self.console.print("[dim]Safety: redacted preview, exact hash confirmation, rollback backup before apply.[/dim]")
         self.console.print(Syntax(patch_decision.redacted_preview, "diff", line_numbers=False))
 
         # //audit assumption: patch application requires explicit operator confirmation; failure risk: non-interactive sessions apply changes without review; expected invariant: patches are denied when confirmation input is unavailable; handling strategy: fail closed before prompts.

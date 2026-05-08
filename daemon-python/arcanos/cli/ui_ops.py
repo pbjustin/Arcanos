@@ -4,6 +4,7 @@ User-interface rendering and speech operations for the CLI.
 
 from __future__ import annotations
 
+import os
 from typing import Any, Mapping, Optional, TYPE_CHECKING
 
 from rich.markdown import Markdown
@@ -11,9 +12,11 @@ from rich.table import Table
 
 from ..cli_ui import build_help_panel, build_stats_table
 from ..config import Config
+from ..error_handler import logger as error_logger
 from ..voice_boundary import Persona, apply_voice_boundary
 from ..cli_intents import truncate_for_tts
 from .context import _UNSET_FILTER
+from .cli_policy import load_cli_policy, resolve_workspace_root
 
 if TYPE_CHECKING:
     from .cli import ArcanosCLI
@@ -92,6 +95,144 @@ def render_system_state_table(cli: "ArcanosCLI", state_payload: Mapping[str, Any
     cli.console.print(table)
 
 
+def build_execution_context_summary(cli: "ArcanosCLI") -> dict[str, Any]:
+    """
+    Purpose: Build a user-facing daemon execution context without exposing secrets.
+    Inputs/Outputs: CLI instance; returns deterministic summary fields for rendering or JSON.
+    Edge cases: Policy loading failures degrade to unknown sandbox/capabilities.
+    """
+    try:
+        policy = load_cli_policy()
+        sandbox_root = resolve_workspace_root(policy)
+        allow_prefixes = [
+            str(prefix)
+            for prefix in policy.get("commandPolicy", {}).get("allowPrefixes") or []
+            if str(prefix).strip()
+        ]
+    except Exception as exc:
+        error_logger.warning("Execution context policy resolution failed: %s", exc)
+        sandbox_root = "unknown"
+        allow_prefixes = []
+
+    backend_configured = bool(Config.BACKEND_URL)
+    daemon_connected = bool(getattr(cli, "_daemon_running", False))
+    railway_runtime = _is_railway_runtime()
+    local_bridge_enabled = bool(os.environ.get("ARCANOS_CLI_BRIDGE_TOKEN"))
+
+    if railway_runtime:
+        mode = "Production Runtime"
+    elif local_bridge_enabled:
+        mode = "Local Desktop Daemon"
+    elif not backend_configured:
+        mode = "Disabled"
+    elif daemon_connected:
+        mode = "Local CLI Runtime"
+    else:
+        mode = "Unavailable"
+
+    if daemon_connected:
+        daemon_state = "Connected"
+    elif backend_configured:
+        daemon_state = "Configured, not connected"
+    elif local_bridge_enabled:
+        daemon_state = "Local bridge token configured"
+    else:
+        daemon_state = "Not configured"
+
+    execution_mode = "Confirmation required" if Config.CONFIRM_SENSITIVE_ACTIONS else "Policy gated"
+    if not allow_prefixes:
+        execution_mode = "Read-only"
+
+    can_access = ["deployed runtime" if railway_runtime or backend_configured else "local CLI runtime"]
+    if sandbox_root != "unknown":
+        can_access.append(f"{sandbox_root} workspace")
+    can_access.extend(_capability_labels(allow_prefixes))
+
+    cannot_access = [
+        "your personal desktop" if railway_runtime else "paths outside the configured sandbox",
+        "unrestricted shell",
+        "raw secrets or environment variables",
+        "patches touching secret files",
+    ]
+    if not Config.RUN_ELEVATED:
+        cannot_access.append("elevated shell")
+
+    return {
+        "mode": mode,
+        "daemon": daemon_state,
+        "sandbox": sandbox_root,
+        "execution": execution_mode,
+        "canAccess": can_access,
+        "cannotAccess": cannot_access,
+        "environmentWarning": (
+            "Railway production runtime: this can operate only inside the deployed container sandbox."
+            if railway_runtime
+            else None
+        ),
+        "canAccessPersonalDesktop": bool(local_bridge_enabled and not railway_runtime),
+        "localDesktopDaemonReady": local_bridge_enabled,
+    }
+
+
+def render_execution_context_summary(cli: "ArcanosCLI", summary: Mapping[str, Any] | None = None) -> None:
+    """
+    Purpose: Render execution context in a compact, human-readable form.
+    Inputs/Outputs: CLI instance and optional summary; prints text to console.
+    Edge cases: Missing fields render as unknown/empty without secret-bearing fallbacks.
+    """
+    context = dict(summary or build_execution_context_summary(cli))
+    lines = [
+        "Execution Context",
+        "-----------------",
+        f"Mode: {context.get('mode', 'Unknown')}",
+        f"Daemon: {context.get('daemon', 'Unknown')}",
+        f"Sandbox: {context.get('sandbox', 'unknown')}",
+        f"Execution: {context.get('execution', 'Unknown')}",
+    ]
+    warning = context.get("environmentWarning")
+    if isinstance(warning, str) and warning:
+        lines.append(f"Warning: {warning}")
+
+    desktop_access = "Yes" if context.get("canAccessPersonalDesktop") else "No"
+    lines.append(f"Can access your personal desktop: {desktop_access}")
+    lines.append("Can access:")
+    for item in context.get("canAccess") or []:
+        lines.append(f"+ {item}")
+    lines.append("Cannot access:")
+    for item in context.get("cannotAccess") or []:
+        lines.append(f"- {item}")
+
+    cli.console.print("\n".join(lines))
+
+
+def _is_railway_runtime() -> bool:
+    railway_markers = (
+        "RAILWAY_ENVIRONMENT",
+        "RAILWAY_ENVIRONMENT_ID",
+        "RAILWAY_PROJECT_ID",
+        "RAILWAY_SERVICE_ID",
+        "RAILWAY_DEPLOYMENT_ID",
+    )
+    return any(bool(os.environ.get(marker)) for marker in railway_markers)
+
+
+def _capability_labels(allow_prefixes: list[str]) -> list[str]:
+    labels: list[str] = []
+    normalized = {prefix.lower() for prefix in allow_prefixes}
+    git_inspection_commands = ("git status", "git diff", "git log", "git show")
+    if any(
+        any(prefix.startswith(command) or command.startswith(prefix) for command in git_inspection_commands)
+        for prefix in normalized
+    ):
+        labels.append("read-only git inspection")
+    if any(prefix.startswith("npm run") or prefix.startswith("python ") for prefix in normalized):
+        labels.append("approved validation commands")
+    if allow_prefixes:
+        labels.append("allowlisted command proposals")
+    labels.append("redacted audit/history summaries")
+    return labels
+
+
 def handle_speak(cli: "ArcanosCLI") -> None:
     """
     Purpose: Replay last user-visible response through TTS.
@@ -130,6 +271,15 @@ def handle_stats(cli: "ArcanosCLI") -> None:
     cli.console.print(table)
 
 
+def handle_context(cli: "ArcanosCLI") -> None:
+    """
+    Purpose: Display the current daemon execution context and safety boundaries.
+    Inputs/Outputs: CLI instance; prints summary.
+    Edge cases: Summary builder degrades missing policy fields safely.
+    """
+    render_execution_context_summary(cli)
+
+
 def handle_help(cli: "ArcanosCLI") -> None:
     """
     Purpose: Display CLI help text panel.
@@ -163,11 +313,14 @@ def handle_reset(cli: "ArcanosCLI") -> None:
 
 
 __all__ = [
+    "build_execution_context_summary",
     "handle_clear",
+    "handle_context",
     "handle_help",
     "handle_reset",
     "handle_speak",
     "handle_stats",
+    "render_execution_context_summary",
     "render_system_state_table",
     "speak_to_user",
 ]

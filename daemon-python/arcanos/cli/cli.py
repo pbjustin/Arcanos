@@ -239,6 +239,9 @@ class ArcanosCLI:
     def _render_system_state_table(self, state_payload: Mapping[str, Any]) -> None:
         return ui_ops.render_system_state_table(self, state_payload)
 
+    def _render_execution_context_summary(self) -> None:
+        return ui_ops.render_execution_context_summary(self)
+
     def _is_working_context_query(self, message: str) -> bool:
         return state.is_working_context_query(message)
 
@@ -262,6 +265,14 @@ class ArcanosCLI:
         state.hydrate_session_from_backend_state(self, state_payload)
         ui_ops.render_system_state_table(self, state_payload)
         return True
+
+    def handle_context(self) -> None:
+        """
+        Purpose: Show local daemon execution context and safety boundaries.
+        Inputs/Outputs: None; renders user-facing summary.
+        Edge cases: Does not require backend connectivity.
+        """
+        return ui_ops.handle_context(self)
 
     def _registry_cache_is_valid(self) -> bool:
         return state.registry_cache_is_valid(self)
@@ -830,7 +841,7 @@ def main() -> None:
     parser.add_argument(
         "command",
         nargs="?",
-        help="Run a one-shot command such as `status`, `bridge`, or a protocol command and exit.",
+        help="Run a one-shot command such as `status`, `context`, `bridge`, or a protocol command and exit.",
     )
     parser.add_argument(
         "protocol_target",
@@ -923,6 +934,13 @@ def main() -> None:
     if args.command == "status":
         succeeded = cli.handle_status()
         sys.exit(0 if succeeded else 1)
+    if args.command == "context":
+        if args.json:
+            sys.stdout.write(json.dumps(ui_ops.build_execution_context_summary(cli), sort_keys=True))
+            sys.stdout.write("\n")
+        else:
+            cli.handle_context()
+        sys.exit(0)
 
     cli.run(debug_mode=args.debug_mode)
 

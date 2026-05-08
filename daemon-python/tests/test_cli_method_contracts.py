@@ -14,6 +14,7 @@ def test_arcanos_cli_exposes_expected_command_methods() -> None:
         "handle_dryrun",
         "handle_feedback",
         "handle_safemode",
+        "handle_context",
         "handle_speak",
         "handle_stats",
         "handle_help",

@@ -248,6 +248,37 @@ describe("Arcanos CLI", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("prints execution context details for status", async () => {
+    const fetchMock = jest.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      const pathname = url instanceof URL ? url.pathname : String(url);
+      if (pathname.endsWith("/status")) {
+        return createJsonResponse({ ok: true });
+      }
+      if (pathname.endsWith("/health")) {
+        return createJsonResponse({ status: "healthy" });
+      }
+      throw new Error(`Unexpected URL: ${pathname}`);
+    });
+    const stdout = createWritableCapture();
+    const stderr = createWritableCapture();
+
+    const exitCode = await runCli(
+      ["status", "--transport", "local", "--cwd", path.resolve("tmp", "arcanos-status-test")],
+      stdout.stream,
+      stderr.stream
+    );
+
+    const output = stdout.read();
+    expect(exitCode).toBe(0);
+    expect(stderr.read()).toBe("");
+    expect(output).toContain("Execution Context");
+    expect(output).toContain("Daemon: Connected");
+    expect(output).toContain("Execution: Confirmation required for CLI daemon actions");
+    expect(output).toContain("Can access your personal desktop: No");
+    expect(output).toContain("Cannot access:");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("sends ask requests to the canonical backend GPT route", async () => {
     const fetchMock = jest.spyOn(globalThis, "fetch").mockResolvedValue(
       createJsonResponse({ result: "backend ok" })
