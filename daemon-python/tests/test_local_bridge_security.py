@@ -45,6 +45,19 @@ def test_bridge_rejects_missing_token_and_unsupported_content_type(monkeypatch, 
         server.shutdown()
 
 
+def test_bridge_refuses_enabled_startup_without_token(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("ARCANOS_CLI_BRIDGE_ENABLED", "true")
+    monkeypatch.delenv("ARCANOS_CLI_BRIDGE_TOKEN", raising=False)
+    monkeypatch.setenv("ARCANOS_CLI_SANDBOX_ROOT", str(tmp_path))
+
+    try:
+        LocalBridge(port=0)
+    except ValueError as exc:
+        assert "ARCANOS_CLI_BRIDGE_TOKEN" in str(exc)
+    else:
+        raise AssertionError("enabled bridge startup without token should fail")
+
+
 def test_bridge_requires_matching_command_proposal_id(monkeypatch, tmp_path) -> None:
     subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
     _bridge, server, _thread = _start_bridge(monkeypatch, tmp_path)

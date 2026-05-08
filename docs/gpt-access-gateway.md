@@ -58,11 +58,29 @@ Actions:
 | `applyApprovedPatch` | Yes | Applies only after the confirmation challenge retry, patch policy approval, and matching `proposalId`. |
 | `tailAudit` | No | Reserved for bounded sanitized audit metadata; current implementation returns an unavailable placeholder. |
 
-The bridge uses the local Python daemon HTTP bridge at `ARCANOS_CLI_BRIDGE_URL` and expects it to bind to `127.0.0.1` by default. Production Railway does not start the daemon bridge unless a separate process/supervisor is added; in that case `status` can report `enabled:true`, `daemonReachable:false`, and `mode:"localhost-http-python-daemon"` without crashing. Command and patch POSTs require `ARCANOS_CLI_BRIDGE_TOKEN` between the TypeScript gateway and local daemon; confirmation tokens still belong only at the top level of the GPT Access request, never inside action payloads. Command and patch operations are constrained by the shared `config/cli-policy.json` allowlists, deny patterns, cwd sandboxing under `ARCANOS_CLI_SANDBOX_ROOT`, timeouts, output caps, redaction, patch safety rules, and audit records. Secrets, authorization headers, cookies, private keys, OpenAI keys, Railway tokens, database URLs, and `.env` contents must not be emitted in logs or outputs.
+The bridge uses the local Python daemon HTTP bridge at `ARCANOS_CLI_BRIDGE_URL` and expects it to bind to `127.0.0.1` by default. Production Railway attaches the daemon only inside the web service container when `ARCANOS_CLI_BRIDGE_ENABLED=true`; the launcher starts `python3 -m arcanos.cli.local_bridge` as a loopback-only child process and does not expose it as a public Railway service. If the daemon is unavailable, `status` can report `enabled:true`, `daemonReachable:false`, and `mode:"localhost-http-python-daemon"` without crashing the backend. Command and patch POSTs require `ARCANOS_CLI_BRIDGE_TOKEN` between the TypeScript gateway and local daemon; confirmation tokens still belong only at the top level of the GPT Access request, never inside action payloads. Command and patch operations are constrained by the shared `config/cli-policy.json` allowlists, deny patterns, cwd sandboxing under `ARCANOS_CLI_SANDBOX_ROOT`, timeouts, output caps, redaction, patch safety rules, and audit records. Secrets, authorization headers, cookies, private keys, OpenAI keys, Railway tokens, database URLs, and `.env` contents must not be emitted in logs or outputs.
 
 Daemon-side execution also validates the same `proposalId` against the exact command or patch and resolved cwd before running. The local bridge accepts only loopback hosts, token-authenticated `application/json` POSTs, bounded body sizes, and sanitized deterministic JSON errors. Patch history stores hashes, file summaries, approval state, timestamps, backups metadata, and redacted previews; raw patch text is not stored.
 
 On `CONFIRMATION_REQUIRED`, retry the same `/gpt-access/capabilities/v1/ARCANOS:CLI/run` request once with the same `action` and `payload` plus top-level `confirmation_token`. Do not put confirmation tokens inside `payload`. Approval payloads for `runApprovedCommand` and `applyApprovedPatch` must include the `proposalId` returned by the matching proposal action.
+
+Production Railway setup:
+
+| Variable | Safe setting |
+| --- | --- |
+| `ARCANOS_CLI_BRIDGE_ENABLED` | `true` to attach the daemon, `false` to disable it. |
+| `ARCANOS_CLI_BRIDGE_URL` | `http://127.0.0.1:8765`; never use public, private-network, or `0.0.0.0` URLs. |
+| `ARCANOS_CLI_BRIDGE_TOKEN` | Required secret value; set through Railway variables and never print it. |
+| `ARCANOS_CLI_SANDBOX_ROOT` | `/app` or a narrower workspace path inside the container. |
+| `ARCANOS_WORKSPACE_ROOT` | `/app` or the same narrower workspace path. |
+| `ARCANOS_CLI_COMMAND_TIMEOUT_MS` | Bounded value no higher than policy max. |
+| `ARCANOS_CLI_OUTPUT_MAX_BYTES` | Bounded value no higher than policy output cap. |
+
+Safe production verification is read-only: call `listCapabilitiesV1`, `getCapabilityV1("ARCANOS:CLI")`, then run `status`, `policy`, `repoContext` with a read-only repo tool such as `repo.getStatus`, and `proposeCommand` for both an allowlisted read-only command and a dangerous command. Do not call `runApprovedCommand` or `applyApprovedPatch` during production verification unless separately approved. Expected result is `enabled:true`, `daemonReachable:true`, loaded policy metadata, an allowed safe proposal, a denied dangerous proposal, and confirmation still required for execution actions. Railway production images are deployed artifacts and do not include `.git`; in that environment `repo.getStatus` should return `gitAvailable:false`, `workspaceType:"deployed-artifact"`, and a clear non-error message instead of failing.
+
+Troubleshooting `daemonReachable:false`: verify the web service has `ARCANOS_CLI_BRIDGE_ENABLED=true`, `ARCANOS_CLI_BRIDGE_URL` is loopback-only, the bridge token is present, the sandbox path exists, and the web service was redeployed after variable changes. Sanitized logs should include daemon lifecycle and CLI events such as `daemon.started`, `arcanos.daemon.health.checked`, `arcanos.daemon.unreachable`, `arcanos.daemon.recovered`, `arcanos.cli.status.checked`, `arcanos.cli.policy.read`, `arcanos.cli.command.proposed`, and `arcanos.cli.command.denied`. GPT Access bridge events are persisted through the sanitized `arcanos-cli` execution log service and can be checked with `/gpt-access/logs/query` without exposing bridge tokens, command text, output, prompts, provider payloads, or environment values.
+
+Emergency disable: set `ARCANOS_CLI_BRIDGE_ENABLED=false` on the web service and redeploy. `ARCANOS:CLI` remains discoverable, `status` reports disabled/unreachable, and privileged execution actions fail closed. For stronger rollback, remove the bridge token after disabling the bridge.
 
 ## Local Setup
 

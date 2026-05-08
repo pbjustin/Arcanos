@@ -7,6 +7,7 @@ const getPoolMock = jest.fn();
 const isDatabaseConnectedMock = jest.fn();
 const queryMock = jest.fn();
 const transactionMock = jest.fn();
+const logExecutionMock = jest.fn();
 const findOrCreateGptJobMock = jest.fn();
 const getJobByIdMock = jest.fn();
 const getJobQueueSummaryMock = jest.fn();
@@ -44,6 +45,11 @@ jest.unstable_mockModule('../src/core/db/index.js', () => ({
   isDatabaseConnected: isDatabaseConnectedMock,
   query: queryMock,
   transaction: transactionMock
+}));
+
+jest.unstable_mockModule('@core/db/repositories/executionLogRepository.js', () => ({
+  logExecution: logExecutionMock,
+  logExecutionBatch: jest.fn()
 }));
 
 jest.unstable_mockModule('../src/core/db/repositories/jobRepository.js', () => ({
@@ -221,6 +227,7 @@ describe('/gpt-access gateway', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    logExecutionMock.mockResolvedValue(undefined);
     responsesCreateMock.mockReset();
     hasValidOpenAiKeyMock.mockReturnValue(false);
     process.env.ARCANOS_GPT_ACCESS_TOKEN = TEST_TOKEN;
@@ -864,6 +871,38 @@ describe('/gpt-access gateway', () => {
       })
     }));
     expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
+  it('persists sanitized ARCANOS:CLI bridge events for log queries', async () => {
+    process.env.ARCANOS_CLI_BRIDGE_ENABLED = 'true';
+    process.env.ARCANOS_CLI_BRIDGE_TOKEN = 'test-bridge-token';
+    allowCapabilityRun('capabilities.run', 'ARCANOS:CLI:proposeCommand');
+
+    const response = await authorized(request(buildApp({ trustProxy: true })).post('/gpt-access/capabilities/v1/ARCANOS%3ACLI/run'))
+      .set('X-Forwarded-For', '203.0.113.21')
+      .send({
+        action: 'proposeCommand',
+        payload: {
+          command: 'rm -rf /'
+        }
+      });
+
+    expect(response.status).toBe(200);
+    expect(logExecutionMock).toHaveBeenCalledWith(
+      'arcanos-cli',
+      'warn',
+      'arcanos.cli.command.denied',
+      expect.objectContaining({
+        source: 'gpt-access-cli-bridge',
+        proposalId: expect.stringMatching(/^cli-/u),
+        reason: 'command_denied_by_policy'
+      })
+    );
+    const persistedPayload = JSON.stringify(logExecutionMock.mock.calls);
+    expect(persistedPayload).not.toContain('rm -rf');
+    expect(persistedPayload).not.toContain('test-bridge-token');
+    expect(persistedPayload).not.toContain('commandPreview');
+    expect(persistedPayload).not.toContain('cwd');
   });
 
   it('requires confirmation before ARCANOS:CLI execution actions', async () => {

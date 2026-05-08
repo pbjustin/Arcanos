@@ -41,6 +41,12 @@ const DEFAULT_HEALTH_HOST = '0.0.0.0';
 const SHUTDOWN_SIGNALS = new Set(['SIGTERM', 'SIGINT']);
 const WORKER_BOOTSTRAP_READY_MARKER = 'worker.bootstrap.completed';
 const WORKER_BOOTSTRAP_MARKER_OVERLAP_LENGTH = Math.max(0, WORKER_BOOTSTRAP_READY_MARKER.length - 1);
+const DEFAULT_CLI_BRIDGE_HOST = '127.0.0.1';
+const DEFAULT_CLI_BRIDGE_PORT = 8765;
+const LOOPBACK_CLI_BRIDGE_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
+const CLI_BRIDGE_ENABLED_ENV = 'ARCANOS_CLI_BRIDGE_ENABLED';
+const CLI_BRIDGE_URL_ENV = 'ARCANOS_CLI_BRIDGE_URL';
+const CLI_BRIDGE_TOKEN_ENV = 'ARCANOS_CLI_BRIDGE_TOKEN';
 const OPENAI_API_KEY_ENV_NAMES = [
   'OPENAI_API_KEY',
   'RAILWAY_OPENAI_API_KEY',
@@ -144,8 +150,87 @@ function buildChildEnvironment(processKind) {
 function spawnProcess(command, args, processKind, options = {}) {
   return spawn(command, args, {
     stdio: options.stdio ?? 'inherit',
-    env: buildChildEnvironment(processKind)
+    env: buildChildEnvironment(processKind),
+    cwd: options.cwd
   });
+}
+
+function isCliBridgeEnabled(env = process.env) {
+  return env[CLI_BRIDGE_ENABLED_ENV] === 'true';
+}
+
+export function resolveCliBridgeListenerConfig(env = process.env) {
+  const rawUrl = env[CLI_BRIDGE_URL_ENV]?.trim() || `http://${DEFAULT_CLI_BRIDGE_HOST}:${DEFAULT_CLI_BRIDGE_PORT}`;
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(rawUrl);
+  } catch {
+    throw new Error(`${CLI_BRIDGE_URL_ENV} must be a valid HTTP loopback URL.`);
+  }
+
+  if (parsedUrl.protocol !== 'http:' || !LOOPBACK_CLI_BRIDGE_HOSTS.has(parsedUrl.hostname)) {
+    throw new Error(`${CLI_BRIDGE_URL_ENV} must use HTTP loopback.`);
+  }
+
+  const port = parsedUrl.port ? Number.parseInt(parsedUrl.port, 10) : DEFAULT_CLI_BRIDGE_PORT;
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error(`${CLI_BRIDGE_URL_ENV} must include a valid port when provided.`);
+  }
+
+  const tokenPresent = Boolean(env[CLI_BRIDGE_TOKEN_ENV]?.trim());
+  if (!tokenPresent) {
+    throw new Error(`${CLI_BRIDGE_TOKEN_ENV} is required when ${CLI_BRIDGE_ENABLED_ENV}=true.`);
+  }
+
+  return {
+    host: parsedUrl.hostname,
+    port,
+    tokenPresent
+  };
+}
+
+function maybeStartCliBridgeDaemon() {
+  if (!isCliBridgeEnabled()) {
+    return null;
+  }
+
+  const bridgeConfig = resolveCliBridgeListenerConfig();
+  console.log('[railway-launcher] daemon.started', JSON.stringify({
+    module: 'railway-launcher',
+    host: bridgeConfig.host,
+    port: bridgeConfig.port,
+    restartPolicy: 'no-restart',
+    tokenPresent: bridgeConfig.tokenPresent
+  }));
+
+  const daemonProcess = spawnProcess('python3', [
+    '-m',
+    'arcanos.cli.local_bridge',
+    '--host',
+    bridgeConfig.host,
+    '--port',
+    String(bridgeConfig.port)
+  ], 'web', {
+    cwd: 'daemon-python',
+    stdio: ['ignore', 'inherit', 'inherit']
+  });
+
+  daemonProcess.once('error', (error) => {
+    console.error('[railway-launcher] daemon.unreachable', JSON.stringify({
+      module: 'railway-launcher',
+      reason: 'spawn_error',
+      errorType: error instanceof Error ? error.name : 'Error'
+    }));
+  });
+  daemonProcess.once('exit', (code, signal) => {
+    console.error('[railway-launcher] daemon.unreachable', JSON.stringify({
+      module: 'railway-launcher',
+      reason: signal ? `signal_${signal}` : `exit_${typeof code === 'number' ? code : 'unknown'}`,
+      restartPolicy: 'no-restart'
+    }));
+  });
+
+  return daemonProcess;
 }
 
 /**
@@ -206,6 +291,7 @@ async function runWebRuntime() {
     enabled: false,
     disabledReason: 'ARCANOS_PROCESS_KIND=web disables in-process workers; dedicated async workers must run in a separate worker service.'
   }));
+  const daemonProcess = maybeStartCliBridgeDaemon();
   const webProcess = spawnProcess('node', [
     '--max-old-space-size=7168',
     '--import',
@@ -220,6 +306,7 @@ async function runWebRuntime() {
 
     shutdownRequested = true;
     console.log(`[railway-launcher] received ${signal}; forwarding shutdown to web runtime`);
+    daemonProcess?.kill(signal);
     webProcess.kill(signal);
   };
 

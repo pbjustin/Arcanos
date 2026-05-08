@@ -51,6 +51,19 @@
           }
         }
       }
+    },
+    "gitAvailable": {
+      "type": "boolean"
+    },
+    "workspaceType": {
+      "type": "string",
+      "enum": [
+        "git",
+        "deployed-artifact"
+      ]
+    },
+    "message": {
+      "type": "string"
     }
   }
 }
