@@ -171,7 +171,7 @@ def validate_patch_text(patch_text: str, cwd: str | None = None) -> PatchDecisio
                 return PatchDecision(False, "patch_targets_secret_file", patch_hash, files, added, removed, preview)
         root = Path(cwd or resolve_workspace_root(policy)).resolve()
         candidate = root / normalized
-        if candidate.exists() and candidate.is_symlink():
+        if candidate.is_symlink():
             return PatchDecision(False, "patch_symlink_not_allowed", patch_hash, files, added, removed, preview)
         target = candidate.resolve()
         try:
