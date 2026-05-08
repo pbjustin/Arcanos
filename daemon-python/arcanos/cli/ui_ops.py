@@ -110,18 +110,22 @@ def build_execution_context_summary(cli: "ArcanosCLI") -> dict[str, Any]:
             if str(prefix).strip()
         ]
     except Exception as exc:
-        error_logger.warning("Execution context policy resolution failed: %s", exc)
+        error_logger.warning("Execution context policy resolution failed: %s", type(exc).__name__)
         sandbox_root = "unknown"
         allow_prefixes = []
 
     backend_configured = bool(Config.BACKEND_URL)
     daemon_connected = bool(getattr(cli, "_daemon_running", False))
     railway_runtime = _is_railway_runtime()
-    local_bridge_enabled = bool(os.environ.get("ARCANOS_CLI_BRIDGE_TOKEN"))
+    bridge_token_configured = bool((os.environ.get("ARCANOS_CLI_BRIDGE_TOKEN") or "").strip())
+    local_bridge_enabled = os.environ.get("ARCANOS_CLI_BRIDGE_ENABLED", "").strip().lower() == "true"
+    local_desktop_daemon_ready = bool(
+        local_bridge_enabled and bridge_token_configured and daemon_connected and not railway_runtime
+    )
 
     if railway_runtime:
         mode = "Production Runtime"
-    elif local_bridge_enabled:
+    elif local_desktop_daemon_ready:
         mode = "Local Desktop Daemon"
     elif not backend_configured:
         mode = "Disabled"
@@ -134,8 +138,10 @@ def build_execution_context_summary(cli: "ArcanosCLI") -> dict[str, Any]:
         daemon_state = "Connected"
     elif backend_configured:
         daemon_state = "Configured, not connected"
+    elif local_bridge_enabled and not bridge_token_configured:
+        daemon_state = "Local desktop bridge enabled, token missing"
     elif local_bridge_enabled:
-        daemon_state = "Local bridge token configured"
+        daemon_state = "Local desktop daemon configured, not connected"
     else:
         daemon_state = "Not configured"
 
@@ -143,13 +149,28 @@ def build_execution_context_summary(cli: "ArcanosCLI") -> dict[str, Any]:
     if not allow_prefixes:
         execution_mode = "Read-only"
 
-    can_access = ["deployed runtime" if railway_runtime or backend_configured else "local CLI runtime"]
+    if railway_runtime:
+        runtime_label = "deployed runtime"
+    elif local_desktop_daemon_ready:
+        runtime_label = "local desktop daemon"
+    elif daemon_connected:
+        runtime_label = "local CLI runtime"
+    else:
+        runtime_label = None
+
+    can_access = [runtime_label] if runtime_label else []
     if sandbox_root != "unknown":
         can_access.append(f"{sandbox_root} workspace")
     can_access.extend(_capability_labels(allow_prefixes))
 
     cannot_access = [
-        "your personal desktop" if railway_runtime else "paths outside the configured sandbox",
+        "your personal desktop"
+        if railway_runtime
+        else (
+            "paths outside the configured sandbox"
+            if local_desktop_daemon_ready
+            else "your personal desktop through the local desktop daemon"
+        ),
         "unrestricted shell",
         "raw secrets or environment variables",
         "patches touching secret files",
@@ -169,8 +190,8 @@ def build_execution_context_summary(cli: "ArcanosCLI") -> dict[str, Any]:
             if railway_runtime
             else None
         ),
-        "canAccessPersonalDesktop": bool(local_bridge_enabled and not railway_runtime),
-        "localDesktopDaemonReady": local_bridge_enabled,
+        "canAccessPersonalDesktop": local_desktop_daemon_ready,
+        "localDesktopDaemonReady": local_desktop_daemon_ready,
     }
 
 

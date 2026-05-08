@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 import uuid
+from types import SimpleNamespace
 from typing import Any, Callable, Mapping, Optional
 
 if sys.platform == "win32":
@@ -919,6 +920,11 @@ def main() -> None:
     if args.command == "bridge":
         run_local_bridge(host=args.bridge_host, port=args.bridge_port)
         return
+    if args.command == "context" and args.json:
+        summary = ui_ops.build_execution_context_summary(SimpleNamespace(_daemon_running=False))
+        sys.stdout.write(json.dumps(summary, sort_keys=True))
+        sys.stdout.write("\n")
+        return
 
     try:
         bootstrap_credentials()
@@ -935,11 +941,7 @@ def main() -> None:
         succeeded = cli.handle_status()
         sys.exit(0 if succeeded else 1)
     if args.command == "context":
-        if args.json:
-            sys.stdout.write(json.dumps(ui_ops.build_execution_context_summary(cli), sort_keys=True))
-            sys.stdout.write("\n")
-        else:
-            cli.handle_context()
+        cli.handle_context()
         sys.exit(0)
 
     cli.run(debug_mode=args.debug_mode)
