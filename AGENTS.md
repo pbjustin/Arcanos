@@ -97,12 +97,14 @@ If multiple approaches are possible, choose the one that:
 - Install Node dependencies with `npm install`.
 - Use `npm run probe` for a quick runtime/environment diagnostic before deeper startup or validation work.
 - Use `npm run dev` for the full local TypeScript server bootstrap; it rebuilds packages/workers, repairs aliases, checks dist aliases, copies assets, and starts the server.
+- Use `npm run dev:inspect` when debugging startup behavior with the Node inspector against the built backend entrypoint.
 - Build workspace packages before full backend validation with `npm run build:packages`.
 - Build the full backend artifact with `npm run build` before deployment-oriented validation or startup checks.
 
 ## Validation
 - Use `npm run start:worker` when validating local worker-only flows, async pipelines, or job runner startup behavior.
 - Run `npm run self-test` when changes touch the self-test pipeline, `/devops/self-test`, or scheduled operational checks.
+- Run `npm run daily-summary` after `npm run build` when changes touch daily summary generation or `/devops/daily-summary`.
 - For protocol-boundary or backend CLI changes, run `npm run build:packages` before `npm run validate:backend-cli:contract` and `npm run validate:backend-cli:offline`.
 - Run `npm run check:boundaries`, `npm run check:cef-layer-access`, and `npm run check:routing-boundaries` when changes affect protocol/layer boundaries or route handlers.
 - Build worker artifacts with `npm run build:workers` when changes touch `workers/`, job runners, or worker startup paths.
