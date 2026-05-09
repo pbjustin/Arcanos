@@ -96,8 +96,10 @@ If multiple approaches are possible, choose the one that:
 ## Setup
 - Install Node dependencies with `npm install`.
 - Use `npm run probe` for a quick runtime/environment diagnostic before deeper startup or validation work.
+- Use `npm start` to run the compiled backend entrypoint after a successful build or when validating production-style local startup.
 - Use `npm run dev` for the full local TypeScript server bootstrap; it rebuilds packages/workers, repairs aliases, checks dist aliases, copies assets, and starts the server.
 - Use `npm run dev:inspect` when debugging startup behavior with the Node inspector against the built backend entrypoint.
+- Use `npm run dev:watch` for TypeScript watch-only iteration when you only need incremental compilation feedback without starting the backend.
 - Build workspace packages before full backend validation with `npm run build:packages`.
 - Build the full backend artifact with `npm run build` before deployment-oriented validation or startup checks.
 
@@ -108,6 +110,7 @@ If multiple approaches are possible, choose the one that:
 - For protocol-boundary or backend CLI changes, run `npm run build:packages` before `npm run validate:backend-cli:contract` and `npm run validate:backend-cli:offline`.
 - Run `npm run check:boundaries`, `npm run check:cef-layer-access`, and `npm run check:routing-boundaries` when changes affect protocol/layer boundaries or route handlers.
 - Build worker artifacts with `npm run build:workers` when changes touch `workers/`, job runners, or worker startup paths.
+- Run `npm run worker:jobs:maintenance -- inspect` when investigating failed worker jobs; use its `requeue` and `cleanup` modes only for explicit job-maintenance work against a configured database.
 - Run `npm run dist:check-aliases` when changes affect dist entrypoints, import rewrite behavior, or alias repair outputs.
 - Run focused Jest suites with `node scripts/run-jest.mjs --testPathPatterns=<pattern> --coverage=false`.
 - Run the default TypeScript Jest sweep with `npm test` when focused suites pass and you need the broader Node-side check.
@@ -117,6 +120,7 @@ If multiple approaches are possible, choose the one that:
 - Run `npm run test:all:stacks` when a change spans both the TypeScript workspace and `daemon-python`.
 - Run type checks with `npm run type-check`.
 - Run lint with `npm run lint`.
+- Run `npm run job-events:timeline -- --job-id <id>` or `--trace-id <id>` when tracing async job-event ordering or debugging database-backed job history.
 - Run `npm run mcp:stdio` when changes touch the MCP stdio transport or GPT fast-path MCP bridge.
 - Use `npm run mcp:stdio:dev` for TypeScript-level MCP stdio iteration before validating the compiled entrypoint with `npm run mcp:stdio`.
 - Run `npm run validate:gpt:job-hardening` when changes touch `/gpt-access`, async job polling, or GPT job/result hardening.
