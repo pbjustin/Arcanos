@@ -95,6 +95,7 @@ If multiple approaches are possible, choose the one that:
 
 ## Setup
 - Install Node dependencies with `npm install`.
+- Use `npm ci` for reproducible CI, Docker, or Railway-style installs when you are validating those environments rather than local development.
 - Use `npm run probe` for a quick runtime/environment diagnostic before deeper startup or validation work.
 - Use `npm start` to run the compiled backend entrypoint after a successful build or when validating production-style local startup.
 - Use `npm run dev` for the full local TypeScript server bootstrap; it rebuilds packages/workers, repairs aliases, checks dist aliases, copies assets, and starts the server.
@@ -127,8 +128,10 @@ If multiple approaches are possible, choose the one that:
 - Run `npm run guard:commit` when changes affect commit-guarded governance or release-readiness checks and you do not want to wait for the full `npm run validate:all` sweep.
 - Validate the TypeScript/Python backend CLI contract with `npm run validate:backend-cli:contract` and `npm run validate:backend-cli:offline`.
 - Run `npm run sync:check` when changes touch cross-codebase sync-enforced files shared with `daemon-python`.
+- Use `npm run sync:watch` for ongoing cross-codebase sync monitoring, `npm run sync:fix` for the scripted sync-fix pass, and `npm run sync:setup` when restoring the auto-sync setup locally.
+- Use `npm run converge:preview` to dry-run convergence checks and `npm run converge:all` or `npm run converge:ci` when working on convergence-plan criteria or artifact generation.
 - Use `npm run validate:all` for the full local readiness sweep before release-sensitive changes.
-- TODO: `db:init` and `db:patch` remain listed in `package.json`, but `docs/DATABASE_MIGRATIONS.md` marks them unavailable in this checkout until their script targets are repaired or replaced.
+- TODO: `db:init`, `db:patch`, `guide:generate`, `test:doc-workflow`, `audit`, `audit:continuous`, `audit:sdk-compliance`, `audit:fix`, `audit:recursive`, `audit:railway`, `audit:full`, `audit:python`, `audit:python:fix`, and `sync:auto` remain listed in `package.json`, but the current checkout is missing one or more referenced script targets; treat them as unavailable until the targets are repaired or replaced.
 
 ## Railway
 - Confirm the linked project, service, and environment before release with `railway status` or `railway link`.
