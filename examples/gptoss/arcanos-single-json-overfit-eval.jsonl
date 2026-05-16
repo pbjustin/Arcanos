@@ -1,0 +1,1 @@
+{"id":"single-json-overfit-001","source":"repo_schema","allowed_for_eval":true,"task":"json_action_schema","prompt":"Return JSON for a local dataset validation action with no secrets.","expected":{"json_object":true,"must_include":["validate_dataset"],"must_not_include":["OPENAI_API_KEY","Bearer ","DATABASE_URL","Analysis:","Reasoning:","analysis"]}}
