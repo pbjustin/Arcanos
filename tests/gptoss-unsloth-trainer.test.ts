@@ -61,6 +61,30 @@ describe('gptoss Unsloth trainer artifact policy', () => {
     expect(executeScript).toContain('--output-dir local_artifacts/gptoss-phase3-4-lowlr');
   });
 
+  it('defines phase3.5 target-shape low-learning-rate controls', () => {
+    const dryScript = packageJson.scripts['gptoss:unsloth:phase3-5:lowlr:dry'];
+    const maskAuditScript = packageJson.scripts['gptoss:unsloth:phase3-5:lowlr:mask-audit'];
+    const executeScript = packageJson.scripts['gptoss:unsloth:phase3-5:lowlr'];
+
+    expect(packageJson.scripts['gptoss:phase3-5:dataset:validate']).toContain('examples/gptoss/arcanos-phase3-5-target-shape-training.jsonl');
+    expect(dryScript).toContain('--dataset examples/gptoss/arcanos-phase3-5-target-shape-training.jsonl');
+    expect(dryScript).toContain('--learning-rate 5e-5');
+    expect(dryScript).toContain('--max-steps 50');
+    expect(dryScript).toContain('--max-samples 120');
+    expect(dryScript).toContain('--warmup-ratio 0.10');
+    expect(dryScript).toContain('--lora-dropout 0.05');
+    expect(dryScript).toContain('--lora-r 16');
+    expect(dryScript).toContain('--lora-alpha 16');
+    expect(dryScript).toContain('--output-dir local_artifacts/gptoss-phase3-5-lowlr');
+    expect(dryScript).not.toContain('--execute');
+    expect(maskAuditScript).toContain('--mask-audit');
+    expect(maskAuditScript).toContain('--mask-audit-report local_artifacts/gptoss-phase3-5-lowlr/mask-audit-report.json');
+    expect(executeScript).toContain('gptoss:phase3-5:dataset:validate');
+    expect(executeScript).toContain('--execute');
+    expect(executeScript).toContain('--save-adapter');
+    expect(executeScript).toContain('--output-dir local_artifacts/gptoss-phase3-5-lowlr');
+  });
+
   it('defines micro-overfit training and eval scripts', () => {
     const dryScript = packageJson.scripts['gptoss:unsloth:micro:dry'];
     const executeScript = packageJson.scripts['gptoss:unsloth:micro'];
@@ -160,6 +184,7 @@ describe('gptoss Unsloth trainer artifact policy', () => {
     expect(trainerSource).toContain('"loraAlpha": options.lora_alpha');
     expect(trainerSource).toContain('return "phase3-lowlr"');
     expect(trainerSource).toContain('return "phase3-4-lowlr"');
+    expect(trainerSource).toContain('return "phase3-5-lowlr"');
     expect(trainerSource).toContain('return "micro-overfit"');
     expect(trainerSource).toContain('return "single-json-overfit"');
     expect(trainerSource).toContain('return "single-safety-overfit"');

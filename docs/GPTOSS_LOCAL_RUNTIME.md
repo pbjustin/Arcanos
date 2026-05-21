@@ -55,6 +55,12 @@ Validate the safe smoke dataset:
 npm run gptoss:dataset:validate
 ```
 
+Validate the optional Railway-safe routing dataset:
+
+```bash
+npm run gptoss:railway:dataset:validate
+```
+
 Print the smoke training plan without training:
 
 ```bash
@@ -115,6 +121,15 @@ Run a smoke bridge eval without network I/O:
 ```bash
 npm run gptoss:eval:smoke
 ```
+
+Preview a local Railway CLI observation without running Railway:
+
+```bash
+node scripts/gptoss/railway-cli-bridge.mjs --dry-run --action railway.logs --service <service> --environment production
+```
+
+The Railway bridge is for redacted observation and eval/data drafting only.
+Details are in `docs/GPTOSS_RAILWAY_BRIDGE.md`.
 
 Run a live local GPT-OSS comparison. This contacts only the configured local
 OpenAI-compatible GPT-OSS endpoint unless reference mode is explicitly enabled:
@@ -347,6 +362,60 @@ with `npm run gptoss:single-json:train`, `npm run gptoss:single-json:eval`,
 These diagnostics keep the Harmony final-boundary response mask and do not use
 OpenAI reference output or vLLM.
 
+### Generation Channel Diagnostics
+
+The single JSON adapter improved target likelihood under teacher forcing, but
+deterministic free generation still entered analysis-style text before producing
+valid JSON. The next diagnostic is local eval-only final-channel forcing, then
+JSON-task-only constrained start with `{`.
+
+Run the three local diagnostics in sequence: baseline decode, `--force-final-channel`,
+and `--force-final-channel --prefill-json-start`. The eval report must keep
+`allowedForTraining:false`, `openAiCalled:false`, `trainingExecuted:false`,
+`vllmUsed:false`, and `noOpenAiOutputUsed:true`.
+
+Final-channel forcing is allowed only when the tokenizer can derive the
+Harmony final boundary from its own chat template. JSON prefill applies only to
+JSON-only eval records and does not invent fields or weaken strict JSON scoring.
+These modes do not train, do not call OpenAI, do not use vLLM, and do not
+replace proper training/eval once channel behavior is understood.
+
+The single JSON adapter proved final-channel forcing can move generation out of
+analysis-style continuations and into valid final-channel JSON. Broader adapter
+comparison is a separate local eval step:
+
+```bash
+npm run gptoss:adapter:eval:force-final:compare
+```
+
+That command compares the full smoke eval adapters with `--force-final-channel`
+and writes inventory, summary, failure breakdown, and next-decision reports
+under `local_artifacts/gptoss-force-final-comparison/`. It is eval/inference
+behavior only: it does not train, call OpenAI, use vLLM, touch Railway, or
+modify production routing. The Railway bridge remains unrelated to this eval.
+
+The first force-final comparison put Phase 3.4 low-LR and Phase 3 low-LR at
+7/24. Remaining Phase 3.4 failures were mostly missing exact tokens and route
+labels, so Phase 3.5 adds target-shape records for compact labels, required
+first tokens, and JSON action fields:
+
+```bash
+npm run gptoss:phase3-5:dataset:validate
+npm run gptoss:unsloth:phase3-5:lowlr:dry
+npm run gptoss:unsloth:phase3-5:lowlr:mask-audit
+```
+
+Phase 3.5 training is a separate explicit step and was not run while preparing
+the dataset. After training is explicitly requested, evaluate it with:
+
+```bash
+node scripts/gptoss/eval-adapter-local.mjs --execute --adapter-dir local_artifacts/gptoss-phase3-5-lowlr --eval-file examples/gptoss/arcanos-eval-smoke.jsonl --output local_artifacts/gptoss-phase3-5-lowlr/eval-force-final.json --temperature 0 --max-new-tokens 32 --repetition-penalty 1.3 --force-final-channel
+```
+
+OpenAI reference mode remains disabled. The Railway-safe dataset remains
+optional, spec-authored routing material and is not merged into active training
+unless a future step explicitly asks for it.
+
 Phase 4 is local serving and eval against a local endpoint. Phase 5 is a future
 cloud provider path. Neither phase should modify Railway production routing or
 replace OpenAI reasoning configuration without an explicit separate-provider
@@ -365,9 +434,15 @@ Training data must pass the local dataset gate. Allowed sources are:
 - `redacted_consented_log`
 
 Rejected sources include `openai_output`, `openai_judgment`,
-`custom_gpt_action_request`, `hidden_reasoning`, `raw_secret`, `unknown`,
-`third_party_copyrighted`, and `model_generated_label_without_human_review`.
+`railway_cli_observation`, `custom_gpt_action_request`, `hidden_reasoning`,
+`raw_secret`, `unknown`, `third_party_copyrighted`, and
+`model_generated_label_without_human_review`.
 OpenAI API model outputs must not be harvested into GPT-OSS training labels.
+
+The Railway-safe routing dataset is spec-authored optional future material. It
+teaches routing protocol for safe Railway-backed diagnostics, not live backend
+state. It is not part of active training, raw Railway output remains
+non-trainable, and training from it requires a separate explicit future step.
 
 The smoke dataset is:
 

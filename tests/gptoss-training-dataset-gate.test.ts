@@ -6,9 +6,11 @@ import { spawnSync } from 'node:child_process';
 const scriptPath = join(process.cwd(), 'scripts', 'gptoss', 'dataset-gate.mjs');
 const validateDatasetScriptPath = join(process.cwd(), 'scripts', 'gptoss', 'validate-training-dataset.mjs');
 const phase34DatasetPath = join(process.cwd(), 'examples', 'gptoss', 'arcanos-phase3-4-training.jsonl');
+const phase35DatasetPath = join(process.cwd(), 'examples', 'gptoss', 'arcanos-phase3-5-target-shape-training.jsonl');
 const microDatasetPath = join(process.cwd(), 'examples', 'gptoss', 'arcanos-micro-overfit-training.jsonl');
 const singleJsonDatasetPath = join(process.cwd(), 'examples', 'gptoss', 'arcanos-single-json-overfit-training.jsonl');
 const singleSafetyDatasetPath = join(process.cwd(), 'examples', 'gptoss', 'arcanos-single-safety-overfit-training.jsonl');
+const trainingSchemaPath = join(process.cwd(), 'schemas', 'gptoss-training-record.schema.json');
 const trainingMetadata = { target_shape: 'compact_final', no_openai_output_used: true };
 
 function runDatasetGate(lines: string[]) {
@@ -59,6 +61,45 @@ describe('gptoss training dataset gate', () => {
     expect(newRows.every((row) => row.messages.filter((message) => message.role === 'assistant').length === 1)).toBe(true);
     for (const row of newRows.filter((row) => row.metadata.target_shape === 'json_only')) {
       JSON.parse(row.messages.find((message) => message.role === 'assistant').content);
+    }
+  });
+
+  it('validates the phase3.5 target-shape training fixture', () => {
+    const completed = spawnSync(process.execPath, [validateDatasetScriptPath, phase35DatasetPath], {
+      encoding: 'utf8',
+    });
+    const parsed = JSON.parse(completed.stdout);
+
+    expect(completed.status).toBe(0);
+    expect(completed.stderr).toBe('');
+    expect(parsed).toMatchObject({
+      ok: true,
+      checked: 120,
+      accepted: 120,
+      rejected: 0,
+      errors: [],
+    });
+
+    const rows = readFileSync(phase35DatasetPath, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+    const newRows = rows.filter((row) => String(row.id).startsWith('phase3-5-'));
+    expect(rows).toHaveLength(120);
+    expect(newRows).toHaveLength(40);
+    expect(newRows.every((row) => row.source !== 'railway_cli_observation')).toBe(true);
+    expect(newRows.every((row) => Array.isArray(row.messages) && !('text' in row))).toBe(true);
+    expect(newRows.every((row) => row.metadata?.no_openai_output_used === true)).toBe(true);
+    expect(newRows.every((row) => ['label_only', 'json_only', 'compact_final'].includes(row.metadata?.target_shape))).toBe(true);
+    expect(newRows.every((row) => row.messages.filter((message) => message.role === 'assistant').length === 1)).toBe(true);
+
+    const assistantTargets = newRows.map((row) => row.messages.find((message) => message.role === 'assistant').content);
+    for (const row of newRows.filter((row) => row.metadata.target_shape === 'json_only')) {
+      JSON.parse(row.messages.find((message) => message.role === 'assistant').content);
+    }
+    for (const row of newRows.filter((row) => row.metadata.target_shape === 'label_only')) {
+      const target = row.messages.find((message) => message.role === 'assistant').content;
+      expect(target).toMatch(/^\S{1,64}$/);
+    }
+    for (const expectedAction of ['railway.logs', 'railway.status', 'validate_dataset', 'reject', 'reject_training_from_raw_logs']) {
+      expect(assistantTargets.some((target) => target.includes(expectedAction))).toBe(true);
     }
   });
 
@@ -224,6 +265,45 @@ describe('gptoss training dataset gate', () => {
     ]);
   });
 
+  it('rejects invalid json_only and prose label_only targets', () => {
+    const result = runDatasetGate([
+      JSON.stringify({
+        source: 'repo_schema',
+        allowed_for_training: true,
+        reviewed: true,
+        messages: [
+          { role: 'system', content: 'Return only the final answer.' },
+          { role: 'user', content: 'Return a JSON action.' },
+          { role: 'assistant', content: '{not valid json}' },
+        ],
+        metadata: {
+          target_shape: 'json_only',
+          no_openai_output_used: true,
+        },
+      }),
+      JSON.stringify({
+        source: 'repo_schema',
+        allowed_for_training: true,
+        reviewed: true,
+        messages: [
+          { role: 'system', content: 'Return only the final answer.' },
+          { role: 'user', content: 'Return the route label.' },
+          { role: 'assistant', content: 'control plane' },
+        ],
+        metadata: {
+          target_shape: 'label_only',
+          no_openai_output_used: true,
+        },
+      }),
+    ]);
+
+    expect(result.status).toBe(1);
+    expect(result.parsed.errors).toEqual([
+      { line: 1, code: 'json_assistant_target_invalid' },
+      { line: 2, code: 'label_only_target_not_compact' },
+    ]);
+  });
+
   it('requires strict metadata for training rows', () => {
     const result = runDatasetGate([
       JSON.stringify({ source: 'repo_schema', text: 'Missing metadata.', allowed_for_training: true }),
@@ -278,22 +358,39 @@ describe('gptoss training dataset gate', () => {
       JSON.stringify({ source: 'custom_gpt_action_request', text: 'action request payload', metadata: trainingMetadata }),
       JSON.stringify({ source: 'third_party_copyrighted', text: 'copyrighted text', metadata: trainingMetadata }),
       JSON.stringify({ source: 'model_generated_label_without_human_review', text: 'synthetic label', metadata: trainingMetadata }),
+      JSON.stringify({ source: 'railway_cli_observation', text: 'redacted observation draft', allowed_for_training: false, reviewed: false, metadata: trainingMetadata }),
       JSON.stringify({ source: 'unreviewed_web_scrape', text: 'unknown provenance', metadata: trainingMetadata }),
     ]);
 
     expect(result.status).toBe(1);
     expect(result.parsed).toMatchObject({
       ok: false,
-      checked: 5,
+      checked: 6,
       accepted: 0,
-      rejected: 5,
+      rejected: 6,
     });
     expect(result.parsed.errors).toEqual([
       { line: 1, code: 'rejected_source', source: 'openai_output' },
       { line: 2, code: 'rejected_source', source: 'custom_gpt_action_request' },
       { line: 3, code: 'rejected_source', source: 'third_party_copyrighted' },
       { line: 4, code: 'rejected_source', source: 'model_generated_label_without_human_review' },
-      { line: 5, code: 'unknown_source', source: 'unreviewed_web_scrape' },
+      { line: 5, code: 'rejected_source', source: 'railway_cli_observation' },
+      { line: 6, code: 'unknown_source', source: 'unreviewed_web_scrape' },
+    ]);
+  });
+
+  it('keeps railway CLI observations unreviewed and unavailable for training', () => {
+    const result = runDatasetGate([
+      JSON.stringify({ source: 'railway_cli_observation', text: 'redacted observation draft', allowed_for_training: true, reviewed: false, metadata: trainingMetadata }),
+      JSON.stringify({ source: 'railway_cli_observation', text: 'redacted observation draft', allowed_for_training: false, metadata: trainingMetadata }),
+      JSON.stringify({ source: 'railway_cli_observation', text: 'redacted observation draft', allowed_for_training: false, reviewed: true, metadata: trainingMetadata }),
+    ]);
+
+    expect(result.status).toBe(1);
+    expect(result.parsed.errors).toEqual([
+      { line: 1, code: 'allowed_for_training_must_be_false', source: 'railway_cli_observation' },
+      { line: 2, code: 'reviewed_must_be_false', source: 'railway_cli_observation' },
+      { line: 3, code: 'reviewed_must_be_false', source: 'railway_cli_observation' },
     ]);
   });
 
@@ -368,15 +465,69 @@ describe('gptoss training dataset gate', () => {
         reviewed: true,
         metadata: trainingMetadata,
       }),
+      JSON.stringify({
+        source: 'human_authored',
+        text: 'RAILWAY_TOKEN=rwy_abcdefghijklmnopqrstuvwxyz123456 should not be admitted',
+        allowed_for_training: true,
+        reviewed: true,
+        metadata: trainingMetadata,
+      }),
+      JSON.stringify({
+        source: 'human_authored',
+        text: 'DATABASE_URL=postgresql://user:pass@host/db should not be admitted',
+        allowed_for_training: true,
+        reviewed: true,
+        metadata: trainingMetadata,
+      }),
     ]);
 
     expect(result.status).toBe(1);
     expect(result.parsed).toMatchObject({
       ok: false,
-      checked: 1,
+      checked: 3,
       accepted: 0,
-      rejected: 1,
-      errors: [{ line: 1, code: 'secret_marker' }],
+      rejected: 3,
+      errors: [
+        { line: 1, code: 'secret_marker' },
+        { line: 2, code: 'secret_marker' },
+        { line: 3, code: 'secret_marker' },
+      ],
+    });
+  });
+
+  it('rejects raw log-looking dataset rows', () => {
+    const result = runDatasetGate([
+      JSON.stringify({
+        source: 'human_authored',
+        text: '2026-05-16T12:00:00Z ERROR deploy logs raw railway line',
+        allowed_for_training: true,
+        reviewed: true,
+        metadata: trainingMetadata,
+      }),
+    ]);
+
+    expect(result.status).toBe(1);
+    expect(result.parsed.errors).toEqual([
+      { line: 1, code: 'raw_log_marker' },
+    ]);
+  });
+
+  it('documents railway CLI observation schema as rejected draft provenance', () => {
+    const schema = JSON.parse(readFileSync(trainingSchemaPath, 'utf8'));
+
+    expect(schema.properties.source.enum).toContain('railway_cli_observation');
+    const railwayRule = schema.allOf.find((rule) => (
+      rule.if?.properties?.source?.const === 'railway_cli_observation'
+    ));
+
+    expect(railwayRule).toMatchObject({
+      then: {
+        properties: {
+          allowed_for_training: { const: false },
+          reviewed: { const: false },
+        },
+        required: ['reviewed'],
+      },
     });
   });
 

@@ -13,6 +13,7 @@
         "repo_schema",
         "human_authored",
         "redacted_consented_log",
+        "railway_cli_observation",
         "openai_output",
         "openai_judgment",
         "custom_gpt_action_request",
@@ -97,6 +98,27 @@
             "const": false
           }
         }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "source": {
+            "const": "railway_cli_observation"
+          }
+        },
+        "required": ["source"]
+      },
+      "then": {
+        "properties": {
+          "allowed_for_training": {
+            "const": false
+          },
+          "reviewed": {
+            "const": false
+          }
+        },
+        "required": ["reviewed"]
       }
     },
     {

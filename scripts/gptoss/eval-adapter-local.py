@@ -98,6 +98,8 @@ def parse_args(raw_args: list[str]) -> argparse.Namespace:
     parser.add_argument("--top-p", type=float, default=float(os.environ.get("ARCANOS_EVAL_TOP_P", str(DEFAULT_TOP_P))))
     parser.add_argument("--repetition-penalty", type=float, default=float(os.environ.get("ARCANOS_EVAL_REPETITION_PENALTY", str(DEFAULT_REPETITION_PENALTY))))
     parser.add_argument("--compare-base-adapter", action="store_true", help="Run a sequential max-3 base-vs-adapter comparison.")
+    parser.add_argument("--force-final-channel", action="store_true", help="Diagnostic mode: force the tokenizer-derived Harmony final-channel boundary before generation.")
+    parser.add_argument("--prefill-json-start", action="store_true", help="Diagnostic mode: prefill JSON-only final answers with { after a final-channel-safe prefix.")
     parser.add_argument("--dry-run", action="store_true", default=True)
     parser.add_argument("--execute", action="store_false", dest="dry_run", help="Load the model and run generation.")
     options = parser.parse_args(raw_args)
@@ -204,6 +206,12 @@ def build_base_report(options: argparse.Namespace, adapter: dict[str, Any], reco
             "eosTokenIdPresent": False,
             "padTokenIdPresent": False,
         },
+        "forceFinalChannel": options.force_final_channel,
+        "prefillJsonStart": options.prefill_json_start,
+        "diagnosticModes": {
+            "forceFinalChannel": options.force_final_channel,
+            "prefillJsonStart": options.prefill_json_start,
+        },
         "allowedForTraining": False,
         "openAiCalled": False,
         "noOpenAiOutputUsed": True,
@@ -282,21 +290,39 @@ def generate_outputs(options: argparse.Namespace, records: list[dict[str, Any]],
     chat_template_used = False
     chat_template_fallback_used = False
     for record in records:
-        prompt, used_template = build_prompt(tokenizer, record)
+        prompt, used_template, prompt_diagnostics = build_prompt(tokenizer, record, options)
         chat_template_used = chat_template_used or used_template
         chat_template_fallback_used = chat_template_fallback_used or not used_template
         prompt_token_limit = max(32, options.max_seq_length - options.max_new_tokens)
         inputs = tokenizer(prompt, return_tensors="pt", truncation=True, max_length=prompt_token_limit).to(model.device)
+        prefix_ids = inputs["input_ids"][0].detach().cpu().tolist()
+        last_prefix_token_ids = prefix_ids[-16:]
+        prompt_diagnostics = {
+            **prompt_diagnostics,
+            "lastPrefixTokenIds": last_prefix_token_ids,
+            "lastPrefixDecodedPreview": tokenizer.decode(last_prefix_token_ids, skip_special_tokens=False)[-300:],
+        }
         with torch.inference_mode():
             generated = model.generate(**inputs, **generation_kwargs)
         new_tokens = generated[0][inputs["input_ids"].shape[-1]:]
         raw_text = tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
-        extraction = extract_final_output(raw_text, record.get("expected", {}).get("json_object") is True)
+        expects_json = is_json_eval_record(record)
+        assembled_text = f"{{{raw_text}" if prompt_diagnostics["jsonPrefillApplied"] else raw_text
+        extraction = extract_final_output(assembled_text, expects_json)
+        json_diagnostics = inspect_json_result(extraction["finalText"], record) if expects_json else {
+            "validJson": None,
+            "jsonParseError": None,
+            "requiredJsonFieldsPresent": None,
+        }
         outputs[record["id"]] = {
             "rawGeneratedText": raw_text,
+            "rawGeneratedTextSummary": summarize_output(raw_text),
             "finalText": extraction["finalText"],
             "finalExtractionApplied": extraction["finalExtractionApplied"],
             "finalExtractionReason": extraction["finalExtractionReason"],
+            "assembledFinalText": assembled_text if prompt_diagnostics["jsonPrefillApplied"] else extraction["finalText"],
+            **prompt_diagnostics,
+            **json_diagnostics,
         }
     return {
         "outputs": outputs,
@@ -391,8 +417,28 @@ def score_record_outputs(records: list[dict[str, Any]], outputs: dict[str, dict[
             "id": record["id"],
             "passed": len(record_failures) == 0,
             "failures": record_failures,
+            "rawGeneratedTextSummary": summarize_output(output["rawGeneratedText"]),
+            "finalText": output["finalText"],
             "finalExtractionApplied": output["finalExtractionApplied"],
             "finalExtractionReason": output["finalExtractionReason"],
+            "addGenerationPromptUsed": output.get("addGenerationPromptUsed"),
+            "generationPrefixTail": output.get("generationPrefixTail"),
+            "prefixAppearsAnalysisChannel": output.get("prefixAppearsAnalysisChannel"),
+            "prefixAppearsFinalChannel": output.get("prefixAppearsFinalChannel"),
+            "finalBoundaryCandidate": output.get("finalBoundaryCandidate"),
+            "finalBoundaryTokenIds": output.get("finalBoundaryTokenIds"),
+            "lastPrefixTokenIds": output.get("lastPrefixTokenIds"),
+            "lastPrefixDecodedPreview": output.get("lastPrefixDecodedPreview"),
+            "forceFinalChannel": output.get("forceFinalChannel"),
+            "finalChannelBoundaryApplied": output.get("finalChannelBoundaryApplied"),
+            "finalChannelBoundarySource": output.get("finalChannelBoundarySource"),
+            "finalChannelBoundaryTextPreview": output.get("finalChannelBoundaryTextPreview"),
+            "jsonPrefillApplied": output.get("jsonPrefillApplied"),
+            "jsonPrefillText": output.get("jsonPrefillText"),
+            "assembledFinalText": output.get("assembledFinalText"),
+            "validJson": output.get("validJson"),
+            "jsonParseError": output.get("jsonParseError"),
+            "requiredJsonFieldsPresent": output.get("requiredJsonFieldsPresent"),
         })
         if record_failures:
             failures.append({
@@ -403,6 +449,24 @@ def score_record_outputs(records: list[dict[str, Any]], outputs: dict[str, dict[
                 "finalText": output["finalText"],
                 "finalExtractionApplied": output["finalExtractionApplied"],
                 "finalExtractionReason": output["finalExtractionReason"],
+                "addGenerationPromptUsed": output.get("addGenerationPromptUsed"),
+                "generationPrefixTail": output.get("generationPrefixTail"),
+                "prefixAppearsAnalysisChannel": output.get("prefixAppearsAnalysisChannel"),
+                "prefixAppearsFinalChannel": output.get("prefixAppearsFinalChannel"),
+                "finalBoundaryCandidate": output.get("finalBoundaryCandidate"),
+                "finalBoundaryTokenIds": output.get("finalBoundaryTokenIds"),
+                "lastPrefixTokenIds": output.get("lastPrefixTokenIds"),
+                "lastPrefixDecodedPreview": output.get("lastPrefixDecodedPreview"),
+                "forceFinalChannel": output.get("forceFinalChannel"),
+                "finalChannelBoundaryApplied": output.get("finalChannelBoundaryApplied"),
+                "finalChannelBoundarySource": output.get("finalChannelBoundarySource"),
+                "finalChannelBoundaryTextPreview": output.get("finalChannelBoundaryTextPreview"),
+                "jsonPrefillApplied": output.get("jsonPrefillApplied"),
+                "jsonPrefillText": output.get("jsonPrefillText"),
+                "assembledFinalText": output.get("assembledFinalText"),
+                "validJson": output.get("validJson"),
+                "jsonParseError": output.get("jsonParseError"),
+                "requiredJsonFieldsPresent": output.get("requiredJsonFieldsPresent"),
                 "observedSummary": summarize_output(output["finalText"]),
             })
     return {
@@ -419,6 +483,7 @@ def missing_output() -> dict[str, Any]:
         "finalText": "",
         "finalExtractionApplied": False,
         "finalExtractionReason": "missing_output",
+        "rawGeneratedTextSummary": "",
     }
 
 
@@ -432,10 +497,63 @@ def summarize_delta(base_passed: bool, adapter_passed: bool) -> str:
     return "both failed"
 
 
-def build_prompt(tokenizer: Any, record: dict[str, Any]) -> tuple[str, bool]:
+def build_prompt(tokenizer: Any, record: dict[str, Any], options: argparse.Namespace | None = None) -> tuple[str, bool, dict[str, Any]]:
+    options = options or argparse.Namespace(force_final_channel=False, prefill_json_start=False)
+    messages = build_eval_messages(record)
+    prompt, used_template = render_generation_prefix(tokenizer, messages)
+    boundary = derive_final_channel_boundary(tokenizer, messages)
+    diagnostics = build_prefix_diagnostics(
+        tokenizer=tokenizer,
+        prompt=prompt,
+        boundary=boundary,
+        add_generation_prompt_used=used_template,
+        force_final_channel=options.force_final_channel,
+    )
+
+    if options.force_final_channel:
+        if not boundary["available"]:
+            raise RuntimeError(f"{record.get('id', '<unknown>')}: final-channel boundary derivation failed: {boundary['reason']}")
+        prompt = f"{prompt}{boundary['text']}"
+        diagnostics = build_prefix_diagnostics(
+            tokenizer=tokenizer,
+            prompt=prompt,
+            boundary=boundary,
+            add_generation_prompt_used=used_template,
+            force_final_channel=True,
+        )
+        diagnostics["finalChannelBoundaryApplied"] = True
+        if diagnostics["prefixAppearsAnalysisChannel"] or not diagnostics["prefixAppearsFinalChannel"]:
+            raise RuntimeError(f"{record.get('id', '<unknown>')}: derived boundary did not produce a final-channel-safe prefix")
+
+    json_prefill_applied = False
+    if options.prefill_json_start and is_json_eval_record(record):
+        if not options.force_final_channel and not diagnostics["prefixAppearsFinalChannel"]:
+            raise RuntimeError(f"{record.get('id', '<unknown>')}: --prefill-json-start requires --force-final-channel or a final-channel-safe prefix")
+        prompt = f"{prompt}{{"
+        json_prefill_applied = True
+        diagnostics = {
+            **diagnostics,
+            "generationPrefixTail": prompt[-300:],
+            "jsonPrefillApplied": True,
+            "jsonPrefillText": "{",
+        }
+    else:
+        diagnostics = {
+            **diagnostics,
+            "jsonPrefillApplied": False,
+            "jsonPrefillText": None,
+        }
+
+    if options.prefill_json_start and not json_prefill_applied and not is_json_eval_record(record):
+        diagnostics["jsonPrefillSkippedReason"] = "non_json_record"
+
+    return prompt, used_template, diagnostics
+
+
+def build_eval_messages(record: dict[str, Any]) -> list[dict[str, str]]:
     expected = record.get("expected", {})
     output_contract = "Return only a JSON object." if expected.get("json_object") is True else "Return one compact final answer."
-    messages = [
+    return [
         {
             "role": "system",
             "content": "You are a local Arcanos GPT-OSS adapter under evaluation. Return only the final answer. Do not expose private rationale or secrets.",
@@ -450,6 +568,9 @@ def build_prompt(tokenizer: Any, record: dict[str, Any]) -> tuple[str, bool]:
         },
         {"role": "user", "content": record["prompt"]},
     ]
+
+
+def render_generation_prefix(tokenizer: Any, messages: list[dict[str, str]]) -> tuple[str, bool]:
     if hasattr(tokenizer, "apply_chat_template") and getattr(tokenizer, "chat_template", None):
         try:
             return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True), True
@@ -468,6 +589,157 @@ def build_prompt(tokenizer: Any, record: dict[str, Any]) -> tuple[str, bool]:
         ]
     )
     return fallback, False
+
+
+def derive_final_channel_boundary(tokenizer: Any, messages: list[dict[str, str]]) -> dict[str, Any]:
+    if not (hasattr(tokenizer, "apply_chat_template") and getattr(tokenizer, "chat_template", None)):
+        return unavailable_boundary("chat_template_unavailable")
+
+    sentinel = "__ARCANOS_FINAL_BOUNDARY_SENTINEL__"
+    try:
+        prefix = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        full = tokenizer.apply_chat_template(
+            [*messages, {"role": "assistant", "content": sentinel}],
+            tokenize=False,
+            add_generation_prompt=False,
+        )
+    except Exception as error:
+        return unavailable_boundary(f"chat_template_render_failed:{error}")
+
+    start = full.rfind(sentinel)
+    if start < 0:
+        return unavailable_boundary("assistant_sentinel_not_found")
+    if not full.startswith(prefix):
+        return unavailable_boundary("full_render_does_not_start_with_generation_prefix")
+
+    boundary = full[len(prefix):start]
+    if not boundary:
+        return unavailable_boundary("empty_final_boundary")
+    token_ids = encode_text(tokenizer, boundary)
+    if not token_ids:
+        return unavailable_boundary("boundary_tokenization_empty")
+    if appears_final_channel(f"{prefix}{boundary}"):
+        return available_boundary("tokenizer_derived", boundary, token_ids)
+
+    fallback = "<|channel|>final<|message|>"
+    fallback_ids = encode_text(tokenizer, fallback)
+    if prefix.endswith("<|start|>assistant") and fallback_ids and appears_final_channel(f"{prefix}{fallback}"):
+        return available_boundary("literal_fallback", fallback, fallback_ids, "tokenizer_boundary_did_not_include_final_channel")
+
+    return unavailable_boundary("boundary_does_not_produce_final_channel")
+
+
+def available_boundary(source: str, text: str, token_ids: list[int], reason: str | None = None) -> dict[str, Any]:
+    return {
+        "available": True,
+        "source": source,
+        "text": text,
+        "tokenIds": token_ids,
+        "reason": reason,
+    }
+
+
+def unavailable_boundary(reason: str) -> dict[str, Any]:
+    return {
+        "available": False,
+        "source": "unavailable",
+        "text": "",
+        "tokenIds": [],
+        "reason": reason,
+    }
+
+
+def build_prefix_diagnostics(
+    tokenizer: Any,
+    prompt: str,
+    boundary: dict[str, Any],
+    add_generation_prompt_used: bool,
+    force_final_channel: bool,
+) -> dict[str, Any]:
+    tail = prompt[-300:]
+    prefix_analysis = appears_analysis_channel(tail)
+    prefix_final = appears_final_channel(tail)
+    return {
+        "addGenerationPromptUsed": add_generation_prompt_used,
+        "generationPrefixTail": tail,
+        "prefixAppearsAnalysisChannel": prefix_analysis,
+        "prefixAppearsFinalChannel": prefix_final,
+        "finalBoundaryCandidate": boundary["text"] if boundary["available"] else "",
+        "finalBoundaryTokenIds": boundary["tokenIds"],
+        "lastPrefixTokenIds": [],
+        "lastPrefixDecodedPreview": "",
+        "forceFinalChannel": force_final_channel,
+        "finalChannelBoundaryApplied": False,
+        "finalChannelBoundarySource": boundary["source"],
+        "finalChannelBoundaryTextPreview": boundary["text"][:120] if boundary["available"] else "",
+        "finalChannelBoundaryTokenIds": boundary["tokenIds"],
+        "finalChannelBoundaryUnavailableReason": boundary["reason"],
+        "jsonPrefillApplied": False,
+        "jsonPrefillText": None,
+    }
+
+
+def appears_analysis_channel(text: str) -> bool:
+    return bool(re.search(r"<\|channel\|>\s*analysis\b|\banalysis\s*<\|message\|>|(?:^|[>\s])analysis$", text, flags=re.IGNORECASE))
+
+
+def appears_final_channel(text: str) -> bool:
+    return bool(re.search(r"<\|channel\|>\s*final\b|\bfinal\s*<\|message\|>", text, flags=re.IGNORECASE))
+
+
+def encode_text(tokenizer: Any, text: str) -> list[int]:
+    encoded = tokenizer(text, add_special_tokens=False)
+    input_ids = encoded.get("input_ids") if hasattr(encoded, "get") else encoded
+    if hasattr(input_ids, "tolist"):
+        input_ids = input_ids.tolist()
+    if input_ids and isinstance(input_ids[0], list):
+        input_ids = input_ids[0]
+    return list(input_ids)
+
+
+def is_json_eval_record(record: dict[str, Any]) -> bool:
+    expected = record.get("expected", {})
+    metadata = record.get("metadata", {})
+    return expected.get("json_object") is True or metadata.get("target_shape") == "json_only"
+
+
+def inspect_json_result(text: str, record: dict[str, Any]) -> dict[str, Any]:
+    expected = record.get("expected", {})
+    if not is_json_eval_record(record):
+        return {
+            "validJson": None,
+            "jsonParseError": None,
+            "requiredJsonFieldsPresent": None,
+        }
+
+    try:
+        parsed = json.loads(str(text or ""))
+    except Exception as error:
+        return {
+            "validJson": False,
+            "jsonParseError": str(error),
+            "requiredJsonFieldsPresent": False,
+        }
+
+    required_fields = expected.get("required_json_fields", [])
+    serialized = json.dumps(parsed, sort_keys=True, separators=(",", ":")).lower()
+    required_terms = expected.get("must_include", [])
+    return {
+        "validJson": True,
+        "jsonParseError": None,
+        "requiredJsonFieldsPresent": (
+            all(json_has_key(parsed, str(field)) for field in required_fields)
+            and all(str(item).lower() in serialized for item in required_terms)
+        ),
+    }
+
+
+def json_has_key(value: Any, field: str) -> bool:
+    if isinstance(value, dict):
+        return field in value or any(json_has_key(item, field) for item in value.values())
+    if isinstance(value, list):
+        return any(json_has_key(item, field) for item in value)
+    return False
 
 
 def extract_final_output(decoded: str, expects_json: bool) -> dict[str, Any]:
@@ -559,11 +831,16 @@ def evaluate_output(record: dict[str, Any], output: str) -> list[str]:
     failures = []
     text = str(output or "")
     lower = text.lower()
+    parsed_json: Any | None = None
     if expected.get("json_object") is True:
         try:
-            json.loads(text)
+            parsed_json = json.loads(text)
         except Exception:
             failures.append("invalid_json")
+        if parsed_json is not None:
+            for field in expected.get("required_json_fields", []):
+                if not json_has_key(parsed_json, str(field)):
+                    failures.append(f"missing_json_field:{field}")
     plane = expected.get("plane")
     if isinstance(plane, str) and plane.lower() not in lower:
         failures.append("plane_mismatch")

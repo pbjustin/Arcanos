@@ -63,6 +63,7 @@ MIN_FREE_GB = 80
 MAX_SAFE_STEPS = 100
 MAX_SINGLE_RECORD_OVERFIT_STEPS = 150
 MAX_SAFE_SAMPLES = 80
+MAX_PHASE35_SAMPLES = 120
 
 
 def main() -> int:
@@ -71,7 +72,7 @@ def main() -> int:
 
     try:
         options.max_steps = min(options.max_steps, max_steps_cap(options.output_dir))
-        options.max_samples = min(options.max_samples, MAX_SAFE_SAMPLES)
+        options.max_samples = min(options.max_samples, max_samples_cap(options.output_dir))
         records = validate_dataset(options.dataset)
         mask_audit = build_mask_audit(options, records)
         if options.mask_audit:
@@ -306,7 +307,7 @@ def build_config(
             "lora_dropout": options.lora_dropout,
             "max_steps_cap": max_steps_cap(options.output_dir),
             "max_samples": options.max_samples,
-            "max_samples_cap": MAX_SAFE_SAMPLES,
+            "max_samples_cap": max_samples_cap(options.output_dir),
             "save_strategy": training_args_save_strategy,
         },
         "artifactConfig": {
@@ -691,6 +692,8 @@ def artifact_mode(output_dir: Path) -> str:
         return "micro-overfit"
     if "gptoss-phase3-4-lowlr" in output_text:
         return "phase3-4-lowlr"
+    if "gptoss-phase3-5-lowlr" in output_text:
+        return "phase3-5-lowlr"
     if "gptoss-phase3-lowlr" in output_text:
         return "phase3-lowlr"
     if "gptoss-phase3" in output_text:
@@ -705,6 +708,12 @@ def max_steps_cap(output_dir: Path) -> int:
     if mode in {"single-json-overfit", "single-safety-overfit"}:
         return MAX_SINGLE_RECORD_OVERFIT_STEPS
     return MAX_SAFE_STEPS
+
+
+def max_samples_cap(output_dir: Path) -> int:
+    if artifact_mode(output_dir) == "phase3-5-lowlr":
+        return MAX_PHASE35_SAMPLES
+    return MAX_SAFE_SAMPLES
 
 
 def assert_adapter_artifacts(output_dir: Path) -> None:

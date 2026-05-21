@@ -14,6 +14,7 @@ export const ACCEPTED_SOURCES = new Set([
 export const REJECTED_SOURCES = new Set([
   'openai_output',
   'openai_judgment',
+  'railway_cli_observation',
   'custom_gpt_action_request',
   'hidden_reasoning',
   'raw_secret',
@@ -25,7 +26,16 @@ export const REJECTED_SOURCES = new Set([
 const SECRET_PATTERNS = [
   /\bsk-[A-Za-z0-9_-]{20,}\b/,
   /\bBearer\s+[A-Za-z0-9._~+/=-]{20,}\b/i,
-  /\b(api[_-]?key|token|password|secret)\b\s*[:=]\s*["']?[^"',\s]{8,}/i
+  /\b(api[_-]?key|token|password|secret)\b\s*[:=]\s*["']?[^"',\s]{8,}/i,
+  /\b(?:RAILWAY_TOKEN|RAILWAY_API_TOKEN|OPENAI_API_KEY|DATABASE_URL|POSTGRES_URL|REDIS_URL)\b\s*[:=]\s*["']?[^"',\s]{8,}/i,
+  /\b(?:postgres|postgresql|mysql|mongodb|redis):\/\/[^\s"',]+/i,
+  /\b(?:railway|rwy|rw)_[A-Za-z0-9_=]{16,}\b/i
+];
+
+const RAW_LOG_PATTERNS = [
+  /\bStarting\s+Container\b/i,
+  /\b(?:INFO|WARN|ERROR|DEBUG)\b\s+[-.:/@A-Za-z0-9_ ]{8,}/,
+  /\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z\b.*\b(?:INFO|WARN|ERROR|DEBUG|Traceback)\b/i
 ];
 
 const OPENAI_OUTPUT_FIELDS = new Set(['openai_output', 'openai_judgment', 'hidden_reasoning']);
@@ -81,6 +91,10 @@ function hasOpenAiOutputMarker(record) {
 
 function hasSecretMarker(rawLine) {
   return SECRET_PATTERNS.some((pattern) => pattern.test(rawLine));
+}
+
+function hasRawLogMarker(rawLine) {
+  return RAW_LOG_PATTERNS.some((pattern) => pattern.test(rawLine));
 }
 
 function validateMetadata(record, lineNumber, errors) {
@@ -147,6 +161,23 @@ function validateMessages(record, lineNumber, errors) {
     return false;
   }
 
+  if (record.metadata?.target_shape === 'json_only') {
+    try {
+      JSON.parse(assistantContent);
+    } catch (error) {
+      errors.push({ line: lineNumber, code: 'json_assistant_target_invalid' });
+      return false;
+    }
+  }
+
+  if (
+    record.metadata?.target_shape === 'label_only' &&
+    (!/^\S{1,64}$/.test(assistantContent) || /[{}[\]:,]/.test(assistantContent))
+  ) {
+    errors.push({ line: lineNumber, code: 'label_only_target_not_compact' });
+    return false;
+  }
+
   return true;
 }
 
@@ -159,10 +190,15 @@ export function validateRecord(record, rawLine, lineNumber, errors) {
   const source = typeof record.source === 'string' ? record.source : '';
 
   if (
-    (source === 'openai_output' || source === 'openai_judgment') &&
+    (source === 'openai_output' || source === 'openai_judgment' || source === 'railway_cli_observation') &&
     record.allowed_for_training !== false
   ) {
     errors.push({ line: lineNumber, code: 'allowed_for_training_must_be_false', source });
+    return false;
+  }
+
+  if (source === 'railway_cli_observation' && record.reviewed !== false) {
+    errors.push({ line: lineNumber, code: 'reviewed_must_be_false', source });
     return false;
   }
 
@@ -183,6 +219,11 @@ export function validateRecord(record, rawLine, lineNumber, errors) {
 
   if (hasSecretMarker(rawLine)) {
     errors.push({ line: lineNumber, code: 'secret_marker' });
+    return false;
+  }
+
+  if (hasRawLogMarker(rawLine)) {
+    errors.push({ line: lineNumber, code: 'raw_log_marker' });
     return false;
   }
 
