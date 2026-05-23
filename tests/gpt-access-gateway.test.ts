@@ -179,6 +179,24 @@ function allowCapabilityRun(scopes = 'capabilities.run', allowedModuleActions = 
   process.env.MCP_ALLOW_MODULE_ACTIONS = allowedModuleActions;
 }
 
+function allowCoreSystemStateRun(): void {
+  allowCapabilityRun('capabilities.run', 'ARCANOS:CORE:system_state');
+  getModuleMetadataMock.mockImplementation((capabilityId: unknown) => {
+    if (capabilityId !== 'ARCANOS:CORE' && capabilityId !== 'core') {
+      return null;
+    }
+
+    return {
+      name: 'ARCANOS:CORE',
+      description: 'Core runtime capability',
+      route: 'core',
+      actions: ['query', 'diagnostics', 'system_state'],
+      defaultAction: 'query',
+      defaultTimeoutMs: 30000
+    };
+  });
+}
+
 async function withoutOpenApiServerUrlEnv<T>(callback: () => Promise<T>): Promise<T> {
   const previousValues = new Map<string, string | undefined>();
   for (const envName of OPENAPI_SERVER_URL_ENV_KEYS) {
@@ -845,6 +863,77 @@ describe('/gpt-access gateway', () => {
     expect(response.status).toBe(403);
     expect(response.body.code).toBe('CONFIRMATION_REQUIRED');
     expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
+  it('runs read-only ARCANOS:CORE system_state without confirmation', async () => {
+    allowCoreSystemStateRun();
+    dispatchModuleActionMock.mockResolvedValueOnce({
+      mode: 'system_state',
+      backend: { connected: true }
+    });
+
+    const payload = {
+      focus: ['tooling', 'web lookup', 'search', 'retrieval', 'browser', 'fetch']
+    };
+    const response = await authorized(request(buildApp({ trustProxy: true })).post('/gpt-access/capabilities/v1/ARCANOS%3ACORE/run'))
+      .set('X-Forwarded-For', '203.0.113.30')
+      .send({
+        action: 'system_state',
+        payload
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(expect.objectContaining({
+      ok: true,
+      result: expect.objectContaining({
+        mode: 'system_state'
+      })
+    }));
+    expect(dispatchModuleActionMock).toHaveBeenCalledWith('ARCANOS:CORE', 'system_state', payload);
+  });
+
+  it('requires confirmation before ARCANOS:CORE system_state updates and accepts the matching challenge token', async () => {
+    allowCoreSystemStateRun();
+    const app = buildApp({ trustProxy: true });
+    const payload = {
+      expectedVersion: 1,
+      patch: { status: 'active' }
+    };
+
+    const challengeResponse = await authorized(request(app).post('/gpt-access/capabilities/v1/core/run'))
+      .set('X-Forwarded-For', '203.0.113.31')
+      .send({
+        action: 'system_state',
+        payload
+      });
+
+    const challengeId = challengeResponse.body.confirmationChallenge?.id;
+    expect(challengeResponse.status).toBe(403);
+    expect(challengeResponse.body.code).toBe('CONFIRMATION_REQUIRED');
+    expect(typeof challengeId).toBe('string');
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+
+    dispatchModuleActionMock.mockResolvedValueOnce({
+      mode: 'system_state',
+      intent: { status: 'active' }
+    });
+
+    const response = await authorized(request(app).post('/gpt-access/capabilities/v1/core/run'))
+      .set('X-Forwarded-For', '203.0.113.31')
+      .send({
+        action: 'system_state',
+        payload,
+        confirmation_token: challengeId
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(expect.objectContaining({
+      ok: true,
+      result: expect.objectContaining({
+        mode: 'system_state'
+      })
+    }));
+    expect(dispatchModuleActionMock).toHaveBeenCalledWith('ARCANOS:CORE', 'system_state', payload);
   });
 
   it('runs ARCANOS:CLI read-only actions without confirmation when the bridge is enabled', async () => {
