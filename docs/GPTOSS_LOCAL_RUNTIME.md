@@ -131,6 +131,21 @@ node scripts/gptoss/railway-cli-bridge.mjs --dry-run --action railway.logs --ser
 The Railway bridge is for redacted observation and eval/data drafting only.
 Details are in `docs/GPTOSS_RAILWAY_BRIDGE.md`.
 
+Inspect the optional GPT-OSS DB governance schema without opening a DB
+connection:
+
+```bash
+npm run gptoss:db:schema:dry
+npm run gptoss:db:governance:validate
+```
+
+The DB governance layer is a source-of-truth, eval ledger, and reviewed
+candidate store. It is not a raw training corpus and does not export anything
+to JSONL unless an approved-export command is explicitly executed. Details are
+in `docs/GPTOSS_DB_GOVERNANCE.md`.
+Live governance setup uses the guarded `npm run gptoss:db:schema:apply`
+command only after explicit approval.
+
 Run a live local GPT-OSS comparison. This contacts only the configured local
 OpenAI-compatible GPT-OSS endpoint unless reference mode is explicitly enabled:
 
@@ -412,9 +427,48 @@ the dataset. After training is explicitly requested, evaluate it with:
 node scripts/gptoss/eval-adapter-local.mjs --execute --adapter-dir local_artifacts/gptoss-phase3-5-lowlr --eval-file examples/gptoss/arcanos-eval-smoke.jsonl --output local_artifacts/gptoss-phase3-5-lowlr/eval-force-final.json --temperature 0 --max-new-tokens 32 --repetition-penalty 1.3 --force-final-channel
 ```
 
-OpenAI reference mode remains disabled. The Railway-safe dataset remains
-optional, spec-authored routing material and is not merged into active training
-unless a future step explicitly asks for it.
+Phase 3.5 reached 7/24 under force-final eval, equal to the previous best.
+Invalid JSON and safety-boundary failures were zero, while remaining failures
+were route labels, missing required tokens, and the `validate_dataset` action.
+Phase 3.6 therefore adds action/label disambiguation records instead of more
+generic JSON or safety examples:
+
+```bash
+npm run gptoss:phase3-6:dataset:validate
+npm run gptoss:unsloth:phase3-6:lowlr:dry
+npm run gptoss:unsloth:phase3-6:lowlr:mask-audit
+```
+
+Phase 3.6 training is a separate explicit step and was not run while preparing
+the dataset. After training is explicitly requested, evaluate it with:
+
+```bash
+node scripts/gptoss/eval-adapter-local.mjs --execute --adapter-dir local_artifacts/gptoss-phase3-6-lowlr --eval-file examples/gptoss/arcanos-eval-smoke.jsonl --output local_artifacts/gptoss-phase3-6-lowlr/eval-force-final.json --temperature 0 --max-new-tokens 32 --repetition-penalty 1.3 --force-final-channel
+```
+
+Phase 3.6 regressed to 6/24. Phase 3.7 is comparison-driven: it returns to
+the Phase 3.5 dataset as the base, adds only targeted repair records for the
+failed tokens/actions, and oversamples those repair records 3x in the local
+trainer. The source JSONL remains non-duplicated and human-reviewable:
+
+```bash
+npm run gptoss:phase3-7:dataset:validate
+npm run gptoss:unsloth:phase3-7:lowlr:dry
+npm run gptoss:unsloth:phase3-7:lowlr:mask-audit
+```
+
+Phase 3.7 training is a separate explicit step and was not run while preparing
+the dataset. After training is explicitly requested, evaluate it with:
+
+```bash
+node scripts/gptoss/eval-adapter-local.mjs --execute --adapter-dir local_artifacts/gptoss-phase3-7-lowlr --eval-file examples/gptoss/arcanos-eval-smoke.jsonl --output local_artifacts/gptoss-phase3-7-lowlr/eval-force-final.json --temperature 0 --max-new-tokens 32 --repetition-penalty 1.3 --force-final-channel
+```
+
+OpenAI reference mode remains disabled. The Railway bridge remains
+observation-only and unrelated to this dataset except for separate
+spec-authored routing examples. The Railway-safe dataset remains optional,
+spec-authored routing material and is not merged into active training unless a
+future step explicitly asks for it.
 
 Phase 4 is local serving and eval against a local endpoint. Phase 5 is a future
 cloud provider path. Neither phase should modify Railway production routing or
@@ -423,6 +477,34 @@ design.
 
 The OpenAI reference model remains evaluation-only and disabled for this local
 training phase.
+
+## Router Postprocessing
+
+Router/classifier eval mode reached 8/24 with forced final-channel decoding and
+JSON prefill. JSON prefill made the `validate_dataset` action syntactically
+valid, but the model returned a nested action object instead of the required
+top-level action string.
+
+The local eval postprocessor now applies only deterministic, allowlisted
+canonicalization for safe router action envelopes such as
+`{"action":{"type":"validate_dataset"}}` to `{"action":"validate_dataset"}`.
+It does not canonicalize prose, success-message JSON, unknown actions, or
+privileged actions.
+
+OpenAI-output-as-training-data remains a hard policy check. Affirmative answers
+about using OpenAI model outputs as GPT-OSS training targets must fail; compact
+rejections such as `No.` pass the policy check. This is evaluation/runtime
+diagnostics only, not training, and it does not enable the OpenAI reference
+model.
+
+The 9/24 postprocessed eval showed deterministic postprocessing helps but does
+not repair true model errors. The v2 scorer keeps hard policy failures strict,
+adds Unicode dash normalization only for exact route labels, and lets safe
+canonical JSON action envelopes expose token surfaces such as `validate`,
+`allowed`, and `false` for required-token checks. Wrong factual outputs such as
+Python owning the public protocol surface, `SLFTM` instead of `QLoRA 4-bit`, or
+`10` steps instead of `100` remain failures and are future training or
+retrieval candidates.
 
 ## Dataset Gate
 
@@ -443,6 +525,11 @@ The Railway-safe routing dataset is spec-authored optional future material. It
 teaches routing protocol for safe Railway-backed diagnostics, not live backend
 state. It is not part of active training, raw Railway output remains
 non-trainable, and training from it requires a separate explicit future step.
+
+DB-sourced `railway_cli_observation` and `eval_failure_observation` records are
+candidate-only and rejected by the dataset gate. Approved DB exports must be
+reviewed, redacted, explicitly allowed for training, and validated before they
+can become JSONL training examples. Raw DB dumps are prohibited.
 
 The smoke dataset is:
 

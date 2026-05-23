@@ -14,6 +14,8 @@
         "human_authored",
         "redacted_consented_log",
         "railway_cli_observation",
+        "eval_failure_observation",
+        "self_reflection_observation",
         "openai_output",
         "openai_judgment",
         "custom_gpt_action_request",
@@ -104,7 +106,7 @@
       "if": {
         "properties": {
           "source": {
-            "const": "railway_cli_observation"
+            "enum": ["railway_cli_observation", "eval_failure_observation", "self_reflection_observation"]
           }
         },
         "required": ["source"]

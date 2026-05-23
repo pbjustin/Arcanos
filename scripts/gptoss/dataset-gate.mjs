@@ -15,6 +15,8 @@ export const REJECTED_SOURCES = new Set([
   'openai_output',
   'openai_judgment',
   'railway_cli_observation',
+  'eval_failure_observation',
+  'self_reflection_observation',
   'custom_gpt_action_request',
   'hidden_reasoning',
   'raw_secret',
@@ -39,6 +41,11 @@ const RAW_LOG_PATTERNS = [
 ];
 
 const OPENAI_OUTPUT_FIELDS = new Set(['openai_output', 'openai_judgment', 'hidden_reasoning']);
+const CANDIDATE_ONLY_OBSERVATION_SOURCES = new Set([
+  'railway_cli_observation',
+  'eval_failure_observation',
+  'self_reflection_observation',
+]);
 const ACCEPTED_TARGET_SHAPES = new Set(['label_only', 'json_only', 'compact_final']);
 const ASSISTANT_TARGET_REJECT_PATTERNS = [
   /\bInput\s*:/i,
@@ -190,14 +197,16 @@ export function validateRecord(record, rawLine, lineNumber, errors) {
   const source = typeof record.source === 'string' ? record.source : '';
 
   if (
-    (source === 'openai_output' || source === 'openai_judgment' || source === 'railway_cli_observation') &&
+    (source === 'openai_output' ||
+      source === 'openai_judgment' ||
+      CANDIDATE_ONLY_OBSERVATION_SOURCES.has(source)) &&
     record.allowed_for_training !== false
   ) {
     errors.push({ line: lineNumber, code: 'allowed_for_training_must_be_false', source });
     return false;
   }
 
-  if (source === 'railway_cli_observation' && record.reviewed !== false) {
+  if (CANDIDATE_ONLY_OBSERVATION_SOURCES.has(source) && record.reviewed !== false) {
     errors.push({ line: lineNumber, code: 'reviewed_must_be_false', source });
     return false;
   }

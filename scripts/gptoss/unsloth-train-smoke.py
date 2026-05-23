@@ -64,6 +64,8 @@ MAX_SAFE_STEPS = 100
 MAX_SINGLE_RECORD_OVERFIT_STEPS = 150
 MAX_SAFE_SAMPLES = 80
 MAX_PHASE35_SAMPLES = 120
+MAX_PHASE36_SAMPLES = 152
+MAX_PHASE37_SAMPLES = 186
 
 
 def main() -> int:
@@ -134,6 +136,7 @@ def parse_args(raw_args: list[str]) -> argparse.Namespace:
     parser.add_argument("--max-seq-length", type=positive_int, default=int(os.environ.get("ARCANOS_MAX_SEQ_LENGTH", "512")))
     parser.add_argument("--max-steps", type=positive_int, default=int(os.environ.get("ARCANOS_UNSLOTH_MAX_STEPS", os.environ.get("ARCANOS_SMOKE_MAX_STEPS", "25"))))
     parser.add_argument("--max-samples", type=positive_int, default=int(os.environ.get("ARCANOS_SMOKE_MAX_SAMPLES", "8")))
+    parser.add_argument("--repeat-repair-records", type=positive_int, default=int(os.environ.get("ARCANOS_REPAIR_RECORD_REPEAT", "1")))
     parser.add_argument("--learning-rate", type=positive_float, default=float(os.environ.get("ARCANOS_UNSLOTH_LEARNING_RATE", "2e-4")))
     parser.add_argument("--warmup-ratio", type=ratio_float, default=float(os.environ.get("ARCANOS_UNSLOTH_WARMUP_RATIO", "0")))
     parser.add_argument("--lora-dropout", type=ratio_float, default=float(os.environ.get("ARCANOS_UNSLOTH_LORA_DROPOUT", "0")))
@@ -264,6 +267,7 @@ def build_config(
     training_args_save_strategy = "steps" if options.save_adapter else "no"
     dataset_count = len(records)
     message_count = sum(1 for record in records if "messages" in record)
+    sample_weighting = build_sample_weighting_report(records, options)
     return {
         "ok": True,
         "script": "scripts/gptoss/unsloth-train-smoke.py",
@@ -308,8 +312,13 @@ def build_config(
             "max_steps_cap": max_steps_cap(options.output_dir),
             "max_samples": options.max_samples,
             "max_samples_cap": max_samples_cap(options.output_dir),
+            "repairRepeatFactor": sample_weighting["repairRepeatFactor"],
+            "repairRecordCount": sample_weighting["repairRecordCount"],
+            "effectiveRepairSampleCount": sample_weighting["effectiveRepairSampleCount"],
+            "expandedTrainSampleCount": sample_weighting["expandedTrainSampleCount"],
             "save_strategy": training_args_save_strategy,
         },
+        "sampleWeighting": sample_weighting,
         "artifactConfig": {
             "saveAdapter": options.save_adapter,
             "outputDir": str(options.output_dir),
@@ -346,7 +355,7 @@ def run_training(options: argparse.Namespace, records: list[dict[str, Any]], con
         max_seq_length=options.max_seq_length,
         load_in_4bit=True,
     )
-    selected = records[: options.max_samples]
+    selected = select_training_records(records, options)
     dataset = Dataset.from_list([build_response_only_training_example(record, tokenizer, options.max_seq_length) for record in selected])
     model = FastLanguageModel.get_peft_model(
         model,
@@ -436,6 +445,7 @@ def save_adapter_artifacts(options: argparse.Namespace, model: Any, tokenizer: A
         "harmonyBoundaryTokensSupervised": True,
         "assistantContentSupervised": True,
         "maskStrategy": "harmony_final_boundary_plus_content",
+        "repairRepeatFactor": options.repeat_repair_records,
     }
     metadata_path = options.output_dir / "adapter-metadata.json"
     metadata_path.write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -465,7 +475,7 @@ def build_mask_audit(options: argparse.Namespace, records: list[dict[str, Any]])
     from transformers import AutoTokenizer
 
     tokenizer = AutoTokenizer.from_pretrained(options.model)
-    audited_records = records[: options.max_samples]
+    audited_records = select_training_records(records, options)
     audited_samples = [audit_response_only_mask(record, tokenizer, options.max_seq_length) for record in audited_records]
     samples = audited_samples[: min(options.mask_audit_samples, len(audited_samples))]
     assistant_spans_found = all(sample["assistantTargetFound"] for sample in audited_samples)
@@ -513,6 +523,7 @@ def build_mask_audit(options: argparse.Namespace, records: list[dict[str, Any]])
         "noOpenAiOutputUsed": True,
         "vllmCalled": False,
         "saveAdapterPath": str(options.output_dir),
+        "sampleWeighting": build_sample_weighting_report(records, options),
         "records": samples,
     }
 
@@ -682,6 +693,37 @@ def write_json_file(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def is_repair_record(record: dict[str, Any]) -> bool:
+    metadata = record.get("metadata")
+    return isinstance(metadata, dict) and metadata.get("phase3_7_repair") is True
+
+
+def select_training_records(records: list[dict[str, Any]], options: argparse.Namespace) -> list[dict[str, Any]]:
+    selected = records[: options.max_samples]
+    if options.repeat_repair_records <= 1:
+        return selected
+
+    repair_records = [record for record in selected if is_repair_record(record)]
+    expanded = selected + repair_records * (options.repeat_repair_records - 1)
+    return expanded[: options.max_samples]
+
+
+def build_sample_weighting_report(records: list[dict[str, Any]], options: argparse.Namespace) -> dict[str, Any]:
+    selected = records[: options.max_samples]
+    expanded = select_training_records(records, options)
+    repair_records = [record for record in selected if is_repair_record(record)]
+    effective_repair_samples = sum(1 for record in expanded if is_repair_record(record))
+    return {
+        "originalRecordCount": len(records),
+        "selectedSourceRecordCount": len(selected),
+        "expandedTrainSampleCount": len(expanded),
+        "repairRecordCount": len(repair_records),
+        "repairRepeatFactor": options.repeat_repair_records,
+        "effectiveRepairSampleCount": effective_repair_samples,
+        "repairOversamplingEnabled": options.repeat_repair_records > 1,
+    }
+
+
 def artifact_mode(output_dir: Path) -> str:
     output_text = str(output_dir)
     if "gptoss-single-json-overfit" in output_text:
@@ -694,6 +736,10 @@ def artifact_mode(output_dir: Path) -> str:
         return "phase3-4-lowlr"
     if "gptoss-phase3-5-lowlr" in output_text:
         return "phase3-5-lowlr"
+    if "gptoss-phase3-6-lowlr" in output_text:
+        return "phase3-6-lowlr"
+    if "gptoss-phase3-7-lowlr" in output_text:
+        return "phase3-7-lowlr"
     if "gptoss-phase3-lowlr" in output_text:
         return "phase3-lowlr"
     if "gptoss-phase3" in output_text:
@@ -713,6 +759,10 @@ def max_steps_cap(output_dir: Path) -> int:
 def max_samples_cap(output_dir: Path) -> int:
     if artifact_mode(output_dir) == "phase3-5-lowlr":
         return MAX_PHASE35_SAMPLES
+    if artifact_mode(output_dir) == "phase3-6-lowlr":
+        return MAX_PHASE36_SAMPLES
+    if artifact_mode(output_dir) == "phase3-7-lowlr":
+        return MAX_PHASE37_SAMPLES
     return MAX_SAFE_SAMPLES
 
 

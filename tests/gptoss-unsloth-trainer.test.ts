@@ -85,6 +85,65 @@ describe('gptoss Unsloth trainer artifact policy', () => {
     expect(executeScript).toContain('--output-dir local_artifacts/gptoss-phase3-5-lowlr');
   });
 
+  it('defines phase3.6 action-label low-learning-rate controls', () => {
+    const dryScript = packageJson.scripts['gptoss:unsloth:phase3-6:lowlr:dry'];
+    const maskAuditScript = packageJson.scripts['gptoss:unsloth:phase3-6:lowlr:mask-audit'];
+    const executeScript = packageJson.scripts['gptoss:unsloth:phase3-6:lowlr'];
+
+    expect(packageJson.scripts['gptoss:phase3-6:dataset:validate']).toContain('scripts/gptoss/validate-phase3-6-dataset.mjs');
+    expect(dryScript).toContain('--dataset examples/gptoss/arcanos-phase3-6-action-label-training.jsonl');
+    expect(dryScript).toContain('--learning-rate 5e-5');
+    expect(dryScript).toContain('--max-steps 50');
+    expect(dryScript).toContain('--max-samples 152');
+    expect(dryScript).toContain('--max-seq-length 256');
+    expect(dryScript).toContain('--warmup-ratio 0.10');
+    expect(dryScript).toContain('--lora-dropout 0.05');
+    expect(dryScript).toContain('--lora-r 16');
+    expect(dryScript).toContain('--lora-alpha 16');
+    expect(dryScript).toContain('--output-dir local_artifacts/gptoss-phase3-6-lowlr');
+    expect(dryScript).not.toContain('--execute');
+    expect(dryScript).not.toMatch(/vllm|railway|api\.openai\.com/i);
+    expect(maskAuditScript).toContain('--mask-audit');
+    expect(maskAuditScript).toContain('--mask-audit-report local_artifacts/gptoss-phase3-6-lowlr/mask-audit-report.json');
+    expect(maskAuditScript).not.toMatch(/vllm|railway|api\.openai\.com/i);
+    expect(executeScript).toContain('gptoss:phase3-6:dataset:validate');
+    expect(executeScript).toContain('--execute');
+    expect(executeScript).toContain('--save-adapter');
+    expect(executeScript).toContain('--output-dir local_artifacts/gptoss-phase3-6-lowlr');
+    expect(executeScript).not.toMatch(/vllm|railway|api\.openai\.com/i);
+  });
+
+  it('defines phase3.7 weighted repair low-learning-rate controls', () => {
+    const dryScript = packageJson.scripts['gptoss:unsloth:phase3-7:lowlr:dry'];
+    const maskAuditScript = packageJson.scripts['gptoss:unsloth:phase3-7:lowlr:mask-audit'];
+    const executeScript = packageJson.scripts['gptoss:unsloth:phase3-7:lowlr'];
+
+    expect(packageJson.scripts['gptoss:phase3-7:dataset:validate']).toContain('scripts/gptoss/validate-phase3-7-dataset.mjs');
+    expect(dryScript).toContain('--dataset examples/gptoss/arcanos-phase3-7-weighted-repair-training.jsonl');
+    expect(dryScript).toContain('--learning-rate 5e-5');
+    expect(dryScript).toContain('--max-steps 50');
+    expect(dryScript).toContain('--max-samples 186');
+    expect(dryScript).toContain('--repeat-repair-records 3');
+    expect(dryScript).toContain('--max-seq-length 256');
+    expect(dryScript).toContain('--warmup-ratio 0.10');
+    expect(dryScript).toContain('--lora-dropout 0.05');
+    expect(dryScript).toContain('--lora-r 16');
+    expect(dryScript).toContain('--lora-alpha 16');
+    expect(dryScript).toContain('--output-dir local_artifacts/gptoss-phase3-7-lowlr');
+    expect(dryScript).not.toContain('--execute');
+    expect(dryScript).not.toMatch(/vllm|railway|api\.openai\.com/i);
+    expect(maskAuditScript).toContain('--mask-audit');
+    expect(maskAuditScript).toContain('--repeat-repair-records 3');
+    expect(maskAuditScript).toContain('--mask-audit-report local_artifacts/gptoss-phase3-7-lowlr/mask-audit-report.json');
+    expect(maskAuditScript).not.toMatch(/vllm|railway|api\.openai\.com/i);
+    expect(executeScript).toContain('gptoss:phase3-7:dataset:validate');
+    expect(executeScript).toContain('--execute');
+    expect(executeScript).toContain('--repeat-repair-records 3');
+    expect(executeScript).toContain('--save-adapter');
+    expect(executeScript).toContain('--output-dir local_artifacts/gptoss-phase3-7-lowlr');
+    expect(executeScript).not.toMatch(/vllm|railway|api\.openai\.com/i);
+  });
+
   it('defines micro-overfit training and eval scripts', () => {
     const dryScript = packageJson.scripts['gptoss:unsloth:micro:dry'];
     const executeScript = packageJson.scripts['gptoss:unsloth:micro'];
@@ -185,6 +244,11 @@ describe('gptoss Unsloth trainer artifact policy', () => {
     expect(trainerSource).toContain('return "phase3-lowlr"');
     expect(trainerSource).toContain('return "phase3-4-lowlr"');
     expect(trainerSource).toContain('return "phase3-5-lowlr"');
+    expect(trainerSource).toContain('return "phase3-6-lowlr"');
+    expect(trainerSource).toContain('MAX_PHASE36_SAMPLES = 152');
+    expect(trainerSource).toContain('return "phase3-7-lowlr"');
+    expect(trainerSource).toContain('MAX_PHASE37_SAMPLES = 186');
+    expect(trainerSource).toContain('"expandedTrainSampleCount": sample_weighting["expandedTrainSampleCount"]');
     expect(trainerSource).toContain('return "micro-overfit"');
     expect(trainerSource).toContain('return "single-json-overfit"');
     expect(trainerSource).toContain('return "single-safety-overfit"');
@@ -245,6 +309,51 @@ assert decoded == "<|channel|>final<|message|>control-plane"
 assert "Return only final." not in decoded
 assert "Use boundaries." not in decoded
 assert "Classify queue status." not in decoded
+`;
+    const completed = spawnSync('python', ['-c', helper], { cwd: process.cwd(), encoding: 'utf8' });
+
+    expect(completed.status).toBe(0);
+    expect(completed.stderr).toBe('');
+  });
+
+  it('repeats phase3.7 repair records deterministically before training', () => {
+    const helper = `
+import importlib.util
+from pathlib import Path
+from types import SimpleNamespace
+module_path = Path("scripts/gptoss/unsloth-train-smoke.py")
+spec = importlib.util.spec_from_file_location("unsloth_train_smoke", module_path)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+records = [
+    {"id": "base-1", "metadata": {}},
+    {"id": "repair-1", "metadata": {"phase3_7_repair": True}},
+    {"id": "base-2", "metadata": {}},
+    {"id": "repair-2", "metadata": {"phase3_7_repair": True}},
+]
+options = SimpleNamespace(max_samples=10, repeat_repair_records=3)
+selected = module.select_training_records(records, options)
+assert [record["id"] for record in selected] == [
+    "base-1",
+    "repair-1",
+    "base-2",
+    "repair-2",
+    "repair-1",
+    "repair-2",
+    "repair-1",
+    "repair-2",
+]
+report = module.build_sample_weighting_report(records, options)
+assert report["originalRecordCount"] == 4
+assert report["expandedTrainSampleCount"] == 8
+assert report["repairRecordCount"] == 2
+assert report["repairRepeatFactor"] == 3
+assert report["effectiveRepairSampleCount"] == 6
+
+default_options = SimpleNamespace(max_samples=3, repeat_repair_records=1)
+default_selected = module.select_training_records(records, default_options)
+assert [record["id"] for record in default_selected] == ["base-1", "repair-1", "base-2"]
 `;
     const completed = spawnSync('python', ['-c', helper], { cwd: process.cwd(), encoding: 'utf8' });
 

@@ -5,8 +5,12 @@ import { spawnSync } from 'node:child_process';
 
 const scriptPath = join(process.cwd(), 'scripts', 'gptoss', 'dataset-gate.mjs');
 const validateDatasetScriptPath = join(process.cwd(), 'scripts', 'gptoss', 'validate-training-dataset.mjs');
+const validatePhase36DatasetScriptPath = join(process.cwd(), 'scripts', 'gptoss', 'validate-phase3-6-dataset.mjs');
+const validatePhase37DatasetScriptPath = join(process.cwd(), 'scripts', 'gptoss', 'validate-phase3-7-dataset.mjs');
 const phase34DatasetPath = join(process.cwd(), 'examples', 'gptoss', 'arcanos-phase3-4-training.jsonl');
 const phase35DatasetPath = join(process.cwd(), 'examples', 'gptoss', 'arcanos-phase3-5-target-shape-training.jsonl');
+const phase36DatasetPath = join(process.cwd(), 'examples', 'gptoss', 'arcanos-phase3-6-action-label-training.jsonl');
+const phase37DatasetPath = join(process.cwd(), 'examples', 'gptoss', 'arcanos-phase3-7-weighted-repair-training.jsonl');
 const microDatasetPath = join(process.cwd(), 'examples', 'gptoss', 'arcanos-micro-overfit-training.jsonl');
 const singleJsonDatasetPath = join(process.cwd(), 'examples', 'gptoss', 'arcanos-single-json-overfit-training.jsonl');
 const singleSafetyDatasetPath = join(process.cwd(), 'examples', 'gptoss', 'arcanos-single-safety-overfit-training.jsonl');
@@ -100,6 +104,113 @@ describe('gptoss training dataset gate', () => {
     }
     for (const expectedAction of ['railway.logs', 'railway.status', 'validate_dataset', 'reject', 'reject_training_from_raw_logs']) {
       expect(assistantTargets.some((target) => target.includes(expectedAction))).toBe(true);
+    }
+  });
+
+  it('validates the phase3.6 action-label disambiguation training fixture', () => {
+    const completed = spawnSync(process.execPath, [validatePhase36DatasetScriptPath, phase36DatasetPath], {
+      encoding: 'utf8',
+    });
+    const parsed = JSON.parse(completed.stdout);
+
+    expect(completed.status).toBe(0);
+    expect(completed.stderr).toBe('');
+    expect(parsed).toMatchObject({
+      ok: true,
+      checked: 152,
+      accepted: 152,
+      rejected: 0,
+      errors: [],
+    });
+
+    const rows = readFileSync(phase36DatasetPath, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+    const newRows = rows.filter((row) => String(row.id).startsWith('phase3-6-'));
+    expect(rows).toHaveLength(152);
+    expect(newRows).toHaveLength(32);
+    expect(newRows.every((row) => row.source !== 'railway_cli_observation')).toBe(true);
+    expect(newRows.every((row) => !['openai_output', 'openai_judgment'].includes(row.source))).toBe(true);
+    expect(newRows.every((row) => Array.isArray(row.messages) && !('text' in row))).toBe(true);
+    expect(newRows.every((row) => row.metadata?.no_openai_output_used === true)).toBe(true);
+    expect(newRows.every((row) => ['label_only', 'json_only', 'compact_final'].includes(row.metadata?.target_shape))).toBe(true);
+    expect(newRows.every((row) => row.messages.filter((message) => message.role === 'assistant').length === 1)).toBe(true);
+
+    const assistantTargets = newRows.map((row) => row.messages.find((message) => message.role === 'assistant').content);
+    const labelTargets = newRows
+      .filter((row) => row.metadata.target_shape === 'label_only')
+      .map((row) => row.messages.find((message) => message.role === 'assistant').content);
+
+    expect(assistantTargets.some((target) => target.includes('validate_dataset'))).toBe(true);
+    expect(labelTargets).toContain('control-plane');
+    expect(labelTargets).toContain('writing-plane');
+
+    for (const row of newRows.filter((row) => row.metadata.target_shape === 'json_only')) {
+      JSON.parse(row.messages.find((message) => message.role === 'assistant').content);
+    }
+    for (const target of labelTargets) {
+      expect(target).toMatch(/^\S{1,64}$/);
+      expect(target).not.toMatch(/[{}[\]:,]/);
+    }
+  });
+
+  it('validates the phase3.7 weighted repair training fixture', () => {
+    const completed = spawnSync(process.execPath, [validatePhase37DatasetScriptPath, phase37DatasetPath], {
+      encoding: 'utf8',
+    });
+    const parsed = JSON.parse(completed.stdout);
+
+    expect(completed.status).toBe(0);
+    expect(completed.stderr).toBe('');
+    expect(parsed).toMatchObject({
+      ok: true,
+      checked: 142,
+      accepted: 142,
+      rejected: 0,
+      repairRecords: 22,
+      errors: [],
+      coverage: {
+        No: true,
+        TypeScript: true,
+        'control-plane': true,
+        'writing-plane': true,
+        validate_dataset: true,
+        'QLoRA 4-bit': true,
+        '100': true,
+        'false': true,
+      },
+    });
+
+    const rows = readFileSync(phase37DatasetPath, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+    const repairRows = rows.filter((row) => row.metadata?.phase3_7_repair === true);
+    expect(rows).toHaveLength(142);
+    expect(repairRows).toHaveLength(22);
+    expect(repairRows.every((row) => String(row.id).startsWith('phase3-7-'))).toBe(true);
+    expect(repairRows.every((row) => row.source !== 'railway_cli_observation')).toBe(true);
+    expect(repairRows.every((row) => !['openai_output', 'openai_judgment'].includes(row.source))).toBe(true);
+    expect(repairRows.every((row) => Array.isArray(row.messages) && !('text' in row))).toBe(true);
+    expect(repairRows.every((row) => row.metadata?.no_openai_output_used === true)).toBe(true);
+    expect(repairRows.every((row) => ['label_only', 'json_only', 'compact_final'].includes(row.metadata?.target_shape))).toBe(true);
+    expect(repairRows.every((row) => row.messages.filter((message) => message.role === 'assistant').length === 1)).toBe(true);
+
+    const assistantTargets = repairRows.map((row) => row.messages.find((message) => message.role === 'assistant').content);
+    const labelTargets = repairRows
+      .filter((row) => row.metadata.target_shape === 'label_only')
+      .map((row) => row.messages.find((message) => message.role === 'assistant').content);
+    const openAiRejectionTargets = repairRows
+      .filter((row) => row.task_type === 'openai_output_rejection')
+      .map((row) => row.messages.find((message) => message.role === 'assistant').content);
+
+    expect(openAiRejectionTargets).toHaveLength(5);
+    expect(openAiRejectionTargets.every((target) => target.startsWith('No'))).toBe(true);
+    expect(assistantTargets.some((target) => target.includes('validate_dataset'))).toBe(true);
+    expect(labelTargets).toContain('control-plane');
+    expect(labelTargets).toContain('writing-plane');
+
+    for (const row of repairRows.filter((row) => row.metadata.target_shape === 'json_only')) {
+      JSON.parse(row.messages.find((message) => message.role === 'assistant').content);
+    }
+    for (const target of labelTargets) {
+      expect(target).toMatch(/^\S{1,64}$/);
+      expect(target).not.toMatch(/[{}[\]:,]/);
     }
   });
 
@@ -359,15 +470,16 @@ describe('gptoss training dataset gate', () => {
       JSON.stringify({ source: 'third_party_copyrighted', text: 'copyrighted text', metadata: trainingMetadata }),
       JSON.stringify({ source: 'model_generated_label_without_human_review', text: 'synthetic label', metadata: trainingMetadata }),
       JSON.stringify({ source: 'railway_cli_observation', text: 'redacted observation draft', allowed_for_training: false, reviewed: false, metadata: trainingMetadata }),
+      JSON.stringify({ source: 'self_reflection_observation', text: 'redacted reflection summary', allowed_for_training: false, reviewed: false, metadata: trainingMetadata }),
       JSON.stringify({ source: 'unreviewed_web_scrape', text: 'unknown provenance', metadata: trainingMetadata }),
     ]);
 
     expect(result.status).toBe(1);
     expect(result.parsed).toMatchObject({
       ok: false,
-      checked: 6,
+      checked: 7,
       accepted: 0,
-      rejected: 6,
+      rejected: 7,
     });
     expect(result.parsed.errors).toEqual([
       { line: 1, code: 'rejected_source', source: 'openai_output' },
@@ -375,22 +487,23 @@ describe('gptoss training dataset gate', () => {
       { line: 3, code: 'rejected_source', source: 'third_party_copyrighted' },
       { line: 4, code: 'rejected_source', source: 'model_generated_label_without_human_review' },
       { line: 5, code: 'rejected_source', source: 'railway_cli_observation' },
-      { line: 6, code: 'unknown_source', source: 'unreviewed_web_scrape' },
+      { line: 6, code: 'rejected_source', source: 'self_reflection_observation' },
+      { line: 7, code: 'unknown_source', source: 'unreviewed_web_scrape' },
     ]);
   });
 
-  it('keeps railway CLI observations unreviewed and unavailable for training', () => {
+  it('keeps candidate-only observations unreviewed and unavailable for training', () => {
     const result = runDatasetGate([
       JSON.stringify({ source: 'railway_cli_observation', text: 'redacted observation draft', allowed_for_training: true, reviewed: false, metadata: trainingMetadata }),
-      JSON.stringify({ source: 'railway_cli_observation', text: 'redacted observation draft', allowed_for_training: false, metadata: trainingMetadata }),
-      JSON.stringify({ source: 'railway_cli_observation', text: 'redacted observation draft', allowed_for_training: false, reviewed: true, metadata: trainingMetadata }),
+      JSON.stringify({ source: 'eval_failure_observation', text: 'redacted eval failure summary', allowed_for_training: false, metadata: trainingMetadata }),
+      JSON.stringify({ source: 'self_reflection_observation', text: 'redacted reflection summary', allowed_for_training: false, reviewed: true, metadata: trainingMetadata }),
     ]);
 
     expect(result.status).toBe(1);
     expect(result.parsed.errors).toEqual([
       { line: 1, code: 'allowed_for_training_must_be_false', source: 'railway_cli_observation' },
-      { line: 2, code: 'reviewed_must_be_false', source: 'railway_cli_observation' },
-      { line: 3, code: 'reviewed_must_be_false', source: 'railway_cli_observation' },
+      { line: 2, code: 'reviewed_must_be_false', source: 'eval_failure_observation' },
+      { line: 3, code: 'reviewed_must_be_false', source: 'self_reflection_observation' },
     ]);
   });
 
@@ -512,13 +625,16 @@ describe('gptoss training dataset gate', () => {
     ]);
   });
 
-  it('documents railway CLI observation schema as rejected draft provenance', () => {
+  it('documents candidate-only observation schemas as rejected draft provenance', () => {
     const schema = JSON.parse(readFileSync(trainingSchemaPath, 'utf8'));
 
     expect(schema.properties.source.enum).toContain('railway_cli_observation');
+    expect(schema.properties.source.enum).toContain('self_reflection_observation');
     const railwayRule = schema.allOf.find((rule) => (
-      rule.if?.properties?.source?.const === 'railway_cli_observation'
+      rule.if?.properties?.source?.const === 'railway_cli_observation' ||
+      rule.if?.properties?.source?.enum?.includes('railway_cli_observation')
     ));
+    expect(railwayRule.if.properties.source.enum).toContain('self_reflection_observation');
 
     expect(railwayRule).toMatchObject({
       then: {

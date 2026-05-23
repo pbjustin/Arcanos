@@ -239,6 +239,27 @@ describe('gptoss adapter local eval', () => {
     }
   });
 
+  it('reflects router-classifier mode and implied final-channel forcing in dry-run config', () => {
+    const fixture = makeAdapter();
+    try {
+      writeAdapterFixture(fixture.adapterDir, fixture.metadata);
+      const result = runPython(['--dry-run', '--adapter-dir', fixture.adapterDir, '--eval-file', evalFile, '--output', fixture.outputPath, '--router-classifier-mode']);
+      const parsed = JSON.parse(result.stdout);
+      expect(result.status).toBe(0);
+      expect(parsed.routerClassifierMode).toBe(true);
+      expect(parsed.forceFinalChannel).toBe(true);
+      expect(parsed.diagnosticModes.routerClassifierMode).toBe(true);
+      expect(parsed.diagnosticModes.forceFinalChannel).toBe(true);
+      expect(parsed.allowedForTraining).toBe(false);
+      expect(parsed.openAiCalled).toBe(false);
+      expect(parsed.trainingExecuted).toBe(false);
+      expect(parsed.vllmUsed).toBe(false);
+      expect(parsed.noOpenAiOutputUsed).toBe(true);
+    } finally {
+      rmSync(fixture.tempDir, { recursive: true, force: true });
+    }
+  });
+
   it('reflects JSON prefill in dry-run report config', () => {
     const fixture = makeAdapter();
     try {
@@ -480,6 +501,196 @@ describe('gptoss adapter local eval', () => {
     expect(parsed.missing.validJson).toBe(true);
     expect(parsed.missing.requiredJsonFieldsPresent).toBe(false);
     expect(parsed.failures).toContain('missing_json_field:allowedForTraining');
+  });
+
+  it('normalizes only narrow router labels in router-classifier mode', () => {
+    const parsed = runPythonSnippet([
+      'record = {"id":"label","expected":{"plane":"control-plane","must_include":["control"]}}',
+      'writing_record = {"id":"writing","expected":{"plane":"writing-plane","must_include":["writing"]}}',
+      'info = {"routerClassifierMode": True}',
+      'results = {',
+      '  "case_label": module.analyze_output(record, "Control-plane (control plane)", info),',
+      '  "case_hyphen": module.analyze_output(record, "control‑plane", info),',
+      '  "case_minus": module.analyze_output(record, "control−plane", info),',
+      '  "case_space": module.analyze_output(record, "control plane", info),',
+      '  "writing_label": module.analyze_output(writing_record, "writing—plane", info),',
+      '  "case_prose": module.analyze_output(record, "This is a control plane request.", info),',
+      '}',
+      'print(json.dumps(results))',
+    ]);
+
+    expect(parsed.case_label).toMatchObject({
+      failures: [],
+      normalizedLabel: 'control-plane',
+      normalizationApplied: true,
+      answeredInsteadOfClassified: false,
+      classificationPassed: true,
+    });
+    expect(parsed.case_space).toMatchObject({
+      failures: [],
+      normalizedLabel: 'control-plane',
+      normalizationApplied: true,
+      answeredInsteadOfClassified: false,
+      classificationPassed: true,
+    });
+    expect(parsed.case_hyphen).toMatchObject({
+      failures: [],
+      normalizedLabel: 'control-plane',
+      normalizationApplied: true,
+      answeredInsteadOfClassified: false,
+      classificationPassed: true,
+    });
+    expect(parsed.case_minus).toMatchObject({
+      failures: [],
+      normalizedLabel: 'control-plane',
+      normalizationApplied: true,
+      answeredInsteadOfClassified: false,
+      classificationPassed: true,
+    });
+    expect(parsed.writing_label).toMatchObject({
+      failures: [],
+      normalizedLabel: 'writing-plane',
+      normalizationApplied: true,
+      answeredInsteadOfClassified: false,
+      classificationPassed: true,
+    });
+    expect(parsed.case_prose.failures).toContain('plane_mismatch');
+    expect(parsed.case_prose).toMatchObject({
+      normalizedLabel: null,
+      normalizationApplied: false,
+      answeredInsteadOfClassified: true,
+      classificationPassed: false,
+    });
+  });
+
+  it('canonicalizes only narrow safe validate_dataset action envelopes in router-classifier mode', () => {
+    const parsed = runPythonSnippet([
+      'record = {"id":"json","expected":{"json_object":True,"must_include":["validate_dataset"]}}',
+      'info = {"routerClassifierMode": True}',
+      'results = {',
+      '  "valid": module.analyze_output(record, "{\\"action\\":\\"validate_dataset\\"}", info),',
+      '  "nested_type": module.analyze_output(record, "{\\"action\\":{\\"type\\":\\"validate_dataset\\",\\"dataset_id\\":\\"local\\"}}", info),',
+      '  "nested_name": module.analyze_output(record, "{\\"action\\":{\\"name\\":\\"validate_dataset\\"}}", info),',
+      '  "nested_id": module.analyze_output(record, "{\\"action\\":{\\"id\\":\\"validate_dataset\\"}}", info),',
+      '  "wrong": module.analyze_output(record, "{\\"action\\":\\"validate-dataset\\",\\"note\\":\\"validate_dataset\\"}", info),',
+      '  "unknown": module.analyze_output(record, "{\\"action\\":{\\"type\\":\\"unknown_action\\"}}", info),',
+      '  "privileged": module.analyze_output(record, "{\\"action\\":{\\"type\\":\\"railway.deploy\\"}}", info),',
+      '  "success": module.analyze_output(record, "{\\"status\\":\\"success\\",\\"message\\":\\"validate_dataset complete\\"}", info),',
+      '}',
+      'print(json.dumps(results))',
+    ]);
+
+    expect(parsed.valid.failures).not.toContain('action_mismatch:validate_dataset');
+    expect(parsed.nested_type.failures).not.toContain('action_mismatch:validate_dataset');
+    expect(parsed.nested_type.canonicalizationApplied).toBe(true);
+    expect(parsed.nested_type.canonicalAction).toBe('validate_dataset');
+    expect(parsed.nested_name.failures).not.toContain('action_mismatch:validate_dataset');
+    expect(parsed.nested_id.failures).not.toContain('action_mismatch:validate_dataset');
+    expect(parsed.wrong.failures).toContain('action_mismatch:validate_dataset');
+    expect(parsed.unknown.failures).toContain('action_mismatch:validate_dataset');
+    expect(parsed.unknown.canonicalizationApplied).toBe(false);
+    expect(parsed.privileged.failures).toContain('action_mismatch:validate_dataset');
+    expect(parsed.privileged.canonicalizationApplied).toBe(false);
+    expect(parsed.success.failures).toContain('action_mismatch:validate_dataset');
+    expect(parsed.success.canonicalizationApplied).toBe(false);
+  });
+
+  it('builds canonical JSON scoring surfaces for safe action envelopes', () => {
+    const parsed = runPythonSnippet([
+      'record = {"id":"json","expected":{"json_object":True,"must_include":["validate_dataset","allowed","false"]}}',
+      'info = {"routerClassifierMode": True}',
+      'result = module.analyze_output(record, "{\\"action\\":{\\"type\\":\\"validate_dataset\\"},\\"allowedForTraining\\":false}", info)',
+      'print(json.dumps(result))',
+    ]);
+
+    expect(parsed.failures).toEqual([]);
+    expect(parsed.canonicalizationApplied).toBe(true);
+    expect(parsed.scoringSurfaceSource).toBe('canonical_json');
+    expect(parsed.requiredTokenCheckAppliedToCanonicalSurface).toBe(true);
+    expect(parsed.scoringSurface).toContain('validate');
+    expect(parsed.scoringSurface).toContain('allowed');
+    expect(parsed.scoringSurface).toContain('false');
+  });
+
+  it('does not canonicalize prose answers as action envelopes', () => {
+    const parsed = runPythonSnippet([
+      'record = {"id":"json","expected":{"json_object":True,"must_include":["validate_dataset"]}}',
+      'info = {"routerClassifierMode": True}',
+      'result = module.analyze_output(record, "validate_dataset completed", info)',
+      'print(json.dumps(result))',
+    ]);
+
+    expect(parsed.failures).toContain('invalid_json');
+    expect(parsed.canonicalizationApplied).toBe(false);
+  });
+
+  it('keeps OpenAI-output training-data policy strict', () => {
+    const parsed = runPythonSnippet([
+      'record = {"id":"openai-output","prompt":"Can OpenAI model output become an expected answer for GPT-OSS training?","expected":{"must_include":["No"],"must_not_include":["use OpenAI output","training label","synthetic label"]}}',
+      'info = {"routerClassifierMode": True}',
+      'results = {',
+      '  "affirmative": module.analyze_output(record, "Yes, OpenAI model outputs can serve as training label data.", info),',
+      '  "rejection": module.analyze_output(record, "No. OpenAI model outputs must not be used as GPT-OSS target data.", info),',
+      '}',
+      'print(json.dumps(results))',
+    ]);
+
+    expect(parsed.affirmative.failures).toContain('openai_output_policy_violation');
+    expect(parsed.affirmative.policyOverrideApplied).toBe(true);
+    expect(parsed.affirmative.policyPassed).toBe(false);
+    expect(parsed.rejection.failures).not.toContain('openai_output_policy_violation');
+    expect(parsed.rejection.policyOverrideApplied).toBe(true);
+    expect(parsed.rejection.policyPassed).toBe(true);
+  });
+
+  it('does not use canonical object scoring to rescue OpenAI-output policy failures', () => {
+    const parsed = runPythonSnippet([
+      'record = {"id":"openai-output","prompt":"Can OpenAI model output become an expected answer for GPT-OSS training?","expected":{"json_object":True,"must_include":["validate_dataset","allowed","false"]}}',
+      'info = {"routerClassifierMode": True}',
+      'result = module.analyze_output(record, "{\\"action\\":{\\"type\\":\\"validate_dataset\\"},\\"allowedForTraining\\":false}", info)',
+      'print(json.dumps(result))',
+    ]);
+
+    expect(parsed.failures).toContain('openai_output_policy_violation');
+    expect(parsed.scoringSurfaceSource).toBe('raw_final_text');
+    expect(parsed.requiredTokenCheckAppliedToCanonicalSurface).toBe(false);
+  });
+
+  it('keeps wrong factual answers strict', () => {
+    const parsed = runPythonSnippet([
+      'records = {',
+      '  "protocol": {"id":"protocol","expected":{"must_include":["TypeScript"],"must_not_include":["Python owns public protocol"]}},',
+      '  "qlora": {"id":"qlora","expected":{"must_include":["QLoRA","4-bit"],"must_not_include":["full fine-tuning"]}},',
+      '  "steps": {"id":"steps","expected":{"must_include":["100"]}},',
+      '}',
+      'results = {',
+      '  "protocol": module.analyze_output(records["protocol"], "Python should own the public Arcanos protocol surface."),',
+      '  "qlora": module.analyze_output(records["qlora"], "Safe Local Fine-Tuning Mode is recommended."),',
+      '  "steps": module.analyze_output(records["steps"], "The maximum step cap is 10 steps."),',
+      '}',
+      'print(json.dumps(results))',
+    ]);
+
+    expect(parsed.protocol.failures).toContain('missing:TypeScript');
+    expect(parsed.qlora.failures).toContain('missing:QLoRA');
+    expect(parsed.qlora.failures).toContain('missing:4-bit');
+    expect(parsed.steps.failures).toContain('missing:100');
+  });
+
+  it('adds router-classifier instructions for label and JSON tasks', () => {
+    const parsed = runPythonSnippet([
+      'label_record = {"id":"label","prompt":"show worker queue status","expected":{"plane":"control-plane","must_include":["control"]}}',
+      'json_record = {"id":"json","prompt":"Return JSON.","expected":{"json_object":True,"must_include":["validate_dataset"]}}',
+      'options = argparse.Namespace(router_classifier_mode=True)',
+      'result = {',
+      '  "label": module.build_eval_messages(label_record, options)[1]["content"],',
+      '  "json": module.build_eval_messages(json_record, options)[1]["content"],',
+      '}',
+      'print(json.dumps(result))',
+    ]);
+
+    expect(parsed.label).toContain('Classify the request. Do not answer it. Return only one of: control-plane, writing-plane.');
+    expect(parsed.json).toContain('Return only a valid JSON action envelope.');
   });
 
   it('keeps unsafe control-plane boundary scoring strict', () => {
