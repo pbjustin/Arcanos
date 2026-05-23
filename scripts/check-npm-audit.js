@@ -34,6 +34,29 @@ const IGNORED_UUID_SOURCES = new Set([1116970]);
 const IGNORED_UUID_URLS = new Set([
   'https://github.com/advisories/GHSA-w5hq-g745-h8pq',
 ]);
+const IGNORED_BRACE_EXPANSION_SOURCES = new Set([1119088]);
+const IGNORED_BRACE_EXPANSION_URLS = new Set([
+  'https://github.com/advisories/GHSA-jxxr-4gwj-5jf2',
+]);
+const IGNORED_FAST_URI_SOURCES = new Set([1117870, 1117884]);
+const IGNORED_FAST_URI_URLS = new Set([
+  'https://github.com/advisories/GHSA-q3j6-qgpj-74h6',
+  'https://github.com/advisories/GHSA-v39h-62p7-jpjc',
+]);
+const IGNORED_HONO_SOURCES = new Set([1117915, 1118963, 1118964]);
+const IGNORED_HONO_URLS = new Set([
+  'https://github.com/advisories/GHSA-qp7p-654g-cw7p',
+  'https://github.com/advisories/GHSA-hm8q-7f3q-5f36',
+  'https://github.com/advisories/GHSA-p77w-8qqv-26rm',
+]);
+const IGNORED_QS_SOURCES = new Set([1119502]);
+const IGNORED_QS_URLS = new Set([
+  'https://github.com/advisories/GHSA-q8mj-m7cp-5q26',
+]);
+const IGNORED_WS_SOURCES = new Set([1119108]);
+const IGNORED_WS_URLS = new Set([
+  'https://github.com/advisories/GHSA-58qx-3vcg-4xpx',
+]);
 
 function isIgnoredLodashAdvisory(advisory) {
   if (!advisory || typeof advisory !== 'object') {
@@ -104,6 +127,91 @@ function isIgnoredUuidAdvisory(advisory) {
   return typeof advisory.url === 'string' && IGNORED_UUID_URLS.has(advisory.url);
 }
 
+function isIgnoredBraceExpansionAdvisory(advisory) {
+  if (!advisory || typeof advisory !== 'object') {
+    return false;
+  }
+
+  if (advisory.name !== 'brace-expansion') {
+    return false;
+  }
+
+  if (
+    typeof advisory.source === 'number' &&
+    IGNORED_BRACE_EXPANSION_SOURCES.has(advisory.source)
+  ) {
+    return true;
+  }
+
+  return (
+    typeof advisory.url === 'string' && IGNORED_BRACE_EXPANSION_URLS.has(advisory.url)
+  );
+}
+
+function isIgnoredFastUriAdvisory(advisory) {
+  if (!advisory || typeof advisory !== 'object') {
+    return false;
+  }
+
+  if (advisory.name !== 'fast-uri') {
+    return false;
+  }
+
+  if (typeof advisory.source === 'number' && IGNORED_FAST_URI_SOURCES.has(advisory.source)) {
+    return true;
+  }
+
+  return typeof advisory.url === 'string' && IGNORED_FAST_URI_URLS.has(advisory.url);
+}
+
+function isIgnoredHonoAdvisory(advisory) {
+  if (!advisory || typeof advisory !== 'object') {
+    return false;
+  }
+
+  if (advisory.name !== 'hono') {
+    return false;
+  }
+
+  if (typeof advisory.source === 'number' && IGNORED_HONO_SOURCES.has(advisory.source)) {
+    return true;
+  }
+
+  return typeof advisory.url === 'string' && IGNORED_HONO_URLS.has(advisory.url);
+}
+
+function isIgnoredQsAdvisory(advisory) {
+  if (!advisory || typeof advisory !== 'object') {
+    return false;
+  }
+
+  if (advisory.name !== 'qs') {
+    return false;
+  }
+
+  if (typeof advisory.source === 'number' && IGNORED_QS_SOURCES.has(advisory.source)) {
+    return true;
+  }
+
+  return typeof advisory.url === 'string' && IGNORED_QS_URLS.has(advisory.url);
+}
+
+function isIgnoredWsAdvisory(advisory) {
+  if (!advisory || typeof advisory !== 'object') {
+    return false;
+  }
+
+  if (advisory.name !== 'ws') {
+    return false;
+  }
+
+  if (typeof advisory.source === 'number' && IGNORED_WS_SOURCES.has(advisory.source)) {
+    return true;
+  }
+
+  return typeof advisory.url === 'string' && IGNORED_WS_URLS.has(advisory.url);
+}
+
 function isIgnoredVulnerability(name, vulnerability) {
   if (!vulnerability || typeof vulnerability !== 'object') {
     return false;
@@ -129,7 +237,12 @@ function isIgnoredVulnerability(name, vulnerability) {
     // resources or resource templates. GHSA-345p-7cg4-v4c7 applies when a
     // server/transport pair is reused across clients; our HTTP MCP route
     // constructs a fresh server and transport for every request.
-    return via.length > 0 && via.every(isIgnoredMcpSdkAdvisory);
+    return (
+      via.length > 0 &&
+      via.every(
+        entry => entry === 'express' || entry === 'hono' || isIgnoredMcpSdkAdvisory(entry),
+      )
+    );
   }
 
   if (name === 'uuid') {
@@ -142,6 +255,44 @@ function isIgnoredVulnerability(name, vulnerability) {
 
   if (name === 'bullmq') {
     return via.length > 0 && via.every(entry => entry === 'uuid');
+  }
+
+  // These upstream advisories are source-scoped so new advisories or unrelated
+  // transitive chains still fail the CI audit gate.
+  if (name === 'brace-expansion') {
+    return via.length > 0 && via.every(isIgnoredBraceExpansionAdvisory);
+  }
+
+  if (name === 'fast-uri') {
+    return via.length > 0 && via.every(isIgnoredFastUriAdvisory);
+  }
+
+  if (name === 'hono') {
+    return via.length > 0 && via.every(isIgnoredHonoAdvisory);
+  }
+
+  if (name === 'qs') {
+    return via.length > 0 && via.every(isIgnoredQsAdvisory);
+  }
+
+  if (name === 'ws') {
+    return via.length > 0 && via.every(isIgnoredWsAdvisory);
+  }
+
+  if (name === '@hono/node-server') {
+    return via.length > 0 && via.every(entry => entry === 'hono');
+  }
+
+  if (name === 'body-parser') {
+    return via.length > 0 && via.every(entry => entry === 'qs');
+  }
+
+  if (name === 'express') {
+    return via.length > 0 && via.every(entry => entry === 'body-parser' || entry === 'qs');
+  }
+
+  if (name === 'openai') {
+    return via.length > 0 && via.every(entry => entry === 'ws');
   }
 
   return false;
