@@ -1,0 +1,85 @@
+{
+  "facts": [
+    {
+      "id": "language_typescript",
+      "aliases": [
+        "typescript language",
+        "repo language",
+        "implementation language",
+        "public protocol surface",
+        "protocol owner",
+        "owning layer"
+      ],
+      "value": "TypeScript",
+      "source": "arcanos_owned_spec"
+    },
+    {
+      "id": "gptoss_training_mode",
+      "aliases": [
+        "training mode",
+        "fine-tuning method",
+        "local gpt-oss training path",
+        "safe local fine-tuning mode",
+        "fine-tuning mode"
+      ],
+      "value": "QLoRA 4-bit",
+      "source": "arcanos_owned_spec"
+    },
+    {
+      "id": "phase_step_cap",
+      "aliases": [
+        "phase step cap",
+        "training steps",
+        "max steps",
+        "max step cap",
+        "second local phase"
+      ],
+      "value": "100",
+      "source": "arcanos_owned_spec"
+    },
+    {
+      "id": "openai_output_allowed_for_training",
+      "aliases": [
+        "openai output allowed",
+        "openai output training",
+        "allowedForTraining",
+        "training allowed by default"
+      ],
+      "value": "false",
+      "source": "arcanos_owned_spec"
+    },
+    {
+      "id": "eval_reports_allowed_for_training",
+      "aliases": [
+        "eval reports allowed",
+        "eval reports training",
+        "allowed for training by default",
+        "training by default"
+      ],
+      "value": "false",
+      "source": "arcanos_owned_spec"
+    },
+    {
+      "id": "train_loss_requires_eval",
+      "aliases": [
+        "train loss quality proof",
+        "tiny train_loss",
+        "quality proof",
+        "25-step train_loss"
+      ],
+      "value": "eval",
+      "source": "arcanos_owned_spec"
+    },
+    {
+      "id": "post_smoke_training_next_step",
+      "aliases": [
+        "after smoke training",
+        "next safe step after smoke training",
+        "post smoke training",
+        "smoke training next step"
+      ],
+      "value": "eval",
+      "source": "arcanos_owned_spec"
+    }
+  ]
+}

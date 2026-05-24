@@ -1,0 +1,335 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://arcanos.local/schemas/gptoss-effective-router-runtime.schema.json",
+  "title": "GPT-OSS Effective Router Runtime Contract",
+  "type": "object",
+  "$defs": {
+    "runtimeSupports": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "forceFinalChannel",
+        "routerClassifierMode",
+        "prefillJsonStart",
+        "hardPolicyOverrides",
+        "localSpecFacts",
+        "routerPostprocessor"
+      ],
+      "properties": {
+        "forceFinalChannel": { "const": true },
+        "routerClassifierMode": { "const": true },
+        "prefillJsonStart": { "const": true },
+        "hardPolicyOverrides": { "const": true },
+        "localSpecFacts": { "const": true },
+        "routerPostprocessor": { "const": true }
+      }
+    },
+    "runtimeRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestId", "userInput", "mode", "adapterDir", "runtimeSupports"],
+      "properties": {
+        "requestId": { "type": "string", "minLength": 1 },
+        "userInput": { "type": "string", "minLength": 1 },
+        "mode": { "const": "router_classifier" },
+        "adapterDir": { "type": "string", "minLength": 1 },
+        "runtimeSupports": { "$ref": "#/$defs/runtimeSupports" }
+      }
+    },
+    "runtimeOutput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "requestId", "model", "effective", "safety"],
+      "properties": {
+        "ok": { "const": true },
+        "requestId": { "type": "string", "minLength": 1 },
+        "model": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["rawFinalText", "modelPassed"],
+          "properties": {
+            "rawFinalText": { "type": "string" },
+            "modelPassed": { "type": "boolean" }
+          }
+        },
+        "effective": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "plane",
+            "action",
+            "risk",
+            "answer",
+            "requiresConfirmation",
+            "allowedForTraining",
+            "effectivePassed",
+            "sources"
+          ],
+          "properties": {
+            "plane": { "enum": ["writing-plane", "control-plane"] },
+            "action": { "type": "string", "minLength": 1 },
+            "risk": { "type": "string", "minLength": 1 },
+            "answer": { "type": "string", "minLength": 1 },
+            "requiresConfirmation": { "type": "boolean" },
+            "allowedForTraining": { "const": false },
+            "effectivePassed": { "type": "boolean" },
+            "sources": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "enum": ["model", "policy", "spec_facts", "postprocessor"]
+              }
+            }
+          }
+        },
+        "safety": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "allowedForTraining",
+            "openAiCalled",
+            "trainingExecuted",
+            "vllmUsed",
+            "railwayCliUsed",
+            "liveDbUsed",
+            "noOpenAiOutputUsed"
+          ],
+          "properties": {
+            "allowedForTraining": { "const": false },
+            "openAiCalled": { "const": false },
+            "trainingExecuted": { "const": false },
+            "vllmUsed": { "const": false },
+            "railwayCliUsed": { "const": false },
+            "liveDbUsed": { "const": false },
+            "noOpenAiOutputUsed": { "const": true }
+          }
+        }
+      }
+    },
+    "runtimeReport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "mode", "dryRun", "modelLoaded", "records", "passed", "failed", "results", "safety"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "mode": { "const": "smoke" },
+        "dryRun": { "const": true },
+        "modelLoaded": { "type": "boolean" },
+        "records": { "type": "integer", "minimum": 0 },
+        "passed": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 },
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "request", "output", "passed"],
+            "properties": {
+              "id": { "type": "string" },
+              "fixture": { "type": "string" },
+              "request": { "$ref": "#/$defs/runtimeRequest" },
+              "output": { "$ref": "#/$defs/runtimeOutput" },
+              "expected": { "type": "object" },
+              "passed": { "type": "boolean" }
+            }
+          }
+        },
+        "safety": { "$ref": "#/$defs/runtimeOutput/properties/safety" }
+      }
+    },
+    "requestOutput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ok",
+        "requestId",
+        "input",
+        "mode",
+        "dryRun",
+        "executeRequested",
+        "modelLoaded",
+        "runtimeSupports",
+        "model",
+        "effective",
+        "safety",
+        "readiness"
+      ],
+      "properties": {
+        "ok": { "const": true },
+        "requestId": { "type": "string", "minLength": 1 },
+        "input": { "type": "string", "minLength": 1 },
+        "mode": { "const": "router_classifier" },
+        "dryRun": { "type": "boolean" },
+        "executeRequested": { "type": "boolean" },
+        "modelLoaded": { "const": false },
+        "runtimeSupports": { "$ref": "#/$defs/runtimeSupports" },
+        "model": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["modelOnlyReady", "rawFinalText", "modelPassed"],
+          "properties": {
+            "modelOnlyReady": { "const": false },
+            "rawFinalText": { "type": ["string", "null"] },
+            "modelPassed": { "const": false }
+          }
+        },
+        "effective": { "$ref": "#/$defs/runtimeOutput/properties/effective" },
+        "safety": { "$ref": "#/$defs/runtimeOutput/properties/safety" },
+        "localModel": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["requested", "executed", "adapterDir"],
+          "properties": {
+            "requested": { "type": "boolean" },
+            "executed": { "type": "boolean" },
+            "dryRun": { "type": "boolean" },
+            "adapterDir": { "type": "string" },
+            "adapterCommand": { "type": "string" },
+            "evalFile": { "type": "string" },
+            "adapterReport": { "type": "string" },
+            "adapterExitStatus": { "type": "integer" },
+            "reportLoaded": { "type": "boolean" }
+          }
+        },
+        "readiness": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "modelScore",
+            "effectiveScore",
+            "localControlledRuntimeReady",
+            "modelOnlyReady",
+            "cloudReady",
+            "customGptReady"
+          ],
+          "properties": {
+            "modelScore": { "type": "string" },
+            "effectiveScore": { "type": "string" },
+            "localControlledRuntimeReady": { "type": "boolean" },
+            "modelOnlyReady": { "const": false },
+            "cloudReady": { "const": false },
+            "customGptReady": { "const": false }
+          }
+        }
+      }
+    },
+    "auditRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "auditVersion",
+        "requestId",
+        "timestamp",
+        "inputHash",
+        "inputPreview",
+        "adapterDir",
+        "runtimeSupports",
+        "model",
+        "effective",
+        "safety",
+        "replay"
+      ],
+      "properties": {
+        "auditVersion": { "const": 1 },
+        "requestId": { "type": "string", "minLength": 1 },
+        "timestamp": { "type": "string", "minLength": 1 },
+        "inputHash": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "inputPreview": { "type": "string", "maxLength": 160 },
+        "adapterDir": { "type": "string", "minLength": 1 },
+        "runtimeSupports": { "$ref": "#/$defs/runtimeSupports" },
+        "model": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["modelLoaded", "executed", "rawFinalTextPreview"],
+          "properties": {
+            "modelLoaded": { "type": "boolean" },
+            "executed": { "type": "boolean" },
+            "rawFinalTextPreview": { "type": "string", "maxLength": 240 }
+          }
+        },
+        "effective": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "plane",
+            "action",
+            "risk",
+            "requiresConfirmation",
+            "allowedForTraining",
+            "sources"
+          ],
+          "properties": {
+            "plane": { "enum": ["writing-plane", "control-plane"] },
+            "action": { "type": "string", "minLength": 1 },
+            "risk": { "type": "string", "minLength": 1 },
+            "requiresConfirmation": { "type": "boolean" },
+            "allowedForTraining": { "const": false },
+            "sources": {
+              "type": "array",
+              "items": {
+                "enum": ["model", "policy", "spec_facts", "postprocessor"]
+              }
+            }
+          }
+        },
+        "safety": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "openAiCalled",
+            "trainingExecuted",
+            "vllmUsed",
+            "railwayCliUsed",
+            "liveDbUsed",
+            "noOpenAiOutputUsed"
+          ],
+          "properties": {
+            "openAiCalled": { "const": false },
+            "trainingExecuted": { "const": false },
+            "vllmUsed": { "const": false },
+            "railwayCliUsed": { "const": false },
+            "liveDbUsed": { "const": false },
+            "noOpenAiOutputUsed": { "const": true }
+          }
+        },
+        "replay": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["command"],
+          "properties": {
+            "command": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    },
+    "replayReport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ok",
+        "mode",
+        "audit",
+        "requestReport",
+        "dryRun",
+        "executeRequested",
+        "modelLoaded",
+        "request",
+        "response",
+        "safety",
+        "readiness"
+      ],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "mode": { "const": "request_replay" },
+        "audit": { "type": "string", "minLength": 1 },
+        "requestReport": { "type": "string", "minLength": 1 },
+        "dryRun": { "type": "boolean" },
+        "executeRequested": { "type": "boolean" },
+        "modelLoaded": { "type": "boolean" },
+        "request": { "$ref": "#/$defs/runtimeRequest" },
+        "response": { "$ref": "#/$defs/requestOutput" },
+        "safety": { "$ref": "#/$defs/runtimeOutput/properties/safety" },
+        "readiness": { "$ref": "#/$defs/requestOutput/properties/readiness" }
+      }
+    }
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://arcanos.local/schemas/gptoss-bridge-report.schema.json",
+  "type": "object",
+  "required": ["ok", "kind", "policy", "candidate", "reference", "validators", "comparison"],
+  "properties": {
+    "ok": { "type": "boolean" },
+    "kind": { "const": "gptoss_bridge_eval" },
+    "policy": {
+      "type": "object",
+      "required": [
+        "dryRun",
+        "localOnly",
+        "allowNetwork",
+        "enableOpenAiReference",
+        "includeCandidateOutput",
+        "includeReferenceOutput",
+        "openAiRawPersistence"
+      ],
+      "properties": {
+        "dryRun": { "type": "boolean" },
+        "localOnly": { "type": "boolean" },
+        "allowNetwork": { "type": "boolean" },
+        "enableOpenAiReference": { "type": "boolean" },
+        "includeCandidateOutput": { "type": "boolean" },
+        "includeReferenceOutput": { "type": "boolean" },
+        "openAiRawPersistence": { "const": false }
+      },
+      "additionalProperties": true
+    },
+    "prompt": {
+      "type": "object",
+      "properties": {
+        "length": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "candidate": { "type": "object" },
+    "reference": { "type": "object" },
+    "validators": {
+      "type": "object",
+      "required": ["candidate", "deterministicOnly"],
+      "properties": {
+        "candidate": { "type": "object" },
+        "reference": {
+          "anyOf": [
+            { "type": "object" },
+            { "type": "null" }
+          ]
+        },
+        "deterministicOnly": { "const": true }
+      },
+      "additionalProperties": false
+    },
+    "comparison": { "type": "object" }
+  },
+  "additionalProperties": false
+}

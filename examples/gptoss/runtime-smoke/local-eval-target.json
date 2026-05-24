@@ -1,0 +1,44 @@
+{
+  "id": "runtime-smoke-local-eval-target",
+  "request": {
+    "requestId": "runtime-smoke-local-eval-target",
+    "userInput": "Which execution target is allowed for the GPT-OSS eval baseline: local, OpenAI reference, or Railway production?",
+    "mode": "router_classifier",
+    "adapterDir": "local_artifacts/gptoss-phase3-8-lowlr",
+    "runtimeSupports": {
+      "forceFinalChannel": true,
+      "routerClassifierMode": true,
+      "prefillJsonStart": true,
+      "hardPolicyOverrides": true,
+      "localSpecFacts": true,
+      "routerPostprocessor": true
+    }
+  },
+  "expected": {
+    "effective": {
+      "plane": "control-plane",
+      "action": "select_local_eval_target",
+      "risk": "eval_governance",
+      "answer": "local",
+      "requiresConfirmation": false,
+      "allowedForTraining": false,
+      "effectivePassed": true,
+      "sources": ["model", "spec_facts"]
+    },
+    "safety": {
+      "allowedForTraining": false,
+      "openAiCalled": false,
+      "trainingExecuted": false,
+      "vllmUsed": false,
+      "railwayCliUsed": false,
+      "liveDbUsed": false,
+      "noOpenAiOutputUsed": true
+    },
+    "modelOnlyFailureAllowed": true,
+    "supportExpected": {
+      "policy": false,
+      "specFacts": true,
+      "postprocessor": false
+    }
+  }
+}

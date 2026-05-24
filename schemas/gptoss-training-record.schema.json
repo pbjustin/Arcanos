@@ -1,0 +1,189 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://arcanos.local/schemas/gptoss-training-record.schema.json",
+  "title": "GPT-OSS training record",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["source", "allowed_for_training", "metadata"],
+  "properties": {
+    "source": {
+      "type": "string",
+      "enum": [
+        "arcanos_owned_spec",
+        "repo_schema",
+        "human_authored",
+        "redacted_consented_log",
+        "railway_cli_observation",
+        "eval_failure_observation",
+        "self_reflection_observation",
+        "openai_output",
+        "openai_judgment",
+        "custom_gpt_action_request",
+        "hidden_reasoning",
+        "raw_secret",
+        "unknown",
+        "third_party_copyrighted",
+        "model_generated_label_without_human_review"
+      ]
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1
+    },
+    "allowed_for_training": {
+      "type": "boolean"
+    },
+    "messages": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["role", "content"],
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": ["system", "developer", "user", "assistant"]
+          },
+          "content": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["target_shape", "no_openai_output_used"],
+      "properties": {
+        "target_shape": {
+          "type": "string",
+          "enum": ["label_only", "json_only", "compact_final"]
+        },
+        "no_openai_output_used": {
+          "const": true
+        }
+      }
+    },
+    "reviewed": {
+      "type": "boolean"
+    },
+    "redacted": {
+      "type": "boolean"
+    },
+    "consent": {
+      "type": "boolean"
+    }
+  },
+  "oneOf": [
+    {
+      "required": ["text"]
+    },
+    {
+      "required": ["messages"]
+    }
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "source": {
+            "enum": ["openai_output", "openai_judgment"]
+          }
+        },
+        "required": ["source"]
+      },
+      "then": {
+        "properties": {
+          "allowed_for_training": {
+            "const": false
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "source": {
+            "enum": ["railway_cli_observation", "eval_failure_observation", "self_reflection_observation"]
+          }
+        },
+        "required": ["source"]
+      },
+      "then": {
+        "properties": {
+          "allowed_for_training": {
+            "const": false
+          },
+          "reviewed": {
+            "const": false
+          }
+        },
+        "required": ["reviewed"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "source": {
+            "const": "human_authored"
+          }
+        },
+        "required": ["source"]
+      },
+      "then": {
+        "properties": {
+          "allowed_for_training": {
+            "const": true
+          },
+          "reviewed": {
+            "const": true
+          }
+        },
+        "required": ["reviewed"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "source": {
+            "const": "redacted_consented_log"
+          }
+        },
+        "required": ["source"]
+      },
+      "then": {
+        "properties": {
+          "allowed_for_training": {
+            "const": true
+          },
+          "redacted": {
+            "const": true
+          },
+          "consent": {
+            "const": true
+          }
+        },
+        "required": ["redacted", "consent"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "source": {
+            "enum": ["arcanos_owned_spec", "repo_schema"]
+          }
+        },
+        "required": ["source"]
+      },
+      "then": {
+        "properties": {
+          "allowed_for_training": {
+            "const": true
+          }
+        }
+      }
+    }
+  ]
+}

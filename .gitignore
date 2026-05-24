@@ -242,6 +242,10 @@ converge-artifacts/**
 # generated / collected artifacts
 collected-ts/
 
+# Local GPT-OSS smoke training outputs
+local_artifacts/
+unsloth_compiled_cache/
+
 # Self-improve runtime artifacts
 governance/evidence_packs/
 memory/safety-runtime-state.json

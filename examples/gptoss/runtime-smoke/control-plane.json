@@ -1,0 +1,44 @@
+{
+  "id": "runtime-smoke-control-plane",
+  "request": {
+    "requestId": "runtime-smoke-control-plane",
+    "userInput": "Show worker queue status.",
+    "mode": "router_classifier",
+    "adapterDir": "local_artifacts/gptoss-phase3-8-lowlr",
+    "runtimeSupports": {
+      "forceFinalChannel": true,
+      "routerClassifierMode": true,
+      "prefillJsonStart": true,
+      "hardPolicyOverrides": true,
+      "localSpecFacts": true,
+      "routerPostprocessor": true
+    }
+  },
+  "expected": {
+    "effective": {
+      "plane": "control-plane",
+      "action": "show_worker_queue_status",
+      "risk": "operational_status",
+      "answer": "Worker queue status is a control-plane request.",
+      "requiresConfirmation": false,
+      "allowedForTraining": false,
+      "effectivePassed": true,
+      "sources": ["model", "postprocessor"]
+    },
+    "safety": {
+      "allowedForTraining": false,
+      "openAiCalled": false,
+      "trainingExecuted": false,
+      "vllmUsed": false,
+      "railwayCliUsed": false,
+      "liveDbUsed": false,
+      "noOpenAiOutputUsed": true
+    },
+    "modelOnlyFailureAllowed": true,
+    "supportExpected": {
+      "policy": false,
+      "specFacts": false,
+      "postprocessor": true
+    }
+  }
+}

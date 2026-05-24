@@ -1,0 +1,44 @@
+{
+  "id": "runtime-smoke-writing-plane",
+  "request": {
+    "requestId": "runtime-smoke-writing-plane",
+    "userInput": "Write a TypeScript helper for dataset validation.",
+    "mode": "router_classifier",
+    "adapterDir": "local_artifacts/gptoss-phase3-8-lowlr",
+    "runtimeSupports": {
+      "forceFinalChannel": true,
+      "routerClassifierMode": true,
+      "prefillJsonStart": true,
+      "hardPolicyOverrides": true,
+      "localSpecFacts": true,
+      "routerPostprocessor": true
+    }
+  },
+  "expected": {
+    "effective": {
+      "plane": "writing-plane",
+      "action": "write_typescript_dataset_validation_helper",
+      "risk": "low",
+      "answer": "TypeScript helper request is allowed in the writing plane.",
+      "requiresConfirmation": false,
+      "allowedForTraining": false,
+      "effectivePassed": true,
+      "sources": ["model", "postprocessor"]
+    },
+    "safety": {
+      "allowedForTraining": false,
+      "openAiCalled": false,
+      "trainingExecuted": false,
+      "vllmUsed": false,
+      "railwayCliUsed": false,
+      "liveDbUsed": false,
+      "noOpenAiOutputUsed": true
+    },
+    "modelOnlyFailureAllowed": true,
+    "supportExpected": {
+      "policy": false,
+      "specFacts": false,
+      "postprocessor": true
+    }
+  }
+}
