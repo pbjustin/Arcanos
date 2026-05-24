@@ -701,21 +701,21 @@ describe('gptoss training dataset gate', () => {
     const result = runDatasetGate([
       JSON.stringify({
         source: 'human_authored',
-        text: 'token=123456789abcdefghi should not be admitted',
+        text: 'token=[redacted] should not be admitted',
         allowed_for_training: true,
         reviewed: true,
         metadata: trainingMetadata,
       }),
       JSON.stringify({
         source: 'human_authored',
-        text: 'RAILWAY_TOKEN=rwy_abcdefghijklmnopqrstuvwxyz123456 should not be admitted',
+        text: 'RAILWAY_TOKEN=[redacted] should not be admitted',
         allowed_for_training: true,
         reviewed: true,
         metadata: trainingMetadata,
       }),
       JSON.stringify({
         source: 'human_authored',
-        text: 'DATABASE_URL=postgresql://user:pass@host/db should not be admitted',
+        text: 'DATABASE_URL=[redacted] should not be admitted',
         allowed_for_training: true,
         reviewed: true,
         metadata: trainingMetadata,

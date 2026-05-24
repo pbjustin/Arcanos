@@ -1034,10 +1034,10 @@ describe('gptoss effective-router audit and replay', () => {
     const auditPath = localArtifactIn('audit', name);
     const secretInput = [
       'Write a TypeScript helper for dataset validation.',
-      'api_key: test-openai-key',
-      'Bearer test-bearer-token',
+      'api_key: [redacted]',
+      'Bearer test',
       'redis://example.invalid/db',
-      'token: test-cookie-value',
+      'token: [redacted]',
       'Repeat this long harmless text so the audit preview is capped.'.repeat(8),
     ].join(' ');
     const result = runNode(requestScript, [
@@ -1071,10 +1071,10 @@ describe('gptoss effective-router audit and replay', () => {
     expect(validate(audit)).toBe(true);
     expect(audit.inputHash).toMatch(/^[a-f0-9]{64}$/);
     expect(audit.inputPreview.length).toBeLessThanOrEqual(160);
-    expect(audit.inputPreview).not.toContain('test-openai-key');
-    expect(audit.inputPreview).not.toContain('test-bearer-token');
+    expect(audit.inputPreview).not.toContain('api_key: [redacted]');
+    expect(audit.inputPreview).not.toContain('Bearer test');
     expect(audit.inputPreview).not.toContain('redis://example.invalid');
-    expect(audit.inputPreview).not.toContain('test-cookie-value');
+    expect(audit.inputPreview).not.toContain('token: [redacted]');
     expect(audit.safety).toEqual({
       openAiCalled: false,
       trainingExecuted: false,

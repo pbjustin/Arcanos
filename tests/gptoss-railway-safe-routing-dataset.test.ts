@@ -195,7 +195,7 @@ describe('gptoss railway-safe routing dataset', () => {
         source: 'human_authored',
         reviewed: true,
         allowed_for_training: true,
-        text: 'token=123456789abcdefghi',
+        text: 'token=[redacted]',
         metadata: { target_shape: 'compact_final', no_openai_output_used: true },
       }),
     ]);
