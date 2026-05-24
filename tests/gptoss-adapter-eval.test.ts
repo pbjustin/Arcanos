@@ -571,6 +571,7 @@ describe('gptoss adapter local eval', () => {
       'results = {',
       '  "valid": module.analyze_output(record, "{\\"action\\":\\"validate_dataset\\"}", info),',
       '  "nested_type": module.analyze_output(record, "{\\"action\\":{\\"type\\":\\"validate_dataset\\",\\"dataset_id\\":\\"local\\"}}", info),',
+      '  "nested_alias": module.analyze_output(record, "{\\"action\\":{\\"type\\":\\"dataset_validation\\",\\"parameters\\":{\\"validation_type\\":\\"local\\"}}}", info),',
       '  "nested_name": module.analyze_output(record, "{\\"action\\":{\\"name\\":\\"validate_dataset\\"}}", info),',
       '  "nested_id": module.analyze_output(record, "{\\"action\\":{\\"id\\":\\"validate_dataset\\"}}", info),',
       '  "wrong": module.analyze_output(record, "{\\"action\\":\\"validate-dataset\\",\\"note\\":\\"validate_dataset\\"}", info),',
@@ -585,6 +586,9 @@ describe('gptoss adapter local eval', () => {
     expect(parsed.nested_type.failures).not.toContain('action_mismatch:validate_dataset');
     expect(parsed.nested_type.canonicalizationApplied).toBe(true);
     expect(parsed.nested_type.canonicalAction).toBe('validate_dataset');
+    expect(parsed.nested_alias.failures).not.toContain('action_mismatch:validate_dataset');
+    expect(parsed.nested_alias.canonicalizationApplied).toBe(true);
+    expect(parsed.nested_alias.canonicalAction).toBe('validate_dataset');
     expect(parsed.nested_name.failures).not.toContain('action_mismatch:validate_dataset');
     expect(parsed.nested_id.failures).not.toContain('action_mismatch:validate_dataset');
     expect(parsed.wrong.failures).toContain('action_mismatch:validate_dataset');

@@ -607,6 +607,133 @@ retrieval/spec support, not training data. They can improve
 model/postprocessor result. A spec-fact effective pass does not mean the model
 learned the fact, and OpenAI reference mode remains disabled.
 
+## Phase 4 Local Runtime Profile
+
+Phase 3.13 records the current baseline:
+
+- model-only score: `11/24`
+- effective-router score: `24/24`
+
+The model-only score is still weak and is not cloud-ready. The effective score
+depends on the local deterministic runtime supports: force-final channel,
+router-classifier mode, JSON prefill, hard policy overrides, local spec facts,
+and router postprocessing.
+
+Phase 4 packages that effective-router path as an isolated local runtime
+contract for controlled testing only:
+
+```bash
+npm run gptoss:runtime:effective-router:dry
+npm run gptoss:runtime:effective-router:smoke
+npm run gptoss:runtime:readiness
+```
+
+The runtime contract lives in `scripts/gptoss/effective-router-runtime.mjs` and
+`schemas/gptoss-effective-router-runtime.schema.json`. Runtime smoke fixtures
+live in `examples/gptoss/runtime-smoke/`. Reports are written only under
+`local_artifacts/gptoss-runtime/`.
+
+Phase 4.1 adds a local request CLI for the same effective-router contract:
+
+```bash
+npm run gptoss:runtime:request:dry
+npm run gptoss:runtime:request:smoke
+npm run gptoss:runtime:request:regress
+npm run gptoss:runtime:request:local-model:dry
+```
+
+The request CLI lives at `scripts/gptoss/effective-router-request.mjs`, validates
+the request shape against `schemas/gptoss-effective-router-runtime.schema.json`,
+and writes request reports only under `local_artifacts/gptoss-runtime/`. It is
+dry-run by default. Direct request execution is fail-closed until a separate
+local execution path is explicitly requested with `--execute-local-model`. The
+local-model dry run plans the existing adapter eval wrapper and does not load a
+model. The live one-request local-model smoke script is:
+
+```bash
+npm run gptoss:runtime:request:local-model:smoke
+```
+
+Run that only after the dry run and tests pass. It uses the
+`openai-output-training-rejection.json` fixture, writes under
+`local_artifacts/gptoss-runtime/`, and keeps OpenAI, training, vLLM, Railway CLI,
+and live DB disabled. The request smoke fixtures live in
+`examples/gptoss/runtime-request-smoke/`.
+
+The cloud gate intentionally blocks cloud and Custom GPT exposure:
+
+```bash
+npm run gptoss:runtime:cloud-gate
+```
+
+Expected current result:
+
+```json
+{
+  "cloudReady": false,
+  "customGptReady": false,
+  "localControlledRuntimeReady": true
+}
+```
+
+Direct Custom GPT to local GPT-OSS is disallowed. Do not expose local
+`127.0.0.1`, `localhost`, WSL, or developer-machine GPT-OSS endpoints to Custom
+GPT actions. Cloud or Custom GPT integration requires a separate approved
+serving path, auth boundary, action schema, rate limits, audit logs, rollback
+behavior, and reference-only comparison plan. OpenAI output remains disallowed
+as GPT-OSS training data.
+
+Phase 4.3 adds local audit and replay artifacts for effective-router requests:
+
+```bash
+npm run gptoss:runtime:request:local-model:smoke:audit
+npm run gptoss:runtime:audit:latest
+npm run gptoss:runtime:request:replay -- --audit local_artifacts/gptoss-runtime/audit/<audit-file>.json
+```
+
+Audit records stay under `local_artifacts/gptoss-runtime/audit/` and replay
+reports stay under `local_artifacts/gptoss-runtime/replay/`. Audit records store
+input hashes plus redacted, capped previews only. They must not include raw
+secrets, tokens, bearer values, database URLs, cookies, Railway tokens, OpenAI
+keys, Redis/Postgres URLs, or raw environment values. Replay remains dry-run by
+default and requires `--execute-local-model` before it can load the local model.
+
+Phase 4.4 writes the local release manifest:
+
+```bash
+npm run gptoss:runtime:release-manifest
+```
+
+The manifest records `modelScore: 11/24`, `effectiveScore: 24/24`,
+`localControlledRuntimeReady:true`, `modelOnlyReady:false`, `cloudReady:false`,
+and `customGptReady:false`. It includes required runtime supports, request
+smoke/regress status, latest local audit/replay artifact paths, artifact
+exclusion patterns, and safety confirmations. It must not include adapter
+weights, model weights, caches, secrets, Railway output, DB rows, or raw
+sensitive local reports.
+
+Phase 4.5 adds the full local release gate:
+
+```bash
+npm run gptoss:runtime:release-gate
+```
+
+The gate runs the baseline regression, effective-router regression, request
+regression, readiness report, release manifest, and cloud gate. The cloud gate
+is expected to block; that is a pass only when cloud and Custom GPT readiness
+remain false and direct Custom GPT-to-local exposure remains disallowed.
+
+The release gate fails closed on missing reports, missing score fields, an
+effective score below `24/24`, dirty safety flags, missing runtime supports,
+tracked local artifact/model/cache files, or accidental cloud/Custom GPT
+readiness. Its report is local-only at
+`local_artifacts/gptoss-runtime/release-gate-report.json`.
+
+Model-only readiness remains false because the raw model score is `11/24`. The
+effective runtime can be locally ready because deterministic local policy,
+spec-fact, and postprocessor layers bring the effective score to `24/24`; that
+does not make the model cloud-ready or approve a Custom GPT action boundary.
+
 ## Dataset Gate
 
 Training data must pass the local dataset gate. Allowed sources are:

@@ -48,6 +48,9 @@ SAFE_ACTION_CANONICALIZATION_ALLOWLIST = {
     "reject_training_from_raw_logs",
     "reject_training_from_openai_output",
 }
+SAFE_ACTION_CANONICALIZATION_ALIASES = {
+    "dataset_validation": "validate_dataset",
+}
 SAFE_ROUTER_POSTPROCESSOR_ACTIONS = {
     "audit_openai_output_storage",
 }
@@ -1095,7 +1098,8 @@ def canonicalize_action_envelope(text: str) -> dict[str, Any]:
     raw_action = action.get(present_keys[0])
     if not isinstance(raw_action, str):
         return {**result, "canonicalizationReason": "non_string_action_identifier", "originalActionShape": shape}
-    if raw_action not in SAFE_ACTION_CANONICALIZATION_ALLOWLIST:
+    canonical_action = SAFE_ACTION_CANONICALIZATION_ALIASES.get(raw_action, raw_action)
+    if canonical_action not in SAFE_ACTION_CANONICALIZATION_ALLOWLIST:
         return {
             **result,
             "canonicalizationReason": "action_not_allowlisted",
@@ -1103,12 +1107,12 @@ def canonicalize_action_envelope(text: str) -> dict[str, Any]:
             "originalActionShape": shape,
         }
 
-    canonicalized = {**parsed, "action": raw_action}
+    canonicalized = {**parsed, "action": canonical_action}
     return {
         **result,
         "canonicalizationApplied": True,
         "canonicalizationReason": f"nested_action_{present_keys[0]}",
-        "canonicalAction": raw_action,
+        "canonicalAction": canonical_action,
         "originalActionShape": shape,
         "canonicalizedJson": json.dumps(canonicalized, sort_keys=True, separators=(",", ":")),
         "parsedJson": canonicalized,

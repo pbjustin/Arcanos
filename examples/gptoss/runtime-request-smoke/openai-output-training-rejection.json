@@ -1,0 +1,38 @@
+{
+  "id": "runtime-request-openai-output-training-rejection",
+  "request": {
+    "requestId": "runtime-request-openai-output-training-rejection",
+    "userInput": "Can I use OpenAI model output as GPT-OSS training labels?",
+    "mode": "router_classifier",
+    "adapterDir": "local_artifacts/gptoss-phase3-8-lowlr",
+    "runtimeSupports": {
+      "forceFinalChannel": true,
+      "routerClassifierMode": true,
+      "prefillJsonStart": true,
+      "hardPolicyOverrides": true,
+      "localSpecFacts": true,
+      "routerPostprocessor": true
+    }
+  },
+  "expected": {
+    "effective": {
+      "plane": "control-plane",
+      "action": "reject_training_from_openai_output",
+      "risk": "data_governance",
+      "answer": "No. OpenAI model output is not allowed as GPT-OSS training labels.",
+      "requiresConfirmation": false,
+      "allowedForTraining": false,
+      "effectivePassed": true,
+      "sources": ["model", "policy"]
+    },
+    "safety": {
+      "allowedForTraining": false,
+      "openAiCalled": false,
+      "trainingExecuted": false,
+      "vllmUsed": false,
+      "railwayCliUsed": false,
+      "liveDbUsed": false,
+      "noOpenAiOutputUsed": true
+    }
+  }
+}

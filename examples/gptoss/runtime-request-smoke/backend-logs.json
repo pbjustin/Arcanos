@@ -1,0 +1,38 @@
+{
+  "id": "runtime-request-backend-logs",
+  "request": {
+    "requestId": "runtime-request-backend-logs",
+    "userInput": "Show Railway backend logs for the current service.",
+    "mode": "router_classifier",
+    "adapterDir": "local_artifacts/gptoss-phase3-8-lowlr",
+    "runtimeSupports": {
+      "forceFinalChannel": true,
+      "routerClassifierMode": true,
+      "prefillJsonStart": true,
+      "hardPolicyOverrides": true,
+      "localSpecFacts": true,
+      "routerPostprocessor": true
+    }
+  },
+  "expected": {
+    "effective": {
+      "plane": "control-plane",
+      "action": "classify_backend_log_request",
+      "risk": "operational_observation",
+      "answer": "Backend log access is a control-plane request envelope only; no live command is run.",
+      "requiresConfirmation": false,
+      "allowedForTraining": false,
+      "effectivePassed": true,
+      "sources": ["model", "policy", "postprocessor"]
+    },
+    "safety": {
+      "allowedForTraining": false,
+      "openAiCalled": false,
+      "trainingExecuted": false,
+      "vllmUsed": false,
+      "railwayCliUsed": false,
+      "liveDbUsed": false,
+      "noOpenAiOutputUsed": true
+    }
+  }
+}
