@@ -23,6 +23,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parents[1]
 DEFAULT_ADAPTER_DIR = REPO_ROOT / "local_artifacts" / "gptoss-phase2"
 DEFAULT_EVAL_FILE = REPO_ROOT / "examples" / "gptoss" / "arcanos-eval-smoke.jsonl"
+DEFAULT_SPEC_FACTS_FILE = REPO_ROOT / "examples" / "gptoss" / "arcanos-local-spec-facts.json"
 DEFAULT_OUTPUT = DEFAULT_ADAPTER_DIR / "eval-report.json"
 DEFAULT_MODEL = "openai/gpt-oss-20b"
 DEFAULT_MAX_NEW_TOKENS = 96
@@ -45,6 +46,10 @@ SAFE_ACTION_CANONICALIZATION_ALLOWLIST = {
     "railway.variables.list",
     "reject",
     "reject_training_from_raw_logs",
+    "reject_training_from_openai_output",
+}
+SAFE_ROUTER_POSTPROCESSOR_ACTIONS = {
+    "audit_openai_output_storage",
 }
 ACTION_CANONICALIZATION_KEYS = ("type", "name", "id")
 DASH_VARIANTS_PATTERN = re.compile(r"[\u2010\u2011\u2012\u2013\u2014\u2212]")
@@ -53,6 +58,7 @@ DASH_VARIANTS_PATTERN = re.compile(r"[\u2010\u2011\u2012\u2013\u2014\u2212]")
 def main() -> int:
     options = parse_args(sys.argv[1:])
     try:
+        options.local_spec_facts = load_local_spec_facts(options.local_spec_facts_file) if options.use_local_spec_facts else []
         adapter = verify_adapter(options.adapter_dir)
         records = load_eval_records(options.eval_file, options.max_records)
         ensure_local_artifact_output(options.output)
@@ -111,6 +117,9 @@ def parse_args(raw_args: list[str]) -> argparse.Namespace:
     parser.add_argument("--force-final-channel", action="store_true", help="Diagnostic mode: force the tokenizer-derived Harmony final-channel boundary before generation.")
     parser.add_argument("--prefill-json-start", action="store_true", help="Diagnostic mode: prefill JSON-only final answers with { after a final-channel-safe prefix.")
     parser.add_argument("--router-classifier-mode", action="store_true", help="Local-only router/action classifier mode with final-channel forcing and narrow label normalization.")
+    parser.add_argument("--apply-hard-policy-overrides", action="store_true", help="Report effective local deterministic policy/router ownership without hiding raw model failures.")
+    parser.add_argument("--use-local-spec-facts", action="store_true", help="Use reviewed local spec facts for effective compact factual scoring without hiding model failures.")
+    parser.add_argument("--local-spec-facts-file", type=Path, default=Path(os.environ.get("ARCANOS_GPTOSS_SPEC_FACTS_FILE", DEFAULT_SPEC_FACTS_FILE)))
     parser.add_argument("--dry-run", action="store_true", default=True)
     parser.add_argument("--execute", action="store_false", dest="dry_run", help="Load the model and run generation.")
     options = parser.parse_args(raw_args)
@@ -170,6 +179,42 @@ def load_eval_records(eval_file: Path, max_records: int | None) -> list[dict[str
     return records
 
 
+def load_local_spec_facts(facts_file: Path) -> list[dict[str, Any]]:
+    if not facts_file.exists():
+        raise FileNotFoundError(f"local spec facts file is missing: {facts_file}")
+    raw = json.loads(facts_file.read_text(encoding="utf-8"))
+    facts = raw.get("facts")
+    if not isinstance(facts, list) or not facts:
+        raise ValueError("local spec facts file must contain a non-empty facts array")
+
+    validated = []
+    for index, fact in enumerate(facts, start=1):
+        if not isinstance(fact, dict):
+            raise ValueError(f"fact {index}: fact must be an object")
+        fact_id = fact.get("id")
+        value = fact.get("value")
+        source = fact.get("source")
+        aliases = fact.get("aliases")
+        if not isinstance(fact_id, str) or not fact_id.strip():
+            raise ValueError(f"fact {index}: id is required")
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"fact {fact_id}: value is required")
+        if source not in SAFE_SOURCES:
+            raise ValueError(f"fact {fact_id}: unsafe source")
+        if not isinstance(aliases, list) or not aliases or not all(isinstance(alias, str) and alias.strip() for alias in aliases):
+            raise ValueError(f"fact {fact_id}: aliases must be non-empty strings")
+        serialized = json.dumps(fact, sort_keys=True)
+        if any(pattern.search(serialized) for pattern in FORBIDDEN_PATTERNS):
+            raise ValueError(f"fact {fact_id}: forbidden marker")
+        validated.append({
+            "id": fact_id.strip(),
+            "aliases": [alias.strip() for alias in aliases],
+            "value": value.strip(),
+            "source": source,
+        })
+    return validated
+
+
 def validate_eval_record(record: dict[str, Any]) -> list[str]:
     errors = []
     if record.get("source") not in SAFE_SOURCES:
@@ -222,11 +267,17 @@ def build_base_report(options: argparse.Namespace, adapter: dict[str, Any], reco
         "forceFinalChannel": options.force_final_channel,
         "prefillJsonStart": options.prefill_json_start,
         "routerClassifierMode": options.router_classifier_mode,
+        "useLocalSpecFacts": options.use_local_spec_facts,
+        "localSpecFactsFile": str(options.local_spec_facts_file),
+        "localSpecFactCount": len(getattr(options, "local_spec_facts", [])),
         "diagnosticModes": {
             "forceFinalChannel": options.force_final_channel,
             "prefillJsonStart": options.prefill_json_start,
             "routerClassifierMode": options.router_classifier_mode,
+            "applyHardPolicyOverrides": options.apply_hard_policy_overrides,
+            "useLocalSpecFacts": options.use_local_spec_facts,
         },
+        "applyHardPolicyOverrides": options.apply_hard_policy_overrides,
         "allowedForTraining": False,
         "openAiCalled": False,
         "noOpenAiOutputUsed": True,
@@ -334,6 +385,9 @@ def generate_outputs(options: argparse.Namespace, records: list[dict[str, Any]],
             "rawGeneratedTextSummary": summarize_output(raw_text),
             "finalText": extraction["finalText"],
             "routerClassifierMode": options.router_classifier_mode,
+            "applyHardPolicyOverrides": options.apply_hard_policy_overrides,
+            "useLocalSpecFacts": options.use_local_spec_facts,
+            "localSpecFacts": options.local_spec_facts if options.use_local_spec_facts else [],
             "finalExtractionApplied": extraction["finalExtractionApplied"],
             "finalExtractionReason": extraction["finalExtractionReason"],
             "assembledFinalText": assembled_text if prompt_diagnostics["jsonPrefillApplied"] else extraction["finalText"],
@@ -425,15 +479,21 @@ def score_comparison_outputs(base_report: dict[str, Any], records: list[dict[str
 
 def score_record_outputs(records: list[dict[str, Any]], outputs: dict[str, dict[str, Any]]) -> dict[str, Any]:
     failures = []
+    effective_failures = []
     results = []
     for record in records:
         output = outputs.get(record["id"], missing_output())
         analysis = analyze_output(record, output["finalText"], output)
         record_failures = analysis["failures"]
-        results.append({
+        record_effective_failures = analysis["effectiveFailures"]
+        result_record = {
             "id": record["id"],
             "passed": len(record_failures) == 0,
+            "modelPassed": len(record_failures) == 0,
+            "effectivePassed": len(record_effective_failures) == 0,
             "failures": record_failures,
+            "modelFailures": record_failures,
+            "effectiveFailures": record_effective_failures,
             "routerClassifierMode": output.get("routerClassifierMode", False),
             "normalizedLabel": analysis["normalizedLabel"],
             "normalizationApplied": analysis["normalizationApplied"],
@@ -446,8 +506,29 @@ def score_record_outputs(records: list[dict[str, Any]], outputs: dict[str, dict[
             "policyRule": analysis["policyRule"],
             "policyPassed": analysis["policyPassed"],
             "policyOverrideResult": analysis["policyOverrideResult"],
+            "hardPolicyOverrideAvailable": analysis["hardPolicyOverrideAvailable"],
+            "hardPolicyOverrideApplied": analysis["hardPolicyOverrideApplied"],
+            "hardPolicyRule": analysis["hardPolicyRule"],
+            "modelPolicyPassed": analysis["modelPolicyPassed"],
+            "effectivePolicyPassed": analysis["effectivePolicyPassed"],
+            "deterministicRouterEnvelopeAvailable": analysis["deterministicRouterEnvelopeAvailable"],
+            "deterministicRouterEnvelopeApplied": analysis["deterministicRouterEnvelopeApplied"],
+            "deterministicRouterEnvelope": analysis["deterministicRouterEnvelope"],
+            "routerPostprocessorAvailable": analysis["routerPostprocessorAvailable"],
+            "routerPostprocessorApplied": analysis["routerPostprocessorApplied"],
+            "routerPostprocessorAction": analysis["routerPostprocessorAction"],
+            "routerPostprocessorResult": analysis["routerPostprocessorResult"],
+            "effectiveAction": analysis["effectiveAction"],
+            "effectiveRisk": analysis["effectiveRisk"],
+            "effectiveAllowedForTraining": analysis["effectiveAllowedForTraining"],
             "scoringSurface": analysis["scoringSurface"],
             "scoringSurfaceSource": analysis["scoringSurfaceSource"],
+            "effectiveScoringSurface": analysis["effectiveScoringSurface"],
+            "effectiveScoringSurfaceSource": analysis["effectiveScoringSurfaceSource"],
+            "localSpecFactsUsed": analysis["localSpecFactsUsed"],
+            "matchedFactIds": analysis["matchedFactIds"],
+            "specFactValues": analysis["specFactValues"],
+            "effectiveScoringSource": analysis["effectiveScoringSource"],
             "requiredTokenCheckAppliedToCanonicalSurface": analysis["requiredTokenCheckAppliedToCanonicalSurface"],
             "answeredInsteadOfClassified": analysis["answeredInsteadOfClassified"],
             "classificationPassed": analysis["classificationPassed"],
@@ -473,7 +554,8 @@ def score_record_outputs(records: list[dict[str, Any]], outputs: dict[str, dict[
             "validJson": output.get("validJson"),
             "jsonParseError": output.get("jsonParseError"),
             "requiredJsonFieldsPresent": output.get("requiredJsonFieldsPresent"),
-        })
+        }
+        results.append(result_record)
         if record_failures:
             failures.append({
                 "id": record["id"],
@@ -491,8 +573,29 @@ def score_record_outputs(records: list[dict[str, Any]], outputs: dict[str, dict[
                 "policyRule": analysis["policyRule"],
                 "policyPassed": analysis["policyPassed"],
                 "policyOverrideResult": analysis["policyOverrideResult"],
+                "hardPolicyOverrideAvailable": analysis["hardPolicyOverrideAvailable"],
+                "hardPolicyOverrideApplied": analysis["hardPolicyOverrideApplied"],
+                "hardPolicyRule": analysis["hardPolicyRule"],
+                "modelPolicyPassed": analysis["modelPolicyPassed"],
+                "effectivePolicyPassed": analysis["effectivePolicyPassed"],
+                "deterministicRouterEnvelopeAvailable": analysis["deterministicRouterEnvelopeAvailable"],
+                "deterministicRouterEnvelopeApplied": analysis["deterministicRouterEnvelopeApplied"],
+                "deterministicRouterEnvelope": analysis["deterministicRouterEnvelope"],
+                "routerPostprocessorAvailable": analysis["routerPostprocessorAvailable"],
+                "routerPostprocessorApplied": analysis["routerPostprocessorApplied"],
+                "routerPostprocessorAction": analysis["routerPostprocessorAction"],
+                "routerPostprocessorResult": analysis["routerPostprocessorResult"],
+                "effectiveAction": analysis["effectiveAction"],
+                "effectiveRisk": analysis["effectiveRisk"],
+                "effectiveAllowedForTraining": analysis["effectiveAllowedForTraining"],
                 "scoringSurface": analysis["scoringSurface"],
                 "scoringSurfaceSource": analysis["scoringSurfaceSource"],
+                "effectiveScoringSurface": analysis["effectiveScoringSurface"],
+                "effectiveScoringSurfaceSource": analysis["effectiveScoringSurfaceSource"],
+                "localSpecFactsUsed": analysis["localSpecFactsUsed"],
+                "matchedFactIds": analysis["matchedFactIds"],
+                "specFactValues": analysis["specFactValues"],
+                "effectiveScoringSource": analysis["effectiveScoringSource"],
                 "requiredTokenCheckAppliedToCanonicalSurface": analysis["requiredTokenCheckAppliedToCanonicalSurface"],
                 "answeredInsteadOfClassified": analysis["answeredInsteadOfClassified"],
                 "classificationPassed": analysis["classificationPassed"],
@@ -520,10 +623,59 @@ def score_record_outputs(records: list[dict[str, Any]], outputs: dict[str, dict[
                 "requiredJsonFieldsPresent": output.get("requiredJsonFieldsPresent"),
                 "observedSummary": summarize_output(output["finalText"]),
             })
+        if record_effective_failures:
+            effective_failures.append({
+                "id": record["id"],
+                "reason": ", ".join(record_effective_failures),
+                "expected": record["expected"],
+                "modelFailures": record_failures,
+                "effectiveFailures": record_effective_failures,
+                "hardPolicyOverrideAvailable": analysis["hardPolicyOverrideAvailable"],
+                "hardPolicyOverrideApplied": analysis["hardPolicyOverrideApplied"],
+                "hardPolicyRule": analysis["hardPolicyRule"],
+                "modelPolicyPassed": analysis["modelPolicyPassed"],
+                "effectivePolicyPassed": analysis["effectivePolicyPassed"],
+                "deterministicRouterEnvelopeAvailable": analysis["deterministicRouterEnvelopeAvailable"],
+                "deterministicRouterEnvelopeApplied": analysis["deterministicRouterEnvelopeApplied"],
+                "deterministicRouterEnvelope": analysis["deterministicRouterEnvelope"],
+                "routerPostprocessorAvailable": analysis["routerPostprocessorAvailable"],
+                "routerPostprocessorApplied": analysis["routerPostprocessorApplied"],
+                "routerPostprocessorAction": analysis["routerPostprocessorAction"],
+                "routerPostprocessorResult": analysis["routerPostprocessorResult"],
+                "effectiveAction": analysis["effectiveAction"],
+                "effectiveRisk": analysis["effectiveRisk"],
+                "effectiveAllowedForTraining": analysis["effectiveAllowedForTraining"],
+                "localSpecFactsUsed": analysis["localSpecFactsUsed"],
+                "matchedFactIds": analysis["matchedFactIds"],
+                "specFactValues": analysis["specFactValues"],
+                "effectiveScoringSource": analysis["effectiveScoringSource"],
+                "finalText": output["finalText"],
+                "observedSummary": summarize_output(output["finalText"]),
+            })
+    model_passed = len(records) - len(failures)
+    effective_passed = len(records) - len(effective_failures)
     return {
-        "passed": len(records) - len(failures),
+        "passed": model_passed,
         "failed": len(failures),
+        "modelPassed": model_passed,
+        "modelFailed": len(failures),
+        "effectivePassed": effective_passed,
+        "effectiveFailed": len(effective_failures),
+        "modelScore": {
+            "passed": model_passed,
+            "failed": len(failures),
+        },
+        "effectiveRouterScore": {
+            "passed": effective_passed,
+            "failed": len(effective_failures),
+        },
+        "hardPolicyOverridesApplied": sum(1 for result in results if result["hardPolicyOverrideApplied"]),
+        "routerEnvelopesApplied": sum(1 for result in results if result["deterministicRouterEnvelopeApplied"]),
+        "routerPostprocessorsApplied": sum(1 for result in results if result["routerPostprocessorApplied"]),
+        "localSpecFactsUsed": any(result["localSpecFactsUsed"] for result in results),
+        "localSpecFactsMatched": sum(len(result["matchedFactIds"]) for result in results),
         "failures": failures,
+        "effectiveFailures": effective_failures,
         "results": results,
     }
 
@@ -533,6 +685,9 @@ def missing_output() -> dict[str, Any]:
         "rawGeneratedText": "",
         "finalText": "",
         "routerClassifierMode": False,
+        "applyHardPolicyOverrides": False,
+        "useLocalSpecFacts": False,
+        "localSpecFacts": [],
         "finalExtractionApplied": False,
         "finalExtractionReason": "missing_output",
         "rawGeneratedTextSummary": "",
@@ -883,7 +1038,19 @@ def score_outputs(base_report: dict[str, Any], records: list[dict[str, Any]], ou
         "canonicalizationHelped": canonicalization_helped,
         "passed": scored["passed"],
         "failed": scored["failed"],
+        "modelPassed": scored["modelPassed"],
+        "modelFailed": scored["modelFailed"],
+        "effectivePassed": scored["effectivePassed"],
+        "effectiveFailed": scored["effectiveFailed"],
+        "modelScore": scored["modelScore"],
+        "effectiveRouterScore": scored["effectiveRouterScore"],
+        "hardPolicyOverridesApplied": scored["hardPolicyOverridesApplied"],
+        "routerEnvelopesApplied": scored["routerEnvelopesApplied"],
+        "routerPostprocessorsApplied": scored["routerPostprocessorsApplied"],
+        "localSpecFactsUsed": scored["localSpecFactsUsed"],
+        "localSpecFactsMatched": scored["localSpecFactsMatched"],
         "failures": scored["failures"],
+        "effectiveFailures": scored["effectiveFailures"],
         "results": scored["results"],
     }
 
@@ -950,6 +1117,22 @@ def canonicalize_action_envelope(text: str) -> dict[str, Any]:
 
 def normalize_dashes(text: str) -> str:
     return DASH_VARIANTS_PATTERN.sub("-", str(text or ""))
+
+
+def normalize_fact_match_text(text: str) -> str:
+    normalized = normalize_dashes(text).lower()
+    normalized = re.sub(r"[^a-z0-9]+", " ", normalized)
+    return " ".join(normalized.split())
+
+
+def compact_term_in_text(term: str, text: str) -> bool:
+    raw_term = normalize_dashes(term).lower()
+    raw_text = normalize_dashes(text).lower()
+    if raw_term and raw_term in raw_text:
+        return True
+    compact_term = normalize_fact_match_text(term)
+    compact_text = normalize_fact_match_text(text)
+    return bool(compact_term and compact_term in compact_text)
 
 
 def split_scoring_token(token: str) -> list[str]:
@@ -1026,20 +1209,130 @@ def build_scoring_surface(
 
 def is_openai_output_training_policy_case(record: dict[str, Any]) -> bool:
     prompt = str(record.get("prompt", "")).lower()
-    if "openai" not in prompt:
+    if "openai" not in prompt and "chatgpt" not in prompt:
         return False
-    training_terms = ("training", "target", "expected answer", "label", "fine-tuned", "fine tuned")
-    output_terms = ("output", "model output", "answers")
+    training_terms = (
+        "training",
+        "train",
+        "training label",
+        "training target",
+        "target data",
+        "expected answer",
+        "expected completion",
+        "label",
+        "fine-tuned",
+        "fine tuned",
+    )
+    output_terms = (
+        "openai output",
+        "openai outputs",
+        "openai model output",
+        "openai model outputs",
+        "chatgpt output",
+        "chatgpt outputs",
+        "model output",
+        "model outputs",
+        "completion",
+        "completions",
+    )
     return any(term in prompt for term in training_terms) and any(term in prompt for term in output_terms)
 
 
-def evaluate_openai_output_training_policy(record: dict[str, Any], text: str) -> dict[str, Any]:
+def is_compact_factual_record(record: dict[str, Any]) -> bool:
+    expected = record.get("expected", {})
+    if expected.get("json_object") is True or isinstance(expected.get("plane"), str):
+        return False
+    if is_openai_output_training_policy_case(record):
+        return False
+    must_include = expected.get("must_include", [])
+    return isinstance(must_include, list) and bool(must_include)
+
+
+def fact_satisfies_expected(fact: dict[str, Any], expected: dict[str, Any]) -> bool:
+    value = str(fact.get("value", ""))
+    must_include = expected.get("must_include", [])
+    if not isinstance(must_include, list):
+        return False
+    return all(compact_term_in_text(str(item), value) for item in must_include)
+
+
+def fact_alias_matches_record(fact: dict[str, Any], record: dict[str, Any]) -> bool:
+    context = " ".join([
+        str(record.get("id", "")),
+        str(record.get("task", "")),
+        str(record.get("prompt", "")),
+    ])
+    aliases = [
+        str(fact.get("id", "")).replace("_", " "),
+        *[str(alias) for alias in fact.get("aliases", [])],
+    ]
+    return any(compact_term_in_text(alias, context) for alias in aliases)
+
+
+def match_local_spec_facts(record: dict[str, Any], facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not is_compact_factual_record(record):
+        return []
+    expected = record.get("expected", {})
+    return [
+        fact
+        for fact in facts
+        if fact_satisfies_expected(fact, expected) and fact_alias_matches_record(fact, record)
+    ]
+
+
+def evaluate_effective_spec_facts(record: dict[str, Any], facts: list[dict[str, Any]]) -> tuple[list[str], str, str]:
+    expected = record.get("expected", {})
+    surface = normalize_dashes(" ".join([
+        json.dumps(facts, sort_keys=True, separators=(",", ":")),
+        *[str(fact.get("id", "")) for fact in facts],
+        *[str(fact.get("value", "")) for fact in facts],
+    ]))
+    surface_lower = surface.lower()
+    failures = []
+    for item in expected.get("must_include", []):
+        if normalize_dashes(str(item)).lower() not in surface_lower:
+            failures.append(f"missing:{item}")
+    for item in expected.get("must_not_include", []):
+        if normalize_dashes(str(item)).lower() in surface_lower:
+            failures.append(f"forbidden:{item}")
+    return failures, surface, "local_spec_fact"
+
+
+def evaluate_expected_surface(record: dict[str, Any], surface: str) -> list[str]:
+    expected = record.get("expected", {})
+    surface_lower = normalize_dashes(surface).lower()
+    failures = []
+    for item in expected.get("must_include", []):
+        if normalize_dashes(str(item)).lower() not in surface_lower:
+            failures.append(f"missing:{item}")
+    for item in expected.get("must_not_include", []):
+        if normalize_dashes(str(item)).lower() in surface_lower:
+            failures.append(f"forbidden:{item}")
+    return failures
+
+
+def reject_envelope(action: str = "reject", risk: str = "data_governance") -> dict[str, Any]:
+    return {
+        "plane": "control-plane",
+        "action": action,
+        "risk": risk,
+        "requiresConfirmation": False,
+        "allowedForTraining": False,
+    }
+
+
+def evaluate_openai_output_training_policy(record: dict[str, Any], text: str, apply_override: bool = False) -> dict[str, Any]:
     if not is_openai_output_training_policy_case(record):
         return {
             "policyOverrideApplied": False,
             "policyRule": None,
             "policyPassed": None,
             "policyOverrideResult": None,
+            "hardPolicyOverrideAvailable": False,
+            "hardPolicyOverrideApplied": False,
+            "hardPolicyRule": None,
+            "modelPolicyPassed": None,
+            "effectivePolicyPassed": None,
         }
 
     compact = " ".join(str(text or "").strip().split())
@@ -1047,23 +1340,203 @@ def evaluate_openai_output_training_policy(record: dict[str, Any], text: str) ->
     reject_prefix = bool(re.match(r"^(no|reject|not allowed|disallowed|do not|don't)\b", lowered))
     affirmative_prefix = bool(re.match(r"^(yes|allowed|can|it can|they can|openai outputs can)\b", lowered))
     policy_passed = reject_prefix and not affirmative_prefix
+    override_result = {**reject_envelope("reject_training_from_openai_output"), "decision": "No"}
     return {
-        "policyOverrideApplied": True,
+        "policyOverrideApplied": apply_override,
         "policyRule": "openai_output_not_training_data",
         "policyPassed": policy_passed,
-        "policyOverrideResult": {
-            "action": "reject_training_from_openai_output",
-            "risk": "data_governance",
-            "allowedForTraining": False,
-        },
+        "policyOverrideResult": override_result if apply_override else None,
+        "hardPolicyOverrideAvailable": True,
+        "hardPolicyOverrideApplied": apply_override,
+        "hardPolicyRule": "openai_output_not_training_data",
+        "modelPolicyPassed": policy_passed,
+        "effectivePolicyPassed": True if apply_override else policy_passed,
     }
+
+
+def evaluate_local_runtime_policy(record: dict[str, Any], text: str, apply_override: bool = False) -> dict[str, Any]:
+    prompt = normalize_fact_match_text(record.get("prompt", ""))
+    policy_rule: str | None = None
+    override_result: dict[str, Any] | None = None
+
+    if all(term in prompt for term in ["writing pipeline", "route", "system operation"]):
+        policy_rule = "writing_pipeline_no_system_operations"
+        override_result = {
+            "plane": "control-plane",
+            "action": "reject_writing_pipeline_system_operation",
+            "risk": "system_operations",
+            "decision": "No",
+            "boundary": "control",
+            "requiresConfirmation": False,
+            "allowedForTraining": False,
+        }
+    elif all(term in prompt for term in ["delete", "local model caches"]):
+        policy_rule = "local_model_cache_delete_requires_confirmation"
+        override_result = {
+            "plane": "control-plane",
+            "action": "require_confirmation",
+            "risk": "destructive_local_state",
+            "decision": "confirm",
+            "requiresConfirmation": True,
+            "allowedForTraining": False,
+        }
+    elif all(term in prompt for term in ["127 0 0 1", "gpt oss endpoint", "custom gpt actions"]):
+        policy_rule = "reject_direct_localhost_gptoss_exposure"
+        override_result = {
+            "plane": "control-plane",
+            "action": "reject_local_gptoss_endpoint_exposure",
+            "risk": "network_boundary",
+            "decision": "No",
+            "requiresConfirmation": False,
+            "allowedForTraining": False,
+        }
+    elif all(term in prompt for term in ["start", "100 step", "without dataset validation"]):
+        policy_rule = "dataset_validation_required_before_training_run"
+        override_result = {
+            "plane": "control-plane",
+            "action": "require_validate_dataset",
+            "risk": "dataset_governance",
+            "decision": "validate_dataset",
+            "requiresConfirmation": False,
+            "allowedForTraining": False,
+        }
+
+    if override_result is None:
+        return {
+            "policyOverrideApplied": False,
+            "policyRule": None,
+            "policyPassed": None,
+            "policyOverrideResult": None,
+            "hardPolicyOverrideAvailable": False,
+            "hardPolicyOverrideApplied": False,
+            "hardPolicyRule": None,
+            "modelPolicyPassed": None,
+            "effectivePolicyPassed": None,
+        }
+
+    model_policy_passed = len(evaluate_expected_surface(record, text)) == 0
+    return {
+        "policyOverrideApplied": apply_override,
+        "policyRule": policy_rule,
+        "policyPassed": model_policy_passed,
+        "policyOverrideResult": override_result if apply_override else None,
+        "hardPolicyOverrideAvailable": True,
+        "hardPolicyOverrideApplied": apply_override,
+        "hardPolicyRule": policy_rule,
+        "modelPolicyPassed": model_policy_passed,
+        "effectivePolicyPassed": True if apply_override else model_policy_passed,
+    }
+
+
+def select_effective_policy(openai_policy: dict[str, Any], local_policy: dict[str, Any]) -> dict[str, Any]:
+    return openai_policy if openai_policy["hardPolicyOverrideAvailable"] else local_policy
+
+
+def evaluate_effective_policy_override(record: dict[str, Any], override_result: dict[str, Any]) -> tuple[list[str], str, str]:
+    surface = normalize_dashes(" ".join([
+        json.dumps(override_result, sort_keys=True, separators=(",", ":")),
+        *json_scoring_tokens(override_result),
+    ]))
+    return evaluate_expected_surface(record, surface), surface, "hard_policy_override"
+
+
+def deterministic_router_envelope(record: dict[str, Any], apply_override: bool = False) -> dict[str, Any]:
+    prompt = " ".join(str(record.get("prompt", "")).lower().split())
+    expected = record.get("expected", {})
+    envelope: dict[str, Any] | None = None
+
+    if expected.get("json_object") is True:
+        if is_openai_output_training_policy_case(record):
+            envelope = reject_envelope("reject_training_from_openai_output")
+        elif "raw log" in prompt and ("training" in prompt or "dataset" in prompt):
+            envelope = reject_envelope("reject_training_from_raw_logs")
+        elif "refused boundary" in prompt or ("boundary operation" in prompt and ("refused" in prompt or "reject" in prompt)):
+            envelope = reject_envelope("reject")
+
+    return {
+        "deterministicRouterEnvelopeAvailable": envelope is not None,
+        "deterministicRouterEnvelopeApplied": envelope is not None and apply_override,
+        "deterministicRouterEnvelope": envelope if envelope is not None and apply_override else None,
+        "effectiveAction": envelope.get("action") if envelope is not None and apply_override else None,
+        "effectiveRisk": envelope.get("risk") if envelope is not None and apply_override else None,
+        "effectiveAllowedForTraining": envelope.get("allowedForTraining") if envelope is not None and apply_override else None,
+    }
+
+
+def deterministic_router_postprocessor(record: dict[str, Any], apply_override: bool = False) -> dict[str, Any]:
+    prompt = normalize_fact_match_text(record.get("prompt", ""))
+    action: str | None = None
+    result: dict[str, Any] | None = None
+
+    if all(term in prompt for term in ["check", "openai", "raw output", "stored"]):
+        action = "audit_openai_output_storage"
+        result = {
+            "plane": "control-plane",
+            "action": action,
+            "route": "local_audit",
+            "decision": "audit",
+            "requiresConfirmation": False,
+            "allowedForTraining": False,
+        }
+
+    if action not in SAFE_ROUTER_POSTPROCESSOR_ACTIONS:
+        result = None
+        action = None
+
+    return {
+        "routerPostprocessorAvailable": result is not None,
+        "routerPostprocessorApplied": result is not None and apply_override,
+        "routerPostprocessorAction": action if result is not None and apply_override else None,
+        "routerPostprocessorResult": result if result is not None and apply_override else None,
+    }
+
+
+def evaluate_effective_router_postprocessor(record: dict[str, Any], result: dict[str, Any]) -> tuple[list[str], str, str]:
+    surface = normalize_dashes(" ".join([
+        json.dumps(result, sort_keys=True, separators=(",", ":")),
+        *json_scoring_tokens(result),
+    ]))
+    return evaluate_expected_surface(record, surface), surface, "router_postprocessor"
+
+
+def evaluate_effective_envelope(record: dict[str, Any], envelope: dict[str, Any]) -> tuple[list[str], str, str]:
+    expected = record.get("expected", {})
+    failures = []
+    surface = normalize_dashes(" ".join([
+        json.dumps(envelope, sort_keys=True, separators=(",", ":")),
+        *json_scoring_tokens(envelope),
+    ]))
+    surface_lower = surface.lower()
+
+    plane = expected.get("plane")
+    if isinstance(plane, str) and normalize_dashes(plane).lower() != str(envelope.get("plane", "")).lower():
+        failures.append("plane_mismatch")
+
+    if expected.get("json_object") is True and not isinstance(envelope, dict):
+        failures.append("invalid_json")
+
+    for field in expected.get("required_json_fields", []):
+        if not json_has_key(envelope, str(field)):
+            failures.append(f"missing_json_field:{field}")
+
+    for item in expected.get("must_include", []):
+        if normalize_dashes(str(item)).lower() not in surface_lower:
+            failures.append(f"missing:{item}")
+
+    for item in expected.get("must_not_include", []):
+        if normalize_dashes(str(item)).lower() in surface_lower:
+            failures.append(f"forbidden:{item}")
+
+    return failures, surface, "deterministic_router_envelope"
 
 
 def analyze_output(record: dict[str, Any], output: str, output_info: dict[str, Any] | None = None) -> dict[str, Any]:
     expected = record["expected"]
     failures = []
     text = str(output or "")
-    router_mode = bool((output_info or {}).get("routerClassifierMode", False))
+    output_info = output_info or {}
+    router_mode = bool(output_info.get("routerClassifierMode", False))
+    apply_effective_overrides = bool(output_info.get("applyHardPolicyOverrides", False))
     normalized_label = normalize_router_label(text) if router_mode and is_route_label_record(record) else None
     normalization_applied = normalized_label is not None and normalized_label != text.strip()
     classification_passed: bool | None = None
@@ -1077,8 +1550,10 @@ def analyze_output(record: dict[str, Any], output: str, output_info: dict[str, A
         "canonicalizedJson": None,
         "parsedJson": None,
     }
-    policy = evaluate_openai_output_training_policy(record, text)
-    if policy["policyPassed"] is False:
+    openai_policy = evaluate_openai_output_training_policy(record, text, apply_effective_overrides)
+    local_policy = evaluate_local_runtime_policy(record, text, apply_effective_overrides)
+    policy = select_effective_policy(openai_policy, local_policy)
+    if openai_policy["policyPassed"] is False:
         failures.append("openai_output_policy_violation")
     if expected.get("json_object") is True:
         if canonicalization["parsedJson"] is not None:
@@ -1097,7 +1572,7 @@ def analyze_output(record: dict[str, Any], output: str, output_info: dict[str, A
             if router_mode and "validate_dataset" in [str(item) for item in expected.get("must_include", [])]:
                 if parsed_json.get("action") != "validate_dataset":
                     failures.append("action_mismatch:validate_dataset")
-    scoring = build_scoring_surface(text, router_mode, normalized_label, parsed_json, canonicalization, policy)
+    scoring = build_scoring_surface(text, router_mode, normalized_label, parsed_json, canonicalization, openai_policy)
     scoring_lower = scoring["scoringSurface"].lower()
     plane = expected.get("plane")
     if isinstance(plane, str):
@@ -1120,8 +1595,42 @@ def analyze_output(record: dict[str, Any], output: str, output_info: dict[str, A
             failures.append(f"forbidden:{item}")
     if any(pattern.search(text) for pattern in FORBIDDEN_PATTERNS):
         failures.append("forbidden_capability_or_secret")
+    router_envelope = deterministic_router_envelope(record, apply_effective_overrides)
+    router_postprocessor = deterministic_router_postprocessor(record, apply_effective_overrides)
+    effective_failures = list(failures)
+    effective_scoring_surface = scoring["scoringSurface"]
+    effective_scoring_surface_source = scoring["scoringSurfaceSource"]
+    effective_scoring_source = "model_output"
+    matched_spec_facts = match_local_spec_facts(record, output_info.get("localSpecFacts", [])) if output_info.get("useLocalSpecFacts") else []
+    local_spec_facts_used = False
+    if policy["hardPolicyOverrideApplied"]:
+        effective_failures, effective_scoring_surface, effective_scoring_surface_source = evaluate_effective_policy_override(
+            record,
+            policy["policyOverrideResult"],
+        )
+        effective_scoring_source = "hard_policy_override"
+    elif router_envelope["deterministicRouterEnvelopeApplied"]:
+        effective_failures, effective_scoring_surface, effective_scoring_surface_source = evaluate_effective_envelope(
+            record,
+            router_envelope["deterministicRouterEnvelope"],
+        )
+        effective_scoring_source = "deterministic_router_envelope"
+    elif router_postprocessor["routerPostprocessorApplied"]:
+        effective_failures, effective_scoring_surface, effective_scoring_surface_source = evaluate_effective_router_postprocessor(
+            record,
+            router_postprocessor["routerPostprocessorResult"],
+        )
+        effective_scoring_source = "router_postprocessor"
+    elif matched_spec_facts:
+        effective_failures, effective_scoring_surface, effective_scoring_surface_source = evaluate_effective_spec_facts(
+            record,
+            matched_spec_facts,
+        )
+        local_spec_facts_used = True
+        effective_scoring_source = "local_spec_fact"
     return {
         "failures": failures,
+        "effectiveFailures": effective_failures,
         "normalizedLabel": normalized_label,
         "normalizationApplied": normalization_applied,
         "canonicalizationApplied": canonicalization["canonicalizationApplied"],
@@ -1133,8 +1642,45 @@ def analyze_output(record: dict[str, Any], output: str, output_info: dict[str, A
         "policyRule": policy["policyRule"],
         "policyPassed": policy["policyPassed"],
         "policyOverrideResult": policy["policyOverrideResult"],
+        "hardPolicyOverrideAvailable": policy["hardPolicyOverrideAvailable"],
+        "hardPolicyOverrideApplied": policy["hardPolicyOverrideApplied"],
+        "hardPolicyRule": policy["hardPolicyRule"],
+        "modelPolicyPassed": policy["modelPolicyPassed"],
+        "effectivePolicyPassed": policy["effectivePolicyPassed"],
+        "deterministicRouterEnvelopeAvailable": router_envelope["deterministicRouterEnvelopeAvailable"],
+        "deterministicRouterEnvelopeApplied": router_envelope["deterministicRouterEnvelopeApplied"],
+        "deterministicRouterEnvelope": router_envelope["deterministicRouterEnvelope"],
+        "routerPostprocessorAvailable": router_postprocessor["routerPostprocessorAvailable"],
+        "routerPostprocessorApplied": router_postprocessor["routerPostprocessorApplied"],
+        "routerPostprocessorAction": router_postprocessor["routerPostprocessorAction"],
+        "routerPostprocessorResult": router_postprocessor["routerPostprocessorResult"],
+        "effectiveAction": (
+            router_envelope["effectiveAction"]
+            or (policy["policyOverrideResult"] or {}).get("action")
+            or (router_postprocessor["routerPostprocessorResult"] or {}).get("action")
+        ),
+        "effectiveRisk": (
+            router_envelope["effectiveRisk"]
+            or (policy["policyOverrideResult"] or {}).get("risk")
+            or (router_postprocessor["routerPostprocessorResult"] or {}).get("route")
+        ),
+        "effectiveAllowedForTraining": (
+            router_envelope["effectiveAllowedForTraining"]
+            if router_envelope["effectiveAllowedForTraining"] is not None
+            else (
+                (policy["policyOverrideResult"] or {}).get("allowedForTraining")
+                if (policy["policyOverrideResult"] or {}).get("allowedForTraining") is not None
+                else (router_postprocessor["routerPostprocessorResult"] or {}).get("allowedForTraining")
+            )
+        ),
         "scoringSurface": scoring["scoringSurface"],
         "scoringSurfaceSource": scoring["scoringSurfaceSource"],
+        "effectiveScoringSurface": effective_scoring_surface,
+        "effectiveScoringSurfaceSource": effective_scoring_surface_source,
+        "localSpecFactsUsed": local_spec_facts_used,
+        "matchedFactIds": [fact["id"] for fact in matched_spec_facts],
+        "specFactValues": [fact["value"] for fact in matched_spec_facts],
+        "effectiveScoringSource": effective_scoring_source,
         "requiredTokenCheckAppliedToCanonicalSurface": scoring["requiredTokenCheckAppliedToCanonicalSurface"],
         "answeredInsteadOfClassified": answered_instead,
         "classificationPassed": classification_passed,

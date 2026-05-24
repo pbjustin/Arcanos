@@ -90,6 +90,9 @@ const CAPABILITY_CONFIRMATION_TOKEN_BODY_KEY = 'confirmation_token';
 const CAPABILITY_CONFIRMATION_HEADER_TOKEN_PREFIX = 'token:';
 const CAPABILITY_RUN_BODY_KEYS = new Set(['action', 'payload']);
 const CAPABILITY_PAYLOAD_MAX_DEPTH = 32;
+const CORE_CAPABILITY_ID = 'ARCANOS:CORE';
+const CORE_CAPABILITY_ROUTE = 'core';
+const CORE_READONLY_ACTIONS = new Set(['system_state']);
 const CLI_CAPABILITY_ID = 'ARCANOS:CLI';
 const CLI_CAPABILITY_ROUTE = 'cli';
 const CLI_GATED_ACTIONS = new Set(['runApprovedCommand', 'applyApprovedPatch']);
@@ -119,6 +122,20 @@ function sortStrings(values: string[]): string[] {
 
 function isCliCapabilityId(value: string): boolean {
   return value === CLI_CAPABILITY_ID || value === CLI_CAPABILITY_ROUTE;
+}
+
+function isCoreCapabilityId(value: string): boolean {
+  return value === CORE_CAPABILITY_ID || value === CORE_CAPABILITY_ROUTE;
+}
+
+function isReadOnlySystemStatePayload(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return true;
+  }
+
+  const record = value as Record<string, unknown>;
+  return !Object.prototype.hasOwnProperty.call(record, 'patch')
+    && !Object.prototype.hasOwnProperty.call(record, 'expectedVersion');
 }
 
 function getCliCapabilitySummary() {
@@ -241,6 +258,25 @@ function readCapabilityRunBody(body: unknown): CapabilityRunBody {
 }
 
 function capabilityRunNeedsConfirmation(req: express.Request): boolean {
+  if (isCoreCapabilityId(req.params.id)) {
+    if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) {
+      return true;
+    }
+
+    const record = req.body as Record<string, unknown>;
+    const action = record.action;
+    const payload = Object.prototype.hasOwnProperty.call(record, 'payload') ? record.payload : {};
+    if (
+      typeof action === 'string'
+      && CORE_READONLY_ACTIONS.has(action.trim())
+      && isReadOnlySystemStatePayload(payload)
+    ) {
+      return false;
+    }
+
+    return true;
+  }
+
   if (!isCliCapabilityId(req.params.id)) {
     return true;
   }

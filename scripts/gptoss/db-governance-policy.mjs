@@ -10,6 +10,7 @@ export const APPROVED_TRAINING_SOURCES = new Set([
 export const CANDIDATE_ONLY_SOURCES = new Set([
   'railway_cli_observation',
   'eval_failure_observation',
+  'self_reflection_observation',
 ]);
 
 export const REJECTED_TRAINING_SOURCES = new Set([

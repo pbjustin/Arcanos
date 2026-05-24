@@ -148,6 +148,37 @@ npm run gptoss:db:eval-ledger:dry -- --report local_artifacts/gptoss-phase3-7-lo
 
 Ledger dry-runs write local reports under `local_artifacts/gptoss-db-ledger/`.
 
+## Phase 3.8 Candidate Workflow
+
+The Phase 3.7 router/classifier postprocessed v2 eval reached 9/24. Its
+remaining true model errors are now represented as local governance candidate
+drafts, not training data:
+
+```bash
+node scripts/gptoss/db-eval-ledger.mjs --report local_artifacts/gptoss-phase3-7-lowlr/eval-router-classifier-postprocessed-v2.json --dataset-path examples/gptoss/arcanos-phase3-7-weighted-repair-training.jsonl
+node scripts/gptoss/db-training-candidate-import.mjs --input local_artifacts/gptoss-phase3-7-lowlr/phase3_8_governance_candidates.jsonl
+node scripts/gptoss/db-export-approved-training.mjs
+```
+
+Those commands are dry-run/local by default. They do not require live DB writes,
+do not dump raw rows, and do not create approved JSONL examples. The
+`eval_failure_observation` source remains non-trainable even when the candidate
+is redacted and queued for review.
+
+Only a separate reviewed `arcanos_owned_spec`, `repo_schema`, or
+`human_authored` repair dataset can be used for future training. For Phase 3.8,
+that file is
+`examples/gptoss/arcanos-phase3-8-true-error-repair-training.jsonl`; validate it
+with:
+
+```bash
+npm run gptoss:phase3-8:dataset:validate
+```
+
+OpenAI reference mode remains disabled for this workflow, and no live DB writes
+are required to ingest the local eval ledger or candidate drafts in dry-run
+mode.
+
 ## Safety
 
 Keep tokens, cookies, bearer strings, and connection strings in local

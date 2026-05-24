@@ -127,6 +127,8 @@ describe('gptoss DB governance layer', () => {
     expect(policy.evaluateApprovedTrainingExample(approvedRecord()).ok).toBe(true);
     expect(policy.evaluateApprovedTrainingExample(approvedRecord({ source: 'openai_output' })).reasons).toContain('openai_derived_source_rejected');
     expect(policy.evaluateApprovedTrainingExample(approvedRecord({ source: 'railway_cli_observation', allowed_for_training: false })).reasons).toContain('source_rejected:railway_cli_observation');
+    expect(policy.evaluateApprovedTrainingExample(approvedRecord({ source: 'eval_failure_observation', allowed_for_training: false, reviewed: false })).reasons).toContain('source_rejected:eval_failure_observation');
+    expect(policy.evaluateApprovedTrainingExample(approvedRecord({ source: 'self_reflection_observation', allowed_for_training: false, reviewed: false })).reasons).toContain('source_rejected:self_reflection_observation');
     expect(policy.evaluateApprovedTrainingExample(approvedRecord({ reviewed: false })).reasons).toContain('reviewed_true_required');
     expect(policy.evaluateApprovedTrainingExample(approvedRecord({ source: 'arcanos_owned_spec', reviewed: true })).ok).toBe(true);
     expect(policy.evaluateApprovedTrainingExample(approvedRecord({ contains_secret: true })).reasons).toContain('contains_secret');
@@ -172,6 +174,75 @@ describe('gptoss DB governance layer', () => {
     expect(result.trainingExecuted).toBe(false);
     expect(result.vllmUsed).toBe(false);
     expect(result.railwayCliExecuted).toBe(false);
+  });
+
+  it('dry-runs eval failure candidate JSONL batches as non-trainable governance drafts', async () => {
+    const candidateModule = await loadCandidateModule() as {
+      buildCandidateImport: (argv: string[]) => Promise<unknown>;
+    };
+    const inputPath = join(tempDir, 'phase38-candidates.jsonl');
+    writeFileSync(inputPath, [
+      JSON.stringify({
+        candidate_id: 'phase3-8-candidate-a',
+        source: 'eval_failure_observation',
+        reviewed: false,
+        redacted: true,
+        allowed_for_training: false,
+        requires_human_review: true,
+        no_openai_output_used: true,
+        contains_secret: false,
+        eval_id: 'eval-smoke-002',
+        raw_input_summary: 'Protocol owner prompt.',
+        observed_summary: 'Wrong owner summary.',
+      }),
+      JSON.stringify({
+        candidate_id: 'phase3-8-candidate-b',
+        source: 'eval_failure_observation',
+        reviewed: false,
+        redacted: true,
+        allowed_for_training: false,
+        requires_human_review: true,
+        no_openai_output_used: true,
+        contains_secret: false,
+        eval_id: 'eval-smoke-020',
+        raw_input_summary: 'Route label prompt.',
+        observed_summary: 'Wrong route summary.',
+      }),
+    ].join('\n') + '\n', 'utf8');
+
+    const result = await candidateModule.buildCandidateImport(['--input', inputPath]) as {
+      ok?: boolean;
+      dryRun?: boolean;
+      checked?: number;
+      importable?: number;
+      rejected?: number;
+      candidates?: Array<{
+        source?: string;
+        reviewed?: boolean;
+        allowed_for_training?: boolean;
+        requires_human_review?: boolean;
+      }>;
+      openAiCalled?: boolean;
+      trainingExecuted?: boolean;
+      vllmUsed?: boolean;
+      railwayCliExecuted?: boolean;
+      liveDbWrite?: boolean;
+    };
+
+    expect(result.ok).toBe(true);
+    expect(result.dryRun).toBe(true);
+    expect(result.checked).toBe(2);
+    expect(result.importable).toBe(2);
+    expect(result.rejected).toBe(0);
+    expect(result.candidates?.every((candidate) => candidate.source === 'eval_failure_observation')).toBe(true);
+    expect(result.candidates?.every((candidate) => candidate.reviewed === false)).toBe(true);
+    expect(result.candidates?.every((candidate) => candidate.allowed_for_training === false)).toBe(true);
+    expect(result.candidates?.every((candidate) => candidate.requires_human_review === true)).toBe(true);
+    expect(result.openAiCalled).toBe(false);
+    expect(result.trainingExecuted).toBe(false);
+    expect(result.vllmUsed).toBe(false);
+    expect(result.railwayCliExecuted).toBe(false);
+    expect(result.liveDbWrite).toBe(false);
   });
 
   it('exports only approved rows and rejects candidate-only provenance', async () => {

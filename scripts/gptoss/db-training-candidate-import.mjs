@@ -47,7 +47,16 @@ function readInput(path) {
       summary: 'Dry-run candidate placeholder; no raw payload provided.',
     };
   }
-  return JSON.parse(readFileSync(path, 'utf8'));
+  const content = readFileSync(path, 'utf8').trim();
+  try {
+    return JSON.parse(content);
+  } catch {
+    return content
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+  }
 }
 
 async function insertCandidate(candidate) {
@@ -108,21 +117,30 @@ async function insertCandidate(candidate) {
 export async function buildCandidateImport(argv = []) {
   const options = parseArgs(argv);
   const input = readInput(options.input);
-  const source = options.source || input.source || 'eval_failure_observation';
-  const candidate = normalizeCandidateRecord(input, {
-    candidateId: input.candidate_id || input.id || `gptoss-candidate-${randomUUID()}`,
-    source,
-    redacted: input.redacted === true,
+  const inputs = Array.isArray(input) ? input : [input];
+  const candidates = inputs.map((record) => {
+    const source = options.source || record.source || 'eval_failure_observation';
+    return normalizeCandidateRecord(record, {
+      candidateId: record.candidate_id || record.id || `gptoss-candidate-${randomUUID()}`,
+      source,
+      redacted: record.redacted === true,
+    });
   });
-  const policy = evaluateCandidateRecord(candidate);
+  const policies = candidates.map((candidate) => evaluateCandidateRecord(candidate));
+  const ok = policies.every((policy) => policy.ok);
 
   return {
-    ok: policy.ok,
+    ok,
     dryRun: !options.execute,
     executeRequested: options.execute,
-    dbInsertPlanned: options.execute && options.allowDbWrite && policy.ok,
-    candidate,
-    policy,
+    dbInsertPlanned: options.execute && options.allowDbWrite && ok,
+    candidate: candidates[0],
+    policy: policies[0],
+    candidates,
+    policies,
+    checked: candidates.length,
+    importable: policies.filter((policy) => policy.ok).length,
+    rejected: policies.filter((policy) => !policy.ok).length,
     allowedForTraining: false,
     openAiCalled: false,
     trainingExecuted: false,
@@ -137,11 +155,15 @@ export async function main(argv = process.argv.slice(2)) {
   const result = await buildCandidateImport(argv);
   if (result.executeRequested && !result.options.allowDbWrite) {
     result.ok = false;
-    result.policy.reasons.push('db_write_requires_explicit_allow_flag');
+    for (const policy of result.policies) {
+      policy.reasons.push('db_write_requires_explicit_allow_flag');
+    }
   }
 
   if (result.ok && result.dbInsertPlanned) {
-    await insertCandidate(result.candidate);
+    for (const candidate of result.candidates) {
+      await insertCandidate(candidate);
+    }
     result.liveDbWrite = true;
   }
 

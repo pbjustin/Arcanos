@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "kind": "gptoss_baseline_registry",
+  "current": "phase3.13",
+  "baselines": [
+    {
+      "id": "phase3.13",
+      "label": "Phase 3.13",
+      "adapterPath": "local_artifacts/gptoss-phase3-8-lowlr",
+      "evalReport": "local_artifacts/gptoss-phase3-8-lowlr/eval-router-classifier-effective-spec-v3.json",
+      "modelScore": {
+        "passed": 11,
+        "failed": 13,
+        "records": 24
+      },
+      "effectiveScore": {
+        "passed": 24,
+        "failed": 0,
+        "records": 24
+      },
+      "requiredRuntimeFlags": [
+        "--router-classifier-mode",
+        "--prefill-json-start",
+        "--apply-hard-policy-overrides",
+        "--use-local-spec-facts"
+      ],
+      "requiredDiagnosticModes": {
+        "routerClassifierMode": true,
+        "prefillJsonStart": true,
+        "applyHardPolicyOverrides": true,
+        "useLocalSpecFacts": true
+      },
+      "safetyFlags": {
+        "allowedForTraining": false,
+        "openAiCalled": false,
+        "trainingExecuted": false,
+        "vllmUsed": false,
+        "noOpenAiOutputUsed": true,
+        "railwayCliUsed": false,
+        "liveDbUsed": false
+      }
+    }
+  ]
+}

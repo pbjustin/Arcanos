@@ -7,10 +7,12 @@ const scriptPath = join(process.cwd(), 'scripts', 'gptoss', 'dataset-gate.mjs');
 const validateDatasetScriptPath = join(process.cwd(), 'scripts', 'gptoss', 'validate-training-dataset.mjs');
 const validatePhase36DatasetScriptPath = join(process.cwd(), 'scripts', 'gptoss', 'validate-phase3-6-dataset.mjs');
 const validatePhase37DatasetScriptPath = join(process.cwd(), 'scripts', 'gptoss', 'validate-phase3-7-dataset.mjs');
+const validatePhase38DatasetScriptPath = join(process.cwd(), 'scripts', 'gptoss', 'validate-phase3-8-dataset.mjs');
 const phase34DatasetPath = join(process.cwd(), 'examples', 'gptoss', 'arcanos-phase3-4-training.jsonl');
 const phase35DatasetPath = join(process.cwd(), 'examples', 'gptoss', 'arcanos-phase3-5-target-shape-training.jsonl');
 const phase36DatasetPath = join(process.cwd(), 'examples', 'gptoss', 'arcanos-phase3-6-action-label-training.jsonl');
 const phase37DatasetPath = join(process.cwd(), 'examples', 'gptoss', 'arcanos-phase3-7-weighted-repair-training.jsonl');
+const phase38DatasetPath = join(process.cwd(), 'examples', 'gptoss', 'arcanos-phase3-8-true-error-repair-training.jsonl');
 const microDatasetPath = join(process.cwd(), 'examples', 'gptoss', 'arcanos-micro-overfit-training.jsonl');
 const singleJsonDatasetPath = join(process.cwd(), 'examples', 'gptoss', 'arcanos-single-json-overfit-training.jsonl');
 const singleSafetyDatasetPath = join(process.cwd(), 'examples', 'gptoss', 'arcanos-single-safety-overfit-training.jsonl');
@@ -150,6 +152,12 @@ describe('gptoss training dataset gate', () => {
       expect(target).toMatch(/^\S{1,64}$/);
       expect(target).not.toMatch(/[{}[\]:,]/);
     }
+
+    const packageScripts = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8')).scripts;
+    expect(packageScripts['gptoss:unsloth:phase3-8:lowlr:dry']).not.toContain('--execute');
+    expect(packageScripts['gptoss:unsloth:phase3-8:lowlr:mask-audit']).not.toContain('--execute');
+    expect(packageScripts['gptoss:unsloth:phase3-8:lowlr:dry']).not.toMatch(/openai|vllm|railway/i);
+    expect(packageScripts['gptoss:unsloth:phase3-8:lowlr:mask-audit']).not.toMatch(/openai|vllm|railway/i);
   });
 
   it('validates the phase3.7 weighted repair training fixture', () => {
@@ -211,6 +219,126 @@ describe('gptoss training dataset gate', () => {
     for (const target of labelTargets) {
       expect(target).toMatch(/^\S{1,64}$/);
       expect(target).not.toMatch(/[{}[\]:,]/);
+    }
+  });
+
+  it('validates the phase3.8 true-error repair training fixture', () => {
+    const completed = spawnSync(process.execPath, [validatePhase38DatasetScriptPath, phase38DatasetPath], {
+      encoding: 'utf8',
+    });
+    const parsed = JSON.parse(completed.stdout);
+
+    expect(completed.status).toBe(0);
+    expect(completed.stderr).toBe('');
+    expect(parsed).toMatchObject({
+      ok: true,
+      checked: 16,
+      accepted: 16,
+      rejected: 0,
+      repairRecords: 16,
+      categoryBreakdown: {
+        openai_output_rejection: 4,
+        factual_correction: 5,
+        route_action_contrast: 4,
+        exact_token_compact: 3,
+      },
+      coverage: {
+        TypeScript: true,
+        'QLoRA 4-bit': true,
+        '100': true,
+        false: true,
+        'control-plane': true,
+        'writing-plane': true,
+        validate_dataset: true,
+      },
+      openAiCalled: false,
+      trainingExecuted: false,
+      vllmUsed: false,
+      railwayCliExecuted: false,
+      liveDbWrite: false,
+      errors: [],
+    });
+
+    const rows = readFileSync(phase38DatasetPath, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+    expect(rows).toHaveLength(16);
+    expect(rows.every((row) => row.metadata?.phase3_8_repair === true)).toBe(true);
+    expect(rows.every((row) => !['eval_failure_observation', 'self_reflection_observation', 'railway_cli_observation'].includes(row.source))).toBe(true);
+    expect(rows.every((row) => !['openai_output', 'openai_judgment'].includes(row.source))).toBe(true);
+    expect(rows.every((row) => Array.isArray(row.messages) && !('text' in row))).toBe(true);
+    expect(rows.every((row) => row.metadata?.no_openai_output_used === true)).toBe(true);
+    expect(rows.every((row) => row.messages.filter((message) => message.role === 'assistant').length === 1)).toBe(true);
+
+    const assistantTargets = rows.map((row) => row.messages.find((message) => message.role === 'assistant').content);
+    const labelTargets = rows
+      .filter((row) => row.metadata.target_shape === 'label_only')
+      .map((row) => row.messages.find((message) => message.role === 'assistant').content);
+    const openAiRejectionTargets = rows
+      .filter((row) => row.task_type === 'openai_output_rejection')
+      .map((row) => row.messages.find((message) => message.role === 'assistant').content);
+
+    expect(openAiRejectionTargets).toHaveLength(4);
+    expect(openAiRejectionTargets.every((target) => target.startsWith('No.'))).toBe(true);
+    expect(assistantTargets.some((target) => target.includes('QLoRA 4-bit'))).toBe(true);
+    expect(assistantTargets.some((target) => /\b100\b/.test(target))).toBe(true);
+    expect(assistantTargets.some((target) => target === 'false' || target.includes(':false'))).toBe(true);
+    expect(labelTargets).toContain('control-plane');
+    expect(labelTargets).toContain('writing-plane');
+    expect(assistantTargets.some((target) => target.includes('validate_dataset'))).toBe(true);
+
+    for (const row of rows.filter((row) => row.metadata.target_shape === 'json_only')) {
+      JSON.parse(row.messages.find((message) => message.role === 'assistant').content);
+    }
+    for (const target of labelTargets) {
+      expect(target).toMatch(/^\S{1,64}$/);
+      expect(target).not.toMatch(/[{}[\]:,]/);
+    }
+  });
+
+  it('rejects phase3.8 assistant targets that exactly copy an eval failure output', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'arcanos-gptoss-phase38-'));
+    const datasetPath = join(tempDir, 'phase38.jsonl');
+    const evalReportPath = join(tempDir, 'eval-report.json');
+    try {
+      writeFileSync(datasetPath, `${JSON.stringify({
+        id: 'phase3-8-raw-output-copy',
+        source: 'human_authored',
+        reviewed: true,
+        allowed_for_training: true,
+        task_type: 'exact_token_compact',
+        messages: [
+          { role: 'system', content: 'Return only the final answer.' },
+          { role: 'user', content: 'Return the target.' },
+          { role: 'assistant', content: 'bad raw target' },
+        ],
+        metadata: {
+          target_shape: 'compact_final',
+          no_openai_output_used: true,
+          phase3_8_repair: true,
+        },
+      })}\n`, 'utf8');
+      writeFileSync(evalReportPath, JSON.stringify({
+        failures: [
+          { id: 'eval-test-1', finalText: 'bad raw target' },
+        ],
+      }), 'utf8');
+
+      const completed = spawnSync(process.execPath, [
+        validatePhase38DatasetScriptPath,
+        datasetPath,
+        '--eval-report',
+        evalReportPath,
+      ], { encoding: 'utf8' });
+      const parsed = JSON.parse(completed.stdout);
+
+      expect(completed.status).toBe(1);
+      expect(parsed.errors).toContainEqual({ line: 1, code: 'phase38_raw_eval_output_target_rejected' });
+      expect(parsed.openAiCalled).toBe(false);
+      expect(parsed.trainingExecuted).toBe(false);
+      expect(parsed.vllmUsed).toBe(false);
+      expect(parsed.railwayCliExecuted).toBe(false);
+      expect(parsed.liveDbWrite).toBe(false);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
     }
   });
 

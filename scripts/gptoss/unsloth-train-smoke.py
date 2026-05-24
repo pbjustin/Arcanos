@@ -695,7 +695,9 @@ def write_json_file(path: Path, payload: dict[str, Any]) -> None:
 
 def is_repair_record(record: dict[str, Any]) -> bool:
     metadata = record.get("metadata")
-    return isinstance(metadata, dict) and metadata.get("phase3_7_repair") is True
+    return isinstance(metadata, dict) and (
+        metadata.get("phase3_7_repair") is True or metadata.get("phase3_8_repair") is True
+    )
 
 
 def select_training_records(records: list[dict[str, Any]], options: argparse.Namespace) -> list[dict[str, Any]]:

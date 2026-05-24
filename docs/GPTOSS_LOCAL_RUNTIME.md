@@ -506,6 +506,107 @@ Python owning the public protocol surface, `SLFTM` instead of `QLoRA 4-bit`, or
 `10` steps instead of `100` remain failures and are future training or
 retrieval candidates.
 
+## Phase 3.8 Governance Repair
+
+Phase 3.7 router/classifier postprocessed v2 remained at 9/24. The remaining
+true model errors are now split into two local artifacts: non-trainable
+governance candidates under `local_artifacts/` and a separate
+human/spec-authored repair JSONL file. The candidates keep
+`source: eval_failure_observation`, `reviewed:false`, and
+`allowed_for_training:false`; they must not be exported as training examples.
+
+Only the separate approved repair dataset can be used for a future training
+step, and only after validation and mask audit pass:
+
+```bash
+npm run gptoss:phase3-8:dataset:validate
+npm run gptoss:unsloth:phase3-8:lowlr:dry
+npm run gptoss:unsloth:phase3-8:lowlr:mask-audit
+```
+
+No OpenAI reference model is enabled for Phase 3.8, and no live DB writes are
+required. The dry-run scripts keep response-only Harmony final-boundary masking,
+force-final/router-classifier eval modes remain available, and eval failure
+observations remain candidate-only provenance.
+
+If a future review explicitly approves training, the local command is:
+
+```bash
+npm run gptoss:unsloth:phase3-8:lowlr
+```
+
+After any approved Phase 3.8 training, evaluate the adapter with:
+
+```bash
+node scripts/gptoss/eval-adapter-local.mjs \
+  --execute \
+  --router-classifier-mode \
+  --prefill-json-start \
+  --adapter-dir local_artifacts/gptoss-phase3-8-lowlr \
+  --eval-file examples/gptoss/arcanos-eval-smoke.jsonl \
+  --output local_artifacts/gptoss-phase3-8-lowlr/eval-router-classifier-postprocessed.json \
+  --temperature 0 \
+  --max-new-tokens 32 \
+  --repetition-penalty 1.3
+```
+
+Phase 3.8 reached a model/postprocessor score of 10/24 with no regressions.
+The new pass was the writing-plane route label case. The OpenAI-output
+training-data rejection, compact factual targets (`TypeScript`, `QLoRA 4-bit`,
+`100`, `false`), and the refused-boundary JSON envelope remained model
+failures.
+
+Phase 3.9 adds a local deterministic effective scoring mode for policy/router
+ownership:
+
+```bash
+node scripts/gptoss/eval-adapter-local.mjs \
+  --execute \
+  --router-classifier-mode \
+  --prefill-json-start \
+  --apply-hard-policy-overrides \
+  --adapter-dir local_artifacts/gptoss-phase3-8-lowlr \
+  --eval-file examples/gptoss/arcanos-eval-smoke.jsonl \
+  --output local_artifacts/gptoss-phase3-8-lowlr/eval-router-classifier-effective-policy.json \
+  --temperature 0 \
+  --max-new-tokens 32 \
+  --repetition-penalty 1.3
+```
+
+This report has two metrics. `modelScore` is the raw model/postprocessor score
+and must remain visible. `effectiveRouterScore` is model output plus the local
+deterministic policy/router layer. A hard policy override passing does not mean
+the model learned the rule; it means runtime policy rejected the unsafe route
+after the model failed it. The same distinction applies to deterministic
+refused-boundary envelopes. Factual compact errors must not be normalized into
+passes; they remain retrieval/spec or future training targets.
+
+OpenAI reference mode remains disabled for both model and effective scoring.
+
+Phase 3.10 adds a local spec-fact registry for compact, stable Arcanos facts:
+
+```bash
+node scripts/gptoss/eval-adapter-local.mjs \
+  --execute \
+  --router-classifier-mode \
+  --prefill-json-start \
+  --apply-hard-policy-overrides \
+  --use-local-spec-facts \
+  --adapter-dir local_artifacts/gptoss-phase3-8-lowlr \
+  --eval-file examples/gptoss/arcanos-eval-smoke.jsonl \
+  --output local_artifacts/gptoss-phase3-8-lowlr/eval-router-classifier-effective-spec.json \
+  --temperature 0 \
+  --max-new-tokens 32 \
+  --repetition-penalty 1.3
+```
+
+The spec facts live in `examples/gptoss/arcanos-local-spec-facts.json`. They are
+retrieval/spec support, not training data. They can improve
+`effectiveRouterScore` for compact factual answers such as `TypeScript`,
+`QLoRA 4-bit`, `100`, and `false`, while `modelScore` still reports the raw
+model/postprocessor result. A spec-fact effective pass does not mean the model
+learned the fact, and OpenAI reference mode remains disabled.
+
 ## Dataset Gate
 
 Training data must pass the local dataset gate. Allowed sources are:
