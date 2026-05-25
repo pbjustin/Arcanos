@@ -53,6 +53,7 @@ SAFE_ACTION_CANONICALIZATION_ALIASES = {
 }
 SAFE_ROUTER_POSTPROCESSOR_ACTIONS = {
     "audit_openai_output_storage",
+    "classify_local_runtime_guide_writing",
 }
 ACTION_CANONICALIZATION_KEYS = ("type", "name", "id")
 DASH_VARIANTS_PATTERN = re.compile(r"[\u2010\u2011\u2012\u2013\u2014\u2212]")
@@ -1479,6 +1480,16 @@ def deterministic_router_postprocessor(record: dict[str, Any], apply_override: b
             "action": action,
             "route": "local_audit",
             "decision": "audit",
+            "requiresConfirmation": False,
+            "allowedForTraining": False,
+        }
+    elif all(term in prompt for term in ["write", "short guide note", "local gpt oss runtime"]):
+        action = "classify_local_runtime_guide_writing"
+        result = {
+            "plane": "writing-plane",
+            "action": action,
+            "route": "writing_plane",
+            "decision": "writing",
             "requiresConfirmation": False,
             "allowedForTraining": False,
         }

@@ -1,6 +1,6 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { jest } from '@jest/globals';
@@ -12,9 +12,14 @@ const auditScript = join(process.cwd(), 'scripts', 'gptoss', 'effective-router-a
 const replayScript = join(process.cwd(), 'scripts', 'gptoss', 'effective-router-replay.mjs');
 const releaseManifestScript = join(process.cwd(), 'scripts', 'gptoss', 'runtime-release-manifest.mjs');
 const releaseGateScript = join(process.cwd(), 'scripts', 'gptoss', 'runtime-release-gate.mjs');
+const releaseGateCiScript = join(process.cwd(), 'scripts', 'gptoss', 'runtime-release-gate-ci.mjs');
 const readinessScript = join(process.cwd(), 'scripts', 'gptoss', 'model-readiness-report.mjs');
 const cloudGateScript = join(process.cwd(), 'scripts', 'gptoss', 'cloud-readiness-gate.mjs');
 const schemaPath = join(process.cwd(), 'schemas', 'gptoss-effective-router-runtime.schema.json');
+const baselineRegistryPath = join(process.cwd(), 'examples', 'gptoss', 'gptoss-baseline-registry.json');
+const localSpecFactsPath = join(process.cwd(), 'examples', 'gptoss', 'arcanos-local-spec-facts.json');
+const runtimeSmokeDir = join(process.cwd(), 'examples', 'gptoss', 'runtime-smoke');
+const requestSmokeDir = join(process.cwd(), 'examples', 'gptoss', 'runtime-request-smoke');
 const smokeRequest = join(process.cwd(), 'examples', 'gptoss', 'runtime-smoke', 'writing-plane.json');
 const backendLogRequest = join(process.cwd(), 'examples', 'gptoss', 'runtime-request-smoke', 'backend-logs.json');
 const openAiTrainingRequest = join(process.cwd(), 'examples', 'gptoss', 'runtime-request-smoke', 'openai-output-training-rejection.json');
@@ -262,6 +267,7 @@ describe('gptoss effective-router runtime readiness', () => {
       'gptoss:runtime:request:local-model:smoke:audit',
       'gptoss:runtime:release-manifest',
       'gptoss:runtime:release-gate',
+      'gptoss:runtime:release-gate:ci',
     ];
 
     for (const scriptName of runtimeScripts) {
@@ -299,7 +305,14 @@ describe('gptoss effective-router release manifest', () => {
 
   it('includes readiness, regression status, runtime flags, and latest artifact paths', () => {
     const manifest = runReleaseManifest();
+    const schema = JSON.parse(readFileSync(schemaPath, 'utf8'));
+    const ajv = new Ajv2020();
+    const validate = ajv.compile({
+      ...schema.$defs.releaseManifest,
+      $defs: schema.$defs,
+    });
 
+    expect(validate(manifest)).toBe(true);
     expect(manifest).toMatchObject({
       kind: 'gptoss_effective_router_runtime_release_manifest',
       releaseScope: 'local_controlled_runtime_only',
@@ -735,6 +748,223 @@ describe('gptoss effective-router release gate', () => {
     const scripts = gate.RELEASE_GATE_COMMANDS.map((command) => command.script).join('\n');
 
     expect(scripts).not.toMatch(/openai|train|vllm|railway|db/i);
+  });
+});
+
+describe('gptoss CI-safe effective-router release gate', () => {
+  type GateCiModule = {
+    runReleaseGateCi: (options: {
+      repoRoot?: string;
+      ci?: boolean;
+      write?: boolean;
+    }) => Record<string, unknown>;
+  };
+
+  async function loadReleaseGateCi(): Promise<GateCiModule> {
+    return await import(pathToFileURL(releaseGateCiScript).href) as GateCiModule;
+  }
+
+  function writeFixtureFile(root: string, relativePath: string, body: string) {
+    const fullPath = join(root, relativePath);
+    mkdirSync(dirname(fullPath), { recursive: true });
+    writeFileSync(fullPath, body, 'utf8');
+  }
+
+  function writeFixtureJson(root: string, relativePath: string, value: unknown) {
+    writeFixtureFile(root, relativePath, `${JSON.stringify(value, null, 2)}\n`);
+  }
+
+  function copyJsonFixtures(root: string, sourceDir: string, targetDir: string) {
+    for (const name of readdirSync(sourceDir).filter((entry) => entry.endsWith('.json'))) {
+      writeFixtureFile(root, join(targetDir, name), readFileSync(join(sourceDir, name), 'utf8'));
+    }
+  }
+
+  function writeCiGateFixture(mutate: {
+    packageJson?: (value: Record<string, unknown>) => void;
+    schema?: (value: Record<string, unknown>) => void;
+    registry?: (value: Record<string, unknown>) => void;
+  } = {}) {
+    const tempDir = join(tmpdir(), `arcanos-gptoss-ci-gate-${Date.now()}-${Math.random()}`);
+    mkdirSync(tempDir, { recursive: true });
+
+    const packageJson = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8'));
+    mutate.packageJson?.(packageJson);
+    writeFixtureJson(tempDir, 'package.json', packageJson);
+
+    const schema = JSON.parse(readFileSync(schemaPath, 'utf8'));
+    mutate.schema?.(schema);
+    writeFixtureJson(tempDir, join('schemas', 'gptoss-effective-router-runtime.schema.json'), schema);
+
+    const registry = JSON.parse(readFileSync(baselineRegistryPath, 'utf8'));
+    mutate.registry?.(registry);
+    writeFixtureJson(tempDir, join('examples', 'gptoss', 'gptoss-baseline-registry.json'), registry);
+
+    writeFixtureFile(
+      tempDir,
+      join('examples', 'gptoss', 'arcanos-local-spec-facts.json'),
+      readFileSync(localSpecFactsPath, 'utf8'),
+    );
+    copyJsonFixtures(tempDir, runtimeSmokeDir, join('examples', 'gptoss', 'runtime-smoke'));
+    copyJsonFixtures(tempDir, requestSmokeDir, join('examples', 'gptoss', 'runtime-request-smoke'));
+    writeFixtureFile(
+      tempDir,
+      join('docs', 'GPTOSS_LOCAL_RUNTIME.md'),
+      readFileSync(join(process.cwd(), 'docs', 'GPTOSS_LOCAL_RUNTIME.md'), 'utf8'),
+    );
+    writeFixtureFile(
+      tempDir,
+      join('docs', 'GPTOSS_RUNTIME_ARCHITECTURE.md'),
+      readFileSync(join(process.cwd(), 'docs', 'GPTOSS_RUNTIME_ARCHITECTURE.md'), 'utf8'),
+    );
+
+    return tempDir;
+  }
+
+  it('passes without local_artifacts in CI mode', async () => {
+    const gate = await loadReleaseGateCi();
+    const tempDir = writeCiGateFixture();
+    try {
+      const report = gate.runReleaseGateCi({ repoRoot: tempDir, ci: true, write: false });
+
+      expect(report).toMatchObject({
+        ok: true,
+        modelScore: '11/24',
+        effectiveScore: '24/24',
+        localControlledRuntimeReady: true,
+        modelOnlyReady: false,
+        cloudReady: false,
+        customGptReady: false,
+        ciMode: true,
+        reportWritten: false,
+      });
+      expect(report.localOnlyChecksSkipped).toEqual(expect.arrayContaining([
+        'local_artifacts directory presence',
+        'adapter files',
+        'model weights',
+        'CUDA',
+        'WSL',
+      ]));
+      expect((report.safetyConfirmations as Record<string, unknown>).localArtifactsRequired).toBe(false);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('fails if required package scripts are missing', async () => {
+    const gate = await loadReleaseGateCi();
+    const tempDir = writeCiGateFixture({
+      packageJson: (packageJson) => {
+        delete ((packageJson.scripts as Record<string, unknown>)['gptoss:runtime:release-gate:ci']);
+      },
+    });
+    try {
+      const report = gate.runReleaseGateCi({ repoRoot: tempDir, ci: true, write: false });
+
+      expect(report.ok).toBe(false);
+      expect(report.failures).toEqual(expect.arrayContaining([
+        'package_script_missing:gptoss:runtime:release-gate:ci',
+      ]));
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('fails if cloudReady or customGptReady is true in tracked baseline data', async () => {
+    const gate = await loadReleaseGateCi();
+    const cloudTempDir = writeCiGateFixture({
+      registry: (registry) => {
+        (registry.baselines as Array<Record<string, unknown>>)[0].cloudReady = true;
+      },
+    });
+    const customTempDir = writeCiGateFixture({
+      registry: (registry) => {
+        (registry.baselines as Array<Record<string, unknown>>)[0].customGptReady = true;
+      },
+    });
+    try {
+      const cloudReport = gate.runReleaseGateCi({ repoRoot: cloudTempDir, ci: true, write: false });
+      const customReport = gate.runReleaseGateCi({ repoRoot: customTempDir, ci: true, write: false });
+
+      expect(cloudReport.ok).toBe(false);
+      expect(customReport.ok).toBe(false);
+      expect(cloudReport.failures).toEqual(expect.arrayContaining([
+        'tracked_cloud_or_custom_gpt_ready_true:baseline_registry.cloudReady',
+      ]));
+      expect(customReport.failures).toEqual(expect.arrayContaining([
+        'tracked_cloud_or_custom_gpt_ready_true:baseline_registry.customGptReady',
+      ]));
+    } finally {
+      rmSync(cloudTempDir, { recursive: true, force: true });
+      rmSync(customTempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('fails if required runtime supports are missing', async () => {
+    const gate = await loadReleaseGateCi();
+    const tempDir = writeCiGateFixture({
+      schema: (schema) => {
+        const supports = (schema.$defs as Record<string, Record<string, unknown>>).runtimeSupports;
+        supports.required = (supports.required as string[])
+          .filter((name) => name !== 'routerPostprocessor');
+        delete ((supports.properties as Record<string, unknown>).routerPostprocessor);
+      },
+    });
+    try {
+      const report = gate.runReleaseGateCi({ repoRoot: tempDir, ci: true, write: false });
+
+      expect(report.ok).toBe(false);
+      expect(report.failures).toEqual(expect.arrayContaining([
+        'runtime_support_schema_required_missing:router-postprocessor',
+        'runtime_support_schema_const_missing:router-postprocessor',
+      ]));
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not call OpenAI, training, vLLM, Railway, live DB, or start a server', async () => {
+    const gate = await loadReleaseGateCi();
+    const tempDir = writeCiGateFixture();
+    try {
+      const report = gate.runReleaseGateCi({ repoRoot: tempDir, ci: true, write: false });
+      const source = readFileSync(releaseGateCiScript, 'utf8');
+
+      expect(report.ok).toBe(true);
+      expect(report.checks).toMatchObject({
+        noExternalOperationsRequired: true,
+      });
+      expect(report.safetyConfirmations).toMatchObject({
+        openAiCalled: false,
+        trainingExecuted: false,
+        vllmUsed: false,
+        railwayCliUsed: false,
+        liveDbUsed: false,
+        serverCreated: false,
+        publicServerCreated: false,
+        customGptExposureEnabled: false,
+      });
+      expect(source).not.toMatch(/node:child_process|spawnSync|execSync|railway\s+up|api\.openai\.com/);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not require adapter files', async () => {
+    const gate = await loadReleaseGateCi();
+    const tempDir = writeCiGateFixture();
+    try {
+      const report = gate.runReleaseGateCi({ repoRoot: tempDir, ci: true, write: false });
+
+      expect(report.ok).toBe(true);
+      expect((report.checks as Record<string, unknown>).adapterFilesRequired).toBe(false);
+      expect(report.safetyConfirmations).toMatchObject({
+        adapterFilesRequired: false,
+        modelWeightsRequired: false,
+      });
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });
 
