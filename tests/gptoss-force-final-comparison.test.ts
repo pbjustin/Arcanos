@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
@@ -103,10 +103,7 @@ describe('gptoss force-final comparison wrapper', () => {
   });
 
   it('treats nonzero eval exits with reports as eval failures in the wrapper source', () => {
-    const source = spawnSync('powershell', ['-NoProfile', '-Command', `Get-Content ${scriptPath}`], {
-      cwd: process.cwd(),
-      encoding: 'utf8',
-    }).stdout;
+    const source = readFileSync(scriptPath, 'utf8');
     expect(source).toContain("reportExists ? 'report_written_eval_failed' : 'infrastructure_failed'");
     expect(source).toContain('openAiCalled: false');
     expect(source).toContain('trainingExecuted: false');
