@@ -149,6 +149,18 @@ tracked local artifact/model/cache files, or accidental cloud/Custom GPT
 readiness. It writes only to
 `local_artifacts/gptoss-runtime/release-gate-report.json`.
 
+Phase 4.6 adds a CI-safe static gate:
+
+```bash
+npm run gptoss:runtime:release-gate:ci
+```
+
+This gate checks package scripts, the runtime schema, release-manifest schema
+expectations, baseline metadata, runtime smoke fixtures, local spec facts, docs,
+required runtime supports, and cloud/Custom GPT false readiness. It intentionally
+skips local-only prerequisites such as `local_artifacts/`, adapter/model files,
+CUDA, WSL, vLLM, Railway, OpenAI, live DB access, and server exposure.
+
 The expected current state remains:
 
 - model-only score: `11/24`

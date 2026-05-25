@@ -24,6 +24,79 @@
         "routerPostprocessor": { "const": true }
       }
     },
+    "scoreString": {
+      "type": "string",
+      "pattern": "^[0-9]+/[0-9]+$"
+    },
+    "releaseManifest": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "schemaVersion",
+        "kind",
+        "releaseScope",
+        "modelScore",
+        "effectiveScore",
+        "localControlledRuntimeReady",
+        "modelOnlyReady",
+        "cloudReady",
+        "customGptReady",
+        "baselineRegistryPath",
+        "requiredRuntimeSupports",
+        "requiredRuntimeFlags",
+        "paths",
+        "requestStatus",
+        "safetyConfirmations",
+        "safety"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "kind": { "const": "gptoss_effective_router_runtime_release_manifest" },
+        "releaseScope": { "const": "local_controlled_runtime_only" },
+        "modelScore": { "$ref": "#/$defs/scoreString" },
+        "effectiveScore": { "$ref": "#/$defs/scoreString" },
+        "localControlledRuntimeReady": { "type": "boolean" },
+        "modelOnlyReady": { "const": false },
+        "cloudReady": { "const": false },
+        "customGptReady": { "const": false },
+        "baselineRegistryPath": { "type": "string", "minLength": 1 },
+        "requiredRuntimeSupports": { "$ref": "#/$defs/runtimeSupports" },
+        "requiredRuntimeFlags": {
+          "type": "array",
+          "minItems": 4,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "paths": { "type": "object" },
+        "requestStatus": { "type": "object" },
+        "safetyConfirmations": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": [
+            "allowedForTraining",
+            "openAiCalled",
+            "trainingExecuted",
+            "vllmUsed",
+            "railwayCliUsed",
+            "liveDbUsed",
+            "noOpenAiOutputUsed",
+            "publicServerCreated",
+            "customGptExposureEnabled"
+          ],
+          "properties": {
+            "allowedForTraining": { "const": false },
+            "openAiCalled": { "const": false },
+            "trainingExecuted": { "const": false },
+            "vllmUsed": { "const": false },
+            "railwayCliUsed": { "const": false },
+            "liveDbUsed": { "const": false },
+            "noOpenAiOutputUsed": { "const": true },
+            "publicServerCreated": { "const": false },
+            "customGptExposureEnabled": { "const": false }
+          }
+        },
+        "safety": { "$ref": "#/$defs/runtimeOutput/properties/safety" }
+      }
+    },
     "runtimeRequest": {
       "type": "object",
       "additionalProperties": false,

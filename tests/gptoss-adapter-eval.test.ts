@@ -910,6 +910,21 @@ describe('gptoss adapter local eval', () => {
     expect(parsed.ambiguous.effectiveFailures).toContain('missing:audit');
   });
 
+  it('postprocesses the stable local runtime writing-guide route', () => {
+    const parsed = runPythonSnippet([
+      'record = {"id":"eval-smoke-020","prompt":"Write a short guide note for the local GPT-OSS runtime.","expected":{"plane":"writing-plane","must_include":["writing"],"must_not_include":["control-plane only"]}}',
+      'info = {"routerClassifierMode": True, "applyHardPolicyOverrides": True}',
+      'result = module.analyze_output(record, "control-plane", info)',
+      'print(json.dumps(result))',
+    ]);
+
+    expect(parsed.failures).toContain('plane_mismatch');
+    expect(parsed.effectiveFailures).toEqual([]);
+    expect(parsed.routerPostprocessorApplied).toBe(true);
+    expect(parsed.routerPostprocessorAction).toBe('classify_local_runtime_guide_writing');
+    expect(parsed.effectiveScoringSource).toBe('router_postprocessor');
+  });
+
   it('reports separate model and effective router scores without changing model failures', () => {
     const parsed = runPythonSnippet([
       'records = [',
