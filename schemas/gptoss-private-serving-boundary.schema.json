@@ -1,0 +1,236 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://arcanos.local/schemas/gptoss-private-serving-boundary.schema.json",
+  "title": "GPT-OSS Private Serving Boundary Contract",
+  "description": "Design-only schema for private GPT-OSS serving boundary envelopes. This schema does not define cryptographic implementation.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "schemaVersion", "request", "response"],
+  "properties": {
+    "kind": { "const": "gptoss_private_serving_boundary" },
+    "schemaVersion": { "const": 1 },
+    "request": { "$ref": "#/$defs/signedRequestEnvelope" },
+    "response": { "$ref": "#/$defs/responseEnvelope" },
+    "denial": { "$ref": "#/$defs/denialResponse" },
+    "rateLimit": { "$ref": "#/$defs/rateLimitResponse" },
+    "authFailure": { "$ref": "#/$defs/authFailureResponse" }
+  },
+  "$defs": {
+    "signedRequestEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requestId",
+        "timestamp",
+        "nonce",
+        "audience",
+        "bodyHash",
+        "signature",
+        "input"
+      ],
+      "properties": {
+        "requestId": { "$ref": "#/$defs/nonEmptyString" },
+        "timestamp": { "$ref": "#/$defs/dateTimeString" },
+        "nonce": { "$ref": "#/$defs/nonEmptyString" },
+        "audience": { "const": "gptoss-effective-router-private" },
+        "bodyHash": { "$ref": "#/$defs/sha256Hex" },
+        "signature": { "$ref": "#/$defs/nonEmptyString" },
+        "input": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["userInput", "mode"],
+          "properties": {
+            "userInput": { "$ref": "#/$defs/nonEmptyString" },
+            "mode": { "const": "router_classifier" }
+          }
+        }
+      }
+    },
+    "responseEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestId", "effective", "safety", "audit", "replay", "readiness"],
+      "properties": {
+        "requestId": { "$ref": "#/$defs/nonEmptyString" },
+        "effective": { "$ref": "#/$defs/effectiveResult" },
+        "safety": { "$ref": "#/$defs/safetyFlags" },
+        "audit": { "$ref": "#/$defs/auditMetadata" },
+        "replay": { "$ref": "#/$defs/replayMetadata" },
+        "readiness": { "$ref": "#/$defs/readinessFlags" }
+      }
+    },
+    "safetyFlags": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "openAiCalled",
+        "trainingExecuted",
+        "vllmUsed",
+        "railwayCliUsed",
+        "liveDbUsed",
+        "noOpenAiOutputUsed"
+      ],
+      "properties": {
+        "openAiCalled": { "const": false },
+        "trainingExecuted": { "const": false },
+        "vllmUsed": { "const": false },
+        "railwayCliUsed": { "const": false },
+        "liveDbUsed": { "const": false },
+        "noOpenAiOutputUsed": { "const": true }
+      }
+    },
+    "auditMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["auditVersion", "requestId", "timestamp", "bodyHash", "decision"],
+      "properties": {
+        "auditVersion": { "const": 1 },
+        "requestId": { "$ref": "#/$defs/nonEmptyString" },
+        "timestamp": { "$ref": "#/$defs/dateTimeString" },
+        "bodyHash": { "$ref": "#/$defs/sha256Hex" },
+        "decision": {
+          "type": "string",
+          "enum": ["allowed", "denied", "rate_limited", "auth_failed"]
+        }
+      }
+    },
+    "replayMetadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["replayable", "requestHash", "nonce"],
+      "properties": {
+        "replayable": { "type": "boolean" },
+        "requestHash": { "$ref": "#/$defs/sha256Hex" },
+        "nonce": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "denialResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestId", "error", "safety", "audit", "replay", "readiness"],
+      "properties": {
+        "requestId": { "$ref": "#/$defs/nonEmptyString" },
+        "error": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "message"],
+          "properties": {
+            "code": { "const": "DENIED" },
+            "message": { "$ref": "#/$defs/nonEmptyString" }
+          }
+        },
+        "safety": { "$ref": "#/$defs/safetyFlags" },
+        "audit": { "$ref": "#/$defs/auditMetadata" },
+        "replay": { "$ref": "#/$defs/replayMetadata" },
+        "readiness": { "$ref": "#/$defs/readinessFlags" }
+      }
+    },
+    "rateLimitResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestId", "error", "retryAfterSeconds", "audit", "replay", "readiness"],
+      "properties": {
+        "requestId": { "$ref": "#/$defs/nonEmptyString" },
+        "error": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "message"],
+          "properties": {
+            "code": { "const": "RATE_LIMITED" },
+            "message": { "$ref": "#/$defs/nonEmptyString" }
+          }
+        },
+        "retryAfterSeconds": { "type": "integer", "minimum": 1 },
+        "audit": { "$ref": "#/$defs/auditMetadata" },
+        "replay": { "$ref": "#/$defs/replayMetadata" },
+        "readiness": { "$ref": "#/$defs/readinessFlags" }
+      }
+    },
+    "authFailureResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestId", "error", "audit", "replay", "readiness"],
+      "properties": {
+        "requestId": { "$ref": "#/$defs/nonEmptyString" },
+        "error": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "message"],
+          "properties": {
+            "code": { "const": "AUTH_FAILED" },
+            "message": { "$ref": "#/$defs/nonEmptyString" }
+          }
+        },
+        "audit": { "$ref": "#/$defs/auditMetadata" },
+        "replay": { "$ref": "#/$defs/replayMetadata" },
+        "readiness": { "$ref": "#/$defs/readinessFlags" }
+      }
+    },
+    "effectiveResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "plane",
+        "action",
+        "risk",
+        "requiresConfirmation",
+        "allowedForTraining",
+        "sources"
+      ],
+      "properties": {
+        "plane": { "enum": ["writing-plane", "control-plane"] },
+        "action": { "$ref": "#/$defs/nonEmptyString" },
+        "risk": { "$ref": "#/$defs/nonEmptyString" },
+        "requiresConfirmation": { "type": "boolean" },
+        "allowedForTraining": { "const": false },
+        "sources": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "enum": ["model", "policy", "spec_facts", "postprocessor"]
+          }
+        }
+      }
+    },
+    "readinessFlags": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "privateServingDesignReady",
+        "privateServingImplemented",
+        "privateServingExposed",
+        "requestSigningDesigned",
+        "requestSigningImplemented",
+        "authBoundaryDesigned",
+        "authBoundaryImplemented",
+        "publicServerCreated",
+        "cloudReady",
+        "customGptReady"
+      ],
+      "properties": {
+        "privateServingDesignReady": { "const": true },
+        "privateServingImplemented": { "const": false },
+        "privateServingExposed": { "const": false },
+        "requestSigningDesigned": { "const": true },
+        "requestSigningImplemented": { "const": false },
+        "authBoundaryDesigned": { "const": true },
+        "authBoundaryImplemented": { "const": false },
+        "publicServerCreated": { "const": false },
+        "cloudReady": { "const": false },
+        "customGptReady": { "const": false }
+      }
+    },
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "dateTimeString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sha256Hex": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    }
+  }
+}

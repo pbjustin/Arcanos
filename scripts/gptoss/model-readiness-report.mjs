@@ -8,6 +8,17 @@ import { RUNTIME_REPORT_DIR } from './effective-router-runtime.mjs';
 
 export const MODEL_READY_THRESHOLD_PASSED = 20;
 export const DEFAULT_OUTPUT = join(RUNTIME_REPORT_DIR, 'model-readiness-report.json');
+export const PRIVATE_SERVING_DESIGN_READINESS = {
+  privateServingDesignReady: true,
+  privateServingImplemented: false,
+  privateServingExposed: false,
+  requestSigningDesigned: true,
+  requestSigningImplemented: false,
+  authBoundaryDesigned: true,
+  authBoundaryImplemented: false,
+  publicServerCreated: false,
+  customGptExposureCreated: false,
+};
 
 function readJson(path) {
   if (!existsSync(path)) {
@@ -145,6 +156,7 @@ export function buildReadinessReport({
     effectiveRuntimeReadyForLocalControlledTesting,
     localControlledRuntimeReady: effectiveRuntimeReadyForLocalControlledTesting,
     deterministicRuntimeSupportRequired: true,
+    ...PRIVATE_SERVING_DESIGN_READINESS,
     cloudReady: false,
     customGptReady: false,
     safety,

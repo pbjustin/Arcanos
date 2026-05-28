@@ -52,6 +52,15 @@ export function buildCloudGate({
     runtimeContractExists: existsSync(RUNTIME_CONTRACT_SCRIPT),
     runtimeContractSchemaExists: existsSync(RUNTIME_CONTRACT_SCHEMA),
     authBoundaryRequirementDocumented: hasText(architectureDoc, /auth boundary/i),
+    privateServingDesignReady: readiness.privateServingDesignReady === true,
+    privateServingImplemented: readiness.privateServingImplemented === true,
+    privateServingExposed: readiness.privateServingExposed === true,
+    requestSigningDesigned: readiness.requestSigningDesigned === true,
+    requestSigningImplemented: readiness.requestSigningImplemented === true,
+    authBoundaryDesigned: readiness.authBoundaryDesigned === true,
+    authBoundaryImplemented: readiness.authBoundaryImplemented === true,
+    publicServerCreated: readiness.publicServerCreated === true,
+    customGptExposureCreated: readiness.customGptExposureCreated === true,
     cloudServingPathValidated: false,
     cloudAuthBoundaryExists: false,
     customGptActionBoundaryApproved: false,
@@ -92,6 +101,11 @@ export function buildCloudGate({
   const blockers = [];
   if (!checks.modelThresholdMet) blockers.push('model_score_below_cloud_threshold');
   if (!checks.cloudServingPathValidated) blockers.push('serving_path_not_validated');
+  if (!checks.privateServingImplemented) blockers.push('private_serving_not_implemented');
+  if (!checks.requestSigningImplemented) blockers.push('request_signing_not_implemented');
+  if (!checks.authBoundaryImplemented) blockers.push('auth_boundary_not_implemented');
+  if (checks.publicServerCreated) blockers.push('public_server_created');
+  if (checks.customGptExposureCreated) blockers.push('custom_gpt_exposure_created');
   if (!checks.cloudAuthBoundaryExists) blockers.push('cloud_auth_boundary_missing');
   if (!checks.customGptActionBoundaryApproved) blockers.push('custom_gpt_action_boundary_not_approved');
   if (!checks.customGptDirectLocalDisallowed) blockers.push('custom_gpt_direct_local_disallowance_missing');
@@ -112,6 +126,15 @@ export function buildCloudGate({
       modelOnlyReady: readiness.modelOnlyReady,
       effectiveRuntimeReadyForLocalControlledTesting:
         readiness.effectiveRuntimeReadyForLocalControlledTesting,
+      privateServingDesignReady: readiness.privateServingDesignReady,
+      privateServingImplemented: readiness.privateServingImplemented,
+      privateServingExposed: readiness.privateServingExposed,
+      requestSigningDesigned: readiness.requestSigningDesigned,
+      requestSigningImplemented: readiness.requestSigningImplemented,
+      authBoundaryDesigned: readiness.authBoundaryDesigned,
+      authBoundaryImplemented: readiness.authBoundaryImplemented,
+      publicServerCreated: readiness.publicServerCreated,
+      customGptExposureCreated: readiness.customGptExposureCreated,
       cloudReady: readiness.cloudReady,
       customGptReady: readiness.customGptReady,
     },
