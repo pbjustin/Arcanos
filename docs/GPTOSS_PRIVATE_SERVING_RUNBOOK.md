@@ -4,6 +4,10 @@ This runbook is for Phase 5 private serving design checks only. It does not
 authorize public exposure, Custom GPT actions, Railway mutation, live DB access,
 training, vLLM serving, OpenAI calls, or starting a server.
 
+Phase 5.1 adds local-only scaffold helpers. The scaffold is not a serving
+implementation: no HTTP server, listener, route handler, tunnel, deployment, or
+Custom GPT action exists.
+
 ## Preflight
 
 Confirm the checkout and scripts without running a model:
@@ -44,6 +48,20 @@ Run the CI-safe gate for static validation:
 npm run gptoss:runtime:release-gate:ci
 ```
 
+Run the private serving design and scaffold validators:
+
+```bash
+npm run gptoss:private-serving:design:validate
+npm run gptoss:private-serving:threat-model:validate
+npm run gptoss:private-serving:scaffold:validate
+```
+
+Generate the local scaffold PR report when preparing a review:
+
+```bash
+npm run gptoss:private-serving:scaffold:report
+```
+
 Run the request regression gate:
 
 ```bash
@@ -72,6 +90,53 @@ Pass criteria:
 - Cloud readiness remains false.
 - Custom GPT readiness remains false.
 - Required runtime supports remain enabled in the readiness report.
+- Phase 5.1 scaffold readiness is true.
+- Private serving implementation and exposure remain false.
+- Public server creation remains false.
+
+Expected Phase 5.1 scaffold fields:
+
+```json
+{
+  "privateServingDesignReady": true,
+  "privateServingScaffoldReady": true,
+  "privateServingImplemented": false,
+  "privateServingExposed": false,
+  "requestSigningScaffoldReady": true,
+  "requestSigningImplemented": false,
+  "authBoundaryScaffoldReady": true,
+  "authBoundaryImplemented": false,
+  "rateLimitScaffoldReady": true,
+  "rateLimitImplemented": false,
+  "responseShapingScaffoldReady": true,
+  "publicServerCreated": false,
+  "cloudReady": false,
+  "customGptReady": false
+}
+```
+
+## Phase 5.1 Scaffold Notes
+
+The scaffold modules live under `scripts/gptoss/private-serving/` and are pure
+local helpers:
+
+- request signing verification is scaffolded and fails closed
+- auth boundary validation fails closed and is not production auth
+- rate limiting is in-memory policy only
+- response shaping strips raw model text and emits only the safe envelope
+- denial helpers return structured refusals without stack traces
+- scaffold validation scans for server/listener patterns and forbidden runtime
+  paths
+
+Future work required before any server:
+
+- real signature verification
+- durable private rate limiter
+- private network boundary
+- endpoint auth integration
+- audit sink approval
+- rollback gate
+- penetration test or security review
 
 ## Local Request Smoke
 

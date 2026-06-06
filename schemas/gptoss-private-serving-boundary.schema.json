@@ -46,6 +46,147 @@
         }
       }
     },
+    "scaffoldSignedRequestEnvelope": {
+      "$ref": "#/$defs/signedRequestEnvelope"
+    },
+    "scaffoldAuthDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "authenticated", "failClosed", "implemented", "reason"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "authenticated": { "type": "boolean" },
+        "failClosed": { "type": "boolean" },
+        "implemented": { "const": false },
+        "testOnly": { "type": "boolean" },
+        "reason": {
+          "type": ["string", "null"],
+          "enum": [
+            null,
+            "missing_request_id",
+            "missing_timestamp",
+            "missing_nonce",
+            "missing_audience",
+            "missing_body_hash",
+            "missing_signature",
+            "invalid_audience",
+            "stale_timestamp",
+            "invalid_nonce",
+            "signature_verification_unavailable"
+          ]
+        },
+        "requestId": { "type": ["string", "null"] },
+        "audience": { "const": "gptoss-effective-router-private" },
+        "cloudReady": { "const": false },
+        "customGptReady": { "const": false },
+        "privateServingExposed": { "const": false },
+        "publicServerCreated": { "const": false }
+      }
+    },
+    "scaffoldRateLimitDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "allowed", "reason", "retryAfterSeconds"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "allowed": { "type": "boolean" },
+        "reason": {
+          "type": ["string", "null"],
+          "enum": [null, "missing_subject", "invalid_rate_limit_policy", "rate_limited"]
+        },
+        "retryAfterSeconds": { "type": "integer", "minimum": 0 },
+        "remaining": { "type": "integer", "minimum": 0 },
+        "policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["maxRequestsPerMinute", "burstLimit"],
+          "properties": {
+            "maxRequestsPerMinute": { "const": 30 },
+            "burstLimit": { "const": 5 }
+          }
+        }
+      }
+    },
+    "scaffoldSafeResponseEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestId", "effective", "safety"],
+      "properties": {
+        "requestId": { "$ref": "#/$defs/nonEmptyString" },
+        "effective": { "$ref": "#/$defs/effectiveResult" },
+        "safety": { "$ref": "#/$defs/safetyFlags" }
+      }
+    },
+    "scaffoldDenialResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "denied", "reason", "requestId", "safety"],
+      "properties": {
+        "ok": { "const": false },
+        "denied": { "const": true },
+        "reason": { "$ref": "#/$defs/nonEmptyString" },
+        "requestId": { "$ref": "#/$defs/nonEmptyString" },
+        "retryAfterSeconds": { "type": "integer", "minimum": 1 },
+        "safety": { "$ref": "#/$defs/safetyFlags" }
+      }
+    },
+    "scaffoldValidationReport": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ok",
+        "privateServingDesignReady",
+        "privateServingScaffoldReady",
+        "privateServingImplemented",
+        "privateServingExposed",
+        "publicServerCreated",
+        "cloudReady",
+        "customGptReady",
+        "openAiCalled",
+        "trainingExecuted",
+        "vllmUsed",
+        "railwayCliUsed",
+        "liveDbUsed",
+        "serverCreated",
+        "failures",
+        "scripts",
+        "docs",
+        "tests"
+      ],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "privateServingDesignReady": { "const": true },
+        "privateServingScaffoldReady": { "const": true },
+        "privateServingImplemented": { "const": false },
+        "privateServingExposed": { "const": false },
+        "publicServerCreated": { "const": false },
+        "cloudReady": { "const": false },
+        "customGptReady": { "const": false },
+        "openAiCalled": { "const": false },
+        "trainingExecuted": { "const": false },
+        "vllmUsed": { "const": false },
+        "railwayCliUsed": { "const": false },
+        "liveDbUsed": { "const": false },
+        "serverCreated": { "const": false },
+        "noOpenAiOutputUsed": { "const": true },
+        "failures": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "scripts": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "docs": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "tests": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
     "responseEnvelope": {
       "type": "object",
       "additionalProperties": false,
@@ -197,24 +338,36 @@
       "additionalProperties": false,
       "required": [
         "privateServingDesignReady",
+        "privateServingScaffoldReady",
         "privateServingImplemented",
         "privateServingExposed",
         "requestSigningDesigned",
+        "requestSigningScaffoldReady",
         "requestSigningImplemented",
         "authBoundaryDesigned",
+        "authBoundaryScaffoldReady",
         "authBoundaryImplemented",
+        "rateLimitScaffoldReady",
+        "rateLimitImplemented",
+        "responseShapingScaffoldReady",
         "publicServerCreated",
         "cloudReady",
         "customGptReady"
       ],
       "properties": {
         "privateServingDesignReady": { "const": true },
+        "privateServingScaffoldReady": { "const": true },
         "privateServingImplemented": { "const": false },
         "privateServingExposed": { "const": false },
         "requestSigningDesigned": { "const": true },
+        "requestSigningScaffoldReady": { "const": true },
         "requestSigningImplemented": { "const": false },
         "authBoundaryDesigned": { "const": true },
+        "authBoundaryScaffoldReady": { "const": true },
         "authBoundaryImplemented": { "const": false },
+        "rateLimitScaffoldReady": { "const": true },
+        "rateLimitImplemented": { "const": false },
+        "responseShapingScaffoldReady": { "const": true },
         "publicServerCreated": { "const": false },
         "cloudReady": { "const": false },
         "customGptReady": { "const": false }

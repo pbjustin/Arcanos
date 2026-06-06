@@ -53,12 +53,18 @@ export function buildCloudGate({
     runtimeContractSchemaExists: existsSync(RUNTIME_CONTRACT_SCHEMA),
     authBoundaryRequirementDocumented: hasText(architectureDoc, /auth boundary/i),
     privateServingDesignReady: readiness.privateServingDesignReady === true,
+    privateServingScaffoldReady: readiness.privateServingScaffoldReady === true,
     privateServingImplemented: readiness.privateServingImplemented === true,
     privateServingExposed: readiness.privateServingExposed === true,
     requestSigningDesigned: readiness.requestSigningDesigned === true,
+    requestSigningScaffoldReady: readiness.requestSigningScaffoldReady === true,
     requestSigningImplemented: readiness.requestSigningImplemented === true,
     authBoundaryDesigned: readiness.authBoundaryDesigned === true,
+    authBoundaryScaffoldReady: readiness.authBoundaryScaffoldReady === true,
     authBoundaryImplemented: readiness.authBoundaryImplemented === true,
+    rateLimitScaffoldReady: readiness.rateLimitScaffoldReady === true,
+    rateLimitImplemented: readiness.rateLimitImplemented === true,
+    responseShapingScaffoldReady: readiness.responseShapingScaffoldReady === true,
     publicServerCreated: readiness.publicServerCreated === true,
     customGptExposureCreated: readiness.customGptExposureCreated === true,
     cloudServingPathValidated: false,
@@ -101,9 +107,15 @@ export function buildCloudGate({
   const blockers = [];
   if (!checks.modelThresholdMet) blockers.push('model_score_below_cloud_threshold');
   if (!checks.cloudServingPathValidated) blockers.push('serving_path_not_validated');
+  if (!checks.privateServingScaffoldReady) blockers.push('private_serving_scaffold_missing');
   if (!checks.privateServingImplemented) blockers.push('private_serving_not_implemented');
+  if (!checks.requestSigningScaffoldReady) blockers.push('request_signing_scaffold_missing');
   if (!checks.requestSigningImplemented) blockers.push('request_signing_not_implemented');
+  if (!checks.authBoundaryScaffoldReady) blockers.push('auth_boundary_scaffold_missing');
   if (!checks.authBoundaryImplemented) blockers.push('auth_boundary_not_implemented');
+  if (!checks.rateLimitScaffoldReady) blockers.push('rate_limit_scaffold_missing');
+  if (!checks.rateLimitImplemented) blockers.push('rate_limit_not_implemented');
+  if (!checks.responseShapingScaffoldReady) blockers.push('response_shaping_scaffold_missing');
   if (checks.publicServerCreated) blockers.push('public_server_created');
   if (checks.customGptExposureCreated) blockers.push('custom_gpt_exposure_created');
   if (!checks.cloudAuthBoundaryExists) blockers.push('cloud_auth_boundary_missing');
@@ -127,12 +139,18 @@ export function buildCloudGate({
       effectiveRuntimeReadyForLocalControlledTesting:
         readiness.effectiveRuntimeReadyForLocalControlledTesting,
       privateServingDesignReady: readiness.privateServingDesignReady,
+      privateServingScaffoldReady: readiness.privateServingScaffoldReady,
       privateServingImplemented: readiness.privateServingImplemented,
       privateServingExposed: readiness.privateServingExposed,
       requestSigningDesigned: readiness.requestSigningDesigned,
+      requestSigningScaffoldReady: readiness.requestSigningScaffoldReady,
       requestSigningImplemented: readiness.requestSigningImplemented,
       authBoundaryDesigned: readiness.authBoundaryDesigned,
+      authBoundaryScaffoldReady: readiness.authBoundaryScaffoldReady,
       authBoundaryImplemented: readiness.authBoundaryImplemented,
+      rateLimitScaffoldReady: readiness.rateLimitScaffoldReady,
+      rateLimitImplemented: readiness.rateLimitImplemented,
+      responseShapingScaffoldReady: readiness.responseShapingScaffoldReady,
       publicServerCreated: readiness.publicServerCreated,
       customGptExposureCreated: readiness.customGptExposureCreated,
       cloudReady: readiness.cloudReady,

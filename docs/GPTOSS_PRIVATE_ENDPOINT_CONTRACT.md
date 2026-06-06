@@ -5,10 +5,26 @@ design-only contract for future implementation; it does not create routes,
 schemas, tests, model execution, Railway behavior, database access, or server
 startup.
 
+Phase 5.1 adds local-only scaffold helpers for signing, auth, rate-limit
+policy, response shaping, denial responses, and scaffold validation. These
+helpers do not create an endpoint, route handler, listener, tunnel, deployment,
+or Custom GPT action.
+
 ## Shared Rules
 
 All allowed endpoints must be private-only, schema-validated, authenticated,
 rate-limited, audited, rollback-aware, and secret-free.
+
+The Phase 5.1 scaffolds are not endpoint implementations:
+
+- request signing verification fails closed until real verification is added
+- auth validation rejects unauthenticated requests and is not production auth
+- rate limiting uses in-memory scaffold state only
+- response shaping emits only the safe effective-router envelope
+- private serving remains unexposed with `privateServingImplemented:false`,
+  `privateServingExposed:false`, and `publicServerCreated:false`
+- cloud and Custom GPT remain blocked with `cloudReady:false` and
+  `customGptReady:false`
 
 Every endpoint response that returns a router result must use the effective plus
 safety envelope:

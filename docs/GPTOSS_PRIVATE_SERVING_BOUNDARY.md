@@ -5,6 +5,10 @@ document is design-only. It does not add routes, schemas, scripts, model
 execution, Railway behavior, database access, Custom GPT actions, or public
 serving.
 
+Phase 5.1 adds local-only scaffold helpers; it is not a serving
+implementation. No HTTP server, listener, route handler, tunnel, deployment, or
+Custom GPT action is created.
+
 ## Purpose
 
 The private serving boundary exists to let an approved Arcanos backend caller
@@ -74,6 +78,21 @@ A future implementation must keep the stack split by responsibility:
   endpoint.
 - Local artifacts, capped previews, readiness reports, and replay reports must
   remain deterministic JSON artifacts.
+
+Phase 5.1 scaffold helpers now exist under
+`scripts/gptoss/private-serving/`:
+
+- request signing verification is scaffolded and fails closed; production
+  signature verification is not implemented
+- the auth boundary scaffold rejects unauthenticated requests and must not be
+  treated as production auth
+- rate limiting is in-memory scaffold policy only; production exposure requires
+  a durable private rate limiter
+- response shaping is a local helper that emits only the effective-router safe
+  response envelope
+- denial helpers emit structured fail-closed responses without stack traces
+- scaffold validation confirms these helpers load without server/listener
+  patterns
 
 The effective router must continue to report raw model status separately from
 effective-router status. A passing effective-router result does not imply that
@@ -167,6 +186,33 @@ prove all of the following with deterministic JSON reports:
 
 Readiness must not depend on live OpenAI calls, live training, Railway CLI
 mutation, public internet exposure, or live database mutation.
+
+Current Phase 5.1 readiness is scaffold-only:
+
+- `privateServingDesignReady:true`
+- `privateServingScaffoldReady:true`
+- `privateServingImplemented:false`
+- `privateServingExposed:false`
+- `requestSigningScaffoldReady:true`
+- `requestSigningImplemented:false`
+- `authBoundaryScaffoldReady:true`
+- `authBoundaryImplemented:false`
+- `rateLimitScaffoldReady:true`
+- `rateLimitImplemented:false`
+- `responseShapingScaffoldReady:true`
+- `publicServerCreated:false`
+- `cloudReady:false`
+- `customGptReady:false`
+
+Required future work before any server or route can be considered:
+
+- real signature verification
+- durable private rate limiter
+- private network boundary
+- endpoint auth integration
+- audit sink approval
+- rollback gate
+- penetration test or security review
 
 ## Rollback Expectations
 

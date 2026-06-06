@@ -133,6 +133,8 @@
     "gptoss:runtime:release-gate:ci": "node scripts/gptoss/runtime-release-gate-ci.mjs",
     "gptoss:private-serving:design:validate": "node scripts/gptoss/private-serving-design-validate.mjs",
     "gptoss:private-serving:threat-model:validate": "node scripts/gptoss/private-serving-threat-model-validate.mjs",
+    "gptoss:private-serving:scaffold:validate": "node scripts/gptoss/private-serving/private-serving-scaffold-validate.mjs",
+    "gptoss:private-serving:scaffold:report": "node scripts/gptoss/private-serving/private-serving-scaffold-validate.mjs --pr-report",
     "gptoss:adapter:eval:force-final:compare": "node scripts/gptoss/eval-force-final-comparison.mjs",
     "gptoss:adapter:triage": "node scripts/gptoss/triage-adapter-eval.mjs",
     "gptoss:vllm:command": "node scripts/gptoss/vllm-command.mjs",

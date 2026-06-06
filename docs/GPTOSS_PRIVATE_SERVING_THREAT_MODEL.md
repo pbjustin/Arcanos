@@ -4,6 +4,11 @@ Phase 5 private serving is not approved for public, cloud, or Custom GPT
 exposure yet. This threat model defines the minimum risks, mitigations, gates,
 and current status for moving beyond the local controlled runtime.
 
+Phase 5.1 adds local-only scaffold helpers for request signing, auth boundary
+validation, rate-limit policy, response shaping, denial responses, and scaffold
+validation. The scaffold is not a serving implementation and creates no server,
+listener, tunnel, deployment, route handler, or Custom GPT action.
+
 Current baseline:
 
 - Local controlled runtime: ready for local testing only.
@@ -43,3 +48,19 @@ Private serving cannot advance unless all of the following are true:
 - No OpenAI output, Railway observation, raw DB row, or Custom GPT request is
   marked as training data.
 - A rollback path exists for the exact serving boundary being released.
+
+## Phase 5.1 Scaffold Status
+
+- Request signing verification is scaffolded and fails closed; production
+  verification is not implemented.
+- The auth boundary scaffold rejects unauthenticated requests and must not be
+  treated as production auth.
+- Rate limiting is in-memory scaffold policy only; production exposure requires
+  a durable private rate limiter.
+- Response shaping is a local helper that emits only the effective-router safe
+  response envelope.
+- Private serving remains unexposed:
+  `privateServingImplemented:false`, `privateServingExposed:false`, and
+  `publicServerCreated:false`.
+- Cloud and Custom GPT remain blocked:
+  `cloudReady:false`, `customGptReady:false`.

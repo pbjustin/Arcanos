@@ -10,12 +10,18 @@ export const MODEL_READY_THRESHOLD_PASSED = 20;
 export const DEFAULT_OUTPUT = join(RUNTIME_REPORT_DIR, 'model-readiness-report.json');
 export const PRIVATE_SERVING_DESIGN_READINESS = {
   privateServingDesignReady: true,
+  privateServingScaffoldReady: true,
   privateServingImplemented: false,
   privateServingExposed: false,
   requestSigningDesigned: true,
+  requestSigningScaffoldReady: true,
   requestSigningImplemented: false,
   authBoundaryDesigned: true,
+  authBoundaryScaffoldReady: true,
   authBoundaryImplemented: false,
+  rateLimitScaffoldReady: true,
+  rateLimitImplemented: false,
+  responseShapingScaffoldReady: true,
   publicServerCreated: false,
   customGptExposureCreated: false,
 };

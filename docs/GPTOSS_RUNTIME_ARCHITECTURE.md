@@ -170,6 +170,45 @@ The expected current state remains:
 - cloud ready: `false`
 - Custom GPT ready: `false`
 
+## Phase 5 Private Serving Scaffold
+
+Phase 5 defines the private serving boundary. Phase 5.1 adds local-only
+scaffold helpers under `scripts/gptoss/private-serving/`; it is not a serving
+implementation. No HTTP server, listener, route handler, tunnel, deployment, or
+Custom GPT action is created.
+
+The scaffold covers:
+
+- request signing canonicalization and hash helpers
+- fail-closed signature verification scaffold
+- fail-closed auth boundary validation
+- in-memory rate-limit policy evaluation for tests only
+- response shaping that emits only the safe effective-router envelope
+- structured denial responses
+- scaffold validation and local scaffold reports
+
+Current scaffold readiness fields are:
+
+- `privateServingDesignReady:true`
+- `privateServingScaffoldReady:true`
+- `privateServingImplemented:false`
+- `privateServingExposed:false`
+- `requestSigningScaffoldReady:true`
+- `requestSigningImplemented:false`
+- `authBoundaryScaffoldReady:true`
+- `authBoundaryImplemented:false`
+- `rateLimitScaffoldReady:true`
+- `rateLimitImplemented:false`
+- `responseShapingScaffoldReady:true`
+- `publicServerCreated:false`
+- `cloudReady:false`
+- `customGptReady:false`
+
+Future work before any server or route includes real signature verification, a
+durable private rate limiter, a private network boundary, endpoint auth
+integration, audit sink approval, rollback gate validation, and penetration
+test or security review.
+
 ## Future Work Before Exposure
 
 Before any cloud or Custom GPT exposure, add a separate reviewed design that
