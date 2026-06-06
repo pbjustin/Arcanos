@@ -60,7 +60,7 @@ export function validateTimestampSkew(
 
 export function validateNonceShape(nonce) {
   const value = String(nonce || '');
-  if (!/^[A-Za-z0-9._:-]{8,128}$/.test(value)) {
+  if (!/^[A-Za-z0-9_-]{16,128}$/.test(value)) {
     return { ok: false, reason: 'invalid_nonce' };
   }
   return { ok: true, reason: null };

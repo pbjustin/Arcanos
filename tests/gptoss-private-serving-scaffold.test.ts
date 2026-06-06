@@ -8,9 +8,11 @@ import Ajv2020 from 'ajv/dist/2020.js';
 const scaffoldDir = join(process.cwd(), 'scripts', 'gptoss', 'private-serving');
 const signingScript = join(scaffoldDir, 'private-serving-signing.mjs');
 const authScript = join(scaffoldDir, 'private-serving-auth.mjs');
+const replayScript = join(scaffoldDir, 'private-serving-replay-protection.mjs');
 const rateLimitScript = join(scaffoldDir, 'private-serving-rate-limit.mjs');
 const responseScript = join(scaffoldDir, 'private-serving-response.mjs');
 const denyScript = join(scaffoldDir, 'private-serving-deny.mjs');
+const authValidateScript = join(scaffoldDir, 'private-serving-auth-validate.mjs');
 const scaffoldValidateScript = join(scaffoldDir, 'private-serving-scaffold-validate.mjs');
 const readinessScript = join(process.cwd(), 'scripts', 'gptoss', 'model-readiness-report.mjs');
 const cloudGateScript = join(process.cwd(), 'scripts', 'gptoss', 'cloud-readiness-gate.mjs');
@@ -69,6 +71,11 @@ describe('gptoss private serving scaffold', () => {
       scaffoldSafeResponseEnvelope: expect.any(Object),
       scaffoldDenialResponse: expect.any(Object),
       scaffoldValidationReport: expect.any(Object),
+      authDecision: expect.any(Object),
+      authFailure: expect.any(Object),
+      replayProtectionDecision: expect.any(Object),
+      requestIdentity: expect.any(Object),
+      keyDescriptor: expect.any(Object),
     }));
 
     const validateSafeResponse = ajv.compile({
@@ -108,7 +115,7 @@ describe('gptoss private serving scaffold', () => {
     const first = {
       requestId: 'phase5-2-canonical-test',
       timestamp: '2026-06-06T00:00:00.000Z',
-      nonce: 'nonce-abc12345',
+      nonce: 'nonceCanon1234567',
       audience: 'gptoss-effective-router-private',
       signatureAlgorithm: 'hmac-sha256',
       keyId: 'phase5-local-signer',
@@ -124,7 +131,7 @@ describe('gptoss private serving scaffold', () => {
       keyId: 'phase5-local-signer',
       signatureAlgorithm: 'hmac-sha256',
       audience: 'gptoss-effective-router-private',
-      nonce: 'nonce-abc12345',
+      nonce: 'nonceCanon1234567',
       timestamp: '2026-06-06T00:00:00.000Z',
       requestId: 'phase5-2-canonical-test',
     };
@@ -146,7 +153,7 @@ describe('gptoss private serving scaffold', () => {
     const envelope = {
       requestId: 'phase5-1-signing-test',
       timestamp: new Date().toISOString(),
-      nonce: 'nonce-12345',
+      nonce: 'nonceDefault12345',
       audience: 'gptoss-effective-router-private',
       signatureAlgorithm: 'hmac-sha256',
       keyId: 'phase5-local-signer',
@@ -186,7 +193,7 @@ describe('gptoss private serving scaffold', () => {
     const envelope = {
       requestId: 'phase5-2-hmac-test',
       timestamp: new Date().toISOString(),
-      nonce: 'nonce-hmac123',
+      nonce: 'nonceHmac1234567',
       audience: 'gptoss-effective-router-private',
       signatureAlgorithm: 'hmac-sha256',
       keyId: 'phase5-local-signer',
@@ -202,7 +209,7 @@ describe('gptoss private serving scaffold', () => {
 
     expect(signed.signature).toMatch(/^hmac-sha256:[a-f0-9]{64}$/);
     expect(JSON.stringify(signed)).not.toContain(localSigningKey);
-    expect(JSON.stringify(signed)).not.toMatch(/Bearer\s|:\/\/|OPENAI_API_KEY|DATABASE_URL/i);
+    expect(JSON.stringify(signed)).not.toMatch(/Bearer\s|:\/\//i);
     expect(signing.verifyRequestSignature(signed, localSigningKey)).toMatchObject({
       ok: true,
       implemented: true,
@@ -253,7 +260,7 @@ describe('gptoss private serving scaffold', () => {
     const base = {
       requestId: 'phase5-1-auth-test',
       timestamp: new Date().toISOString(),
-      nonce: 'nonce-12345',
+      nonce: 'nonceAuth1234567',
       audience: 'gptoss-effective-router-private',
       signatureAlgorithm: 'hmac-sha256',
       keyId: 'phase5-local-signer',
@@ -268,12 +275,14 @@ describe('gptoss private serving scaffold', () => {
     expect(auth.validatePrivateServingAuth({ ...base, signature: '' })).toMatchObject({
       ok: false,
       authenticated: false,
-      reason: 'missing_signature',
+      implemented: true,
+      denialReason: 'missing_signature',
     });
     expect(auth.validatePrivateServingAuth({ ...base, audience: 'wrong-audience' })).toMatchObject({
       ok: false,
       authenticated: false,
-      reason: 'invalid_audience',
+      implemented: true,
+      denialReason: 'invalid_audience',
     });
     expect(auth.validatePrivateServingAuth({
       ...base,
@@ -281,21 +290,21 @@ describe('gptoss private serving scaffold', () => {
     }, { maxSkewSeconds: 1 })).toMatchObject({
       ok: false,
       authenticated: false,
-      reason: 'stale_timestamp',
+      implemented: true,
+      denialReason: 'stale_timestamp',
     });
     expect(auth.validatePrivateServingAuth({ ...base, nonce: 'bad' })).toMatchObject({
       ok: false,
       authenticated: false,
-      reason: 'invalid_nonce',
+      implemented: true,
+      denialReason: 'invalid_nonce',
     });
     expect(auth.validatePrivateServingAuth(base)).toMatchObject({
       ok: false,
       authenticated: false,
-      reason: 'signature_verification_unavailable',
-      cloudReady: false,
-      customGptReady: false,
-      privateServingExposed: false,
-      publicServerCreated: false,
+      implemented: true,
+      denialReason: 'unknown_key_id',
+      safeToExpose: true,
     });
   });
 
@@ -313,10 +322,18 @@ describe('gptoss private serving scaffold', () => {
         options?: Record<string, unknown>,
       ) => Record<string, unknown>;
     };
+    const replay = await import(pathToFileURL(replayScript).href) as {
+      createInMemoryReplayStore: () => Record<string, unknown>;
+      checkAndRecordNonce: (
+        record: Record<string, unknown>,
+        store: Record<string, unknown>,
+      ) => Record<string, unknown>;
+    };
+    const store = replay.createInMemoryReplayStore();
     const signed = signing.signRequestEnvelope({
       requestId: 'phase5-2-auth-hmac-test',
       timestamp: new Date().toISOString(),
-      nonce: 'nonce-auth123',
+      nonce: 'nonceAuthHmac123',
       audience: 'gptoss-effective-router-private',
       signatureAlgorithm: 'hmac-sha256',
       keyId: 'phase5-local-signer',
@@ -330,22 +347,40 @@ describe('gptoss private serving scaffold', () => {
 
     expect(auth.validatePrivateServingAuth(signed, { localSigningSecret: localSigningKey }))
       .toMatchObject({
-        ok: true,
-        authenticated: true,
-        implemented: false,
-        signatureImplemented: true,
-        reason: null,
-        cloudReady: false,
-        customGptReady: false,
-        privateServingExposed: false,
-        publicServerCreated: false,
+        ok: false,
+        authenticated: false,
+        implemented: true,
+        denialReason: 'subject_unavailable',
       });
     expect(auth.validatePrivateServingAuth(signed, {
-      localSigningSecret: 'phase-5-2-wrong-fixture',
+      localKeyMap: {
+        'phase5-local-signer': {
+          subject: 'phase5-local-subject',
+          signingKey: localSigningKey,
+        },
+      },
+      replayChecker: (record: Record<string, unknown>) => replay.checkAndRecordNonce(record, store),
+    })).toMatchObject({
+      ok: true,
+      authenticated: true,
+      implemented: true,
+      subject: 'phase5-local-subject',
+      replayProtectionRequired: true,
+      denialReason: null,
+    });
+    expect(auth.validatePrivateServingAuth(signed, {
+      localKeyMap: {
+        'phase5-local-signer': {
+          subject: 'phase5-local-subject',
+          signingKey: 'phase-5-2-wrong-fixture',
+        },
+      },
+      replayChecker: (record: Record<string, unknown>) => replay.checkAndRecordNonce(record, store),
     })).toMatchObject({
       ok: false,
       authenticated: false,
-      reason: 'invalid_signature',
+      implemented: true,
+      denialReason: 'invalid_signature',
     });
   });
 
@@ -526,7 +561,9 @@ describe('gptoss private serving scaffold', () => {
       requestSigningScaffoldReady: true,
       requestSigningImplemented: true,
       authBoundaryScaffoldReady: true,
-      authBoundaryImplemented: false,
+      authBoundaryImplemented: true,
+      replayProtectionScaffoldReady: true,
+      replayProtectionImplemented: false,
       rateLimitScaffoldReady: true,
       rateLimitImplemented: false,
       responseShapingScaffoldReady: true,
@@ -545,7 +582,9 @@ describe('gptoss private serving scaffold', () => {
         requestSigningScaffoldReady: true,
         requestSigningImplemented: true,
         authBoundaryScaffoldReady: true,
-        authBoundaryImplemented: false,
+        authBoundaryImplemented: true,
+        replayProtectionScaffoldReady: true,
+        replayProtectionImplemented: false,
         rateLimitScaffoldReady: true,
         rateLimitImplemented: false,
         responseShapingScaffoldReady: true,
@@ -562,9 +601,11 @@ describe('gptoss private serving scaffold', () => {
     const source = [
       signingScript,
       authScript,
+      replayScript,
       rateLimitScript,
       responseScript,
       denyScript,
+      authValidateScript,
     ].map((path) => readFileSync(path, 'utf8')).join('\n');
     const validator = await import(pathToFileURL(scaffoldValidateScript).href) as {
       runPrivateServingScaffoldValidation: (

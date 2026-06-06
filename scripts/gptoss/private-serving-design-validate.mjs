@@ -95,6 +95,11 @@ function schemaHasDefs(schema, failures) {
     'denialResponse',
     'rateLimitResponse',
     'authFailureResponse',
+    'authDecision',
+    'authFailure',
+    'replayProtectionDecision',
+    'requestIdentity',
+    'keyDescriptor',
   ];
   for (const name of requiredDefs) {
     if (!defs[name]) {
@@ -129,8 +134,14 @@ function schemaHasDefs(schema, failures) {
   if (readiness?.properties?.authBoundaryDesigned?.const !== true) {
     pushFailure(failures, 'private_serving_readiness_auth_boundary_designed_missing');
   }
-  if (readiness?.properties?.authBoundaryImplemented?.const !== false) {
-    pushFailure(failures, 'private_serving_readiness_auth_boundary_not_false');
+  if (readiness?.properties?.authBoundaryImplemented?.const !== true) {
+    pushFailure(failures, 'private_serving_readiness_auth_boundary_not_true');
+  }
+  if (readiness?.properties?.replayProtectionScaffoldReady?.const !== true) {
+    pushFailure(failures, 'private_serving_readiness_replay_scaffold_not_true');
+  }
+  if (readiness?.properties?.replayProtectionImplemented?.const !== false) {
+    pushFailure(failures, 'private_serving_readiness_replay_implemented_not_false');
   }
   if (readiness?.properties?.publicServerCreated?.const !== false) {
     pushFailure(failures, 'private_serving_response_public_server_not_false');
@@ -274,7 +285,9 @@ function validateReadiness(failures) {
     requestSigningDesigned: true,
     requestSigningImplemented: true,
     authBoundaryDesigned: true,
-    authBoundaryImplemented: false,
+    authBoundaryImplemented: true,
+    replayProtectionScaffoldReady: true,
+    replayProtectionImplemented: false,
     publicServerCreated: false,
     customGptExposureCreated: false,
     cloudReady: false,

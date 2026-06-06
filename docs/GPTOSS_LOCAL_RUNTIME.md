@@ -739,7 +739,7 @@ The CI gate validates package wiring, the runtime schema, release-manifest schem
 expectations, baseline metadata, runtime smoke fixtures, local spec facts, docs,
 required runtime supports, and cloud/Custom GPT false readiness without requiring
 `local_artifacts/`, adapter files, model weights, CUDA, WSL, vLLM, Railway auth,
-`DATABASE_URL`, OpenAI keys, live DB access, or a server. In local runs it writes
+a database connection environment variable, OpenAI keys, live DB access, or a server. In local runs it writes
 `local_artifacts/gptoss-runtime/release-gate-ci-report.json`; in CI it can rely
 on the stdout JSON summary.
 
@@ -763,11 +763,14 @@ deployment, or Custom GPT action.
 
 The scaffold status is:
 
-- request signing verification is scaffolded and fails closed
+- request signing verification is implemented locally and fails closed
 - Phase 5.2 request signing verification is implemented locally with
   HMAC-SHA256 and fails closed without an explicitly supplied local signing key
-- auth boundary validation rejects unauthenticated requests and is not
-  production auth
+- Phase 5.3 auth decision validation is implemented locally for signed
+  envelopes and fails closed without an explicit key resolver or local test key
+  map, valid signature, accepted nonce, and replay checker
+- replay protection is in-memory scaffold logic only and not durable production
+  state
 - rate limiting is in-memory policy only and not durable production state
 - response shaping emits only the safe effective-router envelope
 - denial responses are structured and secret-free
@@ -784,7 +787,9 @@ Expected readiness:
   "requestSigningScaffoldReady": true,
   "requestSigningImplemented": true,
   "authBoundaryScaffoldReady": true,
-  "authBoundaryImplemented": false,
+  "authBoundaryImplemented": true,
+  "replayProtectionScaffoldReady": true,
+  "replayProtectionImplemented": false,
   "rateLimitScaffoldReady": true,
   "rateLimitImplemented": false,
   "responseShapingScaffoldReady": true,
@@ -795,9 +800,9 @@ Expected readiness:
 ```
 
 Before any server can be considered, a later phase must add production key
-management and rotation, a durable private rate limiter, a private network
-boundary, endpoint auth integration, audit sink approval, rollback gate
-validation, and penetration test or security review.
+management and rotation, a durable private replay store, a durable private rate
+limiter, a private network boundary, endpoint auth integration, audit sink
+approval, rollback gate validation, and penetration test or security review.
 
 ## Dataset Gate
 

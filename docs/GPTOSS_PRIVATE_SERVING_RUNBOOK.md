@@ -12,6 +12,10 @@ Phase 5.2 implements local HMAC-SHA256 request signing helpers. They require an
 explicitly supplied local signing key, do not read environment variables, and do
 not provide production key management or endpoint integration.
 
+Phase 5.3 implements local auth decision helpers. They validate signed request
+identity, timestamp skew, nonce shape, audience, signature, and replay-check
+availability. They do not create a server and are not production endpoint auth.
+
 ## Preflight
 
 Confirm the checkout and scripts without running a model:
@@ -57,6 +61,7 @@ Run the private serving design and scaffold validators:
 ```bash
 npm run gptoss:private-serving:design:validate
 npm run gptoss:private-serving:threat-model:validate
+npm run gptoss:private-serving:auth:validate
 npm run gptoss:private-serving:scaffold:validate
 ```
 
@@ -98,7 +103,7 @@ Pass criteria:
 - Private serving implementation and exposure remain false.
 - Public server creation remains false.
 
-Expected Phase 5.2 scaffold fields:
+Expected Phase 5.3 local auth fields:
 
 ```json
 {
@@ -109,7 +114,9 @@ Expected Phase 5.2 scaffold fields:
   "requestSigningScaffoldReady": true,
   "requestSigningImplemented": true,
   "authBoundaryScaffoldReady": true,
-  "authBoundaryImplemented": false,
+  "authBoundaryImplemented": true,
+  "replayProtectionScaffoldReady": true,
+  "replayProtectionImplemented": false,
   "rateLimitScaffoldReady": true,
   "rateLimitImplemented": false,
   "responseShapingScaffoldReady": true,
@@ -126,7 +133,10 @@ local helpers:
 
 - request signing verification is implemented locally and fails closed when no
   explicit local signing key is supplied
-- auth boundary validation fails closed and is not production auth
+- auth decision validation is implemented locally and fails closed without an
+  explicit key resolver or local test key map, valid signature, accepted nonce,
+  and replay checker
+- replay protection is in-memory scaffold logic only and is not durable
 - rate limiting is in-memory policy only
 - response shaping strips raw model text and emits only the safe envelope
 - denial helpers return structured refusals without stack traces
@@ -136,6 +146,7 @@ local helpers:
 Future work required before any server:
 
 - production key management and rotation
+- durable private replay store
 - durable private rate limiter
 - private network boundary
 - endpoint auth integration

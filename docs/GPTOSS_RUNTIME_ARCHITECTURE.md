@@ -182,7 +182,8 @@ The scaffold covers:
 - request signing canonicalization and hash helpers
 - local HMAC-SHA256 request signing and verification helpers
 - fail-closed signature verification scaffold
-- fail-closed auth boundary validation
+- local auth decision validation for signed envelopes
+- in-memory replay protection scaffold for nonce reuse checks
 - in-memory rate-limit policy evaluation for tests only
 - response shaping that emits only the safe effective-router envelope
 - structured denial responses
@@ -197,7 +198,9 @@ Current scaffold readiness fields are:
 - `requestSigningScaffoldReady:true`
 - `requestSigningImplemented:true`
 - `authBoundaryScaffoldReady:true`
-- `authBoundaryImplemented:false`
+- `authBoundaryImplemented:true`
+- `replayProtectionScaffoldReady:true`
+- `replayProtectionImplemented:false`
 - `rateLimitScaffoldReady:true`
 - `rateLimitImplemented:false`
 - `responseShapingScaffoldReady:true`
@@ -205,13 +208,15 @@ Current scaffold readiness fields are:
 - `cloudReady:false`
 - `customGptReady:false`
 
-The signing implementation is local helper logic only. It requires an
-explicitly supplied local signing key, does not read environment variables, and
-does not create production key management or endpoint auth integration.
+The signing and auth implementations are local helper logic only. They require
+explicit local key material or a local/test key resolver, do not read
+environment variables, and do not create production key management or endpoint
+auth integration. Replay protection is scaffold/in-memory only.
 
 Future work before any server or route includes production key management and
-rotation, a durable private rate limiter, a private network boundary, endpoint
-auth integration, audit sink approval, rollback gate validation, and
+rotation, a durable private replay store, a durable private rate limiter, a
+private network boundary, endpoint auth integration, audit sink approval,
+rollback gate validation, and
 penetration test or security review.
 
 ## Future Work Before Exposure

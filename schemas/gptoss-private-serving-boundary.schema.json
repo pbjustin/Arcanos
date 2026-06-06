@@ -33,10 +33,11 @@
       "properties": {
         "requestId": { "$ref": "#/$defs/nonEmptyString" },
         "timestamp": { "$ref": "#/$defs/dateTimeString" },
-        "nonce": { "$ref": "#/$defs/nonEmptyString" },
+        "nonce": { "$ref": "#/$defs/nonceString" },
         "audience": { "const": "gptoss-effective-router-private" },
         "signatureAlgorithm": { "const": "hmac-sha256" },
         "keyId": { "$ref": "#/$defs/nonEmptyString" },
+        "subject": { "$ref": "#/$defs/nonEmptyString" },
         "bodyHash": { "$ref": "#/$defs/sha256Hex" },
         "signature": { "$ref": "#/$defs/hmacSha256Signature" },
         "input": {
@@ -52,6 +53,100 @@
     },
     "scaffoldSignedRequestEnvelope": {
       "$ref": "#/$defs/signedRequestEnvelope"
+    },
+    "requestIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestId", "subject", "keyId", "audience"],
+      "properties": {
+        "requestId": { "$ref": "#/$defs/nonEmptyString" },
+        "subject": { "$ref": "#/$defs/nonEmptyString" },
+        "keyId": { "$ref": "#/$defs/nonEmptyString" },
+        "audience": { "const": "gptoss-effective-router-private" }
+      }
+    },
+    "keyDescriptor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["keyId", "subject"],
+      "properties": {
+        "keyId": { "$ref": "#/$defs/nonEmptyString" },
+        "subject": { "$ref": "#/$defs/nonEmptyString" },
+        "label": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "authFailure": {
+      "type": "string",
+      "enum": [
+        "missing_request_id",
+        "missing_timestamp",
+        "missing_nonce",
+        "missing_audience",
+        "missing_body_hash",
+        "missing_signature",
+        "invalid_signature",
+        "invalid_audience",
+        "stale_timestamp",
+        "invalid_nonce",
+        "missing_key_id",
+        "unknown_key_id",
+        "replay_check_unavailable",
+        "replay_detected",
+        "subject_unavailable",
+        "signature_verification_unavailable",
+        "signature_verification_not_implemented",
+        "authentication_failure"
+      ]
+    },
+    "authDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ok", "authenticated", "implemented", "requestId"],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "authenticated": { "type": "boolean" },
+        "implemented": { "const": true },
+        "requestId": { "type": ["string", "null"] },
+        "subject": { "$ref": "#/$defs/nonEmptyString" },
+        "keyId": { "$ref": "#/$defs/nonEmptyString" },
+        "audience": { "const": "gptoss-effective-router-private" },
+        "replayProtectionRequired": { "const": true },
+        "timestampAccepted": { "const": true },
+        "nonceAccepted": { "const": true },
+        "signatureAccepted": { "const": true },
+        "denialReason": {
+          "anyOf": [
+            { "const": null },
+            { "$ref": "#/$defs/authFailure" }
+          ]
+        },
+        "safeToExpose": { "const": true }
+      }
+    },
+    "replayProtectionDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ok",
+        "implemented",
+        "scaffoldReady",
+        "nonceAccepted",
+        "replayDetected",
+        "denialReason"
+      ],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "implemented": { "const": false },
+        "scaffoldReady": { "const": true },
+        "nonceAccepted": { "type": "boolean" },
+        "replayDetected": { "type": "boolean" },
+        "denialReason": {
+          "anyOf": [
+            { "const": null },
+            { "$ref": "#/$defs/authFailure" }
+          ]
+        }
+      }
     },
     "scaffoldAuthDecision": {
       "type": "object",
@@ -248,7 +343,7 @@
       "properties": {
         "replayable": { "type": "boolean" },
         "requestHash": { "$ref": "#/$defs/sha256Hex" },
-        "nonce": { "$ref": "#/$defs/nonEmptyString" }
+        "nonce": { "$ref": "#/$defs/nonceString" }
       }
     },
     "denialResponse": {
@@ -353,6 +448,8 @@
         "authBoundaryDesigned",
         "authBoundaryScaffoldReady",
         "authBoundaryImplemented",
+        "replayProtectionScaffoldReady",
+        "replayProtectionImplemented",
         "rateLimitScaffoldReady",
         "rateLimitImplemented",
         "responseShapingScaffoldReady",
@@ -370,7 +467,9 @@
         "requestSigningImplemented": { "const": true },
         "authBoundaryDesigned": { "const": true },
         "authBoundaryScaffoldReady": { "const": true },
-        "authBoundaryImplemented": { "const": false },
+        "authBoundaryImplemented": { "const": true },
+        "replayProtectionScaffoldReady": { "const": true },
+        "replayProtectionImplemented": { "const": false },
         "rateLimitScaffoldReady": { "const": true },
         "rateLimitImplemented": { "const": false },
         "responseShapingScaffoldReady": { "const": true },
@@ -386,6 +485,10 @@
     "dateTimeString": {
       "type": "string",
       "minLength": 1
+    },
+    "nonceString": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{16,128}$"
     },
     "sha256Hex": {
       "type": "string",

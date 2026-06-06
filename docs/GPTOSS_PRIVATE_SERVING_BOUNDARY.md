@@ -9,6 +9,10 @@ Phase 5.1 adds local-only scaffold helpers; it is not a serving
 implementation. No HTTP server, listener, route handler, tunnel, deployment, or
 Custom GPT action is created.
 
+Phase 5.3 implements the local auth decision engine for signed private-serving
+request envelopes. This remains helper logic only: no endpoint, server,
+listener, route, tunnel, deployment, or Custom GPT action exists.
+
 ## Purpose
 
 The private serving boundary exists to let an approved Arcanos backend caller
@@ -82,10 +86,12 @@ A future implementation must keep the stack split by responsibility:
 Phase 5.1 scaffold helpers now exist under
 `scripts/gptoss/private-serving/`:
 
-- request signing verification is scaffolded and fails closed; production
-  key management is not implemented
-- the auth boundary scaffold rejects unauthenticated requests and must not be
-  treated as production auth
+- request signing verification is implemented locally with HMAC-SHA256 and
+  fails closed without an explicitly supplied local signing key
+- the auth decision engine validates request identity, timestamp skew, nonce
+  shape, audience, signature, and replay-check availability
+- replay protection is in-memory scaffold logic only; production exposure
+  requires a durable private replay store
 - rate limiting is in-memory scaffold policy only; production exposure requires
   a durable private rate limiter
 - response shaping is a local helper that emits only the effective-router safe
@@ -99,6 +105,13 @@ module. These helpers use only Node crypto, require an explicitly supplied
 local signing key, and fail closed when no key is supplied. They do not read
 environment variables and do not provide production key management, rotation,
 or endpoint integration.
+
+Phase 5.3 implements local auth decisions in
+`scripts/gptoss/private-serving/private-serving-auth.mjs`. The helper requires
+an explicit key resolver or local test key map, requires a `keyId`, requires a
+subject or local/test subject derivation, and requires a replay checker. Without
+those controls it fails closed. This is not production auth and does not make
+private serving ready.
 
 The effective router must continue to report raw model status separately from
 effective-router status. A passing effective-router result does not imply that
@@ -193,7 +206,7 @@ prove all of the following with deterministic JSON reports:
 Readiness must not depend on live OpenAI calls, live training, Railway CLI
 mutation, public internet exposure, or live database mutation.
 
-Current Phase 5.1 readiness is scaffold-only:
+Current Phase 5.3 readiness remains unexposed:
 
 - `privateServingDesignReady:true`
 - `privateServingScaffoldReady:true`
@@ -202,7 +215,9 @@ Current Phase 5.1 readiness is scaffold-only:
 - `requestSigningScaffoldReady:true`
 - `requestSigningImplemented:true`
 - `authBoundaryScaffoldReady:true`
-- `authBoundaryImplemented:false`
+- `authBoundaryImplemented:true`
+- `replayProtectionScaffoldReady:true`
+- `replayProtectionImplemented:false`
 - `rateLimitScaffoldReady:true`
 - `rateLimitImplemented:false`
 - `responseShapingScaffoldReady:true`
@@ -213,6 +228,7 @@ Current Phase 5.1 readiness is scaffold-only:
 Required future work before any server or route can be considered:
 
 - production key management and rotation
+- durable private replay store
 - durable private rate limiter
 - private network boundary
 - endpoint auth integration

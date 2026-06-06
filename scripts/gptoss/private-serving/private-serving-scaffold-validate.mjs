@@ -24,9 +24,11 @@ export const PRIVATE_SERVING_SCAFFOLD_PR_REPORT =
 export const REQUIRED_SCAFFOLD_MODULES = [
   'private-serving-signing.mjs',
   'private-serving-auth.mjs',
+  'private-serving-replay-protection.mjs',
   'private-serving-rate-limit.mjs',
   'private-serving-response.mjs',
   'private-serving-deny.mjs',
+  'private-serving-auth-validate.mjs',
 ];
 export const SCAFFOLD_REPORT_SCRIPTS = [
   ...REQUIRED_SCAFFOLD_MODULES,
@@ -109,7 +111,9 @@ function validateReadiness(failures) {
     requestSigningImplemented: true,
     authBoundaryDesigned: true,
     authBoundaryScaffoldReady: true,
-    authBoundaryImplemented: false,
+    authBoundaryImplemented: true,
+    replayProtectionScaffoldReady: true,
+    replayProtectionImplemented: false,
     rateLimitScaffoldReady: true,
     rateLimitImplemented: false,
     responseShapingScaffoldReady: true,
@@ -154,6 +158,10 @@ export async function runPrivateServingScaffoldValidation({
     ok: failures.length === 0,
     privateServingDesignReady: readiness.privateServingDesignReady === true,
     privateServingScaffoldReady: readiness.privateServingScaffoldReady === true,
+    requestSigningImplemented: true,
+    authBoundaryImplemented: true,
+    replayProtectionScaffoldReady: true,
+    replayProtectionImplemented: false,
     privateServingImplemented: false,
     privateServingExposed: false,
     publicServerCreated: false,
@@ -174,7 +182,10 @@ export async function runPrivateServingScaffoldValidation({
       'docs/GPTOSS_PRIVATE_SERVING_THREAT_MODEL.md',
       'docs/GPTOSS_PRIVATE_SERVING_RUNBOOK.md',
     ],
-    tests: ['tests/gptoss-private-serving-scaffold.test.ts'],
+    tests: [
+      'tests/gptoss-private-serving-scaffold.test.ts',
+      'tests/gptoss-private-serving-auth.test.ts',
+    ],
   };
 
   if (write) {

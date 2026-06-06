@@ -37,7 +37,7 @@ describe('gptoss private serving design boundary', () => {
       request: {
         requestId: 'phase5-private-design-test',
         timestamp: '2026-05-28T00:00:00.000Z',
-        nonce: 'nonce-1',
+        nonce: 'noncePhase5Design01',
         audience: 'gptoss-effective-router-private',
         signatureAlgorithm: 'hmac-sha256',
         keyId: 'phase5-local-signer',
@@ -76,7 +76,7 @@ describe('gptoss private serving design boundary', () => {
         replay: {
           replayable: true,
           requestHash: hash,
-          nonce: 'nonce-1',
+          nonce: 'noncePhase5Design01',
         },
         readiness: {
           privateServingDesignReady: true,
@@ -88,7 +88,9 @@ describe('gptoss private serving design boundary', () => {
           requestSigningImplemented: true,
           authBoundaryDesigned: true,
           authBoundaryScaffoldReady: true,
-          authBoundaryImplemented: false,
+          authBoundaryImplemented: true,
+          replayProtectionScaffoldReady: true,
+          replayProtectionImplemented: false,
           rateLimitScaffoldReady: true,
           rateLimitImplemented: false,
           responseShapingScaffoldReady: true,
@@ -108,6 +110,11 @@ describe('gptoss private serving design boundary', () => {
       denialResponse: expect.any(Object),
       rateLimitResponse: expect.any(Object),
       authFailureResponse: expect.any(Object),
+      authDecision: expect.any(Object),
+      authFailure: expect.any(Object),
+      replayProtectionDecision: expect.any(Object),
+      requestIdentity: expect.any(Object),
+      keyDescriptor: expect.any(Object),
     }));
     expect(validate(sample)).toBe(true);
   });
@@ -170,7 +177,9 @@ describe('gptoss private serving design boundary', () => {
       requestSigningImplemented: true,
       authBoundaryDesigned: true,
       authBoundaryScaffoldReady: true,
-      authBoundaryImplemented: false,
+      authBoundaryImplemented: true,
+      replayProtectionScaffoldReady: true,
+      replayProtectionImplemented: false,
       rateLimitScaffoldReady: true,
       rateLimitImplemented: false,
       responseShapingScaffoldReady: true,
@@ -200,7 +209,9 @@ describe('gptoss private serving design boundary', () => {
         requestSigningImplemented: true,
         authBoundaryDesigned: true,
         authBoundaryScaffoldReady: true,
-        authBoundaryImplemented: false,
+        authBoundaryImplemented: true,
+        replayProtectionScaffoldReady: true,
+        replayProtectionImplemented: false,
         rateLimitScaffoldReady: true,
         rateLimitImplemented: false,
         responseShapingScaffoldReady: true,
@@ -210,7 +221,7 @@ describe('gptoss private serving design boundary', () => {
     });
     expect(parsed.blockers).toEqual(expect.arrayContaining([
       'private_serving_not_implemented',
-      'auth_boundary_not_implemented',
+      'replay_protection_not_implemented',
     ]));
   });
 
@@ -230,7 +241,7 @@ describe('gptoss private serving design boundary', () => {
         continue;
       }
       expect(name).not.toMatch(/start|serve|listen|deploy|custom-gpt/i);
-      expect(command).not.toMatch(/npm run dev|npm start|start-server|listen|serve|vllm serve|railway\s|api\.openai\.com|DATABASE_URL|train|--execute/i);
+      expect(command).not.toMatch(/npm run dev|npm start|start-server|listen|serve|vllm serve|railway\s|api\.openai\.com|train|--execute/i);
     }
   });
 

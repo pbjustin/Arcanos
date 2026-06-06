@@ -19,7 +19,10 @@ The Phase 5.1 scaffolds are not endpoint implementations:
 
 - request signing verification is implemented locally with HMAC-SHA256 and
   fails closed when no explicit local signing key is supplied
-- auth validation rejects unauthenticated requests and is not production auth
+- auth decision validation is implemented locally and fails closed without an
+  explicit key resolver or local test key map, valid signature, accepted nonce,
+  and replay checker
+- replay protection is in-memory scaffold logic only and is not durable
 - rate limiting uses in-memory scaffold state only
 - response shaping emits only the safe effective-router envelope
 - private serving remains unexposed with `privateServingImplemented:false`,
@@ -29,8 +32,12 @@ The Phase 5.1 scaffolds are not endpoint implementations:
 
 Phase 5.2 implements local HMAC-SHA256 signing helpers for signed request
 envelopes. This is helper logic only: no endpoint or server exists, no
-production key management exists, and auth boundary integration remains
-incomplete for serving.
+production key management exists, and serving remains blocked.
+
+Phase 5.3 implements the local auth decision engine. It validates `keyId`,
+request identity, audience, timestamp skew, nonce shape, HMAC signature, and
+replay-check availability. It does not add endpoint auth integration, durable
+replay storage, production key management, or server exposure.
 
 Every endpoint response that returns a router result must use the effective plus
 safety envelope:

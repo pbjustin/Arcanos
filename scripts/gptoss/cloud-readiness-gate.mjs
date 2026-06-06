@@ -62,6 +62,8 @@ export function buildCloudGate({
     authBoundaryDesigned: readiness.authBoundaryDesigned === true,
     authBoundaryScaffoldReady: readiness.authBoundaryScaffoldReady === true,
     authBoundaryImplemented: readiness.authBoundaryImplemented === true,
+    replayProtectionScaffoldReady: readiness.replayProtectionScaffoldReady === true,
+    replayProtectionImplemented: readiness.replayProtectionImplemented === true,
     rateLimitScaffoldReady: readiness.rateLimitScaffoldReady === true,
     rateLimitImplemented: readiness.rateLimitImplemented === true,
     responseShapingScaffoldReady: readiness.responseShapingScaffoldReady === true,
@@ -113,6 +115,8 @@ export function buildCloudGate({
   if (!checks.requestSigningImplemented) blockers.push('request_signing_not_implemented');
   if (!checks.authBoundaryScaffoldReady) blockers.push('auth_boundary_scaffold_missing');
   if (!checks.authBoundaryImplemented) blockers.push('auth_boundary_not_implemented');
+  if (!checks.replayProtectionScaffoldReady) blockers.push('replay_protection_scaffold_missing');
+  if (!checks.replayProtectionImplemented) blockers.push('replay_protection_not_implemented');
   if (!checks.rateLimitScaffoldReady) blockers.push('rate_limit_scaffold_missing');
   if (!checks.rateLimitImplemented) blockers.push('rate_limit_not_implemented');
   if (!checks.responseShapingScaffoldReady) blockers.push('response_shaping_scaffold_missing');
@@ -148,6 +152,8 @@ export function buildCloudGate({
       authBoundaryDesigned: readiness.authBoundaryDesigned,
       authBoundaryScaffoldReady: readiness.authBoundaryScaffoldReady,
       authBoundaryImplemented: readiness.authBoundaryImplemented,
+      replayProtectionScaffoldReady: readiness.replayProtectionScaffoldReady,
+      replayProtectionImplemented: readiness.replayProtectionImplemented,
       rateLimitScaffoldReady: readiness.rateLimitScaffoldReady,
       rateLimitImplemented: readiness.rateLimitImplemented,
       responseShapingScaffoldReady: readiness.responseShapingScaffoldReady,
