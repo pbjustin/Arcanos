@@ -15,7 +15,7 @@ export const PRIVATE_SERVING_DESIGN_READINESS = {
   privateServingExposed: false,
   requestSigningDesigned: true,
   requestSigningScaffoldReady: true,
-  requestSigningImplemented: false,
+  requestSigningImplemented: true,
   authBoundaryDesigned: true,
   authBoundaryScaffoldReady: true,
   authBoundaryImplemented: false,

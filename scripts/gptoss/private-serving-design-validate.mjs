@@ -123,8 +123,8 @@ function schemaHasDefs(schema, failures) {
   if (readiness?.properties?.requestSigningDesigned?.const !== true) {
     pushFailure(failures, 'private_serving_readiness_request_signing_designed_missing');
   }
-  if (readiness?.properties?.requestSigningImplemented?.const !== false) {
-    pushFailure(failures, 'private_serving_readiness_request_signing_not_false');
+  if (readiness?.properties?.requestSigningImplemented?.const !== true) {
+    pushFailure(failures, 'private_serving_readiness_request_signing_not_true');
   }
   if (readiness?.properties?.authBoundaryDesigned?.const !== true) {
     pushFailure(failures, 'private_serving_readiness_auth_boundary_designed_missing');
@@ -272,7 +272,7 @@ function validateReadiness(failures) {
     privateServingImplemented: false,
     privateServingExposed: false,
     requestSigningDesigned: true,
-    requestSigningImplemented: false,
+    requestSigningImplemented: true,
     authBoundaryDesigned: true,
     authBoundaryImplemented: false,
     publicServerCreated: false,

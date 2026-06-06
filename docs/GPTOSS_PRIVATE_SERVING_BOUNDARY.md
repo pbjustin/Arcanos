@@ -83,7 +83,7 @@ Phase 5.1 scaffold helpers now exist under
 `scripts/gptoss/private-serving/`:
 
 - request signing verification is scaffolded and fails closed; production
-  signature verification is not implemented
+  key management is not implemented
 - the auth boundary scaffold rejects unauthenticated requests and must not be
   treated as production auth
 - rate limiting is in-memory scaffold policy only; production exposure requires
@@ -93,6 +93,12 @@ Phase 5.1 scaffold helpers now exist under
 - denial helpers emit structured fail-closed responses without stack traces
 - scaffold validation confirms these helpers load without server/listener
   patterns
+
+Phase 5.2 implements local HMAC-SHA256 request signing helpers in the signing
+module. These helpers use only Node crypto, require an explicitly supplied
+local signing key, and fail closed when no key is supplied. They do not read
+environment variables and do not provide production key management, rotation,
+or endpoint integration.
 
 The effective router must continue to report raw model status separately from
 effective-router status. A passing effective-router result does not imply that
@@ -194,7 +200,7 @@ Current Phase 5.1 readiness is scaffold-only:
 - `privateServingImplemented:false`
 - `privateServingExposed:false`
 - `requestSigningScaffoldReady:true`
-- `requestSigningImplemented:false`
+- `requestSigningImplemented:true`
 - `authBoundaryScaffoldReady:true`
 - `authBoundaryImplemented:false`
 - `rateLimitScaffoldReady:true`
@@ -206,7 +212,7 @@ Current Phase 5.1 readiness is scaffold-only:
 
 Required future work before any server or route can be considered:
 
-- real signature verification
+- production key management and rotation
 - durable private rate limiter
 - private network boundary
 - endpoint auth integration

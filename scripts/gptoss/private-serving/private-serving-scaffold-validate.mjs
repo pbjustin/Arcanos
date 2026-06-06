@@ -106,7 +106,7 @@ function validateReadiness(failures) {
     privateServingExposed: false,
     requestSigningDesigned: true,
     requestSigningScaffoldReady: true,
-    requestSigningImplemented: false,
+    requestSigningImplemented: true,
     authBoundaryDesigned: true,
     authBoundaryScaffoldReady: true,
     authBoundaryImplemented: false,

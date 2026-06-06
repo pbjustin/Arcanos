@@ -764,6 +764,8 @@ deployment, or Custom GPT action.
 The scaffold status is:
 
 - request signing verification is scaffolded and fails closed
+- Phase 5.2 request signing verification is implemented locally with
+  HMAC-SHA256 and fails closed without an explicitly supplied local signing key
 - auth boundary validation rejects unauthenticated requests and is not
   production auth
 - rate limiting is in-memory policy only and not durable production state
@@ -780,7 +782,7 @@ Expected readiness:
   "privateServingImplemented": false,
   "privateServingExposed": false,
   "requestSigningScaffoldReady": true,
-  "requestSigningImplemented": false,
+  "requestSigningImplemented": true,
   "authBoundaryScaffoldReady": true,
   "authBoundaryImplemented": false,
   "rateLimitScaffoldReady": true,
@@ -792,10 +794,10 @@ Expected readiness:
 }
 ```
 
-Before any server can be considered, a later phase must add real signature
-verification, a durable private rate limiter, a private network boundary,
-endpoint auth integration, audit sink approval, rollback gate validation, and
-penetration test or security review.
+Before any server can be considered, a later phase must add production key
+management and rotation, a durable private rate limiter, a private network
+boundary, endpoint auth integration, audit sink approval, rollback gate
+validation, and penetration test or security review.
 
 ## Dataset Gate
 

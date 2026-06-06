@@ -39,8 +39,10 @@ describe('gptoss private serving design boundary', () => {
         timestamp: '2026-05-28T00:00:00.000Z',
         nonce: 'nonce-1',
         audience: 'gptoss-effective-router-private',
+        signatureAlgorithm: 'hmac-sha256',
+        keyId: 'phase5-local-signer',
         bodyHash: hash,
-        signature: 'design-only-signature-placeholder',
+        signature: `hmac-sha256:${'b'.repeat(64)}`,
         input: {
           userInput: 'Write a TypeScript helper for dataset validation.',
           mode: 'router_classifier',
@@ -83,7 +85,7 @@ describe('gptoss private serving design boundary', () => {
           privateServingExposed: false,
           requestSigningDesigned: true,
           requestSigningScaffoldReady: true,
-          requestSigningImplemented: false,
+          requestSigningImplemented: true,
           authBoundaryDesigned: true,
           authBoundaryScaffoldReady: true,
           authBoundaryImplemented: false,
@@ -165,7 +167,7 @@ describe('gptoss private serving design boundary', () => {
       privateServingExposed: false,
       requestSigningDesigned: true,
       requestSigningScaffoldReady: true,
-      requestSigningImplemented: false,
+      requestSigningImplemented: true,
       authBoundaryDesigned: true,
       authBoundaryScaffoldReady: true,
       authBoundaryImplemented: false,
@@ -195,7 +197,7 @@ describe('gptoss private serving design boundary', () => {
         privateServingExposed: false,
         requestSigningDesigned: true,
         requestSigningScaffoldReady: true,
-        requestSigningImplemented: false,
+        requestSigningImplemented: true,
         authBoundaryDesigned: true,
         authBoundaryScaffoldReady: true,
         authBoundaryImplemented: false,
@@ -208,7 +210,6 @@ describe('gptoss private serving design boundary', () => {
     });
     expect(parsed.blockers).toEqual(expect.arrayContaining([
       'private_serving_not_implemented',
-      'request_signing_not_implemented',
       'auth_boundary_not_implemented',
     ]));
   });

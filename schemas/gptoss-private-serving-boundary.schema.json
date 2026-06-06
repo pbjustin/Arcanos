@@ -24,6 +24,8 @@
         "timestamp",
         "nonce",
         "audience",
+        "signatureAlgorithm",
+        "keyId",
         "bodyHash",
         "signature",
         "input"
@@ -33,8 +35,10 @@
         "timestamp": { "$ref": "#/$defs/dateTimeString" },
         "nonce": { "$ref": "#/$defs/nonEmptyString" },
         "audience": { "const": "gptoss-effective-router-private" },
+        "signatureAlgorithm": { "const": "hmac-sha256" },
+        "keyId": { "$ref": "#/$defs/nonEmptyString" },
         "bodyHash": { "$ref": "#/$defs/sha256Hex" },
-        "signature": { "$ref": "#/$defs/nonEmptyString" },
+        "signature": { "$ref": "#/$defs/hmacSha256Signature" },
         "input": {
           "type": "object",
           "additionalProperties": false,
@@ -72,7 +76,9 @@
             "invalid_audience",
             "stale_timestamp",
             "invalid_nonce",
-            "signature_verification_unavailable"
+            "signature_verification_unavailable",
+            "signature_verification_not_implemented",
+            "invalid_signature"
           ]
         },
         "requestId": { "type": ["string", "null"] },
@@ -361,7 +367,7 @@
         "privateServingExposed": { "const": false },
         "requestSigningDesigned": { "const": true },
         "requestSigningScaffoldReady": { "const": true },
-        "requestSigningImplemented": { "const": false },
+        "requestSigningImplemented": { "const": true },
         "authBoundaryDesigned": { "const": true },
         "authBoundaryScaffoldReady": { "const": true },
         "authBoundaryImplemented": { "const": false },
@@ -384,6 +390,10 @@
     "sha256Hex": {
       "type": "string",
       "pattern": "^[a-f0-9]{64}$"
+    },
+    "hmacSha256Signature": {
+      "type": "string",
+      "pattern": "^hmac-sha256:[a-f0-9]{64}$"
     }
   }
 }

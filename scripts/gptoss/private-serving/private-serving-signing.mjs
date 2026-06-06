@@ -1,7 +1,8 @@
-import { createHash } from 'node:crypto';
+import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 
 export const PRIVATE_SERVING_AUDIENCE = 'gptoss-effective-router-private';
 export const DEFAULT_MAX_TIMESTAMP_SKEW_SECONDS = 300;
+export const SIGNATURE_ALGORITHM = 'hmac-sha256';
 
 function stableValue(value) {
   if (Array.isArray(value)) {
@@ -26,6 +27,8 @@ export function canonicalizeRequestEnvelope(envelope) {
     timestamp: envelope?.timestamp,
     nonce: envelope?.nonce,
     audience: envelope?.audience,
+    signatureAlgorithm: envelope?.signatureAlgorithm || SIGNATURE_ALGORITHM,
+    keyId: envelope?.keyId,
     bodyHash: envelope?.bodyHash,
     input: envelope?.input,
   };
@@ -70,7 +73,115 @@ export function validateAudience(audience) {
   return { ok: true, reason: null };
 }
 
+function hasSigningMaterial(secret) {
+  return typeof secret === 'string' && secret.length > 0;
+}
+
+function normalizeSignature(signature) {
+  const value = String(signature || '').trim();
+  return value.startsWith(`${SIGNATURE_ALGORITHM}:`)
+    ? value.slice(`${SIGNATURE_ALGORITHM}:`.length)
+    : value;
+}
+
+function safeEqualSignature(actual, expected) {
+  const actualValue = normalizeSignature(actual);
+  const expectedValue = normalizeSignature(expected);
+  if (!/^[a-f0-9]{64}$/i.test(actualValue) || !/^[a-f0-9]{64}$/i.test(expectedValue)) {
+    return false;
+  }
+  const actualBuffer = Buffer.from(actualValue, 'hex');
+  const expectedBuffer = Buffer.from(expectedValue, 'hex');
+  return (
+    actualBuffer.length === expectedBuffer.length &&
+    timingSafeEqual(actualBuffer, expectedBuffer)
+  );
+}
+
+function resolveExplicitSigningSecret(options = {}) {
+  return options.signingSecret || options.localSigningSecret || options.secret;
+}
+
+function computeExpectedSignature(envelope, secret) {
+  const canonical = canonicalizeRequestEnvelope(envelope);
+  const digest = createHmac('sha256', secret).update(canonical, 'utf8').digest('hex');
+  return `${SIGNATURE_ALGORITHM}:${digest}`;
+}
+
+export function signRequestEnvelope(envelope, secret, options = {}) {
+  if (!hasSigningMaterial(secret)) {
+    return {
+      ok: false,
+      implemented: true,
+      reason: 'signature_verification_unavailable',
+    };
+  }
+
+  const signedEnvelope = {
+    ...envelope,
+    signatureAlgorithm: SIGNATURE_ALGORITHM,
+    keyId: String(options.keyId || envelope?.keyId || 'phase5-local-signer'),
+    bodyHash: computeBodyHash(envelope?.input ?? {}),
+  };
+  return {
+    ...signedEnvelope,
+    signature: computeExpectedSignature(signedEnvelope, secret),
+  };
+}
+
+export function verifyRequestSignature(envelope, secret, options = {}) {
+  if (!hasSigningMaterial(secret)) {
+    return {
+      ok: false,
+      implemented: true,
+      reason: 'signature_verification_unavailable',
+    };
+  }
+  if (!String(envelope?.signature || '').trim()) {
+    return {
+      ok: false,
+      implemented: true,
+      reason: 'missing_signature',
+    };
+  }
+  if ((envelope?.signatureAlgorithm || SIGNATURE_ALGORITHM) !== SIGNATURE_ALGORITHM) {
+    return {
+      ok: false,
+      implemented: true,
+      reason: 'invalid_signature',
+    };
+  }
+
+  const expectedBodyHash = computeBodyHash(envelope?.input ?? {});
+  if (envelope?.bodyHash !== expectedBodyHash) {
+    return {
+      ok: false,
+      implemented: true,
+      reason: 'invalid_signature',
+    };
+  }
+
+  const canonicalEnvelope = {
+    ...envelope,
+    signatureAlgorithm: SIGNATURE_ALGORITHM,
+    keyId: String(envelope?.keyId || options.keyId || 'phase5-local-signer'),
+    bodyHash: expectedBodyHash,
+  };
+  const expectedSignature = computeExpectedSignature(canonicalEnvelope, secret);
+  const ok = safeEqualSignature(envelope.signature, expectedSignature);
+  return {
+    ok,
+    implemented: true,
+    reason: ok ? null : 'invalid_signature',
+  };
+}
+
 export function verifySignatureScaffold(envelope, options = {}) {
+  const explicitSecret = resolveExplicitSigningSecret(options);
+  if (hasSigningMaterial(explicitSecret)) {
+    return verifyRequestSignature(envelope, explicitSecret, options);
+  }
+
   if (options.allowDeterministicTestSignature === true) {
     const expected = `test-signature:${computeBodyHash(canonicalizeRequestEnvelope(envelope))}`;
     return {

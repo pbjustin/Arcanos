@@ -8,6 +8,10 @@ Phase 5.1 adds local-only scaffold helpers. The scaffold is not a serving
 implementation: no HTTP server, listener, route handler, tunnel, deployment, or
 Custom GPT action exists.
 
+Phase 5.2 implements local HMAC-SHA256 request signing helpers. They require an
+explicitly supplied local signing key, do not read environment variables, and do
+not provide production key management or endpoint integration.
+
 ## Preflight
 
 Confirm the checkout and scripts without running a model:
@@ -94,7 +98,7 @@ Pass criteria:
 - Private serving implementation and exposure remain false.
 - Public server creation remains false.
 
-Expected Phase 5.1 scaffold fields:
+Expected Phase 5.2 scaffold fields:
 
 ```json
 {
@@ -103,7 +107,7 @@ Expected Phase 5.1 scaffold fields:
   "privateServingImplemented": false,
   "privateServingExposed": false,
   "requestSigningScaffoldReady": true,
-  "requestSigningImplemented": false,
+  "requestSigningImplemented": true,
   "authBoundaryScaffoldReady": true,
   "authBoundaryImplemented": false,
   "rateLimitScaffoldReady": true,
@@ -120,7 +124,8 @@ Expected Phase 5.1 scaffold fields:
 The scaffold modules live under `scripts/gptoss/private-serving/` and are pure
 local helpers:
 
-- request signing verification is scaffolded and fails closed
+- request signing verification is implemented locally and fails closed when no
+  explicit local signing key is supplied
 - auth boundary validation fails closed and is not production auth
 - rate limiting is in-memory policy only
 - response shaping strips raw model text and emits only the safe envelope
@@ -130,7 +135,7 @@ local helpers:
 
 Future work required before any server:
 
-- real signature verification
+- production key management and rotation
 - durable private rate limiter
 - private network boundary
 - endpoint auth integration

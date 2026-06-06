@@ -17,7 +17,8 @@ rate-limited, audited, rollback-aware, and secret-free.
 
 The Phase 5.1 scaffolds are not endpoint implementations:
 
-- request signing verification fails closed until real verification is added
+- request signing verification is implemented locally with HMAC-SHA256 and
+  fails closed when no explicit local signing key is supplied
 - auth validation rejects unauthenticated requests and is not production auth
 - rate limiting uses in-memory scaffold state only
 - response shaping emits only the safe effective-router envelope
@@ -25,6 +26,11 @@ The Phase 5.1 scaffolds are not endpoint implementations:
   `privateServingExposed:false`, and `publicServerCreated:false`
 - cloud and Custom GPT remain blocked with `cloudReady:false` and
   `customGptReady:false`
+
+Phase 5.2 implements local HMAC-SHA256 signing helpers for signed request
+envelopes. This is helper logic only: no endpoint or server exists, no
+production key management exists, and auth boundary integration remains
+incomplete for serving.
 
 Every endpoint response that returns a router result must use the effective plus
 safety envelope:
@@ -89,6 +95,8 @@ Request schema:
 ```json
 {
   "requestId": "string",
+  "signatureAlgorithm": "hmac-sha256",
+  "keyId": "non-secret identifier",
   "userInput": "string",
   "mode": "router_classifier",
   "context": {

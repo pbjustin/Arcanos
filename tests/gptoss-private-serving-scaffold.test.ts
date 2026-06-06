@@ -15,6 +15,7 @@ const scaffoldValidateScript = join(scaffoldDir, 'private-serving-scaffold-valid
 const readinessScript = join(process.cwd(), 'scripts', 'gptoss', 'model-readiness-report.mjs');
 const cloudGateScript = join(process.cwd(), 'scripts', 'gptoss', 'cloud-readiness-gate.mjs');
 const schemaPath = join(process.cwd(), 'schemas', 'gptoss-private-serving-boundary.schema.json');
+const localSigningKey = 'phase-5-2-local-hmac-fixture';
 
 function runNode(script: string, args: string[] = []) {
   return spawnSync(process.execPath, [script, ...args], {
@@ -95,6 +96,48 @@ describe('gptoss private serving scaffold', () => {
     })).toBe(true);
   });
 
+  it('canonicalizes requests deterministically and keeps body hashes stable', async () => {
+    const signing = await import(pathToFileURL(signingScript).href) as {
+      canonicalizeRequestEnvelope: (envelope: Record<string, unknown>) => string;
+      computeBodyHash: (body: unknown) => string;
+    };
+    const input = {
+      mode: 'router_classifier',
+      userInput: 'Classify this local request.',
+    };
+    const first = {
+      requestId: 'phase5-2-canonical-test',
+      timestamp: '2026-06-06T00:00:00.000Z',
+      nonce: 'nonce-abc12345',
+      audience: 'gptoss-effective-router-private',
+      signatureAlgorithm: 'hmac-sha256',
+      keyId: 'phase5-local-signer',
+      bodyHash: signing.computeBodyHash(input),
+      input,
+    };
+    const second = {
+      input,
+      bodyHash: signing.computeBodyHash({
+        userInput: 'Classify this local request.',
+        mode: 'router_classifier',
+      }),
+      keyId: 'phase5-local-signer',
+      signatureAlgorithm: 'hmac-sha256',
+      audience: 'gptoss-effective-router-private',
+      nonce: 'nonce-abc12345',
+      timestamp: '2026-06-06T00:00:00.000Z',
+      requestId: 'phase5-2-canonical-test',
+    };
+
+    expect(signing.computeBodyHash(input)).toBe(signing.computeBodyHash({
+      userInput: 'Classify this local request.',
+      mode: 'router_classifier',
+    }));
+    expect(signing.canonicalizeRequestEnvelope(first)).toBe(
+      signing.canonicalizeRequestEnvelope(second),
+    );
+  });
+
   it('keeps signature verification scaffold fail-closed by default', async () => {
     const signing = await import(pathToFileURL(signingScript).href) as {
       computeBodyHash: (body: unknown) => string;
@@ -105,6 +148,8 @@ describe('gptoss private serving scaffold', () => {
       timestamp: new Date().toISOString(),
       nonce: 'nonce-12345',
       audience: 'gptoss-effective-router-private',
+      signatureAlgorithm: 'hmac-sha256',
+      keyId: 'phase5-local-signer',
       bodyHash: signing.computeBodyHash({ userInput: 'Classify this.', mode: 'router_classifier' }),
       signature: 'test-signature-placeholder',
       input: {
@@ -120,6 +165,84 @@ describe('gptoss private serving scaffold', () => {
     });
   });
 
+  it('signs and verifies synthetic local HMAC envelopes', async () => {
+    const signing = await import(pathToFileURL(signingScript).href) as {
+      computeBodyHash: (body: unknown) => string;
+      signRequestEnvelope: (
+        envelope: Record<string, unknown>,
+        signingKey: string,
+        options?: Record<string, unknown>,
+      ) => Record<string, unknown>;
+      verifyRequestSignature: (
+        envelope: Record<string, unknown>,
+        signingKey?: string,
+        options?: Record<string, unknown>,
+      ) => Record<string, unknown>;
+      verifySignatureScaffold: (
+        envelope: Record<string, unknown>,
+        options?: Record<string, unknown>,
+      ) => Record<string, unknown>;
+    };
+    const envelope = {
+      requestId: 'phase5-2-hmac-test',
+      timestamp: new Date().toISOString(),
+      nonce: 'nonce-hmac123',
+      audience: 'gptoss-effective-router-private',
+      signatureAlgorithm: 'hmac-sha256',
+      keyId: 'phase5-local-signer',
+      bodyHash: signing.computeBodyHash({ userInput: 'Classify this.', mode: 'router_classifier' }),
+      input: {
+        userInput: 'Classify this.',
+        mode: 'router_classifier',
+      },
+    };
+    const signed = signing.signRequestEnvelope(envelope, localSigningKey, {
+      keyId: 'phase5-local-signer',
+    });
+
+    expect(signed.signature).toMatch(/^hmac-sha256:[a-f0-9]{64}$/);
+    expect(JSON.stringify(signed)).not.toContain(localSigningKey);
+    expect(JSON.stringify(signed)).not.toMatch(/Bearer\s|:\/\/|OPENAI_API_KEY|DATABASE_URL/i);
+    expect(signing.verifyRequestSignature(signed, localSigningKey)).toMatchObject({
+      ok: true,
+      implemented: true,
+      reason: null,
+    });
+    expect(signing.verifySignatureScaffold(signed, { localSigningSecret: localSigningKey }))
+      .toMatchObject({
+        ok: true,
+        implemented: true,
+        reason: null,
+      });
+    expect(signing.verifyRequestSignature({
+      ...signed,
+      input: {
+        userInput: 'Tampered local request.',
+        mode: 'router_classifier',
+      },
+    }, localSigningKey)).toMatchObject({
+      ok: false,
+      implemented: true,
+      reason: 'invalid_signature',
+    });
+    expect(signing.verifyRequestSignature(signed, 'phase-5-2-wrong-fixture')).toMatchObject({
+      ok: false,
+      implemented: true,
+      reason: 'invalid_signature',
+    });
+    expect(signing.verifyRequestSignature(signed)).toMatchObject({
+      ok: false,
+      implemented: true,
+      reason: 'signature_verification_unavailable',
+    });
+    expect(signing.verifyRequestSignature({ ...signed, signature: '' }, localSigningKey))
+      .toMatchObject({
+        ok: false,
+        implemented: true,
+        reason: 'missing_signature',
+      });
+  });
+
   it('rejects missing signature, invalid audience, stale timestamp, and invalid nonce', async () => {
     const auth = await import(pathToFileURL(authScript).href) as {
       validatePrivateServingAuth: (
@@ -132,6 +255,8 @@ describe('gptoss private serving scaffold', () => {
       timestamp: new Date().toISOString(),
       nonce: 'nonce-12345',
       audience: 'gptoss-effective-router-private',
+      signatureAlgorithm: 'hmac-sha256',
+      keyId: 'phase5-local-signer',
       bodyHash: 'a'.repeat(64),
       signature: 'test-signature-placeholder',
       input: {
@@ -173,6 +298,57 @@ describe('gptoss private serving scaffold', () => {
       publicServerCreated: false,
     });
   });
+
+  it('auth accepts valid synthetic HMAC and rejects invalid HMAC', async () => {
+    const signing = await import(pathToFileURL(signingScript).href) as {
+      signRequestEnvelope: (
+        envelope: Record<string, unknown>,
+        signingKey: string,
+        options?: Record<string, unknown>,
+      ) => Record<string, unknown>;
+    };
+    const auth = await import(pathToFileURL(authScript).href) as {
+      validatePrivateServingAuth: (
+        envelope: Record<string, unknown>,
+        options?: Record<string, unknown>,
+      ) => Record<string, unknown>;
+    };
+    const signed = signing.signRequestEnvelope({
+      requestId: 'phase5-2-auth-hmac-test',
+      timestamp: new Date().toISOString(),
+      nonce: 'nonce-auth123',
+      audience: 'gptoss-effective-router-private',
+      signatureAlgorithm: 'hmac-sha256',
+      keyId: 'phase5-local-signer',
+      input: {
+        userInput: 'Classify this.',
+        mode: 'router_classifier',
+      },
+    }, localSigningKey, {
+      keyId: 'phase5-local-signer',
+    });
+
+    expect(auth.validatePrivateServingAuth(signed, { localSigningSecret: localSigningKey }))
+      .toMatchObject({
+        ok: true,
+        authenticated: true,
+        implemented: false,
+        signatureImplemented: true,
+        reason: null,
+        cloudReady: false,
+        customGptReady: false,
+        privateServingExposed: false,
+        publicServerCreated: false,
+      });
+    expect(auth.validatePrivateServingAuth(signed, {
+      localSigningSecret: 'phase-5-2-wrong-fixture',
+    })).toMatchObject({
+      ok: false,
+      authenticated: false,
+      reason: 'invalid_signature',
+    });
+  });
+
 
   it('rate limits above the scaffold burst threshold', async () => {
     const rateLimit = await import(pathToFileURL(rateLimitScript).href) as {
@@ -348,7 +524,7 @@ describe('gptoss private serving scaffold', () => {
       privateServingImplemented: false,
       privateServingExposed: false,
       requestSigningScaffoldReady: true,
-      requestSigningImplemented: false,
+      requestSigningImplemented: true,
       authBoundaryScaffoldReady: true,
       authBoundaryImplemented: false,
       rateLimitScaffoldReady: true,
@@ -367,7 +543,7 @@ describe('gptoss private serving scaffold', () => {
         privateServingImplemented: false,
         privateServingExposed: false,
         requestSigningScaffoldReady: true,
-        requestSigningImplemented: false,
+        requestSigningImplemented: true,
         authBoundaryScaffoldReady: true,
         authBoundaryImplemented: false,
         rateLimitScaffoldReady: true,

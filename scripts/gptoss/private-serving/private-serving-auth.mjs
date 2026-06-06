@@ -3,6 +3,7 @@ import {
   validateAudience,
   validateNonceShape,
   validateTimestampSkew,
+  verifyRequestSignature,
   verifySignatureScaffold,
 } from './private-serving-signing.mjs';
 
@@ -28,6 +29,10 @@ function fail(reason, envelope) {
     privateServingExposed: false,
     publicServerCreated: false,
   };
+}
+
+function explicitSigningSecret(options = {}) {
+  return options.signingSecret || options.localSigningSecret || options.secret;
 }
 
 export function validatePrivateServingAuth(envelope, options = {}) {
@@ -59,7 +64,10 @@ export function validatePrivateServingAuth(envelope, options = {}) {
     return fail('invalid_nonce', envelope);
   }
 
-  const signature = verifySignatureScaffold(envelope, options);
+  const signingSecret = explicitSigningSecret(options);
+  const signature = signingSecret
+    ? verifyRequestSignature(envelope, signingSecret, options)
+    : verifySignatureScaffold(envelope, options);
   if (!signature.ok || signature.implemented !== true) {
     if (signature.testOnly === true && signature.ok === true) {
       return {
@@ -77,8 +85,23 @@ export function validatePrivateServingAuth(envelope, options = {}) {
         publicServerCreated: false,
       };
     }
-    return fail('signature_verification_unavailable', envelope);
+    return fail(signature.reason === 'invalid_signature'
+      ? 'invalid_signature'
+      : 'signature_verification_unavailable', envelope);
   }
 
-  return fail('signature_verification_unavailable', envelope);
+  return {
+    ok: true,
+    authenticated: true,
+    failClosed: false,
+    implemented: false,
+    signatureImplemented: true,
+    reason: null,
+    requestId: envelope.requestId,
+    audience: PRIVATE_SERVING_AUDIENCE,
+    cloudReady: false,
+    customGptReady: false,
+    privateServingExposed: false,
+    publicServerCreated: false,
+  };
 }

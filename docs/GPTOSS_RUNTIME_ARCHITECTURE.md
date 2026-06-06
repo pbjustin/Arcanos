@@ -180,6 +180,7 @@ Custom GPT action is created.
 The scaffold covers:
 
 - request signing canonicalization and hash helpers
+- local HMAC-SHA256 request signing and verification helpers
 - fail-closed signature verification scaffold
 - fail-closed auth boundary validation
 - in-memory rate-limit policy evaluation for tests only
@@ -194,7 +195,7 @@ Current scaffold readiness fields are:
 - `privateServingImplemented:false`
 - `privateServingExposed:false`
 - `requestSigningScaffoldReady:true`
-- `requestSigningImplemented:false`
+- `requestSigningImplemented:true`
 - `authBoundaryScaffoldReady:true`
 - `authBoundaryImplemented:false`
 - `rateLimitScaffoldReady:true`
@@ -204,10 +205,14 @@ Current scaffold readiness fields are:
 - `cloudReady:false`
 - `customGptReady:false`
 
-Future work before any server or route includes real signature verification, a
-durable private rate limiter, a private network boundary, endpoint auth
-integration, audit sink approval, rollback gate validation, and penetration
-test or security review.
+The signing implementation is local helper logic only. It requires an
+explicitly supplied local signing key, does not read environment variables, and
+does not create production key management or endpoint auth integration.
+
+Future work before any server or route includes production key management and
+rotation, a durable private rate limiter, a private network boundary, endpoint
+auth integration, audit sink approval, rollback gate validation, and
+penetration test or security review.
 
 ## Future Work Before Exposure
 

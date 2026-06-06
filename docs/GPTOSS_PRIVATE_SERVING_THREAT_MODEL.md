@@ -9,6 +9,10 @@ validation, rate-limit policy, response shaping, denial responses, and scaffold
 validation. The scaffold is not a serving implementation and creates no server,
 listener, tunnel, deployment, route handler, or Custom GPT action.
 
+Phase 5.2 implements local HMAC-SHA256 request signing helpers with explicitly
+supplied local signing keys. Production key management, rotation, endpoint
+integration, and production auth remain incomplete.
+
 Current baseline:
 
 - Local controlled runtime: ready for local testing only.
@@ -27,7 +31,7 @@ Current baseline:
 | Raw model output leakage | Raw generations could include analysis-style continuations, internal policy text, prompt fragments, or sensitive local context. | Force final-channel behavior, cap output, validate response envelopes, and keep raw local reports under ignored `local_artifacts/`. | `npm run gptoss:runtime:request:local-model:smoke` and `npm run gptoss:runtime:readiness` | Local smoke only; public output handling needs separate review. |
 | Audit log secret leakage | Audit records could persist bearer tokens, OpenAI keys, Railway tokens, cookies, database URLs, passwords, or raw environment values. | Store hashes plus redacted, capped previews only; inspect latest audit records before release; never place secrets in committed docs or fixtures. | `npm run gptoss:runtime:audit:latest` and `npm run gptoss:runtime:release-gate` | Local audit path exists; must be inspected before any private serving release. |
 | Replay abuse | Replay artifacts could become a way to re-run sensitive requests or load the local model outside the intended gate. | Keep replay dry-run by default; require explicit local execution flag for model loading; use audit file paths only under local artifacts. | `npm run gptoss:runtime:request:replay -- --audit local_artifacts/gptoss-runtime/audit/<audit-file>.json` | Local replay is dry-run by default; no remote replay API approved. |
-| Request forgery | Unauthenticated callers or forged Custom GPT actions could submit requests to the private runtime. | Require an authenticated gateway and request signature or equivalent auth boundary before cloud exposure; reject direct local and Custom GPT access. | `npm run gptoss:runtime:cloud-gate` | Blocked. No approved auth boundary exists. |
+| Request forgery | Unauthenticated callers or forged Custom GPT actions could submit requests to the private runtime. | Require an authenticated gateway and request signature or equivalent auth boundary before cloud exposure; reject direct local and Custom GPT access. | `npm run gptoss:runtime:cloud-gate` | Local HMAC signing helpers exist. Production auth and exposure remain blocked. |
 | Missing rate limits | Private serving could be exhausted or abused if request volume is unlimited. | Add per-principal and global rate limits before exposure; fail closed on missing limit configuration. | Future private serving gate plus `npm run gptoss:runtime:cloud-gate` | Blocked. Rate limit implementation is not approved yet. |
 | Accidental training from requests | User prompts, logs, audit records, replay records, or Custom GPT action requests could be used as training data without consent and review. | Keep request/audit/replay artifacts non-trainable; dataset gates must reject `custom_gpt_action_request`, raw logs, unknown sources, and unreviewed model-generated labels. | `npm run gptoss:runtime:release-gate` | Mitigated by policy and current local gates; future exports require review. |
 | OpenAI output contamination | OpenAI model outputs or judgments could enter GPT-OSS labels, reports marked trainable, or private serving comparisons. | Keep OpenAI reference mode disabled for runtime gates; mark eval and request reports `allowedForTraining:false`; reject OpenAI output sources. | `npm run gptoss:runtime:request:regress` and `npm run gptoss:runtime:release-gate:ci` | Prohibited. Current gates must keep OpenAI output non-training. |
@@ -51,8 +55,9 @@ Private serving cannot advance unless all of the following are true:
 
 ## Phase 5.1 Scaffold Status
 
-- Request signing verification is scaffolded and fails closed; production
-  verification is not implemented.
+- Request signing verification is implemented locally with HMAC-SHA256 and
+  fails closed without an explicitly supplied local signing key.
+- Production key management and rotation are not implemented.
 - The auth boundary scaffold rejects unauthenticated requests and must not be
   treated as production auth.
 - Rate limiting is in-memory scaffold policy only; production exposure requires
