@@ -16,6 +16,10 @@ Phase 5.3 implements local auth decision helpers. They validate signed request
 identity, timestamp skew, nonce shape, audience, signature, and replay-check
 availability. They do not create a server and are not production endpoint auth.
 
+Phase 5.4 implements local replay protection helper logic with in-memory nonce
+tracking for local tests only. It does not create a durable replay store,
+persistent nonce ledger, endpoint, or server. No endpoint/server exists.
+
 ## Preflight
 
 Confirm the checkout and scripts without running a model:
@@ -102,8 +106,11 @@ Pass criteria:
 - Phase 5.1 scaffold readiness is true.
 - Private serving implementation and exposure remain false.
 - Public server creation remains false.
+- `replayProtectionImplemented:true` means helper-level/local test
+  implementation only.
+- `replayProtectionDurable:false` blocks private serving exposure.
 
-Expected Phase 5.3 local auth fields:
+Expected Phase 5.4 local replay fields:
 
 ```json
 {
@@ -116,7 +123,8 @@ Expected Phase 5.3 local auth fields:
   "authBoundaryScaffoldReady": true,
   "authBoundaryImplemented": true,
   "replayProtectionScaffoldReady": true,
-  "replayProtectionImplemented": false,
+  "replayProtectionImplemented": true,
+  "replayProtectionDurable": false,
   "rateLimitScaffoldReady": true,
   "rateLimitImplemented": false,
   "responseShapingScaffoldReady": true,
@@ -136,23 +144,22 @@ local helpers:
 - auth decision validation is implemented locally and fails closed without an
   explicit key resolver or local test key map, valid signature, accepted nonce,
   and replay checker
-- replay protection is in-memory scaffold logic only and is not durable
+- Phase 5.4 replay protection is implemented in memory for helper-level/local
+  tests only; no durable replay store or persistent nonce ledger exists
 - rate limiting is in-memory policy only
 - response shaping strips raw model text and emits only the safe envelope
 - denial helpers return structured refusals without stack traces
 - scaffold validation scans for server/listener patterns and forbidden runtime
   paths
 
-Future work required before any server:
+Future work required before any exposure:
 
-- production key management and rotation
-- durable private replay store
-- durable private rate limiter
+- durable replay store
+- persistent nonce ledger
+- key rotation
+- production auth integration
 - private network boundary
-- endpoint auth integration
-- audit sink approval
-- rollback gate
-- penetration test or security review
+- server review
 
 ## Local Request Smoke
 
@@ -204,6 +211,8 @@ Replay checks:
 - The replay does not call OpenAI, Railway, vLLM, or a live DB.
 - The replay does not load the local model unless a separate local execution
   step explicitly supplies the required execution flag.
+- Phase 5.4 replay protection is local memory only; durable replay remains
+  false and blocks exposure.
 
 ## Verify Cloud And Custom GPT Blocked
 

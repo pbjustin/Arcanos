@@ -22,11 +22,14 @@ The Phase 5.1 scaffolds are not endpoint implementations:
 - auth decision validation is implemented locally and fails closed without an
   explicit key resolver or local test key map, valid signature, accepted nonce,
   and replay checker
-- replay protection is in-memory scaffold logic only and is not durable
+- replay protection is implemented in memory for helper-level/local tests only;
+  no durable replay store or persistent nonce ledger exists
 - rate limiting uses in-memory scaffold state only
 - response shaping emits only the safe effective-router envelope
 - private serving remains unexposed with `privateServingImplemented:false`,
   `privateServingExposed:false`, and `publicServerCreated:false`
+- `replayProtectionImplemented:true` is not exposure readiness because
+  `replayProtectionDurable:false` remains blocking
 - cloud and Custom GPT remain blocked with `cloudReady:false` and
   `customGptReady:false`
 
@@ -38,6 +41,16 @@ Phase 5.3 implements the local auth decision engine. It validates `keyId`,
 request identity, audience, timestamp skew, nonce shape, HMAC signature, and
 replay-check availability. It does not add endpoint auth integration, durable
 replay storage, production key management, or server exposure.
+
+Phase 5.4 implements local in-memory replay protection helper logic for local
+tests. It does not add a durable replay store, persistent nonce ledger,
+endpoint, or server. No endpoint/server exists.
+`replayProtectionImplemented:true` means helper-level/local test implementation
+only; `replayProtectionDurable:false` blocks private serving exposure.
+
+Future work before any exposure includes durable replay store, persistent nonce
+ledger, key rotation, production auth integration, private network boundary,
+and server review.
 
 Every endpoint response that returns a router result must use the effective plus
 safety envelope:
@@ -77,6 +90,8 @@ The only allowed future private endpoints are:
 - `POST /private/gptoss/effective-router/replay`
 - `GET /private/gptoss/effective-router/readiness`
 - `GET /private/gptoss/effective-router/release-gate`
+
+These are contract placeholders only. No endpoint or server currently exists.
 
 ## Forbidden Endpoints
 

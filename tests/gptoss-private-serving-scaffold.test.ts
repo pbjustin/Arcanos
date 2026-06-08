@@ -74,6 +74,9 @@ describe('gptoss private serving scaffold', () => {
       authDecision: expect.any(Object),
       authFailure: expect.any(Object),
       replayProtectionDecision: expect.any(Object),
+      replayProtectionPolicy: expect.any(Object),
+      replayProtectionStoreStats: expect.any(Object),
+      replayProtectionValidationReport: expect.any(Object),
       requestIdentity: expect.any(Object),
       keyDescriptor: expect.any(Object),
     }));
@@ -563,7 +566,8 @@ describe('gptoss private serving scaffold', () => {
       authBoundaryScaffoldReady: true,
       authBoundaryImplemented: true,
       replayProtectionScaffoldReady: true,
-      replayProtectionImplemented: false,
+      replayProtectionImplemented: true,
+      replayProtectionDurable: false,
       rateLimitScaffoldReady: true,
       rateLimitImplemented: false,
       responseShapingScaffoldReady: true,
@@ -584,7 +588,8 @@ describe('gptoss private serving scaffold', () => {
         authBoundaryScaffoldReady: true,
         authBoundaryImplemented: true,
         replayProtectionScaffoldReady: true,
-        replayProtectionImplemented: false,
+        replayProtectionImplemented: true,
+        replayProtectionDurable: false,
         rateLimitScaffoldReady: true,
         rateLimitImplemented: false,
         responseShapingScaffoldReady: true,
@@ -616,6 +621,9 @@ describe('gptoss private serving scaffold', () => {
 
     expect(scripts['gptoss:private-serving:scaffold:validate']).toBe(
       'node scripts/gptoss/private-serving/private-serving-scaffold-validate.mjs',
+    );
+    expect(scripts['gptoss:private-serving:replay:validate']).toBe(
+      'node scripts/gptoss/private-serving/private-serving-replay-validate.mjs',
     );
     expect(scripts['gptoss:private-serving:scaffold:report']).toBe(
       'node scripts/gptoss/private-serving/private-serving-scaffold-validate.mjs --pr-report',

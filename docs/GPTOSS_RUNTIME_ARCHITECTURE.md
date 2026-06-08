@@ -177,19 +177,23 @@ scaffold helpers under `scripts/gptoss/private-serving/`; it is not a serving
 implementation. No HTTP server, listener, route handler, tunnel, deployment, or
 Custom GPT action is created.
 
+Phase 5.4 adds local in-memory replay protection helper logic for local tests.
+It does not add a durable replay store, persistent nonce ledger, endpoint, or
+server. No endpoint/server exists.
+
 The scaffold covers:
 
 - request signing canonicalization and hash helpers
 - local HMAC-SHA256 request signing and verification helpers
 - fail-closed signature verification scaffold
 - local auth decision validation for signed envelopes
-- in-memory replay protection scaffold for nonce reuse checks
+- in-memory replay protection helper implementation for local nonce reuse tests
 - in-memory rate-limit policy evaluation for tests only
 - response shaping that emits only the safe effective-router envelope
 - structured denial responses
 - scaffold validation and local scaffold reports
 
-Current scaffold readiness fields are:
+Current Phase 5.4 readiness fields are:
 
 - `privateServingDesignReady:true`
 - `privateServingScaffoldReady:true`
@@ -200,7 +204,8 @@ Current scaffold readiness fields are:
 - `authBoundaryScaffoldReady:true`
 - `authBoundaryImplemented:true`
 - `replayProtectionScaffoldReady:true`
-- `replayProtectionImplemented:false`
+- `replayProtectionImplemented:true`
+- `replayProtectionDurable:false`
 - `rateLimitScaffoldReady:true`
 - `rateLimitImplemented:false`
 - `responseShapingScaffoldReady:true`
@@ -208,16 +213,13 @@ Current scaffold readiness fields are:
 - `cloudReady:false`
 - `customGptReady:false`
 
-The signing and auth implementations are local helper logic only. They require
-explicit local key material or a local/test key resolver, do not read
-environment variables, and do not create production key management or endpoint
-auth integration. Replay protection is scaffold/in-memory only.
+The signing, auth, and replay implementations are local helper logic only.
+`replayProtectionImplemented:true` means helper-level/local test implementation
+only. `replayProtectionDurable:false` blocks private serving exposure.
 
-Future work before any server or route includes production key management and
-rotation, a durable private replay store, a durable private rate limiter, a
-private network boundary, endpoint auth integration, audit sink approval,
-rollback gate validation, and
-penetration test or security review.
+Future work before any exposure includes a durable replay store, a persistent
+nonce ledger, key rotation, production auth integration, a private network
+boundary, and server review.
 
 ## Future Work Before Exposure
 

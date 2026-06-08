@@ -748,7 +748,7 @@ effective runtime can be locally ready because deterministic local policy,
 spec-fact, and postprocessor layers bring the effective score to `24/24`; that
 does not make the model cloud-ready or approve a Custom GPT action boundary.
 
-## Phase 5.1 Private Serving Scaffold
+## Phase 5.4 Private Serving Replay Status
 
 Phase 5.1 adds local-only private serving scaffold helpers:
 
@@ -761,6 +761,10 @@ The scaffold lives under `scripts/gptoss/private-serving/` and is not a serving
 implementation. It creates no HTTP server, listener, route handler, tunnel,
 deployment, or Custom GPT action.
 
+Phase 5.4 adds local in-memory replay protection helper logic for local tests.
+It does not add a durable replay store, persistent nonce ledger, endpoint, or
+server. No endpoint/server exists.
+
 The scaffold status is:
 
 - request signing verification is implemented locally and fails closed
@@ -769,8 +773,9 @@ The scaffold status is:
 - Phase 5.3 auth decision validation is implemented locally for signed
   envelopes and fails closed without an explicit key resolver or local test key
   map, valid signature, accepted nonce, and replay checker
-- replay protection is in-memory scaffold logic only and not durable production
-  state
+- Phase 5.4 replay protection is implemented in memory for helper-level/local
+  tests only and not durable production state
+- durable replay store and persistent nonce ledger are not implemented
 - rate limiting is in-memory policy only and not durable production state
 - response shaping emits only the safe effective-router envelope
 - denial responses are structured and secret-free
@@ -789,7 +794,8 @@ Expected readiness:
   "authBoundaryScaffoldReady": true,
   "authBoundaryImplemented": true,
   "replayProtectionScaffoldReady": true,
-  "replayProtectionImplemented": false,
+  "replayProtectionImplemented": true,
+  "replayProtectionDurable": false,
   "rateLimitScaffoldReady": true,
   "rateLimitImplemented": false,
   "responseShapingScaffoldReady": true,
@@ -799,10 +805,12 @@ Expected readiness:
 }
 ```
 
-Before any server can be considered, a later phase must add production key
-management and rotation, a durable private replay store, a durable private rate
-limiter, a private network boundary, endpoint auth integration, audit sink
-approval, rollback gate validation, and penetration test or security review.
+`replayProtectionImplemented:true` means helper-level/local test implementation
+only. `replayProtectionDurable:false` blocks private serving exposure.
+
+Before any exposure can be considered, a later phase must add a durable replay
+store, persistent nonce ledger, key rotation, production auth integration,
+private network boundary, and server review.
 
 ## Dataset Gate
 

@@ -29,6 +29,7 @@ export const REQUIRED_SCAFFOLD_MODULES = [
   'private-serving-response.mjs',
   'private-serving-deny.mjs',
   'private-serving-auth-validate.mjs',
+  'private-serving-replay-validate.mjs',
 ];
 export const SCAFFOLD_REPORT_SCRIPTS = [
   ...REQUIRED_SCAFFOLD_MODULES,
@@ -113,7 +114,8 @@ function validateReadiness(failures) {
     authBoundaryScaffoldReady: true,
     authBoundaryImplemented: true,
     replayProtectionScaffoldReady: true,
-    replayProtectionImplemented: false,
+    replayProtectionImplemented: true,
+    replayProtectionDurable: false,
     rateLimitScaffoldReady: true,
     rateLimitImplemented: false,
     responseShapingScaffoldReady: true,
@@ -161,7 +163,8 @@ export async function runPrivateServingScaffoldValidation({
     requestSigningImplemented: true,
     authBoundaryImplemented: true,
     replayProtectionScaffoldReady: true,
-    replayProtectionImplemented: false,
+    replayProtectionImplemented: true,
+    replayProtectionDurable: false,
     privateServingImplemented: false,
     privateServingExposed: false,
     publicServerCreated: false,
@@ -185,6 +188,7 @@ export async function runPrivateServingScaffoldValidation({
     tests: [
       'tests/gptoss-private-serving-scaffold.test.ts',
       'tests/gptoss-private-serving-auth.test.ts',
+      'tests/gptoss-private-serving-replay.test.ts',
     ],
   };
 

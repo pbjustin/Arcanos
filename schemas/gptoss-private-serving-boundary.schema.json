@@ -13,7 +13,13 @@
     "response": { "$ref": "#/$defs/responseEnvelope" },
     "denial": { "$ref": "#/$defs/denialResponse" },
     "rateLimit": { "$ref": "#/$defs/rateLimitResponse" },
-    "authFailure": { "$ref": "#/$defs/authFailureResponse" }
+    "authFailure": { "$ref": "#/$defs/authFailureResponse" },
+    "replayProtectionPolicy": { "$ref": "#/$defs/replayProtectionPolicy" },
+    "replayProtectionStoreStats": { "$ref": "#/$defs/replayProtectionStoreStats" },
+    "replayProtectionDecision": { "$ref": "#/$defs/replayProtectionDecision" },
+    "replayProtectionValidationReport": {
+      "$ref": "#/$defs/replayProtectionValidationReport"
+    }
   },
   "$defs": {
     "signedRequestEnvelope": {
@@ -87,10 +93,12 @@
         "invalid_signature",
         "invalid_audience",
         "stale_timestamp",
+        "future_timestamp",
         "invalid_nonce",
         "missing_key_id",
         "unknown_key_id",
         "replay_check_unavailable",
+        "replay_store_unavailable",
         "replay_detected",
         "subject_unavailable",
         "signature_verification_unavailable",
@@ -128,24 +136,119 @@
       "additionalProperties": false,
       "required": [
         "ok",
+        "replayAccepted",
         "implemented",
-        "scaffoldReady",
-        "nonceAccepted",
-        "replayDetected",
+        "keyId",
+        "nonce",
+        "requestId",
+        "bodyHash",
+        "recorded",
         "denialReason"
       ],
       "properties": {
         "ok": { "type": "boolean" },
-        "implemented": { "const": false },
-        "scaffoldReady": { "const": true },
-        "nonceAccepted": { "type": "boolean" },
-        "replayDetected": { "type": "boolean" },
+        "replayAccepted": { "type": "boolean" },
+        "implemented": { "const": true },
+        "keyId": { "type": ["string", "null"] },
+        "nonce": { "type": ["string", "null"] },
+        "requestId": { "type": ["string", "null"] },
+        "bodyHash": { "type": ["string", "null"] },
+        "recorded": { "type": "boolean" },
         "denialReason": {
           "anyOf": [
             { "const": null },
             { "$ref": "#/$defs/authFailure" }
           ]
         }
+      }
+    },
+    "replayProtectionPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "implemented",
+        "durable",
+        "replayWindowSeconds",
+        "maxFutureSkewSeconds",
+        "noncePattern"
+      ],
+      "properties": {
+        "implemented": { "const": true },
+        "durable": { "const": false },
+        "replayWindowSeconds": { "type": "integer", "minimum": 0 },
+        "maxFutureSkewSeconds": { "type": "integer", "minimum": 0 },
+        "noncePattern": { "const": "^[A-Za-z0-9_-]{16,128}$" },
+        "now": { "type": "number" }
+      }
+    },
+    "replayProtectionStoreStats": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "implemented",
+        "durable",
+        "available",
+        "entries",
+        "keyIds",
+        "nonces",
+        "oldestTimestamp",
+        "newestTimestamp"
+      ],
+      "properties": {
+        "implemented": { "const": true },
+        "durable": { "const": false },
+        "available": { "type": "boolean" },
+        "entries": { "type": "integer", "minimum": 0 },
+        "keyIds": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "nonces": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "oldestTimestamp": {
+          "anyOf": [
+            { "const": null },
+            { "$ref": "#/$defs/dateTimeString" }
+          ]
+        },
+        "newestTimestamp": {
+          "anyOf": [
+            { "const": null },
+            { "$ref": "#/$defs/dateTimeString" }
+          ]
+        }
+      }
+    },
+    "replayProtectionValidationReport": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["policy", "decisions", "storeStats", "pruneStoreStats"],
+      "properties": {
+        "policy": { "$ref": "#/$defs/replayProtectionPolicy" },
+        "decisions": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/replayProtectionDecision" }
+        },
+        "prune": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["ok", "implemented", "pruned", "denialReason"],
+          "properties": {
+            "ok": { "type": "boolean" },
+            "implemented": { "const": true },
+            "pruned": { "type": "integer", "minimum": 0 },
+            "denialReason": {
+              "anyOf": [
+                { "const": null },
+                { "$ref": "#/$defs/authFailure" }
+              ]
+            }
+          }
+        },
+        "storeStats": { "$ref": "#/$defs/replayProtectionStoreStats" },
+        "pruneStoreStats": { "$ref": "#/$defs/replayProtectionStoreStats" }
       }
     },
     "scaffoldAuthDecision": {
@@ -238,6 +341,11 @@
         "ok",
         "privateServingDesignReady",
         "privateServingScaffoldReady",
+        "requestSigningImplemented",
+        "authBoundaryImplemented",
+        "replayProtectionScaffoldReady",
+        "replayProtectionImplemented",
+        "replayProtectionDurable",
         "privateServingImplemented",
         "privateServingExposed",
         "publicServerCreated",
@@ -258,6 +366,11 @@
         "ok": { "type": "boolean" },
         "privateServingDesignReady": { "const": true },
         "privateServingScaffoldReady": { "const": true },
+        "requestSigningImplemented": { "const": true },
+        "authBoundaryImplemented": { "const": true },
+        "replayProtectionScaffoldReady": { "const": true },
+        "replayProtectionImplemented": { "const": true },
+        "replayProtectionDurable": { "const": false },
         "privateServingImplemented": { "const": false },
         "privateServingExposed": { "const": false },
         "publicServerCreated": { "const": false },
@@ -450,6 +563,7 @@
         "authBoundaryImplemented",
         "replayProtectionScaffoldReady",
         "replayProtectionImplemented",
+        "replayProtectionDurable",
         "rateLimitScaffoldReady",
         "rateLimitImplemented",
         "responseShapingScaffoldReady",
@@ -469,7 +583,8 @@
         "authBoundaryScaffoldReady": { "const": true },
         "authBoundaryImplemented": { "const": true },
         "replayProtectionScaffoldReady": { "const": true },
-        "replayProtectionImplemented": { "const": false },
+        "replayProtectionImplemented": { "const": true },
+        "replayProtectionDurable": { "const": false },
         "rateLimitScaffoldReady": { "const": true },
         "rateLimitImplemented": { "const": false },
         "responseShapingScaffoldReady": { "const": true },

@@ -90,7 +90,8 @@ describe('gptoss private serving design boundary', () => {
           authBoundaryScaffoldReady: true,
           authBoundaryImplemented: true,
           replayProtectionScaffoldReady: true,
-          replayProtectionImplemented: false,
+          replayProtectionImplemented: true,
+          replayProtectionDurable: false,
           rateLimitScaffoldReady: true,
           rateLimitImplemented: false,
           responseShapingScaffoldReady: true,
@@ -113,6 +114,9 @@ describe('gptoss private serving design boundary', () => {
       authDecision: expect.any(Object),
       authFailure: expect.any(Object),
       replayProtectionDecision: expect.any(Object),
+      replayProtectionPolicy: expect.any(Object),
+      replayProtectionStoreStats: expect.any(Object),
+      replayProtectionValidationReport: expect.any(Object),
       requestIdentity: expect.any(Object),
       keyDescriptor: expect.any(Object),
     }));
@@ -179,7 +183,8 @@ describe('gptoss private serving design boundary', () => {
       authBoundaryScaffoldReady: true,
       authBoundaryImplemented: true,
       replayProtectionScaffoldReady: true,
-      replayProtectionImplemented: false,
+      replayProtectionImplemented: true,
+      replayProtectionDurable: false,
       rateLimitScaffoldReady: true,
       rateLimitImplemented: false,
       responseShapingScaffoldReady: true,
@@ -211,7 +216,8 @@ describe('gptoss private serving design boundary', () => {
         authBoundaryScaffoldReady: true,
         authBoundaryImplemented: true,
         replayProtectionScaffoldReady: true,
-        replayProtectionImplemented: false,
+        replayProtectionImplemented: true,
+        replayProtectionDurable: false,
         rateLimitScaffoldReady: true,
         rateLimitImplemented: false,
         responseShapingScaffoldReady: true,
@@ -221,7 +227,7 @@ describe('gptoss private serving design boundary', () => {
     });
     expect(parsed.blockers).toEqual(expect.arrayContaining([
       'private_serving_not_implemented',
-      'replay_protection_not_implemented',
+      'replay_protection_not_durable',
     ]));
   });
 

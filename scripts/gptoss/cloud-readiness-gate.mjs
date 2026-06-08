@@ -64,6 +64,7 @@ export function buildCloudGate({
     authBoundaryImplemented: readiness.authBoundaryImplemented === true,
     replayProtectionScaffoldReady: readiness.replayProtectionScaffoldReady === true,
     replayProtectionImplemented: readiness.replayProtectionImplemented === true,
+    replayProtectionDurable: readiness.replayProtectionDurable === true,
     rateLimitScaffoldReady: readiness.rateLimitScaffoldReady === true,
     rateLimitImplemented: readiness.rateLimitImplemented === true,
     responseShapingScaffoldReady: readiness.responseShapingScaffoldReady === true,
@@ -117,6 +118,7 @@ export function buildCloudGate({
   if (!checks.authBoundaryImplemented) blockers.push('auth_boundary_not_implemented');
   if (!checks.replayProtectionScaffoldReady) blockers.push('replay_protection_scaffold_missing');
   if (!checks.replayProtectionImplemented) blockers.push('replay_protection_not_implemented');
+  if (!checks.replayProtectionDurable) blockers.push('replay_protection_not_durable');
   if (!checks.rateLimitScaffoldReady) blockers.push('rate_limit_scaffold_missing');
   if (!checks.rateLimitImplemented) blockers.push('rate_limit_not_implemented');
   if (!checks.responseShapingScaffoldReady) blockers.push('response_shaping_scaffold_missing');
@@ -134,6 +136,14 @@ export function buildCloudGate({
     cloudReady,
     customGptReady,
     localControlledRuntimeReady,
+    requestSigningImplemented: checks.requestSigningImplemented,
+    authBoundaryImplemented: checks.authBoundaryImplemented,
+    replayProtectionScaffoldReady: checks.replayProtectionScaffoldReady,
+    replayProtectionImplemented: checks.replayProtectionImplemented,
+    replayProtectionDurable: checks.replayProtectionDurable,
+    privateServingImplemented: checks.privateServingImplemented,
+    privateServingExposed: checks.privateServingExposed,
+    publicServerCreated: checks.publicServerCreated,
     checks,
     blockers,
     readiness: {
@@ -154,6 +164,7 @@ export function buildCloudGate({
       authBoundaryImplemented: readiness.authBoundaryImplemented,
       replayProtectionScaffoldReady: readiness.replayProtectionScaffoldReady,
       replayProtectionImplemented: readiness.replayProtectionImplemented,
+      replayProtectionDurable: readiness.replayProtectionDurable,
       rateLimitScaffoldReady: readiness.rateLimitScaffoldReady,
       rateLimitImplemented: readiness.rateLimitImplemented,
       responseShapingScaffoldReady: readiness.responseShapingScaffoldReady,

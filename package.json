@@ -134,6 +134,7 @@
     "gptoss:private-serving:design:validate": "node scripts/gptoss/private-serving-design-validate.mjs",
     "gptoss:private-serving:threat-model:validate": "node scripts/gptoss/private-serving-threat-model-validate.mjs",
     "gptoss:private-serving:auth:validate": "node scripts/gptoss/private-serving/private-serving-auth-validate.mjs",
+    "gptoss:private-serving:replay:validate": "node scripts/gptoss/private-serving/private-serving-replay-validate.mjs",
     "gptoss:private-serving:scaffold:validate": "node scripts/gptoss/private-serving/private-serving-scaffold-validate.mjs",
     "gptoss:private-serving:scaffold:report": "node scripts/gptoss/private-serving/private-serving-scaffold-validate.mjs --pr-report",
     "gptoss:adapter:eval:force-final:compare": "node scripts/gptoss/eval-force-final-comparison.mjs",

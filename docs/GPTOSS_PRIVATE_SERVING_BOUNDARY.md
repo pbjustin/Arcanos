@@ -13,6 +13,11 @@ Phase 5.3 implements the local auth decision engine for signed private-serving
 request envelopes. This remains helper logic only: no endpoint, server,
 listener, route, tunnel, deployment, or Custom GPT action exists.
 
+Phase 5.4 implements local replay protection helper logic with in-memory nonce
+tracking for local tests. `replayProtectionImplemented:true` means only that
+the helper-level/local test path exists. No durable replay store or persistent
+nonce ledger is implemented. No endpoint/server exists.
+
 ## Purpose
 
 The private serving boundary exists to let an approved Arcanos backend caller
@@ -90,10 +95,9 @@ Phase 5.1 scaffold helpers now exist under
   fails closed without an explicitly supplied local signing key
 - the auth decision engine validates request identity, timestamp skew, nonce
   shape, audience, signature, and replay-check availability
-- replay protection is in-memory scaffold logic only; production exposure
-  requires a durable private replay store
-- rate limiting is in-memory scaffold policy only; production exposure requires
-  a durable private rate limiter
+- replay protection is implemented locally with in-memory helper/test state
+  only; no durable replay store or persistent nonce ledger exists
+- rate limiting is in-memory scaffold policy only
 - response shaping is a local helper that emits only the effective-router safe
   response envelope
 - denial helpers emit structured fail-closed responses without stack traces
@@ -112,6 +116,11 @@ an explicit key resolver or local test key map, requires a `keyId`, requires a
 subject or local/test subject derivation, and requires a replay checker. Without
 those controls it fails closed. This is not production auth and does not make
 private serving ready.
+
+Phase 5.4 implements local replay protection in memory for helper-level tests.
+A successful replay check is not durable replay protection and cannot be used
+as a private serving exposure gate. `replayProtectionDurable:false` remains
+blocking.
 
 The effective router must continue to report raw model status separately from
 effective-router status. A passing effective-router result does not imply that
@@ -206,7 +215,7 @@ prove all of the following with deterministic JSON reports:
 Readiness must not depend on live OpenAI calls, live training, Railway CLI
 mutation, public internet exposure, or live database mutation.
 
-Current Phase 5.3 readiness remains unexposed:
+Current Phase 5.4 readiness remains unexposed:
 
 - `privateServingDesignReady:true`
 - `privateServingScaffoldReady:true`
@@ -217,7 +226,8 @@ Current Phase 5.3 readiness remains unexposed:
 - `authBoundaryScaffoldReady:true`
 - `authBoundaryImplemented:true`
 - `replayProtectionScaffoldReady:true`
-- `replayProtectionImplemented:false`
+- `replayProtectionImplemented:true`
+- `replayProtectionDurable:false`
 - `rateLimitScaffoldReady:true`
 - `rateLimitImplemented:false`
 - `responseShapingScaffoldReady:true`
@@ -225,16 +235,18 @@ Current Phase 5.3 readiness remains unexposed:
 - `cloudReady:false`
 - `customGptReady:false`
 
-Required future work before any server or route can be considered:
+`replayProtectionImplemented:true` means helper-level/local test
+implementation only. `replayProtectionDurable:false` blocks private serving
+exposure.
 
-- production key management and rotation
-- durable private replay store
-- durable private rate limiter
+Required future work before any exposure can be considered:
+
+- durable replay store
+- persistent nonce ledger
+- key rotation
+- production auth integration
 - private network boundary
-- endpoint auth integration
-- audit sink approval
-- rollback gate
-- penetration test or security review
+- server review
 
 ## Rollback Expectations
 

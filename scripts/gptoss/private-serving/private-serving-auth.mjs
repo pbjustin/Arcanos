@@ -6,6 +6,10 @@ import {
   validateTimestampSkew,
   verifyRequestSignature,
 } from './private-serving-signing.mjs';
+import {
+  checkReplayProtection,
+  createReplayProtectionPolicy,
+} from './private-serving-replay-protection.mjs';
 
 const REQUIRED_FIELDS = [
   ['requestId', 'missing_request_id'],
@@ -180,18 +184,34 @@ export function authenticateSignedRequest(envelope, options = {}) {
     return fail(signature.reason || 'invalid_signature', envelope);
   }
 
-  if (typeof options.replayChecker !== 'function') {
-    return fail('replay_check_unavailable', envelope);
-  }
-
-  const replay = options.replayChecker({
+  const replayRecord = {
     keyId: identity.keyId,
     nonce: envelope.nonce,
     timestamp: envelope.timestamp,
-    subject: identity.subject,
-  });
+    requestId: envelope.requestId,
+    bodyHash: envelope.bodyHash,
+  };
+  let replay;
+  if (options.replayStore) {
+    replay = checkReplayProtection(
+      replayRecord,
+      options.replayStore,
+      createReplayProtectionPolicy({
+        maxSkewSeconds: options.maxSkewSeconds,
+        ...(options.replayPolicy || {}),
+      }),
+    );
+  } else if (typeof options.replayChecker === 'function') {
+    replay = options.replayChecker({
+      ...replayRecord,
+      subject: identity.subject,
+    });
+  } else {
+    return fail('replay_store_unavailable', envelope);
+  }
+
   if (!replay?.ok) {
-    return fail(replay?.denialReason || replay?.reason || 'replay_check_unavailable', envelope);
+    return fail(replay?.denialReason || replay?.reason || 'replay_store_unavailable', envelope);
   }
 
   return buildAuthDecision({

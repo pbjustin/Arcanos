@@ -98,6 +98,9 @@ function schemaHasDefs(schema, failures) {
     'authDecision',
     'authFailure',
     'replayProtectionDecision',
+    'replayProtectionPolicy',
+    'replayProtectionStoreStats',
+    'replayProtectionValidationReport',
     'requestIdentity',
     'keyDescriptor',
   ];
@@ -140,8 +143,11 @@ function schemaHasDefs(schema, failures) {
   if (readiness?.properties?.replayProtectionScaffoldReady?.const !== true) {
     pushFailure(failures, 'private_serving_readiness_replay_scaffold_not_true');
   }
-  if (readiness?.properties?.replayProtectionImplemented?.const !== false) {
-    pushFailure(failures, 'private_serving_readiness_replay_implemented_not_false');
+  if (readiness?.properties?.replayProtectionImplemented?.const !== true) {
+    pushFailure(failures, 'private_serving_readiness_replay_implemented_not_true');
+  }
+  if (readiness?.properties?.replayProtectionDurable?.const !== false) {
+    pushFailure(failures, 'private_serving_readiness_replay_durable_not_false');
   }
   if (readiness?.properties?.publicServerCreated?.const !== false) {
     pushFailure(failures, 'private_serving_response_public_server_not_false');
@@ -287,7 +293,8 @@ function validateReadiness(failures) {
     authBoundaryDesigned: true,
     authBoundaryImplemented: true,
     replayProtectionScaffoldReady: true,
-    replayProtectionImplemented: false,
+    replayProtectionImplemented: true,
+    replayProtectionDurable: false,
     publicServerCreated: false,
     customGptExposureCreated: false,
     cloudReady: false,

@@ -83,7 +83,7 @@ describe('gptoss private serving auth boundary', () => {
           signingKey: LOCAL_SIGNING_KEY,
         },
       },
-      replayChecker: (record: Record<string, unknown>) => replay.checkAndRecordNonce(record, store),
+      replayStore: store,
     })).toMatchObject({
       ok: true,
       authenticated: true,
@@ -210,18 +210,18 @@ describe('gptoss private serving auth boundary', () => {
     expect(auth.authenticateSignedRequest(signed, { localKeyMap: keyMap })).toMatchObject({
       ok: false,
       authenticated: false,
-      denialReason: 'replay_check_unavailable',
+      denialReason: 'replay_store_unavailable',
     });
     expect(auth.authenticateSignedRequest(signed, {
       localKeyMap: keyMap,
-      replayChecker: (record: Record<string, unknown>) => replay.checkAndRecordNonce(record, store),
+      replayStore: store,
     })).toMatchObject({
       ok: true,
       authenticated: true,
     });
     expect(auth.authenticateSignedRequest(signed, {
       localKeyMap: keyMap,
-      replayChecker: (record: Record<string, unknown>) => replay.checkAndRecordNonce(record, store),
+      replayStore: store,
     })).toMatchObject({
       ok: false,
       authenticated: false,
@@ -310,7 +310,8 @@ describe('gptoss private serving auth boundary', () => {
       requestSigningImplemented: true,
       authBoundaryImplemented: true,
       replayProtectionScaffoldReady: true,
-      replayProtectionImplemented: false,
+      replayProtectionImplemented: true,
+      replayProtectionDurable: false,
       privateServingImplemented: false,
       privateServingExposed: false,
       publicServerCreated: false,
@@ -324,7 +325,8 @@ describe('gptoss private serving auth boundary', () => {
       checks: {
         authBoundaryImplemented: true,
         replayProtectionScaffoldReady: true,
-        replayProtectionImplemented: false,
+        replayProtectionImplemented: true,
+        replayProtectionDurable: false,
         privateServingImplemented: false,
         privateServingExposed: false,
         publicServerCreated: false,
@@ -332,14 +334,15 @@ describe('gptoss private serving auth boundary', () => {
     });
     expect(parsedCloud.blockers).toEqual(expect.arrayContaining([
       'private_serving_not_implemented',
-      'replay_protection_not_implemented',
+      'replay_protection_not_durable',
     ]));
     expect(parsedAuthReport).toMatchObject({
       ok: true,
       requestSigningImplemented: true,
       authBoundaryImplemented: true,
       replayProtectionScaffoldReady: true,
-      replayProtectionImplemented: false,
+      replayProtectionImplemented: true,
+      replayProtectionDurable: false,
       privateServingImplemented: false,
       privateServingExposed: false,
       publicServerCreated: false,
