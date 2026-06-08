@@ -117,6 +117,7 @@ If multiple approaches are possible, choose the one that:
 - Run the default TypeScript Jest sweep with `npm test` when focused suites pass and you need the broader Node-side check.
 - Run unit tests with `npm run test:unit`.
 - Run integration coverage with `npm run test:integration` when changes touch backend flows or adapters.
+- Run `npm run test:all` when you need the combined root unit and integration Jest sweep.
 - Run `npm run test:runtime-integration` when changes touch `arcanos-ai-runtime` integration behavior.
 - Run `npm run test:all:stacks` when a change spans both the TypeScript workspace and `daemon-python`.
 - Run type checks with `npm run type-check`.
@@ -136,6 +137,7 @@ If multiple approaches are possible, choose the one that:
 ## Railway
 - Confirm the linked project, service, and environment before release with `railway status` or `railway link`.
 - Validate Railway compatibility with `npm run validate:railway`.
+- Railway deploys must start through `node scripts/start-railway-service.mjs`; keep `ARCANOS_PROCESS_KIND=web` on the API service, `ARCANOS_PROCESS_KIND=worker` on the worker service, and use `/health` as the Railway health check path.
 - Use `npm run railway:probe:async` and `npm run railway:probe:fast-path` when checking Railway job execution paths or investigating production path regressions.
 - For release verification, use this order: `npm run build`, `npm run validate:railway`, `railway up`, `npm run railway:smoke:production`, then `npm run railway:alert:timeouts -- --since 15m --lines 500 --fail-on-budget-abort`.
 - Run the production smoke check with `npm run railway:smoke:production` when verifying a live Railway deployment.
