@@ -20,6 +20,15 @@ Phase 5.4 implements local replay protection helper logic with in-memory nonce
 tracking for local tests only. It does not create a durable replay store,
 persistent nonce ledger, endpoint, or server. No endpoint/server exists.
 
+Phase 5.5 adds durable replay store design/schema/validation only. It does not
+create a live DB store, SQL migration, endpoint, server, Railway command path,
+OpenAI call, training path, or vLLM serving path.
+
+Phase 5.6 adds a durable replay implementation plan, a design-only migration
+draft, a no-DB interface contract, validation gate, and rollback plan. It does
+not connect to a live DB, apply a migration, create a server, or expose an
+endpoint.
+
 ## Preflight
 
 Confirm the checkout and scripts without running a model:
@@ -65,6 +74,8 @@ Run the private serving design and scaffold validators:
 ```bash
 npm run gptoss:private-serving:design:validate
 npm run gptoss:private-serving:threat-model:validate
+npm run gptoss:private-serving:durable-replay:design:validate
+npm run gptoss:private-serving:durable-replay:implementation-plan:validate
 npm run gptoss:private-serving:auth:validate
 npm run gptoss:private-serving:scaffold:validate
 ```
@@ -108,9 +119,12 @@ Pass criteria:
 - Public server creation remains false.
 - `replayProtectionImplemented:true` means helper-level/local test
   implementation only.
+- `replayProtectionDurableDesigned:true` means design/schema/validation only.
+- `replayProtectionDurableImplemented:false` confirms the Phase 5.6 plan,
+  draft migration, and contract do not enable a live durable store.
 - `replayProtectionDurable:false` blocks private serving exposure.
 
-Expected Phase 5.4 local replay fields:
+Expected Phase 5.5 local replay fields:
 
 ```json
 {
@@ -124,6 +138,8 @@ Expected Phase 5.4 local replay fields:
   "authBoundaryImplemented": true,
   "replayProtectionScaffoldReady": true,
   "replayProtectionImplemented": true,
+  "replayProtectionDurableDesigned": true,
+  "replayProtectionDurableImplemented": false,
   "replayProtectionDurable": false,
   "rateLimitScaffoldReady": true,
   "rateLimitImplemented": false,
@@ -146,6 +162,10 @@ local helpers:
   and replay checker
 - Phase 5.4 replay protection is implemented in memory for helper-level/local
   tests only; no durable replay store or persistent nonce ledger exists
+- Phase 5.5 durable replay design is documented and schema-validated only; no
+  live DB store or migration is wired
+- Phase 5.6 durable replay implementation planning exists; the migration draft
+  is under `migrations/drafts/` and must not be applied
 - rate limiting is in-memory policy only
 - response shaping strips raw model text and emits only the safe envelope
 - denial helpers return structured refusals without stack traces
@@ -154,8 +174,8 @@ local helpers:
 
 Future work required before any exposure:
 
-- durable replay store
-- persistent nonce ledger
+- reviewed durable replay store implementation
+- persistent nonce ledger implementation
 - key rotation
 - production auth integration
 - private network boundary
@@ -211,8 +231,9 @@ Replay checks:
 - The replay does not call OpenAI, Railway, vLLM, or a live DB.
 - The replay does not load the local model unless a separate local execution
   step explicitly supplies the required execution flag.
-- Phase 5.4 replay protection is local memory only; durable replay remains
-  false and blocks exposure.
+- Phase 5.4 replay protection is local memory only.
+- Phase 5.5 durable replay is design/schema/validation only; durable replay
+  remains false and blocks exposure.
 
 ## Verify Cloud And Custom GPT Blocked
 

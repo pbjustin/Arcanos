@@ -181,6 +181,17 @@ Phase 5.4 adds local in-memory replay protection helper logic for local tests.
 It does not add a durable replay store, persistent nonce ledger, endpoint, or
 server. No endpoint/server exists.
 
+Phase 5.5 adds durable replay store design/schema/validation only. The design
+defines the future record shape, `keyId + nonce` uniqueness rule, timestamp
+window, TTL/pruning policy, audit correlation fields, migration safety, and
+rollback behavior. It does not add live DB access, a migration, endpoint
+exposure, or server creation.
+
+Phase 5.6 adds the durable replay store implementation plan, a design-only
+migration draft, an interface contract module, a validation gate, and rollback
+criteria. It does not connect to a live DB, apply the draft migration, create a
+server, or expose any endpoint.
+
 The scaffold covers:
 
 - request signing canonicalization and hash helpers
@@ -188,12 +199,16 @@ The scaffold covers:
 - fail-closed signature verification scaffold
 - local auth decision validation for signed envelopes
 - in-memory replay protection helper implementation for local nonce reuse tests
+- durable replay implementation planning only:
+  `docs/GPTOSS_DURABLE_REPLAY_STORE_IMPLEMENTATION_PLAN.md`,
+  `migrations/drafts/gptoss_durable_replay_store.sql`, and
+  `scripts/gptoss/private-serving/private-serving-durable-replay-store.mjs`
 - in-memory rate-limit policy evaluation for tests only
 - response shaping that emits only the safe effective-router envelope
 - structured denial responses
 - scaffold validation and local scaffold reports
 
-Current Phase 5.4 readiness fields are:
+Current Phase 5.5 readiness fields are:
 
 - `privateServingDesignReady:true`
 - `privateServingScaffoldReady:true`
@@ -205,6 +220,8 @@ Current Phase 5.4 readiness fields are:
 - `authBoundaryImplemented:true`
 - `replayProtectionScaffoldReady:true`
 - `replayProtectionImplemented:true`
+- `replayProtectionDurableDesigned:true`
+- `replayProtectionDurableImplemented:false`
 - `replayProtectionDurable:false`
 - `rateLimitScaffoldReady:true`
 - `rateLimitImplemented:false`
@@ -215,11 +232,13 @@ Current Phase 5.4 readiness fields are:
 
 The signing, auth, and replay implementations are local helper logic only.
 `replayProtectionImplemented:true` means helper-level/local test implementation
-only. `replayProtectionDurable:false` blocks private serving exposure.
+only. `replayProtectionDurableDesigned:true` is design-only.
+`replayProtectionDurableImplemented:false` and `replayProtectionDurable:false`
+block private serving exposure.
 
-Future work before any exposure includes a durable replay store, a persistent
-nonce ledger, key rotation, production auth integration, a private network
-boundary, and server review.
+Future work before any exposure includes durable replay store implementation, a
+persistent nonce ledger implementation, key rotation, production auth
+integration, a private network boundary, and server review.
 
 ## Future Work Before Exposure
 

@@ -66,7 +66,9 @@ function listModuleFiles(scaffoldDir) {
     .filter((path) =>
       statSync(path).isFile() &&
       path.endsWith('.mjs') &&
-      !path.endsWith('private-serving-scaffold-validate.mjs'),
+      !path.endsWith('private-serving-scaffold-validate.mjs') &&
+      !path.endsWith('private-serving-durable-replay-design-validate.mjs') &&
+      !path.endsWith('private-serving-durable-replay-implementation-plan-validate.mjs'),
     );
 }
 
@@ -115,6 +117,8 @@ function validateReadiness(failures) {
     authBoundaryImplemented: true,
     replayProtectionScaffoldReady: true,
     replayProtectionImplemented: true,
+    replayProtectionDurableDesigned: true,
+    replayProtectionDurableImplemented: false,
     replayProtectionDurable: false,
     rateLimitScaffoldReady: true,
     rateLimitImplemented: false,
@@ -164,6 +168,8 @@ export async function runPrivateServingScaffoldValidation({
     authBoundaryImplemented: true,
     replayProtectionScaffoldReady: true,
     replayProtectionImplemented: true,
+    replayProtectionDurableDesigned: true,
+    replayProtectionDurableImplemented: false,
     replayProtectionDurable: false,
     privateServingImplemented: false,
     privateServingExposed: false,
@@ -184,6 +190,7 @@ export async function runPrivateServingScaffoldValidation({
       'docs/GPTOSS_PRIVATE_ENDPOINT_CONTRACT.md',
       'docs/GPTOSS_PRIVATE_SERVING_THREAT_MODEL.md',
       'docs/GPTOSS_PRIVATE_SERVING_RUNBOOK.md',
+      'docs/GPTOSS_DURABLE_REPLAY_STORE_DESIGN.md',
     ],
     tests: [
       'tests/gptoss-private-serving-scaffold.test.ts',

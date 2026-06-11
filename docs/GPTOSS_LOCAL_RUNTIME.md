@@ -748,7 +748,7 @@ effective runtime can be locally ready because deterministic local policy,
 spec-fact, and postprocessor layers bring the effective score to `24/24`; that
 does not make the model cloud-ready or approve a Custom GPT action boundary.
 
-## Phase 5.4 Private Serving Replay Status
+## Phase 5.5 Private Serving Replay Status
 
 Phase 5.1 adds local-only private serving scaffold helpers:
 
@@ -765,6 +765,29 @@ Phase 5.4 adds local in-memory replay protection helper logic for local tests.
 It does not add a durable replay store, persistent nonce ledger, endpoint, or
 server. No endpoint/server exists.
 
+Phase 5.5 adds durable replay store design/schema/validation only:
+
+```bash
+npm run gptoss:private-serving:durable-replay:design:validate
+```
+
+The durable replay design defines the future record shape, `keyId + nonce`
+uniqueness rule, timestamp window, TTL/pruning policy, audit correlation fields,
+migration safety, and rollback behavior. It does not add live DB access, a SQL
+migration, endpoint exposure, or server creation.
+
+Phase 5.6 adds implementation planning only:
+
+```bash
+npm run gptoss:private-serving:durable-replay:implementation-plan:validate
+```
+
+The Phase 5.6 artifacts are
+`docs/GPTOSS_DURABLE_REPLAY_STORE_IMPLEMENTATION_PLAN.md`,
+`migrations/drafts/gptoss_durable_replay_store.sql`, and
+`scripts/gptoss/private-serving/private-serving-durable-replay-store.mjs`. The
+SQL file is a design draft only and must not be applied.
+
 The scaffold status is:
 
 - request signing verification is implemented locally and fails closed
@@ -775,6 +798,9 @@ The scaffold status is:
   map, valid signature, accepted nonce, and replay checker
 - Phase 5.4 replay protection is implemented in memory for helper-level/local
   tests only and not durable production state
+- Phase 5.5 durable replay store is designed and schema-validated only
+- Phase 5.6 durable replay implementation planning exists, but no live durable
+  store is implemented
 - durable replay store and persistent nonce ledger are not implemented
 - rate limiting is in-memory policy only and not durable production state
 - response shaping emits only the safe effective-router envelope
@@ -795,6 +821,8 @@ Expected readiness:
   "authBoundaryImplemented": true,
   "replayProtectionScaffoldReady": true,
   "replayProtectionImplemented": true,
+  "replayProtectionDurableDesigned": true,
+  "replayProtectionDurableImplemented": false,
   "replayProtectionDurable": false,
   "rateLimitScaffoldReady": true,
   "rateLimitImplemented": false,
@@ -806,11 +834,13 @@ Expected readiness:
 ```
 
 `replayProtectionImplemented:true` means helper-level/local test implementation
-only. `replayProtectionDurable:false` blocks private serving exposure.
+only. `replayProtectionDurableDesigned:true` is design-only.
+`replayProtectionDurableImplemented:false` and `replayProtectionDurable:false`
+block private serving exposure.
 
 Before any exposure can be considered, a later phase must add a durable replay
-store, persistent nonce ledger, key rotation, production auth integration,
-private network boundary, and server review.
+store implementation, persistent nonce ledger implementation, key rotation,
+production auth integration, private network boundary, and server review.
 
 ## Dataset Gate
 

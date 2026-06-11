@@ -19,6 +19,12 @@
     "replayProtectionDecision": { "$ref": "#/$defs/replayProtectionDecision" },
     "replayProtectionValidationReport": {
       "$ref": "#/$defs/replayProtectionValidationReport"
+    },
+    "durableReplayStoreDesign": { "$ref": "#/$defs/durableReplayStoreDesign" },
+    "durableReplayStoreRecord": { "$ref": "#/$defs/durableReplayStoreRecord" },
+    "durableReplayStorePolicy": { "$ref": "#/$defs/durableReplayStorePolicy" },
+    "durableReplayStoreValidationReport": {
+      "$ref": "#/$defs/durableReplayStoreValidationReport"
     }
   },
   "$defs": {
@@ -251,6 +257,163 @@
         "pruneStoreStats": { "$ref": "#/$defs/replayProtectionStoreStats" }
       }
     },
+    "durableReplayAuditCorrelation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requestId", "bodyHash", "keyId", "traceId", "auditRecordId"],
+      "properties": {
+        "requestId": { "$ref": "#/$defs/nonEmptyString" },
+        "bodyHash": { "$ref": "#/$defs/sha256Hex" },
+        "keyId": { "$ref": "#/$defs/nonEmptyString" },
+        "subjectHash": { "$ref": "#/$defs/sha256Hex" },
+        "traceId": { "$ref": "#/$defs/nonEmptyString" },
+        "auditRecordId": { "$ref": "#/$defs/nonEmptyString" }
+      }
+    },
+    "durableReplayStoreRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "keyId",
+        "nonce",
+        "uniquenessScope",
+        "requestId",
+        "bodyHash",
+        "timestamp",
+        "receivedAt",
+        "expiresAt",
+        "auditCorrelation",
+        "rawRequestBodyStored",
+        "secretsStored"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "keyId": { "$ref": "#/$defs/nonEmptyString" },
+        "nonce": { "$ref": "#/$defs/nonceString" },
+        "uniquenessScope": { "const": "keyId+nonce" },
+        "requestId": { "$ref": "#/$defs/nonEmptyString" },
+        "bodyHash": { "$ref": "#/$defs/sha256Hex" },
+        "timestamp": { "$ref": "#/$defs/dateTimeString" },
+        "receivedAt": { "$ref": "#/$defs/dateTimeString" },
+        "expiresAt": { "$ref": "#/$defs/dateTimeString" },
+        "auditCorrelation": { "$ref": "#/$defs/durableReplayAuditCorrelation" },
+        "rawRequestBodyStored": { "const": false },
+        "secretsStored": { "const": false }
+      }
+    },
+    "durableReplayStorePolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "designed",
+        "implemented",
+        "durable",
+        "uniquenessRule",
+        "timestampWindowSeconds",
+        "maxFutureSkewSeconds",
+        "ttlSeconds",
+        "pruningPolicy",
+        "failureMode",
+        "migrationSafety",
+        "rollbackBehavior",
+        "noRawRequestBodyStorage",
+        "noSecretStorage",
+        "liveDbAccessInPhase"
+      ],
+      "properties": {
+        "designed": { "const": true },
+        "implemented": { "const": false },
+        "durable": { "const": false },
+        "uniquenessRule": { "const": "keyId+nonce" },
+        "timestampWindowSeconds": { "type": "integer", "minimum": 1 },
+        "maxFutureSkewSeconds": { "type": "integer", "minimum": 0 },
+        "ttlSeconds": { "type": "integer", "minimum": 1 },
+        "pruningPolicy": {
+          "type": "string",
+          "enum": ["delete_after_expires_at", "partition_or_batch_prune_after_ttl"]
+        },
+        "failureMode": { "const": "fail_closed" },
+        "migrationSafety": { "const": "design_only_no_live_migration" },
+        "rollbackBehavior": { "const": "disable_private_serving_keep_existing_replay_blocks" },
+        "noRawRequestBodyStorage": { "const": true },
+        "noSecretStorage": { "const": true },
+        "liveDbAccessInPhase": { "const": false }
+      }
+    },
+    "durableReplayStoreDesign": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "phase",
+        "designed",
+        "implemented",
+        "durable",
+        "purpose",
+        "record",
+        "policy"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "phase": { "const": "5.5" },
+        "designed": { "const": true },
+        "implemented": { "const": false },
+        "durable": { "const": false },
+        "purpose": { "$ref": "#/$defs/nonEmptyString" },
+        "record": { "$ref": "#/$defs/durableReplayStoreRecord" },
+        "policy": { "$ref": "#/$defs/durableReplayStorePolicy" }
+      }
+    },
+    "durableReplayStoreValidationReport": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "schemaVersion",
+        "kind",
+        "ok",
+        "durableReplayStoreDesigned",
+        "replayProtectionDurableDesigned",
+        "replayProtectionDurableImplemented",
+        "replayProtectionDurable",
+        "privateServingImplemented",
+        "privateServingExposed",
+        "cloudReady",
+        "customGptReady",
+        "openAiCalled",
+        "trainingExecuted",
+        "vllmUsed",
+        "railwayCliUsed",
+        "liveDbUsed",
+        "serverCreated",
+        "failures"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "kind": {
+          "const": "gptoss_private_serving_durable_replay_store_design_validation"
+        },
+        "ok": { "type": "boolean" },
+        "durableReplayStoreDesigned": { "const": true },
+        "replayProtectionDurableDesigned": { "const": true },
+        "replayProtectionDurableImplemented": { "const": false },
+        "replayProtectionDurable": { "const": false },
+        "privateServingImplemented": { "const": false },
+        "privateServingExposed": { "const": false },
+        "cloudReady": { "const": false },
+        "customGptReady": { "const": false },
+        "openAiCalled": { "const": false },
+        "trainingExecuted": { "const": false },
+        "vllmUsed": { "const": false },
+        "railwayCliUsed": { "const": false },
+        "liveDbUsed": { "const": false },
+        "serverCreated": { "const": false },
+        "failures": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
     "scaffoldAuthDecision": {
       "type": "object",
       "additionalProperties": false,
@@ -345,6 +508,8 @@
         "authBoundaryImplemented",
         "replayProtectionScaffoldReady",
         "replayProtectionImplemented",
+        "replayProtectionDurableDesigned",
+        "replayProtectionDurableImplemented",
         "replayProtectionDurable",
         "privateServingImplemented",
         "privateServingExposed",
@@ -370,6 +535,8 @@
         "authBoundaryImplemented": { "const": true },
         "replayProtectionScaffoldReady": { "const": true },
         "replayProtectionImplemented": { "const": true },
+        "replayProtectionDurableDesigned": { "const": true },
+        "replayProtectionDurableImplemented": { "const": false },
         "replayProtectionDurable": { "const": false },
         "privateServingImplemented": { "const": false },
         "privateServingExposed": { "const": false },
@@ -563,6 +730,8 @@
         "authBoundaryImplemented",
         "replayProtectionScaffoldReady",
         "replayProtectionImplemented",
+        "replayProtectionDurableDesigned",
+        "replayProtectionDurableImplemented",
         "replayProtectionDurable",
         "rateLimitScaffoldReady",
         "rateLimitImplemented",
@@ -584,6 +753,8 @@
         "authBoundaryImplemented": { "const": true },
         "replayProtectionScaffoldReady": { "const": true },
         "replayProtectionImplemented": { "const": true },
+        "replayProtectionDurableDesigned": { "const": true },
+        "replayProtectionDurableImplemented": { "const": false },
         "replayProtectionDurable": { "const": false },
         "rateLimitScaffoldReady": { "const": true },
         "rateLimitImplemented": { "const": false },

@@ -99,6 +99,12 @@ export function buildLocalAuthValidationReport() {
   if (readiness.replayProtectionImplemented !== true) {
     failures.push('replay_protection_not_implemented');
   }
+  if (readiness.replayProtectionDurableDesigned !== true) {
+    failures.push('replay_protection_durable_design_missing');
+  }
+  if (readiness.replayProtectionDurableImplemented !== false) {
+    failures.push('replay_protection_durable_implemented_not_false');
+  }
   if (readiness.replayProtectionDurable !== false) {
     failures.push('replay_protection_durable_not_false');
   }
@@ -120,6 +126,8 @@ export function buildLocalAuthValidationReport() {
     authBoundaryImplemented: true,
     replayProtectionScaffoldReady: true,
     replayProtectionImplemented: true,
+    replayProtectionDurableDesigned: true,
+    replayProtectionDurableImplemented: false,
     replayProtectionDurable: false,
     privateServingImplemented: false,
     privateServingExposed: false,

@@ -133,6 +133,8 @@
     "gptoss:runtime:release-gate:ci": "node scripts/gptoss/runtime-release-gate-ci.mjs",
     "gptoss:private-serving:design:validate": "node scripts/gptoss/private-serving-design-validate.mjs",
     "gptoss:private-serving:threat-model:validate": "node scripts/gptoss/private-serving-threat-model-validate.mjs",
+    "gptoss:private-serving:durable-replay:design:validate": "node scripts/gptoss/private-serving/private-serving-durable-replay-design-validate.mjs",
+    "gptoss:private-serving:durable-replay:implementation-plan:validate": "node scripts/gptoss/private-serving/private-serving-durable-replay-implementation-plan-validate.mjs",
     "gptoss:private-serving:auth:validate": "node scripts/gptoss/private-serving/private-serving-auth-validate.mjs",
     "gptoss:private-serving:replay:validate": "node scripts/gptoss/private-serving/private-serving-replay-validate.mjs",
     "gptoss:private-serving:scaffold:validate": "node scripts/gptoss/private-serving/private-serving-scaffold-validate.mjs",

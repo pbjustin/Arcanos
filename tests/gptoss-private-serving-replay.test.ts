@@ -188,6 +188,8 @@ describe('gptoss private serving replay protection', () => {
       requestSigningImplemented: true,
       authBoundaryImplemented: true,
       replayProtectionImplemented: true,
+      replayProtectionDurableDesigned: true,
+      replayProtectionDurableImplemented: false,
       replayProtectionDurable: false,
       privateServingImplemented: false,
       privateServingExposed: false,
@@ -210,6 +212,8 @@ describe('gptoss private serving replay protection', () => {
     });
     expect(parsedReadiness).toMatchObject({
       replayProtectionImplemented: true,
+      replayProtectionDurableDesigned: true,
+      replayProtectionDurableImplemented: false,
       replayProtectionDurable: false,
       privateServingImplemented: false,
       privateServingExposed: false,

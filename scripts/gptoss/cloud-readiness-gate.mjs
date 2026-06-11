@@ -64,6 +64,8 @@ export function buildCloudGate({
     authBoundaryImplemented: readiness.authBoundaryImplemented === true,
     replayProtectionScaffoldReady: readiness.replayProtectionScaffoldReady === true,
     replayProtectionImplemented: readiness.replayProtectionImplemented === true,
+    replayProtectionDurableDesigned: readiness.replayProtectionDurableDesigned === true,
+    replayProtectionDurableImplemented: readiness.replayProtectionDurableImplemented === true,
     replayProtectionDurable: readiness.replayProtectionDurable === true,
     rateLimitScaffoldReady: readiness.rateLimitScaffoldReady === true,
     rateLimitImplemented: readiness.rateLimitImplemented === true,
@@ -118,6 +120,10 @@ export function buildCloudGate({
   if (!checks.authBoundaryImplemented) blockers.push('auth_boundary_not_implemented');
   if (!checks.replayProtectionScaffoldReady) blockers.push('replay_protection_scaffold_missing');
   if (!checks.replayProtectionImplemented) blockers.push('replay_protection_not_implemented');
+  if (!checks.replayProtectionDurableDesigned) blockers.push('replay_protection_durable_design_missing');
+  if (!checks.replayProtectionDurableImplemented) {
+    blockers.push('replay_protection_durable_not_implemented');
+  }
   if (!checks.replayProtectionDurable) blockers.push('replay_protection_not_durable');
   if (!checks.rateLimitScaffoldReady) blockers.push('rate_limit_scaffold_missing');
   if (!checks.rateLimitImplemented) blockers.push('rate_limit_not_implemented');
@@ -140,6 +146,8 @@ export function buildCloudGate({
     authBoundaryImplemented: checks.authBoundaryImplemented,
     replayProtectionScaffoldReady: checks.replayProtectionScaffoldReady,
     replayProtectionImplemented: checks.replayProtectionImplemented,
+    replayProtectionDurableDesigned: checks.replayProtectionDurableDesigned,
+    replayProtectionDurableImplemented: checks.replayProtectionDurableImplemented,
     replayProtectionDurable: checks.replayProtectionDurable,
     privateServingImplemented: checks.privateServingImplemented,
     privateServingExposed: checks.privateServingExposed,
@@ -164,6 +172,8 @@ export function buildCloudGate({
       authBoundaryImplemented: readiness.authBoundaryImplemented,
       replayProtectionScaffoldReady: readiness.replayProtectionScaffoldReady,
       replayProtectionImplemented: readiness.replayProtectionImplemented,
+      replayProtectionDurableDesigned: readiness.replayProtectionDurableDesigned,
+      replayProtectionDurableImplemented: readiness.replayProtectionDurableImplemented,
       replayProtectionDurable: readiness.replayProtectionDurable,
       rateLimitScaffoldReady: readiness.rateLimitScaffoldReady,
       rateLimitImplemented: readiness.rateLimitImplemented,

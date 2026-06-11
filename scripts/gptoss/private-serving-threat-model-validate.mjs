@@ -59,6 +59,9 @@ export function runPrivateServingThreatModelValidation() {
   return {
     ok: failures.length === 0,
     privateServingDesignReady: design.privateServingDesignReady,
+    replayProtectionDurableDesigned: design.replayProtectionDurableDesigned === true,
+    replayProtectionDurableImplemented: false,
+    replayProtectionDurable: false,
     privateServingImplemented: false,
     privateServingExposed: false,
     cloudReady: false,

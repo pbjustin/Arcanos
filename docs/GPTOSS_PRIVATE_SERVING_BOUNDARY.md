@@ -18,6 +18,13 @@ tracking for local tests. `replayProtectionImplemented:true` means only that
 the helper-level/local test path exists. No durable replay store or persistent
 nonce ledger is implemented. No endpoint/server exists.
 
+Phase 5.5 adds the durable replay store design and validation gate only. It
+defines the future record shape, `keyId + nonce` uniqueness rule, timestamp
+window, TTL/pruning policy, audit correlation fields, migration safety, and
+rollback behavior in `docs/GPTOSS_DURABLE_REPLAY_STORE_DESIGN.md`. It does not
+implement a live DB store, add a SQL migration, create a server, expose an
+endpoint, or change private serving readiness.
+
 ## Purpose
 
 The private serving boundary exists to let an approved Arcanos backend caller
@@ -122,6 +129,12 @@ A successful replay check is not durable replay protection and cannot be used
 as a private serving exposure gate. `replayProtectionDurable:false` remains
 blocking.
 
+Phase 5.5 durable replay design is now documented, but implementation remains
+blocked. `replayProtectionDurableDesigned:true` means only that the future
+durable store shape and policy have schema and validation coverage.
+`replayProtectionDurableImplemented:false` and `replayProtectionDurable:false`
+remain the exposure blockers.
+
 The effective router must continue to report raw model status separately from
 effective-router status. A passing effective-router result does not imply that
 the raw model is ready for direct serving.
@@ -215,7 +228,7 @@ prove all of the following with deterministic JSON reports:
 Readiness must not depend on live OpenAI calls, live training, Railway CLI
 mutation, public internet exposure, or live database mutation.
 
-Current Phase 5.4 readiness remains unexposed:
+Current Phase 5.5 readiness remains unexposed:
 
 - `privateServingDesignReady:true`
 - `privateServingScaffoldReady:true`
@@ -227,6 +240,8 @@ Current Phase 5.4 readiness remains unexposed:
 - `authBoundaryImplemented:true`
 - `replayProtectionScaffoldReady:true`
 - `replayProtectionImplemented:true`
+- `replayProtectionDurableDesigned:true`
+- `replayProtectionDurableImplemented:false`
 - `replayProtectionDurable:false`
 - `rateLimitScaffoldReady:true`
 - `rateLimitImplemented:false`
@@ -236,13 +251,14 @@ Current Phase 5.4 readiness remains unexposed:
 - `customGptReady:false`
 
 `replayProtectionImplemented:true` means helper-level/local test
-implementation only. `replayProtectionDurable:false` blocks private serving
-exposure.
+implementation only. `replayProtectionDurableDesigned:true` is design-only.
+`replayProtectionDurableImplemented:false` and `replayProtectionDurable:false`
+block private serving exposure.
 
 Required future work before any exposure can be considered:
 
-- durable replay store
-- persistent nonce ledger
+- durable replay store implementation
+- persistent nonce ledger implementation
 - key rotation
 - production auth integration
 - private network boundary

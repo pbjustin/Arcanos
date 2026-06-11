@@ -21,6 +21,8 @@ export const PRIVATE_SERVING_DESIGN_READINESS = {
   authBoundaryImplemented: true,
   replayProtectionScaffoldReady: true,
   replayProtectionImplemented: true,
+  replayProtectionDurableDesigned: true,
+  replayProtectionDurableImplemented: false,
   replayProtectionDurable: false,
   rateLimitScaffoldReady: true,
   rateLimitImplemented: false,

@@ -14,6 +14,7 @@ export const PRIVATE_SERVING_DOCS = [
   'docs/GPTOSS_PRIVATE_ENDPOINT_CONTRACT.md',
   'docs/GPTOSS_PRIVATE_SERVING_THREAT_MODEL.md',
   'docs/GPTOSS_PRIVATE_SERVING_RUNBOOK.md',
+  'docs/GPTOSS_DURABLE_REPLAY_STORE_DESIGN.md',
 ];
 export const PRIVATE_SERVING_REPORT =
   'local_artifacts/gptoss-runtime/private-serving-design-report.json';
@@ -39,6 +40,7 @@ const ALLOWED_PRIVATE_ENDPOINTS = [
 const REQUIRED_PACKAGE_SCRIPTS = [
   'gptoss:private-serving:design:validate',
   'gptoss:private-serving:threat-model:validate',
+  'gptoss:private-serving:durable-replay:design:validate',
 ];
 
 const FORBIDDEN_PACKAGE_SCRIPT_NAMES = [
@@ -101,6 +103,10 @@ function schemaHasDefs(schema, failures) {
     'replayProtectionPolicy',
     'replayProtectionStoreStats',
     'replayProtectionValidationReport',
+    'durableReplayStoreDesign',
+    'durableReplayStoreRecord',
+    'durableReplayStorePolicy',
+    'durableReplayStoreValidationReport',
     'requestIdentity',
     'keyDescriptor',
   ];
@@ -145,6 +151,12 @@ function schemaHasDefs(schema, failures) {
   }
   if (readiness?.properties?.replayProtectionImplemented?.const !== true) {
     pushFailure(failures, 'private_serving_readiness_replay_implemented_not_true');
+  }
+  if (readiness?.properties?.replayProtectionDurableDesigned?.const !== true) {
+    pushFailure(failures, 'private_serving_readiness_replay_durable_design_missing');
+  }
+  if (readiness?.properties?.replayProtectionDurableImplemented?.const !== false) {
+    pushFailure(failures, 'private_serving_readiness_replay_durable_implemented_not_false');
   }
   if (readiness?.properties?.replayProtectionDurable?.const !== false) {
     pushFailure(failures, 'private_serving_readiness_replay_durable_not_false');
@@ -294,6 +306,8 @@ function validateReadiness(failures) {
     authBoundaryImplemented: true,
     replayProtectionScaffoldReady: true,
     replayProtectionImplemented: true,
+    replayProtectionDurableDesigned: true,
+    replayProtectionDurableImplemented: false,
     replayProtectionDurable: false,
     publicServerCreated: false,
     customGptExposureCreated: false,
@@ -343,6 +357,8 @@ export function runPrivateServingDesignValidation({
     privateServingDesignReady: readiness.privateServingDesignReady === true,
     privateServingImplemented: readiness.privateServingImplemented === true,
     privateServingExposed: readiness.privateServingExposed === true,
+    replayProtectionDurableDesigned: readiness.replayProtectionDurableDesigned === true,
+    replayProtectionDurableImplemented: false,
     cloudReady: false,
     customGptReady: false,
     publicServerCreated: false,
