@@ -780,6 +780,7 @@ Phase 5.6 adds implementation planning only:
 
 ```bash
 npm run gptoss:private-serving:durable-replay:implementation-plan:validate
+npm run gptoss:private-serving:durable-replay:migration-guard
 ```
 
 The Phase 5.6 artifacts are
@@ -787,6 +788,10 @@ The Phase 5.6 artifacts are
 `migrations/drafts/gptoss_durable_replay_store.sql`, and
 `scripts/gptoss/private-serving/private-serving-durable-replay-store.mjs`. The
 SQL file is a design draft only and must not be applied.
+
+The guard validates the draft only. It does not apply or execute migrations and
+does not establish DB connectivity. Migration apply remains blocked, and no
+live durable replay store is implemented.
 
 The scaffold status is:
 
@@ -801,6 +806,9 @@ The scaffold status is:
 - Phase 5.5 durable replay store is designed and schema-validated only
 - Phase 5.6 durable replay implementation planning exists, but no live durable
   store is implemented
+- Phase 5.7 durable replay migration guard exists; the migration draft exists,
+  migration apply is blocked, no migration execution or DB connectivity exists,
+  and no live durable store is implemented
 - durable replay store and persistent nonce ledger are not implemented
 - rate limiting is in-memory policy only and not durable production state
 - response shaping emits only the safe effective-router envelope
@@ -824,6 +832,9 @@ Expected readiness:
   "replayProtectionDurableDesigned": true,
   "replayProtectionDurableImplemented": false,
   "replayProtectionDurable": false,
+  "durableReplayMigrationDraftReady": true,
+  "durableReplayMigrationApplyAllowed": false,
+  "durableReplayMigrationApplied": false,
   "rateLimitScaffoldReady": true,
   "rateLimitImplemented": false,
   "responseShapingScaffoldReady": true,

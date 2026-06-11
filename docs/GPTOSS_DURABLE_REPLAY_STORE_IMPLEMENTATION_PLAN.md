@@ -22,6 +22,9 @@ Current required readiness remains:
   "replayProtectionDurableDesigned": true,
   "replayProtectionDurableImplemented": false,
   "replayProtectionDurable": false,
+  "durableReplayMigrationDraftReady": true,
+  "durableReplayMigrationApplyAllowed": false,
+  "durableReplayMigrationApplied": false,
   "privateServingImplemented": false,
   "privateServingExposed": false,
   "cloudReady": false,
@@ -41,6 +44,11 @@ The draft is explicitly marked design-only and must not be applied. A later
 phase must convert it into a reviewed migration only after the serving boundary,
 auth integration, operational database target, and rollback controls are
 approved.
+
+Phase 5.7 adds a migration guard for review/preflight only. The migration draft
+exists only as a blocked draft under `migrations/drafts/`. No reviewed
+executable migration has been promoted, no migration apply path exists, and no
+durable replay migration execution is available.
 
 Planned table shape:
 
@@ -95,6 +103,16 @@ The Phase 5.6 gate is:
 npm run gptoss:private-serving:durable-replay:implementation-plan:validate
 ```
 
+The Phase 5.7 migration guard is:
+
+```bash
+npm run gptoss:private-serving:durable-replay:migration-guard
+```
+
+The guard validates the draft only. It does not apply SQL, dry-run a migration,
+execute a migration runner, open database connectivity, or enable durable
+replay.
+
 The validator checks:
 
 - implementation plan exists
@@ -108,6 +126,8 @@ The validator checks:
 - no Railway command usage
 - no server/listener pattern
 - readiness remains blocked for serving and exposure
+- migration apply remains blocked with `applyAllowed:false`
+- live DB writes remain disabled with `liveDbWrite:false`
 
 Reports are written only under:
 
@@ -155,4 +175,3 @@ npm run gptoss:runtime:release-gate:ci
 
 The expected post-rollback readiness state remains `cloudReady:false` and
 `customGptReady:false`.
-

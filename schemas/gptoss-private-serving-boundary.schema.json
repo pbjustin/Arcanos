@@ -25,6 +25,15 @@
     "durableReplayStorePolicy": { "$ref": "#/$defs/durableReplayStorePolicy" },
     "durableReplayStoreValidationReport": {
       "$ref": "#/$defs/durableReplayStoreValidationReport"
+    },
+    "durableReplayMigrationGuardReport": {
+      "$ref": "#/$defs/durableReplayMigrationGuardReport"
+    },
+    "durableReplayMigrationGuardDecision": {
+      "$ref": "#/$defs/durableReplayMigrationGuardDecision"
+    },
+    "durableReplayMigrationReadiness": {
+      "$ref": "#/$defs/durableReplayMigrationReadiness"
     }
   },
   "$defs": {
@@ -408,6 +417,77 @@
         "railwayCliUsed": { "const": false },
         "liveDbUsed": { "const": false },
         "serverCreated": { "const": false },
+        "failures": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "durableReplayMigrationGuardDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "migrationDraftReady",
+        "applyAllowed",
+        "liveDbWrite",
+        "durableReplayMigrationApplied",
+        "failures"
+      ],
+      "properties": {
+        "migrationDraftReady": { "type": "boolean" },
+        "applyAllowed": { "const": false },
+        "liveDbWrite": { "const": false },
+        "durableReplayMigrationApplied": { "const": false },
+        "failures": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "durableReplayMigrationReadiness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "migrationDraftReady",
+        "applyAllowed",
+        "liveDbWrite",
+        "durableReplayMigrationApplied",
+        "failures"
+      ],
+      "properties": {
+        "migrationDraftReady": { "type": "boolean" },
+        "applyAllowed": { "const": false },
+        "liveDbWrite": { "const": false },
+        "durableReplayMigrationApplied": { "const": false },
+        "failures": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "durableReplayMigrationGuardReport": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "schemaVersion",
+        "kind",
+        "ok",
+        "migrationDraftReady",
+        "applyAllowed",
+        "liveDbWrite",
+        "durableReplayMigrationApplied",
+        "failures"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "kind": {
+          "const": "gptoss_private_serving_durable_replay_migration_guard"
+        },
+        "ok": { "type": "boolean" },
+        "migrationDraftReady": { "type": "boolean" },
+        "applyAllowed": { "const": false },
+        "liveDbWrite": { "const": false },
+        "durableReplayMigrationApplied": { "const": false },
         "failures": {
           "type": "array",
           "items": { "type": "string" }

@@ -67,6 +67,9 @@ export function buildCloudGate({
     replayProtectionDurableDesigned: readiness.replayProtectionDurableDesigned === true,
     replayProtectionDurableImplemented: readiness.replayProtectionDurableImplemented === true,
     replayProtectionDurable: readiness.replayProtectionDurable === true,
+    durableReplayMigrationDraftReady: readiness.durableReplayMigrationDraftReady === true,
+    durableReplayMigrationApplyBlocked: readiness.durableReplayMigrationApplyAllowed === false,
+    durableReplayMigrationNotApplied: readiness.durableReplayMigrationApplied === false,
     rateLimitScaffoldReady: readiness.rateLimitScaffoldReady === true,
     rateLimitImplemented: readiness.rateLimitImplemented === true,
     responseShapingScaffoldReady: readiness.responseShapingScaffoldReady === true,
@@ -125,6 +128,15 @@ export function buildCloudGate({
     blockers.push('replay_protection_durable_not_implemented');
   }
   if (!checks.replayProtectionDurable) blockers.push('replay_protection_not_durable');
+  if (!checks.durableReplayMigrationDraftReady) {
+    blockers.push('durable_replay_migration_draft_not_ready');
+  }
+  if (!checks.durableReplayMigrationApplyBlocked) {
+    blockers.push('durable_replay_migration_apply_allowed');
+  }
+  if (!checks.durableReplayMigrationNotApplied) {
+    blockers.push('durable_replay_migration_applied');
+  }
   if (!checks.rateLimitScaffoldReady) blockers.push('rate_limit_scaffold_missing');
   if (!checks.rateLimitImplemented) blockers.push('rate_limit_not_implemented');
   if (!checks.responseShapingScaffoldReady) blockers.push('response_shaping_scaffold_missing');
@@ -149,6 +161,9 @@ export function buildCloudGate({
     replayProtectionDurableDesigned: checks.replayProtectionDurableDesigned,
     replayProtectionDurableImplemented: checks.replayProtectionDurableImplemented,
     replayProtectionDurable: checks.replayProtectionDurable,
+    durableReplayMigrationDraftReady: checks.durableReplayMigrationDraftReady,
+    durableReplayMigrationApplyAllowed: false,
+    durableReplayMigrationApplied: false,
     privateServingImplemented: checks.privateServingImplemented,
     privateServingExposed: checks.privateServingExposed,
     publicServerCreated: checks.publicServerCreated,
@@ -175,6 +190,9 @@ export function buildCloudGate({
       replayProtectionDurableDesigned: readiness.replayProtectionDurableDesigned,
       replayProtectionDurableImplemented: readiness.replayProtectionDurableImplemented,
       replayProtectionDurable: readiness.replayProtectionDurable,
+      durableReplayMigrationDraftReady: readiness.durableReplayMigrationDraftReady,
+      durableReplayMigrationApplyAllowed: readiness.durableReplayMigrationApplyAllowed,
+      durableReplayMigrationApplied: readiness.durableReplayMigrationApplied,
       rateLimitScaffoldReady: readiness.rateLimitScaffoldReady,
       rateLimitImplemented: readiness.rateLimitImplemented,
       responseShapingScaffoldReady: readiness.responseShapingScaffoldReady,

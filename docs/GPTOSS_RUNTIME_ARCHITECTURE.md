@@ -192,6 +192,12 @@ migration draft, an interface contract module, a validation gate, and rollback
 criteria. It does not connect to a live DB, apply the draft migration, create a
 server, or expose any endpoint.
 
+Phase 5.7 adds a migration guard for the draft. The migration draft exists, but
+apply is blocked. The guard validates the draft and no-DB contract only; it
+does not execute migrations or connect to a database. Durable replay remains
+unimplemented, so private serving, cloud, and Custom GPT exposure remain
+blocked.
+
 The scaffold covers:
 
 - request signing canonicalization and hash helpers
@@ -203,12 +209,14 @@ The scaffold covers:
   `docs/GPTOSS_DURABLE_REPLAY_STORE_IMPLEMENTATION_PLAN.md`,
   `migrations/drafts/gptoss_durable_replay_store.sql`, and
   `scripts/gptoss/private-serving/private-serving-durable-replay-store.mjs`
+- durable replay migration guard review only:
+  `scripts/gptoss/private-serving/private-serving-durable-replay-migration-guard.mjs`
 - in-memory rate-limit policy evaluation for tests only
 - response shaping that emits only the safe effective-router envelope
 - structured denial responses
 - scaffold validation and local scaffold reports
 
-Current Phase 5.5 readiness fields are:
+Current Phase 5 readiness fields are:
 
 - `privateServingDesignReady:true`
 - `privateServingScaffoldReady:true`
@@ -223,6 +231,9 @@ Current Phase 5.5 readiness fields are:
 - `replayProtectionDurableDesigned:true`
 - `replayProtectionDurableImplemented:false`
 - `replayProtectionDurable:false`
+- `durableReplayMigrationDraftReady:true`
+- `durableReplayMigrationApplyAllowed:false`
+- `durableReplayMigrationApplied:false`
 - `rateLimitScaffoldReady:true`
 - `rateLimitImplemented:false`
 - `responseShapingScaffoldReady:true`

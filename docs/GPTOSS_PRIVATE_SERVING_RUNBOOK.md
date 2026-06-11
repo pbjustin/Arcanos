@@ -29,6 +29,11 @@ draft, a no-DB interface contract, validation gate, and rollback plan. It does
 not connect to a live DB, apply a migration, create a server, or expose an
 endpoint.
 
+Phase 5.7 adds a durable replay migration guard. The guard validates the draft
+only; migration apply remains blocked, no migration execution exists, no DB
+connectivity exists, durable replay remains unimplemented, and exposure remains
+blocked.
+
 ## Preflight
 
 Confirm the checkout and scripts without running a model:
@@ -76,6 +81,7 @@ npm run gptoss:private-serving:design:validate
 npm run gptoss:private-serving:threat-model:validate
 npm run gptoss:private-serving:durable-replay:design:validate
 npm run gptoss:private-serving:durable-replay:implementation-plan:validate
+npm run gptoss:private-serving:durable-replay:migration-guard
 npm run gptoss:private-serving:auth:validate
 npm run gptoss:private-serving:scaffold:validate
 ```
@@ -123,8 +129,13 @@ Pass criteria:
 - `replayProtectionDurableImplemented:false` confirms the Phase 5.6 plan,
   draft migration, and contract do not enable a live durable store.
 - `replayProtectionDurable:false` blocks private serving exposure.
+- `durableReplayMigrationDraftReady:true` confirms the draft passes guarded
+  review checks.
+- `durableReplayMigrationApplyAllowed:false` and
+  `durableReplayMigrationApplied:false` confirm no live migration path is
+  enabled.
 
-Expected Phase 5.5 local replay fields:
+Expected current local replay fields:
 
 ```json
 {
@@ -141,6 +152,9 @@ Expected Phase 5.5 local replay fields:
   "replayProtectionDurableDesigned": true,
   "replayProtectionDurableImplemented": false,
   "replayProtectionDurable": false,
+  "durableReplayMigrationDraftReady": true,
+  "durableReplayMigrationApplyAllowed": false,
+  "durableReplayMigrationApplied": false,
   "rateLimitScaffoldReady": true,
   "rateLimitImplemented": false,
   "responseShapingScaffoldReady": true,
@@ -165,7 +179,9 @@ local helpers:
 - Phase 5.5 durable replay design is documented and schema-validated only; no
   live DB store or migration is wired
 - Phase 5.6 durable replay implementation planning exists; the migration draft
-  is under `migrations/drafts/` and must not be applied
+  is under `migrations/drafts/`, the guard validates draft safety only,
+  migration apply is blocked, and no migration execution path, DB connectivity,
+  or live durable store exists
 - rate limiting is in-memory policy only
 - response shaping strips raw model text and emits only the safe envelope
 - denial helpers return structured refusals without stack traces
