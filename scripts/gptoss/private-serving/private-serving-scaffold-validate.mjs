@@ -68,7 +68,8 @@ function listModuleFiles(scaffoldDir) {
       path.endsWith('.mjs') &&
       !path.endsWith('private-serving-scaffold-validate.mjs') &&
       !path.endsWith('private-serving-durable-replay-design-validate.mjs') &&
-      !path.endsWith('private-serving-durable-replay-implementation-plan-validate.mjs'),
+      !path.endsWith('private-serving-durable-replay-implementation-plan-validate.mjs') &&
+      !path.endsWith('private-serving-durable-replay-readiness-validate.mjs'),
     );
 }
 

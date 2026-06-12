@@ -781,6 +781,7 @@ Phase 5.6 adds implementation planning only:
 ```bash
 npm run gptoss:private-serving:durable-replay:implementation-plan:validate
 npm run gptoss:private-serving:durable-replay:migration-guard
+npm run gptoss:private-serving:durable-replay:readiness:validate
 ```
 
 The Phase 5.6 artifacts are
@@ -792,6 +793,12 @@ SQL file is a design draft only and must not be applied.
 The guard validates the draft only. It does not apply or execute migrations and
 does not establish DB connectivity. Migration apply remains blocked, and no
 live durable replay store is implemented.
+
+Phase 5.8 completes durable replay implementation readiness review. It documents
+the future PostgreSQL nonce ledger decision, key rotation lifecycle, rollback
+strategy, security checklist, and readiness validator. It does not implement the
+ledger, connect to a live DB, apply migrations, create a server, expose an
+endpoint, call OpenAI, train, use vLLM, run Railway CLI, or expose Custom GPT.
 
 The scaffold status is:
 
@@ -809,6 +816,8 @@ The scaffold status is:
 - Phase 5.7 durable replay migration guard exists; the migration draft exists,
   migration apply is blocked, no migration execution or DB connectivity exists,
   and no live durable store is implemented
+- Phase 5.8 durable replay implementation readiness review is complete, but
+  durable replay implementation has not started and exposure remains blocked
 - durable replay store and persistent nonce ledger are not implemented
 - rate limiting is in-memory policy only and not durable production state
 - response shaping emits only the safe effective-router envelope
@@ -830,6 +839,7 @@ Expected readiness:
   "replayProtectionScaffoldReady": true,
   "replayProtectionImplemented": true,
   "replayProtectionDurableDesigned": true,
+  "durableReplayImplementationReady": true,
   "replayProtectionDurableImplemented": false,
   "replayProtectionDurable": false,
   "durableReplayMigrationDraftReady": true,

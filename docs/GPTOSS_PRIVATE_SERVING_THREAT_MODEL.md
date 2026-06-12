@@ -29,6 +29,12 @@ Phase 5.6 adds an implementation plan, design-only migration draft, interface
 contract, validation gate, and rollback plan. It still does not apply a
 migration, connect to a live DB, create a server, or expose private serving.
 
+Phase 5.8 completes durable replay implementation readiness review. It records
+the future storage decision, key rotation requirements, rollback plan, security
+checklist, and readiness validation. Durable replay storage is not started,
+migration apply remains blocked, and private serving/cloud/Custom GPT exposure
+remain blocked.
+
 Current baseline:
 
 - Local controlled runtime: ready for local testing only.
@@ -47,6 +53,7 @@ Current baseline:
 | Raw model output leakage | Raw generations could include analysis-style continuations, internal policy text, prompt fragments, or sensitive local context. | Force final-channel behavior, cap output, validate response envelopes, and keep raw local reports under ignored `local_artifacts/`. | `npm run gptoss:runtime:request:local-model:smoke` and `npm run gptoss:runtime:readiness` | Local smoke only; public output handling needs separate review. |
 | Audit log secret leakage | Audit records could persist bearer tokens, OpenAI keys, Railway tokens, cookies, database URLs, passwords, or raw environment values. | Store hashes plus redacted, capped previews only; inspect latest audit records before release; never place secrets in committed docs or fixtures. | `npm run gptoss:runtime:audit:latest` and `npm run gptoss:runtime:release-gate` | Local audit path exists; must be inspected before any private serving release. |
 | Replay abuse | Replay artifacts could become a way to re-run sensitive requests or load the local model outside the intended gate. | Keep replay dry-run by default; require explicit local execution flag for model loading; use audit file paths only under local artifacts; require durable replay protection before exposure. | `npm run gptoss:runtime:request:replay -- --audit local_artifacts/gptoss-runtime/audit/<audit-file>.json`, `npm run gptoss:private-serving:durable-replay:design:validate`, and `npm run gptoss:private-serving:durable-replay:implementation-plan:validate` | Local replay is dry-run by default. Private-serving replay protection is in-memory helper/local test implementation only. Durable replay is designed and planned but not implemented; `replayProtectionDurable:false` and no endpoint exists. |
+| Durable replay implementation readiness drift | A future implementation could begin with unresolved schema, storage, retention, key-rotation, or rollback assumptions. | Keep Phase 5.8 as review-only; document storage, key rotation, rollback, and security requirements; require the readiness validator before any later implementation phase. | `npm run gptoss:private-serving:durable-replay:readiness:validate` | Readiness review is complete, but durable replay remains unimplemented and exposure remains blocked. |
 | Request forgery | Unauthenticated callers or forged Custom GPT actions could submit requests to the private runtime. | Require an authenticated gateway and request signature or equivalent auth boundary before cloud exposure; reject direct local and Custom GPT access. | `npm run gptoss:private-serving:auth:validate` and `npm run gptoss:runtime:cloud-gate` | Local signing and auth decision helpers exist. Production auth integration and exposure remain blocked. |
 | Missing rate limits | Private serving could be exhausted or abused if request volume is unlimited. | Add per-principal and global rate limits before exposure; fail closed on missing limit configuration. | Future private serving gate plus `npm run gptoss:runtime:cloud-gate` | Blocked. Rate limit implementation is not approved yet. |
 | Accidental training from requests | User prompts, logs, audit records, replay records, or Custom GPT action requests could be used as training data without consent and review. | Keep request/audit/replay artifacts non-trainable; dataset gates must reject `custom_gpt_action_request`, raw logs, unknown sources, and unreviewed model-generated labels. | `npm run gptoss:runtime:release-gate` | Mitigated by policy and current local gates; future exports require review. |
@@ -83,6 +90,8 @@ Private serving cannot advance unless all of the following are true:
 - `replayProtectionImplemented:true` means helper-level/local test
   implementation only.
 - `replayProtectionDurableDesigned:true` means design/schema/validation only.
+- `durableReplayImplementationReady:true` means readiness review is complete,
+  not that durable replay storage exists.
 - `replayProtectionDurableImplemented:false` and
   `replayProtectionDurable:false` block private serving exposure; durable
   replay store and persistent nonce ledger are not implemented.

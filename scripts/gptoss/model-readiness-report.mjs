@@ -24,6 +24,7 @@ export const PRIVATE_SERVING_DESIGN_READINESS = {
   replayProtectionDurableDesigned: true,
   replayProtectionDurableImplemented: false,
   replayProtectionDurable: false,
+  durableReplayImplementationReady: true,
   durableReplayMigrationDraftReady: true,
   durableReplayMigrationApplyAllowed: false,
   durableReplayMigrationApplied: false,

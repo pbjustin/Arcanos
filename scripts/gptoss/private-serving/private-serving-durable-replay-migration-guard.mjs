@@ -21,6 +21,7 @@ export const DURABLE_REPLAY_MIGRATION_GUARD_REPORT =
 const REQUIRED_MARKERS = [
   'DESIGN DRAFT ONLY',
   'DO NOT APPLY',
+  'NO LIVE DB EXECUTION',
 ];
 
 const RAW_NONCE_COLUMN_PATTERN = /^\s*(nonce|raw_nonce|rawnonce)\s+/im;

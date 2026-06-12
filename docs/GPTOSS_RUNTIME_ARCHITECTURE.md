@@ -198,6 +198,12 @@ does not execute migrations or connect to a database. Durable replay remains
 unimplemented, so private serving, cloud, and Custom GPT exposure remain
 blocked.
 
+Phase 5.8 completes durable replay implementation readiness review. It adds the
+storage-decision/key-rotation review, rollback plan, security review, schema
+report definitions, and readiness validator. Durable replay storage is still
+not implemented, no live database is used, migration apply remains blocked, and
+cloud/Custom GPT exposure remain blocked.
+
 The scaffold covers:
 
 - request signing canonicalization and hash helpers
@@ -211,6 +217,11 @@ The scaffold covers:
   `scripts/gptoss/private-serving/private-serving-durable-replay-store.mjs`
 - durable replay migration guard review only:
   `scripts/gptoss/private-serving/private-serving-durable-replay-migration-guard.mjs`
+- durable replay implementation readiness review only:
+  `docs/GPTOSS_DURABLE_REPLAY_IMPLEMENTATION_READINESS.md`,
+  `docs/GPTOSS_DURABLE_REPLAY_SECURITY_REVIEW.md`,
+  `docs/GPTOSS_DURABLE_REPLAY_ROLLBACK_PLAN.md`, and
+  `scripts/gptoss/private-serving/private-serving-durable-replay-readiness-validate.mjs`
 - in-memory rate-limit policy evaluation for tests only
 - response shaping that emits only the safe effective-router envelope
 - structured denial responses
@@ -229,6 +240,7 @@ Current Phase 5 readiness fields are:
 - `replayProtectionScaffoldReady:true`
 - `replayProtectionImplemented:true`
 - `replayProtectionDurableDesigned:true`
+- `durableReplayImplementationReady:true`
 - `replayProtectionDurableImplemented:false`
 - `replayProtectionDurable:false`
 - `durableReplayMigrationDraftReady:true`

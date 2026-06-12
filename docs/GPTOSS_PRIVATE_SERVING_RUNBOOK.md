@@ -34,6 +34,12 @@ only; migration apply remains blocked, no migration execution exists, no DB
 connectivity exists, durable replay remains unimplemented, and exposure remains
 blocked.
 
+Phase 5.8 completes durable replay implementation readiness review. It adds
+storage-decision, key-rotation, rollback, and security review documentation plus
+a readiness validator. It does not implement durable replay storage, connect to
+a database, apply migrations, create a server, expose an endpoint, or change
+cloud/Custom GPT readiness.
+
 ## Preflight
 
 Confirm the checkout and scripts without running a model:
@@ -82,6 +88,7 @@ npm run gptoss:private-serving:threat-model:validate
 npm run gptoss:private-serving:durable-replay:design:validate
 npm run gptoss:private-serving:durable-replay:implementation-plan:validate
 npm run gptoss:private-serving:durable-replay:migration-guard
+npm run gptoss:private-serving:durable-replay:readiness:validate
 npm run gptoss:private-serving:auth:validate
 npm run gptoss:private-serving:scaffold:validate
 ```
@@ -126,6 +133,8 @@ Pass criteria:
 - `replayProtectionImplemented:true` means helper-level/local test
   implementation only.
 - `replayProtectionDurableDesigned:true` means design/schema/validation only.
+- `durableReplayImplementationReady:true` means readiness review is complete;
+  it does not mean durable replay storage exists.
 - `replayProtectionDurableImplemented:false` confirms the Phase 5.6 plan,
   draft migration, and contract do not enable a live durable store.
 - `replayProtectionDurable:false` blocks private serving exposure.
@@ -150,6 +159,7 @@ Expected current local replay fields:
   "replayProtectionScaffoldReady": true,
   "replayProtectionImplemented": true,
   "replayProtectionDurableDesigned": true,
+  "durableReplayImplementationReady": true,
   "replayProtectionDurableImplemented": false,
   "replayProtectionDurable": false,
   "durableReplayMigrationDraftReady": true,
@@ -182,6 +192,9 @@ local helpers:
   is under `migrations/drafts/`, the guard validates draft safety only,
   migration apply is blocked, and no migration execution path, DB connectivity,
   or live durable store exists
+- Phase 5.8 durable replay implementation readiness review is complete; storage
+  selection, key rotation, rollback, and security controls are documented, but
+  durable replay storage is not started
 - rate limiting is in-memory policy only
 - response shaping strips raw model text and emits only the safe envelope
 - denial helpers return structured refusals without stack traces

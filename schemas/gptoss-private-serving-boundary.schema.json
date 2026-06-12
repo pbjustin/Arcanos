@@ -34,6 +34,15 @@
     },
     "durableReplayMigrationReadiness": {
       "$ref": "#/$defs/durableReplayMigrationReadiness"
+    },
+    "durableReplayImplementationReadinessReport": {
+      "$ref": "#/$defs/durableReplayImplementationReadinessReport"
+    },
+    "durableReplaySecurityReview": {
+      "$ref": "#/$defs/durableReplaySecurityReview"
+    },
+    "durableReplayRollbackReview": {
+      "$ref": "#/$defs/durableReplayRollbackReview"
     }
   },
   "$defs": {
@@ -488,6 +497,145 @@
         "applyAllowed": { "const": false },
         "liveDbWrite": { "const": false },
         "durableReplayMigrationApplied": { "const": false },
+        "failures": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "durableReplayImplementationReadinessReport": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "schemaVersion",
+        "kind",
+        "ok",
+        "durableReplayImplementationReady",
+        "replayProtectionDurableDesigned",
+        "replayProtectionDurableImplemented",
+        "replayProtectionDurable",
+        "privateServingImplemented",
+        "privateServingExposed",
+        "cloudReady",
+        "customGptReady",
+        "migrationGuardExists",
+        "migrationApplyBlocked",
+        "durableReplayMigrationApplied",
+        "liveDbUsed",
+        "liveDbWrite",
+        "serverCreated",
+        "openAiCalled",
+        "trainingExecuted",
+        "vllmUsed",
+        "railwayCliUsed",
+        "noDbImplementation",
+        "noServerImplementation",
+        "noExposurePath",
+        "failures"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "kind": {
+          "const": "gptoss_private_serving_durable_replay_implementation_readiness"
+        },
+        "ok": { "type": "boolean" },
+        "durableReplayImplementationReady": { "const": true },
+        "replayProtectionDurableDesigned": { "const": true },
+        "replayProtectionDurableImplemented": { "const": false },
+        "replayProtectionDurable": { "const": false },
+        "privateServingImplemented": { "const": false },
+        "privateServingExposed": { "const": false },
+        "cloudReady": { "const": false },
+        "customGptReady": { "const": false },
+        "migrationGuardExists": { "const": true },
+        "migrationApplyBlocked": { "const": true },
+        "durableReplayMigrationApplied": { "const": false },
+        "liveDbUsed": { "const": false },
+        "liveDbWrite": { "const": false },
+        "serverCreated": { "const": false },
+        "openAiCalled": { "const": false },
+        "trainingExecuted": { "const": false },
+        "vllmUsed": { "const": false },
+        "railwayCliUsed": { "const": false },
+        "noDbImplementation": { "const": true },
+        "noServerImplementation": { "const": true },
+        "noExposurePath": { "const": true },
+        "failures": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "durableReplaySecurityReview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "kind",
+        "ok",
+        "noRawNonceStorage",
+        "noRawBodyStorage",
+        "noSecretStorage",
+        "noSignatureStorage",
+        "noOpenAiContamination",
+        "noTrainingDataIngestion",
+        "noDbAccessInCurrentPhase",
+        "noEndpointExposure",
+        "noCustomGptAccess",
+        "durableReplayImplementationAllowed",
+        "failures"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "kind": { "const": "gptoss_private_serving_durable_replay_security_review" },
+        "ok": { "type": "boolean" },
+        "noRawNonceStorage": { "const": true },
+        "noRawBodyStorage": { "const": true },
+        "noSecretStorage": { "const": true },
+        "noSignatureStorage": { "const": true },
+        "noOpenAiContamination": { "const": true },
+        "noTrainingDataIngestion": { "const": true },
+        "noDbAccessInCurrentPhase": { "const": true },
+        "noEndpointExposure": { "const": true },
+        "noCustomGptAccess": { "const": true },
+        "durableReplayImplementationAllowed": { "const": false },
+        "failures": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "durableReplayRollbackReview": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "kind",
+        "ok",
+        "migrationRollbackStrategyDocumented",
+        "featureDisableStrategyDocumented",
+        "replayFallbackBehaviorDocumented",
+        "auditPreservationDocumented",
+        "incidentRecoveryChecklistDocumented",
+        "failClosedRequirementsDocumented",
+        "executableRollbackCode",
+        "cloudReady",
+        "customGptReady",
+        "failures"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "kind": { "const": "gptoss_private_serving_durable_replay_rollback_review" },
+        "ok": { "type": "boolean" },
+        "migrationRollbackStrategyDocumented": { "const": true },
+        "featureDisableStrategyDocumented": { "const": true },
+        "replayFallbackBehaviorDocumented": { "const": true },
+        "auditPreservationDocumented": { "const": true },
+        "incidentRecoveryChecklistDocumented": { "const": true },
+        "failClosedRequirementsDocumented": { "const": true },
+        "executableRollbackCode": { "const": false },
+        "cloudReady": { "const": false },
+        "customGptReady": { "const": false },
         "failures": {
           "type": "array",
           "items": { "type": "string" }
