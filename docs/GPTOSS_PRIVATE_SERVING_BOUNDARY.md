@@ -25,6 +25,12 @@ rollback behavior in `docs/GPTOSS_DURABLE_REPLAY_STORE_DESIGN.md`. It does not
 implement a live DB store, add a SQL migration, create a server, expose an
 endpoint, or change private serving readiness.
 
+Phase 5.9 adds production key-management design and a planned key-rotation
+runbook only. It does not load real signing keys, read keys from environment
+variables, integrate with KMS, create production key resolution, expose an
+endpoint, or change readiness. Request signing remains local/test-safe helper
+logic.
+
 ## Purpose
 
 The private serving boundary exists to let an approved Arcanos backend caller
@@ -135,6 +141,12 @@ durable store shape and policy have schema and validation coverage.
 `replayProtectionDurableImplemented:false` and `replayProtectionDurable:false`
 remain the exposure blockers.
 
+Phase 5.9 production key management is design-only. The design and planned
+rotation runbook live in `docs/GPTOSS_PRODUCTION_KEY_MANAGEMENT_DESIGN.md` and
+`docs/GPTOSS_KEY_ROTATION_RUNBOOK.md`. No real keys are loaded, no environment
+key reads exist, no KMS integration exists, and no production signing key
+ownership path is implemented.
+
 The effective router must continue to report raw model status separately from
 effective-router status. A passing effective-router result does not imply that
 the raw model is ready for direct serving.
@@ -228,7 +240,7 @@ prove all of the following with deterministic JSON reports:
 Readiness must not depend on live OpenAI calls, live training, Railway CLI
 mutation, public internet exposure, or live database mutation.
 
-Current Phase 5.5 readiness remains unexposed:
+Current Phase 5 readiness remains unexposed:
 
 - `privateServingDesignReady:true`
 - `privateServingScaffoldReady:true`
@@ -238,6 +250,11 @@ Current Phase 5.5 readiness remains unexposed:
 - `requestSigningImplemented:true`
 - `authBoundaryScaffoldReady:true`
 - `authBoundaryImplemented:true`
+- `productionKeyManagementDesigned:true`
+- `productionKeyManagementImplemented:false`
+- `realSecretsUsed:false`
+- `envSecretsRead:false`
+- `kmsIntegrated:false`
 - `replayProtectionScaffoldReady:true`
 - `replayProtectionImplemented:true`
 - `replayProtectionDurableDesigned:true`
@@ -254,12 +271,15 @@ Current Phase 5.5 readiness remains unexposed:
 implementation only. `replayProtectionDurableDesigned:true` is design-only.
 `replayProtectionDurableImplemented:false` and `replayProtectionDurable:false`
 block private serving exposure.
+Phase 5.9 keeps production key management as design-only, so
+`privateServingImplemented:false`, `privateServingExposed:false`,
+`cloudReady:false`, and `customGptReady:false` remain required.
 
 Required future work before any exposure can be considered:
 
 - durable replay store implementation
 - persistent nonce ledger implementation
-- key rotation
+- implemented production key management and key rotation
 - production auth integration
 - private network boundary
 - server review

@@ -43,6 +43,15 @@
     },
     "durableReplayRollbackReview": {
       "$ref": "#/$defs/durableReplayRollbackReview"
+    },
+    "productionKeyManagementDesign": {
+      "$ref": "#/$defs/productionKeyManagementDesign"
+    },
+    "keyDescriptor": { "$ref": "#/$defs/keyDescriptor" },
+    "keyRotationPolicy": { "$ref": "#/$defs/keyRotationPolicy" },
+    "keyRevocationPolicy": { "$ref": "#/$defs/keyRevocationPolicy" },
+    "keyManagementReadinessReport": {
+      "$ref": "#/$defs/keyManagementReadinessReport"
     }
   },
   "$defs": {
@@ -102,7 +111,195 @@
       "properties": {
         "keyId": { "$ref": "#/$defs/nonEmptyString" },
         "subject": { "$ref": "#/$defs/nonEmptyString" },
-        "label": { "$ref": "#/$defs/nonEmptyString" }
+        "label": { "$ref": "#/$defs/nonEmptyString" },
+        "owner": { "$ref": "#/$defs/nonEmptyString" },
+        "audience": { "const": "gptoss-effective-router-private" },
+        "status": {
+          "type": "string",
+          "enum": ["planned", "active", "rotating", "deprecated", "revoked", "retired"]
+        },
+        "activationTime": { "$ref": "#/$defs/dateTimeString" },
+        "retirementTime": { "$ref": "#/$defs/dateTimeString" },
+        "rawKeyMaterialStored": { "const": false },
+        "envSecretRead": { "const": false },
+        "kmsIntegrated": { "const": false }
+      }
+    },
+    "keyRotationPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "designed",
+        "implemented",
+        "cadenceDays",
+        "overlapWindowRequired",
+        "oldKeyReplayWindowHandling",
+        "durableReplayRequired",
+        "realSecretsUsed",
+        "envSecretsRead",
+        "kmsIntegrated"
+      ],
+      "properties": {
+        "designed": { "const": true },
+        "implemented": { "const": false },
+        "cadenceDays": { "type": "integer", "minimum": 1 },
+        "overlapWindowRequired": { "const": true },
+        "oldKeyReplayWindowHandling": { "const": "keyId+nonce_window_bound" },
+        "durableReplayRequired": { "const": true },
+        "realSecretsUsed": { "const": false },
+        "envSecretsRead": { "const": false },
+        "kmsIntegrated": { "const": false }
+      }
+    },
+    "keyRevocationPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "designed",
+        "implemented",
+        "failureMode",
+        "revokedKeyAccepted",
+        "auditMetadataRetained",
+        "fallbackAllowed",
+        "privateServingImplemented",
+        "privateServingExposed"
+      ],
+      "properties": {
+        "designed": { "const": true },
+        "implemented": { "const": false },
+        "failureMode": { "const": "fail_closed" },
+        "revokedKeyAccepted": { "const": false },
+        "auditMetadataRetained": { "const": true },
+        "fallbackAllowed": { "const": false },
+        "privateServingImplemented": { "const": false },
+        "privateServingExposed": { "const": false }
+      }
+    },
+    "productionKeyManagementDesign": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "phase",
+        "productionKeyManagementDesigned",
+        "productionKeyManagementImplemented",
+        "realSecretsUsed",
+        "envSecretsRead",
+        "kmsIntegrated",
+        "keyDescriptor",
+        "keyRotationPolicy",
+        "keyRevocationPolicy",
+        "auditRequirements",
+        "futureImplementationBlockers",
+        "privateServingImplemented",
+        "privateServingExposed",
+        "cloudReady",
+        "customGptReady"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "phase": { "const": "5.9" },
+        "productionKeyManagementDesigned": { "const": true },
+        "productionKeyManagementImplemented": { "const": false },
+        "realSecretsUsed": { "const": false },
+        "envSecretsRead": { "const": false },
+        "kmsIntegrated": { "const": false },
+        "keyDescriptor": { "$ref": "#/$defs/keyDescriptor" },
+        "keyRotationPolicy": { "$ref": "#/$defs/keyRotationPolicy" },
+        "keyRevocationPolicy": { "$ref": "#/$defs/keyRevocationPolicy" },
+        "auditRequirements": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/nonEmptyString" }
+        },
+        "futureImplementationBlockers": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/nonEmptyString" }
+        },
+        "privateServingImplemented": { "const": false },
+        "privateServingExposed": { "const": false },
+        "cloudReady": { "const": false },
+        "customGptReady": { "const": false }
+      }
+    },
+    "keyManagementReadinessReport": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "schemaVersion",
+        "kind",
+        "ok",
+        "productionKeyManagementDesigned",
+        "productionKeyManagementImplemented",
+        "keyRotationPolicyDesigned",
+        "keyRotationPolicyImplemented",
+        "keyRevocationPolicyDesigned",
+        "keyRevocationPolicyImplemented",
+        "realSecretsUsed",
+        "envSecretsRead",
+        "kmsIntegrated",
+        "noRealSecretLiterals",
+        "noEnvSecretReads",
+        "noKmsImports",
+        "noCloudSdkImports",
+        "noServerListener",
+        "noOpenAiPath",
+        "noRailwayPath",
+        "noDbPath",
+        "noVllmPath",
+        "readinessBlocked",
+        "privateServingImplemented",
+        "privateServingExposed",
+        "cloudReady",
+        "customGptReady",
+        "openAiCalled",
+        "trainingExecuted",
+        "vllmUsed",
+        "railwayCliUsed",
+        "liveDbUsed",
+        "serverCreated",
+        "failures"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "kind": {
+          "const": "gptoss_private_serving_key_management_design_validation"
+        },
+        "ok": { "type": "boolean" },
+        "productionKeyManagementDesigned": { "const": true },
+        "productionKeyManagementImplemented": { "const": false },
+        "keyRotationPolicyDesigned": { "const": true },
+        "keyRotationPolicyImplemented": { "const": false },
+        "keyRevocationPolicyDesigned": { "const": true },
+        "keyRevocationPolicyImplemented": { "const": false },
+        "realSecretsUsed": { "const": false },
+        "envSecretsRead": { "const": false },
+        "kmsIntegrated": { "const": false },
+        "noRealSecretLiterals": { "const": true },
+        "noEnvSecretReads": { "const": true },
+        "noKmsImports": { "const": true },
+        "noCloudSdkImports": { "const": true },
+        "noServerListener": { "const": true },
+        "noOpenAiPath": { "const": true },
+        "noRailwayPath": { "const": true },
+        "noDbPath": { "const": true },
+        "noVllmPath": { "const": true },
+        "readinessBlocked": { "const": true },
+        "privateServingImplemented": { "const": false },
+        "privateServingExposed": { "const": false },
+        "cloudReady": { "const": false },
+        "customGptReady": { "const": false },
+        "openAiCalled": { "const": false },
+        "trainingExecuted": { "const": false },
+        "vllmUsed": { "const": false },
+        "railwayCliUsed": { "const": false },
+        "liveDbUsed": { "const": false },
+        "serverCreated": { "const": false },
+        "failures": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
       }
     },
     "authFailure": {
@@ -956,6 +1153,11 @@
         "authBoundaryDesigned",
         "authBoundaryScaffoldReady",
         "authBoundaryImplemented",
+        "productionKeyManagementDesigned",
+        "productionKeyManagementImplemented",
+        "realSecretsUsed",
+        "envSecretsRead",
+        "kmsIntegrated",
         "replayProtectionScaffoldReady",
         "replayProtectionImplemented",
         "replayProtectionDurableDesigned",
@@ -979,6 +1181,11 @@
         "authBoundaryDesigned": { "const": true },
         "authBoundaryScaffoldReady": { "const": true },
         "authBoundaryImplemented": { "const": true },
+        "productionKeyManagementDesigned": { "const": true },
+        "productionKeyManagementImplemented": { "const": false },
+        "realSecretsUsed": { "const": false },
+        "envSecretsRead": { "const": false },
+        "kmsIntegrated": { "const": false },
         "replayProtectionScaffoldReady": { "const": true },
         "replayProtectionImplemented": { "const": true },
         "replayProtectionDurableDesigned": { "const": true },

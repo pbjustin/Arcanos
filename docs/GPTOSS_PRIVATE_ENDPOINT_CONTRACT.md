@@ -14,6 +14,10 @@ or Custom GPT action.
 
 All allowed endpoints must be private-only, schema-validated, authenticated,
 rate-limited, audited, rollback-aware, and secret-free.
+They must not become reachable until production key management is implemented
+in a later approved phase; the Phase 5.9 key-management documents are
+design-only and keep `privateServingImplemented:false`,
+`privateServingExposed:false`, `cloudReady:false`, and `customGptReady:false`.
 
 The Phase 5.1 scaffolds are not endpoint implementations:
 
@@ -48,8 +52,12 @@ endpoint, or server. No endpoint/server exists.
 `replayProtectionImplemented:true` means helper-level/local test implementation
 only; `replayProtectionDurable:false` blocks private serving exposure.
 
-Future work before any exposure includes durable replay store, persistent nonce
-ledger, key rotation, production auth integration, private network boundary,
+Phase 5.9 adds production key-management design and a planned key-rotation
+runbook only. No real keys are loaded, no environment key reads exist, no KMS
+integration exists, no production key resolver exists, and request signing
+remains local/test-safe helper logic. Future work before any exposure includes
+durable replay store, persistent nonce ledger, implemented production key
+management and rotation, production auth integration, private network boundary,
 and server review.
 
 Every endpoint response that returns a router result must use the effective plus

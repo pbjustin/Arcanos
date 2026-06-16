@@ -35,6 +35,11 @@ checklist, and readiness validation. Durable replay storage is not started,
 migration apply remains blocked, and private serving/cloud/Custom GPT exposure
 remain blocked.
 
+Phase 5.9 adds production key-management design and a planned key-rotation
+runbook only. It does not load real signing keys, read keys from environment
+variables, integrate with KMS, create production key resolution, or expose
+serving. Request signing remains local/test-safe helper logic.
+
 Current baseline:
 
 - Local controlled runtime: ready for local testing only.
@@ -55,6 +60,7 @@ Current baseline:
 | Replay abuse | Replay artifacts could become a way to re-run sensitive requests or load the local model outside the intended gate. | Keep replay dry-run by default; require explicit local execution flag for model loading; use audit file paths only under local artifacts; require durable replay protection before exposure. | `npm run gptoss:runtime:request:replay -- --audit local_artifacts/gptoss-runtime/audit/<audit-file>.json`, `npm run gptoss:private-serving:durable-replay:design:validate`, and `npm run gptoss:private-serving:durable-replay:implementation-plan:validate` | Local replay is dry-run by default. Private-serving replay protection is in-memory helper/local test implementation only. Durable replay is designed and planned but not implemented; `replayProtectionDurable:false` and no endpoint exists. |
 | Durable replay implementation readiness drift | A future implementation could begin with unresolved schema, storage, retention, key-rotation, or rollback assumptions. | Keep Phase 5.8 as review-only; document storage, key rotation, rollback, and security requirements; require the readiness validator before any later implementation phase. | `npm run gptoss:private-serving:durable-replay:readiness:validate` | Readiness review is complete, but durable replay remains unimplemented and exposure remains blocked. |
 | Request forgery | Unauthenticated callers or forged Custom GPT actions could submit requests to the private runtime. | Require an authenticated gateway and request signature or equivalent auth boundary before cloud exposure; reject direct local and Custom GPT access. | `npm run gptoss:private-serving:auth:validate` and `npm run gptoss:runtime:cloud-gate` | Local signing and auth decision helpers exist. Production auth integration and exposure remain blocked. |
+| Production key compromise or rotation failure | Future production signing keys could be exposed, reused too long, rotated without overlap, or revoked without fail-closed behavior. | Keep Phase 5.9 design-only; require non-secret `keyId` metadata, no raw key logging, no secrets in repo, no environment key reads, no KMS integration in this phase, planned overlap windows, revoked-key denial, emergency disable, and fresh implementation review before exposure. | Future key-management implementation gate plus `npm run gptoss:runtime:cloud-gate` | Blocked. No real keys are loaded, production key management is not implemented, and `privateServingImplemented:false`, `privateServingExposed:false`, `cloudReady:false`, and `customGptReady:false` remain required. |
 | Missing rate limits | Private serving could be exhausted or abused if request volume is unlimited. | Add per-principal and global rate limits before exposure; fail closed on missing limit configuration. | Future private serving gate plus `npm run gptoss:runtime:cloud-gate` | Blocked. Rate limit implementation is not approved yet. |
 | Accidental training from requests | User prompts, logs, audit records, replay records, or Custom GPT action requests could be used as training data without consent and review. | Keep request/audit/replay artifacts non-trainable; dataset gates must reject `custom_gpt_action_request`, raw logs, unknown sources, and unreviewed model-generated labels. | `npm run gptoss:runtime:release-gate` | Mitigated by policy and current local gates; future exports require review. |
 | OpenAI output contamination | OpenAI model outputs or judgments could enter GPT-OSS labels, reports marked trainable, or private serving comparisons. | Keep OpenAI reference mode disabled for runtime gates; mark eval and request reports `allowedForTraining:false`; reject OpenAI output sources. | `npm run gptoss:runtime:request:regress` and `npm run gptoss:runtime:release-gate:ci` | Prohibited. Current gates must keep OpenAI output non-training. |
@@ -78,11 +84,14 @@ Private serving cannot advance unless all of the following are true:
   marked as training data.
 - A rollback path exists for the exact serving boundary being released.
 
-## Phase 5.5 Local Replay Status
+## Phase 5 Local Replay And Key Status
 
 - Request signing verification is implemented locally with HMAC-SHA256 and
   fails closed without an explicitly supplied local signing key.
 - Production key management and rotation are not implemented.
+- Phase 5.9 documents production key management and key rotation as design-only;
+  no real keys are loaded, no environment key reads exist, no KMS integration
+  exists, and request signing remains local/test-safe.
 - The auth decision engine validates request identity, timestamp skew, nonce
   shape, audience, signature, and replay-check availability.
 - Local replay protection is implemented in memory for helper-level/local tests
@@ -110,5 +119,6 @@ Private serving cannot advance unless all of the following are true:
 - Cloud and Custom GPT remain blocked:
   `cloudReady:false`, `customGptReady:false`.
 - Future work before exposure includes durable replay store implementation,
-  persistent nonce ledger implementation, key rotation, production auth
-  integration, private network boundary, and server review.
+  persistent nonce ledger implementation, implemented production key management
+  and key rotation, production auth integration, private network boundary, and
+  server review.

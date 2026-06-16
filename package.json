@@ -137,6 +137,7 @@
     "gptoss:private-serving:durable-replay:implementation-plan:validate": "node scripts/gptoss/private-serving/private-serving-durable-replay-implementation-plan-validate.mjs",
     "gptoss:private-serving:durable-replay:migration-guard": "node scripts/gptoss/private-serving/private-serving-durable-replay-migration-guard.mjs",
     "gptoss:private-serving:durable-replay:readiness:validate": "node scripts/gptoss/private-serving/private-serving-durable-replay-readiness-validate.mjs",
+    "gptoss:private-serving:key-management:design:validate": "node scripts/gptoss/private-serving/private-serving-key-management-design-validate.mjs",
     "gptoss:private-serving:auth:validate": "node scripts/gptoss/private-serving/private-serving-auth-validate.mjs",
     "gptoss:private-serving:replay:validate": "node scripts/gptoss/private-serving/private-serving-replay-validate.mjs",
     "gptoss:private-serving:scaffold:validate": "node scripts/gptoss/private-serving/private-serving-scaffold-validate.mjs",

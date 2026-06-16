@@ -40,6 +40,11 @@ a readiness validator. It does not implement durable replay storage, connect to
 a database, apply migrations, create a server, expose an endpoint, or change
 cloud/Custom GPT readiness.
 
+Phase 5.9 adds production key-management design and a planned key-rotation
+runbook only. It does not load real signing keys, read keys from environment
+variables, integrate with KMS, create a production key resolver, expose an
+endpoint, or change the local/test-safe request signing helper boundary.
+
 ## Preflight
 
 Confirm the checkout and scripts without running a model:
@@ -89,6 +94,7 @@ npm run gptoss:private-serving:durable-replay:design:validate
 npm run gptoss:private-serving:durable-replay:implementation-plan:validate
 npm run gptoss:private-serving:durable-replay:migration-guard
 npm run gptoss:private-serving:durable-replay:readiness:validate
+npm run gptoss:private-serving:key-management:design:validate
 npm run gptoss:private-serving:auth:validate
 npm run gptoss:private-serving:scaffold:validate
 ```
@@ -143,6 +149,10 @@ Pass criteria:
 - `durableReplayMigrationApplyAllowed:false` and
   `durableReplayMigrationApplied:false` confirm no live migration path is
   enabled.
+- Phase 5.9 production key management is design-only; no real keys are loaded,
+  no environment key reads or KMS integration exist, and
+  `privateServingImplemented:false`, `privateServingExposed:false`,
+  `cloudReady:false`, and `customGptReady:false` remain required.
 
 Expected current local replay fields:
 
@@ -156,6 +166,11 @@ Expected current local replay fields:
   "requestSigningImplemented": true,
   "authBoundaryScaffoldReady": true,
   "authBoundaryImplemented": true,
+  "productionKeyManagementDesigned": true,
+  "productionKeyManagementImplemented": false,
+  "realSecretsUsed": false,
+  "envSecretsRead": false,
+  "kmsIntegrated": false,
   "replayProtectionScaffoldReady": true,
   "replayProtectionImplemented": true,
   "replayProtectionDurableDesigned": true,
@@ -195,6 +210,9 @@ local helpers:
 - Phase 5.8 durable replay implementation readiness review is complete; storage
   selection, key rotation, rollback, and security controls are documented, but
   durable replay storage is not started
+- Phase 5.9 production key-management design and key-rotation runbook exist,
+  but no real keys are loaded, no environment key reads or KMS integration
+  exist, and production key management is not implemented
 - rate limiting is in-memory policy only
 - response shaping strips raw model text and emits only the safe envelope
 - denial helpers return structured refusals without stack traces
@@ -205,7 +223,7 @@ Future work required before any exposure:
 
 - reviewed durable replay store implementation
 - persistent nonce ledger implementation
-- key rotation
+- implemented production key management and key rotation
 - production auth integration
 - private network boundary
 - server review

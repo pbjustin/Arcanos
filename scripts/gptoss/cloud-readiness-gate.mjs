@@ -62,6 +62,11 @@ export function buildCloudGate({
     authBoundaryDesigned: readiness.authBoundaryDesigned === true,
     authBoundaryScaffoldReady: readiness.authBoundaryScaffoldReady === true,
     authBoundaryImplemented: readiness.authBoundaryImplemented === true,
+    productionKeyManagementDesigned: readiness.productionKeyManagementDesigned === true,
+    productionKeyManagementImplemented: readiness.productionKeyManagementImplemented === true,
+    realSecretsUsed: readiness.realSecretsUsed === true,
+    envSecretsRead: readiness.envSecretsRead === true,
+    kmsIntegrated: readiness.kmsIntegrated === true,
     replayProtectionScaffoldReady: readiness.replayProtectionScaffoldReady === true,
     replayProtectionImplemented: readiness.replayProtectionImplemented === true,
     replayProtectionDurableDesigned: readiness.replayProtectionDurableDesigned === true,
@@ -104,7 +109,11 @@ export function buildCloudGate({
   const cloudReady = (
     localControlledRuntimeReady &&
     checks.cloudServingPathValidated &&
-    checks.cloudAuthBoundaryExists
+    checks.cloudAuthBoundaryExists &&
+    checks.productionKeyManagementImplemented &&
+    checks.kmsIntegrated &&
+    !checks.realSecretsUsed &&
+    !checks.envSecretsRead
   );
   const customGptReady = (
     cloudReady &&
@@ -121,6 +130,15 @@ export function buildCloudGate({
   if (!checks.requestSigningImplemented) blockers.push('request_signing_not_implemented');
   if (!checks.authBoundaryScaffoldReady) blockers.push('auth_boundary_scaffold_missing');
   if (!checks.authBoundaryImplemented) blockers.push('auth_boundary_not_implemented');
+  if (!checks.productionKeyManagementDesigned) {
+    blockers.push('production_key_management_design_missing');
+  }
+  if (!checks.productionKeyManagementImplemented) {
+    blockers.push('production_key_management_not_implemented');
+  }
+  if (checks.realSecretsUsed) blockers.push('real_secrets_used');
+  if (checks.envSecretsRead) blockers.push('env_secrets_read');
+  if (!checks.kmsIntegrated) blockers.push('kms_not_integrated');
   if (!checks.replayProtectionScaffoldReady) blockers.push('replay_protection_scaffold_missing');
   if (!checks.replayProtectionImplemented) blockers.push('replay_protection_not_implemented');
   if (!checks.replayProtectionDurableDesigned) blockers.push('replay_protection_durable_design_missing');
@@ -166,6 +184,11 @@ export function buildCloudGate({
     durableReplayMigrationApplied: false,
     privateServingImplemented: checks.privateServingImplemented,
     privateServingExposed: checks.privateServingExposed,
+    productionKeyManagementDesigned: checks.productionKeyManagementDesigned,
+    productionKeyManagementImplemented: checks.productionKeyManagementImplemented,
+    realSecretsUsed: checks.realSecretsUsed,
+    envSecretsRead: checks.envSecretsRead,
+    kmsIntegrated: checks.kmsIntegrated,
     publicServerCreated: checks.publicServerCreated,
     checks,
     blockers,
@@ -185,6 +208,11 @@ export function buildCloudGate({
       authBoundaryDesigned: readiness.authBoundaryDesigned,
       authBoundaryScaffoldReady: readiness.authBoundaryScaffoldReady,
       authBoundaryImplemented: readiness.authBoundaryImplemented,
+      productionKeyManagementDesigned: readiness.productionKeyManagementDesigned,
+      productionKeyManagementImplemented: readiness.productionKeyManagementImplemented,
+      realSecretsUsed: readiness.realSecretsUsed,
+      envSecretsRead: readiness.envSecretsRead,
+      kmsIntegrated: readiness.kmsIntegrated,
       replayProtectionScaffoldReady: readiness.replayProtectionScaffoldReady,
       replayProtectionImplemented: readiness.replayProtectionImplemented,
       replayProtectionDurableDesigned: readiness.replayProtectionDurableDesigned,

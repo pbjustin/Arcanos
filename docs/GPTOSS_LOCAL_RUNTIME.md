@@ -748,7 +748,7 @@ effective runtime can be locally ready because deterministic local policy,
 spec-fact, and postprocessor layers bring the effective score to `24/24`; that
 does not make the model cloud-ready or approve a Custom GPT action boundary.
 
-## Phase 5.5 Private Serving Replay Status
+## Phase 5 Private Serving Status
 
 Phase 5.1 adds local-only private serving scaffold helpers:
 
@@ -800,6 +800,13 @@ strategy, security checklist, and readiness validator. It does not implement the
 ledger, connect to a live DB, apply migrations, create a server, expose an
 endpoint, call OpenAI, train, use vLLM, run Railway CLI, or expose Custom GPT.
 
+Phase 5.9 adds production key-management design only:
+`docs/GPTOSS_PRODUCTION_KEY_MANAGEMENT_DESIGN.md` and
+`docs/GPTOSS_KEY_ROTATION_RUNBOOK.md`. It does not load real signing keys, read
+keys from environment variables, integrate with KMS, create production key
+resolution, expose serving, or change request signing beyond the existing
+local/test-safe helpers.
+
 The scaffold status is:
 
 - request signing verification is implemented locally and fails closed
@@ -818,6 +825,9 @@ The scaffold status is:
   and no live durable store is implemented
 - Phase 5.8 durable replay implementation readiness review is complete, but
   durable replay implementation has not started and exposure remains blocked
+- Phase 5.9 production key-management design and key-rotation runbook exist,
+  but no real keys are loaded, no environment key reads or KMS integration
+  exist, and production key management is not implemented
 - durable replay store and persistent nonce ledger are not implemented
 - rate limiting is in-memory policy only and not durable production state
 - response shaping emits only the safe effective-router envelope
@@ -836,6 +846,11 @@ Expected readiness:
   "requestSigningImplemented": true,
   "authBoundaryScaffoldReady": true,
   "authBoundaryImplemented": true,
+  "productionKeyManagementDesigned": true,
+  "productionKeyManagementImplemented": false,
+  "realSecretsUsed": false,
+  "envSecretsRead": false,
+  "kmsIntegrated": false,
   "replayProtectionScaffoldReady": true,
   "replayProtectionImplemented": true,
   "replayProtectionDurableDesigned": true,
@@ -860,8 +875,10 @@ only. `replayProtectionDurableDesigned:true` is design-only.
 block private serving exposure.
 
 Before any exposure can be considered, a later phase must add a durable replay
-store implementation, persistent nonce ledger implementation, key rotation,
-production auth integration, private network boundary, and server review.
+store implementation, persistent nonce ledger implementation, implemented key
+rotation, production auth integration, private network boundary, and server
+review. Phase 5.9 keeps `privateServingImplemented:false`,
+`privateServingExposed:false`, `cloudReady:false`, and `customGptReady:false`.
 
 ## Dataset Gate
 

@@ -204,6 +204,14 @@ report definitions, and readiness validator. Durable replay storage is still
 not implemented, no live database is used, migration apply remains blocked, and
 cloud/Custom GPT exposure remain blocked.
 
+Phase 5.9 adds production key-management design and a planned key-rotation
+runbook only:
+`docs/GPTOSS_PRODUCTION_KEY_MANAGEMENT_DESIGN.md` and
+`docs/GPTOSS_KEY_ROTATION_RUNBOOK.md`. No real signing keys are loaded, no
+environment key reads exist, no KMS integration exists, and request signing
+remains local/test-safe helper logic. Production private serving remains
+blocked.
+
 The scaffold covers:
 
 - request signing canonicalization and hash helpers
@@ -222,6 +230,9 @@ The scaffold covers:
   `docs/GPTOSS_DURABLE_REPLAY_SECURITY_REVIEW.md`,
   `docs/GPTOSS_DURABLE_REPLAY_ROLLBACK_PLAN.md`, and
   `scripts/gptoss/private-serving/private-serving-durable-replay-readiness-validate.mjs`
+- production key-management design only:
+  `docs/GPTOSS_PRODUCTION_KEY_MANAGEMENT_DESIGN.md` and
+  `docs/GPTOSS_KEY_ROTATION_RUNBOOK.md`
 - in-memory rate-limit policy evaluation for tests only
 - response shaping that emits only the safe effective-router envelope
 - structured denial responses
@@ -237,6 +248,11 @@ Current Phase 5 readiness fields are:
 - `requestSigningImplemented:true`
 - `authBoundaryScaffoldReady:true`
 - `authBoundaryImplemented:true`
+- `productionKeyManagementDesigned:true`
+- `productionKeyManagementImplemented:false`
+- `realSecretsUsed:false`
+- `envSecretsRead:false`
+- `kmsIntegrated:false`
 - `replayProtectionScaffoldReady:true`
 - `replayProtectionImplemented:true`
 - `replayProtectionDurableDesigned:true`
@@ -258,10 +274,15 @@ The signing, auth, and replay implementations are local helper logic only.
 only. `replayProtectionDurableDesigned:true` is design-only.
 `replayProtectionDurableImplemented:false` and `replayProtectionDurable:false`
 block private serving exposure.
+Production key management is design-only in Phase 5.9; no key material is
+loaded, no environment key reads or KMS integration exist, and
+`privateServingImplemented:false`, `privateServingExposed:false`,
+`cloudReady:false`, and `customGptReady:false` remain the required state.
 
 Future work before any exposure includes durable replay store implementation, a
-persistent nonce ledger implementation, key rotation, production auth
-integration, a private network boundary, and server review.
+persistent nonce ledger implementation, implemented production key management
+and key rotation, production auth integration, a private network boundary, and
+server review.
 
 ## Future Work Before Exposure
 
