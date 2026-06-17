@@ -77,6 +77,9 @@ export function buildCloudGate({
     durableReplayMigrationNotApplied: readiness.durableReplayMigrationApplied === false,
     rateLimitScaffoldReady: readiness.rateLimitScaffoldReady === true,
     rateLimitImplemented: readiness.rateLimitImplemented === true,
+    durableRateLimitDesigned: readiness.durableRateLimitDesigned === true,
+    durableRateLimitImplemented: readiness.durableRateLimitImplemented === true,
+    rateLimitDurable: readiness.rateLimitDurable === true,
     responseShapingScaffoldReady: readiness.responseShapingScaffoldReady === true,
     publicServerCreated: readiness.publicServerCreated === true,
     customGptExposureCreated: readiness.customGptExposureCreated === true,
@@ -110,8 +113,15 @@ export function buildCloudGate({
     localControlledRuntimeReady &&
     checks.cloudServingPathValidated &&
     checks.cloudAuthBoundaryExists &&
+    checks.privateServingImplemented &&
+    checks.privateServingExposed &&
     checks.productionKeyManagementImplemented &&
     checks.kmsIntegrated &&
+    checks.replayProtectionDurableImplemented &&
+    checks.replayProtectionDurable &&
+    checks.rateLimitImplemented &&
+    checks.durableRateLimitImplemented &&
+    checks.rateLimitDurable &&
     !checks.realSecretsUsed &&
     !checks.envSecretsRead
   );
@@ -157,6 +167,13 @@ export function buildCloudGate({
   }
   if (!checks.rateLimitScaffoldReady) blockers.push('rate_limit_scaffold_missing');
   if (!checks.rateLimitImplemented) blockers.push('rate_limit_not_implemented');
+  if (!checks.durableRateLimitDesigned) {
+    blockers.push('durable_rate_limit_design_missing');
+  }
+  if (!checks.durableRateLimitImplemented) {
+    blockers.push('durable_rate_limit_not_implemented');
+  }
+  if (!checks.rateLimitDurable) blockers.push('rate_limit_not_durable');
   if (!checks.responseShapingScaffoldReady) blockers.push('response_shaping_scaffold_missing');
   if (checks.publicServerCreated) blockers.push('public_server_created');
   if (checks.customGptExposureCreated) blockers.push('custom_gpt_exposure_created');
@@ -189,6 +206,9 @@ export function buildCloudGate({
     realSecretsUsed: checks.realSecretsUsed,
     envSecretsRead: checks.envSecretsRead,
     kmsIntegrated: checks.kmsIntegrated,
+    durableRateLimitDesigned: checks.durableRateLimitDesigned,
+    durableRateLimitImplemented: checks.durableRateLimitImplemented,
+    rateLimitDurable: checks.rateLimitDurable,
     publicServerCreated: checks.publicServerCreated,
     checks,
     blockers,
@@ -223,6 +243,9 @@ export function buildCloudGate({
       durableReplayMigrationApplied: readiness.durableReplayMigrationApplied,
       rateLimitScaffoldReady: readiness.rateLimitScaffoldReady,
       rateLimitImplemented: readiness.rateLimitImplemented,
+      durableRateLimitDesigned: readiness.durableRateLimitDesigned,
+      durableRateLimitImplemented: readiness.durableRateLimitImplemented,
+      rateLimitDurable: readiness.rateLimitDurable,
       responseShapingScaffoldReady: readiness.responseShapingScaffoldReady,
       publicServerCreated: readiness.publicServerCreated,
       customGptExposureCreated: readiness.customGptExposureCreated,

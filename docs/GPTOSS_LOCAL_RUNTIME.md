@@ -862,6 +862,9 @@ Expected readiness:
   "durableReplayMigrationApplied": false,
   "rateLimitScaffoldReady": true,
   "rateLimitImplemented": false,
+  "durableRateLimitDesigned": true,
+  "durableRateLimitImplemented": false,
+  "rateLimitDurable": false,
   "responseShapingScaffoldReady": true,
   "publicServerCreated": false,
   "cloudReady": false,
@@ -876,9 +879,12 @@ block private serving exposure.
 
 Before any exposure can be considered, a later phase must add a durable replay
 store implementation, persistent nonce ledger implementation, implemented key
-rotation, production auth integration, private network boundary, and server
-review. Phase 5.9 keeps `privateServingImplemented:false`,
-`privateServingExposed:false`, `cloudReady:false`, and `customGptReady:false`.
+rotation, durable private rate-limit backend, production auth integration,
+private network boundary, and server review. Phase 5.10 keeps the current rate
+limiter local/in-memory only; `durableRateLimitImplemented:false`,
+`rateLimitDurable:false`, `privateServingImplemented:false`,
+`privateServingExposed:false`, `cloudReady:false`, and `customGptReady:false`
+remain required.
 
 ## Dataset Gate
 

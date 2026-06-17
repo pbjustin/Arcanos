@@ -44,6 +44,15 @@
     "durableReplayRollbackReview": {
       "$ref": "#/$defs/durableReplayRollbackReview"
     },
+    "durableRateLimitDesign": { "$ref": "#/$defs/durableRateLimitDesign" },
+    "durableRateLimitPolicy": { "$ref": "#/$defs/durableRateLimitPolicy" },
+    "durableRateLimitDecision": { "$ref": "#/$defs/durableRateLimitDecision" },
+    "durableRateLimitReadinessReport": {
+      "$ref": "#/$defs/durableRateLimitReadinessReport"
+    },
+    "durableRateLimitAuditRecord": {
+      "$ref": "#/$defs/durableRateLimitAuditRecord"
+    },
     "productionKeyManagementDesign": {
       "$ref": "#/$defs/productionKeyManagementDesign"
     },
@@ -285,6 +294,249 @@
         "noRailwayPath": { "const": true },
         "noDbPath": { "const": true },
         "noVllmPath": { "const": true },
+        "readinessBlocked": { "const": true },
+        "privateServingImplemented": { "const": false },
+        "privateServingExposed": { "const": false },
+        "cloudReady": { "const": false },
+        "customGptReady": { "const": false },
+        "openAiCalled": { "const": false },
+        "trainingExecuted": { "const": false },
+        "vllmUsed": { "const": false },
+        "railwayCliUsed": { "const": false },
+        "liveDbUsed": { "const": false },
+        "serverCreated": { "const": false },
+        "failures": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "durableRateLimitPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "designed",
+        "implemented",
+        "durable",
+        "quotaScopes",
+        "burstPolicyDesigned",
+        "abuseMitigationDesigned",
+        "replayInteractionDesigned",
+        "authInteractionDesigned",
+        "failureMode",
+        "liveDbAccessInPhase",
+        "migrationApplyPathCreated"
+      ],
+      "properties": {
+        "designed": { "const": true },
+        "implemented": { "const": false },
+        "durable": { "const": false },
+        "quotaScopes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "enum": ["keyId", "subject", "action", "global"]
+          }
+        },
+        "burstPolicyDesigned": { "const": true },
+        "abuseMitigationDesigned": { "const": true },
+        "replayInteractionDesigned": { "const": true },
+        "authInteractionDesigned": { "const": true },
+        "failureMode": { "const": "fail_closed" },
+        "liveDbAccessInPhase": { "const": false },
+        "migrationApplyPathCreated": { "const": false }
+      }
+    },
+    "durableRateLimitDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "ok",
+        "allowed",
+        "implemented",
+        "durable",
+        "quotaScope",
+        "retryAfterSeconds",
+        "denialReason"
+      ],
+      "properties": {
+        "ok": { "type": "boolean" },
+        "allowed": { "type": "boolean" },
+        "implemented": { "const": false },
+        "durable": { "const": false },
+        "keyId": {
+          "anyOf": [
+            { "const": null },
+            { "$ref": "#/$defs/nonEmptyString" }
+          ]
+        },
+        "subject": {
+          "anyOf": [
+            { "const": null },
+            { "$ref": "#/$defs/nonEmptyString" }
+          ]
+        },
+        "action": {
+          "anyOf": [
+            { "const": null },
+            { "$ref": "#/$defs/nonEmptyString" }
+          ]
+        },
+        "quotaScope": {
+          "type": "string",
+          "enum": ["keyId", "subject", "action", "global"]
+        },
+        "retryAfterSeconds": { "type": "integer", "minimum": 0 },
+        "denialReason": {
+          "type": ["string", "null"],
+          "enum": [
+            null,
+            "rate_limited",
+            "missing_subject",
+            "invalid_rate_limit_policy",
+            "durable_rate_limit_not_implemented",
+            "rate_limit_backend_unavailable"
+          ]
+        }
+      }
+    },
+    "durableRateLimitAuditRecord": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "requestId",
+        "keyId",
+        "action",
+        "quotaScope",
+        "windowStart",
+        "windowEnd",
+        "retryAfterSeconds",
+        "denialReason",
+        "rawRequestBodyStored",
+        "secretsStored",
+        "liveDbRecordCreated"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "requestId": { "$ref": "#/$defs/nonEmptyString" },
+        "keyId": { "$ref": "#/$defs/nonEmptyString" },
+        "subjectHash": { "$ref": "#/$defs/sha256Hex" },
+        "action": { "$ref": "#/$defs/nonEmptyString" },
+        "quotaScope": {
+          "type": "string",
+          "enum": ["keyId", "subject", "action", "global"]
+        },
+        "windowStart": { "$ref": "#/$defs/dateTimeString" },
+        "windowEnd": { "$ref": "#/$defs/dateTimeString" },
+        "retryAfterSeconds": { "type": "integer", "minimum": 0 },
+        "denialReason": {
+          "type": ["string", "null"],
+          "enum": [
+            null,
+            "rate_limited",
+            "missing_subject",
+            "invalid_rate_limit_policy",
+            "durable_rate_limit_not_implemented",
+            "rate_limit_backend_unavailable"
+          ]
+        },
+        "rawRequestBodyStored": { "const": false },
+        "secretsStored": { "const": false },
+        "liveDbRecordCreated": { "const": false }
+      }
+    },
+    "durableRateLimitDesign": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schemaVersion",
+        "phase",
+        "durableRateLimitDesigned",
+        "durableRateLimitImplemented",
+        "rateLimitDurable",
+        "policy",
+        "auditRecord",
+        "futureImplementationBlockers",
+        "privateServingImplemented",
+        "privateServingExposed",
+        "cloudReady",
+        "customGptReady"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "phase": { "const": "5.10" },
+        "durableRateLimitDesigned": { "const": true },
+        "durableRateLimitImplemented": { "const": false },
+        "rateLimitDurable": { "const": false },
+        "policy": { "$ref": "#/$defs/durableRateLimitPolicy" },
+        "auditRecord": { "$ref": "#/$defs/durableRateLimitAuditRecord" },
+        "futureImplementationBlockers": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/nonEmptyString" }
+        },
+        "privateServingImplemented": { "const": false },
+        "privateServingExposed": { "const": false },
+        "cloudReady": { "const": false },
+        "customGptReady": { "const": false }
+      }
+    },
+    "durableRateLimitReadinessReport": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "schemaVersion",
+        "kind",
+        "ok",
+        "durableRateLimitDesigned",
+        "durableRateLimitImplemented",
+        "rateLimitDurable",
+        "noDbClientImports",
+        "noDatabaseUrlUsage",
+        "noRailwayUsage",
+        "noServerListener",
+        "noOpenAiPath",
+        "noVllmPath",
+        "noTrainingPath",
+        "noRealSecretLiterals",
+        "noEnvSecretReads",
+        "noKmsImports",
+        "noCloudSdkImports",
+        "readinessBlocked",
+        "privateServingImplemented",
+        "privateServingExposed",
+        "cloudReady",
+        "customGptReady",
+        "openAiCalled",
+        "trainingExecuted",
+        "vllmUsed",
+        "railwayCliUsed",
+        "liveDbUsed",
+        "serverCreated",
+        "failures"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "kind": {
+          "const": "gptoss_private_serving_rate_limit_design_validation"
+        },
+        "ok": { "type": "boolean" },
+        "durableRateLimitDesigned": { "const": true },
+        "durableRateLimitImplemented": { "const": false },
+        "rateLimitDurable": { "const": false },
+        "noDbClientImports": { "const": true },
+        "noDatabaseUrlUsage": { "const": true },
+        "noRailwayUsage": { "const": true },
+        "noServerListener": { "const": true },
+        "noOpenAiPath": { "const": true },
+        "noVllmPath": { "const": true },
+        "noTrainingPath": { "const": true },
+        "noRealSecretLiterals": { "const": true },
+        "noEnvSecretReads": { "const": true },
+        "noKmsImports": { "const": true },
+        "noCloudSdkImports": { "const": true },
         "readinessBlocked": { "const": true },
         "privateServingImplemented": { "const": false },
         "privateServingExposed": { "const": false },
@@ -1165,6 +1417,9 @@
         "replayProtectionDurable",
         "rateLimitScaffoldReady",
         "rateLimitImplemented",
+        "durableRateLimitDesigned",
+        "durableRateLimitImplemented",
+        "rateLimitDurable",
         "responseShapingScaffoldReady",
         "publicServerCreated",
         "cloudReady",
@@ -1193,6 +1448,9 @@
         "replayProtectionDurable": { "const": false },
         "rateLimitScaffoldReady": { "const": true },
         "rateLimitImplemented": { "const": false },
+        "durableRateLimitDesigned": { "const": true },
+        "durableRateLimitImplemented": { "const": false },
+        "rateLimitDurable": { "const": false },
         "responseShapingScaffoldReady": { "const": true },
         "publicServerCreated": { "const": false },
         "cloudReady": { "const": false },

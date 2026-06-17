@@ -262,6 +262,9 @@ Current Phase 5 readiness remains unexposed:
 - `replayProtectionDurable:false`
 - `rateLimitScaffoldReady:true`
 - `rateLimitImplemented:false`
+- `durableRateLimitDesigned:true`
+- `durableRateLimitImplemented:false`
+- `rateLimitDurable:false`
 - `responseShapingScaffoldReady:true`
 - `publicServerCreated:false`
 - `cloudReady:false`
@@ -274,12 +277,17 @@ block private serving exposure.
 Phase 5.9 keeps production key management as design-only, so
 `privateServingImplemented:false`, `privateServingExposed:false`,
 `cloudReady:false`, and `customGptReady:false` remain required.
+Phase 5.10 adds durable rate-limit governance design only. The executable rate
+limiter remains local/in-memory scaffold logic, no durable private backend or
+database client is connected, and `durableRateLimitImplemented:false` plus
+`rateLimitDurable:false` continue to block private serving exposure.
 
 Required future work before any exposure can be considered:
 
 - durable replay store implementation
 - persistent nonce ledger implementation
 - implemented production key management and key rotation
+- durable private rate-limit backend implementation
 - production auth integration
 - private network boundary
 - server review

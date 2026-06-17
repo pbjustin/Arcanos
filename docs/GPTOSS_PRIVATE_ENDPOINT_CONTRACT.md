@@ -18,6 +18,9 @@ They must not become reachable until production key management is implemented
 in a later approved phase; the Phase 5.9 key-management documents are
 design-only and keep `privateServingImplemented:false`,
 `privateServingExposed:false`, `cloudReady:false`, and `customGptReady:false`.
+Phase 5.10 durable rate-limit governance is also design-only:
+`durableRateLimitDesigned:true`, `durableRateLimitImplemented:false`, and
+`rateLimitDurable:false`.
 
 The Phase 5.1 scaffolds are not endpoint implementations:
 
@@ -28,7 +31,8 @@ The Phase 5.1 scaffolds are not endpoint implementations:
   and replay checker
 - replay protection is implemented in memory for helper-level/local tests only;
   no durable replay store or persistent nonce ledger exists
-- rate limiting uses in-memory scaffold state only
+- rate limiting uses in-memory scaffold state only; durable rate-limit policy
+  and runbook coverage are design-only
 - response shaping emits only the safe effective-router envelope
 - private serving remains unexposed with `privateServingImplemented:false`,
   `privateServingExposed:false`, and `publicServerCreated:false`
@@ -59,6 +63,12 @@ remains local/test-safe helper logic. Future work before any exposure includes
 durable replay store, persistent nonce ledger, implemented production key
 management and rotation, production auth integration, private network boundary,
 and server review.
+
+Phase 5.10 adds durable rate-limit design and a planned operator runbook only.
+No durable rate-limit storage, DB client, migration apply path, server,
+listener, endpoint, Railway command, OpenAI call, training path, vLLM path,
+secret read, or KMS integration is added. Future production serving requires a
+durable private rate-limit backend before exposure review.
 
 Every endpoint response that returns a router result must use the effective plus
 safety envelope:

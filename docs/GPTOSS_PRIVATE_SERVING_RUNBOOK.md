@@ -153,6 +153,9 @@ Pass criteria:
   no environment key reads or KMS integration exist, and
   `privateServingImplemented:false`, `privateServingExposed:false`,
   `cloudReady:false`, and `customGptReady:false` remain required.
+- Phase 5.10 durable rate-limit governance is design-only. The current rate
+  limiter remains local/in-memory scaffold logic; no durable backend, DB client,
+  migration apply path, server, listener, or endpoint exists.
 
 Expected current local replay fields:
 
@@ -182,6 +185,9 @@ Expected current local replay fields:
   "durableReplayMigrationApplied": false,
   "rateLimitScaffoldReady": true,
   "rateLimitImplemented": false,
+  "durableRateLimitDesigned": true,
+  "durableRateLimitImplemented": false,
+  "rateLimitDurable": false,
   "responseShapingScaffoldReady": true,
   "publicServerCreated": false,
   "cloudReady": false,
@@ -281,6 +287,14 @@ Replay checks:
 - Phase 5.4 replay protection is local memory only.
 - Phase 5.5 durable replay is design/schema/validation only; durable replay
   remains false and blocks exposure.
+- Phase 5.10 durable rate-limit design is schema/validation only; durable
+  counters remain false and block exposure.
+
+Run the Phase 5.10 design validator:
+
+```bash
+npm run gptoss:private-serving:rate-limit:design:validate
+```
 
 ## Verify Cloud And Custom GPT Blocked
 
@@ -298,6 +312,7 @@ Required blocked state:
 - no approved public action schema
 - no approved cloud auth boundary
 - no approved serving rate limits
+- no durable private rate-limit backend
 - no approved rollback for exposure
 
 Do not point Custom GPT actions at `localhost`, `127.0.0.1`, WSL, or a

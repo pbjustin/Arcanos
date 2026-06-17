@@ -234,6 +234,9 @@ The scaffold covers:
   `docs/GPTOSS_PRODUCTION_KEY_MANAGEMENT_DESIGN.md` and
   `docs/GPTOSS_KEY_ROTATION_RUNBOOK.md`
 - in-memory rate-limit policy evaluation for tests only
+- durable rate-limit governance design in
+  `docs/GPTOSS_DURABLE_RATE_LIMIT_DESIGN.md` and
+  `docs/GPTOSS_RATE_LIMIT_RUNBOOK.md`
 - response shaping that emits only the safe effective-router envelope
 - structured denial responses
 - scaffold validation and local scaffold reports
@@ -264,6 +267,9 @@ Current Phase 5 readiness fields are:
 - `durableReplayMigrationApplied:false`
 - `rateLimitScaffoldReady:true`
 - `rateLimitImplemented:false`
+- `durableRateLimitDesigned:true`
+- `durableRateLimitImplemented:false`
+- `rateLimitDurable:false`
 - `responseShapingScaffoldReady:true`
 - `publicServerCreated:false`
 - `cloudReady:false`
@@ -278,11 +284,14 @@ Production key management is design-only in Phase 5.9; no key material is
 loaded, no environment key reads or KMS integration exist, and
 `privateServingImplemented:false`, `privateServingExposed:false`,
 `cloudReady:false`, and `customGptReady:false` remain the required state.
+Durable rate-limit governance is design-only in Phase 5.10; current rate
+limiting remains local/in-memory scaffold logic and no DB client, durable
+counter backend, migration apply path, server, listener, or endpoint is added.
 
 Future work before any exposure includes durable replay store implementation, a
 persistent nonce ledger implementation, implemented production key management
-and key rotation, production auth integration, a private network boundary, and
-server review.
+and key rotation, a durable private rate-limit backend, production auth
+integration, a private network boundary, and server review.
 
 ## Future Work Before Exposure
 
