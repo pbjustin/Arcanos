@@ -4,6 +4,16 @@ const mockRunGuidePipeline = jest.fn();
 const mockRunBuildPipeline = jest.fn();
 const mockRunMetaPipeline = jest.fn();
 const mockEvaluateWithHRC = jest.fn();
+const mockLogger = {
+  debug: jest.fn(),
+  info: jest.fn(),
+  warn: jest.fn(),
+  error: jest.fn(),
+  timed: jest.fn(),
+  startTimer: jest.fn(() => jest.fn()),
+  child: jest.fn(),
+};
+mockLogger.child.mockReturnValue(mockLogger);
 
 jest.unstable_mockModule("../src/services/gaming.js", () => ({
   runGuidePipeline: mockRunGuidePipeline,
@@ -13,6 +23,30 @@ jest.unstable_mockModule("../src/services/gaming.js", () => ({
 
 jest.unstable_mockModule("../src/services/hrcWrapper.js", () => ({
   evaluateWithHRC: mockEvaluateWithHRC,
+}));
+
+jest.unstable_mockModule("../src/platform/logging/structuredLogging.js", () => ({
+  LogLevel: {
+    DEBUG: "debug",
+    INFO: "info",
+    WARN: "warn",
+    ERROR: "error",
+  },
+  logger: mockLogger,
+  apiLogger: mockLogger,
+  dbLogger: mockLogger,
+  aiLogger: mockLogger,
+  workerLogger: mockLogger,
+  sanitize: jest.fn((value: unknown) => value),
+  getConfiguredLogLevel: jest.fn(() => "info"),
+  requestLoggingMiddleware: jest.fn((_req: unknown, _res: unknown, next: () => void) => next()),
+  healthMetrics: {
+    record: jest.fn(),
+    increment: jest.fn(),
+    getMetrics: jest.fn(() => ({})),
+    getSnapshot: jest.fn(() => ({})),
+  },
+  default: mockLogger,
 }));
 
 const { ArcanosGaming } = await import("../src/services/arcanos-gaming.js");
@@ -67,15 +101,18 @@ describe("ArcanosGaming mode routing", () => {
     expect(mockRunBuildPipeline).not.toHaveBeenCalled();
     expect(mockRunMetaPipeline).not.toHaveBeenCalled();
     expect(mockEvaluateWithHRC).not.toHaveBeenCalled();
-    expect(result).toEqual({
+    expect(result).toEqual(expect.objectContaining({
       ok: true,
       route: "gaming",
       mode: "guide",
-      data: {
-        response: "Guide response",
+      data: expect.objectContaining({
+        response: expect.stringContaining("Guide response"),
         sources: [],
-      },
-    });
+      }),
+    }));
+    expect((result as any).data.response).toContain("Quick Answer");
+    expect((result as any).data.response).toContain("Why It Works");
+    expect((result as any).data.response).toContain("Watch Outs");
   });
 
   it("accepts guideUrl as the single guide URL field", async () => {
@@ -158,7 +195,7 @@ describe("ArcanosGaming mode routing", () => {
     );
   });
 
-  it("returns a structured error when mode is missing", async () => {
+  it("returns a structured non-gaming error for a bare ping prompt", async () => {
     const result = await ArcanosGaming.actions.query({
       prompt: "ping",
     });
@@ -171,8 +208,8 @@ describe("ArcanosGaming mode routing", () => {
       route: "gaming",
       mode: null,
       error: {
-        code: "GAMEPLAY_MODE_REQUIRED",
-        message: "Gameplay requests require explicit mode 'guide', 'build', or 'meta'.",
+        code: "NON_GAMING_REQUEST",
+        message: "ARCANOS Gaming handles gameplay guide, build, and meta requests.",
       },
     });
   });

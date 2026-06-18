@@ -3,6 +3,15 @@ import { getGamingModuleTimeoutMs } from "@services/gamingConfig.js";
 import { evaluateWithHRC } from "./hrcWrapper.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { getRequestAbortSignal, isAbortError } from "@arcanos/runtime";
+import { logger } from "@platform/logging/structuredLogging.js";
+import {
+  BackendQueryAgent,
+  ClarificationAgent,
+  IntentRouterAgent,
+  ResponseComposerAgent,
+  type GamingBackendActionPayload,
+  type GamingIntent
+} from "@services/gamingAgents.js";
 import {
   formatGamingError,
   type GamingErrorEnvelope,
@@ -86,7 +95,7 @@ function formatKnownGenerationFailure(mode: GamingMode, error: unknown): GamingE
   });
 }
 
-async function handleGamingRequest(payload: unknown): Promise<GamingEnvelope> {
+async function executeGamingBackendQuery(payload: GamingBackendActionPayload): Promise<GamingEnvelope> {
   const validation = validateGamingRequest(payload);
   if (!validation.ok) {
     return validation.error;
@@ -130,6 +139,172 @@ async function handleGamingRequest(payload: unknown): Promise<GamingEnvelope> {
         code: "MODULE_ERROR",
         message: `HRC evaluation failed: ${resolveErrorMessage(error)}`
       }
+    });
+  }
+}
+
+function formatSecurityBlocked(intent: GamingIntent): GamingErrorEnvelope {
+  return formatGamingError({
+    mode: intent.mode === "guide" || intent.mode === "build" || intent.mode === "meta" ? intent.mode : null,
+    error: {
+      code: intent.securityBlocked?.code ?? "SECURITY_BLOCKED",
+      message: intent.securityBlocked?.message ?? "ARCANOS Gaming only handles writing-plane gameplay guidance.",
+      details: {
+        reason: intent.securityBlocked?.reason ?? "security_blocked"
+      }
+    }
+  });
+}
+
+function formatInvalidMode(): GamingErrorEnvelope {
+  return formatGamingError({
+    mode: null,
+    error: {
+      code: "GAMEPLAY_MODE_REQUIRED",
+      message: "Gameplay requests require explicit mode 'guide', 'build', or 'meta'."
+    }
+  });
+}
+
+function formatNonGamingRequest(): GamingErrorEnvelope {
+  return formatGamingError({
+    mode: null,
+    error: {
+      code: "NON_GAMING_REQUEST",
+      message: "ARCANOS Gaming handles gameplay guide, build, and meta requests."
+    }
+  });
+}
+
+function formatClarification(clarification: Extract<ReturnType<typeof ClarificationAgent.evaluate>, { required: true }>): GamingErrorEnvelope {
+  return formatGamingError({
+    mode: clarification.mode,
+    error: {
+      code: "CLARIFICATION_REQUIRED",
+      message: clarification.question,
+      details: {
+        missing: clarification.missing
+      }
+    }
+  });
+}
+
+function isGamingMode(value: GamingIntent["mode"]): value is GamingMode {
+  return value === "guide" || value === "build" || value === "meta";
+}
+
+function isUsableGamingSuccessEnvelope(value: GamingEnvelope): value is GamingSuccessEnvelope {
+  return value.ok === true &&
+    value.data !== null &&
+    typeof value.data === "object" &&
+    typeof value.data.response === "string";
+}
+
+function buildTelemetryEntityFlags(intent: GamingIntent) {
+  return {
+    game: Boolean(intent.game),
+    platform: Boolean(intent.platform),
+    version: Boolean(intent.version),
+    class: Boolean(intent.class),
+    role: Boolean(intent.role),
+    difficulty: Boolean(intent.difficulty),
+    progressPoint: Boolean(intent.progressPoint),
+    spoilerTolerance: intent.spoilerTolerance
+  };
+}
+
+async function handleGamingRequest(payload: unknown): Promise<GamingEnvelope> {
+  const intent = IntentRouterAgent.classify(payload);
+  logger.info("gaming.routing.intent", {
+    mode: intent.mode,
+    confidence: intent.confidence,
+    signals: intent.routingSignals,
+    entityFlags: buildTelemetryEntityFlags(intent),
+    securityBlocked: Boolean(intent.securityBlocked)
+  });
+
+  if (intent.securityBlocked) {
+    logger.warn("gaming.routing.security_blocked", {
+      mode: intent.mode,
+      confidence: intent.confidence,
+      reason: intent.securityBlocked.reason
+    });
+    return formatSecurityBlocked(intent);
+  }
+
+  if (intent.invalidMode) {
+    return formatInvalidMode();
+  }
+
+  if (intent.mode === "non-gaming") {
+    return formatNonGamingRequest();
+  }
+
+  const clarification = ClarificationAgent.evaluate(intent);
+  if (clarification.required) {
+    logger.info("gaming.routing.clarification", {
+      mode: clarification.mode,
+      confidence: intent.confidence,
+      missing: clarification.missing
+    });
+    return formatClarification(clarification);
+  }
+
+  if (!isGamingMode(intent.mode)) {
+    return formatNonGamingRequest();
+  }
+
+  const gamingIntent: GamingIntent & { mode: GamingMode } = {
+    ...intent,
+    mode: intent.mode
+  };
+  const backendAction = BackendQueryAgent.build(gamingIntent);
+  try {
+    const backendEnvelope = await BackendQueryAgent.call(backendAction, executeGamingBackendQuery);
+    if (!backendEnvelope.ok) {
+      logger.warn("gaming.backend.failure", {
+        mode: gamingIntent.mode,
+        confidence: gamingIntent.confidence,
+        errorCode: backendEnvelope.error.code
+      });
+      return backendEnvelope;
+    }
+
+    if (!isUsableGamingSuccessEnvelope(backendEnvelope)) {
+      logger.warn("gaming.backend.failure", {
+        mode: gamingIntent.mode,
+        confidence: gamingIntent.confidence,
+        errorCode: "MALFORMED_BACKEND_RESPONSE"
+      });
+      return ResponseComposerAgent.composeBackendFailureFallback({
+        intent: gamingIntent,
+        error: new Error("Malformed backend response")
+      });
+    }
+
+    logger.info("gaming.backend.success", {
+      mode: gamingIntent.mode,
+      confidence: gamingIntent.confidence,
+      sourceCount: backendEnvelope.data.sources.length
+    });
+
+    return ResponseComposerAgent.compose({
+      intent: gamingIntent,
+      backendEnvelope
+    });
+  } catch (error: unknown) {
+    if (getRequestAbortSignal()?.aborted || isAbortError(error)) {
+      throw error;
+    }
+
+    logger.warn("gaming.backend.failure", {
+      mode: gamingIntent.mode,
+      confidence: gamingIntent.confidence,
+      errorCode: "BACKEND_EXCEPTION"
+    });
+    return ResponseComposerAgent.composeBackendFailureFallback({
+      intent: gamingIntent,
+      error
     });
   }
 }
