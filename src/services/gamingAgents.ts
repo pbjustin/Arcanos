@@ -78,6 +78,14 @@ const KNOWN_GAMES: Array<{ pattern: RegExp; name: string }> = [
   { pattern: /\bFortnite\b/i, name: "Fortnite" },
 ];
 
+const INFERRED_GAME_BLACKLIST = new Set([
+  "pc", "ps5", "ps4", "xbox", "switch", "steam", "deck",
+  "tank", "healer", "healing", "support", "dps", "damage", "solo", "duo", "carry",
+  "mage", "sorcerer", "sorc", "barbarian", "rogue", "druid", "necromancer", "paladin", "warlock", "hunter", "priest", "warrior", "monk",
+  "leveling", "beginner", "beginners", "veteran", "veterans", "hardcore", "casual", "casuals", "build", "loadout", "guide", "spec",
+  "this", "that", "current", "latest"
+]);
+
 const GUIDE_RULES = [
   { label: "guide_help_beat", pattern: /\bhelp\s+me\s+beat\b/i, weight: 0.78 },
   { label: "guide_beat_target", pattern: /\b(?:beat|defeat|kill)\s+[A-Z]?[A-Za-z0-9' -]{2,}\b/i, weight: 0.62 },
@@ -301,6 +309,8 @@ function scoreIntent(payload: unknown, prompt: string): { mode: GamingIntentMode
     build.score += 0.16;
     meta.score += 0.16;
     guide.signals.push("known_game");
+    build.signals.push("known_game");
+    meta.signals.push("known_game");
   }
 
   const scoredModes = [
@@ -348,7 +358,21 @@ function inferGameFromPrompt(prompt: string): string | undefined {
   }
 
   const match = prompt.match(/\b(?:in|for|on)\s+([A-Za-z0-9][A-Za-z0-9'’:.+-]*(?:\s+[A-Za-z0-9][A-Za-z0-9'’:.+-]*){0,5})/i);
-  return match?.[1] ? cleanGameCandidate(match[1]) : undefined;
+  if (!match?.[1]) {
+    return undefined;
+  }
+
+  const candidate = cleanGameCandidate(match[1]);
+  if (!candidate) {
+    return undefined;
+  }
+
+  const words = candidate.toLowerCase().split(/\s+/);
+  if (words.some((word) => INFERRED_GAME_BLACKLIST.has(word))) {
+    return undefined;
+  }
+
+  return candidate;
 }
 
 function extractPlatform(payload: unknown, prompt: string): string | undefined {
@@ -508,7 +532,12 @@ function firstUsefulLine(text: string): string {
     return "Backend-supported guidance is available below.";
   }
 
-  return line.length > 220 ? `${line.slice(0, 217)}...` : line;
+  const cleanLine = line.replace(/^#+\s*/, "").trim();
+  if (!cleanLine) {
+    return "Backend-supported guidance is available below.";
+  }
+
+  return cleanLine.length > 220 ? `${cleanLine.slice(0, 217)}...` : cleanLine;
 }
 
 function spoilerWatchOut(spoilerTolerance: GamingSpoilerTolerance): string {
@@ -597,6 +626,9 @@ export const IntentRouterAgent = {
     const guideUrls = rawStringList(isRecord(payload) ? payload.guideUrls : undefined);
     const audit = getBooleanField(payload, "audit") ?? getBooleanField(payload, "enableAudit");
     const hrc = getBooleanField(payload, "hrc") ?? getBooleanField(payload, "enableHrc");
+    const rawGame = getStringField(payload, "game");
+    const rawPlatform = extractPlatform(payload, prompt);
+    const rawVersion = extractVersion(payload, prompt);
 
     return {
       mode: scoredIntent.mode,
@@ -604,9 +636,9 @@ export const IntentRouterAgent = {
       confidence: scoredIntent.confidence,
       routingSignals: scoredIntent.signals,
       ...(rawMode && !explicitMode && !securityBlocked ? { invalidMode: rawMode } : {}),
-      game: getStringField(payload, "game") ? normalizeEntityValue(getStringField(payload, "game")!) : inferGameFromPrompt(prompt),
-      platform: extractPlatform(payload, prompt) ? normalizeEntityValue(extractPlatform(payload, prompt)!) : undefined,
-      version: extractVersion(payload, prompt) ? normalizeEntityValue(extractVersion(payload, prompt)!) : undefined,
+      game: rawGame ? normalizeEntityValue(rawGame) : inferGameFromPrompt(prompt),
+      platform: rawPlatform ? normalizeEntityValue(rawPlatform) : undefined,
+      version: rawVersion ? normalizeEntityValue(rawVersion) : undefined,
       class: extractClass(payload, prompt),
       role: extractRole(payload, prompt),
       difficulty: extractDifficulty(payload, prompt),
