@@ -71,7 +71,8 @@ function listModuleFiles(scaffoldDir) {
       !path.endsWith('private-serving-durable-replay-implementation-plan-validate.mjs') &&
       !path.endsWith('private-serving-durable-replay-readiness-validate.mjs') &&
       !path.endsWith('private-serving-key-management-design-validate.mjs') &&
-      !path.endsWith('private-serving-rate-limit-design-validate.mjs'),
+      !path.endsWith('private-serving-rate-limit-design-validate.mjs') &&
+      !path.endsWith('private-serving-operations-readiness-validate.mjs'),
     );
 }
 

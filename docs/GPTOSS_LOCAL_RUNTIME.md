@@ -865,6 +865,10 @@ Expected readiness:
   "durableRateLimitDesigned": true,
   "durableRateLimitImplemented": false,
   "rateLimitDurable": false,
+  "operationsReadinessDesigned": true,
+  "incidentResponseReady": true,
+  "productionGoNoGoChecklistReady": true,
+  "productionGoAllowed": false,
   "responseShapingScaffoldReady": true,
   "publicServerCreated": false,
   "cloudReady": false,
@@ -885,6 +889,9 @@ limiter local/in-memory only; `durableRateLimitImplemented:false`,
 `rateLimitDurable:false`, `privateServingImplemented:false`,
 `privateServingExposed:false`, `cloudReady:false`, and `customGptReady:false`
 remain required.
+Phase 5.11 adds operations readiness, incident response, and go/no-go checklist
+validation only; `productionGoAllowed:false` remains required until every
+production serving gate is implemented and reviewed.
 
 ## Dataset Gate
 
