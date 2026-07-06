@@ -80,6 +80,10 @@ export function buildCloudGate({
     durableRateLimitDesigned: readiness.durableRateLimitDesigned === true,
     durableRateLimitImplemented: readiness.durableRateLimitImplemented === true,
     rateLimitDurable: readiness.rateLimitDurable === true,
+    operationsReadinessDesigned: readiness.operationsReadinessDesigned === true,
+    incidentResponseReady: readiness.incidentResponseReady === true,
+    productionGoNoGoChecklistReady: readiness.productionGoNoGoChecklistReady === true,
+    productionGoAllowed: readiness.productionGoAllowed === true,
     responseShapingScaffoldReady: readiness.responseShapingScaffoldReady === true,
     publicServerCreated: readiness.publicServerCreated === true,
     customGptExposureCreated: readiness.customGptExposureCreated === true,
@@ -122,6 +126,10 @@ export function buildCloudGate({
     checks.rateLimitImplemented &&
     checks.durableRateLimitImplemented &&
     checks.rateLimitDurable &&
+    checks.operationsReadinessDesigned &&
+    checks.incidentResponseReady &&
+    checks.productionGoNoGoChecklistReady &&
+    checks.productionGoAllowed &&
     !checks.realSecretsUsed &&
     !checks.envSecretsRead
   );
@@ -174,6 +182,16 @@ export function buildCloudGate({
     blockers.push('durable_rate_limit_not_implemented');
   }
   if (!checks.rateLimitDurable) blockers.push('rate_limit_not_durable');
+  if (!checks.operationsReadinessDesigned) {
+    blockers.push('operations_readiness_design_missing');
+  }
+  if (!checks.incidentResponseReady) {
+    blockers.push('incident_response_not_ready');
+  }
+  if (!checks.productionGoNoGoChecklistReady) {
+    blockers.push('production_go_no_go_checklist_missing');
+  }
+  if (!checks.productionGoAllowed) blockers.push('production_go_not_allowed');
   if (!checks.responseShapingScaffoldReady) blockers.push('response_shaping_scaffold_missing');
   if (checks.publicServerCreated) blockers.push('public_server_created');
   if (checks.customGptExposureCreated) blockers.push('custom_gpt_exposure_created');
@@ -209,6 +227,10 @@ export function buildCloudGate({
     durableRateLimitDesigned: checks.durableRateLimitDesigned,
     durableRateLimitImplemented: checks.durableRateLimitImplemented,
     rateLimitDurable: checks.rateLimitDurable,
+    operationsReadinessDesigned: checks.operationsReadinessDesigned,
+    incidentResponseReady: checks.incidentResponseReady,
+    productionGoNoGoChecklistReady: checks.productionGoNoGoChecklistReady,
+    productionGoAllowed: checks.productionGoAllowed,
     publicServerCreated: checks.publicServerCreated,
     checks,
     blockers,
@@ -246,6 +268,10 @@ export function buildCloudGate({
       durableRateLimitDesigned: readiness.durableRateLimitDesigned,
       durableRateLimitImplemented: readiness.durableRateLimitImplemented,
       rateLimitDurable: readiness.rateLimitDurable,
+      operationsReadinessDesigned: readiness.operationsReadinessDesigned,
+      incidentResponseReady: readiness.incidentResponseReady,
+      productionGoNoGoChecklistReady: readiness.productionGoNoGoChecklistReady,
+      productionGoAllowed: readiness.productionGoAllowed,
       responseShapingScaffoldReady: readiness.responseShapingScaffoldReady,
       publicServerCreated: readiness.publicServerCreated,
       customGptExposureCreated: readiness.customGptExposureCreated,

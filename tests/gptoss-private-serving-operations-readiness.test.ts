@@ -4,9 +4,10 @@ import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import Ajv2020 from 'ajv/dist/2020.js';
 
-const rateLimitDocs = [
-  join(process.cwd(), 'docs', 'GPTOSS_DURABLE_RATE_LIMIT_DESIGN.md'),
-  join(process.cwd(), 'docs', 'GPTOSS_RATE_LIMIT_RUNBOOK.md'),
+const operationsDocs = [
+  join(process.cwd(), 'docs', 'GPTOSS_PRIVATE_SERVING_INCIDENT_RESPONSE.md'),
+  join(process.cwd(), 'docs', 'GPTOSS_PRIVATE_SERVING_OPERATIONS_READINESS.md'),
+  join(process.cwd(), 'docs', 'GPTOSS_PRIVATE_SERVING_GO_NO_GO_CHECKLIST.md'),
 ];
 const schemaPath = join(process.cwd(), 'schemas', 'gptoss-private-serving-boundary.schema.json');
 const validatorScript = join(
@@ -14,14 +15,7 @@ const validatorScript = join(
   'scripts',
   'gptoss',
   'private-serving',
-  'private-serving-rate-limit-design-validate.mjs',
-);
-const rateLimitScript = join(
-  process.cwd(),
-  'scripts',
-  'gptoss',
-  'private-serving',
-  'private-serving-rate-limit.mjs',
+  'private-serving-operations-readiness-validate.mjs',
 );
 const readinessScript = join(process.cwd(), 'scripts', 'gptoss', 'model-readiness-report.mjs');
 const cloudGateScript = join(process.cwd(), 'scripts', 'gptoss', 'cloud-readiness-gate.mjs');
@@ -48,124 +42,125 @@ function importSpecifiers(text: string) {
   return specifiers;
 }
 
-describe('gptoss private serving durable rate-limit design', () => {
-  it('has the Phase 5.10 design docs and runbook', () => {
-    for (const path of rateLimitDocs) {
+describe('gptoss private serving operations readiness', () => {
+  it('has the Phase 5.11 operations docs', () => {
+    const expectedMarkers = [
+      /incident classes|Incident Classes/i,
+      /operations preflight|Operations Preflight/i,
+      /go\/no-go|NO-GO/i,
+    ];
+
+    for (const [index, path] of operationsDocs.entries()) {
       expect(existsSync(path)).toBe(true);
       const text = readFileSync(path, 'utf8');
-      expect(text).toContain('Phase 5.10');
-      expect(text).toMatch(/durable rate-limit/i);
-      expect(text).toMatch(/local scaffold/i);
-      expect(text).toMatch(/implementation remains blocked|private serving remains blocked/i);
+      expect(text).toContain('Phase 5.11');
+      expect(text).toMatch(expectedMarkers[index]);
+      expect(text).toMatch(/NO-GO|blocked/i);
     }
   });
 
-  it('parses durable rate-limit schema sections and validates sample shapes', () => {
+  it('parses operations schema sections and validates sample reports', () => {
     const schema = readJson(schemaPath);
     const ajv = new Ajv2020();
-    const hash = 'a'.repeat(64);
-    const policy = {
-      designed: true,
-      implemented: false,
-      durable: false,
-      quotaScopes: ['keyId', 'subject', 'action', 'global'],
-      burstPolicyDesigned: true,
-      abuseMitigationDesigned: true,
-      replayInteractionDesigned: true,
-      authInteractionDesigned: true,
-      failureMode: 'fail_closed',
-      liveDbAccessInPhase: false,
-      migrationApplyPathCreated: false,
-    };
-    const auditRecord = {
+    const incidentResponse = {
       schemaVersion: 1,
-      requestId: 'phase510-rate-limit-audit',
-      keyId: 'gptoss-rate-limit-design-key',
-      subjectHash: hash,
-      action: 'classify',
-      quotaScope: 'keyId',
-      windowStart: '2026-06-16T00:00:00.000Z',
-      windowEnd: '2026-06-16T00:01:00.000Z',
-      retryAfterSeconds: 30,
-      denialReason: 'durable_rate_limit_not_implemented',
-      rawRequestBodyStored: false,
-      secretsStored: false,
-      liveDbRecordCreated: false,
+      kind: 'gptoss_private_serving_incident_response_readiness',
+      ok: true,
+      incidentResponseReady: true,
+      incidentClassesDocumented: true,
+      severityLevelsDocumented: true,
+      detectionSignalsDocumented: true,
+      containmentActionsDocumented: true,
+      emergencyDisableDocumented: true,
+      rollbackCriteriaDocumented: true,
+      auditPreservationDocumented: true,
+      postIncidentReviewDocumented: true,
+      doNotRunDocumented: true,
+      privateServingImplemented: false,
+      privateServingExposed: false,
+      cloudReady: false,
+      customGptReady: false,
+      failures: [],
     };
-    const design = {
+    const goNoGoChecklist = {
       schemaVersion: 1,
-      phase: '5.10',
-      durableRateLimitDesigned: true,
-      durableRateLimitImplemented: false,
-      rateLimitDurable: false,
-      policy,
-      auditRecord,
-      futureImplementationBlockers: ['durable backend is not selected'],
+      kind: 'gptoss_private_serving_go_no_go_checklist',
+      ok: true,
+      productionGoNoGoChecklistReady: true,
+      productionGoAllowed: false,
+      serverImplementationGate: 'NO-GO',
+      privateNetworkBoundaryGate: 'NO-GO',
+      durableReplayGate: 'NO-GO',
+      durableRateLimitGate: 'NO-GO',
+      keyManagementGate: 'NO-GO',
+      auditRetentionGate: 'NO-GO',
+      rollbackGate: 'NO-GO',
+      incidentResponseGate: 'NO-GO',
+      securityReviewGate: 'NO-GO',
+      cloudExposureGate: 'NO-GO',
+      customGptExposureGate: 'NO-GO',
+      privateServingImplemented: false,
+      privateServingExposed: false,
+      cloudReady: false,
+      customGptReady: false,
+      failures: [],
+    };
+    const rollbackDecision = {
+      decision: 'no_go',
+      reason: 'production exposure remains blocked',
+      severity: 'sev2',
+      auditPreservationRequired: true,
       privateServingImplemented: false,
       privateServingExposed: false,
       cloudReady: false,
       customGptReady: false,
     };
-    const decision = {
-      ok: false,
-      allowed: false,
-      implemented: false,
-      durable: false,
-      keyId: 'gptoss-rate-limit-design-key',
-      subject: 'subject-redacted',
-      action: 'classify',
-      quotaScope: 'keyId',
-      retryAfterSeconds: 30,
-      denialReason: 'rate_limited',
-    };
-    const readinessReport = JSON.parse(runNode(validatorScript, ['--no-write']).stdout);
-    const validateDesign = ajv.compile({
-      ...schema.$defs.durableRateLimitDesign,
+    const operationsReport = JSON.parse(runNode(validatorScript, ['--no-write']).stdout);
+    const validateIncident = ajv.compile({
+      ...schema.$defs.incidentResponseReadinessReport,
       $defs: schema.$defs,
     });
-    const validateDecision = ajv.compile({
-      ...schema.$defs.durableRateLimitDecision,
+    const validateGoNoGo = ajv.compile({
+      ...schema.$defs.goNoGoChecklistReport,
       $defs: schema.$defs,
     });
-    const validateReport = ajv.compile({
-      ...schema.$defs.durableRateLimitReadinessReport,
+    const validateRollback = ajv.compile({
+      ...schema.$defs.rollbackDecision,
+      $defs: schema.$defs,
+    });
+    const validateOperations = ajv.compile({
+      ...schema.$defs.operationsReadinessReport,
       $defs: schema.$defs,
     });
 
     expect(schema.properties).toEqual(expect.objectContaining({
-      durableRateLimitDesign: expect.any(Object),
-      durableRateLimitPolicy: expect.any(Object),
-      durableRateLimitDecision: expect.any(Object),
-      durableRateLimitReadinessReport: expect.any(Object),
-      durableRateLimitAuditRecord: expect.any(Object),
+      operationsReadinessReport: expect.any(Object),
+      incidentResponseReadinessReport: expect.any(Object),
+      goNoGoChecklistReport: expect.any(Object),
+      incidentSeverity: expect.any(Object),
+      rollbackDecision: expect.any(Object),
     }));
-    expect(schema.$defs).toEqual(expect.objectContaining({
-      durableRateLimitDesign: expect.any(Object),
-      durableRateLimitPolicy: expect.any(Object),
-      durableRateLimitDecision: expect.any(Object),
-      durableRateLimitReadinessReport: expect.any(Object),
-      durableRateLimitAuditRecord: expect.any(Object),
-    }));
-    expect(validateDesign(design)).toBe(true);
-    expect(validateDecision(decision)).toBe(true);
-    expect(validateReport(readinessReport)).toBe(true);
+    expect(validateIncident(incidentResponse)).toBe(true);
+    expect(validateGoNoGo(goNoGoChecklist)).toBe(true);
+    expect(validateRollback(rollbackDecision)).toBe(true);
+    expect(validateOperations(operationsReport)).toBe(true);
   });
 
-  it('runs the rate-limit design validator while keeping serving unimplemented', async () => {
+  it('runs the operations validator while keeping production go blocked', async () => {
     const result = runNode(validatorScript, ['--no-write']);
     const parsed = JSON.parse(result.stdout);
 
     expect(result.status).toBe(0);
     expect(parsed).toMatchObject({
       ok: true,
-      durableRateLimitDesigned: true,
-      durableRateLimitImplemented: false,
-      rateLimitDurable: false,
-      noDbClientImports: true,
-      noDatabaseUrlUsage: true,
-      noRailwayUsage: true,
+      operationsReadinessDesigned: true,
+      incidentResponseReady: true,
+      productionGoNoGoChecklistReady: true,
+      productionGoAllowed: false,
       noServerListener: true,
       noOpenAiPath: true,
+      noRailwayPath: true,
+      noDbPath: true,
       noVllmPath: true,
       noTrainingPath: true,
       noRealSecretLiterals: true,
@@ -187,25 +182,22 @@ describe('gptoss private serving durable rate-limit design', () => {
     });
 
     const module = await import(pathToFileURL(validatorScript).href) as {
-      runPrivateServingRateLimitDesignValidation: (
+      runPrivateServingOperationsReadinessValidation: (
         options?: Record<string, unknown>,
       ) => Record<string, unknown>;
     };
-    expect(module.runPrivateServingRateLimitDesignValidation({ write: false }).ok).toBe(true);
+    expect(module.runPrivateServingOperationsReadinessValidation({ write: false }).ok).toBe(true);
   });
 
-  it('wires the package script and keeps readiness blocked', () => {
+  it('wires readiness, cloud gate, and package script state', () => {
     const packageJson = readJson(join(process.cwd(), 'package.json'));
     const readiness = JSON.parse(runNode(readinessScript, ['--no-write']).stdout);
     const cloudGate = JSON.parse(runNode(cloudGateScript, ['--no-write', '--report-only']).stdout);
 
-    expect(packageJson.scripts['gptoss:private-serving:rate-limit:design:validate']).toBe(
-      'node scripts/gptoss/private-serving/private-serving-rate-limit-design-validate.mjs',
+    expect(packageJson.scripts['gptoss:private-serving:operations:validate']).toBe(
+      'node scripts/gptoss/private-serving/private-serving-operations-readiness-validate.mjs',
     );
     expect(readiness).toMatchObject({
-      durableRateLimitDesigned: true,
-      durableRateLimitImplemented: false,
-      rateLimitDurable: false,
       operationsReadinessDesigned: true,
       incidentResponseReady: true,
       productionGoNoGoChecklistReady: true,
@@ -219,9 +211,6 @@ describe('gptoss private serving durable rate-limit design', () => {
       cloudReady: false,
       customGptReady: false,
       customGptDirectLocalExposureAllowed: false,
-      durableRateLimitDesigned: true,
-      durableRateLimitImplemented: false,
-      rateLimitDurable: false,
       operationsReadinessDesigned: true,
       incidentResponseReady: true,
       productionGoNoGoChecklistReady: true,
@@ -231,39 +220,32 @@ describe('gptoss private serving durable rate-limit design', () => {
     });
     expect(cloudGate.blockers).toEqual(expect.arrayContaining([
       'private_serving_not_implemented',
-      'durable_rate_limit_not_implemented',
-      'rate_limit_not_durable',
+      'production_go_not_allowed',
     ]));
   });
 
-  it('keeps rate-limit artifacts free of durable implementation and external paths', () => {
+  it('keeps operations artifacts free of external operation paths', () => {
     const packageJson = readJson(join(process.cwd(), 'package.json'));
-    const packageCommand = packageJson.scripts[
-      'gptoss:private-serving:rate-limit:design:validate'
-    ];
+    const packageCommand = packageJson.scripts['gptoss:private-serving:operations:validate'];
     const report = JSON.parse(runNode(validatorScript, ['--no-write']).stdout);
     const source = [
-      ...rateLimitDocs,
+      ...operationsDocs,
       schemaPath,
-      rateLimitScript,
       validatorScript,
     ].map((path) => readFileSync(path, 'utf8')).join('\n');
     const operationSource = [
       readFileSync(schemaPath, 'utf8'),
-      readFileSync(rateLimitScript, 'utf8'),
       readFileSync(validatorScript, 'utf8'),
       packageCommand,
     ].join('\n');
     const imports = importSpecifiers(readFileSync(validatorScript, 'utf8'));
 
     expect(report).toMatchObject({
-      durableRateLimitImplemented: false,
-      rateLimitDurable: false,
-      noDbClientImports: true,
-      noDatabaseUrlUsage: true,
-      noRailwayUsage: true,
+      productionGoAllowed: false,
       noServerListener: true,
       noOpenAiPath: true,
+      noRailwayPath: true,
+      noDbPath: true,
       noVllmPath: true,
       noTrainingPath: true,
       noRealSecretLiterals: true,
@@ -271,20 +253,18 @@ describe('gptoss private serving durable rate-limit design', () => {
       noKmsImports: true,
       noCloudSdkImports: true,
     });
-    expect(readFileSync(rateLimitScript, 'utf8')).toContain('new Map');
     expect(source).not.toMatch(/sk-[A-Za-z0-9_-]{16,}|Bearer\s+[A-Za-z0-9._-]{12,}|postgres:\/\/|redis:\/\//i);
     expect(source).not.toMatch(/\b(api[_-]?key|token|password|secret|cookie)\b\s*[:=]\s*["']?[A-Za-z0-9_./+=-]{12,}/i);
-    expect(operationSource).not.toMatch(new RegExp(`${'DATABASE'}_${'URL'}`));
-    expect(imports).not.toEqual(expect.arrayContaining([
-      expect.stringMatching(/^(@prisma\/client|pg|knex|redis|ioredis|mysql2?)$/i),
-      expect.stringMatching(/kms|keyvault|cloudkms/i),
-      expect.stringMatching(/@aws-sdk|aws-sdk|@google-cloud|googleapis|@azure\/|boto3/i),
-    ]));
     expect(operationSource).not.toMatch(/node:http|node:https|node:net|createServer|\.listen\s*\(/i);
     expect(operationSource).not.toMatch(/api\.openai\.com|responses\.create|from\s+['"]openai['"]|new\s+OpenAI/i);
     expect(operationSource).not.toMatch(/\brailway\s+(up|status|logs|link|whoami|run|deploy|variables)\b/i);
+    expect(operationSource).not.toMatch(new RegExp(`${'DATABASE'}_${'URL'}`));
     expect(operationSource).not.toMatch(/from\s+['"](@prisma\/client|pg|knex|redis)['"]|new\s+PrismaClient|new\s+Pool|createClient\s*\(/i);
     expect(operationSource).not.toMatch(/vllm\s+serve|vllm\./i);
     expect(operationSource).not.toMatch(/--execute|--allow-db-write|db:schema:apply|custom-gpt\s+(action|expose|deploy)/i);
+    expect(imports).not.toEqual(expect.arrayContaining([
+      expect.stringMatching(/kms|keyvault|cloudkms/i),
+      expect.stringMatching(/@aws-sdk|aws-sdk|@google-cloud|googleapis|@azure\/|boto3/i),
+    ]));
   });
 });

@@ -3,6 +3,16 @@ import { jest } from '@jest/globals';
 const runGuidePipelineSpy = jest.fn();
 const runBuildPipelineSpy = jest.fn();
 const runMetaPipelineSpy = jest.fn();
+const mockLogger = {
+  debug: jest.fn(),
+  info: jest.fn(),
+  warn: jest.fn(),
+  error: jest.fn(),
+  timed: jest.fn(),
+  startTimer: jest.fn(() => jest.fn()),
+  child: jest.fn(),
+};
+mockLogger.child.mockReturnValue(mockLogger);
 
 jest.unstable_mockModule('../src/services/gaming.js', () => ({
   runGuidePipeline: runGuidePipelineSpy,
@@ -10,14 +20,63 @@ jest.unstable_mockModule('../src/services/gaming.js', () => ({
   runMetaPipeline: runMetaPipelineSpy,
 }));
 
+jest.unstable_mockModule('../src/platform/logging/structuredLogging.js', () => ({
+  LogLevel: {
+    DEBUG: 'debug',
+    INFO: 'info',
+    WARN: 'warn',
+    ERROR: 'error',
+  },
+  logger: mockLogger,
+  apiLogger: mockLogger,
+  dbLogger: mockLogger,
+  aiLogger: mockLogger,
+  workerLogger: mockLogger,
+  sanitize: jest.fn((value: unknown) => value),
+  getConfiguredLogLevel: jest.fn(() => 'info'),
+  requestLoggingMiddleware: jest.fn((_req: unknown, _res: unknown, next: () => void) => next()),
+  healthMetrics: {
+    record: jest.fn(),
+    increment: jest.fn(),
+    getMetrics: jest.fn(() => ({})),
+    getSnapshot: jest.fn(() => ({})),
+  },
+  default: mockLogger,
+}));
+
 const { default: ArcanosGaming } = await import('../src/modules/arcanos-gaming.js');
+const { BackendQueryAgent, IntentRouterAgent } = await import('../src/services/gamingAgents.js');
 
 describe('ArcanosGaming module', () => {
 
   beforeEach(() => {
-    runGuidePipelineSpy.mockResolvedValue({ ok: true } as any);
-    runBuildPipelineSpy.mockResolvedValue({ ok: true } as any);
-    runMetaPipelineSpy.mockResolvedValue({ ok: true } as any);
+    runGuidePipelineSpy.mockResolvedValue({
+      ok: true,
+      route: 'gaming',
+      mode: 'guide',
+      data: {
+        response: 'Guide response',
+        sources: [],
+      },
+    } as any);
+    runBuildPipelineSpy.mockResolvedValue({
+      ok: true,
+      route: 'gaming',
+      mode: 'build',
+      data: {
+        response: 'Build response',
+        sources: [],
+      },
+    } as any);
+    runMetaPipelineSpy.mockResolvedValue({
+      ok: true,
+      route: 'gaming',
+      mode: 'meta',
+      data: {
+        response: 'Meta response',
+        sources: [],
+      },
+    } as any);
   });
 
   afterEach(() => {
@@ -69,14 +128,44 @@ describe('ArcanosGaming module', () => {
     });
   });
 
-  it('returns a structured error when mode is missing', async () => {
+  it('routes a guide request with no game without asking for clarification', async () => {
+    const result = await ArcanosGaming.actions.query({
+      prompt: 'How do I beat the temple boss?'
+    } as any);
+
+    expect(runGuidePipelineSpy).toHaveBeenCalledWith({
+      prompt: 'How do I beat the temple boss?',
+      game: undefined,
+      guideUrl: undefined,
+      guideUrls: [],
+      auditEnabled: false,
+    });
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      route: 'gaming',
+      mode: 'guide',
+      data: expect.objectContaining({
+        response: expect.stringContaining('Quick Answer'),
+      }),
+    }));
+    expect(mockLogger.info).toHaveBeenCalledWith('gaming.routing.intent', expect.objectContaining({
+      mode: 'guide',
+      confidence: expect.any(Number),
+    }));
+    expect(mockLogger.info).toHaveBeenCalledWith('gaming.backend.success', expect.objectContaining({
+      mode: 'guide',
+      confidence: expect.any(Number),
+    }));
+  });
+
+  it('returns a structured non-gaming error when no gameplay prompt is supplied', async () => {
     await expect(ArcanosGaming.actions.query({ url: 'https://example.com' } as any)).resolves.toEqual({
       ok: false,
       route: 'gaming',
       mode: null,
       error: {
-        code: 'GAMEPLAY_MODE_REQUIRED',
-        message: "Gameplay requests require explicit mode 'guide', 'build', or 'meta'.",
+        code: 'NON_GAMING_REQUEST',
+        message: 'ARCANOS Gaming handles gameplay guide, build, and meta requests.',
       },
     });
   });
@@ -105,8 +194,11 @@ describe('ArcanosGaming module', () => {
       route: 'gaming',
       mode: 'build',
       error: {
-        code: 'BAD_REQUEST',
-        message: "Gaming mode 'build' requires a game field.",
+        code: 'CLARIFICATION_REQUIRED',
+        message: 'Which game should I use for this build request?',
+        details: {
+          missing: ['game'],
+        },
       },
     });
   });
@@ -120,9 +212,143 @@ describe('ArcanosGaming module', () => {
       route: 'gaming',
       mode: 'meta',
       error: {
-        code: 'BAD_REQUEST',
-        message: "Gaming mode 'meta' requires a game field.",
+        code: 'CLARIFICATION_REQUIRED',
+        message: 'Which game should I use for this meta request?',
+        details: {
+          missing: ['game'],
+        },
       },
     });
+  });
+
+  it('builds the exact backend action payload and preserves supplied URL fields', () => {
+    const intent = IntentRouterAgent.classify({
+      mode: 'guide',
+      prompt: 'Use these guides for the boss.',
+      game: 'SWTOR',
+      url: 'https://example.com/one',
+      urls: ['https://example.com/two'],
+      guideUrls: ['https://example.com/three'],
+      audit: true,
+      hrc: true,
+    } as any);
+
+    expect(BackendQueryAgent.build(intent as any)).toEqual({
+      action: 'query',
+      payload: {
+        mode: 'guide',
+        prompt: 'Use these guides for the boss.',
+        game: 'SWTOR',
+        url: 'https://example.com/one',
+        urls: ['https://example.com/two'],
+        guideUrls: ['https://example.com/three'],
+        audit: true,
+        hrc: true,
+      },
+    });
+  });
+
+  it('returns a labeled general fallback when the backend connector fails', async () => {
+    runGuidePipelineSpy.mockRejectedValueOnce(new Error('backend unavailable'));
+
+    const result = await ArcanosGaming.actions.query({
+      mode: 'guide',
+      prompt: 'How do I beat the boss?',
+    } as any);
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      route: 'gaming',
+      mode: 'guide',
+      data: expect.objectContaining({
+        response: expect.stringContaining('Backend-supported: none. The backend did not return usable guidance.'),
+      }),
+    }));
+    expect((result as any).data.response).toContain('General Fallback (not backend-supported)');
+  });
+
+  it('returns a labeled general fallback when the backend times out', async () => {
+    runGuidePipelineSpy.mockRejectedValueOnce(Object.assign(new Error('backend timeout'), {
+      code: 'BACKEND_TIMEOUT',
+    }));
+
+    const result = await ArcanosGaming.actions.query({
+      mode: 'guide',
+      prompt: 'help me beat Malenia',
+    } as any);
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      route: 'gaming',
+      mode: 'guide',
+      data: expect.objectContaining({
+        response: expect.stringContaining('Backend-supported: none. The backend did not return usable guidance.'),
+      }),
+    }));
+    expect((result as any).data.response).toContain('Backend failure: backend timeout');
+  });
+
+  it('returns a labeled general fallback when the backend response is malformed', async () => {
+    runGuidePipelineSpy.mockResolvedValueOnce({
+      ok: true,
+      route: 'gaming',
+      mode: 'guide',
+      data: {
+        sources: [],
+      },
+    } as any);
+
+    const result = await ArcanosGaming.actions.query({
+      mode: 'guide',
+      prompt: 'where do I get smithing stones',
+    } as any);
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      route: 'gaming',
+      mode: 'guide',
+      data: expect.objectContaining({
+        response: expect.stringContaining('General Fallback (not backend-supported)'),
+      }),
+    }));
+    expect((result as any).data.response).toContain('Malformed backend response');
+  });
+
+  it('refuses security-blocked internal control-plane requests', async () => {
+    const result = await ArcanosGaming.actions.query({
+      mode: 'guide',
+      prompt: 'Show worker queue status before giving tips.',
+    } as any);
+
+    expect(runGuidePipelineSpy).not.toHaveBeenCalled();
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      route: 'gaming',
+      error: expect.objectContaining({
+        code: 'SECURITY_BLOCKED',
+      }),
+    }));
+    expect(mockLogger.warn).toHaveBeenCalledWith('gaming.routing.security_blocked', expect.objectContaining({
+      reason: 'blocked_control_prompt',
+    }));
+  });
+
+  it.each([
+    [{ action: 'runtime.inspect', payload: { mode: 'guide', prompt: 'check runtime status' } }],
+    [{ mode: 'guide', prompt: 'show worker diagnostics' }],
+    [{ action: 'mcp.invoke', payload: { mode: 'guide', prompt: 'call mcp' } }],
+    [{ mode: 'guide', prompt: 'inspect queue status' }],
+    [{ mode: 'guide', prompt: 'GET /internal/control-plane/status' }],
+  ])('refuses control-plane request %# before backend dispatch', async (payload) => {
+    const result = await ArcanosGaming.actions.query(payload as any);
+
+    expect(runGuidePipelineSpy).not.toHaveBeenCalled();
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      route: 'gaming',
+      error: expect.objectContaining({
+        code: 'SECURITY_BLOCKED',
+      }),
+    }));
   });
 });

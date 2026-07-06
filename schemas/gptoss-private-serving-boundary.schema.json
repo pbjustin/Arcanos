@@ -61,7 +61,18 @@
     "keyRevocationPolicy": { "$ref": "#/$defs/keyRevocationPolicy" },
     "keyManagementReadinessReport": {
       "$ref": "#/$defs/keyManagementReadinessReport"
-    }
+    },
+    "operationsReadinessReport": {
+      "$ref": "#/$defs/operationsReadinessReport"
+    },
+    "incidentResponseReadinessReport": {
+      "$ref": "#/$defs/incidentResponseReadinessReport"
+    },
+    "goNoGoChecklistReport": {
+      "$ref": "#/$defs/goNoGoChecklistReport"
+    },
+    "incidentSeverity": { "$ref": "#/$defs/incidentSeverity" },
+    "rollbackDecision": { "$ref": "#/$defs/rollbackDecision" }
   },
   "$defs": {
     "signedRequestEnvelope": {
@@ -548,6 +559,211 @@
         "railwayCliUsed": { "const": false },
         "liveDbUsed": { "const": false },
         "serverCreated": { "const": false },
+        "failures": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "incidentSeverity": {
+      "type": "string",
+      "enum": ["sev0", "sev1", "sev2", "sev3", "sev4"]
+    },
+    "rollbackDecision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "decision",
+        "reason",
+        "privateServingImplemented",
+        "privateServingExposed",
+        "cloudReady",
+        "customGptReady"
+      ],
+      "properties": {
+        "decision": {
+          "type": "string",
+          "enum": ["rollback_required", "hold_release", "continue_blocked", "no_go"]
+        },
+        "reason": { "$ref": "#/$defs/nonEmptyString" },
+        "severity": { "$ref": "#/$defs/incidentSeverity" },
+        "auditPreservationRequired": { "const": true },
+        "privateServingImplemented": { "const": false },
+        "privateServingExposed": { "const": false },
+        "cloudReady": { "const": false },
+        "customGptReady": { "const": false }
+      }
+    },
+    "incidentResponseReadinessReport": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "schemaVersion",
+        "kind",
+        "ok",
+        "incidentResponseReady",
+        "incidentClassesDocumented",
+        "severityLevelsDocumented",
+        "detectionSignalsDocumented",
+        "containmentActionsDocumented",
+        "emergencyDisableDocumented",
+        "rollbackCriteriaDocumented",
+        "auditPreservationDocumented",
+        "postIncidentReviewDocumented",
+        "doNotRunDocumented",
+        "privateServingImplemented",
+        "privateServingExposed",
+        "cloudReady",
+        "customGptReady",
+        "failures"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "kind": {
+          "const": "gptoss_private_serving_incident_response_readiness"
+        },
+        "ok": { "type": "boolean" },
+        "incidentResponseReady": { "const": true },
+        "incidentClassesDocumented": { "const": true },
+        "severityLevelsDocumented": { "const": true },
+        "detectionSignalsDocumented": { "const": true },
+        "containmentActionsDocumented": { "const": true },
+        "emergencyDisableDocumented": { "const": true },
+        "rollbackCriteriaDocumented": { "const": true },
+        "auditPreservationDocumented": { "const": true },
+        "postIncidentReviewDocumented": { "const": true },
+        "doNotRunDocumented": { "const": true },
+        "privateServingImplemented": { "const": false },
+        "privateServingExposed": { "const": false },
+        "cloudReady": { "const": false },
+        "customGptReady": { "const": false },
+        "failures": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "goNoGoChecklistReport": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "schemaVersion",
+        "kind",
+        "ok",
+        "productionGoNoGoChecklistReady",
+        "productionGoAllowed",
+        "serverImplementationGate",
+        "privateNetworkBoundaryGate",
+        "durableReplayGate",
+        "durableRateLimitGate",
+        "keyManagementGate",
+        "auditRetentionGate",
+        "rollbackGate",
+        "incidentResponseGate",
+        "securityReviewGate",
+        "cloudExposureGate",
+        "customGptExposureGate",
+        "privateServingImplemented",
+        "privateServingExposed",
+        "cloudReady",
+        "customGptReady",
+        "failures"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "kind": { "const": "gptoss_private_serving_go_no_go_checklist" },
+        "ok": { "type": "boolean" },
+        "productionGoNoGoChecklistReady": { "const": true },
+        "productionGoAllowed": { "const": false },
+        "serverImplementationGate": { "const": "NO-GO" },
+        "privateNetworkBoundaryGate": { "const": "NO-GO" },
+        "durableReplayGate": { "const": "NO-GO" },
+        "durableRateLimitGate": { "const": "NO-GO" },
+        "keyManagementGate": { "const": "NO-GO" },
+        "auditRetentionGate": { "const": "NO-GO" },
+        "rollbackGate": { "const": "NO-GO" },
+        "incidentResponseGate": { "const": "NO-GO" },
+        "securityReviewGate": { "const": "NO-GO" },
+        "cloudExposureGate": { "const": "NO-GO" },
+        "customGptExposureGate": { "const": "NO-GO" },
+        "privateServingImplemented": { "const": false },
+        "privateServingExposed": { "const": false },
+        "cloudReady": { "const": false },
+        "customGptReady": { "const": false },
+        "failures": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "operationsReadinessReport": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "schemaVersion",
+        "kind",
+        "ok",
+        "operationsReadinessDesigned",
+        "incidentResponseReady",
+        "productionGoNoGoChecklistReady",
+        "productionGoAllowed",
+        "noServerListener",
+        "noOpenAiPath",
+        "noRailwayPath",
+        "noDbPath",
+        "noVllmPath",
+        "noTrainingPath",
+        "noRealSecretLiterals",
+        "noEnvSecretReads",
+        "noKmsImports",
+        "noCloudSdkImports",
+        "readinessBlocked",
+        "privateServingImplemented",
+        "privateServingExposed",
+        "cloudReady",
+        "customGptReady",
+        "openAiCalled",
+        "trainingExecuted",
+        "vllmUsed",
+        "railwayCliUsed",
+        "liveDbUsed",
+        "serverCreated",
+        "failures"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "kind": {
+          "const": "gptoss_private_serving_operations_readiness_validation"
+        },
+        "ok": { "type": "boolean" },
+        "operationsReadinessDesigned": { "const": true },
+        "incidentResponseReady": { "const": true },
+        "productionGoNoGoChecklistReady": { "const": true },
+        "productionGoAllowed": { "const": false },
+        "noServerListener": { "const": true },
+        "noOpenAiPath": { "const": true },
+        "noRailwayPath": { "const": true },
+        "noDbPath": { "const": true },
+        "noVllmPath": { "const": true },
+        "noTrainingPath": { "const": true },
+        "noRealSecretLiterals": { "const": true },
+        "noEnvSecretReads": { "const": true },
+        "noKmsImports": { "const": true },
+        "noCloudSdkImports": { "const": true },
+        "readinessBlocked": { "const": true },
+        "privateServingImplemented": { "const": false },
+        "privateServingExposed": { "const": false },
+        "cloudReady": { "const": false },
+        "customGptReady": { "const": false },
+        "openAiCalled": { "const": false },
+        "trainingExecuted": { "const": false },
+        "vllmUsed": { "const": false },
+        "railwayCliUsed": { "const": false },
+        "liveDbUsed": { "const": false },
+        "serverCreated": { "const": false },
+        "incidentResponse": { "$ref": "#/$defs/incidentResponseReadinessReport" },
+        "goNoGoChecklist": { "$ref": "#/$defs/goNoGoChecklistReport" },
+        "rollbackDecision": { "$ref": "#/$defs/rollbackDecision" },
         "failures": {
           "type": "array",
           "items": { "type": "string" }
@@ -1420,6 +1636,10 @@
         "durableRateLimitDesigned",
         "durableRateLimitImplemented",
         "rateLimitDurable",
+        "operationsReadinessDesigned",
+        "incidentResponseReady",
+        "productionGoNoGoChecklistReady",
+        "productionGoAllowed",
         "responseShapingScaffoldReady",
         "publicServerCreated",
         "cloudReady",
@@ -1451,6 +1671,10 @@
         "durableRateLimitDesigned": { "const": true },
         "durableRateLimitImplemented": { "const": false },
         "rateLimitDurable": { "const": false },
+        "operationsReadinessDesigned": { "const": true },
+        "incidentResponseReady": { "const": true },
+        "productionGoNoGoChecklistReady": { "const": true },
+        "productionGoAllowed": { "const": false },
         "responseShapingScaffoldReady": { "const": true },
         "publicServerCreated": { "const": false },
         "cloudReady": { "const": false },

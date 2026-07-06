@@ -156,6 +156,10 @@ Pass criteria:
 - Phase 5.10 durable rate-limit governance is design-only. The current rate
   limiter remains local/in-memory scaffold logic; no durable backend, DB client,
   migration apply path, server, listener, or endpoint exists.
+- Phase 5.11 operations readiness, incident response, and go/no-go checklists
+  are docs/schema/validation only. `productionGoAllowed:false`,
+  `privateServingImplemented:false`, `privateServingExposed:false`,
+  `cloudReady:false`, and `customGptReady:false` remain required.
 
 Expected current local replay fields:
 
@@ -188,6 +192,10 @@ Expected current local replay fields:
   "durableRateLimitDesigned": true,
   "durableRateLimitImplemented": false,
   "rateLimitDurable": false,
+  "operationsReadinessDesigned": true,
+  "incidentResponseReady": true,
+  "productionGoNoGoChecklistReady": true,
+  "productionGoAllowed": false,
   "responseShapingScaffoldReady": true,
   "publicServerCreated": false,
   "cloudReady": false,
