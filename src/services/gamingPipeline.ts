@@ -321,14 +321,15 @@ function stringifyMockResult(result: unknown): string {
 function buildGamingRunOptions(mode: GamingMode) {
   if (mode === "guide") {
     return {
-      answerMode: "explained" as const,
-      requestedVerbosity: "detailed" as const,
+      answerMode: "direct" as const,
+      requestedVerbosity: "normal" as const,
       strictUserVisibleOutput: true
     };
   }
 
   return {
     answerMode: "direct" as const,
+    requestedVerbosity: "minimal" as const,
     strictUserVisibleOutput: true
   };
 }
