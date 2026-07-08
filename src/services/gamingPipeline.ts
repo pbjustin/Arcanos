@@ -81,6 +81,8 @@ const PROVIDER_TIMEOUT_ERROR_MARKERS = [
   "execution aborted by watchdog"
 ];
 
+const PROVIDER_COMPLETION_INCOMPLETE_FALLBACK_REASON = "PROVIDER_COMPLETION_INCOMPLETE";
+
 function isGamingProviderTimeoutError(error: unknown): boolean {
   if (isAbortError(error)) {
     return true;
@@ -98,6 +100,10 @@ function isGamingProviderTimeoutError(error: unknown): boolean {
   return values.some((value) =>
     PROVIDER_TIMEOUT_ERROR_MARKERS.some((marker) => value.includes(marker))
   );
+}
+
+function isGamingProviderCompletionIncompleteError(error: unknown): boolean {
+  return readErrorString(error, "code") === "OPENAI_COMPLETION_INCOMPLETE";
 }
 
 function classifyGamingProviderFallbackReason(timeoutPhase?: string): string {
@@ -266,19 +272,28 @@ function buildGamingProviderFallbackResponse(params: {
       ? buildMetaFallbackSteps(params.input)
       : buildGuideFallbackSteps(params.input);
   const sectionLabel = params.input.mode === "build" ? "Build" : "Steps";
-  const phaseLine = params.timeoutPhase
-    ? `Timeout phase: ${params.timeoutPhase}.`
-    : "Timeout phase: unknown.";
+  const providerIncomplete = params.fallbackReason === PROVIDER_COMPLETION_INCOMPLETE_FALLBACK_REASON;
+  const phaseLine = providerIncomplete
+    ? "Provider output: incomplete."
+    : params.timeoutPhase
+      ? `Timeout phase: ${params.timeoutPhase}.`
+      : "Timeout phase: unknown.";
+  const fallbackSummary = providerIncomplete
+    ? `${sourceAvailabilityLine(params.sources)} The upstream provider returned an incomplete answer, so this is a bounded deterministic fallback.`
+    : `${sourceAvailabilityLine(params.sources)} The full generation path hit ${params.fallbackReason}, so this is a bounded deterministic fallback.`;
+  const supportLine = providerIncomplete
+    ? "Backend-supported: partial. ARCANOS Gaming returned stable gameplay guidance instead of exposing incomplete upstream output."
+    : "Backend-supported: partial. ARCANOS Gaming returned stable gameplay guidance instead of waiting for the timed-out upstream stage.";
 
   return [
     "Quick Answer",
-    `${sourceAvailabilityLine(params.sources)} The full generation path hit ${params.fallbackReason}, so this is a bounded deterministic fallback.`,
+    fallbackSummary,
     "",
     sectionLabel,
     ...steps.map((step, index) => `${index + 1}. ${step}`),
     "",
     "Why It Works",
-    "Backend-supported: partial. ARCANOS Gaming returned stable gameplay guidance instead of waiting for the timed-out upstream stage.",
+    supportLine,
     `Fallback reason: ${params.fallbackReason}. ${phaseLine}`,
     "",
     "Watch Outs",
@@ -516,6 +531,48 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
           sources,
           fallbackReason,
           timeoutPhase
+        }),
+        sources,
+        logContext: baseLogContext,
+        requestStartedAt
+      });
+    }
+
+    if (isGamingProviderCompletionIncompleteError(error)) {
+      const fallbackReason = PROVIDER_COMPLETION_INCOMPLETE_FALLBACK_REASON;
+      const errorCode = readErrorString(error, "code");
+      logger.warn("gaming.provider.incomplete", {
+        ...baseLogContext,
+        ...(params.game ? { game: params.game } : {}),
+        provider: "trinity",
+        elapsedMs,
+        upstreamModelLatencyMs: elapsedMs,
+        errorCode,
+        finishReason: readErrorString(error, "finishReason"),
+        incompleteReason: readErrorString(error, "incompleteReason"),
+        fallbackReason
+      });
+      logGamingIntakeStep(baseLogContext, "provider", providerStartedAt, {
+        ok: false,
+        provider: "trinity",
+        upstreamModelLatencyMs: elapsedMs,
+        errorCode,
+        fallbackReason
+      });
+      logger.warn("gaming.fallback.used", {
+        ...baseLogContext,
+        ...(params.game ? { game: params.game } : {}),
+        provider: "trinity",
+        fallbackReason,
+        elapsedMs,
+        errorCode
+      });
+      return formatGameplaySuccessWithLogs({
+        mode: params.mode,
+        response: buildGamingProviderFallbackResponse({
+          input: params,
+          sources,
+          fallbackReason
         }),
         sources,
         logContext: baseLogContext,

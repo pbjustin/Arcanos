@@ -103,14 +103,18 @@ function formatKnownGenerationFailure(mode: GamingMode, error: unknown): GamingE
     return formatGenerationTimeout(mode, error);
   }
 
-  if (code !== "OPENAI_COMPLETION_INCOMPLETE" && code !== "TRINITY_OUTPUT_INTEGRITY_FAILED") {
+  if (code === "OPENAI_COMPLETION_INCOMPLETE") {
+    return null;
+  }
+
+  if (code !== "TRINITY_OUTPUT_INTEGRITY_FAILED") {
     return null;
   }
 
   return formatGamingError({
     mode,
     error: {
-      code: code === "OPENAI_COMPLETION_INCOMPLETE" ? "GENERATION_INCOMPLETE" : "GENERATION_INTEGRITY_FAILED",
+      code: "GENERATION_INTEGRITY_FAILED",
       message: "Gaming generation did not complete cleanly; no partial answer was returned.",
       details: {
         finishReason: readSafeErrorString(error, "finishReason"),

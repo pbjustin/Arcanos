@@ -44,7 +44,7 @@ jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({
   runTrinityWritingPipeline: mockRunTrinityWritingPipeline
 }));
 
-const { runGuidePipeline } = await import('../src/services/gaming.js');
+const { runBuildPipeline, runGuidePipeline, runMetaPipeline } = await import('../src/services/gaming.js');
 const { runWithRequestAbortContext } = await import('@arcanos/runtime');
 const { logger } = await import('@platform/logging/structuredLogging.js');
 
@@ -328,6 +328,72 @@ describe('gaming guide output hardening', () => {
     expect(result.data.response).not.toContain('bounded deterministic fallback');
     const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
     expect(trinityRequest.input.prompt).toContain('Where do I go first in Elden Ring after leaving the tutorial?');
+  });
+
+  it('returns a deterministic fallback when build provider generation is incomplete', async () => {
+    const incompleteError = Object.assign(new Error('provider output incomplete'), {
+      code: 'OPENAI_COMPLETION_INCOMPLETE',
+      finishReason: 'length',
+      incompleteReason: 'max_output_tokens'
+    });
+    const warnSpy = jest.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    mockRunTrinityWritingPipeline.mockRejectedValueOnce(incompleteError);
+    const controller = new AbortController();
+
+    try {
+      const result = await runWithRequestAbortContext({
+        requestId: 'req-build-incomplete',
+        controller,
+        signal: controller.signal,
+        deadlineAt: Date.now() + 60_000,
+        timeoutMs: 60_000
+      }, () => runBuildPipeline({
+        game: 'Elden Ring',
+        prompt: 'Make me a bleed build for Elden Ring.',
+        guideUrls: [],
+        auditEnabled: false
+      }));
+
+      expect(result.ok).toBe(true);
+      expect(result.mode).toBe('build');
+      expect(result.data.response).toContain('bounded deterministic fallback');
+      expect(result.data.response).toContain('PROVIDER_COMPLETION_INCOMPLETE');
+      expect(result.data.response).toContain('Provider output: incomplete.');
+      expect(result.data.response).toContain('For Elden Ring');
+      expect(warnSpy).toHaveBeenCalledWith('gaming.provider.incomplete', expect.objectContaining({
+        requestId: 'req-build-incomplete',
+        traceId: 'req-build-incomplete',
+        mode: 'build',
+        game: 'Elden Ring',
+        errorCode: 'OPENAI_COMPLETION_INCOMPLETE',
+        fallbackReason: 'PROVIDER_COMPLETION_INCOMPLETE'
+      }));
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('passes a meta request with game through the normal path', async () => {
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce({
+      result: 'Frost Mage is viable when current tuning supports its control and cleave profile.',
+      activeModel: 'gpt-test',
+      meta: { provider: { finishReason: 'stop' } }
+    });
+
+    const result = await runMetaPipeline({
+      game: 'World of Warcraft',
+      prompt: 'Is frost mage still viable this patch?',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.mode).toBe('meta');
+    expect(result.data.response).toBe('Frost Mage is viable when current tuning supports its control and cleave profile.');
+    expect(result.data.response).not.toContain('bounded deterministic fallback');
+    const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
+    expect(trinityRequest.input.prompt).toContain('[MODE]\nmeta');
+    expect(trinityRequest.input.prompt).toContain('[GAME]\nWorld of Warcraft');
   });
 
   it('returns a controlled fallback when upstream intake slows down', async () => {

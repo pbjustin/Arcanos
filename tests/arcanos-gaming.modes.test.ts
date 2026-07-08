@@ -214,7 +214,7 @@ describe("ArcanosGaming mode routing", () => {
     });
   });
 
-  it("returns an incomplete generation error instead of a partial guide when the provider truncates", async () => {
+  it("returns a controlled fallback when the provider reports incomplete generation", async () => {
     const incompleteError = Object.assign(new Error("provider output incomplete"), {
       code: "OPENAI_COMPLETION_INCOMPLETE",
       finishReason: "length",
@@ -231,23 +231,38 @@ describe("ArcanosGaming mode routing", () => {
       prompt: "Beginner to intermediate guide for tanking in Star Wars The Old Republic including mechanics, threat management, mitigation, positioning, and group play tips."
     });
 
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      route: "gaming",
+      mode: "guide",
+      data: expect.objectContaining({
+        response: expect.stringContaining("General Fallback (not backend-supported)")
+      })
+    }));
+    expect((result as any).data.response).toContain("provider output incomplete");
+  });
+
+  it("returns build clarification without calling fallback or provider", async () => {
+    const result = await ArcanosGaming.actions.query({
+      mode: "build",
+      prompt: "Make me a tank build."
+    });
+
     expect(result).toEqual({
       ok: false,
       route: "gaming",
-      mode: "guide",
+      mode: "build",
       error: {
-        code: "GENERATION_INCOMPLETE",
-        message: "Gaming generation did not complete cleanly; no partial answer was returned.",
+        code: "CLARIFICATION_REQUIRED",
+        message: "Which game should I use for this build request?",
         details: {
-          finishReason: "length",
-          incompleteReason: "max_output_tokens",
-          truncated: true,
-          lengthTruncated: true,
-          contentFiltered: false,
-          integrityIssues: undefined
+          missing: ["game"]
         }
       }
     });
+    expect(mockRunBuildPipeline).not.toHaveBeenCalled();
+    expect(mockRunGuidePipeline).not.toHaveBeenCalled();
+    expect(mockRunMetaPipeline).not.toHaveBeenCalled();
   });
 
   it("returns a controlled fallback when the provider aborts before module dispatch expires", async () => {
