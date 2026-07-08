@@ -329,7 +329,6 @@ function buildGamingRunOptions(mode: GamingMode) {
 
   return {
     answerMode: "direct" as const,
-    requestedVerbosity: "minimal" as const,
     strictUserVisibleOutput: true
   };
 }

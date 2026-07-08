@@ -375,8 +375,9 @@ describe('gaming guide output hardening', () => {
       expect(trinityRequest.input.prompt).toContain('Return only 5 short numbered bullets');
       expect(trinityRequest.context.runOptions).toEqual(expect.objectContaining({
         answerMode: 'direct',
-        requestedVerbosity: 'minimal'
+        strictUserVisibleOutput: true
       }));
+      expect(trinityRequest.context.runOptions).not.toHaveProperty('requestedVerbosity');
       expect(warnSpy).toHaveBeenCalledWith('gaming.provider.incomplete', expect.objectContaining({
         requestId: 'req-build-incomplete',
         traceId: 'req-build-incomplete',
