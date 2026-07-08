@@ -250,7 +250,7 @@ describe("ArcanosGaming mode routing", () => {
     });
   });
 
-  it("returns a controlled generation timeout when the provider aborts before module dispatch expires", async () => {
+  it("returns a controlled fallback when the provider aborts before module dispatch expires", async () => {
     const timeoutError = Object.assign(new Error("Request was aborted."), {
       name: "AbortError",
       code: "GAMING_PROVIDER_TIMEOUT",
@@ -266,23 +266,19 @@ describe("ArcanosGaming mode routing", () => {
       prompt: "Regression check only: Beginner to intermediate guide for tanking in Star Wars The Old Republic including mechanics, threat management, mitigation, positioning, and group play tips. Return a complete coherent answer with valid numbering."
     });
 
-    expect(result).toEqual({
-      ok: false,
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
       route: "gaming",
       mode: "guide",
-      error: {
-        code: "GENERATION_TIMEOUT",
-        message: "Gaming generation timed out before a complete answer was available.",
-        details: {
-          timeoutMs: 50_000,
-          stageTimeoutMs: 15_000,
-          timeoutPhase: "intake"
-        }
-      }
-    });
+      data: expect.objectContaining({
+        response: expect.stringContaining("General Fallback (not backend-supported)")
+      })
+    }));
+    expect((result as any).data.response).toContain("GENERATION_TIMEOUT");
+    expect((result as any).data.response).toContain("phase=intake");
   });
 
-  it("returns a controlled generation timeout when the runtime budget expires before module dispatch", async () => {
+  it("returns a controlled fallback when the runtime budget expires before module dispatch", async () => {
     const timeoutError = Object.assign(new Error("Gaming guide generation timed out."), {
       code: "GAMING_PROVIDER_TIMEOUT",
       timeoutMs: 50_000,
@@ -298,18 +294,15 @@ describe("ArcanosGaming mode routing", () => {
     });
 
     expect(result).toEqual(expect.objectContaining({
-      ok: false,
+      ok: true,
       route: "gaming",
       mode: "guide",
-      error: expect.objectContaining({
-        code: "GENERATION_TIMEOUT",
-        details: {
-          timeoutMs: 50_000,
-          stageTimeoutMs: 15_000,
-          timeoutPhase: "reasoning"
-        }
+      data: expect.objectContaining({
+        response: expect.stringContaining("General Fallback (not backend-supported)")
       })
     }));
+    expect((result as any).data.response).toContain("GENERATION_TIMEOUT");
+    expect((result as any).data.response).toContain("phase=reasoning");
   });
 
   it("preserves parent request aborts instead of mapping them to generation timeouts", async () => {

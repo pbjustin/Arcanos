@@ -56,6 +56,7 @@ describe('gaming guide output hardening', () => {
     delete process.env.ARCANOS_GAMING_GUIDE_STAGE_TIMEOUT_MS;
     delete process.env.ARCANOS_GAMING_MODULE_TIMEOUT_MS;
     delete process.env.ARCANOS_GAMING_WEB_CONTEXT_MAX_URLS;
+    delete process.env.ARCANOS_GAMING_WEB_CONTEXT_FETCH_TIMEOUT_MS;
 
     mockGetEnv.mockImplementation((key: string, defaultValue?: string) => process.env[key] ?? defaultValue);
     mockGetEnvNumber.mockReturnValue(512);
@@ -287,61 +288,108 @@ describe('gaming guide output hardening', () => {
     );
   });
 
-  it('converts a provider abort into a bounded gaming timeout error', async () => {
+  it('passes a broad Elden Ring guide lookup through the normal guide path', async () => {
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce({
+      result: 'Follow the Limgrave route, upgrade one weapon, and delay Stormveil until you are prepared.',
+      activeModel: 'gpt-test',
+      meta: { provider: { finishReason: 'stop' } }
+    });
+
+    const result = await runGuidePipeline({
+      game: 'Elden Ring',
+      prompt: 'Look up a guide for Elden Ring.',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(result.data.response).toBe('Follow the Limgrave route, upgrade one weapon, and delay Stormveil until you are prepared.');
+    expect(result.data.response).not.toContain('bounded deterministic fallback');
+    const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
+    expect(trinityRequest.input.prompt).toContain('[GAME]\nElden Ring');
+    expect(trinityRequest.input.prompt).toContain('Look up a guide for Elden Ring.');
+  });
+
+  it('passes a narrow Elden Ring progression guide through the normal guide path', async () => {
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce({
+      result: 'Go to the Church of Elleh, then Gatefront Ruins for the map and Torrent unlock.',
+      activeModel: 'gpt-test',
+      meta: { provider: { finishReason: 'stop' } }
+    });
+
+    const result = await runGuidePipeline({
+      game: 'Elden Ring',
+      prompt: 'Where do I go first in Elden Ring after leaving the tutorial?',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(result.data.response).toBe('Go to the Church of Elleh, then Gatefront Ruins for the map and Torrent unlock.');
+    expect(result.data.response).not.toContain('bounded deterministic fallback');
+    const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
+    expect(trinityRequest.input.prompt).toContain('Where do I go first in Elden Ring after leaving the tutorial?');
+  });
+
+  it('returns a controlled fallback when upstream intake slows down', async () => {
     const providerAbort = Object.assign(new Error('Request was aborted.'), {
       name: 'AbortError',
       timeoutPhase: 'intake'
     });
     mockRunTrinityWritingPipeline.mockRejectedValueOnce(providerAbort);
 
-    await expect(runGuidePipeline({
-      game: 'Star Wars: The Old Republic',
-      prompt: 'Regression check only: Beginner to intermediate guide for tanking in Star Wars The Old Republic including mechanics, threat management, mitigation, positioning, and group play tips. Return a complete coherent answer with valid numbering.',
+    const result = await runGuidePipeline({
+      game: 'Elden Ring',
+      prompt: 'Look up a guide for Elden Ring.',
       guideUrls: [],
       auditEnabled: false
-    })).rejects.toMatchObject({
-      code: 'GAMING_PROVIDER_TIMEOUT',
-      timeoutMs: 50_000,
-      stageTimeoutMs: 15_000,
-      timeoutPhase: 'intake'
     });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      route: 'gaming',
+      mode: 'guide'
+    }));
+    expect(result.data.response).toContain('Sources unavailable');
+    expect(result.data.response).toContain('INTAKE_UPSTREAM_TIMEOUT');
+    expect(result.data.response).toContain('Timeout phase: intake.');
+    expect(result.data.response).toContain('Limgrave');
   });
 
-  it('converts runtime budget exhaustion into a bounded gaming timeout error', async () => {
+  it('returns a controlled fallback when runtime budget exhaustion reaches the guide pipeline', async () => {
     const budgetError = Object.assign(new Error('runtime_budget_exhausted'), {
       name: 'RuntimeBudgetExceededError',
       timeoutPhase: 'reasoning'
     });
     mockRunTrinityWritingPipeline.mockRejectedValueOnce(budgetError);
 
-    await expect(runGuidePipeline({
+    const result = await runGuidePipeline({
       game: 'Star Wars: The Old Republic',
       prompt: 'Regression check only: Beginner to intermediate guide for tanking in Star Wars The Old Republic including mechanics, threat management, mitigation, positioning, and group play tips. Return a complete coherent answer with valid numbering.',
       guideUrls: [],
       auditEnabled: false
-    })).rejects.toMatchObject({
-      code: 'GAMING_PROVIDER_TIMEOUT',
-      timeoutMs: 50_000,
-      stageTimeoutMs: 15_000,
-      timeoutPhase: 'reasoning'
     });
+
+    expect(result.ok).toBe(true);
+    expect(result.data.response).toContain('bounded deterministic fallback');
+    expect(result.data.response).toContain('INTAKE_UPSTREAM_TIMEOUT');
+    expect(result.data.response).toContain('Timeout phase: reasoning.');
   });
 
-  it('defaults missing provider timeout phase consistently', async () => {
+  it('defaults missing provider timeout phase consistently in the fallback response', async () => {
     const providerAbort = Object.assign(new Error('Request was aborted.'), {
       name: 'AbortError'
     });
     mockRunTrinityWritingPipeline.mockRejectedValueOnce(providerAbort);
 
-    await expect(runGuidePipeline({
+    const result = await runGuidePipeline({
       game: 'Star Wars: The Old Republic',
       prompt: 'Smoke test: give three short tanking tips with valid numbering.',
       guideUrls: [],
       auditEnabled: false
-    })).rejects.toMatchObject({
-      code: 'GAMING_PROVIDER_TIMEOUT',
-      timeoutPhase: 'provider'
     });
+
+    expect(result.ok).toBe(true);
+    expect(result.data.response).toContain('INTAKE_UPSTREAM_TIMEOUT');
+    expect(result.data.response).toContain('Timeout phase: provider.');
   });
 
   it('preserves parent request aborts instead of reporting provider timeouts', async () => {
@@ -555,6 +603,30 @@ describe('gaming guide output hardening', () => {
     );
     const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
     expect(trinityRequest.input.prompt).not.toContain('user:pass');
+  });
+
+  it('continues with sources unavailable when retrieval fails', async () => {
+    mockFetchAndClean.mockRejectedValueOnce(new Error('network unavailable'));
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce({
+      result: 'Use the safe route and verify the linked guide later.',
+      activeModel: 'gpt-test',
+      meta: { provider: { finishReason: 'stop' } }
+    });
+
+    const result = await runGuidePipeline({
+      prompt: 'Use the linked guide for a direct boss strategy.',
+      guideUrl: 'https://example.com/guide',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.data.response).toBe('Use the safe route and verify the linked guide later.');
+    expect(result.data.sources).toEqual([
+      { url: 'https://example.com/guide', error: 'network unavailable' }
+    ]);
+    const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
+    expect(trinityRequest.input.prompt).toContain('Guides were provided but no usable snippets were retrieved.');
   });
 
   it('short-circuits exact-literal prompts before any provider call', async () => {

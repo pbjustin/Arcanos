@@ -2,7 +2,7 @@ import { runBuildPipeline, runGuidePipeline, runMetaPipeline } from "@services/g
 import { getGamingModuleTimeoutMs } from "@services/gamingConfig.js";
 import { evaluateWithHRC } from "./hrcWrapper.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
-import { getRequestAbortSignal, isAbortError } from "@arcanos/runtime";
+import { getRequestAbortContext, getRequestAbortSignal, isAbortError } from "@arcanos/runtime";
 import { logger } from "@platform/logging/structuredLogging.js";
 import {
   BackendQueryAgent,
@@ -21,6 +21,37 @@ import {
 } from "@services/gamingModes.js";
 
 type GamingEnvelope = GamingSuccessEnvelope | GamingErrorEnvelope;
+type GamingRequestLogContext = {
+  module: "ARCANOS:GAMING";
+  route: "gaming";
+  requestId?: string;
+  traceId?: string;
+};
+
+function buildGamingRequestLogContext(): GamingRequestLogContext {
+  const requestId = getRequestAbortContext()?.requestId;
+  return {
+    module: "ARCANOS:GAMING",
+    route: "gaming",
+    ...(requestId ? { requestId, traceId: requestId } : {})
+  };
+}
+
+function logGamingIntakeStep(
+  logContext: GamingRequestLogContext,
+  step: string,
+  startedAt: number,
+  details: Record<string, unknown> = {}
+): void {
+  const timeoutPhase = typeof details.timeoutPhase === "string" ? details.timeoutPhase : null;
+  logger.info("gaming.intake.step", {
+    ...logContext,
+    step,
+    timeoutPhase,
+    ...details,
+    elapsedMs: Date.now() - startedAt
+  });
+}
 
 function readSafeErrorString(error: unknown, key: string): string | undefined {
   if (!error || typeof error !== "object") {
@@ -93,6 +124,27 @@ function formatKnownGenerationFailure(mode: GamingMode, error: unknown): GamingE
       }
     }
   });
+}
+
+function describeGamingErrorEnvelope(error: GamingErrorEnvelope["error"]): string {
+  const detailParts: string[] = [];
+  if (error.details && typeof error.details === "object") {
+    const details = error.details as Record<string, unknown>;
+    const timeoutPhase = typeof details.timeoutPhase === "string" ? details.timeoutPhase : undefined;
+    const timeoutMs = typeof details.timeoutMs === "number" ? details.timeoutMs : undefined;
+    const stageTimeoutMs = typeof details.stageTimeoutMs === "number" ? details.stageTimeoutMs : undefined;
+    if (timeoutPhase) {
+      detailParts.push(`phase=${timeoutPhase}`);
+    }
+    if (timeoutMs) {
+      detailParts.push(`timeoutMs=${timeoutMs}`);
+    }
+    if (stageTimeoutMs) {
+      detailParts.push(`stageTimeoutMs=${stageTimeoutMs}`);
+    }
+  }
+
+  return `${error.code}: ${error.message}${detailParts.length > 0 ? ` (${detailParts.join(", ")})` : ""}`;
 }
 
 async function executeGamingBackendQuery(payload: GamingBackendActionPayload): Promise<GamingEnvelope> {
@@ -214,17 +266,30 @@ function buildTelemetryEntityFlags(intent: GamingIntent) {
 }
 
 async function handleGamingRequest(payload: unknown): Promise<GamingEnvelope> {
+  const requestLogContext = buildGamingRequestLogContext();
+  const classifyStartedAt = Date.now();
   const intent = IntentRouterAgent.classify(payload);
   logger.info("gaming.routing.intent", {
+    ...requestLogContext,
     mode: intent.mode,
     confidence: intent.confidence,
     signals: intent.routingSignals,
     entityFlags: buildTelemetryEntityFlags(intent),
+    securityBlocked: Boolean(intent.securityBlocked),
+    timeoutPhase: null,
+    elapsedMs: Date.now() - classifyStartedAt
+  });
+  logGamingIntakeStep(requestLogContext, "classify", classifyStartedAt, {
+    mode: intent.mode,
+    confidence: intent.confidence,
+    gameProvided: Boolean(intent.game),
+    signalCount: intent.routingSignals.length,
     securityBlocked: Boolean(intent.securityBlocked)
   });
 
   if (intent.securityBlocked) {
     logger.warn("gaming.routing.security_blocked", {
+      ...requestLogContext,
       mode: intent.mode,
       confidence: intent.confidence,
       reason: intent.securityBlocked.reason
@@ -243,6 +308,7 @@ async function handleGamingRequest(payload: unknown): Promise<GamingEnvelope> {
   const clarification = ClarificationAgent.evaluate(intent);
   if (clarification.required) {
     logger.info("gaming.routing.clarification", {
+      ...requestLogContext,
       mode: clarification.mode,
       confidence: intent.confidence,
       missing: clarification.missing
@@ -258,20 +324,41 @@ async function handleGamingRequest(payload: unknown): Promise<GamingEnvelope> {
     ...intent,
     mode: intent.mode
   };
+  const backendBuildStartedAt = Date.now();
   const backendAction = BackendQueryAgent.build(gamingIntent);
+  logGamingIntakeStep(requestLogContext, "backend-build", backendBuildStartedAt, {
+    mode: gamingIntent.mode,
+    action: backendAction.action,
+    gameProvided: Boolean(backendAction.payload.game),
+    guideSourceCount: (backendAction.payload.url ? 1 : 0) + (backendAction.payload.guideUrls?.length ?? 0) + (backendAction.payload.urls?.length ?? 0)
+  });
+  const backendCallStartedAt = Date.now();
   try {
     const backendEnvelope = await BackendQueryAgent.call(backendAction, executeGamingBackendQuery);
+    logGamingIntakeStep(requestLogContext, "backend-call", backendCallStartedAt, {
+      mode: gamingIntent.mode,
+      ok: backendEnvelope.ok,
+      ...(backendEnvelope.ok ? { sourceCount: backendEnvelope.data.sources.length } : { errorCode: backendEnvelope.error.code })
+    });
     if (!backendEnvelope.ok) {
       logger.warn("gaming.backend.failure", {
+        ...requestLogContext,
         mode: gamingIntent.mode,
         confidence: gamingIntent.confidence,
         errorCode: backendEnvelope.error.code
       });
+      if (backendEnvelope.error.code === "GENERATION_TIMEOUT") {
+        return ResponseComposerAgent.composeBackendFailureFallback({
+          intent: gamingIntent,
+          error: new Error(describeGamingErrorEnvelope(backendEnvelope.error))
+        });
+      }
       return backendEnvelope;
     }
 
     if (!isUsableGamingSuccessEnvelope(backendEnvelope)) {
       logger.warn("gaming.backend.failure", {
+        ...requestLogContext,
         mode: gamingIntent.mode,
         confidence: gamingIntent.confidence,
         errorCode: "MALFORMED_BACKEND_RESPONSE"
@@ -283,6 +370,7 @@ async function handleGamingRequest(payload: unknown): Promise<GamingEnvelope> {
     }
 
     logger.info("gaming.backend.success", {
+      ...requestLogContext,
       mode: gamingIntent.mode,
       confidence: gamingIntent.confidence,
       sourceCount: backendEnvelope.data.sources.length
@@ -297,7 +385,13 @@ async function handleGamingRequest(payload: unknown): Promise<GamingEnvelope> {
       throw error;
     }
 
+    logGamingIntakeStep(requestLogContext, "backend-call", backendCallStartedAt, {
+      mode: gamingIntent.mode,
+      ok: false,
+      errorCode: "BACKEND_EXCEPTION"
+    });
     logger.warn("gaming.backend.failure", {
+      ...requestLogContext,
       mode: gamingIntent.mode,
       confidence: gamingIntent.confidence,
       errorCode: "BACKEND_EXCEPTION"

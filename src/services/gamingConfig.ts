@@ -4,6 +4,7 @@ import type { GamingMode } from "@services/gamingModes.js";
 export const DEFAULT_GAMING_MODULE_TIMEOUT_MS = 60_000;
 export const DEFAULT_GAMING_WEB_CONTEXT_CHARS = 5_000;
 export const DEFAULT_GAMING_WEB_CONTEXT_MAX_URLS = 15;
+export const DEFAULT_GAMING_WEB_CONTEXT_FETCH_TIMEOUT_MS = 5_000;
 export const DEFAULT_GAMING_PIPELINE_TIMEOUT_MS = 35_000;
 export const DEFAULT_GAMING_GUIDE_PIPELINE_TIMEOUT_MS = 50_000;
 export const DEFAULT_GAMING_STAGE_TIMEOUT_MS = 12_000;
@@ -33,6 +34,14 @@ export function getGamingWebContextMaxUrls(): number {
     "ARCANOS_GAMING_WEB_CONTEXT_MAX_URLS",
     DEFAULT_GAMING_WEB_CONTEXT_MAX_URLS,
     0
+  );
+}
+
+export function getGamingWebContextFetchTimeoutMs(): number {
+  return getEnvIntegerAtLeast(
+    "ARCANOS_GAMING_WEB_CONTEXT_FETCH_TIMEOUT_MS",
+    DEFAULT_GAMING_WEB_CONTEXT_FETCH_TIMEOUT_MS,
+    1
   );
 }
 
