@@ -47,8 +47,8 @@ function logGamingIntakeStep(
   logger.info("gaming.intake.step", {
     ...logContext,
     step,
-    timeoutPhase,
     ...details,
+    timeoutPhase,
     elapsedMs: Date.now() - startedAt
   });
 }

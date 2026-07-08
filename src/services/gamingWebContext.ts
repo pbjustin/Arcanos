@@ -80,12 +80,16 @@ function createGamingRetrievalTimeoutError(timeoutMs: number): Error {
   return error;
 }
 
-function runWithLocalTimeout<T>(operation: Promise<T>, timeoutMs: number): Promise<T> {
+function runWithLocalTimeout<T>(operation: (signal: AbortSignal) => Promise<T>, timeoutMs: number): Promise<T> {
+  const controller = new AbortController();
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   return Promise.race([
-    operation,
+    operation(controller.signal),
     new Promise<T>((_resolve, reject) => {
-      timeoutHandle = setTimeout(() => reject(createGamingRetrievalTimeoutError(timeoutMs)), timeoutMs);
+      timeoutHandle = setTimeout(() => {
+        controller.abort();
+        reject(createGamingRetrievalTimeoutError(timeoutMs));
+      }, timeoutMs);
     })
   ]).finally(() => {
     if (timeoutHandle) {
@@ -150,7 +154,10 @@ export async function buildGamingWebContext(
       }
 
       try {
-        const snippet = await runWithLocalTimeout(fetchAndClean(sourceUrl, maxContextChars), fetchTimeoutMs);
+        const snippet = await runWithLocalTimeout(
+          (signal) => fetchAndClean(sourceUrl, maxContextChars, { signal, timeoutMs: fetchTimeoutMs }),
+          fetchTimeoutMs
+        );
         if (logContext) {
           logger.info("gaming.retrieval.source.end", {
             ...logContext,

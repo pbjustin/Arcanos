@@ -14,6 +14,13 @@ const mockGetOptionalEnvIntegerAtLeast = jest.fn();
 const mockGetEnvBoolean = jest.fn();
 const mockRunTrinityWritingPipeline = jest.fn();
 
+function expectFetchOptions(timeoutMs = 5000) {
+  return expect.objectContaining({
+    signal: expect.any(Object),
+    timeoutMs
+  });
+}
+
 jest.unstable_mockModule('@services/openai/clientBridge.js', () => ({
   getOpenAIClientOrAdapter: mockGetOpenAIClientOrAdapter
 }));
@@ -599,8 +606,8 @@ describe('gaming guide output hardening', () => {
       auditEnabled: false
     });
 
-    expect(mockFetchAndClean).toHaveBeenNthCalledWith(1, 'https://example.com/guide-a', 512);
-    expect(mockFetchAndClean).toHaveBeenNthCalledWith(2, 'https://example.com/guide-b', 512);
+    expect(mockFetchAndClean).toHaveBeenNthCalledWith(1, 'https://example.com/guide-a', 512, expectFetchOptions());
+    expect(mockFetchAndClean).toHaveBeenNthCalledWith(2, 'https://example.com/guide-b', 512, expectFetchOptions());
     expect(mockFetchAndClean).toHaveBeenCalledTimes(2);
     expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -622,8 +629,8 @@ describe('gaming guide output hardening', () => {
     });
 
     expect(mockFetchAndClean).toHaveBeenCalledTimes(2);
-    expect(mockFetchAndClean).toHaveBeenNthCalledWith(1, 'https://example.com/guide-a', 512);
-    expect(mockFetchAndClean).toHaveBeenNthCalledWith(2, 'https://example.com/guide-b', 512);
+    expect(mockFetchAndClean).toHaveBeenNthCalledWith(1, 'https://example.com/guide-a', 512, expectFetchOptions());
+    expect(mockFetchAndClean).toHaveBeenNthCalledWith(2, 'https://example.com/guide-b', 512, expectFetchOptions());
     expect(result.data.sources).toEqual([
       { url: 'https://example.com/guide-a', snippet: 'clean snippet' },
       { url: 'https://example.com/guide-b', snippet: 'clean snippet' }
@@ -647,8 +654,8 @@ describe('gaming guide output hardening', () => {
     });
 
     expect(mockFetchAndClean).toHaveBeenCalledTimes(2);
-    expect(mockFetchAndClean).toHaveBeenNthCalledWith(1, 'https://example.com/guide-a', 512);
-    expect(mockFetchAndClean).toHaveBeenNthCalledWith(2, 'http://example.com/guide-b', 512);
+    expect(mockFetchAndClean).toHaveBeenNthCalledWith(1, 'https://example.com/guide-a', 512, expectFetchOptions());
+    expect(mockFetchAndClean).toHaveBeenNthCalledWith(2, 'http://example.com/guide-b', 512, expectFetchOptions());
     expect(result.data.sources).toEqual([
       { url: 'https://example.com/guide-a', snippet: 'clean snippet' },
       { url: 'http://example.com/guide-b', snippet: 'clean snippet' }
@@ -702,7 +709,7 @@ describe('gaming guide output hardening', () => {
     expect(result.data.sources).toEqual([
       { url: 'https://example.com/guide', snippet: 'clean snippet' }
     ]);
-    expect(mockFetchAndClean).toHaveBeenCalledWith('https://example.com/guide', 512);
+    expect(mockFetchAndClean).toHaveBeenCalledWith('https://example.com/guide', 512, expectFetchOptions());
     expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(
       expect.objectContaining({
         input: expect.objectContaining({
@@ -736,6 +743,42 @@ describe('gaming guide output hardening', () => {
     ]);
     const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
     expect(trinityRequest.input.prompt).toContain('Guides were provided but no usable snippets were retrieved.');
+  });
+
+  it('aborts guide source fetches when the local retrieval timeout fires', async () => {
+    process.env.ARCANOS_GAMING_WEB_CONTEXT_FETCH_TIMEOUT_MS = '5';
+    let capturedSignal: AbortSignal | undefined;
+    mockFetchAndClean.mockImplementationOnce(async (_url: string, _maxChars: number, options?: { signal?: AbortSignal }) => {
+      capturedSignal = options?.signal;
+      await new Promise(() => undefined);
+      return 'unreachable';
+    });
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce({
+      result: 'Use a safe fallback route while source retrieval is unavailable.',
+      activeModel: 'gpt-test',
+      meta: { provider: { finishReason: 'stop' } }
+    });
+
+    const result = await runGuidePipeline({
+      prompt: 'Use the linked guide for a direct boss strategy.',
+      guideUrl: 'https://example.com/guide',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(capturedSignal?.aborted).toBe(true);
+    expect(result.ok).toBe(true);
+    expect(result.data.sources).toEqual([
+      {
+        url: 'https://example.com/guide',
+        error: 'Gaming guide source fetch timed out after 5ms.'
+      }
+    ]);
+    expect(mockFetchAndClean).toHaveBeenCalledWith(
+      'https://example.com/guide',
+      512,
+      expectFetchOptions(5)
+    );
   });
 
   it('does not classify unexpected retrieval crashes as retrieval timeouts', async () => {

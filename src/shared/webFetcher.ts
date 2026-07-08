@@ -52,6 +52,11 @@ export interface FetchAndCleanDocument {
   combined: string;
 }
 
+export interface FetchAndCleanOptions {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}
+
 /**
  * Purpose: Parse and validate a user-provided URL for fetch usage.
  * Inputs/Outputs: raw URL string -> normalized URL object.
@@ -104,7 +109,8 @@ export function serializeFetchAndCleanDocument(
  */
 export async function fetchAndCleanDocument(
   url: string,
-  maxChars = getConfiguredMaxChars()
+  maxChars = getConfiguredMaxChars(),
+  options: FetchAndCleanOptions = {}
 ): Promise<FetchAndCleanDocument> {
   const target = await resolveFetchTarget(url);
   const maxFetchBytes = getConfiguredMaxFetchBytes();
@@ -117,7 +123,8 @@ export async function fetchAndCleanDocument(
       : undefined;
 
   const { data } = await axios.get<string>(target.requestUrl.toString(), {
-    timeout: getConfiguredFetchTimeoutMs(),
+    timeout: options.timeoutMs ?? getConfiguredFetchTimeoutMs(),
+    signal: options.signal,
     maxContentLength: maxFetchBytes,
     maxBodyLength: maxFetchBytes,
     // SSRF safety: redirects would bypass resolveFetchTarget IP pinning and Host/SNI controls.
@@ -177,8 +184,12 @@ export async function fetchAndCleanDocument(
  * Inputs/Outputs: URL + optional max chars -> cleaned page text string.
  * Edge cases: Preserves the historical compact string payload for existing callers.
  */
-export async function fetchAndClean(url: string, maxChars = getConfiguredMaxChars()): Promise<string> {
-  const document = await fetchAndCleanDocument(url, maxChars);
+export async function fetchAndClean(
+  url: string,
+  maxChars = getConfiguredMaxChars(),
+  options: FetchAndCleanOptions = {}
+): Promise<string> {
+  const document = await fetchAndCleanDocument(url, maxChars, options);
   return document.combined;
 }
 
