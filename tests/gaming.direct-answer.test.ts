@@ -46,6 +46,7 @@ jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({
 
 const { runGuidePipeline } = await import('../src/services/gaming.js');
 const { runWithRequestAbortContext } = await import('@arcanos/runtime');
+const { logger } = await import('@platform/logging/structuredLogging.js');
 
 describe('gaming guide output hardening', () => {
   beforeEach(() => {
@@ -546,6 +547,29 @@ describe('gaming guide output hardening', () => {
     expect(trinityRequest.input.prompt).not.toContain('https://example.com/guide-c');
   });
 
+  it('filters blank, invalid, and non-http guide URLs before fetching', async () => {
+    const result = await runGuidePipeline({
+      prompt: 'Use the linked guides for a direct boss strategy.',
+      guideUrl: 'not-a-url',
+      guideUrls: [
+        '',
+        '   ',
+        'ftp://example.com/guide',
+        ' https://example.com/guide-a ',
+        'http://example.com/guide-b'
+      ],
+      auditEnabled: false
+    });
+
+    expect(mockFetchAndClean).toHaveBeenCalledTimes(2);
+    expect(mockFetchAndClean).toHaveBeenNthCalledWith(1, 'https://example.com/guide-a', 512);
+    expect(mockFetchAndClean).toHaveBeenNthCalledWith(2, 'http://example.com/guide-b', 512);
+    expect(result.data.sources).toEqual([
+      { url: 'https://example.com/guide-a', snippet: 'clean snippet' },
+      { url: 'http://example.com/guide-b', snippet: 'clean snippet' }
+    ]);
+  });
+
   it('preserves source ordering when guide fetches resolve out of order', async () => {
     mockFetchAndClean.mockImplementation(async (url: string) => {
       if (url.endsWith('/slow')) {
@@ -627,6 +651,34 @@ describe('gaming guide output hardening', () => {
     ]);
     const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
     expect(trinityRequest.input.prompt).toContain('Guides were provided but no usable snippets were retrieved.');
+  });
+
+  it('does not classify unexpected retrieval crashes as retrieval timeouts', async () => {
+    const warnSpy = jest.spyOn(logger, 'warn').mockImplementation(() => undefined);
+
+    try {
+      const result = await runGuidePipeline({
+        prompt: 'Use the linked guide for a direct boss strategy.',
+        guideUrls: [undefined as unknown as string],
+        auditEnabled: false
+      });
+
+      expect(result.ok).toBe(true);
+      expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(1);
+      const retrievalFailureLog = warnSpy.mock.calls.find(([event]) => event === 'gaming.retrieval.failure')?.[1];
+      expect(retrievalFailureLog).toEqual(expect.objectContaining({
+        fallbackReason: 'INTAKE_RETRIEVAL_FAILED',
+        errorName: 'TypeError'
+      }));
+      expect(retrievalFailureLog).not.toEqual(expect.objectContaining({
+        fallbackReason: 'INTAKE_RETRIEVAL_TIMEOUT'
+      }));
+      expect(retrievalFailureLog).not.toEqual(expect.objectContaining({
+        timeoutPhase: 'retrieval'
+      }));
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it('short-circuits exact-literal prompts before any provider call', async () => {

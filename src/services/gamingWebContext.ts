@@ -33,6 +33,20 @@ export function collectGamingGuideUrls(params: GamingGuideUrlInput): string[] {
   ];
 }
 
+function isFetchableGuideUrl(url: string): boolean {
+  const trimmedUrl = url.trim();
+  if (trimmedUrl.length === 0) {
+    return false;
+  }
+
+  try {
+    const parsedUrl = new URL(trimmedUrl);
+    return parsedUrl.protocol === "http:" || parsedUrl.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 function redactUrlCredentials(url: string): string {
   try {
     const parsedUrl = new URL(url);
@@ -106,7 +120,7 @@ export async function buildGamingWebContext(
   const maxContextChars = getGamingWebContextMaxChars();
   const maxUrls = getGamingWebContextMaxUrls();
   const fetchTimeoutMs = getGamingWebContextFetchTimeoutMs();
-  const uniqueUrls = Array.from(new Set(urls)).slice(0, maxUrls);
+  const uniqueUrls = Array.from(new Set(urls.map((url) => url.trim()).filter(isFetchableGuideUrl))).slice(0, maxUrls);
   const retrievalStartedAt = Date.now();
   if (logContext) {
     logger.info("gaming.retrieval.start", {

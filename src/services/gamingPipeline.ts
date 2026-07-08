@@ -370,19 +370,20 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
       failedSourceCount: sources.filter((source) => Boolean(source.error)).length
     });
   } catch (error) {
-    const timeoutPhase = readTimeoutPhase(error) ?? "retrieval";
-    const fallbackReason = readErrorString(error, "code") ?? classifyGamingProviderFallbackReason(timeoutPhase);
+    const errorCode = readErrorString(error, "code");
+    const timeoutPhase = readTimeoutPhase(error) ?? (errorCode === "INTAKE_RETRIEVAL_TIMEOUT" ? "retrieval" : undefined);
+    const fallbackReason = errorCode ?? (timeoutPhase ? classifyGamingProviderFallbackReason(timeoutPhase) : "INTAKE_RETRIEVAL_FAILED");
     logger.warn("gaming.retrieval.failure", {
       ...baseLogContext,
       elapsedMs: Date.now() - retrievalStartedAt,
-      timeoutPhase,
+      ...(timeoutPhase ? { timeoutPhase } : {}),
       fallbackReason,
       errorName: error instanceof Error ? error.name : typeof error,
-      errorCode: readErrorString(error, "code")
+      ...(errorCode ? { errorCode } : {})
     });
     logGamingIntakeStep(baseLogContext, "retrieval", retrievalStartedAt, {
       ok: false,
-      timeoutPhase,
+      ...(timeoutPhase ? { timeoutPhase } : {}),
       retrievalLatencyMs: Date.now() - retrievalStartedAt,
       fallbackReason
     });
