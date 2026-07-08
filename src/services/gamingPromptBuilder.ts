@@ -19,10 +19,9 @@ const modeInstructions: Record<GamingMode, string> = {
   meta: "Return a meta overview with current assumptions, tradeoffs, counters, and explicit uncertainty when patch/version context is missing."
 };
 
-const outputShapeInstructions: Record<GamingMode, string> = {
+const outputShapeInstructions: Partial<Record<GamingMode, string>> = {
   guide: "Return only 6 short numbered bullets. Cover route/order, preparation, key mechanics, danger checks, upgrades/resources, and one missing-info note when relevant.",
-  build: "Return only 5 short numbered bullets. Cover role, core stats, weapons/skills, gear/talismans, and play pattern. Keep each bullet compact.",
-  meta: "Return only 4 short numbered bullets. Cover viability, assumptions, strengths, counters/risks, and missing patch context when relevant."
+  build: "Return only 5 short numbered bullets. Cover role, core stats, weapons/skills, gear/talismans, and play pattern. Keep each bullet compact."
 };
 
 function rewriteGuideDirectAnswerCues(prompt: string): string {
@@ -72,7 +71,8 @@ export function buildGamingPrompt(
   const modeLabel = `[MODE]\n${params.mode}`;
   const gameLabel = params.game ? `\n\n[GAME]\n${params.game}` : "";
   const requestPrompt = params.mode === "guide" ? rewriteGuideDirectAnswerCues(params.prompt) : params.prompt;
-  const outputLabel = `\n\n[OUTPUT]\n${outputShapeInstructions[params.mode]}`;
+  const outputInstruction = outputShapeInstructions[params.mode];
+  const outputLabel = outputInstruction ? `\n\n[OUTPUT]\n${outputInstruction}` : "";
   const webLabel = webContext
     ? `\n\n[WEB CONTEXT]\n${webContext}\n\n${gamingPrompts.webContextInstruction}`
     : hadSources

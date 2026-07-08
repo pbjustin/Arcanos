@@ -412,7 +412,7 @@ describe('gaming guide output hardening', () => {
     const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
     expect(trinityRequest.input.prompt).toContain('[MODE]\nmeta');
     expect(trinityRequest.input.prompt).toContain('[GAME]\nWorld of Warcraft');
-    expect(trinityRequest.input.prompt).toContain('Return only 4 short numbered bullets');
+    expect(trinityRequest.input.prompt).not.toContain('[OUTPUT]');
   });
 
   it('returns a controlled fallback when upstream intake slows down', async () => {
