@@ -126,13 +126,17 @@ If multiple approaches are possible, choose the one that:
 - Run `npm run mcp:stdio` when changes touch the MCP stdio transport or GPT fast-path MCP bridge.
 - Use `npm run mcp:stdio:dev` for TypeScript-level MCP stdio iteration before validating the compiled entrypoint with `npm run mcp:stdio`.
 - Run `npm run validate:gpt:job-hardening` when changes touch `/gpt-access`, async job polling, or GPT job/result hardening.
+- Run `npm run gptoss:runtime:readiness`, `npm run gptoss:runtime:release-gate`, and `npm run gptoss:runtime:release-gate:ci` when changes touch the local GPT-OSS effective-router runtime, release evidence, or CI-safe release gating.
+- Run `npm run gptoss:adapter:eval:dry`, `npm run gptoss:adapter:eval`, and `npm run gptoss:adapter:eval:effective-router:regress` when changes affect GPT-OSS adapter behavior, local evals, or effective-router regression baselines.
+- Run `npm run gptoss:private-serving:design:validate`, `npm run gptoss:private-serving:threat-model:validate`, and `npm run gptoss:private-serving:scaffold:validate` when changes touch GPT-OSS private-serving design, boundary, or scaffold validation work; use `npm run gptoss:private-serving:scaffold:report` when you need the PR-style report artifact.
+- Run `npm run gptoss:db:governance:validate` when changes affect GPT-OSS database governance schemas or export controls.
 - Run `npm run guard:commit` when changes affect commit-guarded governance or release-readiness checks and you do not want to wait for the full `npm run validate:all` sweep.
 - Validate the TypeScript/Python backend CLI contract with `npm run validate:backend-cli:contract` and `npm run validate:backend-cli:offline`.
 - Run `npm run sync:check` when changes touch cross-codebase sync-enforced files shared with `daemon-python`.
 - Use `npm run sync:watch` for ongoing cross-codebase sync monitoring, `npm run sync:fix` for the scripted sync-fix pass, and `npm run sync:setup` when restoring the auto-sync setup locally.
 - Use `npm run converge:preview` to dry-run convergence checks and `npm run converge:all` or `npm run converge:ci` when working on convergence-plan criteria or artifact generation.
 - Use `npm run validate:all` for the full local readiness sweep before release-sensitive changes.
-- TODO: `db:init`, `db:patch`, `guide:generate`, `test:doc-workflow`, `audit`, `audit:continuous`, `audit:sdk-compliance`, `audit:fix`, `audit:recursive`, `audit:railway`, `audit:full`, `audit:python`, `audit:python:fix`, and `sync:auto` remain listed in `package.json`, but the current checkout is missing one or more referenced script targets; treat them as unavailable until the targets are repaired or replaced.
+- TODO: `db:init`, `db:patch`, `guide:generate`, `test:doc-workflow`, `audit:python`, `audit:python:fix`, and `sync:auto` remain listed in `package.json`, but the current checkout is missing one or more referenced script targets; treat them as unavailable until the targets are repaired or replaced.
 
 ## Railway
 - Confirm the linked project, service, and environment before release with `railway status` or `railway link`.
