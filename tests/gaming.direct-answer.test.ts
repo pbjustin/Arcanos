@@ -21,6 +21,21 @@ function expectFetchOptions(timeoutMs = 5000) {
   });
 }
 
+function extractInlineSourceRefs(text: string): number[] {
+  return Array.from(text.matchAll(/(?:\[(?:sources?)\s+([\d,\s]+)\]|\((?:sources?)\s+([\d,\s]+)\)|\b(?:sources?)\s+(\d+(?:\s*,\s*\d+)*))/gi))
+    .flatMap((match) => [match[1], match[2], match[3]])
+    .filter((value): value is string => typeof value === 'string' && value.length > 0)
+    .flatMap((value) => Array.from(value.matchAll(/\d+/g)).map((numberMatch) => Number.parseInt(numberMatch[0], 10)))
+    .filter((value) => Number.isInteger(value) && value > 0);
+}
+
+function expectInlineSourceRefsToMap(response: string, sourceCount: number): void {
+  for (const sourceRef of extractInlineSourceRefs(response)) {
+    expect(sourceRef).toBeGreaterThanOrEqual(1);
+    expect(sourceRef).toBeLessThanOrEqual(sourceCount);
+  }
+}
+
 jest.unstable_mockModule('@services/openai/clientBridge.js', () => ({
   getOpenAIClientOrAdapter: mockGetOpenAIClientOrAdapter
 }));
@@ -527,6 +542,65 @@ describe('gaming guide output hardening', () => {
     }));
   });
 
+  it('normalizes generated citations so inline source refs map to public sources', async () => {
+    mockFetchAndClean.mockImplementation(async (url: string) => `Guide for ${url}: Elden Ring route, preparation, boss danger checks, and upgrades.`);
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce({
+      result: 'Use [Source 3] for the route, (sources 1, 4) for prep, and source 2 for upgrades.',
+      activeModel: 'gpt-test',
+      meta: { provider: { finishReason: 'stop' } }
+    });
+
+    const result = await runGuidePipeline({
+      prompt: 'Use the linked guides for source mapping.',
+      guideUrl: 'https://example.com/guide-a',
+      guideUrls: ['https://example.com/guide-b'],
+      auditEnabled: false
+    });
+
+    expect(result.data.sources).toHaveLength(2);
+    expect(result.data.response).toBe('Use for the route, (source 1) for prep, and (source 2) for upgrades.');
+    expectInlineSourceRefsToMap(result.data.response, result.data.sources.length);
+  });
+
+  it('removes inline citation numbers when public sources are empty', async () => {
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce({
+      result: 'Start in Limgrave [Source 1] and verify source 2 later.',
+      activeModel: 'gpt-test',
+      meta: { provider: { finishReason: 'stop' } }
+    });
+
+    const result = await runGuidePipeline({
+      prompt: 'How do I start a generic run?',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(result.data.sources).toEqual([]);
+    expect(extractInlineSourceRefs(result.data.response)).toEqual([]);
+    expect(result.data.response).not.toMatch(/\bsource\s+\d+\b/i);
+  });
+
+  it('preserves retrieved sources when generic provider generation fails', async () => {
+    mockFetchAndClean.mockResolvedValueOnce('Elden Ring route guide: start in Limgrave, follow Sites of Grace, upgrade flasks, and prepare before Stormveil Castle.');
+    mockRunTrinityWritingPipeline.mockRejectedValueOnce(new Error('provider unavailable'));
+
+    const result = await runGuidePipeline({
+      game: 'Elden Ring',
+      prompt: 'Look up a guide for Elden Ring.',
+      guideUrl: 'https://example.com/elden-ring-route',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.data.sources.length).toBeGreaterThanOrEqual(1);
+    expect(result.data.sources.map((source) => source.url)).toContain('https://example.com/elden-ring-route');
+    expect(result.data.response).toContain('Sources available');
+    expect(result.data.response).toContain('GAMING_PROVIDER_ERROR');
+    expect(result.data.response).not.toContain('Backend-supported: none');
+    expectInlineSourceRefsToMap(result.data.response, result.data.sources.length);
+  });
+
   it('returns a controlled fallback when upstream intake slows down', async () => {
     const providerAbort = Object.assign(new Error('Request was aborted.'), {
       name: 'AbortError',
@@ -735,6 +809,7 @@ describe('gaming guide output hardening', () => {
     expect(mockFetchAndClean).toHaveBeenNthCalledWith(1, 'https://example.com/guide-a', 512, expectFetchOptions());
     expect(mockFetchAndClean).toHaveBeenNthCalledWith(2, 'https://example.com/guide-b', 512, expectFetchOptions());
     expect(mockFetchAndClean).toHaveBeenCalledTimes(2);
+    const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
     expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(
       expect.objectContaining({
         input: expect.objectContaining({
@@ -742,10 +817,16 @@ describe('gaming guide output hardening', () => {
         })
       })
     );
+    expect(trinityRequest.input.prompt).toContain('[Source 2] https://example.com/guide-b');
   });
 
   it('caps user-provided guide URLs before parallel fetches', async () => {
     process.env.ARCANOS_GAMING_WEB_CONTEXT_MAX_URLS = '2';
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce({
+      result: 'Use [Source 1], [Source 2], and [Source 3].',
+      activeModel: 'gpt-test',
+      meta: { provider: { finishReason: 'stop' } }
+    });
 
     const result = await runGuidePipeline({
       prompt: 'Use the linked guides for a direct boss strategy.',
@@ -763,6 +844,8 @@ describe('gaming guide output hardening', () => {
     ]);
     const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
     expect(trinityRequest.input.prompt).not.toContain('https://example.com/guide-c');
+    expect(trinityRequest.input.prompt).not.toContain('[Source 3]');
+    expectInlineSourceRefsToMap(result.data.response, result.data.sources.length);
   });
 
   it('filters blank, invalid, and non-http guide URLs before fetching', async () => {
@@ -786,6 +869,11 @@ describe('gaming guide output hardening', () => {
       { url: 'https://example.com/guide-a', snippet: 'clean snippet' },
       { url: 'http://example.com/guide-b', snippet: 'clean snippet' }
     ]);
+    const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
+    expect(trinityRequest.input.prompt).toContain('[Source 1] https://example.com/guide-a');
+    expect(trinityRequest.input.prompt).toContain('[Source 2] http://example.com/guide-b');
+    expect(trinityRequest.input.prompt).not.toContain('not-a-url');
+    expect(trinityRequest.input.prompt).not.toContain('ftp://example.com/guide');
   });
 
   it('preserves source ordering when guide fetches resolve out of order', async () => {
@@ -1069,6 +1157,50 @@ describe('gaming guide output hardening', () => {
       robustFallback: true,
       passed: true
     }));
+  });
+
+  it('keeps RAG source numbering stable after URL dedupe collapses multiple chunks', async () => {
+    process.env.ARCANOS_GAMING_RAG_CHUNK_CHARS = '120';
+    process.env.ARCANOS_GAMING_RAG_MAX_CHUNKS = '4';
+    mockFetchAndClean.mockResolvedValue([
+      'Elden Ring route guide: start in Limgrave and use Sites of Grace before Stormveil.',
+      'Elden Ring preparation guide: upgrade weapons and collect flask improvements.',
+      'Elden Ring danger guide: avoid early bosses that are clearly overtuned.'
+    ].join(' '));
+
+    const result = await buildGamingRagContext({
+      mode: 'guide',
+      prompt: 'Use the supplied guide.',
+      guideUrl: 'https://example.com/elden-ring-guide',
+      guideUrls: []
+    });
+
+    expect(result.sources).toHaveLength(1);
+    expect(result.context).toContain('[Source 1] https://example.com/elden-ring-guide');
+    expect(result.context).not.toContain('[Source 2]');
+    expect(result.context).not.toContain('[Source 3]');
+  });
+
+  it('deduplicates supplied URLs before applying the source cap', async () => {
+    process.env.ARCANOS_GAMING_WEB_CONTEXT_MAX_URLS = '2';
+    mockFetchAndClean.mockImplementation(async (url: string) => `Guide for ${url}: route, boss checks, resources, and upgrades.`);
+
+    const result = await runGuidePipeline({
+      prompt: 'Use the linked guides for source numbering.',
+      guideUrl: 'https://example.com/guide-a',
+      guideUrls: ['https://example.com/guide-a', 'https://example.com/guide-b', 'https://example.com/guide-c'],
+      auditEnabled: false
+    });
+
+    expect(mockFetchAndClean).toHaveBeenCalledTimes(2);
+    expect(result.data.sources.map((source) => source.url)).toEqual([
+      'https://example.com/guide-a',
+      'https://example.com/guide-b'
+    ]);
+    const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
+    expect(trinityRequest.input.prompt).toContain('[Source 1] https://example.com/guide-a');
+    expect(trinityRequest.input.prompt).toContain('[Source 2] https://example.com/guide-b');
+    expect(trinityRequest.input.prompt).not.toContain('https://example.com/guide-c');
   });
 
   it('preserves oversized retrieved sentences by splitting them into multiple chunks', async () => {

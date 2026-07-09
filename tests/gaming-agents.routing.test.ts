@@ -160,6 +160,7 @@ describe('Gaming agent routing model', () => {
 
   it.each([
     [{ action: 'runtime.inspect', payload: { prompt: 'check runtime' } }],
+    [{ action: 'query', payload: { action: 'runtime.inspect', prompt: 'check runtime' } }],
     [{ prompt: 'show worker diagnostics before answering' }],
     [{ action: 'mcp.invoke', payload: { prompt: 'call a tool' } }],
     [{ prompt: 'inspect queue status' }],

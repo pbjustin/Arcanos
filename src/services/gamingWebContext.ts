@@ -26,6 +26,9 @@ export type GamingRagContext = GamingWebContext & {
   retrievalEnabled: boolean;
   retrievalReason: string;
   retrievalQuery: string;
+  retrievedSourceCount: number;
+  publicSourceCount: number;
+  omittedSourceCount: number;
   sourceDomains: string[];
   cacheHit: boolean;
   retrievalElapsedMs: number;
@@ -642,11 +645,12 @@ function pruneDocumentCache(now: number): void {
 }
 
 function buildSourceCandidates(input: GamingRagInput, game: string | undefined): GamingSourceCandidate[] {
-  const suppliedUrls = collectGamingGuideUrls(input)
-    .filter((url): url is string => typeof url === "string")
-    .map((url) => url.trim())
-    .filter(isFetchableGuideUrl)
-    .slice(0, getGamingWebContextMaxUrls());
+  const suppliedUrls = Array.from(new Set(
+    collectGamingGuideUrls(input)
+      .filter((url): url is string => typeof url === "string")
+      .map((url) => url.trim())
+      .filter(isFetchableGuideUrl)
+  )).slice(0, getGamingWebContextMaxUrls());
   const suppliedCandidates = suppliedUrls.map((url) => makeSourceCandidate({
     url,
     title: safeSourceTitleFromUrl(url),
@@ -852,6 +856,22 @@ function splitIntoChunks(text: string, maxChunkChars: number): string[] {
   return chunks;
 }
 
+const NAVIGATION_JUNK_PATTERN = /\b(?:advertisement|cookie|privacy policy|terms of use|sign in|log in|subscribe|newsletter|menu|navigation|share this|edit source|page information|fandom apps|explore properties)\b/i;
+const GAMEPLAY_CONTENT_PATTERN = /\b(?:boss|route|walkthrough|build|patch|weapon|stat|skill|class|quest|location|level|damage|bleed|frost|mage|limgrave|stormveil|grace|talent|gear|rotation|viable)\b/i;
+
+function isReadableGameplayChunk(text: string): boolean {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (normalized.length === 0) {
+    return false;
+  }
+
+  if (GAMEPLAY_CONTENT_PATTERN.test(normalized)) {
+    return true;
+  }
+
+  return !NAVIGATION_JUNK_PATTERN.test(normalized);
+}
+
 function hashChunk(text: string): string {
   return createHash("sha256").update(text.toLowerCase().replace(/\s+/g, " ").slice(0, 600)).digest("hex");
 }
@@ -866,15 +886,20 @@ function rankChunks(documents: GamingFetchedDocument[], terms: string[], input: 
   const scoredChunks: GamingRankedChunk[] = [];
   for (const document of documents) {
     for (const chunk of splitIntoChunks(document.text, maxChunkChars)) {
+      if (!isReadableGameplayChunk(chunk)) {
+        continue;
+      }
+
       const haystack = chunk.toLowerCase();
       const termScore = terms.reduce((score, term) => score + (haystack.includes(term.toLowerCase()) ? 0.14 : 0), 0);
       const patchScore = patchSensitive && /\b(?:patch|hotfix|version|buff|nerf|balance|adjusted|changed)\b/i.test(chunk) ? 0.28 : 0;
       const buildScore = input.mode === "build" && /\b(?:build|stat|weapon|talent|gear|rotation|bleed|frost|mage)\b/i.test(chunk) ? 0.22 : 0;
       const guideScore = input.mode === "guide" && /\b(?:route|walkthrough|first|after|location|boss|quest|progress)\b/i.test(chunk) ? 0.18 : 0;
+      const navigationPenalty = NAVIGATION_JUNK_PATTERN.test(chunk) ? -0.35 : 0;
       scoredChunks.push({
         candidate: document.candidate,
         text: chunk,
-        score: scoreCandidate(input, document.candidate, terms, patchSensitive) + termScore + patchScore + buildScore + guideScore,
+        score: scoreCandidate(input, document.candidate, terms, patchSensitive) + termScore + patchScore + buildScore + guideScore + navigationPenalty,
         hash: hashChunk(chunk)
       });
     }
@@ -894,18 +919,35 @@ function rankChunks(documents: GamingFetchedDocument[], terms: string[], input: 
     .slice(0, maxChunks);
 }
 
-function buildRagContext(chunks: GamingRankedChunk[], retrievalQuery: string, maxContextChars: number): string {
+function buildSourceNumberByUrl(sources: GamingWebSource[]): Map<string, number> {
+  return new Map(sources.map((source, index) => [source.url, index + 1]));
+}
+
+function buildPublicSourcesFromChunks(chunks: GamingRankedChunk[]): GamingWebSource[] {
+  return Array.from(new Map(chunks.map((chunk) => [chunk.candidate.url, sourceFromChunk(chunk)])).values());
+}
+
+function buildRagContext(
+  chunks: GamingRankedChunk[],
+  sources: GamingWebSource[],
+  retrievalQuery: string,
+  maxContextChars: number
+): string {
   if (chunks.length === 0) {
     return "";
   }
 
+  const sourceNumberByUrl = buildSourceNumberByUrl(sources);
   const parts: string[] = [
     "[RETRIEVAL QUERY]",
     retrievalQuery || "prompt-only"
   ];
 
-  chunks.forEach((chunk, index) => {
-    const sourceNumber = index + 1;
+  chunks.forEach((chunk) => {
+    const sourceNumber = sourceNumberByUrl.get(chunk.candidate.url);
+    if (!sourceNumber) {
+      return;
+    }
     const domain = normalizeDomain(chunk.candidate.url);
     parts.push(
       "",
@@ -981,6 +1023,9 @@ function emptyRagContext(params: {
   return {
     context: "",
     sources: [],
+    retrievedSourceCount: 0,
+    publicSourceCount: 0,
+    omittedSourceCount: 0,
     retrievalEnabled: params.enabled,
     retrievalReason: params.reason,
     retrievalQuery: params.query,
@@ -1081,12 +1126,15 @@ export async function buildGamingRagContext(
   const timedOut = errorSources.some((source) => source.error?.toLowerCase().includes("timed out"));
   const rankingStartedAt = Date.now();
   const chunks = rankChunks(documents, terms, input, patchSensitive);
-  const context = buildRagContext(chunks, retrievalQuery, maxContextChars);
+  const sources = buildPublicSourcesFromChunks(chunks);
+  const context = buildRagContext(chunks, sources, retrievalQuery, maxContextChars);
   const rankingElapsedMs = Date.now() - rankingStartedAt;
-  const sources = Array.from(new Map(chunks.map((chunk) => [chunk.candidate.url, sourceFromChunk(chunk)])).values());
   const sourceDomains = sourceDomainsFromChunks(chunks);
   const cacheHit = documents.some((document) => document.cacheHit);
   const fallbackReason = documents.length === 0 && timedOut ? "INTAKE_RETRIEVAL_TIMEOUT" : undefined;
+  const retrievedSourceCount = documents.length;
+  const publicSourceCount = sources.length;
+  const omittedSourceCount = Math.max(0, chunks.length - publicSourceCount);
   const clear = buildClearChecks({
     retrievalEnabled,
     sourceCount: sources.length,
@@ -1102,6 +1150,9 @@ export async function buildGamingRagContext(
       retrievalReason,
       retrievalQuery,
       sourceCount: sources.length,
+      retrievedSourceCount,
+      publicSourceCount,
+      omittedSourceCount,
       sourceDomains,
       cacheHit,
       retrievalElapsedMs: Date.now() - retrievalStartedAt,
@@ -1122,6 +1173,9 @@ export async function buildGamingRagContext(
   return {
     context,
     sources: sources.length > 0 ? sources : errorSources,
+    retrievedSourceCount,
+    publicSourceCount: sources.length > 0 ? publicSourceCount : errorSources.length,
+    omittedSourceCount: sources.length > 0 ? omittedSourceCount : 0,
     retrievalEnabled,
     retrievalReason,
     retrievalQuery,

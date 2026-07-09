@@ -84,6 +84,12 @@ const PROVIDER_TIMEOUT_ERROR_MARKERS = [
 
 const PROVIDER_COMPLETION_INCOMPLETE_FALLBACK_REASON = "PROVIDER_COMPLETION_INCOMPLETE";
 
+type GamingCitationNormalization = {
+  response: string;
+  maxInlineSourceRef: number;
+  applied: boolean;
+};
+
 function isGamingProviderTimeoutError(error: unknown): boolean {
   if (isAbortError(error)) {
     return true;
@@ -152,24 +158,113 @@ function logGamingIntakeStep(
   });
 }
 
+function parseCitationNumbers(value: string): number[] {
+  return Array.from(value.matchAll(/\d+/g))
+    .map((match) => Number.parseInt(match[0], 10))
+    .filter((number) => Number.isInteger(number) && number > 0);
+}
+
+function formatCitationNumbers(numbers: number[], sourceCount: number, wrapper: "paren" | "bracket"): string {
+  const validNumbers = Array.from(new Set(numbers.filter((number) => number <= sourceCount)));
+  if (validNumbers.length === 0) {
+    return "";
+  }
+
+  const label = validNumbers.length === 1 ? "source" : "sources";
+  const joined = validNumbers.join(", ");
+  if (wrapper === "bracket") {
+    return `[${label === "source" ? "Source" : "Sources"} ${joined}]`;
+  }
+
+  return `(${label} ${joined})`;
+}
+
+export function normalizeGamingInlineSourceReferences(response: string, sourceCount: number): GamingCitationNormalization {
+  let maxInlineSourceRef = 0;
+  let applied = false;
+  const normalizeMatch = (fullMatch: string, rawNumbers: string, wrapper: "paren" | "bracket"): string => {
+    const numbers = parseCitationNumbers(rawNumbers);
+    for (const number of numbers) {
+      maxInlineSourceRef = Math.max(maxInlineSourceRef, number);
+    }
+
+    const normalized = formatCitationNumbers(numbers, sourceCount, wrapper);
+    if (normalized !== fullMatch) {
+      applied = true;
+    }
+    return normalized;
+  };
+
+  const normalized = response
+    .replace(/\[(?:sources?)\s+([\d,\s]+)\]/gi, (fullMatch, rawNumbers: string) =>
+      normalizeMatch(fullMatch, rawNumbers, "bracket")
+    )
+    .replace(/\((?:sources?)\s+([\d,\s]+)\)/gi, (fullMatch, rawNumbers: string) =>
+      normalizeMatch(fullMatch, rawNumbers, "paren")
+    )
+    .replace(/\b(?:sources?)\s+(\d+(?:\s*,\s*\d+)*)\b/gi, (
+      fullMatch: string,
+      rawNumbers: string,
+      offset: number,
+      fullText: string
+    ) => {
+      const previousChar = fullText[offset - 1];
+      const nextChar = fullText[offset + fullMatch.length];
+      if (previousChar === "[" || previousChar === "(" || nextChar === "]" || nextChar === ")") {
+        return fullMatch;
+      }
+
+      const numbers = parseCitationNumbers(rawNumbers);
+      for (const number of numbers) {
+        maxInlineSourceRef = Math.max(maxInlineSourceRef, number);
+      }
+
+      const normalized = formatCitationNumbers(numbers, sourceCount, "paren");
+      if (normalized !== fullMatch) {
+        applied = true;
+      }
+      return normalized;
+    })
+    .replace(/\s+([.,;:!?])/g, "$1")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+
+  return {
+    response: normalized,
+    maxInlineSourceRef,
+    applied
+  };
+}
+
 function formatGameplaySuccessWithLogs(params: {
   mode: GamingMode;
   response: string;
   sources: GamingWebSource[];
   logContext: GamingLogContext;
   requestStartedAt: number;
+  retrievedSourceCount?: number;
+  omittedSourceCount?: number;
+  fallbackReason?: string;
 }): GamingSuccessEnvelope {
   const postprocessStartedAt = Date.now();
+  const citationNormalization = normalizeGamingInlineSourceReferences(params.response, params.sources.length);
+  const response = citationNormalization.response;
   logger.info("gaming.postprocess.start", {
     ...params.logContext,
     responseChars: params.response.length,
-    sourceCount: params.sources.length
+    sourceCount: params.sources.length,
+    retrievedSourceCount: params.retrievedSourceCount ?? params.sources.length,
+    publicSourceCount: params.sources.length,
+    omittedSourceCount: params.omittedSourceCount ?? 0,
+    maxInlineSourceRef: citationNormalization.maxInlineSourceRef,
+    citationNormalizationApplied: citationNormalization.applied,
+    ...(params.fallbackReason ? { fallbackReason: params.fallbackReason } : {})
   });
 
   const envelope = formatGamingSuccess({
     mode: params.mode,
     data: {
-      response: params.response,
+      response,
       sources: params.sources
     }
   });
@@ -177,12 +272,18 @@ function formatGameplaySuccessWithLogs(params: {
   logger.info("gaming.postprocess.end", {
     ...params.logContext,
     postprocessMs: Date.now() - postprocessStartedAt,
-    responseChars: params.response.length,
-    sourceCount: params.sources.length
+    responseChars: response.length,
+    sourceCount: params.sources.length,
+    retrievedSourceCount: params.retrievedSourceCount ?? params.sources.length,
+    publicSourceCount: params.sources.length,
+    omittedSourceCount: params.omittedSourceCount ?? 0,
+    maxInlineSourceRef: citationNormalization.maxInlineSourceRef,
+    citationNormalizationApplied: citationNormalization.applied,
+    ...(params.fallbackReason ? { fallbackReason: params.fallbackReason } : {})
   });
 
   const payloadEstimateStartedAt = Date.now();
-  const responsePayloadChars = estimateResponsePayloadChars(params.response, params.sources);
+  const responsePayloadChars = estimateResponsePayloadChars(response, params.sources);
   logger.info("gaming.response.serialization", {
     ...params.logContext,
     serializedByTransport: true,
@@ -286,7 +387,9 @@ function buildGamingProviderFallbackResponse(params: {
     : `${sourceAvailabilityLine(params.sources)} The full generation path hit ${params.fallbackReason}, so this is a bounded deterministic fallback.`;
   const supportLine = providerIncomplete
     ? "Backend-supported: partial. ARCANOS Gaming returned stable gameplay guidance instead of exposing incomplete upstream output."
-    : "Backend-supported: partial. ARCANOS Gaming returned stable gameplay guidance instead of waiting for the timed-out upstream stage.";
+    : params.timeoutPhase
+      ? "Backend-supported: partial. ARCANOS Gaming returned stable gameplay guidance instead of waiting for the timed-out upstream stage."
+      : "Backend-supported: partial. ARCANOS Gaming returned stable gameplay guidance instead of exposing an upstream provider failure.";
 
   return [
     "Quick Answer",
@@ -394,12 +497,18 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
   let sources: GamingWebSource[] = [];
   let retrievalAttempted = guideUrls.length > 0;
   let retrievalHadUsableSources = false;
+  let retrievedSourceCount = 0;
+  let publicSourceCount = 0;
+  let omittedSourceCount = 0;
   try {
     const webContextResult = await buildGamingRagContext(params, baseLogContext);
     webContext = webContextResult.context;
     sources = webContextResult.sources;
     retrievalAttempted = webContextResult.retrievalEnabled;
     retrievalHadUsableSources = sources.some((source) => Boolean(source.snippet));
+    retrievedSourceCount = webContextResult.retrievedSourceCount;
+    publicSourceCount = webContextResult.publicSourceCount;
+    omittedSourceCount = webContextResult.omittedSourceCount;
     logGamingIntakeStep(baseLogContext, "retrieval", retrievalStartedAt, {
       ok: true,
       retrievalEnabled: webContextResult.retrievalEnabled,
@@ -408,6 +517,9 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
       retrievalLatencyMs: webContextResult.retrievalElapsedMs,
       rankingElapsedMs: webContextResult.rankingElapsedMs,
       sourceCount: sources.length,
+      retrievedSourceCount,
+      publicSourceCount,
+      omittedSourceCount,
       sourceDomains: webContextResult.sourceDomains,
       cacheHit: webContextResult.cacheHit,
       usableSourceCount: sources.filter((source) => Boolean(source.snippet)).length,
@@ -421,6 +533,9 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
         retrievalEnabled: webContextResult.retrievalEnabled,
         retrievalReason: webContextResult.retrievalReason,
         sourceCount: sources.length,
+        retrievedSourceCount,
+        publicSourceCount,
+        omittedSourceCount,
         sourceDomains: webContextResult.sourceDomains,
         cacheHit: webContextResult.cacheHit,
         retrievalElapsedMs: webContextResult.retrievalElapsedMs,
@@ -439,7 +554,10 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
         }),
         sources,
         logContext: baseLogContext,
-        requestStartedAt
+        requestStartedAt,
+        retrievedSourceCount,
+        omittedSourceCount,
+        fallbackReason: webContextResult.fallbackReason
       });
     }
   } catch (error) {
@@ -483,7 +601,9 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
       response: stringifyMockResult(mock.result),
       sources,
       logContext: baseLogContext,
-      requestStartedAt
+      requestStartedAt,
+      retrievedSourceCount,
+      omittedSourceCount
     });
   }
 
@@ -603,7 +723,10 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
         }),
         sources,
         logContext: baseLogContext,
-        requestStartedAt
+        requestStartedAt,
+        retrievedSourceCount,
+        omittedSourceCount,
+        fallbackReason
       });
     }
 
@@ -648,7 +771,10 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
         }),
         sources,
         logContext: baseLogContext,
-        requestStartedAt
+        requestStartedAt,
+        retrievedSourceCount,
+        omittedSourceCount,
+        fallbackReason
       });
     }
 
@@ -668,13 +794,29 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
       errorName: error instanceof Error ? error.name : typeof error,
       errorCode: readErrorString(error, "code")
     });
-    logger.info("gaming.request.end", {
+    const fallbackReason = readErrorString(error, "code") || "GAMING_PROVIDER_ERROR";
+    logger.warn("gaming.fallback.used", {
       ...baseLogContext,
-      ok: false,
-      totalElapsedMs: Date.now() - requestStartedAt,
-      errorCode: "GAMING_PROVIDER_ERROR"
+      provider: "trinity",
+      fallbackReason,
+      elapsedMs,
+      generationElapsedMs: elapsedMs,
+      errorCode: readErrorString(error, "code")
     });
-    throw error;
+    return formatGameplaySuccessWithLogs({
+      mode: params.mode,
+      response: buildGamingProviderFallbackResponse({
+        input: params,
+        sources,
+        fallbackReason
+      }),
+      sources,
+      logContext: baseLogContext,
+      requestStartedAt,
+      retrievedSourceCount,
+      omittedSourceCount,
+      fallbackReason
+    });
   }
 
   logger.info("gaming.stream.end", {
@@ -709,6 +851,8 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
     response: trinityResult.result,
     sources,
     logContext: baseLogContext,
-    requestStartedAt
+    requestStartedAt,
+    retrievedSourceCount,
+    omittedSourceCount
   });
 }

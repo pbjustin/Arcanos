@@ -216,22 +216,26 @@ function readNestedAction(payload: unknown): string | null {
     return null;
   }
 
-  const directAction = getStringField(payload, "action") ?? getStringField(payload, "operation");
-  if (directAction) {
-    return directAction.toLowerCase();
+  const actions = [
+    getStringField(payload, "action") ?? getStringField(payload, "operation"),
+    isRecord(payload.payload)
+      ? getStringField(payload.payload, "action") ?? getStringField(payload.payload, "operation")
+      : undefined,
+    isRecord(payload.mcp)
+      ? getStringField(payload.mcp, "action") ?? getStringField(payload.mcp, "operation")
+      : undefined,
+    isRecord(payload.dag)
+      ? getStringField(payload.dag, "action") ?? getStringField(payload.dag, "operation")
+      : undefined,
+  ]
+    .filter((action): action is string => typeof action === "string" && action.length > 0)
+    .map((action) => action.toLowerCase());
+
+  if (actions.length === 0) {
+    return null;
   }
 
-  const mcpAction = isRecord(payload.mcp)
-    ? getStringField(payload.mcp, "action") ?? getStringField(payload.mcp, "operation")
-    : undefined;
-  if (mcpAction) {
-    return mcpAction.toLowerCase();
-  }
-
-  const dagAction = isRecord(payload.dag)
-    ? getStringField(payload.dag, "action") ?? getStringField(payload.dag, "operation")
-    : undefined;
-  return dagAction ? dagAction.toLowerCase() : null;
+  return actions.find((action) => BLOCKED_ACTIONS.has(action) || action.startsWith("dag.")) ?? actions[0];
 }
 
 function detectSecurityBlock(payload: unknown, prompt: string): GamingIntent["securityBlocked"] | undefined {

@@ -335,6 +335,7 @@ describe('ArcanosGaming module', () => {
 
   it.each([
     [{ action: 'runtime.inspect', payload: { mode: 'guide', prompt: 'check runtime status' } }],
+    [{ action: 'query', payload: { action: 'runtime.inspect', mode: 'guide', prompt: 'check runtime status' }, prompt: 'help me beat the boss' }],
     [{ mode: 'guide', prompt: 'show worker diagnostics' }],
     [{ action: 'mcp.invoke', payload: { mode: 'guide', prompt: 'call mcp' } }],
     [{ mode: 'guide', prompt: 'inspect queue status' }],
