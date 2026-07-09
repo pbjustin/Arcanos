@@ -146,7 +146,7 @@ describe('gaming guide output hardening', () => {
     expect(trinityRequest.input.prompt).not.toContain('Do not simulate');
     expect(trinityRequest.input.prompt).toContain('avoid hypothetical run narration');
     expect(trinityRequest.input.prompt).not.toContain('avoid run narration narration');
-    expect(trinityRequest.input.prompt).toContain('Return only 6 short numbered bullets');
+    expect(trinityRequest.input.prompt).toContain('Return only a six-item checklist using hyphen bullets');
   });
 
   it('keeps SWTOR guide requests on the compact guide output path', async () => {
@@ -256,7 +256,7 @@ describe('gaming guide output hardening', () => {
       };
     };
     expect(trinityRequest.input.prompt).toContain('Regression check only');
-    expect(trinityRequest.input.prompt).toContain('Return only 6 short numbered bullets');
+    expect(trinityRequest.input.prompt).toContain('Return only a six-item checklist using hyphen bullets');
     expect(trinityRequest.context.runtimeBudget).toEqual(expect.objectContaining({
       watchdogLimit: 50_000,
       safetyBuffer: 500
@@ -321,7 +321,7 @@ describe('gaming guide output hardening', () => {
     const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
     expect(trinityRequest.input.prompt).toContain('[GAME]\nElden Ring');
     expect(trinityRequest.input.prompt).toContain('Look up a guide for Elden Ring.');
-    expect(trinityRequest.input.prompt).toContain('Return only 6 short numbered bullets');
+    expect(trinityRequest.input.prompt).toContain('Return only a six-item checklist using hyphen bullets');
   });
 
   it('passes a narrow Elden Ring progression guide through the normal guide path', async () => {
@@ -342,7 +342,7 @@ describe('gaming guide output hardening', () => {
     expect(result.data.response).not.toContain('bounded deterministic fallback');
     const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
     expect(trinityRequest.input.prompt).toContain('Where do I go first in Elden Ring after leaving the tutorial?');
-    expect(trinityRequest.input.prompt).toContain('Return only 6 short numbered bullets');
+    expect(trinityRequest.input.prompt).toContain('Return only a six-item checklist using hyphen bullets');
   });
 
   it('returns a deterministic fallback when build provider generation is incomplete', async () => {
@@ -511,7 +511,7 @@ describe('gaming guide output hardening', () => {
       context: { runOptions: { answerMode?: string; requestedVerbosity?: string } };
     };
     expect(trinityRequest.input.prompt).toContain('[WEB CONTEXT]');
-    expect(trinityRequest.input.prompt).toContain('Return only 6 short numbered bullets');
+    expect(trinityRequest.input.prompt).toContain('Return only a six-item checklist using hyphen bullets');
     expect(trinityRequest.context.runOptions).toEqual(expect.objectContaining({
       answerMode: 'explained',
       requestedVerbosity: 'normal'

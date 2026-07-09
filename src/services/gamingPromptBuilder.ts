@@ -20,7 +20,7 @@ const modeInstructions: Record<GamingMode, string> = {
 };
 
 const outputShapeInstructions: Partial<Record<GamingMode, string>> = {
-  guide: "Return only 6 short numbered bullets. Cover route/order, preparation, key mechanics, danger checks, upgrades/resources, and one missing-info note when relevant.",
+  guide: "Return only a six-item checklist using hyphen bullets, not numbered bullets. Cover route/order, preparation, key mechanics, danger checks, upgrades/resources, and one missing-info note when relevant.",
   build: "Return only 5 short numbered bullets. Cover role, core stats, weapons/skills, gear/talismans, and play pattern. Keep each bullet compact."
 };
 
