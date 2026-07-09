@@ -14,6 +14,13 @@ const mockGetOptionalEnvIntegerAtLeast = jest.fn();
 const mockGetEnvBoolean = jest.fn();
 const mockRunTrinityWritingPipeline = jest.fn();
 
+function expectFetchOptions(timeoutMs = 5000) {
+  return expect.objectContaining({
+    signal: expect.any(Object),
+    timeoutMs
+  });
+}
+
 jest.unstable_mockModule('@services/openai/clientBridge.js', () => ({
   getOpenAIClientOrAdapter: mockGetOpenAIClientOrAdapter
 }));
@@ -44,8 +51,9 @@ jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({
   runTrinityWritingPipeline: mockRunTrinityWritingPipeline
 }));
 
-const { runGuidePipeline } = await import('../src/services/gaming.js');
+const { runBuildPipeline, runGuidePipeline, runMetaPipeline } = await import('../src/services/gaming.js');
 const { runWithRequestAbortContext } = await import('@arcanos/runtime');
+const { logger } = await import('@platform/logging/structuredLogging.js');
 
 describe('gaming guide output hardening', () => {
   beforeEach(() => {
@@ -56,6 +64,7 @@ describe('gaming guide output hardening', () => {
     delete process.env.ARCANOS_GAMING_GUIDE_STAGE_TIMEOUT_MS;
     delete process.env.ARCANOS_GAMING_MODULE_TIMEOUT_MS;
     delete process.env.ARCANOS_GAMING_WEB_CONTEXT_MAX_URLS;
+    delete process.env.ARCANOS_GAMING_WEB_CONTEXT_FETCH_TIMEOUT_MS;
 
     mockGetEnv.mockImplementation((key: string, defaultValue?: string) => process.env[key] ?? defaultValue);
     mockGetEnvNumber.mockReturnValue(512);
@@ -94,7 +103,7 @@ describe('gaming guide output hardening', () => {
     });
   });
 
-  it('routes anti-simulation guide prompts without enabling the implicit direct-answer cap', async () => {
+  it('routes anti-simulation guide prompts through compact direct guide mode', async () => {
     mockResponsesCreate.mockResolvedValue({
       choices: [{ message: { content: 'Direct gameplay answer' } }]
     });
@@ -125,8 +134,8 @@ describe('gaming guide output hardening', () => {
         }),
         context: expect.objectContaining({
           runOptions: expect.objectContaining({
-            answerMode: 'explained',
-            requestedVerbosity: 'detailed',
+            answerMode: 'direct',
+            requestedVerbosity: 'normal',
             strictUserVisibleOutput: true
           })
         })
@@ -137,9 +146,10 @@ describe('gaming guide output hardening', () => {
     expect(trinityRequest.input.prompt).not.toContain('Do not simulate');
     expect(trinityRequest.input.prompt).toContain('avoid hypothetical run narration');
     expect(trinityRequest.input.prompt).not.toContain('avoid run narration narration');
+    expect(trinityRequest.input.prompt).toContain('Return only a six-item checklist using hyphen bullets');
   });
 
-  it('keeps SWTOR guide requests on an uncapped guide output path', async () => {
+  it('keeps SWTOR guide requests on the compact guide output path', async () => {
     mockRunTrinityWritingPipeline.mockResolvedValueOnce({
       result: [
         '1. Set your role and discipline.',
@@ -161,8 +171,8 @@ describe('gaming guide output hardening', () => {
       expect.objectContaining({
         context: expect.objectContaining({
           runOptions: expect.objectContaining({
-            answerMode: 'explained',
-            requestedVerbosity: 'detailed',
+            answerMode: 'direct',
+            requestedVerbosity: 'normal',
             strictUserVisibleOutput: true
           })
         })
@@ -205,8 +215,8 @@ describe('gaming guide output hardening', () => {
         }),
         context: expect.objectContaining({
           runOptions: expect.objectContaining({
-            answerMode: 'explained',
-            requestedVerbosity: 'detailed',
+            answerMode: 'direct',
+            requestedVerbosity: 'normal',
             strictUserVisibleOutput: true,
             watchdogModelTimeoutMs: 15_000
           })
@@ -242,15 +252,18 @@ describe('gaming guide output hardening', () => {
       input: { prompt: string };
       context: {
         runtimeBudget: { watchdogLimit: number; safetyBuffer: number };
-        runOptions: { watchdogModelTimeoutMs?: number };
+        runOptions: { answerMode?: string; requestedVerbosity?: string; watchdogModelTimeoutMs?: number };
       };
     };
     expect(trinityRequest.input.prompt).toContain('Regression check only');
+    expect(trinityRequest.input.prompt).toContain('Return only a six-item checklist using hyphen bullets');
     expect(trinityRequest.context.runtimeBudget).toEqual(expect.objectContaining({
       watchdogLimit: 50_000,
       safetyBuffer: 500
     }));
     expect(trinityRequest.context.runOptions).toEqual(expect.objectContaining({
+      answerMode: 'direct',
+      requestedVerbosity: 'normal',
       watchdogModelTimeoutMs: 15_000
     }));
   });
@@ -280,6 +293,8 @@ describe('gaming guide output hardening', () => {
       expect.objectContaining({
         context: expect.objectContaining({
           runOptions: expect.objectContaining({
+            answerMode: 'direct',
+            requestedVerbosity: 'normal',
             watchdogModelTimeoutMs: 15_000
           })
         })
@@ -287,61 +302,304 @@ describe('gaming guide output hardening', () => {
     );
   });
 
-  it('converts a provider abort into a bounded gaming timeout error', async () => {
+  it('passes a broad Elden Ring guide lookup through the normal guide path', async () => {
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce({
+      result: 'Follow the Limgrave route, upgrade one weapon, and delay Stormveil until you are prepared.',
+      activeModel: 'gpt-test',
+      meta: { provider: { finishReason: 'stop' } }
+    });
+
+    const result = await runGuidePipeline({
+      game: 'Elden Ring',
+      prompt: 'Look up a guide for Elden Ring.',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(result.data.response).toBe('Follow the Limgrave route, upgrade one weapon, and delay Stormveil until you are prepared.');
+    expect(result.data.response).not.toContain('bounded deterministic fallback');
+    const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
+    expect(trinityRequest.input.prompt).toContain('[GAME]\nElden Ring');
+    expect(trinityRequest.input.prompt).toContain('Look up a guide for Elden Ring.');
+    expect(trinityRequest.input.prompt).toContain('Return only a six-item checklist using hyphen bullets');
+  });
+
+  it('passes a narrow Elden Ring progression guide through the normal guide path', async () => {
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce({
+      result: 'Go to the Church of Elleh, then Gatefront Ruins for the map and Torrent unlock.',
+      activeModel: 'gpt-test',
+      meta: { provider: { finishReason: 'stop' } }
+    });
+
+    const result = await runGuidePipeline({
+      game: 'Elden Ring',
+      prompt: 'Where do I go first in Elden Ring after leaving the tutorial?',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(result.data.response).toBe('Go to the Church of Elleh, then Gatefront Ruins for the map and Torrent unlock.');
+    expect(result.data.response).not.toContain('bounded deterministic fallback');
+    const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
+    expect(trinityRequest.input.prompt).toContain('Where do I go first in Elden Ring after leaving the tutorial?');
+    expect(trinityRequest.input.prompt).toContain('Return only a six-item checklist using hyphen bullets');
+  });
+
+  it('returns a deterministic fallback when build provider generation is incomplete', async () => {
+    const incompleteError = Object.assign(new Error('provider output incomplete'), {
+      code: 'OPENAI_COMPLETION_INCOMPLETE',
+      finishReason: 'length',
+      incompleteReason: 'max_output_tokens'
+    });
+    const warnSpy = jest.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    mockRunTrinityWritingPipeline.mockRejectedValueOnce(incompleteError);
+    const controller = new AbortController();
+
+    try {
+      const result = await runWithRequestAbortContext({
+        requestId: 'req-build-incomplete',
+        controller,
+        signal: controller.signal,
+        deadlineAt: Date.now() + 60_000,
+        timeoutMs: 60_000
+      }, () => runBuildPipeline({
+        game: 'Elden Ring',
+        prompt: 'Make me a bleed build for Elden Ring.',
+        guideUrls: [],
+        auditEnabled: false
+      }));
+
+      expect(result.ok).toBe(true);
+      expect(result.mode).toBe('build');
+      expect(result.data.response).toContain('bounded deterministic fallback');
+      expect(result.data.response).toContain('PROVIDER_COMPLETION_INCOMPLETE');
+      expect(result.data.response).toContain('Provider output: incomplete.');
+      expect(result.data.response).toContain('For Elden Ring');
+      const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as {
+        input: { prompt: string };
+        context: { runOptions: { answerMode?: string; requestedVerbosity?: string } };
+      };
+      expect(trinityRequest.input.prompt).toContain('Return only 5 short numbered bullets');
+      expect(trinityRequest.context.runOptions).toEqual(expect.objectContaining({
+        answerMode: 'direct',
+        strictUserVisibleOutput: true
+      }));
+      expect(trinityRequest.context.runOptions).not.toHaveProperty('requestedVerbosity');
+      expect(warnSpy).toHaveBeenCalledWith('gaming.provider.incomplete', expect.objectContaining({
+        requestId: 'req-build-incomplete',
+        traceId: 'req-build-incomplete',
+        mode: 'build',
+        game: 'Elden Ring',
+        errorCode: 'OPENAI_COMPLETION_INCOMPLETE',
+        fallbackReason: 'PROVIDER_COMPLETION_INCOMPLETE'
+      }));
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('passes a meta request with game through the normal path', async () => {
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce({
+      result: 'Frost Mage is viable when current tuning supports its control and cleave profile.',
+      activeModel: 'gpt-test',
+      meta: { provider: { finishReason: 'stop' } }
+    });
+
+    const result = await runMetaPipeline({
+      game: 'World of Warcraft',
+      prompt: 'Is frost mage still viable this patch?',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.mode).toBe('meta');
+    expect(result.data.response).toBe('Frost Mage is viable when current tuning supports its control and cleave profile.');
+    expect(result.data.response).not.toContain('bounded deterministic fallback');
+    const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as {
+      input: { prompt: string };
+      context: { runOptions: { answerMode?: string; strictUserVisibleOutput?: boolean } };
+    };
+    expect(trinityRequest.input.prompt).toContain('[MODE]\nmeta');
+    expect(trinityRequest.input.prompt).toContain('[GAME]\nWorld of Warcraft');
+    expect(trinityRequest.input.prompt).not.toContain('[OUTPUT]');
+    expect(trinityRequest.input.prompt).not.toContain('Answer the request directly');
+    expect(trinityRequest.context.runOptions).toEqual(expect.objectContaining({
+      answerMode: 'explained',
+      strictUserVisibleOutput: true
+    }));
+  });
+
+  it('keeps repeated meta requests off the direct-answer integrity path', async () => {
+    const metaAnswer = [
+      '1. Frost Mage is viable when its control, cleave, and burst windows match the current encounter profile.',
+      '2. Treat exact rankings as patch-sensitive and verify tuning before committing to competitive pushes.'
+    ].join('\n');
+    mockRunTrinityWritingPipeline.mockResolvedValue({
+      result: metaAnswer,
+      activeModel: 'gpt-test',
+      meta: { provider: { finishReason: 'stop' } }
+    });
+
+    for (let index = 0; index < 10; index += 1) {
+      const result = await runMetaPipeline({
+        game: 'World of Warcraft',
+        prompt: 'Is frost mage still viable this patch?',
+        guideUrls: [],
+        auditEnabled: false
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.mode).toBe('meta');
+      expect(result.data.response).toBe(metaAnswer);
+      expect(result.data.response).not.toContain('bounded deterministic fallback');
+    }
+
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(10);
+    for (const [request] of mockRunTrinityWritingPipeline.mock.calls) {
+      const trinityRequest = request as {
+        input: { prompt: string };
+        context: { runOptions: { answerMode?: string; strictUserVisibleOutput?: boolean } };
+      };
+      expect(trinityRequest.input.prompt).not.toContain('[OUTPUT]');
+      expect(trinityRequest.input.prompt).not.toContain('Answer the request directly');
+      expect(trinityRequest.context.runOptions).toEqual(expect.objectContaining({
+        answerMode: 'explained',
+        strictUserVisibleOutput: true
+      }));
+    }
+  });
+
+  it('allows numbered or bulleted meta formatting without direct-answer false positives', async () => {
+    const metaAnswer = [
+      '- Frost Mage can be viable when control and burst windows matter.',
+      '- Watch for tuning, dungeon pool, and team composition before treating it as best-in-slot.'
+    ].join('\n');
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce({
+      result: metaAnswer,
+      activeModel: 'gpt-test',
+      meta: { provider: { finishReason: 'stop' } }
+    });
+
+    const result = await runMetaPipeline({
+      game: 'World of Warcraft',
+      prompt: 'Is frost mage still viable this patch?',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.mode).toBe('meta');
+    expect(result.data.response).toBe(metaAnswer);
+    expect(result.data.response).not.toContain('bounded deterministic fallback');
+    const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as {
+      context: { runOptions: { answerMode?: string } };
+    };
+    expect(trinityRequest.context.runOptions.answerMode).toBe('explained');
+  });
+
+  it('uses explained mode for source-backed guide requests to avoid direct-answer integrity false positives', async () => {
+    await runGuidePipeline({
+      prompt: 'Use this source for a simple guide summary.',
+      guideUrl: 'https://example.com/',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as {
+      input: { prompt: string };
+      context: { runOptions: { answerMode?: string; requestedVerbosity?: string } };
+    };
+    expect(trinityRequest.input.prompt).toContain('[WEB CONTEXT]');
+    expect(trinityRequest.input.prompt).toContain('Return only a six-item checklist using hyphen bullets');
+    expect(trinityRequest.context.runOptions).toEqual(expect.objectContaining({
+      answerMode: 'explained',
+      requestedVerbosity: 'normal'
+    }));
+  });
+
+  it('returns a controlled fallback when upstream intake slows down', async () => {
     const providerAbort = Object.assign(new Error('Request was aborted.'), {
       name: 'AbortError',
       timeoutPhase: 'intake'
     });
     mockRunTrinityWritingPipeline.mockRejectedValueOnce(providerAbort);
 
-    await expect(runGuidePipeline({
-      game: 'Star Wars: The Old Republic',
-      prompt: 'Regression check only: Beginner to intermediate guide for tanking in Star Wars The Old Republic including mechanics, threat management, mitigation, positioning, and group play tips. Return a complete coherent answer with valid numbering.',
+    const result = await runGuidePipeline({
+      game: 'Elden Ring',
+      prompt: 'Look up a guide for Elden Ring.',
       guideUrls: [],
       auditEnabled: false
-    })).rejects.toMatchObject({
-      code: 'GAMING_PROVIDER_TIMEOUT',
-      timeoutMs: 50_000,
-      stageTimeoutMs: 15_000,
-      timeoutPhase: 'intake'
     });
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      route: 'gaming',
+      mode: 'guide'
+    }));
+    expect(result.data.response).toContain('Sources unavailable');
+    expect(result.data.response).toContain('INTAKE_UPSTREAM_TIMEOUT');
+    expect(result.data.response).toContain('Timeout phase: intake.');
+    expect(result.data.response).toContain('Limgrave');
   });
 
-  it('converts runtime budget exhaustion into a bounded gaming timeout error', async () => {
+  it('returns a controlled fallback when runtime budget exhaustion reaches the guide pipeline', async () => {
     const budgetError = Object.assign(new Error('runtime_budget_exhausted'), {
       name: 'RuntimeBudgetExceededError',
       timeoutPhase: 'reasoning'
     });
     mockRunTrinityWritingPipeline.mockRejectedValueOnce(budgetError);
 
-    await expect(runGuidePipeline({
+    const result = await runGuidePipeline({
       game: 'Star Wars: The Old Republic',
       prompt: 'Regression check only: Beginner to intermediate guide for tanking in Star Wars The Old Republic including mechanics, threat management, mitigation, positioning, and group play tips. Return a complete coherent answer with valid numbering.',
       guideUrls: [],
       auditEnabled: false
-    })).rejects.toMatchObject({
-      code: 'GAMING_PROVIDER_TIMEOUT',
-      timeoutMs: 50_000,
-      stageTimeoutMs: 15_000,
-      timeoutPhase: 'reasoning'
     });
+
+    expect(result.ok).toBe(true);
+    expect(result.data.response).toContain('bounded deterministic fallback');
+    expect(result.data.response).toContain('INTAKE_UPSTREAM_TIMEOUT');
+    expect(result.data.response).toContain('Timeout phase: reasoning.');
   });
 
-  it('defaults missing provider timeout phase consistently', async () => {
+  it('defaults missing provider timeout phase consistently in the fallback response', async () => {
     const providerAbort = Object.assign(new Error('Request was aborted.'), {
       name: 'AbortError'
     });
     mockRunTrinityWritingPipeline.mockRejectedValueOnce(providerAbort);
 
-    await expect(runGuidePipeline({
+    const result = await runGuidePipeline({
       game: 'Star Wars: The Old Republic',
       prompt: 'Smoke test: give three short tanking tips with valid numbering.',
       guideUrls: [],
       auditEnabled: false
-    })).rejects.toMatchObject({
-      code: 'GAMING_PROVIDER_TIMEOUT',
-      timeoutPhase: 'provider'
     });
+
+    expect(result.ok).toBe(true);
+    expect(result.data.response).toContain('INTAKE_UPSTREAM_TIMEOUT');
+    expect(result.data.response).toContain('Timeout phase: provider.');
+  });
+
+  it('classifies direct-answer stage timeouts as upstream timeouts', async () => {
+    const providerAbort = Object.assign(new Error('Trinity direct-answer stage timed out.'), {
+      name: 'AbortError',
+      timeoutPhase: 'direct-answer'
+    });
+    mockRunTrinityWritingPipeline.mockRejectedValueOnce(providerAbort);
+
+    const result = await runBuildPipeline({
+      game: 'Elden Ring',
+      prompt: 'Make me a bleed build for Elden Ring.',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.mode).toBe('build');
+    expect(result.data.response).toContain('INTAKE_UPSTREAM_TIMEOUT');
+    expect(result.data.response).toContain('Timeout phase: direct-answer.');
+    expect(result.data.response).not.toContain('INTAKE_UNKNOWN_TIMEOUT');
   });
 
   it('preserves parent request aborts instead of reporting provider timeouts', async () => {
@@ -465,8 +723,8 @@ describe('gaming guide output hardening', () => {
       auditEnabled: false
     });
 
-    expect(mockFetchAndClean).toHaveBeenNthCalledWith(1, 'https://example.com/guide-a', 512);
-    expect(mockFetchAndClean).toHaveBeenNthCalledWith(2, 'https://example.com/guide-b', 512);
+    expect(mockFetchAndClean).toHaveBeenNthCalledWith(1, 'https://example.com/guide-a', 512, expectFetchOptions());
+    expect(mockFetchAndClean).toHaveBeenNthCalledWith(2, 'https://example.com/guide-b', 512, expectFetchOptions());
     expect(mockFetchAndClean).toHaveBeenCalledTimes(2);
     expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -488,14 +746,37 @@ describe('gaming guide output hardening', () => {
     });
 
     expect(mockFetchAndClean).toHaveBeenCalledTimes(2);
-    expect(mockFetchAndClean).toHaveBeenNthCalledWith(1, 'https://example.com/guide-a', 512);
-    expect(mockFetchAndClean).toHaveBeenNthCalledWith(2, 'https://example.com/guide-b', 512);
+    expect(mockFetchAndClean).toHaveBeenNthCalledWith(1, 'https://example.com/guide-a', 512, expectFetchOptions());
+    expect(mockFetchAndClean).toHaveBeenNthCalledWith(2, 'https://example.com/guide-b', 512, expectFetchOptions());
     expect(result.data.sources).toEqual([
       { url: 'https://example.com/guide-a', snippet: 'clean snippet' },
       { url: 'https://example.com/guide-b', snippet: 'clean snippet' }
     ]);
     const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
     expect(trinityRequest.input.prompt).not.toContain('https://example.com/guide-c');
+  });
+
+  it('filters blank, invalid, and non-http guide URLs before fetching', async () => {
+    const result = await runGuidePipeline({
+      prompt: 'Use the linked guides for a direct boss strategy.',
+      guideUrl: 'not-a-url',
+      guideUrls: [
+        '',
+        '   ',
+        'ftp://example.com/guide',
+        ' https://example.com/guide-a ',
+        'http://example.com/guide-b'
+      ],
+      auditEnabled: false
+    });
+
+    expect(mockFetchAndClean).toHaveBeenCalledTimes(2);
+    expect(mockFetchAndClean).toHaveBeenNthCalledWith(1, 'https://example.com/guide-a', 512, expectFetchOptions());
+    expect(mockFetchAndClean).toHaveBeenNthCalledWith(2, 'http://example.com/guide-b', 512, expectFetchOptions());
+    expect(result.data.sources).toEqual([
+      { url: 'https://example.com/guide-a', snippet: 'clean snippet' },
+      { url: 'http://example.com/guide-b', snippet: 'clean snippet' }
+    ]);
   });
 
   it('preserves source ordering when guide fetches resolve out of order', async () => {
@@ -545,7 +826,7 @@ describe('gaming guide output hardening', () => {
     expect(result.data.sources).toEqual([
       { url: 'https://example.com/guide', snippet: 'clean snippet' }
     ]);
-    expect(mockFetchAndClean).toHaveBeenCalledWith('https://example.com/guide', 512);
+    expect(mockFetchAndClean).toHaveBeenCalledWith('https://example.com/guide', 512, expectFetchOptions());
     expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(
       expect.objectContaining({
         input: expect.objectContaining({
@@ -555,6 +836,94 @@ describe('gaming guide output hardening', () => {
     );
     const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
     expect(trinityRequest.input.prompt).not.toContain('user:pass');
+  });
+
+  it('continues with sources unavailable when retrieval fails', async () => {
+    mockFetchAndClean.mockRejectedValueOnce(new Error('network unavailable'));
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce({
+      result: 'Use the safe route and verify the linked guide later.',
+      activeModel: 'gpt-test',
+      meta: { provider: { finishReason: 'stop' } }
+    });
+
+    const result = await runGuidePipeline({
+      prompt: 'Use the linked guide for a direct boss strategy.',
+      guideUrl: 'https://example.com/guide',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.data.response).toBe('Use the safe route and verify the linked guide later.');
+    expect(result.data.sources).toEqual([
+      { url: 'https://example.com/guide', error: 'network unavailable' }
+    ]);
+    const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
+    expect(trinityRequest.input.prompt).toContain('Guides were provided but no usable snippets were retrieved.');
+  });
+
+  it('aborts guide source fetches when the local retrieval timeout fires', async () => {
+    process.env.ARCANOS_GAMING_WEB_CONTEXT_FETCH_TIMEOUT_MS = '5';
+    let capturedSignal: AbortSignal | undefined;
+    mockFetchAndClean.mockImplementationOnce(async (_url: string, _maxChars: number, options?: { signal?: AbortSignal }) => {
+      capturedSignal = options?.signal;
+      await new Promise(() => undefined);
+      return 'unreachable';
+    });
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce({
+      result: 'Use a safe fallback route while source retrieval is unavailable.',
+      activeModel: 'gpt-test',
+      meta: { provider: { finishReason: 'stop' } }
+    });
+
+    const result = await runGuidePipeline({
+      prompt: 'Use the linked guide for a direct boss strategy.',
+      guideUrl: 'https://example.com/guide',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(capturedSignal?.aborted).toBe(true);
+    expect(result.ok).toBe(true);
+    expect(result.data.sources).toEqual([
+      {
+        url: 'https://example.com/guide',
+        error: 'Gaming guide source fetch timed out after 5ms.'
+      }
+    ]);
+    expect(mockFetchAndClean).toHaveBeenCalledWith(
+      'https://example.com/guide',
+      512,
+      expectFetchOptions(5)
+    );
+  });
+
+  it('does not classify unexpected retrieval crashes as retrieval timeouts', async () => {
+    const warnSpy = jest.spyOn(logger, 'warn').mockImplementation(() => undefined);
+
+    try {
+      const result = await runGuidePipeline({
+        prompt: 'Use the linked guide for a direct boss strategy.',
+        guideUrls: [undefined as unknown as string],
+        auditEnabled: false
+      });
+
+      expect(result.ok).toBe(true);
+      expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(1);
+      const retrievalFailureLog = warnSpy.mock.calls.find(([event]) => event === 'gaming.retrieval.failure')?.[1];
+      expect(retrievalFailureLog).toEqual(expect.objectContaining({
+        fallbackReason: 'INTAKE_RETRIEVAL_FAILED',
+        errorName: 'TypeError'
+      }));
+      expect(retrievalFailureLog).not.toEqual(expect.objectContaining({
+        fallbackReason: 'INTAKE_RETRIEVAL_TIMEOUT'
+      }));
+      expect(retrievalFailureLog).not.toEqual(expect.objectContaining({
+        timeoutPhase: 'retrieval'
+      }));
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it('short-circuits exact-literal prompts before any provider call', async () => {

@@ -19,6 +19,11 @@ const modeInstructions: Record<GamingMode, string> = {
   meta: "Return a meta overview with current assumptions, tradeoffs, counters, and explicit uncertainty when patch/version context is missing."
 };
 
+const outputShapeInstructions: Partial<Record<GamingMode, string>> = {
+  guide: "Return only a six-item checklist using hyphen bullets, not numbered bullets. Cover route/order, preparation, key mechanics, danger checks, upgrades/resources, and one missing-info note when relevant.",
+  build: "Return only 5 short numbered bullets. Cover role, core stats, weapons/skills, gear/talismans, and play pattern. Keep each bullet compact."
+};
+
 function rewriteGuideDirectAnswerCues(prompt: string): string {
   return prompt
     .replace(/\b(?:answer|respond|reply)\s+directly\b/gi, "give practical guidance")
@@ -45,6 +50,17 @@ export function buildGamingSystemPrompt(mode: GamingMode): string {
     ].join(" ");
   }
 
+  if (mode === "meta") {
+    return [
+      "You are ARCANOS:GAMING:META.",
+      modeInstructions.meta,
+      "Give practical meta guidance with enough context to compare viability, counters, and uncertainty.",
+      "Avoid gameplay reenactment, roleplay framing, invented live patch details, hotline banter, and theatrical framing.",
+      "If the user requests an exact literal response, return only that literal.",
+      "State missing platform, class, role, patch, or version details plainly instead of guessing."
+    ].join(" ");
+  }
+
   return buildDirectAnswerModeSystemInstruction({
     moduleLabel: `ARCANOS:GAMING:${mode.toUpperCase()}`,
     domainGuidance: modeInstructions[mode],
@@ -66,13 +82,15 @@ export function buildGamingPrompt(
   const modeLabel = `[MODE]\n${params.mode}`;
   const gameLabel = params.game ? `\n\n[GAME]\n${params.game}` : "";
   const requestPrompt = params.mode === "guide" ? rewriteGuideDirectAnswerCues(params.prompt) : params.prompt;
+  const outputInstruction = outputShapeInstructions[params.mode];
+  const outputLabel = outputInstruction ? `\n\n[OUTPUT]\n${outputInstruction}` : "";
   const webLabel = webContext
     ? `\n\n[WEB CONTEXT]\n${webContext}\n\n${gamingPrompts.webContextInstruction}`
     : hadSources
     ? `\n\n[WEB CONTEXT]\nGuides were provided but no usable snippets were retrieved.\n\n${gamingPrompts.webUncertaintyGuidance}`
     : "";
 
-  return `${modeLabel}${gameLabel}\n\n[REQUEST]\n${requestPrompt}${webLabel}`;
+  return `${modeLabel}${gameLabel}\n\n[REQUEST]\n${requestPrompt}${outputLabel}${webLabel}`;
 }
 
 export function buildGamingTrinityPrompt(

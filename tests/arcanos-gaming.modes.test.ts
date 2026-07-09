@@ -214,7 +214,7 @@ describe("ArcanosGaming mode routing", () => {
     });
   });
 
-  it("returns an incomplete generation error instead of a partial guide when the provider truncates", async () => {
+  it("returns a controlled fallback when the provider reports incomplete generation", async () => {
     const incompleteError = Object.assign(new Error("provider output incomplete"), {
       code: "OPENAI_COMPLETION_INCOMPLETE",
       finishReason: "length",
@@ -231,26 +231,96 @@ describe("ArcanosGaming mode routing", () => {
       prompt: "Beginner to intermediate guide for tanking in Star Wars The Old Republic including mechanics, threat management, mitigation, positioning, and group play tips."
     });
 
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      route: "gaming",
+      mode: "guide",
+      data: expect.objectContaining({
+        response: expect.stringContaining("General Fallback (not backend-supported)")
+      })
+    }));
+    expect((result as any).data.response).toContain("provider output incomplete");
+  });
+
+  it("returns build clarification without calling fallback or provider", async () => {
+    const result = await ArcanosGaming.actions.query({
+      mode: "build",
+      prompt: "Make me a tank build."
+    });
+
     expect(result).toEqual({
       ok: false,
       route: "gaming",
-      mode: "guide",
+      mode: "build",
       error: {
-        code: "GENERATION_INCOMPLETE",
+        code: "CLARIFICATION_REQUIRED",
+        message: "Which game should I use for this build request?",
+        details: {
+          missing: ["game"]
+        }
+      }
+    });
+    expect(mockRunBuildPipeline).not.toHaveBeenCalled();
+    expect(mockRunGuidePipeline).not.toHaveBeenCalled();
+    expect(mockRunMetaPipeline).not.toHaveBeenCalled();
+  });
+
+  it("returns meta clarification without calling fallback or provider", async () => {
+    const result = await ArcanosGaming.actions.query({
+      mode: "meta",
+      prompt: "Is frost mage still viable this patch?"
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      route: "gaming",
+      mode: "meta",
+      error: {
+        code: "CLARIFICATION_REQUIRED",
+        message: "Which game should I use for this meta request?",
+        details: {
+          missing: ["game"]
+        }
+      }
+    });
+    expect(mockRunMetaPipeline).not.toHaveBeenCalled();
+    expect(mockRunBuildPipeline).not.toHaveBeenCalled();
+    expect(mockRunGuidePipeline).not.toHaveBeenCalled();
+  });
+
+  it("surfaces genuine Trinity integrity failures as generation integrity errors", async () => {
+    const integrityError = Object.assign(new Error("Trinity direct-answer output failed integrity validation."), {
+      code: "TRINITY_OUTPUT_INTEGRITY_FAILED",
+      integrityIssues: ["broken_numbering"]
+    });
+    mockRunMetaPipeline.mockRejectedValueOnce(integrityError);
+
+    const result = await ArcanosGaming.actions.query({
+      mode: "meta",
+      game: "World of Warcraft",
+      prompt: "Is frost mage still viable this patch?"
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      route: "gaming",
+      mode: "meta",
+      error: {
+        code: "GENERATION_INTEGRITY_FAILED",
         message: "Gaming generation did not complete cleanly; no partial answer was returned.",
         details: {
-          finishReason: "length",
-          incompleteReason: "max_output_tokens",
-          truncated: true,
-          lengthTruncated: true,
-          contentFiltered: false,
-          integrityIssues: undefined
+          finishReason: undefined,
+          incompleteReason: undefined,
+          truncated: undefined,
+          lengthTruncated: undefined,
+          contentFiltered: undefined,
+          integrityIssues: ["broken_numbering"]
         }
       }
     });
   });
 
-  it("returns a controlled generation timeout when the provider aborts before module dispatch expires", async () => {
+  it("returns a controlled fallback when the provider aborts before module dispatch expires", async () => {
     const timeoutError = Object.assign(new Error("Request was aborted."), {
       name: "AbortError",
       code: "GAMING_PROVIDER_TIMEOUT",
@@ -266,23 +336,19 @@ describe("ArcanosGaming mode routing", () => {
       prompt: "Regression check only: Beginner to intermediate guide for tanking in Star Wars The Old Republic including mechanics, threat management, mitigation, positioning, and group play tips. Return a complete coherent answer with valid numbering."
     });
 
-    expect(result).toEqual({
-      ok: false,
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
       route: "gaming",
       mode: "guide",
-      error: {
-        code: "GENERATION_TIMEOUT",
-        message: "Gaming generation timed out before a complete answer was available.",
-        details: {
-          timeoutMs: 50_000,
-          stageTimeoutMs: 15_000,
-          timeoutPhase: "intake"
-        }
-      }
-    });
+      data: expect.objectContaining({
+        response: expect.stringContaining("General Fallback (not backend-supported)")
+      })
+    }));
+    expect((result as any).data.response).toContain("GENERATION_TIMEOUT");
+    expect((result as any).data.response).toContain("phase=intake");
   });
 
-  it("returns a controlled generation timeout when the runtime budget expires before module dispatch", async () => {
+  it("returns a controlled fallback when the runtime budget expires before module dispatch", async () => {
     const timeoutError = Object.assign(new Error("Gaming guide generation timed out."), {
       code: "GAMING_PROVIDER_TIMEOUT",
       timeoutMs: 50_000,
@@ -298,18 +364,15 @@ describe("ArcanosGaming mode routing", () => {
     });
 
     expect(result).toEqual(expect.objectContaining({
-      ok: false,
+      ok: true,
       route: "gaming",
       mode: "guide",
-      error: expect.objectContaining({
-        code: "GENERATION_TIMEOUT",
-        details: {
-          timeoutMs: 50_000,
-          stageTimeoutMs: 15_000,
-          timeoutPhase: "reasoning"
-        }
+      data: expect.objectContaining({
+        response: expect.stringContaining("General Fallback (not backend-supported)")
       })
     }));
+    expect((result as any).data.response).toContain("GENERATION_TIMEOUT");
+    expect((result as any).data.response).toContain("phase=reasoning");
   });
 
   it("preserves parent request aborts instead of mapping them to generation timeouts", async () => {
