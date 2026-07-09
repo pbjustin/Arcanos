@@ -986,7 +986,7 @@ describe('gaming guide output hardening', () => {
 
     expect(mockFetchAndClean).toHaveBeenNthCalledWith(
       1,
-      'https://en.bandainamcoent.eu/elden-ring/news',
+      'https://en.bandainamcoent.eu/elden-ring/news/elden-ring-patch-notes-version-1161',
       512,
       expectFetchOptions()
     );

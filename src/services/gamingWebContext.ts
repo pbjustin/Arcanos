@@ -129,7 +129,7 @@ const BUILTIN_SOURCE_CATALOG: Array<{ game: string; sources: Array<Omit<GamingSo
     sources: [
       {
         title: "Elden Ring official news and patch notes",
-        url: "https://en.bandainamcoent.eu/elden-ring/news",
+        url: "https://en.bandainamcoent.eu/elden-ring/news/elden-ring-patch-notes-version-1161",
         sourceType: "patch_notes",
         topics: ["patch", "latest", "news", "meta", "balance"],
         modes: ["build", "meta"],
