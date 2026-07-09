@@ -52,6 +52,7 @@ jest.unstable_mockModule('@core/logic/trinityWritingPipeline.js', () => ({
 }));
 
 const { runBuildPipeline, runGuidePipeline, runMetaPipeline } = await import('../src/services/gaming.js');
+const { buildGamingRagContext, clearGamingRagCache } = await import('../src/services/gamingWebContext.js');
 const { runWithRequestAbortContext } = await import('@arcanos/runtime');
 const { logger } = await import('@platform/logging/structuredLogging.js');
 
@@ -65,6 +66,9 @@ describe('gaming guide output hardening', () => {
     delete process.env.ARCANOS_GAMING_MODULE_TIMEOUT_MS;
     delete process.env.ARCANOS_GAMING_WEB_CONTEXT_MAX_URLS;
     delete process.env.ARCANOS_GAMING_WEB_CONTEXT_FETCH_TIMEOUT_MS;
+    delete process.env.ARCANOS_GAMING_RAG_MAX_SOURCES;
+    delete process.env.ARCANOS_GAMING_RAG_MAX_CHUNKS;
+    delete process.env.ARCANOS_GAMING_CURATED_SOURCES_JSON;
 
     mockGetEnv.mockImplementation((key: string, defaultValue?: string) => process.env[key] ?? defaultValue);
     mockGetEnvNumber.mockReturnValue(512);
@@ -101,6 +105,7 @@ describe('gaming guide output hardening', () => {
       },
       client: {}
     });
+    clearGamingRagCache();
   });
 
   it('routes anti-simulation guide prompts through compact direct guide mode', async () => {
@@ -200,10 +205,12 @@ describe('gaming guide output hardening', () => {
     expect(result).toEqual(expect.objectContaining({
       ok: true,
       mode: 'guide',
-      data: {
+      data: expect.objectContaining({
         response: swtorGuide,
-        sources: []
-      }
+        sources: [
+          { url: 'https://swtorista.com/articles/', snippet: 'clean snippet' }
+        ]
+      })
     }));
     expect(result.data.response).not.toContain('bounded fallback response');
     expect(result.data.response).not.toContain('Retry with a narrower scope');
@@ -537,7 +544,7 @@ describe('gaming guide output hardening', () => {
       route: 'gaming',
       mode: 'guide'
     }));
-    expect(result.data.response).toContain('Sources unavailable');
+    expect(result.data.response).toContain('Sources available');
     expect(result.data.response).toContain('INTAKE_UPSTREAM_TIMEOUT');
     expect(result.data.response).toContain('Timeout phase: intake.');
     expect(result.data.response).toContain('Limgrave');
@@ -859,7 +866,7 @@ describe('gaming guide output hardening', () => {
       { url: 'https://example.com/guide', error: 'network unavailable' }
     ]);
     const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
-    expect(trinityRequest.input.prompt).toContain('Guides were provided but no usable snippets were retrieved.');
+    expect(trinityRequest.input.prompt).toContain('Source retrieval ran or sources were provided, but no usable snippets were retrieved.');
   });
 
   it('aborts guide source fetches when the local retrieval timeout fires', async () => {
@@ -898,7 +905,7 @@ describe('gaming guide output hardening', () => {
     );
   });
 
-  it('does not classify unexpected retrieval crashes as retrieval timeouts', async () => {
+  it('ignores malformed retrieval inputs without logging secrets or timeout fallbacks', async () => {
     const warnSpy = jest.spyOn(logger, 'warn').mockImplementation(() => undefined);
 
     try {
@@ -911,17 +918,187 @@ describe('gaming guide output hardening', () => {
       expect(result.ok).toBe(true);
       expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(1);
       const retrievalFailureLog = warnSpy.mock.calls.find(([event]) => event === 'gaming.retrieval.failure')?.[1];
-      expect(retrievalFailureLog).toEqual(expect.objectContaining({
-        fallbackReason: 'INTAKE_RETRIEVAL_FAILED',
-        errorName: 'TypeError'
-      }));
-      expect(retrievalFailureLog).not.toEqual(expect.objectContaining({
+      expect(retrievalFailureLog).toBeUndefined();
+      expect(warnSpy).not.toHaveBeenCalledWith('gaming.fallback.used', expect.objectContaining({
         fallbackReason: 'INTAKE_RETRIEVAL_TIMEOUT'
       }));
-      expect(retrievalFailureLog).not.toEqual(expect.objectContaining({
-        timeoutPhase: 'retrieval'
-      }));
     } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('uses curated walkthrough context for Elden Ring guide requests', async () => {
+    mockFetchAndClean.mockImplementation(async (url: string) =>
+      url.includes('Game+Progress+Route')
+        ? 'Limgrave route: visit The First Step, Church of Elleh, Gatefront Ruins, and unlock Torrent before Stormveil.'
+        : 'less relevant source'
+    );
+
+    await runGuidePipeline({
+      game: 'Elden Ring',
+      prompt: 'Where do I go first in Elden Ring after leaving the tutorial?',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(mockFetchAndClean).toHaveBeenCalledWith(
+      'https://eldenring.wiki.fextralife.com/Game+Progress+Route',
+      512,
+      expectFetchOptions()
+    );
+    const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
+    expect(trinityRequest.input.prompt).toContain('[Source 1] https://eldenring.wiki.fextralife.com/Game+Progress+Route');
+    expect(trinityRequest.input.prompt).toContain('Limgrave route');
+    expect(trinityRequest.input.prompt).toContain('[CLEAR]');
+  });
+
+  it('uses source-backed build data for Elden Ring bleed build requests', async () => {
+    mockFetchAndClean.mockImplementation(async (url: string) =>
+      url.includes('Builds')
+        ? 'Bleed builds prioritize Arcane, fast multi-hit weapons, blood affinity, and Lord of Blood-style pressure.'
+        : 'Status Effects: Hemorrhage deals burst damage after buildup.'
+    );
+
+    const result = await runBuildPipeline({
+      game: 'Elden Ring',
+      prompt: 'Make me a bleed build for Elden Ring.',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(result.data.sources.some((source) => source.url.includes('/Builds'))).toBe(true);
+    const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
+    expect(trinityRequest.input.prompt).toContain('Bleed builds prioritize Arcane');
+    expect(trinityRequest.input.prompt).toContain('source-backed claims');
+  });
+
+  it('prefers official patch notes for patch-sensitive Elden Ring meta requests', async () => {
+    mockFetchAndClean.mockResolvedValue('Official patch notes: balance adjustments changed several weapon and skill interactions.');
+
+    await runMetaPipeline({
+      game: 'Elden Ring',
+      prompt: 'What changed for Elden Ring builds in the latest patch?',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(mockFetchAndClean).toHaveBeenNthCalledWith(
+      1,
+      'https://en.bandainamcoent.eu/elden-ring/news',
+      512,
+      expectFetchOptions()
+    );
+    const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
+    expect(trinityRequest.input.prompt).toContain('Type: patch_notes');
+    expect(trinityRequest.input.prompt).toContain('Official patch notes');
+  });
+
+  it('retrieves WoW patch and Frost Mage guide context for current viability requests', async () => {
+    mockFetchAndClean.mockImplementation(async (url: string) =>
+      url.includes('worldofwarcraft.blizzard.com')
+        ? 'Official WoW news: current hotfixes and class tuning can change spec viability this patch.'
+        : 'Frost Mage guide: Frost Mage viability depends on tuning, talents, damage profile, and encounter needs.'
+    );
+
+    await runMetaPipeline({
+      game: 'World of Warcraft',
+      prompt: 'Is Frost Mage still viable this patch?',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(mockFetchAndClean).toHaveBeenNthCalledWith(
+      1,
+      'https://worldofwarcraft.blizzard.com/en-us/news',
+      512,
+      expectFetchOptions()
+    );
+    const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
+    expect(trinityRequest.input.prompt).toContain('Official WoW news');
+    expect(trinityRequest.input.prompt).toContain('Frost Mage guide');
+  });
+
+  it('deduplicates low-quality duplicate sources and passes CLEAR checks', async () => {
+    process.env.ARCANOS_GAMING_CURATED_SOURCES_JSON = JSON.stringify([
+      {
+        url: 'https://example.com/curated-guide',
+        title: 'Internal curated guide',
+        modes: ['guide'],
+        topics: ['boss'],
+        sourceType: 'curated',
+        stable: true
+      },
+      {
+        url: 'https://example.com/curated-guide',
+        title: 'Duplicate internal curated guide',
+        modes: ['guide'],
+        topics: ['boss'],
+        sourceType: 'curated',
+        stable: true
+      },
+      {
+        url: 'https://youtube.com/watch?v=lowquality',
+        title: 'Low quality duplicate',
+        modes: ['guide'],
+        topics: ['boss'],
+        sourceType: 'curated'
+      }
+    ]);
+    mockFetchAndClean.mockResolvedValue('Curated guide: use safe positioning, upgrade first, and punish only after boss recovery.');
+
+    const result = await buildGamingRagContext({
+      mode: 'guide',
+      prompt: 'Help me beat the boss.',
+      guideUrls: []
+    });
+
+    expect(mockFetchAndClean).toHaveBeenCalledTimes(1);
+    expect(result.sources).toEqual([
+      {
+        url: 'https://example.com/curated-guide',
+        snippet: 'Curated guide: use safe positioning, upgrade first, and punish only after boss recovery.'
+      }
+    ]);
+    expect(result.clear).toEqual(expect.objectContaining({
+      contextGrounded: true,
+      limitedEvidence: true,
+      explicitUncertainty: true,
+      attributableSources: true,
+      robustFallback: true,
+      passed: true
+    }));
+  });
+
+  it('marks no-source generation as retrieval fallback or inference context', async () => {
+    await runGuidePipeline({
+      prompt: 'How do I beat the temple boss?',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(mockFetchAndClean).not.toHaveBeenCalled();
+    const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
+    expect(trinityRequest.input.prompt).toContain('Source retrieval ran or sources were provided, but no usable snippets were retrieved.');
+    expect(trinityRequest.input.prompt).toContain('label weak, missing, or patch-sensitive evidence as inference or fallback');
+  });
+
+  it('does not log credentials from supplied guide URLs', async () => {
+    const infoSpy = jest.spyOn(logger, 'info').mockImplementation(() => undefined);
+    const warnSpy = jest.spyOn(logger, 'warn').mockImplementation(() => undefined);
+
+    try {
+      await runGuidePipeline({
+        prompt: 'Use the linked guide for a direct boss strategy.',
+        guideUrl: 'https://user:pass@example.com/guide',
+        guideUrls: [],
+        auditEnabled: false
+      });
+
+      const logged = JSON.stringify([...infoSpy.mock.calls, ...warnSpy.mock.calls]);
+      expect(logged).not.toContain('user:pass');
+      expect(logged).not.toContain('pass@example.com');
+    } finally {
+      infoSpy.mockRestore();
       warnSpy.mockRestore();
     }
   });

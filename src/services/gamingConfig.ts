@@ -1,10 +1,15 @@
-import { getEnvIntegerAtLeast, getOptionalEnvIntegerAtLeast } from "@platform/runtime/env.js";
+import { getEnv, getEnvIntegerAtLeast, getOptionalEnvIntegerAtLeast } from "@platform/runtime/env.js";
 import type { GamingMode } from "@services/gamingModes.js";
 
 export const DEFAULT_GAMING_MODULE_TIMEOUT_MS = 60_000;
 export const DEFAULT_GAMING_WEB_CONTEXT_CHARS = 5_000;
 export const DEFAULT_GAMING_WEB_CONTEXT_MAX_URLS = 15;
 export const DEFAULT_GAMING_WEB_CONTEXT_FETCH_TIMEOUT_MS = 5_000;
+export const DEFAULT_GAMING_RAG_MAX_SOURCES = 4;
+export const DEFAULT_GAMING_RAG_MAX_CHUNKS = 6;
+export const DEFAULT_GAMING_RAG_CHUNK_CHARS = 900;
+export const DEFAULT_GAMING_RAG_META_TTL_MS = 15 * 60_000;
+export const DEFAULT_GAMING_RAG_GUIDE_TTL_MS = 24 * 60 * 60_000;
 export const DEFAULT_GAMING_PIPELINE_TIMEOUT_MS = 35_000;
 export const DEFAULT_GAMING_GUIDE_PIPELINE_TIMEOUT_MS = 50_000;
 export const DEFAULT_GAMING_STAGE_TIMEOUT_MS = 12_000;
@@ -43,6 +48,51 @@ export function getGamingWebContextFetchTimeoutMs(): number {
     DEFAULT_GAMING_WEB_CONTEXT_FETCH_TIMEOUT_MS,
     1
   );
+}
+
+export function getGamingRagEnabled(): boolean {
+  const rawValue = getEnv("ARCANOS_GAMING_RAG_ENABLED");
+  return rawValue === undefined ? true : !["0", "false", "no", "off"].includes(rawValue.trim().toLowerCase());
+}
+
+export function getGamingRagMaxSources(): number {
+  return getEnvIntegerAtLeast(
+    "ARCANOS_GAMING_RAG_MAX_SOURCES",
+    DEFAULT_GAMING_RAG_MAX_SOURCES,
+    0
+  );
+}
+
+export function getGamingRagMaxChunks(): number {
+  return getEnvIntegerAtLeast(
+    "ARCANOS_GAMING_RAG_MAX_CHUNKS",
+    DEFAULT_GAMING_RAG_MAX_CHUNKS,
+    0
+  );
+}
+
+export function getGamingRagChunkChars(): number {
+  return getEnvIntegerAtLeast(
+    "ARCANOS_GAMING_RAG_CHUNK_CHARS",
+    DEFAULT_GAMING_RAG_CHUNK_CHARS,
+    200
+  );
+}
+
+export function getGamingRagTtlMs(mode: GamingMode, patchSensitive: boolean): number {
+  const fallback = mode === "meta" || patchSensitive
+    ? DEFAULT_GAMING_RAG_META_TTL_MS
+    : DEFAULT_GAMING_RAG_GUIDE_TTL_MS;
+  const genericTtlMs = getEnvIntegerAtLeast("ARCANOS_GAMING_RAG_TTL_MS", fallback, 1);
+  const modeTtlMs = getEnvIntegerAtLeast(
+    `ARCANOS_GAMING_RAG_${mode.toUpperCase()}_TTL_MS`,
+    genericTtlMs,
+    1
+  );
+
+  return patchSensitive
+    ? Math.min(modeTtlMs, getEnvIntegerAtLeast("ARCANOS_GAMING_RAG_META_TTL_MS", DEFAULT_GAMING_RAG_META_TTL_MS, 1))
+    : modeTtlMs;
 }
 
 function clampToRequestRemaining(timeoutMs: number, remainingRequestMs: number | null): number {

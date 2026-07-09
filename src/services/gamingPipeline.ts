@@ -24,7 +24,7 @@ import {
 } from "@services/gamingModes.js";
 import { buildGamingTrinityPrompt } from "@services/gamingPromptBuilder.js";
 import {
-  buildGamingWebContext,
+  buildGamingRagContext,
   collectGamingGuideUrls
 } from "@services/gamingWebContext.js";
 
@@ -44,6 +44,7 @@ type GamingLogContext = {
   traceId?: string;
   promptLength: number;
   gameProvided: boolean;
+  game?: string;
   guideSourceCount: number;
 };
 
@@ -246,19 +247,19 @@ function buildMetaFallbackSteps(params: GamingPipelineInput): string[] {
 
 function sourceAvailabilityLine(sources: GamingWebSource[]): string {
   if (sources.length === 0) {
-    return "Sources unavailable: no guide URL content was available for this request.";
+    return "Sources unavailable: no source-backed game data was available for this request.";
   }
 
   const usableSourceCount = sources.filter((source) => Boolean(source.snippet)).length;
   if (usableSourceCount === 0) {
-    return "Sources unavailable: provided guide sources could not be retrieved before the fallback.";
+    return "Sources unavailable: selected game-data sources could not be retrieved before the fallback.";
   }
 
   if (usableSourceCount < sources.length) {
-    return `Sources partially available: ${usableSourceCount} of ${sources.length} provided guide sources were usable.`;
+    return `Sources partially available: ${usableSourceCount} of ${sources.length} selected game-data sources were usable.`;
   }
 
-  return `Sources available: ${usableSourceCount} provided guide source${usableSourceCount === 1 ? " was" : "s were"} retrieved.`;
+  return `Sources available: ${usableSourceCount} source-backed game-data snippet${usableSourceCount === 1 ? " was" : "s were"} retrieved.`;
 }
 
 function buildGamingProviderFallbackResponse(params: {
@@ -366,6 +367,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
     ...(traceId ? { traceId } : {}),
     promptLength: params.prompt.length,
     gameProvided: Boolean(params.game),
+    ...(params.game ? { game: params.game } : {}),
     guideSourceCount
   };
 
@@ -390,17 +392,56 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
   const retrievalStartedAt = Date.now();
   let webContext = "";
   let sources: GamingWebSource[] = [];
+  let retrievalAttempted = guideUrls.length > 0;
+  let retrievalHadUsableSources = false;
   try {
-    const webContextResult = await buildGamingWebContext(guideUrls, baseLogContext);
+    const webContextResult = await buildGamingRagContext(params, baseLogContext);
     webContext = webContextResult.context;
     sources = webContextResult.sources;
+    retrievalAttempted = webContextResult.retrievalEnabled;
+    retrievalHadUsableSources = sources.some((source) => Boolean(source.snippet));
     logGamingIntakeStep(baseLogContext, "retrieval", retrievalStartedAt, {
       ok: true,
-      retrievalLatencyMs: Date.now() - retrievalStartedAt,
+      retrievalEnabled: webContextResult.retrievalEnabled,
+      retrievalReason: webContextResult.retrievalReason,
+      retrievalElapsedMs: webContextResult.retrievalElapsedMs,
+      retrievalLatencyMs: webContextResult.retrievalElapsedMs,
+      rankingElapsedMs: webContextResult.rankingElapsedMs,
       sourceCount: sources.length,
+      sourceDomains: webContextResult.sourceDomains,
+      cacheHit: webContextResult.cacheHit,
       usableSourceCount: sources.filter((source) => Boolean(source.snippet)).length,
-      failedSourceCount: sources.filter((source) => Boolean(source.error)).length
+      failedSourceCount: sources.filter((source) => Boolean(source.error)).length,
+      clearPassed: webContextResult.clear.passed,
+      ...(webContextResult.fallbackReason ? { fallbackReason: webContextResult.fallbackReason } : {})
     });
+    if (webContextResult.fallbackReason === "INTAKE_RETRIEVAL_TIMEOUT") {
+      logger.warn("gaming.fallback.used", {
+        ...baseLogContext,
+        retrievalEnabled: webContextResult.retrievalEnabled,
+        retrievalReason: webContextResult.retrievalReason,
+        sourceCount: sources.length,
+        sourceDomains: webContextResult.sourceDomains,
+        cacheHit: webContextResult.cacheHit,
+        retrievalElapsedMs: webContextResult.retrievalElapsedMs,
+        rankingElapsedMs: webContextResult.rankingElapsedMs,
+        generationElapsedMs: 0,
+        fallbackReason: webContextResult.fallbackReason,
+        timeoutPhase: "retrieval"
+      });
+      return formatGameplaySuccessWithLogs({
+        mode: params.mode,
+        response: buildGamingProviderFallbackResponse({
+          input: params,
+          sources,
+          fallbackReason: webContextResult.fallbackReason,
+          timeoutPhase: "retrieval"
+        }),
+        sources,
+        logContext: baseLogContext,
+        requestStartedAt
+      });
+    }
   } catch (error) {
     const errorCode = readErrorString(error, "code");
     const timeoutPhase = readTimeoutPhase(error) ?? (errorCode === "INTAKE_RETRIEVAL_TIMEOUT" ? "retrieval" : undefined);
@@ -416,7 +457,14 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
     logGamingIntakeStep(baseLogContext, "retrieval", retrievalStartedAt, {
       ok: false,
       ...(timeoutPhase ? { timeoutPhase } : {}),
+      retrievalEnabled: true,
+      retrievalReason: "retrieval_exception",
+      retrievalElapsedMs: Date.now() - retrievalStartedAt,
       retrievalLatencyMs: Date.now() - retrievalStartedAt,
+      rankingElapsedMs: 0,
+      sourceCount: 0,
+      sourceDomains: [],
+      cacheHit: false,
       fallbackReason
     });
   }
@@ -466,7 +514,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
       () =>
         runTrinityWritingPipeline({
           input: {
-            prompt: buildGamingTrinityPrompt(params, webContext, guideUrls.length > 0),
+            prompt: buildGamingTrinityPrompt(params, webContext, retrievalAttempted || retrievalHadUsableSources),
             moduleId: "ARCANOS:GAMING",
             sourceEndpoint,
             requestedAction: "query",
@@ -495,6 +543,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
       streaming: false,
       ok: false,
       elapsedMs,
+      generationElapsedMs: elapsedMs,
       upstreamModelLatencyMs: elapsedMs
     });
 
@@ -517,6 +566,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
         timeoutMs: pipelineTimeoutMs,
         stageTimeoutMs,
         elapsedMs,
+        generationElapsedMs: elapsedMs,
         upstreamModelLatencyMs: elapsedMs,
         timeoutPhase,
         fallbackReason,
@@ -530,6 +580,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
         stageTimeoutMs,
         timeoutPhase,
         upstreamModelLatencyMs: elapsedMs,
+        generationElapsedMs: elapsedMs,
         fallbackReason
       });
       logger.warn("gaming.fallback.used", {
@@ -538,6 +589,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
         fallbackReason,
         timeoutPhase,
         elapsedMs,
+        generationElapsedMs: elapsedMs,
         timeoutMs: pipelineTimeoutMs,
         stageTimeoutMs
       });
@@ -563,6 +615,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
         ...(params.game ? { game: params.game } : {}),
         provider: "trinity",
         elapsedMs,
+        generationElapsedMs: elapsedMs,
         upstreamModelLatencyMs: elapsedMs,
         errorCode,
         finishReason: readErrorString(error, "finishReason"),
@@ -573,6 +626,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
         ok: false,
         provider: "trinity",
         upstreamModelLatencyMs: elapsedMs,
+        generationElapsedMs: elapsedMs,
         errorCode,
         fallbackReason
       });
@@ -582,6 +636,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
         provider: "trinity",
         fallbackReason,
         elapsedMs,
+        generationElapsedMs: elapsedMs,
         errorCode
       });
       return formatGameplaySuccessWithLogs({
@@ -602,12 +657,14 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
       provider: "trinity",
       timeoutPhase: readTimeoutPhase(error) ?? "provider",
       upstreamModelLatencyMs: elapsedMs,
+      generationElapsedMs: elapsedMs,
       errorCode: readErrorString(error, "code")
     });
     logger.error("gaming.provider.error", {
       ...baseLogContext,
       provider: "trinity",
       elapsedMs,
+      generationElapsedMs: elapsedMs,
       errorName: error instanceof Error ? error.name : typeof error,
       errorCode: readErrorString(error, "code")
     });
@@ -626,12 +683,14 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
     streaming: false,
     ok: true,
     elapsedMs: Date.now() - providerStartedAt,
+    generationElapsedMs: Date.now() - providerStartedAt,
     upstreamModelLatencyMs: Date.now() - providerStartedAt
   });
   logger.info("gaming.provider.end", {
     ...baseLogContext,
     provider: "trinity",
     elapsedMs: Date.now() - providerStartedAt,
+    generationElapsedMs: Date.now() - providerStartedAt,
     upstreamModelLatencyMs: Date.now() - providerStartedAt,
     activeModel: trinityResult.activeModel,
     finishReason: trinityResult.meta?.provider?.finishReason ?? "unknown"
@@ -640,6 +699,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
     ok: true,
     provider: "trinity",
     upstreamModelLatencyMs: Date.now() - providerStartedAt,
+    generationElapsedMs: Date.now() - providerStartedAt,
     activeModel: trinityResult.activeModel,
     finishReason: trinityResult.meta?.provider?.finishReason ?? "unknown"
   });
