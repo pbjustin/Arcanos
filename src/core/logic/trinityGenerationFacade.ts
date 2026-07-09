@@ -105,6 +105,36 @@ function readRequestedAction(body: unknown): string | null {
   return readActionAlias(payload as Record<string, unknown>);
 }
 
+function readBodyPrompt(body: unknown): string | null {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return null;
+  }
+
+  const bodyRecord = body as Record<string, unknown>;
+  const prompt = bodyRecord.prompt;
+  if (typeof prompt === 'string' && prompt.trim().length > 0) {
+    return prompt.trim();
+  }
+
+  const payload = bodyRecord.payload;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return null;
+  }
+
+  const payloadPrompt = (payload as Record<string, unknown>).prompt;
+  return typeof payloadPrompt === 'string' && payloadPrompt.trim().length > 0
+    ? payloadPrompt.trim()
+    : null;
+}
+
+function resolveClassificationPrompt(params: TrinityGenerationFacadeRequest): string {
+  if (params.input.sourceEndpoint.startsWith('arcanos-gaming.')) {
+    return readBodyPrompt(params.input.body) ?? resolveTrinityGenerationPrompt(params.input);
+  }
+
+  return resolveTrinityGenerationPrompt(params.input);
+}
+
 function normalizePositiveInteger(value: unknown): number | undefined {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
     return undefined;
@@ -185,7 +215,7 @@ export function resolveTrinityGenerationPrompt(input: TrinityGenerationInput): s
 export function classifyTrinityGenerationInput(
   params: TrinityGenerationFacadeRequest
 ): WritingPlaneInputClassification {
-  const prompt = resolveTrinityGenerationPrompt(params.input);
+  const prompt = resolveClassificationPrompt(params);
 
   return classifyWritingPlaneInput({
     body: params.input.body,

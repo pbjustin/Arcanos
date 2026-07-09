@@ -759,6 +759,48 @@ function shapeDiagnosticResult(value: Record<string, unknown>): Record<string, u
   };
 }
 
+function shapeGamingSource(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const url = readString(value.url);
+  if (!url) {
+    return null;
+  }
+
+  return {
+    url,
+    ...(readString(value.snippet) ? { snippet: truncateText(readString(value.snippet) as string, 1_200) } : {}),
+    ...(readString(value.error) ? { error: truncateText(readString(value.error) as string, 600) } : {}),
+  };
+}
+
+function shapeGamingResult(value: Record<string, unknown>): Record<string, unknown> | null {
+  if (value.ok !== true || readString(value.route) !== 'gaming' || !isRecord(value.data)) {
+    return null;
+  }
+
+  const response = readString(value.data.response);
+  const mode = readString(value.mode);
+  const sources = Array.isArray(value.data.sources)
+    ? value.data.sources
+      .map(shapeGamingSource)
+      .filter((source): source is Record<string, unknown> => source !== null)
+      .slice(0, 8)
+    : [];
+
+  return {
+    ok: true,
+    route: 'gaming',
+    ...(mode ? { mode } : {}),
+    data: {
+      ...(response ? { response: truncateText(response, STRING_PREVIEW_MAX_BYTES) } : {}),
+      sources,
+    },
+  };
+}
+
 export function shapeClientRouteResult(result: unknown): unknown {
   if (typeof result === 'string') {
     return truncateText(result, STRING_PREVIEW_MAX_BYTES);
@@ -775,6 +817,11 @@ export function shapeClientRouteResult(result: unknown): unknown {
   const diagnostic = shapeDiagnosticResult(result);
   if (diagnostic) {
     return diagnostic;
+  }
+
+  const gaming = shapeGamingResult(result);
+  if (gaming) {
+    return gaming;
   }
 
   const mcpDispatch = shapeMcpDispatchResult(result);

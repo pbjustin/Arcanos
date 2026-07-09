@@ -165,6 +165,53 @@ describe('routeGptRequest gaming routing', () => {
     );
   });
 
+  it('preserves Gaming source metadata arrays through the GPT route shaper', async () => {
+    mockDispatchModuleAction.mockResolvedValueOnce({
+      ok: true,
+      route: 'gaming',
+      mode: 'guide',
+      data: {
+        response: 'Gaming source-backed response',
+        sources: [
+          {
+            url: 'https://example.com/guide',
+            snippet: 'Relevant source snippet.'
+          }
+        ],
+      },
+    });
+
+    const envelope = await routeGptRequest({
+      gptId: 'arcanos-gaming',
+      body: {
+        action: 'query',
+        payload: {
+          mode: 'guide',
+          prompt: 'Use the supplied source.',
+          game: 'Elden Ring',
+        },
+      },
+      requestId: 'req-gaming-sources',
+    });
+
+    expect(envelope).toEqual(expect.objectContaining({
+      ok: true,
+      result: expect.objectContaining({
+        route: 'gaming',
+        mode: 'guide',
+        data: expect.objectContaining({
+          response: 'Gaming source-backed response',
+          sources: [
+            {
+              url: 'https://example.com/guide',
+              snippet: 'Relevant source snippet.',
+            },
+          ],
+        }),
+      }),
+    }));
+  });
+
   it('forces arcanos-gaming to the gaming module even if the generic GPT map is misconfigured', async () => {
     mockGetGptModuleMap.mockResolvedValue({
       'arcanos-gaming': { route: 'tutor', module: 'ARCANOS:TUTOR' },

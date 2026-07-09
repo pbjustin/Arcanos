@@ -263,6 +263,51 @@ describe('client response guards', () => {
     });
   });
 
+  it('preserves bounded Gaming source arrays for client-visible route results', () => {
+    const shaped = shapeClientRouteResult({
+      ok: true,
+      route: 'gaming',
+      mode: 'guide',
+      data: {
+        response: 'Use the source-backed route.',
+        sources: [
+          { url: 'https://example.com/guide-1', snippet: 'First source snippet.' },
+          { url: 'https://example.com/guide-2', error: 'Fetch failed.' },
+          { snippet: 'missing url' },
+          ...Array.from({ length: 8 }, (_value, index) => ({
+            url: `https://example.com/extra-${index}`,
+            snippet: 'Extra source snippet.',
+          })),
+        ],
+        auditTrace: {
+          draft: 'internal draft',
+        },
+      },
+      pipelineDebug: {
+        hidden: true,
+      },
+    }) as Record<string, unknown>;
+
+    expect(shaped).toEqual({
+      ok: true,
+      route: 'gaming',
+      mode: 'guide',
+      data: {
+        response: 'Use the source-backed route.',
+        sources: [
+          { url: 'https://example.com/guide-1', snippet: 'First source snippet.' },
+          { url: 'https://example.com/guide-2', error: 'Fetch failed.' },
+          { url: 'https://example.com/extra-0', snippet: 'Extra source snippet.' },
+          { url: 'https://example.com/extra-1', snippet: 'Extra source snippet.' },
+          { url: 'https://example.com/extra-2', snippet: 'Extra source snippet.' },
+          { url: 'https://example.com/extra-3', snippet: 'Extra source snippet.' },
+          { url: 'https://example.com/extra-4', snippet: 'Extra source snippet.' },
+          { url: 'https://example.com/extra-5', snippet: 'Extra source snippet.' },
+        ],
+      },
+    });
+  });
+
   it('preserves compact self-heal runtime inspection evidence arrays for client responses', () => {
     const shaped = shapeClientRouteResult({
       handledBy: 'runtime-inspection',

@@ -323,9 +323,7 @@ describe('gpt router auth logging', () => {
         mode: 'guide',
         data: {
           response: 'Guide response',
-          sources: {
-            total: 0,
-          },
+          sources: [],
         },
       },
     });
