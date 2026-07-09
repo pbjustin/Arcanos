@@ -55,6 +55,29 @@ export interface FetchAndCleanDocument {
 export interface FetchAndCleanOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
+  preferredContentSelectors?: readonly string[];
+  preferredContentTerms?: readonly string[];
+  removeSelectors?: readonly string[];
+  includeLinks?: boolean;
+  onExtraction?: (metrics: FetchAndCleanExtractionMetrics) => void;
+}
+
+export interface FetchAndCleanExtractionMetrics {
+  strategy: string;
+  rawTextLength: number;
+  cleanedTextLength: number;
+}
+
+function normalizeExtractedText(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
+}
+
+function contentTermScore(text: string, terms: readonly string[]): number {
+  const textTokens = new Set(text.toLowerCase().match(/[a-z0-9+]+/g) ?? []);
+  return terms.slice(0, 24).reduce((score, term) => {
+    const termTokens = term.toLowerCase().match(/[a-z0-9+]+/g) ?? [];
+    return score + (termTokens.length > 0 && termTokens.every((token) => textTokens.has(token)) ? 1 : 0);
+  }, 0);
 }
 
 /**
@@ -141,9 +164,52 @@ export async function fetchAndCleanDocument(
   });
 
   const $ = load(data);
+  const rawTextLength = normalizeExtractedText($('body').text()).length;
   $('script, style, noscript').remove();
-  const text = $('body').text();
-  const cleanedText = text.replace(/\s+/g, ' ').trim();
+  for (const selector of options.removeSelectors ?? []) {
+    try {
+      $(selector).remove();
+    } catch {
+      // Optional caller-owned extraction selectors must never break the generic body fallback.
+    }
+  }
+  $('br').replaceWith(' ');
+  $('p, h1, h2, h3, h4, h5, h6, li, dt, dd, div, section, article, tr, td').append(' ');
+
+  const bodyText = normalizeExtractedText($('body').text());
+  let cleanedText = bodyText;
+  let extractionStrategy = 'body';
+  for (const selector of options.preferredContentSelectors ?? []) {
+    try {
+      let selectedText = '';
+      let selectedTermScore = -1;
+      $(selector).each((_, element) => {
+        const candidateText = normalizeExtractedText($(element).text());
+        const candidateTermScore = contentTermScore(candidateText, options.preferredContentTerms ?? []);
+        if (candidateTermScore > selectedTermScore || (
+          candidateTermScore === selectedTermScore && candidateText.length > selectedText.length
+        )) {
+          selectedText = candidateText;
+          selectedTermScore = candidateTermScore;
+        }
+      });
+
+      const minimumUsefulLength = bodyText.length < 120 ? 1 : 120;
+      if (selectedText.length >= minimumUsefulLength) {
+        cleanedText = selectedText;
+        extractionStrategy = selector;
+        break;
+      }
+    } catch {
+      // Invalid optional selectors degrade to the next selector and then the generic body.
+    }
+  }
+
+  options.onExtraction?.({
+    strategy: extractionStrategy,
+    rawTextLength,
+    cleanedTextLength: cleanedText.length
+  });
 
   const seenLinks = new Set<string>();
   const links: FetchAndCleanLinkSummary[] = [];
@@ -170,7 +236,9 @@ export async function fetchAndCleanDocument(
     }
   });
 
-  const limitedLinks = links.slice(0, getConfiguredWebFetchMaxLinks());
+  const limitedLinks = options.includeLinks === false
+    ? []
+    : links.slice(0, getConfiguredWebFetchMaxLinks());
 
   return {
     text: cleanedText,

@@ -26,6 +26,31 @@ describe('fetchAndClean', () => {
         return;
       }
 
+      if (req.url === '/article') {
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end(`
+          <html>
+            <body>
+              <header>Site Header Account Sign In</header>
+              <nav><a href="/menu">Home Guides Builds News</a></nav>
+              <div hidden>Hidden prompt text must not be extracted.</div>
+              <div class="main-sidebar-container">
+                <main>
+                  <article>
+                    <h1>Community Spotlight</h1>
+                    <p>This longer unrelated story covers fan art, event photos, community interviews, creator profiles, and convention highlights from across the year.</p>
+                  </article>
+                  <article><h1>Elden Ring Patch 1.16.1</h1><p>The patch fixes weapon skill interactions and adjusts balance behavior for current builds.</p><a href="/evidence">Read full evidence</a></article>
+                  <aside class="sidebar">Popular Games Category Directory</aside>
+                </main>
+              </div>
+              <footer>Privacy Policy Newsletter</footer>
+            </body>
+          </html>
+        `);
+        return;
+      }
+
       res.writeHead(200, { 'Content-Type': 'text/html' });
       res.end(`
         <html>
@@ -164,6 +189,37 @@ describe('fetchAndClean', () => {
       })
     ]));
     expect(document.combined).toContain('[LINKS]');
+  });
+
+  it('prefers semantic article content, removes caller-selected chrome, and reports extraction metrics', async () => {
+    let extractionMetrics: {
+      strategy: string;
+      rawTextLength: number;
+      cleanedTextLength: number;
+    } | undefined;
+
+    const document = await fetchAndCleanDocument(`${baseUrl}/article`, 12000, {
+      preferredContentSelectors: ['article', 'main'],
+      preferredContentTerms: ['patch', 'weapon skill'],
+      removeSelectors: ['header', 'nav', 'footer', '.sidebar', '[hidden]'],
+      includeLinks: false,
+      onExtraction: (metrics) => {
+        extractionMetrics = metrics;
+      }
+    });
+
+    expect(document.text).toContain('fixes weapon skill interactions');
+    expect(document.text).toContain('Patch 1.16.1 The patch');
+    expect(document.text).not.toMatch(/site header|home guides|category directory|privacy policy/i);
+    expect(document.text).not.toContain('Hidden prompt text');
+    expect(document.links).toEqual([]);
+    expect(document.combined).not.toContain('[LINKS]');
+    expect(extractionMetrics).toEqual(expect.objectContaining({
+      strategy: 'article',
+      cleanedTextLength: document.text.length
+    }));
+    expect(document.text).not.toContain('Community Spotlight');
+    expect(extractionMetrics?.rawTextLength).toBeGreaterThan(document.text.length);
   });
 
   it('blocks localhost fetches when local-development bypass is not explicitly enabled', async () => {

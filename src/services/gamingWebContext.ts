@@ -2,7 +2,11 @@ import { createHash } from "node:crypto";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { logger } from "@platform/logging/structuredLogging.js";
 import { getEnv } from "@platform/runtime/env.js";
-import { fetchAndClean } from "@shared/webFetcher.js";
+import {
+  fetchAndClean,
+  type FetchAndCleanExtractionMetrics,
+  type FetchAndCleanOptions
+} from "@shared/webFetcher.js";
 import {
   getGamingRagChunkChars,
   getGamingRagEnabled,
@@ -74,6 +78,7 @@ type GamingFetchedDocument = {
   text: string;
   fetchedAt: string;
   cacheHit: boolean;
+  extraction: FetchAndCleanExtractionMetrics;
 };
 
 type GamingRankedChunk = {
@@ -81,6 +86,8 @@ type GamingRankedChunk = {
   text: string;
   score: number;
   hash: string;
+  snippetQualityScore: number;
+  navigationPenalty: number;
 };
 
 const KNOWN_GAME_ALIASES: Array<{ pattern: RegExp; name: string }> = [
@@ -125,6 +132,102 @@ const LOW_QUALITY_DOMAINS = [
 ];
 
 const MAX_DOCUMENT_CACHE_ENTRIES = 100;
+const MAX_PUBLIC_SNIPPET_CHARS = 600;
+const LIMITED_ARTICLE_TEXT_SNIPPET = "Relevant source retrieved, but readable article text was limited.";
+const LIMITED_ARTICLE_CONTEXT_NOTE = "[No readable article evidence was extracted from this source.]";
+
+const GENERIC_CONTENT_SELECTORS = [
+  "main",
+  "article",
+  "[role='main']",
+  ".mw-parser-output",
+  ".entry-content",
+  ".page-content",
+  ".post-content",
+  ".content"
+] as const;
+
+const COMMON_JUNK_SELECTORS = [
+  "nav",
+  "header",
+  "footer",
+  "aside",
+  "form",
+  "template",
+  "[hidden]",
+  "[aria-hidden='true']",
+  "[aria-modal='true']",
+  "[role='dialog']",
+  "[role='navigation']",
+  "[role='banner']",
+  "[role='complementary']",
+  ".sidebar",
+  "#sidebar",
+  "[class$='-sidebar']",
+  "[class$='__sidebar']",
+  "[id$='-sidebar']",
+  "[id$='__sidebar']",
+  "[class*='cookie']",
+  "[id*='cookie']",
+  "[class*='newsletter']",
+  "[class*='modal']",
+  "[class*='popup']",
+  "[class*='popin']",
+  ".comments",
+  "#comments",
+  "[class*='comment-list']",
+  "[class*='breadcrumb']",
+  "[class*='social-share']",
+  "[class*='share-social']",
+  "[class*='advertisement']",
+  "[class*='ad-container']"
+] as const;
+
+const SOURCE_EXTRACTION_PROFILES: Array<{
+  domains: string[];
+  contentSelectors: readonly string[];
+  removeSelectors: readonly string[];
+}> = [
+  {
+    domains: ["wiki.fextralife.com", "fextralife.com"],
+    contentSelectors: ["#wiki-content-block", ".wiki-content-block", "#main-content", ".page-content"],
+    removeSelectors: [
+      ".wiki-header-container",
+      ".wiki-menu-2-left",
+      ".wikiMenuMobile",
+      ".left-side-menu-container",
+      ".side-bar-right",
+      "#featured-wikis",
+      "#related-games-content",
+      "#disqus_thread"
+    ]
+  },
+  {
+    domains: ["bandainamcoent.com", "bandainamcoent.eu"],
+    contentSelectors: [".article__edito-content", ".article__content", ".article", "article"],
+    removeSelectors: [
+      ".article__sidebar",
+      ".article__share-social",
+      "[class*='read-next']",
+      ".age-gate"
+    ]
+  },
+  {
+    domains: ["worldofwarcraft.blizzard.com", "news.blizzard.com", "blizzard.com"],
+    contentSelectors: [".NewsBlog-content", ".Article-content", ".article-content", "#main", "article"],
+    removeSelectors: [".SiteNav", ".SocialLinks", ".CommentTotal"]
+  },
+  {
+    domains: ["icy-veins.com"],
+    contentSelectors: [".left-column-content", ".left-column-main", ".guide-page-content", "article"],
+    removeSelectors: [
+      ".guide-header__breadcrumbs",
+      ".content-toc",
+      ".table-of-contents",
+      ".left-column-sidebar"
+    ]
+  }
+];
 
 const BUILTIN_SOURCE_CATALOG: Array<{ game: string; sources: Array<Omit<GamingSourceCandidate, "trustScore" | "supplied">> }> = [
   {
@@ -160,6 +263,14 @@ const BUILTIN_SOURCE_CATALOG: Array<{ game: string; sources: Array<Omit<GamingSo
         sourceType: "wiki",
         topics: ["bleed", "frost", "poison", "status", "build"],
         modes: ["build", "guide"],
+        stable: true
+      },
+      {
+        title: "Elden Ring wiki hemorrhage guide",
+        url: "https://eldenring.wiki.fextralife.com/Hemorrhage",
+        sourceType: "wiki",
+        topics: ["bleed", "blood loss", "hemorrhage", "arcane", "build"],
+        modes: ["build"],
         stable: true
       }
     ]
@@ -276,7 +387,12 @@ const BUILTIN_SOURCE_CATALOG: Array<{ game: string; sources: Array<Omit<GamingSo
   }
 ];
 
-const documentCache = new Map<string, { text: string; fetchedAt: string; expiresAt: number }>();
+const documentCache = new Map<string, {
+  text: string;
+  fetchedAt: string;
+  expiresAt: number;
+  extraction: FetchAndCleanExtractionMetrics;
+}>();
 
 export function collectGamingGuideUrls(params: GamingGuideUrlInput): string[] {
   return [
@@ -350,15 +466,21 @@ function runWithLocalTimeout<T>(operation: (signal: AbortSignal) => Promise<T>, 
   });
 }
 
-function buildSafeSourceLogTarget(url: string): { sourceHost: string; sourcePathLength: number } {
+function buildSafeSourceLogTarget(url: string): { sourceUrl: string; sourceHost: string; sourcePathLength: number } {
   try {
     const parsedUrl = new URL(url);
+    parsedUrl.username = "";
+    parsedUrl.password = "";
+    parsedUrl.search = "";
+    parsedUrl.hash = "";
     return {
+      sourceUrl: parsedUrl.origin,
       sourceHost: parsedUrl.host,
       sourcePathLength: parsedUrl.pathname.length
     };
   } catch {
     return {
+      sourceUrl: "invalid-url",
       sourceHost: "invalid-url",
       sourcePathLength: 0
     };
@@ -406,10 +528,29 @@ export async function buildGamingWebContext(
       }
 
       try {
-        const snippet = await runWithLocalTimeout(
-          (signal) => fetchAndClean(sourceUrl, maxContextChars, { signal, timeoutMs: fetchTimeoutMs }),
+        let extraction: FetchAndCleanExtractionMetrics = {
+          strategy: "body",
+          rawTextLength: 0,
+          cleanedTextLength: 0
+        };
+        const fetchedText = await runWithLocalTimeout(
+          (signal) => fetchAndClean(
+            sourceUrl,
+            maxContextChars,
+            buildGamingFetchOptions(sourceUrl, signal, fetchTimeoutMs, [], (metrics) => {
+              extraction = metrics;
+            })
+          ),
           fetchTimeoutMs
         );
+        if (extraction.rawTextLength === 0 && fetchedText.length > 0) {
+          extraction = {
+            strategy: "body",
+            rawTextLength: fetchedText.length,
+            cleanedTextLength: fetchedText.length
+          };
+        }
+        const snippet = shapePublicSnippet(fetchedText);
         if (logContext) {
           logger.info("gaming.retrieval.source.end", {
             ...logContext,
@@ -420,6 +561,10 @@ export async function buildGamingWebContext(
             elapsedMs: Date.now() - sourceStartedAt,
             fetchParseMs: Date.now() - sourceStartedAt,
             snippetChars: snippet.length,
+            extractionStrategy: extraction.strategy,
+            rawTextLength: extraction.rawTextLength,
+            cleanedTextLength: extraction.cleanedTextLength,
+            fallbackSnippetUsed: snippet === LIMITED_ARTICLE_TEXT_SNIPPET,
             maxContextChars,
             fetchTimeoutMs
           });
@@ -481,6 +626,35 @@ function normalizeDomain(rawUrl: string): string {
 
 function domainMatches(domain: string, candidate: string): boolean {
   return domain === candidate || domain.endsWith(`.${candidate}`);
+}
+
+function buildGamingFetchOptions(
+  url: string,
+  signal: AbortSignal,
+  timeoutMs: number,
+  preferredContentTerms: readonly string[],
+  onExtraction: (metrics: FetchAndCleanExtractionMetrics) => void
+): FetchAndCleanOptions {
+  const domain = normalizeDomain(url);
+  const profile = SOURCE_EXTRACTION_PROFILES.find((entry) =>
+    entry.domains.some((candidate) => domainMatches(domain, candidate))
+  );
+
+  return {
+    signal,
+    timeoutMs,
+    includeLinks: false,
+    preferredContentSelectors: [
+      ...(profile?.contentSelectors ?? []),
+      ...GENERIC_CONTENT_SELECTORS
+    ],
+    preferredContentTerms,
+    removeSelectors: [
+      ...COMMON_JUNK_SELECTORS,
+      ...(profile?.removeSelectors ?? [])
+    ],
+    onExtraction
+  };
 }
 
 function trustScoreForUrl(url: string, fallback: number): number {
@@ -688,7 +862,8 @@ function scoreCandidate(
   patchSensitive: boolean
 ): number {
   const haystack = `${candidate.title} ${candidate.url} ${candidate.topics.join(" ")}`.toLowerCase();
-  const termScore = terms.reduce((score, term) => score + (haystack.includes(term.toLowerCase()) ? 0.08 : 0), 0);
+  const matchedTermCount = terms.filter((term) => haystack.includes(term.toLowerCase())).length;
+  const termScore = Math.min(0.4, matchedTermCount * 0.08);
   const suppliedBoost = candidate.supplied ? 0.5 : 0;
   const modeBoost = candidate.modes.includes(input.mode) ? 0.16 : 0;
   const patchBoost = patchSensitive && candidate.sourceType === "patch_notes" ? 0.36 : 0;
@@ -705,8 +880,8 @@ function selectCandidates(input: GamingRagInput, candidates: GamingSourceCandida
   }
 
   return candidates
-    .map((candidate) => ({ candidate, score: scoreCandidate(input, candidate, terms, patchSensitive) }))
-    .sort((left, right) => right.score - left.score)
+    .map((candidate, index) => ({ candidate, index, score: scoreCandidate(input, candidate, terms, patchSensitive) }))
+    .sort((left, right) => right.score - left.score || left.index - right.index)
     .slice(0, maxSources)
     .map((entry) => entry.candidate);
 }
@@ -715,6 +890,7 @@ async function fetchGamingRagDocument(
   candidate: GamingSourceCandidate,
   input: GamingRagInput,
   patchSensitive: boolean,
+  contentTerms: readonly string[],
   maxDocumentChars: number,
   fetchTimeoutMs: number,
   logContext: GamingWebContextLogContext | undefined,
@@ -722,7 +898,8 @@ async function fetchGamingRagDocument(
   sourceCount: number
 ): Promise<GamingFetchedDocument | GamingWebSource> {
   const sourceUrl = redactUrlCredentials(candidate.url);
-  const cacheKey = normalizeCacheUrl(sourceUrl);
+  const contentTermKey = createHash("sha256").update(contentTerms.join("\n")).digest("hex").slice(0, 16);
+  const cacheKey = `${normalizeCacheUrl(sourceUrl)}#gaming-rag:${contentTermKey}`;
   const cached = documentCache.get(cacheKey);
   const now = Date.now();
   const sourceStartedAt = now;
@@ -739,6 +916,9 @@ async function fetchGamingRagDocument(
         elapsedMs: 0,
         fetchParseMs: 0,
         snippetChars: Math.min(cached.text.length, maxDocumentChars),
+        extractionStrategy: cached.extraction.strategy,
+        rawTextLength: cached.extraction.rawTextLength,
+        cleanedTextLength: cached.extraction.cleanedTextLength,
         fetchTimeoutMs
       });
     }
@@ -746,7 +926,8 @@ async function fetchGamingRagDocument(
       candidate,
       text: cached.text,
       fetchedAt: cached.fetchedAt,
-      cacheHit: true
+      cacheHit: true,
+      extraction: cached.extraction
     };
   }
 
@@ -763,16 +944,35 @@ async function fetchGamingRagDocument(
   }
 
   try {
+    let extraction: FetchAndCleanExtractionMetrics = {
+      strategy: "body",
+      rawTextLength: 0,
+      cleanedTextLength: 0
+    };
     const text = await runWithLocalTimeout(
-      (signal) => fetchAndClean(sourceUrl, maxDocumentChars, { signal, timeoutMs: fetchTimeoutMs }),
+      (signal) => fetchAndClean(
+        sourceUrl,
+        maxDocumentChars,
+        buildGamingFetchOptions(sourceUrl, signal, fetchTimeoutMs, contentTerms, (metrics) => {
+          extraction = metrics;
+        })
+      ),
       fetchTimeoutMs
     );
+    if (extraction.rawTextLength === 0 && text.length > 0) {
+      extraction = {
+        strategy: "body",
+        rawTextLength: text.length,
+        cleanedTextLength: text.length
+      };
+    }
     const fetchedAt = new Date().toISOString();
     pruneDocumentCache(now);
     documentCache.set(cacheKey, {
       text,
       fetchedAt,
-      expiresAt: now + getGamingRagTtlMs(input.mode, patchSensitive)
+      expiresAt: now + getGamingRagTtlMs(input.mode, patchSensitive),
+      extraction
     });
     if (logContext) {
       logger.info("gaming.retrieval.source.end", {
@@ -785,6 +985,9 @@ async function fetchGamingRagDocument(
         elapsedMs: Date.now() - sourceStartedAt,
         fetchParseMs: Date.now() - sourceStartedAt,
         snippetChars: text.length,
+        extractionStrategy: extraction.strategy,
+        rawTextLength: extraction.rawTextLength,
+        cleanedTextLength: extraction.cleanedTextLength,
         fetchTimeoutMs
       });
     }
@@ -792,7 +995,8 @@ async function fetchGamingRagDocument(
       candidate,
       text,
       fetchedAt,
-      cacheHit: false
+      cacheHit: false,
+      extraction
     };
   } catch (error) {
     const errorCode = readErrorString(error, "code") ?? "INTAKE_RETRIEVAL_FAILED";
@@ -856,8 +1060,86 @@ function splitIntoChunks(text: string, maxChunkChars: number): string[] {
   return chunks;
 }
 
-const NAVIGATION_JUNK_PATTERN = /\b(?:advertisement|cookie|privacy policy|terms of use|sign in|log in|subscribe|newsletter|menu|navigation|share this|edit source|page information|fandom apps|explore properties)\b/i;
+const NAVIGATION_JUNK_PATTERN = /\b(?:advertisement|cookie settings?|privacy policy|terms of use|sign in|log in|subscribe|newsletter|menu|navigation|footer|share this|edit source|page information|table of contents|all rights reserved|fandom apps|explore properties|category directory|wiki category)\b/i;
+const NAVIGATION_LABEL_PATTERN = /\b(?:home|menu|games?|news|guides?|builds?|weapons?|armor|talismans?|skills?|bosses?|locations?|quests?|walkthrough|classes?|community|forums?|wiki|categories|view all|go back|read next|follow us|related games?|popular games)\b/gi;
+const NAVIGATION_JUNK_MATCH_PATTERN = /\b(?:advertisement|cookie settings?|privacy policy|terms of use|sign in|log in|subscribe|newsletter|menu|navigation|footer|share this|edit source|page information|table of contents|all rights reserved|category directory|wiki category)\b/gi;
 const GAMEPLAY_CONTENT_PATTERN = /\b(?:boss|route|walkthrough|build|patch|weapon|stat|skill|class|quest|location|level|damage|bleed|frost|mage|limgrave|stormveil|grace|talent|gear|rotation|viable)\b/i;
+const MODE_CONTENT_TERMS: Record<GamingMode, readonly string[]> = {
+  guide: ["route", "walkthrough", "boss", "location", "beginner", "quest", "tutorial", "progress", "grace"],
+  build: ["build", "stats", "weapon", "armor", "talisman", "skill", "rotation", "talent", "gear"],
+  meta: ["patch", "update", "nerf", "buff", "viability", "viable", "tier", "changes", "balance", "hotfix"]
+};
+const NON_TOPICAL_QUERY_TERMS = new Set([
+  "about", "and", "best", "create", "current", "for", "from", "give", "help", "into", "latest", "look", "need", "please", "recommend", "show", "the", "use", "using", "want", "with"
+]);
+
+function clampScore(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function countPatternMatches(text: string, pattern: RegExp): number {
+  return text.match(pattern)?.length ?? 0;
+}
+
+function navigationDensity(text: string): number {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  const words = normalized.match(/[a-z0-9+]+/gi) ?? [];
+  if (words.length === 0) {
+    return 1;
+  }
+
+  const sentences = normalized.split(/(?<=[.!?])\s+/).filter(Boolean);
+  const shortLabelCount = sentences.filter((sentence) => {
+    const sentenceWords = sentence.match(/[a-z0-9+]+/gi) ?? [];
+    return sentenceWords.length <= 3 && countPatternMatches(sentence, NAVIGATION_LABEL_PATTERN) > 0;
+  }).length;
+  const navigationLabels = countPatternMatches(normalized, NAVIGATION_LABEL_PATTERN);
+  const explicitJunk = countPatternMatches(normalized, NAVIGATION_JUNK_MATCH_PATTERN);
+  const separators = countPatternMatches(normalized, /(?:\||›|»|→)/g);
+  return clampScore(
+    (navigationLabels * 0.55 + explicitJunk * 2 + separators * 0.5) / Math.max(8, words.length)
+    + (sentences.length > 1 ? (shortLabelCount / sentences.length) * 0.5 : 0)
+  );
+}
+
+function repeatedTextPenalty(text: string): number {
+  const sentences = text
+    .split(/(?<=[.!?])\s+/)
+    .map((sentence) => sentence.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim())
+    .filter((sentence) => sentence.length >= 20);
+  if (sentences.length < 2) {
+    return 0;
+  }
+
+  return Math.min(0.35, (sentences.length - new Set(sentences).size) / sentences.length);
+}
+
+function readabilityScore(text: string): number {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  const words = normalized.match(/[a-z0-9]+/gi) ?? [];
+  if (words.length === 0) {
+    return 0;
+  }
+
+  const alphabeticChars = countPatternMatches(normalized, /[a-z]/gi);
+  const alphabeticRatio = alphabeticChars / Math.max(1, normalized.length);
+  const sentenceSignal = /[.!?]/.test(normalized) ? 0.18 : 0.08;
+  const lengthSignal = Math.min(0.35, normalized.length / 900);
+  const wordSignal = words.length >= 8 ? 0.18 : words.length / 50;
+  return clampScore(lengthSignal + wordSignal + sentenceSignal + Math.min(0.2, alphabeticRatio * 0.3));
+}
+
+function matchedTermRatio(text: string, terms: readonly string[]): number {
+  const normalizedTerms = Array.from(new Set(terms.map((term) => term.toLowerCase()).filter(Boolean))).slice(0, 12);
+  if (normalizedTerms.length === 0) {
+    return 0;
+  }
+  const textTokens = new Set(tokenize(text));
+  const matches = normalizedTerms.filter((term) =>
+    tokenize(term).every((token) => textTokens.has(token))
+  ).length;
+  return matches / normalizedTerms.length;
+}
 
 function isReadableGameplayChunk(text: string): boolean {
   const normalized = text.replace(/\s+/g, " ").trim();
@@ -865,15 +1147,73 @@ function isReadableGameplayChunk(text: string): boolean {
     return false;
   }
 
-  if (GAMEPLAY_CONTENT_PATTERN.test(normalized)) {
+  const density = navigationDensity(normalized);
+  if (density >= 0.62) {
+    return false;
+  }
+
+  return !(NAVIGATION_JUNK_PATTERN.test(normalized) && density >= 0.2);
+}
+
+function isRelevantGameplayChunk(
+  text: string,
+  candidate: GamingSourceCandidate,
+  terms: readonly string[],
+  input: GamingRagInput
+): boolean {
+  if (candidate.supplied) {
     return true;
   }
 
-  return !NAVIGATION_JUNK_PATTERN.test(normalized);
+  const haystack = text.toLowerCase();
+  const textTokens = new Set(tokenize(text));
+  const gameTerms = new Set(tokenize(normalizeGameName(input) ?? ""));
+  const topicalTerms = terms.filter((term) =>
+    tokenize(term).some((token) => !gameTerms.has(token) && !NON_TOPICAL_QUERY_TERMS.has(token))
+  );
+  const hasTopicalOverlap = topicalTerms.some((term) =>
+    tokenize(term).every((token) => textTokens.has(token))
+  );
+  const hasModeSignal = MODE_CONTENT_TERMS[input.mode].some((term) => haystack.includes(term));
+  const hasGenericGameplaySignal = topicalTerms.length === 0 && GAMEPLAY_CONTENT_PATTERN.test(text);
+  const hasCompactCuratedFallback = candidate.sourceType === "curated"
+    && text.trim().length <= 40
+    && !NAVIGATION_JUNK_PATTERN.test(text);
+  if (input.mode === "build" && topicalTerms.length > 0) {
+    return hasTopicalOverlap || hasCompactCuratedFallback;
+  }
+  return hasTopicalOverlap || hasModeSignal || hasGenericGameplaySignal || hasCompactCuratedFallback;
 }
 
 function hashChunk(text: string): string {
-  return createHash("sha256").update(text.toLowerCase().replace(/\s+/g, " ").slice(0, 600)).digest("hex");
+  return createHash("sha256").update(text.toLowerCase().replace(/\s+/g, " ")).digest("hex");
+}
+
+function areNearDuplicateChunks(left: string, right: string): boolean {
+  const normalize = (value: string): string[] => value
+    .toLowerCase()
+    .replace(/[^a-z0-9+]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter((word) => word.length >= 3);
+  const leftWords = normalize(left);
+  const rightWords = normalize(right);
+  if (leftWords.join(" ") === rightWords.join(" ")) {
+    return true;
+  }
+  if (leftWords.length < 8 || rightWords.length < 8) {
+    return false;
+  }
+  const lengthRatio = Math.min(leftWords.length, rightWords.length) / Math.max(leftWords.length, rightWords.length);
+  if (lengthRatio < 0.8) {
+    return false;
+  }
+
+  const leftSet = new Set(leftWords);
+  const rightSet = new Set(rightWords);
+  const intersectionSize = Array.from(leftSet).filter((word) => rightSet.has(word)).length;
+  const unionSize = new Set([...leftSet, ...rightSet]).size;
+  return unionSize > 0 && intersectionSize / unionSize >= 0.86;
 }
 
 function rankChunks(documents: GamingFetchedDocument[], terms: string[], input: GamingRagInput, patchSensitive: boolean): GamingRankedChunk[] {
@@ -886,45 +1226,104 @@ function rankChunks(documents: GamingFetchedDocument[], terms: string[], input: 
   const scoredChunks: GamingRankedChunk[] = [];
   for (const document of documents) {
     for (const chunk of splitIntoChunks(document.text, maxChunkChars)) {
-      if (!isReadableGameplayChunk(chunk)) {
+      if (!isReadableGameplayChunk(chunk) || !isRelevantGameplayChunk(chunk, document.candidate, terms, input)) {
         continue;
       }
 
       const haystack = chunk.toLowerCase();
-      const termScore = terms.reduce((score, term) => score + (haystack.includes(term.toLowerCase()) ? 0.14 : 0), 0);
+      const chunkTokens = new Set(tokenize(chunk));
+      const termScore = Math.min(0.7, terms.filter((term) =>
+        tokenize(term).every((token) => chunkTokens.has(token))
+      ).length * 0.14);
+      const gameTerms = tokenize(normalizeGameName(input) ?? "");
+      const gameScore = Math.min(0.24, gameTerms.filter((term) => chunkTokens.has(term)).length * 0.08);
+      const modeTermCount = MODE_CONTENT_TERMS[input.mode].filter((term) => haystack.includes(term)).length;
+      const modeScore = Math.min(0.35, modeTermCount * 0.07);
       const patchScore = patchSensitive && /\b(?:patch|hotfix|version|buff|nerf|balance|adjusted|changed)\b/i.test(chunk) ? 0.28 : 0;
       const buildScore = input.mode === "build" && /\b(?:build|stat|weapon|talent|gear|rotation|bleed|frost|mage)\b/i.test(chunk) ? 0.22 : 0;
       const guideScore = input.mode === "guide" && /\b(?:route|walkthrough|first|after|location|boss|quest|progress)\b/i.test(chunk) ? 0.18 : 0;
-      const navigationPenalty = NAVIGATION_JUNK_PATTERN.test(chunk) ? -0.35 : 0;
+      const density = navigationDensity(chunk);
+      const repetitionPenalty = repeatedTextPenalty(chunk);
+      const navigationPenalty = -(density * 1.1 + (NAVIGATION_JUNK_PATTERN.test(chunk) ? 0.35 : 0));
+      const snippetQualityScore = clampScore(
+        readabilityScore(chunk)
+        + matchedTermRatio(chunk, terms) * 0.35
+        + (GAMEPLAY_CONTENT_PATTERN.test(chunk) ? 0.12 : 0)
+        - density * 0.65
+        - repetitionPenalty
+      );
       scoredChunks.push({
         candidate: document.candidate,
         text: chunk,
-        score: scoreCandidate(input, document.candidate, terms, patchSensitive) + termScore + patchScore + buildScore + guideScore + navigationPenalty,
-        hash: hashChunk(chunk)
+        score: scoreCandidate(input, document.candidate, terms, patchSensitive)
+          + termScore
+          + gameScore
+          + modeScore
+          + patchScore
+          + buildScore
+          + guideScore
+          + snippetQualityScore * 0.35
+          + navigationPenalty
+          - repetitionPenalty,
+        hash: hashChunk(chunk),
+        snippetQualityScore,
+        navigationPenalty
       });
     }
   }
 
-  const deduped = new Map<string, GamingRankedChunk>();
-  for (const chunk of scoredChunks) {
-    const dedupeKey = chunk.candidate.supplied ? `${chunk.hash}:${chunk.candidate.url}` : chunk.hash;
-    const existing = deduped.get(dedupeKey);
-    if (!existing || chunk.score > existing.score) {
-      deduped.set(dedupeKey, chunk);
+  const sortedChunks = scoredChunks.sort((left, right) =>
+    right.score - left.score
+    || left.candidate.url.localeCompare(right.candidate.url)
+    || left.hash.localeCompare(right.hash)
+  );
+  const selectedChunks: GamingRankedChunk[] = [];
+  for (const chunk of sortedChunks) {
+    if (selectedChunks.some((selected) =>
+      selected.candidate.url === chunk.candidate.url
+      && (selected.hash === chunk.hash || areNearDuplicateChunks(selected.text, chunk.text))
+    )) {
+      continue;
+    }
+    selectedChunks.push(chunk);
+    if (selectedChunks.length >= maxChunks) {
+      break;
     }
   }
 
-  return Array.from(deduped.values())
-    .sort((left, right) => right.score - left.score)
-    .slice(0, maxChunks);
+  return selectedChunks;
 }
 
 function buildSourceNumberByUrl(sources: GamingWebSource[]): Map<string, number> {
   return new Map(sources.map((source, index) => [source.url, index + 1]));
 }
 
-function buildPublicSourcesFromChunks(chunks: GamingRankedChunk[]): GamingWebSource[] {
-  return Array.from(new Map(chunks.map((chunk) => [chunk.candidate.url, sourceFromChunk(chunk)])).values());
+function buildPublicSourcesFromChunks(
+  chunks: GamingRankedChunk[],
+  documents: GamingFetchedDocument[],
+  terms: readonly string[],
+  input: GamingRagInput
+): GamingWebSource[] {
+  const sourcesByUrl = new Map<string, GamingWebSource>();
+  const chunkChars = getGamingRagChunkChars();
+  for (const document of documents) {
+    const selectedChunk = chunks.find((chunk) => chunk.candidate.url === document.candidate.url);
+    if (selectedChunk) {
+      sourcesByUrl.set(document.candidate.url, sourceFromChunk(selectedChunk));
+      continue;
+    }
+    const hasReadableArticleText = splitIntoChunks(document.text, chunkChars).some((chunk) =>
+      isReadableGameplayChunk(chunk) && isRelevantGameplayChunk(chunk, document.candidate, terms, input)
+    );
+    if (!hasReadableArticleText) {
+      sourcesByUrl.set(document.candidate.url, {
+        url: document.candidate.url,
+        snippet: LIMITED_ARTICLE_TEXT_SNIPPET
+      });
+    }
+  }
+
+  return Array.from(sourcesByUrl.values());
 }
 
 function buildRagContext(
@@ -933,7 +1332,7 @@ function buildRagContext(
   retrievalQuery: string,
   maxContextChars: number
 ): string {
-  if (chunks.length === 0) {
+  if (sources.length === 0) {
     return "";
   }
 
@@ -943,27 +1342,70 @@ function buildRagContext(
     retrievalQuery || "prompt-only"
   ];
 
-  chunks.forEach((chunk) => {
+  const orderedChunks = chunks
+    .map((chunk, index) => ({ chunk, index, sourceNumber: sourceNumberByUrl.get(chunk.candidate.url) ?? Number.MAX_SAFE_INTEGER }))
+    .sort((left, right) => left.sourceNumber - right.sourceNumber || left.index - right.index)
+    .map((entry) => entry.chunk);
+
+  orderedChunks.forEach((chunk) => {
     const sourceNumber = sourceNumberByUrl.get(chunk.candidate.url);
-    if (!sourceNumber) {
+    const source = sourceNumber ? sources[sourceNumber - 1] : undefined;
+    if (!sourceNumber || source?.snippet === LIMITED_ARTICLE_TEXT_SNIPPET) {
       return;
     }
     const domain = normalizeDomain(chunk.candidate.url);
+    const evidenceText = extractReadableEvidenceText(chunk.text);
+    if (!evidenceText) {
+      return;
+    }
     parts.push(
       "",
       `[Source ${sourceNumber}] ${chunk.candidate.url}`,
       `Title: ${chunk.candidate.title}; Domain: ${domain}; Type: ${chunk.candidate.sourceType}; Trust: ${chunk.candidate.trustScore.toFixed(2)}`,
-      chunk.text
+      evidenceText
     );
+  });
+
+  sources.forEach((source, index) => {
+    if (source.snippet !== LIMITED_ARTICLE_TEXT_SNIPPET) {
+      return;
+    }
+    parts.push("", `[Source ${index + 1}] ${source.url}`, LIMITED_ARTICLE_CONTEXT_NOTE);
   });
 
   return parts.join("\n").slice(0, Math.max(0, maxContextChars));
 }
 
+function extractReadableEvidenceText(text: string): string {
+  const withoutLinks = text.replace(/\s*\[LINKS\][\s\S]*$/i, "").replace(/\s+/g, " ").trim();
+  if (!withoutLinks) {
+    return "";
+  }
+  const sentences = withoutLinks.split(/(?<=[.!?])\s+/).filter(Boolean);
+  return sentences.filter(isReadableGameplayChunk).join(" ").trim();
+}
+
+function truncateSnippet(text: string): string {
+  if (text.length <= MAX_PUBLIC_SNIPPET_CHARS) {
+    return text;
+  }
+  const candidate = text.slice(0, MAX_PUBLIC_SNIPPET_CHARS - 1);
+  const boundary = Math.max(candidate.lastIndexOf(". "), candidate.lastIndexOf("; "), candidate.lastIndexOf(" "));
+  const truncated = boundary >= Math.floor(MAX_PUBLIC_SNIPPET_CHARS * 0.6)
+    ? candidate.slice(0, boundary + (candidate.slice(boundary, boundary + 2) === ". " ? 1 : 0))
+    : candidate;
+  return `${truncated.trimEnd()}…`;
+}
+
+function shapePublicSnippet(text: string): string {
+  const evidenceText = extractReadableEvidenceText(text);
+  return evidenceText ? truncateSnippet(evidenceText) : LIMITED_ARTICLE_TEXT_SNIPPET;
+}
+
 function sourceFromChunk(chunk: GamingRankedChunk): GamingWebSource {
   return {
     url: chunk.candidate.url,
-    snippet: chunk.text
+    snippet: shapePublicSnippet(chunk.text)
   };
 }
 
@@ -989,8 +1431,8 @@ function buildClearChecks(params: {
   };
 }
 
-function sourceDomainsFromChunks(chunks: GamingRankedChunk[]): string[] {
-  return Array.from(new Set(chunks.map((chunk) => normalizeDomain(chunk.candidate.url)).filter(Boolean)));
+function sourceDomainsFromSources(sources: GamingWebSource[]): string[] {
+  return Array.from(new Set(sources.map((source) => normalizeDomain(source.url)).filter(Boolean)));
 }
 
 function retrievalReasonFor(input: GamingRagInput, game: string | undefined, suppliedSourceCount: number, patchSensitive: boolean): string {
@@ -1085,7 +1527,7 @@ export async function buildGamingRagContext(
       ...(game ? { game } : {}),
       retrievalEnabled,
       retrievalReason,
-      retrievalQuery,
+      retrievalQueryTermCount: terms.length,
       requestedSourceCount: suppliedSourceCount,
       sourceCount: candidates.length,
       sourceDomains: Array.from(new Set(candidates.map((candidate) => normalizeDomain(candidate.url)).filter(Boolean))),
@@ -1112,6 +1554,7 @@ export async function buildGamingRagContext(
         candidate,
         input,
         patchSensitive,
+        Array.from(new Set([...terms, ...MODE_CONTENT_TERMS[input.mode]])),
         maxContextChars,
         fetchTimeoutMs,
         logContext,
@@ -1126,10 +1569,10 @@ export async function buildGamingRagContext(
   const timedOut = errorSources.some((source) => source.error?.toLowerCase().includes("timed out"));
   const rankingStartedAt = Date.now();
   const chunks = rankChunks(documents, terms, input, patchSensitive);
-  const sources = buildPublicSourcesFromChunks(chunks);
+  const sources = buildPublicSourcesFromChunks(chunks, documents, terms, input);
   const context = buildRagContext(chunks, sources, retrievalQuery, maxContextChars);
   const rankingElapsedMs = Date.now() - rankingStartedAt;
-  const sourceDomains = sourceDomainsFromChunks(chunks);
+  const sourceDomains = sourceDomainsFromSources(sources);
   const cacheHit = documents.some((document) => document.cacheHit);
   const fallbackReason = documents.length === 0 && timedOut ? "INTAKE_RETRIEVAL_TIMEOUT" : undefined;
   const retrievedSourceCount = documents.length;
@@ -1143,12 +1586,32 @@ export async function buildGamingRagContext(
   });
 
   if (logContext) {
+    for (const document of documents) {
+      const selectedChunk = chunks.find((chunk) => chunk.candidate.url === document.candidate.url);
+      const publicSource = sources.find((source) => source.url === document.candidate.url);
+      logger.info("gaming.retrieval.source.selection", {
+        ...logContext,
+        ...(game ? { game } : {}),
+        ...buildSafeSourceLogTarget(document.candidate.url),
+        cacheHit: document.cacheHit,
+        extractionStrategy: document.extraction.strategy,
+        rawTextLength: document.extraction.rawTextLength,
+        cleanedTextLength: document.extraction.cleanedTextLength,
+        chunkCount: splitIntoChunks(document.text, getGamingRagChunkChars()).length,
+        selectedChunkScore: selectedChunk ? Number(selectedChunk.score.toFixed(4)) : null,
+        snippetQualityScore: selectedChunk ? Number(selectedChunk.snippetQualityScore.toFixed(4)) : null,
+        navigationPenalty: selectedChunk ? Number(selectedChunk.navigationPenalty.toFixed(4)) : null,
+        fallbackSnippetUsed: publicSource?.snippet === LIMITED_ARTICLE_TEXT_SNIPPET,
+        retrievalElapsedMs: Date.now() - retrievalStartedAt
+      });
+    }
+
     logger.info("gaming.retrieval.end", {
       ...logContext,
       ...(game ? { game } : {}),
       retrievalEnabled,
       retrievalReason,
-      retrievalQuery,
+      retrievalQueryTermCount: terms.length,
       sourceCount: sources.length,
       retrievedSourceCount,
       publicSourceCount,
