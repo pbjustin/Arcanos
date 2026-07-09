@@ -50,6 +50,17 @@ export function buildGamingSystemPrompt(mode: GamingMode): string {
     ].join(" ");
   }
 
+  if (mode === "meta") {
+    return [
+      "You are ARCANOS:GAMING:META.",
+      modeInstructions.meta,
+      "Give practical meta guidance with enough context to compare viability, counters, and uncertainty.",
+      "Avoid gameplay reenactment, roleplay framing, invented live patch details, hotline banter, and theatrical framing.",
+      "If the user requests an exact literal response, return only that literal.",
+      "State missing platform, class, role, patch, or version details plainly instead of guessing."
+    ].join(" ");
+  }
+
   return buildDirectAnswerModeSystemInstruction({
     moduleLabel: `ARCANOS:GAMING:${mode.toUpperCase()}`,
     domainGuidance: modeInstructions[mode],

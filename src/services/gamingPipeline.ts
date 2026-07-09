@@ -320,8 +320,16 @@ function stringifyMockResult(result: unknown): string {
   }
 }
 
-function buildGamingRunOptions(mode: GamingMode) {
+function buildGamingRunOptions(mode: GamingMode, hasGuideSources: boolean) {
   if (mode === "guide") {
+    if (hasGuideSources) {
+      return {
+        answerMode: "explained" as const,
+        requestedVerbosity: "normal" as const,
+        strictUserVisibleOutput: true
+      };
+    }
+
     return {
       answerMode: "direct" as const,
       requestedVerbosity: "normal" as const,
@@ -473,7 +481,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
               GAMING_RUNTIME_BUDGET_SAFETY_BUFFER_MS
             ),
             runOptions: {
-              ...buildGamingRunOptions(params.mode),
+              ...buildGamingRunOptions(params.mode, guideUrls.length > 0),
               watchdogModelTimeoutMs: stageTimeoutMs
             }
           }

@@ -423,6 +423,7 @@ describe('gaming guide output hardening', () => {
     expect(trinityRequest.input.prompt).toContain('[MODE]\nmeta');
     expect(trinityRequest.input.prompt).toContain('[GAME]\nWorld of Warcraft');
     expect(trinityRequest.input.prompt).not.toContain('[OUTPUT]');
+    expect(trinityRequest.input.prompt).not.toContain('Answer the request directly');
     expect(trinityRequest.context.runOptions).toEqual(expect.objectContaining({
       answerMode: 'explained',
       strictUserVisibleOutput: true
@@ -461,6 +462,7 @@ describe('gaming guide output hardening', () => {
         context: { runOptions: { answerMode?: string; strictUserVisibleOutput?: boolean } };
       };
       expect(trinityRequest.input.prompt).not.toContain('[OUTPUT]');
+      expect(trinityRequest.input.prompt).not.toContain('Answer the request directly');
       expect(trinityRequest.context.runOptions).toEqual(expect.objectContaining({
         answerMode: 'explained',
         strictUserVisibleOutput: true
@@ -494,6 +496,26 @@ describe('gaming guide output hardening', () => {
       context: { runOptions: { answerMode?: string } };
     };
     expect(trinityRequest.context.runOptions.answerMode).toBe('explained');
+  });
+
+  it('uses explained mode for source-backed guide requests to avoid direct-answer integrity false positives', async () => {
+    await runGuidePipeline({
+      prompt: 'Use this source for a simple guide summary.',
+      guideUrl: 'https://example.com/',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as {
+      input: { prompt: string };
+      context: { runOptions: { answerMode?: string; requestedVerbosity?: string } };
+    };
+    expect(trinityRequest.input.prompt).toContain('[WEB CONTEXT]');
+    expect(trinityRequest.input.prompt).toContain('Return only 6 short numbered bullets');
+    expect(trinityRequest.context.runOptions).toEqual(expect.objectContaining({
+      answerMode: 'explained',
+      requestedVerbosity: 'normal'
+    }));
   });
 
   it('returns a controlled fallback when upstream intake slows down', async () => {
