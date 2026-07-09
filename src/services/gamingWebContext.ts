@@ -121,6 +121,8 @@ const LOW_QUALITY_DOMAINS = [
   "twitter.com"
 ];
 
+const MAX_DOCUMENT_CACHE_ENTRIES = 100;
+
 const BUILTIN_SOURCE_CATALOG: Array<{ game: string; sources: Array<Omit<GamingSourceCandidate, "trustScore" | "supplied">> }> = [
   {
     game: "Elden Ring",
@@ -580,6 +582,9 @@ function collectConfiguredSources(): GamingSourceCandidate[] {
   try {
     const parsedValue = JSON.parse(rawValue) as unknown;
     if (!Array.isArray(parsedValue)) {
+      logger.warn("gaming.config.curated_sources.invalid_format", {
+        reason: "curated_sources_json_not_array"
+      });
       return [];
     }
 
@@ -612,8 +617,27 @@ function collectConfiguredSources(): GamingSourceCandidate[] {
         stable: record.stable === true
       }, false, 0.72)];
     });
-  } catch {
+  } catch (error) {
+    logger.warn("gaming.config.curated_sources.parse_failed", {
+      error: error instanceof Error ? error.message : String(error)
+    });
     return [];
+  }
+}
+
+function pruneDocumentCache(now: number): void {
+  for (const [key, entry] of documentCache.entries()) {
+    if (entry.expiresAt <= now) {
+      documentCache.delete(key);
+    }
+  }
+
+  while (documentCache.size >= MAX_DOCUMENT_CACHE_ENTRIES) {
+    const oldestKey = documentCache.keys().next().value as string | undefined;
+    if (!oldestKey) {
+      return;
+    }
+    documentCache.delete(oldestKey);
   }
 }
 
@@ -740,6 +764,7 @@ async function fetchGamingRagDocument(
       fetchTimeoutMs
     );
     const fetchedAt = new Date().toISOString();
+    pruneDocumentCache(now);
     documentCache.set(cacheKey, {
       text,
       fetchedAt,
@@ -794,19 +819,30 @@ function splitIntoChunks(text: string, maxChunkChars: number): string[] {
     return [];
   }
 
+  const chunkSize = Math.max(1, maxChunkChars);
   const sentences = normalized.split(/(?<=[.!?])\s+/);
   const chunks: string[] = [];
   let current = "";
   for (const sentence of sentences) {
-    if (current.length + sentence.length + 1 <= maxChunkChars) {
+    const nextLength = current ? current.length + sentence.length + 1 : sentence.length;
+    if (nextLength <= chunkSize) {
       current = current ? `${current} ${sentence}` : sentence;
       continue;
     }
 
     if (current) {
       chunks.push(current);
+      current = "";
     }
-    current = sentence.length > maxChunkChars ? sentence.slice(0, maxChunkChars) : sentence;
+
+    if (sentence.length > chunkSize) {
+      for (let index = 0; index < sentence.length; index += chunkSize) {
+        chunks.push(sentence.slice(index, index + chunkSize));
+      }
+      continue;
+    }
+
+    current = sentence;
   }
 
   if (current) {

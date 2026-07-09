@@ -64,10 +64,12 @@ describe('gaming guide output hardening', () => {
     delete process.env.ARCANOS_GAMING_STAGE_TIMEOUT_MS;
     delete process.env.ARCANOS_GAMING_GUIDE_STAGE_TIMEOUT_MS;
     delete process.env.ARCANOS_GAMING_MODULE_TIMEOUT_MS;
+    delete process.env.ARCANOS_GAMING_WEB_CONTEXT_CHARS;
     delete process.env.ARCANOS_GAMING_WEB_CONTEXT_MAX_URLS;
     delete process.env.ARCANOS_GAMING_WEB_CONTEXT_FETCH_TIMEOUT_MS;
     delete process.env.ARCANOS_GAMING_RAG_MAX_SOURCES;
     delete process.env.ARCANOS_GAMING_RAG_MAX_CHUNKS;
+    delete process.env.ARCANOS_GAMING_RAG_CHUNK_CHARS;
     delete process.env.ARCANOS_GAMING_CURATED_SOURCES_JSON;
 
     mockGetEnv.mockImplementation((key: string, defaultValue?: string) => process.env[key] ?? defaultValue);
@@ -1067,6 +1069,73 @@ describe('gaming guide output hardening', () => {
       robustFallback: true,
       passed: true
     }));
+  });
+
+  it('preserves oversized retrieved sentences by splitting them into multiple chunks', async () => {
+    process.env.ARCANOS_GAMING_WEB_CONTEXT_CHARS = '2000';
+    process.env.ARCANOS_GAMING_RAG_CHUNK_CHARS = '200';
+    process.env.ARCANOS_GAMING_RAG_MAX_CHUNKS = '4';
+    const longSentence = `oversized-start ${'alpha '.repeat(45)}oversized-end final safe punish window.`;
+    mockFetchAndClean.mockResolvedValue(longSentence);
+
+    const result = await buildGamingRagContext({
+      mode: 'guide',
+      prompt: 'Use the supplied guide for oversized marker strategy.',
+      guideUrl: 'https://example.com/oversized-guide',
+      guideUrls: []
+    });
+
+    expect(result.context).toContain('oversized-start');
+    expect(result.context).toContain('oversized-end final safe punish window');
+  });
+
+  it('bounds the RAG document cache and refetches entries evicted from the cache', async () => {
+    process.env.ARCANOS_GAMING_WEB_CONTEXT_MAX_URLS = '102';
+    process.env.ARCANOS_GAMING_RAG_MAX_SOURCES = '102';
+    process.env.ARCANOS_GAMING_RAG_MAX_CHUNKS = '1';
+    const urls = Array.from({ length: 102 }, (_value, index) => `https://example.com/cache-${index}`);
+    mockFetchAndClean.mockResolvedValue('Cache guide text about boss route and safe positioning.');
+
+    await buildGamingRagContext({
+      mode: 'guide',
+      prompt: 'Use the supplied cache guides.',
+      guideUrls: urls
+    });
+    const firstFetchCount = mockFetchAndClean.mock.calls.length;
+
+    await buildGamingRagContext({
+      mode: 'guide',
+      prompt: 'Use the supplied cache guides.',
+      guideUrls: urls
+    });
+
+    expect(firstFetchCount).toBe(102);
+    expect(mockFetchAndClean.mock.calls.length).toBeGreaterThan(firstFetchCount);
+    expect(mockFetchAndClean.mock.calls.length).toBeLessThan(firstFetchCount + urls.length);
+  });
+
+  it('logs malformed curated source JSON without exposing the raw configured value', async () => {
+    const warnSpy = jest.spyOn(logger, 'warn').mockImplementation(() => undefined);
+    process.env.ARCANOS_GAMING_CURATED_SOURCES_JSON = '{"secret":"sk-test-secret",';
+
+    try {
+      const result = await buildGamingRagContext({
+        mode: 'guide',
+        prompt: 'Use curated guide context.',
+        guideUrls: []
+      });
+
+      expect(result.sources).toEqual([]);
+      expect(warnSpy).toHaveBeenCalledWith(
+        'gaming.config.curated_sources.parse_failed',
+        expect.objectContaining({
+          error: expect.any(String)
+        })
+      );
+      expect(JSON.stringify(warnSpy.mock.calls)).not.toContain('sk-test-secret');
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it('marks no-source generation as retrieval fallback or inference context', async () => {
