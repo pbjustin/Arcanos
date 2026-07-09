@@ -416,10 +416,84 @@ describe('gaming guide output hardening', () => {
     expect(result.mode).toBe('meta');
     expect(result.data.response).toBe('Frost Mage is viable when current tuning supports its control and cleave profile.');
     expect(result.data.response).not.toContain('bounded deterministic fallback');
-    const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
+    const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as {
+      input: { prompt: string };
+      context: { runOptions: { answerMode?: string; strictUserVisibleOutput?: boolean } };
+    };
     expect(trinityRequest.input.prompt).toContain('[MODE]\nmeta');
     expect(trinityRequest.input.prompt).toContain('[GAME]\nWorld of Warcraft');
     expect(trinityRequest.input.prompt).not.toContain('[OUTPUT]');
+    expect(trinityRequest.context.runOptions).toEqual(expect.objectContaining({
+      answerMode: 'explained',
+      strictUserVisibleOutput: true
+    }));
+  });
+
+  it('keeps repeated meta requests off the direct-answer integrity path', async () => {
+    const metaAnswer = [
+      '1. Frost Mage is viable when its control, cleave, and burst windows match the current encounter profile.',
+      '2. Treat exact rankings as patch-sensitive and verify tuning before committing to competitive pushes.'
+    ].join('\n');
+    mockRunTrinityWritingPipeline.mockResolvedValue({
+      result: metaAnswer,
+      activeModel: 'gpt-test',
+      meta: { provider: { finishReason: 'stop' } }
+    });
+
+    for (let index = 0; index < 10; index += 1) {
+      const result = await runMetaPipeline({
+        game: 'World of Warcraft',
+        prompt: 'Is frost mage still viable this patch?',
+        guideUrls: [],
+        auditEnabled: false
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.mode).toBe('meta');
+      expect(result.data.response).toBe(metaAnswer);
+      expect(result.data.response).not.toContain('bounded deterministic fallback');
+    }
+
+    expect(mockRunTrinityWritingPipeline).toHaveBeenCalledTimes(10);
+    for (const [request] of mockRunTrinityWritingPipeline.mock.calls) {
+      const trinityRequest = request as {
+        input: { prompt: string };
+        context: { runOptions: { answerMode?: string; strictUserVisibleOutput?: boolean } };
+      };
+      expect(trinityRequest.input.prompt).not.toContain('[OUTPUT]');
+      expect(trinityRequest.context.runOptions).toEqual(expect.objectContaining({
+        answerMode: 'explained',
+        strictUserVisibleOutput: true
+      }));
+    }
+  });
+
+  it('allows numbered or bulleted meta formatting without direct-answer false positives', async () => {
+    const metaAnswer = [
+      '- Frost Mage can be viable when control and burst windows matter.',
+      '- Watch for tuning, dungeon pool, and team composition before treating it as best-in-slot.'
+    ].join('\n');
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce({
+      result: metaAnswer,
+      activeModel: 'gpt-test',
+      meta: { provider: { finishReason: 'stop' } }
+    });
+
+    const result = await runMetaPipeline({
+      game: 'World of Warcraft',
+      prompt: 'Is frost mage still viable this patch?',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.mode).toBe('meta');
+    expect(result.data.response).toBe(metaAnswer);
+    expect(result.data.response).not.toContain('bounded deterministic fallback');
+    const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as {
+      context: { runOptions: { answerMode?: string } };
+    };
+    expect(trinityRequest.context.runOptions.answerMode).toBe('explained');
   });
 
   it('returns a controlled fallback when upstream intake slows down', async () => {
@@ -483,6 +557,27 @@ describe('gaming guide output hardening', () => {
     expect(result.ok).toBe(true);
     expect(result.data.response).toContain('INTAKE_UPSTREAM_TIMEOUT');
     expect(result.data.response).toContain('Timeout phase: provider.');
+  });
+
+  it('classifies direct-answer stage timeouts as upstream timeouts', async () => {
+    const providerAbort = Object.assign(new Error('Trinity direct-answer stage timed out.'), {
+      name: 'AbortError',
+      timeoutPhase: 'direct-answer'
+    });
+    mockRunTrinityWritingPipeline.mockRejectedValueOnce(providerAbort);
+
+    const result = await runBuildPipeline({
+      game: 'Elden Ring',
+      prompt: 'Make me a bleed build for Elden Ring.',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.mode).toBe('build');
+    expect(result.data.response).toContain('INTAKE_UPSTREAM_TIMEOUT');
+    expect(result.data.response).toContain('Timeout phase: direct-answer.');
+    expect(result.data.response).not.toContain('INTAKE_UNKNOWN_TIMEOUT');
   });
 
   it('preserves parent request aborts instead of reporting provider timeouts', async () => {

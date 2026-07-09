@@ -265,6 +265,61 @@ describe("ArcanosGaming mode routing", () => {
     expect(mockRunMetaPipeline).not.toHaveBeenCalled();
   });
 
+  it("returns meta clarification without calling fallback or provider", async () => {
+    const result = await ArcanosGaming.actions.query({
+      mode: "meta",
+      prompt: "Is frost mage still viable this patch?"
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      route: "gaming",
+      mode: "meta",
+      error: {
+        code: "CLARIFICATION_REQUIRED",
+        message: "Which game should I use for this meta request?",
+        details: {
+          missing: ["game"]
+        }
+      }
+    });
+    expect(mockRunMetaPipeline).not.toHaveBeenCalled();
+    expect(mockRunBuildPipeline).not.toHaveBeenCalled();
+    expect(mockRunGuidePipeline).not.toHaveBeenCalled();
+  });
+
+  it("surfaces genuine Trinity integrity failures as generation integrity errors", async () => {
+    const integrityError = Object.assign(new Error("Trinity direct-answer output failed integrity validation."), {
+      code: "TRINITY_OUTPUT_INTEGRITY_FAILED",
+      integrityIssues: ["broken_numbering"]
+    });
+    mockRunMetaPipeline.mockRejectedValueOnce(integrityError);
+
+    const result = await ArcanosGaming.actions.query({
+      mode: "meta",
+      game: "World of Warcraft",
+      prompt: "Is frost mage still viable this patch?"
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      route: "gaming",
+      mode: "meta",
+      error: {
+        code: "GENERATION_INTEGRITY_FAILED",
+        message: "Gaming generation did not complete cleanly; no partial answer was returned.",
+        details: {
+          finishReason: undefined,
+          incompleteReason: undefined,
+          truncated: undefined,
+          lengthTruncated: undefined,
+          contentFiltered: undefined,
+          integrityIssues: ["broken_numbering"]
+        }
+      }
+    });
+  });
+
   it("returns a controlled fallback when the provider aborts before module dispatch expires", async () => {
     const timeoutError = Object.assign(new Error("Request was aborted."), {
       name: "AbortError",

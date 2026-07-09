@@ -112,7 +112,9 @@ function classifyGamingProviderFallbackReason(timeoutPhase?: string): string {
     normalizedPhase === "intake" ||
     normalizedPhase === "reasoning" ||
     normalizedPhase === "final" ||
-    normalizedPhase === "provider"
+    normalizedPhase === "provider" ||
+    normalizedPhase?.includes("direct-answer") === true ||
+    normalizedPhase?.includes("direct_answer") === true
   ) {
     return "INTAKE_UPSTREAM_TIMEOUT";
   }
@@ -327,8 +329,15 @@ function buildGamingRunOptions(mode: GamingMode) {
     };
   }
 
+  if (mode === "build") {
+    return {
+      answerMode: "direct" as const,
+      strictUserVisibleOutput: true
+    };
+  }
+
   return {
-    answerMode: "direct" as const,
+    answerMode: "explained" as const,
     strictUserVisibleOutput: true
   };
 }
