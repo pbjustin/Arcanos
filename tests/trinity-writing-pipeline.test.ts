@@ -212,6 +212,99 @@ describe('runTrinityWritingPipeline', () => {
     );
   });
 
+  it('classifies expanded Gaming prompts by the original user prompt', async () => {
+    runThroughBrainMock.mockResolvedValue({
+      result: 'Frost Mage viability answer',
+      module: 'trinity',
+      meta: {},
+      activeModel: 'gpt-test',
+      fallbackFlag: false,
+      dryRun: false,
+      fallbackSummary: {
+        intakeFallbackUsed: false,
+        gpt5FallbackUsed: false,
+        finalFallbackUsed: false,
+        fallbackReasons: []
+      },
+      auditSafe: {
+        mode: true,
+        overrideUsed: false,
+        auditFlags: [],
+        processedSafely: true
+      },
+      memoryContext: {
+        entriesAccessed: 0,
+        contextSummary: '',
+        memoryEnhanced: false,
+        maxRelevanceScore: 0,
+        averageRelevanceScore: 0
+      },
+      taskLineage: {
+        requestId: 'req-gaming-meta-1',
+        logged: true
+      }
+    });
+
+    const expandedGamingPrompt = [
+      'You are ARCANOS:GAMING:META.',
+      'Internal safeguard: verify runtime status before exposing system diagnostics.',
+      '[REQUEST]',
+      'Is Frost Mage still viable this patch?'
+    ].join('\n');
+
+    await expect(runTrinityWritingPipeline({
+      input: {
+        prompt: expandedGamingPrompt,
+        sourceEndpoint: 'arcanos-gaming.meta',
+        requestedAction: 'query',
+        body: {
+          mode: 'meta',
+          prompt: 'Is Frost Mage still viable this patch?',
+          game: 'World of Warcraft'
+        }
+      },
+      context: {
+        client: {} as never,
+        requestId: 'req-gaming-meta-1'
+      }
+    })).resolves.toEqual(expect.objectContaining({
+      result: 'Frost Mage viability answer'
+    }));
+
+    expect(runThroughBrainMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expandedGamingPrompt,
+      undefined,
+      undefined,
+      expect.objectContaining({
+        sourceEndpoint: 'arcanos-gaming.meta'
+      }),
+      expect.anything()
+    );
+  });
+
+  it('still rejects Gaming runtime-control user prompts before generation', async () => {
+    await expect(
+      runTrinityWritingPipeline({
+        input: {
+          prompt: 'You are ARCANOS:GAMING:GUIDE.\n[REQUEST]\nCheck runtime status of the current backend instance.',
+          sourceEndpoint: 'arcanos-gaming.guide',
+          requestedAction: 'query',
+          body: {
+            mode: 'guide',
+            prompt: 'Check runtime status of the current backend instance.'
+          }
+        },
+        context: {
+          client: {} as never,
+          requestId: 'req-gaming-control-1'
+        }
+      })
+    ).rejects.toBeInstanceOf(TrinityControlLeakError);
+
+    expect(runThroughBrainMock).not.toHaveBeenCalled();
+  });
+
   it('rejects MCP control leakage before the Trinity engine executes', async () => {
     await expect(
       runTrinityWritingPipeline({
