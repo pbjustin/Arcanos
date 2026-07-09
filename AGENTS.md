@@ -97,6 +97,7 @@ If multiple approaches are possible, choose the one that:
 - Install Node dependencies with `npm install`.
 - Use `npm ci` for reproducible CI, Docker, or Railway-style installs when you are validating those environments rather than local development.
 - Use `npm run probe` for a quick runtime/environment diagnostic before deeper startup or validation work.
+- Run `npm run reindex` when source moves or new entrypoints make `docs/BACKEND_INDEX.md`, `docs/CLI_AGENT_INDEX.md`, `backend-index.json`, or `cli-agent-index.json` stale.
 - Use `npm start` to run the compiled backend entrypoint after a successful build or when validating production-style local startup.
 - Use `npm run dev` for the full local TypeScript server bootstrap; it rebuilds packages/workers, repairs aliases, checks dist aliases, copies assets, and starts the server.
 - Use `npm run dev:inspect` when debugging startup behavior with the Node inspector against the built backend entrypoint.
@@ -106,6 +107,7 @@ If multiple approaches are possible, choose the one that:
 
 ## Validation
 - Use `npm run start:worker` when validating local worker-only flows, async pipelines, or job runner startup behavior.
+- Run `npm run gptoss:vram:profile` when validating local GPT-OSS GPU headroom and selector thresholds; use `npm run gptoss:vram:profile:dry` when no GPU is present.
 - Run `npm run self-test` when changes touch the self-test pipeline, `/devops/self-test`, or scheduled operational checks.
 - Run `npm run daily-summary` after `npm run build` when changes touch daily summary generation or `/devops/daily-summary`.
 - For protocol-boundary or backend CLI changes, run `npm run build:packages` before `npm run validate:backend-cli:contract` and `npm run validate:backend-cli:offline`.
@@ -125,6 +127,7 @@ If multiple approaches are possible, choose the one that:
 - Run `npm run job-events:timeline -- --job-id <id>` or `--trace-id <id>` when tracing async job-event ordering or debugging database-backed job history.
 - Run `npm run mcp:stdio` when changes touch the MCP stdio transport or GPT fast-path MCP bridge.
 - Use `npm run mcp:stdio:dev` for TypeScript-level MCP stdio iteration before validating the compiled entrypoint with `npm run mcp:stdio`.
+- Run `npm run gptoss:bridge:health` to check the local GPT-OSS OpenAI-compatible endpoint and `npm run gptoss:bridge:dry` to preview the resolved endpoint configuration without network I/O.
 - Run `npm run validate:gpt:job-hardening` when changes touch `/gpt-access`, async job polling, or GPT job/result hardening.
 - Run `npm run guard:commit` when changes affect commit-guarded governance or release-readiness checks and you do not want to wait for the full `npm run validate:all` sweep.
 - Validate the TypeScript/Python backend CLI contract with `npm run validate:backend-cli:contract` and `npm run validate:backend-cli:offline`.
