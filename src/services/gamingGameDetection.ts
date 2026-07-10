@@ -41,9 +41,9 @@ const GAME_TRAILING_TERMS = new Set([
 ]);
 
 const INVALID_GAME_WORDS = new Set([
-  "a", "an", "best", "build", "compare", "create", "current", "explain", "for", "from", "give", "guide", "help", "how", "in", "is",
-  "latest", "loadout", "make", "me", "meta", "my", "need", "numbering", "on", "patch", "please", "raid", "raids",
-  "recommend", "season", "show", "source", "sources", "starter", "starters", "that", "this", "summarize", "tell", "tips", "use",
+  "a", "an", "best", "build", "compare", "create", "current", "explain", "find", "for", "from", "give", "guide", "help", "how", "in", "is",
+  "latest", "loadout", "look", "make", "me", "meta", "my", "need", "numbering", "on", "patch", "please", "raid", "raids",
+  "recommend", "search", "season", "show", "source", "sources", "starter", "starters", "that", "this", "summarize", "tell", "tips", "use",
   "lol", "using", "want", "what", "where", "which", "with", "wow"
 ]);
 
@@ -113,6 +113,9 @@ function normalizeCandidate(rawValue: string): string | undefined {
   if (!normalized) {
     return undefined;
   }
+  if (/^(?:the\s+)?(?:game|title|one)(?:\s+(?:i|you|we))?\s+(?:mentioned|named|provided|linked|shown|above|earlier|before)\b/i.test(normalized)) {
+    return undefined;
+  }
 
   const words = normalized.split(/\s+/);
   while (words.length > 0 && GAME_TRAILING_TERMS.has(words[words.length - 1].toLowerCase())) {
@@ -144,6 +147,7 @@ function stripConversationalRequestPrefix(value: string): string {
   return value
     .replace(/^(?:hey|hello|hi)[,!?.]\s*/i, "")
     .replace(/^(?:wow|Wow)[,!?.]\s*/, "")
+    .replace(/^(?:please\s+)?(?:find(?:\s+me)?|look\s+up|search\s+for)(?:\s+me)?\s+(?:an|a|the)?\s*/i, "")
     .replace(/^(?:(?:could|can|would|will)\s+you\s+)?(?:please\s+)?(?:give|make|show|create|recommend)\s+(?:me\s+)?(?:a|an|the)?\s*/i, "")
     .replace(/^(?:i\s+(?:need|want|would\s+like)|(?:please\s+)?help\s+me(?:\s+(?:with|find|make))?|looking\s+for)\s+(?:a|an|the)?\s*/i, "")
     .replace(/^please\s+/i, "")

@@ -53,6 +53,17 @@ describe('Gaming agent routing model', () => {
     expect(ClarificationAgent.evaluate(intent)).toEqual({ required: false });
   });
 
+  it.each([
+    ['Find a Caves of Qud early progression guide', 'Caves of Qud'],
+    ['Look up a Vintage Story progression guide', 'Vintage Story'],
+    ['Search for an Elite Dangerous exploration guide', 'Elite Dangerous'],
+  ])('detects an unregistered game after a discovery verb: %s', (prompt, game) => {
+    const intent = IntentRouterAgent.classify({ prompt });
+
+    expect(intent.game).toBe(game);
+    expect(intent.gameDetectionConfidence).toBeGreaterThanOrEqual(0.8);
+  });
+
   it('detects an unregistered game from a supplied guide URL when build mode needs it', () => {
     const intent = IntentRouterAgent.classify({
       prompt: 'make me a tank build',
@@ -154,6 +165,9 @@ describe('Gaming agent routing model', () => {
     'Late game meta guide',
     'Speedrun guide',
     'Crafting progression guide',
+    'Find a current guide for the title mentioned earlier.',
+    'Look up the latest guide for this game.',
+    'Search for a current build guide.',
   ])('does not treat generic gameplay descriptors as a game: %s', (prompt) => {
     expect(IntentRouterAgent.classify({ prompt }).game).toBeUndefined();
   });

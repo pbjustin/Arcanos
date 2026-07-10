@@ -503,7 +503,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
   let omittedSourceCount = 0;
   let retrievedGame: string | undefined;
   try {
-    const webContextResult = await buildGamingRagContext(params, baseLogContext);
+    const webContextResult = await buildGamingRagContext(params, baseLogContext, getRequestAbortSignal());
     webContext = webContextResult.context;
     sources = webContextResult.sources;
     retrievalAttempted = webContextResult.retrievalEnabled;
@@ -516,6 +516,22 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
       ok: true,
       retrievalEnabled: webContextResult.retrievalEnabled,
       retrievalReason: webContextResult.retrievalReason,
+      discoveryEnabled: webContextResult.discoveryEnabled,
+      discoveryTriggered: webContextResult.discoveryTriggered,
+      discoveryReason: webContextResult.discoveryReason,
+      ...(webContextResult.searchProvider ? { searchProvider: webContextResult.searchProvider } : {}),
+      ...(webContextResult.searchQueryHash ? { searchQueryHash: webContextResult.searchQueryHash } : {}),
+      searchResultCount: webContextResult.searchResultCount,
+      candidateCount: webContextResult.candidateCount,
+      rejectedCandidateCount: webContextResult.rejectedCandidateCount,
+      fetchedCandidateCount: webContextResult.fetchedCandidateCount,
+      acceptedSourceCount: webContextResult.acceptedSourceCount,
+      discoveryCacheHit: webContextResult.discoveryCacheHit,
+      discoveryElapsedMs: webContextResult.discoveryElapsedMs,
+      candidateRankingElapsedMs: webContextResult.candidateRankingElapsedMs,
+      ...(webContextResult.discoveryFailureReason
+        ? { discoveryFailureReason: webContextResult.discoveryFailureReason }
+        : {}),
       retrievalElapsedMs: webContextResult.retrievalElapsedMs,
       retrievalLatencyMs: webContextResult.retrievalElapsedMs,
       rankingElapsedMs: webContextResult.rankingElapsedMs,
@@ -538,6 +554,21 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
         ...baseLogContext,
         retrievalEnabled: webContextResult.retrievalEnabled,
         retrievalReason: webContextResult.retrievalReason,
+        discoveryEnabled: webContextResult.discoveryEnabled,
+        discoveryTriggered: webContextResult.discoveryTriggered,
+        discoveryReason: webContextResult.discoveryReason,
+        ...(webContextResult.searchProvider ? { searchProvider: webContextResult.searchProvider } : {}),
+        searchResultCount: webContextResult.searchResultCount,
+        candidateCount: webContextResult.candidateCount,
+        rejectedCandidateCount: webContextResult.rejectedCandidateCount,
+        fetchedCandidateCount: webContextResult.fetchedCandidateCount,
+        acceptedSourceCount: webContextResult.acceptedSourceCount,
+        discoveryCacheHit: webContextResult.discoveryCacheHit,
+        discoveryElapsedMs: webContextResult.discoveryElapsedMs,
+        candidateRankingElapsedMs: webContextResult.candidateRankingElapsedMs,
+        ...(webContextResult.discoveryFailureReason
+          ? { discoveryFailureReason: webContextResult.discoveryFailureReason }
+          : {}),
         sourceCount: sources.length,
         retrievedSourceCount,
         publicSourceCount,

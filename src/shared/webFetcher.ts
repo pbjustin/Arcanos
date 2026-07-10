@@ -118,6 +118,8 @@ export interface FetchAndCleanExtractionMetrics {
   strategy: string;
   rawTextLength: number;
   cleanedTextLength: number;
+  fetchElapsedMs?: number;
+  extractionElapsedMs?: number;
   selectedContainer?: string;
   qualityScore?: number;
   navigationPenalty?: number;
@@ -347,6 +349,7 @@ export async function fetchAndCleanDocument(
   maxChars = getConfiguredMaxChars(),
   options: FetchAndCleanOptions = {}
 ): Promise<FetchAndCleanDocument> {
+  const fetchStartedAt = Date.now();
   const target = await resolveFetchTarget(url);
   const maxFetchBytes = getConfiguredMaxFetchBytes();
   const boundedMaxChars = Math.min(Math.max(0, maxChars), HARD_MAX_CHARS);
@@ -379,6 +382,7 @@ export async function fetchAndCleanDocument(
     },
     httpsAgent
   });
+  const fetchElapsedMs = Date.now() - fetchStartedAt;
 
   const contentType = String(response.headers['content-type'] ?? '').split(';', 1)[0].trim().toLowerCase();
   if (contentType && !['text/html', 'text/plain', 'application/xhtml+xml'].includes(contentType)) {
@@ -391,6 +395,7 @@ export async function fetchAndCleanDocument(
     throw new Error('Unsupported binary-like content for web fetching');
   }
 
+  const extractionStartedAt = Date.now();
   const $ = load(responseText);
   $('script, style, noscript').remove();
   const rawTextLength = normalizeExtractedText($('body').text()).length;
@@ -474,6 +479,8 @@ export async function fetchAndCleanDocument(
     strategy: extractionStrategy,
     rawTextLength,
     cleanedTextLength: cleanedText.length,
+    fetchElapsedMs,
+    extractionElapsedMs: Date.now() - extractionStartedAt,
     selectedContainer: selectedCandidate.selector,
     qualityScore: roundUnitMetric(selectedCandidate.qualityScore),
     navigationPenalty: roundUnitMetric(selectedCandidate.navigationPenalty),
