@@ -563,18 +563,8 @@ function fallbackBodyForMode(intent: GamingIntent): string {
   ].join("\n");
 }
 
-function safeBackendFailureReason(error: unknown): string {
-  const values = error && typeof error === "object"
-    ? [(error as Record<string, unknown>).code, (error as Record<string, unknown>).message]
-    : [error];
-  const diagnostic = values.filter((value): value is string => typeof value === "string").join(" ").toLowerCase();
-  if (diagnostic.includes("timeout") || diagnostic.includes("timed out")) {
-    return "Generation timed out before a complete answer was available; no partial provider output was exposed.";
-  }
-  if (diagnostic.includes("incomplete")) {
-    return "The provider did not return a complete answer; no partial provider output was exposed.";
-  }
-  return "The gaming backend was unavailable; no backend error details were exposed.";
+function safeBackendFailureReason(_error: unknown): string {
+  return "The gaming backend could not return usable guidance; a safe deterministic fallback was used.";
 }
 
 export const IntentRouterAgent = {

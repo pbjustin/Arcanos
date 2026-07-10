@@ -397,8 +397,8 @@ describe('gaming guide output hardening', () => {
       expect(result.ok).toBe(true);
       expect(result.mode).toBe('build');
       expect(result.data.response).toContain('bounded deterministic fallback');
-      expect(result.data.response).toContain('PROVIDER_COMPLETION_INCOMPLETE');
-      expect(result.data.response).toContain('Provider output: incomplete.');
+      expect(result.data.response).not.toContain('PROVIDER_COMPLETION_INCOMPLETE');
+      expect(result.data.response).not.toMatch(/provider|incomplete|integrity|timeout/i);
       expect(result.data.response).toContain('For Elden Ring');
       const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as {
         input: { prompt: string };
@@ -660,24 +660,36 @@ describe('gaming guide output hardening', () => {
   });
 
   it('preserves retrieved sources when generic provider generation fails', async () => {
-    mockFetchAndClean.mockResolvedValueOnce('Elden Ring route guide: start in Limgrave, follow Sites of Grace, upgrade flasks, and prepare before Stormveil Castle.');
-    mockRunTrinityWritingPipeline.mockRejectedValueOnce(new Error('provider unavailable'));
+    const warnSpy = jest.spyOn(logger, 'warn');
+    try {
+      mockFetchAndClean.mockResolvedValueOnce('Elden Ring route guide: start in Limgrave, follow Sites of Grace, upgrade flasks, and prepare before Stormveil Castle.');
+      mockRunTrinityWritingPipeline.mockRejectedValueOnce(Object.assign(new Error('provider unavailable'), {
+        code: 'TRINITY_OUTPUT_INTEGRITY_FAILED'
+      }));
 
-    const result = await runGuidePipeline({
-      game: 'Elden Ring',
-      prompt: 'Look up a guide for Elden Ring.',
-      guideUrl: 'https://example.com/elden-ring-route',
-      guideUrls: [],
-      auditEnabled: false
-    });
+      const result = await runGuidePipeline({
+        game: 'Elden Ring',
+        prompt: 'Look up a guide for Elden Ring.',
+        guideUrl: 'https://example.com/elden-ring-route',
+        guideUrls: [],
+        auditEnabled: false
+      });
 
-    expect(result.ok).toBe(true);
-    expect(result.data.sources.length).toBeGreaterThanOrEqual(1);
-    expect(result.data.sources.map((source) => source.url)).toContain('https://example.com/elden-ring-route');
-    expect(result.data.response).toContain('Sources available');
-    expect(result.data.response).toContain('GAMING_PROVIDER_ERROR');
-    expect(result.data.response).not.toContain('Backend-supported: none');
-    expectInlineSourceRefsToMap(result.data.response, result.data.sources.length);
+      expect(result.ok).toBe(true);
+      expect(result.data.sources.length).toBeGreaterThanOrEqual(1);
+      expect(result.data.sources.map((source) => source.url)).toContain('https://example.com/elden-ring-route');
+      expect(result.data.response).toContain('Sources available');
+      expect(result.data.response).not.toContain('TRINITY_OUTPUT_INTEGRITY_FAILED');
+      expect(result.data.response).not.toMatch(/provider|incomplete|integrity|timeout/i);
+      expect(result.data.response).not.toContain('Backend-supported: none');
+      expectInlineSourceRefsToMap(result.data.response, result.data.sources.length);
+      expect(warnSpy).toHaveBeenCalledWith('gaming.fallback.used', expect.objectContaining({
+        fallbackReason: 'TRINITY_OUTPUT_INTEGRITY_FAILED',
+        errorCode: 'TRINITY_OUTPUT_INTEGRITY_FAILED'
+      }));
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it('returns a controlled fallback when upstream intake slows down', async () => {
@@ -700,8 +712,8 @@ describe('gaming guide output hardening', () => {
       mode: 'guide'
     }));
     expect(result.data.response).toContain('Sources available');
-    expect(result.data.response).toContain('INTAKE_UPSTREAM_TIMEOUT');
-    expect(result.data.response).toContain('Timeout phase: intake.');
+    expect(result.data.response).not.toContain('INTAKE_UPSTREAM_TIMEOUT');
+    expect(result.data.response).not.toMatch(/provider|incomplete|integrity|timeout/i);
     expect(result.data.response).toContain('For Elden Ring');
   });
 
@@ -721,8 +733,8 @@ describe('gaming guide output hardening', () => {
 
     expect(result.ok).toBe(true);
     expect(result.data.response).toContain('bounded deterministic fallback');
-    expect(result.data.response).toContain('INTAKE_UPSTREAM_TIMEOUT');
-    expect(result.data.response).toContain('Timeout phase: reasoning.');
+    expect(result.data.response).not.toContain('INTAKE_UPSTREAM_TIMEOUT');
+    expect(result.data.response).not.toMatch(/provider|incomplete|integrity|timeout/i);
   });
 
   it('defaults missing provider timeout phase consistently in the fallback response', async () => {
@@ -739,8 +751,8 @@ describe('gaming guide output hardening', () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(result.data.response).toContain('INTAKE_UPSTREAM_TIMEOUT');
-    expect(result.data.response).toContain('Timeout phase: provider.');
+    expect(result.data.response).not.toContain('INTAKE_UPSTREAM_TIMEOUT');
+    expect(result.data.response).not.toMatch(/provider|incomplete|integrity|timeout/i);
   });
 
   it('classifies direct-answer stage timeouts as upstream timeouts', async () => {
@@ -759,8 +771,8 @@ describe('gaming guide output hardening', () => {
 
     expect(result.ok).toBe(true);
     expect(result.mode).toBe('build');
-    expect(result.data.response).toContain('INTAKE_UPSTREAM_TIMEOUT');
-    expect(result.data.response).toContain('Timeout phase: direct-answer.');
+    expect(result.data.response).not.toContain('INTAKE_UPSTREAM_TIMEOUT');
+    expect(result.data.response).not.toMatch(/provider|incomplete|integrity|timeout/i);
     expect(result.data.response).not.toContain('INTAKE_UNKNOWN_TIMEOUT');
   });
 

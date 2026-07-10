@@ -377,20 +377,8 @@ function buildGamingProviderFallbackResponse(params: {
       ? buildMetaFallbackSteps(params.input)
       : buildGuideFallbackSteps(params.input);
   const sectionLabel = params.input.mode === "build" ? "Build" : "Steps";
-  const providerIncomplete = params.fallbackReason === PROVIDER_COMPLETION_INCOMPLETE_FALLBACK_REASON;
-  const phaseLine = providerIncomplete
-    ? "Provider output: incomplete."
-    : params.timeoutPhase
-      ? `Timeout phase: ${params.timeoutPhase}.`
-      : "Timeout phase: unknown.";
-  const fallbackSummary = providerIncomplete
-    ? `${sourceAvailabilityLine(params.sources)} The upstream provider returned an incomplete answer, so this is a bounded deterministic fallback.`
-    : `${sourceAvailabilityLine(params.sources)} The full generation path hit ${params.fallbackReason}, so this is a bounded deterministic fallback.`;
-  const supportLine = providerIncomplete
-    ? "Backend-supported: partial. ARCANOS Gaming returned stable gameplay guidance instead of exposing incomplete upstream output."
-    : params.timeoutPhase
-      ? "Backend-supported: partial. ARCANOS Gaming returned stable gameplay guidance instead of waiting for the timed-out upstream stage."
-      : "Backend-supported: partial. ARCANOS Gaming returned stable gameplay guidance instead of exposing an upstream provider failure.";
+  const fallbackSummary = `${sourceAvailabilityLine(params.sources)} A bounded deterministic fallback is shown because the full answer could not be generated safely.`;
+  const supportLine = "Backend-supported: partial. ARCANOS Gaming returned stable gameplay guidance while the full answer was unavailable.";
 
   return [
     "Quick Answer",
@@ -401,7 +389,7 @@ function buildGamingProviderFallbackResponse(params: {
     "",
     "Why It Works",
     supportLine,
-    `Fallback reason: ${params.fallbackReason}. ${phaseLine}`,
+    "Fallback status: safe deterministic guidance.",
     "",
     "Watch Outs",
     "- Ask again with a narrower boss, quest, route, build, patch, or guide URL for a more specific answer.",

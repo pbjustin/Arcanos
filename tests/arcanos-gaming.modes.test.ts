@@ -284,8 +284,8 @@ describe("ArcanosGaming mode routing", () => {
         response: expect.stringContaining("General Fallback (not backend-supported)")
       })
     }));
-    expect((result as any).data.response).toContain("provider did not return a complete answer");
-    expect((result as any).data.response).not.toContain("GENERATION_INCOMPLETE");
+    expect((result as any).data.response).toContain("safe deterministic fallback was used");
+    expect((result as any).data.response).not.toMatch(/timeout|incomplete|integrity/i);
   });
 
   it("returns build clarification without calling fallback or provider", async () => {
@@ -390,8 +390,8 @@ describe("ArcanosGaming mode routing", () => {
         response: expect.stringContaining("General Fallback (not backend-supported)")
       })
     }));
-    expect((result as any).data.response).toContain("Generation timed out before a complete answer was available");
-    expect((result as any).data.response).not.toContain("GENERATION_TIMEOUT");
+    expect((result as any).data.response).toContain("safe deterministic fallback was used");
+    expect((result as any).data.response).not.toMatch(/timeout|incomplete|integrity/i);
   });
 
   it("returns a controlled fallback when the runtime budget expires before module dispatch", async () => {
@@ -417,8 +417,8 @@ describe("ArcanosGaming mode routing", () => {
         response: expect.stringContaining("General Fallback (not backend-supported)")
       })
     }));
-    expect((result as any).data.response).toContain("Generation timed out before a complete answer was available");
-    expect((result as any).data.response).not.toContain("GENERATION_TIMEOUT");
+    expect((result as any).data.response).toContain("safe deterministic fallback was used");
+    expect((result as any).data.response).not.toMatch(/timeout|incomplete|integrity/i);
   });
 
   it("preserves parent request aborts instead of mapping them to generation timeouts", async () => {
