@@ -44,12 +44,6 @@ export async function checkDeadCodeRemoval(
       details.push('Consider using structured logging instead');
     }
 
-    const duplicateMatches = collectMatches(diff, DEAD_CODE_PATTERNS.duplicate);
-    if (duplicateMatches.length > 5) {
-      issues.push('Potential code duplication detected');
-      details.push('Look for opportunities to extract reusable utilities');
-    }
-
     const detailMessages = issues.length === 0 ? ['PR maintains clean codebase standards'] : uniqueStrings(details);
 
     return createCheckResult(

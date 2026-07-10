@@ -11,7 +11,7 @@ export const VALIDATION_CONSTANTS: ValidationConfig = {
 
 export const RAILWAY_VALIDATION_PATTERNS = [
   { pattern: /(?:http:\/\/|https:\/\/)(?!localhost|127\.0\.0\.1|example\.com)/gi, message: 'Hardcoded URLs detected' },
-  { pattern: /['"`]\w+\.\w+\.\w+['"`]/gi, message: 'Potential hardcoded domains' },
+  { pattern: /\b(?:url|host(?:name)?|domain|[\w$]+(?:URL|Url|Host(?:name)?|Domain)|[\w$]+_(?:URL|HOST(?:NAME)?|DOMAIN|url|host(?:name)?|domain))\s*[=:]\s*['"`](?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,63}['"`]/g, message: 'Potential hardcoded domains' },
   { pattern: /:\s*\d{4,5}(?!\s*[,}\]])/gi, message: 'Hardcoded port numbers' },
   { pattern: /password\s*[=:]\s*['"`][^'"`]{3,}['"`]/gi, message: 'Hardcoded password detected' },
   { pattern: /api[_-]?key\s*[=:]\s*['"`][^'"`]{10,}['"`]/gi, message: 'Hardcoded API key detected' }

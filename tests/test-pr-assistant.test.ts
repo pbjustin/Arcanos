@@ -107,8 +107,32 @@ describe('ARCANOS PR Assistant', () => {
     it('should pass for clean code', async () => {
       const result = await prAssistant['checkDeadCodeRemoval'](mockPRFiles, mockPRDiff);
       
-      expect(result.status).toBe('⚠️'); // Should have warnings for console.log
-      expect(result.message).toContain('Minor code quality concerns');
+      expect(result.status).toBe('✅');
+      expect(result.message).toBe('No bloated or dead code detected');
+      expect(result.details).toEqual(['PR maintains clean codebase standards']);
+    });
+
+    it('does not treat ordinary distinct added lines as code duplication', async () => {
+      const distinctLinesDiff = [
+        'diff --git a/src/distinct.ts b/src/distinct.ts',
+        'new file mode 100644',
+        '--- /dev/null',
+        '+++ b/src/distinct.ts',
+        '@@ -0,0 +1,8 @@',
+        '+const alphaResult = buildAlphaResult();',
+        '+const betaResult = buildBetaResult();',
+        '+const gammaResult = buildGammaResult();',
+        '+const deltaResult = buildDeltaResult();',
+        '+const epsilonResult = buildEpsilonResult();',
+        '+const zetaResult = buildZetaResult();',
+        '+const etaResult = buildEtaResult();',
+        '+export const results = [alphaResult, betaResult, gammaResult, deltaResult];'
+      ].join('\n');
+
+      const result = await prAssistant['checkDeadCodeRemoval'](['src/distinct.ts'], distinctLinesDiff);
+
+      expect(result.status).toBe('✅');
+      expect(result.details).toEqual(['PR maintains clean codebase standards']);
     });
 
     it('should detect large files', async () => {
@@ -152,6 +176,36 @@ describe('ARCANOS PR Assistant', () => {
       expect(result.details).toEqual(['PR maintains clean codebase standards']);
     });
 
+    it('keeps two large-file findings advisory', async () => {
+      await fs.mkdir(path.join(tempDir, 'src'), { recursive: true });
+
+      const largeFiles = ['src/first-large.ts', 'src/second-large.ts'];
+      for (const file of largeFiles) {
+        await fs.writeFile(
+          path.join(tempDir, file),
+          Array.from({ length: 501 }, (_, index) => `export const value${index} = ${index};`).join('\n')
+        );
+      }
+
+      const largeFilesDiff = largeFiles.map(file => [
+        `diff --git a/${file} b/${file}`,
+        'new file mode 100644',
+        '--- /dev/null',
+        `+++ b/${file}`,
+        '@@ -0,0 +1,501 @@',
+        ...Array.from({ length: 501 }, (_, index) => `+export const value${index} = ${index};`)
+      ].join('\n')).join('\n');
+
+      const result = await prAssistant['checkDeadCodeRemoval'](largeFiles, largeFilesDiff);
+
+      expect(result.status).toBe('⚠️');
+      expect(result.message).toBe('Minor code quality concerns found: 2 issues');
+      expect(result.details).toEqual([
+        'Consider breaking down src/first-large.ts into smaller, focused modules',
+        'Consider breaking down src/second-large.ts into smaller, focused modules'
+      ]);
+    });
+
     it('should detect TODO comments', async () => {
       const result = await prAssistant['checkDeadCodeRemoval'](mockPRFiles, mockBadDiff);
       
@@ -191,6 +245,37 @@ describe('ARCANOS PR Assistant', () => {
       
       expect(result.status).toMatch(/❌|⚠️/);
       expect(result.details.some(d => d.includes('hardcoded') || d.includes('environment'))).toBe(true);
+    });
+
+    it('ignores structured logger event names', async () => {
+      const loggerDiff = [
+        '+logger.info("gaming.discovery.start", { query });',
+        '+logger.info("gaming.discovery.end", { resultCount });',
+        '+logger.warn("gaming.discovery.disabled", { reason });',
+        '+const eventName = "gaming.discovery.start";',
+        '+const ghostwriter = "api.games.example";'
+      ].join('\n');
+
+      const result = await prAssistant['checkRailwayReadiness'](['src/services/gaming.ts'], loggerDiff);
+
+      expect(result.status).toBe('✅');
+      expect(result.details).toEqual(['Proper environment variable usage and Railway compatibility']);
+    });
+
+    it('detects hardcoded bare domains assigned to host, URL, and domain settings', async () => {
+      const domainDiffs = [
+        "+const discoveryHostname = 'api.games.example';",
+        "+const apiUrl = 'api.games.example';",
+        "+const API_HOST = 'edge-1.games.example';",
+        "+const settings = { domain: 'assets.games.example' };"
+      ];
+
+      for (const domainDiff of domainDiffs) {
+        const result = await prAssistant['checkRailwayReadiness'](['src/services/gaming.ts'], domainDiff);
+
+        expect(result.status).toBe('⚠️');
+        expect(result.details).toContain('Move hardcoded values to environment variables');
+      }
     });
 
     it('ignores lockfile and test-only values that look hardcoded', async () => {
@@ -284,7 +369,7 @@ describe('ARCANOS PR Assistant', () => {
 
       expect(result.status).toBe('❌');
       expect(result.summary).toContain('REJECTED');
-      expect(result.checks.deadCodeRemoval.status).toBe('⚠️');
+      expect(result.checks.deadCodeRemoval.status).toBe('✅');
       expect(result.checks.automatedValidation.status).toBe('❌');
     });
 

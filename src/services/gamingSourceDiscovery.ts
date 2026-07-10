@@ -319,9 +319,6 @@ function sanitizeCandidateUrl(rawUrl: string): { url?: string; rejected: boolean
     parsed.hostname = domain;
     parsed.hash = "";
     parsed.searchParams.sort();
-    if ((parsed.protocol === "https:" && parsed.port === "443") || (parsed.protocol === "http:" && parsed.port === "80")) {
-      parsed.port = "";
-    }
     return { url: parsed.toString(), rejected: false };
   } catch {
     return { rejected: true };

@@ -1,7 +1,6 @@
 export const DEAD_CODE_PATTERNS = {
   todo: /^\+.*(?:TODO|FIXME|XXX|HACK)/gim,
-  debug: /^\+.*console\.(?:log|debug|warn|error)/gim,
-  duplicate: /^\+.*(\w+.*){3,}/gim
+  debug: /^\+.*console\.(?:log|debug|warn|error)/gim
 } as const;
 
 export const SIMPLIFICATION_PATTERNS = {
