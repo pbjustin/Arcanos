@@ -51,6 +51,24 @@ describe('fetchAndClean', () => {
         return;
       }
 
+      if (req.url === '/metrics') {
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end('<html><body>Visible text<script>ignored script</script><style>ignored style</style><noscript>ignored fallback</noscript></body></html>');
+        return;
+      }
+
+      if (req.url === '/binary') {
+        res.writeHead(200, { 'Content-Type': 'image/png' });
+        res.end(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+        return;
+      }
+
+      if (req.url === '/large') {
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        res.end('A'.repeat(1024));
+        return;
+      }
+
       res.writeHead(200, { 'Content-Type': 'text/html' });
       res.end(`
         <html>
@@ -220,6 +238,37 @@ describe('fetchAndClean', () => {
     }));
     expect(document.text).not.toContain('Community Spotlight');
     expect(extractionMetrics?.rawTextLength).toBeGreaterThan(document.text.length);
+  });
+
+  it('excludes script, style, and noscript content from raw text metrics', async () => {
+    let rawTextLength = 0;
+
+    const document = await fetchAndCleanDocument(`${baseUrl}/metrics`, 12000, {
+      includeLinks: false,
+      onExtraction: (metrics) => {
+        rawTextLength = metrics.rawTextLength;
+      }
+    });
+
+    expect(document.text).toBe('Visible text');
+    expect(rawTextLength).toBe('Visible text'.length);
+  });
+
+  it('rejects unsupported response content types before parsing', async () => {
+    await expect(fetchAndClean(`${baseUrl}/binary`)).rejects.toThrow(
+      'Unsupported content type for web fetching: image/png'
+    );
+  });
+
+  it('enforces the configured response-size cap', async () => {
+    const previousMaxBytes = process.env.WEB_FETCH_MAX_BYTES;
+    process.env.WEB_FETCH_MAX_BYTES = '64';
+
+    try {
+      await expect(fetchAndClean(`${baseUrl}/large`)).rejects.toThrow(/maxContentLength|size/i);
+    } finally {
+      restoreEnvValue('WEB_FETCH_MAX_BYTES', previousMaxBytes);
+    }
   });
 
   it('blocks localhost fetches when local-development bypass is not explicitly enabled', async () => {

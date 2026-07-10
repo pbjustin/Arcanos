@@ -145,7 +145,7 @@ export async function fetchAndCleanDocument(
         })
       : undefined;
 
-  const { data } = await axios.get<string>(target.requestUrl.toString(), {
+  const response = await axios.get<string>(target.requestUrl.toString(), {
     timeout: options.timeoutMs ?? getConfiguredFetchTimeoutMs(),
     signal: options.signal,
     maxContentLength: maxFetchBytes,
@@ -163,9 +163,14 @@ export async function fetchAndCleanDocument(
     httpsAgent
   });
 
-  const $ = load(data);
-  const rawTextLength = normalizeExtractedText($('body').text()).length;
+  const contentType = String(response.headers['content-type'] ?? '').split(';', 1)[0].trim().toLowerCase();
+  if (contentType && !['text/html', 'text/plain', 'application/xhtml+xml'].includes(contentType)) {
+    throw new Error(`Unsupported content type for web fetching: ${contentType}`);
+  }
+
+  const $ = load(response.data);
   $('script, style, noscript').remove();
+  const rawTextLength = normalizeExtractedText($('body').text()).length;
   for (const selector of options.removeSelectors ?? []) {
     try {
       $(selector).remove();

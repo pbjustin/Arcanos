@@ -22,8 +22,8 @@ function expectFetchOptions(timeoutMs = 5000) {
 }
 
 function extractInlineSourceRefs(text: string): number[] {
-  return Array.from(text.matchAll(/(?:\[(?:sources?)\s+([\d,\s]+)\]|\((?:sources?)\s+([\d,\s]+)\)|\b(?:sources?)\s+(\d+(?:\s*,\s*\d+)*))/gi))
-    .flatMap((match) => [match[1], match[2], match[3]])
+  return Array.from(text.matchAll(/(?:\[(?:sources?)\s+([\d,\s]+)\]|\[([\d,\s]+)\]|\((?:sources?)\s+([\d,\s]+)\)|\b(?:sources?)\s+(\d+(?:\s*,\s*\d+)*))/gi))
+    .flatMap((match) => [match[1], match[2], match[3], match[4]])
     .filter((value): value is string => typeof value === 'string' && value.length > 0)
     .flatMap((value) => Array.from(value.matchAll(/\d+/g)).map((numberMatch) => Number.parseInt(numberMatch[0], 10)))
     .filter((value) => Number.isInteger(value) && value > 0);
@@ -545,7 +545,7 @@ describe('gaming guide output hardening', () => {
   it('normalizes generated citations so inline source refs map to public sources', async () => {
     mockFetchAndClean.mockImplementation(async (url: string) => `Guide for ${url}: Elden Ring route, preparation, boss danger checks, and upgrades.`);
     mockRunTrinityWritingPipeline.mockResolvedValueOnce({
-      result: 'Use [Source 3] for the route, (sources 1, 4) for prep, and source 2 for upgrades.',
+      result: 'Use [Source 3] for the route, (sources 1, 4) for prep, [1, 4] for danger checks, and source 2 for upgrades.',
       activeModel: 'gpt-test',
       meta: { provider: { finishReason: 'stop' } }
     });
@@ -558,13 +558,13 @@ describe('gaming guide output hardening', () => {
     });
 
     expect(result.data.sources).toHaveLength(2);
-    expect(result.data.response).toBe('Use for the route, (source 1) for prep, and (source 2) for upgrades.');
+    expect(result.data.response).toBe('Use for the route, (source 1) for prep, [1] for danger checks, and (source 2) for upgrades.');
     expectInlineSourceRefsToMap(result.data.response, result.data.sources.length);
   });
 
   it('removes inline citation numbers when public sources are empty', async () => {
     mockRunTrinityWritingPipeline.mockResolvedValueOnce({
-      result: 'Start in Limgrave [Source 1] and verify source 2 later.',
+      result: 'Start in Limgrave [Source 1], verify [1], and check source 2 later.',
       activeModel: 'gpt-test',
       meta: { provider: { finishReason: 'stop' } }
     });
