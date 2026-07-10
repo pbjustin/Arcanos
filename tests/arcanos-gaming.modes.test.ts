@@ -131,6 +131,51 @@ describe("ArcanosGaming mode routing", () => {
     });
   });
 
+  it.each([
+    ["build", mockRunBuildPipeline],
+    ["meta", mockRunMetaPipeline],
+  ] as const)("lets a supplied generic URL reach the %s pipeline before game clarification", async (mode, pipeline) => {
+    const result = await ArcanosGaming.actions.query({
+      mode,
+      prompt: "Use the supplied article for this request.",
+      guideUrl: "https://community.example/article/123",
+    });
+
+    expect(pipeline).toHaveBeenCalledWith({
+      prompt: "Use the supplied article for this request.",
+      game: undefined,
+      guideUrl: "https://community.example/article/123",
+      guideUrls: [],
+      auditEnabled: false,
+    });
+    expect(result).toEqual(expect.objectContaining({ ok: true, mode }));
+  });
+
+  it("translates failed supplied-page game detection into build clarification", async () => {
+    mockRunBuildPipeline.mockRejectedValueOnce(Object.assign(new Error("game could not be identified"), {
+      code: "GAMING_GAME_REQUIRED",
+    }));
+
+    const result = await ArcanosGaming.actions.query({
+      mode: "build",
+      prompt: "best build for the current patch",
+      guideUrl: "https://unknown.example/article/123",
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      route: "gaming",
+      mode: "build",
+      error: {
+        code: "CLARIFICATION_REQUIRED",
+        message: "Which game should I use for this build request?",
+        details: {
+          missing: ["game"],
+        },
+      },
+    });
+  });
+
   it("keeps url as a backward-compatible guide URL field", async () => {
     await ArcanosGaming.actions.query({
       mode: "guide",
@@ -239,7 +284,8 @@ describe("ArcanosGaming mode routing", () => {
         response: expect.stringContaining("General Fallback (not backend-supported)")
       })
     }));
-    expect((result as any).data.response).toContain("provider output incomplete");
+    expect((result as any).data.response).toContain("provider did not return a complete answer");
+    expect((result as any).data.response).not.toContain("GENERATION_INCOMPLETE");
   });
 
   it("returns build clarification without calling fallback or provider", async () => {
@@ -344,8 +390,8 @@ describe("ArcanosGaming mode routing", () => {
         response: expect.stringContaining("General Fallback (not backend-supported)")
       })
     }));
-    expect((result as any).data.response).toContain("GENERATION_TIMEOUT");
-    expect((result as any).data.response).toContain("phase=intake");
+    expect((result as any).data.response).toContain("Generation timed out before a complete answer was available");
+    expect((result as any).data.response).not.toContain("GENERATION_TIMEOUT");
   });
 
   it("returns a controlled fallback when the runtime budget expires before module dispatch", async () => {
@@ -371,8 +417,8 @@ describe("ArcanosGaming mode routing", () => {
         response: expect.stringContaining("General Fallback (not backend-supported)")
       })
     }));
-    expect((result as any).data.response).toContain("GENERATION_TIMEOUT");
-    expect((result as any).data.response).toContain("phase=reasoning");
+    expect((result as any).data.response).toContain("Generation timed out before a complete answer was available");
+    expect((result as any).data.response).not.toContain("GENERATION_TIMEOUT");
   });
 
   it("preserves parent request aborts instead of mapping them to generation timeouts", async () => {

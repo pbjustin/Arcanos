@@ -34,6 +34,76 @@ describe('Gaming agent routing model', () => {
     expect(ClarificationAgent.evaluate(intent)).toEqual({ required: false });
   });
 
+  it.each([
+    ['Elite Dangerous exploration guide', 'guide', 'Elite Dangerous'],
+    ['Factorio progression guide', 'guide', 'Factorio'],
+    ['Hollow Knight boss guide', 'guide', 'Hollow Knight'],
+    ['Caves of Qud build request', 'build', 'Caves of Qud'],
+    ['Vintage Story class meta', 'meta', 'Vintage Story'],
+  ])('detects an unregistered game from an anchored request: %s', (prompt, mode, game) => {
+    const intent = IntentRouterAgent.classify({ prompt });
+
+    expect(intent).toEqual(expect.objectContaining({
+      mode,
+      game,
+      gameDetectionSource: 'prompt',
+    }));
+    expect(intent.gameDetectionConfidence).toBeGreaterThanOrEqual(0.8);
+    expect(intent.routingSignals).toContain('detected_game');
+    expect(ClarificationAgent.evaluate(intent)).toEqual({ required: false });
+  });
+
+  it.each([
+    ['Find a Caves of Qud early progression guide', 'Caves of Qud'],
+    ['Look up a Vintage Story progression guide', 'Vintage Story'],
+    ['Search for an Elite Dangerous exploration guide', 'Elite Dangerous'],
+  ])('detects an unregistered game after a discovery verb: %s', (prompt, game) => {
+    const intent = IntentRouterAgent.classify({ prompt });
+
+    expect(intent.game).toBe(game);
+    expect(intent.gameDetectionConfidence).toBeGreaterThanOrEqual(0.8);
+  });
+
+  it('detects an unregistered game from a supplied guide URL when build mode needs it', () => {
+    const intent = IntentRouterAgent.classify({
+      prompt: 'make me a tank build',
+      guideUrl: 'https://independent.example/games/caves-of-qud/build-guide',
+    });
+
+    expect(intent).toEqual(expect.objectContaining({
+      mode: 'build',
+      game: 'Caves of Qud',
+      gameDetectionSource: 'url',
+    }));
+    expect(ClarificationAgent.evaluate(intent)).toEqual({ required: false });
+  });
+
+  it('detects an unregistered game from an anchored community-wiki domain', () => {
+    const intent = IntentRouterAgent.classify({
+      prompt: 'make me a starter build',
+      guideUrl: 'https://factorio-wiki.example/',
+    });
+
+    expect(intent).toEqual(expect.objectContaining({
+      mode: 'build',
+      game: 'Factorio',
+      gameDetectionSource: 'url',
+    }));
+    expect(intent.gameDetectionConfidence).toBeGreaterThanOrEqual(0.7);
+    expect(ClarificationAgent.evaluate(intent)).toEqual({ required: false });
+  });
+
+  it('defers low-confidence supplied-URL build clarification until page metadata is checked', () => {
+    const intent = IntentRouterAgent.classify({
+      prompt: 'make me a tank build',
+      guideUrl: 'https://guides.example/builds/tank',
+    });
+
+    expect(intent.game).toBeUndefined();
+    expect(intent.gameDetectionConfidence).toBeLessThan(0.7);
+    expect(ClarificationAgent.evaluate(intent)).toEqual({ required: false });
+  });
+
   it('classifies a build request without a game and asks one blocking question', () => {
     const intent = IntentRouterAgent.classify({
       prompt: 'make me a tank build',
@@ -55,6 +125,12 @@ describe('Gaming agent routing model', () => {
     ['make me a build for tank', 'build'],
     ['is frost mage still viable in this patch', 'meta'],
     ['best loadout on Steam Deck', 'build'],
+    ['best build for the current patch', 'build'],
+    ['meta for the latest season', 'meta'],
+    ['meta for season 4', 'meta'],
+    ['best build for raids', 'build'],
+    ['Need a tank build lol', 'build'],
+    ['wow, what is the current meta?', 'meta'],
   ])('does not infer blacklisted terms as a game: %s', (prompt, mode) => {
     const intent = IntentRouterAgent.classify({ prompt });
 
@@ -64,6 +140,92 @@ describe('Gaming agent routing model', () => {
       required: true,
       missing: ['game'],
     }));
+  });
+
+  it('does not treat a sentence-initial exclamation as the WoW acronym', () => {
+    const intent = IntentRouterAgent.classify({ prompt: 'Wow! Give me a beginner guide' });
+
+    expect(intent.game).toBeUndefined();
+  });
+
+  it.each([
+    'New player build guide',
+    'Ultimate beginner build guide',
+    'Complete class build guide',
+    'Endgame tank build guide',
+    'Advanced raid build guide',
+    'Solo build guide',
+    'Duo build guide',
+    'Damage build guide',
+    'Glass cannon build guide',
+    'Hardcore build guide',
+    'Casual beginner guide',
+    'Veteran progression guide',
+    'Early game build guide',
+    'Late game meta guide',
+    'Speedrun guide',
+    'Crafting progression guide',
+    'Find a current guide for the title mentioned earlier.',
+    'Look up the latest guide for this game.',
+    'Search for a current build guide.',
+  ])('does not treat generic gameplay descriptors as a game: %s', (prompt) => {
+    expect(IntentRouterAgent.classify({ prompt }).game).toBeUndefined();
+  });
+
+  it.each([
+    [{ prompt: 'make me a tank build', game: 'wow' }, 'wow'],
+    [{ prompt: 'make me a tank build', game: 'lol' }, 'lol'],
+    [{ prompt: 'WoW, what is the current meta?' }, 'World of Warcraft'],
+  ])('preserves explicit values or recognizes deliberately cased prompt aliases: %#', (payload, game) => {
+    expect(IntentRouterAgent.classify(payload).game).toBe(game);
+  });
+
+  it.each([
+    ['Could you give me a Noita build?', 'Noita'],
+    ['I need a Hollow Knight boss guide', 'Hollow Knight'],
+    ['Which build should I use in Last Epoch?', 'Last Epoch'],
+    ['What is the best build for Noita right now?', 'Noita'],
+    ['Tell me the meta for The Finals', 'The Finals'],
+    ['What is the current meta for The Finals?', 'The Finals'],
+    ['meta for Helldivers 2 season 4', 'Helldivers 2'],
+    ['best build for current patch in Caves of Qud', 'Caves of Qud'],
+  ])('strips conversational request framing before detecting the game: %s', (prompt, game) => {
+    const intent = IntentRouterAgent.classify({ prompt });
+
+    expect(intent.game).toBe(game);
+  });
+
+  it.each([
+    ['https://expert-guides.example/', 'make me a tank build'],
+    ['https://nexus-guides.example/', 'best build for the current patch'],
+    ['https://example.com/arcane/build', 'make me a mage build'],
+  ])('does not treat a generic site brand or ambiguous path as a game: %s', (guideUrl, prompt) => {
+    const intent = IntentRouterAgent.classify({ prompt, guideUrl });
+
+    expect(intent.game).toBeUndefined();
+    expect(intent.gameDetectionConfidence).toBeLessThan(0.7);
+  });
+
+  it.each([
+    ['League of Legends tier list', 'League of Legends'],
+    ['Overwatch 2 tier list', 'Overwatch 2'],
+    ['Give me a LoL build', 'League of Legends'],
+    ['Minecraft first-night survival tips', 'Minecraft'],
+    ['Path of Exile 2 build guide', 'Path of Exile 2'],
+    ['Morrowind main quest guide', 'Morrowind'],
+  ])('preserves generic and alias title compatibility: %s', (prompt, game) => {
+    const intent = IntentRouterAgent.classify({ prompt });
+
+    expect(intent.game).toBe(game);
+    expect(intent.mode).not.toBe('non-gaming');
+  });
+
+  it('prefers the anchored requested title over a comparison-game alias', () => {
+    const intent = IntentRouterAgent.classify({
+      prompt: 'Factorio guide for players coming from World of Warcraft',
+    });
+
+    expect(intent.game).toBe('Factorio');
   });
 
   it.each([
@@ -105,6 +267,15 @@ describe('Gaming agent routing model', () => {
       missing: ['game'],
       question: 'Which game should I use for this meta request?',
     });
+  });
+
+  it('does not treat source-numbering prose as a game title', () => {
+    const intent = IntentRouterAgent.classify({
+      mode: 'guide',
+      prompt: 'Use the linked guides for source numbering.',
+    });
+
+    expect(intent.game).toBeUndefined();
   });
 
   it('strips markdown heading markers from composed backend summary lines', () => {

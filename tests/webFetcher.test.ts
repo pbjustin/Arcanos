@@ -1,5 +1,9 @@
 import http from 'http';
-import { fetchAndClean, fetchAndCleanDocument } from '../src/shared/webFetcher.js';
+import {
+  fetchAndClean,
+  fetchAndCleanDocument,
+  type FetchAndCleanExtractionMetrics
+} from '../src/shared/webFetcher.js';
 
 function restoreEnvValue(key: string, previousValue: string | undefined): void {
   if (typeof previousValue === 'string') {
@@ -57,9 +61,54 @@ describe('fetchAndClean', () => {
         return;
       }
 
+      if (req.url === '/container-ranking') {
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end(`
+          <html>
+            <body>
+              <section class="menu-candidate">
+                <nav>
+                  <a href="/home">Home</a>
+                  <a href="/exploration">Exploration</a>
+                  <a href="/builds">Nebula drive builds</a>
+                  <a href="/popular">Popular categories</a>
+                  <a href="/account">Account sign in</a>
+                  <a href="/related">Related links</a>
+                </nav>
+              </section>
+              <article>
+                <h1>Independent Space Exploration Guide</h1>
+                <p>This nebula drive exploration guide explains how to prepare a reliable ship before leaving inhabited space.</p>
+                <p>Carry repair equipment, plan fuel stops, and scan each system before committing to the next long jump.</p>
+                <p>These steps keep the route readable and give new pilots concrete evidence for each recommendation.</p>
+              </article>
+            </body>
+          </html>
+        `);
+        return;
+      }
+
+      if (req.url === '/bounded-metrics') {
+        const candidates = Array.from({ length: 80 }, (_, index) => `
+          <article class="bounded-candidate">
+            <h2>Candidate ${index + 1} ${'heading '.repeat(50)}</h2>
+            <p>This generic progression guide contains complete sentences and bounded extraction evidence for an unknown game.</p>
+          </article>
+        `).join('');
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end(`<html><head><title>${'document title '.repeat(40)}</title></head><body>${candidates}</body></html>`);
+        return;
+      }
+
       if (req.url === '/binary') {
         res.writeHead(200, { 'Content-Type': 'image/png' });
         res.end(Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+        return;
+      }
+
+      if (req.url === '/binary-text') {
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        res.end(Buffer.from([0x00, 0x01, 0x02, 0x41, 0x42, 0x43]));
         return;
       }
 
@@ -133,6 +182,7 @@ describe('fetchAndClean', () => {
     'http://224.0.0.1/',
     'http://240.0.0.1/',
     'http://[2001:db8::1]/',
+    'http://[fec0::1]/',
     'http://[ff02::1]/',
     'http://[::ffff:7f00:1]/'
   ])('blocks non-global fetch target %s', async (blockedUrl) => {
@@ -254,9 +304,63 @@ describe('fetchAndClean', () => {
     expect(rawTextLength).toBe('Visible text'.length);
   });
 
+  it('scores every preferred container so a poor first strategy loses to a readable later one', async () => {
+    let extractionMetrics: FetchAndCleanExtractionMetrics | undefined;
+
+    const document = await fetchAndCleanDocument(`${baseUrl}/container-ranking`, 12000, {
+      preferredContentSelectors: ['.menu-candidate', 'article'],
+      preferredContentTerms: ['nebula drive', 'exploration guide'],
+      includeLinks: false,
+      onExtraction: (metrics) => {
+        extractionMetrics = metrics;
+      }
+    });
+
+    expect(document.text).toContain('Carry repair equipment');
+    expect(document.text).not.toMatch(/popular categories|account sign in|related links/i);
+    expect(extractionMetrics).toEqual(expect.objectContaining({
+      strategy: 'article',
+      selectedContainer: 'article',
+      candidateCount: 2,
+      cleanedTextLength: document.text.length
+    }));
+  });
+
+  it('bounds candidate evaluation, scores, and extracted title and heading metrics', async () => {
+    let extractionMetrics: FetchAndCleanExtractionMetrics | undefined;
+
+    await fetchAndCleanDocument(`${baseUrl}/bounded-metrics`, 12000, {
+      preferredContentSelectors: ['.bounded-candidate'],
+      preferredContentTerms: ['progression guide'],
+      includeLinks: false,
+      onExtraction: (metrics) => {
+        extractionMetrics = metrics;
+      }
+    });
+
+    expect(extractionMetrics?.candidateCount).toBe(48);
+    expect(extractionMetrics?.documentTitle).toHaveLength(240);
+    expect(extractionMetrics?.headingText).toHaveLength(240);
+    for (const metric of [
+      extractionMetrics?.qualityScore,
+      extractionMetrics?.navigationPenalty,
+      extractionMetrics?.navigationDensity,
+      extractionMetrics?.linkDensity
+    ]) {
+      expect(metric).toBeGreaterThanOrEqual(0);
+      expect(metric).toBeLessThanOrEqual(1);
+    }
+  });
+
   it('rejects unsupported response content types before parsing', async () => {
     await expect(fetchAndClean(`${baseUrl}/binary`)).rejects.toThrow(
       'Unsupported content type for web fetching: image/png'
+    );
+  });
+
+  it('rejects binary-like bodies even when the response claims to be text', async () => {
+    await expect(fetchAndClean(`${baseUrl}/binary-text`)).rejects.toThrow(
+      'Unsupported binary-like content for web fetching'
     );
   });
 

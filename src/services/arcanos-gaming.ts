@@ -168,6 +168,16 @@ async function executeGamingBackendQuery(payload: GamingBackendActionPayload): P
         ? await runBuildPipeline({ prompt, game, guideUrl, guideUrls, auditEnabled })
         : await runMetaPipeline({ prompt, game, guideUrl, guideUrls, auditEnabled });
   } catch (error: unknown) {
+    if (readSafeErrorString(error, "code") === "GAMING_GAME_REQUIRED") {
+      return formatGamingError({
+        mode,
+        error: {
+          code: "CLARIFICATION_REQUIRED",
+          message: `Which game should I use for this ${mode} request?`,
+          details: { missing: ["game"] }
+        }
+      });
+    }
     const knownGenerationFailure = formatKnownGenerationFailure(mode, error);
     if (knownGenerationFailure) {
       return knownGenerationFailure;
@@ -278,6 +288,9 @@ async function handleGamingRequest(payload: unknown): Promise<GamingEnvelope> {
     mode: intent.mode,
     confidence: intent.confidence,
     signals: intent.routingSignals,
+    ...(intent.game ? { detectedGame: intent.game } : {}),
+    gameDetectionConfidence: intent.gameDetectionConfidence,
+    gameDetectionSource: intent.gameDetectionSource,
     entityFlags: buildTelemetryEntityFlags(intent),
     securityBlocked: Boolean(intent.securityBlocked),
     timeoutPhase: null,
@@ -287,6 +300,9 @@ async function handleGamingRequest(payload: unknown): Promise<GamingEnvelope> {
     mode: intent.mode,
     confidence: intent.confidence,
     gameProvided: Boolean(intent.game),
+    ...(intent.game ? { detectedGame: intent.game } : {}),
+    gameDetectionConfidence: intent.gameDetectionConfidence,
+    gameDetectionSource: intent.gameDetectionSource,
     signalCount: intent.routingSignals.length,
     securityBlocked: Boolean(intent.securityBlocked)
   });

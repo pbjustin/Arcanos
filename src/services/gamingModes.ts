@@ -117,7 +117,12 @@ export function validateGamingRequest(payload: unknown): { ok: true; value: Vali
   }
 
   const game = getStringField(payload, "game");
-  if ((mode === "build" || mode === "meta") && !game) {
+  const guideUrl = getStringField(payload, "guideUrl") ?? getStringField(payload, "url");
+  const guideUrls = normalizeStringList(
+    isRecord(payload) ? payload.urls : undefined,
+    isRecord(payload) ? payload.guideUrls : undefined
+  );
+  if ((mode === "build" || mode === "meta") && !game && !guideUrl && guideUrls.length === 0) {
     return {
       ok: false,
       error: formatGamingError({
@@ -136,11 +141,8 @@ export function validateGamingRequest(payload: unknown): { ok: true; value: Vali
       mode,
       prompt,
       game,
-      guideUrl: getStringField(payload, "guideUrl") ?? getStringField(payload, "url"),
-      guideUrls: normalizeStringList(
-        isRecord(payload) ? payload.urls : undefined,
-        isRecord(payload) ? payload.guideUrls : undefined
-      ),
+      guideUrl,
+      guideUrls,
       auditEnabled: getBooleanField(payload, "audit") || getBooleanField(payload, "enableAudit"),
       hrcEnabled: getBooleanField(payload, "hrc") || getBooleanField(payload, "enableHrc"),
     }

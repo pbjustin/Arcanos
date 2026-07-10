@@ -11,6 +11,52 @@ const DEFAULT_MAX_FETCH_BYTES = 1_500_000;
 const DEFAULT_FETCH_TIMEOUT_MS = 8000;
 const DEFAULT_MAX_LINKS = 15;
 const DEFAULT_USER_AGENT = 'Arcanos-WebFetcher/1.0';
+const HARD_MAX_CHARS = 100_000;
+const HARD_MAX_FETCH_BYTES = 5_000_000;
+const HARD_MAX_FETCH_TIMEOUT_MS = 30_000;
+const HARD_MAX_LINKS = 100;
+const MAX_EXTRACTION_SELECTORS = 24;
+const MAX_EXTRACTION_CANDIDATES = 48;
+const MAX_CANDIDATE_SCORE_CHARS = 24000;
+const MAX_REPETITION_SEGMENTS = 96;
+const MAX_EXTRACTION_METADATA_CHARS = 240;
+const MIN_PREFERRED_CONTAINER_SCORE = 0.3;
+const NAVIGATION_CONTAINER_SELECTOR = [
+  'nav',
+  'header',
+  'footer',
+  'aside',
+  '[role="navigation"]',
+  '[class*="nav"]',
+  '[id*="nav"]',
+  '[class*="menu"]',
+  '[id*="menu"]',
+  '[class*="sidebar"]',
+  '[id*="sidebar"]'
+].join(', ');
+const NAVIGATION_TERMS = new Set([
+  'about',
+  'account',
+  'categories',
+  'category',
+  'contact',
+  'cookie',
+  'cookies',
+  'home',
+  'login',
+  'menu',
+  'newsletter',
+  'popular',
+  'previous',
+  'privacy',
+  'register',
+  'related',
+  'search',
+  'share',
+  'signin',
+  'subscribe',
+  'terms'
+]);
 
 type IpFamily = 4 | 6;
 
@@ -22,19 +68,25 @@ interface ResolvedFetchTarget {
 }
 
 function getConfiguredMaxChars(): number {
-  return getEnvIntegerAtLeast('WEB_FETCH_MAX_CHARS', DEFAULT_MAX_CHARS, 0);
+  return Math.min(getEnvIntegerAtLeast('WEB_FETCH_MAX_CHARS', DEFAULT_MAX_CHARS, 0), HARD_MAX_CHARS);
 }
 
 function getConfiguredFetchTimeoutMs(): number {
-  return getEnvIntegerAtLeast('WEB_FETCH_TIMEOUT_MS', DEFAULT_FETCH_TIMEOUT_MS, 1);
+  return Math.min(
+    getEnvIntegerAtLeast('WEB_FETCH_TIMEOUT_MS', DEFAULT_FETCH_TIMEOUT_MS, 1),
+    HARD_MAX_FETCH_TIMEOUT_MS
+  );
 }
 
 function getConfiguredMaxFetchBytes(): number {
-  return getEnvIntegerAtLeast('WEB_FETCH_MAX_BYTES', DEFAULT_MAX_FETCH_BYTES, 1);
+  return Math.min(
+    getEnvIntegerAtLeast('WEB_FETCH_MAX_BYTES', DEFAULT_MAX_FETCH_BYTES, 1),
+    HARD_MAX_FETCH_BYTES
+  );
 }
 
 export function getConfiguredWebFetchMaxLinks(): number {
-  return getEnvIntegerAtLeast('WEB_FETCH_MAX_LINKS', DEFAULT_MAX_LINKS, 0);
+  return Math.min(getEnvIntegerAtLeast('WEB_FETCH_MAX_LINKS', DEFAULT_MAX_LINKS, 0), HARD_MAX_LINKS);
 }
 
 function getConfiguredUserAgent(): string {
@@ -66,18 +118,180 @@ export interface FetchAndCleanExtractionMetrics {
   strategy: string;
   rawTextLength: number;
   cleanedTextLength: number;
+  fetchElapsedMs?: number;
+  extractionElapsedMs?: number;
+  selectedContainer?: string;
+  qualityScore?: number;
+  navigationPenalty?: number;
+  navigationDensity?: number;
+  linkDensity?: number;
+  candidateCount?: number;
+  documentTitle?: string;
+  headingText?: string;
 }
 
 function normalizeExtractedText(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
 }
 
-function contentTermScore(text: string, terms: readonly string[]): number {
-  const textTokens = new Set(text.toLowerCase().match(/[a-z0-9+]+/g) ?? []);
-  return terms.slice(0, 24).reduce((score, term) => {
-    const termTokens = term.toLowerCase().match(/[a-z0-9+]+/g) ?? [];
-    return score + (termTokens.length > 0 && termTokens.every((token) => textTokens.has(token)) ? 1 : 0);
-  }, 0);
+function tokenizeExtractedText(value: string): string[] {
+  return value.toLowerCase().match(/[\p{L}\p{N}+]+/gu) ?? [];
+}
+
+function clampUnitMetric(value: number): number {
+  return Math.min(1, Math.max(0, Number.isFinite(value) ? value : 0));
+}
+
+function roundUnitMetric(value: number): number {
+  return Number(clampUnitMetric(value).toFixed(4));
+}
+
+function boundExtractionMetadata(value: string): string | undefined {
+  const normalized = normalizeExtractedText(value);
+  return normalized.length > 0
+    ? normalized.slice(0, MAX_EXTRACTION_METADATA_CHARS)
+    : undefined;
+}
+
+function contentTermOverlap(text: string, terms: readonly string[]): number {
+  const textWords = tokenizeExtractedText(text);
+  const textTokens = new Set(textWords);
+  const boundedTerms = terms
+    .slice(0, MAX_EXTRACTION_SELECTORS)
+    .map((term) => tokenizeExtractedText(term))
+    .filter((termTokens) => termTokens.length > 0);
+  if (boundedTerms.length === 0) {
+    return 0.5;
+  }
+
+  const matchedTerms = boundedTerms.filter((termTokens) =>
+    termTokens.every((token) => textTokens.has(token))
+  ).length;
+  const termTokens = new Set(boundedTerms.flat());
+  const matchingWordCount = textWords.reduce(
+    (count, word) => count + (termTokens.has(word) ? 1 : 0),
+    0
+  );
+  const termDensity = clampUnitMetric(matchingWordCount * 5 / Math.max(1, textWords.length));
+  const termCoverage = matchedTerms / boundedTerms.length;
+  return termCoverage * (0.25 + termDensity * 0.75);
+}
+
+interface ScoredExtractionCandidate {
+  selector: string;
+  text: string;
+  headingText?: string;
+  qualityScore: number;
+  termOverlap: number;
+  navigationPenalty: number;
+  navigationDensity: number;
+  linkDensity: number;
+}
+
+function scoreExtractionCandidate(
+  $: ReturnType<typeof load>,
+  element: cheerio.Element,
+  selector: string,
+  preferredContentTerms: readonly string[]
+): ScoredExtractionCandidate {
+  const candidate = $(element);
+  const fullText = normalizeExtractedText(candidate.text());
+  const scoringText = fullText.slice(0, MAX_CANDIDATE_SCORE_CHARS);
+  const scoringTextLength = scoringText.length;
+  const words = tokenizeExtractedText(scoringText);
+  const sentenceCount = scoringText.match(/[.!?。！？]+(?:\s|$)/g)?.length ?? 0;
+  const sentenceDensity = clampUnitMetric(sentenceCount / Math.max(1, words.length / 24));
+
+  let paragraphTextLength = 0;
+  candidate.find('p').slice(0, MAX_REPETITION_SEGMENTS).each((_, paragraph) => {
+    paragraphTextLength += normalizeExtractedText($(paragraph).text())
+      .slice(0, MAX_CANDIDATE_SCORE_CHARS).length;
+  });
+  const paragraphDensity = clampUnitMetric(
+    Math.min(scoringTextLength, paragraphTextLength) / Math.max(1, scoringTextLength)
+  );
+
+  const markupLength = Math.min(
+    MAX_CANDIDATE_SCORE_CHARS,
+    Math.max(scoringTextLength, candidate.html()?.length ?? 0)
+  );
+  const textDensity = clampUnitMetric(scoringTextLength / Math.max(1, markupLength));
+  const textLengthScore = clampUnitMetric(scoringTextLength / 600);
+  const termOverlap = contentTermOverlap(scoringText, preferredContentTerms);
+
+  const linkTextLength = normalizeExtractedText(candidate.find('a').text())
+    .slice(0, MAX_CANDIDATE_SCORE_CHARS).length;
+  const linkDensity = clampUnitMetric(
+    (candidate.is('a') ? scoringTextLength : Math.min(scoringTextLength, linkTextLength)) /
+      Math.max(1, scoringTextLength)
+  );
+
+  const semanticNavigationTextLength = candidate.is(NAVIGATION_CONTAINER_SELECTOR)
+    ? scoringTextLength
+    : normalizeExtractedText(candidate.find(NAVIGATION_CONTAINER_SELECTOR).text())
+      .slice(0, MAX_CANDIDATE_SCORE_CHARS).length;
+  const semanticNavigationDensity = clampUnitMetric(
+    Math.min(scoringTextLength, semanticNavigationTextLength) / Math.max(1, scoringTextLength)
+  );
+  const navigationTermCount = words.reduce(
+    (count, word) => count + (NAVIGATION_TERMS.has(word) ? 1 : 0),
+    0
+  );
+  const navigationTermDensity = clampUnitMetric(navigationTermCount * 4 / Math.max(1, words.length));
+  const navigationDensity = Math.max(semanticNavigationDensity, navigationTermDensity);
+
+  const repeatedSegments: string[] = [];
+  candidate
+    .find('p, li, dt, dd, h1, h2, h3, h4, h5, h6, a')
+    .slice(0, MAX_REPETITION_SEGMENTS)
+    .each((_, segment) => {
+      const segmentText = normalizeExtractedText($(segment).text()).slice(0, 240).toLowerCase();
+      if (segmentText.length > 1) {
+        repeatedSegments.push(segmentText);
+      }
+    });
+  const segmentCounts = new Map<string, number>();
+  for (const segment of repeatedSegments) {
+    segmentCounts.set(segment, (segmentCounts.get(segment) ?? 0) + 1);
+  }
+  const duplicateSegmentCount = Array.from(segmentCounts.values()).reduce(
+    (count, occurrences) => count + Math.max(0, occurrences - 1),
+    0
+  );
+  const repetitionPenalty = clampUnitMetric(
+    duplicateSegmentCount / Math.max(1, repeatedSegments.length)
+  );
+  const navigationPenalty = clampUnitMetric(
+    linkDensity * 0.45 + navigationDensity * 0.4 + repetitionPenalty * 0.15
+  );
+
+  const positiveScore =
+    sentenceDensity * 0.24 +
+    paragraphDensity * 0.18 +
+    textDensity * 0.14 +
+    textLengthScore * 0.16 +
+    termOverlap * 0.28;
+  const qualityScore = clampUnitMetric(positiveScore * (1 - navigationPenalty * 0.65));
+
+  const headings: string[] = [];
+  candidate.find('h1, h2, h3').slice(0, 6).each((_, heading) => {
+    const headingText = normalizeExtractedText($(heading).text());
+    if (headingText.length > 0 && !headings.includes(headingText)) {
+      headings.push(headingText);
+    }
+  });
+  const headingText = boundExtractionMetadata(headings.join(' | '));
+
+  return {
+    selector: selector.slice(0, MAX_EXTRACTION_METADATA_CHARS),
+    text: scoringText,
+    ...(headingText ? { headingText } : {}),
+    qualityScore,
+    termOverlap,
+    navigationPenalty,
+    navigationDensity,
+    linkDensity
+  };
 }
 
 /**
@@ -121,7 +335,7 @@ export function serializeFetchAndCleanDocument(
   maxChars = getConfiguredMaxChars()
 ): string {
   const linkBlock = buildLinkBlock(document.links);
-  return `${document.text}${linkBlock}`.slice(0, Math.max(0, maxChars));
+  return `${document.text}${linkBlock}`.slice(0, Math.min(Math.max(0, maxChars), HARD_MAX_CHARS));
 }
 
 /**
@@ -135,8 +349,14 @@ export async function fetchAndCleanDocument(
   maxChars = getConfiguredMaxChars(),
   options: FetchAndCleanOptions = {}
 ): Promise<FetchAndCleanDocument> {
+  const fetchStartedAt = Date.now();
   const target = await resolveFetchTarget(url);
   const maxFetchBytes = getConfiguredMaxFetchBytes();
+  const boundedMaxChars = Math.min(Math.max(0, maxChars), HARD_MAX_CHARS);
+  const fetchTimeoutMs = Math.min(
+    Math.max(1, options.timeoutMs ?? getConfiguredFetchTimeoutMs()),
+    HARD_MAX_FETCH_TIMEOUT_MS
+  );
   const httpsAgent =
     target.parsedUrl.protocol === 'https:'
       ? new HttpsAgent({
@@ -146,7 +366,7 @@ export async function fetchAndCleanDocument(
       : undefined;
 
   const response = await axios.get<string>(target.requestUrl.toString(), {
-    timeout: options.timeoutMs ?? getConfiguredFetchTimeoutMs(),
+    timeout: fetchTimeoutMs,
     signal: options.signal,
     maxContentLength: maxFetchBytes,
     maxBodyLength: maxFetchBytes,
@@ -162,16 +382,24 @@ export async function fetchAndCleanDocument(
     },
     httpsAgent
   });
+  const fetchElapsedMs = Date.now() - fetchStartedAt;
 
   const contentType = String(response.headers['content-type'] ?? '').split(';', 1)[0].trim().toLowerCase();
   if (contentType && !['text/html', 'text/plain', 'application/xhtml+xml'].includes(contentType)) {
     throw new Error(`Unsupported content type for web fetching: ${contentType}`);
   }
+  const responseText = typeof response.data === 'string' ? response.data : String(response.data ?? '');
+  const binarySample = responseText.slice(0, 8192);
+  const binaryControlCount = binarySample.match(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\ufffd]/g)?.length ?? 0;
+  if (binarySample.includes('\u0000') || binaryControlCount / Math.max(1, binarySample.length) > 0.03) {
+    throw new Error('Unsupported binary-like content for web fetching');
+  }
 
-  const $ = load(response.data);
+  const extractionStartedAt = Date.now();
+  const $ = load(responseText);
   $('script, style, noscript').remove();
   const rawTextLength = normalizeExtractedText($('body').text()).length;
-  for (const selector of options.removeSelectors ?? []) {
+  for (const selector of (options.removeSelectors ?? []).slice(0, MAX_EXTRACTION_SELECTORS * 4)) {
     try {
       $(selector).remove();
     } catch {
@@ -182,43 +410,90 @@ export async function fetchAndCleanDocument(
   $('p, h1, h2, h3, h4, h5, h6, li, dt, dd, div, section, article, tr, td').append(' ');
 
   const bodyText = normalizeExtractedText($('body').text());
-  let cleanedText = bodyText;
-  let extractionStrategy = 'body';
-  for (const selector of options.preferredContentSelectors ?? []) {
+  const bodyElement = $('body').get(0);
+  const bodyCandidate = bodyElement
+    ? scoreExtractionCandidate($, bodyElement, 'body', options.preferredContentTerms ?? [])
+    : {
+        selector: 'body',
+        text: bodyText,
+        qualityScore: 0,
+        termOverlap: 0,
+        navigationPenalty: 0,
+        navigationDensity: 0,
+        linkDensity: 0
+      };
+  const candidates: ScoredExtractionCandidate[] = [];
+  const seenCandidateElements = new Set<cheerio.Element>();
+  for (const selector of (options.preferredContentSelectors ?? []).slice(0, MAX_EXTRACTION_SELECTORS)) {
+    if (candidates.length >= MAX_EXTRACTION_CANDIDATES) {
+      break;
+    }
     try {
-      let selectedText = '';
-      let selectedTermScore = -1;
       $(selector).each((_, element) => {
-        const candidateText = normalizeExtractedText($(element).text());
-        const candidateTermScore = contentTermScore(candidateText, options.preferredContentTerms ?? []);
-        if (candidateTermScore > selectedTermScore || (
-          candidateTermScore === selectedTermScore && candidateText.length > selectedText.length
-        )) {
-          selectedText = candidateText;
-          selectedTermScore = candidateTermScore;
+        if (candidates.length >= MAX_EXTRACTION_CANDIDATES) {
+          return false;
         }
+        if (seenCandidateElements.has(element)) {
+          return;
+        }
+        seenCandidateElements.add(element);
+        candidates.push(scoreExtractionCandidate(
+          $,
+          element,
+          selector,
+          options.preferredContentTerms ?? []
+        ));
       });
-
-      const minimumUsefulLength = bodyText.length < 120 ? 1 : 120;
-      if (selectedText.length >= minimumUsefulLength) {
-        cleanedText = selectedText;
-        extractionStrategy = selector;
-        break;
-      }
     } catch {
       // Invalid optional selectors degrade to the next selector and then the generic body.
     }
   }
 
+  const bestPreferredCandidate = candidates.reduce<ScoredExtractionCandidate | undefined>((best, candidate) => {
+    if (!best || candidate.qualityScore > best.qualityScore) {
+      return candidate;
+    }
+    if (candidate.qualityScore === best.qualityScore && candidate.termOverlap > best.termOverlap) {
+      return candidate;
+    }
+    if (
+      candidate.qualityScore === best.qualityScore &&
+      candidate.termOverlap === best.termOverlap &&
+      candidate.text.length > best.text.length
+    ) {
+      return candidate;
+    }
+    return best;
+  }, undefined);
+  const minimumUsefulLength = bodyText.length < 120 ? 1 : 80;
+  const selectedCandidate = bestPreferredCandidate &&
+    bestPreferredCandidate.text.length >= minimumUsefulLength &&
+    bestPreferredCandidate.qualityScore >= MIN_PREFERRED_CONTAINER_SCORE
+    ? bestPreferredCandidate
+    : bodyCandidate;
+  const cleanedText = selectedCandidate.text;
+  const extractionStrategy = selectedCandidate.selector;
+  const documentTitle = boundExtractionMetadata($('title').first().text());
+
   options.onExtraction?.({
     strategy: extractionStrategy,
     rawTextLength,
-    cleanedTextLength: cleanedText.length
+    cleanedTextLength: cleanedText.length,
+    fetchElapsedMs,
+    extractionElapsedMs: Date.now() - extractionStartedAt,
+    selectedContainer: selectedCandidate.selector,
+    qualityScore: roundUnitMetric(selectedCandidate.qualityScore),
+    navigationPenalty: roundUnitMetric(selectedCandidate.navigationPenalty),
+    navigationDensity: roundUnitMetric(selectedCandidate.navigationDensity),
+    linkDensity: roundUnitMetric(selectedCandidate.linkDensity),
+    candidateCount: candidates.length,
+    ...(documentTitle ? { documentTitle } : {}),
+    ...(selectedCandidate.headingText ? { headingText: selectedCandidate.headingText } : {})
   });
 
   const seenLinks = new Set<string>();
   const links: FetchAndCleanLinkSummary[] = [];
-  $('a[href]').each((_, el) => {
+  $('a[href]').slice(0, HARD_MAX_LINKS * 4).each((_, el) => {
     const href = $(el).attr('href');
     if (!href) return;
 
@@ -248,7 +523,7 @@ export async function fetchAndCleanDocument(
   return {
     text: cleanedText,
     links: limitedLinks,
-    combined: serializeFetchAndCleanDocument({ text: cleanedText, links: limitedLinks }, maxChars)
+    combined: serializeFetchAndCleanDocument({ text: cleanedText, links: limitedLinks }, boundedMaxChars)
   };
 }
 
@@ -398,6 +673,7 @@ function isInternalIpv6(ipv6Address: string): boolean {
   if (normalized === '::' || normalized === '::1') return true;
   if (normalized.startsWith('fc') || normalized.startsWith('fd')) return true; // fc00::/7
   if (/^fe[89ab]/.test(normalized)) return true; // fe80::/10
+  if (/^fe[c-f]/.test(normalized)) return true; // fec0::/10 deprecated site-local.
   if (normalized.startsWith('ff')) return true; // ff00::/8 multicast.
   if (normalized === '2001:db8' || normalized.startsWith('2001:db8:')) return true; // Documentation prefix.
 
