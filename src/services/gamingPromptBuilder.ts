@@ -15,7 +15,7 @@ const gamingPrompts = {
 
 const modeInstructions: Record<GamingMode, string> = {
   guide: "Return a practical guide with concrete steps, checkpoints, and missing-info notes instead of simulation.",
-  build: "Return a build recommendation with priorities, tradeoffs, and setup guidance. Do not invent patch details.",
+  build: "Return a build recommendation with priorities, tradeoffs, and setup guidance. When structured build evidence is present, distinguish extracted facts, inferred role or synergy, recommendations, and unknown fields. Do not invent missing items, skills, stats, modules, or patch details.",
   meta: "Return a meta overview with current assumptions, tradeoffs, counters, and explicit uncertainty when patch/version context is missing."
 };
 

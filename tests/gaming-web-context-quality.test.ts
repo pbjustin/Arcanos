@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { logger } from '../src/platform/logging/structuredLogging.js';
+import { gamingStructuredResourceFixtures } from './testUtils/gamingStructuredResourceFixtures.js';
 
 const mockFetchAndClean = jest.fn();
 const mockGetEnv = jest.fn();
@@ -26,6 +27,11 @@ const {
   isCitableGamingWebSource,
   scoreGamingSnippetQuality
 } = await import('../src/services/gamingWebContext.js');
+const {
+  GAMING_BUILD_RESOURCE_HARD_LIMITS,
+  getGamingBuildResourceCacheStats,
+  ingestGamingBuildResource
+} = await import('../src/services/gamingBuildResources.js');
 
 const TEST_ENV_KEYS = [
   'ARCANOS_GAMING_CURATED_SOURCES_JSON',
@@ -308,6 +314,178 @@ describe('gaming RAG snippet quality', () => {
     expect(result.context).toContain(`[Source 1] ${url}`);
     expect(result.context).not.toMatch(/cookie settings|privacy policy|community navigation/i);
     expect(result.sources.some((source) => /fextralife|wowhead|icy-veins|bungie\.net/i.test(source.url))).toBe(false);
+  });
+
+  it('uses a self-contained structured build URL as normalized source-backed evidence when page fetch fails', async () => {
+    const fixture = gamingStructuredResourceFixtures[0];
+    mockFetchAndClean.mockRejectedValue(new Error('upstream page unavailable'));
+
+    const result = await buildGamingRagContext({
+      mode: 'build',
+      game: fixture.game,
+      prompt: `Review this ${fixture.game} ship build.`,
+      guideUrl: fixture.jsonUrl,
+      guideUrls: []
+    });
+
+    expect(result.sources).toHaveLength(1);
+    expect(result.sources[0]).toEqual(expect.objectContaining({
+      url: expect.not.stringMatching(/build=|#/),
+      snippet: expect.stringMatching(/^Structured build resource detected:/)
+    }));
+    expect(result.context).toContain('[STRUCTURED BUILD EVIDENCE - EXTRACTED FACTS ONLY]');
+    expect(result.context).toContain('Light Ion Blaster II');
+    expect(result.context).toContain('Recommendations must be labeled separately');
+    expect(result.context).not.toContain(encodeURIComponent(JSON.stringify(fixture.payload)));
+    expect(result.detectedGame).toBe(fixture.game);
+  });
+
+  it('extracts Next.js planner state from the bounded raw-document callback', async () => {
+    const fixture = gamingStructuredResourceFixtures[1];
+    const html = `<html><head><title>${fixture.game} Talent Calculator</title></head><body><script id="__NEXT_DATA__" type="application/json">${JSON.stringify({ props: { pageProps: { build: fixture.payload } } })}</script></body></html>`;
+    mockFetchAndClean.mockImplementation(async (_url: string, _maxChars: number, options?: {
+      onRawDocument?: (document: { body: string; contentType: string; truncated: boolean }) => void;
+      onExtraction?: (metrics: Record<string, unknown>) => void;
+    }) => {
+      options?.onRawDocument?.({ body: html, contentType: 'text/html', truncated: false });
+      options?.onExtraction?.({
+        strategy: 'body',
+        rawTextLength: 0,
+        cleanedTextLength: 0,
+        documentTitle: `${fixture.game} Talent Calculator`,
+        headingText: 'Talent Calculator'
+      });
+      return '';
+    });
+
+    const result = await buildGamingRagContext({
+      mode: 'build',
+      prompt: 'Review the linked raid healer talents.',
+      guideUrl: 'https://state-only.example/talent-calculator/share',
+      guideUrls: []
+    });
+
+    expect(result.detectedGame).toBe(fixture.game);
+    expect(result.sources[0]?.snippet).toMatch(/^Structured build resource detected:/);
+    expect(result.context).toContain('Renewing Bloom');
+    expect(result.context).not.toContain('__NEXT_DATA__');
+  });
+
+  it('returns a bounded safe structured fallback when a planner payload cannot be decoded', async () => {
+    const rawPayload = '{malformed-secret-payload';
+    const url = `https://unknown-planner.example/build-planner/share?build=${encodeURIComponent(rawPayload)}`;
+    mockFetchAndClean.mockResolvedValue('');
+
+    const result = await buildGamingRagContext({
+      mode: 'guide',
+      prompt: 'Inspect this shared planner.',
+      guideUrl: url,
+      guideUrls: []
+    });
+
+    expect(result.sources).toEqual([{
+      url: 'https://unknown-planner.example/build-planner/share',
+      snippet: 'Structured build resource detected, but the loadout data could not be decoded safely.'
+    }]);
+    expect(result.context).toContain('could not be decoded safely');
+    expect(JSON.stringify(result)).not.toContain(rawPayload);
+    expect(JSON.stringify(result)).not.toMatch(/SyntaxError|Unexpected token/i);
+  });
+
+  it('does not turn an oversized invalid planner URL into a citable source', async () => {
+    const url = `https://oversized.example/build-planner?build=${'A'.repeat(GAMING_BUILD_RESOURCE_HARD_LIMITS.maxUrlChars)}`;
+    const result = await buildGamingRagContext({
+      mode: 'guide',
+      prompt: 'Inspect this oversized planner.',
+      guideUrl: url,
+      guideUrls: []
+    });
+
+    expect(mockFetchAndClean).not.toHaveBeenCalled();
+    expect(result.sources).toEqual([{
+      url: 'invalid-source',
+      error: 'Structured build resource detected, but the loadout data could not be decoded safely.'
+    }]);
+    expect(result.sources.some(isCitableGamingWebSource)).toBe(false);
+    expect(result.context).toBe('');
+  });
+
+  it('suppresses structured facts when the normalized resource belongs to the wrong requested game', async () => {
+    const fixture = gamingStructuredResourceFixtures[3];
+    mockFetchAndClean.mockRejectedValue(new Error('page fetch failed'));
+
+    const result = await buildGamingRagContext({
+      mode: 'build',
+      game: fixture.game,
+      prompt: `Review this ${fixture.game} loadout.`,
+      guideUrl: fixture.wrongGameUrl,
+      guideUrls: []
+    });
+
+    expect(result.sources).toEqual([expect.objectContaining({
+      url: expect.not.stringMatching(/build=|#/),
+      snippet: 'Relevant source retrieved, but readable article text was limited.'
+    })]);
+    expect(result.context).not.toContain('VX-9 SMG');
+    expect(result.sources.some(isCitableGamingWebSource)).toBe(false);
+  });
+
+  it('logs bounded structured extraction metrics without raw URLs or payloads', async () => {
+    const fixture = gamingStructuredResourceFixtures[4];
+    const infoSpy = jest.spyOn(logger, 'info').mockImplementation(() => undefined);
+    mockFetchAndClean.mockRejectedValue(new Error('page unavailable'));
+
+    try {
+      await buildGamingRagContext({
+        mode: 'build',
+        game: fixture.game,
+        prompt: `Review this ${fixture.game} deck.`,
+        guideUrl: fixture.base64Url,
+        guideUrls: []
+      }, {
+        module: 'ARCANOS:GAMING',
+        route: 'gaming',
+        mode: 'build',
+        sourceEndpoint: 'arcanos-gaming.build',
+        requestId: 'structured-request',
+        traceId: 'structured-trace'
+      });
+
+      expect(infoSpy).toHaveBeenCalledWith('gaming.retrieval.source.selection', expect.objectContaining({
+        requestId: 'structured-request',
+        traceId: 'structured-trace',
+        requestedGame: fixture.game,
+        detectedGame: fixture.game,
+        resourceType: 'build_planner',
+        resourceConfidence: expect.any(Number),
+        adapterId: 'generic',
+        structuredExtractionStrategy: 'url_payload',
+        payloadLength: expect.any(Number),
+        payloadHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        decodedSize: expect.any(Number),
+        normalizedFieldCount: expect.any(Number),
+        equipmentCount: 3,
+        skillCount: 0,
+        statCount: 4,
+        extractionQuality: expect.stringMatching(/complete|substantial|partial/),
+        validationResult: 'accepted',
+        structuredEvidenceUsed: true
+      }));
+      const serializedLogs = JSON.stringify(infoSpy.mock.calls);
+      expect(serializedLogs).not.toContain(new URL(fixture.base64Url).searchParams.get('payload'));
+      expect(serializedLogs).not.toMatch(/payload=|build=|#/);
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
+  it('clears normalized structured-build entries with the existing Gaming RAG cache hook', async () => {
+    await ingestGamingBuildResource({ url: gamingStructuredResourceFixtures[0].base64Url });
+    expect(getGamingBuildResourceCacheStats().activeEntries).toBeGreaterThan(0);
+
+    clearGamingRagCache();
+
+    expect(getGamingBuildResourceCacheStats().activeEntries).toBe(0);
   });
 
   it('detects a game from agreeing bounded page title and heading metadata', async () => {

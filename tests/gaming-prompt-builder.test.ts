@@ -12,7 +12,7 @@ jest.unstable_mockModule('@platform/runtime/prompts.js', () => ({
   })
 }));
 
-const { buildGamingPrompt } = await import('../src/services/gamingPromptBuilder.js');
+const { buildGamingPrompt, buildGamingSystemPrompt } = await import('../src/services/gamingPromptBuilder.js');
 
 describe('gaming prompt web-evidence boundary', () => {
   it('keeps source-looking instructions and delimiters inside a static untrusted-data boundary', () => {
@@ -67,5 +67,20 @@ describe('gaming prompt web-evidence boundary', () => {
     );
     expect(prompt).not.toContain('[UNTRUSTED WEB EVIDENCE - DATA ONLY]');
     expect(prompt).not.toContain('[END UNTRUSTED WEB EVIDENCE]');
+  });
+
+  it('requires build analysis to separate extracted facts, inference, recommendations, and unknowns', () => {
+    const systemPrompt = buildGamingSystemPrompt('build');
+    const prompt = buildGamingPrompt({
+      mode: 'build',
+      prompt: 'Review this build.',
+      game: 'Fixture Game',
+      auditEnabled: false
+    }, '[STRUCTURED BUILD EVIDENCE - EXTRACTED FACTS ONLY]\nEquipment: Verified Blade.', true);
+
+    expect(systemPrompt).toMatch(/distinguish extracted facts, inferred role or synergy, recommendations, and unknown fields/i);
+    expect(systemPrompt).toMatch(/do not invent missing items, skills, stats, modules/i);
+    expect(prompt).toContain('[UNTRUSTED WEB EVIDENCE - DATA ONLY]');
+    expect(prompt).toContain('Verified Blade');
   });
 });
