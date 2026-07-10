@@ -199,6 +199,19 @@ export function normalizeGamingInlineSourceReferences(response: string, sourceCo
     .replace(/\[(?:sources?)\s+([\d,\s]+)\]/gi, (fullMatch, rawNumbers: string) =>
       normalizeMatch(fullMatch, rawNumbers, "bracket")
     )
+    .replace(/\[([\d,\s]+)\]/g, (fullMatch, rawNumbers: string) => {
+      const numbers = parseCitationNumbers(rawNumbers);
+      for (const number of numbers) {
+        maxInlineSourceRef = Math.max(maxInlineSourceRef, number);
+      }
+
+      const validNumbers = Array.from(new Set(numbers.filter((number) => number <= sourceCount)));
+      const normalizedMatch = validNumbers.length > 0 ? `[${validNumbers.join(", ")}]` : "";
+      if (normalizedMatch !== fullMatch) {
+        applied = true;
+      }
+      return normalizedMatch;
+    })
     .replace(/\((?:sources?)\s+([\d,\s]+)\)/gi, (fullMatch, rawNumbers: string) =>
       normalizeMatch(fullMatch, rawNumbers, "paren")
     )
