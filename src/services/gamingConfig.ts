@@ -14,6 +14,12 @@ export const DEFAULT_GAMING_PIPELINE_TIMEOUT_MS = 35_000;
 export const DEFAULT_GAMING_GUIDE_PIPELINE_TIMEOUT_MS = 50_000;
 export const DEFAULT_GAMING_STAGE_TIMEOUT_MS = 12_000;
 export const DEFAULT_GAMING_GUIDE_STAGE_TIMEOUT_MS = 15_000;
+const HARD_MAX_GAMING_WEB_CONTEXT_CHARS = 50_000;
+const HARD_MAX_GAMING_WEB_CONTEXT_URLS = 32;
+const HARD_MAX_GAMING_WEB_FETCH_TIMEOUT_MS = 30_000;
+const HARD_MAX_GAMING_RAG_SOURCES = 32;
+const HARD_MAX_GAMING_RAG_CHUNKS = 48;
+const HARD_MAX_GAMING_RAG_CHUNK_CHARS = 4_000;
 export const GAMING_REQUEST_TIMEOUT_HEADROOM_MS = 1_000;
 export const GAMING_PROVIDER_DISPATCH_HEADROOM_MS = 5_000;
 export const GAMING_RUNTIME_BUDGET_SAFETY_BUFFER_MS = 500;
@@ -27,27 +33,27 @@ export function getGamingModuleTimeoutMs(): number {
 }
 
 export function getGamingWebContextMaxChars(): number {
-  return getEnvIntegerAtLeast(
+  return Math.min(getEnvIntegerAtLeast(
     "ARCANOS_GAMING_WEB_CONTEXT_CHARS",
     DEFAULT_GAMING_WEB_CONTEXT_CHARS,
     0
-  );
+  ), HARD_MAX_GAMING_WEB_CONTEXT_CHARS);
 }
 
 export function getGamingWebContextMaxUrls(): number {
-  return getEnvIntegerAtLeast(
+  return Math.min(getEnvIntegerAtLeast(
     "ARCANOS_GAMING_WEB_CONTEXT_MAX_URLS",
     DEFAULT_GAMING_WEB_CONTEXT_MAX_URLS,
     0
-  );
+  ), HARD_MAX_GAMING_WEB_CONTEXT_URLS);
 }
 
 export function getGamingWebContextFetchTimeoutMs(): number {
-  return getEnvIntegerAtLeast(
+  return Math.min(getEnvIntegerAtLeast(
     "ARCANOS_GAMING_WEB_CONTEXT_FETCH_TIMEOUT_MS",
     DEFAULT_GAMING_WEB_CONTEXT_FETCH_TIMEOUT_MS,
     1
-  );
+  ), HARD_MAX_GAMING_WEB_FETCH_TIMEOUT_MS);
 }
 
 export function getGamingRagEnabled(): boolean {
@@ -56,27 +62,27 @@ export function getGamingRagEnabled(): boolean {
 }
 
 export function getGamingRagMaxSources(): number {
-  return getEnvIntegerAtLeast(
+  return Math.min(getEnvIntegerAtLeast(
     "ARCANOS_GAMING_RAG_MAX_SOURCES",
     DEFAULT_GAMING_RAG_MAX_SOURCES,
     0
-  );
+  ), HARD_MAX_GAMING_RAG_SOURCES);
 }
 
 export function getGamingRagMaxChunks(): number {
-  return getEnvIntegerAtLeast(
+  return Math.min(getEnvIntegerAtLeast(
     "ARCANOS_GAMING_RAG_MAX_CHUNKS",
     DEFAULT_GAMING_RAG_MAX_CHUNKS,
     0
-  );
+  ), HARD_MAX_GAMING_RAG_CHUNKS);
 }
 
 export function getGamingRagChunkChars(): number {
-  return getEnvIntegerAtLeast(
+  return Math.min(getEnvIntegerAtLeast(
     "ARCANOS_GAMING_RAG_CHUNK_CHARS",
     DEFAULT_GAMING_RAG_CHUNK_CHARS,
     200
-  );
+  ), HARD_MAX_GAMING_RAG_CHUNK_CHARS);
 }
 
 export function getGamingRagTtlMs(mode: GamingMode, patchSensitive: boolean): number {

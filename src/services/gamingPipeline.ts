@@ -25,7 +25,8 @@ import {
 import { buildGamingTrinityPrompt } from "@services/gamingPromptBuilder.js";
 import {
   buildGamingRagContext,
-  collectGamingGuideUrls
+  collectGamingGuideUrls,
+  isCitableGamingWebSource
 } from "@services/gamingWebContext.js";
 
 export type GamingPipelineInput = Pick<
@@ -71,6 +72,12 @@ function readErrorString(error: unknown, key: string): string | undefined {
 
   const value = (error as Record<string, unknown>)[key];
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function createGamingGameRequiredError(mode: GamingMode): Error {
+  const error = new Error(`Gaming mode '${mode}' requires a reliably detected game.`);
+  Object.assign(error, { code: "GAMING_GAME_REQUIRED", mode });
+  return error;
 }
 
 const PROVIDER_TIMEOUT_ERROR_MARKERS = [
@@ -260,7 +267,8 @@ function formatGameplaySuccessWithLogs(params: {
   fallbackReason?: string;
 }): GamingSuccessEnvelope {
   const postprocessStartedAt = Date.now();
-  const citationNormalization = normalizeGamingInlineSourceReferences(params.response, params.sources.length);
+  const citableSourceCount = params.sources.filter(isCitableGamingWebSource).length;
+  const citationNormalization = normalizeGamingInlineSourceReferences(params.response, citableSourceCount);
   const response = citationNormalization.response;
   logger.info("gaming.postprocess.start", {
     ...params.logContext,
@@ -268,6 +276,7 @@ function formatGameplaySuccessWithLogs(params: {
     sourceCount: params.sources.length,
     retrievedSourceCount: params.retrievedSourceCount ?? params.sources.length,
     publicSourceCount: params.sources.length,
+    citableSourceCount,
     omittedSourceCount: params.omittedSourceCount ?? 0,
     maxInlineSourceRef: citationNormalization.maxInlineSourceRef,
     citationNormalizationApplied: citationNormalization.applied,
@@ -289,6 +298,7 @@ function formatGameplaySuccessWithLogs(params: {
     sourceCount: params.sources.length,
     retrievedSourceCount: params.retrievedSourceCount ?? params.sources.length,
     publicSourceCount: params.sources.length,
+    citableSourceCount,
     omittedSourceCount: params.omittedSourceCount ?? 0,
     maxInlineSourceRef: citationNormalization.maxInlineSourceRef,
     citationNormalizationApplied: citationNormalization.applied,
@@ -312,31 +322,9 @@ function formatGameplaySuccessWithLogs(params: {
   return envelope;
 }
 
-function hasEldenRingContext(params: GamingPipelineInput): boolean {
-  return /\belden\s+ring\b/i.test(`${params.game ?? ""} ${params.prompt}`);
-}
-
 function buildGuideFallbackSteps(params: GamingPipelineInput): string[] {
-  if (hasEldenRingContext(params)) {
-    if (/\b(after\s+leaving\s+the\s+tutorial|where\s+do\s+i\s+go\s+first|go\s+first)\b/i.test(params.prompt)) {
-      return [
-        "Rest at The First Step Site of Grace, then head to the Church of Elleh for the merchant and crafting kit.",
-        "Follow the guidance trail toward Gatefront Ruins, grab the map fragment, and rest at a grace to unlock Torrent.",
-        "Avoid fighting the Tree Sentinel early; clear nearby caves, ruins, and soldier camps for runes and upgrade materials.",
-        "Level Vigor early, upgrade one weapon you like, then try Margit and Stormveil only after Limgrave feels manageable."
-      ];
-    }
-
-    return [
-      "Start in Limgrave, unlock Sites of Grace, the Church of Elleh, Gatefront Ruins, the map fragment, and Torrent.",
-      "Prioritize survivability first: level Vigor, keep equipment load medium or lighter, and upgrade one main weapon.",
-      "Explore caves, ruins, and Weeping Peninsula before forcing Stormveil; skip enemies that are clearly overtuned.",
-      "Use spirit ashes, guard counters, jumping attacks, and status tools when bosses punish repeated light-attack trades."
-    ];
-  }
-
   return [
-    "Confirm the next objective, nearest checkpoint, and any missing game/version details before committing rare resources.",
+    `For ${params.game ?? "the requested game"}, confirm the next objective, nearest checkpoint, and any missing version details before committing rare resources.`,
     "Upgrade or repair core gear, stock healing and utility items, and retry the next encounter while watching repeatable mechanics.",
     "If progress stalls, narrow the request to the exact boss, quest, route, build, or checkpoint for a more precise guide.",
     "Treat patch-sensitive numbers as provisional until verified in game or against a provided guide URL."
@@ -364,7 +352,7 @@ function sourceAvailabilityLine(sources: GamingWebSource[]): string {
     return "Sources unavailable: no source-backed game data was available for this request.";
   }
 
-  const usableSourceCount = sources.filter((source) => Boolean(source.snippet)).length;
+  const usableSourceCount = sources.filter(isCitableGamingWebSource).length;
   if (usableSourceCount === 0) {
     return "Sources unavailable: selected game-data sources could not be retrieved before the fallback.";
   }
@@ -513,15 +501,17 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
   let retrievedSourceCount = 0;
   let publicSourceCount = 0;
   let omittedSourceCount = 0;
+  let retrievedGame: string | undefined;
   try {
     const webContextResult = await buildGamingRagContext(params, baseLogContext);
     webContext = webContextResult.context;
     sources = webContextResult.sources;
     retrievalAttempted = webContextResult.retrievalEnabled;
-    retrievalHadUsableSources = sources.some((source) => Boolean(source.snippet));
+    retrievalHadUsableSources = sources.some(isCitableGamingWebSource);
     retrievedSourceCount = webContextResult.retrievedSourceCount;
     publicSourceCount = webContextResult.publicSourceCount;
     omittedSourceCount = webContextResult.omittedSourceCount;
+    retrievedGame = webContextResult.detectedGame;
     logGamingIntakeStep(baseLogContext, "retrieval", retrievalStartedAt, {
       ok: true,
       retrievalEnabled: webContextResult.retrievalEnabled,
@@ -535,12 +525,15 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
       omittedSourceCount,
       sourceDomains: webContextResult.sourceDomains,
       cacheHit: webContextResult.cacheHit,
-      usableSourceCount: sources.filter((source) => Boolean(source.snippet)).length,
+      usableSourceCount: sources.filter(isCitableGamingWebSource).length,
       failedSourceCount: sources.filter((source) => Boolean(source.error)).length,
       clearPassed: webContextResult.clear.passed,
       ...(webContextResult.fallbackReason ? { fallbackReason: webContextResult.fallbackReason } : {})
     });
-    if (webContextResult.fallbackReason === "INTAKE_RETRIEVAL_TIMEOUT") {
+    if (
+      webContextResult.fallbackReason === "INTAKE_RETRIEVAL_TIMEOUT"
+      && (params.game || (params.mode !== "build" && params.mode !== "meta"))
+    ) {
       logger.warn("gaming.fallback.used", {
         ...baseLogContext,
         retrievalEnabled: webContextResult.retrievalEnabled,
@@ -600,6 +593,13 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
     });
   }
 
+  const resolvedParams: GamingPipelineInput = !params.game && retrievedGame
+    ? { ...params, game: retrievedGame }
+    : params;
+  if ((resolvedParams.mode === "build" || resolvedParams.mode === "meta") && !resolvedParams.game) {
+    throw createGamingGameRequiredError(resolvedParams.mode);
+  }
+
   const { client } = getOpenAIClientOrAdapter();
 
   if (!client) {
@@ -608,7 +608,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
       provider: "openai",
       fallback: "mock"
     });
-    const mock = generateMockResponse(params.prompt, params.mode);
+    const mock = generateMockResponse(resolvedParams.prompt, resolvedParams.mode);
     return formatGameplaySuccessWithLogs({
       mode: params.mode,
       response: stringifyMockResult(mock.result),
@@ -647,11 +647,11 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
       () =>
         runTrinityWritingPipeline({
           input: {
-            prompt: buildGamingTrinityPrompt(params, webContext, retrievalAttempted || retrievalHadUsableSources),
+            prompt: buildGamingTrinityPrompt(resolvedParams, webContext, retrievalAttempted || retrievalHadUsableSources),
             moduleId: "ARCANOS:GAMING",
             sourceEndpoint,
             requestedAction: "query",
-            body: params,
+            body: resolvedParams,
             executionMode: "request"
           },
           context: {
@@ -729,7 +729,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
       return formatGameplaySuccessWithLogs({
         mode: params.mode,
         response: buildGamingProviderFallbackResponse({
-          input: params,
+          input: resolvedParams,
           sources,
           fallbackReason,
           timeoutPhase
@@ -748,7 +748,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
       const errorCode = readErrorString(error, "code");
       logger.warn("gaming.provider.incomplete", {
         ...baseLogContext,
-        ...(params.game ? { game: params.game } : {}),
+        ...(resolvedParams.game ? { game: resolvedParams.game } : {}),
         provider: "trinity",
         elapsedMs,
         generationElapsedMs: elapsedMs,
@@ -768,7 +768,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
       });
       logger.warn("gaming.fallback.used", {
         ...baseLogContext,
-        ...(params.game ? { game: params.game } : {}),
+        ...(resolvedParams.game ? { game: resolvedParams.game } : {}),
         provider: "trinity",
         fallbackReason,
         elapsedMs,
@@ -778,7 +778,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
       return formatGameplaySuccessWithLogs({
         mode: params.mode,
         response: buildGamingProviderFallbackResponse({
-          input: params,
+          input: resolvedParams,
           sources,
           fallbackReason
         }),
@@ -819,7 +819,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
     return formatGameplaySuccessWithLogs({
       mode: params.mode,
       response: buildGamingProviderFallbackResponse({
-        input: params,
+        input: resolvedParams,
         sources,
         fallbackReason
       }),

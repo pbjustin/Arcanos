@@ -285,7 +285,8 @@ describe('ArcanosGaming module', () => {
         response: expect.stringContaining('Backend-supported: none. The backend did not return usable guidance.'),
       }),
     }));
-    expect((result as any).data.response).toContain('Backend failure: backend timeout');
+    expect((result as any).data.response).toContain('Generation timed out before a complete answer was available');
+    expect((result as any).data.response).not.toContain('backend timeout');
   });
 
   it('returns a labeled general fallback when the backend response is malformed', async () => {
@@ -311,7 +312,8 @@ describe('ArcanosGaming module', () => {
         response: expect.stringContaining('General Fallback (not backend-supported)'),
       }),
     }));
-    expect((result as any).data.response).toContain('Malformed backend response');
+    expect((result as any).data.response).toContain('no backend error details were exposed');
+    expect((result as any).data.response).not.toContain('Malformed backend response');
   });
 
   it('refuses security-blocked internal control-plane requests', async () => {

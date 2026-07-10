@@ -13,6 +13,7 @@ const mockGetEnvIntegerAtLeast = jest.fn();
 const mockGetOptionalEnvIntegerAtLeast = jest.fn();
 const mockGetEnvBoolean = jest.fn();
 const mockRunTrinityWritingPipeline = jest.fn();
+const DEFAULT_GUIDE_SNIPPET = 'Clean guide explains boss mechanics, route steps, and readable gameplay evidence.';
 
 function expectFetchOptions(timeoutMs = 5000) {
   return expect.objectContaining({
@@ -112,7 +113,7 @@ describe('gaming guide output hardening', () => {
     mockGetGPT5Model.mockReturnValue('gpt-5.1-test');
     mockGenerateMockResponse.mockReturnValue({ result: 'mock guide result' });
     mockGetPrompt.mockImplementation((_section: string, key: string) => `${key}-prompt`);
-    mockFetchAndClean.mockResolvedValue('clean snippet');
+    mockFetchAndClean.mockResolvedValue(DEFAULT_GUIDE_SNIPPET);
     mockRunTrinityWritingPipeline.mockResolvedValue({ result: 'Direct gameplay answer' });
     mockGetOpenAIClientOrAdapter.mockReturnValue({
       adapter: {
@@ -225,7 +226,7 @@ describe('gaming guide output hardening', () => {
       data: expect.objectContaining({
         response: swtorGuide,
         sources: [
-          { url: 'https://swtorista.com/articles/', snippet: 'clean snippet' }
+          { url: 'https://swtorista.com/articles/', snippet: DEFAULT_GUIDE_SNIPPET }
         ]
       })
     }));
@@ -454,6 +455,62 @@ describe('gaming guide output hardening', () => {
     }));
   });
 
+  it.each([
+    ['build', 'Caves of Qud Build', 'Caves of Qud'],
+    ['meta', 'Broken Ranks Class Meta', 'Broken Ranks']
+  ] as const)('resolves a missing %s game from a strong supplied-page metadata signal', async (mode, pageHeading, expectedGame) => {
+    const url = `https://community.example/article/${mode}`;
+    mockFetchAndClean.mockImplementation(async (_url: string, _maxChars: number, options?: { onExtraction?: (metrics: Record<string, unknown>) => void }) => {
+      options?.onExtraction?.({
+        strategy: 'article',
+        selectedContainer: 'article',
+        qualityScore: 0.9,
+        navigationPenalty: 0.02,
+        linkDensity: 0.01,
+        candidateCount: 2,
+        rawTextLength: 170,
+        cleanedTextLength: 150,
+        ...(mode === 'build' ? { documentTitle: pageHeading } : { headingText: pageHeading })
+      });
+      return `${expectedGame} ${mode} evidence explains readable gameplay choices, priorities, tradeoffs, and current recommendations.`;
+    });
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce({
+      result: `Source-backed ${mode} response`,
+      activeModel: 'gpt-test',
+      meta: { provider: { finishReason: 'stop' } }
+    });
+
+    const pipeline = mode === 'build' ? runBuildPipeline : runMetaPipeline;
+    const result = await pipeline({
+      prompt: `Use the supplied article for this ${mode} request.`,
+      guideUrl: url,
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.data.sources).toEqual([expect.objectContaining({ url })]);
+    const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
+    expect(trinityRequest.input.prompt).toContain(expectedGame);
+  });
+
+  it.each([
+    ['build', 'best build for the current patch', runBuildPipeline],
+    ['meta', 'meta for the latest season', runMetaPipeline]
+  ] as const)('raises a tagged game-required result when a supplied %s page has no usable game metadata', async (_mode, prompt, pipeline) => {
+    mockFetchAndClean.mockResolvedValue(
+      'This community article contains readable gameplay recommendations but does not identify which game they apply to.'
+    );
+
+    await expect(pipeline({
+      prompt,
+      guideUrl: 'https://unknown.example/article/123',
+      guideUrls: [],
+      auditEnabled: false
+    })).rejects.toMatchObject({ code: 'GAMING_GAME_REQUIRED' });
+    expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
+  });
+
   it('keeps repeated meta requests off the direct-answer integrity path', async () => {
     const metaAnswer = [
       '1. Frost Mage is viable when its control, cleave, and burst windows match the current encounter profile.',
@@ -580,6 +637,28 @@ describe('gaming guide output hardening', () => {
     expect(result.data.response).not.toMatch(/\bsource\s+\d+\b/i);
   });
 
+  it('removes inline citations when the only public source has no readable evidence', async () => {
+    mockFetchAndClean.mockResolvedValue('Menu. Sign In. Cookie Settings. Privacy Policy. Related. Categories.');
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce({
+      result: 'Treat this as verified source-backed guidance [1].',
+      activeModel: 'gpt-test',
+      meta: { provider: { finishReason: 'stop' } }
+    });
+
+    const result = await runGuidePipeline({
+      prompt: 'Use this supplied guide.',
+      guideUrl: 'https://unknown.example/chrome-only',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(result.data.sources).toEqual([{
+      url: 'https://unknown.example/chrome-only',
+      snippet: 'Relevant source retrieved, but readable article text was limited.'
+    }]);
+    expect(extractInlineSourceRefs(result.data.response)).toEqual([]);
+  });
+
   it('preserves retrieved sources when generic provider generation fails', async () => {
     mockFetchAndClean.mockResolvedValueOnce('Elden Ring route guide: start in Limgrave, follow Sites of Grace, upgrade flasks, and prepare before Stormveil Castle.');
     mockRunTrinityWritingPipeline.mockRejectedValueOnce(new Error('provider unavailable'));
@@ -623,7 +702,7 @@ describe('gaming guide output hardening', () => {
     expect(result.data.response).toContain('Sources available');
     expect(result.data.response).toContain('INTAKE_UPSTREAM_TIMEOUT');
     expect(result.data.response).toContain('Timeout phase: intake.');
-    expect(result.data.response).toContain('Limgrave');
+    expect(result.data.response).toContain('For Elden Ring');
   });
 
   it('returns a controlled fallback when runtime budget exhaustion reaches the guide pipeline', async () => {
@@ -839,8 +918,8 @@ describe('gaming guide output hardening', () => {
     expect(mockFetchAndClean).toHaveBeenNthCalledWith(1, 'https://example.com/guide-a', 512, expectFetchOptions());
     expect(mockFetchAndClean).toHaveBeenNthCalledWith(2, 'https://example.com/guide-b', 512, expectFetchOptions());
     expect(result.data.sources).toEqual([
-      { url: 'https://example.com/guide-a', snippet: 'clean snippet' },
-      { url: 'https://example.com/guide-b', snippet: 'clean snippet' }
+      { url: 'https://example.com/guide-a', snippet: DEFAULT_GUIDE_SNIPPET },
+      { url: 'https://example.com/guide-b', snippet: DEFAULT_GUIDE_SNIPPET }
     ]);
     const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
     expect(trinityRequest.input.prompt).not.toContain('https://example.com/guide-c');
@@ -866,8 +945,8 @@ describe('gaming guide output hardening', () => {
     expect(mockFetchAndClean).toHaveBeenNthCalledWith(1, 'https://example.com/guide-a', 512, expectFetchOptions());
     expect(mockFetchAndClean).toHaveBeenNthCalledWith(2, 'http://example.com/guide-b', 512, expectFetchOptions());
     expect(result.data.sources).toEqual([
-      { url: 'https://example.com/guide-a', snippet: 'clean snippet' },
-      { url: 'http://example.com/guide-b', snippet: 'clean snippet' }
+      { url: 'https://example.com/guide-a', snippet: DEFAULT_GUIDE_SNIPPET },
+      { url: 'http://example.com/guide-b', snippet: DEFAULT_GUIDE_SNIPPET }
     ]);
     const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
     expect(trinityRequest.input.prompt).toContain('[Source 1] https://example.com/guide-a');
@@ -921,7 +1000,7 @@ describe('gaming guide output hardening', () => {
     });
 
     expect(result.data.sources).toEqual([
-      { url: 'https://example.com/guide', snippet: 'clean snippet' }
+      { url: 'https://example.com/guide', snippet: DEFAULT_GUIDE_SNIPPET }
     ]);
     expect(mockFetchAndClean).toHaveBeenCalledWith('https://example.com/guide', 512, expectFetchOptions());
     expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(
@@ -953,7 +1032,7 @@ describe('gaming guide output hardening', () => {
     expect(result.ok).toBe(true);
     expect(result.data.response).toBe('Use the safe route and verify the linked guide later.');
     expect(result.data.sources).toEqual([
-      { url: 'https://example.com/guide', error: 'network unavailable' }
+      { url: 'https://example.com/guide', error: 'Source could not be retrieved.' }
     ]);
     const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
     expect(trinityRequest.input.prompt).toContain('Source retrieval ran or sources were provided, but no usable snippets were retrieved.');
@@ -985,7 +1064,7 @@ describe('gaming guide output hardening', () => {
     expect(result.data.sources).toEqual([
       {
         url: 'https://example.com/guide',
-        error: 'Gaming guide source fetch timed out after 5ms.'
+        error: 'Source retrieval timed out.'
       }
     ]);
     expect(mockFetchAndClean).toHaveBeenCalledWith(
@@ -1207,7 +1286,7 @@ describe('gaming guide output hardening', () => {
     process.env.ARCANOS_GAMING_WEB_CONTEXT_CHARS = '2000';
     process.env.ARCANOS_GAMING_RAG_CHUNK_CHARS = '200';
     process.env.ARCANOS_GAMING_RAG_MAX_CHUNKS = '4';
-    const longSentence = `oversized-start ${'alpha '.repeat(45)}oversized-end final safe punish window.`;
+    const longSentence = `oversized-start ${'collect resources and upgrade gear before each encounter '.repeat(12)}oversized-end final safe punish window.`;
     mockFetchAndClean.mockResolvedValue(longSentence);
 
     const result = await buildGamingRagContext({
@@ -1222,28 +1301,29 @@ describe('gaming guide output hardening', () => {
   });
 
   it('bounds the RAG document cache and refetches entries evicted from the cache', async () => {
-    process.env.ARCANOS_GAMING_WEB_CONTEXT_MAX_URLS = '102';
-    process.env.ARCANOS_GAMING_RAG_MAX_SOURCES = '102';
+    process.env.ARCANOS_GAMING_WEB_CONTEXT_MAX_URLS = '32';
+    process.env.ARCANOS_GAMING_RAG_MAX_SOURCES = '32';
     process.env.ARCANOS_GAMING_RAG_MAX_CHUNKS = '1';
     const urls = Array.from({ length: 102 }, (_value, index) => `https://example.com/cache-${index}`);
     mockFetchAndClean.mockResolvedValue('Cache guide text about boss route and safe positioning.');
 
-    await buildGamingRagContext({
-      mode: 'guide',
-      prompt: 'Use the supplied cache guides.',
-      guideUrls: urls
-    });
+    for (let index = 0; index < urls.length; index += 32) {
+      await buildGamingRagContext({
+        mode: 'guide',
+        prompt: 'Use the supplied cache guides.',
+        guideUrls: urls.slice(index, index + 32)
+      });
+    }
     const firstFetchCount = mockFetchAndClean.mock.calls.length;
 
     await buildGamingRagContext({
       mode: 'guide',
       prompt: 'Use the supplied cache guides.',
-      guideUrls: urls
+      guideUrls: urls.slice(0, 32)
     });
 
     expect(firstFetchCount).toBe(102);
-    expect(mockFetchAndClean.mock.calls.length).toBeGreaterThan(firstFetchCount);
-    expect(mockFetchAndClean.mock.calls.length).toBeLessThan(firstFetchCount + urls.length);
+    expect(mockFetchAndClean.mock.calls.length).toBe(firstFetchCount + 2);
   });
 
   it('logs malformed curated source JSON without exposing the raw configured value', async () => {

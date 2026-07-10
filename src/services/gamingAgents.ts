@@ -1,4 +1,4 @@
-import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { detectGamingGame, type GamingGameDetectionSource } from "@services/gamingGameDetection.js";
 import { formatGamingSuccess, resolveGamingMode, type GamingErrorEnvelope, type GamingMode, type GamingSuccessEnvelope } from "@services/gamingModes.js";
 import { isRecord } from "@shared/typeGuards.js";
 import { extractTextPrompt, normalizeStringList } from "@transport/http/payloadNormalization.js";
@@ -14,6 +14,8 @@ export type GamingIntent = {
   routingSignals: string[];
   invalidMode?: string;
   game?: string;
+  gameDetectionConfidence: number;
+  gameDetectionSource: GamingGameDetectionSource;
   platform?: string;
   version?: string;
   class?: string;
@@ -62,29 +64,6 @@ export type GamingBackendAction = {
 export type GamingBackendConnector = (
   payload: GamingBackendActionPayload
 ) => Promise<GamingSuccessEnvelope | GamingErrorEnvelope>;
-
-const KNOWN_GAMES: Array<{ pattern: RegExp; name: string }> = [
-  { pattern: /\bSWTOR\b/i, name: "SWTOR" },
-  { pattern: /\bStar Wars:\s*The Old Republic\b/i, name: "Star Wars: The Old Republic" },
-  { pattern: /\bElden Ring\b/i, name: "Elden Ring" },
-  { pattern: /\bMinecraft\b/i, name: "Minecraft" },
-  { pattern: /\bDestiny 2\b/i, name: "Destiny 2" },
-  { pattern: /\bDiablo\s+(?:4|IV)\b/i, name: "Diablo 4" },
-  { pattern: /\bBaldur'?s Gate 3\b/i, name: "Baldur's Gate 3" },
-  { pattern: /\bPath of Exile(?: 2)?\b/i, name: "Path of Exile" },
-  { pattern: /\bWorld of Warcraft\b|\bWoW\b/i, name: "World of Warcraft" },
-  { pattern: /\bLeague of Legends\b|\bLoL\b/i, name: "League of Legends" },
-  { pattern: /\bOverwatch 2\b/i, name: "Overwatch 2" },
-  { pattern: /\bFortnite\b/i, name: "Fortnite" },
-];
-
-const INFERRED_GAME_BLACKLIST = new Set([
-  "pc", "ps5", "ps4", "xbox", "switch", "steam", "deck",
-  "tank", "healer", "healing", "support", "dps", "damage", "solo", "duo", "carry",
-  "mage", "sorcerer", "sorc", "barbarian", "rogue", "druid", "necromancer", "paladin", "warlock", "hunter", "priest", "warrior", "monk",
-  "leveling", "beginner", "beginners", "veteran", "veterans", "hardcore", "casual", "casuals", "build", "loadout", "guide", "spec",
-  "this", "that", "current", "latest"
-]);
 
 const GUIDE_RULES = [
   { label: "guide_help_beat", pattern: /\bhelp\s+me\s+beat\b/i, weight: 0.78 },
@@ -278,7 +257,11 @@ function detectSecurityBlock(payload: unknown, prompt: string): GamingIntent["se
   return undefined;
 }
 
-function scoreIntent(payload: unknown, prompt: string): { mode: GamingIntentMode; confidence: number; signals: string[] } {
+function scoreIntent(
+  payload: unknown,
+  prompt: string,
+  gameDetection: ReturnType<typeof detectGamingGame>
+): { mode: GamingIntentMode; confidence: number; signals: string[] } {
   const explicitMode = resolveGamingMode(payload);
   if (explicitMode) {
     return {
@@ -307,14 +290,14 @@ function scoreIntent(payload: unknown, prompt: string): { mode: GamingIntentMode
   const guide = scoreRules(prompt, GUIDE_RULES);
   const build = scoreRules(prompt, BUILD_RULES);
   const meta = scoreRules(prompt, META_RULES);
-  const knownGame = extractKnownGame(prompt);
-  if (knownGame) {
+  if (gameDetection.game) {
+    const detectionSignal = gameDetection.source === "alias" ? "known_game" : "detected_game";
     guide.score += 0.22;
     build.score += 0.16;
     meta.score += 0.16;
-    guide.signals.push("known_game");
-    build.signals.push("known_game");
-    meta.signals.push("known_game");
+    guide.signals.push(detectionSignal);
+    build.signals.push(detectionSignal);
+    meta.signals.push(detectionSignal);
   }
 
   const scoredModes = [
@@ -339,44 +322,6 @@ function scoreIntent(payload: unknown, prompt: string): { mode: GamingIntentMode
     confidence,
     signals: best.signals,
   };
-}
-
-function extractKnownGame(prompt: string): string | undefined {
-  const match = KNOWN_GAMES.find((game) => game.pattern.test(prompt));
-  return match?.name;
-}
-
-function cleanGameCandidate(candidate: string): string | undefined {
-  const cleaned = candidate
-    .replace(/\b(?:build|loadout|meta|guide|tips|class|team|comp|patch|season|right now)\b.*$/i, "")
-    .replace(/[?.!,;:]+$/g, "")
-    .trim();
-
-  return cleaned.length > 1 ? cleaned : undefined;
-}
-
-function inferGameFromPrompt(prompt: string): string | undefined {
-  const known = extractKnownGame(prompt);
-  if (known) {
-    return known;
-  }
-
-  const match = prompt.match(/\b(?:in|for|on)\s+([A-Za-z0-9][A-Za-z0-9'’:.+-]*(?:\s+[A-Za-z0-9][A-Za-z0-9'’:.+-]*){0,5})/i);
-  if (!match?.[1]) {
-    return undefined;
-  }
-
-  const candidate = cleanGameCandidate(match[1]);
-  if (!candidate) {
-    return undefined;
-  }
-
-  const words = candidate.toLowerCase().split(/\s+/);
-  if (words.some((word) => INFERRED_GAME_BLACKLIST.has(word))) {
-    return undefined;
-  }
-
-  return candidate;
 }
 
 function extractPlatform(payload: unknown, prompt: string): string | undefined {
@@ -618,19 +563,41 @@ function fallbackBodyForMode(intent: GamingIntent): string {
   ].join("\n");
 }
 
+function safeBackendFailureReason(error: unknown): string {
+  const values = error && typeof error === "object"
+    ? [(error as Record<string, unknown>).code, (error as Record<string, unknown>).message]
+    : [error];
+  const diagnostic = values.filter((value): value is string => typeof value === "string").join(" ").toLowerCase();
+  if (diagnostic.includes("timeout") || diagnostic.includes("timed out")) {
+    return "Generation timed out before a complete answer was available; no partial provider output was exposed.";
+  }
+  if (diagnostic.includes("incomplete")) {
+    return "The provider did not return a complete answer; no partial provider output was exposed.";
+  }
+  return "The gaming backend was unavailable; no backend error details were exposed.";
+}
+
 export const IntentRouterAgent = {
   classify(payload: unknown): GamingIntent {
     const prompt = extractPrompt(payload);
     const securityBlocked = detectSecurityBlock(payload, prompt);
     const rawMode = getStringField(payload, "mode");
     const explicitMode = resolveGamingMode(payload);
-    const scoredIntent = scoreIntent(payload, prompt);
     const url = getRawStringField(payload, "url") ?? getRawStringField(payload, "guideUrl");
     const urls = rawStringList(isRecord(payload) ? payload.urls : undefined);
     const guideUrls = rawStringList(isRecord(payload) ? payload.guideUrls : undefined);
     const audit = getBooleanField(payload, "audit") ?? getBooleanField(payload, "enableAudit");
     const hrc = getBooleanField(payload, "hrc") ?? getBooleanField(payload, "enableHrc");
     const rawGame = getStringField(payload, "game");
+    const rawGameDetection = detectGamingGame({
+      explicitGame: rawGame,
+      prompt,
+      urls: [url, ...urls, ...guideUrls].filter((value): value is string => typeof value === "string")
+    });
+    const gameDetection = rawGameDetection.confidence >= 0.7
+      ? rawGameDetection
+      : { confidence: rawGameDetection.confidence, source: rawGameDetection.source };
+    const scoredIntent = scoreIntent(payload, prompt, gameDetection);
     const rawPlatform = extractPlatform(payload, prompt);
     const rawVersion = extractVersion(payload, prompt);
 
@@ -640,7 +607,9 @@ export const IntentRouterAgent = {
       confidence: scoredIntent.confidence,
       routingSignals: scoredIntent.signals,
       ...(rawMode && !explicitMode && !securityBlocked ? { invalidMode: rawMode } : {}),
-      game: rawGame ? normalizeEntityValue(rawGame) : inferGameFromPrompt(prompt),
+      game: gameDetection.game,
+      gameDetectionConfidence: gameDetection.confidence,
+      gameDetectionSource: gameDetection.source,
       platform: rawPlatform ? normalizeEntityValue(rawPlatform) : undefined,
       version: rawVersion ? normalizeEntityValue(rawVersion) : undefined,
       class: extractClass(payload, prompt),
@@ -666,6 +635,10 @@ export const ClarificationAgent = {
     }
 
     if (intent.game) {
+      return { required: false };
+    }
+
+    if (intent.url || (intent.urls?.length ?? 0) > 0 || (intent.guideUrls?.length ?? 0) > 0) {
       return { required: false };
     }
 
@@ -782,7 +755,7 @@ export const ResponseComposerAgent = {
       `- ${spoilerWatchOut(intent.spoilerTolerance)}`,
       `- ${patchWatchOut(intent)}`,
       ...(lowConfidenceNote(intent) ? [`- ${lowConfidenceNote(intent)}`] : []),
-      `- Backend failure: ${resolveErrorMessage(error, "unknown backend failure")}`,
+      `- Backend status: ${safeBackendFailureReason(error)}`,
     ].join("\n");
 
     return formatGamingSuccess({
