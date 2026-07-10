@@ -106,6 +106,12 @@ describe('fetchAndClean', () => {
         return;
       }
 
+      if (req.url === '/json') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end('{"build":{"game":"Fixture Game","equipment":[{"name":"JSON Blade"}]}}');
+        return;
+      }
+
       if (req.url === '/binary-text') {
         res.writeHead(200, { 'Content-Type': 'text/plain' });
         res.end(Buffer.from([0x00, 0x01, 0x02, 0x41, 0x42, 0x43]));
@@ -159,6 +165,39 @@ describe('fetchAndClean', () => {
   it('strips non-text elements and condenses whitespace', async () => {
     const cleaned = await fetchAndClean(baseUrl);
     expect(cleaned).toContain('Hello World!');
+  });
+
+  it('provides bounded raw HTML to explicit callers before script removal', async () => {
+    let rawDocument: { body: string; contentType: string; truncated: boolean } | undefined;
+    const document = await fetchAndCleanDocument(`${baseUrl}/metrics`, 12000, {
+      rawDocumentMaxChars: 80,
+      onRawDocument: (raw) => {
+        rawDocument = raw;
+      }
+    });
+
+    expect(rawDocument).toEqual(expect.objectContaining({
+      contentType: 'text/html',
+      truncated: true
+    }));
+    expect(rawDocument?.body.length).toBeLessThanOrEqual(80);
+    expect(rawDocument?.body).toContain('<script>');
+    expect(document.text).toBe('Visible text');
+  });
+
+  it('allows bounded JSON resource documents through the same SSRF-safe fetch path', async () => {
+    let rawBody = '';
+    let rawContentType = '';
+    await fetchAndCleanDocument(`${baseUrl}/json`, 12000, {
+      rawDocumentMaxChars: 1000,
+      onRawDocument: (raw) => {
+        rawBody = raw.body;
+        rawContentType = raw.contentType;
+      }
+    });
+
+    expect(rawContentType).toBe('application/json');
+    expect(rawBody).toContain('JSON Blade');
   });
 
   it('enforces http/https schemes', async () => {

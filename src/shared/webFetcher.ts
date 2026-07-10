@@ -104,6 +104,12 @@ export interface FetchAndCleanDocument {
   combined: string;
 }
 
+export interface FetchAndCleanRawDocument {
+  body: string;
+  contentType: string;
+  truncated: boolean;
+}
+
 export interface FetchAndCleanOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
@@ -112,6 +118,8 @@ export interface FetchAndCleanOptions {
   removeSelectors?: readonly string[];
   includeLinks?: boolean;
   onExtraction?: (metrics: FetchAndCleanExtractionMetrics) => void;
+  rawDocumentMaxChars?: number;
+  onRawDocument?: (document: FetchAndCleanRawDocument) => void;
 }
 
 export interface FetchAndCleanExtractionMetrics {
@@ -385,7 +393,7 @@ export async function fetchAndCleanDocument(
   const fetchElapsedMs = Date.now() - fetchStartedAt;
 
   const contentType = String(response.headers['content-type'] ?? '').split(';', 1)[0].trim().toLowerCase();
-  if (contentType && !['text/html', 'text/plain', 'application/xhtml+xml'].includes(contentType)) {
+  if (contentType && !['text/html', 'text/plain', 'application/xhtml+xml', 'application/json'].includes(contentType)) {
     throw new Error(`Unsupported content type for web fetching: ${contentType}`);
   }
   const responseText = typeof response.data === 'string' ? response.data : String(response.data ?? '');
@@ -393,6 +401,22 @@ export async function fetchAndCleanDocument(
   const binaryControlCount = binarySample.match(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\ufffd]/g)?.length ?? 0;
   if (binarySample.includes('\u0000') || binaryControlCount / Math.max(1, binarySample.length) > 0.03) {
     throw new Error('Unsupported binary-like content for web fetching');
+  }
+
+  if (options.onRawDocument) {
+    const rawDocumentMaxChars = Math.min(
+      Math.max(0, options.rawDocumentMaxChars ?? boundedMaxChars),
+      HARD_MAX_FETCH_BYTES
+    );
+    try {
+      options.onRawDocument({
+        body: responseText.slice(0, rawDocumentMaxChars),
+        contentType,
+        truncated: responseText.length > rawDocumentMaxChars
+      });
+    } catch {
+      // Optional caller-owned raw-document inspection must not break the safe article fallback.
+    }
   }
 
   const extractionStartedAt = Date.now();
