@@ -13,7 +13,7 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
-    "bullmq": "^5.69.3",
+    "bullmq": "5.76.2",
     "express": "^4.21.2",
     "ioredis": "^5.9.3",
     "openai": "^6.25.0",
