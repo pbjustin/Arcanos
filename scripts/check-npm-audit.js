@@ -16,6 +16,25 @@ if (!reportText) {
 const report = JSON.parse(reportText);
 const vulnerabilities = report.vulnerabilities ?? {};
 
+// Temporary exception register. Review by 2026-10-01, or immediately when the
+// configured registry publishes a patched artifact or an owning parent release.
+// - lodash (Knex -> lodash): patched 4.18.0 is unpublished; affected template/
+//   unset gadgets are not used by the repository's query stores. Retest Knex
+//   stores when a registry artifact or Knex parent fix is available.
+// - follow-redirects/axios/form-data: patched artifacts are unpublished. The
+//   caller-controlled fetch path disables redirects and proxying and does not
+//   construct multipart bodies. Re-run network regression tests on publication.
+// - @modelcontextprotocol/sdk: the server exposes no resource templates and
+//   creates a fresh HTTP server/transport pair per request. Review on SDK update.
+// - brace-expansion (vendored minimatch -> brace-expansion): remediation needs
+//   the separately reviewed vendor/postinstall redesign; exposure is tooling-only.
+// - fast-uri (Ajv -> fast-uri): schemas are repository-owned, not request-supplied.
+// - hono (@modelcontextprotocol/sdk -> hono): no direct Hono API use was found.
+// - undici (Cheerio -> undici): callers use Cheerio.load, not Cheerio.fromURL.
+// - ws (root/workers/OpenAI -> ws): setupBridgeSocket has no live caller and
+//   workers do not import ws. Review before activating that latent entry point.
+// Advisory IDs for every exception are deliberately source-scoped below so an
+// unexpected advisory for the same package remains actionable.
 const IGNORED_LODASH_SOURCES = new Set([1115806, 1115810]);
 const IGNORED_LODASH_URLS = new Set([
   'https://github.com/advisories/GHSA-r5fr-rjxr-66jc',
@@ -53,10 +72,6 @@ const IGNORED_MCP_SDK_SOURCES = new Set([1111906, 1113080]);
 const IGNORED_MCP_SDK_URLS = new Set([
   'https://github.com/advisories/GHSA-8r9q-7v3j-jr4g',
   'https://github.com/advisories/GHSA-345p-7cg4-v4c7',
-]);
-const IGNORED_UUID_SOURCES = new Set([1116970]);
-const IGNORED_UUID_URLS = new Set([
-  'https://github.com/advisories/GHSA-w5hq-g745-h8pq',
 ]);
 const IGNORED_BRACE_EXPANSION_SOURCES = new Set([1119088]);
 const IGNORED_BRACE_EXPANSION_URLS = new Set([
@@ -112,10 +127,6 @@ const IGNORED_UNDICI_URLS = new Set([
   'https://github.com/advisories/GHSA-35p6-xmwp-9g52',
   'https://github.com/advisories/GHSA-g8m3-5g58-fq7m',
   'https://github.com/advisories/GHSA-pr7r-676h-xcf6',
-]);
-const IGNORED_QS_SOURCES = new Set([1119502]);
-const IGNORED_QS_URLS = new Set([
-  'https://github.com/advisories/GHSA-q8mj-m7cp-5q26',
 ]);
 const IGNORED_WS_SOURCES = new Set([1119108, 1120730]);
 const IGNORED_WS_URLS = new Set([
@@ -211,22 +222,6 @@ function isIgnoredMcpSdkAdvisory(advisory) {
   return typeof advisory.url === 'string' && IGNORED_MCP_SDK_URLS.has(advisory.url);
 }
 
-function isIgnoredUuidAdvisory(advisory) {
-  if (!advisory || typeof advisory !== 'object') {
-    return false;
-  }
-
-  if (advisory.name !== 'uuid') {
-    return false;
-  }
-
-  if (typeof advisory.source === 'number' && IGNORED_UUID_SOURCES.has(advisory.source)) {
-    return true;
-  }
-
-  return typeof advisory.url === 'string' && IGNORED_UUID_URLS.has(advisory.url);
-}
-
 function isIgnoredBraceExpansionAdvisory(advisory) {
   if (!advisory || typeof advisory !== 'object') {
     return false;
@@ -296,22 +291,6 @@ function isIgnoredUndiciAdvisory(advisory) {
   return typeof advisory.url === 'string' && IGNORED_UNDICI_URLS.has(advisory.url);
 }
 
-function isIgnoredQsAdvisory(advisory) {
-  if (!advisory || typeof advisory !== 'object') {
-    return false;
-  }
-
-  if (advisory.name !== 'qs') {
-    return false;
-  }
-
-  if (typeof advisory.source === 'number' && IGNORED_QS_SOURCES.has(advisory.source)) {
-    return true;
-  }
-
-  return typeof advisory.url === 'string' && IGNORED_QS_URLS.has(advisory.url);
-}
-
 function isIgnoredWsAdvisory(advisory) {
   if (!advisory || typeof advisory !== 'object') {
     return false;
@@ -372,18 +351,6 @@ function isIgnoredVulnerability(name, vulnerability) {
     );
   }
 
-  if (name === 'uuid') {
-    // GHSA-w5hq-g745-h8pq applies to uuid v3/v5/v6 when callers provide a buf
-    // argument. uuid@14.0.0 is the audit-reported fixed version but is not
-    // published yet; this service does not call uuid directly, and BullMQ's
-    // bundled usage is limited to v4() for queue/worker ids.
-    return via.length > 0 && via.every(isIgnoredUuidAdvisory);
-  }
-
-  if (name === 'bullmq') {
-    return via.length > 0 && via.every(entry => entry === 'uuid');
-  }
-
   // These upstream advisories are source-scoped so new advisories or unrelated
   // transitive chains still fail the CI audit gate.
   if (name === 'brace-expansion') {
@@ -406,24 +373,12 @@ function isIgnoredVulnerability(name, vulnerability) {
     return via.length > 0 && via.every(entry => entry === 'undici');
   }
 
-  if (name === 'qs') {
-    return via.length > 0 && via.every(isIgnoredQsAdvisory);
-  }
-
   if (name === 'ws') {
     return via.length > 0 && via.every(isIgnoredWsAdvisory);
   }
 
   if (name === '@hono/node-server') {
     return via.length > 0 && via.every(entry => entry === 'hono');
-  }
-
-  if (name === 'body-parser') {
-    return via.length > 0 && via.every(entry => entry === 'qs');
-  }
-
-  if (name === 'express') {
-    return via.length > 0 && via.every(entry => entry === 'body-parser' || entry === 'qs');
   }
 
   if (name === 'openai') {
