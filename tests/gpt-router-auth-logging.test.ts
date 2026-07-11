@@ -347,6 +347,66 @@ describe('gpt router auth logging', () => {
     });
   });
 
+  it('keeps Gaming integrity rejections inside the HTTP 200 result envelope', async () => {
+    mockRouteGptRequest.mockResolvedValue({
+      ok: true,
+      result: {
+        ok: false,
+        route: 'gaming',
+        mode: 'meta',
+        error: {
+          code: 'GENERATION_INTEGRITY_FAILED',
+          message: 'Gaming generation did not complete cleanly; no partial answer was returned.'
+        }
+      },
+      _route: {
+        gptId: 'arcanos-gaming',
+        module: 'ARCANOS:GAMING',
+        action: 'query',
+        route: 'gaming',
+        availableActions: ['query']
+      }
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use(requestContext);
+    app.use('/gpt', gptRouter);
+
+    const response = await request(app)
+      .post('/gpt/arcanos-gaming')
+      .send({
+        action: 'query',
+        payload: {
+          mode: 'meta',
+          game: 'World of Warcraft',
+          prompt: 'Is frost mage still viable this patch?'
+        }
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.type).toBe('application/json');
+    expect(response.body).toMatchObject({
+      ok: true,
+      requestId: response.headers['x-request-id'],
+      traceId: response.headers['x-trace-id'],
+      result: {
+        ok: false,
+        route: 'gaming',
+        mode: 'meta',
+        error: {
+          code: 'GENERATION_INTEGRITY_FAILED'
+        }
+      },
+      _route: {
+        requestId: response.headers['x-request-id'],
+        traceId: response.headers['x-trace-id'],
+        module: 'ARCANOS:GAMING',
+        route: 'gaming'
+      }
+    });
+  });
+
   it('routes explicit Gaming query actions directly through the module dispatcher', async () => {
     mockRouteGptRequest.mockResolvedValue({
       ok: true,

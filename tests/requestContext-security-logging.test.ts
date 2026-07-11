@@ -200,6 +200,34 @@ describe('requestContext security logging', () => {
     expect(JSON.stringify(response.body)).not.toMatch(/stack|payloadtoolarge|entity\.too\.large/i);
   });
 
+  it('masks structurally detected public GPT AppError messages', async () => {
+    const rawProviderMarker = 'provider-401-detail-must-not-escape';
+    const app = express();
+    app.use(requestContext);
+    app.use(express.json());
+    app.post('/gpt/arcanos-gaming', () => {
+      throw Object.assign(new Error(rawProviderMarker), { httpCode: 400 });
+    });
+    app.use(errorHandler);
+
+    const response = await request(app)
+      .post('/gpt/arcanos-gaming')
+      .send({ action: 'query' });
+
+    expect(response.status).toBe(400);
+    expect(response.type).toBe('application/json');
+    expect(response.body).toEqual({
+      ok: false,
+      requestId: response.headers['x-request-id'],
+      traceId: response.headers['x-trace-id'],
+      error: {
+        code: 'GPT_REQUEST_REJECTED',
+        message: 'The GPT request could not be accepted.'
+      }
+    });
+    expect(JSON.stringify(response.body)).not.toContain(rawProviderMarker);
+  });
+
   it('records self-healing signals for completed operational requests', async () => {
     const app = express();
     app.use(requestContext);
