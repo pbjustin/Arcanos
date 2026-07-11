@@ -34,6 +34,19 @@ describe('Gaming agent routing model', () => {
     expect(ClarificationAgent.evaluate(intent)).toEqual({ required: false });
   });
 
+  it('extracts a bare semantic version from an explicit recent-game request', () => {
+    const intent = IntentRouterAgent.classify({
+      mode: 'guide',
+      game: 'Palworld',
+      prompt: 'Look up a beginner guide for Palworld 1.0.',
+    });
+
+    expect(intent).toEqual(expect.objectContaining({
+      game: 'Palworld',
+      version: '1.0',
+    }));
+  });
+
   it.each([
     ['Elite Dangerous exploration guide', 'guide', 'Elite Dangerous'],
     ['Factorio progression guide', 'guide', 'Factorio'],

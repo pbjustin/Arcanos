@@ -1,7 +1,6 @@
 import { runBuildPipeline, runGuidePipeline, runMetaPipeline } from "@services/gaming.js";
 import { getGamingModuleTimeoutMs } from "@services/gamingConfig.js";
 import { evaluateWithHRC } from "./hrcWrapper.js";
-import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { getRequestAbortContext, getRequestAbortSignal, isAbortError } from "@arcanos/runtime";
 import { logger } from "@platform/logging/structuredLogging.js";
 import {
@@ -14,6 +13,7 @@ import {
 } from "@services/gamingAgents.js";
 import {
   formatGamingError,
+  resolveGamingMode,
   type GamingErrorEnvelope,
   type GamingMode,
   type GamingSuccessEnvelope,
@@ -198,12 +198,12 @@ async function executeGamingBackendQuery(payload: GamingBackendActionPayload): P
         hrc
       }
     };
-  } catch (error: unknown) {
+  } catch {
     return formatGamingError({
       mode,
       error: {
         code: "MODULE_ERROR",
-        message: `HRC evaluation failed: ${resolveErrorMessage(error)}`
+        message: "Gaming response verification could not be completed safely."
       }
     });
   }
@@ -370,7 +370,8 @@ async function handleGamingRequest(payload: unknown): Promise<GamingEnvelope> {
       if (backendEnvelope.error.code === "GENERATION_TIMEOUT") {
         return ResponseComposerAgent.composeBackendFailureFallback({
           intent: gamingIntent,
-          error: new Error(describeGamingErrorEnvelope(backendEnvelope.error))
+          error: new Error(describeGamingErrorEnvelope(backendEnvelope.error)),
+          fallbackReason: "INTAKE_UPSTREAM_TIMEOUT"
         });
       }
       return backendEnvelope;
@@ -431,7 +432,24 @@ export const ArcanosGaming = {
   defaultTimeoutMs: getGamingModuleTimeoutMs(),
   actions: {
     async query(payload: unknown) {
-      return handleGamingRequest(payload);
+      try {
+        return await handleGamingRequest(payload);
+      } catch (error: unknown) {
+        if (getRequestAbortSignal()?.aborted || isAbortError(error)) {
+          throw error;
+        }
+        logger.error("gaming.request.failure", {
+          ...buildGamingRequestLogContext(),
+          errorCode: "MODULE_ERROR"
+        });
+        return formatGamingError({
+          mode: resolveGamingMode(payload),
+          error: {
+            code: "MODULE_ERROR",
+            message: "ARCANOS Gaming could not complete the request safely."
+          }
+        });
+      }
     },
   },
 };

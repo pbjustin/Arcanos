@@ -18,6 +18,9 @@ import { generateMockResponse } from "@services/openai.js";
 import { tryExtractExactLiteralPromptShortcut } from "@services/exactLiteralPromptShortcut.js";
 import {
   formatGamingSuccess,
+  type GamingDiscoveryFailureReason,
+  type GamingDiscoveryReason,
+  type GamingFallbackReason,
   type GamingMode,
   type GamingSuccessEnvelope,
   type ValidatedGamingRequest
@@ -26,6 +29,7 @@ import { buildGamingTrinityPrompt } from "@services/gamingPromptBuilder.js";
 import {
   buildGamingRagContext,
   collectGamingGuideUrls,
+  isGamingFreshnessSensitive,
   isCitableGamingWebSource
 } from "@services/gamingWebContext.js";
 
@@ -120,7 +124,7 @@ function isGamingProviderCompletionIncompleteError(error: unknown): boolean {
   return readErrorString(error, "code") === "OPENAI_COMPLETION_INCOMPLETE";
 }
 
-function classifyGamingProviderFallbackReason(timeoutPhase?: string): string {
+function classifyGamingProviderFallbackReason(timeoutPhase?: string): GamingFallbackReason {
   const normalizedPhase = timeoutPhase?.toLowerCase();
   if (
     normalizedPhase === "intake" ||
@@ -264,7 +268,9 @@ function formatGameplaySuccessWithLogs(params: {
   requestStartedAt: number;
   retrievedSourceCount?: number;
   omittedSourceCount?: number;
-  fallbackReason?: string;
+  fallbackReason?: GamingFallbackReason;
+  discoveryReason?: GamingDiscoveryReason;
+  discoveryFailureReason?: GamingDiscoveryFailureReason;
 }): GamingSuccessEnvelope {
   const postprocessStartedAt = Date.now();
   const citableSourceCount = params.sources.filter(isCitableGamingWebSource).length;
@@ -287,7 +293,12 @@ function formatGameplaySuccessWithLogs(params: {
     mode: params.mode,
     data: {
       response,
-      sources: params.sources
+      sources: params.sources,
+      ...(params.fallbackReason ? { fallbackReason: params.fallbackReason } : {}),
+      ...(params.discoveryReason ? { discoveryReason: params.discoveryReason } : {}),
+      ...(params.discoveryFailureReason
+        ? { discoveryFailureReason: params.discoveryFailureReason }
+        : {})
     }
   });
 
@@ -481,6 +492,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
   }
 
   const guideUrls = collectGamingGuideUrls(params);
+  const freshnessSensitive = isGamingFreshnessSensitive(params);
   const retrievalStartedAt = Date.now();
   let webContext = "";
   let sources: GamingWebSource[] = [];
@@ -490,6 +502,10 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
   let publicSourceCount = 0;
   let omittedSourceCount = 0;
   let retrievedGame: string | undefined;
+  let fallbackReason: GamingFallbackReason | undefined;
+  let discoveryReason: GamingDiscoveryReason | undefined;
+  let discoveryFailureReason: GamingDiscoveryFailureReason | undefined;
+  let currentEvidenceAvailable = false;
   try {
     const webContextResult = await buildGamingRagContext(params, baseLogContext, getRequestAbortSignal());
     webContext = webContextResult.context;
@@ -500,6 +516,10 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
     publicSourceCount = webContextResult.publicSourceCount;
     omittedSourceCount = webContextResult.omittedSourceCount;
     retrievedGame = webContextResult.detectedGame;
+    fallbackReason = webContextResult.fallbackReason;
+    discoveryReason = webContextResult.discoveryReason;
+    discoveryFailureReason = webContextResult.discoveryFailureReason;
+    currentEvidenceAvailable = webContextResult.currentEvidenceAvailable;
     logGamingIntakeStep(baseLogContext, "retrieval", retrievalStartedAt, {
       ok: true,
       retrievalEnabled: webContextResult.retrievalEnabled,
@@ -582,13 +602,17 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
         requestStartedAt,
         retrievedSourceCount,
         omittedSourceCount,
-        fallbackReason: webContextResult.fallbackReason
+        fallbackReason: webContextResult.fallbackReason,
+        discoveryReason,
+        discoveryFailureReason
       });
     }
   } catch (error) {
     const errorCode = readErrorString(error, "code");
     const timeoutPhase = readTimeoutPhase(error) ?? (errorCode === "INTAKE_RETRIEVAL_TIMEOUT" ? "retrieval" : undefined);
-    const fallbackReason = errorCode ?? (timeoutPhase ? classifyGamingProviderFallbackReason(timeoutPhase) : "INTAKE_RETRIEVAL_FAILED");
+    fallbackReason = timeoutPhase
+      ? classifyGamingProviderFallbackReason(timeoutPhase)
+      : "INTAKE_RETRIEVAL_FAILED";
     logger.warn("gaming.retrieval.failure", {
       ...baseLogContext,
       elapsedMs: Date.now() - retrievalStartedAt,
@@ -619,6 +643,32 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
     throw createGamingGameRequiredError(resolvedParams.mode);
   }
 
+  if (freshnessSensitive && !currentEvidenceAvailable) {
+    const currentEvidenceFallbackReason: GamingFallbackReason = "CURRENT_EVIDENCE_UNAVAILABLE";
+    logger.warn("gaming.fallback.used", {
+      ...baseLogContext,
+      fallbackReason: currentEvidenceFallbackReason,
+      ...(discoveryReason ? { discoveryReason } : {}),
+      ...(discoveryFailureReason ? { discoveryFailureReason } : {})
+    });
+    return formatGameplaySuccessWithLogs({
+      mode: params.mode,
+      response: buildGamingProviderFallbackResponse({
+        input: resolvedParams,
+        sources,
+        fallbackReason: currentEvidenceFallbackReason
+      }),
+      sources,
+      logContext: baseLogContext,
+      requestStartedAt,
+      retrievedSourceCount,
+      omittedSourceCount,
+      fallbackReason: currentEvidenceFallbackReason,
+      discoveryReason,
+      discoveryFailureReason
+    });
+  }
+
   const { client } = getOpenAIClientOrAdapter();
 
   if (!client) {
@@ -635,7 +685,10 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
       logContext: baseLogContext,
       requestStartedAt,
       retrievedSourceCount,
-      omittedSourceCount
+      omittedSourceCount,
+      fallbackReason: "GAMING_PROVIDER_UNAVAILABLE",
+      discoveryReason,
+      discoveryFailureReason
     });
   }
 
@@ -758,7 +811,9 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
         requestStartedAt,
         retrievedSourceCount,
         omittedSourceCount,
-        fallbackReason
+        fallbackReason,
+        discoveryReason,
+        discoveryFailureReason
       });
     }
 
@@ -806,8 +861,14 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
         requestStartedAt,
         retrievedSourceCount,
         omittedSourceCount,
-        fallbackReason
+        fallbackReason,
+        discoveryReason,
+        discoveryFailureReason
       });
+    }
+
+    if (readErrorString(error, "code") === "TRINITY_OUTPUT_INTEGRITY_FAILED") {
+      throw error;
     }
 
     logGamingIntakeStep(baseLogContext, "provider", providerStartedAt, {
@@ -826,7 +887,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
       errorName: error instanceof Error ? error.name : typeof error,
       errorCode: readErrorString(error, "code")
     });
-    const fallbackReason = readErrorString(error, "code") || "GAMING_PROVIDER_ERROR";
+    const fallbackReason: GamingFallbackReason = "GAMING_PROVIDER_ERROR";
     logger.warn("gaming.fallback.used", {
       ...baseLogContext,
       provider: "trinity",
@@ -847,7 +908,9 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
       requestStartedAt,
       retrievedSourceCount,
       omittedSourceCount,
-      fallbackReason
+      fallbackReason,
+      discoveryReason,
+      discoveryFailureReason
     });
   }
 
@@ -885,6 +948,9 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
     logContext: baseLogContext,
     requestStartedAt,
     retrievedSourceCount,
-    omittedSourceCount
+    omittedSourceCount,
+    fallbackReason,
+    discoveryReason,
+    discoveryFailureReason
   });
 }

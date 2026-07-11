@@ -3,6 +3,40 @@ import { extractTextPrompt, normalizeStringList } from "@transport/http/payloadN
 
 export type GamingMode = "guide" | "build" | "meta";
 
+export type GamingFallbackReason =
+  | "CURRENT_EVIDENCE_UNAVAILABLE"
+  | "GAMING_PROVIDER_ERROR"
+  | "GAMING_PROVIDER_UNAVAILABLE"
+  | "INTAKE_PARSE_TIMEOUT"
+  | "INTAKE_RETRIEVAL_FAILED"
+  | "INTAKE_RETRIEVAL_TIMEOUT"
+  | "INTAKE_UNKNOWN_TIMEOUT"
+  | "INTAKE_UPSTREAM_TIMEOUT"
+  | "PROVIDER_COMPLETION_INCOMPLETE";
+
+export type GamingDiscoveryReason =
+  | "DISCOVERY_CURATED_SOURCE_UNAVAILABLE"
+  | "DISCOVERY_DISABLED"
+  | "DISCOVERY_EVIDENCE_BELOW_THRESHOLD"
+  | "DISCOVERY_EXPLICIT_CURRENT_LOOKUP"
+  | "DISCOVERY_MISSING_GAME"
+  | "DISCOVERY_NOT_NEEDED"
+  | "DISCOVERY_NO_SOURCE_CANDIDATES"
+  | "DISCOVERY_PATCH_SENSITIVE"
+  | "DISCOVERY_SUPPLIED_SOURCE_FAILED";
+
+export type GamingDiscoveryFailureReason =
+  | "DISCOVERY_ALL_CANDIDATES_REJECTED"
+  | "DISCOVERY_BUDGET_EXHAUSTED"
+  | "DISCOVERY_DISABLED"
+  | "DISCOVERY_FETCH_FAILED"
+  | "DISCOVERY_LOW_QUALITY"
+  | "DISCOVERY_NOT_NEEDED"
+  | "DISCOVERY_NO_RESULTS"
+  | "DISCOVERY_PROVIDER_ERROR"
+  | "DISCOVERY_PROVIDER_TIMEOUT"
+  | "DISCOVERY_PROVIDER_UNCONFIGURED";
+
 export type GamingError = {
   code: string;
   message: string;
@@ -16,6 +50,9 @@ export type GamingSuccessEnvelope = {
   data: {
     response: string;
     sources: Array<{ url: string; snippet?: string; error?: string }>;
+    fallbackReason?: GamingFallbackReason;
+    discoveryReason?: GamingDiscoveryReason;
+    discoveryFailureReason?: GamingDiscoveryFailureReason;
     auditTrace?: {
       draft: string;
       finalized: string;

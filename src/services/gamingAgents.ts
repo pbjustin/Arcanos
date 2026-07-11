@@ -1,5 +1,12 @@
 import { detectGamingGame, type GamingGameDetectionSource } from "@services/gamingGameDetection.js";
-import { formatGamingSuccess, resolveGamingMode, type GamingErrorEnvelope, type GamingMode, type GamingSuccessEnvelope } from "@services/gamingModes.js";
+import {
+  formatGamingSuccess,
+  resolveGamingMode,
+  type GamingErrorEnvelope,
+  type GamingFallbackReason,
+  type GamingMode,
+  type GamingSuccessEnvelope
+} from "@services/gamingModes.js";
 import { isRecord } from "@shared/typeGuards.js";
 import { extractTextPrompt, normalizeStringList } from "@transport/http/payloadNormalization.js";
 
@@ -345,7 +352,8 @@ function extractVersion(payload: unknown, prompt: string): string | undefined {
   }
 
   const match = prompt.match(/\b(?:patch|version|season)\s+([A-Za-z0-9._ -]{1,32})/i) ??
-    prompt.match(/\bin\s+(\d{1,2}\.\d{1,2})\b/i);
+    prompt.match(/\bin\s+(\d{1,3}\.\d{1,3}(?:\.\d{1,3})?)\b/i) ??
+    prompt.match(/\b(\d{1,3}\.\d{1,3}(?:\.\d{1,3})?)\b/);
   return match?.[1]?.trim();
 }
 
@@ -725,6 +733,7 @@ export const ResponseComposerAgent = {
   composeBackendFailureFallback(params: {
     intent: GamingIntent & { mode: GamingMode };
     error: unknown;
+    fallbackReason?: GamingFallbackReason;
   }): GamingSuccessEnvelope {
     const { intent, error } = params;
     const fallback = fallbackBodyForMode(intent);
@@ -753,6 +762,7 @@ export const ResponseComposerAgent = {
       data: {
         response,
         sources: [],
+        fallbackReason: params.fallbackReason ?? "GAMING_PROVIDER_ERROR"
       },
     });
   },

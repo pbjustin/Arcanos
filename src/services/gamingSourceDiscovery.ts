@@ -17,7 +17,10 @@ import {
   getGamingDiscoverySearchResultLimit,
   getGamingDiscoveryTimeoutMs
 } from "@services/gamingConfig.js";
-import type { GamingMode } from "@services/gamingModes.js";
+import type {
+  GamingDiscoveryFailureReason as GamingDiscoveryFailureReasonContract,
+  GamingMode
+} from "@services/gamingModes.js";
 
 export type GamingSearchFreshnessPreference = "current" | "stable";
 
@@ -47,16 +50,7 @@ export interface GamingSearchProvider {
   search(input: GamingSearchRequest): Promise<GamingSearchResult[]>;
 }
 
-export type GamingDiscoveryFailureReason =
-  | "DISCOVERY_DISABLED"
-  | "DISCOVERY_NOT_NEEDED"
-  | "DISCOVERY_NO_RESULTS"
-  | "DISCOVERY_PROVIDER_TIMEOUT"
-  | "DISCOVERY_PROVIDER_ERROR"
-  | "DISCOVERY_ALL_CANDIDATES_REJECTED"
-  | "DISCOVERY_FETCH_FAILED"
-  | "DISCOVERY_BUDGET_EXHAUSTED"
-  | "DISCOVERY_LOW_QUALITY";
+export type GamingDiscoveryFailureReason = GamingDiscoveryFailureReasonContract;
 
 export interface GamingDiscoveredCandidate extends GamingSearchResult {
   score: number;
@@ -692,7 +686,7 @@ export async function discoverGamingSources(input: GamingDiscoveryInput): Promis
         searchProvider: providerId ?? getGamingDiscoveryProvider() ?? "unsupported"
       });
     }
-    return emptyDiscoveryResult(startedAt, "DISCOVERY_DISABLED", {
+    return emptyDiscoveryResult(startedAt, "DISCOVERY_PROVIDER_UNCONFIGURED", {
       ...(providerId ? { searchProvider: providerId } : {})
     });
   }
