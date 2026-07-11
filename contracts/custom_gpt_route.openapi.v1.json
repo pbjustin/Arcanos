@@ -2,9 +2,15 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Arcanos GPT Route API",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "Canonical public contract for GPT-routed writing requests and the safe DAG bridge. GPT identity is path-bound at /gpt/{gptId}; generated tool clients may also echo the same gptId in the JSON body, and mismatched body/path IDs are rejected. POST /gpt/{gptId} accepts flexible request bodies with action as a string and payload as an open object so durable GPT writing actions, safe DAG bridge actions, and prompt-only fast-path generation can share one public endpoint. For generated clients that place operation metadata outside the JSON body, the route also accepts action as a query parameter or operation-style body alias. Simple prompt-generation requests that omit action can opt into inline fast-path execution with executionMode=fast. Runtime diagnostics, worker status, queue inspection, job lookups, self-heal status, MCP calls, root diagnostics, and arbitrary internal endpoint forwarding remain blocked on this route and must use direct control-plane endpoints, /gpt-access/*, or POST /mcp."
   },
+  "servers": [
+    {
+      "url": "https://acranos-production.up.railway.app",
+      "description": "Canonical ARCANOS production deployment"
+    }
+  ],
   "paths": {
     "/gpt/{gptId}": {
       "post": {
@@ -38,7 +44,14 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/GptRouteRequest"
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/GamingQueryRequest"
+                  },
+                  {
+                    "$ref": "#/components/schemas/GptRouteRequest"
+                  }
+                ]
               },
               "examples": {
                 "genericPrompt": {
@@ -168,6 +181,8 @@
                     "summary": "Structured job lookup actions are rejected on /gpt/{gptId}",
                     "value": {
                       "ok": false,
+                      "requestId": "req_example",
+                      "traceId": "trace_example",
                       "action": "get_status",
                       "error": {
                         "code": "CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT",
@@ -185,6 +200,8 @@
                     "summary": "Canonical query requires a prompt",
                     "value": {
                       "ok": false,
+                      "requestId": "req_example",
+                      "traceId": "trace_example",
                       "action": "query",
                       "error": {
                         "code": "PROMPT_REQUIRED",
@@ -196,6 +213,8 @@
                     "summary": "Prompt-based job retrieval is rejected",
                     "value": {
                       "ok": false,
+                      "requestId": "req_example",
+                      "traceId": "trace_example",
                       "action": "result_lookup",
                       "error": {
                         "code": "JOB_LOOKUP_REQUIRES_JOBS_API",
@@ -211,6 +230,8 @@
                     "summary": "Prompt-based runtime inspection remains rejected without an explicit allowlisted action",
                     "value": {
                       "ok": false,
+                      "requestId": "req_example",
+                      "traceId": "trace_example",
                       "action": "runtime.inspect",
                       "error": {
                         "code": "CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT",
@@ -233,6 +254,8 @@
                     "summary": "Natural-language DAG diagnostic prompts are rejected with DAG endpoint guidance",
                     "value": {
                       "ok": false,
+                      "requestId": "req_example",
+                      "traceId": "trace_example",
                       "action": "dag.run.create",
                       "error": {
                         "code": "DAG_CONTROL_REQUIRES_DIRECT_ENDPOINT",
@@ -252,6 +275,8 @@
                     "summary": "Unknown reserved control actions are rejected safely",
                     "value": {
                       "ok": false,
+                      "requestId": "req_example",
+                      "traceId": "trace_example",
                       "action": "runtime.unknown",
                       "error": {
                         "code": "UNSUPPORTED_GPT_ACTION",
@@ -266,6 +291,8 @@
                     "summary": "Explicit runtime inspection payloads are rejected before planner validation",
                     "value": {
                       "ok": false,
+                      "requestId": "req_example",
+                      "traceId": "trace_example",
                       "action": "runtime.inspect",
                       "error": {
                         "code": "CONTROL_PLANE_REQUIRES_DIRECT_ENDPOINT",
@@ -311,6 +338,16 @@
               }
             }
           },
+          "500": {
+            "description": "Unexpected GPT route defect returned as bounded JSON",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GptRouteErrorResponse"
+                }
+              }
+            }
+          },
           "503": {
             "description": "Durable async GPT jobs unavailable for canonical bridge operations",
             "content": {
@@ -323,6 +360,8 @@
                     "summary": "Canonical query is unavailable when durable job persistence is down",
                     "value": {
                       "ok": false,
+                      "requestId": "req_example",
+                      "traceId": "trace_example",
                       "action": "query",
                       "error": {
                         "code": "ASYNC_GPT_JOBS_UNAVAILABLE",
@@ -333,6 +372,16 @@
                 }
               }
             }
+          },
+          "504": {
+            "description": "GPT module or route timeout returned as bounded JSON",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GptRouteErrorResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -340,6 +389,278 @@
   },
   "components": {
     "schemas": {
+      "GamingQueryRequest": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "action",
+          "payload"
+        ],
+        "properties": {
+          "action": {
+            "const": "query"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/GamingQueryPayload"
+          }
+        }
+      },
+      "GamingQueryPayload": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "mode",
+          "prompt"
+        ],
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "guide",
+              "build",
+              "meta"
+            ]
+          },
+          "game": {
+            "type": "string",
+            "minLength": 1
+          },
+          "prompt": {
+            "type": "string",
+            "minLength": 1
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "urls": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uri"
+            }
+          },
+          "guideUrl": {
+            "type": "string",
+            "format": "uri"
+          },
+          "guideUrls": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uri"
+            }
+          }
+        }
+      },
+      "GamingSource": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "url": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Sanitized public source URL or stable safe source identifier when the supplied value was malformed."
+          },
+          "snippet": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          }
+        }
+      },
+      "GamingResponseData": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "response",
+          "sources"
+        ],
+        "properties": {
+          "response": {
+            "type": "string"
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/GamingSource"
+            }
+          },
+          "fallbackReason": {
+            "type": "string",
+            "enum": [
+              "CURRENT_EVIDENCE_UNAVAILABLE",
+              "GAMING_PROVIDER_ERROR",
+              "GAMING_PROVIDER_UNAVAILABLE",
+              "INTAKE_PARSE_TIMEOUT",
+              "INTAKE_RETRIEVAL_FAILED",
+              "INTAKE_RETRIEVAL_TIMEOUT",
+              "INTAKE_UNKNOWN_TIMEOUT",
+              "INTAKE_UPSTREAM_TIMEOUT",
+              "PROVIDER_COMPLETION_INCOMPLETE"
+            ]
+          },
+          "discoveryReason": {
+            "type": "string",
+            "enum": [
+              "DISCOVERY_CURATED_SOURCE_UNAVAILABLE",
+              "DISCOVERY_DISABLED",
+              "DISCOVERY_EVIDENCE_BELOW_THRESHOLD",
+              "DISCOVERY_EXPLICIT_CURRENT_LOOKUP",
+              "DISCOVERY_MISSING_GAME",
+              "DISCOVERY_NOT_NEEDED",
+              "DISCOVERY_NO_SOURCE_CANDIDATES",
+              "DISCOVERY_PATCH_SENSITIVE",
+              "DISCOVERY_SUPPLIED_SOURCE_FAILED"
+            ]
+          },
+          "discoveryFailureReason": {
+            "type": "string",
+            "enum": [
+              "DISCOVERY_ALL_CANDIDATES_REJECTED",
+              "DISCOVERY_BUDGET_EXHAUSTED",
+              "DISCOVERY_DISABLED",
+              "DISCOVERY_FETCH_FAILED",
+              "DISCOVERY_LOW_QUALITY",
+              "DISCOVERY_NOT_NEEDED",
+              "DISCOVERY_NO_RESULTS",
+              "DISCOVERY_PROVIDER_ERROR",
+              "DISCOVERY_PROVIDER_TIMEOUT",
+              "DISCOVERY_PROVIDER_UNCONFIGURED"
+            ]
+          }
+        }
+      },
+      "GamingSuccessResult": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "ok",
+          "route",
+          "mode",
+          "data"
+        ],
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "route": {
+            "const": "gaming"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "guide",
+              "build",
+              "meta"
+            ]
+          },
+          "data": {
+            "$ref": "#/components/schemas/GamingResponseData"
+          }
+        }
+      },
+      "GamingErrorResult": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "ok",
+          "route",
+          "mode",
+          "error"
+        ],
+        "properties": {
+          "ok": {
+            "const": false
+          },
+          "route": {
+            "const": "gaming"
+          },
+          "mode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "guide",
+              "build",
+              "meta",
+              null
+            ]
+          },
+          "error": {
+            "$ref": "#/components/schemas/GptRouteError"
+          }
+        }
+      },
+      "GamingResult": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/GamingSuccessResult"
+          },
+          {
+            "$ref": "#/components/schemas/GamingErrorResult"
+          }
+        ]
+      },
+      "GamingRouteMeta": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/GptRouteMeta"
+          },
+          {
+            "type": "object",
+            "required": [
+              "requestId",
+              "traceId"
+            ],
+            "properties": {
+              "requestId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "traceId": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        ]
+      },
+      "GamingPublicResponse": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "ok",
+          "requestId",
+          "traceId",
+          "result",
+          "_route"
+        ],
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "requestId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "traceId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "result": {
+            "$ref": "#/components/schemas/GamingResult"
+          },
+          "_route": {
+            "$ref": "#/components/schemas/GamingRouteMeta"
+          }
+        }
+      },
       "GptRouteRequest": {
         "type": "object",
         "additionalProperties": true,
@@ -573,7 +894,10 @@
         }
       },
       "GptRouteSuccessResponse": {
-        "oneOf": [
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/GamingPublicResponse"
+          },
           {
             "$ref": "#/components/schemas/GptDirectActionCompletedResponse"
           },
@@ -1001,11 +1325,21 @@
         "additionalProperties": true,
         "required": [
           "ok",
+          "requestId",
+          "traceId",
           "error"
         ],
         "properties": {
           "ok": {
             "const": false
+          },
+          "requestId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "traceId": {
+            "type": "string",
+            "minLength": 1
           },
           "action": {
             "type": [
@@ -1055,6 +1389,9 @@
         "additionalProperties": true,
         "properties": {
           "requestId": {
+            "type": "string"
+          },
+          "traceId": {
             "type": "string"
           },
           "gptId": {
