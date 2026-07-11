@@ -268,11 +268,11 @@
       "minimatch": "3.1.5"
     },
     "@eslint/eslintrc": {
-      "ajv": "6.12.6",
+      "ajv": "6.14.0",
       "minimatch": "3.1.5"
     },
     "eslint": {
-      "ajv": "6.12.6",
+      "ajv": "6.14.0",
       "minimatch": "3.1.5"
     },
     "eslint-plugin-import": {
