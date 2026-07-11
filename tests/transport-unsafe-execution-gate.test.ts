@@ -230,4 +230,74 @@ describe('transport/http/middleware/unsafeExecutionGate', () => {
     });
     expect(JSON.stringify(response.json.mock.calls[0]?.[0])).not.toContain('PATTERN_INTEGRITY_FAILURE');
   });
+
+  it.each([
+    ['missing body', undefined, undefined, undefined, null, 'unknown', 'unknown'],
+    ['string body', 'not-json', ' ', ' ', null, 'unknown', 'unknown'],
+    ['array body', [], undefined, undefined, null, 'unknown', 'unknown'],
+    ['top-level build mode', { mode: 'BUILD' }, ' req-only ', undefined, 'build', 'req-only', 'req-only'],
+    ['primitive payload with meta mode', { payload: 'invalid', mode: 'meta' }, undefined, ' trace-only ', 'meta', 'trace-only', 'trace-only'],
+    ['array payload with invalid mode', { payload: [], mode: 'invalid' }, undefined, undefined, null, 'unknown', 'unknown'],
+    ['payload without mode', { payload: {} }, undefined, undefined, null, 'unknown', 'unknown']
+  ])('bounds unsafe Gaming alias requests with %s', (
+    _caseName,
+    body,
+    requestId,
+    traceId,
+    expectedMode,
+    expectedRequestId,
+    expectedTraceId
+  ) => {
+    const next = jest.fn();
+    const response = createResponse();
+    hasUnsafeBlockingConditionsMock.mockReturnValue(true);
+
+    unsafeExecutionGate({
+      method: 'POST',
+      path: '/gpt/gaming',
+      body,
+      requestId,
+      traceId
+    } as MockRequest as any, response as any, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(response.status).toHaveBeenCalledWith(200);
+    expect(response.json).toHaveBeenCalledWith(expect.objectContaining({
+      ok: true,
+      requestId: expectedRequestId,
+      traceId: expectedTraceId,
+      result: expect.objectContaining({
+        ok: false,
+        route: 'gaming',
+        mode: expectedMode
+      }),
+      _route: expect.objectContaining({
+        requestId: expectedRequestId,
+        traceId: expectedTraceId,
+        gptId: 'gaming'
+      })
+    }));
+  });
+
+  it('preserves available correlation IDs for blocked non-Gaming mutations', () => {
+    const next = jest.fn();
+    const response = createResponse();
+    hasUnsafeBlockingConditionsMock.mockReturnValue(true);
+
+    unsafeExecutionGate({
+      method: 'PUT',
+      path: '/mutate',
+      body: { action: 'write' },
+      requestId: ' req-generic '
+    } as MockRequest as any, response as any, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(response.status).toHaveBeenCalledWith(503);
+    expect(response.json).toHaveBeenCalledWith({
+      error: 'UNSAFE_TO_PROCEED',
+      conditions: ['PATTERN_INTEGRITY_FAILURE'],
+      requestId: 'req-generic',
+      traceId: 'req-generic'
+    });
+  });
 });
