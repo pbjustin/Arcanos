@@ -81,6 +81,10 @@ function isGptDispatcherPath(path: string): boolean {
   return path === '/gpt' || path.startsWith('/gpt/');
 }
 
+function isPublicGamingPath(path: string): boolean {
+  return path === '/gpt/arcanos-gaming' || path === '/gpt/gaming';
+}
+
 function isFallbackEligibleAiEndpoint(path: string): boolean {
   if (isGptDispatcherPath(path)) {
     return false;
@@ -115,7 +119,7 @@ function logFallbackEvent(
  */
 export function createFallbackMiddleware() {
   return (err: unknown, req: Request, res: Response, next: NextFunction) => {
-    if (isGptDispatcherPath(req.path)) {
+    if (isPublicGamingPath(req.path)) {
       return next(err);
     }
 

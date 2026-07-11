@@ -73,12 +73,15 @@ describe('fallback health-check middleware', () => {
     );
   });
 
-  it('does not replace GPT route errors with a generic degraded response', async () => {
+  it.each([
+    '/gpt/arcanos-gaming',
+    '/gpt/gaming'
+  ])('does not replace %s route errors with a generic degraded response', async (path) => {
     const { createFallbackMiddleware } = await import(
       '../src/transport/http/middleware/fallbackHandler.js'
     );
     const middleware = createFallbackMiddleware();
-    const req = createMockRequest('/gpt/arcanos-gaming');
+    const req = createMockRequest(path);
     const res = createMockResponse();
     const next = jest.fn() as NextFunction;
     const error = Object.assign(new Error('provider timeout'), { status: 504 });
@@ -88,5 +91,25 @@ describe('fallback health-check middleware', () => {
     expect(next).toHaveBeenCalledWith(error);
     expect(res.status).not.toHaveBeenCalled();
     expect(res.json).not.toHaveBeenCalled();
+  });
+
+  it('preserves degraded fallback handling for non-Gaming GPT route errors', async () => {
+    const { createFallbackMiddleware } = await import(
+      '../src/transport/http/middleware/fallbackHandler.js'
+    );
+    const middleware = createFallbackMiddleware();
+    const req = createMockRequest('/gpt/arcanos-core');
+    const res = createMockResponse();
+    const next = jest.fn() as NextFunction;
+    const error = Object.assign(new Error('provider timeout'), { status: 504 });
+
+    middleware(error, req, res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(503);
+    expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'degraded',
+      fallbackMode: expect.any(String)
+    }));
   });
 });

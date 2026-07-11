@@ -341,7 +341,7 @@ function extractPlatform(payload: unknown, prompt: string): string | undefined {
   return match?.[1];
 }
 
-function extractVersion(payload: unknown, prompt: string): string | undefined {
+function extractVersion(payload: unknown, prompt: string, game?: string): string | undefined {
   const explicit = getStringField(payload, "version") ?? getStringField(payload, "patch");
   if (explicit) {
     return explicit;
@@ -352,9 +352,24 @@ function extractVersion(payload: unknown, prompt: string): string | undefined {
   }
 
   const match = prompt.match(/\b(?:patch|version|season)\s+([A-Za-z0-9._ -]{1,32})/i) ??
-    prompt.match(/\bin\s+(\d{1,3}\.\d{1,3}(?:\.\d{1,3})?)\b/i) ??
-    prompt.match(/\b(\d{1,3}\.\d{1,3}(?:\.\d{1,3})?)\b/);
-  return match?.[1]?.trim();
+    prompt.match(/\bwhat\s+changed\b[^.!?\n]{0,32}\bin\s+(\d{1,3}\.\d{1,3}(?:\.\d{1,3})?)\b/i) ??
+    prompt.match(/\(\s*(?:v(?:ersion)?\.?\s*)?(\d{1,3}\.\d{1,3}(?:\.\d{1,3})?)\s*\)/i) ??
+    prompt.match(/\b(\d{1,3}\.\d{1,3}\.\d{1,3})\b/);
+  if (match?.[1]) {
+    return match[1].trim();
+  }
+
+  if (!game) {
+    return undefined;
+  }
+
+  const escapedGame = game.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const gameVersionPattern = new RegExp(
+    `\\b${escapedGame}\\s+(?:v(?:ersion)?\\.?\\s*)?(\\d{1,3}\\.\\d{1,3}(?:\\.\\d{1,3})?)\\b(?!\\.\\d)(?!\\s*(?:%|percent\\b|minutes?\\b|mins?\\b|hours?\\b|seconds?\\b|milliseconds?\\b|ms\\b|fps\\b|hz\\b))`,
+    "i"
+  );
+  const gameVersionMatch = prompt.match(gameVersionPattern);
+  return gameVersionMatch?.[1]?.trim();
 }
 
 function extractClass(payload: unknown, prompt: string): string | undefined {
@@ -597,7 +612,7 @@ export const IntentRouterAgent = {
       : { confidence: rawGameDetection.confidence, source: rawGameDetection.source };
     const scoredIntent = scoreIntent(payload, prompt, gameDetection);
     const rawPlatform = extractPlatform(payload, prompt);
-    const rawVersion = extractVersion(payload, prompt);
+    const rawVersion = extractVersion(payload, prompt, gameDetection.game);
 
     return {
       mode: scoredIntent.mode,

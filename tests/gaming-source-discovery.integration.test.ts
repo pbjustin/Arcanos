@@ -29,7 +29,8 @@ jest.unstable_mockModule('@platform/runtime/env.js', () => ({
 const {
   buildGamingRagContext,
   clearGamingRagCache,
-  isCitableGamingWebSource
+  isCitableGamingWebSource,
+  isGamingFreshnessSensitive
 } = await import('../src/services/gamingWebContext.js');
 
 const TEST_ENV_KEYS = [
@@ -220,6 +221,23 @@ describe('Gaming RAG discovery integration', () => {
     expect(result.currentEvidenceAvailable).toBe(false);
   });
 
+  it('treats a parenthesized semantic version as freshness-sensitive without a known game', () => {
+    expect(isGamingFreshnessSensitive(baseInput({
+      game: undefined,
+      prompt: 'Use the supplied article for this guide request (1.0).'
+    }))).toBe(true);
+  });
+
+  it.each([
+    'How do I beat the boss in under 3.5 minutes?',
+    'What is the strategy for a 99.9% success rate?',
+  ])('does not treat a general decimal as freshness-sensitive: %s', (prompt) => {
+    expect(isGamingFreshnessSensitive(baseInput({
+      game: 'Palworld',
+      prompt,
+    }))).toBe(false);
+  });
+
   it('accepts a validated supplied semantic-version article as current evidence', async () => {
     const suppliedUrl = 'https://palworld-guides.example/palworld-1-0-beginner-guide';
     mockFetchAndClean.mockResolvedValue(
@@ -238,6 +256,40 @@ describe('Gaming RAG discovery integration', () => {
     expect(result.sources).toEqual([
       expect.objectContaining({ url: suppliedUrl, snippet: expect.any(String) })
     ]);
+  });
+
+  it('accepts an exact requested version followed by sentence-ending punctuation', async () => {
+    const suppliedUrl = 'https://palworld-guides.example/palworld-1-0-beginner-guide';
+    mockFetchAndClean.mockResolvedValue(
+      'Palworld beginner guide evidence explains a current progression route with preparation and combat steps. '
+      + 'Players should gather supplies, confirm the nearby landmark, and save before starting the objective. '
+      + 'This guidance applies to Palworld version 1.0.'
+    );
+
+    const result = await buildGamingRagContext(baseInput({
+      game: 'Palworld',
+      prompt: 'Use this Palworld 1.0 article as a current guide source.',
+      guideUrl: suppliedUrl
+    }));
+
+    expect(result.currentEvidenceAvailable).toBe(true);
+  });
+
+  it('does not accept a longer patch as an exact requested version', async () => {
+    const suppliedUrl = 'https://palworld-guides.example/palworld-1-0-1-beginner-guide';
+    mockFetchAndClean.mockResolvedValue(
+      'Palworld beginner guide evidence explains a current progression route with preparation and combat steps. '
+      + 'Players should gather supplies, confirm the nearby landmark, and save before starting the objective. '
+      + 'This guidance applies to Palworld version 1.0.1.'
+    );
+
+    const result = await buildGamingRagContext(baseInput({
+      game: 'Palworld',
+      prompt: 'Use this Palworld 1.0 article as a current guide source.',
+      guideUrl: suppliedUrl
+    }));
+
+    expect(result.currentEvidenceAvailable).toBe(false);
   });
 
   it('does not treat a different semantic version as current evidence', async () => {

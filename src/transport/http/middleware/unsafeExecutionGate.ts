@@ -3,6 +3,7 @@ import {
   buildUnsafeToProceedPayload,
   hasUnsafeBlockingConditions
 } from '@services/safety/runtimeState.js';
+import { resolveGamingMode } from '@services/gamingModes.js';
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const SAFETY_RELEASE_PATH_PATTERN = /^\/status\/safety\/quarantine\/[^/]+\/release$/;
@@ -23,18 +24,16 @@ function isPublicGamingRequest(req: Request): boolean {
     && (req.path === '/gpt/arcanos-gaming' || req.path === '/gpt/gaming');
 }
 
-function resolvePublicGamingMode(body: unknown): 'guide' | 'build' | 'meta' | null {
+function resolvePublicGamingMode(body: unknown) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
-    return null;
+    return resolveGamingMode(body);
   }
 
   const bodyRecord = body as Record<string, unknown>;
   const payload = bodyRecord.payload;
-  const modeOwner = payload && typeof payload === 'object' && !Array.isArray(payload)
-    ? payload as Record<string, unknown>
-    : bodyRecord;
-  const mode = typeof modeOwner.mode === 'string' ? modeOwner.mode.trim().toLowerCase() : '';
-  return mode === 'guide' || mode === 'build' || mode === 'meta' ? mode : null;
+  return resolveGamingMode(payload && typeof payload === 'object' && !Array.isArray(payload)
+    ? payload
+    : bodyRecord);
 }
 
 /**

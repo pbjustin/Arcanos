@@ -47,6 +47,29 @@ describe('Gaming agent routing model', () => {
     }));
   });
 
+  it('extracts a parenthesized semantic version without relying on a nearby game name', () => {
+    const intent = IntentRouterAgent.classify({
+      mode: 'meta',
+      game: 'Palworld',
+      prompt: 'Use the supplied article for this meta request (1.0).',
+    });
+
+    expect(intent.version).toBe('1.0');
+  });
+
+  it.each([
+    'How do I beat the boss in under 3.5 minutes?',
+    'What is the strategy for a 99.9% success rate?',
+  ])('does not extract a general decimal as a game version: %s', (prompt) => {
+    const intent = IntentRouterAgent.classify({
+      mode: 'guide',
+      game: 'Palworld',
+      prompt,
+    });
+
+    expect(intent.version).toBeUndefined();
+  });
+
   it.each([
     ['Elite Dangerous exploration guide', 'guide', 'Elite Dangerous'],
     ['Factorio progression guide', 'guide', 'Factorio'],

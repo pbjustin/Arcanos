@@ -1071,16 +1071,36 @@ function candidateWithFetchedGameCorroboration(
 
 export function isGamingFreshnessSensitive(input: GamingRagInput): boolean {
   return input.mode === "meta"
-    || /\b(?:patch|hotfix|version|season|latest|current|right\s+now|meta|buff|nerf|balance|viable)\b|\b\d+\.\d+(?:\.\d+)?\b/i.test(input.prompt);
+    || /\b(?:patch|hotfix|version|season|latest|current|right\s+now|meta|buff|nerf|balance|viable)\b/i.test(input.prompt)
+    || Boolean(extractRequestedSemanticVersion(input));
 }
 
 function extractRequestedSemanticVersion(input: GamingRagInput): string | undefined {
-  return input.prompt.match(/\b(\d{1,3}\.\d{1,3}(?:\.\d{1,3})?)\b/)?.[1];
+  const contextualMatch = input.prompt.match(/\b(?:patch|version|update)\s+(\d{1,3}\.\d{1,3}(?:\.\d{1,3})?)\b/i)
+    ?? input.prompt.match(/\bv\.?\s*(\d{1,3}\.\d{1,3}(?:\.\d{1,3})?)\b/i)
+    ?? input.prompt.match(/\bwhat\s+changed\b[^.!?\n]{0,32}\bin\s+(\d{1,3}\.\d{1,3}(?:\.\d{1,3})?)\b/i)
+    ?? input.prompt.match(/\(\s*(?:v(?:ersion)?\.?\s*)?(\d{1,3}\.\d{1,3}(?:\.\d{1,3})?)\s*\)/i)
+    ?? input.prompt.match(/\b(\d{1,3}\.\d{1,3}\.\d{1,3})\b/);
+  if (contextualMatch?.[1]) {
+    return contextualMatch[1];
+  }
+
+  const game = normalizeGameName(input);
+  if (!game) {
+    return undefined;
+  }
+
+  const escapedGame = game.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const gameVersionPattern = new RegExp(
+    `\\b${escapedGame}\\s+(?:v(?:ersion)?\\.?\\s*)?(\\d{1,3}\\.\\d{1,3}(?:\\.\\d{1,3})?)\\b(?!\\.\\d)(?!\\s*(?:%|percent\\b|minutes?\\b|mins?\\b|hours?\\b|seconds?\\b|milliseconds?\\b|ms\\b|fps\\b|hz\\b))`,
+    "i"
+  );
+  return input.prompt.match(gameVersionPattern)?.[1];
 }
 
 function sourceMatchesRequestedVersion(chunk: GamingRankedChunk, requestedVersion: string): boolean {
   const escapedVersion = requestedVersion.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const versionPattern = new RegExp(`(?:^|[^0-9.])${escapedVersion}(?![0-9.])`, "i");
+  const versionPattern = new RegExp(`(?:^|[^0-9.])${escapedVersion}(?![0-9]|\\.[0-9])`, "i");
   return versionPattern.test(chunk.text);
 }
 
