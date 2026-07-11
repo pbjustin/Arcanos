@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 type AuditVulnerability = {
   severity: string;
@@ -9,6 +10,10 @@ type AuditVulnerability = {
   nodes: string[];
   fixAvailable: boolean;
 };
+
+const auditPolicyScriptPath = fileURLToPath(
+  new URL('../scripts/check-npm-audit.js', import.meta.url),
+);
 
 function runAuditPolicy(vulnerabilities: Record<string, AuditVulnerability>) {
   const directory = mkdtempSync(path.join(tmpdir(), 'arcanos-audit-policy-'));
@@ -21,12 +26,26 @@ function runAuditPolicy(vulnerabilities: Record<string, AuditVulnerability>) {
       'utf8',
     );
 
-    return spawnSync(process.execPath, ['scripts/check-npm-audit.js', reportPath], {
+    return spawnSync(process.execPath, [auditPolicyScriptPath, reportPath], {
       cwd: process.cwd(),
       encoding: 'utf8',
     });
   } finally {
     rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+function parseStdout(result: { stdout: string; stderr: string }) {
+  try {
+    return JSON.parse(result.stdout);
+  } catch {
+    throw new Error(
+      [
+        'Failed to parse audit policy output as JSON.',
+        `Stdout: ${result.stdout || '<empty>'}`,
+        `Stderr: ${result.stderr || '<empty>'}`,
+      ].join('\n'),
+    );
   }
 }
 
@@ -46,6 +65,14 @@ function advisory(name: string, severity: 'high' | 'critical', source: number, g
 }
 
 describe('npm audit policy', () => {
+  it('includes child-process output when policy JSON parsing fails', () => {
+    expect(() => parseStdout({ stdout: '', stderr: 'spawn failed' })).toThrow(
+      'Failed to parse audit policy output as JSON.\n' +
+        'Stdout: <empty>\n' +
+        'Stderr: spawn failed',
+    );
+  });
+
   it.each(['high', 'critical'] as const)(
     'fails for an unexpected %s advisory',
     severity => {
@@ -59,7 +86,7 @@ describe('npm audit policy', () => {
       });
 
       expect(result.status).toBe(1);
-      expect(JSON.parse(result.stdout).actionable).toHaveLength(1);
+      expect(parseStdout(result).actionable).toHaveLength(1);
     },
   );
 
@@ -69,7 +96,7 @@ describe('npm audit policy', () => {
     });
 
     expect(result.status).toBe(1);
-    expect(JSON.parse(result.stdout).actionable[0].name).toBe('axios');
+    expect(parseStdout(result).actionable[0].name).toBe('axios');
   });
 
   it.each([
@@ -82,7 +109,7 @@ describe('npm audit policy', () => {
     });
 
     expect(result.status).toBe(1);
-    expect(JSON.parse(result.stdout).actionable[0].name).toBe(name);
+    expect(parseStdout(result).actionable[0].name).toBe(name);
   });
 
   it('retains the source-scoped exception for blocked lodash advisories', () => {
@@ -91,6 +118,6 @@ describe('npm audit policy', () => {
     });
 
     expect(result.status).toBe(0);
-    expect(JSON.parse(result.stdout).ignored[0].name).toBe('lodash');
+    expect(parseStdout(result).ignored[0].name).toBe('lodash');
   });
 });
