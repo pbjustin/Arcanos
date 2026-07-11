@@ -115,6 +115,10 @@ function logFallbackEvent(
  */
 export function createFallbackMiddleware() {
   return (err: unknown, req: Request, res: Response, next: NextFunction) => {
+    if (isGptDispatcherPath(req.path)) {
+      return next(err);
+    }
+
     const errorRecord = err && typeof err === 'object' ? (err as Record<string, unknown>) : {};
     const errorMessage = typeof errorRecord.message === 'string' ? errorRecord.message : '';
     // Check if this is an AI service error

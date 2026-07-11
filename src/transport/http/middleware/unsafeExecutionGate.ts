@@ -18,6 +18,25 @@ function isGptAccessReadOnlyRequest(req: Request): boolean {
   return req.method.toUpperCase() === 'POST' && GPT_ACCESS_READONLY_POST_PATHS.has(req.path);
 }
 
+function isPublicGamingRequest(req: Request): boolean {
+  return req.method.toUpperCase() === 'POST'
+    && (req.path === '/gpt/arcanos-gaming' || req.path === '/gpt/gaming');
+}
+
+function resolvePublicGamingMode(body: unknown): 'guide' | 'build' | 'meta' | null {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return null;
+  }
+
+  const bodyRecord = body as Record<string, unknown>;
+  const payload = bodyRecord.payload;
+  const modeOwner = payload && typeof payload === 'object' && !Array.isArray(payload)
+    ? payload as Record<string, unknown>
+    : bodyRecord;
+  const mode = typeof modeOwner.mode === 'string' ? modeOwner.mode.trim().toLowerCase() : '';
+  return mode === 'guide' || mode === 'build' || mode === 'meta' ? mode : null;
+}
+
 /**
  * Purpose: Block mutating requests when unsafe safety conditions are active.
  * Inputs/Outputs: Express middleware; returns 503 unsafe contract on block.
@@ -51,7 +70,47 @@ export function unsafeExecutionGate(req: Request, res: Response, next: NextFunct
     return;
   }
 
-  res.status(503).json(buildUnsafeToProceedPayload());
+  const requestId = typeof req.requestId === 'string' && req.requestId.trim().length > 0
+    ? req.requestId.trim()
+    : undefined;
+  const traceId = typeof req.traceId === 'string' && req.traceId.trim().length > 0
+    ? req.traceId.trim()
+    : requestId;
+  if (isPublicGamingRequest(req)) {
+    const gamingRequestId = requestId ?? traceId ?? 'unknown';
+    const gamingTraceId = traceId ?? gamingRequestId;
+    const gptId = req.path.endsWith('/gaming') ? 'gaming' : 'arcanos-gaming';
+    res.status(200).json({
+      ok: true,
+      requestId: gamingRequestId,
+      traceId: gamingTraceId,
+      result: {
+        ok: false,
+        route: 'gaming',
+        mode: resolvePublicGamingMode(req.body),
+        error: {
+          code: 'UNSAFE_TO_PROCEED',
+          message: 'ARCANOS Gaming is temporarily unavailable because runtime integrity checks did not pass.'
+        }
+      },
+      _route: {
+        requestId: gamingRequestId,
+        traceId: gamingTraceId,
+        gptId,
+        module: 'ARCANOS:GAMING',
+        action: 'query',
+        route: 'gaming',
+        timestamp: new Date().toISOString()
+      }
+    });
+    return;
+  }
+
+  res.status(503).json({
+    ...buildUnsafeToProceedPayload(),
+    ...(requestId ? { requestId } : {}),
+    ...(traceId ? { traceId } : {})
+  });
 }
 
 export default unsafeExecutionGate;

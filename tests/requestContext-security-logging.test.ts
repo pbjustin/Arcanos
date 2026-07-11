@@ -91,7 +91,15 @@ describe('requestContext security logging', () => {
     });
     app.use(errorHandler);
 
-    await request(app).get('/boom?apiKey=topsecret');
+    const response = await request(app).get('/boom?apiKey=topsecret');
+
+    expect(response.status).toBe(500);
+    expect(response.body).toEqual({
+      error: 'Internal Server Error',
+      code: 500,
+      requestId: response.headers['x-request-id'],
+      traceId: response.headers['x-trace-id']
+    });
 
     const logs = collectStructuredLogs(consoleLogSpy.mock.calls);
     const requestFailed = logs.find((entry) => entry.event === 'request.failed');
@@ -118,8 +126,78 @@ describe('requestContext security logging', () => {
     expect(response.status).toBe(400);
     expect(response.body).toEqual({
       error: 'invalid request schema',
-      code: 400
+      code: 400,
+      requestId: response.headers['x-request-id'],
+      traceId: response.headers['x-trace-id']
     });
+  });
+
+  it('returns malformed public GPT JSON as a bounded route error envelope', async () => {
+    const app = express();
+    let dispatched = false;
+    app.use(requestContext);
+    app.use(express.json());
+    app.post('/gpt/arcanos-gaming', (_req, res) => {
+      dispatched = true;
+      res.status(200).json({ ok: true });
+    });
+    app.use(errorHandler);
+
+    const response = await request(app)
+      .post('/gpt/arcanos-gaming')
+      .set('Content-Type', 'application/json')
+      .send('{"action":');
+
+    expect(response.status).toBe(400);
+    expect(response.type).toBe('application/json');
+    expect(response.body).toEqual({
+      ok: false,
+      requestId: response.headers['x-request-id'],
+      traceId: response.headers['x-trace-id'],
+      error: {
+        code: 'INVALID_JSON',
+        message: 'Request body must be valid JSON.'
+      }
+    });
+    expect(dispatched).toBe(false);
+    expect(JSON.stringify(response.body)).not.toMatch(/stack|syntaxerror|unexpected token/i);
+  });
+
+  it('returns oversized public GPT JSON as a bounded validation envelope', async () => {
+    const app = express();
+    let dispatched = false;
+    app.use(requestContext);
+    app.use(express.json({ limit: '128b' }));
+    app.post('/gpt/arcanos-gaming', (_req, res) => {
+      dispatched = true;
+      res.status(200).json({ ok: true });
+    });
+    app.use(errorHandler);
+
+    const response = await request(app)
+      .post('/gpt/arcanos-gaming')
+      .send({
+        action: 'query',
+        payload: {
+          mode: 'guide',
+          game: 'Elden Ring',
+          prompt: 'x'.repeat(256)
+        }
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.type).toBe('application/json');
+    expect(response.body).toEqual({
+      ok: false,
+      requestId: response.headers['x-request-id'],
+      traceId: response.headers['x-trace-id'],
+      error: {
+        code: 'REQUEST_BODY_TOO_LARGE',
+        message: 'Request body exceeds the configured JSON size limit.'
+      }
+    });
+    expect(dispatched).toBe(false);
+    expect(JSON.stringify(response.body)).not.toMatch(/stack|payloadtoolarge|entity\.too\.large/i);
   });
 
   it('records self-healing signals for completed operational requests', async () => {

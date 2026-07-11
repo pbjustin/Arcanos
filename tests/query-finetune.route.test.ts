@@ -109,7 +109,9 @@ describe('/query-finetune route', () => {
     expect(response.status).toBe(400);
     expect(response.body).toEqual({
       error: 'invalid request schema',
-      code: 400
+      code: 400,
+      requestId: response.headers['x-request-id'],
+      traceId: response.headers['x-trace-id']
     });
   });
 });

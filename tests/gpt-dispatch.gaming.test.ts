@@ -710,6 +710,34 @@ describe('routeGptRequest gaming routing', () => {
     );
   });
 
+  it('merges a top-level guideUrl into the explicit Gaming payload', async () => {
+    const guideUrl = 'https://guides.example/palworld-1-0';
+    await routeGptRequest({
+      gptId: 'arcanos-gaming',
+      body: {
+        action: 'query',
+        guideUrl,
+        payload: {
+          mode: 'guide',
+          game: 'Palworld',
+          prompt: 'Use the supplied Palworld 1.0 guide.'
+        }
+      },
+      requestId: 'req-gaming-top-level-guide-url'
+    });
+
+    expect(mockDispatchModuleAction).toHaveBeenCalledWith(
+      'ARCANOS:GAMING',
+      'query',
+      expect.objectContaining({
+        mode: 'guide',
+        game: 'Palworld',
+        prompt: 'Use the supplied Palworld 1.0 guide.',
+        guideUrl
+      })
+    );
+  });
+
   it('preserves explicit payload Gaming mode over conflicting top-level mode', async () => {
     const envelope = await routeGptRequest({
       gptId: 'arcanos-gaming',

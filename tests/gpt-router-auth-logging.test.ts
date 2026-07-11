@@ -61,6 +61,8 @@ describe('gpt router auth logging', () => {
   let consoleLogSpy: ReturnType<typeof jest.spyOn>;
   const originalGptRouteHardTimeoutMs = process.env.GPT_ROUTE_HARD_TIMEOUT_MS;
   const originalGptRouteAsyncCoreDefault = process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT;
+  const originalNodeEnv = process.env.NODE_ENV;
+  const originalOpenAIApiKey = process.env.OPENAI_API_KEY;
 
   beforeEach(() => {
     consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => undefined);
@@ -98,6 +100,16 @@ describe('gpt router auth logging', () => {
       delete process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT;
     } else {
       process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = originalGptRouteAsyncCoreDefault;
+    }
+    if (originalNodeEnv === undefined) {
+      delete process.env.NODE_ENV;
+    } else {
+      process.env.NODE_ENV = originalNodeEnv;
+    }
+    if (originalOpenAIApiKey === undefined) {
+      delete process.env.OPENAI_API_KEY;
+    } else {
+      Reflect.set(process.env, 'OPENAI_API_KEY', originalOpenAIApiKey);
     }
     consoleLogSpy.mockRestore();
   });
@@ -247,7 +259,7 @@ describe('gpt router auth logging', () => {
     });
   });
 
-  it('returns bare diagnostic JSON instead of the dispatcher envelope for ping probes', async () => {
+  it('returns correlated diagnostic JSON instead of the dispatcher envelope for ping probes', async () => {
     mockRouteGptRequest.mockResolvedValue({
       ok: true,
       result: {
@@ -277,6 +289,8 @@ describe('gpt router auth logging', () => {
       status: 'ok',
       route: 'diagnostic',
       message: 'backend operational',
+      requestId: response.headers['x-request-id'],
+      traceId: response.headers['x-trace-id'],
     });
   });
 
@@ -312,7 +326,11 @@ describe('gpt router auth logging', () => {
     expect(response.status).toBe(200);
     expect(response.body).toMatchObject({
       ok: true,
+      requestId: response.headers['x-request-id'],
+      traceId: response.headers['x-trace-id'],
       _route: {
+        requestId: response.headers['x-request-id'],
+        traceId: response.headers['x-trace-id'],
         gptId: 'arcanos-gaming',
         module: 'ARCANOS:GAMING',
         route: 'gaming',
@@ -395,6 +413,308 @@ describe('gpt router auth logging', () => {
         }),
       })
     );
+  });
+
+  it.each([
+    [
+      'Elden Ring without a supplied URL',
+      {
+        mode: 'guide',
+        game: 'Elden Ring',
+        prompt: 'Look up a concise beginner guide for Elden Ring.'
+      }
+    ],
+    [
+      'Palworld without a supplied URL',
+      {
+        mode: 'guide',
+        game: 'Palworld',
+        prompt: 'Look up a current beginner guide for Palworld 1.0.'
+      }
+    ],
+    [
+      'Palworld with payload.url',
+      {
+        mode: 'guide',
+        game: 'Palworld',
+        prompt: 'Use the supplied Palworld 1.0 article as a guide source.',
+        url: 'https://medium.com/worth-playing-pc/the-ultimate-palworld-1-0-guide-why-your-old-strategy-wont-cut-it-c90d8460c96b'
+      }
+    ],
+    [
+      'Palworld with payload.guideUrls',
+      {
+        mode: 'guide',
+        game: 'Palworld',
+        prompt: 'Use the supplied Palworld 1.0 article as a guide source.',
+        guideUrls: [
+          'https://medium.com/worth-playing-pc/the-ultimate-palworld-1-0-guide-why-your-old-strategy-wont-cut-it-c90d8460c96b'
+        ]
+      }
+    ]
+  ])('preserves the public action payload for %s', async (_caseName, payload) => {
+    mockRouteGptRequest.mockResolvedValue({
+      ok: true,
+      result: {
+        ok: true,
+        route: 'gaming',
+        mode: 'guide',
+        data: {
+          response: 'Guide response',
+          sources: []
+        }
+      },
+      _route: {
+        gptId: 'arcanos-gaming',
+        module: 'ARCANOS:GAMING',
+        action: 'query',
+        route: 'gaming',
+        availableActions: ['query']
+      }
+    });
+    const app = express();
+    app.use(express.json());
+    app.use(requestContext);
+    app.use('/gpt', gptRouter);
+
+    const response = await request(app)
+      .post('/gpt/arcanos-gaming')
+      .send({ action: 'query', payload });
+
+    expect(response.status).toBe(200);
+    expect(response.type).toBe('application/json');
+    expect(response.body).toMatchObject({
+      ok: true,
+      requestId: response.headers['x-request-id'],
+      traceId: response.headers['x-trace-id'],
+      _route: {
+        requestId: response.headers['x-request-id'],
+        traceId: response.headers['x-trace-id']
+      },
+      result: {
+        ok: true,
+        route: 'gaming',
+        mode: 'guide'
+      }
+    });
+    const dispatchInput = mockRouteGptRequest.mock.calls[0]?.[0] as {
+      body?: { action?: unknown; prompt?: unknown; payload?: unknown };
+    };
+    expect(dispatchInput.body).toEqual({
+      action: 'query',
+      payload,
+      prompt: payload.prompt
+    });
+  });
+
+  it('lets Gaming use its deterministic provider fallback when the OpenAI key is unavailable', async () => {
+    process.env.NODE_ENV = 'production';
+    process.env.OPENAI_API_KEY = '';
+    mockRouteGptRequest.mockResolvedValue({
+      ok: true,
+      result: {
+        ok: true,
+        route: 'gaming',
+        mode: 'guide',
+        data: {
+          response: 'Deterministic Gaming fallback',
+          sources: []
+        }
+      },
+      _route: {
+        gptId: 'arcanos-gaming',
+        module: 'ARCANOS:GAMING',
+        action: 'query',
+        route: 'gaming',
+        availableActions: ['query']
+      }
+    });
+    const app = express();
+    app.use(express.json());
+    app.use(requestContext);
+    app.use('/gpt', gptRouter);
+
+    const response = await request(app)
+      .post('/gpt/arcanos-gaming')
+      .send({
+        action: 'query',
+        payload: {
+          mode: 'guide',
+          game: 'Elden Ring',
+          prompt: 'Look up a concise beginner guide for Elden Ring.'
+        }
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.result).toMatchObject({
+      ok: true,
+      route: 'gaming',
+      mode: 'guide'
+    });
+    expect(mockRouteGptRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['MODULE_TIMEOUT', 'GENERATION_TIMEOUT'],
+    ['REQUEST_ABORTED', 'REQUEST_ABORTED']
+  ])('contains Gaming dispatcher %s as an HTTP 200 Gaming error envelope', async (dispatcherCode, publicCode) => {
+    const rawErrorMarker = 'raw-provider-body-must-not-escape';
+    mockRouteGptRequest.mockResolvedValue({
+      ok: false,
+      error: {
+        code: dispatcherCode,
+        message: rawErrorMarker
+      },
+      _route: {
+        gptId: 'arcanos-gaming',
+        module: 'ARCANOS:GAMING',
+        action: 'query',
+        route: 'gaming'
+      }
+    });
+    const app = express();
+    app.use(express.json());
+    app.use(requestContext);
+    app.use('/gpt', gptRouter);
+
+    const response = await request(app)
+      .post('/gpt/arcanos-gaming')
+      .send({
+        action: 'query',
+        payload: {
+          mode: 'guide',
+          game: 'Palworld',
+          prompt: 'Look up a current beginner guide for Palworld 1.0.'
+        }
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.type).toBe('application/json');
+    expect(response.body).toMatchObject({
+      ok: true,
+      requestId: response.headers['x-request-id'],
+      traceId: response.headers['x-trace-id'],
+      _route: {
+        requestId: response.headers['x-request-id'],
+        traceId: response.headers['x-trace-id'],
+        module: 'ARCANOS:GAMING',
+        route: 'gaming'
+      },
+      result: {
+        ok: false,
+        route: 'gaming',
+        mode: 'guide',
+        error: {
+          code: publicCode
+        }
+      }
+    });
+    expect(JSON.stringify(response.body)).not.toContain(rawErrorMarker);
+  });
+
+  it('returns an unexpected Gaming dispatcher defect as safe JSON HTTP 500', async () => {
+    const rawErrorMarker = 'raw-provider-body-must-not-escape';
+    mockRouteGptRequest.mockResolvedValue({
+      ok: false,
+      error: {
+        code: 'MODULE_ERROR',
+        message: rawErrorMarker
+      },
+      _route: {
+        gptId: 'arcanos-gaming',
+        module: 'ARCANOS:GAMING',
+        action: 'query',
+        route: 'gaming'
+      }
+    });
+    const app = express();
+    app.use(express.json());
+    app.use(requestContext);
+    app.use('/gpt', gptRouter);
+
+    const response = await request(app)
+      .post('/gpt/arcanos-gaming')
+      .send({
+        action: 'query',
+        payload: {
+          mode: 'guide',
+          game: 'Palworld',
+          prompt: 'Look up a current beginner guide for Palworld 1.0.'
+        }
+      });
+
+    expect(response.status).toBe(500);
+    expect(response.type).toBe('application/json');
+    expect(response.body).toMatchObject({
+      ok: false,
+      requestId: response.headers['x-request-id'],
+      traceId: response.headers['x-trace-id'],
+      error: {
+        code: 'GAMING_ROUTE_ERROR',
+        message: 'ARCANOS Gaming encountered an unexpected route error.'
+      },
+      _route: {
+        requestId: response.headers['x-request-id'],
+        traceId: response.headers['x-trace-id'],
+        module: 'ARCANOS:GAMING',
+        route: 'gaming'
+      }
+    });
+    expect(JSON.stringify(response.body)).not.toContain(rawErrorMarker);
+    expect(JSON.stringify(response.body)).not.toContain('stack');
+  });
+
+  it('uses a 60-second Gaming route minimum and contains an outer route timeout as HTTP 200', async () => {
+    process.env.GPT_ROUTE_HARD_TIMEOUT_MS = '6000';
+    const timeoutError = new Error('GPT route timeout after 60000ms');
+    timeoutError.name = 'AbortError';
+    mockRouteGptRequest.mockRejectedValue(timeoutError);
+    const app = express();
+    app.use(express.json());
+    app.use(requestContext);
+    app.use('/gpt', gptRouter);
+
+    const response = await request(app)
+      .post('/gpt/arcanos-gaming')
+      .send({
+        action: 'query',
+        payload: {
+          mode: 'guide',
+          game: 'Elden Ring',
+          prompt: 'Look up a concise beginner guide for Elden Ring.'
+        }
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.type).toBe('application/json');
+    expect(response.body).toMatchObject({
+      ok: true,
+      requestId: response.headers['x-request-id'],
+      traceId: response.headers['x-trace-id'],
+      result: {
+        ok: false,
+        route: 'gaming',
+        mode: 'guide',
+        error: {
+          code: 'GENERATION_TIMEOUT',
+          details: {
+            timeoutMs: 60000,
+            timeoutPhase: 'gpt-route'
+          }
+        }
+      },
+      _route: {
+        requestId: response.headers['x-request-id'],
+        traceId: response.headers['x-trace-id'],
+        module: 'ARCANOS:GAMING',
+        route: 'gaming'
+      }
+    });
+    const logs = collectStructuredLogs(consoleLogSpy.mock.calls);
+    expect(logs.find((entry) => entry.event === 'gpt.request.timeout_plan')?.data).toMatchObject({
+      gptId: 'arcanos-gaming',
+      timeoutMs: 60000
+    });
   });
 
   it('returns structured gaming errors when explicit mode is missing', async () => {
@@ -678,6 +998,8 @@ describe('gpt router auth logging', () => {
     expect(response.status).toBe(503);
     expect(response.body).toEqual({
       ok: false,
+      requestId: response.headers['x-request-id'],
+      traceId: response.headers['x-trace-id'],
       error: {
         code: 'REQUEST_ABORTED',
         message: 'Request was aborted before completion.',

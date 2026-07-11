@@ -17,6 +17,8 @@ type MockRequest = {
   method: string;
   path: string;
   body?: unknown;
+  requestId?: string;
+  traceId?: string;
   logger?: { info?: jest.Mock };
 };
 
@@ -186,5 +188,46 @@ describe('transport/http/middleware/unsafeExecutionGate', () => {
       error: 'UNSAFE_TO_PROCEED',
       conditions: ['PATTERN_INTEGRITY_FAILURE']
     });
+  });
+
+  it('contains an unsafe Gaming request in the public Gaming envelope', () => {
+    const next = jest.fn();
+    const response = createResponse();
+    hasUnsafeBlockingConditionsMock.mockReturnValue(true);
+
+    unsafeExecutionGate({
+      method: 'POST',
+      path: '/gpt/arcanos-gaming',
+      body: { action: 'query', payload: { mode: 'guide' } },
+      requestId: 'req-gaming-unsafe',
+      traceId: 'trace-gaming-unsafe'
+    } as MockRequest as any, response as any, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(response.status).toHaveBeenCalledWith(200);
+    expect(response.json).toHaveBeenCalledWith({
+      ok: true,
+      requestId: 'req-gaming-unsafe',
+      traceId: 'trace-gaming-unsafe',
+      result: {
+        ok: false,
+        route: 'gaming',
+        mode: 'guide',
+        error: {
+          code: 'UNSAFE_TO_PROCEED',
+          message: 'ARCANOS Gaming is temporarily unavailable because runtime integrity checks did not pass.'
+        }
+      },
+      _route: {
+        requestId: 'req-gaming-unsafe',
+        traceId: 'trace-gaming-unsafe',
+        gptId: 'arcanos-gaming',
+        module: 'ARCANOS:GAMING',
+        action: 'query',
+        route: 'gaming',
+        timestamp: expect.any(String)
+      }
+    });
+    expect(JSON.stringify(response.json.mock.calls[0]?.[0])).not.toContain('PATTERN_INTEGRITY_FAILURE');
   });
 });

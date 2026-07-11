@@ -72,4 +72,21 @@ describe('fallback health-check middleware', () => {
       'fallback_handler_preemptive'
     );
   });
+
+  it('does not replace GPT route errors with a generic degraded response', async () => {
+    const { createFallbackMiddleware } = await import(
+      '../src/transport/http/middleware/fallbackHandler.js'
+    );
+    const middleware = createFallbackMiddleware();
+    const req = createMockRequest('/gpt/arcanos-gaming');
+    const res = createMockResponse();
+    const next = jest.fn() as NextFunction;
+    const error = Object.assign(new Error('provider timeout'), { status: 504 });
+
+    middleware(error, req, res, next);
+
+    expect(next).toHaveBeenCalledWith(error);
+    expect(res.status).not.toHaveBeenCalled();
+    expect(res.json).not.toHaveBeenCalled();
+  });
 });
