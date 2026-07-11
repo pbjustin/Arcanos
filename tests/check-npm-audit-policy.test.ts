@@ -75,6 +75,7 @@ describe('npm audit policy', () => {
   it.each([
     ['uuid', 1_116_970, 'GHSA-w5hq-g745-h8pq'],
     ['qs', 1_119_502, 'GHSA-q8mj-m7cp-5q26'],
+    ['axios', 1_119_667, 'GHSA-pjwm-pj3p-43mv'],
   ] as const)('no longer suppresses the remediated %s advisory', (name, source, ghsa) => {
     const result = runAuditPolicy({
       [name]: advisory(name, 'high', source, ghsa),
@@ -84,12 +85,12 @@ describe('npm audit policy', () => {
     expect(JSON.parse(result.stdout).actionable[0].name).toBe(name);
   });
 
-  it('retains the source-scoped exception for a blocked Axios advisory', () => {
+  it('retains the source-scoped exception for blocked lodash advisories', () => {
     const result = runAuditPolicy({
-      axios: advisory('axios', 'high', 1_119_667, 'GHSA-pjwm-pj3p-43mv'),
+      lodash: advisory('lodash', 'high', 1_115_806, 'GHSA-r5fr-rjxr-66jc'),
     });
 
     expect(result.status).toBe(0);
-    expect(JSON.parse(result.stdout).ignored[0].name).toBe('axios');
+    expect(JSON.parse(result.stdout).ignored[0].name).toBe('lodash');
   });
 });
