@@ -12,6 +12,11 @@ const CUSTOM_GPT_OPENAPI_CONTRACT_PATH = path.resolve(
   "contracts",
   "custom_gpt_route.openapi.v1.json"
 );
+const ARCANOS_GAMING_OPENAPI_CONTRACT_PATH = path.resolve(
+  process.cwd(),
+  "contracts",
+  "arcanos_gaming.openapi.v1.json"
+);
 const JOB_RESULT_OPENAPI_CONTRACT_PATH = path.resolve(
   process.cwd(),
   'contracts',
@@ -38,6 +43,15 @@ router.get(
   asyncHandler(async (_req: Request, res: Response) => {
     const contract = await readOpenApiContract(CUSTOM_GPT_OPENAPI_CONTRACT_PATH);
     //audit Assumption: Custom GPT builders should always fetch the latest contract from the backend instead of caching a stale local copy; failure risk: action routing drifts back to deprecated paths like `/ask`; expected invariant: this endpoint returns the live canonical schema and discourages intermediary caching; handling strategy: serve deterministic JSON with `no-store`.
+    res.set("cache-control", "no-store, max-age=0");
+    return res.json(contract);
+  })
+);
+
+router.get(
+  "/contracts/arcanos_gaming.openapi.v1.json",
+  asyncHandler(async (_req: Request, res: Response) => {
+    const contract = await readOpenApiContract(ARCANOS_GAMING_OPENAPI_CONTRACT_PATH);
     res.set("cache-control", "no-store, max-age=0");
     return res.json(contract);
   })

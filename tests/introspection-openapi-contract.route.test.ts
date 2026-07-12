@@ -52,6 +52,25 @@ describe('custom GPT OpenAPI contract route', () => {
     expect(JSON.stringify(requestExamples)).not.toContain('workers.status');
   });
 
+  it('serves the dedicated ARCANOS Gaming builder contract with no-store caching', async () => {
+    const response = await request(buildApp())
+      .get('/contracts/arcanos_gaming.openapi.v1.json');
+
+    expect(response.status).toBe(200);
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(response.headers['content-type']).toContain('application/json');
+    expect(response.body.servers).toEqual([
+      {
+        url: 'https://acranos-production.up.railway.app',
+        description: 'Canonical ARCANOS production deployment',
+      },
+    ]);
+    expect(response.body.paths?.['/gpt/arcanos-gaming']?.post?.operationId)
+      .toBe('queryArcanosGaming');
+    expect(response.body.paths?.['/gpt/arcanos-gaming/evidence-retry']?.post?.operationId)
+      .toBe('retryArcanosGamingWithSources');
+  });
+
   it('serves the canonical job-result contract with no-store caching', async () => {
     const response = await request(buildApp())
       .get('/contracts/job_result.openapi.v1.json');

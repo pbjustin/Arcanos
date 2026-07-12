@@ -113,12 +113,36 @@ describe('custom GPT route OpenAPI contract', () => {
     expect(gamingPayload?.required).toEqual(['mode', 'prompt']);
     expect(gamingPayload?.properties?.mode?.enum).toEqual(['guide', 'build', 'meta']);
     expect(Object.keys(gamingPayload?.properties ?? {})).toEqual(
-      expect.arrayContaining(['mode', 'game', 'prompt', 'url', 'urls', 'guideUrl', 'guideUrls'])
+      expect.arrayContaining([
+        'mode',
+        'game',
+        'prompt',
+        'url',
+        'urls',
+        'guideUrl',
+        'guideUrls',
+        'evidenceOrigin',
+        'requestedVersion',
+        'evidenceAttempt',
+      ])
     );
     expect(gamingPayload?.properties?.url?.format).toBe('uri');
     expect(gamingPayload?.properties?.urls?.items?.format).toBe('uri');
     expect(gamingPayload?.properties?.guideUrl?.format).toBe('uri');
     expect(gamingPayload?.properties?.guideUrls?.items?.format).toBe('uri');
+    expect(gamingPayload?.properties?.evidenceOrigin?.enum).toEqual(['frontend_web_search']);
+    expect(gamingPayload?.properties?.evidenceAttempt).toEqual(expect.objectContaining({
+      type: 'integer',
+      enum: [1],
+    }));
+    const requestedVersionPattern = new RegExp(
+      gamingPayload?.properties?.requestedVersion?.pattern ?? '(?!)'
+    );
+    for (const value of ['1.0', 'v1.0', 'version 1.0.1', 'PATCH 1.0']) {
+      expect(requestedVersionPattern.test(value)).toBe(true);
+    }
+    expect(requestedVersionPattern.test('guide')).toBe(false);
+    expect(requestedVersionPattern.test(`1.0\u202e`)).toBe(false);
   });
 
   it('binds the canonical production target and documents the public Gaming response envelope', () => {
@@ -137,7 +161,7 @@ describe('custom GPT route OpenAPI contract', () => {
     expect(JSON.stringify(contract.servers)).not.toContain('arcanos-v2-production');
 
     const schemas = contract.components?.schemas;
-    expect(contract.info?.version).toBe('1.1.0');
+    expect(contract.info?.version).toBe('1.2.0');
     expect(schemas?.GptRouteSuccessResponse?.anyOf).toEqual(
       expect.arrayContaining([
         { $ref: '#/components/schemas/GamingPublicResponse' },
@@ -174,8 +198,20 @@ describe('custom GPT route OpenAPI contract', () => {
         'fallbackReason',
         'discoveryReason',
         'discoveryFailureReason',
+        'evidenceRequest',
       ])
     );
+    expect(schemas?.GamingResponseData?.properties?.evidenceRequest).toEqual({
+      $ref: '#/components/schemas/GamingEvidenceRequest',
+    });
+    expect(schemas?.GamingEvidenceRequest?.required).toEqual([
+      'required',
+      'reason',
+      'game',
+      'maxCandidateUrls',
+      'queries',
+    ]);
+    expect(schemas?.GamingEvidenceRequest?.properties?.queries?.items?.maxLength).toBe(180);
     expect(schemas?.GamingResponseData?.properties?.fallbackReason?.enum).toContain(
       'CURRENT_EVIDENCE_UNAVAILABLE'
     );

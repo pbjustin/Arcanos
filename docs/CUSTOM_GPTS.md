@@ -72,6 +72,10 @@ The machine-readable contract lives at [contracts/custom_gpt_route.openapi.v1.js
 For live integrations, prefer the backend-served contract URL instead of a manually copied local file:
 - `https://acranos-production.up.railway.app/contracts/custom_gpt_route.openapi.v1.json`
 
+The Arcanos Gaming builder uses a dedicated fixed-path schema and mandatory backend-first evidence workflow:
+- `https://acranos-production.up.railway.app/contracts/arcanos_gaming.openapi.v1.json`
+- [ARCANOS_GAMING_CUSTOM_GPT.md](ARCANOS_GAMING_CUSTOM_GPT.md)
+
 Important:
 - Updating the repo file alone does not update an already-configured Custom GPT action.
 - After changing the contract or production hostname, refresh or re-import the action schema in the Custom GPT builder so its server target remains `https://acranos-production.up.railway.app`.
@@ -205,7 +209,9 @@ success_response:
   description: Direct Gaming module response envelope plus _route metadata for `ARCANOS:GAMING`.
 ```
 
-**Payload contract:** `mode: "guide"` needs a prompt and may include `game`; `mode: "build"` and `mode: "meta"` require both `prompt` and `game`. Optional `url`, `urls`, `guideUrl`, `guideUrls`, `audit` / `enableAudit`, and `hrc` / `enableHrc` fields are validated by `gamingModes` before any pipeline runs. When callers send a partial explicit `payload`, top-level Gaming fields are merged only where the explicit payload omits them; explicit `payload` fields keep precedence.
+**Payload contract:** `mode: "guide"` needs a prompt and may include `game`; `mode: "build"` and `mode: "meta"` require both `prompt` and `game`. Optional `url`, `urls`, `guideUrl`, `guideUrls`, `audit` / `enableAudit`, and `hrc` / `enableHrc` fields are validated by `gamingModes` before any pipeline runs. Frontend evidence retries additionally carry `evidenceOrigin: "frontend_web_search"`, optional semantic `requestedVersion` (`x.y`, `x.y.z`, or the same value prefixed by `v`, `version`, or `patch`), and `evidenceAttempt: 1`. When callers send a partial explicit `payload`, top-level Gaming fields are merged only where the explicit payload omits them; explicit `payload` fields keep precedence.
+
+**Frontend evidence retry:** The dedicated builder schema keeps `queryArcanosGaming` as the mandatory first operation and exposes `retryArcanosGamingWithSources` only for a backend-requested, one-attempt URL discovery retry. Web Search may discover URL candidates but never supplies evidence directly; ARCANOS must fetch, validate, and return every citable source. See [ARCANOS_GAMING_CUSTOM_GPT.md](ARCANOS_GAMING_CUSTOM_GPT.md) for the exact builder instructions and examples.
 
 **Boundary:** Gaming can call its own module action through `/gpt/arcanos-gaming` or `/gpt/gaming`. It cannot use `/gpt/:gptId` to run `runtime.inspect`, `workers.status`, `queue.inspect`, `self_heal.status`, `system_state`, `get_status`, `get_result`, MCP control actions, DAG control actions, or Core diagnostics; those are rejected by the writing-plane guard before Gaming dispatch.
 
