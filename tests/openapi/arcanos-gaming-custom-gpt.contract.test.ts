@@ -2,7 +2,6 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { buildGamingDiscoveryQuery } from '../../src/services/gamingSourceDiscovery.js';
-import { validateGamingEvidenceRetryRequest } from '../../src/services/gamingModes.js';
 
 const contractPath = join(process.cwd(), 'contracts/arcanos_gaming.openapi.v1.json');
 const instructionsPath = join(process.cwd(), 'docs/ARCANOS_GAMING_CUSTOM_GPT.md');
@@ -59,7 +58,7 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     const contract = loadContract();
 
     expect(contract.openapi).toBe('3.1.0');
-    expect(contract.info.version).toBe('1.2.0');
+    expect(contract.info.version).toBe('1.3.0');
     expect(contract.servers).toEqual([
       {
         url: 'https://acranos-production.up.railway.app',
@@ -68,24 +67,14 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     ]);
     expect(contract.security).toBeUndefined();
     expect(JSON.stringify(contract)).not.toContain('arcanos-v2-production.up.railway.app');
-    expect(Object.keys(contract.paths)).toEqual([
-      '/gpt/arcanos-gaming',
-      '/gpt/arcanos-gaming/evidence-retry',
-    ]);
+    expect(Object.keys(contract.paths)).toEqual(['/gpt/arcanos-gaming']);
 
     const query = contract.paths['/gpt/arcanos-gaming'].post;
-    const retry = contract.paths['/gpt/arcanos-gaming/evidence-retry'].post;
     expect(query.operationId).toBe('queryArcanosGaming');
-    expect(retry.operationId).toBe('retryArcanosGamingWithSources');
     expect(query.security).toBeUndefined();
-    expect(retry.security).toBeUndefined();
     expect(query.description.length).toBeLessThanOrEqual(300);
-    expect(retry.description.length).toBeLessThanOrEqual(300);
     expect(query.requestBody.content['application/json'].schema).toEqual({
       $ref: '#/components/schemas/GamingQueryRequest',
-    });
-    expect(retry.requestBody.content['application/json'].schema).toEqual({
-      $ref: '#/components/schemas/GamingEvidenceRetryRequest',
     });
 
     const keys = collectKeys(contract);
@@ -99,11 +88,10 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     refs.forEach((ref) => expect(resolveLocalRef(contract, ref)).toBeDefined());
   });
 
-  it('documents the first-call payload and the exact bounded retry input', () => {
+  it('documents the single first-call payload with bounded candidate URL fields', () => {
     const schemas = loadContract().components.schemas;
     const queryRequest = schemas.GamingQueryRequest;
     const queryPayload = schemas.GamingQueryPayload;
-    const retry = schemas.GamingEvidenceRetryRequest;
 
     expect(queryRequest.required).toEqual(['action', 'payload']);
     expect(queryRequest.properties.action).toEqual(expect.objectContaining({
@@ -119,121 +107,23 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
       'urls',
       'guideUrl',
       'guideUrls',
-      'evidenceOrigin',
-      'requestedVersion',
-      'evidenceAttempt',
     ]));
-    expect(queryPayload.properties.evidenceOrigin.enum).toEqual(['frontend_web_search']);
-    expect(queryPayload.properties.evidenceAttempt).toEqual(expect.objectContaining({
-      type: 'integer',
-      enum: [1],
-    }));
-
-    expect(retry.additionalProperties).toBe(false);
-    expect(Object.keys(retry.properties)).toEqual([
-      'game',
-      'mode',
-      'originalPrompt',
-      'candidateUrls',
-      'requestedVersion',
-      'evidenceAttempt',
-    ]);
-    expect(retry.required).toEqual([
-      'game',
-      'mode',
-      'originalPrompt',
-      'candidateUrls',
-      'evidenceAttempt',
-    ]);
-    expect(retry.properties.candidateUrls).toEqual(expect.objectContaining({
-      type: 'array',
-      maxItems: 4,
-      uniqueItems: true,
-    }));
-    expect(retry.properties.candidateUrls.minItems).toBeUndefined();
-    expect(retry.properties.candidateUrls.items.format).toBe('uri');
-    expect(retry.properties.evidenceAttempt.enum).toEqual([1]);
-  });
-
-  it('keeps requestedVersion syntax aligned with runtime normalization', () => {
-    const schemas = loadContract().components.schemas;
-    const queryVersion = schemas.GamingQueryPayload.properties.requestedVersion;
-    const retryVersion = schemas.GamingEvidenceRetryRequest.properties.requestedVersion;
-    const queryPattern = new RegExp(queryVersion.pattern);
-    const retryPattern = new RegExp(retryVersion.pattern);
-    const baseRequest = {
-      game: 'Palworld',
-      mode: 'guide',
-      originalPrompt: 'Look up a current Palworld guide.',
-      candidateUrls: [],
-      evidenceAttempt: 1,
-    };
-
-    for (const [input, normalized] of [
-      ['1.0', '1.0'],
-      ['1.0.1', '1.0.1'],
-      ['v1.0', '1.0'],
-      ['version 1.0', '1.0'],
-      ['PATCH 1.0.1', '1.0.1'],
-    ]) {
-      expect(queryPattern.test(input)).toBe(true);
-      expect(retryPattern.test(input)).toBe(true);
-      expect(validateGamingEvidenceRetryRequest({
-        ...baseRequest,
-        requestedVersion: input,
-      })).toEqual(expect.objectContaining({
-        ok: true,
-        value: expect.objectContaining({ requestedVersion: normalized }),
+    for (const property of ['urls', 'guideUrls']) {
+      expect(queryPayload.properties[property]).toEqual(expect.objectContaining({
+        type: 'array',
+        maxItems: 4,
+        uniqueItems: true,
+      }));
+      expect(queryPayload.properties[property].items).toEqual(expect.objectContaining({
+        type: 'string',
+        format: 'uri',
+        maxLength: 2048,
       }));
     }
-
-    for (const input of [
-      'guide',
-      '1',
-      '1.0.1.2',
-      `1.0\u202e`,
-    ]) {
-      expect(queryPattern.test(input)).toBe(false);
-      expect(retryPattern.test(input)).toBe(false);
-      expect(validateGamingEvidenceRetryRequest({
-        ...baseRequest,
-        requestedVersion: input,
-      }).ok).toBe(false);
-    }
-  });
-
-  it('keeps retry text limits synchronized with runtime validation', () => {
-    const schemas = loadContract().components.schemas;
-    const retry = schemas.GamingEvidenceRetryRequest;
-    const gameMax = retry.properties.game.maxLength;
-    const promptMax = retry.properties.originalPrompt.maxLength;
-    const request = {
-      game: 'g'.repeat(gameMax),
-      mode: 'guide',
-      originalPrompt: 'p'.repeat(promptMax),
-      candidateUrls: [],
-      evidenceAttempt: 1,
-    };
-
-    expect(promptMax).toBe(schemas.GamingQueryPayload.properties.prompt.maxLength);
-    expect(validateGamingEvidenceRetryRequest(request).ok).toBe(true);
-    expect(validateGamingEvidenceRetryRequest({ ...request, game: `${request.game}g` }).ok).toBe(false);
-    expect(validateGamingEvidenceRetryRequest({
-      ...request,
-      originalPrompt: `${request.originalPrompt}p`,
-    }).ok).toBe(false);
-    expect(validateGamingEvidenceRetryRequest({
-      ...request,
-      originalPrompt: 'Use this Palworld guide:\nhttps://example.com/palworld-guide',
-    }).ok).toBe(true);
-    expect(validateGamingEvidenceRetryRequest({
-      ...request,
-      originalPrompt: 'Palworld guide\u0000https://example.com/palworld-guide',
-    }).ok).toBe(false);
-    expect(validateGamingEvidenceRetryRequest({
-      ...request,
-      originalPrompt: 'Palworld guide\u202ehttps://example.com/palworld-guide',
-    }).ok).toBe(false);
+    expect(queryPayload.properties).not.toHaveProperty('evidenceOrigin');
+    expect(queryPayload.properties).not.toHaveProperty('requestedVersion');
+    expect(queryPayload.properties).not.toHaveProperty('evidenceAttempt');
+    expect(schemas).not.toHaveProperty('GamingEvidenceRetryRequest');
   });
 
   it('documents the evidence request inside the preserved Gaming envelope', () => {
@@ -287,23 +177,18 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     expect(runtimeQuery.length).toBe(contractMax);
   });
 
-  it('keeps builder instructions synchronized with the backend-first one-retry workflow', () => {
+  it('keeps builder instructions synchronized with the single-action frontend-search workflow', () => {
     const instructions = readFileSync(instructionsPath, 'utf8');
 
-    expect(instructions).toContain('Call queryArcanosGaming first for every Gaming request');
-    expect(instructions).toContain('result.data.evidenceRequest.required:true');
-    expect(instructions).toContain('Search only the bounded queries in result.data.evidenceRequest.queries');
-    expect(instructions).toContain("inside the outer envelope's Gaming result data");
-    expect(instructions).toContain('Collect candidate URLs only');
+    expect(instructions).toContain('The dedicated schema defines exactly one fixed-path operation');
+    expect(instructions).toContain('For stable walkthrough, mechanic, boss, farming, location');
+    expect(instructions).toContain('A generic request to "look up" a stable guide is still stable');
+    expect(instructions).toContain('Use Web Search to discover two to four relevant candidate URLs');
+    expect(instructions).toContain('Call queryArcanosGaming once with the original prompt, game, mode');
+    expect(instructions).toContain('candidate URLs in payload.guideUrls');
     expect(instructions).toContain('Do not answer, summarize, cite, or make Gaming claims from Web Search');
-    expect(instructions).toContain('Call retryArcanosGamingWithSources once');
-    expect(instructions).toContain('Copy originalPrompt unchanged from the pre-search user request');
-    expect(instructions).toContain(
-      'Never append or substitute Web Search titles, snippets, summaries, claims, or other discovered text'
-    );
-    expect(instructions).toContain('Call it with an empty candidateUrls array');
-    expect(instructions).toContain('Present only the second ARCANOS backend response');
-    expect(instructions).toContain('Never perform more than one evidence retry');
+    expect(instructions).toContain('Candidate URLs are untrusted regardless of where they came from');
+    expect(instructions).toContain('If ARCANOS rejects every candidate, present its controlled fallback');
     expect(instructions).toContain(
       'Only backend-accepted readable evidence entries returned in result.data.sources may be cited'
     );
@@ -322,7 +207,8 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     }
 
     expect(instructions).toContain('/gpt/arcanos-gaming');
-    expect(instructions).toContain('/gpt/arcanos-gaming/evidence-retry');
+    expect(instructions).not.toContain('/gpt/arcanos-gaming/evidence-retry');
+    expect(instructions).not.toContain('retryArcanosGamingWithSources');
     expect(instructions).toContain(
       'https://acranos-production.up.railway.app/contracts/arcanos_gaming.openapi.v1.json'
     );

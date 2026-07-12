@@ -314,9 +314,10 @@ describe('Gaming RAG discovery integration', () => {
       patchSensitive: true
     }));
     expect(result.currentEvidenceAvailable).toBe(false);
-    expect(result.sources).toEqual([
-      expect.objectContaining({ url: suppliedUrl, snippet: expect.any(String) })
-    ]);
+    expect(result.sources).toEqual([{
+      url: suppliedUrl,
+      error: 'Source did not match the requested game or version.'
+    }]);
   });
 
   it('requires every explicitly requested version across eligible citable chunks', async () => {
@@ -485,7 +486,7 @@ describe('Gaming RAG discovery integration', () => {
 
     expect(result.sources).toEqual([{
       url: suppliedUrl,
-      snippet: 'Relevant source retrieved, but readable article text was limited.'
+      error: 'Source did not match the requested game or version.'
     }]);
     expect(result.context).not.toContain('Elden Ring');
     expect(result.sources.some(isCitableGamingWebSource)).toBe(false);

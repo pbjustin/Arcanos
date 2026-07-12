@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "ARCANOS Gaming Custom GPT Action",
-    "version": "1.2.0",
+    "version": "1.3.0",
     "description": "Builder-specific contract for ARCANOS Gaming. ARCANOS fetches and validates every source before producing grounded guidance."
   },
   "servers": [
@@ -16,7 +16,7 @@
       "post": {
         "operationId": "queryArcanosGaming",
         "summary": "Ask ARCANOS Gaming",
-        "description": "Always call this operation first. The response may request one bounded frontend URL-discovery retry.",
+        "description": "Submit a Gaming request and up to four untrusted candidate URLs for ARCANOS to fetch and validate.",
         "x-openai-isConsequential": false,
         "requestBody": {
           "required": true,
@@ -45,7 +45,10 @@
                       "mode": "guide",
                       "game": "Palworld",
                       "prompt": "Look up a current beginner-to-midgame guide for Palworld 1.0.",
-                      "requestedVersion": "1.0"
+                      "guideUrls": [
+                        "https://example.com/palworld-1-0-guide",
+                        "https://example.com/palworld-1-0-patch-notes"
+                      ]
                     }
                   }
                 }
@@ -66,66 +69,6 @@
           },
           "400": {
             "description": "Malformed or invalid request expressed as bounded JSON.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PublicErrorResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Unexpected route failure expressed as bounded JSON.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PublicErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/gpt/arcanos-gaming/evidence-retry": {
-      "post": {
-        "operationId": "retryArcanosGamingWithSources",
-        "summary": "Retry with candidate URLs",
-        "description": "Call once only when queryArcanosGaming explicitly requests frontend evidence. ARCANOS fetches and validates each URL.",
-        "x-openai-isConsequential": false,
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/GamingEvidenceRetryRequest"
-              },
-              "example": {
-                "game": "Palworld",
-                "mode": "guide",
-                "originalPrompt": "Look up a current beginner-to-midgame guide for Palworld 1.0.",
-                "candidateUrls": [
-                  "https://example.com/palworld-1-0-guide"
-                ],
-                "requestedVersion": "1.0",
-                "evidenceAttempt": 1
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Final grounded Gaming result or a controlled source-unavailable result.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GamingPublicResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid candidate input or repeated evidence retry expressed as bounded JSON.",
             "content": {
               "application/json": {
                 "schema": {
@@ -226,25 +169,6 @@
               "maxLength": 2048
             }
           },
-          "evidenceOrigin": {
-            "type": "string",
-            "enum": [
-              "frontend_web_search"
-            ]
-          },
-          "requestedVersion": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 64,
-            "pattern": "^(?:(?:[Vv](?:[Ee][Rr][Ss][Ii][Oo][Nn])?|[Pp][Aa][Tt][Cc][Hh]) *)?[0-9]{1,3}\\.[0-9]{1,3}(?:\\.[0-9]{1,3})?$"
-          },
-          "evidenceAttempt": {
-            "type": "integer",
-            "enum": [
-              1
-            ],
-            "description": "Present only for the single frontend evidence retry."
-          },
           "audit": {
             "type": "boolean"
           },
@@ -256,61 +180,6 @@
           },
           "enableHrc": {
             "type": "boolean"
-          }
-        }
-      },
-      "GamingEvidenceRetryRequest": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "game",
-          "mode",
-          "originalPrompt",
-          "candidateUrls",
-          "evidenceAttempt"
-        ],
-        "properties": {
-          "game": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 120
-          },
-          "mode": {
-            "type": "string",
-            "enum": [
-              "guide",
-              "build",
-              "meta"
-            ]
-          },
-          "originalPrompt": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 8000
-          },
-          "candidateUrls": {
-            "type": "array",
-            "maxItems": 4,
-            "uniqueItems": true,
-            "items": {
-              "type": "string",
-              "format": "uri",
-              "maxLength": 2048
-            },
-            "description": "Untrusted URL candidates. Search titles and snippets are never evidence."
-          },
-          "requestedVersion": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 64,
-            "pattern": "^(?:(?:[Vv](?:[Ee][Rr][Ss][Ii][Oo][Nn])?|[Pp][Aa][Tt][Cc][Hh]) *)?[0-9]{1,3}\\.[0-9]{1,3}(?:\\.[0-9]{1,3})?$"
-          },
-          "evidenceAttempt": {
-            "type": "integer",
-            "enum": [
-              1
-            ],
-            "description": "Exactly one frontend evidence retry is permitted."
           }
         }
       },

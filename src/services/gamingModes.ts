@@ -474,17 +474,17 @@ export function validateGamingRequest(payload: unknown): { ok: true; value: Vali
     isRecord(payload) ? payload.urls : undefined,
     isRecord(payload) ? payload.guideUrls : undefined
   );
-  const frontendCandidateCount = new Set(
+  const candidateCount = new Set(
     [...(guideUrl ? [guideUrl] : []), ...guideUrls].map((url) => url.trim().toLowerCase())
   ).size;
-  if (evidenceOrigin === "frontend_web_search" && frontendCandidateCount > 4) {
+  if (candidateCount > 4) {
     return {
       ok: false,
       error: formatGamingError({
         mode,
         error: {
           code: "BAD_REQUEST",
-          message: "Frontend Gaming evidence accepts at most four candidate URLs."
+          message: "Gaming accepts at most four candidate URLs."
         }
       })
     };

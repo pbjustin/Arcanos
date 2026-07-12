@@ -294,11 +294,12 @@ describe('gaming RAG snippet quality', () => {
   it('keeps generic extraction support for an unknown supplied guide domain', async () => {
     const url = 'https://guides.example.net/elden-ring-opening-route';
     mockFetchAndClean.mockResolvedValue(
-      'Community route evidence: unlock the nearby grace, collect the map fragment, and upgrade the weapon before the first major boss.'
+      'Elden Ring community route evidence: unlock the nearby grace, collect the map fragment, and upgrade the weapon before the first major boss.'
     );
 
     const result = await buildGamingRagContext({
       mode: 'guide',
+      game: 'Elden Ring',
       prompt: 'Use this supplied guide for the opening route.',
       guideUrl: url,
       guideUrls: []
@@ -321,7 +322,7 @@ describe('gaming RAG snippet quality', () => {
     expect(result.sources).toEqual([
       {
         url,
-        snippet: 'Community route evidence: unlock the nearby grace, collect the map fragment, and upgrade the weapon before the first major boss.'
+        snippet: 'Elden Ring community route evidence: unlock the nearby grace, collect the map fragment, and upgrade the weapon before the first major boss.'
       }
     ]);
   });
@@ -339,7 +340,15 @@ describe('gaming RAG snippet quality', () => {
     process.env.ARCANOS_GAMING_RAG_MAX_SOURCES = '1';
     const slug = game.toLowerCase().replace(/[^a-z0-9]+/g, '-');
     const url = `https://community-${slug}.example/articles/${topic.replace(/\s+/g, '-')}`;
-    mockFetchAndClean.mockResolvedValue(evidence);
+    if (mode === 'meta') {
+      mockFetchedHtml({
+        title: `${game} ${topic}`,
+        text: evidence,
+        date: new Date().toISOString()
+      });
+    } else {
+      mockFetchAndClean.mockResolvedValue(evidence);
+    }
 
     const result = await buildGamingRagContext({
       mode: mode as 'guide' | 'build' | 'meta',
@@ -400,6 +409,7 @@ describe('gaming RAG snippet quality', () => {
 
     const result = await buildGamingRagContext({
       mode: 'build',
+      game: fixture.game,
       prompt: 'Review the linked raid healer talents.',
       guideUrl: 'https://state-only.example/talent-calculator/share',
       guideUrls: []
@@ -444,7 +454,7 @@ describe('gaming RAG snippet quality', () => {
     expect(mockFetchAndClean).not.toHaveBeenCalled();
     expect(result.sources).toEqual([{
       url: 'invalid-source',
-      error: 'Structured build resource detected, but the loadout data could not be decoded safely.'
+      error: 'Source URL was rejected by evidence policy.'
     }]);
     expect(result.sources.some(isCitableGamingWebSource)).toBe(false);
     expect(result.context).toBe('');
@@ -462,10 +472,10 @@ describe('gaming RAG snippet quality', () => {
       guideUrls: []
     });
 
-    expect(result.sources).toEqual([expect.objectContaining({
+    expect(result.sources).toEqual([{
       url: expect.not.stringMatching(/build=|#/),
-      snippet: 'Relevant source retrieved, but readable article text was limited.'
-    })]);
+      error: 'Source did not match the requested game or version.'
+    }]);
     expect(result.context).not.toContain('VX-9 SMG');
     expect(result.sources.some(isCitableGamingWebSource)).toBe(false);
   });
@@ -589,7 +599,7 @@ describe('gaming RAG snippet quality', () => {
 
     expect(result.sources).toEqual([{
       url,
-      snippet: 'Relevant source retrieved, but readable article text was limited.'
+      error: 'Source did not match the requested game or version.'
     }]);
     expect(result.sources.some(isCitableGamingWebSource)).toBe(false);
     expect(result.context).not.toContain('Stormveil Castle');
@@ -716,9 +726,31 @@ describe('gaming RAG snippet quality', () => {
 
     expect(result.sources).toEqual([{
       url: 'invalid-source',
-      error: 'Source URL was blocked or could not be resolved.'
+      error: 'Source URL was rejected by evidence policy.'
     }]);
     expect(JSON.stringify(result.sources)).not.toContain('127.0.0.1');
+  });
+
+  it.each([
+    'https://user:password@example.com/stable-guide',
+    'https://example.com:8443/stable-guide',
+    'https://127.0.0.1/stable-guide',
+    'https://example.com/?q=elden+ring'
+  ])('rejects unsafe stable candidates before fetch without provenance metadata: %s', async (candidateUrl) => {
+    const result = await buildGamingRagContext({
+      mode: 'guide',
+      game: 'Stable Test Game',
+      prompt: 'Use this stable Test Game guide.',
+      guideUrl: candidateUrl,
+      guideUrls: []
+    });
+
+    expect(mockFetchAndClean).not.toHaveBeenCalled();
+    expect(result.sources).toEqual([expect.objectContaining({
+      url: 'invalid-source',
+      error: 'Source URL was rejected by evidence policy.'
+    })]);
+    expect(JSON.stringify(result.sources)).not.toContain(candidateUrl);
   });
 
   it('returns safe metadata for a malformed-only source without fetching', async () => {
@@ -930,12 +962,12 @@ describe('gaming RAG snippet quality', () => {
   it('bounds every public source snippet independently of the configured chunk size', async () => {
     process.env.ARCANOS_GAMING_RAG_CHUNK_CHARS = '1600';
     mockFetchAndClean.mockResolvedValue(
-      `Bleed build evidence recommends Arcane, Vigor, a fast weapon, and an upgraded bleed affinity because ${'measured damage and reliable status buildup '.repeat(32)}.`
+      `Elden Ring bleed build evidence recommends Arcane, Vigor, a fast weapon, and an upgraded bleed affinity because ${'measured damage and reliable status buildup '.repeat(32)}.`
     );
 
     const result = await buildGamingRagContext({
       mode: 'build',
-      game: 'Test Game',
+      game: 'Elden Ring',
       prompt: 'Make me a bleed build for Elden Ring.',
       guideUrl: 'https://example.com/long-bleed-build',
       guideUrls: []
@@ -970,8 +1002,8 @@ describe('gaming RAG snippet quality', () => {
   it('keeps context citation numbers contiguous and mapped to public sources after dedupe', async () => {
     mockFetchAndClean.mockImplementation(async (url: string) =>
       url.endsWith('/one')
-        ? 'First route evidence: activate a grace and collect the map before fighting the boss.'
-        : 'Second route evidence: upgrade the weapon and flasks before entering the legacy dungeon.'
+        ? 'Elden Ring first route evidence: activate a grace and collect the map before fighting the boss.'
+        : 'Elden Ring second route evidence: upgrade the weapon and flasks before entering the legacy dungeon.'
     );
 
     const result = await buildGamingRagContext({
@@ -1010,7 +1042,7 @@ describe('gaming RAG snippet quality', () => {
     expect(result.clear.robustFallback).toBe(true);
   });
 
-  it('accepts fetched frontend evidence only after exact game and version corroboration', async () => {
+  it('accepts fetched first-call candidates only after exact game and version corroboration without provenance metadata', async () => {
     mockGetEnvBoolean.mockImplementation((key: string, defaultValue: boolean) =>
       key === 'ARCANOS_GAMING_RAG_ENABLED' ? true : defaultValue
     );
@@ -1029,10 +1061,7 @@ describe('gaming RAG snippet quality', () => {
       game: 'Palworld',
       prompt: 'Look up a current beginner guide for Palworld 1.0.',
       guideUrl: undefined,
-      guideUrls: ['https://example.com/palworld-1-0'],
-      evidenceOrigin: 'frontend_web_search' as const,
-      requestedVersion: '1.0',
-      evidenceAttempt: 1
+      guideUrls: ['https://example.com/palworld-1-0']
     };
     const first = await buildGamingRagContext(input);
     const cached = await buildGamingRagContext(input);
@@ -1049,7 +1078,7 @@ describe('gaming RAG snippet quality', () => {
     ['a different exact version', 'Palworld 1.0.1 Beginner Guide', 'Palworld 1.0.1 beginner route and boss progression.', new Date().toISOString()],
     ['a wrong-game page with a later incidental mention', 'Elden Ring 1.0 Guide', `${'Elden Ring route and boss advice. '.repeat(8)}A comparison later mentions Palworld 1.0 once.`, new Date().toISOString()],
     ['an explicitly stale page', 'Palworld 1.0 Beginner Guide', 'Palworld 1.0 beginner route and boss progression.', '2020-01-02T00:00:00.000Z']
-  ])('rejects frontend evidence with %s before citation construction', async (_caseName, title, text, date) => {
+  ])('rejects first-call evidence with %s before citation construction without provenance metadata', async (_caseName, title, text, date) => {
     mockGetEnvBoolean.mockImplementation((key: string, defaultValue: boolean) =>
       key === 'ARCANOS_GAMING_RAG_ENABLED' ? true : defaultValue
     );
@@ -1060,10 +1089,7 @@ describe('gaming RAG snippet quality', () => {
       game: 'Palworld',
       prompt: 'Look up a current beginner guide for Palworld 1.0.',
       guideUrl: undefined,
-      guideUrls: ['https://example.com/candidate'],
-      evidenceOrigin: 'frontend_web_search',
-      requestedVersion: '1.0',
-      evidenceAttempt: 1
+      guideUrls: ['https://example.com/candidate']
     });
 
     expect(result.currentEvidenceAvailable).toBe(false);
@@ -1492,7 +1518,7 @@ describe('gaming RAG snippet quality', () => {
     expect(mockFetchAndClean).toHaveBeenCalledTimes(2);
   });
 
-  it('keeps mixed accepted and rejected frontend sources citation-aligned', async () => {
+  it('keeps mixed accepted and rejected first-call sources citation-aligned without provenance metadata', async () => {
     mockGetEnvBoolean.mockImplementation((key: string, defaultValue: boolean) =>
       key === 'ARCANOS_GAMING_RAG_ENABLED' ? true : defaultValue
     );
@@ -1530,10 +1556,7 @@ describe('gaming RAG snippet quality', () => {
       game: 'Palworld',
       prompt: 'Look up a current beginner guide for Palworld 1.0.',
       guideUrl: undefined,
-      guideUrls: ['https://example.com/accepted', 'https://example.com/rejected'],
-      evidenceOrigin: 'frontend_web_search',
-      requestedVersion: '1.0',
-      evidenceAttempt: 1
+      guideUrls: ['https://example.com/accepted', 'https://example.com/rejected']
     });
 
     expect(result.currentEvidenceAvailable).toBe(true);

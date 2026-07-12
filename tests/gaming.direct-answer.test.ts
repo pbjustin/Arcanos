@@ -1088,7 +1088,7 @@ describe('gaming guide output hardening', () => {
     expectInlineSourceRefsToMap(result.data.response, result.data.sources.length);
   });
 
-  it('filters blank, invalid, and non-http guide URLs before fetching', async () => {
+  it('filters blank, invalid, and non-HTTPS guide URLs before fetching', async () => {
     const result = await runGuidePipeline({
       prompt: 'Use the linked guides for a direct boss strategy.',
       guideUrl: 'not-a-url',
@@ -1102,16 +1102,15 @@ describe('gaming guide output hardening', () => {
       auditEnabled: false
     });
 
-    expect(mockFetchAndClean).toHaveBeenCalledTimes(2);
+    expect(mockFetchAndClean).toHaveBeenCalledTimes(1);
     expect(mockFetchAndClean).toHaveBeenNthCalledWith(1, 'https://example.com/guide-a', 512, expectFetchOptions());
-    expect(mockFetchAndClean).toHaveBeenNthCalledWith(2, 'http://example.com/guide-b', 512, expectFetchOptions());
     expect(result.data.sources).toEqual([
       { url: 'https://example.com/guide-a', snippet: DEFAULT_GUIDE_SNIPPET },
-      { url: 'http://example.com/guide-b', snippet: DEFAULT_GUIDE_SNIPPET }
+      { url: 'invalid-source', error: 'Source URL was rejected by evidence policy.' }
     ]);
     const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
     expect(trinityRequest.input.prompt).toContain('[Source 1] https://example.com/guide-a');
-    expect(trinityRequest.input.prompt).toContain('[Source 2] http://example.com/guide-b');
+    expect(trinityRequest.input.prompt).not.toContain('http://example.com/guide-b');
     expect(trinityRequest.input.prompt).not.toContain('not-a-url');
     expect(trinityRequest.input.prompt).not.toContain('ftp://example.com/guide');
   });
@@ -1152,7 +1151,7 @@ describe('gaming guide output hardening', () => {
     );
   });
 
-  it('redacts guide URL credentials from returned sources and prompt context', async () => {
+  it('rejects guide URL credentials before fetch or prompt construction', async () => {
     const result = await runGuidePipeline({
       prompt: 'Use the linked guide for a direct boss strategy.',
       guideUrl: 'https://user:pass@example.com/guide',
@@ -1161,13 +1160,13 @@ describe('gaming guide output hardening', () => {
     });
 
     expect(result.data.sources).toEqual([
-      { url: 'https://example.com/guide', snippet: DEFAULT_GUIDE_SNIPPET }
+      { url: 'invalid-source', error: 'Source URL was rejected by evidence policy.' }
     ]);
-    expect(mockFetchAndClean).toHaveBeenCalledWith('https://example.com/guide', 512, expectFetchOptions());
+    expect(mockFetchAndClean).not.toHaveBeenCalled();
     expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(
       expect.objectContaining({
         input: expect.objectContaining({
-          prompt: expect.stringContaining('[Source 1] https://example.com/guide')
+          prompt: expect.not.stringContaining('https://example.com/guide')
         })
       })
     );
@@ -1472,11 +1471,11 @@ describe('gaming guide output hardening', () => {
     const urls = Array.from({ length: 102 }, (_value, index) => `https://example.com/cache-${index}`);
     mockFetchAndClean.mockResolvedValue('Cache guide text about boss route and safe positioning.');
 
-    for (let index = 0; index < urls.length; index += 32) {
+    for (let index = 0; index < urls.length; index += 1) {
       await buildGamingRagContext({
         mode: 'guide',
         prompt: 'Use the supplied cache guides.',
-        guideUrls: urls.slice(index, index + 32)
+        guideUrls: [urls[index]!]
       });
     }
     const firstFetchCount = mockFetchAndClean.mock.calls.length;
@@ -1484,7 +1483,7 @@ describe('gaming guide output hardening', () => {
     await buildGamingRagContext({
       mode: 'guide',
       prompt: 'Use the supplied cache guides.',
-      guideUrls: urls.slice(0, 32)
+      guideUrls: urls.slice(0, 2)
     });
 
     expect(firstFetchCount).toBe(102);

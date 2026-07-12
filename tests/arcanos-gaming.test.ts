@@ -359,7 +359,7 @@ describe('ArcanosGaming module', () => {
     expect(runGuidePipelineSpy).not.toHaveBeenCalled();
   });
 
-  it('enforces the four-URL cap across single and list frontend evidence fields', async () => {
+  it('enforces the four-URL cap across single and list fields without provenance metadata', async () => {
     const result = await ArcanosGaming.actions.query({
       mode: 'guide',
       prompt: 'Look up a current beginner guide for Palworld 1.0.',
@@ -370,9 +370,7 @@ describe('ArcanosGaming module', () => {
         'https://example.com/three',
         'https://example.com/four',
         'https://example.com/five'
-      ],
-      evidenceOrigin: 'frontend_web_search',
-      evidenceAttempt: 1
+      ]
     } as any);
 
     expect(result).toEqual(expect.objectContaining({
@@ -381,6 +379,24 @@ describe('ArcanosGaming module', () => {
       error: expect.objectContaining({ code: 'BAD_REQUEST' })
     }));
     expect(runGuidePipelineSpy).not.toHaveBeenCalled();
+  });
+
+  it('deduplicates candidate values across initial URL fields before enforcing the cap', async () => {
+    const result = await ArcanosGaming.actions.query({
+      mode: 'guide',
+      prompt: 'Look up a current beginner guide for Palworld 1.0.',
+      game: 'Palworld',
+      url: 'https://example.com/one',
+      guideUrls: [
+        'https://example.com/one',
+        'https://example.com/two',
+        'https://example.com/three',
+        'https://example.com/four'
+      ]
+    } as any);
+
+    expect(result).toEqual(expect.objectContaining({ ok: true, route: 'gaming' }));
+    expect(runGuidePipelineSpy).toHaveBeenCalledTimes(1);
   });
 
   it.each([

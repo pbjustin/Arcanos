@@ -67,8 +67,7 @@ describe('custom GPT OpenAPI contract route', () => {
     ]);
     expect(response.body.paths?.['/gpt/arcanos-gaming']?.post?.operationId)
       .toBe('queryArcanosGaming');
-    expect(response.body.paths?.['/gpt/arcanos-gaming/evidence-retry']?.post?.operationId)
-      .toBe('retryArcanosGamingWithSources');
+    expect(Object.keys(response.body.paths ?? {})).toEqual(['/gpt/arcanos-gaming']);
   });
 
   it('serves the canonical job-result contract with no-store caching', async () => {
