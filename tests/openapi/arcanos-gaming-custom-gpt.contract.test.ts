@@ -222,6 +222,18 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
       ...request,
       originalPrompt: `${request.originalPrompt}p`,
     }).ok).toBe(false);
+    expect(validateGamingEvidenceRetryRequest({
+      ...request,
+      originalPrompt: 'Use this Palworld guide:\nhttps://example.com/palworld-guide',
+    }).ok).toBe(true);
+    expect(validateGamingEvidenceRetryRequest({
+      ...request,
+      originalPrompt: 'Palworld guide\u0000https://example.com/palworld-guide',
+    }).ok).toBe(false);
+    expect(validateGamingEvidenceRetryRequest({
+      ...request,
+      originalPrompt: 'Palworld guide\u202ehttps://example.com/palworld-guide',
+    }).ok).toBe(false);
   });
 
   it('documents the evidence request inside the preserved Gaming envelope', () => {

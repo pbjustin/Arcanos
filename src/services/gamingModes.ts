@@ -165,6 +165,13 @@ function isBoundedText(value: unknown, maxLength: number): value is string {
     && !/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/u.test(value);
 }
 
+function isBoundedPromptText(value: unknown, maxLength: number): value is string {
+  return typeof value === "string"
+    && value.trim().length > 0
+    && value.trim().length <= maxLength
+    && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/u.test(value);
+}
+
 function normalizeRequestedVersion(value: unknown): string | undefined {
   if (!isBoundedText(value, 64)) {
     return undefined;
@@ -211,7 +218,7 @@ export function validateGamingEvidenceRetryRequest(body: unknown): GamingEvidenc
   ) {
     return { ok: false, code: "BAD_REQUEST", message: "Gaming evidence retry game contains unsupported sensitive data." };
   }
-  if (!isBoundedText(body.originalPrompt, 8_000)) {
+  if (!isBoundedPromptText(body.originalPrompt, 8_000)) {
     return { ok: false, code: "BAD_REQUEST", message: "Gaming evidence retry requires a bounded originalPrompt value." };
   }
   if (body.evidenceAttempt !== 1) {

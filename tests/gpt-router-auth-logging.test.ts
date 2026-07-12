@@ -685,13 +685,20 @@ describe('gpt router auth logging', () => {
     app.use(requestContext);
     app.use('/gpt', gptRouter);
 
+    const originalPrompt = 'Use this Palworld 1.0 guide and summarize its beginner recommendations:\nhttps://medium.com/worth-playing-pc/the-ultimate-palworld-1-0-guide-why-your-old-strategy-wont-cut-it-c90d8460c96b';
+    const candidateUrls = [
+      'https://example.com/palworld-1-0',
+      'https://example.org/palworld-1-0',
+      'https://example.net/palworld-1-0',
+      'https://example.edu/palworld-1-0'
+    ];
     const response = await request(app)
       .post('/gpt/arcanos-gaming/evidence-retry')
       .send({
         game: 'Palworld',
         mode: 'guide',
-        originalPrompt: 'Look up a current beginner guide for Palworld 1.0.',
-        candidateUrls: ['https://example.com/palworld-1-0'],
+        originalPrompt,
+        candidateUrls,
         requestedVersion: 'version 1.0',
         evidenceAttempt: 1
       });
@@ -709,13 +716,13 @@ describe('gpt router auth logging', () => {
       payload: {
         mode: 'guide',
         game: 'Palworld',
-        prompt: 'Look up a current beginner guide for Palworld 1.0.',
-        guideUrls: ['https://example.com/palworld-1-0'],
+        prompt: originalPrompt,
+        guideUrls: candidateUrls,
         evidenceOrigin: 'frontend_web_search',
         evidenceAttempt: 1,
         requestedVersion: '1.0'
       },
-      prompt: 'Look up a current beginner guide for Palworld 1.0.'
+      prompt: originalPrompt
     });
   });
 
@@ -729,6 +736,9 @@ describe('gpt router auth logging', () => {
     }, 'BAD_REQUEST'],
     ['generic requested version', {
       game: 'Palworld', mode: 'guide', originalPrompt: 'Palworld guide', candidateUrls: [], requestedVersion: 'guide', evidenceAttempt: 1
+    }, 'BAD_REQUEST'],
+    ['candidate URL with a newline', {
+      game: 'Palworld', mode: 'guide', originalPrompt: 'Palworld guide', candidateUrls: ['https://example.com/palworld\n1-0'], evidenceAttempt: 1
     }, 'BAD_REQUEST']
   ])('rejects invalid Gaming evidence retry input: %s', async (_caseName, body, code) => {
     const app = express();
