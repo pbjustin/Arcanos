@@ -1,5 +1,13 @@
 import { detectGamingGame, type GamingGameDetectionSource } from "@services/gamingGameDetection.js";
-import { formatGamingSuccess, resolveGamingMode, type GamingErrorEnvelope, type GamingMode, type GamingSuccessEnvelope } from "@services/gamingModes.js";
+import { extractExplicitGamingVersions } from "@services/gamingVersion.js";
+import {
+  formatGamingSuccess,
+  resolveGamingMode,
+  type GamingErrorEnvelope,
+  type GamingFallbackReason,
+  type GamingMode,
+  type GamingSuccessEnvelope
+} from "@services/gamingModes.js";
 import { isRecord } from "@shared/typeGuards.js";
 import { extractTextPrompt, normalizeStringList } from "@transport/http/payloadNormalization.js";
 
@@ -334,7 +342,7 @@ function extractPlatform(payload: unknown, prompt: string): string | undefined {
   return match?.[1];
 }
 
-function extractVersion(payload: unknown, prompt: string): string | undefined {
+function extractVersion(payload: unknown, prompt: string, game?: string): string | undefined {
   const explicit = getStringField(payload, "version") ?? getStringField(payload, "patch");
   if (explicit) {
     return explicit;
@@ -344,9 +352,15 @@ function extractVersion(payload: unknown, prompt: string): string | undefined {
     return "this patch";
   }
 
-  const match = prompt.match(/\b(?:patch|version|season)\s+([A-Za-z0-9._ -]{1,32})/i) ??
-    prompt.match(/\bin\s+(\d{1,2}\.\d{1,2})\b/i);
-  return match?.[1]?.trim();
+  const semanticVersion = extractExplicitGamingVersions({ prompt, game })[0];
+  if (semanticVersion) {
+    return semanticVersion;
+  }
+
+  const labeledToken = prompt.match(/\b(?:patch|version|season)\s+([A-Za-z0-9][A-Za-z0-9._-]{0,31})\b/i)?.[1];
+  return labeledToken && !/^(?:for|is|notes?|of|the)$/i.test(labeledToken)
+    ? labeledToken
+    : undefined;
 }
 
 function extractClass(payload: unknown, prompt: string): string | undefined {
@@ -589,7 +603,7 @@ export const IntentRouterAgent = {
       : { confidence: rawGameDetection.confidence, source: rawGameDetection.source };
     const scoredIntent = scoreIntent(payload, prompt, gameDetection);
     const rawPlatform = extractPlatform(payload, prompt);
-    const rawVersion = extractVersion(payload, prompt);
+    const rawVersion = extractVersion(payload, prompt, gameDetection.game);
 
     return {
       mode: scoredIntent.mode,
@@ -725,6 +739,7 @@ export const ResponseComposerAgent = {
   composeBackendFailureFallback(params: {
     intent: GamingIntent & { mode: GamingMode };
     error: unknown;
+    fallbackReason?: GamingFallbackReason;
   }): GamingSuccessEnvelope {
     const { intent, error } = params;
     const fallback = fallbackBodyForMode(intent);
@@ -753,6 +768,7 @@ export const ResponseComposerAgent = {
       data: {
         response,
         sources: [],
+        fallbackReason: params.fallbackReason ?? "GAMING_PROVIDER_ERROR"
       },
     });
   },

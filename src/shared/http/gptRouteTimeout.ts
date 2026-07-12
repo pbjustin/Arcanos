@@ -8,6 +8,7 @@ export function resolveGptRouteHardTimeoutMs(
   options: {
     profile?: 'default' | 'dag_execution';
     defaultMsOverride?: number;
+    minimumMsOverride?: number;
   } = {},
 ): number {
   const profile = options.profile ?? 'default';
@@ -20,6 +21,15 @@ export function resolveGptRouteHardTimeoutMs(
           Math.min(MAX_GPT_ROUTE_HARD_TIMEOUT_MS, Math.trunc(options.defaultMsOverride))
         )
       : undefined;
+  const normalizedMinimumMsOverride =
+    typeof options.minimumMsOverride === 'number' &&
+    Number.isFinite(options.minimumMsOverride) &&
+    options.minimumMsOverride > 0
+      ? Math.max(
+          MIN_GPT_ROUTE_HARD_TIMEOUT_MS,
+          Math.min(MAX_GPT_ROUTE_HARD_TIMEOUT_MS, Math.trunc(options.minimumMsOverride))
+        )
+      : undefined;
   const envKey =
     profile === 'dag_execution'
       ? 'GPT_ROUTE_DAG_EXECUTION_HARD_TIMEOUT_MS'
@@ -28,23 +38,31 @@ export function resolveGptRouteHardTimeoutMs(
 
   if (profile === 'dag_execution') {
     if (!Number.isFinite(configuredTimeoutMs) || configuredTimeoutMs <= 0) {
-      return DEFAULT_GPT_ROUTE_DAG_EXECUTION_HARD_TIMEOUT_MS;
+      return Math.max(
+        DEFAULT_GPT_ROUTE_DAG_EXECUTION_HARD_TIMEOUT_MS,
+        normalizedMinimumMsOverride ?? 0
+      );
     }
 
-    return Math.max(
+    const resolvedTimeoutMs = Math.max(
       DEFAULT_GPT_ROUTE_HARD_TIMEOUT_MS,
       Math.min(MAX_GPT_ROUTE_DAG_EXECUTION_HARD_TIMEOUT_MS, Math.trunc(configuredTimeoutMs))
     );
+    return Math.max(resolvedTimeoutMs, normalizedMinimumMsOverride ?? 0);
   }
 
   if (!Number.isFinite(configuredTimeoutMs) || configuredTimeoutMs <= 0) {
-    return normalizedDefaultMsOverride ?? DEFAULT_GPT_ROUTE_HARD_TIMEOUT_MS;
+    return Math.max(
+      normalizedDefaultMsOverride ?? DEFAULT_GPT_ROUTE_HARD_TIMEOUT_MS,
+      normalizedMinimumMsOverride ?? 0
+    );
   }
 
-  return Math.max(
+  const resolvedTimeoutMs = Math.max(
     MIN_GPT_ROUTE_HARD_TIMEOUT_MS,
     Math.min(MAX_GPT_ROUTE_HARD_TIMEOUT_MS, Math.trunc(configuredTimeoutMs))
   );
+  return Math.max(resolvedTimeoutMs, normalizedMinimumMsOverride ?? 0);
 }
 
 export const GPT_ROUTE_HARD_TIMEOUT_BOUNDS = {

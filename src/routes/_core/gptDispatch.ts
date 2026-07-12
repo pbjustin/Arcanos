@@ -123,6 +123,7 @@ const FORWARDED_TOP_LEVEL_PAYLOAD_KEYS = [
   'game',
   'url',
   'urls',
+  'guideUrl',
   'guideUrls',
   'audit',
   'enableAudit',

@@ -115,6 +115,28 @@ describe("ArcanosGaming mode routing", () => {
     expect((result as any).data.response).toContain("Watch Outs");
   });
 
+  it("returns a fixed-safe envelope when HRC verification fails", async () => {
+    mockEvaluateWithHRC.mockRejectedValueOnce(new Error("secret provider response body"));
+
+    const result = await ArcanosGaming.actions.query({
+      mode: "guide",
+      game: "Elden Ring",
+      prompt: "Give me a concise beginner guide.",
+      hrc: true
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      route: "gaming",
+      mode: "guide",
+      error: {
+        code: "MODULE_ERROR",
+        message: "Gaming response verification could not be completed safely."
+      }
+    });
+    expect(JSON.stringify(result)).not.toContain("secret provider response body");
+  });
+
   it("accepts guideUrl as the single guide URL field", async () => {
     await ArcanosGaming.actions.query({
       mode: "guide",

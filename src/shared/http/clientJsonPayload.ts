@@ -30,6 +30,42 @@ function extractPreviewText(payload: Record<string, unknown>): string {
   return truncateText(JSON.stringify(payload), STRING_PREVIEW_MAX_BYTES);
 }
 
+function buildTruncatedGamingPayload(
+  payload: Record<string, unknown>
+): Record<string, unknown> | undefined {
+  if (!isRecord(payload.result) || payload.result.route !== 'gaming') {
+    return undefined;
+  }
+
+  const mode = readString(payload.result.mode);
+  const publicMode = mode === 'guide' || mode === 'build' || mode === 'meta' ? mode : null;
+  const routeMeta = isRecord(payload._route) ? payload._route : {};
+  return {
+    ok: true,
+    ...(readString(payload.requestId) ? { requestId: readString(payload.requestId) } : {}),
+    ...(readString(payload.traceId) ? { traceId: readString(payload.traceId) } : {}),
+    result: {
+      ok: false,
+      route: 'gaming',
+      mode: publicMode,
+      error: {
+        code: 'GAMING_RESPONSE_TOO_LARGE',
+        message: 'The Gaming response exceeded the public response size limit.'
+      }
+    },
+    _route: {
+      ...(readString(routeMeta.requestId) ? { requestId: readString(routeMeta.requestId) } : {}),
+      ...(readString(routeMeta.traceId) ? { traceId: readString(routeMeta.traceId) } : {}),
+      ...(readString(routeMeta.gptId) ? { gptId: readString(routeMeta.gptId) } : {}),
+      ...(readString(routeMeta.module) ? { module: readString(routeMeta.module) } : {}),
+      ...(readString(routeMeta.action) ? { action: readString(routeMeta.action) } : {}),
+      ...(readString(routeMeta.route) ? { route: readString(routeMeta.route) } : {}),
+      ...(readString(routeMeta.timestamp) ? { timestamp: readString(routeMeta.timestamp) } : {}),
+      truncated: true
+    }
+  };
+}
+
 function buildTruncatedPayloadFromPreview(
   payload: Record<string, unknown>,
   preview: string
@@ -50,8 +86,12 @@ function buildTruncatedPayloadFromPreview(
   if (isRecord(payload._route)) {
     return {
       ...(typeof payload.ok === 'boolean' ? { ok: payload.ok } : {}),
+      ...(readString(payload.requestId) ? { requestId: readString(payload.requestId) } : {}),
+      ...(readString(payload.traceId) ? { traceId: readString(payload.traceId) } : {}),
       result: preview,
       _route: {
+        ...(readString(payload._route.requestId) ? { requestId: readString(payload._route.requestId) } : {}),
+        ...(readString(payload._route.traceId) ? { traceId: readString(payload._route.traceId) } : {}),
         ...(readString(payload._route.gptId) ? { gptId: readString(payload._route.gptId) } : {}),
         ...(readString(payload._route.module) ? { module: readString(payload._route.module) } : {}),
         ...(readString(payload._route.route) ? { route: readString(payload._route.route) } : {}),
@@ -123,6 +163,11 @@ function buildMinimalTruncatedPayload(previewSource: string): Record<string, unk
 }
 
 function buildTruncatedPayload(payload: Record<string, unknown>, maxBytes: number): Record<string, unknown> {
+  const truncatedGamingPayload = buildTruncatedGamingPayload(payload);
+  if (truncatedGamingPayload && measureJsonBytes(truncatedGamingPayload) <= maxBytes) {
+    return truncatedGamingPayload;
+  }
+
   const previewSource = extractPreviewText(payload);
   const maxPreviewBytes = Math.max(512, Math.floor(maxBytes * 0.45));
   let lowerPreviewBytes = 0;

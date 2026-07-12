@@ -270,6 +270,9 @@ describe('client response guards', () => {
       mode: 'guide',
       data: {
         response: 'Use the source-backed route.',
+        fallbackReason: 'CURRENT_EVIDENCE_UNAVAILABLE',
+        discoveryReason: 'DISCOVERY_NO_SOURCE_CANDIDATES',
+        discoveryFailureReason: 'DISCOVERY_PROVIDER_UNCONFIGURED',
         sources: [
           { url: 'https://example.com/guide-1', snippet: 'First source snippet.' },
           { url: 'https://example.com/guide-2', error: 'Fetch failed.' },
@@ -294,6 +297,9 @@ describe('client response guards', () => {
       mode: 'guide',
       data: {
         response: 'Use the source-backed route.',
+        fallbackReason: 'CURRENT_EVIDENCE_UNAVAILABLE',
+        discoveryReason: 'DISCOVERY_NO_SOURCE_CANDIDATES',
+        discoveryFailureReason: 'DISCOVERY_PROVIDER_UNCONFIGURED',
         sources: [
           { url: 'https://example.com/guide-1', snippet: 'First source snippet.' },
           { url: 'https://example.com/guide-2', error: 'Fetch failed.' },
@@ -533,6 +539,90 @@ describe('client response guards', () => {
         truncated: true,
       },
     });
+  });
+
+  it('preserves public request and trace IDs when a route envelope is truncated', () => {
+    const prepared = prepareBoundedClientJsonPayload({
+      ok: true,
+      requestId: 'req-gaming-truncated',
+      traceId: 'trace-gaming-truncated',
+      result: 'x'.repeat(10_000),
+      _route: {
+        requestId: 'req-gaming-truncated',
+        traceId: 'trace-gaming-truncated',
+        gptId: 'arcanos-gaming',
+        module: 'ARCANOS:GAMING',
+        route: 'gaming',
+        timestamp: '2026-07-11T00:00:00.000Z'
+      }
+    }, {
+      maxBytes: 1200
+    });
+
+    expect(prepared.truncated).toBe(true);
+    expect(prepared.payload).toMatchObject({
+      requestId: 'req-gaming-truncated',
+      traceId: 'trace-gaming-truncated',
+      _route: {
+        requestId: 'req-gaming-truncated',
+        traceId: 'trace-gaming-truncated'
+      }
+    });
+  });
+
+  it('preserves a structured Gaming result when a Gaming response is truncated', () => {
+    const prepared = prepareBoundedClientJsonPayload({
+      ok: true,
+      requestId: 'req-gaming-structured-truncated',
+      traceId: 'trace-gaming-structured-truncated',
+      result: {
+        ok: true,
+        route: 'gaming',
+        mode: 'guide',
+        data: {
+          response: 'x'.repeat(12_000),
+          sources: [{
+            url: `https://example.com/${'source-path-'.repeat(500)}`,
+            snippet: 'large source metadata'
+          }]
+        }
+      },
+      _route: {
+        requestId: 'req-gaming-structured-truncated',
+        traceId: 'trace-gaming-structured-truncated',
+        gptId: 'arcanos-gaming',
+        module: 'ARCANOS:GAMING',
+        action: 'query',
+        route: 'gaming',
+        timestamp: '2026-07-11T00:00:00.000Z'
+      }
+    }, {
+      maxBytes: 2048
+    });
+
+    expect(prepared.truncated).toBe(true);
+    expect(prepared.responseBytes).toBeLessThanOrEqual(2048);
+    expect(prepared.payload).toMatchObject({
+      ok: true,
+      requestId: 'req-gaming-structured-truncated',
+      traceId: 'trace-gaming-structured-truncated',
+      result: {
+        ok: false,
+        route: 'gaming',
+        mode: 'guide',
+        error: {
+          code: 'GAMING_RESPONSE_TOO_LARGE'
+        }
+      },
+      _route: {
+        requestId: 'req-gaming-structured-truncated',
+        traceId: 'trace-gaming-structured-truncated',
+        module: 'ARCANOS:GAMING',
+        route: 'gaming',
+        truncated: true
+      }
+    });
+    expect(typeof prepared.payload.result).toBe('object');
   });
 
   it('emits a warning event when a response is truncated', () => {

@@ -318,7 +318,17 @@ describe('gaming open-web source discovery', () => {
     expect(result.discoveryFailureReason).toBe('DISCOVERY_PROVIDER_TIMEOUT');
   });
 
+  it('distinguishes an unconfigured provider from disabled discovery', async () => {
+    const result = await discoverGamingSources(guideInput());
+
+    expect(result.candidates).toEqual([]);
+    expect(result.searchProvider).toBe('brave');
+    expect(result.discoveryFailureReason).toBe('DISCOVERY_PROVIDER_UNCONFIGURED');
+  });
+
   it.each([
+    Object.assign(new Error('unauthorized'), { status: 401 }),
+    Object.assign(new Error('forbidden'), { status: 403 }),
     Object.assign(new Error('rate limited'), { status: 429 }),
     new Error('provider unavailable')
   ])('maps provider errors to a controlled failure result', async (error) => {

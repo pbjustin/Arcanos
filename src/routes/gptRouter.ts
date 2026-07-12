@@ -81,8 +81,6 @@ import {
 import { getRequestActorKey } from '@platform/runtime/security.js';
 import {
   GPT_QUERY_ACTION,
-  GPT_GET_STATUS_ACTION,
-  GPT_GET_RESULT_ACTION,
   GPT_QUERY_AND_WAIT_ACTION
 } from '@shared/gpt/gptJobResult.js';
 import { classifyGptRequestPlane } from './_core/gptPlaneClassification.js';
@@ -93,7 +91,10 @@ import {
 } from '@shared/gpt/gptFastPath.js';
 import { ARCANOS_SUPPRESS_TIMEOUT_FALLBACK_FLAG } from '@shared/gpt/gptDirectAction.js';
 import { extractLastUserMessageText } from '@shared/gpt/messageContentText.js';
+import { resolveRequestedGptActionFromRequest } from '@shared/gpt/gptRequestAction.js';
 import { executeDirectGptAction, executeFastGptPrompt } from '@services/gptFastPath.js';
+import { DEFAULT_GAMING_MODULE_TIMEOUT_MS } from '@services/gamingConfig.js';
+import { formatGamingError, resolveGamingMode, validatePublicGamingQueryRequest } from '@services/gamingModes.js';
 import { getConfig } from '@platform/runtime/unifiedConfig.js';
 import { handleGptDagBridge } from '@services/gptDagBridge.js';
 import {
@@ -225,6 +226,7 @@ function buildGptDispatcherErrorPayload(params: {
 }) {
   return {
     ok: false,
+    requestId: params.requestId ?? params.traceId,
     gptId: params.gptId,
     action: params.action,
     route: GPT_DISPATCHER_ROUTE,
@@ -269,111 +271,6 @@ function extractDispatcherResultText(result: unknown): string {
   } catch {
     return String(result ?? '');
   }
-}
-
-function readFirstNonEmptyString(value: unknown): string | null {
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    return trimmed.length > 0 ? trimmed : null;
-  }
-
-  if (Array.isArray(value)) {
-    for (const entry of value) {
-      const normalizedEntry = readFirstNonEmptyString(entry);
-      if (normalizedEntry) {
-        return normalizedEntry;
-      }
-    }
-  }
-
-  return null;
-}
-
-function normalizeRequestedActionName(value: string): string | null {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  const lowered = trimmed.toLowerCase();
-  const decamelized = trimmed.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
-  const compact = decamelized.replace(/[^a-z0-9]+/g, '');
-
-  if (compact === 'invokegptroute' || compact === 'gptroute' || compact === 'invokegpt') {
-    return null;
-  }
-
-  if (
-    compact === 'queryandwait' ||
-    compact === 'requestqueryandwait' ||
-    compact === 'gptqueryandwait'
-  ) {
-    return GPT_QUERY_AND_WAIT_ACTION;
-  }
-
-  if (compact === 'query') {
-    return GPT_QUERY_ACTION;
-  }
-
-  if (compact === 'getstatus') {
-    return GPT_GET_STATUS_ACTION;
-  }
-
-  if (compact === 'getresult') {
-    return GPT_GET_RESULT_ACTION;
-  }
-
-  if (compact === 'systemstate') {
-    return 'system_state';
-  }
-
-  return lowered;
-}
-
-function readActionAlias(record: Record<string, unknown>): string | null {
-  const actionValue =
-    readFirstNonEmptyString(record.action) ??
-    readFirstNonEmptyString(record.operation) ??
-    readFirstNonEmptyString(record.operationId) ??
-    readFirstNonEmptyString(record.operation_id) ??
-    readFirstNonEmptyString(record.toolAction) ??
-    readFirstNonEmptyString(record.tool_action) ??
-    readFirstNonEmptyString(record.gptAction) ??
-    readFirstNonEmptyString(record.gpt_action);
-
-  return actionValue ? normalizeRequestedActionName(actionValue) : null;
-}
-
-function resolveRequestedAction(body: unknown): string | null {
-  const normalizedBody = normalizeGptRequestBody(body);
-  if (!normalizedBody) {
-    return null;
-  }
-
-  const directAction = readActionAlias(normalizedBody);
-  if (directAction) {
-    return directAction.toLowerCase();
-  }
-
-  const payload = normalizedBody.payload;
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-    return null;
-  }
-
-  const payloadAction = readActionAlias(payload as Record<string, unknown>);
-  return payloadAction;
-}
-
-function resolveRequestedActionFromRequest(req: express.Request): string | null {
-  return (
-    resolveRequestedAction(req.body) ??
-    readActionAlias(req.query as Record<string, unknown>) ??
-    normalizeRequestedActionName(
-      readFirstNonEmptyString(req.header('x-gpt-action')) ??
-      readFirstNonEmptyString(req.header('x-arcanos-action')) ??
-      ''
-    )
-  );
 }
 
 function readPayloadRecord(
@@ -807,6 +704,72 @@ function isDirectModuleQueryGpt(gptId: string): boolean {
   return DIRECT_MODULE_QUERY_GPT_IDS.has(gptId.trim().toLowerCase());
 }
 
+function resolvePublicGamingMode(body: unknown) {
+  const normalizedBody = normalizeGptRequestBody(body);
+  const payload = readPayloadRecord(normalizedBody);
+  return resolveGamingMode(payload) ?? resolveGamingMode(normalizedBody);
+}
+
+function isControlledGamingDispatcherError(
+  code: string
+): code is 'MODULE_TIMEOUT' | 'REQUEST_ABORTED' {
+  return code === 'MODULE_TIMEOUT' || code === 'REQUEST_ABORTED';
+}
+
+function buildControlledGamingErrorResponse(params: {
+  body: unknown;
+  requestId: string | undefined;
+  traceId: string;
+  gptId: string;
+  dispatcherCode: 'MODULE_TIMEOUT' | 'REQUEST_ABORTED';
+  timeoutMs?: number;
+  timeoutPhase?: string;
+  routeMeta?: Record<string, unknown>;
+}) {
+  const requestId = params.requestId ?? params.traceId;
+  const errorCode = params.dispatcherCode === 'MODULE_TIMEOUT'
+    ? 'GENERATION_TIMEOUT'
+    : params.dispatcherCode;
+  const message = params.dispatcherCode === 'MODULE_TIMEOUT'
+    ? 'Gaming generation timed out before a complete answer was available.'
+    : 'Gaming generation was aborted before a complete answer was available.';
+  const timeoutDetails = params.dispatcherCode === 'MODULE_TIMEOUT'
+    ? {
+        ...(typeof params.timeoutMs === 'number' ? { timeoutMs: params.timeoutMs } : {}),
+        ...(params.timeoutPhase ? { timeoutPhase: params.timeoutPhase } : {})
+      }
+    : undefined;
+
+  return {
+    ok: true as const,
+    requestId,
+    traceId: params.traceId,
+    result: formatGamingError({
+      mode: resolvePublicGamingMode(params.body),
+      error: {
+        code: errorCode,
+        message,
+        ...(timeoutDetails && Object.keys(timeoutDetails).length > 0
+          ? { details: timeoutDetails }
+          : {})
+      }
+    }),
+    _route: {
+      ...(params.routeMeta ?? {}),
+      requestId,
+      traceId: params.traceId,
+      gptId: params.gptId,
+      module: 'ARCANOS:GAMING',
+      action: GPT_QUERY_ACTION,
+      route: 'gaming',
+      timestamp:
+        typeof params.routeMeta?.timestamp === 'string'
+          ? params.routeMeta.timestamp
+          : new Date().toISOString()
+    }
+  };
+}
+
 function resolveGptExecutionPlan(params: {
   req: express.Request;
   gptId: string;
@@ -1081,7 +1044,26 @@ function sendGuardedGptJsonResponse(
   logEvent: string,
   statusCode = 200
 ) {
-  return sendBoundedJsonResponse(req, res, payload as Record<string, unknown>, {
+  const payloadRecord = payload as Record<string, unknown>;
+  const requestId = req.requestId ?? req.traceId ?? 'unknown';
+  const traceId = req.traceId ?? requestId;
+  const correlatedPayload = payloadRecord.ok === false
+    ? {
+        ...payloadRecord,
+        requestId,
+        traceId,
+        ...(payloadRecord._route && typeof payloadRecord._route === 'object' && !Array.isArray(payloadRecord._route)
+          ? {
+              _route: {
+                ...(payloadRecord._route as Record<string, unknown>),
+                requestId,
+                traceId
+              }
+            }
+          : {})
+      }
+    : payloadRecord;
+  return sendBoundedJsonResponse(req, res, correlatedPayload, {
     logEvent,
     statusCode,
   });
@@ -1275,7 +1257,7 @@ function applyGptQueueBypassedHeader(
 router.post("/:gptId", async (req, res, next) => {
   const routeGptId = req.params.gptId;
   const priorityGpt = isPriorityGpt(routeGptId);
-  const requestedAction = resolveRequestedActionFromRequest(req);
+  const requestedAction = resolveRequestedGptActionFromRequest(req);
   const queryRequested = requestedAction === GPT_QUERY_ACTION;
   const queryAndWaitRequested = requestedAction === GPT_QUERY_AND_WAIT_ACTION;
   const bypassIntentRouting = queryRequested || queryAndWaitRequested;
@@ -1288,9 +1270,13 @@ router.post("/:gptId", async (req, res, next) => {
   const explicitAsyncPollIntervalMs = readRequestedAsyncGptPollIntervalMs(req, req.body);
   const queryAndWaitRequestedTimeoutMs =
     explicitAsyncWaitForResultMs ?? resolveGptWaitTimeoutMs();
+  const directGamingRoute = isDirectModuleQueryGpt(routeGptId);
   const routeTimeoutMs = resolveGptRouteHardTimeoutMs({
-    profile: routeTimeoutProfile,
-    ...(queryAndWaitRequested && routeTimeoutProfile === 'default'
+    profile: directGamingRoute ? 'default' : routeTimeoutProfile,
+    ...(directGamingRoute
+      ? { minimumMsOverride: DEFAULT_GAMING_MODULE_TIMEOUT_MS }
+      : {}),
+    ...(queryAndWaitRequested && !directGamingRoute && routeTimeoutProfile === 'default'
       ? {
           defaultMsOverride: Math.max(
             resolveDefaultGptQueryAndWaitRouteTimeoutMs(),
@@ -1407,6 +1393,41 @@ router.post("/:gptId", async (req, res, next) => {
             bodyGptId,
             traceId
           });
+        }
+
+        const publicGamingValidationError = isDirectModuleQueryGpt(incomingGptId)
+          ? validatePublicGamingQueryRequest(normalizedBody, requestedAction)
+          : null;
+
+        if (publicGamingValidationError) {
+          const action = requestedAction ?? GPT_QUERY_ACTION;
+          const errorPayload = buildGptDispatcherErrorPayload({
+            requestId,
+            traceId,
+            gptId: incomingGptId,
+            action,
+            code: publicGamingValidationError.code,
+            message: publicGamingValidationError.message,
+            route: 'gaming_validation'
+          });
+          logGptDispatcherOutcome({
+            req,
+            traceId,
+            gptId: incomingGptId,
+            action,
+            status: 400,
+            error: {
+              name: publicGamingValidationError.code,
+              message: publicGamingValidationError.message
+            }
+          });
+          return sendGuardedGptJsonResponse(
+            req,
+            res,
+            errorPayload,
+            'gpt.response.gaming_validation',
+            400
+          );
         }
 
         requestLogger?.info?.("gpt.request.auth_state", {
@@ -1691,6 +1712,7 @@ router.post("/:gptId", async (req, res, next) => {
 
         if (
           (queryRequested || queryAndWaitRequested) &&
+          !isDirectModuleQueryGpt(incomingGptId) &&
           process.env.NODE_ENV !== 'test' &&
           !hasConfiguredOpenAIKey()
         ) {
@@ -1733,7 +1755,7 @@ router.post("/:gptId", async (req, res, next) => {
             kind: planeClassification.kind,
             reason: planeClassification.reason
           });
-          return res.status(500).json({
+          return sendGuardedGptJsonResponse(req, res, {
             ok: false,
             error: {
               code: 'CONTROL_PLANE_ROUTING_BREACH',
@@ -1741,12 +1763,13 @@ router.post("/:gptId", async (req, res, next) => {
             },
             _route: {
               requestId,
+              traceId,
               gptId: incomingGptId,
               route: 'control_guard',
               action: planeClassification.action,
               timestamp: new Date().toISOString()
             }
-          });
+          }, 'gpt.response.control_plane_routing_breach', 500);
         }
 
         const explicitIdempotencyKey = normalizeExplicitIdempotencyKey(
@@ -2749,15 +2772,73 @@ router.post("/:gptId", async (req, res, next) => {
         });
 
         if (!envelope.ok) {
+          if (
+            isDirectModuleQueryGpt(incomingGptId) &&
+            isControlledGamingDispatcherError(envelope.error.code)
+          ) {
+            const controlledGamingResponse = buildControlledGamingErrorResponse({
+              body: effectiveBody,
+              requestId,
+              traceId,
+              gptId: incomingGptId,
+              dispatcherCode: envelope.error.code,
+              ...(envelope.error.code === 'MODULE_TIMEOUT'
+                ? { timeoutMs: routeTimeoutMs, timeoutPhase: 'module-dispatch' }
+                : {}),
+              routeMeta: envelope._route as Record<string, unknown>
+            });
+            if (envelope.error.code === 'MODULE_TIMEOUT') {
+              applyAIDegradedResponseHeaders(res, {
+                timeoutKind: 'pipeline_timeout',
+                degradedModeReason: 'gaming_module_timeout',
+                bypassedSubsystems: ['gaming_generation']
+              });
+            }
+            requestLogger?.warn?.('gpt.request.route_result', {
+              endpoint: req.originalUrl,
+              gptId: incomingGptId,
+              statusCode: 200,
+              ok: false,
+              errorCode: envelope.error.code,
+              controlledGamingFailure: true
+            });
+            logGptDispatcherOutcome({
+              req,
+              traceId,
+              gptId: incomingGptId,
+              action: requestedAction ?? GPT_QUERY_ACTION,
+              status: 200
+            });
+            return sendGuardedGptJsonResponse(
+              req,
+              res,
+              controlledGamingResponse,
+              'gpt.response.gaming_controlled_failure',
+              200
+            );
+          }
+
           applyAIDegradedResponseHeaders(res, extractAIDegradedResponseMetadata(envelope.error.details));
+          const unexpectedGamingRouteFailure =
+            isDirectModuleQueryGpt(incomingGptId) && envelope.error.code === 'MODULE_ERROR';
           const publicErrorEnvelope = {
             ...envelope,
+            ...(unexpectedGamingRouteFailure
+              ? {
+                  error: {
+                    code: 'GAMING_ROUTE_ERROR',
+                    message: 'ARCANOS Gaming encountered an unexpected route error.'
+                  }
+                }
+              : {}),
+            requestId: requestId ?? traceId,
             gptId: incomingGptId,
             action: requestedAction ?? GPT_QUERY_ACTION,
             route: GPT_DISPATCHER_ROUTE,
             traceId,
             _route: {
               ...envelope._route,
+              requestId: requestId ?? traceId,
               traceId
             }
           };
@@ -2766,6 +2847,8 @@ router.post("/:gptId", async (req, res, next) => {
               ? 404
               : envelope.error.code === "SYSTEM_STATE_CONFLICT"
               ? 409
+              : unexpectedGamingRouteFailure
+              ? 500
               : envelope.error.code === "MODULE_TIMEOUT"
               ? 504
               : 400;
@@ -2793,6 +2876,26 @@ router.post("/:gptId", async (req, res, next) => {
           }
           if (envelope.error.code === "SYSTEM_STATE_CONFLICT") {
             return sendGuardedGptJsonResponse(req, res, publicErrorEnvelope, 'gpt.response.route_error', 409);
+          }
+          if (unexpectedGamingRouteFailure) {
+            logGptDispatcherOutcome({
+              req,
+              traceId,
+              gptId: incomingGptId,
+              action: requestedAction ?? GPT_QUERY_ACTION,
+              status: 500,
+              error: {
+                name: 'GAMING_ROUTE_ERROR',
+                message: 'ARCANOS Gaming encountered an unexpected route error.'
+              }
+            });
+            return sendGuardedGptJsonResponse(
+              req,
+              res,
+              publicErrorEnvelope,
+              'gpt.response.gaming_unexpected_failure',
+              500
+            );
           }
           if (envelope.error.code === "MODULE_TIMEOUT") {
             return sendGuardedGptJsonResponse(req, res, publicErrorEnvelope, 'gpt.response.route_error', 504);
@@ -2886,8 +2989,13 @@ router.post("/:gptId", async (req, res, next) => {
           (envelope.result as Record<string, unknown>).route === 'diagnostic'
         ) {
           const diagnosticSerializationStartedAt = Date.now();
+          const diagnosticResult = shapeClientRouteResult(envelope.result) as Record<string, unknown>;
           const diagnosticPayload = prepareBoundedClientJsonPayload(
-            shapeClientRouteResult(envelope.result) as Record<string, unknown>,
+            {
+              ...diagnosticResult,
+              requestId: requestId ?? traceId,
+              traceId
+            },
             {
               logger: req.logger,
               logEvent: 'gpt.response.diagnostic',
@@ -2907,6 +3015,17 @@ router.post("/:gptId", async (req, res, next) => {
         const responseSerializationStartedAt = Date.now();
         const publicEnvelope = prepareBoundedClientJsonPayload({
           ...envelope,
+          ...(isDirectModuleQueryGpt(incomingGptId)
+            ? {
+                requestId: requestId ?? traceId,
+                traceId,
+                _route: {
+                  ...envelope._route,
+                  requestId: requestId ?? traceId,
+                  traceId
+                }
+              }
+            : {}),
           result: shapeClientRouteResult(envelope.result),
         }, {
           logger: req.logger,
@@ -2968,6 +3087,36 @@ router.post("/:gptId", async (req, res, next) => {
           202
         );
       }
+      if (routeTimedOut && responseOpen && isDirectModuleQueryGpt(gptId)) {
+        const controlledGamingResponse = buildControlledGamingErrorResponse({
+          body: req.body,
+          requestId,
+          traceId,
+          gptId,
+          dispatcherCode: 'MODULE_TIMEOUT',
+          timeoutMs: routeTimeoutMs,
+          timeoutPhase: 'gpt-route'
+        });
+        applyAIDegradedResponseHeaders(res, {
+          timeoutKind: 'pipeline_timeout',
+          degradedModeReason: 'gaming_route_timeout',
+          bypassedSubsystems: ['gaming_generation']
+        });
+        logGptDispatcherOutcome({
+          req,
+          traceId,
+          gptId,
+          action: requestedAction ?? GPT_QUERY_ACTION,
+          status: 200
+        });
+        return sendGuardedGptJsonResponse(
+          req,
+          res,
+          controlledGamingResponse,
+          'gpt.response.gaming_route_timeout',
+          200
+        );
+      }
       if (
         routeTimedOut &&
         responseOpen &&
@@ -3004,12 +3153,15 @@ router.post("/:gptId", async (req, res, next) => {
       if (routeTimedOut && responseOpen) {
         return sendGuardedGptJsonResponse(req, res, {
           ok: false,
+          requestId: requestId ?? traceId,
+          traceId,
           error: {
             code: 'MODULE_TIMEOUT',
             message: timeoutMessage
           },
           _route: {
-            requestId,
+            requestId: requestId ?? traceId,
+            traceId,
             gptId: req.params.gptId,
             timestamp: new Date().toISOString()
           }
@@ -3022,12 +3174,15 @@ router.post("/:gptId", async (req, res, next) => {
       if (responseOpen) {
         return sendGuardedGptJsonResponse(req, res, {
           ok: false,
+          requestId: requestId ?? traceId,
+          traceId,
           error: {
             code: 'REQUEST_ABORTED',
             message: 'Request was aborted before completion.'
           },
           _route: {
-            requestId,
+            requestId: requestId ?? traceId,
+            traceId,
             gptId: req.params.gptId,
             timestamp: new Date().toISOString()
           }
@@ -3045,14 +3200,14 @@ router.post("/:gptId", async (req, res, next) => {
     });
     const responseOpen = !res.headersSent && !res.writableEnded && !res.destroyed;
     if (responseOpen) {
-      const message = resolveErrorMessage(err);
+      const internalMessage = resolveErrorMessage(err);
       const errorPayload = buildGptDispatcherErrorPayload({
         requestId,
         traceId,
         gptId: req.params.gptId,
         action: requestedAction ?? GPT_QUERY_ACTION,
         code: 'GPT_DISPATCHER_UNEXPECTED_ERROR',
-        message,
+        message: 'An unexpected GPT route error occurred.',
         route: 'unexpected_failure'
       });
       logGptDispatcherOutcome({
@@ -3063,7 +3218,7 @@ router.post("/:gptId", async (req, res, next) => {
         status: 500,
         error: {
           name: err instanceof Error ? err.name : 'Error',
-          message
+          message: internalMessage
         }
       });
       return sendGuardedGptJsonResponse(

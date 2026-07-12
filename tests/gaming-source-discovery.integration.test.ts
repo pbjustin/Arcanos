@@ -29,7 +29,8 @@ jest.unstable_mockModule('@platform/runtime/env.js', () => ({
 const {
   buildGamingRagContext,
   clearGamingRagCache,
-  isCitableGamingWebSource
+  isCitableGamingWebSource,
+  isGamingFreshnessSensitive
 } = await import('../src/services/gamingWebContext.js');
 
 const TEST_ENV_KEYS = [
@@ -52,6 +53,8 @@ type DiscoveryCandidate = {
   providerRank: number;
   provider: string;
   score: number;
+  publishedAt?: string;
+  updatedAt?: string;
   suggestedSourceType: 'official' | 'patch_notes' | 'wiki' | 'curated';
   stable: boolean;
   freshnessKnown: boolean;
@@ -203,6 +206,203 @@ describe('Gaming RAG discovery integration', () => {
     expect(result.context).toContain(`[Source 1] ${discoveredUrl}`);
   });
 
+  it('treats a bare semantic version as freshness-sensitive discovery', async () => {
+    const result = await buildGamingRagContext(baseInput({
+      game: 'Palworld',
+      prompt: 'Look up a beginner guide for Palworld 1.0.'
+    }));
+
+    expect(mockDiscoverGamingSources).toHaveBeenCalledWith(expect.objectContaining({
+      game: 'Palworld',
+      mode: 'guide',
+      patchSensitive: true
+    }));
+    expect(result.retrievalReason).toBe('patch_or_meta_sensitive');
+    expect(result.currentEvidenceAvailable).toBe(false);
+  });
+
+  it('treats a parenthesized semantic version as freshness-sensitive without a known game', () => {
+    expect(isGamingFreshnessSensitive(baseInput({
+      game: undefined,
+      prompt: 'Use the supplied article for this guide request (1.0).'
+    }))).toBe(true);
+  });
+
+  it.each([
+    'How do I beat the boss in under 3.5 minutes?',
+    'What is the strategy for a 99.9% success rate?',
+    'Connect to 192.168.1.1 for Palworld matchmaking.',
+    'Palworld 2.0 kilograms is the download estimate.',
+    'Palworld was released on 7.11.26.',
+  ])('does not treat a general decimal as freshness-sensitive: %s', (prompt) => {
+    expect(isGamingFreshnessSensitive(baseInput({
+      game: 'Palworld',
+      prompt,
+    }))).toBe(false);
+  });
+
+  it('accepts a validated supplied semantic-version article as current evidence', async () => {
+    const suppliedUrl = 'https://palworld-guides.example/palworld-1-0-beginner-guide';
+    mockFetchAndClean.mockResolvedValue(
+      'Palworld 1.0 beginner guide evidence explains a current progression route with preparation and combat steps. '
+      + 'Players should gather supplies, confirm the nearby landmark, and save before starting the Palworld objective.'
+    );
+
+    const result = await buildGamingRagContext(baseInput({
+      game: 'Palworld',
+      prompt: 'Use this Palworld 1.0 article as a guide source.',
+      guideUrl: suppliedUrl
+    }));
+
+    expect(mockDiscoverGamingSources).not.toHaveBeenCalled();
+    expect(result.currentEvidenceAvailable).toBe(true);
+    expect(result.sources).toEqual([
+      expect.objectContaining({ url: suppliedUrl, snippet: expect.any(String) })
+    ]);
+  });
+
+  it('accepts an exact requested version followed by sentence-ending punctuation', async () => {
+    const suppliedUrl = 'https://palworld-guides.example/palworld-1-0-beginner-guide';
+    mockFetchAndClean.mockResolvedValue(
+      'Palworld beginner guide evidence explains a current progression route with preparation and combat steps. '
+      + 'Players should gather supplies, confirm the nearby landmark, and save before starting the objective. '
+      + 'This guidance applies to Palworld version 1.0.'
+    );
+
+    const result = await buildGamingRagContext(baseInput({
+      game: 'Palworld',
+      prompt: 'Use this Palworld 1.0 article as a current guide source.',
+      guideUrl: suppliedUrl
+    }));
+
+    expect(result.currentEvidenceAvailable).toBe(true);
+  });
+
+  it('does not accept a longer patch as an exact requested version', async () => {
+    const suppliedUrl = 'https://palworld-guides.example/palworld-1-0-1-beginner-guide';
+    mockFetchAndClean.mockResolvedValue(
+      'Palworld beginner guide evidence explains a current progression route with preparation and combat steps. '
+      + 'Players should gather supplies, confirm the nearby landmark, and save before starting the objective. '
+      + 'This guidance applies to Palworld version 1.0.1.'
+    );
+
+    const result = await buildGamingRagContext(baseInput({
+      game: 'Palworld',
+      prompt: 'Use this Palworld 1.0 article as a current guide source.',
+      guideUrl: suppliedUrl
+    }));
+
+    expect(result.currentEvidenceAvailable).toBe(false);
+  });
+
+  it('does not treat a different semantic version as current evidence', async () => {
+    const suppliedUrl = 'https://palworld-guides.example/palworld-1-0-beginner-guide';
+    mockFetchAndClean.mockResolvedValue(
+      'Palworld 0.9 beginner guide evidence explains a progression route with preparation and combat steps. '
+      + 'Players should gather supplies, confirm the nearby landmark, and save before starting the Palworld objective.'
+    );
+
+    const result = await buildGamingRagContext(baseInput({
+      game: 'Palworld',
+      prompt: 'Use this Palworld 1.0 article as a current guide source.',
+      guideUrl: suppliedUrl
+    }));
+
+    expect(mockDiscoverGamingSources).toHaveBeenCalledWith(expect.objectContaining({
+      game: 'Palworld',
+      patchSensitive: true
+    }));
+    expect(result.currentEvidenceAvailable).toBe(false);
+    expect(result.sources).toEqual([
+      expect.objectContaining({ url: suppliedUrl, snippet: expect.any(String) })
+    ]);
+  });
+
+  it('requires every explicitly requested version across eligible citable chunks', async () => {
+    const olderUrl = 'https://palworld-guides.example/palworld-0-9-guide';
+    const currentUrl = 'https://palworld-guides.example/palworld-1-0-guide';
+    mockFetchAndClean.mockImplementation(async (url: string) => url === olderUrl
+      ? guideEvidence('Palworld version 0.9', 'progression route')
+      : guideEvidence('Palworld version 1.0', 'progression route'));
+
+    const result = await buildGamingRagContext(baseInput({
+      game: 'Palworld',
+      prompt: 'Compare Palworld version 0.9 with Palworld version 1.0.',
+      guideUrls: [olderUrl, currentUrl]
+    }));
+
+    expect(result.currentEvidenceAvailable).toBe(true);
+    expect(result.sources).toEqual(expect.arrayContaining([
+      expect.objectContaining({ url: olderUrl, snippet: expect.any(String) }),
+      expect.objectContaining({ url: currentUrl, snippet: expect.any(String) })
+    ]));
+  });
+
+  it('does not satisfy a multi-version request with evidence for only the first version', async () => {
+    const suppliedUrl = 'https://palworld-guides.example/palworld-0-9-guide';
+    mockFetchAndClean.mockResolvedValue(guideEvidence('Palworld version 0.9', 'progression route'));
+
+    const result = await buildGamingRagContext(baseInput({
+      game: 'Palworld',
+      prompt: 'Compare versions 0.9 and 1.0 for Palworld.',
+      guideUrl: suppliedUrl
+    }));
+
+    expect(result.currentEvidenceAvailable).toBe(false);
+    expect(mockDiscoverGamingSources).toHaveBeenCalledWith(expect.objectContaining({
+      game: 'Palworld',
+      patchSensitive: true
+    }));
+  });
+
+  it('does not treat stale official evidence as current without a requested version', async () => {
+    const staleOfficialUrl = 'https://official-palworld.example/guides/beginner';
+    mockDiscoverGamingSources.mockResolvedValue(makeDiscoveryResult({
+      candidates: [{
+        ...makeDiscoveredCandidate(staleOfficialUrl, 1, 'official'),
+        updatedAt: '2020-01-01T00:00:00.000Z'
+      }]
+    }));
+    mockFetchAndClean.mockResolvedValue(
+      'Palworld current beginner guide evidence explains a progression route with preparation and combat steps. '
+      + 'Players should gather supplies, confirm the nearby landmark, and save before starting the Palworld objective.'
+    );
+
+    const result = await buildGamingRagContext(baseInput({
+      game: 'Palworld',
+      prompt: 'Look up a current beginner guide for Palworld.'
+    }));
+
+    expect(result.sources).toEqual([
+      expect.objectContaining({ url: staleOfficialUrl, snippet: expect.any(String) })
+    ]);
+    expect(result.currentEvidenceAvailable).toBe(false);
+  });
+
+  it('accepts recently dated current evidence when no version is requested', async () => {
+    const currentOfficialUrl = 'https://official-palworld.example/guides/current-beginner';
+    mockDiscoverGamingSources.mockResolvedValue(makeDiscoveryResult({
+      candidates: [{
+        ...makeDiscoveredCandidate(currentOfficialUrl, 1, 'official'),
+        updatedAt: new Date().toISOString()
+      }]
+    }));
+    mockFetchAndClean.mockResolvedValue(
+      'Palworld current beginner guide evidence explains a progression route with preparation and combat steps. '
+      + 'Players should gather supplies, confirm the nearby landmark, and save before starting the Palworld objective.'
+    );
+
+    const result = await buildGamingRagContext(baseInput({
+      game: 'Palworld',
+      prompt: 'Look up a current beginner guide for Palworld.'
+    }));
+
+    expect(result.sources).toEqual([
+      expect.objectContaining({ url: currentOfficialUrl, snippet: expect.any(String) })
+    ]);
+    expect(result.currentEvidenceAvailable).toBe(true);
+  });
+
   it('skips discovery when a supplied source already provides high-quality evidence', async () => {
     const suppliedUrl = 'https://community-guides.example/caves-of-qud/early-progression-guide';
     mockFetchAndClean.mockResolvedValue(guideEvidence('Caves of Qud', 'early progression'));
@@ -271,6 +471,25 @@ describe('Gaming RAG discovery integration', () => {
     expect(mockDiscoverGamingSources).not.toHaveBeenCalled();
   });
 
+  it('rejects a supplied wrong-game article identified only by its body introduction', async () => {
+    process.env.ARCANOS_GAMING_DISCOVERY_ENABLED = 'false';
+    const suppliedUrl = 'https://supplied.example/article-without-metadata';
+    mockFetchAndClean.mockResolvedValue(guideEvidence('Elden Ring', 'beginner guide route'));
+
+    const result = await buildGamingRagContext(baseInput({
+      game: 'Factorio',
+      prompt: 'Use this source for a Factorio progression guide.',
+      guideUrl: suppliedUrl
+    }));
+
+    expect(result.sources).toEqual([{
+      url: suppliedUrl,
+      snippet: 'Relevant source retrieved, but readable article text was limited.'
+    }]);
+    expect(result.context).not.toContain('Elden Ring');
+    expect(result.sources.some(isCitableGamingWebSource)).toBe(false);
+  });
+
   it('orders final capped sources by chunk rank after low-quality supplied evidence triggers discovery', async () => {
     process.env.ARCANOS_GAMING_RAG_MAX_SOURCES = '1';
     process.env.ARCANOS_GAMING_DISCOVERY_MIN_EVIDENCE_QUALITY = '0.99';
@@ -302,9 +521,9 @@ describe('Gaming RAG discovery integration', () => {
     expect(result.discoveryTriggered).toBe(true);
     expect(result.discoveryReason).toBe('DISCOVERY_SUPPLIED_SOURCE_FAILED');
     expect(result.sources).toEqual([
-      expect.objectContaining({ url: discoveredUrl, snippet: expect.any(String) })
+      expect.objectContaining({ url: discoveredUrl, snippet: expect.any(String) }),
+      { url: 'invalid-source', error: 'Malformed or unsupported source URL.' }
     ]);
-    expect(result.sources).not.toContainEqual(expect.objectContaining({ url: 'invalid-source' }));
     expect(mockFetchAndClean).toHaveBeenCalledTimes(1);
   });
 
@@ -355,6 +574,42 @@ describe('Gaming RAG discovery integration', () => {
     expect(result.sources).not.toContainEqual(expect.objectContaining({ url: failedUrl }));
     expect(result.sources).not.toContainEqual(expect.objectContaining({ url: searchOnlyUrl }));
     expect(mockFetchAndClean).not.toHaveBeenCalledWith(searchOnlyUrl, expect.anything(), expect.anything());
+  });
+
+  it('keeps a safe supplied-source error after accepted discovered evidence', async () => {
+    process.env.ARCANOS_GAMING_RAG_MAX_SOURCES = '2';
+    const suppliedUrl = 'https://medium.example/palworld-1-0-guide';
+    const discoveredUrl = 'https://palworld.example/news/palworld-1-0-guide';
+    const secondDiscoveredUrl = 'https://palworld-community.example/guides/palworld-1-0';
+    mockDiscoverGamingSources.mockResolvedValue(makeDiscoveryResult({
+      candidates: [
+        makeDiscoveredCandidate(discoveredUrl, 1, 'patch_notes'),
+        makeDiscoveredCandidate(secondDiscoveredUrl, 2, 'patch_notes')
+      ]
+    }));
+    mockFetchAndClean.mockImplementation(async (url: string) => {
+      if (url === suppliedUrl) {
+        throw Object.assign(new Error('secret upstream forbidden response'), {
+          response: { status: 403 }
+        });
+      }
+      return guideEvidence('Palworld', '1.0 current progression');
+    });
+
+    const result = await buildGamingRagContext(baseInput({
+      game: 'Palworld',
+      prompt: 'Use this Palworld 1.0 article as a guide source.',
+      guideUrl: suppliedUrl
+    }));
+
+    expect(result.sources).toEqual([
+      expect.objectContaining({ url: discoveredUrl, snippet: expect.any(String) }),
+      { url: suppliedUrl, error: 'Source access was blocked.' }
+    ]);
+    expect(result.context).toContain(`[Source 1] ${discoveredUrl}`);
+    expect(result.context).not.toContain('[Source 2]');
+    expect(result.sources).not.toContainEqual(expect.objectContaining({ url: secondDiscoveredUrl }));
+    expect(result.currentEvidenceAvailable).toBe(true);
   });
 
   it('does not cite a fetched discovered page that fails to corroborate the requested game', async () => {

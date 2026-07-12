@@ -424,6 +424,10 @@ describe('gaming guide output hardening', () => {
   });
 
   it('passes a meta request with game through the normal path', async () => {
+    mockFetchAndClean.mockResolvedValue(
+      'World of Warcraft 11.2.7 Frost Mage current patch guide explains tuning, talents, rotation, and encounter tradeoffs. '
+      + 'Players should verify current hotfixes before changing a competitive build.'
+    );
     mockRunTrinityWritingPipeline.mockResolvedValueOnce({
       result: 'Frost Mage is viable when current tuning supports its control and cleave profile.',
       activeModel: 'gpt-test',
@@ -432,7 +436,7 @@ describe('gaming guide output hardening', () => {
 
     const result = await runMetaPipeline({
       game: 'World of Warcraft',
-      prompt: 'Is frost mage still viable this patch?',
+      prompt: 'Is frost mage still viable in World of Warcraft 11.2.7?',
       guideUrls: [],
       auditEnabled: false
     });
@@ -472,7 +476,7 @@ describe('gaming guide output hardening', () => {
         cleanedTextLength: 150,
         ...(mode === 'build' ? { documentTitle: pageHeading } : { headingText: pageHeading })
       });
-      return `${expectedGame} ${mode} evidence explains readable gameplay choices, priorities, tradeoffs, and current recommendations.`;
+      return `${expectedGame} ${mode} 1.0 evidence explains readable gameplay choices, priorities, tradeoffs, and current recommendations.`;
     });
     mockRunTrinityWritingPipeline.mockResolvedValueOnce({
       result: `Source-backed ${mode} response`,
@@ -482,7 +486,7 @@ describe('gaming guide output hardening', () => {
 
     const pipeline = mode === 'build' ? runBuildPipeline : runMetaPipeline;
     const result = await pipeline({
-      prompt: `Use the supplied article for this ${mode} request.`,
+      prompt: `Use the supplied article for this ${mode} request${mode === 'meta' ? ' (1.0)' : ''}.`,
       guideUrl: url,
       guideUrls: [],
       auditEnabled: false
@@ -512,6 +516,10 @@ describe('gaming guide output hardening', () => {
   });
 
   it('keeps repeated meta requests off the direct-answer integrity path', async () => {
+    mockFetchAndClean.mockResolvedValue(
+      'World of Warcraft 11.2.7 Frost Mage current patch guide explains tuning, talents, rotation, and encounter tradeoffs. '
+      + 'Players should verify current hotfixes before changing a competitive build.'
+    );
     const metaAnswer = [
       '1. Frost Mage is viable when its control, cleave, and burst windows match the current encounter profile.',
       '2. Treat exact rankings as patch-sensitive and verify tuning before committing to competitive pushes.'
@@ -525,7 +533,7 @@ describe('gaming guide output hardening', () => {
     for (let index = 0; index < 10; index += 1) {
       const result = await runMetaPipeline({
         game: 'World of Warcraft',
-        prompt: 'Is frost mage still viable this patch?',
+        prompt: 'Is frost mage still viable in World of Warcraft 11.2.7?',
         guideUrls: [],
         auditEnabled: false
       });
@@ -552,6 +560,10 @@ describe('gaming guide output hardening', () => {
   });
 
   it('allows numbered or bulleted meta formatting without direct-answer false positives', async () => {
+    mockFetchAndClean.mockResolvedValue(
+      'World of Warcraft 11.2.7 Frost Mage current patch guide explains tuning, talents, rotation, and encounter tradeoffs. '
+      + 'Players should verify current hotfixes before changing a competitive build.'
+    );
     const metaAnswer = [
       '- Frost Mage can be viable when control and burst windows matter.',
       '- Watch for tuning, dungeon pool, and team composition before treating it as best-in-slot.'
@@ -564,7 +576,7 @@ describe('gaming guide output hardening', () => {
 
     const result = await runMetaPipeline({
       game: 'World of Warcraft',
-      prompt: 'Is frost mage still viable this patch?',
+      prompt: 'Is frost mage still viable in World of Warcraft 11.2.7?',
       guideUrls: [],
       auditEnabled: false
     });
@@ -663,9 +675,7 @@ describe('gaming guide output hardening', () => {
     const warnSpy = jest.spyOn(logger, 'warn');
     try {
       mockFetchAndClean.mockResolvedValueOnce('Elden Ring route guide: start in Limgrave, follow Sites of Grace, upgrade flasks, and prepare before Stormveil Castle.');
-      mockRunTrinityWritingPipeline.mockRejectedValueOnce(Object.assign(new Error('provider unavailable'), {
-        code: 'TRINITY_OUTPUT_INTEGRITY_FAILED'
-      }));
+      mockRunTrinityWritingPipeline.mockRejectedValueOnce(new Error('provider unavailable'));
 
       const result = await runGuidePipeline({
         game: 'Elden Ring',
@@ -682,14 +692,69 @@ describe('gaming guide output hardening', () => {
       expect(result.data.response).not.toContain('TRINITY_OUTPUT_INTEGRITY_FAILED');
       expect(result.data.response).not.toMatch(/provider|incomplete|integrity|timeout/i);
       expect(result.data.response).not.toContain('Backend-supported: none');
+      expect(result.data.fallbackReason).toBe('GAMING_PROVIDER_ERROR');
       expectInlineSourceRefsToMap(result.data.response, result.data.sources.length);
       expect(warnSpy).toHaveBeenCalledWith('gaming.fallback.used', expect.objectContaining({
-        fallbackReason: 'TRINITY_OUTPUT_INTEGRITY_FAILED',
-        errorCode: 'TRINITY_OUTPUT_INTEGRITY_FAILED'
+        fallbackReason: 'GAMING_PROVIDER_ERROR'
       }));
     } finally {
       warnSpy.mockRestore();
     }
+  });
+
+  it('preserves genuine output-integrity failures for the module formatter', async () => {
+    const integrityError = Object.assign(new Error('secret provider integrity detail'), {
+      code: 'TRINITY_OUTPUT_INTEGRITY_FAILED',
+      integrityIssues: ['broken_numbering']
+    });
+    mockRunTrinityWritingPipeline.mockRejectedValueOnce(integrityError);
+
+    await expect(runGuidePipeline({
+      game: 'Elden Ring',
+      prompt: 'Look up a guide for Elden Ring.',
+      guideUrls: [],
+      auditEnabled: false
+    })).rejects.toBe(integrityError);
+  });
+
+  it.each([
+    ['Palworld', 'Look up a current beginner guide for Palworld 1.0.'],
+    ['Clockwork Odyssey', 'Look up a current beginner guide for Clockwork Odyssey 1.0.']
+  ])('returns a current-evidence fallback for freshness-sensitive %s guidance', async (game, prompt) => {
+    mockGetEnvBoolean.mockImplementation((key: string, defaultValue: boolean) =>
+      key === 'ARCANOS_GAMING_DISCOVERY_ENABLED' ? true : defaultValue
+    );
+
+    const result = await runGuidePipeline({
+      game,
+      prompt,
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.data.fallbackReason).toBe('CURRENT_EVIDENCE_UNAVAILABLE');
+    expect(result.data.discoveryReason).toBe('DISCOVERY_NO_SOURCE_CANDIDATES');
+    expect(result.data.discoveryFailureReason).toBe('DISCOVERY_PROVIDER_UNCONFIGURED');
+    expect(result.data.sources).toEqual([]);
+    expect(result.data.response).toContain('Sources unavailable');
+    expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
+  });
+
+  it('marks the deterministic no-client path with bounded fallback metadata', async () => {
+    mockGetOpenAIClientOrAdapter.mockReturnValueOnce({ client: null });
+
+    const result = await runGuidePipeline({
+      game: 'Caves of Qud',
+      prompt: 'Give me a concise beginner progression guide.',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(result.data.fallbackReason).toBe('GAMING_PROVIDER_UNAVAILABLE');
+    expect(result.data.discoveryReason).toBe('DISCOVERY_DISABLED');
+    expect(mockGenerateMockResponse).toHaveBeenCalledTimes(1);
+    expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
   });
 
   it('returns a controlled fallback when upstream intake slows down', async () => {
@@ -1154,11 +1219,14 @@ describe('gaming guide output hardening', () => {
   });
 
   it('prefers official patch notes for patch-sensitive Elden Ring meta requests', async () => {
-    mockFetchAndClean.mockResolvedValue('Official patch notes: balance adjustments changed several weapon and skill interactions.');
+    mockFetchAndClean.mockResolvedValue(
+      'Elden Ring 1.16.1 official current patch notes explain balance adjustments to weapons, skills, and build interactions. '
+      + 'Players should review the current version before changing a patch-sensitive build.'
+    );
 
     await runMetaPipeline({
       game: 'Elden Ring',
-      prompt: 'What changed for Elden Ring builds in the latest patch?',
+      prompt: 'What changed for Elden Ring builds in patch 1.16.1?',
       guideUrls: [],
       auditEnabled: false
     });
@@ -1171,19 +1239,20 @@ describe('gaming guide output hardening', () => {
     );
     const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
     expect(trinityRequest.input.prompt).toContain('Type: patch_notes');
-    expect(trinityRequest.input.prompt).toContain('Official patch notes');
+    expect(trinityRequest.input.prompt).toContain('official current patch notes');
   });
 
   it('retrieves WoW patch and Frost Mage guide context for current viability requests', async () => {
+    process.env.ARCANOS_GAMING_WEB_CONTEXT_CHARS = '1024';
     mockFetchAndClean.mockImplementation(async (url: string) =>
       url.includes('worldofwarcraft.blizzard.com')
-        ? 'Official WoW news: current hotfixes and class tuning can change spec viability this patch.'
-        : 'Frost Mage guide: Frost Mage viability depends on tuning, talents, damage profile, and encounter needs.'
+        ? 'World of Warcraft 11.2.7 official current patch news explains hotfixes and class tuning that can change Frost Mage viability.'
+        : 'World of Warcraft 11.2.7 Frost Mage guide explains current talents, rotation, damage profile, and encounter needs.'
     );
 
     await runMetaPipeline({
       game: 'World of Warcraft',
-      prompt: 'Is Frost Mage still viable this patch?',
+      prompt: 'Is Frost Mage still viable in World of Warcraft 11.2.7?',
       guideUrls: [],
       auditEnabled: false
     });
@@ -1191,11 +1260,11 @@ describe('gaming guide output hardening', () => {
     expect(mockFetchAndClean).toHaveBeenNthCalledWith(
       1,
       'https://worldofwarcraft.blizzard.com/en-us/news',
-      512,
+      1024,
       expectFetchOptions()
     );
     const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
-    expect(trinityRequest.input.prompt).toContain('Official WoW news');
+    expect(trinityRequest.input.prompt).toContain('official current patch news');
     expect(trinityRequest.input.prompt).toContain('Frost Mage guide');
   });
 
@@ -1278,8 +1347,8 @@ describe('gaming guide output hardening', () => {
 
     const result = await runGuidePipeline({
       prompt: 'Use the linked guides for source numbering.',
-      guideUrl: 'https://example.com/guide-a',
-      guideUrls: ['https://example.com/guide-a', 'https://example.com/guide-b', 'https://example.com/guide-c'],
+      guideUrl: 'https://example.com/guide-a#first',
+      guideUrls: ['https://example.com/guide-a#duplicate', 'https://example.com/guide-b', 'https://example.com/guide-c'],
       auditEnabled: false
     });
 

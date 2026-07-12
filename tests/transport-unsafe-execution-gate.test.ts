@@ -1,4 +1,7 @@
+import express from 'express';
+import request from 'supertest';
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import requestContext from '../src/middleware/requestContext.js';
 
 const buildUnsafeToProceedPayloadMock = jest.fn(() => ({
   error: 'UNSAFE_TO_PROCEED',
@@ -17,6 +20,8 @@ type MockRequest = {
   method: string;
   path: string;
   body?: unknown;
+  requestId?: string;
+  traceId?: string;
   logger?: { info?: jest.Mock };
 };
 
@@ -185,6 +190,256 @@ describe('transport/http/middleware/unsafeExecutionGate', () => {
     expect(response.json).toHaveBeenCalledWith({
       error: 'UNSAFE_TO_PROCEED',
       conditions: ['PATTERN_INTEGRITY_FAILURE']
+    });
+  });
+
+  it('contains an unsafe Gaming request in the public Gaming envelope', () => {
+    const next = jest.fn();
+    const response = createResponse();
+    hasUnsafeBlockingConditionsMock.mockReturnValue(true);
+
+    unsafeExecutionGate({
+      method: 'POST',
+      path: '/gpt/arcanos-gaming',
+      body: { action: 'query', payload: { mode: 'guide', prompt: 'Guide me.' } },
+      requestId: 'req-gaming-unsafe',
+      traceId: 'trace-gaming-unsafe'
+    } as MockRequest as any, response as any, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(response.status).toHaveBeenCalledWith(200);
+    expect(response.json).toHaveBeenCalledWith({
+      ok: true,
+      requestId: 'req-gaming-unsafe',
+      traceId: 'trace-gaming-unsafe',
+      result: {
+        ok: false,
+        route: 'gaming',
+        mode: 'guide',
+        error: {
+          code: 'UNSAFE_TO_PROCEED',
+          message: 'ARCANOS Gaming is temporarily unavailable because runtime integrity checks did not pass.'
+        }
+      },
+      _route: {
+        requestId: 'req-gaming-unsafe',
+        traceId: 'trace-gaming-unsafe',
+        gptId: 'arcanos-gaming',
+        module: 'ARCANOS:GAMING',
+        action: 'query',
+        route: 'gaming',
+        timestamp: expect.any(String)
+      }
+    });
+    expect(JSON.stringify(response.json.mock.calls[0]?.[0])).not.toContain('PATTERN_INTEGRITY_FAILURE');
+  });
+
+  it.each([
+    ['trace ID only', { traceId: 'trace-only' }, 'trace-only', 'trace-only'],
+    ['request ID only', { requestId: 'request-only' }, 'request-only', 'request-only'],
+    ['no IDs', {}, 'unknown', 'unknown']
+  ])('keeps an unsafe Gaming response correlated with %s', (_caseName, ids, expectedRequestId, expectedTraceId) => {
+    const next = jest.fn();
+    const response = createResponse();
+    hasUnsafeBlockingConditionsMock.mockReturnValue(true);
+
+    unsafeExecutionGate({
+      method: 'POST',
+      path: '/gpt/arcanos-gaming',
+      body: { action: 'query', payload: { mode: 'guide', prompt: 'Guide me.' } },
+      ...ids
+    } as MockRequest as any, response as any, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(response.status).toHaveBeenCalledWith(200);
+    expect(response.json).toHaveBeenCalledWith(expect.objectContaining({
+      requestId: expectedRequestId,
+      traceId: expectedTraceId,
+      _route: expect.objectContaining({
+        requestId: expectedRequestId,
+        traceId: expectedTraceId
+      })
+    }));
+  });
+
+  it.each([
+    ['missing action', { payload: { mode: 'guide', prompt: 'Guide me.' } }, 'GPT_ACTION_REQUIRED'],
+    ['missing payload', { action: 'query', prompt: 'Guide me.' }, 'BAD_REQUEST'],
+    ['invalid mode', { action: 'query', payload: { mode: 'speedrun', prompt: 'Guide me.' } }, 'GAMEPLAY_MODE_REQUIRED'],
+    ['missing prompt', { action: 'query', payload: { mode: 'guide' } }, 'PROMPT_REQUIRED']
+  ])('keeps unsafe-state Gaming validation at HTTP 400 for %s', (_caseName, body, expectedCode) => {
+    const next = jest.fn();
+    const response = createResponse();
+    hasUnsafeBlockingConditionsMock.mockReturnValue(true);
+
+    unsafeExecutionGate({
+      method: 'POST',
+      path: '/gpt/gaming',
+      body,
+      requestId: 'req-invalid',
+      traceId: 'trace-invalid'
+    } as MockRequest as any, response as any, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(response.status).toHaveBeenCalledWith(400);
+    expect(response.json).toHaveBeenCalledWith(expect.objectContaining({
+      ok: false,
+      requestId: 'req-invalid',
+      traceId: 'trace-invalid',
+      error: expect.objectContaining({ code: expectedCode }),
+      _route: expect.objectContaining({
+        requestId: 'req-invalid',
+        traceId: 'trace-invalid',
+        gptId: 'gaming'
+      })
+    }));
+  });
+
+  it('validates the merged Gaming payload before returning an unsafe-state envelope', () => {
+    const next = jest.fn();
+    const response = createResponse();
+    hasUnsafeBlockingConditionsMock.mockReturnValue(true);
+
+    unsafeExecutionGate({
+      method: 'POST',
+      path: '/gpt/gaming/',
+      body: {
+        action: 'query',
+        mode: 'build',
+        payload: { prompt: 'Build help.' }
+      },
+      requestId: 'req-merged',
+      traceId: 'trace-merged'
+    } as MockRequest as any, response as any, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(response.status).toHaveBeenCalledWith(200);
+    expect(response.json).toHaveBeenCalledWith(expect.objectContaining({
+      result: expect.objectContaining({ mode: 'build', error: expect.objectContaining({ code: 'UNSAFE_TO_PROCEED' }) }),
+      _route: expect.objectContaining({ gptId: 'gaming' })
+    }));
+  });
+
+  it('returns correlated JSON 400 before the unsafe response in real middleware order', async () => {
+    hasUnsafeBlockingConditionsMock.mockReturnValue(true);
+    const app = express();
+    app.use(requestContext);
+    app.use(express.json());
+    app.use(unsafeExecutionGate);
+    app.post('/gpt/arcanos-gaming', (_req, res) => res.status(200).json({ reachedRoute: true }));
+
+    const response = await request(app)
+      .post('/gpt/arcanos-gaming')
+      .send({ action: 'query', payload: { mode: 'speedrun', prompt: 'Guide me.' } });
+
+    expect(response.status).toBe(400);
+    expect(response.type).toBe('application/json');
+    expect(response.body).toEqual(expect.objectContaining({
+      ok: false,
+      requestId: response.headers['x-request-id'],
+      traceId: response.headers['x-trace-id'],
+      error: expect.objectContaining({ code: 'GAMEPLAY_MODE_REQUIRED' })
+    }));
+    expect(response.body.reachedRoute).toBeUndefined();
+  });
+
+  it.each([
+    ['operation alias', { body: { operation: 'query', payload: { mode: 'guide', prompt: 'Guide me.' } } }],
+    ['query parameter', { body: { payload: { mode: 'guide', prompt: 'Guide me.' } }, query: { action: 'query' } }],
+    ['action header', {
+      body: { payload: { mode: 'guide', prompt: 'Guide me.' } },
+      header: (name: string) => name === 'x-gpt-action' ? 'query' : undefined
+    }]
+  ])('recognizes the %s before unsafe-state validation', (_caseName, requestParts) => {
+    const next = jest.fn();
+    const response = createResponse();
+    hasUnsafeBlockingConditionsMock.mockReturnValue(true);
+
+    unsafeExecutionGate({
+      method: 'POST',
+      path: '/gpt/gaming',
+      requestId: 'req-alias',
+      traceId: 'trace-alias',
+      ...requestParts
+    } as MockRequest as any, response as any, next);
+
+    expect(response.status).toHaveBeenCalledWith(200);
+    expect(response.json).toHaveBeenCalledWith(expect.objectContaining({
+      result: expect.objectContaining({ error: expect.objectContaining({ code: 'UNSAFE_TO_PROCEED' }) })
+    }));
+  });
+
+  it.each([
+    ['query_and_wait', '/gpt/gaming'],
+    ['nonsense', '/gpt/arcanos-gaming'],
+    ['query', '/gpt/gaming//']
+  ])('does not reclassify unsafe %s at %s as a Gaming query', (action, path) => {
+    const next = jest.fn();
+    const response = createResponse();
+    hasUnsafeBlockingConditionsMock.mockReturnValue(true);
+
+    unsafeExecutionGate({
+      method: 'POST',
+      path,
+      body: { action, payload: { mode: 'guide', prompt: 'Guide me.' } },
+      requestId: 'req-generic-unsafe',
+      traceId: 'trace-generic-unsafe'
+    } as MockRequest as any, response as any, next);
+
+    expect(response.status).toHaveBeenCalledWith(503);
+    expect(response.json).toHaveBeenCalledWith(expect.objectContaining({
+      error: 'UNSAFE_TO_PROCEED',
+      requestId: 'req-generic-unsafe',
+      traceId: 'trace-generic-unsafe'
+    }));
+    expect(response.json).not.toHaveBeenCalledWith(expect.objectContaining({
+      result: expect.objectContaining({ route: 'gaming' })
+    }));
+  });
+
+  it.each([
+    ['/gpt/Gaming', 'gaming'],
+    ['/gpt/ARCANOS-GAMING/', 'arcanos-gaming']
+  ])('keeps normalized Gaming alias %s inside the public envelope', (path, expectedGptId) => {
+    const next = jest.fn();
+    const response = createResponse();
+    hasUnsafeBlockingConditionsMock.mockReturnValue(true);
+
+    unsafeExecutionGate({
+      method: 'POST',
+      path,
+      body: { action: 'query', payload: { mode: 'guide', prompt: 'Guide me.' } },
+      requestId: 'req-normalized',
+      traceId: 'trace-normalized'
+    } as MockRequest as any, response as any, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(response.status).toHaveBeenCalledWith(200);
+    expect(response.json).toHaveBeenCalledWith(expect.objectContaining({
+      result: expect.objectContaining({ route: 'gaming' }),
+      _route: expect.objectContaining({ gptId: expectedGptId })
+    }));
+  });
+
+  it('preserves available correlation IDs for blocked non-Gaming mutations', () => {
+    const next = jest.fn();
+    const response = createResponse();
+    hasUnsafeBlockingConditionsMock.mockReturnValue(true);
+
+    unsafeExecutionGate({
+      method: 'PUT',
+      path: '/mutate',
+      body: { action: 'write' },
+      requestId: ' req-generic '
+    } as MockRequest as any, response as any, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(response.status).toHaveBeenCalledWith(503);
+    expect(response.json).toHaveBeenCalledWith({
+      error: 'UNSAFE_TO_PROCEED',
+      conditions: ['PATTERN_INTEGRITY_FAILURE'],
+      requestId: 'req-generic',
+      traceId: 'req-generic'
     });
   });
 });

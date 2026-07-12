@@ -3,6 +3,40 @@ import { extractTextPrompt, normalizeStringList } from "@transport/http/payloadN
 
 export type GamingMode = "guide" | "build" | "meta";
 
+export type GamingFallbackReason =
+  | "CURRENT_EVIDENCE_UNAVAILABLE"
+  | "GAMING_PROVIDER_ERROR"
+  | "GAMING_PROVIDER_UNAVAILABLE"
+  | "INTAKE_PARSE_TIMEOUT"
+  | "INTAKE_RETRIEVAL_FAILED"
+  | "INTAKE_RETRIEVAL_TIMEOUT"
+  | "INTAKE_UNKNOWN_TIMEOUT"
+  | "INTAKE_UPSTREAM_TIMEOUT"
+  | "PROVIDER_COMPLETION_INCOMPLETE";
+
+export type GamingDiscoveryReason =
+  | "DISCOVERY_CURATED_SOURCE_UNAVAILABLE"
+  | "DISCOVERY_DISABLED"
+  | "DISCOVERY_EVIDENCE_BELOW_THRESHOLD"
+  | "DISCOVERY_EXPLICIT_CURRENT_LOOKUP"
+  | "DISCOVERY_MISSING_GAME"
+  | "DISCOVERY_NOT_NEEDED"
+  | "DISCOVERY_NO_SOURCE_CANDIDATES"
+  | "DISCOVERY_PATCH_SENSITIVE"
+  | "DISCOVERY_SUPPLIED_SOURCE_FAILED";
+
+export type GamingDiscoveryFailureReason =
+  | "DISCOVERY_ALL_CANDIDATES_REJECTED"
+  | "DISCOVERY_BUDGET_EXHAUSTED"
+  | "DISCOVERY_DISABLED"
+  | "DISCOVERY_FETCH_FAILED"
+  | "DISCOVERY_LOW_QUALITY"
+  | "DISCOVERY_NOT_NEEDED"
+  | "DISCOVERY_NO_RESULTS"
+  | "DISCOVERY_PROVIDER_ERROR"
+  | "DISCOVERY_PROVIDER_TIMEOUT"
+  | "DISCOVERY_PROVIDER_UNCONFIGURED";
+
 export type GamingError = {
   code: string;
   message: string;
@@ -16,6 +50,9 @@ export type GamingSuccessEnvelope = {
   data: {
     response: string;
     sources: Array<{ url: string; snippet?: string; error?: string }>;
+    fallbackReason?: GamingFallbackReason;
+    discoveryReason?: GamingDiscoveryReason;
+    discoveryFailureReason?: GamingDiscoveryFailureReason;
     auditTrace?: {
       draft: string;
       finalized: string;
@@ -41,6 +78,40 @@ export type ValidatedGamingRequest = {
   hrcEnabled: boolean;
 };
 
+export type PublicGamingRequestValidationError = {
+  code: "GPT_ACTION_REQUIRED" | "BAD_REQUEST" | "GAMEPLAY_MODE_REQUIRED" | "PROMPT_REQUIRED";
+  message: string;
+};
+
+const MAX_PUBLIC_GAMING_PAYLOAD_DEPTH = 32;
+const MAX_PUBLIC_GAMING_PAYLOAD_NODES = 4096;
+
+function publicGamingRequestExceedsStructuralLimits(body: Record<string, unknown>): boolean {
+  const stack: Array<{ value: unknown; depth: number }> = [{ value: body, depth: 0 }];
+  let visited = 0;
+
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    visited += 1;
+    if (current.depth > MAX_PUBLIC_GAMING_PAYLOAD_DEPTH) {
+      return true;
+    }
+    const children = Array.isArray(current.value)
+      ? current.value
+      : isRecord(current.value)
+        ? Object.values(current.value)
+        : [];
+    if (visited + stack.length + children.length > MAX_PUBLIC_GAMING_PAYLOAD_NODES) {
+      return true;
+    }
+    for (const child of children) {
+      stack.push({ value: child, depth: current.depth + 1 });
+    }
+  }
+
+  return false;
+}
+
 function getStringField(payload: unknown, key: string): string | undefined {
   if (!isRecord(payload)) {
     return undefined;
@@ -61,6 +132,52 @@ export function resolveGamingMode(payload: unknown): GamingMode | null {
   }
 
   return null;
+}
+
+export function validatePublicGamingQueryRequest(
+  body: unknown,
+  requestedAction: string | null
+): PublicGamingRequestValidationError | null {
+  if (!requestedAction) {
+    return {
+      code: "GPT_ACTION_REQUIRED",
+      message: "Gaming requests require action 'query'."
+    };
+  }
+  if (requestedAction !== "query") {
+    return null;
+  }
+  if (!isRecord(body) || !isRecord(body.payload)) {
+    return {
+      code: "BAD_REQUEST",
+      message: "Gaming query requests require a payload object."
+    };
+  }
+  if (publicGamingRequestExceedsStructuralLimits(body)) {
+    return {
+      code: "BAD_REQUEST",
+      message: "Gaming query request exceeds the supported structural limits."
+    };
+  }
+
+  const payloadHasMode = Object.prototype.hasOwnProperty.call(body.payload, "mode");
+  const mode = payloadHasMode ? resolveGamingMode(body.payload) : resolveGamingMode(body);
+  if (!mode) {
+    return {
+      code: "GAMEPLAY_MODE_REQUIRED",
+      message: "Gameplay requests require explicit mode 'guide', 'build', or 'meta'."
+    };
+  }
+
+  const promptKeys = ["prompt", "message", "text", "content", "query"];
+  const payloadHasPromptAlias = promptKeys.some((key) => Object.prototype.hasOwnProperty.call(body.payload, key));
+  const prompt = payloadHasPromptAlias ? extractTextPrompt(body.payload) : extractTextPrompt(body);
+  return prompt
+    ? null
+    : {
+        code: "PROMPT_REQUIRED",
+        message: "query requires a non-empty prompt."
+      };
 }
 
 export function formatGamingSuccess(params: {

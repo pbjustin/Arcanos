@@ -45,7 +45,7 @@ jest.unstable_mockModule('../src/platform/logging/structuredLogging.js', () => (
 }));
 
 const { default: ArcanosGaming } = await import('../src/modules/arcanos-gaming.js');
-const { BackendQueryAgent, IntentRouterAgent } = await import('../src/services/gamingAgents.js');
+const { BackendQueryAgent, IntentRouterAgent, ResponseComposerAgent } = await import('../src/services/gamingAgents.js');
 
 describe('ArcanosGaming module', () => {
 
@@ -314,6 +314,38 @@ describe('ArcanosGaming module', () => {
     }));
     expect((result as any).data.response).toContain('safe deterministic fallback was used');
     expect((result as any).data.response).not.toContain('Malformed backend response');
+  });
+
+  it('contains final response-composer failures in a fixed-safe Gaming envelope', async () => {
+    const composeSpy = jest.spyOn(ResponseComposerAgent, 'compose').mockImplementationOnce(() => {
+      throw new Error('secret response-postprocessing detail');
+    });
+    const fallbackSpy = jest.spyOn(ResponseComposerAgent, 'composeBackendFailureFallback').mockImplementationOnce(() => {
+      throw new Error('secret fallback-postprocessing detail');
+    });
+
+    try {
+      const result = await ArcanosGaming.actions.query({
+        mode: 'guide',
+        game: 'Elden Ring',
+        prompt: 'Give me a concise beginner guide.',
+      });
+
+      expect(result).toEqual({
+        ok: false,
+        route: 'gaming',
+        mode: 'guide',
+        error: {
+          code: 'MODULE_ERROR',
+          message: 'ARCANOS Gaming could not complete the request safely.',
+        },
+      });
+      expect(JSON.stringify(result)).not.toContain('secret response-postprocessing detail');
+      expect(JSON.stringify(result)).not.toContain('secret fallback-postprocessing detail');
+    } finally {
+      composeSpy.mockRestore();
+      fallbackSpy.mockRestore();
+    }
   });
 
   it('refuses security-blocked internal control-plane requests', async () => {

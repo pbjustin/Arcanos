@@ -18,6 +18,7 @@ import {
 import { logger } from "@platform/logging/structuredLogging.js";
 import { sendTimestampedStatus } from "@platform/resilience/serviceUnavailable.js";
 import { applyAIDegradedResponseHeaders } from '@shared/http/aiDegradedHeaders.js';
+import { resolvePublicGamingGptIdFromPath } from '@shared/http/publicGamingPath.js';
 
 export interface DegradedResponse {
   status: 'degraded';
@@ -81,6 +82,10 @@ function isGptDispatcherPath(path: string): boolean {
   return path === '/gpt' || path.startsWith('/gpt/');
 }
 
+function isPublicGamingPath(path: string): boolean {
+  return resolvePublicGamingGptIdFromPath(path) !== null;
+}
+
 function isFallbackEligibleAiEndpoint(path: string): boolean {
   if (isGptDispatcherPath(path)) {
     return false;
@@ -115,6 +120,10 @@ function logFallbackEvent(
  */
 export function createFallbackMiddleware() {
   return (err: unknown, req: Request, res: Response, next: NextFunction) => {
+    if (isPublicGamingPath(req.path)) {
+      return next(err);
+    }
+
     const errorRecord = err && typeof err === 'object' ? (err as Record<string, unknown>) : {};
     const errorMessage = typeof errorRecord.message === 'string' ? errorRecord.message : '';
     // Check if this is an AI service error

@@ -3,6 +3,9 @@ import {
   buildUnsafeToProceedPayload,
   hasUnsafeBlockingConditions
 } from '@services/safety/runtimeState.js';
+import { resolveGamingMode, validatePublicGamingQueryRequest } from '@services/gamingModes.js';
+import { resolveRequestedGptActionFromRequest } from '@shared/gpt/gptRequestAction.js';
+import { resolvePublicGamingGptIdFromPath } from '@shared/http/publicGamingPath.js';
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const SAFETY_RELEASE_PATH_PATTERN = /^\/status\/safety\/quarantine\/[^/]+\/release$/;
@@ -16,6 +19,12 @@ const GPT_ACCESS_READONLY_POST_PATHS = new Set([
 
 function isGptAccessReadOnlyRequest(req: Request): boolean {
   return req.method.toUpperCase() === 'POST' && GPT_ACCESS_READONLY_POST_PATHS.has(req.path);
+}
+
+function resolvePublicGamingMode(body: unknown) {
+  const bodyRecord = body as Record<string, unknown>;
+  const payload = bodyRecord.payload as Record<string, unknown>;
+  return resolveGamingMode(payload) ?? resolveGamingMode(bodyRecord);
 }
 
 /**
@@ -46,12 +55,80 @@ export function unsafeExecutionGate(req: Request, res: Response, next: NextFunct
     return;
   }
 
+  const publicGamingGptId = method === 'POST'
+    ? resolvePublicGamingGptIdFromPath(req.path)
+    : null;
+
   if (!hasUnsafeBlockingConditions()) {
     next();
     return;
   }
 
-  res.status(503).json(buildUnsafeToProceedPayload());
+  const requestId = typeof req.requestId === 'string' && req.requestId.trim().length > 0
+    ? req.requestId.trim()
+    : undefined;
+  const traceId = typeof req.traceId === 'string' && req.traceId.trim().length > 0
+    ? req.traceId.trim()
+    : requestId;
+  if (publicGamingGptId) {
+    const gamingRequestId = requestId ?? traceId ?? 'unknown';
+    const gamingTraceId = traceId ?? gamingRequestId;
+    const requestedAction = resolveRequestedGptActionFromRequest(req);
+    const validationError = validatePublicGamingQueryRequest(req.body, requestedAction);
+    if (validationError) {
+      const action = requestedAction ?? 'query';
+      res.status(400).json({
+        ok: false,
+        requestId: gamingRequestId,
+        traceId: gamingTraceId,
+        gptId: publicGamingGptId,
+        action,
+        route: '/gpt/:gptId',
+        error: validationError,
+        _route: {
+          requestId: gamingRequestId,
+          traceId: gamingTraceId,
+          gptId: publicGamingGptId,
+          action,
+          route: 'gaming_validation',
+          timestamp: new Date().toISOString()
+        }
+      });
+      return;
+    }
+    if (requestedAction === 'query') {
+      res.status(200).json({
+        ok: true,
+        requestId: gamingRequestId,
+        traceId: gamingTraceId,
+        result: {
+          ok: false,
+          route: 'gaming',
+          mode: resolvePublicGamingMode(req.body),
+          error: {
+            code: 'UNSAFE_TO_PROCEED',
+            message: 'ARCANOS Gaming is temporarily unavailable because runtime integrity checks did not pass.'
+          }
+        },
+        _route: {
+          requestId: gamingRequestId,
+          traceId: gamingTraceId,
+          gptId: publicGamingGptId,
+          module: 'ARCANOS:GAMING',
+          action: 'query',
+          route: 'gaming',
+          timestamp: new Date().toISOString()
+        }
+      });
+      return;
+    }
+  }
+
+  res.status(503).json({
+    ...buildUnsafeToProceedPayload(),
+    ...(requestId ? { requestId } : {}),
+    ...(traceId ? { traceId } : {})
+  });
 }
 
 export default unsafeExecutionGate;

@@ -31,6 +31,38 @@ function isJsonSchemaParseError(err: unknown): boolean {
   return type === 'entity.parse.failed' || (status === 400 && typeof body === 'string');
 }
 
+function isRequestEntityTooLarge(err: unknown): boolean {
+  if (!err || typeof err !== 'object') {
+    return false;
+  }
+
+  const candidate = err as Record<string, unknown>;
+  return candidate.type === 'entity.too.large'
+    || candidate.status === 413
+    || candidate.statusCode === 413;
+}
+
+function isPublicGptRequestPath(requestPath: string): boolean {
+  return requestPath === '/gpt' || requestPath.startsWith('/gpt/');
+}
+
+function buildPublicGptErrorPayload(params: {
+  code: string;
+  message: string;
+  requestId: string;
+  traceId: string;
+}): Record<string, unknown> {
+  return {
+    ok: false,
+    requestId: params.requestId,
+    traceId: params.traceId,
+    error: {
+      code: params.code,
+      message: params.message
+    }
+  };
+}
+
 /**
  * Purpose: Centralize HTTP error responses with request-id correlation and stack logging.
  * Inputs/Outputs: Express error middleware; writes JSON error payload and status code.
@@ -45,6 +77,7 @@ const errorHandler = (err: unknown, req: Request, res: Response, next: NextFunct
   const requestId = req.requestId ?? 'unknown';
   const traceId = req.traceId ?? requestId;
   const requestPath = resolveSafeRequestPath(req);
+  const publicGptRequest = isPublicGptRequestPath(requestPath);
 
   // Normalize unknown error input into an Error-like shape for safe logging.
   let name = 'UnknownError';
@@ -73,24 +106,61 @@ const errorHandler = (err: unknown, req: Request, res: Response, next: NextFunct
   }
 
   let statusCode = 500;
-  let payload: Record<string, unknown> = {
-    error: 'Internal Server Error',
-    code: 500
-  };
+  let payload: Record<string, unknown> = publicGptRequest
+    ? buildPublicGptErrorPayload({
+        code: 'INTERNAL_SERVER_ERROR',
+        message: 'An unexpected GPT route error occurred.',
+        requestId,
+        traceId
+      })
+    : {
+        error: 'Internal Server Error',
+        code: 500,
+        requestId,
+        traceId
+      };
 
   if (isJsonSchemaParseError(err)) {
     statusCode = 400;
-    payload = {
-      error: 'invalid request schema',
-      code: 400
-    };
+    payload = publicGptRequest
+      ? buildPublicGptErrorPayload({
+          code: 'INVALID_JSON',
+          message: 'Request body must be valid JSON.',
+          requestId,
+          traceId
+        })
+      : {
+          error: 'invalid request schema',
+          code: 400,
+          requestId,
+          traceId
+        };
+  } else if (publicGptRequest && isRequestEntityTooLarge(err)) {
+    statusCode = 400;
+    payload = buildPublicGptErrorPayload({
+      code: 'REQUEST_BODY_TOO_LARGE',
+      message: 'Request body exceeds the configured JSON size limit.',
+      requestId,
+      traceId
+    });
   } else if (isAppError(err)) {
     const appError = err as AppError;
     statusCode = appError.httpCode;
-    payload = {
-      error: appError.message,
-      code: appError.httpCode
-    };
+    payload = publicGptRequest
+      ? buildPublicGptErrorPayload({
+          code: statusCode >= 500 ? 'INTERNAL_SERVER_ERROR' : 'GPT_REQUEST_REJECTED',
+          message: statusCode >= 500
+            ? 'An unexpected GPT route error occurred.'
+            : 'The GPT request could not be accepted.',
+          requestId,
+          traceId
+        })
+      : {
+          error: appError.message,
+          code: appError.httpCode,
+          requestId,
+          traceId
+        };
   }
 
   const logDetails = {

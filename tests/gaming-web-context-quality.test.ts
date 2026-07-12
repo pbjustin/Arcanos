@@ -665,6 +665,22 @@ describe('gaming RAG snippet quality', () => {
     expect(JSON.stringify(result.sources)).not.toMatch(/secret upstream|private-host/i);
   });
 
+  it('masks a blocked private target instead of returning the internal URL', async () => {
+    mockFetchAndClean.mockRejectedValue(new Error('Private/internal IP addresses are not allowed for security reasons'));
+    const result = await buildGamingRagContext({
+      mode: 'guide',
+      prompt: 'Use this supplied guide.',
+      guideUrl: 'http://127.0.0.1/internal-guide',
+      guideUrls: []
+    });
+
+    expect(result.sources).toEqual([{
+      url: 'invalid-source',
+      error: 'Source URL was blocked or could not be resolved.'
+    }]);
+    expect(JSON.stringify(result.sources)).not.toContain('127.0.0.1');
+  });
+
   it('returns safe metadata for a malformed-only source without fetching', async () => {
     const result = await buildGamingRagContext({
       mode: 'guide',

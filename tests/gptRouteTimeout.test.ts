@@ -49,6 +49,12 @@ describe('resolveGptRouteHardTimeoutMs', () => {
     expect(resolveGptRouteHardTimeoutMs({ defaultMsOverride: 25_750 })).toBe(5_000);
   });
 
+  it('allows a bounded route-specific minimum to exceed a smaller generic env timeout', () => {
+    process.env.GPT_ROUTE_HARD_TIMEOUT_MS = '6000';
+
+    expect(resolveGptRouteHardTimeoutMs({ minimumMsOverride: 60_000 })).toBe(60_000);
+  });
+
   it('keeps the dag-execution timeout clamp unchanged', () => {
     process.env.GPT_ROUTE_DAG_EXECUTION_HARD_TIMEOUT_MS = '60000';
 

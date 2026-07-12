@@ -361,7 +361,9 @@ describe('canonical /api session system routes', () => {
     expect(response.status).toBe(500);
     expect(response.body).toEqual({
       error: 'Internal Server Error',
-      code: 500
+      code: 500,
+      requestId: 'unknown',
+      traceId: 'unknown'
     });
   });
 });

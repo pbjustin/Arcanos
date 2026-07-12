@@ -776,6 +776,11 @@ function shapeGamingSource(value: unknown): Record<string, unknown> | null {
   };
 }
 
+function readGamingReason(value: unknown): string | undefined {
+  const reason = readString(value);
+  return reason && /^[A-Z][A-Z0-9_]{0,63}$/.test(reason) ? reason : undefined;
+}
+
 function shapeGamingResult(value: Record<string, unknown>): Record<string, unknown> | null {
   if (value.ok !== true || readString(value.route) !== 'gaming' || !isRecord(value.data)) {
     return null;
@@ -783,6 +788,9 @@ function shapeGamingResult(value: Record<string, unknown>): Record<string, unkno
 
   const response = readString(value.data.response);
   const mode = readString(value.mode);
+  const fallbackReason = readGamingReason(value.data.fallbackReason);
+  const discoveryReason = readGamingReason(value.data.discoveryReason);
+  const discoveryFailureReason = readGamingReason(value.data.discoveryFailureReason);
   const sources = Array.isArray(value.data.sources)
     ? value.data.sources
       .map(shapeGamingSource)
@@ -797,6 +805,9 @@ function shapeGamingResult(value: Record<string, unknown>): Record<string, unkno
     data: {
       ...(response ? { response: truncateText(response, STRING_PREVIEW_MAX_BYTES) } : {}),
       sources,
+      ...(fallbackReason ? { fallbackReason } : {}),
+      ...(discoveryReason ? { discoveryReason } : {}),
+      ...(discoveryFailureReason ? { discoveryFailureReason } : {}),
     },
   };
 }
