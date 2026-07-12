@@ -20,11 +20,15 @@ import {
   formatGamingSuccess,
   type GamingDiscoveryFailureReason,
   type GamingDiscoveryReason,
+  type GamingEvidenceRequest,
   type GamingFallbackReason,
   type GamingMode,
   type GamingSuccessEnvelope,
   type ValidatedGamingRequest
 } from "@services/gamingModes.js";
+import { buildGamingDiscoveryQuery } from "@services/gamingSourceDiscovery.js";
+import { extractExplicitGamingVersions } from "@services/gamingVersion.js";
+import { redactString } from "@shared/redaction.js";
 import { buildGamingTrinityPrompt } from "@services/gamingPromptBuilder.js";
 import {
   buildGamingRagContext,
@@ -35,7 +39,7 @@ import {
 
 export type GamingPipelineInput = Pick<
   ValidatedGamingRequest,
-  "mode" | "prompt" | "game" | "guideUrl" | "guideUrls" | "auditEnabled"
+  "mode" | "prompt" | "game" | "guideUrl" | "guideUrls" | "evidenceOrigin" | "requestedVersion" | "evidenceAttempt" | "auditEnabled"
 >;
 
 type GamingWebSource = GamingSuccessEnvelope["data"]["sources"][number];
@@ -271,6 +275,7 @@ function formatGameplaySuccessWithLogs(params: {
   fallbackReason?: GamingFallbackReason;
   discoveryReason?: GamingDiscoveryReason;
   discoveryFailureReason?: GamingDiscoveryFailureReason;
+  evidenceRequest?: GamingEvidenceRequest;
 }): GamingSuccessEnvelope {
   const postprocessStartedAt = Date.now();
   const citableSourceCount = params.sources.filter(isCitableGamingWebSource).length;
@@ -298,7 +303,8 @@ function formatGameplaySuccessWithLogs(params: {
       ...(params.discoveryReason ? { discoveryReason: params.discoveryReason } : {}),
       ...(params.discoveryFailureReason
         ? { discoveryFailureReason: params.discoveryFailureReason }
-        : {})
+        : {}),
+      ...(params.evidenceRequest ? { evidenceRequest: params.evidenceRequest } : {})
     }
   });
 
@@ -604,10 +610,16 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
         omittedSourceCount,
         fallbackReason: webContextResult.fallbackReason,
         discoveryReason,
-        discoveryFailureReason
+        discoveryFailureReason,
+        ...(freshnessSensitive
+          ? { evidenceRequest: buildFrontendGamingEvidenceRequest(params) }
+          : {})
       });
     }
   } catch (error) {
+    if (getRequestAbortSignal()?.aborted || isAbortError(error)) {
+      throw error;
+    }
     const errorCode = readErrorString(error, "code");
     const timeoutPhase = readTimeoutPhase(error) ?? (errorCode === "INTAKE_RETRIEVAL_TIMEOUT" ? "retrieval" : undefined);
     fallbackReason = timeoutPhase
@@ -665,7 +677,8 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
       omittedSourceCount,
       fallbackReason: currentEvidenceFallbackReason,
       discoveryReason,
-      discoveryFailureReason
+      discoveryFailureReason,
+      evidenceRequest: buildFrontendGamingEvidenceRequest(resolvedParams)
     });
   }
 
@@ -953,4 +966,47 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
     discoveryReason,
     discoveryFailureReason
   });
+}
+
+function buildFrontendGamingEvidenceRequest(input: GamingPipelineInput): GamingEvidenceRequest | undefined {
+  if (!input.game || input.evidenceAttempt === 1) {
+    return undefined;
+  }
+
+  const game = input.game
+    .normalize("NFKC")
+    .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 120)
+    .trim();
+  if (!game) {
+    return undefined;
+  }
+  if (
+    redactString(game) === "[REDACTED]"
+    || /https?:\/\/|\b\S+@\S+\.\S+\b|\bgh[opusr]_[A-Za-z0-9]{12,}\b/iu.test(game)
+  ) {
+    return undefined;
+  }
+  const version = input.requestedVersion
+    ?? extractExplicitGamingVersions({ prompt: input.prompt, game })[0];
+  const query = buildGamingDiscoveryQuery({
+    game,
+    mode: input.mode,
+    patchSensitive: true,
+    prompt: version ? `version ${version}` : "current release"
+  });
+  if (!query) {
+    return undefined;
+  }
+
+  return {
+    required: true,
+    reason: "CURRENT_VERSION_EVIDENCE_REQUIRED",
+    game,
+    ...(version ? { version } : {}),
+    maxCandidateUrls: 4,
+    queries: [query]
+  };
 }

@@ -3,7 +3,11 @@ import {
   buildUnsafeToProceedPayload,
   hasUnsafeBlockingConditions
 } from '@services/safety/runtimeState.js';
-import { resolveGamingMode, validatePublicGamingQueryRequest } from '@services/gamingModes.js';
+import {
+  resolveGamingMode,
+  validateGamingEvidenceRetryRequest,
+  validatePublicGamingQueryRequest
+} from '@services/gamingModes.js';
 import { resolveRequestedGptActionFromRequest } from '@shared/gpt/gptRequestAction.js';
 import { resolvePublicGamingGptIdFromPath } from '@shared/http/publicGamingPath.js';
 
@@ -73,8 +77,15 @@ export function unsafeExecutionGate(req: Request, res: Response, next: NextFunct
   if (publicGamingGptId) {
     const gamingRequestId = requestId ?? traceId ?? 'unknown';
     const gamingTraceId = traceId ?? gamingRequestId;
-    const requestedAction = resolveRequestedGptActionFromRequest(req);
-    const validationError = validatePublicGamingQueryRequest(req.body, requestedAction);
+    const normalizedPath = req.path.toLowerCase().replace(/\/$/, '');
+    const evidenceRetry = normalizedPath === '/gpt/arcanos-gaming/evidence-retry';
+    const retryValidation = evidenceRetry ? validateGamingEvidenceRetryRequest(req.body) : null;
+    const requestedAction = evidenceRetry ? 'query' : resolveRequestedGptActionFromRequest(req);
+    const validationError = retryValidation && !retryValidation.ok
+      ? { code: retryValidation.code, message: retryValidation.message }
+      : evidenceRetry
+        ? null
+        : validatePublicGamingQueryRequest(req.body, requestedAction);
     if (validationError) {
       const action = requestedAction ?? 'query';
       res.status(400).json({
@@ -97,6 +108,7 @@ export function unsafeExecutionGate(req: Request, res: Response, next: NextFunct
       return;
     }
     if (requestedAction === 'query') {
+      const mode = retryValidation?.ok ? retryValidation.value.mode : resolvePublicGamingMode(req.body);
       res.status(200).json({
         ok: true,
         requestId: gamingRequestId,
@@ -104,7 +116,7 @@ export function unsafeExecutionGate(req: Request, res: Response, next: NextFunct
         result: {
           ok: false,
           route: 'gaming',
-          mode: resolvePublicGamingMode(req.body),
+          mode,
           error: {
             code: 'UNSAFE_TO_PROCEED',
             message: 'ARCANOS Gaming is temporarily unavailable because runtime integrity checks did not pass.'

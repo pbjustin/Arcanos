@@ -75,6 +75,7 @@ describe('fallback health-check middleware', () => {
 
   it.each([
     '/gpt/arcanos-gaming',
+    '/gpt/arcanos-gaming/evidence-retry',
     '/gpt/gaming',
     '/gpt/ARCANOS-GAMING/',
     '/gpt/Gaming/'
@@ -93,6 +94,25 @@ describe('fallback health-check middleware', () => {
     expect(next).toHaveBeenCalledWith(error);
     expect(res.status).not.toHaveBeenCalled();
     expect(res.json).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    '/gpt/arcanos-gaming/evidence-retry/extra',
+    '/gpt/arcanos-gaming/unrelated'
+  ])('does not broaden the Gaming fallback bypass to %s', async (path) => {
+    const { createFallbackMiddleware } = await import(
+      '../src/transport/http/middleware/fallbackHandler.js'
+    );
+    const middleware = createFallbackMiddleware();
+    const req = createMockRequest(path);
+    const res = createMockResponse();
+    const next = jest.fn() as NextFunction;
+    const error = Object.assign(new Error('provider timeout'), { status: 504 });
+
+    middleware(error, req, res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(503);
   });
 
   it('preserves degraded fallback handling for non-Gaming GPT route errors', async () => {

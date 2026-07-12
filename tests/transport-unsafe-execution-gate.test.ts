@@ -234,6 +234,46 @@ describe('transport/http/middleware/unsafeExecutionGate', () => {
     expect(JSON.stringify(response.json.mock.calls[0]?.[0])).not.toContain('PATTERN_INTEGRITY_FAILURE');
   });
 
+  it('contains the fixed evidence retry path in the same correlated unsafe Gaming envelope', () => {
+    const next = jest.fn();
+    const response = createResponse();
+    hasUnsafeBlockingConditionsMock.mockReturnValue(true);
+
+    unsafeExecutionGate({
+      method: 'POST',
+      path: '/gpt/arcanos-gaming/evidence-retry',
+      body: {
+        game: 'Palworld',
+        mode: 'guide',
+        originalPrompt: 'Look up a current beginner guide for Palworld 1.0.',
+        candidateUrls: [],
+        requestedVersion: '1.0',
+        evidenceAttempt: 1
+      },
+      requestId: 'req-evidence-unsafe',
+      traceId: 'trace-evidence-unsafe'
+    } as MockRequest as any, response as any, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(response.status).toHaveBeenCalledWith(200);
+    expect(response.json).toHaveBeenCalledWith(expect.objectContaining({
+      requestId: 'req-evidence-unsafe',
+      traceId: 'trace-evidence-unsafe',
+      result: expect.objectContaining({
+        ok: false,
+        route: 'gaming',
+        mode: 'guide',
+        error: expect.objectContaining({ code: 'UNSAFE_TO_PROCEED' })
+      }),
+      _route: expect.objectContaining({
+        requestId: 'req-evidence-unsafe',
+        traceId: 'trace-evidence-unsafe',
+        gptId: 'arcanos-gaming',
+        route: 'gaming'
+      })
+    }));
+  });
+
   it.each([
     ['trace ID only', { traceId: 'trace-only' }, 'trace-only', 'trace-only'],
     ['request ID only', { requestId: 'request-only' }, 'request-only', 'request-only'],

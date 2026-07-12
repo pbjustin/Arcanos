@@ -273,6 +273,14 @@ describe('client response guards', () => {
         fallbackReason: 'CURRENT_EVIDENCE_UNAVAILABLE',
         discoveryReason: 'DISCOVERY_NO_SOURCE_CANDIDATES',
         discoveryFailureReason: 'DISCOVERY_PROVIDER_UNCONFIGURED',
+        evidenceRequest: {
+          required: true,
+          reason: 'CURRENT_VERSION_EVIDENCE_REQUIRED',
+          game: 'Palworld',
+          version: '1.0',
+          maxCandidateUrls: 4,
+          queries: ['"Palworld" version 1.0 latest patch']
+        },
         sources: [
           { url: 'https://example.com/guide-1', snippet: 'First source snippet.' },
           { url: 'https://example.com/guide-2', error: 'Fetch failed.' },
@@ -300,6 +308,14 @@ describe('client response guards', () => {
         fallbackReason: 'CURRENT_EVIDENCE_UNAVAILABLE',
         discoveryReason: 'DISCOVERY_NO_SOURCE_CANDIDATES',
         discoveryFailureReason: 'DISCOVERY_PROVIDER_UNCONFIGURED',
+        evidenceRequest: {
+          required: true,
+          reason: 'CURRENT_VERSION_EVIDENCE_REQUIRED',
+          game: 'Palworld',
+          version: '1.0',
+          maxCandidateUrls: 4,
+          queries: ['"Palworld" version 1.0 latest patch']
+        },
         sources: [
           { url: 'https://example.com/guide-1', snippet: 'First source snippet.' },
           { url: 'https://example.com/guide-2', error: 'Fetch failed.' },
@@ -539,6 +555,50 @@ describe('client response guards', () => {
         truncated: true,
       },
     });
+  });
+
+  it('drops malformed or unsafe Gaming evidence requests at the client boundary', () => {
+    const shaped = shapeClientRouteResult({
+      ok: true,
+      route: 'gaming',
+      mode: 'guide',
+      data: {
+        response: 'Controlled fallback.',
+        sources: [],
+        evidenceRequest: {
+          required: true,
+          reason: 'CURRENT_VERSION_EVIDENCE_REQUIRED',
+          game: 'Palworld',
+          maxCandidateUrls: 4,
+          queries: ['Bearer private-token https://private.example/search']
+        }
+      }
+    }) as Record<string, unknown>;
+
+    expect((shaped.data as Record<string, unknown>)).not.toHaveProperty('evidenceRequest');
+  });
+
+  it('drops secret-shaped Gaming evidence synthesis at the final client guard', () => {
+    const secretShapedGame = ['railway', '_', 'x'.repeat(16)].join('');
+    const shaped = shapeClientRouteResult({
+      ok: true,
+      route: 'gaming',
+      mode: 'guide',
+      data: {
+        response: 'Controlled fallback.',
+        sources: [],
+        evidenceRequest: {
+          required: true,
+          reason: 'CURRENT_VERSION_EVIDENCE_REQUIRED',
+          game: secretShapedGame,
+          maxCandidateUrls: 4,
+          queries: [secretShapedGame]
+        }
+      }
+    }) as Record<string, unknown>;
+
+    expect((shaped.data as Record<string, unknown>)).not.toHaveProperty('evidenceRequest');
+    expect(JSON.stringify(shaped)).not.toContain(secretShapedGame);
   });
 
   it('preserves public request and trace IDs when a route envelope is truncated', () => {

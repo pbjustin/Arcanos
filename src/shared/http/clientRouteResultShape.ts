@@ -8,6 +8,7 @@ import {
   readStringArray,
   truncateText,
 } from './clientResponseCommon.js';
+import { redactString } from '@shared/redaction.js';
 
 function pickTrinitySummary(value: Record<string, unknown>): Record<string, unknown> | null {
   const result = readString(value.result);
@@ -781,6 +782,61 @@ function readGamingReason(value: unknown): string | undefined {
   return reason && /^[A-Z][A-Z0-9_]{0,63}$/.test(reason) ? reason : undefined;
 }
 
+function shapeGamingEvidenceRequest(value: unknown): Record<string, unknown> | null {
+  if (!isRecord(value) || value.required !== true || value.reason !== 'CURRENT_VERSION_EVIDENCE_REQUIRED') {
+    return null;
+  }
+  const game = readString(value.game)?.normalize('NFKC').replace(/\s+/g, ' ').trim();
+  const version = readString(value.version)?.normalize('NFKC').trim();
+  const maxCandidateUrls = readNumber(value.maxCandidateUrls);
+  if (
+    !game
+    || game.length > 120
+    || /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/u.test(game)
+    || redactString(game) === '[REDACTED]'
+    || /https?:\/\/|\b\S+@\S+\.\S+\b|\bgh[opusr]_[A-Za-z0-9]{12,}\b|\bBearer\b|\bsk-[A-Za-z0-9_-]{8,}\b|\b(?:api[_-]?key|password|secret|session[_-]?id|token)\s*[:=]/iu.test(game)
+    || (version !== undefined && (version.length > 64 || !/^\d{1,3}\.\d{1,3}(?:\.\d{1,3})?$/u.test(version)))
+    || maxCandidateUrls !== 4
+    || !Array.isArray(value.queries)
+    || value.queries.length < 1
+    || value.queries.length > 4
+  ) {
+    return null;
+  }
+
+  const queries = value.queries.map((entry) => {
+    if (typeof entry !== 'string') {
+      return null;
+    }
+    const query = entry
+      .normalize('NFKC')
+      .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/gu, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (
+      !query
+      || query.length > 180
+      || redactString(query) === '[REDACTED]'
+      || /https?:\/\/|\b\S+@\S+\.\S+\b|\bgh[opusr]_[A-Za-z0-9]{12,}\b|\bBearer\b|\bsk-[A-Za-z0-9_-]{8,}\b|\b(?:api[_-]?key|password|secret|session[_-]?id|token)\s*[:=]/iu.test(query)
+    ) {
+      return null;
+    }
+    return query;
+  });
+  if (queries.some((query) => query === null)) {
+    return null;
+  }
+
+  return {
+    required: true,
+    reason: 'CURRENT_VERSION_EVIDENCE_REQUIRED',
+    game,
+    ...(version ? { version } : {}),
+    maxCandidateUrls: 4,
+    queries
+  };
+}
+
 function shapeGamingResult(value: Record<string, unknown>): Record<string, unknown> | null {
   if (value.ok !== true || readString(value.route) !== 'gaming' || !isRecord(value.data)) {
     return null;
@@ -791,6 +847,7 @@ function shapeGamingResult(value: Record<string, unknown>): Record<string, unkno
   const fallbackReason = readGamingReason(value.data.fallbackReason);
   const discoveryReason = readGamingReason(value.data.discoveryReason);
   const discoveryFailureReason = readGamingReason(value.data.discoveryFailureReason);
+  const evidenceRequest = shapeGamingEvidenceRequest(value.data.evidenceRequest);
   const sources = Array.isArray(value.data.sources)
     ? value.data.sources
       .map(shapeGamingSource)
@@ -808,6 +865,7 @@ function shapeGamingResult(value: Record<string, unknown>): Record<string, unkno
       ...(fallbackReason ? { fallbackReason } : {}),
       ...(discoveryReason ? { discoveryReason } : {}),
       ...(discoveryFailureReason ? { discoveryFailureReason } : {}),
+      ...(evidenceRequest ? { evidenceRequest } : {}),
     },
   };
 }

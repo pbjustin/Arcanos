@@ -15,7 +15,8 @@ jest.unstable_mockModule('@shared/webFetcher.js', () => ({
 
 jest.unstable_mockModule('@services/gamingSourceDiscovery.js', () => ({
   discoverGamingSources: mockDiscoverGamingSources,
-  clearGamingDiscoveryCache: mockClearGamingDiscoveryCache
+  clearGamingDiscoveryCache: mockClearGamingDiscoveryCache,
+  sanitizeGamingDiscoveryCandidateUrl: (url: string) => ({ url, rejected: false })
 }));
 
 jest.unstable_mockModule('@platform/runtime/env.js', () => ({

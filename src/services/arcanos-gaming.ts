@@ -3,6 +3,7 @@ import { getGamingModuleTimeoutMs } from "@services/gamingConfig.js";
 import { evaluateWithHRC } from "./hrcWrapper.js";
 import { getRequestAbortContext, getRequestAbortSignal, isAbortError } from "@arcanos/runtime";
 import { logger } from "@platform/logging/structuredLogging.js";
+import { isRecord } from "@shared/typeGuards.js";
 import {
   BackendQueryAgent,
   ClarificationAgent,
@@ -157,16 +158,37 @@ async function executeGamingBackendQuery(payload: GamingBackendActionPayload): P
     return validation.error;
   }
 
-  const { mode, prompt, game, guideUrl, guideUrls, auditEnabled, hrcEnabled } = validation.value;
+  const {
+    mode,
+    prompt,
+    game,
+    guideUrl,
+    guideUrls,
+    evidenceOrigin,
+    requestedVersion,
+    evidenceAttempt,
+    auditEnabled,
+    hrcEnabled
+  } = validation.value;
+  const pipelineInput = {
+    prompt,
+    game,
+    guideUrl,
+    guideUrls,
+    ...(evidenceOrigin ? { evidenceOrigin } : {}),
+    ...(requestedVersion ? { requestedVersion } : {}),
+    ...(evidenceAttempt !== undefined ? { evidenceAttempt } : {}),
+    auditEnabled
+  };
 
   let response: GamingSuccessEnvelope;
   try {
     response =
       mode === "guide"
-        ? await runGuidePipeline({ prompt, game, guideUrl, guideUrls, auditEnabled })
+        ? await runGuidePipeline(pipelineInput)
         : mode === "build"
-        ? await runBuildPipeline({ prompt, game, guideUrl, guideUrls, auditEnabled })
-        : await runMetaPipeline({ prompt, game, guideUrl, guideUrls, auditEnabled });
+        ? await runBuildPipeline(pipelineInput)
+        : await runMetaPipeline(pipelineInput);
   } catch (error: unknown) {
     if (readSafeErrorString(error, "code") === "GAMING_GAME_REQUIRED") {
       return formatGamingError({
@@ -281,6 +303,15 @@ function buildTelemetryEntityFlags(intent: GamingIntent) {
 
 async function handleGamingRequest(payload: unknown): Promise<GamingEnvelope> {
   const requestLogContext = buildGamingRequestLogContext();
+  if (isRecord(payload) && payload.candidateUrls !== undefined) {
+    return formatGamingError({
+      mode: resolveGamingMode(payload),
+      error: {
+        code: "BAD_REQUEST",
+        message: "Gaming candidateUrls are accepted only by the evidence retry route."
+      }
+    });
+  }
   const classifyStartedAt = Date.now();
   const intent = IntentRouterAgent.classify(payload);
   logger.info("gaming.routing.intent", {
