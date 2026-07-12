@@ -83,6 +83,35 @@ export type PublicGamingRequestValidationError = {
   message: string;
 };
 
+const MAX_PUBLIC_GAMING_PAYLOAD_DEPTH = 32;
+const MAX_PUBLIC_GAMING_PAYLOAD_NODES = 4096;
+
+function publicGamingRequestExceedsStructuralLimits(body: Record<string, unknown>): boolean {
+  const stack: Array<{ value: unknown; depth: number }> = [{ value: body, depth: 0 }];
+  let visited = 0;
+
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    visited += 1;
+    if (current.depth > MAX_PUBLIC_GAMING_PAYLOAD_DEPTH) {
+      return true;
+    }
+    const children = Array.isArray(current.value)
+      ? current.value
+      : isRecord(current.value)
+        ? Object.values(current.value)
+        : [];
+    if (visited + stack.length + children.length > MAX_PUBLIC_GAMING_PAYLOAD_NODES) {
+      return true;
+    }
+    for (const child of children) {
+      stack.push({ value: child, depth: current.depth + 1 });
+    }
+  }
+
+  return false;
+}
+
 function getStringField(payload: unknown, key: string): string | undefined {
   if (!isRecord(payload)) {
     return undefined;
@@ -122,6 +151,12 @@ export function validatePublicGamingQueryRequest(
     return {
       code: "BAD_REQUEST",
       message: "Gaming query requests require a payload object."
+    };
+  }
+  if (publicGamingRequestExceedsStructuralLimits(body)) {
+    return {
+      code: "BAD_REQUEST",
+      message: "Gaming query request exceeds the supported structural limits."
     };
   }
 

@@ -961,6 +961,92 @@ describe('gpt router auth logging', () => {
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
+  it('rejects an excessively nested Gaming payload with correlated JSON 400', async () => {
+    const app = express();
+    app.use(express.json());
+    app.use(requestContext);
+    app.use('/gpt', gptRouter);
+    const depth = 10_000;
+    const rawBody = `{"action":"query","payload":{"mode":"guide","game":"Palworld","prompt":"Guide me.","nested":${'{"value":'.repeat(depth)}null${'}'.repeat(depth)}}}`;
+
+    const response = await request(app)
+      .post('/gpt/arcanos-gaming')
+      .set('Content-Type', 'application/json')
+      .send(rawBody);
+
+    expect(response.status).toBe(400);
+    expect(response.type).toBe('application/json');
+    expect(response.body).toEqual(expect.objectContaining({
+      ok: false,
+      requestId: response.headers['x-request-id'],
+      traceId: response.headers['x-trace-id'],
+      error: {
+        code: 'BAD_REQUEST',
+        message: 'Gaming query request exceeds the supported structural limits.'
+      }
+    }));
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('rejects an excessively broad Gaming payload with correlated JSON 400', async () => {
+    const app = express();
+    app.use(express.json());
+    app.use(requestContext);
+    app.use('/gpt', gptRouter);
+
+    const response = await request(app)
+      .post('/gpt/arcanos-gaming')
+      .send({
+        action: 'query',
+        payload: {
+          mode: 'guide',
+          game: 'Palworld',
+          prompt: 'Guide me.',
+          nested: Array.from({ length: 4097 }, () => null)
+        }
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.type).toBe('application/json');
+    expect(response.body).toEqual(expect.objectContaining({
+      ok: false,
+      requestId: response.headers['x-request-id'],
+      traceId: response.headers['x-trace-id'],
+      error: {
+        code: 'BAD_REQUEST',
+        message: 'Gaming query request exceeds the supported structural limits.'
+      }
+    }));
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('rejects an excessively nested top-level Gaming field with correlated JSON 400', async () => {
+    const app = express();
+    app.use(express.json());
+    app.use(requestContext);
+    app.use('/gpt', gptRouter);
+    const depth = 10_000;
+    const rawBody = `{"action":"query","payload":{"mode":"guide","game":"Palworld","prompt":"Guide me."},"context":${'{"value":'.repeat(depth)}null${'}'.repeat(depth)}}`;
+
+    const response = await request(app)
+      .post('/gpt/arcanos-gaming')
+      .set('Content-Type', 'application/json')
+      .send(rawBody);
+
+    expect(response.status).toBe(400);
+    expect(response.type).toBe('application/json');
+    expect(response.body).toEqual(expect.objectContaining({
+      ok: false,
+      requestId: response.headers['x-request-id'],
+      traceId: response.headers['x-trace-id'],
+      error: {
+        code: 'BAD_REQUEST',
+        message: 'Gaming query request exceeds the supported structural limits.'
+      }
+    }));
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
   it('rejects mismatched body-level gptId on the canonical route before dispatching', async () => {
     const app = express();
     app.use(express.json());
