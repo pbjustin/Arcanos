@@ -18,12 +18,18 @@ describe('Gaming semantic version parsing', () => {
     ['Compare versions 0.9 and 1.0.', ['0.9', '1.0']],
     ['Compare Palworld 0.9 and 1.0.', ['0.9', '1.0']],
     ['Compare Palworld 0.9 with Palworld 1.0.', ['0.9', '1.0']],
+    ['Compare versions 1.0 and 2.0 kilograms.', ['1.0']],
+    ['Compare Palworld 1.0 and 3.5 minutes of setup.', ['1.0']],
   ])('extracts explicit versions without trailing prose: %s', (prompt, expected) => {
     expect(extractExplicitGamingVersions({ prompt, game: 'Palworld' })).toEqual(expected);
   });
 
   it.each([
     'Finish the run in 3.5 minutes.',
+    'What changed in 3.5 minutes?',
+    'What changed in 2.0 kilograms?',
+    'What changed in 1.5 hours?',
+    'What changed in 99.9 percent?',
     'Palworld 2.0 kilograms is the download estimate.',
     'Palworld 1.5 hours is the expected duration.',
     'Use Palworld 1920.1080 resolution.',

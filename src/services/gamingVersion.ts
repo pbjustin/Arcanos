@@ -37,7 +37,7 @@ function addPatternMatches(
     let cursor = match.index + match[0].length;
     while (cursor < prompt.length) {
       const continuation = new RegExp(
-        String.raw`^\s*(?:,|and\b|or\b|vs\.?(?=\s)|versus\b|to\b)\s*(?:["'“‘]\s*)?(?:v(?:ersion)?\.?\s*)?${VERSION_TOKEN_SOURCE}${VERSION_END_SOURCE}`,
+        String.raw`^\s*(?:,|and\b|or\b|vs\.?(?=\s)|versus\b|to\b)\s*(?:["'“‘]\s*)?(?:v(?:ersion)?\.?\s*)?${VERSION_TOKEN_SOURCE}${VERSION_END_SOURCE}${NON_VERSION_GAME_SUFFIX_SOURCE}`,
         "i"
       ).exec(prompt.slice(cursor));
       const continuedVersion = continuation?.[1];
@@ -73,7 +73,10 @@ export function extractExplicitGamingVersions(input: GamingVersionTextInput): st
   );
   addPatternMatches(
     prompt,
-    new RegExp(String.raw`\bwhat\s+changed\b[^.!?\n]{0,32}\bin\s+${VERSION_TOKEN_SOURCE}${VERSION_END_SOURCE}`, "gi"),
+    new RegExp(
+      String.raw`\bwhat\s+changed\b[^.!?\n]{0,32}\bin\s+${VERSION_TOKEN_SOURCE}${VERSION_END_SOURCE}${NON_VERSION_GAME_SUFFIX_SOURCE}`,
+      "gi"
+    ),
     matches
   );
   addPatternMatches(

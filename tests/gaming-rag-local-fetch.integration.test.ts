@@ -51,6 +51,27 @@ describe('Gaming RAG real local fetch integration', () => {
         ));
         return;
       }
+      if (request.url === '/wrong-game-with-requested-mention') {
+        response.end(article(
+          '<p>Elden Ring beginner guide route explains flask preparation, weapon upgrades, and safe progress through Stormveil Castle.</p>'
+          + '<p>Unlike Palworld, this route rewards deliberate dodge timing and careful stamina management.</p>'
+        ));
+        return;
+      }
+      if (request.url === '/sequel-game') {
+        response.end(article(
+          '<p>Path of Exile 2 beginner guide explains the new campaign systems, combat pacing, and early progression route.</p>'
+          + '<p>Players should prepare their equipment before entering the next campaign zone.</p>'
+        ));
+        return;
+      }
+      if (request.url === '/sibling-game') {
+        response.end(article(
+          '<p>Elden Ring Nightreign beginner guide explains expeditions, character roles, and early progression strategy.</p>'
+          + '<p>Players should coordinate their route before the next Nightlord encounter.</p>'
+        ));
+        return;
+      }
       response.end(article(
         '<p>Palworld version 0.9 progression guide evidence explains a reliable beginner route with concrete preparation steps.</p>'
         + '<p>Players should gather supplies, confirm the nearby landmark, and save before starting this Palworld objective.</p>'
@@ -92,6 +113,59 @@ describe('Gaming RAG real local fetch integration', () => {
     }]);
     expect(result.sources.some(isCitableGamingWebSource)).toBe(false);
     expect(result.context).not.toContain('Stormveil Castle');
+  });
+
+  it('rejects a wrong-game introduction despite an incidental requested-game body mention', async () => {
+    const result = await buildGamingRagContext({
+      mode: 'guide',
+      game: 'Palworld',
+      prompt: 'Use this source for a Palworld progression guide.',
+      guideUrl: `${baseUrl}/wrong-game-with-requested-mention`,
+      guideUrls: [],
+    });
+
+    expect(result.sources).toEqual([{
+      url: `${baseUrl}/wrong-game-with-requested-mention`,
+      snippet: 'Relevant source retrieved, but readable article text was limited.',
+    }]);
+    expect(result.sources.some(isCitableGamingWebSource)).toBe(false);
+    expect(result.context).not.toContain('Stormveil Castle');
+  });
+
+  it('does not treat a sequel source as evidence for the original game', async () => {
+    const result = await buildGamingRagContext({
+      mode: 'guide',
+      game: 'Path of Exile',
+      prompt: 'Use this source for a Path of Exile beginner guide.',
+      guideUrl: `${baseUrl}/sequel-game`,
+      guideUrls: [],
+    });
+
+    const suppliedSource = result.sources.find((source) => source.url === `${baseUrl}/sequel-game`);
+    expect(suppliedSource).toEqual({
+      url: `${baseUrl}/sequel-game`,
+      snippet: 'Relevant source retrieved, but readable article text was limited.',
+    });
+    expect(isCitableGamingWebSource(suppliedSource!)).toBe(false);
+    expect(result.context).not.toContain('new campaign systems');
+  });
+
+  it('does not treat a sibling game source as evidence for the original game', async () => {
+    const result = await buildGamingRagContext({
+      mode: 'guide',
+      game: 'Elden Ring',
+      prompt: 'Use this source for an Elden Ring beginner guide.',
+      guideUrl: `${baseUrl}/sibling-game`,
+      guideUrls: [],
+    });
+
+    const suppliedSource = result.sources.find((source) => source.url === `${baseUrl}/sibling-game`);
+    expect(suppliedSource).toEqual({
+      url: `${baseUrl}/sibling-game`,
+      snippet: 'Relevant source retrieved, but readable article text was limited.',
+    });
+    expect(isCitableGamingWebSource(suppliedSource!)).toBe(false);
+    expect(result.context).not.toContain('Nightlord encounter');
   });
 
   it('does not satisfy a multi-version request from a fetched page covering only one version', async () => {

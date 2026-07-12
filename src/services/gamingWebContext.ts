@@ -996,12 +996,36 @@ function detectReliableDocumentGame(document: GamingFetchedDocument): string | u
   return undefined;
 }
 
-function detectGameFromDocumentIntro(document: GamingFetchedDocument): string | undefined {
+function detectGameFromDocumentIntro(
+  document: GamingFetchedDocument,
+  requestedGame?: string
+): string | undefined {
   const normalizedBody = document.text.replace(/\s+/g, " ").trim();
   const sentenceEnd = normalizedBody.search(/[.!?](?:\s|$)/);
   const intro = normalizedBody.slice(0, Math.min(sentenceEnd >= 0 ? sentenceEnd + 1 : normalizedBody.length, 320));
   if (!/\b(?:guide|build|loadout|meta|walkthrough|wiki|tips?|tier\s+list|patch\s+notes|progression|route|boss)\b/i.test(intro)) {
     return undefined;
+  }
+  const normalizedIntro = intro.replace(/^[\s'"“‘([{]+/u, "").toLowerCase();
+  const canonicalRequested = requestedGame
+    ? canonicalizeGamingGameName(requestedGame)
+    : undefined;
+  const normalizedRequested = canonicalRequested
+    ? canonicalRequested.toLowerCase()
+    : undefined;
+  if (canonicalRequested && normalizedRequested && normalizedIntro.startsWith(normalizedRequested)) {
+    const boundary = normalizedIntro.charAt(normalizedRequested.length);
+    if (!boundary || /[^a-z0-9]/i.test(boundary)) {
+      const suffix = normalizedIntro
+        .slice(normalizedRequested.length)
+        .trimStart()
+        .replace(/^[:\-–—]\s*/u, "");
+      const dottedVersion = /^(?:v(?:ersion)?\.?\s*)?\d{1,3}\.\d{1,3}(?:\.\d{1,3})?\b/i.test(suffix);
+      const descriptiveSuffix = /^(?:beginner|boss|build|class|combat|community|current|early|endgame|exploration|first|guide|late|legacy|leveling|loadout|main|mechanics?|meta|mining|patch|progression|pve|pvp|quest|raids?|route|season|strategy|survival|tier|tips?|update|walkthrough|wiki)\b/i.test(suffix);
+      if (dottedVersion || descriptiveSuffix) {
+        return canonicalRequested;
+      }
+    }
   }
   const detection = detectGamingGame({ pageTitle: intro });
   if (!detection.game || detection.confidence < 0.8) {
@@ -1009,7 +1033,23 @@ function detectGameFromDocumentIntro(document: GamingFetchedDocument): string | 
   }
   const detectedGame = canonicalizeGamingGameName(detection.game);
   const detectedGameWords = detectedGame.match(/[a-z0-9+]+/gi) ?? [];
-  return detection.confidence >= 0.88 || detectedGameWords.length >= 2 ? detectedGame : undefined;
+  const gameAnchorsIntro = normalizedIntro.startsWith(detectedGame.toLowerCase());
+  return detection.confidence >= 0.88 || (detectedGameWords.length >= 2 && gameAnchorsIntro)
+    ? detectedGame
+    : undefined;
+}
+
+function gamingGameNamesMatch(candidateGame: string, requestedGame: string): boolean {
+  const normalizedCandidate = canonicalizeGamingGameName(candidateGame).toLowerCase();
+  const normalizedRequested = canonicalizeGamingGameName(requestedGame).toLowerCase();
+  if (normalizedCandidate === normalizedRequested) {
+    return true;
+  }
+  if (!normalizedCandidate.startsWith(`${normalizedRequested} `)) {
+    return false;
+  }
+  const suffix = normalizedCandidate.slice(normalizedRequested.length).trim();
+  return /^(?:v(?:ersion)?\.?\s*)?\d{1,3}\.\d{1,3}(?:\.\d{1,3})?$/i.test(suffix);
 }
 
 function collectConflictingDocumentUrls(
@@ -1019,18 +1059,14 @@ function collectConflictingDocumentUrls(
   if (!requestedGame) {
     return new Set();
   }
-  const normalizedRequestedGame = canonicalizeGamingGameName(requestedGame).toLowerCase();
   return new Set(documents
     .filter((document) => {
       const reliableGame = detectReliableDocumentGame(document);
       if (reliableGame) {
-        return canonicalizeGamingGameName(reliableGame).toLowerCase() !== normalizedRequestedGame;
+        return !gamingGameNamesMatch(reliableGame, requestedGame);
       }
-      if (fetchedDocumentCorroboratesGame(document.text, document.extraction, requestedGame)) {
-        return false;
-      }
-      const introGame = detectGameFromDocumentIntro(document);
-      return Boolean(introGame && canonicalizeGamingGameName(introGame).toLowerCase() !== normalizedRequestedGame);
+      const introGame = detectGameFromDocumentIntro(document, requestedGame);
+      return Boolean(introGame && !gamingGameNamesMatch(introGame, requestedGame));
     })
     .map((document) => document.candidate.url));
 }

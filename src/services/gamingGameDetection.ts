@@ -20,6 +20,7 @@ const OPTIONAL_GAME_ALIASES: Array<{ pattern: RegExp; name: string }> = [
   { pattern: /\b(?:star\s+wars:\s*)?the\s+old\s+republic\b|\bswtor\b/i, name: "Star Wars: The Old Republic" },
   { pattern: /\bworld\s+of\s+warcraft\b/i, name: "World of Warcraft" },
   { pattern: /\b(?:WoW|WOW)\b/, name: "World of Warcraft" },
+  { pattern: /\belden\s+ring\s+nightreign\b/i, name: "Elden Ring Nightreign" },
   { pattern: /\belden\s+ring\b/i, name: "Elden Ring" },
   { pattern: /\bdestiny\s+2\b/i, name: "Destiny 2" },
   { pattern: /\bdiablo\s+(?:4|iv)\b/i, name: "Diablo 4" },
