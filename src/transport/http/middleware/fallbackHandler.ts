@@ -18,6 +18,7 @@ import {
 import { logger } from "@platform/logging/structuredLogging.js";
 import { sendTimestampedStatus } from "@platform/resilience/serviceUnavailable.js";
 import { applyAIDegradedResponseHeaders } from '@shared/http/aiDegradedHeaders.js';
+import { resolvePublicGamingGptIdFromPath } from '@shared/http/publicGamingPath.js';
 
 export interface DegradedResponse {
   status: 'degraded';
@@ -82,7 +83,7 @@ function isGptDispatcherPath(path: string): boolean {
 }
 
 function isPublicGamingPath(path: string): boolean {
-  return path === '/gpt/arcanos-gaming' || path === '/gpt/gaming';
+  return resolvePublicGamingGptIdFromPath(path) !== null;
 }
 
 function isFallbackEligibleAiEndpoint(path: string): boolean {

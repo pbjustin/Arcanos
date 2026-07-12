@@ -75,7 +75,9 @@ describe('fallback health-check middleware', () => {
 
   it.each([
     '/gpt/arcanos-gaming',
-    '/gpt/gaming'
+    '/gpt/gaming',
+    '/gpt/ARCANOS-GAMING/',
+    '/gpt/Gaming/'
   ])('does not replace %s route errors with a generic degraded response', async (path) => {
     const { createFallbackMiddleware } = await import(
       '../src/transport/http/middleware/fallbackHandler.js'

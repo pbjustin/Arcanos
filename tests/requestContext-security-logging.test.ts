@@ -46,6 +46,51 @@ describe('requestContext security logging', () => {
     consoleLogSpy.mockRestore();
   });
 
+  it('preserves bounded safe inbound correlation IDs', async () => {
+    const app = express();
+    app.use(requestContext);
+    app.get('/probe', (req, res) => {
+      res.status(200).json({ requestId: req.requestId, traceId: req.traceId });
+    });
+
+    const response = await request(app)
+      .get('/probe')
+      .set('x-request-id', 'req-client_123')
+      .set('x-trace-id', 'trace-client:123');
+
+    expect(response.body).toEqual({
+      requestId: 'req-client_123',
+      traceId: 'trace-client:123'
+    });
+    expect(response.headers['x-request-id']).toBe(response.body.requestId);
+    expect(response.headers['x-trace-id']).toBe(response.body.traceId);
+  });
+
+  it.each([
+    ['embedded whitespace', 'client supplied id'],
+    ['disallowed delimiter', 'client/id'],
+    ['oversized value', `client-${'x'.repeat(128)}`]
+  ])('regenerates %s correlation headers without echoing the raw value', async (_caseName, invalidId) => {
+    const app = express();
+    app.use(requestContext);
+    app.get('/probe', (req, res) => {
+      res.status(200).json({ requestId: req.requestId, traceId: req.traceId });
+    });
+
+    const response = await request(app)
+      .get('/probe')
+      .set('x-request-id', invalidId)
+      .set('x-trace-id', invalidId);
+
+    expect(response.body.requestId).toMatch(/^req_/);
+    expect(response.body.traceId).toMatch(/^trace_/);
+    expect(response.body.requestId).not.toBe(invalidId);
+    expect(response.body.traceId).not.toBe(invalidId);
+    expect(response.headers['x-request-id']).toBe(response.body.requestId);
+    expect(response.headers['x-trace-id']).toBe(response.body.traceId);
+    expect(consoleLogSpy.mock.calls.flat().join('\n')).not.toContain(invalidId);
+  });
+
   it('removes query parameters from request logs', async () => {
     const app = express();
     app.use(requestContext);

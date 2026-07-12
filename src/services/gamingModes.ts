@@ -78,6 +78,11 @@ export type ValidatedGamingRequest = {
   hrcEnabled: boolean;
 };
 
+export type PublicGamingRequestValidationError = {
+  code: "GPT_ACTION_REQUIRED" | "BAD_REQUEST" | "GAMEPLAY_MODE_REQUIRED" | "PROMPT_REQUIRED";
+  message: string;
+};
+
 function getStringField(payload: unknown, key: string): string | undefined {
   if (!isRecord(payload)) {
     return undefined;
@@ -98,6 +103,46 @@ export function resolveGamingMode(payload: unknown): GamingMode | null {
   }
 
   return null;
+}
+
+export function validatePublicGamingQueryRequest(
+  body: unknown,
+  requestedAction: string | null
+): PublicGamingRequestValidationError | null {
+  if (!requestedAction) {
+    return {
+      code: "GPT_ACTION_REQUIRED",
+      message: "Gaming requests require action 'query'."
+    };
+  }
+  if (requestedAction !== "query") {
+    return null;
+  }
+  if (!isRecord(body) || !isRecord(body.payload)) {
+    return {
+      code: "BAD_REQUEST",
+      message: "Gaming query requests require a payload object."
+    };
+  }
+
+  const payloadHasMode = Object.prototype.hasOwnProperty.call(body.payload, "mode");
+  const mode = payloadHasMode ? resolveGamingMode(body.payload) : resolveGamingMode(body);
+  if (!mode) {
+    return {
+      code: "GAMEPLAY_MODE_REQUIRED",
+      message: "Gameplay requests require explicit mode 'guide', 'build', or 'meta'."
+    };
+  }
+
+  const promptKeys = ["prompt", "message", "text", "content", "query"];
+  const payloadHasPromptAlias = promptKeys.some((key) => Object.prototype.hasOwnProperty.call(body.payload, key));
+  const prompt = payloadHasPromptAlias ? extractTextPrompt(body.payload) : extractTextPrompt(body);
+  return prompt
+    ? null
+    : {
+        code: "PROMPT_REQUIRED",
+        message: "query requires a non-empty prompt."
+      };
 }
 
 export function formatGamingSuccess(params: {

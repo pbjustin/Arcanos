@@ -81,8 +81,6 @@ import {
 import { getRequestActorKey } from '@platform/runtime/security.js';
 import {
   GPT_QUERY_ACTION,
-  GPT_GET_STATUS_ACTION,
-  GPT_GET_RESULT_ACTION,
   GPT_QUERY_AND_WAIT_ACTION
 } from '@shared/gpt/gptJobResult.js';
 import { classifyGptRequestPlane } from './_core/gptPlaneClassification.js';
@@ -93,9 +91,10 @@ import {
 } from '@shared/gpt/gptFastPath.js';
 import { ARCANOS_SUPPRESS_TIMEOUT_FALLBACK_FLAG } from '@shared/gpt/gptDirectAction.js';
 import { extractLastUserMessageText } from '@shared/gpt/messageContentText.js';
+import { resolveRequestedGptActionFromRequest } from '@shared/gpt/gptRequestAction.js';
 import { executeDirectGptAction, executeFastGptPrompt } from '@services/gptFastPath.js';
 import { DEFAULT_GAMING_MODULE_TIMEOUT_MS } from '@services/gamingConfig.js';
-import { formatGamingError, resolveGamingMode } from '@services/gamingModes.js';
+import { formatGamingError, resolveGamingMode, validatePublicGamingQueryRequest } from '@services/gamingModes.js';
 import { getConfig } from '@platform/runtime/unifiedConfig.js';
 import { handleGptDagBridge } from '@services/gptDagBridge.js';
 import {
@@ -272,111 +271,6 @@ function extractDispatcherResultText(result: unknown): string {
   } catch {
     return String(result ?? '');
   }
-}
-
-function readFirstNonEmptyString(value: unknown): string | null {
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    return trimmed.length > 0 ? trimmed : null;
-  }
-
-  if (Array.isArray(value)) {
-    for (const entry of value) {
-      const normalizedEntry = readFirstNonEmptyString(entry);
-      if (normalizedEntry) {
-        return normalizedEntry;
-      }
-    }
-  }
-
-  return null;
-}
-
-function normalizeRequestedActionName(value: string): string | null {
-  const trimmed = value.trim();
-  if (!trimmed) {
-    return null;
-  }
-
-  const lowered = trimmed.toLowerCase();
-  const decamelized = trimmed.replace(/([a-z0-9])([A-Z])/g, '$1_$2').toLowerCase();
-  const compact = decamelized.replace(/[^a-z0-9]+/g, '');
-
-  if (compact === 'invokegptroute' || compact === 'gptroute' || compact === 'invokegpt') {
-    return null;
-  }
-
-  if (
-    compact === 'queryandwait' ||
-    compact === 'requestqueryandwait' ||
-    compact === 'gptqueryandwait'
-  ) {
-    return GPT_QUERY_AND_WAIT_ACTION;
-  }
-
-  if (compact === 'query') {
-    return GPT_QUERY_ACTION;
-  }
-
-  if (compact === 'getstatus') {
-    return GPT_GET_STATUS_ACTION;
-  }
-
-  if (compact === 'getresult') {
-    return GPT_GET_RESULT_ACTION;
-  }
-
-  if (compact === 'systemstate') {
-    return 'system_state';
-  }
-
-  return lowered;
-}
-
-function readActionAlias(record: Record<string, unknown>): string | null {
-  const actionValue =
-    readFirstNonEmptyString(record.action) ??
-    readFirstNonEmptyString(record.operation) ??
-    readFirstNonEmptyString(record.operationId) ??
-    readFirstNonEmptyString(record.operation_id) ??
-    readFirstNonEmptyString(record.toolAction) ??
-    readFirstNonEmptyString(record.tool_action) ??
-    readFirstNonEmptyString(record.gptAction) ??
-    readFirstNonEmptyString(record.gpt_action);
-
-  return actionValue ? normalizeRequestedActionName(actionValue) : null;
-}
-
-function resolveRequestedAction(body: unknown): string | null {
-  const normalizedBody = normalizeGptRequestBody(body);
-  if (!normalizedBody) {
-    return null;
-  }
-
-  const directAction = readActionAlias(normalizedBody);
-  if (directAction) {
-    return directAction.toLowerCase();
-  }
-
-  const payload = normalizedBody.payload;
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
-    return null;
-  }
-
-  const payloadAction = readActionAlias(payload as Record<string, unknown>);
-  return payloadAction;
-}
-
-function resolveRequestedActionFromRequest(req: express.Request): string | null {
-  return (
-    resolveRequestedAction(req.body) ??
-    readActionAlias(req.query as Record<string, unknown>) ??
-    normalizeRequestedActionName(
-      readFirstNonEmptyString(req.header('x-gpt-action')) ??
-      readFirstNonEmptyString(req.header('x-arcanos-action')) ??
-      ''
-    )
-  );
 }
 
 function readPayloadRecord(
@@ -813,7 +707,7 @@ function isDirectModuleQueryGpt(gptId: string): boolean {
 function resolvePublicGamingMode(body: unknown) {
   const normalizedBody = normalizeGptRequestBody(body);
   const payload = readPayloadRecord(normalizedBody);
-  return resolveGamingMode(payload ?? normalizedBody);
+  return resolveGamingMode(payload) ?? resolveGamingMode(normalizedBody);
 }
 
 function isControlledGamingDispatcherError(
@@ -1363,7 +1257,7 @@ function applyGptQueueBypassedHeader(
 router.post("/:gptId", async (req, res, next) => {
   const routeGptId = req.params.gptId;
   const priorityGpt = isPriorityGpt(routeGptId);
-  const requestedAction = resolveRequestedActionFromRequest(req);
+  const requestedAction = resolveRequestedGptActionFromRequest(req);
   const queryRequested = requestedAction === GPT_QUERY_ACTION;
   const queryAndWaitRequested = requestedAction === GPT_QUERY_AND_WAIT_ACTION;
   const bypassIntentRouting = queryRequested || queryAndWaitRequested;
@@ -1499,6 +1393,41 @@ router.post("/:gptId", async (req, res, next) => {
             bodyGptId,
             traceId
           });
+        }
+
+        const publicGamingValidationError = isDirectModuleQueryGpt(incomingGptId)
+          ? validatePublicGamingQueryRequest(normalizedBody, requestedAction)
+          : null;
+
+        if (publicGamingValidationError) {
+          const action = requestedAction ?? GPT_QUERY_ACTION;
+          const errorPayload = buildGptDispatcherErrorPayload({
+            requestId,
+            traceId,
+            gptId: incomingGptId,
+            action,
+            code: publicGamingValidationError.code,
+            message: publicGamingValidationError.message,
+            route: 'gaming_validation'
+          });
+          logGptDispatcherOutcome({
+            req,
+            traceId,
+            gptId: incomingGptId,
+            action,
+            status: 400,
+            error: {
+              name: publicGamingValidationError.code,
+              message: publicGamingValidationError.message
+            }
+          });
+          return sendGuardedGptJsonResponse(
+            req,
+            res,
+            errorPayload,
+            'gpt.response.gaming_validation',
+            400
+          );
         }
 
         requestLogger?.info?.("gpt.request.auth_state", {
@@ -3062,13 +2991,11 @@ router.post("/:gptId", async (req, res, next) => {
           const diagnosticSerializationStartedAt = Date.now();
           const diagnosticResult = shapeClientRouteResult(envelope.result) as Record<string, unknown>;
           const diagnosticPayload = prepareBoundedClientJsonPayload(
-            isDirectModuleQueryGpt(incomingGptId)
-              ? {
-                  ...diagnosticResult,
-                  requestId: requestId ?? traceId,
-                  traceId
-                }
-              : diagnosticResult,
+            {
+              ...diagnosticResult,
+              requestId: requestId ?? traceId,
+              traceId
+            },
             {
               logger: req.logger,
               logEvent: 'gpt.response.diagnostic',

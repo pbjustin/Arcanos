@@ -1,7 +1,51 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+function collectLocalRefs(value: unknown, refs: string[] = []): string[] {
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      collectLocalRefs(entry, refs);
+    }
+    return refs;
+  }
+
+  if (!value || typeof value !== 'object') {
+    return refs;
+  }
+
+  for (const [key, entry] of Object.entries(value)) {
+    if (key === '$ref' && typeof entry === 'string' && entry.startsWith('#/')) {
+      refs.push(entry);
+      continue;
+    }
+    collectLocalRefs(entry, refs);
+  }
+  return refs;
+}
+
+function resolveLocalRef(document: unknown, ref: string): unknown {
+  return ref.slice(2).split('/').reduce<unknown>((current, segment) => {
+    if (!current || typeof current !== 'object' || Array.isArray(current)) {
+      return undefined;
+    }
+    const key = segment.replace(/~1/g, '/').replace(/~0/g, '~');
+    return (current as Record<string, unknown>)[key];
+  }, document);
+}
+
 describe('custom GPT route OpenAPI contract', () => {
+  it('resolves every local schema reference', () => {
+    const contract = JSON.parse(
+      readFileSync(join(process.cwd(), 'contracts/custom_gpt_route.openapi.v1.json'), 'utf8')
+    );
+
+    const localRefs = collectLocalRefs(contract);
+    expect(localRefs.length).toBeGreaterThan(0);
+    for (const ref of localRefs) {
+      expect(resolveLocalRef(contract, ref)).toBeDefined();
+    }
+  });
+
   it('documents no public GPT direct control actions while preserving safe DAG bridge examples', () => {
     const contract = JSON.parse(
       readFileSync(join(process.cwd(), 'contracts/custom_gpt_route.openapi.v1.json'), 'utf8')
@@ -97,9 +141,17 @@ describe('custom GPT route OpenAPI contract', () => {
     expect(schemas?.GptRouteSuccessResponse?.anyOf).toEqual(
       expect.arrayContaining([
         { $ref: '#/components/schemas/GamingPublicResponse' },
+        { $ref: '#/components/schemas/GptDiagnosticResponse' },
         { $ref: '#/components/schemas/GptRouteGenericResponse' },
       ])
     );
+    expect(schemas?.GptDiagnosticResponse?.required).toEqual([
+      'status',
+      'route',
+      'message',
+      'requestId',
+      'traceId',
+    ]);
     expect(schemas?.GamingPublicResponse?.required).toEqual([
       'ok',
       'requestId',

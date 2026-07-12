@@ -661,6 +661,36 @@
           }
         }
       },
+      "GptDiagnosticResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "status",
+          "route",
+          "message",
+          "requestId",
+          "traceId"
+        ],
+        "properties": {
+          "status": {
+            "const": "ok"
+          },
+          "route": {
+            "const": "diagnostic"
+          },
+          "message": {
+            "const": "backend operational"
+          },
+          "requestId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "traceId": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
       "GptRouteRequest": {
         "type": "object",
         "additionalProperties": true,
@@ -899,13 +929,13 @@
             "$ref": "#/components/schemas/GamingPublicResponse"
           },
           {
+            "$ref": "#/components/schemas/GptDiagnosticResponse"
+          },
+          {
             "$ref": "#/components/schemas/GptDirectActionCompletedResponse"
           },
           {
             "$ref": "#/components/schemas/GptAsyncCompletedResponse"
-          },
-          {
-            "$ref": "#/components/schemas/RootDeepDiagnosticsResponse"
           },
           {
             "$ref": "#/components/schemas/GptRouteGenericResponse"

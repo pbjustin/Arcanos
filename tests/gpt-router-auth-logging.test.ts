@@ -136,7 +136,14 @@ describe('gpt router auth logging', () => {
       .set('Authorization', 'Bearer test-session-token')
       .set('Cookie', 'session=abc123')
       .set('x-confirmed', 'yes')
-      .send({ prompt: 'Ping the gaming backend' });
+      .send({
+        action: 'query',
+        payload: {
+          mode: 'guide',
+          game: 'Minecraft',
+          prompt: 'Ping the gaming backend'
+        }
+      });
 
     expect(response.status).toBe(200);
 
@@ -187,6 +194,12 @@ describe('gpt router auth logging', () => {
     const response = await request(app)
       .post('/gpt/arcanos-gaming')
       .send({
+        action: 'query',
+        payload: {
+          mode: 'guide',
+          game: 'Minecraft',
+          prompt: `Inspect ${promptMarker} carefully`
+        },
         prompt: `Inspect ${promptMarker} carefully`,
         messages: [{ role: 'user', content: `Inspect ${promptMarker} carefully` }],
       });
@@ -207,7 +220,7 @@ describe('gpt router auth logging', () => {
       promptLikeFields: ['messages', 'prompt'],
     });
     expect(requestMetaLog?.data?.promptHash).toEqual(expect.any(String));
-    expect(requestMetaLog?.data?.bodyKeys).toEqual(['messages', 'prompt']);
+    expect(requestMetaLog?.data?.bodyKeys).toEqual(['action', 'messages', 'payload', 'prompt']);
     expect(rawStructuredLogs).not.toContain(promptMarker);
   });
 
@@ -294,7 +307,42 @@ describe('gpt router auth logging', () => {
     });
   });
 
-  it('returns bare gaming envelopes for explicit guide mode responses', async () => {
+  it('includes current request IDs in non-Gaming diagnostic bodies', async () => {
+    mockRouteGptRequest.mockResolvedValue({
+      ok: true,
+      result: {
+        ok: true,
+        route: 'diagnostic',
+        message: 'backend operational'
+      },
+      _route: {
+        gptId: 'arcanos-core',
+        module: 'diagnostic',
+        route: 'diagnostic',
+        availableActions: []
+      }
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use(requestContext);
+    app.use('/gpt', gptRouter);
+
+    const response = await request(app)
+      .post('/gpt/arcanos-core')
+      .send({ action: 'ping' });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      status: 'ok',
+      route: 'diagnostic',
+      message: 'backend operational',
+      requestId: response.headers['x-request-id'],
+      traceId: response.headers['x-trace-id']
+    });
+  });
+
+  it('preserves top-level Gaming fields that fill a partial explicit payload', async () => {
     mockRouteGptRequest.mockResolvedValue({
       ok: true,
       result: {
@@ -321,7 +369,13 @@ describe('gpt router auth logging', () => {
 
     const response = await request(app)
       .post('/gpt/arcanos-gaming')
-      .send({ mode: 'guide', prompt: 'Where do I go next?' });
+      .send({
+        action: 'query',
+        mode: 'guide',
+        payload: {
+          prompt: 'Where do I go next?'
+        }
+      });
 
     expect(response.status).toBe(200);
     expect(response.body).toMatchObject({
@@ -344,6 +398,45 @@ describe('gpt router auth logging', () => {
           sources: [],
         },
       },
+    });
+  });
+
+  it.each([
+    ['/gpt/gaming', 'gaming'],
+    ['/gpt/Gaming/', 'Gaming'],
+    ['/gpt/ARCANOS-GAMING/', 'ARCANOS-GAMING']
+  ])('keeps the accepted Gaming alias %s on the correlated Gaming boundary', async (path, expectedGptId) => {
+    mockRouteGptRequest.mockImplementation(async ({ gptId }: { gptId: string }) => ({
+      ok: true,
+      result: {
+        ok: true,
+        route: 'gaming',
+        mode: 'guide',
+        data: { response: 'Guide response', sources: [] }
+      },
+      _route: {
+        gptId,
+        module: 'ARCANOS:GAMING',
+        action: 'query',
+        route: 'gaming',
+        availableActions: ['query']
+      }
+    }));
+    const app = express();
+    app.use(express.json());
+    app.use(requestContext);
+    app.use('/gpt', gptRouter);
+
+    const response = await request(app)
+      .post(path)
+      .send({ action: 'query', payload: { mode: 'guide', prompt: 'Guide me.' } });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      requestId: response.headers['x-request-id'],
+      traceId: response.headers['x-trace-id'],
+      result: { route: 'gaming' },
+      _route: { gptId: expectedGptId, module: 'ARCANOS:GAMING', route: 'gaming' }
     });
   });
 
@@ -777,20 +870,32 @@ describe('gpt router auth logging', () => {
     });
   });
 
-  it('returns structured gaming errors when explicit mode is missing', async () => {
-    mockRouteGptRequest.mockResolvedValue({
-      ok: false,
-      error: {
-        code: 'GAMEPLAY_MODE_REQUIRED',
-        message: "Gameplay requests require explicit mode 'guide', 'build', or 'meta'.",
-      },
-      _route: {
-        gptId: 'arcanos-gaming',
-        module: 'ARCANOS:GAMING',
-        route: 'gaming',
-      },
-    });
-
+  it.each([
+    [
+      'missing action',
+      { payload: { mode: 'guide', prompt: 'Give me a walkthrough.' } },
+      'GPT_ACTION_REQUIRED',
+      "Gaming requests require action 'query'."
+    ],
+    [
+      'missing payload',
+      { action: 'query', prompt: 'Give me a walkthrough.' },
+      'BAD_REQUEST',
+      'Gaming query requests require a payload object.'
+    ],
+    [
+      'invalid mode',
+      { action: 'query', payload: { mode: 'speedrun', prompt: 'Give me a walkthrough.' } },
+      'GAMEPLAY_MODE_REQUIRED',
+      "Gameplay requests require explicit mode 'guide', 'build', or 'meta'."
+    ],
+    [
+      'missing prompt',
+      { action: 'query', payload: { mode: 'guide' } },
+      'PROMPT_REQUIRED',
+      'query requires a non-empty prompt.'
+    ]
+  ])('rejects Gaming requests with %s before module dispatch', async (_caseName, body, code, message) => {
     const app = express();
     app.use(express.json());
     app.use(requestContext);
@@ -798,26 +903,29 @@ describe('gpt router auth logging', () => {
 
     const response = await request(app)
       .post('/gpt/arcanos-gaming')
-      .send({ prompt: 'Give me a walkthrough.' });
+      .send(body);
 
     expect(response.status).toBe(400);
+    expect(response.type).toBe('application/json');
     expect(response.body).toEqual(expect.objectContaining({
       ok: false,
+      requestId: response.headers['x-request-id'],
+      traceId: response.headers['x-trace-id'],
       gptId: 'arcanos-gaming',
       action: 'query',
       route: '/gpt/:gptId',
-      traceId: expect.any(String),
       _route: expect.objectContaining({
         gptId: 'arcanos-gaming',
-        module: 'ARCANOS:GAMING',
-        route: 'gaming',
-        traceId: expect.any(String),
+        route: 'gaming_validation',
+        requestId: response.headers['x-request-id'],
+        traceId: response.headers['x-trace-id']
       }),
       error: {
-        code: 'GAMEPLAY_MODE_REQUIRED',
-        message: "Gameplay requests require explicit mode 'guide', 'build', or 'meta'.",
-      },
+        code,
+        message
+      }
     }));
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
   it('rejects mismatched body-level gptId on the canonical route before dispatching', async () => {

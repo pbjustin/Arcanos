@@ -35,24 +35,23 @@ interface RequestLogPayload {
   data?: Record<string, unknown>;
 }
 
+const SAFE_CORRELATION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+
+function normalizeCorrelationId(value: string): string | undefined {
+  const trimmed = value.trim();
+  return SAFE_CORRELATION_ID_PATTERN.test(trimmed) ? trimmed : undefined;
+}
+
 function resolveRequestId(req: Request): string {
   const rawHeader = req.headers['x-request-id'];
   const candidate = typeof rawHeader === 'string' ? rawHeader : Array.isArray(rawHeader) ? rawHeader[0] : '';
-  const trimmed = candidate.trim();
-  if (trimmed.length > 0) {
-    return trimmed;
-  }
-  return generateRequestId('req');
+  return normalizeCorrelationId(candidate) ?? generateRequestId('req');
 }
 
 function resolveTraceId(req: Request): string {
   const rawHeader = req.headers['x-trace-id'];
   const candidate = typeof rawHeader === 'string' ? rawHeader : Array.isArray(rawHeader) ? rawHeader[0] : '';
-  const trimmed = candidate.trim();
-  if (trimmed.length > 0) {
-    return trimmed;
-  }
-  return generateRequestId('trace');
+  return normalizeCorrelationId(candidate) ?? generateRequestId('trace');
 }
 
 function emitRequestLog(payload: RequestLogPayload): void {
@@ -105,7 +104,7 @@ function createRequestLogger(req: Request, requestId: string, traceId: string): 
 /**
  * Purpose: Attach request-scoped logging context with request ID, redaction, and latency metrics.
  * Inputs/Outputs: Express middleware; enriches req with `requestId`, `logger`, and `log` helpers.
- * Edge cases: Preserves inbound x-request-id when provided, otherwise generates a new request id.
+ * Edge cases: Preserves bounded safe inbound correlation IDs and regenerates missing or invalid values.
  */
 export function requestContext(req: Request, res: Response, next: NextFunction): void {
   const requestId = resolveRequestId(req);
