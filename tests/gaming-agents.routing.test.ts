@@ -57,9 +57,30 @@ describe('Gaming agent routing model', () => {
     expect(intent.version).toBe('1.0');
   });
 
+  it('keeps the first of multiple explicit versions without trailing sentence text', () => {
+    const intent = IntentRouterAgent.classify({
+      mode: 'meta',
+      game: 'Palworld',
+      prompt: 'Compare Palworld version 0.9 with version 1.0.',
+    });
+
+    expect(intent.version).toBe('0.9');
+  });
+
+  it.each([
+    ['What changed in patch Dragonflight?', 'Dragonflight'],
+    ['Show the meta for season 4.', '4'],
+  ])('preserves a bounded non-semantic patch token: %s', (prompt, version) => {
+    const intent = IntentRouterAgent.classify({ mode: 'meta', game: 'Palworld', prompt });
+
+    expect(intent.version).toBe(version);
+  });
+
   it.each([
     'How do I beat the boss in under 3.5 minutes?',
     'What is the strategy for a 99.9% success rate?',
+    'Connect to 192.168.1.1 for Palworld matchmaking.',
+    'Palworld 2.0 kilograms is the download estimate.',
   ])('does not extract a general decimal as a game version: %s', (prompt) => {
     const intent = IntentRouterAgent.classify({
       mode: 'guide',

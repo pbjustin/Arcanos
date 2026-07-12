@@ -1347,8 +1347,8 @@ describe('gaming guide output hardening', () => {
 
     const result = await runGuidePipeline({
       prompt: 'Use the linked guides for source numbering.',
-      guideUrl: 'https://example.com/guide-a',
-      guideUrls: ['https://example.com/guide-a', 'https://example.com/guide-b', 'https://example.com/guide-c'],
+      guideUrl: 'https://example.com/guide-a#first',
+      guideUrls: ['https://example.com/guide-a#duplicate', 'https://example.com/guide-b', 'https://example.com/guide-c'],
       auditEnabled: false
     });
 

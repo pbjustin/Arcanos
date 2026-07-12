@@ -33,6 +33,10 @@ import {
   type GamingGameDetectionSource
 } from "@services/gamingGameDetection.js";
 import {
+  extractExplicitGamingVersions,
+  textContainsExactGamingVersion
+} from "@services/gamingVersion.js";
+import {
   GAMING_BUILD_RESOURCE_HARD_LIMITS,
   classifyGamingResource,
   clearGamingBuildResourceCache,
@@ -602,6 +606,11 @@ function safeGamingSourceError(error: unknown): string {
   return "Source could not be retrieved.";
 }
 
+function sourceUrlForGamingError(sourceUrl: string, error: unknown): string {
+  const message = resolveErrorMessage(error, "").toLowerCase();
+  return /private\/internal|containing credentials/.test(message) ? "invalid-source" : sourceUrl;
+}
+
 function isStructuredGamingResourceType(type: GamingResourceType): boolean {
   return type === "build_planner"
     || type === "loadout"
@@ -782,7 +791,7 @@ export async function buildGamingWebContext(
             fetchTimeoutMs
           });
         }
-        return { url: sourceUrl, error: safeGamingSourceError(error) };
+        return { url: sourceUrlForGamingError(sourceUrl, error), error: safeGamingSourceError(error) };
       }
     })
   );
@@ -987,6 +996,45 @@ function detectReliableDocumentGame(document: GamingFetchedDocument): string | u
   return undefined;
 }
 
+function detectGameFromDocumentIntro(document: GamingFetchedDocument): string | undefined {
+  const normalizedBody = document.text.replace(/\s+/g, " ").trim();
+  const sentenceEnd = normalizedBody.search(/[.!?](?:\s|$)/);
+  const intro = normalizedBody.slice(0, Math.min(sentenceEnd >= 0 ? sentenceEnd + 1 : normalizedBody.length, 320));
+  if (!/\b(?:guide|build|loadout|meta|walkthrough|wiki|tips?|tier\s+list|patch\s+notes|progression|route|boss)\b/i.test(intro)) {
+    return undefined;
+  }
+  const detection = detectGamingGame({ pageTitle: intro });
+  if (!detection.game || detection.confidence < 0.8) {
+    return undefined;
+  }
+  const detectedGame = canonicalizeGamingGameName(detection.game);
+  const detectedGameWords = detectedGame.match(/[a-z0-9+]+/gi) ?? [];
+  return detection.confidence >= 0.88 || detectedGameWords.length >= 2 ? detectedGame : undefined;
+}
+
+function collectConflictingDocumentUrls(
+  documents: readonly GamingFetchedDocument[],
+  requestedGame: string | undefined
+): Set<string> {
+  if (!requestedGame) {
+    return new Set();
+  }
+  const normalizedRequestedGame = canonicalizeGamingGameName(requestedGame).toLowerCase();
+  return new Set(documents
+    .filter((document) => {
+      const reliableGame = detectReliableDocumentGame(document);
+      if (reliableGame) {
+        return canonicalizeGamingGameName(reliableGame).toLowerCase() !== normalizedRequestedGame;
+      }
+      if (fetchedDocumentCorroboratesGame(document.text, document.extraction, requestedGame)) {
+        return false;
+      }
+      const introGame = detectGameFromDocumentIntro(document);
+      return Boolean(introGame && canonicalizeGamingGameName(introGame).toLowerCase() !== normalizedRequestedGame);
+    })
+    .map((document) => document.candidate.url));
+}
+
 function detectGameFromFetchedDocuments(
   initialDetection: GamingGameDetection,
   documents: GamingFetchedDocument[]
@@ -1072,36 +1120,7 @@ function candidateWithFetchedGameCorroboration(
 export function isGamingFreshnessSensitive(input: GamingRagInput): boolean {
   return input.mode === "meta"
     || /\b(?:patch|hotfix|version|season|latest|current|right\s+now|meta|buff|nerf|balance|viable)\b/i.test(input.prompt)
-    || Boolean(extractRequestedSemanticVersion(input));
-}
-
-function extractRequestedSemanticVersion(input: GamingRagInput): string | undefined {
-  const contextualMatch = input.prompt.match(/\b(?:patch|version|update)\s+(\d{1,3}\.\d{1,3}(?:\.\d{1,3})?)\b/i)
-    ?? input.prompt.match(/\bv\.?\s*(\d{1,3}\.\d{1,3}(?:\.\d{1,3})?)\b/i)
-    ?? input.prompt.match(/\bwhat\s+changed\b[^.!?\n]{0,32}\bin\s+(\d{1,3}\.\d{1,3}(?:\.\d{1,3})?)\b/i)
-    ?? input.prompt.match(/\(\s*(?:v(?:ersion)?\.?\s*)?(\d{1,3}\.\d{1,3}(?:\.\d{1,3})?)\s*\)/i)
-    ?? input.prompt.match(/\b(\d{1,3}\.\d{1,3}\.\d{1,3})\b/);
-  if (contextualMatch?.[1]) {
-    return contextualMatch[1];
-  }
-
-  const game = normalizeGameName(input);
-  if (!game) {
-    return undefined;
-  }
-
-  const escapedGame = game.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const gameVersionPattern = new RegExp(
-    `\\b${escapedGame}\\s+(?:v(?:ersion)?\\.?\\s*)?(\\d{1,3}\\.\\d{1,3}(?:\\.\\d{1,3})?)\\b(?!\\.\\d)(?!\\s*(?:%|percent\\b|minutes?\\b|mins?\\b|hours?\\b|seconds?\\b|milliseconds?\\b|ms\\b|fps\\b|hz\\b))`,
-    "i"
-  );
-  return input.prompt.match(gameVersionPattern)?.[1];
-}
-
-function sourceMatchesRequestedVersion(chunk: GamingRankedChunk, requestedVersion: string): boolean {
-  const escapedVersion = requestedVersion.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const versionPattern = new RegExp(`(?:^|[^0-9.])${escapedVersion}(?![0-9]|\\.[0-9])`, "i");
-  return versionPattern.test(chunk.text);
+    || extractExplicitGamingVersions({ prompt: input.prompt, game: normalizeGameName(input) }).length > 0;
 }
 
 function tokenize(value: string): string[] {
@@ -1278,12 +1297,13 @@ function makeDiscoveredSourceCandidate(
 }
 
 function buildSourceCandidates(input: GamingRagInput, game: string | undefined): GamingSourceCandidate[] {
-  const suppliedUrls = Array.from(new Set(
+  const suppliedUrls = Array.from(new Map(
     collectGamingGuideUrls(input)
       .filter((url): url is string => typeof url === "string")
       .map((url) => url.trim())
       .filter(isFetchableGuideUrl)
-  )).slice(0, getGamingWebContextMaxUrls());
+      .map((url) => [normalizeCacheUrl(url).toLowerCase(), url] as const)
+  ).values()).slice(0, getGamingWebContextMaxUrls());
   const suppliedCandidates = suppliedUrls.map((url) => makeSourceCandidate({
     url,
     title: safeSourceTitleFromUrl(url),
@@ -1644,7 +1664,7 @@ async function fetchGamingRagDocument(
         fetchTimeoutMs
       });
     }
-    return { url: sourceUrl, error: safeGamingSourceError(error) };
+    return { url: sourceUrlForGamingError(sourceUrl, error), error: safeGamingSourceError(error) };
   }
 }
 
@@ -2310,26 +2330,28 @@ function hasSufficientGamingEvidence(
   chunks: readonly GamingRankedChunk[],
   sources: readonly GamingWebSource[],
   patchSensitive: boolean,
-  requestedVersion?: string
+  requestedVersions: readonly string[] = []
 ): boolean {
   const citableUrls = new Set(sources.filter(isCitableGamingWebSource).map((source) => source.url));
   const minimumQuality = getGamingDiscoveryMinEvidenceQuality();
-  return chunks.some((chunk) => {
-    if (!citableUrls.has(chunk.candidate.url) || chunk.snippetQualityScore < minimumQuality) {
-      return false;
-    }
-    if (!patchSensitive) {
-      return true;
-    }
+  const eligibleChunks = chunks.filter((chunk) =>
+    citableUrls.has(chunk.candidate.url) && chunk.snippetQualityScore >= minimumQuality
+  );
+  if (!patchSensitive) {
+    return eligibleChunks.length > 0;
+  }
+  if (requestedVersions.length > 0) {
+    return requestedVersions.every((version) =>
+      eligibleChunks.some((chunk) => textContainsExactGamingVersion(chunk.text, version))
+    );
+  }
+  return eligibleChunks.some((chunk) => {
     const sourceDate = chunk.candidate.updatedAt ?? chunk.candidate.publishedAt;
     const parsedSourceDate = sourceDate ? Date.parse(sourceDate) : Number.NaN;
     const sourceAgeMs = Date.now() - parsedSourceDate;
     const recentDatedSource = Number.isFinite(parsedSourceDate)
       && sourceAgeMs >= 0
       && sourceAgeMs <= 540 * 24 * 60 * 60_000;
-    if (requestedVersion) {
-      return sourceMatchesRequestedVersion(chunk, requestedVersion);
-    }
     return recentDatedSource;
   });
 }
@@ -2404,7 +2426,7 @@ export async function buildGamingRagContext(
   const game = initialGameDetection.game;
   const terms = extractTopicTerms(input, game);
   const patchSensitive = isGamingFreshnessSensitive(input);
-  const requestedVersion = extractRequestedSemanticVersion(input);
+  const requestedVersions = extractExplicitGamingVersions({ prompt: input.prompt, game });
   const retrievalQuery = buildRetrievalQuery(input, game, terms);
   const retrievalEnabled = getGamingRagEnabled();
   const discoveryEnabled = retrievalEnabled && getGamingDiscoveryEnabled();
@@ -2490,17 +2512,7 @@ export async function buildGamingRagContext(
     errorSources = [...errorSources, { url: "invalid-source", error: "Malformed or unsupported source URL." }];
   }
 
-  const requestedGameForSuppliedEvidence = initialGameDetection.game?.toLowerCase();
-  const suppliedConflictingDocumentUrls = new Set(
-    requestedGameForSuppliedEvidence
-      ? documents
-        .filter((document) => {
-          const documentGame = detectReliableDocumentGame(document);
-          return Boolean(documentGame && documentGame.toLowerCase() !== requestedGameForSuppliedEvidence);
-        })
-        .map((document) => document.candidate.url)
-      : []
-  );
+  const suppliedConflictingDocumentUrls = collectConflictingDocumentUrls(documents, initialGameDetection.game);
   const suppliedRankableDocuments = documents.filter((document) =>
     !suppliedConflictingDocumentUrls.has(document.candidate.url)
   );
@@ -2516,7 +2528,7 @@ export async function buildGamingRagContext(
     suppliedChunks,
     suppliedSources,
     patchSensitive,
-    requestedVersion
+    requestedVersions
   );
   if (!suppliedEvidenceSufficient && curatedCandidates.length > 0) {
     const curatedFetchResults = await fetchCandidateBatch(curatedCandidates);
@@ -2531,17 +2543,7 @@ export async function buildGamingRagContext(
     ];
   }
 
-  const requestedGameForInitialEvidence = initialGameDetection.game?.toLowerCase();
-  const initialConflictingDocumentUrls = new Set(
-    requestedGameForInitialEvidence
-      ? documents
-        .filter((document) => {
-          const documentGame = detectReliableDocumentGame(document);
-          return Boolean(documentGame && documentGame.toLowerCase() !== requestedGameForInitialEvidence);
-        })
-        .map((document) => document.candidate.url)
-      : []
-  );
+  const initialConflictingDocumentUrls = collectConflictingDocumentUrls(documents, initialGameDetection.game);
   const initialRankableDocuments = documents.filter((document) => !initialConflictingDocumentUrls.has(document.candidate.url));
   const initialChunks = rankChunks(initialRankableDocuments, terms, input, patchSensitive);
   const initialSources = buildPublicSourcesFromChunks(
@@ -2555,7 +2557,7 @@ export async function buildGamingRagContext(
     initialChunks,
     initialSources,
     patchSensitive,
-    requestedVersion
+    requestedVersions
   );
 
   let discoveryTriggered = false;
@@ -2681,17 +2683,7 @@ export async function buildGamingRagContext(
 
   const timedOut = errorSources.some((source) => source.error?.toLowerCase().includes("timed out"));
   const effectiveGameDetection = detectGameFromFetchedDocuments(initialGameDetection, documents);
-  const requestedGame = initialGameDetection.game?.toLowerCase();
-  const conflictingDocumentUrls = new Set(
-    requestedGame
-      ? documents
-        .filter((document) => {
-          const documentGame = detectReliableDocumentGame(document);
-          return Boolean(documentGame && documentGame.toLowerCase() !== requestedGame);
-        })
-        .map((document) => document.candidate.url)
-      : []
-  );
+  const conflictingDocumentUrls = collectConflictingDocumentUrls(documents, initialGameDetection.game);
   const rankableDocuments = documents.filter((document) => !conflictingDocumentUrls.has(document.candidate.url));
   const effectiveInput: GamingRagInput = effectiveGameDetection.game
     ? { ...input, game: effectiveGameDetection.game }
@@ -2740,7 +2732,7 @@ export async function buildGamingRagContext(
     chunks,
     retainedSources,
     true,
-    requestedVersion
+    requestedVersions
   );
   const clear = buildClearChecks({
     retrievalEnabled,

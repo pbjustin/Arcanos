@@ -231,6 +231,9 @@ describe('Gaming RAG discovery integration', () => {
   it.each([
     'How do I beat the boss in under 3.5 minutes?',
     'What is the strategy for a 99.9% success rate?',
+    'Connect to 192.168.1.1 for Palworld matchmaking.',
+    'Palworld 2.0 kilograms is the download estimate.',
+    'Palworld was released on 7.11.26.',
   ])('does not treat a general decimal as freshness-sensitive: %s', (prompt) => {
     expect(isGamingFreshnessSensitive(baseInput({
       game: 'Palworld',
@@ -313,6 +316,43 @@ describe('Gaming RAG discovery integration', () => {
     expect(result.sources).toEqual([
       expect.objectContaining({ url: suppliedUrl, snippet: expect.any(String) })
     ]);
+  });
+
+  it('requires every explicitly requested version across eligible citable chunks', async () => {
+    const olderUrl = 'https://palworld-guides.example/palworld-0-9-guide';
+    const currentUrl = 'https://palworld-guides.example/palworld-1-0-guide';
+    mockFetchAndClean.mockImplementation(async (url: string) => url === olderUrl
+      ? guideEvidence('Palworld version 0.9', 'progression route')
+      : guideEvidence('Palworld version 1.0', 'progression route'));
+
+    const result = await buildGamingRagContext(baseInput({
+      game: 'Palworld',
+      prompt: 'Compare Palworld version 0.9 with Palworld version 1.0.',
+      guideUrls: [olderUrl, currentUrl]
+    }));
+
+    expect(result.currentEvidenceAvailable).toBe(true);
+    expect(result.sources).toEqual(expect.arrayContaining([
+      expect.objectContaining({ url: olderUrl, snippet: expect.any(String) }),
+      expect.objectContaining({ url: currentUrl, snippet: expect.any(String) })
+    ]));
+  });
+
+  it('does not satisfy a multi-version request with evidence for only the first version', async () => {
+    const suppliedUrl = 'https://palworld-guides.example/palworld-0-9-guide';
+    mockFetchAndClean.mockResolvedValue(guideEvidence('Palworld version 0.9', 'progression route'));
+
+    const result = await buildGamingRagContext(baseInput({
+      game: 'Palworld',
+      prompt: 'Compare versions 0.9 and 1.0 for Palworld.',
+      guideUrl: suppliedUrl
+    }));
+
+    expect(result.currentEvidenceAvailable).toBe(false);
+    expect(mockDiscoverGamingSources).toHaveBeenCalledWith(expect.objectContaining({
+      game: 'Palworld',
+      patchSensitive: true
+    }));
   });
 
   it('does not treat stale official evidence as current without a requested version', async () => {
@@ -429,6 +469,25 @@ describe('Gaming RAG discovery integration', () => {
     expect(result.sources[0]).toEqual(expect.objectContaining({ url: curatedUrl }));
     expect(isCitableGamingWebSource(result.sources[0])).toBe(true);
     expect(mockDiscoverGamingSources).not.toHaveBeenCalled();
+  });
+
+  it('rejects a supplied wrong-game article identified only by its body introduction', async () => {
+    process.env.ARCANOS_GAMING_DISCOVERY_ENABLED = 'false';
+    const suppliedUrl = 'https://supplied.example/article-without-metadata';
+    mockFetchAndClean.mockResolvedValue(guideEvidence('Elden Ring', 'beginner guide route'));
+
+    const result = await buildGamingRagContext(baseInput({
+      game: 'Factorio',
+      prompt: 'Use this source for a Factorio progression guide.',
+      guideUrl: suppliedUrl
+    }));
+
+    expect(result.sources).toEqual([{
+      url: suppliedUrl,
+      snippet: 'Relevant source retrieved, but readable article text was limited.'
+    }]);
+    expect(result.context).not.toContain('Elden Ring');
+    expect(result.sources.some(isCitableGamingWebSource)).toBe(false);
   });
 
   it('orders final capped sources by chunk rank after low-quality supplied evidence triggers discovery', async () => {

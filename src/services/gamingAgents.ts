@@ -1,4 +1,5 @@
 import { detectGamingGame, type GamingGameDetectionSource } from "@services/gamingGameDetection.js";
+import { extractExplicitGamingVersions } from "@services/gamingVersion.js";
 import {
   formatGamingSuccess,
   resolveGamingMode,
@@ -351,25 +352,15 @@ function extractVersion(payload: unknown, prompt: string, game?: string): string
     return "this patch";
   }
 
-  const match = prompt.match(/\b(?:patch|version|season)\s+([A-Za-z0-9._ -]{1,32})/i) ??
-    prompt.match(/\bwhat\s+changed\b[^.!?\n]{0,32}\bin\s+(\d{1,3}\.\d{1,3}(?:\.\d{1,3})?)\b/i) ??
-    prompt.match(/\(\s*(?:v(?:ersion)?\.?\s*)?(\d{1,3}\.\d{1,3}(?:\.\d{1,3})?)\s*\)/i) ??
-    prompt.match(/\b(\d{1,3}\.\d{1,3}\.\d{1,3})\b/);
-  if (match?.[1]) {
-    return match[1].trim();
+  const semanticVersion = extractExplicitGamingVersions({ prompt, game })[0];
+  if (semanticVersion) {
+    return semanticVersion;
   }
 
-  if (!game) {
-    return undefined;
-  }
-
-  const escapedGame = game.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const gameVersionPattern = new RegExp(
-    `\\b${escapedGame}\\s+(?:v(?:ersion)?\\.?\\s*)?(\\d{1,3}\\.\\d{1,3}(?:\\.\\d{1,3})?)\\b(?!\\.\\d)(?!\\s*(?:%|percent\\b|minutes?\\b|mins?\\b|hours?\\b|seconds?\\b|milliseconds?\\b|ms\\b|fps\\b|hz\\b))`,
-    "i"
-  );
-  const gameVersionMatch = prompt.match(gameVersionPattern);
-  return gameVersionMatch?.[1]?.trim();
+  const labeledToken = prompt.match(/\b(?:patch|version|season)\s+([A-Za-z0-9][A-Za-z0-9._-]{0,31})\b/i)?.[1];
+  return labeledToken && !/^(?:for|is|notes?|of|the)$/i.test(labeledToken)
+    ? labeledToken
+    : undefined;
 }
 
 function extractClass(payload: unknown, prompt: string): string | undefined {
