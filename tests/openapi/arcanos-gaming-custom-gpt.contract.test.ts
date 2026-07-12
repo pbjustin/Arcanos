@@ -203,7 +203,8 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
   });
 
   it('keeps retry text limits synchronized with runtime validation', () => {
-    const retry = loadContract().components.schemas.GamingEvidenceRetryRequest;
+    const schemas = loadContract().components.schemas;
+    const retry = schemas.GamingEvidenceRetryRequest;
     const gameMax = retry.properties.game.maxLength;
     const promptMax = retry.properties.originalPrompt.maxLength;
     const request = {
@@ -214,6 +215,7 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
       evidenceAttempt: 1,
     };
 
+    expect(promptMax).toBe(schemas.GamingQueryPayload.properties.prompt.maxLength);
     expect(validateGamingEvidenceRetryRequest(request).ok).toBe(true);
     expect(validateGamingEvidenceRetryRequest({ ...request, game: `${request.game}g` }).ok).toBe(false);
     expect(validateGamingEvidenceRetryRequest({

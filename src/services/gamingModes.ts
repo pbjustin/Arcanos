@@ -211,7 +211,7 @@ export function validateGamingEvidenceRetryRequest(body: unknown): GamingEvidenc
   ) {
     return { ok: false, code: "BAD_REQUEST", message: "Gaming evidence retry game contains unsupported sensitive data." };
   }
-  if (!isBoundedText(body.originalPrompt, 4_000)) {
+  if (!isBoundedText(body.originalPrompt, 8_000)) {
     return { ok: false, code: "BAD_REQUEST", message: "Gaming evidence retry requires a bounded originalPrompt value." };
   }
   if (body.evidenceAttempt !== 1) {
