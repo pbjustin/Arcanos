@@ -2853,7 +2853,23 @@ export async function buildGamingRagContext(
         if (!sanitized.rejected && sanitized.url) {
           return [];
         }
-        const publicUrl = sanitizeFrontendPublicSourceUrl(url);
+        let publicUrl = "invalid-source";
+        try {
+          const originalUrl = new URL(url);
+          const sanitizedPublicUrl = sanitizeFrontendPublicSourceUrl(url);
+          const validatedPublicUrl = sanitizeGamingDiscoveryCandidateUrl(sanitizedPublicUrl);
+          if (
+            !originalUrl.username
+            && !originalUrl.password
+            && !originalUrl.port
+            && !validatedPublicUrl.rejected
+            && validatedPublicUrl.url
+          ) {
+            publicUrl = validatedPublicUrl.url;
+          }
+        } catch {
+          // Keep the fixed public sentinel for malformed or non-public candidates.
+        }
         return [[publicUrl, {
           url: publicUrl,
           error: "Source URL was rejected by evidence policy."

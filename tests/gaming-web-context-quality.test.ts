@@ -1372,6 +1372,33 @@ describe('gaming RAG snippet quality', () => {
     expect(result.sources.some(isCitableGamingWebSource)).toBe(false);
   });
 
+  it.each([
+    'http://127.0.0.1/internal-guide',
+    'https://user:password@example.com/guides/palworld'
+  ])('does not echo a sensitive frontend candidate rejected before fetch: %s', async (candidateUrl) => {
+    mockGetEnvBoolean.mockImplementation((key: string, defaultValue: boolean) =>
+      key === 'ARCANOS_GAMING_RAG_ENABLED' ? true : defaultValue
+    );
+
+    const result = await buildGamingRagContext({
+      mode: 'guide',
+      game: 'Palworld',
+      prompt: 'Look up a current beginner guide for Palworld 1.0.',
+      guideUrl: undefined,
+      guideUrls: [candidateUrl],
+      evidenceOrigin: 'frontend_web_search',
+      requestedVersion: '1.0',
+      evidenceAttempt: 1
+    });
+
+    expect(mockFetchAndClean).not.toHaveBeenCalled();
+    expect(result.sources).toEqual([{
+      url: 'invalid-source',
+      error: 'Source URL was rejected by evidence policy.'
+    }]);
+    expect(JSON.stringify(result)).not.toContain(candidateUrl);
+  });
+
   it('removes Unicode-obfuscated embedded instructions before frontend structured evidence reaches output', async () => {
     mockGetEnvBoolean.mockImplementation((key: string, defaultValue: boolean) =>
       key === 'ARCANOS_GAMING_RAG_ENABLED' ? true : defaultValue
