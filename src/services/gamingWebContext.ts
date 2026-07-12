@@ -769,6 +769,7 @@ function sanitizeFrontendPublicSourceUrl(url: string): string {
     const safeSegments: string[] = [];
     const rawSegments = parsedUrl.pathname.split("/").filter(Boolean);
     const originalRawSegments = originalUrl.pathname.split("/").filter(Boolean);
+    const preservesTrailingSlash = parsedUrl.pathname.length > 1 && parsedUrl.pathname.endsWith("/");
     for (const [index, rawSegment] of rawSegments.entries()) {
       if (!rawSegment) {
         continue;
@@ -796,7 +797,7 @@ function sanitizeFrontendPublicSourceUrl(url: string): string {
       }
       safeSegments.push(rawSegment);
     }
-    parsedUrl.pathname = `/${safeSegments.join("/")}`;
+    parsedUrl.pathname = `/${safeSegments.join("/")}${preservesTrailingSlash ? "/" : ""}`;
     const safeParams = new URLSearchParams();
     for (const [key, value] of parsedUrl.searchParams.entries()) {
       const normalizedKey = key.toLowerCase();

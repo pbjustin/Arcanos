@@ -1315,6 +1315,32 @@ describe('gaming RAG snippet quality', () => {
     expect(JSON.stringify(result)).not.toMatch(/utm_source/);
   });
 
+  it('preserves a frontend article trailing slash across fetch and citation identity', async () => {
+    mockGetEnvBoolean.mockImplementation((key: string, defaultValue: boolean) =>
+      key === 'ARCANOS_GAMING_RAG_ENABLED' ? true : defaultValue
+    );
+    mockFetchedHtml({
+      title: 'Palworld 1.0 Beginner Guide',
+      date: new Date().toISOString(),
+      text: 'Palworld 1.0 beginner route explains base crafting, upgrades, equipment, and boss mechanics.'
+    });
+
+    const result = await buildGamingRagContext({
+      mode: 'guide',
+      game: 'Palworld',
+      prompt: 'Look up a current beginner guide for Palworld 1.0.',
+      guideUrl: undefined,
+      guideUrls: ['https://example.com/guides/palworld/'],
+      evidenceOrigin: 'frontend_web_search',
+      requestedVersion: '1.0',
+      evidenceAttempt: 1
+    });
+
+    expect(mockFetchAndClean.mock.calls[0]?.[0]).toBe('https://example.com/guides/palworld/');
+    expect(result.sources[0]?.url).toBe('https://example.com/guides/palworld/');
+    expect(result.sources.some(isCitableGamingWebSource)).toBe(true);
+  });
+
   it('deduplicates frontend tracking and fragment URL variants before fetching', async () => {
     mockGetEnvBoolean.mockImplementation((key: string, defaultValue: boolean) =>
       key === 'ARCANOS_GAMING_RAG_ENABLED' ? true : defaultValue
