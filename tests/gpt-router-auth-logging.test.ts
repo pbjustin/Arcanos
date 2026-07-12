@@ -890,6 +890,12 @@ describe('gpt router auth logging', () => {
       "Gameplay requests require explicit mode 'guide', 'build', or 'meta'."
     ],
     [
+      'invalid mode behind a bounded action alias array',
+      { action: ['', ['query']], payload: { mode: 'speedrun', prompt: 'Give me a walkthrough.' } },
+      'GAMEPLAY_MODE_REQUIRED',
+      "Gameplay requests require explicit mode 'guide', 'build', or 'meta'."
+    ],
+    [
       'missing prompt',
       { action: 'query', payload: { mode: 'guide' } },
       'PROMPT_REQUIRED',
@@ -923,6 +929,33 @@ describe('gpt router auth logging', () => {
       error: {
         code,
         message
+      }
+    }));
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('bounds deeply nested action aliases and returns correlated JSON 400', async () => {
+    const app = express();
+    app.use(express.json());
+    app.use(requestContext);
+    app.use('/gpt', gptRouter);
+    const depth = 10_000;
+    const rawBody = `{"action":${'['.repeat(depth)}"query"${']'.repeat(depth)},"payload":{"mode":"guide","prompt":"Guide me."}}`;
+
+    const response = await request(app)
+      .post('/gpt/arcanos-gaming')
+      .set('Content-Type', 'application/json')
+      .send(rawBody);
+
+    expect(response.status).toBe(400);
+    expect(response.type).toBe('application/json');
+    expect(response.body).toEqual(expect.objectContaining({
+      ok: false,
+      requestId: response.headers['x-request-id'],
+      traceId: response.headers['x-trace-id'],
+      error: {
+        code: 'GPT_ACTION_REQUIRED',
+        message: "Gaming requests require action 'query'."
       }
     }));
     expect(mockRouteGptRequest).not.toHaveBeenCalled();

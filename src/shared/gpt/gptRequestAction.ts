@@ -7,18 +7,43 @@ import {
   GPT_QUERY_AND_WAIT_ACTION
 } from '@shared/gpt/gptJobResult.js';
 
-function readFirstNonEmptyString(value: unknown): string | null {
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    return trimmed.length > 0 ? trimmed : null;
-  }
+const MAX_ACTION_ALIAS_DEPTH = 8;
+const MAX_ACTION_ALIAS_VALUES = 64;
 
-  if (Array.isArray(value)) {
-    for (const entry of value) {
-      const normalizedEntry = readFirstNonEmptyString(entry);
-      if (normalizedEntry) {
-        return normalizedEntry;
+function readFirstNonEmptyString(value: unknown): string | null {
+  const frames: Array<{ values: unknown[]; nextIndex: number; depth: number }> = [];
+  let current = value;
+  let depth = 0;
+  let visited = 0;
+
+  while (visited < MAX_ACTION_ALIAS_VALUES) {
+    visited += 1;
+    if (typeof current === 'string') {
+      const trimmed = current.trim();
+      if (trimmed.length > 0) {
+        return trimmed;
       }
+    } else if (Array.isArray(current) && depth < MAX_ACTION_ALIAS_DEPTH && current.length > 0) {
+      frames.push({ values: current, nextIndex: 1, depth });
+      current = current[0];
+      depth += 1;
+      continue;
+    }
+
+    let advanced = false;
+    while (frames.length > 0) {
+      const frame = frames[frames.length - 1];
+      if (frame && frame.nextIndex < frame.values.length) {
+        current = frame.values[frame.nextIndex];
+        frame.nextIndex += 1;
+        depth = frame.depth + 1;
+        advanced = true;
+        break;
+      }
+      frames.pop();
+    }
+    if (!advanced) {
+      return null;
     }
   }
 
