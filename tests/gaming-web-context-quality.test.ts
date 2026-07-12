@@ -1250,7 +1250,7 @@ describe('gaming RAG snippet quality', () => {
     expect(result.sources.some(isCitableGamingWebSource)).toBe(true);
   });
 
-  it('does not treat a frontend URL payload as evidence even after a corroborating page fetch', async () => {
+  it('rejects a frontend URL payload before fetch so the citation still identifies the fetched resource', async () => {
     mockGetEnvBoolean.mockImplementation((key: string, defaultValue: boolean) =>
       key === 'ARCANOS_GAMING_RAG_ENABLED' ? true : defaultValue
     );
@@ -1278,13 +1278,18 @@ describe('gaming RAG snippet quality', () => {
       evidenceAttempt: 1
     });
 
-    expect(result.currentEvidenceAvailable).toBe(true);
+    expect(mockFetchAndClean).not.toHaveBeenCalled();
+    expect(result.currentEvidenceAvailable).toBe(false);
     expect(JSON.stringify(result)).not.toMatch(/InjectedPayloadFact|9999/);
-    expect(result.sources[0]?.url).toBe('https://example.com/shared/build');
+    expect(result.sources).toEqual([{
+      url: 'invalid-source',
+      error: 'Source URL was rejected by evidence policy.'
+    }]);
+    expect(result.sources.some(isCitableGamingWebSource)).toBe(false);
     expect(JSON.stringify(result)).not.toContain(encodedPayload);
   });
 
-  it('preserves ordinary frontend article build slugs while removing payload query keys', async () => {
+  it('preserves ordinary frontend article build slugs and safe identity parameters', async () => {
     mockGetEnvBoolean.mockImplementation((key: string, defaultValue: boolean) =>
       key === 'ARCANOS_GAMING_RAG_ENABLED' ? true : defaultValue
     );
@@ -1294,24 +1299,23 @@ describe('gaming RAG snippet quality', () => {
       text: 'Palworld 1.0 beginner build route explains base crafting, upgrades, equipment, and boss mechanics.'
     });
 
-    const fabricatedSensitiveId = ['postgresql', '://demo:demo@example.invalid/db'].join('');
     const result = await buildGamingRagContext({
       mode: 'guide',
       game: 'Palworld',
       prompt: 'Look up a current beginner guide for Palworld 1.0.',
       guideUrl: undefined,
-      guideUrls: [`https://example.com/guides/build/palworld?topic=beginner&code=private-share-code&id=${encodeURIComponent(fabricatedSensitiveId)}&utm_source=test`],
+      guideUrls: ['https://example.com/guides/build/palworld?topic=beginner&utm_source=test'],
       evidenceOrigin: 'frontend_web_search',
       requestedVersion: '1.0',
       evidenceAttempt: 1
     });
 
     expect(result.sources[0]?.url).toBe('https://example.com/guides/build/palworld?topic=beginner');
-    expect(JSON.stringify(result)).not.toMatch(/private-share-code|utm_source/);
-    expect(JSON.stringify(result)).not.toContain(fabricatedSensitiveId);
+    expect(mockFetchAndClean.mock.calls[0]?.[0]).toBe(result.sources[0]?.url);
+    expect(JSON.stringify(result)).not.toMatch(/utm_source/);
   });
 
-  it('deduplicates frontend tracking and payload URL variants before fetching', async () => {
+  it('deduplicates frontend tracking and fragment URL variants before fetching', async () => {
     mockGetEnvBoolean.mockImplementation((key: string, defaultValue: boolean) =>
       key === 'ARCANOS_GAMING_RAG_ENABLED' ? true : defaultValue
     );
@@ -1329,7 +1333,7 @@ describe('gaming RAG snippet quality', () => {
       guideUrls: [
         'https://example.com/guides/palworld?utm_source=one',
         'https://example.com/guides/palworld#section',
-        'https://example.com/guides/palworld?code=share-code',
+        'https://example.com/guides/palworld?utm_campaign=guide',
         'https://example.com/guides/palworld?utm_medium=test&utm_source=two'
       ],
       evidenceOrigin: 'frontend_web_search',

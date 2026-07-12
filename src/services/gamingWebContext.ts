@@ -820,6 +820,22 @@ function sanitizeFrontendPublicSourceUrl(url: string): string {
   }
 }
 
+function sanitizeFrontendEvidenceCandidateUrl(url: string): { url?: string; rejected: boolean } {
+  const candidate = sanitizeGamingDiscoveryCandidateUrl(url);
+  if (candidate.rejected || !candidate.url) {
+    return { rejected: true };
+  }
+
+  const publicCandidate = sanitizeGamingDiscoveryCandidateUrl(
+    sanitizeFrontendPublicSourceUrl(candidate.url)
+  );
+  if (publicCandidate.rejected || !publicCandidate.url || publicCandidate.url !== candidate.url) {
+    return { rejected: true };
+  }
+
+  return candidate;
+}
+
 function neutralizeFrontendStructuredIngestionUrl(url: string): string {
   try {
     const parsedUrl = new URL(url);
@@ -1673,7 +1689,7 @@ function buildSourceCandidates(input: GamingRagInput, game: string | undefined):
         if (input.evidenceOrigin !== "frontend_web_search") {
           return isFetchableGuideUrl(url) ? [url] : [];
         }
-        const sanitized = sanitizeGamingDiscoveryCandidateUrl(url);
+        const sanitized = sanitizeFrontendEvidenceCandidateUrl(url);
         return sanitized.url && !sanitized.rejected ? [sanitized.url] : [];
       })
       .map((url) => [normalizeCacheUrl(url).toLowerCase(), url] as const)
@@ -2849,36 +2865,19 @@ export async function buildGamingRagContext(
   const suppliedSourceCount = requestedGuideUrls.length;
   const rejectedFrontendSources = input.evidenceOrigin === "frontend_web_search"
     ? Array.from(new Map(requestedGuideUrls.flatMap((url) => {
-        const sanitized = sanitizeGamingDiscoveryCandidateUrl(url);
+        const sanitized = sanitizeFrontendEvidenceCandidateUrl(url);
         if (!sanitized.rejected && sanitized.url) {
           return [];
         }
-        let publicUrl = "invalid-source";
-        try {
-          const originalUrl = new URL(url);
-          const sanitizedPublicUrl = sanitizeFrontendPublicSourceUrl(url);
-          const validatedPublicUrl = sanitizeGamingDiscoveryCandidateUrl(sanitizedPublicUrl);
-          if (
-            !originalUrl.username
-            && !originalUrl.password
-            && !originalUrl.port
-            && !validatedPublicUrl.rejected
-            && validatedPublicUrl.url
-          ) {
-            publicUrl = validatedPublicUrl.url;
-          }
-        } catch {
-          // Keep the fixed public sentinel for malformed or non-public candidates.
-        }
-        return [[publicUrl, {
-          url: publicUrl,
+        return [["invalid-source", {
+          url: "invalid-source",
           error: "Source URL was rejected by evidence policy."
         }] as const];
       })).values())
     : [];
   const validSuppliedSourceCount = input.evidenceOrigin === "frontend_web_search"
     ? requestedGuideUrls.filter((url) => {
-        const sanitized = sanitizeGamingDiscoveryCandidateUrl(url);
+        const sanitized = sanitizeFrontendEvidenceCandidateUrl(url);
         return !sanitized.rejected && Boolean(sanitized.url);
       }).length
     : requestedGuideUrls.filter(isFetchableGuideUrl).length;
