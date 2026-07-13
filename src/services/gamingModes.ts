@@ -114,6 +114,10 @@ export type PublicGamingRequestValidationError = {
 
 const MAX_PUBLIC_GAMING_PAYLOAD_DEPTH = 32;
 const MAX_PUBLIC_GAMING_PAYLOAD_NODES = 4096;
+const MAX_PUBLIC_GAMING_GAME_CHARS = 120;
+const MAX_PUBLIC_GAMING_PROMPT_CHARS = 8_000;
+const MAX_PUBLIC_GAMING_URL_CHARS = 2_048;
+const MAX_PUBLIC_GAMING_URLS = 4;
 
 function publicGamingRequestExceedsStructuralLimits(body: Record<string, unknown>): boolean {
   const stack: Array<{ value: unknown; depth: number }> = [{ value: body, depth: 0 }];
@@ -141,6 +145,50 @@ function publicGamingRequestExceedsStructuralLimits(body: Record<string, unknown
   return false;
 }
 
+function publicGamingPayloadExceedsContractLimits(payload: Record<string, unknown>): boolean {
+  for (const field of ["prompt", "message", "text", "content", "query"] as const) {
+    if (
+      Object.prototype.hasOwnProperty.call(payload, field)
+      && !isBoundedPromptText(payload[field], MAX_PUBLIC_GAMING_PROMPT_CHARS)
+    ) {
+      return true;
+    }
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(payload, "game")
+    && !isBoundedText(payload.game, MAX_PUBLIC_GAMING_GAME_CHARS)
+  ) {
+    return true;
+  }
+
+  for (const field of ["url", "guideUrl"] as const) {
+    if (
+      Object.prototype.hasOwnProperty.call(payload, field)
+      && !isBoundedText(payload[field], MAX_PUBLIC_GAMING_URL_CHARS)
+    ) {
+      return true;
+    }
+  }
+
+  for (const field of ["urls", "guideUrls"] as const) {
+    if (!Object.prototype.hasOwnProperty.call(payload, field)) {
+      continue;
+    }
+    const values = payload[field];
+    if (
+      !Array.isArray(values)
+      || values.length > MAX_PUBLIC_GAMING_URLS
+      || new Set(values).size !== values.length
+      || values.some((value) => !isBoundedText(value, MAX_PUBLIC_GAMING_URL_CHARS))
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function getStringField(payload: unknown, key: string): string | undefined {
   if (!isRecord(payload)) {
     return undefined;
@@ -161,14 +209,14 @@ function getOptionalEvidenceAttempt(payload: unknown): unknown {
 function isBoundedText(value: unknown, maxLength: number): value is string {
   return typeof value === "string"
     && value.trim().length > 0
-    && value.trim().length <= maxLength
+    && value.length <= maxLength
     && !/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/u.test(value);
 }
 
 function isBoundedPromptText(value: unknown, maxLength: number): value is string {
   return typeof value === "string"
     && value.trim().length > 0
-    && value.trim().length <= maxLength
+    && value.length <= maxLength
     && !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/u.test(value);
 }
 
@@ -282,6 +330,12 @@ export function validatePublicGamingQueryRequest(
     return {
       code: "BAD_REQUEST",
       message: "Gaming query request exceeds the supported structural limits."
+    };
+  }
+  if (publicGamingPayloadExceedsContractLimits(body.payload)) {
+    return {
+      code: "BAD_REQUEST",
+      message: "Gaming query request exceeds the published field limits."
     };
   }
 

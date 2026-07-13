@@ -306,7 +306,7 @@ This table mirrors the highest-impact runtime keys in `.env.example`. Earlier se
 | `ARCANOS_GAMING_PIPELINE_TIMEOUT_MS` | `35000` (commented) | Generic Gaming provider pipeline timeout for guide/build/meta when a mode-specific override is not set. |
 | `ARCANOS_GAMING_GUIDE_PIPELINE_TIMEOUT_MS` | `50000` (commented) | Guide-mode Gaming provider pipeline timeout; kept below the module dispatch timeout so provider stalls become controlled generation timeouts. |
 | `ARCANOS_GAMING_STAGE_TIMEOUT_MS` | `12000` (commented) | Generic Gaming provider stage/model timeout for guide/build/meta when a mode-specific override is not set. |
-| `ARCANOS_GAMING_GUIDE_STAGE_TIMEOUT_MS` | `15000` (commented) | Guide-mode Gaming provider stage/model timeout; clamped below the guide pipeline timeout with request headroom. |
+| `ARCANOS_GAMING_GUIDE_STAGE_TIMEOUT_MS` | `20000` (commented) | Guide-mode Gaming provider stage/model timeout; clamped below the guide pipeline timeout with request headroom. |
 | `ARCANOS_GAMING_WEB_CONTEXT_CHARS` | `5000` (commented) | Per-guide snippet size used by Gaming guide URL enrichment. |
 | `ARCANOS_GAMING_WEB_CONTEXT_MAX_URLS` | `15` (commented) | Maximum user-provided guide URLs fetched concurrently for Gaming guide enrichment. |
 | `WEB_FETCH_MAX_LINKS` | `15` (commented) | Maximum discovered page links included by the shared web fetch path. |

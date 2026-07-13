@@ -27,6 +27,16 @@ export function hasContent(value: string | null | undefined): boolean {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+const MEANINGFUL_VISIBLE_TEXT_CHARACTER = /[\p{L}\p{N}\p{S}]/u;
+
+/**
+ * Check whether user-visible text contains content beyond whitespace and invisible control characters.
+ */
+export function hasVisibleContent(value: string | null | undefined): boolean {
+  return typeof value === 'string'
+    && MEANINGFUL_VISIBLE_TEXT_CHARACTER.test(value);
+}
+
 /**
  * Extract prompt text from request body, checking all common field names
  * 

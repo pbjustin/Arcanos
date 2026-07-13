@@ -808,11 +808,12 @@ export async function runThroughBrain(
     getGPT5Model(),
     options.watchdogModelTimeoutMs
   );
+  const modelStageTimeoutMs = options.modelStageTimeoutMs ?? options.watchdogModelTimeoutMs;
   const stageTimeoutOverrideMs =
-    typeof options.watchdogModelTimeoutMs === 'number' &&
-    Number.isFinite(options.watchdogModelTimeoutMs) &&
-    options.watchdogModelTimeoutMs > 0
-      ? Math.max(1, Math.min(Math.trunc(options.watchdogModelTimeoutMs), effectiveLimit))
+    typeof modelStageTimeoutMs === 'number' &&
+    Number.isFinite(modelStageTimeoutMs) &&
+    modelStageTimeoutMs > 0
+      ? Math.max(1, Math.min(Math.trunc(modelStageTimeoutMs), effectiveLimit))
       : undefined;
   const checkWatchdog = () => {
     assertBudgetAvailable(runtimeBudget);

@@ -3,6 +3,8 @@ import { getGamingModuleTimeoutMs } from "@services/gamingConfig.js";
 import { evaluateWithHRC } from "./hrcWrapper.js";
 import { getRequestAbortContext, getRequestAbortSignal, isAbortError } from "@arcanos/runtime";
 import { logger } from "@platform/logging/structuredLogging.js";
+import { hasVisibleContent } from "@shared/promptUtils.js";
+import { STRING_PREVIEW_MAX_BYTES } from "@shared/http/clientResponseCommon.js";
 import { isRecord } from "@shared/typeGuards.js";
 import {
   BackendQueryAgent,
@@ -286,7 +288,7 @@ function isUsableGamingSuccessEnvelope(value: GamingEnvelope): value is GamingSu
     value.data !== null &&
     typeof value.data === "object" &&
     typeof value.data.response === "string" &&
-    value.data.response.trim().length > 0;
+    hasVisibleContent(value.data.response);
 }
 
 function buildTelemetryEntityFlags(intent: GamingIntent) {
@@ -442,10 +444,35 @@ async function handleGamingRequest(payload: unknown): Promise<GamingEnvelope> {
       sourceCount: backendEnvelope.data.sources.length
     });
 
-    return ResponseComposerAgent.compose({
+    const composedResponse = ResponseComposerAgent.compose({
       intent: gamingIntent,
       backendEnvelope
     });
+    const composedResponseBytes = Buffer.byteLength(composedResponse.data.response, "utf8");
+    if (composedResponseBytes <= STRING_PREVIEW_MAX_BYTES) {
+      return composedResponse;
+    }
+
+    logger.warn("gaming.backend.failure", {
+      ...requestLogContext,
+      mode: gamingIntent.mode,
+      confidence: gamingIntent.confidence,
+      errorCode: "GAMING_RESPONSE_TOO_LARGE",
+      responseBytes: composedResponseBytes,
+      maxResponseBytes: STRING_PREVIEW_MAX_BYTES
+    });
+    const fallback = ResponseComposerAgent.composeBackendFailureFallback({
+      intent: gamingIntent,
+      error: new Error("Gaming response exceeded the public response size limit."),
+      fallbackReason: "GAMING_PROVIDER_ERROR"
+    });
+    return {
+      ...fallback,
+      data: {
+        ...fallback.data,
+        sources: preservedBackendSources
+      }
+    };
   } catch (error: unknown) {
     if (getRequestAbortSignal()?.aborted || isAbortError(error)) {
       throw error;

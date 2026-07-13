@@ -29,6 +29,7 @@ import {
 import { buildGamingDiscoveryQuery } from "@services/gamingSourceDiscovery.js";
 import { extractExplicitGamingVersions } from "@services/gamingVersion.js";
 import { redactString } from "@shared/redaction.js";
+import { hasVisibleContent } from "@shared/promptUtils.js";
 import { buildGamingTrinityPrompt } from "@services/gamingPromptBuilder.js";
 import {
   buildGamingRagContext,
@@ -753,8 +754,9 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
               GAMING_RUNTIME_BUDGET_SAFETY_BUFFER_MS
             ),
             runOptions: {
-              ...buildGamingRunOptions(params.mode, guideUrls.length > 0),
-              watchdogModelTimeoutMs: stageTimeoutMs
+              ...buildGamingRunOptions(params.mode, guideUrls.length > 0 && retrievalHadUsableSources),
+              watchdogModelTimeoutMs: pipelineTimeoutMs,
+              modelStageTimeoutMs: stageTimeoutMs
             }
           }
         })
@@ -762,7 +764,7 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
     if (
       trinityResult.meta?.provider?.emptyOutput === true
       || typeof trinityResult.result !== "string"
-      || trinityResult.result.trim().length === 0
+      || !hasVisibleContent(trinityResult.result)
     ) {
       throw Object.assign(new Error("Gaming provider returned an empty response."), {
         code: "GAMING_PROVIDER_EMPTY_RESPONSE"

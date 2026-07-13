@@ -59,7 +59,7 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     const contract = loadContract();
 
     expect(contract.openapi).toBe('3.1.0');
-    expect(contract.info.version).toBe('1.3.1');
+    expect(contract.info.version).toBe('1.3.2');
     expect(contract.servers).toEqual([
       {
         url: 'https://acranos-production.up.railway.app',
@@ -152,7 +152,12 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     expect(evidenceRequest.properties.queries.items.maxLength).toBe(180);
     expect(schemas.GamingResponseData.required).toEqual(['response', 'sources']);
     expect(schemas.GamingResponseData.properties).toEqual(expect.objectContaining({
-      response: { type: 'string', minLength: 1, pattern: '\\S' },
+      response: {
+        type: 'string',
+        minLength: 1,
+        maxLength: 4096,
+        pattern: '[\\p{L}\\p{N}\\p{S}]',
+      },
       sources: {
         type: 'array',
         items: { $ref: '#/components/schemas/GamingSource' },
@@ -172,7 +177,12 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
       type: 'object',
       additionalProperties: true,
     });
-    expect(new RegExp(schemas.GamingResponseData.properties.response.pattern).test('   ')).toBe(false);
+    const responsePattern = new RegExp(schemas.GamingResponseData.properties.response.pattern, 'u');
+    expect(responsePattern.test('   ')).toBe(false);
+    expect(responsePattern.test('...')).toBe(false);
+    expect(responsePattern.test('\u034f\u061c\u200b\u202e\u2060\ufe0f\ufeff')).toBe(false);
+    expect(responsePattern.test('\u200bPalworld guide')).toBe(true);
+    expect(responsePattern.test('🎮')).toBe(true);
   });
 
   it('keeps the builder query length synchronized with the runtime query builder', () => {

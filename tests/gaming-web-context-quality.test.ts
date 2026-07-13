@@ -32,6 +32,7 @@ const {
   getGamingBuildResourceCacheStats,
   ingestGamingBuildResource
 } = await import('../src/services/gamingBuildResources.js');
+const { detectGamingGame } = await import('../src/services/gamingGameDetection.js');
 
 const TEST_ENV_KEYS = [
   'ARCANOS_GAMING_CURATED_SOURCES_JSON',
@@ -603,6 +604,49 @@ describe('gaming RAG snippet quality', () => {
     }]);
     expect(result.sources.some(isCitableGamingWebSource)).toBe(false);
     expect(result.context).not.toContain('Stormveil Castle');
+  });
+
+  it.each([
+    ['leading article', 'The Palworld Wiki', true],
+    ['dotted version', 'Best Start Guide for Palworld 1.0.', true],
+    ['possessive descriptor and branded suffix', "Beginner's Guide: Tips and Tricks to Get Started | Palworld｜Game8", true],
+    ['wrong game branded suffix', "Beginner's Guide: Tips and Tricks to Get Started | Aurora Vale｜Game8", false],
+  ] as const)('handles %s in supplied source titles', async (_caseName, title, accepted) => {
+    const url = `https://independent.example/${encodeURIComponent(_caseName)}`;
+    const text = accepted
+      ? 'Palworld beginner guide evidence explains base placement, early crafting, Pal capture priorities, gear upgrades, and the first tower objective.'
+      : 'Aurora Vale beginner guide evidence explains wood tools, shelter, mining, armor upgrades, and the first portal.';
+    mockFetchedHtml({ title, text });
+
+    const result = await buildGamingRagContext({
+      mode: 'guide',
+      game: 'Palworld',
+      prompt: 'Use this supplied source for a Palworld beginner guide.',
+      guideUrl: url,
+      guideUrls: []
+    });
+
+    expect(result.sources.some(isCitableGamingWebSource)).toBe(accepted);
+    if (accepted) {
+      expect(result.context).toContain('[Source 1]');
+      expect(result.context).toContain('Palworld');
+    } else {
+      expect(result.sources).toEqual([{
+        url,
+        error: 'Source did not match the requested game or version.'
+      }]);
+      expect(result.context).not.toContain('first portal');
+    }
+  });
+
+  it.each([
+    ["Beginner's Guide: Tips and Tricks to Get Started | Palworld｜Game8", 'Palworld', 'page_metadata'],
+    ["Beginner's Guide: Tips and Tricks to Get Started | Aurora Vale｜Game8", 'Aurora Vale', 'page_metadata'],
+  ] as const)('detects the game segment in a branded title: %s', (pageTitle, game, source) => {
+    expect(detectGamingGame({ pageTitle })).toEqual(expect.objectContaining({
+      game,
+      source,
+    }));
   });
 
   it('uses a signed fetch URL while stripping its query from public source data', async () => {

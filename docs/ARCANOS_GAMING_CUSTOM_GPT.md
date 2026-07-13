@@ -5,7 +5,7 @@ This is the builder-facing configuration for the existing **Arcanos Gaming** Cus
 ## Action configuration
 
 - Import schema: `https://acranos-production.up.railway.app/contracts/arcanos_gaming.openapi.v1.json`
-- Schema version: `1.3.1`
+- Schema version: `1.3.2`
 - Canonical server: `https://acranos-production.up.railway.app`
 - Authentication: None
 - Recommended model: select a supported non-Pro model that can invoke Actions; do not leave this unset.

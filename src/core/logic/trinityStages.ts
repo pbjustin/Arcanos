@@ -15,6 +15,7 @@ import {
 import { getTokenParameter } from "@shared/tokenParameterHelper.js";
 import { APPLICATION_CONSTANTS } from "@shared/constants.js";
 import { countWords } from '@shared/text/countWords.js';
+import { hasVisibleContent } from '@shared/promptUtils.js';
 import {
   ARCANOS_SYSTEM_PROMPTS,
   buildFinalGpt5AnalysisMessage,
@@ -128,7 +129,7 @@ function normalizeCompletionProviderMetadata(
         : null,
     incompleteReason: typeof incompleteDetails.reason === 'string' ? incompleteDetails.reason : null,
     incomplete: providerMetadata.incomplete === true || candidate.incomplete === true,
-    emptyOutput: output.trim().length === 0,
+    emptyOutput: !hasVisibleContent(output),
     truncated: providerMetadata.truncated === true || candidate.truncated === true || finishReason === 'length',
     lengthTruncated: providerMetadata.length_truncated === true || candidate.length_truncated === true || finishReason === 'length',
     contentFiltered: providerMetadata.content_filtered === true || candidate.content_filtered === true || finishReason === 'content_filter'

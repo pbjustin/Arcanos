@@ -120,27 +120,30 @@ describe('runDirectAnswerStage', () => {
     }));
   });
 
-  it('records raw blank provider output before downstream translation', async () => {
-    createSingleChatCompletionMock.mockResolvedValue({
-      choices: [{ message: { content: '   ' }, finish_reason: 'stop' }],
-      activeModel: 'gpt-4.1',
-      fallbackFlag: false,
-      usage: { total_tokens: 42 },
-      id: 'resp_direct_answer_empty',
-      created: 123
-    });
+  it.each(['   ', '...', '\u034f', '\u061c', '\u200b', '\u202e', '\u2060', '\ufe0f', '\ufeff'])(
+    'records raw blank or invisible provider output before downstream translation',
+    async (providerOutput) => {
+      createSingleChatCompletionMock.mockResolvedValue({
+        choices: [{ message: { content: providerOutput }, finish_reason: 'stop' }],
+        activeModel: 'gpt-4.1',
+        fallbackFlag: false,
+        usage: { total_tokens: 42 },
+        id: 'resp_direct_answer_empty',
+        created: 123
+      });
 
-    const result = await runDirectAnswerStage(
-      {} as never,
-      'No relevant memory context is available.',
-      'Write a guide.',
-      undefined,
-      undefined,
-      'trinity_req_direct_answer_empty'
-    );
+      const result = await runDirectAnswerStage(
+        {} as never,
+        'No relevant memory context is available.',
+        'Write a guide.',
+        undefined,
+        undefined,
+        'trinity_req_direct_answer_empty'
+      );
 
-    expect(result.provider?.emptyOutput).toBe(true);
-  });
+      expect(result.provider?.emptyOutput).toBe(true);
+    }
+  );
 
   it('fails fast when the direct-answer stage exceeds the bounded stage timeout', async () => {
     process.env.TRINITY_DIRECT_ANSWER_STAGE_TIMEOUT_MS = '25';

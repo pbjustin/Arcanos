@@ -1397,8 +1397,8 @@ function detectGameFromDocumentIntro(
 }
 
 function gamingGameNamesMatch(candidateGame: string, requestedGame: string): boolean {
-  const normalizedCandidate = canonicalizeGamingGameName(candidateGame).toLowerCase();
-  const normalizedRequested = canonicalizeGamingGameName(requestedGame).toLowerCase();
+  const normalizedCandidate = canonicalizeGamingGameName(candidateGame).toLowerCase().replace(/^the\s+/u, "");
+  const normalizedRequested = canonicalizeGamingGameName(requestedGame).toLowerCase().replace(/^the\s+/u, "");
   if (normalizedCandidate === normalizedRequested) {
     return true;
   }

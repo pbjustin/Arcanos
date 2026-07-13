@@ -243,7 +243,8 @@ describe('gaming guide output hardening', () => {
             answerMode: 'direct',
             requestedVerbosity: 'normal',
             strictUserVisibleOutput: true,
-            watchdogModelTimeoutMs: 15_000
+            watchdogModelTimeoutMs: 50_000,
+            modelStageTimeoutMs: 20_000
           })
         })
       })
@@ -277,7 +278,12 @@ describe('gaming guide output hardening', () => {
       input: { prompt: string };
       context: {
         runtimeBudget: { watchdogLimit: number; safetyBuffer: number };
-        runOptions: { answerMode?: string; requestedVerbosity?: string; watchdogModelTimeoutMs?: number };
+        runOptions: {
+          answerMode?: string;
+          requestedVerbosity?: string;
+          watchdogModelTimeoutMs?: number;
+          modelStageTimeoutMs?: number;
+        };
       };
     };
     expect(trinityRequest.input.prompt).toContain('Regression check only');
@@ -289,7 +295,8 @@ describe('gaming guide output hardening', () => {
     expect(trinityRequest.context.runOptions).toEqual(expect.objectContaining({
       answerMode: 'direct',
       requestedVerbosity: 'normal',
-      watchdogModelTimeoutMs: 15_000
+      watchdogModelTimeoutMs: 50_000,
+      modelStageTimeoutMs: 20_000
     }));
   });
 
@@ -320,7 +327,8 @@ describe('gaming guide output hardening', () => {
           runOptions: expect.objectContaining({
             answerMode: 'direct',
             requestedVerbosity: 'normal',
-            watchdogModelTimeoutMs: 15_000
+            watchdogModelTimeoutMs: 50_000,
+            modelStageTimeoutMs: 20_000
           })
         })
       })
@@ -601,13 +609,50 @@ describe('gaming guide output hardening', () => {
 
     const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as {
       input: { prompt: string };
-      context: { runOptions: { answerMode?: string; requestedVerbosity?: string } };
+      context: {
+        runOptions: {
+          answerMode?: string;
+          requestedVerbosity?: string;
+          watchdogModelTimeoutMs?: number;
+          modelStageTimeoutMs?: number;
+        };
+      };
     };
     expect(trinityRequest.input.prompt).toContain('[WEB CONTEXT]');
     expect(trinityRequest.input.prompt).toContain('Return only a six-item checklist using hyphen bullets');
     expect(trinityRequest.context.runOptions).toEqual(expect.objectContaining({
       answerMode: 'explained',
-      requestedVerbosity: 'normal'
+      requestedVerbosity: 'normal',
+      watchdogModelTimeoutMs: 50_000,
+      modelStageTimeoutMs: 20_000
+    }));
+  });
+
+  it('uses direct mode when supplied guide sources yield no usable context', async () => {
+    const url = 'https://example.com/unreachable-guide';
+    mockFetchAndClean.mockRejectedValueOnce(new Error('deterministic fetch failure'));
+
+    const result = await runGuidePipeline({
+      game: 'Palworld',
+      prompt: 'Use the supplied source for a Palworld beginner guide.',
+      guideUrl: url,
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(result.data.sources).toEqual([
+      expect.objectContaining({ url, error: expect.any(String) })
+    ]);
+    const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as {
+      input: { prompt: string };
+      context: { runOptions: { answerMode?: string; modelStageTimeoutMs?: number } };
+    };
+    expect(trinityRequest.input.prompt).toContain(
+      'Source retrieval ran or sources were provided, but no usable snippets were retrieved.'
+    );
+    expect(trinityRequest.context.runOptions).toEqual(expect.objectContaining({
+      answerMode: 'direct',
+      modelStageTimeoutMs: 20_000
     }));
   });
 
@@ -723,6 +768,34 @@ describe('gaming guide output hardening', () => {
     expect(result.data.response.trim().length).toBeGreaterThan(0);
     expect(result.data.fallbackReason).toBe('GAMING_PROVIDER_ERROR');
   });
+
+  it.each(['...', '\u034f', '\u061c', '\u200b', '\u202e', '\u2060', '\ufe0f'])(
+    'treats invisible-only provider output as blank while retaining sources',
+    async (providerOutput) => {
+      mockFetchAndClean.mockResolvedValueOnce(
+        'Elden Ring route guide: start in Limgrave, upgrade flasks, and prepare before Stormveil Castle.'
+      );
+      mockRunTrinityWritingPipeline.mockResolvedValueOnce({
+        result: providerOutput,
+        activeModel: 'gpt-test',
+        meta: { provider: { finishReason: 'stop', emptyOutput: false } }
+      });
+
+      const result = await runGuidePipeline({
+        game: 'Elden Ring',
+        prompt: 'Look up a guide for Elden Ring.',
+        guideUrl: 'https://example.com/elden-ring-route',
+        guideUrls: [],
+        auditEnabled: false
+      });
+
+      expect(result.data.sources.map((source) => source.url)).toContain(
+        'https://example.com/elden-ring-route'
+      );
+      expect(result.data.response.trim().length).toBeGreaterThan(0);
+      expect(result.data.fallbackReason).toBe('GAMING_PROVIDER_ERROR');
+    }
+  );
 
   it('preserves genuine output-integrity failures for the module formatter', async () => {
     const integrityError = Object.assign(new Error('secret provider integrity detail'), {
@@ -988,7 +1061,7 @@ describe('gaming guide output hardening', () => {
     const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as {
       context: {
         runtimeBudget: { watchdogLimit: number; safetyBuffer: number };
-        runOptions: { watchdogModelTimeoutMs?: number };
+        runOptions: { watchdogModelTimeoutMs?: number; modelStageTimeoutMs?: number };
       };
     };
     expect(trinityRequest.context.runtimeBudget).toEqual(expect.objectContaining({
@@ -996,7 +1069,8 @@ describe('gaming guide output hardening', () => {
       safetyBuffer: 500
     }));
     expect(trinityRequest.context.runOptions).toEqual(expect.objectContaining({
-      watchdogModelTimeoutMs: 8000
+      watchdogModelTimeoutMs: 9000,
+      modelStageTimeoutMs: 8000
     }));
   });
 
@@ -1018,7 +1092,7 @@ describe('gaming guide output hardening', () => {
     const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as {
       context: {
         runtimeBudget: { watchdogLimit: number; safetyBuffer: number };
-        runOptions: { watchdogModelTimeoutMs?: number };
+        runOptions: { watchdogModelTimeoutMs?: number; modelStageTimeoutMs?: number };
       };
     };
     expect(trinityRequest.context.runtimeBudget).toEqual(expect.objectContaining({
@@ -1026,7 +1100,8 @@ describe('gaming guide output hardening', () => {
       safetyBuffer: 500
     }));
     expect(trinityRequest.context.runOptions).toEqual(expect.objectContaining({
-      watchdogModelTimeoutMs: 15_000
+      watchdogModelTimeoutMs: 85_000,
+      modelStageTimeoutMs: 20_000
     }));
   });
 
@@ -1048,7 +1123,7 @@ describe('gaming guide output hardening', () => {
     const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as {
       context: {
         runtimeBudget: { watchdogLimit: number; safetyBuffer: number };
-        runOptions: { watchdogModelTimeoutMs?: number };
+        runOptions: { watchdogModelTimeoutMs?: number; modelStageTimeoutMs?: number };
       };
     };
     expect(trinityRequest.context.runtimeBudget).toEqual(expect.objectContaining({
@@ -1056,7 +1131,8 @@ describe('gaming guide output hardening', () => {
       safetyBuffer: 500
     }));
     expect(trinityRequest.context.runOptions).toEqual(expect.objectContaining({
-      watchdogModelTimeoutMs: 15_000
+      watchdogModelTimeoutMs: 50_000,
+      modelStageTimeoutMs: 20_000
     }));
   });
 
