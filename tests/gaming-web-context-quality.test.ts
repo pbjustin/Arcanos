@@ -366,6 +366,78 @@ describe('gaming RAG snippet quality', () => {
     expect(result.sources.some((source) => /fextralife|wowhead|icy-veins|bungie\.net/i.test(source.url))).toBe(false);
   });
 
+  it('keeps useful guide article text when incidental tables resemble structured build data', async () => {
+    const url = 'https://guides.example/palworld/beginner-route';
+    const articleText = [
+      'Palworld beginner progression starts by gathering wood, stone, and berries near the first fast-travel point.',
+      'Capture Lamball and Cattiva, craft Pal Spheres at a Primitive Workbench, then place a Palbox on flat ground.',
+      'Build a Feed Box and Straw Pal Beds before assigning workers, and prepare cold protection before night.'
+    ].join(' ');
+    const html = [
+      '<html><head><title>Palworld Beginner Route Guide</title></head><body><article>',
+      `<p>${articleText}</p>`,
+      '<table><tr><th>Name</th><th>Recommendation</th></tr>',
+      '<tr><td>Lamball</td><td>Capture early</td></tr>',
+      '<tr><td>Cattiva</td><td>Assign to gathering</td></tr></table>',
+      '<table>',
+      '<tr><td>Base Level 1</td><td>Build a Palbox</td></tr>',
+      '<tr><td>Base Level 2</td><td>Build a Primitive Workbench</td></tr>',
+      '<tr><td>Base Level 3</td><td>Build a Feed Box</td></tr>',
+      '<tr><td>Base Level 4</td><td>Build a Campfire</td></tr>',
+      '</table></article></body></html>'
+    ].join('');
+    mockFetchAndClean.mockImplementation(async (_url: string, _maxChars: number, options?: {
+      onRawDocument?: (document: { body: string; contentType: string; truncated: boolean }) => void;
+      onExtraction?: (metrics: Record<string, unknown>) => void;
+    }) => {
+      options?.onExtraction?.({
+        strategy: 'article',
+        rawTextLength: articleText.length,
+        cleanedTextLength: articleText.length,
+        documentTitle: 'Palworld Beginner Route Guide',
+        headingText: 'Palworld Beginner Route Guide',
+        qualityScore: 0.9
+      });
+      options?.onRawDocument?.({ body: html, contentType: 'text/html', truncated: false });
+      return articleText;
+    });
+    const infoSpy = jest.spyOn(logger, 'info').mockImplementation(() => undefined);
+
+    try {
+      const result = await buildGamingRagContext({
+        mode: 'guide',
+        game: 'Palworld',
+        prompt: 'Use this Palworld beginner route guide.',
+        guideUrl: url,
+        guideUrls: []
+      }, {
+        module: 'ARCANOS:GAMING',
+        route: 'gaming',
+        mode: 'guide',
+        sourceEndpoint: 'arcanos-gaming.guide',
+        requestId: 'article-table-request',
+        traceId: 'article-table-trace'
+      });
+
+      expect(result.sources[0]).toEqual(expect.objectContaining({
+        url,
+        snippet: expect.stringContaining('Palworld beginner progression starts')
+      }));
+      expect(result.context).toContain('Capture Lamball and Cattiva');
+      expect(result.context).toContain('Primitive Workbench');
+      expect(result.context).not.toContain('Structured build resource detected');
+      expect(infoSpy).toHaveBeenCalledWith('gaming.retrieval.source.selection', expect.objectContaining({
+        sourceHost: 'guides.example',
+        resourceType: 'article',
+        equipmentCount: 2,
+        statCount: 4,
+        structuredEvidenceUsed: false
+      }));
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
   it('uses a self-contained structured build URL as normalized source-backed evidence when page fetch fails', async () => {
     const fixture = gamingStructuredResourceFixtures[0];
     mockFetchAndClean.mockRejectedValue(new Error('upstream page unavailable'));

@@ -615,6 +615,8 @@ describe('gaming guide output hardening', () => {
           requestedVerbosity?: string;
           watchdogModelTimeoutMs?: number;
           modelStageTimeoutMs?: number;
+          intentMode?: string;
+          toolBackedCapabilities?: { verifyProvidedData?: boolean };
         };
       };
     };
@@ -624,7 +626,9 @@ describe('gaming guide output hardening', () => {
       answerMode: 'explained',
       requestedVerbosity: 'normal',
       watchdogModelTimeoutMs: 50_000,
-      modelStageTimeoutMs: 24_000
+      modelStageTimeoutMs: 24_000,
+      intentMode: 'EXECUTE_TASK',
+      toolBackedCapabilities: { verifyProvidedData: true }
     }));
   });
 
@@ -645,15 +649,24 @@ describe('gaming guide output hardening', () => {
     ]);
     const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as {
       input: { prompt: string };
-      context: { runOptions: { answerMode?: string; modelStageTimeoutMs?: number } };
+      context: {
+        runOptions: {
+          answerMode?: string;
+          modelStageTimeoutMs?: number;
+          intentMode?: string;
+          toolBackedCapabilities?: { verifyProvidedData?: boolean };
+        };
+      };
     };
     expect(trinityRequest.input.prompt).toContain(
       'Source retrieval ran or sources were provided, but no usable snippets were retrieved.'
     );
     expect(trinityRequest.context.runOptions).toEqual(expect.objectContaining({
       answerMode: 'direct',
-      modelStageTimeoutMs: 24_000
+      modelStageTimeoutMs: 24_000,
+      intentMode: 'EXECUTE_TASK'
     }));
+    expect(trinityRequest.context.runOptions.toolBackedCapabilities).toBeUndefined();
   });
 
   it('normalizes generated citations so inline source refs map to public sources', async () => {
@@ -796,6 +809,131 @@ describe('gaming guide output hardening', () => {
       expect(result.data.fallbackReason).toBe('GAMING_PROVIDER_ERROR');
     }
   );
+
+  it.each([
+    "I can't browse, call tools, or verify any external state beyond what is written in your prompt.",
+    'I cannot browse the web or access live external data.',
+    "I'm unable to browse the web or access live external data.",
+    'Unfortunately, I cannot browse the web or access live external data.',
+    'As an AI, I cannot browse the web or access live external data.',
+    '- I cannot browse the web or access live external data.',
+    'I cannot browse the web or provide a Palworld beginner guide.',
+    'I cannot browse the web, and I do not have the live data.'
+  ])('treats a pure source-backed capability refusal as unusable while retaining sources', async (providerOutput) => {
+    const url = 'https://example.com/palworld-beginner-guide';
+    mockFetchAndClean.mockResolvedValueOnce(
+      'Palworld beginner guide: capture Lamball and Cattiva, then build a Palbox near wood and stone.'
+    );
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce({
+      result: providerOutput,
+      activeModel: 'gpt-test',
+      meta: { provider: { finishReason: 'stop', emptyOutput: false } }
+    });
+
+    const result = await runGuidePipeline({
+      game: 'Palworld',
+      prompt: 'Use the supplied source for a Palworld beginner guide.',
+      guideUrl: url,
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(result.data.sources.map((source) => source.url)).toContain(url);
+    expect(result.data.response.trim().length).toBeGreaterThan(0);
+    expect(result.data.response).not.toContain(providerOutput);
+    expect(result.data.fallbackReason).toBe('GAMING_PROVIDER_ERROR');
+  });
+
+  it.each([
+    'I cannot browse the web. I also cannot access live external data.',
+    "I'm unable to browse the web. Please paste the source text so I can help."
+  ])('honors Trinity refusal metadata for a multi-sentence capability-only response', async (providerOutput) => {
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce({
+      result: providerOutput,
+      activeModel: 'gpt-test',
+      reasoningHonesty: {
+        responseMode: 'refusal',
+        achievableSubtasks: [],
+        blockedSubtasks: ['Source-backed gameplay guidance was not produced.'],
+        userVisibleCaveats: [],
+        evidenceTags: []
+      },
+      meta: { provider: { finishReason: 'stop', emptyOutput: false } }
+    });
+
+    const result = await runGuidePipeline({
+      prompt: 'Give me a concise general survival-game progression guide.',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(result.data.response).not.toContain(providerOutput);
+    expect(result.data.fallbackReason).toBe('GAMING_PROVIDER_ERROR');
+  });
+
+  it('treats a capability-only provider response as unusable when no sources were available', async () => {
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce({
+      result: 'I cannot browse the web or access live external data.',
+      activeModel: 'gpt-test',
+      meta: { provider: { finishReason: 'stop', emptyOutput: false } }
+    });
+
+    const result = await runGuidePipeline({
+      prompt: 'Give me a concise general survival-game progression guide.',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(result.data.sources).toEqual([]);
+    expect(result.data.response.trim().length).toBeGreaterThan(0);
+    expect(result.data.fallbackReason).toBe('GAMING_PROVIDER_ERROR');
+  });
+
+  it('preserves useful source-backed gameplay guidance that includes a capability limitation', async () => {
+    const providerOutput = 'I cannot browse the web, but using the supplied guide, capture Lamball and Cattiva before building a Palbox near wood and stone.';
+    mockFetchAndClean.mockResolvedValueOnce(
+      'Palworld beginner guide: capture Lamball and Cattiva, then build a Palbox near wood and stone.'
+    );
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce({
+      result: providerOutput,
+      activeModel: 'gpt-test',
+      meta: { provider: { finishReason: 'stop', emptyOutput: false } }
+    });
+
+    const result = await runGuidePipeline({
+      game: 'Palworld',
+      prompt: 'Use the supplied source for a Palworld beginner guide.',
+      guideUrl: 'https://example.com/palworld-guide',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(result.data.response).toBe(providerOutput);
+    expect(result.data.fallbackReason).toBeUndefined();
+  });
+
+  it('preserves short gameplay guidance after a standalone capability disclaimer', async () => {
+    const providerOutput = 'I cannot browse the web. Start by capturing Lamball and Cattiva, then build a Palbox near wood and stone.';
+    mockFetchAndClean.mockResolvedValueOnce(
+      'Palworld beginner guide: capture Lamball and Cattiva, then build a Palbox near wood and stone.'
+    );
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce({
+      result: providerOutput,
+      activeModel: 'gpt-test',
+      meta: { provider: { finishReason: 'stop', emptyOutput: false } }
+    });
+
+    const result = await runGuidePipeline({
+      game: 'Palworld',
+      prompt: 'Use the supplied source for a Palworld beginner guide.',
+      guideUrl: 'https://example.com/palworld-guide',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(result.data.response).toBe(providerOutput);
+    expect(result.data.fallbackReason).toBeUndefined();
+  });
 
   it('preserves genuine output-integrity failures for the module formatter', async () => {
     const integrityError = Object.assign(new Error('secret provider integrity detail'), {

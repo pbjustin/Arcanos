@@ -1033,10 +1033,16 @@ function hasUsefulArticleFallback(text: string): boolean {
 }
 
 function shouldUseStructuredEvidence(result: GamingBuildResourceResult, articleText: string): boolean {
-  if (result.build && result.validation.accepted && result.quality !== "metadata-only") {
+  const structuredResource = isStructuredGamingResourceType(result.classification.type);
+  if (
+    result.build
+    && result.validation.accepted
+    && result.quality !== "metadata-only"
+    && (structuredResource || !hasUsefulArticleFallback(articleText))
+  ) {
     return true;
   }
-  return isStructuredGamingResourceType(result.classification.type) && !hasUsefulArticleFallback(articleText);
+  return structuredResource && !hasUsefulArticleFallback(articleText);
 }
 
 export async function buildGamingWebContext(

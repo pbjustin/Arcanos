@@ -99,6 +99,7 @@ const PROVIDER_TIMEOUT_ERROR_MARKERS = [
 ];
 
 const PROVIDER_COMPLETION_INCOMPLETE_FALLBACK_REASON = "PROVIDER_COMPLETION_INCOMPLETE";
+const PURE_CAPABILITY_REFUSAL_MAX_CHARS = 320;
 
 type GamingCitationNormalization = {
   response: string;
@@ -127,6 +128,30 @@ function isGamingProviderTimeoutError(error: unknown): boolean {
 
 function isGamingProviderCompletionIncompleteError(error: unknown): boolean {
   return readErrorString(error, "code") === "OPENAI_COMPLETION_INCOMPLETE";
+}
+
+function isPureGamingProviderCapabilityRefusal(value: string): boolean {
+  const normalized = value
+    .normalize("NFKC")
+    .replace(/[\u2018\u2019]/gu, "'")
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (normalized.length === 0 || normalized.length > PURE_CAPABILITY_REFUSAL_MAX_CHARS) {
+    return false;
+  }
+
+  const refusalText = normalized.replace(
+    /^(?:(?:[-*>#\u2022]+\s*)|(?:(?:sorry|unfortunately|regrettably)\s*[,!:-]?\s*)|(?:as\s+an?\s+(?:ai|language\s+model)\s*[,!:-]?\s*))+/iu,
+    ""
+  );
+  const beginsWithRefusal = /^(?:(?:i|we)\s+can(?:not|'t)|(?:i(?:\s+am|'m)|we(?:\s+are|'re))\s+unable\s+to|(?:i|we)\s+do(?:n't|\s+not)\s+have)\b/iu.test(refusalText);
+  const namesUnavailableCapability = /\b(?:browse|call\s+tools?|access\s+(?:the\s+)?(?:web|live\s+external\s+data)|verify\s+(?:any\s+)?external\s+state)\b/iu.test(normalized);
+  const continuesWithAnswer = /\b(?:but|however|still|instead|based\s+on|using\s+(?:the\s+)?(?:provided|supplied))\b/iu.test(refusalText);
+  const hasAdditionalSentence = /[.!?;]\s+\S/iu.test(refusalText);
+  return beginsWithRefusal
+    && namesUnavailableCapability
+    && !continuesWithAnswer
+    && !hasAdditionalSentence;
 }
 
 function classifyGamingProviderFallbackReason(timeoutPhase?: string): GamingFallbackReason {
@@ -739,7 +764,12 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
       () =>
         runTrinityWritingPipeline({
           input: {
-            prompt: buildGamingTrinityPrompt(resolvedParams, webContext, retrievalAttempted || retrievalHadUsableSources),
+            prompt: buildGamingTrinityPrompt(
+              resolvedParams,
+              webContext,
+              retrievalAttempted || retrievalHadUsableSources,
+              retrievalHadUsableSources
+            ),
             moduleId: "ARCANOS:GAMING",
             sourceEndpoint,
             requestedAction: "query",
@@ -755,6 +785,10 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
             ),
             runOptions: {
               ...buildGamingRunOptions(params.mode, guideUrls.length > 0 && retrievalHadUsableSources),
+              intentMode: "EXECUTE_TASK",
+              ...(retrievalHadUsableSources
+                ? { toolBackedCapabilities: { verifyProvidedData: true } }
+                : {}),
               watchdogModelTimeoutMs: pipelineTimeoutMs,
               modelStageTimeoutMs: stageTimeoutMs
             }
@@ -768,6 +802,14 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
     ) {
       throw Object.assign(new Error("Gaming provider returned an empty response."), {
         code: "GAMING_PROVIDER_EMPTY_RESPONSE"
+      });
+    }
+    if (
+      trinityResult.reasoningHonesty?.responseMode === "refusal"
+      || isPureGamingProviderCapabilityRefusal(trinityResult.result)
+    ) {
+      throw Object.assign(new Error("Gaming provider returned a capability refusal instead of gameplay guidance."), {
+        code: "GAMING_PROVIDER_UNUSABLE_RESPONSE"
       });
     }
   } catch (error) {
