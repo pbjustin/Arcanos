@@ -339,6 +339,35 @@ describe('ArcanosGaming module', () => {
     });
   });
 
+  it('preserves a multiline current request without adding Web Search facts to the backend prompt', () => {
+    const userPrompt = '  Is Frost Mage viable this patch in World of Warcraft?\nPlease separate PvE and PvP.  ';
+    const guideUrls = [
+      'https://worldofwarcraft.blizzard.com/en-us/news',
+      'https://example.com/frost-mage-guide',
+    ];
+    const intent = IntentRouterAgent.classify({
+      mode: 'meta',
+      game: 'World of Warcraft',
+      prompt: userPrompt,
+      guideUrls,
+    } as any);
+
+    const action = BackendQueryAgent.build(intent as any);
+
+    expect(action).toEqual({
+      action: 'query',
+      payload: {
+        mode: 'meta',
+        game: 'World of Warcraft',
+        prompt: 'Is Frost Mage viable this patch in World of Warcraft?\nPlease separate PvE and PvP.',
+        guideUrls,
+      },
+    });
+    expect(action.payload.prompt).not.toMatch(/12\.0\.7|release date|nerf|buff|\d+%|tier ranking/i);
+    expect(action.payload).not.toHaveProperty('url');
+    expect(action.payload).not.toHaveProperty('urls');
+  });
+
   it('rejects candidateUrls on the mandatory first operation before retrieval', async () => {
     const result = await ArcanosGaming.actions.query({
       mode: 'guide',

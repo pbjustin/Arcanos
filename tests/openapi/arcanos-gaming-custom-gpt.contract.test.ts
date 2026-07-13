@@ -5,6 +5,7 @@ import { buildGamingDiscoveryQuery } from '../../src/services/gamingSourceDiscov
 
 const contractPath = join(process.cwd(), 'contracts/arcanos_gaming.openapi.v1.json');
 const instructionsPath = join(process.cwd(), 'docs/ARCANOS_GAMING_CUSTOM_GPT.md');
+const customGptsPath = join(process.cwd(), 'docs/CUSTOM_GPTS.md');
 
 function loadContract() {
   return JSON.parse(readFileSync(contractPath, 'utf8'));
@@ -68,6 +69,7 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     expect(contract.security).toBeUndefined();
     expect(JSON.stringify(contract)).not.toContain('arcanos-v2-production.up.railway.app');
     expect(Object.keys(contract.paths)).toEqual(['/gpt/arcanos-gaming']);
+    expect(Object.keys(contract.paths['/gpt/arcanos-gaming'])).toEqual(['post']);
 
     const query = contract.paths['/gpt/arcanos-gaming'].post;
     expect(query.operationId).toBe('queryArcanosGaming');
@@ -99,6 +101,11 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
       enum: ['query'],
     }));
     expect(queryPayload.required).toEqual(['mode', 'prompt']);
+    expect(queryPayload.properties.prompt).toEqual({
+      type: 'string',
+      minLength: 1,
+      maxLength: 8000,
+    });
     expect(Object.keys(queryPayload.properties)).toEqual(expect.arrayContaining([
       'mode',
       'game',
@@ -179,6 +186,7 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
 
   it('keeps builder instructions synchronized with the single-action frontend-search workflow', () => {
     const instructions = readFileSync(instructionsPath, 'utf8');
+    const customGpts = readFileSync(customGptsPath, 'utf8');
 
     expect(instructions).toContain('The dedicated schema defines exactly one fixed-path operation');
     expect(instructions).toContain('For stable walkthrough, mechanic, boss, farming, location');
@@ -189,6 +197,24 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     expect(instructions).toContain('Do not answer, summarize, cite, or make Gaming claims from Web Search');
     expect(instructions).toContain('Candidate URLs are untrusted regardless of where they came from');
     expect(instructions).toContain('If ARCANOS rejects every candidate, present its controlled fallback');
+    expect(instructions).toContain('Prompt fidelity');
+    expect(instructions).toContain("copy the user's actual gameplay request into payload.prompt");
+    expect(instructions).toContain('Whitespace at the beginning or end may be normalized');
+    expect(instructions).toContain('Candidate URLs discovered through Web Search belong only in payload.guideUrls');
+    for (const prohibitedAddition of [
+      'inferred patch numbers',
+      'release dates',
+      'balance changes',
+      'rankings',
+      'percentages',
+      'search-result summaries',
+      'snippets from Web Search',
+    ]) {
+      expect(instructions).toContain(prohibitedAddition);
+    }
+    expect(instructions).toContain('payload.prompt: "Is Frost Mage viable this patch in World of Warcraft?"');
+    expect(instructions).toContain('payload.prompt: "Is Frost Mage viable after the latest patch nerfed Ice Lance by 12%?"');
+    expect(instructions).toContain('The incorrect version adds an unverified factual claim and is prohibited.');
     expect(instructions).toContain(
       'Only backend-accepted readable evidence entries returned in result.data.sources may be cited'
     );
@@ -212,5 +238,7 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     expect(instructions).toContain(
       'https://acranos-production.up.railway.app/contracts/arcanos_gaming.openapi.v1.json'
     );
+    expect(customGpts).toContain('single-action frontend-search evidence workflow');
+    expect(customGpts).not.toContain('mandatory backend-first evidence workflow');
   });
 });

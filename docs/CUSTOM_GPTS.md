@@ -72,7 +72,7 @@ The machine-readable contract lives at [contracts/custom_gpt_route.openapi.v1.js
 For live integrations, prefer the backend-served contract URL instead of a manually copied local file:
 - `https://acranos-production.up.railway.app/contracts/custom_gpt_route.openapi.v1.json`
 
-The Arcanos Gaming builder uses a dedicated fixed-path schema and mandatory backend-first evidence workflow:
+The Arcanos Gaming builder uses a dedicated fixed-path schema and single-action frontend-search evidence workflow:
 - `https://acranos-production.up.railway.app/contracts/arcanos_gaming.openapi.v1.json`
 - [ARCANOS_GAMING_CUSTOM_GPT.md](ARCANOS_GAMING_CUSTOM_GPT.md)
 

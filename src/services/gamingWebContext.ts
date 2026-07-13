@@ -90,6 +90,9 @@ export type GamingRagContext = GamingWebContext & {
   rejectedCandidateCount: number;
   fetchedCandidateCount: number;
   acceptedSourceCount: number;
+  suppliedCandidateCount: number;
+  acceptedSuppliedSourceCount: number;
+  rejectedSuppliedCandidateCount: number;
   discoveryCacheHit: boolean;
   discoveryElapsedMs: number;
   candidateRankingElapsedMs: number;
@@ -489,6 +492,7 @@ const documentCache = new Map<string, {
 }>();
 
 const FRONTEND_EVIDENCE_CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/g;
+const FRONTEND_CANDIDATE_URL_CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/u;
 
 function normalizeUntrustedEvidenceText(value: string): string {
   return value
@@ -871,6 +875,9 @@ function sanitizeUntrustedEvidenceCandidateUrl(url: string): { url?: string; rej
 }
 
 function sanitizeSuppliedCandidateUrl(url: string, strictEvidenceValidation: boolean): { url?: string; rejected: boolean } {
+  if (FRONTEND_CANDIDATE_URL_CONTROL_CHARACTERS.test(url)) {
+    return { rejected: true };
+  }
   if (isExplicitLocalTestGuideUrl(url)) {
     return { url: url.trim(), rejected: false };
   }
@@ -2930,6 +2937,9 @@ function emptyRagContext(params: {
     rejectedCandidateCount: 0,
     fetchedCandidateCount: 0,
     acceptedSourceCount: 0,
+    suppliedCandidateCount: 0,
+    acceptedSuppliedSourceCount: 0,
+    rejectedSuppliedCandidateCount: 0,
     discoveryCacheHit: false,
     discoveryElapsedMs: 0,
     candidateRankingElapsedMs: 0,
@@ -2974,6 +2984,10 @@ export async function buildGamingRagContext(
     const sanitized = sanitizeSuppliedCandidateUrl(url, patchSensitive);
     return !sanitized.rejected && Boolean(sanitized.url);
   }).length;
+  const rejectedUntrustedSourceCount = new Set(requestedGuideUrls
+    .filter((url) => sanitizeSuppliedCandidateUrl(url, patchSensitive).rejected)
+    .map((url) => url.trim()))
+    .size;
   const requestedVersions = Array.from(new Set([
     ...(input.requestedVersion ? [input.requestedVersion] : []),
     ...extractExplicitGamingVersions({ prompt: input.prompt, game })
@@ -3012,6 +3026,7 @@ export async function buildGamingRagContext(
     terms,
     patchSensitive
   );
+  const suppliedCandidateCount = suppliedCandidates.length + rejectedUntrustedSourceCount;
   const potentialCandidates = [...suppliedCandidates, ...curatedCandidates];
   let candidates = [...suppliedCandidates];
 
@@ -3029,7 +3044,7 @@ export async function buildGamingRagContext(
       retrievalQueryTermCount: terms.length,
       requestedSourceCount: suppliedSourceCount,
       sourceCount: potentialCandidates.length,
-      suppliedCandidateCount: suppliedCandidates.length,
+      suppliedCandidateCount,
       curatedCandidateCount: curatedCandidates.length,
       sourceDomains: Array.from(new Set(potentialCandidates.map((candidate) => normalizeDomain(candidate.url)).filter(Boolean))),
       cacheHit: false,
@@ -3279,6 +3294,14 @@ export async function buildGamingRagContext(
   const acceptedSourceCount = retainedSources.filter((source) =>
     discoveredCandidateUrls.has(source.url) && isCitableGamingWebSource(source)
   ).length;
+  const suppliedCandidateUrls = new Set(suppliedCandidates.map((candidate) => candidate.url));
+  const acceptedSuppliedSourceCount = retainedSources.filter((source) =>
+    suppliedCandidateUrls.has(source.url) && isCitableGamingWebSource(source)
+  ).length;
+  const rejectedSuppliedCandidateCount = Math.max(
+    0,
+    suppliedCandidateCount - acceptedSuppliedSourceCount
+  );
   if (discoveryTriggered && fetchedCandidateCount > 0 && acceptedSourceCount === 0 && !discoveryFailureReason) {
     discoveryFailureReason = "DISCOVERY_LOW_QUALITY";
   }
@@ -3356,6 +3379,9 @@ export async function buildGamingRagContext(
       rejectedCandidateCount,
       fetchedCandidateCount,
       acceptedSourceCount,
+      suppliedCandidateCount,
+      acceptedSuppliedSourceCount,
+      rejectedSuppliedCandidateCount,
       discoveryCacheHit,
       discoveryElapsedMs,
       candidateRankingElapsedMs,
@@ -3409,6 +3435,9 @@ export async function buildGamingRagContext(
     rejectedCandidateCount,
     fetchedCandidateCount,
     acceptedSourceCount,
+    suppliedCandidateCount,
+    acceptedSuppliedSourceCount,
+    rejectedSuppliedCandidateCount,
     discoveryCacheHit,
     discoveryElapsedMs,
     candidateRankingElapsedMs,

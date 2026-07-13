@@ -128,6 +128,7 @@ const FILE_DOWNLOAD_PATTERN = /\.(?:7z|avi|bin|dmg|docx?|exe|gz|iso|mov|mp3|mp4|
 const ACCOUNT_PATH_PATTERN = /\/(?:account|accounts|auth|login|log-in|register|registration|sign-in|signin|signup)(?:\/|$)/i;
 const SEARCH_PATH_PATTERN = /\/(?:search|search-results|results)(?:\/|$)/i;
 const SEARCH_QUERY_PARAM_PATTERN = /^(?:keyword|q|query|search|search_query)$/i;
+const RAW_URL_CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f-\u009f]/u;
 const CONTENT_FARM_DOMAIN_PATTERN = /(?:^|[.-])(?:clickbait|content-?farm|scraper|seo-?spam|spam)(?:[.-]|$)/i;
 const SOURCE_INSTRUCTION_PATTERN = /(?:\b(?:(?:ignore|disregard|override)\s+(?:all\s+)?(?:previous|prior|system|developer|assistant|user)\s+(?:instructions?|messages?|prompts?)|forget\s+(?:everything|all)(?:\s+(?:written|said))?\s+(?:above|before)|you\s+are\s+now|(?:reveal|print|show|expose)\s+(?:the\s+)?(?:system|developer)\s+(?:prompt|message|instructions?)|(?:call|invoke)\s+(?:the\s+)?(?:tool|function)|(?:execute|run)\s+(?:this\s+)?(?:command|shell|powershell|bash))\b|(?:^|\s|\[|<\|)(?:system|developer|assistant|user)(?:\s*:|\]|\|>))/i;
 const LOW_SIGNAL_DOMAINS = [
@@ -282,7 +283,11 @@ function isInternalHost(hostname: string): boolean {
 }
 
 export function sanitizeGamingDiscoveryCandidateUrl(rawUrl: string): { url?: string; rejected: boolean } {
-  if (rawUrl.length === 0 || rawUrl.length > MAX_SEARCH_RESULT_URL_CHARS) {
+  if (
+    rawUrl.length === 0
+    || rawUrl.length > MAX_SEARCH_RESULT_URL_CHARS
+    || RAW_URL_CONTROL_CHARACTER_PATTERN.test(rawUrl)
+  ) {
     return { rejected: true };
   }
   try {

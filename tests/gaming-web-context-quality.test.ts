@@ -1068,6 +1068,11 @@ describe('gaming RAG snippet quality', () => {
 
     expect(first.currentEvidenceAvailable).toBe(true);
     expect(first.sources.some(isCitableGamingWebSource)).toBe(true);
+    expect(first).toEqual(expect.objectContaining({
+      suppliedCandidateCount: 1,
+      acceptedSuppliedSourceCount: 1,
+      rejectedSuppliedCandidateCount: 0,
+    }));
     expect(JSON.stringify(first)).not.toMatch(/ignore previous|system prompt/i);
     expect(cached.currentEvidenceAvailable).toBe(true);
     expect(cached.cacheHit).toBe(true);
@@ -1098,6 +1103,11 @@ describe('gaming RAG snippet quality', () => {
       url: 'https://example.com/candidate',
       error: 'Source did not match the requested game or version.'
     }]);
+    expect(result).toEqual(expect.objectContaining({
+      suppliedCandidateCount: 1,
+      acceptedSuppliedSourceCount: 0,
+      rejectedSuppliedCandidateCount: 1,
+    }));
     expect(result.context).not.toMatch(/\[Source \d+\]/);
   });
 
@@ -1396,6 +1406,92 @@ describe('gaming RAG snippet quality', () => {
     expect(mockFetchAndClean).toHaveBeenCalledTimes(1);
     expect(result.sources).toHaveLength(1);
     expect(result.sources[0]?.url).toBe('https://example.com/guides/palworld');
+    expect(result).toEqual(expect.objectContaining({
+      suppliedCandidateCount: 1,
+      acceptedSuppliedSourceCount: 1,
+      rejectedSuppliedCandidateCount: 0,
+    }));
+  });
+
+  it('rejects raw control characters in first-call candidates before fetch', async () => {
+    mockGetEnvBoolean.mockImplementation((key: string, defaultValue: boolean) =>
+      key === 'ARCANOS_GAMING_RAG_ENABLED' ? true : defaultValue
+    );
+    const candidateUrl = 'https://example.com/palworld\n1-0';
+
+    const result = await buildGamingRagContext({
+      mode: 'guide',
+      game: 'Palworld',
+      prompt: 'Look up a current beginner guide for Palworld 1.0.',
+      guideUrl: undefined,
+      guideUrls: [candidateUrl]
+    });
+
+    expect(mockFetchAndClean).not.toHaveBeenCalled();
+    expect(result.sources).toEqual([{
+      url: 'invalid-source',
+      error: 'Source URL was rejected by evidence policy.'
+    }]);
+    expect(result).toEqual(expect.objectContaining({
+      suppliedCandidateCount: 1,
+      acceptedSuppliedSourceCount: 0,
+      rejectedSuppliedCandidateCount: 1,
+    }));
+    expect(JSON.stringify(result)).not.toContain(candidateUrl);
+  });
+
+  it('rejects raw control characters before the explicit localhost test bypass', async () => {
+    const previousLocalhostFetch = process.env.ARCANOS_ALLOW_LOCALHOST_FETCH;
+    process.env.ARCANOS_ALLOW_LOCALHOST_FETCH = 'true';
+    const candidateUrl = 'http://127.0.0.1:3000/palworld\n1-0';
+
+    try {
+      const result = await buildGamingRagContext({
+        mode: 'guide',
+        game: 'Palworld',
+        prompt: 'Look up a current beginner guide for Palworld 1.0.',
+        guideUrl: undefined,
+        guideUrls: [candidateUrl]
+      });
+
+      expect(mockFetchAndClean).not.toHaveBeenCalled();
+      expect(result.sources).toEqual([{
+        url: 'invalid-source',
+        error: 'Source URL was rejected by evidence policy.'
+      }]);
+      expect(JSON.stringify(result)).not.toContain(candidateUrl);
+    } finally {
+      if (previousLocalhostFetch === undefined) {
+        delete process.env.ARCANOS_ALLOW_LOCALHOST_FETCH;
+      } else {
+        process.env.ARCANOS_ALLOW_LOCALHOST_FETCH = previousLocalhostFetch;
+      }
+    }
+  });
+
+  it('counts distinct rejected first-call candidates without exposing their values', async () => {
+    const candidateUrls = [
+      'not-a-url',
+      'https://user:password@example.com/palworld',
+    ];
+
+    const result = await buildGamingRagContext({
+      mode: 'guide',
+      game: 'Palworld',
+      prompt: 'Look up a current beginner guide for Palworld 1.0.',
+      guideUrl: undefined,
+      guideUrls: candidateUrls
+    });
+
+    expect(mockFetchAndClean).not.toHaveBeenCalled();
+    expect(result).toEqual(expect.objectContaining({
+      suppliedCandidateCount: 2,
+      acceptedSuppliedSourceCount: 0,
+      rejectedSuppliedCandidateCount: 2,
+    }));
+    expect(result.sources).toEqual([expect.objectContaining({ url: 'invalid-source' })]);
+    expect(JSON.stringify(result)).not.toContain(candidateUrls[0]);
+    expect(JSON.stringify(result)).not.toContain(candidateUrls[1]);
   });
 
   it.each([
@@ -1564,6 +1660,11 @@ describe('gaming RAG snippet quality', () => {
       expect.objectContaining({ url: 'https://example.com/accepted', snippet: expect.any(String) }),
       { url: 'https://example.com/rejected', error: 'Source did not match the requested game or version.' }
     ]);
+    expect(result).toEqual(expect.objectContaining({
+      suppliedCandidateCount: 2,
+      acceptedSuppliedSourceCount: 1,
+      rejectedSuppliedCandidateCount: 1,
+    }));
     expect(result.context).toContain('[Source 1] https://example.com/accepted');
     expect(result.context).not.toContain('[Source 2]');
   });
