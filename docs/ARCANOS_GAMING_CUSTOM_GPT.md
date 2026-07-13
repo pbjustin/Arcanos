@@ -5,11 +5,14 @@ This is the builder-facing configuration for the existing **Arcanos Gaming** Cus
 ## Action configuration
 
 - Import schema: `https://acranos-production.up.railway.app/contracts/arcanos_gaming.openapi.v1.json`
-- Schema version: `1.3.0`
+- Schema version: `1.3.1`
 - Canonical server: `https://acranos-production.up.railway.app`
 - Authentication: None
+- Recommended model: select a supported non-Pro model that can invoke Actions; do not leave this unset.
 - Enable both Actions and Web Search.
 - Do not add a second ARCANOS action or use a retired ARCANOS deployment hostname.
+
+Users can still switch away from the recommended model. Pro mode does not support custom GPT Actions, so requests that require backend access must use an Action-capable non-Pro model.
 
 The dedicated schema defines exactly one fixed-path operation:
 
@@ -21,6 +24,10 @@ Add the following workflow to the GPT instructions without weakening the existin
 
 ```text
 ARCANOS is the only evidence authority for Gaming answers.
+
+Model compatibility
+
+If queryArcanosGaming is unavailable because the current ChatGPT mode does not support Actions, do not report an ARCANOS backend outage. Ask the user to switch from Pro mode to an Action-capable non-Pro model, then retry the request.
 
 Stable gameplay requests
 
@@ -89,7 +96,7 @@ Present the controlled ARCANOS response, including its safe fallback or discover
 
 ## Release procedure
 
-Updating this repository does not update the external Custom GPT automatically. After the exact schema is deployed, re-import it into the existing Arcanos Gaming GPT, preserve its current authentication and visibility, run stable and current-request Preview checks, save, reopen the same GPT, and repeat the checks against the saved configuration.
+Updating this repository does not update the external Custom GPT automatically. After the exact schema is deployed, re-import it into the existing Arcanos Gaming GPT, preserve its current authentication and visibility, select a supported non-Pro recommended model that can invoke Actions, run stable and current-request Preview checks, save, reopen the same GPT, and repeat the checks against the saved configuration.
 
 ## Canary prompt-fidelity proof
 

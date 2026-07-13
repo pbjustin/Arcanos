@@ -59,7 +59,7 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     const contract = loadContract();
 
     expect(contract.openapi).toBe('3.1.0');
-    expect(contract.info.version).toBe('1.3.0');
+    expect(contract.info.version).toBe('1.3.1');
     expect(contract.servers).toEqual([
       {
         url: 'https://acranos-production.up.railway.app',
@@ -152,7 +152,7 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     expect(evidenceRequest.properties.queries.items.maxLength).toBe(180);
     expect(schemas.GamingResponseData.required).toEqual(['response', 'sources']);
     expect(schemas.GamingResponseData.properties).toEqual(expect.objectContaining({
-      response: { type: 'string' },
+      response: { type: 'string', minLength: 1, pattern: '\\S' },
       sources: {
         type: 'array',
         items: { $ref: '#/components/schemas/GamingSource' },
@@ -168,6 +168,11 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
       'result',
       '_route',
     ]);
+    expect(schemas.PublicError.properties.details).toEqual({
+      type: 'object',
+      additionalProperties: true,
+    });
+    expect(new RegExp(schemas.GamingResponseData.properties.response.pattern).test('   ')).toBe(false);
   });
 
   it('keeps the builder query length synchronized with the runtime query builder', () => {
@@ -189,6 +194,9 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     const customGpts = readFileSync(customGptsPath, 'utf8');
 
     expect(instructions).toContain('The dedicated schema defines exactly one fixed-path operation');
+    expect(instructions).toContain('do not leave this unset');
+    expect(instructions).toContain('Pro mode does not support custom GPT Actions');
+    expect(instructions).toContain('do not report an ARCANOS backend outage');
     expect(instructions).toContain('For stable walkthrough, mechanic, boss, farming, location');
     expect(instructions).toContain('A generic request to "look up" a stable guide is still stable');
     expect(instructions).toContain('Use Web Search to discover two to four relevant candidate URLs');

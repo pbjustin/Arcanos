@@ -1017,9 +1017,9 @@ describe('gpt router auth logging', () => {
     expect(JSON.stringify(response.body)).not.toContain('stack');
   });
 
-  it('uses a 60-second Gaming route minimum and contains an outer route timeout as HTTP 200', async () => {
-    process.env.GPT_ROUTE_HARD_TIMEOUT_MS = '6000';
-    const timeoutError = new Error('GPT route timeout after 60000ms');
+  it('contains the direct Gaming Action within 40 seconds and returns its outer timeout as HTTP 200', async () => {
+    process.env.GPT_ROUTE_HARD_TIMEOUT_MS = '60000';
+    const timeoutError = new Error('GPT route timeout after 40000ms');
     timeoutError.name = 'AbortError';
     mockRouteGptRequest.mockRejectedValue(timeoutError);
     const app = express();
@@ -1051,7 +1051,7 @@ describe('gpt router auth logging', () => {
         error: {
           code: 'GENERATION_TIMEOUT',
           details: {
-            timeoutMs: 60000,
+            timeoutMs: 40000,
             timeoutPhase: 'gpt-route'
           }
         }
@@ -1066,7 +1066,7 @@ describe('gpt router auth logging', () => {
     const logs = collectStructuredLogs(consoleLogSpy.mock.calls);
     expect(logs.find((entry) => entry.event === 'gpt.request.timeout_plan')?.data).toMatchObject({
       gptId: 'arcanos-gaming',
-      timeoutMs: 60000
+      timeoutMs: 40000
     });
   });
 
@@ -1533,6 +1533,11 @@ describe('gpt router auth logging', () => {
         }),
       })
     );
+    const logs = collectStructuredLogs(consoleLogSpy.mock.calls);
+    expect(logs.find((entry) => entry.event === 'gpt.request.timeout_plan')?.data).toMatchObject({
+      gptId: 'arcanos-core',
+      timeoutMs: 60000,
+    });
   });
 
   it('keeps workflow-like query prompts on the canonical GPT route', async () => {

@@ -316,6 +316,39 @@ describe('ArcanosGaming module', () => {
     expect((result as any).data.response).not.toContain('Malformed backend response');
   });
 
+  it('returns a labeled general fallback when the backend response is blank', async () => {
+    runGuidePipelineSpy.mockResolvedValueOnce({
+      ok: true,
+      route: 'gaming',
+      mode: 'guide',
+      data: {
+        response: '   ',
+        sources: [{
+          url: 'https://example.com/elden-ring-route',
+          snippet: 'Validated route guidance.',
+        }],
+      },
+    } as any);
+
+    const result = await ArcanosGaming.actions.query({
+      mode: 'guide',
+      prompt: 'where do I get smithing stones',
+    } as any);
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      route: 'gaming',
+      mode: 'guide',
+      data: expect.objectContaining({
+        response: expect.stringContaining('General Fallback (not backend-supported)'),
+        sources: [{
+          url: 'https://example.com/elden-ring-route',
+          snippet: 'Validated route guidance.',
+        }],
+      }),
+    }));
+  });
+
   it('preserves validated frontend evidence retry metadata for the secure guide pipeline', async () => {
     await ArcanosGaming.actions.query({
       mode: 'guide',

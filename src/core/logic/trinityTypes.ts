@@ -32,6 +32,7 @@ export interface TrinityProviderCompletionMetadata {
   responseStatus?: string | null;
   incompleteReason?: string | null;
   incomplete?: boolean;
+  emptyOutput?: boolean;
   truncated?: boolean;
   lengthTruncated?: boolean;
   contentFiltered?: boolean;

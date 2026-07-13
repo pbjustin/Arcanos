@@ -759,6 +759,15 @@ export async function runGameplayPipeline(params: GamingPipelineInput): Promise<
           }
         })
     );
+    if (
+      trinityResult.meta?.provider?.emptyOutput === true
+      || typeof trinityResult.result !== "string"
+      || trinityResult.result.trim().length === 0
+    ) {
+      throw Object.assign(new Error("Gaming provider returned an empty response."), {
+        code: "GAMING_PROVIDER_EMPTY_RESPONSE"
+      });
+    }
   } catch (error) {
     const elapsedMs = Date.now() - providerStartedAt;
     logger.info("gaming.stream.end", {

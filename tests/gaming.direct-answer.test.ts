@@ -702,6 +702,28 @@ describe('gaming guide output hardening', () => {
     }
   });
 
+  it('preserves retrieved sources when provider generation is reported blank', async () => {
+    mockFetchAndClean.mockResolvedValueOnce('Elden Ring route guide: start in Limgrave, follow Sites of Grace, upgrade flasks, and prepare before Stormveil Castle.');
+    mockRunTrinityWritingPipeline.mockResolvedValueOnce({
+      result: "I'd be happy to help—could you share a bit more detail about what you need?",
+      activeModel: 'gpt-test',
+      meta: { provider: { finishReason: 'stop', emptyOutput: true } }
+    });
+
+    const result = await runGuidePipeline({
+      game: 'Elden Ring',
+      prompt: 'Look up a guide for Elden Ring.',
+      guideUrl: 'https://example.com/elden-ring-route',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.data.sources.map((source) => source.url)).toContain('https://example.com/elden-ring-route');
+    expect(result.data.response.trim().length).toBeGreaterThan(0);
+    expect(result.data.fallbackReason).toBe('GAMING_PROVIDER_ERROR');
+  });
+
   it('preserves genuine output-integrity failures for the module formatter', async () => {
     const integrityError = Object.assign(new Error('secret provider integrity detail'), {
       code: 'TRINITY_OUTPUT_INTEGRITY_FAILED',

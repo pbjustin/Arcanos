@@ -285,7 +285,8 @@ function isUsableGamingSuccessEnvelope(value: GamingEnvelope): value is GamingSu
   return value.ok === true &&
     value.data !== null &&
     typeof value.data === "object" &&
-    typeof value.data.response === "string";
+    typeof value.data.response === "string" &&
+    value.data.response.trim().length > 0;
 }
 
 function buildTelemetryEntityFlags(intent: GamingIntent) {
@@ -408,6 +409,12 @@ async function handleGamingRequest(payload: unknown): Promise<GamingEnvelope> {
       return backendEnvelope;
     }
 
+    const preservedBackendSources = isRecord(backendEnvelope.data) && Array.isArray(backendEnvelope.data.sources)
+      ? backendEnvelope.data.sources.filter(
+          (source): source is GamingSuccessEnvelope["data"]["sources"][number] =>
+            isRecord(source) && typeof source.url === "string" && source.url.trim().length > 0
+        )
+      : [];
     if (!isUsableGamingSuccessEnvelope(backendEnvelope)) {
       logger.warn("gaming.backend.failure", {
         ...requestLogContext,
@@ -415,10 +422,17 @@ async function handleGamingRequest(payload: unknown): Promise<GamingEnvelope> {
         confidence: gamingIntent.confidence,
         errorCode: "MALFORMED_BACKEND_RESPONSE"
       });
-      return ResponseComposerAgent.composeBackendFailureFallback({
+      const fallback = ResponseComposerAgent.composeBackendFailureFallback({
         intent: gamingIntent,
         error: new Error("Malformed backend response")
       });
+      return {
+        ...fallback,
+        data: {
+          ...fallback.data,
+          sources: preservedBackendSources
+        }
+      };
     }
 
     logger.info("gaming.backend.success", {
