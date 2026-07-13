@@ -90,3 +90,22 @@ Present the controlled ARCANOS response, including its safe fallback or discover
 ## Release procedure
 
 Updating this repository does not update the external Custom GPT automatically. After the exact schema is deployed, re-import it into the existing Arcanos Gaming GPT, preserve its current authentication and visibility, run stable and current-request Preview checks, save, reopen the same GPT, and repeat the checks against the saved configuration.
+
+## Canary prompt-fidelity proof
+
+The prompt-fidelity merge gate may be satisfied by either a complete saved-GPT Action request card or a single correlated exact-head preview ingress attestation. The attestation is a hash-only canary/debug signal, is disabled by default, and is not a general user-prompt logging mechanism. It must never be enabled in production and never contains raw prompts or URL values.
+
+For the saved-canary prompt `Is Frost Mage viable this patch in World of Warcraft?`, correlated preview telemetry must prove all of the following when the Action request card is unavailable:
+
+- response and attestation request IDs match;
+- response and attestation trace IDs match;
+- `promptUtf8Bytes` is `53`;
+- `promptCodePointCount` is `53`;
+- `promptSha256` is `faa37589a5ec8315c14c6a8aecae1172879a060a2965a5a60302d9fca21f2a89`;
+- mode is `meta` and game is `World of Warcraft`;
+- `guideUrls` is present with a count of four;
+- `url`, `urls`, and `guideUrl` are absent with counts of zero;
+- sorted payload keys are exactly `game`, `guideUrls`, `mode`, and `prompt`; and
+- exactly one Action request occurred in the correlated test window.
+
+Prompt length alone is not sufficient proof. The preview audit must be disabled again after the canary evidence is collected.

@@ -215,6 +215,15 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     expect(instructions).toContain('payload.prompt: "Is Frost Mage viable this patch in World of Warcraft?"');
     expect(instructions).toContain('payload.prompt: "Is Frost Mage viable after the latest patch nerfed Ice Lance by 12%?"');
     expect(instructions).toContain('The incorrect version adds an unverified factual claim and is prohibited.');
+    expect(instructions).toContain('The prompt-fidelity merge gate may be satisfied by either');
+    expect(instructions).toContain('single correlated exact-head preview ingress attestation');
+    expect(instructions).toContain('hash-only canary/debug signal');
+    expect(instructions).toContain('disabled by default');
+    expect(instructions).toContain('not a general user-prompt logging mechanism');
+    expect(instructions).toContain('Prompt length alone is not sufficient proof.');
+    expect(instructions).toContain(
+      'faa37589a5ec8315c14c6a8aecae1172879a060a2965a5a60302d9fca21f2a89'
+    );
     expect(instructions).toContain(
       'Only backend-accepted readable evidence entries returned in result.data.sources may be cited'
     );
