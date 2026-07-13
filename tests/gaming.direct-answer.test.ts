@@ -244,7 +244,7 @@ describe('gaming guide output hardening', () => {
             requestedVerbosity: 'normal',
             strictUserVisibleOutput: true,
             watchdogModelTimeoutMs: 50_000,
-            modelStageTimeoutMs: 20_000
+            modelStageTimeoutMs: 24_000
           })
         })
       })
@@ -296,7 +296,7 @@ describe('gaming guide output hardening', () => {
       answerMode: 'direct',
       requestedVerbosity: 'normal',
       watchdogModelTimeoutMs: 50_000,
-      modelStageTimeoutMs: 20_000
+      modelStageTimeoutMs: 24_000
     }));
   });
 
@@ -328,7 +328,7 @@ describe('gaming guide output hardening', () => {
             answerMode: 'direct',
             requestedVerbosity: 'normal',
             watchdogModelTimeoutMs: 50_000,
-            modelStageTimeoutMs: 20_000
+            modelStageTimeoutMs: 24_000
           })
         })
       })
@@ -624,7 +624,7 @@ describe('gaming guide output hardening', () => {
       answerMode: 'explained',
       requestedVerbosity: 'normal',
       watchdogModelTimeoutMs: 50_000,
-      modelStageTimeoutMs: 20_000
+      modelStageTimeoutMs: 24_000
     }));
   });
 
@@ -652,7 +652,7 @@ describe('gaming guide output hardening', () => {
     );
     expect(trinityRequest.context.runOptions).toEqual(expect.objectContaining({
       answerMode: 'direct',
-      modelStageTimeoutMs: 20_000
+      modelStageTimeoutMs: 24_000
     }));
   });
 
@@ -1101,7 +1101,7 @@ describe('gaming guide output hardening', () => {
     }));
     expect(trinityRequest.context.runOptions).toEqual(expect.objectContaining({
       watchdogModelTimeoutMs: 85_000,
-      modelStageTimeoutMs: 20_000
+      modelStageTimeoutMs: 24_000
     }));
   });
 
@@ -1132,7 +1132,7 @@ describe('gaming guide output hardening', () => {
     }));
     expect(trinityRequest.context.runOptions).toEqual(expect.objectContaining({
       watchdogModelTimeoutMs: 50_000,
-      modelStageTimeoutMs: 20_000
+      modelStageTimeoutMs: 24_000
     }));
   });
 
