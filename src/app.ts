@@ -13,6 +13,7 @@ import { arcanosMcpService } from '@services/arcanosMcp.js';
 import { runtimeDiagnosticsService } from '@services/runtimeDiagnosticsService.js';
 import { startSelfHealingControlLoop } from '@services/selfImprove/controlLoop.js';
 import { writeMetricsResponse } from '@platform/observability/appMetrics.js';
+import { gamingIngressAudit } from '@transport/http/gamingIngressAudit.js';
 
 const SERVICE_NAME = 'arcanos-backend';
 const SERVICE_VERSION = '1.0.0';
@@ -45,6 +46,7 @@ export function createApp(): Express {
     }
     next();
   });
+  app.post('/gpt/arcanos-gaming', gamingIngressAudit);
 
   app.use(unsafeExecutionGate);
   app.use(createHealthCheckMiddleware());

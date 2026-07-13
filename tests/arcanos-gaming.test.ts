@@ -316,6 +316,151 @@ describe('ArcanosGaming module', () => {
     expect((result as any).data.response).not.toContain('Malformed backend response');
   });
 
+  it('preserves validated frontend evidence retry metadata for the secure guide pipeline', async () => {
+    await ArcanosGaming.actions.query({
+      mode: 'guide',
+      prompt: 'Look up a current beginner guide for Palworld 1.0.',
+      game: 'Palworld',
+      guideUrls: ['https://example.com/palworld-1-0'],
+      evidenceOrigin: 'frontend_web_search',
+      requestedVersion: '1.0',
+      evidenceAttempt: 1
+    } as any);
+
+    expect(runGuidePipelineSpy).toHaveBeenCalledWith({
+      prompt: 'Look up a current beginner guide for Palworld 1.0.',
+      game: 'Palworld',
+      guideUrl: undefined,
+      guideUrls: ['https://example.com/palworld-1-0'],
+      evidenceOrigin: 'frontend_web_search',
+      requestedVersion: '1.0',
+      evidenceAttempt: 1,
+      auditEnabled: false
+    });
+  });
+
+  it('preserves a multiline current request without adding Web Search facts to the backend prompt', () => {
+    const userPrompt = '  Is Frost Mage viable this patch in World of Warcraft?\nPlease separate PvE and PvP.  ';
+    const guideUrls = [
+      'https://worldofwarcraft.blizzard.com/en-us/news',
+      'https://example.com/frost-mage-guide',
+    ];
+    const intent = IntentRouterAgent.classify({
+      mode: 'meta',
+      game: 'World of Warcraft',
+      prompt: userPrompt,
+      guideUrls,
+    } as any);
+
+    const action = BackendQueryAgent.build(intent as any);
+
+    expect(action).toEqual({
+      action: 'query',
+      payload: {
+        mode: 'meta',
+        game: 'World of Warcraft',
+        prompt: 'Is Frost Mage viable this patch in World of Warcraft?\nPlease separate PvE and PvP.',
+        guideUrls,
+      },
+    });
+    expect(action.payload.prompt).not.toMatch(/12\.0\.7|release date|nerf|buff|\d+%|tier ranking/i);
+    expect(action.payload).not.toHaveProperty('url');
+    expect(action.payload).not.toHaveProperty('urls');
+  });
+
+  it('rejects candidateUrls on the mandatory first operation before retrieval', async () => {
+    const result = await ArcanosGaming.actions.query({
+      mode: 'guide',
+      prompt: 'Look up a current beginner guide for Palworld 1.0.',
+      game: 'Palworld',
+      candidateUrls: ['https://example.com/palworld-1-0']
+    } as any);
+
+    expect(result).toEqual({
+      ok: false,
+      route: 'gaming',
+      mode: 'guide',
+      error: {
+        code: 'BAD_REQUEST',
+        message: 'Gaming candidateUrls are accepted only by the evidence retry route.'
+      }
+    });
+    expect(runGuidePipelineSpy).not.toHaveBeenCalled();
+  });
+
+  it('enforces the four-URL cap across single and list fields without provenance metadata', async () => {
+    const result = await ArcanosGaming.actions.query({
+      mode: 'guide',
+      prompt: 'Look up a current beginner guide for Palworld 1.0.',
+      game: 'Palworld',
+      url: 'https://example.com/one',
+      guideUrls: [
+        'https://example.com/two',
+        'https://example.com/three',
+        'https://example.com/four',
+        'https://example.com/five'
+      ]
+    } as any);
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      route: 'gaming',
+      error: expect.objectContaining({ code: 'BAD_REQUEST' })
+    }));
+    expect(runGuidePipelineSpy).not.toHaveBeenCalled();
+  });
+
+  it('deduplicates candidate values across initial URL fields before enforcing the cap', async () => {
+    const result = await ArcanosGaming.actions.query({
+      mode: 'guide',
+      prompt: 'Look up a current beginner guide for Palworld 1.0.',
+      game: 'Palworld',
+      url: 'https://example.com/one',
+      guideUrls: [
+        'https://example.com/one',
+        'https://example.com/two',
+        'https://example.com/three',
+        'https://example.com/four'
+      ]
+    } as any);
+
+    expect(result).toEqual(expect.objectContaining({ ok: true, route: 'gaming' }));
+    expect(runGuidePipelineSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['database URI', ['postgresql', '://demo:demo@example.invalid/db'].join('')],
+    ['Unicode-normalized database URI', 'ｐｏｓｔｇｒｅｓｑｌ：／／demo:demo@example.invalid/db'],
+    ['Railway-shaped token', ['railway', '_', 'x'.repeat(16)].join('')],
+    ['GitHub-shaped token', ['gh', 'p_', 'x'.repeat(20)].join('')]
+  ])('rejects a secret-shaped game field without echoing it: %s', async (_caseName, game) => {
+    const result = await ArcanosGaming.actions.query({
+      mode: 'guide',
+      prompt: 'Look up a current beginner guide.',
+      game
+    } as any);
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: false,
+      route: 'gaming',
+      error: expect.objectContaining({ code: 'BAD_REQUEST' })
+    }));
+    expect(JSON.stringify(result)).not.toContain(game);
+    expect(runGuidePipelineSpy).not.toHaveBeenCalled();
+  });
+
+  it('preserves legitimate game names containing the word Railway', async () => {
+    await ArcanosGaming.actions.query({
+      mode: 'guide',
+      prompt: 'Look up a current beginner guide for Railway Empire.',
+      game: 'Railway Empire'
+    } as any);
+
+    expect(runGuidePipelineSpy).toHaveBeenCalledWith(expect.objectContaining({
+      game: 'Railway Empire'
+    }));
+  });
+
   it('contains final response-composer failures in a fixed-safe Gaming envelope', async () => {
     const composeSpy = jest.spyOn(ResponseComposerAgent, 'compose').mockImplementationOnce(() => {
       throw new Error('secret response-postprocessing detail');

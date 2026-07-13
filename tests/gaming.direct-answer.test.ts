@@ -738,7 +738,91 @@ describe('gaming guide output hardening', () => {
     expect(result.data.discoveryFailureReason).toBe('DISCOVERY_PROVIDER_UNCONFIGURED');
     expect(result.data.sources).toEqual([]);
     expect(result.data.response).toContain('Sources unavailable');
+    expect(result.data.evidenceRequest).toEqual({
+      required: true,
+      reason: 'CURRENT_VERSION_EVIDENCE_REQUIRED',
+      game,
+      version: '1.0',
+      maxCandidateUrls: 4,
+      queries: [expect.any(String)]
+    });
+    expect(result.data.evidenceRequest?.queries[0]).toContain(game.includes(' ') ? `"${game}"` : game);
+    expect(result.data.evidenceRequest?.queries[0]).not.toContain(prompt);
     expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
+  });
+
+  it('terminates a zero-candidate frontend evidence retry without requesting another search', async () => {
+    const result = await runGuidePipeline({
+      game: 'Palworld',
+      prompt: 'Look up a current beginner guide for Palworld 1.0.',
+      guideUrls: [],
+      evidenceOrigin: 'frontend_web_search',
+      requestedVersion: '1.0',
+      evidenceAttempt: 1,
+      auditEnabled: false
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.data.fallbackReason).toBe('CURRENT_EVIDENCE_UNAVAILABLE');
+    expect(result.data.sources).toEqual([]);
+    expect(result.data).not.toHaveProperty('evidenceRequest');
+    expect(mockRunTrinityWritingPipeline).not.toHaveBeenCalled();
+  });
+
+  it('contains a blocked frontend candidate as a terminal safe source error', async () => {
+    mockGetEnvBoolean.mockImplementation((key: string, defaultValue: boolean) =>
+      key === 'ARCANOS_GAMING_RAG_ENABLED' ? true : defaultValue
+    );
+    mockFetchAndClean.mockRejectedValue(Object.assign(new Error('raw upstream forbidden body'), { status: 403 }));
+
+    const result = await runGuidePipeline({
+      game: 'Palworld',
+      prompt: 'Look up a current beginner guide for Palworld 1.0.',
+      guideUrls: ['https://example.com/blocked'],
+      evidenceOrigin: 'frontend_web_search',
+      requestedVersion: '1.0',
+      evidenceAttempt: 1,
+      auditEnabled: false
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.data.fallbackReason).toBe('CURRENT_EVIDENCE_UNAVAILABLE');
+    expect(result.data.sources).toEqual([{
+      url: 'https://example.com/blocked',
+      error: 'Source access was blocked.'
+    }]);
+    expect(result.data).not.toHaveProperty('evidenceRequest');
+    expect(JSON.stringify(result)).not.toContain('raw upstream forbidden body');
+  });
+
+  it('does not request frontend evidence for a stable guide request', async () => {
+    const result = await runGuidePipeline({
+      game: 'Elden Ring',
+      prompt: 'Give me a concise beginner progression guide.',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(result.data).not.toHaveProperty('evidenceRequest');
+  });
+
+  it('requests bounded frontend discovery for an explicitly newly released unknown game', async () => {
+    const result = await runGuidePipeline({
+      game: 'Moonring',
+      prompt: 'Give me a beginner guide for the newly released Moonring game.',
+      guideUrls: [],
+      auditEnabled: false
+    });
+
+    expect(result.data.fallbackReason).toBe('CURRENT_EVIDENCE_UNAVAILABLE');
+    expect(result.data.evidenceRequest).toEqual({
+      required: true,
+      reason: 'CURRENT_VERSION_EVIDENCE_REQUIRED',
+      game: 'Moonring',
+      maxCandidateUrls: 4,
+      queries: [expect.stringContaining('Moonring')]
+    });
+    expect(result.data.evidenceRequest?.queries[0].length).toBeLessThanOrEqual(180);
   });
 
   it('marks the deterministic no-client path with bounded fallback metadata', async () => {
@@ -1004,7 +1088,7 @@ describe('gaming guide output hardening', () => {
     expectInlineSourceRefsToMap(result.data.response, result.data.sources.length);
   });
 
-  it('filters blank, invalid, and non-http guide URLs before fetching', async () => {
+  it('filters blank, invalid, and non-HTTPS guide URLs before fetching', async () => {
     const result = await runGuidePipeline({
       prompt: 'Use the linked guides for a direct boss strategy.',
       guideUrl: 'not-a-url',
@@ -1018,16 +1102,15 @@ describe('gaming guide output hardening', () => {
       auditEnabled: false
     });
 
-    expect(mockFetchAndClean).toHaveBeenCalledTimes(2);
+    expect(mockFetchAndClean).toHaveBeenCalledTimes(1);
     expect(mockFetchAndClean).toHaveBeenNthCalledWith(1, 'https://example.com/guide-a', 512, expectFetchOptions());
-    expect(mockFetchAndClean).toHaveBeenNthCalledWith(2, 'http://example.com/guide-b', 512, expectFetchOptions());
     expect(result.data.sources).toEqual([
       { url: 'https://example.com/guide-a', snippet: DEFAULT_GUIDE_SNIPPET },
-      { url: 'http://example.com/guide-b', snippet: DEFAULT_GUIDE_SNIPPET }
+      { url: 'invalid-source', error: 'Source URL was rejected by evidence policy.' }
     ]);
     const trinityRequest = mockRunTrinityWritingPipeline.mock.calls[0][0] as { input: { prompt: string } };
     expect(trinityRequest.input.prompt).toContain('[Source 1] https://example.com/guide-a');
-    expect(trinityRequest.input.prompt).toContain('[Source 2] http://example.com/guide-b');
+    expect(trinityRequest.input.prompt).not.toContain('http://example.com/guide-b');
     expect(trinityRequest.input.prompt).not.toContain('not-a-url');
     expect(trinityRequest.input.prompt).not.toContain('ftp://example.com/guide');
   });
@@ -1068,7 +1151,7 @@ describe('gaming guide output hardening', () => {
     );
   });
 
-  it('redacts guide URL credentials from returned sources and prompt context', async () => {
+  it('rejects guide URL credentials before fetch or prompt construction', async () => {
     const result = await runGuidePipeline({
       prompt: 'Use the linked guide for a direct boss strategy.',
       guideUrl: 'https://user:pass@example.com/guide',
@@ -1077,13 +1160,13 @@ describe('gaming guide output hardening', () => {
     });
 
     expect(result.data.sources).toEqual([
-      { url: 'https://example.com/guide', snippet: DEFAULT_GUIDE_SNIPPET }
+      { url: 'invalid-source', error: 'Source URL was rejected by evidence policy.' }
     ]);
-    expect(mockFetchAndClean).toHaveBeenCalledWith('https://example.com/guide', 512, expectFetchOptions());
+    expect(mockFetchAndClean).not.toHaveBeenCalled();
     expect(mockRunTrinityWritingPipeline).toHaveBeenCalledWith(
       expect.objectContaining({
         input: expect.objectContaining({
-          prompt: expect.stringContaining('[Source 1] https://example.com/guide')
+          prompt: expect.not.stringContaining('https://example.com/guide')
         })
       })
     );
@@ -1388,11 +1471,11 @@ describe('gaming guide output hardening', () => {
     const urls = Array.from({ length: 102 }, (_value, index) => `https://example.com/cache-${index}`);
     mockFetchAndClean.mockResolvedValue('Cache guide text about boss route and safe positioning.');
 
-    for (let index = 0; index < urls.length; index += 32) {
+    for (let index = 0; index < urls.length; index += 1) {
       await buildGamingRagContext({
         mode: 'guide',
         prompt: 'Use the supplied cache guides.',
-        guideUrls: urls.slice(index, index + 32)
+        guideUrls: [urls[index]!]
       });
     }
     const firstFetchCount = mockFetchAndClean.mock.calls.length;
@@ -1400,7 +1483,7 @@ describe('gaming guide output hardening', () => {
     await buildGamingRagContext({
       mode: 'guide',
       prompt: 'Use the supplied cache guides.',
-      guideUrls: urls.slice(0, 32)
+      guideUrls: urls.slice(0, 2)
     });
 
     expect(firstFetchCount).toBe(102);
@@ -1422,7 +1505,7 @@ describe('gaming guide output hardening', () => {
       expect(warnSpy).toHaveBeenCalledWith(
         'gaming.config.curated_sources.parse_failed',
         expect.objectContaining({
-          error: expect.any(String)
+          errorCode: 'CURATED_SOURCES_PARSE_FAILED'
         })
       );
       expect(JSON.stringify(warnSpy.mock.calls)).not.toContain('sk-test-secret');

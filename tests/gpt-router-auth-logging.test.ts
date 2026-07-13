@@ -660,6 +660,149 @@ describe('gpt router auth logging', () => {
     });
   });
 
+  it('adapts the fixed Gaming evidence retry route into one secure query dispatch', async () => {
+    mockRouteGptRequest.mockResolvedValue({
+      ok: true,
+      result: {
+        ok: true,
+        route: 'gaming',
+        mode: 'guide',
+        data: {
+          response: 'Validated current guidance',
+          sources: [{ url: 'https://example.com/palworld-1-0', snippet: 'Palworld 1.0 beginner route evidence.' }]
+        }
+      },
+      _route: {
+        gptId: 'arcanos-gaming',
+        module: 'ARCANOS:GAMING',
+        action: 'query',
+        route: 'gaming',
+        availableActions: ['query']
+      }
+    });
+    const app = express();
+    app.use(express.json());
+    app.use(requestContext);
+    app.use('/gpt', gptRouter);
+
+    const originalPrompt = 'Use this Palworld 1.0 guide and summarize its beginner recommendations:\nhttps://medium.com/worth-playing-pc/the-ultimate-palworld-1-0-guide-why-your-old-strategy-wont-cut-it-c90d8460c96b';
+    const candidateUrls = [
+      'https://example.com/palworld-1-0',
+      'https://example.org/palworld-1-0',
+      'https://example.net/palworld-1-0',
+      'https://example.edu/palworld-1-0'
+    ];
+    const response = await request(app)
+      .post('/gpt/arcanos-gaming/evidence-retry')
+      .send({
+        game: 'Palworld',
+        mode: 'guide',
+        originalPrompt,
+        candidateUrls,
+        requestedVersion: 'version 1.0',
+        evidenceAttempt: 1
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.type).toBe('application/json');
+    expect(response.body).toMatchObject({
+      requestId: response.headers['x-request-id'],
+      traceId: response.headers['x-trace-id'],
+      result: { ok: true, route: 'gaming', mode: 'guide' }
+    });
+    expect(mockRouteGptRequest).toHaveBeenCalledTimes(1);
+    expect((mockRouteGptRequest.mock.calls[0]?.[0] as { body?: unknown }).body).toEqual({
+      action: 'query',
+      payload: {
+        mode: 'guide',
+        game: 'Palworld',
+        prompt: originalPrompt,
+        guideUrls: candidateUrls,
+        evidenceOrigin: 'frontend_web_search',
+        evidenceAttempt: 1,
+        requestedVersion: '1.0'
+      },
+      prompt: originalPrompt
+    });
+  });
+
+  it.each([
+    ['second retry attempt', {
+      game: 'Palworld', mode: 'guide', originalPrompt: 'Palworld 1.0 guide', candidateUrls: [], evidenceAttempt: 2
+    }, 'EVIDENCE_RETRY_LIMIT_REACHED'],
+    ['search-result snippet field', {
+      game: 'Palworld', mode: 'guide', originalPrompt: 'Palworld 1.0 guide', candidateUrls: [], evidenceAttempt: 1,
+      snippets: ['untrusted search text']
+    }, 'BAD_REQUEST'],
+    ['generic requested version', {
+      game: 'Palworld', mode: 'guide', originalPrompt: 'Palworld guide', candidateUrls: [], requestedVersion: 'guide', evidenceAttempt: 1
+    }, 'BAD_REQUEST'],
+    ['candidate URL with a newline', {
+      game: 'Palworld', mode: 'guide', originalPrompt: 'Palworld guide', candidateUrls: ['https://example.com/palworld\n1-0'], evidenceAttempt: 1
+    }, 'BAD_REQUEST']
+  ])('rejects invalid Gaming evidence retry input: %s', async (_caseName, body, code) => {
+    const app = express();
+    app.use(express.json());
+    app.use(requestContext);
+    app.use('/gpt', gptRouter);
+
+    const response = await request(app)
+      .post('/gpt/arcanos-gaming/evidence-retry')
+      .send(body);
+
+    expect(response.status).toBe(400);
+    expect(response.type).toBe('application/json');
+    expect(response.body).toMatchObject({
+      ok: false,
+      requestId: response.headers['x-request-id'],
+      traceId: response.headers['x-trace-id'],
+      error: { code }
+    });
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('accepts a zero-candidate terminal evidence retry without emitting a new evidence request', async () => {
+    mockRouteGptRequest.mockResolvedValue({
+      ok: true,
+      result: {
+        ok: true,
+        route: 'gaming',
+        mode: 'guide',
+        data: {
+          response: 'Current evidence remained unavailable.',
+          sources: [],
+          fallbackReason: 'CURRENT_EVIDENCE_UNAVAILABLE'
+        }
+      },
+      _route: {
+        gptId: 'arcanos-gaming',
+        module: 'ARCANOS:GAMING',
+        action: 'query',
+        route: 'gaming',
+        availableActions: ['query']
+      }
+    });
+    const app = express();
+    app.use(express.json());
+    app.use(requestContext);
+    app.use('/gpt', gptRouter);
+
+    const response = await request(app)
+      .post('/gpt/arcanos-gaming/evidence-retry')
+      .send({
+        game: 'Palworld',
+        mode: 'guide',
+        originalPrompt: 'Look up a current beginner guide for Palworld 1.0.',
+        candidateUrls: [],
+        requestedVersion: '1.0',
+        evidenceAttempt: 1
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.result.data).not.toHaveProperty('evidenceRequest');
+    expect((mockRouteGptRequest.mock.calls[0]?.[0] as { body?: { payload?: { guideUrls?: unknown } } }).body?.payload?.guideUrls).toEqual([]);
+  });
+
   it('lets Gaming use its deterministic provider fallback when the OpenAI key is unavailable', async () => {
     process.env.NODE_ENV = 'production';
     process.env.OPENAI_API_KEY = '';
@@ -705,6 +848,63 @@ describe('gpt router auth logging', () => {
       mode: 'guide'
     });
     expect(mockRouteGptRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves a bounded Gaming evidenceRequest through the public response guard', async () => {
+    mockRouteGptRequest.mockResolvedValue({
+      ok: true,
+      result: {
+        ok: true,
+        route: 'gaming',
+        mode: 'guide',
+        data: {
+          response: 'Current evidence is required.',
+          sources: [],
+          fallbackReason: 'CURRENT_EVIDENCE_UNAVAILABLE',
+          discoveryReason: 'DISCOVERY_DISABLED',
+          evidenceRequest: {
+            required: true,
+            reason: 'CURRENT_VERSION_EVIDENCE_REQUIRED',
+            game: 'Palworld',
+            version: '1.0',
+            maxCandidateUrls: 4,
+            queries: ['"Palworld" version 1.0 latest patch']
+          }
+        }
+      },
+      _route: {
+        gptId: 'arcanos-gaming',
+        module: 'ARCANOS:GAMING',
+        action: 'query',
+        route: 'gaming',
+        availableActions: ['query']
+      }
+    });
+    const app = express();
+    app.use(express.json());
+    app.use(requestContext);
+    app.use('/gpt', gptRouter);
+
+    const response = await request(app)
+      .post('/gpt/arcanos-gaming')
+      .send({
+        action: 'query',
+        payload: {
+          mode: 'guide',
+          game: 'Palworld',
+          prompt: 'Look up a current beginner guide for Palworld 1.0.'
+        }
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.result.data.evidenceRequest).toEqual({
+      required: true,
+      reason: 'CURRENT_VERSION_EVIDENCE_REQUIRED',
+      game: 'Palworld',
+      version: '1.0',
+      maxCandidateUrls: 4,
+      queries: ['"Palworld" version 1.0 latest patch']
+    });
   });
 
   it.each([

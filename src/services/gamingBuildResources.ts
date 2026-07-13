@@ -133,7 +133,8 @@ function safeString(value: unknown, maxChars: number = LIMITS.maxStringLength): 
     return undefined;
   }
   const normalized = value
-    .replace(/[\u0000-\u001f\u007f]/gu, " ")
+    .normalize("NFKC")
+    .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/gu, " ")
     .replace(/https?:\/\/\S+/giu, "[link omitted]")
     .replace(/\s+/gu, " ")
     .trim()

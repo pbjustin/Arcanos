@@ -35,6 +35,9 @@ export type GamingIntent = {
   url?: string;
   urls?: string[];
   guideUrls?: string[];
+  evidenceOrigin?: string;
+  requestedVersion?: string;
+  evidenceAttempt?: unknown;
   audit?: boolean;
   hrc?: boolean;
   securityBlocked?: {
@@ -60,6 +63,9 @@ export type GamingBackendActionPayload = {
   url?: string;
   urls?: string[];
   guideUrls?: string[];
+  evidenceOrigin?: string;
+  requestedVersion?: string;
+  evidenceAttempt?: unknown;
   audit?: boolean;
   hrc?: boolean;
 };
@@ -343,7 +349,9 @@ function extractPlatform(payload: unknown, prompt: string): string | undefined {
 }
 
 function extractVersion(payload: unknown, prompt: string, game?: string): string | undefined {
-  const explicit = getStringField(payload, "version") ?? getStringField(payload, "patch");
+  const explicit = getStringField(payload, "requestedVersion")
+    ?? getStringField(payload, "version")
+    ?? getStringField(payload, "patch");
   if (explicit) {
     return explicit;
   }
@@ -590,6 +598,9 @@ export const IntentRouterAgent = {
     const url = getRawStringField(payload, "url") ?? getRawStringField(payload, "guideUrl");
     const urls = rawStringList(isRecord(payload) ? payload.urls : undefined);
     const guideUrls = rawStringList(isRecord(payload) ? payload.guideUrls : undefined);
+    const evidenceOrigin = getStringField(payload, "evidenceOrigin");
+    const requestedVersion = getStringField(payload, "requestedVersion");
+    const evidenceAttempt = isRecord(payload) ? payload.evidenceAttempt : undefined;
     const audit = getBooleanField(payload, "audit") ?? getBooleanField(payload, "enableAudit");
     const hrc = getBooleanField(payload, "hrc") ?? getBooleanField(payload, "enableHrc");
     const rawGame = getStringField(payload, "game");
@@ -625,6 +636,9 @@ export const IntentRouterAgent = {
       ...(url ? { url } : {}),
       ...(urls.length > 0 ? { urls } : {}),
       ...(guideUrls.length > 0 ? { guideUrls } : {}),
+      ...(evidenceOrigin ? { evidenceOrigin } : {}),
+      ...(requestedVersion ? { requestedVersion } : {}),
+      ...(evidenceAttempt !== undefined ? { evidenceAttempt } : {}),
       ...(audit === true ? { audit: true } : {}),
       ...(hrc === true ? { hrc: true } : {}),
       ...(securityBlocked ? { securityBlocked } : {}),
@@ -673,6 +687,15 @@ export const BackendQueryAgent = {
     }
     if (intent.guideUrls && intent.guideUrls.length > 0) {
       payload.guideUrls = intent.guideUrls;
+    }
+    if (intent.evidenceOrigin) {
+      payload.evidenceOrigin = intent.evidenceOrigin;
+    }
+    if (intent.requestedVersion) {
+      payload.requestedVersion = intent.requestedVersion;
+    }
+    if (intent.evidenceAttempt !== undefined) {
+      payload.evidenceAttempt = intent.evidenceAttempt;
     }
     if (intent.audit === true) {
       payload.audit = true;

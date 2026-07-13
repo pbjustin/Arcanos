@@ -87,6 +87,80 @@ describe('unsafeExecutionGate', () => {
     expect(response.body.ok).toBe(true);
   });
 
+  it('contains a valid Gaming evidence retry as a correlated HTTP 200 JSON envelope while unsafe', async () => {
+    const app = createUnsafeApp();
+    activateIntegrityUnsafeConditionForTest();
+
+    const response = await request(app)
+      .post('/gpt/arcanos-gaming/evidence-retry')
+      .send({
+        game: 'Palworld',
+        mode: 'guide',
+        originalPrompt: 'Look up a current beginner guide for Palworld 1.0.',
+        candidateUrls: [],
+        requestedVersion: '1.0',
+        evidenceAttempt: 1
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.type).toBe('application/json');
+    expect(response.body).toMatchObject({
+      ok: true,
+      requestId: expect.any(String),
+      traceId: expect.any(String),
+      result: {
+        ok: false,
+        route: 'gaming',
+        mode: 'guide',
+        error: { code: 'UNSAFE_TO_PROCEED' }
+      },
+      _route: {
+        requestId: expect.any(String),
+        traceId: expect.any(String),
+        gptId: 'arcanos-gaming',
+        route: 'gaming'
+      }
+    });
+  });
+
+  it('returns bounded JSON 400 for an invalid Gaming evidence retry while unsafe', async () => {
+    const app = createUnsafeApp();
+    activateIntegrityUnsafeConditionForTest();
+
+    const response = await request(app)
+      .post('/gpt/arcanos-gaming/evidence-retry')
+      .send({
+        game: 'Palworld',
+        mode: 'guide',
+        originalPrompt: 'Palworld guide',
+        candidateUrls: [],
+        evidenceAttempt: 2
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.type).toBe('application/json');
+    expect(response.body).toMatchObject({
+      ok: false,
+      requestId: expect.any(String),
+      traceId: expect.any(String),
+      error: { code: 'EVIDENCE_RETRY_LIMIT_REACHED' }
+    });
+  });
+
+  it.each([
+    '/gpt/arcanos-gaming/evidence-retry/extra',
+    '/gpt/arcanos-gaming/unrelated'
+  ])('does not broaden Gaming unsafe semantics to nested path %s', async (path) => {
+    const app = createUnsafeApp();
+    activateIntegrityUnsafeConditionForTest();
+
+    const response = await request(app).post(path).send({ action: 'query' });
+
+    expect(response.status).toBe(503);
+    expect(response.body.error).toBe('UNSAFE_TO_PROCEED');
+    expect(response.body).not.toHaveProperty('result.route', 'gaming');
+  });
+
   it('restores mutating access after operator-confirmed quarantine release', async () => {
     const app = createUnsafeApp();
     const quarantineId = activateIntegrityUnsafeConditionForTest();

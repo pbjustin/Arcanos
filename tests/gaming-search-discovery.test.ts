@@ -24,7 +24,8 @@ jest.unstable_mockModule('@platform/runtime/env.js', () => ({
 const {
   buildGamingDiscoveryQuery,
   clearGamingDiscoveryCache,
-  discoverGamingSources
+  discoverGamingSources,
+  sanitizeGamingDiscoveryCandidateUrl
 } = await import('../src/services/gamingSourceDiscovery.js');
 
 const DISCOVERY_ENV_KEYS = [
@@ -111,6 +112,24 @@ describe('gaming open-web source discovery', () => {
 
   afterEach(() => {
     jest.restoreAllMocks();
+  });
+
+  it('rejects secret-shaped candidate URL values before fetch while preserving ordinary game slugs', () => {
+    expect(sanitizeGamingDiscoveryCandidateUrl(
+      'https://example.com/guide?id=postgresql%3A%2F%2Fdemo%3Ademo%40example.invalid%2Fdb'
+    ).rejected).toBe(true);
+    expect(sanitizeGamingDiscoveryCandidateUrl(
+      'https://example.com/guide?id=railway_abcdefghijklmnop'
+    ).rejected).toBe(true);
+    expect(sanitizeGamingDiscoveryCandidateUrl(
+      'https://example.com/ghp_abcdefghijklmnopqrst'
+    ).rejected).toBe(true);
+    expect(sanitizeGamingDiscoveryCandidateUrl(
+      'https://example.com/guides/railway-empire-beginner-guide'
+    )).toEqual({
+      url: 'https://example.com/guides/railway-empire-beginner-guide',
+      rejected: false
+    });
   });
 
   it('constructs a short deterministic query without prompt instructions, URLs, or private contact text', () => {

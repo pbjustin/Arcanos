@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { isIP } from "node:net";
 import { logger } from "@platform/logging/structuredLogging.js";
 import { getEnv } from "@platform/runtime/env.js";
+import { redactString } from "@shared/redaction.js";
 import {
   getGamingDiscoveryBudgetMs,
   getGamingDiscoveryCacheMaxEntries,
@@ -126,6 +127,8 @@ const SENSITIVE_VALUE_PATTERN = /^(?:sk-|gh[opusr]_|eyj[a-z0-9_-]*\.|bearer\s+)/
 const FILE_DOWNLOAD_PATTERN = /\.(?:7z|avi|bin|dmg|docx?|exe|gz|iso|mov|mp3|mp4|msi|pdf|pkg|rar|tar|wav|webm|xlsx?|zip)$/i;
 const ACCOUNT_PATH_PATTERN = /\/(?:account|accounts|auth|login|log-in|register|registration|sign-in|signin|signup)(?:\/|$)/i;
 const SEARCH_PATH_PATTERN = /\/(?:search|search-results|results)(?:\/|$)/i;
+const SEARCH_QUERY_PARAM_PATTERN = /^(?:keyword|q|query|search|search_query)$/i;
+const RAW_URL_CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f-\u009f]/u;
 const CONTENT_FARM_DOMAIN_PATTERN = /(?:^|[.-])(?:clickbait|content-?farm|scraper|seo-?spam|spam)(?:[.-]|$)/i;
 const SOURCE_INSTRUCTION_PATTERN = /(?:\b(?:(?:ignore|disregard|override)\s+(?:all\s+)?(?:previous|prior|system|developer|assistant|user)\s+(?:instructions?|messages?|prompts?)|forget\s+(?:everything|all)(?:\s+(?:written|said))?\s+(?:above|before)|you\s+are\s+now|(?:reveal|print|show|expose)\s+(?:the\s+)?(?:system|developer)\s+(?:prompt|message|instructions?)|(?:call|invoke)\s+(?:the\s+)?(?:tool|function)|(?:execute|run)\s+(?:this\s+)?(?:command|shell|powershell|bash))\b|(?:^|\s|\[|<\|)(?:system|developer|assistant|user)(?:\s*:|\]|\|>))/i;
 const LOW_SIGNAL_DOMAINS = [
@@ -150,6 +153,13 @@ const URL_SHORTENER_DOMAINS = [
   "tinyurl.com",
   "t.co"
 ];
+const SEARCH_ENGINE_DOMAINS = [
+  "bing.com",
+  "duckduckgo.com",
+  "google.com",
+  "search.brave.com",
+  "search.yahoo.com"
+];
 const QUERY_STOP_WORDS = new Set([
   "about", "access", "and", "api", "are", "auth", "bearer", "best", "can", "cookie", "could", "credential", "find", "for", "from", "game", "give", "help",
   "how", "into", "look", "looking", "me", "need", "please", "show", "that", "the", "this", "through",
@@ -171,9 +181,13 @@ function tokenize(value: string): string[] {
 
 function stripUntrustedInstructions(value: string): string {
   return value
-    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .normalize("NFKC")
+    .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/g, " ")
     .replace(/\bBearer\s+[A-Za-z0-9._~+/-]+=*/gi, " ")
     .replace(/\bsk-[A-Za-z0-9_-]{8,}\b/gi, " ")
+    .replace(/\bgh[opusr]_[A-Za-z0-9]{12,}\b/gi, " ")
+    .replace(/\b(?:railway|rwy)[_-]?[A-Za-z0-9]{16,}\b/gi, " ")
+    .replace(/\b(?:postgres|postgresql|mysql|mongodb|redis):\/\/[^\s]+/gi, " ")
     .replace(/\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}(?:\.[A-Za-z0-9_-]{6,})?\b/g, " ")
     .replace(/\b(?:access[_-]?token|api[_-]?key|auth[_-]?token|cookie|credential|password|secret|session[_-]?id|token)\s*[:=]\s*[^\s,;]+/gi, " ")
     .split(/(?<=[.!?])\s+|[\r\n]+/)
@@ -268,8 +282,12 @@ function isInternalHost(hostname: string): boolean {
   return false;
 }
 
-function sanitizeCandidateUrl(rawUrl: string): { url?: string; rejected: boolean } {
-  if (rawUrl.length === 0 || rawUrl.length > MAX_SEARCH_RESULT_URL_CHARS) {
+export function sanitizeGamingDiscoveryCandidateUrl(rawUrl: string): { url?: string; rejected: boolean } {
+  if (
+    rawUrl.length === 0
+    || rawUrl.length > MAX_SEARCH_RESULT_URL_CHARS
+    || RAW_URL_CONTROL_CHARACTER_PATTERN.test(rawUrl)
+  ) {
     return { rejected: true };
   }
   try {
@@ -283,6 +301,7 @@ function sanitizeCandidateUrl(rawUrl: string): { url?: string; rejected: boolean
     }
     if (LOW_SIGNAL_DOMAINS.some((candidate) => domainMatches(domain, candidate))
       || URL_SHORTENER_DOMAINS.some((candidate) => domainMatches(domain, candidate))
+      || SEARCH_ENGINE_DOMAINS.some((candidate) => domainMatches(domain, candidate))
       || CONTENT_FARM_DOMAIN_PATTERN.test(domain)) {
       return { rejected: true };
     }
@@ -296,10 +315,31 @@ function sanitizeCandidateUrl(rawUrl: string): { url?: string; rejected: boolean
       || FILE_DOWNLOAD_PATTERN.test(parsed.pathname)) {
       return { rejected: true };
     }
+    for (const segment of parsed.pathname.split("/").filter(Boolean)) {
+      let decodedSegment: string;
+      try {
+        decodedSegment = decodeURIComponent(segment);
+      } catch {
+        return { rejected: true };
+      }
+      if (
+        SENSITIVE_VALUE_PATTERN.test(decodedSegment)
+        || redactString(decodedSegment) === "[REDACTED]"
+      ) {
+        return { rejected: true };
+      }
+    }
+    if (Array.from(parsed.searchParams.keys()).some((key) => SEARCH_QUERY_PARAM_PATTERN.test(key))) {
+      return { rejected: true };
+    }
 
     let trackingParamCount = 0;
     for (const [key, value] of Array.from(parsed.searchParams.entries())) {
-      if (SENSITIVE_PARAM_PATTERN.test(key) || SENSITIVE_VALUE_PATTERN.test(value)) {
+      if (
+        SENSITIVE_PARAM_PATTERN.test(key)
+        || SENSITIVE_VALUE_PATTERN.test(value)
+        || redactString(value) === "[REDACTED]"
+      ) {
         return { rejected: true };
       }
       if (TRACKING_PARAM_PATTERN.test(key)) {
@@ -771,7 +811,7 @@ export async function discoverGamingSources(input: GamingDiscoveryInput): Promis
   const deduped = new Map<string, GamingSearchResult>();
   let rejectedCandidateCount = 0;
   for (const result of searchResults) {
-    const normalizedUrl = sanitizeCandidateUrl(result.url);
+    const normalizedUrl = sanitizeGamingDiscoveryCandidateUrl(result.url);
     if (normalizedUrl.rejected || !normalizedUrl.url) {
       rejectedCandidateCount += 1;
       continue;

@@ -109,7 +109,7 @@ describe('Gaming RAG real local fetch integration', () => {
 
     expect(result.sources).toEqual([{
       url: `${baseUrl}/wrong-game`,
-      snippet: 'Relevant source retrieved, but readable article text was limited.',
+      error: 'Source did not match the requested game or version.',
     }]);
     expect(result.sources.some(isCitableGamingWebSource)).toBe(false);
     expect(result.context).not.toContain('Stormveil Castle');
@@ -126,7 +126,7 @@ describe('Gaming RAG real local fetch integration', () => {
 
     expect(result.sources).toEqual([{
       url: `${baseUrl}/wrong-game-with-requested-mention`,
-      snippet: 'Relevant source retrieved, but readable article text was limited.',
+      error: 'Source did not match the requested game or version.',
     }]);
     expect(result.sources.some(isCitableGamingWebSource)).toBe(false);
     expect(result.context).not.toContain('Stormveil Castle');
@@ -144,7 +144,7 @@ describe('Gaming RAG real local fetch integration', () => {
     const suppliedSource = result.sources.find((source) => source.url === `${baseUrl}/sequel-game`);
     expect(suppliedSource).toEqual({
       url: `${baseUrl}/sequel-game`,
-      snippet: 'Relevant source retrieved, but readable article text was limited.',
+      error: 'Source did not match the requested game or version.',
     });
     expect(isCitableGamingWebSource(suppliedSource!)).toBe(false);
     expect(result.context).not.toContain('new campaign systems');
@@ -162,7 +162,7 @@ describe('Gaming RAG real local fetch integration', () => {
     const suppliedSource = result.sources.find((source) => source.url === `${baseUrl}/sibling-game`);
     expect(suppliedSource).toEqual({
       url: `${baseUrl}/sibling-game`,
-      snippet: 'Relevant source retrieved, but readable article text was limited.',
+      error: 'Source did not match the requested game or version.',
     });
     expect(isCitableGamingWebSource(suppliedSource!)).toBe(false);
     expect(result.context).not.toContain('Nightlord encounter');

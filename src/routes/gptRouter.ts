@@ -94,7 +94,12 @@ import { extractLastUserMessageText } from '@shared/gpt/messageContentText.js';
 import { resolveRequestedGptActionFromRequest } from '@shared/gpt/gptRequestAction.js';
 import { executeDirectGptAction, executeFastGptPrompt } from '@services/gptFastPath.js';
 import { DEFAULT_GAMING_MODULE_TIMEOUT_MS } from '@services/gamingConfig.js';
-import { formatGamingError, resolveGamingMode, validatePublicGamingQueryRequest } from '@services/gamingModes.js';
+import {
+  formatGamingError,
+  resolveGamingMode,
+  validateGamingEvidenceRetryRequest,
+  validatePublicGamingQueryRequest
+} from '@services/gamingModes.js';
 import { getConfig } from '@platform/runtime/unifiedConfig.js';
 import { handleGptDagBridge } from '@services/gptDagBridge.js';
 import {
@@ -1253,6 +1258,56 @@ function applyGptQueueBypassedHeader(
 ): void {
   res.setHeader('x-gpt-queue-bypassed', queueBypassed ? 'true' : 'false');
 }
+
+router.post('/arcanos-gaming/evidence-retry', (req, res, next) => {
+  const validation = validateGamingEvidenceRetryRequest(req.body);
+  if (!validation.ok) {
+    const requestId = req.requestId;
+    const traceId = resolveDispatcherTraceId(req, requestId);
+    applyCanonicalGptRouteHeaders(res, 'arcanos-gaming');
+    const errorPayload = buildGptDispatcherErrorPayload({
+      requestId,
+      traceId,
+      gptId: 'arcanos-gaming',
+      action: 'query',
+      code: validation.code,
+      message: validation.message,
+      route: 'gaming_evidence_retry_validation'
+    });
+    logGptDispatcherOutcome({
+      req,
+      traceId,
+      gptId: 'arcanos-gaming',
+      action: 'query',
+      status: 400,
+      error: { name: validation.code, message: validation.message }
+    });
+    return sendGuardedGptJsonResponse(
+      req,
+      res,
+      errorPayload,
+      'gpt.response.gaming_evidence_retry_validation',
+      400
+    );
+  }
+
+  req.body = {
+    action: 'query',
+    payload: {
+      mode: validation.value.mode,
+      game: validation.value.game,
+      prompt: validation.value.originalPrompt,
+      guideUrls: validation.value.candidateUrls,
+      evidenceOrigin: 'frontend_web_search',
+      evidenceAttempt: 1,
+      ...(validation.value.requestedVersion
+        ? { requestedVersion: validation.value.requestedVersion }
+        : {})
+    }
+  };
+  req.url = '/arcanos-gaming';
+  return next('route');
+});
 
 router.post("/:gptId", async (req, res, next) => {
   const routeGptId = req.params.gptId;

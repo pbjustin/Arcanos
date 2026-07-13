@@ -123,6 +123,16 @@ export function getGamingDiscoveryEnabled(): boolean {
   return getEnvBoolean("ARCANOS_GAMING_DISCOVERY_ENABLED", false);
 }
 
+export function getGamingCanaryAuditEnabled(): boolean {
+  const railwayEnvironment = (
+    getEnv("RAILWAY_ENVIRONMENT_NAME")
+    || getEnv("RAILWAY_ENVIRONMENT")
+    || ""
+  ).trim().toLowerCase();
+  return railwayEnvironment !== "production"
+    && getEnvBoolean("ARCANOS_GAMING_CANARY_AUDIT_ENABLED", false);
+}
+
 export function getGamingDiscoveryProvider(): "brave" | undefined {
   const provider = getEnv("ARCANOS_GAMING_DISCOVERY_PROVIDER", "brave").trim().toLowerCase();
   return provider === "brave" ? provider : undefined;
