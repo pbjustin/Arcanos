@@ -25,7 +25,10 @@ Common scripts:
 - `./scripts/doc_audit.sh`
 - `node scripts/validate-railway-compatibility.js`
 - `node scripts/check-railway-timeout-regressions.js --since 30m --lines 400`
-- `ARCANOS_GPT_ACCESS_TOKEN=<token> node scripts/validate-gpt-job-hardening.js --base-url "$ARCANOS_GPT_ACCESS_BASE_URL" --environment production --service "ARCANOS V2" --worker-service "ARCANOS Worker"`
+- `npm run validate:gpt:job-hardening` (safe dry run; reports `executed: false` and never reads ambient URL variables)
+- `ARCANOS_GPT_ACCESS_TOKEN=<token> npm run validate:gpt:job-hardening -- --execute --allow-network --target preview --base-url "https://<service>-arcanos-pr-<N>.up.railway.app" --environment "Arcanos-pr-<N>" --service "ARCANOS V2" --worker-service "ARCANOS Worker"`
+
+The live GPT job hardening validator requires both network flags and an explicit target triple. Preview environment and hostname PR numbers must match. Production additionally requires `--target production`, `--environment production`, `--allow-production`, and the repository-known production origin; never use that opt-in during PR validation.
 - `npm run railway:alert:timeouts`
 - `npm run railway:alert:budget-abort` (fails on any BUDGET_ABORT signal in the last 15 minutes)
 

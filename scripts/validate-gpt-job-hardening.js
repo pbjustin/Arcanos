@@ -10,21 +10,23 @@ import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import process from 'node:process';
+import { pathToFileURL } from 'node:url';
+
+import { RAILWAY_PRODUCTION_BASE_URL } from './railway-fast-path-probe.js';
 
 const DEFAULTS = Object.freeze({
-  baseUrl: process.env.ARCANOS_GPT_ACCESS_BASE_URL ||
-    process.env.ARCANOS_BASE_URL ||
-    process.env.ARCANOS_BACKEND_URL ||
-    process.env.SERVER_URL ||
-    process.env.BACKEND_URL ||
-    process.env.PUBLIC_BASE_URL ||
-    process.env.RAILWAY_PUBLIC_URL ||
-    process.env.RAILWAY_STATIC_URL ||
-    '',
+  baseUrl: '',
+  baseUrlExplicit: false,
+  target: '',
+  targetExplicit: false,
+  execute: false,
+  allowNetwork: false,
+  allowProduction: false,
   healthPath: '/gpt-access/health',
   gptId: 'arcanos-core',
-  gatewayCredential: process.env.ARCANOS_GPT_ACCESS_TOKEN || process.env.GPT_ACCESS_TOKEN || '',
+  gatewayCredential: '',
   environment: '',
+  environmentExplicit: false,
   service: '',
   workerService: '',
   logSince: '10m',
@@ -34,87 +36,86 @@ const DEFAULTS = Object.freeze({
   pollIntervalMs: 2000
 });
 
-function parseArgs(argv) {
-  const config = { ...DEFAULTS };
+const VALUE_FLAGS = Object.freeze({
+  '--base-url': 'baseUrl',
+  '--target': 'target',
+  '--health-path': 'healthPath',
+  '--gpt-id': 'gptId',
+  '--environment': 'environment',
+  '--service': 'service',
+  '--worker-service': 'workerService',
+  '--log-since': 'logSince',
+  '--log-lines': 'logLines',
+  '--request-timeout-ms': 'requestTimeoutMs',
+  '--poll-attempts': 'pollAttempts',
+  '--poll-interval-ms': 'pollIntervalMs'
+});
+
+const BOOLEAN_FLAGS = Object.freeze({
+  '--execute': 'execute',
+  '--allow-network': 'allowNetwork',
+  '--allow-production': 'allowProduction'
+});
+
+const POSITIVE_INTEGER_FLAGS = new Set([
+  '--log-lines',
+  '--request-timeout-ms',
+  '--poll-attempts',
+  '--poll-interval-ms'
+]);
+
+export function parseArgs(argv, env = process.env) {
+  const config = {
+    ...DEFAULTS,
+    gatewayCredential: env.ARCANOS_GPT_ACCESS_TOKEN || env.GPT_ACCESS_TOKEN || ''
+  };
+  const seenFlags = new Set();
 
   for (let index = 0; index < argv.length; index += 1) {
     const flag = argv[index];
-    const next = argv[index + 1];
-
-    if (flag === '--base-url' && typeof next === 'string' && next.trim().length > 0) {
-      config.baseUrl = next.trim();
-      index += 1;
-      continue;
-    }
-
-    if (flag === '--health-path' && typeof next === 'string' && next.trim().length > 0) {
-      config.healthPath = next.trim();
-      index += 1;
-      continue;
-    }
-
-    if (flag === '--gpt-id' && typeof next === 'string' && next.trim().length > 0) {
-      config.gptId = next.trim();
-      index += 1;
-      continue;
-    }
 
     if (flag === '--access-token') {
       throw new Error('Do not pass GPT Access tokens as CLI arguments. Set ARCANOS_GPT_ACCESS_TOKEN in the local environment or Railway secret store.');
     }
 
-    if (flag === '--environment' && typeof next === 'string' && next.trim().length > 0) {
-      config.environment = next.trim();
-      index += 1;
+    if (!Object.prototype.hasOwnProperty.call(VALUE_FLAGS, flag)
+      && !Object.prototype.hasOwnProperty.call(BOOLEAN_FLAGS, flag)) {
+      throw new Error('Unknown argument.');
+    }
+
+    if (seenFlags.has(flag)) {
+      throw new Error(`Duplicate argument: ${flag}`);
+    }
+    seenFlags.add(flag);
+
+    if (Object.prototype.hasOwnProperty.call(BOOLEAN_FLAGS, flag)) {
+      config[BOOLEAN_FLAGS[flag]] = true;
       continue;
     }
 
-    if (flag === '--service' && typeof next === 'string' && next.trim().length > 0) {
-      config.service = next.trim();
-      index += 1;
-      continue;
+    const next = argv[index + 1];
+    if (typeof next !== 'string' || next.trim().length === 0 || next.startsWith('--')) {
+      throw new Error(`Missing value for ${flag}.`);
     }
 
-    if (flag === '--worker-service' && typeof next === 'string' && next.trim().length > 0) {
-      config.workerService = next.trim();
-      index += 1;
-      continue;
-    }
-
-    if (flag === '--log-since' && typeof next === 'string' && next.trim().length > 0) {
-      config.logSince = next.trim();
-      index += 1;
-      continue;
-    }
-
-    if (flag === '--log-lines' && typeof next === 'string' && next.trim().length > 0) {
+    if (POSITIVE_INTEGER_FLAGS.has(flag)) {
       const parsed = Number(next);
-      config.logLines = Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : DEFAULTS.logLines;
-      index += 1;
-      continue;
+      if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+        throw new Error(`${flag} must be a positive integer.`);
+      }
+      config[VALUE_FLAGS[flag]] = parsed;
+    } else {
+      config[VALUE_FLAGS[flag]] = next.trim();
     }
 
-    if (flag === '--request-timeout-ms' && typeof next === 'string' && next.trim().length > 0) {
-      const parsed = Number(next);
-      config.requestTimeoutMs = Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : DEFAULTS.requestTimeoutMs;
-      index += 1;
-      continue;
+    if (flag === '--base-url') {
+      config.baseUrlExplicit = true;
+    } else if (flag === '--target') {
+      config.targetExplicit = true;
+    } else if (flag === '--environment') {
+      config.environmentExplicit = true;
     }
-
-    if (flag === '--poll-attempts' && typeof next === 'string' && next.trim().length > 0) {
-      const parsed = Number(next);
-      config.pollAttempts = Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : DEFAULTS.pollAttempts;
-      index += 1;
-      continue;
-    }
-
-    if (flag === '--poll-interval-ms' && typeof next === 'string' && next.trim().length > 0) {
-      const parsed = Number(next);
-      config.pollIntervalMs = Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : DEFAULTS.pollIntervalMs;
-      index += 1;
-      continue;
-    }
-
+    index += 1;
   }
 
   return config;
@@ -128,24 +129,142 @@ function createCheck(name, passed, details = {}) {
   };
 }
 
-function normalizeBaseUrl(rawValue) {
+export function normalizeBaseUrl(rawValue) {
   const trimmed = typeof rawValue === 'string' ? rawValue.trim() : '';
   if (trimmed.length === 0) {
-    throw new Error('Missing --base-url and no backend URL env var was set.');
+    throw new Error('Live validation requires an explicit --base-url. Ambient URL environment variables are ignored.');
   }
 
-  return trimmed.replace(/\/+$/, '');
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(trimmed);
+  } catch {
+    throw new Error('--base-url must be an absolute HTTP or HTTPS URL.');
+  }
+
+  if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+    throw new Error('--base-url must use HTTP or HTTPS.');
+  }
+  if (parsedUrl.username || parsedUrl.password) {
+    throw new Error('--base-url must not contain credentials.');
+  }
+  if (parsedUrl.search || parsedUrl.hash) {
+    throw new Error('--base-url must not contain a query string or fragment.');
+  }
+  if (parsedUrl.pathname !== '/') {
+    throw new Error('--base-url must not contain a path.');
+  }
+
+  return parsedUrl.origin;
 }
 
-async function requestJson(url, options = {}, timeoutMs = DEFAULTS.requestTimeoutMs) {
+function validateHealthPath(rawPath) {
+  if (typeof rawPath !== 'string'
+    || !rawPath.startsWith('/')
+    || rawPath.startsWith('//')
+    || rawPath.includes('?')
+    || rawPath.includes('#')) {
+    throw new Error('--health-path must be an absolute path without a host, query string, or fragment.');
+  }
+}
+
+export function resolveExecutionPolicy(config) {
+  if (Boolean(config.execute) !== Boolean(config.allowNetwork)) {
+    throw new Error('Live validation requires both --execute and --allow-network. Neither flag enables network access by itself.');
+  }
+
+  const hasAnyTargetArgument = Boolean(
+    config.baseUrlExplicit || config.targetExplicit || config.environmentExplicit
+  );
+  if (hasAnyTargetArgument
+    && !(config.baseUrlExplicit && config.targetExplicit && config.environmentExplicit)) {
+    throw new Error('Target selection requires explicit --base-url, --target, and --environment arguments together.');
+  }
+
+  if (!config.execute && !hasAnyTargetArgument) {
+    if (config.allowProduction) {
+      throw new Error('--allow-production requires an explicit production target.');
+    }
+    return {
+      mode: 'DRY_RUN',
+      executed: false,
+      networkAttempted: false,
+      baseUrl: '',
+      target: '',
+      environment: ''
+    };
+  }
+
+  if (config.execute && !hasAnyTargetArgument) {
+    throw new Error('Live validation requires explicit --base-url, --target, and --environment arguments.');
+  }
+
+  if (!['preview', 'local', 'production'].includes(config.target)) {
+    throw new Error('--target must be exactly preview, local, or production.');
+  }
+
+  const baseUrl = normalizeBaseUrl(config.baseUrl);
+  const parsedUrl = new URL(baseUrl);
+  validateHealthPath(config.healthPath);
+
+  if (config.target === 'preview') {
+    const environmentMatch = /^Arcanos-pr-(\d+)$/.exec(config.environment);
+    if (!environmentMatch) {
+      throw new Error('Preview validation requires --environment Arcanos-pr-N.');
+    }
+    const prNumber = environmentMatch[1];
+    const expectedPreviewHostname = `arcanos-v2-arcanos-pr-${prNumber}.up.railway.app`;
+    if (parsedUrl.protocol !== 'https:'
+      || parsedUrl.port
+      || parsedUrl.hostname !== expectedPreviewHostname) {
+      throw new Error('Preview validation requires the canonical HTTPS Railway PR hostname matching --environment.');
+    }
+    if (config.allowProduction) {
+      throw new Error('--allow-production conflicts with --target preview.');
+    }
+  } else if (config.target === 'local') {
+    const loopbackHosts = new Set(['localhost', '127.0.0.1', '[::1]']);
+    if (config.environment !== 'local' || !loopbackHosts.has(parsedUrl.hostname)) {
+      throw new Error('Local validation requires --environment local and an exact loopback hostname.');
+    }
+    if (config.service || config.workerService) {
+      throw new Error('Local validation cannot request Railway service logs.');
+    }
+    if (config.allowProduction) {
+      throw new Error('--allow-production conflicts with --target local.');
+    }
+  } else {
+    const productionBaseUrl = new URL(RAILWAY_PRODUCTION_BASE_URL).origin;
+    if (config.environment !== 'production'
+      || !config.allowProduction
+      || baseUrl !== productionBaseUrl) {
+      throw new Error('Production validation requires the repository-known production URL, --environment production, and --allow-production.');
+    }
+  }
+
+  return {
+    mode: config.execute ? 'EXECUTE' : 'DRY_RUN',
+    executed: Boolean(config.execute),
+    networkAttempted: false,
+    baseUrl,
+    target: config.target,
+    environment: config.environment
+  };
+}
+
+export async function requestJson(url, options = {}, timeoutMs = DEFAULTS.requestTimeoutMs, fetchFn = fetch) {
   const controller = new AbortController();
   const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const response = await fetch(url, {
+    const response = await fetchFn(url, {
       ...options,
+      redirect: 'manual',
       signal: controller.signal
     });
+    if (response.status >= 300 && response.status < 400) {
+      throw new Error('Redirect responses are not allowed during GPT job hardening validation.');
+    }
     const text = await response.text();
     let json = null;
 
@@ -214,7 +333,7 @@ function sanitizeOutputString(value, knownSecrets = []) {
   return output;
 }
 
-function sanitizeReportValue(value, knownSecrets = []) {
+export function sanitizeReportValue(value, knownSecrets = []) {
   if (typeof value === 'string') {
     return sanitizeOutputString(value, knownSecrets);
   }
@@ -234,6 +353,29 @@ function sanitizeReportValue(value, knownSecrets = []) {
   return value;
 }
 
+export function buildFailureReport(error, options = {}) {
+  const gatewayCredential = typeof options.gatewayCredential === 'string'
+    ? options.gatewayCredential
+    : '';
+  const executionStarted = Boolean(options.executionPolicy?.executed);
+  const rawErrorMessage = error instanceof Error ? error.message : String(error);
+  const credentialRedactedMessage = gatewayCredential
+    ? rawErrorMessage.split(gatewayCredential).join('[REDACTED_SECRET_VALUE]')
+    : rawErrorMessage;
+  const report = {
+    mode: executionStarted ? 'EXECUTION_ERROR' : 'CONFIGURATION_ERROR',
+    executed: executionStarted,
+    networkAttempted: executionStarted,
+    summary: {
+      overall: 'FAIL',
+      failedChecks: 1
+    },
+    error: sanitizeOutputString(credentialRedactedMessage, [gatewayCredential])
+  };
+
+  return sanitizeReportValue(report, [gatewayCredential]);
+}
+
 function extractJobId(payload) {
   if (!payload || typeof payload !== 'object') {
     return '';
@@ -250,9 +392,11 @@ function extractStatus(payload) {
   return String(payload.status || payload.jobStatus || payload.lifecycleStatus || '').trim();
 }
 
-async function pollGptAccessJobResult(baseUrl, jobId, traceId, config, gatewayCredential) {
+async function pollGptAccessJobResult(baseUrl, jobId, traceId, config, gatewayCredential, dependencies = {}) {
   const resultUrl = `${baseUrl}/gpt-access/jobs/result`;
   let lastResponse = null;
+  const fetchFn = dependencies.fetchFn ?? fetch;
+  const sleepFn = dependencies.sleepFn ?? sleep;
 
   for (let attempt = 0; attempt < config.pollAttempts; attempt += 1) {
     lastResponse = await requestJson(
@@ -265,7 +409,8 @@ async function pollGptAccessJobResult(baseUrl, jobId, traceId, config, gatewayCr
           ...(traceId ? { traceId } : {})
         })
       },
-      config.requestTimeoutMs
+      config.requestTimeoutMs,
+      fetchFn
     );
 
     if (lastResponse.ok && isTerminalStatus(extractStatus(lastResponse.json))) {
@@ -276,7 +421,7 @@ async function pollGptAccessJobResult(baseUrl, jobId, traceId, config, gatewayCr
       };
     }
 
-    await sleep(config.pollIntervalMs);
+    await sleepFn(config.pollIntervalMs);
   }
 
   return {
@@ -336,7 +481,7 @@ function executeRailwayCommand(args) {
   throw lastError || new Error('Failed to execute Railway CLI.');
 }
 
-function searchLogs(serviceName, environmentName, filter, since, lines, knownSecrets = []) {
+function searchLogs(serviceName, environmentName, filter, since, lines, knownSecrets = [], railwayExecutor = executeRailwayCommand) {
   if (!serviceName || !environmentName) {
     return {
       skipped: true,
@@ -346,7 +491,7 @@ function searchLogs(serviceName, environmentName, filter, since, lines, knownSec
     };
   }
 
-  const rawOutput = executeRailwayCommand([
+  const rawOutput = railwayExecutor([
     'logs',
     '--service',
     serviceName,
@@ -378,9 +523,52 @@ function truncate(value, limit) {
   return value.length <= limit ? value : `${value.slice(0, limit - 3)}...`;
 }
 
-async function runValidation(config) {
-  const baseUrl = normalizeBaseUrl(config.baseUrl);
-  const timestamp = Date.now();
+function finalizeReport(report) {
+  const failedChecks = report.checks.filter((check) => check.status === 'FAIL').length;
+  report.summary = {
+    overall: failedChecks > 0 ? 'FAIL' : 'PASS',
+    failedChecks
+  };
+  return report;
+}
+
+function createDryRunReport(config, policy) {
+  return {
+    mode: 'DRY_RUN',
+    executed: false,
+    networkAttempted: false,
+    target: {
+      baseUrl: policy.baseUrl || null,
+      target: policy.target || null,
+      environment: policy.environment || null,
+      service: config.service || null,
+      workerService: config.workerService || null,
+      authConfigured: typeof config.gatewayCredential === 'string' && config.gatewayCredential.trim().length > 0
+    },
+    checks: [
+      createCheck('execution_policy', true, {
+        mode: 'DRY_RUN',
+        message: 'No HTTP requests or Railway CLI commands were attempted.'
+      })
+    ],
+    summary: {
+      overall: 'DRY_RUN',
+      failedChecks: 0
+    }
+  };
+}
+
+export async function runValidation(config, dependencies = {}) {
+  const policy = resolveExecutionPolicy(config);
+  if (!policy.executed) {
+    return createDryRunReport(config, policy);
+  }
+
+  const baseUrl = policy.baseUrl;
+  const fetchFn = dependencies.fetchFn ?? fetch;
+  const railwayExecutor = dependencies.railwayExecutor ?? executeRailwayCommand;
+  const now = dependencies.now ?? Date.now;
+  const timestamp = now();
   const promptMarker = `QA-GPT-ACCESS-CREATE-${timestamp}`;
   const fakeSecretMarker = `sk-test-gpt-access-hardening-${timestamp}`;
   const idemKey = `qa-gpt-access-create-${timestamp}`;
@@ -390,8 +578,12 @@ async function runValidation(config) {
   const gatewayCredential = typeof config.gatewayCredential === 'string' ? config.gatewayCredential.trim() : '';
 
   const report = {
+    mode: 'EXECUTE',
+    executed: true,
+    networkAttempted: false,
     target: {
       baseUrl,
+      target: policy.target,
       gptId: config.gptId,
       environment: config.environment,
       service: config.service,
@@ -419,20 +611,25 @@ async function runValidation(config) {
 
   report.checks.push(createCheck('access_token_configured', true));
 
+  report.networkAttempted = true;
   const healthResponse = await requestJson(
     `${baseUrl}${config.healthPath}`,
     {
       method: 'GET',
       headers: buildAuthorizedHeaders(gatewayCredential)
     },
-    config.requestTimeoutMs
+    config.requestTimeoutMs,
+    fetchFn
   );
+  const healthPassed = healthResponse.status === 200;
   report.checks.push(
-    createCheck('health', healthResponse.status === 200, {
-      status: healthResponse.status,
-      body: healthResponse.json || healthResponse.text
+    createCheck('health', healthPassed, {
+      status: healthResponse.status
     })
   );
+  if (!healthPassed) {
+    return finalizeReport(report);
+  }
 
   const openApiResponse = await requestJson(
     openApiEndpoint,
@@ -440,7 +637,8 @@ async function runValidation(config) {
       method: 'GET',
       headers: buildAuthorizedHeaders(gatewayCredential)
     },
-    config.requestTimeoutMs
+    config.requestTimeoutMs,
+    fetchFn
   );
   const createOperation = openApiResponse.json?.paths?.['/gpt-access/jobs/create']?.post;
   const createRequestSchemaRef = createOperation?.requestBody?.content?.['application/json']?.schema?.$ref;
@@ -453,23 +651,24 @@ async function runValidation(config) {
   const advertisedServerUrl = openApiResponse.json?.servers?.[0]?.url ?? null;
   const unsafeSchemaFields = ['sql', 'target', 'endpoint', 'headers', 'auth', 'cookies', 'proxy', 'url']
     .filter((field) => Object.prototype.hasOwnProperty.call(createRequestSchema?.properties ?? {}, field));
+  const openApiServerMatches = openApiResponse.status === 200
+    && advertisedServerUrl === baseUrl;
+  const openApiContractMatches = openApiResponse.status === 200
+    && createOperation?.operationId === 'createAiJob'
+    && JSON.stringify(createOperation?.security ?? openApiResponse.json?.security ?? []).includes('bearerAuth')
+    && createRequestSchema?.additionalProperties === false
+    && unsafeSchemaFields.length === 0;
   report.checks.push(
     createCheck('openapi_server_url_matches_target',
-      openApiResponse.status === 200
-        && advertisedServerUrl === baseUrl,
+      openApiServerMatches,
       {
         status: openApiResponse.status,
-        advertisedServerUrl,
-        expectedServerUrl: baseUrl
+        serverUrlMatchesTarget: openApiServerMatches
       }
     )
   );
   report.checks.push(
-    createCheck('openapi_createAiJob_contract', openApiResponse.status === 200
-      && createOperation?.operationId === 'createAiJob'
-      && JSON.stringify(createOperation?.security ?? openApiResponse.json?.security ?? []).includes('bearerAuth')
-      && createRequestSchema?.additionalProperties === false
-      && unsafeSchemaFields.length === 0,
+    createCheck('openapi_createAiJob_contract', openApiContractMatches,
       {
         status: openApiResponse.status,
         operationId: createOperation?.operationId ?? null,
@@ -478,6 +677,9 @@ async function runValidation(config) {
       }
     )
   );
+  if (!openApiServerMatches || !openApiContractMatches) {
+    return finalizeReport(report);
+  }
 
   const createResponse = await requestJson(
     createEndpoint,
@@ -495,7 +697,8 @@ async function runValidation(config) {
         }
       })
     },
-    config.requestTimeoutMs
+    config.requestTimeoutMs,
+    fetchFn
   );
   const createPayload = createResponse.json;
   const createdJobId = extractJobId(createPayload);
@@ -516,7 +719,10 @@ async function runValidation(config) {
   );
 
   const resultPoll = createdJobId
-    ? await pollGptAccessJobResult(baseUrl, createdJobId, traceId, config, gatewayCredential)
+    ? await pollGptAccessJobResult(baseUrl, createdJobId, traceId, config, gatewayCredential, {
+        fetchFn,
+        sleepFn: dependencies.sleepFn
+      })
     : null;
   const resultPayload = resultPoll?.response?.json ?? null;
 
@@ -535,10 +741,10 @@ async function runValidation(config) {
   );
 
   const knownSecrets = [gatewayCredential, fakeSecretMarker, promptMarker].filter(Boolean);
-  const webPromptLogs = searchLogs(config.service, config.environment, promptMarker, config.logSince, config.logLines, knownSecrets);
-  const workerPromptLogs = searchLogs(config.workerService, config.environment, promptMarker, config.logSince, config.logLines, knownSecrets);
-  const webSecretLogs = searchLogs(config.service, config.environment, fakeSecretMarker, config.logSince, config.logLines, knownSecrets);
-  const workerSecretLogs = searchLogs(config.workerService, config.environment, fakeSecretMarker, config.logSince, config.logLines, knownSecrets);
+  const webPromptLogs = searchLogs(config.service, config.environment, promptMarker, config.logSince, config.logLines, knownSecrets, railwayExecutor);
+  const workerPromptLogs = searchLogs(config.workerService, config.environment, promptMarker, config.logSince, config.logLines, knownSecrets, railwayExecutor);
+  const webSecretLogs = searchLogs(config.service, config.environment, fakeSecretMarker, config.logSince, config.logLines, knownSecrets, railwayExecutor);
+  const workerSecretLogs = searchLogs(config.workerService, config.environment, fakeSecretMarker, config.logSince, config.logLines, knownSecrets, railwayExecutor);
   report.checks.push(
     createCheck('prompt_marker_absent_from_logs',
       !webPromptLogs.matches && !workerPromptLogs.matches,
@@ -558,31 +764,30 @@ async function runValidation(config) {
     )
   );
 
-  const failedChecks = report.checks.filter((check) => check.status === 'FAIL').length;
-  report.summary = {
-    overall: failedChecks > 0 ? 'FAIL' : 'PASS',
-    failedChecks
-  };
-
-  return report;
+  return finalizeReport(report);
 }
+
+let mainExecutionPolicy = null;
+let mainGatewayCredential = '';
 
 async function main() {
+  mainGatewayCredential = process.env.ARCANOS_GPT_ACCESS_TOKEN || process.env.GPT_ACCESS_TOKEN || '';
   const config = parseArgs(process.argv.slice(2));
+  mainGatewayCredential = config.gatewayCredential;
+  mainExecutionPolicy = resolveExecutionPolicy(config);
   const report = await runValidation(config);
   process.stdout.write(`${JSON.stringify(sanitizeReportValue(report, [config.gatewayCredential]), null, 2)}\n`);
-  process.exitCode = report.summary.overall === 'PASS' ? 0 : 1;
+  process.exitCode = ['PASS', 'DRY_RUN'].includes(report.summary.overall) ? 0 : 1;
 }
 
-main().catch((error) => {
-  const report = {
-    summary: {
-      overall: 'FAIL',
-      failedChecks: 1
-    },
-    error: sanitizeOutputString(error instanceof Error ? error.message : String(error))
-  };
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    const report = buildFailureReport(error, {
+      gatewayCredential: mainGatewayCredential,
+      executionPolicy: mainExecutionPolicy
+    });
 
-  process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
-  process.exitCode = 1;
-});
+    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+    process.exitCode = 1;
+  });
+}
