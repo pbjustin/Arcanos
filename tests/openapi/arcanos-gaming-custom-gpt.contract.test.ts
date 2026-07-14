@@ -377,11 +377,13 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     expect(runtimeQuery.length).toBe(contractMax);
   });
 
-  it('keeps builder instructions synchronized with the single-action frontend-search workflow', () => {
+  it('keeps builder instructions synchronized with two operations and one gameplay call', () => {
     const instructions = readFileSync(instructionsPath, 'utf8');
     const customGpts = readFileSync(customGptsPath, 'utf8');
 
-    expect(instructions).toContain('The dedicated schema defines exactly one fixed-path operation');
+    expect(instructions).toContain('The dedicated schema defines exactly two fixed-path operations');
+    expect(instructions).toContain('queryArcanosGaming` → `POST /gpt/arcanos-gaming');
+    expect(instructions).toContain('canaryArcanosGaming` → `POST /gpt/arcanos-gaming/canary');
     expect(instructions).toContain('do not leave this unset');
     expect(instructions).toContain('Pro mode does not support custom GPT Actions');
     expect(instructions).toContain('do not report an ARCANOS backend outage');
@@ -413,7 +415,7 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     expect(instructions).toContain('The incorrect version adds an unverified factual claim and is prohibited.');
     expect(instructions).toContain('The prompt-fidelity merge gate may be satisfied by either');
     expect(instructions).toContain('single correlated exact-head preview ingress attestation');
-    expect(instructions).toContain('hash-only canary/debug signal');
+    expect(instructions).toContain('hash-only prompt-fidelity signal');
     expect(instructions).toContain('disabled by default');
     expect(instructions).toContain('not a general user-prompt logging mechanism');
     expect(instructions).toContain('Prompt length alone is not sufficient proof.');
@@ -443,7 +445,8 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     expect(instructions).toContain(
       'https://acranos-production.up.railway.app/contracts/arcanos_gaming.openapi.v1.json'
     );
-    expect(customGpts).toContain('single-action frontend-search evidence workflow');
+    expect(customGpts).toContain('two Action operations and one gameplay call per gameplay request');
+    expect(customGpts).toContain('each gameplay workflow still makes one `queryArcanosGaming` call');
     expect(customGpts).not.toContain('mandatory backend-first evidence workflow');
   });
 });
