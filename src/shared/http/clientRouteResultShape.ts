@@ -1,4 +1,5 @@
 import {
+  GAMING_RESPONSE_MAX_CHARACTERS,
   INTERNAL_RESPONSE_KEYS,
   STRING_PREVIEW_MAX_BYTES,
   isRecord,
@@ -7,6 +8,7 @@ import {
   readString,
   readStringArray,
   truncateText,
+  truncateTextByCharacters,
 } from './clientResponseCommon.js';
 import { redactString } from '@shared/redaction.js';
 
@@ -843,6 +845,9 @@ function shapeGamingResult(value: Record<string, unknown>): Record<string, unkno
   }
 
   const response = readString(value.data.response);
+  const boundedResponse = response
+    ? truncateTextByCharacters(response, GAMING_RESPONSE_MAX_CHARACTERS)
+    : undefined;
   const mode = readString(value.mode);
   const fallbackReason = readGamingReason(value.data.fallbackReason);
   const discoveryReason = readGamingReason(value.data.discoveryReason);
@@ -860,7 +865,7 @@ function shapeGamingResult(value: Record<string, unknown>): Record<string, unkno
     route: 'gaming',
     ...(mode ? { mode } : {}),
     data: {
-      ...(response ? { response: truncateText(response, STRING_PREVIEW_MAX_BYTES) } : {}),
+      ...(boundedResponse ? { response: boundedResponse } : {}),
       sources,
       ...(fallbackReason ? { fallbackReason } : {}),
       ...(discoveryReason ? { discoveryReason } : {}),

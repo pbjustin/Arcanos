@@ -466,6 +466,37 @@ describe('ArcanosGaming module', () => {
     expect((result as any).data.response).not.toContain('x'.repeat(1_000));
   });
 
+  it('accepts a contract-valid multibyte response larger than 4 KiB', async () => {
+    const response = 'é'.repeat(3_000);
+    runGuidePipelineSpy.mockResolvedValueOnce({
+      ok: true,
+      route: 'gaming',
+      mode: 'guide',
+      data: {
+        response,
+        sources: [],
+      },
+    } as any);
+
+    const result = await ArcanosGaming.actions.query({
+      mode: 'guide',
+      game: 'Palworld',
+      prompt: 'Give me a beginner route.',
+    } as any);
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      data: expect.objectContaining({
+        sources: [],
+      }),
+    }));
+    const publicResponse = (result as any).data.response as string;
+    expect(Buffer.byteLength(publicResponse, 'utf8')).toBeGreaterThan(4 * 1_024);
+    expect(Array.from(publicResponse).length).toBeLessThanOrEqual(4_096);
+    expect(publicResponse).not.toContain('General Fallback (not backend-supported)');
+    expect((result as any).data.fallbackReason).toBeUndefined();
+  });
+
   it('preserves validated frontend evidence retry metadata for the secure guide pipeline', async () => {
     await ArcanosGaming.actions.query({
       mode: 'guide',

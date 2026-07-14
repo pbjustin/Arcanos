@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { buildGamingDiscoveryQuery } from '../../src/services/gamingSourceDiscovery.js';
+import { GAMING_RESPONSE_MAX_CHARACTERS } from '../../src/shared/http/clientResponseCommon.js';
 
 const contractPath = join(process.cwd(), 'contracts/arcanos_gaming.openapi.v1.json');
 const instructionsPath = join(process.cwd(), 'docs/ARCANOS_GAMING_CUSTOM_GPT.md');
@@ -155,7 +156,7 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
       response: {
         type: 'string',
         minLength: 1,
-        maxLength: 4096,
+        maxLength: GAMING_RESPONSE_MAX_CHARACTERS,
         pattern: '[\\p{L}\\p{N}\\p{S}]',
       },
       sources: {

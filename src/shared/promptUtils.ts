@@ -30,7 +30,8 @@ export function hasContent(value: string | null | undefined): boolean {
 const MEANINGFUL_VISIBLE_TEXT_CHARACTER = /[\p{L}\p{N}\p{S}]/u;
 
 /**
- * Check whether user-visible text contains content beyond whitespace and invisible control characters.
+ * Check whether user-visible text contains at least one Unicode letter, number, or symbol;
+ * punctuation-only and invisible-only text does not qualify.
  */
 export function hasVisibleContent(value: string | null | undefined): boolean {
   return typeof value === 'string'

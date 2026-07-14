@@ -4,7 +4,7 @@ import { evaluateWithHRC } from "./hrcWrapper.js";
 import { getRequestAbortContext, getRequestAbortSignal, isAbortError } from "@arcanos/runtime";
 import { logger } from "@platform/logging/structuredLogging.js";
 import { hasVisibleContent } from "@shared/promptUtils.js";
-import { STRING_PREVIEW_MAX_BYTES } from "@shared/http/clientResponseCommon.js";
+import { GAMING_RESPONSE_MAX_CHARACTERS } from "@shared/http/clientResponseCommon.js";
 import { isRecord } from "@shared/typeGuards.js";
 import {
   BackendQueryAgent,
@@ -448,8 +448,9 @@ async function handleGamingRequest(payload: unknown): Promise<GamingEnvelope> {
       intent: gamingIntent,
       backendEnvelope
     });
+    const composedResponseCharacters = Array.from(composedResponse.data.response).length;
     const composedResponseBytes = Buffer.byteLength(composedResponse.data.response, "utf8");
-    if (composedResponseBytes <= STRING_PREVIEW_MAX_BYTES) {
+    if (composedResponseCharacters <= GAMING_RESPONSE_MAX_CHARACTERS) {
       return composedResponse;
     }
 
@@ -458,8 +459,9 @@ async function handleGamingRequest(payload: unknown): Promise<GamingEnvelope> {
       mode: gamingIntent.mode,
       confidence: gamingIntent.confidence,
       errorCode: "GAMING_RESPONSE_TOO_LARGE",
-      responseBytes: composedResponseBytes,
-      maxResponseBytes: STRING_PREVIEW_MAX_BYTES
+      responseCharacters: composedResponseCharacters,
+      maxResponseCharacters: GAMING_RESPONSE_MAX_CHARACTERS,
+      responseBytes: composedResponseBytes
     });
     const fallback = ResponseComposerAgent.composeBackendFailureFallback({
       intent: gamingIntent,

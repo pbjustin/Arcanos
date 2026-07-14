@@ -3,6 +3,7 @@ import type { RequestScopedLogger } from './types.js';
 const DEFAULT_CLIENT_RESPONSE_MAX_BYTES = 32 * 1024;
 const MIN_CLIENT_RESPONSE_MAX_BYTES = 2 * 1024;
 const MAX_CLIENT_RESPONSE_MAX_BYTES = 256 * 1024;
+export const GAMING_RESPONSE_MAX_CHARACTERS = 4_096;
 export const STRING_PREVIEW_MAX_BYTES = 4 * 1024;
 const TRUNCATION_MARKER = '\n...[truncated]';
 
@@ -82,6 +83,17 @@ export function truncateText(text: string, maxBytes: number): string {
   }
 
   return `${text.slice(0, end).trimEnd()}${TRUNCATION_MARKER}`;
+}
+
+export function truncateTextByCharacters(text: string, maxCharacters: number): string {
+  const characters = Array.from(text);
+  if (characters.length <= maxCharacters) {
+    return text;
+  }
+
+  const markerCharacters = Array.from(TRUNCATION_MARKER);
+  const prefixCharacters = Math.max(0, maxCharacters - markerCharacters.length);
+  return `${characters.slice(0, prefixCharacters).join('').trimEnd()}${TRUNCATION_MARKER}`;
 }
 
 function readPositiveIntegerEnv(name: string): number | undefined {

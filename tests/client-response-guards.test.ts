@@ -330,6 +330,40 @@ describe('client response guards', () => {
     });
   });
 
+  it('preserves contract-valid multibyte Gaming responses above 4 KiB', () => {
+    const response = '🎮'.repeat(3_000);
+    const shaped = shapeClientRouteResult({
+      ok: true,
+      route: 'gaming',
+      mode: 'guide',
+      data: {
+        response,
+        sources: [],
+      },
+    }) as Record<string, unknown>;
+
+    expect((shaped.data as Record<string, unknown>).response).toBe(response);
+    expect(Buffer.byteLength(response, 'utf8')).toBeGreaterThan(4 * 1_024);
+    expect(Array.from(response).length).toBeLessThanOrEqual(4_096);
+  });
+
+  it('caps bypassed Gaming responses at the contract character limit', () => {
+    const shaped = shapeClientRouteResult({
+      ok: true,
+      route: 'gaming',
+      mode: 'guide',
+      data: {
+        response: `${'.'.repeat(4_096)}A`,
+        sources: [],
+      },
+    }) as Record<string, unknown>;
+
+    const response = (shaped.data as Record<string, unknown>).response as string;
+    expect(response).toMatch(/\.\.\.\[truncated\]$/u);
+    expect(response).toMatch(/[\p{L}\p{N}\p{S}]/u);
+    expect(Array.from(response).length).toBe(4_096);
+  });
+
   it('preserves compact self-heal runtime inspection evidence arrays for client responses', () => {
     const shaped = shapeClientRouteResult({
       handledBy: 'runtime-inspection',
