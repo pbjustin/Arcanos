@@ -24,6 +24,16 @@ const OPERATIONAL_PROMPTS = [
   'Inspect the server.',
   'Check the API health.',
   'Reach my backend and see if this has been implemented correctly.',
+  'Is the ARCANOS Action working?',
+  'Can you see whether the integration is working?',
+  'Please check if the server is working.',
+  'Has my backend been implemented correctly?',
+  'Tell me whether the API is reachable?',
+  'Please test if my server is up.',
+  'Does my backend work?',
+  'Is my API offline?',
+  'Can my backend be reached?',
+  "Why isn't my backend working?",
   'ping',
 ] as const;
 
@@ -201,6 +211,13 @@ describe('public Gaming request dispatcher', () => {
     'How do I optimize freight routes in Railway Empire?',
     'Inspect dedicated server settings that affect Pal spawning.',
     'How does action combat work in this game?',
+    'Can you test the backend mechanics of Palworld matchmaking?',
+    'How do I test API-based matchmaking mechanics in this game?',
+    'Inspect the backend mechanics controlling matchmaking in this game.',
+    'Does this build work?',
+    'Is the Palworld API-based matchmaking system down?',
+    'Can my Palworld server be reached?',
+    "Why isn't this build working?",
   ])('keeps gameplay wording out of the operational guard: %s', (prompt) => {
     expect(isClearlyOperationalGamingPrompt(prompt)).toBe(false);
     expect(dispatchPublicGamingRequest(queryBody('guide', prompt), 'query')).toMatchObject({

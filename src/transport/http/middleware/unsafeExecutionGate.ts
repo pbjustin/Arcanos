@@ -7,11 +7,14 @@ import { validateGamingEvidenceRetryRequest } from '@services/gamingModes.js';
 import { dispatchPublicGamingRequest } from '@services/gamingPublicDispatcher.js';
 import {
   buildPublicGamingCanaryFailure,
-  guardPublicGamingCanaryResponse,
+  prepareGuardedPublicGamingCanaryResponse,
   PUBLIC_GAMING_CANARY_MAX_RESPONSE_BYTES
 } from '@services/publicGamingCanary.js';
 import { resolvePublicGamingPath } from '@shared/http/publicGamingPath.js';
 import { sendBoundedJsonResponse } from '@shared/http/sendBoundedJsonResponse.js';
+import { isGptDagAction } from '@shared/gpt/gptDagBridgeActions.js';
+import { GPT_QUERY_AND_WAIT_ACTION } from '@shared/gpt/gptJobResult.js';
+import { resolveRequestedGptActionFromRequest } from '@shared/gpt/gptRequestAction.js';
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const SAFETY_RELEASE_PATH_PATTERN = /^\/status\/safety\/quarantine\/[^/]+\/release$/;
@@ -80,25 +83,28 @@ export function unsafeExecutionGate(req: Request, res: Response, next: NextFunct
         requestId: gamingRequestId,
         traceId: gamingTraceId
       });
-      const primaryResponsePassedGuard = guardPublicGamingCanaryResponse(response);
-      const guardedResponse = primaryResponsePassedGuard
-        ? response
-        : buildPublicGamingCanaryFailure({
-            code: 'PUBLIC_CANARY_RESPONSE_GUARD_FAILED',
-            requestId: gamingRequestId,
-            traceId: gamingTraceId
-          });
-      sendBoundedJsonResponse(req, res, guardedResponse, {
+      const guarded = prepareGuardedPublicGamingCanaryResponse({
+        response,
+        statusCode: decision.ok ? 503 : 400,
+        requestId: gamingRequestId,
+        traceId: gamingTraceId
+      });
+      sendBoundedJsonResponse(req, res, guarded.response, {
         logEvent: 'gpt.response.public_canary_unsafe',
-        statusCode: primaryResponsePassedGuard ? (decision.ok ? 503 : 400) : 500,
+        statusCode: guarded.statusCode,
         maxBytes: PUBLIC_GAMING_CANARY_MAX_RESPONSE_BYTES
       });
       return;
     }
 
     const evidenceRetry = publicGamingPath.operation === 'evidence_retry';
+    const requestedAction = evidenceRetry ? null : resolveRequestedGptActionFromRequest(req);
+    const genericGatewayAction = requestedAction === GPT_QUERY_AND_WAIT_ACTION
+      || isGptDagAction(requestedAction);
     const retryValidation = evidenceRetry ? validateGamingEvidenceRetryRequest(req.body) : null;
-    const queryDecision = evidenceRetry ? null : dispatchPublicGamingRequest(req.body, 'query');
+    const queryDecision = evidenceRetry || genericGatewayAction
+      ? null
+      : dispatchPublicGamingRequest(req.body, 'query');
     const validationError = retryValidation && !retryValidation.ok
       ? { code: retryValidation.code, message: retryValidation.message }
       : queryDecision && !queryDecision.ok

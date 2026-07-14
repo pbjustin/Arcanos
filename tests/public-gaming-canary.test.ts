@@ -8,6 +8,8 @@ import {
   buildPublicGamingCanaryFailure,
   executePublicGamingCanary,
   guardPublicGamingCanaryResponse,
+  prepareGuardedPublicGamingCanaryResponse,
+  publicGamingCanaryFailureStatus,
   PUBLIC_GAMING_CANARY_MAX_RESPONSE_BYTES,
   PUBLIC_GAMING_CANARY_SCHEMA_VERSION,
   type PublicGamingCanaryFailureCode,
@@ -53,10 +55,13 @@ const FAILURE_KEYS = [
 ] as const;
 const FAILURE_CODES: PublicGamingCanaryFailureCode[] = [
   'BAD_REQUEST',
+  'PUBLIC_CANARY_REQUEST_REJECTED',
   'PUBLIC_CANARY_UNAVAILABLE',
+  'PUBLIC_CANARY_ROUTE_FAILURE',
   'PUBLIC_CANARY_FIXTURE_UNAVAILABLE',
   'PUBLIC_CANARY_FIXTURE_INVALID',
   'PUBLIC_CANARY_GROUNDING_FAILED',
+  'PUBLIC_CANARY_FAILURE_RESPONSE_GUARD_FAILED',
   'PUBLIC_CANARY_RESPONSE_GUARD_FAILED',
 ];
 
@@ -256,6 +261,81 @@ describe('public Gaming deterministic canary', () => {
     expect(response.durationMs).toBe(30_000);
     expectBoundedClosedResponse(response);
     expect(validateFailureSchema?.(response)).toBe(true);
+  });
+
+  it.each([
+    ['BAD_REQUEST', 400],
+    ['PUBLIC_CANARY_REQUEST_REJECTED', 400],
+    ['PUBLIC_CANARY_FAILURE_RESPONSE_GUARD_FAILED', 500],
+    ['PUBLIC_CANARY_RESPONSE_GUARD_FAILED', 500],
+    ['PUBLIC_CANARY_UNAVAILABLE', 503],
+    ['PUBLIC_CANARY_ROUTE_FAILURE', 503],
+  ] as const)('maps %s to HTTP %s', (code, statusCode) => {
+    expect(publicGamingCanaryFailureStatus(code)).toBe(statusCode);
+  });
+
+  it('preserves a valid prepared response and replaces an invalid one with a guarded fallback', () => {
+    const valid = buildPublicGamingCanaryFailure({
+      code: 'PUBLIC_CANARY_UNAVAILABLE',
+      requestId: 'req-valid',
+      traceId: 'trace-valid'
+    });
+    const preparedValid = prepareGuardedPublicGamingCanaryResponse({
+      response: valid,
+      statusCode: 503,
+      requestId: 'req-valid',
+      traceId: 'trace-valid'
+    });
+    const preparedInvalid = prepareGuardedPublicGamingCanaryResponse({
+      response: { ok: true, privateDetail: 'must-not-escape' },
+      statusCode: 200,
+      requestId: 'req-invalid',
+      traceId: 'trace-invalid'
+    });
+    const preparedInvalidFailure = prepareGuardedPublicGamingCanaryResponse({
+      response: { ok: false, privateDetail: 'must-not-escape' },
+      statusCode: 503,
+      requestId: 'req-invalid-failure',
+      traceId: 'trace-invalid-failure'
+    });
+
+    expect(preparedValid).toEqual({
+      response: valid,
+      statusCode: 503,
+      primaryResponsePassedGuard: true
+    });
+    expect(preparedInvalid).toMatchObject({
+      statusCode: 500,
+      primaryResponsePassedGuard: false,
+      response: {
+        ok: false,
+        code: 'PUBLIC_CANARY_RESPONSE_GUARD_FAILED',
+        requestId: 'req-invalid',
+        traceId: 'trace-invalid'
+      }
+    });
+    expect(guardPublicGamingCanaryResponse(preparedInvalid.response)).toBe(true);
+    expect(JSON.stringify(preparedInvalid.response)).not.toContain('must-not-escape');
+    expect(preparedInvalidFailure).toMatchObject({
+      statusCode: 500,
+      primaryResponsePassedGuard: false,
+      response: {
+        ok: false,
+        code: 'PUBLIC_CANARY_FAILURE_RESPONSE_GUARD_FAILED',
+        requestId: 'req-invalid-failure',
+        traceId: 'trace-invalid-failure',
+        checks: {
+          requestValidation: 'skipped',
+          dispatcher: 'skipped',
+          publicRoute: 'skipped',
+          responseGuard: 'failed'
+        },
+        usedFallback: true,
+        acceptedSources: 0
+      }
+    });
+    expect(guardPublicGamingCanaryResponse(preparedInvalidFailure.response)).toBe(true);
+    expect(JSON.stringify(preparedInvalidFailure.response)).not.toContain('must-not-escape');
   });
 
   it.each([

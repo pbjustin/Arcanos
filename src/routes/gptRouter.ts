@@ -100,14 +100,16 @@ import {
 } from '@services/gamingModes.js';
 import {
   dispatchPublicGamingRequest,
-  resolveLiteralPublicGamingAction,
+  isClearlyOperationalGamingPrompt,
+  OPERATIONAL_REQUEST_NOT_GAMEPLAY_CODE,
+  OPERATIONAL_REQUEST_NOT_GAMEPLAY_MESSAGE,
   type ArcanosRequestIntent,
   type PublicArcanosAction
 } from '@services/gamingPublicDispatcher.js';
 import {
   buildPublicGamingCanaryFailure,
   executePublicGamingCanary,
-  guardPublicGamingCanaryResponse,
+  prepareGuardedPublicGamingCanaryResponse,
   PUBLIC_GAMING_CANARY_MAX_RESPONSE_BYTES,
   PUBLIC_GAMING_CANARY_SCHEMA_VERSION,
   type PublicGamingCanaryResponse
@@ -219,7 +221,7 @@ function logPublicGamingDispatch(params: {
   req: express.Request;
   requestId: string;
   traceId: string;
-  action: PublicArcanosAction | 'unsupported';
+  action: PublicArcanosAction | typeof GPT_QUERY_AND_WAIT_ACTION | 'unsupported';
   intent: ArcanosRequestIntent;
   route: 'gaming' | 'operational_rejected' | 'public_canary' | 'unsupported';
   mode: 'guide' | 'build' | 'meta' | null;
@@ -242,18 +244,16 @@ function sendGuardedPublicGamingCanaryResponse(
   statusCode: 200 | 400 | 500 | 503,
   logEvent: string
 ) {
-  const primaryResponsePassedGuard = guardPublicGamingCanaryResponse(response);
-  const guardedResponse = primaryResponsePassedGuard
-    ? response
-    : buildPublicGamingCanaryFailure({
-      code: 'PUBLIC_CANARY_RESPONSE_GUARD_FAILED',
-      requestId: req.requestId,
-      traceId: req.traceId
-    });
+  const guarded = prepareGuardedPublicGamingCanaryResponse({
+    response,
+    statusCode,
+    requestId: req.requestId,
+    traceId: req.traceId
+  });
 
-  return sendBoundedJsonResponse(req, res, guardedResponse, {
+  return sendBoundedJsonResponse(req, res, guarded.response, {
     logEvent,
-    statusCode: primaryResponsePassedGuard ? statusCode : 500,
+    statusCode: guarded.statusCode,
     maxBytes: PUBLIC_GAMING_CANARY_MAX_RESPONSE_BYTES
   });
 }
@@ -1412,9 +1412,7 @@ router.post("/:gptId", async (req, res, next) => {
   const routeGptId = req.params.gptId;
   const priorityGpt = isPriorityGpt(routeGptId);
   const directGamingRoute = isDirectModuleQueryGpt(routeGptId);
-  const requestedAction = directGamingRoute
-    ? resolveLiteralPublicGamingAction(req.body)
-    : resolveRequestedGptActionFromRequest(req);
+  const requestedAction = resolveRequestedGptActionFromRequest(req);
   const queryRequested = requestedAction === GPT_QUERY_ACTION;
   const queryAndWaitRequested = requestedAction === GPT_QUERY_AND_WAIT_ACTION;
   const bypassIntentRouting = queryRequested || queryAndWaitRequested;
@@ -1550,7 +1548,53 @@ router.post("/:gptId", async (req, res, next) => {
           });
         }
 
+        const publicGamingQueryAndWaitOperational = isDirectModuleQueryGpt(incomingGptId)
+          && queryAndWaitRequested
+          && normalizedBody !== null
+          && promptText !== null
+          && isClearlyOperationalGamingPrompt(promptText);
+        if (publicGamingQueryAndWaitOperational) {
+          logPublicGamingDispatch({
+            req,
+            requestId: requestId ?? traceId,
+            traceId,
+            action: GPT_QUERY_AND_WAIT_ACTION,
+            intent: 'integration_status',
+            route: 'operational_rejected',
+            mode: null
+          });
+          const errorPayload = buildGptDispatcherErrorPayload({
+            requestId,
+            traceId,
+            gptId: incomingGptId,
+            action: GPT_QUERY_AND_WAIT_ACTION,
+            code: OPERATIONAL_REQUEST_NOT_GAMEPLAY_CODE,
+            message: OPERATIONAL_REQUEST_NOT_GAMEPLAY_MESSAGE,
+            route: 'gaming_operational_guard'
+          });
+          logGptDispatcherOutcome({
+            req,
+            traceId,
+            gptId: incomingGptId,
+            action: GPT_QUERY_AND_WAIT_ACTION,
+            status: 400,
+            error: {
+              name: OPERATIONAL_REQUEST_NOT_GAMEPLAY_CODE,
+              message: OPERATIONAL_REQUEST_NOT_GAMEPLAY_MESSAGE
+            }
+          });
+          return sendGuardedGptJsonResponse(
+            req,
+            res,
+            errorPayload,
+            'gpt.response.gaming_operational_guard',
+            400
+          );
+        }
+
         const publicGamingDecision = isDirectModuleQueryGpt(incomingGptId)
+          && !queryAndWaitRequested
+          && !isGptDagAction(requestedAction)
           ? dispatchPublicGamingRequest(req.body, 'query')
           : null;
 

@@ -28,6 +28,7 @@ jest.unstable_mockModule('../src/services/systemState.js', () => ({
 
 const { default: requestContext } = await import('../src/middleware/requestContext.js');
 const { default: gptRouter } = await import('../src/routes/gptRouter.js');
+const { default: errorHandler } = await import('../src/transport/http/middleware/errorHandler.js');
 
 const contract = JSON.parse(readFileSync(
   join(process.cwd(), 'contracts/arcanos_gaming.openapi.v1.json'),
@@ -44,11 +45,12 @@ const validateFailureSchema = ajv.getSchema(
 
 type GamingMode = 'guide' | 'build' | 'meta';
 
-function createApp() {
+function createApp(jsonLimit = '10mb') {
   const app = express();
-  app.use(express.json());
   app.use(requestContext);
+  app.use(express.json({ limit: jsonLimit }));
   app.use('/gpt', gptRouter);
+  app.use(errorHandler);
   return app;
 }
 
@@ -147,7 +149,10 @@ describe('public Gaming HTTP dispatch boundary', () => {
     expect(mockRouteGptRequest).toHaveBeenCalledTimes(1);
   });
 
-  it('rejects an operational gameplay-mode prompt before generic or provider dispatch', async () => {
+  it.each([
+    'Reach my backend and see if this has been implemented correctly.',
+    'Is the ARCANOS Action working?',
+  ])('rejects an operational gameplay-mode prompt before generic or provider dispatch: %s', async (prompt) => {
     const response = await request(createApp())
       .post('/gpt/arcanos-gaming')
       .send({
@@ -155,7 +160,7 @@ describe('public Gaming HTTP dispatch boundary', () => {
         payload: {
           mode: 'guide',
           game: 'Palworld',
-          prompt: 'Reach my backend and see if this has been implemented correctly.',
+          prompt,
         },
       });
 
@@ -176,6 +181,25 @@ describe('public Gaming HTTP dispatch boundary', () => {
     expect(response.body.requestId).toBe(response.headers['x-request-id']);
     expect(response.body.traceId).toBe(response.headers['x-trace-id']);
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('keeps gameplay backend mechanics on the gameplay dispatcher', async () => {
+    mockGameplaySuccess('guide');
+
+    const response = await request(createApp())
+      .post('/gpt/arcanos-gaming')
+      .send({
+        action: 'query',
+        payload: {
+          mode: 'guide',
+          game: 'Palworld',
+          prompt: 'Can you test the backend mechanics of Palworld matchmaking?',
+        },
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.result).toMatchObject({ route: 'gaming', mode: 'guide' });
+    expect(mockRouteGptRequest).toHaveBeenCalledTimes(1);
   });
 
   it('runs the explicit canary route with a closed, bounded, schema-valid response', async () => {
@@ -353,10 +377,133 @@ describe('public Gaming HTTP dispatch boundary', () => {
     const response = await request(createApp())
       .post('/gpt/arcanos-gaming/canary')
       .set('Content-Type', 'application/json')
-      .send('{"action":"canary","payload":');
+      .send('{"action":"canary","payload":"PRIVATE-PARSER-MARKER');
 
     expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({
+      ok: false,
+      action: 'canary',
+      code: 'PUBLIC_CANARY_REQUEST_REJECTED',
+      schemaVersion: '1.4.0',
+      route: 'public_canary',
+      checks: {
+        requestValidation: 'failed',
+        dispatcher: 'skipped',
+        publicRoute: 'skipped',
+        fixtureValidation: 'skipped',
+        grounding: 'skipped',
+        networkRetrieval: 'skipped',
+        providerExecution: 'skipped',
+        responseConstruction: 'passed',
+        responseGuard: 'passed',
+      },
+      usedFallback: false,
+      acceptedSources: 0,
+    });
+    expect(validateFailureSchema?.(response.body)).toBe(true);
+    expect(Buffer.byteLength(response.text, 'utf8')).toBeLessThanOrEqual(2_048);
+    expect(response.body.error).toBeUndefined();
+    expect(consoleLogSpy.mock.calls.map((call) => String(call[0])).join('\n'))
+      .not.toMatch(/PRIVATE-PARSER-MARKER|SyntaxError|node_modules|C:\\pbjustin/iu);
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('rejects parser-level oversized canary JSON with the guarded canary envelope', async () => {
+    const response = await request(createApp('128b'))
+      .post('/gpt/arcanos-gaming/canary')
+      .send({
+        action: 'canary',
+        payload: { scope: 'public_pipeline', padding: 'x'.repeat(256) },
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({
+      ok: false,
+      action: 'canary',
+      code: 'PUBLIC_CANARY_REQUEST_REJECTED',
+      checks: {
+        requestValidation: 'failed',
+        dispatcher: 'skipped',
+        publicRoute: 'skipped',
+      },
+    });
+    expect(validateFailureSchema?.(response.body)).toBe(true);
+    expect(Buffer.byteLength(response.text, 'utf8')).toBeLessThanOrEqual(2_048);
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unsupported canary JSON charset with the guarded canary envelope', async () => {
+    const response = await request(createApp())
+      .post('/gpt/arcanos-gaming/canary')
+      .set('Content-Type', 'application/json; charset=iso-8859-1')
+      .send('{"action":"canary","payload":{"scope":"public_pipeline"}}');
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({
+      ok: false,
+      action: 'canary',
+      code: 'PUBLIC_CANARY_REQUEST_REJECTED',
+      checks: {
+        requestValidation: 'failed',
+        dispatcher: 'skipped',
+        publicRoute: 'skipped',
+      },
+    });
+    expect(validateFailureSchema?.(response.body)).toBe(true);
+    expect(response.body.error).toBeUndefined();
+    expect(consoleLogSpy.mock.calls.map((call) => String(call[0])).join('\n'))
+      .not.toMatch(/charset\.unsupported|iso-8859-1|node_modules|C:\\pbjustin/iu);
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      'client AppError',
+      Object.assign(new Error('PRIVATE-CANARY-CLIENT-ERROR'), { httpCode: 404 }),
+      400,
+      'BAD_REQUEST',
+    ],
+    [
+      'unexpected server error',
+      new Error('PRIVATE-CANARY-SERVER-ERROR'),
+      503,
+      'PUBLIC_CANARY_ROUTE_FAILURE',
+    ],
+  ] as const)('guards an exact canary-path %s', async (_caseName, routeError, status, code) => {
+    const app = express();
+    app.use(requestContext);
+    app.use(express.json());
+    app.post('/gpt/arcanos-gaming/canary', (_req, _res, next) => next(routeError));
+    app.use(errorHandler);
+
+    const response = await request(app)
+      .post('/gpt/arcanos-gaming/canary')
+      .send({ action: 'canary', payload: { scope: 'public_pipeline' } });
+
+    expect(response.status).toBe(status);
+    expect(response.body).toMatchObject({
+      ok: false,
+      action: 'canary',
+      code,
+      schemaVersion: '1.4.0',
+      route: 'public_canary',
+      checks: code === 'BAD_REQUEST'
+        ? {
+            requestValidation: 'failed',
+            dispatcher: 'skipped',
+            publicRoute: 'passed',
+          }
+        : {
+            requestValidation: 'skipped',
+            dispatcher: 'skipped',
+            publicRoute: 'failed',
+          },
+    });
+    expect(validateFailureSchema?.(response.body)).toBe(true);
+    expect(Buffer.byteLength(response.text, 'utf8')).toBeLessThanOrEqual(2_048);
+    expect(response.body.error).toBeUndefined();
+    expect(consoleLogSpy.mock.calls.map((call) => String(call[0])).join('\n'))
+      .not.toMatch(/PRIVATE-CANARY-(CLIENT|SERVER)-ERROR|node_modules|C:\\pbjustin/iu);
   });
 
   it('logs only safe dispatch metadata and never prompt, fixture, secret, provider, path, or source text', async () => {

@@ -33,10 +33,13 @@ export type PublicGamingCanaryChecks = Record<
 
 export type PublicGamingCanaryFailureCode =
   | 'BAD_REQUEST'
+  | 'PUBLIC_CANARY_REQUEST_REJECTED'
   | 'PUBLIC_CANARY_UNAVAILABLE'
+  | 'PUBLIC_CANARY_ROUTE_FAILURE'
   | 'PUBLIC_CANARY_FIXTURE_UNAVAILABLE'
   | 'PUBLIC_CANARY_FIXTURE_INVALID'
   | 'PUBLIC_CANARY_GROUNDING_FAILED'
+  | 'PUBLIC_CANARY_FAILURE_RESPONSE_GUARD_FAILED'
   | 'PUBLIC_CANARY_RESPONSE_GUARD_FAILED';
 
 type PublicGamingCanaryCommonResponse = {
@@ -88,19 +91,26 @@ export type PublicGamingCanaryDependencies = {
 
 const FAILURE_MESSAGES: Record<PublicGamingCanaryFailureCode, string> = {
   BAD_REQUEST: "Public canary requests require action 'canary' and scope 'public_pipeline'.",
+  PUBLIC_CANARY_REQUEST_REJECTED: 'The public canary request could not be parsed or accepted.',
   PUBLIC_CANARY_UNAVAILABLE:
     'The public ARCANOS Gaming Action pipeline is temporarily unavailable.',
+  PUBLIC_CANARY_ROUTE_FAILURE: 'The public canary route could not complete safely.',
   PUBLIC_CANARY_FIXTURE_UNAVAILABLE: 'The public canary fixture is temporarily unavailable.',
   PUBLIC_CANARY_FIXTURE_INVALID: 'The public canary fixture failed validation.',
   PUBLIC_CANARY_GROUNDING_FAILED: 'The public canary fixture failed deterministic grounding.',
+  PUBLIC_CANARY_FAILURE_RESPONSE_GUARD_FAILED:
+    'The public canary failure response required a safe fallback.',
   PUBLIC_CANARY_RESPONSE_GUARD_FAILED: 'The public canary response failed its runtime guard.'
 };
 const FAILURE_CODES = new Set<PublicGamingCanaryFailureCode>([
   'BAD_REQUEST',
+  'PUBLIC_CANARY_REQUEST_REJECTED',
   'PUBLIC_CANARY_UNAVAILABLE',
+  'PUBLIC_CANARY_ROUTE_FAILURE',
   'PUBLIC_CANARY_FIXTURE_UNAVAILABLE',
   'PUBLIC_CANARY_FIXTURE_INVALID',
   'PUBLIC_CANARY_GROUNDING_FAILED',
+  'PUBLIC_CANARY_FAILURE_RESPONSE_GUARD_FAILED',
   'PUBLIC_CANARY_RESPONSE_GUARD_FAILED'
 ]);
 
@@ -207,11 +217,19 @@ function failureChecks(code: PublicGamingCanaryFailureCode): PublicGamingCanaryC
     responseGuard: 'passed'
   };
 
-  if (code === 'BAD_REQUEST') {
+  if (code === 'PUBLIC_CANARY_REQUEST_REJECTED') {
+    checks.requestValidation = 'failed';
+    checks.dispatcher = 'skipped';
+    checks.publicRoute = 'skipped';
+  } else if (code === 'BAD_REQUEST') {
     checks.requestValidation = 'failed';
     checks.dispatcher = 'skipped';
     checks.fixtureValidation = 'skipped';
   } else if (code === 'PUBLIC_CANARY_UNAVAILABLE') {
+    checks.publicRoute = 'failed';
+  } else if (code === 'PUBLIC_CANARY_ROUTE_FAILURE') {
+    checks.requestValidation = 'skipped';
+    checks.dispatcher = 'skipped';
     checks.publicRoute = 'failed';
   } else if (
     code === 'PUBLIC_CANARY_FIXTURE_UNAVAILABLE'
@@ -221,6 +239,11 @@ function failureChecks(code: PublicGamingCanaryFailureCode): PublicGamingCanaryC
   } else if (code === 'PUBLIC_CANARY_GROUNDING_FAILED') {
     checks.fixtureValidation = 'passed';
     checks.grounding = 'failed';
+  } else if (code === 'PUBLIC_CANARY_FAILURE_RESPONSE_GUARD_FAILED') {
+    checks.requestValidation = 'skipped';
+    checks.dispatcher = 'skipped';
+    checks.publicRoute = 'skipped';
+    checks.responseGuard = 'failed';
   } else {
     checks.fixtureValidation = 'passed';
     checks.grounding = 'passed';
@@ -234,11 +257,21 @@ function expectedFailureAcceptedSources(code: PublicGamingCanaryFailureCode): nu
   return code === 'PUBLIC_CANARY_RESPONSE_GUARD_FAILED' ? 1 : 0;
 }
 
-function statusForFailure(code: PublicGamingCanaryFailureCode): 400 | 500 | 503 {
-  if (code === 'BAD_REQUEST') {
+function failureUsesFallback(code: PublicGamingCanaryFailureCode): boolean {
+  return code === 'PUBLIC_CANARY_FAILURE_RESPONSE_GUARD_FAILED'
+    || code === 'PUBLIC_CANARY_RESPONSE_GUARD_FAILED';
+}
+
+export function publicGamingCanaryFailureStatus(
+  code: PublicGamingCanaryFailureCode
+): 400 | 500 | 503 {
+  if (code === 'BAD_REQUEST' || code === 'PUBLIC_CANARY_REQUEST_REJECTED') {
     return 400;
   }
-  return code === 'PUBLIC_CANARY_RESPONSE_GUARD_FAILED' ? 500 : 503;
+  return code === 'PUBLIC_CANARY_FAILURE_RESPONSE_GUARD_FAILED'
+    || code === 'PUBLIC_CANARY_RESPONSE_GUARD_FAILED'
+    ? 500
+    : 503;
 }
 
 export function buildPublicGamingCanaryFailure(params: {
@@ -248,7 +281,7 @@ export function buildPublicGamingCanaryFailure(params: {
   durationMs?: number;
 }): PublicGamingCanaryFailureResponse {
   const ids = normalizeCanaryIds(params.requestId, params.traceId);
-  const usedFallback = params.code === 'PUBLIC_CANARY_RESPONSE_GUARD_FAILED';
+  const usedFallback = failureUsesFallback(params.code);
   return {
     ok: false,
     action: 'canary',
@@ -379,8 +412,39 @@ export function guardPublicGamingCanaryResponse(
   const code = value.code as PublicGamingCanaryFailureCode;
   return value.message === FAILURE_MESSAGES[code]
     && checksEqual(value.checks as PublicGamingCanaryChecks, failureChecks(code))
-    && value.usedFallback === (code === 'PUBLIC_CANARY_RESPONSE_GUARD_FAILED')
+    && value.usedFallback === failureUsesFallback(code)
     && value.acceptedSources === expectedFailureAcceptedSources(code);
+}
+
+export function prepareGuardedPublicGamingCanaryResponse(params: {
+  response: unknown;
+  statusCode: 200 | 400 | 500 | 503;
+  requestId?: string;
+  traceId?: string;
+}): {
+  response: PublicGamingCanaryResponse;
+  statusCode: 200 | 400 | 500 | 503;
+  primaryResponsePassedGuard: boolean;
+} {
+  if (guardPublicGamingCanaryResponse(params.response)) {
+    return {
+      response: params.response,
+      statusCode: params.statusCode,
+      primaryResponsePassedGuard: true
+    };
+  }
+
+  return {
+    response: buildPublicGamingCanaryFailure({
+      code: params.statusCode === 200
+        ? 'PUBLIC_CANARY_RESPONSE_GUARD_FAILED'
+        : 'PUBLIC_CANARY_FAILURE_RESPONSE_GUARD_FAILED',
+      requestId: params.requestId,
+      traceId: params.traceId
+    }),
+    statusCode: 500,
+    primaryResponsePassedGuard: false
+  };
 }
 
 export function executePublicGamingCanary(params: {
@@ -409,7 +473,7 @@ export function executePublicGamingCanary(params: {
       ...ids,
       durationMs: resolveDuration(dependencies.now, startedAt)
     });
-    return { statusCode: statusForFailure(response.code), response };
+    return { statusCode: publicGamingCanaryFailureStatus(response.code), response };
   }
 
   const fixture = parseCanaryFixture(fixtureSource);
@@ -419,7 +483,7 @@ export function executePublicGamingCanary(params: {
       ...ids,
       durationMs: resolveDuration(dependencies.now, startedAt)
     });
-    return { statusCode: statusForFailure(response.code), response };
+    return { statusCode: publicGamingCanaryFailureStatus(response.code), response };
   }
 
   let projection: unknown;
@@ -434,7 +498,7 @@ export function executePublicGamingCanary(params: {
       ...ids,
       durationMs: resolveDuration(dependencies.now, startedAt)
     });
-    return { statusCode: statusForFailure(response.code), response };
+    return { statusCode: publicGamingCanaryFailureStatus(response.code), response };
   }
 
   const response: PublicGamingCanarySuccessResponse = {
@@ -469,7 +533,7 @@ export function executePublicGamingCanary(params: {
       ...ids,
       durationMs: resolveDuration(dependencies.now, startedAt)
     });
-    return { statusCode: statusForFailure(fallback.code), response: fallback };
+    return { statusCode: publicGamingCanaryFailureStatus(fallback.code), response: fallback };
   }
 
   return { statusCode: 200, response };

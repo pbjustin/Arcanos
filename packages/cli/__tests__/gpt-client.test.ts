@@ -419,11 +419,14 @@ describe("GPT route OpenAPI contract and client", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("defines the OpenAPI contract on POST /gpt/{gptId} with path-bound gptId only", () => {
+  it("defines the generic GPT route and fixed public Gaming canary route", () => {
     const specPath = path.resolve(process.cwd(), "contracts", "custom_gpt_route.openapi.v1.json");
     const spec = JSON.parse(readFileSync(specPath, "utf-8")) as Record<string, any>;
 
-    expect(Object.keys(spec.paths ?? {})).toEqual(["/gpt/{gptId}"]);
+    expect(Object.keys(spec.paths ?? {})).toEqual([
+      "/gpt/{gptId}",
+      "/gpt/arcanos-gaming/canary"
+    ]);
 
     const operation = spec.paths?.["/gpt/{gptId}"]?.post;
     expect(operation?.parameters).toEqual(

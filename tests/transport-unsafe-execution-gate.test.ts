@@ -525,18 +525,15 @@ describe('transport/http/middleware/unsafeExecutionGate', () => {
     expect(buildUnsafeToProceedPayloadMock).not.toHaveBeenCalled();
   });
 
-  it.each([
-    ['query_and_wait', '/gpt/gaming'],
-    ['nonsense', '/gpt/arcanos-gaming']
-  ])('rejects unsafe unsupported action %s at %s before generic blocking', (action, path) => {
+  it('rejects an unsafe unsupported Gaming action before generic blocking', () => {
     const next = jest.fn();
     const response = createResponse();
     hasUnsafeBlockingConditionsMock.mockReturnValue(true);
 
     unsafeExecutionGate({
       method: 'POST',
-      path,
-      body: { action, payload: { mode: 'guide', prompt: 'Guide me.' } },
+      path: '/gpt/arcanos-gaming',
+      body: { action: 'nonsense', payload: { mode: 'guide', prompt: 'Guide me.' } },
       requestId: 'req-generic-unsafe',
       traceId: 'trace-generic-unsafe'
     } as MockRequest as any, response as any, next);
@@ -554,6 +551,32 @@ describe('transport/http/middleware/unsafeExecutionGate', () => {
       result: expect.objectContaining({ route: 'gaming' })
     }));
     expect(buildUnsafeToProceedPayloadMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['query_and_wait', '/gpt/gaming'],
+    ['dag.dispatch', '/gpt/arcanos-gaming']
+  ])('uses the generic unsafe block for legacy gateway action %s at %s', (action, path) => {
+    const next = jest.fn();
+    const response = createResponse();
+    hasUnsafeBlockingConditionsMock.mockReturnValue(true);
+
+    unsafeExecutionGate({
+      method: 'POST',
+      path,
+      body: { action, prompt: 'Guide me.' },
+      requestId: 'req-generic-unsafe',
+      traceId: 'trace-generic-unsafe'
+    } as MockRequest as any, response as any, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(response.status).toHaveBeenCalledWith(503);
+    expect(response.json).toHaveBeenCalledWith(expect.objectContaining({
+      error: 'UNSAFE_TO_PROCEED',
+      requestId: 'req-generic-unsafe',
+      traceId: 'trace-generic-unsafe'
+    }));
+    expect(buildUnsafeToProceedPayloadMock).toHaveBeenCalledTimes(1);
   });
 
   it('uses the generic unsafe response for an unrecognized double-slash path', () => {

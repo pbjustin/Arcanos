@@ -189,10 +189,13 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     expect(failureProperties.schemaVersion.enum).toEqual([contract.info.version]);
     expect(failureProperties.code.enum).toEqual([
       'BAD_REQUEST',
+      'PUBLIC_CANARY_REQUEST_REJECTED',
       'PUBLIC_CANARY_UNAVAILABLE',
+      'PUBLIC_CANARY_ROUTE_FAILURE',
       'PUBLIC_CANARY_FIXTURE_UNAVAILABLE',
       'PUBLIC_CANARY_FIXTURE_INVALID',
       'PUBLIC_CANARY_GROUNDING_FAILED',
+      'PUBLIC_CANARY_FAILURE_RESPONSE_GUARD_FAILED',
       'PUBLIC_CANARY_RESPONSE_GUARD_FAILED',
     ]);
     expect(failureProperties.acceptedSources).toEqual(expect.objectContaining({
