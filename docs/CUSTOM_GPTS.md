@@ -1,7 +1,7 @@
 # Custom GPTs and Backend Integration
 
 ## Overview
-Arcanos routes Custom GPT requests through the `/gpt/:gptId` gateway. This gateway is the writing plane: it resolves a GPT ID to a backend module, forwards generative work to the matched module, and returns route metadata describing the matched module/action set. The routing table is built from module definitions (including their `gptIds`), with optional overrides via environment configuration. The canonical Custom GPT contract is path-based: call `/gpt/<gpt-id>` with either a prompt-first generative request or the typed GPT bridge actions `query` and `query_and_wait`. Use direct control endpoints for job status/results, DAG traces, runtime diagnostics, and MCP tools. Legacy `get_status` and `get_result` aliases are reserved and rejected by `/gpt/:gptId` so control-plane reads do not enter the writing route. (`src/routes/gptRouter.ts`) (`src/platform/runtime/gptRouterConfig.ts`) (`src/services/moduleLoader.ts`)
+Arcanos routes Custom GPT requests through the `/gpt/:gptId` gateway. This gateway is the writing plane: it resolves a GPT ID to a backend module, forwards generative work to the matched module, and returns route metadata describing the matched module/action set. The routing table is built from module definitions (including their `gptIds`), with optional overrides via environment configuration. The canonical Custom GPT contract is path-based: call `/gpt/<gpt-id>` with either a prompt-first generative request or the typed GPT bridge actions `query` and `query_and_wait`. The fixed `/gpt/arcanos-gaming/canary` route is a narrow public-protocol exception that never enters the writing plane. Use direct control endpoints for job status/results, DAG traces, runtime diagnostics, and MCP tools. Legacy `get_status` and `get_result` aliases are reserved and rejected by `/gpt/:gptId` so control-plane reads do not enter the writing route. (`src/routes/gptRouter.ts`) (`src/platform/runtime/gptRouterConfig.ts`) (`src/services/moduleLoader.ts`)
 
 ## Why We Use Custom GPTs
 Custom GPTs let Arcanos ship specialized assistants (Backstage Booker, Arcanos Gaming, Tutor) that:
@@ -72,7 +72,8 @@ The machine-readable contract lives at [contracts/custom_gpt_route.openapi.v1.js
 For live integrations, prefer the backend-served contract URL instead of a manually copied local file:
 - `https://acranos-production.up.railway.app/contracts/custom_gpt_route.openapi.v1.json`
 
-The Arcanos Gaming builder uses a dedicated fixed-path schema and single-action frontend-search evidence workflow:
+The Arcanos Gaming builder uses a dedicated fixed-path schema with two Action operations and one gameplay call per gameplay request:
+
 - `https://acranos-production.up.railway.app/contracts/arcanos_gaming.openapi.v1.json`
 - [ARCANOS_GAMING_CUSTOM_GPT.md](ARCANOS_GAMING_CUSTOM_GPT.md)
 
@@ -190,6 +191,13 @@ success_response:
 - `query`
 (`src/services/arcanos-gaming.ts`)
 
+**Dedicated builder operations:**
+
+- `queryArcanosGaming` → `POST /gpt/arcanos-gaming` for gameplay.
+- `canaryArcanosGaming` → `POST /gpt/arcanos-gaming/canary` for bounded public-pipeline verification.
+
+The module itself still exposes only `query`. The canary is a route-level public protocol and never invokes the Gaming module, writing pipeline, provider, persistence, or control-plane code.
+
 **Spec sheet example:**
 ```yaml
 name: Arcanos Gaming
@@ -209,11 +217,15 @@ success_response:
   description: Direct Gaming module response envelope plus _route metadata for `ARCANOS:GAMING`.
 ```
 
-**Payload contract:** `mode: "guide"` needs a prompt and may include `game`; `mode: "build"` and `mode: "meta"` require both `prompt` and `game`. Optional `url`, `urls`, `guideUrl`, `guideUrls`, `audit` / `enableAudit`, and `hrc` / `enableHrc` fields are validated by `gamingModes` before any pipeline runs. Candidate URLs can be supplied on the initial query and are always untrusted: ARCANOS must fetch and validate a page before it can become evidence. When callers send a partial explicit `payload`, top-level Gaming fields are merged only where the explicit payload omits them; explicit `payload` fields keep precedence.
+**Payload contract:** Public gameplay calls require body `action: "query"`; the Gaming dispatcher does not select an action from a query parameter, header, or operation alias. `mode: "guide"` needs a prompt and may include `game`; `mode: "build"` and `mode: "meta"` require both `prompt` and `game`. Optional `url`, `urls`, `guideUrl`, `guideUrls`, `audit` / `enableAudit`, and `hrc` / `enableHrc` fields are validated by `gamingModes` before any pipeline runs. Candidate URLs can be supplied on the initial query and are always untrusted: ARCANOS must fetch and validate a page before it can become evidence. When callers send a partial explicit `payload`, top-level Gaming fields are merged only where the explicit payload omits them; explicit `payload` fields keep precedence.
 
-**Frontend candidate discovery:** The dedicated builder schema exposes only `queryArcanosGaming`. For current or source-sensitive requests, Web Search may discover two to four URL candidates before that single Action call, but its text never supplies evidence directly; ARCANOS must fetch, validate, and return every citable source. See [ARCANOS_GAMING_CUSTOM_GPT.md](ARCANOS_GAMING_CUSTOM_GPT.md) for the exact builder instructions and examples.
+**Dispatcher boundary:** Classification uses only the validated public envelope and original user prompt. It never uses fetched source text, search snippets, translated prompts, enriched context, guide titles, retrieved HTML, or provider output. An obviously operational prompt under any gameplay mode is rejected with `OPERATIONAL_REQUEST_NOT_GAMEPLAY` and an instruction to invoke the public canary; it is not silently rewritten. For example, `Reach my backend and see if this has been implemented correctly.` is operational, while `How do dedicated server settings affect Pal spawning?` and `Is this early-game base build working correctly?` remain gameplay.
 
-**Boundary:** Gaming can call its own module action through `/gpt/arcanos-gaming` or `/gpt/gaming`. It cannot use `/gpt/:gptId` to run `runtime.inspect`, `workers.status`, `queue.inspect`, `self_heal.status`, `system_state`, `get_status`, `get_result`, MCP control actions, DAG control actions, or Core diagnostics; those are rejected by the writing-plane guard before Gaming dispatch.
+**Public canary:** `canaryArcanosGaming` accepts exactly `{ "action": "canary", "payload": { "scope": "public_pipeline" } }`. It verifies request validation, deterministic dispatch, the fixed public route, bundled fixture marker `ARCANOS_PUBLIC_CANARY_7F31`, deterministic grounding/projection, response construction, and the response guard. Network retrieval and provider execution are explicitly `skipped`. The canary is not administrative health and exposes no logs, secrets, credentials, environment values, infrastructure or deployment details, filesystem paths, job, queue, database, worker, or control-plane data. See [ARCANOS_GAMING_CUSTOM_GPT.md](ARCANOS_GAMING_CUSTOM_GPT.md) for the disposable PR-preview Action procedure; direct preview HTTPS tests are not full ChatGPT Action end-to-end proof.
+
+**Frontend candidate discovery:** The dedicated builder schema exposes both operations, but each gameplay workflow still makes one `queryArcanosGaming` call. For current or source-sensitive requests, Web Search may discover two to four URL candidates before that gameplay call, but its text never supplies evidence or route selection directly; ARCANOS must fetch, validate, and return every citable source. See [ARCANOS_GAMING_CUSTOM_GPT.md](ARCANOS_GAMING_CUSTOM_GPT.md) for the exact builder instructions and examples.
+
+**Boundary:** Gaming can call its own module action through `/gpt/arcanos-gaming` or `/gpt/gaming`. The separate canary path performs only its closed public checks. Neither path can run `runtime.inspect`, `workers.status`, `queue.inspect`, `self_heal.status`, `system_state`, `get_status`, `get_result`, MCP control actions, DAG control actions, or Core diagnostics; those operations remain outside the public Gaming protocol.
 
 ### Arcanos Core
 **What it is:** The primary ARCANOS entryway for the main custom GPT. The `ARCANOS:CORE` module sends prompt-first requests through the Trinity brain so the main GPT can use the general ARCANOS pipeline without being coupled to tutor-specific logic.

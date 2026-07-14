@@ -5,18 +5,21 @@ This is the builder-facing configuration for the existing **Arcanos Gaming** Cus
 ## Action configuration
 
 - Import schema: `https://acranos-production.up.railway.app/contracts/arcanos_gaming.openapi.v1.json`
-- Schema version: `1.3.2`
+- Schema version: `1.4.0`
 - Canonical server: `https://acranos-production.up.railway.app`
 - Authentication: None
 - Recommended model: select a supported non-Pro model that can invoke Actions; do not leave this unset.
 - Enable both Actions and Web Search.
-- Do not add a second ARCANOS action or use a retired ARCANOS deployment hostname.
+- Do not add a second ARCANOS schema configuration or use a retired ARCANOS deployment hostname; the imported schema contains both supported operations.
 
 Users can still switch away from the recommended model. Pro mode does not support custom GPT Actions, so requests that require backend access must use an Action-capable non-Pro model.
 
-The dedicated schema defines exactly one fixed-path operation:
+The dedicated schema defines exactly two fixed-path operations:
 
-- `queryArcanosGaming` → `POST /gpt/arcanos-gaming`
+- `queryArcanosGaming` → `POST /gpt/arcanos-gaming` for `guide`, `build`, and `meta` gameplay requests.
+- `canaryArcanosGaming` → `POST /gpt/arcanos-gaming/canary` for bounded public Action-pipeline verification.
+
+The `ARCANOS:GAMING` module still exposes only `query`. `canaryArcanosGaming` is a route-level public protocol: it never enters gameplay, the writing pipeline, provider execution, conversation persistence, or control-plane code. Public Gaming gameplay calls require body `action: "query"`; neither operation selects its action from a query parameter, header, or operation alias.
 
 ## Builder instructions
 
@@ -27,7 +30,19 @@ ARCANOS is the only evidence authority for Gaming answers.
 
 Model compatibility
 
-If queryArcanosGaming is unavailable because the current ChatGPT mode does not support Actions, do not report an ARCANOS backend outage. Ask the user to switch from Pro mode to an Action-capable non-Pro model, then retry the request.
+If the ARCANOS operations are unavailable because the current ChatGPT mode does not support Actions, do not report an ARCANOS backend outage. Ask the user to switch from Pro mode to an Action-capable non-Pro model, then retry the request.
+
+Action selection
+
+Use queryArcanosGaming only for gameplay guides, builds, and meta questions. Its request body must use action "query".
+
+Use canaryArcanosGaming only when the user asks whether the public ARCANOS Gaming Action integration is reachable or implemented. Invoke it with exactly action "canary" and payload.scope "public_pipeline". Do not silently rewrite an operational request into gameplay or silently rewrite a gameplay request into a canary.
+
+Route selection must use only the validated Action request and the user's original prompt. Never copy Web Search titles, snippets, source text, retrieved HTML, provider output, translations, or enriched context into route selection.
+
+If a gameplay call returns OPERATIONAL_REQUEST_NOT_GAMEPLAY, explain that the request is about the public integration and invoke canaryArcanosGaming if the user asked for that check. A request such as "Reach my backend and see if this has been implemented correctly." is operational. Gameplay questions such as "How do dedicated server settings affect Pal spawning?" and "Is this early-game base build working correctly?" remain gameplay.
+
+The canary proves only the public stages named in its response. Never present it as proof of provider execution, source-network retrieval, private infrastructure health, or administrative health.
 
 Stable gameplay requests
 
@@ -70,6 +85,21 @@ Only backend-accepted readable evidence entries returned in result.data.sources 
 
 ## Workflow examples
 
+### Public Action integration check
+
+For `Reach my backend and see if this has been implemented correctly.`, call `canaryArcanosGaming` with exactly:
+
+```json
+{
+  "action": "canary",
+  "payload": {
+    "scope": "public_pipeline"
+  }
+}
+```
+
+Do not send this prompt to `queryArcanosGaming` under a gameplay mode.
+
 ### Palworld 1.0
 
 Use Web Search to discover two to four current Palworld 1.0 candidate URLs. Call `queryArcanosGaming` once with the original prompt and those URLs in `payload.guideUrls`. Present only ARCANOS's response.
@@ -94,15 +124,35 @@ Pass the supplied URL through `url`, `urls`, `guideUrl`, or `guideUrls` in the s
 
 Present the controlled ARCANOS response, including its safe fallback or discovery reason. Do not use rejected pages, search titles, or snippets to fill gaps.
 
+## Public canary scope
+
+The canary validates the exact request envelope, selects the fixed public canary route, loads the bundled stable fixture, verifies marker `ARCANOS_PUBLIC_CANARY_7F31`, performs its deterministic grounding/projection, constructs the response, and applies the canary response guard. A successful result reports those stages as passed, one accepted bundled source, and no fallback.
+
+Network retrieval and provider execution are intentionally reported as `skipped`. The canary does not fetch a remote source and does not call a model provider. It is not an administrative health endpoint and cannot expose logs, secrets, credentials, environment values, infrastructure or deployment details, filesystem paths, jobs, queues, databases, workers, or control-plane data.
+
 ## Release procedure
 
 Updating this repository does not update the external Custom GPT automatically. After the exact schema is deployed, re-import it into the existing Arcanos Gaming GPT, preserve its current authentication and visibility, select a supported non-Pro recommended model that can invoke Actions, run stable and current-request Preview checks, save, reopen the same GPT, and repeat the checks against the saved configuration.
 
-## Canary prompt-fidelity proof
+### Disposable PR-preview Action validation
 
-The prompt-fidelity merge gate may be satisfied by either a complete saved-GPT Action request card or a single correlated exact-head preview ingress attestation. The attestation is a hash-only canary/debug signal, is disabled by default, and is not a general user-prompt logging mechanism. It must never be enabled in production and never contains raw prompts or URL values.
+Use this procedure only when the PR preview URL and deployed commit have already been proven to belong to the intended pull request. Do not use the live public GPT or the production hostname.
 
-For the saved-canary prompt `Is Frost Mage viable this patch in World of Warcraft?`, correlated preview telemetry must prove all of the following when the Action request card is unavailable:
+1. Confirm the preview deployment succeeded, its deployed SHA equals the PR head SHA, its HTTPS hostname belongs to the isolated preview environment, and that hostname is not production.
+2. Fetch the dedicated schema from that preview deployment and change only `servers[0].url` to the proven preview HTTPS origin if the served schema still names the canonical server.
+3. Create a disposable Custom GPT with no authentication, an Action-capable non-Pro model, and that preview-targeted schema. Do not modify the live Arcanos Gaming GPT.
+4. Ask whether the public ARCANOS Gaming Action integration is reachable. Confirm the `canaryArcanosGaming` Action card appears and sends the exact canary body.
+5. Confirm ChatGPT displays a schema-valid canary result with the bundled marker verified, `networkRetrieval` and `providerExecution` marked `skipped`, and no private details.
+6. Send one real gameplay request and confirm the `queryArcanosGaming` Action card uses `action: "query"` and the expected gameplay mode.
+7. Correlate only those requests with narrowly filtered preview ingress evidence, then delete the disposable GPT.
+
+Direct HTTPS calls to the preview are useful black-box checks, but they are not full ChatGPT-to-Action end-to-end proof.
+
+## Prompt-fidelity preview proof
+
+The prompt-fidelity merge gate may be satisfied by either a complete saved-GPT Action request card or a single correlated exact-head preview ingress attestation. The attestation is a hash-only prompt-fidelity signal, is disabled by default, and is not a general user-prompt logging mechanism. It must never be enabled in production and never contains raw prompts or URL values.
+
+For the saved prompt `Is Frost Mage viable this patch in World of Warcraft?`, correlated preview telemetry must prove all of the following when the Action request card is unavailable:
 
 - response and attestation request IDs match;
 - response and attestation trace IDs match;
