@@ -46,6 +46,7 @@ jest.unstable_mockModule('../src/platform/logging/structuredLogging.js', () => (
 
 const { default: ArcanosGaming } = await import('../src/modules/arcanos-gaming.js');
 const { BackendQueryAgent, IntentRouterAgent, ResponseComposerAgent } = await import('../src/services/gamingAgents.js');
+const { validatePublicGamingQueryRequest } = await import('../src/services/gamingModes.js');
 
 describe('ArcanosGaming module', () => {
 
@@ -88,6 +89,56 @@ describe('ArcanosGaming module', () => {
     expect(ArcanosGaming.gptIds).toEqual(['arcanos-gaming', 'gaming']);
     expect(ArcanosGaming.defaultAction).toBe('query');
     expect(Object.keys(ArcanosGaming.actions)).toEqual(['query']);
+  });
+
+  it('accepts Action fields exactly at their published length and count limits', () => {
+    const urlPrefix = 'https://example.com/';
+    const boundedUrl = `${urlPrefix}${'a'.repeat(2_048 - urlPrefix.length)}`;
+
+    expect(validatePublicGamingQueryRequest({
+      action: 'query',
+      payload: {
+        mode: 'guide',
+        game: 'g'.repeat(120),
+        prompt: 'p'.repeat(8_000),
+        guideUrl: boundedUrl,
+        guideUrls: [
+          'https://example.com/one',
+          'https://example.com/two',
+          'https://example.com/three',
+          'https://example.com/four',
+        ],
+      },
+    }, 'query')).toBeNull();
+  });
+
+  it.each([
+    ['prompt length', { mode: 'guide', prompt: 'p'.repeat(8_001) }],
+    ['prompt raw length with trailing whitespace', { mode: 'guide', prompt: `p${' '.repeat(8_000)}` }],
+    ['game length', { mode: 'guide', game: 'g'.repeat(121), prompt: 'Guide me.' }],
+    ['game raw length with trailing whitespace', { mode: 'guide', game: `g${' '.repeat(120)}`, prompt: 'Guide me.' }],
+    ['URL length', { mode: 'guide', prompt: 'Guide me.', guideUrl: `https://example.com/${'a'.repeat(2_049)}` }],
+    ['URL raw length with trailing whitespace', {
+      mode: 'guide',
+      prompt: 'Guide me.',
+      guideUrl: `https://example.com/${' '.repeat(2_029)}`,
+    }],
+    ['URL count', {
+      mode: 'guide',
+      prompt: 'Guide me.',
+      guideUrls: Array.from({ length: 5 }, (_, index) => `https://example.com/${index}`),
+    }],
+    ['URL array type', { mode: 'guide', prompt: 'Guide me.', guideUrls: 'https://example.com/guide' }],
+    ['URL uniqueness', {
+      mode: 'guide',
+      prompt: 'Guide me.',
+      guideUrls: ['https://example.com/guide', 'https://example.com/guide'],
+    }],
+  ])('rejects Action payloads outside the published %s limit', (_caseName, payload) => {
+    expect(validatePublicGamingQueryRequest({ action: 'query', payload }, 'query')).toEqual({
+      code: 'BAD_REQUEST',
+      message: 'Gaming query request exceeds the published field limits.',
+    });
   });
 
   it('accepts guide mode, message alias, and a single guide url', async () => {
@@ -314,6 +365,136 @@ describe('ArcanosGaming module', () => {
     }));
     expect((result as any).data.response).toContain('safe deterministic fallback was used');
     expect((result as any).data.response).not.toContain('Malformed backend response');
+  });
+
+  it('returns a labeled general fallback when the backend response is blank', async () => {
+    runGuidePipelineSpy.mockResolvedValueOnce({
+      ok: true,
+      route: 'gaming',
+      mode: 'guide',
+      data: {
+        response: '   ',
+        sources: [{
+          url: 'https://example.com/elden-ring-route',
+          snippet: 'Validated route guidance.',
+        }],
+      },
+    } as any);
+
+    const result = await ArcanosGaming.actions.query({
+      mode: 'guide',
+      prompt: 'where do I get smithing stones',
+    } as any);
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      route: 'gaming',
+      mode: 'guide',
+      data: expect.objectContaining({
+        response: expect.stringContaining('General Fallback (not backend-supported)'),
+        sources: [{
+          url: 'https://example.com/elden-ring-route',
+          snippet: 'Validated route guidance.',
+        }],
+      }),
+    }));
+  });
+
+  it('returns a labeled source-preserving fallback when the backend response is invisible-only', async () => {
+    runGuidePipelineSpy.mockResolvedValueOnce({
+      ok: true,
+      route: 'gaming',
+      mode: 'guide',
+      data: {
+        response: '...\u034f\u061c\u200b\u202e\u2060\ufe0f',
+        sources: [{
+          url: 'https://example.com/palworld-guide',
+          snippet: 'Validated Palworld guidance.',
+        }],
+      },
+    } as any);
+
+    const result = await ArcanosGaming.actions.query({
+      mode: 'guide',
+      game: 'Palworld',
+      prompt: 'Give me a beginner route.',
+    } as any);
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      data: expect.objectContaining({
+        response: expect.stringContaining('General Fallback (not backend-supported)'),
+        sources: [{
+          url: 'https://example.com/palworld-guide',
+          snippet: 'Validated Palworld guidance.',
+        }],
+      }),
+    }));
+  });
+
+  it('returns a labeled source-preserving fallback instead of truncating an oversized response', async () => {
+    runGuidePipelineSpy.mockResolvedValueOnce({
+      ok: true,
+      route: 'gaming',
+      mode: 'guide',
+      data: {
+        response: 'x'.repeat(5_000),
+        sources: [{
+          url: 'https://example.com/palworld-guide',
+          snippet: 'Validated Palworld guidance.',
+        }],
+      },
+    } as any);
+
+    const result = await ArcanosGaming.actions.query({
+      mode: 'guide',
+      game: 'Palworld',
+      prompt: 'Give me a beginner route.',
+    } as any);
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      data: expect.objectContaining({
+        response: expect.stringContaining('General Fallback (not backend-supported)'),
+        sources: [{
+          url: 'https://example.com/palworld-guide',
+          snippet: 'Validated Palworld guidance.',
+        }],
+        fallbackReason: 'GAMING_PROVIDER_ERROR',
+      }),
+    }));
+    expect((result as any).data.response).not.toContain('x'.repeat(1_000));
+  });
+
+  it('accepts a contract-valid multibyte response larger than 4 KiB', async () => {
+    const response = 'é'.repeat(3_000);
+    runGuidePipelineSpy.mockResolvedValueOnce({
+      ok: true,
+      route: 'gaming',
+      mode: 'guide',
+      data: {
+        response,
+        sources: [],
+      },
+    } as any);
+
+    const result = await ArcanosGaming.actions.query({
+      mode: 'guide',
+      game: 'Palworld',
+      prompt: 'Give me a beginner route.',
+    } as any);
+
+    expect(result).toEqual(expect.objectContaining({
+      ok: true,
+      data: expect.objectContaining({
+        sources: [],
+      }),
+    }));
+    const publicResponse = (result as any).data.response as string;
+    expect(Buffer.byteLength(publicResponse, 'utf8')).toBeGreaterThan(4 * 1_024);
+    expect(Array.from(publicResponse).length).toBeLessThanOrEqual(4_096);
+    expect(publicResponse).not.toContain('General Fallback (not backend-supported)');
+    expect((result as any).data.fallbackReason).toBeUndefined();
   });
 
   it('preserves validated frontend evidence retry metadata for the secure guide pipeline', async () => {

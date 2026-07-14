@@ -119,7 +119,10 @@ function normalizeCandidate(rawValue: string): string | undefined {
   }
 
   const words = normalized.split(/\s+/);
-  while (words.length > 0 && GAME_TRAILING_TERMS.has(words[words.length - 1].toLowerCase())) {
+  while (
+    words.length > 0
+    && GAME_TRAILING_TERMS.has(words[words.length - 1].toLowerCase().replace(/[’']s$/u, "s"))
+  ) {
     words.pop();
   }
   while (words.length > 0 && /^(?:early|mid|late)[- ]?game$/i.test(words[words.length - 1])) {
@@ -166,10 +169,11 @@ function detectFromAnchoredText(value: string, source: "prompt" | "page_metadata
 
   const patterns = [
     /["“]([^"”]{2,80})["”]\s+(?:guide|build|loadout|meta|walkthrough|wiki|tips?)\b/i,
-    /\b(?:guide|build|loadout|meta|walkthrough|wiki|tips?)\s+(?:for\s+)?(?:the\s+)?(?:current|latest)\s+(?:patch|season|version)(?:\s+[a-z0-9._-]+)?\s+(?:in|for|on)\s+(?:the\s+game\s+)?([a-z0-9][a-z0-9'’:.+ -]{1,80}?)(?=[?.!,;]|$)/i,
+    /[|｜]\s*([a-z0-9][a-z0-9'’:.+ -]{1,80}?)\s*[|｜]\s*[a-z0-9][a-z0-9'’:.+ -]{1,80}\s*$/i,
+    /\b(?:guide|build|loadout|meta|walkthrough|wiki|tips?)\s+(?:for\s+)?(?:the\s+)?(?:current|latest)\s+(?:patch|season|version)(?:\s+[a-z0-9._-]+)?\s+(?:in|for|on)\s+(?:the\s+game\s+)?([a-z0-9][a-z0-9'’:.+ -]{1,80}?)(?=[?!,;]|\.(?!\d)|$)/i,
     /^([a-z0-9][a-z0-9'’:.+ -]{1,80}?)\s+(?:(?:beginner|boss|class|combat|community|current|early(?:\s+game)?|endgame|exploration|first[-\s]+night|late(?:\s+game)?|legacy|leveling|main|mechanics?|mining|patch|progression|pve|pvp|quest|raids?|route|season|strategy|survival)\s+){0,4}(?:guide|build|loadout|meta|walkthrough|wiki|tips?|tier(?:\s+list)?|patch\s+notes)\b/i,
-    /\b(?:guide|build|loadout|meta|walkthrough|wiki|tips?)\s+(?:for|in|on)\s+(?:the\s+game\s+)?([a-z0-9][a-z0-9'’:.+ -]{1,80}?)(?=[?.!,;]|$)/i,
-    /\b(?:for|in|on)\s+(?:the\s+game\s+)?([a-z0-9][a-z0-9'’:.+ -]{1,80}?)(?=\s+(?:guide|build|loadout|meta|walkthrough|wiki|tips?|patch|season)\b|[?.!,;]|$)/i,
+    /\b(?:guide|build|loadout|meta|walkthrough|wiki|tips?)\s+(?:for|in|on)\s+(?:the\s+game\s+)?([a-z0-9][a-z0-9'’:.+ -]{1,80}?)(?=[?!,;]|\.(?!\d)|$)/i,
+    /\b(?:for|in|on)\s+(?:the\s+game\s+)?([a-z0-9][a-z0-9'’:.+ -]{1,80}?)(?=\s+(?:guide|build|loadout|meta|walkthrough|wiki|tips?|patch|season)\b|[?!,;]|\.(?!\d)|$)/i,
     /^([a-z0-9][a-z0-9'’:.+ -]{1,80}?)\s+(?:(?:beginner|boss|class|combat|community|current|early(?:\s+game)?|endgame|exploration|first[-\s]+night|late(?:\s+game)?|legacy|leveling|main|mechanics?|mining|patch|progression|pve|pvp|quest|raids?|route|season|strategy|survival)\s+){0,4}(?:guide|build|loadout|meta|walkthrough|wiki|tips?|tier(?:\s+list)?|patch\s+notes)(?:\s+request)?[?.!]*$/i
   ];
 

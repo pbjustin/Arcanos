@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { buildGamingDiscoveryQuery } from '../../src/services/gamingSourceDiscovery.js';
+import { GAMING_RESPONSE_MAX_CHARACTERS } from '../../src/shared/http/clientResponseCommon.js';
 
 const contractPath = join(process.cwd(), 'contracts/arcanos_gaming.openapi.v1.json');
 const instructionsPath = join(process.cwd(), 'docs/ARCANOS_GAMING_CUSTOM_GPT.md');
@@ -59,7 +60,7 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     const contract = loadContract();
 
     expect(contract.openapi).toBe('3.1.0');
-    expect(contract.info.version).toBe('1.3.0');
+    expect(contract.info.version).toBe('1.3.2');
     expect(contract.servers).toEqual([
       {
         url: 'https://acranos-production.up.railway.app',
@@ -152,7 +153,12 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     expect(evidenceRequest.properties.queries.items.maxLength).toBe(180);
     expect(schemas.GamingResponseData.required).toEqual(['response', 'sources']);
     expect(schemas.GamingResponseData.properties).toEqual(expect.objectContaining({
-      response: { type: 'string' },
+      response: {
+        type: 'string',
+        minLength: 1,
+        maxLength: GAMING_RESPONSE_MAX_CHARACTERS,
+        pattern: '[\\p{L}\\p{N}\\p{S}]',
+      },
       sources: {
         type: 'array',
         items: { $ref: '#/components/schemas/GamingSource' },
@@ -168,6 +174,16 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
       'result',
       '_route',
     ]);
+    expect(schemas.PublicError.properties.details).toEqual({
+      type: 'object',
+      additionalProperties: true,
+    });
+    const responsePattern = new RegExp(schemas.GamingResponseData.properties.response.pattern, 'u');
+    expect(responsePattern.test('   ')).toBe(false);
+    expect(responsePattern.test('...')).toBe(false);
+    expect(responsePattern.test('\u034f\u061c\u200b\u202e\u2060\ufe0f\ufeff')).toBe(false);
+    expect(responsePattern.test('\u200bPalworld guide')).toBe(true);
+    expect(responsePattern.test('🎮')).toBe(true);
   });
 
   it('keeps the builder query length synchronized with the runtime query builder', () => {
@@ -189,6 +205,9 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     const customGpts = readFileSync(customGptsPath, 'utf8');
 
     expect(instructions).toContain('The dedicated schema defines exactly one fixed-path operation');
+    expect(instructions).toContain('do not leave this unset');
+    expect(instructions).toContain('Pro mode does not support custom GPT Actions');
+    expect(instructions).toContain('do not report an ARCANOS backend outage');
     expect(instructions).toContain('For stable walkthrough, mechanic, boss, farming, location');
     expect(instructions).toContain('A generic request to "look up" a stable guide is still stable');
     expect(instructions).toContain('Use Web Search to discover two to four relevant candidate URLs');

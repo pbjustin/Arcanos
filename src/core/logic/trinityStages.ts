@@ -15,6 +15,7 @@ import {
 import { getTokenParameter } from "@shared/tokenParameterHelper.js";
 import { APPLICATION_CONSTANTS } from "@shared/constants.js";
 import { countWords } from '@shared/text/countWords.js';
+import { hasVisibleContent } from '@shared/promptUtils.js';
 import {
   ARCANOS_SYSTEM_PROMPTS,
   buildFinalGpt5AnalysisMessage,
@@ -94,7 +95,10 @@ const DEFAULT_TRINITY_FINAL_STAGE_TIMEOUT_MS = 4_000;
 const MODEL_VALIDATION_CACHE_TTL_MS = 10 * 60_000;
 const validatedModelCache = new Map<string, number>();
 
-function normalizeCompletionProviderMetadata(response: unknown): TrinityProviderCompletionMetadata {
+function normalizeCompletionProviderMetadata(
+  response: unknown,
+  output: string
+): TrinityProviderCompletionMetadata {
   const candidate = response && typeof response === 'object'
     ? response as Record<string, unknown>
     : {};
@@ -125,6 +129,7 @@ function normalizeCompletionProviderMetadata(response: unknown): TrinityProvider
         : null,
     incompleteReason: typeof incompleteDetails.reason === 'string' ? incompleteDetails.reason : null,
     incomplete: providerMetadata.incomplete === true || candidate.incomplete === true,
+    emptyOutput: !hasVisibleContent(output),
     truncated: providerMetadata.truncated === true || candidate.truncated === true || finishReason === 'length',
     lengthTruncated: providerMetadata.length_truncated === true || candidate.length_truncated === true || finishReason === 'length',
     contentFiltered: providerMetadata.content_filtered === true || candidate.content_filtered === true || finishReason === 'content_filter'
@@ -147,6 +152,7 @@ function logProviderCompletionMetadata(eventName: string, params: {
     responseStatus: params.provider.responseStatus ?? 'unknown',
     incompleteReason: params.provider.incompleteReason ?? 'none',
     incomplete: params.provider.incomplete === true,
+    emptyOutput: params.provider.emptyOutput === true,
     truncated: params.provider.truncated === true,
     lengthTruncated: params.provider.lengthTruncated === true,
     contentFiltered: params.provider.contentFiltered === true,
@@ -581,7 +587,7 @@ export async function runFinalStage(
   const finalText = finalResponse.choices[0]?.message?.content || '';
   const finalModel = finalResponse.activeModel || complexModel;
   const finalFallback = finalResponse.fallbackFlag || false;
-  const provider = normalizeCompletionProviderMetadata(finalResponse);
+  const provider = normalizeCompletionProviderMetadata(finalResponse, finalText);
   logProviderCompletionMetadata('trinity.final.provider_metadata', {
     model: finalModel,
     provider,
@@ -684,7 +690,7 @@ export async function runDirectAnswerStage(
   const directAnswerText = directAnswerResponse.choices[0]?.message?.content || '';
   const actualModel = directAnswerResponse.activeModel || directAnswerModel;
   const fallbackUsed = directAnswerResponse.fallbackFlag || false;
-  const provider = normalizeCompletionProviderMetadata(directAnswerResponse);
+  const provider = normalizeCompletionProviderMetadata(directAnswerResponse, directAnswerText);
   logProviderCompletionMetadata('trinity.direct_answer.provider_metadata', {
     requestId,
     model: actualModel,

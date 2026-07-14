@@ -1033,10 +1033,16 @@ function hasUsefulArticleFallback(text: string): boolean {
 }
 
 function shouldUseStructuredEvidence(result: GamingBuildResourceResult, articleText: string): boolean {
-  if (result.build && result.validation.accepted && result.quality !== "metadata-only") {
+  const structuredResource = isStructuredGamingResourceType(result.classification.type);
+  if (
+    result.build
+    && result.validation.accepted
+    && result.quality !== "metadata-only"
+    && (structuredResource || !hasUsefulArticleFallback(articleText))
+  ) {
     return true;
   }
-  return isStructuredGamingResourceType(result.classification.type) && !hasUsefulArticleFallback(articleText);
+  return structuredResource && !hasUsefulArticleFallback(articleText);
 }
 
 export async function buildGamingWebContext(
@@ -1397,8 +1403,8 @@ function detectGameFromDocumentIntro(
 }
 
 function gamingGameNamesMatch(candidateGame: string, requestedGame: string): boolean {
-  const normalizedCandidate = canonicalizeGamingGameName(candidateGame).toLowerCase();
-  const normalizedRequested = canonicalizeGamingGameName(requestedGame).toLowerCase();
+  const normalizedCandidate = canonicalizeGamingGameName(candidateGame).toLowerCase().replace(/^the\s+/u, "");
+  const normalizedRequested = canonicalizeGamingGameName(requestedGame).toLowerCase().replace(/^the\s+/u, "");
   if (normalizedCandidate === normalizedRequested) {
     return true;
   }

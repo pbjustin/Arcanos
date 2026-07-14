@@ -434,7 +434,7 @@ function detectGame(input: GamingResourceInput, metadata: GamingResourceMetadata
   if (candidate) {
     return { game: canonicalizeGamingGameName(candidate), confidence: 0.58, evidence: ["page_metadata_prefix"] };
   }
-  const promptGame = safeString(input.prompt, 240)?.match(/\b(?:for|in)\s+([a-z0-9][a-z0-9'’:.+ -]{1,80}?)(?=[?.!,;]|$)/iu)?.[1];
+  const promptGame = safeString(input.prompt, 240)?.match(/\b(?:for|in)\s+([a-z0-9][a-z0-9'’:.+ -]{1,80}?)(?=[?!,;]|\.(?!\d)|$)/iu)?.[1];
   const promptCandidate = safeString(promptGame, 120);
   return promptCandidate
     ? { game: canonicalizeGamingGameName(promptCandidate), confidence: 0.45, evidence: ["request_prompt_uncorroborated"] }

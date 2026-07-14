@@ -93,7 +93,6 @@ import { ARCANOS_SUPPRESS_TIMEOUT_FALLBACK_FLAG } from '@shared/gpt/gptDirectAct
 import { extractLastUserMessageText } from '@shared/gpt/messageContentText.js';
 import { resolveRequestedGptActionFromRequest } from '@shared/gpt/gptRequestAction.js';
 import { executeDirectGptAction, executeFastGptPrompt } from '@services/gptFastPath.js';
-import { DEFAULT_GAMING_MODULE_TIMEOUT_MS } from '@services/gamingConfig.js';
 import {
   formatGamingError,
   resolveGamingMode,
@@ -115,6 +114,7 @@ const DEFAULT_GPT_ASYNC_HEAVY_MESSAGE_COUNT = 8;
 const DEFAULT_GPT_ASYNC_HEAVY_MAX_WORDS = 700;
 const DEFAULT_GPT_ASYNC_HEAVY_WAIT_FOR_RESULT_MS = 500;
 const DIRECT_RETURN_ROUTE_TIMEOUT_HEADROOM_MS = 750;
+const DIRECT_GAMING_ACTION_ROUTE_TIMEOUT_MS = 40_000;
 const QUERY_AND_WAIT_DIRECT_ACTION_REASON = 'query_and_wait_direct_action';
 const DIRECT_RETURN_WAIT_KEYS = [
   'waitForResultMs',
@@ -1326,20 +1326,19 @@ router.post("/:gptId", async (req, res, next) => {
   const queryAndWaitRequestedTimeoutMs =
     explicitAsyncWaitForResultMs ?? resolveGptWaitTimeoutMs();
   const directGamingRoute = isDirectModuleQueryGpt(routeGptId);
-  const routeTimeoutMs = resolveGptRouteHardTimeoutMs({
-    profile: directGamingRoute ? 'default' : routeTimeoutProfile,
-    ...(directGamingRoute
-      ? { minimumMsOverride: DEFAULT_GAMING_MODULE_TIMEOUT_MS }
-      : {}),
-    ...(queryAndWaitRequested && !directGamingRoute && routeTimeoutProfile === 'default'
-      ? {
-          defaultMsOverride: Math.max(
-            resolveDefaultGptQueryAndWaitRouteTimeoutMs(),
-            queryAndWaitRequestedTimeoutMs + DIRECT_RETURN_ROUTE_TIMEOUT_HEADROOM_MS
-          )
-        }
-      : {})
-  });
+  const routeTimeoutMs = directGamingRoute
+    ? DIRECT_GAMING_ACTION_ROUTE_TIMEOUT_MS
+    : resolveGptRouteHardTimeoutMs({
+        profile: routeTimeoutProfile,
+        ...(queryAndWaitRequested && routeTimeoutProfile === 'default'
+          ? {
+              defaultMsOverride: Math.max(
+                resolveDefaultGptQueryAndWaitRouteTimeoutMs(),
+                queryAndWaitRequestedTimeoutMs + DIRECT_RETURN_ROUTE_TIMEOUT_HEADROOM_MS
+              )
+            }
+          : {})
+      });
   const requestId = (req as any).requestId;
   const traceId = resolveDispatcherTraceId(req, requestId);
   let queuedJobId: string | null = null;

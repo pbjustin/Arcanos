@@ -3,6 +3,8 @@ import { getGamingModuleTimeoutMs } from "@services/gamingConfig.js";
 import { evaluateWithHRC } from "./hrcWrapper.js";
 import { getRequestAbortContext, getRequestAbortSignal, isAbortError } from "@arcanos/runtime";
 import { logger } from "@platform/logging/structuredLogging.js";
+import { hasVisibleContent } from "@shared/promptUtils.js";
+import { GAMING_RESPONSE_MAX_CHARACTERS } from "@shared/http/clientResponseCommon.js";
 import { isRecord } from "@shared/typeGuards.js";
 import {
   BackendQueryAgent,
@@ -285,7 +287,8 @@ function isUsableGamingSuccessEnvelope(value: GamingEnvelope): value is GamingSu
   return value.ok === true &&
     value.data !== null &&
     typeof value.data === "object" &&
-    typeof value.data.response === "string";
+    typeof value.data.response === "string" &&
+    hasVisibleContent(value.data.response);
 }
 
 function buildTelemetryEntityFlags(intent: GamingIntent) {
@@ -408,6 +411,12 @@ async function handleGamingRequest(payload: unknown): Promise<GamingEnvelope> {
       return backendEnvelope;
     }
 
+    const preservedBackendSources = isRecord(backendEnvelope.data) && Array.isArray(backendEnvelope.data.sources)
+      ? backendEnvelope.data.sources.filter(
+          (source): source is GamingSuccessEnvelope["data"]["sources"][number] =>
+            isRecord(source) && typeof source.url === "string" && source.url.trim().length > 0
+        )
+      : [];
     if (!isUsableGamingSuccessEnvelope(backendEnvelope)) {
       logger.warn("gaming.backend.failure", {
         ...requestLogContext,
@@ -415,10 +424,17 @@ async function handleGamingRequest(payload: unknown): Promise<GamingEnvelope> {
         confidence: gamingIntent.confidence,
         errorCode: "MALFORMED_BACKEND_RESPONSE"
       });
-      return ResponseComposerAgent.composeBackendFailureFallback({
+      const fallback = ResponseComposerAgent.composeBackendFailureFallback({
         intent: gamingIntent,
         error: new Error("Malformed backend response")
       });
+      return {
+        ...fallback,
+        data: {
+          ...fallback.data,
+          sources: preservedBackendSources
+        }
+      };
     }
 
     logger.info("gaming.backend.success", {
@@ -428,10 +444,37 @@ async function handleGamingRequest(payload: unknown): Promise<GamingEnvelope> {
       sourceCount: backendEnvelope.data.sources.length
     });
 
-    return ResponseComposerAgent.compose({
+    const composedResponse = ResponseComposerAgent.compose({
       intent: gamingIntent,
       backendEnvelope
     });
+    const composedResponseCharacters = Array.from(composedResponse.data.response).length;
+    const composedResponseBytes = Buffer.byteLength(composedResponse.data.response, "utf8");
+    if (composedResponseCharacters <= GAMING_RESPONSE_MAX_CHARACTERS) {
+      return composedResponse;
+    }
+
+    logger.warn("gaming.backend.failure", {
+      ...requestLogContext,
+      mode: gamingIntent.mode,
+      confidence: gamingIntent.confidence,
+      errorCode: "GAMING_RESPONSE_TOO_LARGE",
+      responseCharacters: composedResponseCharacters,
+      maxResponseCharacters: GAMING_RESPONSE_MAX_CHARACTERS,
+      responseBytes: composedResponseBytes
+    });
+    const fallback = ResponseComposerAgent.composeBackendFailureFallback({
+      intent: gamingIntent,
+      error: new Error("Gaming response exceeded the public response size limit."),
+      fallbackReason: "GAMING_PROVIDER_ERROR"
+    });
+    return {
+      ...fallback,
+      data: {
+        ...fallback.data,
+        sources: preservedBackendSources
+      }
+    };
   } catch (error: unknown) {
     if (getRequestAbortSignal()?.aborted || isAbortError(error)) {
       throw error;

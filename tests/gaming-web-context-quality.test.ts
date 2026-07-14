@@ -32,6 +32,7 @@ const {
   getGamingBuildResourceCacheStats,
   ingestGamingBuildResource
 } = await import('../src/services/gamingBuildResources.js');
+const { detectGamingGame } = await import('../src/services/gamingGameDetection.js');
 
 const TEST_ENV_KEYS = [
   'ARCANOS_GAMING_CURATED_SOURCES_JSON',
@@ -365,6 +366,78 @@ describe('gaming RAG snippet quality', () => {
     expect(result.sources.some((source) => /fextralife|wowhead|icy-veins|bungie\.net/i.test(source.url))).toBe(false);
   });
 
+  it('keeps useful guide article text when incidental tables resemble structured build data', async () => {
+    const url = 'https://guides.example/palworld/beginner-route';
+    const articleText = [
+      'Palworld beginner progression starts by gathering wood, stone, and berries near the first fast-travel point.',
+      'Capture Lamball and Cattiva, craft Pal Spheres at a Primitive Workbench, then place a Palbox on flat ground.',
+      'Build a Feed Box and Straw Pal Beds before assigning workers, and prepare cold protection before night.'
+    ].join(' ');
+    const html = [
+      '<html><head><title>Palworld Beginner Route Guide</title></head><body><article>',
+      `<p>${articleText}</p>`,
+      '<table><tr><th>Name</th><th>Recommendation</th></tr>',
+      '<tr><td>Lamball</td><td>Capture early</td></tr>',
+      '<tr><td>Cattiva</td><td>Assign to gathering</td></tr></table>',
+      '<table>',
+      '<tr><td>Base Level 1</td><td>Build a Palbox</td></tr>',
+      '<tr><td>Base Level 2</td><td>Build a Primitive Workbench</td></tr>',
+      '<tr><td>Base Level 3</td><td>Build a Feed Box</td></tr>',
+      '<tr><td>Base Level 4</td><td>Build a Campfire</td></tr>',
+      '</table></article></body></html>'
+    ].join('');
+    mockFetchAndClean.mockImplementation(async (_url: string, _maxChars: number, options?: {
+      onRawDocument?: (document: { body: string; contentType: string; truncated: boolean }) => void;
+      onExtraction?: (metrics: Record<string, unknown>) => void;
+    }) => {
+      options?.onExtraction?.({
+        strategy: 'article',
+        rawTextLength: articleText.length,
+        cleanedTextLength: articleText.length,
+        documentTitle: 'Palworld Beginner Route Guide',
+        headingText: 'Palworld Beginner Route Guide',
+        qualityScore: 0.9
+      });
+      options?.onRawDocument?.({ body: html, contentType: 'text/html', truncated: false });
+      return articleText;
+    });
+    const infoSpy = jest.spyOn(logger, 'info').mockImplementation(() => undefined);
+
+    try {
+      const result = await buildGamingRagContext({
+        mode: 'guide',
+        game: 'Palworld',
+        prompt: 'Use this Palworld beginner route guide.',
+        guideUrl: url,
+        guideUrls: []
+      }, {
+        module: 'ARCANOS:GAMING',
+        route: 'gaming',
+        mode: 'guide',
+        sourceEndpoint: 'arcanos-gaming.guide',
+        requestId: 'article-table-request',
+        traceId: 'article-table-trace'
+      });
+
+      expect(result.sources[0]).toEqual(expect.objectContaining({
+        url,
+        snippet: expect.stringContaining('Palworld beginner progression starts')
+      }));
+      expect(result.context).toContain('Capture Lamball and Cattiva');
+      expect(result.context).toContain('Primitive Workbench');
+      expect(result.context).not.toContain('Structured build resource detected');
+      expect(infoSpy).toHaveBeenCalledWith('gaming.retrieval.source.selection', expect.objectContaining({
+        sourceHost: 'guides.example',
+        resourceType: 'article',
+        equipmentCount: 2,
+        statCount: 4,
+        structuredEvidenceUsed: false
+      }));
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
   it('uses a self-contained structured build URL as normalized source-backed evidence when page fetch fails', async () => {
     const fixture = gamingStructuredResourceFixtures[0];
     mockFetchAndClean.mockRejectedValue(new Error('upstream page unavailable'));
@@ -603,6 +676,49 @@ describe('gaming RAG snippet quality', () => {
     }]);
     expect(result.sources.some(isCitableGamingWebSource)).toBe(false);
     expect(result.context).not.toContain('Stormveil Castle');
+  });
+
+  it.each([
+    ['leading article', 'The Palworld Wiki', true],
+    ['dotted version', 'Best Start Guide for Palworld 1.0.', true],
+    ['possessive descriptor and branded suffix', "Beginner's Guide: Tips and Tricks to Get Started | Palworld｜Game8", true],
+    ['wrong game branded suffix', "Beginner's Guide: Tips and Tricks to Get Started | Aurora Vale｜Game8", false],
+  ] as const)('handles %s in supplied source titles', async (_caseName, title, accepted) => {
+    const url = `https://independent.example/${encodeURIComponent(_caseName)}`;
+    const text = accepted
+      ? 'Palworld beginner guide evidence explains base placement, early crafting, Pal capture priorities, gear upgrades, and the first tower objective.'
+      : 'Aurora Vale beginner guide evidence explains wood tools, shelter, mining, armor upgrades, and the first portal.';
+    mockFetchedHtml({ title, text });
+
+    const result = await buildGamingRagContext({
+      mode: 'guide',
+      game: 'Palworld',
+      prompt: 'Use this supplied source for a Palworld beginner guide.',
+      guideUrl: url,
+      guideUrls: []
+    });
+
+    expect(result.sources.some(isCitableGamingWebSource)).toBe(accepted);
+    if (accepted) {
+      expect(result.context).toContain('[Source 1]');
+      expect(result.context).toContain('Palworld');
+    } else {
+      expect(result.sources).toEqual([{
+        url,
+        error: 'Source did not match the requested game or version.'
+      }]);
+      expect(result.context).not.toContain('first portal');
+    }
+  });
+
+  it.each([
+    ["Beginner's Guide: Tips and Tricks to Get Started | Palworld｜Game8", 'Palworld', 'page_metadata'],
+    ["Beginner's Guide: Tips and Tricks to Get Started | Aurora Vale｜Game8", 'Aurora Vale', 'page_metadata'],
+  ] as const)('detects the game segment in a branded title: %s', (pageTitle, game, source) => {
+    expect(detectGamingGame({ pageTitle })).toEqual(expect.objectContaining({
+      game,
+      source,
+    }));
   });
 
   it('uses a signed fetch URL while stripping its query from public source data', async () => {

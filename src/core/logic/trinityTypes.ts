@@ -32,6 +32,7 @@ export interface TrinityProviderCompletionMetadata {
   responseStatus?: string | null;
   incompleteReason?: string | null;
   incomplete?: boolean;
+  emptyOutput?: boolean;
   truncated?: boolean;
   lengthTruncated?: boolean;
   contentFiltered?: boolean;
@@ -210,7 +211,10 @@ export interface TrinityRunOptions {
   sourceEndpoint?: string;
   memorySessionId?: string;
   tokenAuditSessionId?: string;
+  /** Overall Trinity watchdog model cap. Existing callers also use it as the stage cap unless overridden below. */
   watchdogModelTimeoutMs?: number;
+  /** Optional per-model-stage cap when it must differ from the overall Trinity watchdog. */
+  modelStageTimeoutMs?: number;
   toolBackedCapabilities?: TrinityToolBackedCapabilities;
   requestedVerbosity?: TrinityRequestedVerbosity;
   maxWords?: number | null;

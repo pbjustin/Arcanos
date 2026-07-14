@@ -9,6 +9,7 @@
 import { appendFileSync } from 'fs';
 import { getAuditLogPath, getLineageLogPath, ensureLogDirectory } from "@shared/logPath.js";
 import { generateRequestId } from "@shared/idGenerator.js";
+import { redactString } from "@shared/redaction.js";
 import {
   AUDIT_SAFE_NON_COMPLIANT_PATTERNS,
   AUDIT_SAFE_OVERRIDE_PATTERNS,
@@ -193,7 +194,7 @@ export function createAuditSummary(
   text: string, 
   maxLength: number = 100
 ): string {
-  const cleaned = text.replace(/[\r\n]+/g, ' ').trim();
+  const cleaned = redactString(text).replace(/[\r\n]+/g, ' ').trim();
   return cleaned.length > maxLength 
     ? cleaned.substring(0, maxLength) + '...'
     : cleaned;
