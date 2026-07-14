@@ -145,6 +145,70 @@ describe('custom GPT route OpenAPI contract', () => {
     expect(requestedVersionPattern.test(`1.0\u202e`)).toBe(false);
   });
 
+  it('keeps the fixed public canary aligned with the dedicated Gaming contract', () => {
+    const contract = JSON.parse(
+      readFileSync(join(process.cwd(), 'contracts/custom_gpt_route.openapi.v1.json'), 'utf8')
+    );
+    const gamingContract = JSON.parse(
+      readFileSync(join(process.cwd(), 'contracts/arcanos_gaming.openapi.v1.json'), 'utf8')
+    );
+    const canaryPath = '/gpt/arcanos-gaming/canary';
+
+    expect(contract.info.version).toBe('1.4.0');
+    expect(contract.info.version).toBe(gamingContract.info.version);
+    expect(Object.keys(contract.paths)).toEqual(['/gpt/{gptId}', canaryPath]);
+    expect(contract.paths[canaryPath].post.operationId).toBe('canaryArcanosGaming');
+    expect(contract.paths[canaryPath].post.requestBody.content['application/json'].schema).toEqual({
+      $ref: '#/components/schemas/PublicCanaryRequest',
+    });
+    expect(Object.keys(contract.paths[canaryPath].post.responses)).toEqual([
+      '200',
+      '400',
+      '500',
+      '503',
+    ]);
+    expect(contract.paths[canaryPath].post.responses['200'].content['application/json'].schema)
+      .toEqual({ $ref: '#/components/schemas/PublicCanarySuccessResponse' });
+    for (const status of ['400', '500', '503']) {
+      expect(contract.paths[canaryPath].post.responses[status].content['application/json'].schema)
+        .toEqual({ $ref: '#/components/schemas/PublicCanaryFailureResponse' });
+    }
+
+    const canarySchemas = [
+      'PublicCanaryRequest',
+      'PublicCanaryPayload',
+      'PublicCanaryFixture',
+      'PublicCanarySuccessChecks',
+      'PublicCanaryFailureChecks',
+      'PublicCanarySuccessResponse',
+      'PublicCanaryFailureResponse',
+    ];
+    for (const schemaName of canarySchemas) {
+      expect(contract.components.schemas[schemaName]).toEqual(
+        gamingContract.components.schemas[schemaName]
+      );
+      expect(contract.components.schemas[schemaName].additionalProperties).toBe(false);
+    }
+
+    const canarySchemaText = JSON.stringify(
+      Object.fromEntries(canarySchemas.map((name) => [name, contract.components.schemas[name]]))
+    );
+    for (const forbiddenField of [
+      'details',
+      'environment',
+      'hostname',
+      'deploymentId',
+      'providerError',
+      'stack',
+      'logs',
+      'token',
+      'credentials',
+      'databaseUrl',
+    ]) {
+      expect(canarySchemaText).not.toContain(`\"${forbiddenField}\"`);
+    }
+  });
+
   it('binds the canonical production target and documents the public Gaming response envelope', () => {
     const contract = JSON.parse(
       readFileSync(join(process.cwd(), 'contracts/custom_gpt_route.openapi.v1.json'), 'utf8')
@@ -161,7 +225,7 @@ describe('custom GPT route OpenAPI contract', () => {
     expect(JSON.stringify(contract.servers)).not.toContain('arcanos-v2-production');
 
     const schemas = contract.components?.schemas;
-    expect(contract.info?.version).toBe('1.2.0');
+    expect(contract.info?.version).toBe('1.4.0');
     expect(schemas?.GptRouteSuccessResponse?.anyOf).toEqual(
       expect.arrayContaining([
         { $ref: '#/components/schemas/GamingPublicResponse' },

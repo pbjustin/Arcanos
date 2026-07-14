@@ -60,7 +60,7 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     const contract = loadContract();
 
     expect(contract.openapi).toBe('3.1.0');
-    expect(contract.info.version).toBe('1.3.2');
+    expect(contract.info.version).toBe('1.4.0');
     expect(contract.servers).toEqual([
       {
         url: 'https://acranos-production.up.railway.app',
@@ -69,8 +69,12 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     ]);
     expect(contract.security).toBeUndefined();
     expect(JSON.stringify(contract)).not.toContain('arcanos-v2-production.up.railway.app');
-    expect(Object.keys(contract.paths)).toEqual(['/gpt/arcanos-gaming']);
+    expect(Object.keys(contract.paths)).toEqual([
+      '/gpt/arcanos-gaming',
+      '/gpt/arcanos-gaming/canary',
+    ]);
     expect(Object.keys(contract.paths['/gpt/arcanos-gaming'])).toEqual(['post']);
+    expect(Object.keys(contract.paths['/gpt/arcanos-gaming/canary'])).toEqual(['post']);
 
     const query = contract.paths['/gpt/arcanos-gaming'].post;
     expect(query.operationId).toBe('queryArcanosGaming');
@@ -78,6 +82,14 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     expect(query.description.length).toBeLessThanOrEqual(300);
     expect(query.requestBody.content['application/json'].schema).toEqual({
       $ref: '#/components/schemas/GamingQueryRequest',
+    });
+
+    const canary = contract.paths['/gpt/arcanos-gaming/canary'].post;
+    expect(canary.operationId).toBe('canaryArcanosGaming');
+    expect(canary.security).toBeUndefined();
+    expect(canary.description.length).toBeLessThanOrEqual(300);
+    expect(canary.requestBody.content['application/json'].schema).toEqual({
+      $ref: '#/components/schemas/PublicCanaryRequest',
     });
 
     const keys = collectKeys(contract);
@@ -89,6 +101,171 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     const refs = collectLocalRefs(contract);
     expect(refs.length).toBeGreaterThan(0);
     refs.forEach((ref) => expect(resolveLocalRef(contract, ref)).toBeDefined());
+  });
+
+  it('defines a closed and bounded public canary protocol without internal diagnostics', () => {
+    const contract = loadContract();
+    const schemas = contract.components.schemas;
+    const canary = contract.paths['/gpt/arcanos-gaming/canary'].post;
+
+    expect(canary.requestBody.content['application/json'].examples.publicPipeline.value).toEqual({
+      action: 'canary',
+      payload: { scope: 'public_pipeline' },
+    });
+    expect(Object.keys(canary.responses)).toEqual(['200', '400', '500', '503']);
+    expect(canary.responses['200'].content['application/json'].schema).toEqual({
+      $ref: '#/components/schemas/PublicCanarySuccessResponse',
+    });
+    for (const status of ['400', '500', '503']) {
+      expect(canary.responses[status].content['application/json'].schema).toEqual({
+        $ref: '#/components/schemas/PublicCanaryFailureResponse',
+      });
+    }
+
+    expect(schemas.PublicCanaryRequest).toEqual(expect.objectContaining({
+      type: 'object',
+      additionalProperties: false,
+      required: ['action', 'payload'],
+    }));
+    expect(schemas.PublicCanaryRequest.properties.action.enum).toEqual(['canary']);
+    expect(schemas.PublicCanaryPayload).toEqual(expect.objectContaining({
+      type: 'object',
+      additionalProperties: false,
+      required: ['scope'],
+    }));
+    expect(schemas.PublicCanaryPayload.properties.scope.enum).toEqual(['public_pipeline']);
+
+    const successProperties = schemas.PublicCanarySuccessResponse.properties;
+    expect(schemas.PublicCanarySuccessResponse.additionalProperties).toBe(false);
+    expect(schemas.PublicCanarySuccessResponse.required).toEqual(Object.keys(successProperties));
+    expect(successProperties.schemaVersion.enum).toEqual([contract.info.version]);
+    expect(successProperties.message).toEqual(expect.objectContaining({
+      minLength: 1,
+      maxLength: 160,
+      pattern: '\\S',
+    }));
+    expect(successProperties.requestId.maxLength).toBe(128);
+    expect(successProperties.traceId.maxLength).toBe(128);
+    expect(successProperties.durationMs.maximum).toBe(30000);
+    expect(successProperties.acceptedSources.enum).toEqual([1]);
+    expect(successProperties.usedFallback.enum).toEqual([false]);
+
+    const fixture = schemas.PublicCanaryFixture;
+    expect(fixture.additionalProperties).toBe(false);
+    expect(fixture.required).toEqual(Object.keys(fixture.properties));
+    expect(fixture.properties).toEqual(expect.objectContaining({
+      source: { type: 'string', enum: ['bundled'] },
+      marker: { type: 'string', enum: ['ARCANOS_PUBLIC_CANARY_7F31'] },
+      markerVerified: { type: 'boolean', enum: [true] },
+    }));
+
+    const expectedChecks = [
+      'requestValidation',
+      'dispatcher',
+      'publicRoute',
+      'fixtureValidation',
+      'grounding',
+      'networkRetrieval',
+      'providerExecution',
+      'responseConstruction',
+      'responseGuard',
+    ];
+    for (const schemaName of ['PublicCanarySuccessChecks', 'PublicCanaryFailureChecks']) {
+      expect(schemas[schemaName].additionalProperties).toBe(false);
+      expect(schemas[schemaName].required).toEqual(expectedChecks);
+      expect(Object.keys(schemas[schemaName].properties)).toEqual(expectedChecks);
+    }
+    expect(schemas.PublicCanarySuccessChecks.properties.networkRetrieval.enum).toEqual(['skipped']);
+    expect(schemas.PublicCanarySuccessChecks.properties.providerExecution.enum).toEqual(['skipped']);
+    for (const property of Object.values(schemas.PublicCanaryFailureChecks.properties) as Array<{
+      enum: string[];
+    }>) {
+      expect(property.enum).toEqual(['passed', 'failed', 'skipped']);
+    }
+
+    const failureProperties = schemas.PublicCanaryFailureResponse.properties;
+    expect(schemas.PublicCanaryFailureResponse.additionalProperties).toBe(false);
+    expect(schemas.PublicCanaryFailureResponse.required).toEqual(Object.keys(failureProperties));
+    expect(failureProperties.schemaVersion.enum).toEqual([contract.info.version]);
+    expect(failureProperties.code.enum).toEqual([
+      'BAD_REQUEST',
+      'PUBLIC_CANARY_UNAVAILABLE',
+      'PUBLIC_CANARY_FIXTURE_UNAVAILABLE',
+      'PUBLIC_CANARY_FIXTURE_INVALID',
+      'PUBLIC_CANARY_GROUNDING_FAILED',
+      'PUBLIC_CANARY_RESPONSE_GUARD_FAILED',
+    ]);
+    expect(failureProperties.acceptedSources).toEqual(expect.objectContaining({
+      minimum: 0,
+      maximum: 1,
+    }));
+
+    const boundedSuccess = {
+      ok: true,
+      action: 'canary',
+      scope: 'public_pipeline',
+      schemaVersion: contract.info.version,
+      intent: 'public_canary',
+      route: 'public_canary',
+      message: 'x'.repeat(successProperties.message.maxLength),
+      requestId: 'x'.repeat(successProperties.requestId.maxLength),
+      traceId: 'x'.repeat(successProperties.traceId.maxLength),
+      fixture: {
+        source: 'bundled',
+        marker: 'ARCANOS_PUBLIC_CANARY_7F31',
+        markerVerified: true,
+      },
+      checks: Object.fromEntries(expectedChecks.map((name) => [
+        name,
+        ['networkRetrieval', 'providerExecution'].includes(name) ? 'skipped' : 'passed',
+      ])),
+      usedFallback: false,
+      acceptedSources: 1,
+      durationMs: successProperties.durationMs.maximum,
+    };
+    expect(Buffer.byteLength(JSON.stringify(boundedSuccess), 'utf8')).toBeLessThan(2048);
+
+    const boundedFailure = {
+      ok: false,
+      action: 'canary',
+      scope: 'public_pipeline',
+      schemaVersion: contract.info.version,
+      intent: 'public_canary',
+      route: 'public_canary',
+      message: 'x'.repeat(failureProperties.message.maxLength),
+      requestId: 'x'.repeat(failureProperties.requestId.maxLength),
+      traceId: 'x'.repeat(failureProperties.traceId.maxLength),
+      code: 'PUBLIC_CANARY_RESPONSE_GUARD_FAILED',
+      checks: Object.fromEntries(expectedChecks.map((name) => [name, 'skipped'])),
+      usedFallback: true,
+      acceptedSources: 1,
+      durationMs: failureProperties.durationMs.maximum,
+    };
+    expect(Buffer.byteLength(JSON.stringify(boundedFailure), 'utf8')).toBeLessThan(2048);
+
+    const publicCanarySchemaText = JSON.stringify({
+      request: schemas.PublicCanaryRequest,
+      payload: schemas.PublicCanaryPayload,
+      fixture,
+      successChecks: schemas.PublicCanarySuccessChecks,
+      failureChecks: schemas.PublicCanaryFailureChecks,
+      success: schemas.PublicCanarySuccessResponse,
+      failure: schemas.PublicCanaryFailureResponse,
+    });
+    for (const forbiddenField of [
+      'details',
+      'environment',
+      'hostname',
+      'deploymentId',
+      'providerError',
+      'stack',
+      'logs',
+      'token',
+      'credentials',
+      'databaseUrl',
+    ]) {
+      expect(publicCanarySchemaText).not.toContain(`\"${forbiddenField}\"`);
+    }
   });
 
   it('documents the single first-call payload with bounded candidate URL fields', () => {
