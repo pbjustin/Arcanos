@@ -16,6 +16,7 @@ const productionOnlyKeys = [
   'ARCANOS_PROCESS_KIND',
   'ARCANOS_QUERY_FINETUNE_ATTEMPT_LATENCY_BUDGET_MS',
   'DATABASE_PRIVATE_URL',
+  'DATABASE_PUBLIC_URL',
   'DATABASE_URL',
   'GPT_ROUTE_HARD_TIMEOUT_MS',
   'PGDATABASE',
@@ -51,11 +52,14 @@ const productionOnlyKeys = [
   'REDISHOST',
   'REDISPASSWORD',
   'REDISPORT',
-  'REDISUSER'
+  'REDISUSER',
+  'SESSION_PERSISTENCE_CLIENT',
+  'SESSION_PERSISTENCE_SQLITE_PATH',
+  'SESSION_PERSISTENCE_URL'
 ];
 
 for (const key of productionOnlyKeys) {
-  delete process.env[key];
+  process.env[key] = '';
 }
 
 const testDefaults = {
