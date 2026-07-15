@@ -1,6 +1,13 @@
 import { Request, Response, NextFunction } from 'express';
 import { AppError } from "@core/lib/errors/index.js";
 import { logger } from "@platform/logging/structuredLogging.js";
+import {
+  buildPublicGamingCanaryFailure,
+  prepareGuardedPublicGamingCanaryResponse,
+  publicGamingCanaryFailureStatus,
+  type PublicGamingCanaryFailureCode
+} from '@services/publicGamingCanary.js';
+import { resolvePublicGamingPath } from '@shared/http/publicGamingPath.js';
 import { resolveSafeRequestPath } from "@shared/requestPathSanitizer.js";
 
 function isAppError(err: unknown): err is AppError {
@@ -42,6 +49,32 @@ function isRequestEntityTooLarge(err: unknown): boolean {
     || candidate.statusCode === 413;
 }
 
+const REQUEST_BODY_PARSER_ERROR_SIGNATURES = new Set([
+  'charset.unsupported:415',
+  'encoding.unsupported:415',
+  'entity.parse.failed:400',
+  'entity.too.large:413',
+  'entity.verify.failed:403',
+  'request.aborted:400',
+  'request.size.invalid:400',
+  'stream.encoding.set:500',
+  'stream.not.readable:500'
+]);
+
+function isRecognizedRequestBodyParserError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') {
+    return false;
+  }
+
+  const candidate = err as Record<string, unknown>;
+  const status = typeof candidate.status === 'number'
+    ? candidate.status
+    : candidate.statusCode;
+  return typeof candidate.type === 'string'
+    && typeof status === 'number'
+    && REQUEST_BODY_PARSER_ERROR_SIGNATURES.has(`${candidate.type}:${status}`);
+}
+
 function isPublicGptRequestPath(requestPath: string): boolean {
   return requestPath === '/gpt' || requestPath.startsWith('/gpt/');
 }
@@ -63,6 +96,28 @@ function buildPublicGptErrorPayload(params: {
   };
 }
 
+function buildGuardedPublicCanaryFailure(params: {
+  code: PublicGamingCanaryFailureCode;
+  requestId: string;
+  traceId: string;
+}): { statusCode: 400 | 500 | 503; payload: Record<string, unknown> } {
+  const response = buildPublicGamingCanaryFailure({
+    code: params.code,
+    requestId: params.requestId,
+    traceId: params.traceId
+  });
+  const guarded = prepareGuardedPublicGamingCanaryResponse({
+    response,
+    statusCode: publicGamingCanaryFailureStatus(response.code),
+    requestId: params.requestId,
+    traceId: params.traceId
+  });
+  return {
+    statusCode: guarded.statusCode === 200 ? 500 : guarded.statusCode,
+    payload: { ...guarded.response }
+  };
+}
+
 /**
  * Purpose: Centralize HTTP error responses with request-id correlation and stack logging.
  * Inputs/Outputs: Express error middleware; writes JSON error payload and status code.
@@ -78,6 +133,19 @@ const errorHandler = (err: unknown, req: Request, res: Response, next: NextFunct
   const traceId = req.traceId ?? requestId;
   const requestPath = resolveSafeRequestPath(req);
   const publicGptRequest = isPublicGptRequestPath(requestPath);
+  const publicCanaryRequest = resolvePublicGamingPath(requestPath)?.operation === 'canary';
+  const invalidJson = isJsonSchemaParseError(err);
+  const requestEntityTooLarge = isRequestEntityTooLarge(err);
+  const recognizedRequestBodyParserError = isRecognizedRequestBodyParserError(err);
+  const publicCanaryParserRejection = publicCanaryRequest
+    && (invalidJson || requestEntityTooLarge || recognizedRequestBodyParserError);
+  const publicCanaryFailureCode: PublicGamingCanaryFailureCode | null = publicCanaryRequest
+    ? publicCanaryParserRejection
+      ? 'PUBLIC_CANARY_REQUEST_REJECTED'
+      : isAppError(err) && err.httpCode < 500
+        ? 'BAD_REQUEST'
+        : 'PUBLIC_CANARY_ROUTE_FAILURE'
+    : null;
 
   // Normalize unknown error input into an Error-like shape for safe logging.
   let name = 'UnknownError';
@@ -120,7 +188,13 @@ const errorHandler = (err: unknown, req: Request, res: Response, next: NextFunct
         traceId
       };
 
-  if (isJsonSchemaParseError(err)) {
+  if (publicCanaryFailureCode) {
+    ({ statusCode, payload } = buildGuardedPublicCanaryFailure({
+      code: publicCanaryFailureCode,
+      requestId,
+      traceId
+    }));
+  } else if (invalidJson) {
     statusCode = 400;
     payload = publicGptRequest
       ? buildPublicGptErrorPayload({
@@ -135,7 +209,7 @@ const errorHandler = (err: unknown, req: Request, res: Response, next: NextFunct
           requestId,
           traceId
         };
-  } else if (publicGptRequest && isRequestEntityTooLarge(err)) {
+  } else if (publicGptRequest && requestEntityTooLarge) {
     statusCode = 400;
     payload = buildPublicGptErrorPayload({
       code: 'REQUEST_BODY_TOO_LARGE',
@@ -163,16 +237,22 @@ const errorHandler = (err: unknown, req: Request, res: Response, next: NextFunct
         };
   }
 
+  const safePublicCanaryErrorName = publicCanaryFailureCode === 'BAD_REQUEST'
+    || publicCanaryFailureCode === 'PUBLIC_CANARY_REQUEST_REJECTED'
+    ? 'PublicCanaryRequestRejected'
+    : 'PublicCanaryRouteFailure';
   const logDetails = {
     traceId,
     requestId,
     method: req.method,
     path: requestPath,
-    errorType: name,
+    errorType: publicCanaryFailureCode ? safePublicCanaryErrorName : name,
     statusCode,
-    name,
-    message,
-    stack
+    name: publicCanaryFailureCode ? safePublicCanaryErrorName : name,
+    message: publicCanaryFailureCode
+      ? 'Public canary request failed safely.'
+      : message,
+    stack: publicCanaryFailureCode ? undefined : stack
   };
 
   const logLevel: 'warn' | 'error' = statusCode >= 500 ? 'error' : 'warn';

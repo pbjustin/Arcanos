@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Arcanos GPT Route API",
-    "version": "1.2.0",
-    "description": "Canonical public contract for GPT-routed writing requests and the safe DAG bridge. GPT identity is path-bound at /gpt/{gptId}; generated tool clients may also echo the same gptId in the JSON body, and mismatched body/path IDs are rejected. POST /gpt/{gptId} accepts flexible request bodies with action as a string and payload as an open object so durable GPT writing actions, safe DAG bridge actions, and prompt-only fast-path generation can share one public endpoint. For generated clients that place operation metadata outside the JSON body, the route also accepts action as a query parameter or operation-style body alias. Simple prompt-generation requests that omit action can opt into inline fast-path execution with executionMode=fast. Runtime diagnostics, worker status, queue inspection, job lookups, self-heal status, MCP calls, root diagnostics, and arbitrary internal endpoint forwarding remain blocked on this route and must use direct control-plane endpoints, /gpt-access/*, or POST /mcp."
+    "version": "1.4.0",
+    "description": "Canonical public contract for GPT-routed writing requests and the safe DAG bridge. GPT identity is path-bound at /gpt/{gptId}; generated tool clients may also echo the same gptId in the JSON body, and mismatched body/path IDs are rejected. POST /gpt/{gptId} accepts flexible request bodies with action as a string and payload as an open object so durable GPT writing actions, safe DAG bridge actions, and prompt-only fast-path generation can share one public endpoint. For generated clients that place operation metadata outside the JSON body, the route also accepts action as a query parameter or operation-style body alias. Simple prompt-generation requests that omit action can opt into inline fast-path execution with executionMode=fast. Runtime diagnostics, worker status, queue inspection, job lookups, self-heal status, MCP calls, root diagnostics, and arbitrary internal endpoint forwarding remain blocked on this route and must use direct control-plane endpoints, /gpt-access/*, or POST /mcp. The fixed /gpt/arcanos-gaming/canary operation verifies only public validation, dispatch, bundled fixture grounding, response construction, and guarding."
   },
   "servers": [
     {
@@ -385,10 +385,509 @@
           }
         }
       }
+    },
+    "/gpt/arcanos-gaming/canary": {
+      "post": {
+        "operationId": "canaryArcanosGaming",
+        "summary": "Verify the public ARCANOS Gaming Action pipeline",
+        "description": "Run a deterministic, non-administrative canary over public request validation, dispatch, bundled fixture grounding, response construction, and response guarding.",
+        "x-openai-isConsequential": false,
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PublicCanaryRequest"
+              },
+              "examples": {
+                "publicPipeline": {
+                  "summary": "Public pipeline canary",
+                  "value": {
+                    "action": "canary",
+                    "payload": {
+                      "scope": "public_pipeline"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The deterministic public canary completed successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicCanarySuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The public canary request was malformed or invalid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicCanaryFailureResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The public canary response failed a bounded construction or guard stage.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicCanaryFailureResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The public canary fixture or public pipeline is temporarily unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicCanaryFailureResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
+      "PublicCanaryRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "action",
+          "payload"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "canary"
+            ]
+          },
+          "payload": {
+            "$ref": "#/components/schemas/PublicCanaryPayload"
+          }
+        }
+      },
+      "PublicCanaryPayload": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "scope"
+        ],
+        "properties": {
+          "scope": {
+            "type": "string",
+            "enum": [
+              "public_pipeline"
+            ]
+          }
+        }
+      },
+      "PublicCanaryFixture": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "source",
+          "marker",
+          "markerVerified"
+        ],
+        "properties": {
+          "source": {
+            "type": "string",
+            "enum": [
+              "bundled"
+            ]
+          },
+          "marker": {
+            "type": "string",
+            "enum": [
+              "ARCANOS_PUBLIC_CANARY_7F31"
+            ]
+          },
+          "markerVerified": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          }
+        }
+      },
+      "PublicCanarySuccessChecks": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "requestValidation",
+          "dispatcher",
+          "publicRoute",
+          "fixtureValidation",
+          "grounding",
+          "networkRetrieval",
+          "providerExecution",
+          "responseConstruction",
+          "responseGuard"
+        ],
+        "properties": {
+          "requestValidation": {
+            "type": "string",
+            "enum": [
+              "passed"
+            ]
+          },
+          "dispatcher": {
+            "type": "string",
+            "enum": [
+              "passed"
+            ]
+          },
+          "publicRoute": {
+            "type": "string",
+            "enum": [
+              "passed"
+            ]
+          },
+          "fixtureValidation": {
+            "type": "string",
+            "enum": [
+              "passed"
+            ]
+          },
+          "grounding": {
+            "type": "string",
+            "enum": [
+              "passed"
+            ]
+          },
+          "networkRetrieval": {
+            "type": "string",
+            "enum": [
+              "skipped"
+            ]
+          },
+          "providerExecution": {
+            "type": "string",
+            "enum": [
+              "skipped"
+            ]
+          },
+          "responseConstruction": {
+            "type": "string",
+            "enum": [
+              "passed"
+            ]
+          },
+          "responseGuard": {
+            "type": "string",
+            "enum": [
+              "passed"
+            ]
+          }
+        }
+      },
+      "PublicCanaryFailureChecks": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "requestValidation",
+          "dispatcher",
+          "publicRoute",
+          "fixtureValidation",
+          "grounding",
+          "networkRetrieval",
+          "providerExecution",
+          "responseConstruction",
+          "responseGuard"
+        ],
+        "properties": {
+          "requestValidation": {
+            "type": "string",
+            "enum": [
+              "passed",
+              "failed",
+              "skipped"
+            ]
+          },
+          "dispatcher": {
+            "type": "string",
+            "enum": [
+              "passed",
+              "failed",
+              "skipped"
+            ]
+          },
+          "publicRoute": {
+            "type": "string",
+            "enum": [
+              "passed",
+              "failed",
+              "skipped"
+            ]
+          },
+          "fixtureValidation": {
+            "type": "string",
+            "enum": [
+              "passed",
+              "failed",
+              "skipped"
+            ]
+          },
+          "grounding": {
+            "type": "string",
+            "enum": [
+              "passed",
+              "failed",
+              "skipped"
+            ]
+          },
+          "networkRetrieval": {
+            "type": "string",
+            "enum": [
+              "passed",
+              "failed",
+              "skipped"
+            ]
+          },
+          "providerExecution": {
+            "type": "string",
+            "enum": [
+              "passed",
+              "failed",
+              "skipped"
+            ]
+          },
+          "responseConstruction": {
+            "type": "string",
+            "enum": [
+              "passed",
+              "failed",
+              "skipped"
+            ]
+          },
+          "responseGuard": {
+            "type": "string",
+            "enum": [
+              "passed",
+              "failed",
+              "skipped"
+            ]
+          }
+        }
+      },
+      "PublicCanarySuccessResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ok",
+          "action",
+          "scope",
+          "schemaVersion",
+          "intent",
+          "route",
+          "message",
+          "requestId",
+          "traceId",
+          "fixture",
+          "checks",
+          "usedFallback",
+          "acceptedSources",
+          "durationMs"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "canary"
+            ]
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "public_pipeline"
+            ]
+          },
+          "schemaVersion": {
+            "type": "string",
+            "enum": [
+              "1.4.0"
+            ]
+          },
+          "intent": {
+            "type": "string",
+            "enum": [
+              "public_canary"
+            ]
+          },
+          "route": {
+            "type": "string",
+            "enum": [
+              "public_canary"
+            ]
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160,
+            "pattern": "\\S"
+          },
+          "requestId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+          },
+          "traceId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+          },
+          "fixture": {
+            "$ref": "#/components/schemas/PublicCanaryFixture"
+          },
+          "checks": {
+            "$ref": "#/components/schemas/PublicCanarySuccessChecks"
+          },
+          "usedFallback": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "acceptedSources": {
+            "type": "integer",
+            "enum": [
+              1
+            ]
+          },
+          "durationMs": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 30000
+          }
+        }
+      },
+      "PublicCanaryFailureResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ok",
+          "action",
+          "scope",
+          "schemaVersion",
+          "intent",
+          "route",
+          "message",
+          "requestId",
+          "traceId",
+          "code",
+          "checks",
+          "usedFallback",
+          "acceptedSources",
+          "durationMs"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "enum": [
+              false
+            ]
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "canary"
+            ]
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "public_pipeline"
+            ]
+          },
+          "schemaVersion": {
+            "type": "string",
+            "enum": [
+              "1.4.0"
+            ]
+          },
+          "intent": {
+            "type": "string",
+            "enum": [
+              "public_canary"
+            ]
+          },
+          "route": {
+            "type": "string",
+            "enum": [
+              "public_canary"
+            ]
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160,
+            "pattern": "\\S"
+          },
+          "requestId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+          },
+          "traceId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+          },
+          "code": {
+            "type": "string",
+            "enum": [
+              "BAD_REQUEST",
+              "PUBLIC_CANARY_REQUEST_REJECTED",
+              "PUBLIC_CANARY_UNAVAILABLE",
+              "PUBLIC_CANARY_ROUTE_FAILURE",
+              "PUBLIC_CANARY_FIXTURE_UNAVAILABLE",
+              "PUBLIC_CANARY_FIXTURE_INVALID",
+              "PUBLIC_CANARY_GROUNDING_FAILED",
+              "PUBLIC_CANARY_FAILURE_RESPONSE_GUARD_FAILED",
+              "PUBLIC_CANARY_RESPONSE_GUARD_FAILED"
+            ]
+          },
+          "checks": {
+            "$ref": "#/components/schemas/PublicCanaryFailureChecks"
+          },
+          "usedFallback": {
+            "type": "boolean"
+          },
+          "acceptedSources": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "durationMs": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 30000
+          }
+        }
+      },
       "GamingQueryRequest": {
         "type": "object",
         "additionalProperties": true,

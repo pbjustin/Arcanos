@@ -108,9 +108,26 @@ export type GamingEvidenceRetryValidation =
   | { ok: false; code: "BAD_REQUEST" | "EVIDENCE_RETRY_LIMIT_REACHED"; message: string };
 
 export type PublicGamingRequestValidationError = {
-  code: "GPT_ACTION_REQUIRED" | "BAD_REQUEST" | "GAMEPLAY_MODE_REQUIRED" | "PROMPT_REQUIRED";
+  code:
+    | "GPT_ACTION_REQUIRED"
+    | "BAD_REQUEST"
+    | "GAMEPLAY_MODE_REQUIRED"
+    | "PROMPT_REQUIRED"
+    | "OPERATIONAL_REQUEST_NOT_GAMEPLAY";
   message: string;
 };
+
+export type ValidatedPublicGamingQueryRequest = {
+  action: "query";
+  payload: {
+    mode: GamingMode;
+    prompt: string;
+  };
+};
+
+export type PublicGamingQueryValidation =
+  | { ok: true; value: ValidatedPublicGamingQueryRequest }
+  | { ok: false; error: PublicGamingRequestValidationError };
 
 const MAX_PUBLIC_GAMING_PAYLOAD_DEPTH = 32;
 const MAX_PUBLIC_GAMING_PAYLOAD_NODES = 4096;
@@ -307,35 +324,41 @@ export function resolveGamingMode(payload: unknown): GamingMode | null {
   return null;
 }
 
-export function validatePublicGamingQueryRequest(
-  body: unknown,
-  requestedAction: string | null
-): PublicGamingRequestValidationError | null {
-  if (!requestedAction) {
+export function parsePublicGamingQueryRequest(body: unknown): PublicGamingQueryValidation {
+  if (!isRecord(body) || body.action !== "query") {
     return {
-      code: "GPT_ACTION_REQUIRED",
-      message: "Gaming requests require action 'query'."
+      ok: false,
+      error: {
+        code: isRecord(body) && body.action !== undefined ? "BAD_REQUEST" : "GPT_ACTION_REQUIRED",
+        message: "Gaming requests require action 'query'."
+      }
     };
-  }
-  if (requestedAction !== "query") {
-    return null;
   }
   if (!isRecord(body) || !isRecord(body.payload)) {
     return {
-      code: "BAD_REQUEST",
-      message: "Gaming query requests require a payload object."
+      ok: false,
+      error: {
+        code: "BAD_REQUEST",
+        message: "Gaming query requests require a payload object."
+      }
     };
   }
   if (publicGamingRequestExceedsStructuralLimits(body)) {
     return {
-      code: "BAD_REQUEST",
-      message: "Gaming query request exceeds the supported structural limits."
+      ok: false,
+      error: {
+        code: "BAD_REQUEST",
+        message: "Gaming query request exceeds the supported structural limits."
+      }
     };
   }
   if (publicGamingPayloadExceedsContractLimits(body.payload)) {
     return {
-      code: "BAD_REQUEST",
-      message: "Gaming query request exceeds the published field limits."
+      ok: false,
+      error: {
+        code: "BAD_REQUEST",
+        message: "Gaming query request exceeds the published field limits."
+      }
     };
   }
 
@@ -343,20 +366,45 @@ export function validatePublicGamingQueryRequest(
   const mode = payloadHasMode ? resolveGamingMode(body.payload) : resolveGamingMode(body);
   if (!mode) {
     return {
-      code: "GAMEPLAY_MODE_REQUIRED",
-      message: "Gameplay requests require explicit mode 'guide', 'build', or 'meta'."
+      ok: false,
+      error: {
+        code: "GAMEPLAY_MODE_REQUIRED",
+        message: "Gameplay requests require explicit mode 'guide', 'build', or 'meta'."
+      }
     };
   }
 
   const promptKeys = ["prompt", "message", "text", "content", "query"];
   const payloadHasPromptAlias = promptKeys.some((key) => Object.prototype.hasOwnProperty.call(body.payload, key));
   const prompt = payloadHasPromptAlias ? extractTextPrompt(body.payload) : extractTextPrompt(body);
-  return prompt
-    ? null
-    : {
+  if (!prompt) {
+    return {
+      ok: false,
+      error: {
         code: "PROMPT_REQUIRED",
         message: "query requires a non-empty prompt."
-      };
+      }
+    };
+  }
+
+  return {
+    ok: true,
+    value: {
+      action: "query",
+      payload: {
+        mode,
+        prompt
+      }
+    }
+  };
+}
+
+export function validatePublicGamingQueryRequest(
+  body: unknown,
+  _requestedAction: string | null
+): PublicGamingRequestValidationError | null {
+  const validation = parsePublicGamingQueryRequest(body);
+  return validation.ok ? null : validation.error;
 }
 
 export function formatGamingSuccess(params: {

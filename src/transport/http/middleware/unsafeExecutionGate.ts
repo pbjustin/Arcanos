@@ -3,13 +3,18 @@ import {
   buildUnsafeToProceedPayload,
   hasUnsafeBlockingConditions
 } from '@services/safety/runtimeState.js';
+import { validateGamingEvidenceRetryRequest } from '@services/gamingModes.js';
+import { dispatchPublicGamingRequest } from '@services/gamingPublicDispatcher.js';
 import {
-  resolveGamingMode,
-  validateGamingEvidenceRetryRequest,
-  validatePublicGamingQueryRequest
-} from '@services/gamingModes.js';
+  buildPublicGamingCanaryFailure,
+  prepareGuardedPublicGamingCanaryResponse,
+  PUBLIC_GAMING_CANARY_MAX_RESPONSE_BYTES
+} from '@services/publicGamingCanary.js';
+import { resolvePublicGamingPath } from '@shared/http/publicGamingPath.js';
+import { sendBoundedJsonResponse } from '@shared/http/sendBoundedJsonResponse.js';
+import { isGptDagAction } from '@shared/gpt/gptDagBridgeActions.js';
+import { GPT_QUERY_AND_WAIT_ACTION } from '@shared/gpt/gptJobResult.js';
 import { resolveRequestedGptActionFromRequest } from '@shared/gpt/gptRequestAction.js';
-import { resolvePublicGamingGptIdFromPath } from '@shared/http/publicGamingPath.js';
 
 const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const SAFETY_RELEASE_PATH_PATTERN = /^\/status\/safety\/quarantine\/[^/]+\/release$/;
@@ -23,12 +28,6 @@ const GPT_ACCESS_READONLY_POST_PATHS = new Set([
 
 function isGptAccessReadOnlyRequest(req: Request): boolean {
   return req.method.toUpperCase() === 'POST' && GPT_ACCESS_READONLY_POST_PATHS.has(req.path);
-}
-
-function resolvePublicGamingMode(body: unknown) {
-  const bodyRecord = body as Record<string, unknown>;
-  const payload = bodyRecord.payload as Record<string, unknown>;
-  return resolveGamingMode(payload) ?? resolveGamingMode(bodyRecord);
 }
 
 /**
@@ -59,8 +58,8 @@ export function unsafeExecutionGate(req: Request, res: Response, next: NextFunct
     return;
   }
 
-  const publicGamingGptId = method === 'POST'
-    ? resolvePublicGamingGptIdFromPath(req.path)
+  const publicGamingPath = method === 'POST'
+    ? resolvePublicGamingPath(req.path)
     : null;
 
   if (!hasUnsafeBlockingConditions()) {
@@ -74,32 +73,57 @@ export function unsafeExecutionGate(req: Request, res: Response, next: NextFunct
   const traceId = typeof req.traceId === 'string' && req.traceId.trim().length > 0
     ? req.traceId.trim()
     : requestId;
-  if (publicGamingGptId) {
+  if (publicGamingPath) {
     const gamingRequestId = requestId ?? traceId ?? 'unknown';
     const gamingTraceId = traceId ?? gamingRequestId;
-    const normalizedPath = req.path.toLowerCase().replace(/\/$/, '');
-    const evidenceRetry = normalizedPath === '/gpt/arcanos-gaming/evidence-retry';
+    if (publicGamingPath.operation === 'canary') {
+      const decision = dispatchPublicGamingRequest(req.body, 'canary');
+      const response = buildPublicGamingCanaryFailure({
+        code: decision.ok ? 'PUBLIC_CANARY_UNAVAILABLE' : 'BAD_REQUEST',
+        requestId: gamingRequestId,
+        traceId: gamingTraceId
+      });
+      const guarded = prepareGuardedPublicGamingCanaryResponse({
+        response,
+        statusCode: decision.ok ? 503 : 400,
+        requestId: gamingRequestId,
+        traceId: gamingTraceId
+      });
+      sendBoundedJsonResponse(req, res, guarded.response, {
+        logEvent: 'gpt.response.public_canary_unsafe',
+        statusCode: guarded.statusCode,
+        maxBytes: PUBLIC_GAMING_CANARY_MAX_RESPONSE_BYTES
+      });
+      return;
+    }
+
+    const evidenceRetry = publicGamingPath.operation === 'evidence_retry';
+    const requestedAction = evidenceRetry ? null : resolveRequestedGptActionFromRequest(req);
+    const genericGatewayAction = requestedAction === GPT_QUERY_AND_WAIT_ACTION
+      || isGptDagAction(requestedAction);
     const retryValidation = evidenceRetry ? validateGamingEvidenceRetryRequest(req.body) : null;
-    const requestedAction = evidenceRetry ? 'query' : resolveRequestedGptActionFromRequest(req);
+    const queryDecision = evidenceRetry || genericGatewayAction
+      ? null
+      : dispatchPublicGamingRequest(req.body, 'query');
     const validationError = retryValidation && !retryValidation.ok
       ? { code: retryValidation.code, message: retryValidation.message }
-      : evidenceRetry
-        ? null
-        : validatePublicGamingQueryRequest(req.body, requestedAction);
+      : queryDecision && !queryDecision.ok
+        ? queryDecision.error
+        : null;
     if (validationError) {
-      const action = requestedAction ?? 'query';
+      const action = queryDecision?.action ?? 'query';
       res.status(400).json({
         ok: false,
         requestId: gamingRequestId,
         traceId: gamingTraceId,
-        gptId: publicGamingGptId,
+        gptId: publicGamingPath.gptId,
         action,
         route: '/gpt/:gptId',
         error: validationError,
         _route: {
           requestId: gamingRequestId,
           traceId: gamingTraceId,
-          gptId: publicGamingGptId,
+          gptId: publicGamingPath.gptId,
           action,
           route: 'gaming_validation',
           timestamp: new Date().toISOString()
@@ -107,8 +131,8 @@ export function unsafeExecutionGate(req: Request, res: Response, next: NextFunct
       });
       return;
     }
-    if (requestedAction === 'query') {
-      const mode = retryValidation?.ok ? retryValidation.value.mode : resolvePublicGamingMode(req.body);
+    if (retryValidation?.ok || queryDecision?.ok) {
+      const mode = retryValidation?.ok ? retryValidation.value.mode : queryDecision!.mode;
       res.status(200).json({
         ok: true,
         requestId: gamingRequestId,
@@ -125,7 +149,7 @@ export function unsafeExecutionGate(req: Request, res: Response, next: NextFunct
         _route: {
           requestId: gamingRequestId,
           traceId: gamingTraceId,
-          gptId: publicGamingGptId,
+          gptId: publicGamingPath.gptId,
           module: 'ARCANOS:GAMING',
           action: 'query',
           route: 'gaming',

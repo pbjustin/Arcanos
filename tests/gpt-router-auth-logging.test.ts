@@ -141,7 +141,7 @@ describe('gpt router auth logging', () => {
         payload: {
           mode: 'guide',
           game: 'Minecraft',
-          prompt: 'Ping the gaming backend'
+          prompt: 'Give me a concise Minecraft beginner guide.'
         }
       });
 
@@ -272,7 +272,7 @@ describe('gpt router auth logging', () => {
     });
   });
 
-  it('returns correlated diagnostic JSON instead of the dispatcher envelope for ping probes', async () => {
+  it('rejects public Gaming ping actions before generic dispatch', async () => {
     mockRouteGptRequest.mockResolvedValue({
       ok: true,
       result: {
@@ -297,14 +297,24 @@ describe('gpt router auth logging', () => {
       .post('/gpt/arcanos-gaming')
       .send({ action: 'ping' });
 
-    expect(response.status).toBe(200);
-    expect(response.body).toEqual({
-      status: 'ok',
-      route: 'diagnostic',
-      message: 'backend operational',
+    expect(response.status).toBe(400);
+    expect(response.body).toEqual(expect.objectContaining({
+      ok: false,
       requestId: response.headers['x-request-id'],
       traceId: response.headers['x-trace-id'],
-    });
+      gptId: 'arcanos-gaming',
+      action: 'unsupported',
+      error: {
+        code: 'BAD_REQUEST',
+        message: "Gaming requests require action 'query'.",
+      },
+      _route: expect.objectContaining({
+        gptId: 'arcanos-gaming',
+        action: 'unsupported',
+        route: 'gaming_validation',
+      }),
+    }));
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
   it('includes current request IDs in non-Gaming diagnostic bodies', async () => {
@@ -1075,33 +1085,38 @@ describe('gpt router auth logging', () => {
       'missing action',
       { payload: { mode: 'guide', prompt: 'Give me a walkthrough.' } },
       'GPT_ACTION_REQUIRED',
-      "Gaming requests require action 'query'."
+      "Gaming requests require action 'query'.",
+      'unsupported'
     ],
     [
       'missing payload',
       { action: 'query', prompt: 'Give me a walkthrough.' },
       'BAD_REQUEST',
-      'Gaming query requests require a payload object.'
+      'Gaming query requests require a payload object.',
+      'query'
     ],
     [
       'invalid mode',
       { action: 'query', payload: { mode: 'speedrun', prompt: 'Give me a walkthrough.' } },
       'GAMEPLAY_MODE_REQUIRED',
-      "Gameplay requests require explicit mode 'guide', 'build', or 'meta'."
+      "Gameplay requests require explicit mode 'guide', 'build', or 'meta'.",
+      'query'
     ],
     [
       'invalid mode behind a bounded action alias array',
       { action: ['', ['query']], payload: { mode: 'speedrun', prompt: 'Give me a walkthrough.' } },
-      'GAMEPLAY_MODE_REQUIRED',
-      "Gameplay requests require explicit mode 'guide', 'build', or 'meta'."
+      'BAD_REQUEST',
+      "Gaming requests require action 'query'.",
+      'unsupported'
     ],
     [
       'missing prompt',
       { action: 'query', payload: { mode: 'guide' } },
       'PROMPT_REQUIRED',
-      'query requires a non-empty prompt.'
+      'query requires a non-empty prompt.',
+      'query'
     ]
-  ])('rejects Gaming requests with %s before module dispatch', async (_caseName, body, code, message) => {
+  ])('rejects Gaming requests with %s before module dispatch', async (_caseName, body, code, message, action) => {
     const app = express();
     app.use(express.json());
     app.use(requestContext);
@@ -1118,7 +1133,7 @@ describe('gpt router auth logging', () => {
       requestId: response.headers['x-request-id'],
       traceId: response.headers['x-trace-id'],
       gptId: 'arcanos-gaming',
-      action: 'query',
+      action,
       route: '/gpt/:gptId',
       _route: expect.objectContaining({
         gptId: 'arcanos-gaming',
@@ -1154,7 +1169,7 @@ describe('gpt router auth logging', () => {
       requestId: response.headers['x-request-id'],
       traceId: response.headers['x-trace-id'],
       error: {
-        code: 'GPT_ACTION_REQUIRED',
+        code: 'BAD_REQUEST',
         message: "Gaming requests require action 'query'."
       }
     }));

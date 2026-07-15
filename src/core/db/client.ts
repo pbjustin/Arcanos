@@ -56,10 +56,15 @@ const normalizeEnvValue = (value?: string | null): string | undefined => {
 };
 
 const sanitizeTrackedEnvVars = (): void => {
+  const preserveTestIsolationSentinels =
+    process.env.NODE_ENV === 'test' && process.env.DISABLE_EXTERNAL_CALLS === 'true';
+
   trackedEnvVars.forEach(key => {
     const normalized = normalizeEnvValue(process.env[key]);
     if (normalized === undefined) {
-      delete process.env[key];
+      if (!preserveTestIsolationSentinels || process.env[key] !== '') {
+        delete process.env[key];
+      }
     } else {
       process.env[key] = normalized;
     }

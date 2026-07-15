@@ -125,7 +125,7 @@ If multiple approaches are possible, choose the one that:
 - Run `npm run job-events:timeline -- --job-id <id>` or `--trace-id <id>` when tracing async job-event ordering or debugging database-backed job history.
 - Run `npm run mcp:stdio` when changes touch the MCP stdio transport or GPT fast-path MCP bridge.
 - Use `npm run mcp:stdio:dev` for TypeScript-level MCP stdio iteration before validating the compiled entrypoint with `npm run mcp:stdio`.
-- Run `npm run validate:gpt:job-hardening` when changes touch `/gpt-access`, async job polling, or GPT job/result hardening.
+- Run `npm run validate:gpt:job-hardening` for a no-network dry run when changes touch `/gpt-access`, async job polling, or GPT job/result hardening. Live preview validation requires explicit `--execute --allow-network --target preview --base-url <canonical Railway PR URL> --environment Arcanos-pr-<N>` arguments; ambient backend URL variables never select the target.
 - Run `npm run gptoss:runtime:readiness`, `npm run gptoss:runtime:release-gate`, and `npm run gptoss:runtime:release-gate:ci` when changes touch the local GPT-OSS effective-router runtime, release evidence, or CI-safe release gating.
 - Run `npm run gptoss:adapter:eval:dry`, `npm run gptoss:adapter:eval`, and `npm run gptoss:adapter:eval:effective-router:regress` when changes affect GPT-OSS adapter behavior, local evals, or effective-router regression baselines.
 - Run `npm run gptoss:private-serving:design:validate`, `npm run gptoss:private-serving:threat-model:validate`, and `npm run gptoss:private-serving:scaffold:validate` when changes touch GPT-OSS private-serving design, boundary, or scaffold validation work; use `npm run gptoss:private-serving:scaffold:report` when you need the PR-style report artifact.

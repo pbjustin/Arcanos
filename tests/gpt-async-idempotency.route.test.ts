@@ -795,6 +795,39 @@ describe('async /gpt idempotency', () => {
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['top-level prompt', {
+      action: 'query_and_wait',
+      prompt: 'Is my backend working?'
+    }],
+    ['payload prompt', {
+      action: 'query_and_wait',
+      payload: { prompt: 'Verify the public integration.' }
+    }]
+  ])('rejects an operational Gaming query_and_wait %s before job or provider dispatch', async (_caseName, body) => {
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-gaming')
+      .send(body);
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({
+      ok: false,
+      action: 'query_and_wait',
+      error: {
+        code: 'OPERATIONAL_REQUEST_NOT_GAMEPLAY',
+        message: 'This request asks about the public integration rather than gameplay. Use the public canary operation.'
+      },
+      _route: {
+        gptId: 'arcanos-gaming',
+        action: 'query_and_wait',
+        route: 'gaming_operational_guard'
+      }
+    });
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
   it('returns query_and_wait timeout guidance with the same job id and one job creation only', async () => {
     findOrCreateGptJobMock.mockResolvedValue({
       job: {

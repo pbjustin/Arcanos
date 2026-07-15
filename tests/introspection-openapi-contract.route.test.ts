@@ -17,8 +17,14 @@ describe('custom GPT OpenAPI contract route', () => {
     expect(response.status).toBe(200);
     expect(response.headers['cache-control']).toContain('no-store');
     expect(response.body.openapi).toBe('3.1.0');
-    expect(Object.keys(response.body.paths ?? {})).toEqual(['/gpt/{gptId}']);
+    expect(response.body.info.version).toBe('1.4.0');
+    expect(Object.keys(response.body.paths ?? {})).toEqual([
+      '/gpt/{gptId}',
+      '/gpt/arcanos-gaming/canary',
+    ]);
     expect(response.body.paths?.['/gpt/{gptId}']?.post?.operationId).toBe('invokeGptRoute');
+    expect(response.body.paths?.['/gpt/arcanos-gaming/canary']?.post?.operationId)
+      .toBe('canaryArcanosGaming');
     expect(response.body.info.description).toContain('may also echo the same gptId');
     expect(response.body.info.description).not.toContain('must not duplicate gptId');
     expect(response.body.components?.schemas?.GptRouteRequest?.properties?.gptId).toEqual(
@@ -59,6 +65,7 @@ describe('custom GPT OpenAPI contract route', () => {
     expect(response.status).toBe(200);
     expect(response.headers['cache-control']).toContain('no-store');
     expect(response.headers['content-type']).toContain('application/json');
+    expect(response.body.info.version).toBe('1.4.0');
     expect(response.body.servers).toEqual([
       {
         url: 'https://acranos-production.up.railway.app',
@@ -67,7 +74,12 @@ describe('custom GPT OpenAPI contract route', () => {
     ]);
     expect(response.body.paths?.['/gpt/arcanos-gaming']?.post?.operationId)
       .toBe('queryArcanosGaming');
-    expect(Object.keys(response.body.paths ?? {})).toEqual(['/gpt/arcanos-gaming']);
+    expect(response.body.paths?.['/gpt/arcanos-gaming/canary']?.post?.operationId)
+      .toBe('canaryArcanosGaming');
+    expect(Object.keys(response.body.paths ?? {})).toEqual([
+      '/gpt/arcanos-gaming',
+      '/gpt/arcanos-gaming/canary',
+    ]);
   });
 
   it('serves the canonical job-result contract with no-store caching', async () => {

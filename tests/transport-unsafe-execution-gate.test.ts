@@ -15,6 +15,7 @@ jest.unstable_mockModule('@services/safety/runtimeState.js', () => ({
 }));
 
 const { unsafeExecutionGate } = await import('../src/transport/http/middleware/unsafeExecutionGate.js');
+const { guardPublicGamingCanaryResponse } = await import('../src/services/publicGamingCanary.js');
 
 type MockRequest = {
   method: string;
@@ -28,7 +29,8 @@ type MockRequest = {
 function createResponse() {
   const response = {
     status: jest.fn(),
-    json: jest.fn()
+    json: jest.fn(),
+    setHeader: jest.fn()
   };
   response.status.mockReturnValue(response);
   return response;
@@ -274,6 +276,117 @@ describe('transport/http/middleware/unsafeExecutionGate', () => {
     }));
   });
 
+  it('returns a closed public canary unavailable response without generic unsafe details', () => {
+    const next = jest.fn();
+    const response = createResponse();
+    hasUnsafeBlockingConditionsMock.mockReturnValue(true);
+
+    unsafeExecutionGate({
+      method: 'POST',
+      path: '/gpt/arcanos-gaming/canary',
+      body: { action: 'canary', payload: { scope: 'public_pipeline' } },
+      requestId: 'req-canary-unsafe',
+      traceId: 'trace-canary-unsafe'
+    } as MockRequest as any, response as any, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(response.status).toHaveBeenCalledWith(503);
+    const body = response.json.mock.calls[0]?.[0];
+    expect(body).toMatchObject({
+      ok: false,
+      action: 'canary',
+      scope: 'public_pipeline',
+      schemaVersion: '1.4.0',
+      intent: 'public_canary',
+      route: 'public_canary',
+      requestId: 'req-canary-unsafe',
+      traceId: 'trace-canary-unsafe',
+      code: 'PUBLIC_CANARY_UNAVAILABLE',
+      usedFallback: false,
+      acceptedSources: 0,
+      checks: {
+        requestValidation: 'passed',
+        dispatcher: 'passed',
+        publicRoute: 'failed',
+        fixtureValidation: 'skipped',
+        grounding: 'skipped',
+        networkRetrieval: 'skipped',
+        providerExecution: 'skipped',
+        responseConstruction: 'passed',
+        responseGuard: 'passed'
+      }
+    });
+    expect(guardPublicGamingCanaryResponse(body)).toBe(true);
+    expect(JSON.stringify(body)).not.toContain('PATTERN_INTEGRITY_FAILURE');
+    expect(JSON.stringify(body)).not.toContain('conditions');
+    expect(JSON.stringify(body)).not.toContain('quarantine');
+    expect(buildUnsafeToProceedPayloadMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps malformed canary validation at HTTP 400 during unsafe state', () => {
+    const next = jest.fn();
+    const response = createResponse();
+    hasUnsafeBlockingConditionsMock.mockReturnValue(true);
+
+    unsafeExecutionGate({
+      method: 'POST',
+      path: '/gpt/arcanos-gaming/canary',
+      body: { action: 'canary', payload: { scope: 'public_pipeline', prompt: 'inspect internals' } },
+      requestId: 'req-canary-invalid',
+      traceId: 'trace-canary-invalid'
+    } as MockRequest as any, response as any, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(response.status).toHaveBeenCalledWith(400);
+    const body = response.json.mock.calls[0]?.[0];
+    expect(body).toMatchObject({
+      ok: false,
+      code: 'BAD_REQUEST',
+      requestId: 'req-canary-invalid',
+      traceId: 'trace-canary-invalid',
+      usedFallback: false,
+      acceptedSources: 0
+    });
+    expect(guardPublicGamingCanaryResponse(body)).toBe(true);
+    expect(buildUnsafeToProceedPayloadMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects an operational Gaming query before the unsafe gameplay envelope', () => {
+    const next = jest.fn();
+    const response = createResponse();
+    hasUnsafeBlockingConditionsMock.mockReturnValue(true);
+
+    unsafeExecutionGate({
+      method: 'POST',
+      path: '/gpt/arcanos-gaming',
+      body: {
+        action: 'query',
+        payload: {
+          mode: 'guide',
+          prompt: 'Reach my backend and see if this has been implemented correctly.'
+        }
+      },
+      requestId: 'req-operational-unsafe',
+      traceId: 'trace-operational-unsafe'
+    } as MockRequest as any, response as any, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(response.status).toHaveBeenCalledWith(400);
+    expect(response.json).toHaveBeenCalledWith(expect.objectContaining({
+      ok: false,
+      action: 'query',
+      error: {
+        code: 'OPERATIONAL_REQUEST_NOT_GAMEPLAY',
+        message: 'This request asks about the public integration rather than gameplay. Use the public canary operation.'
+      },
+      _route: expect.objectContaining({ route: 'gaming_validation' })
+    }));
+    expect(response.json).not.toHaveBeenCalledWith(expect.objectContaining({
+      result: expect.objectContaining({ route: 'gaming' })
+    }));
+    expect(buildUnsafeToProceedPayloadMock).not.toHaveBeenCalled();
+  });
+
   it.each([
     ['trace ID only', { traceId: 'trace-only' }, 'trace-only', 'trace-only'],
     ['request ID only', { requestId: 'request-only' }, 'request-only', 'request-only'],
@@ -390,7 +503,7 @@ describe('transport/http/middleware/unsafeExecutionGate', () => {
       body: { payload: { mode: 'guide', prompt: 'Guide me.' } },
       header: (name: string) => name === 'x-gpt-action' ? 'query' : undefined
     }]
-  ])('recognizes the %s before unsafe-state validation', (_caseName, requestParts) => {
+  ])('rejects the %s when the literal body action is absent', (_caseName, requestParts) => {
     const next = jest.fn();
     const response = createResponse();
     hasUnsafeBlockingConditionsMock.mockReturnValue(true);
@@ -403,17 +516,47 @@ describe('transport/http/middleware/unsafeExecutionGate', () => {
       ...requestParts
     } as MockRequest as any, response as any, next);
 
-    expect(response.status).toHaveBeenCalledWith(200);
+    expect(response.status).toHaveBeenCalledWith(400);
     expect(response.json).toHaveBeenCalledWith(expect.objectContaining({
-      result: expect.objectContaining({ error: expect.objectContaining({ code: 'UNSAFE_TO_PROCEED' }) })
+      action: 'unsupported',
+      error: expect.objectContaining({ code: 'GPT_ACTION_REQUIRED' }),
+      _route: expect.objectContaining({ route: 'gaming_validation' })
     }));
+    expect(buildUnsafeToProceedPayloadMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unsafe unsupported Gaming action before generic blocking', () => {
+    const next = jest.fn();
+    const response = createResponse();
+    hasUnsafeBlockingConditionsMock.mockReturnValue(true);
+
+    unsafeExecutionGate({
+      method: 'POST',
+      path: '/gpt/arcanos-gaming',
+      body: { action: 'nonsense', payload: { mode: 'guide', prompt: 'Guide me.' } },
+      requestId: 'req-generic-unsafe',
+      traceId: 'trace-generic-unsafe'
+    } as MockRequest as any, response as any, next);
+
+    expect(response.status).toHaveBeenCalledWith(400);
+    expect(response.json).toHaveBeenCalledWith(expect.objectContaining({
+      ok: false,
+      action: 'unsupported',
+      requestId: 'req-generic-unsafe',
+      traceId: 'trace-generic-unsafe',
+      error: expect.objectContaining({ code: 'BAD_REQUEST' }),
+      _route: expect.objectContaining({ route: 'gaming_validation' })
+    }));
+    expect(response.json).not.toHaveBeenCalledWith(expect.objectContaining({
+      result: expect.objectContaining({ route: 'gaming' })
+    }));
+    expect(buildUnsafeToProceedPayloadMock).not.toHaveBeenCalled();
   });
 
   it.each([
     ['query_and_wait', '/gpt/gaming'],
-    ['nonsense', '/gpt/arcanos-gaming'],
-    ['query', '/gpt/gaming//']
-  ])('does not reclassify unsafe %s at %s as a Gaming query', (action, path) => {
+    ['dag.dispatch', '/gpt/arcanos-gaming']
+  ])('uses the generic unsafe block for legacy gateway action %s at %s', (action, path) => {
     const next = jest.fn();
     const response = createResponse();
     hasUnsafeBlockingConditionsMock.mockReturnValue(true);
@@ -421,7 +564,30 @@ describe('transport/http/middleware/unsafeExecutionGate', () => {
     unsafeExecutionGate({
       method: 'POST',
       path,
-      body: { action, payload: { mode: 'guide', prompt: 'Guide me.' } },
+      body: { action, prompt: 'Guide me.' },
+      requestId: 'req-generic-unsafe',
+      traceId: 'trace-generic-unsafe'
+    } as MockRequest as any, response as any, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(response.status).toHaveBeenCalledWith(503);
+    expect(response.json).toHaveBeenCalledWith(expect.objectContaining({
+      error: 'UNSAFE_TO_PROCEED',
+      requestId: 'req-generic-unsafe',
+      traceId: 'trace-generic-unsafe'
+    }));
+    expect(buildUnsafeToProceedPayloadMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the generic unsafe response for an unrecognized double-slash path', () => {
+    const next = jest.fn();
+    const response = createResponse();
+    hasUnsafeBlockingConditionsMock.mockReturnValue(true);
+
+    unsafeExecutionGate({
+      method: 'POST',
+      path: '/gpt/gaming//',
+      body: { action: 'query', payload: { mode: 'guide', prompt: 'Guide me.' } },
       requestId: 'req-generic-unsafe',
       traceId: 'trace-generic-unsafe'
     } as MockRequest as any, response as any, next);
@@ -432,9 +598,7 @@ describe('transport/http/middleware/unsafeExecutionGate', () => {
       requestId: 'req-generic-unsafe',
       traceId: 'trace-generic-unsafe'
     }));
-    expect(response.json).not.toHaveBeenCalledWith(expect.objectContaining({
-      result: expect.objectContaining({ route: 'gaming' })
-    }));
+    expect(buildUnsafeToProceedPayloadMock).toHaveBeenCalledTimes(1);
   });
 
   it.each([

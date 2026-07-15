@@ -96,9 +96,24 @@ import { executeDirectGptAction, executeFastGptPrompt } from '@services/gptFastP
 import {
   formatGamingError,
   resolveGamingMode,
-  validateGamingEvidenceRetryRequest,
-  validatePublicGamingQueryRequest
+  validateGamingEvidenceRetryRequest
 } from '@services/gamingModes.js';
+import {
+  dispatchPublicGamingRequest,
+  isClearlyOperationalGamingPrompt,
+  OPERATIONAL_REQUEST_NOT_GAMEPLAY_CODE,
+  OPERATIONAL_REQUEST_NOT_GAMEPLAY_MESSAGE,
+  type ArcanosRequestIntent,
+  type PublicArcanosAction
+} from '@services/gamingPublicDispatcher.js';
+import {
+  buildPublicGamingCanaryFailure,
+  executePublicGamingCanary,
+  prepareGuardedPublicGamingCanaryResponse,
+  PUBLIC_GAMING_CANARY_MAX_RESPONSE_BYTES,
+  PUBLIC_GAMING_CANARY_SCHEMA_VERSION,
+  type PublicGamingCanaryResponse
+} from '@services/publicGamingCanary.js';
 import { getConfig } from '@platform/runtime/unifiedConfig.js';
 import { handleGptDagBridge } from '@services/gptDagBridge.js';
 import {
@@ -200,6 +215,47 @@ function logGptDispatcherOutcome(params: {
   } else {
     params.req.logger?.info('gpt.dispatcher.response', payload);
   }
+}
+
+function logPublicGamingDispatch(params: {
+  req: express.Request;
+  requestId: string;
+  traceId: string;
+  action: PublicArcanosAction | typeof GPT_QUERY_AND_WAIT_ACTION | 'unsupported';
+  intent: ArcanosRequestIntent;
+  route: 'gaming' | 'operational_rejected' | 'public_canary' | 'unsupported';
+  mode: 'guide' | 'build' | 'meta' | null;
+}): void {
+  params.req.logger?.info('gpt.public_gaming.dispatch', {
+    requestId: params.requestId,
+    traceId: params.traceId,
+    action: params.action,
+    intent: params.intent,
+    route: params.route,
+    mode: params.mode,
+    schemaVersion: PUBLIC_GAMING_CANARY_SCHEMA_VERSION
+  });
+}
+
+function sendGuardedPublicGamingCanaryResponse(
+  req: express.Request,
+  res: express.Response,
+  response: PublicGamingCanaryResponse,
+  statusCode: 200 | 400 | 500 | 503,
+  logEvent: string
+) {
+  const guarded = prepareGuardedPublicGamingCanaryResponse({
+    response,
+    statusCode,
+    requestId: req.requestId,
+    traceId: req.traceId
+  });
+
+  return sendBoundedJsonResponse(req, res, guarded.response, {
+    logEvent,
+    statusCode: guarded.statusCode,
+    maxBytes: PUBLIC_GAMING_CANARY_MAX_RESPONSE_BYTES
+  });
 }
 
 function buildDispatcherRouteMeta(params: {
@@ -1259,6 +1315,49 @@ function applyGptQueueBypassedHeader(
   res.setHeader('x-gpt-queue-bypassed', queueBypassed ? 'true' : 'false');
 }
 
+router.post('/arcanos-gaming/canary', (req, res) => {
+  const startedAt = Date.now();
+  const requestId = req.requestId;
+  const traceId = resolveDispatcherTraceId(req, requestId);
+  const decision = dispatchPublicGamingRequest(req.body, 'canary');
+  applyCanonicalGptRouteHeaders(res, 'arcanos-gaming');
+
+  logPublicGamingDispatch({
+    req,
+    requestId: requestId ?? traceId,
+    traceId,
+    action: decision.action,
+    intent: decision.intent,
+    route: decision.ok ? 'public_canary' : 'unsupported',
+    mode: null
+  });
+
+  if (!decision.ok) {
+    const response = buildPublicGamingCanaryFailure({
+      code: 'BAD_REQUEST',
+      requestId,
+      traceId,
+      durationMs: Date.now() - startedAt
+    });
+    return sendGuardedPublicGamingCanaryResponse(
+      req,
+      res,
+      response,
+      400,
+      'gpt.response.public_canary_bad_request'
+    );
+  }
+
+  const result = executePublicGamingCanary({ requestId, traceId, startedAtMs: startedAt });
+  return sendGuardedPublicGamingCanaryResponse(
+    req,
+    res,
+    result.response,
+    result.statusCode,
+    'gpt.response.public_canary'
+  );
+});
+
 router.post('/arcanos-gaming/evidence-retry', (req, res, next) => {
   const validation = validateGamingEvidenceRetryRequest(req.body);
   if (!validation.ok) {
@@ -1312,6 +1411,7 @@ router.post('/arcanos-gaming/evidence-retry', (req, res, next) => {
 router.post("/:gptId", async (req, res, next) => {
   const routeGptId = req.params.gptId;
   const priorityGpt = isPriorityGpt(routeGptId);
+  const directGamingRoute = isDirectModuleQueryGpt(routeGptId);
   const requestedAction = resolveRequestedGptActionFromRequest(req);
   const queryRequested = requestedAction === GPT_QUERY_ACTION;
   const queryAndWaitRequested = requestedAction === GPT_QUERY_AND_WAIT_ACTION;
@@ -1325,7 +1425,6 @@ router.post("/:gptId", async (req, res, next) => {
   const explicitAsyncPollIntervalMs = readRequestedAsyncGptPollIntervalMs(req, req.body);
   const queryAndWaitRequestedTimeoutMs =
     explicitAsyncWaitForResultMs ?? resolveGptWaitTimeoutMs();
-  const directGamingRoute = isDirectModuleQueryGpt(routeGptId);
   const routeTimeoutMs = directGamingRoute
     ? DIRECT_GAMING_ACTION_ROUTE_TIMEOUT_MS
     : resolveGptRouteHardTimeoutMs({
@@ -1449,20 +1548,84 @@ router.post("/:gptId", async (req, res, next) => {
           });
         }
 
-        const publicGamingValidationError = isDirectModuleQueryGpt(incomingGptId)
-          ? validatePublicGamingQueryRequest(normalizedBody, requestedAction)
+        const publicGamingQueryAndWaitOperational = isDirectModuleQueryGpt(incomingGptId)
+          && queryAndWaitRequested
+          && normalizedBody !== null
+          && promptText !== null
+          && isClearlyOperationalGamingPrompt(promptText);
+        if (publicGamingQueryAndWaitOperational) {
+          logPublicGamingDispatch({
+            req,
+            requestId: requestId ?? traceId,
+            traceId,
+            action: GPT_QUERY_AND_WAIT_ACTION,
+            intent: 'integration_status',
+            route: 'operational_rejected',
+            mode: null
+          });
+          const errorPayload = buildGptDispatcherErrorPayload({
+            requestId,
+            traceId,
+            gptId: incomingGptId,
+            action: GPT_QUERY_AND_WAIT_ACTION,
+            code: OPERATIONAL_REQUEST_NOT_GAMEPLAY_CODE,
+            message: OPERATIONAL_REQUEST_NOT_GAMEPLAY_MESSAGE,
+            route: 'gaming_operational_guard'
+          });
+          logGptDispatcherOutcome({
+            req,
+            traceId,
+            gptId: incomingGptId,
+            action: GPT_QUERY_AND_WAIT_ACTION,
+            status: 400,
+            error: {
+              name: OPERATIONAL_REQUEST_NOT_GAMEPLAY_CODE,
+              message: OPERATIONAL_REQUEST_NOT_GAMEPLAY_MESSAGE
+            }
+          });
+          return sendGuardedGptJsonResponse(
+            req,
+            res,
+            errorPayload,
+            'gpt.response.gaming_operational_guard',
+            400
+          );
+        }
+
+        const publicGamingDecision = isDirectModuleQueryGpt(incomingGptId)
+          && !queryAndWaitRequested
+          && !isGptDagAction(requestedAction)
+          ? dispatchPublicGamingRequest(req.body, 'query')
           : null;
 
-        if (publicGamingValidationError) {
-          const action = requestedAction ?? GPT_QUERY_ACTION;
+        if (publicGamingDecision) {
+          logPublicGamingDispatch({
+            req,
+            requestId: requestId ?? traceId,
+            traceId,
+            action: publicGamingDecision.action,
+            intent: publicGamingDecision.intent,
+            route: publicGamingDecision.ok
+              ? 'gaming'
+              : publicGamingDecision.intent === 'integration_status'
+                ? 'operational_rejected'
+                : 'unsupported',
+            mode: publicGamingDecision.mode
+          });
+        }
+
+        if (publicGamingDecision && !publicGamingDecision.ok) {
+          const action = publicGamingDecision.action;
           const errorPayload = buildGptDispatcherErrorPayload({
             requestId,
             traceId,
             gptId: incomingGptId,
             action,
-            code: publicGamingValidationError.code,
-            message: publicGamingValidationError.message,
-            route: 'gaming_validation'
+            code: publicGamingDecision.error.code,
+            message: publicGamingDecision.error.message,
+            route: publicGamingDecision.intent === 'integration_status'
+              ? 'gaming_operational_guard'
+              : 'gaming_validation'
           });
           logGptDispatcherOutcome({
             req,
@@ -1471,8 +1634,8 @@ router.post("/:gptId", async (req, res, next) => {
             action,
             status: 400,
             error: {
-              name: publicGamingValidationError.code,
-              message: publicGamingValidationError.message
+              name: publicGamingDecision.error.code,
+              message: publicGamingDecision.error.message
             }
           });
           return sendGuardedGptJsonResponse(
