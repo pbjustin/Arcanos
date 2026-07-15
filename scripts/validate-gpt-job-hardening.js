@@ -315,7 +315,8 @@ const OUTPUT_REDACTIONS = Object.freeze([
   [/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi, 'Bearer [REDACTED]'],
   [/\bsk-[A-Za-z0-9_-]{16,}\b/g, '[REDACTED_OPENAI_KEY]'],
   [/\b(?:railway|rwy)[_-]?[A-Za-z0-9]{16,}\b/gi, '[REDACTED_RAILWAY_TOKEN]'],
-  [/\b(?:postgres|postgresql|mysql|mongodb):\/\/[^\s"'<>]+/gi, '[REDACTED_DATABASE_URL]'],
+  [/\b(?:postgres|postgresql|mysql|mongodb|redis|rediss):\/\/[^\s"'<>]+/gi, '[REDACTED_DATABASE_URL]'],
+  [/\b([a-z0-9_.-]*redis[a-z0-9_.-]*|redis(?:\s+[a-z][a-z0-9]*)*)\b["']?\s*[:=]\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\r\n]+)/gi, '$1=[REDACTED]'],
   [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, '[REDACTED_JWT]'],
   [/\b(?:authorization|cookie|set-cookie|api[_-]?key|openai[_-]?api[_-]?key|access[_-]?token|auth[_-]?token|bearer[_-]?token|openai[_-]?token|railway[_-]?token|refresh[_-]?token|session[_-]?token|token|secret|password|session(?:id)?|database[_-]?url)\s*[:=]\s*["']?[^"'\s,;}]+/gi, '$1=[REDACTED]']
 ]);
@@ -333,22 +334,42 @@ function sanitizeOutputString(value, knownSecrets = []) {
   return output;
 }
 
-export function sanitizeReportValue(value, knownSecrets = []) {
+export function sanitizeReportValue(value, knownSecrets = [], seen = new WeakSet()) {
   if (typeof value === 'string') {
     return sanitizeOutputString(value, knownSecrets);
   }
-  if (Array.isArray(value)) {
-    return value.map((item) => sanitizeReportValue(item, knownSecrets));
+  if (typeof value === 'function') {
+    return '[REDACTED_FUNCTION]';
   }
   if (value && typeof value === 'object') {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, entry]) => [
-        key,
-        /(authorization|cookie|token|secret|password|database[_-]?url|api[_-]?key)/i.test(key)
-          ? '[REDACTED]'
-          : sanitizeReportValue(entry, knownSecrets)
-      ])
-    );
+    if (seen.has(value)) {
+      return '[REDACTED_CIRCULAR_REFERENCE]';
+    }
+    seen.add(value);
+    try {
+      if (value instanceof Error) {
+        return sanitizeReportValue({
+          ...Object.fromEntries(Object.entries(value)),
+          name: value.name,
+          message: value.message,
+          ...(typeof value.stack === 'string' ? { stack: value.stack } : {}),
+          ...('cause' in value ? { cause: value.cause } : {})
+        }, knownSecrets, seen);
+      }
+      if (Array.isArray(value)) {
+        return value.map((item) => sanitizeReportValue(item, knownSecrets, seen));
+      }
+      return Object.fromEntries(
+        Object.entries(value).map(([key, entry]) => [
+          sanitizeOutputString(key, knownSecrets) === key ? key : '[REDACTED_KEY]',
+          /(authorization|cookie|token|secret|password|database[_-]?url|api[_-]?key|redis)/i.test(key)
+            ? '[REDACTED]'
+            : sanitizeReportValue(entry, knownSecrets, seen)
+        ])
+      );
+    } finally {
+      seen.delete(value);
+    }
   }
   return value;
 }

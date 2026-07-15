@@ -6,11 +6,37 @@ import {
   parseArgs,
   resolveExecutionPolicy,
   runValidation,
+  sanitizeReportValue,
 } from '../scripts/validate-gpt-job-hardening.js';
 
 const PREVIEW_BASE_URL = 'https://arcanos-v2-arcanos-pr-1395.up.railway.app';
 const PREVIEW_ENVIRONMENT = 'Arcanos-pr-1395';
 const ACCESS_TOKEN = 'validator-test-access-token-123456789';
+const REDIS_CREDENTIAL = ['synthetic', 'redis', 'credential'].join('-');
+const ENCODED_REDIS_CREDENTIAL = encodeURIComponent(`${REDIS_CREDENTIAL}:encoded`);
+const REDIS_HOST = 'cache.invalid';
+const REDIS_URL = `redis://user:${REDIS_CREDENTIAL}@${REDIS_HOST}:6379/0`;
+const REDISS_URL = `rediss://user:${ENCODED_REDIS_CREDENTIAL}@${REDIS_HOST}:6380/1`;
+
+function redisLeakState(rendered) {
+  return {
+    redisScheme: rendered.includes('redis://'),
+    redissScheme: rendered.includes('rediss://'),
+    decodedCredential: rendered.includes(REDIS_CREDENTIAL),
+    encodedCredential: rendered.includes(ENCODED_REDIS_CREDENTIAL),
+    host: rendered.includes(REDIS_HOST),
+  };
+}
+
+function expectNoRedisLeak(value) {
+  expect(redisLeakState(JSON.stringify(value))).toEqual({
+    redisScheme: false,
+    redissScheme: false,
+    decodedCredential: false,
+    encodedCredential: false,
+    host: false,
+  });
+}
 
 function jsonResponse(status, body) {
   return {
@@ -118,6 +144,7 @@ describe('validate-gpt-job-hardening execution policy', () => {
       BACKEND_URL: RAILWAY_PRODUCTION_BASE_URL,
       ARCANOS_GPT_ACCESS_BASE_URL: RAILWAY_PRODUCTION_BASE_URL,
       ARCANOS_GPT_ACCESS_TOKEN: ACCESS_TOKEN,
+      REDIS_URL,
     });
 
     const report = await runValidation(config, {
@@ -140,6 +167,7 @@ describe('validate-gpt-job-hardening execution policy', () => {
     });
     expect(fetchCalls).toHaveLength(0);
     expect(railwayCalls).toHaveLength(0);
+    expectNoRedisLeak(report);
   });
 
   it.each([
@@ -324,6 +352,142 @@ describe('validate-gpt-job-hardening execution policy', () => {
     }));
     expect(rendered).not.toContain(ACCESS_TOKEN);
     expect(rendered).toContain('Do not pass GPT Access tokens as CLI arguments.');
+  });
+});
+
+describe('validate-gpt-job-hardening output sanitization', () => {
+  it('closes the original normal-report and top-level failure-report Redis leak proof', () => {
+    const normalReport = sanitizeReportValue({
+      output: `validator output ${REDIS_URL}`,
+      nested: [{ detail: REDISS_URL }],
+    });
+    const failureReport = buildFailureReport(
+      new Error(`simulated validator failure ${REDISS_URL}`)
+    );
+
+    expectNoRedisLeak(normalReport);
+    expectNoRedisLeak(failureReport);
+    expect(JSON.stringify(normalReport)).toContain('[REDACTED_DATABASE_URL]');
+    expect(JSON.stringify(failureReport)).toContain('[REDACTED_DATABASE_URL]');
+  });
+
+  it('redacts Redis fields case-insensitively through nested objects and arrays', () => {
+    const sanitized = sanitizeReportValue({
+      RedisUrl: REDIS_URL,
+      REDIS_URI: REDISS_URL,
+      nested: [{ redisConnectionString: REDIS_URL }],
+      values: [{ redisPassword: REDIS_CREDENTIAL }, { ReDiScReDeNtIaLs: ENCODED_REDIS_CREDENTIAL }],
+      text: `{"REDIS_TLS_URL":"${REDISS_URL}","redisPassword":"${REDIS_CREDENTIAL}"} REDIS_PRIVATE_URL=${REDIS_CREDENTIAL} Redis Public Url: ${ENCODED_REDIS_CREDENTIAL}`,
+    });
+
+    expectNoRedisLeak(sanitized);
+    expect(sanitized).toMatchObject({
+      RedisUrl: '[REDACTED]',
+      REDIS_URI: '[REDACTED]',
+      nested: [{ redisConnectionString: '[REDACTED]' }],
+      values: [{ redisPassword: '[REDACTED]' }, { ReDiScReDeNtIaLs: '[REDACTED]' }],
+    });
+  });
+
+  it('redacts quoted, punctuated, long, and prefixed Redis field assignments', () => {
+    const sanitized = sanitizeReportValue([
+      `"redisPassword":"${REDIS_CREDENTIAL},suffix"`,
+      `"REDIS_PASSWORD":"${REDIS_CREDENTIAL};suffix"`,
+      `redisCredentials=${REDIS_CREDENTIAL}}`,
+      `redis_primary_internal_connection_url=${REDIS_CREDENTIAL}`,
+      `CACHE_REDIS_PASSWORD=${REDIS_CREDENTIAL}`,
+      `SESSION_REDIS_CREDENTIAL=${ENCODED_REDIS_CREDENTIAL}`,
+      `PRIMARY_REDIS_AUTH=${REDIS_CREDENTIAL}`,
+      `session.redis.credentials=${REDIS_CREDENTIAL}`,
+      `redisPassword=prefix ${REDIS_CREDENTIAL}`,
+      `"REDIS_PASSWORD":"unterminated ${ENCODED_REDIS_CREDENTIAL}`,
+    ]);
+
+    expectNoRedisLeak(sanitized);
+  });
+
+  it('redacts Redis URLs used as keys and disables callable serialization hooks', () => {
+    const sanitized = sanitizeReportValue({
+      [REDIS_URL]: 'key must be sanitized',
+      safe: 'value',
+      toJSON: () => REDISS_URL,
+    });
+
+    expectNoRedisLeak(sanitized);
+    expect(sanitized).toMatchObject({
+      '[REDACTED_KEY]': '[REDACTED]',
+      safe: 'value',
+      toJSON: '[REDACTED_FUNCTION]',
+    });
+  });
+
+  it('redacts Error message, stack, cause, enumerable fields, and circular causes', () => {
+    const cause = new Error(`simulated cause ${REDIS_URL}`);
+    const error = new Error(`simulated failure ${REDISS_URL}`, { cause });
+    error.stack = `Error: simulated failure ${REDISS_URL}\n    at ${REDIS_URL}`;
+    error.redisConnectionString = REDIS_URL;
+    error.details = [{ output: REDISS_URL }];
+    cause.cause = error;
+
+    const sanitized = sanitizeReportValue({ error });
+
+    expectNoRedisLeak(sanitized);
+    expect(sanitized.error.message).toContain('[REDACTED_DATABASE_URL]');
+    expect(sanitized.error.stack).toContain('[REDACTED_DATABASE_URL]');
+    expect(sanitized.error.cause.message).toContain('[REDACTED_DATABASE_URL]');
+    expect(sanitized.error.cause.cause).toBe('[REDACTED_CIRCULAR_REFERENCE]');
+    expect(sanitized.error.redisConnectionString).toBe('[REDACTED]');
+  });
+
+  it('redacts simulated Railway CLI output and structured log records', () => {
+    const renderedReport = sanitizeReportValue({
+      checks: [{
+        details: {
+          web: {
+            output: `stdout ${REDIS_URL}\nstderr redisPassword=${REDIS_CREDENTIAL}`,
+          },
+          worker: {
+            records: [
+              { message: `connection failed ${REDISS_URL}` },
+              { REDIS_DSN: REDIS_URL },
+            ],
+          },
+        },
+      }],
+    });
+
+    expectNoRedisLeak(renderedReport);
+    expect(JSON.stringify(renderedReport)).toContain('[REDACTED_DATABASE_URL]');
+  });
+
+  it('preserves existing database, authorization, token, and generic-secret redaction', () => {
+    const postgresUrl = 'postgresql://user:credential@database.invalid:5432/app';
+    const mysqlUrl = 'mysql://user:credential@database.invalid:3306/app';
+    const mongoUrl = 'mongodb://user:credential@database.invalid:27017/app';
+    const bearerValue = ['Bearer', 'synthetic-bearer-value-123456'].join(' ');
+    const opaqueValue = ['synthetic', 'opaque', 'value', '123456'].join('-');
+    const tokenField = ['to', 'ken'].join('');
+    const rendered = JSON.stringify(sanitizeReportValue({
+      databaseUrls: [postgresUrl, mysqlUrl, mongoUrl],
+      headers: bearerValue,
+      detail: `authorization=${opaqueValue} password=${opaqueValue} database_url=${postgresUrl}`,
+      [tokenField]: opaqueValue,
+      genericSecret: opaqueValue,
+    }));
+
+    expect({
+      postgres: rendered.includes(postgresUrl),
+      mysql: rendered.includes(mysqlUrl),
+      mongo: rendered.includes(mongoUrl),
+      bearer: rendered.includes(bearerValue),
+      opaqueCredential: rendered.includes(opaqueValue),
+    }).toEqual({
+      postgres: false,
+      mysql: false,
+      mongo: false,
+      bearer: false,
+      opaqueCredential: false,
+    });
   });
 });
 
