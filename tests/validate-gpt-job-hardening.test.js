@@ -7,35 +7,58 @@ import {
   resolveExecutionPolicy,
   runValidation,
   sanitizeReportValue,
+  writeSanitizedReport,
 } from '../scripts/validate-gpt-job-hardening.js';
 
 const PREVIEW_BASE_URL = 'https://arcanos-v2-arcanos-pr-1395.up.railway.app';
 const PREVIEW_ENVIRONMENT = 'Arcanos-pr-1395';
 const ACCESS_TOKEN = 'validator-test-access-token-123456789';
+const REDIS_USERNAME = 'synthetic-redis-user';
 const REDIS_CREDENTIAL = ['synthetic', 'redis', 'credential'].join('-');
 const ENCODED_REDIS_CREDENTIAL = encodeURIComponent(`${REDIS_CREDENTIAL}:encoded`);
+const REDIS_QUERY_TOKEN = 'synthetic-redis-query-token';
+const ENCODED_REDIS_QUERY_TOKEN = encodeURIComponent(`${REDIS_QUERY_TOKEN}:encoded`);
 const REDIS_HOST = 'cache.invalid';
-const REDIS_URL = `redis://user:${REDIS_CREDENTIAL}@${REDIS_HOST}:6379/0`;
-const REDISS_URL = `rediss://user:${ENCODED_REDIS_CREDENTIAL}@${REDIS_HOST}:6380/1`;
+const REDIS_URL = `redis://${REDIS_USERNAME}:${REDIS_CREDENTIAL}@${REDIS_HOST}:6379/0?token=${REDIS_QUERY_TOKEN}`;
+const REDISS_URL = `rediss://${REDIS_USERNAME}:${ENCODED_REDIS_CREDENTIAL}@${REDIS_HOST}:6380/1?token=${ENCODED_REDIS_QUERY_TOKEN}`;
 
 function redisLeakState(rendered) {
   return {
     redisScheme: rendered.includes('redis://'),
     redissScheme: rendered.includes('rediss://'),
+    username: rendered.includes(REDIS_USERNAME),
     decodedCredential: rendered.includes(REDIS_CREDENTIAL),
     encodedCredential: rendered.includes(ENCODED_REDIS_CREDENTIAL),
+    queryToken: rendered.includes(REDIS_QUERY_TOKEN),
+    encodedQueryToken: rendered.includes(ENCODED_REDIS_QUERY_TOKEN),
     host: rendered.includes(REDIS_HOST),
   };
 }
 
 function expectNoRedisLeak(value) {
-  expect(redisLeakState(JSON.stringify(value))).toEqual({
+  const rendered = typeof value === 'string' ? value : JSON.stringify(value);
+  expect(redisLeakState(rendered)).toEqual({
     redisScheme: false,
     redissScheme: false,
+    username: false,
     decodedCredential: false,
     encodedCredential: false,
+    queryToken: false,
+    encodedQueryToken: false,
     host: false,
   });
+}
+
+function captureSanitizedReport(value, knownSecrets = []) {
+  let rendered = '';
+  const output = {
+    write(chunk) {
+      rendered += String(chunk);
+      return true;
+    },
+  };
+  writeSanitizedReport(value, knownSecrets, output);
+  return rendered;
 }
 
 function jsonResponse(status, body) {
@@ -421,7 +444,7 @@ describe('validate-gpt-job-hardening output sanitization', () => {
     });
   });
 
-  it('redacts Error message, stack, cause, enumerable fields, and circular causes', () => {
+  it('redacts Error messages and enumerable fields without exposing native stacks or causes', () => {
     const cause = new Error(`simulated cause ${REDIS_URL}`);
     const error = new Error(`simulated failure ${REDISS_URL}`, { cause });
     error.stack = `Error: simulated failure ${REDISS_URL}\n    at ${REDIS_URL}`;
@@ -433,10 +456,39 @@ describe('validate-gpt-job-hardening output sanitization', () => {
 
     expectNoRedisLeak(sanitized);
     expect(sanitized.error.message).toContain('[REDACTED_DATABASE_URL]');
-    expect(sanitized.error.stack).toContain('[REDACTED_DATABASE_URL]');
-    expect(sanitized.error.cause.message).toContain('[REDACTED_DATABASE_URL]');
-    expect(sanitized.error.cause.cause).toBe('[REDACTED_CIRCULAR_REFERENCE]');
+    expect(sanitized.error.stack).toBeUndefined();
+    expect(sanitized.error.cause).toBeUndefined();
     expect(sanitized.error.redisConnectionString).toBe('[REDACTED]');
+  });
+
+  it('sanitizes the exact final bytes written to terminal or CI', () => {
+    const normalOutput = captureSanitizedReport({
+      checks: [{
+        details: {
+          redisUrl: REDIS_URL,
+          redisPassword: REDIS_CREDENTIAL,
+          cliOutput: `redisUsername=${REDIS_USERNAME}\nredisPassword=${REDIS_CREDENTIAL}\nredisQueryToken=${REDIS_QUERY_TOKEN}`,
+          cliFlags: `--redis-username ${REDIS_USERNAME} --redis-password ${REDIS_CREDENTIAL} --redis-query-token ${REDIS_QUERY_TOKEN}`,
+          prose: `Redis username was ${REDIS_USERNAME}; Redis password was ${REDIS_CREDENTIAL}; Redis query token was ${REDIS_QUERY_TOKEN}`,
+          hybridLabels: `Redis query-token was ${REDIS_QUERY_TOKEN}; Redis query_token is ${ENCODED_REDIS_QUERY_TOKEN}; Redis query.token was ${REDIS_QUERY_TOKEN}`,
+          stack: `Error: connection failed ${REDIS_URL}`,
+          cause: { message: `nested connection failure ${REDISS_URL}` },
+          logs: [{ message: `simulated Railway log ${REDISS_URL}` }],
+        },
+      }],
+    });
+    const failureOutput = captureSanitizedReport(
+      buildFailureReport(new Error(
+        `simulated validator failure ${REDIS_URL}; Redis username was ${REDIS_USERNAME}; Redis password was ${REDIS_CREDENTIAL}; Redis query token was ${REDIS_QUERY_TOKEN}`
+      ))
+    );
+
+    for (const rendered of [normalOutput, failureOutput]) {
+      expect(rendered.endsWith('\n')).toBe(true);
+      expectNoRedisLeak(rendered);
+      expect(() => JSON.parse(rendered)).not.toThrow();
+      expect(rendered).toContain('[REDACTED');
+    }
   });
 
   it('redacts simulated Railway CLI output and structured log records', () => {
@@ -466,13 +518,16 @@ describe('validate-gpt-job-hardening output sanitization', () => {
     const mongoUrl = 'mongodb://user:credential@database.invalid:27017/app';
     const bearerValue = ['Bearer', 'synthetic-bearer-value-123456'].join(' ');
     const opaqueValue = ['synthetic', 'opaque', 'value', '123456'].join('-');
+    const cookieValue = ['synthetic', 'cookie', 'value', '123456'].join('-');
     const tokenField = ['to', 'ken'].join('');
     const rendered = JSON.stringify(sanitizeReportValue({
       databaseUrls: [postgresUrl, mysqlUrl, mongoUrl],
       headers: bearerValue,
-      detail: `authorization=${opaqueValue} password=${opaqueValue} database_url=${postgresUrl}`,
+      detail: `authorization=${opaqueValue} password=${opaqueValue} database_url=${postgresUrl} cookie=${cookieValue} set-cookie=${cookieValue}`,
       [tokenField]: opaqueValue,
       genericSecret: opaqueValue,
+      cookie: cookieValue,
+      responseHeaders: { 'set-cookie': cookieValue },
     }));
 
     expect({
@@ -481,12 +536,14 @@ describe('validate-gpt-job-hardening output sanitization', () => {
       mongo: rendered.includes(mongoUrl),
       bearer: rendered.includes(bearerValue),
       opaqueCredential: rendered.includes(opaqueValue),
+      cookie: rendered.includes(cookieValue),
     }).toEqual({
       postgres: false,
       mysql: false,
       mongo: false,
       bearer: false,
       opaqueCredential: false,
+      cookie: false,
     });
   });
 });

@@ -311,24 +311,30 @@ function hashValue(value) {
   return createHash('sha256').update(String(value), 'utf8').digest('hex').slice(0, 12);
 }
 
-const OUTPUT_REDACTIONS = Object.freeze([
+const STRUCTURE_SAFE_OUTPUT_REDACTIONS = Object.freeze([
   [/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi, 'Bearer [REDACTED]'],
   [/\bsk-[A-Za-z0-9_-]{16,}\b/g, '[REDACTED_OPENAI_KEY]'],
   [/\b(?:railway|rwy)[_-]?[A-Za-z0-9]{16,}\b/gi, '[REDACTED_RAILWAY_TOKEN]'],
   [/\b(?:postgres|postgresql|mysql|mongodb|redis|rediss):\/\/[^\s"'<>]+/gi, '[REDACTED_DATABASE_URL]'],
+  [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, '[REDACTED_JWT]']
+]);
+
+const OUTPUT_REDACTIONS = Object.freeze([
+  ...STRUCTURE_SAFE_OUTPUT_REDACTIONS,
   [/\b([a-z0-9_.-]*redis[a-z0-9_.-]*|redis(?:\s+[a-z][a-z0-9]*)*)\b["']?\s*[:=]\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\r\n]+)/gi, '$1=[REDACTED]'],
-  [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, '[REDACTED_JWT]'],
+  [/\b([a-z0-9_.-]*redis[a-z0-9_.-]*(?:user(?:name)?|pass(?:word)?|credential(?:s)?|auth|query[_-]?token|token)[a-z0-9_.-]*)\b\s+(?:(?:is|was)\s+)?(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}]+)/gi, '$1=[REDACTED]'],
+  [/\b(redis[\s_.-]+(?:(?:auth|access|session|query)[\s_.-]+token|user(?:[\s_.-]*name)?|pass(?:[\s_.-]*word)?|credential(?:s)?|auth(?:entication)?|token))\b\s+(?:(?:is|was)\s+)?(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}]+)/gi, '$1=[REDACTED]'],
   [/\b(?:authorization|cookie|set-cookie|api[_-]?key|openai[_-]?api[_-]?key|access[_-]?token|auth[_-]?token|bearer[_-]?token|openai[_-]?token|railway[_-]?token|refresh[_-]?token|session[_-]?token|token|secret|password|session(?:id)?|database[_-]?url)\s*[:=]\s*["']?[^"'\s,;}]+/gi, '$1=[REDACTED]']
 ]);
 
-function sanitizeOutputString(value, knownSecrets = []) {
+function sanitizeOutputString(value, knownSecrets = [], redactions = OUTPUT_REDACTIONS) {
   let output = String(value);
   for (const secret of knownSecrets) {
     if (typeof secret === 'string' && secret.length >= 8) {
       output = output.split(secret).join('[REDACTED_SECRET_VALUE]');
     }
   }
-  for (const [pattern, replacement] of OUTPUT_REDACTIONS) {
+  for (const [pattern, replacement] of redactions) {
     output = output.replace(pattern, replacement);
   }
   return output;
@@ -351,9 +357,7 @@ export function sanitizeReportValue(value, knownSecrets = [], seen = new WeakSet
         return sanitizeReportValue({
           ...Object.fromEntries(Object.entries(value)),
           name: value.name,
-          message: value.message,
-          ...(typeof value.stack === 'string' ? { stack: value.stack } : {}),
-          ...('cause' in value ? { cause: value.cause } : {})
+          message: value.message
         }, knownSecrets, seen);
       }
       if (Array.isArray(value)) {
@@ -372,6 +376,11 @@ export function sanitizeReportValue(value, knownSecrets = [], seen = new WeakSet
     }
   }
   return value;
+}
+
+export function writeSanitizedReport(report, knownSecrets = [], output = process.stdout) {
+  const serialized = JSON.stringify(sanitizeReportValue(report, knownSecrets), null, 2);
+  output.write(`${sanitizeOutputString(serialized, knownSecrets, STRUCTURE_SAFE_OUTPUT_REDACTIONS)}\n`);
 }
 
 export function buildFailureReport(error, options = {}) {
@@ -797,7 +806,7 @@ async function main() {
   mainGatewayCredential = config.gatewayCredential;
   mainExecutionPolicy = resolveExecutionPolicy(config);
   const report = await runValidation(config);
-  process.stdout.write(`${JSON.stringify(sanitizeReportValue(report, [config.gatewayCredential]), null, 2)}\n`);
+  writeSanitizedReport(report, [config.gatewayCredential]);
   process.exitCode = ['PASS', 'DRY_RUN'].includes(report.summary.overall) ? 0 : 1;
 }
 
@@ -808,7 +817,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       executionPolicy: mainExecutionPolicy
     });
 
-    process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
+    writeSanitizedReport(report, [mainGatewayCredential]);
     process.exitCode = 1;
   });
 }
