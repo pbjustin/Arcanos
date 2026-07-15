@@ -146,6 +146,8 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     }));
     expect(successProperties.requestId.maxLength).toBe(128);
     expect(successProperties.traceId.maxLength).toBe(128);
+    expect(successProperties.requestId.pattern).toBe('^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$');
+    expect(successProperties.traceId.pattern).toBe('^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$');
     expect(successProperties.durationMs.maximum).toBe(30000);
     expect(successProperties.acceptedSources.enum).toEqual([1]);
     expect(successProperties.usedFallback.enum).toEqual([false]);
@@ -187,6 +189,8 @@ describe('ARCANOS Gaming Custom GPT builder contract', () => {
     expect(schemas.PublicCanaryFailureResponse.additionalProperties).toBe(false);
     expect(schemas.PublicCanaryFailureResponse.required).toEqual(Object.keys(failureProperties));
     expect(failureProperties.schemaVersion.enum).toEqual([contract.info.version]);
+    expect(failureProperties.requestId.pattern).toBe('^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$');
+    expect(failureProperties.traceId.pattern).toBe('^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$');
     expect(failureProperties.code.enum).toEqual([
       'BAD_REQUEST',
       'PUBLIC_CANARY_REQUEST_REJECTED',

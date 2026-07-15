@@ -343,7 +343,9 @@ describe('public Gaming deterministic canary', () => {
     ['blank message', (value: Record<string, unknown>) => { value.message = '   '; }],
     ['wrong schema version', (value: Record<string, unknown>) => { value.schemaVersion = '1.3.2'; }],
     ['unsafe request ID', (value: Record<string, unknown>) => { value.requestId = 'bad\nrequest'; }],
+    ['request ID with leading punctuation', (value: Record<string, unknown>) => { value.requestId = '.bad'; }],
     ['unsafe trace ID', (value: Record<string, unknown>) => { value.traceId = 'x'.repeat(129); }],
+    ['trace ID with leading punctuation', (value: Record<string, unknown>) => { value.traceId = ':bad'; }],
     ['wrong accepted source count', (value: Record<string, unknown>) => { value.acceptedSources = 0; }],
     ['wrong fallback status', (value: Record<string, unknown>) => { value.usedFallback = true; }],
     ['out-of-range duration', (value: Record<string, unknown>) => { value.durationMs = 30_001; }],
@@ -354,11 +356,14 @@ describe('public Gaming deterministic canary', () => {
     ['wrong check status', (value: Record<string, unknown>) => {
       (value.checks as Record<string, unknown>).networkRetrieval = 'passed';
     }],
-  ])('rejects a success response with %s', (_caseName, mutate) => {
+  ])('rejects a success response with %s', (caseName, mutate) => {
     const value = cloneRecord(executeWith().response);
     mutate(value);
 
     expect(guardPublicGamingCanaryResponse(value)).toBe(false);
+    if (caseName.includes('leading punctuation')) {
+      expect(validateSuccessSchema?.(value)).toBe(false);
+    }
   });
 
   it('rejects unknown and inherited failure-code names', () => {
@@ -388,7 +393,9 @@ describe('public Gaming deterministic canary', () => {
     }],
     ['wrong failure counter', (value: Record<string, unknown>) => { value.acceptedSources = 1; }],
     ['wrong failure fallback', (value: Record<string, unknown>) => { value.usedFallback = true; }],
-  ])('rejects a failure response with %s', (_caseName, mutate) => {
+    ['request ID with leading punctuation', (value: Record<string, unknown>) => { value.requestId = '.bad'; }],
+    ['trace ID with leading punctuation', (value: Record<string, unknown>) => { value.traceId = ':bad'; }],
+  ])('rejects a failure response with %s', (caseName, mutate) => {
     const value = cloneRecord(buildPublicGamingCanaryFailure({
       code: 'PUBLIC_CANARY_UNAVAILABLE',
       requestId: 'req-failure',
@@ -397,6 +404,9 @@ describe('public Gaming deterministic canary', () => {
     mutate(value);
 
     expect(guardPublicGamingCanaryResponse(value)).toBe(false);
+    if (caseName.includes('leading punctuation')) {
+      expect(validateFailureSchema?.(value)).toBe(false);
+    }
   });
 
   it('rejects an otherwise valid response whose serialization exceeds the response cap', () => {

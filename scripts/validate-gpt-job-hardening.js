@@ -324,7 +324,7 @@ const OUTPUT_REDACTIONS = Object.freeze([
   [/\b([a-z0-9_.-]*redis[a-z0-9_.-]*|redis(?:\s+[a-z][a-z0-9]*)*)\b["']?\s*[:=]\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\r\n]+)/gi, '$1=[REDACTED]'],
   [/\b([a-z0-9_.-]*redis[a-z0-9_.-]*(?:user(?:name)?|pass(?:word)?|credential(?:s)?|auth|query[_-]?token|token)[a-z0-9_.-]*)\b\s+(?:(?:is|was)\s+)?(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}]+)/gi, '$1=[REDACTED]'],
   [/\b(redis[\s_.-]+(?:(?:auth|access|session|query)[\s_.-]+token|user(?:[\s_.-]*name)?|pass(?:[\s_.-]*word)?|credential(?:s)?|auth(?:entication)?|token))\b\s+(?:(?:is|was)\s+)?(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}]+)/gi, '$1=[REDACTED]'],
-  [/\b(?:authorization|cookie|set-cookie|api[_-]?key|openai[_-]?api[_-]?key|access[_-]?token|auth[_-]?token|bearer[_-]?token|openai[_-]?token|railway[_-]?token|refresh[_-]?token|session[_-]?token|token|secret|password|session(?:id)?|database[_-]?url)\s*[:=]\s*["']?[^"'\s,;}]+/gi, '$1=[REDACTED]']
+  [/\b(authorization|cookie|set-cookie|api[_-]?key|openai[_-]?api[_-]?key|access[_-]?token|auth[_-]?token|bearer[_-]?token|openai[_-]?token|railway[_-]?token|refresh[_-]?token|session[_-]?token|token|secret|password|session(?:id)?|database[_-]?url)\s*[:=]\s*["']?[^"'\s,;}]+/gi, '$1=[REDACTED]']
 ]);
 
 function sanitizeOutputString(value, knownSecrets = [], redactions = OUTPUT_REDACTIONS) {

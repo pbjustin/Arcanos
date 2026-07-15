@@ -520,7 +520,7 @@ describe('validate-gpt-job-hardening output sanitization', () => {
     const opaqueValue = ['synthetic', 'opaque', 'value', '123456'].join('-');
     const cookieValue = ['synthetic', 'cookie', 'value', '123456'].join('-');
     const tokenField = ['to', 'ken'].join('');
-    const rendered = JSON.stringify(sanitizeReportValue({
+    const rendered = captureSanitizedReport({
       databaseUrls: [postgresUrl, mysqlUrl, mongoUrl],
       headers: bearerValue,
       detail: `authorization=${opaqueValue} password=${opaqueValue} database_url=${postgresUrl} cookie=${cookieValue} set-cookie=${cookieValue}`,
@@ -528,7 +528,8 @@ describe('validate-gpt-job-hardening output sanitization', () => {
       genericSecret: opaqueValue,
       cookie: cookieValue,
       responseHeaders: { 'set-cookie': cookieValue },
-    }));
+    });
+    const parsed = JSON.parse(rendered);
 
     expect({
       postgres: rendered.includes(postgresUrl),
@@ -545,6 +546,10 @@ describe('validate-gpt-job-hardening output sanitization', () => {
       opaqueCredential: false,
       cookie: false,
     });
+    expect(parsed.detail).toBe(
+      'authorization=[REDACTED] password=[REDACTED] database_url=[REDACTED] cookie=[REDACTED] set-cookie=[REDACTED]'
+    );
+    expect(rendered).not.toContain('$1=[REDACTED]');
   });
 });
 
