@@ -35,7 +35,6 @@ import { GPT_ACCESS_SCOPES, type GptAccessScope } from '@services/gptAccessScope
 
 const SERVICE_VERSION = '1.0.0';
 const TOKEN_ENV_NAME = 'ARCANOS_GPT_ACCESS_TOKEN';
-const DISPATCH_CONFIRMATION_TOKEN_PREFIX = 'token:';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_TOKEN_LENGTH = 4096;
 const LOG_LIMIT_MAX = 500;
@@ -50,6 +49,10 @@ const MAX_AI_JOB_OUTPUT_TOKENS = 4096;
 const MAX_AI_JOB_WORDS = 2000;
 const GPT_ACCESS_JOB_CREATE_ENDPOINT = '/gpt-access/jobs/create';
 const GPT_ACCESS_JOB_RESULT_ENDPOINT = '/gpt-access/jobs/result';
+const ARCANOS_CORE_CANONICAL_GPT_ID = 'arcanos-core';
+const GPT_ACCESS_EXACT_GPT_ID_ALIASES = new Map<string, string>([
+  ['arcanos', ARCANOS_CORE_CANONICAL_GPT_ID]
+]);
 const MAX_CREATE_AI_JOB_VALIDATION_DEPTH = 64;
 export const GPT_ACCESS_SUPPRESS_PROMPT_DEBUG_TRACE_FLAG = '__arcanosSuppressPromptDebugTrace';
 const UNSAFE_CREATE_AI_JOB_FIELDS = new Set([
@@ -467,6 +470,10 @@ function buildGatewayAiJobBody(input: z.infer<typeof createAiJobRequestSchema>):
 async function resolveGatewayGptRouting(gptId: string, requestId: string) {
   const { resolveGptRouting } = await import('@routes/_core/gptDispatch.js');
   return resolveGptRouting(gptId, requestId);
+}
+
+function canonicalizeGptAccessAiJobGptId(gptId: string): string {
+  return GPT_ACCESS_EXACT_GPT_ID_ALIASES.get(gptId.toLowerCase()) ?? gptId;
 }
 
 function isProductionEnvironment(): boolean {
@@ -1270,6 +1277,7 @@ export async function createGptAccessAiJob(body: unknown, context: CreateGptAcce
   }
 
   const request = parsed.data;
+  const canonicalGptId = canonicalizeGptAccessAiJobGptId(request.gptId);
   const bodyIdempotencyKey = normalizeExplicitIdempotencyKey(request.idempotencyKey);
   const headerIdempotencyKey = normalizeExplicitIdempotencyKey(context.idempotencyKey);
   if (bodyIdempotencyKey && headerIdempotencyKey && bodyIdempotencyKey !== headerIdempotencyKey) {
@@ -1294,7 +1302,7 @@ export async function createGptAccessAiJob(body: unknown, context: CreateGptAcce
   context.logger?.info?.('gpt_access.ai_job.requested', {
     traceId,
     requestType: 'createAiJob',
-    gptId: request.gptId,
+    gptId: canonicalGptId,
     promptLength: request.task.length,
     promptHash: hashPromptForGatewayLog(request.task),
     status: 'validating'
@@ -1302,12 +1310,12 @@ export async function createGptAccessAiJob(body: unknown, context: CreateGptAcce
 
   let routeResolution: Awaited<ReturnType<typeof resolveGatewayGptRouting>>;
   try {
-    routeResolution = await resolveGatewayGptRouting(request.gptId, context.requestId ?? traceId);
+    routeResolution = await resolveGatewayGptRouting(canonicalGptId, context.requestId ?? traceId);
   } catch (error: unknown) {
     context.logger?.error?.('gpt_access.ai_job.failed', {
       traceId,
       requestType: 'createAiJob',
-      gptId: request.gptId,
+      gptId: canonicalGptId,
       status: 'routing_unavailable',
       errorType: error instanceof Error ? error.name : 'unknown'
     });
@@ -1322,7 +1330,7 @@ export async function createGptAccessAiJob(body: unknown, context: CreateGptAcce
     context.logger?.warn?.('gpt_access.ai_job.rejected', {
       traceId,
       requestType: 'createAiJob',
-      gptId: request.gptId,
+      gptId: canonicalGptId,
       status: 'unknown_gpt'
     });
     return {
@@ -1339,14 +1347,14 @@ export async function createGptAccessAiJob(body: unknown, context: CreateGptAcce
 
   const aiJobBody = buildGatewayAiJobBody(request);
   const descriptor = buildGptIdempotencyDescriptor({
-    gptId: request.gptId,
+    gptId: canonicalGptId,
     action: GPT_QUERY_ACTION,
     body: aiJobBody,
     actorKey: context.actorKey,
     explicitIdempotencyKey
   });
   const queuedInput = buildQueuedGptJobInput({
-    gptId: request.gptId,
+    gptId: canonicalGptId,
     body: aiJobBody,
     prompt: request.task,
     bypassIntentRouting: true,
@@ -1376,7 +1384,7 @@ export async function createGptAccessAiJob(body: unknown, context: CreateGptAcce
     context.logger?.info?.('gpt_access.ai_job.enqueued', {
       traceId,
       requestType: 'createAiJob',
-      gptId: request.gptId,
+      gptId: canonicalGptId,
       jobId: createResult.job.id,
       status: mapStoredJobStatusToCreateStatus(createResult.job.status),
       deduped: createResult.deduped,
@@ -1388,7 +1396,7 @@ export async function createGptAccessAiJob(body: unknown, context: CreateGptAcce
       context.logger?.error?.('gpt_access.ai_job.failed', {
         traceId,
         requestType: 'createAiJob',
-        gptId: request.gptId,
+        gptId: canonicalGptId,
         jobId: createResult.job.id,
         status: 'invalid_job_id'
       });
@@ -1420,7 +1428,7 @@ export async function createGptAccessAiJob(body: unknown, context: CreateGptAcce
       context.logger?.warn?.('gpt_access.ai_job.rejected', {
         traceId,
         requestType: 'createAiJob',
-        gptId: request.gptId,
+        gptId: canonicalGptId,
         status: 'idempotency_conflict'
       });
       return {
@@ -1439,7 +1447,7 @@ export async function createGptAccessAiJob(body: unknown, context: CreateGptAcce
       context.logger?.error?.('gpt_access.ai_job.failed', {
         traceId,
         requestType: 'createAiJob',
-        gptId: request.gptId,
+        gptId: canonicalGptId,
         status: 'jobs_unavailable',
         errorType: error.name
       });
@@ -1458,7 +1466,7 @@ export async function createGptAccessAiJob(body: unknown, context: CreateGptAcce
     context.logger?.error?.('gpt_access.ai_job.failed', {
       traceId,
       requestType: 'createAiJob',
-      gptId: request.gptId,
+      gptId: canonicalGptId,
       status: 'failed',
       errorType: error instanceof Error ? error.name : 'unknown'
     });
@@ -2094,7 +2102,7 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
     info: {
       title: 'ARCANOS GPT Access Gateway',
       version: SERVICE_VERSION,
-      description: 'Scoped gateway for approved ARCANOS runtime, worker, queue, async AI job, job-result, log, database explain, MCP, capability, and diagnostics actions.'
+      description: 'Scoped gateway for approved ARCANOS backend access. Use createAiJob for prompt-shaped generation, advice, explanation, planning, review, architecture, summarization, and writing. Prefer dedicated operations for runtime, worker, queue, and diagnostics reads; use runDispatch only for other explicit operational commands.'
     },
     servers: [
       {
@@ -2118,7 +2126,7 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
             id: {
               type: 'string',
               minLength: 1,
-              description: 'Challenge ID. Retry the same method, path, and action/payload once; Custom GPT sends it as confirmation_token.'
+              description: 'Challenge ID. Pause for explicit operator approval, then retry the exact same method, path, action, and payload once, adding only this raw ID as top-level confirmation_token. Stop if that retry fails or returns another challenge.'
             },
             issuedAt: { type: 'string', format: 'date-time' },
             expiresAt: { type: 'string', format: 'date-time' },
@@ -2142,7 +2150,7 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
         },
         ConfirmationRequiredResponse: {
           type: 'object',
-          description: 'Confirmation gate response. Extract confirmationChallenge.id and retry once with the same action/payload plus confirmation_token.',
+          description: 'Confirmation gate response. Extract confirmationChallenge.id and pause for explicit operator approval. After approval, retry the exact same operation once with unchanged action/payload plus only the raw ID as top-level confirmation_token. Stop on failure or another challenge.',
           properties: {
             error: { type: 'string' },
             message: { type: 'string' },
@@ -2202,9 +2210,16 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
               type: 'string',
               minLength: 1,
               maxLength: 128,
-              pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$'
+              pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$',
+              description: 'Registered internal GPT ID. For the main ARCANOS Custom GPT, send the canonical ID arcanos-core. The exact case-insensitive display-name compatibility alias arcanos is canonicalized to arcanos-core; registered aliases core and arcanos-daemon remain supported. Do not infer IDs from display names and do not send default.',
+              examples: ['arcanos-core']
             },
-            task: { type: 'string', minLength: 1, maxLength: MAX_AI_JOB_TASK_LENGTH },
+            task: {
+              type: 'string',
+              minLength: 1,
+              maxLength: MAX_AI_JOB_TASK_LENGTH,
+              description: 'Complete backend AI request, including all requested criteria and output requirements.'
+            },
             input: {
               type: 'object',
               additionalProperties: true,
@@ -2221,7 +2236,7 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
               type: 'string',
               minLength: 1,
               maxLength: 256,
-              description: 'Optional client idempotency key. Equivalent to the Idempotency-Key header.'
+              description: 'Optional client idempotency key. Generate a unique value for each semantic request and reuse it only when retrying that same request. Equivalent to the Idempotency-Key header.'
             }
           },
           required: ['gptId', 'task'],
@@ -2399,7 +2414,7 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
         },
         DispatchRunRequest: {
           type: 'object',
-          description: 'Natural-language operator dispatch request. ARCANOS AI and Custom GPT Actions should send backend operator commands here. The utterance is resolved into a DispatchPlan, policy checked, and only then executed through GPT Access capability/control runners. This replaces natural-language dispatch behavior without restoring /ask.',
+          description: 'Operational-only natural-language dispatch request. Prefer dedicated GPT Access operations for runtime, worker, queue, and diagnostics reads. Use runDispatch for other explicit status or control commands. For general generation, advice, explanation, planning, review, architecture, summarization, writing, or how-should prompts, use createAiJob instead.',
           properties: {
             utterance: { type: 'string', minLength: 1, maxLength: DISPATCH_UTTERANCE_MAX_LENGTH },
             context: {
@@ -2414,11 +2429,8 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
             confirmation_token: {
               type: 'string',
               minLength: 1,
-              description: `Confirmation token for one retry when a privileged dispatch returns CONFIRMATION_REQUIRED. Accepted formats are either the raw confirmationChallenge.id or the prefixed form ${DISPATCH_CONFIRMATION_TOKEN_PREFIX}<confirmationChallenge.id>.`,
-              examples: [
-                'example-confirmation-challenge-id',
-                `${DISPATCH_CONFIRMATION_TOKEN_PREFIX}example-confirmation-challenge-id`
-              ]
+              description: 'After explicit operator approval, use the raw confirmationChallenge.id for one exact retry. Keep the endpoint, action, and payload unchanged; add only this top-level field. Stop if the retry fails or returns another challenge.',
+              examples: ['example-confirmation-challenge-id']
             }
           },
           required: ['utterance'],
@@ -2504,7 +2516,7 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
             confirmation_token: {
               type: 'string',
               minLength: 1,
-              description: 'Raw confirmationChallenge.id for one retry. Custom GPT Actions cannot set headers; the gateway maps this to x-confirmed: token:<value> and strips it before dispatch.'
+              description: 'After explicit operator approval, use the raw confirmationChallenge.id for one exact retry. Keep the endpoint, action, and payload unchanged; add only this top-level field. Stop if the retry fails or returns another challenge.'
             }
           },
           required: ['action'],
@@ -2669,7 +2681,7 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
         post: {
           operationId: 'runCapabilityV1',
           summary: 'Run one action on a GPT Access capability.',
-          description: 'Run an allowlisted capability action. On CONFIRMATION_REQUIRED, retry this exact POST once with the same action/payload and confirmation_token=<confirmationChallenge.id>; gateway maps it to x-confirmed: token:<id> and strips it. Do not retry again.',
+          description: 'Run an allowlisted capability action. On CONFIRMATION_REQUIRED, pause for explicit operator approval. After approval, retry this exact POST once with unchanged action/payload and only the raw confirmationChallenge.id as top-level confirmation_token. Stop on failure or another challenge.',
           security: protectedSecurity,
           parameters: [
             {
@@ -2768,13 +2780,17 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
         post: {
           operationId: 'createAiJob',
           summary: 'Create an async backend AI generation job.',
-          description: 'Queues one protected backend AI generation request through the approved GPT access gateway. Use /gpt-access/jobs/result with the returned jobId to read completion.',
+          description: 'Use for general backend AI generation, advice, explanation, planning, review, architecture, summarization, writing, and how-should prompts. For the main ARCANOS Custom GPT, send canonical gptId arcanos-core and the complete user request in task. Then poll getJobResult with the returned jobId until terminal.',
           security: protectedSecurity,
           requestBody: {
             required: true,
             content: {
               'application/json': {
-                schema: { '$ref': '#/components/schemas/CreateAiJobRequest' }
+                schema: { '$ref': '#/components/schemas/CreateAiJobRequest' },
+                example: {
+                  gptId: 'arcanos-core',
+                  task: 'How should I find reusable code throughout the codebase? Provide a practical, systematic approach for identifying, evaluating, and cataloging reusable modules, utilities, components, services, and patterns across a repository.'
+                }
               }
             }
           },
@@ -2799,6 +2815,7 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
         post: {
           operationId: 'getJobResult',
           summary: 'Read an async job result without using /gpt/:gptId.',
+          description: 'Poll with the jobId returned by createAiJob. If status is pending, poll this operation again. If completed, return the result. If failed, expired, or not_found, stop and report that terminal state.',
           security: protectedSecurity,
           requestBody: {
             required: true,
@@ -2965,8 +2982,8 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
       '/gpt-access/dispatch/run': {
         post: {
           operationId: 'runDispatch',
-          summary: 'Resolve and run a natural-language GPT Access dispatch.',
-          description: 'Canonical natural-language dispatch entryway for ARCANOS AI and operator backend commands. Resolves utterance -> DispatchPlan -> registry validation -> scope/allowlist/risk policy -> confirmation when required -> existing GPT Access capability/control runner. This replaces old natural-language dispatch behavior without restoring /ask.',
+          summary: 'Resolve and run an operational GPT Access command.',
+          description: 'Operational-only natural-language entryway. Prefer dedicated GPT Access operations for runtime, worker, queue, and diagnostics reads; use this for other explicit status or control commands. Resolves utterance -> DispatchPlan -> registry validation -> scope/allowlist/risk policy -> confirmation when required -> an existing runner. General generation and advisory prompts must use createAiJob. This does not restore /ask.',
           security: protectedSecurity,
           requestBody: {
             required: true,

@@ -230,10 +230,11 @@ success_response:
 ### Arcanos Core
 **What it is:** The primary ARCANOS entryway for the main custom GPT. The `ARCANOS:CORE` module sends prompt-first requests through the Trinity brain so the main GPT can use the general ARCANOS pipeline without being coupled to tutor-specific logic.
 
-**Known GPT IDs:** `arcanos-core`, `core`. The module route is derived from `arcanos-core.ts` (route: `core`).
+**Canonical GPT ID:** `arcanos-core`. The protected GPT Access job endpoint accepts the exact case-insensitive compatibility alias `arcanos` and canonicalizes it to `arcanos-core`. Registered compatibility IDs `core` and `arcanos-daemon` also resolve. `default` is not a built-in ARCANOS alias. The module route is derived from `arcanos-core.ts` (route: `core`).
 
-**Available actions (via `/gpt/<gpt-id>`):**
-- `query`
+**Protected Custom GPT workflow:** Import `/gpt-access/openapi.json`, keep Bearer authentication in the GPT Action configuration, call `createAiJob` with `gptId: "arcanos-core"` and the complete user request in `task`, then poll `getJobResult` with the returned `jobId`. Runtime, worker, queue, MCP, diagnostics, and job-result operations must use their dedicated `/gpt-access/*` operations, never `/gpt/<gpt-id>`.
+
+The direct `/gpt/<gpt-id>` `query` action remains a legacy writing-plane integration for non-protected callers; it is not the main Custom GPT's protected backend job path.
 
 **Direct-answer output contract:** Trinity direct-answer mode returns a user-visible text string inside the route JSON envelope. Plain strings such as `OK` or `OBSERVABILITY_SMOKE_TEST_OK` are valid inner `result` values when the caller requested an exact literal, but callers should not expect the entire HTTP response body to be raw text. Exact-literal smoke prompts should use compact phrasing such as `Return exactly OBSERVABILITY_SMOKE_TEST_OK.` so the deterministic literal shortcut can bypass generative formatting while preserving the normal route envelope.
 
@@ -244,14 +245,15 @@ success_response:
 name: Arcanos Core
 gpt_id: arcanos-core
 base_url: https://<your-backend>
-endpoint: /gpt/arcanos-core
-method: POST
-headers:
-  Content-Type: application/json
-body:
-  prompt: "Give me a direct answer using the main ARCANOS pipeline."
+openapi: /gpt-access/openapi.json
+create_operation: createAiJob
+result_operation: getJobResult
+authentication: Bearer credential configured in the GPT Action
+create_body:
+  gptId: arcanos-core
+  task: "Give me a direct answer using the main ARCANOS pipeline."
 success_response:
-  description: Main ARCANOS response with Trinity metadata and _route metadata.
+  description: A queued job followed by a completed result from the protected GPT Access job-result operation.
 ```
 
 ### Arcanos Tutor

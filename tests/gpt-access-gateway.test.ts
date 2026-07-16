@@ -131,7 +131,11 @@ jest.unstable_mockModule('../src/platform/runtime/workerConfig.js', () => ({
 }));
 
 const { default: gptAccessRouter } = await import('../src/routes/gpt-access.js');
-const { createGptAccessAiJob, sanitizeGptAccessPayload } = await import('../src/services/gptAccessGateway.js');
+const {
+  createGptAccessAiJob,
+  getGptAccessJobResult,
+  sanitizeGptAccessPayload
+} = await import('../src/services/gptAccessGateway.js');
 
 const TEST_TOKEN = 'test-gpt-access-token';
 const COMPLETED_JOB_ID = '11111111-1111-4111-8111-111111111111';
@@ -2291,6 +2295,61 @@ describe('/gpt-access gateway', () => {
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
   });
 
+  it('rejects default as an unknown built-in ARCANOS GPT ID', async () => {
+    resolveGptRoutingMock.mockResolvedValueOnce({
+      ok: false,
+      error: {
+        code: 'UNKNOWN_GPT',
+        message: "gptId 'default' is not registered"
+      },
+      _route: {
+        gptId: 'default',
+        timestamp: '2026-04-27T10:00:00.000Z'
+      }
+    });
+
+    const response = await createGptAccessAiJob(
+      {
+        gptId: 'default',
+        task: 'Generate a Codex IDE prompt.'
+      },
+      {
+        actorKey: 'test-actor',
+        traceId: 'trace-default-gpt'
+      }
+    );
+
+    expect(response.statusCode).toBe(400);
+    expect(response.payload.error).toEqual({
+      code: 'GPT_ACCESS_VALIDATION_ERROR',
+      message: 'Unknown or unauthorized gptId.'
+    });
+    expect(resolveGptRoutingMock).toHaveBeenCalledWith('default', 'trace-default-gpt');
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects a missing GPT ID before route resolution', async () => {
+    const response = await createGptAccessAiJob(
+      {
+        task: 'Generate a Codex IDE prompt.'
+      },
+      {
+        actorKey: 'test-actor',
+        traceId: 'trace-missing-gpt'
+      }
+    );
+
+    expect(response.statusCode).toBe(400);
+    expect(response.payload.error).toEqual({
+      code: 'GPT_ACCESS_VALIDATION_ERROR',
+      message: 'gptId must be a non-empty string with at most 128 characters.'
+    });
+    expect(resolveGptRoutingMock).not.toHaveBeenCalled();
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+  });
+
   it('rejects invalid GPT ID formats before route resolution', async () => {
     allowCreateJobs();
 
@@ -2594,6 +2653,59 @@ describe('/gpt-access gateway', () => {
       input: queuedInput,
       idempotencyOrigin: 'derived'
     }));
+  });
+
+  it('canonicalizes the exact ARCANOS display-name alias before routing and queueing', async () => {
+    const response = await createGptAccessAiJob(
+      {
+        gptId: 'Arcanos',
+        task: 'How should I find reusable code throughout the codebase?'
+      },
+      {
+        actorKey: 'test-actor',
+        traceId: 'trace-display-alias'
+      }
+    );
+
+    expect(response.statusCode).toBe(202);
+    expect(resolveGptRoutingMock).toHaveBeenCalledWith('arcanos-core', 'trace-display-alias');
+    expect(planAutonomousWorkerJobMock).toHaveBeenCalledTimes(1);
+    expect(planAutonomousWorkerJobMock.mock.calls[0]?.[1]).toEqual(expect.objectContaining({
+      gptId: 'arcanos-core',
+      prompt: 'How should I find reusable code throughout the codebase?',
+      requestPath: '/gpt-access/jobs/create'
+    }));
+    expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not canonicalize compound GPT IDs that merely contain the display-name alias', async () => {
+    resolveGptRoutingMock.mockResolvedValueOnce({
+      ok: false,
+      error: {
+        code: 'UNKNOWN_GPT',
+        message: "gptId 'foo-arcanos-bar' is not registered"
+      },
+      _route: {
+        gptId: 'foo-arcanos-bar',
+        timestamp: '2026-04-27T10:00:00.000Z'
+      }
+    });
+
+    const response = await createGptAccessAiJob(
+      {
+        gptId: 'foo-arcanos-bar',
+        task: 'Generate a Codex IDE prompt.'
+      },
+      {
+        actorKey: 'test-actor',
+        traceId: 'trace-compound-alias'
+      }
+    );
+
+    expect(response.statusCode).toBe(400);
+    expect(resolveGptRoutingMock).toHaveBeenCalledWith('foo-arcanos-bar', 'trace-compound-alias');
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
   });
 
   it('returns created AI job results through the existing GPT access job-result endpoint', async () => {
@@ -3118,6 +3230,49 @@ describe('/gpt-access gateway', () => {
     expect(gptRouteCalled).toBe(false);
   });
 
+  it.each([
+    ['pending', 'pending', null],
+    ['failed', 'failed', 'JOB_FAILED'],
+    ['expired', 'expired', 'JOB_EXPIRED']
+  ])('returns the %s GPT Access polling contract', async (storedStatus, expectedStatus, expectedErrorCode) => {
+    getJobByIdMock.mockResolvedValue({
+      id: COMPLETED_JOB_ID,
+      job_type: 'gpt',
+      status: storedStatus,
+      input: {
+        requestPath: '/gpt-access/jobs/create',
+        executionModeReason: 'gpt_access_create_ai_job'
+      },
+      created_at: '2026-04-27T10:00:00.000Z',
+      updated_at: '2026-04-27T10:01:00.000Z',
+      completed_at: null,
+      retention_until: null,
+      idempotency_until: null,
+      expires_at: null,
+      error_message: expectedErrorCode ? 'sanitized terminal error' : null,
+      output: null
+    });
+
+    const response = await getGptAccessJobResult({ jobId: COMPLETED_JOB_ID });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.payload).toEqual(expect.objectContaining({
+      ok: true,
+      jobId: COMPLETED_JOB_ID,
+      status: expectedStatus,
+      poll: '/gpt-access/jobs/result',
+      resultEndpoint: '/gpt-access/jobs/result',
+      result: null
+    }));
+    if (expectedErrorCode) {
+      expect(response.payload.error).toEqual(expect.objectContaining({
+        code: expectedErrorCode
+      }));
+    } else {
+      expect(response.payload.error).toBeNull();
+    }
+  });
+
   it('does not expose non-gateway or non-GPT job outputs through GPT Access result polling', async () => {
     getJobByIdMock.mockResolvedValue({
       id: COMPLETED_JOB_ID,
@@ -3451,6 +3606,9 @@ describe('/gpt-access gateway', () => {
     expect(response.status).toBe(200);
     expect(response.headers['cache-control']).toContain('no-store');
     expect(response.body.openapi).toBe('3.1.0');
+    expect(response.body.info.description).toContain('Use createAiJob for prompt-shaped generation');
+    expect(response.body.info.description).toContain('Prefer dedicated operations for runtime');
+    expect(response.body.info.description).toContain('use runDispatch only for other explicit operational commands');
     expect(response.body.servers).toEqual([
       { url: 'https://gateway.example.test' }
     ]);
@@ -3511,6 +3669,22 @@ describe('/gpt-access gateway', () => {
       'proxy',
       'url'
     ]));
+    expect(createRequestSchema.properties.gptId.description).toContain('canonical ID arcanos-core');
+    expect(createRequestSchema.properties.gptId.description).toContain('display-name compatibility alias arcanos');
+    expect(createRequestSchema.properties.gptId.description).toContain('do not send default');
+    expect(createRequestSchema.properties.gptId.examples).toEqual(['arcanos-core']);
+    expect(createRequestSchema.properties.gptId.enum).toBeUndefined();
+    expect(createRequestSchema.properties.gptId.const).toBeUndefined();
+    expect(createRequestSchema.properties.gptId.default).toBeUndefined();
+    expect(createRequestSchema.properties.task.description).toContain('Complete backend AI request');
+    expect(createRequestSchema.properties.idempotencyKey.description).toContain('unique value for each semantic request');
+    const createAiJobOperation = response.body.paths['/gpt-access/jobs/create'].post;
+    expect(createAiJobOperation.description).toContain('how-should prompts');
+    expect(createAiJobOperation.description).toContain('canonical gptId arcanos-core');
+    expect(createAiJobOperation.requestBody.content['application/json'].example).toEqual({
+      gptId: 'arcanos-core',
+      task: 'How should I find reusable code throughout the codebase? Provide a practical, systematic approach for identifying, evaluating, and cataloging reusable modules, utilities, components, services, and patterns across a repository.'
+    });
     expect(response.body.components.schemas.CreateAiJobResponse).toEqual(expect.objectContaining({
       required: ['ok', 'jobId', 'traceId', 'status', 'deduped', 'resultEndpoint'],
       additionalProperties: false
@@ -3523,8 +3697,9 @@ describe('/gpt-access gateway', () => {
     expect(response.body.paths['/gpt-access/capabilities/v1/{id}/run'].post.operationId).toBe('runCapabilityV1');
     const runCapabilityOperation = response.body.paths['/gpt-access/capabilities/v1/{id}/run'].post;
     expect(runCapabilityOperation.description).toContain('CONFIRMATION_REQUIRED');
-    expect(runCapabilityOperation.description).toContain('confirmation_token=<confirmationChallenge.id>');
-    expect(runCapabilityOperation.description).toContain('x-confirmed: token:<id>');
+    expect(runCapabilityOperation.description).toContain('explicit operator approval');
+    expect(runCapabilityOperation.description).toContain('exact POST once');
+    expect(runCapabilityOperation.description).toContain('Stop on failure or another challenge');
     expect(runCapabilityOperation.description.length).toBeLessThanOrEqual(300);
     expect(runCapabilityOperation.parameters).toEqual([
       expect.objectContaining({
@@ -3548,7 +3723,10 @@ describe('/gpt-access gateway', () => {
     expect(response.body.components.schemas.ConfirmationRequiredResponse.properties.confirmationChallenge).toEqual({
       '$ref': '#/components/schemas/ConfirmationChallenge'
     });
-    expect(response.body.components.schemas.ConfirmationChallenge.properties.id.description).toContain('confirmation_token');
+    expect(response.body.components.schemas.ConfirmationChallenge.properties.id.description).toContain('explicit operator approval');
+    expect(response.body.components.schemas.ConfirmationChallenge.properties.id.description).toContain('top-level confirmation_token');
+    expect(response.body.components.schemas.ConfirmationRequiredResponse.description).toContain('explicit operator approval');
+    expect(response.body.components.schemas.ConfirmationRequiredResponse.description).toContain('Stop on failure or another challenge');
     expect(runCapabilityOperation.requestBody.content['application/json'].schema).toEqual({
       '$ref': '#/components/schemas/CapabilityRunRequest'
     });
@@ -3566,7 +3744,7 @@ describe('/gpt-access gateway', () => {
     expect(response.body.components.schemas.CapabilityRunRequest.properties.confirmation_token).toEqual({
       type: 'string',
       minLength: 1,
-      description: 'Raw confirmationChallenge.id for one retry. Custom GPT Actions cannot set headers; the gateway maps this to x-confirmed: token:<value> and strips it before dispatch.'
+      description: 'After explicit operator approval, use the raw confirmationChallenge.id for one exact retry. Keep the endpoint, action, and payload unchanged; add only this top-level field. Stop if the retry fails or returns another challenge.'
     });
     expect(response.body.components.schemas.CapabilitiesV1Response).toEqual(expect.objectContaining({
       required: ['ok', 'capabilities'],
@@ -3575,6 +3753,9 @@ describe('/gpt-access gateway', () => {
     expect(response.body.paths['/gpt-access/queue/inspect'].get.operationId).toBe('inspectQueue');
     expect(response.body.paths['/gpt-access/self-heal/status'].get.operationId).toBe('getSelfHealStatus');
     expect(response.body.paths['/gpt-access/jobs/result'].post.operationId).toBe('getJobResult');
+    expect(response.body.paths['/gpt-access/jobs/result'].post.description).toContain('If status is pending');
+    expect(response.body.paths['/gpt-access/jobs/result'].post.description).toContain('If completed');
+    expect(response.body.paths['/gpt-access/jobs/result'].post.description).toContain('failed, expired, or not_found');
     expect(response.body.paths['/gpt-access/jobs/result'].post.requestBody.content['application/json'].schema).toEqual({
       '$ref': '#/components/schemas/JobResultRequest'
     });
@@ -3591,7 +3772,10 @@ describe('/gpt-access gateway', () => {
     });
     expect(response.body.paths['/gpt-access/dispatch/run'].post.operationId).toBe('runDispatch');
     expect(response.body.paths['/gpt-access/dispatch/run'].post.description).toContain('DispatchPlan');
-    expect(response.body.paths['/gpt-access/dispatch/run'].post.description).toContain('without restoring /ask');
+    expect(response.body.paths['/gpt-access/dispatch/run'].post.description).toContain('does not restore /ask');
+    expect(response.body.paths['/gpt-access/dispatch/run'].post.summary).toContain('operational');
+    expect(response.body.paths['/gpt-access/dispatch/run'].post.description).toContain('General generation and advisory prompts must use createAiJob');
+    expect(response.body.paths['/gpt-access/dispatch/run'].post.description).toContain('Prefer dedicated GPT Access operations');
     expect(response.body.paths['/gpt-access/dispatch/run'].post.requestBody.content['application/json'].schema).toEqual({
       '$ref': '#/components/schemas/DispatchRunRequest'
     });
@@ -3599,12 +3783,15 @@ describe('/gpt-access gateway', () => {
       required: ['utterance'],
       additionalProperties: false
     }));
-    const confirmationTokenExamplePrefix = ['tok', 'en:'].join('');
     expect(response.body.components.schemas.DispatchRunRequest.properties.utterance.maxLength).toBe(1000);
-    expect(response.body.components.schemas.DispatchRunRequest.properties.confirmation_token.description).toContain(`${confirmationTokenExamplePrefix}<confirmationChallenge.id>`);
+    expect(response.body.components.schemas.DispatchRunRequest.description).toContain('Operational-only');
+    expect(response.body.components.schemas.DispatchRunRequest.description).toContain('use createAiJob instead');
+    expect(response.body.components.schemas.DispatchRunRequest.description).toContain('Prefer dedicated GPT Access operations');
+    expect(response.body.components.schemas.DispatchRunRequest.properties.confirmation_token.description).toContain('explicit operator approval');
+    expect(response.body.components.schemas.DispatchRunRequest.properties.confirmation_token.description).toContain('raw confirmationChallenge.id');
+    expect(response.body.components.schemas.DispatchRunRequest.properties.confirmation_token.description).toContain('Stop if the retry fails');
     expect(response.body.components.schemas.DispatchRunRequest.properties.confirmation_token.examples).toEqual([
-      'example-confirmation-challenge-id',
-      `${confirmationTokenExamplePrefix}example-confirmation-challenge-id`
+      'example-confirmation-challenge-id'
     ]);
     expect(response.body.components.schemas.DispatchRunResponse.properties.plan).toEqual({
       '$ref': '#/components/schemas/DispatchPlan'
