@@ -1933,6 +1933,15 @@ describe('/gpt-access gateway', () => {
   it('keeps general backend AI requests out of the operational LLM dispatcher', async () => {
     process.env.GPT_ACCESS_NL_DISPATCH_MODE = 'hybrid';
     hasValidOpenAiKeyMock.mockReturnValue(true);
+    allowCoreSystemStateRun();
+    getModulesForRegistryMock.mockReturnValue([
+      {
+        id: 'ARCANOS:CORE',
+        description: 'Core runtime capability',
+        route: 'core',
+        actions: ['query', 'diagnostics', 'system_state']
+      }
+    ]);
     responsesCreateMock.mockResolvedValueOnce({
       output_text: JSON.stringify({
         action: 'ARCANOS:CORE.system_state',
@@ -1946,17 +1955,25 @@ describe('/gpt-access gateway', () => {
 
     const response = await authorized(request(buildApp()).post('/gpt-access/dispatch/run'))
       .send({
-        utterance: 'Ask my backend AI: How should I find reusable code throughout the codebase?'
+        utterance: [
+          'Ask my backend AI: How should I find reusable code throughout the codebase?',
+          'Provide a practical, systematic approach for identifying, evaluating, and cataloging reusable modules,',
+          'utilities, components, services, and patterns across a repository.'
+        ].join(' '),
+        dryRun: true
       });
 
-    expect(response.status).toBe(422);
-    expect(response.body.error.code).toBe('INTENT_CLARIFICATION_REQUIRED');
-    expect(response.body.error.message).toBe(
-      'General backend AI generation requests must use createAiJob instead of runDispatch.'
-    );
+    expect(response.status).toBe(200);
+    expect(response.body.ok).toBe(true);
+    expect(response.body.dryRun).toBe(true);
     expect(response.body.plan.action).toBe('INTENT_CLARIFICATION_REQUIRED');
     expect(response.body.plan.source).toBe('rules');
     expect(response.body.plan.reason).toBe('general_generation_request_use_create_ai_job');
+    expect(response.body.policy).toEqual(expect.objectContaining({
+      status: 'clarification_required',
+      allowed: false,
+      shouldExecute: false
+    }));
     expect(responsesCreateMock).not.toHaveBeenCalled();
     expect(dispatchModuleActionMock).not.toHaveBeenCalled();
   });

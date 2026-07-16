@@ -172,6 +172,105 @@ describe('GPT Access natural-language dispatch service', () => {
     expect(runCapability).not.toHaveBeenCalled();
   });
 
+  it('returns actionable createAiJob guidance for general-generation dispatch attempts', async () => {
+    const handlers = {
+      runMcpTool: jest.fn(),
+      runDiagnostics: jest.fn(),
+      runWorkerRecovery: jest.fn(),
+      runCapability: jest.fn()
+    };
+
+    const response = await runGptAccessNaturalLanguageDispatch({
+      utterance: 'Provide a practical approach for finding and cataloging reusable code.',
+      registry: createGptAccessDispatchRegistry(),
+      handlers
+    });
+
+    expect(response.statusCode).toBe(422);
+    expect(response.plan).toEqual(expect.objectContaining({
+      action: 'INTENT_CLARIFICATION_REQUIRED',
+      source: 'rules',
+      reason: 'general_generation_request_use_create_ai_job'
+    }));
+    expect(response.payload).toEqual(expect.objectContaining({
+      ok: false,
+      error: {
+        code: 'INTENT_CLARIFICATION_REQUIRED',
+        message: 'General backend AI generation requests must use createAiJob instead of runDispatch.'
+      }
+    }));
+    expect(handlers.runMcpTool).not.toHaveBeenCalled();
+    expect(handlers.runDiagnostics).not.toHaveBeenCalled();
+    expect(handlers.runWorkerRecovery).not.toHaveBeenCalled();
+    expect(handlers.runCapability).not.toHaveBeenCalled();
+  });
+
+  it('does not classify ambiguous worker output requests as general generation', async () => {
+    const previousMode = process.env.GPT_ACCESS_NL_DISPATCH_MODE;
+    process.env.GPT_ACCESS_NL_DISPATCH_MODE = 'rules';
+
+    try {
+      const response = await runGptAccessNaturalLanguageDispatch({
+        utterance: 'Provide worker metrics.',
+        registry: createGptAccessDispatchRegistry(),
+        handlers: {
+          runMcpTool: jest.fn(),
+          runDiagnostics: jest.fn(),
+          runWorkerRecovery: jest.fn(),
+          runCapability: jest.fn()
+        }
+      });
+
+      expect(response.statusCode).toBe(422);
+      expect(response.plan).toEqual(expect.objectContaining({
+        action: 'INTENT_CLARIFICATION_REQUIRED',
+        source: 'rules',
+        reason: 'no_registered_intent_match'
+      }));
+      expect(response.payload).toEqual(expect.objectContaining({
+        error: {
+          code: 'INTENT_CLARIFICATION_REQUIRED',
+          message: 'Dispatch intent could not be resolved confidently. Please clarify the requested action.'
+        }
+      }));
+    } finally {
+      if (previousMode === undefined) {
+        delete process.env.GPT_ACCESS_NL_DISPATCH_MODE;
+      } else {
+        process.env.GPT_ACCESS_NL_DISPATCH_MODE = previousMode;
+      }
+    }
+  });
+
+  it.each([
+    'review worker status and tell me what we should improve',
+    'analyze backend errors and recommend fixes'
+  ])('keeps mixed operational and advisory prompt "%s" on the generation path', async (utterance) => {
+    const response = await runGptAccessNaturalLanguageDispatch({
+      utterance,
+      registry: createGptAccessDispatchRegistry(),
+      handlers: {
+        runMcpTool: jest.fn(),
+        runDiagnostics: jest.fn(),
+        runWorkerRecovery: jest.fn(),
+        runCapability: jest.fn()
+      }
+    });
+
+    expect(response.statusCode).toBe(422);
+    expect(response.plan).toEqual(expect.objectContaining({
+      action: 'INTENT_CLARIFICATION_REQUIRED',
+      source: 'rules',
+      reason: 'general_generation_request_use_create_ai_job'
+    }));
+    expect(response.payload).toEqual(expect.objectContaining({
+      error: {
+        code: 'INTENT_CLARIFICATION_REQUIRED',
+        message: 'General backend AI generation requests must use createAiJob instead of runDispatch.'
+      }
+    }));
+  });
+
   it('does not intercept general fix questions as backend operator commands', async () => {
     await expect(routeOperatorCommandThroughDispatch({
       utterance: 'how do I fix a TypeScript bug in my app?'
@@ -199,6 +298,9 @@ describe('GPT Access natural-language dispatch service', () => {
   it.each([
     'ask my AI for improvements',
     'Ask my backend AI: How should I find reusable code throughout the codebase?',
+    'Provide a practical approach for finding reusable code.',
+    'Summarize the architecture.',
+    'Catalog reusable modules.',
     'suggest improvements to worker reliability',
     'review backend architecture',
     'what should I improve about worker reliability',

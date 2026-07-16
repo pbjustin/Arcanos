@@ -142,19 +142,22 @@ export async function resolveGptAccessNaturalLanguageDispatch(
     utterance: input.utterance,
     registry: input.registry
   });
-  const plan =
-    rulePlan.action === INTENT_CLARIFICATION_REQUIRED
-    && isGeneralBackendAiGenerationRequest(input.utterance)
-      ? {
-          ...rulePlan,
-          reason: GENERAL_AI_DISPATCH_REASON
-        }
-      : await resolveDispatchPlan({
-          utterance: input.utterance,
-          registry: input.registry,
-          llmRegistry: createDispatchLlmPlanningRegistry(input.registry),
-          context: input.context
-        });
+  const plan = isGeneralBackendAiGenerationRequest(input.utterance)
+    ? {
+        ...rulePlan,
+        action: INTENT_CLARIFICATION_REQUIRED,
+        payload: {},
+        confidence: 0,
+        requiresConfirmation: false,
+        candidates: [],
+        reason: GENERAL_AI_DISPATCH_REASON
+      }
+    : await resolveDispatchPlan({
+        utterance: input.utterance,
+        registry: input.registry,
+        llmRegistry: createDispatchLlmPlanningRegistry(input.registry),
+        context: input.context
+      });
   const policy = evaluateDispatchPolicy({
     plan,
     registry: input.registry,
@@ -267,11 +270,23 @@ function isGeneralBackendAiGenerationRequest(utterance: string): boolean {
     .replace(/[^a-z0-9]+/gu, ' ')
     .replace(/\s+/gu, ' ')
     .trim();
+  const hasOperationalDispatchSubject =
+    /\b(?:backend|runtime|server|app|workers?|job runners?|queue|backlog|pending jobs?|system state|diagnostics?|health|metrics|logs?|deployments?)\b/u
+      .test(normalized);
+  const hasExplicitGeneralOutputCue =
+    /\b(?:summari[sz](?:e|ation)|outline|describe|compare|catalog(?:ue|ing)?)\b/u.test(normalized)
+    && !hasOperationalDispatchSubject;
+  const requestsGeneralArtifact =
+    /\b(?:provide|give)\b.*\b(?:approach|answer|guidance|overview|explanation|steps|strategy|summary|recommendations?)\b/u
+      .test(normalized)
+    && !hasOperationalDispatchSubject;
 
   return (
     isWritingPrompt(normalized)
     || isAdvisoryAnalysisPrompt(normalized)
     || isConversationalAdvisoryPrompt(normalized)
+    || hasExplicitGeneralOutputCue
+    || requestsGeneralArtifact
     || /\bask\s+(?:my\s+)?(?:backend\s+)?(?:ai|assistant)\b/u.test(normalized)
     || /\b(?:how|what)\s+should\s+(?:i|we)\b/u.test(normalized)
   );
