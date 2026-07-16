@@ -198,6 +198,7 @@ describe('GPT Access natural-language dispatch service', () => {
 
   it.each([
     'ask my AI for improvements',
+    'Ask my backend AI: How should I find reusable code throughout the codebase?',
     'suggest improvements to worker reliability',
     'review backend architecture',
     'what should I improve about worker reliability',

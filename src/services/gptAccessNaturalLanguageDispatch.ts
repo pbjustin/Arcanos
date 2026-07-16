@@ -5,6 +5,7 @@ import {
   dispatchActionRequiresConfirmation,
   evaluateDispatchPolicy,
   resolveDispatchPlan,
+  resolveRuleBasedDispatchPlan,
   runDispatchPlan,
   type CapabilityRegistry,
   type DispatchExecutionResult,
@@ -23,6 +24,7 @@ import {
 } from '@services/gptAccessGateway.js';
 
 const GPT_ACCESS_SCOPE_NAMES = new Set<string>(GPT_ACCESS_SCOPES);
+const GENERAL_AI_DISPATCH_REASON = 'general_generation_request_use_create_ai_job';
 
 export type GptAccessDispatchPolicyResponse = {
   status: DispatchPolicyDecision['status'];
@@ -124,7 +126,9 @@ export function buildDispatchPolicyBlockPayload(plan: DispatchPlan, policy: Disp
           ? INTENT_CLARIFICATION_REQUIRED
           : 'DISPATCH_POLICY_DENIED'
       ),
-      message: toDispatchPolicyErrorMessage(policy)
+      message: plan.reason === GENERAL_AI_DISPATCH_REASON
+        ? 'General backend AI generation requests must use createAiJob instead of runDispatch.'
+        : toDispatchPolicyErrorMessage(policy)
     },
     plan,
     policy: toDispatchPolicyResponse(policy)
@@ -134,12 +138,23 @@ export function buildDispatchPolicyBlockPayload(plan: DispatchPlan, policy: Disp
 export async function resolveGptAccessNaturalLanguageDispatch(
   input: ResolveGptAccessNaturalLanguageDispatchInput
 ): Promise<{ plan: DispatchPlan; policy: DispatchPolicyDecision }> {
-  const plan = await resolveDispatchPlan({
+  const rulePlan = resolveRuleBasedDispatchPlan({
     utterance: input.utterance,
-    registry: input.registry,
-    llmRegistry: createDispatchLlmPlanningRegistry(input.registry),
-    context: input.context
+    registry: input.registry
   });
+  const plan =
+    rulePlan.action === INTENT_CLARIFICATION_REQUIRED
+    && isGeneralBackendAiGenerationRequest(input.utterance)
+      ? {
+          ...rulePlan,
+          reason: GENERAL_AI_DISPATCH_REASON
+        }
+      : await resolveDispatchPlan({
+          utterance: input.utterance,
+          registry: input.registry,
+          llmRegistry: createDispatchLlmPlanningRegistry(input.registry),
+          context: input.context
+        });
   const policy = evaluateDispatchPolicy({
     plan,
     registry: input.registry,
@@ -240,6 +255,26 @@ function isOperatorBackendCommand(utterance: string): boolean {
 
   const explicitOperatorCommand = isExplicitOperatorCommand(normalized);
   return explicitOperatorCommand;
+}
+
+function isGeneralBackendAiGenerationRequest(utterance: string): boolean {
+  if (isOperatorBackendCommand(utterance)) {
+    return false;
+  }
+
+  const normalized = utterance
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gu, ' ')
+    .replace(/\s+/gu, ' ')
+    .trim();
+
+  return (
+    isWritingPrompt(normalized)
+    || isAdvisoryAnalysisPrompt(normalized)
+    || isConversationalAdvisoryPrompt(normalized)
+    || /\bask\s+(?:my\s+)?(?:backend\s+)?(?:ai|assistant)\b/u.test(normalized)
+    || /\b(?:how|what)\s+should\s+(?:i|we)\b/u.test(normalized)
+  );
 }
 
 function isWritingPrompt(normalized: string): boolean {

@@ -1930,18 +1930,34 @@ describe('/gpt-access gateway', () => {
     expect(dispatchModuleActionMock).not.toHaveBeenCalled();
   });
 
-  it('returns clarification for low-confidence natural-language dispatch', async () => {
+  it('keeps general backend AI requests out of the operational LLM dispatcher', async () => {
+    process.env.GPT_ACCESS_NL_DISPATCH_MODE = 'hybrid';
+    hasValidOpenAiKeyMock.mockReturnValue(true);
+    responsesCreateMock.mockResolvedValueOnce({
+      output_text: JSON.stringify({
+        action: 'ARCANOS:CORE.system_state',
+        payload: {},
+        confidence: 0.9,
+        requiresConfirmation: true,
+        reason: 'incorrect_general_request_classification',
+        candidates: []
+      })
+    });
+
     const response = await authorized(request(buildApp()).post('/gpt-access/dispatch/run'))
       .send({
-        utterance: 'please handle whatever seems appropriate'
+        utterance: 'Ask my backend AI: How should I find reusable code throughout the codebase?'
       });
 
     expect(response.status).toBe(422);
     expect(response.body.error.code).toBe('INTENT_CLARIFICATION_REQUIRED');
     expect(response.body.error.message).toBe(
-      'Dispatch intent could not be resolved confidently. Please clarify the requested action.'
+      'General backend AI generation requests must use createAiJob instead of runDispatch.'
     );
     expect(response.body.plan.action).toBe('INTENT_CLARIFICATION_REQUIRED');
+    expect(response.body.plan.source).toBe('rules');
+    expect(response.body.plan.reason).toBe('general_generation_request_use_create_ai_job');
+    expect(responsesCreateMock).not.toHaveBeenCalled();
     expect(dispatchModuleActionMock).not.toHaveBeenCalled();
   });
 
