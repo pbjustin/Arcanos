@@ -46,6 +46,14 @@ public, or Custom GPT exposure; `productionGoAllowed:false`,
 `privateServingImplemented:false`, `privateServingExposed:false`,
 `cloudReady:false`, and `customGptReady:false` remain required.
 
+Phase 5.12 completes the final private-serving architecture readiness review.
+`phase6ImplementationReady:true` and
+`finalArchitectureReadinessReviewed:true` permit bounded Phase 6 internal
+implementation planning and work only. They do not approve a public server,
+listener, endpoint, live DB connection, deployment, production use, or
+cloud/Custom GPT exposure. The final gate is
+`npm run gptoss:private-serving:final-readiness:validate`.
+
 Current baseline:
 
 - Local controlled runtime: ready for local testing only.
@@ -69,6 +77,7 @@ Current baseline:
 | Production key compromise or rotation failure | Future production signing keys could be exposed, reused too long, rotated without overlap, or revoked without fail-closed behavior. | Keep Phase 5.9 design-only; require non-secret `keyId` metadata, no raw key logging, no secrets in repo, no environment key reads, no KMS integration in this phase, planned overlap windows, revoked-key denial, emergency disable, and fresh implementation review before exposure. | Future key-management implementation gate plus `npm run gptoss:runtime:cloud-gate` | Blocked. No real keys are loaded, production key management is not implemented, and `privateServingImplemented:false`, `privateServingExposed:false`, `cloudReady:false`, and `customGptReady:false` remain required. |
 | Missing rate limits / durable rate-limit drift | Private serving could be exhausted or abused if request volume is unlimited or only local/in-memory counters exist. | Keep Phase 5.10 design-only; require per-key, per-subject, per-action, burst, abuse-mitigation, audit, fail-closed, and emergency block policy before any implementation. | `npm run gptoss:private-serving:rate-limit:design:validate` plus future private serving gate and `npm run gptoss:runtime:cloud-gate` | Blocked. Durable rate-limit design exists, but implementation is not approved; the current limiter remains local scaffold only, `durableRateLimitImplemented:false`, `rateLimitDurable:false`, `privateServingImplemented:false`, `privateServingExposed:false`, `cloudReady:false`, and `customGptReady:false` remain required. |
 | Operations readiness drift | Incident response, rollback, or production go/no-go evidence could be missing or misread as approval to expose private serving. | Keep Phase 5.11 docs/schema/validation only; require operations readiness, incident response, and go/no-go validators while keeping `productionGoAllowed:false`. | `npm run gptoss:private-serving:operations:validate` plus `npm run gptoss:runtime:cloud-gate` | Blocked. Operations readiness is designed, incident response and go/no-go checklists exist, but production go remains false and exposure remains blocked. |
+| Final readiness overreach | Phase 6 entry readiness could be misread as approval to expose or operate private serving in production. | Treat Phase 5.12 as an architecture and governance gate for bounded internal implementation only; keep all implementation, exposure, production, cloud, and Custom GPT no-go fields false. | `npm run gptoss:private-serving:final-readiness:validate` plus `npm run gptoss:runtime:cloud-gate` | Phase 6 implementation may begin within its entry criteria, but production and every exposure path remain blocked. |
 | Accidental training from requests | User prompts, logs, audit records, replay records, or Custom GPT action requests could be used as training data without consent and review. | Keep request/audit/replay artifacts non-trainable; dataset gates must reject `custom_gpt_action_request`, raw logs, unknown sources, and unreviewed model-generated labels. | `npm run gptoss:runtime:release-gate` | Mitigated by policy and current local gates; future exports require review. |
 | OpenAI output contamination | OpenAI model outputs or judgments could enter GPT-OSS labels, reports marked trainable, or private serving comparisons. | Keep OpenAI reference mode disabled for runtime gates; mark eval and request reports `allowedForTraining:false`; reject OpenAI output sources. | `npm run gptoss:runtime:request:regress` and `npm run gptoss:runtime:release-gate:ci` | Prohibited. Current gates must keep OpenAI output non-training. |
 | Railway command escalation | GPT-OSS output could be used to run Railway CLI commands, mutate services, read logs with secrets, or deploy. | Railway bridge remains observation-only and redacted; private serving must not expose Railway CLI, deployment, logs, or variable mutation to model output. | `npm run gptoss:runtime:release-gate` | Blocked for serving. No Railway command path is approved. |
@@ -78,7 +87,8 @@ Current baseline:
 
 ## Minimum Approval Criteria
 
-Private serving cannot advance unless all of the following are true:
+Production private-serving exposure cannot advance unless all of the following
+are true:
 
 - `npm run gptoss:runtime:release-gate` passes locally.
 - `npm run gptoss:runtime:release-gate:ci` passes in CI-safe mode.
@@ -125,6 +135,13 @@ Private serving cannot advance unless all of the following are true:
   `publicServerCreated:false`.
 - Cloud and Custom GPT remain blocked:
   `cloudReady:false`, `customGptReady:false`.
+- Phase 5.12 final architecture readiness is reviewed:
+  `finalArchitectureReadinessReviewed:true` and
+  `phase6ImplementationReady:true`. These fields authorize only bounded Phase 6
+  internal implementation planning and work.
+- Production remains no-go:
+  `productionGoAllowed:false`, `privateServingImplemented:false`, and
+  `privateServingExposed:false`.
 - Future work before exposure includes durable replay store implementation,
   persistent nonce ledger implementation, implemented production key management
   and key rotation, production auth integration, private network boundary, and

@@ -45,6 +45,15 @@ runbook only. It does not load real signing keys, read keys from environment
 variables, integrate with KMS, create a production key resolver, expose an
 endpoint, or change the local/test-safe request signing helper boundary.
 
+Phase 5.12 completes the final private-serving architecture readiness review.
+`phase6ImplementationReady:true` and
+`finalArchitectureReadinessReviewed:true` allow bounded Phase 6 internal
+implementation planning and work to begin. They do not authorize a public
+server, listener, endpoint, live DB connection, deployment, production use, or
+cloud/Custom GPT exposure. `productionGoAllowed:false`,
+`privateServingImplemented:false`, `privateServingExposed:false`,
+`cloudReady:false`, and `customGptReady:false` remain required.
+
 ## Preflight
 
 Confirm the checkout and scripts without running a model:
@@ -95,6 +104,9 @@ npm run gptoss:private-serving:durable-replay:implementation-plan:validate
 npm run gptoss:private-serving:durable-replay:migration-guard
 npm run gptoss:private-serving:durable-replay:readiness:validate
 npm run gptoss:private-serving:key-management:design:validate
+npm run gptoss:private-serving:rate-limit:design:validate
+npm run gptoss:private-serving:operations:validate
+npm run gptoss:private-serving:final-readiness:validate
 npm run gptoss:private-serving:auth:validate
 npm run gptoss:private-serving:scaffold:validate
 ```
@@ -160,6 +172,9 @@ Pass criteria:
   are docs/schema/validation only. `productionGoAllowed:false`,
   `privateServingImplemented:false`, `privateServingExposed:false`,
   `cloudReady:false`, and `customGptReady:false` remain required.
+- Phase 5.12 final architecture review permits bounded Phase 6 internal
+  implementation planning and work only. It does not approve production,
+  serving exposure, cloud deployment, or a Custom GPT bridge.
 
 Expected current local replay fields:
 
@@ -195,6 +210,8 @@ Expected current local replay fields:
   "operationsReadinessDesigned": true,
   "incidentResponseReady": true,
   "productionGoNoGoChecklistReady": true,
+  "finalArchitectureReadinessReviewed": true,
+  "phase6ImplementationReady": true,
   "productionGoAllowed": false,
   "responseShapingScaffoldReady": true,
   "publicServerCreated": false,

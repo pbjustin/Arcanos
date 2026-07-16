@@ -11,6 +11,8 @@ export const DEFAULT_OUTPUT = join(RUNTIME_REPORT_DIR, 'model-readiness-report.j
 export const PRIVATE_SERVING_DESIGN_READINESS = {
   privateServingDesignReady: true,
   privateServingScaffoldReady: true,
+  phase6ImplementationReady: true,
+  finalArchitectureReadinessReviewed: true,
   privateServingImplemented: false,
   privateServingExposed: false,
   requestSigningDesigned: true,

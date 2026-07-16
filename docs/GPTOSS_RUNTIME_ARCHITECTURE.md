@@ -241,6 +241,11 @@ The scaffold covers:
   `docs/GPTOSS_PRIVATE_SERVING_OPERATIONS_READINESS.md`,
   `docs/GPTOSS_PRIVATE_SERVING_INCIDENT_RESPONSE.md`, and
   `docs/GPTOSS_PRIVATE_SERVING_GO_NO_GO_CHECKLIST.md`
+- final architecture readiness, Phase 6 entry criteria, and production no-go
+  review in `docs/GPTOSS_PRIVATE_SERVING_FINAL_READINESS_REVIEW.md`,
+  `docs/GPTOSS_PHASE6_IMPLEMENTATION_ENTRY_CRITERIA.md`, and
+  `docs/GPTOSS_PRODUCTION_NO_GO_CHECKLIST.md`, validated by
+  `npm run gptoss:private-serving:final-readiness:validate`
 - response shaping that emits only the safe effective-router envelope
 - structured denial responses
 - scaffold validation and local scaffold reports
@@ -277,6 +282,8 @@ Current Phase 5 readiness fields are:
 - `operationsReadinessDesigned:true`
 - `incidentResponseReady:true`
 - `productionGoNoGoChecklistReady:true`
+- `finalArchitectureReadinessReviewed:true`
+- `phase6ImplementationReady:true`
 - `productionGoAllowed:false`
 - `responseShapingScaffoldReady:true`
 - `publicServerCreated:false`
@@ -297,6 +304,14 @@ limiting remains local/in-memory scaffold logic and no DB client, durable
 counter backend, migration apply path, server, listener, or endpoint is added.
 Operations readiness is design-only in Phase 5.11; incident response and
 go/no-go checklists are ready for review, but production go remains blocked.
+Phase 5.12 completes final architecture readiness review.
+`phase6ImplementationReady:true` permits bounded Phase 6 internal
+implementation planning and work, while
+`finalArchitectureReadinessReviewed:true` records completion of the governance
+review. Neither field authorizes a server, listener, endpoint, live DB path,
+deployment, production use, or cloud/Custom GPT exposure. Private serving
+remains unimplemented and unexposed, and `productionGoAllowed:false`,
+`cloudReady:false`, and `customGptReady:false` remain required.
 
 Future work before any exposure includes durable replay store implementation, a
 persistent nonce ledger implementation, implemented production key management

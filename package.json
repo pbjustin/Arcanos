@@ -140,6 +140,7 @@
     "gptoss:private-serving:key-management:design:validate": "node scripts/gptoss/private-serving/private-serving-key-management-design-validate.mjs",
     "gptoss:private-serving:rate-limit:design:validate": "node scripts/gptoss/private-serving/private-serving-rate-limit-design-validate.mjs",
     "gptoss:private-serving:operations:validate": "node scripts/gptoss/private-serving/private-serving-operations-readiness-validate.mjs",
+    "gptoss:private-serving:final-readiness:validate": "node scripts/gptoss/private-serving/private-serving-final-readiness-validate.mjs",
     "gptoss:private-serving:auth:validate": "node scripts/gptoss/private-serving/private-serving-auth-validate.mjs",
     "gptoss:private-serving:replay:validate": "node scripts/gptoss/private-serving/private-serving-replay-validate.mjs",
     "gptoss:private-serving:scaffold:validate": "node scripts/gptoss/private-serving/private-serving-scaffold-validate.mjs",
