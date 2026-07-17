@@ -1,7 +1,7 @@
 # ARCANOS CLEAR Decision and Disclosure Contract
 
-- Status: Phase 2B authoritative contract
-- Scope: ActionPlan CLEAR 2.0 execution rechecks, decision persistence, and MCP error disclosure
+- Status: Phase 2B authoritative contract with Phase 2C Python daemon compatibility extension
+- Scope: ActionPlan CLEAR 2.0 interpretation, execution rechecks, decision persistence, Python daemon parsing, and MCP error disclosure
 - Baseline branch: `codex/clear-decision-integrity`
 - Baseline commit: `06d1620b3e776eccab98d99b7802193cc7723ca6`
 - Phase 1 audit source: `docs/audits/reusable-code/2026-07-16/`
@@ -19,6 +19,8 @@ This contract separates four responsibilities:
 This phase does not change CLEAR thresholds, plan construction, action ordering, duplicate actions, rollback detection, confirmation gates, route registration, queue behavior, workers, or the persistence schema.
 
 The Phase 1 characterization is immutable evidence of two pre-change defects: a valid current `allow` recheck was discarded when the stored `ActionPlan.clearScore` relation was `null`, and MCP returned a raw dependency exception. The exact historical test is preserved at commit `06d1620b3e776eccab98d99b7802193cc7723ca6`, Git blob `e089b5b2db2c02d549f362c7850b5997faf5ee33`. Phase 2B intentionally changes those two behaviors. Because the two original active assertions are logically incompatible with the corrected production contract, the current assertions verify the new behavior; the cited commit/blob remains the unmodified historical evidence.
+
+Phase 2C extends the same interpretation contract across the TypeScript/Python daemon boundary. The shared test-only fixture at `tests/fixtures/clear-decision-wire-contract.json` is executed independently by both language implementations; neither production runtime imports the other language or reads the fixture. Python-specific non-finite values remain covered by Python tests because they are not representable in standard JSON.
 
 ## Authoritative data flow
 
@@ -59,6 +61,13 @@ Web-search CLEAR summary (trusted local producer, no decision persistence)
   -> services/webSearchAgent.ts
   -> local synchronous buildClear2Summary
   -> returned workflow metadata
+
+Python daemon ActionPlan command
+  -> generic TypeScript daemon command queue forwards the payload unchanged
+  -> daemon-python action_plan_handler.py
+  -> ActionPlan.from_dict
+  -> interpret_clear_outcome
+  -> explicit block callback OR explicit allow/confirm execution OR no mutation
 ```
 
 The two recheck payload builders remain independent in this phase. They continue to preserve action order, duplicate actions, `params`, `timeout_ms`, and the current non-null rollback test.
@@ -79,6 +88,10 @@ A returned evaluation is authoritative only when:
 The current recheck result is the authority for an execution attempt. The older persisted `plan.clearScore` relation is lifecycle history and an initial guard; it MUST NOT supply the decision written to a new execution result.
 
 The explicit decision is the operational control field used by all current consumers. An absent or null score is missing audit evidence, but does not erase an explicit decision. A score without an explicit decision is never sufficient to derive one. The five principle scores and notes remain audit metadata; Phase 2B does not recompute the composite from those fields at the adapter boundary. Unknown extra fields are ignored.
+
+The Python daemon supports its existing legacy `metadata.clear_score` / `metadata.clear_decision` envelope and the raw API `clearScore` field. Redundant authoritative decisions must agree. When both score aliases are non-null, their complete mappings must be equal; a shadow alias cannot disagree in decision, score, or display metadata. Equality follows JSON semantics: integer and floating representations of the same number are equivalent, while booleans are never equal to numbers, including in nested metadata. Conflicting score aliases or decisions are invalid. A fully absent CLEAR result remains representable as `clear_decision=None`, but the action-plan handler must stop before confirmation, local execution, or a backend callback. Python does not accept an undocumented top-level `clearDecision` alias.
+
+The pure Python interpreter intentionally validates only `decision` and `overall`, matching TypeScript. Constructing the daemon's display-oriented `ClearScore` retains its existing numeric parsing for the five principle fields. Malformed display metadata therefore fails the daemon command securely rather than changing the interpreted decision or reaching a mutation boundary.
 
 ## Outcome model
 
@@ -183,6 +196,8 @@ It MUST NOT contain:
 
 The MCP logger sink MUST apply the repository redactor to allowlisted metadata as defense in depth. CLEAR/MCP error paths still MUST avoid passing raw values to that sink.
 
+The Python daemon records only the `action_plan` command name in its activity history, never the payload. ActionPlan parse errors use a fixed diagnostic message and must not interpolate the exception or malformed input.
+
 ## Compatibility matrix
 
 | Surface/input | Previous behavior | Phase 2B behavior | Compatibility risk |
@@ -198,10 +213,14 @@ The MCP logger sink MUST apply the repository redactor to allowlisted metadata a
 | Persistence rejection | Generic HTTP error; raw MCP error | `CLEAR_PERSISTENCE_FAILED`, no raw detail | Medium error-body compatibility |
 | MCP tool/transport exception | Raw exception could be returned | Fixed `MCP_OPERATION_FAILED` | High security fix; clients lose raw text |
 | Existing stored allow/block on an invalid recheck | Could supply execution result decision | Preserved but not copied into new results | Medium; operation now fails |
+| Python score missing a decision | Defaulted to `block` and called the block endpoint | Indeterminate; no block or execution callback | High correctness fix |
+| Python missing/unknown/malformed CLEAR evidence | Could fall through to local execution | Stops before confirmation, execution, or backend mutation | Critical correctness fix |
+| Python explicit decision with absent/null `overall` | Defaulted score to zero or raised | Preserves the explicit decision and records unavailable audit score | Medium compatibility fix |
+| Conflicting Python score aliases or duplicate decisions | Truthy metadata silently won | Invalid; no block or execution callback | High correctness fix |
 
 ## Related systems and deferrals
 
-The Python daemon parser in `daemon-python/arcanos/action_plan_types.py` defaults a non-empty partial score with no decision to `block`. That is a related violation, but changing it also changes a separate TypeScript-to-Python protocol consumer and an existing daemon test. It is inventoried for a bounded follow-up rather than combined with the confirmed HTTP/MCP persistence correction.
+Phase 2C corrects the Python daemon parser and operation boundary without changing daemon polling, acknowledgement, retries, or queue ownership. Parse failures continue through the existing command lifecycle. No current in-repository TypeScript producer of the `action_plan` daemon command was found; the generic queue remains intentionally outside this bounded parser correction.
 
 The ActionPlan 0-1 CLEAR model is distinct from the reinforcement 0-10 scorecard and Trinity audit thresholds. Their types, thresholds, and persistence MUST NOT be unified under this contract.
 
@@ -212,7 +231,8 @@ The ActionPlan 0-1 CLEAR model is distinct from the reinforcement 0-10 scorecard
 | Result writes are not atomic | `src/routes/plans.ts`, `src/mcp/server/index.ts`, `src/stores/actionPlanStore.ts` | Independent action writes can partially succeed | High | High | Static | Store-level transaction and retry matrix | Later persistence phase | Restore independent writes | Yes |
 | Store fallbacks obscure durability | `src/stores/actionPlanStore.ts` | Database failures can return cache success | High | High | Static and existing tests | Durable/cache outcome contract | Later persistence phase | Restore current fallback policy | Yes |
 | Recheck precedes locking | Both execute adapters | Future conflicting outcomes can race status/result writes | Medium | High | Static | Deterministic concurrent block/allow test with version semantics | Later concurrency phase | Restore current lock boundary | Yes |
-| Python partial score defaults to block | `daemon-python/arcanos/action_plan_types.py`, handler and tests | Missing decision can become explicit block | High | Medium | Static and runtime test | Python protocol malformed-result matrix | Phase 2C candidate | Restore parser default | Yes |
+| ActionPlan daemon payload has no formal shared runtime schema | `src/routes/api-daemon.ts`, `src/routes/daemonStore/types.ts`, `daemon-python/arcanos/action_plan_types.py` | Generic command payload is validated only when Python consumes it | High | Medium | Static | Producer inventory and versioned wire-schema compatibility tests | Later protocol phase | Retain parser-local validation | Yes |
+| Python lifecycle status and CLEAR decision can disagree | `daemon-python/arcanos/action_plan_handler.py`, `src/routes/plans.ts`, `src/mcp/server/index.ts` | Python gates the parsed CLEAR decision but does not independently gate `status == "blocked"`; TypeScript gates both | High | High | Static and runtime reproduction | Cross-language lifecycle-state authority and compatibility matrix | Later bounded ActionPlan lifecycle phase | Preserve the current decision-only daemon gate | Yes |
 | Stored decision columns are unconstrained strings | Prisma and bootstrap schemas | Invalid strings can exist when written outside typed producers | High | Medium | Static | Migration/backfill and compatibility evidence | Later schema phase | Revert constraint/migration | Yes |
 
 ## Rollback
@@ -222,5 +242,6 @@ The decision correction and disclosure correction are independently reversible:
 1. Revert the commit that introduces and applies the CLEAR interpreter to restore the former execution decision mapping. No database rollback is needed; already-corrected execution rows are historical records and MUST NOT be rewritten automatically.
 2. Revert the MCP disclosure commit to restore former messages only if an emergency compatibility decision explicitly accepts the disclosure risk.
 3. Re-run the Phase 1 characterization commit to reproduce the original baseline and the Phase 2B focused suites to verify the selected rollback boundary.
+4. Revert the Phase 2C Python parser/handler commit to restore the prior daemon behavior only if the resulting fabricated-block and malformed-execution risks are explicitly accepted. No database rollback is required because the daemon does not persist CLEAR data directly.
 
 Rollback does not authorize deleting or rewriting execution history, changing the CLEAR threshold, or weakening authorization and confirmation gates.
