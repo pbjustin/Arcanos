@@ -185,11 +185,16 @@ class ActionPlan:
             and not _json_values_equal(plan_id_raw, id_raw)
         ):
             raise ValueError("Conflicting ActionPlan identifiers")
-        selected_plan_id = plan_id_raw if plan_id_raw is not _MISSING else id_raw
+        selected_plan_id = (
+            plan_id_raw if plan_id_raw is not _MISSING else id_raw
+        )
         plan_id = selected_plan_id if isinstance(selected_plan_id, str) else ""
 
         requires_confirmation_raw = data.get("requires_confirmation", _MISSING)
-        requires_confirmation_alias = data.get("requiresConfirmation", _MISSING)
+        requires_confirmation_alias = data.get(
+            "requiresConfirmation",
+            _MISSING,
+        )
         if (
             requires_confirmation_raw is not _MISSING
             and requires_confirmation_alias is not _MISSING
@@ -198,7 +203,9 @@ class ActionPlan:
                 requires_confirmation_alias,
             )
         ):
-            raise ValueError("Conflicting ActionPlan confirmation requirements")
+            raise ValueError(
+                "Conflicting ActionPlan confirmation requirements"
+            )
         selected_confirmation = (
             requires_confirmation_raw
             if requires_confirmation_raw is not _MISSING
@@ -209,7 +216,9 @@ class ActionPlan:
         elif isinstance(selected_confirmation, bool):
             requires_confirmation = selected_confirmation
         else:
-            raise ValueError("ActionPlan confirmation requirement is malformed")
+            raise ValueError(
+                "ActionPlan confirmation requirement is malformed"
+            )
 
         status_present = "status" in data
         status = data.get("status") if status_present else None

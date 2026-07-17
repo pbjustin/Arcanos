@@ -128,7 +128,7 @@ def handle_action_plan(
 
 
 def _classify_expiry(expires_at: Any) -> str:
-    """Normalize the wire expiry value for deterministic lifecycle evaluation."""
+    """Classify wire expiry for deterministic lifecycle evaluation."""
     if expires_at is None:
         return "active"
     if not isinstance(expires_at, str) or not expires_at:
@@ -148,7 +148,7 @@ def _classify_expiry(expires_at: Any) -> str:
 
 
 def _is_valid_plan_id(plan_id: Any) -> bool:
-    """Accept the backend's opaque identifier without URI-path metacharacters."""
+    """Accept opaque identifiers without URI-path metacharacters."""
     return bool(
         isinstance(plan_id, str)
         and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", plan_id)
@@ -174,7 +174,9 @@ def _log_lifecycle_decision(
     denied: bool,
 ) -> None:
     """Emit allowlisted lifecycle facts without raw wire values or payloads."""
-    plan_id = plan.plan_id if _is_valid_plan_id(plan.plan_id) else "unavailable"
+    plan_id = (
+        plan.plan_id if _is_valid_plan_id(plan.plan_id) else "unavailable"
+    )
     previous_state = (
         plan.status
         if isinstance(plan.status, str) and plan.status in ACTION_PLAN_STATUSES
@@ -187,7 +189,8 @@ def _log_lifecycle_decision(
             "[ACTION_PLAN] Lifecycle decision "
             "plan_id=%s previous_state=%s operation=%s target_state=%s "
             "outcome=%s reason=%s policy_provenance=daemon_wire "
-            "actor_category=%s version_support=unavailable trace_support=unavailable",
+            "actor_category=%s version_support=unavailable "
+            "trace_support=unavailable",
             plan_id,
             previous_state,
             operation,
@@ -207,7 +210,7 @@ def _report_lifecycle_denial(
     console: "Console",
     instance_id: str,
 ) -> None:
-    """Report a stable lifecycle denial without including untrusted wire values."""
+    """Report a stable denial without untrusted wire values."""
     public_category = {
         "confirmation_required": "ACTION_PLAN_CONFIRMATION_REQUIRED",
         "forbidden": "ACTION_PLAN_TRANSITION_FORBIDDEN",
@@ -224,7 +227,9 @@ def _report_lifecycle_denial(
         instance_id,
         denied=True,
     )
-    console.print(f"[red]ActionPlan operation refused ({public_category})[/red]")
+    console.print(
+        f"[red]ActionPlan operation refused ({public_category})[/red]"
+    )
 
 
 def _reject_plan(
@@ -266,7 +271,8 @@ def _reject_plan(
             try:
                 error_logger.error(
                     "[ACTION_PLAN] Block notification failed "
-                    "error_code=ACTION_PLAN_BLOCK_CALLBACK_FAILED error_class=%s",
+                    "error_code=ACTION_PLAN_BLOCK_CALLBACK_FAILED "
+                    "error_class=%s",
                     _safe_exception_class(exc),
                 )
             except Exception:

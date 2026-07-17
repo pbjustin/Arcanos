@@ -180,7 +180,9 @@ class TestActionPlan:
         status,
         expected,
     ):
-        plan = ActionPlan.from_dict({"plan_id": "plan-status", "status": status})
+        plan = ActionPlan.from_dict(
+            {"plan_id": "plan-status", "status": status}
+        )
 
         assert plan.status_present is True
         assert plan.status == expected
@@ -198,7 +200,10 @@ class TestActionPlan:
         assert plan.plan_id == ""
 
     def test_from_dict_rejects_conflicting_plan_identity_aliases(self):
-        with pytest.raises(ValueError, match="Conflicting ActionPlan identifiers"):
+        with pytest.raises(
+            ValueError,
+            match="Conflicting ActionPlan identifiers",
+        ):
             ActionPlan.from_dict(
                 {
                     "plan_id": "plan-authoritative",
