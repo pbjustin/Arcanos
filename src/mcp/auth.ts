@@ -1,7 +1,7 @@
-import crypto from 'node:crypto';
 import type { Request, Response, NextFunction } from 'express';
 import { getEnv } from '@platform/runtime/env.js';
 import { sendInternalErrorCode } from '@shared/http/index.js';
+import { timingSafeEqualOpaqueSecret } from '@shared/security/opaqueSecret.js';
 
 /**
  * Minimal auth / origin protection for MCP Streamable HTTP.
@@ -15,17 +15,6 @@ function parseAllowedOrigins(raw: string): string[] {
     .filter(Boolean);
 }
 
-function timingSafeStringEqual(left: string, right: string): boolean {
-  const leftBuffer = Buffer.from(left);
-  const rightBuffer = Buffer.from(right);
-
-  if (leftBuffer.length !== rightBuffer.length) {
-    return false;
-  }
-
-  return crypto.timingSafeEqual(leftBuffer, rightBuffer);
-}
-
 const mcpBearerToken = getEnv('MCP_BEARER_TOKEN');
 const allowedOrigins = parseAllowedOrigins(getEnv('MCP_ALLOWED_ORIGINS', ''));
 
@@ -37,7 +26,7 @@ export function mcpAuthMiddleware(req: Request, res: Response, next: NextFunctio
 
   const auth = req.header('authorization') ?? '';
   const expectedAuth = `Bearer ${mcpBearerToken}`;
-  if (!timingSafeStringEqual(auth, expectedAuth)) {
+  if (!timingSafeEqualOpaqueSecret(auth, expectedAuth)) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
   }

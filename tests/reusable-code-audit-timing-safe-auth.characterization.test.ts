@@ -193,9 +193,8 @@ function buildHeaderRequest(
 
 function assertNoCredentialMaterial(value: unknown, ...credentials: string[]): void {
   const serialized = JSON.stringify(value);
-  for (const credential of credentials) {
-    expect(serialized).not.toContain(credential);
-  }
+  const containsCredential = credentials.some((credential) => serialized.includes(credential));
+  expect(containsCredential).toBe(false);
 }
 
 async function observeMcpAuth(expectedToken: string, authorization: unknown) {

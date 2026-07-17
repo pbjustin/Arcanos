@@ -102,11 +102,13 @@ async function loadAuditSafeHarness(): Promise<AuditSafeHarness> {
     extractResponseOutputText: () => '',
   }));
 
-  const [hierarchy, persistence, toggle] = await Promise.all([
-    import('../src/core/persistenceManagerHierarchy.js'),
-    import('../src/services/persistenceManager.js'),
-    import('../src/services/auditSafeToggle.js'),
-  ]);
+  // Jest's ESM linker cannot safely link the same new leaf dependency from two
+  // concurrently imported roots after resetModules(); load the independent
+  // mutable-state implementations sequentially so the production comparator
+  // remains unmocked in this characterization harness.
+  const hierarchy = await import('../src/core/persistenceManagerHierarchy.js');
+  const persistence = await import('../src/services/persistenceManager.js');
+  const toggle = await import('../src/services/auditSafeToggle.js');
 
   hierarchy.configureAuditStore(fakeAuditStore as never);
 
@@ -311,6 +313,43 @@ describe('reusable-code audit: audit-safe policy characterization', () => {
         .filter((entry) => entry.event === 'ROOT_OVERRIDE_DENIED')
         .at(-1)?.payload.failedRootOverrideAttempts
     ).toBe(1);
+  });
+
+  it('keeps both root-override credentials exact and absent from audit output', async () => {
+    const harness = await loadAuditSafeHarness();
+    const credential = ['phase2a', 'root-override', 'sécurité'].join('-');
+    const wrongSameLength = `${credential.slice(0, -1)}x`;
+    const wrongDifferentLength = `${credential}x`;
+    process.env.ALLOW_ROOT_OVERRIDE = 'true';
+    process.env.ROOT_OVERRIDE_TOKEN = credential;
+    const rootOverride = (value: string) => ({
+      rootOverride: true,
+      userRole: 'admin',
+      token: value,
+    });
+
+    await expect(
+      harness.hierarchy.setAuditSafeMode('false', rootOverride(wrongSameLength)),
+    ).rejects.toThrow('Unauthorized attempt');
+    await expect(
+      harness.persistence.setAuditSafeMode('false', rootOverride(wrongDifferentLength)),
+    ).rejects.toThrow('Unauthorized attempt');
+
+    await expect(
+      harness.hierarchy.setAuditSafeMode('false', rootOverride(credential)),
+    ).resolves.toBeUndefined();
+    await expect(
+      harness.persistence.setAuditSafeMode('false', rootOverride(credential)),
+    ).resolves.toBeUndefined();
+
+    const auditOutput = JSON.stringify([
+      harness.coreAuditEvents,
+      harness.fileAuditEntries,
+    ]);
+    expect(
+      [credential, wrongSameLength, wrongDifferentLength]
+        .some((value) => auditOutput.includes(value)),
+    ).toBe(false);
   });
 
   it('characterizes the persistence service override counter independently', async () => {

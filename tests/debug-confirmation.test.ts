@@ -1,8 +1,10 @@
-import { describe, test, expect, beforeEach, beforeAll } from '@jest/globals';
+import { describe, test, expect, beforeEach, beforeAll, afterAll } from '@jest/globals';
 import request from 'supertest';
 import express, { Express } from 'express';
 
 // Set environment variables before importing modules
+const originalAutomationSecret = process.env.ARCANOS_AUTOMATION_SECRET;
+const originalAutomationHeader = process.env.ARCANOS_AUTOMATION_HEADER;
 process.env.ARCANOS_AUTOMATION_SECRET = 'test-secret-123';
 process.env.ARCANOS_AUTOMATION_HEADER = 'x-automation-secret';
 
@@ -16,6 +18,19 @@ describe('debug-confirmation routes', () => {
     // Ensure environment is set
     process.env.ARCANOS_AUTOMATION_SECRET = 'test-secret-123';
     process.env.ARCANOS_AUTOMATION_HEADER = 'x-automation-secret';
+  });
+
+  afterAll(() => {
+    if (originalAutomationSecret === undefined) {
+      delete process.env.ARCANOS_AUTOMATION_SECRET;
+    } else {
+      process.env.ARCANOS_AUTOMATION_SECRET = originalAutomationSecret;
+    }
+    if (originalAutomationHeader === undefined) {
+      delete process.env.ARCANOS_AUTOMATION_HEADER;
+    } else {
+      process.env.ARCANOS_AUTOMATION_HEADER = originalAutomationHeader;
+    }
   });
 
   beforeEach(() => {
@@ -46,6 +61,64 @@ describe('debug-confirmation routes', () => {
         ok: false,
         error: 'Forbidden'
       });
+    });
+
+    test('uses exact opaque equality after Node header parsing and keeps denial output generic', async () => {
+      const previousCredential = process.env.ARCANOS_AUTOMATION_SECRET;
+      const credential = ['phase2a', 'automation', 'sécurité'].join('-');
+      const wrongSameLength = `${credential.slice(0, -1)}x`;
+      const wrongDifferentLength = `${credential}x`;
+      const issuedTokens: string[] = [];
+      process.env.ARCANOS_AUTOMATION_SECRET = `  ${credential}  `;
+
+      try {
+        const exact = await request(app)
+          .post('/debug/create-confirmation-token')
+          .set('x-automation-secret', credential);
+        const leadingWhitespace = await request(app)
+          .post('/debug/create-confirmation-token')
+          .set('x-automation-secret', ` ${credential}`);
+        const wrongSame = await request(app)
+          .post('/debug/create-confirmation-token')
+          .set('x-automation-secret', wrongSameLength);
+        const wrongLength = await request(app)
+          .post('/debug/create-confirmation-token')
+          .set('x-automation-secret', wrongDifferentLength);
+        issuedTokens.push(exact.body.token, leadingWhitespace.body.token);
+
+        expect([exact.status, leadingWhitespace.status]).toEqual([200, 200]);
+        expect([wrongSame.status, wrongLength.status]).toEqual([403, 403]);
+
+        const deniedOutput = JSON.stringify([
+          wrongSame.body,
+          wrongLength.body,
+        ]);
+        expect(
+          [credential, wrongSameLength, wrongDifferentLength]
+            .some((value) => deniedOutput.includes(value)),
+        ).toBe(false);
+      } finally {
+        const cleanupResults: Array<{ status: number; error?: string }> = [];
+        process.env.ARCANOS_AUTOMATION_SECRET = 'test-secret-123';
+        for (const token of issuedTokens) {
+          const cleanupResponse = await request(app)
+            .post('/debug/consume-confirm-token')
+            .set('x-automation-secret', 'test-secret-123')
+            .send({ token });
+          cleanupResults.push({
+            status: cleanupResponse.status,
+            error: typeof cleanupResponse.body.error === 'string'
+              ? cleanupResponse.body.error
+              : undefined,
+          });
+        }
+        if (previousCredential === undefined) {
+          delete process.env.ARCANOS_AUTOMATION_SECRET;
+        } else {
+          process.env.ARCANOS_AUTOMATION_SECRET = previousCredential;
+        }
+        expect(cleanupResults).toEqual([{ status: 200 }, { status: 200 }]);
+      }
     });
 
     test('creates token with valid automation secret', async () => {
@@ -85,7 +158,16 @@ describe('debug-confirmation routes', () => {
         .set('x-automation-secret', 'test-secret-123')
         .expect(200);
 
-      expect(response1.body.token).not.toBe(response2.body.token);
+      expect(response1.body.token === response2.body.token).toBe(false);
+      const cleanupStatuses: number[] = [];
+      for (const token of [response1.body.token, response2.body.token]) {
+        const cleanupResponse = await request(app)
+          .post('/debug/consume-confirm-token')
+          .set('x-automation-secret', 'test-secret-123')
+          .send({ token });
+        cleanupStatuses.push(cleanupResponse.status);
+      }
+      expect(cleanupStatuses.every((status) => status === 200)).toBe(true);
     });
   });
 
@@ -270,9 +352,7 @@ describe('debug-confirmation routes', () => {
       const token3 = token3Response.body.token;
 
       // Verify tokens are unique
-      expect(token1).not.toBe(token2);
-      expect(token2).not.toBe(token3);
-      expect(token1).not.toBe(token3);
+      expect(new Set([token1, token2, token3]).size === 3).toBe(true);
 
       // Consume tokens in non-sequential order
       await request(app)
