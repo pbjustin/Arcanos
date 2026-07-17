@@ -18,7 +18,7 @@ This contract separates four responsibilities:
 
 This phase does not change CLEAR thresholds, plan construction, action ordering, duplicate actions, rollback detection, confirmation gates, route registration, queue behavior, workers, or the persistence schema.
 
-The Phase 1 characterization is immutable evidence of two pre-change defects: a valid current `allow` recheck was discarded when the stored `ActionPlan.clearScore` relation was `null`, and MCP returned a raw dependency exception. Phase 2B intentionally changes those two behaviors.
+The Phase 1 characterization is immutable evidence of two pre-change defects: a valid current `allow` recheck was discarded when the stored `ActionPlan.clearScore` relation was `null`, and MCP returned a raw dependency exception. The exact historical test is preserved at commit `06d1620b3e776eccab98d99b7802193cc7723ca6`, Git blob `e089b5b2db2c02d549f362c7850b5997faf5ee33`. Phase 2B intentionally changes those two behaviors. Because the two original active assertions are logically incompatible with the corrected production contract, the current assertions verify the new behavior; the cited commit/blob remains the unmodified historical evidence.
 
 ## Authoritative data flow
 
@@ -36,9 +36,34 @@ MCP plans.execute
   -> interpretClear2Outcome
   -> blockPlan OR createExecutionResult[] OR no write
   -> MCP result/error adapter
+
+HTTP POST /clear/evaluate
+  -> validated HTTP payload
+  -> buildClear2Summary
+  -> interpretClear2Outcome
+  -> unchanged valid summary OR stable HTTP evaluation error
+
+MCP clear.evaluate
+  -> MCP tool arguments
+  -> buildClear2Summary
+  -> interpretClear2Outcome
+  -> unchanged valid summary OR stable MCP evaluation error
+
+Plan creation (trusted local producer boundary)
+  -> routes/plans.ts or MCP plans.create
+  -> stores/actionPlanStore.ts createPlan
+  -> local synchronous buildClear2Summary
+  -> nested ActionPlan/Action/ClearScore persistence
+
+Web-search CLEAR summary (trusted local producer, no decision persistence)
+  -> services/webSearchAgent.ts
+  -> local synchronous buildClear2Summary
+  -> returned workflow metadata
 ```
 
 The two recheck payload builders remain independent in this phase. They continue to preserve action order, duplicate actions, `params`, `timeout_ms`, and the current non-null rollback test.
+
+`createPlan` remains a trusted local producer boundary. It calls the typed, synchronous repository builder directly and requires the full five-principle `ClearScore` shape for its nested write. The Phase 2B interpreter validates only operational `decision`/`overall`; inserting it there would not validate the complete persisted shape or improve nested-write atomicity. The trust invariant is covered by `tests/clear2.test.ts` and `tests/action-plan-store.test.ts`. Revalidation is required before this producer becomes external, dynamic, or replaceable. `webSearchAgent` likewise uses the same local builder but does not write `ExecutionResult.clearDecision`; changing that workflow is outside this phase.
 
 ## Authoritative inputs
 
@@ -59,14 +84,14 @@ The explicit decision is the operational control field used by all current consu
 
 `confirm` is a first-class existing policy result and is retained in addition to the five conceptual outcomes required by the Phase 2B brief.
 
-| Outcome | Trigger | Persistence | HTTP/MCP behavior | Retry |
-|---|---|---|---|---|
-| `ALLOW` | Explicit `allow`; score absent/null or present and coherent | Create execution results with current recheck decision `allow`; do not rewrite stored score | Continue the already-authorized execution path | Normal idempotency and lock behavior |
-| `CONFIRM` | Explicit `confirm`; score absent/null or present and coherent | Create execution results with current recheck decision `confirm`; do not rewrite stored score | Preserve current approved-plan behavior; do not add another confirmation gate | Normal idempotency and lock behavior |
-| `BLOCK` | Explicit `block`; score absent/null or present and coherent | Call `blockPlan`; create no execution results | Preserve HTTP 403 and MCP `ERR_GATED` envelopes | A persistence failure is not reported as a successful block |
-| `INDETERMINATE` | Evaluator returned `null` or `undefined`, so no result exists | No status, score, or result write; preserve prior state | Fail the operation with `CLEAR_EVALUATION_UNAVAILABLE` | Retryable when the caller's existing policy permits |
-| `INVALID` | Returned value has an unknown decision, malformed present score, or contradictory decision/score | No status, score, or result write; preserve prior state | Fail with `CLEAR_RESULT_INVALID` | Non-retryable without a corrected producer/result |
-| `FAILED` | Evaluator, persistence dependency, or operation throws/rejects/times out/aborts | No fabricated decision; writes already completed by existing non-transactional dependencies are not rewritten | Return a stage-appropriate stable error | Dependency/operation policy determines retryability |
+| Outcome | Trigger | Persistence | HTTP/MCP behavior | Retry | Metrics |
+|---|---|---|---|---|---|
+| `ALLOW` | Explicit `allow`; score absent/null or present and coherent | Create execution results with current recheck decision `allow`; do not rewrite stored score | Continue the already-authorized execution path | Normal idempotency and lock behavior | No dedicated CLEAR metric was observed; unchanged |
+| `CONFIRM` | Explicit `confirm`; score absent/null or present and coherent | Create execution results with current recheck decision `confirm`; do not rewrite stored score | Preserve current approved-plan behavior; do not add another confirmation gate | Normal idempotency and lock behavior | No dedicated CLEAR metric was observed; unchanged |
+| `BLOCK` | Explicit `block`; score absent/null or present and coherent | Call `blockPlan`; create no execution results | Preserve HTTP 403 and MCP `ERR_GATED` envelopes | A persistence failure is not reported as a successful block | No dedicated CLEAR metric was observed; unchanged |
+| `INDETERMINATE` | Evaluator returned `null` or `undefined`, so no result exists | No status, score, or result write; preserve prior state | Fail the operation with `CLEAR_EVALUATION_UNAVAILABLE` | Retryable when the caller's existing policy permits | No dedicated CLEAR metric was observed; unchanged |
+| `INVALID` | Returned value has an unknown decision, malformed present score, or contradictory decision/score | No status, score, or result write; preserve prior state | Fail with `CLEAR_RESULT_INVALID` | Non-retryable without a corrected producer/result | No dedicated CLEAR metric was observed; unchanged |
+| `FAILED` | Evaluator, persistence dependency, or operation throws/rejects/times out/aborts | No fabricated decision; writes already completed by existing non-transactional dependencies are not rewritten | Return a stage-appropriate stable error | Dependency/operation policy determines retryability | No dedicated CLEAR metric was observed; unchanged |
 
 An explicit `block` is a policy decision. A missing, null, malformed, unavailable, or failed result is not a block.
 
