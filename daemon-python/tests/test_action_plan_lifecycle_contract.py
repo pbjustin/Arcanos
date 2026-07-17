@@ -73,10 +73,12 @@ def test_python_evaluator_matches_shared_lifecycle_contract(
     )
 
 
-def test_unsupported_integrity_guarantees_never_claim_authorization() -> None:
-    """Unavailable version and concurrency evidence cannot authorize execution."""
+def test_unsupported_integrity_guarantees_are_explicitly_deferred() -> None:
+    """Unavailable version and concurrency evidence must not claim enforcement."""
     assert len(CONTRACT["unsupportedScenarios"]) >= 8
     for scenario in CONTRACT["unsupportedScenarios"]:
-        assert scenario["mustNotAuthorize"] is True
+        assert scenario["enforced"] is False
+        assert scenario["deferredRisk"] is True
+        assert scenario["observedBehavior"].replace("_", "").isalnum()
         assert scenario["support"].startswith(("unavailable_", "characterized_"))
         assert scenario["expectedCategory"].startswith("ACTION_PLAN_")

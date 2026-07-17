@@ -32,7 +32,9 @@ type LifecycleContract = {
     name: string;
     expectedCategory: string;
     support: string;
-    mustNotAuthorize: boolean;
+    enforced: boolean;
+    deferredRisk: boolean;
+    observedBehavior: string;
   }>;
 };
 
@@ -80,10 +82,12 @@ describe('ActionPlan cross-language lifecycle contract', () => {
     })).toEqual(testCase.expectedSemantic);
   });
 
-  it('marks version, confirmation, and race guarantees as unavailable or characterized', () => {
+  it('marks version, confirmation, and race guarantees as deferred rather than enforced', () => {
     expect(contract.unsupportedScenarios.length).toBeGreaterThanOrEqual(8);
     for (const scenario of contract.unsupportedScenarios) {
-      expect(scenario.mustNotAuthorize).toBe(true);
+      expect(scenario.enforced).toBe(false);
+      expect(scenario.deferredRisk).toBe(true);
+      expect(scenario.observedBehavior).toMatch(/^[a-z0-9_]+$/);
       expect(scenario.support).toMatch(/^(unavailable_|characterized_)/);
       expect(scenario.expectedCategory).toMatch(/^ACTION_PLAN_/);
     }

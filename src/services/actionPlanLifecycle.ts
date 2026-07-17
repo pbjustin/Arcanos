@@ -1,15 +1,8 @@
-export const ACTION_PLAN_LIFECYCLE_STATUSES = [
-  'planned',
-  'awaiting_confirmation',
-  'approved',
-  'in_progress',
-  'completed',
-  'failed',
-  'expired',
-  'blocked',
-] as const;
+import { PLAN_STATUSES, type PlanStatus } from '@shared/types/actionPlan.js';
 
-export type ActionPlanLifecycleStatus = typeof ACTION_PLAN_LIFECYCLE_STATUSES[number];
+export const ACTION_PLAN_LIFECYCLE_STATUSES = PLAN_STATUSES;
+
+export type ActionPlanLifecycleStatus = PlanStatus;
 export type ActionPlanLifecycleOperation = 'approve' | 'execute' | 'block' | 'expire' | 'read';
 export type ActionPlanPolicyKind = 'allow' | 'confirm' | 'block' | 'not_evaluated';
 export type ActionPlanPolicyProvenance = 'stored_creation' | 'current_recheck' | 'daemon_wire' | 'operator';
@@ -182,6 +175,22 @@ export function evaluateActionPlanLifecycle(
     return result('invalid', 'policy_operation_conflict');
   }
 
+  if (status === 'blocked') {
+    if (operation === 'execute') {
+      if (input.policyProvenance === 'stored_creation') {
+        return result('forbidden', 'lifecycle_blocked');
+      }
+      if ((input.policyProvenance === 'current_recheck' || input.policyProvenance === 'daemon_wire')
+        && (input.policyKind === 'allow' || input.policyKind === 'confirm')) {
+        return result('invalid', 'blocked_current_policy_conflict');
+      }
+    }
+    return result(
+      'forbidden',
+      operation === 'execute' ? 'lifecycle_blocked' : 'blocked_transition_forbidden',
+    );
+  }
+
   if (HARD_TERMINAL_STATUSES.has(status)) {
     return result('terminal', 'terminal_state');
   }
@@ -195,22 +204,6 @@ export function evaluateActionPlanLifecycle(
 
   const policyKind = input.policyKind;
   const policyProvenance = input.policyProvenance as ActionPlanPolicyProvenance;
-
-  if (status === 'blocked') {
-    if (operation === 'execute') {
-      if (policyProvenance === 'stored_creation') {
-        return result('forbidden', 'lifecycle_blocked');
-      }
-      if ((policyProvenance === 'current_recheck' || policyProvenance === 'daemon_wire')
-        && (policyKind === 'allow' || policyKind === 'confirm')) {
-        return result('invalid', 'blocked_current_policy_conflict');
-      }
-    }
-    return result(
-      'forbidden',
-      operation === 'execute' ? 'lifecycle_blocked' : 'blocked_transition_forbidden',
-    );
-  }
 
   if (operation === 'approve') {
     if (policyProvenance !== 'stored_creation') {

@@ -121,6 +121,28 @@
       }
     },
     {
+      "name": "blocked lifecycle remains authoritative over elapsed expiry metadata",
+      "plan": { "status": "blocked", "expiry": "elapsed" },
+      "operation": "execute",
+      "policy": { "kind": "allow", "provenance": "stored_creation" },
+      "expectedSemantic": { "classification": "forbidden", "reasonCode": "lifecycle_blocked", "operationAllowed": false, "policyRecheckAllowed": false, "statusTransitionAllowed": false, "targetStatus": null },
+      "expectedEffects": {
+        "typescript": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false },
+        "python": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false }
+      }
+    },
+    {
+      "name": "blocked lifecycle remains authoritative over malformed expiry metadata",
+      "plan": { "status": "blocked", "expiry": "invalid" },
+      "operation": "execute",
+      "policy": { "kind": "allow", "provenance": "stored_creation" },
+      "expectedSemantic": { "classification": "forbidden", "reasonCode": "lifecycle_blocked", "operationAllowed": false, "policyRecheckAllowed": false, "statusTransitionAllowed": false, "targetStatus": null },
+      "expectedEffects": {
+        "typescript": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false },
+        "python": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false }
+      }
+    },
+    {
       "name": "blocked daemon command with allow is invalid",
       "plan": { "status": "blocked", "expiry": "active" },
       "operation": "execute",
@@ -452,13 +474,13 @@
     }
   ],
   "unsupportedScenarios": [
-    { "name": "confirmation targets an older plan version", "expectedCategory": "ACTION_PLAN_VERSION_CONFLICT", "support": "unavailable_no_authoritative_version", "mustNotAuthorize": true },
-    { "name": "confirmation targets a different plan identifier", "expectedCategory": "ACTION_PLAN_CONFIRMATION_STALE", "support": "unavailable_no_confirmation_record", "mustNotAuthorize": true },
-    { "name": "plan actions changed after confirmation", "expectedCategory": "ACTION_PLAN_CONFIRMATION_STALE", "support": "unavailable_no_action_digest", "mustNotAuthorize": true },
-    { "name": "CLEAR evidence targets an older plan version", "expectedCategory": "ACTION_PLAN_VERSION_CONFLICT", "support": "unavailable_no_authoritative_version", "mustNotAuthorize": true },
-    { "name": "state changes after validation", "expectedCategory": "ACTION_PLAN_VERSION_CONFLICT", "support": "unavailable_no_compare_and_swap", "mustNotAuthorize": true },
-    { "name": "duplicate execute spans TypeScript and Python runtimes", "expectedCategory": "ACTION_PLAN_TRANSITION_FORBIDDEN", "support": "unavailable_no_cross_runtime_lock", "mustNotAuthorize": true },
-    { "name": "block and execute race after recheck", "expectedCategory": "ACTION_PLAN_VERSION_CONFLICT", "support": "characterized_not_closed", "mustNotAuthorize": true },
-    { "name": "retry follows partial result persistence", "expectedCategory": "ACTION_PLAN_STATE_UNAVAILABLE", "support": "characterized_non_atomic_results", "mustNotAuthorize": true }
+    { "name": "confirmation targets an older plan version", "expectedCategory": "ACTION_PLAN_VERSION_CONFLICT", "support": "unavailable_no_authoritative_version", "enforced": false, "deferredRisk": true, "observedBehavior": "not_representable" },
+    { "name": "confirmation targets a different plan identifier", "expectedCategory": "ACTION_PLAN_CONFIRMATION_STALE", "support": "unavailable_no_confirmation_record", "enforced": false, "deferredRisk": true, "observedBehavior": "not_representable" },
+    { "name": "plan actions changed after confirmation", "expectedCategory": "ACTION_PLAN_CONFIRMATION_STALE", "support": "unavailable_no_action_digest", "enforced": false, "deferredRisk": true, "observedBehavior": "not_detectable" },
+    { "name": "CLEAR evidence targets an older plan version", "expectedCategory": "ACTION_PLAN_VERSION_CONFLICT", "support": "unavailable_no_authoritative_version", "enforced": false, "deferredRisk": true, "observedBehavior": "not_detectable" },
+    { "name": "state changes after validation", "expectedCategory": "ACTION_PLAN_VERSION_CONFLICT", "support": "unavailable_no_compare_and_swap", "enforced": false, "deferredRisk": true, "observedBehavior": "stale_snapshot_can_authorize" },
+    { "name": "duplicate execute spans TypeScript and Python runtimes", "expectedCategory": "ACTION_PLAN_TRANSITION_FORBIDDEN", "support": "unavailable_no_cross_runtime_lock", "enforced": false, "deferredRisk": true, "observedBehavior": "local_lock_and_result_uniqueness_only" },
+    { "name": "block and execute race after recheck", "expectedCategory": "ACTION_PLAN_VERSION_CONFLICT", "support": "characterized_not_closed", "enforced": false, "deferredRisk": true, "observedBehavior": "execution_and_block_can_both_proceed" },
+    { "name": "retry follows partial result persistence", "expectedCategory": "ACTION_PLAN_STATE_UNAVAILABLE", "support": "characterized_non_atomic_results", "enforced": false, "deferredRisk": true, "observedBehavior": "retry_can_follow_partial_write" }
   ]
 }

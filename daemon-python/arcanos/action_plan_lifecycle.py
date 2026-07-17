@@ -148,9 +148,11 @@ def evaluate_action_plan_lifecycle(
             return _result("invalid", "policy_operation_conflict")
         return _result(
             "forbidden",
-            "lifecycle_blocked"
-            if operation == "execute"
-            else "blocked_transition_forbidden",
+            (
+                "lifecycle_blocked"
+                if operation == "execute"
+                else "blocked_transition_forbidden"
+            ),
         )
 
     if status in _HARD_TERMINAL_STATUSES:

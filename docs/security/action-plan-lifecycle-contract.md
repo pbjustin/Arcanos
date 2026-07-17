@@ -112,11 +112,11 @@ Python must run lifecycle validation before CLEAR display, confirmation prompts,
 | Stored `plan.clearScore` | Creation-time one-to-one score record | Historical | It may explain initial state or expose corruption. It cannot authorize a new execution result. |
 | Current TypeScript recheck | CLEAR result produced for the current execution attempt | Authoritative for current policy only | It may allow execution or cause `approved -> blocked`; it cannot revive a blocked or terminal lifecycle state. |
 | Python command CLEAR evidence | Parsed and coherent daemon payload | Conditionally authoritative, unversioned | It may authorize an operation only when lifecycle is compatible. It cannot override blocked or terminal status. |
-| `requiresConfirmation` | Persisted creation configuration | Authoritative configuration, not confirmation evidence | It determines initial state. It does not prove who confirmed, what was confirmed, or when. |
+| `requiresConfirmation` | Persisted creation configuration | Authoritative configuration, not confirmation evidence | Python accepts only an exact JSON boolean; a missing field retains the compatibility default `true`, while null, coerced, or conflicting aliases are invalid. It determines initial state but does not prove who confirmed, what was confirmed, or when. |
 | `approved` status | Persisted lifecycle state | Current compatibility confirmation surrogate | It is the only durable evidence that lifecycle approval occurred, but is not bound to actor, action content, CLEAR version, or plan revision. |
 | MCP confirmation nonce | In-memory tool/session/payload digest | Authoritative only for that MCP invocation | It is not lifecycle approval and is not bound to stored plan content or version. |
 | Python confirmation response | Immediate local prompt | Ephemeral and conditionally authoritative | It applies only to the current in-memory invocation and does not transition backend lifecycle state. |
-| Plan ID | Database primary key or daemon payload | Authoritative in TypeScript; conditionally authoritative after Python parsing | Must be non-empty before any callback, command, result write, or success output. |
+| Plan ID | Database UUID primary key or daemon payload | Authoritative in TypeScript; conditionally authoritative after Python parsing | Python accepts an exact string matching `[A-Za-z0-9][A-Za-z0-9._:-]{0,127}`; the TypeScript UUID vocabulary is a subset. Missing, null, non-string, whitespace, path-bearing, overlong, or conflicting `plan_id`/`id` aliases cannot reach a callback, command, result write, or success output. No coercion or normalization occurs. |
 | Actions | Loaded record or daemon payload | Current snapshot | TypeScript rechecks the loaded actions. Neither language can prove the actions match a prior confirmation version. |
 | `updatedAt` | Database/cache timestamp | Historical | It is not a revision and must not be used as one without an expected-value comparison contract. |
 | Execution results | Append-only per-action records | Historical execution evidence | They do not by themselves transition or reliably derive plan status. |
@@ -217,6 +217,7 @@ Adapters must evaluate before every protected boundary. An invalid, unavailable,
 - A Python local prompt cannot substitute for the persisted approval transition.
 - An `approved` plan with current `confirm` remains executable under the established Phase 2B behavior; Phase 2D does not add a second TypeScript lifecycle confirmation.
 - Python may retain its additional immediate plan/action prompts after lifecycle validation.
+- Python treats `requires_confirmation` and `requiresConfirmation` as protocol aliases: both must be exact booleans and must agree when both are present. Malformed falsey values cannot bypass the prompt.
 - The `terminal.run` proposal hash remains an action-level confirmation and is separate from lifecycle approval.
 - MCP nonce confirmation remains an operation-level transport gate, not proof of lifecycle approval.
 - Confirmation cannot override current block, revive terminal state, or authorize a different known plan identity.
@@ -242,6 +243,7 @@ An explicit block may be recorded from `planned`, `awaiting_confirmation`, `appr
 
 - `planned`, `awaiting_confirmation`, and `approved` may transition to `expired`.
 - An elapsed authoritative expiry prevents execution even if a sweep has not yet persisted the transition.
+- Expiry is elapsed when its instant is less than or equal to the controlled current instant in both languages.
 - Malformed Python expiry metadata must not be silently treated as unexpired when it is used for an execution decision.
 - `in_progress`, `blocked`, `completed`, and `failed` must not be rewritten to `expired` by an operation adapter.
 - Repeated expiry on `expired` is a no-op.
