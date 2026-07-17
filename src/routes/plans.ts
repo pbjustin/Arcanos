@@ -28,11 +28,81 @@ import { buildClear2Summary } from '../services/clear2.js';
 import { resolveErrorMessage } from '../lib/errors/index.js';
 import { getConfig } from '@platform/runtime/unifiedConfig.js';
 import { apiLogger } from '@platform/logging/structuredLogging.js';
-import type { ClearDecision, PlanStatus, ActionPlanRecord } from '@shared/types/actionPlan.js';
+import type { PlanStatus, ActionPlanRecord } from '@shared/types/actionPlan.js';
 import { acquireExecutionLock } from '../services/safety/executionLock.js';
 import { emitSafetyAuditEvent } from '../services/safety/auditEvents.js';
+import {
+  CLEAR_PUBLIC_ERRORS,
+  interpretClear2Outcome,
+  type ClearPublicError,
+} from '../services/clearDecision.js';
 
 const router = express.Router();
+
+function safeThrownClass(error: unknown): string {
+  try {
+    if (error instanceof TypeError) return 'TypeError';
+    if (error instanceof RangeError) return 'RangeError';
+    if (error instanceof SyntaxError) return 'SyntaxError';
+    if (error instanceof Error) return 'Error';
+    if (error === null) return 'ThrownNull';
+    if (error === undefined) return 'ThrownUndefined';
+    if (typeof error === 'string') return 'ThrownString';
+    if (typeof error === 'number') return 'ThrownNumber';
+    if (typeof error === 'boolean') return 'ThrownBoolean';
+    return 'ThrownObject';
+  } catch {
+    return 'ThrownValue';
+  }
+}
+
+function isUniqueConstraintError(error: unknown): boolean {
+  try {
+    if (error instanceof Error || typeof error === 'string') {
+      return resolveErrorMessage(error).includes('Unique constraint');
+    }
+    if (error && typeof error === 'object') {
+      const message = Reflect.get(error, 'message');
+      return typeof message === 'string' && message.includes('Unique constraint');
+    }
+  } catch {
+    // Error classification must never replace the stable failure response.
+  }
+  return false;
+}
+
+function logClearExecutionFailure(
+  req: Request,
+  failure: ClearPublicError,
+  params: {
+    operation: string;
+    dependency: string;
+    error?: unknown;
+    errorCaptured?: boolean;
+    outcomeReason?: string;
+    retryable: boolean;
+  },
+): void {
+  try {
+    apiLogger.error('CLEAR execution failed', {
+      module: 'plans',
+      errorCode: failure.code,
+      operation: params.operation,
+      dependency: params.dependency,
+      ...(params.errorCaptured || params.error !== undefined ? { errorClass: safeThrownClass(params.error) } : {}),
+      ...(params.outcomeReason ? { outcomeReason: params.outcomeReason } : {}),
+      requestId: req.requestId ?? 'unknown',
+      traceId: req.traceId ?? req.requestId ?? 'unknown',
+      retryable: params.retryable,
+    });
+  } catch {
+    // Diagnostics must not mask the stable public response.
+  }
+}
+
+function sendClearFailure(res: Response, failure: ClearPublicError): void {
+  res.status(failure.httpStatus).json({ error: failure.code, message: failure.message });
+}
 
 /**
  * POST /plans — Create a new ActionPlan
@@ -59,7 +129,7 @@ router.post('/plans', async (req: Request, res: Response) => {
     res.status(201).json(plan);
   } catch (error: unknown) {
     // Idempotency key conflict
-    if (resolveErrorMessage(error).includes('Unique constraint')) {
+    if (isUniqueConstraintError(error)) {
       res.status(409).json({ error: 'Plan with this idempotency_key already exists' });
       return;
     }
@@ -233,10 +303,74 @@ router.post('/plans/:planId/execute', async (req: Request, res: Response) => {
       return;
     }
 
-    // Re-evaluate CLEAR before execution
-    const clearRecheck = buildClear2Summary(buildClearRecheckInput(plan));
-    if (clearRecheck.decision === 'block') {
-      await blockPlan(plan.id);
+    // Re-evaluate CLEAR before execution.
+    let clearRecheck: unknown;
+    try {
+      clearRecheck = buildClear2Summary(buildClearRecheckInput(plan));
+    } catch (error) {
+      const failure = CLEAR_PUBLIC_ERRORS.evaluationUnavailable;
+      logClearExecutionFailure(req, failure, {
+        operation: 'plans.execute.clear_recheck',
+        dependency: 'clear2',
+        error,
+        errorCaptured: true,
+        retryable: true,
+      });
+      sendClearFailure(res, failure);
+      return;
+    }
+
+    const clearOutcome = interpretClear2Outcome(clearRecheck);
+    if (clearOutcome.kind === 'indeterminate') {
+      const failure = CLEAR_PUBLIC_ERRORS.evaluationUnavailable;
+      logClearExecutionFailure(req, failure, {
+        operation: 'plans.execute.clear_recheck',
+        dependency: 'clear2',
+        outcomeReason: clearOutcome.reason,
+        retryable: true,
+      });
+      sendClearFailure(res, failure);
+      return;
+    }
+    if (clearOutcome.kind === 'invalid') {
+      const failure = CLEAR_PUBLIC_ERRORS.resultInvalid;
+      logClearExecutionFailure(req, failure, {
+        operation: 'plans.execute.clear_recheck',
+        dependency: 'clear2',
+        outcomeReason: clearOutcome.reason,
+        retryable: false,
+      });
+      sendClearFailure(res, failure);
+      return;
+    }
+
+    if (clearOutcome.kind === 'block') {
+      let blockedPlan: ActionPlanRecord | null;
+      try {
+        blockedPlan = await blockPlan(plan.id);
+      } catch (error) {
+        const failure = CLEAR_PUBLIC_ERRORS.persistenceFailed;
+        logClearExecutionFailure(req, failure, {
+          operation: 'plans.execute.persist_block',
+          dependency: 'actionPlanStore',
+          error,
+          errorCaptured: true,
+          retryable: true,
+        });
+        sendClearFailure(res, failure);
+        return;
+      }
+      if (!blockedPlan) {
+        const failure = CLEAR_PUBLIC_ERRORS.persistenceFailed;
+        logClearExecutionFailure(req, failure, {
+          operation: 'plans.execute.persist_block',
+          dependency: 'actionPlanStore',
+          outcomeReason: 'missing_persistence_result',
+          retryable: true,
+        });
+        sendClearFailure(res, failure);
+        return;
+      }
       res.status(403).json({ error: 'CLEAR re-evaluation blocked this plan', clearScore: clearRecheck });
       return;
     }
@@ -258,25 +392,77 @@ router.post('/plans/:planId/execute', async (req: Request, res: Response) => {
       return;
     }
 
-    let results: Awaited<ReturnType<typeof createExecutionResult>>[];
+    let results: Awaited<ReturnType<typeof createExecutionResult>>[] | undefined;
+    let persistenceFailed = false;
+    let persistenceError: unknown;
+    let releaseFailed = false;
+    let releaseError: unknown;
     try {
       // Dispatch: create execution results (actual execution is handled by agents)
-      const clearDecision = (plan.clearScore?.decision ?? 'block') as ClearDecision;
       results = await Promise.all(
-        plan.actions.map(action => createExecutionResult(plan.id, action.id, action.agentId, 'success', clearDecision))
+        plan.actions.map(action => createExecutionResult(plan.id, action.id, action.agentId, 'success', clearOutcome.decision))
       );
+    } catch (error) {
+      persistenceFailed = true;
+      persistenceError = error;
     } finally {
-      await lock.release();
+      try {
+        await lock.release();
+      } catch (error) {
+        releaseFailed = true;
+        releaseError = error;
+      }
+    }
+
+    if (releaseFailed) {
+      const failure = CLEAR_PUBLIC_ERRORS.operationFailed;
+      logClearExecutionFailure(req, failure, {
+        operation: 'plans.execute.release_lock',
+        dependency: 'executionLock',
+        error: releaseError,
+        errorCaptured: true,
+        retryable: true,
+      });
+    }
+
+    if (persistenceFailed) {
+      if (isUniqueConstraintError(persistenceError)) {
+        res.status(409).json({ error: 'Actions already executed (replay protection)' });
+        return;
+      }
+      const failure = CLEAR_PUBLIC_ERRORS.persistenceFailed;
+      logClearExecutionFailure(req, failure, {
+        operation: 'plans.execute.persist_results',
+        dependency: 'actionPlanStore',
+        error: persistenceError,
+        errorCaptured: true,
+        retryable: true,
+      });
+      sendClearFailure(res, failure);
+      return;
+    }
+
+    if (releaseFailed) {
+      const failure = CLEAR_PUBLIC_ERRORS.operationFailed;
+      sendClearFailure(res, failure);
+      return;
     }
 
     res.json({ plan_id: plan.id, status: 'executed', results });
   } catch (error: unknown) {
-    if (resolveErrorMessage(error).includes('Unique constraint')) {
+    if (isUniqueConstraintError(error)) {
       res.status(409).json({ error: 'Actions already executed (replay protection)' });
       return;
     }
-    apiLogger.error('Execute failed', { module: 'plans', error: resolveErrorMessage(error) });
-    sendInternalErrorCode(res, 'Failed to execute plan');
+    const failure = CLEAR_PUBLIC_ERRORS.operationFailed;
+    logClearExecutionFailure(req, failure, {
+      operation: 'plans.execute',
+      dependency: 'operation',
+      error,
+      errorCaptured: true,
+      retryable: false,
+    });
+    sendClearFailure(res, failure);
   }
 });
 

@@ -492,7 +492,7 @@ describe('reusable-code audit: HTTP and MCP CLEAR recheck payload parity', () =>
     expect(acquireExecutionLockMock).not.toHaveBeenCalled();
   });
 
-  it('characterizes successful HTTP and MCP persistence, including the stored null CLEAR default', async () => {
+  it('preserves Phase 1 payload parity while persisting the authoritative current recheck decision', async () => {
     const plan = buildPlan(null);
     const allowSummary = {
       ...blockedClearSummary,
@@ -532,14 +532,14 @@ describe('reusable-code audit: HTTP and MCP CLEAR recheck payload parity', () =>
         actionId: 'action-b',
         agentId: 'agent-shared',
         status: 'success',
-        clearDecision: 'block',
+        clearDecision: 'allow',
       },
       {
         planId: plan.id,
         actionId: 'action-a',
         agentId: 'agent-shared',
         status: 'success',
-        clearDecision: 'block',
+        clearDecision: 'allow',
       },
     ];
 
@@ -560,10 +560,10 @@ describe('reusable-code audit: HTTP and MCP CLEAR recheck payload parity', () =>
       .toEqual(buildClear2SummaryMock.mock.calls[1]?.[0]);
     expect(blockPlanMock).not.toHaveBeenCalled();
     expect(createExecutionResultMock.mock.calls).toEqual([
-      [plan.id, 'action-b', 'agent-shared', 'success', 'block'],
-      [plan.id, 'action-a', 'agent-shared', 'success', 'block'],
-      [plan.id, 'action-b', 'agent-shared', 'success', 'block'],
-      [plan.id, 'action-a', 'agent-shared', 'success', 'block'],
+      [plan.id, 'action-b', 'agent-shared', 'success', 'allow'],
+      [plan.id, 'action-a', 'agent-shared', 'success', 'allow'],
+      [plan.id, 'action-b', 'agent-shared', 'success', 'allow'],
+      [plan.id, 'action-a', 'agent-shared', 'success', 'allow'],
     ]);
     expect(acquireExecutionLockMock.mock.calls).toEqual([
       [`policy-task:${plan.id}`],
@@ -573,7 +573,7 @@ describe('reusable-code audit: HTTP and MCP CLEAR recheck payload parity', () =>
     expect(emitSafetyAuditEventMock).not.toHaveBeenCalled();
   });
 
-  it('characterizes block-persistence failure as HTTP 500 versus MCP ERR_INTERNAL', async () => {
+  it('preserves protocol envelopes while sanitizing block-persistence failures', async () => {
     const plan = buildPlan(null);
     const persistenceError = new Error('characterization persistence unavailable');
 
@@ -587,16 +587,18 @@ describe('reusable-code audit: HTTP and MCP CLEAR recheck payload parity', () =>
 
     expect(httpResponse.status).toBe(500);
     expect(httpResponse.body).toEqual({
-      error: 'Failed to execute plan',
+      error: 'CLEAR_PERSISTENCE_FAILED',
+      message: 'CLEAR decision persistence failed.',
     });
     expect(mcpExecution.output).toEqual(expect.objectContaining({
       isError: true,
       structuredContent: {
         error: {
           code: 'ERR_INTERNAL',
-          message: persistenceError.message,
+          message: 'CLEAR decision persistence failed.',
           details: {
             tool: 'plans.execute',
+            category: 'CLEAR_PERSISTENCE_FAILED',
           },
           requestId: 'reusable-audit-mcp-request',
         },
@@ -605,19 +607,33 @@ describe('reusable-code audit: HTTP and MCP CLEAR recheck payload parity', () =>
     expect(buildClear2SummaryMock).toHaveBeenCalledTimes(2);
     expect(blockPlanMock.mock.calls).toEqual([[plan.id], [plan.id]]);
     expect(apiLoggerErrorMock).toHaveBeenCalledWith(
-      'Execute failed',
-      {
-        module: 'plans',
-        error: persistenceError.message,
-      },
-    );
-    expect(mcpExecution.context.logger.error).toHaveBeenCalledWith(
-      'mcp.tool.error',
+      'CLEAR execution failed',
       expect.objectContaining({
-        tool: 'plans.execute',
-        message: persistenceError.message,
+        module: 'plans',
+        errorCode: 'CLEAR_PERSISTENCE_FAILED',
+        operation: 'plans.execute.persist_block',
+        dependency: 'actionPlanStore',
+        errorClass: 'Error',
+        retryable: true,
       }),
     );
+    expect(mcpExecution.context.logger.error).toHaveBeenCalledWith(
+      'mcp.clear.error',
+      expect.objectContaining({
+        tool: 'plans.execute',
+        errorCode: 'CLEAR_PERSISTENCE_FAILED',
+        operation: 'plans.execute.persist_block',
+        dependency: 'actionPlanStore',
+        errorClass: 'Error',
+        retryable: true,
+      }),
+    );
+    expect(JSON.stringify({
+      http: httpResponse.body,
+      mcp: mcpExecution.output,
+      httpLogs: apiLoggerErrorMock.mock.calls,
+      mcpLogs: mcpExecution.context.logger.error.mock.calls,
+    }).includes(persistenceError.message)).toBe(false);
     expect(createExecutionResultMock).not.toHaveBeenCalled();
     expect(acquireExecutionLockMock).not.toHaveBeenCalled();
   });

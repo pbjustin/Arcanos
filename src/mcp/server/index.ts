@@ -13,8 +13,13 @@ import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js
 import { runTrinity } from '@trinity/trinity.js';
 import { DEFAULT_FINE_TUNE } from '@config/openai.js';
 
-import { actionPlanInputSchema, type ActionPlanRecord, type ClearDecision } from '@shared/types/actionPlan.js';
+import { actionPlanInputSchema, type ActionPlanRecord } from '@shared/types/actionPlan.js';
 import { buildClear2Summary } from '@services/clear2.js';
+import {
+  CLEAR_PUBLIC_ERRORS,
+  interpretClear2Outcome,
+  type ClearPublicError,
+} from '@services/clearDecision.js';
 
 import {
   createPlan,
@@ -77,6 +82,71 @@ async function findMissingCapability(plan: ActionPlanRecord) {
     if (!hasCapability) return action;
   }
   return null;
+}
+
+function safeThrownClass(error: unknown): string {
+  try {
+    if (error instanceof TypeError) return 'TypeError';
+    if (error instanceof RangeError) return 'RangeError';
+    if (error instanceof SyntaxError) return 'SyntaxError';
+    if (error instanceof Error) return 'Error';
+    if (error === null) return 'ThrownNull';
+    if (error === undefined) return 'ThrownUndefined';
+    if (typeof error === 'string') return 'ThrownString';
+    if (typeof error === 'number') return 'ThrownNumber';
+    if (typeof error === 'boolean') return 'ThrownBoolean';
+    return 'ThrownObject';
+  } catch {
+    return 'ThrownValue';
+  }
+}
+
+interface ClearMcpFailureParams {
+  operation: string;
+  dependency: string;
+  error?: unknown;
+  errorCaptured?: boolean;
+  outcomeReason?: string;
+  retryable: boolean;
+}
+
+function logClearMcpFailure(
+  ctx: McpRequestContext,
+  tool: string,
+  failure: ClearPublicError,
+  params: ClearMcpFailureParams,
+): void {
+  try {
+    ctx.logger.error('mcp.clear.error', {
+      tool,
+      errorCode: failure.code,
+      operation: params.operation,
+      dependency: params.dependency,
+      ...(params.errorCaptured || params.error !== undefined ? { errorClass: safeThrownClass(params.error) } : {}),
+      ...(params.outcomeReason ? { outcomeReason: params.outcomeReason } : {}),
+      requestId: ctx.requestId,
+      traceId: ctx.traceId,
+      retryable: params.retryable,
+    });
+  } catch {
+    // Diagnostics must not mask the stable MCP result.
+  }
+}
+
+function clearMcpFailure(
+  ctx: McpRequestContext,
+  tool: string,
+  failure: ClearPublicError,
+  params: ClearMcpFailureParams,
+) {
+  logClearMcpFailure(ctx, tool, failure, params);
+
+  return mcpError({
+    code: 'ERR_INTERNAL',
+    message: failure.message,
+    details: { tool, category: failure.code },
+    requestId: ctx.requestId,
+  });
 }
 
 /** Build CLEAR 2.0 re-evaluation input from an existing plan record. */
@@ -236,7 +306,35 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
       inputSchema: actionPlanInputSchema,
     },
     wrapTool('clear.evaluate', ctx, async (args: any) => {
-      const summary = buildClear2Summary(args);
+      let summary: unknown;
+      try {
+        summary = buildClear2Summary(args);
+      } catch (error) {
+        return clearMcpFailure(ctx, 'clear.evaluate', CLEAR_PUBLIC_ERRORS.evaluationUnavailable, {
+          operation: 'clear.evaluate',
+          dependency: 'clear2',
+          error,
+          errorCaptured: true,
+          retryable: true,
+        });
+      }
+      const outcome = interpretClear2Outcome(summary);
+      if (outcome.kind === 'indeterminate') {
+        return clearMcpFailure(ctx, 'clear.evaluate', CLEAR_PUBLIC_ERRORS.evaluationUnavailable, {
+          operation: 'clear.evaluate',
+          dependency: 'clear2',
+          outcomeReason: outcome.reason,
+          retryable: true,
+        });
+      }
+      if (outcome.kind === 'invalid') {
+        return clearMcpFailure(ctx, 'clear.evaluate', CLEAR_PUBLIC_ERRORS.resultInvalid, {
+          operation: 'clear.evaluate',
+          dependency: 'clear2',
+          outcomeReason: outcome.reason,
+          retryable: false,
+        });
+      }
       return mcpText(summary);
     })
   );
@@ -408,9 +506,58 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
         });
       }
 
-      const clearRecheck = buildClear2Summary(buildClearRecheckInput(plan));
-      if (clearRecheck.decision === 'block') {
-        await blockPlan(plan.id);
+      let clearRecheck: unknown;
+      try {
+        clearRecheck = buildClear2Summary(buildClearRecheckInput(plan));
+      } catch (error) {
+        return clearMcpFailure(ctx, 'plans.execute', CLEAR_PUBLIC_ERRORS.evaluationUnavailable, {
+          operation: 'plans.execute.clear_recheck',
+          dependency: 'clear2',
+          error,
+          errorCaptured: true,
+          retryable: true,
+        });
+      }
+
+      const clearOutcome = interpretClear2Outcome(clearRecheck);
+      if (clearOutcome.kind === 'indeterminate') {
+        return clearMcpFailure(ctx, 'plans.execute', CLEAR_PUBLIC_ERRORS.evaluationUnavailable, {
+          operation: 'plans.execute.clear_recheck',
+          dependency: 'clear2',
+          outcomeReason: clearOutcome.reason,
+          retryable: true,
+        });
+      }
+      if (clearOutcome.kind === 'invalid') {
+        return clearMcpFailure(ctx, 'plans.execute', CLEAR_PUBLIC_ERRORS.resultInvalid, {
+          operation: 'plans.execute.clear_recheck',
+          dependency: 'clear2',
+          outcomeReason: clearOutcome.reason,
+          retryable: false,
+        });
+      }
+
+      if (clearOutcome.kind === 'block') {
+        let blockedPlan: ActionPlanRecord | null;
+        try {
+          blockedPlan = await blockPlan(plan.id);
+        } catch (error) {
+          return clearMcpFailure(ctx, 'plans.execute', CLEAR_PUBLIC_ERRORS.persistenceFailed, {
+            operation: 'plans.execute.persist_block',
+            dependency: 'actionPlanStore',
+            error,
+            errorCaptured: true,
+            retryable: true,
+          });
+        }
+        if (!blockedPlan) {
+          return clearMcpFailure(ctx, 'plans.execute', CLEAR_PUBLIC_ERRORS.persistenceFailed, {
+            operation: 'plans.execute.persist_block',
+            dependency: 'actionPlanStore',
+            outcomeReason: 'missing_persistence_result',
+            retryable: true,
+          });
+        }
         return mcpError({
           code: 'ERR_GATED',
           message: 'CLEAR re-evaluation blocked this plan',
@@ -434,17 +581,56 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
         });
       }
 
+      let results: Awaited<ReturnType<typeof createExecutionResult>>[] | undefined;
+      let persistenceFailed = false;
+      let persistenceError: unknown;
+      let releaseFailed = false;
+      let releaseError: unknown;
       try {
-        const clearDecision = (plan.clearScore?.decision ?? 'block') as ClearDecision;
-        const results = await Promise.all(
-          plan.actions.map(action => createExecutionResult(plan.id, action.id, action.agentId, 'success', clearDecision) as any)
+        results = await Promise.all(
+          plan.actions.map(action => createExecutionResult(plan.id, action.id, action.agentId, 'success', clearOutcome.decision) as any)
         );
-        return mcpText({ plan_id: plan.id, status: 'executed', results });
+      } catch (error) {
+        persistenceFailed = true;
+        persistenceError = error;
       } finally {
         try {
-          await (lock as any)?.release?.();
-        } catch {}
+          await lock.release();
+        } catch (error) {
+          releaseFailed = true;
+          releaseError = error;
+        }
       }
+
+      if (persistenceFailed) {
+        if (releaseFailed) {
+          logClearMcpFailure(ctx, 'plans.execute', CLEAR_PUBLIC_ERRORS.operationFailed, {
+            operation: 'plans.execute.release_lock',
+            dependency: 'executionLock',
+            error: releaseError,
+            errorCaptured: true,
+            retryable: true,
+          });
+        }
+        return clearMcpFailure(ctx, 'plans.execute', CLEAR_PUBLIC_ERRORS.persistenceFailed, {
+          operation: 'plans.execute.persist_results',
+          dependency: 'actionPlanStore',
+          error: persistenceError,
+          errorCaptured: true,
+          retryable: true,
+        });
+      }
+      if (releaseFailed) {
+        return clearMcpFailure(ctx, 'plans.execute', CLEAR_PUBLIC_ERRORS.operationFailed, {
+          operation: 'plans.execute.release_lock',
+          dependency: 'executionLock',
+          error: releaseError,
+          errorCaptured: true,
+          retryable: true,
+        });
+      }
+
+      return mcpText({ plan_id: plan.id, status: 'executed', results });
     })
   );
 

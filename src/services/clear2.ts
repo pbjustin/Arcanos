@@ -11,6 +11,7 @@
  */
 
 import type { ClearDecision, ClearScore, ActionDefinition } from '@shared/types/actionPlan.js';
+import { CLEAR2_DECISION_THRESHOLDS } from './clearDecision.js';
 
 // --- Types ---
 
@@ -59,8 +60,7 @@ const DEFAULT_WEIGHTS: Clear2Weights = {
 };
 
 const DEFAULT_THRESHOLDS: Clear2Thresholds = {
-  allowMinimum: 0.70,
-  confirmMinimum: 0.40
+  ...CLEAR2_DECISION_THRESHOLDS
 };
 
 // --- Weight Normalization ---
