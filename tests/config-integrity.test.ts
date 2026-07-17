@@ -11,6 +11,10 @@ import {
   releaseQuarantine,
   resetSafetyRuntimeStateForTests
 } from '../src/services/safety/runtimeState.js';
+import {
+  getTelemetrySnapshot,
+  resetTelemetry
+} from '../src/platform/logging/telemetry.js';
 
 function stableSerialize(value: unknown): string {
   if (Array.isArray(value)) {
@@ -35,16 +39,48 @@ describe('config integrity safety', () => {
 
   beforeEach(() => {
     resetSafetyRuntimeStateForTests();
+    resetTelemetry();
     delete process.env[expectedHashEnvName];
   });
 
   afterAll(() => {
     resetSafetyRuntimeStateForTests();
+    resetTelemetry();
     if (originalExpectedHash === undefined) {
       delete process.env[expectedHashEnvName];
     } else {
       process.env[expectedHashEnvName] = originalExpectedHash;
     }
+  });
+
+  it.each([
+    '/app/config/protected.json',
+    'C:\\runtime\\config\\protected.json',
+    '\\\\runtime-host\\config\\protected.json',
+    'file:///app/config/protected.json'
+  ])('keeps absolute source %s out of integrity logs, traces, and quarantine metadata', absoluteSource => {
+    const payload = { mode: 'strict', priority: 10 };
+    process.env[expectedHashEnvName] = '0'.repeat(64);
+
+    expect(() =>
+      assertProtectedConfigIntegrity('protected_json_file', payload, {
+        source: absoluteSource,
+        schemaOverride: z.object({
+          mode: z.string(),
+          priority: z.number()
+        })
+      })
+    ).toThrow(IntegrityValidationError);
+
+    const quarantine = getActiveQuarantines('integrity')[0];
+    expect(quarantine.metadata?.source).toBe('protected-config:protected_json_file');
+
+    const observableState = JSON.stringify({
+      quarantine,
+      telemetry: getTelemetrySnapshot().traces
+    });
+    expect(observableState).not.toContain(absoluteSource);
+    expect(observableState).toContain('protected-config:protected_json_file');
   });
 
   it('accepts payload when schema and expected hash are valid', () => {

@@ -9,7 +9,6 @@ import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { logger } from "@platform/logging/structuredLogging.js";
 import { APPLICATION_CONSTANTS } from "@shared/constants.js";
-import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { assertProtectedConfigIntegrity } from "@services/safety/configIntegrity.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -77,6 +76,7 @@ const TRINITY_MESSAGES_DEFAULTS: TrinityMessages = {
 };
 
 let promptsConfig: PromptsConfig | null = null;
+const PROMPTS_CONFIG_SOURCE = 'protected-config:prompts_config';
 
 const CONFIG_SEARCH_PATHS = [
   join(process.cwd(), 'config', 'prompts.json'),
@@ -198,7 +198,7 @@ function loadPromptsConfig(): PromptsConfig {
     const configData = readFileSync(configPath, 'utf-8');
     const parsedConfig = JSON.parse(configData) as PromptsConfig;
     assertProtectedConfigIntegrity('prompts_config', parsedConfig, {
-      source: configPath
+      source: PROMPTS_CONFIG_SOURCE
     });
     promptsConfig = parsedConfig;
 
@@ -206,7 +206,7 @@ function loadPromptsConfig(): PromptsConfig {
       module: 'prompts',
       operation: 'loadConfig',
       sectionsLoaded: promptsConfig ? Object.keys(promptsConfig).length : 0,
-      configPath
+      configSource: PROMPTS_CONFIG_SOURCE
     });
 
      
@@ -215,7 +215,12 @@ function loadPromptsConfig(): PromptsConfig {
     logger.error('Failed to load prompts configuration', {
       module: 'prompts',
       operation: 'loadConfig',
-      error: resolveErrorMessage(error)
+      errorCode: 'PROMPTS_CONFIG_LOAD_FAILED',
+      errorClass: error instanceof SyntaxError
+        ? 'SyntaxError'
+        : error instanceof Error
+          ? 'Error'
+          : 'ThrownValue'
     });
 
     // Cache and return fallback configuration to prevent repeated failures

@@ -43,6 +43,18 @@ function computeIntegrityHash(value: unknown): string {
   return createHash('sha256').update(stableSerialize(value)).digest('hex');
 }
 
+function normalizeIntegritySource(protectedId: ProtectedConfigId, source: string): string {
+  const normalizedSource = source.trim();
+  const isAbsoluteFilesystemSource =
+    normalizedSource.startsWith('file:') ||
+    /^[\\/]/u.test(normalizedSource) ||
+    /^[A-Za-z]:[\\/]/u.test(normalizedSource);
+
+  return isAbsoluteFilesystemSource
+    ? `protected-config:${protectedId}`
+    : normalizedSource || `protected-config:${protectedId}`;
+}
+
 function ensureSchema(
   schema: z.ZodType<unknown> | ((value: unknown) => boolean),
   payload: unknown
@@ -152,13 +164,14 @@ export function assertProtectedConfigIntegrity(
   if (!entry) {
     throw new Error(`Unknown integrity protected id: ${protectedId}`);
   }
+  const source = normalizeIntegritySource(protectedId, options.source);
 
   try {
     ensureSchema(options.schemaOverride || entry.schema, payload);
   } catch (error) {
     return quarantineIntegrityFailure(
       protectedId,
-      options.source,
+      source,
       error instanceof Error ? error.message : String(error)
     );
   }
@@ -175,7 +188,7 @@ export function assertProtectedConfigIntegrity(
         severity: 'warn',
         details: {
           protectedId,
-          source: options.source,
+          source,
           hash: actualHash
         }
       });
@@ -185,7 +198,7 @@ export function assertProtectedConfigIntegrity(
     if (config.safety.failClosedIntegrity) {
       return quarantineIntegrityFailure(
         protectedId,
-        options.source,
+        source,
         'Missing expected hash baseline in fail-closed mode'
       );
     }
@@ -194,7 +207,7 @@ export function assertProtectedConfigIntegrity(
   if (expectedHash && actualHash !== expectedHash) {
     return quarantineIntegrityFailure(
       protectedId,
-      options.source,
+      source,
       'Hash mismatch',
       expectedHash,
       actualHash
@@ -207,7 +220,7 @@ export function assertProtectedConfigIntegrity(
     severity: 'info',
     details: {
       protectedId,
-      source: options.source,
+      source,
       hash: actualHash
     }
   });
@@ -251,4 +264,3 @@ export function verifyIntegrityManifestConfiguration(): void {
   });
   throw new Error(message);
 }
-
