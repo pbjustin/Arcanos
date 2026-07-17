@@ -236,7 +236,12 @@ def handle_daemon_command(self, command: DaemonCommand) -> None:
     """
     command_name = command.name
     command_payload = command.payload or {}
-    self._append_activity("command", f"{command_name}: {command_payload}")
+    activity_detail = (
+        command_name
+        if command_name == "action_plan"
+        else f"{command_name}: {command_payload}"
+    )
+    self._append_activity("command", activity_detail)
 
     if command_name == "ping":
         # //audit assumption: ping should always succeed; risk: none; invariant: ok response; strategy: return pong payload.

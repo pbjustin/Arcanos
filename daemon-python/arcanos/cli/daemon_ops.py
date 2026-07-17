@@ -210,7 +210,12 @@ def handle_daemon_command(cli: "ArcanosCLI", command: DaemonCommand) -> None:
     """
     command_name = command.name
     command_payload = command.payload or {}
-    cli._append_activity("command", f"{command_name}: {command_payload}")
+    activity_detail = (
+        command_name
+        if command_name == "action_plan"
+        else f"{command_name}: {command_payload}"
+    )
+    cli._append_activity("command", activity_detail)
 
     if command_name == "ping":
         pass

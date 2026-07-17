@@ -39,9 +39,17 @@ def handle_action_plan(
     """
     try:
         plan = ActionPlan.from_dict(plan_data)
-    except Exception as exc:
-        error_logger.error("[ACTION_PLAN] Failed to parse plan: %s", exc)
+    except Exception:
+        error_logger.error("[ACTION_PLAN] Failed to parse plan")
         console.print("[red]Failed to parse ActionPlan[/red]")
+        return
+
+    # Missing or invalid CLEAR evidence is not an implicit allow or block.
+    if plan.clear_decision is None:
+        error_logger.error(
+            "[ACTION_PLAN] CLEAR decision unavailable; execution suppressed"
+        )
+        console.print("[red]ActionPlan has no authoritative CLEAR decision[/red]")
         return
 
     # Guard: blocked plans never execute
@@ -87,7 +95,10 @@ def _reject_plan(
         f"[red]ActionPlan {plan.plan_id} BLOCKED by CLEAR 2.0[/red]"
     )
     if plan.clear_score:
-        console.print(f"  Overall: {plan.clear_score.overall:.3f} → BLOCK")
+        if plan.clear_score.overall is None:
+            console.print("  Overall: unavailable → BLOCK")
+        else:
+            console.print(f"  Overall: {plan.clear_score.overall:.3f} → BLOCK")
         if plan.clear_score.notes:
             console.print(f"  Notes: {plan.clear_score.notes}")
 
@@ -139,9 +150,10 @@ def _show_clear_summary(plan: ActionPlan, console: "Console") -> None:
     # Overall + decision
     decision = score.decision.upper()
     decision_color = "green" if decision == "ALLOW" else "yellow" if decision == "CONFIRM" else "red"
+    overall = "unavailable" if score.overall is None else f"{score.overall:.3f}"
     table.add_row(
         "[bold]Overall[/bold]",
-        f"[bold {decision_color}]{score.overall:.3f} → {decision}[/bold {decision_color}]",
+        f"[bold {decision_color}]{overall} → {decision}[/bold {decision_color}]",
     )
 
     console.print(table)
