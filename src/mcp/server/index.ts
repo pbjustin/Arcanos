@@ -20,6 +20,15 @@ import {
   interpretClear2Outcome,
   type ClearPublicError,
 } from '@services/clearDecision.js';
+import {
+  actionPlanLifecyclePublicCategory,
+  classifyActionPlanExpiry,
+  evaluateActionPlanLifecycle,
+  isActionPlanLifecycleStatus,
+  type ActionPlanLifecycleOperation,
+  type ActionPlanPolicyProvenance,
+  type ActionPlanLifecycleResult,
+} from '@services/actionPlanLifecycle.js';
 
 import {
   createPlan,
@@ -145,6 +154,161 @@ function clearMcpFailure(
     code: 'ERR_INTERNAL',
     message: failure.message,
     details: { tool, category: failure.code },
+    requestId: ctx.requestId,
+  });
+}
+
+function storedPolicyKind(plan: ActionPlanRecord): unknown {
+  return plan.clearScore?.decision ?? 'not_evaluated';
+}
+
+function evaluateStoredPlanLifecycle(
+  plan: ActionPlanRecord,
+  operation: ActionPlanLifecycleOperation,
+): ActionPlanLifecycleResult {
+  return evaluateActionPlanLifecycle({
+    operation,
+    statusPresent: Object.hasOwn(plan, 'status'),
+    status: plan.status,
+    policyKind: operation === 'block' || operation === 'expire' ? 'not_evaluated' : storedPolicyKind(plan),
+    policyProvenance: operation === 'block' || operation === 'expire' ? 'operator' : 'stored_creation',
+    expiry: classifyActionPlanExpiry(plan.expiresAt, Date.now()),
+  });
+}
+
+function storedPolicyProvenance(
+  operation: ActionPlanLifecycleOperation,
+): ActionPlanPolicyProvenance {
+  return operation === 'block' || operation === 'expire' ? 'operator' : 'stored_creation';
+}
+
+function logLifecycleDecision(
+  ctx: McpRequestContext,
+  tool: string,
+  planId: string,
+  operation: ActionPlanLifecycleOperation,
+  lifecycle: ActionPlanLifecycleResult,
+  status: unknown,
+  policyProvenance: ActionPlanPolicyProvenance,
+): void {
+  const accepted = lifecycle.operationAllowed || lifecycle.policyRecheckAllowed;
+  const metadata = {
+    tool,
+    planId,
+    previousState: isActionPlanLifecycleStatus(status) ? status : null,
+    operation,
+    targetState: lifecycle.targetStatus,
+    outcome: lifecycle.classification,
+    reasonCode: lifecycle.reasonCode,
+    ...(!accepted ? { category: actionPlanLifecyclePublicCategory(lifecycle) } : {}),
+    policyProvenance,
+    requestId: ctx.requestId,
+    traceId: ctx.traceId,
+    actorCategory: 'mcp',
+    versionSupport: 'unavailable',
+  };
+  try {
+    if (accepted) {
+      ctx.logger.info('mcp.action_plan.lifecycle', metadata);
+    } else {
+      ctx.logger.warn('mcp.action_plan.lifecycle', metadata);
+    }
+  } catch {
+    // Lifecycle diagnostics must never alter the tool result.
+  }
+}
+
+function logLifecycleWriteFailure(
+  ctx: McpRequestContext,
+  tool: string,
+  planId: string,
+  reasonCode: string,
+): void {
+  try {
+    ctx.logger.warn('mcp.action_plan.lifecycle_write', {
+      tool,
+      planId,
+      errorCode: 'ACTION_PLAN_STATE_WRITE_FAILED',
+      reasonCode,
+      requestId: ctx.requestId,
+      traceId: ctx.traceId,
+      retryable: true,
+    });
+  } catch {
+    // Diagnostics must never alter the tool result.
+  }
+}
+
+function lifecycleWriteMcpFailure(
+  ctx: McpRequestContext,
+  tool: string,
+  planId: string,
+  reasonCode: string,
+) {
+  logLifecycleWriteFailure(ctx, tool, planId, reasonCode);
+  return mcpError({
+    code: 'ERR_INTERNAL',
+    message: 'MCP operation failed.',
+    details: { tool, category: 'MCP_OPERATION_FAILED' },
+    requestId: ctx.requestId,
+  });
+}
+
+function lifecycleFailureMessage(
+  operation: ActionPlanLifecycleOperation,
+  lifecycle: ActionPlanLifecycleResult,
+  status: unknown,
+): string {
+  if (operation === 'execute' && lifecycle.reasonCode === 'lifecycle_blocked') {
+    return 'Cannot execute blocked plan';
+  }
+  if (operation === 'execute' && lifecycle.reasonCode === 'stored_policy_conflict') {
+    return 'Cannot execute blocked plan';
+  }
+  if (operation === 'execute'
+    && (lifecycle.reasonCode === 'approval_required'
+      || lifecycle.reasonCode === 'durable_approval_required')) {
+    return isActionPlanLifecycleStatus(status)
+      ? `Plan must be approved before execution (current: ${status})`
+      : 'Plan must be approved before execution';
+  }
+  if (operation === 'approve' && lifecycle.classification === 'policy_blocked') {
+    return 'Cannot approve blocked plan';
+  }
+  if (lifecycle.classification === 'terminal') {
+    return `Cannot ${operation} a terminal plan`;
+  }
+  if (lifecycle.classification === 'unavailable') {
+    return 'ActionPlan lifecycle state is unavailable';
+  }
+  if (lifecycle.classification === 'invalid') {
+    return 'ActionPlan lifecycle state is invalid';
+  }
+  return isActionPlanLifecycleStatus(status)
+    ? `Cannot ${operation} plan in ${status} status`
+    : `Cannot ${operation} plan in its current status`;
+}
+
+function lifecycleMcpFailure(
+  ctx: McpRequestContext,
+  tool: string,
+  operation: ActionPlanLifecycleOperation,
+  lifecycle: ActionPlanLifecycleResult,
+  planId: string,
+  status: unknown,
+  policyProvenance: ActionPlanPolicyProvenance,
+) {
+  logLifecycleDecision(ctx, tool, planId, operation, lifecycle, status, policyProvenance);
+  return mcpError({
+    code: 'ERR_GATED',
+    message: lifecycleFailureMessage(operation, lifecycle, status),
+    details: {
+      tool,
+      planId,
+      category: actionPlanLifecyclePublicCategory(lifecycle),
+      reasonCode: lifecycle.reasonCode,
+      ...(isActionPlanLifecycleStatus(status) ? { status } : {}),
+    },
     requestId: ctx.requestId,
   });
 }
@@ -404,7 +568,53 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
       const gate = requireNonceOrIssue(args, 'plans.approve', ctx, stripConfirmationFields(args));
       if (!gate.ok) return gate.error;
 
+      const existing = await getPlan(args.planId);
+      if (!existing) {
+        return mcpError({ code: 'ERR_NOT_FOUND', message: 'Plan not found', details: { planId: args.planId }, requestId: ctx.requestId });
+      }
+
+      const lifecycle = evaluateStoredPlanLifecycle(existing, 'approve');
+      if (!lifecycle.operationAllowed || !lifecycle.statusTransitionAllowed) {
+        return lifecycleMcpFailure(
+          ctx,
+          'plans.approve',
+          'approve',
+          lifecycle,
+          existing.id,
+          existing.status,
+          storedPolicyProvenance('approve'),
+        );
+      }
+      logLifecycleDecision(
+        ctx,
+        'plans.approve',
+        existing.id,
+        'approve',
+        lifecycle,
+        existing.status,
+        storedPolicyProvenance('approve'),
+      );
+
       const plan = await approvePlan(args.planId);
+      if (!plan) {
+        logLifecycleWriteFailure(
+          ctx,
+          'plans.approve',
+          existing.id,
+          'state_changed_before_write',
+        );
+        return mcpError({
+          code: 'ERR_GATED',
+          message: 'ActionPlan state changed before approval',
+          details: {
+            tool: 'plans.approve',
+            planId: existing.id,
+            category: 'ACTION_PLAN_TRANSITION_FORBIDDEN',
+            reasonCode: 'state_changed_before_write',
+          },
+          requestId: ctx.requestId,
+        });
+      }
       return mcpText(plan);
     })
   );
@@ -428,7 +638,45 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
       const gate = requireNonceOrIssue(args, 'plans.block', ctx, stripConfirmationFields(args));
       if (!gate.ok) return gate.error;
 
+      const existing = await getPlan(args.planId);
+      if (!existing) {
+        return mcpError({ code: 'ERR_NOT_FOUND', message: 'Plan not found', details: { planId: args.planId }, requestId: ctx.requestId });
+      }
+
+      const lifecycle = evaluateStoredPlanLifecycle(existing, 'block');
+      if (!lifecycle.operationAllowed) {
+        return lifecycleMcpFailure(
+          ctx,
+          'plans.block',
+          'block',
+          lifecycle,
+          existing.id,
+          existing.status,
+          storedPolicyProvenance('block'),
+        );
+      }
+      logLifecycleDecision(
+        ctx,
+        'plans.block',
+        existing.id,
+        'block',
+        lifecycle,
+        existing.status,
+        storedPolicyProvenance('block'),
+      );
+      if (!lifecycle.statusTransitionAllowed) {
+        return mcpText(existing);
+      }
+
       const plan = await blockPlan(args.planId);
+      if (!plan) {
+        return lifecycleWriteMcpFailure(
+          ctx,
+          'plans.block',
+          existing.id,
+          'missing_write_result',
+        );
+      }
       return mcpText(plan);
     })
   );
@@ -451,7 +699,45 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
       const gate = requireNonceOrIssue(args, 'plans.expire', ctx, stripConfirmationFields(args));
       if (!gate.ok) return gate.error;
 
+      const existing = await getPlan(args.planId);
+      if (!existing) {
+        return mcpError({ code: 'ERR_NOT_FOUND', message: 'Plan not found', details: { planId: args.planId }, requestId: ctx.requestId });
+      }
+
+      const lifecycle = evaluateStoredPlanLifecycle(existing, 'expire');
+      if (!lifecycle.operationAllowed) {
+        return lifecycleMcpFailure(
+          ctx,
+          'plans.expire',
+          'expire',
+          lifecycle,
+          existing.id,
+          existing.status,
+          storedPolicyProvenance('expire'),
+        );
+      }
+      logLifecycleDecision(
+        ctx,
+        'plans.expire',
+        existing.id,
+        'expire',
+        lifecycle,
+        existing.status,
+        storedPolicyProvenance('expire'),
+      );
+      if (!lifecycle.statusTransitionAllowed) {
+        return mcpText(existing);
+      }
+
       const plan = await expirePlan(args.planId);
+      if (!plan) {
+        return lifecycleWriteMcpFailure(
+          ctx,
+          'plans.expire',
+          existing.id,
+          'missing_write_result',
+        );
+      }
       return mcpText(plan);
     })
   );
@@ -479,22 +765,27 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
         return mcpError({ code: 'ERR_NOT_FOUND', message: 'Plan not found', details: { planId: args.planId }, requestId: ctx.requestId });
       }
 
-      if (plan.status === 'blocked' || plan.clearScore?.decision === 'block') {
-        return mcpError({
-          code: 'ERR_GATED',
-          message: 'Cannot execute blocked plan',
-          details: { planId: plan.id, status: plan.status, clearDecision: plan.clearScore?.decision },
-          requestId: ctx.requestId,
-        });
+      const lifecyclePreflight = evaluateStoredPlanLifecycle(plan, 'execute');
+      if (!lifecyclePreflight.policyRecheckAllowed) {
+        return lifecycleMcpFailure(
+          ctx,
+          'plans.execute',
+          'execute',
+          lifecyclePreflight,
+          plan.id,
+          plan.status,
+          storedPolicyProvenance('execute'),
+        );
       }
-      if (plan.status !== 'approved') {
-        return mcpError({
-          code: 'ERR_GATED',
-          message: `Plan must be approved before execution (current: ${plan.status})`,
-          details: { planId: plan.id, status: plan.status },
-          requestId: ctx.requestId,
-        });
-      }
+      logLifecycleDecision(
+        ctx,
+        'plans.execute',
+        plan.id,
+        'execute',
+        lifecyclePreflight,
+        plan.status,
+        storedPolicyProvenance('execute'),
+      );
 
       const missingAction = await findMissingCapability(plan);
       if (missingAction) {
@@ -537,7 +828,36 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
         });
       }
 
+      const currentLifecycle = evaluateActionPlanLifecycle({
+        operation: clearOutcome.kind === 'block' ? 'block' : 'execute',
+        statusPresent: Object.hasOwn(plan, 'status'),
+        status: plan.status,
+        policyKind: clearOutcome.decision,
+        policyProvenance: 'current_recheck',
+        expiry: classifyActionPlanExpiry(plan.expiresAt, Date.now()),
+      });
+
       if (clearOutcome.kind === 'block') {
+        if (!currentLifecycle.operationAllowed || !currentLifecycle.statusTransitionAllowed) {
+          return lifecycleMcpFailure(
+            ctx,
+            'plans.execute',
+            'block',
+            currentLifecycle,
+            plan.id,
+            plan.status,
+            'current_recheck',
+          );
+        }
+        logLifecycleDecision(
+          ctx,
+          'plans.execute',
+          plan.id,
+          'block',
+          currentLifecycle,
+          plan.status,
+          'current_recheck',
+        );
         let blockedPlan: ActionPlanRecord | null;
         try {
           blockedPlan = await blockPlan(plan.id);
@@ -561,10 +881,34 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
         return mcpError({
           code: 'ERR_GATED',
           message: 'CLEAR re-evaluation blocked this plan',
-          details: { planId: plan.id, clearRecheck },
+          details: {
+            planId: plan.id,
+            clearRecheck,
+          },
           requestId: ctx.requestId,
         });
       }
+
+      if (!currentLifecycle.operationAllowed) {
+        return lifecycleMcpFailure(
+          ctx,
+          'plans.execute',
+          'execute',
+          currentLifecycle,
+          plan.id,
+          plan.status,
+          'current_recheck',
+        );
+      }
+      logLifecycleDecision(
+        ctx,
+        'plans.execute',
+        plan.id,
+        'execute',
+        currentLifecycle,
+        plan.status,
+        'current_recheck',
+      );
 
       const lock = await acquireExecutionLock(`policy-task:${plan.id}`);
       if (!lock) {

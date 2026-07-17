@@ -36,6 +36,15 @@ import {
   interpretClear2Outcome,
   type ClearPublicError,
 } from '../services/clearDecision.js';
+import {
+  actionPlanLifecyclePublicCategory,
+  classifyActionPlanExpiry,
+  evaluateActionPlanLifecycle,
+  isActionPlanLifecycleStatus,
+  type ActionPlanLifecycleOperation,
+  type ActionPlanPolicyProvenance,
+  type ActionPlanLifecycleResult,
+} from '../services/actionPlanLifecycle.js';
 
 const router = express.Router();
 
@@ -100,8 +109,168 @@ function logClearExecutionFailure(
   }
 }
 
+function logActionPlanMutationFailure(
+  req: Request,
+  operation: 'approve' | 'block' | 'expire',
+  error: unknown,
+): void {
+  try {
+    apiLogger.error('ActionPlan mutation failed', {
+      module: 'plans',
+      planId: req.params.planId,
+      operation,
+      errorCode: 'ACTION_PLAN_OPERATION_FAILED',
+      errorClass: safeThrownClass(error),
+      requestId: req.requestId ?? 'unknown',
+      traceId: req.traceId ?? req.requestId ?? 'unknown',
+      retryable: true,
+    });
+  } catch {
+    // Diagnostics must not mask the stable public response.
+  }
+}
+
+function logLifecycleWriteFailure(
+  req: Request,
+  planId: string,
+  operation: 'approve' | 'block' | 'expire',
+  reasonCode: string,
+): void {
+  try {
+    apiLogger.warn('ActionPlan lifecycle write suppressed', {
+      module: 'plans',
+      planId,
+      operation,
+      errorCode: 'ACTION_PLAN_STATE_WRITE_FAILED',
+      reasonCode,
+      requestId: req.requestId ?? 'unknown',
+      traceId: req.traceId ?? req.requestId ?? 'unknown',
+      retryable: true,
+    });
+  } catch {
+    // Diagnostics must not mask the stable public response.
+  }
+}
+
 function sendClearFailure(res: Response, failure: ClearPublicError): void {
   res.status(failure.httpStatus).json({ error: failure.code, message: failure.message });
+}
+
+function storedPolicyKind(plan: ActionPlanRecord): unknown {
+  return plan.clearScore?.decision ?? 'not_evaluated';
+}
+
+function evaluateStoredPlanLifecycle(
+  plan: ActionPlanRecord,
+  operation: ActionPlanLifecycleOperation,
+): ActionPlanLifecycleResult {
+  return evaluateActionPlanLifecycle({
+    operation,
+    statusPresent: Object.hasOwn(plan, 'status'),
+    status: plan.status,
+    policyKind: operation === 'block' || operation === 'expire' ? 'not_evaluated' : storedPolicyKind(plan),
+    policyProvenance: operation === 'block' || operation === 'expire' ? 'operator' : 'stored_creation',
+    expiry: classifyActionPlanExpiry(plan.expiresAt, Date.now()),
+  });
+}
+
+function storedPolicyProvenance(
+  operation: ActionPlanLifecycleOperation,
+): ActionPlanPolicyProvenance {
+  return operation === 'block' || operation === 'expire' ? 'operator' : 'stored_creation';
+}
+
+function logLifecycleDecision(
+  req: Request,
+  planId: string,
+  operation: ActionPlanLifecycleOperation,
+  lifecycle: ActionPlanLifecycleResult,
+  status: unknown,
+  policyProvenance: ActionPlanPolicyProvenance,
+): void {
+  const accepted = lifecycle.operationAllowed || lifecycle.policyRecheckAllowed;
+  const metadata = {
+    module: 'plans',
+    planId,
+    previousState: isActionPlanLifecycleStatus(status) ? status : null,
+    operation,
+    targetState: lifecycle.targetStatus,
+    outcome: lifecycle.classification,
+    reasonCode: lifecycle.reasonCode,
+    ...(!accepted ? { category: actionPlanLifecyclePublicCategory(lifecycle) } : {}),
+    policyProvenance,
+    requestId: req.requestId ?? 'unknown',
+    traceId: req.traceId ?? req.requestId ?? 'unknown',
+    actorCategory: 'http',
+    versionSupport: 'unavailable',
+  };
+  try {
+    if (accepted) {
+      apiLogger.info('ActionPlan lifecycle evaluated', metadata);
+    } else {
+      apiLogger.warn('ActionPlan lifecycle evaluated', metadata);
+    }
+  } catch {
+    // Lifecycle diagnostics must never alter the operation result.
+  }
+}
+
+function lifecycleFailureMessage(
+  operation: ActionPlanLifecycleOperation,
+  lifecycle: ActionPlanLifecycleResult,
+  status: unknown,
+): string {
+  if (operation === 'execute' && lifecycle.reasonCode === 'lifecycle_blocked') {
+    return 'Cannot execute blocked plan';
+  }
+  if (operation === 'execute' && lifecycle.reasonCode === 'stored_policy_conflict') {
+    return 'Cannot execute blocked plan';
+  }
+  if (operation === 'execute'
+    && (lifecycle.reasonCode === 'approval_required'
+      || lifecycle.reasonCode === 'durable_approval_required')) {
+    return isActionPlanLifecycleStatus(status)
+      ? `Plan must be approved before execution, current status: ${status}`
+      : 'Plan must be approved before execution';
+  }
+  if (operation === 'approve' && lifecycle.classification === 'policy_blocked') {
+    return 'Cannot approve blocked plan';
+  }
+  if (lifecycle.classification === 'terminal') {
+    return `Cannot ${operation} a terminal plan`;
+  }
+  if (lifecycle.classification === 'unavailable') {
+    return 'ActionPlan lifecycle state is unavailable';
+  }
+  if (lifecycle.classification === 'invalid') {
+    return 'ActionPlan lifecycle state is invalid';
+  }
+  return isActionPlanLifecycleStatus(status)
+    ? `Cannot ${operation} plan in ${status} status`
+    : `Cannot ${operation} plan in its current status`;
+}
+
+function sendLifecycleFailure(
+  req: Request,
+  res: Response,
+  planId: string,
+  operation: ActionPlanLifecycleOperation,
+  lifecycle: ActionPlanLifecycleResult,
+  status: unknown,
+  policyProvenance: ActionPlanPolicyProvenance,
+): void {
+  logLifecycleDecision(req, planId, operation, lifecycle, status, policyProvenance);
+  const category = actionPlanLifecyclePublicCategory(lifecycle);
+  const httpStatus = category === 'ACTION_PLAN_POLICY_BLOCKED'
+    || lifecycle.reasonCode === 'stored_policy_conflict'
+    ? 403
+    : 409;
+  res.status(httpStatus).json({
+    error: lifecycleFailureMessage(operation, lifecycle, status),
+    category,
+    reasonCode: lifecycle.reasonCode,
+    ...(isActionPlanLifecycleStatus(status) ? { currentStatus: status } : {}),
+  });
 }
 
 /**
@@ -183,31 +352,47 @@ router.get('/plans/:planId', async (req: Request, res: Response) => {
  */
 router.post('/plans/:planId/approve', async (req: Request, res: Response) => {
   try {
+    const existing = await getPlan(req.params.planId);
+    if (!existing) {
+      sendNotFound(res, 'Plan not found');
+      return;
+    }
+
+    const lifecycle = evaluateStoredPlanLifecycle(existing, 'approve');
+    if (!lifecycle.operationAllowed || !lifecycle.statusTransitionAllowed) {
+      sendLifecycleFailure(
+        req,
+        res,
+        existing.id,
+        'approve',
+        lifecycle,
+        existing.status,
+        storedPolicyProvenance('approve'),
+      );
+      return;
+    }
+    logLifecycleDecision(
+      req,
+      existing.id,
+      'approve',
+      lifecycle,
+      existing.status,
+      storedPolicyProvenance('approve'),
+    );
+
     const plan = await approvePlan(req.params.planId);
     if (!plan) {
-      // Determine reason
-      const existing = await getPlan(req.params.planId);
-      if (!existing) {
-        sendNotFound(res, 'Plan not found');
-        return;
-      }
-      if (existing.clearScore?.decision === 'block') {
-        res.status(403).json({
-          error: 'Cannot approve blocked plan',
-          clearDecision: existing.clearScore.decision,
-          clearOverall: existing.clearScore.overall,
-        });
-        return;
-      }
+      logLifecycleWriteFailure(req, existing.id, 'approve', 'state_changed_before_write');
       res.status(409).json({
-        error: `Cannot approve plan in ${existing.status} status`,
-        currentStatus: existing.status,
+        error: 'ActionPlan state changed before approval',
+        category: 'ACTION_PLAN_TRANSITION_FORBIDDEN',
+        reasonCode: 'state_changed_before_write',
       });
       return;
     }
     res.json(plan);
   } catch (error: unknown) {
-    apiLogger.error('Approve failed', { module: 'plans', error: resolveErrorMessage(error) });
+    logActionPlanMutationFailure(req, 'approve', error);
     sendInternalErrorCode(res, 'Failed to approve plan');
   }
 });
@@ -217,14 +402,47 @@ router.post('/plans/:planId/approve', async (req: Request, res: Response) => {
  */
 router.post('/plans/:planId/block', async (req: Request, res: Response) => {
   try {
+    const existing = await getPlan(req.params.planId);
+    if (!existing) {
+      sendNotFound(res, 'Plan not found');
+      return;
+    }
+
+    const lifecycle = evaluateStoredPlanLifecycle(existing, 'block');
+    if (!lifecycle.operationAllowed) {
+      sendLifecycleFailure(
+        req,
+        res,
+        existing.id,
+        'block',
+        lifecycle,
+        existing.status,
+        storedPolicyProvenance('block'),
+      );
+      return;
+    }
+    logLifecycleDecision(
+      req,
+      existing.id,
+      'block',
+      lifecycle,
+      existing.status,
+      storedPolicyProvenance('block'),
+    );
+    if (!lifecycle.statusTransitionAllowed) {
+      res.json(existing);
+      return;
+    }
+
     const plan = await blockPlan(req.params.planId);
     if (!plan) {
+      logLifecycleWriteFailure(req, existing.id, 'block', 'missing_write_result');
       sendNotFound(res, 'Plan not found');
       return;
     }
     res.json(plan);
   } catch (error: unknown) {
-    apiLogger.error('Block failed', { module: 'plans', error: resolveErrorMessage(error) });
+    logActionPlanMutationFailure(req, 'block', error);
     sendInternalErrorCode(res, 'Failed to block plan');
   }
 });
@@ -234,14 +452,47 @@ router.post('/plans/:planId/block', async (req: Request, res: Response) => {
  */
 router.post('/plans/:planId/expire', async (req: Request, res: Response) => {
   try {
+    const existing = await getPlan(req.params.planId);
+    if (!existing) {
+      sendNotFound(res, 'Plan not found');
+      return;
+    }
+
+    const lifecycle = evaluateStoredPlanLifecycle(existing, 'expire');
+    if (!lifecycle.operationAllowed) {
+      sendLifecycleFailure(
+        req,
+        res,
+        existing.id,
+        'expire',
+        lifecycle,
+        existing.status,
+        storedPolicyProvenance('expire'),
+      );
+      return;
+    }
+    logLifecycleDecision(
+      req,
+      existing.id,
+      'expire',
+      lifecycle,
+      existing.status,
+      storedPolicyProvenance('expire'),
+    );
+    if (!lifecycle.statusTransitionAllowed) {
+      res.json(existing);
+      return;
+    }
+
     const plan = await expirePlan(req.params.planId);
     if (!plan) {
+      logLifecycleWriteFailure(req, existing.id, 'expire', 'missing_write_result');
       sendNotFound(res, 'Plan not found');
       return;
     }
     res.json(plan);
   } catch (error: unknown) {
-    apiLogger.error('Expire failed', { module: 'plans', error: resolveErrorMessage(error) });
+    logActionPlanMutationFailure(req, 'expire', error);
     sendInternalErrorCode(res, 'Failed to expire plan');
   }
 });
@@ -284,17 +535,27 @@ router.post('/plans/:planId/execute', async (req: Request, res: Response) => {
       return;
     }
 
-    // Guard: blocked plans never execute
-    if (plan.status === 'blocked' || plan.clearScore?.decision === 'block') {
-      res.status(403).json({ error: 'Cannot execute blocked plan', clearDecision: plan.clearScore?.decision });
+    const lifecyclePreflight = evaluateStoredPlanLifecycle(plan, 'execute');
+    if (!lifecyclePreflight.policyRecheckAllowed) {
+      sendLifecycleFailure(
+        req,
+        res,
+        plan.id,
+        'execute',
+        lifecyclePreflight,
+        plan.status,
+        storedPolicyProvenance('execute'),
+      );
       return;
     }
-
-    // Guard: only approved plans can execute
-    if (plan.status !== 'approved') {
-      res.status(409).json({ error: `Plan must be approved before execution, current status: ${plan.status}` });
-      return;
-    }
+    logLifecycleDecision(
+      req,
+      plan.id,
+      'execute',
+      lifecyclePreflight,
+      plan.status,
+      storedPolicyProvenance('execute'),
+    );
 
     // Validate agent capabilities
     const missingAction = await findMissingCapability(plan);
@@ -344,7 +605,36 @@ router.post('/plans/:planId/execute', async (req: Request, res: Response) => {
       return;
     }
 
+    const currentLifecycle = evaluateActionPlanLifecycle({
+      operation: clearOutcome.kind === 'block' ? 'block' : 'execute',
+      statusPresent: Object.hasOwn(plan, 'status'),
+      status: plan.status,
+      policyKind: clearOutcome.decision,
+      policyProvenance: 'current_recheck',
+      expiry: classifyActionPlanExpiry(plan.expiresAt, Date.now()),
+    });
+
     if (clearOutcome.kind === 'block') {
+      if (!currentLifecycle.operationAllowed || !currentLifecycle.statusTransitionAllowed) {
+        sendLifecycleFailure(
+          req,
+          res,
+          plan.id,
+          'block',
+          currentLifecycle,
+          plan.status,
+          'current_recheck',
+        );
+        return;
+      }
+      logLifecycleDecision(
+        req,
+        plan.id,
+        'block',
+        currentLifecycle,
+        plan.status,
+        'current_recheck',
+      );
       let blockedPlan: ActionPlanRecord | null;
       try {
         blockedPlan = await blockPlan(plan.id);
@@ -371,9 +661,33 @@ router.post('/plans/:planId/execute', async (req: Request, res: Response) => {
         sendClearFailure(res, failure);
         return;
       }
-      res.status(403).json({ error: 'CLEAR re-evaluation blocked this plan', clearScore: clearRecheck });
+      res.status(403).json({
+        error: 'CLEAR re-evaluation blocked this plan',
+        clearScore: clearRecheck,
+      });
       return;
     }
+
+    if (!currentLifecycle.operationAllowed) {
+      sendLifecycleFailure(
+        req,
+        res,
+        plan.id,
+        'execute',
+        currentLifecycle,
+        plan.status,
+        'current_recheck',
+      );
+      return;
+    }
+    logLifecycleDecision(
+      req,
+      plan.id,
+      'execute',
+      currentLifecycle,
+      plan.status,
+      'current_recheck',
+    );
 
     const lock = await acquireExecutionLock(`policy-task:${plan.id}`);
     //audit Assumption: policy task execution must be single-active per plan; failure risk: duplicate execution and conflicting writes; expected invariant: duplicate starts suppressed; handling strategy: return 409 and emit audit.
