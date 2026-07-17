@@ -28,7 +28,9 @@ _HARD_TERMINAL_STATUSES = frozenset({"completed", "failed"})
 _BLOCKABLE_STATUSES = frozenset(
     {"planned", "awaiting_confirmation", "approved", "in_progress"}
 )
-_EXPIRABLE_STATUSES = frozenset({"planned", "awaiting_confirmation", "approved"})
+_EXPIRABLE_STATUSES = frozenset(
+    {"planned", "awaiting_confirmation", "approved"}
+)
 
 
 @dataclass(frozen=True)
@@ -100,7 +102,10 @@ def evaluate_action_plan_lifecycle(
 
     if status == "expired":
         if operation == "expire":
-            if policy_kind != "not_evaluated" or policy_provenance != "operator":
+            if (
+                policy_kind != "not_evaluated"
+                or policy_provenance != "operator"
+            ):
                 return _result("invalid", "policy_operation_conflict")
             return _result(
                 "allowed",

@@ -165,7 +165,7 @@ class ActionPlan:
     plan_id: str
     created_by: str  # user | policy | system | recovery
     origin: str
-    status: str  # planned | awaiting_confirmation | approved | in_progress | completed | failed | expired | blocked
+    status: Any  # exact wire value; validated by the lifecycle evaluator
     confidence: float = 0.0
     requires_confirmation: bool = True
     idempotency_key: str = ""
@@ -173,9 +173,46 @@ class ActionPlan:
     actions: Sequence[ActionDef] = field(default_factory=list)
     clear_score: Optional[ClearScore] = None
     clear_decision: Optional[str] = None  # allow | confirm | block
+    status_present: bool = True
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> ActionPlan:
+        plan_id_raw = data.get("plan_id", _MISSING)
+        id_raw = data.get("id", _MISSING)
+        if (
+            plan_id_raw is not _MISSING
+            and id_raw is not _MISSING
+            and not _json_values_equal(plan_id_raw, id_raw)
+        ):
+            raise ValueError("Conflicting ActionPlan identifiers")
+        selected_plan_id = plan_id_raw if plan_id_raw is not _MISSING else id_raw
+        plan_id = selected_plan_id if isinstance(selected_plan_id, str) else ""
+
+        requires_confirmation_raw = data.get("requires_confirmation", _MISSING)
+        requires_confirmation_alias = data.get("requiresConfirmation", _MISSING)
+        if (
+            requires_confirmation_raw is not _MISSING
+            and requires_confirmation_alias is not _MISSING
+            and not _json_values_equal(
+                requires_confirmation_raw,
+                requires_confirmation_alias,
+            )
+        ):
+            raise ValueError("Conflicting ActionPlan confirmation requirements")
+        selected_confirmation = (
+            requires_confirmation_raw
+            if requires_confirmation_raw is not _MISSING
+            else requires_confirmation_alias
+        )
+        if selected_confirmation is _MISSING:
+            requires_confirmation = True
+        elif isinstance(selected_confirmation, bool):
+            requires_confirmation = selected_confirmation
+        else:
+            raise ValueError("ActionPlan confirmation requirement is malformed")
+
+        status_present = "status" in data
+        status = data.get("status") if status_present else None
         actions_raw = data.get("actions", [])
         actions = [ActionDef.from_dict(a) for a in actions_raw] if actions_raw else []
 
@@ -215,6 +252,7 @@ class ActionPlan:
             else None
         )
 
+        clear_decision: Optional[str]
         metadata_decision_raw = metadata.get("clear_decision", _MISSING)
         if metadata_decision_raw is not _MISSING and metadata_decision_raw is not None:
             if (
@@ -229,12 +267,13 @@ class ActionPlan:
             clear_decision = clear_score.decision if clear_score else None
 
         return cls(
-            plan_id=str(data.get("plan_id", data.get("id", ""))),
+            plan_id=plan_id,
             created_by=str(data.get("created_by", data.get("createdBy", ""))),
             origin=str(data.get("origin", "")),
-            status=str(data.get("status", "planned")),
+            status=status,
+            status_present=status_present,
             confidence=float(data.get("confidence", 0)),
-            requires_confirmation=bool(data.get("requires_confirmation", data.get("requiresConfirmation", True))),
+            requires_confirmation=requires_confirmation,
             idempotency_key=str(data.get("idempotency_key", data.get("idempotencyKey", ""))),
             expires_at=data.get("expires_at", data.get("expiresAt")),
             actions=actions,

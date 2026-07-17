@@ -165,6 +165,97 @@ class TestActionPlan:
         assert plan.requires_confirmation is True
         assert plan.clear_decision is None
 
+    @pytest.mark.parametrize(
+        ("status", "expected"),
+        [
+            pytest.param("planned", "planned", id="recognized"),
+            pytest.param("unknown", "unknown", id="unknown"),
+            pytest.param("APPROVED", "APPROVED", id="case-variant"),
+            pytest.param(None, None, id="null"),
+            pytest.param(7, 7, id="non-string"),
+        ],
+    )
+    def test_from_dict_preserves_exact_present_lifecycle_value(
+        self,
+        status,
+        expected,
+    ):
+        plan = ActionPlan.from_dict({"plan_id": "plan-status", "status": status})
+
+        assert plan.status_present is True
+        assert plan.status == expected
+
+    def test_from_dict_preserves_missing_lifecycle_state_as_unavailable(self):
+        plan = ActionPlan.from_dict({"plan_id": "plan-missing-status"})
+
+        assert plan.status_present is False
+        assert plan.status is None
+
+    @pytest.mark.parametrize("plan_id", [None, 7, True, {}, []])
+    def test_from_dict_does_not_coerce_malformed_plan_identity(self, plan_id):
+        plan = ActionPlan.from_dict({"plan_id": plan_id, "status": "approved"})
+
+        assert plan.plan_id == ""
+
+    def test_from_dict_rejects_conflicting_plan_identity_aliases(self):
+        with pytest.raises(ValueError, match="Conflicting ActionPlan identifiers"):
+            ActionPlan.from_dict(
+                {
+                    "plan_id": "plan-authoritative",
+                    "id": "plan-conflict",
+                    "status": "approved",
+                }
+            )
+
+    @pytest.mark.parametrize("requires_confirmation", [True, False])
+    def test_from_dict_preserves_exact_confirmation_requirement(
+        self,
+        requires_confirmation,
+    ):
+        plan = ActionPlan.from_dict(
+            {
+                "plan_id": "plan-confirmation",
+                "status": "approved",
+                "requires_confirmation": requires_confirmation,
+            }
+        )
+
+        assert plan.requires_confirmation is requires_confirmation
+
+    @pytest.mark.parametrize(
+        "requires_confirmation",
+        [None, 0, 1, "", "false", [], {}],
+    )
+    def test_from_dict_rejects_malformed_confirmation_requirement(
+        self,
+        requires_confirmation,
+    ):
+        with pytest.raises(
+            ValueError,
+            match="ActionPlan confirmation requirement is malformed",
+        ):
+            ActionPlan.from_dict(
+                {
+                    "plan_id": "plan-confirmation",
+                    "status": "approved",
+                    "requires_confirmation": requires_confirmation,
+                }
+            )
+
+    def test_from_dict_rejects_conflicting_confirmation_aliases(self):
+        with pytest.raises(
+            ValueError,
+            match="Conflicting ActionPlan confirmation requirements",
+        ):
+            ActionPlan.from_dict(
+                {
+                    "plan_id": "plan-confirmation",
+                    "status": "approved",
+                    "requires_confirmation": False,
+                    "requiresConfirmation": True,
+                }
+            )
+
     def test_from_dict_accepts_top_level_camel_case_clear_score(self):
         plan = ActionPlan.from_dict({
             "id": "plan-camel-score",
