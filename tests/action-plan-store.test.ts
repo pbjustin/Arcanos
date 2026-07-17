@@ -200,6 +200,46 @@ describe('ActionPlan Store', () => {
       expect(repeated.clearDecision).toBe('allow');
       expect(mockExecutionCreate).toHaveBeenCalledTimes(2);
     });
+
+    it('reuses a successful cached result when a repeated database write is rejected', async () => {
+      const planId = 'decision-success-retry-plan';
+      const actionId = 'decision-success-retry-action';
+      const durableRecord = {
+        id: 'decision-success-retry-result',
+        planId,
+        actionId,
+        agentId: 'agent-decision',
+        status: 'success',
+        output: null,
+        error: null,
+        signature: null,
+        clearDecision: 'allow',
+        createdAt: new Date('2026-07-17T00:00:00.000Z'),
+      };
+      mockExecutionCreate
+        .mockResolvedValueOnce(durableRecord)
+        .mockRejectedValueOnce(new Error('synthetic duplicate rejection'));
+
+      const first = await createExecutionResult(
+        planId,
+        actionId,
+        'agent-decision',
+        'success',
+        'allow',
+      );
+      const repeated = await createExecutionResult(
+        planId,
+        actionId,
+        'agent-decision',
+        'success',
+        'block',
+      );
+
+      expect(first).toEqual(durableRecord);
+      expect(repeated).toBe(first);
+      expect(repeated.clearDecision).toBe('allow');
+      expect(mockExecutionCreate).toHaveBeenCalledTimes(2);
+    });
   });
 
   describe('cache fallback eviction', () => {

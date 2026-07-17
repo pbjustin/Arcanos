@@ -54,6 +54,12 @@ function circularThrownValue(): Record<string, unknown> {
   return value;
 }
 
+function revokedProxyThrownValue(): object {
+  const revocable = Proxy.revocable({}, {});
+  revocable.revoke();
+  return revocable.proxy;
+}
+
 const syntheticMarker = ['phase2b', 'opaque', 'marker'].join('-');
 const authorizationText = ['Authorization', 'Bearer', syntheticMarker].join(' ');
 const filesystemPath = ['C:', 'private', 'runtime', 'dependency.log'].join('\\');
@@ -75,6 +81,8 @@ const thrownValues: Array<[string, () => unknown, string[]]> = [
   ['timeout', () => Object.assign(new Error(syntheticMarker), { name: 'TimeoutError' }), [syntheticMarker]],
   ['abort', () => Object.assign(new Error(syntheticMarker), { name: 'AbortError' }), [syntheticMarker]],
   ['attacker-controlled error class', () => Object.assign(new Error('detail'), { name: syntheticMarker }), [syntheticMarker]],
+  ['revoked Proxy', revokedProxyThrownValue, []],
+  ['undefined thrown value', () => undefined, []],
 ];
 
 describe('MCP external error disclosure contract', () => {

@@ -133,6 +133,38 @@ const principleScores = {
   resilience: 0.8,
 };
 
+const disclosureMarker = ['phase2b', 'http', 'opaque', 'marker'].join('-');
+
+function circularThrownValue(): Record<string, unknown> {
+  const value: Record<string, unknown> = { kind: 'circular' };
+  value.self = value;
+  return value;
+}
+
+function revokedProxyThrownValue(): object {
+  const revocable = Proxy.revocable({}, {});
+  revocable.revoke();
+  return revocable.proxy;
+}
+
+const evaluatorFailureCases: Array<[string, () => unknown, string[]]> = [
+  ['ordinary error', () => new Error('ordinary dependency detail'), ['ordinary dependency detail']],
+  ['credential-like marker', () => new Error(disclosureMarker), [disclosureMarker]],
+  ['authorization text', () => new Error(['Authorization', 'Bearer', disclosureMarker].join(' ')), [disclosureMarker]],
+  ['filesystem path', () => new Error(['C:', 'private', 'clear', 'dependency.log'].join('\\')), ['private\\clear']],
+  ['SQL text', () => new Error(['SELECT', '*', 'FROM', 'private_clear_table'].join(' ')), ['private_clear_table']],
+  ['provider JSON', () => new Error(JSON.stringify({ provider: 'synthetic', payload: disclosureMarker })), [disclosureMarker]],
+  ['nested cause', () => new Error('outer detail', { cause: new Error(disclosureMarker) }), ['outer detail', disclosureMarker]],
+  ['non-Error string', () => disclosureMarker, [disclosureMarker]],
+  ['circular object', circularThrownValue, ['circular']],
+  ['very long message', () => new Error('x'.repeat(20_000)), ['x'.repeat(128)]],
+  ['Unicode and control characters', () => new Error(`internal-雪\r\n${disclosureMarker}`), ['internal-雪', disclosureMarker]],
+  ['timeout', () => Object.assign(new Error(disclosureMarker), { name: 'TimeoutError' }), [disclosureMarker]],
+  ['abort', () => Object.assign(new Error(disclosureMarker), { name: 'AbortError' }), [disclosureMarker]],
+  ['revoked Proxy', revokedProxyThrownValue, []],
+  ['undefined thrown value', () => undefined, []],
+];
+
 function clearResult(overall: number, decision: ClearDecision) {
   return { ...principleScores, overall, decision, notes: `synthetic ${decision}` };
 }
@@ -223,6 +255,14 @@ async function executeMcp(planId: string) {
   return { context, output: await tool!.handler({ planId }) };
 }
 
+async function executeMcpTool(toolName: string, args: unknown) {
+  const context = buildMcpContext();
+  const server = await createMcpServer(context) as FakeMcpServer;
+  const tool = server.tools.get(toolName);
+  expect(tool).toBeDefined();
+  return { context, output: await tool!.handler(args) };
+}
+
 function mockExecutionResultPersistence(): void {
   createExecutionResultMock.mockImplementation(async (
     planId: unknown,
@@ -268,10 +308,10 @@ describe('CLEAR execution decision persistence', () => {
   });
 
   it.each([
-    ['finite score', clearResult(0.2, 'block')],
-    ['null score', { ...principleScores, overall: null, decision: 'block' }],
-  ])('preserves an explicit current block with %s and creates no execution results', async (_label, current) => {
-    const plan = buildPlan('allow');
+    ['finite score over stored allow', 'allow', clearResult(0.2, 'block')],
+    ['null score with no stored decision', null, { ...principleScores, overall: null, decision: 'block' }],
+  ] as const)('preserves an explicit current block with %s and creates no execution results', async (_label, prior, current) => {
+    const plan = buildPlan(prior);
     getPlanMock.mockResolvedValue(plan);
     buildClear2SummaryMock.mockReturnValue(current);
 
@@ -346,15 +386,70 @@ describe('CLEAR execution decision persistence', () => {
     expect(createExecutionResultMock).not.toHaveBeenCalled();
   });
 
-  it.each(['rejects', 'returns-null'] as const)('fails safely when block persistence %s', async mode => {
+  it.each(evaluatorFailureCases)('sanitizes HTTP and MCP evaluator failure: %s', async (_label, buildThrown, forbiddenValues) => {
+    const plan = buildPlan();
+    getPlanMock.mockResolvedValue(plan);
+    buildClear2SummaryMock.mockImplementation(() => {
+      throw buildThrown();
+    });
+
+    const response = await request(buildHttpApp()).post(`/plans/${plan.id}/execute`).send({});
+    const mcpResponse = await executeMcp(plan.id);
+    const observable = JSON.stringify({
+      body: response.body,
+      text: response.text,
+      logs: apiLoggerErrorMock.mock.calls,
+      mcp: mcpResponse.output,
+      mcpLogs: mcpResponse.context.logger.error.mock.calls,
+    });
+
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({
+      error: 'CLEAR_EVALUATION_UNAVAILABLE',
+      message: 'CLEAR evaluation is unavailable.',
+    });
+    expect(mcpResponse.output.structuredContent.error).toEqual(expect.objectContaining({
+      code: 'ERR_INTERNAL',
+      message: 'CLEAR evaluation is unavailable.',
+      details: { tool: 'plans.execute', category: 'CLEAR_EVALUATION_UNAVAILABLE' },
+    }));
+    expect(forbiddenValues.some(value => observable.includes(value))).toBe(false);
+    expect(blockPlanMock).not.toHaveBeenCalled();
+    expect(createExecutionResultMock).not.toHaveBeenCalled();
+  });
+
+  it('applies the same sanitized outcome contract to the direct MCP CLEAR tool', async () => {
+    const internalDetail = ['phase2b', 'direct-clear', 'internal'].join('-');
+    buildClear2SummaryMock.mockImplementation(() => {
+      throw new Error(internalDetail);
+    });
+
+    const response = await executeMcpTool('clear.evaluate', { objective: 'synthetic' });
+    const observable = JSON.stringify({
+      output: response.output,
+      logs: response.context.logger.error.mock.calls,
+    });
+
+    expect(response.output.structuredContent.error).toEqual({
+      code: 'ERR_INTERNAL',
+      message: 'CLEAR evaluation is unavailable.',
+      details: { tool: 'clear.evaluate', category: 'CLEAR_EVALUATION_UNAVAILABLE' },
+      requestId: 'phase2b-mcp-request',
+    });
+    expect(observable.includes(internalDetail)).toBe(false);
+  });
+
+  it.each(['rejects', 'returns-null', 'returns-undefined'] as const)('fails safely when block persistence %s', async mode => {
     const plan = buildPlan('allow');
     const internalDetail = ['phase2b', 'persistence', 'internal'].join('-');
     getPlanMock.mockResolvedValue(plan);
     buildClear2SummaryMock.mockReturnValue(clearResult(0.2, 'block'));
     if (mode === 'rejects') {
       blockPlanMock.mockRejectedValue(new Error(internalDetail));
-    } else {
+    } else if (mode === 'returns-null') {
       blockPlanMock.mockResolvedValue(null);
+    } else {
+      blockPlanMock.mockResolvedValue(undefined);
     }
 
     const httpResponse = await request(buildHttpApp()).post(`/plans/${plan.id}/execute`).send({});
@@ -402,6 +497,145 @@ describe('CLEAR execution decision persistence', () => {
     expect(acquireExecutionLockMock).toHaveBeenCalledTimes(2);
   });
 
+  it('releases the lock before a delayed sibling write settles after Promise.all rejection', async () => {
+    const plan = buildPlan();
+    const releaseMock = jest.fn(async () => undefined);
+    let delayedSettled = false;
+    let resolveDelayed!: () => void;
+    const delayedWrite = new Promise(resolve => {
+      resolveDelayed = () => {
+        delayedSettled = true;
+        resolve({ actionId: 'action-two', clearDecision: 'allow' });
+      };
+    });
+    getPlanMock.mockResolvedValue(plan);
+    buildClear2SummaryMock.mockReturnValue(clearResult(0.8, 'allow'));
+    acquireExecutionLockMock.mockResolvedValue({ release: releaseMock });
+    createExecutionResultMock.mockImplementation(async (_planId: string, actionId: string) => {
+      if (actionId === 'action-one') throw new Error('first action rejected');
+      return delayedWrite;
+    });
+
+    const response = await request(buildHttpApp()).post(`/plans/${plan.id}/execute`).send({});
+
+    expect(response.status).toBe(500);
+    expect(response.body.error).toBe('CLEAR_PERSISTENCE_FAILED');
+    expect(releaseMock).toHaveBeenCalledTimes(1);
+    expect(delayedSettled).toBe(false);
+
+    resolveDelayed();
+    await delayedWrite;
+    expect(delayedSettled).toBe(true);
+  });
+
+  it('retains cleanup diagnostics when persistence and lock release both fail', async () => {
+    const plan = buildPlan();
+    getPlanMock.mockResolvedValue(plan);
+    buildClear2SummaryMock.mockReturnValue(clearResult(0.8, 'allow'));
+    createExecutionResultMock.mockRejectedValue(new Error('unobservable persistence detail'));
+    acquireExecutionLockMock.mockResolvedValue({
+      release: jest.fn(async () => {
+        throw new Error('unobservable release detail');
+      }),
+    });
+
+    const httpResponse = await request(buildHttpApp()).post(`/plans/${plan.id}/execute`).send({});
+    const mcpResponse = await executeMcp(plan.id);
+
+    expect(httpResponse.status).toBe(500);
+    expect(httpResponse.body.error).toBe('CLEAR_PERSISTENCE_FAILED');
+    expect(mcpResponse.output.structuredContent.error).toEqual(expect.objectContaining({
+      message: 'CLEAR decision persistence failed.',
+    }));
+    expect(apiLoggerErrorMock.mock.calls.map(call => call[1]?.operation)).toEqual(expect.arrayContaining([
+      'plans.execute.persist_results',
+      'plans.execute.release_lock',
+    ]));
+    expect(mcpResponse.context.logger.error.mock.calls.map(call => call[1]?.operation)).toEqual(expect.arrayContaining([
+      'plans.execute.persist_results',
+      'plans.execute.release_lock',
+    ]));
+  });
+
+  it.each([
+    ['missing release', {}],
+    ['non-callable release', { release: 'not-a-function' }],
+  ])('fails MCP execution when the acquired lock has %s', async (_label, malformedLock) => {
+    const plan = buildPlan();
+    getPlanMock.mockResolvedValue(plan);
+    buildClear2SummaryMock.mockReturnValue(clearResult(0.8, 'allow'));
+    acquireExecutionLockMock.mockResolvedValue(malformedLock);
+
+    const response = await executeMcp(plan.id);
+
+    expect(response.output.structuredContent.error).toEqual(expect.objectContaining({
+      code: 'ERR_INTERNAL',
+      message: 'CLEAR operation failed.',
+      details: { tool: 'plans.execute', category: 'CLEAR_OPERATION_FAILED' },
+    }));
+    expect(createExecutionResultMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps HTTP persistence error handling stable for a hostile message getter', async () => {
+    const plan = buildPlan();
+    const hostileError = Object.defineProperty({}, 'message', {
+      get() {
+        throw new Error('unobservable getter detail');
+      },
+    });
+    getPlanMock.mockResolvedValue(plan);
+    buildClear2SummaryMock.mockReturnValue(clearResult(0.8, 'allow'));
+    createExecutionResultMock.mockRejectedValue(hostileError);
+
+    const response = await request(buildHttpApp()).post(`/plans/${plan.id}/execute`).send({});
+
+    expect(response.status).toBe(500);
+    expect(response.body).toEqual({
+      error: 'CLEAR_PERSISTENCE_FAILED',
+      message: 'CLEAR decision persistence failed.',
+    });
+  });
+
+  it.each(['persistence', 'release'] as const)('does not treat an undefined %s rejection as success', async stage => {
+    const plan = buildPlan();
+    getPlanMock.mockResolvedValue(plan);
+    buildClear2SummaryMock.mockReturnValue(clearResult(0.8, 'allow'));
+    if (stage === 'persistence') {
+      createExecutionResultMock.mockRejectedValue(undefined);
+    } else {
+      acquireExecutionLockMock.mockImplementation(async () => ({
+        release: jest.fn(() => Promise.reject(undefined)),
+      }));
+    }
+
+    const httpResponse = await request(buildHttpApp()).post(`/plans/${plan.id}/execute`).send({});
+    const mcpResponse = await executeMcp(plan.id);
+    const expectedCategory = stage === 'persistence' ? 'CLEAR_PERSISTENCE_FAILED' : 'CLEAR_OPERATION_FAILED';
+    const expectedMessage = stage === 'persistence'
+      ? 'CLEAR decision persistence failed.'
+      : 'CLEAR operation failed.';
+
+    expect(httpResponse.status).toBe(500);
+    expect(httpResponse.body).toEqual({ error: expectedCategory, message: expectedMessage });
+    expect(mcpResponse.output.structuredContent.error).toEqual(expect.objectContaining({
+      code: 'ERR_INTERNAL',
+      message: expectedMessage,
+      details: { tool: 'plans.execute', category: expectedCategory },
+    }));
+    expect(apiLoggerErrorMock.mock.calls).toEqual(expect.arrayContaining([
+      expect.arrayContaining([
+        'CLEAR execution failed',
+        expect.objectContaining({ errorCode: expectedCategory, errorClass: 'ThrownUndefined' }),
+      ]),
+    ]));
+    expect(mcpResponse.context.logger.error.mock.calls).toEqual(expect.arrayContaining([
+      expect.arrayContaining([
+        'mcp.clear.error',
+        expect.objectContaining({ errorCode: expectedCategory, errorClass: 'ThrownUndefined' }),
+      ]),
+    ]));
+  });
+
   it('re-evaluates and persists the explicit decision on retry after a rejected write', async () => {
     const plan = buildPlan();
     getPlanMock.mockResolvedValue(plan);
@@ -445,6 +679,25 @@ describe('CLEAR execution decision persistence', () => {
     expect(emitSafetyAuditEventMock).toHaveBeenCalledWith(expect.objectContaining({
       event: 'policy_task_duplicate_suppressed',
     }));
+  });
+
+  it('documents the existing race boundary for concurrent conflicting rechecks', async () => {
+    const plan = buildPlan();
+    getPlanMock.mockResolvedValue(plan);
+    buildClear2SummaryMock
+      .mockReturnValueOnce(clearResult(0.8, 'allow'))
+      .mockReturnValueOnce(clearResult(0.2, 'block'));
+
+    const [allowResponse, blockResponse] = await Promise.all([
+      request(buildHttpApp()).post(`/plans/${plan.id}/execute`).send({ request: 'allow' }),
+      request(buildHttpApp()).post(`/plans/${plan.id}/execute`).send({ request: 'block' }),
+    ]);
+
+    expect([allowResponse.status, blockResponse.status].sort()).toEqual([200, 403]);
+    expect(createExecutionResultMock).toHaveBeenCalledTimes(2);
+    expect(createExecutionResultMock.mock.calls.every(call => call[4] === 'allow')).toBe(true);
+    expect(blockPlanMock).toHaveBeenCalledWith(plan.id);
+    expect(acquireExecutionLockMock).toHaveBeenCalledTimes(1);
   });
 
   it('keeps an existing stored block as an early policy gate', async () => {
@@ -499,5 +752,40 @@ describe('CLEAR execution decision persistence', () => {
       error: 'CLEAR_EVALUATION_UNAVAILABLE',
       message: 'CLEAR evaluation is unavailable.',
     });
+  });
+
+  it('reports lock-release failure after persisting results without exposing the exception', async () => {
+    const plan = buildPlan();
+    const internalDetail = ['phase2b', 'lock-release', 'internal'].join('-');
+    getPlanMock.mockResolvedValue(plan);
+    buildClear2SummaryMock.mockReturnValue(clearResult(0.8, 'allow'));
+    acquireExecutionLockMock.mockImplementation(async () => ({
+      release: jest.fn(async () => {
+        throw new Error(internalDetail);
+      }),
+    }));
+
+    const httpResponse = await request(buildHttpApp()).post(`/plans/${plan.id}/execute`).send({});
+    const mcpResponse = await executeMcp(plan.id);
+    const observable = JSON.stringify({
+      http: httpResponse.body,
+      mcp: mcpResponse.output,
+      httpLogs: apiLoggerErrorMock.mock.calls,
+      mcpLogs: mcpResponse.context.logger.error.mock.calls,
+    });
+
+    expect(httpResponse.status).toBe(500);
+    expect(httpResponse.body).toEqual({
+      error: 'CLEAR_OPERATION_FAILED',
+      message: 'CLEAR operation failed.',
+    });
+    expect(mcpResponse.output.structuredContent.error).toEqual(expect.objectContaining({
+      code: 'ERR_INTERNAL',
+      message: 'CLEAR operation failed.',
+      details: { tool: 'plans.execute', category: 'CLEAR_OPERATION_FAILED' },
+    }));
+    expect(createExecutionResultMock).toHaveBeenCalledTimes(4);
+    expect(createExecutionResultMock.mock.calls.every(call => call[4] === 'allow')).toBe(true);
+    expect(observable.includes(internalDetail)).toBe(false);
   });
 });

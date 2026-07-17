@@ -53,6 +53,32 @@ describe('stores/agentRegistry error handling', () => {
     );
   });
 
+  it('does not log raw dependency details when an agent lookup fails', async () => {
+    const dependencyDetail = [
+      ['Authorization', 'Bearer', ['phase2b', 'agent', 'marker'].join('-')].join(' '),
+      ['SELECT', '*', 'FROM', 'private_agent_table'].join(' '),
+      ['C:', 'private', 'agent-registry.log'].join('\\'),
+    ].join(' | ');
+    mockAgentFindUnique.mockRejectedValueOnce(new Error(dependencyDetail));
+
+    const result = await agentRegistryModule.getAgent('phase2b-agent-read-failure');
+    const observable = JSON.stringify(loggerWarnMock.mock.calls);
+
+    expect(result).toBeNull();
+    expect(loggerWarnMock).toHaveBeenCalledWith(
+      'Failed to fetch agent from DB; falling back to cache',
+      {
+        module: 'agentRegistry',
+        agentId: 'phase2b-agent-read-failure',
+        errorCode: 'AGENT_REGISTRY_READ_FAILED',
+        errorClass: 'Error',
+      },
+    );
+    expect(observable).not.toContain(dependencyDetail);
+    expect(observable).not.toContain('private_agent_table');
+    expect(observable).not.toContain('agent-registry.log');
+  });
+
   it('returns null and logs when status update fails', async () => {
     mockAgentUpdate.mockRejectedValueOnce(new Error('status update failed'));
 
