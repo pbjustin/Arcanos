@@ -6,8 +6,8 @@
   "focusedCharacterization": {
     "command": "$env:NODE_ENV='test'; $env:FORCE_MOCK='true'; node scripts/run-jest.mjs --testPathPatterns=\"(reusable-code-audit-|openai-response-conversion-parity)\" --coverage=false --runInBand --detectOpenHandles --randomize --seed=20260716",
     "result": "pass",
-    "durationMs": 4558,
-    "jestReportedSeconds": 3.976,
+    "durationMs": 5872,
+    "jestReportedSeconds": 5.172,
     "suitesPassed": 8,
     "suitesFailed": 0,
     "suitesSkipped": 0,
@@ -52,7 +52,7 @@
   "passing": [
     {
       "command": "npm run type-check",
-      "durationMs": 12290,
+      "durationMs": 14373,
       "result": "pass"
     },
     {
@@ -62,7 +62,7 @@
     },
     {
       "command": "npm run lint",
-      "durationMs": 12036,
+      "durationMs": 14005,
       "result": "pass",
       "errors": 0,
       "warnings": 92,
@@ -70,7 +70,8 @@
     },
     {
       "command": "$env:NODE_ENV='test'; $env:FORCE_MOCK='true'; npm test",
-      "durationMs": 81449,
+      "durationMs": 94661,
+      "jestReportedSeconds": 88.541,
       "result": "pass",
       "suitesPassed": 371,
       "suitesFailed": 0,
@@ -82,8 +83,9 @@
         "statements": "3313/3313 (100%)",
         "lines": "3313/3313 (100%)",
         "functions": "62/62 (100%)",
-        "branches": "212/212 (100%)"
-      }
+        "branches": "213/213 (100%)"
+      },
+      "coverageComparison": "The default npm test path reproduced the pre-change 213-branch observation; the deterministic JSON-summary coverage artifact remains 212/212 on its repeated explicit command."
     },
     {
       "command": "node scripts/run-jest.mjs --coverage=false --silent --maxWorkers=50%",

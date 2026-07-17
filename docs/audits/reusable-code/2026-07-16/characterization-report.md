@@ -142,6 +142,16 @@ Affected converters:
 
 The shared golden suite contains 24 provider payloads plus null and undefined roots. Core and service are equal for ordinary JSON payloads; their only theoretical difference is property-getter evaluation order.
 
+Difference classifications:
+
+| Required classification | Evidence-backed assessment |
+|---|---|
+| Proven intentional | None. No repository contract or ownership document proves that a converter divergence is intentional. |
+| Likely intentional | The worker-specific `worker_legacy_<time>` fallback prefix and metadata-light envelope appear deliberate because they are implemented in the separate worker SDK, but this remains an inference. |
+| Unexplained | Explicit zero `total_tokens` is recomputed by core/service and preserved by worker; no supporting contract explains the difference. |
+| Potential defect | Worker maps incomplete, truncated, content-filtered, and tool-related Responses output to ordinary `finish_reason: "stop"`; all converters drop refusal text and callable tool/function payloads, while core/service can still emit `tool_calls` as the finish reason. |
+| Blocked by insufficient evidence | Whether downstream worker consumers require provider metadata, refusal content, or executable tool-call structure cannot be decided without an authoritative response-schema owner and consumer contract. |
+
 Runtime characterization:
 
 - `tests/fixtures/openai-response-conversion.ts`
