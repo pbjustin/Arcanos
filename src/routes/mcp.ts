@@ -9,8 +9,8 @@ import {
   createRateLimitMiddleware,
   getRequestActorKey
 } from '@platform/runtime/security.js';
-import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { sendInternalErrorPayload } from '@shared/http/index.js';
+import { apiLogger } from '@platform/logging/structuredLogging.js';
 
 const router = express.Router();
 const mcpHttpRateLimit = createRateLimitMiddleware({
@@ -19,6 +19,35 @@ const mcpHttpRateLimit = createRateLimitMiddleware({
   windowMs: 15 * 60 * 1000,
   keyGenerator: (req) => `${getRequestActorKey(req)}:transport:http`
 });
+
+function safeThrownClass(error: unknown): string {
+  if (error instanceof TypeError) return 'TypeError';
+  if (error instanceof RangeError) return 'RangeError';
+  if (error instanceof SyntaxError) return 'SyntaxError';
+  if (error instanceof Error) return 'Error';
+  if (error === null) return 'ThrownNull';
+  if (error === undefined) return 'ThrownUndefined';
+  if (typeof error === 'string') return 'ThrownString';
+  if (typeof error === 'number') return 'ThrownNumber';
+  if (typeof error === 'boolean') return 'ThrownBoolean';
+  return 'ThrownObject';
+}
+
+function logMcpTransportFailure(req: Request, error: unknown): void {
+  try {
+    apiLogger.error('MCP transport failed', {
+      module: 'mcp',
+      errorCode: 'MCP_OPERATION_FAILED',
+      operation: 'mcp.http.request',
+      errorClass: safeThrownClass(error),
+      requestId: req.requestId ?? 'unknown',
+      traceId: req.traceId ?? req.requestId ?? 'unknown',
+      retryable: false,
+    });
+  } catch {
+    // Diagnostics must not mask the stable transport response.
+  }
+}
 
 // The MCP transport handler needs raw JSON body.
 router.use(express.json({ limit: process.env.MCP_HTTP_BODY_LIMIT ?? '1mb' }));
@@ -46,8 +75,13 @@ router.post('/mcp', mcpAuthMiddleware, mcpHttpRateLimit, async (req: Request, re
       await transport.handleRequest(req, res, req.body);
     });
   } catch (error) {
-    const message = resolveErrorMessage(error);
-    sendInternalErrorPayload(res, { error: message });
+    logMcpTransportFailure(req, error);
+    if (!res.headersSent) {
+      sendInternalErrorPayload(res, {
+        error: 'MCP_OPERATION_FAILED',
+        message: 'MCP operation failed.',
+      });
+    }
   }
 });
 

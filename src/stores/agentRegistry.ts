@@ -17,6 +17,18 @@ function getPrisma(): PrismaClient {
   return prisma;
 }
 
+function safeThrownClass(error: unknown): string {
+  try {
+    if (error instanceof TypeError) return 'TypeError';
+    if (error instanceof RangeError) return 'RangeError';
+    if (error instanceof SyntaxError) return 'SyntaxError';
+    if (error instanceof Error) return 'Error';
+    return 'ThrownValue';
+  } catch {
+    return 'ThrownValue';
+  }
+}
+
 // --- In-memory cache ---
 const agentCache = new Map<string, AgentRecord>();
 
@@ -65,7 +77,8 @@ export async function getAgent(agentId: string): Promise<AgentRecord | null> {
     aiLogger.warn('Failed to fetch agent from DB; falling back to cache', {
       module: 'agentRegistry',
       agentId,
-      error: String(error)
+      errorCode: 'AGENT_REGISTRY_READ_FAILED',
+      errorClass: safeThrownClass(error)
     });
     return null;
   }

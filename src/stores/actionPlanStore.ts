@@ -28,6 +28,19 @@ function getPrisma(): PrismaClient {
   return prisma;
 }
 
+function safeThrownClass(error: unknown): string {
+  if (error instanceof TypeError) return 'TypeError';
+  if (error instanceof RangeError) return 'RangeError';
+  if (error instanceof SyntaxError) return 'SyntaxError';
+  if (error instanceof Error) return 'Error';
+  if (error === null) return 'ThrownNull';
+  if (error === undefined) return 'ThrownUndefined';
+  if (typeof error === 'string') return 'ThrownString';
+  if (typeof error === 'number') return 'ThrownNumber';
+  if (typeof error === 'boolean') return 'ThrownBoolean';
+  return 'ThrownObject';
+}
+
 // --- In-memory cache ---
 
 /** Maximum number of plans to hold in memory. Prevents unbounded growth in long-running Railway deployments. */
@@ -304,7 +317,8 @@ export async function createPlan(input: ActionPlanInput): Promise<ActionPlanReco
       planId: fallbackRecord.id,
       status: fallbackRecord.status,
       clearDecision: clearResult.decision,
-      error: String(error),
+      errorCode: 'ACTION_PLAN_CREATE_CACHE_FALLBACK',
+      errorClass: safeThrownClass(error),
     });
     return fallbackRecord;
   }
@@ -332,7 +346,8 @@ export async function getPlan(planId: string): Promise<ActionPlanRecord | null> 
     aiLogger.warn('Failed to get plan from DB; falling back to cache', {
       module: 'actionPlanStore',
       planId,
-      error: String(error),
+      errorCode: 'ACTION_PLAN_READ_FAILED',
+      errorClass: safeThrownClass(error),
     });
     return null;
   }
@@ -368,7 +383,8 @@ export async function updatePlanStatus(planId: string, status: PlanStatus): Prom
       module: 'actionPlanStore',
       planId,
       status,
-      error: String(error),
+      errorCode: 'ACTION_PLAN_STATUS_CACHE_FALLBACK',
+      errorClass: safeThrownClass(error),
     });
     return fallback;
   }
@@ -434,7 +450,8 @@ export async function listPlans(filters?: {
     //audit Assumption: listing plans should remain available without DB; risk: stale results; invariant: response shape remains stable; handling: return filtered cache.
     aiLogger.warn('Failed to list plans from DB; returning cached plans', {
       module: 'actionPlanStore',
-      error: String(error),
+      errorCode: 'ACTION_PLAN_LIST_CACHE_FALLBACK',
+      errorClass: safeThrownClass(error),
       cacheSize: planCache.size,
     });
     return listCachedPlans(filters);
@@ -484,7 +501,8 @@ export async function expireStalePlans(): Promise<number> {
       aiLogger.warn('Expired stale plans via cache fallback', {
         module: 'actionPlanStore',
         count,
-        error: String(error),
+        errorCode: 'ACTION_PLAN_EXPIRY_CACHE_FALLBACK',
+        errorClass: safeThrownClass(error),
       });
     }
     return count;
@@ -560,7 +578,8 @@ export async function createExecutionResult(
       actionId,
       status,
       clearDecision,
-      error: String(dbError),
+      errorCode: 'EXECUTION_RESULT_CREATE_CACHE_FALLBACK',
+      errorClass: safeThrownClass(dbError),
     });
     return fallbackRecord;
   }
@@ -589,7 +608,8 @@ export async function getExecutionResults(planId: string): Promise<ExecutionResu
     aiLogger.warn('Failed to list execution results from DB; returning empty list', {
       module: 'actionPlanStore',
       planId,
-      error: String(error),
+      errorCode: 'EXECUTION_RESULT_LIST_FAILED',
+      errorClass: safeThrownClass(error),
     });
     return [];
   }

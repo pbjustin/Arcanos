@@ -2,9 +2,43 @@ import type { McpRequestContext } from '../context.js';
 import { MCP_FLAGS } from '../registry.js';
 import { mcpError } from '../errors.js';
 import { issueConfirmationNonce, verifyAndConsumeNonce } from '../confirm.js';
-import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import type { ActionPlanRecord } from '@shared/types/actionPlan.js';
 import { validateCapability } from '@stores/agentRegistry.js';
+
+const MCP_OPERATION_ERROR = Object.freeze({
+  category: 'MCP_OPERATION_FAILED',
+  message: 'MCP operation failed.',
+});
+
+function safeThrownClass(error: unknown): string {
+  try {
+    if (error instanceof TypeError) return 'TypeError';
+    if (error instanceof RangeError) return 'RangeError';
+    if (error instanceof SyntaxError) return 'SyntaxError';
+    if (error instanceof Error) return 'Error';
+    if (error === null) return 'ThrownNull';
+    if (error === undefined) return 'ThrownUndefined';
+    if (typeof error === 'string') return 'ThrownString';
+    if (typeof error === 'number') return 'ThrownNumber';
+    if (typeof error === 'boolean') return 'ThrownBoolean';
+    return 'ThrownObject';
+  } catch {
+    return 'ThrownValue';
+  }
+}
+
+function logBestEffort(
+  ctx: McpRequestContext,
+  level: 'info' | 'error',
+  event: string,
+  metadata: Record<string, unknown>,
+): void {
+  try {
+    ctx.logger[level](event, metadata);
+  } catch {
+    // Diagnostics must not change tool behavior or error presentation.
+  }
+}
 
 export function sessionKey(ctx: McpRequestContext, args: any): string {
   // Prefer explicit session passed by the client; fall back to context; then requestId
@@ -74,12 +108,12 @@ export function buildClearRecheckInput(plan: ActionPlanRecord) {
 export function wrapTool(toolName: string, ctx: McpRequestContext, handler: (args: any) => Promise<any>) {
   return async (args: any) => {
     const start = Date.now();
-    ctx.logger.info('mcp.tool.start', { tool: toolName });
+    logBestEffort(ctx, 'info', 'mcp.tool.start', { tool: toolName });
 
     try {
       const out = await handler(args);
       const durationMs = Date.now() - start;
-      ctx.logger.info('mcp.tool.end', {
+      logBestEffort(ctx, 'info', 'mcp.tool.end', {
         tool: toolName,
         durationMs,
         isError: Boolean(out?.isError),
@@ -87,13 +121,20 @@ export function wrapTool(toolName: string, ctx: McpRequestContext, handler: (arg
       return out;
     } catch (err) {
       const durationMs = Date.now() - start;
-      const message = resolveErrorMessage(err);
-      ctx.logger.error('mcp.tool.error', { tool: toolName, durationMs, message });
+      logBestEffort(ctx, 'error', 'mcp.tool.error', {
+        tool: toolName,
+        durationMs,
+        errorCode: MCP_OPERATION_ERROR.category,
+        errorClass: safeThrownClass(err),
+        requestId: ctx.requestId,
+        traceId: ctx.traceId,
+        retryable: false,
+      });
 
       return mcpError({
         code: 'ERR_INTERNAL',
-        message,
-        details: { tool: toolName },
+        message: MCP_OPERATION_ERROR.message,
+        details: { tool: toolName, category: MCP_OPERATION_ERROR.category },
         requestId: ctx.requestId,
       });
     }
