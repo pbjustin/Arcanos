@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import json
 import hashlib
-import hmac
 import os
 import queue
 import subprocess
@@ -19,6 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 from arcanos.debug import log_audit_event
+from ..credential_verification import timing_safe_equal_opaque_secret
 from .cli_policy import (
     command_to_argv,
     evaluate_command_policy,
@@ -488,7 +488,11 @@ class LocalBridge:
         return ThreadingHTTPServer((self.host, self.port), Handler)
 
     def _is_authorized(self, provided_token: str | None) -> bool:
-        return bool(self.bridge_token and provided_token and hmac.compare_digest(provided_token, self.bridge_token))
+        return bool(
+            self.bridge_token
+            and provided_token
+            and timing_safe_equal_opaque_secret(provided_token, self.bridge_token)
+        )
 
     def _worker_loop(self) -> None:
         while True:

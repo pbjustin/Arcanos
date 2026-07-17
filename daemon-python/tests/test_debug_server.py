@@ -4,13 +4,31 @@ import threading
 import time
 from collections import deque
 from io import BytesIO
+from urllib.parse import urlencode
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from arcanos.debug import DebugMetrics, get_metrics, liveness, readiness
+from arcanos.config import Config
+from arcanos.debug.middleware import handle_request as handle_debug_request
 from arcanos.debug_server import DebugAPIHandler
-def make_request(handler_class, method: str, path: str, body: bytes = None) -> tuple[int, dict]:
+from tests.credential_observation import assert_no_credential_material
+
+
+def _query_token_path(value: str) -> str:
+    return f"/debug/status?{urlencode({'token': value})}"
+
+
+def make_request(
+    handler_class,
+    method: str,
+    path: str,
+    body: bytes = None,
+    *,
+    request_headers: dict[str, str] | None = None,
+    automation_secret: str = "test-automation-secret",
+) -> tuple[int, dict]:
     """
     Helper to execute DebugAPIHandler using a socket-like in-memory request.
 
@@ -57,8 +75,10 @@ def make_request(handler_class, method: str, path: str, body: bytes = None) -> t
     headers = {
         "Host": "127.0.0.1",
         "Connection": "close",
-        "x-arcanos-automation": "test-automation-secret",
     }
+    if automation_secret:
+        headers["x-arcanos-automation"] = automation_secret
+    headers.update(request_headers or {})
     if method == "POST":
         headers["Content-Type"] = "application/json"
     if body is not None:
@@ -72,7 +92,10 @@ def make_request(handler_class, method: str, path: str, body: bytes = None) -> t
     server = MagicMock()
     server.timeout = None
 
-    with patch("arcanos.debug_server.get_automation_auth", return_value=("x-arcanos-automation", "test-automation-secret")):
+    with patch(
+        "arcanos.debug_server.get_automation_auth",
+        return_value=("x-arcanos-automation", automation_secret),
+    ):
         handler_class(mock_socket, ("127.0.0.1", 0), server)
 
     raw_response = mock_socket.response_bytes
@@ -91,6 +114,185 @@ def make_request(handler_class, method: str, path: str, body: bytes = None) -> t
         data = {"raw": response_text}
 
     return status, data
+
+
+class TestDebugServerAuthentication:
+    """Characterize Python debug-server credential boundaries and observable sinks."""
+
+    def test_debug_token_headers_keep_existing_normalization(self, monkeypatch, mock_cli_instance, capsys):
+        credential = "".join(("opaque", "-header-", "credential-marker"))
+        monkeypatch.setattr(Config, "DEBUG_SERVER_TOKEN", credential)
+        monkeypatch.setattr(Config, "DEBUG_SERVER_ALLOW_QUERY_TOKEN", False)
+        monkeypatch.setattr(Config, "DEBUG_SERVER_RATE_LIMIT", 0)
+        monkeypatch.setattr(Config, "DEBUG_SERVER_METRICS_ENABLED", False)
+
+        class TestHandler(DebugAPIHandler):
+            cli_instance = mock_cli_instance
+
+        with patch("arcanos.debug.middleware.log_request") as request_log, patch(
+            "arcanos.debug_server.log_audit_event"
+        ) as audit_log:
+            bearer_status, bearer_data = make_request(
+                TestHandler,
+                "GET",
+                "/debug/status",
+                request_headers={"Authorization": f"Bearer   {credential}  "},
+                automation_secret="",
+            )
+            header_status, header_data = make_request(
+                TestHandler,
+                "GET",
+                "/debug/status",
+                request_headers={"X-Debug-Token": f"  {credential}  "},
+                automation_secret="",
+            )
+            lowercase_status, lowercase_data = make_request(
+                TestHandler,
+                "GET",
+                "/debug/status",
+                request_headers={"Authorization": f"bearer {credential}"},
+                automation_secret="",
+            )
+            query_status, query_data = make_request(
+                TestHandler,
+                "GET",
+                _query_token_path(credential),
+                automation_secret="",
+            )
+
+        assert bearer_status == 200
+        assert header_status == 200
+        assert lowercase_status == 401
+        assert query_status == 401
+        captured = capsys.readouterr()
+        assert_no_credential_material(
+            credential,
+            bearer_data,
+            header_data,
+            lowercase_data,
+            query_data,
+            request_log.call_args_list,
+            audit_log.call_args_list,
+            captured.out,
+            captured.err,
+        )
+
+    def test_automation_secret_remains_exact(self, monkeypatch, mock_cli_instance, capsys):
+        credential = "".join(("opaque", "-automation-", "credential-marker"))
+        monkeypatch.setattr(Config, "DEBUG_SERVER_TOKEN", None)
+        monkeypatch.setattr(Config, "DEBUG_SERVER_RATE_LIMIT", 0)
+        monkeypatch.setattr(Config, "DEBUG_SERVER_METRICS_ENABLED", False)
+
+        class TestHandler(DebugAPIHandler):
+            cli_instance = mock_cli_instance
+
+        with patch("arcanos.debug.middleware.log_request") as request_log, patch(
+            "arcanos.debug_server.log_audit_event"
+        ) as audit_log:
+            exact_status, exact_data = make_request(
+                TestHandler,
+                "GET",
+                "/debug/status",
+                automation_secret=credential,
+            )
+            padded_status, padded_data = make_request(
+                TestHandler,
+                "GET",
+                "/debug/status",
+                request_headers={"x-arcanos-automation": f" {credential} "},
+                automation_secret=credential,
+            )
+
+        assert exact_status == 200
+        assert padded_status == 401
+        captured = capsys.readouterr()
+        assert_no_credential_material(
+            credential,
+            exact_data,
+            padded_data,
+            request_log.call_args_list,
+            audit_log.call_args_list,
+            captured.out,
+            captured.err,
+        )
+
+    def test_query_token_never_reaches_stderr_audit_or_request_logs(
+        self,
+        monkeypatch,
+        mock_cli_instance,
+        capsys,
+    ):
+        credential = "".join(("opaque", "-query-", "credential-marker"))
+        wrong_credential = credential + "-wrong"
+        monkeypatch.setattr(Config, "DEBUG_SERVER_TOKEN", credential)
+        monkeypatch.setattr(Config, "DEBUG_SERVER_ALLOW_QUERY_TOKEN", True)
+        monkeypatch.setattr(Config, "DEBUG_SERVER_RATE_LIMIT", 0)
+        monkeypatch.setattr(Config, "DEBUG_SERVER_METRICS_ENABLED", False)
+
+        class TestHandler(DebugAPIHandler):
+            cli_instance = mock_cli_instance
+
+        with patch("arcanos.debug.middleware.log_request") as request_log, patch(
+            "arcanos.debug_server.log_audit_event"
+        ) as audit_log:
+            valid_status, valid_data = make_request(
+                TestHandler,
+                "GET",
+                _query_token_path(credential),
+                automation_secret="",
+            )
+            invalid_status, invalid_data = make_request(
+                TestHandler,
+                "GET",
+                _query_token_path(wrong_credential),
+                automation_secret="",
+            )
+
+        assert valid_status == 200
+        assert invalid_status == 401
+        if any(call.args[1] != "/debug/status" for call in request_log.call_args_list):
+            raise AssertionError("debug request logger received a query-bearing path")
+        captured = capsys.readouterr()
+        if "?token=" in captured.err or "/debug/status" not in captured.err:
+            raise AssertionError("stdlib access logging did not preserve a sanitized request path")
+        observable = (
+            valid_data,
+            invalid_data,
+            request_log.call_args_list,
+            audit_log.call_args_list,
+            captured.out,
+            captured.err,
+        )
+        assert_no_credential_material(credential, *observable)
+        assert_no_credential_material(wrong_credential, *observable)
+
+    def test_middleware_sanitizes_query_paths_on_exceptions(self, monkeypatch):
+        credential = "".join(("opaque", "-exception-", "credential-marker"))
+        raw_path = _query_token_path(credential)
+        handler = MagicMock()
+        handler.client_address = ("127.0.0.1", 0)
+        handler.command = "GET"
+        handler.path = raw_path
+        handler._last_status_code = 500
+        monkeypatch.setattr(Config, "DEBUG_SERVER_RATE_LIMIT", 0)
+        monkeypatch.setattr(Config, "DEBUG_SERVER_METRICS_ENABLED", True)
+
+        def fail_request() -> None:
+            raise RuntimeError("synthetic handler failure")
+
+        with patch("arcanos.debug.middleware.get_debug_logger") as get_logger, patch(
+            "arcanos.debug.middleware.log_request"
+        ) as request_log, patch("arcanos.debug.middleware.get_metrics") as get_metrics_mock:
+            handle_debug_request(handler, raw_path, fail_request)
+
+        observable = (
+            get_logger.return_value.method_calls,
+            request_log.call_args_list,
+            get_metrics_mock.return_value.method_calls,
+        )
+        assert_no_credential_material(credential, *observable)
+        if request_log.call_args.args[1] != "/debug/status":
+            raise AssertionError("debug request logger received a query-bearing path")
 
 
 class TestHealthChecks:

@@ -68,6 +68,9 @@ def handle_request(handler: Any, endpoint: str, fn: Callable[[], None]) -> None:
     - Ensures handler._last_status_code is present (via _send_response)
     - Enforces rate limiting per client IP
     """
+    # Request targets can contain query credentials. Observability only needs the route path.
+    safe_endpoint = endpoint.split("?", 1)[0]
+
     # Rate limit check (before processing request)
     client_ip = getattr(handler, "client_address", ("unknown",))[0]
     allowed, retry_after = _check_rate_limit(client_ip)
@@ -83,7 +86,7 @@ def handle_request(handler: Any, endpoint: str, fn: Callable[[], None]) -> None:
         logger = get_debug_logger()
         logger.warning(
             f"Rate limit exceeded for IP {client_ip}",
-            extra={"client_ip": client_ip, "endpoint": endpoint, "retry_after": retry_after}
+            extra={"client_ip": client_ip, "endpoint": safe_endpoint, "retry_after": retry_after}
         )
         return
 
@@ -99,10 +102,10 @@ def handle_request(handler: Any, endpoint: str, fn: Callable[[], None]) -> None:
         logger.exception(
             "Unhandled debug handler error",
             extra={
-                "endpoint": endpoint,
+                "endpoint": safe_endpoint,
                 "request_id": request_id,
                 "method": getattr(handler, "command", None),
-                "path": getattr(handler, "path", None),
+                "path": safe_endpoint,
             },
         )
         # Fallback if handler's _send_response fails; best-effort only.
@@ -114,10 +117,10 @@ def handle_request(handler: Any, endpoint: str, fn: Callable[[], None]) -> None:
         duration_ms = (time.time() - start) * 1000.0
         status_code = getattr(handler, "_last_status_code", 500)
         method = getattr(handler, "command", "GET")
-        path = getattr(handler, "path", endpoint)
+        path = safe_endpoint
 
         if Config.DEBUG_SERVER_METRICS_ENABLED:
-            get_metrics().record(endpoint, status_code, duration_ms)
+            get_metrics().record(safe_endpoint, status_code, duration_ms)
 
         # Logging is always allowed; level controlled via config.
         log_request(method, path, status_code, duration_ms, request_id=request_id)
