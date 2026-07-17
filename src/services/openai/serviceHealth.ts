@@ -560,10 +560,13 @@ export function getOpenAIServiceHealth() {
 export function validateAPIKeyAtStartup(): boolean {
   const health = validateClientHealth();
   const apiKeyConfigured = health.apiKeyConfigured;
+  const forceMock = getEnv('FORCE_MOCK') === 'true';
 
-  syncOpenAIProviderRuntime({
-    reason: 'startup'
-  });
+  if (!forceMock) {
+    syncOpenAIProviderRuntime({
+      reason: 'startup'
+    });
+  }
 
   if (!apiKeyConfigured) {
     markProviderFailure(new Error('OpenAI API key missing at startup'), {
@@ -579,7 +582,7 @@ export function validateAPIKeyAtStartup(): boolean {
     source: health.apiKeySource
   });
 
-  if (getEnv('FORCE_MOCK') === 'true') {
+  if (forceMock) {
     logger.info('openai.provider.startup_probe_skipped', {
       module: 'openai.service_health',
       reason: 'force_mock'

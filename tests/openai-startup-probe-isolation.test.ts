@@ -2,14 +2,17 @@ import { afterAll, beforeEach, describe, expect, it, jest } from '@jest/globals'
 
 const modelsListMock = jest.fn(() => Promise.resolve({ data: [] }));
 const loggerInfoMock = jest.fn();
+const resetOpenAIAdapterMock = jest.fn();
 let apiKeyConfigured = true;
+let configuredModel = 'test-model-0';
+let configuredModelSequence = 0;
 
 jest.unstable_mockModule('@platform/resilience/cache.js', () => ({
   responseCache: { getStats: jest.fn(() => ({})) }
 }));
 jest.unstable_mockModule('@core/adapters/openai.adapter.js', () => ({
   isOpenAIAdapterInitialized: jest.fn(() => true),
-  resetOpenAIAdapter: jest.fn()
+  resetOpenAIAdapter: resetOpenAIAdapterMock
 }));
 jest.unstable_mockModule('@services/openai/resilience.js', () => ({
   RESILIENCE_CONSTANTS: { DEFAULT_MAX_TOKENS: 1000 },
@@ -39,7 +42,7 @@ jest.unstable_mockModule('@services/openai/clientBridge.js', () => ({
 jest.unstable_mockModule('@platform/runtime/unifiedConfig.js', () => ({
   getConfig: jest.fn(() => ({
     openaiApiKey: 'configured-test-key',
-    defaultModel: 'test-model'
+    defaultModel: configuredModel
   }))
 }));
 jest.unstable_mockModule('@platform/runtime/env.js', () => ({
@@ -67,7 +70,10 @@ describe('OpenAI startup probe isolation', () => {
   beforeEach(() => {
     modelsListMock.mockClear();
     loggerInfoMock.mockClear();
+    resetOpenAIAdapterMock.mockClear();
     apiKeyConfigured = true;
+    configuredModelSequence += 1;
+    configuredModel = `test-model-${configuredModelSequence}`;
     delete process.env.FORCE_MOCK;
   });
 
@@ -84,6 +90,7 @@ describe('OpenAI startup probe isolation', () => {
 
     expect(validateAPIKeyAtStartup()).toBe(true);
     expect(modelsListMock).not.toHaveBeenCalled();
+    expect(resetOpenAIAdapterMock).not.toHaveBeenCalled();
     expect(loggerInfoMock).toHaveBeenCalledWith('openai.provider.startup_probe_skipped', {
       module: 'openai.service_health',
       reason: 'force_mock'
