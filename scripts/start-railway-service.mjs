@@ -47,6 +47,13 @@ const LOOPBACK_CLI_BRIDGE_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
 const CLI_BRIDGE_ENABLED_ENV = 'ARCANOS_CLI_BRIDGE_ENABLED';
 const CLI_BRIDGE_URL_ENV = 'ARCANOS_CLI_BRIDGE_URL';
 const CLI_BRIDGE_TOKEN_ENV = 'ARCANOS_CLI_BRIDGE_TOKEN';
+const PREVIEW_ISOLATION_ENV = 'ARCANOS_PREVIEW_ISOLATION';
+const OPENAI_BASE_URL_ENV_NAMES = [
+  'OPENAI_BASE_URL',
+  'RAILWAY_OPENAI_BASE_URL',
+  'OPENAI_API_BASE_URL',
+  'OPENAI_API_BASE'
+];
 const OPENAI_API_KEY_ENV_NAMES = [
   'OPENAI_API_KEY',
   'RAILWAY_OPENAI_API_KEY',
@@ -82,6 +89,82 @@ export function resolveProcessKindOrThrow() {
   }
 
   return normalizedProcessKind;
+}
+
+function firstConfiguredValue(env, names) {
+  for (const name of names) {
+    const value = env[name]?.trim();
+    if (value) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Enforce the opt-in first-boot isolation contract before any Railway child starts.
+ *
+ * Inputs/outputs:
+ * - Input: process environment.
+ * - Output: stable, non-sensitive isolation categories.
+ *
+ * Edge case behavior:
+ * - Marker absent is a no-op, preserving existing production startup semantics.
+ * - Marker present fails closed for production, non-mock mode, or a non-loopback provider.
+ */
+export function assertPreviewIsolationOrThrow(env = process.env) {
+  const previewIsolationMarker = env[PREVIEW_ISOLATION_ENV]?.trim();
+  if (!previewIsolationMarker) {
+    return { enabled: false };
+  }
+  if (previewIsolationMarker !== 'true') {
+    throw new Error('PREVIEW_ISOLATION_MARKER_INVALID');
+  }
+
+  const environmentName = (
+    env.RAILWAY_ENVIRONMENT_NAME?.trim()
+    || env.RAILWAY_ENVIRONMENT?.trim()
+    || ''
+  ).toLowerCase();
+  if (!environmentName) {
+    throw new Error('PREVIEW_ISOLATION_ENVIRONMENT_REQUIRED');
+  }
+  if (environmentName === 'production') {
+    throw new Error('PREVIEW_ISOLATION_PRODUCTION_FORBIDDEN');
+  }
+  if (env.FORCE_MOCK !== 'true') {
+    throw new Error('PREVIEW_ISOLATION_FORCE_MOCK_REQUIRED');
+  }
+
+  const providerBaseUrl = firstConfiguredValue(env, OPENAI_BASE_URL_ENV_NAMES);
+  if (!providerBaseUrl) {
+    throw new Error('PREVIEW_ISOLATION_OPENAI_BASE_URL_REQUIRED');
+  }
+
+  let parsedProviderUrl;
+  try {
+    parsedProviderUrl = new URL(providerBaseUrl);
+  } catch {
+    throw new Error('PREVIEW_ISOLATION_OPENAI_BASE_URL_INVALID');
+  }
+
+  if (parsedProviderUrl.username || parsedProviderUrl.password) {
+    throw new Error('PREVIEW_ISOLATION_OPENAI_BASE_URL_CREDENTIALS_FORBIDDEN');
+  }
+
+  const providerHostname = normalizeCliBridgeHostname(parsedProviderUrl.hostname);
+  if (
+    parsedProviderUrl.protocol !== 'http:'
+    || !LOOPBACK_CLI_BRIDGE_HOSTS.has(providerHostname)
+  ) {
+    throw new Error('PREVIEW_ISOLATION_OPENAI_BASE_URL_NOT_LOOPBACK');
+  }
+
+  return {
+    enabled: true,
+    environmentCategory: 'non-production',
+    providerCategory: 'loopback'
+  };
 }
 
 /**
@@ -515,6 +598,15 @@ async function runWorkerRuntimeWithHealthServer() {
 async function main() {
   try {
     const processKind = resolveProcessKindOrThrow();
+    const previewIsolation = assertPreviewIsolationOrThrow();
+    if (previewIsolation.enabled) {
+      console.log('[railway-launcher] preview.isolation.verified', JSON.stringify({
+        module: 'railway-launcher',
+        environmentCategory: previewIsolation.environmentCategory,
+        providerCategory: previewIsolation.providerCategory,
+        forceMock: true
+      }));
+    }
     logStartup(processKind);
 
     //audit Assumption: runtime role must be selected from an explicit env contract, not infrastructure naming; risk: wrong process type launched; invariant: only validated `web`/`worker` values are accepted; handling: strict env validation before branch selection.
@@ -526,7 +618,13 @@ async function main() {
     await runWebRuntime();
   } catch (error) {
     //audit Assumption: launcher failures must be visible for incident triage; risk: silent boot failure with endless restart loops; invariant: fatal errors are logged and non-zero exit code returned; handling: structured stderr logging + exit(1).
-    const message = error instanceof Error ? error.stack ?? error.message : String(error);
+    const isPreviewIsolationFailure = error instanceof Error
+      && error.message.startsWith('PREVIEW_ISOLATION_');
+    const message = error instanceof Error
+      ? isPreviewIsolationFailure
+        ? error.message
+        : error.stack ?? error.message
+      : String(error);
     console.error(`[railway-launcher] fatal startup error: ${message}`);
     process.exit(1);
   }
