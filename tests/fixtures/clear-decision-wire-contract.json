@@ -1,0 +1,184 @@
+{
+  "version": 1,
+  "thresholds": {
+    "confirmMinimum": 0.4,
+    "allowMinimum": 0.7
+  },
+  "cases": [
+    {
+      "name": "block at zero",
+      "evaluation": { "overall": 0, "decision": "block" },
+      "expected": { "kind": "block", "decision": "block", "overall": 0 }
+    },
+    {
+      "name": "block immediately below confirm boundary",
+      "evaluation": { "overall": 0.399999, "decision": "block" },
+      "expected": { "kind": "block", "decision": "block", "overall": 0.399999 }
+    },
+    {
+      "name": "confirm at lower boundary",
+      "evaluation": { "overall": 0.4, "decision": "confirm" },
+      "expected": { "kind": "confirm", "decision": "confirm", "overall": 0.4 }
+    },
+    {
+      "name": "confirm immediately below allow boundary",
+      "evaluation": { "overall": 0.699999, "decision": "confirm" },
+      "expected": { "kind": "confirm", "decision": "confirm", "overall": 0.699999 }
+    },
+    {
+      "name": "allow at upper boundary",
+      "evaluation": { "overall": 0.7, "decision": "allow" },
+      "expected": { "kind": "allow", "decision": "allow", "overall": 0.7 }
+    },
+    {
+      "name": "allow at one",
+      "evaluation": { "overall": 1, "decision": "allow" },
+      "expected": { "kind": "allow", "decision": "allow", "overall": 1 }
+    },
+    {
+      "name": "explicit allow with null score",
+      "evaluation": { "overall": null, "decision": "allow" },
+      "expected": { "kind": "allow", "decision": "allow", "overall": null }
+    },
+    {
+      "name": "explicit confirm with null score",
+      "evaluation": { "overall": null, "decision": "confirm" },
+      "expected": { "kind": "confirm", "decision": "confirm", "overall": null }
+    },
+    {
+      "name": "explicit block with null score",
+      "evaluation": { "overall": null, "decision": "block" },
+      "expected": { "kind": "block", "decision": "block", "overall": null }
+    },
+    {
+      "name": "explicit allow with missing score",
+      "evaluation": { "decision": "allow" },
+      "expected": { "kind": "allow", "decision": "allow", "overall": null }
+    },
+    {
+      "name": "null result",
+      "evaluation": null,
+      "expected": { "kind": "indeterminate", "reason": "missing_result" }
+    },
+    {
+      "name": "empty result",
+      "evaluation": {},
+      "expected": { "kind": "indeterminate", "reason": "missing_decision" }
+    },
+    {
+      "name": "missing decision does not derive from score",
+      "evaluation": { "overall": 0.8 },
+      "expected": { "kind": "indeterminate", "reason": "missing_decision" }
+    },
+    {
+      "name": "null decision does not derive from score",
+      "evaluation": { "overall": 0.8, "decision": null },
+      "expected": { "kind": "indeterminate", "reason": "missing_decision" }
+    },
+    {
+      "name": "failure-shaped result is not a decision",
+      "evaluation": { "error": { "code": "SYNTHETIC_EVALUATION_FAILURE" } },
+      "expected": { "kind": "indeterminate", "reason": "missing_decision" }
+    },
+    {
+      "name": "unknown decision",
+      "evaluation": { "overall": 0.8, "decision": "unknown" },
+      "expected": { "kind": "invalid", "reason": "invalid_decision" }
+    },
+    {
+      "name": "case-variant decision",
+      "evaluation": { "overall": 0.8, "decision": "ALLOW" },
+      "expected": { "kind": "invalid", "reason": "invalid_decision" }
+    },
+    {
+      "name": "numeric decision",
+      "evaluation": { "overall": 0.8, "decision": 1 },
+      "expected": { "kind": "invalid", "reason": "invalid_decision" }
+    },
+    {
+      "name": "boolean decision",
+      "evaluation": { "overall": 0.8, "decision": true },
+      "expected": { "kind": "invalid", "reason": "invalid_decision" }
+    },
+    {
+      "name": "failed decision object",
+      "evaluation": { "overall": 0.8, "decision": { "status": "failed" } },
+      "expected": { "kind": "invalid", "reason": "invalid_decision" }
+    },
+    {
+      "name": "numeric string score",
+      "evaluation": { "overall": "0.8", "decision": "allow" },
+      "expected": { "kind": "invalid", "reason": "invalid_score" }
+    },
+    {
+      "name": "boolean score",
+      "evaluation": { "overall": true, "decision": "allow" },
+      "expected": { "kind": "invalid", "reason": "invalid_score" }
+    },
+    {
+      "name": "object score",
+      "evaluation": { "overall": { "value": 0.8 }, "decision": "allow" },
+      "expected": { "kind": "invalid", "reason": "invalid_score" }
+    },
+    {
+      "name": "array score",
+      "evaluation": { "overall": [0.8], "decision": "allow" },
+      "expected": { "kind": "invalid", "reason": "invalid_score" }
+    },
+    {
+      "name": "negative score",
+      "evaluation": { "overall": -0.001, "decision": "block" },
+      "expected": { "kind": "invalid", "reason": "invalid_score" }
+    },
+    {
+      "name": "score above one",
+      "evaluation": { "overall": 1.001, "decision": "allow" },
+      "expected": { "kind": "invalid", "reason": "invalid_score" }
+    },
+    {
+      "name": "array result",
+      "evaluation": [],
+      "expected": { "kind": "invalid", "reason": "malformed_result" }
+    },
+    {
+      "name": "string result",
+      "evaluation": "allow",
+      "expected": { "kind": "invalid", "reason": "malformed_result" }
+    },
+    {
+      "name": "boolean result",
+      "evaluation": true,
+      "expected": { "kind": "invalid", "reason": "malformed_result" }
+    },
+    {
+      "name": "numeric result",
+      "evaluation": 0.8,
+      "expected": { "kind": "invalid", "reason": "malformed_result" }
+    },
+    {
+      "name": "allow contradicts block score",
+      "evaluation": { "overall": 0.2, "decision": "allow" },
+      "expected": { "kind": "invalid", "reason": "contradictory_result" }
+    },
+    {
+      "name": "confirm contradicts allow score",
+      "evaluation": { "overall": 0.8, "decision": "confirm" },
+      "expected": { "kind": "invalid", "reason": "contradictory_result" }
+    },
+    {
+      "name": "block contradicts allow score",
+      "evaluation": { "overall": 0.8, "decision": "block" },
+      "expected": { "kind": "invalid", "reason": "contradictory_result" }
+    },
+    {
+      "name": "unknown fields do not change a valid outcome",
+      "evaluation": {
+        "overall": 0.8,
+        "decision": "allow",
+        "providerMetadata": { "opaque": true },
+        "unknownField": "ignored"
+      },
+      "expected": { "kind": "allow", "decision": "allow", "overall": 0.8 }
+    }
+  ]
+}
