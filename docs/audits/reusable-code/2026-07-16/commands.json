@@ -1,0 +1,27 @@
+{
+  "shell": "PowerShell 7",
+  "testEnvironmentPrefix": "$env:NODE_ENV='test'; $env:FORCE_MOCK='true';",
+  "generator": "node scripts/reusable-code-audit-baseline.mjs --source-commit 462e279f264372d42be4c9781a98fe72b6f498a5 --source-branch codex/fix-gaming-action-resilience --baseline-at 2026-07-16T16:37:54.4989251-04:00 --output docs/audits/reusable-code/2026-07-16 --verify-determinism",
+  "artifacts": {
+    "commands.json": "Written by the generator command recorded in generator.",
+    "baseline.json": "Generator plus git rev-parse/status/rev-list, local tool --version commands, and name-only .env.test inspection.",
+    "source-inventory.json": "git ls-tree -r --name-only 462e279f264372d42be4c9781a98fe72b6f498a5",
+    "test-inventory.json": "$env:NODE_ENV='test'; $env:FORCE_MOCK='true'; node scripts/run-jest.mjs --listTests --coverage=false --runInBand; source baseline filtered through git ls-tree",
+    "coverage-scope.txt": "Import config/coverageScope.js; normalize, de-duplicate, sort, and verify against the source commit.",
+    "coverage-report.json": "$env:NODE_ENV='test'; $env:FORCE_MOCK='true'; node scripts/run-jest.mjs --coverage --coverageReporters=json-summary --coverageReporters=lcov --coverageReporters=text-summary --maxWorkers=50% --silent; then run the generator",
+    "dynamic-module-inventory.json": "Generator TypeScript AST classification of source services plus explicitly machine-local ignored dist/services observation.",
+    "circular-paths.json": "node node_modules/madge/bin/cli.js --circular --json --extensions ts --ts-config tsconfig.json src",
+    "runtime-scc.json": "Generator TypeScript AST graph over tracked root-backend src/**/*.ts with explicit type-only edges excluded.",
+    "runtime-edges.json": "Generator sorted source/target edge list from the same TypeScript AST runtime graph.",
+    "architecture-edges.csv": "Generator cross-area aggregation of runtime-edges.json.",
+    "unused-declarations.txt": "node node_modules/typescript/bin/tsc --noEmit --noUnusedLocals --noUnusedParameters --pretty false"
+  },
+  "manuallyMaintainedArtifacts": {
+    "README.md": "Curated index and interpretation of the generated evidence.",
+    "characterization-report.md": "Curated from the cited characterization tests and generated artifacts.",
+    "dependency-boundary-proposals.md": "Curated recommendations from runtime-edges.json and runtime-scc.json; no changes are authorized.",
+    "findings.json": "Curated review-label records backed by cited production files, tests, and generated evidence.",
+    "validation-results.json": "Manually captured pre-change command results with durations and classifications.",
+    "post-change-validation.json": "Manually captured post-change command results supplied by the validation run."
+  }
+}

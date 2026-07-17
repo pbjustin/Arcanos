@@ -1,0 +1,70 @@
+command: node node_modules/typescript/bin/tsc --noEmit --noUnusedLocals --noUnusedParameters --pretty false
+observed_exit_code: 2
+diagnostic_count: 66
+
+src/brain/registerGpt5Worker.ts(26,27): error TS6133: 'payload' is declared but its value is never read.
+src/core/db/repositories/sessionRepository.ts(97,11): error TS6196: 'CountRow' is declared but never used.
+src/mcp/server/dagTools.ts(233,13): error TS6133: 'startedAtMs' is declared but its value is never read.
+src/mcp/server/helpers.ts(7,1): error TS6133: 'validateCapability' is declared but its value is never read.
+src/platform/logging/unifiedTelemetry.ts(21,3): error TS6133: 'TelemetryLogEvent' is declared but its value is never read.
+src/platform/logging/unifiedTelemetry.ts(22,3): error TS6133: 'TelemetryTraceEvent' is declared but its value is never read.
+src/platform/observability/appMetrics.ts(520,10): error TS6133: 'coerceByteSize' is declared but its value is never read.
+src/platform/resilience/unifiedHealth.ts(19,29): error TS6133: 'NextFunction' is declared but its value is never read.
+src/platform/resilience/unifiedHealth.ts(23,53): error TS6133: 'ClientHealthStatus' is declared but its value is never read.
+src/platform/resilience/unifiedHealth.ts(27,1): error TS6192: All imports in import declaration are unused.
+src/platform/resilience/unifiedHealth.ts(323,17): error TS6133: 'req' is declared but its value is never read.
+src/platform/resilience/unifiedRetry.ts(26,3): error TS6133: 'getTechnicalMessage' is declared but its value is never read.
+src/platform/resilience/unifiedRetry.ts(28,1): error TS6133: 'ErrorType' is declared but its value is never read.
+src/platform/runtime/env.ts(310,15): error TS6133: 'key' is declared but its value is never read.
+src/platform/runtime/env.ts(320,15): error TS6133: 'key' is declared but its value is never read.
+src/platform/runtime/environmentValidation.ts(519,9): error TS6133: '_railwayResult' is declared but its value is never read.
+src/platform/runtime/security.ts(475,33): error TS6133: 'req' is declared but its value is never read.
+src/routes/api-daemon.ts(20,10): error TS6133: 'daemonLogger' is declared but its value is never read.
+src/routes/api-daemon.ts(359,11): error TS6133: 'token' is declared but its value is never read.
+src/routes/api-session-system.ts(1,24): error TS6133: 'Request' is declared but its value is never read.
+src/routes/gpt-access.ts(800,3): error TS6133: 'req' is declared but its value is never read.
+src/routes/introspection.ts(90,23): error TS6133: 'req' is declared but its value is never read.
+src/routes/plans.ts(15,33): error TS6133: 'executionResultInputSchema' is declared but its value is never read.
+src/routes/pr-analysis.ts(160,24): error TS6133: 'req' is declared but its value is never read.
+src/routes/pr-analysis.ts(180,24): error TS6133: 'req' is declared but its value is never read.
+src/routes/self-improve.ts(29,85): error TS6133: 'req' is declared but its value is never read.
+src/routes/status.ts(8,10): error TS6133: 'loadState' is declared but its value is never read.
+src/services/ai-reflections.ts(14,1): error TS6192: All imports in import declaration are unused.
+src/services/arcanos-tracker.ts(2,3): error TS6196: 'CancelDagRunResponseData' is declared but never used.
+src/services/gamingWebContext.ts(2837,29): error TS6133: 'input' is declared but its value is never read.
+src/services/naturalLanguageMemory.ts(489,10): error TS6133: 'toNaturalLanguageMemoryEntry' is declared but its value is never read.
+src/services/openai/chatFlow/index.ts(1,26): error TS6133: 'logOpenAISuccess' is declared but its value is never read.
+src/services/openai/chatFlow/index.ts(3,1): error TS6133: 'generateRequestId' is declared but its value is never read.
+src/services/openai/chatFlow/index.ts(30,24): error TS6133: 'DEFAULT_MAX_RETRIES' is declared but its value is never read.
+src/services/openai/chatFlow/index.ts(30,45): error TS6133: 'DEFAULT_SYSTEM_PROMPT' is declared but its value is never read.
+src/services/openai/chatFlow/index.ts(30,96): error TS6133: 'NO_RESPONSE_CONTENT_FALLBACK' is declared but its value is never read.
+src/services/openai/chatFlow/index.ts(42,1): error TS6133: 'buildChatMessages' is declared but its value is never read.
+src/services/openai/chatFlow/index.ts(43,24): error TS6133: 'hasContent' is declared but its value is never read.
+src/services/openai/chatFlow/index.ts(48,1): error TS6133: 'classifyOpenAIError' is declared but its value is never read.
+src/services/openai/chatFlow/index.ts(5,30): error TS6133: 'trackPromptUsage' is declared but its value is never read.
+src/services/openai/chatFlow/index.ts(6,1): error TS6133: 'recordTraceEvent' is declared but its value is never read.
+src/services/openai/chatFlow/index.ts(66,3): error TS6133: 'extractResponseOutputText' is declared but its value is never read.
+src/services/openai/chatFlow/index.ts(7,1): error TS6133: 'aiLogger' is declared but its value is never read.
+src/services/openai/chatFlow/index.ts(8,1): error TS6133: 'createCacheKey' is declared but its value is never read.
+src/services/openai/constants.ts(1,32): error TS6133: 'getEnvBoolean' is declared but its value is never read.
+src/services/prAssistant.ts(48,34): error TS6133: 'files' is declared but its value is never read.
+src/services/railwayClient.ts(80,11): error TS6196: 'RailwayProjectEdge' is declared but never used.
+src/services/safety/runtimeState/types.ts(62,11): error TS6196: 'UnsafeConditionInput' is declared but never used.
+src/services/safety/runtimeState/types.ts(70,11): error TS6196: 'QuarantineInput' is declared but never used.
+src/services/safety/v2/jwks.ts(10,35): error TS6133: 'FlattenedJWSInput' is declared but its value is never read.
+src/services/safety/v2/jwks.ts(10,59): error TS6133: 'JWSHeaderParameters' is declared but its value is never read.
+src/services/selfHealRuntimeInspectionService.ts(26,7): error TS6133: 'SELF_HEAL_RUNTIME_SOURCE' is declared but its value is never read.
+src/services/selfImprove/predictiveHealingService.ts(32,1): error TS6133: 'getEnvNumber' is declared but its value is never read.
+src/services/selfImprove/predictiveHealingService.ts(508,6): error TS6196: 'PredictiveHealingAiDecisionPayload' is declared but never used.
+src/transport/http/controllers/healthController.ts(145,26): error TS6133: 'req' is declared but its value is never read.
+src/transport/http/controllers/healthController.ts(193,32): error TS6133: 'req' is declared but its value is never read.
+src/transport/http/middleware/capabilityGate.ts(77,45): error TS6133: 'res' is declared but its value is never read.
+src/transport/http/middleware/fallbackHandler.ts(244,11): error TS6133: 'req' is declared but its value is never read.
+src/transport/http/middleware/memoryConsistencyGate/index.ts(19,3): error TS6133: 'buildUnsafeToProceedPayload' is declared but its value is never read.
+src/transport/http/middleware/memoryConsistencyGate/index.ts(31,50): error TS6196: 'RequestStateSnapshot' is declared but never used.
+src/transport/http/middleware/memoryConsistencyGate/index.ts(32,10): error TS6133: 'MAX_BODY_SERIALIZATION_BYTES' is declared but its value is never read.
+src/transport/http/middleware/memoryConsistencyGate/index.ts(32,40): error TS6133: 'STATUS_CONFLICT' is declared but its value is never read.
+src/transport/http/middleware/memoryConsistencyGate/index.ts(32,57): error TS6133: 'STATUS_SERVICE_UNAVAILABLE' is declared but its value is never read.
+src/transport/http/middleware/memoryConsistencyGate/index.ts(33,25): error TS6133: 'cloneJsonSafe' is declared but its value is never read.
+src/transport/http/middleware/memoryConsistencyGate/index.ts(37,40): error TS6133: 'buildConflictResponsePayload' is declared but its value is never read.
+src/transport/http/middleware/memoryConsistencyGate/index.ts(37,70): error TS6133: 'buildFailsafePayload' is declared but its value is never read.

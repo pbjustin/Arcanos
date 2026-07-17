@@ -1,0 +1,58 @@
+{
+  "sourceCommit": "462e279f264372d42be4c9781a98fe72b6f498a5",
+  "counts": {
+    "trackedFiles": 1870,
+    "trackedEntriesUnderSrc": 721,
+    "trackedSrcTypeScriptFiles": 720,
+    "trackedSrcDeclarationFiles": 3,
+    "applicableSrcTypeScriptFiles": 717,
+    "trackedPythonFiles": 217,
+    "activeDaemonPythonFiles": 115,
+    "legacyPythonFiles": 55
+  },
+  "declarationExclusions": [
+    "src/shared/types/daemon-bridge.d.ts",
+    "src/shared/types/express.d.ts",
+    "src/shared/types/routes.d.ts"
+  ],
+  "workspaces": [
+    "@arcanos/cli",
+    "@arcanos/openai",
+    "@arcanos/protocol",
+    "@arcanos/runtime",
+    "arcanos-ai-runtime",
+    "arcanos-workers"
+  ],
+  "workspaceManifests": [
+    {
+      "name": "@arcanos/cli",
+      "manifest": "packages/cli/package.json",
+      "hasLocalTestScript": false
+    },
+    {
+      "name": "@arcanos/openai",
+      "manifest": "packages/arcanos-openai/package.json",
+      "hasLocalTestScript": false
+    },
+    {
+      "name": "@arcanos/protocol",
+      "manifest": "packages/protocol/package.json",
+      "hasLocalTestScript": false
+    },
+    {
+      "name": "@arcanos/runtime",
+      "manifest": "packages/arcanos-runtime/package.json",
+      "hasLocalTestScript": false
+    },
+    {
+      "name": "arcanos-ai-runtime",
+      "manifest": "arcanos-ai-runtime/package.json",
+      "hasLocalTestScript": true
+    },
+    {
+      "name": "arcanos-workers",
+      "manifest": "workers/package.json",
+      "hasLocalTestScript": false
+    }
+  ]
+}
