@@ -1,0 +1,464 @@
+{
+  "schemaVersion": 1,
+  "observedStatuses": [
+    "planned",
+    "awaiting_confirmation",
+    "approved",
+    "in_progress",
+    "completed",
+    "failed",
+    "expired",
+    "blocked"
+  ],
+  "effectKeys": [
+    "policyRecheck",
+    "blockCallback",
+    "confirmationCallback",
+    "executionCallback",
+    "localCommand",
+    "statusWrite",
+    "resultWrite",
+    "successOutput"
+  ],
+  "cases": [
+    {
+      "name": "approved executes with current allow",
+      "plan": { "status": "approved", "expiry": "active" },
+      "operation": "execute",
+      "policy": { "kind": "allow", "provenance": "current_recheck" },
+      "expectedSemantic": { "classification": "allowed", "reasonCode": "execution_allowed", "operationAllowed": true, "policyRecheckAllowed": false, "statusTransitionAllowed": false, "targetStatus": null },
+      "expectedEffects": {
+        "typescript": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": true, "successOutput": true },
+        "python": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": true, "executionCallback": true, "localCommand": true, "statusWrite": false, "resultWrite": true, "successOutput": true }
+      }
+    },
+    {
+      "name": "approved executes with current confirm",
+      "plan": { "status": "approved", "expiry": "active" },
+      "operation": "execute",
+      "policy": { "kind": "confirm", "provenance": "current_recheck" },
+      "expectedSemantic": { "classification": "allowed", "reasonCode": "execution_allowed", "operationAllowed": true, "policyRecheckAllowed": false, "statusTransitionAllowed": false, "targetStatus": null },
+      "expectedEffects": {
+        "typescript": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": true, "successOutput": true },
+        "python": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": true, "executionCallback": true, "localCommand": true, "statusWrite": false, "resultWrite": true, "successOutput": true }
+      }
+    },
+    {
+      "name": "approved transitions to blocked with current block",
+      "plan": { "status": "approved", "expiry": "active" },
+      "operation": "block",
+      "policy": { "kind": "block", "provenance": "current_recheck" },
+      "expectedSemantic": { "classification": "policy_blocked", "reasonCode": "current_policy_block", "operationAllowed": true, "policyRecheckAllowed": false, "statusTransitionAllowed": true, "targetStatus": "blocked" },
+      "expectedEffects": {
+        "typescript": { "policyRecheck": false, "blockCallback": true, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": true, "resultWrite": false, "successOutput": false },
+        "python": { "policyRecheck": false, "blockCallback": true, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": true, "resultWrite": false, "successOutput": false }
+      }
+    },
+    {
+      "name": "approved historical allow requires current recheck",
+      "plan": { "status": "approved", "expiry": "active" },
+      "operation": "execute",
+      "policy": { "kind": "allow", "provenance": "stored_creation" },
+      "expectedSemantic": { "classification": "recheck_required", "reasonCode": "fresh_recheck_required", "operationAllowed": false, "policyRecheckAllowed": true, "statusTransitionAllowed": false, "targetStatus": null },
+      "expectedEffects": {
+        "typescript": { "policyRecheck": true, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false },
+        "python": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false }
+      }
+    },
+    {
+      "name": "approved historical confirm requires current recheck",
+      "plan": { "status": "approved", "expiry": "active" },
+      "operation": "execute",
+      "policy": { "kind": "confirm", "provenance": "stored_creation" },
+      "expectedSemantic": { "classification": "recheck_required", "reasonCode": "fresh_recheck_required", "operationAllowed": false, "policyRecheckAllowed": true, "statusTransitionAllowed": false, "targetStatus": null },
+      "expectedEffects": {
+        "typescript": { "policyRecheck": true, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false },
+        "python": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false }
+      }
+    },
+    {
+      "name": "approved without stored CLEAR still requires current recheck",
+      "plan": { "status": "approved", "expiry": "active" },
+      "operation": "execute",
+      "policy": { "kind": "not_evaluated", "provenance": "stored_creation" },
+      "expectedSemantic": { "classification": "recheck_required", "reasonCode": "fresh_recheck_required", "operationAllowed": false, "policyRecheckAllowed": true, "statusTransitionAllowed": false, "targetStatus": null },
+      "expectedEffects": {
+        "typescript": { "policyRecheck": true, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false },
+        "python": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false }
+      }
+    },
+    {
+      "name": "approved with historical block is invalid",
+      "plan": { "status": "approved", "expiry": "active" },
+      "operation": "execute",
+      "policy": { "kind": "block", "provenance": "stored_creation" },
+      "expectedSemantic": { "classification": "invalid", "reasonCode": "stored_policy_conflict", "operationAllowed": false, "policyRecheckAllowed": false, "statusTransitionAllowed": false, "targetStatus": null },
+      "expectedEffects": {
+        "typescript": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false },
+        "python": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false }
+      }
+    },
+    {
+      "name": "blocked lifecycle denies historical allow without contradiction",
+      "plan": { "status": "blocked", "expiry": "active" },
+      "operation": "execute",
+      "policy": { "kind": "allow", "provenance": "stored_creation" },
+      "expectedSemantic": { "classification": "forbidden", "reasonCode": "lifecycle_blocked", "operationAllowed": false, "policyRecheckAllowed": false, "statusTransitionAllowed": false, "targetStatus": null },
+      "expectedEffects": {
+        "typescript": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false },
+        "python": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false }
+      }
+    },
+    {
+      "name": "blocked lifecycle denies historical confirm without contradiction",
+      "plan": { "status": "blocked", "expiry": "active" },
+      "operation": "execute",
+      "policy": { "kind": "confirm", "provenance": "stored_creation" },
+      "expectedSemantic": { "classification": "forbidden", "reasonCode": "lifecycle_blocked", "operationAllowed": false, "policyRecheckAllowed": false, "statusTransitionAllowed": false, "targetStatus": null },
+      "expectedEffects": {
+        "typescript": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false },
+        "python": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false }
+      }
+    },
+    {
+      "name": "blocked daemon command with allow is invalid",
+      "plan": { "status": "blocked", "expiry": "active" },
+      "operation": "execute",
+      "policy": { "kind": "allow", "provenance": "daemon_wire" },
+      "expectedSemantic": { "classification": "invalid", "reasonCode": "blocked_current_policy_conflict", "operationAllowed": false, "policyRecheckAllowed": false, "statusTransitionAllowed": false, "targetStatus": null },
+      "expectedEffects": {
+        "typescript": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false },
+        "python": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false }
+      }
+    },
+    {
+      "name": "blocked daemon command with confirm is invalid",
+      "plan": { "status": "blocked", "expiry": "active" },
+      "operation": "execute",
+      "policy": { "kind": "confirm", "provenance": "daemon_wire" },
+      "expectedSemantic": { "classification": "invalid", "reasonCode": "blocked_current_policy_conflict", "operationAllowed": false, "policyRecheckAllowed": false, "statusTransitionAllowed": false, "targetStatus": null },
+      "expectedEffects": {
+        "typescript": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false },
+        "python": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false }
+      }
+    },
+    {
+      "name": "blocked daemon block is idempotent",
+      "plan": { "status": "blocked", "expiry": "active" },
+      "operation": "block",
+      "policy": { "kind": "block", "provenance": "daemon_wire" },
+      "expectedSemantic": { "classification": "policy_blocked", "reasonCode": "already_blocked", "operationAllowed": true, "policyRecheckAllowed": false, "statusTransitionAllowed": false, "targetStatus": "blocked" },
+      "expectedEffects": {
+        "typescript": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false },
+        "python": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false }
+      }
+    },
+    {
+      "name": "blocked lifecycle cannot expire",
+      "plan": { "status": "blocked", "expiry": "active" },
+      "operation": "expire",
+      "policy": { "kind": "not_evaluated", "provenance": "operator" },
+      "expectedSemantic": { "classification": "forbidden", "reasonCode": "blocked_transition_forbidden", "operationAllowed": false, "policyRecheckAllowed": false, "statusTransitionAllowed": false, "targetStatus": null },
+      "expectedEffects": {
+        "typescript": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false },
+        "python": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false }
+      }
+    },
+    {
+      "name": "planned cannot execute with daemon allow",
+      "plan": { "status": "planned", "expiry": "active" },
+      "operation": "execute",
+      "policy": { "kind": "allow", "provenance": "daemon_wire" },
+      "expectedSemantic": { "classification": "forbidden", "reasonCode": "approval_required", "operationAllowed": false, "policyRecheckAllowed": false, "statusTransitionAllowed": false, "targetStatus": null },
+      "expectedEffects": {
+        "typescript": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false },
+        "python": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false }
+      }
+    },
+    {
+      "name": "awaiting confirmation cannot execute with daemon confirm",
+      "plan": { "status": "awaiting_confirmation", "expiry": "active" },
+      "operation": "execute",
+      "policy": { "kind": "confirm", "provenance": "daemon_wire" },
+      "expectedSemantic": { "classification": "confirmation_required", "reasonCode": "durable_approval_required", "operationAllowed": false, "policyRecheckAllowed": false, "statusTransitionAllowed": false, "targetStatus": null },
+      "expectedEffects": {
+        "typescript": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false },
+        "python": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false }
+      }
+    },
+    {
+      "name": "in progress cannot execute again",
+      "plan": { "status": "in_progress", "expiry": "active" },
+      "operation": "execute",
+      "policy": { "kind": "allow", "provenance": "daemon_wire" },
+      "expectedSemantic": { "classification": "forbidden", "reasonCode": "execution_in_progress", "operationAllowed": false, "policyRecheckAllowed": false, "statusTransitionAllowed": false, "targetStatus": null },
+      "expectedEffects": {
+        "typescript": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false },
+        "python": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false }
+      }
+    },
+    {
+      "name": "in progress may record an explicit daemon block",
+      "plan": { "status": "in_progress", "expiry": "active" },
+      "operation": "block",
+      "policy": { "kind": "block", "provenance": "daemon_wire" },
+      "expectedSemantic": { "classification": "policy_blocked", "reasonCode": "current_policy_block", "operationAllowed": true, "policyRecheckAllowed": false, "statusTransitionAllowed": true, "targetStatus": "blocked" },
+      "expectedEffects": {
+        "typescript": { "policyRecheck": false, "blockCallback": true, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": true, "resultWrite": false, "successOutput": false },
+        "python": { "policyRecheck": false, "blockCallback": true, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": true, "resultWrite": false, "successOutput": false }
+      }
+    },
+    {
+      "name": "completed is terminal for execute",
+      "plan": { "status": "completed", "expiry": "active" },
+      "operation": "execute",
+      "policy": { "kind": "allow", "provenance": "daemon_wire" },
+      "expectedSemantic": { "classification": "terminal", "reasonCode": "terminal_state", "operationAllowed": false, "policyRecheckAllowed": false, "statusTransitionAllowed": false, "targetStatus": null },
+      "expectedEffects": {
+        "typescript": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false },
+        "python": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false }
+      }
+    },
+    {
+      "name": "failed is terminal for block",
+      "plan": { "status": "failed", "expiry": "active" },
+      "operation": "block",
+      "policy": { "kind": "block", "provenance": "daemon_wire" },
+      "expectedSemantic": { "classification": "terminal", "reasonCode": "terminal_state", "operationAllowed": false, "policyRecheckAllowed": false, "statusTransitionAllowed": false, "targetStatus": null },
+      "expectedEffects": {
+        "typescript": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false },
+        "python": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false }
+      }
+    },
+    {
+      "name": "expired lifecycle is terminal for execute",
+      "plan": { "status": "expired", "expiry": "elapsed" },
+      "operation": "execute",
+      "policy": { "kind": "allow", "provenance": "daemon_wire" },
+      "expectedSemantic": { "classification": "terminal", "reasonCode": "terminal_state", "operationAllowed": false, "policyRecheckAllowed": false, "statusTransitionAllowed": false, "targetStatus": null },
+      "expectedEffects": {
+        "typescript": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false },
+        "python": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false }
+      }
+    },
+    {
+      "name": "elapsed expiry makes approved plan terminal",
+      "plan": { "status": "approved", "expiry": "elapsed" },
+      "operation": "execute",
+      "policy": { "kind": "allow", "provenance": "current_recheck" },
+      "expectedSemantic": { "classification": "terminal", "reasonCode": "expiry_elapsed", "operationAllowed": false, "policyRecheckAllowed": false, "statusTransitionAllowed": false, "targetStatus": null },
+      "expectedEffects": {
+        "typescript": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false },
+        "python": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false }
+      }
+    },
+    {
+      "name": "malformed expiry makes approved plan invalid",
+      "plan": { "status": "approved", "expiry": "invalid" },
+      "operation": "execute",
+      "policy": { "kind": "allow", "provenance": "daemon_wire" },
+      "expectedSemantic": { "classification": "invalid", "reasonCode": "expiry_invalid", "operationAllowed": false, "policyRecheckAllowed": false, "statusTransitionAllowed": false, "targetStatus": null },
+      "expectedEffects": {
+        "typescript": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false },
+        "python": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false }
+      }
+    },
+    {
+      "name": "missing lifecycle state is unavailable",
+      "plan": { "expiry": "active" },
+      "operation": "execute",
+      "policy": { "kind": "allow", "provenance": "daemon_wire" },
+      "expectedSemantic": { "classification": "unavailable", "reasonCode": "state_missing", "operationAllowed": false, "policyRecheckAllowed": false, "statusTransitionAllowed": false, "targetStatus": null },
+      "expectedEffects": {
+        "typescript": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false },
+        "python": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false }
+      }
+    },
+    {
+      "name": "null lifecycle state is invalid",
+      "plan": { "status": null, "expiry": "active" },
+      "operation": "execute",
+      "policy": { "kind": "allow", "provenance": "daemon_wire" },
+      "expectedSemantic": { "classification": "invalid", "reasonCode": "state_invalid", "operationAllowed": false, "policyRecheckAllowed": false, "statusTransitionAllowed": false, "targetStatus": null },
+      "expectedEffects": {
+        "typescript": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false },
+        "python": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false }
+      }
+    },
+    {
+      "name": "unknown lifecycle state is invalid",
+      "plan": { "status": "unknown", "expiry": "active" },
+      "operation": "execute",
+      "policy": { "kind": "allow", "provenance": "daemon_wire" },
+      "expectedSemantic": { "classification": "invalid", "reasonCode": "state_unknown", "operationAllowed": false, "policyRecheckAllowed": false, "statusTransitionAllowed": false, "targetStatus": null },
+      "expectedEffects": {
+        "typescript": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false },
+        "python": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false }
+      }
+    },
+    {
+      "name": "cancelled is not an ActionPlan lifecycle state",
+      "plan": { "status": "cancelled", "expiry": "active" },
+      "operation": "execute",
+      "policy": { "kind": "allow", "provenance": "daemon_wire" },
+      "expectedSemantic": { "classification": "invalid", "reasonCode": "state_unknown", "operationAllowed": false, "policyRecheckAllowed": false, "statusTransitionAllowed": false, "targetStatus": null },
+      "expectedEffects": {
+        "typescript": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false },
+        "python": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false }
+      }
+    },
+    {
+      "name": "planned may be approved",
+      "plan": { "status": "planned", "expiry": "active" },
+      "operation": "approve",
+      "policy": { "kind": "allow", "provenance": "stored_creation" },
+      "expectedSemantic": { "classification": "allowed", "reasonCode": "approval_allowed", "operationAllowed": true, "policyRecheckAllowed": false, "statusTransitionAllowed": true, "targetStatus": "approved" },
+      "expectedEffects": {
+        "typescript": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": true, "executionCallback": false, "localCommand": false, "statusWrite": true, "resultWrite": false, "successOutput": true },
+        "python": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false }
+      }
+    },
+    {
+      "name": "awaiting confirmation may be approved",
+      "plan": { "status": "awaiting_confirmation", "expiry": "active" },
+      "operation": "approve",
+      "policy": { "kind": "confirm", "provenance": "stored_creation" },
+      "expectedSemantic": { "classification": "allowed", "reasonCode": "approval_allowed", "operationAllowed": true, "policyRecheckAllowed": false, "statusTransitionAllowed": true, "targetStatus": "approved" },
+      "expectedEffects": {
+        "typescript": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": true, "executionCallback": false, "localCommand": false, "statusWrite": true, "resultWrite": false, "successOutput": true },
+        "python": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false }
+      }
+    },
+    {
+      "name": "approved may be explicitly blocked",
+      "plan": { "status": "approved", "expiry": "active" },
+      "operation": "block",
+      "policy": { "kind": "not_evaluated", "provenance": "operator" },
+      "expectedSemantic": { "classification": "allowed", "reasonCode": "operator_block_allowed", "operationAllowed": true, "policyRecheckAllowed": false, "statusTransitionAllowed": true, "targetStatus": "blocked" },
+      "expectedEffects": {
+        "typescript": { "policyRecheck": false, "blockCallback": true, "confirmationCallback": true, "executionCallback": false, "localCommand": false, "statusWrite": true, "resultWrite": false, "successOutput": true },
+        "python": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false }
+      }
+    },
+    {
+      "name": "approved may expire",
+      "plan": { "status": "approved", "expiry": "active" },
+      "operation": "expire",
+      "policy": { "kind": "not_evaluated", "provenance": "operator" },
+      "expectedSemantic": { "classification": "allowed", "reasonCode": "expiry_allowed", "operationAllowed": true, "policyRecheckAllowed": false, "statusTransitionAllowed": true, "targetStatus": "expired" },
+      "expectedEffects": {
+        "typescript": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": true, "executionCallback": false, "localCommand": false, "statusWrite": true, "resultWrite": false, "successOutput": true },
+        "python": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false }
+      }
+    },
+    {
+      "name": "expired repeat expire is idempotent",
+      "plan": { "status": "expired", "expiry": "elapsed" },
+      "operation": "expire",
+      "policy": { "kind": "not_evaluated", "provenance": "operator" },
+      "expectedSemantic": { "classification": "allowed", "reasonCode": "already_expired", "operationAllowed": true, "policyRecheckAllowed": false, "statusTransitionAllowed": false, "targetStatus": "expired" },
+      "expectedEffects": {
+        "typescript": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": true, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": true },
+        "python": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false }
+      }
+    },
+    {
+      "name": "execute cannot carry a current block semantic",
+      "plan": { "status": "approved", "expiry": "active" },
+      "operation": "execute",
+      "policy": { "kind": "block", "provenance": "current_recheck" },
+      "expectedSemantic": { "classification": "invalid", "reasonCode": "policy_operation_conflict", "operationAllowed": false, "policyRecheckAllowed": false, "statusTransitionAllowed": false, "targetStatus": null },
+      "expectedEffects": {
+        "typescript": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false },
+        "python": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false }
+      }
+    },
+    {
+      "name": "stored creation block cannot mutate an active plan",
+      "plan": { "status": "planned", "expiry": "active" },
+      "operation": "block",
+      "policy": { "kind": "block", "provenance": "stored_creation" },
+      "expectedSemantic": { "classification": "invalid", "reasonCode": "policy_operation_conflict", "operationAllowed": false, "policyRecheckAllowed": false, "statusTransitionAllowed": false, "targetStatus": null },
+      "expectedEffects": {
+        "typescript": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false },
+        "python": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false }
+      }
+    },
+    {
+      "name": "operator block cannot carry an allow decision",
+      "plan": { "status": "approved", "expiry": "active" },
+      "operation": "block",
+      "policy": { "kind": "allow", "provenance": "operator" },
+      "expectedSemantic": { "classification": "invalid", "reasonCode": "policy_operation_conflict", "operationAllowed": false, "policyRecheckAllowed": false, "statusTransitionAllowed": false, "targetStatus": null },
+      "expectedEffects": {
+        "typescript": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false },
+        "python": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false }
+      }
+    },
+    {
+      "name": "approval cannot use current recheck provenance",
+      "plan": { "status": "planned", "expiry": "active" },
+      "operation": "approve",
+      "policy": { "kind": "allow", "provenance": "current_recheck" },
+      "expectedSemantic": { "classification": "invalid", "reasonCode": "policy_provenance_invalid", "operationAllowed": false, "policyRecheckAllowed": false, "statusTransitionAllowed": false, "targetStatus": null },
+      "expectedEffects": {
+        "typescript": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false },
+        "python": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false }
+      }
+    },
+    {
+      "name": "expiry requires explicit operator provenance",
+      "plan": { "status": "approved", "expiry": "active" },
+      "operation": "expire",
+      "policy": { "kind": "not_evaluated", "provenance": "current_recheck" },
+      "expectedSemantic": { "classification": "invalid", "reasonCode": "policy_invalid", "operationAllowed": false, "policyRecheckAllowed": false, "statusTransitionAllowed": false, "targetStatus": null },
+      "expectedEffects": {
+        "typescript": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false },
+        "python": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false }
+      }
+    },
+    {
+      "name": "idempotent expiry still requires expiry operation provenance",
+      "plan": { "status": "expired", "expiry": "elapsed" },
+      "operation": "expire",
+      "policy": { "kind": "allow", "provenance": "operator" },
+      "expectedSemantic": { "classification": "invalid", "reasonCode": "policy_operation_conflict", "operationAllowed": false, "policyRecheckAllowed": false, "statusTransitionAllowed": false, "targetStatus": null },
+      "expectedEffects": {
+        "typescript": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false },
+        "python": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false }
+      }
+    },
+    {
+      "name": "read ignores unrelated policy and expiry metadata",
+      "plan": { "status": "completed", "expiry": "untrusted-expiry" },
+      "operation": "read",
+      "policy": { "kind": "untrusted-policy", "provenance": "untrusted-provenance" },
+      "expectedSemantic": { "classification": "allowed", "reasonCode": "read_allowed", "operationAllowed": true, "policyRecheckAllowed": false, "statusTransitionAllowed": false, "targetStatus": null },
+      "expectedEffects": {
+        "typescript": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": true },
+        "python": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false }
+      }
+    },
+    {
+      "name": "terminal plan remains readable",
+      "plan": { "status": "completed", "expiry": "active" },
+      "operation": "read",
+      "policy": { "kind": "not_evaluated", "provenance": "operator" },
+      "expectedSemantic": { "classification": "allowed", "reasonCode": "read_allowed", "operationAllowed": true, "policyRecheckAllowed": false, "statusTransitionAllowed": false, "targetStatus": null },
+      "expectedEffects": {
+        "typescript": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": true },
+        "python": { "policyRecheck": false, "blockCallback": false, "confirmationCallback": false, "executionCallback": false, "localCommand": false, "statusWrite": false, "resultWrite": false, "successOutput": false }
+      }
+    }
+  ],
+  "unsupportedScenarios": [
+    { "name": "confirmation targets an older plan version", "expectedCategory": "ACTION_PLAN_VERSION_CONFLICT", "support": "unavailable_no_authoritative_version", "mustNotAuthorize": true },
+    { "name": "confirmation targets a different plan identifier", "expectedCategory": "ACTION_PLAN_CONFIRMATION_STALE", "support": "unavailable_no_confirmation_record", "mustNotAuthorize": true },
+    { "name": "plan actions changed after confirmation", "expectedCategory": "ACTION_PLAN_CONFIRMATION_STALE", "support": "unavailable_no_action_digest", "mustNotAuthorize": true },
+    { "name": "CLEAR evidence targets an older plan version", "expectedCategory": "ACTION_PLAN_VERSION_CONFLICT", "support": "unavailable_no_authoritative_version", "mustNotAuthorize": true },
+    { "name": "state changes after validation", "expectedCategory": "ACTION_PLAN_VERSION_CONFLICT", "support": "unavailable_no_compare_and_swap", "mustNotAuthorize": true },
+    { "name": "duplicate execute spans TypeScript and Python runtimes", "expectedCategory": "ACTION_PLAN_TRANSITION_FORBIDDEN", "support": "unavailable_no_cross_runtime_lock", "mustNotAuthorize": true },
+    { "name": "block and execute race after recheck", "expectedCategory": "ACTION_PLAN_VERSION_CONFLICT", "support": "characterized_not_closed", "mustNotAuthorize": true },
+    { "name": "retry follows partial result persistence", "expectedCategory": "ACTION_PLAN_STATE_UNAVAILABLE", "support": "characterized_non_atomic_results", "mustNotAuthorize": true }
+  ]
+}
