@@ -1,0 +1,209 @@
+{
+  "artifact": "ARCANOS Phase 2D validation evidence",
+  "capturedDate": "2026-07-17",
+  "codeCommit": "761cece4ca54cb1cfbf598cba33a8c770775ab48",
+  "deploymentOccurred": false,
+  "externalNetworkUsedByTests": false,
+  "fixtureCorpus": {
+    "deferredScenarios": 8,
+    "enforcedCases": 41,
+    "pythonContractTests": 43,
+    "schemaVersion": 1,
+    "typescriptContractTests": 44
+  },
+  "toolVersions": {
+    "node": "24.13.0",
+    "npm": "11.6.2",
+    "pytest": "9.0.2",
+    "python": "3.11.7",
+    "railwayCli": "4.30.2",
+    "typescript": "5.9.3"
+  },
+  "validation": [
+    {
+      "command": "node scripts/run-jest.mjs --testPathPatterns=<Phase 2B, Phase 2C, lifecycle, HTTP, MCP, store, confirmation, and capability suites> --coverage=false --runInBand",
+      "durationSeconds": 3.86,
+      "result": "pass",
+      "suitesPassed": 12,
+      "testsPassed": 258
+    },
+    {
+      "command": "python -m pytest daemon-python/tests -q",
+      "durationSeconds": 5.25,
+      "result": "pass",
+      "testsPassed": 368
+    },
+    {
+      "command": "node scripts/run-jest.mjs --testPathPatterns=action-plan-lifecycle-contract|clear-execution-decision|plan-routes|mcp-error-disclosure --coverage=false --runInBand --randomize --seed=20260717",
+      "result": "pass",
+      "seed": 20260717,
+      "suitesPassed": 4,
+      "testsPassed": 139
+    },
+    {
+      "command": "node scripts/run-jest.mjs --testPathPatterns=action-plan-lifecycle-contract|clear-execution-decision --coverage=false --runInBand --detectOpenHandles",
+      "openHandlesReported": 0,
+      "result": "pass",
+      "suitesPassed": 2,
+      "testsPassed": 110
+    },
+    {
+      "command": "repeat focused TypeScript lifecycle suites three times",
+      "result": "pass",
+      "runs": 3,
+      "testsPassedPerRun": 110
+    },
+    {
+      "command": "PYTHONHASHSEED=20260717; repeat focused Python lifecycle suites three times",
+      "randomOrderPlugin": "not available",
+      "result": "pass",
+      "runs": 3,
+      "testsPassedPerRun": 150
+    },
+    {
+      "command": "npm run type-check",
+      "durationSeconds": 11.29,
+      "result": "pass"
+    },
+    {
+      "command": "npm run lint",
+      "durationSeconds": 10.96,
+      "errors": 0,
+      "preExistingWarnings": 92,
+      "result": "pass"
+    },
+    {
+      "command": "npm run build",
+      "durationSeconds": 15.37,
+      "result": "pass"
+    },
+    {
+      "command": "npm test -- --silent",
+      "configuredScopeCoverage": {
+        "branches": "100% (212/212)",
+        "functions": "100% (62/62)",
+        "lines": "100% (3313/3313)",
+        "repositoryWideClaim": false,
+        "statements": "100% (3313/3313)"
+      },
+      "durationSeconds": 77.98,
+      "result": "pass",
+      "suitesPassed": 383,
+      "suitesSkipped": 2,
+      "testsPassed": 3662,
+      "testsSkipped": 4
+    },
+    {
+      "command": "npm run test:integration",
+      "durationSeconds": 8.48,
+      "result": "pass",
+      "suitesPassed": 5,
+      "suitesSkipped": 1,
+      "testsPassed": 84,
+      "testsSkipped": 1
+    },
+    {
+      "command": "npm run check:boundaries && npm run check:cef-layer-access && npm run check:routing-boundaries",
+      "result": "pass"
+    },
+    {
+      "command": "npm run validate:railway",
+      "mutationPerformed": false,
+      "result": "pass"
+    },
+    {
+      "command": "npm run guard:commit",
+      "result": "pass"
+    },
+    {
+      "command": "python -m black --check --fast --target-version py311 --line-length 79 <new Phase 2D Python files>",
+      "result": "pass"
+    },
+    {
+      "command": "python -m flake8 <new Phase 2D Python files>",
+      "result": "pass"
+    },
+    {
+      "command": "python -m mypy --follow-imports=skip daemon-python/arcanos/action_plan_lifecycle.py daemon-python/arcanos/action_plan_types.py daemon-python/arcanos/action_plan_handler.py",
+      "result": "pass"
+    },
+    {
+      "command": "Python import smoke for ActionPlan parser, handler, and lifecycle evaluator",
+      "result": "pass"
+    },
+    {
+      "command": "Python wheel build smoke",
+      "reason": "The environment lacks both the build module and the bdist_wheel command; no dependency installation was attempted.",
+      "result": "not_available"
+    }
+  ],
+  "correctedDuringValidation": {
+    "evidence": "The first full Jest sweep found one stale module mock that omitted the newly consumed PLAN_STATUSES export.",
+    "failingSuite": "tests/mcp-job-tools.test.ts",
+    "fixCommit": "c37be348",
+    "postFixResult": "7 focused tests and the complete 383-suite sweep passed",
+    "regressionConcealed": false
+  },
+  "baselineToolingLimitations": [
+    {
+      "command": "Black check across all modified legacy and new Python files",
+      "evidence": "The Phase 2C blobs of action_plan_handler.py, action_plan_types.py, and test_action_plan_types.py also require reformatting.",
+      "result": "pre_existing_failure",
+      "scopeDecision": "New Phase 2D files and newly added lines are formatter/lint clean; legacy files were not broadly reformatted."
+    },
+    {
+      "command": "mypy with transitive import following",
+      "evidence": "130 existing errors in 24 imported modules outside the Phase 2D lifecycle surface.",
+      "result": "pre_existing_failure",
+      "scopeDecision": "Changed lifecycle modules pass targeted mypy with transitive imports skipped."
+    }
+  ],
+  "dependencyComparison": {
+    "command": "node scripts/reusable-code-audit-baseline.mjs --source-commit <codeCommit> --source-branch codex/action-plan-lifecycle-integrity --baseline-at 2026-07-17T00:00:00-04:00 --output tmp/phase2d-dependency-after --verify-determinism",
+    "determinismVerified": true,
+    "before": {
+      "circularPathCount": 63,
+      "modulesInRuntimeSccs": 75,
+      "runtimeEdgeCount": 2330,
+      "runtimeSccCount": 2,
+      "runtimeSccSizes": [67, 8],
+      "sourceFileCount": 719
+    },
+    "after": {
+      "circularPathCount": 63,
+      "modulesInRuntimeSccs": 75,
+      "runtimeEdgeCount": 2333,
+      "runtimeSccCount": 2,
+      "runtimeSccSizes": [67, 8],
+      "sourceFileCount": 720
+    },
+    "newRuntimeEdges": [
+      "src/mcp/server/index.ts -> src/services/actionPlanLifecycle.ts",
+      "src/routes/plans.ts -> src/services/actionPlanLifecycle.ts",
+      "src/services/actionPlanLifecycle.ts -> src/shared/types/actionPlan.ts"
+    ],
+    "typeOnlyEdgesExcluded": true
+  },
+  "safetyChecks": {
+    "changedFilesScopedToPhase2D": true,
+    "credentialPatternScan": "pass",
+    "databaseRedisOpenAiStubs": "test-controlled; no real connections",
+    "ignoredTemporaryFilesRemaining": 0,
+    "lockfileChanges": 0,
+    "migrationChanges": 0,
+    "railwayMutation": false,
+    "runtimeStateTrackedChanges": 0,
+    "schemaChanges": 0,
+    "snapshotChanges": 0
+  },
+  "independentReview": {
+    "blockers": 0,
+    "verdict": "No remaining Phase 2D lifecycle/security blocker found.",
+    "deferred": [
+      "State/version CAS and cross-runtime locking",
+      "Block/execute races and partial result writes",
+      "Pre-existing Python valid-execution raw exception diagnostics",
+      "Python result-submission protocol ownership mismatch"
+    ]
+  }
+}
