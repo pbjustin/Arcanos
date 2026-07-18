@@ -9,6 +9,14 @@ import pytest
 from arcanos.action_plan_handler import handle_action_plan
 
 
+@pytest.fixture(autouse=True)
+def _enable_historical_lifecycle_handler(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        "arcanos.action_plan_handler.Config.ACTION_PLAN_LEGACY_CHARACTERIZATION_TEST_SEAM",
+        True,
+    )
+
+
 def _plan_data(
     *,
     status: object = "approved",

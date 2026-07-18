@@ -9,6 +9,14 @@ _MISSING = object()
 _CONVERSION_SENTINEL = "PHASE2C_SYNTHETIC_CONVERSION_MARKER"
 
 
+@pytest.fixture(autouse=True)
+def _enable_historical_action_plan_handler(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        "arcanos.action_plan_handler.Config.ACTION_PLAN_LEGACY_CHARACTERIZATION_TEST_SEAM",
+        True,
+    )
+
+
 class _CredentialBearingFloat:
     def __float__(self):
         raise ValueError(_CONVERSION_SENTINEL)

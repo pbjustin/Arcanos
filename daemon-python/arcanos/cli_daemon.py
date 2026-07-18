@@ -26,12 +26,12 @@ def start_daemon_threads(self) -> None:
     if self._daemon_running:
         return
 
-    if not self.backend_client:
-        return
-
-    # Skip daemon threads when the backend token is an obvious placeholder —
-    # unauthenticated heartbeat/poll requests will just get 429'd.
-    if (Config.BACKEND_TOKEN or "") in _PLACEHOLDER_TOKENS:
+    generic_ready = bool(
+        self.backend_client
+        and (Config.BACKEND_TOKEN or "") not in _PLACEHOLDER_TOKENS
+    )
+    execution_ready = bool(Config.ACTION_PLAN_EXECUTION_PROTOCOL_V2_ENABLED)
+    if not generic_ready and not execution_ready:
         error_logger.info(
             "[DAEMON] Skipping daemon threads: BACKEND_TOKEN is not configured."
         )
@@ -39,21 +39,31 @@ def start_daemon_threads(self) -> None:
 
     self._daemon_running = True
 
-    # Start heartbeat thread
-    self._heartbeat_thread = threading.Thread(
-        target=self._heartbeat_loop,
-        daemon=True,
-        name="daemon-heartbeat"
-    )
-    self._heartbeat_thread.start()
+    if generic_ready:
+        self._heartbeat_thread = threading.Thread(
+            target=self._heartbeat_loop,
+            daemon=True,
+            name="daemon-heartbeat"
+        )
+        self._heartbeat_thread.start()
 
-    # Start command polling thread
-    self._command_poll_thread = threading.Thread(
-        target=self._command_poll_loop,
-        daemon=True,
-        name="daemon-command-poll"
-    )
-    self._command_poll_thread.start()
+        self._command_poll_thread = threading.Thread(
+            target=self._command_poll_loop,
+            daemon=True,
+            name="daemon-command-poll"
+        )
+        self._command_poll_thread.start()
+
+    if execution_ready:
+        from .action_plan_execution_runner import action_plan_execution_loop
+
+        self._action_plan_execution_thread = threading.Thread(
+            target=action_plan_execution_loop,
+            args=(self,),
+            daemon=True,
+            name="action-plan-execution-poll",
+        )
+        self._action_plan_execution_thread.start()
 
 
 def heartbeat_loop(self) -> None:
@@ -169,8 +179,9 @@ def command_poll_loop(self) -> None:
                                 issuedAt=cmd_data["issuedAt"]
                             )
                             # Call handler
-                            self._handle_daemon_command(command)
-                            command_ids.append(command.id)
+                            handled = self._handle_daemon_command(command)
+                            if handled is not False:
+                                command_ids.append(command.id)
                         except Exception as e:
                             error_logger.error(f"[DAEMON] Error handling command {cmd_data.get('id')}: {e}")
 
@@ -228,7 +239,7 @@ def command_poll_loop(self) -> None:
         time.sleep(self._command_poll_interval)
 
 
-def handle_daemon_command(self, command: DaemonCommand) -> None:
+def handle_daemon_command(self, command: DaemonCommand) -> bool:
     """
     Handle daemon command from HTTP polling.
     Processes commands from the backend (ping, get_status, get_stats, notify).
@@ -283,6 +294,11 @@ def handle_daemon_command(self, command: DaemonCommand) -> None:
             self.console.print("[yellow]Notify command missing message[/yellow]")
 
     elif command_name == "action_plan":
+        if not Config.ACTION_PLAN_LEGACY_CHARACTERIZATION_TEST_SEAM:
+            self.console.print(
+                "[yellow]Legacy action_plan command refused: dedicated execution assignment required[/yellow]"
+            )
+            return False
         # ActionPlan orchestration: CLEAR 2.0 gated execution
         if isinstance(command_payload, dict):
             from .action_plan_handler import handle_action_plan
@@ -301,6 +317,8 @@ def handle_daemon_command(self, command: DaemonCommand) -> None:
         # //audit assumption: unsupported commands should be logged; risk: unexpected behavior; invariant: error logged; strategy: warn.
         self.console.print(f"[yellow]Unsupported command: {command_name}[/yellow]")
 
+    return True
+
 
 def stop_daemon_service(self) -> None:
     """
@@ -313,3 +331,6 @@ def stop_daemon_service(self) -> None:
         self._heartbeat_thread.join(timeout=5.0)
     if self._command_poll_thread:
         self._command_poll_thread.join(timeout=5.0)
+    execution_thread = getattr(self, "_action_plan_execution_thread", None)
+    if execution_thread:
+        execution_thread.join(timeout=5.0)

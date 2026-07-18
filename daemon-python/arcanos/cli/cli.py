@@ -112,6 +112,7 @@ class ArcanosCLI:
 
         self._heartbeat_thread: Optional[threading.Thread] = None
         self._command_poll_thread: Optional[threading.Thread] = None
+        self._action_plan_execution_thread: Optional[threading.Thread] = None
         self._daemon_running = False
         self._heartbeat_interval = Config.DAEMON_HEARTBEAT_INTERVAL_SECONDS
         self._command_poll_interval = Config.DAEMON_COMMAND_POLL_INTERVAL_SECONDS
@@ -589,8 +590,23 @@ class ArcanosCLI:
         return local_ops.handle_ptt_speech(self, text, has_screenshot)
 
     @handle_errors("executing terminal command")
-    def handle_run(self, command: str, return_result: bool = False) -> Optional[dict]:
-        return run_ops.handle_run(self, command, return_result=return_result)
+    def handle_run(
+        self,
+        command: str,
+        return_result: bool = False,
+        *,
+        activity_detail: Optional[str] = None,
+        audit_payload: Optional[Mapping[str, Any]] = None,
+        timeout_seconds: Optional[int] = None,
+    ) -> Optional[dict]:
+        return run_ops.handle_run(
+            self,
+            command,
+            return_result=return_result,
+            activity_detail=activity_detail,
+            audit_payload=audit_payload,
+            timeout_seconds=timeout_seconds,
+        )
 
     @handle_errors("opening a local file")
     def handle_open(self, args: str) -> None:

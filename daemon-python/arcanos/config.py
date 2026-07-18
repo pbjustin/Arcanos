@@ -193,6 +193,32 @@ class Config:
     BACKEND_HISTORY_LIMIT: int = get_env_int("BACKEND_HISTORY_LIMIT", 8)
     BACKEND_VISION_ENABLED: bool = get_env_bool("BACKEND_VISION_ENABLED", False)
     BACKEND_TRANSCRIBE_ENABLED: bool = get_env_bool("BACKEND_TRANSCRIBE_ENABLED", False)
+    # Phase 2E ActionPlan execution uses a purpose-bound executor identity.
+    # These settings are intentionally separate from generic daemon/backend auth.
+    ACTION_PLAN_EXECUTION_PROTOCOL_V2_ENABLED: bool = get_env_bool(
+        "ACTION_PLAN_EXECUTION_PROTOCOL_V2_ENABLED", False
+    )
+    # Historical Phase 2E tests may enable this in-process only. It is deliberately
+    # not environment-backed so deployed runtimes cannot restore the unsafe route.
+    ACTION_PLAN_LEGACY_CHARACTERIZATION_TEST_SEAM: bool = False
+    ACTION_PLAN_EXECUTOR_TOKEN: Optional[str] = (
+        get_env("ACTION_PLAN_EXECUTOR_TOKEN") or None
+    )
+    ACTION_PLAN_EXECUTOR_PRINCIPAL_ID: Optional[str] = (
+        get_env("ACTION_PLAN_EXECUTOR_PRINCIPAL_ID") or None
+    )
+    ACTION_PLAN_EXECUTOR_INSTANCE_ID: Optional[str] = (
+        get_env("ACTION_PLAN_EXECUTOR_INSTANCE_ID") or None
+    )
+    ACTION_PLAN_EXECUTOR_AGENT_ID: Optional[str] = (
+        get_env("ACTION_PLAN_EXECUTOR_AGENT_ID") or None
+    )
+    ACTION_PLAN_EXECUTOR_EXPECTED_REALM: Optional[str] = (
+        get_env("ACTION_PLAN_EXECUTOR_EXPECTED_REALM") or None
+    )
+    ACTION_PLAN_EXECUTION_JOURNAL_PATH: Path = (
+        DATA_DIR / "action_plan_execution" / "journal.sqlite3"
+    )
     # When backend would be chosen, route to backend only if confidence >= threshold; else local. 0.0=always local, 1.0=always backend when otherwise chosen.
     BACKEND_CONFIDENCE_THRESHOLD: float = get_env_float("BACKEND_CONFIDENCE_THRESHOLD", 0.5)
     REGISTRY_CACHE_TTL_MINUTES: int = get_env_int("REGISTRY_CACHE_TTL_MINUTES", 10)

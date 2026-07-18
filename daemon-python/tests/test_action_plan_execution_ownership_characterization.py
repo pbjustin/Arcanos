@@ -11,11 +11,21 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from arcanos.action_plan_handler import handle_action_plan
 from arcanos.backend_client_models import BackendRequestError, BackendResponse
 from arcanos.cli import daemon_ops
 
 HISTORICAL_SOURCE_COMMIT = "410c04a890c021ae51148e58391f8e653be11943"
+
+
+@pytest.fixture(autouse=True)
+def _enable_immutable_historical_seam(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        "arcanos.action_plan_handler.Config.ACTION_PLAN_LEGACY_CHARACTERIZATION_TEST_SEAM",
+        True,
+    )
 
 
 def _approved_allow_plan(

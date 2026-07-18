@@ -23,6 +23,7 @@ from .action_plan_lifecycle import (
     evaluate_action_plan_lifecycle,
 )
 from .action_plan_types import ActionPlan, ExecutionResult
+from .config import Config
 from .error_handler import logger as error_logger
 
 if TYPE_CHECKING:
@@ -43,6 +44,11 @@ def handle_action_plan(
     Inputs: plan data dict, Rich console, backend client, instance ID, run handler, confirm callback.
     Edge cases: Rejects blocked plans, requires confirmation for mid-range CLEAR.
     """
+    if not Config.ACTION_PLAN_LEGACY_CHARACTERIZATION_TEST_SEAM:
+        console.print(
+            "[red]Legacy ActionPlan payload refused: dedicated execution assignment required[/red]"
+        )
+        return
     try:
         plan = ActionPlan.from_dict(plan_data)
     except Exception:

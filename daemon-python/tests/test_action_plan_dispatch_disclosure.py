@@ -10,7 +10,6 @@ from arcanos import cli_daemon
 from arcanos.cli import daemon_ops
 from arcanos.cli_types import DaemonCommand
 
-
 _CREDENTIAL_SENTINEL = "PHASE2C_SYNTHETIC_CREDENTIAL_MARKER"
 
 
@@ -21,8 +20,10 @@ _CREDENTIAL_SENTINEL = "PHASE2C_SYNTHETIC_CREDENTIAL_MARKER"
         pytest.param(cli_daemon.handle_daemon_command, id="legacy-cli-daemon"),
     ],
 )
-def test_action_plan_dispatch_does_not_record_payload_credentials(dispatch) -> None:
-    """Neither daemon dispatcher may copy an ActionPlan payload into activity detail."""
+def test_legacy_action_plan_dispatch_fails_closed_without_disclosing_credentials(
+    dispatch,
+) -> None:
+    """Legacy assignment dispatch stays disabled and keeps payloads out of activity."""
     cli = MagicMock()
     cli.instance_id = "phase2c-test-instance"
     command = DaemonCommand(
@@ -49,4 +50,4 @@ def test_action_plan_dispatch_does_not_record_payload_credentials(dispatch) -> N
     assert activity_kind == "command"
     assert "action_plan" in activity_detail
     assert _CREDENTIAL_SENTINEL not in activity_detail
-    mock_handler.assert_called_once()
+    mock_handler.assert_not_called()

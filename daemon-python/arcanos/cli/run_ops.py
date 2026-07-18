@@ -4,7 +4,7 @@ Terminal command execution operations for the CLI.
 
 from __future__ import annotations
 
-from typing import Optional, TYPE_CHECKING
+from typing import Any, Mapping, Optional, TYPE_CHECKING
 
 from .audit import record as audit_record
 from .execute import execute as governed_execute
@@ -18,13 +18,21 @@ if TYPE_CHECKING:
     from .cli import ArcanosCLI
 
 
-def handle_run(cli: "ArcanosCLI", command: str, return_result: bool = False) -> Optional[dict]:
+def handle_run(
+    cli: "ArcanosCLI",
+    command: str,
+    return_result: bool = False,
+    *,
+    activity_detail: Optional[str] = None,
+    audit_payload: Optional[Mapping[str, Any]] = None,
+    timeout_seconds: Optional[int] = None,
+) -> Optional[dict]:
     """
     Purpose: Execute a terminal command through governance and idempotency guards.
     Inputs/Outputs: command string and return_result flag; prints output or returns structured result.
     Edge cases: Rejects empty commands and duplicate fingerprints.
     """
-    cli._append_activity("run", command)
+    cli._append_activity("run", activity_detail if activity_detail is not None else command)
     if not command:
         if not return_result:
             cli.console.print("[red]⚠️  No command specified[/red]")
@@ -45,7 +53,13 @@ def handle_run(cli: "ArcanosCLI", command: str, return_result: bool = False) -> 
             if not return_result:
                 cli.console.print(f"[cyan]▶️  Running:[/cyan] {command}")
 
-            stdout, stderr, return_code = cli.terminal.execute(command, elevated=Config.RUN_ELEVATED)
+            execute_kwargs: dict[str, Any] = {"elevated": Config.RUN_ELEVATED}
+            if timeout_seconds is not None:
+                execute_kwargs["timeout"] = timeout_seconds
+            stdout, stderr, return_code = cli.terminal.execute(
+                command,
+                **execute_kwargs,
+            )
             cli.memory.increment_stat("terminal_commands")
             return stdout, stderr, return_code
 
@@ -54,7 +68,7 @@ def handle_run(cli: "ArcanosCLI", command: str, return_result: bool = False) -> 
             _do_run,
             trust_state=cli._trust_state,
             requires_confirmation=True,
-            payload={"command": command},
+            payload=dict(audit_payload) if audit_payload is not None else {"command": command},
         )
     except GovernanceError as exc:
         # //audit assumption: governance denials must be explicit; risk: silent policy failures; invariant: denial is audited and surfaced; strategy: audit+print.
@@ -83,4 +97,69 @@ def handle_run(cli: "ArcanosCLI", command: str, return_result: bool = False) -> 
     return None
 
 
-__all__ = ["handle_run"]
+def handle_action_plan_run(
+    cli: "ArcanosCLI",
+    command: str,
+    *,
+    execution_identity: str,
+    timeout_seconds: Optional[int] = None,
+) -> dict[str, Any]:
+    """Run one assigned action while keeping commands and dependency errors out of diagnostics."""
+    activity_detail = f"action-plan-execution:{execution_identity}"
+    safe_payload = {
+        "source": "action-plan-execution-v1",
+        "run_id": execution_identity,
+    }
+    cli._append_activity("run", activity_detail)
+    fingerprint = command_fingerprint(
+        "action-plan-execution",
+        {"run_id": execution_identity},
+    )
+    audit_record(
+        "retry_check",
+        command="action-plan-execution",
+        fingerprint=fingerprint,
+    )
+    if not cli._idempotency_guard.check_and_record(fingerprint):
+        audit_record(
+            "retry_duplicate_rejected",
+            command="action-plan-execution",
+            fingerprint=fingerprint,
+        )
+        return {"ok": False, "return_code": None, "error_category": "duplicate"}
+
+    state.recompute_trust_state(cli)
+    try:
+        stdout, stderr, return_code = governed_execute(
+            "run",
+            lambda: cli.terminal.execute_action_plan_command(
+                command,
+                timeout=timeout_seconds or 30,
+                elevated=Config.RUN_ELEVATED,
+            ),
+            trust_state=cli._trust_state,
+            requires_confirmation=True,
+            payload=safe_payload,
+        )
+        del stdout, stderr
+        return {"ok": return_code == 0, "return_code": return_code}
+    except GovernanceError:
+        category = "governance"
+    except TimeoutError:
+        category = "timeout"
+    except PermissionError:
+        category = "permission"
+    except (TypeError, ValueError):
+        category = "validation"
+    except Exception:
+        category = "execution"
+    audit_record(
+        "action_plan_execution_failed",
+        command="action-plan-execution",
+        run_id=execution_identity,
+        error_category=category,
+    )
+    return {"ok": False, "return_code": None, "error_category": category}
+
+
+__all__ = ["handle_action_plan_run", "handle_run"]
