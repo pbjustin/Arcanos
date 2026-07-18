@@ -73,6 +73,7 @@ jest.unstable_mockModule('../src/config/openai.js', () => ({
 
 jest.unstable_mockModule('../src/shared/types/actionPlan.js', () => ({
   actionPlanInputSchema: z.object({}).passthrough(),
+  phase2eActionPlanInputSchema: z.object({}).passthrough(),
   PLAN_STATUSES: [
     'planned',
     'awaiting_confirmation',

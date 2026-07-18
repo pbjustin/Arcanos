@@ -31,6 +31,7 @@ import safetyRouter from './safety.js';
 import plansRouter from './plans.js';
 import clearRouter from './clear.js';
 import agentsRouter from './agents.js';
+import actionPlanExecutionsRouter from './action-plan-executions.js';
 import selfImproveRouter from './self-improve.js';
 import selfHealRouter from './self-heal.js';
 import workerHelperRouter from './worker-helper.js';
@@ -154,6 +155,7 @@ export function registerRoutes(app: Express): void {
   app.use('/', selfHealRouter);
 
   // ActionPlan orchestration + CLEAR 2.0 governance
+  app.use('/', actionPlanExecutionsRouter);
   app.use('/', plansRouter);
   app.use('/', clearRouter);
   app.use('/', agentsRouter);

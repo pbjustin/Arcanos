@@ -8,6 +8,7 @@ const mockRunWithMcpRequestContext = jest.fn(async (_ctx: unknown, fn: () => Pro
 const mockBuildMcpServer = jest.fn();
 const mockCreateRateLimitMiddleware = jest.fn(() => (_req: unknown, _res: unknown, next: () => void) => next());
 const mockGetRequestActorKey = jest.fn(() => 'actor:test');
+const mockGetRequestClientAddress = jest.fn(() => 'client:test');
 const mockResolveErrorMessage = jest.fn((error: unknown) => error instanceof Error ? error.message : String(error));
 const mockSendInternalErrorPayload = jest.fn((res: express.Response, payload: unknown) => res.status(500).json(payload));
 const mockApiLoggerError = jest.fn();
@@ -29,6 +30,7 @@ jest.unstable_mockModule('../src/mcp/server.js', () => ({
 jest.unstable_mockModule('../src/platform/runtime/security.js', () => ({
   createRateLimitMiddleware: mockCreateRateLimitMiddleware,
   getRequestActorKey: mockGetRequestActorKey,
+  getRequestClientAddress: mockGetRequestClientAddress,
 }));
 
 jest.unstable_mockModule('../src/core/lib/errors/index.js', () => ({
@@ -104,6 +106,8 @@ describe('mcp route request isolation', () => {
     expect(secondResponse.status).toBe(200);
     expect(firstResponse.body.transportId).toBe(1);
     expect(secondResponse.body.transportId).toBe(2);
+    expect(firstResponse.headers['cache-control']).toBe('no-store');
+    expect(firstResponse.headers.pragma).toBe('no-cache');
     expect(mockBuildMcpServer).toHaveBeenCalledTimes(2);
     expect(mockCreateMcpRequestContextProxy).toHaveBeenCalledTimes(2);
     expect(mockRunWithMcpRequestContext).toHaveBeenCalledTimes(2);

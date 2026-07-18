@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const buildClear2SummaryMock = jest.fn();
 const apiLoggerErrorMock = jest.fn();
+const getAuthoritativePlanMock = jest.fn();
 const childLoggerMock = {
   debug: jest.fn(),
   info: jest.fn(),
@@ -14,7 +15,7 @@ jest.unstable_mockModule('../src/services/clear2.js', () => ({
 }));
 
 jest.unstable_mockModule('../src/stores/actionPlanStore.js', () => ({
-  getClearScore: jest.fn(),
+  getAuthoritativePlan: getAuthoritativePlanMock,
 }));
 
 jest.unstable_mockModule('../src/platform/runtime/unifiedConfig.js', () => ({
@@ -53,6 +54,43 @@ const requestBody = {
   origin: 'phase2b-clear-route-test',
   confidence: 0.8,
 };
+const requesterToken = 'r'.repeat(40);
+const operatorToken = 'o'.repeat(40);
+const executorToken = 'e'.repeat(40);
+const authKeys = [
+  'ACTION_PLAN_REQUEST_TOKEN',
+  'ACTION_PLAN_REQUEST_PRINCIPAL_ID',
+  'ACTION_PLAN_OPERATOR_TOKEN',
+  'ACTION_PLAN_OPERATOR_PRINCIPAL_ID',
+  'ACTION_PLAN_EXECUTOR_TOKEN',
+  'ACTION_PLAN_EXECUTOR_PRINCIPAL_ID',
+  'ACTION_PLAN_EXECUTOR_INSTANCE_ID',
+  'ACTION_PLAN_EXECUTOR_AGENT_ID',
+  'ACTION_PLAN_EXECUTION_LOCAL_REALM',
+  'NODE_ENV',
+] as const;
+const originalEnv = Object.fromEntries(authKeys.map(key => [key, process.env[key]]));
+
+function configureAuth() {
+  process.env.ACTION_PLAN_REQUEST_TOKEN = requesterToken;
+  process.env.ACTION_PLAN_REQUEST_PRINCIPAL_ID = 'requester-1';
+  process.env.ACTION_PLAN_OPERATOR_TOKEN = operatorToken;
+  process.env.ACTION_PLAN_OPERATOR_PRINCIPAL_ID = 'operator-1';
+  process.env.ACTION_PLAN_EXECUTOR_TOKEN = executorToken;
+  process.env.ACTION_PLAN_EXECUTOR_PRINCIPAL_ID = 'executor-1';
+  process.env.ACTION_PLAN_EXECUTOR_INSTANCE_ID = 'executor-instance-1';
+  process.env.ACTION_PLAN_EXECUTOR_AGENT_ID = 'agent-1';
+  process.env.ACTION_PLAN_EXECUTION_LOCAL_REALM = 'local-test';
+  process.env.NODE_ENV = 'test';
+}
+
+function restoreEnv() {
+  for (const key of authKeys) {
+    const value = originalEnv[key];
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+}
 
 const validSummary = {
   clarity: 0.8,
@@ -80,7 +118,10 @@ function buildApp() {
 describe('HTTP direct CLEAR evaluation contract', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    configureAuth();
   });
+
+  afterAll(restoreEnv);
 
   it('preserves a valid evaluator response', async () => {
     buildClear2SummaryMock.mockReturnValue(validSummary);
@@ -127,5 +168,106 @@ describe('HTTP direct CLEAR evaluation contract', () => {
     expect(observable).not.toContain(internalDetail);
     expect(observable).not.toContain('private_clear_route');
     expect(observable).not.toContain('clear-route.log');
+  });
+});
+
+describe('stored ActionPlan CLEAR score authorization', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    configureAuth();
+    getAuthoritativePlanMock.mockResolvedValue({
+      id: 'plan-1',
+      ownerPrincipalId: 'requester-1',
+      executionRealm: 'local-test',
+      clearScore: validSummary,
+    });
+  });
+
+  afterAll(restoreEnv);
+
+  it('fails closed without an authenticated principal and does not read storage', async () => {
+    const response = await request(buildApp()).get('/clear/plan-1');
+
+    expect(response.status).toBe(401);
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(response.body.error.code).toBe('ACTION_PLAN_EXECUTION_AUTH_REQUIRED');
+    expect(getAuthoritativePlanMock).not.toHaveBeenCalled();
+  });
+
+  it('forbids an executor credential from reading a plan score', async () => {
+    const response = await request(buildApp())
+      .get('/clear/plan-1')
+      .set('Authorization', `Bearer ${executorToken}`);
+
+    expect(response.status).toBe(403);
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(response.body.error.code).toBe('ACTION_PLAN_EXECUTION_FORBIDDEN');
+    expect(getAuthoritativePlanMock).not.toHaveBeenCalled();
+  });
+
+  it('returns the authoritative score only to the owning requester', async () => {
+    const response = await request(buildApp())
+      .get('/clear/plan-1')
+      .set('Authorization', `Bearer ${requesterToken}`);
+
+    expect(response.status).toBe(200);
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(response.body).toEqual(validSummary);
+    expect(getAuthoritativePlanMock).toHaveBeenCalledWith('plan-1');
+  });
+
+  it('allows the explicit operator role to inspect a current-realm score', async () => {
+    getAuthoritativePlanMock.mockResolvedValue({
+      id: 'plan-1',
+      ownerPrincipalId: 'different-owner',
+      executionRealm: 'local-test',
+      clearScore: validSummary,
+    });
+
+    const response = await request(buildApp())
+      .get('/clear/plan-1')
+      .set('Authorization', `Bearer ${operatorToken}`);
+
+    expect(response.status).toBe(200);
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(response.body).toEqual(validSummary);
+  });
+
+  it.each([
+    ['different owner', { ownerPrincipalId: 'requester-2', executionRealm: 'local-test' }],
+    ['different realm', { ownerPrincipalId: 'requester-1', executionRealm: 'local:other' }],
+  ])('conceals a plan with a %s as not found', async (_label, conflicting) => {
+    getAuthoritativePlanMock.mockResolvedValue({
+      id: 'plan-1',
+      clearScore: validSummary,
+      ...conflicting,
+    });
+
+    const response = await request(buildApp())
+      .get('/clear/plan-1')
+      .set('Authorization', `Bearer ${requesterToken}`);
+
+    expect(response.status).toBe(404);
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(response.body.error.code).toBe('ACTION_PLAN_EXECUTION_NOT_FOUND');
+    expect(JSON.stringify(response.body)).not.toContain('synthetic valid summary');
+  });
+
+  it('fails closed on authoritative storage failure without a cache fallback', async () => {
+    getAuthoritativePlanMock.mockRejectedValue(
+      new Error('credential-sentinel SELECT secret C:\\private\\clear.sql'),
+    );
+
+    const response = await request(buildApp())
+      .get('/clear/plan-1')
+      .set('Authorization', `Bearer ${requesterToken}`);
+    const observable = JSON.stringify({ response: response.body, logs: apiLoggerErrorMock.mock.calls });
+
+    expect(response.status).toBe(503);
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(response.body.error.code).toBe('ACTION_PLAN_EXECUTION_PERSISTENCE_FAILED');
+    expect(getAuthoritativePlanMock).toHaveBeenCalledTimes(1);
+    expect(observable).not.toContain('credential-sentinel');
+    expect(observable).not.toContain('clear.sql');
   });
 });

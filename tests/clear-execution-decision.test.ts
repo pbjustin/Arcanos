@@ -1,134 +1,119 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+/**
+ * Active Phase 2B CLEAR decision characterization at the Phase 2E boundary.
+ *
+ * The exact pre-Phase-2E suite remains immutable in Git blob
+ * 4e66c0006dd22cd5f1957e31077b4613ac0b3b30. Its legacy result-write and
+ * execution-lock behavior is also preserved by the Phase 2E historical
+ * characterization harness. These tests assert the same CLEAR decisions while
+ * proving the command-only boundary creates no legacy result side effects.
+ */
+import { afterAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import type { ActionPlanRecord, ClearDecision } from '../src/shared/types/actionPlan.js';
 
-const getPlanMock = jest.fn();
-const approvePlanMock = jest.fn();
-const blockPlanMock = jest.fn();
-const expirePlanMock = jest.fn();
-const createExecutionResultMock = jest.fn();
-const validateCapabilityMock = jest.fn();
+const getAuthoritativePlanMock = jest.fn();
+const updateAuthoritativePlanStatusMock = jest.fn();
 const buildClear2SummaryMock = jest.fn();
+const requestExecutionMock = jest.fn();
+const replayExecutionMock = jest.fn();
+const createExecutionResultMock = jest.fn();
 const acquireExecutionLockMock = jest.fn();
-const emitSafetyAuditEventMock = jest.fn();
 const apiLoggerErrorMock = jest.fn();
-const apiLoggerInfoMock = jest.fn();
 const apiLoggerWarnMock = jest.fn();
-const mcpFlags = {
-  exposeDestructive: true,
-  requireConfirmation: false,
-  enableSessions: false,
-};
 
-type RegisteredTool = {
-  handler: (args: unknown) => Promise<any>;
-};
+type RegisteredTool = { handler: (args: unknown) => Promise<any> };
 
 class FakeMcpServer {
-  public readonly tools = new Map<string, RegisteredTool>();
-
-  constructor(_info: unknown, _options: unknown) {}
+  readonly tools = new Map<string, RegisteredTool>();
 
   registerTool(name: string, _config: unknown, handler: (args: unknown) => Promise<any>): void {
     this.tools.set(name, { handler });
   }
 }
 
-jest.unstable_mockModule('@modelcontextprotocol/sdk/server/mcp.js', () => ({
-  McpServer: FakeMcpServer,
-}));
-
 jest.unstable_mockModule('../src/mcp/registry.js', () => ({
-  MCP_FLAGS: mcpFlags,
+  MCP_FLAGS: { exposeDestructive: true, requireConfirmation: false, enableSessions: false },
 }));
 
 jest.unstable_mockModule('../src/stores/actionPlanStore.js', () => ({
   createPlan: jest.fn(),
-  getPlan: getPlanMock,
-  approvePlan: approvePlanMock,
-  blockPlan: blockPlanMock,
-  expirePlan: expirePlanMock,
+  getPlan: getAuthoritativePlanMock,
+  getAuthoritativePlan: getAuthoritativePlanMock,
   listPlans: jest.fn(),
+  listAuthoritativePlans: jest.fn(),
+  updateAuthoritativePlanStatus: updateAuthoritativePlanStatusMock,
+  approvePlan: jest.fn(),
+  blockPlan: jest.fn(),
+  expirePlan: jest.fn(),
   createExecutionResult: createExecutionResultMock,
   getExecutionResults: jest.fn(),
-}));
-
-jest.unstable_mockModule('../src/stores/agentRegistry.js', () => ({
-  validateCapability: validateCapabilityMock,
-  listAgents: jest.fn(async () => []),
-  getAgent: jest.fn(),
-  registerAgent: jest.fn(),
-  updateHeartbeat: jest.fn(),
 }));
 
 jest.unstable_mockModule('../src/services/clear2.js', () => ({
   buildClear2Summary: buildClear2SummaryMock,
 }));
 
+jest.unstable_mockModule('../src/services/actionPlanExecution/realm.js', () => ({
+  deriveActionPlanExecutionRealm: jest.fn(() => 'local-test'),
+}));
+
+jest.unstable_mockModule('../src/services/actionPlanExecution/service.js', () => ({
+  createActionPlanExecutionService: jest.fn(() => ({
+    requestExecution: requestExecutionMock,
+    replayExecution: replayExecutionMock,
+  })),
+}));
+
 jest.unstable_mockModule('../src/services/safety/executionLock.js', () => ({
   acquireExecutionLock: acquireExecutionLockMock,
 }));
 
-jest.unstable_mockModule('../src/services/safety/auditEvents.js', () => ({
-  emitSafetyAuditEvent: emitSafetyAuditEventMock,
-}));
-
 jest.unstable_mockModule('../src/platform/logging/structuredLogging.js', () => ({
   apiLogger: {
-    debug: jest.fn(),
-    info: apiLoggerInfoMock,
-    warn: apiLoggerWarnMock,
-    error: apiLoggerErrorMock,
+    debug: jest.fn(), info: jest.fn(), warn: apiLoggerWarnMock, error: apiLoggerErrorMock,
   },
   aiLogger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
   dbLogger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
   workerLogger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
-  logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
+  logger: {
+    debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn(),
+    child: () => ({ debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() }),
+  },
 }));
-
-jest.unstable_mockModule('../src/core/logic/arcanos.js', () => ({ runARCANOS: jest.fn() }));
-jest.unstable_mockModule('../src/core/logic/trinityWritingPipeline.js', () => ({ runTrinityWritingPipeline: jest.fn() }));
-jest.unstable_mockModule('../src/trinity/trinity.js', () => ({ runTrinity: jest.fn() }));
-jest.unstable_mockModule('../src/config/openai.js', () => ({ DEFAULT_FINE_TUNE: 'ft:phase2b-test' }));
-jest.unstable_mockModule('../src/services/webRag.js', () => ({
-  ingestUrl: jest.fn(),
-  ingestContent: jest.fn(),
-  answerQuestion: jest.fn(),
-}));
-jest.unstable_mockModule('../src/services/researchHub.js', () => ({
-  connectResearchBridge: jest.fn(() => ({ requestResearch: jest.fn() })),
-}));
-jest.unstable_mockModule('../src/core/db/index.js', () => ({
-  saveMemory: jest.fn(),
-  loadMemory: jest.fn(),
-  deleteMemory: jest.fn(),
-  query: jest.fn(),
-}));
-jest.unstable_mockModule('../src/services/moduleLoader.js', () => ({
-  loadModuleDefinitions: jest.fn(async () => []),
-  clearModuleDefinitionCache: jest.fn(),
-}));
-jest.unstable_mockModule('../src/routes/modules.js', () => ({ dispatchModuleAction: jest.fn() }));
-jest.unstable_mockModule('../src/services/memoryListing.js', () => ({
-  buildActiveMemorySelect: jest.fn(),
-  normalizeMemoryEntries: jest.fn(),
-}));
-jest.unstable_mockModule('../src/platform/logging/diagnostics.js', () => ({ runHealthCheck: jest.fn() }));
-jest.unstable_mockModule('../src/services/gptFastPath.js', () => ({ executeFastGptPrompt: jest.fn() }));
-jest.unstable_mockModule('../src/shared/gpt/gptFastPath.js', () => ({ classifyGptFastPathRequest: jest.fn() }));
-jest.unstable_mockModule('../src/services/controlPlane/service.js', () => ({
-  executeControlPlaneRequest: jest.fn(),
-  getControlPlaneCapabilities: jest.fn(() => ({})),
-  requiresControlPlaneApproval: jest.fn(() => false),
-}));
-jest.unstable_mockModule('../src/mcp/modulesAllowlist.js', () => ({ isModuleActionAllowed: jest.fn(() => false) }));
-jest.unstable_mockModule('../src/mcp/server/dagTools.js', () => ({ registerDagMcpTools: jest.fn() }));
-jest.unstable_mockModule('../src/mcp/server/jobTools.js', () => ({ registerJobMcpTools: jest.fn() }));
-jest.unstable_mockModule('../src/mcp/server/controlPlaneTools.js', () => ({ registerControlPlaneMcpTools: jest.fn() }));
 
 const express = (await import('express')).default;
 const request = (await import('supertest')).default;
 const plansRouter = (await import('../src/routes/plans.js')).default;
-const { createMcpServer } = await import('../src/mcp/server/index.js');
+const { registerActionPlanMcpTools } = await import('../src/mcp/server/actionPlanTools.js');
+
+const requesterToken = 'r'.repeat(40);
+const operatorToken = 'o'.repeat(40);
+const envKeys = [
+  'ACTION_PLAN_REQUEST_TOKEN',
+  'ACTION_PLAN_REQUEST_PRINCIPAL_ID',
+  'ACTION_PLAN_OPERATOR_TOKEN',
+  'ACTION_PLAN_OPERATOR_PRINCIPAL_ID',
+  'ACTION_PLAN_EXECUTION_LOCAL_REALM',
+  'NODE_ENV',
+] as const;
+const originalEnv = Object.fromEntries(envKeys.map(key => [key, process.env[key]]));
+let idempotencySequence = 0;
+
+function restoreEnvironment(): void {
+  for (const key of envKeys) {
+    const value = originalEnv[key];
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+}
+
+function configureEnvironment(): void {
+  process.env.ACTION_PLAN_REQUEST_TOKEN = requesterToken;
+  process.env.ACTION_PLAN_REQUEST_PRINCIPAL_ID = 'phase2b-requester';
+  process.env.ACTION_PLAN_OPERATOR_TOKEN = operatorToken;
+  process.env.ACTION_PLAN_OPERATOR_PRINCIPAL_ID = 'phase2b-operator';
+  process.env.ACTION_PLAN_EXECUTION_LOCAL_REALM = 'local-test';
+  process.env.NODE_ENV = 'test';
+}
 
 const principleScores = {
   clarity: 0.8,
@@ -137,38 +122,6 @@ const principleScores = {
   alignment: 0.8,
   resilience: 0.8,
 };
-
-const disclosureMarker = ['phase2b', 'http', 'opaque', 'marker'].join('-');
-
-function circularThrownValue(): Record<string, unknown> {
-  const value: Record<string, unknown> = { kind: 'circular' };
-  value.self = value;
-  return value;
-}
-
-function revokedProxyThrownValue(): object {
-  const revocable = Proxy.revocable({}, {});
-  revocable.revoke();
-  return revocable.proxy;
-}
-
-const evaluatorFailureCases: Array<[string, () => unknown, string[]]> = [
-  ['ordinary error', () => new Error('ordinary dependency detail'), ['ordinary dependency detail']],
-  ['credential-like marker', () => new Error(disclosureMarker), [disclosureMarker]],
-  ['authorization text', () => new Error(['Authorization', 'Bearer', disclosureMarker].join(' ')), [disclosureMarker]],
-  ['filesystem path', () => new Error(['C:', 'private', 'clear', 'dependency.log'].join('\\')), ['private\\clear']],
-  ['SQL text', () => new Error(['SELECT', '*', 'FROM', 'private_clear_table'].join(' ')), ['private_clear_table']],
-  ['provider JSON', () => new Error(JSON.stringify({ provider: 'synthetic', payload: disclosureMarker })), [disclosureMarker]],
-  ['nested cause', () => new Error('outer detail', { cause: new Error(disclosureMarker) }), ['outer detail', disclosureMarker]],
-  ['non-Error string', () => disclosureMarker, [disclosureMarker]],
-  ['circular object', circularThrownValue, ['circular']],
-  ['very long message', () => new Error('x'.repeat(20_000)), ['x'.repeat(128)]],
-  ['Unicode and control characters', () => new Error(`internal-雪\r\n${disclosureMarker}`), ['internal-雪', disclosureMarker]],
-  ['timeout', () => Object.assign(new Error(disclosureMarker), { name: 'TimeoutError' }), [disclosureMarker]],
-  ['abort', () => Object.assign(new Error(disclosureMarker), { name: 'AbortError' }), [disclosureMarker]],
-  ['revoked Proxy', revokedProxyThrownValue, []],
-  ['undefined thrown value', () => undefined, []],
-];
 
 function clearResult(overall: number, decision: ClearDecision) {
   return { ...principleScores, overall, decision, notes: `synthetic ${decision}` };
@@ -195,900 +148,349 @@ function buildPlan(previousDecision: ClearDecision | null = null): ActionPlanRec
     origin: 'phase2b-test',
     status: 'approved',
     confidence: 0.75,
-    requiresConfirmation: true,
+    requiresConfirmation: false,
     idempotencyKey: 'phase2b-clear-plan-key',
     expiresAt: null,
     createdAt: timestamp,
     updatedAt: timestamp,
+    ownerPrincipalId: 'phase2b-requester',
+    executionRealm: 'local-test',
+    executionProtocolVersion: 2,
+    executionGeneration: 1,
     clearScore: previousDecision ? storedScore(planId, previousDecision) : null,
-    actions: [
-      {
-        id: 'action-one',
-        planId,
-        agentId: 'agent-one',
-        capability: 'inspect',
-        params: { order: 1 },
-        timeoutMs: 1_000,
-        rollbackAction: null,
-        sortOrder: 0,
-      },
-      {
-        id: 'action-two',
-        planId,
-        agentId: 'agent-two',
-        capability: 'execute',
-        params: { order: 2 },
-        timeoutMs: 1_000,
-        rollbackAction: false,
-        sortOrder: 1,
-      },
-    ],
+    actions: [{
+      id: 'action-one',
+      planId,
+      agentId: 'python-agent',
+      capability: 'terminal.run',
+      params: { command: 'synthetic-noop' },
+      timeoutMs: 1_000,
+      rollbackAction: null,
+      sortOrder: 0,
+    }],
   };
 }
 
 function buildHttpApp() {
   const app = express();
-  app.use(express.json());
-  app.use('/', plansRouter);
-  app.use((_error: unknown, _req: unknown, res: any, _next: unknown) => {
-    res.status(599).json({ error: 'unhandled-test-error' });
-  });
+  app.use(express.json({ limit: '64kb', strict: true }));
+  app.use(plansRouter);
   return app;
+}
+
+function executeHttp(planId: string, key = `phase2b-http-${++idempotencySequence}`) {
+  return request(buildHttpApp())
+    .post(`/plans/${planId}/execute`)
+    .set('Authorization', `Bearer ${requesterToken}`)
+    .set('Idempotency-Key', key)
+    .send({});
+}
+
+function operatorMutation(planId: string, operation: 'approve' | 'block' | 'expire') {
+  return request(buildHttpApp())
+    .post(`/plans/${planId}/${operation}`)
+    .set('Authorization', `Bearer ${operatorToken}`)
+    .send({});
 }
 
 function buildMcpContext() {
   return {
     requestId: 'phase2b-mcp-request',
     traceId: 'phase2b-mcp-trace',
+    transport: 'http',
+    actionPlanPrincipal: { role: 'requester', principalId: 'phase2b-requester' },
+    req: {},
     openai: {},
     runtimeBudget: {},
-    req: {},
     logger: {
-      debug: jest.fn(),
-      info: jest.fn(),
-      warn: jest.fn(),
-      error: jest.fn(),
+      debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn(),
     },
   } as any;
 }
 
-async function executeMcp(planId: string) {
+async function executeMcp(planId: string, key = `phase2b-mcp-${++idempotencySequence}`) {
   const context = buildMcpContext();
-  const server = await createMcpServer(context) as FakeMcpServer;
+  const server = new FakeMcpServer();
+  registerActionPlanMcpTools(server, context);
   const tool = server.tools.get('plans.execute');
   expect(tool).toBeDefined();
-  return { context, output: await tool!.handler({ planId }) };
+  return { context, output: await tool!.handler({ planId, idempotencyKey: key }), server };
 }
 
-async function executeMcpTool(toolName: string, args: unknown) {
-  const context = buildMcpContext();
-  const server = await createMcpServer(context) as FakeMcpServer;
-  const tool = server.tools.get(toolName);
-  expect(tool).toBeDefined();
-  return { context, output: await tool!.handler(args) };
+function acceptedCommand(planId: string) {
+  return {
+    ok: true,
+    code: 'ACTION_PLAN_EXECUTION_COMMAND_ACCEPTED',
+    protocol_version: 'action-plan-execution-v1',
+    command_id: 'phase2b-command',
+    plan_id: planId,
+    disposition: 'COMMAND_CREATED',
+    runs: [{ run_id: 'phase2b-run', action_id: 'action-one', state: 'REQUESTED' }],
+  };
 }
 
-function mockExecutionResultPersistence(): void {
-  createExecutionResultMock.mockImplementation(async (
-    planId: unknown,
-    actionId: unknown,
-    agentId: unknown,
-    status: unknown,
-    clearDecision: unknown,
-  ) => ({ planId, actionId, agentId, status, clearDecision }));
+function circularThrownValue(): Record<string, unknown> {
+  const value: Record<string, unknown> = { kind: 'circular' };
+  value.self = value;
+  return value;
 }
 
-describe('CLEAR execution decision persistence', () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
-    mcpFlags.requireConfirmation = false;
-    validateCapabilityMock.mockResolvedValue(true);
-    acquireExecutionLockMock.mockImplementation(async () => ({ release: jest.fn(async () => undefined) }));
-    blockPlanMock.mockImplementation(async (planId: string) => ({ ...buildPlan(), id: planId, status: 'blocked' }));
-    mockExecutionResultPersistence();
-  });
+const disclosureMarker = 'phase2b-private-dependency-marker';
+const evaluatorFailureCases: Array<[string, () => unknown, string[]]> = [
+  ['ordinary error', () => new Error('ordinary dependency detail'), ['ordinary dependency detail']],
+  ['credential marker', () => new Error(disclosureMarker), [disclosureMarker]],
+  ['authorization text', () => new Error(`Authorization Bearer ${disclosureMarker}`), [disclosureMarker]],
+  ['filesystem path', () => new Error('C:\\private\\clear\\dependency.log'), ['private\\clear']],
+  ['SQL text', () => new Error('SELECT * FROM private_clear_table'), ['private_clear_table']],
+  ['provider JSON', () => new Error(JSON.stringify({ provider: disclosureMarker })), [disclosureMarker]],
+  ['nested cause', () => new Error('outer detail', { cause: new Error(disclosureMarker) }), ['outer detail', disclosureMarker]],
+  ['non-Error string', () => disclosureMarker, [disclosureMarker]],
+  ['circular object', circularThrownValue, ['circular']],
+  ['very long message', () => new Error('x'.repeat(20_000)), ['x'.repeat(128)]],
+  ['Unicode/control', () => new Error(`internal-雪\r\n${disclosureMarker}`), ['internal-雪', disclosureMarker]],
+  ['undefined thrown value', () => undefined, []],
+];
+
+beforeEach(() => {
+  restoreEnvironment();
+  configureEnvironment();
+  jest.clearAllMocks();
+  idempotencySequence = 0;
+  replayExecutionMock.mockResolvedValue(null);
+  requestExecutionMock.mockResolvedValue(acceptedCommand('phase2b-clear-plan'));
+  updateAuthoritativePlanStatusMock.mockImplementation(async (input: { status: string }) => ({
+    ...buildPlan(),
+    status: input.status,
+  }));
+});
+
+afterAll(restoreEnvironment);
+
+describe('CLEAR execution decision persistence at the Phase 2E command boundary', () => {
+  it.each([
+    ['allow with no stored score', null, clearResult(0.8, 'allow'), 'allow', 0.8],
+    ['allow with explicit null score', null, { ...principleScores, overall: null, decision: 'allow' }, 'allow', null],
+    ['allow over stored confirm', 'confirm', clearResult(0.8, 'allow'), 'allow', 0.8],
+    ['confirm over stored allow', 'allow', clearResult(0.5, 'confirm'), 'confirm', 0.5],
+    ['confirm with explicit null score', null, { ...principleScores, overall: null, decision: 'confirm' }, 'confirm', null],
+  ] as const)(
+    'authorizes command runs for %s without fabricating results',
+    async (_label, prior, current, expectedDecision, expectedOverall) => {
+      const plan = buildPlan(prior);
+      getAuthoritativePlanMock.mockResolvedValue(plan);
+      buildClear2SummaryMock.mockReturnValue(current);
+
+      const http = await executeHttp(plan.id);
+      const mcp = await executeMcp(plan.id);
+
+      expect(http.status).toBe(202);
+      expect(http.body.code).toBe('ACTION_PLAN_EXECUTION_COMMAND_ACCEPTED');
+      expect(mcp.output.structuredContent.code).toBe('ACTION_PLAN_EXECUTION_COMMAND_ACCEPTED');
+      expect(requestExecutionMock).toHaveBeenCalledTimes(2);
+      expect(requestExecutionMock.mock.calls.map(call => call[0].policyExpectation)).toEqual([
+        { decision: expectedDecision, overall: expectedOverall, planExecutionGeneration: 1 },
+        { decision: expectedDecision, overall: expectedOverall, planExecutionGeneration: 1 },
+      ]);
+      expect(updateAuthoritativePlanStatusMock).not.toHaveBeenCalled();
+      expect(createExecutionResultMock).not.toHaveBeenCalled();
+      expect(acquireExecutionLockMock).not.toHaveBeenCalled();
+    },
+  );
 
   it.each([
-    ['allow with no stored score', null, clearResult(0.8, 'allow'), 'allow'],
-    ['allow with an explicit decision and null current score', null, { ...principleScores, overall: null, decision: 'allow' }, 'allow'],
-    ['allow over a stored confirm', 'confirm', clearResult(0.8, 'allow'), 'allow'],
-    ['confirm over a stored allow', 'allow', clearResult(0.5, 'confirm'), 'confirm'],
-  ] as const)('persists the current %s outcome across HTTP and MCP', async (_label, prior, current, expected) => {
-    const plan = buildPlan(prior);
-    getPlanMock.mockResolvedValue(plan);
+    ['finite score', clearResult(0.2, 'block')],
+    ['explicit null score', { ...principleScores, overall: null, decision: 'block' }],
+  ] as const)('persists only an explicit coherent block with %s', async (_label, current) => {
+    const plan = buildPlan('allow');
+    getAuthoritativePlanMock.mockResolvedValue(plan);
     buildClear2SummaryMock.mockReturnValue(current);
 
-    const httpResponse = await request(buildHttpApp()).post(`/plans/${plan.id}/execute`).send({});
-    const mcpResponse = await executeMcp(plan.id);
+    const http = await executeHttp(plan.id);
+    const mcp = await executeMcp(plan.id);
 
-    expect(httpResponse.status).toBe(200);
-    expect(mcpResponse.output).not.toHaveProperty('isError');
-    expect(createExecutionResultMock).toHaveBeenCalledTimes(4);
-    expect(createExecutionResultMock.mock.calls.map(call => call[4])).toEqual([
-      expected,
-      expected,
-      expected,
-      expected,
-    ]);
-    expect(blockPlanMock).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    ['finite score over stored allow', 'allow', clearResult(0.2, 'block')],
-    ['null score with no stored decision', null, { ...principleScores, overall: null, decision: 'block' }],
-  ] as const)('preserves an explicit current block with %s and creates no execution results', async (_label, prior, current) => {
-    const plan = buildPlan(prior);
-    getPlanMock.mockResolvedValue(plan);
-    buildClear2SummaryMock.mockReturnValue(current);
-
-    const httpResponse = await request(buildHttpApp()).post(`/plans/${plan.id}/execute`).send({});
-    const mcpResponse = await executeMcp(plan.id);
-
-    expect(httpResponse.status).toBe(403);
-    expect(mcpResponse.output.structuredContent.error).toEqual(expect.objectContaining({
+    expect(http.status).toBe(403);
+    expect(mcp.output.structuredContent.error).toEqual(expect.objectContaining({
       code: 'ERR_GATED',
       message: 'CLEAR re-evaluation blocked this plan',
+      details: { tool: 'plans.execute', category: 'ACTION_PLAN_POLICY_BLOCKED' },
     }));
-    expect(blockPlanMock.mock.calls).toEqual([[plan.id], [plan.id]]);
-    expect(createExecutionResultMock).not.toHaveBeenCalled();
-    expect(acquireExecutionLockMock).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    ['null result', null, 'CLEAR_EVALUATION_UNAVAILABLE', 'CLEAR evaluation is unavailable.', 503],
-    ['missing decision', { ...principleScores, overall: 0.8 }, 'CLEAR_EVALUATION_UNAVAILABLE', 'CLEAR evaluation is unavailable.', 503],
-    ['non-finite score', { ...principleScores, overall: Number.NaN, decision: 'block' }, 'CLEAR_RESULT_INVALID', 'CLEAR evaluation returned an invalid result.', 500],
-    ['contradictory result', clearResult(0.2, 'allow'), 'CLEAR_RESULT_INVALID', 'CLEAR evaluation returned an invalid result.', 500],
-  ] as const)('suppresses all writes for %s', async (_label, result, category, message, httpStatus) => {
-    const plan = buildPlan('allow');
-    getPlanMock.mockResolvedValue(plan);
-    buildClear2SummaryMock.mockReturnValue(result);
-
-    const httpResponse = await request(buildHttpApp()).post(`/plans/${plan.id}/execute`).send({});
-    const mcpResponse = await executeMcp(plan.id);
-
-    expect(httpResponse.status).toBe(httpStatus);
-    expect(httpResponse.body).toEqual({ error: category, message });
-    expect(mcpResponse.output.structuredContent.error).toEqual({
-      code: 'ERR_INTERNAL',
-      message,
-      details: { tool: 'plans.execute', category },
-      requestId: 'phase2b-mcp-request',
-    });
-    expect(blockPlanMock).not.toHaveBeenCalled();
-    expect(createExecutionResultMock).not.toHaveBeenCalled();
-    expect(acquireExecutionLockMock).not.toHaveBeenCalled();
-  });
-
-  it('returns evaluation-unavailable without leaking an evaluator exception', async () => {
-    const plan = buildPlan('allow');
-    const internalDetail = ['phase2b', 'evaluator', 'internal'].join('-');
-    getPlanMock.mockResolvedValue(plan);
-    buildClear2SummaryMock.mockImplementation(() => {
-      throw new Error(internalDetail);
-    });
-
-    const httpResponse = await request(buildHttpApp()).post(`/plans/${plan.id}/execute`).send({});
-    const mcpResponse = await executeMcp(plan.id);
-    const observable = JSON.stringify({
-      http: httpResponse.body,
-      mcp: mcpResponse.output,
-      httpLogs: apiLoggerErrorMock.mock.calls,
-      mcpLogs: mcpResponse.context.logger.error.mock.calls,
-    });
-
-    expect(httpResponse.status).toBe(503);
-    expect(httpResponse.body).toEqual({
-      error: 'CLEAR_EVALUATION_UNAVAILABLE',
-      message: 'CLEAR evaluation is unavailable.',
-    });
-    expect(mcpResponse.output.structuredContent.error).toEqual(expect.objectContaining({
-      code: 'ERR_INTERNAL',
-      message: 'CLEAR evaluation is unavailable.',
-      details: { tool: 'plans.execute', category: 'CLEAR_EVALUATION_UNAVAILABLE' },
-    }));
-    expect(observable.includes(internalDetail)).toBe(false);
-    expect(blockPlanMock).not.toHaveBeenCalled();
-    expect(createExecutionResultMock).not.toHaveBeenCalled();
-  });
-
-  it.each(evaluatorFailureCases)('sanitizes HTTP and MCP evaluator failure: %s', async (_label, buildThrown, forbiddenValues) => {
-    const plan = buildPlan();
-    getPlanMock.mockResolvedValue(plan);
-    buildClear2SummaryMock.mockImplementation(() => {
-      throw buildThrown();
-    });
-
-    const response = await request(buildHttpApp()).post(`/plans/${plan.id}/execute`).send({});
-    const mcpResponse = await executeMcp(plan.id);
-    const observable = JSON.stringify({
-      body: response.body,
-      text: response.text,
-      logs: apiLoggerErrorMock.mock.calls,
-      mcp: mcpResponse.output,
-      mcpLogs: mcpResponse.context.logger.error.mock.calls,
-    });
-
-    expect(response.status).toBe(503);
-    expect(response.body).toEqual({
-      error: 'CLEAR_EVALUATION_UNAVAILABLE',
-      message: 'CLEAR evaluation is unavailable.',
-    });
-    expect(mcpResponse.output.structuredContent.error).toEqual(expect.objectContaining({
-      code: 'ERR_INTERNAL',
-      message: 'CLEAR evaluation is unavailable.',
-      details: { tool: 'plans.execute', category: 'CLEAR_EVALUATION_UNAVAILABLE' },
-    }));
-    expect(forbiddenValues.some(value => observable.includes(value))).toBe(false);
-    expect(blockPlanMock).not.toHaveBeenCalled();
-    expect(createExecutionResultMock).not.toHaveBeenCalled();
-  });
-
-  it('applies the same sanitized outcome contract to the direct MCP CLEAR tool', async () => {
-    const internalDetail = ['phase2b', 'direct-clear', 'internal'].join('-');
-    buildClear2SummaryMock.mockImplementation(() => {
-      throw new Error(internalDetail);
-    });
-
-    const response = await executeMcpTool('clear.evaluate', { objective: 'synthetic' });
-    const observable = JSON.stringify({
-      output: response.output,
-      logs: response.context.logger.error.mock.calls,
-    });
-
-    expect(response.output.structuredContent.error).toEqual({
-      code: 'ERR_INTERNAL',
-      message: 'CLEAR evaluation is unavailable.',
-      details: { tool: 'clear.evaluate', category: 'CLEAR_EVALUATION_UNAVAILABLE' },
-      requestId: 'phase2b-mcp-request',
-    });
-    expect(observable.includes(internalDetail)).toBe(false);
-  });
-
-  it.each(['rejects', 'returns-null', 'returns-undefined'] as const)('fails safely when block persistence %s', async mode => {
-    const plan = buildPlan('allow');
-    const internalDetail = ['phase2b', 'persistence', 'internal'].join('-');
-    getPlanMock.mockResolvedValue(plan);
-    buildClear2SummaryMock.mockReturnValue(clearResult(0.2, 'block'));
-    if (mode === 'rejects') {
-      blockPlanMock.mockRejectedValue(new Error(internalDetail));
-    } else if (mode === 'returns-null') {
-      blockPlanMock.mockResolvedValue(null);
-    } else {
-      blockPlanMock.mockResolvedValue(undefined);
-    }
-
-    const httpResponse = await request(buildHttpApp()).post(`/plans/${plan.id}/execute`).send({});
-    const mcpResponse = await executeMcp(plan.id);
-    const observable = JSON.stringify({
-      http: httpResponse.body,
-      mcp: mcpResponse.output,
-      httpLogs: apiLoggerErrorMock.mock.calls,
-      mcpLogs: mcpResponse.context.logger.error.mock.calls,
-    });
-
-    expect(httpResponse.status).toBe(500);
-    expect(httpResponse.body).toEqual({
-      error: 'CLEAR_PERSISTENCE_FAILED',
-      message: 'CLEAR decision persistence failed.',
-    });
-    expect(mcpResponse.output.structuredContent.error).toEqual(expect.objectContaining({
-      code: 'ERR_INTERNAL',
-      message: 'CLEAR decision persistence failed.',
-      details: { tool: 'plans.execute', category: 'CLEAR_PERSISTENCE_FAILED' },
-    }));
-    expect(observable.includes(internalDetail)).toBe(false);
-    expect(createExecutionResultMock).not.toHaveBeenCalled();
-  });
-
-  it('documents partial per-action writes while returning a sanitized persistence failure', async () => {
-    const plan = buildPlan();
-    getPlanMock.mockResolvedValue(plan);
-    buildClear2SummaryMock.mockReturnValue(clearResult(0.8, 'allow'));
-    createExecutionResultMock
-      .mockResolvedValueOnce({ actionId: 'action-one', clearDecision: 'allow' })
-      .mockRejectedValueOnce(new Error('partial write internal detail'))
-      .mockResolvedValueOnce({ actionId: 'action-one', clearDecision: 'allow' })
-      .mockRejectedValueOnce(new Error('partial write internal detail'));
-
-    const httpResponse = await request(buildHttpApp()).post(`/plans/${plan.id}/execute`).send({});
-    const mcpResponse = await executeMcp(plan.id);
-
-    expect(httpResponse.status).toBe(500);
-    expect(httpResponse.body.error).toBe('CLEAR_PERSISTENCE_FAILED');
-    expect(mcpResponse.output.structuredContent.error).toEqual(expect.objectContaining({
-      message: 'CLEAR decision persistence failed.',
-    }));
-    expect(createExecutionResultMock).toHaveBeenCalledTimes(4);
-    expect(acquireExecutionLockMock).toHaveBeenCalledTimes(2);
-  });
-
-  it('releases the lock before a delayed sibling write settles after Promise.all rejection', async () => {
-    const plan = buildPlan();
-    const releaseMock = jest.fn(async () => undefined);
-    let delayedSettled = false;
-    let resolveDelayed!: () => void;
-    const delayedWrite = new Promise(resolve => {
-      resolveDelayed = () => {
-        delayedSettled = true;
-        resolve({ actionId: 'action-two', clearDecision: 'allow' });
-      };
-    });
-    getPlanMock.mockResolvedValue(plan);
-    buildClear2SummaryMock.mockReturnValue(clearResult(0.8, 'allow'));
-    acquireExecutionLockMock.mockResolvedValue({ release: releaseMock });
-    createExecutionResultMock.mockImplementation(async (_planId: string, actionId: string) => {
-      if (actionId === 'action-one') throw new Error('first action rejected');
-      return delayedWrite;
-    });
-
-    const response = await request(buildHttpApp()).post(`/plans/${plan.id}/execute`).send({});
-
-    expect(response.status).toBe(500);
-    expect(response.body.error).toBe('CLEAR_PERSISTENCE_FAILED');
-    expect(releaseMock).toHaveBeenCalledTimes(1);
-    expect(delayedSettled).toBe(false);
-
-    resolveDelayed();
-    await delayedWrite;
-    expect(delayedSettled).toBe(true);
-  });
-
-  it('retains cleanup diagnostics when persistence and lock release both fail', async () => {
-    const plan = buildPlan();
-    getPlanMock.mockResolvedValue(plan);
-    buildClear2SummaryMock.mockReturnValue(clearResult(0.8, 'allow'));
-    createExecutionResultMock.mockRejectedValue(new Error('unobservable persistence detail'));
-    acquireExecutionLockMock.mockResolvedValue({
-      release: jest.fn(async () => {
-        throw new Error('unobservable release detail');
-      }),
-    });
-
-    const httpResponse = await request(buildHttpApp()).post(`/plans/${plan.id}/execute`).send({});
-    const mcpResponse = await executeMcp(plan.id);
-
-    expect(httpResponse.status).toBe(500);
-    expect(httpResponse.body.error).toBe('CLEAR_PERSISTENCE_FAILED');
-    expect(mcpResponse.output.structuredContent.error).toEqual(expect.objectContaining({
-      message: 'CLEAR decision persistence failed.',
-    }));
-    expect(apiLoggerErrorMock.mock.calls.map(call => call[1]?.operation)).toEqual(expect.arrayContaining([
-      'plans.execute.persist_results',
-      'plans.execute.release_lock',
-    ]));
-    expect(mcpResponse.context.logger.error.mock.calls.map(call => call[1]?.operation)).toEqual(expect.arrayContaining([
-      'plans.execute.persist_results',
-      'plans.execute.release_lock',
-    ]));
-  });
-
-  it.each([
-    ['missing release', {}],
-    ['non-callable release', { release: 'not-a-function' }],
-  ])('fails MCP execution when the acquired lock has %s', async (_label, malformedLock) => {
-    const plan = buildPlan();
-    getPlanMock.mockResolvedValue(plan);
-    buildClear2SummaryMock.mockReturnValue(clearResult(0.8, 'allow'));
-    acquireExecutionLockMock.mockResolvedValue(malformedLock);
-
-    const response = await executeMcp(plan.id);
-
-    expect(response.output.structuredContent.error).toEqual(expect.objectContaining({
-      code: 'ERR_INTERNAL',
-      message: 'CLEAR operation failed.',
-      details: { tool: 'plans.execute', category: 'CLEAR_OPERATION_FAILED' },
-    }));
-    expect(createExecutionResultMock).toHaveBeenCalledTimes(2);
-  });
-
-  it('keeps HTTP persistence error handling stable for a hostile message getter', async () => {
-    const plan = buildPlan();
-    const hostileError = Object.defineProperty({}, 'message', {
-      get() {
-        throw new Error('unobservable getter detail');
-      },
-    });
-    getPlanMock.mockResolvedValue(plan);
-    buildClear2SummaryMock.mockReturnValue(clearResult(0.8, 'allow'));
-    createExecutionResultMock.mockRejectedValue(hostileError);
-
-    const response = await request(buildHttpApp()).post(`/plans/${plan.id}/execute`).send({});
-
-    expect(response.status).toBe(500);
-    expect(response.body).toEqual({
-      error: 'CLEAR_PERSISTENCE_FAILED',
-      message: 'CLEAR decision persistence failed.',
-    });
-  });
-
-  it.each(['persistence', 'release'] as const)('does not treat an undefined %s rejection as success', async stage => {
-    const plan = buildPlan();
-    getPlanMock.mockResolvedValue(plan);
-    buildClear2SummaryMock.mockReturnValue(clearResult(0.8, 'allow'));
-    if (stage === 'persistence') {
-      createExecutionResultMock.mockRejectedValue(undefined);
-    } else {
-      acquireExecutionLockMock.mockImplementation(async () => ({
-        release: jest.fn(() => Promise.reject(undefined)),
-      }));
-    }
-
-    const httpResponse = await request(buildHttpApp()).post(`/plans/${plan.id}/execute`).send({});
-    const mcpResponse = await executeMcp(plan.id);
-    const expectedCategory = stage === 'persistence' ? 'CLEAR_PERSISTENCE_FAILED' : 'CLEAR_OPERATION_FAILED';
-    const expectedMessage = stage === 'persistence'
-      ? 'CLEAR decision persistence failed.'
-      : 'CLEAR operation failed.';
-
-    expect(httpResponse.status).toBe(500);
-    expect(httpResponse.body).toEqual({ error: expectedCategory, message: expectedMessage });
-    expect(mcpResponse.output.structuredContent.error).toEqual(expect.objectContaining({
-      code: 'ERR_INTERNAL',
-      message: expectedMessage,
-      details: { tool: 'plans.execute', category: expectedCategory },
-    }));
-    expect(apiLoggerErrorMock.mock.calls).toEqual(expect.arrayContaining([
-      expect.arrayContaining([
-        'CLEAR execution failed',
-        expect.objectContaining({ errorCode: expectedCategory, errorClass: 'ThrownUndefined' }),
-      ]),
-    ]));
-    expect(mcpResponse.context.logger.error.mock.calls).toEqual(expect.arrayContaining([
-      expect.arrayContaining([
-        'mcp.clear.error',
-        expect.objectContaining({ errorCode: expectedCategory, errorClass: 'ThrownUndefined' }),
-      ]),
-    ]));
-  });
-
-  it('re-evaluates and persists the explicit decision on retry after a rejected write', async () => {
-    const plan = buildPlan();
-    getPlanMock.mockResolvedValue(plan);
-    buildClear2SummaryMock.mockReturnValue(clearResult(0.8, 'allow'));
-    createExecutionResultMock
-      .mockRejectedValueOnce(new Error('first attempt rejected'))
-      .mockResolvedValueOnce({ actionId: 'action-two', clearDecision: 'allow' })
-      .mockResolvedValueOnce({ actionId: 'action-one', clearDecision: 'allow' })
-      .mockResolvedValueOnce({ actionId: 'action-two', clearDecision: 'allow' });
-
-    const first = await request(buildHttpApp()).post(`/plans/${plan.id}/execute`).send({});
-    const retry = await request(buildHttpApp()).post(`/plans/${plan.id}/execute`).send({});
-
-    expect(first.status).toBe(500);
-    expect(first.body.error).toBe('CLEAR_PERSISTENCE_FAILED');
-    expect(retry.status).toBe(200);
-    expect(createExecutionResultMock.mock.calls.map(call => call[4])).toEqual([
-      'allow',
-      'allow',
-      'allow',
-      'allow',
-    ]);
-    expect(buildClear2SummaryMock).toHaveBeenCalledTimes(2);
-  });
-
-  it('suppresses a concurrent duplicate request after the execution lock', async () => {
-    const plan = buildPlan();
-    getPlanMock.mockResolvedValue(plan);
-    buildClear2SummaryMock.mockReturnValue(clearResult(0.8, 'allow'));
-    acquireExecutionLockMock
-      .mockResolvedValueOnce({ release: jest.fn(async () => undefined) })
-      .mockResolvedValueOnce(null);
-
-    const [first, duplicate] = await Promise.all([
-      request(buildHttpApp()).post(`/plans/${plan.id}/execute`).send({}),
-      request(buildHttpApp()).post(`/plans/${plan.id}/execute`).send({}),
-    ]);
-
-    expect([first.status, duplicate.status].sort()).toEqual([200, 409]);
-    expect(createExecutionResultMock).toHaveBeenCalledTimes(2);
-    expect(emitSafetyAuditEventMock).toHaveBeenCalledWith(expect.objectContaining({
-      event: 'policy_task_duplicate_suppressed',
-    }));
-  });
-
-  it('documents the existing race boundary for concurrent conflicting rechecks', async () => {
-    const plan = buildPlan();
-    getPlanMock.mockResolvedValue(plan);
-    buildClear2SummaryMock
-      .mockReturnValueOnce(clearResult(0.8, 'allow'))
-      .mockReturnValueOnce(clearResult(0.2, 'block'));
-
-    const [allowResponse, blockResponse] = await Promise.all([
-      request(buildHttpApp()).post(`/plans/${plan.id}/execute`).send({ request: 'allow' }),
-      request(buildHttpApp()).post(`/plans/${plan.id}/execute`).send({ request: 'block' }),
-    ]);
-
-    expect([allowResponse.status, blockResponse.status].sort()).toEqual([200, 403]);
-    expect(createExecutionResultMock).toHaveBeenCalledTimes(2);
-    expect(createExecutionResultMock.mock.calls.every(call => call[4] === 'allow')).toBe(true);
-    expect(blockPlanMock).toHaveBeenCalledWith(plan.id);
-    expect(acquireExecutionLockMock).toHaveBeenCalledTimes(1);
-  });
-
-  it('keeps an existing stored block as an early policy gate', async () => {
-    const plan = buildPlan('block');
-    getPlanMock.mockResolvedValue(plan);
-
-    const httpResponse = await request(buildHttpApp()).post(`/plans/${plan.id}/execute`).send({});
-    const mcpResponse = await executeMcp(plan.id);
-
-    expect(httpResponse.status).toBe(403);
-    expect(mcpResponse.output.structuredContent.error.code).toBe('ERR_GATED');
-    expect(buildClear2SummaryMock).not.toHaveBeenCalled();
-    expect(blockPlanMock).not.toHaveBeenCalled();
-    expect(createExecutionResultMock).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    ['blocked with historical allow', 'blocked', false, null, 'ACTION_PLAN_POLICY_BLOCKED', 'lifecycle_blocked', 403],
-    ['completed terminal state', 'completed', false, null, 'ACTION_PLAN_TERMINAL', 'terminal_state', 409],
-    ['in-progress state', 'in_progress', false, null, 'ACTION_PLAN_TRANSITION_FORBIDDEN', 'execution_in_progress', 409],
-    ['missing state', undefined, true, null, 'ACTION_PLAN_STATE_UNAVAILABLE', 'state_missing', 409],
-    ['unknown state', 'unrecognized-private-state', false, null, 'ACTION_PLAN_STATE_INVALID', 'state_unknown', 409],
-    ['elapsed expiry', 'approved', false, new Date('2000-01-01T00:00:00.000Z'), 'ACTION_PLAN_TERMINAL', 'expiry_elapsed', 409],
-  ] as const)(
-    'rejects %s before capabilities, CLEAR, locking, or writes',
-    async (_label, status, omitStatus, expiresAt, category, reasonCode, httpStatus) => {
-      const plan = {
-        ...buildPlan('allow'),
-        status,
-        expiresAt,
-      } as unknown as ActionPlanRecord;
-      if (omitStatus) delete (plan as unknown as Record<string, unknown>).status;
-      getPlanMock.mockResolvedValue(plan);
-
-      const httpResponse = await request(buildHttpApp()).post(`/plans/${plan.id}/execute`).send({});
-      const mcpResponse = await executeMcp(plan.id);
-
-      expect(httpResponse.status).toBe(httpStatus);
-      expect(httpResponse.body).toEqual(expect.objectContaining({ category, reasonCode }));
-      expect(mcpResponse.output.structuredContent.error).toEqual(expect.objectContaining({
-        code: 'ERR_GATED',
-        details: expect.objectContaining({ category, reasonCode }),
-      }));
-      expect(apiLoggerWarnMock).toHaveBeenCalledWith(
-        'ActionPlan lifecycle evaluated',
-        expect.objectContaining({
-          planId: plan.id,
-          previousState: typeof status === 'string'
-            && status !== 'unrecognized-private-state'
-            ? status
-            : null,
-          operation: 'execute',
-          outcome: expect.any(String),
-          reasonCode,
-          category,
-          policyProvenance: 'stored_creation',
-          actorCategory: 'http',
-          versionSupport: 'unavailable',
-        }),
-      );
-      expect(mcpResponse.context.logger.warn).toHaveBeenCalledWith(
-        'mcp.action_plan.lifecycle',
-        expect.objectContaining({
-          planId: plan.id,
-          operation: 'execute',
-          reasonCode,
-          category,
-          policyProvenance: 'stored_creation',
-          actorCategory: 'mcp',
-          versionSupport: 'unavailable',
-        }),
-      );
-      expect(JSON.stringify({ http: httpResponse.body, mcp: mcpResponse.output }))
-        .not.toContain('unrecognized-private-state');
-      expect(JSON.stringify({
-        httpLogs: apiLoggerWarnMock.mock.calls,
-        mcpLogs: mcpResponse.context.logger.warn.mock.calls,
-      })).not.toContain('unrecognized-private-state');
-      expect(validateCapabilityMock).not.toHaveBeenCalled();
-      expect(buildClear2SummaryMock).not.toHaveBeenCalled();
-      expect(acquireExecutionLockMock).not.toHaveBeenCalled();
-      expect(blockPlanMock).not.toHaveBeenCalled();
-      expect(createExecutionResultMock).not.toHaveBeenCalled();
-    },
-  );
-
-  it('treats repeated HTTP and MCP block operations as no-write idempotent reads', async () => {
-    const plan = { ...buildPlan('block'), status: 'blocked' } as ActionPlanRecord;
-    getPlanMock.mockResolvedValue(plan);
-
-    const httpResponse = await request(buildHttpApp()).post(`/plans/${plan.id}/block`).send({});
-    const mcpResponse = await executeMcpTool('plans.block', { planId: plan.id });
-
-    expect(httpResponse.status).toBe(200);
-    expect(httpResponse.body.status).toBe('blocked');
-    expect(mcpResponse.output.structuredContent.status).toBe('blocked');
-    expect(blockPlanMock).not.toHaveBeenCalled();
-  });
-
-  it('treats repeated HTTP and MCP expiry operations as no-write idempotent reads', async () => {
-    const plan = {
-      ...buildPlan('allow'),
-      status: 'expired',
-      expiresAt: new Date('2000-01-01T00:00:00.000Z'),
-    } as ActionPlanRecord;
-    getPlanMock.mockResolvedValue(plan);
-
-    const httpResponse = await request(buildHttpApp()).post(`/plans/${plan.id}/expire`).send({});
-    const mcpResponse = await executeMcpTool('plans.expire', { planId: plan.id });
-
-    expect(httpResponse.status).toBe(200);
-    expect(httpResponse.body.status).toBe('expired');
-    expect(mcpResponse.output.structuredContent.status).toBe('expired');
-    expect(expirePlanMock).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    ['approve', 'blocked', false, 'ACTION_PLAN_TRANSITION_FORBIDDEN', 'blocked_transition_forbidden'],
-    ['approve', 'completed', false, 'ACTION_PLAN_TERMINAL', 'terminal_state'],
-    ['block', 'completed', false, 'ACTION_PLAN_TERMINAL', 'terminal_state'],
-    ['expire', 'blocked', false, 'ACTION_PLAN_TRANSITION_FORBIDDEN', 'blocked_transition_forbidden'],
-    ['expire', 'in_progress', false, 'ACTION_PLAN_TRANSITION_FORBIDDEN', 'expiry_forbidden'],
-    ['approve', 'phase2d-private-state', false, 'ACTION_PLAN_STATE_INVALID', 'state_unknown'],
-    ['block', undefined, true, 'ACTION_PLAN_STATE_UNAVAILABLE', 'state_missing'],
-  ] as const)(
-    'rejects %s from lifecycle state %s without a status write',
-    async (operation, status, omitStatus, category, reasonCode) => {
-      const plan = { ...buildPlan('allow'), status } as unknown as ActionPlanRecord;
-      if (omitStatus) delete (plan as unknown as Record<string, unknown>).status;
-      getPlanMock.mockResolvedValue(plan);
-
-      const httpResponse = await request(buildHttpApp())
-        .post(`/plans/${plan.id}/${operation}`)
-        .send({});
-      const mcpResponse = await executeMcpTool(`plans.${operation}`, { planId: plan.id });
-
-      expect(httpResponse.status).toBe(409);
-      expect(httpResponse.body).toEqual(expect.objectContaining({ category, reasonCode }));
-      expect(mcpResponse.output.structuredContent.error).toEqual(expect.objectContaining({
-        code: 'ERR_GATED',
-        details: expect.objectContaining({ category, reasonCode }),
-      }));
-      expect(JSON.stringify({ http: httpResponse.body, mcp: mcpResponse.output }))
-        .not.toContain('phase2d-private-state');
-      expect(approvePlanMock).not.toHaveBeenCalled();
-      expect(blockPlanMock).not.toHaveBeenCalled();
-      expect(expirePlanMock).not.toHaveBeenCalled();
-      expect(createExecutionResultMock).not.toHaveBeenCalled();
-    },
-  );
-
-  it('does not let a correctly bound MCP confirmation nonce bypass lifecycle denial', async () => {
-    mcpFlags.requireConfirmation = true;
-    const plan = { ...buildPlan('allow'), status: 'blocked' } as ActionPlanRecord;
-    getPlanMock.mockResolvedValue(plan);
-    const context = buildMcpContext();
-    const server = await createMcpServer(context) as FakeMcpServer;
-    const tool = server.tools.get('plans.execute');
-    expect(tool).toBeDefined();
-
-    const challenge = await tool!.handler({ planId: plan.id });
-    const nonce = challenge.structuredContent.error.details.confirmationNonce;
-    expect(challenge.structuredContent.error.code).toBe('ERR_CONFIRM_REQUIRED');
-
-    const denied = await tool!.handler({ planId: plan.id, confirmationNonce: nonce });
-    expect(denied.structuredContent.error).toEqual(expect.objectContaining({
-      code: 'ERR_GATED',
-      details: expect.objectContaining({
-        category: 'ACTION_PLAN_POLICY_BLOCKED',
-        reasonCode: 'lifecycle_blocked',
-      }),
-    }));
-
-    const replay = await tool!.handler({ planId: plan.id, confirmationNonce: nonce });
-    expect(replay.structuredContent.error.code).toBe('ERR_CONFIRM_INVALID');
-    const replacementNonce = replay.structuredContent.error.details.confirmationNonce;
-    const replacementDenied = await tool!.handler({
+    expect(updateAuthoritativePlanStatusMock).toHaveBeenCalledTimes(2);
+    expect(updateAuthoritativePlanStatusMock).toHaveBeenCalledWith({
       planId: plan.id,
-      confirmationNonce: replacementNonce,
+      executionRealm: 'local-test',
+      status: 'blocked',
+      allowedCurrentStatuses: ['approved'],
     });
-    expect(replacementDenied.structuredContent.error.code).toBe('ERR_GATED');
-    expect(buildClear2SummaryMock).not.toHaveBeenCalled();
-    expect(blockPlanMock).not.toHaveBeenCalled();
+    expect(requestExecutionMock).not.toHaveBeenCalled();
     expect(createExecutionResultMock).not.toHaveBeenCalled();
   });
 
-  it.each(['block', 'expire'] as const)(
-    'does not report MCP %s success when the lifecycle write returns null',
-    async operation => {
-      const plan = { ...buildPlan('allow'), status: 'approved' } as ActionPlanRecord;
-      getPlanMock.mockResolvedValue(plan);
-      if (operation === 'block') blockPlanMock.mockResolvedValue(null);
-      else expirePlanMock.mockResolvedValue(null);
+  it.each([
+    ['null result', null, 503, 'CLEAR_EVALUATION_UNAVAILABLE', 'CLEAR evaluation is unavailable.'],
+    ['missing decision', { ...principleScores, overall: 0.8 }, 503, 'CLEAR_EVALUATION_UNAVAILABLE', 'CLEAR evaluation is unavailable.'],
+    ['non-finite score', { ...principleScores, overall: Number.NaN, decision: 'block' }, 500, 'CLEAR_RESULT_INVALID', 'CLEAR evaluation returned an invalid result.'],
+    ['contradictory result', clearResult(0.2, 'allow'), 500, 'CLEAR_RESULT_INVALID', 'CLEAR evaluation returned an invalid result.'],
+  ] as const)(
+    'suppresses every write for %s',
+    async (_label, current, status, category, message) => {
+      const plan = buildPlan('allow');
+      getAuthoritativePlanMock.mockResolvedValue(plan);
+      buildClear2SummaryMock.mockReturnValue(current);
 
-      const httpResponse = await request(buildHttpApp())
-        .post(`/plans/${plan.id}/${operation}`)
-        .send({});
-      const mcpResponse = await executeMcpTool(`plans.${operation}`, { planId: plan.id });
+      const http = await executeHttp(plan.id);
+      const mcp = await executeMcp(plan.id);
 
-      expect(httpResponse.status).toBe(404);
-      expect(mcpResponse.output).toEqual(expect.objectContaining({ isError: true }));
-      expect(mcpResponse.output.structuredContent.error).toEqual(expect.objectContaining({
+      expect(http.status).toBe(status);
+      expect(http.body).toEqual({ error: category, message });
+      expect(mcp.output.structuredContent.error).toEqual({
         code: 'ERR_INTERNAL',
-        message: 'MCP operation failed.',
-        details: { tool: `plans.${operation}`, category: 'MCP_OPERATION_FAILED' },
-      }));
-      expect(apiLoggerWarnMock).toHaveBeenCalledWith(
-        'ActionPlan lifecycle write suppressed',
-        expect.objectContaining({
-          planId: plan.id,
-          operation,
-          errorCode: 'ACTION_PLAN_STATE_WRITE_FAILED',
-          reasonCode: 'missing_write_result',
-        }),
-      );
-      expect(mcpResponse.context.logger.warn).toHaveBeenCalledWith(
-        'mcp.action_plan.lifecycle_write',
-        expect.objectContaining({
-          planId: plan.id,
-          errorCode: 'ACTION_PLAN_STATE_WRITE_FAILED',
-          reasonCode: 'missing_write_result',
-        }),
-      );
+        message,
+        details: { tool: 'plans.execute', category },
+        requestId: 'phase2b-mcp-request',
+      });
+      expect(updateAuthoritativePlanStatusMock).not.toHaveBeenCalled();
+      expect(requestExecutionMock).not.toHaveBeenCalled();
       expect(createExecutionResultMock).not.toHaveBeenCalled();
     },
   );
 
-  it('keeps lifecycle denial stable when HTTP and MCP diagnostic loggers throw', async () => {
-    const plan = { ...buildPlan('allow'), status: 'completed' } as ActionPlanRecord;
-    getPlanMock.mockResolvedValue(plan);
-    apiLoggerWarnMock.mockImplementationOnce(() => {
-      throw new Error('phase2d HTTP logger failure');
-    });
+  it.each(evaluatorFailureCases)(
+    'sanitizes HTTP and MCP evaluator failure: %s',
+    async (_label, buildThrown, forbiddenValues) => {
+      const plan = buildPlan();
+      getAuthoritativePlanMock.mockResolvedValue(plan);
+      buildClear2SummaryMock.mockImplementation(() => { throw buildThrown(); });
 
-    const httpResponse = await request(buildHttpApp()).post(`/plans/${plan.id}/execute`).send({});
-    const context = buildMcpContext();
-    context.logger.warn.mockImplementationOnce(() => {
-      throw new Error('phase2d MCP logger failure');
-    });
-    const server = await createMcpServer(context) as FakeMcpServer;
-    const denied = await server.tools.get('plans.execute')!.handler({ planId: plan.id });
+      const http = await executeHttp(plan.id);
+      const mcp = await executeMcp(plan.id);
+      const observable = JSON.stringify({
+        http: http.body,
+        mcp: mcp.output,
+        httpLogs: apiLoggerErrorMock.mock.calls,
+        mcpLogs: mcp.context.logger.warn.mock.calls,
+      });
 
-    expect(httpResponse.status).toBe(409);
-    expect(denied.structuredContent.error.details.category).toBe('ACTION_PLAN_TERMINAL');
-    expect(createExecutionResultMock).not.toHaveBeenCalled();
-  });
+      expect(http.status).toBe(503);
+      expect(http.body).toEqual({
+        error: 'CLEAR_EVALUATION_UNAVAILABLE',
+        message: 'CLEAR evaluation is unavailable.',
+      });
+      expect(mcp.output.structuredContent.error).toEqual(expect.objectContaining({
+        code: 'ERR_INTERNAL',
+        message: 'CLEAR evaluation is unavailable.',
+        details: { tool: 'plans.execute', category: 'CLEAR_EVALUATION_UNAVAILABLE' },
+      }));
+      expect(forbiddenValues.some(value => observable.includes(value))).toBe(false);
+      expect(updateAuthoritativePlanStatusMock).not.toHaveBeenCalled();
+      expect(requestExecutionMock).not.toHaveBeenCalled();
+    },
+  );
 
-  it('sanitizes HTTP and MCP mutation exceptions', async () => {
-    const disclosureSentinel = 'phase2d-private-mutation-path';
-    const plan = { ...buildPlan('allow'), status: 'planned' } as ActionPlanRecord;
-    getPlanMock.mockResolvedValue(plan);
-    approvePlanMock.mockRejectedValue(new Error(disclosureSentinel));
+  it.each(['rejects', 'returns-null', 'returns-undefined'] as const)(
+    'fails safely when explicit-block persistence %s',
+    async mode => {
+      const plan = buildPlan('allow');
+      getAuthoritativePlanMock.mockResolvedValue(plan);
+      buildClear2SummaryMock.mockReturnValue(clearResult(0.2, 'block'));
+      if (mode === 'rejects') {
+        updateAuthoritativePlanStatusMock.mockRejectedValue(new Error(disclosureMarker));
+      } else if (mode === 'returns-null') {
+        updateAuthoritativePlanStatusMock.mockResolvedValue(null);
+      } else {
+        updateAuthoritativePlanStatusMock.mockResolvedValue(undefined);
+      }
 
-    const httpResponse = await request(buildHttpApp()).post(`/plans/${plan.id}/approve`).send({});
-    const mcpResponse = await executeMcpTool('plans.approve', { planId: plan.id });
+      const http = await executeHttp(plan.id);
+      const mcp = await executeMcp(plan.id);
+      const observable = JSON.stringify({
+        http: http.body,
+        mcp: mcp.output,
+        httpLogs: apiLoggerErrorMock.mock.calls,
+        mcpLogs: mcp.context.logger.warn.mock.calls,
+      });
 
-    expect(httpResponse.status).toBe(500);
-    expect(mcpResponse.output).toEqual(expect.objectContaining({ isError: true }));
-    const observable = JSON.stringify({
-      http: httpResponse.body,
-      mcp: mcpResponse.output,
-      httpLogs: apiLoggerErrorMock.mock.calls,
-      mcpLogs: mcpResponse.context.logger.error.mock.calls,
-    });
-    expect(observable).not.toContain(disclosureSentinel);
-    expect(apiLoggerErrorMock).toHaveBeenCalledWith(
-      'ActionPlan mutation failed',
-      expect.objectContaining({
-        operation: 'approve',
-        errorCode: 'ACTION_PLAN_OPERATION_FAILED',
-        errorClass: 'Error',
-      }),
-    );
-  });
+      expect(http.status).toBe(500);
+      expect(http.body).toEqual({
+        error: 'CLEAR_PERSISTENCE_FAILED',
+        message: 'CLEAR decision persistence failed.',
+      });
+      expect(mcp.output.structuredContent.error).toEqual(expect.objectContaining({
+        code: 'ERR_INTERNAL',
+        message: 'CLEAR decision persistence failed.',
+        details: { tool: 'plans.execute', category: 'CLEAR_PERSISTENCE_FAILED' },
+      }));
+      expect(observable).not.toContain(disclosureMarker);
+      expect(requestExecutionMock).not.toHaveBeenCalled();
+      expect(createExecutionResultMock).not.toHaveBeenCalled();
+    },
+  );
 
-  it('preserves valid HTTP and MCP approve, block, and expire transitions', async () => {
+  it.each([
+    ['blocked', false, null, 403, 'ACTION_PLAN_POLICY_BLOCKED', 'lifecycle_blocked'],
+    ['completed', false, null, 409, 'ACTION_PLAN_TERMINAL', 'terminal_state'],
+    [undefined, true, null, 409, 'ACTION_PLAN_STATE_UNAVAILABLE', 'state_missing'],
+    ['private-state', false, null, 409, 'ACTION_PLAN_STATE_INVALID', 'state_unknown'],
+    ['approved', false, new Date('2000-01-01T00:00:00.000Z'), 409, 'ACTION_PLAN_TERMINAL', 'expiry_elapsed'],
+  ] as const)(
+    'rejects lifecycle state %s before CLEAR or command effects',
+    async (status, omitStatus, expiresAt, httpStatus, category, reasonCode) => {
+      const plan = { ...buildPlan('allow'), status, expiresAt } as unknown as ActionPlanRecord;
+      if (omitStatus) delete (plan as unknown as Record<string, unknown>).status;
+      getAuthoritativePlanMock.mockResolvedValue(plan);
+
+      const http = await executeHttp(plan.id);
+      const mcp = await executeMcp(plan.id);
+
+      expect(http.status).toBe(httpStatus);
+      expect(http.body).toEqual(expect.objectContaining({ category, reasonCode }));
+      expect(mcp.output.structuredContent.error).toEqual(expect.objectContaining({
+        code: 'ERR_GATED',
+        details: expect.objectContaining({ category, reasonCode }),
+      }));
+      expect(buildClear2SummaryMock).not.toHaveBeenCalled();
+      expect(updateAuthoritativePlanStatusMock).not.toHaveBeenCalled();
+      expect(requestExecutionMock).not.toHaveBeenCalled();
+      expect(createExecutionResultMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it('keeps operator lifecycle mutations on authenticated HTTP and omits legacy destructive MCP tools', async () => {
     const planned = { ...buildPlan('allow'), status: 'planned' } as ActionPlanRecord;
     const approved = { ...planned, status: 'approved' } as ActionPlanRecord;
-    const blocked = { ...approved, status: 'blocked' } as ActionPlanRecord;
-    const expired = { ...approved, status: 'expired' } as ActionPlanRecord;
+    getAuthoritativePlanMock.mockResolvedValue(planned);
+    updateAuthoritativePlanStatusMock.mockResolvedValue(approved);
 
-    getPlanMock.mockResolvedValueOnce(planned);
-    approvePlanMock.mockResolvedValueOnce(approved);
-    const httpApprove = await request(buildHttpApp()).post(`/plans/${planned.id}/approve`).send({});
-    getPlanMock.mockResolvedValueOnce(planned);
-    approvePlanMock.mockResolvedValueOnce(approved);
-    const mcpApprove = await executeMcpTool('plans.approve', { planId: planned.id });
+    const response = await operatorMutation(planned.id, 'approve');
+    const context = buildMcpContext();
+    const server = new FakeMcpServer();
+    registerActionPlanMcpTools(server, context);
 
-    getPlanMock.mockResolvedValueOnce(approved);
-    blockPlanMock.mockResolvedValueOnce(blocked);
-    const httpBlock = await request(buildHttpApp()).post(`/plans/${approved.id}/block`).send({});
-    getPlanMock.mockResolvedValueOnce(approved);
-    blockPlanMock.mockResolvedValueOnce(blocked);
-    const mcpBlock = await executeMcpTool('plans.block', { planId: approved.id });
-
-    getPlanMock.mockResolvedValueOnce(approved);
-    expirePlanMock.mockResolvedValueOnce(expired);
-    const httpExpire = await request(buildHttpApp()).post(`/plans/${approved.id}/expire`).send({});
-    getPlanMock.mockResolvedValueOnce(approved);
-    expirePlanMock.mockResolvedValueOnce(expired);
-    const mcpExpire = await executeMcpTool('plans.expire', { planId: approved.id });
-
-    expect([httpApprove.status, httpBlock.status, httpExpire.status]).toEqual([200, 200, 200]);
-    expect([
-      mcpApprove.output.structuredContent.status,
-      mcpBlock.output.structuredContent.status,
-      mcpExpire.output.structuredContent.status,
-    ]).toEqual(['approved', 'blocked', 'expired']);
-    expect(approvePlanMock).toHaveBeenCalledTimes(2);
-    expect(blockPlanMock).toHaveBeenCalledTimes(2);
-    expect(expirePlanMock).toHaveBeenCalledTimes(2);
+    expect(response.status).toBe(200);
+    expect(response.body.status).toBe('approved');
+    expect(updateAuthoritativePlanStatusMock).toHaveBeenCalledWith({
+      planId: planned.id,
+      executionRealm: 'local-test',
+      status: 'approved',
+      allowedCurrentStatuses: ['planned', 'awaiting_confirmation'],
+    });
+    expect([...server.tools.keys()]).not.toEqual(expect.arrayContaining([
+      'plans.approve', 'plans.block', 'plans.expire', 'plans.results',
+    ]));
   });
 
-  it('ignores a partial result attached to an evaluator failure', async () => {
+  it('does not let diagnostic logger failure mask a stable sanitized evaluator response', async () => {
     const plan = buildPlan();
-    const failure = Object.assign(new Error('evaluator failed'), {
-      partialResult: clearResult(0.2, 'block'),
-    });
-    getPlanMock.mockResolvedValue(plan);
-    buildClear2SummaryMock.mockImplementation(() => {
-      throw failure;
-    });
+    getAuthoritativePlanMock.mockResolvedValue(plan);
+    buildClear2SummaryMock.mockImplementation(() => { throw new Error(disclosureMarker); });
+    apiLoggerErrorMock.mockImplementation(() => { throw new Error('logger unavailable'); });
 
-    const response = await request(buildHttpApp()).post(`/plans/${plan.id}/execute`).send({});
-
-    expect(response.status).toBe(503);
-    expect(response.body.error).toBe('CLEAR_EVALUATION_UNAVAILABLE');
-    expect(blockPlanMock).not.toHaveBeenCalled();
-    expect(createExecutionResultMock).not.toHaveBeenCalled();
-  });
-
-  it('does not let a failing HTTP logger mask the sanitized response', async () => {
-    const plan = buildPlan();
-    getPlanMock.mockResolvedValue(plan);
-    buildClear2SummaryMock.mockImplementation(() => {
-      throw new Error('unobservable evaluator detail');
-    });
-    apiLoggerErrorMock.mockImplementation(() => {
-      throw new Error('unobservable logger detail');
-    });
-
-    const response = await request(buildHttpApp())
-      .post(`/plans/${plan.id}/execute`)
-      .send({})
-      .timeout({ deadline: 1_000 });
+    const response = await executeHttp(plan.id);
 
     expect(response.status).toBe(503);
     expect(response.body).toEqual({
       error: 'CLEAR_EVALUATION_UNAVAILABLE',
       message: 'CLEAR evaluation is unavailable.',
     });
-  });
-
-  it('reports lock-release failure after persisting results without exposing the exception', async () => {
-    const plan = buildPlan();
-    const internalDetail = ['phase2b', 'lock-release', 'internal'].join('-');
-    getPlanMock.mockResolvedValue(plan);
-    buildClear2SummaryMock.mockReturnValue(clearResult(0.8, 'allow'));
-    acquireExecutionLockMock.mockImplementation(async () => ({
-      release: jest.fn(async () => {
-        throw new Error(internalDetail);
-      }),
-    }));
-
-    const httpResponse = await request(buildHttpApp()).post(`/plans/${plan.id}/execute`).send({});
-    const mcpResponse = await executeMcp(plan.id);
-    const observable = JSON.stringify({
-      http: httpResponse.body,
-      mcp: mcpResponse.output,
-      httpLogs: apiLoggerErrorMock.mock.calls,
-      mcpLogs: mcpResponse.context.logger.error.mock.calls,
-    });
-
-    expect(httpResponse.status).toBe(500);
-    expect(httpResponse.body).toEqual({
-      error: 'CLEAR_OPERATION_FAILED',
-      message: 'CLEAR operation failed.',
-    });
-    expect(mcpResponse.output.structuredContent.error).toEqual(expect.objectContaining({
-      code: 'ERR_INTERNAL',
-      message: 'CLEAR operation failed.',
-      details: { tool: 'plans.execute', category: 'CLEAR_OPERATION_FAILED' },
-    }));
-    expect(createExecutionResultMock).toHaveBeenCalledTimes(4);
-    expect(createExecutionResultMock.mock.calls.every(call => call[4] === 'allow')).toBe(true);
-    expect(observable.includes(internalDetail)).toBe(false);
+    expect(JSON.stringify(response.body)).not.toContain(disclosureMarker);
   });
 });

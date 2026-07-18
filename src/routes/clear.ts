@@ -14,10 +14,29 @@ import {
   interpretClear2Outcome,
   type ClearPublicError,
 } from '../services/clearDecision.js';
-import { getClearScore } from '../stores/actionPlanStore.js';
+import { getAuthoritativePlan } from '../stores/actionPlanStore.js';
 import { getConfig } from '@platform/runtime/unifiedConfig.js';
 import { apiLogger } from '@platform/logging/structuredLogging.js';
-import { asyncHandler, validateBody, validateParams, sendNotFoundError, sendInternalError } from '@shared/http/index.js';
+import { asyncHandler, validateBody, validateParams } from '@shared/http/index.js';
+import {
+  createRateLimitMiddleware,
+  getRequestActorKey,
+  getRequestClientAddress,
+} from '@platform/runtime/security.js';
+import {
+  actionPlanAuthenticationMiddleware,
+  requireActionPlanRoles,
+} from '@services/actionPlanExecution/auth.js';
+import { deriveActionPlanExecutionRealm } from '@services/actionPlanExecution/realm.js';
+import {
+  actionPlanRateLimitOperation,
+  sendActionPlanExecutionError,
+  setActionPlanNoStore,
+} from '@services/actionPlanExecution/http.js';
+import {
+  ACTION_PLAN_EXECUTION_ERRORS,
+  ActionPlanExecutionError,
+} from '@services/actionPlanExecution/errors.js';
 
 const router = express.Router();
 
@@ -60,7 +79,25 @@ function sendClearRouteFailure(res: express.Response, failure: ClearPublicError)
 }
 
 const planIdSchema = z.object({
-  planId: z.string().min(1)
+  planId: z.string().min(1).max(128),
+}).strict();
+const storedClearClientRateLimit = createRateLimitMiddleware({
+  bucketName: 'action-plan-clear-client',
+  maxRequests: 120,
+  windowMs: 60_000,
+  keyGenerator: req => `client:${getRequestClientAddress(req)}`,
+});
+const storedClearCredentialRateLimit = createRateLimitMiddleware({
+  bucketName: 'action-plan-clear-credential',
+  maxRequests: 120,
+  windowMs: 60_000,
+  keyGenerator: req => `client:${getRequestClientAddress(req)}:${getRequestActorKey(req)}`,
+});
+const storedClearPrincipalRateLimit = createRateLimitMiddleware({
+  bucketName: 'action-plan-clear-principal',
+  maxRequests: 120,
+  windowMs: 60_000,
+  keyGenerator: req => `principal:${req.actionPlanPrincipal!.role}:${req.actionPlanPrincipal!.principalId}:operation:${actionPlanRateLimitOperation(req)}`,
 });
 
 /**
@@ -117,23 +154,42 @@ router.post(
  */
 router.get(
   '/clear/:planId',
+  (_req, res, next) => {
+    setActionPlanNoStore(res);
+    next();
+  },
+  storedClearClientRateLimit,
+  storedClearCredentialRateLimit,
+  actionPlanAuthenticationMiddleware,
+  storedClearPrincipalRateLimit,
+  requireActionPlanRoles('requester', 'operator'),
   validateParams(planIdSchema),
   asyncHandler(async (req, res) => {
     try {
       const { planId } = req.validated!.params as z.infer<typeof planIdSchema>;
-      const score = await getClearScore(planId);
-      if (!score) {
-        sendNotFoundError(res, 'CLEAR score not found for plan');
-        return;
+      const realm = deriveActionPlanExecutionRealm();
+      if (!realm) throw new ActionPlanExecutionError(ACTION_PLAN_EXECUTION_ERRORS.realmUnavailable);
+      const plan = await getAuthoritativePlan(planId);
+      const principal = req.actionPlanPrincipal!;
+      if (
+        !plan
+        || plan.executionRealm !== realm
+        || (principal.role === 'requester' && plan.ownerPrincipalId !== principal.principalId)
+        || !plan.clearScore
+      ) {
+        throw new ActionPlanExecutionError(ACTION_PLAN_EXECUTION_ERRORS.notFound);
       }
-      res.json(score);
+      res.json(plan.clearScore);
     } catch (error: unknown) {
       apiLogger.error('Get score failed', {
         module: 'clear',
         errorCode: 'CLEAR_SCORE_READ_FAILED',
         errorClass: error instanceof Error ? 'Error' : 'ThrownValue',
       });
-      sendInternalError(res, 'Failed to get CLEAR score');
+      sendActionPlanExecutionError(res, error, {
+        requestId: req.requestId,
+        traceId: req.traceId,
+      });
     }
   })
 );

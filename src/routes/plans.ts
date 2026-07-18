@@ -1,4 +1,4 @@
-import { sendBadRequest, sendNotFound, sendInternalErrorCode } from '@shared/http/index.js';
+import { sendNotFound, sendInternalErrorCode } from '@shared/http/index.js';
 /**
  * ActionPlan API Routes
  *
@@ -7,30 +7,33 @@ import { sendBadRequest, sendNotFound, sendInternalErrorCode } from '@shared/htt
  * POST   /plans/:planId/approve  — Approve plan (only if CLEAR allows/confirms)
  * POST   /plans/:planId/block    — Block plan
  * POST   /plans/:planId/expire   — Expire plan
- * POST   /plans/:planId/execute  — Dispatch plan to agent, create ExecutionResult
- * GET    /plans/:planId/results  — Get execution results for plan
+ * POST   /plans/:planId/execute  — Create authoritative per-action execution runs
+ * GET    /plans/:planId/results  — Reject legacy result reads in favor of run results
  */
 
 import express, { Request, Response } from 'express';
-import { actionPlanInputSchema, executionResultInputSchema } from '@shared/types/actionPlan.js';
+import { z } from 'zod';
+import {
+  PLAN_CREATORS,
+  PLAN_STATUSES,
+  executionResultInputSchema,
+  phase2eActionPlanInputSchema,
+} from '@shared/types/actionPlan.js';
+import {
+  actionPlanExecutionCommandInputSchema,
+  actionPlanExecutionResultInputSchema,
+} from '@shared/types/actionPlanExecution.js';
 import {
   createPlan,
-  getPlan,
-  approvePlan,
-  blockPlan,
-  expirePlan,
-  listPlans,
-  createExecutionResult,
-  getExecutionResults,
+  getAuthoritativePlan,
+  listAuthoritativePlans,
+  updateAuthoritativePlanStatus,
 } from '../stores/actionPlanStore.js';
-import { validateCapability } from '../stores/agentRegistry.js';
 import { buildClear2Summary } from '../services/clear2.js';
 import { resolveErrorMessage } from '../lib/errors/index.js';
 import { getConfig } from '@platform/runtime/unifiedConfig.js';
 import { apiLogger } from '@platform/logging/structuredLogging.js';
-import type { PlanStatus, ActionPlanRecord } from '@shared/types/actionPlan.js';
-import { acquireExecutionLock } from '../services/safety/executionLock.js';
-import { emitSafetyAuditEvent } from '../services/safety/auditEvents.js';
+import type { ActionPlanRecord } from '@shared/types/actionPlan.js';
 import {
   CLEAR_PUBLIC_ERRORS,
   interpretClear2Outcome,
@@ -45,8 +48,66 @@ import {
   type ActionPlanPolicyProvenance,
   type ActionPlanLifecycleResult,
 } from '../services/actionPlanLifecycle.js';
+import {
+  createRateLimitMiddleware,
+  getRequestActorKey,
+  getRequestClientAddress,
+} from '@platform/runtime/security.js';
+import {
+  actionPlanAuthenticationMiddleware,
+  requireActionPlanRoles,
+} from '@services/actionPlanExecution/auth.js';
+import { deriveActionPlanExecutionRealm } from '@services/actionPlanExecution/realm.js';
+import {
+  readActionPlanIdempotencyKey,
+  actionPlanRateLimitOperation,
+  sendActionPlanExecutionError,
+  setActionPlanNoStore,
+} from '@services/actionPlanExecution/http.js';
+import { createActionPlanExecutionService } from '@services/actionPlanExecution/service.js';
+import {
+  ACTION_PLAN_EXECUTION_ERRORS,
+  ActionPlanExecutionError,
+} from '@services/actionPlanExecution/errors.js';
 
 const router = express.Router();
+const planIdParamsSchema = z.object({ planId: z.string().min(1).max(128) }).strict();
+const emptyMutationBodySchema = z.object({}).strict();
+const strictLegacyExecutionResultInputSchema = executionResultInputSchema.strict();
+const listPlansQuerySchema = z.object({
+  status: z.enum(PLAN_STATUSES).optional(),
+  created_by: z.enum(PLAN_CREATORS).optional(),
+  limit: z.coerce.number().int().min(1).max(200).optional(),
+}).strict();
+
+function assertBoundaryInput(schema: z.ZodType, value: unknown): void {
+  if (!schema.safeParse(value).success) {
+    throw new ActionPlanExecutionError(ACTION_PLAN_EXECUTION_ERRORS.requestInvalid);
+  }
+}
+const actionPlanClientRateLimit = createRateLimitMiddleware({
+  bucketName: 'action-plan-http-client',
+  maxRequests: 120,
+  windowMs: 60_000,
+  keyGenerator: req => `client:${getRequestClientAddress(req)}`,
+});
+const actionPlanCredentialRateLimit = createRateLimitMiddleware({
+  bucketName: 'action-plan-http-credential',
+  maxRequests: 120,
+  windowMs: 60_000,
+  keyGenerator: req => `client:${getRequestClientAddress(req)}:${getRequestActorKey(req)}`,
+});
+const actionPlanPrincipalRateLimit = createRateLimitMiddleware({
+  bucketName: 'action-plan-http-principal',
+  maxRequests: 120,
+  windowMs: 60_000,
+  keyGenerator: req => `principal:${req.actionPlanPrincipal!.role}:${req.actionPlanPrincipal!.principalId}:operation:${actionPlanRateLimitOperation(req)}`,
+});
+
+router.use('/plans', (_req, res, next) => {
+  setActionPlanNoStore(res);
+  next();
+}, actionPlanClientRateLimit, actionPlanCredentialRateLimit, actionPlanAuthenticationMiddleware, actionPlanPrincipalRateLimit);
 
 function safeThrownClass(error: unknown): string {
   try {
@@ -128,6 +189,19 @@ function logActionPlanMutationFailure(
   } catch {
     // Diagnostics must not mask the stable public response.
   }
+}
+
+function sendKnownActionPlanExecutionFailure(
+  req: Request,
+  res: Response,
+  error: unknown,
+): boolean {
+  if (!(error instanceof ActionPlanExecutionError)) return false;
+  sendActionPlanExecutionError(res, error, {
+    requestId: req.requestId,
+    traceId: req.traceId,
+  });
+  return true;
 }
 
 function logLifecycleWriteFailure(
@@ -273,10 +347,33 @@ function sendLifecycleFailure(
   });
 }
 
+function requireExecutionRealm(): string {
+  const realm = deriveActionPlanExecutionRealm();
+  if (!realm) throw new ActionPlanExecutionError(ACTION_PLAN_EXECUTION_ERRORS.realmUnavailable);
+  return realm;
+}
+
+function planVisibleToPrincipal(req: Request, plan: ActionPlanRecord): ActionPlanRecord {
+  if (req.actionPlanPrincipal?.role !== 'requester') return plan;
+  const { executionResults: _legacyExecutionResults, ...visible } = plan;
+  return visible as ActionPlanRecord;
+}
+
+async function getVisibleAuthoritativePlan(req: Request): Promise<ActionPlanRecord | null> {
+  const plan = await getAuthoritativePlan(req.params.planId);
+  if (!plan) return null;
+  const realm = requireExecutionRealm();
+  const principal = req.actionPlanPrincipal!;
+  if (plan.executionRealm !== realm) return null;
+  if (principal.role === 'requester' && plan.ownerPrincipalId !== principal.principalId) return null;
+  if (principal.role !== 'requester' && principal.role !== 'operator') return null;
+  return planVisibleToPrincipal(req, plan);
+}
+
 /**
  * POST /plans — Create a new ActionPlan
  */
-router.post('/plans', async (req: Request, res: Response) => {
+router.post('/plans', requireActionPlanRoles('requester', 'operator'), async (req: Request, res: Response) => {
   try {
     const config = getConfig();
     if (!config.enableActionPlans) {
@@ -284,25 +381,30 @@ router.post('/plans', async (req: Request, res: Response) => {
       return;
     }
 
-    const parsed = actionPlanInputSchema.safeParse(req.body);
+    const parsed = phase2eActionPlanInputSchema.safeParse(req.body);
     if (!parsed.success) {
-      sendBadRequest(
-        res,
-        'Invalid plan input',
-        parsed.error.issues.map(issue => `${issue.path.join('.') || 'body'}: ${issue.message}`)
-      );
-      return;
+      throw new ActionPlanExecutionError(ACTION_PLAN_EXECUTION_ERRORS.requestInvalid);
     }
 
-    const plan = await createPlan(parsed.data);
-    res.status(201).json(plan);
+    const plan = await createPlan(parsed.data, {
+      executionRealm: requireExecutionRealm(),
+      ownerPrincipalId: req.actionPlanPrincipal!.principalId,
+      executionProtocolVersion: 2,
+      executionGeneration: 1,
+    });
+    res.status(201).json(planVisibleToPrincipal(req, plan));
   } catch (error: unknown) {
+    if (sendKnownActionPlanExecutionFailure(req, res, error)) return;
     // Idempotency key conflict
     if (isUniqueConstraintError(error)) {
       res.status(409).json({ error: 'Plan with this idempotency_key already exists' });
       return;
     }
-    apiLogger.error('Create failed', { module: 'plans', error: resolveErrorMessage(error) });
+    apiLogger.error('Create failed', {
+      module: 'plans',
+      errorCode: 'ACTION_PLAN_CREATE_FAILED',
+      errorClass: safeThrownClass(error),
+    });
     sendInternalErrorCode(res, 'Failed to create plan');
   }
 });
@@ -310,7 +412,7 @@ router.post('/plans', async (req: Request, res: Response) => {
 /**
  * GET /plans — List plans with optional filters
  */
-router.get('/plans', async (req: Request, res: Response) => {
+router.get('/plans', requireActionPlanRoles('requester', 'operator'), async (req: Request, res: Response) => {
   try {
     const config = getConfig();
     if (!config.enableActionPlans) {
@@ -318,14 +420,29 @@ router.get('/plans', async (req: Request, res: Response) => {
       return;
     }
 
-    const status = req.query.status as string | undefined;
-    const createdBy = req.query.created_by as string | undefined;
-    const limit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
+    const parsedQuery = listPlansQuerySchema.safeParse(req.query);
+    if (!parsedQuery.success) {
+      throw new ActionPlanExecutionError(ACTION_PLAN_EXECUTION_ERRORS.requestInvalid);
+    }
+    const { status, created_by: createdBy, limit } = parsedQuery.data;
 
-    const plans = await listPlans({ status: status as PlanStatus | undefined, createdBy, limit });
+    const plans = await listAuthoritativePlans({
+      executionRealm: requireExecutionRealm(),
+      ...(req.actionPlanPrincipal!.role === 'requester'
+        ? { ownerPrincipalId: req.actionPlanPrincipal!.principalId }
+        : {}),
+      status,
+      createdBy,
+      limit,
+    });
     res.json({ plans, count: plans.length });
   } catch (error: unknown) {
-    apiLogger.error('List failed', { module: 'plans', error: resolveErrorMessage(error) });
+    if (sendKnownActionPlanExecutionFailure(req, res, error)) return;
+    apiLogger.error('List failed', {
+      module: 'plans',
+      errorCode: 'ACTION_PLAN_LIST_FAILED',
+      errorClass: safeThrownClass(error),
+    });
     sendInternalErrorCode(res, 'Failed to list plans');
   }
 });
@@ -333,16 +450,22 @@ router.get('/plans', async (req: Request, res: Response) => {
 /**
  * GET /plans/:planId — Get plan by ID
  */
-router.get('/plans/:planId', async (req: Request, res: Response) => {
+router.get('/plans/:planId', requireActionPlanRoles('requester', 'operator'), async (req: Request, res: Response) => {
   try {
-    const plan = await getPlan(req.params.planId);
+    assertBoundaryInput(planIdParamsSchema, req.params);
+    const plan = await getVisibleAuthoritativePlan(req);
     if (!plan) {
       sendNotFound(res, 'Plan not found');
       return;
     }
     res.json(plan);
   } catch (error: unknown) {
-    apiLogger.error('Get failed', { module: 'plans', error: resolveErrorMessage(error) });
+    if (sendKnownActionPlanExecutionFailure(req, res, error)) return;
+    apiLogger.error('Get failed', {
+      module: 'plans',
+      errorCode: 'ACTION_PLAN_GET_FAILED',
+      errorClass: safeThrownClass(error),
+    });
     sendInternalErrorCode(res, 'Failed to get plan');
   }
 });
@@ -350,9 +473,11 @@ router.get('/plans/:planId', async (req: Request, res: Response) => {
 /**
  * POST /plans/:planId/approve — Approve a plan
  */
-router.post('/plans/:planId/approve', async (req: Request, res: Response) => {
+router.post('/plans/:planId/approve', requireActionPlanRoles('operator'), async (req: Request, res: Response) => {
   try {
-    const existing = await getPlan(req.params.planId);
+    assertBoundaryInput(planIdParamsSchema, req.params);
+    assertBoundaryInput(emptyMutationBodySchema, req.body ?? {});
+    const existing = await getVisibleAuthoritativePlan(req);
     if (!existing) {
       sendNotFound(res, 'Plan not found');
       return;
@@ -380,7 +505,12 @@ router.post('/plans/:planId/approve', async (req: Request, res: Response) => {
       storedPolicyProvenance('approve'),
     );
 
-    const plan = await approvePlan(req.params.planId);
+    const plan = await updateAuthoritativePlanStatus({
+      planId: req.params.planId,
+      executionRealm: requireExecutionRealm(),
+      status: 'approved',
+      allowedCurrentStatuses: ['planned', 'awaiting_confirmation'],
+    });
     if (!plan) {
       logLifecycleWriteFailure(req, existing.id, 'approve', 'state_changed_before_write');
       res.status(409).json({
@@ -392,6 +522,7 @@ router.post('/plans/:planId/approve', async (req: Request, res: Response) => {
     }
     res.json(plan);
   } catch (error: unknown) {
+    if (sendKnownActionPlanExecutionFailure(req, res, error)) return;
     logActionPlanMutationFailure(req, 'approve', error);
     sendInternalErrorCode(res, 'Failed to approve plan');
   }
@@ -400,9 +531,11 @@ router.post('/plans/:planId/approve', async (req: Request, res: Response) => {
 /**
  * POST /plans/:planId/block — Block a plan
  */
-router.post('/plans/:planId/block', async (req: Request, res: Response) => {
+router.post('/plans/:planId/block', requireActionPlanRoles('operator'), async (req: Request, res: Response) => {
   try {
-    const existing = await getPlan(req.params.planId);
+    assertBoundaryInput(planIdParamsSchema, req.params);
+    assertBoundaryInput(emptyMutationBodySchema, req.body ?? {});
+    const existing = await getVisibleAuthoritativePlan(req);
     if (!existing) {
       sendNotFound(res, 'Plan not found');
       return;
@@ -434,7 +567,11 @@ router.post('/plans/:planId/block', async (req: Request, res: Response) => {
       return;
     }
 
-    const plan = await blockPlan(req.params.planId);
+    const plan = await updateAuthoritativePlanStatus({
+      planId: req.params.planId,
+      executionRealm: requireExecutionRealm(),
+      status: 'blocked',
+    });
     if (!plan) {
       logLifecycleWriteFailure(req, existing.id, 'block', 'missing_write_result');
       sendNotFound(res, 'Plan not found');
@@ -442,6 +579,7 @@ router.post('/plans/:planId/block', async (req: Request, res: Response) => {
     }
     res.json(plan);
   } catch (error: unknown) {
+    if (sendKnownActionPlanExecutionFailure(req, res, error)) return;
     logActionPlanMutationFailure(req, 'block', error);
     sendInternalErrorCode(res, 'Failed to block plan');
   }
@@ -450,9 +588,11 @@ router.post('/plans/:planId/block', async (req: Request, res: Response) => {
 /**
  * POST /plans/:planId/expire — Expire a plan
  */
-router.post('/plans/:planId/expire', async (req: Request, res: Response) => {
+router.post('/plans/:planId/expire', requireActionPlanRoles('operator'), async (req: Request, res: Response) => {
   try {
-    const existing = await getPlan(req.params.planId);
+    assertBoundaryInput(planIdParamsSchema, req.params);
+    assertBoundaryInput(emptyMutationBodySchema, req.body ?? {});
+    const existing = await getVisibleAuthoritativePlan(req);
     if (!existing) {
       sendNotFound(res, 'Plan not found');
       return;
@@ -484,7 +624,11 @@ router.post('/plans/:planId/expire', async (req: Request, res: Response) => {
       return;
     }
 
-    const plan = await expirePlan(req.params.planId);
+    const plan = await updateAuthoritativePlanStatus({
+      planId: req.params.planId,
+      executionRealm: requireExecutionRealm(),
+      status: 'expired',
+    });
     if (!plan) {
       logLifecycleWriteFailure(req, existing.id, 'expire', 'missing_write_result');
       sendNotFound(res, 'Plan not found');
@@ -492,19 +636,11 @@ router.post('/plans/:planId/expire', async (req: Request, res: Response) => {
     }
     res.json(plan);
   } catch (error: unknown) {
+    if (sendKnownActionPlanExecutionFailure(req, res, error)) return;
     logActionPlanMutationFailure(req, 'expire', error);
     sendInternalErrorCode(res, 'Failed to expire plan');
   }
 });
-
-/** Validate all actions have registered agent capabilities. Returns the first failing action or null. */
-async function findMissingCapability(plan: ActionPlanRecord) {
-  for (const action of plan.actions) {
-    const hasCapability = await validateCapability(action.agentId, action.capability);
-    if (!hasCapability) return action;
-  }
-  return null;
-}
 
 /** Build CLEAR 2.0 re-evaluation input from an existing plan record. */
 function buildClearRecheckInput(plan: ActionPlanRecord) {
@@ -527,11 +663,41 @@ function buildClearRecheckInput(plan: ActionPlanRecord) {
 /**
  * POST /plans/:planId/execute — Execute plan actions
  */
-router.post('/plans/:planId/execute', async (req: Request, res: Response) => {
+router.post('/plans/:planId/execute', requireActionPlanRoles('requester', 'operator'), async (req: Request, res: Response) => {
   try {
-    const plan = await getPlan(req.params.planId);
+    assertBoundaryInput(planIdParamsSchema, req.params);
+    const bodyValue = req.body ?? {};
+    const commandBody = actionPlanExecutionCommandInputSchema.safeParse(bodyValue);
+    if (!commandBody.success) {
+      const resultShaped = actionPlanExecutionResultInputSchema.safeParse(bodyValue).success
+        || strictLegacyExecutionResultInputSchema.safeParse(bodyValue).success;
+      throw new ActionPlanExecutionError(
+        resultShaped
+          ? ACTION_PLAN_EXECUTION_ERRORS.resultEndpointRequired
+          : ACTION_PLAN_EXECUTION_ERRORS.requestInvalid,
+      );
+    }
+
+    const idempotencyKey = readActionPlanIdempotencyKey(req);
+    const plan = await getVisibleAuthoritativePlan(req);
     if (!plan) {
       sendNotFound(res, 'Plan not found');
+      return;
+    }
+
+    const executionService = createActionPlanExecutionService();
+    const replay = await executionService.replayExecution({
+      planId: plan.id,
+      actor: req.actionPlanPrincipal!,
+      idempotencyKey,
+      context: {
+        requestId: req.requestId,
+        traceId: req.traceId,
+        sourceService: 'web',
+      },
+    });
+    if (replay) {
+      res.status(202).json(replay);
       return;
     }
 
@@ -556,13 +722,6 @@ router.post('/plans/:planId/execute', async (req: Request, res: Response) => {
       plan.status,
       storedPolicyProvenance('execute'),
     );
-
-    // Validate agent capabilities
-    const missingAction = await findMissingCapability(plan);
-    if (missingAction) {
-      res.status(403).json({ error: `Agent ${missingAction.agentId} lacks capability: ${missingAction.capability}`, actionId: missingAction.id });
-      return;
-    }
 
     // Re-evaluate CLEAR before execution.
     let clearRecheck: unknown;
@@ -637,7 +796,12 @@ router.post('/plans/:planId/execute', async (req: Request, res: Response) => {
       );
       let blockedPlan: ActionPlanRecord | null;
       try {
-        blockedPlan = await blockPlan(plan.id);
+        blockedPlan = await updateAuthoritativePlanStatus({
+          planId: plan.id,
+          executionRealm: requireExecutionRealm(),
+          status: 'blocked',
+          allowedCurrentStatuses: [plan.status],
+        });
       } catch (error) {
         const failure = CLEAR_PUBLIC_ERRORS.persistenceFailed;
         logClearExecutionFailure(req, failure, {
@@ -689,83 +853,41 @@ router.post('/plans/:planId/execute', async (req: Request, res: Response) => {
       'current_recheck',
     );
 
-    const lock = await acquireExecutionLock(`policy-task:${plan.id}`);
-    //audit Assumption: policy task execution must be single-active per plan; failure risk: duplicate execution and conflicting writes; expected invariant: duplicate starts suppressed; handling strategy: return 409 and emit audit.
-    if (!lock) {
-      emitSafetyAuditEvent({
-        event: 'policy_task_duplicate_suppressed',
-        severity: 'warn',
-        details: {
-          planId: plan.id
-        }
-      });
-      res.status(409).json({
-        error: 'Policy task execution suppressed due to duplicate lock',
-        planId: plan.id
-      });
-      return;
-    }
-
-    let results: Awaited<ReturnType<typeof createExecutionResult>>[] | undefined;
-    let persistenceFailed = false;
-    let persistenceError: unknown;
-    let releaseFailed = false;
-    let releaseError: unknown;
-    try {
-      // Dispatch: create execution results (actual execution is handled by agents)
-      results = await Promise.all(
-        plan.actions.map(action => createExecutionResult(plan.id, action.id, action.agentId, 'success', clearOutcome.decision))
-      );
-    } catch (error) {
-      persistenceFailed = true;
-      persistenceError = error;
-    } finally {
-      try {
-        await lock.release();
-      } catch (error) {
-        releaseFailed = true;
-        releaseError = error;
-      }
-    }
-
-    if (releaseFailed) {
-      const failure = CLEAR_PUBLIC_ERRORS.operationFailed;
-      logClearExecutionFailure(req, failure, {
-        operation: 'plans.execute.release_lock',
-        dependency: 'executionLock',
-        error: releaseError,
-        errorCaptured: true,
-        retryable: true,
-      });
-    }
-
-    if (persistenceFailed) {
-      if (isUniqueConstraintError(persistenceError)) {
-        res.status(409).json({ error: 'Actions already executed (replay protection)' });
-        return;
-      }
-      const failure = CLEAR_PUBLIC_ERRORS.persistenceFailed;
-      logClearExecutionFailure(req, failure, {
-        operation: 'plans.execute.persist_results',
-        dependency: 'actionPlanStore',
-        error: persistenceError,
-        errorCaptured: true,
-        retryable: true,
-      });
-      sendClearFailure(res, failure);
-      return;
-    }
-
-    if (releaseFailed) {
-      const failure = CLEAR_PUBLIC_ERRORS.operationFailed;
-      sendClearFailure(res, failure);
-      return;
-    }
-
-    res.json({ plan_id: plan.id, status: 'executed', results });
+    const result = await executionService.requestExecution({
+      planId: plan.id,
+      actor: req.actionPlanPrincipal!,
+      idempotencyKey,
+      policyExpectation: {
+        decision: clearOutcome.decision as 'allow' | 'confirm',
+        overall: clearOutcome.overall,
+        planExecutionGeneration: plan.executionGeneration!,
+      },
+      context: {
+        requestId: req.requestId,
+        traceId: req.traceId,
+        sourceService: 'web',
+      },
+    });
+    res.status(202).json(result);
   } catch (error: unknown) {
-    if (isUniqueConstraintError(error)) {
-      res.status(409).json({ error: 'Actions already executed (replay protection)' });
+    if (error instanceof ActionPlanExecutionError) {
+      try {
+        apiLogger.warn('ActionPlan execution request rejected', {
+          module: 'plans',
+          errorCode: error.code,
+          errorClass: safeThrownClass(error),
+          operation: 'plans.execute',
+          requestId: req.requestId ?? 'unknown',
+          traceId: req.traceId ?? req.requestId ?? 'unknown',
+          retryable: error.retryable,
+        });
+      } catch {
+        // Diagnostics must not mask the stable public response.
+      }
+      sendActionPlanExecutionError(res, error, {
+        requestId: req.requestId,
+        traceId: req.traceId,
+      });
       return;
     }
     const failure = CLEAR_PUBLIC_ERRORS.operationFailed;
@@ -783,14 +905,20 @@ router.post('/plans/:planId/execute', async (req: Request, res: Response) => {
 /**
  * GET /plans/:planId/results — Get execution results
  */
-router.get('/plans/:planId/results', async (req: Request, res: Response) => {
-  try {
-    const results = await getExecutionResults(req.params.planId);
-    res.json({ plan_id: req.params.planId, results });
-  } catch (error: unknown) {
-    apiLogger.error('Results failed', { module: 'plans', error: resolveErrorMessage(error) });
-    sendInternalErrorCode(res, 'Failed to get execution results');
+router.get('/plans/:planId/results', requireActionPlanRoles('requester', 'operator'), async (req: Request, res: Response) => {
+  if (!planIdParamsSchema.safeParse(req.params).success) {
+    sendActionPlanExecutionError(
+      res,
+      new ActionPlanExecutionError(ACTION_PLAN_EXECUTION_ERRORS.requestInvalid),
+      { requestId: req.requestId, traceId: req.traceId },
+    );
+    return;
   }
+  sendActionPlanExecutionError(
+    res,
+    new ActionPlanExecutionError(ACTION_PLAN_EXECUTION_ERRORS.legacyResultUnavailable),
+    { requestId: req.requestId, traceId: req.traceId },
+  );
 });
 
 export default router;

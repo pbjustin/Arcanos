@@ -66,6 +66,10 @@ import { stripConfirmationFields, requireNonceOrIssue, notExposed, buildClearRec
 import { registerDagMcpTools } from './dagTools.js';
 import { registerJobMcpTools } from './jobTools.js';
 import { registerControlPlaneMcpTools } from './controlPlaneTools.js';
+import {
+  createLegacyActionPlanMcpRegistrationBoundary,
+  registerActionPlanMcpTools,
+} from './actionPlanTools.js';
 
 type AnyMcpServer = any;
 
@@ -317,7 +321,8 @@ function lifecycleMcpFailure(
 export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpServer> {
   const { McpServer } = await getMcpSdk();
 
-  const server = new McpServer({ name: 'arcanos', version: '1.0.0' }, { capabilities: { logging: {} } });
+  const requestServer = new McpServer({ name: 'arcanos', version: '1.0.0' }, { capabilities: { logging: {} } });
+  const server = createLegacyActionPlanMcpRegistrationBoundary(requestServer);
 
   // -------------------------
   // Core reasoning tools
@@ -1398,7 +1403,8 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
     })
   );
 
-  return server;
+  registerActionPlanMcpTools(requestServer, ctx);
+  return requestServer;
 }
 
 export async function buildMcpServer(ctx: McpRequestContext): Promise<{ server: AnyMcpServer; transport: any }> {

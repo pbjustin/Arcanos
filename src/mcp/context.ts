@@ -5,6 +5,13 @@ import { getOpenAIClientOrAdapter } from '@services/openai/clientBridge.js';
 import { createRuntimeBudget, type RuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { generateRequestId } from '@core/lib/requestId.js';
 import { createMcpLogger, type McpLogger } from './log.js';
+import {
+  conflictsWithActionPlanCredential,
+  resolveActionPlanAuthConfiguration,
+  type ActionPlanPrincipal,
+} from '@services/actionPlanExecution/auth.js';
+
+export type McpTransportKind = 'http' | 'internal' | 'stdio';
 
 export interface McpRequestContext {
   requestId: string;
@@ -14,6 +21,8 @@ export interface McpRequestContext {
   sessionId?: string;
   req: Request;
   logger: McpLogger;
+  transport: McpTransportKind;
+  actionPlanPrincipal?: ActionPlanPrincipal;
 }
 
 const mcpRequestContextStorage = new AsyncLocalStorage<McpRequestContext>();
@@ -62,6 +71,7 @@ export function buildMcpRequestContext(req: Request): McpRequestContext {
   const requestId = req.requestId ?? generateRequestId('mcp');
   const traceId = req.traceId ?? requestId;
   const logger = createMcpLogger({ requestId, traceId, sessionId, transport: 'http' });
+  const actionPlanPrincipalId = readMcpActionPlanRequesterPrincipalId(process.env);
 
   return {
     requestId,
@@ -71,7 +81,47 @@ export function buildMcpRequestContext(req: Request): McpRequestContext {
     sessionId,
     req,
     logger,
+    transport: 'http',
+    ...(actionPlanPrincipalId ? {
+      actionPlanPrincipal: {
+        role: 'requester' as const,
+        principalId: actionPlanPrincipalId,
+      },
+    } : {}),
   };
+}
+
+const ACTION_PLAN_MCP_PRINCIPAL_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._:-]{0,127})$/u;
+
+/** Resolve the fixed requester identity bound to the already-authenticated HTTP MCP bearer. */
+export function readMcpActionPlanRequesterPrincipalId(
+  env: NodeJS.ProcessEnv = process.env,
+): string | null {
+  const value = env.ACTION_PLAN_MCP_REQUEST_PRINCIPAL_ID;
+  const mcpCredential = env.MCP_BEARER_TOKEN;
+  if (
+    typeof value !== 'string'
+    || value.length === 0
+    || value.length > 128
+    || value !== value.trim()
+    || !ACTION_PLAN_MCP_PRINCIPAL_PATTERN.test(value)
+    || typeof mcpCredential !== 'string'
+    || mcpCredential.length < 32
+    || mcpCredential.length > 4096
+    || mcpCredential !== mcpCredential.trim()
+  ) {
+    return null;
+  }
+
+  const actionPlanAuth = resolveActionPlanAuthConfiguration(env);
+  if (!actionPlanAuth.valid) return null;
+  if (
+    actionPlanAuth.principals.some(principal => principal.principalId === value)
+    || conflictsWithActionPlanCredential(mcpCredential, env)
+  ) {
+    return null;
+  }
+  return value;
 }
 
 /**
@@ -106,6 +156,7 @@ function buildDetachedMcpContext(sessionId: string | undefined, transport: 'inte
     // No HTTP request in stdio transport; keep as empty object.
     req: {} as any,
     logger,
+    transport,
   };
 }
 

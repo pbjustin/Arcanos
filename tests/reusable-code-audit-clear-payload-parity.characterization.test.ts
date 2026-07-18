@@ -9,13 +9,15 @@ import {
 import type { ActionPlanRecord } from '../src/shared/types/actionPlan.js';
 
 const getPlanMock = jest.fn();
-const blockPlanMock = jest.fn();
+const updateAuthoritativePlanStatusMock = jest.fn();
 const createExecutionResultMock = jest.fn();
 const validateCapabilityMock = jest.fn();
 const buildClear2SummaryMock = jest.fn();
 const acquireExecutionLockMock = jest.fn();
 const emitSafetyAuditEventMock = jest.fn();
 const apiLoggerErrorMock = jest.fn();
+const requestExecutionMock = jest.fn();
+const replayExecutionMock = jest.fn();
 
 type RegisteredTool = {
   config: Record<string, unknown>;
@@ -54,10 +56,13 @@ jest.unstable_mockModule('../src/mcp/registry.js', () => ({
 jest.unstable_mockModule('../src/stores/actionPlanStore.js', () => ({
   createPlan: jest.fn(),
   getPlan: getPlanMock,
+  getAuthoritativePlan: getPlanMock,
   approvePlan: jest.fn(),
-  blockPlan: blockPlanMock,
+  blockPlan: jest.fn(),
   expirePlan: jest.fn(),
   listPlans: jest.fn(),
+  listAuthoritativePlans: jest.fn(),
+  updateAuthoritativePlanStatus: updateAuthoritativePlanStatusMock,
   createExecutionResult: createExecutionResultMock,
   getExecutionResults: jest.fn(),
 }));
@@ -72,6 +77,17 @@ jest.unstable_mockModule('../src/stores/agentRegistry.js', () => ({
 
 jest.unstable_mockModule('../src/services/clear2.js', () => ({
   buildClear2Summary: buildClear2SummaryMock,
+}));
+
+jest.unstable_mockModule('../src/services/actionPlanExecution/realm.js', () => ({
+  deriveActionPlanExecutionRealm: jest.fn(() => 'local-test'),
+}));
+
+jest.unstable_mockModule('../src/services/actionPlanExecution/service.js', () => ({
+  createActionPlanExecutionService: jest.fn(() => ({
+    requestExecution: requestExecutionMock,
+    replayExecution: replayExecutionMock,
+  })),
 }));
 
 jest.unstable_mockModule('../src/services/safety/executionLock.js', () => ({
@@ -205,6 +221,7 @@ const { buildClearRecheckInput } = await import('../src/mcp/server/helpers.js');
 const { createMcpServer } = await import('../src/mcp/server/index.js');
 
 const originalEnv = { ...process.env };
+const requesterToken = 'r'.repeat(40);
 const blockedClearSummary = {
   clarity: 0,
   leverage: 0,
@@ -232,11 +249,21 @@ function buildApp() {
   return app;
 }
 
+function executeThroughHttp(planId: string) {
+  return request(buildApp())
+    .post(`/plans/${planId}/execute`)
+    .set('Authorization', `Bearer ${requesterToken}`)
+    .set('Idempotency-Key', 'reusable-audit-http-command')
+    .send({});
+}
+
 function buildMcpContext() {
   return {
     requestId: 'reusable-audit-mcp-request',
     traceId: 'reusable-audit-mcp-trace',
     sessionId: 'reusable-audit-mcp-session',
+    transport: 'http',
+    actionPlanPrincipal: { role: 'requester', principalId: 'reusable-audit-requester' },
     openai: {},
     runtimeBudget: {},
     req: {},
@@ -258,7 +285,7 @@ async function executeThroughMcp(planId: string) {
 
   return {
     context,
-    output: await tool!.handler({ planId }),
+    output: await tool!.handler({ planId, idempotencyKey: 'reusable-audit-mcp-command' }),
   };
 }
 
@@ -275,6 +302,10 @@ function buildPlan(rollbackAction: unknown): ActionPlanRecord {
     expiresAt: null,
     createdAt: timestamp,
     updatedAt: timestamp,
+    ownerPrincipalId: 'reusable-audit-requester',
+    executionRealm: 'local-test',
+    executionProtocolVersion: 2,
+    executionGeneration: 1,
     clearScore: null,
     actions: [
       {
@@ -307,19 +338,37 @@ function buildPlan(rollbackAction: unknown): ActionPlanRecord {
 describe('reusable-code audit: HTTP and MCP CLEAR recheck payload parity', () => {
   beforeEach(() => {
     restoreEnvironment();
+    process.env.ACTION_PLAN_REQUEST_TOKEN = requesterToken;
+    process.env.ACTION_PLAN_REQUEST_PRINCIPAL_ID = 'reusable-audit-requester';
+    process.env.ACTION_PLAN_EXECUTION_LOCAL_REALM = 'local-test';
+    process.env.NODE_ENV = 'test';
     jest.clearAllMocks();
     getPlanMock.mockReset();
-    blockPlanMock.mockReset();
+    updateAuthoritativePlanStatusMock.mockReset();
     createExecutionResultMock.mockReset();
     validateCapabilityMock.mockReset();
     buildClear2SummaryMock.mockReset();
     acquireExecutionLockMock.mockReset();
     emitSafetyAuditEventMock.mockReset();
     apiLoggerErrorMock.mockReset();
+    requestExecutionMock.mockReset();
+    replayExecutionMock.mockReset();
 
     validateCapabilityMock.mockResolvedValue(true);
     buildClear2SummaryMock.mockReturnValue(blockedClearSummary);
-    blockPlanMock.mockResolvedValue(undefined);
+    replayExecutionMock.mockResolvedValue(null);
+    requestExecutionMock.mockResolvedValue({
+      ok: true,
+      code: 'ACTION_PLAN_EXECUTION_COMMAND_ACCEPTED',
+      protocol_version: 'action-plan-execution-v1',
+      command_id: 'reusable-audit-command',
+      plan_id: 'reusable-audit-clear-plan',
+      disposition: 'COMMAND_CREATED',
+      runs: [
+        { run_id: 'run-action-b', action_id: 'action-b', state: 'REQUESTED' },
+        { run_id: 'run-action-a', action_id: 'action-a', state: 'REQUESTED' },
+      ],
+    });
   });
 
   afterEach(() => {
@@ -336,11 +385,9 @@ describe('reusable-code audit: HTTP and MCP CLEAR recheck payload parity', () =>
     async (_label, rollbackAction, expectedHasRollbacks) => {
       const plan = buildPlan(rollbackAction);
       getPlanMock.mockResolvedValue(plan);
-      blockPlanMock.mockResolvedValue({ ...plan, status: 'blocked' });
+      updateAuthoritativePlanStatusMock.mockResolvedValue({ ...plan, status: 'blocked' });
 
-      const httpResponse = await request(buildApp())
-        .post(`/plans/${plan.id}/execute`)
-        .send({});
+      const httpResponse = await executeThroughHttp(plan.id);
 
       expect(httpResponse.status).toBe(403);
       expect(httpResponse.body).toEqual({
@@ -392,8 +439,8 @@ describe('reusable-code audit: HTTP and MCP CLEAR recheck payload parity', () =>
               code: 'ERR_GATED',
               message: 'CLEAR re-evaluation blocked this plan',
               details: {
-                planId: plan.id,
-                clearRecheck: blockedClearSummary,
+                tool: 'plans.execute',
+                category: 'ACTION_PLAN_POLICY_BLOCKED',
               },
               requestId: 'reusable-audit-mcp-request',
             },
@@ -404,8 +451,8 @@ describe('reusable-code audit: HTTP and MCP CLEAR recheck payload parity', () =>
             code: 'ERR_GATED',
             message: 'CLEAR re-evaluation blocked this plan',
             details: {
-              planId: plan.id,
-              clearRecheck: blockedClearSummary,
+              tool: 'plans.execute',
+              category: 'ACTION_PLAN_POLICY_BLOCKED',
             },
             requestId: 'reusable-audit-mcp-request',
           },
@@ -428,13 +475,21 @@ describe('reusable-code audit: HTTP and MCP CLEAR recheck payload parity', () =>
 
       expect(getPlanMock).toHaveBeenNthCalledWith(1, plan.id);
       expect(getPlanMock).toHaveBeenNthCalledWith(2, plan.id);
-      expect(validateCapabilityMock.mock.calls).toEqual([
-        ['agent-shared', 'inspect'],
-        ['agent-shared', 'execute'],
-        ['agent-shared', 'inspect'],
-        ['agent-shared', 'execute'],
+      expect(validateCapabilityMock).not.toHaveBeenCalled();
+      expect(updateAuthoritativePlanStatusMock.mock.calls).toEqual([
+        [{
+          planId: plan.id,
+          executionRealm: 'local-test',
+          status: 'blocked',
+          allowedCurrentStatuses: ['approved'],
+        }],
+        [{
+          planId: plan.id,
+          executionRealm: 'local-test',
+          status: 'blocked',
+          allowedCurrentStatuses: ['approved'],
+        }],
       ]);
-      expect(blockPlanMock.mock.calls).toEqual([[plan.id], [plan.id]]);
       expect(createExecutionResultMock).not.toHaveBeenCalled();
       expect(acquireExecutionLockMock).not.toHaveBeenCalled();
       expect(emitSafetyAuditEventMock).not.toHaveBeenCalled();
@@ -448,51 +503,29 @@ describe('reusable-code audit: HTTP and MCP CLEAR recheck payload parity', () =>
     },
   );
 
-  it('preserves the different HTTP and MCP capability-gate envelopes and stops before CLEAR persistence', async () => {
+  it('keeps capability ownership out of the HTTP and MCP adapters and creates no legacy result writes', async () => {
     const plan = buildPlan(null);
     getPlanMock.mockResolvedValue(plan);
-    validateCapabilityMock.mockImplementation(
-      async (_agentId: unknown, capability: unknown) => capability === 'inspect',
-    );
+    buildClear2SummaryMock.mockReturnValue({
+      ...blockedClearSummary,
+      overall: 1,
+      decision: 'allow',
+    });
 
-    const httpResponse = await request(buildApp())
-      .post(`/plans/${plan.id}/execute`)
-      .send({});
+    const httpResponse = await executeThroughHttp(plan.id);
     const mcpExecution = await executeThroughMcp(plan.id);
 
-    expect(httpResponse.status).toBe(403);
-    expect(httpResponse.body).toEqual({
-      error: 'Agent agent-shared lacks capability: execute',
-      actionId: 'action-a',
-    });
-    expect(mcpExecution.output).toEqual(expect.objectContaining({
-      isError: true,
-      structuredContent: {
-        error: {
-          code: 'ERR_GATED',
-          message: 'Agent agent-shared lacks capability: execute',
-          details: {
-            planId: plan.id,
-            agentId: 'agent-shared',
-            capability: 'execute',
-          },
-          requestId: 'reusable-audit-mcp-request',
-        },
-      },
-    }));
-    expect(validateCapabilityMock.mock.calls).toEqual([
-      ['agent-shared', 'inspect'],
-      ['agent-shared', 'execute'],
-      ['agent-shared', 'inspect'],
-      ['agent-shared', 'execute'],
-    ]);
-    expect(buildClear2SummaryMock).not.toHaveBeenCalled();
-    expect(blockPlanMock).not.toHaveBeenCalled();
+    expect(httpResponse.status).toBe(202);
+    expect(mcpExecution.output).not.toHaveProperty('isError');
+    expect(validateCapabilityMock).not.toHaveBeenCalled();
+    expect(buildClear2SummaryMock).toHaveBeenCalledTimes(2);
+    expect(requestExecutionMock).toHaveBeenCalledTimes(2);
+    expect(updateAuthoritativePlanStatusMock).not.toHaveBeenCalled();
     expect(createExecutionResultMock).not.toHaveBeenCalled();
     expect(acquireExecutionLockMock).not.toHaveBeenCalled();
   });
 
-  it('preserves Phase 1 payload parity while persisting the authoritative current recheck decision', async () => {
+  it('preserves Phase 1 payload parity while creating command runs without fabricating results', async () => {
     const plan = buildPlan(null);
     const allowSummary = {
       ...blockedClearSummary,
@@ -500,76 +533,44 @@ describe('reusable-code audit: HTTP and MCP CLEAR recheck payload parity', () =>
       decision: 'allow',
       notes: 'characterization allow execution',
     };
-    const releaseMock = jest.fn(async () => undefined);
-
     getPlanMock.mockResolvedValue(plan);
     buildClear2SummaryMock.mockReturnValue(allowSummary);
-    acquireExecutionLockMock.mockResolvedValue({ release: releaseMock });
-    createExecutionResultMock.mockImplementation(
-      async (
-        planId: unknown,
-        actionId: unknown,
-        agentId: unknown,
-        status: unknown,
-        clearDecision: unknown,
-      ) => ({
-        planId,
-        actionId,
-        agentId,
-        status,
-        clearDecision,
-      }),
-    );
 
-    const httpResponse = await request(buildApp())
-      .post(`/plans/${plan.id}/execute`)
-      .send({});
+    const httpResponse = await executeThroughHttp(plan.id);
     const mcpExecution = await executeThroughMcp(plan.id);
 
-    const expectedResults = [
-      {
-        planId: plan.id,
-        actionId: 'action-b',
-        agentId: 'agent-shared',
-        status: 'success',
-        clearDecision: 'allow',
-      },
-      {
-        planId: plan.id,
-        actionId: 'action-a',
-        agentId: 'agent-shared',
-        status: 'success',
-        clearDecision: 'allow',
-      },
-    ];
-
-    expect(httpResponse.status).toBe(200);
-    expect(httpResponse.body).toEqual({
+    expect(httpResponse.status).toBe(202);
+    expect(httpResponse.body).toEqual(expect.objectContaining({
+      code: 'ACTION_PLAN_EXECUTION_COMMAND_ACCEPTED',
       plan_id: plan.id,
-      status: 'executed',
-      results: expectedResults,
-    });
+      runs: expect.arrayContaining([
+        expect.objectContaining({ action_id: 'action-b', state: 'REQUESTED' }),
+        expect.objectContaining({ action_id: 'action-a', state: 'REQUESTED' }),
+      ]),
+    }));
     expect(mcpExecution.output).toEqual(expect.objectContaining({
-      structuredContent: {
+      structuredContent: expect.objectContaining({
+        code: 'ACTION_PLAN_EXECUTION_COMMAND_ACCEPTED',
         plan_id: plan.id,
-        status: 'executed',
-        results: expectedResults,
-      },
+      }),
     }));
     expect(buildClear2SummaryMock.mock.calls[0]?.[0])
       .toEqual(buildClear2SummaryMock.mock.calls[1]?.[0]);
-    expect(blockPlanMock).not.toHaveBeenCalled();
-    expect(createExecutionResultMock.mock.calls).toEqual([
-      [plan.id, 'action-b', 'agent-shared', 'success', 'allow'],
-      [plan.id, 'action-a', 'agent-shared', 'success', 'allow'],
-      [plan.id, 'action-b', 'agent-shared', 'success', 'allow'],
-      [plan.id, 'action-a', 'agent-shared', 'success', 'allow'],
+    expect(updateAuthoritativePlanStatusMock).not.toHaveBeenCalled();
+    expect(requestExecutionMock.mock.calls).toEqual([
+      [expect.objectContaining({
+        planId: plan.id,
+        idempotencyKey: 'reusable-audit-http-command',
+        policyExpectation: { decision: 'allow', overall: 1, planExecutionGeneration: 1 },
+      })],
+      [expect.objectContaining({
+        planId: plan.id,
+        idempotencyKey: 'reusable-audit-mcp-command',
+        policyExpectation: { decision: 'allow', overall: 1, planExecutionGeneration: 1 },
+      })],
     ]);
-    expect(acquireExecutionLockMock.mock.calls).toEqual([
-      [`policy-task:${plan.id}`],
-      [`policy-task:${plan.id}`],
-    ]);
-    expect(releaseMock).toHaveBeenCalledTimes(2);
+    expect(createExecutionResultMock).not.toHaveBeenCalled();
+    expect(acquireExecutionLockMock).not.toHaveBeenCalled();
     expect(emitSafetyAuditEventMock).not.toHaveBeenCalled();
   });
 
@@ -578,11 +579,9 @@ describe('reusable-code audit: HTTP and MCP CLEAR recheck payload parity', () =>
     const persistenceError = new Error('characterization persistence unavailable');
 
     getPlanMock.mockResolvedValue(plan);
-    blockPlanMock.mockRejectedValue(persistenceError);
+    updateAuthoritativePlanStatusMock.mockRejectedValue(persistenceError);
 
-    const httpResponse = await request(buildApp())
-      .post(`/plans/${plan.id}/execute`)
-      .send({});
+    const httpResponse = await executeThroughHttp(plan.id);
     const mcpExecution = await executeThroughMcp(plan.id);
 
     expect(httpResponse.status).toBe(500);
@@ -605,7 +604,7 @@ describe('reusable-code audit: HTTP and MCP CLEAR recheck payload parity', () =>
       },
     }));
     expect(buildClear2SummaryMock).toHaveBeenCalledTimes(2);
-    expect(blockPlanMock.mock.calls).toEqual([[plan.id], [plan.id]]);
+    expect(updateAuthoritativePlanStatusMock).toHaveBeenCalledTimes(2);
     expect(apiLoggerErrorMock).toHaveBeenCalledWith(
       'CLEAR execution failed',
       expect.objectContaining({
@@ -617,22 +616,19 @@ describe('reusable-code audit: HTTP and MCP CLEAR recheck payload parity', () =>
         retryable: true,
       }),
     );
-    expect(mcpExecution.context.logger.error).toHaveBeenCalledWith(
-      'mcp.clear.error',
+    expect(mcpExecution.context.logger.warn).toHaveBeenCalledWith(
+      'mcp.action_plan.rejected',
       expect.objectContaining({
         tool: 'plans.execute',
         errorCode: 'CLEAR_PERSISTENCE_FAILED',
-        operation: 'plans.execute.persist_block',
-        dependency: 'actionPlanStore',
         errorClass: 'Error',
-        retryable: true,
       }),
     );
     expect(JSON.stringify({
       http: httpResponse.body,
       mcp: mcpExecution.output,
       httpLogs: apiLoggerErrorMock.mock.calls,
-      mcpLogs: mcpExecution.context.logger.error.mock.calls,
+      mcpLogs: mcpExecution.context.logger.warn.mock.calls,
     }).includes(persistenceError.message)).toBe(false);
     expect(createExecutionResultMock).not.toHaveBeenCalled();
     expect(acquireExecutionLockMock).not.toHaveBeenCalled();
