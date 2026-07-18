@@ -1,0 +1,24 @@
+{
+  "sourceCommit": "8e428686459fb11117dd04865428af58d8d819fa",
+  "postgresqlVersion": "18.4",
+  "catalogArray": {
+    "expected": ["planId", "actionId"],
+    "driverValue": "{planId,actionId}"
+  },
+  "checkConstraint": {
+    "reviewed": "CHECK (char_length(version) BETWEEN 1 AND 64)",
+    "postgresql18": "CHECK ((char_length(version) >= 1) AND (char_length(version) <= 64))",
+    "legacyReviewedHash": "70f6749c1081d98ce4ccbd59210d716d1ab1e0792b0d4137969dd586056186b9",
+    "legacyPostgresql18Hash": "cc1ebf01767d549da19031bc175af0fd8e9061baf2a45cf1af915320beecccc3"
+  },
+  "partialIndex": {
+    "normalizedDefinition": "create unique index uq_ap_exec_run_active_action on public.actionplanexecutionrun using btree(planid,actionid)where(state = any(array['requested','claimed','running']))"
+  },
+  "observedIssueCounts": {
+    "relationalCatalogArrayRepresentation": 17,
+    "postgresql18CheckDeparsing": 7,
+    "partialIndexComparison": 2,
+    "derivedLedgerConsequences": 2,
+    "total": 28
+  }
+}
