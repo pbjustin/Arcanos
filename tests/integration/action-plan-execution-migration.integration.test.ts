@@ -2,6 +2,11 @@ import { pathToFileURL } from 'node:url';
 import { join } from 'node:path';
 
 const migrationScriptPath = join(process.cwd(), 'scripts', 'action-plan-execution-migration.mjs');
+const migrationHistoryScriptPath = join(
+  process.cwd(),
+  'scripts',
+  'action-plan-execution-migration-history.mjs',
+);
 const connectionString = process.env.ACTION_PLAN_EXECUTION_MIGRATION_DATABASE_URL;
 
 interface MigrationModule {
@@ -13,6 +18,22 @@ interface MigrationModule {
   assertLocalEphemeralConnectionString: (value: string) => unknown;
   compensateMigrationWithClient: (client: unknown) => Promise<{ compensated: boolean }>;
   verifyActionPlanExecutionSchemaWithClient: (client: unknown) => Promise<{ ready: boolean }>;
+}
+
+interface MigrationHistoryModule {
+  applyMigrationWithDurableHistoryWithClient: (client: unknown) => Promise<{
+    ready: boolean;
+    applied: boolean;
+    equivalentRerun: boolean;
+    historyAppended: boolean;
+  }>;
+  compensateMigrationWithDurableHistoryWithClient: (client: unknown) => Promise<{
+    compensated: boolean;
+    historyAppended: boolean;
+  }>;
+  verifyMigrationAttemptHistoryWithClient: (client: unknown) => Promise<{
+    ready: boolean;
+  }>;
 }
 
 function isConfirmedLocalEphemeralTarget(value: string | undefined): boolean {
@@ -39,6 +60,9 @@ describeLocalEphemeral('Phase 2E migration against an explicit local ephemeral P
     const Client = pg.Client ?? pg.default.Client;
     const client = new Client({ connectionString });
     const migration = await import(pathToFileURL(migrationScriptPath).href) as MigrationModule;
+    const migrationHistory = await import(
+      pathToFileURL(migrationHistoryScriptPath).href
+    ) as MigrationHistoryModule;
     await client.connect();
     try {
       await client.query(`CREATE TABLE IF NOT EXISTS "ActionPlan" (
@@ -86,19 +110,25 @@ describeLocalEphemeral('Phase 2E migration against an explicit local ephemeral P
         ['phase2e-legacy-result', 'phase2e-legacy-plan', 'phase2e-legacy-action', 'success']
       );
 
-      await expect(migration.applyMigrationWithClient(client)).resolves.toMatchObject({
-        ready: true,
-        applied: true,
-        equivalentRerun: false
-      });
-      await expect(migration.applyMigrationWithClient(client)).resolves.toMatchObject({
-        ready: true,
-        applied: false,
-        equivalentRerun: true
-      });
+      await expect(migrationHistory.applyMigrationWithDurableHistoryWithClient(client))
+        .resolves.toMatchObject({
+          ready: true,
+          applied: true,
+          equivalentRerun: false,
+          historyAppended: true,
+        });
+      await expect(migrationHistory.applyMigrationWithDurableHistoryWithClient(client))
+        .resolves.toMatchObject({
+          ready: true,
+          applied: false,
+          equivalentRerun: true,
+          historyAppended: true,
+        });
       await expect(migration.verifyActionPlanExecutionSchemaWithClient(client)).resolves.toMatchObject({
         ready: true
       });
+      await expect(migrationHistory.verifyMigrationAttemptHistoryWithClient(client))
+        .resolves.toMatchObject({ ready: true });
 
       const legacy = await client.query(
         `SELECT plan."executionRealm", plan."ownerPrincipalId", plan."executionProtocolVersion",
@@ -116,14 +146,18 @@ describeLocalEphemeral('Phase 2E migration against an explicit local ephemeral P
         status: 'success'
       });
 
-      await expect(migration.compensateMigrationWithClient(client)).resolves.toMatchObject({
-        compensated: true
-      });
+      await expect(migrationHistory.compensateMigrationWithDurableHistoryWithClient(client))
+        .resolves.toMatchObject({ compensated: true, historyAppended: true });
       const legacyAfterCompensation = await client.query(
         'SELECT "status" FROM "ExecutionResult" WHERE "id" = $1',
         ['phase2e-legacy-result']
       );
       expect(legacyAfterCompensation.rows[0]).toEqual({ status: 'success' });
+      const retainedHistory = await client.query(
+        `SELECT COUNT(*)::integer AS count
+         FROM "ActionPlanExecutionSchemaMigrationAttempt"`,
+      );
+      expect(retainedHistory.rows[0]?.count).toBeGreaterThanOrEqual(4);
     } finally {
       await client.end();
     }

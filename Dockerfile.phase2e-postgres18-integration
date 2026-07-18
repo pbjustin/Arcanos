@@ -23,10 +23,12 @@ COPY src/core/db/actionPlanExecutionSchema.ts ./src/core/db/actionPlanExecutionS
 COPY src/core/db/client.ts ./src/core/db/client.ts
 COPY tests/integration/action-plan-execution-migration.pg18.integration.test.ts ./tests/integration/action-plan-execution-migration.pg18.integration.test.ts
 COPY scripts/action-plan-execution-migration.mjs ./scripts/action-plan-execution-migration.mjs
+COPY scripts/action-plan-execution-migration-history.mjs ./scripts/action-plan-execution-migration-history.mjs
 COPY scripts/phase2e-migration-validator.mjs ./scripts/phase2e-migration-validator.mjs
 COPY scripts/phase2e-pg18-runner.mjs ./scripts/phase2e-pg18-runner.mjs
 COPY scripts/phase2e-validator-entrypoint.sh ./scripts/phase2e-validator-entrypoint.sh
 COPY migrations/20260717_action_plan_execution_v2/ ./migrations/20260717_action_plan_execution_v2/
+COPY migrations/20260718_action_plan_execution_migration_history_v1/ ./migrations/20260718_action_plan_execution_migration_history_v1/
 
 RUN chmod 0555 /app/scripts/phase2e-validator-entrypoint.sh \
   && chown -R validator:validator /app

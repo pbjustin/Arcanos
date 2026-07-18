@@ -9,6 +9,10 @@ export const PHASE2E_VALIDATOR_ENVIRONMENT_ID = 'fb99f47d-5ef5-44c1-96c2-acf7b90
 export const PHASE2E_VALIDATOR_ENVIRONMENT_NAME = 'phase2e-validation-20260717';
 
 const MIGRATION_MODULE_URL = new URL('./action-plan-execution-migration.mjs', import.meta.url);
+const MIGRATION_HISTORY_MODULE_URL = new URL(
+  './action-plan-execution-migration-history.mjs',
+  import.meta.url,
+);
 const SERVICE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const SERVICE_NAME_PATTERN = /^phase2e-postgres18-validator-[a-z0-9-]+$/u;
 const SOURCE_COMMIT_PATTERN = /^[0-9a-f]{40}$/u;
@@ -113,6 +117,12 @@ const SAFE_MIGRATION_FAILURE_CODES = new Set([
   'MIGRATION_CONCURRENT_PHASE_NOT_SINGLE_STATEMENT',
   'MIGRATION_DRAIN_COUNT_INVALID',
   'MIGRATION_INDEX_RECOVERY_NOT_ALLOWLISTED',
+  'MIGRATION_HISTORY_ARTIFACT_VALIDATION_FAILED',
+  'MIGRATION_HISTORY_SCHEMA_INVALID',
+  'MIGRATION_HISTORY_INSTALL_MARKER_MISSING',
+  'MIGRATION_HISTORY_TERMINAL_WRITE_FAILED',
+  'MIGRATION_RESULT_INVALID',
+  'MIGRATION_COMPENSATION_RESULT_INVALID',
   'MIGRATION_LEDGER_CHECKSUM_CONFLICT',
   'MIGRATION_LEDGER_PHASE_UNKNOWN',
   'MIGRATION_LEDGER_RECOVERY_PHASE_INVALID',
@@ -304,6 +314,10 @@ export function safeOperationResult(context, operation, migration, result) {
       applied: result.applied === true,
       equivalentRerun: result.equivalentRerun === true,
       recoveredFinalVerification: result.recoveredFinalVerification === true,
+      historySchemaInstalled: result.historySchemaInstalled === true,
+      historyAppended: result.historyAppended === true,
+      migrationSchemaMutated: result.migrationSchemaMutated === true,
+      databaseMutated: result.databaseMutated === true,
     };
   }
   if (operation === 'verify' || operation === 'verify-runtime') {
@@ -380,9 +394,18 @@ async function runDatabaseOperation(context, operation, migration) {
 
     let result;
     if (operation === 'apply') {
-      result = await migration.applyMigrationWithClient(client);
+      const history = await import(MIGRATION_HISTORY_MODULE_URL.href);
+      result = await history.applyMigrationWithDurableHistoryWithClient(client);
     } else if (operation === 'verify') {
-      result = await migration.verifyActionPlanExecutionSchemaWithClient(client);
+      const history = await import(MIGRATION_HISTORY_MODULE_URL.href);
+      const [schemaResult, historyResult] = await Promise.all([
+        migration.verifyActionPlanExecutionSchemaWithClient(client),
+        history.verifyMigrationAttemptHistoryWithClient(client),
+      ]);
+      result = {
+        ready: schemaResult.ready === true && historyResult.ready === true,
+        issues: [...schemaResult.issues, ...historyResult.issues].sort(),
+      };
     } else if (operation === 'verify-runtime') {
       const runtimeSchema = await import('../dist/core/db/actionPlanExecutionSchema.js');
       result = await runtimeSchema.verifyActionPlanExecutionSchema(client);
@@ -409,20 +432,24 @@ export async function runValidator(argv = process.argv.slice(2), environment = p
   const context = validateValidatorEnvironment(environment);
   const migration = await import(MIGRATION_MODULE_URL.href);
   const artifactValidation = migration.validateMigrationArtifacts();
+  const history = await import(MIGRATION_HISTORY_MODULE_URL.href);
+  const historyArtifactValidation = history.validateMigrationHistoryArtifacts();
 
   if (operation === 'plan') {
     return {
-      ok: artifactValidation.ok === true,
-      code: artifactValidation.ok === true
+      ok: artifactValidation.ok === true && historyArtifactValidation.ok === true,
+      code: artifactValidation.ok === true && historyArtifactValidation.ok === true
         ? 'PHASE2E_VALIDATOR_PLAN_READY'
         : 'PHASE2E_VALIDATOR_PLAN_INVALID',
       ...baseOutput(context, operation, migration),
-      issueCount: Array.isArray(artifactValidation.issues)
-        ? artifactValidation.issues.length
-        : 0,
+      issueCount:
+        (Array.isArray(artifactValidation.issues) ? artifactValidation.issues.length : 0)
+        + (Array.isArray(historyArtifactValidation.issues)
+          ? historyArtifactValidation.issues.length
+          : 0),
     };
   }
-  if (artifactValidation.ok !== true) {
+  if (artifactValidation.ok !== true || historyArtifactValidation.ok !== true) {
     fail('MIGRATION_ARTIFACT_VALIDATION_FAILED');
   }
   return runDatabaseOperation(context, operation, migration);

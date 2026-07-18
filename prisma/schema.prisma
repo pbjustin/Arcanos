@@ -109,6 +109,30 @@ model ActionPlanExecutionSchemaMigration {
   updatedAt      DateTime @updatedAt
 }
 
+model ActionPlanExecutionSchemaMigrationAttempt {
+  id                String                                           @id
+  migrationVersion  String
+  migrationChecksum String
+  operation         String
+  startedAt         DateTime                                         @default(now())
+  events            ActionPlanExecutionSchemaMigrationAttemptEvent[]
+
+  @@index([migrationVersion, startedAt, id], map: "ix_ap_exec_migration_attempt_version_started")
+}
+
+model ActionPlanExecutionSchemaMigrationAttemptEvent {
+  id            String                                    @id
+  attemptId     String
+  eventSequence BigInt
+  eventType     String
+  phase         String?
+  reasonCode    String
+  createdAt     DateTime                                  @default(now())
+  attempt       ActionPlanExecutionSchemaMigrationAttempt @relation(fields: [attemptId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([attemptId, eventSequence], map: "uq_ap_exec_migration_attempt_event_sequence")
+}
+
 model ActionPlanExecutionCommand {
   id                            String                   @id
   planId                        String

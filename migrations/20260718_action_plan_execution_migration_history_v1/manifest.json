@@ -1,0 +1,12 @@
+{
+  "version": "20260718_action_plan_execution_migration_history_v1",
+  "advisoryLockKey": "7289764876769401394",
+  "checksum": "1e08d934d28546a9b3ae642b6bd0c85baecbe797c2c4f5bc19cc1131208c2f8a",
+  "phases": [
+    {
+      "id": "01_attempt_history",
+      "path": "01_attempt_history.sql",
+      "transactional": true
+    }
+  ]
+}

@@ -700,7 +700,7 @@ export const ACTION_PLAN_EXECUTION_SCHEMA_REQUIREMENTS = Object.freeze({
   indexSpecs: EXPECTED_INDEX_SPECS,
 });
 
-class MigrationError extends Error {
+export class MigrationError extends Error {
   constructor(code) {
     super(code);
     this.name = 'MigrationError';
@@ -2079,7 +2079,23 @@ async function openConfirmedLocalClient(options) {
 export async function main(argv = process.argv.slice(2)) {
   const options = parseArgs(argv);
   if (options.mode === 'plan') {
-    return validateMigrationArtifacts();
+    const canonical = validateMigrationArtifacts();
+    const history = await import('./action-plan-execution-migration-history.mjs');
+    const historyArtifacts = history.validateMigrationHistoryArtifacts();
+    return {
+      ...canonical,
+      ok: canonical.ok === true && historyArtifacts.ok === true,
+      issues: [
+        ...canonical.issues,
+        ...historyArtifacts.issues,
+      ].sort(),
+      history: {
+        version: historyArtifacts.version,
+        checksum: historyArtifacts.checksum,
+        calculatedChecksum: historyArtifacts.calculatedChecksum,
+        issues: historyArtifacts.issues,
+      },
+    };
   }
 
   if (options.mode === 'compensate-local' && options.confirmEmpty !== true) {
@@ -2089,12 +2105,31 @@ export async function main(argv = process.argv.slice(2)) {
   const { client, target } = await openConfirmedLocalClient(options);
   try {
     if (options.mode === 'apply') {
-      const result = await applyMigrationWithClient(client);
-      return { ...result, target, databaseConnected: true, databaseMutated: result.applied };
+      const history = await import('./action-plan-execution-migration-history.mjs');
+      const result = await history.applyMigrationWithDurableHistoryWithClient(client);
+      return {
+        ...result,
+        target,
+        databaseConnected: true,
+        migrationSchemaMutated: result.migrationSchemaMutated === true,
+        databaseMutated: result.databaseMutated === true,
+      };
     }
     if (options.mode === 'verify-local') {
-      const result = await verifyActionPlanExecutionSchemaWithClient(client);
-      return { ...result, target, databaseConnected: true, databaseMutated: false };
+      const history = await import('./action-plan-execution-migration-history.mjs');
+      const [result, historyResult] = await Promise.all([
+        verifyActionPlanExecutionSchemaWithClient(client),
+        history.verifyMigrationAttemptHistoryWithClient(client),
+      ]);
+      return {
+        ...result,
+        ready: result.ready === true && historyResult.ready === true,
+        issues: [...result.issues, ...historyResult.issues].sort(),
+        historyReady: historyResult.ready === true,
+        target,
+        databaseConnected: true,
+        databaseMutated: false,
+      };
     }
     if (options.mode === 'drain-status-local') {
       const result = await inspectMigrationDrainStateWithClient(client);
@@ -2106,8 +2141,15 @@ export async function main(argv = process.argv.slice(2)) {
         databaseMutated: false,
       };
     }
-    const result = await compensateMigrationWithClient(client);
-    return { ...result, target, databaseConnected: true };
+    const history = await import('./action-plan-execution-migration-history.mjs');
+    const result = await history.compensateMigrationWithDurableHistoryWithClient(client);
+    return {
+      ...result,
+      target,
+      databaseConnected: true,
+      migrationSchemaMutated: result.migrationSchemaMutated === true,
+      databaseMutated: result.databaseMutated === true,
+    };
   } finally {
     await client.end();
   }
@@ -2130,6 +2172,8 @@ const FAILURE_CODES_BEFORE_MUTATION = new Set([
   'MIGRATION_DATABASE_NOT_LOOPBACK',
   'MIGRATION_DATABASE_NOT_EXPLICIT_EPHEMERAL',
   'MIGRATION_ARTIFACT_VALIDATION_FAILED',
+  'MIGRATION_HISTORY_ARTIFACT_VALIDATION_FAILED',
+  'MIGRATION_HISTORY_SCHEMA_INVALID',
   'MIGRATION_ADVISORY_LOCK_UNAVAILABLE',
   'MIGRATION_LEDGER_CHECKSUM_CONFLICT',
   'MIGRATION_LEDGER_PHASE_UNKNOWN',
@@ -2145,10 +2189,15 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     .catch((error) => {
       const code = stableFailureCode(error);
       const failedBeforeMutation = FAILURE_CODES_BEFORE_MUTATION.has(code);
+      const historyAppended = error?.historyAppended === true;
       process.stdout.write(`${JSON.stringify({
         ok: false,
         code,
-        databaseMutated: failedBeforeMutation ? false : null,
+        databaseMutated: historyAppended ? true : failedBeforeMutation ? false : null,
+        ...(historyAppended ? {
+          historyAppended: true,
+          migrationSchemaMutated: failedBeforeMutation ? false : null,
+        } : {}),
         ...(failedBeforeMutation ? {} : { databaseMutationState: 'unknown_or_partial' }),
       }, null, 2)}\n`);
       process.exitCode = 2;
