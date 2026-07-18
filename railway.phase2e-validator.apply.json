@@ -5,7 +5,7 @@
     "dockerfilePath": "Dockerfile.phase2e-validator"
   },
   "deploy": {
-    "startCommand": "/app/scripts/phase2e-validator-entrypoint.sh --plan",
+    "startCommand": "/app/scripts/phase2e-validator-entrypoint.sh --apply",
     "restartPolicyType": "NEVER"
   }
 }

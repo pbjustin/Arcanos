@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import { writeSync } from 'node:fs';
 import process from 'node:process';
 import { pathToFileURL } from 'node:url';
 
@@ -17,6 +18,7 @@ const OPERATIONS = new Map([
   ['--plan', 'plan'],
   ['--apply', 'apply'],
   ['--verify', 'verify'],
+  ['--verify-runtime', 'verify-runtime'],
   ['--drain', 'drain'],
 ]);
 
@@ -26,7 +28,10 @@ const FORBIDDEN_VARIABLES = new Set([
   'AI_MODEL',
   'ARCANOS_PROCESS_KIND',
   'CLI_BRIDGE_ENABLED',
+  'DATABASE_PRIVATE_URL',
   'DATABASE_PUBLIC_URL',
+  'DYLD_INSERT_LIBRARIES',
+  'DYLD_LIBRARY_PATH',
   'ENABLE_ACTION_PLANS',
   'ENABLE_AUTO_HEAL',
   'ENABLE_CLEAR_2',
@@ -34,13 +39,19 @@ const FORBIDDEN_VARIABLES = new Set([
   'GPT51_MODEL',
   'GPT5_MODEL',
   'HEALING_ENABLED',
+  'LD_LIBRARY_PATH',
+  'LD_PRELOAD',
   'MCP_ENABLED',
+  'NODE_EXTRA_CA_CERTS',
+  'NODE_OPTIONS',
+  'NODE_PATH',
   'OPENAI_API_KEY',
   'OPENAI_API_KEY_REQUIRED',
   'OPENAI_BASE_URL',
   'PROVIDER_HEALTHCHECK_ENABLED',
   'REDIS_PUBLIC_URL',
   'REDIS_URL',
+  'SHADOW_DATABASE_URL',
   'RAILWAY_OPENAI_API_KEY',
   'RAILWAY_PUBLIC_DOMAIN',
   'RAILWAY_STATIC_URL',
@@ -74,6 +85,8 @@ const FORBIDDEN_VARIABLE_PREFIXES = [
   'MCP_',
   'MISTRAL_',
   'OPENAI_',
+  'PG',
+  'POSTGRES',
   'PROVIDER_',
   'QUEUE_WORKER_',
   'REDIS',
@@ -82,6 +95,8 @@ const FORBIDDEN_VARIABLE_PREFIXES = [
 
 const ALLOWED_SENSITIVE_VARIABLES = new Set([
   'DATABASE_URL',
+  'PHASE2E_VALIDATOR_EXPECTED_DATABASE_HOST',
+  'PHASE2E_VALIDATOR_EXPECTED_DATABASE_NAME',
   'PHASE2E_VALIDATOR_EXPECTED_SERVICE_ID',
   'PHASE2E_VALIDATOR_EXPECTED_SERVICE_NAME',
   'PHASE2E_VALIDATOR_EXPECTED_SOURCE_COMMIT',
@@ -237,8 +252,22 @@ export function validateValidatorEnvironment(environment) {
   }
 
   const databaseUrl = validatePrivateDatabaseUrl(environment.DATABASE_URL);
+  const parsedDatabaseUrl = new URL(databaseUrl);
+  const expectedDatabaseHost = environment.PHASE2E_VALIDATOR_EXPECTED_DATABASE_HOST;
+  const expectedDatabaseName = environment.PHASE2E_VALIDATOR_EXPECTED_DATABASE_NAME;
+  if (
+    typeof expectedDatabaseHost !== 'string'
+    || !/^[a-z0-9-]+\.railway\.internal$/u.test(expectedDatabaseHost)
+    || parsedDatabaseUrl.hostname !== expectedDatabaseHost
+    || typeof expectedDatabaseName !== 'string'
+    || !/^[A-Za-z0-9_-]+$/u.test(expectedDatabaseName)
+    || decodeURIComponent(parsedDatabaseUrl.pathname.slice(1)) !== expectedDatabaseName
+  ) {
+    fail('PHASE2E_VALIDATOR_DATABASE_IDENTITY_MISMATCH');
+  }
   return {
     databaseUrl,
+    databaseName: expectedDatabaseName,
     environmentId: PHASE2E_VALIDATOR_ENVIRONMENT_ID,
     projectId: PHASE2E_VALIDATOR_PROJECT_ID,
     serviceId,
@@ -277,7 +306,7 @@ export function safeOperationResult(context, operation, migration, result) {
       recoveredFinalVerification: result.recoveredFinalVerification === true,
     };
   }
-  if (operation === 'verify') {
+  if (operation === 'verify' || operation === 'verify-runtime') {
     return {
       ok: result.ready === true,
       code: result.ready === true
@@ -311,6 +340,18 @@ export function safeOperationResult(context, operation, migration, result) {
   };
 }
 
+export function validateDatabaseIdentityRows(rows, expectedDatabaseName) {
+  const row = Array.isArray(rows) && rows.length === 1 ? rows[0] : null;
+  if (
+    row?.database_name !== expectedDatabaseName
+    || row?.schema_name !== 'public'
+    || typeof row?.server_version !== 'string'
+    || !/^18(?:\.|$)/u.test(row.server_version)
+  ) {
+    fail('PHASE2E_VALIDATOR_DATABASE_IDENTITY_MISMATCH');
+  }
+}
+
 async function runDatabaseOperation(context, operation, migration) {
   const pg = await import('pg');
   const Client = pg.Client ?? pg.default?.Client;
@@ -318,19 +359,33 @@ async function runDatabaseOperation(context, operation, migration) {
     fail('PHASE2E_VALIDATOR_DATABASE_CLIENT_UNAVAILABLE');
   }
 
-  const client = new Client({ connectionString: context.databaseUrl });
+  const client = new Client({
+    connectionString: context.databaseUrl,
+    connectionTimeoutMillis: 10_000,
+    query_timeout: 65_000,
+  });
   let primaryError = null;
   try {
     await client.connect();
     await client.query("SET application_name TO 'arcanos-phase2e-validator'");
     await client.query("SET lock_timeout TO '5s'");
     await client.query("SET statement_timeout TO '60s'");
+    await client.query('SET search_path TO public, pg_catalog');
+    const databaseIdentity = await client.query(
+      `SELECT current_database() AS database_name,
+              current_schema() AS schema_name,
+              current_setting('server_version') AS server_version`,
+    );
+    validateDatabaseIdentityRows(databaseIdentity.rows, context.databaseName);
 
     let result;
     if (operation === 'apply') {
       result = await migration.applyMigrationWithClient(client);
     } else if (operation === 'verify') {
       result = await migration.verifyActionPlanExecutionSchemaWithClient(client);
+    } else if (operation === 'verify-runtime') {
+      const runtimeSchema = await import('../dist/core/db/actionPlanExecutionSchema.js');
+      result = await runtimeSchema.verifyActionPlanExecutionSchema(client);
     } else {
       result = await migration.inspectMigrationDrainStateWithClient(client);
     }
@@ -388,18 +443,17 @@ export function safeFailureCode(error) {
   return 'PHASE2E_VALIDATOR_OPERATION_FAILED';
 }
 
-function writeSafeJson(value, stream) {
-  stream.write(`${JSON.stringify(value)}\n`);
-}
-
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   runValidator()
     .then((result) => {
-      writeSafeJson(result, process.stdout);
-      process.exitCode = result.ok === true ? 0 : 1;
+      writeSync(process.stdout.fd, `${JSON.stringify(result)}\n`);
+      process.exit(result.ok === true ? 0 : 1);
     })
     .catch((error) => {
-      writeSafeJson({ ok: false, code: safeFailureCode(error) }, process.stderr);
-      process.exitCode = 1;
+      writeSync(
+        process.stderr.fd,
+        `${JSON.stringify({ ok: false, code: safeFailureCode(error) })}\n`,
+      );
+      process.exit(1);
     });
 }

@@ -3,7 +3,10 @@ import { pathToFileURL } from 'node:url';
 import { jest } from '@jest/globals';
 import { verifyActionPlanExecutionSchema } from '../../src/core/db/actionPlanExecutionSchema.js';
 
-const connectionString = process.env.ACTION_PLAN_EXECUTION_MIGRATION_DATABASE_URL;
+const railwayValidation = process.env.ACTION_PLAN_EXECUTION_PG18_RAILWAY_VALIDATION === '1';
+const connectionString = railwayValidation
+  ? process.env.DATABASE_URL
+  : process.env.ACTION_PLAN_EXECUTION_MIGRATION_DATABASE_URL;
 const explicitlyEnabled = process.env.ACTION_PLAN_EXECUTION_PG18_INTEGRATION === '1';
 const migrationScriptPath = join(process.cwd(), 'scripts', 'action-plan-execution-migration.mjs');
 
@@ -924,11 +927,30 @@ async function expectAllPhysicalIndexesReady(client: QueryClient): Promise<void>
   }]);
 }
 
-function isConfirmedLocalEphemeralTarget(value: string | undefined): boolean {
+function isConfirmedEphemeralTarget(value: string | undefined): boolean {
   if (!value) return false;
   try {
     const parsed = new URL(value);
     const databaseName = decodeURIComponent(parsed.pathname.replace(/^\//u, '')).toLowerCase();
+    if (railwayValidation) {
+      return (
+        process.env.RAILWAY_PROJECT_ID === '7faf44e5-519c-4e73-8d7a-da9f389e6187'
+        && process.env.RAILWAY_ENVIRONMENT_ID === 'fb99f47d-5ef5-44c1-96c2-acf7b90fab13'
+        && process.env.RAILWAY_ENVIRONMENT_NAME === 'phase2e-validation-20260717'
+        && !/production/iu.test(process.env.RAILWAY_ENVIRONMENT_NAME)
+        && process.env.RAILWAY_SERVICE_ID === process.env.PHASE2E_VALIDATOR_EXPECTED_SERVICE_ID
+        && process.env.RAILWAY_SERVICE_NAME === process.env.PHASE2E_VALIDATOR_EXPECTED_SERVICE_NAME
+        && process.env.RAILWAY_GIT_COMMIT_SHA
+          === process.env.PHASE2E_VALIDATOR_EXPECTED_SOURCE_COMMIT
+        && parsed.hostname === process.env.PHASE2E_VALIDATOR_EXPECTED_DATABASE_HOST
+        && databaseName === process.env.PHASE2E_VALIDATOR_EXPECTED_DATABASE_NAME?.toLowerCase()
+        && parsed.hostname.endsWith('.railway.internal')
+        && parsed.username.length > 0
+        && parsed.password.length > 0
+        && parsed.search === ''
+        && parsed.hash === ''
+      );
+    }
     return (
       ['localhost', '127.0.0.1', '[::1]', '::1'].includes(parsed.hostname.toLowerCase())
       && /^arcanos_phase2e_[a-z0-9_]+$/u.test(databaseName)
@@ -946,8 +968,8 @@ describePostgresql18('Phase 2E migration against explicitly configured PostgreSQ
   jest.setTimeout(120_000);
 
   it('applies, verifies, recovers a failed ledger, reruns, locks, drains, and compensates', async () => {
-    if (!isConfirmedLocalEphemeralTarget(connectionString)) {
-      throw new Error('PG18_INTEGRATION_REQUIRES_CONFIRMED_LOCAL_EPHEMERAL_DATABASE');
+    if (!isConfirmedEphemeralTarget(connectionString)) {
+      throw new Error('PG18_INTEGRATION_REQUIRES_CONFIRMED_EPHEMERAL_DATABASE');
     }
     const pg = await import('pg');
     const Client = pg.Client ?? pg.default.Client;
@@ -960,8 +982,19 @@ describePostgresql18('Phase 2E migration against explicitly configured PostgreSQ
     await client.connect();
     await holder.connect();
     try {
-      const version = await client.query('SHOW server_version_num');
-      const serverVersionNumber = Number(version.rows[0]?.server_version_num);
+      const identity = await client.query(
+        `SELECT current_database() AS database_name,
+                current_schema() AS schema_name,
+                current_setting('server_version_num') AS server_version_num`
+      );
+      expect(identity.rows).toHaveLength(1);
+      if (railwayValidation) {
+        expect(identity.rows[0]).toMatchObject({
+          database_name: process.env.PHASE2E_VALIDATOR_EXPECTED_DATABASE_NAME,
+          schema_name: 'public'
+        });
+      }
+      const serverVersionNumber = Number(identity.rows[0]?.server_version_num);
       expect(serverVersionNumber).toBeGreaterThanOrEqual(180000);
       expect(serverVersionNumber).toBeLessThan(190000);
 
