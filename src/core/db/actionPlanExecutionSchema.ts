@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { createRequire } from 'node:module';
 import type { Pool as PoolType } from 'pg';
 import { getPool } from './client.js';
 
@@ -266,13 +267,21 @@ interface ConstraintSpec {
   table: string;
   type: 'c' | 'f' | 'p' | 'u';
   requiredFragments: string[];
+  deferrable: false;
+  initiallyDeferred: false;
 }
 
 const constraint = (
   table: string,
   type: ConstraintSpec['type'],
   ...requiredFragments: string[]
-): ConstraintSpec => ({ table, type, requiredFragments });
+): ConstraintSpec => ({
+  table,
+  type,
+  requiredFragments,
+  deferrable: false,
+  initiallyDeferred: false
+});
 
 const REQUIRED_CONSTRAINT_SPECS: Record<string, ConstraintSpec> = {
   ActionPlanExecutionSchemaMigration_pkey: constraint(
@@ -477,41 +486,109 @@ const REQUIRED_CONSTRAINT_SPECS: Record<string, ConstraintSpec> = {
 
 const REQUIRED_CHECK_DEFINITION_HASHES: Record<string, string> = {
   ck_ap_exec_migration_version: '70f6749c1081d98ce4ccbd59210d716d1ab1e0792b0d4137969dd586056186b9',
-  ck_ap_exec_migration_checksum: '6bf5e9b2eef3b76e25f9474062cec9fdd080c6f4b191a9df0b2f0c17b7a1afd6',
-  ck_ap_exec_migration_state: 'dc47d83c07dee2cfc3acb3a3bdc54ad84e04bd9c4d76a826bc3aa33317a83b88',
-  ck_action_plan_execution_provenance_v2: '39c0a703771929796441b1609dbf0913d7729b820bdd3baf6b3b77a491b0b1dd',
-  ck_ap_exec_command_id: '65e008f27ce940844c4e53c1a77444950e1d540895a888d95cea23d5e0679590',
-  ck_ap_exec_command_realm: '501bcd2054e1a398e8e78b51f8b9e2e0c1f0d37ecaaf7983ee1f19ae36502197',
-  ck_ap_exec_command_requester: '90ab0309563bba135b159d9664e078f84abb515f82364623f14f8cdf5c795581',
-  ck_ap_exec_command_idem_hash: 'b20a2b856d14bdf0177c9cdec68464977b1fca1f2d97c768e14baa6fe773ed30',
-  ck_ap_exec_command_fingerprint: 'a4ab86c0bb5ddc8b70de284916ba1b8ab494f13d68b8f6b7c18b6e6473df622a',
-  ck_ap_exec_command_generation: '9b6a722fa10a681d6eeda228a935feffbbd735d026888ba0a1680c9c1230139a',
-  ck_ap_exec_command_protocol: '5a5782d70f4105c945396dc37215d5c65ae55cd20e458b8532aade21eacf78b1',
-  ck_ap_exec_run_id: 'c762376673f646fa1a6d6d9217fb042fac8d1299a3c6ee2071617179f16577ee',
+  ck_ap_exec_migration_checksum: '92ac0a0e79c37c7b4ef43270e0b9b69404daed5c886c4fa14262214b7a99cd50',
+  ck_ap_exec_migration_state: 'bed220fdd744e0a210ea742332cf322c5b090f5a1dc0250737b73b6594523540',
+  ck_action_plan_execution_provenance_v2: '6c935b75b3a8b295bdf8497d6a5d25e4488cb8e26d45b6851bfb14301d0bf10e',
+  ck_ap_exec_command_id: 'a136015059d12601c14377b28fffa3ce4fc0fcc06c9ecc20c8867c6d7e78f4d8',
+  ck_ap_exec_command_realm: '8d8679656d4d3ddfed8c93044066d656c3d25f44a873c4090d1ee115319b38c6',
+  ck_ap_exec_command_requester: '014b36374b05a48e23c45f9c27830b50d4c6fa3a347a26529713bb925c9e3952',
+  ck_ap_exec_command_idem_hash: 'acf1a717b10515b46abff25b8104af20bf44044a159e4b521073485313ee3713',
+  ck_ap_exec_command_fingerprint: '48b24542462f4de65ec83fd6bac2a001900a55ea52a4c5b5dc9e61b2bb5e9f58',
+  ck_ap_exec_command_generation: 'e4101f143d850d417ee2249167f077989f97756743ed86b81317f21977fcb71a',
+  ck_ap_exec_command_protocol: 'a0a36f60c03b7b2e44af3cb5ee76e495bbfda334ee98c1a098df7fb27f0e9c80',
+  ck_ap_exec_run_id: 'de630d3248c39112f4246c53156bfec2665389a54de2fd224bcd4ff6bc7f034c',
   ck_ap_exec_run_attempt: '57af9448c3b033bc925809d88e5b289139f607a2ba663576b232b14a97f7dbfc',
-  ck_ap_exec_run_state: '854d3017425af360e0d14bae01145a1eb922b9a92ff5e285b7cbee9ad5bea3ba',
-  ck_ap_exec_run_executor: '98e7df070fac6e0090b309b32d0b111396af9bc2f3fb65965c83244df7ff0138',
-  ck_ap_exec_run_realm: '501bcd2054e1a398e8e78b51f8b9e2e0c1f0d37ecaaf7983ee1f19ae36502197',
-  ck_ap_exec_run_assignment: '1eb290c07eb72f6248c6f77cc7290ad45752cd5ba5d07fa3857f9427ddc73ca4',
-  ck_ap_exec_run_snapshot_id: '0557d2f9a5683010ffe6e89c3d4490cab2673bf959ff9f588be893b71d52450a',
-  ck_ap_exec_run_snapshot_version: 'e1e6f935feea1887297b90dcb816934133b4c27a29f857f7da058de73e41e84b',
-  ck_ap_exec_run_snapshot: '14392499212ef09f107e10ba5fc1630b4b76e35e7ca53b31a6d71d656da5a600',
-  ck_ap_exec_run_snapshot_shape: '05ad097b4c457463fca0c47ef4c02d778b8323d23124cdc547f039338efd2a85',
-  ck_ap_exec_run_hashes: '36e1b310cb6bd8c944db36c78443ae6f63be1c6778a89ac2bd7a605d1df3096b',
-  ck_ap_exec_run_policy: '6bd74bf2f79df281ae26515df7847d917ac24cd62e3e1d9a96714f883915b4bc',
-  ck_ap_exec_run_sequence: 'd853a4fcfe6c506aac8870c91b9d937d1f5c78e1e41380928df7bc7ae5f8d5d7',
-  ck_ap_exec_run_result_bounds: 'aff909290800e652fad90a984327a2d6038946714af3d002b90ba69775882540',
-  ck_ap_exec_run_claim_group: '0802d1a269af768fce7d6c0d67590d13484cec2cc8620d085e8f7e9945b072a7',
-  ck_ap_exec_run_start_group: 'a093f677c06b15e606b4d7837a1e720189ded961c528d6781fb18e076cfebcb7',
-  ck_ap_exec_run_result_group: '7b21b8e850c4d1fc0c8069960140987f6e4dd1f27bc65fa9a26eeef009d7acb2',
-  ck_ap_exec_run_state_coherence: 'ca6d23cf705d9c057be6fdee2e39771096d22e357e8c95fe714a57f6633f24bc',
-  ck_ap_exec_event_id: '4131bba649e762372873a4ae9026e1e2ce25fbe4ae0df84722ab92c4642e8856',
-  ck_ap_exec_event_sequence: 'c73c4972f1abeefde2d826a49df9e9bf99e96a2dfbc0aedd9913df456bb45e79',
-  ck_ap_exec_event_type: '48f4ae64f34e15b53bef68b5c4b23d99470183d8a7fbe32676febea5e2f36ec9',
-  ck_ap_exec_event_actor: '865a6674c44994de60d39abd0e20489ac875523cf0ad5193d16b9a76251a370a',
-  ck_ap_exec_event_source: '2e10088a763c20c3be1bfcf197b82fac3497df33796c59322ba8ff9888f09a6e',
-  ck_ap_exec_event_identifiers: '172f6db45f11bcf562b81d71e7d7df8554e4162f550c1c26914c74d10b860312',
-  ck_ap_exec_event_metadata: 'dff961432d75bce23396dd66cecbb10a471276a9139a41561360098486ca4f17'
+  ck_ap_exec_run_state: '68362eaba7748ea86ae27fc7018776998a94f83c419cf32710530772b489f5b2',
+  ck_ap_exec_run_executor: '7b330b02f18e700013c380e8049e8511a9f68a2d383e3e7e526593d113ab6437',
+  ck_ap_exec_run_realm: '8d8679656d4d3ddfed8c93044066d656c3d25f44a873c4090d1ee115319b38c6',
+  ck_ap_exec_run_assignment: '6345801f79376017ad0ebf82b2b3cdaabe64e626fea0e65a9d0f5f26c8f5c245',
+  ck_ap_exec_run_snapshot_id: '37201450d3b39d5f3b75849a8269448e69ce4f2887790833a74a2622464d873d',
+  ck_ap_exec_run_snapshot_version: '5b12b718e249fa2c41bb1b0dbeca3cfd6f3e5c103f4195fe047c941aea51d94e',
+  ck_ap_exec_run_snapshot: 'f175cca68fe5575cbf044832fa00d153d6323e8ff2cf69e11c94ca0682919404',
+  ck_ap_exec_run_snapshot_shape: 'b75e2a6afb1e1a48f4da8f5c02ad89828f03d3ad06fa77ca152207104c83e96d',
+  ck_ap_exec_run_hashes: '1334c164956834d1c1a1b278becd4ec7876d6d090f293fef0f33a6db2a5b816e',
+  ck_ap_exec_run_policy: '87d8fa86c20a1fb33695f3852493815381eb263d0a3593bc39cf45148d9c065f',
+  ck_ap_exec_run_sequence: '14599d2eb1a346c353f3479011cf263c87bd5f245e06041f09893ceb426a0213',
+  ck_ap_exec_run_result_bounds: '10ca14c20d760c57b028bfa4811cbd6456012f36d10c3fe16a73a3622a1ae80f',
+  ck_ap_exec_run_claim_group: 'bc0b941d7ad645991b06861d0a474b022f9577d67559b225faf3eb4d15ad1940',
+  ck_ap_exec_run_start_group: 'b17050d978fd59bd44b6ee43e0c661efaa66d7511143736eab9c7b79cfa553c1',
+  ck_ap_exec_run_result_group: '4cfd876a9b5c30bc1dfc63bd0c28a25a5ef041a4374f01a4eaee566b29936907',
+  ck_ap_exec_run_state_coherence: '1f694a34703226118cf3079d7e8276c638bac76b0f82bd399cac23cf247e2443',
+  ck_ap_exec_event_id: 'f8d79479417765d505542c503ab6696cb5c088ce81ab7df0c1715435b9ddb9ec',
+  ck_ap_exec_event_sequence: '8a743d920ee0f08c38d7b5b27e78a7404815391a626fa74e9dc14efcd07cf747',
+  ck_ap_exec_event_type: '694448a31992a43458872ea69474f36de45f01244688f0546964220ad3cac6f9',
+  ck_ap_exec_event_actor: '88e014053da01d10bb46d93c9aa5cdcd5f10ff4fa4672ee8e533fe602e271e87',
+  ck_ap_exec_event_source: '3b320960ce5eec6cd88cabcdada811549ae6fb8bbd719d69ea272cd6216b8b45',
+  ck_ap_exec_event_identifiers: '46ea843115ee2f5c8b0b2a230788194e5f793e6473033f7be899e664fa5b5d7e',
+  ck_ap_exec_event_metadata: '300c1ba7c7178569d4af9c314fbe8551472c6f7b994be874840707220c302647'
+};
+
+const checkColumns = (...columns: string[]): string[] => [...columns].sort();
+
+const REQUIRED_CHECK_COLUMN_SETS: Record<string, string[]> = {
+  ck_ap_exec_migration_version: checkColumns('version'),
+  ck_ap_exec_migration_checksum: checkColumns('checksum'),
+  ck_ap_exec_migration_state: checkColumns('validityState'),
+  ck_action_plan_execution_provenance_v2: checkColumns(
+    'executionRealm', 'ownerPrincipalId', 'executionProtocolVersion', 'executionGeneration'
+  ),
+  ck_ap_exec_command_id: checkColumns('id', 'planId'),
+  ck_ap_exec_command_realm: checkColumns('executionRealm'),
+  ck_ap_exec_command_requester: checkColumns('requesterPrincipalId'),
+  ck_ap_exec_command_idem_hash: checkColumns('commandIdempotencyKeyHash'),
+  ck_ap_exec_command_fingerprint: checkColumns('commandFingerprint'),
+  ck_ap_exec_command_generation: checkColumns('lockedPlanExecutionGeneration'),
+  ck_ap_exec_command_protocol: checkColumns('protocolVersion'),
+  ck_ap_exec_run_id: checkColumns('id', 'commandId', 'planId', 'actionId'),
+  ck_ap_exec_run_attempt: checkColumns('attempt'),
+  ck_ap_exec_run_state: checkColumns('state'),
+  ck_ap_exec_run_executor: checkColumns('executorKind'),
+  ck_ap_exec_run_realm: checkColumns('executionRealm'),
+  ck_ap_exec_run_assignment: checkColumns(
+    'assignedAgentId', 'assignedExecutorPrincipalId', 'assignedExecutorInstanceId'
+  ),
+  ck_ap_exec_run_snapshot_id: checkColumns('actionSnapshotId'),
+  ck_ap_exec_run_snapshot_version: checkColumns('actionSnapshotSchemaVersion'),
+  ck_ap_exec_run_snapshot: checkColumns('actionSnapshot'),
+  ck_ap_exec_run_snapshot_shape: checkColumns(
+    'actionSnapshot', 'planId', 'actionId', 'assignedAgentId', 'executorKind',
+    'assignedExecutorPrincipalId'
+  ),
+  ck_ap_exec_run_hashes: checkColumns(
+    'claimIdempotencyKeyHash', 'claimFingerprint', 'startIdempotencyKeyHash',
+    'startFingerprint', 'resultIdempotencyKeyHash', 'resultFingerprint'
+  ),
+  ck_ap_exec_run_policy: checkColumns('policyCategory', 'policyEvidenceId'),
+  ck_ap_exec_run_sequence: checkColumns('eventSequence', 'version'),
+  ck_ap_exec_run_result_bounds: checkColumns(
+    'resultOutput', 'resultError', 'acceptanceReceipt'
+  ),
+  ck_ap_exec_run_claim_group: checkColumns(
+    'claimedExecutorPrincipalId', 'claimedExecutorInstanceId', 'claimIdempotencyKeyHash',
+    'claimFingerprint', 'claimedAt', 'assignedExecutorPrincipalId',
+    'assignedExecutorInstanceId'
+  ),
+  ck_ap_exec_run_start_group: checkColumns(
+    'startIdempotencyKeyHash', 'startFingerprint', 'startedAt', 'claimedAt'
+  ),
+  ck_ap_exec_run_result_group: checkColumns(
+    'resultIdempotencyKeyHash', 'resultFingerprint', 'acceptanceReceipt', 'resultOutput',
+    'resultError', 'completedAt', 'startedAt'
+  ),
+  ck_ap_exec_run_state_coherence: checkColumns(
+    'state', 'claimedAt', 'startedAt', 'resultIdempotencyKeyHash', 'resultFingerprint',
+    'acceptanceReceipt', 'resultOutput', 'resultError', 'completedAt', 'terminalCategory',
+    'cancelledAt', 'expiredAt', 'supersededAt'
+  ),
+  ck_ap_exec_event_id: checkColumns('id', 'runId'),
+  ck_ap_exec_event_sequence: checkColumns('eventSequence'),
+  ck_ap_exec_event_type: checkColumns('eventType'),
+  ck_ap_exec_event_actor: checkColumns('actorCategory'),
+  ck_ap_exec_event_source: checkColumns('sourceService'),
+  ck_ap_exec_event_identifiers: checkColumns(
+    'executionRealm', 'reasonCode', 'requestId', 'traceId'
+  ),
+  ck_ap_exec_event_metadata: checkColumns('safeMetadata')
 };
 
 interface RelationalConstraintSpec {
@@ -634,6 +711,7 @@ export const ACTION_PLAN_EXECUTION_SCHEMA_REQUIREMENTS = Object.freeze({
   columnSpecs: REQUIRED_COLUMN_SPECS,
   constraints: [...REQUIRED_CONSTRAINTS],
   constraintSpecs: REQUIRED_CONSTRAINT_SPECS,
+  checkColumnSets: REQUIRED_CHECK_COLUMN_SETS,
   relationalConstraintSpecs: REQUIRED_RELATIONAL_CONSTRAINT_SPECS,
   indexes: [...REQUIRED_INDEXES],
   indexSpecs: REQUIRED_INDEX_SPECS
@@ -683,14 +761,82 @@ function verification(
   };
 }
 
+const RESERVED_SQL_IDENTIFIERS = new Set([
+  'all', 'and', 'any', 'array', 'as', 'between', 'check', 'constraint', 'false',
+  'foreign', 'from', 'in', 'is', 'key', 'not', 'null', 'or', 'primary',
+  'references', 'select', 'true', 'unique', 'where'
+]);
+const SAFE_DEQUOTED_SQL_IDENTIFIERS: ReadonlySet<string> = new Set<string>(
+  Object.values(REQUIRED_COLUMNS)
+    .flat()
+    .filter(identifier => /^[a-z_][a-z0-9_$]*$/u.test(identifier))
+    .filter(identifier => !RESERVED_SQL_IDENTIFIERS.has(identifier))
+);
+
+function rewriteSqlSegments(
+  value: string,
+  rewriteUnquoted: (segment: string) => string,
+  rewriteDoubleQuoted: (segment: string, closed: boolean) => string = segment => segment
+): string {
+  let output = '';
+  let unquotedStart = 0;
+  let index = 0;
+  while (index < value.length) {
+    const quote = value[index];
+    if (quote !== "'" && quote !== '"') {
+      index += 1;
+      continue;
+    }
+
+    output += rewriteUnquoted(value.slice(unquotedStart, index));
+    let end = index + 1;
+    let closed = false;
+    while (end < value.length) {
+      if (value[end] !== quote) {
+        end += 1;
+        continue;
+      }
+      if (value[end + 1] === quote) {
+        end += 2;
+        continue;
+      }
+      end += 1;
+      closed = true;
+      break;
+    }
+    const quotedSegment = value.slice(index, end);
+    output += quote === "'"
+      ? quotedSegment
+      : rewriteDoubleQuoted(quotedSegment, closed);
+    index = end;
+    unquotedStart = end;
+  }
+  return output + rewriteUnquoted(value.slice(unquotedStart));
+}
+
 function normalizeDefinition(value: unknown): string {
-  return String(value ?? '')
-    .toLowerCase()
-    .replace(/"/gu, '')
-    .replace(/::(?:character varying|timestamp with time zone|bigint|integer|numeric|text|jsonb)/gu, '')
-    .replace(/\s+/gu, ' ')
-    .replace(/\s*([(),])\s*/gu, '$1')
-    .trim();
+  const normalizedIdentifiers = rewriteSqlSegments(
+    String(value ?? ''),
+    segment => segment
+      .toLowerCase()
+      .replace(
+        /::\s*(?:character varying|timestamp with time zone|bigint|integer|numeric|text|jsonb)\b/giu,
+        ''
+      ),
+    (segment, closed) => {
+      if (!closed) return segment;
+      const identifier = segment.slice(1, -1);
+      return SAFE_DEQUOTED_SQL_IDENTIFIERS.has(identifier)
+        ? identifier
+        : segment;
+    }
+  );
+  return rewriteSqlSegments(
+    normalizedIdentifiers,
+    segment => segment
+      .replace(/\s+/gu, ' ')
+      .replace(/\s*([\[\](),])\s*/gu, '$1')
+  ).trim();
 }
 
 type BooleanNode =
@@ -702,18 +848,22 @@ function stripOuterBooleanParentheses(value: string): string {
   let expression = value.trim();
   while (expression.startsWith('(') && expression.endsWith(')')) {
     let depth = 0;
-    let inString = false;
+    let activeQuote: "'" | '"' | null = null;
     let enclosesWholeExpression = true;
     for (let index = 0; index < expression.length; index += 1) {
       const character = expression[index];
-      if (character === "'") {
-        if (inString && expression[index + 1] === "'") {
+      if (activeQuote !== null) {
+        if (character === activeQuote && expression[index + 1] === activeQuote) {
           index += 1;
           continue;
         }
-        inString = !inString;
+        if (character === activeQuote) activeQuote = null;
+        continue;
       }
-      if (inString) continue;
+      if (character === "'" || character === '"') {
+        activeQuote = character;
+        continue;
+      }
       if (character === '(') depth += 1;
       if (character === ')') {
         depth -= 1;
@@ -733,19 +883,22 @@ function splitTopLevelBoolean(value: string, operator: 'and' | 'or'): string[] {
   const parts: string[] = [];
   let start = 0;
   let depth = 0;
-  let inString = false;
+  let activeQuote: "'" | '"' | null = null;
   let betweenPending = false;
   for (let index = 0; index < value.length; index += 1) {
     const character = value[index];
-    if (character === "'") {
-      if (inString && value[index + 1] === "'") {
+    if (activeQuote !== null) {
+      if (character === activeQuote && value[index + 1] === activeQuote) {
         index += 1;
         continue;
       }
-      inString = !inString;
+      if (character === activeQuote) activeQuote = null;
       continue;
     }
-    if (inString) continue;
+    if (character === "'" || character === '"') {
+      activeQuote = character;
+      continue;
+    }
     if (character === '(' || character === '[') {
       depth += 1;
       continue;
@@ -774,7 +927,10 @@ function splitTopLevelBoolean(value: string, operator: 'and' | 'or'): string[] {
 }
 
 function atomicBooleanNode(value: string): BooleanNode {
-  const canonical = value.replace(/[()[\]\s]/gu, '');
+  const canonical = rewriteSqlSegments(
+    value,
+    segment => segment.replace(/[()[\]\s]/gu, '')
+  );
   const between = canonical.match(/^(.+)between(-?[0-9]+)and(-?[0-9]+)$/u);
   if (between) {
     return { kind: 'between', left: between[1], lower: between[2], upper: between[3] };
@@ -795,12 +951,34 @@ function parseBooleanNode(value: string): BooleanNode {
   return atomicBooleanNode(expression);
 }
 
+function lastIndexOfOutsideQuotes(value: string, needle: string): number {
+  let activeQuote: "'" | '"' | null = null;
+  let marker = -1;
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (activeQuote !== null) {
+      if (character === activeQuote && value[index + 1] === activeQuote) {
+        index += 1;
+        continue;
+      }
+      if (character === activeQuote) activeQuote = null;
+      continue;
+    }
+    if (character === "'" || character === '"') {
+      activeQuote = character;
+      continue;
+    }
+    if (value.startsWith(needle, index)) marker = index;
+  }
+  return marker;
+}
+
 function comparisonParts(
   node: BooleanNode | undefined,
   operator: '>=' | '<='
 ): { left: string; bound: string } | null {
   if (!node || node.kind !== 'atom') return null;
-  const marker = node.value.lastIndexOf(operator);
+  const marker = lastIndexOfOutsideQuotes(node.value, operator);
   if (marker <= 0) return null;
   const bound = node.value.slice(marker + operator.length);
   if (!/^-?[0-9]+$/u.test(bound)) return null;
@@ -829,7 +1007,7 @@ function canonicalizeBooleanNode(node: BooleanNode): BooleanNode {
         collapsed.push(children[index]);
       }
     }
-    return { kind: 'and', children: collapsed };
+    return collapsed.length === 1 ? collapsed[0] : { kind: 'and', children: collapsed };
   }
   return { kind: 'or', children };
 }
@@ -841,11 +1019,14 @@ function renderBooleanNode(node: BooleanNode): string {
 }
 
 function canonicalCheckDefinition(value: unknown): string {
-  const expression = normalizeDefinition(value)
-    .replace(/^constraint [^ ]+ /u, '')
-    .replace(/^check\(/u, '(')
-    .replace(/=\s*any\(array\[/gu, 'in(')
-    .replace(/\]\)/gu, ')');
+  const expression = rewriteSqlSegments(
+    normalizeDefinition(value),
+    segment => segment
+      .replace(/^constraint [^ ]+ /u, '')
+      .replace(/^check\(/u, '(')
+      .replace(/=\s*any\(array\[/gu, 'in(')
+      .replace(/\]\)/gu, ')')
+  );
   return renderBooleanNode(canonicalizeBooleanNode(parseBooleanNode(expression)));
 }
 
@@ -863,56 +1044,192 @@ function defaultMatches(value: unknown, expected: ColumnDefaultKind): boolean {
   return normalized === "'{}'" || normalized === "'{}'::jsonb";
 }
 
+interface PostgreSqlArrayParserFactory {
+  create(
+    source: string,
+    transform: (entry: string) => string
+  ): { parse(): unknown };
+}
+
+let cachedPostgreSqlArrayParser: PostgreSqlArrayParserFactory | null | undefined;
+
+function isStrictFlatPostgreSqlStringArrayLiteral(value: string): boolean {
+  if (value.length < 2 || value[0] !== '{' || value[value.length - 1] !== '}') return false;
+  if (value === '{}') return true;
+
+  const end = value.length - 1;
+  let index = 1;
+  while (index < end) {
+    if (value[index] === ',') return false;
+
+    if (value[index] === '"') {
+      index += 1;
+      let closed = false;
+      while (index < end) {
+        if (value[index] === '\\') {
+          index += 1;
+          if (index >= end) return false;
+          index += 1;
+          continue;
+        }
+        if (value[index] === '"') {
+          index += 1;
+          closed = true;
+          break;
+        }
+        index += 1;
+      }
+      if (!closed) return false;
+    } else {
+      const start = index;
+      while (index < end && value[index] !== ',') {
+        if (
+          value[index] === '{'
+          || value[index] === '}'
+          || value[index] === '"'
+          || value[index] === '\\'
+          || /\s/u.test(value[index])
+        ) {
+          return false;
+        }
+        index += 1;
+      }
+      const entry = value.slice(start, index);
+      if (entry.length === 0 || entry.toUpperCase() === 'NULL') return false;
+    }
+
+    if (index === end) return true;
+    if (value[index] !== ',') return false;
+    index += 1;
+    if (index === end) return false;
+  }
+  return false;
+}
+
+function getPostgreSqlArrayParser(): PostgreSqlArrayParserFactory | null {
+  if (cachedPostgreSqlArrayParser !== undefined) return cachedPostgreSqlArrayParser;
+  try {
+    const pg = createRequire(import.meta.url)('pg') as {
+      types?: { arrayParser?: unknown };
+    };
+    const parser = pg.types?.arrayParser as Partial<PostgreSqlArrayParserFactory> | undefined;
+    cachedPostgreSqlArrayParser = typeof parser?.create === 'function'
+      ? parser as PostgreSqlArrayParserFactory
+      : null;
+  } catch {
+    cachedPostgreSqlArrayParser = null;
+  }
+  return cachedPostgreSqlArrayParser;
+}
+
+function parsePostgreSqlCatalogStringArray(value: string): string[] | null {
+  if (!isStrictFlatPostgreSqlStringArrayLiteral(value)) return null;
+  const parser = getPostgreSqlArrayParser();
+  if (!parser) return null;
+  try {
+    const decoded = parser.create(value, entry => entry).parse();
+    if (!Array.isArray(decoded) || decoded.some(item => typeof item !== 'string')) return null;
+    return [...decoded];
+  } catch {
+    return null;
+  }
+}
+
+export function parseCatalogStringArray(value: unknown): string[] | null {
+  let decoded: unknown = value;
+  if (typeof value === 'string') {
+    if (value === '{}') return parsePostgreSqlCatalogStringArray(value);
+    try {
+      decoded = JSON.parse(value);
+    } catch {
+      return parsePostgreSqlCatalogStringArray(value);
+    }
+  }
+  if (!Array.isArray(decoded) || decoded.some(item => typeof item !== 'string')) return null;
+  return [...decoded];
+}
+
+function exactSortedStringSetMatches(actual: string[], expected: string[]): boolean {
+  return JSON.stringify([...actual].sort()) === JSON.stringify([...expected].sort());
+}
+
 function relationalConstraintMatches(
   row: {
-    columns: string[];
+    columns_json: unknown;
     referenced_table_name: string | null;
-    referenced_columns: string[];
+    referenced_schema_matches: boolean | null;
+    referenced_columns_json: unknown;
     update_action: string;
     delete_action: string;
   },
   spec: RelationalConstraintSpec
 ): boolean {
-  if (JSON.stringify(row.columns) !== JSON.stringify(spec.columns)) return false;
+  const columns = parseCatalogStringArray(row.columns_json);
+  const referencedColumns = parseCatalogStringArray(row.referenced_columns_json);
+  if (!columns || !referencedColumns) return false;
+  if (JSON.stringify(columns) !== JSON.stringify(spec.columns)) return false;
   if (spec.referencedTable === undefined) {
-    return row.referenced_table_name === null && row.referenced_columns.length === 0;
+    return row.referenced_table_name === null
+      && row.referenced_schema_matches === null
+      && referencedColumns.length === 0;
   }
   return row.referenced_table_name === spec.referencedTable
-    && JSON.stringify(row.referenced_columns) === JSON.stringify(spec.referencedColumns)
+    && row.referenced_schema_matches === true
+    && JSON.stringify(referencedColumns) === JSON.stringify(spec.referencedColumns)
     && row.update_action === spec.updateAction
     && row.delete_action === spec.deleteAction;
 }
 
 function predicateStates(predicate: unknown): string[] | null {
   if (predicate === null || predicate === undefined || String(predicate).trim() === '') return [];
-  const normalized = normalizeDefinition(predicate);
-  if (!normalized.includes('state')) return null;
-  const states = [...normalized.matchAll(/'(requested|claimed|running)'/gu)]
-    .map(match => match[1].toUpperCase())
-    .sort();
-  if (states.length === 0) return null;
-  const allowedWords = normalized
-    .replace(/'(requested|claimed|running)'/gu, '')
-    .replace(/state|any|array|in|or|and/gu, '')
-    .replace(/[=\[\](),\s]/gu, '');
-  return allowedWords.length === 0 ? [...new Set(states)] : null;
+  const normalized = stripOuterBooleanParentheses(normalizeDefinition(predicate));
+  const equality = normalized.match(/^state\s*=\s*'(REQUESTED|CLAIMED|RUNNING)'$/u);
+  if (equality) return [equality[1]];
+
+  const membership = normalized.match(/^state in\((.*)\)$/u)
+    ?? normalized.match(/^state\s*=\s*any\(array\[(.*)\]\)$/u);
+  if (!membership || membership[1].length === 0) return null;
+  const values = [...membership[1].matchAll(/'(REQUESTED|CLAIMED|RUNNING)'/gu)]
+    .map(match => match[1]);
+  if (values.length === 0 || values.map(value => `'${value}'`).join(',') !== membership[1]) {
+    return null;
+  }
+  return values.sort();
 }
 
-function indexDefinitionMatches(
-  name: string,
-  row: { definition: unknown; access_method: unknown },
+function indexStructurallyMatches(
+  row: {
+    table_name: string;
+    schema_matches: boolean;
+    unique: boolean;
+    access_method: string;
+    columns_json: unknown;
+    predicate: string | null;
+    key_count: number;
+    attribute_count: number;
+    expressions_absent: boolean;
+    sort_options_default: boolean;
+    opclasses_default: boolean;
+    collations_default: boolean;
+  },
   spec: IndexSpec
 ): boolean {
-  const definition = normalizeDefinition(row.definition);
-  const expectedPrefix = spec.unique ? 'create unique index' : 'create index';
-  if (String(row.access_method) !== 'btree') return false;
-  const baseDefinition = definition.split(' where ')[0];
-  const expectedColumns = spec.columns.map(column => column.toLowerCase()).join(',');
-  const exactBase = new RegExp(
-    `^${expectedPrefix} ${name.toLowerCase()} on (?:[^\\s.]+\\.)?${spec.table.toLowerCase()} using btree\\(${expectedColumns}\\)$`,
-    'u'
+  const columns = parseCatalogStringArray(row.columns_json);
+  return Boolean(
+    columns
+    && row.schema_matches === true
+    && row.table_name === spec.table
+    && row.unique === spec.unique
+    && row.access_method === 'btree'
+    && row.key_count === spec.columns.length
+    && row.attribute_count === spec.columns.length
+    && row.expressions_absent === true
+    && row.sort_options_default === true
+    && row.opclasses_default === true
+    && row.collations_default === true
+    && JSON.stringify(columns) === JSON.stringify(spec.columns)
+    && JSON.stringify(predicateStates(row.predicate)) === JSON.stringify(spec.predicateStates)
   );
-  return exactBase.test(baseDefinition);
 }
 
 /**
@@ -1013,40 +1330,47 @@ export async function verifyActionPlanExecutionSchema(
       type: string;
       validated: boolean;
       definition: string;
-      columns: string[];
+      columns_json: unknown;
       referenced_table_name: string | null;
-      referenced_columns: string[];
+      referenced_schema_matches: boolean | null;
+      referenced_columns_json: unknown;
       update_action: string;
       delete_action: string;
+      deferrable: boolean;
+      initially_deferred: boolean;
     }>(
       `SELECT constraint_data.conname AS name,
               table_relation.relname AS table_name,
               constraint_data.contype AS type,
               constraint_data.convalidated AS validated,
+              constraint_data.condeferrable AS deferrable,
+              constraint_data.condeferred AS initially_deferred,
               pg_get_constraintdef(constraint_data.oid, true) AS definition,
-              ARRAY(
-                SELECT attribute.attname
+              to_json(ARRAY(
+                SELECT attribute.attname::text
                 FROM unnest(constraint_data.conkey) WITH ORDINALITY AS key_column(attnum, position)
                 JOIN pg_attribute AS attribute
                   ON attribute.attrelid = constraint_data.conrelid
                  AND attribute.attnum = key_column.attnum
                 ORDER BY key_column.position
-              ) AS columns,
+              )::text[])::text AS columns_json,
               referenced_relation.relname AS referenced_table_name,
-              CASE WHEN constraint_data.confrelid = 0 THEN ARRAY[]::text[] ELSE ARRAY(
-                SELECT referenced_attribute.attname
+              referenced_namespace.nspname = current_schema() AS referenced_schema_matches,
+              to_json(CASE WHEN constraint_data.confrelid = 0 THEN ARRAY[]::text[] ELSE ARRAY(
+                SELECT referenced_attribute.attname::text
                 FROM unnest(constraint_data.confkey) WITH ORDINALITY AS referenced_key(attnum, position)
                 JOIN pg_attribute AS referenced_attribute
                   ON referenced_attribute.attrelid = constraint_data.confrelid
                  AND referenced_attribute.attnum = referenced_key.attnum
                 ORDER BY referenced_key.position
-              ) END AS referenced_columns,
+              )::text[] END)::text AS referenced_columns_json,
               constraint_data.confupdtype AS update_action,
               constraint_data.confdeltype AS delete_action
        FROM pg_constraint AS constraint_data
        JOIN pg_namespace AS namespace ON namespace.oid = constraint_data.connamespace
        JOIN pg_class AS table_relation ON table_relation.oid = constraint_data.conrelid
        LEFT JOIN pg_class AS referenced_relation ON referenced_relation.oid = constraint_data.confrelid
+       LEFT JOIN pg_namespace AS referenced_namespace ON referenced_namespace.oid = referenced_relation.relnamespace
        WHERE namespace.nspname = current_schema()
          AND constraint_data.conname = ANY($1::text[])`,
       [[...REQUIRED_CONSTRAINTS]]
@@ -1055,6 +1379,7 @@ export async function verifyActionPlanExecutionSchema(
       const matches = constraintResult.rows.filter(row => row.name === name);
       const expected = REQUIRED_CONSTRAINT_SPECS[name];
       const relationalExpected = REQUIRED_RELATIONAL_CONSTRAINT_SPECS[name];
+      const checkColumnsExpected = REQUIRED_CHECK_COLUMN_SETS[name];
       if (matches.length === 0) {
         issues.push(`SCHEMA_CONSTRAINT_MISSING:${name}`);
         continue;
@@ -1064,9 +1389,18 @@ export async function verifyActionPlanExecutionSchema(
         || !expected
         || matches[0].table_name !== expected.table
         || matches[0].type !== expected.type
+        || matches[0].deferrable !== expected.deferrable
+        || matches[0].initially_deferred !== expected.initiallyDeferred
+        || parseCatalogStringArray(matches[0].columns_json) === null
+        || parseCatalogStringArray(matches[0].referenced_columns_json) === null
         || (
           expected.type === 'c'
-            ? checkDefinitionHash(matches[0].definition) !== REQUIRED_CHECK_DEFINITION_HASHES[name]
+            ? !checkColumnsExpected
+              || !exactSortedStringSetMatches(
+                parseCatalogStringArray(matches[0].columns_json) ?? [],
+                checkColumnsExpected
+              )
+              || checkDefinitionHash(matches[0].definition) !== REQUIRED_CHECK_DEFINITION_HASHES[name]
             : !relationalExpected || !relationalConstraintMatches(matches[0], relationalExpected)
         )
       ) {
@@ -1083,24 +1417,78 @@ export async function verifyActionPlanExecutionSchema(
       unique: boolean;
       valid: boolean;
       ready: boolean;
+      schema_matches: boolean;
       access_method: string;
-      columns: string[];
+      columns_json: unknown;
       predicate: string | null;
-      definition: string;
+      key_count: number;
+      attribute_count: number;
+      expressions_absent: boolean;
+      sort_options_default: boolean;
+      opclasses_default: boolean;
+      collations_default: boolean;
     }>(
       `SELECT index_relation.relname AS name,
               table_relation.relname AS table_name,
               index_data.indisunique AS unique,
               index_data.indisvalid AS valid,
               index_data.indisready AS ready,
+              namespace.nspname = current_schema() AS schema_matches,
               access_method.amname AS access_method,
-              ARRAY(
-                SELECT pg_get_indexdef(index_data.indexrelid, position, true)
-                FROM generate_series(1, index_data.indnkeyatts) AS position
-                ORDER BY position
-              ) AS columns,
-              pg_get_expr(index_data.indpred, index_data.indrelid, true) AS predicate,
-              pg_get_indexdef(index_data.indexrelid) AS definition
+              index_data.indnkeyatts::integer AS key_count,
+              index_data.indnatts::integer AS attribute_count,
+              index_data.indexprs IS NULL AS expressions_absent,
+              cardinality(index_data.indoption::smallint[]) >= index_data.indnkeyatts
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM unnest(index_data.indoption::smallint[]) WITH ORDINALITY
+                    AS index_option(option_bits, position)
+                  WHERE index_option.position <= index_data.indnkeyatts
+                    AND index_option.option_bits <> 0
+                ) AS sort_options_default,
+              cardinality(index_data.indclass::oid[]) >= index_data.indnkeyatts
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM unnest(
+                    index_data.indclass::oid[],
+                    index_data.indkey::smallint[]
+                  ) WITH ORDINALITY AS index_opclass(opclass_oid, attnum, position)
+                  LEFT JOIN pg_opclass AS operator_class
+                    ON operator_class.oid = index_opclass.opclass_oid
+                  LEFT JOIN pg_attribute AS opclass_attribute
+                    ON opclass_attribute.attrelid = index_data.indrelid
+                   AND opclass_attribute.attnum = index_opclass.attnum
+                  WHERE index_opclass.position <= index_data.indnkeyatts
+                    AND (
+                      operator_class.opcdefault IS DISTINCT FROM true
+                      OR operator_class.opcmethod IS DISTINCT FROM index_relation.relam
+                      OR operator_class.opcintype IS DISTINCT FROM opclass_attribute.atttypid
+                    )
+                ) AS opclasses_default,
+              cardinality(index_data.indcollation::oid[]) >= index_data.indnkeyatts
+                AND NOT EXISTS (
+                  SELECT 1
+                  FROM unnest(
+                    index_data.indcollation::oid[],
+                    index_data.indkey::smallint[]
+                  ) WITH ORDINALITY AS index_collation(collation_oid, attnum, position)
+                  LEFT JOIN pg_attribute AS collated_attribute
+                    ON collated_attribute.attrelid = index_data.indrelid
+                   AND collated_attribute.attnum = index_collation.attnum
+                  WHERE index_collation.position <= index_data.indnkeyatts
+                    AND index_collation.collation_oid
+                      IS DISTINCT FROM collated_attribute.attcollation
+                ) AS collations_default,
+              to_json(ARRAY(
+                SELECT attribute.attname::text
+                FROM unnest(index_data.indkey::smallint[]) WITH ORDINALITY AS key_column(attnum, position)
+                JOIN pg_attribute AS attribute
+                  ON attribute.attrelid = index_data.indrelid
+                 AND attribute.attnum = key_column.attnum
+                WHERE key_column.position <= index_data.indnkeyatts
+                ORDER BY key_column.position
+              )::text[])::text AS columns_json,
+              pg_get_expr(index_data.indpred, index_data.indrelid, true) AS predicate
        FROM pg_class AS index_relation
        JOIN pg_index AS index_data ON index_data.indexrelid = index_relation.oid
        JOIN pg_class AS table_relation ON table_relation.oid = index_data.indrelid
@@ -1121,12 +1509,7 @@ export async function verifyActionPlanExecutionSchema(
       if (
         matches.length !== 1
         || !expected
-        || actual.table_name !== expected.table
-        || actual.unique !== expected.unique
-        || JSON.stringify(actual.columns.map(column => normalizeDefinition(column)))
-          !== JSON.stringify(expected.columns.map(column => column.toLowerCase()))
-        || JSON.stringify(predicateStates(actual.predicate)) !== JSON.stringify(expected.predicateStates)
-        || !indexDefinitionMatches(name, actual, expected)
+        || !indexStructurallyMatches(actual, expected)
       ) {
         issues.push(`SCHEMA_INDEX_DEFINITION_INVALID:${name}`);
       }
