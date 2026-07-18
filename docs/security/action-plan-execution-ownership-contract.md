@@ -421,7 +421,7 @@ Allowed transitions in the initial implementation:
 
 The schema reserves `CANCELLED` and `EXPIRED`, but the first implementation exposes no public transition endpoint for them. Tests and repository invariants still require those terminal states to reject claims, starts, and results. `SUPERSEDED` is used only when locked pre-execution evidence is stale or incompatible. No state is inferred from a timeout alone.
 
-Because one command represents one immutable multi-action authorization, a pre-start generation, policy, capability, or snapshot conflict supersedes that run and every still-`REQUESTED` or `CLAIMED` sibling in the same command transactionally. Already-`RUNNING` siblings are not cancelled or rewritten; their authentic results may terminalize their own runs but cannot aggregate into a changed plan. If no sibling ever started, the plan remains `approved` and the command is observable as `RECOVERY_REQUIRED`. If any sibling started, the compatible plan remains `in_progress` until all running siblings terminalize, then command-scoped aggregation may move it to `failed`; a concurrent blocked/terminal state still wins.
+Because one command represents one immutable multi-action authorization, a pre-start generation, policy, capability, or snapshot conflict supersedes that run and every still-`REQUESTED` or `CLAIMED` sibling in the same command transactionally. Already-`RUNNING` siblings are not automatically cancelled or rewritten, but the same changed command-wide evidence makes their later normal result submissions stale: no terminal result is accepted and operator recovery is required. If no sibling ever started, the plan remains `approved` and the command is observable as `RECOVERY_REQUIRED`. If any sibling started before evidence changed, the plan and those `RUNNING` runs remain unresolved until a separately authorized recovery operation is defined; Phase 2E does not infer completion, failure, retry, or cancellation.
 
 Terminal state is monotonic. A terminal result cannot be overwritten. Retry is not exposed in the first implementation; a future authorized retry must create a new run with a new attempt number.
 
@@ -434,7 +434,7 @@ Terminal state is monotonic. A terminal result cannot be overwritten. Retry is n
 - While any required run remains non-terminal, a compatible plan remains `in_progress`.
 - When every required run is terminal, the plan may compare-and-swap from the expected `in_progress` generation to `completed` only if every run succeeded.
 - When every required run is terminal and at least one is `FAILED`, `CANCELLED`, `EXPIRED`, or `SUPERSEDED`, the plan may compare-and-swap from the expected `in_progress` generation to `failed`.
-- A concurrent `blocked`, `expired`, `completed`, `failed`, or incompatible generation always wins. The run result is retained, but aggregation records a bounded deferred reason and never revives or overwrites the plan.
+- A concurrent `blocked`, `expired`, `completed`, `failed`, or incompatible generation always wins. Result submission rejects stale evidence before terminal mutation, may append one bounded safe rejection event, and never revives or overwrites the plan.
 - A result never writes a sibling result or fabricates sibling completion.
 - A blocked, expired, completed, failed, unknown, or otherwise incompatible plan cannot create new runs.
 
