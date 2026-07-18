@@ -1249,6 +1249,49 @@ export class ActionPlanExecutionRepository {
         );
       }
 
+      const currentGeneration = numberValue(graph.plan.executionGeneration);
+      const commandGeneration = numberValue(graph.command.lockedPlanExecutionGeneration);
+      if (currentGeneration === null || commandGeneration === null || currentGeneration !== commandGeneration) {
+        return this.rejectOwnedResult(
+          client,
+          run,
+          input.actor,
+          input.context,
+          'result_generation_conflict',
+          new ActionPlanExecutionError(ACTION_PLAN_EXECUTION_ERRORS.generationConflict),
+        );
+      }
+      const agentIds = [...new Set(graph.runs.map(candidate => candidate.assignedAgentId))].sort();
+      const agentResult = await client.query<AgentRow>(
+        'SELECT "id", "capabilities" FROM "Agent" WHERE "id" = ANY($1::text[]) ORDER BY "id" FOR SHARE',
+        [agentIds],
+      );
+      const agents = new Map(agentResult.rows.map(agent => [agent.id, agent]));
+      const allActionSnapshotsMatch = graph.runs.every(candidate => {
+        const currentAction = graph.actions.find(action => action.id === candidate.actionId);
+        const currentAgent = agents.get(candidate.assignedAgentId);
+        return Boolean(
+          currentAction
+          && currentAgent
+          && actionExecutionSnapshotMatches(currentAction, candidate.actionSnapshot, {
+            planExecutionGeneration: currentGeneration,
+            executorKind: candidate.executorKind,
+            assignedExecutorPrincipalId: candidate.assignedExecutorPrincipalId,
+            agentCapabilities: currentAgent.capabilities,
+          })
+        );
+      });
+      if (!allActionSnapshotsMatch) {
+        return this.rejectOwnedResult(
+          client,
+          run,
+          input.actor,
+          input.context,
+          'result_snapshot_conflict',
+          new ActionPlanExecutionError(ACTION_PLAN_EXECUTION_ERRORS.snapshotConflict),
+        );
+      }
+
       const state = input.outcome === 'succeeded' ? 'SUCCEEDED' : 'FAILED';
       const acceptanceReceipt = randomUUID();
       const updated = await client.query<ActionPlanExecutionRunRecord>(
@@ -1266,36 +1309,11 @@ export class ActionPlanExecutionRepository {
       );
       const terminal = updated.rows[0];
       if (!terminal) throw new ActionPlanExecutionError(ACTION_PLAN_EXECUTION_ERRORS.stateConflict);
-      const generationMatches = numberValue(graph.plan.executionGeneration)
-        === numberValue(graph.command.lockedPlanExecutionGeneration);
-      const agentIds = [...new Set(graph.runs.map(candidate => candidate.assignedAgentId))].sort();
-      const agentResult = await client.query<AgentRow>(
-        'SELECT "id", "capabilities" FROM "Agent" WHERE "id" = ANY($1::text[]) ORDER BY "id" FOR SHARE',
-        [agentIds],
-      );
-      const agents = new Map(agentResult.rows.map(agent => [agent.id, agent]));
-      const currentGeneration = numberValue(graph.plan.executionGeneration);
-      const allActionSnapshotsMatch = graph.runs.every(candidate => {
-        const currentAction = graph.actions.find(action => action.id === candidate.actionId);
-        const currentAgent = agents.get(candidate.assignedAgentId);
-        return Boolean(
-          currentAction
-          && currentAgent
-          && currentGeneration !== null
-          && actionExecutionSnapshotMatches(currentAction, candidate.actionSnapshot, {
-            planExecutionGeneration: currentGeneration,
-            executorKind: candidate.executorKind,
-            assignedExecutorPrincipalId: candidate.assignedExecutorPrincipalId,
-            agentCapabilities: currentAgent.capabilities,
-          })
-        );
-      });
-      const aggregationEvidenceCurrent = generationMatches && allActionSnapshotsMatch;
       await appendEvent(client, terminal, 'RESULT_ACCEPTED', 'result_accepted', input.actor, input.context, {
         commandId: terminal.commandId,
         actionId: terminal.actionId,
         terminalCategory: state,
-        aggregationEvidenceCurrent,
+        aggregationEvidenceCurrent: true,
       });
       await appendEvent(
         client,
@@ -1313,7 +1331,7 @@ export class ActionPlanExecutionRepository {
 
       const postStates = graph.runs.map(item => item.id === terminal.id ? terminal : item);
       const active = postStates.some(item => ['REQUESTED', 'CLAIMED', 'RUNNING'].includes(item.state));
-      if (!active && aggregationEvidenceCurrent && graph.plan.status === 'in_progress') {
+      if (!active && graph.plan.status === 'in_progress') {
         const targetStatus = postStates.every(item => item.state === 'SUCCEEDED') ? 'completed' : 'failed';
         const planUpdate = await client.query(
           `UPDATE "ActionPlan" SET "status"=$4,"updatedAt"=CURRENT_TIMESTAMP

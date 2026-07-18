@@ -719,7 +719,13 @@ describe('Phase 2E authoritative repository behavior without an external databas
   );
 
   it('accepts a failure as FAILED, updates only its bound run, and cannot overwrite it with success', async () => {
-    const sibling = runningRun({ id: 'run-2', actionId: 'action-2', actionSnapshotId: 'snapshot-2' });
+    const sibling = succeededSecondRun({
+      state: 'RUNNING',
+      terminalCategory: null,
+      resultFingerprint: null,
+      acceptanceReceipt: null,
+      completedAt: null,
+    });
     const harness = new RunScenarioHarness(runningRun(), [sibling]);
     const repository = new ActionPlanExecutionRepository(harness.pool);
     const accepted = await repository.submitResult(submitInput({
@@ -751,7 +757,7 @@ describe('Phase 2E authoritative repository behavior without an external databas
     });
   });
 
-  it('accepts authentic terminal evidence without aggregating a plan whose sibling snapshot is stale', async () => {
+  it('rejects terminal evidence when any sibling snapshot no longer matches current action evidence', async () => {
     const staleSibling = succeededSecondRun({
       actionSnapshot: {
         snapshot_version: 'action-execution-snapshot-v1',
@@ -773,15 +779,34 @@ describe('Phase 2E authoritative repository behavior without an external databas
     const harness = new RunScenarioHarness(runningRun(), [staleSibling]);
     const repository = new ActionPlanExecutionRepository(harness.pool);
 
-    await expect(repository.submitResult(submitInput())).resolves.toMatchObject({
-      disposition: 'accepted',
-      run: { state: 'SUCCEEDED' },
+    await expect(repository.submitResult(submitInput())).rejects.toMatchObject({
+      code: 'ACTION_PLAN_ACTION_SNAPSHOT_CONFLICT',
     });
+    expect(harness.run.state).toBe('RUNNING');
     expect(harness.plan.status).toBe('in_progress');
+    expect(harness.calls.some(call => call.sql.startsWith('UPDATE "ActionPlanExecutionRun" SET "state"=$2'))).toBe(false);
     expect(harness.calls.some(call => call.sql.startsWith('UPDATE "ActionPlan" SET "status"='))).toBe(false);
-    expect(harness.events.find(event => event.eventType === 'RESULT_ACCEPTED')).toMatchObject({
-      safeMetadata: expect.objectContaining({ aggregationEvidenceCurrent: false }),
+    expect(harness.events).toEqual([expect.objectContaining({
+      eventType: 'RESULT_REJECTED',
+      reasonCode: 'result_snapshot_conflict',
+    })]);
+  });
+
+  it('rejects terminal evidence when the plan generation changed after execution started', async () => {
+    const harness = new RunScenarioHarness(runningRun(), [succeededSecondRun()]);
+    harness.plan.executionGeneration = 2;
+    const repository = new ActionPlanExecutionRepository(harness.pool);
+
+    await expect(repository.submitResult(submitInput())).rejects.toMatchObject({
+      code: 'ACTION_PLAN_EXECUTION_GENERATION_CONFLICT',
     });
+    expect(harness.run.state).toBe('RUNNING');
+    expect(harness.plan.status).toBe('in_progress');
+    expect(harness.calls.some(call => call.sql.startsWith('UPDATE "ActionPlanExecutionRun" SET "state"=$2'))).toBe(false);
+    expect(harness.events).toEqual([expect.objectContaining({
+      eventType: 'RESULT_REJECTED',
+      reasonCode: 'result_generation_conflict',
+    })]);
   });
 
   it('rolls back result acceptance when an expected plan aggregation CAS updates no row', async () => {
