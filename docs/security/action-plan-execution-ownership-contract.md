@@ -1,20 +1,21 @@
 # ARCANOS ActionPlan Execution Ownership and Result-Submission Contract
 
-- Status: Proposed — Phase 2E Gate A approval pending
+- Status: Approved for local implementation — Phase 2E Gate A and additive Migration Gate
 - Scope: Action-level execution ownership, command/result separation, authenticated claims, result acceptance, idempotency, and durable audit evidence
 - Baseline branch: `codex/preview-log-hygiene-first-boot`
 - Baseline commit: `410c04a890c021ae51148e58391f8e653be11943`
-- Proposal branch: `codex/action-plan-execution-ownership`
+- Implementation branch: `codex/action-plan-execution-ownership`
+- Approval baseline commit: `5e8ef46f48adea6eca82b4fd919821c939cca6c6`
 - Contract date: 2026-07-17
 - Related contracts: `docs/security/clear-decision-contract.md`, `docs/security/action-plan-lifecycle-contract.md`, `docs/security/credential-verification-contract.md`
 
 ## Approval boundary
 
-This document records the proposed Phase 2E decision. It is not implementation authorization.
+This document records the approved Phase 2E local implementation decision.
 
-Gate A approval is required before changing production TypeScript or Python behavior. Separate approval is required before creating the migration, configuring a dedicated executor credential, creating a Railway environment, applying a preview migration, deploying, activating an executor, pushing, opening a pull request, touching production, or deleting a preview.
+Gate A authorizes the bounded production TypeScript and Python implementation in the local checkout. The additive Migration Gate authorizes creating the reviewed forward and compensating artifacts and applying them only to a dedicated local ephemeral PostgreSQL database. Neither approval authorizes configuring or rotating credentials, changing Railway, creating a preview, applying a migration outside a local ephemeral database, deploying, activating an executor, making external-provider calls, pushing, opening a pull request, merging, touching production, or deleting an environment.
 
-No production behavior, database schema, Railway configuration, secret, or deployed service was changed while preparing this proposal.
+Implementation remains local until a later gate is explicitly approved. No Railway configuration, secret, deployed service, staging/preview database, or production database may be changed under these approvals.
 
 ## Confirmed defect
 
@@ -84,7 +85,7 @@ HTTP and MCP command adapters delegate to one focused TypeScript ActionPlan exec
 
 The caller cannot supply `executorKind`. A future executor mapping requires separate evidence and tests.
 
-## Authentication and authority proposal
+## Authentication and authority contract
 
 The current HTTP and daemon authentication surfaces are not reusable as a complete protocol:
 
@@ -95,7 +96,7 @@ The current HTTP and daemon authentication surfaces are not reusable as a comple
 - the Python `BackendApiClient` applies one credential provider to every backend request; and
 - no current credential identifies one physical Python ActionPlan executor.
 
-Subject to explicit operator approval, Phase 2E adds purpose-bound high-entropy credentials in the runtime secret store. Stable principals are independent of token rotation.
+The approved local implementation adds purpose-bound credential verification, identity schemas, and fail-closed authorization. Stable principals are independent of token rotation. Credential generation, secret-store configuration, and rotation remain unauthorized until a later explicit gate.
 
 | Role | Server-derived principal | Fixed authority |
 |---|---|---|
@@ -104,7 +105,7 @@ Subject to explicit operator approval, Phase 2E adds purpose-bound high-entropy 
 | Python executor instance | Configured per-installation executor principal, instance ID, and agent ID | Discover, claim, start, report, and read only runs preassigned to that principal in the current realm |
 | HTTP MCP requester | Configured principal bound to the existing HTTP MCP bearer | Create/read owned plans; request execution and read only command/run/result evidence created by that principal |
 
-Proposed variable names, with values never committed or logged:
+Contract variable names, with values never committed or logged:
 
 - `ACTION_PLAN_REQUEST_TOKEN`
 - `ACTION_PLAN_REQUEST_PRINCIPAL_ID`
@@ -138,7 +139,7 @@ Python uses a dedicated, narrow ActionPlan execution protocol client with its ow
 | Read bounded terminal result | Creator only | Yes | Owned run only | Creator only | No |
 | Cancel or administrative retry | Unsupported | Unsupported | Unsupported | Unsupported | No |
 
-When the Phase 2E protocol code is deployed, every ActionPlan HTTP read and lifecycle mutation route is authenticated or disabled: plan create/list/get, approve, block, expire, execute, and legacy results. Agent registration, agent reads, and capability mutation are operator-authenticated because executor selection cannot trust anonymously readable or mutable registry data. Legacy HTTP and MCP `agents.heartbeat` are disabled while Phase 2E is active; `Agent.status` and `lastHeartbeat` are non-authoritative for run ownership and availability. The separately authenticated `/api/daemon/heartbeat` transport remains Phase 2A liveness only and cannot discover, claim, start, or report a run. Existing legacy records with unknown requester or realm provenance are operator-readable only and are not executable.
+When the Phase 2E protocol code is deployed, every ActionPlan HTTP read and lifecycle mutation route is authenticated or disabled: plan create/list/get, approve, block, expire, execute, legacy results, and the stored-plan `GET /clear/:planId` score read. The stored CLEAR read uses authoritative storage only, requires the current server-derived realm, conceals requester ownership mismatches as not found, permits the explicit operator override, rejects executor credentials, and is always no-store; the non-persisting `POST /clear/evaluate` evaluator remains a separate boundary. Agent registration, agent reads, and capability mutation are operator-authenticated because executor selection cannot trust anonymously readable or mutable registry data. Legacy HTTP and MCP `agents.heartbeat` are disabled while Phase 2E is active; `Agent.status` and `lastHeartbeat` are non-authoritative for run ownership and availability. The separately authenticated `/api/daemon/heartbeat` transport remains Phase 2A liveness only and cannot discover, claim, start, or report a run. Existing legacy records with unknown requester or realm provenance are operator-readable only and are not executable.
 
 HTTP MCP maps the configured bearer to one fixed requester principal. It may create a realm-owned plan and request execution only for a plan owned by that same principal. The operator may request execution for any realm-owned plan. The confirmation nonce remains a separate operation gate and is not identity, ownership, delegation, or operator authority. Destructive ActionPlan tools are omitted from stdio and internal MCP registries unless a trusted principal is injected into the server context; missing context never falls back to a synthetic principal. Executor claim/start/result tools are not registered on the ordinary MCP server in the initial implementation.
 
@@ -152,7 +153,7 @@ Every route accepts only the documented content type, path identifiers, headers,
 
 Capability, claim, start, result, status, and bounded-result responses set `Cache-Control: no-store`. Bounded run output/error is classified as sensitive execution evidence and is never copied into ordinary logs, metrics, events, traces, or snapshots. Phase 2E introduces no automatic deletion policy; preview uses synthetic non-sensitive output only, and a production retention/deletion decision requires separate approval before production activation.
 
-The current application installs `express.json({ limit: config.limits.jsonLimit })` globally, and the configured default is 10 MB. Therefore the proposed 64 KiB result limit is not yet a proven pre-parse denial-of-service control. Implementation must establish and test a route-specific pre-parse limit without raising any other route's limit. A `Content-Length` check alone is insufficient because chunked bodies can omit it. If a surgical bounded-parser seam cannot be added without changing unrelated route registration, implementation must stop and request approval rather than claiming the 64 KiB limit is enforced.
+The baseline application installs `express.json({ limit: config.limits.jsonLimit })` globally, and the configured default is 10 MB. The approved implementation must establish and test a route-specific 64 KiB pre-parse limit without raising any other route's limit. A `Content-Length` check alone is insufficient because chunked bodies can omit it. The implementation may use only the approved bounded ActionPlan parser seam; any broad global parser change requires renewed operator approval.
 
 ## Plan provenance and server-derived execution realm
 
@@ -162,7 +163,7 @@ On Railway, the realm is derived from trusted Railway project and environment id
 railway:<RAILWAY_PROJECT_ID>:<RAILWAY_ENVIRONMENT_ID>
 ```
 
-The service fails closed with `ACTION_PLAN_REALM_UNAVAILABLE` when a deployed process cannot derive the realm. Tests inject `local-test` through an internal dependency seam. The fixed `local-development` realm is available only through an explicit development configuration and is rejected when Railway deployment markers are present.
+The final canonical realm is limited to the shared 256-character protocol bound. The service fails closed with `ACTION_PLAN_REALM_UNAVAILABLE` when a deployed process cannot derive a realm within that bound. Tests inject `local-test` through an internal dependency seam. The fixed `local-development` realm is available only through an explicit development configuration and is rejected when Railway deployment markers are present.
 
 New plans store the server-derived realm, authenticated creator principal, protocol version, and an execution generation. Existing plans remain null/legacy and cannot create Phase 2E runs. No automatic adoption or destructive backfill is permitted; a later operator-approved reconciliation phase may adopt a legacy plan only after its prior execution evidence is resolved.
 
@@ -199,11 +200,15 @@ A requester may command only a plan whose stored owner principal and realm match
 
 All actions are selected in the first implementation. Partial action selection is deferred because no authoritative caller or aggregation contract currently requires it.
 
+The initial `python-daemon` mapping is deliberately narrow. Every selected action must use the exact `terminal.run` capability, target the configured authoritative Python agent, and contain a `params.command` string that is nonblank and no longer than 16,384 Unicode code points. Missing, null, non-string, blank, or oversized commands fail with `ACTION_PLAN_EXECUTOR_UNAVAILABLE` before any command, run, or event is written. Action identifiers use the shared protocol grammar `[A-Za-z0-9][A-Za-z0-9._:-]{0,127}`; an omitted identifier may be generated by the backend, but a caller-supplied identifier outside that grammar is rejected at the creation boundary.
+
 A body containing result fields returns `409 ACTION_PLAN_RESULT_ENDPOINT_REQUIRED`. Other non-empty or unknown bodies return `400 ACTION_PLAN_EXECUTION_REQUEST_INVALID`. Neither response dispatches work or creates a run.
 
 The policy recheck follows the Phase 2B contract. An explicit coherent block may preserve the existing evaluator-issued block behavior, but no run is created. Indeterminate, invalid, or failed evaluation returns its stable failure and never fabricates a block.
 
-The successful command stores the latest authoritative CLEAR evidence row identifier, interpreted category, and evaluation timestamp in the command/run evidence. Claim and start do not call an external policy dependency while holding database locks; they directly verify that the same row remains the latest stored coherent `allow` or properly confirmed `confirm` evidence and that plan generation/expiry remain compatible. A later recheck or policy mutation increments plan execution generation and supersedes unstarted work. The repository has no separate CLEAR evidence TTL, so Phase 2E does not invent one; plan `expiresAt`, explicit recheck, and generation changes are the available freshness authorities.
+The successful command stores the current authoritative recheck category, evaluation timestamp, and a versioned content-addressed commitment of `{ planId, evaluated plan generation, decision, overall }`. The commitment distinguishes an explicit `null` score from every numeric score without making the score independently readable or placing it in logs. The repository requires the generation evaluated by the HTTP or MCP adapter to equal the locked durable plan generation before creating any run. `ClearScore` remains historical lifecycle context and is not command, replay, claim, or start authority.
+
+Claim and start do not call an external policy dependency while holding database locks. They verify command-wide immutable policy-evidence cohesion, plan generation/expiry, lifecycle status, exact action snapshots, executor binding, and authoritative capabilities. A later recheck or policy mutation must increment plan execution generation and supersede unstarted work. The repository has no separate CLEAR evidence TTL, so Phase 2E does not invent one; plan `expiresAt`, explicit recheck, and generation changes are the available freshness authorities.
 
 ### Executor discovery and claim
 
@@ -381,6 +386,8 @@ At command creation, the backend builds one bounded immutable snapshot from the 
 
 The canonical encoded snapshot is limited to 32 KiB, nesting depth 8, finite JSON numbers, and the versioned supported ActionPlan action schema. Oversized or malformed actions are not truncated; run creation fails closed.
 
+The public ActionPlan creation and Phase 2E mutation boundaries use the route-scoped 64 KiB pre-parse seam described above. Creation additionally limits the number of actions, identifier lengths, nested JSON size/depth, and prototype-sensitive keys. These checks are local to the bounded ActionPlan routes and do not alter the application's global JSON parser contract.
+
 It excludes mutable run state, credentials, environment-variable values, resolved secret values, provider responses, and result data. The snapshot builder never reads environment variables or resolves secret references. Stable non-secret references may remain references. Exact configured credential sentinels are rejected, but the implementation does not claim that heuristic scanning can identify every secret embedded in arbitrary legacy text.
 
 Only realm-owned Phase 2E plans created under the authenticated input contract are eligible. Legacy actions with unknown provenance, non-JSON values, unsupported nesting/size, or evidence that secret expansion already occurred fail with `ACTION_PLAN_ACTION_SNAPSHOT_UNAVAILABLE`. The snapshot is never written to logs or execution-event metadata and is returned only through an owner-authenticated claim or same-key recovery response while the run remains `CLAIMED`.
@@ -455,6 +462,10 @@ realm + requester principal + plan + operation + idempotency-key hash
 - A global partial uniqueness invariant permits at most one `REQUESTED`, `CLAIMED`, or `RUNNING` run for each plan/action, regardless of requester, key, transport, or realm. A different-key or cross-principal duplicate returns `ACTION_PLAN_EXECUTION_ACTIVE` with zero effects.
 - The first implementation permits only attempt one. A later retry requires an explicit operator-authorized contract and a new run ID/attempt.
 
+The HTTP and MCP adapters attempt same-key replay after authenticating and loading the visible authoritative plan, but before lifecycle/terminal rejection, policy recheck, or confirmation-nonce consumption. This ordering lets a client recover a committed response after the plan legitimately advances to `in_progress`, `completed`, or `failed`. Replay is read/verification only: the repository requires the existing command, the same generation, coherent immutable policy evidence across every sibling run, the same ordered actions, executor binding, authoritative capability grant, the stored command fingerprint, and exact immutable snapshots. It does not consult historical `ClearScore`, create a command, or bypass ownership or realm checks. A different key continues through the normal lifecycle gate and cannot use this recovery path.
+
+Action parameters are intentionally excluded from the command fingerprint so that secret-bearing material is not hashed into a reusable oracle. They are not ignored: replay rebuilds and compares the exact bounded immutable snapshot stored for every run. A changed action, capability, order, generation, executor binding, or policy evidence therefore conflicts without placing raw parameters in the idempotency fingerprint.
+
 ### Claim and start
 
 Claim and start keys are bounded and hashed under separate operation scopes. Claim-next first looks up the unique scope `(realm, assignedExecutorPrincipalId, assignedExecutorInstanceId, claimKeyHash)` before selecting work. If absent, selection and key binding occur in the same transaction; the unique constraint resolves concurrent same-key requests before either can bind a second run. Claim-next and exact-claim share that scope, so one key cannot identify two runs through different paths. Same key/same selection replays the original `CLAIMED` assignment only while execution has not started. Once that run is `RUNNING` or terminal, the same claim-next key returns its non-executable recovery status and never selects another run. Same key/different selection conflicts. Start uses `(runId, ownerPrincipalId, ownerInstanceId, startKeyHash)` and replays state only, never a second executable assignment.
@@ -504,7 +515,7 @@ HTTP and MCP retain protocol-specific envelopes while using the same semantic ca
 
 Public messages are fixed and non-sensitive. Wrong-plan, wrong-run, wrong-owner, and wrong-realm lookups must not reveal which predicate failed. Logs and events contain only stable codes, bounded IDs, actor category, realm identifier, request/trace identifiers, and allowlisted metadata. They never contain raw action parameters, commands, result payloads, credentials, headers, SQL, paths, stacks, or provider responses.
 
-## Additive persistence proposal — migration approval required
+## Approved additive persistence contract — local artifacts only
 
 Existing schema evidence:
 
@@ -515,7 +526,7 @@ Existing schema evidence:
 - The repository has no working versioned migration runner: documented `db:init` and `db:patch` targets are absent.
 - Both web and worker call the sequential runtime `initializeTables()` path, and web startup can continue after schema initialization failure. Phase 2E DDL cannot safely be added to that bootstrap path.
 
-Proposed nullable columns on `ActionPlan`:
+Approved nullable columns on `ActionPlan`:
 
 - execution realm;
 - authenticated owner/requester principal ID;
@@ -526,7 +537,7 @@ New Phase 2E plan creation writes all four fields. Action, CLEAR, confirmation, 
 
 A database CHECK requires the four provenance fields to be either all null for legacy rows or all non-null with execution generation at least one. New protocol repositories accept only the all-non-null form.
 
-Proposed additive tables:
+Approved additive tables:
 
 ### `ActionPlanExecutionSchemaMigration`
 
@@ -569,7 +580,7 @@ The table represents only `requestActionPlanExecution`; the operation discrimina
 - execution realm;
 - opaque snapshot ID, snapshot schema version, and bounded immutable execution snapshot;
 - claim, start, and result idempotency-key hashes/fingerprints as applicable;
-- policy evidence category, stored evidence identifier, and evaluated timestamp;
+- policy evidence category, versioned content-addressed recheck commitment, and evaluated timestamp;
 - opaque acceptance receipt;
 - terminal category;
 - bounded result output and error;
@@ -630,7 +641,9 @@ All statements use Prisma or parameterized SQL; identifiers and predicates are n
 
 ### Controlled migration execution
 
-Phase 2E DDL is never added to `TABLE_DEFINITIONS` or applied by ordinary web/worker startup. After separate migration approval, one explicit out-of-band migration artifact is created with a recorded checksum/version and a pinned session-level advisory lock held across transactional and nontransactional concurrent-index phases. The durable migration ledger records phase/checksum state and invalid-index recovery. Ordinary startup performs read-only schema/version/constraint verification; the protocol remains disabled and fail-closed when verification is absent or inconsistent.
+Phase 2E DDL is never added to `TABLE_DEFINITIONS` or applied by ordinary web/worker startup. Under the approved Migration Gate, one explicit out-of-band migration artifact is created with a recorded checksum/version and a pinned session-level advisory lock held across transactional and nontransactional concurrent-index phases. The durable migration ledger records phase/checksum state and invalid-index recovery. Ordinary startup performs read-only schema/version/constraint verification; the protocol remains disabled and fail-closed when verification is absent or inconsistent. Application remains restricted to a dedicated local ephemeral PostgreSQL database until Gate D is separately approved.
+
+At the local implementation checkpoint, the migration planner, checksum/verifier, fault-injection model, and compensating-path tests run without a database, but no local PostgreSQL server or container runtime is available. Consequently, actual PostgreSQL apply, rerun, advisory-lock contention, old-application/new-schema compatibility, and compensation execution remain unverified runtime prerequisites for Gate D; no database was mutated under this limitation.
 
 The forward migration is additive and phased:
 
@@ -657,7 +670,7 @@ Because concurrent index creation cannot run inside the table-creation transacti
 
 Gate D evidence must include exact forward and compensating SQL, checksum, row counts, `EXPLAIN`, timeouts, index-validity checks, FK/delete tests, migration rerun equivalence, partial-failure recovery, concurrent web/worker startup proving no DDL, old-app/new-schema validation, and a drain/rollback rehearsal.
 
-Gate A alone authorizes no migration artifact or database operation. A separate Migration Gate approval is required to create the forward/compensating SQL, Prisma/runtime schema representation, and migration tests, and permits application only to local ephemeral databases. Gate D separately authorizes applying the already-reviewed migration to the isolated Railway preview. No gate in this document authorizes production migration.
+Gate A and the Migration Gate authorize the forward/compensating SQL, Prisma/runtime schema representation, migration tests, and application only to dedicated local ephemeral databases. Gate D must separately authorize applying the already-reviewed migration to an isolated Railway preview. No approval recorded in this document authorizes a staging, preview, or production migration.
 
 ## Python protocol behavior
 
@@ -742,7 +755,7 @@ No mixed-version request pool is permitted. Before activation, every old web rep
 | Payload or secret disclosure | Strict bounded schema and allowlisted logs/events | Sentinel, header, path, SQL, provider, and raw-result scans remain clean |
 | Legacy anonymous route bypasses new authority | Router-wide ActionPlan/agent mutation auth | Wrong role and anonymous requests perform zero reads/mutations |
 
-## Rollout order after Gate A
+## Approved local implementation and remaining rollout gates
 
 1. Add shared decision fixtures and failing contract tests.
 2. Add the default-off ambiguous-`/execute` guard and authentication decision tests; no result body can reach legacy execution semantics.
@@ -766,9 +779,9 @@ No mixed-version request pool is permitted. Before activation, every old web rep
 - Preview: stop new assignments, drain/quarantine runs, disable the executor, and roll back only to a Phase 2E compatibility build that retains the ambiguous-route guard. If no such build is healthy, remove public reachability or stop the isolated preview rather than exposing the old defect. Delete only after Gate F approval.
 - Production: no Phase 2E production deployment or migration is authorized, so no production rollback should be necessary.
 
-## Gate A decision requested
+## Approved Gate A and Migration Gate decision
 
-Approval is requested for all of the following as one coherent local implementation design:
+The operator approved all of the following as one coherent local implementation design at branch `codex/action-plan-execution-ownership`, commit `5e8ef46f48adea6eca82b4fd919821c939cca6c6`:
 
 1. explicit hybrid ownership with only `terminal.run -> python-daemon` initially supported;
 2. command-only `/execute` plus dedicated claim-next/exact claim, start, result, status, and bounded-result operations;
@@ -782,4 +795,4 @@ Approval is requested for all of the following as one coherent local implementat
 10. no automatic reassignment, partial selection, cancellation, or retry endpoint in the first implementation; and
 11. fail-closed Python dedicated client, local journal, restart recovery, capability, and acknowledgement behavior.
 
-Gate A approval authorizes local production-code implementation and tests for this design. A separate migration approval authorizes creating the additive migration artifacts and applying them only to local ephemeral databases. Neither approval authorizes credential configuration, Railway configuration, preview creation, preview migration, deployment, executor activation, push, pull request, production change, or teardown.
+Gate A authorizes local production-code implementation and tests for this design. The additive Migration Gate authorizes creating the migration artifacts and applying them only to local ephemeral databases. Neither approval authorizes credential configuration, Railway configuration, preview creation, preview migration, deployment, executor activation, external-provider calls, push, pull request, merge, production change, or teardown.

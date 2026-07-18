@@ -1,216 +1,139 @@
 /**
- * Historical Phase 2E characterization for commit
- * 410c04a890c021ae51148e58391f8e653be11943.
+ * Immutable Phase 2E historical evidence for the pre-change implementation.
  *
- * These assertions preserve the unsafe pre-implementation behavior. They are
- * evidence for the command/result protocol split, not the desired contract.
+ * The active route can no longer satisfy these unsafe assertions. The dated
+ * audit records the exact commit and Git blobs that did, while current decision
+ * tests prove the corrected command/result contract independently.
  */
-import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { executionResultInputSchema } from '../src/shared/types/actionPlan.js';
-import type { ActionPlanRecord } from '../src/shared/types/actionPlan.js';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
-const getPlanMock = jest.fn();
-const createExecutionResultMock = jest.fn();
-const validateCapabilityMock = jest.fn();
-const buildClear2SummaryMock = jest.fn();
-const acquireExecutionLockMock = jest.fn();
-const emitSafetyAuditEventMock = jest.fn();
+import { describe, expect, it } from '@jest/globals';
+import { executionResultInputSchema, type ActionPlanRecord } from '../src/shared/types/actionPlan.js';
 
-jest.unstable_mockModule('../src/stores/actionPlanStore.js', () => ({
-  createPlan: jest.fn(),
-  getPlan: getPlanMock,
-  approvePlan: jest.fn(),
-  blockPlan: jest.fn(),
-  expirePlan: jest.fn(),
-  listPlans: jest.fn(),
-  createExecutionResult: createExecutionResultMock,
-  getExecutionResults: jest.fn(),
-}));
-
-jest.unstable_mockModule('../src/stores/agentRegistry.js', () => ({
-  validateCapability: validateCapabilityMock,
-}));
-
-jest.unstable_mockModule('../src/services/clear2.js', () => ({
-  buildClear2Summary: buildClear2SummaryMock,
-}));
-
-jest.unstable_mockModule('../src/services/safety/executionLock.js', () => ({
-  acquireExecutionLock: acquireExecutionLockMock,
-}));
-
-jest.unstable_mockModule('../src/services/safety/auditEvents.js', () => ({
-  emitSafetyAuditEvent: emitSafetyAuditEventMock,
-}));
-
-jest.unstable_mockModule('../src/platform/logging/structuredLogging.js', () => ({
-  apiLogger: {
-    debug: jest.fn(),
-    info: jest.fn(),
-    warn: jest.fn(),
-    error: jest.fn(),
-  },
-  aiLogger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
-  dbLogger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
-  workerLogger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
-  logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
-}));
-
-const express = (await import('express')).default;
-const request = (await import('supertest')).default;
-const plansRouter = (await import('../src/routes/plans.js')).default;
-
-const initialEnvironment = { ...process.env };
-
-function restoreEnvironment(): void {
-  for (const key of Object.keys(process.env)) {
-    if (!(key in initialEnvironment)) delete process.env[key];
-  }
-  Object.assign(process.env, initialEnvironment);
+interface HistoricalEvidence {
+  baseline: {
+    commit: string;
+    sourceBlobs: Array<{ blob: string; path: string }>;
+  };
+  confirmedFlow: {
+    python: string[];
+    typescriptHttp: string[];
+    typescriptMcp: string[];
+  };
+  findings: Array<{
+    finding: string;
+    confidence: string;
+    risk: string;
+  }>;
 }
 
-function buildPlan(): ActionPlanRecord {
+const evidencePath = join(
+  process.cwd(),
+  'docs',
+  'audits',
+  'action-plan-execution',
+  '2026-07-17',
+  'pre-change-behavior.json',
+);
+const evidence = JSON.parse(readFileSync(evidencePath, 'utf8')) as HistoricalEvidence;
+
+/**
+ * Executable reference harness copied from the behavior pinned by the source
+ * blobs above. It intentionally ignores the submitted body and fabricates one
+ * success row per action. Active production code must never call this harness.
+ */
+function executeHistoricalCommandHandler(plan: ActionPlanRecord, submittedBody: unknown) {
+  void submittedBody;
+  return {
+    plan_id: plan.id,
+    status: 'executed',
+    results: plan.actions.map(action => ({
+      planId: plan.id,
+      actionId: action.id,
+      agentId: action.agentId,
+      status: 'success',
+      clearDecision: 'allow',
+    })),
+  };
+}
+
+function historicalPlan(): ActionPlanRecord {
   const timestamp = new Date('2026-07-17T12:00:00.000Z');
   return {
-    id: 'phase2e-historical-plan',
-    createdBy: 'user',
-    origin: 'phase2e-historical-characterization',
-    status: 'approved',
-    confidence: 0.9,
-    requiresConfirmation: true,
-    idempotencyKey: 'phase2e-historical-plan-key',
-    expiresAt: null,
-    createdAt: timestamp,
-    updatedAt: timestamp,
+    id: 'phase2e-historical-plan', createdBy: 'user', origin: 'historical-test',
+    status: 'approved', confidence: 0.9, requiresConfirmation: true,
+    idempotencyKey: 'historical-key', expiresAt: null, createdAt: timestamp, updatedAt: timestamp,
     clearScore: null,
     actions: [
-      {
-        id: 'python-action',
-        planId: 'phase2e-historical-plan',
-        agentId: 'python-daemon',
-        capability: 'terminal.run',
-        params: { command: 'synthetic-no-op' },
-        timeoutMs: 1_000,
-        rollbackAction: null,
-        sortOrder: 0,
-      },
-      {
-        id: 'sibling-action-never-submitted',
-        planId: 'phase2e-historical-plan',
-        agentId: 'python-daemon',
-        capability: 'terminal.run',
-        params: { command: 'synthetic-sibling-no-op' },
-        timeoutMs: 1_000,
-        rollbackAction: null,
-        sortOrder: 1,
-      },
+      { id: 'python-action', planId: 'phase2e-historical-plan', agentId: 'python-daemon', capability: 'terminal.run', params: {}, timeoutMs: 1000, rollbackAction: null, sortOrder: 0 },
+      { id: 'unsubmitted-sibling', planId: 'phase2e-historical-plan', agentId: 'python-daemon', capability: 'terminal.run', params: {}, timeoutMs: 1000, rollbackAction: null, sortOrder: 1 },
     ],
   };
 }
 
-function buildApp() {
-  const app = express();
-  app.use(express.json());
-  app.use('/', plansRouter);
-  return app;
-}
-
-function persistedResult(
-  planId: unknown,
-  actionId: unknown,
-  agentId: unknown,
-  status: unknown,
-  clearDecision: unknown,
-) {
-  return { planId, actionId, agentId, status, clearDecision };
-}
-
-describe('Phase 2E historical execution ownership baseline @ 410c04a890c021ae51148e58391f8e653be11943', () => {
-  beforeEach(() => {
-    restoreEnvironment();
-    jest.clearAllMocks();
-    getPlanMock.mockReset();
-    createExecutionResultMock.mockReset();
-    validateCapabilityMock.mockReset();
-    buildClear2SummaryMock.mockReset();
-    acquireExecutionLockMock.mockReset();
-    emitSafetyAuditEventMock.mockReset();
-
-    getPlanMock.mockResolvedValue(buildPlan());
-    validateCapabilityMock.mockResolvedValue(true);
-    buildClear2SummaryMock.mockReturnValue({ overall: 0.9, decision: 'allow' });
-    acquireExecutionLockMock.mockResolvedValue({ release: jest.fn(async () => undefined) });
-    createExecutionResultMock.mockImplementation(persistedResult);
+describe('Phase 2E historical execution ownership baseline', () => {
+  it('pins the exact pre-change commit and unsafe TypeScript source blobs', () => {
+    expect(evidence.baseline.commit).toBe('410c04a890c021ae51148e58391f8e653be11943');
+    expect(evidence.baseline.sourceBlobs).toEqual(expect.arrayContaining([
+      {
+        blob: '810603ffc0eac47fdd1a74c055b3c36c9275805d',
+        path: 'src/routes/plans.ts',
+      },
+      {
+        blob: '2ee2604d30bc3edcbb501094d5d11e3478b30b84',
+        path: 'src/mcp/server/index.ts',
+      },
+      {
+        blob: '40deeddc4b85a8ade23ca4d1d6da37e9ac5f3f7f',
+        path: 'src/stores/actionPlanStore.ts',
+      },
+    ]));
   });
 
-  afterEach(() => {
-    jest.useRealTimers();
-    jest.restoreAllMocks();
-    restoreEnvironment();
+  it('preserves the result-through-command and fabricated-sibling-success observations', () => {
+    expect(evidence.confirmedFlow.python).toContain(
+      'It submits that outcome to POST /plans/:planId/execute.',
+    );
+    expect(evidence.confirmedFlow.typescriptHttp).toEqual(expect.arrayContaining([
+      'The handler does not read or validate the request body.',
+      'It creates status=success ExecutionResult records for every stored action.',
+    ]));
+    expect(evidence.confirmedFlow.typescriptMcp).toContain(
+      'It creates status=success ExecutionResult records for every stored action.',
+    );
+
+    const critical = evidence.findings.filter(finding => finding.risk === 'critical');
+    expect(critical.map(finding => finding.finding)).toEqual(expect.arrayContaining([
+      'A failed Python action can become a backend-recorded success because the submitted failure body is ignored.',
+      'Submitting one Python action result can create fabricated success records for sibling actions that were not executed.',
+      'Python result submission failure does not prevent completion output or daemon command acknowledgement.',
+    ]));
+    expect(critical.every(finding => finding.confidence === 'high')).toBe(true);
   });
 
-  it('historically ignores one submitted Python failure and fabricates success for it and an unsubmitted sibling', async () => {
-    const plan = buildPlan();
-    const failedPythonResult = {
-      execution_id: 'python-local-execution-1',
-      plan_id: plan.id,
+  it('executable historical harness turns one submitted failure into success for it and its unsubmitted sibling', () => {
+    const submittedFailure = {
       action_id: 'python-action',
       agent_id: 'python-daemon',
       status: 'failure',
-      output: null,
-      error: 'synthetic local execution failure',
-      timestamp: '2026-07-17T12:00:01.000Z',
+      error: 'synthetic failure',
     };
+    expect(executionResultInputSchema.safeParse(submittedFailure).success).toBe(true);
 
-    expect(executionResultInputSchema.safeParse(failedPythonResult).success).toBe(true);
-
-    const response = await request(buildApp())
-      .post(`/plans/${plan.id}/execute`)
-      .send(failedPythonResult);
-
-    expect(response.status).toBe(200);
-    expect(response.body).toEqual({
-      plan_id: plan.id,
+    expect(executeHistoricalCommandHandler(historicalPlan(), submittedFailure)).toEqual({
+      plan_id: 'phase2e-historical-plan',
       status: 'executed',
       results: [
-        persistedResult(plan.id, 'python-action', 'python-daemon', 'success', 'allow'),
-        persistedResult(
-          plan.id,
-          'sibling-action-never-submitted',
-          'python-daemon',
-          'success',
-          'allow',
-        ),
+        { planId: 'phase2e-historical-plan', actionId: 'python-action', agentId: 'python-daemon', status: 'success', clearDecision: 'allow' },
+        { planId: 'phase2e-historical-plan', actionId: 'unsubmitted-sibling', agentId: 'python-daemon', status: 'success', clearDecision: 'allow' },
       ],
     });
-    expect(createExecutionResultMock.mock.calls).toEqual([
-      [plan.id, 'python-action', 'python-daemon', 'success', 'allow'],
-      [plan.id, 'sibling-action-never-submitted', 'python-daemon', 'success', 'allow'],
-    ]);
-    expect(response.body).not.toHaveProperty('error', failedPythonResult.error);
-    expect(response.body).not.toHaveProperty('execution_id');
   });
 
-  it('historically accepts a result-shaped body that executionResultInputSchema rejects, proving the schema is not applied at /execute', async () => {
-    const plan = buildPlan();
-    const malformedResult = {
-      action_id: 'python-action',
-      agent_id: 'python-daemon',
-      status: 'not-a-valid-execution-status',
-      output: { ignored: true },
-    };
-
-    expect(executionResultInputSchema.safeParse(malformedResult).success).toBe(false);
-
-    const response = await request(buildApp())
-      .post(`/plans/${plan.id}/execute`)
-      .send(malformedResult);
-
-    expect(response.status).toBe(200);
-    expect(response.body.status).toBe('executed');
-    expect(createExecutionResultMock.mock.calls).toEqual([
-      [plan.id, 'python-action', 'python-daemon', 'success', 'allow'],
-      [plan.id, 'sibling-action-never-submitted', 'python-daemon', 'success', 'allow'],
-    ]);
+  it('executable historical harness ignores even a malformed result body', () => {
+    const malformed = { action_id: 'python-action', status: 'not-valid', output: { ignored: true } };
+    expect(executionResultInputSchema.safeParse(malformed).success).toBe(false);
+    expect(executeHistoricalCommandHandler(historicalPlan(), malformed).results).toHaveLength(2);
   });
 });

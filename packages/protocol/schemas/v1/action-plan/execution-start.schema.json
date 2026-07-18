@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/action-plan/execution-start.schema.json",
+  "title": "ActionPlan execution start body",
+  "description": "Empty start body. Run owner, instance, realm, plan, action, and snapshot are resolved from authenticated server state.",
+  "type": "object",
+  "maxProperties": 0,
+  "additionalProperties": false
+}

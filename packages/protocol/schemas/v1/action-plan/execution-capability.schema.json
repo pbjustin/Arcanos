@@ -1,0 +1,186 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/action-plan/execution-capability.schema.json",
+  "title": "ActionPlan execution protocol capability response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "ok",
+    "code",
+    "protocol_version",
+    "execution_realm",
+    "role",
+    "operations",
+    "schema_versions",
+    "locations"
+  ],
+  "properties": {
+    "ok": {
+      "const": true
+    },
+    "code": {
+      "const": "ACTION_PLAN_EXECUTION_PROTOCOL_AVAILABLE"
+    },
+    "protocol_version": {
+      "const": "action-plan-execution-v1"
+    },
+    "execution_realm": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "role": {
+      "type": "string",
+      "enum": [
+        "requester",
+        "operator",
+        "executor",
+        "mcp-requester"
+      ]
+    },
+    "executor_principal_id": {
+      "$ref": "#/$defs/identifier"
+    },
+    "executor_instance_id": {
+      "$ref": "#/$defs/identifier"
+    },
+    "assigned_agent_id": {
+      "$ref": "#/$defs/identifier"
+    },
+    "operations": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 7,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": [
+          "request-execution",
+          "claim-next",
+          "claim",
+          "start",
+          "submit-result",
+          "read-status",
+          "read-result"
+        ]
+      }
+    },
+    "schema_versions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command",
+        "claim",
+        "start",
+        "result",
+        "status",
+        "result_read"
+      ],
+      "properties": {
+        "command": {
+          "const": "action-plan-execution-command-v1"
+        },
+        "claim": {
+          "const": "action-plan-execution-claim-v1"
+        },
+        "start": {
+          "const": "action-plan-execution-start-v1"
+        },
+        "result": {
+          "const": "action-plan-execution-result-v1"
+        },
+        "status": {
+          "const": "action-plan-execution-status-v1"
+        },
+        "result_read": {
+          "const": "action-plan-execution-result-read-v1"
+        }
+      }
+    },
+    "locations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status_template",
+        "result_template"
+      ],
+      "properties": {
+        "execute_template": {
+          "$ref": "#/$defs/location"
+        },
+        "claim_next": {
+          "$ref": "#/$defs/location"
+        },
+        "claim_template": {
+          "$ref": "#/$defs/location"
+        },
+        "start_template": {
+          "$ref": "#/$defs/location"
+        },
+        "status_template": {
+          "$ref": "#/$defs/location"
+        },
+        "result_template": {
+          "$ref": "#/$defs/location"
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "role": {
+            "const": "executor"
+          }
+        },
+        "required": [
+          "role"
+        ]
+      },
+      "then": {
+        "required": [
+          "executor_principal_id",
+          "executor_instance_id",
+          "assigned_agent_id"
+        ]
+      },
+      "else": {
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "executor_principal_id"
+              ]
+            },
+            {
+              "required": [
+                "executor_instance_id"
+              ]
+            },
+            {
+              "required": [
+                "assigned_agent_id"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "location": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^/"
+    }
+  }
+}
