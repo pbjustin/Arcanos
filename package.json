@@ -191,6 +191,8 @@
     "build:workers:only": "cd workers && npm run build:workers && cd ..",
     "test:runtime-integration": "npm --prefix arcanos-ai-runtime run test:integration",
     "mcp:stdio": "node dist/mcp/mcp-stdio.js",
+    "mcp:arcanos-core-advisory": "node dist/mcp/arcanos-core-advisory-stdio.js",
+    "mcp:arcanos-core-advisory:dev": "node --loader ts-node/esm src/mcp/arcanos-core-advisory-stdio.ts",
     "mcp:stdio:dev": "node --loader ts-node/esm src/mcp/mcp-stdio.ts"
   },
   "keywords": [
