@@ -1,0 +1,128 @@
+{
+  "capturedAt": "2026-07-18T16:40:59-04:00",
+  "captureMode": "RAILWAY_READ_ONLY_SANITIZED",
+  "cliSyntaxReview": {
+    "environmentEdit": "VERIFIED_HELP",
+    "linkJsonIdentityFields": "VERIFIED_READ_ONLY",
+    "serviceStatus": "VERIFIED_HELP",
+    "ssh": "VERIFIED_HELP",
+    "variableSetStdinSkipDeploys": "VERIFIED_HELP",
+    "volumeAdd": "VERIFIED_HELP",
+    "volumeDelete": "VERIFIED_HELP"
+  },
+  "environment": {
+    "id": "fb99f47d-5ef5-44c1-96c2-acf7b90fab13",
+    "name": "phase2e-validation-20260717",
+    "privateNetworkDisabled": false
+  },
+  "git": {
+    "branch": "codex/phase2e-advisory-history-gate-r",
+    "sourceCommit": "4c82a5de80af4a820bc92c17df91839dab16c83f"
+  },
+  "noMutationPerformed": true,
+  "project": {
+    "id": "7faf44e5-519c-4e73-8d7a-da9f389e6187",
+    "name": "Arcanos"
+  },
+  "publicExposure": {
+    "customDomainCountForDataServices": 0,
+    "railwayDomainCountForDataServices": 0,
+    "tcpProxyCountForDataServices": 0
+  },
+  "railwayCliVersion": "4.30.2",
+  "replacementProcedure": {
+    "postgresImage": "ghcr.io/railwayapp-templates/postgres-ssl:18.4",
+    "postgresReplacementName": "phase2e-postgres-r2-20260718",
+    "redisImage": "redis:8.2.1",
+    "redisReplacementName": "phase2e-redis-r2-20260718",
+    "restartPolicyMaxRetries": 3,
+    "restartPolicyType": "ON_FAILURE",
+    "sourceActivationOrder": [
+      "POSTGRESQL_AFTER_PREACTIVATION_GATE",
+      "REDIS_AFTER_POSTGRESQL_FULL_VERIFICATION"
+    ]
+  },
+  "services": [
+    {
+      "credentialState": "COMPROMISED",
+      "deploymentId": "a7940a2c-d7f2-4dbe-9cfd-86655a51def9",
+      "deploymentStatus": "SUCCESS",
+      "id": "b7789306-8aef-4113-add5-02883a6cc087",
+      "image": "ghcr.io/railwayapp-templates/postgres-ssl:18",
+      "kind": "POSTGRESQL",
+      "name": "Postgres",
+      "privateEndpointConfigured": true,
+      "variableNames": [
+        "DATABASE_PUBLIC_URL",
+        "DATABASE_URL",
+        "PGDATA",
+        "PGDATABASE",
+        "PGHOST",
+        "PGPASSWORD",
+        "PGPORT",
+        "PGUSER",
+        "POSTGRES_DB",
+        "POSTGRES_PASSWORD",
+        "POSTGRES_USER",
+        "RAILWAY_DEPLOYMENT_DRAINING_SECONDS",
+        "SSL_CERT_DAYS"
+      ],
+      "volumeId": "35c26093-1e3f-4d34-b699-89c65d2fb92d",
+      "volumeMountPath": "/var/lib/postgresql/data"
+    },
+    {
+      "credentialState": "COMPROMISED",
+      "deploymentId": "cb53e19c-1fb8-43a1-9268-313aed88e44e",
+      "deploymentStatus": "SUCCESS",
+      "id": "434fa5b4-b52c-4caf-aaba-e87c173bf10d",
+      "image": "redis:8.2.1",
+      "kind": "REDIS",
+      "name": "Redis",
+      "privateEndpointConfigured": true,
+      "variableNames": [
+        "REDISHOST",
+        "REDISPASSWORD",
+        "REDISPORT",
+        "REDISUSER",
+        "REDIS_PASSWORD",
+        "REDIS_PUBLIC_URL",
+        "REDIS_URL"
+      ],
+      "volumeId": "d3690500-fcc5-4c06-afa6-cf30e91f608d",
+      "volumeMountPath": "/data"
+    },
+    {
+      "deploymentId": null,
+      "deploymentStatus": null,
+      "id": "febdf999-1c96-48df-8e28-c905b8b27082",
+      "kind": "INACTIVE_VALIDATOR",
+      "name": "phase2e-compatibility-validator-20260718",
+      "variableNames": [
+        "DATABASE_URL"
+      ]
+    },
+    {
+      "deploymentId": null,
+      "deploymentStatus": null,
+      "id": "d8d5181a-2f72-48d7-8413-6f05d113876c",
+      "kind": "INACTIVE_VALIDATOR",
+      "name": "phase2e-migration-validator-20260718",
+      "variableNames": [
+        "DATABASE_URL"
+      ]
+    }
+  ],
+  "targetEnvironmentApplicationState": {
+    "arcanosV2Deployed": false,
+    "arcanosWorkerDeployed": false,
+    "pythonDaemonStarted": false,
+    "validatorDeploymentCount": 0
+  },
+  "valueHandling": {
+    "credentialFingerprintsStored": false,
+    "credentialValueFieldsInspected": false,
+    "credentialValuesPrinted": false,
+    "rawEnvironmentConfigurationStored": false,
+    "rawVariableOutputStored": false
+  }
+}
