@@ -1,0 +1,30 @@
+{
+  "status": "LOCAL_PASS_RAILWAY_PENDING",
+  "reviewedExplicitIndexCount": 4,
+  "reviewedPartialIndexCount": 2,
+  "physicalIndexCountExpectedInIntegration": 22,
+  "structuredChecks": [
+    "current schema and exact table",
+    "B-tree access method",
+    "uniqueness",
+    "exact case-sensitive ordered keys",
+    "no expressions or included attributes",
+    "default sort and null options",
+    "default access-method/type-compatible opclasses",
+    "default column collations",
+    "exact uppercase predicate states",
+    "indisvalid and indisready"
+  ],
+  "rawCreateIndexTextAuthoritative": false,
+  "mutationsRejectedLocally": [
+    "wrong schema or table",
+    "wrong key order or key case",
+    "wrong access method or uniqueness",
+    "expression or included attribute",
+    "nondefault sort, opclass, or collation",
+    "lowercase or extra predicate state",
+    "conjunctive predicate",
+    "invalid or not-ready index"
+  ],
+  "realPostgresql18BehavioralProbesExecuted": false
+}

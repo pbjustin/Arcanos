@@ -1,0 +1,29 @@
+{
+  "status": "PASS_WITH_SYNTHETIC_TEST_FIXTURES",
+  "evidenceFilesScanned": 19,
+  "evidenceCredentialValues": 0,
+  "evidenceConnectionStrings": 0,
+  "evidencePublicUrls": 0,
+  "evidenceDeveloperAbsolutePaths": 0,
+  "evidenceStackFragments": 0,
+  "officialDocumentationUrlsAllowlisted": 1,
+  "changedCorrectiveFilesScanned": 39,
+  "changedCompatibilityFilesScanned": 7,
+  "realCredentialValues": 0,
+  "railwayConnectionStrings": 0,
+  "developerAbsolutePaths": 0,
+  "stackFragments": 0,
+  "syntheticConnectionStringFixtures": {
+    "correctiveTests": 11,
+    "compatibilityTests": 13,
+    "classification": "Locally constructed test-only values; no Railway or operator value is present."
+  },
+  "syntheticPublicUrlFixtures": {
+    "correctiveTests": 1,
+    "compatibilityTests": 1,
+    "classification": "Test-only forbidden-variable inputs; not deployed endpoints."
+  },
+  "rawRailwayVariableOutputStored": false,
+  "providerPayloadStored": false,
+  "sqlBodyStoredInEvidence": false
+}

@@ -1,0 +1,18 @@
+{
+  "railwayInspectionMode": "read-only",
+  "targetEnvironment": "phase2e-validation-20260717",
+  "applicationServicePresentInTarget": false,
+  "workerServicePresentInTarget": false,
+  "pythonExecutorPresentInTarget": false,
+  "activeValidatorDeploymentCount": 0,
+  "publicDomainCount": 0,
+  "tcpProxyCount": 0,
+  "railwayVariableMutation": false,
+  "credentialRotationOrReplacement": false,
+  "railwayDeployment": false,
+  "railwayMigration": false,
+  "productionMutation": false,
+  "phase2dMutation": false,
+  "externalProviderCall": false,
+  "pushOrPullRequest": false
+}

@@ -1,0 +1,64 @@
+{
+  "artifact": "ARCANOS Phase 2E PostgreSQL 18 verifier failure baseline",
+  "date": "2026-07-18",
+  "sourceCommit": "8e428686459fb11117dd04865428af58d8d819fa",
+  "environment": {
+    "name": "phase2e-validation-20260717",
+    "id": "fb99f47d-5ef5-44c1-96c2-acf7b90fab13",
+    "postgresqlVersion": "18.4"
+  },
+  "migration": {
+    "version": "20260717_action_plan_execution_v2",
+    "checksum": "cfa339af4282ce47a955acd08fa3f16e617b4a943111890f1e5b4bd5ba929533",
+    "firstApplyCode": "MIGRATION_SCHEMA_VERIFICATION_FAILED",
+    "ledgerCompletedPhase": "complete",
+    "ledgerValidityState": "FAILED",
+    "ledgerAppliedAtPresent": false,
+    "repeatApplyEquivalent": false
+  },
+  "issues": {
+    "total": 28,
+    "relationalCatalogArrayRepresentation": 17,
+    "postgresql18CheckDeparsing": 7,
+    "partialIndexComparison": 2,
+    "derivedLedgerState": 2
+  },
+  "rootCauses": [
+    "PostgreSQL name-array catalog values were decoded as PostgreSQL array-literal strings while both verifiers expected JavaScript arrays.",
+    "The CHECK canonicalizer retained a redundant singleton AND node after collapsing PostgreSQL 18 expanded bounds into BETWEEN semantics.",
+    "Partial-index definition normalization removed whitespace around WHERE while the comparator depended on that whitespace.",
+    "Ledger invalidity and missing appliedAt were fail-closed consequences of the structural false negatives."
+  ],
+  "physicalCatalog": {
+    "expectedIndexesPresent": 22,
+    "allObservedIndexesValid": true,
+    "allObservedIndexesReady": true
+  },
+  "controlsThatPassed": [
+    "reviewed checksum verification",
+    "checksum-mismatch refusal before additional catalog mutation",
+    "pinned advisory-lock contention refusal",
+    "active-run drain classification",
+    "populated-state compensation refusal",
+    "empty-state compensation with legacy-row preservation",
+    "Phase 2D.1 Prisma scalar read compatibility"
+  ],
+  "compatibilityLimitation": "The prior Phase 2D.1 check exercised generated Prisma scalar reads only; it did not establish bounded legacy repository or application startup compatibility.",
+  "credentialIncident": {
+    "postgresCredentialCompromised": true,
+    "redisCredentialCompromised": true,
+    "valuesStoredInRepository": false,
+    "valuesPresentInThisArtifact": false,
+    "containmentStatus": "PENDING_GATE_R"
+  },
+  "cleanup": {
+    "disposableSchemasRemoved": 5,
+    "phase2eProtocolTablesInPublicSchema": 0,
+    "activeValidatorDeployments": 0,
+    "publicDomains": 0,
+    "tcpProxies": 0,
+    "productionChanged": false,
+    "phase2dChanged": false
+  },
+  "classification": "MIGRATION VALIDATION FAIL"
+}

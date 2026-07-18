@@ -1,0 +1,10 @@
+{
+  "status": "NOT_RUN",
+  "credentialContainmentComplete": false,
+  "validatorDeployed": false,
+  "migrationApplied": false,
+  "runtimeVerifierRun": false,
+  "compatibilityValidatorRun": false,
+  "reason": "Gate R is not ready because no proven private-only replacement procedure exists; Gate G, Gate V, and Gate M are incomplete or unapproved.",
+  "gateD": "NO_GO"
+}

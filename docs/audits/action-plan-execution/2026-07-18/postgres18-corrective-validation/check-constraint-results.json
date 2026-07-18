@@ -1,0 +1,35 @@
+{
+  "status": "LOCAL_PASS_RAILWAY_PENDING",
+  "reviewedCheckCount": 36,
+  "postgresql18ExpandedBetweenCases": 7,
+  "contract": {
+    "identity": true,
+    "tableAndSchema": true,
+    "validated": true,
+    "nonDeferrable": true,
+    "exactReferencedColumnSet": true,
+    "quoteAwareSemanticHash": true,
+    "literalBytesAndCasePreserved": true,
+    "mixedCaseQuotedIdentifiersPreserved": true
+  },
+  "mutationsRejected": [
+    "wrong column or identifier case",
+    "wrong operator",
+    "wrong threshold",
+    "missing allowed state",
+    "extra forbidden state",
+    "changed constant case or value",
+    "changed literal whitespace, comma, escape, or cast-like text",
+    "removed conjunction",
+    "permissive disjunction",
+    "changed null behavior",
+    "changed boolean association",
+    "reversed logic",
+    "semantically meaningful expression type-cast change"
+  ],
+  "reviewedHashCount": 36,
+  "reviewedHashesChanged": 34,
+  "reviewedHashesUnchanged": 2,
+  "canonicalMigrationChanged": false,
+  "realPostgresql18BehavioralProbesExecuted": false
+}

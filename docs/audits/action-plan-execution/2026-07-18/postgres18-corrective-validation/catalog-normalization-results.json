@@ -1,0 +1,27 @@
+{
+  "status": "LOCAL_PASS_RAILWAY_PENDING",
+  "authority": "query-side JSON text",
+  "acceptedRepresentations": [
+    "decoded string array",
+    "JSON text string array",
+    "strict flat PostgreSQL text array"
+  ],
+  "rejectedRepresentations": [
+    "null",
+    "scalar",
+    "mixed array",
+    "dimensioned array",
+    "nested array",
+    "raw NULL element",
+    "malformed delimiter",
+    "unterminated quote or escape"
+  ],
+  "catalogFields": [
+    "constraint columns",
+    "foreign-key referenced columns",
+    "index key columns"
+  ],
+  "liveQueryContract": "Every array-like catalog field is projected with to_json(... )::text before node-postgres decoding.",
+  "dependencyChange": false,
+  "realPostgresql18Executed": false
+}

@@ -1,0 +1,140 @@
+{
+  "status": "LOCAL_CORRECTION_PASS_WITH_EXTERNAL_GATES_PENDING",
+  "codeTargetCommit": "9da198f65162ea9ab9b17c975be8f06c42f3390f",
+  "commands": [
+    {
+      "command": "node scripts/action-plan-execution-migration.mjs --plan",
+      "result": "PASS",
+      "durationSeconds": 0.3,
+      "details": "Checksum exact; no database connection or mutation."
+    },
+    {
+      "command": "focused migration/runtime/validator/history Jest suites with open-handle detection",
+      "result": "PASS",
+      "durationSeconds": 2.7,
+      "passed": 117,
+      "skipped": 2,
+      "details": "The skipped cases require the explicit real PostgreSQL 18 integration target."
+    },
+    {
+      "command": "final four-suite corrective rerun with open-handle detection",
+      "result": "PASS",
+      "durationSeconds": 5.8,
+      "passedSuites": 4,
+      "passedTests": 119,
+      "snapshots": 0
+    },
+    {
+      "command": "three randomized focused repeats",
+      "result": "PASS",
+      "durationSeconds": 7.8,
+      "passedPerRun": 117,
+      "skippedPerRun": 2,
+      "seed": 271828
+    },
+    {
+      "command": "Phase 2D.1 bounded compatibility validator suites with open-handle detection",
+      "result": "PASS",
+      "passed": 42,
+      "durationSeconds": 0.8,
+      "targetCommit": "87900e71143781fd9cdea29de23a4763944fa4d9"
+    },
+    {
+      "command": "npm run type-check",
+      "result": "PASS",
+      "durationSeconds": 17.2
+    },
+    {
+      "command": "npm run lint",
+      "result": "PASS_WITH_PRE_EXISTING_WARNINGS",
+      "durationSeconds": 17.1,
+      "warningCount": 90,
+      "errorCount": 0
+    },
+    {
+      "command": "npm run build",
+      "result": "PASS",
+      "durationSeconds": 22.2
+    },
+    {
+      "command": "npm test",
+      "result": "FAIL_WORKTREE_LINE_ENDING_PORTABILITY",
+      "durationSeconds": 30.4,
+      "passedSuites": 402,
+      "failedSuites": 1,
+      "skippedSuites": 4,
+      "passedTests": 3996,
+      "failedTests": 1,
+      "skippedTests": 6,
+      "details": "The unrelated durable-replay migration-guard test searches for LF-only markers. It fails in this CRLF checkout; the same Git blob passes 8/8 in the LF original worktree. No test was changed or weakened."
+    },
+    {
+      "command": "npm run test:integration",
+      "result": "PASS",
+      "durationSeconds": 11.4,
+      "passedSuites": 5,
+      "skippedSuites": 3,
+      "passedTests": 84,
+      "skippedTests": 3
+    },
+    {
+      "command": "npm run check:boundaries",
+      "result": "PASS",
+      "durationSeconds": 0.9
+    },
+    {
+      "command": "npm run check:cef-layer-access",
+      "result": "PASS",
+      "durationSeconds": 0.9
+    },
+    {
+      "command": "npm run check:routing-boundaries",
+      "result": "PASS",
+      "durationSeconds": 1.0
+    },
+    {
+      "command": "npm run guard:commit",
+      "result": "PASS",
+      "durationSeconds": 1.0
+    },
+    {
+      "command": "npm run validate:railway",
+      "result": "PASS",
+      "durationSeconds": 0.7
+    },
+    {
+      "command": "npm run sync:check",
+      "result": "PASS_WITH_INFO",
+      "durationSeconds": 0.8,
+      "errors": 0,
+      "warnings": 0,
+      "info": 5
+    },
+    {
+      "command": "validate all six validator configs against the official Railway config schema",
+      "result": "PASS",
+      "details": "Plan, apply, migration verify, runtime verify, drain, and PostgreSQL 18 one-shot configs are schema-valid."
+    },
+    {
+      "command": "git diff --check and changed-file scope scan",
+      "result": "PASS",
+      "details": "No whitespace errors, lockfile changes, or canonical migration SQL changes."
+    },
+    {
+      "command": "sanitized evidence JSON and disclosure scan",
+      "result": "PASS",
+      "details": "All 13 JSON artifacts parse; 19 evidence files contain zero credential values, connection strings, runtime public endpoints, developer paths, or stack fragments."
+    },
+    {
+      "command": "Madge circular comparison against starting commit worktree",
+      "result": "PASS_NO_GROWTH",
+      "before": 63,
+      "after": 63
+    }
+  ],
+  "realPostgresql18Executed": false,
+  "pythonRegressionRun": false,
+  "pythonRegressionReason": "No Python or shared protocol artifact changed.",
+  "providerCalls": 0,
+  "railwayMutations": 0
+}

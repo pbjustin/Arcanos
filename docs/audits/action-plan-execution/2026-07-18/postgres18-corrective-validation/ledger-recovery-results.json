@@ -1,0 +1,15 @@
+{
+  "status": "LOCAL_PASS_WITH_LIMITATION_RAILWAY_PENDING",
+  "freshApply": "DDL then full verification; appliedAt commits only with VALID",
+  "failedVerification": "complete / FAILED / appliedAt null",
+  "sameChecksumRecovery": "verification-only when the physical schema is already complete",
+  "completeRerun": "full re-verification and no duplicate DDL",
+  "checksumConflict": "refused before DDL",
+  "crashRecovery": "RECOVERING_INVALID_INDEX resumes the exact allowlisted concurrent-index phase",
+  "repeatedRepairFailure": "A second allowlisted index-repair failure remains RECOVERING_INVALID_INDEX and a later same-checksum invocation resumes successfully.",
+  "transactionalPromotion": true,
+  "duplicateLedgerIdentityPrevented": true,
+  "databaseResidentAttemptHistory": false,
+  "historyLimitation": "The reviewed canonical ledger has one current-state row and no attempt counter. Same-checksum recovery overwrites that current state, and a later verification failure clears appliedAt. The known first failure is preserved only in failure-baseline.json; a durable generic attempt history requires a separately approved additive schema artifact. This remains a Gate M blocker.",
+  "realPostgresql18Executed": false
+}
