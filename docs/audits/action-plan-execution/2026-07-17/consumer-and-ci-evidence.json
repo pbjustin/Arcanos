@@ -1,0 +1,71 @@
+{
+  "artifact": "ARCANOS Phase 2E consumer compatibility and GitHub CI evidence",
+  "capturedDate": "2026-07-17",
+  "callers": [
+    {
+      "classification": "production result caller",
+      "path": "daemon-python/arcanos/action_plan_handler.py",
+      "surface": "POST /plans/:planId/execute"
+    },
+    {
+      "classification": "public result facade; no internal call site; external use unknown",
+      "path": "daemon-python/arcanos/backend_client/plans.py",
+      "surface": "POST /plans/:planId/execute"
+    },
+    {
+      "classification": "canonical daemon dispatcher",
+      "path": "daemon-python/arcanos/cli/daemon_ops.py",
+      "surface": "action_plan command -> Python result caller -> daemon acknowledgement"
+    },
+    {
+      "classification": "legacy daemon dispatcher",
+      "path": "daemon-python/arcanos/cli_daemon.py",
+      "surface": "action_plan command -> Python result caller -> daemon acknowledgement"
+    },
+    {
+      "classification": "HTTP command handler; not a caller",
+      "path": "src/routes/plans.ts",
+      "surface": "POST /plans/:planId/execute"
+    },
+    {
+      "classification": "MCP command handler; external clients unknown",
+      "path": "src/mcp/server/index.ts",
+      "surface": "plans.execute"
+    }
+  ],
+  "github": {
+    "autoDeployEvidence": {
+      "ciRunId": 29525674138,
+      "headCommit": "7f2a85c1c7c2338f8e472482d1b43bf9d0cf3f41",
+      "railwayAutoDeployRunId": 29526248734,
+      "result": "success",
+      "trigger": "successful main CI workflow_run"
+    },
+    "branchProtection": false,
+    "defaultBranch": "main",
+    "openPullRequests": 0,
+    "repository": "pbjustin/Arcanos",
+    "repositoryVisibility": "public",
+    "rulesets": 0
+  },
+  "packageDistribution": {
+    "consoleEntryPoint": "arcanos = arcanos.cli:main",
+    "githubReleases": 0,
+    "packageName": "arcanos",
+    "packageVersion": "1.1.2",
+    "publicationProven": false,
+    "publicSourceDistributable": true,
+    "publicUseOutsideRepository": "unknown",
+    "releaseWorkflowPublishesPythonPackage": false
+  },
+  "productionCommandCallersFound": 0,
+  "productionResultCallersFound": 1,
+  "releaseRisk": "A push or merge to main can trigger a demonstrated automatic production Railway deployment. Phase 2E must not be pushed or merged without separate Gate F approval.",
+  "requiredCompatibilityPosition": {
+    "activeLegacyClients": "unknown",
+    "legacyResultFallbackAllowed": false,
+    "phase2eCapabilityNegotiationRequired": true,
+    "resultShapedExecuteRequest": "reject without dispatch",
+    "unsupportedBackendBehavior": "fail closed"
+  }
+}

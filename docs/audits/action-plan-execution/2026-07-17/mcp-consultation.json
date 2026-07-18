@@ -1,0 +1,88 @@
+{
+  "artifact": "ARCANOS Phase 2E MCP consultation status and independent advisory review",
+  "capturedDate": "2026-07-17",
+  "commands": [
+    "codex mcp --help",
+    "codex mcp -c model_reasoning_effort=\"xhigh\" list"
+  ],
+  "consultation": {
+    "arcanosBackendAiCalled": false,
+    "reason": "The configured ARCANOS stdio command first reads the real Railway OPENAI_API_KEY and starts an OpenAI-initialized MCP server. No documented architecture-review tool is both advisory and read-only. Launching or calling an unknown tool would violate the safe-use boundary.",
+    "safeAdvisoryToolAvailable": false,
+    "serverConfigured": true
+  },
+  "gateAIndependentReviewResult": {
+    "authorityAndProvenance": "go",
+    "persistenceAndMigrationDesign": "go",
+    "protocolAndDeliveryDesign": "go",
+    "remainingBlockers": 0,
+    "scope": "static design review only; implementation, migration, Railway, push, and production remain separately gated"
+  },
+  "independentReview": [
+    {
+      "finding": "Durable server-selected ownership must exist before any action side effect. A unique constraint without a conditional state transition is insufficient.",
+      "recommendations": [
+        "Create one authoritative run per action before execution.",
+        "Claim through a database compare-and-swap transition.",
+        "Perform zero execution before the owner and realm are durable."
+      ],
+      "reviewKind": "sub-agent advisory; not ARCANOS backend-AI output"
+    },
+    {
+      "finding": "Result authentication and replay must resolve all authority from the stored run plus authenticated context.",
+      "recommendations": [
+        "Do not trust owner, executor kind, realm, plan, lifecycle, or CLEAR fields from a result body.",
+        "Finalize an allowed active run state through compare-and-swap.",
+        "Return exact replay and conflicting replay deterministically without overwriting terminal evidence."
+      ],
+      "reviewKind": "sub-agent advisory; not ARCANOS backend-AI output"
+    },
+    {
+      "finding": "Python acknowledgement must mean durable protocol acceptance, not merely handler return.",
+      "recommendations": [
+        "Retain run and idempotency identity across retries.",
+        "Acknowledge only accepted or proven idempotent terminal results.",
+        "Never fall back to result-through-/execute on an old or incompatible backend."
+      ],
+      "reviewKind": "sub-agent advisory; not ARCANOS backend-AI output"
+    },
+    {
+      "finding": "The initial proposal created requested runs but defined no authenticated way for Python to discover them.",
+      "recommendations": [
+        "Use an executor-only atomic claim-next operation backed by durable run rows.",
+        "Do not reuse the anonymous in-memory daemon queue.",
+        "Recheck lifecycle, CLEAR, generation, executor assignment, and snapshot before returning executable work."
+      ],
+      "reviewKind": "independent sub-agent adversarial review; incorporated into Gate A revision"
+    },
+    {
+      "finding": "New endpoint authentication would remain bypassable while legacy plan reads, result reads, lifecycle mutations, and agent-capability mutations stayed anonymous.",
+      "recommendations": [
+        "Authenticate or disable every equivalent legacy ActionPlan surface when Phase 2E is deployed.",
+        "Bind new plan provenance to realm and authenticated requester.",
+        "Omit destructive ActionPlan tools from MCP contexts without an authenticated principal."
+      ],
+      "reviewKind": "independent sub-agent authority review; incorporated into Gate A revision"
+    },
+    {
+      "finding": "A public digest over arbitrary command parameters cannot substantiate secret exclusion or immutable cross-language semantics.",
+      "recommendations": [
+        "Persist one bounded immutable server-side snapshot per action run.",
+        "Expose only an opaque snapshot identifier for result binding.",
+        "Check snapshot and plan generation again before start and aggregation."
+      ],
+      "reviewKind": "independent sub-agent authority review; incorporated into Gate A revision"
+    },
+    {
+      "finding": "Runtime bootstrap is not a safe migration authority because web and worker both execute sequential DDL and startup may continue after failure.",
+      "recommendations": [
+        "Apply Phase 2E DDL once through a checksummed out-of-band migration.",
+        "Make ordinary startup perform read-only schema verification only.",
+        "Require drain/no-overlap rollout and rollback with zero unresolved nonterminal runs."
+      ],
+      "reviewKind": "independent sub-agent persistence review; incorporated into Gate A revision"
+    }
+  ],
+  "mutationsPerformed": false,
+  "rawSensitiveOutputRecorded": false
+}

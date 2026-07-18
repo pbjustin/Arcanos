@@ -1,0 +1,202 @@
+{
+  "artifact": "ARCANOS Phase 2E read-only Railway topology and authentication evidence",
+  "capturedDate": "2026-07-17",
+  "cliVersion": "4.30.2",
+  "commands": [
+    "railway --help",
+    "railway status --json",
+    "railway environment config --json",
+    "railway variables --service <service> --environment <environment> --json",
+    "railway deployment list --service <service> --environment <environment> --limit <bounded> --json",
+    "railway logs --service <service> --environment <environment> --lines <bounded> --json",
+    "GET <web-origin>/healthz",
+    "GET <web-origin>/readyz",
+    "GET <web-origin>/plans/<synthetic-nonexistent-id>",
+    "GET <web-origin>/plans/<synthetic-nonexistent-id>/results",
+    "OPTIONS <web-origin>/plans/<synthetic-nonexistent-id>/execute"
+  ],
+  "deploymentOccurred": false,
+  "environments": [
+    {
+      "id": "50a92b12-048a-4fec-8bff-282a72267920",
+      "name": "phase2d-validation-20260717"
+    },
+    {
+      "id": "fb583147-6c39-4343-9267-500f357d25ab",
+      "name": "production"
+    }
+  ],
+  "logInspection": {
+    "rawMessagesRetained": false,
+    "scans": [
+      {
+        "actionPlanMatches": 34,
+        "authFailureMatches": 1,
+        "disclosureMarkerMatches": 0,
+        "duplicateExecutionMatches": 0,
+        "environment": "phase2d-validation-20260717",
+        "errorRecords": 2,
+        "lifecycleConflictMatches": 2,
+        "records": 523,
+        "resultSubmissionMatches": 0,
+        "service": "ARCANOS V2",
+        "warningRecords": 13
+      },
+      {
+        "actionPlanMatches": 0,
+        "authFailureMatches": 0,
+        "disclosureMarkerMatches": 0,
+        "duplicateExecutionMatches": 0,
+        "environment": "phase2d-validation-20260717",
+        "errorRecords": 0,
+        "lifecycleConflictMatches": 0,
+        "records": 1000,
+        "resultSubmissionMatches": 0,
+        "service": "ARCANOS Worker",
+        "warningRecords": 0
+      },
+      {
+        "actionPlanMatches": 6,
+        "authFailureMatches": 0,
+        "disclosureMarkerMatches": 0,
+        "duplicateExecutionMatches": 0,
+        "environment": "production",
+        "errorRecords": 0,
+        "lifecycleConflictMatches": 0,
+        "records": 1000,
+        "resultSubmissionMatches": 0,
+        "service": "ARCANOS V2",
+        "warningRecords": 1
+      },
+      {
+        "actionPlanMatches": 0,
+        "authFailureMatches": 0,
+        "disclosureMarkerMatches": 0,
+        "duplicateExecutionMatches": 0,
+        "environment": "production",
+        "errorRecords": 0,
+        "lifecycleConflictMatches": 0,
+        "records": 1000,
+        "resultSubmissionMatches": 0,
+        "service": "ARCANOS Worker",
+        "warningRecords": 16
+      }
+    ]
+  },
+  "mutationChecks": {
+    "databaseOrRedisConnectedManually": false,
+    "deploymentCreated": false,
+    "protectedMutationEndpointCalled": false,
+    "railwayConfigurationChanged": false,
+    "serviceRestarted": false,
+    "variableChanged": false
+  },
+  "project": {
+    "id": "7faf44e5-519c-4e73-8d7a-da9f389e6187",
+    "name": "Arcanos"
+  },
+  "reachability": [
+    {
+      "environment": "phase2d-validation-20260717",
+      "healthzStatus": 200,
+      "nonexistentPlanResultsStatus": 200,
+      "nonexistentPlanStatus": 404,
+      "optionsExecuteAllow": "POST",
+      "optionsExecuteStatus": 200,
+      "origin": "https://arcanos-v2-phase2d-validation-20260717.up.railway.app",
+      "readyzStatus": 200,
+      "responseBodiesRetained": false
+    },
+    {
+      "environment": "production",
+      "healthzStatus": 200,
+      "nonexistentPlanResultsStatus": 200,
+      "nonexistentPlanStatus": 404,
+      "optionsExecuteAllow": "POST",
+      "optionsExecuteStatus": 200,
+      "origin": "https://acranos-production.up.railway.app",
+      "readyzStatus": 200,
+      "responseBodiesRetained": false
+    }
+  ],
+  "runtimeConclusion": {
+    "actionPlanHttpReachableWithoutAuthChallenge": true,
+    "actionPlanResultReadReachableWithoutAuthChallenge": true,
+    "pythonDaemonRunsAsRailwayExecutionOwner": false,
+    "resultSubmissionEvidenceInBoundedLogs": false,
+    "typescriptWebOwnsHttpAndMcpAdapters": true,
+    "typescriptWorkerOwnsActionPlanExecution": false
+  },
+  "services": [
+    {
+      "activeDeploymentId": "4346ccc0-9154-4a96-b746-66a9b0a21db9",
+      "environment": "phase2d-validation-20260717",
+      "id": "c4ade025-3f13-4fca-9309-5d0dd81396fe",
+      "name": "ARCANOS V2",
+      "role": "public web/API",
+      "status": "SUCCESS"
+    },
+    {
+      "activeDeploymentId": "a4f59b9c-1fc0-4fac-a72c-76a9a5f905aa",
+      "environment": "phase2d-validation-20260717",
+      "id": "1765befb-b805-4051-9af9-28634e986886",
+      "name": "ARCANOS Worker",
+      "role": "dedicated worker",
+      "status": "SUCCESS"
+    },
+    {
+      "activeDeploymentId": "d5b83b36-7cd3-476d-a565-9ddeda807fe6",
+      "deploymentCommit": "7f2a85c1c7c2338f8e472482d1b43bf9d0cf3f41",
+      "environment": "production",
+      "id": "c4ade025-3f13-4fca-9309-5d0dd81396fe",
+      "name": "ARCANOS V2",
+      "role": "public web/API",
+      "status": "SUCCESS"
+    },
+    {
+      "activeDeploymentId": "a2563dec-7c6b-461c-ba0b-304cf7deb4dc",
+      "deploymentCommit": "7f2a85c1c7c2338f8e472482d1b43bf9d0cf3f41",
+      "environment": "production",
+      "id": "1765befb-b805-4051-9af9-28634e986886",
+      "name": "ARCANOS Worker",
+      "role": "dedicated worker",
+      "status": "SUCCESS"
+    },
+    {
+      "id": "6647b5b1-d796-4783-b5f0-b8e356019ca6",
+      "name": "Postgres-BTrN",
+      "privateEndpoint": "postgres-btrn:5432",
+      "role": "environment-scoped database"
+    },
+    {
+      "id": "81e4a1cf-7ae4-48bf-8321-23641bb23c0e",
+      "name": "Redis-lQbV",
+      "privateEndpoint": "redis-lqbv:6379",
+      "role": "environment-scoped cache"
+    }
+  ],
+  "valuesRecorded": false,
+  "variablePresence": {
+    "presentAllInspectedWebAndWorkerServices": [
+      "ARCANOS_GPT_ACCESS_TOKEN",
+      "ARCANOS_PROCESS_KIND",
+      "DATABASE_URL",
+      "MCP_BEARER_TOKEN",
+      "OPENAI_ACTION_SHARED_SECRET",
+      "REDIS_URL",
+      "RUN_WORKERS"
+    ],
+    "presentWebOnly": [
+      "ARCANOS_ADMIN_TOKEN"
+    ],
+    "unsetAllInspectedServices": [
+      "ACTION_PLAN_CLAIM_TOKEN",
+      "ACTION_PLAN_COMMAND_TOKEN",
+      "ACTION_PLAN_READ_TOKEN",
+      "ACTION_PLAN_RESULT_TOKEN",
+      "ACTION_PLAN_RETRY_TOKEN",
+      "ARCANOS_WORKER_HELPER_TOKEN",
+      "DAEMON_DEFAULT_TOKEN"
+    ]
+  }
+}
