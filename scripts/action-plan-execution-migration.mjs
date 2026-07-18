@@ -984,6 +984,9 @@ export function assertLocalEphemeralConnectionString(connectionString) {
   if (!['postgres:', 'postgresql:'].includes(parsed.protocol)) {
     throw new MigrationError('MIGRATION_DATABASE_PROTOCOL_INVALID');
   }
+  if (parsed.search.length > 0 || parsed.hash.length > 0) {
+    throw new MigrationError('MIGRATION_DATABASE_OPTIONS_FORBIDDEN');
+  }
   const hostname = parsed.hostname.toLowerCase();
   if (!['localhost', '127.0.0.1', '[::1]', '::1'].includes(hostname)) {
     throw new MigrationError('MIGRATION_DATABASE_NOT_LOOPBACK');
@@ -1688,6 +1691,7 @@ const FAILURE_CODES_BEFORE_MUTATION = new Set([
   'MIGRATION_DATABASE_ENV_MISSING',
   'MIGRATION_DATABASE_URL_INVALID',
   'MIGRATION_DATABASE_PROTOCOL_INVALID',
+  'MIGRATION_DATABASE_OPTIONS_FORBIDDEN',
   'MIGRATION_DATABASE_NOT_LOOPBACK',
   'MIGRATION_DATABASE_NOT_EXPLICIT_EPHEMERAL',
   'MIGRATION_ARTIFACT_VALIDATION_FAILED',

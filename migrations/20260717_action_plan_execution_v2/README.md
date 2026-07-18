@@ -57,7 +57,9 @@ wire value at its exact limit.
 
 Set `ACTION_PLAN_EXECUTION_MIGRATION_DATABASE_URL` in the invoking process. The
 tool accepts only a loopback PostgreSQL URL whose database name matches
-`arcanos_phase2e_*`. It never reads the ordinary application `DATABASE_URL`.
+`arcanos_phase2e_*`. Query parameters and fragments are forbidden so the
+PostgreSQL client cannot override the validated host, port, socket, or database.
+The tool never reads the ordinary application `DATABASE_URL`.
 
 ```text
 npm run db:action-plan-execution:plan

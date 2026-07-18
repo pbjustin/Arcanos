@@ -360,6 +360,23 @@ describe('Phase 2E additive execution schema', () => {
     )).toEqual({ hostname: 'loopback', databaseName: 'arcanos_phase2e_test' });
   });
 
+  it('rejects connection options that could override the validated local target', async () => {
+    const migration = await loadMigrationModule();
+    const base = 'postgresql://user:sentinel@127.0.0.1:5432/arcanos_phase2e_test';
+
+    for (const suffix of [
+      '?host=db.example.test',
+      '?hostaddr=203.0.113.10',
+      '?port=6543',
+      '?socket=%2Fvar%2Frun%2Fpostgresql',
+      '?sslmode=disable',
+      '#connection-options',
+    ]) {
+      expect(() => migration.assertLocalEphemeralConnectionString(`${base}${suffix}`))
+        .toThrow('MIGRATION_DATABASE_OPTIONS_FORBIDDEN');
+    }
+  });
+
   it('fails closed before opening a connection without both local confirmation and the dedicated env', () => {
     const env = { ...process.env };
     delete env.ACTION_PLAN_EXECUTION_MIGRATION_DATABASE_URL;
