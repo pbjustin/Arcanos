@@ -414,6 +414,64 @@ describe('PostgreSQL 18 ActionPlan runtime schema verification', () => {
   });
 
   it.each([
+    ['numeric expression cast', 'ck_ap_exec_run_snapshot_shape', '::NUMERIC', '::INTEGER'],
+    [
+      'result expression cast',
+      'ck_ap_exec_run_result_bounds',
+      '"resultOutput"::TEXT',
+      '"resultOutput"::VARCHAR'
+    ]
+  ])('rejects a CHECK with a changed %s', async (_label, name, from, to) => {
+    const catalog = new PostgreSql18Catalog();
+    const reviewedDefinition = reviewedCheckDefinitions.get(name);
+    expect(reviewedDefinition).toBeDefined();
+    const mutation = reviewedDefinition!.replace(from, to);
+    expect(mutation).not.toBe(reviewedDefinition);
+    catalog.constraintOverrides.set(name, { definition: mutation });
+
+    await expect(verifyActionPlanExecutionSchema(catalog)).resolves.toMatchObject({
+      ready: false,
+      issues: [`SCHEMA_CONSTRAINT_DEFINITION_INVALID:${name}`]
+    });
+  });
+
+  it.each([
+    ['wrong column', 'ck_ap_exec_migration_version', 'char_length("version")', 'char_length("checksum")'],
+    ['missing allowed state', 'ck_ap_exec_migration_state', ", 'VALID'", ''],
+    ['extra forbidden state', 'ck_ap_exec_migration_state', ", 'VALID')", ", 'VALID', 'UNKNOWN')"],
+    [
+      'changed null handling',
+      'ck_ap_exec_event_identifiers',
+      '"requestId" IS NULL OR',
+      '"requestId" IS NOT NULL OR'
+    ],
+    [
+      'reversed logic',
+      'ck_action_plan_execution_provenance_v2',
+      'OR',
+      'AND'
+    ],
+    [
+      'removed conjunction',
+      'ck_ap_exec_command_id',
+      ' AND char_length("planId") BETWEEN 1 AND 128',
+      ''
+    ]
+  ])('rejects a CHECK semantic mutation: %s', async (_label, name, from, to) => {
+    const catalog = new PostgreSql18Catalog();
+    const reviewedDefinition = reviewedCheckDefinitions.get(name);
+    expect(reviewedDefinition).toBeDefined();
+    const mutation = reviewedDefinition!.replace(from, to);
+    expect(mutation).not.toBe(reviewedDefinition);
+    catalog.constraintOverrides.set(name, { definition: mutation });
+
+    await expect(verifyActionPlanExecutionSchema(catalog)).resolves.toMatchObject({
+      ready: false,
+      issues: [`SCHEMA_CONSTRAINT_DEFINITION_INVALID:${name}`]
+    });
+  });
+
+  it.each([
     ['wrong schema', { schema_matches: false }],
     ['wrong table', { table_name: 'ActionPlanExecutionEvent' }],
     ['wrong access method', { access_method: 'hash' }],

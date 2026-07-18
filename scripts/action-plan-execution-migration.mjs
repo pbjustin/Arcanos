@@ -570,12 +570,12 @@ const EXPECTED_CHECK_DEFINITION_HASHES = {
   ck_ap_exec_run_assignment: '6345801f79376017ad0ebf82b2b3cdaabe64e626fea0e65a9d0f5f26c8f5c245',
   ck_ap_exec_run_snapshot_id: '37201450d3b39d5f3b75849a8269448e69ce4f2887790833a74a2622464d873d',
   ck_ap_exec_run_snapshot_version: '5b12b718e249fa2c41bb1b0dbeca3cfd6f3e5c103f4195fe047c941aea51d94e',
-  ck_ap_exec_run_snapshot: 'f175cca68fe5575cbf044832fa00d153d6323e8ff2cf69e11c94ca0682919404',
-  ck_ap_exec_run_snapshot_shape: 'b75e2a6afb1e1a48f4da8f5c02ad89828f03d3ad06fa77ca152207104c83e96d',
+  ck_ap_exec_run_snapshot: '68f0336f96db55aff39fbba2f99ee97ef3c4a8b6ceb62e313c5aad1ae8bba1f0',
+  ck_ap_exec_run_snapshot_shape: '9c8e7a3fb7e770468554f47f702a25ff7ded1b2ac075024b0a22fa0a2633d1fe',
   ck_ap_exec_run_hashes: '1334c164956834d1c1a1b278becd4ec7876d6d090f293fef0f33a6db2a5b816e',
   ck_ap_exec_run_policy: '87d8fa86c20a1fb33695f3852493815381eb263d0a3593bc39cf45148d9c065f',
   ck_ap_exec_run_sequence: '14599d2eb1a346c353f3479011cf263c87bd5f245e06041f09893ceb426a0213',
-  ck_ap_exec_run_result_bounds: '10ca14c20d760c57b028bfa4811cbd6456012f36d10c3fe16a73a3622a1ae80f',
+  ck_ap_exec_run_result_bounds: '127ce6a3d596cd6e3dc5acaedea8730d1c571f32d40dc00f086f337bb75dcfd0',
   ck_ap_exec_run_claim_group: 'bc0b941d7ad645991b06861d0a474b022f9577d67559b225faf3eb4d15ad1940',
   ck_ap_exec_run_start_group: 'b17050d978fd59bd44b6ee43e0c661efaa66d7511143736eab9c7b79cfa553c1',
   ck_ap_exec_run_result_group: '4cfd876a9b5c30bc1dfc63bd0c28a25a5ef041a4374f01a4eaee566b29936907',
@@ -586,7 +586,7 @@ const EXPECTED_CHECK_DEFINITION_HASHES = {
   ck_ap_exec_event_actor: '88e014053da01d10bb46d93c9aa5cdcd5f10ff4fa4672ee8e533fe602e271e87',
   ck_ap_exec_event_source: '3b320960ce5eec6cd88cabcdada811549ae6fb8bbd719d69ea272cd6216b8b45',
   ck_ap_exec_event_identifiers: '46ea843115ee2f5c8b0b2a230788194e5f793e6473033f7be899e664fa5b5d7e',
-  ck_ap_exec_event_metadata: '300c1ba7c7178569d4af9c314fbe8551472c6f7b994be874840707220c302647',
+  ck_ap_exec_event_metadata: '559e64bec811966e261e1473ea71a31f52433ebc65b9055ffcb6ca6201dc99f0',
 };
 
 const EXPECTED_RELATIONAL_CONSTRAINT_SPECS = {
@@ -764,12 +764,7 @@ function rewriteSqlSegments(value, rewriteUnquoted, rewriteDoubleQuoted = (segme
 function normalizeDefinition(value) {
   const normalizedIdentifiers = rewriteSqlSegments(
     String(value ?? ''),
-    (segment) => segment
-      .toLowerCase()
-      .replace(
-        /::\s*(?:character varying|timestamp with time zone|bigint|integer|numeric|text|jsonb)\b/giu,
-        '',
-      ),
+    (segment) => segment.toLowerCase(),
     (segment, closed) => {
       if (!closed) return segment;
       const identifier = segment.slice(1, -1);
@@ -780,8 +775,12 @@ function normalizeDefinition(value) {
         : segment;
     },
   );
+  const normalizedLiteralCasts = normalizedIdentifiers.replace(
+    /('(?:''|[^'])*')::\s*(?:character varying|text)\b/giu,
+    '$1',
+  );
   return rewriteSqlSegments(
-    normalizedIdentifiers,
+    normalizedLiteralCasts,
     (segment) => segment
       .replace(/\s+/gu, ' ')
       .replace(/\s*([\[\](),])\s*/gu, '$1'),
@@ -1906,7 +1905,10 @@ export async function applyMigrationWithClient(client, {
     if (lastCompletedPhase) {
       try {
         if (await relationExists(client, 'ActionPlanExecutionSchemaMigration')) {
-          await writeLedger(client, manifest, lastCompletedPhase, 'FAILED');
+          const failureLedger = await readLedger(client, manifest);
+          if (failureLedger?.validityState !== 'RECOVERING_INVALID_INDEX') {
+            await writeLedger(client, manifest, lastCompletedPhase, 'FAILED');
+          }
         }
       } catch {
         // The original failure remains authoritative; checksum conflicts are not overwritten.

@@ -463,6 +463,20 @@ describe('Phase 2E additive execution schema', () => {
         migration.checkDefinitionHash(reviewed)
       );
     }
+
+    const reviewedDefinitions = migration.loadReviewedCheckDefinitions();
+    for (const [name, from, to] of [
+      ['ck_ap_exec_run_snapshot_shape', '::NUMERIC', '::INTEGER'],
+      ['ck_ap_exec_run_result_bounds', '"resultOutput"::TEXT', '"resultOutput"::VARCHAR'],
+    ]) {
+      const reviewed = reviewedDefinitions.get(name);
+      expect(reviewed).toBeDefined();
+      const mutation = reviewed!.replace(from, to);
+      expect(mutation).not.toBe(reviewed);
+      expect(migration.checkDefinitionHash(mutation)).not.toBe(
+        migration.checkDefinitionHash(reviewed),
+      );
+    }
   });
 
   it('keeps Phase 2E DDL out of ordinary runtime table initialization', () => {
@@ -735,6 +749,47 @@ describe('Phase 2E additive execution schema', () => {
     expect(client.calls.some(call =>
       call.text === `REINDEX INDEX CONCURRENTLY "${recoveringPhase!.concurrentIndex}"`
     )).toBe(true);
+  });
+
+  it('preserves concurrent-index recovery state across a repeated repair failure', async () => {
+    const migration = await loadMigrationModule();
+    const manifest = migration.loadMigrationManifest();
+    const recoveringPhase = manifest.phases.find(phase => phase.concurrentIndex);
+    expect(recoveringPhase).toBeDefined();
+    const client = new FakeMigrationClient(migration.ACTION_PLAN_EXECUTION_SCHEMA_REQUIREMENTS);
+    client.ledgerExists = true;
+    client.ledger = {
+      checksum: manifest.checksum,
+      completedPhase: recoveringPhase!.id,
+      validityState: 'RECOVERING_INVALID_INDEX',
+      appliedAt: null
+    };
+    client.indexes.set(recoveringPhase!.concurrentIndex!, { valid: false, ready: false });
+    client.failOnSql = `REINDEX INDEX CONCURRENTLY "${recoveringPhase!.concurrentIndex}"`;
+
+    await expect(migration.applyMigrationWithClient(client)).rejects.toThrow(
+      'MIGRATION_TEST_PRIMARY_FAILURE'
+    );
+    expect(client.ledger).toEqual({
+      checksum: manifest.checksum,
+      completedPhase: recoveringPhase!.id,
+      validityState: 'RECOVERING_INVALID_INDEX',
+      appliedAt: null
+    });
+
+    client.failOnSql = null;
+    const callsBeforeRetry = client.calls.length;
+    await expect(migration.applyMigrationWithClient(client)).resolves.toMatchObject({
+      ready: true,
+      applied: true
+    });
+    expect(client.calls.slice(callsBeforeRetry).some(call =>
+      call.text === `REINDEX INDEX CONCURRENTLY "${recoveringPhase!.concurrentIndex}"`
+    )).toBe(true);
+    expect(client.ledger).toMatchObject({
+      completedPhase: 'complete',
+      validityState: 'VALID'
+    });
   });
 
   it('rejects RECOVERING_INVALID_INDEX on a transactional phase without mutation', async () => {
