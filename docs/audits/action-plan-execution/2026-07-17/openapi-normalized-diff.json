@@ -1,0 +1,149 @@
+{
+  "artifact_schema_version": 1,
+  "baseline": {
+    "commit": "5e8ef46f48adea6eca82b4fd919821c939cca6c6",
+    "dedicated_action_plan_execution_openapi_document_present": false,
+    "observation": "The approved Phase 2E baseline had no dedicated ActionPlan execution OpenAPI document.",
+    "verification_command": "git ls-tree -r --name-only 5e8ef46f48adea6eca82b4fd919821c939cca6c6"
+  },
+  "normalization": {
+    "path_order": "lexicographic ascending",
+    "method_order": "lexicographic ascending",
+    "operation_id_order": "lexicographic ascending",
+    "security_scheme_order": "lexicographic ascending",
+    "excluded_from_comparison": [
+      "descriptions",
+      "examples",
+      "schema property order"
+    ]
+  },
+  "before": {
+    "document": null,
+    "paths": [],
+    "operation_ids": [],
+    "security_schemes": []
+  },
+  "after": {
+    "document": "contracts/action_plan_execution.openapi.v1.json",
+    "openapi": "3.1.0",
+    "paths": [
+      {
+        "path": "/action-plan-executions/claim-next",
+        "methods": [
+          {
+            "method": "post",
+            "operation_id": "claimNextActionPlanExecution",
+            "security": [
+              "ActionPlanExecutorBearer"
+            ]
+          }
+        ]
+      },
+      {
+        "path": "/action-plan-executions/protocol",
+        "methods": [
+          {
+            "method": "get",
+            "operation_id": "getActionPlanExecutionProtocol",
+            "security": [
+              "ActionPlanExecutorBearer",
+              "ActionPlanOperatorBearer",
+              "ActionPlanRequesterBearer"
+            ]
+          }
+        ]
+      },
+      {
+        "path": "/plans/{planId}/execute",
+        "methods": [
+          {
+            "method": "post",
+            "operation_id": "requestActionPlanExecution",
+            "security": [
+              "ActionPlanOperatorBearer",
+              "ActionPlanRequesterBearer"
+            ]
+          }
+        ]
+      },
+      {
+        "path": "/plans/{planId}/executions/{runId}",
+        "methods": [
+          {
+            "method": "get",
+            "operation_id": "getActionPlanExecution",
+            "security": [
+              "ActionPlanExecutorBearer",
+              "ActionPlanOperatorBearer",
+              "ActionPlanRequesterBearer"
+            ]
+          }
+        ]
+      },
+      {
+        "path": "/plans/{planId}/executions/{runId}/claim",
+        "methods": [
+          {
+            "method": "post",
+            "operation_id": "claimActionPlanExecution",
+            "security": [
+              "ActionPlanExecutorBearer"
+            ]
+          }
+        ]
+      },
+      {
+        "path": "/plans/{planId}/executions/{runId}/result",
+        "methods": [
+          {
+            "method": "get",
+            "operation_id": "getActionPlanExecutionResult",
+            "security": [
+              "ActionPlanExecutorBearer",
+              "ActionPlanOperatorBearer",
+              "ActionPlanRequesterBearer"
+            ]
+          },
+          {
+            "method": "post",
+            "operation_id": "submitActionPlanExecutionResult",
+            "security": [
+              "ActionPlanExecutorBearer"
+            ]
+          }
+        ]
+      },
+      {
+        "path": "/plans/{planId}/executions/{runId}/start",
+        "methods": [
+          {
+            "method": "post",
+            "operation_id": "startActionPlanExecution",
+            "security": [
+              "ActionPlanExecutorBearer"
+            ]
+          }
+        ]
+      }
+    ],
+    "operation_ids": [
+      "claimActionPlanExecution",
+      "claimNextActionPlanExecution",
+      "getActionPlanExecution",
+      "getActionPlanExecutionProtocol",
+      "getActionPlanExecutionResult",
+      "requestActionPlanExecution",
+      "startActionPlanExecution",
+      "submitActionPlanExecutionResult"
+    ],
+    "security_schemes": [
+      "ActionPlanExecutorBearer",
+      "ActionPlanOperatorBearer",
+      "ActionPlanRequesterBearer"
+    ]
+  },
+  "validation": {
+    "test": "tests/openapi/action-plan-execution.contract.test.ts",
+    "command": "node scripts/run-jest.mjs --testPathPatterns=openapi/action-plan-execution.contract --coverage=false --runInBand"
+  }
+}

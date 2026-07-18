@@ -1,0 +1,220 @@
+{
+  "artifact": "ARCANOS Phase 2E local implementation and validation evidence",
+  "authorization": {
+    "additiveMigrationGate": "approved",
+    "approvalCommit": "5e8ef46f48adea6eca82b4fd919821c939cca6c6",
+    "approvalScope": "local implementation, local artifacts, local tests, and dedicated local-ephemeral PostgreSQL migration tests only",
+    "gateA": "approved",
+    "notAuthorized": [
+      "credential configuration or rotation",
+      "executor activation",
+      "external-provider calls",
+      "merge",
+      "migration application outside a dedicated local ephemeral database",
+      "production change",
+      "pull request creation",
+      "push",
+      "Railway change",
+      "staging or preview change"
+    ]
+  },
+  "capturedDate": "2026-07-17",
+  "completedAt": "2026-07-18T00:32:25.6195386-04:00",
+  "evidenceStatus": "complete_local_with_environment_gates",
+  "repository": {
+    "branch": "codex/action-plan-execution-ownership",
+    "implementationTip": "d67f219bdb3c80f37698a40bcc0e1c09b99284cf",
+    "startingCommit": "5e8ef46f48adea6eca82b4fd919821c939cca6c6",
+    "worktreeBeforeEvidenceCommit": "only the four scoped audit evidence files remained modified or untracked"
+  },
+  "implementationCommits": [
+    "ca30388f21ffede3361f74cc7114f49bfc68715b docs(action-plan): define execution ownership protocol",
+    "5554c839164f119021d49efd5602fbc709fb30bc feat(db): add ActionPlan execution integrity schema",
+    "978531a4e5e67adc2e86e7940e5497aa08738637 feat(action-plan): add execution-run domain and persistence",
+    "dfc170ec9150ac4a36f55c9e5332ff1268f5a93b feat(action-plan): separate command and result operations",
+    "201eb3c35675f3d5ca134c7357d33e40a76bffc7 fix(action-plan): reject stale execution results",
+    "84e2370f207003e52237bcd3490d427d13dcac97 fix(python): submit and verify execution results correctly",
+    "2edef213dea7a23f2fc27c8124bc371f13b078ee docs(action-plan): align stale result recovery contract",
+    "d67f219bdb3c80f37698a40bcc0e1c09b99284cf fix(db): reject migration target overrides"
+  ],
+  "historicalEvidence": {
+    "artifact": "docs/audits/action-plan-execution/2026-07-17/pre-change-behavior.json",
+    "baselineCommit": "410c04a890c021ae51148e58391f8e653be11943",
+    "preservedFindings": [
+      "TypeScript treated POST /plans/:planId/execute as a command and ignored the submitted result body.",
+      "TypeScript fabricated success records for every stored action.",
+      "Python submitted one real action result to the command route.",
+      "A failed Python action could become backend success and sibling actions could receive fabricated success.",
+      "Python did not require BackendResponse.ok before completion output or daemon acknowledgement."
+    ]
+  },
+  "implementation": {
+    "additiveMigration": {
+      "checksum": "cfa339af4282ce47a955acd08fa3f16e617b4a943111890f1e5b4bd5ba929533",
+      "manifest": "migrations/20260717_action_plan_execution_v2/manifest.json",
+      "normalStartupDdl": false,
+      "version": "20260717_action_plan_execution_v2"
+    },
+    "crossLanguageContract": [
+      "contracts/action_plan_execution.openapi.v1.json",
+      "packages/protocol/schemas/v1/action-plan/",
+      "tests/fixtures/action-plan-execution-protocol-v1.json"
+    ],
+    "outcome": [
+      "POST /plans/:planId/execute is authenticated and command-only.",
+      "Claim, start, status, bounded-result read, and result submission are distinct authenticated operations.",
+      "Runs bind one action to server-selected executor principal/instance, server-derived realm, generation, and immutable snapshot.",
+      "Database constraints and transactional locks enforce active-run uniqueness, command/result idempotency, claim ownership, and terminal coherence.",
+      "Stale generation, action, or capability evidence is rejected before terminal mutation.",
+      "Python uses durable journaled assignment/claim/start/result flow and acknowledges only accepted or proven idempotent durability."
+    ]
+  },
+  "validation": [
+    {
+      "command": "npm test -- --silent --json --outputFile=<os-temp>/arcanos-phase2e-full-jest-final-tip.json",
+      "coverage": {
+        "branches": "100% (242/242)",
+        "functions": "100% (65/65)",
+        "lines": "100% (3392/3392)",
+        "scope": "repository-configured coverage scope, not repository-wide",
+        "statements": "100% (3392/3392)"
+      },
+      "durationSeconds": 90.2,
+      "result": "pass",
+      "suites": { "passed": 400, "skipped": 3, "total": 403 },
+      "tests": { "passed": 3903, "skipped": 5, "total": 3908 }
+    },
+    {
+      "command": "focused Phase 2E/CLEAR/MCP/OpenAPI suites --runInBand --detectOpenHandles --randomize --seed=20260717 --showSeed",
+      "durationSeconds": 10.86,
+      "openHandleFinding": false,
+      "result": "pass",
+      "seed": 20260717,
+      "suites": { "passed": 23, "skipped": 1, "total": 24 },
+      "tests": { "passed": 324, "skipped": 1, "total": 325 }
+    },
+    {
+      "command": "focused Phase 2E/CLEAR/MCP/OpenAPI suites repeated three times",
+      "durationsSeconds": [9.719, 9.701, 9.75],
+      "result": "pass",
+      "runs": [
+        { "passed": 324, "skipped": 1 },
+        { "passed": 324, "skipped": 1 },
+        { "passed": 324, "skipped": 1 }
+      ]
+    },
+    {
+      "command": "npm run type-check",
+      "result": "pass",
+      "included": ["check:boundaries", "check:cef-layer-access", "check:routing-boundaries", "build:packages", "tsc --noEmit"]
+    },
+    {
+      "command": "npm run lint",
+      "result": "pass_with_pre_existing_warnings",
+      "errors": 0,
+      "warnings": 90
+    },
+    {
+      "command": "npm run build",
+      "result": "pass",
+      "note": "Workers, packages, TypeScript, aliases, and assets validated."
+    },
+    {
+      "command": "npm run test:integration -- --silent",
+      "result": "pass",
+      "suites": { "passed": 5, "skipped": 2, "total": 7 },
+      "tests": { "passed": 84, "skipped": 2, "total": 86 }
+    },
+    {
+      "command": "python -m pytest daemon-python/tests -q",
+      "durationSeconds": 5.87,
+      "result": "pass",
+      "tests": { "passed": 450, "failed": 0 }
+    },
+    {
+      "command": "targeted Black, Flake8, isolated mypy, py_compile, and import smoke",
+      "result": "pass",
+      "details": {
+        "black": "7 new Phase 2E files unchanged; Python 3.11/3.14 parser compatibility warning retained",
+        "flake8": "7 new Phase 2E files pass with repository-compatible max-line-length and E203 settings",
+        "mypy": "4 changed protocol/client source files pass with follow-imports=skip and ignore-missing-imports",
+        "smoke": "Phase 2E modules compile and import"
+      }
+    },
+    {
+      "command": "npm run validate:railway; npm run validate:backend-cli:contract; npm run validate:backend-cli:offline; npm run sync:check; npm run guard:commit",
+      "result": "pass",
+      "note": "sync:check reported 0 errors, 0 warnings, and 5 pre-existing informational recommendations"
+    },
+    {
+      "command": "npm run db:action-plan-execution:plan",
+      "result": "pass",
+      "databaseConnected": false,
+      "databaseMutated": false,
+      "checksumMatched": true
+    }
+  ],
+  "nonPassingOrUnavailableChecks": [
+    {
+      "check": "real PostgreSQL apply, rerun, catalog verification, advisory-lock contention, old-app/new-schema compatibility, drain, and compensation",
+      "classification": "not_available",
+      "reason": "No approved loopback PostgreSQL database named arcanos_phase2e_* and no local PostgreSQL/container runtime were available."
+    },
+    {
+      "check": "broad default mypy dependency traversal",
+      "classification": "pre_existing_failure",
+      "result": "126 errors in 22 imported files outside the isolated Phase 2E type-check scope"
+    },
+    {
+      "check": "Black over every modified legacy Python file",
+      "classification": "pre_existing_format_debt",
+      "result": "10 legacy files would be reformatted; the 7 new Phase 2E files pass"
+    },
+    {
+      "check": "external gitleaks/trufflehog/detect-secrets scan",
+      "classification": "not_available",
+      "reason": "No compatible external scanner is installed; commit guard and sanitized staged/cumulative pattern scans passed."
+    },
+    {
+      "check": "redundant serialized full Jest run",
+      "classification": "aborted",
+      "reason": "Terminated after more than 35 minutes; the normal parallel repository command subsequently passed twice."
+    },
+    {
+      "check": "initial final full Jest attempt",
+      "classification": "corrected_regression",
+      "reason": "All tests passed but the configured actionPlan.ts per-file coverage threshold failed; targeted schema tests restored 100% before the final passing runs."
+    }
+  ],
+  "dependencyEvidence": {
+    "base": { "typescriptFiles": 720, "runtimeEdges": 2332, "runtimeSccs": 2, "sccSizes": [67, 8], "circularPaths": 63 },
+    "implementation": { "typescriptFiles": 733, "runtimeEdges": 2383, "runtimeSccs": 2, "sccSizes": [67, 8], "circularPaths": 63 },
+    "conclusion": "SCC count, membership, and circular-path count are unchanged; no Phase 2E module joined an SCC."
+  },
+  "independentReview": {
+    "verdict": "no_remaining_code_level_blocker",
+    "reviewedTip": "d67f219bdb3c80f37698a40bcc0e1c09b99284cf",
+    "resolvedBlockers": [
+      "Moved generation/action/capability freshness validation before terminal result mutation.",
+      "Rejected migration URL query parameters and fragments before pg.Client receives the connection string."
+    ],
+    "remainingGateBlocker": "Real local PostgreSQL migration evidence remains required before Railway Gate D."
+  },
+  "migrationExecution": {
+    "databaseConnected": false,
+    "localEphemeralApplied": false,
+    "previewApplied": false,
+    "productionApplied": false,
+    "safety": "The runner requires explicit confirmation, loopback authority, arcanos_phase2e_* database name, and forbids URL options/fragments; compensation additionally requires an empty-schema confirmation."
+  },
+  "safetyStatus": {
+    "credentialConfigured": false,
+    "externalProviderCalled": false,
+    "migrationApplied": false,
+    "productionChanged": false,
+    "pushOrPullRequest": false,
+    "railwayCommandExecutedForThisLocalImplementation": false,
+    "runtimeStateArtifactStaged": false,
+    "lockfileChanged": false
+  }
+}
