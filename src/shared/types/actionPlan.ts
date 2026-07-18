@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { actionPlanExecutionIdentifierSchema } from './actionPlanExecution.js';
 
 // --- Status & Role Enums ---
 
@@ -66,9 +67,20 @@ export interface ActionPlanRecord {
   expiresAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
+  executionRealm?: string | null;
+  ownerPrincipalId?: string | null;
+  executionProtocolVersion?: number | null;
+  executionGeneration?: number | null;
   actions: ActionRecord[];
   clearScore: ClearScoreRecord | null;
   executionResults?: ExecutionResultRecord[];
+}
+
+export interface ActionPlanCreationProvenance {
+  executionRealm: string;
+  ownerPrincipalId: string;
+  executionProtocolVersion: 2;
+  executionGeneration: 1;
 }
 
 export interface ActionRecord {
@@ -159,6 +171,73 @@ export const actionPlanInputSchema = z.object({
   idempotency_key: z.string().min(1),
   expires_at: z.string().datetime().optional(),
   actions: z.array(actionDefinitionSchema).min(1),
+});
+
+function boundedJsonRecord(maxDepth: number, maxBytes: number) {
+  return z.custom<Record<string, unknown>>(
+    value => value !== null && typeof value === 'object' && !Array.isArray(value),
+    { message: 'Action parameters must be a JSON object.' },
+  ).superRefine((value, context) => {
+    const seen = new Set<object>();
+    const visit = (candidate: unknown, depth: number): boolean => {
+      if (depth > maxDepth) return false;
+      if (candidate === null || typeof candidate === 'string' || typeof candidate === 'boolean') return true;
+      if (typeof candidate === 'number') return Number.isFinite(candidate);
+      if (typeof candidate !== 'object' || seen.has(candidate)) return false;
+      seen.add(candidate);
+      const valid = Array.isArray(candidate)
+        ? candidate.every(item => visit(item, depth + 1))
+        : Object.entries(candidate).every(([key, entry]) => (
+          key.length <= 256
+          && key !== '__proto__'
+          && key !== 'prototype'
+          && key !== 'constructor'
+          && visit(entry, depth + 1)
+        ));
+      seen.delete(candidate);
+      return valid;
+    };
+    try {
+      if (!visit(value, 0) || Buffer.byteLength(JSON.stringify(value), 'utf8') > maxBytes) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: 'Action parameters are outside protocol bounds.' });
+      }
+    } catch {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: 'Action parameters are outside protocol bounds.' });
+    }
+  });
+}
+
+const phase2eParamsSchema = boundedJsonRecord(8, 32 * 1024);
+const phase2eRollbackActionSchema = z.object({
+  agent_id: z.string().min(1).max(128),
+  capability: z.string().min(1).max(256),
+  params: phase2eParamsSchema.default({}),
+  timeout_ms: z.number().int().positive().max(86_400_000).optional().default(30_000),
+}).strict();
+export const phase2eActionDefinitionSchema = z.object({
+  action_id: actionPlanExecutionIdentifierSchema.optional(),
+  agent_id: z.string().min(1).max(128),
+  capability: z.string().min(1).max(256),
+  params: phase2eParamsSchema.default({}),
+  timeout_ms: z.number().int().positive().max(86_400_000).optional().default(30_000),
+  rollback_action: phase2eRollbackActionSchema.optional(),
+}).strict();
+export const phase2eActionPlanInputSchema = z.object({
+  created_by: z.enum(PLAN_CREATORS),
+  origin: z.string().min(1).max(512),
+  confidence: z.number().min(0).max(1).optional().default(0),
+  requires_confirmation: z.boolean().optional().default(true),
+  idempotency_key: z.string().min(1).max(256).regex(/^[\x21-\x7e]+$/u),
+  expires_at: z.string().datetime().optional(),
+  actions: z.array(phase2eActionDefinitionSchema).min(1).max(100),
+}).strict().superRefine((value, context) => {
+  try {
+    if (Buffer.byteLength(JSON.stringify(value), 'utf8') > 64 * 1024) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: 'ActionPlan input exceeds the protocol limit.' });
+    }
+  } catch {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: 'ActionPlan input is not serializable.' });
+  }
 });
 
 export const agentRegistrationSchema = z.object({

@@ -2,6 +2,7 @@
  * Type definitions for Express Request extensions
  */
 import type { DispatchDecisionV9 } from './dispatchV9.js';
+import type { ActionPlanPrincipal } from '../../services/actionPlanExecution/auth.js';
 
 export type RequestLogLevel = 'debug' | 'info' | 'warn' | 'error';
 
@@ -69,6 +70,8 @@ declare global {
         source: 'jwt' | 'header' | 'session';
         externalSubject?: string | null;
       };
+      /** Purpose-bound Phase 2E principal; never contains presented credential material. */
+      actionPlanPrincipal?: ActionPlanPrincipal;
     }
   }
 }
