@@ -480,7 +480,11 @@ describe('Phase 2E inert migration validator boundary', () => {
 
   it('emits only bounded PostgreSQL 18 runner summaries and refuses skipped execution', async () => {
     const runner = await import(pathToFileURL(pg18RunnerPath).href) as {
-      safePg18Result: (report: unknown, status: number | null) => Record<string, unknown>;
+      safePg18Result: (
+        report: unknown,
+        status: number | null,
+        serverVersionNumber: number | null,
+      ) => Record<string, unknown>;
     };
     expect(runner.safePg18Result({
       success: true,
@@ -489,22 +493,33 @@ describe('Phase 2E inert migration validator boundary', () => {
       numPendingTests: 0,
       numPassedTestSuites: 1,
       testResults: [{ message: `credential=${credentialSentinel} path=${repositoryRoot}` }],
-    }, 0)).toEqual({
+    }, 0, 180004)).toEqual({
       ok: true,
       code: 'PHASE2E_PG18_INTEGRATION_PASS',
       passedTests: 1,
       passedSuites: 1,
+      serverVersion: '18.4',
     });
     for (const report of [
       { success: true, numPassedTests: 0, numFailedTests: 0, numPendingTests: 1, numPassedTestSuites: 1 },
       { success: false, numPassedTests: 0, numFailedTests: 1, numPendingTests: 0, numPassedTestSuites: 0 },
       null,
     ]) {
-      expect(runner.safePg18Result(report, 0)).toEqual({
+      expect(runner.safePg18Result(report, 0, 180004)).toEqual({
         ok: false,
         code: 'PHASE2E_PG18_INTEGRATION_FAILED',
       });
     }
+    expect(runner.safePg18Result({
+      success: true,
+      numPassedTests: 1,
+      numFailedTests: 0,
+      numPendingTests: 0,
+      numPassedTestSuites: 1,
+    }, 0, 170007)).toEqual({
+      ok: false,
+      code: 'PHASE2E_PG18_INTEGRATION_FAILED',
+    });
 
     const spawned = spawnSync(process.execPath, [pg18RunnerPath], {
       cwd: repositoryRoot,

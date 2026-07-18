@@ -6,8 +6,9 @@ import process from 'node:process';
 import { pathToFileURL } from 'node:url';
 
 const REPORT_PATH = '/tmp/phase2e-pg18-jest-result.json';
+const SERVER_REPORT_PATH = '/tmp/phase2e-pg18-server-version.json';
 
-export function safePg18Result(jestReport, exitStatus) {
+export function safePg18Result(jestReport, exitStatus, serverVersionNumber) {
   const passed = Number(jestReport?.numPassedTests);
   const failed = Number(jestReport?.numFailedTests);
   const skipped = Number(jestReport?.numPendingTests);
@@ -21,13 +22,20 @@ export function safePg18Result(jestReport, exitStatus) {
     && skipped === 0
     && Number.isSafeInteger(suitesPassed)
     && suitesPassed > 0
+    && Number.isSafeInteger(serverVersionNumber)
+    && serverVersionNumber >= 180000
+    && serverVersionNumber < 190000
   );
+  const serverVersion = ok
+    ? `${Math.floor(serverVersionNumber / 10_000)}.${serverVersionNumber % 10_000}`
+    : null;
   return ok
     ? {
         ok: true,
         code: 'PHASE2E_PG18_INTEGRATION_PASS',
         passedTests: passed,
         passedSuites: suitesPassed,
+        serverVersion,
       }
     : { ok: false, code: 'PHASE2E_PG18_INTEGRATION_FAILED' };
 }
@@ -47,6 +55,7 @@ function main() {
   }
 
   rmSync(REPORT_PATH, { force: true });
+  rmSync(SERVER_REPORT_PATH, { force: true });
   const child = spawnSync(process.execPath, [
     '--disable-warning=ExperimentalWarning',
     '--experimental-vm-modules',
@@ -59,21 +68,29 @@ function main() {
   ], {
     cwd: process.cwd(),
     encoding: 'utf8',
-    env: process.env,
+    env: {
+      ...process.env,
+      PHASE2E_PG18_SAFE_VERSION_REPORT_PATH: SERVER_REPORT_PATH,
+    },
     maxBuffer: 1024 * 1024,
     stdio: ['ignore', 'pipe', 'pipe'],
     timeout: 180_000,
   });
 
   let report = null;
+  let serverVersionNumber = null;
   try {
     report = JSON.parse(readFileSync(REPORT_PATH, 'utf8'));
+    const serverReport = JSON.parse(readFileSync(SERVER_REPORT_PATH, 'utf8'));
+    serverVersionNumber = Number(serverReport?.serverVersionNumber);
   } catch {
     report = null;
+    serverVersionNumber = null;
   } finally {
     rmSync(REPORT_PATH, { force: true });
+    rmSync(SERVER_REPORT_PATH, { force: true });
   }
-  writeResultAndExit(safePg18Result(report, child.status));
+  writeResultAndExit(safePg18Result(report, child.status, serverVersionNumber));
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

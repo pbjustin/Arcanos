@@ -1,3 +1,4 @@
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { jest } from '@jest/globals';
@@ -997,6 +998,15 @@ describePostgresql18('Phase 2E migration against explicitly configured PostgreSQ
       const serverVersionNumber = Number(identity.rows[0]?.server_version_num);
       expect(serverVersionNumber).toBeGreaterThanOrEqual(180000);
       expect(serverVersionNumber).toBeLessThan(190000);
+      const safeVersionReportPath = process.env.PHASE2E_PG18_SAFE_VERSION_REPORT_PATH;
+      if (railwayValidation) {
+        expect(safeVersionReportPath).toBe('/tmp/phase2e-pg18-server-version.json');
+        writeFileSync(
+          safeVersionReportPath!,
+          JSON.stringify({ serverVersionNumber }),
+          { encoding: 'utf8', mode: 0o600 }
+        );
+      }
 
       await client.query(`CREATE SCHEMA "${schema}"`);
       await client.query(`SET search_path TO "${schema}"`);
