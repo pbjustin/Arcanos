@@ -21,31 +21,41 @@ model User {
 }
 
 model ActionPlan {
-  id                   String            @id @default(uuid())
-  createdBy            String
-  origin               String
-  status               String            @default("planned")
-  confidence           Float             @default(0)
-  requiresConfirmation Boolean           @default(true)
-  idempotencyKey       String            @unique
-  expiresAt            DateTime?
-  createdAt            DateTime          @default(now())
-  updatedAt            DateTime          @updatedAt
-  actions              Action[]
-  clearScore           ClearScore?
-  executionResults     ExecutionResult[]
+  id                       String                       @id @default(uuid())
+  createdBy                String
+  origin                   String
+  status                   String                       @default("planned")
+  confidence               Float                        @default(0)
+  requiresConfirmation     Boolean                      @default(true)
+  idempotencyKey           String                       @unique
+  expiresAt                DateTime?
+  createdAt                DateTime                     @default(now())
+  updatedAt                DateTime                     @updatedAt
+  executionRealm           String?
+  ownerPrincipalId         String?
+  executionProtocolVersion Int?
+  executionGeneration      BigInt?
+  actions                  Action[]
+  clearScore               ClearScore?
+  executionResults         ExecutionResult[]
+  executionCommands        ActionPlanExecutionCommand[]
+
+  @@unique([id, executionRealm], map: "uq_action_plan_id_execution_realm_v2")
 }
 
 model Action {
-  id             String     @id @default(uuid())
+  id             String                   @id @default(uuid())
   planId         String
-  plan           ActionPlan @relation(fields: [planId], references: [id])
+  plan           ActionPlan               @relation(fields: [planId], references: [id])
   agentId        String
   capability     String
   params         Json
-  timeoutMs      Int        @default(30000)
+  timeoutMs      Int                      @default(30000)
   rollbackAction Json?
-  sortOrder      Int        @default(0)
+  sortOrder      Int                      @default(0)
+  executionRuns  ActionPlanExecutionRun[]
+
+  @@unique([planId, id], map: "uq_action_plan_action_plan_id_id_v2")
 }
 
 model Agent {
@@ -88,4 +98,104 @@ model ClearScore {
   decision   String
   notes      String?
   createdAt  DateTime   @default(now())
+}
+
+model ActionPlanExecutionSchemaMigration {
+  version        String   @id
+  checksum       String
+  completedPhase String
+  validityState  String
+  appliedAt      DateTime?
+  updatedAt      DateTime @updatedAt
+}
+
+model ActionPlanExecutionCommand {
+  id                            String                   @id
+  planId                        String
+  executionRealm                String
+  requesterPrincipalId          String
+  commandIdempotencyKeyHash     String
+  commandFingerprint            String
+  lockedPlanExecutionGeneration BigInt
+  protocolVersion               Int
+  createdAt                     DateTime                 @default(now())
+  plan                          ActionPlan               @relation(fields: [planId, executionRealm], references: [id, executionRealm], onDelete: Restrict, onUpdate: Cascade)
+  runs                          ActionPlanExecutionRun[]
+
+  @@unique([id, planId, executionRealm], map: "uq_ap_exec_command_id_plan_realm")
+  @@unique([executionRealm, requesterPrincipalId, planId, commandIdempotencyKeyHash], map: "uq_ap_exec_command_idempotency")
+}
+
+model ActionPlanExecutionRun {
+  id                            String                     @id
+  commandId                     String
+  planId                        String
+  actionId                      String
+  attempt                       Int
+  state                         String
+  executorKind                  String
+  assignedAgentId               String
+  assignedExecutorPrincipalId   String
+  assignedExecutorInstanceId    String
+  claimedExecutorPrincipalId    String?
+  claimedExecutorInstanceId     String?
+  executionRealm                String
+  actionSnapshotId              String
+  actionSnapshotSchemaVersion   Int
+  actionSnapshot                Json
+  claimIdempotencyKeyHash       String?
+  claimFingerprint              String?
+  startIdempotencyKeyHash       String?
+  startFingerprint              String?
+  resultIdempotencyKeyHash      String?
+  resultFingerprint             String?
+  policyCategory                String
+  policyEvidenceId              String
+  policyEvaluatedAt             DateTime
+  acceptanceReceipt             String?
+  terminalCategory              String?
+  resultOutput                  Json?
+  resultError                   Json?
+  eventSequence                 BigInt                     @default(0)
+  version                       BigInt                     @default(0)
+  requestedAt                   DateTime                   @default(now())
+  claimedAt                     DateTime?
+  startedAt                     DateTime?
+  completedAt                   DateTime?
+  cancelledAt                   DateTime?
+  expiredAt                     DateTime?
+  supersededAt                  DateTime?
+  updatedAt                     DateTime                   @updatedAt
+  command                       ActionPlanExecutionCommand @relation(fields: [commandId, planId, executionRealm], references: [id, planId, executionRealm], onDelete: Restrict, onUpdate: Cascade)
+  action                        Action                     @relation(fields: [planId, actionId], references: [planId, id], onDelete: Restrict, onUpdate: Cascade)
+  events                        ActionPlanExecutionEvent[]
+
+  @@unique([commandId, actionId], map: "uq_ap_exec_run_command_action")
+  @@unique([planId, actionId, attempt], map: "uq_ap_exec_run_plan_action_attempt")
+  @@unique([actionSnapshotId], map: "uq_ap_exec_run_snapshot")
+  @@unique([executionRealm, assignedExecutorPrincipalId, assignedExecutorInstanceId, claimIdempotencyKeyHash], map: "uq_ap_exec_run_claim_idem")
+  @@unique([id, claimedExecutorPrincipalId, claimedExecutorInstanceId, startIdempotencyKeyHash], map: "uq_ap_exec_run_start_idem")
+  @@unique([id, executionRealm], map: "uq_ap_exec_run_id_realm")
+}
+
+// The active-action uniqueness and claim-next discovery indexes are partial
+// PostgreSQL indexes managed by the reviewed out-of-band SQL migration because
+// Prisma 5 does not represent partial-index predicates.
+
+model ActionPlanExecutionEvent {
+  id             String                 @id
+  runId          String
+  eventSequence  BigInt
+  eventType      String
+  actorCategory  String
+  sourceService  String
+  executionRealm String
+  reasonCode     String
+  requestId      String?
+  traceId        String?
+  safeMetadata   Json                   @default("{}")
+  createdAt      DateTime               @default(now())
+  run            ActionPlanExecutionRun @relation(fields: [runId, executionRealm], references: [id, executionRealm], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([runId, eventSequence], map: "uq_ap_exec_event_run_sequence")
 }
