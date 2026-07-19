@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-07-19T16:42:27.1613533-04:00",
+  "classification": "CORRECTIVE GATE R0 PASS WITH ONE EVIDENCE LIMITATION",
+  "source": {
+    "branch": "codex/phase2e-advisory-history-gate-r",
+    "startingCommit": "a1c4d07296ebbc09f6263f2a520790a07aa00b1d",
+    "repositorySourceModifiedByRailwayOperation": false,
+    "pushOrPullRequest": false
+  },
+  "target": {
+    "project": "Arcanos",
+    "projectId": "7faf44e5-519c-4e73-8d7a-da9f389e6187",
+    "environment": "phase2e-validation-20260717",
+    "environmentId": "fb99f47d-5ef5-44c1-96c2-acf7b90fab13",
+    "isolatedRailwayLinkUsed": true
+  },
+  "authorizedCorrection": {
+    "serviceId": "434fa5b4-b52c-4caf-aaba-e87c173bf10d",
+    "deploymentId": "ae1e3b71-a816-4baa-8c37-c3d4c0f28c0e",
+    "beforeStatus": "SUCCESS",
+    "operation": "railway down",
+    "operationCount": 1,
+    "afterStatus": "REMOVED",
+    "afterCurrentDeploymentId": null,
+    "afterActiveDeploymentCount": 0,
+    "delayedRecheckCurrentDeploymentId": null,
+    "delayedRecheckActiveDeploymentCount": 0,
+    "automaticRedeploymentConfigurationChanged": false,
+    "automaticRedeploymentChangeReason": "Not required: delayed verification found no replacement deployment or restart."
+  },
+  "preservation": {
+    "redisServiceRecordPreserved": true,
+    "redisServiceId": "434fa5b4-b52c-4caf-aaba-e87c173bf10d",
+    "redisVolumePreserved": true,
+    "redisVolumeId": "d3690500-fcc5-4c06-afa6-cf30e91f608d",
+    "redisVolumeMountPath": "/data",
+    "postgresServiceId": "b7789306-8aef-4113-add5-02883a6cc087",
+    "postgresCurrentDeploymentId": null,
+    "postgresVolumePreserved": true,
+    "postgresVolumeId": "35c26093-1e3f-4d34-b699-89c65d2fb92d",
+    "postgresVolumeMountPath": "/var/lib/postgresql/data",
+    "validatorDeploymentsActive": 0,
+    "targetEnvironmentServiceCount": 4,
+    "targetEnvironmentVolumeCount": 2
+  },
+  "mutationCounts": {
+    "deploymentRemovals": 1,
+    "servicesCreated": 0,
+    "servicesDeleted": 0,
+    "volumesCreated": 0,
+    "volumesChanged": 0,
+    "variablesChanged": 0,
+    "domainsChanged": 0,
+    "tcpProxiesChanged": 0,
+    "applicationsDeployed": 0,
+    "validatorsDeployed": 0,
+    "migrations": 0,
+    "sqlOperations": 0,
+    "redisDataOperations": 0,
+    "actionPlanOperations": 0,
+    "providerCalls": 0
+  },
+  "credentialSafety": {
+    "credentialValuesRead": false,
+    "credentialValuesPrinted": 0,
+    "connectionStringsPrinted": 0,
+    "rawVariableOutputSaved": false
+  },
+  "independentReview": {
+    "verdict": "PASS WITH ONE EVIDENCE LIMITATION",
+    "quarantineEffective": true,
+    "limitation": "The independent reviewer relied on the primary operator's exact sanitized pre-stop snapshot for the initial SUCCESS state, then independently verified deployment history and two post-stop observations."
+  },
+  "nonTargetScope": {
+    "productionSelectedOrMutated": false,
+    "phase2dSelectedOrMutated": false,
+    "replacementResourcesCreated": false,
+    "gateR1Executed": false
+  },
+  "disposition": {
+    "gateR0": "PASS_WITH_ONE_EVIDENCE_LIMITATION",
+    "gateR1": "NO_GO_PENDING_GREEN_LOCAL_PREFLIGHT_AND_SEPARATE_EXECUTION",
+    "gateR2": "NOT_READY",
+    "gateV": "NO_GO",
+    "gateM": "NO_GO",
+    "gateD": "NO_GO"
+  }
+}

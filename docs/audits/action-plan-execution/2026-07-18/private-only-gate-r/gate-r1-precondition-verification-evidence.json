@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-07-18T23:41:47-04:00",
+  "classification": "GATE R1 PRECONDITION UNAVAILABLE",
+  "gateR1": "NO-GO",
+  "source": {
+    "branch": "codex/phase2e-advisory-history-gate-r",
+    "commit": "901f6012129168b7c65fe3678cdbb977d36b78d0",
+    "pushOrPullRequest": false
+  },
+  "target": {
+    "project": "Arcanos",
+    "projectId": "7faf44e5-519c-4e73-8d7a-da9f389e6187",
+    "environment": "phase2e-validation-20260717",
+    "environmentId": "fb99f47d-5ef5-44c1-96c2-acf7b90fab13",
+    "postgresServiceId": "b7789306-8aef-4113-add5-02883a6cc087",
+    "redisServiceId": "434fa5b4-b52c-4caf-aaba-e87c173bf10d"
+  },
+  "proxyVerification": {
+    "proven": false,
+    "postgresCount": "UNVERIFIED",
+    "redisCount": "UNVERIFIED",
+    "cliVersion": "4.30.2",
+    "cliSupportsTargetScopedProxyList": false,
+    "environmentScopedTokenConfigured": false,
+    "cliCredentialStoreAccessed": false,
+    "dashboardBrowserAvailable": true,
+    "dashboardAuthenticated": false,
+    "dashboardObservation": "Railway displayed its login dialog; no authentication action was taken.",
+    "fixedQueryExecuted": false,
+    "priorEvidenceAcceptedAsCurrent": false
+  },
+  "r0Preservation": {
+    "postgresCurrentDeploymentId": null,
+    "redisCurrentDeploymentId": null,
+    "postgresOriginalDeploymentStatus": "REMOVED",
+    "redisOriginalDeploymentStatus": "REMOVED",
+    "postgresVolumeId": "35c26093-1e3f-4d34-b699-89c65d2fb92d",
+    "redisVolumeId": "d3690500-fcc5-4c06-afa6-cf30e91f608d",
+    "quarantinePreserved": true
+  },
+  "procedureRevision": {
+    "isolatedScratchLinkRequired": true,
+    "exactTargetAssertionBeforeEveryMutation": true,
+    "r0ChangedToReadOnlyVerification": true,
+    "r2StepsExplicitlyExcludedFromR1": true,
+    "rawResolvedValueMetadataOperationsProhibited": true,
+    "allowlistedMetadataProjectionReady": false,
+    "postgresReadiness": "AUTHENTICATED_NON_SQL_PSQL_CONNINFO",
+    "postgresServiceNameAsserted": true,
+    "redisReadinessPreserved": true,
+    "childOutputSuppressed": true
+  },
+  "filesChanged": [
+    "docs/audits/action-plan-execution/2026-07-18/private-only-gate-r/private-data-service-replacement-runbook.md",
+    "docs/audits/action-plan-execution/2026-07-18/private-only-gate-r/gate-r-authorization-request.md",
+    "scripts/gate-r1-postgres-readiness.js",
+    "tests/gate-r1-postgres-readiness.test.js",
+    "tests/gate-r1-procedure-contract.test.js",
+    "docs/audits/action-plan-execution/2026-07-18/private-only-gate-r/gate-r1-precondition-verification-evidence.json"
+  ],
+  "localValidation": {
+    "realRailwayReadinessInvocations": 0,
+    "realPostgresConnections": 0,
+    "realRedisConnections": 0,
+    "testSuitesPassed": 2,
+    "testsPassed": 7,
+    "testsFailed": 0,
+    "snapshots": 0,
+    "nodeSyntaxCheck": "PASS",
+    "targetedLint": "PASS",
+    "diffCheck": "PASS"
+  },
+  "independentReview": {
+    "localProcedureAndReadinessChanges": "PASS",
+    "gateR1Execution": "NO-GO",
+    "blockingPreconditions": [
+      "Current exact-target TCP-proxy counts remain unverified.",
+      "The reviewed schema-locked allowlisted metadata projector is not yet available."
+    ],
+    "railwayMutations": 0
+  },
+  "railwayMutations": {
+    "servicesCreated": 0,
+    "volumesCreated": 0,
+    "credentialsGenerated": 0,
+    "variablesChanged": 0,
+    "deploymentsCreated": 0,
+    "domainsChanged": 0,
+    "tcpProxiesChanged": 0,
+    "migrations": 0,
+    "providerCalls": 0
+  },
+  "authorizationDisposition": {
+    "copyReadyGateR1ExecutionAuthorizationProduced": false,
+    "reason": "Both current TCP-proxy counts were not proven zero.",
+    "additionalProcedureBlocker": "A reviewed schema-locked metadata projector is still required before mutation; raw environment configuration and variable-map operations are prohibited.",
+    "unblock": "Use an already authenticated Railway dashboard session or separately configure a least-privilege environment-scoped project token for the fixed allowlisted proxy-count query, then provide or approve the required allowlisted metadata projection."
+  }
+}

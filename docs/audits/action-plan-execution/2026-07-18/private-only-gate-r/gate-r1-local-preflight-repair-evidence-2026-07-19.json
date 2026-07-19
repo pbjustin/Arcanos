@@ -1,0 +1,125 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-07-19T16:52:38.1563689-04:00",
+  "classification": "LOCAL GATE R1 PREFLIGHT REPAIR PASS WITH LIMITATIONS",
+  "source": {
+    "branch": "codex/phase2e-advisory-history-gate-r",
+    "startingCommit": "a1c4d07296ebbc09f6263f2a520790a07aa00b1d",
+    "codeAndProcedureHead": "74a70e5b493274500931985fb70bd33648d693a6",
+    "pushOrPullRequest": false
+  },
+  "correctiveGateR0": {
+    "projectId": "7faf44e5-519c-4e73-8d7a-da9f389e6187",
+    "environmentId": "fb99f47d-5ef5-44c1-96c2-acf7b90fab13",
+    "redisServiceId": "434fa5b4-b52c-4caf-aaba-e87c173bf10d",
+    "redisDeploymentId": "ae1e3b71-a816-4baa-8c37-c3d4c0f28c0e",
+    "beforeStatus": "SUCCESS",
+    "afterStatus": "REMOVED",
+    "activeDeploymentsAfter": 0,
+    "delayedRecheckActiveDeployments": 0,
+    "serviceRecordPreserved": true,
+    "volumeId": "d3690500-fcc5-4c06-afa6-cf30e91f608d",
+    "volumePreserved": true,
+    "automaticRedeploymentConfigurationChanged": false,
+    "railwayMutationCount": 1,
+    "independentVerdict": "PASS_WITH_ONE_EVIDENCE_LIMITATION"
+  },
+  "localCommits": [
+    {
+      "commit": "91f4cb877b4f144408090a36ec2f79c62db5537b",
+      "subject": "feat(railway): add authenticated Gate R1 PostgreSQL readiness"
+    },
+    {
+      "commit": "1d4faad5124a47f1618883ef2266860e966ea5df",
+      "subject": "feat(railway): add Gate R1 metadata projectors"
+    },
+    {
+      "commit": "74a70e5b493274500931985fb70bd33648d693a6",
+      "subject": "docs(railway): define Gate R1 replacement preflight"
+    }
+  ],
+  "projectorContract": {
+    "railwayCliSchemaVersion": "4.30.2",
+    "fixedReadOnlyQueries": 2,
+    "environmentProjection": true,
+    "privateEndpointProjection": true,
+    "projectTokenScopeVerified": true,
+    "variableValuesRequested": false,
+    "variableNamesOnly": true,
+    "rawEnvironmentConfigRequested": false,
+    "projectWideServiceNamesProjected": true,
+    "serviceAndDeploymentStateProjected": true,
+    "domainNamesProjected": false,
+    "domainCountsProjected": true,
+    "volumeBindingAndStateProjected": true,
+    "privateNetworkCountFailClosed": true,
+    "privateEndpointInstanceBinding": true,
+    "responseLimitBytes": 65536,
+    "timeoutMilliseconds": 10000,
+    "networkRetries": 0,
+    "liveQueryExecuted": false
+  },
+  "readinessContract": {
+    "postgresAuthenticationRequired": true,
+    "postgresClientOperation": "psql_meta_command_conninfo",
+    "sqlExecuted": false,
+    "childOutputSuppressed": true,
+    "exactProjectEnvironmentServiceBinding": true,
+    "redisAuthenticatedReadinessPreserved": true
+  },
+  "validation": {
+    "focusedJestSuites": 4,
+    "focusedJestTestsPassed": 84,
+    "focusedJestTestsFailed": 0,
+    "focusedJestDurationMilliseconds": 1611,
+    "targetedEslint": "PASS",
+    "nodeSyntaxChecks": "PASS",
+    "jsonArtifactsValidated": 9,
+    "commitGuard": "PASS_ON_EACH_CODE_OR_PROCEDURE_COMMIT",
+    "syncCheckErrors": 0,
+    "syncCheckWarnings": 0,
+    "syncCheckInformationalItems": 5
+  },
+  "securityReview": {
+    "actualCredentialValuesFound": 0,
+    "actualConnectionStringsFound": 0,
+    "resolvedRailwayVariableValuesFound": 0,
+    "absoluteDeveloperPathsFound": 0,
+    "rawRailwayVariableOutputSaved": false,
+    "externalNetworkCallsFromLocalTests": 0,
+    "fixedSanitizedErrors": true
+  },
+  "scopeProof": {
+    "replacementServicesCreated": 0,
+    "replacementVolumesCreated": 0,
+    "migrationsApplied": 0,
+    "applicationDeployments": 0,
+    "validatorDeployments": 0,
+    "daemonOrExecutorStarts": 0,
+    "productionSelectedOrMutated": false,
+    "phase2dSelectedOrMutated": false,
+    "pushOrPullRequest": false,
+    "gateR1Executed": false
+  },
+  "independentReview": {
+    "verdict": "PASS_WITH_LIMITATIONS",
+    "implementationOrSecurityBlockers": 0,
+    "focusedSuiteResult": "4_SUITES_84_TESTS_PASS",
+    "reviewedAgainstPinnedSchema": true
+  },
+  "limitations": [
+    "No live metadata-projector query was authorized or run.",
+    "Gate R1 still requires an already configured exact-environment project token plus immediate TCP-proxy, domain, quarantine, and topology proof before any mutation.",
+    "Corrective Gate R0 retains its documented pre-stop snapshot evidence limitation.",
+    "An empty isolated temporary link directory remains after local cleanup was denied; it contains no link metadata or files."
+  ],
+  "disposition": {
+    "correctiveGateR0": "PASS_WITH_ONE_EVIDENCE_LIMITATION",
+    "localGateR1Preflight": "PASS_WITH_LIMITATIONS",
+    "gateR1Execution": "NO_GO",
+    "gateR2": "NOT_READY",
+    "gateV": "NO_GO",
+    "gateM": "NO_GO",
+    "gateD": "NO_GO"
+  }
+}

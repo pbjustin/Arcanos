@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "recordedAt": "2026-07-19T14:21:07-04:00",
+  "classification": "GATE R1 TCP-PROXY PRECONDITION PASS WITH LIMITATION",
+  "source": {
+    "branch": "codex/phase2e-advisory-history-gate-r",
+    "commit": "a1c4d07296ebbc09f6263f2a520790a07aa00b1d",
+    "method": "OPERATOR_AUTHENTICATED_RAILWAY_DASHBOARD_OBSERVATION",
+    "railwayMutationPerformed": false
+  },
+  "target": {
+    "project": "Arcanos",
+    "projectId": "7faf44e5-519c-4e73-8d7a-da9f389e6187",
+    "environment": "phase2e-validation-20260717",
+    "environmentId": "fb99f47d-5ef5-44c1-96c2-acf7b90fab13"
+  },
+  "observations": {
+    "environmentOverview": {
+      "deviceTime": "2026-07-19T14:10:00-04:00",
+      "selectedEnvironmentVisible": true,
+      "postgresServiceOffline": true,
+      "redisServiceOffline": true,
+      "postgresVolumeVisible": true,
+      "redisVolumeVisible": true,
+      "activeApplicationVisibleInScreenshot": false
+    },
+    "postgres": {
+      "serviceId": "b7789306-8aef-4113-add5-02883a6cc087",
+      "serviceName": "Postgres",
+      "deviceTime": "2026-07-19T14:19:00-04:00",
+      "publicNetworkingPageVisible": true,
+      "existingProxyHostVisible": false,
+      "existingProxyPortVisible": false,
+      "publicAccessEnablementOptionVisible": true,
+      "tcpProxyCount": 0
+    },
+    "redis": {
+      "serviceId": "434fa5b4-b52c-4caf-aaba-e87c173bf10d",
+      "serviceName": "Redis",
+      "deviceTime": "2026-07-19T14:17:00-04:00",
+      "publicNetworkingPageVisible": true,
+      "existingProxyHostVisible": false,
+      "existingProxyPortVisible": false,
+      "publicAccessEnablementOptionVisible": true,
+      "tcpProxyCount": 0
+    }
+  },
+  "identityBinding": {
+    "method": "Exact environment name plus unique service name, service-specific connect label, and prior sanitized topology mapping",
+    "topologyArtifact": "railway-topology-evidence.json",
+    "serviceIdsVisibleInScreenshots": false,
+    "confidence": "HIGH"
+  },
+  "credentialSafety": {
+    "temporaryTokenUsedForAcceptedProof": false,
+    "credentialValueRecorded": false,
+    "connectionStringRecorded": false,
+    "rawVariableOutputRecorded": false,
+    "operatorReportedTemporaryTokensRevoked": true
+  },
+  "limitations": [
+    "The dashboard screenshots do not display service IDs; exact ID binding relies on the unique service names in the selected environment and the prior sanitized topology artifact.",
+    "The mobile dashboard shows an empty Public access configuration state rather than a literal numeric zero.",
+    "The proof establishes configured-proxy absence at capture time, not immutable future absence or every possible external reachability mechanism.",
+    "This observation must be repeated immediately before the first Gate R1 mutation because networking configuration can change after capture.",
+    "No successful fixed-projector query is claimed."
+  ],
+  "independentReview": {
+    "verdict": "PASS WITH LIMITATIONS",
+    "blockers": [],
+    "basis": "Exact environment name, unique offline Redis/Postgres and validator topology, service-specific connect labels, and Public Networking pages with no generated domain, port, endpoint, or configured-proxy row.",
+    "reviewedAt": "2026-07-19T14:21:00-04:00"
+  },
+  "disposition": {
+    "currentProxyPreconditionSatisfied": true,
+    "copyReadyGateR1ProposalMayBeProduced": true,
+    "gateR1Executed": false,
+    "gateR2Authorized": false,
+    "gateVAuthorized": false,
+    "gateMAuthorized": false,
+    "gateDAuthorized": false,
+    "productionChanged": false,
+    "phase2dChanged": false
+  }
+}

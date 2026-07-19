@@ -1,0 +1,131 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-07-18T19:07:50-04:00",
+  "classification": "GATE R STAGE R1 FAIL",
+  "stageR2": "NOT READY",
+  "executionState": "STOPPED_BEFORE_MUTATION",
+  "source": {
+    "branch": "codex/phase2e-advisory-history-gate-r",
+    "commit": "901f6012129168b7c65fe3678cdbb977d36b78d0",
+    "cleanBeforeEvidenceArtifact": true,
+    "sourceChanges": 0,
+    "pushOrPullRequest": false
+  },
+  "target": {
+    "workspace": "pbjustin's Projects",
+    "project": "Arcanos",
+    "projectId": "7faf44e5-519c-4e73-8d7a-da9f389e6187",
+    "environment": "phase2e-validation-20260717",
+    "environmentId": "fb99f47d-5ef5-44c1-96c2-acf7b90fab13"
+  },
+  "blockers": [
+    {
+      "code": "RUNBOOK_AUTHORIZATION_CONFLICT",
+      "detail": "The committed runbook requires stopping both compromised deployments before replacement creation, while Stage R1 prohibits altering either compromised service. The narrower authorization required a pre-mutation stop."
+    },
+    {
+      "code": "SAFE_METADATA_PROJECTION_INCOMPLETE",
+      "detail": "No committed schema-locked projection covers target identity, variable names without values, domains, and TCP proxies together."
+    },
+    {
+      "code": "TCP_PROXY_OPERATION_UNAVAILABLE",
+      "detail": "Railway CLI 4.30.2 has no supported TCP-proxy list or removal command, and no reviewed target-scoped removal operation was available."
+    },
+    {
+      "code": "HEALTH_CONTRACT_CONFLICT",
+      "detail": "The runbook requires an authenticated Redis PING while Stage R1 prohibits redis-cli."
+    },
+    {
+      "code": "PREFLIGHT_TOOLING_NONCOMPLIANCE",
+      "detail": "A read-only topology audit invoked railway environment config in memory. Raw output was not printed or saved and no known credential was disclosed, but the operation is capable of returning values and therefore violates the strict metadata-tooling rule."
+    }
+  ],
+  "focusedValidation": {
+    "commandCategory": "railway metadata and advisory bridge focused Jest suites",
+    "suitesPassed": 3,
+    "testsPassed": 33,
+    "testsFailed": 0
+  },
+  "preMutationTopology": {
+    "targetServiceInstanceCount": 4,
+    "targetVolumeCount": 2,
+    "replacementPostgresNameMatches": 0,
+    "replacementRedisNameMatches": 0,
+    "applicationDeployments": {
+      "ARCANOS V2": 0,
+      "ARCANOS Worker": 0,
+      "migrationValidators": 0
+    },
+    "compromisedPostgres": {
+      "serviceId": "b7789306-8aef-4113-add5-02883a6cc087",
+      "serviceInstanceId": "6dac21a3-ad8a-4b98-ad50-637054c13729",
+      "deploymentId": "a7940a2c-d7f2-4dbe-9cfd-86655a51def9",
+      "deploymentStatus": "SUCCESS",
+      "volumeId": "35c26093-1e3f-4d34-b699-89c65d2fb92d",
+      "mountPath": "/var/lib/postgresql/data",
+      "railwayDomainCount": 0,
+      "customDomainCount": 0,
+      "unchangedByStageR1": true
+    },
+    "compromisedRedis": {
+      "serviceId": "434fa5b4-b52c-4caf-aaba-e87c173bf10d",
+      "serviceInstanceId": "8340f02f-dbcb-4c0e-bdde-b3f7c4bf5856",
+      "deploymentId": "cb53e19c-1fb8-43a1-9268-313aed88e44e",
+      "deploymentStatus": "SUCCESS",
+      "volumeId": "d3690500-fcc5-4c06-afa6-cf30e91f608d",
+      "mountPath": "/data",
+      "railwayDomainCount": 0,
+      "customDomainCount": 0,
+      "unchangedByStageR1": true
+    },
+    "currentTcpProxyCount": "UNVERIFIED_WITH_APPROVED_TOOLING"
+  },
+  "replacementPostgres": null,
+  "replacementRedis": null,
+  "mutationCounts": {
+    "servicesCreated": 0,
+    "volumesCreated": 0,
+    "variablesChanged": 0,
+    "deploymentsCreated": 0,
+    "domainsChanged": 0,
+    "tcpProxiesChanged": 0,
+    "migrations": 0,
+    "sqlOperations": 0,
+    "actionPlanOperations": 0,
+    "providerCalls": 0
+  },
+  "credentialSafety": {
+    "credentialsGenerated": false,
+    "credentialValuesPrinted": 0,
+    "connectionStringsPrinted": 0,
+    "rawVariableOutputSaved": false,
+    "compromisedValuesRetrievedOrReused": false,
+    "knownCredentialDisclosure": false
+  },
+  "advisoryConsultation": {
+    "available": false,
+    "reason": "The documented bridge configuration was absent; no advisory request or provider call was made."
+  },
+  "nonImpact": {
+    "productionMutated": false,
+    "phase2dMutated": false,
+    "targetEnvironmentMutated": false,
+    "compromisedServicesMutated": false,
+    "repositorySourceMutated": false
+  },
+  "independentReview": {
+    "verdict": "GATE R STAGE R1 FAIL",
+    "blockerCount": 4,
+    "recommendation": "Reconcile the runbook and authorization, add reviewed schema-locked metadata and target-scoped TCP-proxy tooling, reconcile the Redis health contract, then repeat Stage R1 from a clean preflight."
+  },
+  "stageR2Proposal": {
+    "ready": false,
+    "reason": "No replacement services, deployments, or volumes exist. Retirement authorization would be unsafe before a successful Stage R1."
+  },
+  "environmentDisposition": {
+    "newReplacementsRetained": false,
+    "compromisedServicesRetainedUnchanged": true,
+    "environmentRetained": true,
+    "resourcesDeleted": 0
+  }
+}

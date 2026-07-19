@@ -1,0 +1,142 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-07-18T19:45:03-04:00",
+  "classification": "GATE R0 PASS WITH LIMITATION",
+  "executionState": "QUARANTINED",
+  "source": {
+    "branch": "codex/phase2e-advisory-history-gate-r",
+    "commit": "901f6012129168b7c65fe3678cdbb977d36b78d0",
+    "sourceChanges": 0,
+    "pushOrPullRequest": false
+  },
+  "target": {
+    "workspace": "pbjustin's Projects",
+    "project": "Arcanos",
+    "projectId": "7faf44e5-519c-4e73-8d7a-da9f389e6187",
+    "environment": "phase2e-validation-20260717",
+    "environmentId": "fb99f47d-5ef5-44c1-96c2-acf7b90fab13"
+  },
+  "postgres": {
+    "serviceId": "b7789306-8aef-4113-add5-02883a6cc087",
+    "originalDeploymentId": "a7940a2c-d7f2-4dbe-9cfd-86655a51def9",
+    "beforeStatus": "SUCCESS",
+    "afterDeploymentStatus": "REMOVED",
+    "afterCurrentDeploymentId": null,
+    "afterCurrentStatus": null,
+    "serviceRecordPreserved": true,
+    "volumeId": "35c26093-1e3f-4d34-b699-89c65d2fb92d",
+    "volumeMount": "/var/lib/postgresql/data",
+    "volumePreserved": true,
+    "railwayDomainCount": 0,
+    "customDomainCount": 0,
+    "quarantineOperation": "railway down",
+    "operationNote": "The initial client request timed out after Railway accepted the operation; targeted status showed REMOVING and then REMOVED. The operation was not retried."
+  },
+  "redis": {
+    "serviceId": "434fa5b4-b52c-4caf-aaba-e87c173bf10d",
+    "originalDeploymentId": "cb53e19c-1fb8-43a1-9268-313aed88e44e",
+    "beforeStatus": "SUCCESS",
+    "afterDeploymentStatus": "REMOVED",
+    "afterCurrentDeploymentId": null,
+    "afterCurrentStatus": null,
+    "serviceRecordPreserved": true,
+    "volumeId": "d3690500-fcc5-4c06-afa6-cf30e91f608d",
+    "volumeMount": "/data",
+    "volumePreserved": true,
+    "railwayDomainCount": 0,
+    "customDomainCount": 0,
+    "quarantineOperation": "railway down"
+  },
+  "exposureVerification": {
+    "railwayDomains": 0,
+    "customDomains": 0,
+    "tcpProxyCount": "UNVERIFIED_WITH_AVAILABLE_CLI",
+    "tcpProxyPriorCommittedEvidence": 0,
+    "limitation": "Railway CLI 4.30.2 and the committed projector do not expose a current target-scoped TCP-proxy list. No browser session was available for a dashboard verification. No domain or proxy mutation occurred during R0."
+  },
+  "consumerVerification": {
+    "targetArcanosV2DeploymentCount": 0,
+    "targetWorkerDeploymentCount": 0,
+    "targetMigrationValidatorDeploymentCount": 0,
+    "targetCompatibilityValidatorDeploymentCount": 0,
+    "pythonDaemonActive": false,
+    "executorActive": false,
+    "externalConsumerAbsence": "NOT_PROVABLE_FROM_RAILWAY_TOPOLOGY",
+    "containmentEffect": "Both data-service deployments have no current container to accept connections."
+  },
+  "automaticRestart": {
+    "restartPolicyModified": false,
+    "redeployConfigurationModified": false,
+    "newDeploymentObservedAfterRemoval": false
+  },
+  "mutationCounts": {
+    "deploymentRemovals": 2,
+    "servicesCreated": 0,
+    "servicesDeleted": 0,
+    "volumesChanged": 0,
+    "variablesChanged": 0,
+    "domainsChanged": 0,
+    "tcpProxiesChanged": 0,
+    "applicationsDeployed": 0,
+    "migrations": 0,
+    "sqlOperations": 0,
+    "redisCommands": 0,
+    "actionPlanOperations": 0,
+    "providerCalls": 0
+  },
+  "productionBaseline": {
+    "environmentId": "fb583147-6c39-4343-9267-500f357d25ab",
+    "postgresDeploymentId": "5a073def-9a2b-4231-bf9a-0901a9b31dce",
+    "redisDeploymentId": "aeae0e09-e4bb-406f-92ea-cf5ca81294ac",
+    "workerDeploymentId": "a2563dec-7c6b-461c-ba0b-304cf7deb4dc",
+    "webDeploymentId": "d5b83b36-7cd3-476d-a565-9ddeda807fe6",
+    "volumeIds": [
+      "12780efb-f40b-4625-9ec6-d26f2170dbd4",
+      "398546f6-fe53-4e94-b375-66366b8a1a5a",
+      "5be976c8-e700-4d10-8528-4f0263ff98a0",
+      "6cabb50f-cb69-4938-98b7-73edc06a29b5",
+      "dcf7e127-fa4f-42b1-acf0-c8030789d321"
+    ],
+    "unchanged": true
+  },
+  "phase2dBaseline": {
+    "environmentId": "50a92b12-048a-4fec-8bff-282a72267920",
+    "postgresDeploymentId": "e61ed802-de64-4a60-b755-463a1ecb05a5",
+    "redisDeploymentId": "bc2f3122-e1db-4ac9-a445-a34a8a819a04",
+    "workerDeploymentId": "a4f59b9c-1fc0-4fac-a72c-76a9a5f905aa",
+    "webDeploymentId": "4346ccc0-9154-4a96-b746-66a9b0a21db9",
+    "volumeIds": [
+      "12780efb-f40b-4625-9ec6-d26f2170dbd4",
+      "398546f6-fe53-4e94-b375-66366b8a1a5a",
+      "5be976c8-e700-4d10-8528-4f0263ff98a0",
+      "6cabb50f-cb69-4938-98b7-73edc06a29b5",
+      "dcf7e127-fa4f-42b1-acf0-c8030789d321"
+    ],
+    "unchanged": true
+  },
+  "credentialSafety": {
+    "credentialValuesRead": false,
+    "credentialValuesPrinted": 0,
+    "connectionStringsPrinted": 0,
+    "rawVariableOutputSaved": false
+  },
+  "gateR1Proposal": {
+    "readyForSeparateApproval": true,
+    "precondition": "Obtain a current target-scoped zero-TCP-proxy verification before creating replacements.",
+    "scope": "Create fresh private-only PostgreSQL and Redis services with pinned images, fresh volumes, independently generated service-local credentials, zero domains and proxies, and authenticated readiness checks."
+  },
+  "independentReview": {
+    "verdict": "GATE R0 PASS WITH LIMITATIONS",
+    "containmentPassed": true,
+    "unconditionalPassBlockedBy": "Current TCP-proxy count is not exposed by Railway CLI 4.30.2 and no authenticated dashboard session was available.",
+    "r1Readiness": "READY FOR SEPARATE APPROVAL WITH FAIL-CLOSED ZERO-TCP-PROXY PRECONDITION"
+  },
+  "environmentDisposition": {
+    "compromisedServiceRecordsRetained": true,
+    "compromisedVolumesRetained": true,
+    "compromisedDeploymentsQuarantined": true,
+    "replacementResourcesCreated": false,
+    "environmentRetained": true,
+    "resourcesDeleted": 0
+  }
+}
