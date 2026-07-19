@@ -68,4 +68,78 @@ describe('Gate R1 procedure contract', () => {
     expect(runbook).toContain('REDISCLI_AUTH="$REDIS_PASSWORD"');
     expect(runbook).toContain('redis-cli -h 127.0.0.1 -p 6379 --no-auth-warning PING >/dev/null 2>&1');
   });
+
+  it('uses exact schema-locked proxy modes for quarantined and replacement services', () => {
+    const stage1 = runbook.slice(runbook.indexOf('## Stage 1'), runbook.indexOf('## Stage 2'));
+    const stage3 = runbook.slice(runbook.indexOf('## Stage 3'), runbook.indexOf('## Stage 4'));
+    const stage7 = runbook.slice(runbook.indexOf('## Stage 7'), runbook.indexOf('## Stage 8'));
+    const stage8 = runbook.slice(runbook.indexOf('## Stage 8'), runbook.indexOf('## Stage 9'));
+    const stage9 = runbook.slice(runbook.indexOf('## Stage 9'), runbook.indexOf('## Stage 10'));
+
+    expect(stage1).toContain('through exactly one');
+    expect(stage1).toMatch(/one fixed TCP-proxy projector invocation per old service/);
+    expect(stage1).toContain('--service-id $oldPgServiceId');
+    expect(stage1).toContain('--service-id $oldRedisServiceId');
+    expect(stage1).toContain('authenticated Railway dashboard observation');
+    expect(stage1).toContain('Do not combine partial results from the two methods');
+
+    expect(stage3).toContain('--replacement-profile postgres --service-id $pgServiceId --service-instance-id $pgServiceInstanceId');
+    expect(stage3).toContain('--replacement-profile redis --service-id $redisServiceId --service-instance-id $redisServiceInstanceId');
+    expect(stage3).toContain('GATE_R_POSTGRES_EMPTY_SERVICE_PROXY_FAILED');
+    expect(stage3).toContain('GATE_R_REDIS_EMPTY_SERVICE_PROXY_FAILED');
+    expect(stage3).toContain('$pgEmptyProxyProjection.serviceName -ne $pgName');
+    expect(stage3).toContain('$redisEmptyProxyProjection.serviceName -ne $redisName');
+    expect(stage3).not.toContain('Assert from environment configuration');
+    expect(stage3.indexOf('railway add --service $redisName')).toBeLessThan(
+      stage3.indexOf('$emptyProjection = node $railwayMetadataProjector --environment')
+    );
+    expect(stage3.indexOf('$emptyProjection = node $railwayMetadataProjector --environment')).toBeLessThan(
+      stage3.indexOf('$pgEmptyProxyProjection = node $tcpProxyProjector')
+    );
+
+    expect(stage7).toContain('$pgPreActivationProxy = node $tcpProxyProjector --replacement-profile postgres');
+    expect(stage7).toContain('$redisPreActivationProxy = node $tcpProxyProjector --replacement-profile redis');
+    expect(stage7).toContain('GATE_R_POSTGRES_PROXY_PREACTIVATION_FAILED');
+    expect(stage7).toContain('GATE_R_REDIS_PROXY_PREACTIVATION_FAILED');
+    expect(stage7).toContain('GATE_R_REPLACEMENT_PROXY_PREACTIVATION_FAILED');
+    expect(stage7).toContain('$pgPreActivationProxy.serviceName -ne $pgName');
+    expect(stage7).toContain('$redisPreActivationProxy.serviceName -ne $redisName');
+    expect(stage7.indexOf('node $railwayMetadataProjector --environment')).toBeLessThan(
+      stage7.indexOf('$pgPreActivationProxy = node $tcpProxyProjector')
+    );
+
+    expect(stage8).toContain('$pgActiveProxyProjection = node $tcpProxyProjector --replacement-profile postgres');
+    expect(stage8).toContain('GATE_R_POSTGRES_ACTIVE_PROXY_FAILED');
+    expect(stage8).toContain('$pgActiveProxyProjection.serviceName -ne $pgName');
+    expect(stage8.indexOf('source.image $pgImage')).toBeLessThan(
+      stage8.indexOf('$pgActiveProxyProjection = node $tcpProxyProjector')
+    );
+    expect(stage8.indexOf('$pgActiveProxyProjection = node $tcpProxyProjector')).toBeLessThan(
+      stage8.indexOf('node $readinessWrapper --service-id $pgServiceId')
+    );
+    expect(stage9).toContain('$redisActiveProxyProjection = node $tcpProxyProjector --replacement-profile redis');
+    expect(stage9).toContain('GATE_R_REDIS_ACTIVE_PROXY_FAILED');
+    expect(stage9).toContain('$redisActiveProxyProjection.serviceName -ne $redisName');
+    expect(stage9).toContain('must make two new replacement-mode projector calls');
+    expect(stage9).toContain('$pgFinalProxyProjection = node $tcpProxyProjector --replacement-profile postgres');
+    expect(stage9).toContain('$redisFinalProxyProjection = node $tcpProxyProjector --replacement-profile redis');
+    expect(stage9).toContain('GATE_R_FINAL_REPLACEMENT_PROXY_FAILED');
+    expect(stage9.indexOf('source.image $redisImage')).toBeLessThan(
+      stage9.indexOf('$redisActiveProxyProjection = node $tcpProxyProjector')
+    );
+    expect(stage9.indexOf('$redisActiveProxyProjection = node $tcpProxyProjector')).toBeLessThan(
+      stage9.indexOf('redis-cli -h 127.0.0.1')
+    );
+    expect(stage9.indexOf('$redisActiveProxyProjection = node $tcpProxyProjector')).toBeLessThan(
+      stage9.indexOf('$pgFinalProxyProjection = node $tcpProxyProjector')
+    );
+    expect(stage9.indexOf('redis-cli -h 127.0.0.1')).toBeLessThan(
+      stage9.indexOf('$pgFinalProxyProjection = node $tcpProxyProjector')
+    );
+
+    expect(runbook).toContain('It never\nsubstitutes for a fixed replacement-mode projector result');
+    expect(authorizationRequest).toContain('through exactly one current reviewed method');
+    expect(authorizationRequest).toContain('Do not combine partial results from the two methods');
+    expect(authorizationRequest).toContain('after creation, immediately before source activation, after each service activates, and during the final combined isolation check');
+  });
 });

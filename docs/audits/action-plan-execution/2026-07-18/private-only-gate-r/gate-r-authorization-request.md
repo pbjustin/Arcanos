@@ -2,15 +2,17 @@
 
 Status: **COPY-READY REQUEST — NOT AUTHORIZATION BY THIS DOCUMENT**
 
-The current TCP-proxy precondition passed through authenticated Railway
+Historical TCP-proxy evidence was captured through authenticated Railway
 dashboard observations recorded in
 `gate-r1-dashboard-proxy-evidence-2026-07-19.json`. The selected environment
 showed both compromised data services offline with their volumes retained. Each
 service's Public Networking page showed only the inactive Public access
 enablement option and no existing proxy host or port.
 
-This observation must be repeated immediately before the first mutation. A
-historical screenshot is not sufficient to start execution.
+That dashboard evidence is no longer current after the corrective R0
+quarantine. A historical screenshot or projector result is not sufficient to
+start execution. One reviewed exact-target proof method below must be repeated
+immediately before the first mutation.
 
 ## Copy-ready operator authorization
 
@@ -34,8 +36,8 @@ Mandatory precondition immediately before the first mutation:
 - Reverify both quarantined services remain offline and their volumes remain attached.
 - Require the dedicated ARCANOS_GATE_R1_RAILWAY_PROJECT_TOKEN to be already present only in the projector process and prove its exact project/environment scope.
 - Run the reviewed schema-locked environment metadata projector; prohibit raw variable and broad environment-config reads.
-- Through the authenticated Railway dashboard, open each exact service's Public Networking page.
-- Require only the inactive Public access enablement option and no existing proxy hostname or port.
+- Prove zero active TCP proxies for both quarantined services through exactly one current reviewed method: either run the fixed quarantined-service projector once per exact service ID and require two numeric zero counts, or inspect both exact Public Networking pages in an authenticated Railway dashboard and require only the inactive enablement option with no existing proxy host or port.
+- Do not combine partial results from the two methods; either selected method must cover both exact services immediately before mutation.
 - Require zero Railway-provided domains and zero custom domains.
 - Stop if exact service identity, environment, or zero exposure cannot be proven.
 - Do not create, retrieve, configure, print, or persist an API token under this authorization.
@@ -50,6 +52,8 @@ Authorized Gate R1 work:
 - Configure only the reviewed service-local variable-name sets and private Railway references.
 - Keep all deployment-triggering changes suppressed until the pre-activation isolation gate passes.
 - Configure the reviewed bounded restart policies and Redis start command.
+- Resolve each replacement's exact service and service-instance IDs through the schema-locked metadata projector.
+- Run the fixed replacement-profile TCP-proxy projector for each replacement after creation, immediately before source activation, after each service activates, and during the final combined isolation check.
 - Require zero domains, zero TCP proxies, zero public-URL variables, fresh volumes, and exactly one live private network before source activation.
 - Activate PostgreSQL first with ghcr.io/railwayapp-templates/postgres-ssl:18.4.
 - Run only the reviewed authenticated non-SQL psql \conninfo readiness wrapper.

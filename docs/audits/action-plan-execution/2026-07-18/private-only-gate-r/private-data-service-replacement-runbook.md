@@ -169,17 +169,18 @@ returning resolved values, even when its output would remain in memory.
    replacement service instance. Do not read broad environment-config JSON to
    infer private-network availability.
 6. Assert both replacement names are absent project-wide.
-7. Prove zero current TCP proxies for both old services through one reviewed,
-   exact-target method:
+7. Prove zero current TCP proxies for both old services through exactly one
+   reviewed exact-target method:
    - an authenticated Railway dashboard observation showing the exact target
-     environment and each service's Public Networking page with only the
-     inactive Public access enablement option and no existing proxy host or
-     port; or
+     environment and both services' Public Networking pages with only the
+     inactive enablement option and no existing proxy host or port; or
    - one fixed TCP-proxy projector invocation per old service, each returning a
-     numeric count of zero. The projector reads only
+     fresh numeric count of zero. The projector reads only
      `ARCANOS_GATE_R1_RAILWAY_PROJECT_TOKEN`, verifies that token's exact project
      and environment scope, and never falls back to generic tokens or the
      Railway CLI credential store.
+   Do not combine partial results from the two methods; the selected method must
+   cover both exact services immediately before mutation.
 8. Through other reviewed read-only metadata, require Railway-domain and custom-
    domain counts of `0` for each old data service.
 9. Record production service/deployment identities only, for a later unchanged
@@ -214,7 +215,7 @@ or persisting a token. If it is unavailable, stop before mutation. Never fall
 back to `RAILWAY_TOKEN`, a personal token, the CLI credential store, raw variable
 commands, or broad environment configuration.
 
-For the fixed-projector method only:
+For the fixed quarantined-service projector mode:
 
 ```powershell
 $pgProxyProjection = node $tcpProxyProjector --service-id $oldPgServiceId | ConvertFrom-Json
@@ -235,19 +236,33 @@ if (
 }
 ```
 
-The fixed TCP-proxy projector rejects unexpected response fields and never
-requests, resolves, displays, or saves variable values. It emits exactly project
-ID, environment ID, service ID, UTC observation time, and the integer proxy
-count.
+The fixed quarantined-service TCP-proxy mode accepts only the two compromised
+service IDs. It rejects unexpected response fields and never requests, resolves,
+displays, or saves variable values. It emits exactly project ID, environment ID,
+service ID, UTC observation time, and the integer proxy count.
 
-For the dashboard method, record only the observation time, exact environment,
-service identity, absence of an existing proxy host/port, and presence of the
-inactive Public access enablement option. Never click that option. When the
-dashboard view does not display service IDs, bind the unique service name to the
-fixed ID through the sanitized topology artifact and record that limitation.
+The same script has a separate replacement mode. That mode requires an exact
+replacement profile (`postgres` or `redis`), a dynamically resolved service ID,
+and its dynamically resolved service-instance ID. The profile derives the fixed
+replacement name; the caller cannot supply or override it. The fixed query binds
+the service ID, derived name, project, environment, non-deleted service instance,
+and proxy collection before emitting only allowlisted identity fields, UTC
+observation time, and the integer proxy count. It rejects the compromised and
+validator service IDs.
 
-Repeat the selected proof method immediately before the first Stage 3 mutation;
-historical zero counts or screenshots are not sufficient.
+For the dashboard method, record only the observation time, exact
+environment, service identity, absence of an existing proxy host/port, and
+presence of the inactive Public access enablement option. Never click that
+option. When the dashboard view does not display service IDs, bind the unique
+service name to the fixed ID through the sanitized topology artifact and record
+that limitation. Dashboard evidence is an allowed old-service precondition only
+when it covers both exact services immediately before mutation. It never
+substitutes for a fixed replacement-mode projector result and is not sufficient
+for dynamically created replacements.
+
+Repeat the selected complete old-service proof method immediately before the
+first Stage 3 mutation; historical zero counts, projector results, or screenshots
+are not sufficient.
 
 ## Stage 2 — verify the R0 quarantine remains effective
 
@@ -288,9 +303,10 @@ railway add --service $redisName --json | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'GATE_R_REDIS_SERVICE_CREATE_FAILED' }
 ```
 
-Resolve each new service ID by exact name from `railway status --json`; require
-exactly one match. Record only the two non-secret IDs. Assert from environment
-configuration and deployment status that both services have:
+Resolve each new service ID and service-instance ID by exact name from the fixed
+environment metadata projector; require exactly one match. Record only those
+four non-secret IDs. From the allowlisted metadata projection and one replacement-
+mode TCP-proxy projection per service, assert that both services have:
 
 - no source;
 - no deployment;
@@ -301,6 +317,47 @@ configuration and deployment status that both services have:
 
 If either empty service has become active or public, stop and report the new
 IDs. Do not try to repair it in place.
+
+```powershell
+$emptyProjection = node $railwayMetadataProjector --environment | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0) { throw 'GATE_R_EMPTY_SERVICE_METADATA_FAILED' }
+$pgReplacement = @($emptyProjection.services | Where-Object { $_.serviceName -eq $pgName })
+$redisReplacement = @($emptyProjection.services | Where-Object { $_.serviceName -eq $redisName })
+if ($pgReplacement.Count -ne 1 -or $redisReplacement.Count -ne 1) {
+  throw 'GATE_R_REPLACEMENT_IDENTITY_AMBIGUOUS'
+}
+$pgServiceId = $pgReplacement[0].serviceId
+$pgServiceInstanceId = $pgReplacement[0].serviceInstanceId
+$redisServiceId = $redisReplacement[0].serviceId
+$redisServiceInstanceId = $redisReplacement[0].serviceInstanceId
+
+$pgEmptyProxyProjection = node $tcpProxyProjector --replacement-profile postgres --service-id $pgServiceId --service-instance-id $pgServiceInstanceId | ConvertFrom-Json
+if (
+  $LASTEXITCODE -ne 0 -or
+  $pgEmptyProxyProjection.projectId -ne $projectId -or
+  $pgEmptyProxyProjection.environmentId -ne $environmentId -or
+  $pgEmptyProxyProjection.replacementProfile -ne 'postgres' -or
+  $pgEmptyProxyProjection.serviceName -ne $pgName -or
+  $pgEmptyProxyProjection.serviceId -ne $pgServiceId -or
+  $pgEmptyProxyProjection.serviceInstanceId -ne $pgServiceInstanceId -or
+  $pgEmptyProxyProjection.tcpProxyCount -ne 0
+) {
+  throw 'GATE_R_POSTGRES_EMPTY_SERVICE_PROXY_FAILED'
+}
+$redisEmptyProxyProjection = node $tcpProxyProjector --replacement-profile redis --service-id $redisServiceId --service-instance-id $redisServiceInstanceId | ConvertFrom-Json
+if (
+  $LASTEXITCODE -ne 0 -or
+  $redisEmptyProxyProjection.projectId -ne $projectId -or
+  $redisEmptyProxyProjection.environmentId -ne $environmentId -or
+  $redisEmptyProxyProjection.replacementProfile -ne 'redis' -or
+  $redisEmptyProxyProjection.serviceName -ne $redisName -or
+  $redisEmptyProxyProjection.serviceId -ne $redisServiceId -or
+  $redisEmptyProxyProjection.serviceInstanceId -ne $redisServiceInstanceId -or
+  $redisEmptyProxyProjection.tcpProxyCount -ne 0
+) {
+  throw 'GATE_R_REDIS_EMPTY_SERVICE_PROXY_FAILED'
+}
+```
 
 ## Stage 4 — attach fresh dedicated volumes
 
@@ -474,6 +531,36 @@ and the separate fixed TCP-proxy projections:
 
 If this gate does not pass, do not activate an image.
 
+Rerun both replacement-mode projections immediately before source activation;
+do not reuse the Stage 3 observations:
+
+```powershell
+$pgPreActivationProxy = node $tcpProxyProjector --replacement-profile postgres --service-id $pgServiceId --service-instance-id $pgServiceInstanceId | ConvertFrom-Json
+if (
+  $LASTEXITCODE -ne 0 -or
+  $pgPreActivationProxy.projectId -ne $projectId -or
+  $pgPreActivationProxy.environmentId -ne $environmentId -or
+  $pgPreActivationProxy.replacementProfile -ne 'postgres' -or
+  $pgPreActivationProxy.serviceName -ne $pgName -or
+  $pgPreActivationProxy.serviceId -ne $pgServiceId -or
+  $pgPreActivationProxy.serviceInstanceId -ne $pgServiceInstanceId
+) { throw 'GATE_R_POSTGRES_PROXY_PREACTIVATION_FAILED' }
+$redisPreActivationProxy = node $tcpProxyProjector --replacement-profile redis --service-id $redisServiceId --service-instance-id $redisServiceInstanceId | ConvertFrom-Json
+if (
+  $LASTEXITCODE -ne 0 -or
+  $redisPreActivationProxy.projectId -ne $projectId -or
+  $redisPreActivationProxy.environmentId -ne $environmentId -or
+  $redisPreActivationProxy.replacementProfile -ne 'redis' -or
+  $redisPreActivationProxy.serviceName -ne $redisName -or
+  $redisPreActivationProxy.serviceId -ne $redisServiceId -or
+  $redisPreActivationProxy.serviceInstanceId -ne $redisServiceInstanceId
+) { throw 'GATE_R_REDIS_PROXY_PREACTIVATION_FAILED' }
+if (
+  $pgPreActivationProxy.tcpProxyCount -ne 0 -or
+  $redisPreActivationProxy.tcpProxyCount -ne 0
+) { throw 'GATE_R_REPLACEMENT_PROXY_PREACTIVATION_FAILED' }
+```
+
 ## Stage 8 — activate and verify PostgreSQL first
 
 Only after Stage 7 passes, assign the PostgreSQL source. Do not assign the
@@ -505,6 +592,20 @@ if (
   $pgEndpointProjection.endpointPresent -ne $true -or
   $pgEndpointProjection.endpointSyncStatus -ne 'ACTIVE'
 ) { throw 'GATE_R_POSTGRES_PRIVATE_ENDPOINT_FAILED' }
+
+$pgActiveProxyProjection = node $tcpProxyProjector --replacement-profile postgres --service-id $pgServiceId --service-instance-id $pgServiceInstanceId | ConvertFrom-Json
+if (
+  $LASTEXITCODE -ne 0 -or
+  $pgActiveProxyProjection.projectId -ne $projectId -or
+  $pgActiveProxyProjection.environmentId -ne $environmentId -or
+  $pgActiveProxyProjection.replacementProfile -ne 'postgres' -or
+  $pgActiveProxyProjection.serviceName -ne $pgName -or
+  $pgActiveProxyProjection.serviceId -ne $pgServiceId -or
+  $pgActiveProxyProjection.serviceInstanceId -ne $pgServiceInstanceId -or
+  $pgActiveProxyProjection.tcpProxyCount -ne 0
+) {
+  throw 'GATE_R_POSTGRES_ACTIVE_PROXY_FAILED'
+}
 
 node $readinessWrapper --service-id $pgServiceId
 if ($LASTEXITCODE -ne 0) { throw 'GATE_R_POSTGRES_HEALTH_FAILED' }
@@ -541,6 +642,20 @@ if (
   $redisEndpointProjection.endpointSyncStatus -ne 'ACTIVE'
 ) { throw 'GATE_R_REDIS_PRIVATE_ENDPOINT_FAILED' }
 
+$redisActiveProxyProjection = node $tcpProxyProjector --replacement-profile redis --service-id $redisServiceId --service-instance-id $redisServiceInstanceId | ConvertFrom-Json
+if (
+  $LASTEXITCODE -ne 0 -or
+  $redisActiveProxyProjection.projectId -ne $projectId -or
+  $redisActiveProxyProjection.environmentId -ne $environmentId -or
+  $redisActiveProxyProjection.replacementProfile -ne 'redis' -or
+  $redisActiveProxyProjection.serviceName -ne $redisName -or
+  $redisActiveProxyProjection.serviceId -ne $redisServiceId -or
+  $redisActiveProxyProjection.serviceInstanceId -ne $redisServiceInstanceId -or
+  $redisActiveProxyProjection.tcpProxyCount -ne 0
+) {
+  throw 'GATE_R_REDIS_ACTIVE_PROXY_FAILED'
+}
+
 railway ssh -p $projectId -e $environmentId -s $redisServiceId sh -lc 'REDISCLI_AUTH="$REDIS_PASSWORD" timeout 15s redis-cli -h 127.0.0.1 -p 6379 --no-auth-warning PING >/dev/null 2>&1'
 if ($LASTEXITCODE -ne 0) { throw 'GATE_R_REDIS_HEALTH_FAILED' }
 ```
@@ -552,6 +667,33 @@ identifiers/digests when Railway exposes them. Emit no logs unless a bounded
 failure investigation is required; sanitize all output before recording it.
 Do not connect an application or validator and do not run SQL, DDL, a migration,
 or an execution test.
+
+The final combined check must make two new replacement-mode projector calls and
+require both numeric counts to remain zero. Do not reuse either post-activation
+observation.
+
+```powershell
+$pgFinalProxyProjection = node $tcpProxyProjector --replacement-profile postgres --service-id $pgServiceId --service-instance-id $pgServiceInstanceId | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0) { throw 'GATE_R_POSTGRES_FINAL_PROXY_FAILED' }
+$redisFinalProxyProjection = node $tcpProxyProjector --replacement-profile redis --service-id $redisServiceId --service-instance-id $redisServiceInstanceId | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0) { throw 'GATE_R_REDIS_FINAL_PROXY_FAILED' }
+if (
+  $pgFinalProxyProjection.projectId -ne $projectId -or
+  $pgFinalProxyProjection.environmentId -ne $environmentId -or
+  $pgFinalProxyProjection.replacementProfile -ne 'postgres' -or
+  $pgFinalProxyProjection.serviceName -ne $pgName -or
+  $pgFinalProxyProjection.serviceId -ne $pgServiceId -or
+  $pgFinalProxyProjection.serviceInstanceId -ne $pgServiceInstanceId -or
+  $pgFinalProxyProjection.tcpProxyCount -ne 0 -or
+  $redisFinalProxyProjection.projectId -ne $projectId -or
+  $redisFinalProxyProjection.environmentId -ne $environmentId -or
+  $redisFinalProxyProjection.replacementProfile -ne 'redis' -or
+  $redisFinalProxyProjection.serviceName -ne $redisName -or
+  $redisFinalProxyProjection.serviceId -ne $redisServiceId -or
+  $redisFinalProxyProjection.serviceInstanceId -ne $redisServiceInstanceId -or
+  $redisFinalProxyProjection.tcpProxyCount -ne 0
+) { throw 'GATE_R_FINAL_REPLACEMENT_PROXY_FAILED' }
+```
 
 ## Stage 10 — R2 only: cut over inactive validator references without deployment
 
