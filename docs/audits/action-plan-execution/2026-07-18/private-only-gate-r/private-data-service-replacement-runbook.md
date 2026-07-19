@@ -83,31 +83,55 @@ fails.
 
 ## Stage 0 — use an isolated local CLI link
 
-Run from a new temporary directory, never from the repository. Do not enable a
-PowerShell transcript, shell tracing, or command-history persistence for this
-session.
+Resolve the reviewed readiness-wrapper path locally, then create and enter a new
+temporary directory before the first Railway command. No Railway link or command
+may run from the repository. Do not enable a PowerShell transcript, shell
+tracing, or command-history persistence for this session.
 
 ```powershell
 $ErrorActionPreference = 'Stop'
 $projectId = '7faf44e5-519c-4e73-8d7a-da9f389e6187'
+$projectName = 'Arcanos'
 $environmentId = 'fb99f47d-5ef5-44c1-96c2-acf7b90fab13'
 $environmentName = 'phase2e-validation-20260717'
 $oldPgServiceId = 'b7789306-8aef-4113-add5-02883a6cc087'
 $oldRedisServiceId = '434fa5b4-b52c-4caf-aaba-e87c173bf10d'
+$oldPgDeploymentId = 'a7940a2c-d7f2-4dbe-9cfd-86655a51def9'
+$oldRedisDeploymentId = 'ae1e3b71-a816-4baa-8c37-c3d4c0f28c0e'
 $oldPgVolumeId = '35c26093-1e3f-4d34-b699-89c65d2fb92d'
 $oldRedisVolumeId = 'd3690500-fcc5-4c06-afa6-cf30e91f608d'
 $migrationValidatorId = 'd8d5181a-2f72-48d7-8413-6f05d113876c'
 $compatibilityValidatorId = 'febdf999-1c96-48df-8e28-c905b8b27082'
 $pgName = 'phase2e-postgres-r2-20260718'
 $redisName = 'phase2e-redis-r2-20260718'
+$repositoryRoot = (git rev-parse --show-toplevel).Trim()
+$readinessWrapper = Join-Path $repositoryRoot 'scripts/gate-r1-postgres-readiness.js'
+$tcpProxyProjector = Join-Path $repositoryRoot 'scripts/gate-r1-tcp-proxy-projector.js'
+$railwayMetadataProjector = Join-Path $repositoryRoot 'scripts/gate-r1-railway-metadata-projector.js'
 $scratch = Join-Path ([IO.Path]::GetTempPath()) ('arcanos-gate-r-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $scratch | Out-Null
 Push-Location $scratch
+$scratchPath = (Resolve-Path -LiteralPath $scratch).Path
 
-$link = railway link -p $projectId -e $environmentId --json | ConvertFrom-Json
-if ($LASTEXITCODE -ne 0 -or $link.projectId -ne $projectId -or $link.environmentId -ne $environmentId) {
-  throw 'GATE_R_TARGET_MISMATCH'
+function Assert-GateRTarget {
+  if ((Get-Location).Path -ne $scratchPath) { throw 'GATE_R_SCRATCH_LINK_REQUIRED' }
+  $link = railway link -p $projectId -e $environmentId --json | ConvertFrom-Json
+  try {
+    if (
+      $LASTEXITCODE -ne 0 -or
+      $link.projectId -ne $projectId -or
+      $link.projectName -ne $projectName -or
+      $link.environmentId -ne $environmentId -or
+      $link.environmentName -ne $environmentName
+    ) {
+      throw 'GATE_R_TARGET_MISMATCH'
+    }
+  } finally {
+    $link = $null
+  }
 }
+
+Assert-GateRTarget
 if ((railway --version).Trim() -ne 'railway 4.30.2') {
   throw 'GATE_R_CLI_VERSION_MISMATCH'
 }
@@ -120,44 +144,131 @@ set`, `volume add`, `volume delete`, `environment edit`, `service status`, and
 `down` option ordering used below was also checked against the installed
 `--help` output.
 
-Only stable IDs, names, status categories, and counts may be emitted. Keep
-environment configuration and variable-list JSON in memory and never redirect
-it to a file.
+`Assert-GateRTarget` is mandatory immediately before every Railway mutation,
+including each loop iteration and both `railway add` calls. The latter has no
+environment option, so the isolated link is part of its security boundary. Do
+not run this procedure from the repository's existing Railway link.
+
+Only stable IDs, names, status categories, and counts may be emitted. Do not
+invoke any raw environment-configuration or variable-list operation capable of
+returning resolved values, even when its output would remain in memory.
 
 ## Stage 1 — read-only preflight
 
-1. Read `railway status --json`, `railway service status -a -e
-   $environmentId --json`, `railway volume list --json`, and `railway
-   environment config -e $environmentId --json` into memory.
+1. Use exact-target status, deployment, and volume reads plus separately
+   reviewed schema-locked projections that emit only the required non-secret
+   fields. Stop before mutation if a required projection is unavailable; raw
+   environment configuration and raw variable maps are prohibited.
 2. Assert the fixed project/environment/service/volume IDs.
 3. Assert the only target-environment service instances are the two data
    services and the two undeployed validators recorded above.
 4. Assert both validators have no deployment ID or active status.
-5. Assert `privateNetworkDisabled` is `false`.
+5. Through the fixed metadata projector, require exactly one non-deleted private
+   network bound to the exact project and environment. After source activation,
+   require a non-deleted `ACTIVE` private endpoint bound to each exact
+   replacement service instance. Do not read broad environment-config JSON to
+   infer private-network availability.
 6. Assert both replacement names are absent project-wide.
-7. Through read-only Railway networking metadata, emit only these counts for
-   each old data service: Railway domains `0`, custom domains `0`, TCP proxies
-   `0`.
-8. Confirm the Railway dashboard's service **Settings → Networking** view also
-   shows no public domain and no TCP proxy. CLI `4.30.2` does not expose a
-   domain/proxy list command, so this independent read-only check is mandatory.
+7. Prove zero current TCP proxies for both old services through one reviewed,
+   exact-target method:
+   - an authenticated Railway dashboard observation showing the exact target
+     environment and each service's Public Networking page with only the
+     inactive Public access enablement option and no existing proxy host or
+     port; or
+   - one fixed TCP-proxy projector invocation per old service, each returning a
+     numeric count of zero. The projector reads only
+     `ARCANOS_GATE_R1_RAILWAY_PROJECT_TOKEN`, verifies that token's exact project
+     and environment scope, and never falls back to generic tokens or the
+     Railway CLI credential store.
+8. Through other reviewed read-only metadata, require Railway-domain and custom-
+   domain counts of `0` for each old data service.
 9. Record production service/deployment identities only, for a later unchanged
    comparison. Do not read production variables or logs.
 
-Do not display the output of `railway variable list --json` or `railway
-environment config --json`; both can contain resolved values.
-
-## Stage 2 — contain the known generation first
-
-The environment has no application, executor, active validator, or Phase 2E
-application data to preserve. Stop both compromised deployments before creating
-new credentials:
+The environment metadata projector is mandatory for Stages 1 and 7. It uses a
+fixed Railway Public API query and emits only schema version, observation time,
+fixed project/environment identity, project-wide service IDs/names, target
+service/deployment/source policy, domain counts, volume identity/state/mount,
+names-only variables, and the single live private-network ID. It never requests
+variable values, raw environment configuration, repository names, domain names,
+endpoint addresses, or logs.
 
 ```powershell
-railway down -s $oldPgServiceId -e $environmentId -y
-if ($LASTEXITCODE -ne 0) { throw 'GATE_R_OLD_POSTGRES_STOP_FAILED' }
-railway down -s $oldRedisServiceId -e $environmentId -y
-if ($LASTEXITCODE -ne 0) { throw 'GATE_R_OLD_REDIS_STOP_FAILED' }
+$environmentProjection = node $railwayMetadataProjector --environment | ConvertFrom-Json
+if (
+  $LASTEXITCODE -ne 0 -or
+  $environmentProjection.projectId -ne $projectId -or
+  $environmentProjection.environmentId -ne $environmentId -or
+  [string]::IsNullOrWhiteSpace($environmentProjection.privateNetworkId)
+) {
+  throw 'GATE_R_ENVIRONMENT_METADATA_PROJECTION_FAILED'
+}
+$privateNetworkId = $environmentProjection.privateNetworkId
+```
+
+The projector requires `ARCANOS_GATE_R1_RAILWAY_PROJECT_TOKEN` to be already
+present only in the dedicated process environment. The token must be scoped to
+this exact project and environment; the query verifies that scope through
+`projectToken`. This runbook does not authorize creating, retrieving, printing,
+or persisting a token. If it is unavailable, stop before mutation. Never fall
+back to `RAILWAY_TOKEN`, a personal token, the CLI credential store, raw variable
+commands, or broad environment configuration.
+
+For the fixed-projector method only:
+
+```powershell
+$pgProxyProjection = node $tcpProxyProjector --service-id $oldPgServiceId | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0) { throw 'GATE_R_POSTGRES_PROXY_PROJECTION_FAILED' }
+$redisProxyProjection = node $tcpProxyProjector --service-id $oldRedisServiceId | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0) { throw 'GATE_R_REDIS_PROXY_PROJECTION_FAILED' }
+if (
+  $pgProxyProjection.projectId -ne $projectId -or
+  $pgProxyProjection.environmentId -ne $environmentId -or
+  $pgProxyProjection.serviceId -ne $oldPgServiceId -or
+  $pgProxyProjection.tcpProxyCount -ne 0 -or
+  $redisProxyProjection.projectId -ne $projectId -or
+  $redisProxyProjection.environmentId -ne $environmentId -or
+  $redisProxyProjection.serviceId -ne $oldRedisServiceId -or
+  $redisProxyProjection.tcpProxyCount -ne 0
+) {
+  throw 'GATE_R_TCP_PROXY_PRECONDITION_FAILED'
+}
+```
+
+The fixed TCP-proxy projector rejects unexpected response fields and never
+requests, resolves, displays, or saves variable values. It emits exactly project
+ID, environment ID, service ID, UTC observation time, and the integer proxy
+count.
+
+For the dashboard method, record only the observation time, exact environment,
+service identity, absence of an existing proxy host/port, and presence of the
+inactive Public access enablement option. Never click that option. When the
+dashboard view does not display service IDs, bind the unique service name to the
+fixed ID through the sanitized topology artifact and record that limitation.
+
+Repeat the selected proof method immediately before the first Stage 3 mutation;
+historical zero counts or screenshots are not sufficient.
+
+## Stage 2 — verify the R0 quarantine remains effective
+
+Gate R0 already removed both compromised deployments. R1 must only verify that
+the quarantine remains effective; it must not restart, redeploy, or repeat the
+removal operations:
+
+```powershell
+$oldPgStatus = railway service status -s $oldPgServiceId -e $environmentId --json | ConvertFrom-Json
+$oldRedisStatus = railway service status -s $oldRedisServiceId -e $environmentId --json | ConvertFrom-Json
+$oldPgHistory = railway deployment list -s $oldPgServiceId -e $environmentId --limit 3 --json | ConvertFrom-Json
+$oldRedisHistory = railway deployment list -s $oldRedisServiceId -e $environmentId --limit 3 --json | ConvertFrom-Json
+if (
+  $null -ne $oldPgStatus.deploymentId -or
+  $null -ne $oldRedisStatus.deploymentId -or
+  ($oldPgHistory | Where-Object id -eq $oldPgDeploymentId).status -ne 'REMOVED' -or
+  ($oldRedisHistory | Where-Object id -eq $oldRedisDeploymentId).status -ne 'REMOVED'
+) {
+  throw 'GATE_R_R0_QUARANTINE_NOT_EFFECTIVE'
+}
+$oldPgStatus = $oldRedisStatus = $oldPgHistory = $oldRedisHistory = $null
 ```
 
 Re-read service status. Neither old service may be in `SUCCESS`, `DEPLOYING`,
@@ -169,8 +280,10 @@ can accept traffic. Do not restart either service on any later failure.
 Create services without a database template, image, repository, or variables:
 
 ```powershell
+Assert-GateRTarget
 railway add --service $pgName --json | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'GATE_R_POSTGRES_SERVICE_CREATE_FAILED' }
+Assert-GateRTarget
 railway add --service $redisName --json | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'GATE_R_REDIS_SERVICE_CREATE_FAILED' }
 ```
@@ -195,8 +308,10 @@ Use the newly resolved IDs. The global `-s` and `-e` options precede the
 `volume add` subcommand in CLI `4.30.2`:
 
 ```powershell
+Assert-GateRTarget
 $pgVolume = railway volume -s $pgServiceId -e $environmentId add -m '/var/lib/postgresql/data' --json | ConvertFrom-Json
 if ($LASTEXITCODE -ne 0) { throw 'GATE_R_POSTGRES_VOLUME_CREATE_FAILED' }
+Assert-GateRTarget
 $redisVolume = railway volume -s $redisServiceId -e $environmentId add -m '/data' --json | ConvertFrom-Json
 if ($LASTEXITCODE -ne 0) { throw 'GATE_R_REDIS_VOLUME_CREATE_FAILED' }
 ```
@@ -219,6 +334,7 @@ function Set-FreshRailwaySecret([string]$serviceId, [string]$name) {
   try {
     $generatedValue = [Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_')
     if ([string]::IsNullOrWhiteSpace($generatedValue)) { throw 'GATE_R_SECRET_EMPTY' }
+    Assert-GateRTarget
     $generatedValue | railway variable set -s $serviceId -e $environmentId --stdin --skip-deploys --json $name | Out-Null
     if ($LASTEXITCODE -ne 0) { throw 'GATE_R_SECRET_SET_FAILED' }
   } finally {
@@ -258,6 +374,7 @@ $pgVariables = @(
   'RAILWAY_DEPLOYMENT_DRAINING_SECONDS=60'
 )
 foreach ($entry in $pgVariables) {
+  Assert-GateRTarget
   railway variable set -s $pgServiceId -e $environmentId --skip-deploys --json $entry | Out-Null
   if ($LASTEXITCODE -ne 0) { throw 'GATE_R_POSTGRES_VARIABLE_SET_FAILED' }
 }
@@ -270,6 +387,7 @@ $redisVariables = @(
   'REDIS_URL=redis://${{REDISUSER}}:${{REDISPASSWORD}}@${{REDISHOST}}:${{REDISPORT}}'
 )
 foreach ($entry in $redisVariables) {
+  Assert-GateRTarget
   railway variable set -s $redisServiceId -e $environmentId --skip-deploys --json $entry | Out-Null
   if ($LASTEXITCODE -ne 0) { throw 'GATE_R_REDIS_VARIABLE_SET_FAILED' }
 }
@@ -303,9 +421,10 @@ REDIS_PASSWORD
 REDIS_URL
 ```
 
-Read the variable maps into memory, compare names only, and then clear the
-maps. Neither replacement may contain a `*_PUBLIC_URL` key. Both services must
-still have no source and no deployment.
+Use a separately reviewed schema-locked names-only projection to obtain variable
+names. The TCP-proxy projector is deliberately incapable of reading variables.
+Neither replacement may contain a `*_PUBLIC_URL` key. Both services must still
+have no source and no deployment.
 
 Configure the Redis start command while the service still has no source:
 
@@ -313,13 +432,16 @@ Configure the Redis start command while the service still has no source:
 $restartPolicyType = 'ON_FAILURE'
 $restartPolicyMaxRetries = '3'
 foreach ($serviceId in @($pgServiceId, $redisServiceId)) {
+  Assert-GateRTarget
   railway environment edit -e $environmentId --service-config $serviceId deploy.restartPolicyType $restartPolicyType -m 'gate-r: bound database restart policy before source activation' --json | Out-Null
   if ($LASTEXITCODE -ne 0) { throw 'GATE_R_RESTART_POLICY_SET_FAILED' }
+  Assert-GateRTarget
   railway environment edit -e $environmentId --service-config $serviceId deploy.restartPolicyMaxRetries $restartPolicyMaxRetries -m 'gate-r: bound database restart retries before source activation' --json | Out-Null
   if ($LASTEXITCODE -ne 0) { throw 'GATE_R_RESTART_LIMIT_SET_FAILED' }
 }
 
 $redisStartCommand = '/bin/sh -c ''test "$RAILWAY_VOLUME_MOUNT_PATH" = /data && test -n "$REDIS_PASSWORD" && { [ ! -e /data/lost+found ] || rmdir /data/lost+found; } && exec docker-entrypoint.sh redis-server --requirepass "$REDIS_PASSWORD" --save 60 1 --dir /data'''
+Assert-GateRTarget
 railway environment edit -e $environmentId --service-config $redisServiceId deploy.startCommand $redisStartCommand -m 'gate-r: configure private redis before source activation' --json | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'GATE_R_REDIS_START_COMMAND_SET_FAILED' }
 ```
@@ -330,8 +452,9 @@ when it is an empty directory, and contains no recursive deletion.
 
 ## Stage 7 — final pre-activation isolation gate
 
-Before either image is assigned, prove all of the following from in-memory
-environment/service metadata and the Railway networking view:
+Immediately rerun `node $railwayMetadataProjector --environment` before either
+image is assigned. Prove all of the following from its allowlisted projection
+and the separate fixed TCP-proxy projections:
 
 - target project and environment IDs still match;
 - private networking is enabled;
@@ -339,7 +462,10 @@ environment/service metadata and the Railway networking view:
 - both replacement services have no deployment and no source;
 - volumes and mount paths match Stage 4;
 - allowed variable-name sets match Stage 6 exactly;
+- shared variable names contain no public URL or unexpected credential alias;
 - both services use restart policy `ON_FAILURE` with maximum retries `3`;
+- PostgreSQL has an unset start-command contract and Redis has the exact
+  approved start-command contract;
 - no public URL variable exists;
 - Railway domain count is `0` for each replacement;
 - custom domain count is `0` for each replacement;
@@ -356,6 +482,7 @@ Redis source yet.
 ```powershell
 $pgImage = 'ghcr.io/railwayapp-templates/postgres-ssl:18.4'
 
+Assert-GateRTarget
 railway environment edit -e $environmentId --service-config $pgServiceId source.image $pgImage -m 'gate-r: activate private postgres replacement' --json | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'GATE_R_POSTGRES_IMAGE_ACTIVATION_FAILED' }
 ```
@@ -364,11 +491,22 @@ Poll only read-only PostgreSQL deployment status, at most 120 times with a
 five-second interval (ten minutes maximum). Fail immediately on a terminal
 failure category. Require `SUCCESS`, exactly one new deployment, the expected
 image, the new dedicated volume and mount, a private endpoint, zero domains,
-zero TCP proxies, and no public URL variable. Then run its service-local health
-check:
+zero TCP proxies, and no public URL variable. Then run its bounded service-local
+authenticated readiness wrapper. The wrapper verifies the exact Railway target
+inside the container, uses the service-local `POSTGRES_PASSWORD` only through
+`PGPASSWORD`, disables password prompting and startup files, executes only the
+`psql` client meta-command `\conninfo`, suppresses child output, and maps every
+failure to a fixed code:
 
 ```powershell
-railway ssh -p $projectId -e $environmentId -s $pgServiceId sh -lc 'timeout 15s pg_isready -h 127.0.0.1 -p 5432 -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
+$pgEndpointProjection = node $railwayMetadataProjector --endpoint --service-id $pgServiceId --service-name $pgName --private-network-id $privateNetworkId | ConvertFrom-Json
+if (
+  $LASTEXITCODE -ne 0 -or
+  $pgEndpointProjection.endpointPresent -ne $true -or
+  $pgEndpointProjection.endpointSyncStatus -ne 'ACTIVE'
+) { throw 'GATE_R_POSTGRES_PRIVATE_ENDPOINT_FAILED' }
+
+node $readinessWrapper --service-id $pgServiceId
 if ($LASTEXITCODE -ne 0) { throw 'GATE_R_POSTGRES_HEALTH_FAILED' }
 ```
 
@@ -382,6 +520,7 @@ After PostgreSQL passes Stage 8, assign the Redis source:
 
 ```powershell
 $redisImage = 'redis:8.2.1'
+Assert-GateRTarget
 railway environment edit -e $environmentId --service-config $redisServiceId source.image $redisImage -m 'gate-r: activate private redis replacement' --json | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'GATE_R_REDIS_IMAGE_ACTIVATION_FAILED' }
 ```
@@ -395,7 +534,14 @@ its service-local health check. The credential remains inside its own container
 and is not printed:
 
 ```powershell
-railway ssh -p $projectId -e $environmentId -s $redisServiceId sh -lc 'REDISCLI_AUTH="$REDIS_PASSWORD" timeout 15s redis-cli -h 127.0.0.1 -p 6379 --no-auth-warning PING'
+$redisEndpointProjection = node $railwayMetadataProjector --endpoint --service-id $redisServiceId --service-name $redisName --private-network-id $privateNetworkId | ConvertFrom-Json
+if (
+  $LASTEXITCODE -ne 0 -or
+  $redisEndpointProjection.endpointPresent -ne $true -or
+  $redisEndpointProjection.endpointSyncStatus -ne 'ACTIVE'
+) { throw 'GATE_R_REDIS_PRIVATE_ENDPOINT_FAILED' }
+
+railway ssh -p $projectId -e $environmentId -s $redisServiceId sh -lc 'REDISCLI_AUTH="$REDIS_PASSWORD" timeout 15s redis-cli -h 127.0.0.1 -p 6379 --no-auth-warning PING >/dev/null 2>&1'
 if ($LASTEXITCODE -ne 0) { throw 'GATE_R_REDIS_HEALTH_FAILED' }
 ```
 
@@ -407,21 +553,27 @@ failure investigation is required; sanitize all output before recording it.
 Do not connect an application or validator and do not run SQL, DDL, a migration,
 or an execution test.
 
-## Stage 10 — cut over inactive validator references without deployment
+## Stage 10 — R2 only: cut over inactive validator references without deployment
+
+Do not execute this stage under Gate R1. It requires separate Gate R2
+authorization after both replacements pass the combined isolation gate.
 
 The only known consumers are two inactive validators. Change only their
 `DATABASE_URL` references and suppress deployments:
 
 ```powershell
 $privatePgReference = 'DATABASE_URL=${{phase2e-postgres-r2-20260718.DATABASE_URL}}'
+Assert-GateRTarget
 railway variable set -s $migrationValidatorId -e $environmentId --skip-deploys --json $privatePgReference | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'GATE_R_MIGRATION_VALIDATOR_REFERENCE_FAILED' }
+Assert-GateRTarget
 railway variable set -s $compatibilityValidatorId -e $environmentId --skip-deploys --json $privatePgReference | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'GATE_R_COMPATIBILITY_VALIDATOR_REFERENCE_FAILED' }
 ```
 
-Re-read status and require both validators still have no deployment. Inspect
-their variable maps in memory and emit only these facts:
+Re-read status and require both validators still have no deployment. Use a
+separately reviewed schema-locked reference projector—not the TCP-proxy
+projector—and emit only these facts:
 
 - each contains one `DATABASE_URL` reference to the replacement service;
 - neither contains a public URL variable;
@@ -431,7 +583,10 @@ their variable maps in memory and emit only these facts:
 No Redis consumer was found in this environment, so no Redis reference is
 changed.
 
-## Stage 11 — retire compromised service and volume identities
+## Stage 11 — R2 only: retire compromised service and volume identities
+
+Do not execute this stage under Gate R1. It requires separate Gate R2
+authorization.
 
 This stage is destructive and requires explicit Gate R authorization naming
 the old IDs. Railway CLI `4.30.2` has no `service delete` subcommand, and
@@ -443,8 +598,10 @@ environment ID and exact service ID and returns JSON for the operation record.
 After replacement health, isolation, and validator-reference checks pass:
 
 ```powershell
+Assert-GateRTarget
 railway environment edit -e $environmentId --service-config $oldPgServiceId isDeleted true -m 'gate-r: retire compromised preview postgres service' --json | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'GATE_R_OLD_POSTGRES_SERVICE_DELETE_FAILED' }
+Assert-GateRTarget
 railway environment edit -e $environmentId --service-config $oldRedisServiceId isDeleted true -m 'gate-r: retire compromised preview redis service' --json | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'GATE_R_OLD_REDIS_SERVICE_DELETE_FAILED' }
 ```
@@ -469,6 +626,7 @@ foreach ($oldVolume in $oldVolumes) {
   if ($matches.Count -ne 1 -or -not [string]::IsNullOrWhiteSpace($matches[0].serviceName)) {
     throw 'GATE_R_OLD_VOLUME_NOT_UNIQUELY_DETACHED'
   }
+  Assert-GateRTarget
   railway volume -e $environmentId delete -v $oldVolume.id -y --json | Out-Null
   if ($LASTEXITCODE -ne 0) { throw $oldVolume.failure }
 }
