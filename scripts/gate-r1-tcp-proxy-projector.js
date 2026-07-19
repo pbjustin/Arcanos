@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * Purpose: Project the current TCP-proxy count for one exact Gate R1 service.
- * Inputs/outputs: Reads one dedicated project-token environment variable and emits only fixed target IDs plus a count.
- * Safety: Uses one fixed read-only query, rejects schema drift, bounds the response, and never logs token or proxy values.
+ * Purpose: Project the current TCP-proxy count for one exact Gate R1 quarantined or replacement service.
+ * Inputs/outputs: Reads one dedicated project-token environment variable and emits only allowlisted target identity plus a count.
+ * Safety: Uses mode-specific fixed read-only queries, rejects schema drift, bounds the response, and never logs token or proxy values.
  */
 
 import process from 'node:process';
@@ -14,6 +14,12 @@ export const GATE_R1_PROJECT_ID = '7faf44e5-519c-4e73-8d7a-da9f389e6187';
 export const GATE_R1_ENVIRONMENT_ID = 'fb99f47d-5ef5-44c1-96c2-acf7b90fab13';
 export const GATE_R1_POSTGRES_SERVICE_ID = 'b7789306-8aef-4113-add5-02883a6cc087';
 export const GATE_R1_REDIS_SERVICE_ID = '434fa5b4-b52c-4caf-aaba-e87c173bf10d';
+export const GATE_R1_MIGRATION_VALIDATOR_SERVICE_ID = 'd8d5181a-2f72-48d7-8413-6f05d113876c';
+export const GATE_R1_COMPATIBILITY_VALIDATOR_SERVICE_ID = 'febdf999-1c96-48df-8e28-c905b8b27082';
+export const GATE_R1_REPLACEMENT_PROFILES = Object.freeze({
+  postgres: 'phase2e-postgres-r2-20260718',
+  redis: 'phase2e-redis-r2-20260718'
+});
 export const GATE_R1_RAILWAY_PROJECT_TOKEN_ENV = 'ARCANOS_GATE_R1_RAILWAY_PROJECT_TOKEN';
 export const GATE_R1_TCP_PROXY_RESPONSE_LIMIT_BYTES = 16 * 1024;
 export const GATE_R1_TCP_PROXY_TIMEOUT_MS = 10_000;
@@ -29,11 +35,42 @@ export const GATE_R1_TCP_PROXY_QUERY = `query GateR1TcpProxyCount($environmentId
   }
 }`;
 
+export const GATE_R1_REPLACEMENT_TCP_PROXY_QUERY = `query GateR1ReplacementTcpProxyCount($environmentId: String!, $serviceId: String!) {
+  projectToken {
+    projectId
+    environmentId
+  }
+  service(id: $serviceId) {
+    id
+    name
+    projectId
+  }
+  serviceInstance(environmentId: $environmentId, serviceId: $serviceId) {
+    id
+    serviceId
+    serviceName
+    environmentId
+    deletedAt
+  }
+  tcpProxies(environmentId: $environmentId, serviceId: $serviceId) {
+    id
+    serviceId
+    environmentId
+    deletedAt
+  }
+}`;
+
 const APPROVED_SERVICE_IDS = new Set([
   GATE_R1_POSTGRES_SERVICE_ID,
   GATE_R1_REDIS_SERVICE_ID
 ]);
+const PREEXISTING_SERVICE_IDS = new Set([
+  ...APPROVED_SERVICE_IDS,
+  GATE_R1_MIGRATION_VALIDATOR_SERVICE_ID,
+  GATE_R1_COMPATIBILITY_VALIDATOR_SERVICE_ID
+]);
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const ISO_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
 const JSON_CONTENT_TYPE_PATTERN = /^application\/json(?:\s*;|$)/i;
 
 const ERROR_CODES = Object.freeze({
@@ -76,6 +113,41 @@ function assertApprovedServiceId(serviceId) {
   if (typeof serviceId !== 'string' || !APPROVED_SERVICE_IDS.has(serviceId)) {
     fail(ERROR_CODES.TARGET_FORBIDDEN);
   }
+}
+
+function assertReplacementTarget(replacementProfile, serviceId, serviceInstanceId) {
+  if (!Object.hasOwn(GATE_R1_REPLACEMENT_PROFILES, replacementProfile)) {
+    fail(ERROR_CODES.TARGET_FORBIDDEN);
+  }
+  const serviceName = GATE_R1_REPLACEMENT_PROFILES[replacementProfile];
+  if (
+    typeof serviceName !== 'string'
+    || typeof serviceId !== 'string'
+    || !UUID_PATTERN.test(serviceId)
+    || PREEXISTING_SERVICE_IDS.has(serviceId)
+    || serviceId === GATE_R1_PROJECT_ID
+    || serviceId === GATE_R1_ENVIRONMENT_ID
+    || typeof serviceInstanceId !== 'string'
+    || !UUID_PATTERN.test(serviceInstanceId)
+    || PREEXISTING_SERVICE_IDS.has(serviceInstanceId)
+    || serviceInstanceId === GATE_R1_PROJECT_ID
+    || serviceInstanceId === GATE_R1_ENVIRONMENT_ID
+    || serviceInstanceId === serviceId
+  ) {
+    fail(ERROR_CODES.TARGET_FORBIDDEN);
+  }
+  return serviceName;
+}
+
+function isIsoTimestampOrNull(value) {
+  if (value === null) {
+    return true;
+  }
+  if (typeof value !== 'string' || !ISO_PATTERN.test(value) || Number.isNaN(Date.parse(value))) {
+    return false;
+  }
+  const canonicalValue = value.includes('.') ? value : value.replace('Z', '.000Z');
+  return new Date(value).toISOString() === canonicalValue;
 }
 
 function resolveToken(env) {
@@ -249,8 +321,95 @@ function projectResponse(parsed) {
   return proxies.length;
 }
 
-export async function projectGateR1TcpProxyCount({
+function projectReplacementResponse(parsed, {
   serviceId,
+  serviceInstanceId,
+  serviceName
+}) {
+  if (!hasExactKeys(parsed, ['data'])) {
+    fail(ERROR_CODES.RESPONSE_INVALID);
+  }
+
+  const data = parsed.data;
+  if (!hasExactKeys(data, ['projectToken', 'service', 'serviceInstance', 'tcpProxies'])) {
+    fail(ERROR_CODES.RESPONSE_INVALID);
+  }
+
+  const tokenScope = data.projectToken;
+  if (
+    !hasExactKeys(tokenScope, ['environmentId', 'projectId'])
+    || typeof tokenScope.projectId !== 'string'
+    || typeof tokenScope.environmentId !== 'string'
+    || !UUID_PATTERN.test(tokenScope.projectId)
+    || !UUID_PATTERN.test(tokenScope.environmentId)
+  ) {
+    fail(ERROR_CODES.RESPONSE_INVALID);
+  }
+  if (
+    tokenScope.projectId !== GATE_R1_PROJECT_ID
+    || tokenScope.environmentId !== GATE_R1_ENVIRONMENT_ID
+  ) {
+    fail(ERROR_CODES.SCOPE_MISMATCH);
+  }
+
+  const service = data.service;
+  if (
+    !hasExactKeys(service, ['id', 'name', 'projectId'])
+    || service.id !== serviceId
+    || service.name !== serviceName
+    || service.projectId !== GATE_R1_PROJECT_ID
+  ) {
+    fail(ERROR_CODES.RESPONSE_INVALID);
+  }
+
+  const serviceInstance = data.serviceInstance;
+  if (
+    !hasExactKeys(
+      serviceInstance,
+      ['deletedAt', 'environmentId', 'id', 'serviceId', 'serviceName']
+    )
+    || serviceInstance.id !== serviceInstanceId
+    || serviceInstance.serviceId !== serviceId
+    || serviceInstance.serviceName !== serviceName
+    || serviceInstance.environmentId !== GATE_R1_ENVIRONMENT_ID
+    || serviceInstance.deletedAt !== null
+  ) {
+    fail(ERROR_CODES.RESPONSE_INVALID);
+  }
+
+  const proxies = data.tcpProxies;
+  if (!Array.isArray(proxies)) {
+    fail(ERROR_CODES.RESPONSE_INVALID);
+  }
+
+  const proxyIds = new Set();
+  let tcpProxyCount = 0;
+  for (const proxy of proxies) {
+    if (
+      !hasExactKeys(proxy, ['deletedAt', 'environmentId', 'id', 'serviceId'])
+      || typeof proxy.id !== 'string'
+      || !UUID_PATTERN.test(proxy.id)
+      || proxy.serviceId !== serviceId
+      || proxy.environmentId !== GATE_R1_ENVIRONMENT_ID
+      || !isIsoTimestampOrNull(proxy.deletedAt)
+      || proxyIds.has(proxy.id)
+    ) {
+      fail(ERROR_CODES.RESPONSE_INVALID);
+    }
+    proxyIds.add(proxy.id);
+    if (proxy.deletedAt === null) {
+      tcpProxyCount += 1;
+    }
+  }
+
+  return tcpProxyCount;
+}
+
+async function requestGateR1TcpProxyProjection({
+  serviceId,
+  query,
+  project,
+  buildResult,
   env = process.env,
   fetchImpl = globalThis.fetch,
   setTimeoutImpl = setTimeout,
@@ -258,7 +417,6 @@ export async function projectGateR1TcpProxyCount({
   AbortControllerImpl = AbortController,
   clock = () => new Date().toISOString()
 }) {
-  assertApprovedServiceId(serviceId);
   const projectAccessValue = resolveToken(env);
   if (typeof fetchImpl !== 'function') {
     fail(ERROR_CODES.REQUEST_FAILED);
@@ -289,7 +447,7 @@ export async function projectGateR1TcpProxyCount({
           'Project-Access-Token': projectAccessValue
         },
         body: JSON.stringify({
-          query: GATE_R1_TCP_PROXY_QUERY,
+          query,
           variables: {
             environmentId: GATE_R1_ENVIRONMENT_ID,
             serviceId
@@ -329,7 +487,7 @@ export async function projectGateR1TcpProxyCount({
       fail(ERROR_CODES.RESPONSE_INVALID);
     }
 
-    const tcpProxyCount = projectResponse(parsed);
+    const tcpProxyCount = project(parsed);
     if (controller.signal.aborted) {
       fail(ERROR_CODES.TIMEOUT);
     }
@@ -337,13 +495,7 @@ export async function projectGateR1TcpProxyCount({
     if (controller.signal.aborted) {
       fail(ERROR_CODES.TIMEOUT);
     }
-    return Object.freeze({
-      projectId: GATE_R1_PROJECT_ID,
-      environmentId: GATE_R1_ENVIRONMENT_ID,
-      serviceId,
-      observedAt,
-      tcpProxyCount
-    });
+    return Object.freeze(buildResult({ observedAt, tcpProxyCount }));
   } catch (error) {
     if (isSafeProjectorError(error)) {
       throw error;
@@ -358,17 +510,89 @@ export async function projectGateR1TcpProxyCount({
   }
 }
 
+export async function projectGateR1TcpProxyCount(options = {}) {
+  const { serviceId, ...dependencies } = options;
+  assertApprovedServiceId(serviceId);
+  return requestGateR1TcpProxyProjection({
+    ...dependencies,
+    serviceId,
+    query: GATE_R1_TCP_PROXY_QUERY,
+    project: projectResponse,
+    buildResult: ({ observedAt, tcpProxyCount }) => ({
+      projectId: GATE_R1_PROJECT_ID,
+      environmentId: GATE_R1_ENVIRONMENT_ID,
+      serviceId,
+      observedAt,
+      tcpProxyCount
+    })
+  });
+}
+
+export async function projectGateR1ReplacementTcpProxyCount(options = {}) {
+  const {
+    replacementProfile,
+    serviceId,
+    serviceInstanceId,
+    ...dependencies
+  } = options;
+  const serviceName = assertReplacementTarget(
+    replacementProfile,
+    serviceId,
+    serviceInstanceId
+  );
+  return requestGateR1TcpProxyProjection({
+    ...dependencies,
+    serviceId,
+    query: GATE_R1_REPLACEMENT_TCP_PROXY_QUERY,
+    project: (parsed) => projectReplacementResponse(parsed, {
+      serviceId,
+      serviceInstanceId,
+      serviceName
+    }),
+    buildResult: ({ observedAt, tcpProxyCount }) => ({
+      projectId: GATE_R1_PROJECT_ID,
+      environmentId: GATE_R1_ENVIRONMENT_ID,
+      replacementProfile,
+      serviceId,
+      serviceName,
+      serviceInstanceId,
+      observedAt,
+      tcpProxyCount
+    })
+  });
+}
+
 export function parseGateR1TcpProxyArgs(argv) {
   if (
-    !Array.isArray(argv)
-    || argv.length !== 2
-    || argv[0] !== '--service-id'
-    || typeof argv[1] !== 'string'
+    Array.isArray(argv)
+    && argv.length === 2
+    && argv[0] === '--service-id'
+    && typeof argv[1] === 'string'
   ) {
-    fail(ERROR_CODES.ARGUMENT_INVALID);
+    assertApprovedServiceId(argv[1]);
+    return Object.freeze({ serviceId: argv[1] });
   }
-  assertApprovedServiceId(argv[1]);
-  return Object.freeze({ serviceId: argv[1] });
+
+  if (
+    Array.isArray(argv)
+    && argv.length === 6
+    && argv[0] === '--replacement-profile'
+    && typeof argv[1] === 'string'
+    && argv[2] === '--service-id'
+    && typeof argv[3] === 'string'
+    && argv[4] === '--service-instance-id'
+    && typeof argv[5] === 'string'
+  ) {
+    assertReplacementTarget(argv[1], argv[3], argv[5]);
+    return Object.freeze({
+      mode: 'replacement',
+      replacementProfile: argv[1],
+      serviceId: argv[3],
+      serviceInstanceId: argv[5]
+    });
+  }
+
+  fail(ERROR_CODES.ARGUMENT_INVALID);
 }
 
 export async function runGateR1TcpProxyProjectorCli({
@@ -378,10 +602,10 @@ export async function runGateR1TcpProxyProjectorCli({
   ...dependencies
 } = {}) {
   try {
-    const result = await projectGateR1TcpProxyCount({
-      ...parseGateR1TcpProxyArgs(argv),
-      ...dependencies
-    });
+    const args = parseGateR1TcpProxyArgs(argv);
+    const result = args.mode === 'replacement'
+      ? await projectGateR1ReplacementTcpProxyCount({ ...args, ...dependencies })
+      : await projectGateR1TcpProxyCount({ ...args, ...dependencies });
     stdout.write(`${JSON.stringify(result)}\n`);
     return 0;
   } catch (error) {

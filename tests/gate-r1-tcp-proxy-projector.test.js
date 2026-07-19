@@ -1,16 +1,21 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import {
+  GATE_R1_COMPATIBILITY_VALIDATOR_SERVICE_ID,
   GATE_R1_ENVIRONMENT_ID,
+  GATE_R1_MIGRATION_VALIDATOR_SERVICE_ID,
   GATE_R1_POSTGRES_SERVICE_ID,
   GATE_R1_PROJECT_TOKEN_MAX_CHARACTERS,
   GATE_R1_PROJECT_ID,
   GATE_R1_RAILWAY_GRAPHQL_ENDPOINT,
   GATE_R1_RAILWAY_PROJECT_TOKEN_ENV,
   GATE_R1_REDIS_SERVICE_ID,
+  GATE_R1_REPLACEMENT_PROFILES,
+  GATE_R1_REPLACEMENT_TCP_PROXY_QUERY,
   GATE_R1_TCP_PROXY_QUERY,
   GATE_R1_TCP_PROXY_RESPONSE_LIMIT_BYTES,
   GATE_R1_TCP_PROXY_TIMEOUT_MS,
   parseGateR1TcpProxyArgs,
+  projectGateR1ReplacementTcpProxyCount,
   projectGateR1TcpProxyCount,
   runGateR1TcpProxyProjectorCli
 } from '../scripts/gate-r1-tcp-proxy-projector.js';
@@ -18,6 +23,8 @@ import {
 const FIXTURE_TOKEN = 'fixture-project-access-value';
 const PROXY_ID_A = '11111111-2222-4333-8444-555555555555';
 const PROXY_ID_B = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+const REPLACEMENT_SERVICE_ID = '22222222-3333-4444-8555-666666666666';
+const REPLACEMENT_SERVICE_INSTANCE_ID = '33333333-4444-4555-8666-777777777777';
 const OBSERVED_AT = '2026-07-19T12:34:56.789Z';
 
 function envWithToken(overrides = {}) {
@@ -55,6 +62,37 @@ function jsonResponse(payload, init = {}) {
 
 function successFetch(payload = graphqlPayload()) {
   return jest.fn(async () => jsonResponse(payload));
+}
+
+function replacementGraphqlPayload({
+  replacementProfile = 'postgres',
+  serviceId = REPLACEMENT_SERVICE_ID,
+  serviceInstanceId = REPLACEMENT_SERVICE_INSTANCE_ID,
+  serviceInstanceDeletedAt = null,
+  proxies = []
+} = {}) {
+  const serviceName = GATE_R1_REPLACEMENT_PROFILES[replacementProfile];
+  return {
+    data: {
+      projectToken: {
+        projectId: GATE_R1_PROJECT_ID,
+        environmentId: GATE_R1_ENVIRONMENT_ID
+      },
+      service: {
+        id: serviceId,
+        name: serviceName,
+        projectId: GATE_R1_PROJECT_ID
+      },
+      serviceInstance: {
+        id: serviceInstanceId,
+        serviceId,
+        serviceName,
+        environmentId: GATE_R1_ENVIRONMENT_ID,
+        deletedAt: serviceInstanceDeletedAt
+      },
+      tcpProxies: proxies
+    }
+  };
 }
 
 describe('Gate R1 TCP-proxy projector', () => {
@@ -716,5 +754,312 @@ describe('Gate R1 TCP-proxy projector', () => {
     });
     expect(postgresFetch).toHaveBeenCalledTimes(1);
     expect(redisFetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Gate R1 replacement-service TCP-proxy projector', () => {
+  it.each([
+    ['postgres', 'phase2e-postgres-r2-20260718'],
+    ['redis', 'phase2e-redis-r2-20260718']
+  ])('binds the dynamic %s replacement to its derived exact service identity', async (
+    replacementProfile,
+    serviceName
+  ) => {
+    const fetchImpl = successFetch(replacementGraphqlPayload({ replacementProfile }));
+
+    const result = await projectGateR1ReplacementTcpProxyCount({
+      replacementProfile,
+      serviceId: REPLACEMENT_SERVICE_ID,
+      serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID,
+      env: envWithToken(),
+      fetchImpl,
+      clock: () => OBSERVED_AT
+    });
+
+    expect(result).toEqual({
+      projectId: GATE_R1_PROJECT_ID,
+      environmentId: GATE_R1_ENVIRONMENT_ID,
+      replacementProfile,
+      serviceId: REPLACEMENT_SERVICE_ID,
+      serviceName,
+      serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID,
+      observedAt: OBSERVED_AT,
+      tcpProxyCount: 0
+    });
+    expect(Object.isFrozen(result)).toBe(true);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses only the schema-locked replacement query and exact target variables', async () => {
+    const fetchImpl = successFetch(replacementGraphqlPayload());
+
+    await projectGateR1ReplacementTcpProxyCount({
+      replacementProfile: 'postgres',
+      serviceId: REPLACEMENT_SERVICE_ID,
+      serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID,
+      env: envWithToken({
+        RAILWAY_API_TOKEN: 'ignored-broad-account-value',
+        RAILWAY_TOKEN: 'ignored-cli-value'
+      }),
+      fetchImpl,
+      clock: () => OBSERVED_AT
+    });
+
+    const [endpoint, init] = fetchImpl.mock.calls[0];
+    expect(endpoint).toBe(GATE_R1_RAILWAY_GRAPHQL_ENDPOINT);
+    expect(init.headers['Project-Access-Token']).toBe(FIXTURE_TOKEN);
+    expect(init.headers).not.toHaveProperty('Authorization');
+    expect(JSON.parse(init.body)).toEqual({
+      query: GATE_R1_REPLACEMENT_TCP_PROXY_QUERY,
+      variables: {
+        environmentId: GATE_R1_ENVIRONMENT_ID,
+        serviceId: REPLACEMENT_SERVICE_ID
+      }
+    });
+    expect(init.body).not.toContain(FIXTURE_TOKEN);
+    expect(GATE_R1_REPLACEMENT_TCP_PROXY_QUERY).toContain('query GateR1ReplacementTcpProxyCount');
+    expect(GATE_R1_REPLACEMENT_TCP_PROXY_QUERY).toContain('serviceInstance');
+    expect(GATE_R1_REPLACEMENT_TCP_PROXY_QUERY).toContain('tcpProxies');
+    expect(GATE_R1_REPLACEMENT_TCP_PROXY_QUERY).not.toMatch(
+      /\bmutation\b|__schema|__type|variables\s*\(|environmentVariables|environmentConfig|serviceDomains|customDomains|\bhost\b|\bport\b|\bvalue\b/i
+    );
+  });
+
+  it('counts only current exact-target proxies without emitting proxy identities', async () => {
+    const payload = replacementGraphqlPayload({
+      replacementProfile: 'redis',
+      proxies: [
+        {
+          id: PROXY_ID_A,
+          serviceId: REPLACEMENT_SERVICE_ID,
+          environmentId: GATE_R1_ENVIRONMENT_ID,
+          deletedAt: null
+        },
+        {
+          id: PROXY_ID_B,
+          serviceId: REPLACEMENT_SERVICE_ID,
+          environmentId: GATE_R1_ENVIRONMENT_ID,
+          deletedAt: '2026-07-19T11:00:00.000Z'
+        }
+      ]
+    });
+
+    const result = await projectGateR1ReplacementTcpProxyCount({
+      replacementProfile: 'redis',
+      serviceId: REPLACEMENT_SERVICE_ID,
+      serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID,
+      env: envWithToken(),
+      fetchImpl: successFetch(payload),
+      clock: () => OBSERVED_AT
+    });
+    const serialized = JSON.stringify(result);
+
+    expect(result.tcpProxyCount).toBe(1);
+    expect(serialized).not.toContain(PROXY_ID_A);
+    expect(serialized).not.toContain(PROXY_ID_B);
+    expect(serialized).not.toContain(FIXTURE_TOKEN);
+  });
+
+  it.each([
+    ['project', { projectId: '99999999-aaaa-4bbb-8ccc-dddddddddddd' }],
+    ['environment', { environmentId: '99999999-aaaa-4bbb-8ccc-dddddddddddd' }]
+  ])('rejects replacement-mode project-token %s scope mismatch', async (_name, scope) => {
+    const payload = replacementGraphqlPayload();
+    Object.assign(payload.data.projectToken, scope);
+
+    await expect(projectGateR1ReplacementTcpProxyCount({
+      replacementProfile: 'postgres',
+      serviceId: REPLACEMENT_SERVICE_ID,
+      serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID,
+      env: envWithToken(),
+      fetchImpl: successFetch(payload)
+    })).rejects.toThrow('GATE_R1_TCP_PROXY_PROJECTOR_SCOPE_MISMATCH');
+  });
+
+  it.each([
+    ['extra field', (value) => { value.data.projectToken.extra = true; }],
+    ['malformed project ID', (value) => { value.data.projectToken.projectId = 'not-a-uuid'; }],
+    ['null scope', (value) => { value.data.projectToken = null; }]
+  ])('rejects replacement-mode project-token schema drift: %s', async (_name, mutate) => {
+    const payload = replacementGraphqlPayload();
+    mutate(payload);
+
+    await expect(projectGateR1ReplacementTcpProxyCount({
+      replacementProfile: 'postgres',
+      serviceId: REPLACEMENT_SERVICE_ID,
+      serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID,
+      env: envWithToken(),
+      fetchImpl: successFetch(payload)
+    })).rejects.toThrow('GATE_R1_TCP_PROXY_PROJECTOR_RESPONSE_INVALID');
+  });
+
+  it('parses only the exact replacement CLI shape and preserves the legacy shape', () => {
+    expect(parseGateR1TcpProxyArgs([
+      '--replacement-profile',
+      'postgres',
+      '--service-id',
+      REPLACEMENT_SERVICE_ID,
+      '--service-instance-id',
+      REPLACEMENT_SERVICE_INSTANCE_ID
+    ])).toEqual({
+      mode: 'replacement',
+      replacementProfile: 'postgres',
+      serviceId: REPLACEMENT_SERVICE_ID,
+      serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID
+    });
+    expect(parseGateR1TcpProxyArgs(['--service-id', GATE_R1_POSTGRES_SERVICE_ID])).toEqual({
+      serviceId: GATE_R1_POSTGRES_SERVICE_ID
+    });
+
+    for (const argv of [
+      ['--replacement-profile', 'postgres', '--service-id', REPLACEMENT_SERVICE_ID],
+      ['--replacement-profile', 'postgres', '--service-instance-id', REPLACEMENT_SERVICE_INSTANCE_ID],
+      ['--service-id', REPLACEMENT_SERVICE_ID, '--replacement-profile', 'postgres', '--service-instance-id', REPLACEMENT_SERVICE_INSTANCE_ID],
+      ['--replacement-profile', 'postgres', '--service-id', REPLACEMENT_SERVICE_ID, '--service-instance-id', REPLACEMENT_SERVICE_INSTANCE_ID, '--extra']
+    ]) {
+      expect(() => parseGateR1TcpProxyArgs(argv)).toThrow(
+        'GATE_R1_TCP_PROXY_PROJECTOR_ARGUMENT_INVALID'
+      );
+    }
+    for (const replacementProfile of ['POSTGRES', ' postgres', 'unknown']) {
+      expect(() => parseGateR1TcpProxyArgs([
+        '--replacement-profile',
+        replacementProfile,
+        '--service-id',
+        REPLACEMENT_SERVICE_ID,
+        '--service-instance-id',
+        REPLACEMENT_SERVICE_INSTANCE_ID
+      ])).toThrow('GATE_R1_TCP_PROXY_PROJECTOR_TARGET_FORBIDDEN');
+    }
+  });
+
+  it('rejects reserved, malformed, and self-bound replacement identities before token access', async () => {
+    const env = new Proxy({}, {
+      get() {
+        throw new Error('token-source-must-not-be-read');
+      }
+    });
+    const fetchImpl = successFetch(replacementGraphqlPayload());
+    const cases = [
+      { replacementProfile: 'unknown', serviceId: REPLACEMENT_SERVICE_ID, serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID },
+      { replacementProfile: 'postgres', serviceId: 'not-a-uuid', serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID },
+      { replacementProfile: 'postgres', serviceId: GATE_R1_POSTGRES_SERVICE_ID, serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID },
+      { replacementProfile: 'postgres', serviceId: GATE_R1_REDIS_SERVICE_ID, serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID },
+      { replacementProfile: 'postgres', serviceId: GATE_R1_MIGRATION_VALIDATOR_SERVICE_ID, serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID },
+      { replacementProfile: 'postgres', serviceId: GATE_R1_COMPATIBILITY_VALIDATOR_SERVICE_ID, serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID },
+      { replacementProfile: 'postgres', serviceId: GATE_R1_PROJECT_ID, serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID },
+      { replacementProfile: 'postgres', serviceId: GATE_R1_ENVIRONMENT_ID, serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID },
+      { replacementProfile: 'postgres', serviceId: REPLACEMENT_SERVICE_ID, serviceInstanceId: 'not-a-uuid' },
+      { replacementProfile: 'postgres', serviceId: REPLACEMENT_SERVICE_ID, serviceInstanceId: GATE_R1_PROJECT_ID },
+      { replacementProfile: 'postgres', serviceId: REPLACEMENT_SERVICE_ID, serviceInstanceId: GATE_R1_ENVIRONMENT_ID },
+      { replacementProfile: 'postgres', serviceId: REPLACEMENT_SERVICE_ID, serviceInstanceId: REPLACEMENT_SERVICE_ID }
+    ];
+
+    for (const value of cases) {
+      await expect(projectGateR1ReplacementTcpProxyCount({
+        ...value,
+        env,
+        fetchImpl
+      })).rejects.toThrow('GATE_R1_TCP_PROXY_PROJECTOR_TARGET_FORBIDDEN');
+    }
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('rejects a replacement profile inherited through Object.prototype before token access', async () => {
+    const inheritedProfile = 'gateR1PollutedReplacementProfile';
+    Object.defineProperty(Object.prototype, inheritedProfile, {
+      configurable: true,
+      value: GATE_R1_REPLACEMENT_PROFILES.postgres
+    });
+    const fetchImpl = successFetch(replacementGraphqlPayload());
+    const env = new Proxy({}, {
+      get() {
+        throw new Error('token-source-must-not-be-read');
+      }
+    });
+
+    try {
+      await expect(projectGateR1ReplacementTcpProxyCount({
+        replacementProfile: inheritedProfile,
+        serviceId: REPLACEMENT_SERVICE_ID,
+        serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID,
+        env,
+        fetchImpl
+      })).rejects.toThrow('GATE_R1_TCP_PROXY_PROJECTOR_TARGET_FORBIDDEN');
+    } finally {
+      delete Object.prototype[inheritedProfile];
+    }
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['top-level extra', (value) => { value.extensions = {}; }],
+    ['GraphQL errors', (value) => { value.errors = []; }],
+    ['null service', (value) => { value.data.service = null; }],
+    ['wrong service ID', (value) => { value.data.service.id = '99999999-aaaa-4bbb-8ccc-dddddddddddd'; }],
+    ['wrong service name', (value) => { value.data.service.name = GATE_R1_REPLACEMENT_PROFILES.redis; }],
+    ['wrong service project', (value) => { value.data.service.projectId = '99999999-aaaa-4bbb-8ccc-dddddddddddd'; }],
+    ['service extra field', (value) => { value.data.service.description = 'unexpected'; }],
+    ['null service instance', (value) => { value.data.serviceInstance = null; }],
+    ['wrong instance ID', (value) => { value.data.serviceInstance.id = '99999999-aaaa-4bbb-8ccc-dddddddddddd'; }],
+    ['wrong instance owner', (value) => { value.data.serviceInstance.serviceId = '99999999-aaaa-4bbb-8ccc-dddddddddddd'; }],
+    ['wrong instance name', (value) => { value.data.serviceInstance.serviceName = GATE_R1_REPLACEMENT_PROFILES.redis; }],
+    ['wrong instance environment', (value) => { value.data.serviceInstance.environmentId = '99999999-aaaa-4bbb-8ccc-dddddddddddd'; }],
+    ['deleted instance', (value) => { value.data.serviceInstance.deletedAt = '2026-07-19T11:00:00.000Z'; }],
+    ['instance extra field', (value) => { value.data.serviceInstance.source = 'unexpected'; }],
+    ['non-array proxies', (value) => { value.data.tcpProxies = {}; }],
+    ['proxy wrong owner', (value) => { value.data.tcpProxies = [{ id: PROXY_ID_A, serviceId: GATE_R1_POSTGRES_SERVICE_ID, environmentId: GATE_R1_ENVIRONMENT_ID, deletedAt: null }]; }],
+    ['proxy wrong environment', (value) => { value.data.tcpProxies = [{ id: PROXY_ID_A, serviceId: REPLACEMENT_SERVICE_ID, environmentId: '99999999-aaaa-4bbb-8ccc-dddddddddddd', deletedAt: null }]; }],
+    ['proxy malformed deletion time', (value) => { value.data.tcpProxies = [{ id: PROXY_ID_A, serviceId: REPLACEMENT_SERVICE_ID, environmentId: GATE_R1_ENVIRONMENT_ID, deletedAt: 'not-a-time' }]; }],
+    ['proxy nonexistent deletion date', (value) => { value.data.tcpProxies = [{ id: PROXY_ID_A, serviceId: REPLACEMENT_SERVICE_ID, environmentId: GATE_R1_ENVIRONMENT_ID, deletedAt: '2026-02-31T11:00:00.000Z' }]; }],
+    ['proxy extra field', (value) => { value.data.tcpProxies = [{ id: PROXY_ID_A, serviceId: REPLACEMENT_SERVICE_ID, environmentId: GATE_R1_ENVIRONMENT_ID, deletedAt: null, host: 'secret.invalid' }]; }],
+    ['duplicate proxy ID', (value) => { value.data.tcpProxies = [
+      { id: PROXY_ID_A, serviceId: REPLACEMENT_SERVICE_ID, environmentId: GATE_R1_ENVIRONMENT_ID, deletedAt: null },
+      { id: PROXY_ID_A, serviceId: REPLACEMENT_SERVICE_ID, environmentId: GATE_R1_ENVIRONMENT_ID, deletedAt: null }
+    ]; }]
+  ])('fails closed on replacement identity or proxy schema drift: %s', async (_name, mutate) => {
+    const payload = replacementGraphqlPayload();
+    mutate(payload);
+    await expect(projectGateR1ReplacementTcpProxyCount({
+      replacementProfile: 'postgres',
+      serviceId: REPLACEMENT_SERVICE_ID,
+      serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID,
+      env: envWithToken(),
+      fetchImpl: successFetch(payload)
+    })).rejects.toThrow('GATE_R1_TCP_PROXY_PROJECTOR_RESPONSE_INVALID');
+  });
+
+  it('writes only the fixed replacement JSON contract through the CLI boundary', async () => {
+    const stdout = { write: jest.fn() };
+    const stderr = { write: jest.fn() };
+    const exitCode = await runGateR1TcpProxyProjectorCli({
+      argv: [
+        '--replacement-profile',
+        'redis',
+        '--service-id',
+        REPLACEMENT_SERVICE_ID,
+        '--service-instance-id',
+        REPLACEMENT_SERVICE_INSTANCE_ID
+      ],
+      stdout,
+      stderr,
+      env: envWithToken(),
+      fetchImpl: successFetch(replacementGraphqlPayload({ replacementProfile: 'redis' })),
+      clock: () => OBSERVED_AT
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr.write).not.toHaveBeenCalled();
+    expect(JSON.parse(stdout.write.mock.calls[0][0])).toEqual({
+      projectId: GATE_R1_PROJECT_ID,
+      environmentId: GATE_R1_ENVIRONMENT_ID,
+      replacementProfile: 'redis',
+      serviceId: REPLACEMENT_SERVICE_ID,
+      serviceName: GATE_R1_REPLACEMENT_PROFILES.redis,
+      serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID,
+      observedAt: OBSERVED_AT,
+      tcpProxyCount: 0
+    });
+    expect(stdout.write.mock.calls[0][0]).not.toContain(FIXTURE_TOKEN);
   });
 });
