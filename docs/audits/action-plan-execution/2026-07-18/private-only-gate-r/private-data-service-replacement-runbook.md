@@ -106,6 +106,7 @@ $pgName = 'phase2e-postgres-r2-20260718'
 $redisName = 'phase2e-redis-r2-20260718'
 $repositoryRoot = (git rev-parse --show-toplevel).Trim()
 $readinessWrapper = Join-Path $repositoryRoot 'scripts/gate-r1-postgres-readiness.js'
+$redisReadinessWrapper = Join-Path $repositoryRoot 'scripts/gate-r1-redis-readiness.js'
 $tcpProxyProjector = Join-Path $repositoryRoot 'scripts/gate-r1-tcp-proxy-projector.js'
 $railwayMetadataProjector = Join-Path $repositoryRoot 'scripts/gate-r1-railway-metadata-projector.js'
 $scratch = Join-Path ([IO.Path]::GetTempPath()) ('arcanos-gate-r-' + [guid]::NewGuid().ToString('N'))
@@ -752,8 +753,11 @@ five-second interval (ten minutes maximum). Fail immediately on a terminal
 failure category. Require `SUCCESS`, exactly one new deployment, the expected
 image and start command, the new dedicated volume mounted at `/data`, a private
 endpoint, zero domains, zero TCP proxies, and no public URL variable. Then run
-its service-local health check. The credential remains inside its own container
-and is not printed:
+its bounded service-local authenticated readiness wrapper. The wrapper verifies
+the exact Railway target inside the container, uses the service-local
+`REDIS_PASSWORD` only through `REDISCLI_AUTH`, issues only `PING`, requires the
+exact `PONG` response, suppresses child output, and maps every failure to a fixed
+code:
 
 ```powershell
 $redisEndpointProjection = node $railwayMetadataProjector --endpoint --service-id $redisServiceId --service-name $redisName --private-network-id $privateNetworkId | ConvertFrom-Json
@@ -777,9 +781,15 @@ if (
   throw 'GATE_R_REDIS_ACTIVE_PROXY_FAILED'
 }
 
-railway ssh -p $projectId -e $environmentId -s $redisServiceId sh -lc 'REDISCLI_AUTH="$REDIS_PASSWORD" timeout 15s redis-cli -h 127.0.0.1 -p 6379 --no-auth-warning PING >/dev/null 2>&1'
+node $redisReadinessWrapper --service-id $redisServiceId
 if ($LASTEXITCODE -ne 0) { throw 'GATE_R_REDIS_HEALTH_FAILED' }
 ```
+
+Do not replace the Redis wrapper with a direct or verbose `railway ssh`
+diagnostic. The CLI may emit resolved environment assignments before
+remote-command output. The wrapper's ignored child streams and fixed result
+codes are the disclosure boundary; any fixed wrapper failure stops Gate R1 and
+is investigated locally with mocks until a separately authorized live attempt.
 
 Repeat the Stage 7 checks against both active deployments. Require bounded
 restart policy, zero domains, zero TCP proxies, no public URL variables,

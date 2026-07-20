@@ -104,17 +104,24 @@ describe('Gate R1 procedure contract', () => {
     expect(runbook).toContain('## Stage 11 — R2 only:');
   });
 
-  it('uses the authenticated PostgreSQL wrapper and preserves authenticated Redis readiness', () => {
+  it('uses fixed-output authenticated readiness wrappers for PostgreSQL and Redis', () => {
     expect(authorizationRequest).toContain('Status: **COPY-READY REQUEST — NOT AUTHORIZATION BY THIS DOCUMENT**');
     expect(runbook).not.toContain('pg_isready');
     expect(authorizationRequest).not.toContain('pg_isready');
     expect(runbook).toContain('scripts/gate-r1-postgres-readiness.js');
+    expect(runbook).toContain('scripts/gate-r1-redis-readiness.js');
     expect(runbook).toContain('node $readinessWrapper --service-id $pgServiceId');
+    expect(runbook).toContain('node $redisReadinessWrapper --service-id $redisServiceId');
     expect(runbook).toContain('`psql` client meta-command `\\conninfo`');
     expect(runbook).toContain('Do not replace the wrapper with a direct or verbose `railway ssh` diagnostic.');
     expect(runbook).toContain("The wrapper's ignored child streams and fixed result codes are the disclosure");
-    expect(runbook).toContain('REDISCLI_AUTH="$REDIS_PASSWORD"');
-    expect(runbook).toContain('redis-cli -h 127.0.0.1 -p 6379 --no-auth-warning PING >/dev/null 2>&1');
+    expect(runbook).toContain('uses the service-local\n`REDIS_PASSWORD` only through `REDISCLI_AUTH`');
+    expect(runbook).toContain('issues only `PING`, requires the\nexact `PONG` response');
+
+    const stage9 = runbook.slice(runbook.indexOf('## Stage 9'), runbook.indexOf('## Stage 10'));
+    expect(stage9).not.toMatch(/^\s*railway ssh\b/m);
+    expect(stage9).not.toContain('redis-cli');
+    expect(stage9).toContain('Do not replace the Redis wrapper with a direct or verbose `railway ssh`');
   });
 
   it('uses exact schema-locked proxy modes for quarantined and replacement services', () => {
@@ -176,12 +183,12 @@ describe('Gate R1 procedure contract', () => {
       stage9.indexOf('$redisActiveProxyProjection = node $tcpProxyProjector')
     );
     expect(stage9.indexOf('$redisActiveProxyProjection = node $tcpProxyProjector')).toBeLessThan(
-      stage9.indexOf('redis-cli -h 127.0.0.1')
+      stage9.indexOf('node $redisReadinessWrapper --service-id $redisServiceId')
     );
     expect(stage9.indexOf('$redisActiveProxyProjection = node $tcpProxyProjector')).toBeLessThan(
       stage9.indexOf('$pgFinalProxyProjection = node $tcpProxyProjector')
     );
-    expect(stage9.indexOf('redis-cli -h 127.0.0.1')).toBeLessThan(
+    expect(stage9.indexOf('node $redisReadinessWrapper --service-id $redisServiceId')).toBeLessThan(
       stage9.indexOf('$pgFinalProxyProjection = node $tcpProxyProjector')
     );
 
