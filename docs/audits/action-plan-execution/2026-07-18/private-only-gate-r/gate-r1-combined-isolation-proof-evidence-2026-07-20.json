@@ -42,6 +42,7 @@
       "tcpProxyCount": 0,
       "proxyObservedAt": "2026-07-20T19:31:36.186Z",
       "volumeId": "35c26093-1e3f-4d34-b699-89c65d2fb92d",
+      "volumeInstanceId": "b8f04086-2e97-4167-a0fd-bcb259541e9f",
       "mountPath": "/var/lib/postgresql/data",
       "volumeState": "READY"
     },
@@ -55,6 +56,7 @@
       "tcpProxyCount": 0,
       "proxyObservedAt": "2026-07-20T19:31:36.564Z",
       "volumeId": "d3690500-fcc5-4c06-afa6-cf30e91f608d",
+      "volumeInstanceId": "f222873c-255e-45a2-9a17-840bdba108f6",
       "mountPath": "/data",
       "volumeState": "READY"
     },
@@ -68,6 +70,7 @@
       "tcpProxyCount": 0,
       "proxyObservedAt": "2026-07-20T19:31:36.931Z",
       "volumeId": "2998734d-7530-4f26-b715-cea4780bd437",
+      "volumeInstanceId": "46113532-5609-46da-b7b4-46b8f06930cc",
       "mountPath": "/var/lib/postgresql/data",
       "volumeState": "READY"
     }
