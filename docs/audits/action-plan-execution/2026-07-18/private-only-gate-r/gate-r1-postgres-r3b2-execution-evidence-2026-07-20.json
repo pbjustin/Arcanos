@@ -2,10 +2,31 @@
   "schemaVersion": 1,
   "gate": "Gate R1 PostgreSQL R3B2",
   "result": "BLOCKED_AFTER_SAFE_ACTIVATION",
+  "provenance": {
+    "capturedAt": null,
+    "capturedAtStatus": "UNAVAILABLE_NOT_RECORDED_DURING_LIVE_ATTEMPT",
+    "finalProjectionObservedAt": null,
+    "finalProjectionObservedAtStatus": "UNAVAILABLE_NOT_RECORDED_DURING_LIVE_ATTEMPT",
+    "finalProjectionDetailAvailability": "PARTIAL_SAFE_FIELDS_ONLY",
+    "postAttemptIndependentReview": {
+      "status": "COMPLETED_WITH_PROVENANCE_LIMITATIONS",
+      "reviewedAt": null,
+      "reviewedAtStatus": "UNAVAILABLE_NOT_RECORDED",
+      "verdict": "HISTORICAL_FAILURE_PRESERVED",
+      "scope": "Artifact consistency, authorization boundary, wrapper safety, and disclosure review; no live observation was repeated.",
+      "limitations": [
+        "The live attempt did not record a capture timestamp or final projection timestamp.",
+        "The final safe projection was retained only as bounded fields and a PASS category, not as a complete raw projection.",
+        "The post-attempt worktree state was not recorded at the live stop boundary."
+      ]
+    }
+  },
   "source": {
     "branch": "codex/phase2e-advisory-history-gate-r",
     "commit": "8d57f75f6df5c0781f06dcd40e364b1c55356a01",
-    "worktreeCleanBeforeMutation": true
+    "worktreeCleanBeforeMutation": true,
+    "worktreeCleanAfterOperation": null,
+    "worktreeCleanAfterOperationStatus": "UNAVAILABLE_NOT_RECORDED_AT_LIVE_STOP_BOUNDARY"
   },
   "railway": {
     "projectId": "7faf44e5-519c-4e73-8d7a-da9f389e6187",
@@ -38,10 +59,12 @@
     "sourceActivationAttempts": 1,
     "deploymentWaitObservations": 1,
     "exactDeploymentVerificationBeforeReadiness": "PASS",
+    "exactDeploymentVerificationAfterReadiness": "NOT_RUN_AFTER_READINESS_FAILURE",
     "authenticatedReadiness": "GATE_R_POSTGRES_READINESS_REMOTE_TARGET_MISMATCH",
     "readinessRetried": false,
     "containmentPerformed": false,
     "finalSafeProjection": "PASS",
+    "finalSafeProjectionRawArtifactRetained": false,
     "secureSessionStopped": true
   },
   "credentialSafety": {
