@@ -13,11 +13,17 @@ import { pathToFileURL } from 'node:url';
 
 export const GATE_R_PROJECT_ID = '7faf44e5-519c-4e73-8d7a-da9f389e6187';
 export const GATE_R_ENVIRONMENT_ID = 'fb99f47d-5ef5-44c1-96c2-acf7b90fab13';
-export const GATE_R_POSTGRES_SERVICE_NAME = 'phase2e-postgres-r2-20260718';
+export const GATE_R_POSTGRES_SERVICE_NAME = 'phase2e-postgres-r3-20260720';
 
 const QUARANTINED_SERVICE_IDS = new Set([
   'b7789306-8aef-4113-add5-02883a6cc087',
-  '434fa5b4-b52c-4caf-aaba-e87c173bf10d'
+  '434fa5b4-b52c-4caf-aaba-e87c173bf10d',
+  'a2a57da4-a928-427f-be30-d4a68b59a117',
+  '1ac0bd56-50b3-49eb-954c-ea83515ec915',
+  'd8d5181a-2f72-48d7-8413-6f05d113876c',
+  'febdf999-1c96-48df-8e28-c905b8b27082',
+  'c4ade025-3f13-4fca-9309-5d0dd81396fe',
+  '1765befb-b805-4051-9af9-28634e986886'
 ]);
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const FIXED_FAILURES = Object.freeze({

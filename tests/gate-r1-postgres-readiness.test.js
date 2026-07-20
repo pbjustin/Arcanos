@@ -42,6 +42,7 @@ describe('Gate R1 authenticated PostgreSQL readiness', () => {
   });
 
   it('builds an exact-target, authenticated, non-SQL Railway SSH invocation', () => {
+    expect(GATE_R_POSTGRES_SERVICE_NAME).toBe('phase2e-postgres-r3-20260720');
     const invocation = buildPostgresReadinessInvocation({
       serviceId: REPLACEMENT_SERVICE_ID,
       railwayExecutable: TEST_RAILWAY_EXECUTABLE
@@ -198,6 +199,23 @@ describe('Gate R1 authenticated PostgreSQL readiness', () => {
         spawn: fakeSpawn
       })
     ).toThrow('GATE_R_POSTGRES_READINESS_SERVICE_FORBIDDEN');
+    for (const serviceId of [
+      '434fa5b4-b52c-4caf-aaba-e87c173bf10d',
+      'a2a57da4-a928-427f-be30-d4a68b59a117',
+      '1ac0bd56-50b3-49eb-954c-ea83515ec915',
+      'd8d5181a-2f72-48d7-8413-6f05d113876c',
+      'febdf999-1c96-48df-8e28-c905b8b27082',
+      'c4ade025-3f13-4fca-9309-5d0dd81396fe',
+      '1765befb-b805-4051-9af9-28634e986886'
+    ]) {
+      expect(() =>
+        runPostgresReadiness({
+          serviceId,
+          railwayExecutable: TEST_RAILWAY_EXECUTABLE,
+          spawn: fakeSpawn
+        })
+      ).toThrow('GATE_R_POSTGRES_READINESS_SERVICE_FORBIDDEN');
+    }
     expect(fakeSpawn).not.toHaveBeenCalled();
   });
 

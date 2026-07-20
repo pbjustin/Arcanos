@@ -16,9 +16,16 @@ export const GATE_R1_POSTGRES_SERVICE_ID = 'b7789306-8aef-4113-add5-02883a6cc087
 export const GATE_R1_REDIS_SERVICE_ID = '434fa5b4-b52c-4caf-aaba-e87c173bf10d';
 export const GATE_R1_MIGRATION_VALIDATOR_SERVICE_ID = 'd8d5181a-2f72-48d7-8413-6f05d113876c';
 export const GATE_R1_COMPATIBILITY_VALIDATOR_SERVICE_ID = 'febdf999-1c96-48df-8e28-c905b8b27082';
+export const GATE_R1_WEB_SERVICE_ID = 'c4ade025-3f13-4fca-9309-5d0dd81396fe';
+export const GATE_R1_WORKER_SERVICE_ID = '1765befb-b805-4051-9af9-28634e986886';
+export const GATE_R1_POSTGRES_R2_SERVICE_ID = 'a2a57da4-a928-427f-be30-d4a68b59a117';
+export const GATE_R1_POSTGRES_R2_SERVICE_INSTANCE_ID = 'e8c42bea-d887-485b-8aaf-ba0f45d439e8';
+export const GATE_R1_REDIS_R2_SERVICE_ID = '1ac0bd56-50b3-49eb-954c-ea83515ec915';
+export const GATE_R1_REDIS_R2_SERVICE_INSTANCE_ID = '0f34bcbb-bfd0-4df5-954a-bb97371bd460';
 export const GATE_R1_REPLACEMENT_PROFILES = Object.freeze({
   postgres: 'phase2e-postgres-r2-20260718',
-  redis: 'phase2e-redis-r2-20260718'
+  redis: 'phase2e-redis-r2-20260718',
+  'postgres-r3': 'phase2e-postgres-r3-20260720'
 });
 export const GATE_R1_RAILWAY_PROJECT_TOKEN_ENV = 'ARCANOS_GATE_R1_RAILWAY_PROJECT_TOKEN';
 export const GATE_R1_TCP_PROXY_RESPONSE_LIMIT_BYTES = 16 * 1024;
@@ -67,8 +74,27 @@ const APPROVED_SERVICE_IDS = new Set([
 const PREEXISTING_SERVICE_IDS = new Set([
   ...APPROVED_SERVICE_IDS,
   GATE_R1_MIGRATION_VALIDATOR_SERVICE_ID,
-  GATE_R1_COMPATIBILITY_VALIDATOR_SERVICE_ID
+  GATE_R1_COMPATIBILITY_VALIDATOR_SERVICE_ID,
+  GATE_R1_WEB_SERVICE_ID,
+  GATE_R1_WORKER_SERVICE_ID
 ]);
+const POSTGRES_R3_FORBIDDEN_IDS = new Set([
+  ...PREEXISTING_SERVICE_IDS,
+  GATE_R1_POSTGRES_R2_SERVICE_ID,
+  GATE_R1_POSTGRES_R2_SERVICE_INSTANCE_ID,
+  GATE_R1_REDIS_R2_SERVICE_ID,
+  GATE_R1_REDIS_R2_SERVICE_INSTANCE_ID
+]);
+const FIXED_REPLACEMENT_TARGETS = Object.freeze({
+  postgres: Object.freeze({
+    serviceId: GATE_R1_POSTGRES_R2_SERVICE_ID,
+    serviceInstanceId: GATE_R1_POSTGRES_R2_SERVICE_INSTANCE_ID
+  }),
+  redis: Object.freeze({
+    serviceId: GATE_R1_REDIS_R2_SERVICE_ID,
+    serviceInstanceId: GATE_R1_REDIS_R2_SERVICE_INSTANCE_ID
+  })
+});
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ISO_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/;
 const JSON_CONTENT_TYPE_PATTERN = /^application\/json(?:\s*;|$)/i;
@@ -120,16 +146,24 @@ function assertReplacementTarget(replacementProfile, serviceId, serviceInstanceI
     fail(ERROR_CODES.TARGET_FORBIDDEN);
   }
   const serviceName = GATE_R1_REPLACEMENT_PROFILES[replacementProfile];
+  const fixedTarget = FIXED_REPLACEMENT_TARGETS[replacementProfile];
+  if (fixedTarget !== undefined
+      && (serviceId !== fixedTarget.serviceId || serviceInstanceId !== fixedTarget.serviceInstanceId)) {
+    fail(ERROR_CODES.TARGET_FORBIDDEN);
+  }
+  const forbiddenIds = replacementProfile === 'postgres-r3'
+    ? POSTGRES_R3_FORBIDDEN_IDS
+    : PREEXISTING_SERVICE_IDS;
   if (
     typeof serviceName !== 'string'
     || typeof serviceId !== 'string'
     || !UUID_PATTERN.test(serviceId)
-    || PREEXISTING_SERVICE_IDS.has(serviceId)
+    || forbiddenIds.has(serviceId)
     || serviceId === GATE_R1_PROJECT_ID
     || serviceId === GATE_R1_ENVIRONMENT_ID
     || typeof serviceInstanceId !== 'string'
     || !UUID_PATTERN.test(serviceInstanceId)
-    || PREEXISTING_SERVICE_IDS.has(serviceInstanceId)
+    || forbiddenIds.has(serviceInstanceId)
     || serviceInstanceId === GATE_R1_PROJECT_ID
     || serviceInstanceId === GATE_R1_ENVIRONMENT_ID
     || serviceInstanceId === serviceId

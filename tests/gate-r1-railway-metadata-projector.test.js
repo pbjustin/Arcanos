@@ -1,13 +1,17 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import {
   GATE_R1_APPROVED_REDIS_START_COMMAND,
+  GATE_R1_APPROVED_IMAGES_BY_SERVICE,
   GATE_R1_APPROVED_SERVICES,
+  GATE_R1_ENDPOINT_NAMES,
   GATE_R1_ENVIRONMENT_METADATA_QUERY,
   GATE_R1_METADATA_ENVIRONMENT_ID,
   GATE_R1_METADATA_ENDPOINT,
   GATE_R1_METADATA_PROJECT_ID,
+  GATE_R1_METADATA_PRIVATE_NETWORK_ID,
   GATE_R1_METADATA_RESPONSE_LIMIT_BYTES,
   GATE_R1_METADATA_TOKEN_ENV,
+  GATE_R1_NEW_REPLACEMENT_NAMES,
   GATE_R1_PRIVATE_ENDPOINT_QUERY,
   GATE_R1_REPLACEMENT_NAMES,
   parseGateR1MetadataArgs,
@@ -17,7 +21,8 @@ import {
 } from '../scripts/gate-r1-railway-metadata-projector.js';
 
 const FIXTURE_PROJECT_ACCESS_VALUE = 'fixture-project-access-value';
-const NETWORK_ID = '11111111-2222-4333-8444-555555555555';
+const NETWORK_ID = GATE_R1_METADATA_PRIVATE_NETWORK_ID;
+const WRONG_NETWORK_ID = '11111111-2222-4333-8444-555555555555';
 const SERVICE_INSTANCE_ID = '22222222-3333-4444-8555-666666666666';
 const DEPLOYMENT_ID = '33333333-4444-4555-8666-777777777777';
 const VOLUME_INSTANCE_ID = '44444444-5555-4666-8777-888888888888';
@@ -25,6 +30,12 @@ const VOLUME_ID = '55555555-6666-4777-8888-999999999999';
 const VARIABLE_ID = '66666666-7777-4888-8999-aaaaaaaaaaaa';
 const ENDPOINT_ID = '77777777-8888-4999-8aaa-bbbbbbbbbbbb';
 const REPLACEMENT_SERVICE_ID = '88888888-9999-4aaa-8bbb-cccccccccccc';
+const POSTGRES_R2_SERVICE_ID = 'a2a57da4-a928-427f-be30-d4a68b59a117';
+const REDIS_R2_SERVICE_ID = '1ac0bd56-50b3-49eb-954c-ea83515ec915';
+const REDIS_R2_SERVICE_INSTANCE_ID = '0f34bcbb-bfd0-4df5-954a-bb97371bd460';
+const POSTGRES_R3_NAME = 'phase2e-postgres-r3-20260720';
+const WEB_SERVICE_ID = 'c4ade025-3f13-4fca-9309-5d0dd81396fe';
+const WORKER_SERVICE_ID = '1765befb-b805-4051-9af9-28634e986886';
 const OBSERVED_AT = '2026-07-19T12:34:56.789Z';
 
 function env() { return { [GATE_R1_METADATA_TOKEN_ENV]: FIXTURE_PROJECT_ACCESS_VALUE }; }
@@ -87,6 +98,52 @@ function response(value, init = {}) {
 function fetchFor(value = payload()) { return jest.fn(async () => response(value)); }
 
 describe('Gate R1 schema-locked Railway metadata projector', () => {
+  it('keeps retained R2 identities exact while allowing only PostgreSQL R3 as a new service', async () => {
+    expect(GATE_R1_REPLACEMENT_NAMES).toEqual([
+      'phase2e-postgres-r2-20260718',
+      'phase2e-redis-r2-20260718',
+      POSTGRES_R3_NAME
+    ]);
+    expect(GATE_R1_NEW_REPLACEMENT_NAMES).toEqual([POSTGRES_R3_NAME]);
+    expect(GATE_R1_ENDPOINT_NAMES).toEqual([
+      'phase2e-redis-r2-20260718',
+      POSTGRES_R3_NAME
+    ]);
+    expect(GATE_R1_APPROVED_SERVICES[POSTGRES_R2_SERVICE_ID]).toBe('phase2e-postgres-r2-20260718');
+    expect(GATE_R1_APPROVED_SERVICES[REDIS_R2_SERVICE_ID]).toBe('phase2e-redis-r2-20260718');
+    expect(GATE_R1_APPROVED_SERVICES[WEB_SERVICE_ID]).toBe('ARCANOS V2');
+    expect(GATE_R1_APPROVED_SERVICES[WORKER_SERVICE_ID]).toBe('ARCANOS Worker');
+
+    for (const oldName of ['phase2e-postgres-r2-20260718', 'phase2e-redis-r2-20260718']) {
+      await expect(projectGateR1EnvironmentMetadata({
+        env: env(),
+        fetchImpl: fetchFor(payload({
+          services: [service({ serviceId: REPLACEMENT_SERVICE_ID, serviceName: oldName })]
+        }))
+      })).rejects.toThrow('GATE_R1_METADATA_RESPONSE_INVALID');
+    }
+    for (const existingServiceId of [WEB_SERVICE_ID, WORKER_SERVICE_ID]) {
+      await expect(projectGateR1EnvironmentMetadata({
+        env: env(),
+        fetchImpl: fetchFor(payload({
+          services: [service({ serviceId: existingServiceId, serviceName: POSTGRES_R3_NAME })]
+        }))
+      })).rejects.toThrow('GATE_R1_METADATA_RESPONSE_INVALID');
+    }
+
+    const r3 = await projectGateR1EnvironmentMetadata({
+      env: env(),
+      fetchImpl: fetchFor(payload({
+        services: [service({ serviceId: REPLACEMENT_SERVICE_ID, serviceName: POSTGRES_R3_NAME })]
+      }))
+    });
+    expect(r3.services[0]).toMatchObject({
+      serviceId: REPLACEMENT_SERVICE_ID,
+      serviceName: POSTGRES_R3_NAME,
+      startCommandContract: 'UNSET'
+    });
+  });
+
   it('uses fixed read-only queries that cannot request config, variable values, domains, or introspection', () => {
     for (const query of [GATE_R1_ENVIRONMENT_METADATA_QUERY, GATE_R1_PRIVATE_ENDPOINT_QUERY]) {
       expect(query).toMatch(/^query GateR1/);
@@ -100,12 +157,12 @@ describe('Gate R1 schema-locked Railway metadata projector', () => {
   });
 
   it('projects exact allowlisted topology, deployment, volume, domain counts, and variable names', async () => {
-    const serviceId = Object.keys(GATE_R1_APPROVED_SERVICES)[0];
+    const serviceId = REPLACEMENT_SERVICE_ID;
     const deployment = { id: DEPLOYMENT_ID, status: 'SUCCESS', createdAt: '2026-07-19T10:00:00.000Z' };
     const fetchImpl = fetchFor(payload({
       services: [service({
         serviceId,
-        serviceName: GATE_R1_APPROVED_SERVICES[serviceId],
+        serviceName: POSTGRES_R3_NAME,
         source: { image: 'ghcr.io/railwayapp-templates/postgres-ssl:18.4', repo: null },
         deployment,
         domains: { serviceDomains: [], customDomains: [] }
@@ -131,11 +188,11 @@ describe('Gate R1 schema-locked Railway metadata projector', () => {
       environmentId: GATE_R1_METADATA_ENVIRONMENT_ID,
       environmentName: 'phase2e-validation-20260717',
       privateNetworkId: NETWORK_ID,
-      projectServices: [{ serviceId, serviceName: 'Postgres' }],
+      projectServices: [{ serviceId, serviceName: POSTGRES_R3_NAME }],
       services: [{
         serviceId,
         serviceInstanceId: SERVICE_INSTANCE_ID,
-        serviceName: 'Postgres',
+        serviceName: POSTGRES_R3_NAME,
         deleted: false,
         sourceKind: 'IMAGE',
         sourceImage: 'ghcr.io/railwayapp-templates/postgres-ssl:18.4',
@@ -145,7 +202,7 @@ describe('Gate R1 schema-locked Railway metadata projector', () => {
         activeDeployments: [deployment],
         restartPolicyType: 'ON_FAILURE',
         restartPolicyMaxRetries: 3,
-        startCommandContract: 'NOT_APPLICABLE',
+        startCommandContract: 'UNSET',
         railwayDomainCount: 0,
         customDomainCount: 0
       }],
@@ -176,10 +233,10 @@ describe('Gate R1 schema-locked Railway metadata projector', () => {
       env: env(),
       fetchImpl: fetchFor(payload({ services: [service({
         serviceId: REPLACEMENT_SERVICE_ID,
-        serviceName: GATE_R1_REPLACEMENT_NAMES[0]
+        serviceName: POSTGRES_R3_NAME
       })] }))
     });
-    expect(result.services[0]).toMatchObject({ serviceId: REPLACEMENT_SERVICE_ID, serviceName: GATE_R1_REPLACEMENT_NAMES[0] });
+    expect(result.services[0]).toMatchObject({ serviceId: REPLACEMENT_SERVICE_ID, serviceName: POSTGRES_R3_NAME });
 
     await expect(projectGateR1EnvironmentMetadata({
       env: env(),
@@ -194,11 +251,11 @@ describe('Gate R1 schema-locked Railway metadata projector', () => {
     const value = payload();
     value.data.project.services = connection([
       { id: Object.keys(GATE_R1_APPROVED_SERVICES)[0], name: 'Postgres' },
-      { id: REPLACEMENT_SERVICE_ID, name: GATE_R1_REPLACEMENT_NAMES[0] }
+      { id: REPLACEMENT_SERVICE_ID, name: POSTGRES_R3_NAME }
     ]);
     const result = await projectGateR1EnvironmentMetadata({ env: env(), fetchImpl: fetchFor(value) });
     expect(result.projectServices).toEqual([
-      { serviceId: REPLACEMENT_SERVICE_ID, serviceName: GATE_R1_REPLACEMENT_NAMES[0] },
+      { serviceId: REPLACEMENT_SERVICE_ID, serviceName: POSTGRES_R3_NAME },
       { serviceId: Object.keys(GATE_R1_APPROVED_SERVICES)[0], serviceName: 'Postgres' }
     ]);
 
@@ -304,8 +361,12 @@ describe('Gate R1 schema-locked Railway metadata projector', () => {
       .rejects.toThrow('GATE_R1_METADATA_RESPONSE_INVALID');
   });
 
-  it('emits only safe start-command contract categories for the two replacements', async () => {
-    const redis = service({ serviceId: REPLACEMENT_SERVICE_ID, serviceName: GATE_R1_REPLACEMENT_NAMES[1] });
+  it('emits only safe start-command contract categories for retained Redis and PostgreSQL R3', async () => {
+    const redis = service({
+      id: REDIS_R2_SERVICE_INSTANCE_ID,
+      serviceId: REDIS_R2_SERVICE_ID,
+      serviceName: GATE_R1_APPROVED_SERVICES[REDIS_R2_SERVICE_ID]
+    });
     redis.startCommand = GATE_R1_APPROVED_REDIS_START_COMMAND;
     let result = await projectGateR1EnvironmentMetadata({ env: env(), fetchImpl: fetchFor(payload({ services: [redis] })) });
     expect(result.services[0].startCommandContract).toBe('APPROVED_REDIS');
@@ -316,15 +377,16 @@ describe('Gate R1 schema-locked Railway metadata projector', () => {
     expect(result.services[0].startCommandContract).toBe('MISMATCH');
     expect(JSON.stringify(result)).not.toContain('credential-sentinel');
 
-    const postgres = service({ serviceId: REPLACEMENT_SERVICE_ID, serviceName: GATE_R1_REPLACEMENT_NAMES[0] });
+    const postgres = service({ serviceId: REPLACEMENT_SERVICE_ID, serviceName: POSTGRES_R3_NAME });
     result = await projectGateR1EnvironmentMetadata({ env: env(), fetchImpl: fetchFor(payload({ services: [postgres] })) });
     expect(result.services[0].startCommandContract).toBe('UNSET');
   });
 
   it('reports source-less service-instance configuration exactly without inferring desired config', async () => {
     const redis = service({
-      serviceId: REPLACEMENT_SERVICE_ID,
-      serviceName: GATE_R1_REPLACEMENT_NAMES[1]
+      id: REDIS_R2_SERVICE_INSTANCE_ID,
+      serviceId: REDIS_R2_SERVICE_ID,
+      serviceName: GATE_R1_APPROVED_SERVICES[REDIS_R2_SERVICE_ID]
     });
     redis.restartPolicyMaxRetries = 10;
 
@@ -359,8 +421,42 @@ describe('Gate R1 schema-locked Railway metadata projector', () => {
     expect(JSON.stringify(result)).not.toContain(sourceSentinel);
   });
 
+  it('binds approved images to the exact service role', async () => {
+    expect(GATE_R1_APPROVED_IMAGES_BY_SERVICE).toEqual({
+      [POSTGRES_R3_NAME]: 'ghcr.io/railwayapp-templates/postgres-ssl:18.4',
+      'phase2e-redis-r2-20260718': 'redis:8.2.1'
+    });
+    const result = await projectGateR1EnvironmentMetadata({
+      env: env(),
+      fetchImpl: fetchFor(payload({ services: [service({
+        serviceId: REPLACEMENT_SERVICE_ID,
+        serviceName: POSTGRES_R3_NAME,
+        source: { image: 'redis:8.2.1', repo: null }
+      })] }))
+    });
+    expect(result.services[0]).toMatchObject({
+      sourceKind: 'IMAGE',
+      sourceImage: null,
+      sourceImageApproved: false
+    });
+
+    const redis = await projectGateR1EnvironmentMetadata({
+      env: env(),
+      fetchImpl: fetchFor(payload({ services: [service({
+        serviceId: REDIS_R2_SERVICE_ID,
+        serviceName: 'phase2e-redis-r2-20260718',
+        source: { image: 'ghcr.io/railwayapp-templates/postgres-ssl:18.4', repo: null }
+      })] }))
+    });
+    expect(redis.services[0]).toMatchObject({
+      sourceKind: 'IMAGE',
+      sourceImage: null,
+      sourceImageApproved: false
+    });
+  });
+
   it('projects endpoint presence without exposing endpoint identity or network host data', async () => {
-    const serviceName = GATE_R1_REPLACEMENT_NAMES[1];
+    const serviceName = POSTGRES_R3_NAME;
     const fetchImpl = fetchFor({ data: {
       projectToken: { projectId: GATE_R1_METADATA_PROJECT_ID, environmentId: GATE_R1_METADATA_ENVIRONMENT_ID },
       service: { id: REPLACEMENT_SERVICE_ID, name: serviceName, projectId: GATE_R1_METADATA_PROJECT_ID },
@@ -395,8 +491,54 @@ describe('Gate R1 schema-locked Railway metadata projector', () => {
     expect(JSON.stringify(result)).not.toContain(ENDPOINT_ID);
   });
 
+  it('allows the exact retained Redis endpoint but rejects failed PostgreSQL R2 and spoofed R2 targets', () => {
+    expect(parseGateR1MetadataArgs([
+      '--endpoint', '--service-id', REDIS_R2_SERVICE_ID,
+      '--service-name', 'phase2e-redis-r2-20260718', '--private-network-id', NETWORK_ID
+    ])).toMatchObject({ serviceId: REDIS_R2_SERVICE_ID, serviceName: 'phase2e-redis-r2-20260718' });
+
+    for (const [serviceId, serviceName] of [
+      [POSTGRES_R2_SERVICE_ID, 'phase2e-postgres-r2-20260718'],
+      [REPLACEMENT_SERVICE_ID, 'phase2e-redis-r2-20260718']
+    ]) {
+      expect(() => parseGateR1MetadataArgs([
+        '--endpoint', '--service-id', serviceId,
+        '--service-name', serviceName, '--private-network-id', NETWORK_ID
+      ])).toThrow('GATE_R1_METADATA_TARGET_FORBIDDEN');
+    }
+  });
+
+  it('rejects a wrong private network before token access or transport', async () => {
+    const fetchImpl = jest.fn();
+    const guardedEnv = new Proxy({}, {
+      get() { throw new Error('token-accessed'); }
+    });
+    expect(() => parseGateR1MetadataArgs([
+      '--endpoint', '--service-id', REPLACEMENT_SERVICE_ID,
+      '--service-name', POSTGRES_R3_NAME, '--private-network-id', WRONG_NETWORK_ID
+    ])).toThrow('GATE_R1_METADATA_TARGET_FORBIDDEN');
+    expect(() => projectGateR1PrivateEndpoint({
+      serviceId: REPLACEMENT_SERVICE_ID,
+      serviceName: POSTGRES_R3_NAME,
+      privateNetworkId: WRONG_NETWORK_ID,
+      env: guardedEnv,
+      fetchImpl
+    })).toThrow('GATE_R1_METADATA_TARGET_FORBIDDEN');
+    expect(fetchImpl).not.toHaveBeenCalled();
+
+    await expect(projectGateR1EnvironmentMetadata({
+      env: env(),
+      fetchImpl: fetchFor(payload({ networks: [{
+        publicId: WRONG_NETWORK_ID,
+        projectId: GATE_R1_METADATA_PROJECT_ID,
+        environmentId: GATE_R1_METADATA_ENVIRONMENT_ID,
+        deletedAt: null
+      }] }))
+    })).rejects.toThrow('GATE_R1_METADATA_SCOPE_MISMATCH');
+  });
+
   it('rejects an endpoint bound to another service instance or an unknown sync state', async () => {
-    const serviceName = GATE_R1_REPLACEMENT_NAMES[1];
+    const serviceName = POSTGRES_R3_NAME;
     const endpointPayload = () => ({ data: {
       projectToken: { projectId: GATE_R1_METADATA_PROJECT_ID, environmentId: GATE_R1_METADATA_ENVIRONMENT_ID },
       service: { id: REPLACEMENT_SERVICE_ID, name: serviceName, projectId: GATE_R1_METADATA_PROJECT_ID },
@@ -519,7 +661,7 @@ describe('Gate R1 schema-locked Railway metadata projector', () => {
     expect(parseGateR1MetadataArgs(['--environment'])).toEqual({ mode: 'environment' });
     expect(parseGateR1MetadataArgs([
       '--endpoint', '--service-id', REPLACEMENT_SERVICE_ID,
-      '--service-name', GATE_R1_REPLACEMENT_NAMES[0], '--private-network-id', NETWORK_ID
+      '--service-name', POSTGRES_R3_NAME, '--private-network-id', NETWORK_ID
     ])).toMatchObject({ mode: 'endpoint', serviceId: REPLACEMENT_SERVICE_ID, privateNetworkId: NETWORK_ID });
     expect(() => parseGateR1MetadataArgs(['--environment', '--extra'])).toThrow('GATE_R1_METADATA_ARGUMENT_INVALID');
 

@@ -1,6 +1,11 @@
 # Gate R1 private replacement execution authorization request
 
-Status: **COPY-READY REQUEST — NOT AUTHORIZATION BY THIS DOCUMENT**
+Status: **SUPERSEDED R2 REQUEST — DO NOT USE**
+
+Both one-attempt R2 names were consumed. Use
+`gate-r1-postgres-r3-authorization-request-2026-07-20.md` for the bounded
+PostgreSQL R3A identity-only gate. This file is retained as historical evidence only.
+Historical Status: **COPY-READY REQUEST — NOT AUTHORIZATION BY THIS DOCUMENT**
 
 Historical TCP-proxy evidence was captured through authenticated Railway
 dashboard observations recorded in

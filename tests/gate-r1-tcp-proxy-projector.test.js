@@ -3,12 +3,18 @@ import {
   GATE_R1_COMPATIBILITY_VALIDATOR_SERVICE_ID,
   GATE_R1_ENVIRONMENT_ID,
   GATE_R1_MIGRATION_VALIDATOR_SERVICE_ID,
+  GATE_R1_POSTGRES_R2_SERVICE_ID,
+  GATE_R1_POSTGRES_R2_SERVICE_INSTANCE_ID,
   GATE_R1_POSTGRES_SERVICE_ID,
   GATE_R1_PROJECT_TOKEN_MAX_CHARACTERS,
   GATE_R1_PROJECT_ID,
   GATE_R1_RAILWAY_GRAPHQL_ENDPOINT,
   GATE_R1_RAILWAY_PROJECT_TOKEN_ENV,
   GATE_R1_REDIS_SERVICE_ID,
+  GATE_R1_REDIS_R2_SERVICE_ID,
+  GATE_R1_REDIS_R2_SERVICE_INSTANCE_ID,
+  GATE_R1_WEB_SERVICE_ID,
+  GATE_R1_WORKER_SERVICE_ID,
   GATE_R1_REPLACEMENT_PROFILES,
   GATE_R1_REPLACEMENT_TCP_PROXY_QUERY,
   GATE_R1_TCP_PROXY_QUERY,
@@ -758,13 +764,9 @@ describe('Gate R1 TCP-proxy projector', () => {
 });
 
 describe('Gate R1 replacement-service TCP-proxy projector', () => {
-  it.each([
-    ['postgres', 'phase2e-postgres-r2-20260718'],
-    ['redis', 'phase2e-redis-r2-20260718']
-  ])('binds the dynamic %s replacement to its derived exact service identity', async (
-    replacementProfile,
-    serviceName
-  ) => {
+  it('binds the dynamic PostgreSQL R3 replacement to its derived exact service identity', async () => {
+    const replacementProfile = 'postgres-r3';
+    const serviceName = 'phase2e-postgres-r3-20260720';
     const fetchImpl = successFetch(replacementGraphqlPayload({ replacementProfile }));
 
     const result = await projectGateR1ReplacementTcpProxyCount({
@@ -790,11 +792,48 @@ describe('Gate R1 replacement-service TCP-proxy projector', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    ['postgres', GATE_R1_POSTGRES_R2_SERVICE_ID, GATE_R1_POSTGRES_R2_SERVICE_INSTANCE_ID],
+    ['redis', GATE_R1_REDIS_R2_SERVICE_ID, GATE_R1_REDIS_R2_SERVICE_INSTANCE_ID]
+  ])('keeps retained %s R2 projection bound to its exact known identity', async (
+    replacementProfile,
+    serviceId,
+    serviceInstanceId
+  ) => {
+    const payload = replacementGraphqlPayload({ replacementProfile, serviceId, serviceInstanceId });
+    const result = await projectGateR1ReplacementTcpProxyCount({
+      replacementProfile,
+      serviceId,
+      serviceInstanceId,
+      env: envWithToken(),
+      fetchImpl: successFetch(payload),
+      clock: () => OBSERVED_AT
+    });
+    expect(result).toMatchObject({ replacementProfile, serviceId, serviceInstanceId, tcpProxyCount: 0 });
+  });
+
+  it('rejects alternate identities for both retained R2 profiles before reading a token', async () => {
+    const env = new Proxy({}, {
+      get() { throw new Error('token-source-must-not-be-read'); }
+    });
+    const fetchImpl = successFetch();
+    for (const replacementProfile of ['postgres', 'redis']) {
+      await expect(projectGateR1ReplacementTcpProxyCount({
+        replacementProfile,
+        serviceId: REPLACEMENT_SERVICE_ID,
+        serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID,
+        env,
+        fetchImpl
+      })).rejects.toThrow('GATE_R1_TCP_PROXY_PROJECTOR_TARGET_FORBIDDEN');
+    }
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it('uses only the schema-locked replacement query and exact target variables', async () => {
-    const fetchImpl = successFetch(replacementGraphqlPayload());
+    const fetchImpl = successFetch(replacementGraphqlPayload({ replacementProfile: 'postgres-r3' }));
 
     await projectGateR1ReplacementTcpProxyCount({
-      replacementProfile: 'postgres',
+      replacementProfile: 'postgres-r3',
       serviceId: REPLACEMENT_SERVICE_ID,
       serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID,
       env: envWithToken({
@@ -827,7 +866,7 @@ describe('Gate R1 replacement-service TCP-proxy projector', () => {
 
   it('counts only current exact-target proxies without emitting proxy identities', async () => {
     const payload = replacementGraphqlPayload({
-      replacementProfile: 'redis',
+      replacementProfile: 'postgres-r3',
       proxies: [
         {
           id: PROXY_ID_A,
@@ -845,7 +884,7 @@ describe('Gate R1 replacement-service TCP-proxy projector', () => {
     });
 
     const result = await projectGateR1ReplacementTcpProxyCount({
-      replacementProfile: 'redis',
+      replacementProfile: 'postgres-r3',
       serviceId: REPLACEMENT_SERVICE_ID,
       serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID,
       env: envWithToken(),
@@ -864,11 +903,11 @@ describe('Gate R1 replacement-service TCP-proxy projector', () => {
     ['project', { projectId: '99999999-aaaa-4bbb-8ccc-dddddddddddd' }],
     ['environment', { environmentId: '99999999-aaaa-4bbb-8ccc-dddddddddddd' }]
   ])('rejects replacement-mode project-token %s scope mismatch', async (_name, scope) => {
-    const payload = replacementGraphqlPayload();
+    const payload = replacementGraphqlPayload({ replacementProfile: 'postgres-r3' });
     Object.assign(payload.data.projectToken, scope);
 
     await expect(projectGateR1ReplacementTcpProxyCount({
-      replacementProfile: 'postgres',
+      replacementProfile: 'postgres-r3',
       serviceId: REPLACEMENT_SERVICE_ID,
       serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID,
       env: envWithToken(),
@@ -881,11 +920,11 @@ describe('Gate R1 replacement-service TCP-proxy projector', () => {
     ['malformed project ID', (value) => { value.data.projectToken.projectId = 'not-a-uuid'; }],
     ['null scope', (value) => { value.data.projectToken = null; }]
   ])('rejects replacement-mode project-token schema drift: %s', async (_name, mutate) => {
-    const payload = replacementGraphqlPayload();
+    const payload = replacementGraphqlPayload({ replacementProfile: 'postgres-r3' });
     mutate(payload);
 
     await expect(projectGateR1ReplacementTcpProxyCount({
-      replacementProfile: 'postgres',
+      replacementProfile: 'postgres-r3',
       serviceId: REPLACEMENT_SERVICE_ID,
       serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID,
       env: envWithToken(),
@@ -896,14 +935,14 @@ describe('Gate R1 replacement-service TCP-proxy projector', () => {
   it('parses only the exact replacement CLI shape and preserves the legacy shape', () => {
     expect(parseGateR1TcpProxyArgs([
       '--replacement-profile',
-      'postgres',
+      'postgres-r3',
       '--service-id',
       REPLACEMENT_SERVICE_ID,
       '--service-instance-id',
       REPLACEMENT_SERVICE_INSTANCE_ID
     ])).toEqual({
       mode: 'replacement',
-      replacementProfile: 'postgres',
+      replacementProfile: 'postgres-r3',
       serviceId: REPLACEMENT_SERVICE_ID,
       serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID
     });
@@ -912,10 +951,10 @@ describe('Gate R1 replacement-service TCP-proxy projector', () => {
     });
 
     for (const argv of [
-      ['--replacement-profile', 'postgres', '--service-id', REPLACEMENT_SERVICE_ID],
-      ['--replacement-profile', 'postgres', '--service-instance-id', REPLACEMENT_SERVICE_INSTANCE_ID],
-      ['--service-id', REPLACEMENT_SERVICE_ID, '--replacement-profile', 'postgres', '--service-instance-id', REPLACEMENT_SERVICE_INSTANCE_ID],
-      ['--replacement-profile', 'postgres', '--service-id', REPLACEMENT_SERVICE_ID, '--service-instance-id', REPLACEMENT_SERVICE_INSTANCE_ID, '--extra']
+      ['--replacement-profile', 'postgres-r3', '--service-id', REPLACEMENT_SERVICE_ID],
+      ['--replacement-profile', 'postgres-r3', '--service-instance-id', REPLACEMENT_SERVICE_INSTANCE_ID],
+      ['--service-id', REPLACEMENT_SERVICE_ID, '--replacement-profile', 'postgres-r3', '--service-instance-id', REPLACEMENT_SERVICE_INSTANCE_ID],
+      ['--replacement-profile', 'postgres-r3', '--service-id', REPLACEMENT_SERVICE_ID, '--service-instance-id', REPLACEMENT_SERVICE_INSTANCE_ID, '--extra']
     ]) {
       expect(() => parseGateR1TcpProxyArgs(argv)).toThrow(
         'GATE_R1_TCP_PROXY_PROJECTOR_ARGUMENT_INVALID'
@@ -939,20 +978,26 @@ describe('Gate R1 replacement-service TCP-proxy projector', () => {
         throw new Error('token-source-must-not-be-read');
       }
     });
-    const fetchImpl = successFetch(replacementGraphqlPayload());
+    const fetchImpl = successFetch(replacementGraphqlPayload({ replacementProfile: 'postgres-r3' }));
     const cases = [
       { replacementProfile: 'unknown', serviceId: REPLACEMENT_SERVICE_ID, serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID },
-      { replacementProfile: 'postgres', serviceId: 'not-a-uuid', serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID },
-      { replacementProfile: 'postgres', serviceId: GATE_R1_POSTGRES_SERVICE_ID, serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID },
-      { replacementProfile: 'postgres', serviceId: GATE_R1_REDIS_SERVICE_ID, serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID },
-      { replacementProfile: 'postgres', serviceId: GATE_R1_MIGRATION_VALIDATOR_SERVICE_ID, serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID },
-      { replacementProfile: 'postgres', serviceId: GATE_R1_COMPATIBILITY_VALIDATOR_SERVICE_ID, serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID },
-      { replacementProfile: 'postgres', serviceId: GATE_R1_PROJECT_ID, serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID },
-      { replacementProfile: 'postgres', serviceId: GATE_R1_ENVIRONMENT_ID, serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID },
-      { replacementProfile: 'postgres', serviceId: REPLACEMENT_SERVICE_ID, serviceInstanceId: 'not-a-uuid' },
-      { replacementProfile: 'postgres', serviceId: REPLACEMENT_SERVICE_ID, serviceInstanceId: GATE_R1_PROJECT_ID },
-      { replacementProfile: 'postgres', serviceId: REPLACEMENT_SERVICE_ID, serviceInstanceId: GATE_R1_ENVIRONMENT_ID },
-      { replacementProfile: 'postgres', serviceId: REPLACEMENT_SERVICE_ID, serviceInstanceId: REPLACEMENT_SERVICE_ID }
+      { replacementProfile: 'postgres-r3', serviceId: 'not-a-uuid', serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID },
+      { replacementProfile: 'postgres-r3', serviceId: GATE_R1_POSTGRES_SERVICE_ID, serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID },
+      { replacementProfile: 'postgres-r3', serviceId: GATE_R1_REDIS_SERVICE_ID, serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID },
+      { replacementProfile: 'postgres-r3', serviceId: GATE_R1_POSTGRES_R2_SERVICE_ID, serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID },
+      { replacementProfile: 'postgres-r3', serviceId: GATE_R1_REDIS_R2_SERVICE_ID, serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID },
+      { replacementProfile: 'postgres-r3', serviceId: GATE_R1_MIGRATION_VALIDATOR_SERVICE_ID, serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID },
+      { replacementProfile: 'postgres-r3', serviceId: GATE_R1_COMPATIBILITY_VALIDATOR_SERVICE_ID, serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID },
+      { replacementProfile: 'postgres-r3', serviceId: GATE_R1_WEB_SERVICE_ID, serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID },
+      { replacementProfile: 'postgres-r3', serviceId: GATE_R1_WORKER_SERVICE_ID, serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID },
+      { replacementProfile: 'postgres-r3', serviceId: GATE_R1_PROJECT_ID, serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID },
+      { replacementProfile: 'postgres-r3', serviceId: GATE_R1_ENVIRONMENT_ID, serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID },
+      { replacementProfile: 'postgres-r3', serviceId: REPLACEMENT_SERVICE_ID, serviceInstanceId: 'not-a-uuid' },
+      { replacementProfile: 'postgres-r3', serviceId: REPLACEMENT_SERVICE_ID, serviceInstanceId: GATE_R1_POSTGRES_R2_SERVICE_INSTANCE_ID },
+      { replacementProfile: 'postgres-r3', serviceId: REPLACEMENT_SERVICE_ID, serviceInstanceId: GATE_R1_REDIS_R2_SERVICE_INSTANCE_ID },
+      { replacementProfile: 'postgres-r3', serviceId: REPLACEMENT_SERVICE_ID, serviceInstanceId: GATE_R1_PROJECT_ID },
+      { replacementProfile: 'postgres-r3', serviceId: REPLACEMENT_SERVICE_ID, serviceInstanceId: GATE_R1_ENVIRONMENT_ID },
+      { replacementProfile: 'postgres-r3', serviceId: REPLACEMENT_SERVICE_ID, serviceInstanceId: REPLACEMENT_SERVICE_ID }
     ];
 
     for (const value of cases) {
@@ -969,9 +1014,9 @@ describe('Gate R1 replacement-service TCP-proxy projector', () => {
     const inheritedProfile = 'gateR1PollutedReplacementProfile';
     Object.defineProperty(Object.prototype, inheritedProfile, {
       configurable: true,
-      value: GATE_R1_REPLACEMENT_PROFILES.postgres
+      value: GATE_R1_REPLACEMENT_PROFILES['postgres-r3']
     });
-    const fetchImpl = successFetch(replacementGraphqlPayload());
+    const fetchImpl = successFetch(replacementGraphqlPayload({ replacementProfile: 'postgres-r3' }));
     const env = new Proxy({}, {
       get() {
         throw new Error('token-source-must-not-be-read');
@@ -1018,10 +1063,10 @@ describe('Gate R1 replacement-service TCP-proxy projector', () => {
       { id: PROXY_ID_A, serviceId: REPLACEMENT_SERVICE_ID, environmentId: GATE_R1_ENVIRONMENT_ID, deletedAt: null }
     ]; }]
   ])('fails closed on replacement identity or proxy schema drift: %s', async (_name, mutate) => {
-    const payload = replacementGraphqlPayload();
+    const payload = replacementGraphqlPayload({ replacementProfile: 'postgres-r3' });
     mutate(payload);
     await expect(projectGateR1ReplacementTcpProxyCount({
-      replacementProfile: 'postgres',
+      replacementProfile: 'postgres-r3',
       serviceId: REPLACEMENT_SERVICE_ID,
       serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID,
       env: envWithToken(),
@@ -1035,7 +1080,7 @@ describe('Gate R1 replacement-service TCP-proxy projector', () => {
     const exitCode = await runGateR1TcpProxyProjectorCli({
       argv: [
         '--replacement-profile',
-        'redis',
+        'postgres-r3',
         '--service-id',
         REPLACEMENT_SERVICE_ID,
         '--service-instance-id',
@@ -1044,7 +1089,7 @@ describe('Gate R1 replacement-service TCP-proxy projector', () => {
       stdout,
       stderr,
       env: envWithToken(),
-      fetchImpl: successFetch(replacementGraphqlPayload({ replacementProfile: 'redis' })),
+      fetchImpl: successFetch(replacementGraphqlPayload({ replacementProfile: 'postgres-r3' })),
       clock: () => OBSERVED_AT
     });
 
@@ -1053,9 +1098,9 @@ describe('Gate R1 replacement-service TCP-proxy projector', () => {
     expect(JSON.parse(stdout.write.mock.calls[0][0])).toEqual({
       projectId: GATE_R1_PROJECT_ID,
       environmentId: GATE_R1_ENVIRONMENT_ID,
-      replacementProfile: 'redis',
+      replacementProfile: 'postgres-r3',
       serviceId: REPLACEMENT_SERVICE_ID,
-      serviceName: GATE_R1_REPLACEMENT_PROFILES.redis,
+      serviceName: GATE_R1_REPLACEMENT_PROFILES['postgres-r3'],
       serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID,
       observedAt: OBSERVED_AT,
       tcpProxyCount: 0

@@ -13,6 +13,7 @@ export const GATE_R1_METADATA_PROJECT_ID = '7faf44e5-519c-4e73-8d7a-da9f389e6187
 export const GATE_R1_METADATA_PROJECT_NAME = 'Arcanos';
 export const GATE_R1_METADATA_ENVIRONMENT_ID = 'fb99f47d-5ef5-44c1-96c2-acf7b90fab13';
 export const GATE_R1_METADATA_ENVIRONMENT_NAME = 'phase2e-validation-20260717';
+export const GATE_R1_METADATA_PRIVATE_NETWORK_ID = '464f2194-3825-4ac1-a705-192566561675';
 export const GATE_R1_METADATA_TOKEN_ENV = 'ARCANOS_GATE_R1_RAILWAY_PROJECT_TOKEN';
 export const GATE_R1_METADATA_RESPONSE_LIMIT_BYTES = 64 * 1024;
 export const GATE_R1_METADATA_TIMEOUT_MS = 10_000;
@@ -21,17 +22,29 @@ export const GATE_R1_METADATA_TOKEN_MAX_CHARACTERS = 512;
 export const GATE_R1_APPROVED_SERVICES = Object.freeze({
   'b7789306-8aef-4113-add5-02883a6cc087': 'Postgres',
   '434fa5b4-b52c-4caf-aaba-e87c173bf10d': 'Redis',
+  'a2a57da4-a928-427f-be30-d4a68b59a117': 'phase2e-postgres-r2-20260718',
+  '1ac0bd56-50b3-49eb-954c-ea83515ec915': 'phase2e-redis-r2-20260718',
+  'c4ade025-3f13-4fca-9309-5d0dd81396fe': 'ARCANOS V2',
+  '1765befb-b805-4051-9af9-28634e986886': 'ARCANOS Worker',
   'd8d5181a-2f72-48d7-8413-6f05d113876c': 'phase2e-migration-validator-20260718',
   'febdf999-1c96-48df-8e28-c905b8b27082': 'phase2e-compatibility-validator-20260718'
 });
 export const GATE_R1_REPLACEMENT_NAMES = Object.freeze([
   'phase2e-postgres-r2-20260718',
-  'phase2e-redis-r2-20260718'
+  'phase2e-redis-r2-20260718',
+  'phase2e-postgres-r3-20260720'
 ]);
-export const GATE_R1_APPROVED_IMAGES = Object.freeze([
-  'ghcr.io/railwayapp-templates/postgres-ssl:18.4',
-  'redis:8.2.1'
+export const GATE_R1_NEW_REPLACEMENT_NAMES = Object.freeze([
+  'phase2e-postgres-r3-20260720'
 ]);
+export const GATE_R1_ENDPOINT_NAMES = Object.freeze([
+  'phase2e-redis-r2-20260718',
+  'phase2e-postgres-r3-20260720'
+]);
+export const GATE_R1_APPROVED_IMAGES_BY_SERVICE = Object.freeze({
+  'phase2e-postgres-r3-20260720': 'ghcr.io/railwayapp-templates/postgres-ssl:18.4',
+  'phase2e-redis-r2-20260718': 'redis:8.2.1'
+});
 export const GATE_R1_APPROVED_REDIS_START_COMMAND = '/bin/sh -c \'test "$RAILWAY_VOLUME_MOUNT_PATH" = /data && test -n "$REDIS_PASSWORD" && { [ ! -e /data/lost+found ] || rmdir /data/lost+found; } && exec docker-entrypoint.sh redis-server --requirepass "$REDIS_PASSWORD" --save 60 1 --dir /data\'';
 
 export const GATE_R1_ENVIRONMENT_METADATA_QUERY = `query GateR1EnvironmentMetadata($projectId: String!, $environmentId: String!) {
@@ -219,7 +232,7 @@ function projectDeployment(value) {
 function approvedServiceName(serviceId, serviceName) {
   const fixed = GATE_R1_APPROVED_SERVICES[serviceId];
   if (fixed !== undefined) return fixed === serviceName;
-  return GATE_R1_REPLACEMENT_NAMES.includes(serviceName);
+  return GATE_R1_NEW_REPLACEMENT_NAMES.includes(serviceName);
 }
 
 function projectService(node) {
@@ -257,12 +270,12 @@ function projectService(node) {
   const latestDeployment = projectDeployment(node.latestDeployment);
   const approvedSourceImage = node.source?.image !== null
     && node.source?.image !== undefined
-    && GATE_R1_APPROVED_IMAGES.includes(node.source.image)
+    && GATE_R1_APPROVED_IMAGES_BY_SERVICE[node.serviceName] === node.source.image
     ? node.source.image
     : null;
   const startCommandContract = node.serviceName === 'phase2e-redis-r2-20260718'
     ? node.startCommand === GATE_R1_APPROVED_REDIS_START_COMMAND ? 'APPROVED_REDIS' : node.startCommand === null ? 'MISSING' : 'MISMATCH'
-    : node.serviceName === 'phase2e-postgres-r2-20260718'
+    : node.serviceName === 'phase2e-postgres-r3-20260720'
       ? node.startCommand === null ? 'UNSET' : 'MISMATCH'
       : 'NOT_APPLICABLE';
   return Object.freeze({
@@ -368,6 +381,9 @@ function projectEnvironmentResponse(parsed) {
     return network.deletedAt === null;
   });
   if (activeNetworks.length !== 1) fail('GATE_R1_METADATA_RESPONSE_INVALID');
+  if (activeNetworks[0].publicId !== GATE_R1_METADATA_PRIVATE_NETWORK_ID) {
+    fail('GATE_R1_METADATA_SCOPE_MISMATCH');
+  }
 
   const variablesByService = Object.fromEntries([...serviceIds].sort().map((serviceId) => [
     serviceId,
@@ -526,7 +542,13 @@ export function projectGateR1EnvironmentMetadata(options = {}) {
 }
 
 export function projectGateR1PrivateEndpoint({ serviceId, serviceName, privateNetworkId, ...options }) {
-  if (!uuid(serviceId) || !GATE_R1_REPLACEMENT_NAMES.includes(serviceName) || !uuid(privateNetworkId)) {
+  const fixedServiceName = GATE_R1_APPROVED_SERVICES[serviceId];
+  const approvedTarget = (
+    fixedServiceName === serviceName && GATE_R1_ENDPOINT_NAMES.includes(serviceName)
+  ) || (
+    fixedServiceName === undefined && GATE_R1_NEW_REPLACEMENT_NAMES.includes(serviceName)
+  );
+  if (!uuid(serviceId) || !approvedTarget || privateNetworkId !== GATE_R1_METADATA_PRIVATE_NETWORK_ID) {
     fail('GATE_R1_METADATA_TARGET_FORBIDDEN');
   }
   const dependencies = { ...defaults, ...options };
@@ -542,7 +564,16 @@ export function parseGateR1MetadataArgs(argv) {
   if (Array.isArray(argv) && argv.length === 1 && argv[0] === '--environment') return Object.freeze({ mode: 'environment' });
   if (Array.isArray(argv) && argv.length === 7 && argv[0] === '--endpoint'
       && argv[1] === '--service-id' && argv[3] === '--service-name' && argv[5] === '--private-network-id'
-      && uuid(argv[2]) && GATE_R1_REPLACEMENT_NAMES.includes(argv[4]) && uuid(argv[6])) {
+      && uuid(argv[2]) && uuid(argv[6])) {
+    const fixedServiceName = GATE_R1_APPROVED_SERVICES[argv[2]];
+    const approvedTarget = (
+      fixedServiceName === argv[4] && GATE_R1_ENDPOINT_NAMES.includes(argv[4])
+    ) || (
+      fixedServiceName === undefined && GATE_R1_NEW_REPLACEMENT_NAMES.includes(argv[4])
+    );
+    if (!approvedTarget || argv[6] !== GATE_R1_METADATA_PRIVATE_NETWORK_ID) {
+      fail('GATE_R1_METADATA_TARGET_FORBIDDEN');
+    }
     return Object.freeze({ mode: 'endpoint', serviceId: argv[2], serviceName: argv[4], privateNetworkId: argv[6] });
   }
   fail('GATE_R1_METADATA_ARGUMENT_INVALID');

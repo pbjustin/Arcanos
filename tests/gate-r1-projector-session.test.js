@@ -72,6 +72,23 @@ function runBoundedFixture(mode, timeoutMs = 5_000) {
   });
 }
 
+function runProjectorArgumentRequest(request) {
+  const harnessScript = createHarness();
+  const escapedHarness = harnessScript.replaceAll("'", "''");
+  const requestJson = JSON.stringify(request).replaceAll("'", "''");
+  const command = [
+    `. '${escapedHarness}'`,
+    `$request='${requestJson}' | ConvertFrom-Json -AsHashtable`,
+    "try { $projectorArguments=@(Get-ProjectorArguments $request); @{ok=$true;arguments=$projectorArguments} | ConvertTo-Json -Compress } catch { @{ok=$false;code=(Resolve-SafeErrorCode $_)} | ConvertTo-Json -Compress }"
+  ].join('; ');
+  return spawnSync('pwsh', ['-NoLogo', '-NoProfile', '-Command', command], {
+    encoding: 'utf8',
+    env: withoutRailwayTokens(),
+    timeout: 15_000,
+    windowsHide: true
+  });
+}
+
 function withoutRailwayTokens() {
   const env = { ...process.env };
   for (const name of [
@@ -175,8 +192,8 @@ describe('Gate R1 projector session', () => {
 
   it('pins every executable artifact before each projector launch', () => {
     for (const value of [
-      '745D057525779274B2E55DE3E90BFA8662E4700A7693B72612A993DE633F1523',
-      'B52A90B27EF5447725E3419E7CE8A9906BBE99C870543BD4BC8E290A79EBFCB9',
+      'B659DD037DD900697AD9384C845B4579BED1BF76AF6DA1DA4736693B9E748A83',
+      'D60AE8D073DCD5A0C58FEC200D5AE841EB8E5E92575E822398968676F50E8E77',
       'D14BA95CDCE1EF7DC9AD3AC74949CA5DB38B27378EE30F30A23CF26F9E875A11'
     ]) {
       expect(sessionScript).toContain(value);
@@ -193,22 +210,75 @@ describe('Gate R1 projector session', () => {
     expect(sessionScript).toContain('switch -CaseSensitive ($Request.operation)');
     expect(sessionScript).toContain("'protocolVersion'");
     expect(sessionScript).toContain("$PrivateNetworkId = '464f2194-3825-4ac1-a705-192566561675'");
-    for (const operation of ['environment', 'replacementProxy', 'endpoint', 'stop']) {
+    for (const operation of ['environment', 'fixedProxy', 'replacementProxy', 'endpoint', 'stop']) {
       expect(sessionScript).toContain(`'${operation}'`);
     }
     expect(sessionScript).toContain('$request.operation -ceq \'stop\'');
+    expect(sessionScript).not.toContain('postgres-r3');
   });
 
   it('hard-pins the approved project, environment, and current replacement services', () => {
     for (const value of [
       '7faf44e5-519c-4e73-8d7a-da9f389e6187',
       'fb99f47d-5ef5-44c1-96c2-acf7b90fab13',
+      'b7789306-8aef-4113-add5-02883a6cc087',
+      '434fa5b4-b52c-4caf-aaba-e87c173bf10d',
       'a2a57da4-a928-427f-be30-d4a68b59a117',
       '1ac0bd56-50b3-49eb-954c-ea83515ec915',
       'phase2e-postgres-r2-20260718',
       'phase2e-redis-r2-20260718'
     ]) {
       expect(sessionScript).toContain(value);
+    }
+  });
+
+  it('maps only the two original services through the fixed proxy protocol', () => {
+    for (const serviceId of [
+      'b7789306-8aef-4113-add5-02883a6cc087',
+      '434fa5b4-b52c-4caf-aaba-e87c173bf10d'
+    ]) {
+      const result = runProjectorArgumentRequest({
+        operation: 'fixedProxy', protocolVersion: 1, sequence: 1, serviceId
+      });
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe('');
+      const projected = JSON.parse(result.stdout);
+      expect(projected.ok).toBe(true);
+      expect(projected.arguments[0].replaceAll('\\', '/')).toMatch(/\/scripts\/gate-r1-tcp-proxy-projector\.js$/);
+      expect(projected.arguments.slice(1)).toEqual(['--service-id', serviceId]);
+    }
+    const rejected = runProjectorArgumentRequest({
+      operation: 'fixedProxy', protocolVersion: 1, sequence: 1,
+      serviceId: 'd8d5181a-2f72-48d7-8413-6f05d113876c'
+    });
+    expect(rejected.status).toBe(0);
+    expect(rejected.stderr).toBe('');
+    expect(JSON.parse(rejected.stdout)).toEqual({
+      code: 'GATE_R1_SESSION_REQUEST_INVALID',
+      ok: false
+    });
+  });
+
+  it('rejects unbound R3 requests in the executable session protocol', () => {
+    for (const request of [
+      {
+        operation: 'replacementProxy', profile: 'postgres-r3', protocolVersion: 1, sequence: 1,
+        serviceId: '88888888-9999-4aaa-8bbb-cccccccccccc',
+        serviceInstanceId: '22222222-3333-4444-8555-666666666666'
+      },
+      {
+        operation: 'endpoint', profile: 'postgres-r3', protocolVersion: 1, sequence: 1,
+        serviceId: '88888888-9999-4aaa-8bbb-cccccccccccc',
+        privateNetworkId: '464f2194-3825-4ac1-a705-192566561675'
+      }
+    ]) {
+      const result = runProjectorArgumentRequest(request);
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe('');
+      expect(JSON.parse(result.stdout)).toEqual({
+        code: 'GATE_R1_SESSION_REQUEST_INVALID',
+        ok: false
+      });
     }
   });
 

@@ -8,6 +8,8 @@ $ProjectorTokenName = 'ARCANOS_GATE_R1_RAILWAY_PROJECT_TOKEN'
 $ProjectId = '7faf44e5-519c-4e73-8d7a-da9f389e6187'
 $EnvironmentId = 'fb99f47d-5ef5-44c1-96c2-acf7b90fab13'
 $PrivateNetworkId = '464f2194-3825-4ac1-a705-192566561675'
+$OriginalPostgresServiceId = 'b7789306-8aef-4113-add5-02883a6cc087'
+$OriginalRedisServiceId = '434fa5b4-b52c-4caf-aaba-e87c173bf10d'
 $PostgresServiceId = 'a2a57da4-a928-427f-be30-d4a68b59a117'
 $RedisServiceId = '1ac0bd56-50b3-49eb-954c-ea83515ec915'
 $PostgresName = 'phase2e-postgres-r2-20260718'
@@ -24,8 +26,8 @@ $MaximumRequestBytes = 4096
 $RepositoryRoot = Split-Path -Parent $PSScriptRoot
 $MetadataProjector = Join-Path $PSScriptRoot 'gate-r1-railway-metadata-projector.js'
 $TcpProxyProjector = Join-Path $PSScriptRoot 'gate-r1-tcp-proxy-projector.js'
-$MetadataProjectorSha256 = '745D057525779274B2E55DE3E90BFA8662E4700A7693B72612A993DE633F1523'
-$TcpProxyProjectorSha256 = 'B52A90B27EF5447725E3419E7CE8A9906BBE99C870543BD4BC8E290A79EBFCB9'
+$MetadataProjectorSha256 = 'B659DD037DD900697AD9384C845B4579BED1BF76AF6DA1DA4736693B9E748A83'
+$TcpProxyProjectorSha256 = 'D60AE8D073DCD5A0C58FEC200D5AE841EB8E5E92575E822398968676F50E8E77'
 $NodePath = 'C:\Program Files\nodejs\node.exe'
 $NodeSha256 = 'D14BA95CDCE1EF7DC9AD3AC74949CA5DB38B27378EE30F30A23CF26F9E875A11'
 
@@ -163,6 +165,13 @@ function Get-ProjectorArguments([hashtable]$Request) {
       Assert-ExactKeys $Request @('operation', 'protocolVersion', 'sequence')
       return @($MetadataProjector, '--environment')
     }
+    'fixedProxy' {
+      Assert-ExactKeys $Request @('operation', 'protocolVersion', 'sequence', 'serviceId')
+      if ($Request.serviceId -cne $OriginalPostgresServiceId -and $Request.serviceId -cne $OriginalRedisServiceId) {
+        Throw-Safe 'GATE_R1_SESSION_REQUEST_INVALID'
+      }
+      return @($TcpProxyProjector, '--service-id', [string]$Request.serviceId)
+    }
     'replacementProxy' {
       Assert-ExactKeys $Request @('operation', 'profile', 'protocolVersion', 'sequence', 'serviceId', 'serviceInstanceId')
       if (-not (Test-CanonicalUuid $Request.serviceInstanceId)) {
@@ -186,9 +195,7 @@ function Get-ProjectorArguments([hashtable]$Request) {
       if ($Request.privateNetworkId -cne $PrivateNetworkId) {
         Throw-Safe 'GATE_R1_SESSION_REQUEST_INVALID'
       }
-      if ($Request.profile -ceq 'postgres' -and $Request.serviceId -ceq $PostgresServiceId) {
-        $serviceName = $PostgresName
-      } elseif ($Request.profile -ceq 'redis' -and $Request.serviceId -ceq $RedisServiceId) {
+      if ($Request.profile -ceq 'redis' -and $Request.serviceId -ceq $RedisServiceId) {
         $serviceName = $RedisName
       } else {
         Throw-Safe 'GATE_R1_SESSION_REQUEST_INVALID'
@@ -212,15 +219,22 @@ function Assert-ExactProjectorInvocation([string[]]$Arguments) {
     return
   }
   if (
+    $Arguments.Count -eq 3 -and
+    $Arguments[0] -ceq $TcpProxyProjector -and
+    $Arguments[1] -ceq '--service-id' -and
+    ($Arguments[2] -ceq $OriginalPostgresServiceId -or $Arguments[2] -ceq $OriginalRedisServiceId)
+  ) {
+    return
+  }
+  if (
     $Arguments.Count -eq 8 -and
     $Arguments[0] -ceq $MetadataProjector -and
     $Arguments[1] -ceq '--endpoint' -and
     $Arguments[2] -ceq '--service-id' -and
-    ($Arguments[3] -ceq $PostgresServiceId -or $Arguments[3] -ceq $RedisServiceId) -and
+    $Arguments[3] -ceq $RedisServiceId -and
     $Arguments[4] -ceq '--service-name' -and
     (
-      ($Arguments[3] -ceq $PostgresServiceId -and $Arguments[5] -ceq $PostgresName) -or
-      ($Arguments[3] -ceq $RedisServiceId -and $Arguments[5] -ceq $RedisName)
+      $Arguments[5] -ceq $RedisName
     ) -and
     $Arguments[6] -ceq '--private-network-id' -and
     $Arguments[7] -ceq $PrivateNetworkId

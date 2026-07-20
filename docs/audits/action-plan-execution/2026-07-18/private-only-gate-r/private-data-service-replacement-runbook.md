@@ -1,5 +1,11 @@
 # Phase 2E Gate R private-only data-service replacement runbook
 
+> **Historical R2 procedure — do not execute.** Both one-attempt R2 names were
+> consumed. PostgreSQL R2 was later contained, and Redis R2 remains retained
+> offline. The bounded PostgreSQL R3A identity-only procedure is now
+> `gate-r1-postgres-r3-recovery-plan-2026-07-20.md`. This file remains intact as
+> historical evidence for the R2 attempt.
+
 Status: **PROCEDURE ONLY — NOT EXECUTED OR AUTHORIZED BY THIS DOCUMENT**
 
 This runbook replaces the credential-compromised PostgreSQL and Redis services
