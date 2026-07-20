@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "gate": "Gate R1 PostgreSQL R3B2",
+  "result": "BLOCKED_AFTER_SAFE_ACTIVATION",
+  "source": {
+    "branch": "codex/phase2e-advisory-history-gate-r",
+    "commit": "8d57f75f6df5c0781f06dcd40e364b1c55356a01",
+    "worktreeCleanBeforeMutation": true
+  },
+  "railway": {
+    "projectId": "7faf44e5-519c-4e73-8d7a-da9f389e6187",
+    "environmentId": "fb99f47d-5ef5-44c1-96c2-acf7b90fab13",
+    "privateNetworkId": "464f2194-3825-4ac1-a705-192566561675",
+    "serviceId": "7346b3f6-bf3d-46e1-9d66-79f10847ef89",
+    "serviceInstanceId": "86dde430-50ac-4d5c-95c3-cb27064eff51",
+    "volumeId": "ce93ced0-0c15-48f9-87fc-d9153ffefdc8",
+    "volumeInstanceId": "c7969acf-79fd-4a6b-83d7-1e6cb442a030",
+    "image": "ghcr.io/railwayapp-templates/postgres-ssl:18.4",
+    "deploymentId": "b5e45d34-19b8-4253-b230-c3ab0b60b0d7",
+    "deploymentStatusAfterAbort": "SUCCESS",
+    "activeDeploymentCountAfterAbort": 1,
+    "tcpProxyCountBeforeActivation": 0,
+    "tcpProxyCountAfterActivation": 0,
+    "privateEndpointPresent": true,
+    "privateEndpointSyncStatus": "ACTIVE"
+  },
+  "preconditions": {
+    "exactTargetAndVolume": "PASS",
+    "approvedVariableNameCount": 12,
+    "publicUrlVariablePresent": false,
+    "retainedDataServicesInactive": 4,
+    "phase2eApplicationInstances": 0,
+    "validatorsInactive": 2,
+    "productionStableIdentitiesUnchanged": true,
+    "phase2dStableIdentitiesUnchanged": true
+  },
+  "operation": {
+    "sourceActivationAttempts": 1,
+    "deploymentWaitObservations": 1,
+    "exactDeploymentVerificationBeforeReadiness": "PASS",
+    "authenticatedReadiness": "GATE_R_POSTGRES_READINESS_REMOTE_TARGET_MISMATCH",
+    "readinessRetried": false,
+    "containmentPerformed": false,
+    "finalSafeProjection": "PASS",
+    "secureSessionStopped": true
+  },
+  "credentialSafety": {
+    "temporaryProjectTokenValueRecorded": false,
+    "temporaryProjectTokenRevokedByOperator": true,
+    "ambientProjectTokenPresentAfterSession": false,
+    "secureSessionArtifactsRemaining": 0,
+    "connectionStringsPrinted": 0,
+    "credentialValuesPrinted": 0
+  },
+  "blocker": {
+    "code": "GATE_R_POSTGRES_READINESS_REMOTE_TARGET_MISMATCH",
+    "effect": "Gate R1 PostgreSQL readiness is not complete. No retry is authorized by the R3B2 failure contract.",
+    "localFinding": "Railway CLI 4.30.2 joins trailing command arguments and supplies its own sh -c wrapper. The committed readiness wrapper added an unquoted nested sh -lc, causing the first target test to fail with child exit 70 before it could attest the selected Railway target.",
+    "nextAction": "Validate and review the local single-command correction, then obtain a separately bounded authorization before any new live readiness attempt. The historical R3B2 failure remains unchanged."
+  },
+  "prohibitionsPreserved": {
+    "redisMutated": false,
+    "migrationRun": false,
+    "applicationDeployed": false,
+    "workerOrExecutorStarted": false,
+    "productionMutated": false,
+    "phase2dMutated": false,
+    "providerCalled": false
+  }
+}
