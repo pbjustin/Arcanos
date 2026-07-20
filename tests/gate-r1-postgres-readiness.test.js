@@ -25,6 +25,16 @@ function expectZeroed(buffer) {
   expect([...buffer]).toEqual(new Array(buffer.length).fill(0));
 }
 
+function modelRailwayCli4302Command(args) {
+  // Mirrors Railway CLI 4.30.2: trailing arguments are joined, then passed to `sh -c`.
+  const commandArguments = args.slice(7);
+  return Object.freeze({
+    args: Object.freeze(['-c', commandArguments.join(' ')]),
+    commandArguments: Object.freeze(commandArguments),
+    file: 'sh'
+  });
+}
+
 describe('Gate R1 authenticated PostgreSQL readiness', () => {
   it('resolves the executable directly on non-Windows platforms', () => {
     const exists = jest.fn();
@@ -64,18 +74,16 @@ describe('Gate R1 authenticated PostgreSQL readiness', () => {
     const serialized = invocation.args.join(' ');
 
     expect(invocation.file).toBe(TEST_RAILWAY_EXECUTABLE);
-    expect(invocation.args).toEqual(
-      expect.arrayContaining([
-        '-p',
-        GATE_R_PROJECT_ID,
-        '-e',
-        GATE_R_ENVIRONMENT_ID,
-        '-s',
-        REPLACEMENT_SERVICE_ID,
-        'sh',
-        '-lc'
-      ])
-    );
+    expect(invocation.args.slice(0, 7)).toEqual([
+      'ssh',
+      '-p',
+      GATE_R_PROJECT_ID,
+      '-e',
+      GATE_R_ENVIRONMENT_ID,
+      '-s',
+      REPLACEMENT_SERVICE_ID
+    ]);
+    expect(invocation.args.slice(7)).toEqual([expect.any(String)]);
     expect(invocation.options).toMatchObject({ shell: false, timeout: 30_000, windowsHide: true });
     expect(invocation.options.env).toEqual({ PATH: 'safe' });
     expect(invocation.options.stdio).toEqual(['ignore', 'ignore', 'ignore']);
@@ -95,6 +103,25 @@ describe('Gate R1 authenticated PostgreSQL readiness', () => {
     expect(serialized).not.toContain('pg_isready');
     expect(serialized).not.toMatch(/\b(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\b/i);
     expect(serialized).not.toMatch(/\b(echo|env|printenv|printf)\b/);
+  });
+
+  it('passes one fixed command through the Railway CLI 4.30.2 outer shell without nesting', () => {
+    const invocation = buildPostgresReadinessInvocation({
+      serviceId: REPLACEMENT_SERVICE_ID,
+      railwayExecutable: TEST_RAILWAY_EXECUTABLE,
+      environment: SAFE_ENVIRONMENT
+    });
+    const modeled = modelRailwayCli4302Command(invocation.args);
+    const [remoteCommand] = modeled.commandArguments;
+
+    expect(modeled.file).toBe('sh');
+    expect(modeled.args).toEqual(['-c', remoteCommand]);
+    expect(modeled.commandArguments).toHaveLength(1);
+    expect(remoteCommand).toMatch(/^test "\$\{RAILWAY_PROJECT_ID:-\}"/);
+    expect(remoteCommand).not.toMatch(/^sh\s+-lc\b/u);
+    expect(remoteCommand).toContain('|| exit 70');
+    expect(remoteCommand).toContain('psql');
+    expect(remoteCommand).toContain('>/dev/null 2>&1');
   });
 
   it('suppresses and clears unexpected child output on success', () => {

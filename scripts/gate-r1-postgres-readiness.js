@@ -193,6 +193,8 @@ export function buildPostgresReadinessInvocation({
     'exit 74'
   ].join('; ');
 
+  // Railway CLI 4.30.2 joins trailing arguments and supplies the outer `sh -c`.
+  // Keep the complete remote command as one argument so its target checks stay intact.
   return Object.freeze({
     args: Object.freeze([
       'ssh',
@@ -202,8 +204,6 @@ export function buildPostgresReadinessInvocation({
       environmentId,
       '-s',
       serviceId,
-      'sh',
-      '-lc',
       remoteCommand
     ]),
     file: executable,
