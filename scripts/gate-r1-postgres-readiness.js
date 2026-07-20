@@ -5,7 +5,9 @@
  * Safety: Uses exact project/environment targets, suppresses child output, and never receives credential values.
  */
 
-import { execFileSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { win32 as windowsPath } from 'node:path';
 import process from 'node:process';
 import { pathToFileURL } from 'node:url';
 
@@ -18,6 +20,17 @@ const QUARANTINED_SERVICE_IDS = new Set([
   '434fa5b4-b52c-4caf-aaba-e87c173bf10d'
 ]);
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const FIXED_FAILURES = Object.freeze({
+  70: 'GATE_R_POSTGRES_READINESS_REMOTE_TARGET_MISMATCH',
+  71: 'GATE_R_POSTGRES_READINESS_CREDENTIAL_CONFIGURATION_INVALID',
+  72: 'GATE_R_POSTGRES_READINESS_CLIENT_UNAVAILABLE',
+  73: 'GATE_R_POSTGRES_READINESS_TIMEOUT',
+  74: 'GATE_R_POSTGRES_AUTHENTICATED_READINESS_FAILED'
+});
+const FIXED_FAILURE_MESSAGES = new Set([
+  ...Object.values(FIXED_FAILURES),
+  'GATE_R_POSTGRES_READINESS_CLI_UNAVAILABLE'
+]);
 
 function assertTargets(projectId, environmentId, serviceId) {
   if (projectId !== GATE_R_PROJECT_ID || environmentId !== GATE_R_ENVIRONMENT_ID) {
@@ -31,23 +44,102 @@ function assertTargets(projectId, environmentId, serviceId) {
   }
 }
 
+export function resolveRailwayExecutable({
+  platform = process.platform,
+  pathValue = process.env.PATH,
+  exists = existsSync
+} = {}) {
+  if (platform !== 'win32') {
+    return 'railway';
+  }
+  if (typeof pathValue !== 'string' || pathValue.length === 0) {
+    throw new Error('GATE_R_POSTGRES_READINESS_CLI_UNAVAILABLE');
+  }
+
+  for (const entry of pathValue.split(';').filter(Boolean)) {
+    const directExecutable = windowsPath.join(entry, 'railway.exe');
+    if (exists(directExecutable)) {
+      return directExecutable;
+    }
+
+    const commandShim = windowsPath.join(entry, 'railway.cmd');
+    const powershellShim = windowsPath.join(entry, 'railway.ps1');
+    if (exists(commandShim) || exists(powershellShim)) {
+      const packageExecutable = windowsPath.join(
+        entry,
+        'node_modules',
+        '@railway',
+        'cli',
+        'bin',
+        'railway.exe'
+      );
+      if (exists(packageExecutable)) {
+        return packageExecutable;
+      }
+    }
+  }
+
+  throw new Error('GATE_R_POSTGRES_READINESS_CLI_UNAVAILABLE');
+}
+
+function clearBuffer(value) {
+  if (Buffer.isBuffer(value)) {
+    value.fill(0);
+  }
+}
+
+function clearChildDiagnostics(value, seen = new Set()) {
+  if (!value || typeof value !== 'object' || seen.has(value)) {
+    return;
+  }
+  seen.add(value);
+  clearBuffer(value.stdout);
+  clearBuffer(value.stderr);
+  if (Array.isArray(value.output)) {
+    value.output.forEach(clearBuffer);
+  }
+  if (value.error && value.error !== value) {
+    clearChildDiagnostics(value.error, seen);
+  }
+}
+
+function fixedSpawnFailure(error) {
+  if (error?.code === 'ETIMEDOUT') {
+    return 'GATE_R_POSTGRES_READINESS_TIMEOUT';
+  }
+  if (['EACCES', 'EINVAL', 'ENOENT'].includes(error?.code)) {
+    return 'GATE_R_POSTGRES_READINESS_CLI_UNAVAILABLE';
+  }
+  return 'GATE_R_POSTGRES_AUTHENTICATED_READINESS_FAILED';
+}
+
 export function buildPostgresReadinessInvocation({
   projectId = GATE_R_PROJECT_ID,
   environmentId = GATE_R_ENVIRONMENT_ID,
-  serviceId
+  serviceId,
+  railwayExecutable
 }) {
   assertTargets(projectId, environmentId, serviceId);
+  const executable = railwayExecutable ?? resolveRailwayExecutable();
+  if (typeof executable !== 'string' || executable.length === 0) {
+    throw new Error('GATE_R_POSTGRES_READINESS_CLI_UNAVAILABLE');
+  }
 
   const remoteCommand = [
-    'set -eu',
-    `test "$RAILWAY_PROJECT_ID" = "${projectId}"`,
-    `test "$RAILWAY_ENVIRONMENT_ID" = "${environmentId}"`,
-    `test "$RAILWAY_SERVICE_ID" = "${serviceId}"`,
-    `test "$RAILWAY_SERVICE_NAME" = "${GATE_R_POSTGRES_SERVICE_NAME}"`,
-    'test -n "$POSTGRES_USER"',
-    'test -n "$POSTGRES_PASSWORD"',
-    'test -n "$POSTGRES_DB"',
-    'PGCONNECT_TIMEOUT=10 PGPASSWORD="$POSTGRES_PASSWORD" timeout 15s psql --no-psqlrc --no-password --set=ON_ERROR_STOP=1 --host=127.0.0.1 --port=5432 --username="$POSTGRES_USER" --dbname="$POSTGRES_DB" --command="\\conninfo" >/dev/null 2>&1'
+    `test "${'${RAILWAY_PROJECT_ID:-}'}" = "${projectId}" || exit 70`,
+    `test "${'${RAILWAY_ENVIRONMENT_ID:-}'}" = "${environmentId}" || exit 70`,
+    `test "${'${RAILWAY_SERVICE_ID:-}'}" = "${serviceId}" || exit 70`,
+    `test "${'${RAILWAY_SERVICE_NAME:-}'}" = "${GATE_R_POSTGRES_SERVICE_NAME}" || exit 70`,
+    'test -n "${POSTGRES_USER:-}" || exit 71',
+    'test -n "${POSTGRES_PASSWORD:-}" || exit 71',
+    'test -n "${POSTGRES_DB:-}" || exit 71',
+    'command -v timeout >/dev/null 2>&1 || exit 72',
+    'command -v psql >/dev/null 2>&1 || exit 72',
+    'PGCONNECT_TIMEOUT=10 PGPASSWORD="$POSTGRES_PASSWORD" timeout 15s psql --no-psqlrc --no-password --set=ON_ERROR_STOP=1 --host=127.0.0.1 --port=5432 --username="$POSTGRES_USER" --dbname="$POSTGRES_DB" --command="\\conninfo" >/dev/null 2>&1',
+    'result=$?',
+    'test "$result" -eq 0 && exit 0',
+    'test "$result" -eq 124 && exit 73',
+    'exit 74'
   ].join('; ');
 
   return Object.freeze({
@@ -63,8 +155,13 @@ export function buildPostgresReadinessInvocation({
       '-lc',
       remoteCommand
     ]),
-    file: 'railway',
-    options: Object.freeze({ shell: false, stdio: 'ignore', timeout: 30_000, windowsHide: true })
+    file: executable,
+    options: Object.freeze({
+      shell: false,
+      stdio: Object.freeze(['ignore', 'ignore', 'ignore']),
+      timeout: 30_000,
+      windowsHide: true
+    })
   });
 }
 
@@ -72,14 +169,34 @@ export function runPostgresReadiness({
   projectId = GATE_R_PROJECT_ID,
   environmentId = GATE_R_ENVIRONMENT_ID,
   serviceId,
-  execFile = execFileSync
+  railwayExecutable,
+  spawn = spawnSync
 }) {
-  const invocation = buildPostgresReadinessInvocation({ projectId, environmentId, serviceId });
+  const invocation = buildPostgresReadinessInvocation({
+    projectId,
+    environmentId,
+    serviceId,
+    railwayExecutable
+  });
+  let child;
 
   try {
-    execFile(invocation.file, invocation.args, invocation.options);
-  } catch {
-    throw new Error('GATE_R_POSTGRES_AUTHENTICATED_READINESS_FAILED');
+    child = spawn(invocation.file, invocation.args, invocation.options);
+    if (child?.error) {
+      throw new Error(fixedSpawnFailure(child.error));
+    }
+    if (child?.status !== 0) {
+      throw new Error(FIXED_FAILURES[child?.status] ?? 'GATE_R_POSTGRES_AUTHENTICATED_READINESS_FAILED');
+    }
+  } catch (error) {
+    const message = error instanceof Error && FIXED_FAILURE_MESSAGES.has(error.message)
+      ? error.message
+      : fixedSpawnFailure(error);
+    clearChildDiagnostics(error);
+    throw new Error(message);
+  } finally {
+    clearChildDiagnostics(child);
+    child = null;
   }
 
   return Object.freeze({

@@ -111,6 +111,8 @@ describe('Gate R1 procedure contract', () => {
     expect(runbook).toContain('scripts/gate-r1-postgres-readiness.js');
     expect(runbook).toContain('node $readinessWrapper --service-id $pgServiceId');
     expect(runbook).toContain('`psql` client meta-command `\\conninfo`');
+    expect(runbook).toContain('Do not replace the wrapper with a direct or verbose `railway ssh` diagnostic.');
+    expect(runbook).toContain("The wrapper's ignored child streams and fixed result codes are the disclosure");
     expect(runbook).toContain('REDISCLI_AUTH="$REDIS_PASSWORD"');
     expect(runbook).toContain('redis-cli -h 127.0.0.1 -p 6379 --no-auth-warning PING >/dev/null 2>&1');
   });

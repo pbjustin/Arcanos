@@ -729,6 +729,12 @@ node $readinessWrapper --service-id $pgServiceId
 if ($LASTEXITCODE -ne 0) { throw 'GATE_R_POSTGRES_HEALTH_FAILED' }
 ```
 
+Do not replace the wrapper with a direct or verbose `railway ssh` diagnostic.
+The CLI may emit resolved environment assignments before remote-command output.
+The wrapper's ignored child streams and fixed result codes are the disclosure
+boundary; any fixed wrapper failure stops Gate R1 and is investigated locally
+with mocks until a separately authorized live attempt.
+
 PostgreSQL must pass the complete health and isolation gate before Redis source
 activation. Do not add domains, TCP proxies, repositories, or application
 references.
