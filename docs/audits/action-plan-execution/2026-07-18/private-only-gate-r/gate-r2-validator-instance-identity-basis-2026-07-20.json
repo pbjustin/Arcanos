@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "observedAt": "2026-07-20T00:28:25.403Z",
+  "observationType": "runtime",
+  "source": "operator-supplied schema-locked Gate R1 metadata projection",
+  "projectId": "7faf44e5-519c-4e73-8d7a-da9f389e6187",
+  "environmentId": "fb99f47d-5ef5-44c1-96c2-acf7b90fab13",
+  "validators": [
+    {
+      "profile": "compatibility-validator",
+      "serviceId": "febdf999-1c96-48df-8e28-c905b8b27082",
+      "serviceInstanceId": "3c385dd2-c786-4149-9319-2a168a920aa9",
+      "activeDeploymentCount": 0
+    },
+    {
+      "profile": "migration-validator",
+      "serviceId": "d8d5181a-2f72-48d7-8413-6f05d113876c",
+      "serviceInstanceId": "7a645cbc-dadf-4072-84c1-6f0843fa30d9",
+      "activeDeploymentCount": 0
+    }
+  ],
+  "sensitiveValuesRecorded": false,
+  "productionDeploymentRequired": false
+}

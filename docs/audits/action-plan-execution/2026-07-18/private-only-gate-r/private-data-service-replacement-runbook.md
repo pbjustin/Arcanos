@@ -1,11 +1,13 @@
 # Phase 2E Gate R private-only data-service replacement runbook
 
-> **Historical R2 procedure — do not execute.** Both one-attempt R2 names were
-> consumed. PostgreSQL R2 was later contained, and Redis R2 remains retained
-> offline. PostgreSQL R3A created only the empty identity recorded in
-> `gate-r1-postgres-r3a-execution-evidence-2026-07-20.json`. The current bounded
-> PostgreSQL continuation is `gate-r1-postgres-r3b-plan-2026-07-20.md`. This file
-> remains intact as historical evidence for the R2 attempt.
+> **Stages 1–9 are historical — do not execute them.** Both one-attempt R2 names
+> were consumed. PostgreSQL R2 was later contained, and PostgreSQL R3 plus
+> Redis R2 now have committed readiness and combined-isolation evidence.
+> Stages 10–13 define the corrected Gate R2 contract only. The bounded tools
+> were independently reviewed at commit
+> `b299ecc3dbfeabd968b587d07dce7562bbca1b4f`; live execution still requires
+> current operator authorization, a clean worktree, and separately entered
+> temporary tokens.
 
 Status: **PROCEDURE ONLY — NOT EXECUTED OR AUTHORIZED BY THIS DOCUMENT**
 
@@ -833,145 +835,210 @@ if (
 ) { throw 'GATE_R_FINAL_REPLACEMENT_PROXY_FAILED' }
 ```
 
-## Stage 10 — R2 only: cut over inactive validator references without deployment
+## Stage 10 — R2 only: fresh combined proof, then inactive-validator cutover
 
-Do not execute this stage under Gate R1. It requires separate Gate R2
-authorization after both replacements pass the combined isolation gate.
+Do not execute this stage under Gate R1. It requires a separate Gate R2
+authorization after the committed combined Gate R1 isolation evidence reports
+`PASS` and the associated temporary token is revoked.
 
-The only known consumers are two inactive validators. Change only their
-`DATABASE_URL` references and suppress deployments:
+Immediately before the first Gate R2 mutation, rerun the complete combined
+isolation proof with fresh observations. Require:
 
-```powershell
-$privatePgReference = 'DATABASE_URL=${{phase2e-postgres-r2-20260718.DATABASE_URL}}'
-Assert-GateRTarget
-railway variable set -s $migrationValidatorId -e $environmentId --skip-deploys --json $privatePgReference | Out-Null
-if ($LASTEXITCODE -ne 0) { throw 'GATE_R_MIGRATION_VALIDATOR_REFERENCE_FAILED' }
-Assert-GateRTarget
-railway variable set -s $compatibilityValidatorId -e $environmentId --skip-deploys --json $privatePgReference | Out-Null
-if ($LASTEXITCODE -ne 0) { throw 'GATE_R_COMPATIBILITY_VALIDATOR_REFERENCE_FAILED' }
+- PostgreSQL R3 service `7346b3f6-bf3d-46e1-9d66-79f10847ef89`, deployment
+  `b5e45d34-19b8-4253-b230-c3ab0b60b0d7`, and volume
+  `ce93ced0-0c15-48f9-87fc-d9153ffefdc8` to remain healthy and private-only;
+- Redis R2 service `1ac0bd56-50b3-49eb-954c-ea83515ec915`, deployment
+  `9f102e53-ef25-46b5-80e8-0243eb1512d6`, and volume
+  `983c4f0a-9180-4621-b65e-dfdd0b79f2bd` to remain healthy and private-only;
+- zero Railway domains, custom domains, and TCP proxies for both active
+  replacements;
+- active private endpoints bound to both exact service instances;
+- the original PostgreSQL, original Redis, and failed PostgreSQL R2 service to
+  remain inactive with zero TCP proxies; and
+- applications, workers, validators, daemons, bridges, and executors to remain
+  inactive.
+
+The only known consumers are the two inactive validator services:
+
+```text
+Migration validator:     d8d5181a-2f72-48d7-8413-6f05d113876c
+Compatibility validator: febdf999-1c96-48df-8e28-c905b8b27082
 ```
 
-Re-read status and require both validators still have no deployment. Use a
-separately reviewed schema-locked reference projector—not the TCP-proxy
-projector—and emit only these facts:
+Their fixed environment service-instance identities are preserved in
+`gate-r2-validator-instance-identity-basis-2026-07-20.json` and must be freshly
+revalidated before use:
 
-- each contains one `DATABASE_URL` reference to the replacement service;
-- neither contains a public URL variable;
-- old PostgreSQL reference count is `0`; and
-- validator deployment count remains `0`.
-
-No Redis consumer was found in this environment, so no Redis reference is
-changed.
-
-## Stage 11 — R2 only: retire compromised service and volume identities
-
-Do not execute this stage under Gate R1. It requires separate Gate R2
-authorization.
-
-This stage is destructive and requires explicit Gate R authorization naming
-the old IDs. Railway CLI `4.30.2` has no `service delete` subcommand, and
-`railway delete` would delete the project. The reviewed target-scoped deletion
-path is the environment configuration's service-level `isDeleted` field. It is
-safer than a dashboard deletion here because the command binds both the fixed
-environment ID and exact service ID and returns JSON for the operation record.
-
-After replacement health, isolation, and validator-reference checks pass:
-
-```powershell
-Assert-GateRTarget
-railway environment edit -e $environmentId --service-config $oldPgServiceId isDeleted true -m 'gate-r: retire compromised preview postgres service' --json | Out-Null
-if ($LASTEXITCODE -ne 0) { throw 'GATE_R_OLD_POSTGRES_SERVICE_DELETE_FAILED' }
-Assert-GateRTarget
-railway environment edit -e $environmentId --service-config $oldRedisServiceId isDeleted true -m 'gate-r: retire compromised preview redis service' --json | Out-Null
-if ($LASTEXITCODE -ne 0) { throw 'GATE_R_OLD_REDIS_SERVICE_DELETE_FAILED' }
+```text
+Migration validator instance:     7a645cbc-dadf-4072-84c1-6f0843fa30d9
+Compatibility validator instance: 3c385dd2-c786-4149-9319-2a168a920aa9
 ```
 
-1. Re-read Railway status/configuration and require both old service IDs absent
-   from the target environment.
-2. Run `railway volume list --json` in memory.
-3. If an old volume ID disappeared with its service, record it as already
-   removed and do not issue a delete.
-4. If an old volume ID remains and is detached, delete only that exact ID:
+Before cutover, open a second masked projector session with a second newly
+created environment-scoped project token. This session is separate from the
+fresh combined-proof session. It permits exactly fourteen requests: two validator
+baselines, four validator post-cutover/final projections, one retirement preprojection,
+three cumulative service-retirement postprojections, three cumulative final
+volume-state projections, and stop plus consumed acknowledgement. Stop,
+acknowledge, and revoke this token after the last cumulative projection passes.
+The last cumulative projection is also the target-environment Gate C rerun and
+must reprove replacements, endpoints, deployment identities, domains, proxies,
+variable-name contracts, validator references, and the exact non-deployment
+inventory.
 
-```powershell
-$volumeRoot = railway volume -e $environmentId list --json | ConvertFrom-Json
-if ($LASTEXITCODE -ne 0) { throw 'GATE_R_VOLUME_RELIST_FAILED' }
-$oldVolumes = @(
-  @{ id = $oldPgVolumeId; failure = 'GATE_R_OLD_POSTGRES_VOLUME_DELETE_FAILED' },
-  @{ id = $oldRedisVolumeId; failure = 'GATE_R_OLD_REDIS_VOLUME_DELETE_FAILED' }
-)
-foreach ($oldVolume in $oldVolumes) {
-  $matches = @($volumeRoot.volumes | Where-Object { $_.id -eq $oldVolume.id })
-  if ($matches.Count -eq 0) { continue }
-  if ($matches.Count -ne 1 -or -not [string]::IsNullOrWhiteSpace($matches[0].serviceName)) {
-    throw 'GATE_R_OLD_VOLUME_NOT_UNIQUELY_DETACHED'
-  }
-  Assert-GateRTarget
-  railway volume -e $environmentId delete -v $oldVolume.id -y --json | Out-Null
-  if ($LASTEXITCODE -ne 0) { throw $oldVolume.failure }
-}
-$matches = $null
-$volumeRoot = $null
+The masked token exists only inside the separate projector-session process.
+Every mutation wrapper must reject the Gate R2 token if it is present in its
+own parent environment, and must execute the mutation inside the exact isolated
+scratch link that it just verified.
+The committed `scripts/gate-r2-retirement-runner.js` binds the secure session
+directory, PID, live OS process-start identity, and current session-script
+SHA-256 before invoking `scripts/gate-r2-retirement-coordinator.js`. The
+coordinator revalidates the ready contract and enforces the exact fourteen-step
+ledger.
+
+Use `scripts/gate-r2-validator-reference-projector.js`. It must be
+schema-locked, resolve no variable value, and report only the exact fixed
+validator profile/service/service-instance identity, an active deployment count
+fixed at zero, a variable count of zero or one, and one fixed reference
+category. An additional variable key, including a public-URL key, is a schema
+error rather than a projected count. Then use
+`scripts/gate-r2-validator-cutover.js` to change only each validator's
+`DATABASE_URL` reference, with deployment suppression, to:
+
+```text
+${{phase2e-postgres-r3-20260720.DATABASE_URL}}
 ```
 
-If Railway requires 2FA, pause and obtain the code out of band. Never put a 2FA
-code in Git, a report, a transcript, or chat. If either remaining volume is
-attached to any service, stop; do not detach it speculatively.
+The failed PostgreSQL R2 reference
+`${{phase2e-postgres-r2-20260718.DATABASE_URL}}` is prohibited as a cutover
+target. The cutover wrapper must bind the exact project, environment, validator
+service, and PostgreSQL R3 service identities and must preserve
+`--skip-deploys` semantics. It must not accept a resolved connection string.
 
-Service deletion and either conditional volume deletion are prohibited until
-the operator submits the separate Gate R authorization request. They were not
-performed while this runbook was written.
+Project after each cutover and again after both. Require:
 
-Deleting the old PostgreSQL volume intentionally discards the isolated
-preview database, including its prior migration-validation ledger and schema
-state. The sanitized committed evidence remains the historical record. Gate M
-must later perform a fresh, separately authorized migration validation against
-the replacement database; Gate R does not carry forward or reinterpret the
-old database state.
+- each validator has exactly one `DATABASE_URL` reference to PostgreSQL R3;
+- references to the original PostgreSQL and failed PostgreSQL R2 are zero;
+- `*_PUBLIC_URL` variable-name count is zero;
+- both validator deployment counts remain zero; and
+- no Redis consumer or reference was introduced.
 
-## Stage 12 — containment and non-impact proof
+If either cutover or projection fails or is ambiguous, keep both validators
+inactive and stop. Do not retire any service or volume, do not retry, and do
+not perform an unreviewed compensating write.
 
-The final sanitized evidence must show:
+## Stage 11 — R2 only: one-at-a-time obsolete service-instance retirement
 
-- both compromised service IDs absent;
-- both compromised volume IDs absent;
-- no environment configuration or validator reference mentions an old service;
-- both replacement services healthy, private-only, and independently
-  credentialed;
-- both replacement volumes distinct and correctly mounted;
-- zero Railway domains, custom domains, and TCP proxies for both replacements;
-- no `*_PUBLIC_URL` variables on replacements or validators;
-- validators remain undeployed;
+This destructive stage requires explicit authorization naming every target.
+It may begin only after Stage 10 proves both validator references point only to
+PostgreSQL R3 and both validators remain inactive.
+
+Retire these environment-local service instances, one at a time:
+
+| Order | Role | Service ID |
+| --- | --- | --- |
+| 1 | Original compromised PostgreSQL | `b7789306-8aef-4113-add5-02883a6cc087` |
+| 2 | Failed PostgreSQL R2 replacement | `a2a57da4-a928-427f-be30-d4a68b59a117` |
+| 3 | Original compromised Redis | `434fa5b4-b52c-4caf-aaba-e87c173bf10d` |
+
+Use only `scripts/gate-r2-service-instance-retirement.js` for a fixed target
+and only `scripts/gate-r2-retirement-state-projector.js` to establish its
+result. The retirement wrapper must bind the exact project, environment, and
+one allowlisted service ID, perform one service-level `isDeleted` transition,
+suppress child output, and return a fixed non-sensitive result. It must not
+accept an arbitrary service ID or expose raw Railway configuration.
+
+After each single retirement attempt, project state before proceeding. Require:
+
+- that exact obsolete environment service instance to be absent or deleted;
+- its active deployment count and reference count to be zero;
+- PostgreSQL R3 and Redis R2 identities, deployments, volumes, endpoints,
+  domain counts, and proxy counts to remain unchanged; and
+- ARCANOS V2 and ARCANOS Worker to remain absent from the environment;
+- both fixed validator instances to remain present and inactive; and
+- no other service instance to be deleted or activated.
+
+An ambiguous response authorizes one read-only postprojection, not a retry.
+If the target is still present, or any non-target changed, stop. Never recreate
+or restart a retired compromised generation.
+
+## Stage 12 — R2 only: separate old-volume disposition
+
+Service-instance retirement does not authorize volume deletion. Handle these
+old volumes only after all three obsolete service instances are proven retired:
+
+| Role | Volume ID |
+| --- | --- |
+| Original PostgreSQL | `35c26093-1e3f-4d34-b699-89c65d2fb92d` |
+| Failed PostgreSQL R2 | `2998734d-7530-4f26-b715-cea4780bd437` |
+| Original Redis | `d3690500-fcc5-4c06-afa6-cf30e91f608d` |
+
+First project volume state. If Railway already removed an old volume with its
+service instance, record it as absent and issue no deletion. If an old volume
+remains, it may be deleted only when it is the exact allowlisted ID, appears
+exactly once, and is detached. An attached, duplicated, unknown, or ambiguous
+volume stops the operation; do not detach it speculatively.
+
+Use only the fixed, schema-locked
+`scripts/gate-r2-volume-disposition.js` after the retirement-state projector
+categorizes the same exact profile as `RETAINED_DETACHED` and the live
+authorization names the reviewed source commit. Do not substitute raw
+`railway volume list`, `railway volume delete`, dashboard deletion, or an
+arbitrary API call.
+
+Deleting the old PostgreSQL volumes intentionally discards isolated preview
+database state, including prior migration-validation ledgers. Committed
+sanitized evidence remains the historical record. Gate M must perform a fresh,
+separately authorized migration validation against PostgreSQL R3.
+
+## Stage 13 — R2 only: full Gate C isolation rerun and evidence
+
+Gate R2 is complete only after old-volume disposition is complete and the last
+cumulative Gate R2 projection supplies a fresh, schema-locked target-environment
+Gate C isolation proof. It must prove:
+
+- all three obsolete environment service instances are absent or deleted;
+- all three old volume IDs are absent with their disposition recorded;
+- no validator, environment variable, or approved reference projection names
+  an obsolete service;
+- PostgreSQL R3 and Redis R2 remain healthy, private-only, independently
+  credentialed, and bound to their distinct replacement volumes;
+- both replacements have zero Railway domains, custom domains, TCP proxies,
+  and `*_PUBLIC_URL` variable names;
+- both private endpoints remain `ACTIVE` and exact deployment verification
+  still passes;
+- both validators remain undeployed and reference only PostgreSQL R3;
 - no application, worker, Python daemon, bridge, provider, or executor started;
-- no migration or DDL ran;
-- no ActionPlan, run, claim, or result was created;
-- production and the Phase 2D environment retain the same service/deployment
-  identities captured during preflight; and
-- no production variable, log, data, or endpoint was read or mutated.
+- no migration, DDL, SQL, Redis data, ActionPlan, run, claim, or result operation
+  occurred; and
+- production and Phase 2D retain their preserved stable service and deployment
+  identities without any variable, log, data, or endpoint access.
+
+Then stop and acknowledge the Gate R2 projector session and revoke its token
+before classifying Gate R2.
+
+The sanitized evidence must distinguish an environment service instance marked
+deleted from a project-level service record that Railway retains. It must not
+claim project-wide deletion unless the projection proves it.
 
 ## Failure containment and rollback
 
-There is no rollback to the compromised generation.
+There is no rollback to a compromised or failed generation.
 
-- If preflight fails, make no change.
-- If stopping one old service fails, stop and report; do not create a
-  replacement.
-- If an empty replacement violates isolation, stop and leave the old services
-  stopped. Delete the failed replacement only under the exact Gate R cleanup
-  authority.
-- If configuration, volume attachment, image activation, or health fails,
-  leave old services stopped and validators undeployed. Do not repair by
-  copying an old credential or adding a public proxy.
-- If one replacement succeeds and the other fails, keep the successful service
-  private and idle; do not cut over validators or retire old identities until a
-  new operator decision.
-- If validator cutover fails, keep validators undeployed and do not delete old
-  service identities until references are proven correct.
-- After an old service is deleted, never recreate or restart it. A later
-  recovery uses another fresh service name, volume, and credential generation
-  under new approval.
-- Gate R permits at most one PostgreSQL and one Redis replacement attempt. It
-  does not authorize an automatic retry loop.
+- If fresh combined proof or reference discovery fails, make no mutation.
+- If validator cutover fails, keep validators undeployed and retain every old
+  service and volume. Do not continue to retirement.
+- If one service retirement succeeds and a later retirement fails, preserve
+  the observed partial state, make no retry, and request a new decision. Never
+  recreate the retired service.
+- If an old volume remains attached or ambiguous, preserve it and stop. Never
+  detach it speculatively.
+- If volume deletion is ambiguous, project its state once and do not retry.
+- If an application, worker, validator, daemon, executor, migration, data
+  operation, provider call, public endpoint, secret disclosure, or production
+  or Phase 2D change occurs, stop immediately.
+- Recovery after a destructive step uses a new identity, volume, and credential
+  generation under separate approval; it never restores a compromised service.
 
 ## Local cleanup
 
