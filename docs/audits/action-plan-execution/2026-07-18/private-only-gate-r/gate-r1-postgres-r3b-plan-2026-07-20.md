@@ -165,24 +165,129 @@ required.
 
 ## R3B2 — source activation and readiness
 
-R3B2 requires a separate reviewed commit and explicit authorization after R3B1
-passes. It must repeat all shared preconditions, validate the complete R3B1
-state, then introduce and apply one exact source-assignment operation. That
-future operation must assign only the pinned image and be the only allowed
-deployment trigger; do not run `railway up`, redeploy, or restart.
+R3B1 is preserved in
+`gate-r1-postgres-r3b1-execution-evidence-2026-07-20.json` as
+`PASS_WITH_LIMITATIONS`. R3B2 must treat that artifact and a fresh live
+projection as cumulative prerequisites. The projected state, not the invalid
+R3B1 configuration-wrapper acknowledgement, is the evidence that the fixed
+restart policy is present. R3B2 does not reinterpret or retry the historical
+R3B1 operation.
 
-The R3B2 acceptance boundary requires one successful deployment using the
-pinned image, the exact volume, exact variable-name set, an active private
-endpoint, zero domains and TCP proxies, and a bounded authenticated non-SQL
-`psql \conninfo` readiness result. Retained resources and production/Phase 2D
-stable identities must remain unchanged.
+R3B2 requires a separate reviewed commit and explicit live authorization. It
+must repeat all shared preconditions, validate the complete R3B1 state, and use
+only these target-bound entry points:
 
-If source assignment may have occurred and activation, exposure, or readiness
-fails, stop. A future authorization may permit at most one exact-target
-`railway down`; it does not imply repair, retry, deletion, networking mutation,
-Redis activation, or migration authority.
+```text
+node scripts/gate-r1-postgres-r3-source-activation.js --operation activate
+node scripts/gate-r1-postgres-r3-deployment-status.js --operation wait --service-id 7346b3f6-bf3d-46e1-9d66-79f10847ef89
+node scripts/gate-r1-postgres-r3-deployment-status.js --operation verify-success --service-id 7346b3f6-bf3d-46e1-9d66-79f10847ef89 --deployment-id <deployment-id-returned-by-wait>
+node scripts/gate-r1-postgres-readiness.js --service-id 7346b3f6-bf3d-46e1-9d66-79f10847ef89
+```
+
+The source-activation wrapper assigns only
+`ghcr.io/railwayapp-templates/postgres-ssl:18.4` to the exact R3 service. It is
+one-shot, reports only that fresh projection is required, and is the only
+allowed deployment trigger. Do not use `railway up`, redeploy, restart,
+`--service-config`, an arbitrary environment patch, or any second source
+assignment. A timeout, nonzero result, lost response, or other ambiguous source
+result consumes the one attempt and is not retry authorization.
+
+The deployment-status wrapper's fixed `wait` operation is read-only. It makes
+at most `120` observations with a fixed five-second sleep between observations,
+and has a ten-minute monotonic overall deadline. It latches the first non-null
+deployment ID and fails immediately if that ID
+changes or disappears. Terminal, stopped, malformed, unexpected, or timed-out
+states exit nonzero. Only `SUCCESS` advances the procedure. Its fixed
+`verify-success` operation requires the returned deployment ID, exact
+`SUCCESS`, and `stopped: false`. Neither operation fetches raw logs or variable
+values. The existence of a successful deployment does not replace the later
+source, volume, variable-name, restart-policy, endpoint, exposure, readiness,
+or non-impact proofs.
+
+The existing PostgreSQL readiness wrapper may run exactly once and only after
+the successful deployment, the first post-success metadata, proxy, and
+private-endpoint proofs, and an expected-ID `verify-success` call pass. Run the
+same expected-ID verification again immediately after readiness and before the
+final metadata proof. The readiness command is service-targeted rather than
+deployment-instance-targeted; the surrounding checks make a rollover fail
+closed but cannot make the SSH boundary atomic. The wrapper performs the
+bounded authenticated non-SQL `psql \conninfo` check with suppressed child
+output and fixed diagnostics. Do not replace it with direct or verbose
+`railway ssh`, `psql`, or log inspection.
+
+R3B2 authorizes no containment mutation. On any post-source failure or
+ambiguity, stop at the next safe read, stop and acknowledge the projector
+session, revoke the temporary token, and report the latched deployment ID when
+one exists. Do not retry, repair, run `railway down`, clear the source, or
+continue the success ledger. Containment requires a separate gate because
+Railway CLI `down` targets the most recent service deployment rather than an
+immutable deployment ID.
+
+### R3B2 projector-session ledger
+
+A successful R3B2 run uses exactly 15 requests in the target-bound secure
+projector session:
+
+| Request | Read-only operation or intervening controlled step |
+|---:|---|
+| 1 | Target-environment metadata and complete R3B1-state validation |
+| 2–6 | Original PostgreSQL, original Redis, PostgreSQL R2, Redis R2, and exact PostgreSQL R3 proxy proofs |
+| — | Invoke the source-activation wrapper exactly once |
+| 7 | Immediate post-source target-environment metadata |
+| 8 | Immediate post-source exact R3 proxy proof |
+| — | Invoke the deployment-status wrapper, at most 120 polls with a five-second interval, until `SUCCESS` or fail closed |
+| 9 | Post-success target-environment metadata |
+| 10 | Post-success exact R3 proxy proof |
+| 11 | Post-success exact R3 private-endpoint proof |
+| — | Verify exact expected deployment ID and `SUCCESS` immediately before readiness |
+| — | Invoke the existing authenticated readiness wrapper exactly once |
+| — | Verify exact expected deployment ID and `SUCCESS` immediately after readiness |
+| 12 | Final target-environment metadata and retained-resource proof |
+| 13 | Final exact R3 proxy proof |
+| 14 | Final exact R3 private-endpoint proof |
+| 15 | Stop and acknowledge the secure session, then revoke the temporary token |
+
+Deployment-status polling and the two expected-ID verifications are outside
+the secure projector request count and authorize no mutation. On a failed or
+ambiguous path, stop and acknowledge the projector session at the next safe
+request, revoke the token, and do not consume the remaining success-path ledger
+as repair or containment authority.
+
+Request 9 metadata must show the latched deployment ID as the sole active R3
+deployment before any endpoint or readiness check proceeds.
+
+The R3B2 acceptance boundary requires exactly one new successful deployment
+using the approved image, the R3B1 volume
+`ce93ced0-0c15-48f9-87fc-d9153ffefdc8` and volume instance
+`c7969acf-79fd-4a6b-83d7-1e6cb442a030`, the exact twelve-name variable set,
+restart policy `ON_FAILURE` with maximum retries `3`, an active private
+endpoint, zero Railway and custom domains, zero TCP proxies, and the successful
+readiness result. Retained resources and production/Phase 2D stable identities
+must remain unchanged. The final metadata projection must still show exactly
+the latched deployment ID as the sole active R3 deployment.
+
+The approved `18.4` source is version-tag pinned, not digest immutable.
+Metadata must prove the exact approved source string, but this gate does not
+claim registry-content immutability. The pre/post-readiness deployment-ID
+checks bound the observed service deployment but do not make the service-
+targeted readiness connection atomic.
+
+R3B2 does not authorize Redis source assignment, activation, mutation,
+readiness, containment, or deployment. It also does not authorize migrations,
+SQL, application connections, validators, workers, daemons, executors,
+providers, Gate R2/V/M/D, production, or Phase 2D mutation.
 
 ## Current stop state
 
-Until R3B1 is separately authorized, the R3 service remains empty, source-less,
-undeployed, without a volume or variables, and untouched after R3A.
+R3B1 completed with the limitation recorded in
+`gate-r1-postgres-r3b1-execution-evidence-2026-07-20.json`. The exact R3 service
+remains source-less and undeployed with one `READY` volume at
+`/var/lib/postgresql/data`, the exact twelve approved variable names, restart
+policy `ON_FAILURE` with maximum retries `3`, and zero Railway domains, custom
+domains, and TCP proxies. The temporary projector token was revoked. The
+configuration-wrapper result remains invalid historical evidence even though
+the fresh schema-locked projection proved the intended configuration; it was
+not retried or relabeled.
+
+R3B2 execution remains unauthorized. Local R3B2 preparation changes no Railway
+state, and Redis remains offline and untouched.
