@@ -10,14 +10,30 @@ import {
   resolveRedisRailwayExecutable,
   runRedisReadiness
 } from '../scripts/gate-r1-redis-readiness.js';
+import { GATE_R1_REDIS_SERVICE_ID } from '../scripts/gate-r1-redis-r2-config-patch.js';
+import { GATE_R_FORBIDDEN_RAILWAY_TOKEN_VARIABLES } from '../scripts/gate-r1-postgres-readiness.js';
 
-const REPLACEMENT_SERVICE_ID = '11111111-2222-4333-8444-555555555555';
+const REPLACEMENT_SERVICE_ID = GATE_R1_REDIS_SERVICE_ID;
 const TEST_RAILWAY_EXECUTABLE = 'C:\\fixed\\railway.exe';
 const SECRET_SENTINEL = 'credential-sentinel-should-not-escape';
 const ORIGINAL_REDIS_PASSWORD = process.env.REDIS_PASSWORD;
+const SAFE_ENVIRONMENT = Object.freeze({
+  DATABASE_URL: SECRET_SENTINEL,
+  PROVIDER_TEST_INPUT: SECRET_SENTINEL,
+  PATH: 'C:\\safe'
+});
 
 function expectZeroed(buffer) {
   expect([...buffer]).toEqual(new Array(buffer.length).fill(0));
+}
+
+function modelRailwayCli4302Command(args) {
+  const commandArguments = args.slice(7);
+  return Object.freeze({
+    args: Object.freeze(['-c', commandArguments.join(' ')]),
+    commandArguments: Object.freeze(commandArguments),
+    file: 'sh'
+  });
 }
 
 afterEach(() => {
@@ -60,24 +76,24 @@ describe('Gate R1 authenticated Redis readiness', () => {
     process.env.REDIS_PASSWORD = SECRET_SENTINEL;
     const invocation = buildRedisReadinessInvocation({
       serviceId: REPLACEMENT_SERVICE_ID,
-      railwayExecutable: TEST_RAILWAY_EXECUTABLE
+      railwayExecutable: TEST_RAILWAY_EXECUTABLE,
+      environment: SAFE_ENVIRONMENT
     });
     const serialized = invocation.args.join(' ');
 
     expect(invocation.file).toBe(TEST_RAILWAY_EXECUTABLE);
-    expect(invocation.args).toEqual(
-      expect.arrayContaining([
-        '-p',
-        GATE_R_PROJECT_ID,
-        '-e',
-        GATE_R_ENVIRONMENT_ID,
-        '-s',
-        REPLACEMENT_SERVICE_ID,
-        'sh',
-        '-lc'
-      ])
-    );
+    expect(invocation.args.slice(0, 7)).toEqual([
+      'ssh',
+      '-p',
+      GATE_R_PROJECT_ID,
+      '-e',
+      GATE_R_ENVIRONMENT_ID,
+      '-s',
+      REPLACEMENT_SERVICE_ID
+    ]);
+    expect(invocation.args.slice(7)).toEqual([expect.any(String)]);
     expect(invocation.options).toMatchObject({ shell: false, timeout: 30_000, windowsHide: true });
+    expect(invocation.options.env).toEqual({ PATH: 'C:\\safe' });
     expect(invocation.options.stdio).toEqual(['ignore', 'ignore', 'ignore']);
     expect(serialized).toContain(`RAILWAY_SERVICE_NAME:-}" = "${GATE_R_REDIS_SERVICE_NAME}`);
     expect(serialized).toContain('REDISCLI_AUTH="$REDIS_PASSWORD"');
@@ -96,6 +112,26 @@ describe('Gate R1 authenticated Redis readiness', () => {
     expect(serialized).not.toMatch(/\b(SET|DEL|FLUSHALL|FLUSHDB|CONFIG|EVAL|SCRIPT)\b/);
   });
 
+  it('passes one fixed command through the Railway CLI 4.30.2 outer shell without nesting', () => {
+    const invocation = buildRedisReadinessInvocation({
+      serviceId: REPLACEMENT_SERVICE_ID,
+      railwayExecutable: TEST_RAILWAY_EXECUTABLE,
+      environment: SAFE_ENVIRONMENT
+    });
+    const modeled = modelRailwayCli4302Command(invocation.args);
+    const [remoteCommand] = modeled.commandArguments;
+
+    expect(modeled.file).toBe('sh');
+    expect(modeled.args).toEqual(['-c', remoteCommand]);
+    expect(modeled.commandArguments).toHaveLength(1);
+    expect(remoteCommand).toMatch(/^test "\$\{RAILWAY_PROJECT_ID:-\}"/u);
+    expect(remoteCommand).not.toMatch(/^sh\s+-lc\b/u);
+    expect(remoteCommand).toContain('|| exit 70');
+    expect(remoteCommand).toContain('REDISCLI_AUTH="$REDIS_PASSWORD"');
+    expect(remoteCommand).toContain('redis-cli --raw');
+    expect(remoteCommand).toContain('2>/dev/null');
+  });
+
   it('suppresses and clears unexpected child output on success', () => {
     const stdout = Buffer.from(`redis://${SECRET_SENTINEL}`);
     const stderr = Buffer.from(`Authorization: Bearer ${SECRET_SENTINEL}`);
@@ -111,6 +147,7 @@ describe('Gate R1 authenticated Redis readiness', () => {
     const result = runRedisReadiness({
       serviceId: REPLACEMENT_SERVICE_ID,
       railwayExecutable: TEST_RAILWAY_EXECUTABLE,
+      environment: SAFE_ENVIRONMENT,
       spawn: fakeSpawn
     });
 
@@ -145,6 +182,7 @@ describe('Gate R1 authenticated Redis readiness', () => {
       runRedisReadiness({
         serviceId: REPLACEMENT_SERVICE_ID,
         railwayExecutable: TEST_RAILWAY_EXECUTABLE,
+        environment: SAFE_ENVIRONMENT,
         spawn: fakeSpawn
       })
     ).toThrow(expectedMessage);
@@ -166,6 +204,7 @@ describe('Gate R1 authenticated Redis readiness', () => {
       runRedisReadiness({
         serviceId: REPLACEMENT_SERVICE_ID,
         railwayExecutable: TEST_RAILWAY_EXECUTABLE,
+        environment: SAFE_ENVIRONMENT,
         spawn: fakeSpawn
       })
     ).toThrow(expectedMessage);
@@ -198,6 +237,7 @@ describe('Gate R1 authenticated Redis readiness', () => {
       runRedisReadiness({
         serviceId: REPLACEMENT_SERVICE_ID,
         railwayExecutable: TEST_RAILWAY_EXECUTABLE,
+        environment: SAFE_ENVIRONMENT,
         spawn: fakeSpawn
       })
     ).toThrow('GATE_R_REDIS_AUTHENTICATED_READINESS_FAILED');
@@ -207,7 +247,11 @@ describe('Gate R1 authenticated Redis readiness', () => {
 
   it('rejects wrong project, environment, malformed, missing, and quarantined targets before execution', () => {
     const fakeSpawn = jest.fn();
-    const common = { railwayExecutable: TEST_RAILWAY_EXECUTABLE, spawn: fakeSpawn };
+    const common = {
+      environment: SAFE_ENVIRONMENT,
+      railwayExecutable: TEST_RAILWAY_EXECUTABLE,
+      spawn: fakeSpawn
+    };
 
     expect(() =>
       runRedisReadiness({
@@ -231,7 +275,8 @@ describe('Gate R1 authenticated Redis readiness', () => {
     );
     for (const serviceId of [
       'b7789306-8aef-4113-add5-02883a6cc087',
-      '434fa5b4-b52c-4caf-aaba-e87c173bf10d'
+      '434fa5b4-b52c-4caf-aaba-e87c173bf10d',
+      '11111111-2222-4333-8444-555555555555'
     ]) {
       expect(() => runRedisReadiness({ ...common, serviceId })).toThrow(
         'GATE_R_REDIS_READINESS_SERVICE_FORBIDDEN'
@@ -247,9 +292,41 @@ describe('Gate R1 authenticated Redis readiness', () => {
       runRedisReadiness({
         serviceId: REPLACEMENT_SERVICE_ID,
         railwayExecutable: '',
+        environment: SAFE_ENVIRONMENT,
         spawn: fakeSpawn
       })
     ).toThrow('GATE_R_REDIS_READINESS_CLI_UNAVAILABLE');
+    expect(fakeSpawn).not.toHaveBeenCalled();
+  });
+
+  it.each(GATE_R_FORBIDDEN_RAILWAY_TOKEN_VARIABLES)(
+    'rejects ambient %s before starting Railway',
+    tokenName => {
+      const fakeSpawn = jest.fn();
+      expect(() => runRedisReadiness({
+        environment: { PATH: 'C:\\safe', [tokenName]: SECRET_SENTINEL },
+        railwayExecutable: TEST_RAILWAY_EXECUTABLE,
+        serviceId: REPLACEMENT_SERVICE_ID,
+        spawn: fakeSpawn
+      })).toThrow('GATE_R_REDIS_READINESS_AMBIENT_TOKEN_FORBIDDEN');
+      expect(fakeSpawn).not.toHaveBeenCalled();
+    }
+  );
+
+  it('maps hostile environment enumeration to the fixed ambient-token code', () => {
+    const fakeSpawn = jest.fn();
+    const environment = new Proxy({}, {
+      ownKeys() {
+        throw new Error(SECRET_SENTINEL);
+      }
+    });
+
+    expect(() => runRedisReadiness({
+      environment,
+      railwayExecutable: TEST_RAILWAY_EXECUTABLE,
+      serviceId: REPLACEMENT_SERVICE_ID,
+      spawn: fakeSpawn
+    })).toThrow('GATE_R_REDIS_READINESS_AMBIENT_TOKEN_FORBIDDEN');
     expect(fakeSpawn).not.toHaveBeenCalled();
   });
 

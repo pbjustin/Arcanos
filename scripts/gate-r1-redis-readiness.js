@@ -9,18 +9,19 @@ import { spawnSync } from 'node:child_process';
 import process from 'node:process';
 import { pathToFileURL } from 'node:url';
 import {
+  buildSanitizedRailwayChildEnvironment,
   GATE_R_ENVIRONMENT_ID,
   GATE_R_PROJECT_ID,
   resolveRailwayExecutable
 } from './gate-r1-postgres-readiness.js';
+import {
+  GATE_R1_REDIS_SERVICE_ID,
+  GATE_R1_REDIS_SERVICE_NAME
+} from './gate-r1-redis-r2-config-patch.js';
 
 export { GATE_R_ENVIRONMENT_ID, GATE_R_PROJECT_ID };
-export const GATE_R_REDIS_SERVICE_NAME = 'phase2e-redis-r2-20260718';
+export const GATE_R_REDIS_SERVICE_NAME = GATE_R1_REDIS_SERVICE_NAME;
 
-const QUARANTINED_SERVICE_IDS = new Set([
-  'b7789306-8aef-4113-add5-02883a6cc087',
-  '434fa5b4-b52c-4caf-aaba-e87c173bf10d'
-]);
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const FIXED_FAILURES = Object.freeze({
   70: 'GATE_R_REDIS_READINESS_REMOTE_TARGET_MISMATCH',
@@ -31,6 +32,7 @@ const FIXED_FAILURES = Object.freeze({
 });
 const FIXED_FAILURE_MESSAGES = new Set([
   ...Object.values(FIXED_FAILURES),
+  'GATE_R_REDIS_READINESS_AMBIENT_TOKEN_FORBIDDEN',
   'GATE_R_REDIS_READINESS_CLI_UNAVAILABLE'
 ]);
 
@@ -38,10 +40,10 @@ function assertTargets(projectId, environmentId, serviceId) {
   if (projectId !== GATE_R_PROJECT_ID || environmentId !== GATE_R_ENVIRONMENT_ID) {
     throw new Error('GATE_R_TARGET_MISMATCH');
   }
-  if (!UUID_PATTERN.test(serviceId)) {
+  if (typeof serviceId !== 'string' || !UUID_PATTERN.test(serviceId)) {
     throw new Error('GATE_R_REDIS_READINESS_SERVICE_INVALID');
   }
-  if (QUARANTINED_SERVICE_IDS.has(serviceId)) {
+  if (serviceId !== GATE_R1_REDIS_SERVICE_ID) {
     throw new Error('GATE_R_REDIS_READINESS_SERVICE_FORBIDDEN');
   }
 }
@@ -113,9 +115,19 @@ export function buildRedisReadinessInvocation({
   projectId = GATE_R_PROJECT_ID,
   environmentId = GATE_R_ENVIRONMENT_ID,
   serviceId,
-  railwayExecutable
+  railwayExecutable,
+  environment = process.env
 }) {
   assertTargets(projectId, environmentId, serviceId);
+  let childEnvironment;
+  try {
+    childEnvironment = buildSanitizedRailwayChildEnvironment(
+      environment,
+      'GATE_R_REDIS_READINESS_AMBIENT_TOKEN_FORBIDDEN'
+    );
+  } catch {
+    throw new Error('GATE_R_REDIS_READINESS_AMBIENT_TOKEN_FORBIDDEN');
+  }
   const executable = railwayExecutable ?? resolveRedisRailwayExecutable();
   if (typeof executable !== 'string' || executable.length === 0) {
     throw new Error('GATE_R_REDIS_READINESS_CLI_UNAVAILABLE');
@@ -147,12 +159,11 @@ export function buildRedisReadinessInvocation({
       environmentId,
       '-s',
       serviceId,
-      'sh',
-      '-lc',
       remoteCommand
     ]),
     file: executable,
     options: Object.freeze({
+      env: Object.freeze(childEnvironment),
       shell: false,
       stdio: Object.freeze(['ignore', 'ignore', 'ignore']),
       timeout: 30_000,
@@ -166,13 +177,15 @@ export function runRedisReadiness({
   environmentId = GATE_R_ENVIRONMENT_ID,
   serviceId,
   railwayExecutable,
+  environment = process.env,
   spawn = spawnSync
 }) {
   const invocation = buildRedisReadinessInvocation({
     projectId,
     environmentId,
     serviceId,
-    railwayExecutable
+    railwayExecutable,
+    environment
   });
   let child;
 
@@ -217,7 +230,17 @@ if (isMain) {
     const result = runRedisReadiness(parseArgs(process.argv.slice(2)));
     process.stdout.write(`${JSON.stringify(result)}\n`);
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'GATE_R_REDIS_AUTHENTICATED_READINESS_FAILED';
+    const allowedMainFailures = new Set([
+      ...FIXED_FAILURE_MESSAGES,
+      'GATE_R_REDIS_READINESS_ARGUMENT_INVALID',
+      'GATE_R_REDIS_READINESS_SERVICE_FORBIDDEN',
+      'GATE_R_REDIS_READINESS_SERVICE_INVALID',
+      'GATE_R_TARGET_MISMATCH'
+    ]);
+    const candidate = error && typeof error === 'object' ? readOwnDataValue(error, 'message') : undefined;
+    const message = typeof candidate === 'string' && allowedMainFailures.has(candidate)
+      ? candidate
+      : 'GATE_R_REDIS_AUTHENTICATED_READINESS_FAILED';
     process.stderr.write(`${message}\n`);
     process.exitCode = 1;
   }
