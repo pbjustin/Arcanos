@@ -144,6 +144,17 @@ set`, `volume add`, `volume delete`, `environment edit`, `service status`, and
 `down` option ordering used below was also checked against the installed
 `--help` output.
 
+Railway CLI `4.30.2` checks non-terminal stdin before it considers
+`--service-config`. An automated invocation with empty stdin therefore ignores
+those flags, constructs an empty patch, and returns
+`{"staged":false,"committed":false,"message":"No changes to apply"}` without
+calling `EnvironmentPatchCommit`. This behavior was verified against the
+official `railwayapp/cli` `v4.30.2` source at commit
+`7650d29f2295d32c0ed9ef627d1eab6c8e4aaf49`. Every automated Gate R1
+`environment edit` below therefore sends one explicit, fixed JSON patch on
+stdin, omits `--service-config` and `--stage`, and requires the exact committed
+acknowledgement before trusting a fresh service-instance projection.
+
 `Assert-GateRTarget` is mandatory immediately before every Railway mutation,
 including each loop iteration and both `railway add` calls. The latter has no
 environment option, so the isolated link is part of its security boundary. Do
@@ -483,24 +494,101 @@ names. The TCP-proxy projector is deliberately incapable of reading variables.
 Neither replacement may contain a `*_PUBLIC_URL` key. Both services must still
 have no source and no deployment.
 
-Configure the Redis start command while the service still has no source:
+Configure the restart policies and Redis start command while both services
+still have no source. The three allowed patch profiles below construct the
+entire bounded `EnvironmentConfig` object locally. They accept no arbitrary
+path or value and never request Railway's broad environment-config view:
 
 ```powershell
-$restartPolicyType = 'ON_FAILURE'
-$restartPolicyMaxRetries = '3'
-foreach ($serviceId in @($pgServiceId, $redisServiceId)) {
-  Assert-GateRTarget
-  railway environment edit -e $environmentId --service-config $serviceId deploy.restartPolicyType $restartPolicyType -m 'gate-r: bound database restart policy before source activation' --json | Out-Null
-  if ($LASTEXITCODE -ne 0) { throw 'GATE_R_RESTART_POLICY_SET_FAILED' }
-  Assert-GateRTarget
-  railway environment edit -e $environmentId --service-config $serviceId deploy.restartPolicyMaxRetries $restartPolicyMaxRetries -m 'gate-r: bound database restart retries before source activation' --json | Out-Null
-  if ($LASTEXITCODE -ne 0) { throw 'GATE_R_RESTART_LIMIT_SET_FAILED' }
+$redisStartCommand = '/bin/sh -c ''test "$RAILWAY_VOLUME_MOUNT_PATH" = /data && test -n "$REDIS_PASSWORD" && { [ ! -e /data/lost+found ] || rmdir /data/lost+found; } && exec docker-entrypoint.sh redis-server --requirepass "$REDIS_PASSWORD" --save 60 1 --dir /data'''
+$pgImage = 'ghcr.io/railwayapp-templates/postgres-ssl:18.4'
+$redisImage = 'redis:8.2.1'
+
+function Invoke-GateR1EnvironmentPatch {
+  param(
+    [Parameter(Mandatory)]
+    [ValidateSet('service-configuration', 'postgres-source', 'redis-source')]
+    [string]$Profile
+  )
+
+  $patch = [ordered]@{ services = [ordered]@{} }
+  switch ($Profile) {
+    'service-configuration' {
+      $patch.services[$pgServiceId] = [ordered]@{
+        deploy = [ordered]@{
+          restartPolicyType = 'ON_FAILURE'
+          restartPolicyMaxRetries = 3
+        }
+      }
+      $patch.services[$redisServiceId] = [ordered]@{
+        deploy = [ordered]@{
+          startCommand = $redisStartCommand
+          restartPolicyType = 'ON_FAILURE'
+          restartPolicyMaxRetries = 3
+        }
+      }
+      $commitMessage = 'gate-r: configure private replacement services'
+    }
+    'postgres-source' {
+      $patch.services[$pgServiceId] = [ordered]@{
+        source = [ordered]@{ image = $pgImage }
+      }
+      $commitMessage = 'gate-r: activate private postgres replacement'
+    }
+    'redis-source' {
+      $patch.services[$redisServiceId] = [ordered]@{
+        source = [ordered]@{ image = $redisImage }
+      }
+      $commitMessage = 'gate-r: activate private redis replacement'
+    }
+  }
+
+  $patchJson = $patch | ConvertTo-Json -Depth 8 -Compress
+  $responseLines = $null
+  $responseText = $null
+  $result = $null
+  try {
+    Assert-GateRTarget
+    $responseLines = @($patchJson | railway environment edit -e $environmentId -m $commitMessage --json 2>&1)
+    if ($LASTEXITCODE -ne 0 -or $responseLines.Count -lt 1 -or $responseLines.Count -gt 8) {
+      throw 'GATE_R_ENVIRONMENT_PATCH_FAILED'
+    }
+    $responseText = [string]::Join("`n", @($responseLines | ForEach-Object { [string]$_ }))
+    if ([Text.Encoding]::UTF8.GetByteCount($responseText) -gt 4096) {
+      throw 'GATE_R_ENVIRONMENT_PATCH_RESULT_INVALID'
+    }
+    try {
+      $result = [string]$responseLines[-1] | ConvertFrom-Json
+    } catch {
+      throw 'GATE_R_ENVIRONMENT_PATCH_RESULT_INVALID'
+    }
+    $expectedKeys = @('committed', 'environmentId', 'environmentName', 'message', 'staged')
+    $actualKeys = @($result.PSObject.Properties.Name)
+    if (
+      $result -isnot [pscustomobject] -or
+      $actualKeys.Count -ne $expectedKeys.Count -or
+      @($expectedKeys | Where-Object { $actualKeys -cnotcontains $_ }).Count -ne 0 -or
+      $result.committed -isnot [bool] -or
+      $result.committed -ne $true -or
+      $result.staged -isnot [bool] -or
+      $result.staged -ne $true -or
+      $result.environmentId -cne $environmentId -or
+      $result.environmentName -cne $environmentName -or
+      $result.message -cne $commitMessage
+    ) {
+      throw 'GATE_R_ENVIRONMENT_PATCH_NOT_COMMITTED'
+    }
+  } finally {
+    $patch = $null
+    $patchJson = $null
+    $responseLines = $null
+    $responseText = $null
+    $actualKeys = $null
+    $result = $null
+  }
 }
 
-$redisStartCommand = '/bin/sh -c ''test "$RAILWAY_VOLUME_MOUNT_PATH" = /data && test -n "$REDIS_PASSWORD" && { [ ! -e /data/lost+found ] || rmdir /data/lost+found; } && exec docker-entrypoint.sh redis-server --requirepass "$REDIS_PASSWORD" --save 60 1 --dir /data'''
-Assert-GateRTarget
-railway environment edit -e $environmentId --service-config $redisServiceId deploy.startCommand $redisStartCommand -m 'gate-r: configure private redis before source activation' --json | Out-Null
-if ($LASTEXITCODE -ne 0) { throw 'GATE_R_REDIS_START_COMMAND_SET_FAILED' }
+Invoke-GateR1EnvironmentPatch 'service-configuration'
 ```
 
 This command contains an environment-variable reference, not a password. It
@@ -510,8 +598,10 @@ when it is an empty directory, and contains no recursive deletion.
 ## Stage 7 — final pre-activation isolation gate
 
 Immediately rerun `node $railwayMetadataProjector --environment` before either
-image is assigned. Prove all of the following from its allowlisted projection
-and the separate fixed TCP-proxy projections:
+image is assigned. Its configuration fields are the current service-instance
+view; they are not inferred from a broad desired-config object. A successful
+commit acknowledgement alone is insufficient. Prove all of the following from
+this fresh allowlisted projection and the separate fixed TCP-proxy projections:
 
 - target project and environment IDs still match;
 - private networking is enabled;
@@ -535,6 +625,38 @@ Rerun both replacement-mode projections immediately before source activation;
 do not reuse the Stage 3 observations:
 
 ```powershell
+$preActivationProjection = node $railwayMetadataProjector --environment | ConvertFrom-Json
+if (
+  $LASTEXITCODE -ne 0 -or
+  $preActivationProjection.projectId -cne $projectId -or
+  $preActivationProjection.environmentId -cne $environmentId
+) { throw 'GATE_R_PREACTIVATION_METADATA_FAILED' }
+$pgPreActivationMatches = @($preActivationProjection.services | Where-Object {
+  $_.serviceId -ceq $pgServiceId -and $_.serviceName -ceq $pgName
+})
+$redisPreActivationMatches = @($preActivationProjection.services | Where-Object {
+  $_.serviceId -ceq $redisServiceId -and $_.serviceName -ceq $redisName
+})
+if ($pgPreActivationMatches.Count -ne 1 -or $redisPreActivationMatches.Count -ne 1) {
+  throw 'GATE_R_PREACTIVATION_SERVICE_IDENTITY_FAILED'
+}
+$pgPreActivationService = $pgPreActivationMatches[0]
+$redisPreActivationService = $redisPreActivationMatches[0]
+if (
+  $pgPreActivationService.sourceKind -cne 'NONE' -or
+  $null -ne $pgPreActivationService.latestDeployment -or
+  @($pgPreActivationService.activeDeployments).Count -ne 0 -or
+  $pgPreActivationService.restartPolicyType -cne 'ON_FAILURE' -or
+  $pgPreActivationService.restartPolicyMaxRetries -ne 3 -or
+  $pgPreActivationService.startCommandContract -cne 'UNSET' -or
+  $redisPreActivationService.sourceKind -cne 'NONE' -or
+  $null -ne $redisPreActivationService.latestDeployment -or
+  @($redisPreActivationService.activeDeployments).Count -ne 0 -or
+  $redisPreActivationService.restartPolicyType -cne 'ON_FAILURE' -or
+  $redisPreActivationService.restartPolicyMaxRetries -ne 3 -or
+  $redisPreActivationService.startCommandContract -cne 'APPROVED_REDIS'
+) { throw 'GATE_R_PREACTIVATION_CONFIGURATION_MISMATCH' }
+
 $pgPreActivationProxy = node $tcpProxyProjector --replacement-profile postgres --service-id $pgServiceId --service-instance-id $pgServiceInstanceId | ConvertFrom-Json
 if (
   $LASTEXITCODE -ne 0 -or
@@ -567,11 +689,7 @@ Only after Stage 7 passes, assign the PostgreSQL source. Do not assign the
 Redis source yet.
 
 ```powershell
-$pgImage = 'ghcr.io/railwayapp-templates/postgres-ssl:18.4'
-
-Assert-GateRTarget
-railway environment edit -e $environmentId --service-config $pgServiceId source.image $pgImage -m 'gate-r: activate private postgres replacement' --json | Out-Null
-if ($LASTEXITCODE -ne 0) { throw 'GATE_R_POSTGRES_IMAGE_ACTIVATION_FAILED' }
+Invoke-GateR1EnvironmentPatch 'postgres-source'
 ```
 
 Poll only read-only PostgreSQL deployment status, at most 120 times with a
@@ -620,10 +738,7 @@ references.
 After PostgreSQL passes Stage 8, assign the Redis source:
 
 ```powershell
-$redisImage = 'redis:8.2.1'
-Assert-GateRTarget
-railway environment edit -e $environmentId --service-config $redisServiceId source.image $redisImage -m 'gate-r: activate private redis replacement' --json | Out-Null
-if ($LASTEXITCODE -ne 0) { throw 'GATE_R_REDIS_IMAGE_ACTIVATION_FAILED' }
+Invoke-GateR1EnvironmentPatch 'redis-source'
 ```
 
 Poll only read-only Redis deployment status, at most 120 times with a

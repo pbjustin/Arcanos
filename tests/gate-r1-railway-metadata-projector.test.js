@@ -321,6 +321,30 @@ describe('Gate R1 schema-locked Railway metadata projector', () => {
     expect(result.services[0].startCommandContract).toBe('UNSET');
   });
 
+  it('reports source-less service-instance configuration exactly without inferring desired config', async () => {
+    const redis = service({
+      serviceId: REPLACEMENT_SERVICE_ID,
+      serviceName: GATE_R1_REPLACEMENT_NAMES[1]
+    });
+    redis.restartPolicyMaxRetries = 10;
+
+    const result = await projectGateR1EnvironmentMetadata({
+      env: env(),
+      fetchImpl: fetchFor(payload({ services: [redis] }))
+    });
+
+    expect(result.services[0]).toMatchObject({
+      sourceKind: 'NONE',
+      latestDeployment: null,
+      activeDeployments: [],
+      restartPolicyType: 'ON_FAILURE',
+      restartPolicyMaxRetries: 10,
+      startCommandContract: 'MISSING'
+    });
+    expect(GATE_R1_ENVIRONMENT_METADATA_QUERY).toContain('serviceInstances(first: 100)');
+    expect(GATE_R1_ENVIRONMENT_METADATA_QUERY).not.toMatch(/environmentConfig|decryptVariables|\bconfig\b/i);
+  });
+
   it('classifies an unapproved image without returning its potentially sensitive source text', async () => {
     const sourceSentinel = 'registry.invalid/user:embedded-credential-sentinel';
     const result = await projectGateR1EnvironmentMetadata({

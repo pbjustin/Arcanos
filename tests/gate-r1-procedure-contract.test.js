@@ -35,6 +35,52 @@ describe('Gate R1 procedure contract', () => {
     }
   });
 
+  it('uses explicit stdin patches and requires committed configuration before projection', () => {
+    const stage6 = runbook.slice(runbook.indexOf('## Stage 6'), runbook.indexOf('## Stage 7'));
+    const stage7 = runbook.slice(runbook.indexOf('## Stage 7'), runbook.indexOf('## Stage 8'));
+    const stage8 = runbook.slice(runbook.indexOf('## Stage 8'), runbook.indexOf('## Stage 9'));
+    const stage9 = runbook.slice(runbook.indexOf('## Stage 9'), runbook.indexOf('## Stage 10'));
+    const r1 = `${stage6}\n${stage7}\n${stage8}\n${stage9}`;
+
+    expect(r1).not.toContain('--service-config');
+    expect(r1).not.toContain('--stage');
+    expect(stage6).toContain("'service-configuration'");
+    expect(stage6).toContain("[ValidateSet('service-configuration', 'postgres-source', 'redis-source')]");
+    expect(stage6).toContain("restartPolicyType = 'ON_FAILURE'");
+    expect(stage6).toContain('restartPolicyMaxRetries = 3');
+    expect(stage6).toContain('startCommand = $redisStartCommand');
+    expect(stage6).toContain("$pgImage = 'ghcr.io/railwayapp-templates/postgres-ssl:18.4'");
+    expect(stage6).toContain("$redisImage = 'redis:8.2.1'");
+    expect(stage6).toContain('source = [ordered]@{ image = $pgImage }');
+    expect(stage6).toContain('source = [ordered]@{ image = $redisImage }');
+    expect(stage6).toContain('$patchJson | railway environment edit');
+    expect(stage6).toContain('$result.committed -ne $true');
+    expect(stage6).toContain('$result.staged -ne $true');
+    expect(stage6).toContain('$result.environmentId -cne $environmentId');
+    expect(stage6).toContain('$result.environmentName -cne $environmentName');
+    expect(stage6).toContain("$result.message -cne $commitMessage");
+    expect(stage6).toContain("$expectedKeys = @('committed', 'environmentId', 'environmentName', 'message', 'staged')");
+    expect(stage6).toContain('$responseLines.Count -gt 8');
+    expect(stage6).toContain('GetByteCount($responseText) -gt 4096');
+    expect(stage6).not.toContain('ConvertFrom-Json -AsHashtable');
+    expect(stage6).toContain("throw 'GATE_R_ENVIRONMENT_PATCH_NOT_COMMITTED'");
+    expect(stage6).toContain("Invoke-GateR1EnvironmentPatch 'service-configuration'");
+    expect(stage7).toContain('$preActivationProjection = node $railwayMetadataProjector --environment');
+    expect(stage7).toContain('$pgPreActivationService.restartPolicyMaxRetries -ne 3');
+    expect(stage7).toContain("$redisPreActivationService.startCommandContract -cne 'APPROVED_REDIS'");
+    expect(runbook.indexOf("Invoke-GateR1EnvironmentPatch 'service-configuration'")).toBeLessThan(
+      runbook.indexOf('$preActivationProjection = node $railwayMetadataProjector --environment')
+    );
+    expect(stage8).toContain("Invoke-GateR1EnvironmentPatch 'postgres-source'");
+    expect(stage9).toContain("Invoke-GateR1EnvironmentPatch 'redis-source'");
+    expect(stage8.indexOf("Invoke-GateR1EnvironmentPatch 'postgres-source'")).toBeLessThan(
+      stage8.indexOf('$pgActiveProxyProjection = node $tcpProxyProjector')
+    );
+    expect(stage9.indexOf("Invoke-GateR1EnvironmentPatch 'redis-source'")).toBeLessThan(
+      stage9.indexOf('$redisActiveProxyProjection = node $tcpProxyProjector')
+    );
+  });
+
   it('treats R0 as read-only and keeps cutover and retirement outside R1', () => {
     const stage1 = runbook.slice(runbook.indexOf('## Stage 1'), runbook.indexOf('## Stage 2'));
     const stage2 = runbook.slice(runbook.indexOf('## Stage 2'), runbook.indexOf('## Stage 3'));
@@ -111,7 +157,7 @@ describe('Gate R1 procedure contract', () => {
     expect(stage8).toContain('$pgActiveProxyProjection = node $tcpProxyProjector --replacement-profile postgres');
     expect(stage8).toContain('GATE_R_POSTGRES_ACTIVE_PROXY_FAILED');
     expect(stage8).toContain('$pgActiveProxyProjection.serviceName -ne $pgName');
-    expect(stage8.indexOf('source.image $pgImage')).toBeLessThan(
+    expect(stage8.indexOf("Invoke-GateR1EnvironmentPatch 'postgres-source'")).toBeLessThan(
       stage8.indexOf('$pgActiveProxyProjection = node $tcpProxyProjector')
     );
     expect(stage8.indexOf('$pgActiveProxyProjection = node $tcpProxyProjector')).toBeLessThan(
@@ -124,7 +170,7 @@ describe('Gate R1 procedure contract', () => {
     expect(stage9).toContain('$pgFinalProxyProjection = node $tcpProxyProjector --replacement-profile postgres');
     expect(stage9).toContain('$redisFinalProxyProjection = node $tcpProxyProjector --replacement-profile redis');
     expect(stage9).toContain('GATE_R_FINAL_REPLACEMENT_PROXY_FAILED');
-    expect(stage9.indexOf('source.image $redisImage')).toBeLessThan(
+    expect(stage9.indexOf("Invoke-GateR1EnvironmentPatch 'redis-source'")).toBeLessThan(
       stage9.indexOf('$redisActiveProxyProjection = node $tcpProxyProjector')
     );
     expect(stage9.indexOf('$redisActiveProxyProjection = node $tcpProxyProjector')).toBeLessThan(
