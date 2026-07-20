@@ -22,6 +22,8 @@ export const GATE_R1_POSTGRES_R2_SERVICE_ID = 'a2a57da4-a928-427f-be30-d4a68b59a
 export const GATE_R1_POSTGRES_R2_SERVICE_INSTANCE_ID = 'e8c42bea-d887-485b-8aaf-ba0f45d439e8';
 export const GATE_R1_REDIS_R2_SERVICE_ID = '1ac0bd56-50b3-49eb-954c-ea83515ec915';
 export const GATE_R1_REDIS_R2_SERVICE_INSTANCE_ID = '0f34bcbb-bfd0-4df5-954a-bb97371bd460';
+export const GATE_R1_POSTGRES_R3_SERVICE_ID = '7346b3f6-bf3d-46e1-9d66-79f10847ef89';
+export const GATE_R1_POSTGRES_R3_SERVICE_INSTANCE_ID = '86dde430-50ac-4d5c-95c3-cb27064eff51';
 export const GATE_R1_REPLACEMENT_PROFILES = Object.freeze({
   postgres: 'phase2e-postgres-r2-20260718',
   redis: 'phase2e-redis-r2-20260718',
@@ -93,6 +95,10 @@ const FIXED_REPLACEMENT_TARGETS = Object.freeze({
   redis: Object.freeze({
     serviceId: GATE_R1_REDIS_R2_SERVICE_ID,
     serviceInstanceId: GATE_R1_REDIS_R2_SERVICE_INSTANCE_ID
+  }),
+  'postgres-r3': Object.freeze({
+    serviceId: GATE_R1_POSTGRES_R3_SERVICE_ID,
+    serviceInstanceId: GATE_R1_POSTGRES_R3_SERVICE_INSTANCE_ID
   })
 });
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;

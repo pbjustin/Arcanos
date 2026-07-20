@@ -192,8 +192,8 @@ describe('Gate R1 projector session', () => {
 
   it('pins every executable artifact before each projector launch', () => {
     for (const value of [
-      'B659DD037DD900697AD9384C845B4579BED1BF76AF6DA1DA4736693B9E748A83',
-      'D60AE8D073DCD5A0C58FEC200D5AE841EB8E5E92575E822398968676F50E8E77',
+      '6225B33CA2BE6A92A7F6B617AAE86B7043440B0EF26A8700C8E12F6F14108C6E',
+      'E6B1EB138DA5734ECF429378E86C04F64936020ECAE4B4E9CD58F2E5703A256E',
       'D14BA95CDCE1EF7DC9AD3AC74949CA5DB38B27378EE30F30A23CF26F9E875A11'
     ]) {
       expect(sessionScript).toContain(value);
@@ -214,7 +214,7 @@ describe('Gate R1 projector session', () => {
       expect(sessionScript).toContain(`'${operation}'`);
     }
     expect(sessionScript).toContain('$request.operation -ceq \'stop\'');
-    expect(sessionScript).not.toContain('postgres-r3');
+    expect(sessionScript).toContain('postgres-r3');
   });
 
   it('hard-pins the approved project, environment, and current replacement services', () => {
@@ -225,8 +225,11 @@ describe('Gate R1 projector session', () => {
       '434fa5b4-b52c-4caf-aaba-e87c173bf10d',
       'a2a57da4-a928-427f-be30-d4a68b59a117',
       '1ac0bd56-50b3-49eb-954c-ea83515ec915',
+      '7346b3f6-bf3d-46e1-9d66-79f10847ef89',
+      '86dde430-50ac-4d5c-95c3-cb27064eff51',
       'phase2e-postgres-r2-20260718',
-      'phase2e-redis-r2-20260718'
+      'phase2e-redis-r2-20260718',
+      'phase2e-postgres-r3-20260720'
     ]) {
       expect(sessionScript).toContain(value);
     }
@@ -259,7 +262,51 @@ describe('Gate R1 projector session', () => {
     });
   });
 
-  it('rejects unbound R3 requests in the executable session protocol', () => {
+  it('maps only the exact observed R3 proxy and endpoint requests', () => {
+    const serviceId = '7346b3f6-bf3d-46e1-9d66-79f10847ef89';
+    const serviceInstanceId = '86dde430-50ac-4d5c-95c3-cb27064eff51';
+    const privateNetworkId = '464f2194-3825-4ac1-a705-192566561675';
+    const proxy = runProjectorArgumentRequest({
+      operation: 'replacementProxy',
+      profile: 'postgres-r3',
+      protocolVersion: 1,
+      sequence: 1,
+      serviceId,
+      serviceInstanceId
+    });
+    expect(proxy.status).toBe(0);
+    expect(proxy.stderr).toBe('');
+    const projectedProxy = JSON.parse(proxy.stdout);
+    expect(projectedProxy.ok).toBe(true);
+    expect(projectedProxy.arguments[0].replaceAll('\\', '/'))
+      .toMatch(/\/scripts\/gate-r1-tcp-proxy-projector\.js$/);
+    expect(projectedProxy.arguments.slice(1)).toEqual([
+      '--replacement-profile', 'postgres-r3', '--service-id', serviceId,
+      '--service-instance-id', serviceInstanceId
+    ]);
+
+    const endpoint = runProjectorArgumentRequest({
+      operation: 'endpoint',
+      profile: 'postgres-r3',
+      protocolVersion: 1,
+      sequence: 1,
+      serviceId,
+      privateNetworkId
+    });
+    expect(endpoint.status).toBe(0);
+    expect(endpoint.stderr).toBe('');
+    const projectedEndpoint = JSON.parse(endpoint.stdout);
+    expect(projectedEndpoint.ok).toBe(true);
+    expect(projectedEndpoint.arguments[0].replaceAll('\\', '/'))
+      .toMatch(/\/scripts\/gate-r1-railway-metadata-projector\.js$/);
+    expect(projectedEndpoint.arguments.slice(1)).toEqual([
+      '--endpoint', '--service-id', serviceId,
+      '--service-name', 'phase2e-postgres-r3-20260720',
+      '--private-network-id', privateNetworkId
+    ]);
+  });
+
+  it('rejects every unbound or malformed R3 request', () => {
     for (const request of [
       {
         operation: 'replacementProxy', profile: 'postgres-r3', protocolVersion: 1, sequence: 1,
@@ -270,6 +317,22 @@ describe('Gate R1 projector session', () => {
         operation: 'endpoint', profile: 'postgres-r3', protocolVersion: 1, sequence: 1,
         serviceId: '88888888-9999-4aaa-8bbb-cccccccccccc',
         privateNetworkId: '464f2194-3825-4ac1-a705-192566561675'
+      },
+      {
+        operation: 'replacementProxy', profile: 'postgres-r3', protocolVersion: 1, sequence: 1,
+        serviceId: '7346b3f6-bf3d-46e1-9d66-79f10847ef89',
+        serviceInstanceId: '22222222-3333-4444-8555-666666666666'
+      },
+      {
+        operation: 'endpoint', profile: 'postgres-r3', protocolVersion: 1, sequence: 1,
+        serviceId: '7346b3f6-bf3d-46e1-9d66-79f10847ef89',
+        privateNetworkId: '11111111-2222-4333-8444-555555555555'
+      },
+      {
+        operation: 'endpoint', profile: 'postgres-r3', protocolVersion: 1, sequence: 1,
+        serviceId: '7346b3f6-bf3d-46e1-9d66-79f10847ef89',
+        privateNetworkId: '464f2194-3825-4ac1-a705-192566561675',
+        unexpected: true
       }
     ]) {
       const result = runProjectorArgumentRequest(request);

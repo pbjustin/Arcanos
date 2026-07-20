@@ -1,16 +1,25 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import {
   GATE_R_ENVIRONMENT_ID,
+  GATE_R_POSTGRES_SERVICE_ID,
   GATE_R_POSTGRES_SERVICE_NAME,
+  GATE_R_FORBIDDEN_RAILWAY_TOKEN_VARIABLES,
   GATE_R_PROJECT_ID,
   buildPostgresReadinessInvocation,
   resolveRailwayExecutable,
   runPostgresReadiness
 } from '../scripts/gate-r1-postgres-readiness.js';
 
-const REPLACEMENT_SERVICE_ID = '11111111-2222-4333-8444-555555555555';
+const REPLACEMENT_SERVICE_ID = GATE_R_POSTGRES_SERVICE_ID;
 const TEST_RAILWAY_EXECUTABLE = 'C:\\fixed\\railway.exe';
 const SECRET_SENTINEL = 'credential-sentinel-should-not-escape';
+const SAFE_ENVIRONMENT = Object.freeze({ PATH: 'C:\\safe' });
+const UNRELATED_SECRET_ENVIRONMENT = Object.freeze(Object.fromEntries([
+  ['OPENAI_API_KEY', SECRET_SENTINEL],
+  ['DATABASE_URL', SECRET_SENTINEL],
+  ['REDIS_URL', SECRET_SENTINEL],
+  ['AUTHORIZATION', SECRET_SENTINEL]
+]));
 
 function expectZeroed(buffer) {
   expect([...buffer]).toEqual(new Array(buffer.length).fill(0));
@@ -45,7 +54,12 @@ describe('Gate R1 authenticated PostgreSQL readiness', () => {
     expect(GATE_R_POSTGRES_SERVICE_NAME).toBe('phase2e-postgres-r3-20260720');
     const invocation = buildPostgresReadinessInvocation({
       serviceId: REPLACEMENT_SERVICE_ID,
-      railwayExecutable: TEST_RAILWAY_EXECUTABLE
+      railwayExecutable: TEST_RAILWAY_EXECUTABLE,
+      environment: {
+        PATH: 'safe',
+        RAILWAY_TOKEN: '',
+        ...UNRELATED_SECRET_ENVIRONMENT
+      }
     });
     const serialized = invocation.args.join(' ');
 
@@ -63,6 +77,7 @@ describe('Gate R1 authenticated PostgreSQL readiness', () => {
       ])
     );
     expect(invocation.options).toMatchObject({ shell: false, timeout: 30_000, windowsHide: true });
+    expect(invocation.options.env).toEqual({ PATH: 'safe' });
     expect(invocation.options.stdio).toEqual(['ignore', 'ignore', 'ignore']);
     expect(serialized).toContain('psql');
     expect(serialized).toContain('--no-psqlrc');
@@ -96,6 +111,7 @@ describe('Gate R1 authenticated PostgreSQL readiness', () => {
 
     const result = runPostgresReadiness({
       serviceId: REPLACEMENT_SERVICE_ID,
+      environment: SAFE_ENVIRONMENT,
       railwayExecutable: TEST_RAILWAY_EXECUTABLE,
       spawn: fakeSpawn
     });
@@ -128,6 +144,7 @@ describe('Gate R1 authenticated PostgreSQL readiness', () => {
     expect(() =>
       runPostgresReadiness({
         serviceId: REPLACEMENT_SERVICE_ID,
+        environment: SAFE_ENVIRONMENT,
         railwayExecutable: TEST_RAILWAY_EXECUTABLE,
         spawn: fakeSpawn
       })
@@ -143,6 +160,7 @@ describe('Gate R1 authenticated PostgreSQL readiness', () => {
     expect(() =>
       runPostgresReadiness({
         serviceId: REPLACEMENT_SERVICE_ID,
+        environment: SAFE_ENVIRONMENT,
         railwayExecutable: TEST_RAILWAY_EXECUTABLE,
         spawn: fakeSpawn
       })
@@ -152,27 +170,31 @@ describe('Gate R1 authenticated PostgreSQL readiness', () => {
 
   it('maps thrown child errors to a fixed message and clears diagnostics', () => {
     const stderr = Buffer.from(SECRET_SENTINEL);
+    const causeStderr = Buffer.from(SECRET_SENTINEL);
     const fakeSpawn = jest.fn(() => {
-      throw Object.assign(new Error(SECRET_SENTINEL), { stderr });
+      throw Object.assign(new Error(SECRET_SENTINEL), { cause: { stderr: causeStderr }, stderr });
     });
 
     expect(() =>
       runPostgresReadiness({
         serviceId: REPLACEMENT_SERVICE_ID,
+        environment: SAFE_ENVIRONMENT,
         railwayExecutable: TEST_RAILWAY_EXECUTABLE,
         spawn: fakeSpawn
       })
     ).toThrow('GATE_R_POSTGRES_AUTHENTICATED_READINESS_FAILED');
     expectZeroed(stderr);
+    expectZeroed(causeStderr);
   });
 
-  it('rejects wrong project, environment, malformed, and quarantined service targets before execution', () => {
+  it('rejects wrong project, environment, malformed, and every non-R3 service target before execution', () => {
     const fakeSpawn = jest.fn();
 
     expect(() =>
       runPostgresReadiness({
         projectId: '00000000-0000-4000-8000-000000000000',
         serviceId: REPLACEMENT_SERVICE_ID,
+        environment: SAFE_ENVIRONMENT,
         railwayExecutable: TEST_RAILWAY_EXECUTABLE,
         spawn: fakeSpawn
       })
@@ -181,6 +203,7 @@ describe('Gate R1 authenticated PostgreSQL readiness', () => {
       runPostgresReadiness({
         environmentId: '00000000-0000-4000-8000-000000000000',
         serviceId: REPLACEMENT_SERVICE_ID,
+        environment: SAFE_ENVIRONMENT,
         railwayExecutable: TEST_RAILWAY_EXECUTABLE,
         spawn: fakeSpawn
       })
@@ -188,6 +211,7 @@ describe('Gate R1 authenticated PostgreSQL readiness', () => {
     expect(() =>
       runPostgresReadiness({
         serviceId: 'not-a-uuid',
+        environment: SAFE_ENVIRONMENT,
         railwayExecutable: TEST_RAILWAY_EXECUTABLE,
         spawn: fakeSpawn
       })
@@ -195,11 +219,13 @@ describe('Gate R1 authenticated PostgreSQL readiness', () => {
     expect(() =>
       runPostgresReadiness({
         serviceId: 'b7789306-8aef-4113-add5-02883a6cc087',
+        environment: SAFE_ENVIRONMENT,
         railwayExecutable: TEST_RAILWAY_EXECUTABLE,
         spawn: fakeSpawn
       })
     ).toThrow('GATE_R_POSTGRES_READINESS_SERVICE_FORBIDDEN');
     for (const serviceId of [
+      '11111111-2222-4333-8444-555555555555',
       '434fa5b4-b52c-4caf-aaba-e87c173bf10d',
       'a2a57da4-a928-427f-be30-d4a68b59a117',
       '1ac0bd56-50b3-49eb-954c-ea83515ec915',
@@ -211,6 +237,7 @@ describe('Gate R1 authenticated PostgreSQL readiness', () => {
       expect(() =>
         runPostgresReadiness({
           serviceId,
+          environment: SAFE_ENVIRONMENT,
           railwayExecutable: TEST_RAILWAY_EXECUTABLE,
           spawn: fakeSpawn
         })
@@ -225,10 +252,25 @@ describe('Gate R1 authenticated PostgreSQL readiness', () => {
     expect(() =>
       runPostgresReadiness({
         serviceId: REPLACEMENT_SERVICE_ID,
+        environment: SAFE_ENVIRONMENT,
         railwayExecutable: '',
         spawn: fakeSpawn
       })
     ).toThrow('GATE_R_POSTGRES_READINESS_CLI_UNAVAILABLE');
     expect(fakeSpawn).not.toHaveBeenCalled();
   });
+
+  it.each(GATE_R_FORBIDDEN_RAILWAY_TOKEN_VARIABLES)(
+    'rejects ambient %s before spawning Railway',
+    tokenName => {
+      const fakeSpawn = jest.fn();
+      expect(() => runPostgresReadiness({
+        serviceId: REPLACEMENT_SERVICE_ID,
+        environment: { PATH: 'safe', [tokenName]: SECRET_SENTINEL },
+        railwayExecutable: TEST_RAILWAY_EXECUTABLE,
+        spawn: fakeSpawn
+      })).toThrow('GATE_R_POSTGRES_READINESS_AMBIENT_TOKEN_FORBIDDEN');
+      expect(fakeSpawn).not.toHaveBeenCalled();
+    }
+  );
 });

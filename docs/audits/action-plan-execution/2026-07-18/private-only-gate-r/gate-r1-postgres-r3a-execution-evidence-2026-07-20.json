@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "phase": "GATE_R1_POSTGRES_R3A",
+  "result": "PASS_WITH_LIMITATIONS",
+  "source": {
+    "branch": "codex/phase2e-advisory-history-gate-r",
+    "commit": "644a82dcdbe9ff6734ceed63eafdefc468a7061c",
+    "worktreeCleanAfterOperation": true,
+    "sourceChanges": 0
+  },
+  "target": {
+    "projectId": "7faf44e5-519c-4e73-8d7a-da9f389e6187",
+    "projectName": "Arcanos",
+    "environmentId": "fb99f47d-5ef5-44c1-96c2-acf7b90fab13",
+    "environmentName": "phase2e-validation-20260717",
+    "privateNetworkId": "464f2194-3825-4ac1-a705-192566561675"
+  },
+  "precondition": {
+    "r3NameAbsent": true,
+    "retainedDataServicesOffline": 4,
+    "validatorsOffline": 2,
+    "applicationInstances": 0,
+    "retainedVolumeCount": 4,
+    "allProjectedDomainCountsZero": true,
+    "tcpProxyCounts": {
+      "originalPostgres": 0,
+      "originalRedis": 0,
+      "postgresR2": 0,
+      "redisR2": 0
+    }
+  },
+  "mutation": {
+    "attemptCount": 1,
+    "retryCount": 0,
+    "operation": "EMPTY_SERVICE_IDENTITY_CREATE",
+    "serviceName": "phase2e-postgres-r3-20260720"
+  },
+  "createdIdentity": {
+    "serviceId": "7346b3f6-bf3d-46e1-9d66-79f10847ef89",
+    "serviceInstanceId": "86dde430-50ac-4d5c-95c3-cb27064eff51",
+    "sourceKind": "NONE",
+    "repositoryConfigured": false,
+    "latestDeploymentPresent": false,
+    "activeDeploymentCount": 0,
+    "volumeCount": 0,
+    "variableCount": 0,
+    "railwayDomainCount": 0,
+    "customDomainCount": 0,
+    "observedAt": "2026-07-20T06:15:38.345Z"
+  },
+  "accessControl": {
+    "temporaryTokenCreateCount": 1,
+    "temporaryTokenRevocation": "OPERATOR_CONFIRMED",
+    "ambientTokenPresentAfterSession": false,
+    "secureProjectorProcessExited": true,
+    "secureSessionDirectoryRemoved": true,
+    "projectorStderrBytes": 0
+  },
+  "disclosureScan": {
+    "secretLikeMatchCount": 0,
+    "connectionStringMatchCount": 0
+  },
+  "limitations": [
+    "The new R3 service TCP-proxy count was intentionally not queried in R3A.",
+    "A separate live production and Phase 2D stable-identity comparison was not captured."
+  ],
+  "nextGate": {
+    "name": "GATE_R1_POSTGRES_R3B1",
+    "status": "NO_GO_PENDING_EXACT_ID_TOOLING_AND_FRESH_ZERO_PROXY_PROOF"
+  }
+}

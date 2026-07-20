@@ -5,6 +5,8 @@ import {
   GATE_R1_MIGRATION_VALIDATOR_SERVICE_ID,
   GATE_R1_POSTGRES_R2_SERVICE_ID,
   GATE_R1_POSTGRES_R2_SERVICE_INSTANCE_ID,
+  GATE_R1_POSTGRES_R3_SERVICE_ID,
+  GATE_R1_POSTGRES_R3_SERVICE_INSTANCE_ID,
   GATE_R1_POSTGRES_SERVICE_ID,
   GATE_R1_PROJECT_TOKEN_MAX_CHARACTERS,
   GATE_R1_PROJECT_ID,
@@ -29,8 +31,10 @@ import {
 const FIXTURE_TOKEN = 'fixture-project-access-value';
 const PROXY_ID_A = '11111111-2222-4333-8444-555555555555';
 const PROXY_ID_B = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
-const REPLACEMENT_SERVICE_ID = '22222222-3333-4444-8555-666666666666';
-const REPLACEMENT_SERVICE_INSTANCE_ID = '33333333-4444-4555-8666-777777777777';
+const REPLACEMENT_SERVICE_ID = GATE_R1_POSTGRES_R3_SERVICE_ID;
+const REPLACEMENT_SERVICE_INSTANCE_ID = GATE_R1_POSTGRES_R3_SERVICE_INSTANCE_ID;
+const ALTERNATE_REPLACEMENT_SERVICE_ID = '22222222-3333-4444-8555-666666666666';
+const ALTERNATE_REPLACEMENT_SERVICE_INSTANCE_ID = '33333333-4444-4555-8666-777777777777';
 const OBSERVED_AT = '2026-07-19T12:34:56.789Z';
 
 function envWithToken(overrides = {}) {
@@ -769,6 +773,9 @@ describe('Gate R1 replacement-service TCP-proxy projector', () => {
     const serviceName = 'phase2e-postgres-r3-20260720';
     const fetchImpl = successFetch(replacementGraphqlPayload({ replacementProfile }));
 
+    expect(GATE_R1_POSTGRES_R3_SERVICE_ID).toBe('7346b3f6-bf3d-46e1-9d66-79f10847ef89');
+    expect(GATE_R1_POSTGRES_R3_SERVICE_INSTANCE_ID).toBe('86dde430-50ac-4d5c-95c3-cb27064eff51');
+
     const result = await projectGateR1ReplacementTcpProxyCount({
       replacementProfile,
       serviceId: REPLACEMENT_SERVICE_ID,
@@ -822,6 +829,33 @@ describe('Gate R1 replacement-service TCP-proxy projector', () => {
         replacementProfile,
         serviceId: REPLACEMENT_SERVICE_ID,
         serviceInstanceId: REPLACEMENT_SERVICE_INSTANCE_ID,
+        env,
+        fetchImpl
+      })).rejects.toThrow('GATE_R1_TCP_PROXY_PROJECTOR_TARGET_FORBIDDEN');
+    }
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('rejects altered, swapped, and retained identities for PostgreSQL R3 before token or fetch access', async () => {
+    const env = new Proxy({}, {
+      get() { throw new Error('token-source-must-not-be-read'); }
+    });
+    const fetchImpl = successFetch();
+    const cases = [
+      [ALTERNATE_REPLACEMENT_SERVICE_ID, GATE_R1_POSTGRES_R3_SERVICE_INSTANCE_ID],
+      [GATE_R1_POSTGRES_R3_SERVICE_ID, ALTERNATE_REPLACEMENT_SERVICE_INSTANCE_ID],
+      [GATE_R1_POSTGRES_R3_SERVICE_INSTANCE_ID, GATE_R1_POSTGRES_R3_SERVICE_ID],
+      [GATE_R1_POSTGRES_SERVICE_ID, GATE_R1_POSTGRES_R3_SERVICE_INSTANCE_ID],
+      [GATE_R1_REDIS_SERVICE_ID, GATE_R1_POSTGRES_R3_SERVICE_INSTANCE_ID],
+      [GATE_R1_POSTGRES_R2_SERVICE_ID, GATE_R1_POSTGRES_R2_SERVICE_INSTANCE_ID],
+      [GATE_R1_REDIS_R2_SERVICE_ID, GATE_R1_REDIS_R2_SERVICE_INSTANCE_ID]
+    ];
+
+    for (const [serviceId, serviceInstanceId] of cases) {
+      await expect(projectGateR1ReplacementTcpProxyCount({
+        replacementProfile: 'postgres-r3',
+        serviceId,
+        serviceInstanceId,
         env,
         fetchImpl
       })).rejects.toThrow('GATE_R1_TCP_PROXY_PROJECTOR_TARGET_FORBIDDEN');

@@ -13,18 +13,34 @@ import { pathToFileURL } from 'node:url';
 
 export const GATE_R_PROJECT_ID = '7faf44e5-519c-4e73-8d7a-da9f389e6187';
 export const GATE_R_ENVIRONMENT_ID = 'fb99f47d-5ef5-44c1-96c2-acf7b90fab13';
+export const GATE_R_POSTGRES_SERVICE_ID = '7346b3f6-bf3d-46e1-9d66-79f10847ef89';
 export const GATE_R_POSTGRES_SERVICE_NAME = 'phase2e-postgres-r3-20260720';
-
-const QUARANTINED_SERVICE_IDS = new Set([
-  'b7789306-8aef-4113-add5-02883a6cc087',
-  '434fa5b4-b52c-4caf-aaba-e87c173bf10d',
-  'a2a57da4-a928-427f-be30-d4a68b59a117',
-  '1ac0bd56-50b3-49eb-954c-ea83515ec915',
-  'd8d5181a-2f72-48d7-8413-6f05d113876c',
-  'febdf999-1c96-48df-8e28-c905b8b27082',
-  'c4ade025-3f13-4fca-9309-5d0dd81396fe',
-  '1765befb-b805-4051-9af9-28634e986886'
+export const GATE_R_FORBIDDEN_RAILWAY_TOKEN_VARIABLES = Object.freeze([
+  'ARCANOS_GATE_R1_RAILWAY_PROJECT_TOKEN',
+  'RAILWAY_TOKEN',
+  'RAILWAY_API_TOKEN',
+  'RAILWAY_PROJECT_TOKEN'
 ]);
+export const GATE_R_ALLOWED_RAILWAY_CHILD_VARIABLES = Object.freeze([
+  'APPDATA',
+  'HOME',
+  'HOMEDRIVE',
+  'HOMEPATH',
+  'LOCALAPPDATA',
+  'PATH',
+  'PATHEXT',
+  'SYSTEMROOT',
+  'TEMP',
+  'TMP',
+  'TMPDIR',
+  'USERPROFILE',
+  'WINDIR',
+  'XDG_CONFIG_HOME'
+]);
+
+const FORBIDDEN_RAILWAY_TOKEN_NAMES = new Set(GATE_R_FORBIDDEN_RAILWAY_TOKEN_VARIABLES);
+const ALLOWED_RAILWAY_CHILD_NAMES = new Set(GATE_R_ALLOWED_RAILWAY_CHILD_VARIABLES);
+
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const FIXED_FAILURES = Object.freeze({
   70: 'GATE_R_POSTGRES_READINESS_REMOTE_TARGET_MISMATCH',
@@ -35,8 +51,32 @@ const FIXED_FAILURES = Object.freeze({
 });
 const FIXED_FAILURE_MESSAGES = new Set([
   ...Object.values(FIXED_FAILURES),
+  'GATE_R_POSTGRES_READINESS_AMBIENT_TOKEN_FORBIDDEN',
   'GATE_R_POSTGRES_READINESS_CLI_UNAVAILABLE'
 ]);
+
+export function buildSanitizedRailwayChildEnvironment(
+  environment = process.env,
+  failureCode = 'GATE_R_POSTGRES_READINESS_AMBIENT_TOKEN_FORBIDDEN'
+) {
+  if (environment === null || typeof environment !== 'object' || Array.isArray(environment)) {
+    throw new Error(failureCode);
+  }
+
+  const childEnvironment = {};
+  for (const [name, value] of Object.entries(environment)) {
+    if (FORBIDDEN_RAILWAY_TOKEN_NAMES.has(name.toUpperCase())) {
+      if (typeof value === 'string' && value.trim().length > 0) {
+        throw new Error(failureCode);
+      }
+      continue;
+    }
+    if (ALLOWED_RAILWAY_CHILD_NAMES.has(name.toUpperCase()) && typeof value === 'string') {
+      childEnvironment[name] = value;
+    }
+  }
+  return childEnvironment;
+}
 
 function assertTargets(projectId, environmentId, serviceId) {
   if (projectId !== GATE_R_PROJECT_ID || environmentId !== GATE_R_ENVIRONMENT_ID) {
@@ -45,7 +85,7 @@ function assertTargets(projectId, environmentId, serviceId) {
   if (!UUID_PATTERN.test(serviceId)) {
     throw new Error('GATE_R_POSTGRES_READINESS_SERVICE_INVALID');
   }
-  if (QUARANTINED_SERVICE_IDS.has(serviceId)) {
+  if (serviceId !== GATE_R_POSTGRES_SERVICE_ID) {
     throw new Error('GATE_R_POSTGRES_READINESS_SERVICE_FORBIDDEN');
   }
 }
@@ -107,6 +147,9 @@ function clearChildDiagnostics(value, seen = new Set()) {
   if (value.error && value.error !== value) {
     clearChildDiagnostics(value.error, seen);
   }
+  if (value.cause && value.cause !== value) {
+    clearChildDiagnostics(value.cause, seen);
+  }
 }
 
 function fixedSpawnFailure(error) {
@@ -123,9 +166,11 @@ export function buildPostgresReadinessInvocation({
   projectId = GATE_R_PROJECT_ID,
   environmentId = GATE_R_ENVIRONMENT_ID,
   serviceId,
-  railwayExecutable
+  railwayExecutable,
+  environment = process.env
 }) {
   assertTargets(projectId, environmentId, serviceId);
+  const childEnvironment = buildSanitizedRailwayChildEnvironment(environment);
   const executable = railwayExecutable ?? resolveRailwayExecutable();
   if (typeof executable !== 'string' || executable.length === 0) {
     throw new Error('GATE_R_POSTGRES_READINESS_CLI_UNAVAILABLE');
@@ -163,6 +208,7 @@ export function buildPostgresReadinessInvocation({
     ]),
     file: executable,
     options: Object.freeze({
+      env: Object.freeze(childEnvironment),
       shell: false,
       stdio: Object.freeze(['ignore', 'ignore', 'ignore']),
       timeout: 30_000,
@@ -176,13 +222,15 @@ export function runPostgresReadiness({
   environmentId = GATE_R_ENVIRONMENT_ID,
   serviceId,
   railwayExecutable,
+  environment = process.env,
   spawn = spawnSync
 }) {
   const invocation = buildPostgresReadinessInvocation({
     projectId,
     environmentId,
     serviceId,
-    railwayExecutable
+    railwayExecutable,
+    environment
   });
   let child;
 
@@ -227,7 +275,16 @@ if (isMain) {
     const result = runPostgresReadiness(parseArgs(process.argv.slice(2)));
     process.stdout.write(`${JSON.stringify(result)}\n`);
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'GATE_R_POSTGRES_AUTHENTICATED_READINESS_FAILED';
+    const allowedMainFailures = new Set([
+      ...FIXED_FAILURE_MESSAGES,
+      'GATE_R_POSTGRES_READINESS_ARGUMENT_INVALID',
+      'GATE_R_POSTGRES_READINESS_SERVICE_FORBIDDEN',
+      'GATE_R_POSTGRES_READINESS_SERVICE_INVALID',
+      'GATE_R_TARGET_MISMATCH'
+    ]);
+    const message = error instanceof Error && allowedMainFailures.has(error.message)
+      ? error.message
+      : 'GATE_R_POSTGRES_AUTHENTICATED_READINESS_FAILED';
     process.stderr.write(`${message}\n`);
     process.exitCode = 1;
   }

@@ -18,6 +18,9 @@ export const GATE_R1_METADATA_TOKEN_ENV = 'ARCANOS_GATE_R1_RAILWAY_PROJECT_TOKEN
 export const GATE_R1_METADATA_RESPONSE_LIMIT_BYTES = 64 * 1024;
 export const GATE_R1_METADATA_TIMEOUT_MS = 10_000;
 export const GATE_R1_METADATA_TOKEN_MAX_CHARACTERS = 512;
+export const GATE_R1_POSTGRES_R3_SERVICE_ID = '7346b3f6-bf3d-46e1-9d66-79f10847ef89';
+export const GATE_R1_POSTGRES_R3_SERVICE_INSTANCE_ID = '86dde430-50ac-4d5c-95c3-cb27064eff51';
+export const GATE_R1_POSTGRES_R3_SERVICE_NAME = 'phase2e-postgres-r3-20260720';
 
 export const GATE_R1_APPROVED_SERVICES = Object.freeze({
   'b7789306-8aef-4113-add5-02883a6cc087': 'Postgres',
@@ -27,16 +30,15 @@ export const GATE_R1_APPROVED_SERVICES = Object.freeze({
   'c4ade025-3f13-4fca-9309-5d0dd81396fe': 'ARCANOS V2',
   '1765befb-b805-4051-9af9-28634e986886': 'ARCANOS Worker',
   'd8d5181a-2f72-48d7-8413-6f05d113876c': 'phase2e-migration-validator-20260718',
-  'febdf999-1c96-48df-8e28-c905b8b27082': 'phase2e-compatibility-validator-20260718'
+  'febdf999-1c96-48df-8e28-c905b8b27082': 'phase2e-compatibility-validator-20260718',
+  [GATE_R1_POSTGRES_R3_SERVICE_ID]: GATE_R1_POSTGRES_R3_SERVICE_NAME
 });
 export const GATE_R1_REPLACEMENT_NAMES = Object.freeze([
   'phase2e-postgres-r2-20260718',
   'phase2e-redis-r2-20260718',
   'phase2e-postgres-r3-20260720'
 ]);
-export const GATE_R1_NEW_REPLACEMENT_NAMES = Object.freeze([
-  'phase2e-postgres-r3-20260720'
-]);
+export const GATE_R1_NEW_REPLACEMENT_NAMES = Object.freeze([]);
 export const GATE_R1_ENDPOINT_NAMES = Object.freeze([
   'phase2e-redis-r2-20260718',
   'phase2e-postgres-r3-20260720'
@@ -231,8 +233,7 @@ function projectDeployment(value) {
 
 function approvedServiceName(serviceId, serviceName) {
   const fixed = GATE_R1_APPROVED_SERVICES[serviceId];
-  if (fixed !== undefined) return fixed === serviceName;
-  return GATE_R1_NEW_REPLACEMENT_NAMES.includes(serviceName);
+  return fixed !== undefined && fixed === serviceName;
 }
 
 function projectService(node) {
@@ -247,6 +248,10 @@ function projectService(node) {
       || !isoOrNull(node.deletedAt) || !RESTART_POLICY_TYPES.has(node.restartPolicyType)
       || !Number.isSafeInteger(node.restartPolicyMaxRetries) || node.restartPolicyMaxRetries < 0
       || !nullableString(node.startCommand)) {
+    fail('GATE_R1_METADATA_RESPONSE_INVALID');
+  }
+  if (node.serviceId === GATE_R1_POSTGRES_R3_SERVICE_ID
+      && node.id !== GATE_R1_POSTGRES_R3_SERVICE_INSTANCE_ID) {
     fail('GATE_R1_METADATA_RESPONSE_INVALID');
   }
   if (node.source !== null && (!exact(node.source, ['image', 'repo']) || !nullableString(node.source.image) || !nullableString(node.source.repo))) {
@@ -419,6 +424,10 @@ function projectEndpointResponse(parsed, { serviceId, serviceName, privateNetwor
   if (!exact(serviceInstance, ['id', 'environmentId', 'serviceId']) || !uuid(serviceInstance.id)
       || serviceInstance.environmentId !== GATE_R1_METADATA_ENVIRONMENT_ID
       || serviceInstance.serviceId !== serviceId) fail('GATE_R1_METADATA_SCOPE_MISMATCH');
+  if (serviceId === GATE_R1_POSTGRES_R3_SERVICE_ID
+      && serviceInstance.id !== GATE_R1_POSTGRES_R3_SERVICE_INSTANCE_ID) {
+    fail('GATE_R1_METADATA_SCOPE_MISMATCH');
+  }
   const endpoint = parsed.data.privateNetworkEndpoint;
   if (endpoint !== null && (!exact(endpoint, ['publicId', 'deletedAt', 'serviceInstanceId', 'syncStatus'])
       || !uuid(endpoint.publicId) || !isoOrNull(endpoint.deletedAt)
@@ -543,11 +552,8 @@ export function projectGateR1EnvironmentMetadata(options = {}) {
 
 export function projectGateR1PrivateEndpoint({ serviceId, serviceName, privateNetworkId, ...options }) {
   const fixedServiceName = GATE_R1_APPROVED_SERVICES[serviceId];
-  const approvedTarget = (
-    fixedServiceName === serviceName && GATE_R1_ENDPOINT_NAMES.includes(serviceName)
-  ) || (
-    fixedServiceName === undefined && GATE_R1_NEW_REPLACEMENT_NAMES.includes(serviceName)
-  );
+  const approvedTarget = fixedServiceName === serviceName
+    && GATE_R1_ENDPOINT_NAMES.includes(serviceName);
   if (!uuid(serviceId) || !approvedTarget || privateNetworkId !== GATE_R1_METADATA_PRIVATE_NETWORK_ID) {
     fail('GATE_R1_METADATA_TARGET_FORBIDDEN');
   }
@@ -566,11 +572,8 @@ export function parseGateR1MetadataArgs(argv) {
       && argv[1] === '--service-id' && argv[3] === '--service-name' && argv[5] === '--private-network-id'
       && uuid(argv[2]) && uuid(argv[6])) {
     const fixedServiceName = GATE_R1_APPROVED_SERVICES[argv[2]];
-    const approvedTarget = (
-      fixedServiceName === argv[4] && GATE_R1_ENDPOINT_NAMES.includes(argv[4])
-    ) || (
-      fixedServiceName === undefined && GATE_R1_NEW_REPLACEMENT_NAMES.includes(argv[4])
-    );
+    const approvedTarget = fixedServiceName === argv[4]
+      && GATE_R1_ENDPOINT_NAMES.includes(argv[4]);
     if (!approvedTarget || argv[6] !== GATE_R1_METADATA_PRIVATE_NETWORK_ID) {
       fail('GATE_R1_METADATA_TARGET_FORBIDDEN');
     }
