@@ -193,38 +193,14 @@ def test_default_permission_enforcement_creates_private_storage(tmp_path: Path) 
         assert stat.S_IMODE(journal.path.stat().st_mode) == 0o600
 
 
-@pytest.mark.parametrize(
-    ("environment", "fallback_user", "directory", "identity"),
-    [
-        (
-            {"USERNAME": "runner", "USERDOMAIN": "EXAMPLE"},
-            "fallback",
-            False,
-            "EXAMPLE\\runner",
-        ),
-        (
-            {"COMPUTERNAME": "WORKSTATION"},
-            "fallback",
-            True,
-            "WORKSTATION\\fallback",
-        ),
-        ({"USERNAME": "runner"}, "fallback", False, "runner"),
-    ],
-)
-def test_windows_permissions_use_environment_identity(
+@pytest.mark.parametrize("directory", [False, True])
+def test_windows_permissions_use_native_identity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    environment: dict[str, str],
-    fallback_user: str,
     directory: bool,
-    identity: str,
 ) -> None:
-    for name in ("USERNAME", "USERDOMAIN", "COMPUTERNAME"):
-        monkeypatch.delenv(name, raising=False)
-    for name, value in environment.items():
-        monkeypatch.setenv(name, value)
-    monkeypatch.setattr(journal_module.getpass, "getuser", lambda: fallback_user)
-
+    identity = "EXAMPLE\\runner"
+    monkeypatch.setattr(journal_module, "_windows_current_identity", lambda: identity)
     path = tmp_path / ("private" if directory else "journal.sqlite3")
     calls: list[list[str]] = []
 
@@ -232,7 +208,8 @@ def test_windows_permissions_use_environment_identity(
         calls.append(args)
         stdout = ""
         if args == ["icacls", str(path)]:
-            stdout = f"{path} {identity}:(F)\n"
+            permissions = "(OI)(CI)(F)" if directory else "(F)"
+            stdout = f"{path} {identity}:{permissions}\n"
         return subprocess.CompletedProcess(args, 0, stdout=stdout)
 
     monkeypatch.setattr(journal_module.subprocess, "run", run)
@@ -244,6 +221,98 @@ def test_windows_permissions_use_environment_identity(
         ["icacls", str(path), "/inheritance:r", "/grant:r", grant],
         ["icacls", str(path)],
     ]
+
+
+def test_windows_permissions_remove_extra_principals(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    identity = "EXAMPLE\\runner"
+    extra_identity = "S-1-5-32-544"
+    monkeypatch.setattr(journal_module, "_windows_current_identity", lambda: identity)
+    path = tmp_path / "journal.sqlite3"
+    calls: list[list[str]] = []
+    query_count = 0
+
+    def run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        nonlocal query_count
+        calls.append(args)
+        stdout = ""
+        if args == ["icacls", str(path)]:
+            query_count += 1
+            stdout = f"{path} {identity}:(F)\n"
+            if query_count == 1:
+                stdout += f"  {extra_identity}:(F)\n"
+        return subprocess.CompletedProcess(args, 0, stdout=stdout)
+
+    monkeypatch.setattr(journal_module.subprocess, "run", run)
+
+    journal_module._secure_windows_path(path, directory=False)
+
+    assert calls == [
+        ["icacls", str(path), "/inheritance:r", "/grant:r", f"{identity}:(F)"],
+        ["icacls", str(path)],
+        ["icacls", str(path), "/remove", f"*{extra_identity}"],
+        ["icacls", str(path)],
+    ]
+
+
+def test_windows_permissions_reject_extra_principal_that_remains(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    identity = "EXAMPLE\\runner"
+    extra_identity = "BUILTIN\\Administrators"
+    monkeypatch.setattr(journal_module, "_windows_current_identity", lambda: identity)
+    path = tmp_path / "journal.sqlite3"
+
+    def run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        stdout = ""
+        if args == ["icacls", str(path)]:
+            stdout = f"{path} {identity}:(F)\n" f"  {extra_identity}:(F)\n"
+        return subprocess.CompletedProcess(args, 0, stdout=stdout)
+
+    monkeypatch.setattr(journal_module.subprocess, "run", run)
+
+    with pytest.raises(
+        ActionPlanExecutionJournalError,
+        match="Journal permissions are not private",
+    ):
+        journal_module._secure_windows_path(path, directory=False)
+
+
+@pytest.mark.parametrize(
+    "acl_lines",
+    [
+        ["EXAMPLE\\runner:(M)"],
+        ["EXAMPLE\\runner:(I)(F)"],
+        ["EXAMPLE\\runner:(F)", "EXAMPLE\\runner:(DENY)(F)"],
+        [],
+    ],
+)
+def test_windows_permissions_reject_non_private_acl(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    acl_lines: list[str],
+) -> None:
+    identity = "EXAMPLE\\runner"
+    monkeypatch.setattr(journal_module, "_windows_current_identity", lambda: identity)
+    path = tmp_path / "journal.sqlite3"
+
+    def run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        stdout = ""
+        if args == ["icacls", str(path)] and acl_lines:
+            stdout = f"{path} {acl_lines[0]}\n"
+            stdout += "".join(f"  {line}\n" for line in acl_lines[1:])
+        return subprocess.CompletedProcess(args, 0, stdout=stdout)
+
+    monkeypatch.setattr(journal_module.subprocess, "run", run)
+
+    with pytest.raises(
+        ActionPlanExecutionJournalError,
+        match="Journal permissions are not private",
+    ):
+        journal_module._secure_windows_path(path, directory=False)
 
 
 def test_journal_reopen_preserves_pending_result_for_exact_retry(

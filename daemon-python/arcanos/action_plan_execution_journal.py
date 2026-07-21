@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import getpass
+import ctypes
 import json
 import os
 import sqlite3
@@ -421,13 +421,54 @@ def _secure_path(path: Path, *, directory: bool) -> None:
         raise ActionPlanExecutionJournalError("Journal permissions are not private")
 
 
-def _secure_windows_path(path: Path, *, directory: bool) -> None:
-    """Replace inherited ACLs and verify that only the current account is listed."""
-    creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    username = os.environ.get("USERNAME") or getpass.getuser()
-    domain = os.environ.get("USERDOMAIN") or os.environ.get("COMPUTERNAME")
-    identity = f"{domain}\\{username}" if domain else username
+def _windows_current_identity() -> str:
+    """Return the calling thread's trusted DOMAIN\\user identity."""
     try:
+        get_user_name_ex = ctypes.WinDLL("secur32", use_last_error=True).GetUserNameExW
+    except (AttributeError, OSError) as exc:
+        raise OSError("Current Windows identity cannot be resolved") from exc
+    get_user_name_ex.argtypes = [
+        ctypes.c_int,
+        ctypes.c_wchar_p,
+        ctypes.POINTER(ctypes.c_ulong),
+    ]
+    get_user_name_ex.restype = ctypes.c_ubyte
+    length = ctypes.c_ulong(0)
+    get_user_name_ex(2, None, ctypes.byref(length))
+    if not length.value:
+        raise OSError("Current Windows identity cannot be resolved")
+    buffer = ctypes.create_unicode_buffer(length.value)
+    if not get_user_name_ex(2, buffer, ctypes.byref(length)) or not buffer.value:
+        raise OSError("Current Windows identity cannot be resolved")
+    return buffer.value
+
+
+def _windows_acl_entries(path: Path, output: str) -> list[tuple[str, tuple[str, ...]]]:
+    entries: list[tuple[str, tuple[str, ...]]] = []
+    path_text = str(path)
+    for line in output.splitlines():
+        normalized = line.strip()
+        if not normalized or ":(" not in normalized:
+            continue
+        principal_text, permission_text = normalized.rsplit(":(", 1)
+        if principal_text.lower().startswith(path_text.lower()):
+            principal_text = principal_text[len(path_text) :].strip()
+        elif not line[:1].isspace():
+            return []
+        if not principal_text or not permission_text.endswith(")"):
+            return []
+        permissions = tuple(permission_text[:-1].split(")("))
+        if not permissions or any(not permission for permission in permissions):
+            return []
+        entries.append((principal_text, permissions))
+    return entries
+
+
+def _secure_windows_path(path: Path, *, directory: bool) -> None:
+    """Remove non-current ACLs and verify exact current-account full control."""
+    creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    try:
+        identity = _windows_current_identity()
         grant = f"{identity}:(OI)(CI)(F)" if directory else f"{identity}:(F)"
         subprocess.run(
             ["icacls", str(path), "/inheritance:r", "/grant:r", grant],
@@ -445,22 +486,60 @@ def _secure_windows_path(path: Path, *, directory: bool) -> None:
             timeout=10,
             creationflags=creation_flags,
         )
+        entries = _windows_acl_entries(path, acl_result.stdout)
+        expected_permissions = {"OI", "CI", "F"} if directory else {"F"}
+        current_entries = [
+            permissions
+            for principal, permissions in entries
+            if principal.lower() == identity.lower()
+        ]
+        if (
+            len(current_entries) != 1
+            or len(current_entries[0]) != len(expected_permissions)
+            or set(current_entries[0]) != expected_permissions
+        ):
+            raise ActionPlanExecutionJournalError("Journal permissions are not private")
+        extra_principals = sorted(
+            {
+                principal
+                for principal, _permissions in entries
+                if principal.lower() != identity.lower()
+            },
+            key=str.lower,
+        )
+        if extra_principals:
+            removal_targets = [
+                f"*{principal}" if principal.upper().startswith("S-1-") else principal
+                for principal in extra_principals
+            ]
+            subprocess.run(
+                ["icacls", str(path), "/remove", *removal_targets],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                creationflags=creation_flags,
+            )
+            acl_result = subprocess.run(
+                ["icacls", str(path)],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                creationflags=creation_flags,
+            )
     except (OSError, subprocess.SubprocessError) as exc:
         raise ActionPlanExecutionJournalError(
             "Journal permissions cannot be verified"
         ) from exc
 
-    principals: list[str] = []
-    for line in acl_result.stdout.splitlines():
-        normalized = line.strip()
-        if not normalized or ":(" not in normalized:
-            continue
-        if normalized.lower().startswith(str(path).lower()):
-            normalized = normalized[len(str(path)) :].strip()
-        principal = normalized.split(":(", 1)[0].strip()
-        if principal:
-            principals.append(principal.lower())
-    if not principals or any(principal != identity.lower() for principal in principals):
+    entries = _windows_acl_entries(path, acl_result.stdout)
+    if (
+        len(entries) != 1
+        or entries[0][0].lower() != identity.lower()
+        or len(entries[0][1]) != len(expected_permissions)
+        or set(entries[0][1]) != expected_permissions
+    ):
         raise ActionPlanExecutionJournalError("Journal permissions are not private")
 
 
