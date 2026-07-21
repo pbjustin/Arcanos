@@ -700,6 +700,87 @@ describe('Gate R1 schema-locked Railway metadata projector', () => {
     expect(observed.message).not.toMatch(/postgresql|secret|SQL|path|token/i);
   });
 
+  it.each([
+    [401, 'GATE_R1_METADATA_AUTH_REFUSED'],
+    [403, 'GATE_R1_METADATA_AUTH_REFUSED'],
+    [429, 'GATE_R1_METADATA_HTTP_FAILED'],
+    [500, 'GATE_R1_METADATA_HTTP_FAILED']
+  ])('maps HTTP %i to a fixed safe diagnostic without reading its body', async (status, code) => {
+    let headerReads = 0;
+    let bodyReads = 0;
+    const fetchImpl = jest.fn(async () => ({
+      status,
+      get headers() { headerReads += 1; throw new Error('credential-sentinel header'); },
+      get body() { bodyReads += 1; throw new Error('credential-sentinel body'); }
+    }));
+    let observed;
+    try { await projectGateR1EnvironmentMetadata({ env: env(), fetchImpl }); } catch (error) { observed = error; }
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(headerReads).toBe(0);
+    expect(bodyReads).toBe(0);
+    expect(observed.message).toBe(code);
+    expect(observed.message).not.toMatch(/credential|postgresql|Authorization|Bearer|hidden/i);
+  });
+
+  it.each([
+    ['errors with null data', { data: null, errors: [{ message: 'credential-sentinel dependency detail' }] }],
+    ['errors without data', { errors: [{ message: 'credential-sentinel dependency detail' }] }],
+    ['null data', { data: null }]
+  ])('maps an HTTP-200 GraphQL %s envelope to a fixed safe diagnostic', async (_name, value) => {
+    let observed;
+    try { await projectGateR1EnvironmentMetadata({ env: env(), fetchImpl: fetchFor(value) }); } catch (error) { observed = error; }
+    expect(observed.message).toBe('GATE_R1_METADATA_GRAPHQL_FAILED');
+    expect(observed.message).not.toMatch(/credential|dependency|detail/i);
+  });
+
+  it('keeps malformed HTTP-200 metadata distinct from a GraphQL failure envelope', async () => {
+    await expect(projectGateR1EnvironmentMetadata({
+      env: env(),
+      fetchImpl: fetchFor({ data: { projectToken: null } })
+    })).rejects.toThrow('GATE_R1_METADATA_RESPONSE_INVALID');
+  });
+
+  it('accepts a sanitized full seven-service and five-volume environment fixture', async () => {
+    const fixtureServiceSpecs = [
+      ['b7789306-8aef-4113-add5-02883a6cc087', '6dac21a3-ad8a-4b98-ad50-637054c13729'],
+      ['434fa5b4-b52c-4caf-aaba-e87c173bf10d', '8340f02f-dbcb-4c0e-bdde-b3f7c4bf5856'],
+      [POSTGRES_R2_SERVICE_ID, 'e8c42bea-d887-485b-8aaf-ba0f45d439e8'],
+      [REDIS_R2_SERVICE_ID, REDIS_R2_SERVICE_INSTANCE_ID],
+      [GATE_R1_POSTGRES_R3_SERVICE_ID, GATE_R1_POSTGRES_R3_SERVICE_INSTANCE_ID],
+      ['d8d5181a-2f72-48d7-8413-6f05d113876c', '7a645cbc-dadf-4072-84c1-6f0843fa30d9'],
+      ['febdf999-1c96-48df-8e28-c905b8b27082', '3c385dd2-c786-4149-9319-2a168a920aa9']
+    ];
+    const services = fixtureServiceSpecs.map(([serviceId, id]) => service({
+      serviceId,
+      serviceName: GATE_R1_APPROVED_SERVICES[serviceId],
+      id
+    }));
+    const volumeOwners = fixtureServiceSpecs.slice(0, 5).map(([serviceId]) => serviceId);
+    const volumes = volumeOwners.map((serviceId, index) => ({
+      id: `90000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+      serviceId,
+      environmentId: GATE_R1_METADATA_ENVIRONMENT_ID,
+      mountPath: serviceId === REDIS_R2_SERVICE_ID ? '/data' : '/var/lib/postgresql/data',
+      state: 'READY',
+      volume: {
+        id: `a0000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+        name: `fixture-volume-${index + 1}`,
+        projectId: GATE_R1_METADATA_PROJECT_ID
+      }
+    }));
+
+    const result = await projectGateR1EnvironmentMetadata({
+      env: env(),
+      fetchImpl: fetchFor(payload({ services, volumes })),
+      clock: () => OBSERVED_AT
+    });
+
+    expect(result.services).toHaveLength(7);
+    expect(result.volumes).toHaveLength(5);
+    expect(Object.keys(result.variablesByService)).toHaveLength(7);
+    expect(JSON.stringify(result)).not.toMatch(/credential|connection|string|token/i);
+  });
+
   it('interrupts and cancels a hanging response reader at the fixed timeout', async () => {
     let timeoutCallback;
     const timeoutHandle = { unref: jest.fn() };

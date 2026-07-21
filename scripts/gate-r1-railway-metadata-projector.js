@@ -157,7 +157,10 @@ const ENDPOINT_SYNC_STATUSES = new Set(['ACTIVE', 'CREATING', 'DELETED', 'DELETI
 const RESTART_POLICY_TYPES = new Set(['ALWAYS', 'NEVER', 'ON_FAILURE']);
 const SAFE_CODES = new Set([
   'GATE_R1_METADATA_ARGUMENT_INVALID',
+  'GATE_R1_METADATA_AUTH_REFUSED',
   'GATE_R1_METADATA_CLOCK_INVALID',
+  'GATE_R1_METADATA_GRAPHQL_FAILED',
+  'GATE_R1_METADATA_HTTP_FAILED',
   'GATE_R1_METADATA_REQUEST_FAILED',
   'GATE_R1_METADATA_RESPONSE_INVALID',
   'GATE_R1_METADATA_SCOPE_MISMATCH',
@@ -180,6 +183,12 @@ function uuid(value) { return typeof value === 'string' && UUID_PATTERN.test(val
 function nullableString(value) { return value === null || typeof value === 'string'; }
 function isoOrNull(value) {
   return value === null || (typeof value === 'string' && ISO_PATTERN.test(value) && !Number.isNaN(Date.parse(value)));
+}
+
+function assertGraphqlSuccessEnvelope(value) {
+  if (plain(value) && (Object.hasOwn(value, 'errors') || (Object.hasOwn(value, 'data') && value.data === null))) {
+    fail('GATE_R1_METADATA_GRAPHQL_FAILED');
+  }
 }
 
 function resolveObservedAt(clock) {
@@ -515,12 +524,18 @@ async function requestProjection({ query, variables, project, env, fetchImpl, se
         cache: 'no-store'
       });
     } catch { fail(controller.signal.aborted ? 'GATE_R1_METADATA_TIMEOUT' : 'GATE_R1_METADATA_REQUEST_FAILED'); }
-    if (!response || response.status !== 200 || !JSON_CONTENT_TYPE_PATTERN.test(response.headers?.get?.('content-type') ?? '')) {
+    if (!response || !Number.isSafeInteger(response.status)) {
+      fail('GATE_R1_METADATA_RESPONSE_INVALID');
+    }
+    if (response.status === 401 || response.status === 403) fail('GATE_R1_METADATA_AUTH_REFUSED');
+    if (response.status !== 200) fail('GATE_R1_METADATA_HTTP_FAILED');
+    if (!JSON_CONTENT_TYPE_PATTERN.test(response.headers?.get?.('content-type') ?? '')) {
       fail('GATE_R1_METADATA_RESPONSE_INVALID');
     }
     const raw = await readBounded(response, controller.signal);
     let parsed;
     try { parsed = JSON.parse(raw); } catch { fail('GATE_R1_METADATA_RESPONSE_INVALID'); }
+    assertGraphqlSuccessEnvelope(parsed);
     const projected = project(parsed);
     if (controller.signal.aborted) fail('GATE_R1_METADATA_TIMEOUT');
     const observedAt = resolveObservedAt(clock);
