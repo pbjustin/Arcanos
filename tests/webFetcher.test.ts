@@ -17,6 +17,7 @@ describe('fetchAndClean', () => {
   let server: http.Server;
   let baseUrl: string;
   let redirectUrl: string;
+  let receivedRequestBody = '';
   let previousLocalhostFetchFlag: string | undefined;
 
   beforeAll(async () => {
@@ -24,6 +25,20 @@ describe('fetchAndClean', () => {
     process.env.ARCANOS_ALLOW_LOCALHOST_FETCH = 'true';
 
     server = http.createServer((req, res) => {
+      if (req.url === '/request-body') {
+        let requestBody = '';
+        req.setEncoding('utf8');
+        req.on('data', (chunk) => {
+          requestBody += chunk;
+        });
+        req.on('end', () => {
+          receivedRequestBody = requestBody;
+          res.writeHead(200, { 'Content-Type': 'text/plain' });
+          res.end('request body recorded');
+        });
+        return;
+      }
+
       if (req.url === '/redirect') {
         res.writeHead(302, { Location: '/' });
         res.end();
@@ -260,6 +275,28 @@ describe('fetchAndClean', () => {
       restoreEnvValue('HTTP_PROXY', previousHttpProxy);
       restoreEnvValue('HTTPS_PROXY', previousHttpsProxy);
       restoreEnvValue('NO_PROXY', previousNoProxy);
+    }
+  });
+
+  it('does not inherit a GET request body from Object.prototype', async () => {
+    const previousDataDescriptor = Object.getOwnPropertyDescriptor(Object.prototype, 'data');
+    receivedRequestBody = '';
+    Object.defineProperty(Object.prototype, 'data', {
+      configurable: true,
+      enumerable: false,
+      value: 'polluted-body',
+      writable: true,
+    });
+
+    try {
+      await fetchAndClean(`${baseUrl}/request-body`);
+      expect(receivedRequestBody).toBe('');
+    } finally {
+      if (previousDataDescriptor) {
+        Object.defineProperty(Object.prototype, 'data', previousDataDescriptor);
+      } else {
+        Reflect.deleteProperty(Object.prototype, 'data');
+      }
     }
   });
 

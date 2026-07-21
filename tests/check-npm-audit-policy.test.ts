@@ -49,7 +49,13 @@ function parseStdout(result: { stdout: string; stderr: string }) {
   }
 }
 
-function advisory(name: string, severity: 'high' | 'critical', source: number, ghsa: string) {
+function advisory(
+  name: string,
+  severity: 'high' | 'critical',
+  source: number,
+  ghsa: string,
+  nodes = [`node_modules/${name}`],
+) {
   return {
     severity,
     via: [
@@ -59,7 +65,7 @@ function advisory(name: string, severity: 'high' | 'critical', source: number, g
         url: `https://github.com/advisories/${ghsa}`,
       },
     ],
-    nodes: [`node_modules/${name}`],
+    nodes,
     fixAvailable: false,
   };
 }
@@ -119,5 +125,100 @@ describe('npm audit policy', () => {
 
     expect(result.status).toBe(0);
     expect(parseStdout(result).ignored[0].name).toBe('lodash');
+  });
+
+  it.each([
+    [1_123_882, 'GHSA-42h9-826w-cgv3'],
+    [1_123_884, 'GHSA-xj6q-8x83-jv6g'],
+    [1_123_885, 'GHSA-pmv8-rq9r-6j72'],
+    [1_123_957, 'GHSA-jqh4-m9w3-8hp9'],
+    [1_123_959, 'GHSA-mmx7-hfxf-jppx'],
+    [1_123_961, 'GHSA-f4gw-2p7v-4548'],
+    [1_123_967, 'GHSA-gcfj-64vw-6mp9'],
+    [1_123_969, 'GHSA-hcpx-6fm6-wx23'],
+    [1_123_971, 'GHSA-7q8q-rj6j-mhjq'],
+    [1_123_973, 'GHSA-mwf2-3pr3-8698'],
+  ] as const)('retains the source-scoped axios exception for %s', (source, ghsa) => {
+    const result = runAuditPolicy({
+      axios: advisory('axios', 'high', source, ghsa),
+    });
+
+    expect(result.status).toBe(0);
+    expect(parseStdout(result).ignored[0].name).toBe('axios');
+  });
+
+  it('does not suppress a mixed known and unexpected axios advisory set', () => {
+    const axiosVulnerability = advisory(
+      'axios',
+      'high',
+      1_123_882,
+      'GHSA-42h9-826w-cgv3',
+    );
+    axiosVulnerability.via.push({
+      name: 'axios',
+      source: 9_999_996,
+      url: 'https://github.com/advisories/GHSA-neww-mixe-sory',
+    });
+    const result = runAuditPolicy({ axios: axiosVulnerability });
+
+    expect(result.status).toBe(1);
+    expect(parseStdout(result).actionable[0].name).toBe('axios');
+  });
+
+  it('does not suppress an approved axios advisory on a new dependency path', () => {
+    const result = runAuditPolicy({
+      axios: advisory('axios', 'high', 1_123_882, 'GHSA-42h9-826w-cgv3', [
+        'node_modules/unexpected-package/node_modules/axios',
+      ]),
+    });
+
+    expect(result.status).toBe(1);
+    expect(parseStdout(result).actionable[0].name).toBe('axios');
+  });
+
+  it.each([
+    [1_120_311, 'GHSA-jxxr-4gwj-5jf2'],
+    [1_123_898, 'GHSA-3jxr-9vmj-r5cp'],
+  ] as const)(
+    'retains the source-scoped brace-expansion exception for %s',
+    (source, ghsa) => {
+      const result = runAuditPolicy({
+        'brace-expansion': advisory('brace-expansion', 'high', source, ghsa, [
+          'vendor/minimatch-9.0.7/node_modules/brace-expansion',
+        ]),
+      });
+
+      expect(result.status).toBe(0);
+      expect(parseStdout(result).ignored[0].name).toBe('brace-expansion');
+    },
+  );
+
+  it('does not suppress an approved brace-expansion advisory on a production node', () => {
+    const result = runAuditPolicy({
+      'brace-expansion': advisory(
+        'brace-expansion',
+        'high',
+        1_120_311,
+        'GHSA-jxxr-4gwj-5jf2',
+      ),
+    });
+
+    expect(result.status).toBe(1);
+    expect(parseStdout(result).actionable[0].name).toBe('brace-expansion');
+  });
+
+  it('does not suppress an unexpected brace-expansion advisory on the vendor node', () => {
+    const result = runAuditPolicy({
+      'brace-expansion': advisory(
+        'brace-expansion',
+        'high',
+        9_999_997,
+        'GHSA-neww-brac-sory',
+        ['vendor/minimatch-9.0.7/node_modules/brace-expansion'],
+      ),
+    });
+
+    expect(result.status).toBe(1);
+    expect(parseStdout(result).actionable[0].name).toBe('brace-expansion');
   });
 });

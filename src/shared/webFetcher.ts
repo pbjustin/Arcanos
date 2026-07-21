@@ -374,6 +374,7 @@ export async function fetchAndCleanDocument(
       : undefined;
 
   const response = await axios.get<string>(target.requestUrl.toString(), {
+    data: undefined,
     timeout: fetchTimeoutMs,
     signal: options.signal,
     maxContentLength: maxFetchBytes,
