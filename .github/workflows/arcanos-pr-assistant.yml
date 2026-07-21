@@ -20,6 +20,7 @@ env:
 
 jobs:
   arcanos-pr-analysis:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       checks: write
