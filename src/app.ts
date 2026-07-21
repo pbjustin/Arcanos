@@ -14,6 +14,10 @@ import { runtimeDiagnosticsService } from '@services/runtimeDiagnosticsService.j
 import { startSelfHealingControlLoop } from '@services/selfImprove/controlLoop.js';
 import { writeMetricsResponse } from '@platform/observability/appMetrics.js';
 import { gamingIngressAudit } from '@transport/http/gamingIngressAudit.js';
+import {
+  ACTION_PLAN_EXECUTION_BODY_LIMIT,
+  isActionPlanExecutionBoundedBodyRoute,
+} from '@services/actionPlanExecution/http.js';
 
 const SERVICE_NAME = 'arcanos-backend';
 const SERVICE_VERSION = '1.0.0';
@@ -27,9 +31,73 @@ export function createApp(): Express {
     type: () => true,
     limit: config.limits.jsonLimit
   });
+  const actionPlanExecutionBodyParser = express.json({
+    limit: ACTION_PLAN_EXECUTION_BODY_LIMIT,
+    strict: true,
+  });
 
   app.use(requestContext);
   app.use(cors(config.cors));
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    if (!isActionPlanExecutionBoundedBodyRoute(req.method, req.path)) {
+      next();
+      return;
+    }
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Pragma', 'no-cache');
+    const contentLength = req.header('content-length');
+    const hasBody = req.header('transfer-encoding') !== undefined
+      || (contentLength !== undefined && Number(contentLength) > 0);
+    const contentType = req.header('content-type')?.split(';', 1)[0]?.trim().toLowerCase();
+    if (hasBody && contentType !== 'application/json') {
+      res.status(400).json({
+        ok: false,
+        error: {
+          code: 'ACTION_PLAN_EXECUTION_REQUEST_INVALID',
+          message: 'ActionPlan execution request is invalid.',
+        },
+        ...(req.requestId ? { request_id: req.requestId } : {}),
+        ...(req.traceId ? { trace_id: req.traceId } : {}),
+      });
+      return;
+    }
+    actionPlanExecutionBodyParser(req, res, (error?: unknown) => {
+      if (error === undefined) {
+        next();
+        return;
+      }
+
+      const parserStatus = error && typeof error === 'object'
+        ? (error as { status?: unknown; statusCode?: unknown; type?: unknown })
+        : {};
+      const statusCode = parserStatus.type === 'entity.too.large'
+        || parserStatus.status === 413
+        || parserStatus.statusCode === 413
+        ? 413
+        : 400;
+
+      try {
+        req.logger?.warn('action_plan_execution.request_rejected', {
+          errorCode: 'ACTION_PLAN_EXECUTION_REQUEST_INVALID',
+          statusCode,
+          requestId: req.requestId,
+          traceId: req.traceId,
+        });
+      } catch {
+        // Diagnostics must not alter the fixed public parser response.
+      }
+
+      res.status(statusCode).json({
+        ok: false,
+        error: {
+          code: 'ACTION_PLAN_EXECUTION_REQUEST_INVALID',
+          message: 'ActionPlan execution request is invalid.',
+        },
+        ...(req.requestId ? { request_id: req.requestId } : {}),
+        ...(req.traceId ? { trace_id: req.traceId } : {}),
+      });
+    });
+  });
   app.use(express.json({ limit: config.limits.jsonLimit }));
   app.use(express.urlencoded({ extended: true }));
   app.use('/gpt', (req: Request, res: Response, next: NextFunction) => {

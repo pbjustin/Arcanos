@@ -1,0 +1,28 @@
+{
+  "status": "NOT_RUN",
+  "classification": "FAIL_PENDING_GATE_V",
+  "requiredServerRange": "PostgreSQL 18.x",
+  "observedBaselineServer": "18.4 (Debian 18.4-1.pgdg13+1)",
+  "localPostgresql18Available": false,
+  "localContainerRuntimeAvailable": false,
+  "railwayExecutionAuthorized": false,
+  "packagedTarget": true,
+  "dockerfile": "Dockerfile.phase2e-postgres18-integration",
+  "railwayConfig": "railway.phase2e-validator.pg18-integration.json",
+  "runner": "scripts/phase2e-pg18-runner.mjs",
+  "optInTarget": "tests/integration/action-plan-execution-migration.pg18.integration.test.ts",
+  "safeVersionEvidence": "The one-shot runner emits only the bounded major.minor server version after the test verifies the connected database, public schema, and PostgreSQL 18 server.",
+  "targetCoverage": [
+    "fresh apply and both verifiers",
+    "catalog normalization and all 36 CHECK identities",
+    "behavioral probes and semantic mutations for the seven PostgreSQL 18 deparsing cases",
+    "two partial-index behavior and mutation probes",
+    "all 22 physical indexes valid and ready",
+    "true failed-verifier ledger and same-checksum recovery",
+    "partial-object repair and repeat apply",
+    "checksum conflict and advisory-lock contention",
+    "negative and empty drain",
+    "compensation refusal, legacy preservation, cleanup, and reapply"
+  ],
+  "reasonNotRun": "No existing local PostgreSQL 18 or container runtime is available. The committed target has not been built or deployed because Gate R, Gate G, and Gate V remain incomplete or unapproved."
+}

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import Any, TYPE_CHECKING
 
-from ..backend_client_models import BackendResponse
+from ..backend_client_models import BackendRequestError, BackendResponse
+from ..config import Config
 
 if TYPE_CHECKING:
     from ..backend_client import BackendApiClient
@@ -44,6 +45,14 @@ def submit_execution_result(
     Inputs/Outputs: plan_id and result data; returns confirmation or error.
     Edge cases: Returns 409 on replay (duplicate action_id).
     """
+    if not Config.ACTION_PLAN_LEGACY_CHARACTERIZATION_TEST_SEAM:
+        return BackendResponse(
+            ok=False,
+            error=BackendRequestError(
+                kind="ACTION_PLAN_RESULT_ENDPOINT_REQUIRED",
+                message="Dedicated ActionPlan execution result endpoint is required",
+            ),
+        )
     return client._request_json("POST", f"/plans/{plan_id}/execute", result_data)
 
 

@@ -32,7 +32,9 @@ jobs:
           # Set environment variables
           export PORT=8080
           export NODE_ENV=test
-          export OPENAI_API_KEY="${OPENAI_API_KEY:-test-key}"
+          export OPENAI_API_KEY=mock-api-key
+          export FORCE_MOCK=true
+          export OPENAI_BASE_URL=http://127.0.0.1:9/v1
           
           # Start server in background
           npm start > server.log 2>&1 &

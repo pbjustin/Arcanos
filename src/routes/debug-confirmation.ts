@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { createOneTimeToken, consumeOneTimeToken, getOneTimeTokenTtlMs } from "@core/lib/tokenStore.js";
 import { getAutomationAuth } from "@platform/runtime/env.js";
+import { timingSafeEqualOpaqueSecret } from '@shared/security/opaqueSecret.js';
 import { resolveHeader } from "@transport/http/requestHeaders.js";
 
 const router = Router();
@@ -18,7 +19,7 @@ function requireAutomationSecret(req: Request, res: Response, next: NextFunction
     return;
   }
 
-  if (!providedValue || providedValue !== secret) {
+  if (!timingSafeEqualOpaqueSecret(providedValue, secret)) {
     res.status(403).json({
       ok: false,
       error: 'Forbidden'

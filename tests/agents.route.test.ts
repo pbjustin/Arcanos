@@ -1,23 +1,52 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
+
+const operatorToken = 'o'.repeat(40);
+const requesterToken = 'r'.repeat(40);
+const authEnvKeys = [
+  'ACTION_PLAN_OPERATOR_TOKEN',
+  'ACTION_PLAN_OPERATOR_PRINCIPAL_ID',
+  'ACTION_PLAN_REQUEST_TOKEN',
+  'ACTION_PLAN_REQUEST_PRINCIPAL_ID',
+] as const;
+const originalAuthEnv = Object.fromEntries(authEnvKeys.map(key => [key, process.env[key]]));
+process.env.ACTION_PLAN_OPERATOR_TOKEN = operatorToken;
+process.env.ACTION_PLAN_OPERATOR_PRINCIPAL_ID = 'operator-1';
+process.env.ACTION_PLAN_REQUEST_TOKEN = requesterToken;
+process.env.ACTION_PLAN_REQUEST_PRINCIPAL_ID = 'requester-1';
 
 const mockRegisterAgent = jest.fn();
-const mockGetAgent = jest.fn();
+const mockGetAuthoritativeAgent = jest.fn();
 const mockUpdateHeartbeat = jest.fn();
-const mockListAgents = jest.fn();
-const mockGrantCapabilities = jest.fn();
+const mockListAuthoritativeAgents = jest.fn();
+const mockGrantAuthoritativeCapabilities = jest.fn();
 const mockGetConfig = jest.fn();
+const mockApiLoggerError = jest.fn();
 
 jest.unstable_mockModule('../src/stores/agentRegistry.js', () => ({
   registerAgent: mockRegisterAgent,
-  getAgent: mockGetAgent,
+  getAuthoritativeAgent: mockGetAuthoritativeAgent,
   updateHeartbeat: mockUpdateHeartbeat,
-  listAgents: mockListAgents,
-  grantCapabilities: mockGrantCapabilities
+  listAuthoritativeAgents: mockListAuthoritativeAgents,
+  grantAuthoritativeCapabilities: mockGrantAuthoritativeCapabilities,
 }));
 
 jest.unstable_mockModule('@platform/runtime/unifiedConfig.js', () => ({
   getConfig: mockGetConfig
 }));
+
+jest.unstable_mockModule('@platform/logging/structuredLogging.js', async () => {
+  const actual = await import('../src/platform/logging/logger.js');
+  return {
+    ...actual,
+    apiLogger: new Proxy(actual.apiLogger, {
+      get(target, property, receiver) {
+        if (property === 'error') return mockApiLoggerError;
+        const value = Reflect.get(target, property, receiver);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    }),
+  };
+});
 
 const express = (await import('express')).default;
 const request = (await import('supertest')).default;
@@ -36,18 +65,36 @@ const validRegistrationPayload = {
   public_key: 'pub-key-1'
 };
 
+function authorizeOperator<T extends { set(name: string, value: string): T }>(requestBuilder: T): T {
+  return requestBuilder.set('Authorization', `Bearer ${operatorToken}`);
+}
+
+afterAll(() => {
+  for (const key of authEnvKeys) {
+    const value = originalAuthEnv[key];
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+});
+
 describe('agents routes', () => {
   beforeEach(() => {
-    jest.clearAllMocks();
+    mockRegisterAgent.mockReset();
+    mockGetAuthoritativeAgent.mockReset();
+    mockUpdateHeartbeat.mockReset();
+    mockListAuthoritativeAgents.mockReset();
+    mockGrantAuthoritativeCapabilities.mockReset();
+    mockGetConfig.mockReset();
+    mockApiLoggerError.mockReset();
     mockGetConfig.mockReturnValue({ enableActionPlans: true });
   });
 
   it('returns 503 when action plans are disabled', async () => {
     mockGetConfig.mockReturnValue({ enableActionPlans: false });
 
-    const response = await request(buildApp())
+    const response = await authorizeOperator(request(buildApp())
       .post('/agents/register')
-      .send(validRegistrationPayload);
+      ).send(validRegistrationPayload);
 
     expect(response.status).toBe(503);
     expect(response.body).toEqual({ error: 'ActionPlans are not enabled' });
@@ -63,9 +110,9 @@ describe('agents routes', () => {
     };
     mockRegisterAgent.mockResolvedValue(registeredAgent);
 
-    const response = await request(buildApp())
+    const response = await authorizeOperator(request(buildApp())
       .post('/agents/register')
-      .send(validRegistrationPayload);
+      ).send(validRegistrationPayload);
 
     expect(response.status).toBe(201);
     expect(response.body).toMatchObject(registeredAgent);
@@ -78,21 +125,27 @@ describe('agents routes', () => {
   it('returns 500 when registerAgent throws', async () => {
     mockRegisterAgent.mockRejectedValue(new Error('register failed'));
 
-    const response = await request(buildApp())
+    const response = await authorizeOperator(request(buildApp())
       .post('/agents/register')
-      .send(validRegistrationPayload);
+      ).send(validRegistrationPayload);
 
     expect(response.status).toBe(500);
-    expect(response.body.error).toBe('Failed to register agent');
+    expect(response.body).toEqual({
+      ok: false,
+      error: {
+        code: 'ACTION_PLAN_AGENT_OPERATION_FAILED',
+        message: 'ActionPlan agent operation failed.',
+      },
+    });
   });
 
   it('lists all registered agents with count', async () => {
-    mockListAgents.mockResolvedValue([
+    mockListAuthoritativeAgents.mockResolvedValue([
       { id: 'agent-1' },
       { id: 'agent-2' }
     ]);
 
-    const response = await request(buildApp()).get('/agents');
+    const response = await authorizeOperator(request(buildApp()).get('/agents'));
 
     expect(response.status).toBe(200);
     expect(response.body.count).toBe(2);
@@ -100,22 +153,22 @@ describe('agents routes', () => {
   });
 
   it('returns 404 for unknown agent id on status endpoint', async () => {
-    mockGetAgent.mockResolvedValue(null);
+    mockGetAuthoritativeAgent.mockResolvedValue(null);
 
-    const response = await request(buildApp()).get('/agents/unknown-agent');
+    const response = await authorizeOperator(request(buildApp()).get('/agents/unknown-agent'));
 
     expect(response.status).toBe(404);
     expect(response.body.error).toContain('Agent not found');
   });
 
   it('returns agent details for known agent id on status endpoint', async () => {
-    mockGetAgent.mockResolvedValue({
+    mockGetAuthoritativeAgent.mockResolvedValue({
       id: 'agent-1',
       role: 'executor',
       status: 'idle'
     });
 
-    const response = await request(buildApp()).get('/agents/agent-1');
+    const response = await authorizeOperator(request(buildApp()).get('/agents/agent-1'));
 
     expect(response.status).toBe(200);
     expect(response.body).toMatchObject({
@@ -126,77 +179,135 @@ describe('agents routes', () => {
   });
 
   it('returns 500 when getAgent throws', async () => {
-    mockGetAgent.mockRejectedValue(new Error('lookup failed'));
+    mockGetAuthoritativeAgent.mockRejectedValue(new Error('lookup failed'));
 
-    const response = await request(buildApp()).get('/agents/agent-1');
-
-    expect(response.status).toBe(500);
-    expect(response.body.error).toBe('Failed to get agent');
-  });
-
-  it('returns updated agent on heartbeat', async () => {
-    const updatedAgent = {
-      id: 'agent-1',
-      status: 'idle'
-    };
-    mockUpdateHeartbeat.mockResolvedValue(updatedAgent);
-
-    const response = await request(buildApp()).post('/agents/agent-1/heartbeat');
-
-    expect(response.status).toBe(200);
-    expect(response.body).toMatchObject(updatedAgent);
-  });
-
-  it('returns 404 on heartbeat when agent does not exist', async () => {
-    mockUpdateHeartbeat.mockResolvedValue(null);
-
-    const response = await request(buildApp()).post('/agents/ghost/heartbeat');
-
-    expect(response.status).toBe(404);
-    expect(response.body.error).toContain('Agent not found');
-  });
-
-  it('returns 500 when updateHeartbeat throws', async () => {
-    mockUpdateHeartbeat.mockRejectedValue(new Error('heartbeat failed'));
-
-    const response = await request(buildApp()).post('/agents/agent-1/heartbeat');
+    const response = await authorizeOperator(request(buildApp()).get('/agents/agent-1'));
 
     expect(response.status).toBe(500);
-    expect(response.body.error).toBe('Failed to update heartbeat');
+    expect(response.body.error.code).toBe('ACTION_PLAN_AGENT_OPERATION_FAILED');
+  });
+
+  it('disables the legacy heartbeat with a fixed no-store response and zero registry mutation', async () => {
+    const response = await authorizeOperator(
+      request(buildApp()).post('/agents/agent-1/heartbeat'),
+    );
+
+    expect(response.status).toBe(403);
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(response.body).toEqual({
+      ok: false,
+      error: {
+        code: 'ACTION_PLAN_LEGACY_AGENT_HEARTBEAT_DISABLED',
+        message: 'Legacy ActionPlan agent heartbeat is disabled.',
+      },
+    });
+    expect(mockUpdateHeartbeat).not.toHaveBeenCalled();
   });
 
   it('returns 500 when listAgents throws', async () => {
-    mockListAgents.mockRejectedValue(new Error('storage read failed'));
+    mockListAuthoritativeAgents.mockRejectedValue(new Error('storage read failed'));
 
-    const response = await request(buildApp()).get('/agents');
+    const response = await authorizeOperator(request(buildApp()).get('/agents'));
 
     expect(response.status).toBe(500);
-    expect(response.body.error).toBe('Failed to list agents');
+    expect(response.body.error.code).toBe('ACTION_PLAN_AGENT_OPERATION_FAILED');
   });
 
-  it('grants capabilities without admin header auth', async () => {
-    mockGrantCapabilities.mockResolvedValue({
+  it('grants capabilities only to the authenticated operator principal', async () => {
+    mockGrantAuthoritativeCapabilities.mockResolvedValue({
       id: 'agent-1',
       capabilities: ['terminal.run', 'vision.analyze']
     });
 
-    const response = await request(buildApp())
+    const response = await authorizeOperator(request(buildApp())
       .post('/agents/agent-1/capabilities/grant')
-      .send({ capabilities: ['vision.analyze'] });
+      ).send({ capabilities: ['vision.analyze'] });
 
     expect(response.status).toBe(200);
-    expect(mockGrantCapabilities).toHaveBeenCalledWith('agent-1', ['vision.analyze']);
+    expect(mockGrantAuthoritativeCapabilities).toHaveBeenCalledWith('agent-1', ['vision.analyze']);
     expect(response.body.agent.capabilities).toContain('vision.analyze');
   });
 
   it('returns 404 when capability grant target is missing', async () => {
-    mockGrantCapabilities.mockResolvedValue(null);
+    mockGrantAuthoritativeCapabilities.mockResolvedValue(null);
 
-    const response = await request(buildApp())
+    const response = await authorizeOperator(request(buildApp())
       .post('/agents/missing/capabilities/grant')
-      .send({ capabilities: ['vision.analyze'] });
+      ).send({ capabilities: ['vision.analyze'] });
 
     expect(response.status).toBe(404);
     expect(response.body.error).toContain('Agent not found');
+  });
+
+  it('fails closed without authentication and rejects requester privilege escalation', async () => {
+    const unauthenticated = await request(buildApp()).get('/agents');
+    const requesterOnly = await request(buildApp())
+      .get('/agents')
+      .set('Authorization', `Bearer ${requesterToken}`);
+
+    expect(unauthenticated.status).toBe(401);
+    expect(unauthenticated.headers['cache-control']).toBe('no-store');
+    expect(unauthenticated.body.error.code).toBe('ACTION_PLAN_EXECUTION_AUTH_REQUIRED');
+    expect(requesterOnly.status).toBe(403);
+    expect(requesterOnly.headers['cache-control']).toBe('no-store');
+    expect(requesterOnly.body.error.code).toBe('ACTION_PLAN_EXECUTION_FORBIDDEN');
+    expect(mockListAuthoritativeAgents).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      name: 'register',
+      arrange: (error: Error) => mockRegisterAgent.mockRejectedValueOnce(error),
+      request: () => authorizeOperator(request(buildApp())
+        .post('/agents/register'))
+        .send(validRegistrationPayload),
+    },
+    {
+      name: 'list',
+      arrange: (error: Error) => mockListAuthoritativeAgents.mockRejectedValueOnce(error),
+      request: () => authorizeOperator(request(buildApp()).get('/agents')),
+    },
+    {
+      name: 'get',
+      arrange: (error: Error) => mockGetAuthoritativeAgent.mockRejectedValueOnce(error),
+      request: () => authorizeOperator(request(buildApp()).get('/agents/agent-1')),
+    },
+    {
+      name: 'grant',
+      arrange: (error: Error) => mockGrantAuthoritativeCapabilities.mockRejectedValueOnce(error),
+      request: () => authorizeOperator(request(buildApp())
+        .post('/agents/agent-1/capabilities/grant'))
+        .send({ capabilities: ['terminal.run'] }),
+    },
+  ])('does not disclose dependency details when authoritative $name fails', async ({ arrange, request: makeRequest }) => {
+    const dependencyDetail = [
+      ['Authorization', 'Bearer', ['phase2e', 'agent', 'marker'].join('-')].join(' '),
+      ['SELECT', '*', 'FROM', 'private_agent_table'].join(' '),
+      ['C:', 'private', 'agent-registry.log'].join('\\'),
+    ].join(' | ');
+    arrange(new Error(dependencyDetail));
+
+    const response = await makeRequest();
+    const observable = JSON.stringify({ body: response.body, logs: mockApiLoggerError.mock.calls });
+
+    expect(response.status).toBe(500);
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(response.body).toEqual({
+      ok: false,
+      error: {
+        code: 'ACTION_PLAN_AGENT_OPERATION_FAILED',
+        message: 'ActionPlan agent operation failed.',
+      },
+    });
+    expect(observable).not.toContain(dependencyDetail);
+    expect(observable).not.toContain('private_agent_table');
+    expect(observable).not.toContain('agent-registry.log');
+    expect(mockApiLoggerError).toHaveBeenCalledWith(
+      'ActionPlan agent operation failed',
+      expect.objectContaining({
+        errorCode: 'ACTION_PLAN_AGENT_OPERATION_FAILED',
+        errorClass: 'Error',
+      }),
+    );
   });
 });

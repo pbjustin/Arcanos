@@ -1,3 +1,5 @@
+import { redactSensitive } from '@shared/redaction.js';
+
 export type McpLogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 export interface McpLogger {
@@ -18,7 +20,7 @@ function emit(level: McpLogLevel, msg: string, meta?: Record<string, unknown>) {
   // IMPORTANT for stdio MCP servers: never write logs to stdout.
   // Use stderr for both stdio and HTTP to keep behavior consistent.
   try {
-    process.stderr.write(JSON.stringify(payload) + '\n');
+    process.stderr.write(JSON.stringify(redactSensitive(payload)) + '\n');
   } catch {
     // Last resort: ignore logging failures.
   }

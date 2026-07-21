@@ -16,6 +16,7 @@ from .cli_config import CAMERA_INTENT_PATTERN, RUN_COMMAND_PATTERNS, SCREEN_INTE
 from .cli_intents import detect_run_see_intent
 from .completer import install_completion
 from .config import Config
+from .credential_verification import timing_safe_equal_opaque_secret
 from .env import get_env
 from .error_handler import ErrorHandler
 
@@ -90,29 +91,37 @@ def _build_debug_logger(log_file_path: Path) -> logging.Logger:
     return logger
 
 
-def _resolve_debug_token() -> str:
+def _resolve_debug_token(*, allow_generated: bool) -> tuple[str | None, bool]:
     """
-    Purpose: Resolve debug command token from environment or generate a one-time token.
-    Inputs/Outputs: Reads environment; returns token string.
-    Edge cases: Empty env value falls back to generated token.
+    Purpose: Resolve debug command token and its provenance from one environment read.
+    Inputs/Outputs: Returns token (if available) and whether it was configured.
+    Edge cases: Empty config generates only when interactive delivery is allowed.
     """
     configured_token = (get_env(DEBUG_MODE_TOKEN_ENV, "") or "").strip()
     if configured_token:
-        return configured_token
-    return secrets.token_urlsafe(18)
+        return configured_token, True
+    if not allow_generated:
+        return None, False
+    return secrets.token_urlsafe(18), False
 
 
-def _resolve_command_file_path(debug_dir: Path, token: str) -> Path:
+def _can_reveal_generated_debug_token(cli: "ArcanosCLI") -> bool:
+    """Allow one-time token delivery only to a terminal-attached console."""
+    return getattr(cli.console, "is_terminal", False) is True
+
+
+def _resolve_command_file_path(debug_dir: Path) -> Path:
     """
     Purpose: Determine the command file location for debug mode.
-    Inputs/Outputs: Debug directory and token; returns file path.
-    Edge cases: Relative env path is resolved under debug_dir for portability.
+    Inputs/Outputs: Debug directory; returns file path.
+    Edge cases: Relative env paths use debug_dir; default suffixes are random
+    and credential-independent.
     """
     configured_path = (get_env(DEBUG_MODE_COMMAND_FILE_ENV, "") or "").strip()
     if configured_path:
         path = Path(configured_path).expanduser()
         return path if path.is_absolute() else debug_dir / path
-    return debug_dir / f"debug_cmd_{token[:12]}.json"
+    return debug_dir / f"debug_cmd_{secrets.token_hex(8)}.json"
 
 
 def _read_command_payload(cmd_file_path: Path, logger: logging.Logger) -> tuple[str, str] | None:
@@ -204,16 +213,25 @@ def run_debug_mode(cli: "ArcanosCLI") -> None:
     debug_dir = Config.LOG_DIR / DEBUG_MODE_DIR_NAME
     debug_dir.mkdir(parents=True, exist_ok=True)
 
-    debug_token = _resolve_debug_token()
+    debug_token, configured_debug_token = _resolve_debug_token(
+        allow_generated=_can_reveal_generated_debug_token(cli)
+    )
+    if debug_token is None:
+        cli.console.print(
+            f"[red]{DEBUG_MODE_TOKEN_ENV} is required when debug output is not attached to a terminal.[/red]"
+        )
+        cli._stop_daemon_service()
+        return
+
     log_file_path = debug_dir / "debug_log.txt"
-    cmd_file_path = _resolve_command_file_path(debug_dir, debug_token)
+    cmd_file_path = _resolve_command_file_path(debug_dir)
     logger = _build_debug_logger(log_file_path)
 
     cli.console.print("Daemon starting in authenticated debug mode...")
     cli.console.print(f"All output will be in: {log_file_path}")
     cli.console.print(f"Command file path: {cmd_file_path}")
     cli.console.print('Command payload format: {"token":"...","command":"..."}')
-    if get_env(DEBUG_MODE_TOKEN_ENV):
+    if configured_debug_token:
         cli.console.print(f"Using debug token from {DEBUG_MODE_TOKEN_ENV}.")
     else:
         cli.console.print(f"[yellow]Generated one-time debug token:[/yellow] {debug_token}")
@@ -232,7 +250,7 @@ def run_debug_mode(cli: "ArcanosCLI") -> None:
                         continue
                     provided_token, user_input = payload
 
-                    if provided_token != debug_token:
+                    if not timing_safe_equal_opaque_secret(provided_token, debug_token):
                         logger.warning("Rejected command due to invalid debug token.")
                         time.sleep(DEBUG_MODE_POLL_SECONDS)
                         continue

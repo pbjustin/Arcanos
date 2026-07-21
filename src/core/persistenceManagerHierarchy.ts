@@ -4,6 +4,7 @@
 
 import { createAuditStore, type AuditStore, type AuditStoreTransaction } from "@core/db/auditStore.js";
 import { getEnv } from "@platform/runtime/env.js";
+import { timingSafeEqualOpaqueSecret } from '@shared/security/opaqueSecret.js';
 
 // ----------------------
 // Database Config
@@ -107,7 +108,7 @@ function canEnableRootOverride(userRole: string, token: string) {
   }
   
   // Fail closed: require non-empty token and exact match
-  if (!overrideToken || !token || token !== overrideToken) {
+  if (!overrideToken || !token || !timingSafeEqualOpaqueSecret(token, overrideToken)) {
     return false;
   }
   

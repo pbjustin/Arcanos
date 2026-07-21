@@ -1,0 +1,576 @@
+{
+  "protocolVersion": "action-plan-execution-v1",
+  "persistedProtocolVersion": 2,
+  "snapshotVersion": "action-execution-snapshot-v1",
+  "limits": {
+    "maxHttpBodyBytes": 65536,
+    "maxOutputBytes": 32768,
+    "maxErrorBytes": 4096,
+    "maxSnapshotBytes": 32768,
+    "maxJsonDepth": 8,
+    "maxIdCharacters": 128,
+    "maxRealmCharacters": 256,
+    "maxIdempotencyKeyCharacters": 256,
+    "maxErrorCodeCharacters": 64,
+    "maxLocationCharacters": 512
+  },
+  "schemaVersions": {
+    "command": "action-plan-execution-command-v1",
+    "claim": "action-plan-execution-claim-v1",
+    "start": "action-plan-execution-start-v1",
+    "result": "action-plan-execution-result-v1",
+    "status": "action-plan-execution-status-v1",
+    "result_read": "action-plan-execution-result-read-v1"
+  },
+  "jsonDepthCases": [
+    {
+      "name": "empty container at maximum depth",
+      "value": { "d": { "d": { "d": { "d": { "d": { "d": { "d": {} } } } } } } },
+      "valid": true
+    },
+    {
+      "name": "value beyond maximum depth",
+      "value": { "d": { "d": { "d": { "d": { "d": { "d": { "d": { "d": {} } } } } } } } },
+      "valid": false
+    }
+  ],
+  "identifierCases": [
+    { "name": "canonical action identifier", "value": "action-001", "valid": true },
+    { "name": "identifier with space", "value": "bad id", "valid": false },
+    { "name": "identifier with slash", "value": "bad/id", "valid": false },
+    { "name": "identifier over maximum", "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "valid": false }
+  ],
+  "valid": {
+    "commandBodies": [
+      {
+        "name": "strict empty command",
+        "value": {}
+      }
+    ],
+    "claimBodies": [
+      {
+        "name": "strict empty claim",
+        "value": {}
+      }
+    ],
+    "startBodies": [
+      {
+        "name": "strict empty start",
+        "value": {}
+      }
+    ],
+    "resultRequests": [
+      {
+        "name": "successful bounded output",
+        "value": {
+          "action_id": "action-001",
+          "snapshot_id": "snapshot-001",
+          "outcome": "succeeded",
+          "output": {
+            "exit_code": 0,
+            "text": "synthetic no-op complete"
+          }
+        }
+      },
+      {
+        "name": "failed bounded safe error",
+        "value": {
+          "action_id": "action-002",
+          "snapshot_id": "snapshot-002",
+          "outcome": "failed",
+          "error": {
+            "code": "LOCAL_COMMAND_FAILED",
+            "category": "EXECUTION_FAILURE"
+          }
+        }
+      },
+      {
+        "name": "unicode and explicit null output",
+        "value": {
+          "action_id": "action-unicode",
+          "snapshot_id": "snapshot-unicode",
+          "outcome": "succeeded",
+          "output": {
+            "message": "安全な結果 🚦",
+            "optional": null
+          }
+        }
+      }
+    ],
+    "commandResponses": [
+      {
+        "name": "one run per action command response",
+        "value": {
+          "ok": true,
+          "code": "ACTION_PLAN_EXECUTION_COMMAND_ACCEPTED",
+          "protocol_version": "action-plan-execution-v1",
+          "command_id": "command-001",
+          "plan_id": "plan-001",
+          "disposition": "COMMAND_CREATED",
+          "runs": [
+            {
+              "run_id": "run-001",
+              "action_id": "action-001",
+              "state": "REQUESTED",
+              "status_location": "/plans/plan-001/executions/run-001",
+              "result_location": "/plans/plan-001/executions/run-001/result"
+            },
+            {
+              "run_id": "run-002",
+              "action_id": "action-002",
+              "state": "REQUESTED",
+              "status_location": "/plans/plan-001/executions/run-002",
+              "result_location": "/plans/plan-001/executions/run-002/result"
+            }
+          ]
+        }
+      }
+    ],
+    "claimResponses": [
+      {
+        "name": "executable claimed assignment",
+        "value": {
+          "ok": true,
+          "code": "ACTION_PLAN_EXECUTION_CLAIMED",
+          "protocol_version": "action-plan-execution-v1",
+          "execution_realm": "local-test",
+          "command_id": "command-001",
+          "plan_id": "plan-001",
+          "run_id": "run-001",
+          "action_id": "action-001",
+          "snapshot_id": "snapshot-001",
+          "snapshot_version": "action-execution-snapshot-v1",
+          "state": "CLAIMED",
+          "disposition": "CLAIMED",
+          "assignment": {
+            "agent_id": "python-agent-001",
+            "capability": "terminal.run",
+            "params": {
+              "fixture": "synthetic-noop"
+            },
+            "timeout_ms": 30000
+          },
+          "plan_execution_generation": 1,
+          "lifecycle": {
+            "status": "approved",
+            "expires_at": null
+          },
+          "policy": {
+            "category": "ALLOW",
+            "evidence_id": "clear-evidence-001",
+            "evaluated_at": "2026-07-17T12:00:00.000Z"
+          },
+          "status_location": "/plans/plan-001/executions/run-001",
+          "result_location": "/plans/plan-001/executions/run-001/result"
+        }
+      },
+      {
+        "name": "running recovery omits executable assignment",
+        "value": {
+          "ok": true,
+          "code": "ACTION_PLAN_EXECUTION_CLAIMED",
+          "protocol_version": "action-plan-execution-v1",
+          "execution_realm": "local-test",
+          "command_id": "command-001",
+          "plan_id": "plan-001",
+          "run_id": "run-001",
+          "action_id": "action-001",
+          "snapshot_id": "snapshot-001",
+          "snapshot_version": "action-execution-snapshot-v1",
+          "state": "RUNNING",
+          "disposition": "CLAIM_RECOVERY_RUNNING",
+          "plan_execution_generation": 1,
+          "lifecycle": {
+            "status": "in_progress",
+            "expires_at": null
+          },
+          "policy": {
+            "category": "ALLOW",
+            "evidence_id": "clear-evidence-001",
+            "evaluated_at": "2026-07-17T12:00:00.000Z"
+          },
+          "status_location": "/plans/plan-001/executions/run-001",
+          "result_location": "/plans/plan-001/executions/run-001/result"
+        }
+      }
+    ],
+    "startResponses": [
+      {
+        "name": "new running transition",
+        "value": {
+          "ok": true,
+          "code": "ACTION_PLAN_EXECUTION_STARTED",
+          "protocol_version": "action-plan-execution-v1",
+          "execution_realm": "local-test",
+          "plan_id": "plan-001",
+          "run_id": "run-001",
+          "action_id": "action-001",
+          "state": "RUNNING",
+          "disposition": "STARTED",
+          "status_location": "/plans/plan-001/executions/run-001"
+        }
+      }
+    ],
+    "resultResponses": [
+      {
+        "name": "accepted failure remains failed",
+        "value": {
+          "ok": true,
+          "code": "ACTION_PLAN_EXECUTION_RESULT_ACCEPTED",
+          "protocol_version": "action-plan-execution-v1",
+          "execution_realm": "local-test",
+          "plan_id": "plan-001",
+          "run_id": "run-002",
+          "action_id": "action-002",
+          "snapshot_id": "snapshot-002",
+          "state": "FAILED",
+          "terminal_category": "failed",
+          "disposition": "RESULT_ACCEPTED",
+          "acceptance_receipt": "receipt-002",
+          "status_location": "/plans/plan-001/executions/run-002",
+          "result_location": "/plans/plan-001/executions/run-002/result"
+        }
+      }
+    ],
+    "statusResponses": [
+      {
+        "name": "sanitized terminal status",
+        "value": {
+          "ok": true,
+          "code": "ACTION_PLAN_EXECUTION_STATUS",
+          "protocol_version": "action-plan-execution-v1",
+          "execution_realm": "local-test",
+          "command_id": "command-001",
+          "plan_id": "plan-001",
+          "run_id": "run-002",
+          "action_id": "action-002",
+          "snapshot_id": "snapshot-002",
+          "state": "FAILED",
+          "terminal_category": "failed",
+          "disposition": "STATUS_CURRENT",
+          "timestamps": {
+            "requested_at": "2026-07-17T12:00:00.000Z",
+            "claimed_at": "2026-07-17T12:00:01.000Z",
+            "started_at": "2026-07-17T12:00:02.000Z",
+            "completed_at": "2026-07-17T12:00:03.000Z",
+            "cancelled_at": null,
+            "expired_at": null,
+            "superseded_at": null
+          },
+          "acceptance_receipt": "receipt-002",
+          "result_location": "/plans/plan-001/executions/run-002/result"
+        }
+      }
+    ],
+    "resultReadResponses": [
+      {
+        "name": "bounded failure read",
+        "value": {
+          "ok": true,
+          "code": "ACTION_PLAN_EXECUTION_RESULT",
+          "protocol_version": "action-plan-execution-v1",
+          "execution_realm": "local-test",
+          "plan_id": "plan-001",
+          "run_id": "run-002",
+          "action_id": "action-002",
+          "snapshot_id": "snapshot-002",
+          "state": "FAILED",
+          "terminal_category": "failed",
+          "outcome": "failed",
+          "error": {
+            "code": "LOCAL_COMMAND_FAILED",
+            "category": "EXECUTION_FAILURE"
+          },
+          "acceptance_receipt": "receipt-002"
+        }
+      }
+    ],
+    "capabilityResponses": [
+      {
+        "name": "executor capability with configured identity pins",
+        "value": {
+          "ok": true,
+          "code": "ACTION_PLAN_EXECUTION_PROTOCOL_AVAILABLE",
+          "protocol_version": "action-plan-execution-v1",
+          "execution_realm": "local-test",
+          "role": "executor",
+          "executor_principal_id": "python-executor-principal-001",
+          "executor_instance_id": "python-executor-instance-001",
+          "assigned_agent_id": "python-agent-001",
+          "operations": [
+            "claim-next",
+            "claim",
+            "start",
+            "submit-result",
+            "read-status",
+            "read-result"
+          ],
+          "schema_versions": {
+            "command": "action-plan-execution-command-v1",
+            "claim": "action-plan-execution-claim-v1",
+            "start": "action-plan-execution-start-v1",
+            "result": "action-plan-execution-result-v1",
+            "status": "action-plan-execution-status-v1",
+            "result_read": "action-plan-execution-result-read-v1"
+          },
+          "locations": {
+            "claim_next": "/action-plan-executions/claim-next",
+            "claim_template": "/plans/{planId}/executions/{runId}/claim",
+            "start_template": "/plans/{planId}/executions/{runId}/start",
+            "status_template": "/plans/{planId}/executions/{runId}",
+            "result_template": "/plans/{planId}/executions/{runId}/result"
+          }
+        }
+      }
+    ]
+  },
+  "invalid": [
+    {
+      "name": "result-shaped command requires dedicated endpoint",
+      "schema": "command",
+      "value": {
+        "action_id": "action-001",
+        "snapshot_id": "snapshot-001",
+        "outcome": "succeeded"
+      },
+      "expected_code": "ACTION_PLAN_RESULT_ENDPOINT_REQUIRED"
+    },
+    {
+      "name": "ambiguous command field is rejected",
+      "schema": "command",
+      "value": {
+        "operation": "execute"
+      },
+      "expected_code": "ACTION_PLAN_EXECUTION_REQUEST_INVALID"
+    },
+    {
+      "name": "caller cannot select claim owner",
+      "schema": "claim",
+      "value": {
+        "owner": "caller-selected-owner"
+      },
+      "expected_code": "ACTION_PLAN_EXECUTION_REQUEST_INVALID"
+    },
+    {
+      "name": "caller cannot select start realm",
+      "schema": "start",
+      "value": {
+        "execution_realm": "caller-selected-realm"
+      },
+      "expected_code": "ACTION_PLAN_EXECUTION_REQUEST_INVALID"
+    },
+    {
+      "name": "result owner field is rejected",
+      "schema": "result",
+      "value": {
+        "action_id": "action-001",
+        "snapshot_id": "snapshot-001",
+        "outcome": "succeeded",
+        "owner": "caller-selected-owner"
+      },
+      "expected_code": "ACTION_PLAN_EXECUTION_REQUEST_INVALID"
+    },
+    {
+      "name": "result executor kind field is rejected",
+      "schema": "result",
+      "value": {
+        "action_id": "action-001",
+        "snapshot_id": "snapshot-001",
+        "outcome": "succeeded",
+        "executor_kind": "backend-inline"
+      },
+      "expected_code": "ACTION_PLAN_EXECUTION_REQUEST_INVALID"
+    },
+    {
+      "name": "result realm field is rejected",
+      "schema": "result",
+      "value": {
+        "action_id": "action-001",
+        "snapshot_id": "snapshot-001",
+        "outcome": "succeeded",
+        "execution_realm": "caller-selected-realm"
+      },
+      "expected_code": "ACTION_PLAN_EXECUTION_REQUEST_INVALID"
+    },
+    {
+      "name": "result command field is rejected",
+      "schema": "result",
+      "value": {
+        "action_id": "action-001",
+        "snapshot_id": "snapshot-001",
+        "outcome": "succeeded",
+        "command": "synthetic command"
+      },
+      "expected_code": "ACTION_PLAN_EXECUTION_REQUEST_INVALID"
+    },
+    {
+      "name": "result clear field is rejected",
+      "schema": "result",
+      "value": {
+        "action_id": "action-001",
+        "snapshot_id": "snapshot-001",
+        "outcome": "succeeded",
+        "clear_decision": "allow"
+      },
+      "expected_code": "ACTION_PLAN_EXECUTION_REQUEST_INVALID"
+    },
+    {
+      "name": "result lifecycle field is rejected",
+      "schema": "result",
+      "value": {
+        "action_id": "action-001",
+        "snapshot_id": "snapshot-001",
+        "outcome": "succeeded",
+        "plan_status": "approved"
+      },
+      "expected_code": "ACTION_PLAN_EXECUTION_REQUEST_INVALID"
+    },
+    {
+      "name": "result missing action identity is rejected",
+      "schema": "result",
+      "value": {
+        "snapshot_id": "snapshot-001",
+        "outcome": "succeeded"
+      },
+      "expected_code": "ACTION_PLAN_EXECUTION_REQUEST_INVALID"
+    },
+    {
+      "name": "unknown terminal outcome is rejected",
+      "schema": "result",
+      "value": {
+        "action_id": "action-001",
+        "snapshot_id": "snapshot-001",
+        "outcome": "completed"
+      },
+      "expected_code": "ACTION_PLAN_EXECUTION_REQUEST_INVALID"
+    },
+    {
+      "name": "raw error message is rejected",
+      "schema": "result",
+      "value": {
+        "action_id": "action-002",
+        "snapshot_id": "snapshot-002",
+        "outcome": "failed",
+        "error": {
+          "code": "LOCAL_COMMAND_FAILED",
+          "message": "raw dependency detail"
+        }
+      },
+      "expected_code": "ACTION_PLAN_EXECUTION_REQUEST_INVALID"
+    },
+    {
+      "name": "successful outcome with error evidence is rejected",
+      "schema": "result",
+      "value": {
+        "action_id": "action-001",
+        "snapshot_id": "snapshot-001",
+        "outcome": "succeeded",
+        "error": {
+          "code": "CONTRADICTORY_RESULT"
+        }
+      },
+      "expected_code": "ACTION_PLAN_EXECUTION_REQUEST_INVALID"
+    },
+    {
+      "name": "failed outcome with success output is rejected",
+      "schema": "result",
+      "value": {
+        "action_id": "action-002",
+        "snapshot_id": "snapshot-002",
+        "outcome": "failed",
+        "output": {
+          "completed": true
+        }
+      },
+      "expected_code": "ACTION_PLAN_EXECUTION_REQUEST_INVALID"
+    }
+  ],
+  "idempotencyDecisions": [
+    {
+      "name": "same command key and same canonical request replays",
+      "operation": "request-execution",
+      "same_key": true,
+      "same_fingerprint": true,
+      "expected_disposition": "COMMAND_REPLAY",
+      "expected_code": "ACTION_PLAN_EXECUTION_COMMAND_ACCEPTED",
+      "expected_new_runs": 0
+    },
+    {
+      "name": "same command key and different request conflicts",
+      "operation": "request-execution",
+      "same_key": true,
+      "same_fingerprint": false,
+      "expected_disposition": "CONFLICT",
+      "expected_code": "ACTION_PLAN_EXECUTION_IDEMPOTENCY_CONFLICT",
+      "expected_new_runs": 0
+    },
+    {
+      "name": "same result key and same evidence replays",
+      "operation": "submit-result",
+      "same_key": true,
+      "same_fingerprint": true,
+      "expected_disposition": "RESULT_REPLAY",
+      "expected_code": "ACTION_PLAN_EXECUTION_RESULT_ACCEPTED",
+      "expected_terminal_transitions": 0
+    },
+    {
+      "name": "accepted run cannot receive conflicting result",
+      "operation": "submit-result",
+      "same_key": false,
+      "same_fingerprint": false,
+      "expected_disposition": "CONFLICT",
+      "expected_code": "ACTION_PLAN_RESULT_IDEMPOTENCY_CONFLICT",
+      "expected_terminal_transitions": 0
+    }
+  ],
+  "authorizationDecisions": [
+    {
+      "name": "anonymous command fails closed",
+      "operation": "request-execution",
+      "authenticated": false,
+      "owner_matches": false,
+      "realm_matches": false,
+      "expected_allowed": false,
+      "expected_code": "ACTION_PLAN_EXECUTION_AUTH_REQUIRED"
+    },
+    {
+      "name": "wrong authenticated owner cannot read run",
+      "operation": "read-status",
+      "authenticated": true,
+      "owner_matches": false,
+      "realm_matches": true,
+      "expected_allowed": false,
+      "expected_code": "ACTION_PLAN_EXECUTION_NOT_FOUND"
+    },
+    {
+      "name": "cross-realm result is indistinguishable from missing run",
+      "operation": "submit-result",
+      "authenticated": true,
+      "owner_matches": true,
+      "realm_matches": false,
+      "expected_allowed": false,
+      "expected_code": "ACTION_PLAN_EXECUTION_NOT_FOUND"
+    },
+    {
+      "name": "authenticated assigned executor may submit matching result",
+      "operation": "submit-result",
+      "authenticated": true,
+      "owner_matches": true,
+      "realm_matches": true,
+      "expected_allowed": true,
+      "expected_code": "ACTION_PLAN_EXECUTION_RESULT_ACCEPTED"
+    }
+  ],
+  "zeroEffectContract": {
+    "rejected_request_expected_effects": {
+      "execution_callback": 0,
+      "local_command": 0,
+      "worker_job": 0,
+      "new_run": 0,
+      "sibling_result": 0,
+      "plan_success": 0,
+      "provider_call": 0,
+      "success_acknowledgement": 0
+    }
+  }
+}

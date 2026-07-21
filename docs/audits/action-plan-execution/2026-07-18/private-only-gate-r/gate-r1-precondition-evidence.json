@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-07-18T20:06:36-04:00",
+  "classification": "GATE R1 NO-GO",
+  "executionState": "STOPPED_BEFORE_FIRST_MUTATION",
+  "source": {
+    "branch": "codex/phase2e-advisory-history-gate-r",
+    "commit": "901f6012129168b7c65fe3678cdbb977d36b78d0",
+    "sourceChanges": 0,
+    "pushOrPullRequest": false
+  },
+  "target": {
+    "project": "Arcanos",
+    "projectId": "7faf44e5-519c-4e73-8d7a-da9f389e6187",
+    "environment": "phase2e-validation-20260717",
+    "environmentId": "fb99f47d-5ef5-44c1-96c2-acf7b90fab13"
+  },
+  "mandatoryProxyPrecondition": {
+    "satisfied": false,
+    "postgresServiceId": "b7789306-8aef-4113-add5-02883a6cc087",
+    "redisServiceId": "434fa5b4-b52c-4caf-aaba-e87c173bf10d",
+    "currentCounts": "UNVERIFIED",
+    "cliVersion": "4.30.2",
+    "cliProxyOperationAvailable": false,
+    "committedProjectionAvailable": false,
+    "authenticatedBrowserAvailable": false,
+    "environmentScopedApiCredentialConfigured": false,
+    "storedCliCredentialAccessed": false,
+    "priorCommittedCount": 0,
+    "priorCountAcceptedAsCurrentProof": false,
+    "requiredUnblock": "Provide a current exact-target dashboard result or a reviewed fixed-query projector using a separately configured environment-scoped project token."
+  },
+  "r0State": {
+    "postgresCurrentDeploymentId": null,
+    "postgresOriginalDeploymentStatus": "REMOVED",
+    "redisCurrentDeploymentId": null,
+    "redisOriginalDeploymentStatus": "REMOVED",
+    "postgresVolumeId": "35c26093-1e3f-4d34-b699-89c65d2fb92d",
+    "redisVolumeId": "d3690500-fcc5-4c06-afa6-cf30e91f608d",
+    "quarantinePreserved": true
+  },
+  "additionalPlanFinding": {
+    "code": "POSTGRES_READINESS_NOT_AUTHENTICATED",
+    "detail": "The committed pg_isready command proves server readiness but does not prove valid PostgreSQL credentials. A reviewed authenticated, non-SQL psql connection/meta-command is required by the current authorization."
+  },
+  "linkSafety": {
+    "currentRepositoryLinkIsTarget": false,
+    "currentLinkedEnvironment": "Arcanos-pr-1046",
+    "requiredBeforeFutureMutation": "Use an isolated temporary directory, link exact project and environment IDs, and assert both immediately before every operation without changing the repository worktree link."
+  },
+  "mutationCounts": {
+    "servicesCreated": 0,
+    "volumesCreated": 0,
+    "credentialsGenerated": 0,
+    "variablesChanged": 0,
+    "deploymentsCreated": 0,
+    "domainsChanged": 0,
+    "tcpProxiesChanged": 0,
+    "applicationsDeployed": 0,
+    "migrations": 0,
+    "sqlOperations": 0,
+    "redisDataOperations": 0,
+    "providerCalls": 0
+  },
+  "replacementPostgres": null,
+  "replacementRedis": null,
+  "independentReview": {
+    "verdict": "NO-GO",
+    "reason": "The current zero-TCP-proxy precondition is not provable with available approved tooling or sessions."
+  },
+  "nextStep": {
+    "gateR1AuthorizationRetained": true,
+    "executionMayResumeAfter": [
+      "Current exact-target zero-TCP-proxy proof for both quarantined services",
+      "Review of an authenticated non-SQL PostgreSQL readiness command",
+      "Isolated exact-target Railway link preflight"
+    ]
+  }
+}

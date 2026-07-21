@@ -27,6 +27,11 @@ const JOB_STATUS_OPENAPI_CONTRACT_PATH = path.resolve(
   'contracts',
   'job_status.openapi.v1.json'
 );
+const ACTION_PLAN_EXECUTION_OPENAPI_CONTRACT_PATH = path.resolve(
+  process.cwd(),
+  'contracts',
+  'action_plan_execution.openapi.v1.json'
+);
 const CUSTOM_GPT_BRIDGE_OPENAPI_CONTRACT_PATH = path.resolve(
   process.cwd(),
   'openapi',
@@ -70,6 +75,15 @@ router.get(
   '/contracts/job_status.openapi.v1.json',
   asyncHandler(async (_req: Request, res: Response) => {
     const contract = await readOpenApiContract(JOB_STATUS_OPENAPI_CONTRACT_PATH);
+    res.set('cache-control', 'no-store, max-age=0');
+    return res.json(contract);
+  })
+);
+
+router.get(
+  '/contracts/action_plan_execution.openapi.v1.json',
+  asyncHandler(async (_req: Request, res: Response) => {
+    const contract = await readOpenApiContract(ACTION_PLAN_EXECUTION_OPENAPI_CONTRACT_PATH);
     res.set('cache-control', 'no-store, max-age=0');
     return res.json(contract);
   })

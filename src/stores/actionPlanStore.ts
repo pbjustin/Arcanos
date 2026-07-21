@@ -16,6 +16,7 @@ import type {
   ClearDecision,
   ActionDefinition,
   ExecutionResultRecord,
+  ActionPlanCreationProvenance,
 } from '@shared/types/actionPlan.js';
 import { aiLogger } from '@platform/logging/structuredLogging.js';
 
@@ -26,6 +27,19 @@ function getPrisma(): PrismaClient {
     prisma = new PrismaClient();
   }
   return prisma;
+}
+
+function safeThrownClass(error: unknown): string {
+  if (error instanceof TypeError) return 'TypeError';
+  if (error instanceof RangeError) return 'RangeError';
+  if (error instanceof SyntaxError) return 'SyntaxError';
+  if (error instanceof Error) return 'Error';
+  if (error === null) return 'ThrownNull';
+  if (error === undefined) return 'ThrownUndefined';
+  if (typeof error === 'string') return 'ThrownString';
+  if (typeof error === 'number') return 'ThrownNumber';
+  if (typeof error === 'boolean') return 'ThrownBoolean';
+  return 'ThrownObject';
 }
 
 // --- In-memory cache ---
@@ -181,9 +195,22 @@ function actionDefToCreateInput(def: ActionDefinition, index: number) {
   };
 }
 
+function toActionPlanRecord(plan: unknown): ActionPlanRecord {
+  const row = plan as ActionPlanRecord & { executionGeneration?: bigint | number | null };
+  return {
+    ...row,
+    ...(typeof row.executionGeneration === 'bigint'
+      ? { executionGeneration: Number(row.executionGeneration) }
+      : {}),
+  } as ActionPlanRecord;
+}
+
 // --- Store Operations ---
 
-export async function createPlan(input: ActionPlanInput): Promise<ActionPlanRecord> {
+export async function createPlan(
+  input: ActionPlanInput,
+  provenance?: ActionPlanCreationProvenance,
+): Promise<ActionPlanRecord> {
   // Compute CLEAR 2.0 score
   const hasRollbacks = input.actions.some(a => a.rollback_action != null);
   const clearResult = buildClear2Summary({
@@ -216,6 +243,7 @@ export async function createPlan(input: ActionPlanInput): Promise<ActionPlanReco
         requiresConfirmation: input.requires_confirmation ?? true,
         idempotencyKey: input.idempotency_key,
         expiresAt: input.expires_at ? new Date(input.expires_at) : null,
+        ...(provenance ?? {}),
         actions: {
           create: input.actions.map((a, i) => actionDefToCreateInput(a, i)),
         },
@@ -235,7 +263,7 @@ export async function createPlan(input: ActionPlanInput): Promise<ActionPlanReco
       include: { actions: true, clearScore: true, executionResults: true },
     });
 
-    const record = plan as unknown as ActionPlanRecord;
+    const record = toActionPlanRecord(plan);
     cachePlanRecord(record);
 
     aiLogger.info('ActionPlan created', {
@@ -248,6 +276,10 @@ export async function createPlan(input: ActionPlanInput): Promise<ActionPlanReco
 
     return record;
   } catch (error) {
+    if (provenance) {
+      // Phase 2E provenance is authoritative and must never be represented by a cache-only plan.
+      throw error;
+    }
     //audit Assumption: DB writes can fail transiently or be unavailable; risk: plan creation outage; invariant: plan creation still returns deterministic record; handling: cache-backed fallback record.
     const existingPlanId = planIdByIdempotencyKey.get(input.idempotency_key);
     if (existingPlanId) {
@@ -304,7 +336,8 @@ export async function createPlan(input: ActionPlanInput): Promise<ActionPlanReco
       planId: fallbackRecord.id,
       status: fallbackRecord.status,
       clearDecision: clearResult.decision,
-      error: String(error),
+      errorCode: 'ACTION_PLAN_CREATE_CACHE_FALLBACK',
+      errorClass: safeThrownClass(error),
     });
     return fallbackRecord;
   }
@@ -324,7 +357,7 @@ export async function getPlan(planId: string): Promise<ActionPlanRecord | null> 
 
     if (!plan) return null;
 
-    const record = plan as unknown as ActionPlanRecord;
+    const record = toActionPlanRecord(plan);
     cachePlanRecord(record);
     return record;
   } catch (error) {
@@ -332,10 +365,81 @@ export async function getPlan(planId: string): Promise<ActionPlanRecord | null> 
     aiLogger.warn('Failed to get plan from DB; falling back to cache', {
       module: 'actionPlanStore',
       planId,
-      error: String(error),
+      errorCode: 'ACTION_PLAN_READ_FAILED',
+      errorClass: safeThrownClass(error),
     });
     return null;
   }
+}
+
+/**
+ * Read a plan only from durable storage for Phase 2E authority decisions.
+ * Cache fallback is intentionally prohibited.
+ */
+export async function getAuthoritativePlan(planId: string): Promise<ActionPlanRecord | null> {
+  const db = getPrisma();
+  const plan = await db.actionPlan.findUnique({
+    where: { id: planId },
+    include: { actions: true, clearScore: true, executionResults: true },
+  });
+  if (!plan) return null;
+  const record = toActionPlanRecord(plan);
+  cachePlanRecord(record);
+  return record;
+}
+
+/** List durable plans only; caller applies principal/realm predicates through Prisma. */
+export async function listAuthoritativePlans(filters: {
+  executionRealm: string;
+  ownerPrincipalId?: string;
+  status?: PlanStatus;
+  createdBy?: string;
+  limit?: number;
+}): Promise<ActionPlanRecord[]> {
+  const db = getPrisma();
+  const plans = await db.actionPlan.findMany({
+    where: {
+      executionRealm: filters.executionRealm,
+      ...(filters.ownerPrincipalId ? { ownerPrincipalId: filters.ownerPrincipalId } : {}),
+      ...(filters.status ? { status: filters.status } : {}),
+      ...(filters.createdBy ? { createdBy: filters.createdBy } : {}),
+    },
+    include: { actions: true, clearScore: true },
+    orderBy: { createdAt: 'desc' },
+    take: filters.limit ?? 50,
+  });
+  return plans.map(toActionPlanRecord);
+}
+
+/**
+ * Perform a provenance-bound lifecycle mutation without cache fallback.
+ * External lifecycle changes increment executionGeneration so unstarted runs become stale.
+ */
+export async function updateAuthoritativePlanStatus(input: {
+  planId: string;
+  executionRealm: string;
+  status: PlanStatus;
+  allowedCurrentStatuses?: PlanStatus[];
+  incrementExecutionGeneration?: boolean;
+}): Promise<ActionPlanRecord | null> {
+  const db = getPrisma();
+  const updated = await db.actionPlan.updateMany({
+    where: {
+      id: input.planId,
+      executionRealm: input.executionRealm,
+      executionProtocolVersion: 2,
+      executionGeneration: { not: null },
+      ...(input.allowedCurrentStatuses ? { status: { in: input.allowedCurrentStatuses } } : {}),
+    },
+    data: {
+      status: input.status,
+      ...(input.incrementExecutionGeneration === false
+        ? {}
+        : { executionGeneration: { increment: 1 } }),
+    },
+  });
+  if (updated.count !== 1) return null;
+  return getAuthoritativePlan(input.planId);
 }
 
 export async function updatePlanStatus(planId: string, status: PlanStatus): Promise<ActionPlanRecord | null> {
@@ -347,7 +451,7 @@ export async function updatePlanStatus(planId: string, status: PlanStatus): Prom
       include: { actions: true, clearScore: true, executionResults: true },
     });
 
-    const record = plan as unknown as ActionPlanRecord;
+    const record = toActionPlanRecord(plan);
     cachePlanRecord(record);
 
     aiLogger.info('ActionPlan status updated', {
@@ -368,7 +472,8 @@ export async function updatePlanStatus(planId: string, status: PlanStatus): Prom
       module: 'actionPlanStore',
       planId,
       status,
-      error: String(error),
+      errorCode: 'ACTION_PLAN_STATUS_CACHE_FALLBACK',
+      errorClass: safeThrownClass(error),
     });
     return fallback;
   }
@@ -425,16 +530,17 @@ export async function listPlans(filters?: {
 
     // Update cache
     for (const plan of plans) {
-      const record = plan as unknown as ActionPlanRecord;
+      const record = toActionPlanRecord(plan);
       cachePlanRecord(record);
     }
 
-    return plans as unknown as ActionPlanRecord[];
+    return plans.map(toActionPlanRecord);
   } catch (error) {
     //audit Assumption: listing plans should remain available without DB; risk: stale results; invariant: response shape remains stable; handling: return filtered cache.
     aiLogger.warn('Failed to list plans from DB; returning cached plans', {
       module: 'actionPlanStore',
-      error: String(error),
+      errorCode: 'ACTION_PLAN_LIST_CACHE_FALLBACK',
+      errorClass: safeThrownClass(error),
       cacheSize: planCache.size,
     });
     return listCachedPlans(filters);
@@ -484,7 +590,8 @@ export async function expireStalePlans(): Promise<number> {
       aiLogger.warn('Expired stale plans via cache fallback', {
         module: 'actionPlanStore',
         count,
-        error: String(error),
+        errorCode: 'ACTION_PLAN_EXPIRY_CACHE_FALLBACK',
+        errorClass: safeThrownClass(error),
       });
     }
     return count;
@@ -560,7 +667,8 @@ export async function createExecutionResult(
       actionId,
       status,
       clearDecision,
-      error: String(dbError),
+      errorCode: 'EXECUTION_RESULT_CREATE_CACHE_FALLBACK',
+      errorClass: safeThrownClass(dbError),
     });
     return fallbackRecord;
   }
@@ -589,7 +697,8 @@ export async function getExecutionResults(planId: string): Promise<ExecutionResu
     aiLogger.warn('Failed to list execution results from DB; returning empty list', {
       module: 'actionPlanStore',
       planId,
-      error: String(error),
+      errorCode: 'EXECUTION_RESULT_LIST_FAILED',
+      errorClass: safeThrownClass(error),
     });
     return [];
   }
@@ -610,14 +719,14 @@ export async function warmCache(): Promise<void> {
     });
 
     for (const plan of activePlans) {
-      cachePlanRecord(plan as unknown as ActionPlanRecord);
+      cachePlanRecord(toActionPlanRecord(plan));
     }
 
     aiLogger.info('ActionPlan cache warmed', {
       module: 'actionPlanStore',
       count: activePlans.length,
     });
-  } catch (error) {
+  } catch {
     aiLogger.warn('Failed to warm ActionPlan cache (DB may not be available)', {
       module: 'actionPlanStore',
     });

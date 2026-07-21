@@ -31,12 +31,14 @@ import safetyRouter from './safety.js';
 import plansRouter from './plans.js';
 import clearRouter from './clear.js';
 import agentsRouter from './agents.js';
+import actionPlanExecutionsRouter from './action-plan-executions.js';
 import selfImproveRouter from './self-improve.js';
 import selfHealRouter from './self-heal.js';
 import workerHelperRouter from './worker-helper.js';
 import { createFallbackTestRoute } from "@transport/http/middleware/fallbackHandler.js";
 import { runHealthCheck } from "@platform/logging/diagnostics.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import { timingSafeEqualOpaqueSecret } from '@shared/security/opaqueSecret.js';
 import devopsRouter from './devops.js';
 import introspectionRouter from './introspection.js';
 import trinityRouter from './trinity.js';
@@ -82,7 +84,10 @@ export function registerRoutes(app: Express): void {
   if (process.env.DEBUG_WATCHDOG === 'true') {
     app.get('/debug/watchdog', (req: Request, res: Response) => {
       const expectedDebugKey = process.env.DEBUG_WATCHDOG_KEY;
-      if (expectedDebugKey && req.header('x-debug-key') !== expectedDebugKey) {
+      if (
+        expectedDebugKey
+        && !timingSafeEqualOpaqueSecret(req.header('x-debug-key'), expectedDebugKey)
+      ) {
         return res.status(403).json({ error: 'Forbidden' });
       }
 
@@ -150,6 +155,7 @@ export function registerRoutes(app: Express): void {
   app.use('/', selfHealRouter);
 
   // ActionPlan orchestration + CLEAR 2.0 governance
+  app.use('/', actionPlanExecutionsRouter);
   app.use('/', plansRouter);
   app.use('/', clearRouter);
   app.use('/', agentsRouter);

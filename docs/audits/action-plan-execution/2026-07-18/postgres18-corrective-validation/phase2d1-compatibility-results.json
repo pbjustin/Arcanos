@@ -1,0 +1,23 @@
+{
+  "status": "LOCAL_TARGET_PASS_LIVE_DATABASE_PENDING",
+  "sourceCommit": "da8b0c5e4ea977b6b5c678f2049809b43fa9a857",
+  "targetCommit": "87900e71143781fd9cdea29de23a4763944fa4d9",
+  "branch": "codex/phase2d1-bounded-compatibility-validator",
+  "boundedOperations": [
+    "real legacy database-pool initialization and close",
+    "actual compiled legacy ActionPlan store module import without invoking its lazy Prisma singleton",
+    "exact complete and VALID migration-ledger assertion for the reviewed migration identity, checksum, and appliedAt",
+    "connected PostgreSQL 18 server, expected database, and public schema assertions",
+    "validator-owned Prisma ActionPlan, Action, and ExecutionResult scalar reads inside a read-only transaction",
+    "Phase 2E schema-migration/command/run/event counts before and after",
+    "pre-Node injection guard, client disconnect, forced process exit, and process-resource check"
+  ],
+  "phase2eWritesPermitted": false,
+  "serverWorkerMcpProviderBridgeStarted": false,
+  "localTestCount": 42,
+  "liveDatabaseExecuted": false,
+  "sourceIdentity": "The historical Phase 2D.1 application commit and the later validator artifact commit are separate evidence fields; Railway must report the configured exact validator commit.",
+  "serviceIdentity": "A recreated validator must match separately configured expected service ID/name values and Railway system identity.",
+  "customConfigPathRequired": "/railway.phase2d1-compatibility-validator.json",
+  "limitation": "Module import plus direct bounded Prisma reads is not complete legacy repository-operation or full application-startup compatibility; this evidence cannot clear Gate D."
+}

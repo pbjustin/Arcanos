@@ -1,0 +1,39 @@
+FROM node:20.18.1-alpine
+
+ENV NODE_ENV=test
+
+RUN addgroup -g 1001 -S validator && adduser -u 1001 -S validator -G validator
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+COPY vendor/ ./vendor/
+COPY packages/arcanos-openai/package.json ./packages/arcanos-openai/package.json
+COPY packages/arcanos-runtime/package.json ./packages/arcanos-runtime/package.json
+COPY packages/cli/package.json ./packages/cli/package.json
+COPY packages/protocol/package.json ./packages/protocol/package.json
+COPY workers/package.json ./workers/package.json
+COPY arcanos-ai-runtime/package.json ./arcanos-ai-runtime/package.json
+
+RUN npm ci --ignore-scripts --no-audit --no-fund
+
+COPY jest.phase2e-pg18.config.js ./jest.phase2e-pg18.config.js
+COPY tsconfig.json ./tsconfig.json
+COPY src/core/db/actionPlanExecutionSchema.ts ./src/core/db/actionPlanExecutionSchema.ts
+COPY src/core/db/client.ts ./src/core/db/client.ts
+COPY tests/integration/action-plan-execution-migration.pg18.integration.test.ts ./tests/integration/action-plan-execution-migration.pg18.integration.test.ts
+COPY scripts/action-plan-execution-migration.mjs ./scripts/action-plan-execution-migration.mjs
+COPY scripts/action-plan-execution-migration-history.mjs ./scripts/action-plan-execution-migration-history.mjs
+COPY scripts/phase2e-migration-validator.mjs ./scripts/phase2e-migration-validator.mjs
+COPY scripts/phase2e-pg18-runner.mjs ./scripts/phase2e-pg18-runner.mjs
+COPY scripts/phase2e-validator-entrypoint.sh ./scripts/phase2e-validator-entrypoint.sh
+COPY migrations/20260717_action_plan_execution_v2/ ./migrations/20260717_action_plan_execution_v2/
+COPY migrations/20260718_action_plan_execution_migration_history_v1/ ./migrations/20260718_action_plan_execution_migration_history_v1/
+
+RUN chmod 0555 /app/scripts/phase2e-validator-entrypoint.sh \
+  && chown -R validator:validator /app
+
+USER validator
+
+ENTRYPOINT ["/app/scripts/phase2e-validator-entrypoint.sh"]
+CMD ["--pg18-integration"]

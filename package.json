@@ -8,6 +8,11 @@
     "probe": "node scripts/probe.js",
     "db:init": "node scripts/db-init.js",
     "db:patch": "node scripts/schema-sync.js",
+    "db:action-plan-execution:plan": "node scripts/action-plan-execution-migration.mjs --plan",
+    "db:action-plan-execution:apply-local": "node scripts/action-plan-execution-migration.mjs --apply --confirm-local-ephemeral",
+    "db:action-plan-execution:verify-local": "node scripts/action-plan-execution-migration.mjs --verify-local --confirm-local-ephemeral",
+    "db:action-plan-execution:drain-status-local": "node scripts/action-plan-execution-migration.mjs --drain-status-local --confirm-local-ephemeral",
+    "db:action-plan-execution:compensate-local": "node scripts/action-plan-execution-migration.mjs --compensate-local --confirm-local-ephemeral --confirm-empty",
     "start": "npm run dist:repair-aliases && node --import ./scripts/register-esm-loader.mjs dist/start-server.js",
     "start:worker": "npm run dist:repair-aliases && node --import ./scripts/register-esm-loader.mjs dist/workers/jobRunner.js",
     "dev": "npm run build:packages && npm run build:workers && tsc && node ./node_modules/tsc-alias/dist/index.js && npm run dist:repair-aliases && npm run dist:check-aliases && npm run build:copy-assets && node --import ./scripts/register-esm-loader.mjs dist/start-server.js",
@@ -140,6 +145,7 @@
     "gptoss:private-serving:key-management:design:validate": "node scripts/gptoss/private-serving/private-serving-key-management-design-validate.mjs",
     "gptoss:private-serving:rate-limit:design:validate": "node scripts/gptoss/private-serving/private-serving-rate-limit-design-validate.mjs",
     "gptoss:private-serving:operations:validate": "node scripts/gptoss/private-serving/private-serving-operations-readiness-validate.mjs",
+    "gptoss:private-serving:final-readiness:validate": "node scripts/gptoss/private-serving/private-serving-final-readiness-validate.mjs",
     "gptoss:private-serving:auth:validate": "node scripts/gptoss/private-serving/private-serving-auth-validate.mjs",
     "gptoss:private-serving:replay:validate": "node scripts/gptoss/private-serving/private-serving-replay-validate.mjs",
     "gptoss:private-serving:scaffold:validate": "node scripts/gptoss/private-serving/private-serving-scaffold-validate.mjs",
@@ -185,6 +191,8 @@
     "build:workers:only": "cd workers && npm run build:workers && cd ..",
     "test:runtime-integration": "npm --prefix arcanos-ai-runtime run test:integration",
     "mcp:stdio": "node dist/mcp/mcp-stdio.js",
+    "mcp:arcanos-core-advisory": "node dist/mcp/arcanos-core-advisory-stdio.js",
+    "mcp:arcanos-core-advisory:dev": "node --loader ts-node/esm src/mcp/arcanos-core-advisory-stdio.ts",
     "mcp:stdio:dev": "node --loader ts-node/esm src/mcp/mcp-stdio.ts"
   },
   "keywords": [
@@ -250,6 +258,9 @@
   },
   "overrides": {
     "@modelcontextprotocol/sdk": {
+      "express": {
+        "body-parser": "2.3.0"
+      },
       "hono": "4.12.25"
     },
     "express-rate-limit": "https://codeload.github.com/express-rate-limit/express-rate-limit/tar.gz/refs/tags/v8.3.0",

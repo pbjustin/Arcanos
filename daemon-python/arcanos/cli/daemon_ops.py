@@ -37,25 +37,39 @@ def start_daemon_threads(cli: "ArcanosCLI") -> None:
     if cli._daemon_running:
         return
 
-    if not cli.backend_client:
-        return
-
-    if (Config.BACKEND_TOKEN or "") in _PLACEHOLDER_TOKENS:
+    generic_ready = bool(
+        cli.backend_client
+        and (Config.BACKEND_TOKEN or "") not in _PLACEHOLDER_TOKENS
+    )
+    execution_ready = bool(Config.ACTION_PLAN_EXECUTION_PROTOCOL_V2_ENABLED)
+    if not generic_ready and not execution_ready:
         # //audit assumption: placeholder tokens cannot authenticate; risk: repeated 429/noise; invariant: skip thread startup with placeholder token; strategy: guard and log once.
         error_logger.info("[DAEMON] Skipping daemon threads: BACKEND_TOKEN is not configured.")
         return
 
     cli._daemon_running = True
 
-    cli._heartbeat_thread = threading.Thread(target=cli._heartbeat_loop, daemon=True, name="daemon-heartbeat")
-    cli._heartbeat_thread.start()
+    if generic_ready:
+        cli._heartbeat_thread = threading.Thread(target=cli._heartbeat_loop, daemon=True, name="daemon-heartbeat")
+        cli._heartbeat_thread.start()
 
-    cli._command_poll_thread = threading.Thread(
-        target=cli._command_poll_loop,
-        daemon=True,
-        name="daemon-command-poll",
-    )
-    cli._command_poll_thread.start()
+        cli._command_poll_thread = threading.Thread(
+            target=cli._command_poll_loop,
+            daemon=True,
+            name="daemon-command-poll",
+        )
+        cli._command_poll_thread.start()
+
+    if execution_ready:
+        from ..action_plan_execution_runner import action_plan_execution_loop
+
+        cli._action_plan_execution_thread = threading.Thread(
+            target=action_plan_execution_loop,
+            args=(cli,),
+            daemon=True,
+            name="action-plan-execution-poll",
+        )
+        cli._action_plan_execution_thread.start()
 
 
 def heartbeat_loop(cli: "ArcanosCLI") -> None:
@@ -153,8 +167,9 @@ def command_poll_loop(cli: "ArcanosCLI") -> None:
                                 payload=cmd_data["payload"],
                                 issuedAt=cmd_data["issuedAt"],
                             )
-                            cli._handle_daemon_command(command)
-                            command_ids.append(command.id)
+                            handled = cli._handle_daemon_command(command)
+                            if handled is not False:
+                                command_ids.append(command.id)
                         except Exception as exc:
                             error_logger.error(f"[DAEMON] Error handling command {cmd_data.get('id')}: {exc}")
 
@@ -202,7 +217,7 @@ def command_poll_loop(cli: "ArcanosCLI") -> None:
         time.sleep(cli._command_poll_interval)
 
 
-def handle_daemon_command(cli: "ArcanosCLI", command: DaemonCommand) -> None:
+def handle_daemon_command(cli: "ArcanosCLI", command: DaemonCommand) -> bool:
     """
     Purpose: Handle daemon commands delivered from backend polling.
     Inputs/Outputs: typed daemon command; dispatches command side effects.
@@ -210,7 +225,12 @@ def handle_daemon_command(cli: "ArcanosCLI", command: DaemonCommand) -> None:
     """
     command_name = command.name
     command_payload = command.payload or {}
-    cli._append_activity("command", f"{command_name}: {command_payload}")
+    activity_detail = (
+        command_name
+        if command_name == "action_plan"
+        else f"{command_name}: {command_payload}"
+    )
+    cli._append_activity("command", activity_detail)
 
     if command_name == "ping":
         pass
@@ -229,7 +249,7 @@ def handle_daemon_command(cli: "ArcanosCLI", command: DaemonCommand) -> None:
             expected_proposal_id = _hash_command_proposal(command_text.strip(), cwd)
             if proposal_id != expected_proposal_id:
                 cli.console.print("[yellow]Run command rejected: proposalId mismatch or missing[/yellow]")
-                return
+                return True
             cli.handle_run(command_text.strip())
         else:
             cli.console.print("[yellow]Run command missing 'command' payload[/yellow]")
@@ -248,6 +268,11 @@ def handle_daemon_command(cli: "ArcanosCLI", command: DaemonCommand) -> None:
             cli.console.print("[yellow]Notify command missing message[/yellow]")
 
     elif command_name == "action_plan":
+        if not Config.ACTION_PLAN_LEGACY_CHARACTERIZATION_TEST_SEAM:
+            cli.console.print(
+                "[yellow]Legacy action_plan command refused: dedicated execution assignment required[/yellow]"
+            )
+            return False
         if isinstance(command_payload, dict):
             from ..action_plan_handler import handle_action_plan
 
@@ -264,6 +289,8 @@ def handle_daemon_command(cli: "ArcanosCLI", command: DaemonCommand) -> None:
 
     else:
         cli.console.print(f"[yellow]Unsupported command: {command_name}[/yellow]")
+
+    return True
 
 
 def _hash_command_proposal(command_text: str, cwd: str) -> str:
@@ -285,6 +312,9 @@ def stop_daemon_service(cli: "ArcanosCLI") -> None:
         cli._heartbeat_thread.join(timeout=5.0)
     if cli._command_poll_thread:
         cli._command_poll_thread.join(timeout=5.0)
+    execution_thread = getattr(cli, "_action_plan_execution_thread", None)
+    if execution_thread:
+        execution_thread.join(timeout=5.0)
 
 
 __all__ = [

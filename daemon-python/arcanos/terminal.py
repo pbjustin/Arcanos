@@ -207,6 +207,33 @@ class TerminalController:
         except Exception as e:
             raise RuntimeError(f"Failed to execute elevated command: {str(e)}")
 
+    def execute_action_plan_command(
+        self,
+        command: str,
+        *,
+        timeout: int = 30,
+        elevated: bool = False,
+    ) -> Tuple[Optional[str], Optional[str], int]:
+        """Execute a Phase 2E assignment without raw command/error audit fields."""
+        is_safe, _reason = self.is_command_safe(command)
+        if not is_safe:
+            raise PermissionError("ActionPlan terminal policy rejected the command")
+        shell = self._detect_shell()
+        if elevated:
+            return self._execute_elevated(command, shell, timeout)
+        try:
+            result = subprocess.run(
+                self._build_shell_command(shell, command),
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                encoding="utf-8",
+                errors="replace",
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise TimeoutError("ActionPlan command timed out") from exc
+        return result.stdout.strip(), result.stderr.strip(), result.returncode
+
     @handle_errors("executing command")
     def execute(
         self,

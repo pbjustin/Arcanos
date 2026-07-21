@@ -1,0 +1,174 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/action-plan/execution-status.schema.json",
+  "title": "ActionPlan execution status response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "ok",
+    "code",
+    "protocol_version",
+    "execution_realm",
+    "command_id",
+    "plan_id",
+    "run_id",
+    "action_id",
+    "snapshot_id",
+    "state",
+    "terminal_category",
+    "disposition",
+    "timestamps",
+    "acceptance_receipt",
+    "result_location"
+  ],
+  "properties": {
+    "ok": {
+      "const": true
+    },
+    "code": {
+      "const": "ACTION_PLAN_EXECUTION_STATUS"
+    },
+    "protocol_version": {
+      "const": "action-plan-execution-v1"
+    },
+    "execution_realm": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "command_id": {
+      "$ref": "#/$defs/identifier"
+    },
+    "plan_id": {
+      "$ref": "#/$defs/identifier"
+    },
+    "run_id": {
+      "$ref": "#/$defs/identifier"
+    },
+    "action_id": {
+      "$ref": "#/$defs/identifier"
+    },
+    "snapshot_id": {
+      "$ref": "#/$defs/identifier"
+    },
+    "state": {
+      "$ref": "#/$defs/runState"
+    },
+    "terminal_category": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "enum": [
+            "succeeded",
+            "failed",
+            "cancelled",
+            "expired",
+            "superseded"
+          ]
+        }
+      ]
+    },
+    "disposition": {
+      "const": "STATUS_CURRENT"
+    },
+    "timestamps": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requested_at",
+        "claimed_at",
+        "started_at",
+        "completed_at",
+        "cancelled_at",
+        "expired_at",
+        "superseded_at"
+      ],
+      "properties": {
+        "requested_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "claimed_at": {
+          "$ref": "#/$defs/nullableTimestamp"
+        },
+        "started_at": {
+          "$ref": "#/$defs/nullableTimestamp"
+        },
+        "completed_at": {
+          "$ref": "#/$defs/nullableTimestamp"
+        },
+        "cancelled_at": {
+          "$ref": "#/$defs/nullableTimestamp"
+        },
+        "expired_at": {
+          "$ref": "#/$defs/nullableTimestamp"
+        },
+        "superseded_at": {
+          "$ref": "#/$defs/nullableTimestamp"
+        }
+      }
+    },
+    "acceptance_receipt": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/identifier"
+        }
+      ]
+    },
+    "result_location": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/location"
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "location": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^/"
+    },
+    "runState": {
+      "type": "string",
+      "enum": [
+        "REQUESTED",
+        "CLAIMED",
+        "RUNNING",
+        "SUCCEEDED",
+        "FAILED",
+        "CANCELLED",
+        "EXPIRED",
+        "SUPERSEDED"
+      ]
+    },
+    "nullableTimestamp": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "format": "date-time"
+        }
+      ]
+    }
+  }
+}

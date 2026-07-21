@@ -1,0 +1,38 @@
+{
+  "version": "20260717_action_plan_execution_v2",
+  "schemaLabel": "action-plan-execution-v1",
+  "protocolVersion": 2,
+  "snapshotSchemaVersion": 1,
+  "advisoryLockKey": "7289764876769401394",
+  "checksum": "cfa339af4282ce47a955acd08fa3f16e617b4a943111890f1e5b4bd5ba929533",
+  "phases": [
+    {
+      "id": "01_additive_provenance",
+      "path": "01_additive_provenance.sql",
+      "transactional": true
+    },
+    {
+      "id": "02a_action_plan_realm_index",
+      "path": "02a_action_plan_realm_index.sql",
+      "transactional": false,
+      "concurrentIndex": "uq_action_plan_id_execution_realm_v2"
+    },
+    {
+      "id": "02b_action_identity_index",
+      "path": "02b_action_identity_index.sql",
+      "transactional": false,
+      "concurrentIndex": "uq_action_plan_action_plan_id_id_v2"
+    },
+    {
+      "id": "03_execution_protocol_tables",
+      "path": "03_execution_protocol_tables.sql",
+      "transactional": true
+    },
+    {
+      "id": "04_validate_provenance",
+      "path": "04_validate_provenance.sql",
+      "transactional": true
+    }
+  ],
+  "compensationPath": "compensate_local_ephemeral.sql"
+}

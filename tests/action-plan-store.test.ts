@@ -152,6 +152,96 @@ describe('ActionPlan Store', () => {
     });
   });
 
+  describe('execution-result CLEAR decisions', () => {
+    it.each(['allow', 'confirm', 'block'] as const)('persists an explicit %s without remapping it', async decision => {
+      const planId = `decision-plan-${decision}`;
+      const actionId = `decision-action-${decision}`;
+      mockExecutionCreate.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
+        id: `result-${decision}`,
+        ...data,
+        createdAt: new Date('2026-07-17T00:00:00.000Z'),
+      }));
+
+      const result = await createExecutionResult(
+        planId,
+        actionId,
+        'agent-decision',
+        'success',
+        decision,
+      );
+
+      expect(mockExecutionCreate).toHaveBeenCalledWith(expect.objectContaining({
+        data: expect.objectContaining({ clearDecision: decision }),
+      }));
+      expect(result.clearDecision).toBe(decision);
+    });
+
+    it('reuses the first cache-fallback result for a repeated plan/action write', async () => {
+      const planId = 'decision-fallback-plan';
+      const actionId = 'decision-fallback-action';
+      mockExecutionCreate.mockRejectedValue(new Error('synthetic database failure'));
+
+      const first = await createExecutionResult(
+        planId,
+        actionId,
+        'agent-decision',
+        'success',
+        'allow',
+      );
+      const repeated = await createExecutionResult(
+        planId,
+        actionId,
+        'agent-decision',
+        'success',
+        'block',
+      );
+
+      expect(repeated).toBe(first);
+      expect(repeated.clearDecision).toBe('allow');
+      expect(mockExecutionCreate).toHaveBeenCalledTimes(2);
+    });
+
+    it('reuses a successful cached result when a repeated database write is rejected', async () => {
+      const planId = 'decision-success-retry-plan';
+      const actionId = 'decision-success-retry-action';
+      const durableRecord = {
+        id: 'decision-success-retry-result',
+        planId,
+        actionId,
+        agentId: 'agent-decision',
+        status: 'success',
+        output: null,
+        error: null,
+        signature: null,
+        clearDecision: 'allow',
+        createdAt: new Date('2026-07-17T00:00:00.000Z'),
+      };
+      mockExecutionCreate
+        .mockResolvedValueOnce(durableRecord)
+        .mockRejectedValueOnce(new Error('synthetic duplicate rejection'));
+
+      const first = await createExecutionResult(
+        planId,
+        actionId,
+        'agent-decision',
+        'success',
+        'allow',
+      );
+      const repeated = await createExecutionResult(
+        planId,
+        actionId,
+        'agent-decision',
+        'success',
+        'block',
+      );
+
+      expect(first).toEqual(durableRecord);
+      expect(repeated).toBe(first);
+      expect(repeated.clearDecision).toBe('allow');
+      expect(mockExecutionCreate).toHaveBeenCalledTimes(2);
+    });
+  });
+
   describe('cache fallback eviction', () => {
     it('removes execution-result fallback cache when a plan is evicted', async () => {
       mockPrismaCreate.mockRejectedValue(new Error('db unavailable'));

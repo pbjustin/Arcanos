@@ -16,7 +16,6 @@
 
 import express from 'express';
 import type { NextFunction, Request, Response } from 'express';
-import crypto from 'node:crypto';
 import { z } from 'zod';
 import {
   asyncHandler,
@@ -48,6 +47,7 @@ import {
 } from '@services/workerControlService.js';
 import { getEnv } from '@platform/runtime/env.js';
 import { resolveHeader } from '@transport/http/requestHeaders.js';
+import { timingSafeEqualOpaqueSecret } from '@shared/security/opaqueSecret.js';
 
 const router = express.Router();
 
@@ -83,12 +83,6 @@ const dispatchRequestSchema = z.object({
   sourceEndpoint: z.string().trim().min(1).max(64).optional()
 });
 
-function timingSafeEqualString(left: string, right: string): boolean {
-  const leftBuffer = Buffer.from(left);
-  const rightBuffer = Buffer.from(right);
-  return leftBuffer.length === rightBuffer.length && crypto.timingSafeEqual(leftBuffer, rightBuffer);
-}
-
 function extractBearerToken(req: Request): string | null {
   const authHeader = resolveHeader(req.headers, 'authorization')?.trim();
   if (!authHeader) {
@@ -109,7 +103,7 @@ function hasTrustedWorkerHelperToken(req: Request): boolean {
     resolveHeader(req.headers, workerHelperTokenHeader)?.trim()
     ?? extractBearerToken(req);
 
-  return Boolean(providedToken && timingSafeEqualString(providedToken, configuredToken));
+  return timingSafeEqualOpaqueSecret(providedToken, configuredToken);
 }
 
 function isOperatorLightRole(role: string | undefined): boolean {

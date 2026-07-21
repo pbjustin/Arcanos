@@ -5,6 +5,7 @@ import { logger } from "@platform/logging/structuredLogging.js";
 import { isBridgeEnabled } from "@platform/runtime/bridgeEnv.js";
 import { getAutomationAuth } from "@platform/runtime/env.js";
 import { consumeOneTimeToken } from "@core/lib/tokenStore.js";
+import { timingSafeEqualOpaqueSecret } from '@shared/security/opaqueSecret.js';
 import { resolveHeader } from "@transport/http/requestHeaders.js";
 
 const bridgeLogger = logger.child({ module: 'bridge-ipc' });
@@ -40,7 +41,7 @@ function isAutomationAuthorized(req: IncomingMessage): boolean {
       return consumeOneTimeToken(token).ok;
     }
     const provided = resolveHeader(req.headers, headerName);
-    if (provided === secret) {
+    if (timingSafeEqualOpaqueSecret(provided, secret)) {
       return true;
     }
     const token = resolveHeader(req.headers, 'x-arcanos-confirm-token');

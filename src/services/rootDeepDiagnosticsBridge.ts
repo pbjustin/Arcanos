@@ -1,4 +1,3 @@
-import crypto from 'node:crypto';
 import type { Request } from 'express';
 
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
@@ -12,6 +11,7 @@ import {
 } from '@services/workerControlService.js';
 import { buildSafetySelfHealSnapshot } from '@services/selfHealRuntimeInspectionService.js';
 import { arcanosDagRunService } from '@services/arcanosDagRunService.js';
+import { timingSafeEqualOpaqueSecret } from '@shared/security/opaqueSecret.js';
 
 export const ROOT_DEEP_DIAGNOSTICS_ACTION = 'root.deep_diagnostics';
 export const ROOT_DIAGNOSTICS_FORBIDDEN = 'ROOT_DIAGNOSTICS_FORBIDDEN';
@@ -150,17 +150,6 @@ function parseRootDiagnosticGpts(): Set<string> {
   );
 }
 
-function constantTimeEquals(left: string, right: string): boolean {
-  const leftBuffer = Buffer.from(left);
-  const rightBuffer = Buffer.from(right);
-
-  if (leftBuffer.length !== rightBuffer.length) {
-    return false;
-  }
-
-  return crypto.timingSafeEqual(leftBuffer, rightBuffer);
-}
-
 function resolveRequesterIdentity(req: Request): Record<string, unknown> {
   const authUser = (req as RootDiagnosticsRequest).authUser;
 
@@ -207,7 +196,7 @@ export function authorizeRootDeepDiagnosticsRequest(req: Request, gptId: string)
   }
 
   const expectedAuthorizationHeader = `Bearer ${adminToken}`;
-  if (!constantTimeEquals(authorizationHeader, expectedAuthorizationHeader)) {
+  if (!timingSafeEqualOpaqueSecret(authorizationHeader, expectedAuthorizationHeader)) {
     return { allowed: false, reason: 'authorization_mismatch' };
   }
 

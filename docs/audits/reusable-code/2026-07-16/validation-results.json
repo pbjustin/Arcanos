@@ -1,0 +1,309 @@
+{
+  "sourceCommit": "462e279f264372d42be4c9781a98fe72b6f498a5",
+  "classificationRule": "Results in this file were captured before characterization-test edits. Existing nonzero results are baseline failures, not regressions.",
+  "executionShell": "PowerShell 7",
+  "testEnvironment": {
+    "prefix": "$env:NODE_ENV='test'; $env:FORCE_MOCK='true';",
+    "ignoredEnvFilePresent": true,
+    "ignoredEnvFilePath": ".env.test",
+    "valuesRecorded": false,
+    "variableNames": [
+      "AI_MODEL",
+      "ALLOW_MOCK_OPENAI",
+      "DISABLE_EXTERNAL_CALLS",
+      "LOG_LEVEL",
+      "NODE_ENV",
+      "OPENAI_API_KEY",
+      "REDIS_SHARED_METRICS_ENABLED",
+      "RUN_WORKERS",
+      "USE_MOCK_SERVICES"
+    ]
+  },
+  "passing": [
+    {
+      "command": "npm run build",
+      "durationMs": 16063,
+      "suitesPassed": null,
+      "testsPassed": null,
+      "testsFailed": 0,
+      "testsSkipped": null,
+      "notes": "Package, worker, backend TypeScript, alias, asset, and configured boundary build stages passed."
+    },
+    {
+      "command": "npm run type-check",
+      "durationMs": 11504,
+      "suitesPassed": null,
+      "testsPassed": null,
+      "testsFailed": 0,
+      "testsSkipped": null
+    },
+    {
+      "command": "npm run lint",
+      "durationMs": 11649,
+      "suitesPassed": null,
+      "testsPassed": null,
+      "testsFailed": 0,
+      "testsSkipped": null,
+      "notes": "Passed with 92 pre-existing warnings and zero errors."
+    },
+    {
+      "command": "$env:NODE_ENV='test'; $env:FORCE_MOCK='true'; npm test",
+      "durationMs": 68968,
+      "suitesPassed": 363,
+      "suitesFailed": 0,
+      "suitesSkipped": 2,
+      "testsPassed": 3271,
+      "testsFailed": 0,
+      "testsSkipped": 4,
+      "notes": "Initial coverage run reported 3313/3313 statements and lines, 62/62 functions, and 213/213 branches."
+    },
+    {
+      "command": "$env:NODE_ENV='test'; $env:FORCE_MOCK='true'; npm run test:integration",
+      "durationMs": 8316,
+      "suitesPassed": 5,
+      "suitesFailed": 0,
+      "suitesSkipped": 1,
+      "testsPassed": 84,
+      "testsFailed": 0,
+      "testsSkipped": 1
+    },
+    {
+      "command": "$env:NODE_ENV='test'; $env:FORCE_MOCK='true'; npm run test:all",
+      "durationMs": 75227,
+      "suitesPassed": null,
+      "testsPassed": null,
+      "testsFailed": 0,
+      "testsSkipped": null,
+      "notes": "Combined root unit and integration sweeps passed. Unit coverage branch denominator was 212."
+    },
+    {
+      "command": "cd daemon-python; python -m pytest tests -q",
+      "durationMs": 5224,
+      "suitesPassed": null,
+      "testsPassed": 131,
+      "testsFailed": 0,
+      "testsSkipped": 0
+    },
+    {
+      "command": "python -m pytest legacy -q",
+      "durationMs": 685,
+      "suitesPassed": null,
+      "testsPassed": 3,
+      "testsFailed": 0,
+      "testsSkipped": 0
+    },
+    {
+      "command": "npm --prefix arcanos-ai-runtime test",
+      "durationMs": 477,
+      "suitesPassed": 1,
+      "testsPassed": 1,
+      "testsFailed": 0,
+      "testsSkipped": 0
+    },
+    {
+      "command": "$env:NODE_ENV='test'; $env:FORCE_MOCK='true'; npm run test:runtime-integration",
+      "durationMs": 6430,
+      "suitesPassed": 1,
+      "testsPassed": 6,
+      "testsFailed": 0,
+      "testsSkipped": 0
+    },
+    {
+      "command": "node scripts/run-jest.mjs --testPathPatterns='(memorySync-worker|worker-task-queue|worker-runtime-repository|worker-execution-limits|worker-duplication-suppression)' --coverage=false --runInBand",
+      "durationMs": 6108,
+      "suitesPassed": 5,
+      "testsPassed": 19,
+      "testsFailed": 0,
+      "testsSkipped": 0
+    },
+    {
+      "command": "node scripts/run-jest.mjs --testPathPatterns='(api-reusable-code.route|modules.legacy-route|arcanos-pipeline-route-gate|legacy-gpt-route-gate)' --coverage=false --runInBand",
+      "durationMs": 5868,
+      "suitesPassed": 5,
+      "testsPassed": 10,
+      "testsFailed": 0,
+      "testsSkipped": 0
+    },
+    {
+      "command": "npm run check:boundaries",
+      "durationMs": 430,
+      "suitesPassed": null,
+      "testsPassed": null,
+      "testsFailed": 0,
+      "testsSkipped": null,
+      "notes": "Passes, but currently invokes only the CEF scanner rather than Madge or scripts/check-boundaries.ts."
+    },
+    {
+      "command": "npm run check:cef-layer-access && npm run check:routing-boundaries",
+      "durationMs": 817,
+      "suitesPassed": null,
+      "testsPassed": null,
+      "testsFailed": 0,
+      "testsSkipped": null
+    },
+    {
+      "command": "npm run validate:railway",
+      "durationMs": 414,
+      "suitesPassed": null,
+      "testsPassed": null,
+      "testsFailed": 0,
+      "testsSkipped": null,
+      "notes": "Static/non-destructive compatibility validation only; no deployment or Railway mutation."
+    },
+    {
+      "command": "npm run validate:backend-cli:contract && npm run validate:backend-cli:offline",
+      "durationMs": 1535,
+      "suitesPassed": null,
+      "testsPassed": null,
+      "testsFailed": 0,
+      "testsSkipped": null
+    },
+    {
+      "command": "npm run probe",
+      "durationMs": 405,
+      "suitesPassed": null,
+      "testsPassed": null,
+      "testsFailed": 0,
+      "testsSkipped": null
+    },
+    {
+      "command": "npm run guard:commit",
+      "durationMs": 461,
+      "suitesPassed": null,
+      "testsPassed": null,
+      "testsFailed": 0,
+      "testsSkipped": null,
+      "notes": "No staged files existed at baseline."
+    },
+    {
+      "command": "node scripts/run-jest.mjs --coverage=false --silent --maxWorkers=50%",
+      "durationMs": 21227,
+      "suitesPassed": 363,
+      "suitesFailed": 0,
+      "suitesSkipped": 2,
+      "testsPassed": 3271,
+      "testsFailed": 0,
+      "testsSkipped": 4
+    },
+    {
+      "command": "node scripts/run-jest.mjs --coverage --coverageReporters=json-summary --coverageReporters=lcov --coverageReporters=text-summary --maxWorkers=50% --silent",
+      "durationMs": 70267,
+      "suitesPassed": 363,
+      "suitesFailed": 0,
+      "suitesSkipped": 2,
+      "testsPassed": 3271,
+      "testsFailed": 0,
+      "testsSkipped": 4,
+      "notes": "Fresh JSON summary: 3313/3313 statements and lines, 62/62 functions, 212/212 branches."
+    },
+    {
+      "command": "node scripts/run-jest.mjs --coverage --coverageReporters=json-summary --coverageReporters=lcov --coverageReporters=text-summary --maxWorkers=50% --silent (repeat)",
+      "durationMs": 61952,
+      "suitesPassed": 363,
+      "suitesFailed": 0,
+      "suitesSkipped": 2,
+      "testsPassed": 3271,
+      "testsFailed": 0,
+      "testsSkipped": 4,
+      "notes": "Byte-relevant totals repeated at 212/212 branches."
+    }
+  ],
+  "failing": [
+    {
+      "command": "npx --no-install tsc --noEmit --noUnusedLocals --noUnusedParameters --pretty false",
+      "durationMs": 6530,
+      "exitCode": 2,
+      "failureCount": 66,
+      "existedBeforeEdits": true,
+      "notes": "Pre-existing unused declaration/import diagnostics; preserved in unused-declarations.txt."
+    },
+    {
+      "command": "npx --no-install madge --circular --extensions ts --ts-config tsconfig.json src",
+      "durationMs": 4906,
+      "exitCode": 1,
+      "failureCount": 63,
+      "existedBeforeEdits": true,
+      "notes": "Expected nonzero exit because 63 circular paths were detected and preserved."
+    }
+  ],
+  "skipped": [
+    {
+      "surface": "Root Jest baseline",
+      "suitesSkipped": 2,
+      "testsSkipped": 4,
+      "classification": "Runner-reported skips; not failures."
+    },
+    {
+      "surface": "Focused integration baseline",
+      "suitesSkipped": 1,
+      "testsSkipped": 1,
+      "classification": "Runner-reported skips; not failures."
+    }
+  ],
+  "flakyOrInconsistent": [
+    {
+      "surface": "Configured-scope branch denominator",
+      "observations": [
+        "Initial npm test run: 213/213 branches.",
+        "Fresh JSON-summary run: 212/212 branches.",
+        "Identical repeated JSON-summary run: 212/212 branches."
+      ],
+      "classification": "Inconsistent baseline instrumentation/reporting; no test failure.",
+      "existedBeforeEdits": true
+    },
+    {
+      "command": "node scripts/run-jest.mjs --coverage=false --runInBand --silent",
+      "durationMs": 184045,
+      "result": "timed out",
+      "notes": "Supplemental serial count run exceeded the command budget; the parallel main sweep passed and no Jest child process remained."
+    }
+  ],
+  "notAvailable": [
+    {
+      "check": "Local gitleaks scan",
+      "reason": "gitleaks is not installed and the audit prohibited network installation."
+    },
+    {
+      "check": "Local TruffleHog scan",
+      "reason": "trufflehog is not installed and the audit prohibited network installation."
+    },
+    {
+      "check": "Local detect-secrets scan",
+      "reason": "detect-secrets is not installed and the audit prohibited network installation."
+    },
+    {
+      "check": "Local pip-audit scan",
+      "reason": "pip-audit is not installed and the audit prohibited network installation."
+    },
+    {
+      "check": "Local license-checker scan",
+      "reason": "license-checker is not installed and the audit prohibited network installation."
+    },
+    {
+      "check": "Package-local tests for protocol, CLI, runtime, OpenAI, and workers workspaces",
+      "reason": "Those workspaces expose build scripts but no package-local test script. CLI and worker behavior is covered by root Jest; runtime has its separate node:test package."
+    },
+    {
+      "check": "db:init, db:patch, guide:generate, test:doc-workflow, audit*, audit:python*, sync:auto",
+      "reason": "The current checkout is missing referenced script targets, as documented in AGENTS.md."
+    },
+    {
+      "check": "Repository-wide route uniqueness command",
+      "reason": "No existing command or test provides a complete mount-graph manifest."
+    }
+  ],
+  "notRun": [
+    {
+      "command": "railway up",
+      "reason": "Deployment was explicitly prohibited."
+    },
+    {
+      "command": "npm audit",
+      "reason": "Would require registry/network access; CI owns this check."
+    },
+    {
+      "command": "Production smoke and post-deploy Railway watchdog commands",
+      "reason": "No deployment occurred."
+    }
+  ]
+}

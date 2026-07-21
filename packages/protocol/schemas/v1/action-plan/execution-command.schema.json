@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/action-plan/execution-command.schema.json",
+  "title": "ActionPlan execution command body",
+  "description": "Command-only request body. Result fields and every other caller-supplied field are rejected.",
+  "type": "object",
+  "maxProperties": 0,
+  "additionalProperties": false
+}

@@ -828,6 +828,9 @@ The scaffold status is:
 - Phase 5.9 production key-management design and key-rotation runbook exist,
   but no real keys are loaded, no environment key reads or KMS integration
   exist, and production key management is not implemented
+- Phase 5.12 final architecture readiness review permits bounded Phase 6
+  internal implementation planning and work only; production and every
+  exposure path remain blocked
 - durable replay store and persistent nonce ledger are not implemented
 - rate limiting is in-memory policy only and not durable production state
 - response shaping emits only the safe effective-router envelope
@@ -868,6 +871,8 @@ Expected readiness:
   "operationsReadinessDesigned": true,
   "incidentResponseReady": true,
   "productionGoNoGoChecklistReady": true,
+  "finalArchitectureReadinessReviewed": true,
+  "phase6ImplementationReady": true,
   "productionGoAllowed": false,
   "responseShapingScaffoldReady": true,
   "publicServerCreated": false,
@@ -892,6 +897,21 @@ remain required.
 Phase 5.11 adds operations readiness, incident response, and go/no-go checklist
 validation only; `productionGoAllowed:false` remains required until every
 production serving gate is implemented and reviewed.
+
+Phase 5.12 completes the final private-serving architecture readiness review:
+
+```bash
+npm run gptoss:private-serving:final-readiness:validate
+```
+
+`finalArchitectureReadinessReviewed:true` and
+`phase6ImplementationReady:true` mean Phase 6 may begin bounded internal
+implementation planning and work. Private serving remains unimplemented and
+unexposed. No server, listener, endpoint, live DB path, Railway command path,
+OpenAI path, training path, vLLM path, secret read, KMS integration, deployment,
+or Custom GPT bridge is approved. `productionGoAllowed:false`,
+`privateServingImplemented:false`, `privateServingExposed:false`,
+`cloudReady:false`, and `customGptReady:false` remain required.
 
 ## Dataset Gate
 

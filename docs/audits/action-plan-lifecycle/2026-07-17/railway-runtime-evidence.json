@@ -1,0 +1,136 @@
+{
+  "capturedDate": "2026-07-17",
+  "cliVersion": "4.30.2",
+  "commands": [
+    "railway --version",
+    "railway status",
+    "railway status --json",
+    "railway environment config --json",
+    "railway variables --service <service> --environment production --json",
+    "railway deployment list --service <service> --environment production --limit 10 --json",
+    "railway logs --service <service> --environment production --since 7d --lines <bounded> --filter <fixed-term> --json"
+  ],
+  "deploymentOccurred": false,
+  "environment": "production",
+  "logInspection": {
+    "lookback": "7d",
+    "rawMessagesRetained": false,
+    "searches": [
+      "ActionPlan",
+      "/plans",
+      "blocked",
+      "confirmation",
+      "duplicate execution",
+      "plan execute",
+      "plans.execute",
+      "state invalid",
+      "transition forbidden",
+      "version conflict"
+    ],
+    "webLifecycleMatches": 0,
+    "workerGenericClearMatches": 2,
+    "workerLifecycleMatches": 0
+  },
+  "mutationChecks": {
+    "deploymentIdsUnchanged": true,
+    "protectedEndpointsCalled": false,
+    "railwayConfigurationChanged": false,
+    "servicesRestarted": false,
+    "variablesChanged": false
+  },
+  "project": "Arcanos",
+  "runtimeOwnership": {
+    "actionPlanHttpAndMcp": "ARCANOS V2",
+    "actionPlanPollingDaemonOnRailway": false,
+    "pythonRuntime": "ARCANOS V2 loopback local_bridge only",
+    "workerJobs": "ARCANOS Worker"
+  },
+  "services": [
+    {
+      "deploymentCommit": "7f2a85c1c7c2338f8e472482d1b43bf9d0cf3f41",
+      "deploymentId": "d5b83b36-7cd3-476d-a565-9ddeda807fe6",
+      "deploymentStatus": "SUCCESS",
+      "name": "ARCANOS V2",
+      "processKind": "web",
+      "replicas": 1,
+      "sourceProvenance": "CLI artifact; commit recovered from sanitized deployment metadata"
+    },
+    {
+      "deploymentCommit": "7f2a85c1c7c2338f8e472482d1b43bf9d0cf3f41",
+      "deploymentId": "a2563dec-7c6b-461c-ba0b-304cf7deb4dc",
+      "deploymentStatus": "SUCCESS",
+      "name": "ARCANOS Worker",
+      "processKind": "worker",
+      "replicas": 1,
+      "sourceProvenance": "Railway Git deployment metadata"
+    },
+    {
+      "name": "Postgres-BTrN",
+      "role": "database"
+    },
+    {
+      "name": "Redis-lQbV",
+      "role": "cache"
+    }
+  ],
+  "sourceHistory": {
+    "deployedContainsPhase2B": false,
+    "deployedContainsPhase2C": false,
+    "phase2BCommit": "0a9ba09755b1af77f1cf7712415986bb83aad60e",
+    "phase2CCommit": "d9830a5f545902d70fe33d3f05f1b1db39a4064a"
+  },
+  "variablePresence": [
+    {
+      "environment": "production",
+      "service": "ARCANOS V2",
+      "set": [
+        "ARCANOS_CLI_BRIDGE_ENABLED",
+        "ARCANOS_CLI_BRIDGE_TOKEN",
+        "ARCANOS_CLI_BRIDGE_URL",
+        "ARCANOS_CLI_COMMAND_TIMEOUT_MS",
+        "ARCANOS_PROCESS_KIND",
+        "DATABASE_URL",
+        "MCP_ALLOW_MODULE_ACTIONS",
+        "OPENAI_ACTION_SHARED_SECRET",
+        "OPENAI_API_KEY",
+        "PREDICTIVE_AUTO_EXECUTE",
+        "REDIS_URL",
+        "RUN_WORKERS"
+      ],
+      "structurallyPlausible": true,
+      "unset": [
+        "BACKEND_TOKEN",
+        "ENABLE_ACTION_PLANS",
+        "ENABLE_CLEAR_2",
+        "JOB_WORKER_CONCURRENCY"
+      ]
+    },
+    {
+      "environment": "production",
+      "service": "ARCANOS Worker",
+      "set": [
+        "ARCANOS_PROCESS_KIND",
+        "DATABASE_URL",
+        "JOB_WORKER_CONCURRENCY",
+        "OPENAI_ACTION_SHARED_SECRET",
+        "OPENAI_API_KEY",
+        "REDIS_URL",
+        "RUN_WORKERS"
+      ],
+      "structurallyPlausible": true,
+      "unset": [
+        "ARCANOS_CLI_BRIDGE_ENABLED",
+        "ARCANOS_CLI_BRIDGE_TOKEN",
+        "ARCANOS_CLI_BRIDGE_URL",
+        "ARCANOS_CLI_COMMAND_TIMEOUT_MS",
+        "BACKEND_TOKEN",
+        "ENABLE_ACTION_PLANS",
+        "ENABLE_CLEAR_2",
+        "MCP_ALLOW_MODULE_ACTIONS",
+        "PREDICTIVE_AUTO_EXECUTE"
+      ]
+    }
+  ],
+  "valuesRecorded": false,
+  "workspace": "pbjustin's Projects"
+}

@@ -4,7 +4,7 @@
  * Manages zero-trust agent registration, capability tracking, and heartbeat.
  */
 
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, type Prisma } from '@prisma/client';
 import type { AgentRecord, AgentRegistration } from '@shared/types/actionPlan.js';
 import { aiLogger } from '@platform/logging/structuredLogging.js';
 
@@ -15,6 +15,18 @@ function getPrisma(): PrismaClient {
     prisma = new PrismaClient();
   }
   return prisma;
+}
+
+function safeThrownClass(error: unknown): string {
+  try {
+    if (error instanceof TypeError) return 'TypeError';
+    if (error instanceof RangeError) return 'RangeError';
+    if (error instanceof SyntaxError) return 'SyntaxError';
+    if (error instanceof Error) return 'Error';
+    return 'ThrownValue';
+  } catch {
+    return 'ThrownValue';
+  }
 }
 
 // --- In-memory cache ---
@@ -42,7 +54,7 @@ export async function registerAgent(input: AgentRegistration): Promise<AgentReco
     module: 'agentRegistry',
     agentId: record.id,
     role: record.role,
-    capabilities: record.capabilities,
+    capabilityCount: record.capabilities.length,
   });
 
   return record;
@@ -65,10 +77,27 @@ export async function getAgent(agentId: string): Promise<AgentRecord | null> {
     aiLogger.warn('Failed to fetch agent from DB; falling back to cache', {
       module: 'agentRegistry',
       agentId,
-      error: String(error)
+      errorCode: 'AGENT_REGISTRY_READ_FAILED',
+      errorClass: safeThrownClass(error)
     });
     return null;
   }
+}
+
+/**
+ * Read an agent from durable storage for Phase 2E authorization decisions.
+ *
+ * This path deliberately bypasses the legacy cache. A persistence failure is
+ * allowed to reject so the authenticated HTTP boundary can fail closed.
+ */
+export async function getAuthoritativeAgent(agentId: string): Promise<AgentRecord | null> {
+  const db = getPrisma();
+  const agent = await db.agent.findUnique({ where: { id: agentId } });
+  if (!agent) return null;
+
+  const record = agent as unknown as AgentRecord;
+  agentCache.set(agentId, record);
+  return record;
 }
 
 export async function updateHeartbeat(agentId: string): Promise<AgentRecord | null> {
@@ -87,7 +116,8 @@ export async function updateHeartbeat(agentId: string): Promise<AgentRecord | nu
     aiLogger.error('Failed to update heartbeat', {
       module: 'agentRegistry',
       agentId,
-      error: String(error)
+      errorCode: 'AGENT_REGISTRY_HEARTBEAT_FAILED',
+      errorClass: safeThrownClass(error)
     });
     return null;
   }
@@ -110,7 +140,8 @@ export async function updateAgentStatus(agentId: string, status: string): Promis
       module: 'agentRegistry',
       agentId,
       status,
-      error: String(error)
+      errorCode: 'AGENT_REGISTRY_STATUS_UPDATE_FAILED',
+      errorClass: safeThrownClass(error)
     });
     return null;
   }
@@ -130,11 +161,29 @@ export async function listAgents(): Promise<AgentRecord[]> {
     //audit Assumption: listing should remain available during DB outages; risk: stale/incomplete view; invariant: response stays shape-compatible; handling: return cached agents.
     aiLogger.warn('Failed to list agents from DB; returning cached agents', {
       module: 'agentRegistry',
-      error: String(error),
+      errorCode: 'AGENT_REGISTRY_LIST_FAILED',
+      errorClass: safeThrownClass(error),
       cacheSize: agentCache.size
     });
     return Array.from(agentCache.values());
   }
+}
+
+/**
+ * List agents from durable storage for the authenticated Phase 2E boundary.
+ *
+ * Unlike the compatibility list operation, this never returns cached data
+ * when the database is unavailable.
+ */
+export async function listAuthoritativeAgents(): Promise<AgentRecord[]> {
+  const db = getPrisma();
+  const agents = await db.agent.findMany({ orderBy: { createdAt: 'desc' } });
+
+  for (const agent of agents) {
+    agentCache.set(agent.id, agent as unknown as AgentRecord);
+  }
+
+  return agents as unknown as AgentRecord[];
 }
 
 /**
@@ -162,17 +211,58 @@ export async function grantCapabilities(agentId: string, capabilities: string[])
     });
     const record = updated as unknown as AgentRecord;
     agentCache.set(record.id, record);
-    aiLogger.info('Capabilities granted', { module: 'agentRegistry', agentId, capabilities });
+    aiLogger.info('Capabilities granted', {
+      module: 'agentRegistry',
+      agentId,
+      capabilityCount: capabilities.length,
+    });
     return record;
   } catch (error) {
     aiLogger.error('Failed to grant capabilities', {
       module: 'agentRegistry',
       agentId,
-      capabilities,
-      error: String(error)
+      capabilityCount: capabilities.length,
+      errorCode: 'AGENT_REGISTRY_CAPABILITY_GRANT_FAILED',
+      errorClass: safeThrownClass(error)
     });
     return null;
   }
+}
+
+/**
+ * Grant capabilities using a durable serializable transaction.
+ *
+ * Prisma parameterizes both the identifier and capability values. The
+ * transaction prevents a successful response from being based on cache state
+ * and makes concurrent read/merge/write grants detect serialization conflicts
+ * instead of silently losing an update.
+ */
+export async function grantAuthoritativeCapabilities(
+  agentId: string,
+  capabilities: string[],
+): Promise<AgentRecord | null> {
+  const db = getPrisma();
+  const record = await db.$transaction(async (transaction: Prisma.TransactionClient) => {
+    const current = await transaction.agent.findUnique({ where: { id: agentId } });
+    if (!current) return null;
+
+    const merged = Array.from(new Set([...(current.capabilities || []), ...capabilities])).sort();
+    const updated = await transaction.agent.update({
+      where: { id: agentId },
+      data: { capabilities: merged },
+    });
+    return updated as unknown as AgentRecord;
+  }, { isolationLevel: 'Serializable' });
+
+  if (record) {
+    agentCache.set(record.id, record);
+    aiLogger.info('Authoritative capabilities granted', {
+      module: 'agentRegistry',
+      agentId: record.id,
+      capabilityCount: capabilities.length,
+    });
+  }
+  return record;
 }
 
 export async function warmAgentCache(): Promise<void> {

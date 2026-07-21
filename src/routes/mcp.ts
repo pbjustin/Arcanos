@@ -7,18 +7,54 @@ import {
 } from '../mcp/context.js';
 import {
   createRateLimitMiddleware,
-  getRequestActorKey
+  getRequestActorKey,
+  getRequestClientAddress,
 } from '@platform/runtime/security.js';
-import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { sendInternalErrorPayload } from '@shared/http/index.js';
+import { apiLogger } from '@platform/logging/structuredLogging.js';
 
 const router = express.Router();
-const mcpHttpRateLimit = createRateLimitMiddleware({
-  bucketName: 'mcp-http',
+const mcpHttpClientRateLimit = createRateLimitMiddleware({
+  bucketName: 'mcp-http-client',
   maxRequests: 300,
   windowMs: 15 * 60 * 1000,
-  keyGenerator: (req) => `${getRequestActorKey(req)}:transport:http`
+  keyGenerator: (req) => `client:${getRequestClientAddress(req)}:transport:http`,
 });
+const mcpHttpCredentialRateLimit = createRateLimitMiddleware({
+  bucketName: 'mcp-http-credential',
+  maxRequests: 300,
+  windowMs: 15 * 60 * 1000,
+  keyGenerator: (req) => `client:${getRequestClientAddress(req)}:${getRequestActorKey(req)}:transport:http`,
+});
+
+function safeThrownClass(error: unknown): string {
+  if (error instanceof TypeError) return 'TypeError';
+  if (error instanceof RangeError) return 'RangeError';
+  if (error instanceof SyntaxError) return 'SyntaxError';
+  if (error instanceof Error) return 'Error';
+  if (error === null) return 'ThrownNull';
+  if (error === undefined) return 'ThrownUndefined';
+  if (typeof error === 'string') return 'ThrownString';
+  if (typeof error === 'number') return 'ThrownNumber';
+  if (typeof error === 'boolean') return 'ThrownBoolean';
+  return 'ThrownObject';
+}
+
+function logMcpTransportFailure(req: Request, error: unknown): void {
+  try {
+    apiLogger.error('MCP transport failed', {
+      module: 'mcp',
+      errorCode: 'MCP_OPERATION_FAILED',
+      operation: 'mcp.http.request',
+      errorClass: safeThrownClass(error),
+      requestId: req.requestId ?? 'unknown',
+      traceId: req.traceId ?? req.requestId ?? 'unknown',
+      retryable: false,
+    });
+  } catch {
+    // Diagnostics must not mask the stable transport response.
+  }
+}
 
 // The MCP transport handler needs raw JSON body.
 router.use(express.json({ limit: process.env.MCP_HTTP_BODY_LIMIT ?? '1mb' }));
@@ -36,18 +72,26 @@ async function buildMcpServerForRequest() {
   return buildMcpServer(proxyContext);
 }
 
-router.post('/mcp', mcpAuthMiddleware, mcpHttpRateLimit, async (req: Request, res: Response) => {
+router.post('/mcp', (_req, res, next) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Pragma', 'no-cache');
+  next();
+}, mcpHttpClientRateLimit, mcpHttpCredentialRateLimit, mcpAuthMiddleware, async (req: Request, res: Response) => {
   try {
     const ctx = buildMcpRequestContext(req);
-    //audit Assumption: streamable transport instances are request-scoped; risk: shared transport state causes subsequent MCP calls to fail; invariant: each request gets a fresh transport; handling: build isolated server/transport pair per request.
-    const { transport } = await buildMcpServerForRequest();
-
     await runWithMcpRequestContext(ctx, async () => {
+      //audit Assumption: streamable transport instances are request-scoped; risk: shared transport state causes subsequent MCP calls to fail; invariant: each request gets a fresh transport; handling: build isolated server/transport pair inside the authenticated request context.
+      const { transport } = await buildMcpServerForRequest();
       await transport.handleRequest(req, res, req.body);
     });
   } catch (error) {
-    const message = resolveErrorMessage(error);
-    sendInternalErrorPayload(res, { error: message });
+    logMcpTransportFailure(req, error);
+    if (!res.headersSent) {
+      sendInternalErrorPayload(res, {
+        error: 'MCP_OPERATION_FAILED',
+        message: 'MCP operation failed.',
+      });
+    }
   }
 });
 

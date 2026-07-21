@@ -104,6 +104,28 @@ describe('custom GPT OpenAPI contract route', () => {
     expect(response.body.paths?.['/jobs/{jobId}']?.get?.operationId).toBe('getJobStatus');
   });
 
+  it('serves the authenticated ActionPlan execution contract with no-store caching', async () => {
+    const response = await request(buildApp())
+      .get('/contracts/action_plan_execution.openapi.v1.json');
+
+    expect(response.status).toBe(200);
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(response.body.openapi).toBe('3.1.0');
+    expect(response.body.paths?.['/plans/{planId}/execute']?.post?.operationId)
+      .toBe('requestActionPlanExecution');
+    expect(response.body.paths?.['/plans/{planId}/executions/{runId}/result']?.post?.operationId)
+      .toBe('submitActionPlanExecutionResult');
+    for (const pathItem of Object.values(response.body.paths ?? {})) {
+      for (const operation of Object.values(pathItem as Record<string, unknown>)) {
+        const typed = operation as { operationId?: string; security?: unknown[] };
+        if (typed.operationId) {
+          expect(typed.security).toBeDefined();
+          expect(typed.security).not.toHaveLength(0);
+        }
+      }
+    }
+  });
+
   it('serves the Custom GPT bridge OpenAPI contract with the smoke action documented', async () => {
     const response = await request(buildApp())
       .get('/openapi/custom-gpt-bridge.yaml');

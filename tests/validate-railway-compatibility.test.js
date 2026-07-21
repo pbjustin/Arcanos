@@ -35,6 +35,16 @@ function buildMinimalRailwayConfig(overrides = {}) {
           ARCANOS_PROCESS_KIND: '$ARCANOS_PROCESS_KIND',
         },
       },
+      pr: {
+        deploy: {
+          startCommand: 'node scripts/start-railway-service.mjs --pr-preview-safe',
+          preDeployCommand: null,
+          healthcheckPath: '/health',
+          cronSchedule: null,
+          restartPolicyType: 'NEVER',
+          restartPolicyMaxRetries: null,
+        },
+      },
     },
     ...overrides,
   };
@@ -72,6 +82,16 @@ describe('validate-railway-compatibility', () => {
               ARCANOS_PROCESS_KIND: 'sometimes',
             },
           },
+          pr: {
+            deploy: {
+              startCommand: 'node scripts/start-railway-service.mjs --pr-preview-safe',
+              preDeployCommand: null,
+              healthcheckPath: '/health',
+              cronSchedule: null,
+              restartPolicyType: 'NEVER',
+              restartPolicyMaxRetries: null,
+            },
+          },
         },
       }),
     );
@@ -82,6 +102,44 @@ describe('validate-railway-compatibility', () => {
         expect.stringContaining('environments.production.variables.ARCANOS_PROCESS_KIND'),
       ]),
     );
+  });
+
+  it('rejects missing or weakened native PR preview overrides', () => {
+    const missingPreviewErrors = validateConfig(buildMinimalRailwayConfig({
+      environments: {
+        production: buildMinimalRailwayConfig().environments.production,
+      },
+    }));
+    expect(missingPreviewErrors).toEqual(expect.arrayContaining([
+      expect.stringContaining('environments.pr.deploy'),
+    ]));
+
+    const weakenedPreviewErrors = validateConfig(buildMinimalRailwayConfig({
+      environments: {
+        production: buildMinimalRailwayConfig().environments.production,
+        pr: {
+          variables: { FORCE_MOCK: 'true' },
+          deploy: {
+            startCommand: 'node scripts/start-railway-service.mjs',
+            preDeployCommand: 'node scripts/action-plan-execution-migration.mjs --apply',
+            healthcheckPath: '/healthz',
+            cronSchedule: '*/5 * * * *',
+            restartPolicyType: 'ON_FAILURE',
+            restartPolicyMaxRetries: 10,
+          },
+        },
+      },
+    }));
+
+    expect(weakenedPreviewErrors).toEqual(expect.arrayContaining([
+      expect.stringContaining('environments.pr.variables'),
+      expect.stringContaining('--pr-preview-safe'),
+      expect.stringContaining('preDeployCommand'),
+      expect.stringContaining('healthcheckPath'),
+      expect.stringContaining('cronSchedule'),
+      expect.stringContaining('restartPolicyType'),
+      expect.stringContaining('restartPolicyMaxRetries'),
+    ]));
   });
 
   it('still requires documentation coverage for optional production settings', () => {

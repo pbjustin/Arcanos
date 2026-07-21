@@ -1,0 +1,1760 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "ARCANOS ActionPlan Execution Protocol",
+    "version": "1.0.0",
+    "description": "Authenticated action-level execution command, claim, start, status, and bounded result-evidence contract. Execution commands never accept results, and result submission never initiates execution."
+  },
+  "tags": [
+    {
+      "name": "ActionPlan execution",
+      "description": "Phase 2E action-level execution ownership operations."
+    }
+  ],
+  "paths": {
+    "/plans/{planId}/execute": {
+      "post": {
+        "tags": [
+          "ActionPlan execution"
+        ],
+        "operationId": "requestActionPlanExecution",
+        "summary": "Request execution runs for an approved ActionPlan",
+        "description": "Command-only operation. It creates or replays one authoritative run per eligible action and never accepts terminal result evidence.",
+        "security": [
+          {
+            "ActionPlanRequesterBearer": []
+          },
+          {
+            "ActionPlanOperatorBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PlanId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmptyOperationBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Execution command accepted or idempotently replayed.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionCommandResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/Unprocessable"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/action-plan-executions/claim-next": {
+      "post": {
+        "tags": [
+          "ActionPlan execution"
+        ],
+        "operationId": "claimNextActionPlanExecution",
+        "summary": "Claim the next run assigned to this executor instance",
+        "security": [
+          {
+            "ActionPlanExecutorBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmptyOperationBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Assigned run claimed or safely recovered.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionClaimResponse"
+                }
+              }
+            }
+          },
+          "204": {
+            "description": "No eligible assigned work. The idempotency key is not consumed."
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/plans/{planId}/executions/{runId}/claim": {
+      "post": {
+        "tags": [
+          "ActionPlan execution"
+        ],
+        "operationId": "claimActionPlanExecution",
+        "summary": "Claim or recover one exact assigned run",
+        "security": [
+          {
+            "ActionPlanExecutorBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PlanId"
+          },
+          {
+            "$ref": "#/components/parameters/RunId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmptyOperationBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Run claimed or safely recovered.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionClaimResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/plans/{planId}/executions/{runId}/start": {
+      "post": {
+        "tags": [
+          "ActionPlan execution"
+        ],
+        "operationId": "startActionPlanExecution",
+        "summary": "Record start before the assigned executor performs a side effect",
+        "security": [
+          {
+            "ActionPlanExecutorBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PlanId"
+          },
+          {
+            "$ref": "#/components/parameters/RunId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmptyOperationBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Run started or idempotently replayed.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionStartResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/plans/{planId}/executions/{runId}/result": {
+      "post": {
+        "tags": [
+          "ActionPlan execution"
+        ],
+        "operationId": "submitActionPlanExecutionResult",
+        "summary": "Submit bounded terminal evidence for one existing run",
+        "description": "Result-only operation. It never claims, starts, dispatches, or creates an execution run.",
+        "security": [
+          {
+            "ActionPlanExecutorBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PlanId"
+          },
+          {
+            "$ref": "#/components/parameters/RunId"
+          },
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "x-arcanos-max-http-body-bytes": 65536,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExecutionResultInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Result accepted or idempotently replayed.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionResultResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/InvalidRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "ActionPlan execution"
+        ],
+        "operationId": "getActionPlanExecutionResult",
+        "summary": "Read the accepted bounded terminal result",
+        "security": [
+          {
+            "ActionPlanRequesterBearer": []
+          },
+          {
+            "ActionPlanOperatorBearer": []
+          },
+          {
+            "ActionPlanExecutorBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PlanId"
+          },
+          {
+            "$ref": "#/components/parameters/RunId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Bounded accepted result.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionResultReadResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/plans/{planId}/executions/{runId}": {
+      "get": {
+        "tags": [
+          "ActionPlan execution"
+        ],
+        "operationId": "getActionPlanExecution",
+        "summary": "Read sanitized execution-run status",
+        "security": [
+          {
+            "ActionPlanRequesterBearer": []
+          },
+          {
+            "ActionPlanOperatorBearer": []
+          },
+          {
+            "ActionPlanExecutorBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PlanId"
+          },
+          {
+            "$ref": "#/components/parameters/RunId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sanitized run status without action or result payloads.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionStatusResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    },
+    "/action-plan-executions/protocol": {
+      "get": {
+        "tags": [
+          "ActionPlan execution"
+        ],
+        "operationId": "getActionPlanExecutionProtocol",
+        "summary": "Read authenticated Phase 2E capability and realm identity",
+        "security": [
+          {
+            "ActionPlanRequesterBearer": []
+          },
+          {
+            "ActionPlanOperatorBearer": []
+          },
+          {
+            "ActionPlanExecutorBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Caller-specific protocol capability.",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/NoStore"
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionCapabilityResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/AuthenticationRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "503": {
+            "$ref": "#/components/responses/Unavailable"
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "ActionPlanRequesterBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "Opaque purpose-bound requester credential",
+        "description": "Maps server-side to one fixed ActionPlan requester principal."
+      },
+      "ActionPlanOperatorBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "Opaque purpose-bound operator credential",
+        "description": "Maps server-side to one fixed ActionPlan operator principal."
+      },
+      "ActionPlanExecutorBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "Opaque purpose-bound executor credential",
+        "description": "Maps server-side to the configured executor principal, physical instance, assigned agent, and execution realm."
+      }
+    },
+    "parameters": {
+      "PlanId": {
+        "name": "planId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "$ref": "#/components/schemas/Identifier"
+        }
+      },
+      "RunId": {
+        "name": "runId",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "$ref": "#/components/schemas/Identifier"
+        }
+      },
+      "IdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": true,
+        "description": "Opaque operation-scoped key. Raw values are never stored or logged.",
+        "schema": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256,
+          "pattern": "^[!-~]+$"
+        }
+      }
+    },
+    "headers": {
+      "NoStore": {
+        "description": "Sensitive execution evidence must not be cached.",
+        "schema": {
+          "type": "string",
+          "const": "no-store"
+        }
+      }
+    },
+    "responses": {
+      "InvalidRequest": {
+        "description": "Malformed or unsupported request.",
+        "headers": {
+          "Cache-Control": {
+            "$ref": "#/components/headers/NoStore"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/PublicError"
+            }
+          }
+        }
+      },
+      "AuthenticationRequired": {
+        "description": "Missing or invalid purpose-bound authentication.",
+        "headers": {
+          "Cache-Control": {
+            "$ref": "#/components/headers/NoStore"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/PublicError"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "Authenticated principal lacks authority.",
+        "headers": {
+          "Cache-Control": {
+            "$ref": "#/components/headers/NoStore"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/PublicError"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "No visible run matches every authoritative predicate.",
+        "headers": {
+          "Cache-Control": {
+            "$ref": "#/components/headers/NoStore"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/PublicError"
+            }
+          }
+        }
+      },
+      "Conflict": {
+        "description": "Ownership, realm, snapshot, state, terminal, or idempotency conflict.",
+        "headers": {
+          "Cache-Control": {
+            "$ref": "#/components/headers/NoStore"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/PublicError"
+            }
+          }
+        }
+      },
+      "Unprocessable": {
+        "description": "A bounded immutable action snapshot cannot be created.",
+        "headers": {
+          "Cache-Control": {
+            "$ref": "#/components/headers/NoStore"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/PublicError"
+            }
+          }
+        }
+      },
+      "Unavailable": {
+        "description": "Protocol, realm, schema, or required persistence is unavailable.",
+        "headers": {
+          "Cache-Control": {
+            "$ref": "#/components/headers/NoStore"
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/PublicError"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Identifier": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128,
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+      },
+      "Location": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 512,
+        "pattern": "^/"
+      },
+      "EmptyOperationBody": {
+        "type": "object",
+        "maxProperties": 0,
+        "additionalProperties": false
+      },
+      "RunState": {
+        "type": "string",
+        "enum": [
+          "REQUESTED",
+          "CLAIMED",
+          "RUNNING",
+          "SUCCEEDED",
+          "FAILED",
+          "CANCELLED",
+          "EXPIRED",
+          "SUPERSEDED"
+        ]
+      },
+      "JsonValue": {
+        "oneOf": [
+          {
+            "type": "null"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "string"
+          },
+          {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JsonValue"
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            }
+          }
+        ]
+      },
+      "SafeResultError": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+          },
+          "category": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+          }
+        },
+        "x-arcanos-max-encoded-bytes": 4096
+      },
+      "ExecutionResultInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "action_id",
+          "snapshot_id",
+          "outcome"
+        ],
+        "properties": {
+          "action_id": {
+            "$ref": "#/components/schemas/Identifier"
+          },
+          "snapshot_id": {
+            "$ref": "#/components/schemas/Identifier"
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "succeeded",
+              "failed"
+            ]
+          },
+          "output": {
+            "$ref": "#/components/schemas/JsonValue",
+            "x-arcanos-max-encoded-bytes": 32768,
+            "x-arcanos-max-depth": 8
+          },
+          "error": {
+            "$ref": "#/components/schemas/SafeResultError"
+          }
+        },
+        "x-arcanos-max-http-body-bytes": 65536,
+        "x-arcanos-finite-numbers-only": true,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "outcome": {
+                  "const": "succeeded"
+                }
+              }
+            },
+            "then": {
+              "not": {
+                "required": [
+                  "error"
+                ]
+              }
+            }
+          },
+          {
+            "if": {
+              "properties": {
+                "outcome": {
+                  "const": "failed"
+                }
+              }
+            },
+            "then": {
+              "not": {
+                "required": [
+                  "output"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ResponseBase": {
+        "type": "object",
+        "required": [
+          "ok",
+          "code",
+          "protocol_version"
+        ],
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "code": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          },
+          "protocol_version": {
+            "const": "action-plan-execution-v1"
+          }
+        }
+      },
+      "ExecutionRunLocation": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "run_id",
+          "action_id",
+          "state",
+          "status_location",
+          "result_location"
+        ],
+        "properties": {
+          "run_id": {
+            "$ref": "#/components/schemas/Identifier"
+          },
+          "action_id": {
+            "$ref": "#/components/schemas/Identifier"
+          },
+          "state": {
+            "$ref": "#/components/schemas/RunState"
+          },
+          "status_location": {
+            "$ref": "#/components/schemas/Location"
+          },
+          "result_location": {
+            "$ref": "#/components/schemas/Location"
+          }
+        }
+      },
+      "ExecutionCommandResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ResponseBase"
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "ok",
+              "code",
+              "protocol_version",
+              "command_id",
+              "plan_id",
+              "disposition",
+              "runs"
+            ],
+            "properties": {
+              "ok": {
+                "const": true
+              },
+              "code": {
+                "const": "ACTION_PLAN_EXECUTION_COMMAND_ACCEPTED"
+              },
+              "protocol_version": {
+                "const": "action-plan-execution-v1"
+              },
+              "command_id": {
+                "$ref": "#/components/schemas/Identifier"
+              },
+              "plan_id": {
+                "$ref": "#/components/schemas/Identifier"
+              },
+              "disposition": {
+                "type": "string",
+                "enum": [
+                  "COMMAND_CREATED",
+                  "COMMAND_REPLAY"
+                ]
+              },
+              "runs": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 100,
+                "items": {
+                  "$ref": "#/components/schemas/ExecutionRunLocation"
+                }
+              }
+            }
+          }
+        ]
+      },
+      "ExecutionAssignment": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "agent_id",
+          "capability",
+          "params",
+          "timeout_ms"
+        ],
+        "properties": {
+          "agent_id": {
+            "$ref": "#/components/schemas/Identifier"
+          },
+          "capability": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "params": {
+            "$ref": "#/components/schemas/JsonValue"
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 86400000
+          },
+          "rollback_action": {
+            "$ref": "#/components/schemas/RollbackAssignment"
+          }
+        },
+        "x-arcanos-max-encoded-bytes": 32768,
+        "x-arcanos-max-depth": 8
+      },
+      "RollbackAssignment": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "agent_id",
+          "capability",
+          "params",
+          "timeout_ms"
+        ],
+        "properties": {
+          "agent_id": {
+            "$ref": "#/components/schemas/Identifier"
+          },
+          "capability": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "params": {
+            "$ref": "#/components/schemas/JsonValue"
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 86400000
+          }
+        }
+      },
+      "ExecutionClaimResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ok",
+          "code",
+          "protocol_version",
+          "execution_realm",
+          "command_id",
+          "plan_id",
+          "run_id",
+          "action_id",
+          "snapshot_id",
+          "snapshot_version",
+          "state",
+          "disposition",
+          "plan_execution_generation",
+          "lifecycle",
+          "policy",
+          "status_location",
+          "result_location"
+        ],
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "code": {
+            "const": "ACTION_PLAN_EXECUTION_CLAIMED"
+          },
+          "protocol_version": {
+            "const": "action-plan-execution-v1"
+          },
+          "execution_realm": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "command_id": {
+            "$ref": "#/components/schemas/Identifier"
+          },
+          "plan_id": {
+            "$ref": "#/components/schemas/Identifier"
+          },
+          "run_id": {
+            "$ref": "#/components/schemas/Identifier"
+          },
+          "action_id": {
+            "$ref": "#/components/schemas/Identifier"
+          },
+          "snapshot_id": {
+            "$ref": "#/components/schemas/Identifier"
+          },
+          "snapshot_version": {
+            "const": "action-execution-snapshot-v1"
+          },
+          "state": {
+            "$ref": "#/components/schemas/RunState"
+          },
+          "disposition": {
+            "type": "string",
+            "enum": [
+              "CLAIMED",
+              "CLAIM_REPLAY_NOT_STARTED",
+              "CLAIM_RECOVERY_RUNNING",
+              "CLAIM_RECOVERY_TERMINAL"
+            ]
+          },
+          "assignment": {
+            "$ref": "#/components/schemas/ExecutionAssignment"
+          },
+          "plan_execution_generation": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "lifecycle": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "status",
+              "expires_at"
+            ],
+            "properties": {
+              "status": {
+                "type": "string"
+              },
+              "expires_at": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              }
+            }
+          },
+          "policy": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "category",
+              "evidence_id",
+              "evaluated_at"
+            ],
+            "properties": {
+              "category": {
+                "type": "string",
+                "enum": [
+                  "ALLOW",
+                  "CONFIRM"
+                ]
+              },
+              "evidence_id": {
+                "$ref": "#/components/schemas/Identifier"
+              },
+              "evaluated_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          },
+          "status_location": {
+            "$ref": "#/components/schemas/Location"
+          },
+          "result_location": {
+            "$ref": "#/components/schemas/Location"
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "disposition": {
+                  "enum": [
+                    "CLAIMED",
+                    "CLAIM_REPLAY_NOT_STARTED"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "assignment"
+              ],
+              "properties": {
+                "state": {
+                  "const": "CLAIMED"
+                }
+              }
+            },
+            "else": {
+              "not": {
+                "required": [
+                  "assignment"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ExecutionStartResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ok",
+          "code",
+          "protocol_version",
+          "execution_realm",
+          "plan_id",
+          "run_id",
+          "action_id",
+          "state",
+          "disposition",
+          "status_location"
+        ],
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "code": {
+            "const": "ACTION_PLAN_EXECUTION_STARTED"
+          },
+          "protocol_version": {
+            "const": "action-plan-execution-v1"
+          },
+          "execution_realm": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+          },
+          "plan_id": {
+            "$ref": "#/components/schemas/Identifier"
+          },
+          "run_id": {
+            "$ref": "#/components/schemas/Identifier"
+          },
+          "action_id": {
+            "$ref": "#/components/schemas/Identifier"
+          },
+          "state": {
+            "const": "RUNNING"
+          },
+          "disposition": {
+            "type": "string",
+            "enum": [
+              "STARTED",
+              "START_REPLAY"
+            ]
+          },
+          "status_location": {
+            "$ref": "#/components/schemas/Location"
+          }
+        }
+      },
+      "ExecutionResultResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ok",
+          "code",
+          "protocol_version",
+          "execution_realm",
+          "plan_id",
+          "run_id",
+          "action_id",
+          "snapshot_id",
+          "state",
+          "terminal_category",
+          "disposition",
+          "acceptance_receipt",
+          "status_location",
+          "result_location"
+        ],
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "code": {
+            "const": "ACTION_PLAN_EXECUTION_RESULT_ACCEPTED"
+          },
+          "protocol_version": {
+            "const": "action-plan-execution-v1"
+          },
+          "execution_realm": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+          },
+          "plan_id": {
+            "$ref": "#/components/schemas/Identifier"
+          },
+          "run_id": {
+            "$ref": "#/components/schemas/Identifier"
+          },
+          "action_id": {
+            "$ref": "#/components/schemas/Identifier"
+          },
+          "snapshot_id": {
+            "$ref": "#/components/schemas/Identifier"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "SUCCEEDED",
+              "FAILED"
+            ]
+          },
+          "terminal_category": {
+            "type": "string",
+            "enum": [
+              "succeeded",
+              "failed"
+            ]
+          },
+          "disposition": {
+            "type": "string",
+            "enum": [
+              "RESULT_ACCEPTED",
+              "RESULT_REPLAY",
+              "RESULT_ALREADY_ACCEPTED"
+            ]
+          },
+          "acceptance_receipt": {
+            "$ref": "#/components/schemas/Identifier"
+          },
+          "status_location": {
+            "$ref": "#/components/schemas/Location"
+          },
+          "result_location": {
+            "$ref": "#/components/schemas/Location"
+          }
+        }
+      },
+      "ExecutionStatusResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ok",
+          "code",
+          "protocol_version",
+          "execution_realm",
+          "command_id",
+          "plan_id",
+          "run_id",
+          "action_id",
+          "snapshot_id",
+          "state",
+          "terminal_category",
+          "disposition",
+          "timestamps",
+          "acceptance_receipt",
+          "result_location"
+        ],
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "code": {
+            "const": "ACTION_PLAN_EXECUTION_STATUS"
+          },
+          "protocol_version": {
+            "const": "action-plan-execution-v1"
+          },
+          "execution_realm": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+          },
+          "command_id": {
+            "$ref": "#/components/schemas/Identifier"
+          },
+          "plan_id": {
+            "$ref": "#/components/schemas/Identifier"
+          },
+          "run_id": {
+            "$ref": "#/components/schemas/Identifier"
+          },
+          "action_id": {
+            "$ref": "#/components/schemas/Identifier"
+          },
+          "snapshot_id": {
+            "$ref": "#/components/schemas/Identifier"
+          },
+          "state": {
+            "$ref": "#/components/schemas/RunState"
+          },
+          "terminal_category": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "succeeded",
+              "failed",
+              "cancelled",
+              "expired",
+              "superseded",
+              null
+            ]
+          },
+          "disposition": {
+            "const": "STATUS_CURRENT"
+          },
+          "timestamps": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "requested_at",
+              "claimed_at",
+              "started_at",
+              "completed_at",
+              "cancelled_at",
+              "expired_at",
+              "superseded_at"
+            ],
+            "properties": {
+              "requested_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "claimed_at": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              },
+              "started_at": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              },
+              "completed_at": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              },
+              "cancelled_at": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              },
+              "expired_at": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              },
+              "superseded_at": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "format": "date-time"
+              }
+            }
+          },
+          "acceptance_receipt": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Identifier"
+              }
+            ]
+          },
+          "result_location": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/Location"
+              }
+            ]
+          }
+        }
+      },
+      "ExecutionResultReadResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ok",
+          "code",
+          "protocol_version",
+          "execution_realm",
+          "plan_id",
+          "run_id",
+          "action_id",
+          "snapshot_id",
+          "state",
+          "terminal_category",
+          "outcome",
+          "acceptance_receipt"
+        ],
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "code": {
+            "const": "ACTION_PLAN_EXECUTION_RESULT"
+          },
+          "protocol_version": {
+            "const": "action-plan-execution-v1"
+          },
+          "execution_realm": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+          },
+          "plan_id": {
+            "$ref": "#/components/schemas/Identifier"
+          },
+          "run_id": {
+            "$ref": "#/components/schemas/Identifier"
+          },
+          "action_id": {
+            "$ref": "#/components/schemas/Identifier"
+          },
+          "snapshot_id": {
+            "$ref": "#/components/schemas/Identifier"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "SUCCEEDED",
+              "FAILED"
+            ]
+          },
+          "terminal_category": {
+            "type": "string",
+            "enum": [
+              "succeeded",
+              "failed"
+            ]
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "succeeded",
+              "failed"
+            ]
+          },
+          "output": {
+            "$ref": "#/components/schemas/JsonValue",
+            "x-arcanos-max-encoded-bytes": 32768,
+            "x-arcanos-max-depth": 8
+          },
+          "error": {
+            "$ref": "#/components/schemas/SafeResultError"
+          },
+          "acceptance_receipt": {
+            "$ref": "#/components/schemas/Identifier"
+          }
+        }
+      },
+      "ExecutionCapabilityResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ok",
+          "code",
+          "protocol_version",
+          "execution_realm",
+          "role",
+          "operations",
+          "schema_versions",
+          "locations"
+        ],
+        "properties": {
+          "ok": {
+            "const": true
+          },
+          "code": {
+            "const": "ACTION_PLAN_EXECUTION_PROTOCOL_AVAILABLE"
+          },
+          "protocol_version": {
+            "const": "action-plan-execution-v1"
+          },
+          "execution_realm": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "requester",
+              "operator",
+              "executor",
+              "mcp-requester"
+            ]
+          },
+          "executor_principal_id": {
+            "$ref": "#/components/schemas/Identifier"
+          },
+          "executor_instance_id": {
+            "$ref": "#/components/schemas/Identifier"
+          },
+          "assigned_agent_id": {
+            "$ref": "#/components/schemas/Identifier"
+          },
+          "operations": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 7,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "enum": [
+                "request-execution",
+                "claim-next",
+                "claim",
+                "start",
+                "submit-result",
+                "read-status",
+                "read-result"
+              ]
+            }
+          },
+          "schema_versions": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "command",
+              "claim",
+              "start",
+              "result",
+              "status",
+              "result_read"
+            ],
+            "properties": {
+              "command": {
+                "const": "action-plan-execution-command-v1"
+              },
+              "claim": {
+                "const": "action-plan-execution-claim-v1"
+              },
+              "start": {
+                "const": "action-plan-execution-start-v1"
+              },
+              "result": {
+                "const": "action-plan-execution-result-v1"
+              },
+              "status": {
+                "const": "action-plan-execution-status-v1"
+              },
+              "result_read": {
+                "const": "action-plan-execution-result-read-v1"
+              }
+            }
+          },
+          "locations": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "status_template",
+              "result_template"
+            ],
+            "properties": {
+              "execute_template": {
+                "$ref": "#/components/schemas/Location"
+              },
+              "claim_next": {
+                "$ref": "#/components/schemas/Location"
+              },
+              "claim_template": {
+                "$ref": "#/components/schemas/Location"
+              },
+              "start_template": {
+                "$ref": "#/components/schemas/Location"
+              },
+              "status_template": {
+                "$ref": "#/components/schemas/Location"
+              },
+              "result_template": {
+                "$ref": "#/components/schemas/Location"
+              }
+            }
+          }
+        },
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "role": {
+                  "const": "executor"
+                }
+              }
+            },
+            "then": {
+              "required": [
+                "executor_principal_id",
+                "executor_instance_id",
+                "assigned_agent_id"
+              ]
+            },
+            "else": {
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "executor_principal_id"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "executor_instance_id"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "assigned_agent_id"
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "ExecutionErrorCode": {
+        "type": "string",
+        "enum": [
+          "ACTION_PLAN_EXECUTION_AUTH_REQUIRED",
+          "ACTION_PLAN_EXECUTION_FORBIDDEN",
+          "ACTION_PLAN_EXECUTION_PROTOCOL_DISABLED",
+          "ACTION_PLAN_RESULT_ENDPOINT_REQUIRED",
+          "ACTION_PLAN_EXECUTION_REQUEST_INVALID",
+          "ACTION_PLAN_EXECUTOR_UNAVAILABLE",
+          "ACTION_PLAN_REALM_UNAVAILABLE",
+          "ACTION_PLAN_PROVENANCE_UNAVAILABLE",
+          "ACTION_PLAN_LEGACY_EXECUTION_STATE_UNRESOLVED",
+          "ACTION_PLAN_LEGACY_RESULT_VIEW_UNAVAILABLE",
+          "ACTION_PLAN_EXECUTION_ACTIVE",
+          "ACTION_PLAN_EXECUTION_IDEMPOTENCY_CONFLICT",
+          "ACTION_PLAN_EXECUTION_NOT_FOUND",
+          "ACTION_PLAN_EXECUTION_CLAIM_CONFLICT",
+          "ACTION_PLAN_EXECUTION_STATE_CONFLICT",
+          "ACTION_PLAN_EXECUTION_GENERATION_CONFLICT",
+          "ACTION_PLAN_ACTION_SNAPSHOT_UNAVAILABLE",
+          "ACTION_PLAN_ACTION_SNAPSHOT_CONFLICT",
+          "ACTION_PLAN_RESULT_IDEMPOTENCY_CONFLICT",
+          "ACTION_PLAN_EXECUTION_PERSISTENCE_FAILED",
+          "ACTION_PLAN_EXECUTION_PROTOCOL_INCOMPATIBLE"
+        ]
+      },
+      "PublicError": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ok",
+          "error"
+        ],
+        "properties": {
+          "ok": {
+            "const": false
+          },
+          "error": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "code",
+              "message"
+            ],
+            "properties": {
+              "code": {
+                "$ref": "#/components/schemas/ExecutionErrorCode"
+              },
+              "message": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 160,
+                "description": "Fixed non-sensitive message selected by the server from the error category."
+              }
+            }
+          },
+          "request_id": {
+            "$ref": "#/components/schemas/Identifier"
+          },
+          "trace_id": {
+            "$ref": "#/components/schemas/Identifier"
+          }
+        }
+      }
+    }
+  }
+}

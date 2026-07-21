@@ -1,6 +1,7 @@
 import express, { Request, Response } from 'express';
 import { createRateLimitMiddleware, securityHeaders } from "@platform/runtime/security.js";
 import { asyncHandler, sendBadRequestPayload, sendNotFoundPayload } from '@shared/http/index.js';
+import { timingSafeEqualOpaqueSecret } from '@shared/security/opaqueSecret.js';
 import { getModulesForRegistry } from './modules.js';
 import { recordTraceEvent } from "@platform/logging/telemetry.js";
 import {
@@ -79,7 +80,7 @@ router.post(
     // 1. InstanceId has no existing token (first registration), OR
     // 2. The existing token matches the current token (legitimate update)
     const existingToken = daemonStore.getTokenForInstance(instanceId);
-    if (existingToken && existingToken !== daemonToken) {
+    if (existingToken && !timingSafeEqualOpaqueSecret(existingToken, daemonToken)) {
       //audit Assumption: instanceId hijacking attempt detected; risk: unauthorized access; invariant: reject; handling: return 403.
       return res.status(403).json({
         error: 'Forbidden',

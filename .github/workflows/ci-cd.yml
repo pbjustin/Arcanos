@@ -11,6 +11,8 @@ on:
 env:
   NODE_VERSION: '20.19.0'
   OPENAI_API_KEY: 'mock-api-key'
+  FORCE_MOCK: 'true'
+  OPENAI_BASE_URL: 'http://127.0.0.1:9/v1'
 
 jobs:
   lint-and-typecheck:

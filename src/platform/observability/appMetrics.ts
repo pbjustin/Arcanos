@@ -6,6 +6,7 @@ import {
   Registry,
 } from 'prom-client';
 import { monitorEventLoopDelay } from 'node:perf_hooks';
+import { timingSafeEqualOpaqueSecret } from '@shared/security/opaqueSecret.js';
 
 const METRICS_SERVICE_NAME = process.env.RAILWAY_SERVICE_NAME?.trim() || 'arcanos-backend';
 const WORKER_METRICS_REFRESH_TTL_MS = 5_000;
@@ -1374,7 +1375,8 @@ function isMetricsRequestAuthorized(req: Request): boolean {
 
   const bearerToken = req.header('authorization')?.replace(/^Bearer\s+/i, '').trim();
   const headerToken = req.header('x-metrics-token')?.trim();
-  return bearerToken === expectedToken || headerToken === expectedToken;
+  return timingSafeEqualOpaqueSecret(bearerToken, expectedToken)
+    || timingSafeEqualOpaqueSecret(headerToken, expectedToken);
 }
 
 export async function writeMetricsResponse(req: Request, res: Response): Promise<void> {

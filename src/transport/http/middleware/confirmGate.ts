@@ -6,6 +6,7 @@ import {
   verifyConfirmationChallenge,
 } from './confirmationChallengeStore.js';
 import { sendInternalErrorPayload } from '@shared/http/index.js';
+import { timingSafeEqualOpaqueSecret } from '@shared/security/opaqueSecret.js';
 import { consumeOneTimeToken } from "@core/lib/tokenStore.js";
 import { getDefaultModel } from "@services/openai/credentialProvider.js";
 import { getConfig } from "@platform/runtime/unifiedConfig.js";
@@ -168,7 +169,9 @@ export function confirmGate(req: Request, res: Response, next: NextFunction): vo
     ? resolveHeader(req.headers, automationBypassHeader)
     : undefined;
   const automationBypassApproved = Boolean(
-    automationBypassEnabled && automationHeaderValue && automationHeaderValue === automationBypassSecret,
+    automationBypassEnabled
+    && automationHeaderValue
+    && timingSafeEqualOpaqueSecret(automationHeaderValue, automationBypassSecret),
   );
   const confirmationMode = allowAllGpts ? 'allow-all' : 'header';
   const normalizedConfirmation = confirmationHeader?.toString().trim();
@@ -245,7 +248,7 @@ export function confirmGate(req: Request, res: Response, next: NextFunction): vo
     res.setHeader('x-confirmation-challenge', challenge.id);
 
     console.log(
-      `[❌ CONFIRM-GATE] Request blocked - confirmation ${tokenStatus}. GPTID: ${gptId || 'none'} - Challenge: ${challenge.id}`,
+      `[❌ CONFIRM-GATE] Request blocked - confirmation ${tokenStatus}. GPTID: ${gptId || 'none'} - Challenge: issued`,
     );
 
     const confirmationInstructions = [

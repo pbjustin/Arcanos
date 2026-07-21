@@ -3,6 +3,7 @@ import type fs from 'fs';
 import type path from 'path';
 import { logger } from "@platform/logging/structuredLogging.js";
 import { assertProtectedConfigIntegrity } from "@services/safety/configIntegrity.js";
+import { timingSafeEqualOpaqueSecret } from '@shared/security/opaqueSecret.js';
 import type {
   DaemonCommand,
   DaemonCommandResult,
@@ -293,7 +294,7 @@ export function createDaemonStore(deps: DaemonStoreDependencies): DaemonStore {
     }
 
     const expectedToken = getTokenForInstance(instanceId);
-    if (!expectedToken || expectedToken !== daemonToken) {
+    if (!timingSafeEqualOpaqueSecret(daemonToken, expectedToken)) {
       //audit Assumption: daemon token must match; risk: unauthorized execution; invariant: reject; handling: return -1.
       return -1;
     }

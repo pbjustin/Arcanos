@@ -1,0 +1,355 @@
+{
+  "artifact": "ARCANOS Phase 2D.1 preview validation evidence",
+  "capturedDate": "2026-07-17",
+  "decision": {
+    "cumulativePhase2ATo2DPreview": "GO",
+    "productionDeployment": "NOT_AUTHORIZED",
+    "productionDeploymentOccurred": false
+  },
+  "source": {
+    "startingBranch": "codex/action-plan-lifecycle-integrity",
+    "startingCommit": "be9d81fa8f444c930df901be54d7506f630d725a",
+    "validationBranch": "codex/preview-log-hygiene-first-boot",
+    "deployedCommit": "da8b0c5e4ea977b6b5c678f2049809b43fa9a857",
+    "phase2ACommits": [
+      "507a9596",
+      "a3814a0f",
+      "06d1620b"
+    ],
+    "phase2BCommit": "0a9ba09755b1af77f1cf7712415986bb83aad60e",
+    "phase2CCommit": "d9830a5f545902d70fe33d3f05f1b1db39a4064a",
+    "phase2DFinalCommit": "be9d81fa8f444c930df901be54d7506f630d725a",
+    "phase2D1Commits": [
+      "a8fc1cfa",
+      "db6a6721",
+      "da8b0c5e"
+    ]
+  },
+  "toolVersions": {
+    "node": "24.13.0",
+    "npm": "11.6.2",
+    "typescript": "5.9.3",
+    "python": "3.11.7",
+    "pytest": "9.0.2",
+    "railwayCli": "4.30.2"
+  },
+  "railwayPreview": {
+    "project": {
+      "id": "7faf44e5-519c-4e73-8d7a-da9f389e6187",
+      "name": "Arcanos"
+    },
+    "environment": {
+      "id": "50a92b12-048a-4fec-8bff-282a72267920",
+      "name": "phase2d-validation-20260717",
+      "isolated": true
+    },
+    "services": {
+      "web": {
+        "id": "c4ade025-3f13-4fca-9309-5d0dd81396fe",
+        "name": "ARCANOS V2",
+        "deploymentId": "4346ccc0-9154-4a96-b746-66a9b0a21db9",
+        "status": "SUCCESS"
+      },
+      "worker": {
+        "id": "1765befb-b805-4051-9af9-28634e986886",
+        "name": "ARCANOS Worker",
+        "deploymentId": "a4f59b9c-1fc0-4fac-a72c-76a9a5f905aa",
+        "status": "SUCCESS"
+      },
+      "postgres": {
+        "id": "6647b5b1-d796-4783-b5f0-b8e356019ca6",
+        "referenceSet": true
+      },
+      "redis": {
+        "id": "81e4a1cf-7ae4-48bf-8321-23641bb23c0e",
+        "referenceSet": true
+      }
+    },
+    "configurationPresence": {
+      "ARCANOS_PREVIEW_ISOLATION": true,
+      "PHASE2D_PREVIEW_ARMED": true,
+      "FORCE_MOCK": true,
+      "OPENAI_API_KEY": true,
+      "DATABASE_URL": true,
+      "REDIS_URL": true,
+      "effectiveProviderBaseUrlIsCredentialFreeLoopback": true,
+      "processKindsCorrect": true,
+      "valuesRecorded": false
+    },
+    "mutations": {
+      "existingPreviewOnly": true,
+      "productionChanged": false,
+      "railwayVariablesChangedInPreview": [
+        "ARCANOS_PREVIEW_ISOLATION",
+        "PHASE2D_PREVIEW_ARMED"
+      ],
+      "productionVariablesChanged": false,
+      "databaseSchemaChanged": false
+    }
+  },
+  "corrections": {
+    "startupLogPathDisclosure": {
+      "previousBehaviorConfirmed": true,
+      "newContract": "Protected startup records use stable logical source identifiers rather than physical paths.",
+      "productionBehaviorChange": "Logging metadata only"
+    },
+    "firstBootProviderProbe": {
+      "previousSupersededPreviewProbeConfirmed": true,
+      "previousProbeCount": 1,
+      "newContract": "An explicit preview marker requires non-production Railway, exact mock mode, and a credential-free loopback provider URL before any child process starts.",
+      "finalWebProviderRequestCount": 0,
+      "finalWorkerProviderRequestCount": 0
+    },
+    "intermediateReadinessRegression": {
+      "deploymentId": "1c2958fd-5dc7-4d69-b230-3c60e41465fb",
+      "providerRequestCount": 0,
+      "observedBehavior": "The provider synchronization step reset the initialized mock adapter, causing /readyz to return 503.",
+      "correctedByCommit": "da8b0c5e",
+      "finalReadyStatus": 200,
+      "regressionConcealed": false
+    }
+  },
+  "runtimeValidation": {
+    "webLogAudit": {
+      "deploymentId": "4346ccc0-9154-4a96-b746-66a9b0a21db9",
+      "linesInspected": 218,
+      "previewIsolationRecords": 1,
+      "logicalPromptSourceRecords": 2,
+      "startupProbeSkippedRecords": 1,
+      "providerRequestRecords": 0,
+      "providerFailureRecords": 0,
+      "absolutePathRecords": 0,
+      "credentialMatches": 0,
+      "authorizationHeaderRecords": 0,
+      "rawSqlRecords": 0,
+      "providerBodyRecords": 0,
+      "stackFrameRecords": 0,
+      "rawPlanActionRecords": 0,
+      "rawCommandRecords": 0
+    },
+    "workerLogAudit": {
+      "deploymentId": "a4f59b9c-1fc0-4fac-a72c-76a9a5f905aa",
+      "linesInspected": 37,
+      "previewIsolationRecords": 1,
+      "logicalPromptSourceRecords": 2,
+      "startupProbeSkippedRecords": 0,
+      "startupProbeSkippedReason": "The worker startup path does not invoke the web provider-health probe.",
+      "providerRequestRecords": 0,
+      "providerFailureRecords": 0,
+      "absolutePathRecords": 0,
+      "credentialMatches": 0,
+      "authorizationHeaderRecords": 0,
+      "rawSqlRecords": 0,
+      "providerBodyRecords": 0,
+      "stackFrameRecords": 0
+    },
+    "http": [
+      {
+        "path": "/health",
+        "status": 200,
+        "disclosureMatches": 0
+      },
+      {
+        "path": "/healthz",
+        "status": 200,
+        "disclosureMatches": 0
+      },
+      {
+        "path": "/readyz",
+        "status": 200,
+        "disclosureMatches": 0
+      },
+      {
+        "path": "/status/safety",
+        "status": 200,
+        "safetyStatus": "safe",
+        "activeConditions": 0,
+        "activeQuarantines": 0,
+        "disclosureMatches": 0
+      }
+    ],
+    "mcp": {
+      "initializeStatus": 200,
+      "toolsListStatus": 200,
+      "invalidBearerStatus": 401,
+      "invalidBearerReflected": false,
+      "configuredBearerReflected": false,
+      "readOnlyPlanLookups": 2,
+      "destructiveToolsEnabled": false,
+      "plansExecuteAttempted": false,
+      "disclosureMatches": 0
+    },
+    "actionPlans": [
+      {
+        "fixture": "blocked lifecycle with stored CLEAR allow",
+        "createStatus": 201,
+        "executeStatus": 403,
+        "category": "ACTION_PLAN_POLICY_BLOCKED",
+        "reason": "lifecycle_blocked",
+        "executionResultWrites": 0
+      },
+      {
+        "fixture": "expired lifecycle with stored CLEAR allow",
+        "createStatus": 201,
+        "executeStatus": 409,
+        "category": "ACTION_PLAN_TERMINAL",
+        "reason": "terminal_state",
+        "executionResultWrites": 0
+      }
+    ],
+    "pythonCompatibility": [
+      {
+        "fixture": "blocked lifecycle with stored CLEAR allow",
+        "classification": "invalid",
+        "reason": "blocked_current_policy_conflict",
+        "operationAllowed": false,
+        "executionCallbacks": 0,
+        "confirmationCallbacks": 0,
+        "resultSubmissions": 0
+      },
+      {
+        "fixture": "expired lifecycle with stored CLEAR allow",
+        "classification": "terminal",
+        "reason": "terminal_state",
+        "operationAllowed": false,
+        "executionCallbacks": 0,
+        "confirmationCallbacks": 0,
+        "resultSubmissions": 0
+      }
+    ],
+    "workerState": {
+      "activeWorkers": 1,
+      "queueDepth": 0,
+      "running": 0,
+      "waiting": 0,
+      "delayed": 0,
+      "stalled": 0
+    }
+  },
+  "localValidation": [
+    {
+      "command": "node scripts/run-jest.mjs --coverage=false --runInBand --detectOpenHandles --testPathPatterns=<Phase 2D.1 focused suites>",
+      "result": "pass",
+      "suitesPassed": 5,
+      "testsPassed": 43,
+      "openHandlesReported": 0
+    },
+    {
+      "command": "node scripts/run-jest.mjs --coverage=false --runInBand --randomize --seed=20260717 --testPathPatterns=<Phase 2D.1 focused suites>",
+      "result": "pass",
+      "seed": 20260717,
+      "suitesPassed": 5,
+      "testsPassed": 43
+    },
+    {
+      "command": "repeat Phase 2D.1 focused suites three times",
+      "result": "pass",
+      "runs": 3,
+      "testsPassedPerRun": 43
+    },
+    {
+      "command": "node scripts/run-jest.mjs --testPathPatterns=<Phase 2A through Phase 2D security and lifecycle suites> --coverage=false --runInBand",
+      "result": "pass",
+      "suitesPassed": 11,
+      "testsPassed": 217
+    },
+    {
+      "command": "python -m pytest daemon-python/tests/test_action_plan_types.py daemon-python/tests/test_action_plan_lifecycle_contract.py daemon-python/tests/test_action_plan_lifecycle_handler.py -q",
+      "result": "pass",
+      "testsPassed": 150
+    },
+    {
+      "command": "python -m pytest daemon-python/tests -q",
+      "result": "pass",
+      "testsPassed": 368
+    },
+    {
+      "command": "npm run type-check",
+      "result": "pass"
+    },
+    {
+      "command": "npm run lint",
+      "result": "pass",
+      "errors": 0,
+      "preExistingWarnings": 92
+    },
+    {
+      "command": "npm run build",
+      "result": "pass"
+    },
+    {
+      "command": "npm test -- --silent",
+      "result": "pass",
+      "suitesPassed": 386,
+      "suitesSkipped": 2,
+      "testsPassed": 3690,
+      "testsSkipped": 4,
+      "configuredScopeCoverage": {
+        "statements": "100% (3313/3313)",
+        "branches": "100% (212/212)",
+        "functions": "100% (62/62)",
+        "lines": "100% (3313/3313)",
+        "repositoryWideClaim": false
+      }
+    },
+    {
+      "command": "npm run test:integration",
+      "result": "pass",
+      "suitesPassed": 5,
+      "suitesSkipped": 1,
+      "testsPassed": 84,
+      "testsSkipped": 1
+    },
+    {
+      "command": "npm run validate:railway",
+      "result": "pass"
+    },
+    {
+      "command": "npm run guard:commit",
+      "result": "pass"
+    }
+  ],
+  "dependencyComparison": {
+    "command": "node scripts/reusable-code-audit-baseline.mjs --source-commit da8b0c5e4ea977b6b5c678f2049809b43fa9a857 --source-branch codex/preview-log-hygiene-first-boot --baseline-at 2026-07-17T00:00:00-04:00 --output tmp/phase2d1-dependency-final --verify-determinism",
+    "determinismVerified": true,
+    "before": {
+      "circularPathCount": 63,
+      "runtimeSccCount": 2,
+      "modulesInRuntimeSccs": 75,
+      "runtimeSccSizes": [67, 8],
+      "runtimeEdgeCount": 2333,
+      "sourceFileCount": 720
+    },
+    "after": {
+      "circularPathCount": 63,
+      "runtimeSccCount": 2,
+      "modulesInRuntimeSccs": 75,
+      "runtimeSccSizes": [67, 8],
+      "runtimeEdgeCount": 2332,
+      "sourceFileCount": 720
+    },
+    "newSccs": 0,
+    "typeOnlyEdgesExcluded": true
+  },
+  "safetyChecks": {
+    "previewOnlyDataWrites": true,
+    "pythonResultSubmissionAttempted": false,
+    "externalOpenAiCallFromFinalDeployments": false,
+    "productionMutation": false,
+    "productionDeployment": false,
+    "lockfileChanges": 0,
+    "migrationChanges": 0,
+    "schemaChanges": 0,
+    "snapshotChanges": 0,
+    "rawLogsRetained": false,
+    "rawPayloadsRetained": false,
+    "variableValuesRecorded": false
+  },
+  "independentReview": {
+    "verdict": "GO for cumulative Phase 2A-2D isolated preview; production requires separate authorization.",
+    "blockers": 0,
+    "railwayMutationPerformedByReviewer": false,
+    "workerSensitiveValuesCompared": 18,
+    "workerSensitiveValueMatches": 0
+  }
+}

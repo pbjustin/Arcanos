@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.arcanos.dev/protocol/v1/action-plan/execution-result-read.schema.json",
+  "title": "ActionPlan bounded execution result response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "ok",
+    "code",
+    "protocol_version",
+    "execution_realm",
+    "plan_id",
+    "run_id",
+    "action_id",
+    "snapshot_id",
+    "state",
+    "terminal_category",
+    "outcome",
+    "acceptance_receipt"
+  ],
+  "properties": {
+    "ok": {
+      "const": true
+    },
+    "code": {
+      "const": "ACTION_PLAN_EXECUTION_RESULT"
+    },
+    "protocol_version": {
+      "const": "action-plan-execution-v1"
+    },
+    "execution_realm": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "plan_id": {
+      "$ref": "#/$defs/identifier"
+    },
+    "run_id": {
+      "$ref": "#/$defs/identifier"
+    },
+    "action_id": {
+      "$ref": "#/$defs/identifier"
+    },
+    "snapshot_id": {
+      "$ref": "#/$defs/identifier"
+    },
+    "state": {
+      "type": "string",
+      "enum": [
+        "SUCCEEDED",
+        "FAILED"
+      ]
+    },
+    "terminal_category": {
+      "type": "string",
+      "enum": [
+        "succeeded",
+        "failed"
+      ]
+    },
+    "outcome": {
+      "type": "string",
+      "enum": [
+        "succeeded",
+        "failed"
+      ]
+    },
+    "output": {
+      "$ref": "#/$defs/jsonValue",
+      "x-arcanos-max-encoded-bytes": 32768,
+      "x-arcanos-max-depth": 8
+    },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        },
+        "category": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+        }
+      },
+      "x-arcanos-max-encoded-bytes": 4096
+    },
+    "acceptance_receipt": {
+      "$ref": "#/$defs/identifier"
+    }
+  },
+  "$defs": {
+    "identifier": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]*$"
+    },
+    "jsonValue": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/jsonValue"
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/jsonValue"
+          }
+        }
+      ]
+    }
+  }
+}

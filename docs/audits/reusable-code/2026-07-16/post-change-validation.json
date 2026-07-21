@@ -1,0 +1,194 @@
+{
+  "sourceCommit": "462e279f264372d42be4c9781a98fe72b6f498a5",
+  "auditBranch": "codex/reusable-code-audit-phase0-1",
+  "classificationRule": "Post-change results are compared with validation-results.json. Expected Madge and noUnused nonzero exits reproduced their exact pre-change counts and are not regressions.",
+  "productionFilesChanged": false,
+  "focusedCharacterization": {
+    "command": "$env:NODE_ENV='test'; $env:FORCE_MOCK='true'; node scripts/run-jest.mjs --testPathPatterns=\"(reusable-code-audit-|openai-response-conversion-parity)\" --coverage=false --runInBand --detectOpenHandles --randomize --seed=20260716",
+    "result": "pass",
+    "durationMs": 5872,
+    "jestReportedSeconds": 5.172,
+    "suitesPassed": 8,
+    "suitesFailed": 0,
+    "suitesSkipped": 0,
+    "testsPassed": 129,
+    "testsFailed": 0,
+    "testsSkipped": 0,
+    "detectOpenHandles": true,
+    "randomized": true,
+    "seed": 20260716
+  },
+  "interimDeterminismRuns": [
+    {
+      "scope": "Eight audit suites before the final review additions (five non-CLEAR cases and three CLEAR runtime cases)",
+      "result": "pass",
+      "durationMs": 3591,
+      "suitesPassed": 8,
+      "testsPassed": 121,
+      "detectOpenHandles": true,
+      "randomized": false
+    },
+    {
+      "scope": "Eight audit suites before the final review additions (five non-CLEAR cases and three CLEAR runtime cases)",
+      "result": "pass",
+      "durationMs": 3592,
+      "suitesPassed": 8,
+      "testsPassed": 121,
+      "detectOpenHandles": true,
+      "randomized": true,
+      "seed": 7162026
+    },
+    {
+      "scope": "Eight audit suites before the final review additions (five non-CLEAR cases and three CLEAR runtime cases)",
+      "result": "pass",
+      "durationMs": 3569,
+      "suitesPassed": 8,
+      "testsPassed": 121,
+      "detectOpenHandles": true,
+      "randomized": true,
+      "seed": 4620279
+    }
+  ],
+  "passing": [
+    {
+      "command": "npm run type-check",
+      "durationMs": 14373,
+      "result": "pass"
+    },
+    {
+      "command": "npm run build",
+      "durationMs": 16362,
+      "result": "pass"
+    },
+    {
+      "command": "npm run lint",
+      "durationMs": 14005,
+      "result": "pass",
+      "errors": 0,
+      "warnings": 92,
+      "comparison": "Warning and error counts are unchanged from the pre-change baseline."
+    },
+    {
+      "command": "$env:NODE_ENV='test'; $env:FORCE_MOCK='true'; npm test",
+      "durationMs": 94661,
+      "jestReportedSeconds": 88.541,
+      "result": "pass",
+      "suitesPassed": 371,
+      "suitesFailed": 0,
+      "suitesSkipped": 2,
+      "testsPassed": 3400,
+      "testsFailed": 0,
+      "testsSkipped": 4,
+      "coverage": {
+        "statements": "3313/3313 (100%)",
+        "lines": "3313/3313 (100%)",
+        "functions": "62/62 (100%)",
+        "branches": "213/213 (100%)"
+      },
+      "coverageComparison": "The default npm test path reproduced the pre-change 213-branch observation; the deterministic JSON-summary coverage artifact remains 212/212 on its repeated explicit command."
+    },
+    {
+      "command": "node scripts/run-jest.mjs --coverage=false --silent --maxWorkers=50%",
+      "durationMs": 24243,
+      "result": "pass",
+      "suitesPassed": 371,
+      "suitesFailed": 0,
+      "suitesSkipped": 2,
+      "testsPassed": 3400,
+      "testsFailed": 0,
+      "testsSkipped": 4
+    },
+    {
+      "command": "$env:NODE_ENV='test'; $env:FORCE_MOCK='true'; npm run test:integration",
+      "durationMs": 8424,
+      "result": "pass",
+      "suitesPassed": 5,
+      "suitesFailed": 0,
+      "suitesSkipped": 1,
+      "testsPassed": 84,
+      "testsFailed": 0,
+      "testsSkipped": 1
+    },
+    {
+      "command": "cd daemon-python; python -m pytest tests -q",
+      "durationMs": 6762,
+      "result": "pass",
+      "testsPassed": 131,
+      "testsFailed": 0,
+      "testsSkipped": 0
+    },
+    {
+      "command": "python -m pytest legacy -q",
+      "durationMs": 673,
+      "result": "pass",
+      "testsPassed": 3,
+      "testsFailed": 0,
+      "testsSkipped": 0
+    },
+    {
+      "command": "$env:NODE_ENV='test'; $env:FORCE_MOCK='true'; npm run test:runtime-integration",
+      "durationMs": 6516,
+      "result": "pass",
+      "suitesPassed": 1,
+      "testsPassed": 6,
+      "testsFailed": 0,
+      "testsSkipped": 0
+    },
+    {
+      "command": "npm --prefix arcanos-ai-runtime test",
+      "durationMs": 455,
+      "result": "pass",
+      "suitesPassed": 1,
+      "testsPassed": 1,
+      "testsFailed": 0,
+      "testsSkipped": 0
+    },
+    {
+      "command": "npm run validate:railway",
+      "durationMs": 402,
+      "result": "pass",
+      "notes": "Static non-destructive validation only."
+    },
+    {
+      "command": "npm run validate:backend-cli:contract && npm run validate:backend-cli:offline",
+      "durationMs": 1554,
+      "result": "pass"
+    },
+    {
+      "command": "rg -n --pcre2 \"(sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----|postgres(?:ql)?://[^\\s:]+:[^\\s@]+@|redis(?:s)?://[^\\s:]+:[^\\s@]+@)\" docs/audits/reusable-code/2026-07-16 scripts/reusable-code-audit-baseline.mjs tests/fixtures tests/openai-response-conversion-parity.test.ts tests/reusable-code-audit-audit-safe.characterization.test.ts tests/reusable-code-audit-clear-payload-parity.characterization.test.ts tests/reusable-code-audit-module-loader.characterization.test.ts tests/reusable-code-audit-queue-waiters.characterization.test.ts tests/reusable-code-audit-routing-coverage.characterization.test.ts tests/reusable-code-audit-system-state-parity.characterization.test.ts tests/reusable-code-audit-timing-safe-auth.characterization.test.ts",
+      "result": "pass",
+      "rawExitCode": 1,
+      "interpretation": "ripgrep exit 1 means no credential-pattern matches."
+    }
+  ],
+  "expectedBaselineFailuresReproduced": [
+    {
+      "command": "npx --no-install madge --circular --extensions ts --ts-config tsconfig.json src",
+      "durationMs": 5016,
+      "exitCode": 1,
+      "failureCount": 63,
+      "comparison": "Exact pre-change circular-path count; not a regression."
+    },
+    {
+      "command": "npx --no-install tsc --noEmit --noUnusedLocals --noUnusedParameters --pretty false",
+      "durationMs": 7033,
+      "exitCode": 2,
+      "failureCount": 66,
+      "comparison": "Exact pre-change unused-diagnostic count; not a regression."
+    }
+  ],
+  "notRun": [
+    {
+      "command": "npm run test:all",
+      "reason": "Redundant after the full root Jest sweep and focused integration sweep; both constituent surfaces passed post-change."
+    },
+    {
+      "command": "railway up",
+      "reason": "Deployment was explicitly prohibited."
+    },
+    {
+      "command": "Production smoke and post-deploy Railway watchdog commands",
+      "reason": "No deployment occurred."
+    }
+  ]
+}

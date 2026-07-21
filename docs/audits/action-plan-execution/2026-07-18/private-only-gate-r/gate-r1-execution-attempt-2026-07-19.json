@@ -1,0 +1,169 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-07-19T22:33:17.1175708-04:00",
+  "classification": "GATE R STAGE R1 FAIL",
+  "stageR2": "NOT READY",
+  "executionState": "STOPPED_AT_PRE_ACTIVATION_GATE",
+  "source": {
+    "branch": "codex/phase2e-advisory-history-gate-r",
+    "commit": "86dc421c3fc68cb1381948bd2e391198d15a045f",
+    "cleanBeforeEvidenceArtifact": true,
+    "sourceChanges": 0,
+    "pushOrPullRequest": false
+  },
+  "target": {
+    "workspace": "pbjustin's Projects",
+    "project": "Arcanos",
+    "projectId": "7faf44e5-519c-4e73-8d7a-da9f389e6187",
+    "environment": "phase2e-validation-20260717",
+    "environmentId": "fb99f47d-5ef5-44c1-96c2-acf7b90fab13",
+    "privateNetworkId": "464f2194-3825-4ac1-a705-192566561675",
+    "railwayCliVersion": "4.30.2"
+  },
+  "continuationContext": {
+    "replacementServicesPreExisted": true,
+    "replacementServiceIdsExplicitlyApprovedForContinuation": true,
+    "servicesCreatedByThisAttempt": 0
+  },
+  "replacementPostgres": {
+    "serviceId": "a2a57da4-a928-427f-be30-d4a68b59a117",
+    "serviceInstanceId": "e8c42bea-d887-485b-8aaf-ba0f45d439e8",
+    "volumeId": "2998734d-7530-4f26-b715-cea4780bd437",
+    "volumeInstanceId": "46113532-5609-46da-b7b4-46b8f06930cc",
+    "mountPath": "/var/lib/postgresql/data",
+    "volumeState": "READY",
+    "sourceKind": "NONE",
+    "deploymentCount": 0,
+    "railwayDomainCount": 0,
+    "customDomainCount": 0,
+    "tcpProxyCount": 0,
+    "tcpProxyObservedAt": "2026-07-20T02:31:49.352Z",
+    "variableNameCount": 12,
+    "variableNamesMatchReviewedContract": true,
+    "publicUrlVariablePresent": false,
+    "projectedRestartPolicyType": "ON_FAILURE",
+    "projectedRestartPolicyMaxRetries": 10,
+    "projectedStartCommandContract": "UNSET"
+  },
+  "replacementRedis": {
+    "serviceId": "1ac0bd56-50b3-49eb-954c-ea83515ec915",
+    "serviceInstanceId": "0f34bcbb-bfd0-4df5-954a-bb97371bd460",
+    "volumeId": "983c4f0a-9180-4621-b65e-dfdd0b79f2bd",
+    "volumeInstanceId": "b96f20a3-a1f1-40ea-ba4b-334ea3e8ba15",
+    "mountPath": "/data",
+    "volumeState": "READY",
+    "sourceKind": "NONE",
+    "deploymentCount": 0,
+    "railwayDomainCount": 0,
+    "customDomainCount": 0,
+    "tcpProxyCount": 0,
+    "tcpProxyObservedAt": "2026-07-20T02:31:49.964Z",
+    "variableNameCount": 6,
+    "variableNamesMatchReviewedContract": true,
+    "publicUrlVariablePresent": false,
+    "projectedRestartPolicyType": "ON_FAILURE",
+    "projectedRestartPolicyMaxRetries": 10,
+    "projectedStartCommandContract": "MISSING"
+  },
+  "preActivationBlocker": {
+    "code": "GATE_R1_NONINTERACTIVE_CONFIG_PATCH_NOT_APPLIED",
+    "detail": "Railway CLI 4.30.2 selected empty non-terminal stdin before the supplied --service-config flags, constructed an empty EnvironmentConfig, and returned committed false with No changes to apply without calling EnvironmentPatchCommit. The schema-locked service-instance projection correctly reported the unchanged retry-limit and start-command values, so Stage 7 correctly suppressed source activation.",
+    "activationSuppressed": true,
+    "postgresImageAssigned": false,
+    "redisImageAssigned": false
+  },
+  "rootCauseReconciliation": {
+    "confidence": "HIGH",
+    "observationType": "STATIC_CLI_SOURCE_AND_RUNTIME_ACKNOWLEDGEMENT",
+    "railwayCliTag": "v4.30.2",
+    "railwayCliSourceCommit": "7650d29f2295d32c0ed9ef627d1eab6c8e4aaf49",
+    "emptyPatchAcknowledgement": {
+      "staged": false,
+      "committed": false,
+      "messageCategory": "NO_CHANGES_TO_APPLY"
+    },
+    "desiredConfigurationWriteProven": false,
+    "serviceInstanceProjectionAccurate": true,
+    "rawEnvironmentConfigReadRequired": false
+  },
+  "credentialSafety": {
+    "credentialsGeneratedIndependently": true,
+    "credentialCount": 2,
+    "entropyBytesEach": 32,
+    "encoding": "base64url",
+    "transport": "stdin",
+    "deploymentSuppressed": true,
+    "credentialValuesPrinted": 0,
+    "connectionStringsPrinted": 0,
+    "rawVariableOutputSaved": false,
+    "compromisedValuesRetrievedOrReused": false,
+    "brokerStoppedAndAcknowledged": true,
+    "brokerSessionDirectoryRemoved": true
+  },
+  "legacyQuarantine": {
+    "postgresServiceId": "b7789306-8aef-4113-add5-02883a6cc087",
+    "postgresDeploymentId": "a7940a2c-d7f2-4dbe-9cfd-86655a51def9",
+    "postgresDeploymentStatus": "REMOVED",
+    "redisServiceId": "434fa5b4-b52c-4caf-aaba-e87c173bf10d",
+    "redisDeploymentIds": [
+      "ae1e3b71-a816-4baa-8c37-c3d4c0f28c0e",
+      "cb53e19c-1fb8-43a1-9268-313aed88e44e"
+    ],
+    "redisDeploymentStatuses": [
+      "REMOVED",
+      "REMOVED"
+    ],
+    "servicesAndVolumesRetained": true,
+    "alteredByThisAttempt": false
+  },
+  "mutationCounts": {
+    "servicesCreated": 0,
+    "volumesCreated": 2,
+    "credentialsGenerated": 2,
+    "replacementVariableNamesConfigured": 18,
+    "replacementServiceConfigWritesAttempted": 5,
+    "replacementServiceConfigNoChangeProbes": 5,
+    "replacementServiceConfigCliInvocations": 10,
+    "replacementServiceConfigCommitsApplied": 0,
+    "imagesAssigned": 0,
+    "deploymentsCreated": 0,
+    "domainsChanged": 0,
+    "tcpProxiesChanged": 0,
+    "migrations": 0,
+    "sqlOperations": 0,
+    "redisDataOperations": 0,
+    "actionPlanOperations": 0,
+    "providerCalls": 0
+  },
+  "nonImpact": {
+    "productionMutated": false,
+    "phase2dMutated": false,
+    "applicationServicesMutated": false,
+    "validatorsMutated": false,
+    "compromisedServicesMutated": false,
+    "repositorySourceMutated": false
+  },
+  "independentReview": {
+    "verdict": "GATE R STAGE R1 FAIL",
+    "stopDecision": "CORRECT",
+    "blocker": "No environment configuration patch was committed; the live Stage 7 projection correctly retained the prior service-instance values.",
+    "stageR2Ready": false
+  },
+  "limitations": [
+    "The replacement services pre-existed this continuation under explicit operator authorization; this attempt created their volumes and configured their service-local variables.",
+    "Production and Phase 2D non-impact is supported by exact-target assertions and operation history; this artifact does not embed full before-and-after stable identity lists for those environments.",
+    "The generated byte arrays were cleared and PowerShell secret references removed, but immutable managed-string memory zeroization cannot be proven."
+  ],
+  "environmentDisposition": {
+    "newReplacementServicesRetained": true,
+    "newReplacementVolumesRetained": true,
+    "replacementServicesDeployed": false,
+    "compromisedServicesRetainedUnchanged": true,
+    "environmentRetained": true,
+    "resourcesDeleted": 0
+  },
+  "requiredNextStep": {
+    "classification": "SEPARATE GATE R1 RE-AUTHORIZATION REQUIRED",
+    "detail": "Use the corrected schema-locked procedure to send an explicit fixed EnvironmentConfig JSON patch over stdin, require an exact committed-true acknowledgement, and then require the fresh service-instance projection to report retry limit 3 and the approved Redis start-command contract. Do not assign either image until that proof chain passes under separate Railway mutation authorization."
+  }
+}

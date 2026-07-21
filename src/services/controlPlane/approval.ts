@@ -1,6 +1,5 @@
-import crypto from 'node:crypto';
-
 import { getEnv } from '@platform/runtime/env.js';
+import { timingSafeEqualOpaqueSecret } from '@shared/security/opaqueSecret.js';
 
 import type { ControlPlaneApprovalStatus, ControlPlaneRequest } from './types.js';
 
@@ -8,15 +7,6 @@ export interface ControlPlaneApprovalDecision {
   ok: boolean;
   status: ControlPlaneApprovalStatus;
   reason?: string;
-}
-
-function timingSafeEqualString(left: string, right: string): boolean {
-  const leftBuffer = Buffer.from(left);
-  const rightBuffer = Buffer.from(right);
-  if (leftBuffer.length !== rightBuffer.length) {
-    return false;
-  }
-  return crypto.timingSafeEqual(leftBuffer, rightBuffer);
 }
 
 export function readControlPlaneApprovalToken(): string | undefined {
@@ -50,7 +40,7 @@ export function evaluateControlPlaneApproval(
     };
   }
 
-  if (!timingSafeEqualString(suppliedToken, configuredToken)) {
+  if (!timingSafeEqualOpaqueSecret(suppliedToken, configuredToken)) {
     return {
       ok: false,
       status: 'invalid',

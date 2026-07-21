@@ -81,6 +81,8 @@ describe('gptoss private serving design boundary', () => {
         readiness: {
           privateServingDesignReady: true,
           privateServingScaffoldReady: true,
+          phase6ImplementationReady: true,
+          finalArchitectureReadinessReviewed: true,
           privateServingImplemented: false,
           privateServingExposed: false,
           requestSigningDesigned: true,

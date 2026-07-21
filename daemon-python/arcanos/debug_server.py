@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from cli import ArcanosCLI
 
 from .config import Config, get_automation_auth, get_backend_base_url
+from .credential_verification import timing_safe_equal_opaque_secret
 from arcanos.debug import handle_request, liveness, log_audit_event, readiness, get_debug_logger
 from arcanos.utils.telemetry import sanitize_sensitive_data
 
@@ -20,6 +21,18 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
     cli_instance: "ArcanosCLI"
     _last_status_code: int = 200
     _request_id: Optional[str] = None
+
+    def log_message(self, format: str, *args: Any) -> None:
+        """Preserve stdlib access logs while removing query credentials."""
+        raw_target = getattr(self, "path", "")
+        safe_target = raw_target.split("?", 1)[0]
+        safe_args = tuple(
+            value.replace(raw_target, safe_target)
+            if raw_target and isinstance(value, str)
+            else value
+            for value in args
+        )
+        super().log_message(format, *safe_args)
 
     def _consume_confirmation_token(self, token: str) -> bool:
         backend_url = (get_backend_base_url() or "").rstrip("/")
@@ -103,7 +116,7 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
         provided = self.headers.get(header_name)
         confirm_token = self.headers.get("x-arcanos-confirm-token")
 
-        if secret and provided == secret:
+        if secret and timing_safe_equal_opaque_secret(provided, secret):
             # //audit Assumption: automation secret is a trusted gate; risk: unauthorized access; invariant: secret must match; handling: allow when matched.
             return True
 
@@ -116,17 +129,17 @@ class DebugAPIHandler(BaseHTTPRequestHandler):
             auth_header = self.headers.get("Authorization", "")
             if auth_header.startswith("Bearer "):
                 token = auth_header[7:].strip()
-                if token == Config.DEBUG_SERVER_TOKEN:
+                if timing_safe_equal_opaque_secret(token, Config.DEBUG_SERVER_TOKEN):
                     return True
 
             token_header = self.headers.get("X-Debug-Token", "").strip()
-            if token_header == Config.DEBUG_SERVER_TOKEN:
+            if timing_safe_equal_opaque_secret(token_header, Config.DEBUG_SERVER_TOKEN):
                 return True
 
             if Config.DEBUG_SERVER_ALLOW_QUERY_TOKEN:
                 params = self._query_params()
                 if "token" in params and params["token"]:
-                    if params["token"][0] == Config.DEBUG_SERVER_TOKEN:
+                    if timing_safe_equal_opaque_secret(params["token"][0], Config.DEBUG_SERVER_TOKEN):
                         return True
 
         if require_auth:

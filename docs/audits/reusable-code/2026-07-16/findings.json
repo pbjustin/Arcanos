@@ -1,0 +1,520 @@
+[
+  {
+    "id": "AUDIT-SAFE-INDEPENDENT-STATE",
+    "title": "Three independent audit-safe policy states",
+    "evidence": [
+      "Each implementation owns separate module-scoped mode and override state.",
+      "Characterization transitions in one implementation are invisible to the other two.",
+      "Runtime tests independently exhaust the core and persistence-service counters and interleave updates without cross-module visibility."
+    ],
+    "affectedFiles": [
+      "src/core/persistenceManagerHierarchy.ts",
+      "src/services/persistenceManager.ts",
+      "src/services/auditSafeToggle.ts",
+      "tests/reusable-code-audit-audit-safe.characterization.test.ts"
+    ],
+    "observedBehavior": "Modes, supported values, overrides, failure semantics, persistence, and reset behavior disagree across the three implementations.",
+    "confidence": "high",
+    "risk": "high",
+    "observationType": "static and runtime",
+    "requiredPrerequisiteTests": [
+      "Cross-module transition matrix",
+      "Override and partial-failure characterization",
+      "Module-reset characterization"
+    ],
+    "suggestedImplementationPhase": "Phase 2 correctness and ownership decision",
+    "rollbackApproach": "Revert any future ownership or synchronization change independently while retaining characterization tests.",
+    "productionDeploymentRequired": true
+  },
+  {
+    "id": "AUDIT-SAFE-PARTIAL-UPDATES",
+    "title": "Audit-safe state mutates before durable logging completes",
+    "evidence": [
+      "Core setter mutates then awaits audit-store insertion.",
+      "Persistence setter mutates then performs best-effort file append.",
+      "Toggle setter mutates before console logging."
+    ],
+    "affectedFiles": [
+      "src/core/persistenceManagerHierarchy.ts",
+      "src/services/persistenceManager.ts",
+      "src/services/auditSafeToggle.ts"
+    ],
+    "observedBehavior": "A caller can receive an error while the new state remains active; interleaved core updates have no mutex or rollback.",
+    "confidence": "high",
+    "risk": "high",
+    "observationType": "static and runtime",
+    "requiredPrerequisiteTests": [
+      "Logging/persistence failure tests",
+      "Interleaved update ordering test"
+    ],
+    "suggestedImplementationPhase": "Phase 2 transactional-semantics review",
+    "rollbackApproach": "Restore current mutation-before-log ordering if a later atomicity change causes operational regressions.",
+    "productionDeploymentRequired": true
+  },
+  {
+    "id": "MODULE-LOADER-COMPILED-DRIFT",
+    "title": "Machine-local compiled service discovery includes source-orphaned files",
+    "evidence": [
+      "Source loader evaluates 134 files.",
+      "Current dist loader evaluates 138 files.",
+      "Four compiled-only service JavaScript files have no source counterpart.",
+      "The build does not clean dist before compilation.",
+      "dist/ is ignored generated state and is not content-addressed by the source commit."
+    ],
+    "affectedFiles": [
+      "src/services/moduleLoader.ts",
+      "dist/services/gptAccessOperator.js",
+      "dist/services/gptAccessOperatorRegistry.js",
+      "dist/services/gptIntegrationActions.js",
+      "dist/services/persistedSessionService.js"
+    ],
+    "observedBehavior": "The observed local compiled loader inventory is defined by current generated-directory contents, not solely by source; whether an identical directory is deployed was not established.",
+    "confidence": "high",
+    "risk": "high",
+    "observationType": "machine-local runtime filesystem and static",
+    "requiredPrerequisiteTests": [
+      "Source/compiled inventory comparison",
+      "Clean-build inventory regression test"
+    ],
+    "suggestedImplementationPhase": "Phase 2 build hygiene",
+    "rollbackApproach": "Restore the prior build pipeline and generated directory if cleaning changes deployed artifacts unexpectedly.",
+    "productionDeploymentRequired": true
+  },
+  {
+    "id": "MODULE-LOADER-PERMISSIVE-IMPORTS",
+    "title": "Loader accepts malformed definitions after evaluating every candidate",
+    "evidence": [
+      "Acceptance checks only truthiness of default and default.actions.",
+      "Empty objects and malformed truthy actions values are accepted.",
+      "Rejected modules have already executed top-level code."
+    ],
+    "affectedFiles": [
+      "src/services/moduleLoader.ts",
+      "tests/reusable-code-audit-module-loader.characterization.test.ts"
+    ],
+    "observedBehavior": "Malformed modules can enter the result, while rejected modules can still register timers/listeners or mutate state.",
+    "confidence": "high",
+    "risk": "high",
+    "observationType": "static and fixture runtime",
+    "requiredPrerequisiteTests": [
+      "Malformed/default/actions matrix",
+      "Import failure continuation",
+      "Side-effect cleanup characterization"
+    ],
+    "suggestedImplementationPhase": "Phase 2 loader hardening",
+    "rollbackApproach": "Restore the permissive predicate and raw scan behavior if validation rejects an existing compatibility module.",
+    "productionDeploymentRequired": true
+  },
+  {
+    "id": "MODULE-LOADER-CACHE-SEMANTICS",
+    "title": "Loader cache is mutable, non-coalesced, and does not reset ESM state",
+    "evidence": [
+      "Repeated calls return the same mutable array.",
+      "Concurrent cold loads perform multiple directory scans.",
+      "clearModuleDefinitionCache only clears the array reference."
+    ],
+    "affectedFiles": [
+      "src/services/moduleLoader.ts",
+      "src/platform/runtime/gptRouterConfig.ts"
+    ],
+    "observedBehavior": "Caller mutation affects later results; concurrent scans race; failed or side-effectful imports persist after loader reset.",
+    "confidence": "high",
+    "risk": "medium",
+    "observationType": "static and fixture runtime",
+    "requiredPrerequisiteTests": [
+      "Same-reference cache test",
+      "Concurrent cold-load test",
+      "Cache-reset/ESM-state test"
+    ],
+    "suggestedImplementationPhase": "Phase 2 loader hardening",
+    "rollbackApproach": "Restore the array-only cache if coalescing or defensive copies alter callers.",
+    "productionDeploymentRequired": true
+  },
+  {
+    "id": "QUEUE-TERMINAL-DIVERGENCE",
+    "title": "Ask and GPT waiters map cancellation and expiration differently",
+    "evidence": [
+      "Ask collapses cancelled into failed.",
+      "Ask treats expired as pending.",
+      "GPT preserves cancelled and expired terminal states."
+    ],
+    "affectedFiles": [
+      "src/services/queuedAskCompletionService.ts",
+      "src/services/queuedGptCompletionService.ts",
+      "tests/reusable-code-audit-queue-waiters.characterization.test.ts"
+    ],
+    "observedBehavior": "The same stored job lifecycle state yields different service and HTTP behavior.",
+    "confidence": "high",
+    "risk": "medium",
+    "observationType": "static and runtime",
+    "requiredPrerequisiteTests": [
+      "Complete waiter state matrix",
+      "Caller HTTP mapping tests"
+    ],
+    "suggestedImplementationPhase": "Phase 2 correctness review",
+    "rollbackApproach": "Restore each private terminal predicate independently.",
+    "productionDeploymentRequired": true
+  },
+  {
+    "id": "QUEUE-ABORT-AND-CLOCK",
+    "title": "Queue waiters ignore request abort signals and rely entirely on wall-clock progress",
+    "evidence": [
+      "Neither waiter accepts AbortSignal.",
+      "The shared sleep helper supports signals but receives only a delay.",
+      "No independent maximum poll count exists."
+    ],
+    "affectedFiles": [
+      "src/services/queuedAskCompletionService.ts",
+      "src/services/queuedGptCompletionService.ts",
+      "src/routes/gptRouter.ts"
+    ],
+    "observedBehavior": "Outer request timeout can reject while waiter work continues; backward/stalled clocks can extend polling.",
+    "confidence": "high",
+    "risk": "high",
+    "observationType": "static and injected-runtime",
+    "requiredPrerequisiteTests": [
+      "Ignored-signal characterization",
+      "AbortError propagation",
+      "Forward/backward clock tests",
+      "Exact poll-count test"
+    ],
+    "suggestedImplementationPhase": "Phase 2 cancellation and bounded-loop design",
+    "rollbackApproach": "Remove future signal threading or iteration bounds and restore current dependency signatures.",
+    "productionDeploymentRequired": true
+  },
+  {
+    "id": "QUEUE-MISSING-AMBIGUITY",
+    "title": "Database disconnection is indistinguishable from a missing job",
+    "evidence": [
+      "Default repository returns null for both disconnected database and absent row.",
+      "Both waiters map every null to missing."
+    ],
+    "affectedFiles": [
+      "src/core/db/repositories/jobRepository.ts",
+      "src/services/queuedAskCompletionService.ts",
+      "src/services/queuedGptCompletionService.ts"
+    ],
+    "observedBehavior": "Operational outage can be reported as job disappearance.",
+    "confidence": "high",
+    "risk": "high",
+    "observationType": "static",
+    "requiredPrerequisiteTests": [
+      "Null repository characterization",
+      "Route error-envelope tests"
+    ],
+    "suggestedImplementationPhase": "Phase 2 repository result discrimination",
+    "rollbackApproach": "Revert to null-only repository results if callers cannot consume a richer error contract.",
+    "productionDeploymentRequired": true
+  },
+  {
+    "id": "OPENAI-WORKER-CONVERTER-DIVERGENCE",
+    "title": "Worker Responses converter drops terminal metadata",
+    "evidence": [
+      "Worker hardcodes finish_reason stop.",
+      "Worker omits response status, incomplete details, truncation, and content-filter metadata.",
+      "Golden fixtures reproduce differences."
+    ],
+    "affectedFiles": [
+      "workers/src/infrastructure/sdk/openai.ts",
+      "src/core/adapters/openai.adapter.ts",
+      "src/services/openai/requestBuilders/convert.ts"
+    ],
+    "observedBehavior": "Truncated, filtered, incomplete, and tool-call provider outputs appear as ordinary stopped completions in workers.",
+    "confidence": "high",
+    "risk": "high",
+    "observationType": "static and runtime",
+    "requiredPrerequisiteTests": [
+      "Shared golden conversion suite",
+      "Worker consumer ownership evidence"
+    ],
+    "suggestedImplementationPhase": "Phase 2 converter contract decision",
+    "rollbackApproach": "Revert worker mapping independently while preserving golden fixtures.",
+    "productionDeploymentRequired": true
+  },
+  {
+    "id": "OPENAI-REFUSAL-TOOL-DROPPING",
+    "title": "Legacy converters discard refusal and tool payloads",
+    "evidence": [
+      "Refusal parts produce empty content and explicit refusal null.",
+      "Core/service can emit finish_reason tool_calls without message.tool_calls.",
+      "Worker emits stop and also drops the call."
+    ],
+    "affectedFiles": [
+      "packages/arcanos-openai/src/responseParsing.ts",
+      "src/core/adapters/openaiResponsesMetadata.ts",
+      "src/core/adapters/openai.adapter.ts",
+      "src/services/openai/requestBuilders/convert.ts",
+      "workers/src/infrastructure/sdk/openai.ts"
+    ],
+    "observedBehavior": "Security refusal and actionable tool-call information can be lost at the compatibility boundary.",
+    "confidence": "high",
+    "risk": "high",
+    "observationType": "static and runtime",
+    "requiredPrerequisiteTests": [
+      "Refusal fixtures",
+      "Safety-refusal fixtures",
+      "Function/tool-call fixtures",
+      "Consumer contract review"
+    ],
+    "suggestedImplementationPhase": "Phase 2 provider-contract review",
+    "rollbackApproach": "Restore characterized field omission if consumers reject richer legacy messages.",
+    "productionDeploymentRequired": true
+  },
+  {
+    "id": "ROUTE-COLLISIONS",
+    "title": "Multiple HTTP method/path collisions are order-dependent",
+    "evidence": [
+      "Reusable router is nested in apiRouter and mounted directly.",
+      "Audit, update, and health handlers also have competing registrations.",
+      "Middleware stacks differ between registrations.",
+      "Runtime composition proves nested-first health handling executes the memory gate, while direct-first handling bypasses it."
+    ],
+    "affectedFiles": [
+      "src/routes/register.ts",
+      "src/routes/api/index.ts",
+      "src/routes/api-reusable-code.ts",
+      "src/routes/ai-endpoints.ts",
+      "src/routes/reinforcement.ts",
+      "src/routes/api-update.ts",
+      "src/routes/api-daemon.ts",
+      "src/routes/healthGroup.ts",
+      "src/routes/health.ts",
+      "src/routes/status.ts"
+    ],
+    "observedBehavior": "Earlier terminating handlers shadow later stacks; duplicate reusable routes have different middleware ancestry.",
+    "confidence": "high",
+    "risk": "high",
+    "observationType": "static mount graph and runtime",
+    "requiredPrerequisiteTests": [
+      "Deterministic mount manifest",
+      "Known-collision first-wins tests",
+      "Middleware-stack comparison"
+    ],
+    "suggestedImplementationPhase": "Phase 2 route ownership correction",
+    "rollbackApproach": "Restore the removed mount in its original order and reinstate its middleware chain.",
+    "productionDeploymentRequired": true
+  },
+  {
+    "id": "TIMING-SAFE-DIVERGENCE",
+    "title": "Seven timing-safe credential comparisons have different normalization contracts",
+    "evidence": [
+      "Five raw-buffer length-guard implementations and two hash-based implementations exist.",
+      "Whitespace, Bearer parsing, header precedence, case, maximum length, and configured-token trimming differ."
+    ],
+    "affectedFiles": [
+      "src/mcp/auth.ts",
+      "src/routes/worker-helper.ts",
+      "src/services/controlPlane/approval.ts",
+      "src/services/gptDagBridge.ts",
+      "src/services/rootDeepDiagnosticsBridge.ts",
+      "src/services/customGptBridgeService.ts",
+      "src/services/gptAccessGateway.ts"
+    ],
+    "observedBehavior": "Equivalent-looking credentials can authorize on one surface and fail on another; none performs Unicode normalization.",
+    "confidence": "high",
+    "risk": "high",
+    "observationType": "static and runtime",
+    "requiredPrerequisiteTests": [
+      "Equal/different length matrix",
+      "Whitespace/case/Unicode/long-input matrix",
+      "Secret non-disclosure assertions"
+    ],
+    "suggestedImplementationPhase": "Phase 2 security contract review",
+    "rollbackApproach": "Revert each surface independently; do not centralize until compatibility decisions are explicit.",
+    "productionDeploymentRequired": true
+  },
+  {
+    "id": "COVERAGE-SCOPE-LABEL",
+    "title": "Configured 100% coverage represents a bounded root-backend and monorepo production slice",
+    "evidence": [
+      "Coverage scope lists 94 unique existing files.",
+      "Executable src denominator is 717 files.",
+      "Seven explicit monorepo production roots contain 803 non-declaration TypeScript files.",
+      "Jest applies per-file 100% thresholds only to the curated list."
+    ],
+    "affectedFiles": [
+      "config/coverageScope.js",
+      "jest.config.js",
+      "codecov.yml",
+      "docs/audits/reusable-code/2026-07-16/coverage-report.json"
+    ],
+    "observedBehavior": "The scoped metric represents 13.1102% of root-backend src files and 11.7061% of monorepo production-root files; it can be mistaken for repository-wide 100% without both labels.",
+    "confidence": "high",
+    "risk": "medium",
+    "observationType": "static and generated report",
+    "requiredPrerequisiteTests": [
+      "Coverage label consistency test",
+      "Dynamic denominator verification"
+    ],
+    "suggestedImplementationPhase": "Phase 2 reporting/CI clarity",
+    "rollbackApproach": "Restore prior labels while retaining the denominator artifact if downstream dashboards depend on wording.",
+    "productionDeploymentRequired": false
+  },
+  {
+    "id": "BOUNDARY-CHECK-GAP",
+    "title": "Named boundary check does not execute dependency-cycle analysis",
+    "evidence": [
+      "npm run check:boundaries invokes scripts/check-boundaries.js.",
+      "That file runs the CEF scanner.",
+      "Madge still detects 63 circular paths."
+    ],
+    "affectedFiles": [
+      "package.json",
+      "scripts/check-boundaries.js",
+      "scripts/check-boundaries.ts",
+      "scripts/check-cef-layer-access.js"
+    ],
+    "observedBehavior": "CI can report the named boundary check as passing while runtime dependency cycles remain unchecked.",
+    "confidence": "high",
+    "risk": "high",
+    "observationType": "static and command runtime",
+    "requiredPrerequisiteTests": [
+      "Boundary command wiring test",
+      "Deterministic cycle/SCC baseline"
+    ],
+    "suggestedImplementationPhase": "Phase 2 CI governance",
+    "rollbackApproach": "Restore the prior command target if newly enforced cycle checks block releases unexpectedly.",
+    "productionDeploymentRequired": false
+  },
+  {
+    "id": "RUNTIME-SCCS",
+    "title": "Two runtime SCCs span 75 modules",
+    "evidence": [
+      "AST graph contains 2,310 runtime edges after explicit type-only edges are removed.",
+      "SCC sizes are 67 and 8.",
+      "Cross-area imports include both core-to-services and services-to-core edges."
+    ],
+    "affectedFiles": [
+      "docs/audits/reusable-code/2026-07-16/runtime-scc.json",
+      "docs/audits/reusable-code/2026-07-16/runtime-edges.json",
+      "docs/audits/reusable-code/2026-07-16/architecture-edges.csv"
+    ],
+    "observedBehavior": "Initialization order, import-time state, and boundary ownership are coupled across major architectural areas.",
+    "confidence": "high",
+    "risk": "high",
+    "observationType": "static deterministic graph",
+    "requiredPrerequisiteTests": [
+      "Runtime SCC snapshot",
+      "Import-side-effect characterization",
+      "Boundary-specific contract tests"
+    ],
+    "suggestedImplementationPhase": "Phase 3 incremental boundary cuts after Phase 2 correctness decisions",
+    "rollbackApproach": "Revert one boundary cut at a time and restore the original direct import edge.",
+    "productionDeploymentRequired": true
+  },
+  {
+    "id": "SYSTEM-STATE-DUPLICATION",
+    "title": "Ask and service system-state builders match while request/error contracts differ",
+    "evidence": [
+      "Success builders are field-for-field duplicates.",
+      "Ask sanitizes and validates more narrowly.",
+      "Invalid and conflict envelopes differ.",
+      "The shared module-scoped intent store exposes no reset function; characterization isolates inserts with unique session IDs."
+    ],
+    "affectedFiles": [
+      "src/routes/ask/index.ts",
+      "src/services/systemState.ts",
+      "src/routes/system-state.ts"
+    ],
+    "observedBehavior": "Successful anonymous reads can match exactly, but clients see different validation, headers, side effects, and error shapes.",
+    "confidence": "high",
+    "risk": "medium",
+    "observationType": "static and runtime",
+    "requiredPrerequisiteTests": [
+      "Fixed-clock success parity",
+      "Invalid/conflict envelope comparison",
+      "Header and logging side-effect comparison"
+    ],
+    "suggestedImplementationPhase": "Phase 2 contract ownership review",
+    "rollbackApproach": "Restore independent builders if delegating one surface changes route-specific contracts.",
+    "productionDeploymentRequired": true
+  },
+  {
+    "id": "CLEAR-RECHECK-DUPLICATION",
+    "title": "HTTP and MCP CLEAR recheck builders are exact duplicates",
+    "evidence": [
+      "Both emit the same fields in the same order.",
+      "Both preserve actions and params without normalization.",
+      "Both use non-null rollback detection.",
+      "Actual HTTP and createMcpServer plans.execute execution produces equal recheck payloads."
+    ],
+    "affectedFiles": [
+      "src/routes/plans.ts",
+      "src/mcp/server/helpers.ts"
+    ],
+    "observedBehavior": "The same concept is implemented twice, while downstream HTTP and MCP envelopes remain different.",
+    "confidence": "high",
+    "risk": "medium",
+    "observationType": "static and runtime",
+    "requiredPrerequisiteTests": [
+      "Shared fixture input parity",
+      "Blocked recheck persistence tests",
+      "Distinct response-envelope tests"
+    ],
+    "suggestedImplementationPhase": "Phase 2 narrow extraction review",
+    "rollbackApproach": "Restore both local builders if a shared pure function changes serialization or dependency boundaries.",
+    "productionDeploymentRequired": true
+  },
+  {
+    "id": "CLEAR-EXECUTION-DIVERGENCE",
+    "title": "HTTP and MCP CLEAR execution preserve divergent errors and null-score persistence",
+    "evidence": [
+      "Capability rejection stops both surfaces before CLEAR evaluation or persistence, but response envelopes differ.",
+      "A blocking CLEAR decision calls blockPlan on both surfaces; HTTP returns 403 and MCP returns ERR_GATED.",
+      "An allow decision whose stored clearScore is null persists clearDecision block on both surfaces.",
+      "A blockPlan failure becomes a generic HTTP 500, while MCP ERR_INTERNAL includes the dependency-thrown message."
+    ],
+    "affectedFiles": [
+      "src/routes/plans.ts",
+      "src/mcp/server/index.ts",
+      "src/mcp/server/helpers.ts",
+      "tests/reusable-code-audit-clear-payload-parity.characterization.test.ts"
+    ],
+    "observedBehavior": "Shared CLEAR inputs can produce equivalent persistence decisions but surface-specific error envelopes; null scores invert the persisted allow decision, and MCP can disclose a dependency error message.",
+    "confidence": "high",
+    "risk": "high",
+    "observationType": "runtime",
+    "requiredPrerequisiteTests": [
+      "Capability-gate short-circuit tests",
+      "Allow/block persistence matrix",
+      "Null-score characterization",
+      "Dependency-error non-disclosure contract"
+    ],
+    "suggestedImplementationPhase": "Phase 2 CLEAR correctness and error-contract review",
+    "rollbackApproach": "Revert null-score mapping and error-envelope changes independently while retaining the shared runtime fixture matrix.",
+    "productionDeploymentRequired": true
+  },
+  {
+    "id": "WORKER-RUNTIME-OWNERSHIP-OVERLAP",
+    "title": "Dedicated DB worker transitively starts the in-process listener runtime",
+    "evidence": [
+      "The Railway launcher selects src/workers/jobRunner.ts for ARCANOS_PROCESS_KIND=worker and derives RUN_WORKERS=true.",
+      "jobRunner imports gptDispatch, which imports routes/modules.ts; that module performs a top-level loadModuleDefinitions call.",
+      "The loader evaluates workerControlService.ts even though the deterministic inventory rejects it as noDefaultExport.",
+      "workerControlService.ts imports workerConfig.ts, whose import-time branch calls startWorkers when worker mode is enabled.",
+      "The in-process runtime registers EventEmitter handlers, defaulting to four listeners, while jobRunner independently polls PostgreSQL."
+    ],
+    "affectedFiles": [
+      "scripts/start-railway-service.mjs",
+      "src/workers/jobRunner.ts",
+      "src/routes/_core/gptDispatch.ts",
+      "src/routes/modules.ts",
+      "src/services/moduleLoader.ts",
+      "src/services/workerControlService.ts",
+      "src/platform/runtime/workerConfig.ts"
+    ],
+    "observedBehavior": "Repository wiring designates jobRunner as the PostgreSQL queue owner, but its import graph also starts the separate in-process listener lifecycle. The listeners do not claim database jobs; live deployed listener counts were not observed.",
+    "confidence": "high",
+    "risk": "high",
+    "observationType": "static plus deterministic loader inventory; live deployment not observed",
+    "requiredPrerequisiteTests": [
+      "Isolated worker-entrypoint import with database, Redis, OpenAI, network, signal, timer, and listener stubs",
+      "In-process listener-count and cleanup characterization",
+      "DB claim-loop singleton characterization",
+      "Existing web/worker selector matrix"
+    ],
+    "suggestedImplementationPhase": "Phase 2 worker-lifecycle ownership review",
+    "rollbackApproach": "Revert any later startup-boundary change, rebuild and redeploy only the worker service, then verify readiness, bootstrap logs, queue claims, and absence of duplicate completion events.",
+    "productionDeploymentRequired": true
+  }
+]

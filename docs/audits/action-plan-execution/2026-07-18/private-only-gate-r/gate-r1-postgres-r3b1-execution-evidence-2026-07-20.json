@@ -1,0 +1,142 @@
+{
+  "schemaVersion": 1,
+  "phase": "GATE_R1_POSTGRES_R3B1",
+  "result": "PASS_WITH_LIMITATIONS",
+  "source": {
+    "branch": "codex/phase2e-advisory-history-gate-r",
+    "reviewedToolingCommit": "21736924568fd38742ef8b2064c157fed00277b4",
+    "authorizationDocumentCommit": "1fbe37623bea06c3b4e6de273eba8bae6186a6ff",
+    "sourceChangesDuringExecution": 0,
+    "pushOrPullRequest": false
+  },
+  "target": {
+    "projectId": "7faf44e5-519c-4e73-8d7a-da9f389e6187",
+    "projectName": "Arcanos",
+    "environmentId": "fb99f47d-5ef5-44c1-96c2-acf7b90fab13",
+    "environmentName": "phase2e-validation-20260717",
+    "privateNetworkId": "464f2194-3825-4ac1-a705-192566561675",
+    "serviceId": "7346b3f6-bf3d-46e1-9d66-79f10847ef89",
+    "serviceInstanceId": "86dde430-50ac-4d5c-95c3-cb27064eff51",
+    "serviceName": "phase2e-postgres-r3-20260720"
+  },
+  "precondition": {
+    "r3IdentityUnique": true,
+    "r3SourceKind": "NONE",
+    "r3VolumeCount": 0,
+    "r3VariableCount": 0,
+    "retainedDataServicesOffline": 4,
+    "validatorsOffline": 2,
+    "applicationInstances": 0,
+    "privateNetworkExact": true,
+    "allProjectedDomainCountsZero": true,
+    "tcpProxyCounts": {
+      "originalPostgres": 0,
+      "originalRedis": 0,
+      "postgresR2": 0,
+      "redisR2": 0,
+      "postgresR3": 0
+    }
+  },
+  "operations": [
+    {
+      "sequence": 1,
+      "operation": "VOLUME_ATTACH",
+      "wrapperResult": "GATE_R1_R3_VOLUME_ACCEPTED_PENDING_PROJECTION",
+      "retryCount": 0,
+      "projectionPassed": true
+    },
+    {
+      "sequence": 2,
+      "operation": "CREDENTIAL_SET",
+      "wrapperResult": "GATE_R1_R3_PASSWORD_ACCEPTED_PENDING_PROJECTION",
+      "retryCount": 0,
+      "projectionPassed": true
+    },
+    {
+      "sequence": 3,
+      "operation": "FIXED_VARIABLE_BATCH",
+      "wrapperResult": "GATE_R1_R3_VARIABLES_ACCEPTED_PENDING_PROJECTION",
+      "retryCount": 0,
+      "projectionPassed": true
+    },
+    {
+      "sequence": 4,
+      "operation": "SERVICE_CONFIGURATION_PATCH",
+      "wrapperResult": "GATE_R1_R3_CONFIG_PATCH_RESULT_INVALID",
+      "retryCount": 0,
+      "projectionPassed": true,
+      "projectionObservation": "The fresh schema-locked projection reported ON_FAILURE with maximum retries 3. The wrapper acknowledgement remains classified as invalid and was not reinterpreted as success."
+    }
+  ],
+  "offlineStopState": {
+    "sourceKind": "NONE",
+    "repositoryConfigured": false,
+    "latestDeploymentPresent": false,
+    "activeDeploymentCount": 0,
+    "volume": {
+      "volumeId": "ce93ced0-0c15-48f9-87fc-d9153ffefdc8",
+      "volumeInstanceId": "c7969acf-79fd-4a6b-83d7-1e6cb442a030",
+      "mountPath": "/var/lib/postgresql/data",
+      "state": "READY"
+    },
+    "variableNames": [
+      "DATABASE_URL",
+      "PGDATA",
+      "PGDATABASE",
+      "PGHOST",
+      "PGPASSWORD",
+      "PGPORT",
+      "PGUSER",
+      "POSTGRES_DB",
+      "POSTGRES_PASSWORD",
+      "POSTGRES_USER",
+      "RAILWAY_DEPLOYMENT_DRAINING_SECONDS",
+      "SSL_CERT_DAYS"
+    ],
+    "publicUrlVariableCount": 0,
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 3,
+    "railwayDomainCount": 0,
+    "customDomainCount": 0,
+    "tcpProxyCount": 0
+  },
+  "accessControl": {
+    "secureProjectorRequestCount": 15,
+    "secureProjectorMaximumRequests": 20,
+    "temporaryTokenCreateCount": 1,
+    "temporaryTokenRevocation": "OPERATOR_CONFIRMED",
+    "ambientTokenPresentAfterSession": false,
+    "secureSessionDirectoryRemoved": true
+  },
+  "nonImpact": {
+    "retainedDataServicesUnchanged": true,
+    "productionStableIdentitiesUnchanged": true,
+    "phase2dStableIdentitiesUnchanged": true,
+    "targetApplicationDeployments": 0,
+    "targetWorkerDeployments": 0,
+    "activeTargetValidatorDeployments": 0,
+    "migrations": 0,
+    "sqlOperations": 0,
+    "providerCalls": 0
+  },
+  "validation": {
+    "focusedTestSuitesPassed": 10,
+    "focusedTestsPassed": 230,
+    "independentVerdict": "PASS_WITH_LIMITATIONS"
+  },
+  "disclosureScan": {
+    "credentialValuesRead": false,
+    "credentialValuesPrinted": 0,
+    "connectionStringsPrinted": 0,
+    "rawVariableOutputSaved": false
+  },
+  "limitations": [
+    "The service-configuration command acknowledgement was invalid even though a later schema-locked projection proved the intended restart policy was present.",
+    "The invalid acknowledgement was not retried, repaired, or relabeled as a successful wrapper result."
+  ],
+  "nextGate": {
+    "name": "GATE_R1_POSTGRES_R3B2",
+    "status": "LOCAL_PREPARATION_AUTHORIZED_EXECUTION_NOT_AUTHORIZED",
+    "required": "A separately reviewed source-activation tool, deployment-status projector, complete precondition replay, bounded authenticated readiness, and explicit execution authorization."
+  }
+}

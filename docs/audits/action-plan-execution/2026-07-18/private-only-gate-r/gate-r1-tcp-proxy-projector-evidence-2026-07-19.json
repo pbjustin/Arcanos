@@ -1,0 +1,120 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-07-19T01:14:51.2260326-04:00",
+  "classification": "GATE R1 TCP PROXY PRECONDITION UNAVAILABLE",
+  "gateR1": "NO-GO",
+  "source": {
+    "root": "Arcanos-phase2e-advisory-history-gate-r",
+    "branch": "codex/phase2e-advisory-history-gate-r",
+    "commit": "901f6012129168b7c65fe3678cdbb977d36b78d0",
+    "committed": false,
+    "pushed": false,
+    "pullRequestCreated": false
+  },
+  "railway": {
+    "cliVersion": "4.30.2",
+    "project": "Arcanos",
+    "projectId": "7faf44e5-519c-4e73-8d7a-da9f389e6187",
+    "environment": "phase2e-validation-20260717",
+    "environmentId": "fb99f47d-5ef5-44c1-96c2-acf7b90fab13",
+    "environmentAccessible": true,
+    "mutations": 0
+  },
+  "projectorContract": {
+    "file": "scripts/gate-r1-tcp-proxy-projector.js",
+    "sha256": "4F2250DA841C816A6FCBFDB78566CA9F3C34A9894E8FD02A7E876381DAF7E05F",
+    "endpoint": "https://backboard.railway.com/graphql/v2",
+    "authenticationHeader": "Project-Access-Token",
+    "tokenEnvironmentVariable": "ARCANOS_GATE_R1_RAILWAY_PROJECT_TOKEN",
+    "genericTokenFallback": false,
+    "cliCredentialStoreFallback": false,
+    "allowedServiceIds": [
+      "b7789306-8aef-4113-add5-02883a6cc087",
+      "434fa5b4-b52c-4caf-aaba-e87c173bf10d"
+    ],
+    "fixedQueryFields": [
+      "projectToken.projectId",
+      "projectToken.environmentId",
+      "tcpProxies.id"
+    ],
+    "responseLimitBytes": 16384,
+    "timeoutMilliseconds": 10000,
+    "retries": 0,
+    "redirectsAllowed": false,
+    "successOutputFields": [
+      "projectId",
+      "environmentId",
+      "serviceId",
+      "observedAt",
+      "tcpProxyCount"
+    ]
+  },
+  "officialSources": [
+    "https://docs.railway.com/integrations/api",
+    "https://docs.railway.com/integrations/api/api-cookbook"
+  ],
+  "localValidation": {
+    "projectorTestFile": "tests/gate-r1-tcp-proxy-projector.test.js",
+    "projectorTestSha256": "DC7CA434AE7D8300500DECE2D2101E2E10483D27567D8DCBF74699D48A1FE06A",
+    "projectorTestsPassed": 50,
+    "combinedGateR1TestSuitesPassed": 3,
+    "combinedGateR1TestsPassed": 57,
+    "projectorFocusedRepeatRuns": 3,
+    "projectorTestsPassedPerRepeat": 50,
+    "testsFailed": 0,
+    "snapshots": 0,
+    "openHandles": "PASS",
+    "syntax": "PASS",
+    "targetedLint": "PASS",
+    "diffCheck": "PASS",
+    "realGraphqlRequests": 0
+  },
+  "tokenAvailability": {
+    "dedicatedTokenPresent": false,
+    "tokenValueRead": false,
+    "tokenValuePrinted": false,
+    "tokenFingerprintCreated": false,
+    "cliCredentialStoreAccessed": false
+  },
+  "currentTargets": [
+    {
+      "kind": "postgresql",
+      "serviceId": "b7789306-8aef-4113-add5-02883a6cc087",
+      "currentDeploymentId": null,
+      "activeDeploymentCount": 0,
+      "tcpProxyCount": "UNVERIFIED",
+      "projectorFailBeforeFetch": true
+    },
+    {
+      "kind": "redis",
+      "serviceId": "434fa5b4-b52c-4caf-aaba-e87c173bf10d",
+      "currentDeploymentId": null,
+      "activeDeploymentCount": 0,
+      "tcpProxyCount": "UNVERIFIED",
+      "projectorFailBeforeFetch": true
+    }
+  ],
+  "independentReview": {
+    "localProjector": "PASS",
+    "codeBlockers": 0,
+    "livePrecondition": "UNAVAILABLE",
+    "reason": "The dedicated least-privilege token is not configured in the process environment."
+  },
+  "authorizationDisposition": {
+    "copyReadyGateR1AuthorizationProduced": false,
+    "reason": "Both current TCP-proxy counts were not proven zero.",
+    "requiredNextStep": "Configure the dedicated least-privilege environment-scoped project token out of band, rerun the projector for both exact services, and accept only two fresh numeric zero results with matching token scope."
+  },
+  "prohibitedOperationsObserved": {
+    "railwayMutation": false,
+    "credentialRetrieval": false,
+    "databaseConnection": false,
+    "redisConnection": false,
+    "migration": false,
+    "applicationDeployment": false,
+    "executorActivation": false,
+    "providerCall": false,
+    "gitPush": false,
+    "pullRequest": false
+  }
+}

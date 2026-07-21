@@ -1,0 +1,161 @@
+{
+  "artifact": "ARCANOS Phase 2D pre-change ActionPlan lifecycle behavior",
+  "baseline": {
+    "branch": "codex/clear-parsing-integrity",
+    "commit": "d9830a5f545902d70fe33d3f05f1b1db39a4064a",
+    "sourceBlobs": [
+      {
+        "blob": "7ef026b93e94afec36481de8ef039d1752a59480",
+        "path": "daemon-python/arcanos/action_plan_handler.py"
+      },
+      {
+        "blob": "1eea49d18c3480b59f4f8bd6850a12264cbe56b2",
+        "path": "daemon-python/arcanos/action_plan_types.py"
+      },
+      {
+        "blob": "74ea5a0cbd90f86e697820d3feb93a1fc0e80bbe",
+        "path": "src/mcp/server/index.ts"
+      },
+      {
+        "blob": "6280a9d2b6e678e4628e07531b8b29416bf55484",
+        "path": "src/routes/plans.ts"
+      }
+    ]
+  },
+  "capturedDate": "2026-07-17",
+  "dependencyBaseline": {
+    "circularPathCount": 63,
+    "runtimeEdgeCount": 2330,
+    "runtimeModuleCountInSccs": 75,
+    "runtimeSccCount": 2,
+    "runtimeSccSizes": [
+      67,
+      8
+    ],
+    "typeOnlyEdgesExcluded": true
+  },
+  "observations": [
+    {
+      "basis": "static",
+      "finding": "TypeScript HTTP and MCP execution require exact approved lifecycle status before CLEAR re-evaluation.",
+      "paths": [
+        "src/mcp/server/index.ts",
+        "src/routes/plans.ts"
+      ]
+    },
+    {
+      "basis": "static",
+      "finding": "Python defaulted a missing lifecycle status to planned, coerced other values to strings, and did not consult status before confirmation, block, local command, backend result submission, or success output.",
+      "paths": [
+        "daemon-python/arcanos/action_plan_handler.py",
+        "daemon-python/arcanos/action_plan_types.py"
+      ]
+    },
+    {
+      "basis": "static",
+      "finding": "The ActionPlan schema has no version, revision, confirmation record, confirmation version, policy-evidence version, or block provenance field.",
+      "paths": [
+        "prisma/schema.prisma",
+        "src/shared/types/actionPlan.ts"
+      ]
+    },
+    {
+      "basis": "static",
+      "finding": "Execution-result writes do not transition the plan out of approved status; duplicate and partial executions are governed by lock and per-action uniqueness rather than terminal lifecycle state.",
+      "paths": [
+        "prisma/schema.prisma",
+        "src/mcp/server/index.ts",
+        "src/routes/plans.ts",
+        "src/stores/actionPlanStore.ts"
+      ]
+    }
+  ],
+  "runtimeProbe": {
+    "backendOperation": "/execute",
+    "cases": [
+      {
+        "completionOutput": true,
+        "confirmationCalls": 1,
+        "runCalls": 1,
+        "statusFieldPresent": true,
+        "statusValue": "approved"
+      },
+      {
+        "completionOutput": true,
+        "confirmationCalls": 1,
+        "runCalls": 1,
+        "statusFieldPresent": true,
+        "statusValue": "blocked"
+      },
+      {
+        "completionOutput": true,
+        "confirmationCalls": 1,
+        "runCalls": 1,
+        "statusFieldPresent": true,
+        "statusValue": "completed"
+      },
+      {
+        "completionOutput": true,
+        "confirmationCalls": 1,
+        "runCalls": 1,
+        "statusFieldPresent": true,
+        "statusValue": "expired"
+      },
+      {
+        "completionOutput": true,
+        "confirmationCalls": 1,
+        "runCalls": 1,
+        "statusFieldPresent": true,
+        "statusValue": "failed"
+      },
+      {
+        "completionOutput": true,
+        "confirmationCalls": 1,
+        "runCalls": 1,
+        "statusFieldPresent": false,
+        "statusValue": null
+      },
+      {
+        "completionOutput": true,
+        "confirmationCalls": 1,
+        "runCalls": 1,
+        "statusFieldPresent": true,
+        "statusValue": "unknown"
+      }
+    ],
+    "clearDecision": "allow",
+    "clearOverall": 0.9,
+    "executionRequestObserved": true,
+    "networkUsed": false,
+    "probeKind": "in-process mocked handler characterization"
+  },
+  "schemaVersion": 1,
+  "validationBaseline": [
+    {
+      "failed": 0,
+      "label": "Phase 2B and Phase 2C focused TypeScript suites",
+      "passedSuites": 6,
+      "passedTests": 142,
+      "runtime": "typescript"
+    },
+    {
+      "failed": 0,
+      "label": "Phase 2C focused Python suites",
+      "passedTests": 119,
+      "runtime": "python"
+    },
+    {
+      "failed": 0,
+      "label": "TypeScript ActionPlan, confirmation, capability, and route gates",
+      "passedSuites": 7,
+      "passedTests": 46,
+      "runtime": "typescript"
+    },
+    {
+      "failed": 0,
+      "label": "Full daemon-python suite",
+      "passedTests": 264,
+      "runtime": "python"
+    }
+  ]
+}

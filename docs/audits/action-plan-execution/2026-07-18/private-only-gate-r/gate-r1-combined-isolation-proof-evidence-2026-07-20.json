@@ -1,0 +1,188 @@
+{
+  "schemaVersion": 1,
+  "gate": "R1",
+  "result": "PASS",
+  "recordedAt": "2026-07-20T19:34:07.3707783Z",
+  "repository": {
+    "branch": "codex/phase2e-advisory-history-gate-r",
+    "sourceCommit": "f8fe2a93601b1463a1bd18e10ad062b6760fb423",
+    "worktreeWasCleanBeforeProof": true
+  },
+  "railway": {
+    "projectId": "7faf44e5-519c-4e73-8d7a-da9f389e6187",
+    "projectName": "Arcanos",
+    "environmentId": "fb99f47d-5ef5-44c1-96c2-acf7b90fab13",
+    "environmentName": "phase2e-validation-20260717",
+    "privateNetworkId": "464f2194-3825-4ac1-a705-192566561675",
+    "environmentObservedAt": "2026-07-20T19:31:18.23Z"
+  },
+  "session": {
+    "mode": "read-only schema-locked projector session",
+    "projectionRequests": 8,
+    "stopSequence": 9,
+    "consumedThroughSequence": 9,
+    "processExited": true,
+    "stopAcknowledged": true,
+    "secureTemporaryDirectoryRemoved": true,
+    "ambientTokenVariableCountAfterCleanup": 0,
+    "temporaryTokenLabel": "codex-gate-r1-combined-isolation-20260720",
+    "temporaryTokenRevocation": "operator-confirmed",
+    "temporaryTokenRevocationConfirmedAt": "2026-07-20T19:34:07.3707783Z",
+    "tokenValueRecorded": false,
+    "tokenFingerprintRecorded": false
+  },
+  "retainedQuarantinedServices": [
+    {
+      "role": "original-postgresql",
+      "serviceId": "b7789306-8aef-4113-add5-02883a6cc087",
+      "serviceInstanceId": "6dac21a3-ad8a-4b98-ad50-637054c13729",
+      "activeDeploymentCount": 0,
+      "railwayDomainCount": 0,
+      "customDomainCount": 0,
+      "tcpProxyCount": 0,
+      "proxyObservedAt": "2026-07-20T19:31:36.186Z",
+      "volumeId": "35c26093-1e3f-4d34-b699-89c65d2fb92d",
+      "volumeInstanceId": "b8f04086-2e97-4167-a0fd-bcb259541e9f",
+      "mountPath": "/var/lib/postgresql/data",
+      "volumeState": "READY"
+    },
+    {
+      "role": "original-redis",
+      "serviceId": "434fa5b4-b52c-4caf-aaba-e87c173bf10d",
+      "serviceInstanceId": "8340f02f-dbcb-4c0e-bdde-b3f7c4bf5856",
+      "activeDeploymentCount": 0,
+      "railwayDomainCount": 0,
+      "customDomainCount": 0,
+      "tcpProxyCount": 0,
+      "proxyObservedAt": "2026-07-20T19:31:36.564Z",
+      "volumeId": "d3690500-fcc5-4c06-afa6-cf30e91f608d",
+      "volumeInstanceId": "f222873c-255e-45a2-9a17-840bdba108f6",
+      "mountPath": "/data",
+      "volumeState": "READY"
+    },
+    {
+      "role": "failed-postgresql-r2-replacement",
+      "serviceId": "a2a57da4-a928-427f-be30-d4a68b59a117",
+      "serviceInstanceId": "e8c42bea-d887-485b-8aaf-ba0f45d439e8",
+      "activeDeploymentCount": 0,
+      "railwayDomainCount": 0,
+      "customDomainCount": 0,
+      "tcpProxyCount": 0,
+      "proxyObservedAt": "2026-07-20T19:31:36.931Z",
+      "volumeId": "2998734d-7530-4f26-b715-cea4780bd437",
+      "volumeInstanceId": "46113532-5609-46da-b7b4-46b8f06930cc",
+      "mountPath": "/var/lib/postgresql/data",
+      "volumeState": "READY"
+    }
+  ],
+  "activeReplacements": [
+    {
+      "role": "postgresql-r3",
+      "serviceId": "7346b3f6-bf3d-46e1-9d66-79f10847ef89",
+      "serviceInstanceId": "86dde430-50ac-4d5c-95c3-cb27064eff51",
+      "deploymentId": "b5e45d34-19b8-4253-b230-c3ab0b60b0d7",
+      "deploymentStatus": "SUCCESS",
+      "deploymentStopped": false,
+      "deploymentVerification": "PASS",
+      "image": "ghcr.io/railwayapp-templates/postgres-ssl:18.4",
+      "imageApproved": true,
+      "volumeId": "ce93ced0-0c15-48f9-87fc-d9153ffefdc8",
+      "volumeInstanceId": "c7969acf-79fd-4a6b-83d7-1e6cb442a030",
+      "mountPath": "/var/lib/postgresql/data",
+      "volumeState": "READY",
+      "activeDeploymentCount": 1,
+      "railwayDomainCount": 0,
+      "customDomainCount": 0,
+      "tcpProxyCount": 0,
+      "proxyObservedAt": "2026-07-20T19:31:37.312Z",
+      "privateEndpointPresent": true,
+      "privateEndpointStatus": "ACTIVE",
+      "endpointObservedAt": "2026-07-20T19:31:38.08Z",
+      "publicUrlVariablePresent": false,
+      "approvedVariableNames": [
+        "DATABASE_URL",
+        "PGDATA",
+        "PGDATABASE",
+        "PGHOST",
+        "PGPASSWORD",
+        "PGPORT",
+        "PGUSER",
+        "POSTGRES_DB",
+        "POSTGRES_PASSWORD",
+        "POSTGRES_USER",
+        "RAILWAY_DEPLOYMENT_DRAINING_SECONDS",
+        "SSL_CERT_DAYS"
+      ],
+      "authenticatedReadinessEvidence": "gate-r1-postgres-r3b3-execution-evidence-2026-07-20.json",
+      "authenticatedReadinessEvidenceCommit": "4c8d5c7650ace6a511f04b99680b560cee73c117"
+    },
+    {
+      "role": "redis-r2",
+      "serviceId": "1ac0bd56-50b3-49eb-954c-ea83515ec915",
+      "serviceInstanceId": "0f34bcbb-bfd0-4df5-954a-bb97371bd460",
+      "deploymentId": "9f102e53-ef25-46b5-80e8-0243eb1512d6",
+      "deploymentStatus": "SUCCESS",
+      "deploymentStopped": false,
+      "deploymentVerification": "PASS",
+      "image": "redis:8.2.1",
+      "imageApproved": true,
+      "volumeId": "983c4f0a-9180-4621-b65e-dfdd0b79f2bd",
+      "volumeInstanceId": "b96f20a3-a1f1-40ea-ba4b-334ea3e8ba15",
+      "mountPath": "/data",
+      "volumeState": "READY",
+      "activeDeploymentCount": 1,
+      "railwayDomainCount": 0,
+      "customDomainCount": 0,
+      "tcpProxyCount": 0,
+      "proxyObservedAt": "2026-07-20T19:31:37.686Z",
+      "privateEndpointPresent": true,
+      "privateEndpointStatus": "ACTIVE",
+      "endpointObservedAt": "2026-07-20T19:31:38.445Z",
+      "publicUrlVariablePresent": false,
+      "approvedVariableNames": [
+        "REDIS_PASSWORD",
+        "REDIS_URL",
+        "REDISHOST",
+        "REDISPASSWORD",
+        "REDISPORT",
+        "REDISUSER"
+      ],
+      "authenticatedReadinessEvidence": "gate-r1-redis-r2-execution-evidence-2026-07-20.json",
+      "authenticatedReadinessEvidenceCommit": "09812d9e6f614eb7206f8a59c683eb947f5149a1"
+    }
+  ],
+  "nonDeploymentAndIsolation": {
+    "applicationServiceInstanceCount": 0,
+    "workerServiceInstanceCount": 0,
+    "activeValidatorDeploymentCount": 0,
+    "sharedVariableNameCount": 0,
+    "migrationCount": 0,
+    "sqlOperationCount": 0,
+    "redisDataOperationCount": 0,
+    "actionPlanOperationCount": 0,
+    "providerCallCount": 0,
+    "railwayMutationCountDuringCombinedProof": 0
+  },
+  "disclosure": {
+    "credentialValuesRecorded": 0,
+    "connectionStringsRecorded": 0,
+    "resolvedVariableValuesRecorded": 0,
+    "rawRailwayVariableOutputRecorded": false
+  },
+  "productionAndPhase2dNonImpact": {
+    "result": "preserved-baseline-plus-target-scope",
+    "freshCrossEnvironmentProjectionPerformed": false,
+    "basis": "The combined proof executed read-only projectors against only the Phase 2E environment; preserved stable-identity baselines provide the cross-environment comparison."
+  },
+  "independentReview": {
+    "status": "PASS_WITH_LIMITATIONS",
+    "verdict": "NO_BLOCKERS",
+    "blockerCount": 0,
+    "reviewedAt": "2026-07-20T19:36:09.9924758Z"
+  },
+  "limitations": [
+    "The combined proof did not perform a fresh cross-environment production or Phase 2D projection.",
+    "Container images are pinned to reviewed version tags rather than immutable image digests.",
+    "Token revocation is operator-confirmed; the token value was never retrieved by the evidence process."
+  ]
+}

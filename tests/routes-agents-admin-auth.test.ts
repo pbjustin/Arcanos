@@ -1,19 +1,25 @@
 import express from 'express';
 import request from 'supertest';
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
+
+const operatorToken = 'a'.repeat(40);
+const operatorTokenBeforeTest = process.env.ACTION_PLAN_OPERATOR_TOKEN;
+const operatorPrincipalBeforeTest = process.env.ACTION_PLAN_OPERATOR_PRINCIPAL_ID;
+process.env.ACTION_PLAN_OPERATOR_TOKEN = operatorToken;
+process.env.ACTION_PLAN_OPERATOR_PRINCIPAL_ID = 'phase2e-operator';
 
 const registerAgentMock = jest.fn();
-const getAgentMock = jest.fn();
+const getAuthoritativeAgentMock = jest.fn();
 const updateHeartbeatMock = jest.fn();
-const listAgentsMock = jest.fn();
-const grantCapabilitiesMock = jest.fn();
+const listAuthoritativeAgentsMock = jest.fn();
+const grantAuthoritativeCapabilitiesMock = jest.fn();
 
 jest.unstable_mockModule('../src/stores/agentRegistry.js', () => ({
   registerAgent: registerAgentMock,
-  getAgent: getAgentMock,
+  getAuthoritativeAgent: getAuthoritativeAgentMock,
   updateHeartbeat: updateHeartbeatMock,
-  listAgents: listAgentsMock,
-  grantCapabilities: grantCapabilitiesMock
+  listAuthoritativeAgents: listAuthoritativeAgentsMock,
+  grantAuthoritativeCapabilities: grantAuthoritativeCapabilitiesMock,
 }));
 
 jest.unstable_mockModule('@platform/runtime/unifiedConfig.js', () => ({
@@ -41,15 +47,15 @@ function createAgentsApp(): express.Express {
 describe('routes/agents admin capability auth', () => {
   beforeEach(() => {
     registerAgentMock.mockReset();
-    getAgentMock.mockReset();
+    getAuthoritativeAgentMock.mockReset();
     updateHeartbeatMock.mockReset();
-    listAgentsMock.mockReset();
-    grantCapabilitiesMock.mockReset();
+    listAuthoritativeAgentsMock.mockReset();
+    grantAuthoritativeCapabilitiesMock.mockReset();
   });
 
-  it('allows capability grants without an auth header', async () => {
+  it('rejects unauthenticated capability grants and permits the configured operator', async () => {
     const app = createAgentsApp();
-    grantCapabilitiesMock.mockResolvedValueOnce({
+    grantAuthoritativeCapabilitiesMock.mockResolvedValueOnce({
       id: 'agent-1',
       role: 'planner',
       capabilities: ['self_improve_admin'],
@@ -60,12 +66,27 @@ describe('routes/agents admin capability auth', () => {
       updatedAt: new Date()
     });
 
+    const unauthenticated = await request(app)
+      .post('/agents/agent-1/capabilities/grant')
+      .send({ capabilities: ['self_improve_admin'] })
+      .expect(401);
     const response = await request(app)
       .post('/agents/agent-1/capabilities/grant')
+      .set('Authorization', `Bearer ${operatorToken}`)
       .send({ capabilities: ['self_improve_admin'] })
       .expect(200);
 
-    expect(grantCapabilitiesMock).toHaveBeenCalledWith('agent-1', ['self_improve_admin']);
+    expect(unauthenticated.headers['cache-control']).toBe('no-store');
+    expect(unauthenticated.body.error.code).toBe('ACTION_PLAN_EXECUTION_AUTH_REQUIRED');
+    expect(grantAuthoritativeCapabilitiesMock).toHaveBeenCalledTimes(1);
+    expect(grantAuthoritativeCapabilitiesMock).toHaveBeenCalledWith('agent-1', ['self_improve_admin']);
     expect(response.body.agent.id).toBe('agent-1');
   });
+});
+
+afterAll(() => {
+  if (operatorTokenBeforeTest === undefined) delete process.env.ACTION_PLAN_OPERATOR_TOKEN;
+  else process.env.ACTION_PLAN_OPERATOR_TOKEN = operatorTokenBeforeTest;
+  if (operatorPrincipalBeforeTest === undefined) delete process.env.ACTION_PLAN_OPERATOR_PRINCIPAL_ID;
+  else process.env.ACTION_PLAN_OPERATOR_PRINCIPAL_ID = operatorPrincipalBeforeTest;
 });

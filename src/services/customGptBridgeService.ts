@@ -1,5 +1,3 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
-
 import { z } from 'zod';
 
 import {
@@ -27,6 +25,7 @@ import {
   isGptBridgeSmokeAction,
   type GptBridgeSmokeAction,
 } from '@shared/gpt/bridgeSmoke.js';
+import { timingSafeEqualOpaqueSecret } from '@shared/security/opaqueSecret.js';
 import { planAutonomousWorkerJob } from './workerAutonomyService.js';
 import {
   resolveAsyncGptPollIntervalMs,
@@ -122,14 +121,6 @@ interface BridgeTimingInput {
 function readRequiredSecret(env: NodeJS.ProcessEnv = process.env): string | null {
   const value = env.OPENAI_ACTION_SHARED_SECRET?.trim();
   return value ? value : null;
-}
-
-function sha256(value: string): Buffer {
-  return createHash('sha256').update(value, 'utf8').digest();
-}
-
-function secureEquals(left: string, right: string): boolean {
-  return timingSafeEqual(sha256(left), sha256(right));
 }
 
 function extractBearerToken(authorization?: string | null): string | null {
@@ -553,7 +544,7 @@ export function validateCustomGptBridgeSecret(
     };
   }
   const providedSecret = extractBearerToken(input.authorization) ?? input.actionSecret?.trim() ?? null;
-  if (!providedSecret || !secureEquals(providedSecret, expectedSecret)) {
+  if (!timingSafeEqualOpaqueSecret(providedSecret, expectedSecret)) {
     return {
       ok: false,
       statusCode: 401,

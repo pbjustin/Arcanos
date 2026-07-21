@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import http.client
 import json
+import logging
 import subprocess
 import threading
 
 from arcanos.cli.local_bridge import BRIDGE_TOKEN_HEADER, LocalBridge, _hash_proposal
+from tests.credential_observation import assert_no_credential_material
 
 
 def _start_bridge(monkeypatch, tmp_path):
@@ -17,6 +19,16 @@ def _start_bridge(monkeypatch, tmp_path):
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return bridge, server, thread
+
+
+def _stop_bridge(bridge, server, thread) -> None:
+    server.shutdown()
+    server.server_close()
+    thread.join(timeout=5)
+    bridge.jobs.put_nowait(None)
+    bridge._worker.join(timeout=5)
+    if thread.is_alive() or bridge._worker.is_alive():
+        raise AssertionError("local bridge test threads did not stop")
 
 
 def _post(server, path: str, payload: dict, token: str | None = "test-bridge-token", content_type: str = "application/json"):
@@ -32,7 +44,7 @@ def _post(server, path: str, payload: dict, token: str | None = "test-bridge-tok
 
 
 def test_bridge_rejects_missing_token_and_unsupported_content_type(monkeypatch, tmp_path) -> None:
-    _bridge, server, _thread = _start_bridge(monkeypatch, tmp_path)
+    bridge, server, thread = _start_bridge(monkeypatch, tmp_path)
     try:
         status, body = _post(server, "/commands/run", {}, token=None)
         assert status == 403
@@ -42,7 +54,7 @@ def test_bridge_rejects_missing_token_and_unsupported_content_type(monkeypatch, 
         assert status == 415
         assert body["status"] == "unsupported_media_type"
     finally:
-        server.shutdown()
+        _stop_bridge(bridge, server, thread)
 
 
 def test_bridge_refuses_enabled_startup_without_token(monkeypatch, tmp_path) -> None:
@@ -58,9 +70,26 @@ def test_bridge_refuses_enabled_startup_without_token(monkeypatch, tmp_path) -> 
         raise AssertionError("enabled bridge startup without token should fail")
 
 
+def test_bridge_uses_exact_unicode_safe_credential_verification(monkeypatch, tmp_path, capsys, caplog) -> None:
+    credential = "".join(("opaque", "-bridge-雪-", "credential-marker"))
+    monkeypatch.setenv("ARCANOS_CLI_BRIDGE_TOKEN", credential)
+    monkeypatch.setenv("ARCANOS_CLI_SANDBOX_ROOT", str(tmp_path))
+    bridge = LocalBridge(port=0)
+
+    with caplog.at_level(logging.DEBUG):
+        assert bridge._is_authorized(credential) is True
+        assert bridge._is_authorized(credential + "x") is False
+        assert bridge._is_authorized(credential[:-1] + "x") is False
+        assert bridge._is_authorized(f" {credential} ") is False
+        assert bridge._is_authorized(None) is False
+
+    captured = capsys.readouterr()
+    assert_no_credential_material(credential, captured.out, captured.err, caplog.text)
+
+
 def test_bridge_requires_matching_command_proposal_id(monkeypatch, tmp_path) -> None:
     subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
-    _bridge, server, _thread = _start_bridge(monkeypatch, tmp_path)
+    bridge, server, thread = _start_bridge(monkeypatch, tmp_path)
     cwd = str(tmp_path.resolve())
     command = "git status --short"
     proposal_id = _hash_proposal({"kind": "command", "command": command, "cwd": cwd})
@@ -77,11 +106,11 @@ def test_bridge_requires_matching_command_proposal_id(monkeypatch, tmp_path) -> 
         assert status == 200
         assert body["status"] == "completed"
     finally:
-        server.shutdown()
+        _stop_bridge(bridge, server, thread)
 
 
 def test_bridge_denies_dangerous_command_even_with_matching_proposal(monkeypatch, tmp_path) -> None:
-    _bridge, server, _thread = _start_bridge(monkeypatch, tmp_path)
+    bridge, server, thread = _start_bridge(monkeypatch, tmp_path)
     cwd = str(tmp_path.resolve())
     command = "rm -rf ."
     proposal_id = _hash_proposal({"kind": "command", "command": command, "cwd": cwd})
@@ -90,11 +119,11 @@ def test_bridge_denies_dangerous_command_even_with_matching_proposal(monkeypatch
         assert status == 400
         assert body["status"] == "denied"
     finally:
-        server.shutdown()
+        _stop_bridge(bridge, server, thread)
 
 
 def test_bridge_rejects_secret_patch_and_patch_proposal_mismatch(monkeypatch, tmp_path) -> None:
-    _bridge, server, _thread = _start_bridge(monkeypatch, tmp_path)
+    bridge, server, thread = _start_bridge(monkeypatch, tmp_path)
     cwd = str(tmp_path.resolve())
     patch = "\n".join([
         "diff --git a/.env b/.env",
@@ -114,4 +143,4 @@ def test_bridge_rejects_secret_patch_and_patch_proposal_mismatch(monkeypatch, tm
         assert status == 400
         assert body["status"] == "denied"
     finally:
-        server.shutdown()
+        _stop_bridge(bridge, server, thread)

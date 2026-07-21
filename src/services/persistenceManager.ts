@@ -14,6 +14,7 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import { getEnv } from "@platform/runtime/env.js";
+import { timingSafeEqualOpaqueSecret } from '@shared/security/opaqueSecret.js';
 
 // ----------------------
 // Types and State
@@ -62,7 +63,7 @@ function canEnableRootOverride(userRole: string, token: string): boolean {
   return (
     getEnv('ALLOW_ROOT_OVERRIDE') === 'true' &&
     userRole === 'admin' &&
-    token === getEnv('ROOT_OVERRIDE_TOKEN')
+    timingSafeEqualOpaqueSecret(token, getEnv('ROOT_OVERRIDE_TOKEN'))
   );
 }
 
@@ -274,4 +275,3 @@ export default {
   saveWithAuditCheck,
   getModuleSaves,
 };
-

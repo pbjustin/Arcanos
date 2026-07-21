@@ -22,6 +22,7 @@ import {
 import { buildGptJobResultLookupPayload, GPT_QUERY_ACTION } from '@shared/gpt/gptJobResult.js';
 import { redactSensitive } from '@shared/redaction.js';
 import { sanitizeRequestPath } from '@shared/requestPathSanitizer.js';
+import { timingSafeEqualOpaqueSecret } from '@shared/security/opaqueSecret.js';
 import { runtimeDiagnosticsService } from '@services/runtimeDiagnosticsService.js';
 import { getWorkerControlHealth, getWorkerControlStatus } from '@services/workerControlService.js';
 import { planAutonomousWorkerJob } from '@services/workerAutonomyService.js';
@@ -490,10 +491,8 @@ function timingSafeTokenEquals(providedToken: string, expectedToken: string): bo
     return false;
   }
 
-  const providedDigest = crypto.createHash('sha256').update(providedToken, 'utf8').digest();
-  const expectedDigest = crypto.createHash('sha256').update(expectedToken, 'utf8').digest();
-  const digestMatches = crypto.timingSafeEqual(providedDigest, expectedDigest);
-  return digestMatches && providedToken.length === expectedToken.length;
+  return timingSafeEqualOpaqueSecret(providedToken, expectedToken)
+    && providedToken.length === expectedToken.length;
 }
 
 function readBearerToken(req: Request): string | null {

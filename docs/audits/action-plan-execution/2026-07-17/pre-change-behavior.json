@@ -1,0 +1,171 @@
+{
+  "artifact": "ARCANOS Phase 2E pre-change ActionPlan execution ownership behavior",
+  "baseline": {
+    "branch": "codex/preview-log-hygiene-first-boot",
+    "commit": "410c04a890c021ae51148e58391f8e653be11943",
+    "worktree": "clean",
+    "sourceBlobs": [
+      {
+        "blob": "feb2fdfbb06a3ccb4334f98e0c00667a8194b7f2",
+        "path": "daemon-python/arcanos/action_plan_handler.py"
+      },
+      {
+        "blob": "97e846284e05ad35b6bf75d7d08c313a08ea99b8",
+        "path": "daemon-python/arcanos/backend_client/plans.py"
+      },
+      {
+        "blob": "8d0cdb56fb8b8cfd7877799bacfad64eadcc3713",
+        "path": "daemon-python/arcanos/cli/daemon_ops.py"
+      },
+      {
+        "blob": "c46ee8f0cd7d48c6db3483dbf436cb71efdfae7b",
+        "path": "prisma/schema.prisma"
+      },
+      {
+        "blob": "2ee2604d30bc3edcbb501094d5d11e3478b30b84",
+        "path": "src/mcp/server/index.ts"
+      },
+      {
+        "blob": "810603ffc0eac47fdd1a74c055b3c36c9275805d",
+        "path": "src/routes/plans.ts"
+      },
+      {
+        "blob": "0779e81a52fdfac4d3bb83eeefc35af5394a9b4e",
+        "path": "src/shared/types/actionPlan.ts"
+      },
+      {
+        "blob": "40deeddc4b85a8ade23ca4d1d6da37e9ac5f3f7f",
+        "path": "src/stores/actionPlanStore.ts"
+      }
+    ]
+  },
+  "capturedDate": "2026-07-17",
+  "confirmedFlow": {
+    "python": [
+      "The daemon executes one action locally.",
+      "It serializes the real action outcome.",
+      "It submits that outcome to POST /plans/:planId/execute.",
+      "It ignores BackendResponse.ok and emits completion output.",
+      "The canonical poller may acknowledge the daemon command after result submission failed."
+    ],
+    "typescriptHttp": [
+      "POST /plans/:planId/execute treats the request as an execution command.",
+      "The handler does not read or validate the request body.",
+      "It creates status=success ExecutionResult records for every stored action.",
+      "It does not dispatch an action to Python, a worker, or an inline executor."
+    ],
+    "typescriptMcp": [
+      "plans.execute is an execution command with MCP authentication and confirmation gates.",
+      "It creates status=success ExecutionResult records for every stored action.",
+      "It does not dispatch an action to Python, a worker, or an inline executor."
+    ]
+  },
+  "consumerInventory": [
+    {
+      "classification": "result caller",
+      "path": "daemon-python/arcanos/action_plan_handler.py",
+      "surface": "POST /plans/:planId/execute"
+    },
+    {
+      "classification": "result caller facade",
+      "path": "daemon-python/arcanos/backend_client/plans.py",
+      "surface": "POST /plans/:planId/execute"
+    },
+    {
+      "classification": "command adapter",
+      "path": "src/routes/plans.ts",
+      "surface": "POST /plans/:planId/execute"
+    },
+    {
+      "classification": "command adapter",
+      "path": "src/mcp/server/index.ts",
+      "surface": "MCP plans.execute"
+    }
+  ],
+  "findings": [
+    {
+      "basis": "static and runtime characterization",
+      "confidence": "high",
+      "finding": "A failed Python action can become a backend-recorded success because the submitted failure body is ignored.",
+      "risk": "critical"
+    },
+    {
+      "basis": "static and runtime characterization",
+      "confidence": "high",
+      "finding": "Submitting one Python action result can create fabricated success records for sibling actions that were not executed.",
+      "risk": "critical"
+    },
+    {
+      "basis": "static and runtime characterization",
+      "confidence": "high",
+      "finding": "executionResultInputSchema is imported by the HTTP route but is not applied to the execute boundary.",
+      "risk": "high"
+    },
+    {
+      "basis": "static",
+      "confidence": "high",
+      "finding": "No repository call path dispatches an HTTP or MCP ActionPlan execute command to the Python daemon, backend worker, or backend inline executor.",
+      "risk": "critical"
+    },
+    {
+      "basis": "static",
+      "confidence": "high",
+      "finding": "The HTTP plan router has no application-layer requester or executor authentication middleware.",
+      "risk": "critical pending Railway-edge verification"
+    },
+    {
+      "basis": "static and runtime characterization",
+      "confidence": "high",
+      "finding": "Python result submission failure does not prevent completion output or daemon command acknowledgement.",
+      "risk": "critical"
+    }
+  ],
+  "persistenceBaseline": {
+    "actionForeignKeyOnExecutionResult": false,
+    "actionSnapshotOrDigest": false,
+    "attemptIdentity": false,
+    "commandIdempotencyConstraint": false,
+    "durableExecutorPrincipalBinding": false,
+    "environmentRealmBinding": false,
+    "executionEventTable": false,
+    "planRevision": false,
+    "resultIdempotencyConstraint": false,
+    "resultUniqueness": [
+      "planId",
+      "actionId"
+    ],
+    "transactionalRunAndEventWrites": false
+  },
+  "schemaVersion": 1,
+  "validationBaseline": [
+    {
+      "command": "node scripts/run-jest.mjs --coverage=false --runInBand --testPathPatterns='(plan-routes|clear-execution-decision|action-plan-store|action-plan-lifecycle-contract)\\.test\\.ts$'",
+      "failedSuites": 0,
+      "failedTests": 0,
+      "passedSuites": 4,
+      "passedTests": 129,
+      "runtime": "typescript"
+    },
+    {
+      "command": "python -m pytest daemon-python/tests/test_action_plan_handler.py daemon-python/tests/test_action_plan_lifecycle_handler.py daemon-python/tests/test_action_plan_types.py daemon-python/tests/test_action_plan_dispatch_disclosure.py -q",
+      "failedTests": 0,
+      "passedTests": 140,
+      "runtime": "python"
+    },
+    {
+      "command": "npm run build:packages",
+      "result": "pass",
+      "runtime": "typescript"
+    },
+    {
+      "command": "npm run validate:backend-cli:contract",
+      "result": "pass; ActionPlan result submission is outside the validator scope",
+      "runtime": "cross-language"
+    },
+    {
+      "command": "npm run validate:backend-cli:offline",
+      "result": "pass; ActionPlan result submission is outside the validator scope",
+      "runtime": "cross-language"
+    }
+  ]
+}

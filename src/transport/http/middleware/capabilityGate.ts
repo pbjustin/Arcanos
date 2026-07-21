@@ -9,6 +9,7 @@ import type { Request, Response, NextFunction } from 'express';
 import { validateCapability } from '@stores/agentRegistry.js';
 import { aiLogger } from '@platform/logging/structuredLogging.js';
 import { getAutomationAuth } from '@platform/runtime/env.js';
+import { timingSafeEqualOpaqueSecret } from '@shared/security/opaqueSecret.js';
 import { resolveHeader } from '@transport/http/requestHeaders.js';
 
 /**
@@ -24,7 +25,9 @@ export function capabilityGate(requiredCapability?: string) {
       ? resolveHeader(req.headers, automationHeaderName)
       : undefined;
     const automationSecretApproved = Boolean(
-      automationCredential && automationHeaderValue && automationHeaderValue === automationCredential
+      automationCredential
+      && automationHeaderValue
+      && timingSafeEqualOpaqueSecret(automationHeaderValue, automationCredential)
     );
     const agentId = req.body?.agent_id || req.headers['x-agent-id'];
     const capability = requiredCapability || req.body?.capability;

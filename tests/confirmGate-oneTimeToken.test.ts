@@ -23,6 +23,7 @@ describe('ConfirmGate Middleware - One-Time Token Integration', () => {
 
   afterEach(() => {
     process.env = originalEnv;
+    jest.restoreAllMocks();
     jest.resetModules();
   });
 
@@ -288,6 +289,76 @@ describe('ConfirmGate Middleware - One-Time Token Integration', () => {
       // Token should still be consumable (wasn't used)
       const result = consumeOneTimeToken(record.token);
       expect(result.ok).toBe(true);
+    });
+
+    it('uses import-captured automation configuration with exact application-boundary equality', async () => {
+      const credential = ['phase2a', 'confirm-gate', 'sécurité'].join('-');
+      const wrongSameLength = `${credential.slice(0, -1)}x`;
+      process.env.ARCANOS_AUTOMATION_SECRET = `  ${credential}  `;
+      process.env.ARCANOS_AUTOMATION_HEADER = 'x-phase2a-confirm';
+      jest.resetModules();
+      const { confirmGate } = await import('../src/middleware/confirmGate.js');
+      const {
+        buildConfirmationRequestFingerprintHash,
+        getPendingChallengeCount,
+        verifyConfirmationChallenge,
+      } = await import('../src/transport/http/middleware/confirmationChallengeStore.js');
+      const pendingBefore = getPendingChallengeCount();
+      const consoleLog = jest.spyOn(console, 'log').mockImplementation(() => undefined);
+
+      function invoke(provided: string) {
+        const req = {
+          headers: { 'x-phase2a-confirm': provided },
+          body: {},
+          method: 'POST',
+          path: '/phase2a/confirm',
+        } as unknown as Request;
+        const res = {
+          status: jest.fn().mockReturnThis(),
+          json: jest.fn().mockReturnThis(),
+          setHeader: jest.fn(),
+        } as unknown as Response;
+        const next = jest.fn() as NextFunction;
+        confirmGate(req, res, next);
+        return { next, req, res };
+      }
+
+      const exact = invoke(credential);
+      const wrong = invoke(wrongSameLength);
+      const whitespaceChanged = invoke(` ${credential}`);
+
+      expect(exact.next).toHaveBeenCalledTimes(1);
+      expect(exact.req.confirmationContext?.automationSecretApproved).toBe(true);
+      expect(wrong.next).not.toHaveBeenCalled();
+      expect(whitespaceChanged.next).not.toHaveBeenCalled();
+
+      const rejectedBodies = [wrong, whitespaceChanged].flatMap(({ res }) =>
+        (res.json as jest.Mock).mock.calls.map((call) => call[0]),
+      );
+      const rejectedOutput = JSON.stringify(rejectedBodies);
+      expect(
+        [credential, wrongSameLength].some((value) => rejectedOutput.includes(value)),
+      ).toBe(false);
+
+      const challengeIds = [wrong, whitespaceChanged].map(({ res }) => {
+        const call = (res.setHeader as jest.Mock).mock.calls.find(
+          ([name]) => name === 'x-confirmation-challenge',
+        );
+        return typeof call?.[1] === 'string' ? call[1] : null;
+      });
+      expect(challengeIds.every((value) => typeof value === 'string')).toBe(true);
+      const renderedLogs = JSON.stringify(consoleLog.mock.calls);
+      expect(
+        challengeIds.some((value) => typeof value === 'string' && renderedLogs.includes(value)),
+      ).toBe(false);
+
+      const fingerprint = buildConfirmationRequestFingerprintHash({});
+      const cleanupDecisions = challengeIds.map((value) =>
+        typeof value === 'string'
+          && verifyConfirmationChallenge(value, 'POST', '/phase2a/confirm', fingerprint),
+      );
+      expect(cleanupDecisions.every(Boolean)).toBe(true);
+      expect(getPendingChallengeCount()).toBe(pendingBefore);
     });
   });
 

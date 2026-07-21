@@ -1,4 +1,3 @@
-import crypto from 'node:crypto';
 import type express from 'express';
 
 import {
@@ -14,6 +13,7 @@ import {
   isGptDagBridgeAction,
 } from '@shared/gpt/gptDagBridgeActions.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
+import { timingSafeEqualOpaqueSecret } from '@shared/security/opaqueSecret.js';
 
 const GPT_DISPATCHER_ROUTE = '/gpt/:gptId';
 const DEFAULT_ALLOWED_GPTS = ['arcanos-core'];
@@ -127,12 +127,6 @@ function parseCsv(value: string | undefined, fallback: string[]): string[] {
     .filter(Boolean);
 
   return parsed && parsed.length > 0 ? parsed : fallback;
-}
-
-function timingSafeEqual(left: string, right: string): boolean {
-  const leftBuffer = Buffer.from(left);
-  const rightBuffer = Buffer.from(right);
-  return leftBuffer.length === rightBuffer.length && crypto.timingSafeEqual(leftBuffer, rightBuffer);
 }
 
 function extractBearerToken(req: express.Request): string | null {
@@ -364,7 +358,7 @@ export function assertGptCanUseDag(
     }
 
     const providedToken = extractBearerToken(ctx.req);
-    if (!providedToken || !timingSafeEqual(providedToken, expectedToken)) {
+    if (!timingSafeEqualOpaqueSecret(providedToken, expectedToken)) {
       return buildErrorResponse(
         ctx,
         401,

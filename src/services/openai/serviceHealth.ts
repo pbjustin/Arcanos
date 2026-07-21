@@ -12,7 +12,7 @@ import {
 } from './credentialProvider.js';
 import { getOpenAIClientOrAdapter } from './clientBridge.js';
 import { getConfig } from '@platform/runtime/unifiedConfig.js';
-import { getEnvNumber } from '@platform/runtime/env.js';
+import { getEnv, getEnvNumber } from '@platform/runtime/env.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 
@@ -560,10 +560,13 @@ export function getOpenAIServiceHealth() {
 export function validateAPIKeyAtStartup(): boolean {
   const health = validateClientHealth();
   const apiKeyConfigured = health.apiKeyConfigured;
+  const forceMock = getEnv('FORCE_MOCK') === 'true';
 
-  syncOpenAIProviderRuntime({
-    reason: 'startup'
-  });
+  if (!forceMock) {
+    syncOpenAIProviderRuntime({
+      reason: 'startup'
+    });
+  }
 
   if (!apiKeyConfigured) {
     markProviderFailure(new Error('OpenAI API key missing at startup'), {
@@ -578,6 +581,15 @@ export function validateAPIKeyAtStartup(): boolean {
     status: 'configured',
     source: health.apiKeySource
   });
+
+  if (forceMock) {
+    logger.info('openai.provider.startup_probe_skipped', {
+      module: 'openai.service_health',
+      reason: 'force_mock'
+    });
+    return true;
+  }
+
   void probeOpenAIProviderHealth({
     force: true,
     source: 'startup'

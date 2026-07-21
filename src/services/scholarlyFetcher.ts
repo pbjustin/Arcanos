@@ -30,6 +30,7 @@ export async function searchScholarly(
       : scholarlyConfig.defaultRows;
   try {
     const response = await axios.get(scholarlyConfig.endpoint, {
+      data: undefined,
       params: { query, rows: requestedRows },
       timeout: scholarlyConfig.timeoutMs,
     });
