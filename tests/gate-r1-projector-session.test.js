@@ -20,6 +20,7 @@ const sessionScriptUrl = new URL(
 const sessionScript = readFileSync(sessionScriptUrl, 'utf8');
 const sessionScriptPath = decodeURIComponent(sessionScriptUrl.pathname).replace(/^\/(?:([A-Za-z]:))/, '$1');
 const cleanupDirectories = new Set();
+const windowsIt = process.platform === 'win32' ? it : it.skip;
 
 function createHarness({ copyProjectors = false } = {}) {
   const harnessRoot = mkdtempSync(join(tmpdir(), 'gate-r1-session-harness-'));
@@ -47,11 +48,12 @@ function runBoundedFixture(mode, timeoutMs = 5_000) {
   ).replace(/^\/(?:([A-Za-z]:))/, '$1');
   const escapedHarness = harnessScript.replaceAll("'", "''");
   const escapedFixture = fixturePath.replaceAll("'", "''");
+  const escapedNodePath = process.execPath.replaceAll("'", "''");
   const command = [
     `. '${escapedHarness}'`,
     'Initialize-BoundedProcessType',
     "$psi=[Diagnostics.ProcessStartInfo]::new()",
-    "$psi.FileName='C:\\Program Files\\nodejs\\node.exe'",
+    `$psi.FileName='${escapedNodePath}'`,
     '$psi.UseShellExecute=$false',
     '$psi.RedirectStandardOutput=$true',
     '$psi.RedirectStandardError=$true',
@@ -394,7 +396,7 @@ describe('Gate R1 projector session', () => {
     expect(sessionScript).toContain('Try-WriteSafeJsonFile');
   });
 
-  it('completes a no-network stop/ack session and removes its session directory', async () => {
+  windowsIt('completes a no-network stop/ack session and removes its session directory', async () => {
     const harnessScript = createHarness({ copyProjectors: true });
     const escapedHarness = harnessScript.replaceAll("'", "''");
     const command = [
