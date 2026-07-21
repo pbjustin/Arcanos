@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import os
 import stat
+import subprocess
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
 
+from arcanos import action_plan_execution_journal as journal_module
 from arcanos.action_plan_execution_journal import (
     ActionPlanExecutionJournal,
     ActionPlanExecutionJournalError,
@@ -189,6 +191,59 @@ def test_default_permission_enforcement_creates_private_storage(tmp_path: Path) 
     if os.name != "nt":
         assert stat.S_IMODE(journal.path.parent.stat().st_mode) == 0o700
         assert stat.S_IMODE(journal.path.stat().st_mode) == 0o600
+
+
+@pytest.mark.parametrize(
+    ("environment", "fallback_user", "directory", "identity"),
+    [
+        (
+            {"USERNAME": "runner", "USERDOMAIN": "EXAMPLE"},
+            "fallback",
+            False,
+            "EXAMPLE\\runner",
+        ),
+        (
+            {"COMPUTERNAME": "WORKSTATION"},
+            "fallback",
+            True,
+            "WORKSTATION\\fallback",
+        ),
+        ({"USERNAME": "runner"}, "fallback", False, "runner"),
+    ],
+)
+def test_windows_permissions_use_environment_identity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    environment: dict[str, str],
+    fallback_user: str,
+    directory: bool,
+    identity: str,
+) -> None:
+    for name in ("USERNAME", "USERDOMAIN", "COMPUTERNAME"):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in environment.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(journal_module.getpass, "getuser", lambda: fallback_user)
+
+    path = tmp_path / ("private" if directory else "journal.sqlite3")
+    calls: list[list[str]] = []
+
+    def run(args: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        stdout = ""
+        if args == ["icacls", str(path)]:
+            stdout = f"{path} {identity}:(F)\n"
+        return subprocess.CompletedProcess(args, 0, stdout=stdout)
+
+    monkeypatch.setattr(journal_module.subprocess, "run", run)
+
+    journal_module._secure_windows_path(path, directory=directory)
+
+    grant = f"{identity}:(OI)(CI)(F)" if directory else f"{identity}:(F)"
+    assert calls == [
+        ["icacls", str(path), "/inheritance:r", "/grant:r", grant],
+        ["icacls", str(path)],
+    ]
 
 
 def test_journal_reopen_preserves_pending_result_for_exact_retry(

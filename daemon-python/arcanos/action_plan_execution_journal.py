@@ -424,18 +424,10 @@ def _secure_path(path: Path, *, directory: bool) -> None:
 def _secure_windows_path(path: Path, *, directory: bool) -> None:
     """Replace inherited ACLs and verify that only the current account is listed."""
     creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    username = os.environ.get("USERNAME") or getpass.getuser()
+    domain = os.environ.get("USERDOMAIN") or os.environ.get("COMPUTERNAME")
+    identity = f"{domain}\\{username}" if domain else username
     try:
-        identity_result = subprocess.run(
-            ["whoami"],
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=5,
-            creationflags=creation_flags,
-        )
-        identity = identity_result.stdout.strip()
-        if not identity:
-            identity = getpass.getuser()
         grant = f"{identity}:(OI)(CI)(F)" if directory else f"{identity}:(F)"
         subprocess.run(
             ["icacls", str(path), "/inheritance:r", "/grant:r", grant],
