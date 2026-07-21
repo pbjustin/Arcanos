@@ -280,4 +280,3 @@ production, delete the preview, or perform an administrative retry.
 5. A journal/acknowledgement verifier that emits only stable safe codes.
 6. A disclosure and production/Phase 2D non-impact projector.
 7. Independent adversarial review and a committed exact Gate E authorization.
-
