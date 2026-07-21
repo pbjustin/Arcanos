@@ -24,6 +24,7 @@ const ENV_TEMPLATE_PATH = path.join(PROJECT_ROOT, '.env.example');
 const DOCKERFILE_PATH = path.join(PROJECT_ROOT, 'Dockerfile');
 const RAILWAYIGNORE_PATH = path.join(PROJECT_ROOT, '.railwayignore');
 const EXPECTED_START_COMMAND = 'node scripts/start-railway-service.mjs';
+const EXPECTED_PR_START_COMMAND = `${EXPECTED_START_COMMAND} --pr-preview-safe`;
 const EXPECTED_HEALTHCHECK_PATH = '/health';
 const EXPECTED_DOCKERFILE_CMD = 'CMD ["node", "scripts/start-railway-service.mjs"]';
 const EXPECTED_DOCKERFILE_PRISMA_COPY = 'COPY prisma/ ./prisma/';
@@ -156,6 +157,8 @@ export function validateConfig(config) {
   const environments = (config.environments ?? {});
   const productionEnvironment = (environments.production ?? {});
   const productionVariables = productionEnvironment.variables;
+  const prEnvironment = (environments.pr ?? {});
+  const prDeploy = prEnvironment.deploy;
 
   //audit Assumption: builder must be explicitly declared for deterministic deploys; risk: implicit platform defaults change behavior; invariant: builder is RAILPACK; handling: fail validation when mismatched.
   if (build.builder !== 'RAILPACK') {
@@ -209,6 +212,34 @@ export function validateConfig(config) {
         `Expected environments.production.variables.${PROCESS_KIND_ENV} to be "web", "worker", or "$${PROCESS_KIND_ENV}" but found "${String(productionVariables[PROCESS_KIND_ENV] ?? '')}"`,
       );
     }
+  }
+
+  //audit Assumption: Railway applies the special `environments.pr` override to every native PR service; risk: inherited production configuration starts providers, workers, bridges, schedulers, or migrations before preview isolation is reviewed; invariant: native PR deploys enter the health-only launcher with no pre-deploy command, cron, or restart loop; handling: schema-lock the exact passive override.
+  if (!prDeploy || typeof prDeploy !== 'object' || Array.isArray(prDeploy)) {
+    errors.push('environments.pr.deploy must be an object');
+  } else {
+    if (prDeploy.startCommand !== EXPECTED_PR_START_COMMAND) {
+      errors.push(`Expected environments.pr.deploy.startCommand to be "${EXPECTED_PR_START_COMMAND}" but found "${String(prDeploy.startCommand ?? '')}"`);
+    }
+    if (prDeploy.preDeployCommand !== null) {
+      errors.push('environments.pr.deploy.preDeployCommand must be null');
+    }
+    if (prDeploy.healthcheckPath !== EXPECTED_HEALTHCHECK_PATH) {
+      errors.push(`Expected environments.pr.deploy.healthcheckPath to be "${EXPECTED_HEALTHCHECK_PATH}" but found "${String(prDeploy.healthcheckPath ?? '')}"`);
+    }
+    if (prDeploy.cronSchedule !== null) {
+      errors.push('environments.pr.deploy.cronSchedule must be null');
+    }
+    if (prDeploy.restartPolicyType !== 'NEVER') {
+      errors.push(`Expected environments.pr.deploy.restartPolicyType to be "NEVER" but found "${String(prDeploy.restartPolicyType ?? '')}"`);
+    }
+    if (prDeploy.restartPolicyMaxRetries !== null) {
+      errors.push(`Expected environments.pr.deploy.restartPolicyMaxRetries to be null but found "${String(prDeploy.restartPolicyMaxRetries ?? '')}"`);
+    }
+  }
+
+  if ('variables' in prEnvironment) {
+    errors.push('environments.pr.variables is forbidden; Railway PR overrides must remain schema-compatible build/deploy settings only');
   }
 
   return errors;

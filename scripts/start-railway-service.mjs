@@ -48,6 +48,8 @@ const CLI_BRIDGE_ENABLED_ENV = 'ARCANOS_CLI_BRIDGE_ENABLED';
 const CLI_BRIDGE_URL_ENV = 'ARCANOS_CLI_BRIDGE_URL';
 const CLI_BRIDGE_TOKEN_ENV = 'ARCANOS_CLI_BRIDGE_TOKEN';
 const PREVIEW_ISOLATION_ENV = 'ARCANOS_PREVIEW_ISOLATION';
+const PASSIVE_PR_PREVIEW_ARGUMENT = '--pr-preview-safe';
+const NATIVE_PR_ENVIRONMENT_PATTERN = /^Arcanos-pr-[1-9]\d*$/iu;
 const OPENAI_BASE_URL_ENV_NAMES = [
   'OPENAI_BASE_URL',
   'RAILWAY_OPENAI_BASE_URL',
@@ -99,6 +101,154 @@ function firstConfiguredValue(env, names) {
     }
   }
   return undefined;
+}
+
+/**
+ * Resolve the native Railway PR preview startup contract.
+ *
+ * Inputs/outputs:
+ * - Input: launcher arguments and Railway-owned environment identity.
+ * - Output: a stable passive-mode category or the historical disabled result.
+ *
+ * Edge case behavior:
+ * - Exact native ARCANOS PR environments enter passive mode even when the
+ *   dedicated argument is absent; non-PR startup remains unchanged.
+ * - The dedicated argument fails closed outside an exact native ARCANOS PR environment.
+ */
+export function resolvePassivePrPreviewOrThrow(args = process.argv.slice(2), env = process.env) {
+  const environmentName = env.RAILWAY_ENVIRONMENT_NAME?.trim() || '';
+  const isNativePrEnvironment = NATIVE_PR_ENVIRONMENT_PATTERN.test(environmentName);
+  const passiveArgumentPresent = args.includes(PASSIVE_PR_PREVIEW_ARGUMENT);
+
+  if (!isNativePrEnvironment && !passiveArgumentPresent) {
+    return { enabled: false };
+  }
+  if (args.length > 0 && (args.length !== 1 || args[0] !== PASSIVE_PR_PREVIEW_ARGUMENT)) {
+    throw new Error('PREVIEW_ISOLATION_ARGUMENT_INVALID');
+  }
+  if (!isNativePrEnvironment) {
+    throw new Error('PREVIEW_ISOLATION_NATIVE_PR_ENVIRONMENT_REQUIRED');
+  }
+  if (!env.RAILWAY_PROJECT_ID?.trim()) {
+    throw new Error('PREVIEW_ISOLATION_PROJECT_REQUIRED');
+  }
+  if (!env.RAILWAY_ENVIRONMENT_ID?.trim()) {
+    throw new Error('PREVIEW_ISOLATION_ENVIRONMENT_ID_REQUIRED');
+  }
+
+  return {
+    enabled: true,
+    environmentCategory: 'native-pr',
+    runtimeMode: 'passive'
+  };
+}
+
+function resolvePassivePrProcessKindOrThrow(env = process.env) {
+  const processKind = String(env[PROCESS_KIND_ENV] ?? '').trim().toLowerCase();
+  if (!VALID_PROCESS_KINDS.has(processKind)) {
+    throw new Error('PREVIEW_ISOLATION_PROCESS_KIND_INVALID');
+  }
+  return processKind;
+}
+
+/**
+ * Create the health-only server used by an automatically generated PR environment.
+ *
+ * The passive server intentionally imports no application, worker, provider, bridge,
+ * database, Redis, migration, or scheduler module.
+ */
+export function createPassivePrPreviewServer(processKind) {
+  if (!VALID_PROCESS_KINDS.has(processKind)) {
+    throw new Error('PREVIEW_ISOLATION_PROCESS_KIND_INVALID');
+  }
+
+  return createServer((request, response) => {
+    const requestPath = request.url ?? '';
+    const requestMethod = request.method ?? '';
+    const isReadMethod = requestMethod === 'GET' || requestMethod === 'HEAD';
+    response.setHeader('Cache-Control', 'no-store');
+
+    if (isReadMethod && LIVENESS_PATHS.has(requestPath)) {
+      response.statusCode = 200;
+      response.setHeader('content-type', 'text/plain; charset=utf-8');
+      response.end(requestMethod === 'HEAD' ? undefined : HEALTH_OK_BODY);
+      return;
+    }
+
+    if (isReadMethod && requestPath === READINESS_PATH) {
+      response.statusCode = 200;
+      response.setHeader('content-type', 'application/json; charset=utf-8');
+      response.end(requestMethod === 'HEAD' ? undefined : JSON.stringify({
+        ready: true,
+        mode: 'passive-pr-preview',
+        processKind
+      }));
+      return;
+    }
+
+    response.statusCode = 404;
+    response.setHeader('content-type', 'text/plain; charset=utf-8');
+    response.end(requestMethod === 'HEAD' ? undefined : HEALTH_NOT_FOUND_BODY);
+  });
+}
+
+async function runPassivePrPreview(processKind) {
+  let listenerConfig;
+  try {
+    listenerConfig = resolveHealthListenerConfig();
+  } catch {
+    throw new Error('PREVIEW_ISOLATION_LISTENER_INVALID');
+  }
+  const server = createPassivePrPreviewServer(processKind);
+
+  await new Promise((resolve, reject) => {
+    const handleListenError = () => reject(new Error('PREVIEW_ISOLATION_LISTENER_START_FAILED'));
+    server.once('error', handleListenError);
+    server.listen(listenerConfig.port, listenerConfig.host, () => {
+      server.off('error', handleListenError);
+      resolve();
+    });
+  });
+
+  console.log('[railway-launcher] preview.passive.ready', JSON.stringify({
+    module: 'railway-launcher',
+    environmentCategory: 'native-pr',
+    processKind,
+    protectedEffectsEnabled: false
+  }));
+
+  await new Promise((resolve, reject) => {
+    let shutdownStarted = false;
+    const cleanup = () => {
+      server.off('error', handleServerError);
+      process.off('SIGTERM', handleSigterm);
+      process.off('SIGINT', handleSigint);
+    };
+    const handleServerError = () => {
+      cleanup();
+      reject(new Error('PREVIEW_ISOLATION_LISTENER_RUNTIME_FAILED'));
+    };
+    const shutdown = (signal) => {
+      if (shutdownStarted) {
+        return;
+      }
+      shutdownStarted = true;
+      console.log(`[railway-launcher] received ${signal}; closing passive PR preview`);
+      server.close((error) => {
+        cleanup();
+        if (error) {
+          reject(new Error('PREVIEW_ISOLATION_LISTENER_CLOSE_FAILED'));
+          return;
+        }
+        resolve();
+      });
+    };
+    const handleSigterm = () => shutdown('SIGTERM');
+    const handleSigint = () => shutdown('SIGINT');
+    server.once('error', handleServerError);
+    process.once('SIGTERM', handleSigterm);
+    process.once('SIGINT', handleSigint);
+  });
 }
 
 /**
@@ -597,6 +747,13 @@ async function runWorkerRuntimeWithHealthServer() {
  */
 async function main() {
   try {
+    const passivePrPreview = resolvePassivePrPreviewOrThrow();
+    if (passivePrPreview.enabled) {
+      const processKind = resolvePassivePrProcessKindOrThrow();
+      await runPassivePrPreview(processKind);
+      return;
+    }
+
     const processKind = resolveProcessKindOrThrow();
     const previewIsolation = assertPreviewIsolationOrThrow();
     if (previewIsolation.enabled) {

@@ -25,6 +25,17 @@
     }
   },
   "environments": {
+    "pr": {
+      "deploy": {
+        "startCommand": "node scripts/start-railway-service.mjs --pr-preview-safe",
+        "preDeployCommand": null,
+        "healthcheckPath": "/health",
+        "healthcheckTimeout": 300,
+        "cronSchedule": null,
+        "restartPolicyType": "NEVER",
+        "restartPolicyMaxRetries": null
+      }
+    },
     "production": {
       "variables": {
         "NODE_ENV": "production",

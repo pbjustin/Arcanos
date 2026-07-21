@@ -3,16 +3,114 @@ import { spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import {
   buildWorkerReadinessResponse,
+  createPassivePrPreviewServer,
   createWorkerReadinessState,
   mirrorAndObserveWorkerOutput,
   recordWorkerExit,
   recordWorkerOutput,
   assertPreviewIsolationOrThrow,
+  resolvePassivePrPreviewOrThrow,
   resolveCliBridgeListenerConfig,
   resolveHealthListenerConfig,
 } from '../scripts/start-railway-service.mjs';
 
 describe('start-railway-service launcher helpers', () => {
+  it('recognizes only the exact Railway native PR preview contract', () => {
+    expect(resolvePassivePrPreviewOrThrow(['--pr-preview-safe'], {
+      RAILWAY_PROJECT_ID: 'project-id',
+      RAILWAY_ENVIRONMENT_ID: 'environment-id',
+      RAILWAY_ENVIRONMENT_NAME: 'Arcanos-pr-1395',
+    })).toEqual({
+      enabled: true,
+      environmentCategory: 'native-pr',
+      runtimeMode: 'passive',
+    });
+
+    expect(resolvePassivePrPreviewOrThrow([], {
+      RAILWAY_ENVIRONMENT_NAME: 'production',
+    })).toEqual({ enabled: false });
+
+    expect(resolvePassivePrPreviewOrThrow([], {
+      RAILWAY_PROJECT_ID: 'project-id',
+      RAILWAY_ENVIRONMENT_ID: 'environment-id',
+      RAILWAY_ENVIRONMENT_NAME: 'Arcanos-pr-1395',
+    })).toEqual({
+      enabled: true,
+      environmentCategory: 'native-pr',
+      runtimeMode: 'passive',
+    });
+  });
+
+  it.each([
+    ['production', 'PREVIEW_ISOLATION_NATIVE_PR_ENVIRONMENT_REQUIRED'],
+    ['Arcanos-pr-0', 'PREVIEW_ISOLATION_NATIVE_PR_ENVIRONMENT_REQUIRED'],
+    ['Arcanos-pr-1395-extra', 'PREVIEW_ISOLATION_NATIVE_PR_ENVIRONMENT_REQUIRED'],
+    ['Arcanos-pr-production', 'PREVIEW_ISOLATION_NATIVE_PR_ENVIRONMENT_REQUIRED'],
+  ])('rejects passive preview mode outside an exact native PR environment: %s', (environmentName, expectedCode) => {
+    expect(() => resolvePassivePrPreviewOrThrow(['--pr-preview-safe'], {
+      RAILWAY_PROJECT_ID: 'project-id',
+      RAILWAY_ENVIRONMENT_ID: 'environment-id',
+      RAILWAY_ENVIRONMENT_NAME: environmentName,
+    })).toThrow(expectedCode);
+  });
+
+  it.each([
+    ['RAILWAY_PROJECT_ID', 'PREVIEW_ISOLATION_PROJECT_REQUIRED'],
+    ['RAILWAY_ENVIRONMENT_ID', 'PREVIEW_ISOLATION_ENVIRONMENT_ID_REQUIRED'],
+  ])('requires Railway-owned %s before passive preview startup', (missingName, expectedCode) => {
+    const env = {
+      RAILWAY_PROJECT_ID: 'project-id',
+      RAILWAY_ENVIRONMENT_ID: 'environment-id',
+      RAILWAY_ENVIRONMENT_NAME: 'Arcanos-pr-1395',
+    };
+    delete env[missingName];
+
+    expect(() => resolvePassivePrPreviewOrThrow(['--pr-preview-safe'], env)).toThrow(expectedCode);
+  });
+
+  it('rejects extra launcher arguments in passive preview mode', () => {
+    expect(() => resolvePassivePrPreviewOrThrow(['--pr-preview-safe', '--unexpected'], {
+      RAILWAY_PROJECT_ID: 'project-id',
+      RAILWAY_ENVIRONMENT_ID: 'environment-id',
+      RAILWAY_ENVIRONMENT_NAME: 'Arcanos-pr-1395',
+    })).toThrow('PREVIEW_ISOLATION_ARGUMENT_INVALID');
+  });
+
+  it.each(['web', 'worker'])('serves only passive health endpoints for %s without starting an application runtime', async (processKind) => {
+    const server = createPassivePrPreviewServer(processKind);
+    await new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', resolve);
+    });
+
+    try {
+      const address = server.address();
+      expect(address && typeof address === 'object').toBe(true);
+      const origin = `http://127.0.0.1:${address.port}`;
+
+      const healthResponse = await fetch(`${origin}/health`);
+      expect(healthResponse.status).toBe(200);
+      expect(await healthResponse.text()).toBe('ok');
+
+      const readinessResponse = await fetch(`${origin}/readyz`);
+      expect(readinessResponse.status).toBe(200);
+      expect(await readinessResponse.json()).toEqual({
+        ready: true,
+        mode: 'passive-pr-preview',
+        processKind,
+      });
+
+      const protectedResponse = await fetch(`${origin}/api/plans`);
+      expect(protectedResponse.status).toBe(404);
+      expect(await protectedResponse.text()).toBe('not found');
+
+      const mutatingHealthResponse = await fetch(`${origin}/health`, { method: 'POST' });
+      expect(mutatingHealthResponse.status).toBe(404);
+    } finally {
+      await new Promise(resolve => server.close(resolve));
+    }
+  });
+
   it('keeps preview isolation inert unless explicitly enabled', () => {
     expect(assertPreviewIsolationOrThrow({
       RAILWAY_ENVIRONMENT_NAME: 'production',
@@ -165,6 +263,46 @@ describe('start-railway-service launcher helpers', () => {
     expect(result.stderr).toContain('PREVIEW_ISOLATION_FORCE_MOCK_REQUIRED');
     expect(result.stderr).not.toContain(repositoryRoot);
     expect(result.stderr).not.toContain('start-railway-service.mjs:');
+  });
+
+  it.each([
+    {
+      name: 'malformed listener',
+      processKind: 'web',
+      port: 'credential-sentinel-port',
+      expectedCode: 'PREVIEW_ISOLATION_LISTENER_INVALID',
+    },
+    {
+      name: 'malformed process kind',
+      processKind: 'credential-sentinel-kind',
+      port: '8080',
+      expectedCode: 'PREVIEW_ISOLATION_PROCESS_KIND_INVALID',
+    },
+  ])('keeps passive PR startup failures non-sensitive: $name', ({ processKind, port, expectedCode }) => {
+    const repositoryRoot = process.cwd();
+    const result = spawnSync(process.execPath, ['scripts/start-railway-service.mjs'], {
+      cwd: repositoryRoot,
+      env: {
+        ...process.env,
+        ARCANOS_PROCESS_KIND: processKind,
+        RAILWAY_PROJECT_ID: 'project-id',
+        RAILWAY_ENVIRONMENT_ID: 'environment-id',
+        RAILWAY_ENVIRONMENT_NAME: 'Arcanos-pr-1395',
+        RAILWAY_SERVICE_NAME: 'credential-sentinel-service',
+        NODE_ENV: 'credential-sentinel-node-env',
+        PORT: port,
+      },
+      encoding: 'utf8',
+    });
+
+    const transcript = `${result.stdout}\n${result.stderr}`;
+    expect(result.status).toBe(1);
+    expect(transcript).toContain(expectedCode);
+    expect(transcript).not.toContain('credential-sentinel');
+    expect(transcript).not.toContain(repositoryRoot);
+    expect(transcript).not.toContain('start-railway-service.mjs:');
+    expect(transcript).not.toContain('starting web runtime');
+    expect(transcript).not.toContain('starting worker runtime');
   });
 
   it('resolves one validated worker health listener with Railway-safe defaults', () => {
