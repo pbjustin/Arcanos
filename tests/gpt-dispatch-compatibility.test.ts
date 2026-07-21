@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const mockGetGptModuleMap = jest.fn();
+const mockRebuildGptModuleMap = jest.fn();
 const mockGetModuleMetadata = jest.fn();
 const mockDispatchModuleAction = jest.fn();
 
@@ -87,7 +88,7 @@ jest.unstable_mockModule('@services/systemState.js', () => ({
 jest.unstable_mockModule('@platform/runtime/gptRouterConfig.js', () => ({
   default: mockGetGptModuleMap,
   getGptModuleMap: mockGetGptModuleMap,
-  rebuildGptModuleMap: jest.fn(),
+  rebuildGptModuleMap: mockRebuildGptModuleMap,
   validateGptRegistry: jest.fn(() => ({ requiredGptIds: ['arcanos-core'] })),
 }));
 
@@ -102,6 +103,12 @@ describe('gpt dispatch compatibility', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockGetGptModuleMap.mockResolvedValue({
+      'arcanos-core': {
+        route: 'core',
+        module: 'ARCANOS:CORE'
+      }
+    });
+    mockRebuildGptModuleMap.mockResolvedValue({
       'arcanos-core': {
         route: 'core',
         module: 'ARCANOS:CORE'
@@ -283,6 +290,22 @@ describe('gpt dispatch compatibility', () => {
         })
       })
     );
+    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+  });
+
+  it.each(['default', 'foo-arcanos-bar'])('keeps unregistered GPT ID %s unknown', async (gptId) => {
+    const response = await resolveGptRouting(gptId, `req_unknown_${gptId}`);
+
+    expect(response).toEqual(expect.objectContaining({
+      ok: false,
+      error: expect.objectContaining({
+        code: 'UNKNOWN_GPT'
+      }),
+      _route: expect.objectContaining({
+        requestId: `req_unknown_${gptId}`,
+        gptId
+      })
+    }));
     expect(mockDispatchModuleAction).not.toHaveBeenCalled();
   });
 });
