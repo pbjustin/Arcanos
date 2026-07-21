@@ -50,8 +50,10 @@ provider clients, bridge, schedulers, migrations, or ActionPlan execution.
 - [x] `npm run type-check`
 - [x] `npm run lint`
 - [x] `npm run build`
-- [ ] `npm test` — 433 suites and 4,647 tests passed; one unrelated existing
-  GPT-OSS migration-draft marker assertion failed; four suites were skipped.
+- [x] Full Jest result reviewed under the temporary publication-readiness
+  waiver. `npm test` is not green: the branch-owned GPT-OSS migration-draft
+  marker assertion, unchanged by the refresh and native PR-preview hardening,
+  still fails.
 - [x] `npm run guard:commit`
 
 ### Deployment boundary
@@ -77,10 +79,11 @@ The generated preview is passive only. It does not apply migrations, connect
 the application to PostgreSQL/Redis, start a worker/executor, or validate
 Phase 2E protocol behavior. Those remain later, explicit gates.
 
-At preparation time the cumulative branch is 94 commits ahead of and 6 commits
-behind `origin/main` (355 files changed relative to the merge base). Refreshing
-against `origin/main`, resolving any integration differences, and rerunning the
-relevant security/full suites are required before publication.
+The cumulative branch was refreshed through exact `origin/main` commit
+`7f2a85c1c7c2338f8e472482d1b43bf9d0cf3f41` in merge commit
+`ba567b4187c13355d70380026490925bbf6d2f33`. The security-focused suites,
+build checks, backend CLI checks, and Python suite passed. Full Jest retained
+the single failure covered by the temporary publication-readiness waiver.
 
 ### Rollback
 
@@ -91,4 +94,5 @@ authorized separately.
 ### References
 
 - `docs/audits/action-plan-execution/2026-07-21/native-pr-preview-hardening.md`
+- `docs/audits/action-plan-execution/2026-07-21/temporary-gptoss-test-waiver.md`
 - `docs/audits/action-plan-execution/2026-07-20/phase2e-cumulative-preview-gates-runbook.md`
