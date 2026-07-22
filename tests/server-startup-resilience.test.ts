@@ -455,3 +455,38 @@ describe('startup lifecycle transitions', () => {
     }));
   });
 });
+
+describe('server entrypoint failure handling', () => {
+  afterEach(() => {
+    jest.resetModules();
+  });
+
+  it('logs only a sanitized error type before exiting', async () => {
+    jest.resetModules();
+    const secretSentinel = 'redis://user:secret@startup.invalid:6379';
+    const startServer = jest.fn(async () => {
+      throw new Error(secretSentinel);
+    });
+    jest.unstable_mockModule('../src/server.js', () => ({ startServer }));
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+    const exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+
+    try {
+      await import('../src/start-server.js');
+      await flushAsyncWork();
+
+      expect(startServer).toHaveBeenCalledTimes(1);
+      expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        '[STARTUP] Fatal startup failure:',
+        { errorType: 'Error' }
+      );
+      expect(JSON.stringify(consoleErrorSpy.mock.calls)).not.toContain(secretSentinel);
+      expect(exitSpy).toHaveBeenCalledTimes(1);
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    } finally {
+      exitSpy.mockRestore();
+      consoleErrorSpy.mockRestore();
+    }
+  });
+});

@@ -995,7 +995,15 @@ async function hydrateRedisTelemetryPersistence(): Promise<void> {
       redisPersistenceDirty = true;
       await persistStateToRedis(state, target);
     }
-  })();
+  })().catch(() => {
+    state.persistence.lastSaveError = 'REDIS_DEPENDENCY_UNAVAILABLE';
+    redisPersistenceDirty = true;
+    scheduleRedisHydrationRetry();
+    logger.warn('self_heal.telemetry.redis_hydration_failed', {
+      module: 'self-heal-telemetry',
+      errorCode: 'REDIS_DEPENDENCY_UNAVAILABLE'
+    });
+  });
   redisHydrationPromise = hydration;
 
   try {

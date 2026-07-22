@@ -16,6 +16,7 @@ interface TelemetryRedisHarness {
   subscribeMock: jest.Mock;
   unsubscribeMock: jest.Mock;
   getReadyClientMock: jest.Mock;
+  loggerWarnMock: jest.Mock;
 }
 
 function lifecycleSnapshot(
@@ -100,6 +101,7 @@ async function loadTelemetryRedisHarness(
     set: jest.fn(async () => 'OK')
   };
   const getReadyClientMock = jest.fn(() => readyClient);
+  const loggerWarnMock = jest.fn();
   const subscribeMock = jest.fn((listener: (snapshot: RedisLifecycleSnapshot) => void) => {
     lifecycleListeners.add(listener);
     listener(initialSnapshot);
@@ -129,7 +131,7 @@ async function loadTelemetryRedisHarness(
     },
     logger: {
       info: jest.fn(),
-      warn: jest.fn(),
+      warn: loggerWarnMock,
       error: jest.fn(),
       debug: jest.fn(),
       child: jest.fn(() => ({
@@ -157,7 +159,8 @@ async function loadTelemetryRedisHarness(
     },
     subscribeMock,
     unsubscribeMock,
-    getReadyClientMock
+    getReadyClientMock,
+    loggerWarnMock
   };
 }
 
@@ -320,5 +323,49 @@ describe('self-heal telemetry Redis lifecycle integration', () => {
 
     expect(harness.client.get).toHaveBeenCalledTimes(1);
     expect(harness.client.set).not.toHaveBeenCalled();
+  });
+
+  it('contains unexpected hydration failures and retries with sanitized telemetry', async () => {
+    jest.useFakeTimers();
+    const harness = await loadTelemetryRedisHarness();
+    loadedModules.push(harness.moduleUnderTest);
+    harness.client.get.mockResolvedValue(null);
+    harness.setReadyClient(harness.client);
+    const secretSentinel = 'redis://user:secret@telemetry.invalid:6379';
+    const toISOStringSpy = jest.spyOn(Date.prototype, 'toISOString')
+      .mockImplementationOnce(() => {
+        throw new Error(secretSentinel);
+      });
+
+    try {
+      await harness.moduleUnderTest.primeSelfHealTelemetryPersistence();
+      harness.emitLifecycle(lifecycleSnapshot('READY'));
+      await flushAsyncWork();
+
+      expect(harness.client.get).toHaveBeenCalledTimes(1);
+      expect(harness.moduleUnderTest.buildSelfHealTelemetrySnapshot({
+        enabled: true,
+        active: false
+      }).persistence.lastSaveError).toBe('REDIS_DEPENDENCY_UNAVAILABLE');
+      expect(harness.loggerWarnMock).toHaveBeenCalledWith(
+        'self_heal.telemetry.redis_hydration_failed',
+        {
+          module: 'self-heal-telemetry',
+          errorCode: 'REDIS_DEPENDENCY_UNAVAILABLE'
+        }
+      );
+      expect(JSON.stringify(harness.loggerWarnMock.mock.calls)).not.toContain(secretSentinel);
+
+      await jest.advanceTimersByTimeAsync(1_000);
+      await flushAsyncWork();
+
+      expect(harness.client.get).toHaveBeenCalledTimes(2);
+      expect(harness.moduleUnderTest.buildSelfHealTelemetrySnapshot({
+        enabled: true,
+        active: false
+      }).persistence.lastSaveError).toBeNull();
+    } finally {
+      toISOStringSpy.mockRestore();
+    }
   });
 });
