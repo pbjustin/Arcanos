@@ -10,6 +10,8 @@ import {
 } from '@services/runtimeDiagnosticsService.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { getGptRegistrySnapshot } from '@platform/runtime/gptRouterConfig.js';
+import { getRedisLifecycleSnapshot } from '@platform/runtime/redisLifecycle.js';
+import { getStartupLifecycleSnapshot } from '@platform/runtime/startupLifecycle.js';
 import { withJsonResponseBytes } from '@shared/http/clientResponseGuards.js';
 import { sendBoundedJsonResponse } from '@shared/http/sendBoundedJsonResponse.js';
 
@@ -21,10 +23,43 @@ function hasConfiguredOpenAIKey(): boolean {
   return typeof key === 'string' && key.trim().length > 0;
 }
 
+function buildPublicStartupLifecycleSnapshot() {
+  const startup = getStartupLifecycleSnapshot();
+  const redis = getRedisLifecycleSnapshot();
+  const redisReady = redis.state === 'READY';
+  const redisCode = redisReady
+    ? null
+    : redis.state === 'STARTING'
+      ? 'REDIS_INITIALIZING'
+      : 'REDIS_DEPENDENCY_UNAVAILABLE';
+
+  return {
+    startup: {
+      phase: startup.phase,
+      ready: startup.ready,
+      listener_bound: startup.listenerBound,
+      runtime_initialized: startup.runtimeInitialized,
+      shutting_down: startup.shuttingDown,
+      changed_at: startup.changedAt
+    },
+    dependencies: {
+      redis: {
+        configured: redis.configured,
+        ready: redisReady,
+        status: redis.state.toLowerCase(),
+        code: redisCode,
+        attempt: redis.attempt,
+        retry_scheduled: redis.retryScheduled
+      }
+    }
+  };
+}
+
 export async function writePublicHealthResponse(req: Request, res: Response): Promise<void> {
   const baseSnapshot = runtimeDiagnosticsService.getHealthSnapshot();
   const { validation } = await getGptRegistrySnapshot();
   const status = validation.missingGptIds.length === 0 ? 'ok' : 'unhealthy';
+  const lifecycle = buildPublicStartupLifecycleSnapshot();
   const payload = withJsonResponseBytes({
     ...baseSnapshot,
     status,
@@ -36,6 +71,7 @@ export async function writePublicHealthResponse(req: Request, res: Response): Pr
       missing: validation.missingGptIds
     },
     openai_configured: hasConfiguredOpenAIKey(),
+    ...lifecycle,
   });
 
   req.logger?.info?.('health.response', {

@@ -16,21 +16,17 @@
  * @module unifiedHealth
  */
 
-import { Request, Response, NextFunction } from 'express';
-import { createClient } from 'redis';
+import { Request, Response } from 'express';
 import { aiLogger } from "@platform/logging/structuredLogging.js";
 import { recordTraceEvent } from "@platform/logging/telemetry.js";
-import { validateClientHealth, type HealthStatus as ClientHealthStatus } from '@arcanos/openai/unifiedClient';
+import { validateClientHealth } from '@arcanos/openai/unifiedClient';
 import { isOpenAIAdapterInitialized } from "@core/adapters/openai.adapter.js";
 import { getConfig } from "@platform/runtime/unifiedConfig.js";
 import { resolveConfiguredRedisConnection } from "@platform/runtime/redis.js";
-import { assessCoreServiceReadiness, HealthStatus as ServiceHealthStatus } from "@platform/resilience/healthChecks.js";
+import { getRedisLifecycleSnapshot } from "@platform/runtime/redisLifecycle.js";
+import { getStartupLifecycleSnapshot } from "@platform/runtime/startupLifecycle.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { sendTimestampedStatus } from "@platform/resilience/serviceUnavailable.js";
-
-type RedisHealthClient = ReturnType<typeof createClient>;
-
-const REDIS_HEALTH_TIMEOUT_MS = 3_000;
 
 /**
  * Health check function type
@@ -45,6 +41,8 @@ export interface HealthCheckResult {
   healthy: boolean;
   /** Check name */
   name: string;
+  /** Stable machine-readable failure classification */
+  code?: string;
   /** Optional error message */
   error?: string;
   /** Optional metadata */
@@ -350,53 +348,6 @@ export function buildReadinessEndpoint(checks: HealthChecker[]): (req: Request, 
   };
 }
 
-async function withHealthCheckTimeout<T>(
-  operation: Promise<T>,
-  timeoutMs: number,
-  timeoutLabel: string
-): Promise<T> {
-  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
-
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutHandle = setTimeout(() => {
-      reject(new Error(`${timeoutLabel} timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-
-    if (typeof timeoutHandle.unref === 'function') {
-      timeoutHandle.unref();
-    }
-  });
-
-  try {
-    return await Promise.race([operation, timeoutPromise]);
-  } finally {
-    if (timeoutHandle) {
-      clearTimeout(timeoutHandle);
-    }
-  }
-}
-
-async function closeRedisHealthClient(redisClient: RedisHealthClient): Promise<void> {
-  const disconnectableRedisClient = redisClient as RedisHealthClient & {
-    isOpen?: boolean;
-    disconnect?: () => Promise<void> | void;
-  };
-
-  try {
-    //audit Assumption: an open Redis health client should exit cleanly to avoid probe-driven socket leaks; failure risk: liveness/readiness checks accumulate idle connections; expected invariant: open clients are closed before the check returns; handling strategy: prefer `quit()` for open clients and fall back to `disconnect()` when needed.
-    if (disconnectableRedisClient.isOpen) {
-      await redisClient.quit();
-      return;
-    }
-
-    if (typeof disconnectableRedisClient.disconnect === 'function') {
-      await disconnectableRedisClient.disconnect();
-    }
-  } catch {
-    //audit Assumption: health probe cleanup is best-effort and must not mask the primary health result; failure risk: cleanup noise replaces the real dependency status; expected invariant: caller receives the original health outcome; handling strategy: swallow cleanup failures.
-  }
-}
-
 /**
  * Default health checks for common services
  */
@@ -472,20 +423,23 @@ export async function checkDatabaseHealth(): Promise<HealthCheckResult> {
  * Redis health check (if Redis is configured).
  *
  * Purpose:
- * - Verify that the app can establish a Redis connection and receive a `PONG`.
+ * - Project the long-lived Redis lifecycle into health/readiness responses.
  *
  * Inputs/outputs:
- * - Input: none; reads Redis configuration from runtime env via shared resolver.
+ * - Input: none; reads safe process-local lifecycle and configuration metadata.
  * - Output: health result with configuration and connectivity metadata.
  *
  * Edge case behavior:
  * - Returns healthy with `configured: false` when Redis is not configured for the deployment.
+ * - Never opens a Redis connection or exposes an underlying connection error.
  */
 export async function checkRedisHealth(): Promise<HealthCheckResult> {
   const redisConnection = resolveConfiguredRedisConnection();
+  const redisLifecycle = getRedisLifecycleSnapshot();
+  const configured = redisConnection.configured || redisLifecycle.configured;
 
   //audit Assumption: Redis is optional for some deployments, so missing configuration should not fail health by itself; failure risk: stateless or reduced-feature environments flap unhealthy without using Redis; expected invariant: unconfigured Redis reports healthy with explicit metadata; handling strategy: short-circuit with `configured: false`.
-  if (!redisConnection.configured || !redisConnection.url) {
+  if (!configured) {
     return {
       healthy: true,
       name: 'redis',
@@ -497,45 +451,8 @@ export async function checkRedisHealth(): Promise<HealthCheckResult> {
     };
   }
 
-  const redisHealthClient = createClient({
-    url: redisConnection.url,
-    socket: {
-      connectTimeout: REDIS_HEALTH_TIMEOUT_MS
-    }
-  });
-  redisHealthClient.on('error', () => {
-    //audit Assumption: probe-only redis clients can emit transient socket errors after the primary result is known; failure risk: unhandled error events crash the process; expected invariant: health checks never leave uncaught redis event handlers behind; handling strategy: attach a no-op listener and surface failures through awaited calls instead.
-  });
-
-  const redisPingStartedAtMs = Date.now();
-
-  try {
-    await withHealthCheckTimeout(
-      redisHealthClient.connect(),
-      REDIS_HEALTH_TIMEOUT_MS,
-      'Redis connect'
-    );
-    const redisPingResponse = await withHealthCheckTimeout(
-      redisHealthClient.ping(),
-      REDIS_HEALTH_TIMEOUT_MS,
-      'Redis ping'
-    );
-
-    //audit Assumption: a healthy Redis probe returns the canonical `PONG` response; failure risk: partial protocol failures look healthy; expected invariant: only `PONG` marks Redis healthy; handling strategy: treat any other reply as unhealthy.
-    if (redisPingResponse !== 'PONG') {
-      return {
-        healthy: false,
-        name: 'redis',
-        error: `Unexpected Redis ping response: ${redisPingResponse}`,
-        metadata: {
-          configured: true,
-          connected: true,
-          source: redisConnection.source,
-          latencyMs: Date.now() - redisPingStartedAtMs
-        }
-      };
-    }
-
+  //audit Assumption: the long-lived Redis lifecycle owns all connectivity and retry I/O; failure risk: readiness probes create duplicate clients and amplify an outage; expected invariant: health reads one synchronous sanitized snapshot; handling strategy: project lifecycle state without connecting or pinging.
+  if (redisLifecycle.state === 'READY') {
     return {
       healthy: true,
       name: 'redis',
@@ -543,23 +460,71 @@ export async function checkRedisHealth(): Promise<HealthCheckResult> {
         configured: true,
         connected: true,
         source: redisConnection.source,
-        latencyMs: Date.now() - redisPingStartedAtMs
+        state: redisLifecycle.state,
+        attempt: redisLifecycle.attempt,
+        recoveryCount: redisLifecycle.recoveryCount
       }
     };
-  } catch (error) {
-    return {
-      healthy: false,
-      name: 'redis',
-      error: resolveErrorMessage(error),
-      metadata: {
-        configured: true,
-        connected: false,
-        source: redisConnection.source
-      }
-    };
-  } finally {
-    await closeRedisHealthClient(redisHealthClient);
   }
+
+  const code = redisLifecycle.state === 'STARTING'
+    ? 'REDIS_INITIALIZING'
+    : 'REDIS_DEPENDENCY_UNAVAILABLE';
+
+  return {
+    healthy: false,
+    name: 'redis',
+    code,
+    error: code === 'REDIS_INITIALIZING'
+      ? 'Redis initialization is in progress.'
+      : 'Redis dependency is unavailable.',
+    metadata: {
+      configured: true,
+      connected: false,
+      source: redisConnection.source,
+      state: redisLifecycle.state,
+      attempt: redisLifecycle.attempt,
+      retryScheduled: redisLifecycle.retryScheduled,
+      code
+    }
+  };
+}
+
+/**
+ * Process startup readiness check.
+ *
+ * Purpose:
+ * - Keep `/readyz` unavailable until the listener, core runtime, and configured
+ *   Redis dependency have all reached the shared READY state.
+ *
+ * Edge case behavior:
+ * - Reads process-local state only and never performs dependency I/O.
+ */
+export function checkStartupReadiness(): HealthCheckResult {
+  const startup = getStartupLifecycleSnapshot();
+  const code = startup.phase === 'STARTING'
+    ? 'APPLICATION_STARTING'
+    : startup.phase === 'DEGRADED'
+      ? 'APPLICATION_DEGRADED'
+      : undefined;
+
+  return {
+    healthy: startup.ready,
+    name: 'startup',
+    ...(code ? {
+      code,
+      error: startup.phase === 'STARTING'
+        ? 'Application startup is in progress.'
+        : 'Application dependencies are degraded.'
+    } : {}),
+    metadata: {
+      phase: startup.phase,
+      listenerBound: startup.listenerBound,
+      runtimeInitialized: startup.runtimeInitialized,
+      shuttingDown: startup.shuttingDown,
+      changedAt: startup.changedAt
+    }
+  };
 }
 
 /**
@@ -593,5 +558,6 @@ export default {
   checkOpenAIHealth,
   checkDatabaseHealth,
   checkRedisHealth,
+  checkStartupReadiness,
   checkApplicationHealth
 };
