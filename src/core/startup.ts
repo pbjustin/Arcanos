@@ -16,24 +16,14 @@ import { getQueryFinetuneAttemptLatencyBudgetDiagnostics } from "@config/queryFi
 import { getGptRegistrySnapshot } from '@platform/runtime/gptRouterConfig.js';
 
 /**
- * Runs startup checks including environment validation, database init,
- * OpenAI key validation, and schema verification.
+ * Run deterministic configuration and safety checks before opening the HTTP
+ * listener. No external dependency connection belongs in this phase.
  */
-export async function performStartup(): Promise<void> {
+export async function performStartupPreflight(): Promise<void> {
   // Railway-specific environment validation
   const railwayValidation = validateRailwayEnvironment();
   printValidationResults(railwayValidation);
   checkEphemeralFS();
-
-  //audit Assumption: Railway API config controls probe behavior
-  if (isRailwayApiConfigured()) {
-    const probeResult = await probeRailwayApi();
-    if (!probeResult.ok) {
-      logger.warn('⚠️ Railway management API probe failed - deployment automation features may be unavailable');
-    }
-  } else {
-    logger.info('Railway management API token not detected - skipping management API connectivity probe');
-  }
 
   const securityState = await initializeEnvironmentSecurity();
   logger.info('ARCANOS environment security', {
@@ -50,7 +40,7 @@ export async function performStartup(): Promise<void> {
   //audit Assumption: invalid env should halt startup
   if (!envValidation.isValid) {
     logger.error('Environment validation failed - exiting');
-    process.exit(1);
+    throw new Error('STARTUP_ENVIRONMENT_INVALID');
   }
 
   logger.info('🔥 ARCANOS STARTUP - Server boot sequence triggered');
@@ -77,32 +67,7 @@ export async function performStartup(): Promise<void> {
     });
   }
 
-  try {
-    const dbConnected = await initializeDatabase('server');
-    if (!dbConnected) {
-      logger.warn('⚠️ DB CHECK - Database not available - continuing with in-memory fallback');
-    } else {
-      try {
-        const hydratedEntries = await hydrateJudgedResponseFeedbackContext();
-        //audit Assumption: judged feedback hydration is best-effort and should not block startup; risk: missing historical context after restart; invariant: startup continues even when hydration fails; handling: informational logging with fallback catch below.
-        logger.info('🧠 Reinforcement judged feedback hydrated', { hydratedEntries });
-      } catch (hydrationError: unknown) {
-        logger.warn('⚠️ Reinforcement judged feedback hydration failed - continuing without persisted judgment context', {
-          error: resolveErrorMessage(hydrationError)
-        });
-      }
-    }
-  } catch (err: unknown) {
-    //audit Assumption: DB init errors should log and fallback
-    const errorMessage = resolveErrorMessage(err);
-    logger.error('❌ DB CHECK - Database initialization failed', { error: errorMessage });
-    logger.warn('⚠️ DB CHECK - Continuing with in-memory fallback');
-  }
-
-  await memoryStore.initialize();
-
   validateAPIKeyAtStartup(); // Always continue, but log warnings
-  await verifySchema();
   const gptRegistrySnapshot = await getGptRegistrySnapshot();
 
   logger.info('gpt.registry.startup', {
@@ -133,4 +98,55 @@ export async function performStartup(): Promise<void> {
     usedFallbackDefault: queryFinetuneAttemptLatencyBudgetDiagnostics.usedFallbackDefault
   });
   logger.info('✅ ARCANOS CONFIG - Configuration validation complete');
+}
+
+/**
+ * Initialize fallible external dependencies after the HTTP listener is bound.
+ * Each existing optional-dependency fallback remains intact so observability is
+ * not lost while a dependency is unavailable.
+ */
+export async function initializeRuntimeDependencies(): Promise<void> {
+  //audit Assumption: Railway API config controls probe behavior
+  if (isRailwayApiConfigured()) {
+    const probeResult = await probeRailwayApi();
+    if (!probeResult.ok) {
+      logger.warn('⚠️ Railway management API probe failed - deployment automation features may be unavailable');
+    }
+  } else {
+    logger.info('Railway management API token not detected - skipping management API connectivity probe');
+  }
+
+  try {
+    const dbConnected = await initializeDatabase('server');
+    if (!dbConnected) {
+      logger.warn('⚠️ DB CHECK - Database not available - continuing with in-memory fallback');
+    } else {
+      try {
+        const hydratedEntries = await hydrateJudgedResponseFeedbackContext();
+        //audit Assumption: judged feedback hydration is best-effort and should not block startup; risk: missing historical context after restart; invariant: startup continues even when hydration fails; handling: informational logging with fallback catch below.
+        logger.info('🧠 Reinforcement judged feedback hydrated', { hydratedEntries });
+      } catch (hydrationError: unknown) {
+        logger.warn('⚠️ Reinforcement judged feedback hydration failed - continuing without persisted judgment context', {
+          error: resolveErrorMessage(hydrationError)
+        });
+      }
+    }
+  } catch (err: unknown) {
+    //audit Assumption: DB init errors should log and fallback
+    const errorMessage = resolveErrorMessage(err);
+    logger.error('❌ DB CHECK - Database initialization failed', { error: errorMessage });
+    logger.warn('⚠️ DB CHECK - Continuing with in-memory fallback');
+  }
+
+  await memoryStore.initialize();
+  await verifySchema();
+}
+
+/**
+ * Compatibility entry point for non-server callers that still require the
+ * complete startup sequence.
+ */
+export async function performStartup(): Promise<void> {
+  await performStartupPreflight();
+  await initializeRuntimeDependencies();
 }

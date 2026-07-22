@@ -21,6 +21,23 @@ import {
 
 const SERVICE_NAME = 'arcanos-backend';
 const SERVICE_VERSION = '1.0.0';
+const startedRuntimeApps = new WeakSet<Express>();
+
+/**
+ * Start background application runtime exactly once after startup readiness.
+ * Route construction stays side-effect free with respect to external
+ * dependencies, allowing the HTTP listener to bind before dependency recovery.
+ */
+export function startAppRuntimeOnce(app: Express): boolean {
+  if (startedRuntimeApps.has(app)) {
+    return false;
+  }
+
+  startedRuntimeApps.add(app);
+  startSelfHealingControlLoop(app);
+  void runtimeDiagnosticsService.logStartupSummary(app);
+  return true;
+}
 
 /**
  * Creates and configures the Express application.
@@ -178,8 +195,6 @@ export function createApp(): Express {
 
   setupDiagnostics(app);
   registerRoutes(app);
-  startSelfHealingControlLoop(app);
-  void runtimeDiagnosticsService.logStartupSummary(app);
 
   app.use(createFallbackMiddleware());
   app.use(errorHandler);
