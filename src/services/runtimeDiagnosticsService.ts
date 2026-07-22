@@ -1,12 +1,14 @@
 import type { Application } from 'express';
-import { createClient } from 'redis';
 import { getEnv, getEnvNumber } from '@platform/runtime/env.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { getGptModuleMap } from '@platform/runtime/gptRouterConfig.js';
+import {
+  getReadyRedisClient,
+  type RedisLifecycleClient
+} from '@platform/runtime/redisLifecycle.js';
 import { loadModuleDefinitions, type LoadedModule } from './moduleLoader.js';
 import { getActiveRouteTable } from './runtimeRouteTableService.js';
-import { resolveConfiguredRedisConnection } from '@platform/runtime/redis.js';
 import type { AIDegradedResponseMetadata, AITimeoutKind } from '@shared/http/aiDegradedHeaders.js';
 
 type ModuleStatus =
@@ -138,7 +140,7 @@ interface MetricsSnapshot {
   topErrorRoutes: DiagnosticsRouteErrorSnapshot[];
 }
 
-type RuntimeDiagnosticsRedisClient = ReturnType<typeof createClient>;
+type RuntimeDiagnosticsRedisClient = RedisLifecycleClient;
 
 const RECENT_LATENCY_LIMIT = Math.max(10, getEnvNumber('DIAGNOSTICS_RECENT_LATENCY_LIMIT', 50));
 const RECENT_REQUEST_LIMIT = Math.max(25, getEnvNumber('DIAGNOSTICS_RECENT_REQUEST_LIMIT', 250));
@@ -489,14 +491,12 @@ class RuntimeDiagnosticsService {
 }
 
 class RuntimeDiagnosticsRedisStore {
-  private clientPromise: Promise<RuntimeDiagnosticsRedisClient | null> | null = null;
-
   async recordRequestCompletion(
     statusCode: number,
     latencyMs: number,
     metadata: AIDegradedResponseMetadata = {}
   ): Promise<void> {
-    const redisClient = await this.getClient();
+    const redisClient = this.getClient();
     if (!redisClient) {
       return;
     }
@@ -511,16 +511,16 @@ class RuntimeDiagnosticsRedisStore {
       redisCommandBatch.lPush(this.key('recent_latency_ms'), String(latencyMs));
       redisCommandBatch.lTrim(this.key('recent_latency_ms'), 0, RECENT_LATENCY_LIMIT - 1);
       await redisCommandBatch.exec();
-    } catch (error) {
+    } catch {
       logger.warn('diagnostics.shared_metrics.write_failed', {
         module: 'runtime-diagnostics',
-        error: resolveErrorMessage(error)
+        errorCode: 'REDIS_DEPENDENCY_UNAVAILABLE'
       });
     }
   }
 
   async getSnapshot(): Promise<MetricsSnapshot | null> {
-    const redisClient = await this.getClient();
+    const redisClient = this.getClient();
     if (!redisClient) {
       return null;
     }
@@ -569,17 +569,17 @@ class RuntimeDiagnosticsRedisStore {
           : 'DATA NOT EXPOSED: recent_latency_ms',
         topErrorRoutes: []
       };
-    } catch (error) {
+    } catch {
       logger.warn('diagnostics.shared_metrics.read_failed', {
         module: 'runtime-diagnostics',
-        error: resolveErrorMessage(error)
+        errorCode: 'REDIS_DEPENDENCY_UNAVAILABLE'
       });
       return null;
     }
   }
 
   async reset(): Promise<void> {
-    const redisClient = await this.getClient();
+    const redisClient = this.getClient();
     if (!redisClient) {
       return;
     }
@@ -591,49 +591,20 @@ class RuntimeDiagnosticsRedisStore {
         this.key('latency_total_ms'),
         this.key('recent_latency_ms')
       ]);
-    } catch (error) {
+    } catch {
       logger.warn('diagnostics.shared_metrics.reset_failed', {
         module: 'runtime-diagnostics',
-        error: resolveErrorMessage(error)
+        errorCode: 'REDIS_DEPENDENCY_UNAVAILABLE'
       });
     }
   }
 
-  private async getClient(): Promise<RuntimeDiagnosticsRedisClient | null> {
+  private getClient(): RuntimeDiagnosticsRedisClient | null {
     if (!REDIS_SHARED_METRICS_ENABLED) {
       return null;
     }
 
-    if (!this.clientPromise) {
-      this.clientPromise = this.createClient();
-    }
-
-    return this.clientPromise;
-  }
-
-  private async createClient(): Promise<RuntimeDiagnosticsRedisClient | null> {
-    const redisConnection = resolveConfiguredRedisConnection();
-    if (!redisConnection.configured || !redisConnection.url) {
-      return null;
-    }
-
-    try {
-      const redisClient = createClient({ url: redisConnection.url });
-      redisClient.on('error', (error) => {
-        logger.warn('diagnostics.shared_metrics.redis_error', {
-          module: 'runtime-diagnostics',
-          error: resolveErrorMessage(error)
-        });
-      });
-      await redisClient.connect();
-      return redisClient;
-    } catch (error) {
-      logger.warn('diagnostics.shared_metrics.unavailable', {
-        module: 'runtime-diagnostics',
-        error: resolveErrorMessage(error)
-      });
-      return null;
-    }
+    return getReadyRedisClient();
   }
 
   private key(suffix: string): string {

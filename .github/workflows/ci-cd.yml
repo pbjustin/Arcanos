@@ -259,6 +259,12 @@ jobs:
           # reported against the MCP SDK, but this service does not expose MCP
           # resource templates and it builds a fresh HTTP server/transport pair
           # per request, so those code paths are not in use here.
+          # The 2026-07-21 Hono advisories require npm builds that are not yet
+          # published; their source tags omit required `dist` exports. ARCANOS
+          # uses none of the affected Hono static/AWS/JSX paths, so the policy
+          # script temporarily scopes those findings by advisory id and node.
+          # The high-severity fast-uri advisories are fixed by the pinned 3.1.4
+          # upstream tag rather than suppressed.
           # GHSA-w5hq-g745-h8pq is currently reported against `uuid` and
           # transitive `uuid` via `bullmq`; the audit-reported fixed uuid@14.0.0
           # is not published, this service does not call uuid directly, and

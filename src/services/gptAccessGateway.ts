@@ -29,6 +29,8 @@ import { planAutonomousWorkerJob } from '@services/workerAutonomyService.js';
 import { buildSafetySelfHealSnapshot } from '@services/selfHealRuntimeInspectionService.js';
 import { getJobEventTimeline } from '@services/jobEventTimelineService.js';
 import { getWorkerRuntimeStatus } from '@platform/runtime/workerConfig.js';
+import { getRedisLifecycleSnapshot } from '@platform/runtime/redisLifecycle.js';
+import { getStartupLifecycleSnapshot } from '@platform/runtime/startupLifecycle.js';
 import { getNaturalLanguageDispatchRuntimeStatus } from '@dispatcher/naturalLanguage/planner.js';
 import { DISPATCH_UTTERANCE_MAX_LENGTH } from '@dispatcher/naturalLanguage/types.js';
 export { GPT_ACCESS_SCOPES, type GptAccessScope } from '@services/gptAccessScopes.js';
@@ -636,13 +638,40 @@ export function isGptAccessScopeAllowed(scope: GptAccessScope): boolean {
 }
 
 export function buildGptAccessHealthPayload() {
+  const startup = getStartupLifecycleSnapshot();
+  const redis = getRedisLifecycleSnapshot();
+  const redisReady = redis.state === 'READY';
+  const redisCode = redisReady
+    ? null
+    : redis.state === 'STARTING'
+      ? 'REDIS_INITIALIZING'
+      : 'REDIS_DEPENDENCY_UNAVAILABLE';
+
   return {
     ok: true,
+    status: startup.phase === 'READY'
+      ? 'healthy'
+      : startup.phase === 'STARTING'
+        ? 'starting'
+        : 'degraded',
     service: 'arcanos-gpt-access',
     time: new Date().toISOString(),
     authRequired: true,
     version: SERVICE_VERSION,
-    nlDispatch: getNaturalLanguageDispatchRuntimeStatus()
+    nlDispatch: getNaturalLanguageDispatchRuntimeStatus(),
+    startup: {
+      phase: startup.phase,
+      ready: startup.ready
+    },
+    dependencies: {
+      redis: {
+        configured: redis.configured,
+        ready: redisReady,
+        status: redis.state.toLowerCase(),
+        code: redisCode,
+        retryScheduled: redis.retryScheduled
+      }
+    }
   };
 }
 

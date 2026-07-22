@@ -451,9 +451,14 @@ async function buildSystemHealthProbeResponse(params: {
   const healthReport = runHealthCheck();
   const redisHealth = await checkRedisHealth();
   const overallStatus = healthReport.status === 'ok' && redisHealth.healthy ? 'ok' : 'degraded';
+  const redisStatus = redisHealth.healthy
+    ? 'ready'
+    : redisHealth.code === 'REDIS_INITIALIZING'
+      ? 'initializing'
+      : 'unavailable';
   const summary = redisHealth.healthy
     ? healthReport.summary
-    : `${healthReport.summary} | Redis: ${redisHealth.error || 'unhealthy'}`;
+    : `${healthReport.summary} | Redis dependency: ${redisStatus}`;
   const createdAt = Math.floor(Date.now() / 1000);
   const requestId = `health_${createdAt}`;
 

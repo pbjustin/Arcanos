@@ -1,9 +1,15 @@
 import fs from 'fs';
 import path from 'path';
-import { createClient } from 'redis';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
+import { logger } from '@platform/logging/structuredLogging.js';
 import { getEnv } from '@platform/runtime/env.js';
 import { resolveConfiguredRedisConnection } from '@platform/runtime/redis.js';
+import {
+  getReadyRedisClient,
+  subscribeRedisLifecycle,
+  type RedisLifecycleClient,
+  type RedisLifecycleSnapshot
+} from '@platform/runtime/redisLifecycle.js';
 import { readJsonFileSafely } from '@shared/jsonFileUtils.js';
 
 const SELF_HEAL_EVENT_KINDS = [
@@ -154,9 +160,13 @@ interface PersistedSelfHealTelemetryState {
 }
 
 let pendingPersistenceTimeout: NodeJS.Timeout | null = null;
-let redisClientPromise: Promise<SelfHealTelemetryRedisClient | null> | null = null;
-
-type SelfHealTelemetryRedisClient = ReturnType<typeof createClient>;
+let redisHydrationRetryTimeout: NodeJS.Timeout | null = null;
+let redisHydrationPromise: Promise<void> | null = null;
+let redisLifecycleUnsubscribe: (() => void) | null = null;
+let redisPersistenceDirty = false;
+let redisPersistenceStopping = false;
+let redisPersistenceGeneration = 0;
+let handledRedisReadyAt: string | null = null;
 
 function isPathWithin(basePath: string, candidatePath: string): boolean {
   const resolvedBasePath = path.resolve(basePath);
@@ -485,6 +495,47 @@ function applyPersistedState(
   state.persistence.lastSavedAt = persistedState.storedAt ?? state.persistence.lastSavedAt;
 }
 
+function applyLastEventReference(state: SelfHealTelemetryState, event: SelfHealEvent): void {
+  if (event.kind === 'trigger') {
+    state.lastTrigger = event;
+  } else if (event.kind === 'attempt') {
+    state.lastAttempt = event;
+  } else if (event.kind === 'success') {
+    state.lastSuccess = event;
+  } else if (event.kind === 'failure') {
+    state.lastFailure = event;
+  } else if (event.kind === 'fallback') {
+    state.lastFallback = event;
+  }
+}
+
+function applyPersistedStateWithoutLosingLocalEvents(
+  state: SelfHealTelemetryState,
+  persistedState: PersistedSelfHealTelemetryState | null,
+  loadedAt: string
+): void {
+  const localEvents = state.recentEvents.map((event) => cloneEvent(event)!);
+  applyPersistedState(state, persistedState, loadedAt);
+
+  if (!persistedState) {
+    return;
+  }
+
+  for (const localEvent of localEvents) {
+    const mergedEvent = {
+      ...localEvent,
+      id: `self_heal_event_${state.nextSequence}`
+    };
+    state.nextSequence += 1;
+    state.recentEvents.push(mergedEvent);
+    applyLastEventReference(state, mergedEvent);
+  }
+
+  if (state.recentEvents.length > MAX_RECENT_EVENTS) {
+    state.recentEvents.splice(0, state.recentEvents.length - MAX_RECENT_EVENTS);
+  }
+}
+
 function hydrateStateFromPersistence(state: SelfHealTelemetryState): void {
   if (state.hydrated) {
     return;
@@ -499,53 +550,35 @@ function hydrateStateFromPersistence(state: SelfHealTelemetryState): void {
   applyPersistedState(state, loadPersistedStateFromFile(target), new Date().toISOString());
 }
 
-async function getRedisClient(): Promise<SelfHealTelemetryRedisClient | null> {
-  const redisConnection = resolveConfiguredRedisConnection();
-  if (!redisConnection.configured || !redisConnection.url) {
-    return null;
-  }
-
-  if (!redisClientPromise) {
-    redisClientPromise = (async () => {
-      try {
-        const redisClient = createClient({ url: redisConnection.url });
-        redisClient.on('error', (error) => {
-          console.warn(`[SELF-HEAL][TELEMETRY] redis error: ${resolveErrorMessage(error)}`);
-        });
-        await redisClient.connect();
-        return redisClient;
-      } catch (error) {
-        console.warn(`[SELF-HEAL][TELEMETRY] redis unavailable: ${resolveErrorMessage(error)}`);
-        return null;
-      }
-    })();
-  }
-
-  return redisClientPromise;
+interface RedisPersistenceLoadResult {
+  ok: boolean;
+  state: PersistedSelfHealTelemetryState | null;
 }
 
 async function loadPersistedStateFromRedis(
+  redisClient: RedisLifecycleClient,
   target: SelfHealTelemetryPersistenceTarget
-): Promise<PersistedSelfHealTelemetryState | null> {
+): Promise<RedisPersistenceLoadResult> {
   if (!target.redisKey) {
-    return null;
-  }
-
-  const redisClient = await getRedisClient();
-  if (!redisClient) {
-    return null;
+    return { ok: true, state: null };
   }
 
   try {
     const persistedStateRaw = await redisClient.get(target.redisKey);
     if (!persistedStateRaw) {
-      return null;
+      return { ok: true, state: null };
     }
 
-    return normalizePersistedState(JSON.parse(persistedStateRaw));
-  } catch (error) {
-    console.warn(`[SELF-HEAL][TELEMETRY] redis read failed: ${resolveErrorMessage(error)}`);
-    return null;
+    return {
+      ok: true,
+      state: normalizePersistedState(JSON.parse(persistedStateRaw))
+    };
+  } catch {
+    logger.warn('self_heal.telemetry.redis_read_failed', {
+      module: 'self-heal-telemetry',
+      errorCode: 'REDIS_DEPENDENCY_UNAVAILABLE'
+    });
+    return { ok: false, state: null };
   }
 }
 
@@ -575,20 +608,41 @@ async function persistStateToRedis(
     return;
   }
 
-  const redisClient = await getRedisClient();
-  if (!redisClient) {
-    state.persistence.lastSaveError = 'Redis client unavailable';
+  if (!state.hydrated) {
+    redisPersistenceDirty = true;
+    state.persistence.lastSaveError = 'REDIS_TELEMETRY_NOT_HYDRATED';
+    return;
+  }
+
+  const redisClient = getReadyRedisClient();
+  if (!redisClient || redisPersistenceStopping) {
+    redisPersistenceDirty = true;
+    state.persistence.lastSaveError = 'REDIS_DEPENDENCY_UNAVAILABLE';
     return;
   }
 
   const persistedState = buildPersistedState(state);
   try {
     await redisClient.set(target.redisKey, JSON.stringify(persistedState));
+    if (getReadyRedisClient() !== redisClient) {
+      redisPersistenceDirty = true;
+      state.persistence.lastSaveError = 'REDIS_DEPENDENCY_UNAVAILABLE';
+      scheduleRedisHydrationRetry();
+      return;
+    }
+
+    redisPersistenceDirty = false;
+    clearRedisHydrationRetry();
     state.persistence.lastSavedAt = persistedState.storedAt;
     state.persistence.lastSaveError = null;
-  } catch (error) {
-    state.persistence.lastSaveError = resolveErrorMessage(error);
-    console.warn(`[SELF-HEAL][TELEMETRY] redis write failed: ${state.persistence.lastSaveError}`);
+  } catch {
+    redisPersistenceDirty = true;
+    state.persistence.lastSaveError = 'REDIS_DEPENDENCY_UNAVAILABLE';
+    scheduleRedisHydrationRetry();
+    logger.warn('self_heal.telemetry.redis_write_failed', {
+      module: 'self-heal-telemetry',
+      errorCode: 'REDIS_DEPENDENCY_UNAVAILABLE'
+    });
   }
 }
 
@@ -863,21 +917,166 @@ export function buildCompactSelfHealSummary(snapshot: SelfHealTelemetrySnapshot)
   };
 }
 
+function clearRedisHydrationRetry(): void {
+  if (!redisHydrationRetryTimeout) {
+    return;
+  }
+
+  clearTimeout(redisHydrationRetryTimeout);
+  redisHydrationRetryTimeout = null;
+}
+
+function scheduleRedisHydrationRetry(): void {
+  if (redisPersistenceStopping || redisHydrationRetryTimeout) {
+    return;
+  }
+
+  redisHydrationRetryTimeout = setTimeout(() => {
+    redisHydrationRetryTimeout = null;
+    const lifecycleSnapshot = getReadyRedisClient();
+    if (lifecycleSnapshot) {
+      void hydrateRedisTelemetryPersistence();
+    }
+  }, 1_000);
+  redisHydrationRetryTimeout.unref?.();
+}
+
+async function hydrateRedisTelemetryPersistence(): Promise<void> {
+  if (redisPersistenceStopping) {
+    return;
+  }
+
+  const state = getOrCreateMutableState();
+  if (state.hydrated) {
+    if (redisPersistenceDirty) {
+      await persistStateToRedis(state, resolvePersistenceTarget());
+    }
+    return;
+  }
+
+  if (redisHydrationPromise) {
+    return redisHydrationPromise;
+  }
+
+  const redisClient = getReadyRedisClient();
+  const target = resolvePersistenceTarget();
+  if (!redisClient || target.mode !== 'redis') {
+    state.persistence.lastSaveError = 'REDIS_DEPENDENCY_UNAVAILABLE';
+    redisPersistenceDirty = true;
+    return;
+  }
+
+  const generation = redisPersistenceGeneration;
+  const hydration = (async () => {
+    const result = await loadPersistedStateFromRedis(redisClient, target);
+    if (
+      !result.ok
+      || redisPersistenceStopping
+      || generation !== redisPersistenceGeneration
+      || getReadyRedisClient() !== redisClient
+    ) {
+      state.persistence.lastSaveError = 'REDIS_DEPENDENCY_UNAVAILABLE';
+      redisPersistenceDirty = true;
+      scheduleRedisHydrationRetry();
+      return;
+    }
+
+    const hadLocalEvents = state.recentEvents.length > 0;
+    applyPersistedStateWithoutLosingLocalEvents(
+      state,
+      result.state,
+      new Date().toISOString()
+    );
+    state.hydrated = true;
+    state.persistence.lastSaveError = null;
+    clearRedisHydrationRetry();
+
+    if (hadLocalEvents || redisPersistenceDirty) {
+      redisPersistenceDirty = true;
+      await persistStateToRedis(state, target);
+    }
+  })().catch(() => {
+    state.persistence.lastSaveError = 'REDIS_DEPENDENCY_UNAVAILABLE';
+    redisPersistenceDirty = true;
+    scheduleRedisHydrationRetry();
+    logger.warn('self_heal.telemetry.redis_hydration_failed', {
+      module: 'self-heal-telemetry',
+      errorCode: 'REDIS_DEPENDENCY_UNAVAILABLE'
+    });
+  });
+  redisHydrationPromise = hydration;
+
+  try {
+    await hydration;
+  } finally {
+    if (redisHydrationPromise === hydration) {
+      redisHydrationPromise = null;
+    }
+  }
+}
+
+function handleRedisLifecycleSnapshot(snapshot: RedisLifecycleSnapshot): void {
+  if (redisPersistenceStopping || resolvePersistenceTarget().mode !== 'redis') {
+    return;
+  }
+
+  const state = getOrCreateMutableState();
+  if (snapshot.state !== 'READY' || !snapshot.connected) {
+    redisPersistenceDirty = true;
+    state.persistence.lastSaveError = 'REDIS_DEPENDENCY_UNAVAILABLE';
+    return;
+  }
+
+  if (snapshot.lastReadyAt && handledRedisReadyAt === snapshot.lastReadyAt) {
+    return;
+  }
+
+  handledRedisReadyAt = snapshot.lastReadyAt;
+  void hydrateRedisTelemetryPersistence();
+}
+
+function ensureRedisLifecycleSubscription(): void {
+  if (redisLifecycleUnsubscribe || redisPersistenceStopping) {
+    return;
+  }
+
+  redisLifecycleUnsubscribe = subscribeRedisLifecycle(handleRedisLifecycleSnapshot);
+}
+
 export async function primeSelfHealTelemetryPersistence(): Promise<void> {
   const state = getOrCreateMutableState();
+  const target = resolvePersistenceTarget();
+
+  if (target.mode === 'redis') {
+    ensureRedisLifecycleSubscription();
+    void hydrateRedisTelemetryPersistence();
+    return;
+  }
+
   if (state.hydrated) {
     return;
   }
 
-  const target = resolvePersistenceTarget();
   state.hydrated = true;
+  applyPersistedState(state, loadPersistedStateFromFile(target), new Date().toISOString());
+}
 
-  if (target.mode === 'redis') {
-    applyPersistedState(state, await loadPersistedStateFromRedis(target), new Date().toISOString());
+/** Stop telemetry retry/debounce work without waiting on an unavailable Redis dependency. */
+export async function stopSelfHealTelemetryPersistence(): Promise<void> {
+  if (redisPersistenceStopping) {
     return;
   }
 
-  applyPersistedState(state, loadPersistedStateFromFile(target), new Date().toISOString());
+  redisPersistenceStopping = true;
+  redisPersistenceGeneration += 1;
+  redisLifecycleUnsubscribe?.();
+  redisLifecycleUnsubscribe = null;
+  clearRedisHydrationRetry();
+
+  if (pendingPersistenceTimeout) {
+    clearTimeout(pendingPersistenceTimeout);
+    pendingPersistenceTimeout = null;
+  }
 }
 
 export function resetSelfHealTelemetryForTests(options: { clearPersistence?: boolean } = {}): void {
@@ -889,6 +1088,15 @@ export function resetSelfHealTelemetryForTests(options: { clearPersistence?: boo
     clearTimeout(pendingPersistenceTimeout);
     pendingPersistenceTimeout = null;
   }
+
+  clearRedisHydrationRetry();
+  redisLifecycleUnsubscribe?.();
+  redisLifecycleUnsubscribe = null;
+  redisPersistenceGeneration += 1;
+  redisHydrationPromise = null;
+  redisPersistenceDirty = false;
+  redisPersistenceStopping = false;
+  handledRedisReadyAt = null;
 
   const runtime = globalThis as SelfHealTelemetryGlobal;
   runtime[GLOBAL_KEY] = createInitialState();
