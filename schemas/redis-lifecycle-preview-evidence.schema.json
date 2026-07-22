@@ -1,0 +1,202 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://arcanos.invalid/schemas/redis-lifecycle-preview-evidence.schema.json",
+  "title": "ARCANOS Redis lifecycle Railway preview evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "mode",
+    "phase",
+    "target",
+    "limits",
+    "executed",
+    "networkAttempted",
+    "startedAt",
+    "completedAt",
+    "summary",
+    "observations",
+    "checks"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "kind": { "const": "redis_lifecycle_preview_evidence" },
+    "mode": { "enum": ["DRY_RUN", "EXECUTE"] },
+    "phase": {
+      "type": ["string", "null"],
+      "enum": ["outage", "recovery", null]
+    },
+    "target": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "category",
+            "baseUrl",
+            "environment",
+            "environmentId",
+            "webServiceId",
+            "webDeploymentId"
+          ],
+          "properties": {
+            "category": { "const": "isolated-preview" },
+            "baseUrl": { "type": "string", "format": "uri" },
+            "environment": {
+              "type": "string",
+              "pattern": "^arcanos-redis-lifecycle-preview-[0-9]{8}-[1-9][0-9]*$"
+            },
+            "environmentId": { "$ref": "#/$defs/uuid" },
+            "webServiceId": { "$ref": "#/$defs/uuid" },
+            "webDeploymentId": { "$ref": "#/$defs/uuid" }
+          }
+        }
+      ]
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxSamples", "intervalMs", "requestTimeoutMs"],
+      "properties": {
+        "maxSamples": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "intervalMs": { "type": "integer", "minimum": 1, "maximum": 5000 },
+        "requestTimeoutMs": { "type": "integer", "minimum": 1, "maximum": 2000 }
+      }
+    },
+    "executed": { "type": "boolean" },
+    "networkAttempted": { "type": "boolean" },
+    "startedAt": { "$ref": "#/$defs/nullableTimestamp" },
+    "completedAt": { "$ref": "#/$defs/nullableTimestamp" },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "sampleCount",
+        "livenessFailures",
+        "readinessTransitionObserved"
+      ],
+      "properties": {
+        "status": { "enum": ["DRY_RUN", "PASS", "FAIL"] },
+        "sampleCount": { "type": "integer", "minimum": 0 },
+        "livenessFailures": { "type": "integer", "minimum": 0 },
+        "readinessTransitionObserved": { "type": "boolean" }
+      }
+    },
+    "observations": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/observation" }
+    },
+    "checks": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/check" }
+    }
+  },
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+    },
+    "nullableTimestamp": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "string", "format": "date-time" }
+      ]
+    },
+    "nullableInteger": {
+      "type": ["integer", "null"]
+    },
+    "nullableNumber": {
+      "type": ["number", "null"]
+    },
+    "nullableString": {
+      "type": ["string", "null"]
+    },
+    "healthObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "latencyMs",
+        "errorCode",
+        "serverTimestamp",
+        "startupPhase",
+        "listenerBound",
+        "uptimeSeconds",
+        "redisReady",
+        "redisStatus",
+        "redisCode",
+        "retryScheduled"
+      ],
+      "properties": {
+        "status": { "$ref": "#/$defs/nullableInteger" },
+        "latencyMs": { "type": "integer", "minimum": 0 },
+        "errorCode": { "$ref": "#/$defs/nullableString" },
+        "serverTimestamp": { "$ref": "#/$defs/nullableTimestamp" },
+        "startupPhase": { "$ref": "#/$defs/nullableString" },
+        "listenerBound": { "type": ["boolean", "null"] },
+        "uptimeSeconds": { "$ref": "#/$defs/nullableNumber" },
+        "redisReady": { "type": ["boolean", "null"] },
+        "redisStatus": { "$ref": "#/$defs/nullableString" },
+        "redisCode": { "$ref": "#/$defs/nullableString" },
+        "retryScheduled": { "type": ["boolean", "null"] }
+      }
+    },
+    "readinessObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "latencyMs",
+        "errorCode",
+        "ready",
+        "readinessStatus",
+        "redisHealthy",
+        "redisCode",
+        "recoveryCount"
+      ],
+      "properties": {
+        "status": { "$ref": "#/$defs/nullableInteger" },
+        "latencyMs": { "type": "integer", "minimum": 0 },
+        "errorCode": { "$ref": "#/$defs/nullableString" },
+        "ready": { "type": ["boolean", "null"] },
+        "readinessStatus": { "$ref": "#/$defs/nullableString" },
+        "redisHealthy": { "type": ["boolean", "null"] },
+        "redisCode": { "$ref": "#/$defs/nullableString" },
+        "recoveryCount": { "$ref": "#/$defs/nullableInteger" }
+      }
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sequence",
+        "observedAt",
+        "health",
+        "healthz",
+        "readyz",
+        "sensitiveContentObserved"
+      ],
+      "properties": {
+        "sequence": { "type": "integer", "minimum": 1 },
+        "observedAt": { "type": "string", "format": "date-time" },
+        "health": { "$ref": "#/$defs/healthObservation" },
+        "healthz": { "$ref": "#/$defs/healthObservation" },
+        "readyz": { "$ref": "#/$defs/readinessObservation" },
+        "sensitiveContentObserved": { "type": "boolean" }
+      }
+    },
+    "check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "status", "code"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["PASS", "FAIL", "NOT_RUN"] },
+        "code": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}
