@@ -69,6 +69,9 @@ async function buildAppHealthHarness(): Promise<AppHealthHarness> {
   }));
   jest.unstable_mockModule('@platform/runtime/redisLifecycle.js', () => ({
     RedisLifecycleManager: class {},
+    executeRedisOperation: jest.fn(async () => {
+      throw new Error('Health probes must not execute a Redis command.');
+    }),
     getRedisLifecycleSnapshot: jest.fn(() => ({ ...currentRedisSnapshot })),
     getReadyRedisClient: jest.fn(() => null),
     startRedisLifecycle: jest.fn(),

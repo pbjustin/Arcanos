@@ -20,7 +20,10 @@ function normalizeRedisEnvValue(value: string | undefined): string | undefined {
 function isUsableRedisUrl(urlValue: string): boolean {
   try {
     const parsedRedisUrl = new URL(urlValue);
-    return parsedRedisUrl.protocol === 'redis:' && Boolean(parsedRedisUrl.hostname);
+    return (
+      parsedRedisUrl.protocol === 'redis:'
+      || parsedRedisUrl.protocol === 'rediss:'
+    ) && Boolean(parsedRedisUrl.hostname);
   } catch {
     return false;
   }
@@ -84,6 +87,13 @@ export function resolveConfiguredRedisConnection(): RedisConnectionResolution {
       configured: true,
       source: 'discrete',
       url: discreteRedisUrl
+    };
+  }
+
+  if (directRedisUrl) {
+    return {
+      configured: true,
+      source: 'REDIS_URL'
     };
   }
 

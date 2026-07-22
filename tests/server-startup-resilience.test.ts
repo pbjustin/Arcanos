@@ -319,7 +319,7 @@ describe('web server startup resilience', () => {
     expect(startSelfHealing).toHaveBeenCalledTimes(1);
   });
 
-  it('drains the listener before cancelling dependency work and closes each resource once', async () => {
+  it('stops accepting work and closes each resource once in dependency order', async () => {
     jest.resetModules();
     const serverModule = await import('../src/server.js');
     const startupLifecycle = await import('../src/platform/runtime/startupLifecycle.js');
@@ -395,6 +395,78 @@ describe('web server startup resilience', () => {
         ready: false,
         shuttingDown: true
       }));
+    } finally {
+      exitSpy.mockRestore();
+    }
+  });
+
+  it('cancels dependency recovery while an active request is still draining', async () => {
+    jest.resetModules();
+    const serverModule = await import('../src/server.js');
+    const startupLifecycle = await import('../src/platform/runtime/startupLifecycle.js');
+    startupLifecycle.resetStartupLifecycleForTests();
+
+    const sequence: string[] = [];
+    const { app, server } = buildFakeApp(sequence);
+    let finishListenerDrain: ((error?: Error) => void) | null = null;
+    server.close.mockImplementation((callback?: (error?: Error) => void) => {
+      sequence.push('listener.drain_started');
+      finishListenerDrain = callback ?? null;
+      return server;
+    });
+    server.closeIdleConnections.mockImplementation(() => {
+      sequence.push('listener.stop_accepting');
+    });
+    const stopTelemetry = jest.fn(async () => {
+      sequence.push('telemetry.stop');
+    });
+    const stopRedis = jest.fn(async () => {
+      sequence.push('redis.stop');
+    });
+    const closeDatabase = jest.fn(async () => {
+      sequence.push('database.close');
+    });
+    const exitSpy = jest.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
+
+    try {
+      await serverModule.startServer({
+        app,
+        startAppRuntimeOnce: jest.fn(() => true),
+        performPreflight: jest.fn(async () => undefined),
+        initializeDependencies: jest.fn(async () => undefined),
+        startRedis: jest.fn(),
+        stopRedis,
+        primeTelemetry: jest.fn(async () => undefined),
+        stopTelemetry,
+        getRedisSnapshot: () => redisSnapshot('READY'),
+        subscribeRedis: (listener) => {
+          listener(redisSnapshot('READY'));
+          return jest.fn(() => sequence.push('redis.unsubscribe'));
+        },
+        startSelfHealing: jest.fn(() => ({
+          loopRunning: true,
+          intervalMs: 30_000
+        })) as never,
+        closeDatabase,
+        registerSignalHandlers: false
+      });
+      await flushAsyncWork();
+
+      const shutdownPromise = serverModule.shutdownServer('SIGTERM');
+      await flushAsyncWork();
+
+      expect(stopTelemetry).toHaveBeenCalledTimes(1);
+      expect(stopRedis).toHaveBeenCalledTimes(1);
+      expect(closeDatabase).not.toHaveBeenCalled();
+      expect(exitSpy).not.toHaveBeenCalled();
+      expect(sequence.indexOf('listener.stop_accepting')).toBeLessThan(sequence.indexOf('redis.stop'));
+
+      expect(finishListenerDrain).not.toBeNull();
+      finishListenerDrain?.();
+      await shutdownPromise;
+
+      expect(closeDatabase).toHaveBeenCalledTimes(1);
+      expect(exitSpy).toHaveBeenCalledWith(0);
     } finally {
       exitSpy.mockRestore();
     }
@@ -489,4 +561,5 @@ describe('server entrypoint failure handling', () => {
       consoleErrorSpy.mockRestore();
     }
   });
+
 });

@@ -112,6 +112,16 @@ async function loadTelemetryRedisHarness(
   });
 
   jest.unstable_mockModule('@platform/runtime/redisLifecycle.js', () => ({
+    executeRedisOperation: jest.fn(async (
+      operation: (client: FakeRedisTelemetryClient) => Promise<unknown>,
+      operationOptions?: { client?: FakeRedisTelemetryClient }
+    ) => {
+      const operationClient = operationOptions?.client ?? readyClient;
+      if (!operationClient) {
+        throw new Error('REDIS_DEPENDENCY_UNAVAILABLE');
+      }
+      return operation(operationClient);
+    }),
     getReadyRedisClient: getReadyClientMock,
     subscribeRedisLifecycle: subscribeMock
   }));

@@ -8,13 +8,17 @@
  * - SELF_IMPROVE_FREEZE=true|false
  * - SELF_IMPROVE_AUTONOMY_LEVEL=0..3
  */
-import { createClient } from "redis";
 import { aiLogger } from "@platform/logging/structuredLogging.js";
 import { getConfig } from "@platform/runtime/unifiedConfig.js";
 import { getEnv } from "@platform/runtime/env.js";
-import { resolveConfiguredRedisConnection } from "@platform/runtime/redis.js";
+import {
+  executeRedisOperation,
+  getReadyRedisClient,
+  getRedisLifecycleSnapshot,
+  type RedisLifecycleClient
+} from "@platform/runtime/redisLifecycle.js";
 
-type RedisClient = ReturnType<typeof createClient>;
+type RedisClient = RedisLifecycleClient;
 
 interface KillSwitchOverrideState {
   freeze: boolean | null;
@@ -30,8 +34,8 @@ let localOverrideState: KillSwitchOverrideState = {
 };
 let cacheOverrideState: KillSwitchOverrideState | null = null;
 let cacheUpdatedAt = 0;
-let redisClientPromise: Promise<RedisClient | null> | null = null;
 let redisUnavailableLogged = false;
+let sharedOverrideDirty = false;
 
 /**
  * Clamp autonomy to the supported range.
@@ -46,53 +50,29 @@ function clampAutonomyLevel(level: number): number {
 }
 
 /**
- * Resolve a shared Redis client for multi-instance kill-switch consistency.
+ * Resolve the lifecycle-owned Redis client for multi-instance kill-switch consistency.
  *
- * Purpose: centralize override state in a cluster-safe backend store.
- * Inputs/outputs: none -> connected Redis client or null when unavailable.
- * Edge cases: logs once on connection failure and falls back to local state.
+ * Purpose: reuse the process-wide connection without starting a parallel reconnect loop.
+ * Inputs/outputs: none -> ready Redis client or null when unavailable.
+ * Edge cases: configured outages log one sanitized warning and fall back immediately.
  */
-async function getSharedKillSwitchRedisClient(): Promise<RedisClient | null> {
-  if (redisClientPromise) return redisClientPromise;
+function getSharedKillSwitchRedisClient(): RedisClient | null {
+  const client = getReadyRedisClient();
+  if (client) {
+    redisUnavailableLogged = false;
+    return client;
+  }
 
-  const redisUrl = resolveConfiguredRedisConnection().url;
+  const lifecycle = getRedisLifecycleSnapshot();
+  if (lifecycle.configured && !redisUnavailableLogged) {
+    redisUnavailableLogged = true;
+    aiLogger.warn('Kill switch Redis unavailable; using local fallback', {
+      module: 'killSwitch',
+      errorCode: 'REDIS_DEPENDENCY_UNAVAILABLE'
+    });
+  }
 
-  //audit Assumption: distributed kill-switch state should only be attempted against an explicitly configured Redis endpoint; failure risk: fallback to an unintended local Redis instance in production; expected invariant: shared state is disabled when Redis is unconfigured; handling strategy: return local-only mode when no configured URL is present.
-  if (!redisUrl) return null;
-
-  redisClientPromise = (async () => {
-    try {
-      const client = createClient({
-        url: redisUrl,
-        socket: {
-          reconnectStrategy: (retries: number) => Math.min(retries * 100, 2000),
-          connectTimeout: 3000
-        }
-      });
-      client.on('error', (error) => {
-        if (!redisUnavailableLogged) {
-          redisUnavailableLogged = true;
-          aiLogger.warn('Kill switch Redis client error; using local fallback', {
-            module: 'killSwitch',
-            error: String(error)
-          });
-        }
-      });
-      await client.connect();
-      return client;
-    } catch (error) {
-      if (!redisUnavailableLogged) {
-        redisUnavailableLogged = true;
-        aiLogger.warn('Kill switch Redis unavailable; using local fallback', {
-          module: 'killSwitch',
-          error: String(error)
-        });
-      }
-      return null;
-    }
-  })();
-
-  return redisClientPromise;
+  return null;
 }
 
 /**
@@ -103,16 +83,26 @@ async function getSharedKillSwitchRedisClient(): Promise<RedisClient | null> {
  * Edge cases: corrupt payloads are ignored with fallback to local overrides.
  */
 async function readSharedOverrideState(): Promise<KillSwitchOverrideState | null> {
+  const redis = getSharedKillSwitchRedisClient();
+  if (!redis) return null;
+
   const now = Date.now();
+  if (sharedOverrideDirty) {
+    await persistSharedOverrideState(localOverrideState, redis);
+    cacheOverrideState = localOverrideState;
+    cacheUpdatedAt = now;
+    return localOverrideState;
+  }
+
   if (cacheOverrideState && (now - cacheUpdatedAt) < CACHE_TTL_MS) {
     return cacheOverrideState;
   }
 
-  const redis = await getSharedKillSwitchRedisClient();
-  if (!redis) return null;
-
   try {
-    const raw = await redis.get(KILL_SWITCH_KEY);
+    const raw = await executeRedisOperation(
+      (readyClient) => readyClient.get(KILL_SWITCH_KEY),
+      { client: redis }
+    );
     if (!raw) {
       cacheOverrideState = { freeze: null, autonomy: null };
       cacheUpdatedAt = now;
@@ -126,13 +116,34 @@ async function readSharedOverrideState(): Promise<KillSwitchOverrideState | null
     cacheOverrideState = normalized;
     cacheUpdatedAt = now;
     return normalized;
-  } catch (error) {
+  } catch {
     //audit Assumption: shared-state parse/read failures should not block emergency controls; risk: stale cross-instance visibility; invariant: local override remains usable; handling: log warning and continue with local state.
     aiLogger.warn('Failed to read shared kill-switch state; using local fallback', {
       module: 'killSwitch',
-      error: String(error)
+      errorCode: 'REDIS_DEPENDENCY_UNAVAILABLE'
     });
     return null;
+  }
+}
+
+async function persistSharedOverrideState(
+  state: KillSwitchOverrideState,
+  redis: RedisClient
+): Promise<void> {
+  try {
+    await executeRedisOperation(
+      (readyClient) => readyClient.set(KILL_SWITCH_KEY, JSON.stringify(state)),
+      { client: redis }
+    );
+    if (localOverrideState === state) {
+      sharedOverrideDirty = false;
+    }
+  } catch {
+    //audit Assumption: Redis write failures are possible in degraded conditions; risk: inter-instance drift in kill-switch status; invariant: local process still enforces override; handling: warn and keep local override active for lazy reconciliation.
+    aiLogger.warn('Failed to persist kill-switch state to Redis; local override retained', {
+      module: 'killSwitch',
+      errorCode: 'REDIS_DEPENDENCY_UNAVAILABLE'
+    });
   }
 }
 
@@ -140,26 +151,18 @@ async function readSharedOverrideState(): Promise<KillSwitchOverrideState | null
  * Persist override state to Redis and update local cache.
  *
  * Purpose: keep kill-switch state consistent across instances.
- * Inputs/outputs: override state + reason string; returns when write attempt completes.
+ * Inputs/outputs: override state; returns when write attempt completes.
  * Edge cases: write failures degrade to local-only override with warning logs.
  */
-async function writeSharedOverrideState(state: KillSwitchOverrideState, reason: string): Promise<void> {
+async function writeSharedOverrideState(state: KillSwitchOverrideState): Promise<void> {
   cacheOverrideState = state;
   cacheUpdatedAt = Date.now();
+  sharedOverrideDirty = true;
 
-  const redis = await getSharedKillSwitchRedisClient();
+  const redis = getSharedKillSwitchRedisClient();
   if (!redis) return;
 
-  try {
-    await redis.set(KILL_SWITCH_KEY, JSON.stringify(state));
-  } catch (error) {
-    //audit Assumption: Redis write failures are possible in degraded conditions; risk: inter-instance drift in kill-switch status; invariant: local process still enforces override; handling: warn and keep local override active.
-    aiLogger.warn('Failed to persist kill-switch state to Redis; local override retained', {
-      module: 'killSwitch',
-      error: String(error),
-      reason
-    });
-  }
+  await persistSharedOverrideState(state, redis);
 }
 
 async function resolveEffectiveOverrides(): Promise<KillSwitchOverrideState> {
@@ -204,7 +207,7 @@ export async function getEffectiveAutonomyLevel(): Promise<number> {
  */
 export async function freezeSelfImprove(reason: string): Promise<void> {
   localOverrideState = { freeze: true, autonomy: 0 };
-  await writeSharedOverrideState(localOverrideState, reason);
+  await writeSharedOverrideState(localOverrideState);
   aiLogger.error("Self-improve frozen (kill switch)", { module: "killSwitch", reason });
 }
 
@@ -217,7 +220,7 @@ export async function freezeSelfImprove(reason: string): Promise<void> {
  */
 export async function unfreezeSelfImprove(reason: string): Promise<void> {
   localOverrideState = { ...localOverrideState, freeze: false };
-  await writeSharedOverrideState(localOverrideState, reason);
+  await writeSharedOverrideState(localOverrideState);
   aiLogger.warn("Self-improve unfrozen", { module: "killSwitch", reason });
 }
 
@@ -233,7 +236,7 @@ export async function setAutonomyLevel(level: number, reason: string): Promise<v
     ...localOverrideState,
     autonomy: clampAutonomyLevel(level)
   };
-  await writeSharedOverrideState(localOverrideState, reason);
+  await writeSharedOverrideState(localOverrideState);
   aiLogger.warn("Self-improve autonomy override set", { module: "killSwitch", level: localOverrideState.autonomy, reason });
 }
 
@@ -246,8 +249,11 @@ export async function setAutonomyLevel(level: number, reason: string): Promise<v
  */
 export async function getKillSwitchStatus() {
   const effective = await resolveEffectiveOverrides();
-  const frozen = await isSelfImproveFrozen();
-  const autonomyLevel = await getEffectiveAutonomyLevel();
+  const cfg = getConfig();
+  const frozen = effective.freeze ?? cfg.selfImproveFrozen;
+  const autonomyLevel = clampAutonomyLevel(
+    effective.autonomy ?? cfg.selfImproveAutonomyLevel
+  );
   return {
     frozen,
     autonomyLevel,

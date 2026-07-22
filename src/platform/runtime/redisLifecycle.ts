@@ -1,20 +1,31 @@
 import { createClient } from 'redis';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { resolveConfiguredRedisConnection } from '@platform/runtime/redis.js';
+import {
+  DependencyLifecycle,
+  DependencyUnavailableError,
+  type DependencyLifecycleAdapter,
+  type DependencyLifecycleEvent,
+  type DependencyLifecycleSleep,
+  type DependencyLifecycleState,
+} from '@platform/runtime/dependencyLifecycle.js';
 
 const REDIS_ATTEMPT_TIMEOUT_MS = 3_000;
 const REDIS_RETRY_BASE_DELAY_MS = 250;
 const REDIS_RETRY_MAX_DELAY_MS = 30_000;
 const REDIS_RETRY_JITTER_MS = 250;
+const REDIS_OPERATION_TIMEOUT_MS = 2_000;
 
-export type RedisLifecycleState = 'STARTING' | 'DEGRADED' | 'READY';
+export type RedisLifecycleState = DependencyLifecycleState;
 
 export type RedisLifecycleErrorCode =
   | 'REDIS_CONNECTION_REFUSED'
   | 'REDIS_CONNECT_TIMEOUT'
+  | 'REDIS_CONFIGURATION_INVALID'
   | 'REDIS_AUTH_FAILED'
   | 'REDIS_DNS_UNAVAILABLE'
   | 'REDIS_CONNECTION_LOST'
+  | 'REDIS_OPERATION_TIMEOUT'
   | 'REDIS_UNAVAILABLE';
 
 export interface RedisLifecycleSnapshot {
@@ -31,7 +42,7 @@ export interface RedisLifecycleSnapshot {
 
 export type RedisLifecycleClient = ReturnType<typeof createClient>;
 export type RedisLifecycleListener = (snapshot: RedisLifecycleSnapshot) => void;
-export type RedisLifecycleSleep = (delayMs: number, signal: AbortSignal) => Promise<void>;
+export type RedisLifecycleSleep = DependencyLifecycleSleep;
 export type RedisLifecycleClientFactory = (
   options: Parameters<typeof createClient>[0]
 ) => RedisLifecycleClient;
@@ -43,42 +54,17 @@ export interface RedisLifecycleManagerOptions {
   now?: () => Date;
 }
 
-class RedisLifecycleAbortError extends Error {
-  constructor() {
-    super('Redis lifecycle operation aborted.');
-    this.name = 'RedisLifecycleAbortError';
-  }
+export interface RedisOperationOptions {
+  client?: RedisLifecycleClient;
+  timeoutMs?: number;
 }
 
-class RedisLifecycleAttemptTimeoutError extends Error {
-  readonly code = 'REDIS_CONNECT_TIMEOUT';
-
-  constructor() {
-    super('Redis lifecycle connection attempt timed out.');
-    this.name = 'RedisLifecycleAttemptTimeoutError';
-  }
-}
-
-function defaultSleep(delayMs: number, signal: AbortSignal): Promise<void> {
-  if (signal.aborted) {
-    return Promise.reject(new RedisLifecycleAbortError());
-  }
-
-  return new Promise((resolve, reject) => {
-    const timeoutHandle = setTimeout(() => {
-      signal.removeEventListener('abort', onAbort);
-      resolve();
-    }, delayMs);
-    timeoutHandle.unref?.();
-
-    const onAbort = () => {
-      clearTimeout(timeoutHandle);
-      signal.removeEventListener('abort', onAbort);
-      reject(new RedisLifecycleAbortError());
-    };
-
-    signal.addEventListener('abort', onAbort, { once: true });
-  });
+function createRedisDependencyUnavailableError(): DependencyUnavailableError {
+  return new DependencyUnavailableError(
+    'redis',
+    'REDIS_DEPENDENCY_UNAVAILABLE',
+    'Redis dependency is unavailable.'
+  );
 }
 
 function normalizeErrorText(error: unknown): string {
@@ -110,9 +96,17 @@ function classifyRedisLifecycleError(error: unknown): RedisLifecycleErrorCode {
     return 'REDIS_CONNECTION_REFUSED';
   }
 
+  if (code === 'REDIS_CONFIGURATION_INVALID') {
+    return 'REDIS_CONFIGURATION_INVALID';
+  }
+
+  if (code === 'REDIS_OPERATION_TIMEOUT') {
+    return 'REDIS_OPERATION_TIMEOUT';
+  }
+
   if (
     code === 'ETIMEDOUT'
-    || code === 'REDIS_CONNECT_TIMEOUT'
+    || code === 'DEPENDENCY_ATTEMPT_TIMEOUT'
     || message.includes('CONNECTION TIMEOUT')
     || message.includes('TIMED OUT')
   ) {
@@ -126,6 +120,7 @@ function classifyRedisLifecycleError(error: unknown): RedisLifecycleErrorCode {
   if (
     code === 'ECONNRESET'
     || code === 'EPIPE'
+    || code === 'REDIS_CONNECTION_LOST'
     || message.includes('SOCKET CLOSED')
     || message.includes('CONNECTION LOST')
   ) {
@@ -135,422 +130,233 @@ function classifyRedisLifecycleError(error: unknown): RedisLifecycleErrorCode {
   return 'REDIS_UNAVAILABLE';
 }
 
-function cloneSnapshot(snapshot: RedisLifecycleSnapshot): RedisLifecycleSnapshot {
-  return { ...snapshot };
+function projectRedisSnapshot(
+  snapshot: ReturnType<DependencyLifecycle<RedisLifecycleClient, RedisLifecycleErrorCode>['getSnapshot']>
+): RedisLifecycleSnapshot {
+  return {
+    state: snapshot.state,
+    configured: snapshot.configured,
+    connected: snapshot.ready,
+    attempt: snapshot.attempt,
+    recoveryCount: snapshot.recoveryCount,
+    retryScheduled: snapshot.retryScheduled,
+    lastTransitionAt: snapshot.lastTransitionAt,
+    lastReadyAt: snapshot.lastReadyAt,
+    lastErrorCode: snapshot.lastErrorCode
+  };
+}
+
+function reportRedisLifecycleEvent(event: DependencyLifecycleEvent<RedisLifecycleErrorCode>): void {
+  if (event.kind === 'ready') {
+    logger.info('redis.lifecycle.ready', {
+      module: 'redis-lifecycle',
+      recovered: event.recovered,
+      attempt: event.attempt
+    });
+    return;
+  }
+
+  if (event.kind === 'retry_scheduled') {
+    logger.warn('redis.lifecycle.retry_scheduled', {
+      module: 'redis-lifecycle',
+      operation: event.operation,
+      errorCode: event.errorCode,
+      attempt: event.attempt,
+      retryDelayMs: event.retryDelayMs
+    });
+    return;
+  }
+
+  if (event.kind === 'unavailable') {
+    logger.warn('redis.lifecycle.connection_lost', {
+      module: 'redis-lifecycle',
+      errorCode: event.errorCode
+    });
+    return;
+  }
+
+  logger.warn('redis.lifecycle.listener_failed', {
+    module: 'redis-lifecycle',
+    errorCode: 'REDIS_LIFECYCLE_LISTENER_FAILED'
+  });
 }
 
 /**
- * Own the shared startup/telemetry/diagnostics Redis connection without making
- * listener startup wait for it.
+ * Redis adapter for the reusable dependency lifecycle.
  *
- * A single client is reused across bounded connect attempts. Reconnect scheduling is
- * owned here so shutdown can abort every pending timer deterministically.
+ * URL resolution, node-redis events, PING validation, and Redis-specific error
+ * classification stay here; retry, state, timer, and shutdown mechanics live in
+ * the dependency lifecycle runner.
  */
 export class RedisLifecycleManager {
-  private readonly clientFactory: RedisLifecycleClientFactory;
-  private readonly sleep: RedisLifecycleSleep;
-  private readonly random: () => number;
-  private readonly now: () => Date;
-  private readonly listeners = new Set<RedisLifecycleListener>();
-  private readonly abortController = new AbortController();
-  private client: RedisLifecycleClient | null = null;
-  private connectionLoop: Promise<void> | null = null;
-  private stopPromise: Promise<void> | null = null;
-  private started = false;
-  private stopping = false;
-  private consecutiveAttempts = 0;
-  private snapshot: RedisLifecycleSnapshot;
+  private readonly lifecycle: DependencyLifecycle<RedisLifecycleClient, RedisLifecycleErrorCode>;
+  private activeOperationCount = 0;
 
   constructor(options: RedisLifecycleManagerOptions = {}) {
-    this.clientFactory = options.clientFactory ?? ((clientOptions) => createClient(clientOptions));
-    this.sleep = options.sleep ?? defaultSleep;
-    this.random = options.random ?? Math.random;
-    this.now = options.now ?? (() => new Date());
-    this.snapshot = {
-      state: 'STARTING',
-      configured: false,
-      connected: false,
-      attempt: 0,
-      recoveryCount: 0,
-      retryScheduled: false,
-      lastTransitionAt: this.now().toISOString(),
-      lastReadyAt: null,
-      lastErrorCode: null
-    };
-  }
-
-  /** Start connection recovery in the background. Repeated calls are no-ops. */
-  start(): void {
-    if (this.started || this.stopping) {
-      return;
-    }
-
-    this.started = true;
-    const redisConnection = resolveConfiguredRedisConnection();
-    if (!redisConnection.configured || !redisConnection.url) {
-      // Redis remains optional for local/stateless deployments. Production config
-      // validation is responsible for enforcing a required reference where needed.
-      this.updateSnapshot({
-        state: 'READY',
-        configured: false,
-        connected: false,
-        retryScheduled: false,
-        lastErrorCode: null
-      });
-      return;
-    }
-
-    this.updateSnapshot({
-      state: 'STARTING',
-      configured: true,
-      connected: false,
-      retryScheduled: false,
-      lastErrorCode: null
-    });
-
-    try {
-      const client = this.clientFactory({
-        url: redisConnection.url,
-        disableOfflineQueue: true,
-        socket: {
-          connectTimeout: REDIS_ATTEMPT_TIMEOUT_MS,
-          reconnectStrategy: false
+    const clientFactory = options.clientFactory ?? ((clientOptions) => createClient(clientOptions));
+    const adapter: DependencyLifecycleAdapter<RedisLifecycleClient, RedisLifecycleErrorCode> = {
+      resolve: () => {
+        const redisConnection = resolveConfiguredRedisConnection();
+        if (!redisConnection.configured) {
+          return { configured: false };
         }
-      });
-      this.client = client;
-      client.on('error', (error: Error) => {
-        this.handleClientError(client, error);
-      });
-      client.on('end', () => {
-        this.handleClientEnd(client);
-      });
-      this.ensureConnectionLoop(client);
-    } catch (error) {
-      const errorCode = classifyRedisLifecycleError(error);
-      this.updateSnapshot({
-        state: 'DEGRADED',
-        configured: true,
-        connected: false,
-        retryScheduled: false,
-        lastErrorCode: errorCode
-      });
-      logger.warn('redis.lifecycle.client_creation_failed', {
-        module: 'redis-lifecycle',
-        errorCode
-      });
-    }
-  }
 
-  /** Stop retries and close the current client. Repeated calls share one promise. */
-  async stop(): Promise<void> {
-    if (this.stopPromise) {
-      return this.stopPromise;
-    }
+        if (!redisConnection.url) {
+          return {
+            configured: true,
+            createResource: () => {
+              throw Object.assign(new Error('Redis configuration is invalid.'), {
+                code: 'REDIS_CONFIGURATION_INVALID'
+              });
+            }
+          };
+        }
 
-    this.stopPromise = this.stopInternal();
-    return this.stopPromise;
-  }
-
-  /** Return the singleton client only while it is verified ready. */
-  getReadyClient(): RedisLifecycleClient | null {
-    const client = this.client;
-    if (
-      !client
-      || this.stopping
-      || this.snapshot.state !== 'READY'
-      || !this.snapshot.connected
-      || !client.isReady
-    ) {
-      return null;
-    }
-
-    return client;
-  }
-
-  /** Return an immutable, credential-free lifecycle projection. */
-  getSnapshot(): RedisLifecycleSnapshot {
-    return cloneSnapshot(this.snapshot);
-  }
-
-  /** Subscribe to lifecycle transitions and receive the current snapshot immediately. */
-  subscribe(listener: RedisLifecycleListener): () => void {
-    this.listeners.add(listener);
-    this.notifyListener(listener);
-    return () => {
-      this.listeners.delete(listener);
-    };
-  }
-
-  private ensureConnectionLoop(client: RedisLifecycleClient): void {
-    if (
-      this.connectionLoop
-      || this.stopping
-      || this.abortController.signal.aborted
-      || this.client !== client
-    ) {
-      return;
-    }
-
-    const loop = this.runConnectionLoop(client);
-    this.connectionLoop = loop;
-    void loop.finally(() => {
-      if (this.connectionLoop === loop) {
-        this.connectionLoop = null;
-      }
-      if (
-        !this.stopping
-        && !this.abortController.signal.aborted
-        && this.client === client
-        && this.snapshot.state === 'DEGRADED'
-      ) {
-        this.ensureConnectionLoop(client);
-      }
-    }).catch(() => {
-      // Every operational failure is represented by the sanitized lifecycle state.
-    });
-  }
-
-  private async runConnectionLoop(client: RedisLifecycleClient): Promise<void> {
-    while (!this.stopping && !this.abortController.signal.aborted && this.client === client) {
-      this.consecutiveAttempts += 1;
-      const attempt = this.consecutiveAttempts;
-      this.updateSnapshot({
-        attempt,
-        retryScheduled: false
-      });
-
-      try {
+        const redisUrl = redisConnection.url;
+        return {
+          configured: true,
+          createResource: () => clientFactory({
+            url: redisUrl,
+            disableOfflineQueue: true,
+            socket: {
+              connectTimeout: REDIS_ATTEMPT_TIMEOUT_MS,
+              reconnectStrategy: false
+            }
+          })
+        };
+      },
+      connect: async (client) => {
         if (!client.isOpen) {
-          await this.runBoundedAttempt(client.connect(), client);
+          await client.connect();
         }
-
-        const pingResponse = await this.runBoundedAttempt(client.ping(), client);
+      },
+      validate: async (client) => {
+        const pingResponse = await client.ping();
         if (pingResponse !== 'PONG') {
           throw Object.assign(new Error('Unexpected Redis readiness response.'), {
             code: 'REDIS_UNEXPECTED_RESPONSE'
           });
         }
-
-        if (this.stopping || this.abortController.signal.aborted || this.client !== client) {
-          return;
-        }
-
-        const recovered = this.snapshot.state === 'DEGRADED';
-        this.updateSnapshot({
-          state: 'READY',
-          configured: true,
-          connected: true,
-          retryScheduled: false,
-          recoveryCount: this.snapshot.recoveryCount + (recovered ? 1 : 0),
-          lastReadyAt: this.now().toISOString(),
-          lastErrorCode: null
-        });
-        this.consecutiveAttempts = 0;
-        logger.info('redis.lifecycle.ready', {
-          module: 'redis-lifecycle',
-          recovered,
-          attempt
-        });
-        return;
-      } catch (error) {
-        if (this.stopping || this.abortController.signal.aborted || error instanceof RedisLifecycleAbortError) {
-          return;
-        }
-
-        this.destroyClientConnection(client);
-        const errorCode = classifyRedisLifecycleError(error);
-        const retryDelayMs = this.calculateRetryDelay(attempt);
-        this.updateSnapshot({
-          state: 'DEGRADED',
-          configured: true,
-          connected: false,
-          retryScheduled: true,
-          lastErrorCode: errorCode
-        });
-        logger.warn('redis.lifecycle.retry_scheduled', {
-          module: 'redis-lifecycle',
-          errorCode,
-          attempt,
-          retryDelayMs
-        });
-
-        try {
-          await this.sleep(retryDelayMs, this.abortController.signal);
-        } catch (sleepError) {
-          if (sleepError instanceof RedisLifecycleAbortError || this.abortController.signal.aborted) {
-            return;
-          }
-          throw sleepError;
-        }
-      }
-    }
-  }
-
-  private async runBoundedAttempt<T>(
-    operation: Promise<T>,
-    client: RedisLifecycleClient
-  ): Promise<T> {
-    const attemptController = new AbortController();
-    const abortAttempt = () => attemptController.abort();
-    this.abortController.signal.addEventListener('abort', abortAttempt, { once: true });
-
-    const timeoutPromise = this.sleep(REDIS_ATTEMPT_TIMEOUT_MS, attemptController.signal)
-      .then<never>(() => {
-        if (this.client === client) {
-          this.destroyClientConnection(client);
-        }
-        throw new RedisLifecycleAttemptTimeoutError();
-      });
-
-    try {
-      return await Promise.race([operation, timeoutPromise]);
-    } finally {
-      attemptController.abort();
-      this.abortController.signal.removeEventListener('abort', abortAttempt);
-    }
-  }
-
-  private handleClientError(client: RedisLifecycleClient, error: unknown): void {
-    if (
-      this.stopping
-      || this.client !== client
-      || (this.connectionLoop !== null && this.snapshot.state !== 'READY')
-    ) {
-      return;
-    }
-
-    const errorCode = classifyRedisLifecycleError(error);
-    this.updateSnapshot({
-      state: 'DEGRADED',
-      configured: true,
-      connected: false,
-      retryScheduled: false,
-      lastErrorCode: errorCode
-    });
-    logger.warn('redis.lifecycle.connection_lost', {
-      module: 'redis-lifecycle',
-      errorCode
-    });
-    this.destroyClientConnection(client);
-    this.ensureConnectionLoop(client);
-  }
-
-  private handleClientEnd(client: RedisLifecycleClient): void {
-    if (
-      this.stopping
-      || this.client !== client
-      || this.snapshot.state !== 'READY'
-      || !this.snapshot.connected
-    ) {
-      return;
-    }
-
-    this.updateSnapshot({
-      state: 'DEGRADED',
-      configured: true,
-      connected: false,
-      retryScheduled: false,
-      lastErrorCode: 'REDIS_CONNECTION_LOST'
-    });
-    logger.warn('redis.lifecycle.connection_lost', {
-      module: 'redis-lifecycle',
-      errorCode: 'REDIS_CONNECTION_LOST'
-    });
-    this.ensureConnectionLoop(client);
-  }
-
-  private calculateRetryDelay(attempt: number): number {
-    const exponent = Math.max(0, Math.min(attempt - 1, 30));
-    const exponentialDelay = Math.min(
-      REDIS_RETRY_BASE_DELAY_MS * (2 ** exponent),
-      REDIS_RETRY_MAX_DELAY_MS
-    );
-    const boundedRandom = Math.max(0, Math.min(this.random(), 0.999999999));
-    const jitter = Math.floor(boundedRandom * REDIS_RETRY_JITTER_MS);
-    return Math.min(exponentialDelay + jitter, REDIS_RETRY_MAX_DELAY_MS);
-  }
-
-  private destroyClientConnection(client: RedisLifecycleClient): void {
-    if (this.client !== client || !client.isOpen) {
-      return;
-    }
-
-    try {
-      client.destroy();
-    } catch {
-      // Destruction is best-effort; the retry loop remains the source of truth.
-    }
-  }
-
-  private async stopInternal(): Promise<void> {
-    if (this.stopping) {
-      return;
-    }
-
-    this.stopping = true;
-    this.abortController.abort();
-    const client = this.client;
-    this.client = null;
-    const connectionLoop = this.connectionLoop;
-    this.updateSnapshot({
-      state: 'DEGRADED',
-      connected: false,
-      retryScheduled: false,
-      lastErrorCode: null
-    });
-
-    if (client?.isOpen) {
-      try {
-        if (client.isReady) {
-          await client.close();
-        } else {
+      },
+      isReady: (client) => client.isReady,
+      invalidate: (client) => {
+        if (client.isOpen) {
           client.destroy();
         }
-      } catch {
-        try {
-          if (client.isOpen) {
-            client.destroy();
-          }
-        } catch {
-          // Redis shutdown remains best-effort under the server shutdown deadline.
+      },
+      close: async (client) => {
+        if (!client.isOpen) {
+          return;
         }
-      }
-    }
-
-    if (connectionLoop) {
-      await connectionLoop.catch(() => undefined);
-    }
-
-    this.listeners.clear();
-  }
-
-  private updateSnapshot(update: Partial<RedisLifecycleSnapshot>): void {
-    const previousState = this.snapshot.state;
-    const nextState = update.state ?? previousState;
-    this.snapshot = {
-      ...this.snapshot,
-      ...update,
-      lastTransitionAt: nextState === previousState
-        ? this.snapshot.lastTransitionAt
-        : this.now().toISOString()
+        if (client.isReady && this.activeOperationCount === 0) {
+          await client.close();
+          return;
+        }
+        client.destroy();
+      },
+      subscribeUnavailable: (client, listener) => {
+        const onError = (error: Error) => listener(error);
+        const onEnd = () => listener(Object.assign(new Error('Redis connection lost.'), {
+          code: 'REDIS_CONNECTION_LOST'
+        }));
+        client.on('error', onError);
+        client.on('end', onEnd);
+        return () => {
+          client.off?.('error', onError);
+          client.off?.('end', onEnd);
+        };
+      },
+      classifyError: classifyRedisLifecycleError
     };
-    this.notifyListeners();
+
+    this.lifecycle = new DependencyLifecycle({
+      adapter,
+      attemptTimeoutMs: REDIS_ATTEMPT_TIMEOUT_MS,
+      retryBaseDelayMs: REDIS_RETRY_BASE_DELAY_MS,
+      retryMaxDelayMs: REDIS_RETRY_MAX_DELAY_MS,
+      retryJitterMs: REDIS_RETRY_JITTER_MS,
+      sleep: options.sleep,
+      random: options.random,
+      now: options.now,
+      onEvent: reportRedisLifecycleEvent
+    });
   }
 
-  private notifyListeners(): void {
-    for (const listener of this.listeners) {
-      this.notifyListener(listener);
+  start(): void {
+    this.lifecycle.start();
+  }
+
+  stop(): Promise<void> {
+    return this.lifecycle.stop();
+  }
+
+  getReadyClient(): RedisLifecycleClient | null {
+    return this.lifecycle.getReadyResource();
+  }
+
+  getSnapshot(): RedisLifecycleSnapshot {
+    return projectRedisSnapshot(this.lifecycle.getSnapshot());
+  }
+
+  subscribe(listener: RedisLifecycleListener): () => void {
+    return this.lifecycle.subscribe((snapshot) => {
+      listener(projectRedisSnapshot(snapshot));
+    });
+  }
+
+  reportUnavailable(error: unknown): void {
+    this.lifecycle.reportUnavailable(error);
+  }
+
+  async executeOperation<T>(
+    operation: (client: RedisLifecycleClient) => Promise<T>,
+    options: RedisOperationOptions = {}
+  ): Promise<T> {
+    const client = options.client ?? this.getReadyClient();
+    if (!client || this.getReadyClient() !== client) {
+      throw createRedisDependencyUnavailableError();
     }
-  }
 
-  private notifyListener(listener: RedisLifecycleListener): void {
+    const timeoutMs = options.timeoutMs ?? REDIS_OPERATION_TIMEOUT_MS;
+    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+      throw new Error('Redis operation timeout must be a positive finite number.');
+    }
+
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+    const timeoutError = Object.assign(new Error('Redis operation timed out.'), {
+      code: 'REDIS_OPERATION_TIMEOUT'
+    });
+    const timeoutPromise = new Promise<never>((_resolve, reject) => {
+      timeoutHandle = setTimeout(() => {
+        this.reportUnavailable(timeoutError);
+        reject(createRedisDependencyUnavailableError());
+      }, timeoutMs);
+      timeoutHandle.unref?.();
+    });
+
+    this.activeOperationCount += 1;
     try {
-      listener(this.getSnapshot());
-    } catch {
-      logger.warn('redis.lifecycle.listener_failed', {
-        module: 'redis-lifecycle',
-        errorCode: 'REDIS_LIFECYCLE_LISTENER_FAILED'
-      });
+      const result = await Promise.race([
+        Promise.resolve().then(() => operation(client)),
+        timeoutPromise
+      ]);
+      if (this.getReadyClient() !== client) {
+        throw createRedisDependencyUnavailableError();
+      }
+      return result;
+    } catch (error) {
+      if (this.getReadyClient() === client) {
+        this.reportUnavailable(error);
+      }
+      if (error instanceof DependencyUnavailableError) {
+        throw error;
+      }
+      throw createRedisDependencyUnavailableError();
+    } finally {
+      this.activeOperationCount = Math.max(0, this.activeOperationCount - 1);
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
     }
   }
 }
@@ -567,6 +373,26 @@ export function stopRedisLifecycle(): Promise<void> {
 
 export function getReadyRedisClient(): RedisLifecycleClient | null {
   return redisLifecycle.getReadyClient();
+}
+
+export function requireReadyRedisClient(): RedisLifecycleClient {
+  const client = getReadyRedisClient();
+  if (!client) {
+    throw new DependencyUnavailableError(
+      'redis',
+      'REDIS_DEPENDENCY_UNAVAILABLE',
+      'Redis dependency is unavailable.'
+    );
+  }
+  return client;
+}
+
+/** Run one Redis command with a deadline and a stable dependency failure. */
+export async function executeRedisOperation<T>(
+  operation: (client: RedisLifecycleClient) => Promise<T>,
+  options: RedisOperationOptions = {}
+): Promise<T> {
+  return redisLifecycle.executeOperation(operation, options);
 }
 
 export function getRedisLifecycleSnapshot(): RedisLifecycleSnapshot {

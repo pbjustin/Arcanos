@@ -166,11 +166,14 @@ function closeHttpServer(server: Server): Promise<void> {
   });
 }
 
-async function closeResources(): Promise<void> {
+async function stopDependencyLifecycles(): Promise<void> {
   unsubscribeRedisLifecycle?.();
   unsubscribeRedisLifecycle = null;
   await activeStopTelemetryPersistence();
   await activeStopRedisLifecycle();
+}
+
+async function closeRemainingResources(): Promise<void> {
   await runtimeInitializationPromise?.catch(() => undefined);
   await activeCloseDatabase();
 }
@@ -194,12 +197,17 @@ export async function shutdownServer(signal: NodeJS.Signals): Promise<void> {
   timeoutHandle.unref?.();
 
   try {
+    let listenerDrainPromise = Promise.resolve();
     if (httpServer) {
       httpServer.closeIdleConnections?.();
-      await closeHttpServer(httpServer);
+      listenerDrainPromise = closeHttpServer(httpServer);
     }
 
-    await closeResources();
+    await Promise.all([
+      listenerDrainPromise,
+      stopDependencyLifecycles()
+    ]);
+    await closeRemainingResources();
     clearTimeout(timeoutHandle);
     console.log('[SHUTDOWN] Completed graceful shutdown.');
     process.exit(0);

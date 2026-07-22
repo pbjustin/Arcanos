@@ -138,7 +138,7 @@ function createManualSleep(): {
   };
 }
 
-async function flushAsyncWork(iterations = 8): Promise<void> {
+async function flushAsyncWork(iterations = 16): Promise<void> {
   for (let iteration = 0; iteration < iterations; iteration += 1) {
     await Promise.resolve();
   }
@@ -256,6 +256,40 @@ describe('RedisLifecycleManager', () => {
     expect(JSON.stringify(snapshot)).not.toContain('lifecycle.invalid');
   });
 
+  it('accepts TLS Redis URLs and treats malformed explicit URLs as degraded', async () => {
+    const tlsClient = new FakeRedisClient();
+    process.env.REDIS_URL = 'rediss://tls.invalid:6380';
+    const { manager: tlsManager, clientFactory } = createManager(tlsClient);
+
+    tlsManager.start();
+    await flushAsyncWork();
+
+    expect(clientFactory).toHaveBeenCalledWith(expect.objectContaining({
+      url: 'rediss://tls.invalid:6380'
+    }));
+    expect(tlsManager.getSnapshot()).toEqual(expect.objectContaining({
+      state: 'READY',
+      configured: true,
+      connected: true
+    }));
+
+    const invalidClient = new FakeRedisClient();
+    process.env.REDIS_URL = 'https://user:secret@not-redis.invalid';
+    const { manager: invalidManager, clientFactory: invalidClientFactory } = createManager(invalidClient);
+    invalidManager.start();
+    await flushAsyncWork();
+
+    expect(invalidClientFactory).not.toHaveBeenCalled();
+    expect(invalidManager.getSnapshot()).toEqual(expect.objectContaining({
+      state: 'DEGRADED',
+      configured: true,
+      connected: false,
+      retryScheduled: true,
+      lastErrorCode: 'REDIS_CONFIGURATION_INVALID'
+    }));
+    expect(JSON.stringify(invalidManager.getSnapshot())).not.toContain('secret');
+  });
+
   it('recovers automatically when Redis returns after startup', async () => {
     const client = new FakeRedisClient();
     client.queueConnect(
@@ -351,6 +385,55 @@ describe('RedisLifecycleManager', () => {
     expect(manager.getSnapshot().state).toBe('READY');
   });
 
+  it('fails required operations immediately while Redis is unavailable', async () => {
+    const client = new FakeRedisClient();
+    const { manager } = createManager(client);
+    const operation = jest.fn(async () => 'unused');
+
+    await expect(manager.executeOperation(operation)).rejects.toEqual(expect.objectContaining({
+      name: 'DependencyUnavailableError',
+      dependency: 'redis',
+      code: 'REDIS_DEPENDENCY_UNAVAILABLE',
+      message: 'Redis dependency is unavailable.'
+    }));
+    expect(operation).not.toHaveBeenCalled();
+  });
+
+  it('bounds a stalled ready-state command and starts one recovery loop', async () => {
+    const reconnect = createDeferred<void>();
+    const stalledOperation = createDeferred<string>();
+    const client = new FakeRedisClient();
+    client.queueConnect(async () => undefined, () => reconnect.promise);
+    const { manager, clientFactory } = createManager(client);
+
+    manager.start();
+    await flushAsyncWork();
+    expect(manager.getSnapshot().state).toBe('READY');
+
+    const operationPromise = manager.executeOperation(
+      async () => stalledOperation.promise,
+      { timeoutMs: 50 }
+    );
+    const operationRejection = expect(operationPromise).rejects.toEqual(expect.objectContaining({
+      code: 'REDIS_DEPENDENCY_UNAVAILABLE',
+      message: 'Redis dependency is unavailable.'
+    }));
+    await jest.advanceTimersByTimeAsync(50);
+
+    await operationRejection;
+    expect(manager.getReadyClient()).toBeNull();
+    expect(manager.getSnapshot()).toEqual(expect.objectContaining({
+      state: 'DEGRADED',
+      connected: false,
+      lastErrorCode: 'REDIS_OPERATION_TIMEOUT'
+    }));
+    expect(client.connect).toHaveBeenCalledTimes(2);
+    expect(clientFactory).toHaveBeenCalledTimes(1);
+
+    reconnect.resolve(undefined);
+    stalledOperation.resolve('late secret redis://user:password@host');
+  });
+
   it('uses exponential backoff with bounded deterministic jitter and keeps retrying', async () => {
     const manualSleep = createManualSleep();
     const client = new FakeRedisClient();
@@ -429,6 +512,27 @@ describe('RedisLifecycleManager', () => {
     }));
   });
 
+  it('destroys a client when shutdown interrupts readiness validation', async () => {
+    const pendingPing = createDeferred<string>();
+    const client = new FakeRedisClient();
+    client.ping.mockImplementation(() => pendingPing.promise);
+    const { manager } = createManager(client);
+
+    manager.start();
+    await flushAsyncWork();
+    expect(client.connect).toHaveBeenCalledTimes(1);
+    expect(client.ping).toHaveBeenCalledTimes(1);
+    expect(client.isReady).toBe(true);
+
+    await manager.stop();
+    pendingPing.resolve('PONG');
+    await flushAsyncWork();
+
+    expect(client.destroy).toHaveBeenCalledTimes(1);
+    expect(client.close).not.toHaveBeenCalled();
+    expect(manager.getReadyClient()).toBeNull();
+  });
+
   it('ignores stale client events after shutdown', async () => {
     const client = new FakeRedisClient();
     const { manager } = createManager(client);
@@ -459,5 +563,30 @@ describe('RedisLifecycleManager', () => {
 
     expect(client.close).toHaveBeenCalledTimes(1);
     expect(client.destroy).not.toHaveBeenCalled();
+  });
+
+  it('destroys a ready client during shutdown when an operation is still active', async () => {
+    const stalledOperation = createDeferred<string>();
+    const client = new FakeRedisClient();
+    const { manager } = createManager(client);
+
+    manager.start();
+    await flushAsyncWork();
+    expect(manager.getSnapshot().state).toBe('READY');
+
+    const operationPromise = manager.executeOperation(
+      async () => stalledOperation.promise,
+      { timeoutMs: 5_000 }
+    );
+    await flushAsyncWork();
+
+    await manager.stop();
+    stalledOperation.resolve('late result');
+
+    await expect(operationPromise).rejects.toEqual(expect.objectContaining({
+      code: 'REDIS_DEPENDENCY_UNAVAILABLE'
+    }));
+    expect(client.destroy).toHaveBeenCalledTimes(1);
+    expect(client.close).not.toHaveBeenCalled();
   });
 });

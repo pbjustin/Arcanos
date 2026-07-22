@@ -5,6 +5,7 @@ import { logger } from '@platform/logging/structuredLogging.js';
 import { getEnv } from '@platform/runtime/env.js';
 import { resolveConfiguredRedisConnection } from '@platform/runtime/redis.js';
 import {
+  executeRedisOperation,
   getReadyRedisClient,
   subscribeRedisLifecycle,
   type RedisLifecycleClient,
@@ -564,7 +565,10 @@ async function loadPersistedStateFromRedis(
   }
 
   try {
-    const persistedStateRaw = await redisClient.get(target.redisKey);
+    const persistedStateRaw = await executeRedisOperation(
+      (readyClient) => readyClient.get(target.redisKey!),
+      { client: redisClient }
+    );
     if (!persistedStateRaw) {
       return { ok: true, state: null };
     }
@@ -623,7 +627,10 @@ async function persistStateToRedis(
 
   const persistedState = buildPersistedState(state);
   try {
-    await redisClient.set(target.redisKey, JSON.stringify(persistedState));
+    await executeRedisOperation(
+      (readyClient) => readyClient.set(target.redisKey!, JSON.stringify(persistedState)),
+      { client: redisClient }
+    );
     if (getReadyRedisClient() !== redisClient) {
       redisPersistenceDirty = true;
       state.persistence.lastSaveError = 'REDIS_DEPENDENCY_UNAVAILABLE';

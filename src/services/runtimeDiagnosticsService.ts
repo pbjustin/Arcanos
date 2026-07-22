@@ -4,6 +4,7 @@ import { logger } from '@platform/logging/structuredLogging.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { getGptModuleMap } from '@platform/runtime/gptRouterConfig.js';
 import {
+  executeRedisOperation,
   getReadyRedisClient,
   type RedisLifecycleClient
 } from '@platform/runtime/redisLifecycle.js';
@@ -502,15 +503,17 @@ class RuntimeDiagnosticsRedisStore {
     }
 
     try {
-      const redisCommandBatch = redisClient.multi();
-      redisCommandBatch.incr(this.key('requests_total'));
-      redisCommandBatch.incrByFloat(this.key('latency_total_ms'), latencyMs);
-      if (countsAsPublicFailure(statusCode, metadata)) {
-        redisCommandBatch.incr(this.key('errors_total'));
-      }
-      redisCommandBatch.lPush(this.key('recent_latency_ms'), String(latencyMs));
-      redisCommandBatch.lTrim(this.key('recent_latency_ms'), 0, RECENT_LATENCY_LIMIT - 1);
-      await redisCommandBatch.exec();
+      await executeRedisOperation(async (readyClient) => {
+        const redisCommandBatch = readyClient.multi();
+        redisCommandBatch.incr(this.key('requests_total'));
+        redisCommandBatch.incrByFloat(this.key('latency_total_ms'), latencyMs);
+        if (countsAsPublicFailure(statusCode, metadata)) {
+          redisCommandBatch.incr(this.key('errors_total'));
+        }
+        redisCommandBatch.lPush(this.key('recent_latency_ms'), String(latencyMs));
+        redisCommandBatch.lTrim(this.key('recent_latency_ms'), 0, RECENT_LATENCY_LIMIT - 1);
+        await redisCommandBatch.exec();
+      }, { client: redisClient });
     } catch {
       logger.warn('diagnostics.shared_metrics.write_failed', {
         module: 'runtime-diagnostics',
@@ -526,12 +529,15 @@ class RuntimeDiagnosticsRedisStore {
     }
 
     try {
-      const redisResults = await redisClient.multi()
-        .get(this.key('requests_total'))
-        .get(this.key('errors_total'))
-        .get(this.key('latency_total_ms'))
-        .lRange(this.key('recent_latency_ms'), 0, RECENT_LATENCY_LIMIT - 1)
-        .exec();
+      const redisResults = await executeRedisOperation(
+        (readyClient) => readyClient.multi()
+          .get(this.key('requests_total'))
+          .get(this.key('errors_total'))
+          .get(this.key('latency_total_ms'))
+          .lRange(this.key('recent_latency_ms'), 0, RECENT_LATENCY_LIMIT - 1)
+          .exec(),
+        { client: redisClient }
+      );
 
       if (!Array.isArray(redisResults) || redisResults.length < 4) {
         return null;
@@ -585,12 +591,15 @@ class RuntimeDiagnosticsRedisStore {
     }
 
     try {
-      await redisClient.del([
-        this.key('requests_total'),
-        this.key('errors_total'),
-        this.key('latency_total_ms'),
-        this.key('recent_latency_ms')
-      ]);
+      await executeRedisOperation(
+        (readyClient) => readyClient.del([
+          this.key('requests_total'),
+          this.key('errors_total'),
+          this.key('latency_total_ms'),
+          this.key('recent_latency_ms')
+        ]),
+        { client: redisClient }
+      );
     } catch {
       logger.warn('diagnostics.shared_metrics.reset_failed', {
         module: 'runtime-diagnostics',

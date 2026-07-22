@@ -8,11 +8,8 @@
  */
 
 import { randomUUID } from "node:crypto";
+import { executeRedisOperation } from "@platform/runtime/redisLifecycle.js";
 import { V2_CONFIG } from "./config.js";
-import { getRedis } from "./redisClient.js";
-import { CircuitBreaker } from "./circuitBreaker.js";
-
-const breaker = new CircuitBreaker();
 
 export type LockLostCallback = (key: string) => void;
 
@@ -45,10 +42,9 @@ export class DistributedLock {
    * Acquire the lock. Throws if already held by another owner.
    */
   async acquire(): Promise<void> {
-    const result = await breaker.call(async () => {
-      const redis = await getRedis();
-      return redis.set(this.key, this.ownerId, { NX: true, PX: this.ttlMs });
-    });
+    const result = await executeRedisOperation((redis) =>
+      redis.set(this.key, this.ownerId, { NX: true, PX: this.ttlMs })
+    );
 
     if (result !== "OK") {
       throw new Error(`Lock already held: ${this.key}`);
@@ -76,13 +72,13 @@ export class DistributedLock {
     `;
 
     try {
-      const redis = await getRedis();
-      await redis.eval(script, { keys: [this.key], arguments: [this.ownerId] });
+      await executeRedisOperation((redis) =>
+        redis.eval(script, { keys: [this.key], arguments: [this.ownerId] })
+      );
     } catch {
       // best-effort release — log for diagnostics
       try {
-        // eslint-disable-next-line no-console
-        console.error(`[v2/lock] failed to release lock ${this.key}`);
+        console.error("[v2/lock] failed to release lock");
       } catch {}
     }
   }
@@ -92,7 +88,6 @@ export class DistributedLock {
       if (this.released) return;
       try {
         // Atomically extend TTL only if we still own the lock to avoid race
-        const redis = await getRedis();
         const script = `
           if redis.call("get", KEYS[1]) == ARGV[1] then
             return redis.call("pexpire", KEYS[1], ARGV[2])
@@ -100,10 +95,12 @@ export class DistributedLock {
             return 0
           end
         `;
-        const res = await redis.eval(script, {
-          keys: [this.key],
-          arguments: [this.ownerId, String(this.ttlMs)],
-        });
+        const res = await executeRedisOperation((redis) =>
+          redis.eval(script, {
+            keys: [this.key],
+            arguments: [this.ownerId, String(this.ttlMs)],
+          })
+        );
         if (!res) {
           // Lock was stolen or expired — notify caller
           this.released = true;
@@ -114,8 +111,7 @@ export class DistributedLock {
       } catch {
         // Log and notify owner lost — heartbeat is best-effort
         try {
-          // eslint-disable-next-line no-console
-          console.error(`[v2/lock] heartbeat failed for ${this.key}`);
+          console.error("[v2/lock] heartbeat failed");
         } catch {}
         this.released = true;
         this.stopHeartbeat();
@@ -153,8 +149,8 @@ export async function withLock<T>(
   } finally {
     try {
       await lock.release();
-    } catch (releaseErr) {
-      console.error("[v2/lock] release failed:", releaseErr);
+    } catch {
+      console.error("[v2/lock] release failed");
     }
   }
 }
