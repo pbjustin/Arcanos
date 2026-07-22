@@ -35,6 +35,7 @@ Launcher behavior:
 - Web services start the compiled API runtime with `ARCANOS_PROCESS_KIND=web` and `RUN_WORKERS=false`.
 - Worker services expose a minimal health server and then start `dist/workers/jobRunner.js` with `ARCANOS_PROCESS_KIND=worker` and `RUN_WORKERS=true`.
 - The application keeps `/health`, `/healthz`, and `/readyz` available; Railway should probe `/health`.
+- The web listener binds before Redis initialization. `/health` and `/healthz` remain live during a Redis outage, while `/readyz` returns `503` until Redis reconnects; see `STARTUP_RESILIENCE.md`.
 - `Procfile` remains in the repository as a historical fallback artifact and must not be treated as the canonical Railway start path.
 
 Environment variables:
