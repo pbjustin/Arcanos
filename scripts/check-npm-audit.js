@@ -30,6 +30,12 @@ const vulnerabilities = report.vulnerabilities ?? {};
 // - brace-expansion (vendored minimatch -> brace-expansion): the patched
 //   5.0.6/5.0.7 releases are not yet published to npm and exposure is
 //   tooling-only. Retest and remove these entries when a patch is published.
+// - Hono (MCP SDK -> Hono): the patched @hono/node-server 2.0.5 and Hono
+//   4.12.27 npm builds are not published. Their source tags omit the compiled
+//   package exports, so consuming those archives would break runtime imports.
+//   ARCANOS mounts the SDK's Node/Web Standard streamable transport through
+//   Express and uses only @hono/node-server's root request listener; it does
+//   not use Hono static serving, AWS adapters, JSX, or CSS rendering.
 // Advisory IDs for every exception are deliberately source-scoped below, and
 // affected graphs are constrained where usage assumptions matter, so an
 // unexpected advisory or dependency path remains actionable.
@@ -63,6 +69,22 @@ const IGNORED_BRACE_EXPANSION_URLS = new Set([
 const IGNORED_BRACE_EXPANSION_NODES = new Set([
   'vendor/minimatch-9.0.7/node_modules/brace-expansion',
 ]);
+const IGNORED_HONO_NODE_SERVER_SOURCES = new Set([1124006]);
+const IGNORED_HONO_NODE_SERVER_URLS = new Set([
+  'https://github.com/advisories/GHSA-frvp-7c67-39w9',
+]);
+const IGNORED_HONO_SOURCES = new Set([1124005, 1124009, 1124010]);
+const IGNORED_HONO_URLS = new Set([
+  'https://github.com/advisories/GHSA-xgm2-5f3f-mvvc',
+  'https://github.com/advisories/GHSA-hvrm-45r6-mjfj',
+  'https://github.com/advisories/GHSA-w62v-xxxg-mg59',
+]);
+const IGNORED_HONO_NODE_SERVER_NODES = new Set([
+  'node_modules/@hono/node-server',
+]);
+const IGNORED_HONO_NODES = new Set(['node_modules/hono']);
+const IGNORED_MCP_SDK_NODES = new Set(['node_modules/@modelcontextprotocol/sdk']);
+const IGNORED_MCP_SDK_HONO_VIA = new Set(['@hono/node-server', 'hono']);
 
 function isIgnoredAxiosAdvisory(advisory) {
   if (!advisory || typeof advisory !== 'object') {
@@ -117,6 +139,41 @@ function isIgnoredBraceExpansionAdvisory(advisory) {
   );
 }
 
+function isIgnoredHonoNodeServerAdvisory(advisory) {
+  if (!advisory || typeof advisory !== 'object' || advisory.name !== '@hono/node-server') {
+    return false;
+  }
+
+  if (
+    typeof advisory.source === 'number' &&
+    IGNORED_HONO_NODE_SERVER_SOURCES.has(advisory.source)
+  ) {
+    return true;
+  }
+
+  return (
+    typeof advisory.url === 'string' &&
+    IGNORED_HONO_NODE_SERVER_URLS.has(advisory.url)
+  );
+}
+
+function isIgnoredHonoAdvisory(advisory) {
+  if (!advisory || typeof advisory !== 'object' || advisory.name !== 'hono') {
+    return false;
+  }
+
+  if (typeof advisory.source === 'number' && IGNORED_HONO_SOURCES.has(advisory.source)) {
+    return true;
+  }
+
+  return typeof advisory.url === 'string' && IGNORED_HONO_URLS.has(advisory.url);
+}
+
+function hasOnlyExpectedNodes(vulnerability, expectedNodes) {
+  const nodes = Array.isArray(vulnerability.nodes) ? vulnerability.nodes : [];
+  return nodes.length > 0 && nodes.every(node => expectedNodes.has(node));
+}
+
 function isIgnoredVulnerability(name, vulnerability) {
   if (!vulnerability || typeof vulnerability !== 'object') {
     return false;
@@ -151,6 +208,32 @@ function isIgnoredVulnerability(name, vulnerability) {
       via.every(isIgnoredBraceExpansionAdvisory) &&
       nodes.length > 0 &&
       nodes.every(node => IGNORED_BRACE_EXPANSION_NODES.has(node))
+    );
+  }
+
+  if (name === '@hono/node-server') {
+    return (
+      via.length > 0 &&
+      via.every(entry => entry === 'hono' || isIgnoredHonoNodeServerAdvisory(entry)) &&
+      hasOnlyExpectedNodes(vulnerability, IGNORED_HONO_NODE_SERVER_NODES)
+    );
+  }
+
+  if (name === 'hono') {
+    return (
+      via.length > 0 &&
+      via.every(isIgnoredHonoAdvisory) &&
+      hasOnlyExpectedNodes(vulnerability, IGNORED_HONO_NODES)
+    );
+  }
+
+  if (name === '@modelcontextprotocol/sdk') {
+    return (
+      via.length > 0 &&
+      via.every(
+        entry => typeof entry === 'string' && IGNORED_MCP_SDK_HONO_VIA.has(entry),
+      ) &&
+      hasOnlyExpectedNodes(vulnerability, IGNORED_MCP_SDK_NODES)
     );
   }
 

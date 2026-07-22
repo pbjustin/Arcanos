@@ -264,6 +264,7 @@
       "hono": "4.12.25"
     },
     "express-rate-limit": "https://codeload.github.com/express-rate-limit/express-rate-limit/tar.gz/refs/tags/v8.3.0",
+    "fast-uri": "https://codeload.github.com/fastify/fast-uri/tar.gz/refs/tags/v3.1.4",
     "ip-address": "10.1.1",
     "proxy-from-env": "https://codeload.github.com/Rob--W/proxy-from-env/tar.gz/refs/tags/v2.1.0",
     "express": {

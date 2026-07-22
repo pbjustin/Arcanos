@@ -51,7 +51,7 @@ function parseStdout(result: { stdout: string; stderr: string }) {
 
 function advisory(
   name: string,
-  severity: 'high' | 'critical',
+  severity: 'moderate' | 'high' | 'critical',
   source: number,
   ghsa: string,
   nodes = [`node_modules/${name}`],
@@ -220,5 +220,126 @@ describe('npm audit policy', () => {
 
     expect(result.status).toBe(1);
     expect(parseStdout(result).actionable[0].name).toBe('brace-expansion');
+  });
+
+  it('retains source- and node-scoped exceptions for the unpublished Hono builds', () => {
+    const hono = advisory('hono', 'moderate', 1_124_005, 'GHSA-xgm2-5f3f-mvvc');
+    hono.via.push(
+      {
+        name: 'hono',
+        source: 1_124_009,
+        url: 'https://github.com/advisories/GHSA-hvrm-45r6-mjfj',
+      },
+      {
+        name: 'hono',
+        source: 1_124_010,
+        url: 'https://github.com/advisories/GHSA-w62v-xxxg-mg59',
+      },
+    );
+
+    const honoNodeServer = advisory(
+      '@hono/node-server',
+      'moderate',
+      1_124_006,
+      'GHSA-frvp-7c67-39w9',
+    );
+    honoNodeServer.via.push('hono');
+
+    const result = runAuditPolicy({
+      '@hono/node-server': honoNodeServer,
+      hono,
+      '@modelcontextprotocol/sdk': {
+        severity: 'moderate',
+        via: ['@hono/node-server', 'hono'],
+        nodes: ['node_modules/@modelcontextprotocol/sdk'],
+        fixAvailable: false,
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(parseStdout(result).ignored.map((entry: { name: string }) => entry.name)).toEqual(
+      expect.arrayContaining(['@hono/node-server', 'hono', '@modelcontextprotocol/sdk']),
+    );
+  });
+
+  it('does not suppress an unexpected Hono advisory', () => {
+    const result = runAuditPolicy({
+      hono: advisory('hono', 'moderate', 9_999_995, 'GHSA-neww-hono-sory'),
+    });
+
+    expect(result.status).toBe(1);
+    expect(parseStdout(result).actionable[0].name).toBe('hono');
+  });
+
+  it('does not suppress a mixed known and unexpected node-server advisory set', () => {
+    const nodeServer = advisory(
+      '@hono/node-server',
+      'moderate',
+      1_124_006,
+      'GHSA-frvp-7c67-39w9',
+    );
+    nodeServer.via.push({
+      name: '@hono/node-server',
+      source: 9_999_994,
+      url: 'https://github.com/advisories/GHSA-neww-node-sory',
+    });
+    const result = runAuditPolicy({ '@hono/node-server': nodeServer });
+
+    expect(result.status).toBe(1);
+    expect(parseStdout(result).actionable[0].name).toBe('@hono/node-server');
+  });
+
+  it('does not suppress an approved node-server advisory on a new dependency path', () => {
+    const result = runAuditPolicy({
+      '@hono/node-server': advisory(
+        '@hono/node-server',
+        'moderate',
+        1_124_006,
+        'GHSA-frvp-7c67-39w9',
+        ['node_modules/unexpected-package/node_modules/@hono/node-server'],
+      ),
+    });
+
+    expect(result.status).toBe(1);
+    expect(parseStdout(result).actionable[0].name).toBe('@hono/node-server');
+  });
+
+  it('does not suppress an approved Hono advisory on a new dependency path', () => {
+    const result = runAuditPolicy({
+      hono: advisory('hono', 'moderate', 1_124_005, 'GHSA-xgm2-5f3f-mvvc', [
+        'node_modules/unexpected-package/node_modules/hono',
+      ]),
+    });
+
+    expect(result.status).toBe(1);
+    expect(parseStdout(result).actionable[0].name).toBe('hono');
+  });
+
+  it('does not suppress a new vulnerability propagated through the MCP SDK', () => {
+    const result = runAuditPolicy({
+      '@modelcontextprotocol/sdk': {
+        severity: 'high',
+        via: ['unexpected-package'],
+        nodes: ['node_modules/@modelcontextprotocol/sdk'],
+        fixAvailable: false,
+      },
+    });
+
+    expect(result.status).toBe(1);
+    expect(parseStdout(result).actionable[0].name).toBe('@modelcontextprotocol/sdk');
+  });
+
+  it('does not suppress the approved MCP Hono graph on a new SDK node', () => {
+    const result = runAuditPolicy({
+      '@modelcontextprotocol/sdk': {
+        severity: 'moderate',
+        via: ['@hono/node-server', 'hono'],
+        nodes: ['node_modules/unexpected-package/node_modules/@modelcontextprotocol/sdk'],
+        fixAvailable: false,
+      },
+    });
+
+    expect(result.status).toBe(1);
+    expect(parseStdout(result).actionable[0].name).toBe('@modelcontextprotocol/sdk');
   });
 });
