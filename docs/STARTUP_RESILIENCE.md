@@ -113,24 +113,15 @@ begins.
 
 ## Local verification
 
-The focused regression suites are:
+Run the focused Redis resilience regression selection defined by the
+`test:redis-resilience` script in the root `package.json`:
 
 ```text
 npm run test:redis-resilience
-
-tests/redis-startup-lifecycle.test.ts
-tests/dependency-lifecycle.test.ts
-tests/server-startup-resilience.test.ts
-tests/startup-health-routes.test.ts
-tests/self-heal-telemetry-redis.test.ts
-tests/incident-response-kill-switch.test.ts
-tests/safety-v2-redis-lifecycle.test.ts
-tests/worker-duplication-suppression.test.ts
-tests/unified-health-redis.test.ts
 ```
 
-They use fake clients and local HTTP requests only. They do not require a
-production credential or a live Redis service.
+The selected tests use fake clients and local HTTP requests only. They do not
+require production credentials or a live Redis service.
 
 The reusable isolated Railway baseline/outage/recovery procedure is in
 `docs/RAILWAY_REDIS_LIFECYCLE_PREVIEW.md`; dated audit evidence records whether
