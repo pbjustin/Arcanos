@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "kind": "redis_outage_path_risk_comparison",
+  "paths": [
+    {
+      "id": "A",
+      "name": "no region mutation plus bounded Redis outage",
+      "dataRisk": "low_but_nonzero_due_to_abrupt_stop_and_rdb_window",
+      "topologyRisk": "lowest",
+      "identityRisk": "service_and_volume_intended_to_remain_fixed_deployment_and_runtime_instance_may_change",
+      "rollback": "restore_the_same_service_only",
+      "downtime": "intentional_and_bounded_to_five_minutes",
+      "experimentalFidelity": "highest",
+      "evidentiaryValue": "highest",
+      "recommendation": "preferred_after_separate_authorization_and_exact_restore_preflight"
+    },
+    {
+      "id": "B",
+      "name": "in-place region and volume migration plus outage",
+      "dataRisk": "medium_to_high",
+      "topologyRisk": "medium_to_high",
+      "identityRisk": "logical_and_instance_volume_identity_unverified",
+      "rollback": "not_documented",
+      "downtime": "migration_downtime_plus_experiment_outage",
+      "experimentalFidelity": "lower_due_to_confounding_migration",
+      "evidentiaryValue": "ambiguous",
+      "recommendation": "do_not_use"
+    },
+    {
+      "id": "C",
+      "name": "replacement Redis or volume plus outage",
+      "dataRisk": "high",
+      "topologyRisk": "highest",
+      "identityRisk": "new_service_volume_dns_and_credentials",
+      "rollback": "complex_replacement_reversal",
+      "downtime": "highest",
+      "experimentalFidelity": "poor",
+      "evidentiaryValue": "low_for_transient_dependency_loss",
+      "recommendation": "prohibited_for_this_preview"
+    },
+    {
+      "id": "D",
+      "name": "no Railway experiment",
+      "dataRisk": "none",
+      "topologyRisk": "none",
+      "identityRisk": "none",
+      "rollback": "not_applicable",
+      "downtime": "none",
+      "experimentalFidelity": "none",
+      "evidentiaryValue": "local_and_ci_evidence_only",
+      "recommendation": "fallback_if_the_separate_outage_gate_fails"
+    }
+  ],
+  "minimumMutationRecommendation": "A"
+}

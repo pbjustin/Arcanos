@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "kind": "railway_volume_preservation_analysis",
+  "currentAttachment": {
+    "classification": "control_plane_observed",
+    "logicalVolumeId": "60326a10-1f7f-40a5-bd79-2dbc0ffa4479",
+    "volumeInstanceId": null,
+    "serviceId": "d9849f88-89c0-4650-86de-7ee07acc7f08",
+    "mountPath": "/data",
+    "regionLabel": "US East (Virginia, USA)"
+  },
+  "normalDeploymentSemantics": {
+    "volumePersistenceAcrossDeployments": "officially_documented",
+    "mountAtContainerStart": "officially_documented",
+    "volumeBackedRedeployDowntime": "officially_documented",
+    "exactLogicalVolumeIdAcrossRedeploy": "not_expressly_stated_but_consistent_with_persistent_volume_object",
+    "exactVolumeInstanceIdAcrossRedeploy": "unverified"
+  },
+  "regionMigrationSemantics": {
+    "volumeFollowsAttachedServiceRegion": "officially_documented",
+    "migrationRequiredWhenRegionActuallyChanges": "officially_documented",
+    "downtime": "officially_documented_size_dependent",
+    "logicalVolumeIdPreserved": "unverified",
+    "volumeInstanceIdPreserved": "unverified",
+    "mountPathPreserved": "unverified",
+    "dataIntegrityGuarantee": "unverified",
+    "rollback": "unverified"
+  },
+  "officialSources": [
+    {
+      "title": "Regions",
+      "url": "https://docs.railway.com/deployments/regions"
+    },
+    {
+      "title": "Using Volumes",
+      "url": "https://docs.railway.com/volumes"
+    },
+    {
+      "title": "Volumes Reference",
+      "url": "https://docs.railway.com/volumes/reference"
+    },
+    {
+      "title": "Manage Volumes with the Public API",
+      "url": "https://docs.railway.com/integrations/api/manage-volumes"
+    },
+    {
+      "title": "Healthchecks",
+      "url": "https://docs.railway.com/deployments/healthchecks"
+    },
+    {
+      "title": "Pricing FAQs",
+      "url": "https://docs.railway.com/pricing/faqs",
+      "claim": "Deployment removal does not remove an attached volume, and a removed deployment can be manually redeployed from its deployment menu."
+    },
+    {
+      "title": "Pricing Plans",
+      "url": "https://docs.railway.com/pricing/plans",
+      "claim": "Removed deployment images are retained for the plan retention period and may be redeployed during that window."
+    }
+  ],
+  "decision": {
+    "migrationNeeded": false,
+    "reason": "The current service and volume are already in the documented target region.",
+    "migrationPreservationQuestionsMaterialToOutage": false,
+    "outageGateRequirement": "Reverify the exact logical volume-to-service attachment before stop and after restore; do not detach, migrate, replace, or recreate it.",
+    "futureMigrationRequirement": "Obtain Railway confirmation of both logical-volume and volume-instance identity behavior before any migration."
+  }
+}

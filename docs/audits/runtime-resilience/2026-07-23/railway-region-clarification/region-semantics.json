@@ -1,0 +1,51 @@
+{
+  "schemaVersion": 1,
+  "kind": "railway_region_semantics_analysis",
+  "regionIdentifier": "us-east4-eqdc4a",
+  "conclusion": {
+    "label": "US East Metal",
+    "location": "Virginia, USA",
+    "currentlyDocumentedIdentifier": true,
+    "legacyOrDeprecated": "not indicated by current official documentation",
+    "aliasRequiringNormalization": "not documented",
+    "normalizationRequirement": "no such requirement is documented and no control-plane normalization state was observed",
+    "classification": "officially_documented_and_control_plane_observed"
+  },
+  "officialSources": [
+    {
+      "title": "Regions",
+      "url": "https://docs.railway.com/deployments/regions",
+      "lastUpdatedWhenObserved": "2026-05-22",
+      "claim": "US East Metal in Virginia uses region identifier us-east4-eqdc4a; the identifier is valid in Config as Code.",
+      "directlyAnswersArcanos": true
+    },
+    {
+      "title": "Edge Networking",
+      "url": "https://docs.railway.com/networking/edge-networking",
+      "lastUpdatedWhenObserved": null,
+      "claim": "The us-east4-eqdc4a upstream/edge zone maps to US East, Virginia.",
+      "directlyAnswersArcanos": true
+    },
+    {
+      "title": "Config as Code Reference",
+      "url": "https://docs.railway.com/config-as-code/reference",
+      "lastUpdatedWhenObserved": null,
+      "claim": "us-east4-eqdc4a is accepted as a current multiRegionConfig key.",
+      "directlyAnswersArcanos": true
+    }
+  ],
+  "controlPlaneEvidence": {
+    "acceptedDeploymentRegionKey": "us-east4-eqdc4a",
+    "dashboardRegionLabel": "US East (Virginia, USA)",
+    "dashboardSelectedRegion": "US East (Virginia, USA)",
+    "otherUsEastDestinationOffered": false,
+    "normalizationStateOrActionObserved": false
+  },
+  "unsupportedClaimsAvoided": [
+    "selecting the already selected region is a no-op",
+    "a hidden migration state cannot exist",
+    "same-looking display names prove resource identity",
+    "region migration preserves volume identity"
+  ],
+  "decision": "The existing placement already satisfies the intended US East region requirement. A region action is unnecessary to reach the documented target; this does not claim that Railway has affirmatively documented the absence of every hidden normalization mechanism."
+}
