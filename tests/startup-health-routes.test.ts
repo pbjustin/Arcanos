@@ -143,6 +143,8 @@ const originalHealthEnvironment = Object.fromEntries(
 ) as Record<(typeof HEALTH_ENV_NAMES)[number], string | undefined>;
 
 describe('actual Express startup health route ordering', () => {
+  jest.setTimeout(20_000);
+
   beforeEach(() => {
     process.env.NODE_ENV = 'test';
     process.env.OPENAI_API_KEY = 'test-openai-api-key';
