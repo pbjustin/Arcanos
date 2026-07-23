@@ -224,6 +224,7 @@ htmlcov/
 !public.key
 
 # Personal notes and temporary files with hardcoded paths
+/MEMORY.md
 GITHUB_SYNC_INSTRUCTIONS.md
 PR_DRAFT*.md
 REFACTORING_COMMIT_MESSAGE.md
