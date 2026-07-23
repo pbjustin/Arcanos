@@ -58,14 +58,23 @@ client, and start one reconnect loop. A successful reconnect moves the process
 back to `READY`. Repeated start calls and repeated disconnect events cannot
 create another client or overlapping retry loop.
 
-Redis-backed operations obtain only the lifecycle-owned ready client. When it
-is unavailable they fail immediately with `REDIS_DEPENDENCY_UNAVAILABLE` and a
-credential-free message. Commands are bounded to two seconds; a timeout or
-connection failure invalidates the client and starts the same single recovery
-loop. The incident kill switch retains its local fallback, while safety-v2
-continues to fail closed. An emergency kill-switch update made during an outage
-is marked dirty and written through before a recovered client is allowed to
-replace it with shared state.
+The lifecycle is also the sole Redis circuit breaker: `READY` is `CLOSED`, the
+retry wait is `OPEN`, and the one serialized connect-and-`PING` attempt is
+`HALF_OPEN`. Application probe capacity is zero while half-open. Each successful
+validation increments a ready generation; late commands from an older
+generation cannot return or invalidate the recovered client.
+
+Redis-backed operations can access the lifecycle-owned client only inside an
+`executeRedisOperation` callback with an allowlisted operation identity. When
+Redis is unavailable they fail before the callback with
+`REDIS_DEPENDENCY_UNAVAILABLE` and a credential-free message. Commands are
+bounded to two seconds; a timeout or connection failure invalidates the client
+and starts the same single recovery loop. Configured kill-switch reads fail
+closed to frozen/autonomy zero. Restrictive mutations apply locally first and
+reconcile after recovery; relaxing mutations persist before changing local
+state. In-process mutations are serialized and versioned, while relaxing
+cross-replica mutations use a fresh shared read and atomic compare-and-mutate so
+a concurrent restrictive update rejects the relaxation.
 
 Both `redis://` and TLS `rediss://` URLs are accepted. Without a valid discrete
 fallback, a non-empty malformed `REDIS_URL` remains explicitly configured but
@@ -107,6 +116,8 @@ begins.
 The focused regression suites are:
 
 ```text
+npm run test:redis-resilience
+
 tests/redis-startup-lifecycle.test.ts
 tests/dependency-lifecycle.test.ts
 tests/server-startup-resilience.test.ts
@@ -121,5 +132,6 @@ tests/unified-health-redis.test.ts
 They use fake clients and local HTTP requests only. They do not require a
 production credential or a live Redis service.
 
-The isolated Railway outage/recovery proof is prepared, but not executed, in
-`docs/RAILWAY_REDIS_LIFECYCLE_PREVIEW.md`.
+The reusable isolated Railway baseline/outage/recovery procedure is in
+`docs/RAILWAY_REDIS_LIFECYCLE_PREVIEW.md`; dated audit evidence records whether
+a particular execution occurred.

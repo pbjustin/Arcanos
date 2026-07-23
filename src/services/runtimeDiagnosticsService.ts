@@ -5,8 +5,7 @@ import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import { getGptModuleMap } from '@platform/runtime/gptRouterConfig.js';
 import {
   executeRedisOperation,
-  getReadyRedisClient,
-  type RedisLifecycleClient
+  getRedisLifecycleSnapshot
 } from '@platform/runtime/redisLifecycle.js';
 import { loadModuleDefinitions, type LoadedModule } from './moduleLoader.js';
 import { getActiveRouteTable } from './runtimeRouteTableService.js';
@@ -140,8 +139,6 @@ interface MetricsSnapshot {
   recentLatencyMs: number[] | `DATA NOT EXPOSED: ${string}`;
   topErrorRoutes: DiagnosticsRouteErrorSnapshot[];
 }
-
-type RuntimeDiagnosticsRedisClient = RedisLifecycleClient;
 
 const RECENT_LATENCY_LIMIT = Math.max(10, getEnvNumber('DIAGNOSTICS_RECENT_LATENCY_LIMIT', 50));
 const RECENT_REQUEST_LIMIT = Math.max(25, getEnvNumber('DIAGNOSTICS_RECENT_REQUEST_LIMIT', 250));
@@ -492,13 +489,14 @@ class RuntimeDiagnosticsService {
 }
 
 class RuntimeDiagnosticsRedisStore {
+  private writeFailureGeneration: number | null = null;
+
   async recordRequestCompletion(
     statusCode: number,
     latencyMs: number,
     metadata: AIDegradedResponseMetadata = {}
   ): Promise<void> {
-    const redisClient = this.getClient();
-    if (!redisClient) {
+    if (!REDIS_SHARED_METRICS_ENABLED) {
       return;
     }
 
@@ -513,8 +511,14 @@ class RuntimeDiagnosticsRedisStore {
         redisCommandBatch.lPush(this.key('recent_latency_ms'), String(latencyMs));
         redisCommandBatch.lTrim(this.key('recent_latency_ms'), 0, RECENT_LATENCY_LIMIT - 1);
         await redisCommandBatch.exec();
-      }, { client: redisClient });
+      }, { operation: 'diagnostics.metrics.record' });
+      this.writeFailureGeneration = null;
     } catch {
+      const readyGeneration = getRedisLifecycleSnapshot().readyGeneration;
+      if (this.writeFailureGeneration === readyGeneration) {
+        return;
+      }
+      this.writeFailureGeneration = readyGeneration;
       logger.warn('diagnostics.shared_metrics.write_failed', {
         module: 'runtime-diagnostics',
         errorCode: 'REDIS_DEPENDENCY_UNAVAILABLE'
@@ -523,8 +527,7 @@ class RuntimeDiagnosticsRedisStore {
   }
 
   async getSnapshot(): Promise<MetricsSnapshot | null> {
-    const redisClient = this.getClient();
-    if (!redisClient) {
+    if (!REDIS_SHARED_METRICS_ENABLED) {
       return null;
     }
 
@@ -536,7 +539,7 @@ class RuntimeDiagnosticsRedisStore {
           .get(this.key('latency_total_ms'))
           .lRange(this.key('recent_latency_ms'), 0, RECENT_LATENCY_LIMIT - 1)
           .exec(),
-        { client: redisClient }
+        { operation: 'diagnostics.metrics.read' }
       );
 
       if (!Array.isArray(redisResults) || redisResults.length < 4) {
@@ -585,8 +588,7 @@ class RuntimeDiagnosticsRedisStore {
   }
 
   async reset(): Promise<void> {
-    const redisClient = this.getClient();
-    if (!redisClient) {
+    if (!REDIS_SHARED_METRICS_ENABLED) {
       return;
     }
 
@@ -598,7 +600,7 @@ class RuntimeDiagnosticsRedisStore {
           this.key('latency_total_ms'),
           this.key('recent_latency_ms')
         ]),
-        { client: redisClient }
+        { operation: 'diagnostics.metrics.reset' }
       );
     } catch {
       logger.warn('diagnostics.shared_metrics.reset_failed', {
@@ -606,14 +608,6 @@ class RuntimeDiagnosticsRedisStore {
         errorCode: 'REDIS_DEPENDENCY_UNAVAILABLE'
       });
     }
-  }
-
-  private getClient(): RuntimeDiagnosticsRedisClient | null {
-    if (!REDIS_SHARED_METRICS_ENABLED) {
-      return null;
-    }
-
-    return getReadyRedisClient();
   }
 
   private key(suffix: string): string {

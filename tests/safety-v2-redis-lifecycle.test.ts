@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 interface FakeRedisClient {
   set: jest.Mock;
@@ -19,16 +19,14 @@ function dependencyUnavailableError(): Error & { code: string; dependency: strin
 }
 
 let readyClient: FakeRedisClient | null = null;
-const requireReadyRedisClientMock = jest.fn(() => {
-  if (!readyClient) {
+const executeRedisOperationMock = jest.fn(async (
+  operation: (client: FakeRedisClient) => Promise<unknown>,
+  _options?: Record<string, unknown>
+) => {
+  const client = readyClient;
+  if (!client) {
     throw dependencyUnavailableError();
   }
-  return readyClient;
-});
-const executeRedisOperationMock = jest.fn(async (
-  operation: (client: FakeRedisClient) => Promise<unknown>
-) => {
-  const client = requireReadyRedisClientMock();
   try {
     return await operation(client);
   } catch (error) {
@@ -40,8 +38,7 @@ const executeRedisOperationMock = jest.fn(async (
 });
 
 jest.unstable_mockModule('@platform/runtime/redisLifecycle.js', () => ({
-  executeRedisOperation: executeRedisOperationMock,
-  requireReadyRedisClient: requireReadyRedisClientMock
+  executeRedisOperation: executeRedisOperationMock
 }));
 
 const redisBoundary = await import('../src/services/safety/v2/redisClient.js');
@@ -59,35 +56,55 @@ function createFakeRedisClient(): FakeRedisClient {
   };
 }
 
+function createDeferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T | PromiseLike<T>) => void;
+} {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 describe('safety v2 shared Redis lifecycle boundary', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     readyClient = null;
   });
 
-  it('fails closed immediately and uses the recovered shared client without a restart', async () => {
-    const unavailableClient = redisBoundary.getRedis();
+  afterEach(() => {
+    jest.useRealTimers();
+  });
 
-    expect(requireReadyRedisClientMock).toHaveBeenCalledTimes(1);
-    await expect(unavailableClient).rejects.toMatchObject({
-      name: 'DependencyUnavailableError',
-      code: 'REDIS_DEPENDENCY_UNAVAILABLE',
-      dependency: 'redis',
-      message: 'Redis dependency is unavailable.'
-    });
-    await expect(redisBoundary.setNX('nonce:unavailable', 30)).rejects.toMatchObject({
+  it('fails closed immediately and uses the recovered shared client without a restart', async () => {
+    await expect(redisBoundary.setNX(
+      'nonce:unavailable',
+      30,
+      'trace-unavailable'
+    )).rejects.toMatchObject({
       code: 'REDIS_DEPENDENCY_UNAVAILABLE'
     });
 
     const client = createFakeRedisClient();
     readyClient = client;
 
-    await expect(redisBoundary.getRedis()).resolves.toBe(client);
-    await expect(redisBoundary.setNX('nonce:recovered', 30)).resolves.toBe(true);
+    await expect(redisBoundary.setNX(
+      'nonce:recovered',
+      30,
+      'trace-recovered'
+    )).resolves.toBe(true);
     expect(client.set).toHaveBeenCalledWith('nonce:recovered', '1', {
       NX: true,
       EX: 30
     });
+    expect(executeRedisOperationMock).toHaveBeenLastCalledWith(
+      expect.any(Function),
+      {
+        operation: 'safety.nonce.consume',
+        correlationId: 'trace-recovered'
+      }
+    );
 
     await redisBoundary.disconnectRedis();
     expect(client.quit).not.toHaveBeenCalled();
@@ -140,5 +157,40 @@ describe('safety v2 shared Redis lifecycle boundary', () => {
     expect(consoleError).toHaveBeenCalledWith('[v2/lock] failed to release lock');
     expect(JSON.stringify(consoleError.mock.calls)).not.toContain('secret');
     expect(JSON.stringify(consoleError.mock.calls)).not.toContain('private.internal');
+  });
+
+  it('serializes heartbeat work and waits for it before conditional release', async () => {
+    jest.useFakeTimers();
+    const heartbeat = createDeferred<number>();
+    const client = createFakeRedisClient();
+    client.eval
+      .mockImplementationOnce(() => heartbeat.promise)
+      .mockResolvedValueOnce(1);
+    readyClient = client;
+    const onLockLost = jest.fn();
+    const lock = new DistributedLock('serialized-heartbeat', {
+      ttlMs: 10_000,
+      heartbeatMs: 2_000,
+      onLockLost
+    });
+    await lock.acquire();
+
+    await jest.advanceTimersByTimeAsync(2_000);
+    expect(client.eval).toHaveBeenCalledTimes(1);
+    await jest.advanceTimersByTimeAsync(10_000);
+    expect(client.eval).toHaveBeenCalledTimes(1);
+
+    let releaseSettled = false;
+    const releasePromise = lock.release().finally(() => {
+      releaseSettled = true;
+    });
+    await Promise.resolve();
+    expect(releaseSettled).toBe(false);
+    expect(client.eval).toHaveBeenCalledTimes(1);
+
+    heartbeat.resolve(1);
+    await releasePromise;
+    expect(client.eval).toHaveBeenCalledTimes(2);
+    expect(onLockLost).not.toHaveBeenCalled();
   });
 });

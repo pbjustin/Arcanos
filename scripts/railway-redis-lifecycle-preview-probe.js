@@ -8,7 +8,7 @@
 import process from 'node:process';
 import { pathToFileURL } from 'node:url';
 
-export const PROBE_SCHEMA_VERSION = 1;
+export const PROBE_SCHEMA_VERSION = 2;
 export const PROBE_KIND = 'redis_lifecycle_preview_evidence';
 export const PRODUCTION_BASE_URL = 'https://acranos-production.up.railway.app';
 export const PROBE_LIMITS = Object.freeze({
@@ -67,7 +67,7 @@ const TARGET_FIELDS = Object.freeze([
 ]);
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
-const ENVIRONMENT_PATTERN = /^arcanos-redis-lifecycle-preview-[0-9]{8}-[1-9][0-9]*$/u;
+const ENVIRONMENT_PATTERN = /^(?:arcanos-redis-lifecycle-preview-[0-9]{8}-[1-9][0-9]*|dep-resilience-preview-[0-9a-f]{7,12}|dependency-resilience-preview-(?:[0-9]{8}|[0-9a-f]{7,12}))$/u;
 const PRODUCTION_HOSTNAME_PATTERN = /(^|[.-])production([.-]|$)/iu;
 const SENSITIVE_OR_LOW_LEVEL_PATTERN = /(?:redis|rediss):\/\/|\.railway\.internal|authorization|bearer\s|"(?:accessToken|token|secret|password)"\s*:|wrongpass|econnrefused|econnreset|etimedout|enotfound|enetunreach|ehostunreach|eai_again|getaddrinfo|"stack"\s*:|\bat\s+[^\r\n]+:\d+:\d+|(?:\b\d{1,3}\.){3}\d{1,3}\b/iu;
 const MAX_RESPONSE_CHARACTERS = 65_536;
@@ -202,11 +202,15 @@ export function resolveExecutionPolicy(config) {
     || !UUID_PATTERN.test(config.webDeploymentId)) {
     fail('INVALID_RAILWAY_RESOURCE_ID');
   }
-  if (!['outage', 'recovery'].includes(config.phase)) {
+  if (!['baseline', 'outage', 'recovery'].includes(config.phase)) {
     fail('INVALID_PROBE_PHASE');
   }
 
-  const defaultMaxSamples = config.phase === 'outage' ? 5 : 80;
+  const defaultMaxSamples = config.phase === 'baseline'
+    ? 3
+    : config.phase === 'outage'
+      ? 5
+      : 80;
   return {
     mode: config.execute ? 'EXECUTE' : 'DRY_RUN',
     execute: config.execute,
@@ -264,7 +268,7 @@ export async function requestJson(url, options = {}) {
       signal: controller.signal,
       headers: {
         accept: 'application/json',
-        'user-agent': 'arcanos-redis-lifecycle-preview-probe/1'
+        'user-agent': 'arcanos-redis-lifecycle-preview-probe/2'
       }
     });
     const rawBody = await response.text();
@@ -326,7 +330,11 @@ function projectHealthEndpoint(result) {
     redisReady: asNullableBoolean(redis.ready),
     redisStatus: asNullableString(redis.status),
     redisCode: asNullableString(redis.code),
-    retryScheduled: asNullableBoolean(redis.retry_scheduled)
+    retryScheduled: asNullableBoolean(redis.retry_scheduled),
+    recoveryCount: asNullableInteger(redis.recovery_count),
+    readyGeneration: asNullableInteger(redis.ready_generation),
+    circuitEnabled: asNullableBoolean(redis.circuit_enabled),
+    circuitState: asNullableString(redis.circuit_state)
   };
 }
 
@@ -345,7 +353,10 @@ function projectReadinessEndpoint(result) {
     readinessStatus: asNullableString(body.status),
     redisHealthy: asNullableBoolean(redis.healthy),
     redisCode: asNullableString(redis.code),
-    recoveryCount: asNullableInteger(metadata.recoveryCount)
+    recoveryCount: asNullableInteger(metadata.recoveryCount),
+    readyGeneration: asNullableInteger(metadata.readyGeneration),
+    circuitEnabled: asNullableBoolean(metadata.circuitEnabled),
+    circuitState: asNullableString(metadata.circuitState)
   };
 }
 
@@ -451,8 +462,16 @@ export function evaluateOutageObservations(observations, limits = DEFAULTS) {
   const stableDependencyError = finalObservation?.readyz.redisCode === 'REDIS_DEPENDENCY_UNAVAILABLE'
     && finalObservation?.health.redisCode === 'REDIS_DEPENDENCY_UNAVAILABLE'
     && finalObservation?.health.redisReady === false;
-  const retryScheduled = finalObservation?.health.retryScheduled === true
-    && finalObservation?.healthz.retryScheduled === true;
+  const breakerUnavailable = observations.length > 0
+    && observations.every((observation) => (
+      ['OPEN', 'HALF_OPEN'].includes(observation.health.circuitState)
+      && ['OPEN', 'HALF_OPEN'].includes(observation.healthz.circuitState)
+      && ['OPEN', 'HALF_OPEN'].includes(observation.readyz.circuitState)
+    ));
+  const retryScheduled = observations.some((observation) => (
+    observation.health.retryScheduled === true
+    && observation.healthz.retryScheduled === true
+  ));
   const sanitized = observations.every((observation) => !observation.sensitiveContentObserved);
 
   const checks = [
@@ -461,10 +480,62 @@ export function evaluateOutageObservations(observations, limits = DEFAULTS) {
     check('listener_bound', listenerBound, 'LISTENER_BOUND_DURING_OUTAGE', 'LISTENER_NOT_CONFIRMED_BOUND'),
     check('readiness_unavailable', readinessUnavailable, 'READINESS_REJECTED_TRAFFIC', 'READINESS_OUTAGE_NOT_CONFIRMED'),
     check('stable_dependency_error', stableDependencyError, 'REDIS_DEPENDENCY_UNAVAILABLE_OBSERVED', 'STABLE_REDIS_ERROR_NOT_OBSERVED'),
+    check('circuit_unavailable', breakerUnavailable, 'REDIS_CIRCUIT_OPEN_OR_HALF_OPEN', 'REDIS_CIRCUIT_STATE_INVALID'),
     check('retry_scheduled', retryScheduled, 'REDIS_RETRY_SCHEDULED', 'REDIS_RETRY_NOT_CONFIRMED'),
     check('sanitized_public_output', sanitized, 'PUBLIC_OUTPUT_SANITIZED', 'SENSITIVE_OR_LOW_LEVEL_OUTPUT_OBSERVED')
   ];
 
+  return {
+    checks,
+    livenessFailures,
+    readinessTransitionObserved: false,
+    passed: checks.every((entry) => entry.status === 'PASS')
+  };
+}
+
+export function evaluateBaselineObservations(observations, limits = DEFAULTS) {
+  const livenessFailures = countLivenessFailures(observations);
+  const livenessReachable = observations.length > 0 && livenessFailures === 0;
+  const responseLatencyBounded = hasBoundedResponseLatency(observations, limits.requestTimeoutMs);
+  const listenerBound = observations.length > 0
+    && observations.every((observation) => (
+      observation.health.listenerBound === true
+      && observation.healthz.listenerBound === true
+    ));
+  const readinessReady = observations.length > 0
+    && observations.every((observation) => (
+      observation.readyz.status === 200
+      && observation.readyz.ready === true
+      && observation.readyz.redisHealthy === true
+    ));
+  const redisReady = observations.length > 0
+    && observations.every((observation) => (
+      observation.health.redisReady === true
+      && observation.healthz.redisReady === true
+      && observation.health.redisCode === null
+      && observation.healthz.redisCode === null
+    ));
+  const circuitClosed = observations.length > 0
+    && observations.every((observation) => (
+      observation.health.circuitState === 'CLOSED'
+      && observation.healthz.circuitState === 'CLOSED'
+      && observation.readyz.circuitState === 'CLOSED'
+    ));
+  const retryIdle = observations.every((observation) => (
+    observation.health.retryScheduled === false
+    && observation.healthz.retryScheduled === false
+  ));
+  const sanitized = observations.every((observation) => !observation.sensitiveContentObserved);
+  const checks = [
+    check('liveness_reachable', livenessReachable, 'LIVENESS_REACHABLE', 'LIVENESS_FAILURE_OBSERVED'),
+    check('response_latency_bounded', responseLatencyBounded, 'RESPONSES_COMPLETED_WITHIN_TIMEOUT', 'RESPONSE_LATENCY_BOUND_EXCEEDED'),
+    check('listener_bound', listenerBound, 'LISTENER_BOUND', 'LISTENER_NOT_CONFIRMED_BOUND'),
+    check('readiness_ready', readinessReady, 'READINESS_CONFIRMED', 'READINESS_NOT_READY'),
+    check('redis_ready', redisReady, 'REDIS_REPORTED_READY', 'REDIS_READY_NOT_CONFIRMED'),
+    check('circuit_closed', circuitClosed, 'REDIS_CIRCUIT_CLOSED', 'REDIS_CIRCUIT_NOT_CLOSED'),
+    check('retry_idle', retryIdle, 'REDIS_RETRY_IDLE', 'REDIS_RETRY_STILL_SCHEDULED'),
+    check('sanitized_public_output', sanitized, 'PUBLIC_OUTPUT_SANITIZED', 'SENSITIVE_OR_LOW_LEVEL_OUTPUT_OBSERVED')
+  ];
   return {
     checks,
     livenessFailures,
@@ -485,6 +556,19 @@ export function evaluateRecoveryObservations(observations, limits = DEFAULTS) {
     && observation.readyz.status === 200
     && observation.readyz.ready === true
     && observation.readyz.redisHealthy === true
+    && observation.health.redisReady === true
+    && observation.health.redisStatus === 'ready'
+    && observation.health.redisCode === null
+    && observation.healthz.redisReady === true
+    && observation.healthz.redisStatus === 'ready'
+    && observation.healthz.redisCode === null
+    && observation.health.circuitState === 'CLOSED'
+    && observation.healthz.circuitState === 'CLOSED'
+    && observation.readyz.circuitState === 'CLOSED'
+    && typeof observation.readyz.recoveryCount === 'number'
+    && observation.readyz.recoveryCount >= 1
+    && typeof observation.readyz.readyGeneration === 'number'
+    && observation.readyz.readyGeneration >= 2
   ));
   const transitionObserved = outageIndex >= 0 && readyIndex > outageIndex;
   const finalObservation = readyIndex >= 0 ? observations[readyIndex] : observations.at(-1);
@@ -504,9 +588,14 @@ export function evaluateRecoveryObservations(observations, limits = DEFAULTS) {
     && finalObservation?.health.redisCode === null
     && finalObservation?.healthz.redisReady === true
     && finalObservation?.healthz.redisStatus === 'ready'
-    && finalObservation?.healthz.redisCode === null;
+    && finalObservation?.healthz.redisCode === null
+    && finalObservation?.health.circuitState === 'CLOSED'
+    && finalObservation?.healthz.circuitState === 'CLOSED'
+    && finalObservation?.readyz.circuitState === 'CLOSED';
   const recoveryRecorded = typeof finalObservation?.readyz.recoveryCount === 'number'
-    && finalObservation.readyz.recoveryCount >= 1;
+    && finalObservation.readyz.recoveryCount >= 1
+    && typeof finalObservation?.readyz.readyGeneration === 'number'
+    && finalObservation.readyz.readyGeneration >= 2;
   const sanitized = observations.every((observation) => !observation.sensitiveContentObserved);
 
   const checks = [
@@ -577,8 +666,8 @@ export async function runProbe(config, dependencies = {}) {
     observations.push(observation);
 
     if (policy.phase === 'recovery') {
-      const transition = evaluateRecoveryObservations(observations, policy).readinessTransitionObserved;
-      if (transition) {
+      const recoveryEvaluation = evaluateRecoveryObservations(observations, policy);
+      if (recoveryEvaluation.passed) {
         break;
       }
     }
@@ -587,9 +676,11 @@ export async function runProbe(config, dependencies = {}) {
     }
   }
 
-  const evaluation = policy.phase === 'outage'
-    ? evaluateOutageObservations(observations, policy)
-    : evaluateRecoveryObservations(observations, policy);
+  const evaluation = policy.phase === 'baseline'
+    ? evaluateBaselineObservations(observations, policy)
+    : policy.phase === 'outage'
+      ? evaluateOutageObservations(observations, policy)
+      : evaluateRecoveryObservations(observations, policy);
 
   return {
     schemaVersion: PROBE_SCHEMA_VERSION,

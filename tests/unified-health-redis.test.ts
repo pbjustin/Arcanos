@@ -25,12 +25,28 @@ const DEFAULT_REDIS_LIFECYCLE: RedisLifecycleSnapshot = {
   state: 'STARTING',
   configured: true,
   connected: false,
+  attemptInFlight: true,
+  readyGeneration: 0,
+  circuitEnabled: true,
+  circuitState: 'HALF_OPEN',
+  circuitFailureThreshold: 1,
   attempt: 1,
   recoveryCount: 0,
   retryScheduled: false,
   lastTransitionAt: '2026-07-21T12:00:00.000Z',
   lastReadyAt: null,
-  lastErrorCode: null
+  lastErrorCode: null,
+  operationGate: {
+    inFlight: 0,
+    admittedTotal: 0,
+    rejectedTotal: 0,
+    succeededTotal: 0,
+    failedTotal: 0,
+    timedOutTotal: 0,
+    lastOperation: null,
+    lastOutcome: null,
+    lastDurationMs: null
+  }
 };
 
 const DEFAULT_STARTUP_LIFECYCLE: StartupLifecycleSnapshot = {
@@ -181,6 +197,9 @@ describe('platform/resilience/unifiedHealth Redis lifecycle checks', () => {
         state: 'READY',
         configured: true,
         connected: true,
+        attemptInFlight: false,
+        readyGeneration: 2,
+        circuitState: 'CLOSED',
         attempt: 2,
         recoveryCount: 1,
         retryScheduled: false,
@@ -198,6 +217,9 @@ describe('platform/resilience/unifiedHealth Redis lifecycle checks', () => {
         connected: true,
         source: 'discrete',
         state: 'READY',
+        circuitEnabled: true,
+        circuitState: 'CLOSED',
+        readyGeneration: 2,
         attempt: 2,
         recoveryCount: 1
       }

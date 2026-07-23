@@ -20,12 +20,12 @@
     "checks"
   ],
   "properties": {
-    "schemaVersion": { "const": 1 },
+    "schemaVersion": { "const": 2 },
     "kind": { "const": "redis_lifecycle_preview_evidence" },
     "mode": { "enum": ["DRY_RUN", "EXECUTE"] },
     "phase": {
       "type": ["string", "null"],
-      "enum": ["outage", "recovery", null]
+      "enum": ["baseline", "outage", "recovery", null]
     },
     "target": {
       "oneOf": [
@@ -46,7 +46,7 @@
             "baseUrl": { "type": "string", "format": "uri" },
             "environment": {
               "type": "string",
-              "pattern": "^arcanos-redis-lifecycle-preview-[0-9]{8}-[1-9][0-9]*$"
+              "pattern": "^(?:arcanos-redis-lifecycle-preview-[0-9]{8}-[1-9][0-9]*|dep-resilience-preview-[0-9a-f]{7,12}|dependency-resilience-preview-(?:[0-9]{8}|[0-9a-f]{7,12}))$"
             },
             "environmentId": { "$ref": "#/$defs/uuid" },
             "webServiceId": { "$ref": "#/$defs/uuid" },
@@ -128,7 +128,11 @@
         "redisReady",
         "redisStatus",
         "redisCode",
-        "retryScheduled"
+        "retryScheduled",
+        "recoveryCount",
+        "readyGeneration",
+        "circuitEnabled",
+        "circuitState"
       ],
       "properties": {
         "status": { "$ref": "#/$defs/nullableInteger" },
@@ -141,7 +145,11 @@
         "redisReady": { "type": ["boolean", "null"] },
         "redisStatus": { "$ref": "#/$defs/nullableString" },
         "redisCode": { "$ref": "#/$defs/nullableString" },
-        "retryScheduled": { "type": ["boolean", "null"] }
+        "retryScheduled": { "type": ["boolean", "null"] },
+        "recoveryCount": { "$ref": "#/$defs/nullableInteger" },
+        "readyGeneration": { "$ref": "#/$defs/nullableInteger" },
+        "circuitEnabled": { "type": ["boolean", "null"] },
+        "circuitState": { "$ref": "#/$defs/nullableString" }
       }
     },
     "readinessObservation": {
@@ -155,7 +163,10 @@
         "readinessStatus",
         "redisHealthy",
         "redisCode",
-        "recoveryCount"
+        "recoveryCount",
+        "readyGeneration",
+        "circuitEnabled",
+        "circuitState"
       ],
       "properties": {
         "status": { "$ref": "#/$defs/nullableInteger" },
@@ -165,7 +176,10 @@
         "readinessStatus": { "$ref": "#/$defs/nullableString" },
         "redisHealthy": { "type": ["boolean", "null"] },
         "redisCode": { "$ref": "#/$defs/nullableString" },
-        "recoveryCount": { "$ref": "#/$defs/nullableInteger" }
+        "recoveryCount": { "$ref": "#/$defs/nullableInteger" },
+        "readyGeneration": { "$ref": "#/$defs/nullableInteger" },
+        "circuitEnabled": { "type": ["boolean", "null"] },
+        "circuitState": { "$ref": "#/$defs/nullableString" }
       }
     },
     "observation": {

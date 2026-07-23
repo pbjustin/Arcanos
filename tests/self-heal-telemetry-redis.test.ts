@@ -15,7 +15,6 @@ interface TelemetryRedisHarness {
   emitLifecycle: (snapshot: RedisLifecycleSnapshot) => void;
   subscribeMock: jest.Mock;
   unsubscribeMock: jest.Mock;
-  getReadyClientMock: jest.Mock;
   loggerWarnMock: jest.Mock;
 }
 
@@ -27,12 +26,28 @@ function lifecycleSnapshot(
     state,
     configured: true,
     connected: state === 'READY',
+    attemptInFlight: false,
+    readyGeneration: state === 'READY' ? 1 : 0,
+    circuitEnabled: true,
+    circuitState: state === 'READY' ? 'CLOSED' : 'OPEN',
+    circuitFailureThreshold: 1,
     attempt: state === 'STARTING' ? 0 : 1,
     recoveryCount: 0,
     retryScheduled: state === 'DEGRADED',
     lastTransitionAt: '2026-07-21T12:00:00.000Z',
     lastReadyAt: state === 'READY' ? '2026-07-21T12:00:00.000Z' : null,
     lastErrorCode: state === 'DEGRADED' ? 'REDIS_CONNECTION_REFUSED' : null,
+    operationGate: {
+      inFlight: 0,
+      admittedTotal: 0,
+      rejectedTotal: 0,
+      succeededTotal: 0,
+      failedTotal: 0,
+      timedOutTotal: 0,
+      lastOperation: null,
+      lastOutcome: null,
+      lastDurationMs: null
+    },
     ...overrides
   };
 }
@@ -95,12 +110,12 @@ async function loadTelemetryRedisHarness(
 
   const lifecycleListeners = new Set<(snapshot: RedisLifecycleSnapshot) => void>();
   const unsubscribeMock = jest.fn();
+  let currentSnapshot = initialSnapshot;
   let readyClient: FakeRedisTelemetryClient | null = null;
   const client: FakeRedisTelemetryClient = {
     get: jest.fn(async () => null),
     set: jest.fn(async () => 'OK')
   };
-  const getReadyClientMock = jest.fn(() => readyClient);
   const loggerWarnMock = jest.fn();
   const subscribeMock = jest.fn((listener: (snapshot: RedisLifecycleSnapshot) => void) => {
     lifecycleListeners.add(listener);
@@ -114,15 +129,15 @@ async function loadTelemetryRedisHarness(
   jest.unstable_mockModule('@platform/runtime/redisLifecycle.js', () => ({
     executeRedisOperation: jest.fn(async (
       operation: (client: FakeRedisTelemetryClient) => Promise<unknown>,
-      operationOptions?: { client?: FakeRedisTelemetryClient }
+      _operationOptions?: Record<string, unknown>
     ) => {
-      const operationClient = operationOptions?.client ?? readyClient;
+      const operationClient = readyClient;
       if (!operationClient) {
         throw new Error('REDIS_DEPENDENCY_UNAVAILABLE');
       }
       return operation(operationClient);
     }),
-    getReadyRedisClient: getReadyClientMock,
+    getRedisLifecycleSnapshot: jest.fn(() => ({ ...currentSnapshot })),
     subscribeRedisLifecycle: subscribeMock
   }));
   jest.unstable_mockModule('@platform/runtime/redis.js', () => ({
@@ -163,13 +178,13 @@ async function loadTelemetryRedisHarness(
       readyClient = nextClient;
     },
     emitLifecycle(snapshot): void {
+      currentSnapshot = snapshot;
       for (const listener of lifecycleListeners) {
         listener(snapshot);
       }
     },
     subscribeMock,
     unsubscribeMock,
-    getReadyClientMock,
     loggerWarnMock
   };
 }

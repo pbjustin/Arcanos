@@ -13,7 +13,8 @@ interface KillSwitchHarnessOptions {
     configured?: boolean;
     getValue?: string | null;
     getError?: Error;
-    setError?: Error;
+    evalError?: Error;
+    evalImplementation?: () => Promise<void>;
   };
 }
 
@@ -22,10 +23,11 @@ interface KillSwitchHarness {
   createClientMock: jest.Mock;
   redisConnectMock: jest.Mock;
   redisGetMock: jest.Mock;
-  redisSetMock: jest.Mock;
+  redisEvalMock: jest.Mock;
   loggerWarnMock: jest.Mock;
   loggerErrorMock: jest.Mock;
   setRedisReady: (ready: boolean) => void;
+  setSharedValue: (value: string | null) => void;
 }
 
 /**
@@ -56,26 +58,67 @@ async function loadKillSwitchHarness(options: KillSwitchHarnessOptions = {}): Pr
 
   let redisReady = options.redis?.ready ?? options.redis !== undefined;
   const redisConfigured = options.redis?.configured ?? options.redis !== undefined;
+  let sharedValue = options.redis?.getValue ?? null;
   const redisConnectMock = jest.fn(async () => undefined);
   const redisGetMock = jest.fn(async () => {
     if (options.redis?.getError) {
       throw options.redis.getError;
     }
-    return options.redis?.getValue ?? null;
+    return sharedValue;
   });
-  const redisSetMock = jest.fn(async () => {
-    if (options.redis?.setError) {
-      throw options.redis.setError;
+  const redisEvalMock = jest.fn(async (
+    _script: string,
+    command: { arguments: string[] }
+  ) => {
+    if (options.redis?.evalError) {
+      throw options.redis.evalError;
     }
+    await options.redis?.evalImplementation?.();
+    const [mode, autonomyValue, freezeValue, expectedFreeze, expectedAutonomy] =
+      command.arguments;
+    const parsed = sharedValue
+      ? JSON.parse(sharedValue) as { freeze?: unknown; autonomy?: unknown }
+      : {};
+    const state = {
+      freeze: typeof parsed.freeze === 'boolean' ? parsed.freeze : null,
+      autonomy: typeof parsed.autonomy === 'number'
+        ? Math.max(0, Math.min(3, Math.trunc(parsed.autonomy)))
+        : null
+    };
+    const freezeToken = state.freeze === null ? 'null' : String(state.freeze);
+    const autonomyToken = state.autonomy === null ? 'null' : String(state.autonomy);
+    if (
+      expectedFreeze !== '*'
+      && (freezeToken !== expectedFreeze || autonomyToken !== expectedAutonomy)
+    ) {
+      return '__ARCANOS_KILL_SWITCH_CONFLICT__';
+    }
+    if (mode === 'restrictive') {
+      if (freezeValue === '1') {
+        state.freeze = true;
+      }
+      if (autonomyValue !== '') {
+        const requested = Number(autonomyValue);
+        state.autonomy = state.autonomy === null
+          ? requested
+          : Math.min(state.autonomy, requested);
+      }
+    } else if (mode === 'unfreeze') {
+      state.freeze = false;
+    } else if (mode === 'autonomy_relax') {
+      state.autonomy = Number(autonomyValue);
+    }
+    sharedValue = JSON.stringify(state);
+    return sharedValue;
   });
   const createClientMock = jest.fn(() => ({
     connect: redisConnectMock,
     get: redisGetMock,
-    set: redisSetMock
+    eval: redisEvalMock
   }));
   const sharedRedisClient = {
     get: redisGetMock,
-    set: redisSetMock
+    eval: redisEvalMock
   };
 
   jest.unstable_mockModule('redis', () => ({
@@ -84,9 +127,9 @@ async function loadKillSwitchHarness(options: KillSwitchHarnessOptions = {}): Pr
   jest.unstable_mockModule('@platform/runtime/redisLifecycle.js', () => ({
     executeRedisOperation: jest.fn(async (
       operation: (client: typeof sharedRedisClient) => Promise<unknown>,
-      operationOptions?: { client?: typeof sharedRedisClient }
+      _operationOptions?: Record<string, unknown>
     ) => {
-      const operationClient = operationOptions?.client ?? (redisReady ? sharedRedisClient : null);
+      const operationClient = redisReady ? sharedRedisClient : null;
       if (!operationClient) {
         throw Object.assign(new Error('Redis dependency is unavailable.'), {
           code: 'REDIS_DEPENDENCY_UNAVAILABLE'
@@ -94,7 +137,6 @@ async function loadKillSwitchHarness(options: KillSwitchHarnessOptions = {}): Pr
       }
       return operation(operationClient);
     }),
-    getReadyRedisClient: jest.fn(() => redisReady ? sharedRedisClient : null),
     getRedisLifecycleSnapshot: jest.fn(() => ({
       state: redisReady ? 'READY' : redisConfigured ? 'DEGRADED' : 'READY',
       configured: redisConfigured,
@@ -127,11 +169,14 @@ async function loadKillSwitchHarness(options: KillSwitchHarnessOptions = {}): Pr
     createClientMock,
     redisConnectMock,
     redisGetMock,
-    redisSetMock,
+    redisEvalMock,
     loggerWarnMock,
     loggerErrorMock,
     setRedisReady: (ready: boolean) => {
       redisReady = ready;
+    },
+    setSharedValue: (value: string | null) => {
+      sharedValue = value;
     }
   };
 }
@@ -193,7 +238,7 @@ describe('incidentResponse/killSwitch', () => {
     });
   });
 
-  it('falls back immediately while unavailable and uses the shared client after lifecycle recovery', async () => {
+  it('fails closed immediately while unavailable and uses shared state after lifecycle recovery', async () => {
     const harness = await loadKillSwitchHarness({
       config: { selfImproveFrozen: false, selfImproveAutonomyLevel: 1 },
       redis: {
@@ -204,11 +249,11 @@ describe('incidentResponse/killSwitch', () => {
     });
 
     await expect(harness.moduleUnderTest.getKillSwitchStatus()).resolves.toEqual({
-      frozen: false,
-      autonomyLevel: 1,
+      frozen: true,
+      autonomyLevel: 0,
       overrides: {
-        freeze: null,
-        autonomy: null
+        freeze: true,
+        autonomy: 0
       }
     });
     expect(harness.redisGetMock).not.toHaveBeenCalled();
@@ -241,7 +286,7 @@ describe('incidentResponse/killSwitch', () => {
     });
 
     await harness.moduleUnderTest.freezeSelfImprove('redis-outage');
-    expect(harness.redisSetMock).not.toHaveBeenCalled();
+    expect(harness.redisEvalMock).not.toHaveBeenCalled();
 
     harness.setRedisReady(true);
 
@@ -253,17 +298,17 @@ describe('incidentResponse/killSwitch', () => {
         autonomy: 0
       }
     });
-    expect(harness.redisSetMock).toHaveBeenCalledTimes(1);
-    expect(harness.redisSetMock).toHaveBeenCalledWith(
-      'arcanos:self-improve:kill-switch:v1',
-      JSON.stringify({ freeze: true, autonomy: 0 })
-    );
+    expect(harness.redisEvalMock).toHaveBeenCalledTimes(1);
+    expect(harness.redisEvalMock.mock.calls[0]?.[1]).toEqual({
+      keys: ['arcanos:self-improve:kill-switch:v1'],
+      arguments: ['restrictive', '0', '1', '*', '*']
+    });
     expect(harness.redisGetMock).not.toHaveBeenCalled();
     expect(harness.createClientMock).not.toHaveBeenCalled();
     expect(harness.redisConnectMock).not.toHaveBeenCalled();
   });
 
-  it('falls back safely when shared redis payload is malformed', async () => {
+  it('fails closed when shared redis payload is malformed', async () => {
     const harness = await loadKillSwitchHarness({
       config: { selfImproveFrozen: false, selfImproveAutonomyLevel: 2 },
       env: {
@@ -274,8 +319,8 @@ describe('incidentResponse/killSwitch', () => {
       redis: { getValue: '{this-is-not-json' }
     });
 
-    expect(await harness.moduleUnderTest.isSelfImproveFrozen()).toBe(false);
-    expect(await harness.moduleUnderTest.getEffectiveAutonomyLevel()).toBe(2);
+    expect(await harness.moduleUnderTest.isSelfImproveFrozen()).toBe(true);
+    expect(await harness.moduleUnderTest.getEffectiveAutonomyLevel()).toBe(0);
     expect(harness.loggerWarnMock).toHaveBeenCalledWith(
       expect.stringContaining('Failed to read shared kill-switch state'),
       {
@@ -299,11 +344,143 @@ describe('incidentResponse/killSwitch', () => {
     expect(status.autonomyLevel).toBe(2);
   });
 
+  it('preserves the authoritative shared autonomy restriction when unfreezing', async () => {
+    const harness = await loadKillSwitchHarness({
+      config: { selfImproveFrozen: false, selfImproveAutonomyLevel: 3 },
+      redis: {
+        getValue: JSON.stringify({ freeze: true, autonomy: 0 })
+      }
+    });
+
+    await harness.moduleUnderTest.unfreezeSelfImprove('reviewed-release');
+
+    expect(harness.redisEvalMock.mock.calls[0]?.[1]).toEqual({
+      keys: ['arcanos:self-improve:kill-switch:v1'],
+      arguments: ['unfreeze', '', '0', 'true', '0']
+    });
+    await expect(harness.moduleUnderTest.getKillSwitchStatus()).resolves.toEqual({
+      frozen: false,
+      autonomyLevel: 0,
+      overrides: {
+        freeze: false,
+        autonomy: 0
+      }
+    });
+  });
+
+  it('bypasses stale local observations before a relaxing mutation', async () => {
+    const harness = await loadKillSwitchHarness({
+      config: { selfImproveFrozen: false, selfImproveAutonomyLevel: 3 },
+      redis: {
+        getValue: JSON.stringify({ freeze: false, autonomy: 3 })
+      }
+    });
+
+    await harness.moduleUnderTest.getKillSwitchStatus();
+    harness.setSharedValue(JSON.stringify({ freeze: true, autonomy: 0 }));
+    await harness.moduleUnderTest.unfreezeSelfImprove('authoritative-refresh');
+
+    expect(harness.redisGetMock).toHaveBeenCalledTimes(2);
+    expect(harness.redisEvalMock.mock.calls[0]?.[1].arguments).toEqual([
+      'unfreeze',
+      '',
+      '0',
+      'true',
+      '0'
+    ]);
+    await expect(harness.moduleUnderTest.getEffectiveAutonomyLevel()).resolves.toBe(0);
+  });
+
+  it('rejects relaxation when another replica changes state after the read', async () => {
+    let releaseMutation!: () => void;
+    let observeMutation!: () => void;
+    const mutationStarted = new Promise<void>((resolve) => {
+      observeMutation = resolve;
+    });
+    const mutationBlocked = new Promise<void>((resolve) => {
+      releaseMutation = resolve;
+    });
+    const harness = await loadKillSwitchHarness({
+      config: { selfImproveFrozen: false, selfImproveAutonomyLevel: 3 },
+      redis: {
+        getValue: JSON.stringify({ freeze: false, autonomy: 3 }),
+        evalImplementation: async () => {
+          observeMutation();
+          await mutationBlocked;
+        }
+      }
+    });
+
+    const relaxation = harness.moduleUnderTest.unfreezeSelfImprove('cross-replica-race');
+    await mutationStarted;
+    harness.setSharedValue(JSON.stringify({ freeze: true, autonomy: 0 }));
+    releaseMutation();
+
+    await expect(relaxation).rejects.toMatchObject({
+      dependency: 'redis',
+      code: 'REDIS_DEPENDENCY_UNAVAILABLE'
+    });
+    await expect(harness.moduleUnderTest.getKillSwitchStatus()).resolves.toEqual({
+      frozen: true,
+      autonomyLevel: 0,
+      overrides: {
+        freeze: true,
+        autonomy: 0
+      }
+    });
+  });
+
+  it('serializes concurrent relaxation and restriction with restriction winning', async () => {
+    let releaseFirstWrite!: () => void;
+    let observeFirstWrite!: () => void;
+    let writeCount = 0;
+    const firstWriteStarted = new Promise<void>((resolve) => {
+      observeFirstWrite = resolve;
+    });
+    const firstWriteBlocked = new Promise<void>((resolve) => {
+      releaseFirstWrite = resolve;
+    });
+    const harness = await loadKillSwitchHarness({
+      config: { selfImproveFrozen: false, selfImproveAutonomyLevel: 3 },
+      redis: {
+        getValue: JSON.stringify({ freeze: true, autonomy: 0 }),
+        evalImplementation: async () => {
+          writeCount += 1;
+          if (writeCount === 1) {
+            observeFirstWrite();
+            await firstWriteBlocked;
+          }
+        }
+      }
+    });
+
+    const relaxation = harness.moduleUnderTest.unfreezeSelfImprove('concurrent-relax');
+    await firstWriteStarted;
+    const restriction = harness.moduleUnderTest.freezeSelfImprove('concurrent-freeze');
+    releaseFirstWrite();
+    await Promise.all([relaxation, restriction]);
+
+    expect(
+      harness.redisEvalMock.mock.calls.map((call) => call[1].arguments)
+    ).toEqual([
+      ['unfreeze', '', '0', 'true', '0'],
+      ['restrictive', '0', '1', '*', '*']
+    ]);
+    await expect(harness.moduleUnderTest.getKillSwitchStatus()).resolves.toEqual({
+      frozen: true,
+      autonomyLevel: 0,
+      overrides: {
+        freeze: true,
+        autonomy: 0
+      }
+    });
+  });
+
   it('retains local freeze state when redis write fails', async () => {
     const harness = await loadKillSwitchHarness({
       config: { selfImproveFrozen: false, selfImproveAutonomyLevel: 2 },
       env: { REDIS_URL: 'redis://localhost:6379' },
-      redis: { setError: new Error('redis write failed') }
+      redis: { evalError: new Error('redis write failed') }
     });
 
     await harness.moduleUnderTest.freezeSelfImprove('operator-trigger');
@@ -311,9 +488,9 @@ describe('incidentResponse/killSwitch', () => {
 
     expect(status.frozen).toBe(true);
     expect(status.autonomyLevel).toBe(0);
-    expect(harness.redisSetMock).toHaveBeenCalled();
+    expect(harness.redisEvalMock).toHaveBeenCalled();
     expect(harness.loggerWarnMock).toHaveBeenCalledWith(
-      expect.stringContaining('Failed to persist kill-switch state to Redis'),
+      expect.stringContaining('Failed to persist restrictive kill-switch state'),
       {
         module: 'killSwitch',
         errorCode: 'REDIS_DEPENDENCY_UNAVAILABLE'
@@ -342,7 +519,7 @@ describe('incidentResponse/killSwitch', () => {
     );
 
     expect(redisUnavailableLogs).toEqual([[
-      'Kill switch Redis unavailable; using local fallback',
+      'Kill switch Redis unavailable; enforcing restrictive fallback',
       {
         module: 'killSwitch',
         errorCode: 'REDIS_DEPENDENCY_UNAVAILABLE'
@@ -351,5 +528,37 @@ describe('incidentResponse/killSwitch', () => {
     expect(JSON.stringify(redisUnavailableLogs)).not.toContain('redis://');
     expect(harness.createClientMock).not.toHaveBeenCalled();
     expect(harness.redisConnectMock).not.toHaveBeenCalled();
+  });
+
+  it('rejects relaxation and autonomy increases without changing restrictive local state', async () => {
+    const harness = await loadKillSwitchHarness({
+      config: { selfImproveFrozen: false, selfImproveAutonomyLevel: 2 },
+      redis: {
+        ready: false,
+        configured: true
+      }
+    });
+
+    await harness.moduleUnderTest.freezeSelfImprove('outage');
+    await expect(
+      harness.moduleUnderTest.unfreezeSelfImprove('unsafe-relaxation')
+    ).rejects.toMatchObject({
+      code: 'REDIS_DEPENDENCY_UNAVAILABLE'
+    });
+    await expect(
+      harness.moduleUnderTest.setAutonomyLevel(2, 'unsafe-increase')
+    ).rejects.toMatchObject({
+      code: 'REDIS_DEPENDENCY_UNAVAILABLE'
+    });
+
+    await expect(harness.moduleUnderTest.getKillSwitchStatus()).resolves.toEqual({
+      frozen: true,
+      autonomyLevel: 0,
+      overrides: {
+        freeze: true,
+        autonomy: 0
+      }
+    });
+    expect(harness.redisEvalMock).not.toHaveBeenCalled();
   });
 });

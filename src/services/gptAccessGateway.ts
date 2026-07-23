@@ -669,7 +669,11 @@ export function buildGptAccessHealthPayload() {
         ready: redisReady,
         status: redis.state.toLowerCase(),
         code: redisCode,
-        retryScheduled: redis.retryScheduled
+        retryScheduled: redis.retryScheduled,
+        recoveryCount: redis.recoveryCount,
+        readyGeneration: redis.readyGeneration,
+        circuitEnabled: redis.circuitEnabled,
+        circuitState: redis.circuitState
       }
     }
   };

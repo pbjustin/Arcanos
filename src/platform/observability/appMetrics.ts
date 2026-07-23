@@ -401,6 +401,48 @@ const dependencyTimeoutsTotal = new Counter({
   registers: [metricsRegistry],
 });
 
+const dependencyLifecycleEventsTotal = new Counter({
+  name: 'dependency_lifecycle_events_total',
+  help: 'Sanitized dependency lifecycle events by dependency and event kind.',
+  labelNames: ['dependency', 'event'] as const,
+  registers: [metricsRegistry],
+});
+
+const dependencyLifecycleState = new Gauge({
+  name: 'dependency_lifecycle_state',
+  help: 'Dependency lifecycle state as one-hot labels.',
+  labelNames: ['dependency', 'state'] as const,
+  registers: [metricsRegistry],
+});
+
+const dependencyCircuitBreakerState = new Gauge({
+  name: 'dependency_circuit_breaker_state',
+  help: 'Dependency circuit breaker state as one-hot labels.',
+  labelNames: ['dependency', 'state'] as const,
+  registers: [metricsRegistry],
+});
+
+const dependencyOperationGateRejectionsTotal = new Counter({
+  name: 'dependency_operation_gate_rejections_total',
+  help: 'Dependency operations rejected before execution by operation and gate reason.',
+  labelNames: ['dependency', 'operation', 'reason'] as const,
+  registers: [metricsRegistry],
+});
+
+const dependencyOperationInFlight = new Gauge({
+  name: 'dependency_operation_in_flight',
+  help: 'Dependency operations currently executing after gate admission.',
+  labelNames: ['dependency'] as const,
+  registers: [metricsRegistry],
+});
+
+const dependencyRecoveriesTotal = new Counter({
+  name: 'dependency_recoveries_total',
+  help: 'Successful dependency recoveries after an unavailable state.',
+  labelNames: ['dependency'] as const,
+  registers: [metricsRegistry],
+});
+
 const aiCallsTotal = new Counter({
   name: 'ai_calls_total',
   help: 'AI provider calls by source, model, operation, and outcome.',
@@ -1122,6 +1164,57 @@ export function recordDependencyCall(input: {
   if (isTimeoutError(input.error) || outcome === 'timeout') {
     dependencyTimeoutsTotal.inc({ dependency, operation });
   }
+}
+
+export function recordDependencyLifecycleEvent(input: {
+  dependency: string;
+  event: string;
+  lifecycleState: 'STARTING' | 'DEGRADED' | 'READY';
+  circuitState: 'CLOSED' | 'OPEN' | 'HALF_OPEN';
+  recovered?: boolean;
+}): void {
+  const dependency = normalizeLabel(input.dependency);
+  dependencyLifecycleEventsTotal.inc({
+    dependency,
+    event: normalizeLabel(input.event),
+  });
+  for (const state of ['STARTING', 'DEGRADED', 'READY'] as const) {
+    dependencyLifecycleState.set(
+      { dependency, state },
+      state === input.lifecycleState ? 1 : 0,
+    );
+  }
+  for (const state of ['CLOSED', 'OPEN', 'HALF_OPEN'] as const) {
+    dependencyCircuitBreakerState.set(
+      { dependency, state },
+      state === input.circuitState ? 1 : 0,
+    );
+  }
+  if (input.recovered) {
+    dependencyRecoveriesTotal.inc({ dependency });
+  }
+}
+
+export function recordDependencyOperationGateRejection(input: {
+  dependency: string;
+  operation: string;
+  reason: string;
+}): void {
+  dependencyOperationGateRejectionsTotal.inc({
+    dependency: normalizeLabel(input.dependency),
+    operation: normalizeLabel(input.operation),
+    reason: normalizeLabel(input.reason),
+  });
+}
+
+export function recordDependencyOperationInFlight(
+  dependency: string,
+  value: number,
+): void {
+  dependencyOperationInFlight.set(
+    { dependency: normalizeLabel(dependency) },
+    Math.max(0, Math.trunc(value)),
+  );
 }
 
 export function recordAiOperation(input: {

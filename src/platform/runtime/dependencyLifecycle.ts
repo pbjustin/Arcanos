@@ -4,6 +4,8 @@ export interface DependencyLifecycleSnapshot<TErrorCode extends string = string>
   state: DependencyLifecycleState;
   configured: boolean;
   ready: boolean;
+  attemptInFlight: boolean;
+  readyGeneration: number;
   attempt: number;
   recoveryCount: number;
   retryScheduled: boolean;
@@ -41,7 +43,26 @@ export interface DependencyLifecycleAdapter<TResource, TErrorCode extends string
 
 export type DependencyLifecycleOperation = 'create' | 'connect' | 'validate' | 'runtime';
 
-export type DependencyLifecycleEvent<TErrorCode extends string> =
+export interface DependencyLifecycleEventEnvelope {
+  dependency: string;
+  lifecycleId: string;
+  eventId: string;
+  correlationId: string;
+  eventSequence: number;
+  occurredAt: string;
+  previousState: DependencyLifecycleState;
+  state: DependencyLifecycleState;
+  previousAttemptInFlight: boolean;
+  attemptInFlight: boolean;
+  previousReadyGeneration: number;
+  readyGeneration: number;
+}
+
+export type DependencyLifecycleEventDetail<TErrorCode extends string> =
+  | {
+    kind: 'attempt_started';
+    attempt: number;
+  }
   | {
     kind: 'ready';
     attempt: number;
@@ -58,13 +79,25 @@ export type DependencyLifecycleEvent<TErrorCode extends string> =
     kind: 'unavailable';
     operation: 'runtime';
     errorCode: TErrorCode;
+    retryDelayMs: number;
   }
   | {
     kind: 'listener_failed';
   };
 
+export type DependencyLifecycleEvent<TErrorCode extends string> =
+  DependencyLifecycleEventEnvelope & DependencyLifecycleEventDetail<TErrorCode>;
+
+export interface DependencyLifecycleResourceLease<TResource> {
+  readonly resource: TResource;
+  readonly readyGeneration: number;
+  readonly correlationId?: string;
+}
+
 export interface DependencyLifecycleOptions<TResource, TErrorCode extends string> {
   adapter: DependencyLifecycleAdapter<TResource, TErrorCode>;
+  dependencyName?: string;
+  lifecycleId?: string;
   attemptTimeoutMs: number;
   retryBaseDelayMs: number;
   retryMaxDelayMs: number;
@@ -133,6 +166,13 @@ function requireNonNegativeFinite(value: number, name: string): number {
   return value;
 }
 
+let nextLifecycleId = 0;
+
+function createLifecycleId(dependencyName: string, now: Date): string {
+  nextLifecycleId += 1;
+  return `${dependencyName}-${now.getTime()}-${nextLifecycleId}`;
+}
+
 /**
  * Own one recoverable dependency resource and its retry lifecycle.
  *
@@ -150,6 +190,8 @@ export class DependencyLifecycle<TResource, TErrorCode extends string> {
   private readonly random: () => number;
   private readonly now: () => Date;
   private readonly onEvent?: (event: DependencyLifecycleEvent<TErrorCode>) => void;
+  private readonly dependencyName: string;
+  private readonly lifecycleId: string;
   private readonly listeners = new Set<DependencyLifecycleListener<TErrorCode>>();
   private readonly abortController = new AbortController();
   private resourceFactory: (() => TResource) | null = null;
@@ -160,6 +202,7 @@ export class DependencyLifecycle<TResource, TErrorCode extends string> {
   private started = false;
   private stopping = false;
   private consecutiveAttempts = 0;
+  private eventSequence = 0;
   private snapshot: DependencyLifecycleSnapshot<TErrorCode>;
 
   constructor(options: DependencyLifecycleOptions<TResource, TErrorCode>) {
@@ -187,10 +230,15 @@ export class DependencyLifecycle<TResource, TErrorCode extends string> {
     this.random = options.random ?? Math.random;
     this.now = options.now ?? (() => new Date());
     this.onEvent = options.onEvent;
+    this.dependencyName = options.dependencyName?.trim() || 'dependency';
+    this.lifecycleId = options.lifecycleId?.trim()
+      || createLifecycleId(this.dependencyName, this.now());
     this.snapshot = {
       state: 'STARTING',
       configured: false,
       ready: false,
+      attemptInFlight: false,
+      readyGeneration: 0,
       attempt: 0,
       recoveryCount: 0,
       retryScheduled: false,
@@ -213,6 +261,7 @@ export class DependencyLifecycle<TResource, TErrorCode extends string> {
         state: 'READY',
         configured: false,
         ready: false,
+        attemptInFlight: false,
         retryScheduled: false,
         lastErrorCode: null
       });
@@ -224,6 +273,7 @@ export class DependencyLifecycle<TResource, TErrorCode extends string> {
       state: 'STARTING',
       configured: true,
       ready: false,
+      attemptInFlight: false,
       retryScheduled: false,
       lastErrorCode: null
     });
@@ -242,6 +292,11 @@ export class DependencyLifecycle<TResource, TErrorCode extends string> {
 
   /** Return the resource only while the adapter still verifies it as ready. */
   getReadyResource(): TResource | null {
+    return this.getReadyResourceLease()?.resource ?? null;
+  }
+
+  /** Capture one ready generation so late work cannot affect a recovered resource. */
+  getReadyResourceLease(correlationId?: string): DependencyLifecycleResourceLease<TResource> | null {
     const resource = this.resource;
     if (
       !resource
@@ -253,7 +308,21 @@ export class DependencyLifecycle<TResource, TErrorCode extends string> {
       return null;
     }
 
-    return resource;
+    return {
+      resource,
+      readyGeneration: this.snapshot.readyGeneration,
+      ...(correlationId ? { correlationId } : {})
+    };
+  }
+
+  /** Verify that a lease still belongs to the currently ready generation. */
+  isReadyResourceLease(lease: DependencyLifecycleResourceLease<TResource>): boolean {
+    const currentLease = this.getReadyResourceLease();
+    return Boolean(
+      currentLease
+      && currentLease.resource === lease.resource
+      && currentLease.readyGeneration === lease.readyGeneration
+    );
   }
 
   getSnapshot(): DependencyLifecycleSnapshot<TErrorCode> {
@@ -261,12 +330,18 @@ export class DependencyLifecycle<TResource, TErrorCode extends string> {
   }
 
   /** Invalidate a ready resource after a bounded operation detects failure. */
-  reportUnavailable(error: unknown): void {
+  reportUnavailable(
+    error: unknown,
+    lease?: DependencyLifecycleResourceLease<TResource>
+  ): void {
     const resource = this.resource;
-    if (!resource) {
+    if (
+      !resource
+      || (lease && !this.isReadyResourceLease(lease))
+    ) {
       return;
     }
-    this.handleUnavailable(resource, error);
+    this.handleUnavailable(resource, error, lease?.correlationId);
   }
 
   subscribe(listener: DependencyLifecycleListener<TErrorCode>): () => void {
@@ -277,7 +352,7 @@ export class DependencyLifecycle<TResource, TErrorCode extends string> {
     };
   }
 
-  private ensureConnectionLoop(): void {
+  private ensureConnectionLoop(initialDelayMs = 0): void {
     if (
       this.connectionLoop
       || this.stopping
@@ -287,7 +362,7 @@ export class DependencyLifecycle<TResource, TErrorCode extends string> {
       return;
     }
 
-    const loop = this.runConnectionLoop();
+    const loop = this.runConnectionLoop(initialDelayMs);
     this.connectionLoop = loop;
     void loop.finally(() => {
       if (this.connectionLoop === loop) {
@@ -331,14 +406,33 @@ export class DependencyLifecycle<TResource, TErrorCode extends string> {
     return resource;
   }
 
-  private async runConnectionLoop(): Promise<void> {
+  private async runConnectionLoop(initialDelayMs = 0): Promise<void> {
+    if (initialDelayMs > 0) {
+      try {
+        await this.sleep(initialDelayMs, this.abortController.signal);
+      } catch (error) {
+        if (
+          error instanceof DependencyLifecycleAbortError
+          || this.abortController.signal.aborted
+        ) {
+          return;
+        }
+        throw error;
+      }
+    }
+
     while (!this.stopping && !this.abortController.signal.aborted) {
       this.consecutiveAttempts += 1;
       const attempt = this.consecutiveAttempts;
-      this.updateSnapshot({
+      const beforeAttempt = this.updateSnapshot({
         attempt,
+        attemptInFlight: true,
         retryScheduled: false
       });
+      this.emitEvent({
+        kind: 'attempt_started',
+        attempt
+      }, beforeAttempt);
 
       let operation: DependencyLifecycleOperation = 'create';
       let resource: TResource | null = null;
@@ -357,10 +451,12 @@ export class DependencyLifecycle<TResource, TErrorCode extends string> {
         }
 
         const recovered = this.snapshot.state === 'DEGRADED';
-        this.updateSnapshot({
+        const beforeReady = this.updateSnapshot({
           state: 'READY',
           configured: true,
           ready: true,
+          attemptInFlight: false,
+          readyGeneration: this.snapshot.readyGeneration + 1,
           retryScheduled: false,
           recoveryCount: this.snapshot.recoveryCount + (recovered ? 1 : 0),
           lastReadyAt: this.now().toISOString(),
@@ -371,7 +467,7 @@ export class DependencyLifecycle<TResource, TErrorCode extends string> {
           kind: 'ready',
           recovered,
           attempt
-        });
+        }, beforeReady);
         return;
       } catch (error) {
         if (
@@ -391,10 +487,11 @@ export class DependencyLifecycle<TResource, TErrorCode extends string> {
         }
         const errorCode = this.adapter.classifyError(error);
         const retryDelayMs = this.calculateRetryDelay(attempt);
-        this.updateSnapshot({
+        const beforeRetry = this.updateSnapshot({
           state: 'DEGRADED',
           configured: true,
           ready: false,
+          attemptInFlight: false,
           retryScheduled: true,
           lastErrorCode: errorCode
         });
@@ -404,7 +501,7 @@ export class DependencyLifecycle<TResource, TErrorCode extends string> {
           errorCode,
           attempt,
           retryDelayMs
-        });
+        }, beforeRetry);
 
         try {
           await this.sleep(retryDelayMs, this.abortController.signal);
@@ -446,7 +543,11 @@ export class DependencyLifecycle<TResource, TErrorCode extends string> {
     }
   }
 
-  private handleUnavailable(resource: TResource, error: unknown): void {
+  private handleUnavailable(
+    resource: TResource,
+    error: unknown,
+    correlationId?: string
+  ): void {
     if (
       this.stopping
       || this.resource !== resource
@@ -456,24 +557,27 @@ export class DependencyLifecycle<TResource, TErrorCode extends string> {
     }
 
     const errorCode = this.adapter.classifyError(error);
-    this.updateSnapshot({
+    const retryDelayMs = this.calculateRetryDelay(1);
+    const beforeUnavailable = this.updateSnapshot({
       state: 'DEGRADED',
       configured: true,
       ready: false,
-      retryScheduled: false,
+      attemptInFlight: false,
+      retryScheduled: true,
       lastErrorCode: errorCode
     });
     this.emitEvent({
       kind: 'unavailable',
       operation: 'runtime',
-      errorCode
-    });
+      errorCode,
+      retryDelayMs
+    }, beforeUnavailable, correlationId);
     try {
       this.adapter.invalidate(resource);
     } catch {
       // Retry remains available even when invalidation is already complete.
     }
-    this.ensureConnectionLoop();
+    this.ensureConnectionLoop(retryDelayMs);
   }
 
   private calculateRetryDelay(attempt: number): number {
@@ -500,6 +604,7 @@ export class DependencyLifecycle<TResource, TErrorCode extends string> {
     this.updateSnapshot({
       state: 'DEGRADED',
       ready: false,
+      attemptInFlight: false,
       retryScheduled: false,
       lastErrorCode: null
     });
@@ -539,17 +644,24 @@ export class DependencyLifecycle<TResource, TErrorCode extends string> {
     this.listeners.clear();
   }
 
-  private updateSnapshot(update: Partial<DependencyLifecycleSnapshot<TErrorCode>>): void {
+  private updateSnapshot(
+    update: Partial<DependencyLifecycleSnapshot<TErrorCode>>
+  ): DependencyLifecycleSnapshot<TErrorCode> {
+    const previousSnapshot = this.snapshot;
     const previousState = this.snapshot.state;
     const nextState = update.state ?? previousState;
+    const previousAttemptInFlight = this.snapshot.attemptInFlight;
+    const nextAttemptInFlight = update.attemptInFlight ?? previousAttemptInFlight;
     this.snapshot = {
       ...this.snapshot,
       ...update,
       lastTransitionAt: nextState === previousState
+        && nextAttemptInFlight === previousAttemptInFlight
         ? this.snapshot.lastTransitionAt
         : this.now().toISOString()
     };
     this.notifyListeners();
+    return previousSnapshot;
   }
 
   private notifyListeners(): void {
@@ -562,13 +674,33 @@ export class DependencyLifecycle<TResource, TErrorCode extends string> {
     try {
       listener(this.getSnapshot());
     } catch {
-      this.emitEvent({ kind: 'listener_failed' });
+      this.emitEvent({ kind: 'listener_failed' }, this.snapshot);
     }
   }
 
-  private emitEvent(event: DependencyLifecycleEvent<TErrorCode>): void {
+  private emitEvent(
+    event: DependencyLifecycleEventDetail<TErrorCode>,
+    previousSnapshot: DependencyLifecycleSnapshot<TErrorCode>,
+    correlationId = this.lifecycleId
+  ): void {
+    this.eventSequence += 1;
+    const occurredAt = this.now().toISOString();
+    const envelope: DependencyLifecycleEventEnvelope = {
+      dependency: this.dependencyName,
+      lifecycleId: this.lifecycleId,
+      eventId: `${this.lifecycleId}:${this.eventSequence}`,
+      correlationId,
+      eventSequence: this.eventSequence,
+      occurredAt,
+      previousState: previousSnapshot.state,
+      state: this.snapshot.state,
+      previousAttemptInFlight: previousSnapshot.attemptInFlight,
+      attemptInFlight: this.snapshot.attemptInFlight,
+      previousReadyGeneration: previousSnapshot.readyGeneration,
+      readyGeneration: this.snapshot.readyGeneration
+    };
     try {
-      this.onEvent?.(event);
+      this.onEvent?.({ ...envelope, ...event });
     } catch {
       // Observability callbacks must never alter dependency recovery.
     }

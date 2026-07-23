@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, jest } from '@jest/globals';
 import {
   DependencyLifecycle,
   type DependencyLifecycleAdapter,
+  type DependencyLifecycleEvent,
   type DependencyLifecycleSleep,
 } from '../src/platform/runtime/dependencyLifecycle.js';
 
@@ -171,7 +172,15 @@ describe('DependencyLifecycle', () => {
     expect(lifecycle.getReadyResource()).toBe(resource);
     expect(lifecycle.getSnapshot()).toEqual(expect.objectContaining({
       state: 'READY',
-      recoveryCount: 1
+      recoveryCount: 1,
+      attemptInFlight: false,
+      readyGeneration: 1
+    }));
+    const firstReadyLease = lifecycle.getReadyResourceLease('trace-generation-1');
+    expect(firstReadyLease).toEqual(expect.objectContaining({
+      resource,
+      readyGeneration: 1,
+      correlationId: 'trace-generation-1'
     }));
 
     expect(reportUnavailable).not.toBeNull();
@@ -179,6 +188,24 @@ describe('DependencyLifecycle', () => {
     reportUnavailable?.(Object.assign(new Error('duplicate'), { code: 'TEST_UNAVAILABLE' }));
     await flushAsyncWork();
 
+    expect(lifecycle.getSnapshot()).toEqual(expect.objectContaining({
+      state: 'DEGRADED',
+      attemptInFlight: false,
+      retryScheduled: true
+    }));
+    manualSleep.resolveNext(10);
+    await flushAsyncWork();
+
+    expect(lifecycle.getSnapshot().state).toBe('READY');
+    const recoveredLease = lifecycle.getReadyResourceLease();
+    expect(recoveredLease?.readyGeneration).toBe(2);
+    expect(lifecycle.isReadyResourceLease(firstReadyLease!)).toBe(false);
+    expect(lifecycle.isReadyResourceLease(recoveredLease!)).toBe(true);
+
+    lifecycle.reportUnavailable(
+      Object.assign(new Error('late generation-one failure'), { code: 'TEST_UNAVAILABLE' }),
+      firstReadyLease!
+    );
     expect(lifecycle.getSnapshot().state).toBe('READY');
     expect(createResource).toHaveBeenCalledTimes(1);
     expect(adapter.subscribeUnavailable).toHaveBeenCalledTimes(1);
@@ -236,6 +263,7 @@ describe('DependencyLifecycle', () => {
   });
 
   it('suppresses the unavailable event echoed synchronously by invalidation', async () => {
+    const manualSleep = createManualSleep();
     const resource: TestResource = { ready: false };
     let unavailableListener: ((error: unknown) => void) | null = null;
     const events: string[] = [];
@@ -269,6 +297,7 @@ describe('DependencyLifecycle', () => {
       attemptTimeoutMs: 100,
       retryBaseDelayMs: 10,
       retryMaxDelayMs: 100,
+      sleep: manualSleep.sleep,
       onEvent: (event) => {
         events.push(event.kind);
       }
@@ -285,9 +314,81 @@ describe('DependencyLifecycle', () => {
     await flushAsyncWork();
 
     expect(events.filter((kind) => kind === 'unavailable')).toHaveLength(1);
+    expect(lifecycle.getSnapshot()).toEqual(expect.objectContaining({
+      state: 'DEGRADED',
+      attemptInFlight: false,
+      retryScheduled: true
+    }));
+    manualSleep.resolveNext(10);
+    await flushAsyncWork();
+
     expect(adapter.connect).toHaveBeenCalledTimes(2);
     expect(adapter.subscribeUnavailable).toHaveBeenCalledTimes(1);
     expect(lifecycle.getSnapshot().state).toBe('READY');
+  });
+
+  it('emits sanitized correlation-aware lifecycle events', async () => {
+    const manualSleep = createManualSleep();
+    const resource: TestResource = { ready: false };
+    const events: Array<DependencyLifecycleEvent<TestErrorCode>> = [];
+    const adapter: DependencyLifecycleAdapter<TestResource, TestErrorCode> = {
+      resolve: () => ({ configured: true, createResource: () => resource }),
+      connect: jest.fn(async (target) => {
+        target.ready = true;
+      }),
+      validate: jest.fn(async () => undefined),
+      isReady: (target) => target.ready,
+      invalidate: jest.fn((target) => {
+        target.ready = false;
+      }),
+      close: jest.fn(async (target) => {
+        target.ready = false;
+      }),
+      subscribeUnavailable: jest.fn(() => jest.fn()),
+      classifyError: () => 'TEST_UNAVAILABLE'
+    };
+    const lifecycle = new DependencyLifecycle({
+      adapter,
+      dependencyName: 'test-cache',
+      lifecycleId: 'test-cache-lifecycle-1',
+      attemptTimeoutMs: 100,
+      retryBaseDelayMs: 10,
+      retryMaxDelayMs: 100,
+      sleep: manualSleep.sleep,
+      now: () => new Date('2026-07-22T12:00:00.000Z'),
+      onEvent: (event) => events.push(event)
+    });
+    lifecycles.push(lifecycle);
+
+    lifecycle.start();
+    await flushAsyncWork();
+    const lease = lifecycle.getReadyResourceLease('trace-safe-123');
+    expect(lease).not.toBeNull();
+    lifecycle.reportUnavailable(
+      Object.assign(new Error('secret redis://user:password@host'), {
+        code: 'TEST_UNAVAILABLE'
+      }),
+      lease!
+    );
+
+    const unavailableEvent = events.find((event) => event.kind === 'unavailable');
+    expect(unavailableEvent).toEqual(expect.objectContaining({
+      kind: 'unavailable',
+      dependency: 'test-cache',
+      lifecycleId: 'test-cache-lifecycle-1',
+      eventId: 'test-cache-lifecycle-1:3',
+      correlationId: 'trace-safe-123',
+      eventSequence: 3,
+      occurredAt: '2026-07-22T12:00:00.000Z',
+      previousState: 'READY',
+      state: 'DEGRADED',
+      previousReadyGeneration: 1,
+      readyGeneration: 1,
+      retryDelayMs: 10,
+      errorCode: 'TEST_UNAVAILABLE'
+    }));
+    expect(JSON.stringify(events)).not.toContain('password');
+    expect(JSON.stringify(events)).not.toContain('redis://');
   });
 
   it('continues shutdown when subscription cleanup throws and closes once', async () => {

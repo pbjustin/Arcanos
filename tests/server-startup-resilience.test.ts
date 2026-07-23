@@ -53,12 +53,28 @@ function redisSnapshot(
     state,
     configured: true,
     connected: state === 'READY',
+    attemptInFlight: state === 'STARTING',
+    readyGeneration: state === 'READY' ? 1 : 0,
+    circuitEnabled: true,
+    circuitState: state === 'READY' ? 'CLOSED' : state === 'STARTING' ? 'HALF_OPEN' : 'OPEN',
+    circuitFailureThreshold: 1,
     attempt: state === 'STARTING' ? 0 : 1,
     recoveryCount: 0,
     retryScheduled: state === 'DEGRADED',
     lastTransitionAt: '2026-07-21T12:00:00.000Z',
     lastReadyAt: state === 'READY' ? '2026-07-21T12:00:00.000Z' : null,
     lastErrorCode: state === 'DEGRADED' ? 'REDIS_CONNECTION_REFUSED' : null,
+    operationGate: {
+      inFlight: 0,
+      admittedTotal: 0,
+      rejectedTotal: 0,
+      succeededTotal: 0,
+      failedTotal: 0,
+      timedOutTotal: 0,
+      lastOperation: null,
+      lastOutcome: null,
+      lastDurationMs: null
+    },
     ...overrides
   };
 }

@@ -462,7 +462,10 @@ export async function checkRedisHealth(): Promise<HealthCheckResult> {
         source: redisConnection.source,
         state: redisLifecycle.state,
         attempt: redisLifecycle.attempt,
-        recoveryCount: redisLifecycle.recoveryCount
+        recoveryCount: redisLifecycle.recoveryCount,
+        readyGeneration: redisLifecycle.readyGeneration,
+        circuitEnabled: redisLifecycle.circuitEnabled,
+        circuitState: redisLifecycle.circuitState
       }
     };
   }
@@ -485,6 +488,10 @@ export async function checkRedisHealth(): Promise<HealthCheckResult> {
       state: redisLifecycle.state,
       attempt: redisLifecycle.attempt,
       retryScheduled: redisLifecycle.retryScheduled,
+      recoveryCount: redisLifecycle.recoveryCount,
+      readyGeneration: redisLifecycle.readyGeneration,
+      circuitEnabled: redisLifecycle.circuitEnabled,
+      circuitState: redisLifecycle.circuitState,
       code
     }
   };

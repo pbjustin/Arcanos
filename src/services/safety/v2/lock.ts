@@ -14,7 +14,8 @@ import { V2_CONFIG } from "./config.js";
 export type LockLostCallback = (key: string) => void;
 
 export class DistributedLock {
-  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
+  private heartbeatInFlight: Promise<void> | null = null;
   private readonly key: string;
   private readonly ttlMs: number;
   private readonly heartbeatMs: number;
@@ -42,8 +43,9 @@ export class DistributedLock {
    * Acquire the lock. Throws if already held by another owner.
    */
   async acquire(): Promise<void> {
-    const result = await executeRedisOperation((redis) =>
-      redis.set(this.key, this.ownerId, { NX: true, PX: this.ttlMs })
+    const result = await executeRedisOperation(
+      (redis) => redis.set(this.key, this.ownerId, { NX: true, PX: this.ttlMs }),
+      { operation: 'safety.lock.acquire' }
     );
 
     if (result !== "OK") {
@@ -61,6 +63,7 @@ export class DistributedLock {
     if (this.released) return;
     this.released = true;
     this.stopHeartbeat();
+    await this.heartbeatInFlight?.catch(() => undefined);
 
     // Lua script: delete only if the value matches our ownerId
     const script = `
@@ -72,8 +75,9 @@ export class DistributedLock {
     `;
 
     try {
-      await executeRedisOperation((redis) =>
-        redis.eval(script, { keys: [this.key], arguments: [this.ownerId] })
+      await executeRedisOperation(
+        (redis) => redis.eval(script, { keys: [this.key], arguments: [this.ownerId] }),
+        { operation: 'safety.lock.release' }
       );
     } catch {
       // best-effort release — log for diagnostics
@@ -84,50 +88,77 @@ export class DistributedLock {
   }
 
   private startHeartbeat(): void {
-    this.heartbeatTimer = setInterval(async () => {
+    this.scheduleHeartbeat();
+  }
+
+  private scheduleHeartbeat(): void {
+    if (this.released || this.heartbeatTimer || this.heartbeatInFlight) {
+      return;
+    }
+    this.heartbeatTimer = setTimeout(() => {
+      this.heartbeatTimer = null;
       if (this.released) return;
-      try {
-        // Atomically extend TTL only if we still own the lock to avoid race
-        const script = `
-          if redis.call("get", KEYS[1]) == ARGV[1] then
-            return redis.call("pexpire", KEYS[1], ARGV[2])
-          else
-            return 0
-          end
-        `;
-        const res = await executeRedisOperation((redis) =>
-          redis.eval(script, {
-            keys: [this.key],
-            arguments: [this.ownerId, String(this.ttlMs)],
-          })
-        );
-        if (!res) {
-          // Lock was stolen or expired — notify caller
-          this.released = true;
-          this.stopHeartbeat();
-          this.onLockLost?.(this.key);
-          return;
+      const heartbeat = this.runHeartbeat();
+      this.heartbeatInFlight = heartbeat;
+      void heartbeat.then(() => {
+        if (this.heartbeatInFlight === heartbeat) {
+          this.heartbeatInFlight = null;
         }
-      } catch {
-        // Log and notify owner lost — heartbeat is best-effort
-        try {
-          console.error("[v2/lock] heartbeat failed");
-        } catch {}
-        this.released = true;
-        this.stopHeartbeat();
-        this.onLockLost?.(this.key);
-      }
+        this.scheduleHeartbeat();
+      });
     }, this.heartbeatMs);
 
-    // Prevent the heartbeat from keeping the process alive
-    if (this.heartbeatTimer.unref) {
-      this.heartbeatTimer.unref();
+    this.heartbeatTimer.unref?.();
+  }
+
+  private async runHeartbeat(): Promise<void> {
+    try {
+      // Atomically extend TTL only if we still own the lock to avoid race
+      const script = `
+        if redis.call("get", KEYS[1]) == ARGV[1] then
+          return redis.call("pexpire", KEYS[1], ARGV[2])
+        else
+          return 0
+        end
+      `;
+      const res = await executeRedisOperation(
+        (redis) => redis.eval(script, {
+          keys: [this.key],
+          arguments: [this.ownerId, String(this.ttlMs)],
+        }),
+        { operation: 'safety.lock.heartbeat' }
+      );
+      if (!res && !this.released) {
+        // Lock was stolen or expired — notify caller
+        this.released = true;
+        this.stopHeartbeat();
+        this.notifyLockLost();
+      }
+    } catch {
+      if (this.released) {
+        return;
+      }
+      // Log and notify owner lost — heartbeat is best-effort
+      try {
+        console.error("[v2/lock] heartbeat failed");
+      } catch {}
+      this.released = true;
+      this.stopHeartbeat();
+      this.notifyLockLost();
+    }
+  }
+
+  private notifyLockLost(): void {
+    try {
+      this.onLockLost?.(this.key);
+    } catch {
+      // Owner notification cannot create an unhandled heartbeat rejection.
     }
   }
 
   private stopHeartbeat(): void {
     if (this.heartbeatTimer) {
-      clearInterval(this.heartbeatTimer);
+      clearTimeout(this.heartbeatTimer);
       this.heartbeatTimer = null;
     }
   }

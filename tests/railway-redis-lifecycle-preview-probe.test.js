@@ -6,6 +6,7 @@ import Ajv2020 from 'ajv/dist/2020.js';
 import {
   ProbeConfigurationError,
   collectObservation,
+  evaluateBaselineObservations,
   evaluateOutageObservations,
   evaluateRecoveryObservations,
   parseArgs,
@@ -23,7 +24,17 @@ const EXPLICIT_TARGET_ARGS = [
   '--web-deployment-id', '33333333-3333-4333-8333-333333333333'
 ];
 
-function healthResult({ uptime, phase, redisReady, redisStatus, redisCode, retryScheduled }) {
+function healthResult({
+  uptime,
+  phase,
+  redisReady,
+  redisStatus,
+  redisCode,
+  retryScheduled,
+  recoveryCount,
+  readyGeneration,
+  circuitState
+}) {
   return {
     status: 200,
     latencyMs: 8,
@@ -41,14 +52,24 @@ function healthResult({ uptime, phase, redisReady, redisStatus, redisCode, retry
           ready: redisReady,
           status: redisStatus,
           code: redisCode,
-          retry_scheduled: retryScheduled
+          retry_scheduled: retryScheduled,
+          recovery_count: recoveryCount,
+          ready_generation: readyGeneration,
+          circuit_enabled: true,
+          circuit_state: circuitState
         }
       }
     }
   };
 }
 
-function readinessResult({ ready, code, recoveryCount = null }) {
+function readinessResult({
+  ready,
+  code,
+  recoveryCount = null,
+  readyGeneration = null,
+  circuitState
+}) {
   return {
     status: ready ? 200 : 503,
     latencyMs: 9,
@@ -61,7 +82,12 @@ function readinessResult({ ready, code, recoveryCount = null }) {
         name: 'redis',
         healthy: ready,
         ...(code ? { code } : {}),
-        metadata: recoveryCount === null ? {} : { recoveryCount }
+        metadata: {
+          recoveryCount,
+          readyGeneration,
+          circuitEnabled: true,
+          circuitState
+        }
       }]
     }
   };
@@ -82,7 +108,11 @@ function outageObservation(sequence = 1) {
       redisReady: false,
       redisStatus: 'degraded',
       redisCode: 'REDIS_DEPENDENCY_UNAVAILABLE',
-      retryScheduled: true
+      retryScheduled: true,
+      recoveryCount: 0,
+      readyGeneration: 1,
+      circuitEnabled: true,
+      circuitState: 'OPEN'
     },
     healthz: {
       status: 200,
@@ -95,7 +125,11 @@ function outageObservation(sequence = 1) {
       redisReady: false,
       redisStatus: 'degraded',
       redisCode: 'REDIS_DEPENDENCY_UNAVAILABLE',
-      retryScheduled: true
+      retryScheduled: true,
+      recoveryCount: 0,
+      readyGeneration: 1,
+      circuitEnabled: true,
+      circuitState: 'OPEN'
     },
     readyz: {
       status: 503,
@@ -105,7 +139,10 @@ function outageObservation(sequence = 1) {
       readinessStatus: 'unhealthy',
       redisHealthy: false,
       redisCode: 'REDIS_DEPENDENCY_UNAVAILABLE',
-      recoveryCount: null
+      recoveryCount: 0,
+      readyGeneration: 1,
+      circuitEnabled: true,
+      circuitState: 'OPEN'
     },
     sensitiveContentObserved: false
   };
@@ -126,7 +163,11 @@ function readyObservation(sequence = 2) {
       redisReady: true,
       redisStatus: 'ready',
       redisCode: null,
-      retryScheduled: false
+      retryScheduled: false,
+      recoveryCount: 1,
+      readyGeneration: 2,
+      circuitEnabled: true,
+      circuitState: 'CLOSED'
     },
     healthz: {
       status: 200,
@@ -139,7 +180,11 @@ function readyObservation(sequence = 2) {
       redisReady: true,
       redisStatus: 'ready',
       redisCode: null,
-      retryScheduled: false
+      retryScheduled: false,
+      recoveryCount: 1,
+      readyGeneration: 2,
+      circuitEnabled: true,
+      circuitState: 'CLOSED'
     },
     readyz: {
       status: 200,
@@ -149,7 +194,10 @@ function readyObservation(sequence = 2) {
       readinessStatus: 'healthy',
       redisHealthy: true,
       redisCode: null,
-      recoveryCount: 1
+      recoveryCount: 1,
+      readyGeneration: 2,
+      circuitEnabled: true,
+      circuitState: 'CLOSED'
     },
     sensitiveContentObserved: false
   };
@@ -254,6 +302,39 @@ describe('railway-redis-lifecycle-preview-probe', () => {
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
+  it('allows the established isolated preview environment naming scheme', () => {
+    const config = parseArgs([
+      ...EXPLICIT_TARGET_ARGS,
+      '--phase', 'baseline'
+    ]);
+    config.environment = 'dep-resilience-preview-28f408c';
+
+    expect(resolveExecutionPolicy(config)).toEqual(expect.objectContaining({
+      target: expect.objectContaining({
+        environment: 'dep-resilience-preview-28f408c'
+      }),
+      phase: 'baseline'
+    }));
+  });
+
+  it('passes a healthy baseline only when liveness, readiness, and the circuit converge', () => {
+    const passing = evaluateBaselineObservations([
+      readyObservation(1),
+      readyObservation(2)
+    ]);
+    const openCircuit = readyObservation(2);
+    openCircuit.readyz.circuitState = 'OPEN';
+    const failing = evaluateBaselineObservations([readyObservation(1), openCircuit]);
+
+    expect(passing.passed).toBe(true);
+    expect(passing.checks).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: 'liveness_reachable', status: 'PASS' }),
+      expect.objectContaining({ name: 'readiness_ready', status: 'PASS' }),
+      expect.objectContaining({ name: 'circuit_closed', status: 'PASS' })
+    ]));
+    expect(failing.passed).toBe(false);
+  });
+
   it('passes outage evidence only when liveness stays reachable and readiness is degraded', () => {
     const evaluation = evaluateOutageObservations([
       outageObservation(1),
@@ -341,6 +422,23 @@ describe('railway-redis-lifecycle-preview-probe', () => {
     }));
   });
 
+  it('waits past a split recovery sample until every endpoint converges', () => {
+    const splitRecovery = readyObservation(2);
+    splitRecovery.healthz.redisReady = false;
+    splitRecovery.healthz.redisStatus = 'degraded';
+    splitRecovery.healthz.redisCode = 'REDIS_DEPENDENCY_UNAVAILABLE';
+    splitRecovery.healthz.circuitState = 'OPEN';
+
+    const evaluation = evaluateRecoveryObservations([
+      outageObservation(1),
+      splitRecovery,
+      readyObservation(3)
+    ]);
+
+    expect(evaluation.passed).toBe(true);
+    expect(evaluation.readinessTransitionObserved).toBe(true);
+  });
+
   it('runs a bounded GET-only recovery probe and stops after the transition', async () => {
     const states = [
       {
@@ -351,7 +449,9 @@ describe('railway-redis-lifecycle-preview-probe', () => {
         redisCode: 'REDIS_DEPENDENCY_UNAVAILABLE',
         retryScheduled: true,
         ready: false,
-        recoveryCount: null
+        recoveryCount: 0,
+        readyGeneration: 1,
+        circuitState: 'OPEN'
       },
       {
         uptime: 21,
@@ -361,7 +461,9 @@ describe('railway-redis-lifecycle-preview-probe', () => {
         redisCode: 'REDIS_DEPENDENCY_UNAVAILABLE',
         retryScheduled: true,
         ready: false,
-        recoveryCount: null
+        recoveryCount: 0,
+        readyGeneration: 1,
+        circuitState: 'OPEN'
       },
       {
         uptime: 22,
@@ -371,7 +473,9 @@ describe('railway-redis-lifecycle-preview-probe', () => {
         redisCode: null,
         retryScheduled: false,
         ready: true,
-        recoveryCount: 1
+        recoveryCount: 1,
+        readyGeneration: 2,
+        circuitState: 'CLOSED'
       }
     ];
     let requestCount = 0;
@@ -382,7 +486,9 @@ describe('railway-redis-lifecycle-preview-probe', () => {
         ? readinessResult({
           ready: state.ready,
           code: state.redisCode,
-          recoveryCount: state.recoveryCount
+          recoveryCount: state.recoveryCount,
+          readyGeneration: state.readyGeneration,
+          circuitState: state.circuitState
         })
         : healthResult(state));
     });

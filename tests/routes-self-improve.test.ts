@@ -46,6 +46,27 @@ function createTestApp(): express.Express {
   return app;
 }
 
+function createDependencyAwareTestApp(): express.Express {
+  const app = createTestApp();
+  app.use((
+    error: unknown,
+    _req: express.Request,
+    res: express.Response,
+    _next: express.NextFunction
+  ) => {
+    const dependencyError = error as { code?: unknown; dependency?: unknown };
+    res.status(
+      dependencyError.code === 'REDIS_DEPENDENCY_UNAVAILABLE'
+      && dependencyError.dependency === 'redis'
+        ? 503
+        : 500
+    ).json({
+      code: dependencyError.code
+    });
+  });
+  return app;
+}
+
 describe('routes/self-improve', () => {
   beforeEach(() => {
     runSelfImproveCycleMock.mockReset();
@@ -237,6 +258,30 @@ describe('routes/self-improve', () => {
       expect.anything(),
       expect.objectContaining({ where: 'self-improve/unfreeze' })
     );
+  });
+
+  it('forwards Redis dependency failures from relaxing operations as stable 503s', async () => {
+    const app = createDependencyAwareTestApp();
+    const dependencyError = Object.assign(
+      new Error('Redis dependency is unavailable.'),
+      {
+        dependency: 'redis',
+        code: 'REDIS_DEPENDENCY_UNAVAILABLE'
+      }
+    );
+    unfreezeSelfImproveMock.mockRejectedValueOnce(dependencyError);
+    setAutonomyLevelMock.mockRejectedValueOnce(dependencyError);
+
+    await request(app)
+      .post('/api/self-improve/unfreeze')
+      .send({ reason: 'blocked' })
+      .expect(503, { code: 'REDIS_DEPENDENCY_UNAVAILABLE' });
+    await request(app)
+      .post('/api/self-improve/autonomy')
+      .send({ level: 3, reason: 'blocked' })
+      .expect(503, { code: 'REDIS_DEPENDENCY_UNAVAILABLE' });
+
+    expect(sendInternalErrorPayloadMock).not.toHaveBeenCalled();
   });
 
   it('validates autonomy level and handles success/error branches', async () => {

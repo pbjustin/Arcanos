@@ -1,8 +1,8 @@
 # Railway Redis lifecycle preview
 
-**Status: PREPARED / NOT EXECUTED**
+**Status: REUSABLE ISOLATED-PREVIEW PROCEDURE**
 
-This runbook prepares an end-to-end proof that a temporary Redis outage does not remove the ARCANOS web listener and that Redis recovery restores readiness without restarting the web deployment. It must only target a new, empty, non-production Railway environment. Nothing in this document has been executed against Railway.
+This runbook defines an end-to-end proof that a temporary Redis outage does not remove the ARCANOS web listener and that Redis recovery restores readiness without restarting the web or worker deployment. It must target only an explicitly verified, independently provisioned, non-production Railway environment. Record each execution separately; this document is not execution evidence.
 
 The evidence probe is read-only and dry-run by default. It never invokes Railway CLI, changes a service, reads Railway variables, or infers a target from the local Railway link or ambient environment variables.
 
@@ -10,9 +10,9 @@ The evidence probe is read-only and dry-run by default. It never invokes Railway
 
 Do not proceed unless an operator has approved creation and later deletion of a billable preview environment.
 
-- Create an **empty** persistent environment. Do not duplicate or fork the production environment.
-- Use an environment named `arcanos-redis-lifecycle-preview-YYYYMMDD-N`. Native `Arcanos-pr-N` environments use the repository's passive PR-safe launcher and cannot exercise the application lifecycle.
-- Add only one web service and one fresh Redis service. Do not add a worker, Postgres, executor, cron, or production volume.
+- Create an **empty** persistent environment for the initial preview. Do not duplicate or fork the production environment. A retained preview may be reused only after its service, volume, credential, domain, and source identities are reverified.
+- Use an environment named `arcanos-redis-lifecycle-preview-YYYYMMDD-N`, `dependency-resilience-preview-YYYYMMDD`, or `dep-resilience-preview-<short-commit>`. Native `Arcanos-pr-N` environments use the repository's passive PR-safe launcher and cannot exercise the application lifecycle.
+- Recreate the production-shaped web, worker, PostgreSQL, and Redis roles with fresh preview-only services and volumes. Do not add an executor, cron, production service, or production volume.
 - Do not copy production variables. In particular, do not provide production OpenAI credentials, GPT Access credentials, database URLs, Railway tokens, cookies, or shared secrets.
 - Keep Redis private-network-only. The Railway Redis template enables a public TCP proxy by default; remove that proxy in the preview service's Networking settings before deploying the web service.
 - Use `/health` as the Railway deployment healthcheck. `/readyz` is intentionally unavailable during the Redis outage and therefore must not be the deployment startup gate for this experiment.
@@ -22,13 +22,14 @@ Railway environments and private networking are environment-scoped, but that iso
 
 References: [Railway environments](https://docs.railway.com/environments), [private networking](https://docs.railway.com/networking/private-networking), [healthchecks](https://docs.railway.com/deployments/healthchecks), and [Redis](https://docs.railway.com/databases/redis).
 
-## Prepared topology
+## Production-shaped isolated topology
 
 | Role | Count | Network exposure | Data/credentials |
 | --- | ---: | --- | --- |
 | ARCANOS web | 1 | One temporary Railway HTTPS domain | Mock provider only; no production secrets |
+| ARCANOS worker | 1 | Private network only | Mock provider only; preview queue namespace |
+| Fresh PostgreSQL | 1 | Railway private network only | Empty preview schema and volume |
 | Fresh Redis | 1 | Railway private network only | Disposable preview data |
-| Worker/Postgres/executor | 0 | None | None |
 
 Required web variables:
 
@@ -51,6 +52,7 @@ Run from the repository root at the exact commit intended for the preview:
 
 ```powershell
 npm run build:packages
+npm run test:redis-resilience
 node scripts/run-jest.mjs --testPathPatterns=railway-redis-lifecycle-preview-probe --coverage=false
 npm run validate:railway
 npm run railway:probe:redis-lifecycle
@@ -93,15 +95,17 @@ railway up --detach --project <PROJECT_ID> --environment <PREVIEW_ENVIRONMENT_ID
 
 Do not put secret values on a command line. Configure the allowlisted preview variables and the private Redis reference in Railway's variable UI.
 
-## Gate 2 — validate the explicit target without network (held target)
+## Gate 2 — validate the explicit target and healthy baseline
 
 Fill all placeholders from the newly created preview. Omitting either an identity or the phase fails closed. This command validates the target but does not make a request:
 
 ```powershell
-npm run railway:probe:redis-lifecycle -- --target isolated-preview --base-url https://<PREVIEW_WEB_DOMAIN>.up.railway.app --environment arcanos-redis-lifecycle-preview-20260722-1 --environment-id <PREVIEW_ENVIRONMENT_UUID> --web-service-id <PREVIEW_WEB_SERVICE_UUID> --web-deployment-id <PREVIEW_WEB_DEPLOYMENT_UUID> --phase outage
+npm run railway:probe:redis-lifecycle -- --target isolated-preview --base-url https://<PREVIEW_WEB_DOMAIN>.up.railway.app --environment <ISOLATED_PREVIEW_NAME> --environment-id <PREVIEW_ENVIRONMENT_UUID> --web-service-id <PREVIEW_WEB_SERVICE_UUID> --web-deployment-id <PREVIEW_WEB_DEPLOYMENT_UUID> --phase baseline
 ```
 
 Expected result: `mode=DRY_RUN`, `networkAttempted=false`, and check code `EXPLICIT_TARGET_VALIDATED_NO_NETWORK`.
+
+After independently confirming the target identity, add `--execute --allow-network`. A passing baseline requires liveness and readiness 200, listener bound, Redis ready, retry idle, and circuit `CLOSED`.
 
 The probe rejects:
 
@@ -117,7 +121,7 @@ The evidence records its execution limits. The probe rejects more than 100 sampl
 
 Because the probe intentionally has no Railway control-plane access, its environment/service/deployment IDs are operator-supplied attestations; public HTTP cannot prove that the domain resolves to those IDs. Before either live phase, independently confirm the domain-to-service mapping in the Railway dashboard or a read-only control-plane listing. The hostname and canonical-production denials are defense in depth, not a replacement for that check.
 
-This probe proves listener, liveness, readiness, retry, and recovery behavior. It does not invoke an application business operation, so operation-specific fast-failure behavior remains covered by local adapter/route tests unless a separately reviewed, non-mutating preview operation is added.
+This probe proves listener, liveness, readiness, circuit, retry, generation, and recovery behavior. It does not invoke a mutating business operation. Fast operation-gate failure is covered deterministically by `npm run test:redis-resilience` and may additionally be confirmed from sanitized gate-rejection metrics or logs generated by normal preview diagnostics.
 
 ## Gate 3 — prove outage behavior (held)
 
@@ -140,7 +144,7 @@ If the web service has not yet been deployed, deploy the exact reviewed commit n
 Live HTTP requests require both authorization flags. The probe performs five bounded samples by default:
 
 ```powershell
-npm run railway:probe:redis-lifecycle -- --target isolated-preview --base-url https://<PREVIEW_WEB_DOMAIN>.up.railway.app --environment arcanos-redis-lifecycle-preview-20260722-1 --environment-id <PREVIEW_ENVIRONMENT_UUID> --web-service-id <PREVIEW_WEB_SERVICE_UUID> --web-deployment-id <PREVIEW_WEB_DEPLOYMENT_UUID> --phase outage --execute --allow-network
+npm run railway:probe:redis-lifecycle -- --target isolated-preview --base-url https://<PREVIEW_WEB_DOMAIN>.up.railway.app --environment <ISOLATED_PREVIEW_NAME> --environment-id <PREVIEW_ENVIRONMENT_UUID> --web-service-id <PREVIEW_WEB_SERVICE_UUID> --web-deployment-id <PREVIEW_WEB_DEPLOYMENT_UUID> --phase outage --execute --allow-network
 ```
 
 Acceptance criteria:
@@ -150,6 +154,7 @@ Acceptance criteria:
 - both liveness payloads report `listener_bound=true`;
 - `/readyz` returns 503 and its Redis check is unhealthy;
 - the final health/readiness state uses `REDIS_DEPENDENCY_UNAVAILABLE`;
+- the Redis circuit is `OPEN` or `HALF_OPEN` and application probe capacity remains zero;
 - liveness reports a scheduled Redis retry;
 - the public responses contain no Redis URL, credential marker, or low-level connection error; and
 - the report exits zero with `summary.status=PASS`.
@@ -163,7 +168,7 @@ Use two terminals. Start the read-only recovery probe **before** the Redis mutat
 Terminal A (bounded to 80 samples, one second apart by default):
 
 ```powershell
-npm run railway:probe:redis-lifecycle -- --target isolated-preview --base-url https://<PREVIEW_WEB_DOMAIN>.up.railway.app --environment arcanos-redis-lifecycle-preview-20260722-1 --environment-id <PREVIEW_ENVIRONMENT_UUID> --web-service-id <PREVIEW_WEB_SERVICE_UUID> --web-deployment-id <PREVIEW_WEB_DEPLOYMENT_UUID> --phase recovery --execute --allow-network
+npm run railway:probe:redis-lifecycle -- --target isolated-preview --base-url https://<PREVIEW_WEB_DOMAIN>.up.railway.app --environment <ISOLATED_PREVIEW_NAME> --environment-id <PREVIEW_ENVIRONMENT_UUID> --web-service-id <PREVIEW_WEB_SERVICE_UUID> --web-deployment-id <PREVIEW_WEB_DEPLOYMENT_UUID> --phase recovery --execute --allow-network
 ```
 
 After Terminal A has captured at least one degraded sample, Terminal B may perform the separately approved preview-only mutation:
@@ -180,7 +185,7 @@ Acceptance criteria:
 - both liveness payloads keep `listener_bound=true` and converge on Redis `ready`;
 - `/readyz` is first 503 and later 200 in the same probe run;
 - the final health state reports Redis `ready` with no dependency error code;
-- the final Redis readiness metadata reports `recoveryCount >= 1`;
+- the final Redis readiness metadata reports `recoveryCount >= 1`, `readyGeneration >= 2`, and circuit `CLOSED`;
 - web process uptime is monotonic and the process start time inferred independently from each server timestamp/uptime pair remains stable; and
 - the report exits zero with `summary.status=PASS` and `readinessTransitionObserved=true`.
 
@@ -215,4 +220,4 @@ Cleanup is a final, separately authorized destructive action. Reconfirm the exac
 
 After deletion, verify that the preview web domain no longer resolves and that the production environment, services, deployment IDs, and domains are unchanged.
 
-**Current execution record: no Railway environment was created, no service was stopped or redeployed, no network probe was run, and production was not accessed or modified.**
+Execution evidence belongs in the dated, sanitized audit package. Never infer current Railway state from this procedure.

@@ -1,5 +1,11 @@
-import { createClient } from 'redis';
+import { createClient, ErrorReply } from 'redis';
 import { logger } from '@platform/logging/structuredLogging.js';
+import {
+  recordDependencyCall,
+  recordDependencyLifecycleEvent,
+  recordDependencyOperationGateRejection,
+  recordDependencyOperationInFlight,
+} from '@platform/observability/appMetrics.js';
 import { resolveConfiguredRedisConnection } from '@platform/runtime/redis.js';
 import {
   DependencyLifecycle,
@@ -15,8 +21,26 @@ const REDIS_RETRY_BASE_DELAY_MS = 250;
 const REDIS_RETRY_MAX_DELAY_MS = 30_000;
 const REDIS_RETRY_JITTER_MS = 250;
 const REDIS_OPERATION_TIMEOUT_MS = 2_000;
+const REDIS_CIRCUIT_FAILURE_THRESHOLD = 1;
 
 export type RedisLifecycleState = DependencyLifecycleState;
+export type RedisCircuitState = 'CLOSED' | 'OPEN' | 'HALF_OPEN';
+
+export type RedisOperationName =
+  | 'diagnostics.metrics.record'
+  | 'diagnostics.metrics.read'
+  | 'diagnostics.metrics.reset'
+  | 'incident.kill_switch.read'
+  | 'incident.kill_switch.write_restrictive'
+  | 'incident.kill_switch.write_relaxing'
+  | 'self_heal.telemetry.load'
+  | 'self_heal.telemetry.save'
+  | 'safety.nonce.consume'
+  | 'safety.lock.extend'
+  | 'safety.key.delete'
+  | 'safety.lock.acquire'
+  | 'safety.lock.release'
+  | 'safety.lock.heartbeat';
 
 export type RedisLifecycleErrorCode =
   | 'REDIS_CONNECTION_REFUSED'
@@ -26,18 +50,37 @@ export type RedisLifecycleErrorCode =
   | 'REDIS_DNS_UNAVAILABLE'
   | 'REDIS_CONNECTION_LOST'
   | 'REDIS_OPERATION_TIMEOUT'
+  | 'REDIS_UNEXPECTED_RESPONSE'
   | 'REDIS_UNAVAILABLE';
 
 export interface RedisLifecycleSnapshot {
   state: RedisLifecycleState;
   configured: boolean;
   connected: boolean;
+  attemptInFlight: boolean;
+  readyGeneration: number;
+  circuitEnabled: boolean;
+  circuitState: RedisCircuitState;
+  circuitFailureThreshold: 1;
   attempt: number;
   recoveryCount: number;
   retryScheduled: boolean;
   lastTransitionAt: string;
   lastReadyAt: string | null;
   lastErrorCode: RedisLifecycleErrorCode | null;
+  operationGate: RedisOperationGateSnapshot;
+}
+
+export interface RedisOperationGateSnapshot {
+  inFlight: number;
+  admittedTotal: number;
+  rejectedTotal: number;
+  succeededTotal: number;
+  failedTotal: number;
+  timedOutTotal: number;
+  lastOperation: RedisOperationName | null;
+  lastOutcome: 'succeeded' | 'failed' | 'timed_out' | 'rejected' | null;
+  lastDurationMs: number | null;
 }
 
 export type RedisLifecycleClient = ReturnType<typeof createClient>;
@@ -55,8 +98,12 @@ export interface RedisLifecycleManagerOptions {
 }
 
 export interface RedisOperationOptions {
-  client?: RedisLifecycleClient;
+  operation: RedisOperationName;
   timeoutMs?: number;
+  correlationId?: string;
+  requestId?: string;
+  traceId?: string;
+  jobId?: string;
 }
 
 function createRedisDependencyUnavailableError(): DependencyUnavailableError {
@@ -104,6 +151,10 @@ function classifyRedisLifecycleError(error: unknown): RedisLifecycleErrorCode {
     return 'REDIS_OPERATION_TIMEOUT';
   }
 
+  if (code === 'REDIS_UNEXPECTED_RESPONSE') {
+    return 'REDIS_UNEXPECTED_RESPONSE';
+  }
+
   if (
     code === 'ETIMEDOUT'
     || code === 'DEPENDENCY_ATTEMPT_TIMEOUT'
@@ -130,26 +181,87 @@ function classifyRedisLifecycleError(error: unknown): RedisLifecycleErrorCode {
   return 'REDIS_UNAVAILABLE';
 }
 
+function deriveRedisCircuitState(snapshot: {
+  configured: boolean;
+  ready: boolean;
+  attemptInFlight: boolean;
+}): RedisCircuitState {
+  if (!snapshot.configured || snapshot.ready) {
+    return 'CLOSED';
+  }
+  return snapshot.attemptInFlight ? 'HALF_OPEN' : 'OPEN';
+}
+
+function cloneOperationGateSnapshot(
+  snapshot: RedisOperationGateSnapshot
+): RedisOperationGateSnapshot {
+  return { ...snapshot };
+}
+
 function projectRedisSnapshot(
-  snapshot: ReturnType<DependencyLifecycle<RedisLifecycleClient, RedisLifecycleErrorCode>['getSnapshot']>
+  snapshot: ReturnType<DependencyLifecycle<RedisLifecycleClient, RedisLifecycleErrorCode>['getSnapshot']>,
+  operationGate: RedisOperationGateSnapshot
 ): RedisLifecycleSnapshot {
   return {
     state: snapshot.state,
     configured: snapshot.configured,
     connected: snapshot.ready,
+    attemptInFlight: snapshot.attemptInFlight,
+    readyGeneration: snapshot.readyGeneration,
+    circuitEnabled: snapshot.configured,
+    circuitState: deriveRedisCircuitState(snapshot),
+    circuitFailureThreshold: REDIS_CIRCUIT_FAILURE_THRESHOLD,
     attempt: snapshot.attempt,
     recoveryCount: snapshot.recoveryCount,
     retryScheduled: snapshot.retryScheduled,
     lastTransitionAt: snapshot.lastTransitionAt,
     lastReadyAt: snapshot.lastReadyAt,
-    lastErrorCode: snapshot.lastErrorCode
+    lastErrorCode: snapshot.lastErrorCode,
+    operationGate: cloneOperationGateSnapshot(operationGate)
   };
 }
 
 function reportRedisLifecycleEvent(event: DependencyLifecycleEvent<RedisLifecycleErrorCode>): void {
+  const circuitState = deriveRedisCircuitState({
+    configured: true,
+    ready: event.state === 'READY',
+    attemptInFlight: event.attemptInFlight
+  });
+  const eventContext = {
+    module: 'redis-lifecycle',
+    dependency: event.dependency,
+    lifecycleId: event.lifecycleId,
+    eventId: event.eventId,
+    correlationId: event.correlationId,
+    eventSequence: event.eventSequence,
+    occurredAt: event.occurredAt,
+    previousState: event.previousState,
+    state: event.state,
+    previousAttemptInFlight: event.previousAttemptInFlight,
+    attemptInFlight: event.attemptInFlight,
+    previousReadyGeneration: event.previousReadyGeneration,
+    readyGeneration: event.readyGeneration,
+    circuitState
+  };
+  recordDependencyLifecycleEvent({
+    dependency: event.dependency,
+    event: event.kind,
+    lifecycleState: event.state,
+    circuitState,
+    recovered: event.kind === 'ready' ? event.recovered : false
+  });
+
+  if (event.kind === 'attempt_started') {
+    logger.info('redis.lifecycle.half_open_probe_started', {
+      ...eventContext,
+      attempt: event.attempt
+    });
+    return;
+  }
+
   if (event.kind === 'ready') {
     logger.info('redis.lifecycle.ready', {
-      module: 'redis-lifecycle',
+      ...eventContext,
       recovered: event.recovered,
       attempt: event.attempt
     });
@@ -158,7 +270,7 @@ function reportRedisLifecycleEvent(event: DependencyLifecycleEvent<RedisLifecycl
 
   if (event.kind === 'retry_scheduled') {
     logger.warn('redis.lifecycle.retry_scheduled', {
-      module: 'redis-lifecycle',
+      ...eventContext,
       operation: event.operation,
       errorCode: event.errorCode,
       attempt: event.attempt,
@@ -169,16 +281,39 @@ function reportRedisLifecycleEvent(event: DependencyLifecycleEvent<RedisLifecycl
 
   if (event.kind === 'unavailable') {
     logger.warn('redis.lifecycle.connection_lost', {
-      module: 'redis-lifecycle',
-      errorCode: event.errorCode
+      ...eventContext,
+      errorCode: event.errorCode,
+      retryDelayMs: event.retryDelayMs
     });
     return;
   }
 
   logger.warn('redis.lifecycle.listener_failed', {
-    module: 'redis-lifecycle',
+    ...eventContext,
     errorCode: 'REDIS_LIFECYCLE_LISTENER_FAILED'
   });
+}
+
+function normalizeCorrelationId(options: RedisOperationOptions): string | undefined {
+  const candidate = options.correlationId
+    ?? options.traceId
+    ?? options.requestId
+    ?? options.jobId;
+  if (typeof candidate !== 'string') {
+    return undefined;
+  }
+  const normalized = candidate.trim();
+  return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(normalized)
+    ? normalized
+    : undefined;
+}
+
+function isRedisLogicalCommandError(error: unknown): boolean {
+  if (!(error instanceof ErrorReply)) {
+    return false;
+  }
+  const replyPrefix = error.message.trim().split(/\s+/u, 1)[0]?.toUpperCase() ?? '';
+  return ['ERR', 'WRONGTYPE', 'NOSCRIPT'].includes(replyPrefix);
 }
 
 /**
@@ -190,9 +325,24 @@ function reportRedisLifecycleEvent(event: DependencyLifecycleEvent<RedisLifecycl
  */
 export class RedisLifecycleManager {
   private readonly lifecycle: DependencyLifecycle<RedisLifecycleClient, RedisLifecycleErrorCode>;
+  private readonly now: () => Date;
   private activeOperationCount = 0;
+  private readonly operationGate: RedisOperationGateSnapshot = {
+    inFlight: 0,
+    admittedTotal: 0,
+    rejectedTotal: 0,
+    succeededTotal: 0,
+    failedTotal: 0,
+    timedOutTotal: 0,
+    lastOperation: null,
+    lastOutcome: null,
+    lastDurationMs: null
+  };
+  private readonly loggedGateRejections = new Set<string>();
+  private loggedGateRejectionGeneration = -1;
 
   constructor(options: RedisLifecycleManagerOptions = {}) {
+    this.now = options.now ?? (() => new Date());
     const clientFactory = options.clientFactory ?? ((clientOptions) => createClient(clientOptions));
     const adapter: DependencyLifecycleAdapter<RedisLifecycleClient, RedisLifecycleErrorCode> = {
       resolve: () => {
@@ -271,13 +421,14 @@ export class RedisLifecycleManager {
 
     this.lifecycle = new DependencyLifecycle({
       adapter,
+      dependencyName: 'redis',
       attemptTimeoutMs: REDIS_ATTEMPT_TIMEOUT_MS,
       retryBaseDelayMs: REDIS_RETRY_BASE_DELAY_MS,
       retryMaxDelayMs: REDIS_RETRY_MAX_DELAY_MS,
       retryJitterMs: REDIS_RETRY_JITTER_MS,
       sleep: options.sleep,
       random: options.random,
-      now: options.now,
+      now: this.now,
       onEvent: reportRedisLifecycleEvent
     });
   }
@@ -290,74 +441,176 @@ export class RedisLifecycleManager {
     return this.lifecycle.stop();
   }
 
-  getReadyClient(): RedisLifecycleClient | null {
-    return this.lifecycle.getReadyResource();
-  }
-
   getSnapshot(): RedisLifecycleSnapshot {
-    return projectRedisSnapshot(this.lifecycle.getSnapshot());
+    return projectRedisSnapshot(this.lifecycle.getSnapshot(), this.operationGate);
   }
 
   subscribe(listener: RedisLifecycleListener): () => void {
     return this.lifecycle.subscribe((snapshot) => {
-      listener(projectRedisSnapshot(snapshot));
+      listener(projectRedisSnapshot(snapshot, this.operationGate));
     });
-  }
-
-  reportUnavailable(error: unknown): void {
-    this.lifecycle.reportUnavailable(error);
   }
 
   async executeOperation<T>(
     operation: (client: RedisLifecycleClient) => Promise<T>,
-    options: RedisOperationOptions = {}
+    options: RedisOperationOptions
   ): Promise<T> {
-    const client = options.client ?? this.getReadyClient();
-    if (!client || this.getReadyClient() !== client) {
+    const operationName = options.operation;
+    const correlationId = normalizeCorrelationId(options);
+    const lease = this.lifecycle.getReadyResourceLease(correlationId);
+    if (!lease) {
+      this.recordGateRejection(operationName, correlationId);
       throw createRedisDependencyUnavailableError();
     }
 
-    const timeoutMs = options.timeoutMs ?? REDIS_OPERATION_TIMEOUT_MS;
-    if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    const requestedTimeoutMs = options.timeoutMs ?? REDIS_OPERATION_TIMEOUT_MS;
+    if (!Number.isFinite(requestedTimeoutMs) || requestedTimeoutMs <= 0) {
       throw new Error('Redis operation timeout must be a positive finite number.');
     }
+    const timeoutMs = Math.min(requestedTimeoutMs, REDIS_OPERATION_TIMEOUT_MS);
+    const startedAtMs = this.now().getTime();
 
     let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+    let operationStarted = false;
+    let timedOut = false;
     const timeoutError = Object.assign(new Error('Redis operation timed out.'), {
       code: 'REDIS_OPERATION_TIMEOUT'
     });
     const timeoutPromise = new Promise<never>((_resolve, reject) => {
       timeoutHandle = setTimeout(() => {
-        this.reportUnavailable(timeoutError);
+        timedOut = true;
+        this.lifecycle.reportUnavailable(timeoutError, lease);
         reject(createRedisDependencyUnavailableError());
       }, timeoutMs);
       timeoutHandle.unref?.();
     });
 
-    this.activeOperationCount += 1;
     try {
       const result = await Promise.race([
-        Promise.resolve().then(() => operation(client)),
+        Promise.resolve().then(() => {
+          if (!this.lifecycle.isReadyResourceLease(lease)) {
+            throw createRedisDependencyUnavailableError();
+          }
+          operationStarted = true;
+          this.activeOperationCount += 1;
+          this.operationGate.inFlight = this.activeOperationCount;
+          this.operationGate.admittedTotal += 1;
+          this.operationGate.lastOperation = operationName;
+          recordDependencyOperationInFlight('redis', this.activeOperationCount);
+          const admittedOperation = Promise.resolve().then(() => operation(lease.resource));
+          void admittedOperation.then(
+            () => this.recordOperationSettled(),
+            () => this.recordOperationSettled()
+          );
+          return admittedOperation;
+        }),
         timeoutPromise
       ]);
-      if (this.getReadyClient() !== client) {
+      if (!this.lifecycle.isReadyResourceLease(lease)) {
         throw createRedisDependencyUnavailableError();
       }
+      const durationMs = Math.max(0, this.now().getTime() - startedAtMs);
+      this.operationGate.succeededTotal += 1;
+      this.operationGate.lastOperation = operationName;
+      this.operationGate.lastOutcome = 'succeeded';
+      this.operationGate.lastDurationMs = durationMs;
+      recordDependencyCall({
+        dependency: 'redis',
+        operation: operationName,
+        outcome: 'ok',
+        durationMs
+      });
       return result;
     } catch (error) {
-      if (this.getReadyClient() === client) {
-        this.reportUnavailable(error);
+      if (!operationStarted) {
+        this.recordGateRejection(operationName, correlationId);
+      } else {
+        const durationMs = Math.max(0, this.now().getTime() - startedAtMs);
+        this.operationGate.failedTotal += 1;
+        this.operationGate.lastOperation = operationName;
+        this.operationGate.lastOutcome = timedOut ? 'timed_out' : 'failed';
+        this.operationGate.lastDurationMs = durationMs;
+        if (timedOut) {
+          this.operationGate.timedOutTotal += 1;
+        }
+        recordDependencyCall({
+          dependency: 'redis',
+          operation: operationName,
+          outcome: timedOut ? 'timeout' : 'failed',
+          durationMs,
+          error
+        });
+      }
+      if (
+        operationStarted
+        && !(error instanceof DependencyUnavailableError)
+        && !timedOut
+        && !isRedisLogicalCommandError(error)
+      ) {
+        this.lifecycle.reportUnavailable(error, lease);
       }
       if (error instanceof DependencyUnavailableError) {
         throw error;
       }
       throw createRedisDependencyUnavailableError();
     } finally {
-      this.activeOperationCount = Math.max(0, this.activeOperationCount - 1);
       if (timeoutHandle) {
         clearTimeout(timeoutHandle);
       }
     }
+  }
+
+  private recordOperationSettled(): void {
+    this.activeOperationCount = Math.max(0, this.activeOperationCount - 1);
+    this.operationGate.inFlight = this.activeOperationCount;
+    recordDependencyOperationInFlight('redis', this.activeOperationCount);
+  }
+
+  private recordGateRejection(
+    operation: RedisOperationName,
+    correlationId?: string
+  ): void {
+    const snapshot = this.getSnapshot();
+    this.operationGate.rejectedTotal += 1;
+    this.operationGate.lastOperation = operation;
+    this.operationGate.lastOutcome = 'rejected';
+    this.operationGate.lastDurationMs = 0;
+    const reason = snapshot.circuitState === 'HALF_OPEN'
+      ? 'half_open'
+      : snapshot.circuitState === 'OPEN'
+        ? 'open'
+        : 'stale_generation';
+    recordDependencyOperationGateRejection({
+      dependency: 'redis',
+      operation,
+      reason
+    });
+    recordDependencyCall({
+      dependency: 'redis',
+      operation,
+      outcome: 'rejected',
+      durationMs: 0
+    });
+
+    if (snapshot.readyGeneration !== this.loggedGateRejectionGeneration) {
+      this.loggedGateRejections.clear();
+      this.loggedGateRejectionGeneration = snapshot.readyGeneration;
+    }
+    const logKey = `${snapshot.readyGeneration}:${snapshot.circuitState}:${operation}`;
+    if (this.loggedGateRejections.has(logKey)) {
+      return;
+    }
+    this.loggedGateRejections.add(logKey);
+    logger.warn('redis.operation.rejected', {
+      module: 'redis-lifecycle',
+      dependency: 'redis',
+      operation,
+      reason,
+      circuitState: snapshot.circuitState,
+      readyGeneration: snapshot.readyGeneration,
+      errorCode: 'REDIS_DEPENDENCY_UNAVAILABLE',
+      ...(correlationId ? { correlationId } : {})
+    });
   }
 }
 
@@ -371,26 +624,10 @@ export function stopRedisLifecycle(): Promise<void> {
   return redisLifecycle.stop();
 }
 
-export function getReadyRedisClient(): RedisLifecycleClient | null {
-  return redisLifecycle.getReadyClient();
-}
-
-export function requireReadyRedisClient(): RedisLifecycleClient {
-  const client = getReadyRedisClient();
-  if (!client) {
-    throw new DependencyUnavailableError(
-      'redis',
-      'REDIS_DEPENDENCY_UNAVAILABLE',
-      'Redis dependency is unavailable.'
-    );
-  }
-  return client;
-}
-
 /** Run one Redis command with a deadline and a stable dependency failure. */
 export async function executeRedisOperation<T>(
   operation: (client: RedisLifecycleClient) => Promise<T>,
-  options: RedisOperationOptions = {}
+  options: RedisOperationOptions
 ): Promise<T> {
   return redisLifecycle.executeOperation(operation, options);
 }
