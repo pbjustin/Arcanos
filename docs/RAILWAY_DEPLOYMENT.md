@@ -76,7 +76,7 @@ Environment separation:
 - Dispatch confidence thresholds are fixed code policy, not Railway variables: readonly `0.65`, privileged `0.78`, and destructive `0.90`.
 - Confirm each service role through an approved control plane against the exact project, environment, and service. Do not reproduce raw variable output in reports.
 
-## Local validation boundary
+## Run locally
 
 Use the build, test, and `validate:railway` checks above for non-deploying validation. Do not start the application with Railway or production variables as a deployment check.
 
