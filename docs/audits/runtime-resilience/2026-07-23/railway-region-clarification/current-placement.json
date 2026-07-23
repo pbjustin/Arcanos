@@ -1,0 +1,142 @@
+{
+  "schemaVersion": 1,
+  "kind": "sanitized_railway_redis_current_placement",
+  "observedAt": "2026-07-23T05:35:00Z",
+  "inspectionMode": "read_only_metadata_and_public_health",
+  "repository": {
+    "branch": "codex/dependency-resilience-preview-20260722",
+    "commit": "a67ad9040830001a69dda6889058d4486adb0c34",
+    "trackedWorktreeCleanBeforeArtifactCreation": true,
+    "preExistingUntrackedEvidencePreserved": true
+  },
+  "project": {
+    "name": "Arcanos",
+    "id": "7faf44e5-519c-4e73-8d7a-da9f389e6187"
+  },
+  "environment": {
+    "name": "dep-resilience-preview-28f408c",
+    "id": "ef75c32a-0e1c-4b82-b0f9-6a5b2951595b",
+    "production": false
+  },
+  "redis": {
+    "serviceName": "Redis Preview",
+    "serviceId": "d9849f88-89c0-4650-86de-7ee07acc7f08",
+    "serviceInstanceId": "e08bcaee-e1f4-4004-bf9b-cb1727564887",
+    "deploymentId": "bb9e73c1-6da5-4ae0-b1b4-b6380724bbd3",
+    "deploymentStatus": "SUCCESS",
+    "deploymentStopped": false,
+    "activeDeploymentCount": 1,
+    "redeployCapability": {
+      "canRedeploy": true,
+      "classification": "control_plane_observed"
+    },
+    "image": "redis:8.6.1",
+    "restartPolicy": {
+      "type": "ON_FAILURE",
+      "maxRetries": 10,
+      "classification": "control_plane_observed"
+    },
+    "serverless": {
+      "enabled": false,
+      "classification": "control_plane_observed"
+    },
+    "regionLabel": "US East (Virginia, USA)",
+    "regionIdentifier": "us-east4-eqdc4a",
+    "regionSelector": {
+      "selected": "US East (Virginia, USA)",
+      "offeredUsEastChoices": 1,
+      "migrationOrNormalizationBannerObserved": false
+    },
+    "volume": {
+      "logicalVolumeId": "60326a10-1f7f-40a5-bd79-2dbc0ffa4479",
+      "volumeInstanceId": null,
+      "volumeInstanceIdReason": "not exposed by installed CLI or inspected dashboard surface",
+      "serviceId": "d9849f88-89c0-4650-86de-7ee07acc7f08",
+      "mountPath": "/data",
+      "regionLabel": "US East (Virginia, USA)",
+      "capacityMb": 50000
+    },
+    "networking": {
+      "railwayServiceDomains": 0,
+      "customDomains": 0,
+      "tcpProxies": 0,
+      "tcpProxyEvidence": "dashboard shows the service as unexposed and only offers creation of a TCP proxy",
+      "privateDns": "redis-preview.railway.internal",
+      "privateDnsReady": true,
+      "addressFamilies": [
+        "IPv4",
+        "IPv6"
+      ]
+    },
+    "persistence": {
+      "mode": "RDB",
+      "savePolicy": "60 1",
+      "appendOnly": false
+    }
+  },
+  "unchangedApplicationDeployments": {
+    "web": {
+      "serviceId": "d83b075d-aad5-4752-b887-039984c1bb0f",
+      "serviceInstanceId": "0485659e-b4a4-4178-843b-4e8830fdfbaa",
+      "deploymentId": "fa5af698-ca43-4e6c-ab9e-76dfd1c89c9f",
+      "status": "SUCCESS"
+    },
+    "worker": {
+      "serviceId": "fc8465a1-7b7b-4a3a-a69d-3df4aa2741d1",
+      "serviceInstanceId": "7de1f4f3-3149-4038-97f5-05d213c5040c",
+      "deploymentId": "23fc639c-e05d-48ec-bff7-7bb9878e963d",
+      "status": "SUCCESS"
+    }
+  },
+  "healthyBaseline": {
+    "sampleCount": 3,
+    "requestTimeoutMs": 2000,
+    "healthHttp200": 3,
+    "healthzHttp200": 3,
+    "readyzHttp200": 3,
+    "listenerBound": true,
+    "startupPhase": "READY",
+    "redisReady": true,
+    "redisStatus": "ready",
+    "circuitEnabled": true,
+    "circuitState": "CLOSED",
+    "retryScheduled": false,
+    "recoveryCount": 0,
+    "readyGeneration": 1,
+    "edge502": 0,
+    "sensitiveContentObserved": false
+  },
+  "productionNonImpact": {
+    "environmentId": "fb583147-6c39-4343-9267-500f357d25ab",
+    "webDeploymentId": "3a8f6f81-378e-4e83-9c82-4306bbf9e6c3",
+    "workerDeploymentId": "ca231f44-b0f0-4d79-894b-ad0165cf13ab",
+    "postgresqlDeploymentId": "5a073def-9a2b-4231-bf9a-0901a9b31dce",
+    "redisDeploymentId": "aeae0e09-e4bb-406f-92ea-cf5ca81294ac",
+    "allStatuses": "SUCCESS",
+    "mutationPerformed": false
+  },
+  "cliLimitations": {
+    "version": "4.30.2",
+    "repositoryLinkMatchedPreview": false,
+    "isolatedTemporaryLinkUsedForTargetedInspection": true,
+    "regionCommandAvailable": false,
+    "metricsCommandAvailable": false,
+    "scaleHelpCompatible": false,
+    "scaleHelpFailure": "current CLI queries an obsolete Region field",
+    "volumeInstanceIdExposed": false,
+    "volumeMigrationStateExposed": false,
+    "tcpProxyStateExposed": false
+  },
+  "prohibitedActionsPerformed": {
+    "redisMigration": false,
+    "redisOutage": false,
+    "redisRestart": false,
+    "redisRedeploy": false,
+    "volumeOperation": false,
+    "networkingChange": false,
+    "variableQuery": false,
+    "redisConnection": false,
+    "productionMutation": false,
+    "supportSubmission": false
+  }
+}

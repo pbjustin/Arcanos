@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "kind": "railway_service_and_deployment_identity_analysis",
+  "identityModel": {
+    "serviceId": {
+      "meaning": "stable deployment target and service configuration identity",
+      "requiredForOutageProof": "must remain d9849f88-89c0-4650-86de-7ee07acc7f08"
+    },
+    "serviceInstanceId": {
+      "meaning": "environment-specific service instance",
+      "currentValue": "e08bcaee-e1f4-4004-bf9b-cb1727564887",
+      "requiredForOutageProof": "must remain e08bcaee-e1f4-4004-bf9b-cb1727564887"
+    },
+    "deploymentId": {
+      "meaning": "one deployable/runtime version of the service",
+      "currentValue": "bb9e73c1-6da5-4ae0-b1b4-b6380724bbd3",
+      "expectedOnRestore": "a new deployment identity is normal"
+    },
+    "replicaOrRuntimeInstanceId": {
+      "meaning": "replaceable running instance identity",
+      "expectedOnRestore": "may change"
+    },
+    "serviceName": {
+      "currentValue": "Redis Preview",
+      "requiredForOutageProof": "must not change"
+    }
+  },
+  "documentedActions": {
+    "restart": "restarts a process within a deployment",
+    "remove": "stops the running deployment and marks it removed",
+    "redeploy": "creates a fresh deployment using the selected deployment's source/configuration",
+    "regionMove": "changes placement and may create new deployment/runtime identities",
+    "serviceReplacement": "creates a materially different topology and is prohibited"
+  },
+  "officialSources": [
+    {
+      "title": "Deployments Reference",
+      "url": "https://docs.railway.com/deployments/reference"
+    },
+    {
+      "title": "Deployment Actions",
+      "url": "https://docs.railway.com/deployments/deployment-actions"
+    },
+    {
+      "title": "railway down",
+      "url": "https://docs.railway.com/cli/down"
+    },
+    {
+      "title": "railway redeploy",
+      "url": "https://docs.railway.com/cli/redeploy"
+    },
+    {
+      "title": "Pricing FAQs",
+      "url": "https://docs.railway.com/pricing/faqs"
+    },
+    {
+      "title": "Pricing Plans",
+      "url": "https://docs.railway.com/pricing/plans"
+    }
+  ],
+  "outageGateIdentityRules": [
+    "Redis service ID and service name must remain unchanged.",
+    "The environment-specific Redis service-instance ID must remain unchanged.",
+    "The logical volume ID and /data attachment must remain unchanged.",
+    "A new Redis deployment and runtime instance are expected during restoration and are not service replacement.",
+    "Web and worker deployment and process identities must remain unchanged.",
+    "No service creation, source upload, variable change, or region change is allowed."
+  ]
+}

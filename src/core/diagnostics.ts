@@ -49,7 +49,11 @@ function buildPublicStartupLifecycleSnapshot() {
         status: redis.state.toLowerCase(),
         code: redisCode,
         attempt: redis.attempt,
-        retry_scheduled: redis.retryScheduled
+        retry_scheduled: redis.retryScheduled,
+        recovery_count: redis.recoveryCount,
+        ready_generation: redis.readyGeneration,
+        circuit_enabled: redis.circuitEnabled,
+        circuit_state: redis.circuitState
       }
     }
   };

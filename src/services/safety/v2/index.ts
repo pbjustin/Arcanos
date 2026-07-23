@@ -14,4 +14,4 @@ export { DistributedLock, withLock, type LockLostCallback } from "./lock.js";
 export { logAuditEvent, flushAuditLog, type AuditEvent } from "./auditLogger.js";
 export { CircuitBreaker } from "./circuitBreaker.js";
 export { registerShutdownHooks } from "./shutdown.js";
-export { getRedis, disconnectRedis } from "./redisClient.js";
+export { disconnectRedis } from "./redisClient.js";

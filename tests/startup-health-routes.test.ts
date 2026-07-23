@@ -13,12 +13,28 @@ function redisSnapshot(
     state,
     configured: true,
     connected: state === 'READY',
+    attemptInFlight: state === 'STARTING',
+    readyGeneration: state === 'READY' ? 1 : 0,
+    circuitEnabled: true,
+    circuitState: state === 'READY' ? 'CLOSED' : state === 'STARTING' ? 'HALF_OPEN' : 'OPEN',
+    circuitFailureThreshold: 1,
     attempt: state === 'STARTING' ? 0 : 1,
     recoveryCount: 0,
     retryScheduled: state === 'DEGRADED',
     lastTransitionAt: '2026-07-21T12:00:00.000Z',
     lastReadyAt: state === 'READY' ? '2026-07-21T12:00:00.000Z' : null,
     lastErrorCode: state === 'DEGRADED' ? 'REDIS_CONNECTION_REFUSED' : null,
+    operationGate: {
+      inFlight: 0,
+      admittedTotal: 0,
+      rejectedTotal: 0,
+      succeededTotal: 0,
+      failedTotal: 0,
+      timedOutTotal: 0,
+      lastOperation: null,
+      lastOutcome: null,
+      lastDurationMs: null
+    },
     ...overrides
   };
 }
@@ -69,6 +85,9 @@ async function buildAppHealthHarness(): Promise<AppHealthHarness> {
   }));
   jest.unstable_mockModule('@platform/runtime/redisLifecycle.js', () => ({
     RedisLifecycleManager: class {},
+    executeRedisOperation: jest.fn(async () => {
+      throw new Error('Health probes must not execute a Redis command.');
+    }),
     getRedisLifecycleSnapshot: jest.fn(() => ({ ...currentRedisSnapshot })),
     getReadyRedisClient: jest.fn(() => null),
     startRedisLifecycle: jest.fn(),
@@ -124,6 +143,8 @@ const originalHealthEnvironment = Object.fromEntries(
 ) as Record<(typeof HEALTH_ENV_NAMES)[number], string | undefined>;
 
 describe('actual Express startup health route ordering', () => {
+  jest.setTimeout(20_000);
+
   beforeEach(() => {
     process.env.NODE_ENV = 'test';
     process.env.OPENAI_API_KEY = 'test-openai-api-key';
@@ -169,7 +190,8 @@ describe('actual Express startup health route ordering', () => {
         redis: expect.objectContaining({
           ready: false,
           status: 'starting',
-          code: 'REDIS_INITIALIZING'
+          code: 'REDIS_INITIALIZING',
+          circuit_state: 'HALF_OPEN'
         })
       }
     }));
@@ -202,7 +224,8 @@ describe('actual Express startup health route ordering', () => {
           ready: false,
           status: 'degraded',
           code: 'REDIS_DEPENDENCY_UNAVAILABLE',
-          retry_scheduled: true
+          retry_scheduled: true,
+          circuit_state: 'OPEN'
         })
       }
     }));
@@ -233,6 +256,12 @@ describe('actual Express startup health route ordering', () => {
       phase: 'READY',
       ready: true
     }));
+    expect(readyHealth.body.dependencies.redis).toEqual(expect.objectContaining({
+      ready: true,
+      circuit_state: 'CLOSED',
+      recovery_count: 1,
+      ready_generation: 1
+    }));
     expect(readyHealthz.status).toBe(200);
     expect(readyHealthz.body.startup.phase).toBe('READY');
     expect(readyResponse.status).toBe(200);
@@ -261,7 +290,8 @@ describe('actual Express startup health route ordering', () => {
         redis: expect.objectContaining({
           ready: false,
           status: 'starting',
-          code: 'REDIS_INITIALIZING'
+          code: 'REDIS_INITIALIZING',
+          circuitState: 'HALF_OPEN'
         })
       }
     }));
@@ -279,7 +309,8 @@ describe('actual Express startup health route ordering', () => {
           ready: false,
           status: 'degraded',
           code: 'REDIS_DEPENDENCY_UNAVAILABLE',
-          retryScheduled: true
+          retryScheduled: true,
+          circuitState: 'OPEN'
         })
       }
     }));
@@ -298,7 +329,10 @@ describe('actual Express startup health route ordering', () => {
           ready: true,
           status: 'ready',
           code: null,
-          retryScheduled: false
+          retryScheduled: false,
+          circuitState: 'CLOSED',
+          recoveryCount: 1,
+          readyGeneration: 1
         })
       }
     }));

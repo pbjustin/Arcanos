@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "kind": "railway_private_network_analysis",
+  "currentState": {
+    "classification": "control_plane_observed",
+    "projectId": "7faf44e5-519c-4e73-8d7a-da9f389e6187",
+    "environmentId": "ef75c32a-0e1c-4b82-b0f9-6a5b2951595b",
+    "serviceId": "d9849f88-89c0-4650-86de-7ee07acc7f08",
+    "serviceName": "Redis Preview",
+    "privateDns": "redis-preview.railway.internal",
+    "privateDnsReady": true,
+    "addressFamilies": [
+      "IPv4",
+      "IPv6"
+    ],
+    "publicServiceDomains": 0,
+    "publicCustomDomains": 0,
+    "tcpProxies": 0
+  },
+  "officialSemantics": {
+    "environmentIsolation": "officially_documented",
+    "automaticInternalDns": "officially_documented",
+    "hostnameDerivedFromServiceName": "officially_documented",
+    "regionChangesLeavePrivateNetworkingUnchanged": "officially_documented",
+    "exactIpAddressStability": "not_guaranteed",
+    "dnsPropagationTiming": "unverified"
+  },
+  "officialSources": [
+    {
+      "title": "Private Networking",
+      "url": "https://docs.railway.com/networking/private-networking"
+    },
+    {
+      "title": "Working with Domains",
+      "url": "https://docs.railway.com/networking/domains/working-with-domains"
+    },
+    {
+      "title": "Regions",
+      "url": "https://docs.railway.com/deployments/regions"
+    }
+  ],
+  "decision": {
+    "regionNormalizationNeededForDns": false,
+    "dependentVariableChangeNeeded": false,
+    "webOrWorkerRestartNeeded": false,
+    "requiredOutageProof": "Keep the same service name and ID, reverify private DNS readiness after restoration, and leave all dependent variables untouched."
+  }
+}

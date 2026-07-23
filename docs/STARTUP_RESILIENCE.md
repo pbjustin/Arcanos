@@ -36,14 +36,21 @@ a Redis command. Redis failures use stable codes such as
 `REDIS_AUTH_FAILED`, and `REDIS_DEPENDENCY_UNAVAILABLE`. Connection strings and
 raw provider errors are never part of the public lifecycle projection.
 
-## Redis lifecycle
+## Dependency and Redis lifecycles
 
-`src/platform/runtime/redisLifecycle.ts` owns one shared client for startup,
-self-heal telemetry, and runtime diagnostics, plus one serialized connection
-loop. Each connect and `PING` attempt is bounded to three seconds. Failed
-attempts use exponential backoff starting at 250 ms, capped at 30 seconds, with
-up to 250 ms of jitter. Recovery continues until shutdown; callers never need a
-process restart or redeploy.
+`src/platform/runtime/dependencyLifecycle.ts` provides the reusable single-
+dependency mechanics: one resource, one serialized recovery loop, bounded
+attempts, capped backoff with jitter, state subscriptions, and idempotent
+shutdown. It is intentionally not a registry or a generic dependency manager;
+each dependency keeps configuration, validation, error classification, and
+cleanup in a small adapter.
+
+`src/platform/runtime/redisLifecycle.ts` is the first production adapter. It
+owns one shared client for self-heal telemetry, runtime diagnostics, the
+incident kill switch, and safety-v2 operations. Each connect and `PING` attempt
+is bounded to three seconds. Failed attempts use exponential backoff starting
+at 250 ms, capped at 30 seconds, with up to 250 ms of jitter. Recovery continues
+until shutdown; callers never need a process restart or redeploy.
 
 The same manager handles connection loss after readiness. Both socket errors
 and clean end events move the process to `DEGRADED`, invalidate access to the
@@ -51,11 +58,28 @@ client, and start one reconnect loop. A successful reconnect moves the process
 back to `READY`. Repeated start calls and repeated disconnect events cannot
 create another client or overlapping retry loop.
 
-Specialized, pre-existing safety-v2 and incident kill-switch clients are not
-part of this lifecycle. They are lazily created by their own security features
-and do not participate in listener startup. Consolidating those clients would
-change fail-closed security behavior and is outside this startup-resilience
-change.
+The lifecycle is also the sole Redis circuit breaker: `READY` is `CLOSED`, the
+retry wait is `OPEN`, and the one serialized connect-and-`PING` attempt is
+`HALF_OPEN`. Application probe capacity is zero while half-open. Each successful
+validation increments a ready generation; late commands from an older
+generation cannot return or invalidate the recovered client.
+
+Redis-backed operations can access the lifecycle-owned client only inside an
+`executeRedisOperation` callback with an allowlisted operation identity. When
+Redis is unavailable they fail before the callback with
+`REDIS_DEPENDENCY_UNAVAILABLE` and a credential-free message. Commands are
+bounded to two seconds; a timeout or connection failure invalidates the client
+and starts the same single recovery loop. Configured kill-switch reads fail
+closed to frozen/autonomy zero. Restrictive mutations apply locally first and
+reconcile after recovery; relaxing mutations persist before changing local
+state. In-process mutations are serialized and versioned, while relaxing
+cross-replica mutations use a fresh shared read and atomic compare-and-mutate so
+a concurrent restrictive update rejects the relaxation.
+
+Both `redis://` and TLS `rediss://` URLs are accepted. Without a valid discrete
+fallback, a non-empty malformed `REDIS_URL` remains explicitly configured but
+degraded with `REDIS_CONFIGURATION_INVALID`; it is never silently treated as
+an optional, unconfigured dependency.
 
 Redis is optional in configurations where no Redis endpoint is present. In
 that case the Redis lifecycle reaches ready in unconfigured mode and does not
@@ -79,23 +103,26 @@ ownership boundary and prevents duplicate execution.
 ## Shutdown
 
 Shutdown first marks readiness unavailable and stops accepting new requests.
-After active HTTP requests drain, it removes lifecycle subscriptions, cancels
-telemetry timers, aborts Redis retry timers and bounded attempts, closes the
-Redis client once, waits for in-flight runtime initialization, and closes the
-database. Late Redis events cannot restore readiness or start background
-runtime work after shutdown begins.
+While active HTTP requests drain, it removes lifecycle subscriptions, cancels
+telemetry timers, aborts Redis retry timers and bounded attempts, and closes the
+Redis client once. Idle clients close gracefully; a client with an active
+bounded command is destroyed so shutdown cannot wait on that command. It then
+waits for in-flight runtime initialization and closes the database. Late Redis
+events cannot restore readiness or start background runtime work after shutdown
+begins.
 
 ## Local verification
 
-The focused regression suites are:
+Run the focused Redis resilience regression selection defined by the
+`test:redis-resilience` script in the root `package.json`:
 
 ```text
-tests/redis-startup-lifecycle.test.ts
-tests/server-startup-resilience.test.ts
-tests/startup-health-routes.test.ts
-tests/self-heal-telemetry-redis.test.ts
-tests/unified-health-redis.test.ts
+npm run test:redis-resilience
 ```
 
-They use fake clients and local HTTP requests only. They do not require a
-production credential or a live Redis service.
+The selected tests use fake clients and local HTTP requests only. They do not
+require production credentials or a live Redis service.
+
+The reusable isolated Railway baseline/outage/recovery procedure is in
+`docs/RAILWAY_REDIS_LIFECYCLE_PREVIEW.md`; dated audit evidence records whether
+a particular execution occurred.

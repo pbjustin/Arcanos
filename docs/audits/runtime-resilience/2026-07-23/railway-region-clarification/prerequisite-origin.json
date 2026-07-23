@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 1,
+  "kind": "redis_region_prerequisite_origin",
+  "classification": "operator_safety_condition_with_inferred_codex_added_technical_premise",
+  "documentedRailwayRequirement": false,
+  "repositoryRequirement": false,
+  "origin": {
+    "bindingWording": "After migration, prove the healthy baseline again, then perform one bounded Redis stop/restore.",
+    "source": "later operator authorization",
+    "technicalPremise": "a region migration or normalization was assumed necessary before the outage",
+    "technicalPremiseEvidence": "not found in current Railway documentation or repository runbooks"
+  },
+  "repositoryEvidence": [
+    {
+      "path": "docs/audits/runtime-resilience/2026-07-22/production-parity-manifest.json",
+      "finding": "Treats us-east4-eqdc4a as the intended production-shaped region."
+    },
+    {
+      "path": "docs/audits/runtime-resilience/2026-07-22/redis-outage-authorization-proposal.md",
+      "finding": "Defines direct stop and restore gates without a region prerequisite."
+    },
+    {
+      "path": "docs/RAILWAY_REDIS_LIFECYCLE_PREVIEW.md",
+      "finding": "Defines direct isolated-preview stop/recovery proof without a region prerequisite."
+    },
+    {
+      "path": "docs/REDIS_RESILIENCE_RUNBOOK.md",
+      "finding": "Requires stop and restore of the same preview Redis service and volume without a region prerequisite."
+    }
+  ],
+  "gitHistoryEvidence": {
+    "commitsReviewed": [
+      "28f408cbb72d12dfd44545c914b9018c0051535a",
+      "a67ad9040830001a69dda6889058d4486adb0c34"
+    ],
+    "regionNormalizationRequirementFound": false
+  },
+  "decision": "The later prerequisite was correctly obeyed while it was binding, but its technical premise is stale and should be removed from the next outage authorization."
+}

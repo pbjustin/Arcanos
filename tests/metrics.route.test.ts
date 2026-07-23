@@ -122,6 +122,9 @@ describe('/metrics route', () => {
     expect(metricsResponse.text).toContain('worker_queue_depth');
     expect(metricsResponse.text).toContain('worker_queue_latency_ms');
     expect(metricsResponse.text).toContain('worker_alert_recommendations');
+    expect(metricsResponse.text).toContain('# HELP dependency_circuit_breaker_state');
+    expect(metricsResponse.text).toContain('# HELP dependency_lifecycle_events_total');
+    expect(metricsResponse.text).toContain('# HELP dependency_operation_gate_rejections_total');
   });
 
   it('preserves metrics credential extraction without disclosing rejected values', async () => {

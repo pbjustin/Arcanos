@@ -1,4 +1,4 @@
-import { Router, Request, Response } from "express";
+import { Router, Request, Response, NextFunction } from "express";
 import { z } from "zod";
 import { capabilityGate } from "@transport/http/middleware/capabilityGate.js";
 import { runSelfHealingLoop } from "@services/selfImprove/selfHealingLoop.js";
@@ -12,6 +12,15 @@ import { sendInternalErrorPayload } from "@shared/http/index.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 
 const router = Router();
+
+function isRedisDependencyUnavailable(error: unknown): boolean {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+  const candidate = error as Record<string, unknown>;
+  return candidate.dependency === 'redis'
+    && candidate.code === 'REDIS_DEPENDENCY_UNAVAILABLE';
+}
 
 const selfImproveRunSchema = z.object({
   trigger: z.enum(['manual', 'self_test', 'clear', 'incident']).default('manual'),
@@ -83,12 +92,20 @@ router.post('/api/self-improve/freeze', capabilityGate('self_improve_admin'), as
   }
 });
 
-router.post('/api/self-improve/unfreeze', capabilityGate('self_improve_admin'), async (req: Request, res: Response) => {
+router.post('/api/self-improve/unfreeze', capabilityGate('self_improve_admin'), async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
   try {
     const reason = String(req.body?.reason ?? 'manual');
     await unfreezeSelfImprove(reason);
     res.json({ status: 'ok', killSwitch: await getKillSwitchStatus() });
   } catch (error) {
+    if (isRedisDependencyUnavailable(error)) {
+      next(error);
+      return;
+    }
     sendInternalErrorPayload(res, {
       error: resolveErrorMessage(error),
       where: 'self-improve/unfreeze'
@@ -96,7 +113,11 @@ router.post('/api/self-improve/unfreeze', capabilityGate('self_improve_admin'), 
   }
 });
 
-router.post('/api/self-improve/autonomy', capabilityGate('self_improve_admin'), async (req: Request, res: Response) => {
+router.post('/api/self-improve/autonomy', capabilityGate('self_improve_admin'), async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
   try {
     const level = Number(req.body?.level);
     if (!Number.isFinite(level)) {
@@ -107,6 +128,10 @@ router.post('/api/self-improve/autonomy', capabilityGate('self_improve_admin'), 
     await setAutonomyLevel(level, reason);
     res.json({ status: 'ok', killSwitch: await getKillSwitchStatus() });
   } catch (error) {
+    if (isRedisDependencyUnavailable(error)) {
+      next(error);
+      return;
+    }
     sendInternalErrorPayload(res, {
       error: resolveErrorMessage(error),
       where: 'self-improve/autonomy'

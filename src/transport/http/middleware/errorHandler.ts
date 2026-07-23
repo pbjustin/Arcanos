@@ -38,6 +38,16 @@ function isJsonSchemaParseError(err: unknown): boolean {
   return type === 'entity.parse.failed' || (status === 400 && typeof body === 'string');
 }
 
+function isRedisDependencyUnavailableError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') {
+    return false;
+  }
+  const candidate = err as Record<string, unknown>;
+  return candidate.code === 'REDIS_DEPENDENCY_UNAVAILABLE'
+    && candidate.dependency === 'redis'
+    && typeof candidate.message === 'string';
+}
+
 function isRequestEntityTooLarge(err: unknown): boolean {
   if (!err || typeof err !== 'object') {
     return false;
@@ -146,6 +156,7 @@ const errorHandler = (err: unknown, req: Request, res: Response, next: NextFunct
         ? 'BAD_REQUEST'
         : 'PUBLIC_CANARY_ROUTE_FAILURE'
     : null;
+  const redisDependencyUnavailable = isRedisDependencyUnavailableError(err);
 
   // Normalize unknown error input into an Error-like shape for safe logging.
   let name = 'UnknownError';
@@ -188,7 +199,22 @@ const errorHandler = (err: unknown, req: Request, res: Response, next: NextFunct
         traceId
       };
 
-  if (publicCanaryFailureCode) {
+  if (redisDependencyUnavailable) {
+    statusCode = 503;
+    payload = publicGptRequest
+      ? buildPublicGptErrorPayload({
+          code: 'REDIS_DEPENDENCY_UNAVAILABLE',
+          message: 'Redis dependency is unavailable.',
+          requestId,
+          traceId
+        })
+      : {
+          error: 'Service Unavailable',
+          code: 'REDIS_DEPENDENCY_UNAVAILABLE',
+          requestId,
+          traceId
+        };
+  } else if (publicCanaryFailureCode) {
     ({ statusCode, payload } = buildGuardedPublicCanaryFailure({
       code: publicCanaryFailureCode,
       requestId,
@@ -246,13 +272,23 @@ const errorHandler = (err: unknown, req: Request, res: Response, next: NextFunct
     requestId,
     method: req.method,
     path: requestPath,
-    errorType: publicCanaryFailureCode ? safePublicCanaryErrorName : name,
+    errorType: redisDependencyUnavailable
+      ? 'DependencyUnavailableError'
+      : publicCanaryFailureCode
+        ? safePublicCanaryErrorName
+        : name,
     statusCode,
-    name: publicCanaryFailureCode ? safePublicCanaryErrorName : name,
-    message: publicCanaryFailureCode
+    name: redisDependencyUnavailable
+      ? 'DependencyUnavailableError'
+      : publicCanaryFailureCode
+        ? safePublicCanaryErrorName
+        : name,
+    message: redisDependencyUnavailable
+      ? 'Redis dependency is unavailable.'
+      : publicCanaryFailureCode
       ? 'Public canary request failed safely.'
       : message,
-    stack: publicCanaryFailureCode ? undefined : stack
+    stack: publicCanaryFailureCode || redisDependencyUnavailable ? undefined : stack
   };
 
   const logLevel: 'warn' | 'error' = statusCode >= 500 ? 'error' : 'warn';

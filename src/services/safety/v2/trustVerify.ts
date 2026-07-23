@@ -16,7 +16,6 @@ import { V2_CONFIG } from "./config.js";
 import { getJWKS } from "./jwks.js";
 import { setNX } from "./redisClient.js";
 import { logAuditEvent } from "./auditLogger.js";
-import { CircuitBreaker } from "./circuitBreaker.js";
 
 export type TrustLevel = "FULL" | "DEGRADED" | "UNSAFE";
 
@@ -87,19 +86,18 @@ export async function verifyTrustToken(token: string): Promise<TrustPayload> {
 
   let wasSet: boolean;
   try {
-    wasSet = await setNX(nonceKey, ttl);
+    wasSet = await setNX(nonceKey, ttl, payload.trace as string);
   } catch (err) {
     if (
-      err instanceof Error &&
-      (err instanceof (CircuitBreaker as any).CircuitBreakerOpenError ||
-        (err as Error).name === "CircuitBreakerOpenError")
+      err
+      && typeof err === 'object'
+      && (err as { code?: unknown }).code === 'REDIS_DEPENDENCY_UNAVAILABLE'
     ) {
       logAuditEvent({
         type: "DEGRADED_MODE",
-        reason: "Redis circuit breaker open",
+        reason: "Redis dependency circuit unavailable",
         trace: payload.trace as string,
       });
-      throw new Error("Trust verification degraded — Redis unavailable, failing closed");
     }
     throw err;
   }

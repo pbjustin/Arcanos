@@ -5,9 +5,9 @@ import { logger } from '@platform/logging/structuredLogging.js';
 import { getEnv } from '@platform/runtime/env.js';
 import { resolveConfiguredRedisConnection } from '@platform/runtime/redis.js';
 import {
-  getReadyRedisClient,
+  executeRedisOperation,
+  getRedisLifecycleSnapshot,
   subscribeRedisLifecycle,
-  type RedisLifecycleClient,
   type RedisLifecycleSnapshot
 } from '@platform/runtime/redisLifecycle.js';
 import { readJsonFileSafely } from '@shared/jsonFileUtils.js';
@@ -556,7 +556,6 @@ interface RedisPersistenceLoadResult {
 }
 
 async function loadPersistedStateFromRedis(
-  redisClient: RedisLifecycleClient,
   target: SelfHealTelemetryPersistenceTarget
 ): Promise<RedisPersistenceLoadResult> {
   if (!target.redisKey) {
@@ -564,7 +563,10 @@ async function loadPersistedStateFromRedis(
   }
 
   try {
-    const persistedStateRaw = await redisClient.get(target.redisKey);
+    const persistedStateRaw = await executeRedisOperation(
+      (readyClient) => readyClient.get(target.redisKey!),
+      { operation: 'self_heal.telemetry.load' }
+    );
     if (!persistedStateRaw) {
       return { ok: true, state: null };
     }
@@ -614,8 +616,7 @@ async function persistStateToRedis(
     return;
   }
 
-  const redisClient = getReadyRedisClient();
-  if (!redisClient || redisPersistenceStopping) {
+  if (redisPersistenceStopping) {
     redisPersistenceDirty = true;
     state.persistence.lastSaveError = 'REDIS_DEPENDENCY_UNAVAILABLE';
     return;
@@ -623,13 +624,10 @@ async function persistStateToRedis(
 
   const persistedState = buildPersistedState(state);
   try {
-    await redisClient.set(target.redisKey, JSON.stringify(persistedState));
-    if (getReadyRedisClient() !== redisClient) {
-      redisPersistenceDirty = true;
-      state.persistence.lastSaveError = 'REDIS_DEPENDENCY_UNAVAILABLE';
-      scheduleRedisHydrationRetry();
-      return;
-    }
+    await executeRedisOperation(
+      (readyClient) => readyClient.set(target.redisKey!, JSON.stringify(persistedState)),
+      { operation: 'self_heal.telemetry.save' }
+    );
 
     redisPersistenceDirty = false;
     clearRedisHydrationRetry();
@@ -933,8 +931,8 @@ function scheduleRedisHydrationRetry(): void {
 
   redisHydrationRetryTimeout = setTimeout(() => {
     redisHydrationRetryTimeout = null;
-    const lifecycleSnapshot = getReadyRedisClient();
-    if (lifecycleSnapshot) {
+    const lifecycleSnapshot = getRedisLifecycleSnapshot();
+    if (lifecycleSnapshot.state === 'READY' && lifecycleSnapshot.connected) {
       void hydrateRedisTelemetryPersistence();
     }
   }, 1_000);
@@ -958,22 +956,30 @@ async function hydrateRedisTelemetryPersistence(): Promise<void> {
     return redisHydrationPromise;
   }
 
-  const redisClient = getReadyRedisClient();
+  const lifecycleSnapshot = getRedisLifecycleSnapshot();
   const target = resolvePersistenceTarget();
-  if (!redisClient || target.mode !== 'redis') {
+  if (
+    target.mode !== 'redis'
+    || lifecycleSnapshot.state !== 'READY'
+    || !lifecycleSnapshot.connected
+  ) {
     state.persistence.lastSaveError = 'REDIS_DEPENDENCY_UNAVAILABLE';
     redisPersistenceDirty = true;
     return;
   }
 
   const generation = redisPersistenceGeneration;
+  const readyGeneration = lifecycleSnapshot.readyGeneration;
   const hydration = (async () => {
-    const result = await loadPersistedStateFromRedis(redisClient, target);
+    const result = await loadPersistedStateFromRedis(target);
+    const currentLifecycleSnapshot = getRedisLifecycleSnapshot();
     if (
       !result.ok
       || redisPersistenceStopping
       || generation !== redisPersistenceGeneration
-      || getReadyRedisClient() !== redisClient
+      || currentLifecycleSnapshot.state !== 'READY'
+      || !currentLifecycleSnapshot.connected
+      || currentLifecycleSnapshot.readyGeneration !== readyGeneration
     ) {
       state.persistence.lastSaveError = 'REDIS_DEPENDENCY_UNAVAILABLE';
       redisPersistenceDirty = true;
