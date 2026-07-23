@@ -1,15 +1,18 @@
 # Railway Deployment Guide
 
 ## Overview
-This runbook documents the active Railway deployment workflow for Arcanos using `railway.json` and the shared Railway launcher.
+This runbook documents the repository-tracked Railway configuration and release safeguards for Arcanos. Tracked files do not prove the current live project linkage, environment state, or service topology.
 
 ## Prerequisites
-- Railway account and project access.
-- Repository connected to Railway.
+- Approved Railway account and project access.
+- A confirmed project, environment, and service target.
+- Repository connection or GitHub-side deploy credentials configured through an approved operator workflow.
 - Required secrets available (`OPENAI_API_KEY`; `DATABASE_URL` for durable async jobs; GPT Access variables when Custom GPT diagnostics are enabled).
 
 ## Setup
-Pre-deploy checks:
+Run repository commands from the repository root. The install step recreates dependency state and invokes `postinstall`; outside CI/production, that hook may update local Git hooks, `.vscode/`, and `.workspace/`.
+
+Pre-deploy checks, when their local side effects are acceptable:
 ```bash
 npm ci --include=dev --no-audit --no-fund
 npm run build
@@ -17,13 +20,17 @@ npm test
 npm run validate:railway
 ```
 
-Railway project setup:
+`npm run validate:railway` validates tracked configuration locally. It does not inspect or validate a live Railway environment.
+
+Railway project setup is an operator-only remote configuration change:
 1. Create/select a Railway project.
 2. Connect this GitHub repository.
 3. Confirm Railway detected `railway.json`.
 
+Apply the operational approval gate below before changing project or repository linkage.
+
 ## Configuration
-Active Railway config (source: `railway.json`):
+Tracked Railway config (source: `railway.json`):
 - Build: `npm ci --include=dev --no-audit --no-fund && npm run build`
 - Start: `node scripts/start-railway-service.mjs`
 - Deploy health check path: `/health`
@@ -31,7 +38,8 @@ Active Railway config (source: `railway.json`):
 - Restart policy: `ON_FAILURE` (`restartPolicyMaxRetries=10`)
 
 Launcher behavior:
-- `scripts/start-railway-service.mjs` is the only supported Railway start command.
+- `node scripts/start-railway-service.mjs` is the canonical normal Railway start command.
+- Native PR environments use the configured `node scripts/start-railway-service.mjs --pr-preview-safe` override. It starts a passive health-only server without importing application, worker, provider, database, Redis, migration, or scheduler modules.
 - Web services start the compiled API runtime with `ARCANOS_PROCESS_KIND=web` and `RUN_WORKERS=false`.
 - Worker services expose a minimal health server and then start `dist/workers/jobRunner.js` with `ARCANOS_PROCESS_KIND=worker` and `RUN_WORKERS=true`.
 - The application keeps `/health`, `/healthz`, and `/readyz` available; Railway should probe `/health`.
@@ -48,9 +56,9 @@ Environment variables:
 | `ARCANOS_PROCESS_KIND` | Yes | `web` for the API service, `worker` for the async worker service. The launcher exits if missing or invalid. |
 | `RUN_WORKERS` | Launcher-managed | Set by `scripts/start-railway-service.mjs` from `ARCANOS_PROCESS_KIND`. |
 | `DATABASE_URL` | Required for async GPT jobs | Attach Railway PostgreSQL for persistence; web and worker services must share it. |
-| `ARCANOS_GPT_ACCESS_TOKEN` | Required for `/gpt-access/*` | Strong bearer token stored only in Railway Variables and GPT Action auth. |
+| `ARCANOS_GPT_ACCESS_TOKEN` | Required for protected `/gpt-access/*` routes | Strong bearer token stored only in Railway Variables and GPT Action auth. `/gpt-access/openapi.json` is public. |
 | `ARCANOS_GPT_ACCESS_BASE_URL` | Required for GPT Action import | Public HTTPS origin advertised by `/gpt-access/openapi.json`; do not rely on request headers in production. |
-| `ARCANOS_GPT_ACCESS_SCOPES` | Required for async GPT access | Include `runtime.read,workers.read,queue.read,jobs.create,jobs.result,logs.read_sanitized,db.explain_approved,mcp.approved_readonly,diagnostics.read`; add `workers.recover` only when confirmed worker recovery dispatch is intentionally enabled; add capability scopes only when intentionally enabled. |
+| `ARCANOS_GPT_ACCESS_SCOPES` | Required for protected GPT access | Grant only the scopes needed by the intended operations. Async job submission and result retrieval use `jobs.create,jobs.result`; add other read, recovery, or capability scopes only when intentionally enabled. |
 | `GPT_ACCESS_NL_DISPATCH_MODE` | Optional, web service only | When unset, `/gpt-access/dispatch/run` uses `hybrid` if the web service has a real resolved OpenAI key and `rules` otherwise. Valid values are `rules`, `hybrid`, and `llm_first`; invalid values resolve to `rules`. Set `rules` to force deterministic dispatch. |
 | `GPT_ACCESS_DISPATCH_MODEL` | Optional | Defaults to `gpt-4.1-mini`; used only by the semantic dispatch planner. |
 | `GPT_ACCESS_DISPATCH_LLM_TIMEOUT_MS` | Optional | Defaults to `5000` and caps at `10000`; timeout/failure never executes an LLM plan and can only fall back through deterministic rules and policy checks. |
@@ -66,68 +74,62 @@ Environment separation:
 - Configure separate Railway services for web and worker when async GPT jobs must complete in the background.
 - `GPT_ACCESS_*` natural-language dispatch variables do not change or recycle the worker service. Worker recycle/recover dispatch uses registered privileged actions, requires explicit `workers.recover` scope plus confirmation, and reclaims stale queue jobs through the approved recovery runner.
 - Dispatch confidence thresholds are fixed code policy, not Railway variables: readonly `0.65`, privileged `0.78`, and destructive `0.90`.
-- Confirm each service role with `railway variable list --service <service> --environment production` before release.
+- Confirm each service role through an approved control plane against the exact project, environment, and service. Do not reproduce raw variable output in reports.
 
-## Run locally
-Mirror Railway locally before deploy:
-```bash
-cp .env.example .env
-# set PORT and OPENAI_API_KEY
-npm run build
-npm start
-curl http://localhost:3000/health
-```
+## Local validation boundary
+
+Use the build, test, and `validate:railway` checks above for non-deploying validation. Do not start the application with Railway or production variables as a deployment check.
+
+A separately approved local runtime check must use a deliberately isolated effective environment with no inherited Railway-management, provider, Redis, queue, or remote-database credentials. Database resolution accepts `DATABASE_PRIVATE_URL`, `DATABASE_URL`, `DATABASE_PUBLIC_URL`, or a complete `PGUSER`/`PGPASSWORD`/`PGHOST`/`PGPORT`/`PGDATABASE` set. When any candidate resolves successfully, startup can execute DDL and write a heartbeat.
 
 ## Deploy (Railway)
-1. Push to the tracked branch.
-2. Watch deployment logs in Railway.
-3. Confirm health endpoint:
+
+The tracked `.github/workflows/railway-auto-deploy.yml` can deploy one configured service after successful CI on `main` or by manual dispatch. It skips automatic CLI deployment when its Railway credentials or identifiers are absent. Repository-connected Railway deployment and current web/worker service coverage are environment-dependent and must be confirmed separately.
+
+A push or manual workflow dispatch can therefore be deployment-affecting. Before triggering either:
+
+1. Confirm the approved release mechanism, exact revision, project, environment, and every web/worker service in scope.
+2. Review the expected deployment effect and rollback.
+3. Obtain explicit operator approval.
+4. After deployment, confirm the targeted deployment status and the configured `/health` endpoint. A manual health request is read-only but still requires a confirmed target:
+
 ```bash
 curl https://<your-service>.up.railway.app/health
 ```
 
-Railway CLI workflow:
-```bash
-railway login
-railway link
-railway status
-railway env production
-railway variable list --service <web-service> --environment production
-railway variable set ARCANOS_PROCESS_KIND=web --service <web-service> --environment production
-railway variable set ARCANOS_PROCESS_KIND=worker --service <worker-service> --environment production
-railway variable set GPT_FAST_PATH_ENABLED=true --service <web-service> --environment production
-railway variable set GPT_FAST_PATH_MODEL=gpt-4.1-mini --service <web-service> --environment production
-railway run --service <web-service> --environment production npm run dev
-railway up --service <web-service> --environment production
-railway logs --service <web-service> --environment production
-```
+### Railway command safety
 
-Railway CLI 4.x supports `railway env` for environment linking, `railway run` for local commands with Railway variables, `railway up` for local-code deployments, `--service` / `--environment` targeting, `railway logs` for deployment/runtime logs, and `railway variable` for environment variables (`variables`, `vars`, and `var` are aliases). See the official Railway references:
-- https://docs.railway.com/cli
-- https://docs.railway.com/cli/deploying
-- https://docs.railway.com/cli/up
-- https://docs.railway.com/cli/variable
+- Local static validation: `npm run validate:railway` reads tracked configuration and does not contact Railway. Builds and tests may create local artifacts.
+- Remote observation: status, targeted variable inspection, targeted logs, and health requests do not intentionally change Railway state, but depend on the current target and can expose identifiers, variable values, request data, or other sensitive output. Confirm the exact project, environment, and service; minimize output and report only sanitized evidence.
+- Local CLI state: authentication, project linking, and environment selection change local credential or target state. Do not perform them as routine validation.
+- Operational actions: variable changes, deployments, restarts, redeployments, rollbacks, database attachment, remote runtime commands, and live probes can change Railway, application, provider, queue, or database state.
 
-Post-deploy fast-path smoke test:
-```bash
-railway run --service <web-service> --environment production npm run railway:probe:fast-path
-npm run railway:probe:fast-path -- --base-url https://<your-service>.up.railway.app --gpt-id arcanos-core
-npm run railway:probe:async -- --base-url https://<your-service>.up.railway.app --gpt-id arcanos-core
-```
+Before any operational action, obtain explicit approval recording:
+
+- Exact command or operator action.
+- Project.
+- Environment.
+- Service.
+- Expected effect.
+- Rollback plan.
+
+Use `not applicable` rather than omitting a field. Never use `railway run ... npm run dev` as validation: it starts the backend with Railway variables and can execute DDL or write a heartbeat against the configured database.
+
+The `railway:probe:fast-path` and `railway:probe:async` scripts are live operations, not routine post-deploy checks. The fast-path probe invokes the live provider path; the async probe can create and process a durable job. Bare invocation is forbidden because both scripts default to a hard-coded production origin. Each requires separate, target-specific approval and an explicit `--base-url` matching the approved target.
 
 Rollback:
-1. Open Railway Deployments tab.
-2. Select last known-good deployment.
-3. Redeploy that version.
+1. Treat rollback as a state-changing production operation and satisfy the approval gate.
+2. In the confirmed target's deployment history, identify the last known-good deployment.
+3. Redeploy only the approved version, then observe the targeted health and deployment status.
 
 ## Troubleshooting
 - Build fails: run `npm ci --include=dev --no-audit --no-fund && npm run build` locally first.
-- Launcher fails with `ARCANOS_PROCESS_KIND is required`: set `ARCANOS_PROCESS_KIND=web` on the API service or `ARCANOS_PROCESS_KIND=worker` on the worker service.
-- Repeated restarts: inspect `/health`, `/healthz`, and `/readyz` along with Railway logs.
-- App boots without AI output: validate `OPENAI_API_KEY` is present and valid.
-- Persistence degraded: attach PostgreSQL or set valid `DATABASE_URL`.
-- Async jobs stay queued: verify the worker service is deployed, has `ARCANOS_PROCESS_KIND=worker`, can reach `DATABASE_URL`, has `OPENAI_API_KEY`, and the web service has `ARCANOS_GPT_ACCESS_SCOPES` including `jobs.create,jobs.result`.
-- Custom GPT cannot import or calls the wrong host: set `ARCANOS_GPT_ACCESS_BASE_URL` to the public web service origin and redeploy.
+- Launcher fails with `ARCANOS_PROCESS_KIND is required`: verify that the exact API service is configured as `web` or the exact worker service as `worker`. Changing the value requires operational approval.
+- Repeated restarts: inspect the exact target's `/health`, `/healthz`, and `/readyz` responses and only the minimum sanitized Railway logs needed.
+- App boots without AI output: verify through an approved control plane that `OPENAI_API_KEY` is present without printing its value. Changing it requires operational approval.
+- Persistence degraded: verify the approved database attachment and `DATABASE_URL` target. Attaching a database or changing the variable requires operational approval.
+- Async jobs stay queued: verify the approved worker deployment, role, shared database target, provider key presence, and the web service scopes `jobs.create,jobs.result`. Deployment or variable changes require operational approval.
+- Custom GPT cannot import or calls the wrong host: verify the public web-service origin. Changing `ARCANOS_GPT_ACCESS_BASE_URL` or redeploying requires operational approval.
 
 ## References
 - `../railway.json`
