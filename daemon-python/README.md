@@ -1,76 +1,106 @@
 # Arcanos Python CLI (Local Daemon Agent)
 
 ## What it is
-`daemon-python/` is the **local companion** to the Arcanos backend. It gives you an interactive CLI that can:
-- chat with your backend through canonical `/gpt/:gptId` module-bound traffic
-- **detect inline patches** (unified diffs) in AI responses and immediately prompt **“Apply patch? [y/N]”**
-- **detect command proposals** and prompt **“Run? [y/N]”** (allowlisted)
-- maintain **repo awareness** (light repo indexing injected into backend requests)
-- keep a durable **audit/history log** (SQLite) with rollback support
 
-> The daemon is meant to run **locally** (your machine). The backend is what you deploy (Railway, Docker, etc.).
+`daemon-python/` is the local companion to the Arcanos backend. It provides an interactive Python CLI that can:
 
-## Where it fits in the overall codebase
-- Backend (TypeScript/Express): `src/`  
-  - Primary daemon/backend endpoints: `/gpt/:gptId`, `/api/daemon/*`, and `/api/update`
-  - Compatibility endpoints: `/api/arcanos/ask` and `/query-finetune`
-- Local daemon (Python): `daemon-python/`  
-  - CLI runtime: `daemon-python/arcanos/cli/`
-  - Agentic coding loop: `daemon-python/arcanos/agentic/`
-  - Response translation layer: `daemon-python/arcanos/assistant/translator.py`
+- chat with the backend through canonical `/gpt/:gptId` module-bound traffic
+- detect patch and command proposals and ask for approval before local execution
+- maintain lightweight repository context for backend requests
+- keep durable SQLite audit/history data and patch backups for rollback
+- run an optional loopback-only bridge and debug server for local integrations
 
-## Architecture (high level)
+The daemon runs on the operator's machine. The TypeScript backend is the component deployed to Railway, Docker, or another service environment.
 
+## Choose the intended `arcanos` executable
+
+Two packages in this repository can install an executable named `arcanos`:
+
+- `packages/cli/` provides the TypeScript `@arcanos/cli` command surface and also installs `arcanos-protocol`.
+- `daemon-python/` provides this interactive Python daemon CLI.
+
+Which `arcanos` command runs depends on the active environment and `PATH`. Use an unambiguous invocation when both packages are installed:
+
+```bash
+# Python daemon CLI
+python -m arcanos.cli
+
+# TypeScript CLI, after npm run build:packages
+arcanos-protocol --help
+node packages/cli/dist/index.js --help
 ```
+
+See `../docs/CLI_OVERVIEW.md` for the TypeScript CLI.
+
+## Routing boundary
+
+The daemon preserves the backend writing/control-plane split:
+
+- assistant chat and GPT/module-bound writing traffic use `/gpt/:gptId`
+- system-state reads use the direct `/system-state` endpoint
+- daemon coordination uses `/api/daemon/*`
+- update checks use `/api/update`
+- job, runtime, DAG, and other control-plane reads use their structured direct or `/gpt-access/*` endpoints
+
+The daemon does not use legacy ask-style routes such as `/api/arcanos/ask` or `/query-finetune` for its active chat flow. Do not encode job lookups, runtime diagnostics, DAG inspection, or MCP control calls as prompt text sent to `/gpt/:gptId`.
+
+High-level flow:
+
+```text
 You (terminal)
-  ↓
-Arcanos CLI shell (daemon-python/arcanos/cli)
-  ↓
-Backend request with:
-  - daemon chat and GPT/module-bound traffic → `/gpt/<gpt-id>`
-  - sessionId=<machine/user instance>
-  - context.repoIndex (optional)
-  ↓
-Raw AI response
-  ↓
-Translator (cleans narration + extracts proposals)
-  ↓
-Proposal router:
-  - patch → preview → approve → git apply (+ backup + rollback_id)
-  - command → preview → approve → run allowlisted command
-  ↓
-Tool results fed back to backend for the next step (multi-step loop)
+  -> Python CLI shell
+  -> backend /gpt/<gpt-id> request with session and optional repo context
+  -> response translator and proposal parser
+  -> explicit patch/command review
+  -> approved local action
+  -> summarized tool result returned to the backend for the next loop step
 ```
 
 ## Prerequisites
+
 - Python 3.10+
-- `git` installed (patch application uses `git apply`)
-- OpenAI API key **if** you use direct OpenAI routing
-- Backend URL/token **if** you route through the backend (recommended for `arcanos-daemon`)
+- `git` for patch validation and application
+- an OpenAI API key
+- a backend URL and credential for backend-routed operation
+
+The current CLI startup validation requires `OPENAI_API_KEY` even when the selected conversation path routes through the backend. Treat this as a current implementation constraint.
 
 ## Install
-From repository root:
-```bash
+
+From the repository root:
+
+```powershell
 cd daemon-python
 python -m venv venv
-# Windows PowerShell
+
 .\venv\Scripts\Activate.ps1
+
 python -m pip install -e .
+
 # For daemon test/development work:
-# python -m pip install -e ".[dev]"
-cp .env.example .env
+python -m pip install -e ".[dev]"
+
+Copy-Item .env.example .env
 ```
 
-## Configuration
+On macOS/Linux, activate with `source venv/bin/activate` and copy the environment template with `cp .env.example .env`.
 
-### Minimal (backend-routed assistant)
+## Minimal backend-routed configuration
+
 ```env
+OPENAI_API_KEY=your-openai-api-key
 BACKEND_URL=https://<your-service>.up.railway.app
 BACKEND_GPT_ID=arcanos-daemon
-BACKEND_ALLOW_GPT_ID_AUTH=true
+BACKEND_TOKEN=your-backend-token
+BACKEND_ALLOW_GPT_ID_AUTH=false
 ```
 
-### Agentic coding assistant features
+`BACKEND_TOKEN` is the preferred daemon credential. `BACKEND_ALLOW_GPT_ID_AUTH` defaults to `false`; enable GPT-ID-only authentication only when the backend deployment explicitly allows and authorizes that trusted caller model.
+
+The complete environment-variable reference is `../docs/CONFIGURATION.md`.
+
+### Agentic coding features
+
 ```env
 AGENTIC_ENABLED=true
 AGENT_MAX_STEPS=6
@@ -83,118 +113,193 @@ HISTORY_DB_PATH=history.db
 PATCH_BACKUP_DIR=patch_backups
 AUTOMATIONS_FILE=automations.toml
 
-# Optional patch tokens (backend may emit these)
+# Optional patch delimiters understood by the response translator
 PATCH_TOKEN_START=---patch.start---
 PATCH_TOKEN_END=---patch.end---
 ```
 
-### Optional backend token auth
-```env
-BACKEND_TOKEN=your-backend-token
-```
-
 ## Run
+
+From `daemon-python/` with the virtual environment active:
+
 ```bash
-arcanos
-# or
 python -m arcanos.cli
 ```
 
-## How patch proposals work
+Use `arcanos` only when the active environment is known to resolve to the Python package.
 
-The backend can propose edits in either of these formats:
+## Module ownership
 
-**A) Markdown fenced diff**
+Keep orchestration and side effects in their existing owners:
+
+| Module | Responsibility |
+| --- | --- |
+| `arcanos/cli/cli.py` | CLI orchestration, command routing, lifecycle wiring, and delegation. |
+| `arcanos/cli/context.py` | Shared context models and local context helpers; no backend I/O or governance decisions. |
+| `arcanos/cli/bootstrap.py` | Startup guards, first-run setup, update checks, and debug-server startup. |
+| `arcanos/cli/state.py` | Trust/registry/session state hydration and prompt assembly; no direct backend I/O. |
+| `arcanos/cli/backend_ops.py` | Backend HTTP operations and request metadata propagation. |
+| `arcanos/cli/local_ops.py` | Local GPT, vision, voice, and multimodal flows; backend calls delegate to `backend_ops.py`. |
+| `arcanos/cli/confirmation.py` | Confirmation prompts and approval/rejection flow. |
+| `arcanos/cli/memory_ops.py` | Conversation persistence and summary state. |
+| `arcanos/cli/daemon_ops.py` | Daemon thread lifecycle, polling, and command dispatch. |
+| `arcanos/cli/ui_ops.py` | Rendering, tables/Markdown output, and speech replay. |
+| `arcanos/cli/run_ops.py` | Terminal-command orchestration under governance and idempotency controls. |
+| `arcanos/agentic/` | Repository indexing, proposal parsing, patch orchestration, history, and the multi-step loop. |
+| `arcanos/assistant/translator.py` | Response translation and proposal extraction. |
+| `arcanos/backend_client/` | Backend request clients and payload construction. |
+| `arcanos/openai/` | Python-local unified client and adapter helpers for chat, streaming, vision, transcription, and embeddings. |
+
+TypeScript owns the public protocol contract. Python consumes that contract behind the backend/protocol boundary and must not define a competing public shape.
+
+The backend/CLI compatibility contract is `../contracts/backend_cli_contract.v1.json`. From the repository root, validate both sides with:
+
+```bash
+npm run validate:backend-cli:contract
+npm run validate:backend-cli:offline
+```
+
+## Patch proposals
+
+The backend can propose a patch in a fenced diff:
+
+````text
 ```diff
 diff --git a/path/to/file.py b/path/to/file.py
 ...
 ```
+````
 
-**B) Explicit patch tokens**
-```
+It can also use explicit delimiters:
+
+```text
 ---patch.start---
 diff --git a/path/to/file.py b/path/to/file.py
 ...
 ---patch.end---
 ```
 
-The CLI will:
-1) extract patches
-2) validate target paths and patch content against `../config/cli-policy.json`
-3) show only a redacted preview plus the patch SHA-256
-4) require the exact patch SHA-256 before the final **Apply patch? [y/N]** prompt
-5) on approval: create backups in `PATCH_BACKUP_DIR/<rollback_id>/...` and apply via `git apply`
+Before application, the daemon:
 
-Patch proposals targeting secret-like paths such as `.env`, `.npmrc`, `.ssh/*`, token/credential/private-key files, `.git`, absolute paths, path traversal, symlinks, or binary patches are rejected before preview. History stores the proposal id/rollback id, patch hash, file summary, redacted preview, approval state, timestamp, and backups metadata. Raw patch text is not stored.
+1. validates target paths and patch content against `../config/cli-policy.json`
+2. rejects secret-like paths, absolute paths, traversal, symlinks, binary patches, and `.git` targets
+3. shows a redacted preview and the patch SHA-256
+4. binds approval to the exact proposal
+5. creates backups under `PATCH_BACKUP_DIR/<rollback_id>/` and applies with `git apply`
+
+History stores hashes, summaries, approval state, rollback metadata, and a redacted preview; it does not store raw patch text.
 
 Rollback:
+
 ```text
 /rollback <rollback_id>
 ```
 
-## How command proposals work
-Commands are detected from:
-- ```bash fenced blocks
-- a simple `Command:` suggestion
+## Command proposal safety
 
-The CLI prompts **Run? [y/N]** and executes only allowlisted commands. ActionPlan `terminal.run`, backend-polled `run`, natural-language run intents, and local bridge `/commands/run` all require proposal binding before execution. Bridge command confirmations bind to the exact command, cwd, and `proposalId`; changed commands or cwd values are rejected.
+The daemon has distinct command surfaces; they do not all use the same policy implementation.
 
-Command policy is loaded from `../config/cli-policy.json`, shared with the TypeScript backend. The policy defines:
-- sandbox root behavior
-- allowed command prefixes
-- deny regexes
-- default and maximum timeouts
-- output redaction and truncation
-- patch safety rules
+### Policy-bound bridge and patch flow
 
-If the policy cannot be loaded, daemon command and patch execution fail closed.
+The local bridge `/commands/run` path and patch orchestration use `../config/cli-policy.json`. The policy controls sandbox roots, allowed command prefixes, deny patterns, timeout caps, output redaction/truncation, and patch safety. Bridge command approval is bound to the exact normalized command, working directory, and `proposalId`; changing any of those values invalidates the proposal. Policy load failure closes these paths.
+
+### Inline agentic command flow
+
+Commands extracted from assistant responses use the terminal safety layer:
+
+- high-risk shell-token rejection
+- `COMMAND_WHITELIST` and dangerous-command checks
+- the `ALLOW_DANGEROUS_COMMANDS` override when deliberately configured
+- a final interactive `Run command? [y/N]` prompt
+
+Approval in one surface does not authorize a changed command or bypass the checks in another surface.
 
 ## Local bridge safety
 
-The HTTP bridge is local-only:
+The optional HTTP bridge:
+
 - binds only to `127.0.0.1`, `localhost`, or `::1`
 - requires `ARCANOS_CLI_BRIDGE_TOKEN` for POST requests
 - accepts only `application/json`
-- enforces request body limits, sandboxed cwd, per-command timeout caps, output caps, redaction, and deterministic JSON errors
+- enforces request limits, a sandboxed working directory, timeout/output caps, redaction, and deterministic errors
 - never returns raw tracebacks
 
-Rotate the bridge token by replacing `ARCANOS_CLI_BRIDGE_TOKEN` in the local daemon environment and restarting the daemon and any backend process that calls it. Disable bridge execution by omitting the token, stopping the bridge, or setting backend `ARCANOS_CLI_BRIDGE_ENABLED=false`.
+Rotate the bridge token by replacing it in the daemon and calling-process environments, then restart both processes. Disable bridge execution by stopping the bridge, omitting its token, or setting backend `ARCANOS_CLI_BRIDGE_ENABLED=false`.
 
-## Audit and history safety
+## Local debug server
 
-Daemon audit events use sanitized metadata only. Command output is redacted and truncated before history storage. Patch history stores redacted previews and SHA-256 hashes instead of raw patch text. Audit exports omit command output and raw patch text.
+The optional debug HTTP server binds to `127.0.0.1` and is not a Railway service.
 
-Useful events include `daemon.health.checked`, `daemon.policy.loaded`, `daemon.command.proposed`, `daemon.command.denied`, `daemon.command.started`, `daemon.command.completed`, `daemon.command.failed`, `daemon.command.timeout`, `daemon.patch.proposed`, `daemon.patch.denied`, `daemon.patch.applied`, and `daemon.patch.failed`.
+```env
+DEBUG_SERVER_ENABLED=true
+DEBUG_SERVER_PORT=9999
+DEBUG_SERVER_TOKEN=your-strong-random-token
+```
 
-To add an allowlisted command, update `../config/cli-policy.json` under `commandPolicy.allowPrefixes`, then run the daemon and backend CLI validation tests. Keep commands read-only by default and add mutating commands only with an explicit confirmation workflow.
+`IDE_AGENT_DEBUG=true` and `DAEMON_DEBUG_PORT=<port>` remain compatibility toggles. The read-only `/debug/health`, `/debug/ready`, and `/debug/metrics` endpoints are unauthenticated. All other debug endpoints require one of:
 
-## Multi-step reasoning loop
-When the assistant proposes patches/commands, the CLI:
-- executes only what you approve
-- then sends a summarized tool-result message back to the backend
-- repeats up to `AGENT_MAX_STEPS` or until no new actions are proposed
+- the configured automation-secret header
+- a valid single-use `x-arcanos-confirm-token`
+- `Authorization: Bearer your-debug-server-token`
+- `X-Debug-Token: your-debug-server-token`
+
+Query-string token authentication is disabled by default and should remain disabled. Use `GET /debug/help` for the live endpoint catalog; it includes status, instance/chat/log/audit/crash inspection and the authenticated `/debug/ask`, `/debug/run`, and `/debug/see` operations.
+
+Example:
+
+```bash
+curl http://127.0.0.1:9999/debug/health
+curl -H "X-Debug-Token: $DEBUG_SERVER_TOKEN" http://127.0.0.1:9999/debug/status
+```
+
+## Audit, history, and multi-step behavior
+
+Audit events contain sanitized metadata. Command output is redacted and truncated before history storage. Patch history stores redacted previews and hashes rather than raw patch text, and audit exports omit command output and raw patches.
+
+When a response contains proposals, the agent loop:
+
+1. performs only actions the operator approves
+2. summarizes results
+3. sends the result back to the backend
+4. repeats until no new proposal remains or `AGENT_MAX_STEPS` is reached
+
+## Async backend client flow
+
+Python clients use structured writing and control-plane operations:
+
+- `BackendApiClient.request_query(...)`
+- `BackendApiClient.request_query_and_wait(...)`
+- `BackendApiClient.request_gpt_job_status(...)`
+- `BackendApiClient.request_gpt_job_result(...)`
+
+The query methods create writing work through the GPT route. Status and result methods read the job through direct control-plane endpoints. These wrappers normalize fields such as `ok`, `action`, `jobId`, `status`, and `result`/`output` when available.
 
 ## Built-in CLI commands
+
 - `/open <path>`: print a file
-- `/auto <name>`: run an automation from `AUTOMATIONS_FILE` (approval per step)
-- `/history` or `/patchlog`: show recent patches (rollback ids)
+- `/auto <name>`: run an automation with approval per step
+- `/history` or `/patchlog`: show recent patches and rollback IDs
 - `/rollback <rollback_id>`: restore files from backups
 - `/audit export <path> [--all]`: export audit history as JSON
-- `/intents`: show last detected proposals
-- `/dryrun on|off`: proposal-only mode (no applying/running)
-- `/safemode on|off`: block patch/exec until turned off
-- `/feedback <rollback_id> <rating 1-5> <note...>`: store feedback about a patch
+- `/intents`: show the last detected proposals
+- `/dryrun on|off`: proposal-only mode
+- `/safemode on|off`: block patch/command execution until disabled
+- `/feedback <rollback_id> <rating 1-5> <note...>`: record patch feedback
 
 ## Troubleshooting
-- Backend route failures: verify `BACKEND_URL`, backend health, and auth headers.
-- `410 Gone` from old ask-style routes: migrate writing calls to `/gpt/<gpt-id>`. `request_system_state` uses the direct `/system-state` endpoint.
-- Patch apply fails: ensure repo is a `git` repo and patch paths are correct.
-- Safe mode triggered: use `/safemode off` after reviewing failures and logs.
-- History DB location: controlled by `HISTORY_DB_PATH`.
+
+- Startup rejects configuration: set `OPENAI_API_KEY`; current validation requires it before the CLI starts.
+- Backend route failure: verify `BACKEND_URL`, backend health, `BACKEND_TOKEN`, and the configured GPT ID.
+- `410 Gone` from an old ask-style route: move writing calls to `/gpt/<gpt-id>`.
+- System-state failure: verify the direct `/system-state` endpoint and backend authorization.
+- Patch application failure: verify the repository is a Git worktree and that patch paths are valid.
+- Debug-server `401`: configure one supported authentication method and send the matching header.
+- Unexpected `arcanos` behavior: check which executable resolves on `PATH`, then use one of the unambiguous invocations above.
 
 ## References
+
 - `../README.md`
-- `../QUICKSTART.md`
+- `../docs/CLI_OVERVIEW.md`
 - `../docs/CONFIGURATION.md`
-- `../docs/CLI_CONSOLIDATION.md`
-- `DEBUG_SERVER_README.md`
+- `../docs/SCHEMA_PROTOCOL_GUIDE.md`
+- `../contracts/backend_cli_contract.v1.json`

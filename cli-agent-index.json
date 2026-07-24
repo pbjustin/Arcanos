@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-03-27T18:45:39.144Z",
+  "generatedAt": "2026-07-24T00:13:40.854Z",
   "scopes": [
     {
       "scope": "daemon-python",
@@ -8,7 +8,19 @@
           "relativePath": "daemon-python/arcanos/__init__.py"
         },
         {
+          "relativePath": "daemon-python/arcanos/action_plan_execution_journal.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/action_plan_execution_protocol.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/action_plan_execution_runner.py"
+        },
+        {
           "relativePath": "daemon-python/arcanos/action_plan_handler.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/action_plan_lifecycle.py"
         },
         {
           "relativePath": "daemon-python/arcanos/action_plan_types.py"
@@ -128,6 +140,9 @@
           "relativePath": "daemon-python/arcanos/cli/bootstrap.py"
         },
         {
+          "relativePath": "daemon-python/arcanos/cli/cli_policy.py"
+        },
+        {
           "relativePath": "daemon-python/arcanos/cli/cli.py"
         },
         {
@@ -147,6 +162,9 @@
         },
         {
           "relativePath": "daemon-python/arcanos/cli/idempotency.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/cli/local_bridge.py"
         },
         {
           "relativePath": "daemon-python/arcanos/cli/local_ops.py"
@@ -198,6 +216,9 @@
         },
         {
           "relativePath": "daemon-python/arcanos/credential_bootstrap/types.py"
+        },
+        {
+          "relativePath": "daemon-python/arcanos/credential_verification.py"
         },
         {
           "relativePath": "daemon-python/arcanos/daemon_system_definition.py"
@@ -377,7 +398,34 @@
           "relativePath": "daemon-python/tests/conftest.py"
         },
         {
+          "relativePath": "daemon-python/tests/credential_observation.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_action_plan_dispatch_disclosure.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_action_plan_execution_journal.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_action_plan_execution_ownership_characterization.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_action_plan_execution_protocol_fixture.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_action_plan_execution_protocol.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_action_plan_execution_runner.py"
+        },
+        {
           "relativePath": "daemon-python/tests/test_action_plan_handler.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_action_plan_lifecycle_contract.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_action_plan_lifecycle_handler.py"
         },
         {
           "relativePath": "daemon-python/tests/test_action_plan_types.py"
@@ -398,10 +446,22 @@
           "relativePath": "daemon-python/tests/test_bootstrap_non_interactive.py"
         },
         {
+          "relativePath": "daemon-python/tests/test_clear_decision_contract.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_cli_execution_context_ux.py"
+        },
+        {
           "relativePath": "daemon-python/tests/test_cli_method_contracts.py"
         },
         {
           "relativePath": "daemon-python/tests/test_cli_midlayer_translation.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_cli_policy_security.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_cli_runner_debug_auth.py"
         },
         {
           "relativePath": "daemon-python/tests/test_config_backend_token.py"
@@ -413,6 +473,9 @@
           "relativePath": "daemon-python/tests/test_credential_bootstrap_backend_auth.py"
         },
         {
+          "relativePath": "daemon-python/tests/test_credential_verification.py"
+        },
+        {
           "relativePath": "daemon-python/tests/test_debug_logging_formatter.py"
         },
         {
@@ -420,6 +483,9 @@
         },
         {
           "relativePath": "daemon-python/tests/test_history_db_utf8.py"
+        },
+        {
+          "relativePath": "daemon-python/tests/test_local_bridge_security.py"
         },
         {
           "relativePath": "daemon-python/tests/test_memory_ops.py"
@@ -574,6 +640,9 @@
           "relativePath": "legacy/cli_v2/runtime.py"
         },
         {
+          "relativePath": "legacy/cli_v2/tests/test_bridge_client.py"
+        },
+        {
           "relativePath": "legacy/cli/__init__.py"
         },
         {
@@ -626,6 +695,21 @@
     {
       "scope": "scripts",
       "files": [
+        {
+          "relativePath": "scripts/gptoss/audit-target-likelihood.py"
+        },
+        {
+          "relativePath": "scripts/gptoss/eval-adapter-local.py"
+        },
+        {
+          "relativePath": "scripts/gptoss/phase3-diagnostic-audit.py"
+        },
+        {
+          "relativePath": "scripts/gptoss/train-smoke.py"
+        },
+        {
+          "relativePath": "scripts/gptoss/unsloth-train-smoke.py"
+        },
         {
           "relativePath": "scripts/python_ast_catalog.py"
         }

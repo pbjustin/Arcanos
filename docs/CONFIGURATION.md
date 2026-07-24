@@ -26,12 +26,12 @@ cp .env.example .env
 | --- | --- | --- | --- |
 | `PORT` | No locally; Railway-managed in deploys | direct server `3000`; validation fallback `8080` | `.env.example` sets `3000`. Railway injects `PORT`; do not hard-code it in Railway Variables. |
 | `NODE_ENV` | No | `development` | Affects host binding and runtime behavior. |
-| `OPENAI_API_KEY` | No* | none | Needed for live AI responses. |
+| `OPENAI_API_KEY` | No for explicit local/test mock paths; yes by default in production/Railway and for live AI | none | Default production/Railway startup validation rejects a missing or placeholder key. |
 | `OPENAI_BASE_URL` | No | none | Optional OpenAI endpoint override. |
 | `OPENAI_MODEL` | No | fallback chain | Participates in default model resolution chain. |
 | `DATABASE_URL` | No | none | Enables PostgreSQL persistence. |
 | `REDIS_URL` | No | none | Preferred `redis://` or TLS `rediss://` connection string; discrete `REDISHOST`/`REDISPORT`/`REDISUSER`/`REDISPASSWORD` are fallback inputs. Without a valid discrete fallback, a malformed non-empty value is treated as configured but unavailable. |
-| `ARCANOS_GPT_ACCESS_TOKEN` | Yes for `/gpt-access/*` | none | Bearer token for the protected GPT access gateway. Store real values only in runtime variables or GPT Action auth. |
+| `ARCANOS_GPT_ACCESS_TOKEN` | Yes for protected `/gpt-access/*` operations | none | Bearer token for the protected GPT access gateway. `GET /gpt-access/openapi.json` is public. Store real values only in runtime variables or GPT Action auth. |
 | `ARCANOS_GPT_ACCESS_BASE_URL` | Yes for deployed GPT Action import | configured public base URL variables, local request origin, then `http://localhost:3000` | Public HTTPS origin advertised by `/gpt-access/openapi.json`; set this in Railway so public metadata is deterministic and never derived from spoofable request headers. Railway PR previews prefer Railway preview URL variables before inherited production URLs. |
 | `ARCANOS_GPT_ACCESS_SCOPES` | Yes for `/gpt-access/jobs/create`, capability discovery, capability runs, and worker recovery | all recognized read/control scopes are granted when unset, except `jobs.create`, `capabilities.read`, `capabilities.run`, and `workers.recover` remain denied unless explicitly listed | Comma-separated gateway scope allowlist. Include `jobs.create` and `jobs.result` for protected async Trinity execution; include `workers.recover` only for confirmed worker recovery dispatch; include `capabilities.read` for discovery and `capabilities.run` only with a matching `MCP_ALLOW_MODULE_ACTIONS` allowlist and confirmation. |
 | `ARCANOS_PROCESS_KIND` | Yes for Railway launcher | none | Must be `web` or `worker` when using `scripts/start-railway-service.mjs`; omit for direct local `npm start`. |
@@ -42,7 +42,7 @@ cp .env.example .env
 | `RAILWAY_ENVIRONMENT` | No | none | Set by Railway and used for environment detection. |
 | `RAILWAY_API_TOKEN` | No | none | Only required for Railway management/API tooling, not normal app runtime. |
 
-`OPENAI_API_KEY` is optional for startup because the API can return mock responses in non-live paths, but live AI behavior and the dedicated worker require a valid key.
+Explicit local/test mock paths can run without a real OpenAI credential. Normal production startup fails validation when the resolved key is missing, empty, or a placeholder; live AI behavior and the dedicated worker also require a valid key.
 
 | Variable | Default | Notes |
 | --- | --- | --- |
@@ -60,7 +60,7 @@ cp .env.example .env
 
 ### OpenAI API key resolution
 
-*Without an API key, AI routes return mock responses by design.*
+Mock responses are limited to explicit non-production/test paths. Do not rely on a missing key to enable mock behavior in production.
 
 The OpenAI client resolves keys in this order:
 
@@ -89,7 +89,7 @@ The OpenAI client resolves keys in this order:
 ### Confirmation and automation
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `TRUSTED_GPT_IDS` | empty | Trusted GPT IDs that can bypass manual confirmation. |
+| `TRUSTED_GPT_IDS` | empty | GPT IDs eligible for the trusted confirmation path. Membership alone does not bypass confirmation; the request must also present a non-empty `x-arcanos-confirm-token`. For a trusted ID, the current middleware treats that header as a presence marker rather than consuming or validating it against the one-time-token store. This setting is not caller authentication because request metadata can supply the ID; use it only behind middleware that authenticates the caller and binds the permitted identity. |
 | `ARCANOS_AUTOMATION_SECRET` | empty | Shared secret for automation bypass. |
 | `ARCANOS_AUTOMATION_HEADER` | `x-arcanos-automation` | Header carrying automation secret. |
 | `ASK_ROUTE_MODE` | `gone` | Legacy ask-style migration switch. Set `compat` only while temporarily supporting old `/brain` callers. |
@@ -107,7 +107,7 @@ Protected GPT Action and operator calls must use `/gpt-access/*` for backend ope
 
 | Variable | Required | Default | Purpose |
 | --- | --- | --- | --- |
-| `ARCANOS_GPT_ACCESS_TOKEN` | Yes for `/gpt-access/*` | none | Gateway bearer token. The gateway returns an auth/config error when this is missing. |
+| `ARCANOS_GPT_ACCESS_TOKEN` | Yes for protected `/gpt-access/*` operations | none | Gateway bearer token. The gateway returns an auth/config error when this is missing. `GET /gpt-access/openapi.json` remains public. |
 | `ARCANOS_GPT_ACCESS_BASE_URL` | Yes for deployed GPT Action import | first valid configured public URL/domain, local request origin, then `http://localhost:3000` | Public origin for GPT Action OpenAPI metadata. Supported configured fallbacks include `ARCANOS_BASE_URL`, `ARCANOS_BACKEND_URL`, `SERVER_URL`, `BACKEND_URL`, `PUBLIC_BASE_URL`, `RAILWAY_PUBLIC_URL`, `RAILWAY_PUBLIC_DOMAIN`, and `RAILWAY_STATIC_URL`. Non-local request hosts are ignored. Railway PR previews advertise `RAILWAY_PUBLIC_DOMAIN`, `RAILWAY_PUBLIC_URL`, or `RAILWAY_STATIC_URL` before inherited production URLs. |
 | `ARCANOS_GPT_ACCESS_SCOPES` | Yes for job creation, capability discovery, capability runs, and worker recovery | all recognized scopes are granted when unset, except `jobs.create`, `capabilities.read`, `capabilities.run`, and `workers.recover` remain denied unless explicitly listed | Scope allowlist. Use `runtime.read,workers.read,queue.read,jobs.create,jobs.result,diagnostics.read` for the minimal protected async Trinity flow; add `workers.recover` only for confirmed worker recovery dispatch; add `capabilities.read` for discovery and `capabilities.run` only with `MCP_ALLOW_MODULE_ACTIONS` and confirmation. |
 | `OPENAI_API_KEY` | Yes for live worker execution | none | Preferred OpenAI key setting. The config layer also supports the fallback key names listed above. |
@@ -154,7 +154,7 @@ Use `docs/TRINITY_PIPELINE.md` for the full execution flow and `docs/gpt-access-
 | `JOB_EVENTS_CLEANUP_DRY_RUN` | `true` | When true, cleanup counts eligible old events without deleting them. Set to `false` after reviewing cleanup metrics/logs. Legacy `JOB_EVENT_CLEANUP_DRY_RUN` is also accepted. |
 | `JOB_EVENT_RECORD_HEARTBEATS` | `false` | When true, records high-frequency `worker.heartbeat` timeline events. Leave false unless debugging a specific lease issue because `job_data.last_heartbeat_at` already tracks liveness. |
 
-Use `npm run build` before `npm run job-events:timeline -- --job-id <uuid> --output text` to reconstruct a redacted chronological job timeline from the compiled backend.
+Use `npm run build` before `npm run job-events:timeline -- --job-id <uuid> --output text` to reconstruct a redacted chronological job timeline from the compiled backend. The script first invokes the shared database initializer, which can apply built-in schema DDL and write an initialization heartbeat; treat it as a configured-database operation and run it only with explicit authorization and exact target confirmation.
 
 ### Self reflections and judged feedback
 | Variable | Default | Purpose |
@@ -171,6 +171,7 @@ Use `npm run build` before `npm run job-events:timeline -- --job-id <uuid> --out
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `MCP_BEARER_TOKEN` | none | Required bearer token for `POST /mcp`. |
+| `ACTION_PLAN_MCP_REQUEST_PRINCIPAL_ID` | none | Required, alongside a valid `MCP_BEARER_TOKEN` and valid ActionPlan auth configuration, to expose requester-owned ActionPlan tools on HTTP MCP. Binds the authenticated MCP credential to one fixed requester principal; invalid, conflicting, or already-configured principal IDs leave those tools unexposed. |
 | `MCP_ALLOWED_ORIGINS` | empty | Comma-separated browser origin allowlist for MCP HTTP requests. |
 | `MCP_HTTP_BODY_LIMIT` | `1mb` | JSON body size limit for MCP transport route. |
 | `MCP_REQUIRE_CONFIRMATION` | `true` | Require nonce confirmation for gated MCP tools. |
@@ -198,7 +199,7 @@ The semantic planner can only propose one registered action plus a JSON-object p
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `OPENAI_API_KEY` | none | Required only when using local OpenAI routing. |
+| `OPENAI_API_KEY` | none | Required by the current daemon startup validator, including backend and hybrid routing modes. |
 | `BACKEND_URL` | none | Backend routing target (recommended for `arcanos-daemon`). |
 | `BACKEND_TOKEN` | none | Optional bearer token for backend auth. |
 | `BACKEND_GPT_ID` | `arcanos-daemon` | Identifies the daemon to the backend for `/gpt/:gptId` routing and optional `x-gpt-id` auth metadata. |
@@ -253,8 +254,6 @@ These directories are created at runtime or during builds and must **not** be co
 | `node_modules/` | `npm install` | Node.js dependencies |
 | `coverage/` | `npm test` / `pytest --cov` | Test coverage reports |
 | `logs/` | Runtime | Application and audit logs |
-| `backups/` | `scripts/backup.ps1` | Workspace backups |
-| `dist_new/` | Legacy build scripts | Deprecated build artifacts |
 | `converge-artifacts/` | `npm run converge:ci` | CI convergence gate output |
 | `**/.pytest_cache/` | pytest | Python test cache |
 
@@ -276,8 +275,8 @@ These control how long the backend waits for the daemon to report tool results b
 - `DAEMON_RESULT_WAIT_MS` (default: `8000`)
 - `DAEMON_RESULT_POLL_MS` (default: `250`)
 
-## Complete environment variable reference
-This table mirrors the highest-impact runtime keys in `.env.example`. Earlier sections group variables by runtime area; this section is a compact operator template mirror. Use `.env.example` for the current full template and update this section when a new deploy-relevant variable is added.
+## Selected environment variable reference
+This table mirrors high-impact runtime keys and active operator controls in `.env.example`; it is not an exhaustive schema. Earlier sections group variables by runtime area. Use `.env.example` as the full template and executable configuration as the source of truth for code defaults.
 | Variable | Default (example) | Purpose |
 |---|---:|---|
 | `PORT` | `3000` | HTTP port the server binds to. |
@@ -288,7 +287,14 @@ This table mirrors the highest-impact runtime keys in `.env.example`. Earlier se
 | `OPENAI_ACTION_SHARED_SECRET` | `replace-with-a-strong-shared-secret` | Shared secret for `/api/bridge/gpt`. |
 | `ARCANOS_GPT_ACCESS_TOKEN` | commented placeholder | Bearer token for `/gpt-access/*`; real values must not be committed or logged. |
 | `ARCANOS_GPT_ACCESS_BASE_URL` | commented HTTPS placeholder | Public origin advertised by `/gpt-access/openapi.json`; set this in deployed environments. |
-| `ARCANOS_GPT_ACCESS_SCOPES` | commented full scope list | Gateway scope allowlist. `jobs.create`, `capabilities.read`, and `capabilities.run` must be explicit before they enqueue, discover, or execute capability work. |
+| `ARCANOS_GPT_ACCESS_SCOPES` | commented scope list | Gateway scope allowlist. `jobs.create`, `capabilities.read`, `capabilities.run`, and `workers.recover` must be explicit before they enqueue, discover, execute capability work, or recover workers. |
+| `ARCANOS_CLI_BRIDGE_ENABLED` | `false` | Enables the optional local ARCANOS:CLI bridge capability. |
+| `ARCANOS_CLI_BRIDGE_URL` | `http://127.0.0.1:8765` | Local daemon bridge URL used by the capability. |
+| `ARCANOS_CLI_BRIDGE_TOKEN` | empty | Shared bridge token; keep the real value out of GPT payloads and source control. |
+| `ARCANOS_CLI_SANDBOX_ROOT` | empty | Optional filesystem sandbox root for CLI bridge operations. |
+| `ARCANOS_WORKSPACE_ROOT` | empty | Optional explicit workspace root used by local CLI integration. |
+| `ARCANOS_CLI_COMMAND_TIMEOUT_MS` | `30000` | CLI bridge command timeout. |
+| `ARCANOS_CLI_OUTPUT_MAX_BYTES` | `20000` | Maximum captured CLI bridge output. |
 | `GPT_ACCESS_NL_DISPATCH_MODE` | unset (commented) | Optional `/gpt-access/dispatch/run` resolver mode: `rules`, `hybrid`, or `llm_first`; unset defaults from real OpenAI credential availability. |
 | `GPT_ACCESS_DISPATCH_MODEL` | `gpt-4.1-mini` (commented) | Model used only by the optional semantic dispatcher. |
 | `GPT_ACCESS_DISPATCH_LLM_TIMEOUT_MS` | `5000` (commented) | Optional semantic dispatcher timeout, capped at `10000`; failures fall back only through deterministic rules and policy checks. |
@@ -296,6 +302,7 @@ This table mirrors the highest-impact runtime keys in `.env.example`. Earlier se
 | `ARCANOS_PROCESS_KIND` | `web` (commented) | Explicit Railway launcher role: `web` or `worker`. |
 | `ALLOW_MOCK_FALLBACK` | `false` | Allow fallback to mocked providers in non-prod. |
 | `BUDGET_DISABLED` | `false` | Disable runtime budget enforcement (not recommended in prod). |
+| `ARCANOS_OWNER_EMAIL` | `you@example.com` | Optional identity-module owner bootstrap email; replace the example only in runtime configuration. |
 | `WATCHDOG_LIMIT_MS` | `120000` | Hard watchdog limit for long-running operations. |
 | `SAFETY_BUFFER_MS` | `2000` | Safety buffer subtracted from watchdog to stop early. |
 | `TRINITY_BASE_SOFT_CAP_MS` | `60000` | Base soft cap for Trinity-mode calls. |
@@ -314,13 +321,23 @@ This table mirrors the highest-impact runtime keys in `.env.example`. Earlier se
 | `ARC_LOG_PATH` | `/tmp/arc/log` | Filesystem path for logs (if file logging enabled). |
 | `ARC_MEMORY_PATH` | `/tmp/arc/memory` | Filesystem path for memory persistence. |
 | `RUN_WORKERS` | `true` | Whether to run background workers in this process. |
-| `WORKER_API_TIMEOUT_MS` | `60000` | Timeout for worker-to-server API calls. |
+| `WORKER_API_TIMEOUT_MS` | `60000` template override; `30000` unified-config default when unset | Timeout for worker-to-server API calls. |
 | `JOB_WORKER_ID` | `async-queue` (commented) | Dedicated worker identity. |
 | `JOB_WORKER_CONCURRENCY` | `1` (commented) | Queue-consumer slots per worker process. |
 | `JOB_WORKER_POLL_MS` | `250` (commented) | Worker polling delay after claim cycles. |
+| `JOB_WORKER_HEARTBEAT_MS` | `5000` | Worker heartbeat interval. |
+| `JOB_WORKER_STALE_AFTER_MS` | `45000` | Age after which a worker heartbeat is considered stale. |
+| `JOB_WORKER_WATCHDOG_MS` | `10000` | Worker watchdog inspection interval. |
+| `JOB_WORKER_WATCHDOG_IDLE_MS` | `120000` | Idle threshold used by the worker watchdog. |
 | `WORKER_TRINITY_RUNTIME_BUDGET_MS` | `420000` (code default) | Worker Trinity runtime budget. |
 | `WORKER_TRINITY_STAGE_TIMEOUT_MS` | `180000` (code default) | Worker Trinity stage/model timeout. |
 | `TRINITY_DAG_GPT_ACCESS_ENABLED` | unset in `.env.example`; code auto-enables only when worker slots exceed `DAG_MAX_CONCURRENT_NODES` if unset | Queue DAG node prompts through GPT Access job creation/result polling. |
+| `GPT_FAST_PATH_ENABLED` | `true` | Enables eligible inline GPT prompt-generation requests. |
+| `PRIORITY_QUEUE_ENABLED` | `true` | Enables the priority GPT queue lane. |
+| `PRIORITY_QUEUE_WEIGHT` | `5` | Weight assigned to priority queue scheduling. |
+| `GPT_DIRECT_EXECUTION_THRESHOLD_MS` | `8000` | Direct-execution threshold for eligible GPT requests. |
+| `GPT_WAIT_TIMEOUT_MS` | `24000` | Maximum inline wait for a queued GPT result. |
+| `GPT_JOB_MAX_RETRIES` | `1` | Retry limit for GPT jobs. |
 | `REDIS_URL` | `redis://localhost:6379` (commented) | Preferred `redis://` or TLS `rediss://` connection string. |
 | `SAFETY_HEARTBEAT_TIMEOUT_MS` | `15000` | Worker heartbeat timeout window. |
 | `SAFETY_HEARTBEAT_MISS_THRESHOLD` | `3` | Missed heartbeats before marking unhealthy. |
@@ -332,7 +349,10 @@ This table mirrors the highest-impact runtime keys in `.env.example`. Earlier se
 | `SAFETY_FAIL_CLOSED_INTEGRITY` | `true` | Fail closed when integrity checks cannot be satisfied. |
 | `OPENAI_STORE` | `false` | If true, allow OpenAI to store Responses; default false (stateless). |
 | `MCP_BEARER_TOKEN` | commented placeholder | Required for `POST /mcp`. |
+| `ACTION_PLAN_MCP_REQUEST_PRINCIPAL_ID` | unset | Fixed requester identity required to expose requester-owned ActionPlan tools through authenticated HTTP MCP. |
 | `METRICS_AUTH_TOKEN` | commented empty | Optional token for `GET /metrics`. |
+| `ADMIN_DB_PREVIEW_MAX_ROWS` | `100` | Maximum rows returned by approved database preview operations. |
+| `ADMIN_DB_TABLE_LIST_LIMIT` | `40` | Maximum tables returned by approved database table listing. |
 | `ASK_ROUTE_MODE` | `gone` (commented) | Legacy `/brain` migration switch. |
 | `DAEMON_RESULT_WAIT_MS` | `8000` | How long (ms) to poll for daemon command results before continuing without them. |
 | `DAEMON_RESULT_POLL_MS` | `250` | Poll interval (ms) when waiting for daemon results. |

@@ -21,10 +21,16 @@ npm install
 | Command schemas | `packages/protocol/schemas/v1/commands/*.schema.json` |
 | Shared noun schemas | `packages/protocol/schemas/v1/nouns/*.schema.json` |
 | Tool schemas | `packages/protocol/schemas/v1/tools/*.schema.json` |
+| ActionPlan execution schemas | `packages/protocol/schemas/v1/action-plan/` |
+| ActionPlan shared TypeScript types | `src/shared/types/actionPlanExecution.ts` |
+| ActionPlan OpenAPI contract | `contracts/action_plan_execution.openapi.v1.json` |
+| ActionPlan Python consumer constants | `daemon-python/arcanos/action_plan_execution_protocol.py` |
 | Backend/CLI OpenAPI contracts | `contracts/*.openapi.v1.json` and `contracts/backend_cli_contract.v1.json` |
 | Custom GPT bridge OpenAPI | `openapi/custom-gpt-bridge.yaml` |
 
 Protocol v1 distinguishes protocol-visible command ids from implemented command ids. `ARCANOS_PROTOCOL_COMMAND_IDS` includes forward-compatible reserved commands so clients can reason about future surfaces. `ARCANOS_PROTOCOL_IMPLEMENTED_COMMAND_IDS` is the supported set with concrete schemas and dispatcher behavior in this checkout.
+
+ActionPlan execution is a separate contract family. Keep its schemas, shared TypeScript types, OpenAPI contract, Python constants, and focused contract tests synchronized; do not register these schemas in `packages/protocol/src/schemaCatalog.ts`.
 
 Implemented protocol commands:
 - `task.create`
@@ -51,13 +57,13 @@ Reserved but not implemented in the current protocol runtime:
 ## Change Workflow
 1. Add or update the JSON schema first.
 2. Register new implemented command schemas in `packages/protocol/src/schemaCatalog.ts`.
-3. Add or update command ids in `packages/protocol/src/commands.ts`.
+3. Add or update command ids in `packages/protocol/src/commands.ts` only when the supported or reserved command set changes.
 4. Update TypeScript callers in `packages/cli/`, `src/`, or `workers/`.
 5. Update Python daemon consumers only after the protocol shape is stable.
 6. Document route, CLI, or env changes in the matching doc:
    - API routes: `docs/API.md`
    - CLI commands: `docs/CLI_OVERVIEW.md`
-   - daemon behavior: `docs/CLI_DAEMON.md` and `daemon-python/README.md`
+   - daemon behavior: `daemon-python/README.md`
    - env variables: `.env.example` and `docs/CONFIGURATION.md`
 
 ## Validation
@@ -68,6 +74,7 @@ npm run lint
 node scripts/run-jest.mjs --testPathPatterns=protocol --coverage=false
 npm run validate:backend-cli:contract
 npm run validate:backend-cli:offline
+npm run sync:check
 ```
 
 Use focused Jest patterns for changed areas. For Python protocol-runtime work, run the relevant daemon tests after installing daemon dev dependencies:
@@ -110,4 +117,4 @@ Railway builds packages through the root build. Validate schema changes locally 
 - `../packages/protocol/schemas/v1/`
 - `../contracts/`
 - `CLI_OVERVIEW.md`
-- `CLI_DAEMON.md`
+- `../daemon-python/README.md`

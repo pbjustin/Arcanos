@@ -22,6 +22,7 @@ const EXCLUDED_DIRS = [
   'dist',
   'build',
   'coverage',
+  'unsloth_compiled_cache',
   '.venv',
   '__pycache__',
   'converge-artifacts',

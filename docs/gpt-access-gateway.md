@@ -126,6 +126,14 @@ The optional LLM resolver is a semantic planner only. It never calls backend rou
 
 `GET /gpt-access/health`, `runtime.inspect`, and deep diagnostics include sanitized `nlDispatch` fields: `mode`, `effectiveMode`, `llmEnabled`, `model`, `timeoutMs`, and `reasonIfDisabled`. They do not expose keys, prompts, headers, raw utterances, or cross-request resolver state.
 
+### Dispatcher boundary and typed control-plane allowlists
+
+`OperatorIntentDispatcher` keeps operator control-plane work separate from GPT reasoning. It can call only the typed GPT Access operations registered by `controlPlaneClient`, including runtime, worker, queue, self-heal, diagnostic, approved database-explain, approved MCP, sanitized-log, and job create/result operations. It never forwards an arbitrary URL, internal path, header, credential, raw SQL statement, or proxy request, and it never sends these operations through `/gpt/:gptId`.
+
+Database inspection is limited to the approved templates `worker_claim`, `worker_liveliness_upsert`, `queue_pending`, and `job_result_lookup`. MCP inspection is limited to `runtime.inspect`, `workers.status`, `queue.inspect`, `self_heal.status`, and `diagnostics`. Adding a new database or MCP operation requires extending the corresponding typed allowlist and gateway policy; natural-language similarity does not widen either list.
+
+For hybrid requests, the dispatcher runs the control-plane operation first, sanitizes its result, and only then creates a GPT job with that bounded context. Sanitization removes authorization and cookie headers, API keys, tokens, secrets, passwords, session identifiers, database URLs, and other credential-shaped fields; it also limits text, arrays, and nesting while retaining useful status, counts, timestamps, error categories, and trace metadata. The writing plane therefore receives a summarized observation, not raw control-plane access or its transport credentials.
+
 Examples:
 
 | Utterance | Expected dispatch behavior |

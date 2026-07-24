@@ -37,7 +37,7 @@ npm test
 
 If you only work on the TypeScript backend, skip the Python steps above.
 
-Use `npm install` for local development. CI, Docker, and Railway use reproducible `npm ci` installs.
+Use `npm install` for local development. CI and Railway use reproducible `npm ci` installs. The Docker image uses the install sequence declared in `Dockerfile`, which currently combines `npm ci --omit=dev` with a later development-dependency install for the build stage.
 
 ## Setup (Step by Step)
 ```bash
@@ -79,27 +79,21 @@ arcanos
 - Keep secrets out of git. Use placeholders in all `*.env.example` files.
 
 ## Required Local Validation
-Backend and worker checks:
-```bash
-npm run guard:commit
-npm run type-check
-npm run lint
-npm run build
-npm test
-npm run validate:railway
-npm run validate:backend-cli:offline
-```
+Choose the smallest check set that covers the change, then expand for cross-cutting or release-sensitive work:
 
-Daemon checks:
-```bash
-python daemon-python/validate_backend_cli_offline.py
-pytest daemon-python/tests/test_debug_server.py -q
-pytest daemon-python/tests/test_openai_adapter.py -q
-pytest daemon-python/tests/test_openai_unified_client.py -q
-pytest daemon-python/tests/test_telemetry_sanitization.py -q
-```
+| Change area | Minimum relevant checks |
+| --- | --- |
+| Root TypeScript/backend | `npm run type-check`, `npm run lint`, and focused Jest via `node scripts/run-jest.mjs --testPathPatterns=<pattern> --coverage=false` |
+| Broad root behavior | `npm run build` and `npm test` (or the split `npm run test:all`) |
+| Protocol/CLI or TypeScript-Python boundary | `npm run type-check`, `npm run lint`, protocol-focused Jest, `npm run validate:backend-cli:contract`, `npm run validate:backend-cli:offline`, and `npm run sync:check` |
+| `workers/` | `npm run build:workers`, `npm run lint`, and focused Jest where applicable |
+| Root job runner or `src/workers/` | `npm run build`, `npm run lint`, and focused Jest |
+| `arcanos-ai-runtime/` | `npm run test:runtime-integration` and `npm run lint` |
+| Python daemon | Relevant `python -m pytest daemon-python/tests/<test_file>.py -q`; add `npm run validate:backend-cli:offline` for contract changes |
+| Railway configuration/startup | `npm run build` and the local, non-deploying `npm run validate:railway` |
+| Database/schema code | `npm run type-check`, focused database/route Jest, and `npm run validate:railway`; do not apply a migration as routine validation |
 
-The historical daemon continuous-audit script referenced by older command lists is not present in this checkout.
+Run `npm run guard:commit` before committing. The expensive broad readiness sweep is `npm run validate:all`; it does not include the Python pytest suite or `arcanos-ai-runtime` tests.
 
 ## Deploy (Railway)
 Contributors must keep Railway build/start behavior unchanged:
@@ -124,10 +118,11 @@ Required CI behavior:
 - Windows Python CLI unit/offline validation job
 
 ## OpenAI and Env Rules
-- TypeScript OpenAI constructor boundary: `src/core/adapters/openai.adapter.ts`
-- Worker OpenAI constructor boundary: `workers/src/infrastructure/sdk/openai.ts`
+- Shared TypeScript OpenAI constructor helper: `packages/arcanos-openai/src/client.ts`
+- Backend OpenAI adapter/constructor boundary: `src/core/adapters/openai.adapter.ts`
+- Worker OpenAI adapter (which consumes the shared constructor helper): `workers/src/infrastructure/sdk/openai.ts`
 - Python OpenAI constructor boundary: `daemon-python/arcanos/openai/unified_client.py`
-- TypeScript env access boundary: `src/config/env.ts`
+- TypeScript env access boundary: `src/platform/runtime/env.ts` (`src/config/env.ts` is a compatibility re-export)
 - Python env access boundary: `daemon-python/arcanos/env.py`
 
 Escape hatch usage:
@@ -144,4 +139,5 @@ Escape hatch usage:
 - Security policy: `SECURITY.md`
 - Docs standards: `docs/README.md`
 - PR templates: `.github/PULL_REQUEST_TEMPLATE.md`
-- Adapter migration map: `OPENAI_ADAPTER_MIGRATION.md`
+- OpenAI behavior and migration guidance: `docs/OPENAI_RESPONSES_TOOLS.md`
+- Shared package boundaries: `docs/WORKSPACE_PACKAGES.md`

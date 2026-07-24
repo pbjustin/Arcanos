@@ -12,9 +12,9 @@ Arcanos uses PostgreSQL when `DATABASE_URL` or equivalent `PG*` variables are co
 | Path | Purpose |
 | --- | --- |
 | `src/core/db/` | Runtime database initialization, schema checks, and repositories used by the backend and worker. |
-| `src/db/schema.ts` | Idempotent table definitions used by older schema initialization tooling. |
+| `src/core/db/schema.ts` | Idempotent runtime table definitions; `src/db/schema.ts` is a compatibility re-export. |
 | `prisma/schema.prisma` | Prisma schema for ActionPlan/CLEAR-related models and Prisma client generation during Docker builds. |
-| `migrations/*.sql` | Hand-written SQL migrations and rollback SQL for runtime tables. |
+| `migrations/**` | Hand-written SQL migrations, versioned migration bundles, validation manifests, and rollback/compensation SQL for runtime tables. |
 | `contracts/job_status.openapi.v1.json` | Contract for job status reads. |
 | `contracts/job_result.openapi.v1.json` | Contract for job result reads. |
 
@@ -65,10 +65,12 @@ npm run build
 npm start
 ```
 
-Start the dedicated worker only when the database and OpenAI key are configured:
+Start the dedicated worker only when the database and OpenAI key are configured and you intend to consume the configured queue:
 ```bash
 npm run start:worker
 ```
+
+This is an active worker process, not a read-only probe. It initializes database state, writes heartbeat state, and can claim queued jobs from the configured database.
 
 ## Deploy (Railway)
 Attach PostgreSQL to the Railway environment or set a valid external `DATABASE_URL`. The web and worker services must point at the same database for async jobs to be observable and claimable.

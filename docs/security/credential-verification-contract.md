@@ -1,5 +1,7 @@
 # ARCANOS Credential Verification Contract
 
+> Historical lifecycle note: This is the Phase 2A inventory snapshot for the cited 2026-07-16 commits. Its O-01 through O-20 consumer set is fixed evidence, not an exhaustive inventory of current credential consumers; later boundaries, including ActionPlan execution authentication, fall outside that count. The opaque-comparison and protocol-extraction principles remain normative, but use current source to inventory active consumers.
+
 - Status: Phase 2A authoritative contract
 - Scope: opaque credentials, protocol extraction, and credential-safe observability
 - Baseline: `codex/reusable-code-audit-phase0-1` at `6cf4a6d12f949e9c96fdd81d844c2ac7076065c5`
