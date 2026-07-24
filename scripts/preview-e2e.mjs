@@ -3,6 +3,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
+import { win32 as win32Path } from 'node:path';
 import { promisify } from 'node:util';
 import { pathToFileURL } from 'node:url';
 
@@ -134,6 +135,35 @@ const RAILWAY_HOST_PATTERN = /(?:^|\.)railway\.(?:internal|app)$/iu;
 const RAILWAY_PUBLIC_HOST_PATTERN = /(?:^|\.)up\.railway\.app$/iu;
 const RAILWAY_PROXY_HOST_PATTERN = /(?:^|\.)proxy\.rlwy\.net$/iu;
 const execFileAsync = promisify(execFile);
+
+export function railwayInvocationForPlatform(
+  platform,
+  appData = process.env.APPDATA,
+  nodeExecutable = process.execPath
+) {
+  if (platform !== 'win32') {
+    return { executable: 'railway', argsPrefix: [] };
+  }
+  requireCondition(
+    typeof appData === 'string' && appData.length > 0 && !/[\r\n\0]/u.test(appData),
+    'RAILWAY_INSPECTION_FAILED',
+    'The Windows Railway CLI installation root is unavailable.'
+  );
+  return {
+    executable: nodeExecutable,
+    argsPrefix: [
+      win32Path.join(
+        appData,
+        'npm',
+        'node_modules',
+        '@railway',
+        'cli',
+        'bin',
+        'railway.js'
+      )
+    ]
+  };
+}
 
 export class PreviewE2EError extends Error {
   constructor(code, message) {
@@ -460,7 +490,8 @@ export async function executeRailwayCliJson(args) {
   );
   let stdout;
   try {
-    ({ stdout } = await execFileAsync('railway', args, {
+    const invocation = railwayInvocationForPlatform(process.platform);
+    ({ stdout } = await execFileAsync(invocation.executable, [...invocation.argsPrefix, ...args], {
       encoding: 'utf8',
       timeout: RAILWAY_CLI_TIMEOUT_MS,
       maxBuffer: RAILWAY_CLI_MAX_OUTPUT_BYTES,

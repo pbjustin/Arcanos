@@ -6,6 +6,7 @@ import {
   executeRailwayCliJson,
   PreviewE2EError,
   parseArgs,
+  railwayInvocationForPlatform,
   runPreviewE2E,
   validatePreviewTarget
 } from './preview-e2e.mjs';
@@ -603,6 +604,22 @@ test('the live Railway executor rejects mutating commands before process executi
     ]),
     (error) => error.code === 'UNSAFE_RAILWAY_COMMAND'
   );
+});
+
+test('the live Railway executor selects a shell-free platform-native invocation', () => {
+  assert.deepEqual(
+    railwayInvocationForPlatform('win32', 'C:\\Users\\preview\\AppData\\Roaming', 'C:\\node.exe'),
+    {
+      executable: 'C:\\node.exe',
+      argsPrefix: [
+        'C:\\Users\\preview\\AppData\\Roaming\\npm\\node_modules\\@railway\\cli\\bin\\railway.js'
+      ]
+    }
+  );
+  assert.deepEqual(railwayInvocationForPlatform('linux'), {
+    executable: 'railway',
+    argsPrefix: []
+  });
 });
 
 test('discovery checks use only GPT Access and emit sanitized evidence', async () => {
