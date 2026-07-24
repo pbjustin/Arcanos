@@ -49,6 +49,7 @@ describe('jobRepository.claimNextPendingJob', () => {
 
     expect(updateCall).toBeDefined();
     expect(updateCall?.[0]).not.toContain('$3');
+    expect(updateCall?.[0]).toContain("job_type <> 'local-agent'");
     expect(updateCall?.[1]).toEqual([12_000, 'worker-1']);
   });
 

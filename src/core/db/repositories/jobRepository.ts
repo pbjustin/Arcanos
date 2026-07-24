@@ -1336,6 +1336,7 @@ async function claimPendingJobWithLane(
        SELECT id
        FROM job_data
        WHERE status = 'pending'
+         AND job_type <> 'local-agent'
          AND next_run_at <= NOW()
          ${normalLaneFilter}
        ORDER BY priority ASC, next_run_at ASC, created_at ASC
@@ -1608,6 +1609,7 @@ export async function recoverStaleJobs(
       `SELECT id, worker_id, last_worker_id, correlation_id, job_type, status, retry_count, max_retries, autonomy_state, cancel_requested_at, cancel_reason
        FROM job_data
        WHERE status = 'running'
+         AND job_type <> 'local-agent'
          AND (
            (lease_expires_at IS NOT NULL AND lease_expires_at < NOW())
            OR (last_heartbeat_at IS NULL AND started_at < NOW() - ($1::bigint * INTERVAL '1 millisecond'))
@@ -1829,6 +1831,7 @@ export async function recoverStalledJobsForWorkers(
          last_worker_id
        FROM job_data
        WHERE status = 'running'
+         AND job_type <> 'local-agent'
          AND last_worker_id = ANY($1::text[])
          AND (
            (last_heartbeat_at IS NULL AND started_at < NOW() - ($2::bigint * INTERVAL '1 millisecond'))
@@ -2569,7 +2572,7 @@ export async function requeueFailedJob(
   assertDatabaseReady();
 
   const job = await getJobById(jobId);
-  if (!job || job.status !== 'failed') {
+  if (!job || job.status !== 'failed' || job.job_type === 'local-agent') {
     return null;
   }
 

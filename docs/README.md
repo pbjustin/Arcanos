@@ -71,8 +71,10 @@ ownership, lifecycle, consolidation, and validation rules.
 | [Async documentation workflow](GPT_ASYNC_DOCUMENTATION_WORKFLOW.md) | Generated | Output target for the CLI documentation generator; verify against API and source. |
 | [GPT fast path](GPT_FAST_PATH.md) | Companion | Inline prompt-generation behavior and fallback. |
 | [GPT Access gateway](gpt-access-gateway.md) | Canonical | Protected control-plane API, dispatch, scopes, and safety. |
+| [Local-agent capability bridge](LOCAL_AGENT_CAPABILITY_BRIDGE.md) | Canonical | Protected TypeScript-to-Python execution protocol, local setup, and preview verification. |
 | [Memory backend](MEMORY_BACKEND_USAGE.md) | Canonical | Persistence semantics and safe usage. |
 | [Predictive self-healing](PREDICTIVE_SELF_HEALING.md) | Companion | Predictive healing configuration and execution. |
+| [Productivity system](PRODUCTIVITY_SYSTEM.md) | Canonical | Conversational productivity capability contracts, lifecycle rules, and persistence. |
 | [Self reflections](SELF_REFLECTIONS.md) | Companion | Reflection and feedback persistence. |
 | [Solo operator runtime](SOLO_OPERATOR_RUNTIME_GUIDE.md) | Canonical | Operator-facing runtime and authentication guide. |
 | [Trinity pipeline](TRINITY_PIPELINE.md) | Companion | Writing-plane generation pipeline. |
@@ -148,6 +150,7 @@ current topology.
 - [Arcanos Core advisory bridge](security/arcanos-core-advisory-bridge.md)
 - [CLEAR decision contract](security/clear-decision-contract.md)
 - [Credential verification](security/credential-verification-contract.md)
+- [Local-agent bridge security review](security/LOCAL_AGENT_CAPABILITY_BRIDGE_SECURITY_REVIEW.md)
 
 Migration-local implementation notes live beside their artifacts under
 [migrations/](../migrations/).

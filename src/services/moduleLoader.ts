@@ -3,13 +3,52 @@ import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 
+export type ModuleActionRisk = 'readonly' | 'privileged' | 'destructive';
+export type ModuleActionExecutionTarget = 'typescript' | 'python-daemon';
+
+export interface ModuleHandlerContext {
+  source: 'gpt-access';
+  principalId: string;
+  workspaceId: string;
+  actorKey: string;
+  requestId?: string;
+  traceId?: string | null;
+  idempotencyKey?: string;
+  confirmation?: {
+    status: string;
+    usedChallengeToken: boolean;
+  };
+}
+
+export interface ModuleActionMetadata {
+  description?: string;
+  risk: ModuleActionRisk;
+  requiresConfirmation?: boolean;
+  inputSchema?: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
+  idempotent?: boolean;
+  executionTarget?: ModuleActionExecutionTarget;
+  timeoutMs?: number;
+  requiredDeviceScopes?: string[];
+  readOnly?: boolean;
+  mayModifyFiles?: boolean;
+}
+
+export type ModuleActionHandler = (
+  payload: unknown,
+  context?: ModuleHandlerContext
+) => Promise<unknown>;
+
 export interface ModuleDef {
   name: string;
   description?: string;
-  actions: Record<string, (payload: unknown) => Promise<unknown>>;
+  actions: Record<string, ModuleActionHandler>;
+  actionMetadata?: Record<string, ModuleActionMetadata>;
   gptIds?: string[];
   defaultAction?: string;
   defaultTimeoutMs?: number;
+  exposeLegacyRoute?: boolean;
+  gptAccessOnly?: boolean;
 }
 
 export interface LoadedModule {

@@ -15,10 +15,15 @@ import uuid
 import argparse
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
 
 from arcanos.debug import log_audit_event
 from ..credential_verification import timing_safe_equal_opaque_secret
+from ..local_agent.patch_handler import (
+    apply_authorized_patch,
+    issue_patch_execution_authorization,
+)
 from .cli_policy import (
     command_to_argv,
     evaluate_command_policy,
@@ -549,28 +554,33 @@ class LocalBridge:
             patch_hash=patch_decision.patch_hash,
         )
         start = time.perf_counter()
-        process = subprocess.run(
-            ["git", "apply", "--whitespace=nowarn", "-"],
-            input=job.patch,
-            text=True,
-            capture_output=True,
-            cwd=cwd,
-            timeout=job.timeout,
-            encoding="utf-8",
-            errors="replace",
+        patch_payload = {
+            "patch": job.patch,
+            "expectedPatchSha256": patch_decision.patch_hash,
+        }
+        patch_authorization = issue_patch_execution_authorization(
+            patch_payload,
+            authorization_id=job.proposal_id,
         )
-        stdout = redact_output((process.stdout or "").strip())
-        stderr = redact_output((process.stderr or "").strip())
-        event = "daemon.patch.applied" if process.returncode == 0 else "daemon.patch.failed"
+        apply_result = apply_authorized_patch(
+            patch_payload,
+            workspace_root=Path(cwd),
+            timeout_ms=job.timeout * 1000,
+            mutation_authorization=patch_authorization,
+        )
+        process = apply_result.process
+        stdout = process.stdout
+        stderr = process.stderr
+        event = "daemon.patch.applied" if process.exit_code == 0 else "daemon.patch.failed"
         log_audit_event(
             event,
             audit_id=job.audit_id,
             proposal_id=job.proposal_id,
             patch_hash=patch_decision.patch_hash,
             duration_ms=_elapsed_ms(start),
-            return_code=process.returncode,
+            return_code=process.exit_code,
         )
-        return stdout, stderr, process.returncode
+        return stdout, stderr, process.exit_code
 
     def _execute_bounded(self, command: str, cwd: str, timeout: int) -> tuple[str | None, str | None, int]:
         command_hash = hashlib.sha256(command.encode("utf-8")).hexdigest()

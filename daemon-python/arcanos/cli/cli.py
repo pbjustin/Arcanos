@@ -113,6 +113,7 @@ class ArcanosCLI:
         self._heartbeat_thread: Optional[threading.Thread] = None
         self._command_poll_thread: Optional[threading.Thread] = None
         self._action_plan_execution_thread: Optional[threading.Thread] = None
+        self._local_agent_execution_thread: Optional[threading.Thread] = None
         self._daemon_running = False
         self._heartbeat_interval = Config.DAEMON_HEARTBEAT_INTERVAL_SECONDS
         self._command_poll_interval = Config.DAEMON_COMMAND_POLL_INTERVAL_SECONDS

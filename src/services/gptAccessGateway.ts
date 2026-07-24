@@ -13,6 +13,7 @@ import {
   recoverStalledJobsForWorkers,
   resolveJobWorkerStaleAfterMs
 } from '@core/db/repositories/jobRepository.js';
+import { reconcileExpiredLocalAgentJob } from '@core/db/repositories/localAgentJobRepository.js';
 import { buildQueuedGptJobInput } from '@shared/gpt/asyncGptJob.js';
 import {
   buildGptIdempotencyDescriptor,
@@ -23,6 +24,16 @@ import { buildGptJobResultLookupPayload, GPT_QUERY_ACTION } from '@shared/gpt/gp
 import { redactSensitive } from '@shared/redaction.js';
 import { sanitizeRequestPath } from '@shared/requestPathSanitizer.js';
 import { timingSafeEqualOpaqueSecret } from '@shared/security/opaqueSecret.js';
+import { conflictsWithLocalAgentExecutorCredential } from '@services/actionPlanExecution/auth.js';
+import {
+  LOCAL_AGENT_ACTIONS,
+  LOCAL_AGENT_CAPABILITY_CATALOG,
+  LOCAL_AGENT_MODULE_NAME
+} from '@services/localAgent/contracts.js';
+import {
+  PRODUCTIVITY_ACTIONS,
+  PRODUCTIVITY_MODULE_NAME
+} from '@services/productivity/productivityTypes.js';
 import { runtimeDiagnosticsService } from '@services/runtimeDiagnosticsService.js';
 import { getWorkerControlHealth, getWorkerControlStatus } from '@services/workerControlService.js';
 import { planAutonomousWorkerJob } from '@services/workerAutonomyService.js';
@@ -39,6 +50,9 @@ import { GPT_ACCESS_SCOPES, type GptAccessScope } from '@services/gptAccessScope
 const SERVICE_VERSION = '1.0.0';
 const TOKEN_ENV_NAME = 'ARCANOS_GPT_ACCESS_TOKEN';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const DEPLOYMENT_IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+const DEPLOYMENT_NAME_PATTERN = /^[^\u0000-\u001F\u007F]{1,128}$/u;
+const DEPLOYMENT_COMMIT_PATTERN = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/iu;
 const MAX_TOKEN_LENGTH = 4096;
 const LOG_LIMIT_MAX = 500;
 const LOG_LIMIT_DEFAULT = 100;
@@ -183,6 +197,8 @@ export interface CreateGptAccessAiJobContext {
 
 export interface GptAccessJobResultContext {
   actorKey: string;
+  principalId?: string | null;
+  workspaceId?: string | null;
   requestId?: string;
   traceId?: string;
   logger?: GptAccessLogger;
@@ -485,7 +501,11 @@ function isProductionEnvironment(): boolean {
 
 function readConfiguredAccessToken(): string | null {
   const token = process.env[TOKEN_ENV_NAME];
-  return typeof token === 'string' && token.trim().length > 0 ? token : null;
+  return typeof token === 'string'
+    && token.trim().length > 0
+    && !conflictsWithLocalAgentExecutorCredential(token)
+    ? token
+    : null;
 }
 
 function timingSafeTokenEquals(providedToken: string, expectedToken: string): boolean {
@@ -637,6 +657,55 @@ export function isGptAccessScopeAllowed(scope: GptAccessScope): boolean {
   return resolveConfiguredAccessScopes().configuredScopes.has(scope);
 }
 
+function readDeploymentMetadataEnv(
+  name: string,
+  pattern: RegExp
+): string | null {
+  const value = process.env[name]?.trim();
+  return value && pattern.test(value) ? value : null;
+}
+
+export function getGptAccessDeploymentMetadata() {
+  return {
+    provider: 'railway',
+    projectId: readDeploymentMetadataEnv('RAILWAY_PROJECT_ID', DEPLOYMENT_IDENTIFIER_PATTERN),
+    environmentId: readDeploymentMetadataEnv(
+      'RAILWAY_ENVIRONMENT_ID',
+      DEPLOYMENT_IDENTIFIER_PATTERN
+    ),
+    environmentName: readDeploymentMetadataEnv(
+      'RAILWAY_ENVIRONMENT_NAME',
+      DEPLOYMENT_NAME_PATTERN
+    ),
+    serviceId: readDeploymentMetadataEnv('RAILWAY_SERVICE_ID', DEPLOYMENT_IDENTIFIER_PATTERN),
+    serviceName: readDeploymentMetadataEnv('RAILWAY_SERVICE_NAME', DEPLOYMENT_NAME_PATTERN),
+    deploymentId: readDeploymentMetadataEnv(
+      'RAILWAY_DEPLOYMENT_ID',
+      DEPLOYMENT_IDENTIFIER_PATTERN
+    ),
+    gitCommitSha: readDeploymentMetadataEnv(
+      'RAILWAY_GIT_COMMIT_SHA',
+      DEPLOYMENT_COMMIT_PATTERN
+    ),
+    workerServiceId: readDeploymentMetadataEnv(
+      'ARCANOS_WORKER_SERVICE_ID',
+      DEPLOYMENT_IDENTIFIER_PATTERN
+    ),
+    workerServiceName: readDeploymentMetadataEnv(
+      'ARCANOS_WORKER_SERVICE_NAME',
+      DEPLOYMENT_NAME_PATTERN
+    ),
+    workerDeploymentId: readDeploymentMetadataEnv(
+      'ARCANOS_WORKER_DEPLOYMENT_ID',
+      DEPLOYMENT_IDENTIFIER_PATTERN
+    ),
+    workerGitCommitSha: readDeploymentMetadataEnv(
+      'ARCANOS_WORKER_GIT_COMMIT_SHA',
+      DEPLOYMENT_COMMIT_PATTERN
+    )
+  };
+}
+
 export function buildGptAccessHealthPayload() {
   const startup = getStartupLifecycleSnapshot();
   const redis = getRedisLifecycleSnapshot();
@@ -658,6 +727,7 @@ export function buildGptAccessHealthPayload() {
     time: new Date().toISOString(),
     authRequired: true,
     version: SERVICE_VERSION,
+    deployment: getGptAccessDeploymentMetadata(),
     nlDispatch: getNaturalLanguageDispatchRuntimeStatus(),
     startup: {
       phase: startup.phase,
@@ -852,15 +922,39 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-function isGptAccessCreatedJob(job: Awaited<ReturnType<typeof getJobById>>): boolean {
-  if (!job || job.job_type !== 'gpt' || !isRecord(job.input)) {
+function isGptAccessCreatedJob(
+  job: Awaited<ReturnType<typeof getJobById>>,
+  context?: GptAccessJobResultContext
+): boolean {
+  if (!job || !isRecord(job.input)) {
     return false;
   }
 
-  return (
-    job.input.requestPath === GPT_ACCESS_JOB_CREATE_ENDPOINT &&
-    job.input.executionModeReason === 'gpt_access_create_ai_job'
-  );
+  if (job.job_type === 'gpt') {
+    return (
+      job.input.requestPath === GPT_ACCESS_JOB_CREATE_ENDPOINT
+      && job.input.executionModeReason === 'gpt_access_create_ai_job'
+    );
+  }
+
+  if (
+    job.job_type !== 'local-agent'
+    || job.input.protocolVersion !== 'local-agent-job-v1'
+    || job.input.requestPath !== '/gpt-access/capabilities/v1/ARCANOS:LOCAL_AGENT/run'
+    || job.input.executionModeReason !== 'gpt_access_local_agent_capability'
+    || !isRecord(job.input.job)
+  ) {
+    return false;
+  }
+
+  const principalId =
+    typeof context?.principalId === 'string' ? context.principalId.trim() : '';
+  const workspaceId =
+    typeof context?.workspaceId === 'string' ? context.workspaceId.trim() : '';
+  return principalId.length > 0
+    && workspaceId.length > 0
+    && job.input.job.principal === principalId
+    && job.input.job.workspace === workspaceId;
 }
 
 function readOptionalUuid(params: Record<string, unknown>, key: string): string {
@@ -1224,7 +1318,35 @@ export async function getGptAccessJobResult(body: unknown, context?: GptAccessJo
     };
   }
 
-  const gatewayJob = isGptAccessCreatedJob(job) ? job : null;
+  let gatewayJob = isGptAccessCreatedJob(job, context) ? job : null;
+  if (
+    gatewayJob?.job_type === 'local-agent'
+    && ['pending', 'running'].includes(gatewayJob.status)
+    && gatewayJob.expires_at
+    && new Date(gatewayJob.expires_at).getTime() <= Date.now()
+  ) {
+    try {
+      gatewayJob = await reconcileExpiredLocalAgentJob(gatewayJob.id);
+    } catch (error: unknown) {
+      context?.logger?.error?.('gpt_access.job_result.failed', {
+        traceId,
+        requestType: 'getJobResult',
+        status: 'jobs_unavailable',
+        errorType: error instanceof Error ? error.name : 'unknown'
+      });
+      return {
+        statusCode: 503,
+        payload: {
+          ok: false,
+          traceId,
+          error: {
+            code: 'GPT_ACCESS_JOBS_UNAVAILABLE',
+            message: 'Durable GPT job persistence is unavailable.'
+          }
+        }
+      };
+    }
+  }
   return {
     statusCode: 200,
     payload: sanitizeGptAccessPayload({
@@ -2125,6 +2247,34 @@ export async function queryBackendLogs(body: unknown) {
   }
 }
 
+export function buildGptAccessCapabilityCatalogExtension() {
+  return {
+    [PRODUCTIVITY_MODULE_NAME]: {
+      actions: [...PRODUCTIVITY_ACTIONS]
+    },
+    [LOCAL_AGENT_MODULE_NAME]: {
+      actions: [...LOCAL_AGENT_ACTIONS],
+      contracts: LOCAL_AGENT_ACTIONS.map((action) => {
+        const contract = LOCAL_AGENT_CAPABILITY_CATALOG[action];
+        return {
+          id: contract.id,
+          description: contract.description,
+          executionTarget: contract.executionTarget,
+          inputSchema: contract.inputSchema,
+          outputSchema: contract.outputSchema,
+          risk: contract.risk,
+          requiresConfirmation: contract.requiresConfirmation,
+          idempotent: contract.idempotent,
+          timeoutMs: contract.timeoutMs,
+          requiredDeviceScopes: [...contract.requiredDeviceScopes],
+          readOnly: contract.readOnly,
+          mayModifyFiles: contract.mayModifyFiles
+        };
+      })
+    }
+  };
+}
+
 export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = {}) {
   const serverUrl = normalizeOpenApiServerUrl(options.serverUrl) ?? resolveGptAccessOpenApiServerUrl();
   const protectedSecurity = [{ bearerAuth: [] }];
@@ -2142,6 +2292,7 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
       }
     ],
     security: protectedSecurity,
+    'x-arcanos-capability-catalogs': buildGptAccessCapabilityCatalogExtension(),
     components: {
       securitySchemes: {
         bearerAuth: {
@@ -2232,6 +2383,39 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
             reasonIfDisabled: { type: ['string', 'null'] }
           },
           required: ['mode', 'effectiveMode', 'llmEnabled', 'model', 'timeoutMs', 'reasonIfDisabled'],
+          additionalProperties: false
+        },
+        RailwayDeploymentMetadata: {
+          type: 'object',
+          description: 'Non-secret Railway deployment identity used to bind preview verification to the served commit.',
+          properties: {
+            provider: { type: 'string', const: 'railway' },
+            projectId: { type: ['string', 'null'] },
+            environmentId: { type: ['string', 'null'] },
+            environmentName: { type: ['string', 'null'] },
+            serviceId: { type: ['string', 'null'] },
+            serviceName: { type: ['string', 'null'] },
+            deploymentId: { type: ['string', 'null'] },
+            gitCommitSha: { type: ['string', 'null'] },
+            workerServiceId: { type: ['string', 'null'] },
+            workerServiceName: { type: ['string', 'null'] },
+            workerDeploymentId: { type: ['string', 'null'] },
+            workerGitCommitSha: { type: ['string', 'null'] }
+          },
+          required: [
+            'provider',
+            'projectId',
+            'environmentId',
+            'environmentName',
+            'serviceId',
+            'serviceName',
+            'deploymentId',
+            'gitCommitSha',
+            'workerServiceId',
+            'workerServiceName',
+            'workerDeploymentId',
+            'workerGitCommitSha'
+          ],
           additionalProperties: false
         },
         CreateAiJobRequest: {
@@ -2505,6 +2689,47 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
               type: 'array',
               items: { type: 'string' }
             },
+            actionMetadata: {
+              type: 'object',
+              description: 'Machine-readable action contracts published by the registered module.',
+              additionalProperties: {
+                type: 'object',
+                properties: {
+                  description: { type: 'string' },
+                  risk: {
+                    type: 'string',
+                    enum: ['readonly', 'privileged', 'destructive']
+                  },
+                  requiresConfirmation: { type: 'boolean' },
+                  inputSchema: {
+                    type: 'object',
+                    additionalProperties: true
+                  },
+                  outputSchema: {
+                    type: 'object',
+                    additionalProperties: true
+                  },
+                  idempotent: { type: 'boolean' },
+                  executionTarget: {
+                    type: 'string',
+                    enum: ['typescript', 'python-daemon']
+                  },
+                  timeoutMs: {
+                    type: 'integer',
+                    minimum: 1
+                  },
+                  requiredDeviceScopes: {
+                    type: 'array',
+                    items: { type: 'string' },
+                    uniqueItems: true
+                  },
+                  readOnly: { type: 'boolean' },
+                  mayModifyFiles: { type: 'boolean' }
+                },
+                required: ['risk', 'requiresConfirmation'],
+                additionalProperties: false
+              }
+            },
             defaultAction: { type: ['string', 'null'] },
             defaultTimeoutMs: { type: ['integer', 'null'] }
           },
@@ -2586,9 +2811,18 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
                       time: { type: 'string', format: 'date-time' },
                       authRequired: { type: 'boolean' },
                       version: { type: 'string' },
+                      deployment: { '$ref': '#/components/schemas/RailwayDeploymentMetadata' },
                       nlDispatch: { '$ref': '#/components/schemas/NaturalLanguageDispatchStatus' }
                     },
-                    required: ['ok', 'service', 'time', 'authRequired', 'version', 'nlDispatch'],
+                    required: [
+                      'ok',
+                      'service',
+                      'time',
+                      'authRequired',
+                      'version',
+                      'deployment',
+                      'nlDispatch'
+                    ],
                     additionalProperties: true
                   }
                 }
@@ -2721,6 +2955,18 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
               in: 'path',
               required: true,
               schema: { type: 'string', minLength: 1 }
+            },
+            {
+              name: 'Idempotency-Key',
+              in: 'header',
+              required: false,
+              description: 'Stable key for safe mutation retries. Reuse only with the same action and semantic payload.',
+              schema: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 240,
+                pattern: '^[!-~]+$'
+              }
             }
           ],
           requestBody: {
@@ -2756,7 +3002,8 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
               }
             },
             '404': { description: 'Capability or action not found.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
-            '500': { description: 'Unexpected capability execution failure.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } }
+            '500': { description: 'Unexpected capability execution failure.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } },
+            '503': { description: 'Capability registry or required execution identity unavailable.', content: { 'application/json': { schema: { '$ref': '#/components/schemas/ErrorResponse' } } } }
           }
         }
       },
@@ -2847,7 +3094,7 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
         post: {
           operationId: 'getJobResult',
           summary: 'Read an async job result without using /gpt/:gptId.',
-          description: 'Poll with the jobId returned by createAiJob. If status is pending, poll this operation again. If completed, return the result. If failed, expired, or not_found, stop and report that terminal state.',
+          description: 'Poll with the jobId returned by createAiJob or an asynchronous protected capability such as ARCANOS:LOCAL_AGENT. If status is pending or running, poll this operation again. If completed, return the result. If failed, expired, or not_found, stop and report that terminal state.',
           security: protectedSecurity,
           requestBody: {
             required: true,
@@ -3017,6 +3264,20 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
           summary: 'Resolve and run an operational GPT Access command.',
           description: 'Operational-only natural-language entryway. Prefer dedicated GPT Access operations for runtime, worker, queue, and diagnostics reads; use this for other explicit status or control commands. Resolves utterance -> DispatchPlan -> registry validation -> scope/allowlist/risk policy -> confirmation when required -> an existing runner. General generation and advisory prompts must use createAiJob. This does not restore /ask.',
           security: protectedSecurity,
+          parameters: [
+            {
+              name: 'Idempotency-Key',
+              in: 'header',
+              required: false,
+              description: 'Stable key propagated when dispatch selects an idempotent capability mutation.',
+              schema: {
+                type: 'string',
+                minLength: 1,
+                maxLength: 240,
+                pattern: '^[!-~]+$'
+              }
+            }
+          ],
           requestBody: {
             required: true,
             content: {

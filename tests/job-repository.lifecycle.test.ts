@@ -77,6 +77,36 @@ describe('jobRepository lifecycle recovery', () => {
     ).toBe(1_000);
   });
 
+  it('leaves local-agent expiry and lease recovery to the device protocol', async () => {
+    clientQueryMock.mockResolvedValue({ rows: [] });
+
+    await recoverStaleJobs({
+      staleAfterMs: 60_000,
+      maxRetries: 2
+    });
+    const staleSelector = clientQueryMock.mock.calls.find(([sql]) =>
+      typeof sql === 'string'
+      && sql.includes('FROM job_data')
+      && sql.includes("status = 'running'")
+    )?.[0];
+    expect(staleSelector).toContain("job_type <> 'local-agent'");
+
+    clientQueryMock.mockClear();
+    clientQueryMock.mockResolvedValue({ rows: [] });
+    await recoverStalledJobsForWorkers({
+      workerIds: ['worker-local-agent'],
+      staleAfterMs: 60_000,
+      maxRetries: 2,
+      stalledJobAction: 'requeue'
+    });
+    const stalledSelector = clientQueryMock.mock.calls.find(([sql]) =>
+      typeof sql === 'string'
+      && sql.includes('FROM job_data')
+      && sql.includes('last_worker_id = ANY')
+    )?.[0];
+    expect(stalledSelector).toContain("job_type <> 'local-agent'");
+  });
+
   it('dead-letters stale jobs with persisted max_retries=0 even when the global default allows retries', async () => {
     mockStaleRows([
       {

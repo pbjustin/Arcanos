@@ -1,0 +1,46 @@
+# Refresh deliberately with:
+# docker buildx imagetools inspect node:20-bookworm-slim
+# Review the upstream change, replace this digest, rebuild, and configure the
+# daemon with the resulting RepoDigest or immutable local image ID.
+FROM node:20-bookworm-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PATH=/opt/venv/bin:/usr/local/bin:/usr/bin:/bin
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        git \
+        libgl1 \
+        libglib2.0-0 \
+        portaudio19-dev \
+        python3 \
+        python3-dev \
+        python3-pip \
+        python3-venv \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/node-deps
+COPY package.json package-lock.json ./
+COPY scripts/ ./scripts/
+COPY prisma/ ./prisma/
+COPY vendor/ ./vendor/
+RUN npm ci --include=dev --ignore-scripts --no-audit --no-fund
+
+WORKDIR /opt/python-package
+COPY daemon-python/pyproject.toml daemon-python/README.md ./
+COPY daemon-python/arcanos/ ./arcanos/
+RUN python3 -m venv /opt/venv \
+    && /opt/venv/bin/pip install --no-cache-dir --upgrade pip \
+    && /opt/venv/bin/pip install --no-cache-dir '.[dev]'
+
+RUN install -d -m 0755 /opt/arcanos-sandbox \
+    && install -m 0555 \
+        /opt/python-package/arcanos/local_agent/sandbox_entrypoint.py \
+        /opt/arcanos-sandbox/sandbox_entrypoint.py \
+    && groupadd --gid 65532 sandbox \
+    && useradd --uid 65532 --gid 65532 --no-create-home sandbox
+
+USER 65532:65532
+WORKDIR /workspace
+ENTRYPOINT []

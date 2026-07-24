@@ -62,7 +62,8 @@
       "BEGIN (?:RSA |OPENSSH |EC |DSA )?PRIVATE KEY",
       "^GIT binary patch$",
       "^Binary files ",
-      "^new file mode 120000$"
+      "^new file mode 120000$",
+      "^new mode 120000$"
     ]
   }
 }

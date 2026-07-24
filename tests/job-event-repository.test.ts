@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import type { PoolClient } from 'pg';
 
 const isDatabaseConnectedMock = jest.fn();
 const queryMock = jest.fn();
@@ -36,7 +37,8 @@ jest.unstable_mockModule('@platform/observability/appMetrics.js', () => ({
 const {
   cleanupJobEvents,
   listJobEventTimeline,
-  recordJobEvent
+  recordJobEvent,
+  recordJobEventWithClient
 } = await import('../src/core/db/repositories/jobEventRepository.js');
 const tokenLikeValue = ['secret', '-token'].join('');
 const tokenField = ['to', 'ken'].join('');
@@ -135,6 +137,53 @@ describe('jobEventRepository.recordJobEvent', () => {
     expect(warningPayload).not.toContain(bearerLikeValue);
     expect(warningPayload).not.toContain(assignmentLikeValue);
     expect(recordJobEventInsertFailureMock).toHaveBeenCalledWith('insert_failed');
+  });
+});
+
+describe('jobEventRepository.recordJobEventWithClient', () => {
+  const transactionQueryMock = jest.fn();
+  const transactionClient = {
+    query: transactionQueryMock
+  } as unknown as PoolClient;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    transactionQueryMock.mockResolvedValue({ rows: [], rowCount: 1 });
+  });
+
+  it('inserts expiry evidence through the caller transaction', async () => {
+    await expect(
+      recordJobEventWithClient(transactionClient, {
+        jobId: '11111111-1111-4111-8111-111111111111',
+        eventType: 'job.expired',
+        traceId: 'trace-expiry',
+        metadata: {
+          reason: 'job_expired_before_completion'
+        }
+      })
+    ).resolves.toBeUndefined();
+
+    expect(transactionQueryMock).toHaveBeenCalledWith(
+      expect.stringContaining('INSERT INTO job_events'),
+      expect.arrayContaining([
+        '11111111-1111-4111-8111-111111111111',
+        'trace-expiry',
+        'job.expired'
+      ])
+    );
+  });
+
+  it('throws when the transaction cannot persist lifecycle evidence', async () => {
+    transactionQueryMock.mockRejectedValueOnce(new Error('insert failed'));
+
+    await expect(
+      recordJobEventWithClient(transactionClient, {
+        jobId: '11111111-1111-4111-8111-111111111111',
+        eventType: 'job.completed'
+      })
+    ).rejects.toMatchObject({
+      code: 'JOB_EVENT_INSERT_FAILED'
+    });
   });
 });
 

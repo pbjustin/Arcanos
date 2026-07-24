@@ -35,6 +35,24 @@ describe('jobRepository.requeueFailedJob', () => {
       });
   });
 
+  it('leaves failed local-agent jobs in manual reconciliation state', async () => {
+    queryMock.mockReset();
+    queryMock.mockResolvedValueOnce({
+      rows: [{
+        id: 'job-local-agent',
+        status: 'failed',
+        job_type: 'local-agent',
+        retry_count: 0,
+        autonomy_state: {
+          localAgent: { manualReconciliationRequired: true }
+        }
+      }]
+    });
+
+    await expect(requeueFailedJob('job-local-agent')).resolves.toBeNull();
+    expect(queryMock).toHaveBeenCalledTimes(1);
+  });
+
   it('resets a retained failed job to pending for explicit operator recovery', async () => {
     const result = await requeueFailedJob('job-1', {
       requestedBy: 'test-suite'

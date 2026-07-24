@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import shutil
-import subprocess
 import sys
 import uuid
 from dataclasses import dataclass
@@ -14,6 +13,10 @@ from rich.syntax import Syntax
 
 from ..config import Config
 from ..cli.cli_policy import validate_patch_text
+from ..local_agent.patch_handler import (
+    apply_authorized_patch,
+    issue_patch_execution_authorization,
+)
 from .history_db import HistoryDB
 from .policy_guard import PolicyGuard
 
@@ -176,27 +179,31 @@ class PatchOrchestrator:
             )
             return ApplyResult(ok=False, rollback_id=rollback_id, files=files, backups={}, error="denied")
 
-        backup_root = Config.PATCH_BACKUP_DIR / rollback_id
-        backup_root.mkdir(parents=True, exist_ok=True)
-
-        backups: dict[str, str] = {}
-        for f in files:
-            src = repo_root / f
-            if src.exists() and src.is_file():
-                dst = backup_root / f
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(src, dst)
-                backups[f] = str(dst)
-
-        proc = subprocess.run(
-            ["git", "apply", "--whitespace=nowarn", "-"],
-            input=patch_text,
-            text=True,
-            capture_output=True,
-            cwd=str(repo_root),
+        patch_payload = {
+            "patch": patch_text,
+            "expectedPatchSha256": patch_decision.patch_hash,
+        }
+        patch_authorization = issue_patch_execution_authorization(
+            patch_payload,
+            authorization_id=(
+                f"interactive:{session_id}:{rollback_id}:{patch_decision.patch_hash}"
+            ),
         )
-        if proc.returncode != 0:
-            err = (proc.stderr or proc.stdout or "").strip() or f"git apply failed rc={proc.returncode}"
+        apply_result = apply_authorized_patch(
+            patch_payload,
+            workspace_root=repo_root,
+            timeout_ms=120000,
+            mutation_authorization=patch_authorization,
+            backup_root=Config.PATCH_BACKUP_DIR,
+            rollback_id=rollback_id,
+        )
+        backups = apply_result.backups
+        if not apply_result.applied:
+            err = (
+                apply_result.process.stderr
+                or apply_result.process.stdout
+                or f"git apply failed rc={apply_result.process.exit_code}"
+            )
             self.history.log_patch(
                 session_id,
                 rollback_id,
