@@ -137,3 +137,4 @@ Rollback:
 - `CI_CD.md`
 - `RAILWAY_RATIONALE.md`
 - Railway docs: https://docs.railway.com/
+- Railway CLI docs: https://docs.railway.com/develop/cli

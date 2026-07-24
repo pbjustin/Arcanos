@@ -1,7 +1,7 @@
 # API Guide
 
 ## Overview
-This is the current API catalog for routes mounted by `src/routes/register.ts`, `src/routes/healthGroup.ts`, and `src/routes/api/index.ts`. Route behavior is sensitive to mount order when duplicate paths exist.
+This guide documents the primary supported surfaces and notable operator/compatibility routes mounted by `src/routes/register.ts`, `src/routes/healthGroup.ts`, and `src/routes/api/index.ts`. It is a maintained integration guide, not a generated exhaustive route manifest. Route behavior is sensitive to mount order when duplicate paths exist.
 
 ## Prerequisites
 - Backend running locally or on Railway.
@@ -23,7 +23,7 @@ Base URLs:
 Confirmation gate behavior (`src/transport/http/middleware/confirmGate.ts`):
 - Manual: `x-confirmed: yes`
 - Challenge retry: `x-confirmed: token:<challengeId>`
-- Trusted GPT: `x-gpt-id` + configured `TRUSTED_GPT_IDS`
+- Trusted GPT presence path: a request GPT ID in configured `TRUSTED_GPT_IDS` plus a non-empty `x-arcanos-confirm-token`. In the current middleware this header is a presence marker for trusted IDs; it is not consumed or validated against the one-time-token store. Because the request path, body, or header can supply the GPT ID, this setting is not caller authentication. Use it only behind deployment middleware that authenticates the caller and binds the permitted identity.
 - Automation secret: configured header (default `x-arcanos-automation`)
 
 ## Run locally
@@ -52,7 +52,7 @@ No API path changes are required for Railway. Validate liveness (`/healthz`), re
 
 Writing vs control:
 - Writing plane: prompt generation, assistant responses, durable `query` jobs, non-core durable `query_and_wait` jobs, and core synchronous `query_and_wait` actions.
-- Direct control plane: `GET /jobs/:id`, `GET /jobs/:id/result`, `GET /workers/status`, `GET /worker-helper/health`, `GET /status`, `GET /status/safety/self-heal`, `POST /gpt-access/diagnostics/deep`, `POST /system-state`, `POST /mcp`, and `/api/arcanos/dag/*`.
+- Direct control plane: `GET /jobs/:id`, `GET /jobs/:id/result`, `GET /workers/status`, `GET /worker-helper/health`, `GET /status`, `GET /status/safety/self-heal`, `POST /gpt-access/diagnostics/deep`, `GET|POST /system-state`, `POST /mcp`, and `/api/arcanos/dag/*`.
 - No public control actions are served by `POST /gpt/:gptId`; `get_status`, `get_result`, `diagnostics`, `system_state`, runtime inspection, worker status, queue inspection, self-heal status, MCP calls, and prompt-based job lookups are rejected with canonical control endpoints.
 
 Request guidance:
@@ -109,8 +109,9 @@ Pipeline timeout fallback detection:
 - Documentation clients must retry with a narrower section prompt once, then fail with: `ARCANOS completed in degraded fallback mode; documentation generation must be split into smaller tasks.`
 
 Job status routes:
-- `GET /jobs/:id`: returns `{ id, job_type, status, lifecycle_status, created_at, updated_at, completed_at, cancel_requested_at, cancel_reason, retention_until, idempotency_until, expires_at, error_message, output, result }`
-- `GET /jobs/:id/stream`: SSE stream of status changes. Terminal events include `completed`, `failed`, `cancelled`, and `expired`.
+- `GET /jobs/:id`: returns `{ id, jobId, job_type, status, lifecycle_status, created_at, updated_at, completed_at, cancel_requested_at, cancel_reason, retention_until, idempotency_until, expires_at, poll, stream, error_message, output, result }`
+- `GET /jobs/:id/result`: returns the canonical result lookup envelope, including `jobId`, job/lifecycle status, polling links, result, and a typed error when applicable.
+- `GET /jobs/:id/stream`: SSE stream of status changes. The event name is `terminal` when the payload status is `completed`, `failed`, `cancelled`, or `expired`; nonterminal changes use the `status` event.
 - `POST /jobs/:id/cancel`: cancels a queued GPT job immediately or requests best-effort cancellation for a running GPT job.
 
 GPT job lifecycle:
@@ -130,15 +131,15 @@ Retention defaults:
 Client retry guidance:
 - Reuse the same `Idempotency-Key` for safe client retries of the same GPT request body.
 - Poll `GET /jobs/:id` or subscribe to `GET /jobs/:id/stream` after any `202`.
-- Prefer the canonical jobs API for job reads. Use GPT compatibility actions only when the caller cannot reach `/jobs/*`.
+- Use the canonical direct jobs API or the protected GPT Access result operation for job reads; `/gpt/:gptId` does not provide a job-read compatibility action.
 - ARCANOS CLI follows the same split: `arcanos query` and `arcanos query-and-wait` use the writing plane, while `arcanos job-status` and `arcanos job-result` call the canonical jobs API.
-- Natural-language retrieval through `prompt` text is intentionally blocked. Retrieval must use structured `action + payload.jobId`.
+- Natural-language retrieval through `prompt` text is intentionally blocked. Retrieval must use `GET /jobs/:id`, `GET /jobs/:id/result`, or `POST /gpt-access/jobs/result`.
 - Do not send prompts that ask the GPT route to inspect runtime state, trigger DAGs, or call MCP tools. Use the direct control endpoints instead.
 - Treat `cancelled` and `expired` as terminal and submit a fresh request if more work is needed.
 
-## Active Endpoint Groups
+## Primary Supported Surfaces and Notable Endpoint Groups
 
-The groups below include stable public routes, operator/control routes, compatibility routes, and internal diagnostics. Treat `/gpt/:gptId`, `/api/bridge/*`, `/jobs/*`, `/gpt-access/*`, `/mcp`, `/metrics`, `/api/web/search`, and documented health/status routes as the primary integration surfaces. Test/debug routes such as `/api/test`, `/api/fallback/test`, `/diag/*`, `/debug/*`, bridge/IPC compatibility probes, dynamic `/modules/:moduleRoute`, and `/queryroute` are implementation or operator diagnostics unless a dedicated contract says otherwise.
+The groups below highlight stable public routes, operator/control routes, compatibility routes, and internal diagnostics; they are intentionally curated rather than exhaustive. Treat `/gpt/:gptId`, `/api/bridge/*`, `/jobs/*`, `/gpt-access/*`, `/mcp`, `/metrics`, `/api/web/search`, ActionPlan contract routes, and documented health/status routes as the primary integration surfaces. Test/debug routes such as `/api/test`, `/api/fallback/test`, `/diag/*`, `/debug/*`, bridge/IPC compatibility probes, dynamic `/modules/:moduleRoute`, and `/queryroute` are implementation or operator diagnostics unless a dedicated contract says otherwise.
 
 ### Core health and status
 - `GET /`
@@ -161,6 +162,13 @@ The groups below include stable public routes, operator/control routes, compatib
 - `POST /siri` (confirmation required)
 - `POST /api/ask-hrc`
 - `POST /api/arcanos/ask` (deprecated compatibility route; prefer `/gpt/:gptId`)
+
+### State and Custom GPT bridge
+- `GET /system-state`
+- `POST /system-state`
+- `POST /api/bridge/gpt`
+- `POST /api/openai/gpt-action` (bridge compatibility alias)
+- `GET /api/bridge/health`
 
 ### Reinforcement and reflection feedback
 - `POST /reinforce`
@@ -214,6 +222,7 @@ The groups below include stable public routes, operator/control routes, compatib
 - `POST /worker-helper/dispatch` (privileged auth required)
 - `POST /worker-helper/heal` (privileged auth required)
 - `GET /jobs/:id`
+- `GET /jobs/:id/result`
 - `GET /jobs/:id/stream`
 - `POST /jobs/:id/cancel`
 - `POST /orchestration/reset` (confirmation required)
@@ -254,22 +263,72 @@ The groups below include stable public routes, operator/control routes, compatib
 - `POST /gpt/:gptId` (writing plane; control compatibility actions are intercepted before write dispatch)
 
 ### GPT Access protected gateway
-- `GET /gpt-access/openapi.json`
+- `GET /gpt-access/openapi.json` (public schema metadata)
 - `GET /gpt-access/health`
 - `GET /gpt-access/status`
 - `GET /gpt-access/workers/status`
+- `GET /gpt-access/worker-helper/health`
 - `GET /gpt-access/queue/inspect`
 - `GET /gpt-access/self-heal/status`
 - `POST /gpt-access/jobs/create`
 - `POST /gpt-access/jobs/result`
+- `POST /gpt-access/jobs/timeline`
 - `POST /gpt-access/diagnostics/deep`
 - `POST /gpt-access/db/explain`
 - `POST /gpt-access/logs/query`
-- `POST /gpt-access/mcp/run`
+- `POST /gpt-access/mcp`
 - `GET /gpt-access/capabilities/v1`
 - `GET /gpt-access/capabilities/v1/:id`
 - `POST /gpt-access/capabilities/v1/:id/run`
+- `GET /gpt-access/modules` and `GET /gpt-access/modules/:id` (capability compatibility aliases)
 - `POST /gpt-access/dispatch/run`
+
+### ActionPlan, CLEAR, and agent execution
+- `POST|GET /plans`
+- `GET /plans/:planId`
+- `POST /plans/:planId/approve`
+- `POST /plans/:planId/block`
+- `POST /plans/:planId/expire`
+- `POST /plans/:planId/execute`
+- `GET /plans/:planId/results` (disabled legacy view; returns `409 ACTION_PLAN_LEGACY_RESULT_VIEW_UNAVAILABLE`; use `GET /plans/:planId/executions/:runId/result`)
+- `GET /action-plan-executions/protocol`
+- `POST /action-plan-executions/claim-next`
+- `POST /plans/:planId/executions/:runId/claim`
+- `POST /plans/:planId/executions/:runId/start`
+- `POST /plans/:planId/executions/:runId/result`
+- `GET /plans/:planId/executions/:runId`
+- `GET /plans/:planId/executions/:runId/result`
+- `POST /clear/evaluate`
+- `GET /clear/:planId`
+- `POST /agents/register`
+- `GET /agents`
+- `GET /agents/:agentId`
+- `POST /agents/:agentId/capabilities/grant`
+- `POST /agents/:agentId/heartbeat` (disabled legacy route; returns `403 ACTION_PLAN_LEGACY_AGENT_HEARTBEAT_DISABLED`)
+
+These routes use the ActionPlan role/auth boundary and the separate ActionPlan execution contract family. Consult `SCHEMA_PROTOCOL_GUIDE.md` and `contracts/action_plan_execution.openapi.v1.json` before integrating.
+
+### Self-heal, self-improve, and introspection
+- `POST /api/self-heal/decide`
+- `GET /api/self-heal/runtime`
+- `GET /api/self-heal/events`
+- `GET /api/self-heal/inspection`
+- `GET /api/self-heal/provider-health`
+- `GET /api/self-improve/status`
+- `POST /api/self-improve/run`
+- `POST /api/self-improve/freeze`
+- `POST /api/self-improve/unfreeze`
+- `POST /api/self-improve/autonomy`
+- `GET /_introspection`
+- `GET /_introspection/gpt/:gptId`
+- `GET /contracts/custom_gpt_route.openapi.v1.json`
+- `GET /contracts/arcanos_gaming.openapi.v1.json`
+- `GET /contracts/job_status.openapi.v1.json`
+- `GET /contracts/job_result.openapi.v1.json`
+- `GET /contracts/action_plan_execution.openapi.v1.json`
+- `GET /openapi/custom-gpt-bridge.yaml`
+
+Self-heal/self-improve operations are operator capabilities, and introspection routes expose contracts or sanitized routing metadata. They are not writing-plane GPT actions.
 
 ### API submodules mounted under `/api`
 - `GET /api/assistants`

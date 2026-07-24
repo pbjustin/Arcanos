@@ -17,7 +17,7 @@ Implementation rules:
 - Prompt-shaped control requests for job lookup, DAG execution/tracing, runtime inspection, or MCP tool calls are rejected with canonical control endpoints.
 
 ## Prerequisites
-- Read `README.md` and `CODEBASE_INDEX.md` first.
+- Read `README.md` and this document first.
 - Familiarity with Express routing and OpenAI SDK usage.
 
 ## Setup
@@ -27,11 +27,29 @@ Primary backend flow:
 3. `src/routes/register.ts` mounts all route groups.
 4. `src/services/openai/*` handles OpenAI client and request flows.
 
+## Repository Map and Entry Points
+
+| Area | Current entry point or source |
+| --- | --- |
+| Backend startup | `src/start-server.ts`, `src/server.ts`, and `src/app.ts` |
+| HTTP route registry | `src/routes/register.ts` |
+| Dedicated database-backed worker | `src/workers/jobRunner.ts` |
+| Separately compiled worker workspace | `workers/` |
+| Public protocol and shared packages | `packages/protocol/`, `packages/cli/`, `packages/arcanos-runtime/`, and `packages/arcanos-openai/` |
+| Separate BullMQ/Redis runtime workspace | `arcanos-ai-runtime/` |
+| Optional Python daemon CLI | `daemon-python/arcanos/cli/` through the `arcanos` console script |
+| Optional local daemon bridge | `daemon-python/arcanos/cli/local_bridge.py` through `arcanos bridge` |
+| Optional CLI bridge policy | `config/cli-policy.json` |
+
+Run `npm run reindex` after structural moves or deletions. It rewrites `backend-index.json`, `cli-agent-index.json`, `docs/BACKEND_INDEX.md`, and `docs/CLI_AGENT_INDEX.md` together; those generated inventories complement this maintained architecture map.
+
 ## Configuration
 Main config layers:
-- `src/config/env.ts` (validated env access)
-- `src/config/unifiedConfig.ts` (fallback and precedence logic)
-- `src/config/index.ts` (runtime defaults and derived values)
+- `src/platform/runtime/env.ts` (validated env access)
+- `src/platform/runtime/unifiedConfig.ts` (fallback and precedence logic)
+- `src/platform/runtime/config.ts` (runtime defaults and derived values)
+
+Compatibility imports under `src/config/` re-export these platform runtime modules; new code should use the platform runtime paths.
 
 ## Run locally
 Build and run backend:
@@ -50,7 +68,7 @@ Deployment control lives in:
 
 ## Troubleshooting
 - Routing ambiguity: inspect `src/routes/register.ts` mount order first.
-- Unexpected model selection: inspect `src/config/unifiedConfig.ts` precedence chain.
+- Unexpected model selection: inspect `src/platform/runtime/unifiedConfig.ts` precedence chain.
 
 ## References
 - `../src/start-server.ts`

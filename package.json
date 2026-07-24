@@ -32,6 +32,7 @@
     "test:redis-resilience": "npm run build:packages && node scripts/run-jest.mjs --testPathPatterns=dependency-lifecycle --testPathPatterns=redis-startup-lifecycle --testPathPatterns=redis-operation-boundary --testPathPatterns=dependency-lifecycle-metrics --testPathPatterns=dependency-unavailable-http --testPathPatterns=incident-response-kill-switch --testPathPatterns=routes-self-improve --testPathPatterns=safety-v2-redis-lifecycle --testPathPatterns=self-heal-telemetry-redis --testPathPatterns=startup-health-routes --testPathPatterns=server-startup-resilience --testPathPatterns=unified-health-redis --testPathPatterns=railway-redis-lifecycle-preview-probe --coverage=false --runInBand",
     "type-check": "npm run check:boundaries && npm run check:cef-layer-access && npm run check:routing-boundaries && npm run build:packages && tsc --noEmit",
     "reindex": "node scripts/reindex-codebase.js",
+    "docs:check": "node scripts/check-documentation.mjs",
     "lint": "eslint src tests packages workers arcanos-ai-runtime",
     "lint:fix": "eslint src tests packages workers arcanos-ai-runtime --fix",
     "assistants-sync": "npx ts-node scripts/assistants-sync.ts",

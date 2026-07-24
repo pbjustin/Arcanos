@@ -109,23 +109,26 @@ Now Arcanos builds one canonical tool definition and emits:
 
 This is why the remaining ask-style compatibility code builds tool payloads correctly when temporarily enabled, while new callers should use canonical GPT and control-plane routes.
 
-### What changed in worker/operator auth
-Route-level helper/admin token requirements were removed from the worker helper surface and the lightweight agent capability grant path.
+### Worker/operator auth boundaries
+Worker-helper authentication is route-specific.
+
+These bounded summary routes do not apply the worker-helper privileged-auth middleware:
+- `GET /worker-helper/status`
+- `GET /worker-helper/health`
+- `GET /worker-helper/jobs/failed`
+
+These job-detail and mutation routes require authenticated operator or trusted internal access:
+- `GET /worker-helper/jobs/latest`
+- `GET /worker-helper/jobs/:id`
+- `POST /worker-helper/queue/ask`
+- `POST /worker-helper/dispatch`
+- `POST /worker-helper/heal`
+
+Privileged access accepts a daemon context, a configured `ARCANOS_WORKER_HELPER_TOKEN` supplied through `x-arcanos-worker-helper-token` or Bearer authentication, an authenticated `admin`/`operator`/`owner` role, or an established operator actor. The `operator-light` role is explicitly denied. These checks supplement deployment-level access controls; they are not removed for a solo-operator deployment.
 
 Relevant code:
 - `src/routes/worker-helper.ts`
 - `scripts/worker-helper.mjs`
-- `src/routes/agents.ts`
-
-This means the backend now assumes a trusted solo-operator deployment model instead of requiring extra helper headers such as:
-- `x-worker-helper-key`
-- `x-admin-api-key`
-- `x-register-key`
-
-The practical tradeoff is simple:
-- less operator overhead
-- less route-level friction
-- more reliance on deployment-level access control
 
 ## What This Means For The End User
 For the end user, the main visible changes are operational, not UI-facing.
@@ -171,15 +174,19 @@ Read them as:
 - `/health`: detailed dependency report
 
 ### Worker helper routes
-Use:
+Use the bounded status routes for summary inspection:
 - `GET /worker-helper/status`
+- `GET /worker-helper/health`
+- `GET /worker-helper/jobs/failed`
+
+Use an authenticated operator or trusted internal context for:
 - `GET /worker-helper/jobs/latest`
 - `GET /worker-helper/jobs/:id`
 - `POST /worker-helper/queue/ask`
 - `POST /worker-helper/dispatch`
 - `POST /worker-helper/heal`
 
-These routes are the simplest operator control surface for a solo developer because they expose runtime and queue state without extra helper-token management.
+The summary routes intentionally expose bounded runtime and queue health. Job detail and mutation routes do not bypass authentication merely because the deployment has one operator.
 
 ### CLI helper
 Use:
@@ -188,6 +195,68 @@ Use:
 - `node scripts/worker-helper.mjs queue-ask "your prompt"`
 - `node scripts/worker-helper.mjs dispatch "your input"`
 - `node scripts/worker-helper.mjs heal`
+
+The bundled script sends no worker-helper credential. Its privileged commands therefore require a surrounding authenticated integration or will return `401`; the script is not an authentication bypass.
+
+### Queue and GPT job observability
+
+The Prometheus endpoint exposes queue, worker, provider, and job-event metrics
+for an operator dashboard. Never use raw prompts, completions, headers,
+cookies, bearer tokens, API keys, database URLs, or `job_events.metadata`
+values as metric labels.
+
+The thresholds below are starting points, not deployment-independent
+guarantees. Tune them against observed traffic and the configured worker
+budgets.
+
+| Panel | Prometheus metric | Suggested alert |
+| --- | --- | --- |
+| Queue depth | `worker_queue_depth{state="pending"}` | Warn above 25 for 10m; critical above 100 for 5m. |
+| Oldest pending age | `worker_queue_latency_ms{scope="oldest_pending"}` | Warn above 60000ms for 10m; critical above 300000ms for 5m. |
+| Worker health | `worker_health_status`, `worker_heartbeat_age_ms`, `worker_stale_workers` | Alert when heartbeat age exceeds `2 * JOB_WORKER_STALE_AFTER_MS`; stale workers should remain zero. |
+| Worker recommendations | `worker_alert_recommendations{recommendation="operational_alerts"}`, `worker_alert_recommendations{recommendation="diagnostic_alerts"}`, `worker_alert_recommendations{recommendation="restart_recommended_workers"}` | Alert on sustained non-zero values; page only after validating restart recommendations against current state. |
+| Stale recovery | `worker_stale_total`, `worker_stalled_jobs_total`, `worker_recovery_actions_total` | Alert on a sustained increase for 10m. |
+| Provider latency | `ai_call_duration_ms` by provider, model, and operation | Warn when p95 exceeds 30000ms for 10m. |
+| Provider and dependency failures | `ai_calls_total{outcome!="ok"}`, `ai_timeouts_total`, `dependency_failures_total`, `dependency_timeouts_total` | Warn when the error ratio exceeds 5% for 10m or timeouts spike. |
+| AI circuit breaker | `ai_circuit_breaker_state`, `ai_circuit_breaker_failures` | Alert when the state remains open for two checks. |
+| Retry exhaustion | `worker_failures_total`, `worker_retries_total`, `gpt_job_events_total{event="job.failed"}` | Alert when dead-letter growth exceeds three jobs in 15m. |
+| Event throughput | `gpt_job_events_total`, `job_event_insert_failures_total`, `job_events_cleanup_rows_total` | Alert on zero event rate while jobs are active or any insert failure. |
+| Retention cleanup | `job_events_cleanup_runs_total`, `job_events_cleanup_duration_ms`, `job_events_cleanup_rows_total` | Alert on cleanup failures or p95 duration above 10000ms. |
+
+Recommended initial service objectives:
+
+| SLO | Target |
+| --- | --- |
+| Async GPT queue admission | 99% of accepted jobs emit `job.created` and `job.queued` within 5s. |
+| Queue wait | 95% of jobs are claimed within 60s. |
+| Worker execution | 95% of non-retried jobs complete or fail terminally within the configured worker budget. |
+| Provider latency | 95% of OpenAI calls complete within 30s, excluding upstream incidents. |
+| Stale recovery | 99% of stale running jobs are recovered, cancelled, or dead-lettered within two inspection intervals. |
+| Retention cleanup | Cleanup completes within 10s and deletes no more than `JOB_EVENT_CLEANUP_BATCH_SIZE` rows per run. |
+
+`gpt_job_timing_ms{phase="queue_wait"}` measures created-to-claimed latency,
+`phase="execution"` measures started-to-terminal latency, and
+`phase="end_to_end"` measures created-to-terminal latency. Claim-to-start
+should be near zero because the claim update also sets `started_at`.
+
+Build before using the bounded timeline utility:
+
+```bash
+npm run build
+npm run job-events:timeline -- --job-id <uuid> --output text
+npm run job-events:timeline -- --trace-id <trace-id> --limit 200
+```
+
+This is a configured-database operation, not a read-only verification command.
+Before querying, the script runs the shared database initializer, which can
+apply built-in schema DDL and write an initialization heartbeat. Run it only
+with explicit authorization and exact database-target confirmation. The
+timeline query itself returns redacted chronological events, trace and worker
+summaries, queue wait, execution, and provider latency, bounded by
+`MAX_JOB_EVENT_TIMELINE_LIMIT`. High-frequency `worker.heartbeat` events are
+disabled by default; use `job_data.last_heartbeat_at` and worker heartbeat
+metrics for normal liveness, and enable `JOB_EVENT_RECORD_HEARTBEATS=true` only
+for short debugging windows.
 
 ## Failure Modes To Remember
 ### Postgres failure
@@ -231,4 +300,4 @@ Technically, this work turned the runtime into a clearer split between:
 For the end user, it mostly means the system is more reliable and easier to trust:
 - background work actually routes
 - health checks reflect real dependency state
-- worker inspection works without extra operator token friction
+- bounded worker summaries remain simple while job detail and mutations require operator authentication

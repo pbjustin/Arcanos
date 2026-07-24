@@ -1,4 +1,4 @@
-# Arcanos CLI Overview
+# TypeScript Arcanos CLI Overview
 
 ## What the Arcanos CLI is
 
@@ -8,6 +8,19 @@ Arcanos includes a TypeScript CLI package (`@arcanos/cli`) that provides a stabl
 - `arcanos-protocol`
 
 Both binaries point at the same entrypoint and command parser. The standard command mode is optimized for day-to-day operator workflows (`ask`, `plan`, `status`, etc.), while the `protocol` subcommand mode gives direct access to protocol-level requests for automation/integration use cases. 
+
+The Python daemon package in `daemon-python/` can also install a binary named `arcanos`. Which executable runs depends on the active environment and `PATH`. When both packages are installed, use an unambiguous invocation:
+
+```bash
+# TypeScript CLI, after npm run build:packages
+arcanos-protocol --help
+node packages/cli/dist/index.js --help
+
+# Python daemon CLI
+python -m arcanos.cli
+```
+
+The Python interactive-agent behavior is documented in `../daemon-python/README.md`.
 
 ---
 
@@ -101,7 +114,7 @@ arcanos job-result <job-id>
 arcanos logs --recent
 ```
 
-- Calls `/api/self-heal/events` and reports recent runtime event count.
+- Sends `POST /gpt-access/logs/query` and reports the recent runtime event count.
 - Currently supports only `--recent` form.
 
 ### 9) Inspect self-heal state (`inspect self-heal`)
@@ -121,6 +134,7 @@ arcanos doctor implementation
 
 - Dispatches protocol `tool.invoke` with tool id `doctor.implementation`.
 - Returns doctor status summary.
+- Requires the default `python` transport.
 
 ### 11) Dispatch raw protocol commands (`protocol`)
 
@@ -158,6 +172,14 @@ Arcanos CLI supports two protocol transport strategies:
 - `local`: dispatches to the local in-process TypeScript protocol dispatcher
 
 Use `--transport local` for local-only workflows; use default/python when you need parity with the Python protocol runtime.
+
+The local dispatcher intentionally omits Python-only schema introspection and repository tool execution. These operations require `--transport python`:
+
+- `doctor implementation`
+- protocol command `tool.describe`
+- protocol command `tool.invoke`
+
+The CLI fails fast with an explicit transport error if one of these is requested with `--transport local`.
 
 ---
 
@@ -227,5 +249,12 @@ Use `--json` for machine parsing in scripts/CI.
 - `logs` currently supports only `--recent`.
 - `inspect` currently supports only `self-heal`.
 - `doctor` currently supports only `implementation`.
+- `doctor implementation`, `tool.describe`, and `tool.invoke` require the Python transport.
 - Unknown commands or invalid flags fail fast with explicit CLI errors.
+
+## References
+
+- `../daemon-python/README.md`
+- `WORKSPACE_PACKAGES.md`
+- `SCHEMA_PROTOCOL_GUIDE.md`
 

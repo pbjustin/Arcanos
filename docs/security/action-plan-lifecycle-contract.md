@@ -1,5 +1,7 @@
 # ARCANOS ActionPlan Lifecycle and CLEAR State Contract
 
+> Historical lifecycle note: This is the Phase 2D snapshot for the cited 2026-07-17 baseline. Statements that fields, provenance, or execution state are absent apply to that baseline; the later Phase 2E work added authentication and execution provenance. For current behavior, inspect the ActionPlan schemas, `src/routes/plans.ts`, `src/routes/action-plan-executions.ts`, `src/services/actionPlanExecution/`, and the applicable Prisma and migration artifacts. The fixtures and evidence below remain the historical contract record.
+
 - Status: Phase 2D authoritative contract
 - Scope: ActionPlan lifecycle parsing, provenance, cross-field consistency, operation gates, and TypeScript/Python parity
 - Baseline branch: `codex/clear-parsing-integrity`

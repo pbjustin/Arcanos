@@ -59,7 +59,6 @@ cloud/Custom GPT exposure. `productionGoAllowed:false`,
 Confirm the checkout and scripts without running a model:
 
 ```bash
-npm run probe
 npm run gptoss:runtime:release-gate:ci
 ```
 

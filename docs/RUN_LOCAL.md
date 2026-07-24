@@ -15,7 +15,7 @@ npm install
 cp .env.example .env
 ```
 
-Use `npm install` for local development. CI, Docker, and Railway use reproducible `npm ci` installs.
+Use `npm install` for local development. CI and Railway use reproducible `npm ci` installs. The Dockerfile declares its own two-stage dependency install sequence for image builds.
 
 Set minimum backend values:
 Set `PORT` to `3000` and set `OPENAI_API_KEY` to your local key in `.env`.
@@ -57,6 +57,8 @@ Dedicated async worker, after `npm run build`, when `DATABASE_URL` and `OPENAI_A
 ```bash
 npm run start:worker
 ```
+
+`npm run start:worker` is not a read-only health check. It initializes database state, writes worker heartbeat state, and can claim queued jobs from the configured database. Point it only at an intentionally selected local/test database and queue.
 
 Optional daemon:
 ```bash

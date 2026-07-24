@@ -44,7 +44,7 @@ npm install
 cp .env.example .env
 ```
 
-Use `npm install` for local development. CI, Docker, and Railway use reproducible `npm ci` installs.
+Use `npm install` for local development. CI and Railway use reproducible `npm ci` installs. The current Dockerfile starts from `npm ci --omit=dev` and then installs development dependencies for the image build, so treat the Dockerfile itself as the container install source of truth.
 
 ## Configuration
 - Backend minimum:
@@ -57,9 +57,21 @@ Use `npm install` for local development. CI, Docker, and Railway use reproducibl
   - `ARCANOS_PROCESS_KIND=worker` on the async worker service
 
 ## Run locally
-Use the runbook docs for exact commands:
-- `QUICKSTART.md`
-- `docs/RUN_LOCAL.md`
+Build and start the backend:
+
+```bash
+npm run build
+npm start
+```
+
+For a rebuild-and-run development cycle, use `npm run dev`. Then verify the local process with:
+
+```bash
+curl http://localhost:3000/healthz
+curl http://localhost:3000/health
+```
+
+See `docs/RUN_LOCAL.md` for daemon setup, the dedicated worker, focused validation, and troubleshooting.
 
 ## Deploy (Railway)
 - `docs/RAILWAY_DEPLOYMENT.md`
@@ -101,6 +113,7 @@ The Custom GPT Action OpenAPI document is `openapi/custom-gpt-bridge.yaml`.
 
 ## OpenAI integration map (current)
 Canonical boundaries / pipelines:
+- Shared TypeScript client constructor and helpers: `packages/arcanos-openai/src/client.ts`
 - TypeScript OpenAI adapter boundary: `src/core/adapters/openai.adapter.ts`
 - TypeScript request builders (staged): `src/services/openai/requestBuilders/`
   - `build → normalize → convert → validate`
@@ -124,3 +137,8 @@ Responses requests default to **stateless** (`store: false`). You can enable sto
 
 More details:
 - `docs/OPENAI_RESPONSES_TOOLS.md`
+
+External SDK references:
+- OpenAI Node SDK: https://github.com/openai/openai-node
+- OpenAI Python SDK: https://github.com/openai/openai-python
+- OpenAI API documentation: https://platform.openai.com/docs

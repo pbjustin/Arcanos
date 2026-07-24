@@ -1,5 +1,7 @@
 # ARCANOS ActionPlan Execution Ownership and Result-Submission Contract
 
+> Historical lifecycle note: This is the approved Phase 2E implementation and migration-gate snapshot from 2026-07-17 through 2026-07-18. Present-tense topology and authorization findings below describe the cited baseline and approval commits, not necessarily the current routes, schema, or deployment. For current behavior, inspect `src/routes/plans.ts`, `src/routes/action-plan-executions.ts`, `src/services/actionPlanExecution/`, and the applicable Prisma and migration artifacts. The evidence and decisions in this snapshot remain unchanged.
+
 - Status: Approved for local implementation — Phase 2E Gate A and additive Migration Gate
 - Scope: Action-level execution ownership, command/result separation, authenticated claims, result acceptance, idempotency, and durable audit evidence
 - Baseline branch: `codex/preview-log-hygiene-first-boot`

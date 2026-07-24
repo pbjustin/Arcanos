@@ -1,5 +1,8 @@
 # Arcanos Refactor Audit
 
+> Lifecycle: historical repository snapshot from 2026-04-29. Revalidate every
+> claim against current source, tests, configuration, and CI before acting.
+
 Status: baseline audit, read-only evidence pass
 Date: 2026-04-29
 

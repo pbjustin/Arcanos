@@ -32,9 +32,10 @@ curl http://localhost:3000/healthz
 
 Daemon probe:
 ```bash
-cd daemon-python
-python validate_backend_cli.py
+npm run validate:backend-cli:offline
 ```
+
+For the daemon-side live contract validator, use `python daemon-python/scripts/validate_backend_cli.py` only against an explicitly selected backend target.
 
 ## Deploy (Railway)
 Post-deploy checks:
@@ -53,7 +54,7 @@ If failing, inspect Railway build/deploy logs first.
 - Web service starts as the wrong role: run `railway variable list --service <service> --environment production` and verify `ARCANOS_PROCESS_KIND`.
 - Worker health is green but jobs stay queued: confirm `DATABASE_URL`, `OPENAI_API_KEY`, worker logs, and `GET /worker-helper/health`.
 - Local port confusion: use `PORT=3000` in `.env`; Railway probes the injected `PORT` and `/health`.
-- Mock responses in production: `OPENAI_API_KEY` missing/invalid.
+- Production startup fails OpenAI configuration validation: verify that a real `OPENAI_API_KEY` is present without printing its value. Mock fallback is for explicit non-production/test paths and is not the normal production behavior.
 - Confirmation-required 403: include `x-confirmed` or trusted automation headers.
 - Daemon auth errors: validate backend token/bootstrap settings.
 - Health degraded for database: attach/configure PostgreSQL or accept in-memory mode.
