@@ -34,6 +34,8 @@ cp .env.example .env
 | `ARCANOS_GPT_ACCESS_TOKEN` | Yes for protected `/gpt-access/*` operations | none | Bearer token for the protected GPT access gateway. `GET /gpt-access/openapi.json` is public. Store real values only in runtime variables or GPT Action auth. |
 | `ARCANOS_GPT_ACCESS_BASE_URL` | Yes for deployed GPT Action import | configured public base URL variables, local request origin, then `http://localhost:3000` | Public HTTPS origin advertised by `/gpt-access/openapi.json`; set this in Railway so public metadata is deterministic and never derived from spoofable request headers. Railway PR previews prefer Railway preview URL variables before inherited production URLs. |
 | `ARCANOS_GPT_ACCESS_SCOPES` | Yes for `/gpt-access/jobs/create`, capability discovery, capability runs, and worker recovery | all recognized read/control scopes are granted when unset, except `jobs.create`, `capabilities.read`, `capabilities.run`, and `workers.recover` remain denied unless explicitly listed | Comma-separated gateway scope allowlist. Include `jobs.create` and `jobs.result` for protected async Trinity execution; include `workers.recover` only for confirmed worker recovery dispatch; include `capabilities.read` for discovery and `capabilities.run` only with a matching `MCP_ALLOW_MODULE_ACTIONS` allowlist and confirmation. |
+| `ARCANOS_GPT_ACCESS_PRINCIPAL_ID` | Yes for GPT Access-only tenant-scoped capabilities | none | Server-controlled principal for capabilities such as `ARCANOS:PRODUCTIVITY`; never source it from action payloads. |
+| `ARCANOS_GPT_ACCESS_WORKSPACE_ID` | Yes for GPT Access-only tenant-scoped capabilities | none | Server-controlled workspace paired with the configured principal; missing identity fails closed. |
 | `ARCANOS_PROCESS_KIND` | Yes for Railway launcher | none | Must be `web` or `worker` when using `scripts/start-railway-service.mjs`; omit for direct local `npm start`. |
 | `RUN_WORKERS` | No | `true` (non-test) | Local/direct background worker toggle. Ignored by Railway launcher role selection when `ARCANOS_PROCESS_KIND` is set. |
 | `WORKER_API_TIMEOUT_MS` | No | `30000` | Unified config default; some worker adapters fallback to `60000` if unset. |
@@ -136,6 +138,77 @@ Protected async Trinity flow:
 Queued Trinity DAG nodes use `src/services/trinity/adapter.ts` to create and poll Arcanos core GPT jobs through the same GPT Access job path. The adapter accepts injected config/dependencies for tests and non-Railway runtimes; production code reads the role toggle from `TRINITY_DAG_GPT_ACCESS_ENABLED` and otherwise only auto-enables when worker slots exceed `DAG_MAX_CONCURRENT_NODES`, preserving at least one slot for child GPT jobs.
 
 Use `docs/TRINITY_PIPELINE.md` for the full execution flow and `docs/gpt-access-gateway.md` for curl examples.
+
+### Local-agent capability bridge
+
+`ARCANOS:LOCAL_AGENT` is an opt-in outbound Python executor behind the existing
+GPT Access capability and `job_data` paths. It does not expose a Python API or
+accept principal, workspace, device, root, authorization, or confirmation
+fields from capability payloads. See
+`docs/LOCAL_AGENT_CAPABILITY_BRIDGE.md` for setup, contracts, and the
+Railway deployment plan.
+
+| Variable | Runtime | Required when enabled | Purpose |
+| --- | --- | --- | --- |
+| `ARCANOS_LOCAL_AGENT_WORKSPACES` | Backend | Yes | Comma-separated server workspace ID allowlist. |
+| `ARCANOS_LOCAL_AGENT_JOB_TTL_MS` | Backend | No | Durable assignment lifetime; clamped to exceed the action timeout and to at most 24 hours. |
+| `ARCANOS_LOCAL_AGENT_LEASE_MS` | Backend | No | Device claim lease, clamped to 10-60 seconds. |
+| `ARCANOS_LOCAL_AGENT_HEARTBEAT_TTL_MS` | Backend | No; default `90000` | Maximum age of the registered device heartbeat before capability enqueue fails as offline; clamped to 10 seconds-15 minutes. |
+| `ENABLE_ACTION_PLANS` | Backend | Yes | Enables the existing authoritative Agent registration and executor identity infrastructure. |
+| `ARCANOS_LOCAL_AGENT_EXECUTOR_TOKEN` | Backend and daemon | Yes | Dedicated bearer credential accepted only by the `local-agent-protocol` audience. It must be distinct from GPT Access and every ActionPlan role token. |
+| `ARCANOS_LOCAL_AGENT_EXECUTOR_PRINCIPAL_ID` | Backend and daemon | Yes | Pinned local-agent executor principal. |
+| `ARCANOS_LOCAL_AGENT_EXECUTOR_INSTANCE_ID` | Backend and daemon | Yes | Pinned local-agent executor instance. |
+| `ARCANOS_LOCAL_AGENT_EXECUTOR_DEVICE_ID` | Backend and daemon | Yes | Authoritative registered executor Agent/device UUID. |
+| `ARCANOS_LOCAL_AGENT_EXECUTOR_PREVIOUS_TOKEN` | Backend only | No | Previous dedicated token accepted only during a configured rotation overlap. Configure together with its expiry. |
+| `ARCANOS_LOCAL_AGENT_EXECUTOR_PREVIOUS_TOKEN_EXPIRES_AT` | Backend only | No | ISO-8601 UTC expiry for the previous token; it may be no more than 24 hours in the future. Expired values are not accepted. |
+| `ARCANOS_LOCAL_AGENT_ENABLED` | Daemon | No; default `false` | Starts the outbound polling thread. |
+| `ARCANOS_LOCAL_AGENT_ACTIONS` | Daemon | Yes | Local action allowlist, restricted to the seven catalog actions. |
+| `ARCANOS_LOCAL_AGENT_DEVICE_SCOPES` | Daemon | Yes | Local device-scope allowlist, which must also be granted to the authoritative Agent. |
+| `ARCANOS_LOCAL_AGENT_TEST_EXECUTION_MODE` | Daemon | No; default `disabled` | `disabled`, `sandboxed`, or `unsandboxed-development-only`. Production-capable configuration requires `sandboxed`; there is no automatic fallback to host execution. |
+| `ARCANOS_LOCAL_AGENT_SANDBOX_RUNTIME` | Daemon | Required for `sandboxed` | `docker` or `podman`. The runtime must successfully execute the baked-in sandbox self-test. |
+| `ARCANOS_LOCAL_AGENT_SANDBOX_IMAGE` | Daemon | Required for `sandboxed` | Immutable registry RepoDigest (`name@sha256:...`) or local image ID (`sha256:...`). Mutable tags are rejected. |
+| `ARCANOS_LOCAL_AGENT_ALLOW_UNSANDBOXED_TESTS` | Daemon | No; default `false` | Second opt-in required only with `unsandboxed-development-only`. That mode is rejected when `NODE_ENV=production` or Railway runtime markers are present. |
+| `ARCANOS_LOCAL_AGENT_WORKSPACES_JSON` | Daemon | Yes | Bounded JSON map from server workspace IDs to existing absolute local roots. |
+| `ARCANOS_LOCAL_AGENT_POLL_INTERVAL_SECONDS` | Daemon | No; default `5` | Outbound poll delay. |
+| `ARCANOS_LOCAL_AGENT_HEARTBEAT_SECONDS` | Daemon | No; default `10` | Active-job heartbeat interval. |
+
+Backend capability use also requires `capabilities.read`, `capabilities.run`,
+and `jobs.result` as appropriate, a narrow
+`MCP_ALLOW_MODULE_ACTIONS=ARCANOS:LOCAL_AGENT:*` entry, configured GPT Access
+principal and workspace IDs, PostgreSQL, and a matching authoritative executor
+Agent record. An ActionPlan operator credential is required to register or
+manage that Agent; a requester credential is not required by the bridge. Any
+configured ActionPlan role credentials and principal IDs must remain complete
+and distinct. Local-agent HTTP routes require the dedicated audience and only
+the heartbeat, claim, job-heartbeat, and result scopes; the credential cannot
+authenticate as an ActionPlan executor.
+
+The hardened job path requires
+`migrations/20260724_local_agent_job_hardening_v1`. The migration adds the
+database-authoritative idempotency binding and its expiry index; job state and
+each lifecycle event are persisted in the same transaction. The migration
+runner intentionally ignores ambient `DATABASE_URL`. First validate the
+reviewed artifacts without a database:
+
+```powershell
+npm run db:local-agent-hardening:plan
+```
+
+For the newly provisioned isolated preview PostgreSQL service, set
+`LOCAL_AGENT_HARDENING_PREVIEW_TARGET=true` on that service. Run the migration
+only through Railway's variable injection with explicit project, environment,
+and PostgreSQL service IDs:
+
+```powershell
+railway run --no-local --project <preview-project-id> --environment <preview-environment-id> --service <preview-postgres-service-id> -- npm run db:local-agent-hardening:apply-preview -- --confirm-preview --expected-project-id <preview-project-id> --expected-environment-id <preview-environment-id> --expected-postgres-service-id <preview-postgres-service-id>
+railway run --no-local --project <preview-project-id> --environment <preview-environment-id> --service <preview-postgres-service-id> -- npm run db:local-agent-hardening:verify-preview -- --confirm-preview --expected-project-id <preview-project-id> --expected-environment-id <preview-environment-id> --expected-postgres-service-id <preview-postgres-service-id>
+```
+
+The runner rejects production-like environments and the known Phase 2E Redis
+validation environment/service. It connects only through the selected
+service's injected `DATABASE_PUBLIC_URL` and verifies that URL against the same
+service's generated PostgreSQL identity fields. Never print or pass the preview
+database URL as a command-line argument.
 
 ### Dedicated job runner
 | Variable | Default | Purpose |
@@ -295,6 +368,11 @@ This table mirrors high-impact runtime keys and active operator controls in `.en
 | `ARCANOS_WORKSPACE_ROOT` | empty | Optional explicit workspace root used by local CLI integration. |
 | `ARCANOS_CLI_COMMAND_TIMEOUT_MS` | `30000` | CLI bridge command timeout. |
 | `ARCANOS_CLI_OUTPUT_MAX_BYTES` | `20000` | Maximum captured CLI bridge output. |
+| `ARCANOS_LOCAL_AGENT_EXECUTOR_TOKEN` | commented placeholder | Dedicated `local-agent-protocol` bearer credential; it must not match GPT Access or any ActionPlan role credential. |
+| `ARCANOS_LOCAL_AGENT_EXECUTOR_DEVICE_ID` | commented UUID placeholder | Authoritative registered local-agent device/Agent UUID. |
+| `ARCANOS_LOCAL_AGENT_EXECUTOR_PREVIOUS_TOKEN` | commented empty | Optional previous dedicated credential for one bounded rotation overlap. |
+| `ARCANOS_LOCAL_AGENT_EXECUTOR_PREVIOUS_TOKEN_EXPIRES_AT` | commented ISO-8601 placeholder | Previous-token expiry, limited to at most 24 hours from validation time. |
+| `ARCANOS_LOCAL_AGENT_HEARTBEAT_TTL_MS` | `90000` (commented) | Fresh-device window before local-agent enqueue fails closed; clamped to 10 seconds-15 minutes. |
 | `GPT_ACCESS_NL_DISPATCH_MODE` | unset (commented) | Optional `/gpt-access/dispatch/run` resolver mode: `rules`, `hybrid`, or `llm_first`; unset defaults from real OpenAI credential availability. |
 | `GPT_ACCESS_DISPATCH_MODEL` | `gpt-4.1-mini` (commented) | Model used only by the optional semantic dispatcher. |
 | `GPT_ACCESS_DISPATCH_LLM_TIMEOUT_MS` | `5000` (commented) | Optional semantic dispatcher timeout, capped at `10000`; failures fall back only through deterministic rules and policy checks. |

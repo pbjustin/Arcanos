@@ -24,8 +24,15 @@ export interface ConfirmationChallenge {
   path: string;
   gptId: string | null;
   requestFingerprintHash: string | null;
+  bindingFingerprintHash: string | null;
   issuedAt: number;
   expiresAt: number;
+}
+
+export interface ConfirmationChallengeBinding {
+  actorKey: string;
+  principalId: string;
+  workspaceId: string;
 }
 
 /**
@@ -98,6 +105,15 @@ export function buildConfirmationRequestFingerprintHash(body: unknown): string {
   return createHash('sha256').update(stableStringify(body)).digest('hex');
 }
 
+export function buildConfirmationBindingFingerprintHash(
+  binding: ConfirmationChallengeBinding,
+): string {
+  return createHash('sha256')
+    .update('confirmation-binding-v1\0')
+    .update(stableStringify(binding))
+    .digest('hex');
+}
+
 /**
  * Removes expired challenges from the pending challenge map.
  * Called automatically before creating or verifying challenges.
@@ -125,7 +141,8 @@ export function createConfirmationChallenge(
   method: string,
   path: string,
   gptId: string | null,
-  requestFingerprintHash: string | null = null
+  requestFingerprintHash: string | null = null,
+  binding: ConfirmationChallengeBinding | null = null,
 ): ConfirmationChallenge {
   const now = Date.now();
   purgeExpiredChallenges(now);
@@ -136,6 +153,9 @@ export function createConfirmationChallenge(
     path,
     gptId,
     requestFingerprintHash,
+    bindingFingerprintHash: binding
+      ? buildConfirmationBindingFingerprintHash(binding)
+      : null,
     issuedAt: now,
     expiresAt: now + challengeTtlMs,
   };
@@ -158,7 +178,8 @@ export function verifyConfirmationChallenge(
   token: string,
   method: string,
   path: string,
-  requestFingerprintHash: string | null = null
+  requestFingerprintHash: string | null = null,
+  binding: ConfirmationChallengeBinding | null = null,
 ): boolean {
   const now = Date.now();
   purgeExpiredChallenges(now);
@@ -179,6 +200,14 @@ export function verifyConfirmationChallenge(
   }
 
   if (challenge.requestFingerprintHash && challenge.requestFingerprintHash !== requestFingerprintHash) {
+    pendingChallenges.delete(token);
+    return false;
+  }
+
+  const bindingFingerprintHash = binding
+    ? buildConfirmationBindingFingerprintHash(binding)
+    : null;
+  if (challenge.bindingFingerprintHash !== bindingFingerprintHash) {
     pendingChallenges.delete(token);
     return false;
   }

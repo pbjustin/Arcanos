@@ -1,3 +1,5 @@
+import type { PoolClient } from 'pg';
+
 import { isDatabaseConnected } from '@core/db/client.js';
 import { query } from '@core/db/query.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
@@ -17,6 +19,7 @@ export const JOB_EVENT_TYPES = [
   'job.retry.scheduled',
   'job.completed',
   'job.failed',
+  'job.expired',
   'worker.heartbeat',
   'worker.stale_detected',
   'worker.recovered'
@@ -39,6 +42,16 @@ export interface RecordJobEventInput {
   workerId?: string | null;
   durationMs?: number | null;
   metadata?: Record<string, unknown>;
+}
+
+export class JobEventPersistenceError extends Error {
+  constructor(
+    public readonly code: 'JOB_EVENT_SERIALIZATION_FAILED' | 'JOB_EVENT_INSERT_FAILED',
+    message: string
+  ) {
+    super(message);
+    this.name = 'JobEventPersistenceError';
+  }
 }
 
 export type RecordJobEventResult =
@@ -141,6 +154,63 @@ function normalizeJsonbInput(value: Record<string, unknown> | undefined): string
   });
 }
 
+function buildJobEventInsert(input: RecordJobEventInput): {
+  sql: string;
+  params: unknown[];
+} {
+  const serializedMetadata = normalizeJsonbInput(input.metadata);
+  if (!serializedMetadata) {
+    throw new JobEventPersistenceError(
+      'JOB_EVENT_SERIALIZATION_FAILED',
+      'Job event metadata could not be serialized.'
+    );
+  }
+
+  return {
+    sql: `INSERT INTO job_events (
+       job_id,
+       trace_id,
+       event_type,
+       worker_id,
+       duration_ms,
+       metadata
+     )
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
+    params: [
+      input.jobId,
+      normalizeNullableString(input.traceId),
+      input.eventType,
+      normalizeNullableString(input.workerId),
+      normalizeDurationMs(input.durationMs),
+      serializedMetadata
+    ]
+  };
+}
+
+/**
+ * Persist a job event through an existing transaction.
+ *
+ * Unlike the best-effort public recorder, this helper throws so a caller can
+ * keep a canonical job transition and its lifecycle evidence atomic.
+ */
+export async function recordJobEventWithClient(
+  client: PoolClient,
+  input: RecordJobEventInput
+): Promise<void> {
+  const insert = buildJobEventInsert(input);
+  try {
+    await client.query(insert.sql, insert.params);
+  } catch (error) {
+    if (error instanceof JobEventPersistenceError) {
+      throw error;
+    }
+    throw new JobEventPersistenceError(
+      'JOB_EVENT_INSERT_FAILED',
+      'Job event could not be persisted in the current transaction.'
+    );
+  }
+}
+
 export async function recordJobEvent(input: RecordJobEventInput): Promise<RecordJobEventResult> {
   if (!isDatabaseConnected()) {
     recordJobEventInsertFailure('database_unavailable');
@@ -156,38 +226,11 @@ export async function recordJobEvent(input: RecordJobEventInput): Promise<Record
   }
 
   try {
-    const serializedMetadata = normalizeJsonbInput(input.metadata);
-    if (!serializedMetadata) {
-      recordJobEventInsertFailure('serialization_failed');
-      dbLogger.warn('job_events.insert_skipped', {
-        module: 'job-events',
-        jobId: input.jobId,
-        eventType: input.eventType,
-        workerId: normalizeNullableString(input.workerId),
-        traceId: normalizeNullableString(input.traceId),
-        reason: 'serialization_failed'
-      });
-      return { inserted: false, reason: 'serialization_failed' };
-    }
+    const insert = buildJobEventInsert(input);
 
     await query(
-      `INSERT INTO job_events (
-         job_id,
-         trace_id,
-         event_type,
-         worker_id,
-         duration_ms,
-         metadata
-       )
-       VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
-      [
-        input.jobId,
-        normalizeNullableString(input.traceId),
-        input.eventType,
-        normalizeNullableString(input.workerId),
-        normalizeDurationMs(input.durationMs),
-        serializedMetadata
-      ],
+      insert.sql,
+      insert.params,
       JOB_EVENT_INSERT_RETRY_COUNT,
       false,
       {
@@ -198,7 +241,11 @@ export async function recordJobEvent(input: RecordJobEventInput): Promise<Record
     );
     return { inserted: true };
   } catch (error: unknown) {
-    recordJobEventInsertFailure('insert_failed');
+    const reason = error instanceof JobEventPersistenceError
+      && error.code === 'JOB_EVENT_SERIALIZATION_FAILED'
+      ? 'serialization_failed'
+      : 'insert_failed';
+    recordJobEventInsertFailure(reason);
     const errorMetadata = redactSensitive({
       errorMessage: resolveErrorMessage(error)
     }) as Record<string, unknown>;
@@ -209,11 +256,12 @@ export async function recordJobEvent(input: RecordJobEventInput): Promise<Record
         jobId: input.jobId,
         eventType: input.eventType,
         workerId: normalizeNullableString(input.workerId),
-        traceId: normalizeNullableString(input.traceId)
+        traceId: normalizeNullableString(input.traceId),
+        reason
       },
       errorMetadata
     );
-    return { inserted: false, reason: 'insert_failed' };
+    return { inserted: false, reason };
   }
 }
 

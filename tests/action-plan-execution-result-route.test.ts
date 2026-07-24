@@ -36,10 +36,15 @@ const { ActionPlanExecutionError, ACTION_PLAN_EXECUTION_ERRORS } = await import(
 
 const executorToken = 'e'.repeat(40);
 const requesterToken = 'r'.repeat(40);
+const localAgentToken = 'l'.repeat(40);
 const keys = [
   'ACTION_PLAN_EXECUTOR_TOKEN', 'ACTION_PLAN_EXECUTOR_PRINCIPAL_ID',
   'ACTION_PLAN_EXECUTOR_INSTANCE_ID', 'ACTION_PLAN_EXECUTOR_AGENT_ID',
   'ACTION_PLAN_REQUEST_TOKEN', 'ACTION_PLAN_REQUEST_PRINCIPAL_ID',
+  'ARCANOS_LOCAL_AGENT_EXECUTOR_TOKEN',
+  'ARCANOS_LOCAL_AGENT_EXECUTOR_PRINCIPAL_ID',
+  'ARCANOS_LOCAL_AGENT_EXECUTOR_INSTANCE_ID',
+  'ARCANOS_LOCAL_AGENT_EXECUTOR_DEVICE_ID',
 ] as const;
 const originalEnv = Object.fromEntries(keys.map(key => [key, process.env[key]]));
 
@@ -58,6 +63,10 @@ function configureEnv() {
   process.env.ACTION_PLAN_EXECUTOR_AGENT_ID = 'agent-1';
   process.env.ACTION_PLAN_REQUEST_TOKEN = requesterToken;
   process.env.ACTION_PLAN_REQUEST_PRINCIPAL_ID = 'requester-1';
+  process.env.ARCANOS_LOCAL_AGENT_EXECUTOR_TOKEN = localAgentToken;
+  process.env.ARCANOS_LOCAL_AGENT_EXECUTOR_PRINCIPAL_ID = 'local-agent:executor';
+  process.env.ARCANOS_LOCAL_AGENT_EXECUTOR_INSTANCE_ID = 'local-agent:instance';
+  process.env.ARCANOS_LOCAL_AGENT_EXECUTOR_DEVICE_ID = 'local-agent:device';
 }
 
 function buildApp() {
@@ -153,6 +162,24 @@ describe('Phase 2E result-only HTTP boundary', () => {
       });
     expect(response.status).toBe(403);
     expect(response.body.error.code).toBe('ACTION_PLAN_EXECUTION_FORBIDDEN');
+    expect(submitResultMock).not.toHaveBeenCalled();
+  });
+
+  it('does not grant a local-agent executor credential ActionPlan executor routes', async () => {
+    const response = await request(buildApp())
+      .post('/plans/plan-1/executions/run-1/result')
+      .set('Authorization', `Bearer ${localAgentToken}`)
+      .set('Idempotency-Key', 'result-key-1')
+      .send({
+        action_id: 'action-1',
+        snapshot_id: 'snapshot-1',
+        outcome: 'succeeded',
+      });
+
+    expect(response.status).toBe(401);
+    expect(response.body.error.code).toBe(
+      'ACTION_PLAN_EXECUTION_AUTH_REQUIRED'
+    );
     expect(submitResultMock).not.toHaveBeenCalled();
   });
 

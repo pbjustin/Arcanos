@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals
 import type { NextFunction, Request, Response } from 'express';
 import {
   createRateLimitMiddleware,
-  getRequestActorKey
+  getRequestActorKey,
+  getRequestAuthenticatedActorKey
 } from '../src/platform/runtime/security.js';
 
 function createMockRequest(
@@ -113,6 +114,26 @@ describe('createRateLimitMiddleware', () => {
 
     expect(next).toHaveBeenCalledTimes(2);
     expect(res.status).toHaveBeenCalledWith(429);
+  });
+
+  it('binds authenticated actors to credentials before caller-selected sessions', () => {
+    const firstSession = createMockRequest('203.0.113.11', {
+      headers: {
+        authorization: 'Bearer preview-credential',
+        'x-session-id': 'caller-selected-a'
+      }
+    });
+    const secondSession = createMockRequest('203.0.113.12', {
+      headers: {
+        authorization: 'Bearer preview-credential',
+        'x-session-id': 'caller-selected-b'
+      }
+    });
+
+    const firstKey = getRequestAuthenticatedActorKey(firstSession);
+    expect(firstKey).toBe(getRequestAuthenticatedActorKey(secondSession));
+    expect(firstKey).toMatch(/^auth:[a-f0-9]{16}$/u);
+    expect(firstKey).not.toContain('preview-credential');
   });
 
   it('can isolate DAG monitoring buckets per run id for the same actor', () => {

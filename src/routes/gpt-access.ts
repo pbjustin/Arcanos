@@ -4,9 +4,11 @@ import { writePublicHealthResponse } from '@core/diagnostics.js';
 import {
   createRateLimitMiddleware,
   getRequestActorKey,
+  getRequestAuthenticatedActorKey,
   securityHeaders
 } from '@platform/runtime/security.js';
 import { confirmGate } from '@transport/http/middleware/confirmGate.js';
+import type { ConfirmationChallengeBinding } from '@transport/http/middleware/confirmationChallengeStore.js';
 import {
   DISPATCH_RUN_BODY_KEYS,
   DISPATCH_UTTERANCE_MAX_LENGTH,
@@ -32,6 +34,7 @@ import {
   sendBadRequestPayload,
   sendInternalErrorPayload
 } from '@shared/http/index.js';
+import type { ModuleHandlerContext } from '@services/moduleLoader.js';
 import { getWorkerControlHealth, getWorkerControlStatus } from '@services/workerControlService.js';
 import {
   buildGptAccessHealthPayload,
@@ -69,8 +72,12 @@ import {
   resolveGptAccessNaturalLanguageDispatch,
   toDispatchPolicyResponse
 } from '@services/gptAccessNaturalLanguageDispatch.js';
+import localAgentProtocolRouter from './gpt-access-local-agent.js';
+import { configureLocalAgentActionExecutor } from '@services/localAgent/executor.js';
+import { executeLocalAgentActionAsJob } from '@services/localAgent/service.js';
 
 const router = express.Router();
+configureLocalAgentActionExecutor(executeLocalAgentActionAsJob);
 
 type CapabilityRegistryEntry = ReturnType<typeof getModulesForRegistry>[number];
 type CapabilityMetadata = NonNullable<ReturnType<typeof getModuleMetadata>>;
@@ -90,12 +97,18 @@ const CAPABILITY_CONFIRMATION_TOKEN_BODY_KEY = 'confirmation_token';
 const CAPABILITY_CONFIRMATION_HEADER_TOKEN_PREFIX = 'token:';
 const CAPABILITY_RUN_BODY_KEYS = new Set(['action', 'payload']);
 const CAPABILITY_PAYLOAD_MAX_DEPTH = 32;
+const CAPABILITY_IDEMPOTENCY_KEY_MAX_LENGTH = 240;
+const CAPABILITY_IDEMPOTENCY_KEY_PATTERN = /^[\x21-\x7E]+$/u;
+const GPT_ACCESS_CONTEXT_ID_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._:-]{0,127})$/u;
 const CORE_CAPABILITY_ID = 'ARCANOS:CORE';
 const CORE_CAPABILITY_ROUTE = 'core';
 const CORE_READONLY_ACTIONS = new Set(['system_state']);
 const CLI_CAPABILITY_ID = 'ARCANOS:CLI';
 const CLI_CAPABILITY_ROUTE = 'cli';
 const CLI_GATED_ACTIONS = new Set(['runApprovedCommand', 'applyApprovedPatch']);
+const LOCAL_AGENT_CAPABILITY_ID = 'ARCANOS:LOCAL_AGENT';
+const LOCAL_AGENT_CAPABILITY_ROUTE = 'local-agent';
+const LOCAL_AGENT_STRICT_CONFIRMATION_ACTION = 'patch.apply';
 const CLI_CAPABILITY_ACTIONS = [
   ...CLI_READONLY_ACTIONS,
   ...CLI_GATED_ACTIONS
@@ -126,6 +139,96 @@ function isCliCapabilityId(value: string): boolean {
 
 function isCoreCapabilityId(value: string): boolean {
   return value === CORE_CAPABILITY_ID || value === CORE_CAPABILITY_ROUTE;
+}
+
+function readConfiguredGptAccessContextId(name: string): string | null {
+  const value = process.env[name];
+  if (
+    typeof value !== 'string'
+    || value.length === 0
+    || value !== value.trim()
+    || !GPT_ACCESS_CONTEXT_ID_PATTERN.test(value)
+  ) {
+    return null;
+  }
+  return value;
+}
+
+function readCapabilityIdempotencyKey(req: express.Request): string | undefined {
+  const value = req.header('idempotency-key');
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  return value.length > 0
+    && value.length <= CAPABILITY_IDEMPOTENCY_KEY_MAX_LENGTH
+    && CAPABILITY_IDEMPOTENCY_KEY_PATTERN.test(value)
+    ? value
+    : undefined;
+}
+
+function validateCapabilityIdempotencyKey(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction
+): void {
+  if (
+    req.header('idempotency-key') !== undefined
+    && readCapabilityIdempotencyKey(req) === undefined
+  ) {
+    sendGptAccessBadRequest(
+      res,
+      `idempotency-key must be 1-${CAPABILITY_IDEMPOTENCY_KEY_MAX_LENGTH} visible ASCII characters.`
+    );
+    return;
+  }
+  next();
+}
+
+function buildGptAccessModuleHandlerContext(
+  req: express.Request
+): ModuleHandlerContext | null {
+  const principalId = readConfiguredGptAccessContextId('ARCANOS_GPT_ACCESS_PRINCIPAL_ID');
+  const workspaceId = readConfiguredGptAccessContextId('ARCANOS_GPT_ACCESS_WORKSPACE_ID');
+  if (!principalId || !workspaceId) {
+    return null;
+  }
+
+  const idempotencyKey = readCapabilityIdempotencyKey(req);
+  return {
+    source: 'gpt-access',
+    principalId,
+    workspaceId,
+    actorKey: getRequestActorKey(req),
+    ...(req.requestId ? { requestId: req.requestId } : {}),
+    traceId: req.traceId ?? null,
+    ...(idempotencyKey ? { idempotencyKey } : {}),
+    ...(req.confirmationContext
+      ? {
+          confirmation: {
+            status: req.confirmationContext.confirmationStatus,
+            usedChallengeToken: req.confirmationContext.usedChallengeToken
+          }
+        }
+      : {})
+  };
+}
+
+function isExplicitReadOnlyCapabilityAction(
+  metadata: CapabilityMetadata | null,
+  action: string
+): boolean {
+  const candidate = metadata?.actionMetadata?.[action] as
+    | { risk?: unknown; requiresConfirmation?: unknown }
+    | undefined;
+  return Boolean(
+    candidate
+    && candidate.risk === 'readonly'
+    && (
+      candidate.requiresConfirmation === undefined
+      || typeof candidate.requiresConfirmation === 'boolean'
+    )
+    && candidate.requiresConfirmation !== true
+  );
 }
 
 function isReadOnlySystemStatePayload(value: unknown): boolean {
@@ -180,6 +283,7 @@ function toCapabilityDetail(metadata: CapabilityMetadata) {
     description: metadata.description ?? null,
     route: metadata.route ?? null,
     actions: sortStrings(metadata.actions),
+    actionMetadata: metadata.actionMetadata,
     defaultAction: metadata.defaultAction ?? null,
     defaultTimeoutMs: metadata.defaultTimeoutMs ?? null
   };
@@ -278,7 +382,21 @@ function capabilityRunNeedsConfirmation(req: express.Request): boolean {
   }
 
   if (!isCliCapabilityId(req.params.id)) {
-    return true;
+    if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) {
+      return true;
+    }
+    const action = (req.body as Record<string, unknown>).action;
+    if (typeof action !== 'string' || action.trim().length === 0) {
+      return true;
+    }
+    try {
+      return !isExplicitReadOnlyCapabilityAction(
+        getModuleMetadata(req.params.id),
+        action.trim()
+      );
+    } catch {
+      return true;
+    }
   }
 
   if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) {
@@ -303,7 +421,67 @@ function confirmCapabilityRunWhenRequired(
     return;
   }
 
-  confirmGate(req, res, next);
+  const capabilityId = req.params.id;
+  const action = req.body
+    && typeof req.body === 'object'
+    && !Array.isArray(req.body)
+    && typeof (req.body as Record<string, unknown>).action === 'string'
+    ? ((req.body as Record<string, unknown>).action as string).trim()
+    : null;
+  const strictLocalAgentConfirmation =
+    (capabilityId === LOCAL_AGENT_CAPABILITY_ID
+      || capabilityId === LOCAL_AGENT_CAPABILITY_ROUTE)
+    && action === LOCAL_AGENT_STRICT_CONFIRMATION_ACTION;
+  const strictConfirmationBinding: ConfirmationChallengeBinding | null =
+    strictLocalAgentConfirmation
+      ? (() => {
+          const principalId = readConfiguredGptAccessContextId(
+            'ARCANOS_GPT_ACCESS_PRINCIPAL_ID'
+          );
+          const workspaceId = readConfiguredGptAccessContextId(
+            'ARCANOS_GPT_ACCESS_WORKSPACE_ID'
+          );
+          return principalId && workspaceId
+            ? {
+                actorKey: getRequestAuthenticatedActorKey(req),
+                principalId,
+                workspaceId
+              }
+            : null;
+        })()
+      : null;
+  if (strictLocalAgentConfirmation && !strictConfirmationBinding) {
+    sendGptAccessUnavailable(
+      res,
+      'GPT_ACCESS_CONTEXT_UNAVAILABLE',
+      'GPT Access confirmation identity is unavailable.'
+    );
+    return;
+  }
+
+  confirmGate(req, res, () => {
+    if (
+      strictLocalAgentConfirmation
+      && req.confirmationContext?.usedChallengeToken !== true
+    ) {
+      res.status(403).json({
+        ok: false,
+        error: {
+          code: 'LOCAL_AGENT_CHALLENGE_CONFIRMATION_REQUIRED',
+          message:
+            'patch.apply requires a consumed confirmation challenge bound to this exact action and payload.'
+        },
+        confirmationRequired: true,
+        confirmationStatus: req.confirmationContext?.confirmationStatus ?? 'missing',
+        ...(req.requestId ? { requestId: req.requestId } : {}),
+        ...(req.traceId ? { traceId: req.traceId } : {})
+      });
+      return;
+    }
+    next();
+  }, strictConfirmationBinding
+    ? { challengeBinding: strictConfirmationBinding }
+    : {});
 }
 
 function readDispatchRunBody(body: unknown): DispatchRunBody {
@@ -581,6 +759,7 @@ async function runGptAccessCapabilityAction(input: {
   capabilityId: string;
   action: string;
   payload: unknown;
+  moduleContext?: ModuleHandlerContext | null;
 }): Promise<DispatchExecutionResult> {
   let metadata;
   try {
@@ -646,8 +825,30 @@ async function runGptAccessCapabilityAction(input: {
     };
   }
 
+  if (metadata.gptAccessOnly === true && !input.moduleContext) {
+    return {
+      statusCode: 503,
+      payload: {
+        ok: false,
+        status: 'unavailable',
+        service: 'gpt-access',
+        error: {
+          code: 'GPT_ACCESS_INTERNAL_ERROR',
+          message: 'GPT Access capability execution identity is unavailable.'
+        }
+      }
+    };
+  }
+
   try {
-    const result = await dispatchModuleAction(metadata.name, input.action, input.payload);
+    const result = metadata.gptAccessOnly === true
+      ? await dispatchModuleAction(
+          metadata.name,
+          input.action,
+          input.payload,
+          input.moduleContext ?? undefined
+        )
+      : await dispatchModuleAction(metadata.name, input.action, input.payload);
     return {
       statusCode: 200,
       payload: {
@@ -779,7 +980,8 @@ const runGptAccessCapability = asyncHandler(async (req, res) => {
     await runGptAccessCapabilityAction({
       capabilityId: req.params.id,
       action: action.trim(),
-      payload
+      payload,
+      moduleContext: buildGptAccessModuleHandlerContext(req)
     })
   );
 });
@@ -809,7 +1011,9 @@ async function executeDispatchRun(
 
   const result = await runDispatchPlan({
     plan,
-    registry: createGptAccessDispatchRegistry(getModulesForRegistry()),
+    registry: createGptAccessDispatchRegistry(
+      getModulesForRegistry({ includeActionMetadata: true })
+    ),
     handlers: {
       runMcpTool: (body) => runGptAccessMcpTool(body),
       runDiagnostics: (payload) => runDeepDiagnostics(payload),
@@ -817,7 +1021,8 @@ async function executeDispatchRun(
       runCapability: (input) => runGptAccessCapabilityAction({
         capabilityId: input.capabilityId,
         action: input.action,
-        payload: input.payload
+        payload: input.payload,
+        moduleContext: buildGptAccessModuleHandlerContext(req)
       })
     }
   });
@@ -840,7 +1045,9 @@ const runGptAccessDispatch = asyncHandler(async (req, res) => {
     return;
   }
 
-  const registry = createGptAccessDispatchRegistry(getModulesForRegistry());
+  const registry = createGptAccessDispatchRegistry(
+    getModulesForRegistry({ includeActionMetadata: true })
+  );
   const { plan, policy } = await resolveGptAccessNaturalLanguageDispatch({
     utterance: body.utterance,
     registry,
@@ -897,6 +1104,7 @@ router.get('/gpt-access/openapi.json', (req, res) => {
   }));
 });
 
+router.use('/gpt-access/local-agent', localAgentProtocolRouter);
 router.use('/gpt-access', gptAccessAuthMiddleware);
 
 router.get(
@@ -915,6 +1123,7 @@ router.post(
   '/gpt-access/capabilities/v1/:id/run',
   requireGptAccessScope('capabilities.run'),
   mapCapabilityRunConfirmationToken,
+  validateCapabilityIdempotencyKey,
   confirmCapabilityRunWhenRequired,
   runGptAccessCapability
 );
@@ -1024,6 +1233,8 @@ router.post(
       res,
       await getGptAccessJobResult(req.body, {
         actorKey: getRequestActorKey(req),
+        principalId: readConfiguredGptAccessContextId('ARCANOS_GPT_ACCESS_PRINCIPAL_ID'),
+        workspaceId: readConfiguredGptAccessContextId('ARCANOS_GPT_ACCESS_WORKSPACE_ID'),
         requestId: req.requestId,
         traceId: req.traceId,
         logger: req.logger
@@ -1075,6 +1286,7 @@ router.post(
 router.post(
   '/gpt-access/dispatch/run',
   mapDispatchRunConfirmationToken,
+  validateCapabilityIdempotencyKey,
   runGptAccessDispatch
 );
 

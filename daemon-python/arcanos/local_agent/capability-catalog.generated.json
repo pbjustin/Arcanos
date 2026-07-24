@@ -1,0 +1,677 @@
+{
+  "schemaVersion": "local-agent-capability-catalog-v1",
+  "module": "ARCANOS:LOCAL_AGENT",
+  "actions": [
+    {
+      "id": "local_agent.status",
+      "description": "Read the paired local agent readiness and registered-workspace status.",
+      "risk": "readonly",
+      "requiresConfirmation": false,
+      "idempotent": true,
+      "timeoutMs": 10000,
+      "requiredDeviceScopes": [
+        "local_agent.status"
+      ],
+      "readOnly": true,
+      "mayModifyFiles": false,
+      "executionTarget": "python-daemon",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "busy",
+              "degraded"
+            ]
+          },
+          "daemonVersion": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "local_agent.status",
+                "repo.search",
+                "git.status",
+                "git.diff",
+                "tests.run",
+                "patch.preview",
+                "patch.apply"
+              ]
+            },
+            "uniqueItems": true,
+            "maxItems": 7
+          },
+          "workspaceRegistered": {
+            "type": "boolean"
+          },
+          "testExecutionMode": {
+            "type": "string",
+            "enum": [
+              "disabled",
+              "sandboxed",
+              "unsandboxed-development-only"
+            ]
+          },
+          "testSandboxAvailable": {
+            "type": "boolean"
+          },
+          "testSandboxRuntime": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "docker",
+              "podman",
+              null
+            ]
+          },
+          "observedAt": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64
+          }
+        },
+        "required": [
+          "status",
+          "daemonVersion",
+          "capabilities",
+          "workspaceRegistered",
+          "testExecutionMode",
+          "testSandboxAvailable",
+          "testSandboxRuntime",
+          "observedAt"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "repo.search",
+      "description": "Search bounded text or symbols within the registered workspace.",
+      "risk": "readonly",
+      "requiresConfirmation": false,
+      "idempotent": true,
+      "timeoutMs": 30000,
+      "requiredDeviceScopes": [
+        "repo.search"
+      ],
+      "readOnly": true,
+      "mayModifyFiles": false,
+      "executionTarget": "python-daemon",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000,
+            "pattern": "\\S"
+          },
+          "options": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "text",
+                  "symbol"
+                ],
+                "default": "text"
+              },
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1024,
+                "pattern": "^(?![A-Za-z]:[\\\\/])(?![\\\\/])(?!.*(?:^|[\\\\/])\\.\\.(?:[\\\\/]|$)).+$"
+              },
+              "includeHidden": {
+                "type": "boolean",
+                "default": false
+              },
+              "offset": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 10000,
+                "default": 0
+              },
+              "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 200,
+                "default": 50
+              },
+              "maxFileBytes": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 1048576,
+                "default": 262144
+              }
+            },
+            "required": [],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "searchType": {
+            "type": "string",
+            "enum": [
+              "text",
+              "symbol"
+            ]
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200
+          },
+          "nextOffset": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "searchedFileCount": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "matches": {
+            "type": "array",
+            "maxItems": 200,
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1024
+                },
+                "line": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "column": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "preview": {
+                  "type": "string",
+                  "maxLength": 240
+                },
+                "symbolKind": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 80
+                }
+              },
+              "required": [
+                "path",
+                "line",
+                "column",
+                "preview"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "query",
+          "searchType",
+          "offset",
+          "limit",
+          "searchedFileCount",
+          "matches",
+          "truncated"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "git.status",
+      "description": "Read sanitized Git branch and worktree status for the registered workspace.",
+      "risk": "readonly",
+      "requiresConfirmation": false,
+      "idempotent": true,
+      "timeoutMs": 15000,
+      "requiredDeviceScopes": [
+        "git.status"
+      ],
+      "readOnly": true,
+      "mayModifyFiles": false,
+      "executionTarget": "python-daemon",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "required": [],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "branch": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "head": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128
+          },
+          "clean": {
+            "type": "boolean"
+          },
+          "changes": {
+            "type": "array",
+            "maxItems": 10000,
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1024
+                },
+                "indexStatus": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1
+                },
+                "workTreeStatus": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1
+                },
+                "originalPath": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1024
+                }
+              },
+              "required": [
+                "path",
+                "indexStatus",
+                "workTreeStatus"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "gitAvailable": {
+            "type": "boolean"
+          },
+          "workspaceType": {
+            "type": "string",
+            "enum": [
+              "git",
+              "deployed-artifact"
+            ]
+          },
+          "message": {
+            "type": "string",
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "clean",
+          "changes",
+          "gitAvailable",
+          "workspaceType"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "git.diff",
+      "description": "Read a bounded sanitized Git diff between two validated refs.",
+      "risk": "readonly",
+      "requiresConfirmation": false,
+      "idempotent": true,
+      "timeoutMs": 30000,
+      "requiredDeviceScopes": [
+        "git.diff"
+      ],
+      "readOnly": true,
+      "mayModifyFiles": false,
+      "executionTarget": "python-daemon",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "base": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "pattern": "^(?!-)(?!.*(?:\\.\\.|@\\{|[~^:?*\\[\\\\\\s]))[A-Za-z0-9][A-Za-z0-9._/-]*$"
+          },
+          "head": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200,
+            "pattern": "^(?!-)(?!.*(?:\\.\\.|@\\{|[~^:?*\\[\\\\\\s]))[A-Za-z0-9][A-Za-z0-9._/-]*$"
+          },
+          "contextLines": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 20,
+            "default": 3
+          },
+          "maxBytes": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65536,
+            "default": 32768
+          }
+        },
+        "required": [
+          "base",
+          "head"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "base": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "head": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "diff": {
+            "type": "string",
+            "maxLength": 65536
+          },
+          "bytes": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 65536
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "base",
+          "head",
+          "diff",
+          "bytes",
+          "truncated"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "tests.run",
+      "description": "Run one fixed, allowlisted test profile in the registered workspace.",
+      "risk": "privileged",
+      "requiresConfirmation": true,
+      "idempotent": true,
+      "timeoutMs": 900000,
+      "requiredDeviceScopes": [
+        "tests.run"
+      ],
+      "readOnly": false,
+      "mayModifyFiles": true,
+      "executionTarget": "python-daemon",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "profile": {
+            "type": "string",
+            "enum": [
+              "python-unit",
+              "typescript-unit",
+              "typescript-integration",
+              "backend-cli-contract"
+            ]
+          }
+        },
+        "required": [
+          "profile"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "profile": {
+            "type": "string",
+            "enum": [
+              "python-unit",
+              "typescript-unit",
+              "typescript-integration",
+              "backend-cli-contract"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "passed",
+              "failed",
+              "timed_out"
+            ]
+          },
+          "exitCode": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": -2147483648,
+            "maximum": 2147483647
+          },
+          "stdout": {
+            "type": "string",
+            "maxLength": 65536
+          },
+          "stderr": {
+            "type": "string",
+            "maxLength": 65536
+          },
+          "durationMs": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 900000
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "profile",
+          "status",
+          "exitCode",
+          "stdout",
+          "stderr",
+          "durationMs",
+          "truncated"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "patch.preview",
+      "description": "Validate and dry-run a bounded patch without modifying workspace files.",
+      "risk": "readonly",
+      "requiresConfirmation": false,
+      "idempotent": true,
+      "timeoutMs": 30000,
+      "requiredDeviceScopes": [
+        "patch.preview"
+      ],
+      "readOnly": true,
+      "mayModifyFiles": false,
+      "executionTarget": "python-daemon",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "patch": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200000,
+            "pattern": "\\S",
+            "maxUtf8Bytes": 200000
+          }
+        },
+        "required": [
+          "patch"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "patchSha256": {
+            "type": "string",
+            "pattern": "^[A-Fa-f0-9]{64}$"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            },
+            "uniqueItems": true,
+            "maxItems": 1000
+          },
+          "applicable": {
+            "type": "boolean"
+          },
+          "check": {
+            "type": "object",
+            "properties": {
+              "exitCode": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": -2147483648,
+                "maximum": 2147483647
+              },
+              "stdout": {
+                "type": "string",
+                "maxLength": 65536
+              },
+              "stderr": {
+                "type": "string",
+                "maxLength": 65536
+              },
+              "truncated": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "exitCode",
+              "stdout",
+              "stderr",
+              "truncated"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "patchSha256",
+          "files",
+          "applicable",
+          "check"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "id": "patch.apply",
+      "description": "Apply one validated patch whose exact payload received GPT Access confirmation.",
+      "risk": "privileged",
+      "requiresConfirmation": true,
+      "idempotent": true,
+      "timeoutMs": 60000,
+      "requiredDeviceScopes": [
+        "patch.apply"
+      ],
+      "readOnly": false,
+      "mayModifyFiles": true,
+      "executionTarget": "python-daemon",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "patch": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200000,
+            "pattern": "\\S",
+            "maxUtf8Bytes": 200000
+          },
+          "expectedPatchSha256": {
+            "type": "string",
+            "pattern": "^[A-Fa-f0-9]{64}$"
+          }
+        },
+        "required": [
+          "patch",
+          "expectedPatchSha256"
+        ],
+        "additionalProperties": false
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "patchSha256": {
+            "type": "string",
+            "pattern": "^[A-Fa-f0-9]{64}$"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            },
+            "uniqueItems": true,
+            "maxItems": 1000
+          },
+          "applied": {
+            "const": true
+          }
+        },
+        "required": [
+          "patchSha256",
+          "files",
+          "applied"
+        ],
+        "additionalProperties": false
+      }
+    }
+  ]
+}

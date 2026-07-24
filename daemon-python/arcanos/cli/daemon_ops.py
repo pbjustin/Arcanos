@@ -42,7 +42,8 @@ def start_daemon_threads(cli: "ArcanosCLI") -> None:
         and (Config.BACKEND_TOKEN or "") not in _PLACEHOLDER_TOKENS
     )
     execution_ready = bool(Config.ACTION_PLAN_EXECUTION_PROTOCOL_V2_ENABLED)
-    if not generic_ready and not execution_ready:
+    local_agent_ready = bool(Config.LOCAL_AGENT_ENABLED)
+    if not generic_ready and not execution_ready and not local_agent_ready:
         # //audit assumption: placeholder tokens cannot authenticate; risk: repeated 429/noise; invariant: skip thread startup with placeholder token; strategy: guard and log once.
         error_logger.info("[DAEMON] Skipping daemon threads: BACKEND_TOKEN is not configured.")
         return
@@ -70,6 +71,17 @@ def start_daemon_threads(cli: "ArcanosCLI") -> None:
             name="action-plan-execution-poll",
         )
         cli._action_plan_execution_thread.start()
+
+    if local_agent_ready:
+        from ..local_agent.runner import local_agent_execution_loop
+
+        cli._local_agent_execution_thread = threading.Thread(
+            target=local_agent_execution_loop,
+            args=(lambda: cli._daemon_running,),
+            daemon=True,
+            name="local-agent-execution-poll",
+        )
+        cli._local_agent_execution_thread.start()
 
 
 def heartbeat_loop(cli: "ArcanosCLI") -> None:
@@ -315,6 +327,9 @@ def stop_daemon_service(cli: "ArcanosCLI") -> None:
     execution_thread = getattr(cli, "_action_plan_execution_thread", None)
     if execution_thread:
         execution_thread.join(timeout=5.0)
+    local_agent_thread = getattr(cli, "_local_agent_execution_thread", None)
+    if local_agent_thread:
+        local_agent_thread.join(timeout=5.0)
 
 
 __all__ = [

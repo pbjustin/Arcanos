@@ -5,20 +5,41 @@ from __future__ import annotations
 import os
 from pathlib import Path, PurePosixPath
 import re
-import subprocess
+import threading
+import time
 from typing import Any, Iterable
 
+from ...cli.cli_policy import (
+    is_secret_path,
+    parse_patch_paths,
+    redact_output,
+    strip_unsafe_output_controls,
+)
+from ...local_agent.process_runner import (
+    ProcessCancelledError,
+    run_bounded_process,
+)
+from ...local_agent.secure_fs import (
+    has_link_or_reparse_component,
+    open_workspace_file,
+)
+from ...local_agent.workspace_registry import is_secret_workspace_path
 from ..schema_loader import resolve_repository_root
-
 
 DEFAULT_FILE_READ_MAX_BYTES = 65536
 DEFAULT_LIST_LIMIT = 200
 DEFAULT_LIST_DEPTH = 1
 DEFAULT_SEARCH_LIMIT = 50
 DEFAULT_SEARCH_MAX_FILE_BYTES = 262144
+DEFAULT_SEARCH_TIMEOUT_MS = 30000
+MAX_SEARCH_SCANNED_BYTES = 64 * 1024 * 1024
+MAX_SEARCH_SCANNED_FILES = 10000
 DEFAULT_LOG_LIMIT = 20
 DEFAULT_DIFF_MAX_BYTES = 131072
+MAX_DIFF_BYTES = 524288
 DEFAULT_DIFF_CONTEXT_LINES = 3
+DEFAULT_GIT_TIMEOUT_MS = 30000
+DEFAULT_GIT_OUTPUT_MAX_CHARS = 1048576
 IGNORE_DIRECTORY_NAMES = {
     ".git",
     ".mypy_cache",
@@ -35,22 +56,45 @@ SYMBOL_LINE_PATTERN = re.compile(
     r"\b(class|def|function|interface|type|enum|const|let|var|export|async function)\b",
     re.IGNORECASE,
 )
+GIT_REVISION_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$")
+GIT_SECRET_PATHSPECS = (
+    ":(exclude,icase,glob)**/.env",
+    ":(exclude,icase,glob)**/.env.*",
+    ":(exclude,icase,glob)**/.npmrc",
+    ":(exclude,icase,glob)**/.pypirc",
+    ":(exclude,icase,glob)**/.netrc",
+    ":(exclude,icase,glob)**/.ssh/**",
+    ":(exclude,icase,glob)**/id_rsa",
+    ":(exclude,icase,glob)**/id_ed25519",
+    ":(exclude,icase,glob)**/*secret*",
+    ":(exclude,icase,glob)**/*token*",
+    ":(exclude,icase,glob)**/*credential*",
+    ":(exclude,icase,glob)**/*private_key*",
+    ":(exclude,icase,glob)**/*private-key*",
+    ":(exclude,icase,glob)**/*.pem",
+    ":(exclude,icase,glob)**/*.key",
+    ":(exclude,icase,glob)**/*.p12",
+    ":(exclude,icase,glob)**/*.pfx",
+)
 
 
-def resolve_workspace_root() -> Path:
+def resolve_workspace_root(workspace_root: Path | str | None = None) -> Path:
     """Resolve the explicit workspace root for repo tools from env or the repository root."""
 
     configured_root = os.environ.get("ARCANOS_WORKSPACE_ROOT")
-    workspace_root = (
-        Path(configured_root).expanduser().resolve()
-        if configured_root
-        else resolve_repository_root()
-    )
+    if workspace_root is not None:
+        resolved_workspace_root = Path(workspace_root).expanduser().resolve()
+    elif configured_root:
+        resolved_workspace_root = Path(configured_root).expanduser().resolve()
+    else:
+        resolved_workspace_root = resolve_repository_root()
 
-    if not workspace_root.exists() or not workspace_root.is_dir():
-        raise FileNotFoundError(f'Workspace root "{workspace_root}" does not exist or is not a directory.')
+    if not resolved_workspace_root.exists() or not resolved_workspace_root.is_dir():
+        raise FileNotFoundError(
+            f'Workspace root "{resolved_workspace_root}" does not exist or is not a directory.'
+        )
 
-    return workspace_root
+    return resolved_workspace_root
 
 
 def build_remote_source_descriptor(workspace_root: Path) -> dict[str, Any] | None:
@@ -79,7 +123,9 @@ def build_remote_source_descriptor(workspace_root: Path) -> dict[str, Any] | Non
             {
                 "provider": "railway",
                 "railwayProjectId": os.environ.get("ARCANOS_RAILWAY_PROJECT_ID"),
-                "railwayEnvironmentId": os.environ.get("ARCANOS_RAILWAY_ENVIRONMENT_ID"),
+                "railwayEnvironmentId": os.environ.get(
+                    "ARCANOS_RAILWAY_ENVIRONMENT_ID"
+                ),
                 "railwayServiceId": os.environ.get("ARCANOS_RAILWAY_SERVICE_ID"),
                 "railwayServiceName": os.environ.get("ARCANOS_RAILWAY_SERVICE_NAME"),
                 "url": os.environ.get("ARCANOS_REMOTE_URL"),
@@ -93,7 +139,9 @@ def list_repository_tree(tool_input: dict[str, Any]) -> dict[str, Any]:
     """List files and directories from the bound workspace root with deterministic ordering."""
 
     workspace_root = resolve_workspace_root()
-    target_path, relative_path = resolve_workspace_path(workspace_root, tool_input.get("path", "."))
+    target_path, relative_path = resolve_workspace_path(
+        workspace_root, tool_input.get("path", ".")
+    )
     if not target_path.exists():
         raise FileNotFoundError(f'Path "{relative_path}" was not found.')
     if not target_path.is_dir():
@@ -110,8 +158,13 @@ def list_repository_tree(tool_input: dict[str, Any]) -> dict[str, Any]:
         if len(entries) >= max_results:
             return
 
-        for child_path in sorted(directory.iterdir(), key=lambda candidate: (candidate.name.lower(), candidate.name)):
+        for child_path in sorted(
+            directory.iterdir(),
+            key=lambda candidate: (candidate.name.lower(), candidate.name),
+        ):
             if _should_skip_path(child_path, include_hidden):
+                continue
+            if not _path_resolves_within_workspace(child_path, workspace_root):
                 continue
 
             child_relative_path = child_path.relative_to(workspace_root).as_posix()
@@ -159,7 +212,11 @@ def list_repository_entries(tool_input: dict[str, Any]) -> dict[str, Any]:
         "rootPath": result["rootPath"],
         "path": result["path"],
         "entries": [
-            {key: value for key, value in entry.items() if key in {"name", "path", "entryType", "bytes"}}
+            {
+                key: value
+                for key, value in entry.items()
+                if key in {"name", "path", "entryType", "bytes"}
+            }
             for entry in result["entries"]
         ],
         "truncated": result["truncated"],
@@ -170,7 +227,9 @@ def read_repository_file(tool_input: dict[str, Any]) -> dict[str, Any]:
     """Read UTF-8 content from a file within the bound workspace root."""
 
     workspace_root = resolve_workspace_root()
-    target_path, relative_path = resolve_workspace_path(workspace_root, tool_input["path"])
+    target_path, relative_path = resolve_workspace_path(
+        workspace_root, tool_input["path"]
+    )
     if not target_path.exists():
         raise FileNotFoundError(f'Path "{relative_path}" was not found.')
     if not target_path.is_file():
@@ -239,21 +298,30 @@ def read_repository_file(tool_input: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def search_repository(tool_input: dict[str, Any]) -> dict[str, Any]:
+def search_repository(
+    tool_input: dict[str, Any],
+    *,
+    workspace_root: Path | str | None = None,
+    timeout_ms: int = DEFAULT_SEARCH_TIMEOUT_MS,
+    cancellation_event: threading.Event | None = None,
+) -> dict[str, Any]:
     """Search text or symbol definitions across the workspace with bounded output."""
 
-    workspace_root = resolve_workspace_root()
+    workspace_root = resolve_workspace_root(workspace_root)
     query = str(tool_input["query"])
     options = tool_input.get("options") or {}
     search_type = str(options.get("type", "text"))
     include_hidden = bool(options.get("includeHidden", False))
-    search_root, relative_root = resolve_workspace_path(workspace_root, options.get("path", "."))
+    search_root, relative_root = resolve_workspace_path(
+        workspace_root, options.get("path", ".")
+    )
     if not search_root.exists():
         raise FileNotFoundError(f'Path "{relative_root}" was not found.')
-    if search_root.is_file():
-        candidate_files: Iterable[Path] = [search_root]
-    else:
-        candidate_files = _iter_search_files(search_root, include_hidden)
+    candidate_files: Iterable[Path] = _iter_search_files(
+        search_root,
+        include_hidden,
+        workspace_root,
+    )
 
     offset = int(options.get("offset", 0))
     limit = int(options.get("limit", DEFAULT_SEARCH_LIMIT))
@@ -262,20 +330,44 @@ def search_repository(tool_input: dict[str, Any]) -> dict[str, Any]:
     lowered_query = query.lower()
     matches: list[dict[str, Any]] = []
     searched_file_count = 0
+    scanned_file_count = 0
+    scanned_bytes = 0
+    scan_truncated = False
+    deadline = time.monotonic() + max(int(timeout_ms), 1) / 1000
 
     for candidate_path in candidate_files:
+        if cancellation_event is not None and cancellation_event.is_set():
+            raise ProcessCancelledError("Repository search was cancelled.")
+        if (
+            time.monotonic() >= deadline
+            or scanned_file_count >= MAX_SEARCH_SCANNED_FILES
+        ):
+            scan_truncated = True
+            break
         if len(matches) >= max_results:
             break
         try:
-            candidate_size = candidate_path.stat().st_size
-        except OSError:
+            relative_candidate = candidate_path.relative_to(workspace_root)
+            with open_workspace_file(
+                workspace_root,
+                relative_candidate,
+            ) as candidate_stream:
+                candidate_size = os.fstat(candidate_stream.fileno()).st_size
+                scanned_file_count += 1
+                if candidate_size > max_file_bytes:
+                    continue
+                if scanned_bytes + candidate_size > MAX_SEARCH_SCANNED_BYTES:
+                    scan_truncated = True
+                    break
+                scanned_bytes += candidate_size
+                file_bytes = candidate_stream.read(max_file_bytes + 1)
+        except (OSError, PermissionError, ValueError):
             continue
-        if candidate_size > max_file_bytes:
+        if len(file_bytes) > max_file_bytes:
             continue
-        try:
-            file_bytes = candidate_path.read_bytes()
-        except OSError:
-            continue
+        if time.monotonic() >= deadline:
+            scan_truncated = True
+            break
         if _is_binary_bytes(file_bytes):
             continue
 
@@ -289,10 +381,13 @@ def search_repository(tool_input: dict[str, Any]) -> dict[str, Any]:
                 continue
             column = line_to_match.index(lowered_query) + 1
             match = {
-                "path": candidate_path.relative_to(workspace_root).as_posix(),
+            "path": candidate_path.relative_to(workspace_root).as_posix(),
                 "line": line_number,
                 "column": column,
-                "preview": line.strip()[:240],
+                "preview": redact_output(
+                    line.strip()[:240],
+                    apply_truncation=False,
+                ),
             }
             symbol_kind = _detect_symbol_kind(line) if search_type == "symbol" else None
             if symbol_kind is not None:
@@ -311,17 +406,23 @@ def search_repository(tool_input: dict[str, Any]) -> dict[str, Any]:
         "limit": limit,
         "searchedFileCount": searched_file_count,
         "matches": sliced_matches,
-        "truncated": next_offset is not None,
+        "truncated": next_offset is not None or scan_truncated,
     }
     if next_offset is not None:
         result["nextOffset"] = next_offset
     return result
 
 
-def get_repository_status(_tool_input: dict[str, Any]) -> dict[str, Any]:
+def get_repository_status(
+    _tool_input: dict[str, Any],
+    *,
+    workspace_root: Path | str | None = None,
+    timeout_ms: int = DEFAULT_GIT_TIMEOUT_MS,
+    cancellation_event: threading.Event | None = None,
+) -> dict[str, Any]:
     """Return repository status using fixed, read-only git arguments."""
 
-    workspace_root = resolve_workspace_root()
+    workspace_root = resolve_workspace_root(workspace_root)
     if not ((workspace_root / ".git").exists() or (workspace_root / ".git").is_file()):
         return {
             "rootPath": str(workspace_root),
@@ -334,46 +435,79 @@ def get_repository_status(_tool_input: dict[str, Any]) -> dict[str, Any]:
 
     output = _run_git_readonly(
         workspace_root,
-        ["status", "--porcelain=v1", "--branch", "--untracked-files=all"],
+        [
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--branch",
+            "--untracked-files=all",
+            "--",
+            ".",
+            *GIT_SECRET_PATHSPECS,
+        ],
+        timeout_ms=timeout_ms,
+        cancellation_event=cancellation_event,
+        preserve_nul=True,
     )
 
     branch = None
     changes: list[dict[str, Any]] = []
-    for line in output.splitlines():
-        if line.startswith("## "):
-            branch_line = line[3:].strip()
+    records = output.split("\x00")
+    index = 0
+    while index < len(records):
+        record = records[index]
+        index += 1
+        if not record:
+            continue
+        if record.startswith("## "):
+            branch_line = record[3:].strip()
             branch = branch_line.split("...", 1)[0]
             if branch == "HEAD (no branch)":
                 branch = "detached"
             continue
-
-        if len(line) < 3:
+        if len(record) < 3:
             continue
-
-        index_status = line[0]
-        worktree_status = line[1]
-        payload = line[3:]
+        index_status = record[0]
+        worktree_status = record[1]
+        payload = record[3:]
         original_path = None
-        if " -> " in payload:
-            original_path, payload = payload.split(" -> ", 1)
+        if (
+            index_status in {"R", "C"}
+            or worktree_status in {"R", "C"}
+        ) and index < len(records):
+            original_path = records[index]
+            index += 1
         change_entry = {
-            "path": payload.replace("\\", "/"),
+            "path": _sanitize_repository_path(payload),
             "indexStatus": index_status,
             "workTreeStatus": worktree_status,
         }
         if original_path is not None:
-            change_entry["originalPath"] = original_path.replace("\\", "/")
+            change_entry["originalPath"] = _sanitize_repository_path(original_path)
+        if _is_denied_repository_path(payload) or (
+            original_path is not None and _is_denied_repository_path(original_path)
+        ):
+            continue
         changes.append(change_entry)
 
-    return {
+    result: dict[str, Any] = {
         "rootPath": str(workspace_root),
         "branch": branch,
-        "head": _run_git_readonly(workspace_root, ["rev-parse", "HEAD"]).strip(),
         "clean": len(changes) == 0,
         "changes": changes,
         "gitAvailable": True,
         "workspaceType": "git",
     }
+    try:
+        result["head"] = _run_git_readonly(
+            workspace_root,
+            ["rev-parse", "HEAD"],
+            timeout_ms=timeout_ms,
+            cancellation_event=cancellation_event,
+        ).strip()
+    except ValueError:
+        result["message"] = "Git repository has no commits yet."
+    return result
 
 
 def get_repository_log(tool_input: dict[str, Any]) -> dict[str, Any]:
@@ -390,13 +524,19 @@ def get_repository_log(tool_input: dict[str, Any]) -> dict[str, Any]:
             f"--skip={offset}",
             "--format=%H%x1f%h%x1f%an%x1f%ae%x1f%aI%x1f%s",
         ],
+        preserve_nul=True,
     )
 
     commits: list[dict[str, Any]] = []
     for line in raw_output.splitlines():
         if not line.strip():
             continue
-        commit_hash, short_hash, author_name, author_email, authored_at, subject = line.split("\x1f", 5)
+        commit_hash, short_hash, author_name, author_email, authored_at, subject = (
+            line.split("\x1f", 5)
+        )
+        author_name = strip_unsafe_output_controls(author_name)
+        author_email = strip_unsafe_output_controls(author_email)
+        subject = strip_unsafe_output_controls(subject)
         commits.append(
             {
                 "hash": commit_hash,
@@ -422,14 +562,24 @@ def get_repository_log(tool_input: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def get_repository_diff(tool_input: dict[str, Any]) -> dict[str, Any]:
+def get_repository_diff(
+    tool_input: dict[str, Any],
+    *,
+    workspace_root: Path | str | None = None,
+    timeout_ms: int = DEFAULT_GIT_TIMEOUT_MS,
+    cancellation_event: threading.Event | None = None,
+) -> dict[str, Any]:
     """Return a bounded git diff between two refs."""
 
-    workspace_root = resolve_workspace_root()
-    base = str(tool_input["base"])
-    head = str(tool_input["head"])
+    workspace_root = resolve_workspace_root(workspace_root)
+    base = validate_git_revision(tool_input["base"], field_name="base")
+    head = validate_git_revision(tool_input["head"], field_name="head")
     context_lines = int(tool_input.get("contextLines", DEFAULT_DIFF_CONTEXT_LINES))
     max_bytes = int(tool_input.get("maxBytes", DEFAULT_DIFF_MAX_BYTES))
+    if not 0 <= context_lines <= 20:
+        raise ValueError("contextLines must be between 0 and 20.")
+    if not 1 <= max_bytes <= MAX_DIFF_BYTES:
+        raise ValueError(f"maxBytes must be between 1 and {MAX_DIFF_BYTES}.")
 
     diff_text = _run_git_readonly(
         workspace_root,
@@ -437,11 +587,19 @@ def get_repository_diff(tool_input: dict[str, Any]) -> dict[str, Any]:
             "diff",
             "--no-color",
             "--no-ext-diff",
+            "--no-textconv",
             f"--unified={context_lines}",
             base,
             head,
+            "--",
+            ".",
+            *GIT_SECRET_PATHSPECS,
         ],
+        timeout_ms=timeout_ms,
+        max_output_chars=max_bytes + 1,
+        cancellation_event=cancellation_event,
     )
+    diff_text = _filter_denied_diff_sections(diff_text)
 
     encoded_diff = diff_text.encode("utf-8")
     truncated = len(encoded_diff) > max_bytes
@@ -459,29 +617,57 @@ def get_repository_diff(tool_input: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def resolve_workspace_path(workspace_root: Path, candidate_path: Any) -> tuple[Path, str]:
+def resolve_workspace_path(
+    workspace_root: Path, candidate_path: Any
+) -> tuple[Path, str]:
     """Resolve a user-supplied relative path within the allowed workspace root."""
 
     raw_relative_path = str(candidate_path or ".").replace("\\", "/")
-    normalized_relative_path = "." if raw_relative_path in {"", "."} else PurePosixPath(raw_relative_path).as_posix()
+    normalized_relative_path = (
+        "."
+        if raw_relative_path in {"", "."}
+        else PurePosixPath(raw_relative_path).as_posix()
+    )
     relative_parts = PurePosixPath(normalized_relative_path).parts
 
-    if normalized_relative_path.startswith("/") or ".." in relative_parts:
+    if (
+        normalized_relative_path.startswith("/")
+        or re.match(r"^[A-Za-z]:/", normalized_relative_path)
+        or ".." in relative_parts
+    ):
         raise ValueError("Paths must stay within the bound workspace root.")
     if ".git" in relative_parts:
         raise ValueError("Paths inside .git are not exposed through repo tools.")
+    if is_secret_path(normalized_relative_path):
+        raise PermissionError("Secret files are not exposed through repo tools.")
 
-    target_path = (workspace_root / normalized_relative_path).resolve()
+    unresolved_target = workspace_root / normalized_relative_path
+    if has_link_or_reparse_component(workspace_root, unresolved_target):
+        raise ValueError("Symbolic-link paths are not exposed through repo tools.")
+    target_path = unresolved_target.resolve()
     try:
-        target_path.relative_to(workspace_root)
+        resolved_relative_path = target_path.relative_to(workspace_root)
     except ValueError as error:
         raise ValueError("Paths must stay within the bound workspace root.") from error
+    resolved_relative = resolved_relative_path.as_posix()
+    if ".git" in resolved_relative_path.parts:
+        raise ValueError("Paths inside .git are not exposed through repo tools.")
+    if is_secret_path(resolved_relative):
+        raise PermissionError("Secret files are not exposed through repo tools.")
 
     allowed_roots = _resolve_allowed_roots(workspace_root)
-    if not any(_is_relative_to(target_path, allowed_root) for allowed_root in allowed_roots):
-        raise ValueError("Paths must stay within the configured allowed repository directories.")
+    if not any(
+        _is_relative_to(target_path, allowed_root) for allowed_root in allowed_roots
+    ):
+        raise ValueError(
+            "Paths must stay within the configured allowed repository directories."
+        )
 
-    return target_path, "." if normalized_relative_path == "." else target_path.relative_to(workspace_root).as_posix()
+    return target_path, (
+        "."
+        if normalized_relative_path == "."
+        else target_path.relative_to(workspace_root).as_posix()
+    )
 
 
 def _resolve_allowed_roots(workspace_root: Path) -> list[Path]:
@@ -504,17 +690,29 @@ def _resolve_allowed_roots(workspace_root: Path) -> list[Path]:
     return allowed_roots or [workspace_root]
 
 
-def _iter_search_files(search_root: Path, include_hidden: bool) -> Iterable[Path]:
+def _iter_search_files(
+    search_root: Path,
+    include_hidden: bool,
+    workspace_root: Path,
+) -> Iterable[Path]:
     if search_root.is_file():
-        yield search_root
+        if not _should_skip_path(
+            search_root, include_hidden
+        ) and _path_resolves_within_workspace(search_root, workspace_root):
+            yield search_root
         return
 
-    for root, directories, files in os.walk(search_root):
+    for root, directories, files in os.walk(search_root, followlinks=False):
         root_path = Path(root)
         directories[:] = [
             directory_name
-            for directory_name in sorted(directories, key=lambda candidate: candidate.lower())
+            for directory_name in sorted(
+                directories, key=lambda candidate: candidate.lower()
+            )
             if not _should_skip_path(root_path / directory_name, include_hidden)
+            and _path_resolves_within_workspace(
+                root_path / directory_name, workspace_root
+            )
         ]
         for file_name in sorted(files, key=lambda candidate: candidate.lower()):
             candidate_path = root_path / file_name
@@ -522,20 +720,41 @@ def _iter_search_files(search_root: Path, include_hidden: bool) -> Iterable[Path
                 continue
             if not candidate_path.is_file():
                 continue
+            if not _path_resolves_within_workspace(candidate_path, workspace_root):
+                continue
             yield candidate_path
 
 
 def _should_skip_path(candidate_path: Path, include_hidden: bool) -> bool:
+    if has_link_or_reparse_component(
+        candidate_path.parent,
+        candidate_path,
+    ):
+        return True
     if any(part in IGNORE_DIRECTORY_NAMES for part in candidate_path.parts):
         return True
-    if not include_hidden and any(part.startswith(".") for part in candidate_path.parts):
+    if _is_denied_repository_path(candidate_path.as_posix()):
+        return True
+    if not include_hidden and any(
+        part.startswith(".") for part in candidate_path.parts
+    ):
         return True
     return False
 
 
 def _detect_symbol_kind(line: str) -> str | None:
     lowered_line = line.lower()
-    for symbol_kind in ("class", "interface", "type", "enum", "function", "const", "let", "var", "def"):
+    for symbol_kind in (
+        "class",
+        "interface",
+        "type",
+        "enum",
+        "function",
+        "const",
+        "let",
+        "var",
+        "def",
+    ):
         if re.search(rf"\b{re.escape(symbol_kind)}\b", lowered_line):
             return symbol_kind
     if "export " in lowered_line:
@@ -547,28 +766,63 @@ def _is_binary_bytes(file_bytes: bytes) -> bool:
     return b"\x00" in file_bytes[:4096]
 
 
-def _run_git_readonly(workspace_root: Path, args: list[str]) -> str:
+def validate_git_revision(candidate: Any, *, field_name: str) -> str:
+    """Validate a single Git revision without permitting option or path injection."""
+
+    revision = str(candidate or "")
+    if not GIT_REVISION_PATTERN.fullmatch(revision) or ".." in revision:
+        raise ValueError(f"{field_name} must be a single safe Git revision.")
+    return revision
+
+
+def _run_git_readonly(
+    workspace_root: Path,
+    args: list[str],
+    *,
+    timeout_ms: int = DEFAULT_GIT_TIMEOUT_MS,
+    max_output_chars: int = DEFAULT_GIT_OUTPUT_MAX_CHARS,
+    cancellation_event: threading.Event | None = None,
+    preserve_nul: bool = False,
+) -> str:
     if not ((workspace_root / ".git").exists() or (workspace_root / ".git").is_file()):
         raise ValueError(f'Workspace root "{workspace_root}" is not a git repository.')
 
-    completed_process = subprocess.run(
-        ["git", "-C", str(workspace_root), *args],
-        capture_output=True,
-        check=False,
-        encoding="utf-8",
-        errors="replace",
-        shell=False,
-        env={
-            **os.environ,
-            "GIT_PAGER": "cat",
-            "LC_ALL": "C",
-            "LANG": "C",
-        },
+    completed_process = run_bounded_process(
+        [
+            "git",
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "credential.helper=",
+            "-C",
+            str(workspace_root),
+            *args,
+        ],
+        cwd=workspace_root,
+        timeout_ms=timeout_ms,
+        max_output_chars=max_output_chars,
+        cancellation_event=cancellation_event,
+        preserve_nul=preserve_nul,
     )
-    if completed_process.returncode != 0:
-        error_message = completed_process.stderr.strip() or completed_process.stdout.strip() or "git command failed"
+    if completed_process.exit_code != 0:
+        error_message = (
+            completed_process.stderr.strip()
+            or completed_process.stdout.strip()
+            or "git command failed"
+        )
         raise ValueError(error_message)
     return completed_process.stdout
+
+
+def _path_resolves_within_workspace(candidate_path: Path, workspace_root: Path) -> bool:
+    try:
+        resolved_path = candidate_path.resolve(strict=True)
+    except OSError:
+        return False
+    return any(
+        _is_relative_to(resolved_path, allowed_root)
+        for allowed_root in _resolve_allowed_roots(workspace_root.resolve())
+    )
 
 
 def _is_relative_to(candidate_path: Path, parent_path: Path) -> bool:
@@ -577,6 +831,48 @@ def _is_relative_to(candidate_path: Path, parent_path: Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+def _is_denied_repository_path(candidate: str) -> bool:
+    normalized = candidate.replace("\\", "/")
+    return is_secret_path(normalized) or is_secret_workspace_path(Path(normalized))
+
+
+def _filter_denied_diff_sections(diff_text: str) -> str:
+    if not diff_text:
+        return ""
+    sections: list[list[str]] = []
+    current_section: list[str] | None = None
+    for line in diff_text.splitlines(keepends=True):
+        if line.startswith("diff --git "):
+            current_section = [line]
+            sections.append(current_section)
+            continue
+        if current_section is None:
+            if line.strip():
+                raise PermissionError(
+                    "Git diff output did not use the expected format."
+                )
+            continue
+        current_section.append(line)
+
+    allowed_sections: list[str] = []
+    for section_lines in sections:
+        section = "".join(section_lines)
+        try:
+            paths = parse_patch_paths(section)
+        except ValueError as error:
+            raise PermissionError("Git diff contained an unsafe path.") from error
+        if not paths:
+            raise PermissionError("Git diff did not identify a bounded path.")
+        if any(_is_denied_repository_path(path) for path in paths):
+            continue
+        allowed_sections.append(section)
+    return "".join(allowed_sections)
+
+
+def _sanitize_repository_path(candidate: str) -> str:
+    return strip_unsafe_output_controls(candidate.replace("\\", "/"))[:4_096]
 
 
 def _resolve_remote_source_type() -> str | None:

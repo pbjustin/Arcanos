@@ -1,5 +1,12 @@
 import express, { NextFunction, Request, Response } from 'express';
-import { loadModuleDefinitions, ModuleDef } from '@services/moduleLoader.js';
+import {
+  loadModuleDefinitions,
+  type ModuleActionMetadata,
+  type ModuleActionExecutionTarget,
+  type ModuleActionRisk,
+  type ModuleDef,
+  type ModuleHandlerContext
+} from '@services/moduleLoader.js';
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { logger } from "@platform/logging/structuredLogging.js";
 import { sendBadRequest, sendNotFound, sendInternalErrorPayload } from '@shared/http/index.js';
@@ -16,6 +23,10 @@ const router = express.Router();
 const registryByRoute = new Map<string, ModuleDef>();
 const registryByName = new Map<string, ModuleDef>();
 const moduleRoutes = new Map<string, string>();
+
+type ResolvedModuleActionMetadata = ModuleActionMetadata & {
+  requiresConfirmation: boolean;
+};
 
 type ModuleDispatchRequestBody = {
   module?: string;
@@ -37,10 +48,153 @@ export class ModuleActionNotFoundError extends Error {
   }
 }
 
+export class ModuleAccessDeniedError extends Error {
+  constructor(moduleName: string) {
+    super(`Module access denied: ${moduleName}`);
+    this.name = 'ModuleAccessDeniedError';
+  }
+}
+
+function isModuleActionRisk(value: unknown): value is ModuleActionRisk {
+  return value === 'readonly' || value === 'privileged' || value === 'destructive';
+}
+
+function isModuleActionExecutionTarget(
+  value: unknown
+): value is ModuleActionExecutionTarget {
+  return value === 'typescript' || value === 'python-daemon';
+}
+
+function isJsonSchemaObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function isValidDeviceScope(value: unknown): value is string {
+  return typeof value === 'string'
+    && /^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/u.test(value);
+}
+
+function resolveModuleActionMetadata(
+  mod: ModuleDef,
+  action: string
+): ResolvedModuleActionMetadata {
+  const candidate = mod.actionMetadata?.[action] as ModuleActionMetadata | undefined;
+  if (
+    !candidate
+    || !isModuleActionRisk(candidate.risk)
+    || (
+      candidate.requiresConfirmation !== undefined
+      && typeof candidate.requiresConfirmation !== 'boolean'
+    )
+    || (
+      candidate.readOnly !== undefined
+      && (
+        typeof candidate.readOnly !== 'boolean'
+        || candidate.readOnly !== (candidate.risk === 'readonly')
+      )
+    )
+    || (
+      candidate.mayModifyFiles !== undefined
+      && (
+        typeof candidate.mayModifyFiles !== 'boolean'
+        || (candidate.risk === 'readonly' && candidate.mayModifyFiles)
+      )
+    )
+  ) {
+    return {
+      risk: 'privileged',
+      requiresConfirmation: true
+    };
+  }
+
+  const description =
+    typeof candidate.description === 'string' && candidate.description.trim().length > 0
+      ? candidate.description.trim()
+      : undefined;
+  const inputSchema =
+    isJsonSchemaObject(candidate.inputSchema)
+      ? candidate.inputSchema
+      : undefined;
+  const outputSchema =
+    isJsonSchemaObject(candidate.outputSchema)
+      ? candidate.outputSchema
+      : undefined;
+  const executionTarget =
+    isModuleActionExecutionTarget(candidate.executionTarget)
+      ? candidate.executionTarget
+      : undefined;
+  const timeoutMs =
+    Number.isSafeInteger(candidate.timeoutMs)
+    && Number(candidate.timeoutMs) > 0
+      ? Number(candidate.timeoutMs)
+      : undefined;
+  const requiredDeviceScopes =
+    Array.isArray(candidate.requiredDeviceScopes)
+    && candidate.requiredDeviceScopes.length > 0
+    && candidate.requiredDeviceScopes.length <= 64
+    && candidate.requiredDeviceScopes.every(isValidDeviceScope)
+      ? [...new Set(candidate.requiredDeviceScopes)]
+      : undefined;
+
+  return {
+    ...(description ? { description } : {}),
+    risk: candidate.risk,
+    requiresConfirmation:
+      candidate.risk === 'readonly'
+        ? candidate.requiresConfirmation === true
+        : true,
+    ...(inputSchema ? { inputSchema } : {}),
+    ...(outputSchema ? { outputSchema } : {}),
+    ...(typeof candidate.idempotent === 'boolean'
+      ? { idempotent: candidate.idempotent }
+      : {}),
+    ...(executionTarget ? { executionTarget } : {}),
+    ...(timeoutMs ? { timeoutMs } : {}),
+    ...(requiredDeviceScopes ? { requiredDeviceScopes } : {}),
+    ...(typeof candidate.readOnly === 'boolean'
+      ? { readOnly: candidate.readOnly }
+      : {}),
+    ...(typeof candidate.mayModifyFiles === 'boolean'
+      ? { mayModifyFiles: candidate.mayModifyFiles }
+      : {})
+  };
+}
+
+function getResolvedModuleActionMetadata(
+  mod: ModuleDef
+): Record<string, ResolvedModuleActionMetadata> {
+  return Object.fromEntries(
+    Object.keys(mod.actions).map((action) => [
+      action,
+      resolveModuleActionMetadata(mod, action)
+    ])
+  );
+}
+
+function isLegacyModuleExposed(mod: ModuleDef): boolean {
+  return mod.gptAccessOnly !== true && mod.exposeLegacyRoute !== false;
+}
+
+function isTrustedGptAccessModuleContext(
+  context: ModuleHandlerContext | undefined
+): context is ModuleHandlerContext {
+  return Boolean(
+    context
+    && context.source === 'gpt-access'
+    && typeof context.principalId === 'string'
+    && context.principalId.trim().length > 0
+    && typeof context.workspaceId === 'string'
+    && context.workspaceId.trim().length > 0
+    && typeof context.actorKey === 'string'
+    && context.actorKey.trim().length > 0
+  );
+}
+
 function resolveRegisteredModule(moduleName: string | undefined): ModuleDef | undefined {
-  return typeof moduleName === 'string'
+  const mod = typeof moduleName === 'string'
     ? (registryByName.get(moduleName) ?? registryByRoute.get(moduleName))
     : undefined;
+  return mod && isLegacyModuleExposed(mod) ? mod : undefined;
 }
 
 function createHandler(mod: ModuleDef, route: string) {
@@ -104,7 +258,7 @@ export function registerModule(route: string, mod: ModuleDef) {
   registryByRoute.set(route, mod);
   registryByName.set(mod.name, mod);
   moduleRoutes.set(mod.name, route);
-  if (legacyGptRoutesEnabled()) {
+  if (legacyGptRoutesEnabled() && isLegacyModuleExposed(mod)) {
     router.post(`/modules/${route}`, createHandler(mod, route));
   }
 }
@@ -114,18 +268,24 @@ export function registerModule(route: string, mod: ModuleDef) {
  * Inputs/Outputs: None; returns list of module metadata without gptIds.
  * Edge cases: Returns empty list when no modules are loaded.
  */
-export function getModulesForRegistry(): Array<{
+export function getModulesForRegistry(options: {
+  includeActionMetadata?: boolean;
+} = {}): Array<{
   id: string;
   description: string | null;
   route: string | null;
   actions: string[];
+  actionMetadata?: Record<string, ResolvedModuleActionMetadata>;
 }> {
   //audit Assumption: registryByName holds current modules; risk: stale data; invariant: map values used; handling: map to safe shape.
   return Array.from(registryByName.values()).map(mod => ({
     id: mod.name,
     description: mod.description ?? null,
     route: moduleRoutes.get(mod.name) ?? null,
-    actions: Object.keys(mod.actions)
+    actions: Object.keys(mod.actions),
+    ...(options.includeActionMetadata
+      ? { actionMetadata: getResolvedModuleActionMetadata(mod) }
+      : {})
   }));
 }
 
@@ -139,8 +299,11 @@ export function getModuleMetadata(moduleName: string): {
   description: string | null;
   route: string | null;
   actions: string[];
+  actionMetadata: Record<string, ResolvedModuleActionMetadata>;
   defaultAction?: string;
   defaultTimeoutMs?: number;
+  exposeLegacyRoute?: boolean;
+  gptAccessOnly?: boolean;
 } | null {
   let mod = registryByName.get(moduleName);
   let route = moduleRoutes.get(moduleName) ?? null;
@@ -159,8 +322,11 @@ export function getModuleMetadata(moduleName: string): {
     description: mod.description ?? null,
     route,
     actions: Object.keys(mod.actions),
+    actionMetadata: getResolvedModuleActionMetadata(mod),
     defaultAction: mod.defaultAction,
     defaultTimeoutMs: mod.defaultTimeoutMs,
+    exposeLegacyRoute: mod.exposeLegacyRoute,
+    gptAccessOnly: mod.gptAccessOnly,
   };
 }
 
@@ -176,23 +342,34 @@ for (const { route, definition } of loadedModules) {
 export async function dispatchModuleAction(
   moduleName: string,
   action: string,
-  payload: unknown
+  payload: unknown,
+  context?: ModuleHandlerContext
 ): Promise<unknown> {
   const mod = registryByName.get(moduleName);
   if (!mod) throw new ModuleNotFoundError(moduleName);
   const handler = mod.actions[action];
   if (!handler) throw new ModuleActionNotFoundError(action);
-  return handler(payload);
+  if (
+    mod.gptAccessOnly === true
+    && !isTrustedGptAccessModuleContext(context)
+  ) {
+    throw new ModuleAccessDeniedError(moduleName);
+  }
+  return mod.gptAccessOnly === true
+    ? handler(payload, context)
+    : handler(payload);
 }
 
 router.get('/registry', (_req: Request, res: Response) => {
-  const modules = Array.from(registryByName.values()).map((mod) => ({
-    name: mod.name,
-    description: mod.description ?? null,
-    route: moduleRoutes.get(mod.name) ?? null,
-    actions: Object.keys(mod.actions),
-    gptIds: mod.gptIds ?? []
-  }));
+  const modules = Array.from(registryByName.values())
+    .filter(isLegacyModuleExposed)
+    .map((mod) => ({
+      name: mod.name,
+      description: mod.description ?? null,
+      route: moduleRoutes.get(mod.name) ?? null,
+      actions: Object.keys(mod.actions),
+      gptIds: mod.gptIds ?? []
+    }));
 
   res.json({
     count: modules.length,
@@ -212,7 +389,7 @@ router.get('/registry/:moduleName', (req: Request, res: Response) => {
     }
   }
 
-  if (!mod) {
+  if (!mod || !isLegacyModuleExposed(mod)) {
     return res.json({ exists: false, module: null });
   }
 

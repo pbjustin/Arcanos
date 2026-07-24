@@ -98,6 +98,9 @@ function buildDefaultBindings(modules: LoadedModule[]): Record<string, GptModule
   const defaults: Record<string, GptModuleEntry> = {};
 
   for (const { route, definition } of modules) {
+    if (definition.gptAccessOnly === true) {
+      continue;
+    }
     const entry: GptModuleEntry = { route, module: definition.name };
     const ids = Array.isArray(definition.gptIds) && definition.gptIds.length > 0
       ? definition.gptIds
@@ -134,6 +137,14 @@ function buildDefaultBindings(modules: LoadedModule[]): Record<string, GptModule
 export async function loadGptModuleMap(): Promise<Record<string, GptModuleEntry>> {
   const loadedModules = await loadModuleDefinitions();
   const defaults = buildDefaultBindings(loadedModules);
+  const gptAccessOnlyModuleKeys = new Set(
+    loadedModules
+      .filter(({ definition }) => definition.gptAccessOnly === true)
+      .flatMap(({ definition, route }) => [
+        definition.name.trim().toLowerCase(),
+        route.trim().toLowerCase()
+      ])
+  );
 
   const map: Record<string, GptModuleEntry> = { ...defaults };
 
@@ -143,7 +154,12 @@ export async function loadGptModuleMap(): Promise<Record<string, GptModuleEntry>
     try {
       const parsed = JSON.parse(raw) as Record<string, GptModuleEntry>;
       for (const [gptId, entry] of Object.entries(parsed)) {
-        if (entry.route && entry.module) {
+        if (
+          entry.route
+          && entry.module
+          && !gptAccessOnlyModuleKeys.has(entry.module.trim().toLowerCase())
+          && !gptAccessOnlyModuleKeys.has(entry.route.trim().toLowerCase())
+        ) {
           addBinding(map, gptId, entry);
         }
       }
