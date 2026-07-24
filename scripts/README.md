@@ -22,6 +22,8 @@ Automation-token flows require the backend's `ARCANOS_AUTOMATION_SECRET`.
 ## Run locally
 Common scripts:
 - `npm run docs:check` (cross-platform documentation audit)
+- `npm run docs:links -- --local-only` (maintained-document links without network access)
+- `npm run docs:links` (bounded external-link audit; network access required)
 - `./scripts/doc_audit.sh` (Bash compatibility wrapper)
 - `node scripts/validate-railway-compatibility.js`
 - `node scripts/check-railway-timeout-regressions.js --since 30m --lines 400`

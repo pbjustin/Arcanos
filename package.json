@@ -33,6 +33,8 @@
     "type-check": "npm run check:boundaries && npm run check:cef-layer-access && npm run check:routing-boundaries && npm run build:packages && tsc --noEmit",
     "reindex": "node scripts/reindex-codebase.js",
     "docs:check": "node scripts/check-documentation.mjs",
+    "docs:links": "node scripts/check-documentation-links.mjs",
+    "docs:links:test": "node --test scripts/check-documentation-links.test.mjs",
     "lint": "eslint src tests packages workers arcanos-ai-runtime",
     "lint:fix": "eslint src tests packages workers arcanos-ai-runtime --fix",
     "assistants-sync": "npx ts-node scripts/assistants-sync.ts",

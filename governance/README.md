@@ -29,6 +29,13 @@ Protect `main` in GitHub with:
 
 1. pull requests required before merging;
 2. at least one approving review; and
-3. required status checks for the `build-test` job from the `PR CI` workflow and the `require-approval` job from the `Require Human Approval (Self-Improve)` workflow.
+3. required status checks for the `build-test` job from the `PR CI`
+   workflow, the `require-approval` job from the `Require Human Approval
+   (Self-Improve)` workflow, and the `docs:check` job from the `Documentation
+   Audit` workflow.
 
-Optionally require Code Owner review. To establish ownership, copy `templates/CODEOWNERS.example` to `.github/CODEOWNERS` and replace its placeholder handles. The approval workflow is label-driven, so the same gate can be applied to another pull request by adding a covered label.
+The active [CODEOWNERS](../.github/CODEOWNERS) file routes repository,
+documentation, daemon, and workflow changes to the current maintainer.
+Optionally require Code Owner review through branch protection. The approval
+workflow is label-driven, so the same gate can be applied to another pull
+request by adding a covered label.

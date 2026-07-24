@@ -1,0 +1,97 @@
+name: Documentation Link Audit
+
+on:
+  schedule:
+    - cron: '17 13 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: documentation-link-audit
+  cancel-in-progress: false
+
+jobs:
+  documentation-links:
+    name: Documentation link integrity
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.19.0'
+
+      - name: Check maintained documentation links
+        id: audit
+        shell: bash
+        run: |
+          set +e
+          npm run docs:links -- --json-report "$RUNNER_TEMP/documentation-link-report.json" \
+            | tee "$RUNNER_TEMP/documentation-link-audit.txt"
+          AUDIT_EXIT_CODE=${PIPESTATUS[0]}
+          set -e
+          echo "exit-code=$AUDIT_EXIT_CODE" >> "$GITHUB_OUTPUT"
+
+      - name: Write job summary
+        if: always()
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFileSync, existsSync, readFileSync } from 'node:fs';
+
+          const summaryPath = process.env.GITHUB_STEP_SUMMARY;
+          const reportPath = `${process.env.RUNNER_TEMP}/documentation-link-report.json`;
+          let summary = '## Documentation link audit\n\n';
+
+          if (!existsSync(reportPath)) {
+            summary += 'The audit did not produce a report. Review the job log for the startup failure.\n';
+          } else {
+            const report = JSON.parse(readFileSync(reportPath, 'utf8'));
+            summary += [
+              '| Measure | Result |',
+              '| --- | ---: |',
+              `| Maintained Markdown files | ${report.filesScanned} |`,
+              `| Local targets passed | ${report.local.passed} |`,
+              `| Local targets failed | ${report.local.failed} |`,
+              `| External URLs passed | ${report.external.passed} |`,
+              `| External URLs failed | ${report.external.failed} |`,
+              `| External URL warnings | ${report.external.warnings} |`,
+              '',
+              report.errors === 0
+                ? 'No definitive broken links were found.'
+                : `${report.errors} definitive link failure(s) were found.`,
+              '',
+              'Transient network responses and access-restricted URLs are reported as warnings. '
+                + 'The complete redacted report is attached to this run.',
+              '',
+            ].join('\n');
+          }
+
+          appendFileSync(summaryPath, summary, 'utf8');
+          NODE
+
+      - name: Upload redacted audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: documentation-link-audit-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/documentation-link-audit.txt
+            ${{ runner.temp }}/documentation-link-report.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Fail on definitive link issues
+        if: always() && steps.audit.outputs.exit-code != '0'
+        shell: bash
+        run: |
+          echo "::error::Documentation link audit found a definitive failure or could not complete."
+          exit 1

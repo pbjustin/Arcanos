@@ -1,3 +1,16 @@
+# Default owner and current repository maintainer.
 * @pbjustin
-daemon-python/ @pbjustin
-.github/workflows/ @pbjustin
+
+# Maintained documentation, policy, and documentation-backed configuration.
+/docs/ @pbjustin
+/README.md @pbjustin
+/CONTRIBUTING.md @pbjustin
+/CHANGELOG.md @pbjustin
+/DEPRECATION.md @pbjustin
+/SECURITY.md @pbjustin
+/.env.example @pbjustin
+/daemon-python/README.md @pbjustin
+
+# Runtime-specific and automation-sensitive paths.
+/daemon-python/ @pbjustin
+/.github/workflows/ @pbjustin
