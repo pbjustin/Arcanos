@@ -539,7 +539,7 @@ def test_tests_run_rejects_symlinked_daemon_root(
 def test_patch_preview_checks_without_mutating(tmp_path: Path) -> None:
     _initialize_git_repository(tmp_path)
     sample_file = tmp_path / "sample.txt"
-    sample_file.write_text("old\n", encoding="utf-8")
+    sample_file.write_bytes(b"old\n")
     patch_text = _sample_patch()
 
     result = execute_local_agent_action(
@@ -607,7 +607,7 @@ def test_patch_apply_requires_separate_exact_payload_authorization(
 ) -> None:
     _initialize_git_repository(tmp_path)
     sample_file = tmp_path / "sample.txt"
-    sample_file.write_text("old\n", encoding="utf-8")
+    sample_file.write_bytes(b"old\n")
     patch_text = _sample_patch()
     patch_hash = hashlib.sha256(patch_text.encode("utf-8")).hexdigest()
     payload = {

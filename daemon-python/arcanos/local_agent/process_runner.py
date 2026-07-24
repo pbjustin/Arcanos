@@ -177,6 +177,7 @@ def run_bounded_process(
 
     if stdin_text is not None and process.stdin is not None:
         try:
+            process.stdin.reconfigure(newline="")
             process.stdin.write(stdin_text)
             process.stdin.close()
         except BrokenPipeError:
