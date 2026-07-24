@@ -4304,6 +4304,12 @@ describe('/gpt-access gateway', () => {
       required: ['ok', 'capabilities'],
       additionalProperties: false
     }));
+    expect(response.body.components.schemas.CapabilityV1Summary.properties.enabled).toEqual({
+      type: 'boolean'
+    });
+    expect(response.body.components.schemas.CapabilityV1Detail.properties.enabled).toEqual({
+      type: 'boolean'
+    });
     expect(response.body.components.schemas.CapabilityV1Detail.properties.actionMetadata).toEqual(
       expect.objectContaining({
         type: 'object'

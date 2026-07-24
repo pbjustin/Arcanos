@@ -2673,7 +2673,8 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
             actions: {
               type: 'array',
               items: { type: 'string' }
-            }
+            },
+            enabled: { type: 'boolean' }
           },
           required: ['id', 'description', 'route', 'actions'],
           additionalProperties: false
@@ -2689,6 +2690,7 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
               type: 'array',
               items: { type: 'string' }
             },
+            enabled: { type: 'boolean' },
             actionMetadata: {
               type: 'object',
               description: 'Machine-readable action contracts published by the registered module.',
