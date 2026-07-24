@@ -71,8 +71,10 @@ configuration.
   accepted by ActionPlan executor routes.
 - One optional previous token may overlap during rotation only when paired
   with an ISO-8601 UTC expiry no more than 24 hours ahead.
-- Python accepts only an outbound assignment whose device and principal match
-  its pinned configuration.
+- Python accepts only an outbound assignment whose device matches its pinned
+  configuration. The assignment principal is the server-controlled requesting
+  GPT Access principal; the separate executor principal is bound to the
+  purpose-specific bearer credential by TypeScript.
 - The daemon protocol requires HTTPS unless the existing explicit development
   HTTP setting is enabled, sends credentials only in the bearer header, and
   does not follow redirects.

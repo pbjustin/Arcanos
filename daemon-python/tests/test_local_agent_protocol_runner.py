@@ -116,7 +116,7 @@ def _assignment(
         job_id=JOB_ID,
         action=action,
         payload=dict(payload or {}),
-        principal="executor-principal",
+        principal="requesting-principal",
         workspace="personal",
         device_id="device-1",
         trace_id="trace-1",

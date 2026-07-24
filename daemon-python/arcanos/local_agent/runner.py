@@ -350,8 +350,6 @@ class LocalAgentExecutionRunner:
             raise ValueError("assignment protocol identity is invalid")
         if assignment.device_id != self.device_id:
             raise ValueError("assignment device mismatch")
-        if assignment.principal != self.principal_id:
-            raise ValueError("assignment principal mismatch")
 
     def _validate_execution_contract(
         self,
