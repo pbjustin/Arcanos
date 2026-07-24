@@ -49,7 +49,7 @@ if (checkOnly) {
       process.stderr.write(`Missing generated catalog: ${outputPath}\n`);
       process.exitCode = 1;
     }
-    if (current && current !== serialized) {
+    if (current && current.replace(/\r\n?/gu, '\n') !== serialized) {
       process.stderr.write(
         `Generated local-agent capability catalog is out of sync: ${outputPath}\n`
       );
