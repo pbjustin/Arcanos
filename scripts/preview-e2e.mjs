@@ -1541,12 +1541,19 @@ async function runProductivityReads(context) {
       path,
       body: { action, payload }
     });
+    const result = request.body?.result;
+    const expectsNotFound = action === 'reference.resolve';
+    const hasExpectedOutcome = expectsNotFound
+      ? result?.ok === false
+        && result?.error?.code === 'NOT_FOUND'
+        && result?.error?.recommendedAction === 'ASK_USER'
+      : result?.ok === true;
     requireCondition(
       request.response.status === 200
         && request.body?.ok === true
-        && request.body?.result?.ok === true
-        && request.body?.result?.action === action
-        && request.body?.result?.persisted === false,
+        && hasExpectedOutcome
+        && result?.action === action
+        && result?.persisted === false,
       'PRODUCTIVITY_READ_FAILED',
       'A read-only productivity action failed its protocol invariant.'
     );
@@ -1557,7 +1564,8 @@ async function runProductivityReads(context) {
       capability: PRODUCTIVITY_MODULE,
       action,
       outerOk: true,
-      innerOk: true
+      innerOk: result.ok,
+      ...(expectsNotFound ? { code: result.error.code } : {})
     }));
   }
   return evidence;
@@ -1652,7 +1660,7 @@ async function verifyLocalAgentJobTimeline(
         && event.metadata.deviceId.length > 0
         && typeof event?.metadata?.requestId === 'string'
         && event.metadata.requestId.length > 0
-        && event?.metadata?.authorizationDecision === 'allow'
+        && event?.metadata?.authorizationDecision === '[REDACTED]'
         && !containsUnsafeTimelineField(event.metadata)
       )),
     'LOCAL_AGENT_TIMELINE_MISMATCH',

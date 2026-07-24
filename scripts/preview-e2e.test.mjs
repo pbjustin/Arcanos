@@ -388,6 +388,20 @@ function createMockFetch({ challenge = false, healthDeployment } = {}) {
           confirmationChallenge: { id: 'unknown-action-challenge' }
         }, 403);
       }
+      if (parsedBody.action === 'reference.resolve') {
+        return jsonResponse({
+          ok: true,
+          result: {
+            ok: false,
+            action: parsedBody.action,
+            persisted: false,
+            error: {
+              code: 'NOT_FOUND',
+              recommendedAction: 'ASK_USER'
+            }
+          }
+        });
+      }
       return jsonResponse({
         ok: true,
         result: {
@@ -506,7 +520,7 @@ function createMockFetch({ challenge = false, healthDeployment } = {}) {
         workspace: 'preview-workspace',
         deviceId: 'preview-device',
         requestId: submitted.requestId,
-        authorizationDecision: 'allow'
+        authorizationDecision: '[REDACTED]'
       };
       const events = ['job.created', 'job.queued', 'job.completed'].map(
         (eventType, index) => ({
@@ -1051,6 +1065,11 @@ test('readonly mode executes productivity reads and bounded local-agent polling 
   assert.ok(evidence.some((record) => record.response.jobStatus === 'completed'));
   assert.ok(evidence.some((record) => record.caseId === 'local-agent-idempotency-conflict'));
   assert.ok(evidence.some((record) => record.caseId.endsWith('-timeline')));
+  assert.ok(evidence.some(
+    (record) => record.caseId === 'productivity-reference.resolve'
+      && record.response.innerOk === false
+      && record.response.code === 'NOT_FOUND'
+  ));
 });
 
 test('confirmation-challenge mode never sends approval, never polls, and records only a challenge hash', async () => {
