@@ -4165,7 +4165,12 @@ describe('/gpt-access gateway', () => {
     expect(response.body.security).toEqual([{ bearerAuth: [] }]);
     expect(response.body.paths['/gpt-access/openapi.json'].get.security).toEqual([]);
     for (const [path, methods] of Object.entries(response.body.paths)) {
-      for (const operation of Object.values(methods as Record<string, { security?: unknown }>)) {
+      for (const operation of Object.values(
+        methods as Record<string, { security?: unknown; description?: unknown }>
+      )) {
+        expect(
+          typeof operation.description === 'string' ? operation.description.length : 0
+        ).toBeLessThanOrEqual(300);
         if (path === '/gpt-access/openapi.json') {
           expect(operation.security).toEqual([]);
         } else {

@@ -3059,7 +3059,7 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
         post: {
           operationId: 'createAiJob',
           summary: 'Create an async backend AI generation job.',
-          description: 'Use for general backend AI generation, advice, explanation, planning, review, architecture, summarization, writing, and how-should prompts. For the main ARCANOS Custom GPT, send canonical gptId arcanos-core and the complete user request in task. Then poll getJobResult with the returned jobId until terminal.',
+          description: 'Use for backend AI generation, advice, explanation, planning, review, architecture, summarization, writing, and how-should prompts. Send canonical gptId arcanos-core and the complete user request in task. Poll getJobResult with the returned jobId until terminal.',
           security: protectedSecurity,
           requestBody: {
             required: true,
@@ -3262,7 +3262,7 @@ export function buildGptAccessOpenApiDocument(options: { serverUrl?: string } = 
         post: {
           operationId: 'runDispatch',
           summary: 'Resolve and run an operational GPT Access command.',
-          description: 'Operational-only natural-language entryway. Prefer dedicated GPT Access operations for runtime, worker, queue, and diagnostics reads; use this for other explicit status or control commands. Resolves utterance -> DispatchPlan -> registry validation -> scope/allowlist/risk policy -> confirmation when required -> an existing runner. General generation and advisory prompts must use createAiJob. This does not restore /ask.',
+          description: 'Operational natural-language entryway. Prefer dedicated GPT Access operations for runtime, worker, queue, and diagnostics. Resolves a DispatchPlan, validates policy, then confirms and runs when allowed. General generation and advisory prompts must use createAiJob. This does not restore /ask.',
           security: protectedSecurity,
           parameters: [
             {
