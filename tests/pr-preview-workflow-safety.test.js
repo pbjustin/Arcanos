@@ -14,7 +14,7 @@ const providerBearingPrJobs = [
   },
   {
     path: '.github/workflows/auto-update-documentation.yml',
-    job: 'update-docs',
+    job: 'analyze',
     expectedGate: "if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'",
   },
 ];
