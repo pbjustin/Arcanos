@@ -91,6 +91,7 @@ both be installed as `arcanos`; their guides explain unambiguous invocation.
 | [Railway rationale](RAILWAY_RATIONALE.md) | Companion | Why Railway is the preferred target and when to reconsider. |
 | [Startup resilience](STARTUP_RESILIENCE.md) | Canonical | Listener, dependency lifecycle, and health semantics. |
 | [Redis resilience runbook](REDIS_RESILIENCE_RUNBOOK.md) | Canonical | Redis outage diagnosis and recovery boundaries. |
+| [Local-agent preview E2E report](PREVIEW_E2E_REPORT.md) | Historical | Dated isolated-preview deployment, security, test, confirmation, and teardown evidence. |
 | [Railway Redis lifecycle preview](RAILWAY_REDIS_LIFECYCLE_PREVIEW.md) | Design-only / approval-gated | Isolated preview proof procedure; not routine validation or deployment authority. |
 
 Operational prose does not authorize live probes, deployments, restarts,
