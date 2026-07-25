@@ -50,6 +50,18 @@ describe("CLI security policy helpers", () => {
     });
   });
 
+  it("rejects the legacy probe command because it can expose configured secrets", () => {
+    const decision = evaluateCliCommandPolicy({
+      command: "npm run probe",
+      workspaceRoot
+    });
+
+    expect(decision).toMatchObject({
+      allowed: false,
+      reason: "command_not_allowlisted"
+    });
+  });
+
   it("denies cwd outside the workspace sandbox", () => {
     const decision = evaluateCliCommandPolicy({
       command: "npm test",
@@ -65,7 +77,7 @@ describe("CLI security policy helpers", () => {
 
   it("allows safe commands inside the workspace with bounded timeout defaults", () => {
     const decision = evaluateCliCommandPolicy({
-      command: "npm run probe",
+      command: "npm run build:packages",
       cwd: "packages/cli",
       workspaceRoot,
       timeoutMs: 999999

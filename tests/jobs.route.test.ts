@@ -21,6 +21,7 @@ const QUEUED_JOB_ID = '55555555-5555-4555-8555-555555555555';
 const CANCEL_REQUEST_JOB_ID = '66666666-6666-4666-8666-666666666666';
 const TERMINAL_JOB_ID = '77777777-7777-4777-8777-777777777777';
 const TRUNCATED_JOB_ID = '88888888-8888-4888-8888-888888888888';
+const LOCAL_AGENT_JOB_ID = '99999999-9999-4999-8999-999999999999';
 
 function buildApp() {
   const app = express();
@@ -225,6 +226,99 @@ describe('/jobs routes', () => {
       idempotency_until: '2026-04-06T10:03:00.000Z',
       expires_at: '2026-04-06T10:05:00.000Z'
     });
+  });
+
+  it('hides local-agent status and result records exactly like missing jobs', async () => {
+    const localAgentJob = {
+      id: LOCAL_AGENT_JOB_ID,
+      job_type: 'local-agent',
+      status: 'completed',
+      created_at: '2026-07-24T10:00:00.000Z',
+      updated_at: '2026-07-24T10:01:00.000Z',
+      completed_at: '2026-07-24T10:01:00.000Z',
+      error_message: null,
+      output: {
+        stdout: 'private local-agent output'
+      },
+      cancel_requested_at: null,
+      cancel_reason: null
+    };
+
+    getJobByIdMock
+      .mockResolvedValueOnce(localAgentJob)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(localAgentJob)
+      .mockResolvedValueOnce(null);
+
+    const localStatus = await request(buildApp()).get(`/jobs/${LOCAL_AGENT_JOB_ID}`);
+    const missingStatus = await request(buildApp()).get(`/jobs/${LOCAL_AGENT_JOB_ID}`);
+    const localResult = await request(buildApp()).get(`/jobs/${LOCAL_AGENT_JOB_ID}/result`);
+    const missingResult = await request(buildApp()).get(`/jobs/${LOCAL_AGENT_JOB_ID}/result`);
+
+    expect(localStatus.status).toBe(404);
+    expect(localStatus.body).toEqual(missingStatus.body);
+    expect(localResult.status).toBe(200);
+    expect(localResult.body).toEqual(missingResult.body);
+    expect(JSON.stringify(localResult.body)).not.toContain('private local-agent output');
+  });
+
+  it('hides local-agent streams exactly like missing jobs', async () => {
+    const localAgentJob = {
+      id: LOCAL_AGENT_JOB_ID,
+      job_type: 'local-agent',
+      status: 'running',
+      created_at: '2026-07-24T10:00:00.000Z',
+      updated_at: '2026-07-24T10:01:00.000Z',
+      completed_at: null,
+      error_message: null,
+      output: {
+        stdout: 'private local-agent output'
+      },
+      cancel_requested_at: null,
+      cancel_reason: null
+    };
+    getJobByIdMock
+      .mockResolvedValueOnce(localAgentJob)
+      .mockResolvedValueOnce(null);
+
+    const localStream = await request(buildApp()).get(`/jobs/${LOCAL_AGENT_JOB_ID}/stream`);
+    const missingStream = await request(buildApp()).get(`/jobs/${LOCAL_AGENT_JOB_ID}/stream`);
+
+    expect(localStream.status).toBe(404);
+    expect(localStream.body).toEqual(missingStream.body);
+    expect(JSON.stringify(localStream.body)).not.toContain('private local-agent output');
+  });
+
+  it('hides local-agent cancellation records exactly like missing jobs', async () => {
+    const localAgentJob = {
+      id: LOCAL_AGENT_JOB_ID,
+      job_type: 'local-agent',
+      status: 'running',
+      idempotency_scope_hash: hashActorKey('session:owner-1'),
+      created_at: '2026-07-24T10:00:00.000Z',
+      updated_at: '2026-07-24T10:01:00.000Z',
+      completed_at: null,
+      error_message: null,
+      output: null,
+      cancel_requested_at: null,
+      cancel_reason: null
+    };
+    getJobByIdMock
+      .mockResolvedValueOnce(localAgentJob)
+      .mockResolvedValueOnce(null);
+
+    const localCancellation = await request(buildApp())
+      .post(`/jobs/${LOCAL_AGENT_JOB_ID}/cancel`)
+      .set('x-confirmed', 'yes')
+      .set('x-session-id', 'owner-1');
+    const missingCancellation = await request(buildApp())
+      .post(`/jobs/${LOCAL_AGENT_JOB_ID}/cancel`)
+      .set('x-confirmed', 'yes')
+      .set('x-session-id', 'owner-1');
+
+    expect(localCancellation.status).toBe(404);
+    expect(localCancellation.body).toEqual(missingCancellation.body);
+    expect(requestJobCancellationMock).not.toHaveBeenCalled();
   });
 
   it('rejects anonymous cancellation requests', async () => {

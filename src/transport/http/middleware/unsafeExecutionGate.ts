@@ -25,9 +25,15 @@ const GPT_ACCESS_READONLY_POST_PATHS = new Set([
   '/gpt-access/logs/query',
   '/gpt-access/mcp'
 ]);
+const LOCAL_AGENT_LIFECYCLE_PATH_PATTERN =
+  /^\/gpt-access\/local-agent\/(?:heartbeat|jobs\/[0-9a-f-]{36}\/(?:heartbeat|result))$/iu;
 
-function isGptAccessReadOnlyRequest(req: Request): boolean {
-  return req.method.toUpperCase() === 'POST' && GPT_ACCESS_READONLY_POST_PATHS.has(req.path);
+function isGptAccessSafetyExemptRequest(req: Request): boolean {
+  return req.method.toUpperCase() === 'POST'
+    && (
+      GPT_ACCESS_READONLY_POST_PATHS.has(req.path)
+      || LOCAL_AGENT_LIFECYCLE_PATH_PATTERN.test(req.path)
+    );
 }
 
 /**
@@ -49,9 +55,9 @@ export function unsafeExecutionGate(req: Request, res: Response, next: NextFunct
     return;
   }
 
-  if (isGptAccessReadOnlyRequest(req)) {
+  if (isGptAccessSafetyExemptRequest(req)) {
     req.logger?.info?.('unsafe_execution_gate.bypass', {
-      reason: 'gpt_access_readonly',
+      reason: 'gpt_access_read_or_reconciliation',
       path: req.path
     });
     next();

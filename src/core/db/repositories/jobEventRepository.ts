@@ -1,3 +1,5 @@
+import type { PoolClient } from 'pg';
+
 import { isDatabaseConnected } from '@core/db/client.js';
 import { query } from '@core/db/query.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
@@ -17,6 +19,7 @@ export const JOB_EVENT_TYPES = [
   'job.retry.scheduled',
   'job.completed',
   'job.failed',
+  'job.expired',
   'worker.heartbeat',
   'worker.stale_detected',
   'worker.recovered'
@@ -39,6 +42,16 @@ export interface RecordJobEventInput {
   workerId?: string | null;
   durationMs?: number | null;
   metadata?: Record<string, unknown>;
+}
+
+export class JobEventPersistenceError extends Error {
+  constructor(
+    public readonly code: 'JOB_EVENT_SERIALIZATION_FAILED' | 'JOB_EVENT_INSERT_FAILED',
+    message: string
+  ) {
+    super(message);
+    this.name = 'JobEventPersistenceError';
+  }
 }
 
 export type RecordJobEventResult =
@@ -71,6 +84,16 @@ export interface ListJobEventTimelineInput {
   occurredAfter?: string | Date | null;
   occurredBefore?: string | Date | null;
   limit?: number | null;
+  /**
+   * Controls local-agent visibility without changing the legacy internal
+   * timeline behavior. Undefined is reserved for trusted internal callers,
+   * null excludes every local-agent job, and a scope exposes only matching
+   * server-owned local-agent jobs.
+   */
+  localAgentScope?: {
+    principalId: string;
+    workspaceId: string;
+  } | null;
 }
 
 export interface JobEventTimelineRow {
@@ -87,6 +110,11 @@ export interface JobEventTimelineRow {
 export type ListJobEventTimelineResult =
   | { available: true; events: JobEventTimelineRow[] }
   | { available: false; reason: 'database_unavailable' | 'table_unavailable' | 'query_failed'; events: [] };
+
+export interface JobEventTimelineQuery {
+  text: string;
+  params: unknown[];
+}
 
 function normalizeNullableString(value: string | null | undefined): string | null {
   if (typeof value !== 'string') {
@@ -141,6 +169,63 @@ function normalizeJsonbInput(value: Record<string, unknown> | undefined): string
   });
 }
 
+function buildJobEventInsert(input: RecordJobEventInput): {
+  sql: string;
+  params: unknown[];
+} {
+  const serializedMetadata = normalizeJsonbInput(input.metadata);
+  if (!serializedMetadata) {
+    throw new JobEventPersistenceError(
+      'JOB_EVENT_SERIALIZATION_FAILED',
+      'Job event metadata could not be serialized.'
+    );
+  }
+
+  return {
+    sql: `INSERT INTO job_events (
+       job_id,
+       trace_id,
+       event_type,
+       worker_id,
+       duration_ms,
+       metadata
+     )
+     VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
+    params: [
+      input.jobId,
+      normalizeNullableString(input.traceId),
+      input.eventType,
+      normalizeNullableString(input.workerId),
+      normalizeDurationMs(input.durationMs),
+      serializedMetadata
+    ]
+  };
+}
+
+/**
+ * Persist a job event through an existing transaction.
+ *
+ * Unlike the best-effort public recorder, this helper throws so a caller can
+ * keep a canonical job transition and its lifecycle evidence atomic.
+ */
+export async function recordJobEventWithClient(
+  client: PoolClient,
+  input: RecordJobEventInput
+): Promise<void> {
+  const insert = buildJobEventInsert(input);
+  try {
+    await client.query(insert.sql, insert.params);
+  } catch (error) {
+    if (error instanceof JobEventPersistenceError) {
+      throw error;
+    }
+    throw new JobEventPersistenceError(
+      'JOB_EVENT_INSERT_FAILED',
+      'Job event could not be persisted in the current transaction.'
+    );
+  }
+}
+
 export async function recordJobEvent(input: RecordJobEventInput): Promise<RecordJobEventResult> {
   if (!isDatabaseConnected()) {
     recordJobEventInsertFailure('database_unavailable');
@@ -156,38 +241,11 @@ export async function recordJobEvent(input: RecordJobEventInput): Promise<Record
   }
 
   try {
-    const serializedMetadata = normalizeJsonbInput(input.metadata);
-    if (!serializedMetadata) {
-      recordJobEventInsertFailure('serialization_failed');
-      dbLogger.warn('job_events.insert_skipped', {
-        module: 'job-events',
-        jobId: input.jobId,
-        eventType: input.eventType,
-        workerId: normalizeNullableString(input.workerId),
-        traceId: normalizeNullableString(input.traceId),
-        reason: 'serialization_failed'
-      });
-      return { inserted: false, reason: 'serialization_failed' };
-    }
+    const insert = buildJobEventInsert(input);
 
     await query(
-      `INSERT INTO job_events (
-         job_id,
-         trace_id,
-         event_type,
-         worker_id,
-         duration_ms,
-         metadata
-       )
-       VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
-      [
-        input.jobId,
-        normalizeNullableString(input.traceId),
-        input.eventType,
-        normalizeNullableString(input.workerId),
-        normalizeDurationMs(input.durationMs),
-        serializedMetadata
-      ],
+      insert.sql,
+      insert.params,
       JOB_EVENT_INSERT_RETRY_COUNT,
       false,
       {
@@ -198,7 +256,11 @@ export async function recordJobEvent(input: RecordJobEventInput): Promise<Record
     );
     return { inserted: true };
   } catch (error: unknown) {
-    recordJobEventInsertFailure('insert_failed');
+    const reason = error instanceof JobEventPersistenceError
+      && error.code === 'JOB_EVENT_SERIALIZATION_FAILED'
+      ? 'serialization_failed'
+      : 'insert_failed';
+    recordJobEventInsertFailure(reason);
     const errorMetadata = redactSensitive({
       errorMessage: resolveErrorMessage(error)
     }) as Record<string, unknown>;
@@ -209,11 +271,12 @@ export async function recordJobEvent(input: RecordJobEventInput): Promise<Record
         jobId: input.jobId,
         eventType: input.eventType,
         workerId: normalizeNullableString(input.workerId),
-        traceId: normalizeNullableString(input.traceId)
+        traceId: normalizeNullableString(input.traceId),
+        reason
       },
       errorMetadata
     );
-    return { inserted: false, reason: 'insert_failed' };
+    return { inserted: false, reason };
   }
 }
 
@@ -324,13 +387,14 @@ export async function cleanupJobEvents(
   }
 }
 
-export async function listJobEventTimeline(
+/**
+ * Builds the exact parameterized query used for timeline reads. Keeping this
+ * separate makes the tenant boundary executable against isolated PostgreSQL
+ * fixtures without requiring the repository's process-wide connection pool.
+ */
+export function buildJobEventTimelineQuery(
   input: ListJobEventTimelineInput = {}
-): Promise<ListJobEventTimelineResult> {
-  if (!isDatabaseConnected()) {
-    return { available: false, reason: 'database_unavailable', events: [] };
-  }
-
+): JobEventTimelineQuery {
   const conditions: string[] = [];
   const params: unknown[] = [];
   const addCondition = (sql: string, value: unknown): void => {
@@ -340,27 +404,45 @@ export async function listJobEventTimeline(
 
   const jobId = normalizeNullableString(input.jobId ?? null);
   if (jobId) {
-    addCondition('job_id = ?', jobId);
+    addCondition('event.job_id = ?', jobId);
   }
   const traceId = normalizeNullableString(input.traceId ?? null);
   if (traceId) {
-    addCondition('trace_id = ?', traceId);
+    addCondition('event.trace_id = ?', traceId);
   }
   const workerId = normalizeNullableString(input.workerId ?? null);
   if (workerId) {
-    addCondition('worker_id = ?', workerId);
+    addCondition('event.worker_id = ?', workerId);
   }
   const eventType = normalizeNullableString(input.eventType ?? null);
   if (eventType) {
-    addCondition('event_type = ?', eventType);
+    addCondition('event.event_type = ?', eventType);
   }
   const occurredAfter = normalizeDateInput(input.occurredAfter);
   if (occurredAfter) {
-    addCondition('occurred_at >= ?::timestamptz', occurredAfter);
+    addCondition('event.occurred_at >= ?::timestamptz', occurredAfter);
   }
   const occurredBefore = normalizeDateInput(input.occurredBefore);
   if (occurredBefore) {
-    addCondition('occurred_at <= ?::timestamptz', occurredBefore);
+    addCondition('event.occurred_at <= ?::timestamptz', occurredBefore);
+  }
+  if (input.localAgentScope !== undefined) {
+    const principalId = normalizeNullableString(input.localAgentScope?.principalId);
+    const workspaceId = normalizeNullableString(input.localAgentScope?.workspaceId);
+    if (!principalId || !workspaceId) {
+      conditions.push("job.job_type IS DISTINCT FROM 'local-agent'");
+    } else {
+      params.push(principalId);
+      const principalParam = `$${params.length}`;
+      params.push(workspaceId);
+      const workspaceParam = `$${params.length}`;
+      conditions.push(
+        `(job.job_type IS DISTINCT FROM 'local-agent' OR (` +
+          `job.job_type = 'local-agent' ` +
+          `AND job.input->'job'->>'principal' = ${principalParam} ` +
+          `AND job.input->'job'->>'workspace' = ${workspaceParam}))`
+      );
+    }
   }
 
   const limit = normalizePositiveInteger(
@@ -371,15 +453,34 @@ export async function listJobEventTimeline(
   params.push(limit);
 
   const whereSql = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+  const jobJoinSql = input.localAgentScope !== undefined
+    ? 'INNER JOIN job_data AS job ON job.id = event.job_id'
+    : '';
 
+  return {
+    text: `SELECT event.id, event.job_id, event.trace_id, event.event_type,
+                  event.worker_id, event.occurred_at, event.duration_ms, event.metadata
+           FROM job_events AS event
+           ${jobJoinSql}
+           ${whereSql}
+           ORDER BY event.occurred_at ASC, event.id ASC
+           LIMIT $${params.length}`,
+    params
+  };
+}
+
+export async function listJobEventTimeline(
+  input: ListJobEventTimelineInput = {}
+): Promise<ListJobEventTimelineResult> {
+  if (!isDatabaseConnected()) {
+    return { available: false, reason: 'database_unavailable', events: [] };
+  }
+
+  const timelineQuery = buildJobEventTimelineQuery(input);
   try {
     const result = await query(
-      `SELECT id, job_id, trace_id, event_type, worker_id, occurred_at, duration_ms, metadata
-       FROM job_events
-       ${whereSql}
-       ORDER BY occurred_at ASC, id ASC
-       LIMIT $${params.length}`,
-      params,
+      timelineQuery.text,
+      timelineQuery.params,
       3,
       false,
       {

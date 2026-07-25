@@ -35,6 +35,10 @@ function isTerminalJobStatus(status: JobData['status']): boolean {
   return isGptJobTerminalStatus(status);
 }
 
+function isLocalAgentJob(job: JobData | null): boolean {
+  return job?.job_type === 'local-agent';
+}
+
 function writeSseEvent(
   res: express.Response,
   event: string,
@@ -96,7 +100,7 @@ router.get(
     const requestId = (req as any).requestId;
 
     const job = await getJobById(id);
-    if (!job) {
+    if (!job || isLocalAgentJob(job)) {
       req.logger?.warn?.('gpt.job.status_lookup.not_found', {
         endpoint: req.originalUrl,
         jobId: id,
@@ -140,7 +144,8 @@ router.get(
     const { id } = req.validated!.params as z.infer<typeof jobIdSchema>;
     const requestId = (req as any).requestId;
     const job = await getJobById(id);
-    const jobLookup = buildGptJobResultLookupPayload(id, job);
+    const publicJob = isLocalAgentJob(job) ? null : job;
+    const jobLookup = buildGptJobResultLookupPayload(id, publicJob);
 
     req.logger?.info?.(
       jobLookup.status === 'not_found'
@@ -198,7 +203,7 @@ router.post(
         : 'Job cancellation requested by client.';
     const job = await getJobById(id);
 
-    if (!job) {
+    if (!job || isLocalAgentJob(job)) {
       sendJobsJsonResponse(req, res, { error: 'JOB_NOT_FOUND' }, 'jobs.cancel.not_found', 404);
       return;
     }
@@ -269,7 +274,7 @@ router.get(
     const { id } = req.validated!.params as z.infer<typeof jobIdSchema>;
     const initialJob = await getJobById(id);
 
-    if (!initialJob) {
+    if (!initialJob || isLocalAgentJob(initialJob)) {
       sendNotFound(res, 'JOB_NOT_FOUND');
       return;
     }

@@ -148,6 +148,11 @@ export {
   type SessionStorageMetrics
 } from './repositories/sessionRepository.js';
 
+export {
+  createProductivityRepository,
+  getProductivityRepository
+} from './repositories/productivityRepository.js';
+
 // Adapter exports
 export {
   createAuditStore,

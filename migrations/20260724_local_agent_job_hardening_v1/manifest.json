@@ -1,0 +1,9 @@
+{
+  "version": "20260724_local_agent_job_hardening_v1",
+  "schemaLabel": "local-agent-job-idempotency-v1",
+  "advisoryLockKey": "7107330653364424017",
+  "checksum": "75cf9f3a914fafbd8d1ad453a2f47c5f930e8f2bdf45ac6e61f672c74f775bed",
+  "forwardPath": "01_local_agent_job_idempotency.sql",
+  "compensationPath": "compensate_preview_empty.sql",
+  "transactional": true
+}

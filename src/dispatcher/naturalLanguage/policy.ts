@@ -20,6 +20,14 @@ function isProhibitedActionName(action: string): boolean {
   return PROHIBITED_ACTION_PATTERNS.some((pattern) => pattern.test(action));
 }
 
+function isDirectOnlyLocalAgentAction(
+  action: DispatchRegistryAction
+): boolean {
+  return action.runner.kind === 'gpt-access-capability'
+    && action.runner.capabilityId.toUpperCase() === 'ARCANOS:LOCAL_AGENT'
+    && dispatchActionRequiresConfirmation(action);
+}
+
 function buildDecision(input: {
   status: DispatchPolicyDecision['status'];
   allowed: boolean;
@@ -88,7 +96,11 @@ export function evaluateDispatchPolicy(input: {
     });
   }
 
-  if (registryAction.risk === 'destructive' || isProhibitedActionName(registryAction.action)) {
+  if (
+    registryAction.risk === 'destructive'
+    || isProhibitedActionName(registryAction.action)
+    || isDirectOnlyLocalAgentAction(registryAction)
+  ) {
     return buildDecision({
       status: 'blocked',
       allowed: false,

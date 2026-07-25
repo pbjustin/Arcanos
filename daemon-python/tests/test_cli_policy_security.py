@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import pytest
+
 from arcanos.cli.cli_policy import (
     evaluate_command_policy,
+    parse_patch_paths,
     redact_output,
     validate_patch_text,
 )
@@ -22,6 +25,18 @@ def test_command_policy_rejects_unconfirmed_dangerous_or_malformed(monkeypatch, 
     assert evaluate_command_policy("rm -rf .", cwd=str(tmp_path)).allowed is False
     assert evaluate_command_policy("git status\nnpm run build", cwd=str(tmp_path)).allowed is False
     assert evaluate_command_policy("node -e \"console.log(1)\"", cwd=str(tmp_path)).reason == "command_not_allowlisted"
+
+
+def test_command_policy_rejects_legacy_probe_that_can_expose_secrets(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("ARCANOS_CLI_SANDBOX_ROOT", str(tmp_path))
+
+    decision = evaluate_command_policy("npm run probe", cwd=str(tmp_path))
+
+    assert decision.allowed is False
+    assert decision.reason == "command_not_allowlisted"
 
 
 def test_redaction_and_truncation_use_shared_policy() -> None:
@@ -58,16 +73,92 @@ def test_patch_policy_rejects_secret_paths_and_sensitive_content(monkeypatch, tm
     assert validate_patch_text(key_patch, str(tmp_path)).reason == "patch_denied_by_policy"
 
 
+def test_patch_policy_decodes_git_quoted_octal_secret_paths(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("ARCANOS_CLI_SANDBOX_ROOT", str(tmp_path))
+    patch = "\n".join(
+        [
+            r'diff --git "a/\056env" "b/\056env"',
+            r'--- "a/\056env"',
+            r'+++ "b/\056env"',
+            "@@ -1 +1 @@",
+            "-old",
+            "+new",
+        ]
+    )
+
+    decision = validate_patch_text(patch, str(tmp_path))
+
+    assert decision.reason == "patch_targets_secret_file"
+    assert decision.files == [".env"]
+
+
+def test_patch_policy_rejects_malformed_git_path_escapes(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("ARCANOS_CLI_SANDBOX_ROOT", str(tmp_path))
+
+    for encoded_path in (r"\05env", r"\qenv", r"\400env"):
+        patch = "\n".join(
+            [
+                f'diff --git "a/{encoded_path}" "b/{encoded_path}"',
+                f'--- "a/{encoded_path}"',
+                f'+++ "b/{encoded_path}"',
+            ]
+        )
+        assert (
+            validate_patch_text(patch, str(tmp_path)).reason == "patch_path_malformed"
+        )
+    unterminated = 'diff --git "a/safe.txt b/safe.txt'
+    assert (
+        validate_patch_text(unterminated, str(tmp_path)).reason
+        == "patch_path_malformed"
+    )
+
+
+def test_patch_policy_preserves_git_quoted_unicode_and_spaces(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("ARCANOS_CLI_SANDBOX_ROOT", str(tmp_path))
+    patch = "\n".join(
+        [
+            r'diff --git "a/caf\303\251 notes.txt" "b/caf\303\251 notes.txt"',
+            r'--- "a/caf\303\251 notes.txt"',
+            r'+++ "b/caf\303\251 notes.txt"',
+            "@@ -1 +1 @@",
+            "-old",
+            "+new",
+        ]
+    )
+
+    decision = validate_patch_text(patch, str(tmp_path))
+
+    assert decision.allowed is True
+    assert parse_patch_paths(patch) == ["café notes.txt"]
+
+
 def test_patch_policy_rejects_binary_traversal_and_symlink(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("ARCANOS_CLI_SANDBOX_ROOT", str(tmp_path))
 
     traversal = "diff --git a/../x b/../x\n--- a/../x\n+++ b/../x\n"
     binary = "diff --git a/a.bin b/a.bin\nGIT binary patch\nliteral 0\n"
     symlink = "diff --git a/link b/link\nnew file mode 120000\n--- /dev/null\n+++ b/link\n"
+    converted_symlink = (
+        "diff --git a/link b/link\n"
+        "old mode 100644\n"
+        "new mode 120000\n"
+        "--- a/link\n"
+        "+++ b/link\n"
+    )
 
     assert validate_patch_text(traversal, str(tmp_path)).reason == "patch_path_outside_sandbox"
     assert validate_patch_text(binary, str(tmp_path)).reason == "patch_denied_by_policy"
     assert validate_patch_text(symlink, str(tmp_path)).reason == "patch_denied_by_policy"
+    assert validate_patch_text(converted_symlink, str(tmp_path)).reason == "patch_denied_by_policy"
     existing = tmp_path / "existing-link"
     try:
         existing.symlink_to(tmp_path / "target")
@@ -75,6 +166,39 @@ def test_patch_policy_rejects_binary_traversal_and_symlink(monkeypatch, tmp_path
         return
     existing_patch = "diff --git a/existing-link b/existing-link\n--- a/existing-link\n+++ b/existing-link\n"
     assert validate_patch_text(existing_patch, str(tmp_path)).reason == "patch_symlink_not_allowed"
+
+
+@pytest.mark.parametrize(
+    "unsafe_path",
+    [
+        "normal.txt:stream",
+        ".env:stream",
+        "normal.txt::$DATA",
+        "nested/file.txt:stream",
+    ],
+)
+def test_patch_policy_rejects_windows_alternate_data_stream_paths(
+    monkeypatch,
+    tmp_path,
+    unsafe_path: str,
+) -> None:
+    monkeypatch.setenv("ARCANOS_CLI_SANDBOX_ROOT", str(tmp_path))
+    patch = "\n".join(
+        [
+            f"diff --git a/{unsafe_path} b/{unsafe_path}",
+            "new file mode 100644",
+            "--- /dev/null",
+            f"+++ b/{unsafe_path}",
+            "@@ -0,0 +1 @@",
+            "+hidden",
+            "",
+        ]
+    )
+
+    decision = validate_patch_text(patch, str(tmp_path))
+
+    assert decision.allowed is False
+    assert decision.reason == "patch_path_outside_sandbox"
 
 
 def test_safe_patch_preview_redacts_added_lines(monkeypatch, tmp_path) -> None:

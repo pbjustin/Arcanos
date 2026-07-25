@@ -180,6 +180,73 @@ describe('natural-language dispatcher', () => {
     expect(policy.requiresConfirmation).toBe(true);
   });
 
+  it.each(['tests.run', 'patch.apply'])(
+    'blocks confirmation-required local-agent action %s from natural-language dispatch',
+    async (action) => {
+      const registry = createGptAccessDispatchRegistry([
+        {
+          id: 'ARCANOS:LOCAL_AGENT',
+          description: 'Protected local-agent capability',
+          route: 'local-agent',
+          actions: [action],
+          actionMetadata: {
+            [action]: {
+              risk: 'privileged',
+              requiresConfirmation: true
+            }
+          }
+        }
+      ]);
+      const plan = await resolveDispatchPlan({
+        utterance: `ARCANOS:LOCAL_AGENT.${action}`,
+        registry
+      });
+
+      const policy = evaluateDispatchPolicy({
+        plan,
+        registry,
+        isScopeAllowed: () => true,
+        isModuleActionAllowed: () => true
+      });
+
+      expect(policy.allowed).toBe(false);
+      expect(policy.code).toBe('DISPATCH_ACTION_PROHIBITED');
+      expect(policy.reason).toBe('dispatch_action_prohibited');
+    }
+  );
+
+  it('allows read-only local-agent actions through natural-language dispatch', async () => {
+    const registry = createGptAccessDispatchRegistry([
+      {
+        id: 'ARCANOS:LOCAL_AGENT',
+        description: 'Protected local-agent capability',
+        route: 'local-agent',
+        actions: ['git.status'],
+        actionMetadata: {
+          'git.status': {
+            risk: 'readonly',
+            requiresConfirmation: false
+          }
+        }
+      }
+    ]);
+    const plan = await resolveDispatchPlan({
+      utterance: 'ARCANOS:LOCAL_AGENT.git.status',
+      registry
+    });
+
+    const policy = evaluateDispatchPolicy({
+      plan,
+      registry,
+      isScopeAllowed: () => true,
+      isModuleActionAllowed: () => true
+    });
+
+    expect(policy.allowed).toBe(true);
+    expect(policy.status).toBe('allowed');
+    expect(policy.requiresConfirmation).toBe(false);
+  });
+
   it.each([
     ['readonly', 'workers.status', 0.54, 'clarification_required', 'dispatch_confidence_below_threshold'],
     ['readonly', 'workers.status', 0.55, 'clarification_required', 'dispatch_confidence_in_clarification_band'],

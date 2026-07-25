@@ -8,6 +8,11 @@ export type ModuleCapabilitySummary = {
   description?: string | null;
   route?: string | null;
   actions: string[];
+  actionMetadata?: Record<string, {
+    description?: string;
+    risk?: unknown;
+    requiresConfirmation?: unknown;
+  }>;
 };
 
 const DEFAULT_GPT_ACCESS_ACTIONS: DispatchRegistryAction[] = [
@@ -90,6 +95,43 @@ function normalizeActionKey(action: string): string {
   return action.trim().toLowerCase();
 }
 
+function resolveModuleActionPolicy(
+  module: ModuleCapabilitySummary,
+  action: string
+): Pick<DispatchRegistryAction, 'description' | 'risk' | 'requiresConfirmation'> {
+  const candidate = module.actionMetadata?.[action];
+  if (
+    !candidate
+    || (
+      candidate.risk !== 'readonly'
+      && candidate.risk !== 'privileged'
+      && candidate.risk !== 'destructive'
+    )
+    || (
+      candidate.requiresConfirmation !== undefined
+      && typeof candidate.requiresConfirmation !== 'boolean'
+    )
+  ) {
+    return {
+      description: module.description ?? `Run ${action} on ${module.id}.`,
+      risk: 'privileged',
+      requiresConfirmation: true
+    };
+  }
+
+  return {
+    description:
+      typeof candidate.description === 'string' && candidate.description.trim().length > 0
+        ? candidate.description.trim()
+        : module.description ?? `Run ${action} on ${module.id}.`,
+    risk: candidate.risk,
+    requiresConfirmation:
+      candidate.risk === 'readonly'
+        ? candidate.requiresConfirmation === true
+        : true
+  };
+}
+
 export function buildModuleCapabilityActionId(capabilityId: string, action: string): string {
   return `${capabilityId}.${action}`;
 }
@@ -126,18 +168,21 @@ export function createGptAccessDispatchRegistry(
   modules: readonly ModuleCapabilitySummary[] = []
 ): CapabilityRegistry {
   const moduleActions = modules.flatMap((module) =>
-    module.actions.map<DispatchRegistryAction>((action) => ({
-      action: buildModuleCapabilityActionId(module.id, action),
-      description: module.description ?? `Run ${action} on ${module.id}.`,
-      requiredScope: 'capabilities.run',
-      risk: 'privileged',
-      requiresConfirmation: true,
-      runner: {
-        kind: 'gpt-access-capability',
-        capabilityId: module.id,
-        capabilityAction: action
-      }
-    }))
+    module.actions.map<DispatchRegistryAction>((action) => {
+      const policy = resolveModuleActionPolicy(module, action);
+      return {
+        action: buildModuleCapabilityActionId(module.id, action),
+        description: policy.description,
+        requiredScope: 'capabilities.run',
+        risk: policy.risk,
+        requiresConfirmation: policy.requiresConfirmation,
+        runner: {
+          kind: 'gpt-access-capability',
+          capabilityId: module.id,
+          capabilityAction: action
+        }
+      };
+    })
   );
 
   return createCapabilityRegistry([

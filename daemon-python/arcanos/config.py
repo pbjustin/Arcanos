@@ -219,6 +219,23 @@ class Config:
     ACTION_PLAN_EXECUTION_JOURNAL_PATH: Path = (
         DATA_DIR / "action_plan_execution" / "journal.sqlite3"
     )
+    # The outbound local-agent worker is opt-in and never exposes an inbound API.
+    LOCAL_AGENT_ENABLED: bool = get_env_bool(
+        "ARCANOS_LOCAL_AGENT_ENABLED",
+        False,
+    )
+    LOCAL_AGENT_EXECUTOR_TOKEN: Optional[str] = (
+        get_env("ARCANOS_LOCAL_AGENT_EXECUTOR_TOKEN") or None
+    )
+    LOCAL_AGENT_EXECUTOR_PRINCIPAL_ID: Optional[str] = (
+        get_env("ARCANOS_LOCAL_AGENT_EXECUTOR_PRINCIPAL_ID") or None
+    )
+    LOCAL_AGENT_EXECUTOR_INSTANCE_ID: Optional[str] = (
+        get_env("ARCANOS_LOCAL_AGENT_EXECUTOR_INSTANCE_ID") or None
+    )
+    LOCAL_AGENT_EXECUTOR_DEVICE_ID: Optional[str] = (
+        get_env("ARCANOS_LOCAL_AGENT_EXECUTOR_DEVICE_ID") or None
+    )
     # When backend would be chosen, route to backend only if confidence >= threshold; else local. 0.0=always local, 1.0=always backend when otherwise chosen.
     BACKEND_CONFIDENCE_THRESHOLD: float = get_env_float("BACKEND_CONFIDENCE_THRESHOLD", 0.5)
     REGISTRY_CACHE_TTL_MINUTES: int = get_env_int("REGISTRY_CACHE_TTL_MINUTES", 10)

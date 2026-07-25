@@ -410,7 +410,7 @@ function validatePatchPaths(patch: string, policy: CliPolicyConfig): string | nu
       const normalizedPath = rawPath.replace(/\\/gu, '/');
       if (
         normalizedPath.startsWith('/')
-        || /^[a-zA-Z]:/u.test(normalizedPath)
+        || normalizedPath.split('/').some((segment) => segment.includes(':'))
         || normalizedPath.includes('../')
         || normalizedPath === '..'
       ) {

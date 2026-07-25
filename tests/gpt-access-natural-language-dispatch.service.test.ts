@@ -52,6 +52,52 @@ describe('GPT Access natural-language dispatch service', () => {
     }));
   });
 
+  it('uses explicit module action risk metadata and defaults unsafe metadata to privileged', () => {
+    const registry = createGptAccessDispatchRegistry([
+      {
+        id: 'ARCANOS:PRODUCTIVITY',
+        description: 'Protected productivity capability',
+        route: 'productivity',
+        actions: ['state.current', 'task.create', 'unknown.action'],
+        actionMetadata: {
+          'state.current': {
+            description: 'Read the canonical productivity state.',
+            risk: 'readonly',
+            requiresConfirmation: false
+          },
+          'task.create': {
+            risk: 'privileged',
+            requiresConfirmation: false
+          },
+          'unknown.action': {
+            risk: 'unexpected',
+            requiresConfirmation: false
+          }
+        }
+      }
+    ]);
+
+    expect(registry.getAction('ARCANOS:PRODUCTIVITY.state.current')).toEqual(
+      expect.objectContaining({
+        description: 'Read the canonical productivity state.',
+        risk: 'readonly',
+        requiresConfirmation: false
+      })
+    );
+    expect(registry.getAction('ARCANOS:PRODUCTIVITY.task.create')).toEqual(
+      expect.objectContaining({
+        risk: 'privileged',
+        requiresConfirmation: true
+      })
+    );
+    expect(registry.getAction('ARCANOS:PRODUCTIVITY.unknown.action')).toEqual(
+      expect.objectContaining({
+        risk: 'privileged',
+        requiresConfirmation: true
+      })
+    );
+  });
+
   it('requires policy confirmation before ARCANOS:CLI dispatch execution', () => {
     const registry = createGptAccessDispatchRegistry([
       {

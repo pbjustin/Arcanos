@@ -13,6 +13,10 @@ type AnyMcpServer = {
   registerTool: (name: string, config: Record<string, unknown>, handler: (args: unknown) => Promise<unknown>) => void;
 };
 
+function isProtectedLocalAgentJob(job: { job_type?: unknown } | null): boolean {
+  return job?.job_type === 'local-agent';
+}
+
 export function registerJobMcpTools(server: AnyMcpServer, ctx: McpRequestContext): void {
   server.registerTool(
     'jobs.status',
@@ -26,7 +30,7 @@ export function registerJobMcpTools(server: AnyMcpServer, ctx: McpRequestContext
     },
     wrapTool('jobs.status', ctx, async (args: any) => {
       const job = await getJobById(args.jobId);
-      if (!job) {
+      if (!job || isProtectedLocalAgentJob(job)) {
         return mcpError({
           code: 'ERR_NOT_FOUND',
           message: 'Async GPT job was not found.',
@@ -54,7 +58,7 @@ export function registerJobMcpTools(server: AnyMcpServer, ctx: McpRequestContext
     },
     wrapTool('jobs.result', ctx, async (args: any) => {
       const job = await getJobById(args.jobId);
-      if (!job) {
+      if (!job || isProtectedLocalAgentJob(job)) {
         return mcpError({
           code: 'ERR_NOT_FOUND',
           message: 'Async GPT job was not found.',

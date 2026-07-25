@@ -1063,7 +1063,9 @@ export async function getLatestWorkerJobDetail(): Promise<WorkerJobDetailSnapsho
  */
 export async function getWorkerJobDetailById(jobId: string): Promise<WorkerJobDetailSnapshot | null> {
   const job = await getJobById(jobId);
-  return job ? buildWorkerJobDetailSnapshot(job) : null;
+  return job && job.job_type !== 'local-agent'
+    ? buildWorkerJobDetailSnapshot(job)
+    : null;
 }
 
 /**

@@ -505,6 +505,51 @@ describe('createMcpServer job control tools', () => {
     expect(mockDispatchModuleAction).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['jobs.status', 'get_status'],
+    ['jobs.result', 'get_result'],
+  ])('hides local-agent jobs from generic MCP %s lookups', async (toolName, action) => {
+    mockGetJobById.mockResolvedValue({
+      id: 'local-agent-protected-job',
+      worker_id: 'preview-device',
+      job_type: 'local-agent',
+      status: 'completed',
+      input: {
+        patch: 'private patch material',
+        principalId: 'operator:preview',
+        workspaceId: 'preview'
+      },
+      output: {
+        diff: 'private repository output'
+      }
+    });
+
+    const server = await createMcpServer(buildContext()) as FakeMcpServer;
+    const output = await server.tools.get(toolName)!.handler({
+      jobId: 'local-agent-protected-job'
+    });
+
+    expect(mockGetJobById).toHaveBeenCalledWith('local-agent-protected-job');
+    expect(output).toEqual(
+      expect.objectContaining({
+        isError: true,
+        structuredContent: {
+          error: expect.objectContaining({
+            code: 'ERR_NOT_FOUND',
+            message: 'Async GPT job was not found.',
+            details: {
+              action,
+              jobId: 'local-agent-protected-job',
+            },
+          }),
+        },
+      })
+    );
+    expect(JSON.stringify(output)).not.toContain('private patch material');
+    expect(JSON.stringify(output)).not.toContain('private repository output');
+    expect(JSON.stringify(output)).not.toContain('operator:preview');
+  });
+
   it('marks approval-required execute control-plane requests before service invocation', async () => {
     mockRequiresControlPlaneApproval.mockReturnValue(true);
     const server = await createMcpServer(buildContext()) as FakeMcpServer;

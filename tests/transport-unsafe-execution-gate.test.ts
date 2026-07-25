@@ -119,9 +119,39 @@ describe('transport/http/middleware/unsafeExecutionGate', () => {
     }
 
     expect(logger.info).toHaveBeenCalledWith('unsafe_execution_gate.bypass', {
-      reason: 'gpt_access_readonly',
+      reason: 'gpt_access_read_or_reconciliation',
       path: '/gpt-access/jobs/result'
     });
+  });
+
+  it('allows local-agent heartbeats and results but blocks new claims while unsafe', () => {
+    hasUnsafeBlockingConditionsMock.mockReturnValue(true);
+    const jobId = '10000000-0000-4000-8000-000000000001';
+
+    for (const path of [
+      '/gpt-access/local-agent/heartbeat',
+      `/gpt-access/local-agent/jobs/${jobId}/heartbeat`,
+      `/gpt-access/local-agent/jobs/${jobId}/result`
+    ]) {
+      const next = jest.fn();
+      const response = createResponse();
+      unsafeExecutionGate({
+        method: 'POST',
+        path,
+        body: {}
+      } as MockRequest as any, response as any, next);
+      expect(next).toHaveBeenCalledTimes(1);
+    }
+
+    const claimNext = jest.fn();
+    const claimResponse = createResponse();
+    unsafeExecutionGate({
+      method: 'POST',
+      path: '/gpt-access/local-agent/jobs/claim',
+      body: { claimKey: 'claim-key-1' }
+    } as MockRequest as any, claimResponse as any, claimNext);
+    expect(claimNext).not.toHaveBeenCalled();
+    expect(claimResponse.status).toHaveBeenCalledWith(503);
   });
 
   it('does not treat GPT access AI job creation as a read-only bypass', () => {

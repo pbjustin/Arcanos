@@ -54,6 +54,7 @@ jest.unstable_mockModule('../src/services/workerAutonomyService.js', () => ({
 
 const {
   getWorkerControlHealth,
+  getWorkerJobDetailById,
   requeueFailedWorkerJob
 } = await import('../src/services/workerControlService.js');
 
@@ -80,6 +81,19 @@ describe('workerControlService', () => {
 
   afterEach(() => {
     jest.useRealTimers();
+  });
+
+  it('hides local-agent jobs from generic worker detail inspection', async () => {
+    getJobByIdMock.mockResolvedValue({
+      id: 'local-agent-job',
+      worker_id: 'preview-device',
+      job_type: 'local-agent',
+      status: 'completed',
+      input: { patch: 'private' },
+      output: { diff: 'private' }
+    });
+
+    await expect(getWorkerJobDetailById('local-agent-job')).resolves.toBeNull();
   });
 
   it('reports healthy operational status while preserving historical failure debt', async () => {

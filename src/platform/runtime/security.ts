@@ -329,6 +329,39 @@ export function getRequestActorKey(req: Request): string {
   return `ip:${getRequestClientAddress(req)}`;
 }
 
+/**
+ * Resolve an actor key from authenticated request material before any
+ * caller-selected session identifier.
+ * Purpose: bind sensitive approvals to the credential that passed
+ * authentication rather than to mutable conversational metadata.
+ */
+export function getRequestAuthenticatedActorKey(req: Request): string {
+  if (req.authUser?.id !== undefined) {
+    return `user:${req.authUser.id}`;
+  }
+
+  const operatorActor = isNonEmptyString(req.operatorActor)
+    ? req.operatorActor.trim()
+    : undefined;
+  if (operatorActor) {
+    return `operator:${operatorActor}`;
+  }
+
+  const daemonToken = isNonEmptyString(req.daemonToken)
+    ? req.daemonToken.trim()
+    : undefined;
+  if (daemonToken) {
+    return `daemon:${fingerprintSecretValue(daemonToken)}`;
+  }
+
+  const authorizationHeader = getNormalizedHeader(req, 'authorization');
+  if (authorizationHeader) {
+    return `auth:${fingerprintSecretValue(authorizationHeader)}`;
+  }
+
+  return getRequestActorKey(req);
+}
+
 function resolveRateLimitOptions(
   maxRequestsOrOptions: number | RateLimitMiddlewareOptions,
   windowMs: number

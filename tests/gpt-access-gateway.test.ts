@@ -132,7 +132,9 @@ jest.unstable_mockModule('../src/platform/runtime/workerConfig.js', () => ({
 
 const { default: gptAccessRouter } = await import('../src/routes/gpt-access.js');
 const {
+  buildGptAccessHealthPayload,
   createGptAccessAiJob,
+  getGptAccessDeploymentMetadata,
   getGptAccessJobResult,
   sanitizeGptAccessPayload
 } = await import('../src/services/gptAccessGateway.js');
@@ -151,12 +153,22 @@ const OPENAPI_SERVER_URL_ENV_KEYS = [
   'RAILWAY_PUBLIC_DOMAIN',
   'RAILWAY_STATIC_URL'
 ] as const;
+let testAppNetworkSequence = 0;
 
 function buildApp(options: { trustProxy?: boolean } = {}) {
   const app = express();
+  testAppNetworkSequence += 1;
+  const testRemoteAddress = `198.18.${Math.floor(testAppNetworkSequence / 254)}.${(testAppNetworkSequence % 254) + 1}`;
   if (options.trustProxy) {
     app.set('trust proxy', true);
   }
+  app.use((req, _res, next) => {
+    Object.defineProperty(req.socket, 'remoteAddress', {
+      configurable: true,
+      value: testRemoteAddress
+    });
+    next();
+  });
   app.use(express.json());
   app.use('/', gptAccessRouter);
   return app;
@@ -246,6 +258,8 @@ describe('/gpt-access gateway', () => {
   const previousCliBridgeEnabled = process.env.ARCANOS_CLI_BRIDGE_ENABLED;
   const previousCliBridgeUrl = process.env.ARCANOS_CLI_BRIDGE_URL;
   const previousCliBridgeToken = process.env.ARCANOS_CLI_BRIDGE_TOKEN;
+  const previousGptAccessPrincipalId = process.env.ARCANOS_GPT_ACCESS_PRINCIPAL_ID;
+  const previousGptAccessWorkspaceId = process.env.ARCANOS_GPT_ACCESS_WORKSPACE_ID;
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -453,6 +467,18 @@ describe('/gpt-access gateway', () => {
     } else {
       process.env.ARCANOS_CLI_BRIDGE_TOKEN = previousCliBridgeToken;
     }
+
+    if (previousGptAccessPrincipalId === undefined) {
+      delete process.env.ARCANOS_GPT_ACCESS_PRINCIPAL_ID;
+    } else {
+      process.env.ARCANOS_GPT_ACCESS_PRINCIPAL_ID = previousGptAccessPrincipalId;
+    }
+
+    if (previousGptAccessWorkspaceId === undefined) {
+      delete process.env.ARCANOS_GPT_ACCESS_WORKSPACE_ID;
+    } else {
+      process.env.ARCANOS_GPT_ACCESS_WORKSPACE_ID = previousGptAccessWorkspaceId;
+    }
   });
 
   it('rejects missing bearer token', async () => {
@@ -471,6 +497,78 @@ describe('/gpt-access gateway', () => {
     expect(response.status).toBe(401);
     expect(response.body.error.code).toBe('UNAUTHORIZED_GPT_ACCESS');
     expect(response.body.error.message).toBe('Invalid GPT access bearer token.');
+  });
+
+  it('keeps local-agent protocol polling out of the shared GPT Access budget', async () => {
+    const app = buildApp({ trustProxy: true });
+    const clientAddress = '198.51.100.221';
+
+    for (let index = 0; index < 121; index += 1) {
+      const response = await request(app)
+        .post('/gpt-access/local-agent/heartbeat')
+        .set(
+          'Authorization',
+          ['Bearer', 'invalid-local-agent-credential'].join(' ')
+        )
+        .set('X-Forwarded-For', clientAddress)
+        .send({});
+      expect(response.status).toBe(401);
+      expect(response.headers['x-ratelimit-bucket']).toBe(
+        'local-agent-protocol-client'
+      );
+    }
+
+    process.env.ARCANOS_GPT_ACCESS_SCOPES = 'diagnostics.read';
+    const gptAccessResponse = await authorized(
+      request(app)
+        .get('/gpt-access/health')
+        .set('X-Forwarded-For', clientAddress)
+    );
+
+    expect(gptAccessResponse.status).toBe(200);
+    expect(gptAccessResponse.headers['x-ratelimit-bucket']).toBe('gpt-access');
+    expect(gptAccessResponse.headers['x-ratelimit-remaining']).toBe('119');
+  });
+
+  it('fails closed when GPT Access reuses the local-agent executor credential', async () => {
+    const credential = 'shared-purpose-bound-credential-value'.repeat(2);
+    const localAgentKeys = [
+      'ARCANOS_LOCAL_AGENT_EXECUTOR_TOKEN',
+      'ARCANOS_LOCAL_AGENT_EXECUTOR_PRINCIPAL_ID',
+      'ARCANOS_LOCAL_AGENT_EXECUTOR_INSTANCE_ID',
+      'ARCANOS_LOCAL_AGENT_EXECUTOR_DEVICE_ID'
+    ] as const;
+    const previousValues = Object.fromEntries(
+      localAgentKeys.map((key) => [key, process.env[key]])
+    );
+    try {
+      process.env.ARCANOS_GPT_ACCESS_TOKEN = credential;
+      process.env.ARCANOS_LOCAL_AGENT_EXECUTOR_TOKEN = credential;
+      process.env.ARCANOS_LOCAL_AGENT_EXECUTOR_PRINCIPAL_ID =
+        'local-agent:executor';
+      process.env.ARCANOS_LOCAL_AGENT_EXECUTOR_INSTANCE_ID =
+        'local-agent:instance';
+      process.env.ARCANOS_LOCAL_AGENT_EXECUTOR_DEVICE_ID =
+        'local-agent:device';
+
+      const response = await request(buildApp({ trustProxy: true }))
+        .get('/gpt-access/health')
+        .set('Authorization', `Bearer ${credential}`)
+        .set('X-Forwarded-For', '198.51.100.151');
+
+      expect(response.status).toBe(500);
+      expect(response.body.error.code).toBe('GPT_ACCESS_INTERNAL_ERROR');
+    } finally {
+      process.env.ARCANOS_GPT_ACCESS_TOKEN = TEST_TOKEN;
+      for (const key of localAgentKeys) {
+        const value = previousValues[key];
+        if (value === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
+      }
+    }
   });
 
   it('rejects malformed authorization headers with sanitized JSON', async () => {
@@ -531,6 +629,57 @@ describe('/gpt-access gateway', () => {
         reasonIfDisabled: 'openai_credentials_unavailable'
       })
     }));
+  });
+
+  it('publishes bounded Railway deployment identity on protected health', () => {
+    const env = {
+      RAILWAY_PROJECT_ID: 'project-preview',
+      RAILWAY_ENVIRONMENT_ID: 'environment-preview',
+      RAILWAY_ENVIRONMENT_NAME: 'arcanos-preview-e2e',
+      RAILWAY_SERVICE_ID: 'service-api-preview',
+      RAILWAY_SERVICE_NAME: 'arcanos-api-preview-e2e',
+      RAILWAY_DEPLOYMENT_ID: 'deployment-api-preview',
+      RAILWAY_GIT_COMMIT_SHA: 'abcdef1234567890abcdef1234567890abcdef12',
+      ARCANOS_WORKER_SERVICE_ID: 'service-worker-preview',
+      ARCANOS_WORKER_SERVICE_NAME: 'arcanos-worker-preview-e2e',
+      ARCANOS_WORKER_DEPLOYMENT_ID: 'deployment-worker-preview',
+      ARCANOS_WORKER_GIT_COMMIT_SHA: 'abcdef1234567890abcdef1234567890abcdef12'
+    } as const;
+    const previous = Object.fromEntries(
+      Object.keys(env).map((name) => [name, process.env[name]])
+    );
+    try {
+      Object.assign(process.env, env);
+      expect(getGptAccessDeploymentMetadata()).toEqual({
+        provider: 'railway',
+        projectId: env.RAILWAY_PROJECT_ID,
+        environmentId: env.RAILWAY_ENVIRONMENT_ID,
+        environmentName: env.RAILWAY_ENVIRONMENT_NAME,
+        serviceId: env.RAILWAY_SERVICE_ID,
+        serviceName: env.RAILWAY_SERVICE_NAME,
+        deploymentId: env.RAILWAY_DEPLOYMENT_ID,
+        gitCommitSha: env.RAILWAY_GIT_COMMIT_SHA,
+        workerServiceId: env.ARCANOS_WORKER_SERVICE_ID,
+        workerServiceName: env.ARCANOS_WORKER_SERVICE_NAME,
+        workerDeploymentId: env.ARCANOS_WORKER_DEPLOYMENT_ID,
+        workerGitCommitSha: env.ARCANOS_WORKER_GIT_COMMIT_SHA
+      });
+      expect(buildGptAccessHealthPayload().deployment).toEqual(
+        getGptAccessDeploymentMetadata()
+      );
+
+      process.env.RAILWAY_SERVICE_NAME = 'unsafe\r\nheader';
+      expect(getGptAccessDeploymentMetadata().serviceName).toBeNull();
+      expect(JSON.stringify(buildGptAccessHealthPayload())).not.toContain('unsafe');
+    } finally {
+      for (const [name, value] of Object.entries(previous)) {
+        if (value === undefined) {
+          delete process.env[name];
+        } else {
+          process.env[name] = value;
+        }
+      }
+    }
   });
 
   it('reports an enum-safe invalid natural-language dispatch mode in gateway health', async () => {
@@ -615,6 +764,30 @@ describe('/gpt-access gateway', () => {
 
   it('inspects a known registered capability', async () => {
     allowCapabilityRead();
+    getModuleMetadataMock.mockReturnValue({
+      name: 'ARCANOS:CORE',
+      description: 'Core runtime capability',
+      route: 'core',
+      actions: ['query', 'diagnostics'],
+      actionMetadata: {
+        query: {
+          description: 'Run a core query.',
+          risk: 'privileged',
+          requiresConfirmation: true,
+          inputSchema: {
+            type: 'object',
+            additionalProperties: false
+          },
+          idempotent: false
+        },
+        diagnostics: {
+          risk: 'privileged',
+          requiresConfirmation: true
+        }
+      },
+      defaultAction: 'query',
+      defaultTimeoutMs: 30000
+    });
 
     const response = await authorized(request(buildApp()).get('/gpt-access/capabilities/v1/ARCANOS%3ACORE'));
 
@@ -628,6 +801,22 @@ describe('/gpt-access gateway', () => {
         description: 'Core runtime capability',
         route: 'core',
         actions: ['diagnostics', 'query'],
+        actionMetadata: {
+          query: {
+            description: 'Run a core query.',
+            risk: 'privileged',
+            requiresConfirmation: true,
+            inputSchema: {
+              type: 'object',
+              additionalProperties: false
+            },
+            idempotent: false
+          },
+          diagnostics: {
+            risk: 'privileged',
+            requiresConfirmation: true
+          }
+        },
         defaultAction: 'query',
         defaultTimeoutMs: 30000
       }
@@ -896,6 +1085,148 @@ describe('/gpt-access gateway', () => {
     expect(dispatchModuleActionMock).toHaveBeenCalledWith('ARCANOS:CORE', 'system_state', payload);
   });
 
+  it('rejects malformed capability idempotency keys before confirmation or dispatch', async () => {
+    allowCapabilityRun();
+
+    const response = await authorized(
+      request(buildApp({ trustProxy: true })).post('/gpt-access/capabilities/v1/core/run')
+    )
+      .set('X-Forwarded-For', '198.51.100.104')
+      .set('Idempotency-Key', 'contains whitespace')
+      .send({
+        action: 'query',
+        payload: {}
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error).toEqual({
+      code: 'GPT_ACCESS_VALIDATION_ERROR',
+      message: 'idempotency-key must be 1-240 visible ASCII characters.'
+    });
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
+  it('runs explicitly read-only GPT Access-only actions with trusted server context', async () => {
+    allowCapabilityRun('capabilities.run', 'ARCANOS:PRODUCTIVITY:state.current');
+    process.env.ARCANOS_GPT_ACCESS_PRINCIPAL_ID = 'operator:primary';
+    process.env.ARCANOS_GPT_ACCESS_WORKSPACE_ID = 'personal';
+    getModuleMetadataMock.mockImplementation((capabilityId: unknown) => {
+      if (capabilityId !== 'ARCANOS:PRODUCTIVITY' && capabilityId !== 'productivity') {
+        return null;
+      }
+      return {
+        name: 'ARCANOS:PRODUCTIVITY',
+        description: 'Protected productivity capability',
+        route: 'productivity',
+        actions: ['state.current'],
+        actionMetadata: {
+          'state.current': {
+            risk: 'readonly',
+            requiresConfirmation: false
+          }
+        },
+        gptAccessOnly: true
+      };
+    });
+    dispatchModuleActionMock.mockResolvedValueOnce({ status: 'current' });
+
+    try {
+      const response = await authorized(
+        request(buildApp({ trustProxy: true })).post('/gpt-access/capabilities/v1/productivity/run')
+      )
+        .set('X-Forwarded-For', '198.51.100.101')
+        .set('X-Session-ID', 'chat-session-1')
+        .set('Idempotency-Key', 'turn-1-state-current')
+        .send({
+          action: 'state.current',
+          payload: {}
+        });
+
+      expect(response.status).toBe(200);
+      expect(dispatchModuleActionMock).toHaveBeenCalledWith(
+        'ARCANOS:PRODUCTIVITY',
+        'state.current',
+        {},
+        {
+          source: 'gpt-access',
+          principalId: 'operator:primary',
+          workspaceId: 'personal',
+          actorKey: 'session:chat-session-1',
+          traceId: null,
+          idempotencyKey: 'turn-1-state-current'
+        }
+      );
+    } finally {
+      delete process.env.ARCANOS_GPT_ACCESS_PRINCIPAL_ID;
+      delete process.env.ARCANOS_GPT_ACCESS_WORKSPACE_ID;
+    }
+  });
+
+  it('keeps privileged module actions confirmation-gated despite permissive metadata', async () => {
+    allowCapabilityRun('capabilities.run', 'ARCANOS:PRODUCTIVITY:task.create');
+    getModuleMetadataMock.mockReturnValue({
+      name: 'ARCANOS:PRODUCTIVITY',
+      description: 'Protected productivity capability',
+      route: 'productivity',
+      actions: ['task.create'],
+      actionMetadata: {
+        'task.create': {
+          risk: 'privileged',
+          requiresConfirmation: false
+        }
+      },
+      gptAccessOnly: true
+    });
+
+    const response = await authorized(
+      request(buildApp({ trustProxy: true })).post('/gpt-access/capabilities/v1/productivity/run')
+    )
+      .set('X-Forwarded-For', '198.51.100.102')
+      .send({
+      action: 'task.create',
+      payload: { title: 'Prepare brief' }
+    });
+
+    expect(response.status).toBe(403);
+    expect(response.body.code).toBe('CONFIRMATION_REQUIRED');
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when a GPT Access-only module has no server-bound identity', async () => {
+    allowCapabilityRun('capabilities.run', 'ARCANOS:PRODUCTIVITY:state.current');
+    delete process.env.ARCANOS_GPT_ACCESS_PRINCIPAL_ID;
+    delete process.env.ARCANOS_GPT_ACCESS_WORKSPACE_ID;
+    getModuleMetadataMock.mockReturnValue({
+      name: 'ARCANOS:PRODUCTIVITY',
+      description: 'Protected productivity capability',
+      route: 'productivity',
+      actions: ['state.current'],
+      actionMetadata: {
+        'state.current': {
+          risk: 'readonly',
+          requiresConfirmation: false
+        }
+      },
+      gptAccessOnly: true
+    });
+
+    const response = await authorized(
+      request(buildApp({ trustProxy: true })).post('/gpt-access/capabilities/v1/productivity/run')
+    )
+      .set('X-Forwarded-For', '198.51.100.103')
+      .send({
+      action: 'state.current',
+      payload: {}
+    });
+
+    expect(response.status).toBe(503);
+    expect(response.body.error).toEqual({
+      code: 'GPT_ACCESS_INTERNAL_ERROR',
+      message: 'GPT Access capability execution identity is unavailable.'
+    });
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
   it('requires confirmation before ARCANOS:CORE system_state updates and accepts the matching challenge token', async () => {
     allowCoreSystemStateRun();
     const app = buildApp({ trustProxy: true });
@@ -1079,6 +1410,301 @@ describe('/gpt-access gateway', () => {
     }));
   });
 
+  it('allows patch.apply only after an exact consumed challenge token', async () => {
+    allowCapabilityRun(
+      'capabilities.run',
+      'ARCANOS:LOCAL_AGENT:patch.apply,ARCANOS:LOCAL_AGENT:tests.run'
+    );
+    process.env.ARCANOS_GPT_ACCESS_PRINCIPAL_ID = 'operator:primary';
+    process.env.ARCANOS_GPT_ACCESS_WORKSPACE_ID = 'personal';
+    getModuleMetadataMock.mockImplementation((capabilityId: unknown) => {
+      if (
+        capabilityId !== 'ARCANOS:LOCAL_AGENT'
+        && capabilityId !== 'local-agent'
+      ) {
+        return null;
+      }
+      return {
+        name: 'ARCANOS:LOCAL_AGENT',
+        description: 'Protected local-agent capability',
+        route: 'local-agent',
+        actions: ['patch.apply', 'tests.run'],
+        actionMetadata: {
+          'patch.apply': {
+            risk: 'privileged',
+            requiresConfirmation: true,
+            readOnly: false,
+            mayModifyFiles: true
+          },
+          'tests.run': {
+            risk: 'privileged',
+            requiresConfirmation: true,
+            readOnly: false,
+            mayModifyFiles: true
+          }
+        },
+        gptAccessOnly: true
+      };
+    });
+    const body = {
+      action: 'patch.apply',
+      payload: {
+        patch: 'diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-a\n+b\n',
+        expectedPatchSha256: 'a'.repeat(64)
+      }
+    };
+    const app = buildApp({ trustProxy: true });
+    const pending = await authorized(
+      request(app)
+        .post('/gpt-access/capabilities/v1/ARCANOS%3ALOCAL_AGENT/run')
+        .set('X-Forwarded-For', '198.51.100.150')
+    ).send(body);
+    expect(pending.status).toBe(403);
+    expect(pending.body.code).toBe('CONFIRMATION_REQUIRED');
+    const challengeId = pending.body.confirmationChallenge.id as string;
+
+    const mutationPending = await authorized(
+      request(app)
+        .post('/gpt-access/capabilities/v1/ARCANOS%3ALOCAL_AGENT/run')
+        .set('X-Forwarded-For', '198.51.100.150')
+    ).send(body);
+    const mutationChallengeId =
+      mutationPending.body.confirmationChallenge.id as string;
+    const mutatedRetry = await authorized(
+      request(app)
+        .post('/gpt-access/capabilities/v1/ARCANOS%3ALOCAL_AGENT/run')
+        .set('X-Forwarded-For', '198.51.100.150')
+    ).send({
+      action: 'patch.apply',
+      payload: {
+        ...body.payload,
+        expectedPatchSha256: 'b'.repeat(64)
+      },
+      confirmation_token: mutationChallengeId
+    });
+    expect(mutatedRetry.status).toBe(403);
+    expect(mutatedRetry.body.code).toBe('CONFIRMATION_REQUIRED');
+
+    const actorPending = await authorized(
+      request(app)
+        .post('/gpt-access/capabilities/v1/ARCANOS%3ALOCAL_AGENT/run')
+        .set('X-Forwarded-For', '198.51.100.150')
+    ).send(body);
+    const actorChallengeId =
+      actorPending.body.confirmationChallenge.id as string;
+    const alternateActorToken = 'alternate-gpt-access-token';
+    process.env.ARCANOS_GPT_ACCESS_TOKEN = alternateActorToken;
+    const actorMismatch = await request(app)
+      .post('/gpt-access/capabilities/v1/ARCANOS%3ALOCAL_AGENT/run')
+      .set('Authorization', `Bearer ${alternateActorToken}`)
+      .set('X-Forwarded-For', '198.51.100.150')
+      .send({
+        ...body,
+        confirmation_token: actorChallengeId
+      });
+    process.env.ARCANOS_GPT_ACCESS_TOKEN = TEST_TOKEN;
+    expect(actorMismatch.status).toBe(403);
+    expect(actorMismatch.body.code).toBe('CONFIRMATION_REQUIRED');
+
+    const principalPending = await authorized(
+      request(app)
+        .post('/gpt-access/capabilities/v1/ARCANOS%3ALOCAL_AGENT/run')
+        .set('X-Forwarded-For', '198.51.100.150')
+    ).send(body);
+    const principalChallengeId =
+      principalPending.body.confirmationChallenge.id as string;
+    process.env.ARCANOS_GPT_ACCESS_PRINCIPAL_ID = 'operator:alternate';
+    const principalMismatch = await authorized(
+      request(app)
+        .post('/gpt-access/capabilities/v1/ARCANOS%3ALOCAL_AGENT/run')
+        .set('X-Forwarded-For', '198.51.100.150')
+    ).send({
+      ...body,
+      confirmation_token: principalChallengeId
+    });
+    process.env.ARCANOS_GPT_ACCESS_PRINCIPAL_ID = 'operator:primary';
+    expect(principalMismatch.status).toBe(403);
+    expect(principalMismatch.body.code).toBe('CONFIRMATION_REQUIRED');
+
+    const workspacePending = await authorized(
+      request(app)
+        .post('/gpt-access/capabilities/v1/ARCANOS%3ALOCAL_AGENT/run')
+        .set('X-Forwarded-For', '198.51.100.150')
+    ).send(body);
+    const workspaceChallengeId =
+      workspacePending.body.confirmationChallenge.id as string;
+    process.env.ARCANOS_GPT_ACCESS_WORKSPACE_ID = 'alternate';
+    const workspaceMismatch = await authorized(
+      request(app)
+        .post('/gpt-access/capabilities/v1/ARCANOS%3ALOCAL_AGENT/run')
+        .set('X-Forwarded-For', '198.51.100.150')
+    ).send({
+      ...body,
+      confirmation_token: workspaceChallengeId
+    });
+    process.env.ARCANOS_GPT_ACCESS_WORKSPACE_ID = 'personal';
+    expect(workspaceMismatch.status).toBe(403);
+    expect(workspaceMismatch.body.code).toBe('CONFIRMATION_REQUIRED');
+
+    const actionPending = await authorized(
+      request(app)
+        .post('/gpt-access/capabilities/v1/ARCANOS%3ALOCAL_AGENT/run')
+        .set('X-Forwarded-For', '198.51.100.150')
+    ).send(body);
+    const actionChallengeId =
+      actionPending.body.confirmationChallenge.id as string;
+    const actionMismatch = await authorized(
+      request(app)
+        .post('/gpt-access/capabilities/v1/ARCANOS%3ALOCAL_AGENT/run')
+        .set('X-Forwarded-For', '198.51.100.150')
+    ).send({
+      action: 'tests.run',
+      payload: {
+        profile: 'python-unit'
+      },
+      confirmation_token: actionChallengeId
+    });
+    expect(actionMismatch.status).toBe(403);
+    expect(actionMismatch.body.code).toBe('CONFIRMATION_REQUIRED');
+
+    const manual = await authorized(
+      request(app)
+        .post('/gpt-access/capabilities/v1/ARCANOS%3ALOCAL_AGENT/run')
+        .set('X-Forwarded-For', '198.51.100.150')
+        .set('x-confirmed', 'yes')
+    ).send(body);
+    expect(manual.status).toBe(403);
+    expect(manual.body.code).toBe('CONFIRMATION_REQUIRED');
+    expect(manual.body.confirmationChallenge).toEqual(expect.objectContaining({
+      id: expect.any(String)
+    }));
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+
+    const confirmedResponse = await authorized(
+      request(app)
+        .post('/gpt-access/capabilities/v1/ARCANOS%3ALOCAL_AGENT/run')
+        .set('X-Forwarded-For', '198.51.100.150')
+    ).send({
+      ...body,
+      confirmation_token: challengeId
+    });
+    expect(confirmedResponse.status).toBe(200);
+    expect(dispatchModuleActionMock).toHaveBeenCalledWith(
+      'ARCANOS:LOCAL_AGENT',
+      'patch.apply',
+      body.payload,
+      expect.objectContaining({
+        confirmation: {
+          status: 'challenge-token',
+          usedChallengeToken: true
+        }
+      })
+    );
+
+    const replay = await authorized(
+      request(app)
+        .post('/gpt-access/capabilities/v1/ARCANOS%3ALOCAL_AGENT/run')
+        .set('X-Forwarded-For', '198.51.100.150')
+    ).send({
+      ...body,
+      confirmation_token: challengeId
+    });
+    expect(replay.status).toBe(403);
+    expect(replay.body.code).toBe('CONFIRMATION_REQUIRED');
+    expect(dispatchModuleActionMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows tests.run only after an exact consumed challenge token', async () => {
+    allowCapabilityRun('capabilities.run', 'ARCANOS:LOCAL_AGENT:tests.run');
+    process.env.ARCANOS_GPT_ACCESS_PRINCIPAL_ID = 'operator:primary';
+    process.env.ARCANOS_GPT_ACCESS_WORKSPACE_ID = 'personal';
+    getModuleMetadataMock.mockImplementation((capabilityId: unknown) => {
+      if (
+        capabilityId !== 'ARCANOS:LOCAL_AGENT'
+        && capabilityId !== 'local-agent'
+      ) {
+        return null;
+      }
+      return {
+        name: 'ARCANOS:LOCAL_AGENT',
+        description: 'Protected local-agent capability',
+        route: 'local-agent',
+        actions: ['tests.run'],
+        actionMetadata: {
+          'tests.run': {
+            risk: 'privileged',
+            requiresConfirmation: true,
+            readOnly: false,
+            mayModifyFiles: true
+          }
+        },
+        gptAccessOnly: true
+      };
+    });
+    const body = {
+      action: 'tests.run',
+      payload: {
+        profile: 'python-unit'
+      }
+    };
+    const app = buildApp({ trustProxy: true });
+
+    const manual = await authorized(
+      request(app)
+        .post('/gpt-access/capabilities/v1/ARCANOS%3ALOCAL_AGENT/run')
+        .set('X-Forwarded-For', '198.51.100.151')
+        .set('x-confirmed', 'yes')
+    ).send(body);
+    expect(manual.status).toBe(403);
+    expect(manual.body.code).toBe('CONFIRMATION_REQUIRED');
+    expect(manual.body.confirmationChallenge).toEqual(expect.objectContaining({
+      id: expect.any(String)
+    }));
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+
+    const pending = await authorized(
+      request(app)
+        .post('/gpt-access/capabilities/v1/ARCANOS%3ALOCAL_AGENT/run')
+        .set('X-Forwarded-For', '198.51.100.151')
+    ).send(body);
+    expect(pending.status).toBe(403);
+    expect(pending.body.code).toBe('CONFIRMATION_REQUIRED');
+    const challengeId = pending.body.confirmationChallenge.id as string;
+
+    const confirmedResponse = await authorized(
+      request(app)
+        .post('/gpt-access/capabilities/v1/ARCANOS%3ALOCAL_AGENT/run')
+        .set('X-Forwarded-For', '198.51.100.151')
+    ).send({
+      ...body,
+      confirmation_token: challengeId
+    });
+    expect(confirmedResponse.status).toBe(200);
+    expect(dispatchModuleActionMock).toHaveBeenCalledWith(
+      'ARCANOS:LOCAL_AGENT',
+      'tests.run',
+      body.payload,
+      expect.objectContaining({
+        confirmation: {
+          status: 'challenge-token',
+          usedChallengeToken: true
+        }
+      })
+    );
+
+    const replay = await authorized(
+      request(app)
+        .post('/gpt-access/capabilities/v1/ARCANOS%3ALOCAL_AGENT/run')
+        .set('X-Forwarded-For', '198.51.100.151')
+    ).send({
+      ...body,
+      confirmation_token: challengeId
+    });
+    expect(replay.status).toBe(403);
+    expect(replay.body.code).toBe('CONFIRMATION_REQUIRED');
+    expect(dispatchModuleActionMock).toHaveBeenCalledTimes(1);
+  });
+
   it('denies dangerous ARCANOS:CLI commands even after confirmation', async () => {
     process.env.ARCANOS_CLI_BRIDGE_ENABLED = 'true';
     allowCapabilityRun('capabilities.run', 'ARCANOS:CLI:runApprovedCommand');
@@ -1211,6 +1837,9 @@ describe('/gpt-access gateway', () => {
   it.each([
     ['secret file patch', 'diff --git a/packages/app/.env b/packages/app/.env\nnew file mode 100644\n--- /dev/null\n+++ b/packages/app/.env\n@@ -0,0 +1 @@\n+OPENAI_API_KEY=sk-test\n', 'patch_targets_secret_file'],
     ['windows absolute path patch', 'diff --git a/C:/outside.txt b/C:/outside.txt\nnew file mode 100644\n--- /dev/null\n+++ b/C:/outside.txt\n@@ -0,0 +1 @@\n+outside\n', 'patch_path_outside_sandbox'],
+    ['windows alternate data stream patch', 'diff --git a/normal.txt:stream b/normal.txt:stream\nnew file mode 100644\n--- /dev/null\n+++ b/normal.txt:stream\n@@ -0,0 +1 @@\n+hidden\n', 'patch_path_outside_sandbox'],
+    ['windows alternate data stream on a secret path', 'diff --git a/.env:stream b/.env:stream\nnew file mode 100644\n--- /dev/null\n+++ b/.env:stream\n@@ -0,0 +1 @@\n+hidden\n', 'patch_path_outside_sandbox'],
+    ['windows explicit data stream patch', 'diff --git a/normal.txt::$DATA b/normal.txt::$DATA\nnew file mode 100644\n--- /dev/null\n+++ b/normal.txt::$DATA\n@@ -0,0 +1 @@\n+hidden\n', 'patch_path_outside_sandbox'],
     ['binary patch', 'diff --git a/bin.dat b/bin.dat\nnew file mode 100644\nGIT binary patch\nliteral 1\nKcmZQzU|?Wm\n', 'patch_binary_not_allowed'],
     ['symlink patch', 'diff --git a/link b/link\nnew file mode 120000\n--- /dev/null\n+++ b/link\n@@ -0,0 +1 @@\n+../outside\n', 'patch_symlink_not_allowed']
   ])('denies unsafe ARCANOS:CLI patch proposals: %s', async (_caseName, patch, reason) => {
@@ -2042,6 +2671,23 @@ describe('/gpt-access gateway', () => {
     expect(dispatchModuleActionMock).not.toHaveBeenCalled();
   });
 
+  it('does not accept manual confirmation for a privileged dispatch action', async () => {
+    allowCapabilityRun();
+
+    const response = await confirmed(
+      authorized(request(buildApp()).post('/gpt-access/dispatch/run'))
+    ).send({
+      utterance: 'ARCANOS:CORE.query'
+    });
+
+    expect(response.status).toBe(403);
+    expect(response.body.code).toBe('CONFIRMATION_REQUIRED');
+    expect(response.body.confirmationChallenge).toEqual(expect.objectContaining({
+      id: expect.any(String)
+    }));
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
   it('uses the existing confirmation retry mechanism before privileged dispatch execution', async () => {
     allowCapabilityRun();
     const app = buildApp();
@@ -2071,15 +2717,83 @@ describe('/gpt-access gateway', () => {
     expect(dispatchModuleActionMock).toHaveBeenCalledWith('ARCANOS:CORE', 'query', {});
   });
 
+  it('rejects a confirmation retry when the resolved action payload changes', async () => {
+    process.env.GPT_ACCESS_NL_DISPATCH_MODE = 'llm_first';
+    allowCapabilityRun();
+    hasValidOpenAiKeyMock.mockReturnValue(true);
+    responsesCreateMock
+      .mockResolvedValueOnce({
+        output_text: JSON.stringify({
+          action: 'ARCANOS:CORE.query',
+          payload: {
+            prompt: 'first payload'
+          },
+          confidence: 0.95,
+          requiresConfirmation: true,
+          reason: 'first_plan',
+          candidates: []
+        })
+      })
+      .mockResolvedValueOnce({
+        output_text: JSON.stringify({
+          action: 'ARCANOS:CORE.query',
+          payload: {
+            prompt: 'different payload'
+          },
+          confidence: 0.95,
+          requiresConfirmation: true,
+          reason: 'changed_plan',
+          candidates: []
+        })
+      });
+    const app = buildApp();
+    const requestBody = {
+      utterance: 'Run the registered core capability for this request.'
+    };
+
+    const challengeResponse = await authorized(
+      request(app).post('/gpt-access/dispatch/run')
+    ).send(requestBody);
+    const challengeId = challengeResponse.body.confirmationChallenge?.id;
+    expect(challengeResponse.status).toBe(403);
+    expect(typeof challengeId).toBe('string');
+
+    const response = await authorized(request(app).post('/gpt-access/dispatch/run'))
+      .send({
+        ...requestBody,
+        confirmation_token: challengeId
+      });
+
+    expect(response.status).toBe(403);
+    expect(response.body.code).toBe('CONFIRMATION_REQUIRED');
+    expect(response.body.confirmationChallenge).toEqual(expect.objectContaining({
+      id: expect.any(String)
+    }));
+    expect(response.body.confirmationChallenge.id).not.toBe(challengeId);
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
   it('executes confirmed worker recovery dispatch through the approved recovery runner', async () => {
     process.env.ARCANOS_GPT_ACCESS_SCOPES = 'workers.recover';
+    const app = buildApp();
 
-    const response = await confirmed(authorized(request(buildApp()).post('/gpt-access/dispatch/run')))
+    const requestBody = {
+      utterance: 'workers.recycle',
+      context: {
+        operator: 'test'
+      }
+    };
+    const challengeResponse = await authorized(
+      request(app).post('/gpt-access/dispatch/run')
+    ).send(requestBody);
+    const challengeId = challengeResponse.body.confirmationChallenge?.id;
+    expect(challengeResponse.status).toBe(403);
+    expect(typeof challengeId).toBe('string');
+
+    const response = await authorized(request(app).post('/gpt-access/dispatch/run'))
       .send({
-        utterance: 'workers.recycle',
-        context: {
-          operator: 'test'
-        }
+        ...requestBody,
+        confirmation_token: challengeId
       });
 
     expect(response.status).toBe(200);
@@ -3337,6 +4051,59 @@ describe('/gpt-access gateway', () => {
     expect(JSON.stringify(response.body)).not.toContain('should not leak');
   });
 
+  it('returns local-agent results only to the trusted principal and workspace that created them', async () => {
+    getJobByIdMock.mockResolvedValue({
+      id: COMPLETED_JOB_ID,
+      job_type: 'local-agent',
+      status: 'completed',
+      input: {
+        protocolVersion: 'local-agent-job-v1',
+        requestPath: '/gpt-access/capabilities/v1/ARCANOS:LOCAL_AGENT/run',
+        executionModeReason: 'gpt_access_local_agent_capability',
+        job: {
+          principal: 'operator:primary',
+          workspace: 'personal'
+        }
+      },
+      created_at: '2026-07-24T10:00:00.000Z',
+      updated_at: '2026-07-24T10:01:00.000Z',
+      completed_at: '2026-07-24T10:01:00.000Z',
+      retention_until: null,
+      idempotency_until: null,
+      expires_at: null,
+      error_message: null,
+      output: { outcome: 'succeeded', output: { clean: true } }
+    });
+
+    const accepted = await getGptAccessJobResult(
+      { jobId: COMPLETED_JOB_ID },
+      {
+        actorKey: 'actor:test',
+        principalId: 'operator:primary',
+        workspaceId: 'personal'
+      }
+    );
+    expect(accepted.statusCode).toBe(200);
+    expect(accepted.payload).toMatchObject({
+      status: 'completed',
+      result: { outcome: 'succeeded', output: { clean: true } }
+    });
+
+    const denied = await getGptAccessJobResult(
+      { jobId: COMPLETED_JOB_ID },
+      {
+        actorKey: 'actor:test',
+        principalId: 'operator:primary',
+        workspaceId: 'different-workspace'
+      }
+    );
+    expect(denied.statusCode).toBe(200);
+    expect(denied.payload).toMatchObject({
+      status: 'not_found',
+      result: null
+    });
+  });
+
   it('returns unavailable instead of not_found when result storage is disconnected', async () => {
     isDatabaseConnectedMock.mockReturnValueOnce(false);
 
@@ -3515,6 +4282,8 @@ describe('/gpt-access gateway', () => {
 
   it('queries sanitized job event timelines through the diagnostics scope', async () => {
     process.env.ARCANOS_GPT_ACCESS_SCOPES = 'diagnostics.read';
+    process.env.ARCANOS_GPT_ACCESS_PRINCIPAL_ID = 'operator:primary';
+    process.env.ARCANOS_GPT_ACCESS_WORKSPACE_ID = 'personal';
     getJobEventTimelineMock.mockResolvedValueOnce({
       available: true,
       summary: {
@@ -3594,7 +4363,11 @@ describe('/gpt-access gateway', () => {
       eventType: 'job.queued',
       occurredAfter: '2026-05-07T09:00:00.000Z',
       occurredBefore: '2026-05-07T11:00:00.000Z',
-      limit: 10
+      limit: 10,
+      localAgentScope: {
+        principalId: 'operator:primary',
+        workspaceId: 'personal'
+      }
     });
     expect(rendered).toContain('[REDACTED_PROMPT]');
     expect(rendered).toContain('[REDACTED_DIAGNOSTIC_PAYLOAD]');
@@ -3602,6 +4375,30 @@ describe('/gpt-access gateway', () => {
     expect(rendered).not.toContain('raw completion should not leak');
     expect(rendered).not.toContain('live-token-value');
     expect(rendered).not.toContain('postgres://user:pass@host/db');
+  });
+
+  it('fails local-agent timeline visibility closed when trusted tenant context is absent', async () => {
+    process.env.ARCANOS_GPT_ACCESS_SCOPES = 'diagnostics.read';
+    delete process.env.ARCANOS_GPT_ACCESS_PRINCIPAL_ID;
+    delete process.env.ARCANOS_GPT_ACCESS_WORKSPACE_ID;
+
+    const response = await authorized(
+      request(buildApp({ trustProxy: true })).post('/gpt-access/jobs/timeline')
+    )
+      .set('X-Forwarded-For', '203.0.113.57')
+      .send({ job_id: COMPLETED_JOB_ID });
+
+    expect(response.status).toBe(200);
+    expect(getJobEventTimelineMock).toHaveBeenCalledWith({
+      jobId: COMPLETED_JOB_ID,
+      traceId: undefined,
+      workerId: undefined,
+      eventType: undefined,
+      occurredAfter: undefined,
+      occurredBefore: undefined,
+      limit: undefined,
+      localAgentScope: null
+    });
   });
 
   it('rejects unauthenticated job timeline queries', async () => {
@@ -3663,10 +4460,38 @@ describe('/gpt-access gateway', () => {
     expect(response.body.components.schemas.ErrorResponse.properties.service).toEqual({
       type: 'string'
     });
+    expect(response.body.components.schemas.RailwayDeploymentMetadata).toEqual(
+      expect.objectContaining({
+        required: [
+          'provider',
+          'projectId',
+          'environmentId',
+          'environmentName',
+          'serviceId',
+          'serviceName',
+          'deploymentId',
+          'gitCommitSha',
+          'workerServiceId',
+          'workerServiceName',
+          'workerDeploymentId',
+          'workerGitCommitSha'
+        ],
+        additionalProperties: false
+      })
+    );
+    expect(
+      response.body.paths['/gpt-access/health'].get.responses['200']
+        .content['application/json'].schema.properties.deployment
+    ).toEqual({ '$ref': '#/components/schemas/RailwayDeploymentMetadata' });
     expect(response.body.security).toEqual([{ bearerAuth: [] }]);
     expect(response.body.paths['/gpt-access/openapi.json'].get.security).toEqual([]);
     for (const [path, methods] of Object.entries(response.body.paths)) {
-      for (const operation of Object.values(methods as Record<string, { security?: unknown }>)) {
+      for (const operation of Object.values(
+        methods as Record<string, { security?: unknown; description?: unknown }>
+      )) {
+        expect(
+          typeof operation.description === 'string' ? operation.description.length : 0
+        ).toBeLessThanOrEqual(300);
         if (path === '/gpt-access/openapi.json') {
           expect(operation.security).toEqual([]);
         } else {
@@ -3739,12 +4564,29 @@ describe('/gpt-access gateway', () => {
         name: 'id',
         in: 'path',
         required: true
+      }),
+      expect.objectContaining({
+        name: 'Idempotency-Key',
+        in: 'header',
+        required: false,
+        schema: expect.objectContaining({
+          minLength: 1,
+          maxLength: 240
+        })
       })
     ]);
     expect(runCapabilityOperation.responses['403'].content['application/json'].schema.oneOf).toEqual([
       { '$ref': '#/components/schemas/ErrorResponse' },
       { '$ref': '#/components/schemas/ConfirmationRequiredResponse' }
     ]);
+    expect(runCapabilityOperation.responses['503']).toEqual({
+      description: 'Capability registry or required execution identity unavailable.',
+      content: {
+        'application/json': {
+          schema: { '$ref': '#/components/schemas/ErrorResponse' }
+        }
+      }
+    });
     expect(response.body.components.schemas.ConfirmationRequiredResponse).toEqual(expect.objectContaining({
       required: ['code', 'confirmationRequired', 'confirmationChallenge'],
       additionalProperties: true
@@ -3783,6 +4625,41 @@ describe('/gpt-access gateway', () => {
       required: ['ok', 'capabilities'],
       additionalProperties: false
     }));
+    expect(response.body.components.schemas.CapabilityV1Summary.properties.enabled).toEqual({
+      type: 'boolean'
+    });
+    expect(response.body.components.schemas.CapabilityV1Detail.properties.enabled).toEqual({
+      type: 'boolean'
+    });
+    expect(response.body.components.schemas.CapabilityV1Detail.properties.actionMetadata).toEqual(
+      expect.objectContaining({
+        type: 'object'
+      })
+    );
+    expect(
+      response.body.components.schemas.CapabilityV1Detail.properties.actionMetadata
+        .additionalProperties.properties
+    ).toEqual(expect.objectContaining({
+      executionTarget: {
+        type: 'string',
+        enum: ['typescript', 'python-daemon']
+      },
+      outputSchema: {
+        type: 'object',
+        additionalProperties: true
+      },
+      timeoutMs: {
+        type: 'integer',
+        minimum: 1
+      },
+      requiredDeviceScopes: {
+        type: 'array',
+        items: { type: 'string' },
+        uniqueItems: true
+      },
+      readOnly: { type: 'boolean' },
+      mayModifyFiles: { type: 'boolean' }
+    }));
     expect(response.body.paths['/gpt-access/queue/inspect'].get.operationId).toBe('inspectQueue');
     expect(response.body.paths['/gpt-access/self-heal/status'].get.operationId).toBe('getSelfHealStatus');
     expect(response.body.paths['/gpt-access/jobs/result'].post.operationId).toBe('getJobResult');
@@ -3807,6 +4684,13 @@ describe('/gpt-access gateway', () => {
     expect(response.body.paths['/gpt-access/dispatch/run'].post.description).toContain('DispatchPlan');
     expect(response.body.paths['/gpt-access/dispatch/run'].post.description).toContain('does not restore /ask');
     expect(response.body.paths['/gpt-access/dispatch/run'].post.summary).toContain('operational');
+    expect(response.body.paths['/gpt-access/dispatch/run'].post.parameters).toEqual([
+      expect.objectContaining({
+        name: 'Idempotency-Key',
+        in: 'header',
+        required: false
+      })
+    ]);
     expect(response.body.paths['/gpt-access/dispatch/run'].post.description).toContain('General generation and advisory prompts must use createAiJob');
     expect(response.body.paths['/gpt-access/dispatch/run'].post.description).toContain('Prefer dedicated GPT Access operations');
     expect(response.body.paths['/gpt-access/dispatch/run'].post.requestBody.content['application/json'].schema).toEqual({

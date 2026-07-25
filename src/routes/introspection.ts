@@ -105,13 +105,15 @@ router.get(
     const gptModuleMap = await getGptModuleMap();
     const modules = await loadModuleDefinitions();
 
-    const moduleList = modules.map(m => ({
-      name: m.definition.name,
-      route: m.route,
-      description: m.definition.description ?? null,
-      actions: Object.keys(m.definition.actions ?? {}),
-      gptIds: m.definition.gptIds ?? [],
-    }));
+    const moduleList = modules
+      .filter(m => m.definition.gptAccessOnly !== true)
+      .map(m => ({
+        name: m.definition.name,
+        route: m.route,
+        description: m.definition.description ?? null,
+        actions: Object.keys(m.definition.actions ?? {}),
+        gptIds: m.definition.gptIds ?? [],
+      }));
 
     return res.json({
       ok: true,

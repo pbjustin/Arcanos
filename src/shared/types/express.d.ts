@@ -2,7 +2,10 @@
  * Type definitions for Express Request extensions
  */
 import type { DispatchDecisionV9 } from './dispatchV9.js';
-import type { ActionPlanPrincipal } from '../../services/actionPlanExecution/auth.js';
+import type {
+  ActionPlanPrincipal,
+  LocalAgentExecutorPrincipal,
+} from '../../services/actionPlanExecution/auth.js';
 
 export type RequestLogLevel = 'debug' | 'info' | 'warn' | 'error';
 
@@ -72,6 +75,8 @@ declare global {
       };
       /** Purpose-bound Phase 2E principal; never contains presented credential material. */
       actionPlanPrincipal?: ActionPlanPrincipal;
+      /** Purpose-bound local-agent protocol principal; never contains credential material. */
+      localAgentExecutorPrincipal?: LocalAgentExecutorPrincipal;
     }
   }
 }
