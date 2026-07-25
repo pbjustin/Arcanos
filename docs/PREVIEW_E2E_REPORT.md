@@ -10,10 +10,10 @@
 The residual-risk hardening and isolated Railway preview validation has
 proceeded without modifying production or the Phase 2E validation environment.
 
-The application commit used for runtime validation is:
+The exact commit used for the final complete runtime validation is:
 
 ```text
-770d0acb3fd91b4deddfea5c984af73b15200c70
+b2821e8053610fd983c024d81b82e9b781a828f4
 ```
 
 The public preview is:
@@ -34,10 +34,11 @@ fixture's `preview-target.txt` from `before` to `after`.
 
 The original complete productivity/local-agent and confirmed `patch.apply`
 matrix was captured at commit
-`a1357af42b76825408bf18f0fcacfb74994c085b`. The current deployment adds this
-report and focused GPT Action OpenAPI compatibility fixes. Its full read-only
-verifier passed. Windows container sandbox validation and private Custom GPT
-read-only execution also passed at the current commit. The live
+`a1357af42b76825408bf18f0fcacfb74994c085b`. Subsequent runtime-validation
+commits added this report and focused GPT Action OpenAPI compatibility fixes.
+The full read-only verifier passed again at `b2821e80`. Windows container
+sandbox validation and private Custom GPT read-only execution also passed. The
+live
 `tests.run` request reached `CONFIRMATION_REQUIRED` without creating a job.
 After exact operator approval, one unchanged retry completed successfully in
 the Windows container sandbox and produced a correlated six-event timeline.
@@ -80,7 +81,7 @@ Verified properties:
 | Item | Recorded value |
 |---|---|
 | Git branch | `codex/local-agent-preview-hardening` |
-| Runtime-validation commit | `770d0acb3fd91b4deddfea5c984af73b15200c70` |
+| Runtime-validation commit | `b2821e8053610fd983c024d81b82e9b781a828f4` |
 | Node.js | `v24.13.0` locally; CI build target `20.19.0` |
 | npm | `11.6.2` |
 | Python | `3.11.7` locally; CI used Python 3.11 |
@@ -106,16 +107,16 @@ They were not included in the branch or preview deployment.
 | Workspace | `pbjustin's Projects` | — | — |
 | Project | `Arcanos` | `7faf44e5-519c-4e73-8d7a-da9f389e6187` | — |
 | Environment | `arcanos-preview-bf8ac3bd` | `99d9eeae-c618-4a77-8498-85dd0d7444cc` | — |
-| API | `arcanos-api-preview-bf8ac3bd` | `7a34bd3b-5087-4c9e-b732-a5a00a9dae8e` | `2ef16ca7-2dd7-4541-a221-0ee10ec01a77` |
-| Worker | `arcanos-worker-preview-bf8ac3bd` | `ad02d44b-d488-4e8d-b003-92223d02d1b8` | `e333592d-06cc-4c77-8612-5fe620ac9bd7` |
+| API | `arcanos-api-preview-bf8ac3bd` | `7a34bd3b-5087-4c9e-b732-a5a00a9dae8e` | `5dda2716-ac0b-4f67-8f71-f6f046351aea` |
+| Worker | `arcanos-worker-preview-bf8ac3bd` | `ad02d44b-d488-4e8d-b003-92223d02d1b8` | `7264d4d0-889e-4886-879b-2906e762f88d` |
 | PostgreSQL | `postgres-preview-bf8ac3bd` | `c044dc1c-fcf5-4457-ac74-163e2a55132e` | `c1103750-d6ab-4242-8026-80076d4bd98b` |
 | Redis | `redis-preview-bf8ac3bd` | `83109a22-246b-4853-9346-d7179238e0bf` | `5b3e456f-944d-4265-96c6-c768b760e281` |
 
 All four deployments reported `SUCCESS` during runtime validation. The listed
 API deployment metadata and health response identified commit
-`770d0acb3fd91b4deddfea5c984af73b15200c70`. The API's server-controlled
+`b2821e8053610fd983c024d81b82e9b781a828f4`. The API's server-controlled
 worker metadata identified the same commit and worker deployment
-`e333592d-06cc-4c77-8612-5fe620ac9bd7`.
+`7264d4d0-889e-4886-879b-2906e762f88d`.
 
 ### Stateful resources
 
@@ -340,7 +341,7 @@ the required symbolic-link privilege. No result was invented for Windows.
 | Confirmation replay/mutation | One-time, actor/action/payload-bound challenge tests passed in CI |
 | Cross-tenant access | Trusted principal/workspace context; caller-supplied tenancy rejected |
 | OpenAPI exposure | Only registered contracts; no secret values or `/gpt/:gptId` path |
-| API/worker log leakage | 500 API and 80 worker lines scanned: zero credential-pattern hits |
+| API/worker log leakage | Final 500 API and 49 worker lines: one documentation-string false positive, zero actual-secret hits |
 | Preview dependencies | Explicit preview PostgreSQL and Redis service references only |
 
 Deferred findings:
@@ -369,7 +370,7 @@ Deferred findings:
 During temporary GPT setup, a preview-only GPT Access bearer was visible in a
 browser snapshot. It was treated as compromised and immediately revoked and
 rotated. No token value is reproduced here; production credentials and
-resources were unaffected. The zero-hit log scan above covers API and worker
+resources were unaffected. The classified log scan above covers API and worker
 logs, not that browser snapshot.
 
 ## Capability and OpenAPI verification
@@ -615,7 +616,7 @@ decision while retaining evidence presence; the canonical job envelope records
 | Railway compatibility and deployment readiness | Passed |
 | Exact-commit discovery verifier | Passed |
 | Exact-commit read-only verifier | Passed |
-| Preview log credential/fatal-pattern scan | Zero hits |
+| Final preview log scan | 1 harmless documentation-string candidate; 0 actual-secret and 0 fatal hits |
 | Temporary private Custom GPT discovery/read-only execution | Passed |
 | Confirmed Windows preview `tests.run` and six-event timeline | Passed |
 | `gh pr checks 1408` | All checks complete and passing |
@@ -650,6 +651,17 @@ python -m pytest daemon-python/tests/test_local_agent_sandbox_container_e2e.py -
 The Docker CLI `default` context resolved to the dedicated Podman WSL2 machine;
 no secret endpoint or credential was placed in the command.
 
+The exact final read-only preview-verifier invocation was:
+
+```powershell
+& "$env:LOCALAPPDATA\Temp\run-arcanos-preview-sandbox-readonly.ps1"
+```
+
+That purpose-built helper selected commit `b2821e80`, API deployment
+`5dda2716-ac0b-4f67-8f71-f6f046351aea`, worker deployment
+`7264d4d0-889e-4886-879b-2906e762f88d`, and the explicit preview-only Railway
+resource IDs. It loaded the preview bearer without printing it.
+
 The exact confirmation-helper invocations were:
 
 ```powershell
@@ -669,7 +681,7 @@ above.
 ### Passed
 
 - All pull-request checks on commit
-  `770d0acb3fd91b4deddfea5c984af73b15200c70`.
+  `b2821e8053610fd983c024d81b82e9b781a828f4`.
 - Exact commit deployment for API and worker.
 - Preview migrations and schema verification.
 - Capability discovery and OpenAPI.
@@ -732,7 +744,7 @@ above.
 
 ## Logs and secret handling
 
-The review scanned 500 API log lines and 80 worker log lines for:
+The final review scanned 500 API log lines and 49 worker log lines for:
 
 - bearer credentials
 - OpenAI-style secret keys
@@ -740,7 +752,9 @@ The review scanned 500 API log lines and 80 worker log lines for:
 - password, token, secret, or credential assignments
 - fatal startup and connection failures
 
-- Detected API/worker log secret-pattern hits: `0`
+- Broad-regex candidates: `1`
+- Classified harmless documentation-string false positives: `1`
+- Confirmed secret-pattern hits: `0`
 - Detected fatal-pattern hits: `0`
 
 No token, password, database URL, or raw confirmation challenge is included in
