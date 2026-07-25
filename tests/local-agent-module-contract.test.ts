@@ -150,6 +150,19 @@ describe('ARCANOS:LOCAL_AGENT module contract', () => {
         options: { path: '..\\outside' }
       })
     ).toThrow(LocalAgentContractValidationError);
+    for (const path of [
+      'normal.txt:stream',
+      '.env:hidden',
+      'normal.txt::$DATA',
+      'nested/file.txt:stream'
+    ]) {
+      expect(() =>
+        validateLocalAgentActionInput('repo.search', {
+          query: 'needle',
+          options: { path, includeHidden: true }
+        })
+      ).toThrow(LocalAgentContractValidationError);
+    }
     expect(() =>
       validateLocalAgentActionInput('tests.run', {
         profile: 'custom',

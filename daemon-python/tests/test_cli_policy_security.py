@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from arcanos.cli.cli_policy import (
     evaluate_command_policy,
     parse_patch_paths,
@@ -164,6 +166,39 @@ def test_patch_policy_rejects_binary_traversal_and_symlink(monkeypatch, tmp_path
         return
     existing_patch = "diff --git a/existing-link b/existing-link\n--- a/existing-link\n+++ b/existing-link\n"
     assert validate_patch_text(existing_patch, str(tmp_path)).reason == "patch_symlink_not_allowed"
+
+
+@pytest.mark.parametrize(
+    "unsafe_path",
+    [
+        "normal.txt:stream",
+        ".env:stream",
+        "normal.txt::$DATA",
+        "nested/file.txt:stream",
+    ],
+)
+def test_patch_policy_rejects_windows_alternate_data_stream_paths(
+    monkeypatch,
+    tmp_path,
+    unsafe_path: str,
+) -> None:
+    monkeypatch.setenv("ARCANOS_CLI_SANDBOX_ROOT", str(tmp_path))
+    patch = "\n".join(
+        [
+            f"diff --git a/{unsafe_path} b/{unsafe_path}",
+            "new file mode 100644",
+            "--- /dev/null",
+            f"+++ b/{unsafe_path}",
+            "@@ -0,0 +1 @@",
+            "+hidden",
+            "",
+        ]
+    )
+
+    decision = validate_patch_text(patch, str(tmp_path))
+
+    assert decision.allowed is False
+    assert decision.reason == "patch_path_outside_sandbox"
 
 
 def test_safe_patch_preview_redacts_added_lines(monkeypatch, tmp_path) -> None:

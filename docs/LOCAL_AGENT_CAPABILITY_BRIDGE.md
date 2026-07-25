@@ -288,9 +288,10 @@ All confirmation-required local-agent actions currently consist of
 `tests.run` and `patch.apply`. Both are direct-capability-only: the
 natural-language dispatcher blocks them before execution, so confirmation
 cannot be obtained through semantic dispatch. They pass through the existing
-GPT Access confirmation gate. `patch.apply` has an additional strict rule: it
-must use a consumed confirmation challenge bound to the exact direct
-capability action and payload.
+GPT Access confirmation gate. Both actions additionally require a consumed
+confirmation challenge bound to the exact direct capability, action, payload,
+principal, and workspace. A permissive confirmation header without that
+consumed exact challenge cannot authorize either action.
 
 The supported flow is:
 
@@ -318,7 +319,9 @@ The bridge enforces:
 - a server allowlist of workspace IDs and a separate local JSON mapping from
   those IDs to absolute roots;
 - canonical root identity, no symlink/reparse-point workspace roots, traversal
-  rejection, and symlink escape checks;
+  rejection, symlink escape checks, and cross-platform rejection of colon
+  path segments so Windows NTFS alternate data streams cannot bypass ordinary
+  path or secret-file policy;
 - shared secret-file denial for `.env*`, credential files/directories, private
   keys, token/secret/credential-like names, and Git metadata;
 - Git pathspec exclusions and sanitized repository output;
@@ -594,7 +597,9 @@ harmless patch for a disposable fixture repository registered to the preview
 daemon; never use the main working repository. The verifier checks
 `patch.preview` applicability and compares `git.status` before and after the
 preview. It also validates every local-agent job through the sanitized
-`/gpt-access/jobs/timeline` endpoint.
+`/gpt-access/jobs/timeline` endpoint. Local-agent timeline rows are filtered
+by the server-configured GPT Access principal and workspace; when either
+trusted value is unavailable, the endpoint exposes no local-agent events.
 
 ```powershell
 npm run preview:e2e -- --mode readonly `

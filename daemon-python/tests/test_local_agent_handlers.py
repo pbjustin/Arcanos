@@ -241,6 +241,56 @@ def test_repo_search_denies_secret_files_even_when_hidden_files_are_requested(
         read_repository_file({"path": ".env"})
 
 
+@pytest.mark.parametrize(
+    "unsafe_path",
+    [
+        "normal.txt:stream",
+        ".env:hidden",
+        "normal.txt::$DATA",
+        "nested/file.txt:stream",
+    ],
+)
+def test_repo_search_rejects_alternate_data_stream_path_syntax(
+    tmp_path: Path,
+    unsafe_path: str,
+) -> None:
+    with pytest.raises(ValueError, match="bound workspace root"):
+        search_repository(
+            {
+                "query": "hidden",
+                "options": {
+                    "path": unsafe_path,
+                    "includeHidden": True,
+                },
+            },
+            workspace_root=tmp_path,
+        )
+
+
+@pytest.mark.skipif(os.name != "nt", reason="NTFS alternate streams are Windows-specific")
+def test_repo_search_cannot_read_secret_file_alternate_data_stream(
+    tmp_path: Path,
+) -> None:
+    secret_file = tmp_path / ".env"
+    secret_file.write_text("ordinary-content\n", encoding="utf-8")
+    Path(f"{secret_file}:hidden").write_text(
+        "hidden-ads-secret-marker\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="bound workspace root"):
+        search_repository(
+            {
+                "query": "hidden-ads-secret-marker",
+                "options": {
+                    "path": ".env:hidden",
+                    "includeHidden": True,
+                },
+            },
+            workspace_root=tmp_path,
+        )
+
+
 def test_repo_search_skips_file_symlink_that_escapes_workspace(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -523,6 +573,23 @@ def test_git_actions_reject_local_config_includes(
         get_repository_status({}, workspace_root=workspace)
 
 
+def test_git_actions_reject_disabled_protect_ntfs(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _initialize_git_repository(workspace)
+    subprocess.run(
+        ["git", "config", "core.protectNTFS", "false"],
+        cwd=workspace,
+        check=True,
+        capture_output=True,
+    )
+
+    with pytest.raises(PermissionError, match="may not disable core.protectNTFS"):
+        get_repository_status({}, workspace_root=workspace)
+
+
 def test_git_actions_reject_symlinked_git_metadata(
     tmp_path: Path,
 ) -> None:
@@ -775,6 +842,72 @@ def test_patch_preview_rejects_submodule_metadata_and_nested_repositories(
             {"patch": nested_patch},
             tmp_path,
             5_000,
+        )
+
+
+@pytest.mark.parametrize(
+    "unsafe_path",
+    [
+        "normal.txt:stream",
+        ".env:stream",
+        "normal.txt::$DATA",
+        "nested/file.txt:stream",
+    ],
+)
+def test_patch_preview_and_apply_reject_windows_alternate_data_streams(
+    tmp_path: Path,
+    unsafe_path: str,
+) -> None:
+    _initialize_git_repository(tmp_path)
+    subprocess.run(
+        ["git", "config", "core.protectNTFS", "false"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    patch_text = "\n".join(
+        [
+            f"diff --git a/{unsafe_path} b/{unsafe_path}",
+            "new file mode 100644",
+            "--- /dev/null",
+            f"+++ b/{unsafe_path}",
+            "@@ -0,0 +1 @@",
+            "+hidden",
+            "",
+        ]
+    )
+    payload = {
+        "patch": patch_text,
+        "expectedPatchSha256": hashlib.sha256(
+            patch_text.encode("utf-8")
+        ).hexdigest(),
+    }
+
+    with pytest.raises(
+        PermissionError,
+        match=r"(core\.protectNTFS|patch_path_outside_sandbox)",
+    ):
+        execute_local_agent_action(
+            "patch.preview",
+            {"patch": patch_text},
+            tmp_path,
+            5000,
+        )
+
+    patch_authorization = issue_patch_execution_authorization(
+        payload,
+        authorization_id="job:test-ads-path",
+    )
+    with pytest.raises(
+        PermissionError,
+        match=r"(core\.protectNTFS|patch_path_outside_sandbox)",
+    ):
+        execute_local_agent_action(
+            "patch.apply",
+            payload,
+            tmp_path,
+            5000,
+            mutation_authorization=patch_authorization,
         )
 
 

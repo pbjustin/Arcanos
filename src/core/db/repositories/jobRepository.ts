@@ -2037,9 +2037,11 @@ export async function recoverStalledJobsForWorkers(
 }
 
 /**
- * Get the latest queue job.
- * Purpose: support operator tooling that needs one recent queue sample.
- * Inputs/outputs: no inputs, returns the most recently created job or `null`.
+ * Get the latest non-local-agent queue job.
+ * Purpose: support generic operator tooling without crossing the protected
+ * local-agent result boundary.
+ * Inputs/outputs: no inputs, returns the most recently created non-local-agent
+ * job or `null`.
  * Edge case behavior: returns `null` when the database is unavailable or no jobs exist.
  */
 export async function getLatestJob(): Promise<JobData | null> {
@@ -2048,7 +2050,14 @@ export async function getLatestJob(): Promise<JobData | null> {
   }
 
   try {
-    const result = await query('SELECT * FROM job_data ORDER BY created_at DESC LIMIT 1', []);
+    const result = await query(
+      `SELECT *
+       FROM job_data
+       WHERE job_type <> 'local-agent'
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      []
+    );
     return (result.rows[0] as JobData | undefined) ?? null;
   } catch (error: unknown) {
     //audit Assumption: latest job lookup failure should degrade observability rather than crash helper routes; failure risk: status endpoints fail on transient query issues; expected invariant: lookup errors are logged and return `null`; handling strategy: fail closed.
@@ -2131,6 +2140,7 @@ export async function getJobQueueSummary(): Promise<JobQueueSummary | null> {
            END AS dead_letter
          FROM job_data
          WHERE status = 'failed'
+           AND job_type <> 'local-agent'
        ),
        summary AS (
          SELECT
@@ -2191,6 +2201,7 @@ export async function getJobQueueSummary(): Promise<JobQueueSummary | null> {
            )::int AS recent_terminal_count,
            COUNT(*) FILTER (WHERE status = 'pending' AND retry_count > 0)::int AS retry_scheduled_count
          FROM job_data
+         WHERE job_type <> 'local-agent'
        ),
        failure_breakdown AS (
         SELECT
@@ -2721,6 +2732,7 @@ export async function listFailedJobs(limit = 10): Promise<FailedJobSnapshot[]> {
          completed_at
        FROM job_data
        WHERE status = 'failed'
+         AND job_type <> 'local-agent'
        ORDER BY updated_at DESC, created_at DESC
        LIMIT $1`,
       [normalizedLimit]

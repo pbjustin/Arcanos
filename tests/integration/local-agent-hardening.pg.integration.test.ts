@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, test } from '@jest/globals';
 import { Client } from 'pg';
 import { verifyDatabaseSchemaWithClient } from '../../scripts/local-agent-hardening-migration.mjs';
+import { buildJobEventTimelineQuery } from '../../src/core/db/repositories/jobEventRepository.js';
 
 const connectionString =
   process.env.LOCAL_AGENT_HARDENING_TEST_DATABASE_URL?.trim() ?? '';
@@ -79,6 +80,8 @@ describeWithDatabase('local-agent hardening PostgreSQL concurrency', () => {
          trace_id TEXT,
          event_type TEXT NOT NULL,
          worker_id TEXT,
+         occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+         duration_ms INTEGER,
          metadata JSONB NOT NULL DEFAULT '{}'::jsonb
        )`
     );
@@ -127,8 +130,8 @@ describeWithDatabase('local-agent hardening PostgreSQL concurrency', () => {
       missingBindings: 0,
       mismatchedBindings: 0,
       exactColumns: true,
-      exactConstraints: true,
-      exactIndexes: true
+      expectedConstraintsValid: true,
+      expectedIndexesValid: true
     });
   });
 
@@ -435,5 +438,100 @@ describeWithDatabase('local-agent hardening PostgreSQL concurrency', () => {
       'DELETE FROM job_data WHERE id = ANY($1::uuid[])',
       [[firstJobId, secondJobId]]
     );
+  }, 30_000);
+
+  test('the production timeline query isolates local-agent events by tenant', async () => {
+    await withRollback(firstClient, async () => {
+      const ownJobId = randomUUID();
+      const foreignJobId = randomUUID();
+      const genericJobId = randomUUID();
+      await firstClient.query(
+        `INSERT INTO job_data (
+           id,
+           worker_id,
+           job_type,
+           status,
+           input
+         )
+         VALUES
+           ($1, 'device-own', 'local-agent', 'completed', $4::jsonb),
+           ($2, 'device-foreign', 'local-agent', 'completed', $5::jsonb),
+           ($3, 'worker-generic', 'generic', 'completed', '{}'::jsonb)`,
+        [
+          ownJobId,
+          foreignJobId,
+          genericJobId,
+          JSON.stringify({
+            job: {
+              principal: 'principal-own',
+              workspace: 'workspace-own'
+            }
+          }),
+          JSON.stringify({
+            job: {
+              principal: 'principal-foreign',
+              workspace: 'workspace-foreign'
+            }
+          })
+        ]
+      );
+      await firstClient.query(
+        `INSERT INTO job_events (
+           job_id,
+           trace_id,
+           event_type,
+           worker_id,
+           occurred_at,
+           metadata
+         )
+         VALUES
+           ($1, 'trace-own', 'job.completed', 'device-own',
+            '2026-07-24T10:00:00.000Z', '{"tenant":"own"}'::jsonb),
+           ($2, 'trace-foreign', 'job.completed', 'device-foreign',
+            '2026-07-24T10:01:00.000Z', '{"tenant":"foreign"}'::jsonb),
+           ($3, 'trace-generic', 'job.completed', 'worker-generic',
+            '2026-07-24T10:02:00.000Z', '{"tenant":"generic"}'::jsonb)`,
+        [ownJobId, foreignJobId, genericJobId]
+      );
+
+      const ownScopeQuery = buildJobEventTimelineQuery({
+        localAgentScope: {
+          principalId: 'principal-own',
+          workspaceId: 'workspace-own'
+        }
+      });
+      const ownScopeResult = await firstClient.query(
+        ownScopeQuery.text,
+        ownScopeQuery.params
+      );
+      expect(ownScopeResult.rows.map((row) => row.job_id)).toEqual([
+        ownJobId,
+        genericJobId
+      ]);
+
+      const foreignExactQuery = buildJobEventTimelineQuery({
+        jobId: foreignJobId,
+        localAgentScope: {
+          principalId: 'principal-own',
+          workspaceId: 'workspace-own'
+        }
+      });
+      const foreignExactResult = await firstClient.query(
+        foreignExactQuery.text,
+        foreignExactQuery.params
+      );
+      expect(foreignExactResult.rows).toEqual([]);
+
+      const missingScopeQuery = buildJobEventTimelineQuery({
+        localAgentScope: null
+      });
+      const missingScopeResult = await firstClient.query(
+        missingScopeQuery.text,
+        missingScopeQuery.params
+      );
+      expect(missingScopeResult.rows.map((row) => row.job_id)).toEqual([
+        genericJobId
+      ]);
+    });
   }, 30_000);
 });

@@ -216,6 +216,20 @@ function buildGptAccessModuleHandlerContext(
   };
 }
 
+function buildGptAccessConfirmationBinding(
+  req: express.Request
+): ConfirmationChallengeBinding {
+  return {
+    actorKey: getRequestAuthenticatedActorKey(req),
+    principalId:
+      readConfiguredGptAccessContextId('ARCANOS_GPT_ACCESS_PRINCIPAL_ID')
+      ?? 'gpt-access:unscoped-principal',
+    workspaceId:
+      readConfiguredGptAccessContextId('ARCANOS_GPT_ACCESS_WORKSPACE_ID')
+      ?? 'gpt-access:unscoped-workspace'
+  };
+}
+
 function isExplicitReadOnlyCapabilityAction(
   metadata: CapabilityMetadata | null,
   action: string
@@ -484,7 +498,10 @@ function confirmCapabilityRunWhenRequired(
     }
     next();
   }, strictConfirmationBinding
-    ? { challengeBinding: strictConfirmationBinding }
+    ? {
+        challengeBinding: strictConfirmationBinding,
+        requireChallengeToken: true
+      }
     : {});
 }
 
@@ -1075,6 +1092,21 @@ const runGptAccessDispatch = asyncHandler(async (req, res) => {
   }
 
   if (policy.requiresConfirmation) {
+    const confirmationFingerprintBody = {
+      protocol: 'gpt-access-dispatch-confirmation-v1',
+      request: req.body,
+      execution: {
+        action: plan.action,
+        payload: plan.payload,
+        registryAction: policy.registryAction
+          ? {
+              action: policy.registryAction.action,
+              risk: policy.registryAction.risk,
+              runner: policy.registryAction.runner
+            }
+          : null
+      }
+    };
     confirmGate(req, res, () => {
       const confirmedPolicy: DispatchPolicyDecision = {
         ...policy,
@@ -1091,6 +1123,10 @@ const runGptAccessDispatch = asyncHandler(async (req, res) => {
           sendGptAccessInternalError(res, 'Dispatch execution failed.');
         }
       });
+    }, {
+      challengeBinding: buildGptAccessConfirmationBinding(req),
+      requestFingerprintBody: confirmationFingerprintBody,
+      requireChallengeToken: true
     });
     return;
   }
@@ -1251,7 +1287,13 @@ router.post(
   '/gpt-access/jobs/timeline',
   requireGptAccessScope('diagnostics.read'),
   asyncHandler(async (req, res) => {
-    sendGptAccessResult(res, await queryJobEventTimeline(req.body));
+    sendGptAccessResult(
+      res,
+      await queryJobEventTimeline(req.body, {
+        principalId: readConfiguredGptAccessContextId('ARCANOS_GPT_ACCESS_PRINCIPAL_ID'),
+        workspaceId: readConfiguredGptAccessContextId('ARCANOS_GPT_ACCESS_WORKSPACE_ID')
+      })
+    );
   })
 );
 

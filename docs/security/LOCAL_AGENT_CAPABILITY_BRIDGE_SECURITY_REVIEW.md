@@ -101,8 +101,10 @@ configuration.
 - `tests.run` and `patch.apply` are privileged, confirmation-required actions.
 - Every confirmation-required local-agent action is direct-capability-only;
   natural-language dispatch blocks both `tests.run` and `patch.apply`.
-- `patch.apply` requires a consumed GPT Access challenge bound to the exact
-  direct action and payload.
+- `tests.run` and `patch.apply` each require a consumed GPT Access challenge
+  bound to the exact direct capability, action, payload, principal, and
+  workspace. A permissive confirmation header cannot authorize either action
+  without the consumed exact challenge.
 - The confirmation token is stripped by TypeScript and never appears in the
   stored payload, daemon assignment, or local journal.
 - Python accepts only the server’s `confirmed` authorization decision.
@@ -137,6 +139,10 @@ configuration.
   eligible for automatic pruning.
 - Generic worker claim, stale recovery, and failed-job requeue paths exclude
   `local-agent` jobs.
+- GPT Access job-timeline diagnostics join each local-agent event to its
+  authoritative job envelope and expose it only to the server-configured
+  principal/workspace that created it. Missing trusted tenancy context fails
+  closed for local-agent events.
 - Job state and each lifecycle/outbox event are written in the same
   transaction. Bounded batch recovery uses one savepoint per job, so an event
   failure rolls back that job and preserves per-job observability.
@@ -165,6 +171,9 @@ configuration.
   recursively rejects links/reparse points in Git metadata, and rejects local
   config includes plus path- or executable-bearing settings. Linked worktree
   and submodule roots that use a `.git` file are unsupported.
+- Repository and patch path policy rejects colon-bearing path segments on all
+  platforms so NTFS alternate data streams cannot bypass ordinary path or
+  secret-file rules.
 - Patch policy rejects secret paths, Git metadata, path escapes, existing
   symlink targets, creation of symlink mode `120000`, gitlink mode `160000`,
   `.gitmodules`, nested repositories, binary patches, private key content,

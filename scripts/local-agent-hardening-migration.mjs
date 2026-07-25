@@ -920,8 +920,8 @@ export async function verifyDatabaseSchemaWithClient(client) {
       initiallyDeferred: true
     },
     exactColumns: true,
-    exactConstraints: true,
-    exactIndexes: true,
+    expectedConstraintsValid: true,
+    expectedIndexesValid: true,
     expiryIndex: true
   };
 }

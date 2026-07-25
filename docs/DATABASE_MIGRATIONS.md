@@ -98,6 +98,16 @@ The required flag prevents a missing CI database variable from turning the
 database suite into a silent skip. Never point this test command at production
 or a retained preview database.
 
+### Productivity core migration
+
+`migrations/20260724_productivity_core.sql` is an additive, idempotent,
+forward-only migration. It intentionally has no automated rollback: dropping
+its workspace, project, task, note, review, event, or command-receipt tables
+could destroy canonical user data. Preview rollback is performed by discarding
+the isolated preview database. Any future production compensation must be a
+separately reviewed, operator-approved data migration or archival procedure;
+do not add or execute an unconditional table-drop rollback.
+
 ## Run locally
 Start the backend after configuring the database:
 ```bash

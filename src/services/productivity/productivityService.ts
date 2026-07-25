@@ -459,7 +459,7 @@ function calculateReviewStatus(reviews: ProductivityReview[], now: Date) {
   const daily = latestReview(reviews, 'daily');
   const weekly = latestReview(reviews, 'weekly');
   const today = toUtcDate(now);
-  const weeklyCutoff = new Date(now.getTime() - (6 * 86_400_000));
+  const weeklyDueDate = toUtcDate(new Date(now.getTime() - (7 * 86_400_000)));
 
   return {
     daily: {
@@ -467,7 +467,7 @@ function calculateReviewStatus(reviews: ProductivityReview[], now: Date) {
       lastRecorded: daily
     },
     weekly: {
-      due: !weekly || new Date(`${weekly.reviewDate}T00:00:00.000Z`) < weeklyCutoff,
+      due: !weekly || weekly.reviewDate <= weeklyDueDate,
       lastRecorded: weekly
     }
   };

@@ -212,6 +212,8 @@ def build_validated_git_argv(
         "-c",
         "core.fsmonitor=false",
         "-c",
+        "core.protectNTFS=true",
+        "-c",
         "credential.helper=",
         "-c",
         "submodule.recurse=false",
@@ -233,6 +235,8 @@ def _run_git_probe(
             "git",
             "-c",
             "core.fsmonitor=false",
+            "-c",
+            "core.protectNTFS=true",
             "-c",
             "credential.helper=",
             "-c",
@@ -378,6 +382,27 @@ def _validate_git_config_file(
             raise PermissionError(
                 "Git config contains local-agent-unsafe path or executable settings."
             )
+    protect_ntfs = run_bounded_process(
+        [
+            "git",
+            "config",
+            "--file",
+            str(config_path),
+            "--bool",
+            "--get",
+            "core.protectNTFS",
+        ],
+        cwd=root,
+        timeout_ms=timeout_ms,
+        max_output_chars=64,
+        cancellation_event=cancellation_event,
+    )
+    if protect_ntfs.exit_code not in {0, 1} or protect_ntfs.truncated:
+        raise PermissionError("Git core.protectNTFS policy could not be validated.")
+    if protect_ntfs.exit_code == 0 and protect_ntfs.stdout.strip().casefold() != "true":
+        raise PermissionError(
+            "Git config may not disable core.protectNTFS for local-agent actions."
+        )
 
 
 def _validate_git_alternates(
@@ -472,7 +497,10 @@ def open_workspace_file(
     if (
         not relative.parts
         or relative.is_absolute()
-        or any(part in {"", ".", ".."} for part in relative.parts)
+        or any(
+            part in {"", ".", ".."} or ":" in part
+            for part in relative.parts
+        )
     ):
         raise PermissionError("Workspace-relative file path is invalid.")
     root_metadata = os.stat(root, follow_symlinks=False)

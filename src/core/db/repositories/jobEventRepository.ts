@@ -84,6 +84,16 @@ export interface ListJobEventTimelineInput {
   occurredAfter?: string | Date | null;
   occurredBefore?: string | Date | null;
   limit?: number | null;
+  /**
+   * Controls local-agent visibility without changing the legacy internal
+   * timeline behavior. Undefined is reserved for trusted internal callers,
+   * null excludes every local-agent job, and a scope exposes only matching
+   * server-owned local-agent jobs.
+   */
+  localAgentScope?: {
+    principalId: string;
+    workspaceId: string;
+  } | null;
 }
 
 export interface JobEventTimelineRow {
@@ -100,6 +110,11 @@ export interface JobEventTimelineRow {
 export type ListJobEventTimelineResult =
   | { available: true; events: JobEventTimelineRow[] }
   | { available: false; reason: 'database_unavailable' | 'table_unavailable' | 'query_failed'; events: [] };
+
+export interface JobEventTimelineQuery {
+  text: string;
+  params: unknown[];
+}
 
 function normalizeNullableString(value: string | null | undefined): string | null {
   if (typeof value !== 'string') {
@@ -372,13 +387,14 @@ export async function cleanupJobEvents(
   }
 }
 
-export async function listJobEventTimeline(
+/**
+ * Builds the exact parameterized query used for timeline reads. Keeping this
+ * separate makes the tenant boundary executable against isolated PostgreSQL
+ * fixtures without requiring the repository's process-wide connection pool.
+ */
+export function buildJobEventTimelineQuery(
   input: ListJobEventTimelineInput = {}
-): Promise<ListJobEventTimelineResult> {
-  if (!isDatabaseConnected()) {
-    return { available: false, reason: 'database_unavailable', events: [] };
-  }
-
+): JobEventTimelineQuery {
   const conditions: string[] = [];
   const params: unknown[] = [];
   const addCondition = (sql: string, value: unknown): void => {
@@ -388,27 +404,45 @@ export async function listJobEventTimeline(
 
   const jobId = normalizeNullableString(input.jobId ?? null);
   if (jobId) {
-    addCondition('job_id = ?', jobId);
+    addCondition('event.job_id = ?', jobId);
   }
   const traceId = normalizeNullableString(input.traceId ?? null);
   if (traceId) {
-    addCondition('trace_id = ?', traceId);
+    addCondition('event.trace_id = ?', traceId);
   }
   const workerId = normalizeNullableString(input.workerId ?? null);
   if (workerId) {
-    addCondition('worker_id = ?', workerId);
+    addCondition('event.worker_id = ?', workerId);
   }
   const eventType = normalizeNullableString(input.eventType ?? null);
   if (eventType) {
-    addCondition('event_type = ?', eventType);
+    addCondition('event.event_type = ?', eventType);
   }
   const occurredAfter = normalizeDateInput(input.occurredAfter);
   if (occurredAfter) {
-    addCondition('occurred_at >= ?::timestamptz', occurredAfter);
+    addCondition('event.occurred_at >= ?::timestamptz', occurredAfter);
   }
   const occurredBefore = normalizeDateInput(input.occurredBefore);
   if (occurredBefore) {
-    addCondition('occurred_at <= ?::timestamptz', occurredBefore);
+    addCondition('event.occurred_at <= ?::timestamptz', occurredBefore);
+  }
+  if (input.localAgentScope !== undefined) {
+    const principalId = normalizeNullableString(input.localAgentScope?.principalId);
+    const workspaceId = normalizeNullableString(input.localAgentScope?.workspaceId);
+    if (!principalId || !workspaceId) {
+      conditions.push("job.job_type IS DISTINCT FROM 'local-agent'");
+    } else {
+      params.push(principalId);
+      const principalParam = `$${params.length}`;
+      params.push(workspaceId);
+      const workspaceParam = `$${params.length}`;
+      conditions.push(
+        `(job.job_type IS DISTINCT FROM 'local-agent' OR (` +
+          `job.job_type = 'local-agent' ` +
+          `AND job.input->'job'->>'principal' = ${principalParam} ` +
+          `AND job.input->'job'->>'workspace' = ${workspaceParam}))`
+      );
+    }
   }
 
   const limit = normalizePositiveInteger(
@@ -419,15 +453,34 @@ export async function listJobEventTimeline(
   params.push(limit);
 
   const whereSql = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+  const jobJoinSql = input.localAgentScope !== undefined
+    ? 'INNER JOIN job_data AS job ON job.id = event.job_id'
+    : '';
 
+  return {
+    text: `SELECT event.id, event.job_id, event.trace_id, event.event_type,
+                  event.worker_id, event.occurred_at, event.duration_ms, event.metadata
+           FROM job_events AS event
+           ${jobJoinSql}
+           ${whereSql}
+           ORDER BY event.occurred_at ASC, event.id ASC
+           LIMIT $${params.length}`,
+    params
+  };
+}
+
+export async function listJobEventTimeline(
+  input: ListJobEventTimelineInput = {}
+): Promise<ListJobEventTimelineResult> {
+  if (!isDatabaseConnected()) {
+    return { available: false, reason: 'database_unavailable', events: [] };
+  }
+
+  const timelineQuery = buildJobEventTimelineQuery(input);
   try {
     const result = await query(
-      `SELECT id, job_id, trace_id, event_type, worker_id, occurred_at, duration_ms, metadata
-       FROM job_events
-       ${whereSql}
-       ORDER BY occurred_at ASC, id ASC
-       LIMIT $${params.length}`,
-      params,
+      timelineQuery.text,
+      timelineQuery.params,
       3,
       false,
       {

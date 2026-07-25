@@ -273,7 +273,9 @@ The groups below highlight stable public routes, operator/control routes, compat
 - `GET /gpt-access/self-heal/status`
 - `POST /gpt-access/jobs/create`
 - `POST /gpt-access/jobs/result`
-- `POST /gpt-access/jobs/timeline`
+- `POST /gpt-access/jobs/timeline` (local-agent events are restricted to the
+  server-configured GPT Access principal/workspace and fail closed when that
+  trusted context is unavailable)
 - `POST /gpt-access/diagnostics/deep`
 - `POST /gpt-access/db/explain`
 - `POST /gpt-access/logs/query`

@@ -153,12 +153,22 @@ const OPENAPI_SERVER_URL_ENV_KEYS = [
   'RAILWAY_PUBLIC_DOMAIN',
   'RAILWAY_STATIC_URL'
 ] as const;
+let testAppNetworkSequence = 0;
 
 function buildApp(options: { trustProxy?: boolean } = {}) {
   const app = express();
+  testAppNetworkSequence += 1;
+  const testRemoteAddress = `198.18.${Math.floor(testAppNetworkSequence / 254)}.${(testAppNetworkSequence % 254) + 1}`;
   if (options.trustProxy) {
     app.set('trust proxy', true);
   }
+  app.use((req, _res, next) => {
+    Object.defineProperty(req.socket, 'remoteAddress', {
+      configurable: true,
+      value: testRemoteAddress
+    });
+    next();
+  });
   app.use(express.json());
   app.use('/', gptAccessRouter);
   return app;
@@ -1564,9 +1574,10 @@ describe('/gpt-access gateway', () => {
         .set('x-confirmed', 'yes')
     ).send(body);
     expect(manual.status).toBe(403);
-    expect(manual.body.error.code).toBe(
-      'LOCAL_AGENT_CHALLENGE_CONFIRMATION_REQUIRED'
-    );
+    expect(manual.body.code).toBe('CONFIRMATION_REQUIRED');
+    expect(manual.body.confirmationChallenge).toEqual(expect.objectContaining({
+      id: expect.any(String)
+    }));
     expect(dispatchModuleActionMock).not.toHaveBeenCalled();
 
     const confirmedResponse = await authorized(
@@ -1645,9 +1656,10 @@ describe('/gpt-access gateway', () => {
         .set('x-confirmed', 'yes')
     ).send(body);
     expect(manual.status).toBe(403);
-    expect(manual.body.error.code).toBe(
-      'LOCAL_AGENT_CHALLENGE_CONFIRMATION_REQUIRED'
-    );
+    expect(manual.body.code).toBe('CONFIRMATION_REQUIRED');
+    expect(manual.body.confirmationChallenge).toEqual(expect.objectContaining({
+      id: expect.any(String)
+    }));
     expect(dispatchModuleActionMock).not.toHaveBeenCalled();
 
     const pending = await authorized(
@@ -1825,6 +1837,9 @@ describe('/gpt-access gateway', () => {
   it.each([
     ['secret file patch', 'diff --git a/packages/app/.env b/packages/app/.env\nnew file mode 100644\n--- /dev/null\n+++ b/packages/app/.env\n@@ -0,0 +1 @@\n+OPENAI_API_KEY=sk-test\n', 'patch_targets_secret_file'],
     ['windows absolute path patch', 'diff --git a/C:/outside.txt b/C:/outside.txt\nnew file mode 100644\n--- /dev/null\n+++ b/C:/outside.txt\n@@ -0,0 +1 @@\n+outside\n', 'patch_path_outside_sandbox'],
+    ['windows alternate data stream patch', 'diff --git a/normal.txt:stream b/normal.txt:stream\nnew file mode 100644\n--- /dev/null\n+++ b/normal.txt:stream\n@@ -0,0 +1 @@\n+hidden\n', 'patch_path_outside_sandbox'],
+    ['windows alternate data stream on a secret path', 'diff --git a/.env:stream b/.env:stream\nnew file mode 100644\n--- /dev/null\n+++ b/.env:stream\n@@ -0,0 +1 @@\n+hidden\n', 'patch_path_outside_sandbox'],
+    ['windows explicit data stream patch', 'diff --git a/normal.txt::$DATA b/normal.txt::$DATA\nnew file mode 100644\n--- /dev/null\n+++ b/normal.txt::$DATA\n@@ -0,0 +1 @@\n+hidden\n', 'patch_path_outside_sandbox'],
     ['binary patch', 'diff --git a/bin.dat b/bin.dat\nnew file mode 100644\nGIT binary patch\nliteral 1\nKcmZQzU|?Wm\n', 'patch_binary_not_allowed'],
     ['symlink patch', 'diff --git a/link b/link\nnew file mode 120000\n--- /dev/null\n+++ b/link\n@@ -0,0 +1 @@\n+../outside\n', 'patch_symlink_not_allowed']
   ])('denies unsafe ARCANOS:CLI patch proposals: %s', async (_caseName, patch, reason) => {
@@ -2656,6 +2671,23 @@ describe('/gpt-access gateway', () => {
     expect(dispatchModuleActionMock).not.toHaveBeenCalled();
   });
 
+  it('does not accept manual confirmation for a privileged dispatch action', async () => {
+    allowCapabilityRun();
+
+    const response = await confirmed(
+      authorized(request(buildApp()).post('/gpt-access/dispatch/run'))
+    ).send({
+      utterance: 'ARCANOS:CORE.query'
+    });
+
+    expect(response.status).toBe(403);
+    expect(response.body.code).toBe('CONFIRMATION_REQUIRED');
+    expect(response.body.confirmationChallenge).toEqual(expect.objectContaining({
+      id: expect.any(String)
+    }));
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
   it('uses the existing confirmation retry mechanism before privileged dispatch execution', async () => {
     allowCapabilityRun();
     const app = buildApp();
@@ -2685,15 +2717,83 @@ describe('/gpt-access gateway', () => {
     expect(dispatchModuleActionMock).toHaveBeenCalledWith('ARCANOS:CORE', 'query', {});
   });
 
+  it('rejects a confirmation retry when the resolved action payload changes', async () => {
+    process.env.GPT_ACCESS_NL_DISPATCH_MODE = 'llm_first';
+    allowCapabilityRun();
+    hasValidOpenAiKeyMock.mockReturnValue(true);
+    responsesCreateMock
+      .mockResolvedValueOnce({
+        output_text: JSON.stringify({
+          action: 'ARCANOS:CORE.query',
+          payload: {
+            prompt: 'first payload'
+          },
+          confidence: 0.95,
+          requiresConfirmation: true,
+          reason: 'first_plan',
+          candidates: []
+        })
+      })
+      .mockResolvedValueOnce({
+        output_text: JSON.stringify({
+          action: 'ARCANOS:CORE.query',
+          payload: {
+            prompt: 'different payload'
+          },
+          confidence: 0.95,
+          requiresConfirmation: true,
+          reason: 'changed_plan',
+          candidates: []
+        })
+      });
+    const app = buildApp();
+    const requestBody = {
+      utterance: 'Run the registered core capability for this request.'
+    };
+
+    const challengeResponse = await authorized(
+      request(app).post('/gpt-access/dispatch/run')
+    ).send(requestBody);
+    const challengeId = challengeResponse.body.confirmationChallenge?.id;
+    expect(challengeResponse.status).toBe(403);
+    expect(typeof challengeId).toBe('string');
+
+    const response = await authorized(request(app).post('/gpt-access/dispatch/run'))
+      .send({
+        ...requestBody,
+        confirmation_token: challengeId
+      });
+
+    expect(response.status).toBe(403);
+    expect(response.body.code).toBe('CONFIRMATION_REQUIRED');
+    expect(response.body.confirmationChallenge).toEqual(expect.objectContaining({
+      id: expect.any(String)
+    }));
+    expect(response.body.confirmationChallenge.id).not.toBe(challengeId);
+    expect(dispatchModuleActionMock).not.toHaveBeenCalled();
+  });
+
   it('executes confirmed worker recovery dispatch through the approved recovery runner', async () => {
     process.env.ARCANOS_GPT_ACCESS_SCOPES = 'workers.recover';
+    const app = buildApp();
 
-    const response = await confirmed(authorized(request(buildApp()).post('/gpt-access/dispatch/run')))
+    const requestBody = {
+      utterance: 'workers.recycle',
+      context: {
+        operator: 'test'
+      }
+    };
+    const challengeResponse = await authorized(
+      request(app).post('/gpt-access/dispatch/run')
+    ).send(requestBody);
+    const challengeId = challengeResponse.body.confirmationChallenge?.id;
+    expect(challengeResponse.status).toBe(403);
+    expect(typeof challengeId).toBe('string');
+
+    const response = await authorized(request(app).post('/gpt-access/dispatch/run'))
       .send({
-        utterance: 'workers.recycle',
-        context: {
-          operator: 'test'
-        }
+        ...requestBody,
+        confirmation_token: challengeId
       });
 
     expect(response.status).toBe(200);
@@ -4182,6 +4282,8 @@ describe('/gpt-access gateway', () => {
 
   it('queries sanitized job event timelines through the diagnostics scope', async () => {
     process.env.ARCANOS_GPT_ACCESS_SCOPES = 'diagnostics.read';
+    process.env.ARCANOS_GPT_ACCESS_PRINCIPAL_ID = 'operator:primary';
+    process.env.ARCANOS_GPT_ACCESS_WORKSPACE_ID = 'personal';
     getJobEventTimelineMock.mockResolvedValueOnce({
       available: true,
       summary: {
@@ -4261,7 +4363,11 @@ describe('/gpt-access gateway', () => {
       eventType: 'job.queued',
       occurredAfter: '2026-05-07T09:00:00.000Z',
       occurredBefore: '2026-05-07T11:00:00.000Z',
-      limit: 10
+      limit: 10,
+      localAgentScope: {
+        principalId: 'operator:primary',
+        workspaceId: 'personal'
+      }
     });
     expect(rendered).toContain('[REDACTED_PROMPT]');
     expect(rendered).toContain('[REDACTED_DIAGNOSTIC_PAYLOAD]');
@@ -4269,6 +4375,30 @@ describe('/gpt-access gateway', () => {
     expect(rendered).not.toContain('raw completion should not leak');
     expect(rendered).not.toContain('live-token-value');
     expect(rendered).not.toContain('postgres://user:pass@host/db');
+  });
+
+  it('fails local-agent timeline visibility closed when trusted tenant context is absent', async () => {
+    process.env.ARCANOS_GPT_ACCESS_SCOPES = 'diagnostics.read';
+    delete process.env.ARCANOS_GPT_ACCESS_PRINCIPAL_ID;
+    delete process.env.ARCANOS_GPT_ACCESS_WORKSPACE_ID;
+
+    const response = await authorized(
+      request(buildApp({ trustProxy: true })).post('/gpt-access/jobs/timeline')
+    )
+      .set('X-Forwarded-For', '203.0.113.57')
+      .send({ job_id: COMPLETED_JOB_ID });
+
+    expect(response.status).toBe(200);
+    expect(getJobEventTimelineMock).toHaveBeenCalledWith({
+      jobId: COMPLETED_JOB_ID,
+      traceId: undefined,
+      workerId: undefined,
+      eventType: undefined,
+      occurredAfter: undefined,
+      occurredBefore: undefined,
+      limit: undefined,
+      localAgentScope: null
+    });
   });
 
   it('rejects unauthenticated job timeline queries', async () => {

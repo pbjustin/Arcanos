@@ -178,6 +178,10 @@ class RegisteredWorkspaceRegistry:
             raise WorkspaceRegistryError("Absolute paths are not allowed")
         if any(part in {"", ".", ".."} for part in untrusted.parts):
             raise WorkspaceRegistryError("Path traversal is not allowed")
+        if any(":" in part for part in untrusted.parts):
+            raise WorkspaceRegistryError(
+                "Alternate data streams and colon path components are not allowed"
+            )
         if not allow_secret_file and is_secret_workspace_path(untrusted):
             raise WorkspaceRegistryError("Secret-file access is denied")
         candidate = root.joinpath(untrusted)

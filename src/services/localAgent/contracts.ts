@@ -179,7 +179,7 @@ const boundedStringSchema = (
 
 const relativePathSchema = boundedStringSchema(1_024, {
   pattern:
-    '^(?![A-Za-z]:[\\\\/])(?![\\\\/])(?!.*(?:^|[\\\\/])\\.\\.(?:[\\\\/]|$)).+$'
+    '^(?!.*:)(?![\\\\/])(?!.*(?:^|[\\\\/])\\.\\.(?:[\\\\/]|$)).+$'
 });
 const gitRefSchema = boundedStringSchema(200, {
   pattern: '^(?!-)(?!.*(?:\\.\\.|@\\{|[~^:?*\\[\\\\\\s]))[A-Za-z0-9][A-Za-z0-9._/-]*$'

@@ -285,9 +285,12 @@ export async function generateSystemDiagnostics(): Promise<SystemDiagnostics> {
     try {
       const { getLatestJob } = await import("@core/db/index.js");
       const rawJob = await getLatestJob();
-      if (rawJob) {
+      if (rawJob && rawJob.job_type !== 'local-agent') {
         latestJob = {
-          ...rawJob,
+          id: rawJob.id,
+          worker_id: rawJob.worker_id,
+          job_type: rawJob.job_type,
+          status: rawJob.status,
           created_at: rawJob.created_at instanceof Date ? rawJob.created_at.toISOString() : rawJob.created_at,
           completed_at: rawJob.completed_at instanceof Date ? rawJob.completed_at.toISOString() : rawJob.completed_at
         };

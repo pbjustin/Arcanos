@@ -636,7 +636,7 @@ def resolve_workspace_path(
 
     if (
         normalized_relative_path.startswith("/")
-        or re.match(r"^[A-Za-z]:/", normalized_relative_path)
+        or any(":" in part for part in relative_parts)
         or ".." in relative_parts
     ):
         raise ValueError("Paths must stay within the bound workspace root.")

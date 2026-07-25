@@ -1497,6 +1497,46 @@ describe('ProductivityService domain and security contracts', () => {
     expect(repository.tasks).toHaveLength(1);
   });
 
+  test('marks weekly reviews due after seven complete UTC calendar days', async () => {
+    const review = (reviewDate: string): ProductivityReview => ({
+      id: `review-${reviewDate}`,
+      kind: 'weekly',
+      reviewDate,
+      content: {},
+      createdAt: `${reviewDate}T12:00:00.000Z`,
+    });
+    const recentService = new ProductivityService(
+      new InMemoryProductivityRepository({
+        reviews: [review('2026-07-18')],
+      }),
+      () => NOW,
+    );
+    const dueService = new ProductivityService(
+      new InMemoryProductivityRepository({
+        reviews: [review('2026-07-17')],
+      }),
+      () => NOW,
+    );
+
+    const recentState = await recentService.execute(
+      'state.current',
+      {},
+      execution('weekly-review-recent'),
+    );
+    const dueState = await dueService.execute(
+      'state.current',
+      {},
+      execution('weekly-review-due'),
+    );
+
+    expect(dataOf<{
+      summary: { reviews: { weeklyDue: boolean } };
+    }>(recentState).summary.reviews.weeklyDue).toBe(false);
+    expect(dataOf<{
+      summary: { reviews: { weeklyDue: boolean } };
+    }>(dueState).summary.reviews.weeklyDue).toBe(true);
+  });
+
   test('describes no-op transitions without claiming a new state change', async () => {
     const repository = new InMemoryProductivityRepository({
       tasks: [

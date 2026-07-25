@@ -265,7 +265,12 @@ def validate_patch_text(patch_text: str, cwd: str | None = None) -> PatchDecisio
             return PatchDecision(False, "patch_denied_by_policy", patch_hash, files, added, removed, preview)
     for file_path in files:
         normalized = file_path.replace("\\", "/")
-        if normalized.startswith("/") or re.match(r"^[A-Za-z]:", normalized) or normalized == ".." or "../" in normalized:
+        if (
+            normalized.startswith("/")
+            or any(":" in segment for segment in normalized.split("/"))
+            or normalized == ".."
+            or "../" in normalized
+        ):
             return PatchDecision(False, "patch_path_outside_sandbox", patch_hash, files, added, removed, preview)
         if normalized == ".git" or normalized.startswith(".git/"):
             return PatchDecision(False, "patch_targets_git_metadata", patch_hash, files, added, removed, preview)

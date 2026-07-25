@@ -938,6 +938,18 @@ def test_workspace_registry_denies_traversal_secret_and_symlink_escape(
         registry.resolve_relative("personal", ".env", allow_missing=True)
     with pytest.raises(WorkspaceRegistryError):
         registry.resolve_relative("personal", ".git/config", allow_missing=True)
+    with pytest.raises(WorkspaceRegistryError, match="data streams|colon"):
+        registry.resolve_relative(
+            "personal",
+            "public.txt:stream",
+            allow_missing=True,
+        )
+    with pytest.raises(WorkspaceRegistryError, match="data streams|colon"):
+        registry.resolve_relative(
+            "personal",
+            "nested/.env:hidden",
+            allow_missing=True,
+        )
 
     outside = tmp_path / "outside"
     outside.mkdir()

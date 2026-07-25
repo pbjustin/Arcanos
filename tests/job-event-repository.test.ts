@@ -316,7 +316,9 @@ describe('jobEventRepository.listJobEventTimeline', () => {
         })
       ]
     });
-    expect(queryMock.mock.calls[0]?.[0]).toContain('ORDER BY occurred_at ASC, id ASC');
+    expect(queryMock.mock.calls[0]?.[0]).toContain(
+      'ORDER BY event.occurred_at ASC, event.id ASC'
+    );
     expect(queryMock.mock.calls[0]?.[1]).toEqual([
       'job-1',
       'trace-1',
@@ -325,6 +327,47 @@ describe('jobEventRepository.listJobEventTimeline', () => {
       '2026-05-07T11:00:00.000Z',
       '2026-05-07T13:00:00.000Z',
       1_000
+    ]);
+  });
+
+  it('excludes local-agent events when trusted tenant context is unavailable', async () => {
+    await listJobEventTimeline({
+      traceId: 'trace-1',
+      localAgentScope: null
+    });
+
+    const sql = String(queryMock.mock.calls[0]?.[0]);
+    expect(sql).toContain(
+      'INNER JOIN job_data AS job ON job.id = event.job_id'
+    );
+    expect(sql).toContain("job.job_type IS DISTINCT FROM 'local-agent'");
+    expect(sql).toContain('event.trace_id = $1');
+    expect(queryMock.mock.calls[0]?.[1]).toEqual(['trace-1', 100]);
+  });
+
+  it('binds local-agent timeline events to the trusted principal and workspace', async () => {
+    await listJobEventTimeline({
+      jobId: 'job-1',
+      localAgentScope: {
+        principalId: 'operator:primary',
+        workspaceId: 'personal'
+      }
+    });
+
+    const sql = String(queryMock.mock.calls[0]?.[0]);
+    expect(sql).toContain(
+      'INNER JOIN job_data AS job ON job.id = event.job_id'
+    );
+    expect(sql).toContain("job.job_type IS DISTINCT FROM 'local-agent'");
+    expect(sql).toContain("job.input->'job'->>'principal' = $2");
+    expect(sql).toContain("job.input->'job'->>'workspace' = $3");
+    expect(sql).not.toContain('operator:primary');
+    expect(sql).not.toContain('personal');
+    expect(queryMock.mock.calls[0]?.[1]).toEqual([
+      'job-1',
+      'operator:primary',
+      'personal',
+      100
     ]);
   });
 

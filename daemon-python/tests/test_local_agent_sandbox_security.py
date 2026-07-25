@@ -336,6 +336,24 @@ def test_secure_read_denies_posix_link_forms(
             stream.read()
 
 
+@pytest.mark.parametrize(
+    "relative_path",
+    [
+        "normal.txt:stream",
+        ".env:hidden",
+        "normal.txt::$DATA",
+        "nested/file.txt:stream",
+    ],
+)
+def test_secure_read_rejects_alternate_data_stream_path_syntax(
+    tmp_path: Path,
+    relative_path: str,
+) -> None:
+    with pytest.raises(PermissionError, match="path is invalid"):
+        with open_workspace_file(tmp_path, relative_path) as stream:
+            stream.read()
+
+
 @pytest.mark.skipif(os.name == "nt", reason="POSIX O_NOFOLLOW behavior")
 def test_secure_read_denies_swap_to_symlink_after_validation(
     monkeypatch: pytest.MonkeyPatch,

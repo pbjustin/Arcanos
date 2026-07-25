@@ -1945,7 +1945,15 @@ export async function runGptAccessMcpTool(body: unknown) {
   }
 }
 
-export async function queryJobEventTimeline(body: unknown) {
+export interface GptAccessJobTimelineContext {
+  principalId: string | null;
+  workspaceId: string | null;
+}
+
+export async function queryJobEventTimeline(
+  body: unknown,
+  context: GptAccessJobTimelineContext
+) {
   const parsed = jobTimelineQuerySchema.safeParse(body ?? {});
   if (!parsed.success) {
     return {
@@ -1969,7 +1977,13 @@ export async function queryJobEventTimeline(body: unknown) {
       eventType: data.eventType ?? data.event_type,
       occurredAfter: data.occurredAfter ?? data.occurred_after,
       occurredBefore: data.occurredBefore ?? data.occurred_before,
-      limit: data.limit
+      limit: data.limit,
+      localAgentScope: context.principalId && context.workspaceId
+        ? {
+            principalId: context.principalId,
+            workspaceId: context.workspaceId
+          }
+        : null
     });
 
     if (!result.available) {
