@@ -666,8 +666,8 @@ describe('local-agent durable job repository', () => {
   test('rejects a result submitted after the server-controlled job expiry', async () => {
     storedJob.status = 'running';
     storedJob.last_worker_id = storedJob.worker_id;
-    storedJob.lease_expires_at = new Date(Date.now() + 30_000);
-    storedJob.expires_at = new Date(Date.now() - 1);
+    storedJob.lease_expires_at = new Date(databaseNowMs + 30_000);
+    storedJob.expires_at = new Date(databaseNowMs - 1);
 
     await expect(
       submitLocalAgentJobResult({
