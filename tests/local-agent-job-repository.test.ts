@@ -88,6 +88,8 @@ const job = (): MutableJob => ({
 
 let storedJob: MutableJob;
 let storedBinding: Record<string, unknown> | null;
+let databaseNowMs: number;
+let forceResultUpdateMiss: boolean;
 
 function rows(value: unknown[] = []) {
   return { rows: value, rowCount: value.length };
@@ -174,15 +176,18 @@ const client = {
         ? rows([{
           ...storedBinding,
           linked_job: storedJob,
-          binding_reusable:
-            ['completed', 'failed', 'cancelled', 'expired'].includes(
-              storedJob.status
-            )
-            && new Date(
-              String(storedBinding.idempotency_until)
-            ).getTime() <= Date.now()
-        }])
-        : rows();
+           binding_reusable:
+             ['completed', 'failed', 'cancelled', 'expired'].includes(
+               storedJob.status
+             )
+             && new Date(
+               String(storedBinding.idempotency_until)
+             ).getTime() <= databaseNowMs
+             && (
+               storedJob.autonomy_state.localAgent as Record<string, unknown>
+             )?.manualReconciliationRequired !== true
+         }])
+         : rows();
     }
     if (
       sql.startsWith('UPDATE job_data')
@@ -263,13 +268,27 @@ const client = {
       sql.startsWith('SELECT * FROM job_data')
       && sql.includes('LIMIT 1 FOR UPDATE')
     ) {
-      if (sql.includes('worker_id = $3')) {
-        return storedJob.id === values[0] && storedJob.worker_id === values[2]
-          ? rows([storedJob])
-          : rows();
-      }
       return storedJob.id === values[0] && storedJob.job_type === values[1]
         ? rows([storedJob])
+        : rows();
+    }
+    if (
+      sql.startsWith('SELECT job_row.*')
+      && sql.includes('result_job_unexpired')
+      && sql.includes('result_lease_unexpired')
+      && sql.includes('LIMIT 1 FOR UPDATE')
+    ) {
+      return storedJob.id === values[0]
+        && storedJob.job_type === values[1]
+        && storedJob.worker_id === values[2]
+        ? rows([{
+          ...storedJob,
+          result_job_unexpired:
+            storedJob.expires_at.getTime() > databaseNowMs,
+          result_lease_unexpired:
+            Boolean(storedJob.lease_expires_at)
+            && storedJob.lease_expires_at!.getTime() >= databaseNowMs
+        }])
         : rows();
     }
     if (
@@ -277,6 +296,19 @@ const client = {
       && sql.includes('output = $2::jsonb')
       && sql.includes("'{localAgent}'")
     ) {
+      if (
+        forceResultUpdateMiss
+        || storedJob.id !== values[4]
+        || storedJob.job_type !== values[5]
+        || storedJob.worker_id !== values[6]
+        || storedJob.status !== 'running'
+        || storedJob.last_worker_id !== values[6]
+        || storedJob.expires_at.getTime() <= databaseNowMs
+        || !storedJob.lease_expires_at
+        || storedJob.lease_expires_at.getTime() < databaseNowMs
+      ) {
+        return rows();
+      }
       storedJob.status = String(values[0]);
       storedJob.output = JSON.parse(String(values[1])) as unknown;
       storedJob.error_message = values[2] ? String(values[2]) : null;
@@ -328,6 +360,8 @@ const {
 beforeEach(() => {
   storedJob = job();
   storedBinding = null;
+  databaseNowMs = Date.now();
+  forceResultUpdateMiss = false;
   jest.clearAllMocks();
 });
 
@@ -400,6 +434,58 @@ describe('local-agent durable job repository', () => {
     ).rejects.toMatchObject({
       code: 'LOCAL_AGENT_IDEMPOTENCY_CONFLICT'
     });
+  });
+
+  test('never reuses or removes a binding that requires manual reconciliation', async () => {
+    const options = {
+      deviceId: storedJob.worker_id,
+      envelope: storedJob.input as never,
+      requestFingerprintHash: 'a'.repeat(64),
+      idempotencyKeyHash: 'b'.repeat(64),
+      idempotencyScopeHash: 'c'.repeat(64),
+      idempotencyOrigin: 'explicit' as const,
+      expiresAt: '2099-07-24T13:00:00.000Z',
+      idempotencyUntil: '2099-07-25T13:00:00.000Z',
+      retentionUntil: '2099-07-26T13:00:00.000Z'
+    };
+
+    const created = await findOrCreateLocalAgentJob(options);
+    storedJob.status = 'failed';
+    storedJob.completed_at = new Date();
+    storedJob.retention_until = new Date(databaseNowMs - 1);
+    storedJob.idempotency_until = new Date(databaseNowMs - 1);
+    if (storedBinding) {
+      storedBinding.idempotency_until = new Date(databaseNowMs - 1);
+    }
+    storedJob.autonomy_state = {
+      localAgent: { manualReconciliationRequired: true }
+    };
+
+    await expect(findOrCreateLocalAgentJob(options)).resolves.toMatchObject({
+      created: false,
+      deduped: true,
+      dedupeReason: 'reused_terminal_result',
+      job: { id: created.job.id, status: 'failed' }
+    });
+    await expect(
+      findOrCreateLocalAgentJob({
+        ...options,
+        requestFingerprintHash: 'd'.repeat(64)
+      })
+    ).rejects.toMatchObject({
+      code: 'LOCAL_AGENT_IDEMPOTENCY_CONFLICT'
+    });
+
+    const bindingReadSql = (client.query as jest.Mock).mock.calls
+      .map(([sql]) => String(sql))
+      .find((sql) => sql.includes('AS binding_reusable'));
+    const cleanupSql = (client.query as jest.Mock).mock.calls
+      .map(([sql]) => String(sql))
+      .find((sql) => sql.includes('DELETE FROM local_agent_job_idempotency'));
+    expect(bindingReadSql).toContain('manualReconciliationRequired');
+    expect(bindingReadSql).toContain("IS DISTINCT FROM 'true'");
+    expect(cleanupSql).toContain('manualReconciliationRequired');
+    expect(cleanupSql).toContain("IS DISTINCT FROM 'true'");
   });
 
   test('allows only one atomic device claim under a race', async () => {
@@ -490,6 +576,16 @@ describe('local-agent durable job repository', () => {
       replayed: false,
       job: { status: 'completed' }
     });
+    const resultReadSql = (client.query as jest.Mock).mock.calls
+      .map(([sql]) => String(sql))
+      .find((sql) => sql.includes('result_job_unexpired'));
+    const resultUpdateSql = (client.query as jest.Mock).mock.calls
+      .map(([sql]) => String(sql))
+      .find((sql) => sql.includes('output = $2::jsonb'));
+    expect(resultReadSql).toContain('job_row.expires_at > NOW()');
+    expect(resultReadSql).toContain('job_row.lease_expires_at >= NOW()');
+    expect(resultUpdateSql).toContain('expires_at > NOW()');
+    expect(resultUpdateSql).toContain('lease_expires_at >= NOW()');
     await expect(submitLocalAgentJobResult(base)).resolves.toMatchObject({
       replayed: true,
       job: { status: 'completed' }
@@ -596,6 +692,88 @@ describe('local-agent durable job repository', () => {
     ).rejects.toMatchObject({
       code: 'LOCAL_AGENT_JOB_LEASE_EXPIRED'
     });
+  });
+
+  test('rejects a result after the database-controlled lease expiry', async () => {
+    storedJob.status = 'running';
+    storedJob.last_worker_id = storedJob.worker_id;
+    storedJob.lease_expires_at = new Date(databaseNowMs - 1);
+
+    await expect(
+      submitLocalAgentJobResult({
+        jobId: storedJob.id,
+        deviceId: storedJob.worker_id,
+        resultKeyHash: 'late-lease-key',
+        resultFingerprintHash: 'late-lease-fingerprint',
+        outcome: 'succeeded',
+        output: { clean: true },
+        metrics: { durationMs: 10, outputTruncated: false },
+        correlation: {
+          traceId: 'trace:test',
+          requestId: 'request:test',
+          deviceId: storedJob.worker_id
+        }
+      })
+    ).rejects.toMatchObject({
+      code: 'LOCAL_AGENT_JOB_LEASE_EXPIRED'
+    });
+  });
+
+  test('uses the database clock instead of the application clock for result expiry', async () => {
+    storedJob.status = 'running';
+    storedJob.last_worker_id = storedJob.worker_id;
+    storedJob.expires_at = new Date(Date.now() + 60_000);
+    storedJob.lease_expires_at = new Date(Date.now() + 60_000);
+    databaseNowMs = Date.now() + 120_000;
+
+    await expect(
+      submitLocalAgentJobResult({
+        jobId: storedJob.id,
+        deviceId: storedJob.worker_id,
+        resultKeyHash: 'database-time-key',
+        resultFingerprintHash: 'database-time-fingerprint',
+        outcome: 'succeeded',
+        output: { clean: true },
+        metrics: { durationMs: 10, outputTruncated: false },
+        correlation: {
+          traceId: 'trace:test',
+          requestId: 'request:test',
+          deviceId: storedJob.worker_id
+        }
+      })
+    ).rejects.toMatchObject({
+      code: 'LOCAL_AGENT_JOB_LEASE_EXPIRED'
+    });
+  });
+
+  test('fails closed when the repeated database lease predicates reject the update', async () => {
+    storedJob.status = 'running';
+    storedJob.last_worker_id = storedJob.worker_id;
+    storedJob.lease_expires_at = new Date(databaseNowMs + 30_000);
+    forceResultUpdateMiss = true;
+
+    await expect(
+      submitLocalAgentJobResult({
+        jobId: storedJob.id,
+        deviceId: storedJob.worker_id,
+        resultKeyHash: 'predicate-miss-key',
+        resultFingerprintHash: 'predicate-miss-fingerprint',
+        outcome: 'succeeded',
+        output: { clean: true },
+        metrics: { durationMs: 10, outputTruncated: false },
+        correlation: {
+          traceId: 'trace:test',
+          requestId: 'request:test',
+          deviceId: storedJob.worker_id
+        }
+      })
+    ).rejects.toMatchObject({
+      code: 'LOCAL_AGENT_JOB_STATE_CONFLICT'
+    });
+    expect(recordJobEventWithClientMock).not.toHaveBeenCalledWith(
+      client,
+      expect.objectContaining({ eventType: 'job.completed' })
+    );
   });
 
   test('rejects result correlation that differs from the authorized assignment', async () => {

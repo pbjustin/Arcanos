@@ -29,6 +29,10 @@ const OPAQUE_IDEMPOTENCY_KEY_PATTERN = /^[\x21-\x7E]{1,240}$/u;
 const DEFAULT_LOCAL_AGENT_JOB_TTL_MS = 20 * 60 * 1_000;
 const MAX_LOCAL_AGENT_JOB_TTL_MS = 24 * 60 * 60 * 1_000;
 const LOCAL_AGENT_IDEMPOTENCY_RETENTION_MS = 24 * 60 * 60 * 1_000;
+const LOCAL_AGENT_STRICT_CONFIRMATION_ACTIONS = new Set<LocalAgentAction>([
+  'tests.run',
+  'patch.apply'
+]);
 
 function normalizeProtocolId(value: string | null | undefined, prefix: string): string {
   const normalized = typeof value === 'string' ? value.trim() : '';
@@ -90,12 +94,12 @@ function requireConfirmationEvidence(
     );
   }
   if (
-    action === 'patch.apply'
+    LOCAL_AGENT_STRICT_CONFIRMATION_ACTIONS.has(action)
     && request.context.confirmation.usedChallengeToken !== true
   ) {
     throw new LocalAgentDevicePolicyError(
       'LOCAL_AGENT_CONFIRMATION_REQUIRED',
-      'patch.apply requires an exact, consumed GPT Access confirmation challenge.'
+      `${action} requires an exact, consumed GPT Access confirmation challenge.`
     );
   }
   return 'confirmed';

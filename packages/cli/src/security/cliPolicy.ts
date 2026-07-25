@@ -68,7 +68,6 @@ export const DEFAULT_CLI_POLICY: CliPolicyConfig = {
       "git diff",
       "git log",
       "git show",
-      "npm run probe",
       "npm run build:packages",
       "npm run validate:backend-cli:contract",
       "npm run validate:backend-cli:offline",

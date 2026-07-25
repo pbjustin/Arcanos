@@ -2527,6 +2527,12 @@ export async function cleanupRetainedFailedJobs(
            job_data.idempotency_until IS NULL
            OR job_data.idempotency_until <= NOW()
          )
+         AND (
+           job_data.job_type <> 'local-agent'
+           OR (
+             job_data.autonomy_state #>> '{localAgent,manualReconciliationRequired}'
+           ) IS DISTINCT FROM 'true'
+         )
      ),
      deleted AS (
        DELETE FROM job_data

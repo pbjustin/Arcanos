@@ -4,9 +4,15 @@ import { join } from 'node:path';
 
 import { afterAll, beforeAll, describe, expect, test } from '@jest/globals';
 import { Client } from 'pg';
+import { verifyDatabaseSchemaWithClient } from '../../scripts/local-agent-hardening-migration.mjs';
 
 const connectionString =
   process.env.LOCAL_AGENT_HARDENING_TEST_DATABASE_URL?.trim() ?? '';
+const databaseRequired =
+  process.env.LOCAL_AGENT_HARDENING_REQUIRE_DATABASE === '1';
+if (databaseRequired && !connectionString) {
+  throw new Error('LOCAL_AGENT_HARDENING_TEST_DATABASE_URL_REQUIRED');
+}
 const describeWithDatabase = connectionString ? describe : describe.skip;
 const schemaName = `local_agent_hardening_${randomUUID().replaceAll('-', '')}`;
 const quotedSchema = `"${schemaName}"`;
@@ -22,6 +28,18 @@ const migrationSql = readFileSync(
 
 function repeatedHex(character: string): string {
   return character.repeat(64);
+}
+
+async function withRollback(
+  client: Client,
+  callback: () => Promise<void>
+): Promise<void> {
+  await client.query('BEGIN');
+  try {
+    await callback();
+  } finally {
+    await client.query('ROLLBACK');
+  }
 }
 
 describeWithDatabase('local-agent hardening PostgreSQL concurrency', () => {
@@ -52,6 +70,7 @@ describeWithDatabase('local-agent hardening PostgreSQL concurrency', () => {
          idempotency_scope_hash TEXT,
          idempotency_origin VARCHAR(32),
          idempotency_until TIMESTAMPTZ,
+         autonomy_state JSONB,
          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
        );
        CREATE TABLE job_events (
@@ -99,6 +118,196 @@ describeWithDatabase('local-agent hardening PostgreSQL concurrency', () => {
       'local_agent_job_idempotency'
     );
   });
+
+  test('the verifier accepts the exact migrated binding schema', async () => {
+    await expect(
+      verifyDatabaseSchemaWithClient(firstClient)
+    ).resolves.toMatchObject({
+      table: 'local_agent_job_idempotency',
+      missingBindings: 0,
+      mismatchedBindings: 0,
+      exactColumns: true,
+      exactConstraints: true,
+      exactIndexes: true
+    });
+  });
+
+  test('the verifier rejects malformed columns, constraints, and indexes', async () => {
+    await withRollback(firstClient, async () => {
+      await firstClient.query(
+        `ALTER TABLE local_agent_job_idempotency
+         ALTER COLUMN principal_id DROP NOT NULL`
+      );
+      await expect(
+        verifyDatabaseSchemaWithClient(firstClient)
+      ).rejects.toMatchObject({
+        code: 'LOCAL_AGENT_MIGRATION_COLUMNS_INVALID'
+      });
+    });
+
+    await withRollback(firstClient, async () => {
+      await firstClient.query(
+        `ALTER TABLE local_agent_job_idempotency
+         DROP CONSTRAINT chk_local_agent_job_idempotency_action`
+      );
+      await expect(
+        verifyDatabaseSchemaWithClient(firstClient)
+      ).rejects.toMatchObject({
+        code: 'LOCAL_AGENT_MIGRATION_CONSTRAINTS_INVALID'
+      });
+    });
+
+    await withRollback(firstClient, async () => {
+      await firstClient.query(
+        'DROP INDEX idx_local_agent_job_idempotency_expiry'
+      );
+      await expect(
+        verifyDatabaseSchemaWithClient(firstClient)
+      ).rejects.toMatchObject({
+        code: 'LOCAL_AGENT_MIGRATION_INDEX_INVALID'
+      });
+    });
+  }, 30_000);
+
+  test('the verifier rejects binding-to-job drift and missing manual bindings', async () => {
+    await withRollback(firstClient, async () => {
+      const jobId = randomUUID();
+      const idempotencyUntil = new Date(Date.now() + 60_000);
+      await firstClient.query(
+        `INSERT INTO job_data (
+           id,
+           worker_id,
+           job_type,
+           status,
+           input,
+           request_fingerprint_hash,
+           idempotency_key_hash,
+           idempotency_scope_hash,
+           idempotency_origin,
+           idempotency_until,
+           autonomy_state
+         )
+         VALUES (
+           $1,
+           'device-parity',
+           'local-agent',
+           'completed',
+           $2::jsonb,
+           $3,
+           $4,
+           $5,
+           'explicit',
+           $6,
+           '{}'::jsonb
+         )`,
+        [
+          jobId,
+          JSON.stringify({
+            job: {
+              principal: 'principal-parity',
+              workspace: 'workspace-parity',
+              deviceId: 'device-parity',
+              action: 'git.status'
+            }
+          }),
+          repeatedHex('a'),
+          repeatedHex('b'),
+          repeatedHex('c'),
+          idempotencyUntil
+        ]
+      );
+      await firstClient.query(
+        `INSERT INTO local_agent_job_idempotency (
+           principal_id,
+           workspace_id,
+           device_id,
+           action,
+           idempotency_key_hash,
+           idempotency_scope_hash,
+           request_fingerprint_hash,
+           idempotency_origin,
+           job_id,
+           idempotency_until
+         )
+         VALUES (
+           'different-principal',
+           'workspace-parity',
+           'device-parity',
+           'git.status',
+           $1,
+           $2,
+           $3,
+           'explicit',
+           $4,
+           $5
+         )`,
+        [
+          repeatedHex('b'),
+          repeatedHex('c'),
+          repeatedHex('a'),
+          jobId,
+          idempotencyUntil
+        ]
+      );
+
+      await expect(
+        verifyDatabaseSchemaWithClient(firstClient)
+      ).rejects.toMatchObject({
+        code: 'LOCAL_AGENT_MIGRATION_BINDING_PARITY_INVALID'
+      });
+    });
+
+    await withRollback(firstClient, async () => {
+      await firstClient.query(
+        `INSERT INTO job_data (
+           id,
+           worker_id,
+           job_type,
+           status,
+           input,
+           request_fingerprint_hash,
+           idempotency_key_hash,
+           idempotency_scope_hash,
+           idempotency_origin,
+           idempotency_until,
+           autonomy_state
+         )
+         VALUES (
+           $1,
+           'device-manual',
+           'local-agent',
+           'failed',
+           $2::jsonb,
+           $3,
+           $4,
+           $5,
+           'explicit',
+           NOW() - INTERVAL '1 hour',
+           '{"localAgent":{"manualReconciliationRequired":true}}'::jsonb
+         )`,
+        [
+          randomUUID(),
+          JSON.stringify({
+            job: {
+              principal: 'principal-manual',
+              workspace: 'workspace-manual',
+              deviceId: 'device-manual',
+              action: 'patch.apply'
+            }
+          }),
+          repeatedHex('d'),
+          repeatedHex('e'),
+          repeatedHex('f')
+        ]
+      );
+
+      await expect(
+        verifyDatabaseSchemaWithClient(firstClient)
+      ).rejects.toMatchObject({
+        code: 'LOCAL_AGENT_MIGRATION_BACKFILL_INCOMPLETE'
+      });
+    });
+  }, 30_000);
 
   test('separate connections cannot commit duplicate logical bindings', async () => {
     const firstJobId = randomUUID();
@@ -222,5 +431,9 @@ describeWithDatabase('local-agent hardening PostgreSQL concurrency', () => {
       [repeatedHex('b')]
     );
     expect(countResult.rows[0]?.binding_count).toBe(1);
+    await firstClient.query(
+      'DELETE FROM job_data WHERE id = ANY($1::uuid[])',
+      [[firstJobId, secondJobId]]
+    );
   }, 30_000);
 });

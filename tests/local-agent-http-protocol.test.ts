@@ -151,6 +151,10 @@ describe('local-agent outbound HTTP protocol', () => {
       deviceId,
       status: 'idle'
     });
+    expect(accepted.headers['x-ratelimit-bucket']).toBe(
+      'local-agent-protocol-principal'
+    );
+    expect(accepted.headers['x-ratelimit-limit']).toBe('120');
     expect(updateHeartbeatMock).toHaveBeenCalledWith(deviceId);
     expect(resolveAuthorizedLocalAgentDeviceMock).toHaveBeenCalledWith([], {
       principal: expect.objectContaining({
@@ -176,6 +180,22 @@ describe('local-agent outbound HTTP protocol', () => {
     }));
   });
 
+  test('terminates unknown local-agent protocol routes inside the dedicated boundary', async () => {
+    const response = await request(buildApp())
+      .post('/gpt-access/local-agent/unknown')
+      .set('Authorization', `Bearer ${executorToken}`)
+      .send({});
+
+    expect(response.status).toBe(404);
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(response.headers['x-ratelimit-bucket']).toBe(
+      'local-agent-protocol-principal'
+    );
+    expect(response.body.error.code).toBe(
+      'LOCAL_AGENT_PROTOCOL_ROUTE_NOT_FOUND'
+    );
+  });
+
   test('reports a stale registered device as unavailable for job claims', async () => {
     resolveAuthorizedLocalAgentDeviceMock.mockRejectedValueOnce(
       new MockLocalAgentDevicePolicyError(
@@ -192,5 +212,75 @@ describe('local-agent outbound HTTP protocol', () => {
     expect(response.status).toBe(503);
     expect(response.body.error.code).toBe('LOCAL_AGENT_DEVICE_OFFLINE');
     expect(claimLocalAgentJobMock).not.toHaveBeenCalled();
+  });
+
+  test('refreshes device liveness before extending a bound job lease after the freshness TTL', async () => {
+    resolveAuthorizedLocalAgentDeviceMock.mockResolvedValueOnce({
+      deviceId,
+      agentId: deviceId,
+      instanceId: 'local-agent:instance',
+      principalId: 'local-agent:executor',
+      capabilities: ['git.status'],
+      record: {
+        lastHeartbeat: new Date('2026-07-24T10:00:00.000Z')
+      }
+    });
+    updateHeartbeatMock.mockResolvedValueOnce({
+      status: 'busy',
+      lastHeartbeat: new Date('2026-07-24T10:02:00.000Z')
+    });
+    heartbeatLocalAgentJobMock.mockResolvedValueOnce({
+      id: '10000000-0000-4000-8000-000000000001',
+      status: 'running',
+      lease_expires_at: new Date('2026-07-24T10:02:30.000Z')
+    });
+
+    const response = await request(buildApp())
+      .post(
+        '/gpt-access/local-agent/jobs/10000000-0000-4000-8000-000000000001/heartbeat'
+      )
+      .set('Authorization', `Bearer ${executorToken}`)
+      .send({});
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      ok: true,
+      code: 'LOCAL_AGENT_JOB_HEARTBEAT_ACCEPTED',
+      jobId: '10000000-0000-4000-8000-000000000001',
+      state: 'RUNNING',
+      leaseExpiresAt: '2026-07-24T10:02:30.000Z'
+    });
+    expect(resolveAuthorizedLocalAgentDeviceMock).toHaveBeenCalledWith([], {
+      principal: expect.objectContaining({
+        executorDeviceId: deviceId
+      }),
+      requireFreshHeartbeat: false
+    });
+    expect(updateHeartbeatMock).toHaveBeenCalledWith(deviceId);
+    expect(heartbeatLocalAgentJobMock).toHaveBeenCalledWith({
+      jobId: '10000000-0000-4000-8000-000000000001',
+      deviceId,
+      leaseMs: 30_000
+    });
+    expect(
+      updateHeartbeatMock.mock.invocationCallOrder[0]
+    ).toBeLessThan(heartbeatLocalAgentJobMock.mock.invocationCallOrder[0]!);
+  });
+
+  test('does not extend a job lease when the bound device heartbeat cannot be refreshed', async () => {
+    updateHeartbeatMock.mockResolvedValueOnce(null);
+
+    const response = await request(buildApp())
+      .post(
+        '/gpt-access/local-agent/jobs/10000000-0000-4000-8000-000000000001/heartbeat'
+      )
+      .set('Authorization', `Bearer ${executorToken}`)
+      .send({});
+
+    expect(response.status).toBe(403);
+    expect(response.body.error.code).toBe(
+      'LOCAL_AGENT_DEVICE_NOT_REGISTERED'
+    );
+    expect(heartbeatLocalAgentJobMock).not.toHaveBeenCalled();
   });
 });

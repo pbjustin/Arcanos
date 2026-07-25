@@ -319,6 +319,10 @@ function calculateProjectHealth(
   const overdueTasks = openTasks.filter(
     (item) => item.dueAt !== null && new Date(item.dueAt).getTime() < now.getTime()
   );
+  const projectIsOverdue =
+    project.dueAt !== null && new Date(project.dueAt).getTime() < now.getTime();
+  const isTerminalProject =
+    project.status === 'completed' || project.status === 'archived';
   const reasonCodes: string[] = [];
   let health: ProjectHealth['health'];
 
@@ -334,20 +338,19 @@ function calculateProjectHealth(
   } else if (nextTasks.length === 0) {
     health = 'stalled';
     reasonCodes.push('missing_next_action');
-  } else if (
-    overdueTasks.length > 0
-    || (project.dueAt !== null && new Date(project.dueAt).getTime() < now.getTime())
-  ) {
+  } else if (overdueTasks.length > 0 || projectIsOverdue) {
     health = 'at_risk';
-    if (overdueTasks.length > 0) reasonCodes.push('overdue_tasks');
-    if (project.dueAt !== null && new Date(project.dueAt).getTime() < now.getTime()) {
-      reasonCodes.push('project_overdue');
-    }
   } else {
     health = 'healthy';
   }
 
-  if (blockedTasks.length > 0) {
+  if (!isTerminalProject && overdueTasks.length > 0) {
+    reasonCodes.push('overdue_tasks');
+  }
+  if (!isTerminalProject && projectIsOverdue) {
+    reasonCodes.push('project_overdue');
+  }
+  if (!isTerminalProject && blockedTasks.length > 0) {
     reasonCodes.push('waiting_tasks');
   }
 
@@ -374,7 +377,11 @@ function calculateFocus(
         return false;
       }
       const project = item.projectId ? projectsById.get(item.projectId) : undefined;
-      if (project?.status === 'completed' || project?.status === 'archived') {
+      if (
+        project?.status === 'completed'
+        || project?.status === 'archived'
+        || project?.status === 'on_hold'
+      ) {
         return false;
       }
       return item.deferUntil === null || new Date(item.deferUntil).getTime() <= now.getTime();
@@ -479,6 +486,15 @@ function resolveIntent(utterance: string) {
     || /\b(?:do not|don t|never)(?: [a-z0-9]+){0,4} (?:defer|postpone|capture|remember|note|save|create|add|process|clean|clear|advance|move|store|record)\b/u
       .test(normalized)
   ) {
+    return {
+      status: 'unknown',
+      verb: null,
+      recommendedActions: [],
+      confidence: 0
+    };
+  }
+
+  if (normalized === 'later') {
     return {
       status: 'unknown',
       verb: null,
@@ -695,7 +711,9 @@ export class ProductivityService {
         );
         return mutationEnvelope(action, result, {
           outcome: 'captured',
-          message: `Captured “${result.value.title}” in your inbox.`,
+          message: result.replayed || !result.changed
+            ? `“${result.value.title}” was already captured in your inbox.`
+            : `Captured “${result.value.title}” in your inbox.`,
           entities: [{ type: 'task', id: result.value.id }],
           data: { item: result.value }
         });
@@ -719,7 +737,9 @@ export class ProductivityService {
         );
         return mutationEnvelope(action, result, {
           outcome: 'created',
-          message: `Created “${result.value.title}”.`,
+          message: result.replayed || !result.changed
+            ? `“${result.value.title}” was already created.`
+            : `Created “${result.value.title}”.`,
           entities: [{ type: 'task', id: result.value.id }],
           data: { item: result.value }
         });
@@ -741,7 +761,7 @@ export class ProductivityService {
         if (replay) {
           return mutationEnvelope(action, replay, {
             outcome: 'processed',
-            message: `Moved “${replay.value.title}” from inbox to ${replay.value.status}.`,
+            message: `“${replay.value.title}” was already processed as ${replay.value.status}.`,
             entities: [{ type: 'task', id: replay.value.id }],
             data: { item: replay.value }
           });
@@ -764,7 +784,9 @@ export class ProductivityService {
         );
         return mutationEnvelope(action, result, {
           outcome: 'processed',
-          message: `Moved “${result.value.title}” from inbox to ${result.value.status}.`,
+          message: result.changed
+            ? `Moved “${result.value.title}” from inbox to ${result.value.status}.`
+            : `“${result.value.title}” was already processed as ${result.value.status}.`,
           entities: [{ type: 'task', id: result.value.id }],
           data: { item: result.value }
         });
@@ -824,7 +846,7 @@ export class ProductivityService {
         if (replay) {
           return mutationEnvelope(action, replay, {
             outcome: 'deferred',
-            message: `Deferred “${replay.value.title}” until ${replay.value.deferUntil}.`,
+            message: `“${replay.value.title}” was already deferred until ${replay.value.deferUntil}.`,
             entities: [{ type: 'task', id: replay.value.id }],
             data: { item: replay.value }
           });
@@ -842,7 +864,9 @@ export class ProductivityService {
         );
         return mutationEnvelope(action, result, {
           outcome: 'deferred',
-          message: `Deferred “${result.value.title}” until ${result.value.deferUntil}.`,
+          message: result.changed
+            ? `Deferred “${result.value.title}” until ${result.value.deferUntil}.`
+            : `“${result.value.title}” was already deferred until ${result.value.deferUntil}.`,
           entities: [{ type: 'task', id: result.value.id }],
           data: { item: result.value }
         });
@@ -864,7 +888,7 @@ export class ProductivityService {
         if (replay) {
           return mutationEnvelope(action, replay, {
             outcome: 'transitioned',
-            message: `Moved “${replay.value.title}” to ${replay.value.status}.`,
+            message: `“${replay.value.title}” was already ${replay.value.status}.`,
             entities: [{ type: 'task', id: replay.value.id }],
             data: { item: replay.value }
           });
@@ -887,7 +911,9 @@ export class ProductivityService {
         );
         return mutationEnvelope(action, result, {
           outcome: 'transitioned',
-          message: `Moved “${result.value.title}” to ${result.value.status}.`,
+          message: result.changed
+            ? `Moved “${result.value.title}” to ${result.value.status}.`
+            : `“${result.value.title}” was already ${result.value.status}.`,
           entities: [{ type: 'task', id: result.value.id }],
           data: { item: result.value }
         });
@@ -905,7 +931,9 @@ export class ProductivityService {
         );
         return mutationEnvelope(action, result, {
           outcome: 'created',
-          message: `Created project “${result.value.title}”.`,
+          message: result.replayed || !result.changed
+            ? `Project “${result.value.title}” was already created.`
+            : `Created project “${result.value.title}”.`,
           entities: [{ type: 'project', id: result.value.id }],
           data: { item: result.value }
         });
@@ -927,7 +955,7 @@ export class ProductivityService {
         if (replay) {
           return mutationEnvelope(action, replay, {
             outcome: 'advanced',
-            message: `Added the next action “${replay.value.task.title}” to “${replay.value.project.title}”.`,
+            message: `The next action “${replay.value.task.title}” was already added to “${replay.value.project.title}”.`,
             entities: [
               { type: 'project', id: replay.value.project.id },
               { type: 'task', id: replay.value.task.id }
@@ -953,7 +981,9 @@ export class ProductivityService {
         );
         return mutationEnvelope(action, result, {
           outcome: 'advanced',
-          message: `Added the next action “${result.value.task.title}” to “${result.value.project.title}”.`,
+          message: result.replayed || !result.changed
+            ? `The next action “${result.value.task.title}” was already added to “${result.value.project.title}”.`
+            : `Added the next action “${result.value.task.title}” to “${result.value.project.title}”.`,
           entities: [
             { type: 'project', id: result.value.project.id },
             { type: 'task', id: result.value.task.id }
@@ -981,7 +1011,7 @@ export class ProductivityService {
         if (replay) {
           return mutationEnvelope(action, replay, {
             outcome: 'transitioned',
-            message: `Moved project “${replay.value.title}” to ${replay.value.status}.`,
+            message: `Project “${replay.value.title}” was already ${replay.value.status}.`,
             entities: [{ type: 'project', id: replay.value.id }],
             data: { item: replay.value }
           });
@@ -998,7 +1028,9 @@ export class ProductivityService {
         );
         return mutationEnvelope(action, result, {
           outcome: 'transitioned',
-          message: `Moved project “${result.value.title}” to ${result.value.status}.`,
+          message: result.changed
+            ? `Moved project “${result.value.title}” to ${result.value.status}.`
+            : `Project “${result.value.title}” was already ${result.value.status}.`,
           entities: [{ type: 'project', id: result.value.id }],
           data: { item: result.value }
         });
@@ -1018,15 +1050,31 @@ export class ProductivityService {
         );
         return mutationEnvelope(action, result, {
           outcome: 'stored',
-          message: result.value.title
-            ? `Stored note “${result.value.title}”.`
-            : 'Stored the note.',
+          message: result.replayed || !result.changed
+            ? (
+              result.value.title
+                ? `Note “${result.value.title}” was already stored.`
+                : 'The note was already stored.'
+            )
+            : (
+              result.value.title
+                ? `Stored note “${result.value.title}”.`
+                : 'Stored the note.'
+            ),
           entities: [{ type: 'note', id: result.value.id }],
           data: { item: result.value }
         });
       }
       case 'review.record': {
         const input = parseInput(reviewRecordInputSchema, payload);
+        if (input.reviewDate && input.reviewDate > toUtcDate(this.now())) {
+          throw new ProductivityError({
+            code: 'VALIDATION_FAILED',
+            message: 'reviewDate cannot be in the future.',
+            recoverable: true,
+            recommendedAction: 'FIX_INPUT'
+          });
+        }
         const semanticRequest = semanticCommandInput(input);
         const result = await this.repository.recordReview(
           execution.scope,
@@ -1049,7 +1097,9 @@ export class ProductivityService {
         );
         return mutationEnvelope(action, result, {
           outcome: 'recorded',
-          message: `Recorded your ${result.value.kind} review for ${result.value.reviewDate}.`,
+          message: result.replayed || !result.changed
+            ? `Your ${result.value.kind} review for ${result.value.reviewDate} was already recorded.`
+            : `Recorded your ${result.value.kind} review for ${result.value.reviewDate}.`,
           entities: [{ type: 'review', id: result.value.id }],
           data: { item: result.value }
         });

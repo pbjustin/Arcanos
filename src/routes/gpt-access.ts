@@ -108,7 +108,10 @@ const CLI_CAPABILITY_ROUTE = 'cli';
 const CLI_GATED_ACTIONS = new Set(['runApprovedCommand', 'applyApprovedPatch']);
 const LOCAL_AGENT_CAPABILITY_ID = 'ARCANOS:LOCAL_AGENT';
 const LOCAL_AGENT_CAPABILITY_ROUTE = 'local-agent';
-const LOCAL_AGENT_STRICT_CONFIRMATION_ACTION = 'patch.apply';
+const LOCAL_AGENT_STRICT_CONFIRMATION_ACTIONS = new Set([
+  'tests.run',
+  'patch.apply'
+]);
 const CLI_CAPABILITY_ACTIONS = [
   ...CLI_READONLY_ACTIONS,
   ...CLI_GATED_ACTIONS
@@ -431,7 +434,8 @@ function confirmCapabilityRunWhenRequired(
   const strictLocalAgentConfirmation =
     (capabilityId === LOCAL_AGENT_CAPABILITY_ID
       || capabilityId === LOCAL_AGENT_CAPABILITY_ROUTE)
-    && action === LOCAL_AGENT_STRICT_CONFIRMATION_ACTION;
+    && action !== null
+    && LOCAL_AGENT_STRICT_CONFIRMATION_ACTIONS.has(action);
   const strictConfirmationBinding: ConfirmationChallengeBinding | null =
     strictLocalAgentConfirmation
       ? (() => {
@@ -469,7 +473,7 @@ function confirmCapabilityRunWhenRequired(
         error: {
           code: 'LOCAL_AGENT_CHALLENGE_CONFIRMATION_REQUIRED',
           message:
-            'patch.apply requires a consumed confirmation challenge bound to this exact action and payload.'
+            `${action} requires a consumed confirmation challenge bound to this exact action and payload.`
         },
         confirmationRequired: true,
         confirmationStatus: req.confirmationContext?.confirmationStatus ?? 'missing',
@@ -1095,6 +1099,7 @@ const runGptAccessDispatch = asyncHandler(async (req, res) => {
 });
 
 router.use('/gpt-access', securityHeaders);
+router.use('/gpt-access/local-agent', localAgentProtocolRouter);
 router.use('/gpt-access', gptAccessRateLimit);
 
 router.get('/gpt-access/openapi.json', (req, res) => {
@@ -1104,7 +1109,6 @@ router.get('/gpt-access/openapi.json', (req, res) => {
   }));
 });
 
-router.use('/gpt-access/local-agent', localAgentProtocolRouter);
 router.use('/gpt-access', gptAccessAuthMiddleware);
 
 router.get(

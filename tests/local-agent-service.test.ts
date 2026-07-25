@@ -54,7 +54,7 @@ beforeEach(() => {
     agentId: '20000000-0000-4000-8000-000000000001',
     instanceId: 'local-agent:instance',
     principalId: 'local-agent:executor',
-    capabilities: ['git.status', 'patch.apply'],
+    capabilities: ['git.status', 'tests.run', 'patch.apply'],
     record: {}
   });
   findOrCreateLocalAgentJobMock.mockResolvedValue({
@@ -158,6 +158,64 @@ describe('local-agent GPT Access job service', () => {
       }
     });
     expect(findOrCreateLocalAgentJobMock).not.toHaveBeenCalled();
+  });
+
+  test('refuses tests.run when confirmation did not consume an exact challenge', async () => {
+    await expect(
+      executeLocalAgentActionAsJob({
+        action: 'tests.run',
+        payload: {
+          profile: 'python-unit'
+        },
+        context: {
+          ...context,
+          confirmation: {
+            status: 'manual',
+            usedChallengeToken: false
+          }
+        }
+      })
+    ).resolves.toMatchObject({
+      ok: false,
+      accepted: false,
+      error: {
+        code: 'LOCAL_AGENT_CONFIRMATION_REQUIRED'
+      }
+    });
+    expect(findOrCreateLocalAgentJobMock).not.toHaveBeenCalled();
+  });
+
+  test('persists tests.run only with exact consumed challenge evidence', async () => {
+    await expect(
+      executeLocalAgentActionAsJob({
+        action: 'tests.run',
+        payload: {
+          profile: 'python-unit'
+        },
+        context: {
+          ...context,
+          confirmation: {
+            status: 'challenge-token',
+            usedChallengeToken: true
+          }
+        }
+      })
+    ).resolves.toMatchObject({
+      ok: true,
+      accepted: true,
+      action: 'tests.run'
+    });
+
+    const createInput = findOrCreateLocalAgentJobMock.mock.calls[0]?.[0] as {
+      envelope: {
+        job: Record<string, unknown>;
+      };
+    };
+    expect(createInput.envelope.job['authorization']).toMatchObject({
+      decision: 'confirmed',
+      evidenceId: expect.any(String)
+    });
+    expect(createInput.envelope.job['authorization']).not.toHaveProperty('token');
   });
 
   test('persists one confirmed patch assignment without forwarding a confirmation token', async () => {

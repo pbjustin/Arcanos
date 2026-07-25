@@ -96,6 +96,7 @@ def _response(payload: object, status: int = 200) -> SimpleNamespace:
 
 def _assignment(
     *,
+    job_id: str = JOB_ID,
     action: str = "git.status",
     payload: Optional[dict[str, Any]] = None,
     authorization: str = "allow",
@@ -113,7 +114,7 @@ def _assignment(
         "patch.apply": 60_000,
     }[action]
     return LocalAgentJobAssignment(
-        job_id=JOB_ID,
+        job_id=job_id,
         action=action,
         payload=dict(payload or {}),
         principal="requesting-principal",
@@ -1004,3 +1005,40 @@ def test_journal_reopen_preserves_exact_pending_result(
     assert len(recoverable) == 1
     assert recoverable[0].result_key == "result-key"
     assert recoverable[0].pending_result == pending_result
+
+
+def test_journal_prunes_only_oldest_accepted_rows(
+    journal: LocalAgentExecutionJournal,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(journal_module, "MAX_ACCEPTED_JOURNAL_ROWS", 2)
+    accepted_ids = [
+        "10000000-0000-4000-8000-000000000001",
+        "10000000-0000-4000-8000-000000000002",
+        "10000000-0000-4000-8000-000000000003",
+    ]
+    for index, job_id in enumerate(accepted_ids):
+        assignment = _assignment(job_id=job_id)
+        journal.save_assignment(assignment, claim_key=f"claim-key-{index}")
+        journal.save_pending_result(
+            assignment.job_id,
+            result_key=f"result-key-{index}",
+            result={"outcome": "succeeded", "index": index},
+        )
+        journal.mark_accepted(
+            assignment.job_id,
+            f"acceptance-receipt-{index}",
+        )
+
+    quarantined_id = "20000000-0000-4000-8000-000000000001"
+    quarantined = _assignment(job_id=quarantined_id)
+    journal.save_assignment(quarantined, claim_key="quarantined-claim-key")
+    journal.quarantine(quarantined.job_id, "MANUAL_RECONCILIATION_REQUIRED")
+
+    assert journal.load_run(accepted_ids[0]) is None
+    assert journal.load_run(accepted_ids[1]) is not None
+    assert journal.load_run(accepted_ids[2]) is not None
+    retained_quarantine = journal.load_run(quarantined_id)
+    assert retained_quarantine is not None
+    assert retained_quarantine.state == "QUARANTINED"
+    assert retained_quarantine.reason_code == "MANUAL_RECONCILIATION_REQUIRED"

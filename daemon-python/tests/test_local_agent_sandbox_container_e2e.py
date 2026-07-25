@@ -30,6 +30,24 @@ def _write_python_fixture(workspace: Path, source: str) -> None:
     )
 
 
+def _write_typescript_profile_fixture(workspace: Path) -> None:
+    (workspace / "package.json").write_text(
+        """
+        {
+          "name": "arcanos-local-agent-profile-fixture",
+          "private": true,
+          "scripts": {
+            "test:unit": "node -e \\"console.log('typescript-unit-ok')\\"",
+            "test:integration": "node -e \\"console.log('typescript-integration-ok')\\"",
+            "build:packages": "node -e \\"console.log('build-packages-ok')\\"",
+            "validate:backend-cli:contract": "node -e \\"console.log('backend-cli-contract-ok')\\""
+          }
+        }
+        """.strip(),
+        encoding="utf-8",
+    )
+
+
 def _workspace_contents(workspace: Path) -> dict[str, bytes]:
     return {
         path.relative_to(workspace).as_posix(): path.read_bytes()
@@ -175,6 +193,44 @@ def test_effective_sandbox_probe_and_execution(tmp_path: Path) -> None:
     assert result.truncated is False
     assert _workspace_contents(workspace) == before
     assert not (workspace / "sandbox-created.txt").exists()
+
+
+@pytest.mark.parametrize(
+    ("profile", "expected_output"),
+    (
+        ("python-unit", "1 passed"),
+        ("typescript-unit", "typescript-unit-ok"),
+        ("typescript-integration", "typescript-integration-ok"),
+        ("backend-cli-contract", "backend-cli-contract-ok"),
+    ),
+)
+def test_effective_sandbox_executes_each_fixed_profile(
+    tmp_path: Path,
+    profile: str,
+    expected_output: str,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _write_python_fixture(
+        workspace,
+        """
+        def test_python_profile():
+            assert True
+        """,
+    )
+    _write_typescript_profile_fixture(workspace)
+    before = _workspace_contents(workspace)
+
+    result = run_sandboxed_test(
+        profile,
+        workspace,
+        timeout_ms=120_000,
+    )
+
+    assert result.exit_code == 0, result.stdout + result.stderr
+    assert expected_output in result.stdout
+    assert result.truncated is False
+    assert _workspace_contents(workspace) == before
 
 
 def test_effective_sandbox_bounds_output(tmp_path: Path) -> None:

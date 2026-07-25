@@ -110,9 +110,10 @@ Pipeline timeout fallback detection:
 
 Job status routes:
 - `GET /jobs/:id`: returns `{ id, jobId, job_type, status, lifecycle_status, created_at, updated_at, completed_at, cancel_requested_at, cancel_reason, retention_until, idempotency_until, expires_at, poll, stream, error_message, output, result }`
-- `GET /jobs/:id/result`: returns the canonical result lookup envelope, including `jobId`, job/lifecycle status, polling links, result, and a typed error when applicable.
+- `GET /jobs/:id/result`: returns the canonical result lookup envelope, including `jobId`, job/lifecycle status, polling links, result, and a typed error when applicable. A missing job returns HTTP `200` with `status: "not_found"` for compatibility.
 - `GET /jobs/:id/stream`: SSE stream of status changes. The event name is `terminal` when the payload status is `completed`, `failed`, `cancelled`, or `expired`; nonterminal changes use the `status` event.
 - `POST /jobs/:id/cancel`: cancels a queued GPT job immediately or requests best-effort cancellation for a running GPT job.
+- These generic routes expose GPT jobs only. A `local-agent` job is returned exactly like a missing job and its output is available only through the authenticated, tenant-bound `POST /gpt-access/jobs/result` operation.
 
 GPT job lifecycle:
 - Storage states: `pending`, `running`, `completed`, `failed`, `cancelled`, `expired`
@@ -280,6 +281,8 @@ The groups below highlight stable public routes, operator/control routes, compat
 - `GET /gpt-access/capabilities/v1`
 - `GET /gpt-access/capabilities/v1/:id`
 - `POST /gpt-access/capabilities/v1/:id/run`
+- `POST /gpt-access/local-agent/heartbeat`, `/jobs/claim`, `/jobs/:jobId/heartbeat`, and `/jobs/:jobId/result` are private executor-protocol operations. They use the dedicated local-agent credential and a separate bounded rate-limit budget, not the Custom GPT bearer or shared GPT Access budget.
+- Privileged `ARCANOS:LOCAL_AGENT` actions `tests.run` and `patch.apply` require a consumed one-time confirmation challenge bound to the authenticated actor, principal, workspace, exact action, and exact payload. Manual, trusted-GPT, automation-secret, or allow-all confirmation modes do not satisfy this stricter execution condition.
 - `GET /gpt-access/modules` and `GET /gpt-access/modules/:id` (capability compatibility aliases)
 - `POST /gpt-access/dispatch/run`
 

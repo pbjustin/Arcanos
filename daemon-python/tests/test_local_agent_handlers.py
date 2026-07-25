@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -105,6 +106,44 @@ def test_registry_exposes_only_the_seven_public_actions() -> None:
         "patch.apply",
     }
     assert tuple(load_local_agent_capability_catalog()) == LOCAL_AGENT_ACTIONS
+
+
+def test_status_reports_effective_not_catalog_capabilities(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv(
+        "ARCANOS_LOCAL_AGENT_ACTIONS",
+        "local_agent.status,repo.search,git.status,tests.run,patch.apply",
+    )
+    monkeypatch.setenv(
+        "ARCANOS_LOCAL_AGENT_DEVICE_SCOPES",
+        "local_agent.status,git.status,tests.run,patch.apply",
+    )
+    monkeypatch.setattr(
+        "arcanos.local_agent.handlers.safe_test_execution_status",
+        lambda: SimpleNamespace(
+            mode="disabled",
+            configuration_valid=True,
+            sandbox_available=False,
+            sandbox_runtime=None,
+        ),
+    )
+
+    result = execute_local_agent_action(
+        "local_agent.status",
+        {},
+        tmp_path,
+        5_000,
+    )
+
+    assert result["capabilities"] == [
+        "local_agent.status",
+        "git.status",
+        "patch.apply",
+    ]
+    assert "repo.search" not in result["capabilities"]
+    assert "tests.run" not in result["capabilities"]
 
 
 def test_packaged_catalog_supports_standalone_daemon(
@@ -392,6 +431,118 @@ def test_git_diff_filters_every_denied_tracked_file(
     assert "new-safe" in result["diff"]
 
 
+def test_git_diff_rejects_external_gitdir_file_without_disclosing_objects(
+    tmp_path: Path,
+) -> None:
+    outside_repository = tmp_path / "outside"
+    outside_repository.mkdir()
+    _initialize_git_repository(outside_repository)
+    (outside_repository / "sentinel.txt").write_text(
+        "external-git-object-secret-old\n",
+        encoding="utf-8",
+    )
+    base = _commit_all(outside_repository, "base")
+    (outside_repository / "sentinel.txt").write_text(
+        "external-git-object-secret-new\n",
+        encoding="utf-8",
+    )
+    head = _commit_all(outside_repository, "head")
+
+    workspace = tmp_path / "registered"
+    workspace.mkdir()
+    (workspace / ".git").write_text(
+        f"gitdir: {(outside_repository / '.git').as_posix()}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(PermissionError, match=r"physical \.git directory"):
+        get_repository_diff(
+            {"base": base, "head": head},
+            workspace_root=workspace,
+        )
+
+
+def test_git_actions_reject_external_common_dir_and_object_alternates(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _initialize_git_repository(workspace)
+    external = tmp_path / "external"
+    external.mkdir()
+
+    (workspace / ".git" / "commondir").write_text(
+        str(external),
+        encoding="utf-8",
+    )
+    with pytest.raises(PermissionError, match="linked-worktree"):
+        get_repository_status({}, workspace_root=workspace)
+    (workspace / ".git" / "commondir").unlink()
+
+    alternates_file = workspace / ".git" / "objects" / "info" / "alternates"
+    alternates_file.parent.mkdir(parents=True, exist_ok=True)
+    alternates_file.write_text(str(external), encoding="utf-8")
+    with pytest.raises(PermissionError, match="alternates"):
+        get_repository_status({}, workspace_root=workspace)
+
+
+def test_git_actions_reject_external_worktree_config(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _initialize_git_repository(workspace)
+    external = tmp_path / "external"
+    external.mkdir()
+    subprocess.run(
+        ["git", "config", "core.worktree", str(external)],
+        cwd=workspace,
+        check=True,
+        capture_output=True,
+    )
+
+    with pytest.raises(PermissionError, match="unsafe path"):
+        get_repository_status({}, workspace_root=workspace)
+
+
+def test_git_actions_reject_local_config_includes(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _initialize_git_repository(workspace)
+    external_config = tmp_path / "external.gitconfig"
+    external_config.write_text(
+        "[core]\n\thooksPath = C:/external/hooks\n",
+        encoding="utf-8",
+    )
+    with (workspace / ".git" / "config").open("a", encoding="utf-8") as stream:
+        stream.write(f"\n[include]\n\tpath = {external_config.as_posix()}\n")
+
+    with pytest.raises(PermissionError, match="unsafe path"):
+        get_repository_status({}, workspace_root=workspace)
+
+
+def test_git_actions_reject_symlinked_git_metadata(
+    tmp_path: Path,
+) -> None:
+    outside_repository = tmp_path / "outside"
+    outside_repository.mkdir()
+    _initialize_git_repository(outside_repository)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    try:
+        (workspace / ".git").symlink_to(
+            outside_repository / ".git",
+            target_is_directory=True,
+        )
+    except (NotImplementedError, OSError):
+        pytest.skip("Symlink creation is unavailable on this platform")
+
+    with pytest.raises(PermissionError, match=r"physical \.git directory"):
+        get_repository_status({}, workspace_root=workspace)
+
+
 def test_process_runner_uses_sanitized_environment_and_truncates_output(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -554,6 +705,77 @@ def test_patch_preview_checks_without_mutating(tmp_path: Path) -> None:
         result["patchSha256"] == hashlib.sha256(patch_text.encode("utf-8")).hexdigest()
     )
     assert sample_file.read_text(encoding="utf-8") == "old\n"
+
+
+def test_patch_preview_rejects_gitdir_indirection_before_git_apply(
+    tmp_path: Path,
+) -> None:
+    outside_repository = tmp_path / "outside"
+    outside_repository.mkdir()
+    _initialize_git_repository(outside_repository)
+    workspace = tmp_path / "registered"
+    workspace.mkdir()
+    (workspace / ".git").write_text(
+        f"gitdir: {(outside_repository / '.git').as_posix()}\n",
+        encoding="utf-8",
+    )
+    (workspace / "sample.txt").write_text("old\n", encoding="utf-8")
+
+    with pytest.raises(PermissionError, match=r"physical \.git directory"):
+        execute_local_agent_action(
+            "patch.preview",
+            {"patch": _sample_patch()},
+            workspace,
+            5_000,
+        )
+    assert (workspace / "sample.txt").read_text(encoding="utf-8") == "old\n"
+
+
+def test_patch_preview_rejects_submodule_metadata_and_nested_repositories(
+    tmp_path: Path,
+) -> None:
+    _initialize_git_repository(tmp_path)
+    submodule_patch = "\n".join(
+        [
+            "diff --git a/vendor/module b/vendor/module",
+            "new file mode 160000",
+            "index 0000000..1111111",
+            "--- /dev/null",
+            "+++ b/vendor/module",
+            "@@ -0,0 +1 @@",
+            "+Subproject commit 1111111111111111111111111111111111111111",
+            "",
+        ]
+    )
+    with pytest.raises(PermissionError, match="submodules"):
+        execute_local_agent_action(
+            "patch.preview",
+            {"patch": submodule_patch},
+            tmp_path,
+            5_000,
+        )
+
+    nested = tmp_path / "vendor"
+    nested.mkdir()
+    (nested / ".git").write_text("gitdir: ../../outside\n", encoding="utf-8")
+    nested_patch = "\n".join(
+        [
+            "diff --git a/vendor/file.txt b/vendor/file.txt",
+            "--- a/vendor/file.txt",
+            "+++ b/vendor/file.txt",
+            "@@ -1 +1 @@",
+            "-old",
+            "+new",
+            "",
+        ]
+    )
+    with pytest.raises(PermissionError, match="nested repositories"):
+        execute_local_agent_action(
+            "patch.preview",
+            {"patch": nested_patch},
+            tmp_path,
+            5_000,
+        )
 
 
 def test_patch_preview_and_apply_reject_git_quoted_secret_path(

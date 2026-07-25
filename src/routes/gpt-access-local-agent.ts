@@ -13,6 +13,10 @@ import {
   requireLocalAgentExecutorScopes
 } from '@services/actionPlanExecution/auth.js';
 import {
+  createRateLimitMiddleware,
+  getRequestClientAddress
+} from '@platform/runtime/security.js';
+import {
   LocalAgentDevicePolicyError,
   resolveAuthorizedLocalAgentDevice
 } from '@services/localAgent/devicePolicy.js';
@@ -35,6 +39,29 @@ import {
 } from '@services/localAgent/contracts.js';
 
 const router = express.Router();
+const LOCAL_AGENT_PROTOCOL_RATE_LIMIT_WINDOW_MS = 60_000;
+const localAgentProtocolClientRateLimit = createRateLimitMiddleware({
+  bucketName: 'local-agent-protocol-client',
+  maxRequests: 300,
+  windowMs: LOCAL_AGENT_PROTOCOL_RATE_LIMIT_WINDOW_MS,
+  keyGenerator: req => `client:${getRequestClientAddress(req)}`
+});
+const localAgentProtocolPrincipalRateLimit = createRateLimitMiddleware({
+  bucketName: 'local-agent-protocol-principal',
+  maxRequests: 120,
+  windowMs: LOCAL_AGENT_PROTOCOL_RATE_LIMIT_WINDOW_MS,
+  keyGenerator: req => {
+    const principal = req.localAgentExecutorPrincipal!;
+    return [
+      'principal',
+      principal.principalId,
+      'instance',
+      principal.executorInstanceId,
+      'device',
+      principal.executorDeviceId
+    ].join(':');
+  }
+});
 
 function resolveLeaseMs(env: NodeJS.ProcessEnv = process.env): number {
   const configured = Number(env.ARCANOS_LOCAL_AGENT_LEASE_MS);
@@ -112,7 +139,9 @@ router.use((_req, res, next) => {
   sendNoStore(res);
   next();
 });
+router.use(localAgentProtocolClientRateLimit);
 router.use(localAgentExecutorAuthenticationMiddleware);
+router.use(localAgentProtocolPrincipalRateLimit);
 
 router.post(
   '/heartbeat',
@@ -206,8 +235,16 @@ router.post(
 
   try {
     const device = await resolveAuthorizedLocalAgentDevice([], {
-      principal: req.localAgentExecutorPrincipal
+      principal: req.localAgentExecutorPrincipal,
+      requireFreshHeartbeat: false
     });
+    const heartbeat = await updateHeartbeat(device.agentId);
+    if (!heartbeat) {
+      throw new LocalAgentDevicePolicyError(
+        'LOCAL_AGENT_DEVICE_NOT_REGISTERED',
+        'The registered local-agent device heartbeat could not be persisted.'
+      );
+    }
     const job = await heartbeatLocalAgentJob({
       jobId: params.data.jobId,
       deviceId: device.deviceId,
@@ -308,6 +345,18 @@ router.post(
   } catch (error) {
     sendProtocolError(req, res, error);
   }
+});
+
+router.use((req, res) => {
+  res.status(404).json({
+    ok: false,
+    error: {
+      code: 'LOCAL_AGENT_PROTOCOL_ROUTE_NOT_FOUND',
+      message: 'The local-agent protocol route was not found.'
+    },
+    ...(req.requestId ? { requestId: req.requestId } : {}),
+    ...(req.traceId ? { traceId: req.traceId } : {})
+  });
 });
 
 export default router;

@@ -349,6 +349,9 @@ async function readIdempotencyBinding(
        (
          job_row.status IN ('completed', 'failed', 'cancelled', 'expired')
          AND binding.idempotency_until <= NOW()
+         AND (
+           job_row.autonomy_state #>> '{localAgent,manualReconciliationRequired}'
+         ) IS DISTINCT FROM 'true'
        ) AS binding_reusable
      FROM local_agent_job_idempotency AS binding
      INNER JOIN job_data AS job_row
@@ -399,6 +402,9 @@ async function cleanupExpiredLocalAgentIdempotencyBindings(
         AND job_row.job_type = $1
        WHERE binding.idempotency_until <= NOW()
          AND job_row.status IN ('completed', 'failed', 'cancelled', 'expired')
+         AND (
+           job_row.autonomy_state #>> '{localAgent,manualReconciliationRequired}'
+         ) IS DISTINCT FROM 'true'
        ORDER BY binding.idempotency_until, binding.id
        FOR UPDATE OF binding SKIP LOCKED
        LIMIT $2
@@ -980,22 +986,41 @@ export async function submitLocalAgentJobResult(
 
   const result = await transaction(async (client) => {
     const currentResult = await client.query(
-      `SELECT *
-       FROM job_data
-       WHERE id = $1
-         AND job_type = $2
-         AND worker_id = $3
+      `SELECT
+         job_row.*,
+         (
+           job_row.expires_at IS NOT NULL
+           AND job_row.expires_at > NOW()
+         ) AS result_job_unexpired,
+         (
+           job_row.lease_expires_at IS NOT NULL
+           AND job_row.lease_expires_at >= NOW()
+         ) AS result_lease_unexpired
+       FROM job_data AS job_row
+       WHERE job_row.id = $1
+         AND job_row.job_type = $2
+         AND job_row.worker_id = $3
        LIMIT 1
        FOR UPDATE`,
       [options.jobId, LOCAL_AGENT_JOB_TYPE, options.deviceId]
     );
-    const currentJob = currentResult.rows[0] as JobData | undefined;
-    if (!currentJob) {
+    const currentRow = currentResult.rows[0] as
+      | (JobData & {
+        result_job_unexpired: boolean;
+        result_lease_unexpired: boolean;
+      })
+      | undefined;
+    if (!currentRow) {
       throw new LocalAgentJobRepositoryError(
         'LOCAL_AGENT_JOB_NOT_FOUND',
         'The local-agent job was not found for this device.'
       );
     }
+    const {
+      result_job_unexpired: resultJobUnexpired,
+      result_lease_unexpired: resultLeaseUnexpired,
+      ...currentJob
+    } = currentRow;
     assertResultCorrelation(currentJob, options);
 
     const localAgentState = readLocalAgentState(currentJob);
@@ -1011,10 +1036,7 @@ export async function submitLocalAgentJobResult(
         'The local-agent job already has a different terminal result.'
       );
     }
-    const jobExpiry = currentJob.expires_at
-      ? new Date(currentJob.expires_at).getTime()
-      : Number.NaN;
-    if (!Number.isFinite(jobExpiry) || jobExpiry <= Date.now()) {
+    if (resultJobUnexpired !== true) {
       throw new LocalAgentJobRepositoryError(
         'LOCAL_AGENT_JOB_LEASE_EXPIRED',
         'The local-agent job expired before the result was submitted.'
@@ -1026,10 +1048,7 @@ export async function submitLocalAgentJobResult(
         'The local-agent job is not actively leased to this device.'
       );
     }
-    const leaseExpiry = currentJob.lease_expires_at
-      ? new Date(currentJob.lease_expires_at).getTime()
-      : Number.NaN;
-    if (!Number.isFinite(leaseExpiry) || leaseExpiry < Date.now()) {
+    if (resultLeaseUnexpired !== true) {
       throw new LocalAgentJobRepositoryError(
         'LOCAL_AGENT_JOB_LEASE_EXPIRED',
         'The local-agent job lease expired before the result was submitted.'
@@ -1068,16 +1087,32 @@ export async function submitLocalAgentJobResult(
            true
          )
        WHERE id = $5
+         AND job_type = $6
+         AND worker_id = $7
+         AND status = 'running'
+         AND last_worker_id = $7
+         AND expires_at IS NOT NULL
+         AND expires_at > NOW()
+         AND lease_expires_at IS NOT NULL
+         AND lease_expires_at >= NOW()
        RETURNING *`,
       [
         terminalStatus,
         serializeJson(persistedOutput),
         options.error?.message ?? null,
         resultState,
-        options.jobId
+        options.jobId,
+        LOCAL_AGENT_JOB_TYPE,
+        options.deviceId
       ]
     );
-    const updatedJob = updatedResult.rows[0] as JobData;
+    const updatedJob = updatedResult.rows[0] as JobData | undefined;
+    if (!updatedJob) {
+      throw new LocalAgentJobRepositoryError(
+        'LOCAL_AGENT_JOB_STATE_CONFLICT',
+        'The local-agent result could not be accepted under the active database lease.'
+      );
+    }
     await persistLocalAgentJobEvent(
       client,
       updatedJob,

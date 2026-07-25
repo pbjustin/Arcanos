@@ -25,6 +25,152 @@ const FORBIDDEN_TARGET_NAMES = new Set([
   'phase2e-redis-r2-20260718'
 ]);
 
+const EXPECTED_BINDING_COLUMNS = Object.freeze({
+  id: { type: 'uuid', nullable: false, defaultKind: 'uuid' },
+  principal_id: { type: 'text', nullable: false, defaultKind: 'none' },
+  workspace_id: { type: 'text', nullable: false, defaultKind: 'none' },
+  device_id: { type: 'text', nullable: false, defaultKind: 'none' },
+  action: { type: 'text', nullable: false, defaultKind: 'none' },
+  idempotency_key_hash: { type: 'text', nullable: false, defaultKind: 'none' },
+  idempotency_scope_hash: { type: 'text', nullable: false, defaultKind: 'none' },
+  request_fingerprint_hash: { type: 'text', nullable: false, defaultKind: 'none' },
+  idempotency_origin: {
+    type: 'varchar',
+    nullable: false,
+    defaultKind: 'none',
+    maximumLength: 32
+  },
+  job_id: { type: 'uuid', nullable: false, defaultKind: 'none' },
+  idempotency_until: { type: 'timestamptz', nullable: false, defaultKind: 'none' },
+  created_at: { type: 'timestamptz', nullable: false, defaultKind: 'now' },
+  updated_at: { type: 'timestamptz', nullable: false, defaultKind: 'now' }
+});
+
+const EXPECTED_BINDING_CONSTRAINTS = Object.freeze({
+  local_agent_job_idempotency_pkey: {
+    type: 'p',
+    columns: ['id'],
+    deferrable: false,
+    initiallyDeferred: false
+  },
+  uq_local_agent_job_idempotency_scope: {
+    type: 'u',
+    columns: [
+      'principal_id',
+      'workspace_id',
+      'device_id',
+      'action',
+      'idempotency_key_hash'
+    ],
+    deferrable: false,
+    initiallyDeferred: false
+  },
+  uq_local_agent_job_idempotency_job: {
+    type: 'u',
+    columns: ['job_id'],
+    deferrable: false,
+    initiallyDeferred: false
+  },
+  fk_local_agent_job_idempotency_job: {
+    type: 'f',
+    columns: ['job_id'],
+    deferrable: true,
+    initiallyDeferred: true,
+    referencedTable: 'job_data',
+    referencedColumns: ['id'],
+    updateAction: 'a',
+    deleteAction: 'c'
+  },
+  chk_local_agent_job_idempotency_principal: {
+    type: 'c',
+    columns: ['principal_id'],
+    deferrable: false,
+    initiallyDeferred: false,
+    definition: 'CHECK (length(btrim(principal_id)) > 0)'
+  },
+  chk_local_agent_job_idempotency_workspace: {
+    type: 'c',
+    columns: ['workspace_id'],
+    deferrable: false,
+    initiallyDeferred: false,
+    definition: 'CHECK (length(btrim(workspace_id)) > 0)'
+  },
+  chk_local_agent_job_idempotency_device: {
+    type: 'c',
+    columns: ['device_id'],
+    deferrable: false,
+    initiallyDeferred: false,
+    definition: 'CHECK (length(btrim(device_id)) > 0)'
+  },
+  chk_local_agent_job_idempotency_action: {
+    type: 'c',
+    columns: ['action'],
+    deferrable: false,
+    initiallyDeferred: false,
+    definition: 'CHECK (length(btrim(action)) > 0)'
+  },
+  chk_local_agent_job_idempotency_key_hash: {
+    type: 'c',
+    columns: ['idempotency_key_hash'],
+    deferrable: false,
+    initiallyDeferred: false,
+    definition: "CHECK (idempotency_key_hash ~ '^[0-9a-f]{64}$')"
+  },
+  chk_local_agent_job_idempotency_scope_hash: {
+    type: 'c',
+    columns: ['idempotency_scope_hash'],
+    deferrable: false,
+    initiallyDeferred: false,
+    definition: "CHECK (idempotency_scope_hash ~ '^[0-9a-f]{64}$')"
+  },
+  chk_local_agent_job_idempotency_fingerprint_hash: {
+    type: 'c',
+    columns: ['request_fingerprint_hash'],
+    deferrable: false,
+    initiallyDeferred: false,
+    definition: "CHECK (request_fingerprint_hash ~ '^[0-9a-f]{64}$')"
+  },
+  chk_local_agent_job_idempotency_origin: {
+    type: 'c',
+    columns: ['idempotency_origin'],
+    deferrable: false,
+    initiallyDeferred: false,
+    definition: "CHECK (idempotency_origin IN ('explicit', 'derived'))"
+  },
+  chk_local_agent_job_idempotency_expiry: {
+    type: 'c',
+    columns: ['idempotency_until', 'created_at'],
+    deferrable: false,
+    initiallyDeferred: false,
+    definition: 'CHECK (idempotency_until > created_at)'
+  }
+});
+
+const EXPECTED_BINDING_INDEXES = Object.freeze({
+  local_agent_job_idempotency_pkey: {
+    unique: true,
+    columns: ['id']
+  },
+  uq_local_agent_job_idempotency_scope: {
+    unique: true,
+    columns: [
+      'principal_id',
+      'workspace_id',
+      'device_id',
+      'action',
+      'idempotency_key_hash'
+    ]
+  },
+  uq_local_agent_job_idempotency_job: {
+    unique: true,
+    columns: ['job_id']
+  },
+  idx_local_agent_job_idempotency_expiry: {
+    unique: false,
+    columns: ['idempotency_until']
+  }
+});
+
 export class LocalAgentHardeningMigrationError extends Error {
   constructor(code) {
     super(code);
@@ -37,6 +183,42 @@ function sha256(value) {
   return createHash('sha256')
     .update(value.replace(/\r\n/gu, '\n'), 'utf8')
     .digest('hex');
+}
+
+function normalizeDefinition(value) {
+  return String(value ?? '')
+    .toLowerCase()
+    .replace(/\s+/gu, '')
+    .replace(/::character varying/gu, '')
+    .replace(/::charactervarying/gu, '')
+    .replace(/::varchar/gu, '')
+    .replace(/::text\[\]/gu, '')
+    .replace(/::text/gu, '')
+    .replace(/[\[\]()]/gu, '')
+    .replace(/=anyarray/gu, 'in');
+}
+
+function defaultMatches(value, expectedKind) {
+  if (expectedKind === 'none') {
+    return value === null || value === undefined;
+  }
+  const normalized = normalizeDefinition(value);
+  if (expectedKind === 'uuid') {
+    return normalized === 'gen_random_uuid';
+  }
+  return normalized === 'now' || normalized === 'current_timestamp';
+}
+
+function exactStringArray(value, expected, orderMatters = true) {
+  if (
+    !Array.isArray(value)
+    || value.some((entry) => typeof entry !== 'string')
+  ) {
+    return false;
+  }
+  const actual = orderMatters ? value : [...value].sort();
+  const required = orderMatters ? expected : [...expected].sort();
+  return JSON.stringify(actual) === JSON.stringify(required);
 }
 
 function readManifest() {
@@ -370,7 +552,7 @@ export function readMigrationConnectionConfig(
   };
 }
 
-async function verifyDatabaseSchema(client) {
+export async function verifyDatabaseSchemaWithClient(client) {
   const tableResult = await client.query(
     `SELECT to_regclass('local_agent_job_idempotency')::text AS table_name`
   );
@@ -381,29 +563,41 @@ async function verifyDatabaseSchema(client) {
   }
 
   const columnsResult = await client.query(
-    `SELECT column_name
+    `SELECT
+       column_name,
+       udt_name,
+       is_nullable,
+       column_default,
+       character_maximum_length
      FROM information_schema.columns
      WHERE table_schema = current_schema()
        AND table_name = 'local_agent_job_idempotency'
      ORDER BY ordinal_position`
   );
-  const columns = new Set(columnsResult.rows.map((row) => row.column_name));
-  const expectedColumns = [
-    'id',
-    'principal_id',
-    'workspace_id',
-    'device_id',
-    'action',
-    'idempotency_key_hash',
-    'idempotency_scope_hash',
-    'request_fingerprint_hash',
-    'idempotency_origin',
-    'job_id',
-    'idempotency_until',
-    'created_at',
-    'updated_at'
-  ];
-  if (expectedColumns.some((column) => !columns.has(column))) {
+  const expectedColumnEntries = Object.entries(EXPECTED_BINDING_COLUMNS);
+  const columns = new Map(
+    columnsResult.rows.map((row) => [row.column_name, row])
+  );
+  if (
+    columnsResult.rows.length !== expectedColumnEntries.length
+    || expectedColumnEntries.some(([columnName, expected]) => {
+      const actual = columns.get(columnName);
+      return (
+        !actual
+        || actual.udt_name !== expected.type
+        || (actual.is_nullable === 'YES') !== expected.nullable
+        || !defaultMatches(actual.column_default, expected.defaultKind)
+        || (
+          expected.maximumLength !== undefined
+          && Number(actual.character_maximum_length) !== expected.maximumLength
+        )
+        || (
+          expected.maximumLength === undefined
+          && actual.character_maximum_length !== null
+        )
+      );
+    })
+  ) {
     throw new LocalAgentHardeningMigrationError(
       'LOCAL_AGENT_MIGRATION_COLUMNS_INVALID'
     );
@@ -413,64 +607,300 @@ async function verifyDatabaseSchema(client) {
     `SELECT
        conname,
        contype,
+       convalidated,
        condeferrable,
        condeferred,
-       pg_get_constraintdef(oid) AS definition
-     FROM pg_constraint
-     WHERE conrelid = 'local_agent_job_idempotency'::regclass`
+       pg_get_constraintdef(constraint_data.oid, true) AS definition,
+       ARRAY(
+         SELECT attribute.attname::text
+         FROM unnest(constraint_data.conkey) WITH ORDINALITY
+           AS key_column(attnum, position)
+         JOIN pg_attribute AS attribute
+           ON attribute.attrelid = constraint_data.conrelid
+          AND attribute.attnum = key_column.attnum
+         ORDER BY key_column.position
+       ) AS columns,
+       referenced_relation.relname AS referenced_table,
+       CASE
+         WHEN constraint_data.confrelid = 0 THEN ARRAY[]::text[]
+         ELSE ARRAY(
+           SELECT referenced_attribute.attname::text
+           FROM unnest(constraint_data.confkey) WITH ORDINALITY
+             AS referenced_key(attnum, position)
+           JOIN pg_attribute AS referenced_attribute
+             ON referenced_attribute.attrelid = constraint_data.confrelid
+            AND referenced_attribute.attnum = referenced_key.attnum
+           ORDER BY referenced_key.position
+         )
+       END AS referenced_columns,
+       CASE
+         WHEN constraint_data.confrelid = 0 THEN NULL
+         ELSE referenced_namespace.nspname = current_schema()
+       END AS referenced_schema_matches,
+       constraint_data.confupdtype AS update_action,
+       constraint_data.confdeltype AS delete_action
+     FROM pg_constraint AS constraint_data
+     JOIN pg_namespace AS namespace
+       ON namespace.oid = constraint_data.connamespace
+     LEFT JOIN pg_class AS referenced_relation
+       ON referenced_relation.oid = constraint_data.confrelid
+     LEFT JOIN pg_namespace AS referenced_namespace
+       ON referenced_namespace.oid = referenced_relation.relnamespace
+     WHERE constraint_data.conrelid =
+       'local_agent_job_idempotency'::regclass
+       AND namespace.nspname = current_schema()
+       AND constraint_data.conname = ANY($1::text[])`,
+    [Object.keys(EXPECTED_BINDING_CONSTRAINTS)]
   );
   const constraints = new Map(
     constraintsResult.rows.map((row) => [row.conname, row])
   );
-  const scopeConstraint = constraints.get(
-    'uq_local_agent_job_idempotency_scope'
+  const expectedConstraintEntries = Object.entries(
+    EXPECTED_BINDING_CONSTRAINTS
   );
-  const jobConstraint = constraints.get('fk_local_agent_job_idempotency_job');
-  if (scopeConstraint?.contype !== 'u') {
-    throw new LocalAgentHardeningMigrationError(
-      'LOCAL_AGENT_MIGRATION_UNIQUENESS_INVALID'
-    );
-  }
   if (
-    jobConstraint?.contype !== 'f'
-    || jobConstraint.condeferrable !== true
-    || jobConstraint.condeferred !== true
-    || !String(jobConstraint.definition).includes('ON DELETE CASCADE')
+    expectedConstraintEntries.some(([constraintName, expected]) => {
+      const actual = constraints.get(constraintName);
+      if (
+        !actual
+        || actual.contype !== expected.type
+        || actual.convalidated !== true
+        || actual.condeferrable !== expected.deferrable
+        || actual.condeferred !== expected.initiallyDeferred
+        || !exactStringArray(
+          actual.columns,
+          expected.columns,
+          expected.type !== 'c'
+        )
+      ) {
+        return true;
+      }
+      if (expected.type === 'c') {
+        return normalizeDefinition(actual.definition)
+          !== normalizeDefinition(expected.definition);
+      }
+      if (expected.type !== 'f') {
+        return false;
+      }
+      return (
+        actual.referenced_table !== expected.referencedTable
+        || actual.referenced_schema_matches !== true
+        || !exactStringArray(
+          actual.referenced_columns,
+          expected.referencedColumns
+        )
+        || actual.update_action !== expected.updateAction
+        || actual.delete_action !== expected.deleteAction
+      );
+    })
   ) {
     throw new LocalAgentHardeningMigrationError(
-      'LOCAL_AGENT_MIGRATION_FOREIGN_KEY_INVALID'
+      'LOCAL_AGENT_MIGRATION_CONSTRAINTS_INVALID'
     );
   }
 
   const indexResult = await client.query(
-    `SELECT to_regclass(
-       'idx_local_agent_job_idempotency_expiry'
-     )::text AS index_name`
+    `SELECT
+       index_relation.relname AS index_name,
+       index_data.indisunique AS is_unique,
+       index_data.indisvalid AS is_valid,
+       index_data.indisready AS is_ready,
+       access_method.amname AS access_method,
+       index_data.indnkeyatts::integer AS key_count,
+       index_data.indnatts::integer AS attribute_count,
+       index_data.indexprs IS NULL AS expressions_absent,
+       index_data.indpred IS NULL AS predicate_absent,
+       cardinality(index_data.indoption::smallint[]) >=
+         index_data.indnkeyatts
+         AND NOT EXISTS (
+           SELECT 1
+           FROM unnest(index_data.indoption::smallint[]) WITH ORDINALITY
+             AS index_option(option_bits, position)
+           WHERE index_option.position <= index_data.indnkeyatts
+             AND index_option.option_bits <> 0
+         ) AS sort_options_default,
+       cardinality(index_data.indclass::oid[]) >=
+         index_data.indnkeyatts
+         AND NOT EXISTS (
+           SELECT 1
+           FROM unnest(
+             index_data.indclass::oid[],
+             index_data.indkey::smallint[]
+           ) WITH ORDINALITY
+             AS index_opclass(opclass_oid, attnum, position)
+           LEFT JOIN pg_opclass AS operator_class
+             ON operator_class.oid = index_opclass.opclass_oid
+           LEFT JOIN pg_attribute AS opclass_attribute
+             ON opclass_attribute.attrelid = index_data.indrelid
+            AND opclass_attribute.attnum = index_opclass.attnum
+           WHERE index_opclass.position <= index_data.indnkeyatts
+             AND (
+               operator_class.opcdefault IS DISTINCT FROM true
+               OR operator_class.opcmethod IS DISTINCT FROM
+                 index_relation.relam
+               OR operator_class.opcintype IS DISTINCT FROM
+                 opclass_attribute.atttypid
+             )
+         ) AS opclasses_default,
+       cardinality(index_data.indcollation::oid[]) >=
+         index_data.indnkeyatts
+         AND NOT EXISTS (
+           SELECT 1
+           FROM unnest(
+             index_data.indcollation::oid[],
+             index_data.indkey::smallint[]
+           ) WITH ORDINALITY
+             AS index_collation(collation_oid, attnum, position)
+           LEFT JOIN pg_attribute AS collated_attribute
+             ON collated_attribute.attrelid = index_data.indrelid
+            AND collated_attribute.attnum = index_collation.attnum
+           WHERE index_collation.position <= index_data.indnkeyatts
+             AND index_collation.collation_oid IS DISTINCT FROM
+               collated_attribute.attcollation
+         ) AS collations_default,
+       ARRAY(
+         SELECT attribute.attname::text
+         FROM unnest(index_data.indkey::smallint[]) WITH ORDINALITY
+           AS key_column(attnum, position)
+         JOIN pg_attribute AS attribute
+           ON attribute.attrelid = index_data.indrelid
+          AND attribute.attnum = key_column.attnum
+         WHERE key_column.position <= index_data.indnkeyatts
+         ORDER BY key_column.position
+       ) AS columns
+     FROM pg_class AS index_relation
+     JOIN pg_index AS index_data
+       ON index_data.indexrelid = index_relation.oid
+     JOIN pg_class AS table_relation
+       ON table_relation.oid = index_data.indrelid
+     JOIN pg_namespace AS namespace
+       ON namespace.oid = table_relation.relnamespace
+     JOIN pg_am AS access_method
+       ON access_method.oid = index_relation.relam
+     WHERE namespace.nspname = current_schema()
+       AND table_relation.relname = 'local_agent_job_idempotency'
+       AND index_relation.relname = ANY($1::text[])`,
+    [Object.keys(EXPECTED_BINDING_INDEXES)]
   );
-  if (!indexResult.rows[0]?.index_name) {
+  const indexes = new Map(
+    indexResult.rows.map((row) => [row.index_name, row])
+  );
+  const expectedIndexEntries = Object.entries(EXPECTED_BINDING_INDEXES);
+  if (
+    expectedIndexEntries.some(([indexName, expected]) => {
+      const actual = indexes.get(indexName);
+      return (
+        !actual
+        || actual.is_unique !== expected.unique
+        || actual.is_valid !== true
+        || actual.is_ready !== true
+        || actual.access_method !== 'btree'
+        || actual.key_count !== expected.columns.length
+        || actual.attribute_count !== expected.columns.length
+        || actual.expressions_absent !== true
+        || actual.predicate_absent !== true
+        || actual.sort_options_default !== true
+        || actual.opclasses_default !== true
+        || actual.collations_default !== true
+        || !exactStringArray(actual.columns, expected.columns)
+      );
+    })
+  ) {
     throw new LocalAgentHardeningMigrationError(
-      'LOCAL_AGENT_MIGRATION_EXPIRY_INDEX_MISSING'
+      'LOCAL_AGENT_MIGRATION_INDEX_INVALID'
+    );
+  }
+
+  const requiredJobColumns = [
+    'id',
+    'worker_id',
+    'job_type',
+    'status',
+    'input',
+    'autonomy_state',
+    'request_fingerprint_hash',
+    'idempotency_key_hash',
+    'idempotency_scope_hash',
+    'idempotency_origin',
+    'idempotency_until'
+  ];
+  const jobColumnsResult = await client.query(
+    `SELECT column_name
+     FROM information_schema.columns
+     WHERE table_schema = current_schema()
+       AND table_name = 'job_data'
+       AND column_name = ANY($1::text[])`,
+    [requiredJobColumns]
+  );
+  const jobColumns = new Set(
+    jobColumnsResult.rows.map((row) => row.column_name)
+  );
+  if (requiredJobColumns.some((columnName) => !jobColumns.has(columnName))) {
+    throw new LocalAgentHardeningMigrationError(
+      'LOCAL_AGENT_MIGRATION_BINDING_PARITY_INVALID'
     );
   }
 
   const coverageResult = await client.query(
-    `SELECT COUNT(*)::int AS missing_bindings
-     FROM job_data AS job_row
-     WHERE job_row.job_type = 'local-agent'
-       AND (
-         job_row.status IN ('pending', 'running')
-         OR job_row.idempotency_until > NOW()
-       )
-       AND NOT EXISTS (
-         SELECT 1
+    `SELECT
+       (
+         SELECT COUNT(*)::int
+         FROM job_data AS job_row
+         WHERE job_row.job_type = 'local-agent'
+           AND (
+             job_row.status IN ('pending', 'running')
+             OR job_row.idempotency_until > NOW()
+             OR (
+               job_row.autonomy_state
+                 #>> '{localAgent,manualReconciliationRequired}'
+             ) = 'true'
+           )
+           AND NOT EXISTS (
+             SELECT 1
+             FROM local_agent_job_idempotency AS binding
+             WHERE binding.job_id = job_row.id
+           )
+       ) AS missing_bindings,
+       (
+         SELECT COUNT(*)::int
          FROM local_agent_job_idempotency AS binding
-         WHERE binding.job_id = job_row.id
-       )`
+         LEFT JOIN job_data AS job_row
+           ON job_row.id = binding.job_id
+         WHERE job_row.id IS NULL
+           OR job_row.job_type IS DISTINCT FROM 'local-agent'
+           OR binding.device_id IS DISTINCT FROM job_row.worker_id
+           OR binding.principal_id IS DISTINCT FROM
+             job_row.input->'job'->>'principal'
+           OR binding.workspace_id IS DISTINCT FROM
+             job_row.input->'job'->>'workspace'
+           OR binding.device_id IS DISTINCT FROM
+             job_row.input->'job'->>'deviceId'
+           OR binding.action IS DISTINCT FROM
+             job_row.input->'job'->>'action'
+           OR binding.idempotency_key_hash IS DISTINCT FROM
+             job_row.idempotency_key_hash
+           OR binding.idempotency_scope_hash IS DISTINCT FROM
+             job_row.idempotency_scope_hash
+           OR binding.request_fingerprint_hash IS DISTINCT FROM
+             job_row.request_fingerprint_hash
+           OR binding.idempotency_origin IS DISTINCT FROM
+             job_row.idempotency_origin
+           OR binding.idempotency_until IS DISTINCT FROM
+             job_row.idempotency_until
+       ) AS mismatched_bindings`
   );
   const missingBindings = Number(coverageResult.rows[0]?.missing_bindings ?? 0);
+  const mismatchedBindings = Number(
+    coverageResult.rows[0]?.mismatched_bindings ?? 0
+  );
   if (missingBindings !== 0) {
     throw new LocalAgentHardeningMigrationError(
       'LOCAL_AGENT_MIGRATION_BACKFILL_INCOMPLETE'
+    );
+  }
+  if (mismatchedBindings !== 0) {
+    throw new LocalAgentHardeningMigrationError(
+      'LOCAL_AGENT_MIGRATION_BINDING_PARITY_INVALID'
     );
   }
 
@@ -482,12 +912,16 @@ async function verifyDatabaseSchema(client) {
     table: 'local_agent_job_idempotency',
     bindingCount: Number(countResult.rows[0]?.binding_count ?? 0),
     missingBindings,
+    mismatchedBindings,
     scopeUniqueness: true,
     jobForeignKey: {
       onDeleteCascade: true,
       deferrable: true,
       initiallyDeferred: true
     },
+    exactColumns: true,
+    exactConstraints: true,
+    exactIndexes: true,
     expiryIndex: true
   };
 }
@@ -576,7 +1010,7 @@ export async function main(
         mode: options.mode,
         artifacts,
         target,
-        verification: await verifyDatabaseSchema(client)
+        verification: await verifyDatabaseSchemaWithClient(client)
       };
     }
 
@@ -589,7 +1023,7 @@ export async function main(
           const verification = await runTransactionalSql(
             client,
             forwardSql,
-            () => verifyDatabaseSchema(client)
+            () => verifyDatabaseSchemaWithClient(client)
           );
           return {
             ok: true,

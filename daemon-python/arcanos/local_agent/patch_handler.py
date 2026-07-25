@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
+import re
 import shutil
 import threading
 from typing import Any, Mapping
@@ -12,7 +14,13 @@ import uuid
 
 from ..cli.cli_policy import PatchDecision, validate_patch_text
 from .process_runner import ProcessResult, run_bounded_process
-from .secure_fs import has_link_or_reparse_component, path_identity
+from .secure_fs import (
+    ValidatedGitWorkspace,
+    build_validated_git_argv,
+    has_link_or_reparse_component,
+    path_identity,
+    validate_standalone_git_workspace,
+)
 from .workspace_registry import is_secret_workspace_path
 
 _PATCH_AUTHORIZATION_SEAL = object()
@@ -98,27 +106,34 @@ def preview_patch(
 ) -> dict[str, Any]:
     """Validate a patch and run `git apply --check` without modifying files."""
 
-    resolved_root = _resolve_git_workspace(workspace_root)
+    validated_workspace = _resolve_git_workspace(
+        workspace_root,
+        timeout_ms=timeout_ms,
+        cancellation_event=cancellation_event,
+    )
+    resolved_root = validated_workspace.root
     root_identity = path_identity(resolved_root)
     patch_decision = _require_allowed_patch(patch_text, resolved_root)
     process = run_bounded_process(
-        [
-            "git",
-            "-c",
-            "core.fsmonitor=false",
-            "-c",
-            "credential.helper=",
-            "apply",
-            "--check",
-            "--whitespace=nowarn",
-            "-",
-        ],
+        build_validated_git_argv(
+            validated_workspace,
+            [
+                "apply",
+                "--check",
+                "--whitespace=nowarn",
+                "-",
+            ],
+        ),
         cwd=resolved_root,
         timeout_ms=timeout_ms,
         stdin_text=patch_text,
         cancellation_event=cancellation_event,
     )
-    if path_identity(resolved_root) != root_identity:
+    if (
+        path_identity(resolved_root) != root_identity
+        or path_identity(validated_workspace.git_dir)
+        != validated_workspace.git_dir_identity
+    ):
         raise PermissionError("Workspace identity changed during patch preview.")
     return {
         "patchSha256": patch_decision.patch_hash,
@@ -150,13 +165,17 @@ def apply_authorized_patch(
         or not isinstance(mutation_authorization, PatchExecutionAuthorization)
         or mutation_authorization._seal is not _PATCH_AUTHORIZATION_SEAL
         or mutation_authorization.action != "patch.apply"
-        or mutation_authorization.payload_fingerprint
-        != _payload_fingerprint(payload)
+        or mutation_authorization.payload_fingerprint != _payload_fingerprint(payload)
     ):
         raise PermissionError("patch.apply requires exact trusted authorization.")
 
     patch_text = str(payload.get("patch") or "")
-    resolved_root = _resolve_git_workspace(workspace_root)
+    validated_workspace = _resolve_git_workspace(
+        workspace_root,
+        timeout_ms=timeout_ms,
+        cancellation_event=cancellation_event,
+    )
+    resolved_root = validated_workspace.root
     root_identity = path_identity(resolved_root)
     patch_decision = _require_allowed_patch(patch_text, resolved_root)
     expected_patch_hash = payload.get("expectedPatchSha256")
@@ -174,22 +193,24 @@ def apply_authorized_patch(
         rollback_id=resolved_rollback_id,
     )
     process = run_bounded_process(
-        [
-            "git",
-            "-c",
-            "core.fsmonitor=false",
-            "-c",
-            "credential.helper=",
-            "apply",
-            "--whitespace=nowarn",
-            "-",
-        ],
+        build_validated_git_argv(
+            validated_workspace,
+            [
+                "apply",
+                "--whitespace=nowarn",
+                "-",
+            ],
+        ),
         cwd=resolved_root,
         timeout_ms=timeout_ms,
         stdin_text=patch_text,
         cancellation_event=cancellation_event,
     )
-    if path_identity(resolved_root) != root_identity:
+    if (
+        path_identity(resolved_root) != root_identity
+        or path_identity(validated_workspace.git_dir)
+        != validated_workspace.git_dir_identity
+    ):
         raise PermissionError("Workspace identity changed during patch application.")
     _validate_patch_targets(patch_decision, resolved_root)
     return PatchApplyResult(
@@ -212,13 +233,17 @@ def _payload_fingerprint(payload: Mapping[str, Any]) -> str:
     return hashlib.sha256(canonical_payload.encode("utf-8")).hexdigest()
 
 
-def _resolve_git_workspace(workspace_root: Path) -> Path:
-    unresolved_root = Path(workspace_root)
-    path_identity(unresolved_root)
-    resolved_root = unresolved_root.resolve()
-    if not resolved_root.exists() or not resolved_root.is_dir():
-        raise FileNotFoundError(f'Workspace root "{resolved_root}" is not a directory.')
-    return resolved_root
+def _resolve_git_workspace(
+    workspace_root: Path,
+    *,
+    timeout_ms: int,
+    cancellation_event: threading.Event | None,
+) -> ValidatedGitWorkspace:
+    return validate_standalone_git_workspace(
+        workspace_root,
+        timeout_ms=timeout_ms,
+        cancellation_event=cancellation_event,
+    )
 
 
 def _require_allowed_patch(patch_text: str, workspace_root: Path) -> PatchDecision:
@@ -231,6 +256,18 @@ def _require_allowed_patch(patch_text: str, workspace_root: Path) -> PatchDecisi
         raise ValueError("Patch may target at most 1000 files.")
     if any(len(relative_path) > 1024 for relative_path in patch_decision.files):
         raise ValueError("Patch paths must be 1024 characters or fewer.")
+    if re.search(
+        r"^(?:(?:new file mode|deleted file mode|new mode|old mode) 160000|"
+        r"index [0-9a-f]+\.\.[0-9a-f]+ 160000)$",
+        patch_text,
+        re.IGNORECASE | re.MULTILINE,
+    ):
+        raise PermissionError("Patches may not create or modify Git submodules.")
+    if any(
+        Path(relative_path).as_posix().casefold() == ".gitmodules"
+        for relative_path in patch_decision.files
+    ):
+        raise PermissionError("Patches may not modify Git submodule metadata.")
     _validate_patch_targets(patch_decision, workspace_root)
     return patch_decision
 
@@ -243,6 +280,7 @@ def _validate_patch_targets(
         relative_path = Path(relative_file)
         if is_secret_workspace_path(relative_path):
             raise PermissionError("Patch target is denied by secret-file policy.")
+        _reject_nested_git_workspace(workspace_root, relative_path)
         candidate = workspace_root / relative_path
         if has_link_or_reparse_component(workspace_root, candidate):
             raise PermissionError(
@@ -255,6 +293,20 @@ def _validate_patch_targets(
             raise PermissionError("Patch target escaped the workspace.") from error
         if is_secret_workspace_path(resolved_relative):
             raise PermissionError("Resolved patch target is denied by policy.")
+
+
+def _reject_nested_git_workspace(
+    workspace_root: Path,
+    relative_path: Path,
+) -> None:
+    current = workspace_root
+    for part in relative_path.parts:
+        current = current / part
+        nested_git = current / ".git"
+        if os.path.lexists(nested_git):
+            raise PermissionError(
+                "Patch targets inside nested repositories or submodules are unsupported."
+            )
 
 
 def _create_patch_backups(

@@ -1008,6 +1008,7 @@ describe('ProductivityService domain and security contracts', () => {
     ['What should I do?', 'focus', ['focus.today']],
     ["I'm overwhelmed.", 'focus', ['focus.today']],
     ['I finished that.', 'complete_task', ['task.complete']],
+    ['Do this later.', 'defer_task', ['task.defer']],
     ['Plan my day.', 'plan_day', ['state.current', 'focus.today']],
     ["What's going on?", 'context', ['context.summary']],
   ])(
@@ -1039,6 +1040,7 @@ describe('ProductivityService domain and security contracts', () => {
     "I haven't completed that.",
     "I'm not done with that.",
     'I did some planning.',
+    'Later.',
     'Do not defer that.',
     "Don't capture this.",
     'Do not create a task.',
@@ -1077,6 +1079,7 @@ describe('ProductivityService domain and security contracts', () => {
         id: PROJECT_STALLED_ID,
         title: 'Project Drift',
         status: 'active',
+        dueAt: '2026-07-22T09:00:00.000Z',
       }),
       makeProject({
         id: PROJECT_BLOCKED_ID,
@@ -1206,13 +1209,13 @@ describe('ProductivityService domain and security contracts', () => {
         title: 'Project Drift',
         health: 'stalled',
         missingNextAction: true,
-        reasonCodes: ['missing_next_action'],
+        reasonCodes: ['missing_next_action', 'project_overdue'],
       },
       {
         title: 'Project Blocked',
         health: 'blocked',
         missingNextAction: true,
-        reasonCodes: ['project_marked_blocked', 'waiting_tasks'],
+        reasonCodes: ['project_marked_blocked', 'overdue_tasks', 'waiting_tasks'],
       },
     ]);
 
@@ -1251,14 +1254,20 @@ describe('ProductivityService domain and security contracts', () => {
     });
   });
 
-  test('classifies earlier-today deadlines as overdue and excludes terminal-project work', async () => {
+  test('classifies earlier-today deadlines as overdue and excludes terminal or on-hold project work', async () => {
     const completedProjectId = '00000000-0000-4000-8000-000000000051';
+    const onHoldProjectId = '00000000-0000-4000-8000-000000000052';
     const repository = new InMemoryProductivityRepository({
       projects: [
         makeProject({
           id: completedProjectId,
           title: 'Completed launch',
           status: 'completed',
+        }),
+        makeProject({
+          id: onHoldProjectId,
+          title: 'Paused launch',
+          status: 'on_hold',
         }),
       ],
       tasks: [
@@ -1273,6 +1282,14 @@ describe('ProductivityService domain and security contracts', () => {
           title: 'Leftover terminal work',
           status: 'next',
           projectId: completedProjectId,
+          priority: 4,
+          dueAt: '2026-07-23T10:00:00.000Z',
+        }),
+        makeTask({
+          id: '00000000-0000-4000-8000-000000000253',
+          title: 'Paused project work',
+          status: 'next',
+          projectId: onHoldProjectId,
           priority: 4,
           dueAt: '2026-07-23T10:00:00.000Z',
         }),
@@ -1453,6 +1470,8 @@ describe('ProductivityService domain and security contracts', () => {
       replayed: true,
       changed: false,
     });
+    expect(first.effect?.message).toBe('Created “Create once”.');
+    expect(replay.effect?.message).toBe('“Create once” was already created.');
     expect(dataOf<{ item: ProductivityTask }>(replay).item.id).toBe(
       dataOf<{ item: ProductivityTask }>(first).item.id,
     );
@@ -1476,6 +1495,54 @@ describe('ProductivityService domain and security contracts', () => {
     );
     expect(repository.createTaskExecutions).toBe(1);
     expect(repository.tasks).toHaveLength(1);
+  });
+
+  test('describes no-op transitions without claiming a new state change', async () => {
+    const repository = new InMemoryProductivityRepository({
+      tasks: [
+        makeTask({
+          id: TASK_INBOX_ID,
+          title: 'Already next',
+          status: 'next',
+        }),
+      ],
+      projects: [
+        makeProject({
+          id: PROJECT_ATLAS_ID,
+          title: 'Already active',
+          status: 'active',
+        }),
+      ],
+    });
+    const service = new ProductivityService(repository, () => NOW);
+
+    const task = await service.execute(
+      'task.transition',
+      { task: TASK_INBOX_ID, status: 'next' },
+      execution('no-op-task-transition'),
+    );
+    const project = await service.execute(
+      'project.transition',
+      { project: PROJECT_ATLAS_ID, status: 'active' },
+      execution('no-op-project-transition'),
+    );
+
+    expect(task).toMatchObject({
+      replayed: false,
+      changed: false,
+      effect: {
+        outcome: 'transitioned',
+        message: '“Already next” was already next.',
+      },
+    });
+    expect(project).toMatchObject({
+      replayed: false,
+      changed: false,
+      effect: {
+        outcome: 'transitioned',
+        message: 'Project “Already active” was already active.',
+      },
+    });
   });
 
   test('gives the gateway idempotency header precedence and rejects body mismatches', async () => {
@@ -1556,5 +1623,33 @@ describe('ProductivityService domain and security contracts', () => {
     expect(replay).toMatchObject({ replayed: true, changed: false });
     expect(dataOf<{ item: ProductivityReview }>(replay).item.reviewDate).toBe('2026-07-24');
     expect(repository.reviews).toHaveLength(1);
+  });
+
+  test('rejects explicitly future-dated review writes but permits read-only projections', async () => {
+    const repository = new InMemoryProductivityRepository();
+    const service = new ProductivityService(repository, () => NOW);
+
+    const read = await service.execute(
+      'review.daily',
+      { date: '2026-07-25' },
+      execution('future-review-read'),
+    );
+    expect(dataOf<{ reviewDate: string }>(read).reviewDate).toBe('2026-07-25');
+
+    const error = await expectProductivityError(
+      service.execute(
+        'review.record',
+        {
+          kind: 'daily',
+          reviewDate: '2026-07-25',
+          summary: 'Not yet.',
+        },
+        execution('future-review-write'),
+      ),
+      'VALIDATION_FAILED',
+    );
+
+    expect(error.recommendedAction).toBe('FIX_INPUT');
+    expect(repository.reviews).toHaveLength(0);
   });
 });

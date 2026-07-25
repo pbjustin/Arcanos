@@ -25,6 +25,18 @@ def test_command_policy_rejects_unconfirmed_dangerous_or_malformed(monkeypatch, 
     assert evaluate_command_policy("node -e \"console.log(1)\"", cwd=str(tmp_path)).reason == "command_not_allowlisted"
 
 
+def test_command_policy_rejects_legacy_probe_that_can_expose_secrets(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    monkeypatch.setenv("ARCANOS_CLI_SANDBOX_ROOT", str(tmp_path))
+
+    decision = evaluate_command_policy("npm run probe", cwd=str(tmp_path))
+
+    assert decision.allowed is False
+    assert decision.reason == "command_not_allowlisted"
+
+
 def test_redaction_and_truncation_use_shared_policy() -> None:
     secret_name = "OPENAI_API" + "_KEY"
     fake_value = "placeholder-redaction-value"

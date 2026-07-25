@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from importlib.util import find_spec
 from importlib.metadata import PackageNotFoundError, version
+import os
 from pathlib import Path
 import sys
 import threading
@@ -166,12 +167,39 @@ def _handle_status(
     return {
         "status": daemon_status,
         "daemonVersion": daemon_version,
-        "capabilities": list(LOCAL_AGENT_ACTIONS),
+        "capabilities": _resolve_effective_capabilities(test_policy),
         "workspaceRegistered": workspace_root.exists() and workspace_root.is_dir(),
         "testExecutionMode": test_policy.mode,
         "testSandboxAvailable": test_policy.sandbox_available,
         "testSandboxRuntime": test_policy.sandbox_runtime,
         "observedAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _resolve_effective_capabilities(test_policy: Any) -> list[str]:
+    """Return locally enabled actions, distinct from the public catalog."""
+
+    configured_actions = _parse_action_environment("ARCANOS_LOCAL_AGENT_ACTIONS")
+    configured_scopes = _parse_action_environment("ARCANOS_LOCAL_AGENT_DEVICE_SCOPES")
+    effective = configured_actions.intersection(configured_scopes)
+    tests_run_available = (
+        test_policy.configuration_valid
+        and test_policy.mode != "disabled"
+        and (test_policy.mode != "sandboxed" or test_policy.sandbox_available)
+    )
+    if not tests_run_available:
+        effective.discard("tests.run")
+    return [action for action in LOCAL_AGENT_ACTIONS if action in effective]
+
+
+def _parse_action_environment(name: str) -> set[str]:
+    raw = os.environ.get(name)
+    if not raw:
+        return set()
+    return {
+        value
+        for value in (item.strip() for item in raw.split(","))
+        if value in LOCAL_AGENT_ACTIONS
     }
 
 

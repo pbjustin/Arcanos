@@ -46,6 +46,9 @@ describe('jobRepository.cleanupRetainedFailedJobs', () => {
     expect(sql).toContain('retained_rank > $1');
     expect(sql).toContain('job_data.updated_at < NOW()');
     expect(sql).toContain("job_data.job_type <> 'gpt'");
+    expect(sql).toContain("job_data.job_type <> 'local-agent'");
+    expect(sql).toContain('manualReconciliationRequired');
+    expect(sql).toContain("IS DISTINCT FROM 'true'");
     expect(params).toEqual([50, 86_400_000]);
     expect(result).toEqual({
       keep: 50,

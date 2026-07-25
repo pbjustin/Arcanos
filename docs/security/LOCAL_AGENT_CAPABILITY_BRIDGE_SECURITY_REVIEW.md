@@ -132,6 +132,9 @@ configuration.
   reconciliation.
 - The local SQLite journal commits before side effects and before result
   submission. An interrupted unknown side effect is not automatically rerun.
+- Successful accepted journal rows are bounded to the newest 1,000 records.
+  Pending, unaccepted, quarantined, and manual-reconciliation evidence is not
+  eligible for automatic pruning.
 - Generic worker claim, stale recovery, and failed-job requeue paths exclude
   `local-agent` jobs.
 - Job state and each lifecycle/outbox event are written in the same
@@ -154,11 +157,18 @@ configuration.
 - Shared secret-file policy excludes `.env*`, `.npmrc`, `.pypirc`, `.netrc`,
   `.ssh`, private-key names and suffixes, and
   secret/token/credential-like names.
-- Git status and diff use explicit secret pathspec exclusions and filter
-  returned paths.
+- Git status and diff use explicit secret pathspec exclusions, ignore
+  submodules, and filter returned paths.
+- Before every Git or patch action, the daemon requires a physical `.git`
+  directory inside the registered workspace, confirms Git's reported
+  top-level/Git/common directories, rejects external object alternates,
+  recursively rejects links/reparse points in Git metadata, and rejects local
+  config includes plus path- or executable-bearing settings. Linked worktree
+  and submodule roots that use a `.git` file are unsupported.
 - Patch policy rejects secret paths, Git metadata, path escapes, existing
-  symlink targets, creation of symlink mode `120000`, binary patches, private
-  key content, unsupported control characters, and oversized patches.
+  symlink targets, creation of symlink mode `120000`, gitlink mode `160000`,
+  `.gitmodules`, nested repositories, binary patches, private key content,
+  unsupported control characters, and oversized patches.
 
 ### Process and output boundary
 
@@ -177,6 +187,8 @@ configuration.
   limits, timeout/cancellation cleanup, and bounded output. The configured
   image must be an immutable RepoDigest or local image ID and must pass a real
   self-test.
+- Snapshot staging enforces limits against bytes actually copied and removes
+  partial output on overflow or any copy failure.
 - Git and test processes use `shell=False`.
 - Executables are resolved to existing absolute files and are rejected when
   the resolved executable is inside the registered workspace.
@@ -313,6 +325,31 @@ configuration.
   require separate architectural and compatibility review to preserve Git
   patch semantics.
 
+### LA-07: Git metadata indirection and local config — remediated with compatibility limits
+
+- **Previous severity:** High for a registered root whose `.git` indirection,
+  common directory, object alternates, or local config reached outside the
+  workspace.
+- **Location:** `daemon-python/arcanos/local_agent/secure_fs.py`,
+  `daemon-python/arcanos/protocol_runtime/tools/repository_tools.py`,
+  `daemon-python/arcanos/local_agent/patch_handler.py`
+- **Disposition:** Every Git status, diff, patch preview, and patch application
+  now validates a standalone main worktree before invoking Git. The physical
+  `.git` directory, reported top-level, Git directory, common directory,
+  config, and object database remain under the registered root. Git metadata
+  links/reparse points, external alternates, includes, executable filters,
+  external diff/textconv, hooks, SSH commands, and external worktree,
+  attribute, or exclude paths fail closed.
+- **Compatibility condition:** Registered linked worktrees and submodule roots
+  that use `.git` files are unsupported. Patches cannot modify `.gitmodules`,
+  gitlink mode, or paths inside nested repositories. Validation scans at most
+  250,000 Git metadata entries; repositories with unusually large loose-object
+  stores may need Git maintenance. This limit is intentional
+  denial-of-service containment, not an architectural expansion.
+- **Residual:** A hostile local writer can still race path/config state after
+  validation. Keep the workspace private to the daemon account; the same
+  descriptor-atomic limitation described in LA-06 applies to mutation.
+
 ## Operational security requirements
 
 Before enabling the bridge:
@@ -372,4 +409,5 @@ The implementation still needs isolated preview migration/deployment, the
 actual Linux sandbox/link test run, and E2E evidence. The main remaining code
 risk is that `patch.apply` delegates path-based mutation to Git and therefore
 cannot provide descriptor-atomic protection against a hostile concurrent local
-writer.
+writer. Git actions now additionally fail closed when repository metadata or
+config cannot be proven to remain inside a standalone registered worktree.

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+import io
 import json
 import os
 from pathlib import Path
@@ -248,6 +250,41 @@ def test_snapshot_excludes_secrets_git_dependencies_and_symlinks(
     assert not (snapshot / "node_modules").exists()
     if link is not None:
         assert not (snapshot / "linked.txt").exists()
+
+
+def test_snapshot_enforces_actual_copied_bytes_and_removes_partial_output(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from arcanos.local_agent import secure_fs
+
+    workspace = tmp_path / "workspace"
+    snapshot = tmp_path / "snapshot"
+    workspace.mkdir()
+    snapshot.mkdir()
+    source = workspace / "growing.txt"
+    source.write_bytes(b"x")
+    monkeypatch.setattr(secure_fs, "_MAX_SNAPSHOT_BYTES", 4)
+
+    class GrowingStream(io.BytesIO):
+        def __init__(self, descriptor: int) -> None:
+            super().__init__(b"0123456789")
+            self._descriptor = descriptor
+
+        def fileno(self) -> int:
+            return self._descriptor
+
+    @contextmanager
+    def growing_file(_root: Path, _relative: object):
+        with source.open("rb") as backing:
+            yield GrowingStream(backing.fileno())
+
+    monkeypatch.setattr(secure_fs, "open_workspace_file", growing_file)
+
+    with pytest.raises(ValueError, match="exceeds safe limits"):
+        stage_sanitized_workspace_snapshot(workspace, snapshot)
+
+    assert not snapshot.exists()
 
 
 def test_registry_detects_root_replacement(tmp_path: Path) -> None:

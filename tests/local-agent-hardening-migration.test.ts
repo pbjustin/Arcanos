@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { describe, expect, test } from '@jest/globals';
+import { describe, expect, jest, test } from '@jest/globals';
 
 import {
   MIGRATION_DATABASE_ENV,
@@ -10,7 +10,8 @@ import {
   readMigrationConnectionConfig,
   readMigrationConnectionString,
   validateMigrationArtifacts,
-  validatePreviewTarget
+  validatePreviewTarget,
+  verifyDatabaseSchemaWithClient
 } from '../scripts/local-agent-hardening-migration.mjs';
 
 describe('local-agent job hardening migration guard', () => {
@@ -216,5 +217,55 @@ describe('local-agent job hardening migration guard', () => {
     expect(() =>
       validatePreviewTarget(options, {})
     ).toThrow(LocalAgentHardeningMigrationError);
+  });
+
+  test('rejects an existing binding table with a malformed column definition', async () => {
+    const columns = [
+      ['id', 'uuid', 'NO', 'gen_random_uuid()', null],
+      ['principal_id', 'varchar', 'NO', null, null],
+      ['workspace_id', 'text', 'NO', null, null],
+      ['device_id', 'text', 'NO', null, null],
+      ['action', 'text', 'NO', null, null],
+      ['idempotency_key_hash', 'text', 'NO', null, null],
+      ['idempotency_scope_hash', 'text', 'NO', null, null],
+      ['request_fingerprint_hash', 'text', 'NO', null, null],
+      ['idempotency_origin', 'varchar', 'NO', null, 32],
+      ['job_id', 'uuid', 'NO', null, null],
+      ['idempotency_until', 'timestamptz', 'NO', null, null],
+      ['created_at', 'timestamptz', 'NO', 'now()', null],
+      ['updated_at', 'timestamptz', 'NO', 'now()', null]
+    ].map(([
+      column_name,
+      udt_name,
+      is_nullable,
+      column_default,
+      character_maximum_length
+    ]) => ({
+      column_name,
+      udt_name,
+      is_nullable,
+      column_default,
+      character_maximum_length
+    }));
+    const client = {
+      query: jest.fn(async (sql: string) => {
+        if (sql.includes("to_regclass('local_agent_job_idempotency')")) {
+          return {
+            rows: [{ table_name: 'local_agent_job_idempotency' }],
+            rowCount: 1
+          };
+        }
+        if (sql.includes('FROM information_schema.columns')) {
+          return { rows: columns, rowCount: columns.length };
+        }
+        throw new Error(`Unexpected schema verification query: ${sql}`);
+      })
+    };
+
+    await expect(
+      verifyDatabaseSchemaWithClient(client)
+    ).rejects.toMatchObject({
+      code: 'LOCAL_AGENT_MIGRATION_COLUMNS_INVALID'
+    });
   });
 });

@@ -58,6 +58,46 @@ node scripts/run-jest.mjs --testPathPatterns=<db-or-route-pattern> --coverage=fa
 npm run validate:railway
 ```
 
+### Local-agent hardening migration
+
+The additive
+`migrations/20260724_local_agent_job_hardening_v1/01_local_agent_job_idempotency.sql`
+migration creates the database-authoritative local-agent idempotency binding.
+Use only the guarded `db:local-agent-hardening:*` commands documented in
+`LOCAL_AGENT_CAPABILITY_BRIDGE.md`; apply, verify, and compensation require an
+explicitly identified isolated preview PostgreSQL service.
+
+The verifier checks the complete binding-table column contract, constraints,
+foreign-key behavior, and indexes. It also checks that every binding matches
+its linked `job_data` envelope and that each live, unexpired, or
+manual-reconciliation local-agent job has a binding. A mismatch fails closed
+and requires operator reconciliation.
+
+When
+`autonomy_state.localAgent.manualReconciliationRequired` is `true`, the job
+and its binding are quarantined indefinitely: the key cannot become reusable
+when its ordinary idempotency window expires, and generic failed-job cleanup
+must not delete the job or cascade-delete its binding. Removal requires a
+future explicit, audited reconciliation workflow; age-based cleanup is not a
+resolution mechanism.
+
+Local-agent terminal result acceptance compares both the assignment expiry and
+active lease against PostgreSQL `NOW()` in the locked read and terminal
+update. Application-host clock skew therefore cannot authorize a late result.
+
+CI runs the two-connection migration, schema-drift, parity, and uniqueness
+tests against an isolated PostgreSQL 18 service:
+
+```bash
+LOCAL_AGENT_HARDENING_REQUIRE_DATABASE=1 \
+LOCAL_AGENT_HARDENING_TEST_DATABASE_URL=postgresql://... \
+npm run test:local-agent-postgres
+```
+
+The required flag prevents a missing CI database variable from turning the
+database suite into a silent skip. Never point this test command at production
+or a retained preview database.
+
 ## Run locally
 Start the backend after configuring the database:
 ```bash

@@ -17,6 +17,7 @@ from .protocol import LocalAgentJobAssignment, valid_idempotency_key
 
 JOURNAL_SCHEMA_VERSION = 1
 MAX_JOURNAL_JSON_BYTES = 64 * 1024
+MAX_ACCEPTED_JOURNAL_ROWS = 1_000
 
 
 class LocalAgentJournalError(RuntimeError):
@@ -172,6 +173,7 @@ class LocalAgentExecutionJournal:
             },
             immutable={"acceptance_receipt": acceptance_receipt},
         )
+        self._prune_accepted_runs()
 
     def quarantine(self, job_id: str, reason_code: str) -> None:
         if (
@@ -208,6 +210,24 @@ class LocalAgentExecutionJournal:
                 "ORDER BY job_id"
             ).fetchall()
         return [_to_run(row) for row in rows]
+
+    def _prune_accepted_runs(self) -> None:
+        """Bound terminal success evidence without deleting quarantined runs."""
+
+        keep_rows = max(1, int(MAX_ACCEPTED_JOURNAL_ROWS))
+        try:
+            with self._transaction() as connection:
+                connection.execute(
+                    "DELETE FROM local_agent_run "
+                    "WHERE state = 'ACCEPTED' AND rowid IN ("
+                    "SELECT rowid FROM local_agent_run "
+                    "WHERE state = 'ACCEPTED' "
+                    "ORDER BY rowid DESC LIMIT -1 OFFSET ?"
+                    ")",
+                    (keep_rows,),
+                )
+        except sqlite3.Error as error:
+            raise LocalAgentJournalError("Accepted journal cleanup failed") from error
 
     def _prepare_storage(self) -> None:
         directory = self.path.parent
@@ -339,9 +359,9 @@ def _serialize_assignment(assignment: LocalAgentJobAssignment) -> dict[str, Any]
     result = asdict(assignment)
     result["expires_at"] = assignment.expires_at.isoformat()
     authorization_record = dict(result.pop("authorization_context"))
-    authorization_record[
-        "evaluated_at"
-    ] = assignment.authorization_context.evaluated_at.isoformat()
+    authorization_record["evaluated_at"] = (
+        assignment.authorization_context.evaluated_at.isoformat()
+    )
     result["authorization"] = authorization_record
     result["required_device_scopes"] = list(assignment.required_device_scopes)
     return result

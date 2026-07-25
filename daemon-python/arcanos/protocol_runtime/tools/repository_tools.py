@@ -20,8 +20,11 @@ from ...local_agent.process_runner import (
     run_bounded_process,
 )
 from ...local_agent.secure_fs import (
+    build_validated_git_argv,
     has_link_or_reparse_component,
     open_workspace_file,
+    path_identity,
+    validate_standalone_git_workspace,
 )
 from ...local_agent.workspace_registry import is_secret_workspace_path
 from ..schema_loader import resolve_repository_root
@@ -381,7 +384,7 @@ def search_repository(
                 continue
             column = line_to_match.index(lowered_query) + 1
             match = {
-            "path": candidate_path.relative_to(workspace_root).as_posix(),
+                "path": candidate_path.relative_to(workspace_root).as_posix(),
                 "line": line_number,
                 "column": column,
                 "preview": redact_output(
@@ -423,7 +426,7 @@ def get_repository_status(
     """Return repository status using fixed, read-only git arguments."""
 
     workspace_root = resolve_workspace_root(workspace_root)
-    if not ((workspace_root / ".git").exists() or (workspace_root / ".git").is_file()):
+    if not os.path.lexists(workspace_root / ".git"):
         return {
             "rootPath": str(workspace_root),
             "clean": True,
@@ -440,6 +443,7 @@ def get_repository_status(
             "--porcelain=v1",
             "-z",
             "--branch",
+            "--ignore-submodules=all",
             "--untracked-files=all",
             "--",
             ".",
@@ -472,8 +476,7 @@ def get_repository_status(
         payload = record[3:]
         original_path = None
         if (
-            index_status in {"R", "C"}
-            or worktree_status in {"R", "C"}
+            index_status in {"R", "C"} or worktree_status in {"R", "C"}
         ) and index < len(records):
             original_path = records[index]
             index += 1
@@ -588,6 +591,7 @@ def get_repository_diff(
             "--no-color",
             "--no-ext-diff",
             "--no-textconv",
+            "--ignore-submodules=all",
             f"--unified={context_lines}",
             base,
             head,
@@ -784,26 +788,26 @@ def _run_git_readonly(
     cancellation_event: threading.Event | None = None,
     preserve_nul: bool = False,
 ) -> str:
-    if not ((workspace_root / ".git").exists() or (workspace_root / ".git").is_file()):
-        raise ValueError(f'Workspace root "{workspace_root}" is not a git repository.')
+    validated_workspace = validate_standalone_git_workspace(
+        workspace_root,
+        timeout_ms=timeout_ms,
+        cancellation_event=cancellation_event,
+    )
 
     completed_process = run_bounded_process(
-        [
-            "git",
-            "-c",
-            "core.fsmonitor=false",
-            "-c",
-            "credential.helper=",
-            "-C",
-            str(workspace_root),
-            *args,
-        ],
-        cwd=workspace_root,
+        build_validated_git_argv(validated_workspace, args),
+        cwd=validated_workspace.root,
         timeout_ms=timeout_ms,
         max_output_chars=max_output_chars,
         cancellation_event=cancellation_event,
         preserve_nul=preserve_nul,
     )
+    if (
+        path_identity(validated_workspace.root) != validated_workspace.root_identity
+        or path_identity(validated_workspace.git_dir)
+        != validated_workspace.git_dir_identity
+    ):
+        raise PermissionError("Git workspace identity changed during execution.")
     if completed_process.exit_code != 0:
         error_message = (
             completed_process.stderr.strip()

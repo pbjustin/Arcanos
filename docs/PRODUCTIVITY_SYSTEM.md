@@ -30,6 +30,8 @@ The module supports common conversational requests while keeping persistence exp
 | "What's going on?" | `context.summary` | Summarizes tasks, projects, reviews, and focus from one projection. |
 
 Mutation responses distinguish saved changes from reads or replays with `persisted`, `changed`, `replayed`, and a concise `effect`.
+Replay and no-op responses keep the original machine outcome while their
+human-readable effect states that the item was already in the requested state.
 
 ## Capability catalog
 
@@ -89,6 +91,13 @@ archived -> terminal
 ```
 
 Invalid transitions return `INVALID_TRANSITION`. Optimistic version mismatches return `STALE_PLAN` so the caller can refresh and replan rather than overwrite newer state.
+
+Focus recommendations exclude work attached to completed, archived, or
+on-hold projects. Project-health reason codes accumulate independent evidence
+such as overdue tasks, an overdue project date, and waiting tasks without
+changing the lifecycle-derived primary health state. Explicitly dated
+`review.record` writes reject future UTC dates; read-only review projections
+may still inspect a requested date.
 
 ## Identity and route isolation
 

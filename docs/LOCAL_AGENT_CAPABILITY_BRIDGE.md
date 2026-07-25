@@ -95,7 +95,7 @@ retention window is 24 hours.
 
 | Action | Purpose | Input | Output | Risk | Confirmation | Timeout | Required device scope | Read-only | May modify files |
 | --- | --- | --- | --- | --- | --- | ---: | --- | --- | --- |
-| `local_agent.status` | Read paired-agent readiness and workspace registration | Empty object | Daemon readiness, version, capabilities, workspace registration, test execution mode, sandbox availability/runtime, observation time | `readonly` | No | 10 s | `local_agent.status` | Yes | No |
+| `local_agent.status` | Read paired-agent readiness and workspace registration | Empty object | Daemon readiness, version, locally effective capabilities, workspace registration, test execution mode, sandbox availability/runtime, observation time | `readonly` | No | 10 s | `local_agent.status` | Yes | No |
 | `repo.search` | Search bounded text or symbols in the registered workspace | `query`; optional bounded search type, relative path, hidden-file flag, offset, limit, and file-size limit | Bounded path/line/column previews, pagination, searched-file count, truncation | `readonly` | No | 30 s | `repo.search` | Yes | No |
 | `git.status` | Read sanitized Git branch and worktree status | Empty object | Sanitized branch, HEAD, worktree changes, Git availability, workspace type | `readonly` | No | 15 s | `git.status` | Yes | No |
 | `git.diff` | Read a bounded sanitized diff between validated refs | Required safe `base` and `head`; optional context lines and byte limit | Bounded diff, byte count, truncation | `readonly` | No | 30 s | `git.diff` | Yes | No |
@@ -260,6 +260,9 @@ data directory. It commits the assignment before side effects, records
 submitting it, and records the server acceptance receipt. If the daemon
 restarts after execution began but before the outcome was durably known, it
 reports an unknown outcome instead of replaying the side effect.
+Accepted terminal rows are pruned to the newest 1,000 records. Pending,
+unaccepted, quarantined, and manual-reconciliation evidence is never removed
+by that automatic cleanup.
 
 ### Result contract
 
@@ -319,6 +322,12 @@ The bridge enforces:
 - shared secret-file denial for `.env*`, credential files/directories, private
   keys, token/secret/credential-like names, and Git metadata;
 - Git pathspec exclusions and sanitized repository output;
+- fail-closed standalone-Git validation before every Git or patch action:
+  `.git` must be a physical directory inside the registered root, the reported
+  worktree/Git/common directories must match that root, object alternates must
+  remain inside it, and local config includes or executable/path overrides are
+  rejected. Registered linked worktrees and submodule roots that use a `.git`
+  indirection file are intentionally unsupported;
 - descriptor-relative, no-follow reads on POSIX plus pre/post-open identity and
   reparse checks on Windows; Linux tests cover file, directory, chained,
   secret-target, and post-validation link swaps;
@@ -331,6 +340,8 @@ The bridge enforces:
   read-only base and input snapshot, tmpfs workspace, non-root UID, dropped
   capabilities, no-new-privileges, CPU/memory/process/file-size limits,
   timeout/cancellation cleanup, and bounded output;
+- snapshot limits are enforced against bytes actually copied, not only source
+  metadata, and any overflow or copy failure removes the partial snapshot;
 - `shell=False`, an executable resolved outside the workspace, a minimal
   inherited environment, disabled Git credential prompting/config,
   wall-clock timeouts, and bounded captured output;
@@ -377,7 +388,7 @@ for implemented controls and residual risks.
 | `daemon-python/arcanos/local_agent/runner.py` | Poll, heartbeat, validation, execution, sanitization, recovery, and result submission |
 | `daemon-python/arcanos/local_agent/journal.py` | Private crash-safe local execution journal |
 | `daemon-python/arcanos/local_agent/workspace_registry.py` | Operator-controlled workspace resolution and path/secret policy |
-| `daemon-python/arcanos/local_agent/secure_fs.py` | Descriptor-safe POSIX reads, Windows reparse checks, stable root identity, and sanitized snapshot staging |
+| `daemon-python/arcanos/local_agent/secure_fs.py` | Descriptor-safe POSIX reads, Windows reparse checks, stable root identity, standalone-Git containment, and byte-counted sanitized snapshot staging |
 | `daemon-python/arcanos/local_agent/handlers.py` | Fixed typed handler registry and test profiles |
 | `daemon-python/arcanos/local_agent/process_runner.py` | Fixed-argv subprocesses, sanitized environment, timeout, and output bounds |
 | `daemon-python/arcanos/local_agent/test_sandbox.py` and `daemon-python/Dockerfile.local-agent-tests` | Fail-closed execution modes and disposable Docker/Podman test sandbox |
@@ -690,6 +701,16 @@ symlink/link-swap coverage. They are not operationally proven in Railway until
 the isolated preview migration, deployment, Linux CI run, and E2E evidence are
 complete.
 
+Git and patch actions intentionally support only a standalone main worktree
+whose physical `.git` directory is inside the registered workspace. A
+registered linked worktree or submodule root (`.git` file), external common
+directory, external object alternate, link/reparse point in Git metadata,
+local config include, executable filter/diff setting, or external path setting
+fails closed. Internal object alternates are accepted only when their resolved
+directories remain link-free under the registered root. Validation scans at
+most 250,000 Git metadata entries, so unusually large loose-object stores may
+need maintenance before local-agent Git operations can run.
+
 One material filesystem residual remains: `patch.apply` validates target and
 workspace identities before and after invoking `git apply`, but Git performs
 path-based mutation. A malicious local process with concurrent write access
@@ -704,6 +725,11 @@ writer would require separate review to preserve Git patch semantics.
 Windows does not expose the same descriptor-relative directory walk used on
 POSIX. Windows reparse points are checked before and after file open, so
 registered workspaces must not be shared with a hostile local writer.
+
+`local_agent.status.capabilities` reports the effective intersection of the
+daemon action allowlist and device scopes, with `tests.run` removed when its
+configured execution mode is unavailable. It is intentionally distinct from
+the TypeScript-owned public capability catalog.
 
 These risks and recommended follow-up controls are detailed in the security
 review.
