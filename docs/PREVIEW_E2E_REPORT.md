@@ -1,7 +1,7 @@
 # ARCANOS Local-Agent and Productivity Preview E2E Report
 
 - Report date: 2026-07-24
-- Status: Preview validation completed; temporary resources retained for review
+- Status: Production-readiness preview revalidation completed; temporary resources retained for review
 - Branch: `codex/local-agent-preview-hardening`
 - Pull request: <https://github.com/pbjustin/Arcanos/pull/1408>
 
@@ -10,10 +10,11 @@
 The residual-risk hardening and isolated Railway preview validation has
 proceeded without modifying production or the Phase 2E validation environment.
 
-The exact commit used for the final complete runtime validation is:
+The exact runtime candidate used for the final production-readiness
+revalidation is:
 
 ```text
-b2821e8053610fd983c024d81b82e9b781a828f4
+f7f3a2caf3f13566a41a8587a1b6e2966d7f6439
 ```
 
 The public preview is:
@@ -29,21 +30,59 @@ https://arcanos-api-bf8ac3bd-arcanos-preview-bf8ac3bd.up.railway.app/gpt-access/
 ```
 
 `ARCANOS:PRODUCTIVITY` and `ARCANOS:LOCAL_AGENT` both appeared in capability
-discovery. The approved `patch.apply` test changed only the disposable
-fixture's `preview-target.txt` from `before` to `after`.
+discovery. The historically approved `patch.apply` test at `a1357af4` changed
+only the disposable fixture's `preview-target.txt` from `before` to `after`.
 
 The original complete productivity/local-agent and confirmed `patch.apply`
 matrix was captured at commit
-`a1357af42b76825408bf18f0fcacfb74994c085b`. Subsequent runtime-validation
-commits added this report and focused GPT Action OpenAPI compatibility fixes.
-The full read-only verifier passed again at `b2821e80`. Windows container
-sandbox validation and private Custom GPT read-only execution also passed. The
-live
-`tests.run` request reached `CONFIRMATION_REQUIRED` without creating a job.
-After exact operator approval, one unchanged retry completed successfully in
-the Windows container sandbox and produced a correlated six-event timeline.
-A later report-only commit may advance the branch after this document is
-finalized; it does not expand the runtime-validation claims above.
+`a1357af42b76825408bf18f0fcacfb74994c085b`. A confirmed sandboxed
+`tests.run` was later completed at `b2821e80`. Those exact, one-time approvals
+were not reused for the production-readiness candidate.
+
+At `f7f3a2ca`, the authenticated read-only verifier passed against the exact
+API and worker deployments, including tenant-bound six-event timelines,
+idempotent replay/conflict, and a non-mutating `patch.preview`. A separate
+challenge-only invocation proved that `patch.apply` still returned
+`CONFIRMATION_REQUIRED`; it did not approve, retry, or create a mutation job.
+Linux CI and focused tests cover the exact confirmation and sandbox paths.
+A later review-artifact-only commit may advance the branch after this document
+is finalized; it does not expand the runtime claims above.
+
+## Production-readiness revalidation
+
+The review identified and remediated the following additional issues after the
+original preview matrix:
+
+- Windows alternate-data-stream path components are rejected across the
+  TypeScript contracts and Python filesystem, repository, and patch handlers.
+- Generic job, worker, diagnostics, and MCP surfaces exclude local-agent jobs.
+- `tests.run` and `patch.apply` always require an exact, one-time GPT Access
+  challenge; trusted/manual modes cannot bypass that rule.
+- Natural-language retries bind the original request and resolved execution
+  plan, so a changed model plan cannot reuse a challenge.
+- `/gpt-access/jobs/timeline` joins authoritative job data and filters
+  local-agent events by server-controlled principal and workspace.
+- The local-agent expiry test now uses the mock database clock, eliminating a
+  one-millisecond CI race without changing runtime behavior.
+- The 18-test preview isolation and fail-closed harness is a required step in
+  the existing Deployment Readiness CI job.
+
+Exact candidate evidence:
+
+| Evidence | Result |
+|---|---|
+| `npm run build` | Passed |
+| `npm run type-check` | Passed |
+| `npm run lint` | Passed with 0 errors and 84 pre-existing warnings |
+| `npm run validate:railway` | Passed |
+| `npm run test:preview-e2e` | 18 passed |
+| Local-agent repository suite | 14 passed |
+| Expiry regression stress loop | 20 consecutive passes |
+| Full Python daemon suite | 546 passed, 18 platform/container skips |
+| Preview PostgreSQL concurrency and tenant-isolation suite | 6 passed |
+| Exact-deployment authenticated read-only verifier | Passed |
+| Exact-deployment `patch.apply` challenge-only verifier | Passed; no retry or mutation |
+| Exact-deployment runtime log scan | 0 fatal and 0 actual credential findings |
 
 ## Architecture assessment
 
@@ -81,7 +120,7 @@ Verified properties:
 | Item | Recorded value |
 |---|---|
 | Git branch | `codex/local-agent-preview-hardening` |
-| Runtime-validation commit | `b2821e8053610fd983c024d81b82e9b781a828f4` |
+| Runtime-validation commit | `f7f3a2caf3f13566a41a8587a1b6e2966d7f6439` |
 | Node.js | `v24.13.0` locally; CI build target `20.19.0` |
 | npm | `11.6.2` |
 | Python | `3.11.7` locally; CI used Python 3.11 |
@@ -107,16 +146,16 @@ They were not included in the branch or preview deployment.
 | Workspace | `pbjustin's Projects` | — | — |
 | Project | `Arcanos` | `7faf44e5-519c-4e73-8d7a-da9f389e6187` | — |
 | Environment | `arcanos-preview-bf8ac3bd` | `99d9eeae-c618-4a77-8498-85dd0d7444cc` | — |
-| API | `arcanos-api-preview-bf8ac3bd` | `7a34bd3b-5087-4c9e-b732-a5a00a9dae8e` | `5dda2716-ac0b-4f67-8f71-f6f046351aea` |
-| Worker | `arcanos-worker-preview-bf8ac3bd` | `ad02d44b-d488-4e8d-b003-92223d02d1b8` | `7264d4d0-889e-4886-879b-2906e762f88d` |
+| API | `arcanos-api-preview-bf8ac3bd` | `7a34bd3b-5087-4c9e-b732-a5a00a9dae8e` | `ce5a974e-a087-4634-9e74-992b4c44144e` |
+| Worker | `arcanos-worker-preview-bf8ac3bd` | `ad02d44b-d488-4e8d-b003-92223d02d1b8` | `87baaf0a-ac51-42a0-abdc-5044cd71f122` |
 | PostgreSQL | `postgres-preview-bf8ac3bd` | `c044dc1c-fcf5-4457-ac74-163e2a55132e` | `c1103750-d6ab-4242-8026-80076d4bd98b` |
 | Redis | `redis-preview-bf8ac3bd` | `83109a22-246b-4853-9346-d7179238e0bf` | `5b3e456f-944d-4265-96c6-c768b760e281` |
 
 All four deployments reported `SUCCESS` during runtime validation. The listed
 API deployment metadata and health response identified commit
-`b2821e8053610fd983c024d81b82e9b781a828f4`. The API's server-controlled
+`f7f3a2caf3f13566a41a8587a1b6e2966d7f6439`. The API's server-controlled
 worker metadata identified the same commit and worker deployment
-`7264d4d0-889e-4886-879b-2906e762f88d`.
+`87baaf0a-ac51-42a0-abdc-5044cd71f122`.
 
 ### Stateful resources
 
@@ -602,13 +641,18 @@ decision while retaining evidence presence; the canonical job envelope records
 | Command or CI job | Result |
 |---|---|
 | `node --test scripts/preview-e2e.test.mjs` | 18 passed |
-| Focused local-agent repository Jest suite | 10 passed |
-| Preview PostgreSQL two-connection concurrency suite | 2 passed |
-| Full local Python suite during hardening | 519 passed, 13 skipped |
-| Final Windows Python CI | 522 passed, 9 skipped |
-| Final Node unit CI | 4,907 passed, 10 skipped |
-| Final Node integration CI | 84 passed, 5 skipped |
-| Linux effective sandbox/link-race CI | 20 passed |
+| Focused local-agent repository Jest suite | 14 passed |
+| Expiry regression repeated stress run | 20 passed |
+| Preview PostgreSQL concurrency and tenant-isolation suite | 6 passed |
+| Full local Python suite during final hardening | 546 passed, 18 skipped |
+| Historical Windows Python CI at `b2821e80` | 522 passed, 9 skipped |
+| Historical Node unit CI at `b2821e80` | 4,907 passed, 10 skipped |
+| Historical Node integration CI at `b2821e80` | 84 passed, 5 skipped |
+| Exact `f7f3a2ca` Windows Python CI | 551 passed, 13 skipped |
+| Exact `f7f3a2ca` Node unit CI | 4,944 passed, 14 skipped |
+| Exact `f7f3a2ca` Node integration CI | 84 passed, 9 skipped |
+| Exact `f7f3a2ca` Linux effective sandbox/link-race CI | 29 passed |
+| Required Deployment Readiness preview harness | 18 passed |
 | Windows container-sandbox pytest invocation below | 3 passed in 8.52s |
 | `npm run validate:gpt:job-hardening` | Dry run passed; no network |
 | Boundary, CEF, and routing checks | Passed |
@@ -616,10 +660,10 @@ decision while retaining evidence presence; the canonical job envelope records
 | Railway compatibility and deployment readiness | Passed |
 | Exact-commit discovery verifier | Passed |
 | Exact-commit read-only verifier | Passed |
-| Final preview log scan | 1 harmless documentation-string candidate; 0 actual-secret and 0 fatal hits |
+| Final preview log scan | 1 harmless help-string candidate; 0 actual-secret and 0 fatal hits |
 | Temporary private Custom GPT discovery/read-only execution | Passed |
 | Confirmed Windows preview `tests.run` and six-event timeline | Passed |
-| `gh pr checks 1408` | All checks complete and passing |
+| `gh pr checks 1408` at runtime candidate `f7f3a2ca` | All checks complete and passing |
 
 The exact preview database concurrency command was:
 
@@ -657,9 +701,9 @@ The exact final read-only preview-verifier invocation was:
 & "$env:LOCALAPPDATA\Temp\run-arcanos-preview-sandbox-readonly.ps1"
 ```
 
-That purpose-built helper selected commit `b2821e80`, API deployment
-`5dda2716-ac0b-4f67-8f71-f6f046351aea`, worker deployment
-`7264d4d0-889e-4886-879b-2906e762f88d`, and the explicit preview-only Railway
+That purpose-built helper selected commit `f7f3a2ca`, API deployment
+`ce5a974e-a087-4634-9e74-992b4c44144e`, worker deployment
+`87baaf0a-ac51-42a0-abdc-5044cd71f122`, and the explicit preview-only Railway
 resource IDs. It loaded the preview bearer without printing it.
 
 The exact confirmation-helper invocations were:
@@ -680,9 +724,8 @@ above.
 
 ### Passed
 
-- All pull-request checks on commit
-  `b2821e8053610fd983c024d81b82e9b781a828f4`.
-- Exact commit deployment for API and worker.
+- All required pull-request checks on runtime candidate `f7f3a2ca`.
+- Exact runtime-candidate deployment for API and worker.
 - Preview migrations and schema verification.
 - Capability discovery and OpenAPI.
 - Productivity E2E scenarios.
@@ -693,12 +736,21 @@ above.
 - Temporary private Custom GPT discovery and read-only execution.
 - Confirmed Windows preview `tests.run` execution and audit/trace correlation.
 - Confirmed fixture-only patch application.
+- Exact-candidate `patch.apply` challenge-only fail-closed behavior, with no
+  approval, retry, or mutation.
 - Audit, trace, identity, and job correlation.
 
 ### Failed
 
-- No completed CI, migration, deployment, discovery, read-only, approved patch,
-  or container-sandbox validation failed.
+- The `a3d2251f` unit shard exposed one timing-sensitive test: the mock held a
+  fixed database clock while the test derived expiry from `Date.now()`. The
+  runtime code correctly used PostgreSQL `NOW()`; the test could occasionally
+  make its nominally expired timestamp newer than the mocked database clock.
+  Commit `0808eb1f` changed only that test to use the mock database clock. The
+  focused suite then passed 14/14 and the formerly failing case passed 20
+  consecutive repetitions. No unresolved runtime failure resulted.
+- No migration, deployment, discovery, read-only, approved patch, or
+  container-sandbox validation failed.
 - The first local invocation of the one-shot `tests.run` retry helper failed
   while decoding a trailing newline in its DPAPI-protected challenge file. It
   failed before creating the retry sentinel and before any HTTP retry. The
@@ -744,7 +796,8 @@ above.
 
 ## Logs and secret handling
 
-The final review scanned 500 API log lines and 49 worker log lines for:
+The final production-readiness review scanned 241 API log records and 38
+worker log records for:
 
 - bearer credentials
 - OpenAI-style secret keys
@@ -753,7 +806,7 @@ The final review scanned 500 API log lines and 49 worker log lines for:
 - fatal startup and connection failures
 
 - Broad-regex candidates: `1`
-- Classified harmless documentation-string false positives: `1`
+- Classified harmless Railway help-string false positives: `1`
 - Confirmed secret-pattern hits: `0`
 - Detected fatal-pattern hits: `0`
 

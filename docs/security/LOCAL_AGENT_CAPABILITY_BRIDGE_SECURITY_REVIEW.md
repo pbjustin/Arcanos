@@ -386,9 +386,15 @@ Before enabling the bridge:
 
 ## Deployment security gate
 
-No deployment, migration, or Railway variable change has occurred for this
-hardening work yet.
-The current read-only Railway selection is:
+The bridge and hardening migration were deployed only to the isolated
+`arcanos-preview-bf8ac3bd` Railway environment with preview-owned API, worker,
+PostgreSQL, Redis, credentials, domain, and synthetic data. The exact resource
+IDs, commands, validation evidence, and teardown plan are recorded in
+`docs/PREVIEW_E2E_REPORT.md`.
+
+No production deployment, production migration, production variable change,
+or production Custom GPT Action change has occurred. The initial read-only
+Railway selection was:
 
 ```text
 Project:     Arcanos
@@ -396,12 +402,12 @@ Environment: phase2e-validation-20260717
 Service:     phase2e-redis-r2-20260718
 ```
 
-That is the Phase 2E Redis validation service, not the API, worker, PostgreSQL,
-Redis, or migration target for this bridge. It must not be modified. A preview
-must use a fresh isolated environment with preview-owned PostgreSQL, Redis,
-credentials, services, and domain; reject inherited production references
-before any migration or deployment. The Python daemon remains local and
-outbound.
+That Phase 2E Redis validation service was not modified. Preview operations
+used explicit preview environment and service IDs and rejected inherited
+production references before migration or deployment. The Python daemon
+remained local and outbound. Any future preview or production promotion must
+repeat the same target and variable audit rather than relying on an ambient
+Railway CLI link.
 
 ## Review disposition
 
@@ -414,9 +420,10 @@ production-sandboxed, the daemon credential has a dedicated narrow audience,
 idempotency is database-enforced after migration, per-job expiry events share
 the state transaction, and no generic command capability is exposed.
 
-The implementation still needs isolated preview migration/deployment, the
-actual Linux sandbox/link test run, and E2E evidence. The main remaining code
-risk is that `patch.apply` delegates path-based mutation to Git and therefore
-cannot provide descriptor-atomic protection against a hostile concurrent local
-writer. Git actions now additionally fail closed when repository metadata or
-config cannot be proven to remain inside a standalone registered worktree.
+The isolated preview migration/deployment, Linux sandbox/link test run, and
+E2E evidence are complete and preserved in `docs/PREVIEW_E2E_REPORT.md`.
+Production remains disabled. The main remaining code risk is that
+`patch.apply` delegates path-based mutation to Git and therefore cannot provide
+descriptor-atomic protection against a hostile concurrent local writer. Git
+actions now additionally fail closed when repository metadata or config cannot
+be proven to remain inside a standalone registered worktree.

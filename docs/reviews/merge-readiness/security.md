@@ -2,24 +2,24 @@
 
 ## Review identity
 
-- Review round: 2
+- Review round: final independent security review
 - Reviewer: independent security reviewer
 - Base commit: `59989445b6bf206c0f73bc9fb11f6d47f3494214`
-- Reviewed PR head: `87788342f862d59c60fa3ea830da47c39950dabf`
-- Candidate reviewed: the PR head plus the uncommitted, architecture-preserving
-  Round 2 hardening in the shared review worktree
-- Scope: all 111 changed files, including source, generated protocol artifacts,
-  tests, migrations and compensation, documentation, CI, Railway configuration,
-  preview tooling, and deployment evidence
+- Reviewed PR head: `f7f3a2caf3f13566a41a8587a1b6e2966d7f6439`
+- Scope: all 125 changed files, including application and daemon source,
+  generated protocol artifacts, tests, migrations and compensation,
+  documentation, CI, preview tooling, and retained deployment evidence
 - Verdict: **APPROVE WITH CONDITIONS**
-- Confidence: **high (0.92)**
+- Confidence: **high (0.95)**
 - Open Critical findings: **0**
 - Open High findings: **0**
 
-The Round 2 fixes described below must be captured in the final candidate
-commit and that exact commit must complete the required preview validation
-before the PR is made Ready for Review. The verdict does not approve a
-production deployment.
+This verdict is conditional on the exact reviewed head completing CI. The
+isolated exact-head preview deployment and read-only/fail-closed validation
+have completed successfully; the exact-head CI matrix had restarted after the
+final workflow-only commit and was still pending when this report was updated.
+This review does not authorize a production deployment, production migration,
+or merge.
 
 ## Executive assessment
 
@@ -41,342 +41,362 @@ No Python public API, direct Python PostgreSQL ownership, second queue, second
 workflow engine, generic shell capability, parallel authentication system,
 legacy module exposure, or `/gpt/:gptId` execution path was found.
 
-The review reproduced and resolved four material Round 2 issues:
+The final candidate closes the material security findings found during review:
 
-1. an unauthenticated SDK diagnostics path could disclose raw local-agent job
-   material;
-2. generic MCP job tools could disclose a local-agent result by UUID;
-3. Windows alternate data streams could be created through patch handling;
-4. Windows alternate data streams could be read through `repo.search`.
+1. generic diagnostics and MCP surfaces can no longer disclose local-agent job
+   input or output;
+2. GPT Access job timelines now join the authoritative job envelope and scope
+   local-agent events to the trusted principal/workspace;
+3. `tests.run` and `patch.apply` require a consumed, one-use challenge bound
+   to the exact actor, tenant, action, and payload;
+4. Windows alternate data stream paths are denied at the TypeScript contract,
+   Python workspace, secure-file, Git, and patch-policy layers;
+5. local-agent executor credentials have a dedicated audience and narrow
+   heartbeat/claim/lease/result scopes;
+6. logical-job idempotency is protected by a database unique constraint, not
+   advisory locking alone;
+7. `tests.run` uses a real fail-closed container boundary in
+   production-capable mode.
 
-The first two were High findings because local-agent input or output can contain
-private repository material. They are resolved by denying local-agent rows at
-the generic repository, worker, diagnostics, and MCP boundaries and by adding
-focused regression tests. The ADS findings are resolved by rejecting colon
-syntax at the TypeScript contract, Python workspace-path, descriptor-safe file
-open, and patch-policy layers, while forcing and validating
-`core.protectNTFS=true`.
+No unresolved Critical or High vulnerability was found in the reviewed head.
+The remaining items are operational assumptions or defense-in-depth work and
+are listed explicitly below.
 
-## Review method and coverage
+## Independent review method
 
-The reviewer independently:
+The reviewer did not assume another reviewer covered any security area. The
+review independently:
 
-- inventoried the complete PR diff and all 111 changed files;
-- inspected every changed-file category without assuming another reviewer
-  covered overlapping behavior;
-- reviewed GPT Access authentication, capability metadata, exact confirmation
-  binding, challenge consumption, replay behavior, result polling, route
-  isolation, and OpenAPI exposure;
-- reviewed local-agent executor authentication, audience and scope separation,
-  device registration, heartbeat, claim, lease, result, expiry, recovery,
-  idempotency, and audit correlation;
-- reviewed generic job routes, worker controls, MCP tools, system diagnostics,
-  queue summaries, and recovery/cleanup paths for authority leaks;
-- reviewed the Python handler registry, protocol runner, local journal,
-  workspace registry, Git validation, patch validation/application,
-  repository search, process execution, output sanitation, secret denial,
-  symlink/reparse handling, and test sandbox;
-- reviewed productivity schemas, lifecycle enforcement, tenancy derivation,
-  confirmation policy, persistence, idempotency, events, and protected routing;
-- reviewed all migration and compensation SQL, migration tooling, CI jobs,
-  Railway configuration, preview verifier, preview report, and maintained
-  security/setup documentation;
-- ran focused TypeScript and Python security suites, broader capability and
-  boundary suites, type checking, lint, build, protocol parity, migration
-  planning, and passive Railway validation.
+- inventoried the complete base-to-head diff and all 125 changed files;
+- inspected authentication, authorization, rate limiting, tenancy, exact
+  confirmation binding, challenge consumption, replay behavior, result
+  polling, route isolation, OpenAPI exposure, and error/log sanitation;
+- inspected executor audience/scope separation, credential rotation and
+  revocation, device registration, heartbeat freshness, job claim, lease,
+  result, expiry, recovery, idempotency, and audit correlation;
+- inspected generic jobs, workers, diagnostics, MCP tools, event timelines,
+  queue summaries, recovery, and cleanup for cross-boundary disclosure;
+- inspected the Python handler registry, protocol client, durable journal,
+  workspace registry, repository and Git tools, patch preview/application,
+  process runner, output sanitizer, secret policy, symlink/reparse defenses,
+  alternate data streams, and test sandbox;
+- inspected productivity schemas, lifecycle rules, trusted tenancy,
+  repository queries, transactions, idempotency, outbox events, confirmation,
+  and protected routing;
+- inspected both SQL migrations, compensation, migration tooling, schema
+  verification, CI jobs, Railway compatibility, preview verifier, retained
+  preview report, environment examples, and maintained documentation;
+- ran focused security suites plus static, protocol-parity, and passive
+  Railway validation on the exact reviewed head.
 
-## Round 1 finding dispositions
+## Finding disposition
 
-| Round 1 concern | Disposition | Security evidence |
-| --- | --- | --- |
-| Git metadata, linked worktrees, alternates, local configuration, hooks, filters, or submodules could escape the registered workspace | Resolved with a documented compatibility limit | `daemon-python/arcanos/local_agent/secure_fs.py` requires a physical standalone `.git` directory, validates the reported worktree, git/common/object directories and alternates, rejects linked metadata and executable configuration, forces safe Git config, and revalidates repository identity. Linked worktrees and submodule roots using `.git` files fail closed. |
-| Generic `/jobs/*` routes could reveal or control local-agent jobs | Resolved | Generic status, result, cancellation, streaming, worker claim, stale recovery, failed-job requeue, and cleanup paths exclude `job_type = 'local-agent'`. Tenant-bound reads remain under GPT Access. |
-| `tests.run` did not have the same strict confirmation semantics as `patch.apply` | Resolved | Both mutating actions require direct capability execution and a one-time consumed challenge bound to authenticated actor, principal, workspace, method, path, exact action, and exact payload. Changes to the body or action invalidate the challenge, and replay fails closed. |
-| Local-agent credentials shared broader ActionPlan executor authority | Resolved | Local-agent credentials use the separate `local-agent-protocol` audience, dedicated executor role, narrow heartbeat/claim/job-heartbeat/result scopes, device and instance binding, current/previous-key rotation, revocation, and timing-safe verification. |
-| Advisory locks were the only logical-job idempotency boundary | Resolved | The additive `local_agent_job_idempotency` relation provides database-enforced tenant/device/action/key and job uniqueness. Same canonical requests return the original logical job/result; conflicting fingerprints fail closed. |
-| Expiry reconciliation did not provide equivalent per-job observability | Resolved | Each expired job receives its own state transition and transactional event/audit context. Savepoint isolation prevents one failed candidate from collapsing the successful candidates. |
-| Sanitized environment variables were being treated as a test sandbox | Resolved | `tests.run` has explicit disabled, sandboxed, and development-only modes. The production-capable mode uses a non-root disposable container, read-only base/source mounts, writable temporary workspace only, no network or host socket, dropped capabilities, no-new-privileges, bounded CPU/memory/PIDs/disk/time/output, sanitized environment, and fail-closed runtime checks. |
-| Symlink and path validation lacked Linux execution evidence | Resolved for the required preview/CI environment; conditional residual remains on Windows | Linux container/CI evidence exercises descriptor-safe symlink and race cases. Windows uses pre/post reparse checks and dedicated tests but cannot provide a fully descriptor-relative directory walk through the Python standard library. |
-| Python might become a competing public or data authority | Resolved | Python remains outbound-only, has no public listener for GPT Actions, does not connect to canonical PostgreSQL state, receives only server-created jobs, and exposes only the fixed handler catalog. |
-| Productivity could inherit model-supplied tenancy or legacy routing | Resolved | Trusted execution context supplies principal/workspace; schemas reject authority aliases; writes are confirmation-gated; and `ARCANOS:PRODUCTIVITY` remains GPT-Access-only with legacy exposure disabled. |
+| ID | Original severity | Status | Disposition |
+| --- | --- | --- | --- |
+| SEC-001 | High | Resolved | Generic repository, diagnostics, worker, and MCP paths exclude local-agent rows; protected GPT Access result reads remain tenant-bound. |
+| SEC-002 | High | Resolved | Job-event timelines join `job_data`; missing trusted tenancy excludes local-agent events and a trusted scope returns only matching local-agent events. |
+| SEC-003 | High | Resolved | Git work requires a physical standalone worktree and rejects external Git/common/object directories, alternates, executable config, includes, linked worktrees, and submodule roots. |
+| SEC-004 | Medium | Resolved | Patch and repository paths reject colon-bearing segments, including Windows alternate data streams, and Git forces/validates `core.protectNTFS=true`. |
+| SEC-005 | Medium | Resolved | Both file-modifying actions require exact consumed GPT Access challenge evidence; permissive confirmation flags and natural-language execution cannot authorize them. |
+| SEC-006 | Medium | Resolved | The local-agent credential uses a dedicated role/audience, fixed protocol scopes, pinned identity, bounded rotation overlap, and cross-token collision checks. |
+| SEC-007 | Medium | Resolved | `local_agent_job_idempotency` supplies database-enforced tenant/device/action/key and one-job uniqueness; advisory locks are only an optimization. |
+| SEC-008 | Medium | Resolved | `tests.run` has disabled, sandboxed, and development-only modes; production-capable execution requires the sandbox and never falls back to host execution. |
+| SEC-009 | Low | Resolved | Every expiry/recovery transition receives per-job transactional event evidence; savepoints isolate a failed candidate without collapsing the batch. |
 
-## Round 2 findings and dispositions
+### SEC-001 — Generic job-data disclosure
 
-### SEC-R2-001 — SDK diagnostics could expose raw local-agent job data
-
-- Original severity: **High**
-- Confidence: **high**
-- Status: **resolved in the candidate worktree**
-
-`GET /sdk/diagnostics` is not independently authenticated. Its latest-job
-projection previously inherited raw job input/output and could select a
-`local-agent` row. A recent local-agent result can include repository search,
-diff, test, or patch material.
-
-The fix is defense in depth at both sources:
-
-- `getLatestJob`, queue summary, failed-job, detail, recovery, and cleanup
-  repository queries exclude `job_type = 'local-agent'`;
-- `runSystemDiagnostics` rejects local-agent rows again and projects only
-  bounded metadata (`id`, `worker_id`, `job_type`, status, and timestamps),
-  never raw job input or output;
-- focused tests verify the repository and diagnostics boundary.
+`local-agent` input and output can contain repository search, diff, test, or
+patch material. Generic job routes, worker inspection, system diagnostics, and
+MCP tools now treat those rows as nonexistent or omit them from aggregate
+queries. The diagnostics projection itself is bounded and does not contain raw
+input or output.
 
 Evidence:
 
-- `src/core/db/repositories/jobRepository.ts:1339`
-- `src/core/db/repositories/jobRepository.ts:1612`
-- `src/core/db/repositories/jobRepository.ts:1834`
-- `src/core/db/repositories/jobRepository.ts:2056`
-- `src/platform/logging/systemDiagnostics.ts:288`
+- `src/core/db/repositories/jobRepository.ts`
+- `src/mcp/server/jobTools.ts`
+- `src/platform/logging/systemDiagnostics.ts`
+- `src/routes/jobs.ts`
+- `src/services/workerControlService.ts`
 - `tests/job-repository.local-agent-boundary.test.ts`
-- `tests/system-diagnostics-local-agent-boundary.test.ts`
-
-### SEC-R2-002 — Generic MCP job tools could disclose a local-agent result by UUID
-
-- Original severity: **High**
-- Confidence: **high**
-- Status: **resolved in the candidate worktree**
-
-Generic MCP `jobs.status` and `jobs.result` accepted a local-agent job UUID and
-returned protected job state or output without the GPT Access
-principal/workspace boundary.
-
-The tools now return the same generic `ERR_NOT_FOUND` response used for an
-unknown job when the row is local-agent-owned. Worker detail/summary paths
-apply the same exclusion, and focused regression tests cover status, result,
-detail, summary, and ordinary non-local jobs.
-
-Evidence:
-
-- `src/mcp/server/jobTools.ts:17`
-- `src/mcp/server/jobTools.ts:31`
-- `src/mcp/server/jobTools.ts:59`
-- `src/services/workerControlService.ts:1066`
+- `tests/jobs.route.test.ts`
 - `tests/mcp-job-tools.test.ts`
+- `tests/system-diagnostics-local-agent-boundary.test.ts`
 - `tests/worker-control-service.test.ts`
 
-### SEC-R2-003 — Patch handling allowed Windows alternate data stream targets
+### SEC-002 — Cross-tenant event-timeline disclosure
 
-- Original severity: **Medium**
-- Confidence: **high**
-- Status: **resolved in the candidate worktree**
-
-On Windows, an exact-authorized `patch.apply` could create
-`normal.txt:stream` while leaving the ordinary file and ordinary backup view
-unchanged when repository configuration disabled NTFS protection. The reviewer
-reproduced that behavior against a disposable repository before the fix.
-
-Patch validation now rejects a colon in every path segment on all platforms.
-The fixed Git argument set forces `core.protectNTFS=true`, repository validation
-rejects a local setting that disables it, and the TypeScript CLI bridge applies
-equivalent patch policy. Tests cover ordinary, secret-looking, nested, and
-`::$DATA` stream forms, plus a repository with an explicit false setting.
+Timeline queries now parameterize and join the authoritative `job_data`
+envelope. A request without trusted principal/workspace context excludes every
+local-agent event. A request with trusted context returns ordinary events plus
+only local-agent events whose server-created job envelope matches both values.
+No model field can supply that scope.
 
 Evidence:
 
-- `daemon-python/arcanos/local_agent/secure_fs.py:215`
-- `daemon-python/arcanos/local_agent/secure_fs.py:385`
-- `daemon-python/arcanos/local_agent/secure_fs.py:501`
-- `daemon-python/tests/test_local_agent_handlers.py:583`
-- `daemon-python/tests/test_local_agent_handlers.py:857`
-- `tests/gpt-access-gateway.test.ts:1828`
+- `src/core/db/repositories/jobEventRepository.ts`
+- `src/routes/gpt-access.ts`
+- `src/services/gptAccessGateway.ts`
+- `tests/job-event-repository.test.ts`
+- `tests/integration/local-agent-hardening.pg.integration.test.ts`
 
-### SEC-R2-004 — `repo.search` allowed explicit Windows alternate data stream reads
+### SEC-003 — Git metadata and command escape
 
-- Original severity: **Medium**
-- Confidence: **high**
-- Status: **resolved in the candidate worktree**
-
-The reviewer independently reproduced `repo.search` reading
-`normal.txt:stream`. With `includeHidden=true`, `.env:stream` also bypassed the
-ordinary secret-name predicate because the stream suffix changed the apparent
-path.
-
-The TypeScript public contract now rejects any colon in a repository-relative
-path. Python rejects it during workspace resolution and again in the
-descriptor-safe file opener. The generated TypeScript/Python capability
-catalogs were regenerated and parity-checked. Cross-platform tests cover
-stream syntax, and a Windows-specific test creates a real ADS and proves that
-it cannot be read.
+Every local-agent Git or patch operation validates a standalone repository,
+requires physical in-root Git metadata, rejects external alternates/common
+directories and executable-bearing local configuration, uses fixed arguments,
+disables credential helpers/hooks/text conversion/submodule recursion, uses a
+sanitized environment, and rechecks repository identity. Linked worktrees and
+submodule roots that use `.git` files are intentionally unsupported.
 
 Evidence:
 
-- `src/services/localAgent/contracts.ts:180`
-- `daemon-python/arcanos/protocol_runtime/tools/repository_tools.py:637`
-- `daemon-python/arcanos/local_agent/secure_fs.py:497`
-- `daemon-python/tests/test_local_agent_handlers.py:247`
-- `daemon-python/tests/test_local_agent_handlers.py:270`
-- `daemon-python/tests/test_local_agent_sandbox_security.py:342`
-- `tests/local-agent-module-contract.test.ts:111`
+- `daemon-python/arcanos/local_agent/secure_fs.py`
+- `daemon-python/arcanos/local_agent/patch_handler.py`
+- `daemon-python/arcanos/protocol_runtime/tools/repository_tools.py`
+- `daemon-python/tests/test_local_agent_handlers.py`
 
-## Security-domain assessment
+### SEC-004 — Path, symlink, secret, and ADS escape
 
-### Public routes, identity, and tenancy
+Public schemas and Python path resolution reject absolute paths, drives,
+traversal, `.git`, colon/ADS syntax, secret names, links/reparse points, and
+paths outside a registered root. POSIX reads walk descriptor-relative with
+no-follow semantics. Windows performs pre/post reparse and identity checks.
+Git output is NUL-aware and control-stripped; secret paths are excluded and
+filtered again.
 
-- The two protected modules are discoverable and executable only through
-  `/gpt-access/*`; legacy module routes, generic GPT routing, and public
-  introspection exclude them.
-- The public capability payload cannot select principal, workspace, device,
-  repository root, authorization, confirmation, or executor identity.
-- GPT Access result polling requires the exact GPT-created local-agent job and
-  trusted principal/workspace; generic job surfaces treat local-agent jobs as
-  nonexistent.
-- The daemon's dedicated bearer credential cannot authorize GPT Access,
-  ActionPlan execution, administrative control, unrelated queue access, or
-  database administration.
-- Device registration, capability membership, revocation, credential
-  generation, audience, instance, and principal are validated before protocol
-  operations.
+Evidence:
 
-### Confirmation and replay
+- `src/services/localAgent/contracts.ts`
+- `daemon-python/arcanos/local_agent/workspace_registry.py`
+- `daemon-python/arcanos/local_agent/secure_fs.py`
+- `daemon-python/arcanos/cli/cli_policy.py`
+- `daemon-python/arcanos/protocol_runtime/tools/repository_tools.py`
+- `daemon-python/tests/test_cli_policy_security.py`
+- `daemon-python/tests/test_local_agent_handlers.py`
+- `daemon-python/tests/test_local_agent_sandbox_security.py`
 
-- `tests.run` and `patch.apply` cannot execute through natural-language
-  routing.
-- A challenge binds the exact authenticated identity, HTTP operation, action,
-  and canonical payload.
-- The retry may add only the raw challenge ID as top-level
-  `confirmation_token`; nested/model-provided confirmation flags are rejected.
-- Consumption is one-time. A changed payload, changed action, different actor,
-  workspace, or token replay fails closed.
-- The service checks the consumed challenge binding again before creating the
-  authorized job.
+### SEC-005 — Confirmation binding and replay
 
-### Jobs, results, audit, and database correctness
+`tests.run` and `patch.apply` are privileged, direct-capability-only actions.
+They require a consumed challenge bound to the authenticated actor,
+server-controlled principal/workspace, HTTP method/path, action, and normalized
+payload. The token is stripped before dispatch and never becomes daemon
+payload or journal data. A changed action, changed payload, expired token,
+different binding, or replay fails closed. Python receives only the server's
+authorized assignment, and patch application additionally requires an
+in-process non-serializable authorization sealed to the exact canonical
+payload and expected SHA-256.
 
-- Local-agent work reuses `job_data`, `job_events`, existing transactions, and
-  audit/trace infrastructure; the idempotency table is a uniqueness binding,
-  not a second queue.
-- Claims are atomic and lease-bound; expired/already-terminal jobs do not
-  execute; exact duplicate terminal results are idempotent and conflicting
-  results fail closed.
-- Mutations with uncertain local outcomes require manual reconciliation and
-  are not automatically replayed.
-- Generic workers, generic job routes, MCP job tools, SDK diagnostics, and
-  generic recovery/cleanup paths do not cross the local-agent result boundary.
-- Sensitive payloads are not copied into event, operational log, or preview
-  report projections reviewed here.
+Evidence:
 
-### Python execution and local filesystem
+- `src/transport/http/middleware/confirmationChallengeStore.ts`
+- `src/transport/http/middleware/confirmGate.ts`
+- `src/routes/gpt-access.ts`
+- `src/services/localAgent/service.ts`
+- `daemon-python/arcanos/local_agent/runner.py`
+- `daemon-python/arcanos/local_agent/patch_handler.py`
+- `tests/gpt-access-gateway.test.ts`
+- `tests/local-agent-service.test.ts`
+- `daemon-python/tests/test_local_agent_protocol_runner.py`
+- `daemon-python/tests/test_local_agent_handlers.py`
 
-- The daemon polls outbound and dispatches only fixed catalog actions. There
-  is no arbitrary shell action.
-- Workspace roots are registered locally; server/model payloads cannot select
-  a root.
-- Paths are normalized; traversal, absolute paths, `.git` internals, secret
-  names, colon/ADS syntax, links, reparse points, and escapes are denied.
-- POSIX file reads walk from open directory descriptors with no-follow
-  semantics and revalidate identities. Windows performs pre/post reparse and
-  identity checks and documents its private-workspace assumption.
-- Git operations use fixed argument vectors and sanitized environment, reject
-  external metadata/configuration, and cap/clean output controls.
-- Patch preview is non-mutating. Patch apply requires exact authorization,
-  SHA-256 binding, policy validation, repository revalidation, and structured
-  reconciliation on uncertain outcomes.
-- Process execution uses fixed profiles, no shell expansion, timeouts,
-  cancellation, process-tree cleanup, environment sanitation, and output
-  limits.
+### SEC-006 — Executor identity and device authority
 
-### `tests.run` sandbox
+The daemon bearer authenticates only as `local-agent-executor` in the
+`local-agent-protocol` audience. Its fixed scopes are heartbeat, claim, job
+heartbeat, and result. It cannot authenticate to ActionPlan executor, GPT
+Access, administration, unrelated queues, or PostgreSQL. Configuration rejects
+credential overlap, pins principal/instance/device, verifies an authoritative
+Agent record and capability grant, enforces a fresh heartbeat, and supports a
+single previous credential for at most 24 hours.
 
-- `disabled` is fail-closed.
-- `sandboxed` requires the configured Docker/Podman runtime and immutable image
-  reference to be available.
-- `unsandboxed-development-only` requires an explicit second opt-in and is
-  forbidden in production or Railway.
-- The sandbox runs non-root with no network, no host socket, no privilege,
-  read-only base/source, temporary writable workspace, dropped capabilities,
-  no-new-privileges, resource/process/disk/time/output limits, and cleanup.
-- The source is copied to a bounded snapshot before container execution, so
-  tests do not run against the registered host workspace directly.
+Evidence:
+
+- `src/services/actionPlanExecution/auth.ts`
+- `src/services/localAgent/devicePolicy.ts`
+- `src/routes/gpt-access-local-agent.ts`
+- `daemon-python/arcanos/local_agent/protocol.py`
+- `tests/action-plan-execution-auth.test.ts`
+- `tests/action-plan-execution-result-route.test.ts`
+- `tests/local-agent-device-policy.test.ts`
+- `tests/local-agent-http-protocol.test.ts`
+
+### SEC-007 — Job integrity, replay, and recovery
+
+Jobs carry server-created principal, workspace, device, action, validated
+payload, trace/request IDs, idempotency evidence, authorization evidence, and
+expiry. Database uniqueness prevents two logical jobs for the same scoped key;
+changed canonical payloads conflict. Claims are atomic and lease-bound. Exact
+claim/result replays are idempotent, different terminal results are rejected,
+and expired/already-terminal jobs do not execute. A possibly started file
+mutation is marked unknown and requires manual reconciliation rather than
+automatic replay. The local journal commits before side effects and result
+submission.
+
+Evidence:
+
+- `migrations/20260724_local_agent_job_hardening_v1`
+- `src/core/db/repositories/localAgentJobRepository.ts`
+- `daemon-python/arcanos/local_agent/journal.py`
+- `daemon-python/arcanos/local_agent/runner.py`
+- `tests/local-agent-job-repository.test.ts`
+- `tests/integration/local-agent-hardening.pg.integration.test.ts`
+- `daemon-python/tests/test_local_agent_protocol_runner.py`
+
+### SEC-008 — `tests.run` sandbox
+
+The production-capable mode starts a disposable Docker/Podman container as a
+non-root user with no network, no host socket, read-only base/input
+filesystems, a bounded temporary writable workspace, all capabilities dropped,
+no-new-privileges, and CPU, memory, PID, disk, file-size, time, cancellation,
+and output limits. The image must be an immutable digest and pass an effective
+self-test. Source staging excludes secrets, dependencies, Git metadata, and
+links and enforces actual copied-byte limits. Missing sandbox infrastructure
+fails closed; no host fallback exists.
+
+Evidence:
+
+- `daemon-python/Dockerfile.local-agent-tests`
+- `daemon-python/arcanos/local_agent/test_sandbox.py`
+- `daemon-python/arcanos/local_agent/sandbox_entrypoint.py`
+- `daemon-python/arcanos/local_agent/secure_fs.py`
+- `daemon-python/tests/test_local_agent_sandbox_security.py`
+- `daemon-python/tests/test_local_agent_sandbox_container_e2e.py`
+- `.github/workflows/ci-cd.yml`
+
+## Other security-domain conclusions
 
 ### Productivity
 
-- TypeScript remains the sole productivity business-rule and persistence
-  authority.
-- The capability module exposes 24 fixed actions; read-only metadata is
-  explicit and all writes require confirmation.
-- Task/project transitions are validated against canonical state machines.
-- Reads and writes are scoped by trusted principal and workspace.
-- State change, event/outbox entry, and idempotency receipt are transactional;
-  stale writes and conflicting replays fail closed.
-- The module is separate from repository/command functionality and is not
-  legacy-route-exposed.
+- TypeScript is the sole public, lifecycle, tenancy, transaction, idempotency,
+  and persistence authority.
+- The module exposes 24 fixed actions; all writes are privileged and
+  confirmation-gated.
+- Caller-supplied tenancy aliases are recursively rejected; every repository
+  read/write is scoped by trusted principal and workspace.
+- Task/project transitions, optimistic versions, terminal-state handling,
+  ambiguity, and stale-plan behavior fail closed.
+- Canonical state, the outbox event, and the hashed idempotency receipt share a
+  transaction.
+- `ARCANOS:PRODUCTIVITY` is GPT-Access-only, not exposed through legacy module
+  routes, introspection, or `/gpt/:gptId`, and contains no repository or command
+  execution.
 
-### Migrations, CI, and preview tooling
+### OpenAPI and public protocol
 
-- The local-agent hardening migration is additive, idempotent, and has a
-  fail-closed compensation path.
-- Migration tooling checks expected columns, constraints, indexes, and binding
-  shape without printing credentials.
-- The preview verifier uses shell-free argument execution, requires explicit
-  project/environment/service/commit/deployment identities, rejects production
-  and Phase 2E targets, requires isolated dependency references, hashes
-  sensitive evidence, and calls only `/gpt-access/*`.
-- Its challenge mode observes and records `CONFIRMATION_REQUIRED`; it does not
-  approve or retry a mutation.
-- The retained preview report documents an isolated historical preview and
-  prior Linux/Windows sandbox evidence. It is not evidence for hardening added
-  after that deployed commit.
+The public `/gpt-access/openapi.json` contains only the intended Custom GPT
+Action contract and deterministic capability metadata. It does not publish
+daemon heartbeat/claim/result protocol routes, credentials, workspace roots,
+or implementation paths. Execution, result reads, and protected discovery
+remain bearer/scope controlled.
 
-## Commands and tests actually executed by this reviewer
+### Logging, output, and evidence
+
+Operational logs and events use bounded structured metadata and redaction.
+Bearer values, confirmation tokens, database URLs, workspace roots, private
+keys, credential assignments, ANSI/control sequences, and sensitive object
+keys are removed or never persisted. The preview verifier hashes payloads,
+challenge IDs, dependency hosts, and deployment metadata rather than printing
+the underlying sensitive values. A base-to-head added-line scan found no
+private-key, OpenAI-key, Railway-token, or bearer literal; database URL
+matches were limited to CI/test/documentation fixtures.
+
+### Migrations and preview isolation
+
+The local-agent hardening migration is additive, transactional, repeatable,
+checksum-pinned, and verified against exact expected columns, constraints, and
+indexes. Compensation refuses nonempty bindings or active local-agent jobs.
+The productivity migration is additive and forward-only by documentation.
+Preview tooling accepts only fixed read-only Railway commands, requires an
+explicit four-service preview identity and exact commit/deployments, rejects
+production and Phase 2E names/references, verifies dependency host ownership,
+uses shell-free execution, and permits only `/gpt-access/*` HTTP paths.
+Challenge mode observes `CONFIRMATION_REQUIRED` and never approves or retries.
+
+## Final-head addenda
+
+Two changes landed after the larger security hardening commit:
+
+1. `0808eb1f` replaced application-clock calls in one expiry test with the
+   fixture's deterministic database clock. It changes no production code or
+   security contract and makes the intended database-clock assertion stable.
+2. `f7f3a2ca` added `npm run test:preview-e2e` to Deployment Readiness CI. It
+   changes no runtime behavior and closes a release-evidence gap by making the
+   existing 18-test fail-closed preview harness mandatory.
+
+Both changes are security-neutral or security-positive. Exact-head preview
+evidence was subsequently collected for `f7f3a2ca`; exact-head CI remained in
+flight.
+
+## Exact-head isolated preview evidence
+
+The final head was deployed only to the isolated preview stack:
+
+- API deployment `ce5a974e-a087-4634-9e74-992b4c44144e` reported
+  `SUCCESS`;
+- worker deployment `87baaf0a-ac51-42a0-abdc-5044cd71f122` reported
+  `SUCCESS`;
+- protected server metadata paired both deployments to exact commit
+  `f7f3a2caf3f13566a41a8587a1b6e2966d7f6439`;
+- authenticated read-only E2E passed, including six-event tenant-bound local
+  agent timelines, idempotent replay, idempotency conflict, and
+  `patch.preview` with no workspace mutation;
+- PostgreSQL integration passed 6/6, including own-tenant, foreign-tenant, and
+  missing-context timeline isolation;
+- a separate exact `patch.apply` request returned
+  `403 CONFIRMATION_REQUIRED`; no approval, retry, or job was created;
+- a bounded preview log scan found zero fatal entries and zero actual
+  credentials.
+
+The preview evidence is sufficient for the security review because it exercises
+the public authorization, tenancy, job, event, and fail-closed confirmation
+boundaries without performing a newly approved mutation.
+
+## Commands and tests executed by this final reviewer
 
 | Command | Result |
 | --- | --- |
-| `git diff --check 59989445b6bf206c0f73bc9fb11f6d47f3494214..87788342f862d59c60fa3ea830da47c39950dabf` | Passed |
-| `node scripts/run-jest.mjs --testPathPatterns=tests/gpt-access-gateway.test.ts --testNamePattern="(allows patch\\.apply only\|allows tests\\.run only\|rejects replay of a consumed confirmation_token\|rejects a confirmation_token retry when the request body changes\|returns local-agent results only\|does not expose non-gateway)" --coverage=false --runInBand` | 6 passed |
-| `node scripts/run-jest.mjs` over ActionPlan auth, generic jobs, device policy, local-agent protocol/repository/module/service/migration, protected routing, and productivity contract/parity suites | 12 suites, 101 tests passed |
-| `node scripts/run-jest.mjs` over generic job repository, SDK diagnostics, worker-control, and MCP local-agent boundary suites | 4 suites, 18 tests passed |
-| `node scripts/run-jest.mjs --testPathPatterns=tests/local-agent-module-contract.test.ts --testPathPatterns=tests/gpt-access-gateway.test.ts --testNamePattern="(validates action payloads\|denies unsafe ARCANOS:CLI)" --coverage=false --runInBand` | 8 passed, 148 not selected |
-| `python -m pytest daemon-python/tests/test_local_agent_protocol_runner.py daemon-python/tests/test_local_agent_sandbox_security.py -q` | 41 passed, 7 skipped |
-| `python -m pytest daemon-python/tests/test_local_agent_handlers.py daemon-python/tests/test_cli_policy_security.py -q` | 44 passed, 4 skipped |
-| `python -m pytest daemon-python/tests/test_local_agent_handlers.py daemon-python/tests/test_cli_policy_security.py daemon-python/tests/test_local_agent_sandbox_security.py -q` | 65 passed, 10 skipped |
-| `node --test scripts/preview-e2e.test.mjs` | 18 passed |
-| `npm run type-check` | Passed, including boundary checks and package compilation |
-| `npm run lint` | Passed with 0 errors and 84 warnings |
-| `npm run build` | Passed |
+| `git diff --check 59989445b6bf206c0f73bc9fb11f6d47f3494214..f7f3a2caf3f13566a41a8587a1b6e2966d7f6439` | Passed |
+| `python -m pytest` over CLI policy, local-agent handlers, protocol/runner, and sandbox-security suites | 94 passed, 11 skipped |
+| `node scripts/run-jest.mjs` over local-agent, ActionPlan auth, job events, and productivity suites | 15 suites passed, 166 tests passed, 6 database-gated tests skipped |
+| `node scripts/run-jest.mjs` over GPT Access, OpenAPI, natural-language dispatch, ActionPlan result routing, and protected GPT routing | 5 suites, 211 tests passed |
+| `npm run test:preview-e2e` | 18 tests passed |
+| `npm run type-check` | Passed, including all boundary checks and workspace package builds |
+| `npm run lint` | Passed with 0 errors and 84 pre-existing warnings |
 | `node scripts/generate-local-agent-capability-catalog.mjs --check` | Passed |
-| `node scripts/local-agent-hardening-migration.mjs --plan` | Passed; no shape/checksum issues |
-| `npm run validate:backend-cli:offline` | Passed |
-| `npm run sync:check` | Passed with 0 errors, 0 warnings, and 5 informational legacy notes |
-| `npm run validate:railway` | Passed; no deployment performed |
+| `npm run validate:railway` | Passed; passive validation only, no deployment |
+| Added-line sensitive-literal scan | No private key, OpenAI key, Railway token, or bearer literal found |
 
-The reviewer also ran disposable local reproductions for both ADS issues before
-the fix and repeated them after the fix. Patch apply created an ADS before the
-fix; after the fix it is denied. `repo.search` returned ADS content before the
-fix; after the fix path resolution raises a fail-closed validation error.
+The skipped Python cases require platform privileges or an effective container
+runtime. The skipped TypeScript cases require the explicit PostgreSQL test
+connection. Those checks are required in exact-head CI and are not represented
+as locally passed here.
 
-Docker was not available in this PowerShell session's executable path, so the
-reviewer did not claim a new local effective-container run. The retained CI and
-preview evidence records successful Linux effective sandbox/link-race tests and
-Windows container tests for the previously deployed commit. Exact-final-commit
-preview execution remains an approval condition below.
+## Residual risks and operating conditions
 
-## Residual risks and conditions
-
-### 1. Exact-final-commit preview evidence
+### 1. Exact-head CI evidence
 
 - Severity: **release-blocking condition**, not an open code vulnerability
 - Confidence: high
 
-The retained preview report names a commit older than the current PR head and
-the Round 2 worktree fixes. Before Ready for Review, commit the candidate,
-deploy that exact commit only to the isolated preview, rerun the authenticated
-discovery/productivity/local-agent/idempotency/offline/expiry/sandbox/trace
-matrix, and update `docs/PREVIEW_E2E_REPORT.md` with exact deployment evidence.
-Any subsequent runtime change invalidates that exact-commit evidence.
+The API and worker preview deployments identify exact head and the final
+read-only/confirmation-fail-closed preview verifier passed. Before Ready for
+Review, every required CI check for `f7f3a2ca` must also be green. Any later
+runtime or workflow change restarts both the CI and exact-head preview evidence
+conditions.
 
-### 2. Path-based patch mutation and a hostile concurrent local writer
+### 2. Path-based patch mutation under a hostile concurrent local writer
 
-- Severity: **Medium conditionally; Low in the required private daemon-owned fixture**
+- Severity: **Medium conditional; Low in the required private daemon-owned fixture**
 - Confidence: high
 
-`git apply` cannot make every target mutation descriptor-relative and atomic
-against a hostile local process that changes paths concurrently. Keep mutation
-roots private and daemon-owned, use disposable fixtures for preview tests,
-revalidate repository identity, and require manual reconciliation after
-interruption or identity drift. Do not share a writable registered patch root
-with an untrusted local user or process.
+External `git apply` cannot make every mutation descriptor-relative and atomic
+against another local process swapping path components. Keep mutation roots
+private to the daemon account, use disposable fixtures for preview mutation,
+preserve identity checks/backups, and require manual reconciliation after any
+interruption or identity drift. A shared hostile writable patch root is outside
+the supported threat model.
 
 ### 3. Windows descriptor-relative limitation
 
@@ -385,106 +405,104 @@ with an untrusted local user or process.
 
 Python does not expose a complete descriptor-relative Win32 directory walk.
 Pre/post reparse and identity checks are defense in depth, not a kernel-level
-race guarantee. Use private registered roots protected by Windows ACLs; keep
-Linux descriptor-safe validation in CI; do not treat a shared hostile Windows
-workspace as a supported threat model.
+race guarantee. Protect registered roots with private Windows ACLs and keep the
+Linux descriptor-safe link/race suite mandatory.
 
-### 4. Test snapshot host resource pressure
+### 4. Semantic output/prompt injection
 
-- Severity: **Low**
+- Severity: **Medium conditional**
 - Confidence: medium-high
 
-Sandbox snapshot staging is bounded but can copy up to the configured file and
-byte limits before container execution. Add deadline/cancellation checks during
-copy and consider lower deployment-specific quotas if host resource exhaustion
-is in scope. This does not permit code execution outside the sandbox.
+Repository text, Git names, diffs, and test output are untrusted content.
+Structural validation, control stripping, secret redaction, and size limits do
+not remove human-language instructions embedded in source. Custom GPT
+instructions must treat tool output as data, never as authority. The exact
+confirmation boundary for file-modifying actions materially limits impact and
+must remain intact.
 
-### 5. In-memory confirmation and rate-limit state
-
-- Severity: **Low operational**
-- Confidence: high
-
-Confirmation challenges and pre-authentication rate buckets are process-local.
-A restart or different replica can reject a legitimate retry, which is
-fail-closed; rate limiting is not globally coordinated. A shared expiring store
-would improve multi-replica reliability and abuse resistance without changing
-the confirmation contract.
-
-### 6. Bearer credential theft
+### 5. Local journal data at rest
 
 - Severity: **Low/Medium conditional**
 - Confidence: high
 
-The dedicated credential is narrow, device-bound, rotatable, and revocable, but
-there is no mTLS or hardware attestation. A stolen unexpired token can
-impersonate its exact registered device until revocation. Keep preview and
-production credentials separate, minimize token lifetime/exposure, rotate
-regularly, monitor device/audit anomalies, and consider transport-bound
-credentials for a later hardening phase.
+Pending or quarantined journal rows can contain a server assignment, including
+patch content, until accepted or manually reconciled. The SQLite file is
+private and permission-checked but not application-encrypted. Run the daemon
+under a dedicated account on encrypted storage, protect backups, and clear
+resolved quarantines through an audited operator procedure.
 
-### 7. Sandbox image supply-chain reproducibility
+### 6. Development HTTP override
 
-- Severity: **Low**
-- Confidence: medium
+- Severity: **Low/Medium configuration risk**
+- Confidence: high
 
-The base digest and application lockfile are pinned, but some package-manager
-resolution occurs during sandbox image construction. Preserve the deployed
-image digest, publish an SBOM/provenance record, and pin Python/system package
-inputs more tightly before broad production distribution.
+The protocol requires HTTPS by default and never follows redirects, but it
+inherits the existing explicit `BACKEND_ALLOW_HTTP=true` development override.
+Keep that flag false for every non-localhost preview/production daemon; reject
+such configuration during deployment review so the executor bearer cannot be
+sent over cleartext transport.
 
-### 8. Diagnostics-scope metadata visibility
-
-- Severity: **Low**
-- Confidence: medium-high
-
-The job-event timeline omits payloads and is redacted, but a holder of broad
-diagnostics authority can observe job IDs and principal/workspace/device
-labels. The current gateway uses a controlled principal/workspace. If the
-system becomes generally multi-tenant, scope diagnostic timelines to the
-trusted tenant or move them behind a separate administrative policy.
-
-### 9. Sandbox runtime availability
+### 7. In-memory confirmation and rate-limit state
 
 - Severity: **Low operational**
 - Confidence: high
 
-When Docker/Podman or the immutable sandbox image is unavailable,
-production-capable `tests.run` fails closed. Deployment health/monitoring must
-distinguish this expected unavailability from a successful sandbox execution.
+Confirmation challenges and pre-auth rate buckets are process-local. Restart
+or replica drift rejects a valid retry, which is fail-closed; rate limits are
+not globally coordinated. Use a single/sticky confirmation issuer during this
+release or move expiring state to a shared store in a future change.
 
-### 10. Existing dependency advisory debt
+### 8. Bearer credential theft and daemon impersonation
 
-- Severity: **unclassified external debt pending impact analysis**
-- Confidence: medium
+- Severity: **Low/Medium conditional**
+- Confidence: high
 
-The preview report records existing npm audit advisories while its configured
-security gate passed. This PR did not demonstrate exploitability of those
-advisories, so this review does not relabel them as a PR Critical/High finding.
-Track and triage them separately against reachable production code.
+The dedicated token is narrow, pinned, rotatable, and revocable, but not
+hardware- or transport-bound. A stolen current token can impersonate that
+registered device until revocation. Separate preview/production credentials,
+store them only in backend/daemon secret stores, rotate on loss or anomalous
+audit activity, and remove the previous-token overlap promptly.
+
+### 9. Sandbox runtime and supply chain
+
+- Severity: **Low**
+- Confidence: medium-high
+
+Container/kernel vulnerabilities remain outside the application boundary. The
+base image digest and npm lockfile are pinned, but OS/Python package resolution
+during image construction is not fully reproducible. Retain the exact image
+digest, produce SBOM/provenance for broader distribution, never mount a host
+socket or use privileged mode, and keep missing/unhealthy sandbox status
+fail-closed.
 
 ## Approval conditions
 
-This reviewer approves with the following conditions:
+This reviewer approves with these conditions:
 
-1. Preserve and commit all Round 2 fixes and focused tests described above.
-2. Rerun the required full build, lint, type check, TypeScript tests, Python
-   tests, schema/catalog parity, migration validation, and preview validation
-   on the final candidate.
-3. Deploy only the exact final commit to the proven-isolated Railway preview;
-   do not reuse production or the Phase 2E Redis validation service.
-4. Update the preview and merge-readiness reports with exact final-commit,
-   migration, deployment, E2E, sandbox, audit, and trace evidence.
-5. Preserve the private-workspace operating condition for patch mutation and
-   the fail-closed sandbox default.
-6. Do not interpret this review as approval to deploy or migrate production,
-   merge the PR, or alter the production Custom GPT.
+1. All required CI checks for exact head
+   `f7f3a2caf3f13566a41a8587a1b6e2966d7f6439` must pass, including full build,
+   lint/typecheck, unit/integration tests, security audit, Windows Python,
+   Linux effective sandbox/link-race tests, PostgreSQL concurrency, deployment
+   readiness, and the preview safety harness.
+2. Preserve the recorded isolated preview evidence: the API and worker serve
+   exact head, use only preview-owned PostgreSQL/Redis/credentials, and passed
+   the final discovery/read-only/confirmation-fail-closed validation.
+3. Preserve the exact-action/payload one-use confirmation contract, the
+   private-workspace condition for patch mutation, HTTPS outside localhost,
+   and fail-closed sandbox defaults.
+4. Keep the PR Draft until the combined merge-readiness report records the
+   exact-head green evidence and every independent reviewer approves or
+   approves with conditions.
+5. Do not interpret this review as approval to merge, deploy production,
+   migrate production, modify production Custom GPT configuration, or relax
+   any authority boundary.
 
 ## Final verdict
 
 **APPROVE WITH CONDITIONS**
 
-No Critical or High security finding remains open in the reviewed candidate.
-The architecture and TypeScript/Python authority boundaries remain intact.
-The required conditions are exact-candidate release verification and explicit
-acceptance of the documented local-workspace/runtime limitations, not requests
-for architectural expansion.
+No Critical or High security finding remains open in the reviewed code. The
+TypeScript/Python authority boundary, tenancy, confirmation, job, filesystem,
+sandbox, and protected-routing controls are coherent and well-tested. The
+remaining blocker is exact-head release evidence, not an unresolved Critical
+or High design defect.

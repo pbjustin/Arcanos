@@ -92,6 +92,7 @@ both be installed as `arcanos`; their guides explain unambiguous invocation.
 | [Startup resilience](STARTUP_RESILIENCE.md) | Canonical | Listener, dependency lifecycle, and health semantics. |
 | [Redis resilience runbook](REDIS_RESILIENCE_RUNBOOK.md) | Canonical | Redis outage diagnosis and recovery boundaries. |
 | [Local-agent preview E2E report](PREVIEW_E2E_REPORT.md) | Historical | Dated isolated-preview deployment, security, test, confirmation, and teardown evidence. |
+| [PR 1408 merge readiness](MERGE_READINESS.md) | Historical | Consolidated seven-reviewer production-readiness decision, validation evidence, residual risks, and merge recommendation. |
 | [Railway Redis lifecycle preview](RAILWAY_REDIS_LIFECYCLE_PREVIEW.md) | Design-only / approval-gated | Isolated preview proof procedure; not routine validation or deployment authority. |
 
 Operational prose does not authorize live probes, deployments, restarts,

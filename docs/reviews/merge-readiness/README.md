@@ -10,10 +10,24 @@ uses two rounds:
 1. Baseline review of commit
    `77d6e6c9b7b0db1adeb9c7243dfc19cac87957b9`.
 2. Independent verification after the approved, architecture-preserving
-   remediations and final validation.
+   remediations against runtime candidate
+   `f7f3a2caf3f13566a41a8587a1b6e2966d7f6439`.
 
 The consolidated decision, validation evidence, residual risks, and merge
-recommendation are recorded in `docs/MERGE_READINESS.md`.
+recommendation are recorded in
+[MERGE_READINESS.md](../../MERGE_READINESS.md). The independent artifacts are:
+
+- [Architecture](architecture.md)
+- [Security](security.md)
+- [Database and job semantics](database.md)
+- [Local Agent](local-agent.md)
+- [Productivity](productivity.md)
+- [Release Engineering](release-engineering.md)
+- [Devil's Advocate](devils-advocate.md)
+
+All seven final reviews are `APPROVE WITH CONDITIONS`, with zero open Critical
+or High findings. A later documentation-only aggregation commit does not change
+the reviewed runtime candidate.
 
 Review verdicts are:
 

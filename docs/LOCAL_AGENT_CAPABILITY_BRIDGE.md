@@ -653,12 +653,17 @@ URL on the command line. The daemon’s SQLite journal remains private local
 execution evidence; it is not canonical ARCANOS state, a server queue, or a
 PostgreSQL replacement.
 
-## Railway deployment plan
+## Railway deployment status and production plan
 
-No Railway deployment, migration, variable change, or privileged operation has
-been performed for this hardening work yet.
+The bridge and hardening migration have been exercised only in the isolated
+`arcanos-preview-bf8ac3bd` Railway environment. That preview has its own API,
+worker, PostgreSQL, Redis, credentials, domain, and disposable data. The exact
+resources, deployments, commands, tests, and teardown procedure are recorded
+in `docs/PREVIEW_E2E_REPORT.md`.
 
-A read-only Railway status check reported:
+No production deployment, production migration, production variable change,
+or production Custom GPT Action change has been performed. The initial
+read-only Railway inspection found this unrelated selection:
 
 ```text
 Project:     Arcanos
@@ -666,10 +671,12 @@ Environment: phase2e-validation-20260717
 Service:     phase2e-redis-r2-20260718
 ```
 
-That linked service is the Phase 2E Redis validation service, not the ARCANOS
-API deployment target. Do not deploy the bridge from that selection.
+That Phase 2E Redis validation service was not used or modified. All preview
+operations selected the preview environment and service IDs explicitly rather
+than relying on the CLI's ambient link.
 
-For an isolated operator-approved preview:
+For another isolated operator-approved preview, or before a future production
+promotion:
 
 1. Create or select a fresh preview environment and explicitly identify its
    API, worker, PostgreSQL, and Redis services. Do not rely on the current CLI
@@ -702,9 +709,9 @@ PostgreSQL/Redis, and do not alter the production Custom GPT Action.
 The five reported hardening gaps now have code-level remediations: fail-closed
 container sandboxing, a dedicated executor audience, database-authoritative
 idempotency, transactional per-job recovery events, and Linux
-symlink/link-swap coverage. They are not operationally proven in Railway until
-the isolated preview migration, deployment, Linux CI run, and E2E evidence are
-complete.
+symlink/link-swap coverage. They were exercised through Linux CI and the
+isolated Railway preview described in `docs/PREVIEW_E2E_REPORT.md`; that
+evidence is not a production enablement or production rollout.
 
 Git and patch actions intentionally support only a standalone main worktree
 whose physical `.git` directory is inside the registered workspace. A
