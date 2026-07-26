@@ -3,7 +3,6 @@ import path from 'path';
 
 import { runCommand } from "@services/prAssistant/commandUtils.js";
 import type { CheckContext, CheckResult } from "@services/prAssistant/types.js";
-import { resolveErrorMessage } from "@core/lib/errors/index.js";
 
 export async function performFinalDoubleCheck(context: CheckContext): Promise<CheckResult> {
   const details: string[] = [];
@@ -78,11 +77,11 @@ export async function performFinalDoubleCheck(context: CheckContext): Promise<Ch
       message: 'All final checks passed - Ready for deployment',
       details
     };
-  } catch (error) {
+  } catch {
     return {
       status: '❌',
       message: 'Final validation failed',
-      details: [`Error: ${resolveErrorMessage(error)}`]
+      details: ['Final validation could not be completed']
     };
   }
 }

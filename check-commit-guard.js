@@ -18,6 +18,8 @@
 
 import { execSync } from 'node:child_process';
 
+const MAX_GIT_OUTPUT_BYTES = 64 * 1024 * 1024;
+
 const BLOCKED_STAGE_PATH_PATTERNS = [
   /^\.env$/i,
   /(^|\/)\.env$/i,
@@ -36,6 +38,8 @@ const BLOCKED_STAGE_PATH_PATTERNS = [
 const PLACEHOLDER_HINT_PATTERN =
   /\b(example|sample|placeholder|replace|changeme|mock|test|dummy|your-|redacted|xxxxx|<[^>]+>)\b/i;
 
+const CODE_SOURCE_PATH_PATTERN = /\.(?:[cm]?[jt]sx?|py)$/i;
+
 const SECRET_LITERAL_PATTERNS = [
   { label: 'OpenAI key', regex: /\bsk-[a-zA-Z0-9]{20,}\b/ },
   { label: 'Bearer token', regex: /\bBearer\s+[a-zA-Z0-9._-]{20,}\b/i },
@@ -45,7 +49,7 @@ const SECRET_LITERAL_PATTERNS = [
 ];
 
 const SENSITIVE_ASSIGNMENT_PATTERN =
-  /\b(openai[_-]?api[_-]?key|api[_-]?key|access[_-]?token|refresh[_-]?token|bearer[_-]?token|token|secret|password|authorization)\b\s*[:=]\s*["'`]?([^"'`\s]+)/i;
+  /\b(openai[_-]?api[_-]?key|api[_-]?key|access[_-]?token|refresh[_-]?token|bearer[_-]?token|token|secret|password|authorization)\b\s*[:=]\s*(?:(["'`])([^"'`\r\n]*)\2|([^\s,;}\]]+))/i;
 
 /**
  * Run a git command and return stdout.
@@ -57,6 +61,7 @@ function runGitCommand(command) {
   try {
     return execSync(command, {
       encoding: 'utf8',
+      maxBuffer: MAX_GIT_OUTPUT_BYTES,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
   } catch (error) {
@@ -156,6 +161,7 @@ function isRuntimeReference(value) {
   return (
     normalized.startsWith('$') ||
     normalized.startsWith('${') ||
+    normalized.includes('${') ||
     normalized.startsWith('process.env') ||
     normalized.startsWith('os.getenv') ||
     normalized.startsWith('env(')
@@ -189,14 +195,17 @@ function scanLineForSecretLeaks(lineEntry) {
   const assignmentMatch = candidateText.match(SENSITIVE_ASSIGNMENT_PATTERN);
   if (assignmentMatch) {
     const key = assignmentMatch[1] ?? 'sensitive_key';
-    const rawValue = assignmentMatch[2] ?? '';
+    const quotedValue = assignmentMatch[3];
+    const rawValue = quotedValue ?? assignmentMatch[4] ?? '';
     const value = rawValue.replace(/^['"`]+|['"`]+$/g, '');
 
     const looksSensitive = value.length >= 12;
     const safeValue = isPlaceholder(value) || isRuntimeReference(value);
+    const isCodeExpression =
+      quotedValue === undefined && CODE_SOURCE_PATH_PATTERN.test(lineEntry.file);
 
     //audit Assumption: long literal assignments to sensitive keys are likely secrets; Failure risk: secret exposure; Invariant: literal sensitive values must be blocked; Handling strategy: require placeholder/runtime-reference or fail.
-    if (looksSensitive && !safeValue) {
+    if (looksSensitive && !safeValue && !isCodeExpression) {
       findings.push(
         `${lineEntry.file}:${lineEntry.line} sensitive assignment for "${key}" appears to contain a literal secret.`,
       );

@@ -26,10 +26,12 @@ Arcanos uses two complementary memory layers:
 ## Implementation and Validation
 Use this source-of-truth map when changing the memory subsystem:
 - route mounting and middleware order: `src/routes/api/index.ts`
+- memory-plane credential policy and HTTP enforcement: `src/shared/security/memoryAccessCredential.ts` and `src/transport/http/middleware/memoryPlaneAuth.ts`
 - memory HTTP contract: `src/routes/api-memory.ts`
 - structured conversation contract: `src/routes/api-save-conversation.ts`
 - natural-language parsing, session scoping, and pointer behavior: `src/services/naturalLanguageMemory.ts`
 - GPT dispatcher interception: `src/routes/_core/gptDispatch.ts`
+- shared GPT memory-interception classification: `src/services/memoryDispatchInterception.ts`
 - dispatcher conversation persistence: `src/services/moduleConversationPersistence.ts`
 - legacy `/brain` compatibility-handler shortcut when `ASK_ROUTE_MODE=compat`: `src/services/naturalLanguageMemoryRouteShortcut.ts` and `src/routes/ask/index.ts`
 - durable exact memory: `src/core/db/repositories/memoryRepository.ts` and `src/core/db/schema.ts`
@@ -40,17 +42,51 @@ Preserve these invariants:
 - session-scoped natural-language commands without explicit session scope fail closed as `stateless`
 - `/api/memory/search` intentionally performs a global merged search when `sessionId` is omitted
 - structured conversation saves retain schema validation and immediate read-after-write verification
+- production memory API mounts and exact GPT memory interception fail closed without the dedicated memory-plane credential
 
-Focused mocked tests cover the HTTP routes, natural-language service, memory repository, and conversation-persistence service. The conditional GPT-dispatch interception and its call into conversation persistence are verified from source but do not have a focused dispatcher test; do not describe that branch as directly test-covered.
+Focused mocked tests cover the production authentication composition, HTTP
+routes, exact GPT interception and dispatcher authorization, natural-language
+service, memory repository, and conversation-persistence service.
 
 For memory code changes, use mocked focused tests instead of live persistence:
 ```powershell
 npm run type-check
 npm run lint
-node scripts/run-jest.mjs --testPathPatterns=api-memory --testPathPatterns=api-save-conversation --testPathPatterns=naturalLanguageMemory --testPathPatterns=memoryRepository --testPathPatterns=moduleConversationPersistence --testPathPatterns=ask-memory-shortcut --coverage=false --runInBand
+node scripts/run-jest.mjs --testPathPatterns=api-memory --testPathPatterns=api-save-conversation --testPathPatterns=memory-plane-http-auth --testPathPatterns=memory-dispatch-interception --testPathPatterns=gpt-dispatch.mcp --testPathPatterns=gpt-async-idempotency.route --testPathPatterns=naturalLanguageMemory --testPathPatterns=memoryRepository --testPathPatterns=moduleConversationPersistence --testPathPatterns=ask-memory-shortcut --coverage=false --runInBand
 ```
 
 Do not call live save, delete, bulk, natural-language save, or save-conversation endpoints, or exercise GPT-dispatcher memory commands (including recall), unless persistent writes against the exact target and session are explicitly authorized. With explicit session scope, dispatcher interception attempts best-effort conversation/history persistence after reads; interception without explicit session scope skips that write. Endpoint, response-envelope, session-scope, or exact-versus-semantic changes must update this guide and `docs/API.md`; storage-schema changes must also update `docs/DATABASE_MIGRATIONS.md`.
+
+## Memory Access Boundary
+
+Production `/api/memory/*`, `/api/save-conversation*`, and `/api/sessions*`
+mounts require the exact `ARCANOS_MEMORY_ACCESS_TOKEN` in
+`x-arcanos-memory-token`. The same credential is required when
+`POST /gpt/:gptId` would enter the exact natural-language memory interception
+branch. The token is custom-header-only:
+Bearer authorization, cookies, query parameters, and request-body fields never
+grant memory authority. An unrelated Authorization header may coexist with a
+valid memory header.
+
+The configured and presented values are case-sensitive, must contain 32–4096
+characters with no whitespace, and must not reuse another purpose-bound
+application credential. Configuration is read on every request. Invalid or
+missing server configuration returns `503 MEMORY_AUTH_UNAVAILABLE`; missing,
+malformed, duplicate, or incorrect request credentials return
+`401 MEMORY_AUTH_REQUIRED`. Denials use `Cache-Control: no-store` and do not
+emit a Bearer challenge.
+
+Authentication runs before consistency, confirmation, database/service access,
+GPT fast-path execution, and queue creation. This token grants deployment-wide
+memory access only. It does not establish a tenant principal, prove ownership
+of `sessionId`, or prevent a token holder from using intentionally global
+listing/search behavior.
+
+The legacy `/brain` compatibility memory shortcut is a separate,
+confirmation-gated path and is not promoted to this credential contract.
+Memory-capable MCP tools remain governed by the MCP boundary. Do not describe
+either path as covered by the memory-plane token without a separate integration
+change and test.
 
 ## Core Persistence Flow
 When memory is saved through natural language (`POST /api/memory/nl` or dispatcher memory intercept):
@@ -73,8 +109,16 @@ For a registered `/gpt/:gptId` request, memory handling runs before module actio
 - the prompt is a string with a recognized memory intent
 - the prompt has a memory cue or the module has no routable action
 - the requested action is absent or `query`
+- the request presents a valid `x-arcanos-memory-token`
 
-The branch is not tied to Backstage Booker, but it is not universal. Forced-direct routes and requests that bypass intent routing do not use it. The legacy `/brain` compatibility handler runs a separate shortcut only when `ASK_ROUTE_MODE=compat`; `/api/arcanos/ask` does not use that shortcut.
+The branch is not tied to Backstage Booker, but it is not universal.
+Forced-direct routes and requests that bypass intent routing do not use it.
+Authentication is evaluated only after the exact predicate matches, so ordinary
+GPT writing requests do not require the memory credential. Authenticated
+interceptions execute directly and bypass fast-path and job-backed execution,
+including when async, fast, or idempotency hints are present. The legacy
+`/brain` compatibility handler runs a separate shortcut only when
+`ASK_ROUTE_MODE=compat`; `/api/arcanos/ask` does not use that shortcut.
 
 When the branch runs:
 - session-scoped saves, lists, inspections, latest recall, and ordinary lookup require an explicit `sessionId` or inline session/storage label
@@ -147,6 +191,10 @@ If omitted:
 | `GET /api/memory/search` | Always merges exact and semantic results; omitting `sessionId` makes the search global. |
 
 ## Endpoint Reference
+
+All endpoints in this section require `x-arcanos-memory-token` at their
+production mounts. Confirmation requirements listed for individual mutation
+routes remain additional checks.
 
 ### `POST /api/save-conversation`
 Structured persistence endpoint for deterministic log/conversation saves.
@@ -317,11 +365,14 @@ For reliable memory behavior in clients:
 5. Use `/api/memory/search` for UI search pages because it already merges exact + semantic.
 
 ## Security and Data Hygiene Notes
-1. These route handlers and direct GPT-dispatch memory paths do not independently establish tenant authorization. Verify deployment middleware and caller authorization before exposing or invoking them.
+1. Production memory/session API mounts and exact GPT-dispatch memory interception require the deployment-wide memory-plane token, but this does not establish tenant authorization.
 2. `sessionId` is a caller-controlled retrieval namespace/filter, not identity, authentication, authorization, or tenant isolation.
-3. `POST /api/memory/save`, `DELETE /api/memory/delete`, and `POST /api/memory/bulk` use `confirmGate`; mutating `POST /api/memory/nl` and `POST /api/save-conversation` do not.
-4. `confirmGate` is an action-confirmation/risk gate, not authentication, tenant authorization, or proof of key ownership.
-5. The global unsafe-execution gate is a runtime-safety check, not tenant authentication or routine human approval.
-6. `/api/memory/search` is global when `sessionId` is omitted.
-7. Explicit session scope filters natural-language exact rows and RAG results, but ordinary lookup also supplements from durable conversation sessions without that filter; session scope does not guarantee bounded or tenant-isolated results across every source.
-8. Avoid placing secrets in plain memory text unless your environment policy permits it.
+3. Token holders can address any caller-selectable session or globally visible record supported by the endpoint; true tenant isolation requires principal binding and an ownership field in the persistence schema.
+4. `POST /api/memory/save`, `DELETE /api/memory/delete`, and `POST /api/memory/bulk` use `confirmGate`; mutating `POST /api/memory/nl` and `POST /api/save-conversation` do not.
+5. `confirmGate` is an action-confirmation/risk gate, not authentication, tenant authorization, or proof of key ownership.
+6. The global unsafe-execution gate is a runtime-safety check, not tenant authentication or routine human approval.
+7. `/api/memory/search` is global when `sessionId` is omitted.
+8. Explicit session scope filters natural-language exact rows and RAG results, but ordinary lookup also supplements from durable conversation sessions without that filter; session scope does not guarantee bounded or tenant-isolated results across every source.
+9. The custom-header-only `/api/memory/table` view is intended for authenticated API/operator clients; ordinary browser navigation cannot attach the credential.
+10. Avoid placing secrets in plain memory text unless your environment policy permits it.
+11. Any token holder can list, read, create, and replay durable `/api/sessions*` records; per-session ownership and read/write scope separation remain future authorization work.

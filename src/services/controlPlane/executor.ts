@@ -130,11 +130,6 @@ function redactCommandPlan(plan: ControlPlaneCommandPlan): ControlPlaneCommandPl
   return redactSensitive(plan) as ControlPlaneCommandPlan;
 }
 
-async function getDefaultMcpService() {
-  const { arcanosMcpService } = await import('../arcanosMcp.js');
-  return arcanosMcpService;
-}
-
 async function runBackendHealthCheck(options: ExecuteControlPlaneOperationOptions): Promise<unknown> {
   if (options.healthCheck) {
     return options.healthCheck();
@@ -144,7 +139,10 @@ async function runBackendHealthCheck(options: ExecuteControlPlaneOperationOption
 }
 
 async function resolveMcpService(options: ExecuteControlPlaneOperationOptions) {
-  return options.mcpService ?? await getDefaultMcpService();
+  if (!options.mcpService) {
+    throw new Error('ARCANOS MCP service is unavailable for this control-plane operation.');
+  }
+  return options.mcpService;
 }
 
 function resolveRequestForMcp(request: Request | undefined): Request | undefined {

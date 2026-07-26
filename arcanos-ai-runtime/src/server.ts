@@ -1,104 +1,91 @@
-import express from "express";
-import { randomUUID } from "node:crypto";
-import type { Job } from "bullmq";
-import { aiQueue } from "./queue/queue.js";
-import { runtimeEnv } from "./config/env.js";
-import type { AIJobPayload, RuntimeJobStatus } from "./jobs/types.js";
-import { validateCreateJobInput } from "./jobs/validation.js";
-import { sendBadRequest, sendInternalErrorPayload, sendNotFound } from './http/errors.js';
+import {
+  resolveRuntimeAdmissionConfig
+} from "./admission/config.js";
+import {
+  createRedisRuntimeAdmission
+} from "./admission/redisAdmission.js";
+import {
+  createRuntimeAdmissionReconciler
+} from "./admission/reconciler.js";
+import {
+  AI_RUNTIME_PRINCIPAL_ID_ENV_NAME,
+  readConfiguredAiRuntimePrincipalId
+} from "./auth/runtimeHttpAuth.js";
+import {
+  resolveRuntimeHttpConfig,
+  resolveRuntimeShutdownConfig
+} from "./config/env.js";
+import {
+  createRuntimeShutdownCoordinator,
+  installRuntimeSignalHandlers
+} from "./lifecycle/shutdown.js";
+import {
+  createAiQueueRuntime
+} from "./queue/queue.js";
+import { createRuntimeApp } from "./app.js";
 
-const JSON_BODY_LIMIT = "256kb";
-const ANONYMOUS_PRINCIPAL_ID = "anonymous";
-
-function mapQueueStateToStatus(state: string): RuntimeJobStatus {
-  switch (state) {
-    case "active":
-      return "processing";
-    case "completed":
-      return "completed";
-    case "failed":
-      return "failed";
-    default:
-      return "queued";
-  }
+const admissionConfig = resolveRuntimeAdmissionConfig(process.env);
+if (!admissionConfig) {
+  throw new Error("AI runtime admission configuration is unavailable");
 }
 
-function buildJobResponse(
-  job: Job<AIJobPayload>,
-  status: RuntimeJobStatus
-): Record<string, unknown> {
-  const response: Record<string, unknown> = {
-    jobId: String(job.id),
-    status,
-    model: job.data.model,
-    createdAt: job.timestamp,
-    startedAt: job.processedOn ?? null,
-    finishedAt: job.finishedOn ?? null
-  };
-
-  if (job.data.maxTokens !== undefined) {
-    response.maxTokens = job.data.maxTokens;
-  }
-
-  if (status === "completed") {
-    response.result = job.returnvalue;
-  }
-
-  if (status === "failed") {
-    response.error = job.failedReason ?? "Job execution failed";
-  }
-
-  return response;
+const principalId = readConfiguredAiRuntimePrincipalId(
+  process.env[AI_RUNTIME_PRINCIPAL_ID_ENV_NAME]
+);
+if (!principalId) {
+  throw new Error("AI runtime principal configuration is unavailable");
 }
-
-const app = express();
-app.use(express.json({ limit: JSON_BODY_LIMIT }));
-
-app.post("/jobs", async (req, res) => {
-  const validation = validateCreateJobInput(req.body);
-  if (!validation.ok) {
-    return res.status(400).json({ error: validation.error });
-  }
-
-  try {
-    const jobId = randomUUID();
-
-    await aiQueue.add(
-      "ai-job",
-      {
-        ...validation.data,
-        principalId: ANONYMOUS_PRINCIPAL_ID
-      },
-      { jobId }
-    );
-
-    return res.status(202).json({ jobId, status: "queued" });
-  } catch (error) {
-    console.error("Failed to enqueue job", error);
-    return sendInternalErrorPayload(res, { error: "Failed to enqueue job" });
-  }
+const runtimeHttpConfig = resolveRuntimeHttpConfig(process.env);
+const shutdownConfig = resolveRuntimeShutdownConfig(process.env);
+const queueRuntime = createAiQueueRuntime({
+  environment: process.env
 });
-
-app.get("/jobs/:id", async (req, res) => {
-  const jobId = req.params.id?.trim();
-  if (!jobId) {
-    return sendBadRequest(res, 'Job ID is required');
+const admission = createRedisRuntimeAdmission({
+  config: admissionConfig,
+  getClient: queueRuntime.getReadyClient,
+  queueName: queueRuntime.name
+});
+const admissionReconciler = createRuntimeAdmissionReconciler({
+  admission,
+  config: admissionConfig,
+  expectedPrincipalId: principalId,
+  queue: queueRuntime.queue
+});
+const app = createRuntimeApp({
+  queue: queueRuntime.queue,
+  admission,
+  readiness: queueRuntime
+});
+const httpServer = app.listen(runtimeHttpConfig.port, () => {
+  if (!shutdownCoordinator.isShuttingDown()) {
+    admissionReconciler.start();
   }
-
-  try {
-    const job = await aiQueue.getJob(jobId);
-    if (!job) {
-      return sendNotFound(res, 'Job not found');
+  console.log(`API running on port ${runtimeHttpConfig.port}`);
+});
+const shutdownCoordinator =
+  createRuntimeShutdownCoordinator({
+    timeoutMs: shutdownConfig.timeoutMs,
+    async graceful() {
+      const listenerDrain = new Promise<void>(
+        (resolve, reject) => {
+          httpServer.close((error) => {
+            if (error) {
+              reject(error);
+              return;
+            }
+            resolve();
+          });
+        }
+      );
+      admissionReconciler.stop();
+      httpServer.closeIdleConnections?.();
+      await listenerDrain;
+      await queueRuntime.close();
+    },
+    async force() {
+      admissionReconciler.stop();
+      httpServer.closeAllConnections?.();
+      await queueRuntime.close();
     }
-
-    const status = mapQueueStateToStatus(await job.getState());
-    return res.json(buildJobResponse(job, status));
-  } catch (error) {
-    console.error("Failed to read job", error);
-    return sendInternalErrorPayload(res, { error: "Failed to read job status" });
-  }
-});
-
-app.listen(runtimeEnv.PORT, () => {
-  console.log(`API running on port ${runtimeEnv.PORT}`);
-});
+  });
+installRuntimeSignalHandlers(shutdownCoordinator);

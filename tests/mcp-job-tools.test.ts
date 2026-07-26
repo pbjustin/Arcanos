@@ -6,6 +6,9 @@ const mockRunThroughBrain = jest.fn();
 const mockRunARCANOS = jest.fn();
 const mockRunTrinity = jest.fn();
 const mockDispatchModuleAction = jest.fn();
+const mockGetPublicModulesForRegistry =
+  jest.fn<() => Array<Record<string, unknown>>>();
+const mockInitializeModuleRegistry = jest.fn<() => Promise<void>>();
 const mockRegisterDagMcpTools = jest.fn();
 const mockRegisterResource = jest.fn();
 const mockRegisterResourceTemplate = jest.fn();
@@ -14,6 +17,10 @@ const mockClassifyGptFastPathRequest = jest.fn();
 const mockExecuteControlPlaneRequest = jest.fn();
 const mockGetControlPlaneCapabilities = jest.fn();
 const mockRequiresControlPlaneApproval = jest.fn();
+const mockArcanosMcpPort = {
+  invokeTool: jest.fn(),
+  listTools: jest.fn(),
+};
 class MockIdempotencyKeyConflictError extends Error {}
 class MockJobRepositoryUnavailableError extends Error {}
 
@@ -176,8 +183,10 @@ jest.unstable_mockModule('../src/services/moduleLoader.js', () => ({
   clearModuleDefinitionCache: jest.fn(),
 }));
 
-jest.unstable_mockModule('../src/routes/modules.js', () => ({
+jest.unstable_mockModule('../src/services/moduleRegistry.js', () => ({
   dispatchModuleAction: mockDispatchModuleAction,
+  getPublicModulesForRegistry: mockGetPublicModulesForRegistry,
+  initializeModuleRegistry: mockInitializeModuleRegistry,
 }));
 
 jest.unstable_mockModule('../src/services/memoryListing.js', () => ({
@@ -219,6 +228,13 @@ function buildContext() {
     sessionId: 'mcp-session-1',
     openai: {},
     runtimeBudget: {},
+    req: {
+      app: {
+        locals: {
+          arcanosMcp: mockArcanosMcpPort,
+        },
+      },
+    },
     logger: {
       info: jest.fn(),
       warn: jest.fn(),
@@ -230,6 +246,8 @@ function buildContext() {
 describe('createMcpServer job control tools', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockGetPublicModulesForRegistry.mockReturnValue([]);
+    mockInitializeModuleRegistry.mockResolvedValue(undefined);
     mockClassifyGptFastPathRequest.mockReturnValue({
       path: 'fast_path',
       eligible: true,
@@ -314,6 +332,30 @@ describe('createMcpServer job control tools', () => {
 
     expect(mockRegisterResource).not.toHaveBeenCalled();
     expect(mockRegisterResourceTemplate).not.toHaveBeenCalled();
+  });
+
+  it('serves modules.list from the safe public registry projection', async () => {
+    const publicModules = [
+      {
+        name: 'ARCANOS:CORE',
+        description: 'Core public capability',
+        route: 'core',
+        actions: ['query'],
+        gptIds: ['arcanos-core'],
+      },
+    ];
+    mockGetPublicModulesForRegistry.mockReturnValue(publicModules);
+    const server = await createMcpServer(buildContext()) as FakeMcpServer;
+
+    const tool = server.tools.get('modules.list');
+    const output = await tool!.handler({});
+
+    expect(tool?.config.description).toContain('safe public module registry');
+    expect(mockInitializeModuleRegistry).toHaveBeenCalledTimes(1);
+    expect(mockGetPublicModulesForRegistry).toHaveBeenCalledTimes(1);
+    expect(output).toEqual(expect.objectContaining({
+      structuredContent: { value: publicModules },
+    }));
   });
 
   it('registers explicit control-plane jobs.status and jobs.result tools with required jobId schemas', async () => {
@@ -572,16 +614,21 @@ describe('createMcpServer job control tools', () => {
       adapter: 'arcanos-mcp',
       operation: 'invokeTool',
     }));
-    expect(mockExecuteControlPlaneRequest).toHaveBeenCalledWith(expect.objectContaining({
-      phase: 'execute',
-      adapter: 'arcanos-mcp',
-      operation: 'invokeTool',
-      approval: expect.objectContaining({
-        approved: true,
-        approvedBy: 'mcp:mcp-session-1',
-        reason: 'MCP control-plane confirmation gate accepted.',
+    expect(mockExecuteControlPlaneRequest).toHaveBeenCalledWith(
+      expect.objectContaining({
+        phase: 'execute',
+        adapter: 'arcanos-mcp',
+        operation: 'invokeTool',
+        approval: expect.objectContaining({
+          approved: true,
+          approvedBy: 'mcp:mcp-session-1',
+          reason: 'MCP control-plane confirmation gate accepted.',
+        }),
       }),
-    }));
+      {
+        mcpClient: mockArcanosMcpPort,
+      }
+    );
     expect(output).toEqual(expect.objectContaining({
       structuredContent: expect.objectContaining({
         ok: true,

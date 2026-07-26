@@ -45,6 +45,8 @@ const BRIDGE_FAILURE_COUNTERS: BridgeFailureCounters = {
   timeout: 0,
   auth: 0,
 };
+const DURABLE_GPT_JOB_PERSISTENCE_UNAVAILABLE_MESSAGE =
+  'Durable GPT job persistence is unavailable.';
 const BRIDGE_FAILURE_EVENTS: Array<{ source: BridgeErrorSource; timestampMs: number }> = [];
 const DEFAULT_BRIDGE_FAILURE_COUNTER_WINDOW_MS = 15 * 60 * 1000;
 const BRIDGE_IDEMPOTENCY_FINGERPRINT_VERSION = 3;
@@ -100,6 +102,7 @@ export interface ExecuteBridgeRequestInput {
   requestId: string;
   actorKey: string;
   explicitIdempotencyKey?: string | null;
+  signal?: AbortSignal;
 }
 
 export interface ExecuteBridgeRequestResult {
@@ -701,10 +704,40 @@ export async function executeCustomGptBridgeRequest(
     }
 
     const waitStartedAtMs = Date.now();
-    const completion = await waitForQueuedGptJobCompletion(jobResult.job.id, {
-      waitForResultMs,
-      pollIntervalMs,
-    });
+    let completion: Awaited<ReturnType<typeof waitForQueuedGptJobCompletion>>;
+    try {
+      completion = await waitForQueuedGptJobCompletion(jobResult.job.id, {
+        waitForResultMs,
+        pollIntervalMs,
+        signal: input.signal,
+      });
+    } catch (error) {
+      input.signal?.throwIfAborted();
+      if (!(error instanceof JobRepositoryUnavailableError)) {
+        throw error;
+      }
+
+      const waitCompletedAtMs = Date.now();
+      return {
+        statusCode: 503,
+        errorSource: 'queue',
+        body: buildBridgeErrorPayload({
+          source: 'queue',
+          status: 'queue_error',
+          message: DURABLE_GPT_JOB_PERSISTENCE_UNAVAILABLE_MESSAGE,
+          requestId: input.requestId,
+          jobId: jobResult.job.id,
+          timing: buildBridgeTiming({
+            startedAtMs,
+            enqueueStartedAtMs,
+            enqueueCompletedAtMs,
+            waitStartedAtMs,
+            waitCompletedAtMs,
+            job: jobResult.job,
+          }),
+        }),
+      };
+    }
     const waitCompletedAtMs = Date.now();
 
     if (completion.state === 'completed') {
@@ -769,6 +802,7 @@ export async function executeCustomGptBridgeRequest(
       }),
     };
   } catch (error) {
+    input.signal?.throwIfAborted();
     const source: BridgeErrorSource =
       error instanceof IdempotencyKeyConflictError || error instanceof JobRepositoryUnavailableError
         ? 'queue'
@@ -781,7 +815,9 @@ export async function executeCustomGptBridgeRequest(
       body: buildBridgeErrorPayload({
         source,
         status: source === 'queue' ? 'queue_error' : 'routing_error',
-        message: resolveErrorMessage(error),
+        message: error instanceof JobRepositoryUnavailableError
+          ? DURABLE_GPT_JOB_PERSISTENCE_UNAVAILABLE_MESSAGE
+          : resolveErrorMessage(error),
         requestId: input.requestId,
         timing: buildBridgeTiming({
           startedAtMs,

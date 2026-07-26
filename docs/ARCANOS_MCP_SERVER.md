@@ -164,6 +164,10 @@ Except for the conditional HTTP-only ActionPlan tools described above, the serve
 - `modules.list`
 - `modules.invoke`
 
+`modules.list` returns the same safe public projection as `GET /registry`; it
+does not expose GPT Access-only definitions or executable handlers.
+`modules.invoke` remains subject to the deny-by-default module/action allowlist.
+
 ## Common MCP error codes
 
 | Code | Meaning |

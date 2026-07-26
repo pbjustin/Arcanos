@@ -26,9 +26,10 @@ jest.unstable_mockModule('../src/platform/runtime/gptRouterConfig.js', () => ({
   validateGptRegistry: mockValidateGptRegistry,
 }));
 
-jest.unstable_mockModule('../src/routes/modules.js', () => ({
+jest.unstable_mockModule('../src/services/moduleRegistry.js', () => ({
   dispatchModuleAction: mockDispatchModuleAction,
   getModuleMetadata: mockGetModuleMetadata,
+  initializeModuleRegistry: jest.fn(async () => undefined),
 }));
 
 jest.unstable_mockModule('../src/services/moduleConversationPersistence.js', () => ({
@@ -345,6 +346,77 @@ describe('routeGptRequest write-plane classification', () => {
       'gpt.dispatch.dag_execution.ok',
       expect.anything()
     );
+  });
+
+  it('fails closed before memory execution when server authorization is absent or body-spoofed', async () => {
+    mockParseNaturalLanguageMemoryCommand.mockReturnValue({ intent: 'save' });
+    mockHasNaturalLanguageMemoryCue.mockReturnValue(true);
+
+    const envelope = await routeGptRequest({
+      gptId: 'arcanos-core',
+      body: {
+        sessionId: 'memory-auth-session',
+        memoryPlaneAuthorized: true,
+        payload: {
+          prompt: 'Remember the release marker.',
+          memoryPlaneAuthorized: true,
+        },
+      },
+      requestId: 'req-memory-auth-denied',
+    });
+
+    expect(envelope).toEqual(expect.objectContaining({
+      ok: false,
+      error: {
+        code: 'MEMORY_AUTH_REQUIRED',
+        message: 'A valid memory-plane access token is required.',
+      },
+      _route: expect.objectContaining({
+        module: 'ARCANOS:CORE',
+        route: 'core',
+      }),
+    }));
+    expect(mockExecuteNaturalLanguageMemoryCommand).not.toHaveBeenCalled();
+    expect(mockPersistModuleConversation).not.toHaveBeenCalled();
+    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
+  });
+
+  it('executes the exact memory branch only with the server-owned authorization flag', async () => {
+    mockParseNaturalLanguageMemoryCommand.mockReturnValue({ intent: 'save' });
+    mockHasNaturalLanguageMemoryCue.mockReturnValue(true);
+    mockExecuteNaturalLanguageMemoryCommand.mockResolvedValue({
+      success: true,
+      intent: 'save',
+      operation: 'saved',
+      sessionId: 'memory-auth-session',
+      message: 'Saved.',
+    });
+
+    const envelope = await routeGptRequest({
+      gptId: 'arcanos-core',
+      body: {
+        prompt: 'Remember the authorized release marker.',
+        sessionId: 'memory-auth-session',
+      },
+      requestId: 'req-memory-auth-allowed',
+      memoryPlaneAuthorized: true,
+    });
+
+    expect(envelope).toEqual(expect.objectContaining({
+      ok: true,
+      result: expect.objectContaining({
+        handledBy: 'memory-dispatcher',
+        memory: expect.objectContaining({
+          operation: 'saved',
+        }),
+      }),
+    }));
+    expect(mockExecuteNaturalLanguageMemoryCommand).toHaveBeenCalledWith({
+      input: 'Remember the authorized release marker.',
+      sessionId: 'memory-auth-session',
+    });
+    expect(mockPersistModuleConversation).toHaveBeenCalledTimes(1);
+    expect(mockDispatchModuleAction).not.toHaveBeenCalled();
   });
 
   it('still allows repo inspection for implementation-status writing prompts', async () => {

@@ -5,7 +5,6 @@
   "type": "module",
   "main": "dist/server.js",
   "scripts": {
-    "probe": "node scripts/probe.js",
     "db:init": "node scripts/db-init.js",
     "db:patch": "node scripts/schema-sync.js",
     "db:action-plan-execution:plan": "node scripts/action-plan-execution-migration.mjs --plan",
@@ -202,6 +201,7 @@
     "build:packages": "npm run build -w @arcanos/protocol && npm run build -w @arcanos/cli && npm run build -w @arcanos/runtime && npm run build -w @arcanos/openai",
     "build:workers:only": "cd workers && npm run build:workers && cd ..",
     "test:runtime-integration": "npm --prefix arcanos-ai-runtime run test:integration",
+    "test:runtime-redis-integration": "npm --prefix arcanos-ai-runtime run test:redis-integration",
     "mcp:stdio": "node dist/mcp/mcp-stdio.js",
     "mcp:arcanos-core-advisory": "node dist/mcp/arcanos-core-advisory-stdio.js",
     "mcp:arcanos-core-advisory:dev": "node --loader ts-node/esm src/mcp/arcanos-core-advisory-stdio.ts",

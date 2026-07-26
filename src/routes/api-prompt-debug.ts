@@ -1,11 +1,40 @@
-import express, { Request, Response } from 'express';
+import express, { type NextFunction, type Request, type Response } from 'express';
 
+import { createRateLimitMiddleware, securityHeaders } from '@platform/runtime/security.js';
+import {
+  controlPlaneHttpAuthenticationMiddleware,
+  requireControlPlaneHttpScopes,
+  requireControlPlaneOperator,
+} from '@services/controlPlane/httpAuth.js';
 import {
   getLatestPromptDebugTrace,
   listPromptDebugTraces,
 } from '@services/promptDebugTraceService.js';
 
 const router = express.Router();
+const requirePromptDebugReadScope = requireControlPlaneHttpScopes(
+  ['arcanos:read'],
+  'prompt_debug.http_authorization.denied'
+);
+
+function setPromptDebugNoStore(
+  _req: Request,
+  res: Response,
+  next: NextFunction
+): void {
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Pragma', 'no-cache');
+  next();
+}
+
+router.use(
+  securityHeaders,
+  setPromptDebugNoStore,
+  createRateLimitMiddleware(60, 5 * 60 * 1000),
+  controlPlaneHttpAuthenticationMiddleware,
+  requireControlPlaneOperator,
+  requirePromptDebugReadScope
+);
 
 function resolveLimit(value: unknown): number | undefined {
   if (typeof value !== 'string' || value.trim().length === 0) {
@@ -16,7 +45,7 @@ function resolveLimit(value: unknown): number | undefined {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
-router.get('/api/prompt-debug/latest', async (_req: Request, res: Response) => {
+router.get('/latest', async (_req: Request, res: Response) => {
   const requestId =
     typeof _req.query.requestId === 'string' && _req.query.requestId.trim().length > 0
       ? _req.query.requestId.trim()
@@ -28,7 +57,7 @@ router.get('/api/prompt-debug/latest', async (_req: Request, res: Response) => {
   });
 });
 
-router.get('/api/prompt-debug/events', async (req: Request, res: Response) => {
+router.get('/events', async (req: Request, res: Response) => {
   const requestId =
     typeof req.query.requestId === 'string' && req.query.requestId.trim().length > 0
       ? req.query.requestId.trim()
@@ -39,6 +68,13 @@ router.get('/api/prompt-debug/events', async (req: Request, res: Response) => {
   res.json({
     count: events.length,
     events,
+  });
+});
+
+router.use((_req: Request, res: Response) => {
+  res.status(404).json({
+    error: 'Route Not Found',
+    code: 404
   });
 });
 

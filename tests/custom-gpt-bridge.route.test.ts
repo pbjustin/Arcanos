@@ -29,6 +29,7 @@ jest.unstable_mockModule('../src/services/queuedGptCompletionService.js', () => 
 
 const { default: requestContext } = await import('../src/middleware/requestContext.js');
 const { default: bridgeRouter } = await import('../src/routes/bridge.js');
+const { executeCustomGptBridgeRequest } = await import('../src/services/customGptBridgeService.js');
 const { buildGptRequestFingerprintHash } = await import('../src/shared/gpt/gptIdempotency.js');
 
 function buildApp() {
@@ -266,6 +267,88 @@ describe('Custom GPT bridge route', () => {
     expect(waitForQueuedGptJobCompletionMock).toHaveBeenCalledWith('job-completed-123', {
       waitForResultMs: 3500,
       pollIntervalMs: 250,
+      signal: expect.any(AbortSignal),
     });
+    const waiterSignal = waitForQueuedGptJobCompletionMock.mock.calls[0]?.[1]
+      ?.signal as AbortSignal;
+    expect(waiterSignal.aborted).toBe(false);
+  });
+
+  it('returns a sanitized 503 with the accepted job id when polling becomes unavailable', async () => {
+    findOrCreateGptJobMock.mockResolvedValue({
+      job: buildJob('job-wait-unavailable-123', 'running'),
+      created: true,
+      deduped: false,
+      dedupeReason: 'new_job',
+    });
+    waitForQueuedGptJobCompletionMock.mockRejectedValue(
+      new MockJobRepositoryUnavailableError('internal bridge repository sentinel'),
+    );
+
+    const response = await request(buildApp())
+      .post('/api/bridge/gpt')
+      .set('Authorization', 'Bearer test-bridge-secret')
+      .send({
+        gptId: 'arcanos-core',
+        prompt: 'Analyze this deployment',
+        action: 'query_and_wait',
+      });
+
+    expect(response.status).toBe(503);
+    expect(response.body).toMatchObject({
+      ok: false,
+      status: 'queue_error',
+      error: {
+        source: 'queue',
+        message: 'Durable GPT job persistence is unavailable.',
+      },
+      jobId: 'job-wait-unavailable-123',
+      request_id: expect.any(String),
+      timing: expect.any(Object),
+    });
+    expect(JSON.stringify(response.body)).not.toContain('internal bridge repository sentinel');
+    expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
+    expect(waitForQueuedGptJobCompletionMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves enqueueing but rethrows an already-aborted wait signal', async () => {
+    const controller = new AbortController();
+    const expectedError = new Error('bridge client disconnected');
+    expectedError.name = 'AbortError';
+    controller.abort(expectedError);
+    findOrCreateGptJobMock.mockResolvedValue({
+      job: buildJob('job-aborted-wait-123', 'running'),
+      created: true,
+      deduped: false,
+      dedupeReason: 'new_job',
+    });
+    waitForQueuedGptJobCompletionMock.mockImplementation(
+      async (_jobId: string, options: { signal?: AbortSignal }) => {
+        options.signal?.throwIfAborted();
+        throw new Error('unreachable');
+      },
+    );
+
+    await expect(
+      executeCustomGptBridgeRequest({
+        request: {
+          gptId: 'arcanos-core',
+          prompt: 'Analyze this deployment',
+          action: 'query_and_wait',
+          metadata: {},
+        },
+        requestId: 'bridge-aborted-request',
+        actorKey: 'bridge-test-actor',
+        signal: controller.signal,
+      }),
+    ).rejects.toBe(expectedError);
+
+    expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
+    expect(waitForQueuedGptJobCompletionMock).toHaveBeenCalledWith(
+      'job-aborted-wait-123',
+      expect.objectContaining({
+        signal: controller.signal,
+      }),
+    );
   });
 });

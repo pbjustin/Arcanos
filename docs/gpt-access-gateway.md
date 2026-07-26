@@ -42,6 +42,16 @@ ARCANOS_GPT_ACCESS_SCOPES=capabilities.read,capabilities.run
 MCP_ALLOW_MODULE_ACTIONS=ARCANOS:CORE:query
 ```
 
+Capability discovery projects the complete explicit 15-definition module
+catalog under GPT Access authorization. Catalog membership does not itself
+enable execution: scopes, the module-action allowlist, confirmation policy, and
+each definition's trusted-context checks remain authoritative. The three
+protected definitions (`ARCANOS:CLI`, `ARCANOS:LOCAL_AGENT`, and
+`ARCANOS:PRODUCTIVITY`) are intentionally absent from the default GPT map,
+public introspection, public legacy registry, and legacy module routes.
+Their route, source-stem, and normalized name variants are also reserved from
+public substring, token, and fuzzy GPT matching.
+
 ## Optional ARCANOS:CLI Capability
 `ARCANOS:CLI` is disabled by default but remains visible in `GET /gpt-access/capabilities/v1` with `enabled:false` when `ARCANOS_CLI_BRIDGE_ENABLED` is not `true`. It is a control-plane capability under `/gpt-access/capabilities/v1`, not a `/gpt/:gptId` writing-plane route.
 
@@ -349,6 +359,8 @@ For protected backend calls, use the Bearer credential already configured on the
 Classify the request before choosing an Action. For general backend AI generation, advice, explanation, planning, review, architecture, code review, summarization, or writing—including requests phrased "Ask my backend AI..." or "How should I..."—call createAiJob, never runDispatch. Send the canonical internal gptId "arcanos-core"; never derive gptId from the visible display name "ARCANOS", and never send "default". Put the user's complete request in task. Generate a unique idempotencyKey for each semantic request and reuse it only when retrying that same request.
 
 After createAiJob returns, call getJobResult with its jobId. While the result status is pending, poll getJobResult again. On completed, return the result. On failed, expired, or not_found, stop and report the terminal state.
+
+On HTTP 503 GPT_ACCESS_JOBS_UNAVAILABLE, retain the same jobId and retry getJobResult with bounded backoff. Do not treat repository unavailability as not_found or create replacement work.
 
 For runtime inspection, worker status, queue inspection, diagnostics, MCP, and job-result lookup, use the dedicated /gpt-access operation. Use runDispatch only for other explicit operational natural-language status or control requests. Never route runtime inspection, worker status, queue inspection, MCP diagnostics, job creation, or job-result lookup through /gpt/:gptId.
 

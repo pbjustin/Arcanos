@@ -28,7 +28,7 @@ import {
   type AuditLogEntry
 } from "@services/auditSafe.js";
 import { getMemoryContext, storePattern } from "@services/memoryAware.js";
-import { getGPT5Model } from "@services/openai.js";
+import { getGPT5Model } from "@services/openai/credentialProvider.js";
 import { logger } from "@platform/logging/structuredLogging.js";
 import { getAiExecutionContext } from '@services/openai/aiExecutionContext.js';
 import type {

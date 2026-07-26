@@ -37,7 +37,7 @@ cp .env.example .env
 | `ARCANOS_GPT_ACCESS_PRINCIPAL_ID` | Yes for GPT Access-only tenant-scoped capabilities | none | Server-controlled principal for capabilities such as `ARCANOS:PRODUCTIVITY`; never source it from action payloads. |
 | `ARCANOS_GPT_ACCESS_WORKSPACE_ID` | Yes for GPT Access-only tenant-scoped capabilities | none | Server-controlled workspace paired with the configured principal; missing identity fails closed. |
 | `ARCANOS_PROCESS_KIND` | Yes for Railway launcher | none | Must be `web` or `worker` when using `scripts/start-railway-service.mjs`; omit for direct local `npm start`. |
-| `RUN_WORKERS` | No | `true` (non-test) | Local/direct background worker toggle. Ignored by Railway launcher role selection when `ARCANOS_PROCESS_KIND` is set. |
+| `RUN_WORKERS` | No | `true` (non-test) | Local/direct in-process worker toggle. The explicit API startup lifecycle boots it when enabled; importing worker configuration never starts execution. Railway role selection remains authoritative when `ARCANOS_PROCESS_KIND` is set. |
 | `WORKER_API_TIMEOUT_MS` | No | `30000` | Unified config default; some worker adapters fallback to `60000` if unset. |
 | `ARC_LOG_PATH` | No | `/tmp/arc/log` | Runtime log path. |
 | `ARC_MEMORY_PATH` | No | `/tmp/arc/memory` | Runtime memory path. |
@@ -45,6 +45,103 @@ cp .env.example .env
 | `RAILWAY_API_TOKEN` | No | none | Only required for Railway management/API tooling, not normal app runtime. |
 
 Explicit local/test mock paths can run without a real OpenAI credential. Normal production startup fails validation when the resolved key is missing, empty, or a placeholder; live AI behavior and the dedicated worker also require a valid key.
+
+### Standalone BullMQ/Redis AI runtime
+
+`arcanos-ai-runtime/` is an opt-in workspace with a separate HTTP process and
+worker. The root backend, root build, and canonical Railway web/worker launcher
+do not start it. Do not infer deployment or internet exposure from its presence
+in the repository.
+
+| Variable | Required | Default | Notes |
+| --- | --- | --- | --- |
+| `ARCANOS_AI_RUNTIME_ACCESS_TOKEN` | Yes for every `/jobs` request | none | Purpose-bound Bearer credential read once at the start of each request. It must be an exact 32–4096 visible-ASCII character value with no whitespace or placeholder form and must remain distinct from every other ARCANOS application credential. `x-api-key`, cookies, query values, and body fields are not accepted. |
+| `ARCANOS_AI_RUNTIME_PRINCIPAL_ID` | Yes | none | Server-owned principal written into new jobs and compared exactly on reads. The historical owner ID `anonymous` is reserved and makes authentication unavailable. Keep the configured ID stable across replicas and token rotations; changing it intentionally makes existing jobs unreadable. |
+| `ARCANOS_AI_RUNTIME_SCOPES` | Yes | none | Comma-separated allowlist containing `runtime:enqueue`, `runtime:read`, or both. Unknown or malformed scopes make authentication unavailable. |
+| `AI_RUNTIME_ALLOWED_MODELS` | Yes for `POST /jobs` and the worker | none | Comma-separated exact model allowlist. Configure 1–32 distinct visible-ASCII names, each at most 120 characters. No repository evidence identifies the correct deployed models, so there is intentionally no permissive default. |
+| `AI_RUNTIME_DEFAULT_MAX_TOKENS` | Yes for `POST /jobs` and the worker | none | Server-owned output-token value materialized when the caller omits `maxTokens`; integer 1–32768 and no greater than `AI_RUNTIME_MAX_TOKENS`. |
+| `AI_RUNTIME_MAX_TOKENS` | Yes for `POST /jobs` and the worker | none | Hard server-owned maximum for caller `maxTokens`; integer 1–32768. Choose the deployment value from its cost and latency budget. |
+| `AI_RUNTIME_ADMISSION_MAX_OUTSTANDING` | Yes for `POST /jobs` and the worker | none | Shared Redis reservation ceiling across cooperating API replicas; integer 1–100000. It bounds admitted executable work, not retained terminal jobs. |
+| `AI_RUNTIME_ADMISSION_RATE_MAX` | Yes for `POST /jobs` and the worker | none | Maximum enqueue attempts in the shared sliding window; integer 1–100000. The current single configured principal is one trust domain, so this is not per-end-user fairness. |
+| `AI_RUNTIME_ADMISSION_RATE_WINDOW_MS` | Yes for `POST /jobs` and the worker | none | Redis-time sliding-window duration; integer 1000–3600000 ms. A rejected request receives fixed `429` JSON and a bounded `Retry-After`. |
+| `AI_RUNTIME_ADMISSION_PENDING_GRACE_MS` | Yes for `POST /jobs` and the worker | none | Age before the reconciler inspects an unconfirmed reservation; integer 1–3600000 ms and at least the reconciliation interval. |
+| `AI_RUNTIME_ADMISSION_MISSING_CONFIRM_MS` | Yes for `POST /jobs` and the worker | none | Confirmation delay between two observations of a missing BullMQ job before its reservation is released; integer 1–3600000 ms and at least the reconciliation interval. |
+| `AI_RUNTIME_ADMISSION_RECONCILE_INTERVAL_MS` | Yes for `POST /jobs` and the worker | none | Server-side bounded reconciliation interval; integer 1000–600000 ms. |
+| `AI_RUNTIME_ADMISSION_RECONCILE_BATCH_SIZE` | Yes for `POST /jobs` and the worker | none | Maximum stale reservations inspected per pass; integer 1–1000. |
+| `AI_RUNTIME_ADMISSION_CLAIM_GRACE_MS` | Yes for `POST /jobs` and the worker | none | Age before a claimed/live reservation may be reconciled; integer 1–3600000 ms and at least `WATCHDOG_LIMIT_MS + AI_RUNTIME_ADMISSION_RECONCILE_INTERVAL_MS`. This prevents a lost-lock replacement attempt from releasing an earlier provider call that is still inside its watchdog horizon. |
+| `PORT` | No | `3000` | Standalone HTTP listener port. This workspace currently relies on the platform/default listener host unless separately isolated. |
+| `AI_RUNTIME_QUEUE_NAME` | Yes for the standalone API and worker | none | Stable environment/version namespace used by both BullMQ and the admission ledger. It must match `^[a-z0-9][a-z0-9_-]{0,63}$` and must be identical across cooperating API and worker replicas. Use a new value for a coordinated versioned cutover; never point two environments at the same queue name and Redis database. |
+| `AI_RUNTIME_REDIS_URL` | Yes unless `REDIS_HOST` is set | none | Preferred standalone BullMQ target. Only `redis://` and `rediss://` URLs with an optional numeric database path are accepted; query strings and fragments are rejected. The URL takes precedence over the legacy host/port pair and may carry Redis ACL credentials. Keep the complete value secret. Use `redis://` only for loopback or an independently verified trusted private channel; use `rediss://` when the deployment trust boundary requires TLS. |
+| `REDIS_HOST` | Yes unless `AI_RUNTIME_REDIS_URL` is set | none | Legacy standalone BullMQ Redis host. This is not the root backend's `REDIS_URL` lifecycle. |
+| `REDIS_PORT` | No | `6379` | Legacy standalone BullMQ Redis port; ignored when `AI_RUNTIME_REDIS_URL` is set. |
+| `OPENAI_API_KEY` | Yes for the standalone worker; not read by the HTTP process | none | Worker-owned provider credential. Worker startup fails before creating Redis/BullMQ resources when it is missing. Do not configure it on the standalone HTTP process. |
+| `AI_RUNTIME_SHUTDOWN_TIMEOUT_MS` | No | `10000` | Shared graceful-shutdown deadline for the standalone HTTP and worker processes; integer 1000–300000 ms. Size the worker value against the provider watchdog and the deployment platform's termination grace. A deadline force-closes owned connections and terminates with a nonzero exit. |
+| `AI_RUNTIME_WORKER_STARTUP_TIMEOUT_MS` | No | `30000` | Deadline for the standalone worker to establish both Queue and Worker Redis readiness before processing begins; integer 1000–300000 ms. Expiry emits only the fixed startup-failure event, closes owned BullMQ/Redis resources through the shutdown coordinator, and exits nonzero so the process cannot remain live but inert. |
+| `AI_RUNTIME_JOB_RETENTION_SECONDS` | No | `3600` | Age limit for completed and failed jobs; 60–604800 seconds. It does not bound queued backlog. |
+| `AI_RUNTIME_MAX_COMPLETED_JOBS` | No | `1000` | Completed-job count retained by BullMQ; 1–100000. |
+| `AI_RUNTIME_MAX_FAILED_JOBS` | No | `1000` | Failed-job count retained by BullMQ; 1–100000. |
+
+Authentication and the endpoint-specific scope run before the 256 KiB JSON
+parser. New jobs receive only the configured principal, and
+`GET|HEAD /jobs/:id` returns the same 404 for absent, legacy-unowned, and
+cross-principal jobs. All responses are `no-store`. Historical jobs written
+with principal `anonymous` are intentionally unreadable; if a separately
+deployed runtime is discovered, drain or expire them through an approved
+operational procedure before rollout rather than adding an anonymous fallback.
+The admission ledger is also a coordinated-cutover boundary. The runtime now
+requires an explicit `AI_RUNTIME_QUEUE_NAME` instead of silently sharing the
+historical `ai-jobs` namespace. Drain the existing queue or move both API and
+worker to one new versioned name before enabling it. A new worker intentionally
+fails jobs that lack reservations, while an old worker cannot perform the new
+claim-bound release. Repository evidence does not show whether this standalone
+runtime is deployed or has an existing backlog.
+Validated message JSON is reconstructed under explicit depth, node, array,
+object-key, and aggregate-string budgets, then revalidated by the worker. An
+authenticated enqueue request fails closed before JSON parsing when the model
+or token policy is missing or malformed. The worker binds to the exact
+configured principal, model allowlist, default output limit, and hard output
+limit before it accepts persisted queue data.
+Completed results are reduced before persistence and again on read to bounded
+output text or the existing timeout envelope; raw provider response metadata,
+encrypted reasoning, errors, and unknown future fields are not public API.
+The HTTP queue/admission connection uses a three-second connect timeout,
+two-second command timeout, disabled offline queue, one retry per command, and
+an availability gate in front of every Queue or admission operation. Requests
+fail closed without waiting on BullMQ initialization while Redis is unavailable;
+reconnects continue with a delay capped at five seconds so the gate can recover.
+The BullMQ worker uses the same target with its required long-lived
+blocking-command profile and does not apply a command timeout to blocking reads.
+Queue initialization is owned by an explicit factory rather than module import,
+and Queue error logs contain only a stable event name, not the Redis error or
+configured URL.
+`SIGTERM` and `SIGINT` are idempotent and bounded. The HTTP process first stops
+accepting requests, stops reconciliation, drains accepted requests, and then
+closes its Queue. The worker starts fetching only after both its admission Queue
+and blocking Worker connection are ready; shutdown stops fetching, waits for
+active work and terminal reservation releases, and then closes the admission
+Queue. If the configured deadline expires, both processes force-disconnect and
+terminate with a nonzero exit without logging raw shutdown errors. A worker
+readiness or run-loop failure uses the same coordinated cleanup and nonzero
+termination path instead of leaving an idle process alive.
+
+Enqueue rate is consumed before body parsing. A reservation is created before
+`Queue.add`, confirmed afterward, claimed with the BullMQ worker token before
+provider execution, and held until BullMQ reports a terminal transition.
+Ambiguous enqueue outcomes remain reserved and are recovered by bounded,
+idempotent reconciliation; a missing job must be observed twice. There is no
+single transaction spanning the custom admission ledger and BullMQ's high-level
+`Queue.add`, so an ambiguous physical queue entry can temporarily exist, but an
+unreserved or replayed entry fails worker preflight before reaching the provider.
+The source tests cover fail-closed adapter responses and lifecycle behavior with
+mocked Redis results. The required `runtime-redis-admission` CI job additionally
+runs the standalone runtime regression suite, then executes every admission Lua
+lifecycle plus concurrent shared-cap and rate-window invariants through
+independent Redis connections against a disposable loopback service. It also
+drives a real BullMQ Queue/Worker pair to prove that unreserved jobs cannot reach
+the executor and that completed/failed jobs release their token-bound
+reservations. Its test command refuses non-loopback endpoints, requires database
+15 and an explicit disposable-service confirmation, uses unique key namespaces,
+and never calls `FLUSHDB`. That job must pass before activation.
 
 | Variable | Default | Notes |
 | --- | --- | --- |
@@ -96,6 +193,117 @@ The OpenAI client resolves keys in this order:
 | `ARCANOS_AUTOMATION_HEADER` | `x-arcanos-automation` | Header carrying automation secret. |
 | `ASK_ROUTE_MODE` | `gone` | Legacy ask-style migration switch. Set `compat` only while temporarily supporting old `/brain` callers. |
 
+### HTTP control-plane authentication
+
+Both `POST /api/control-plane` routes, `/api/self-heal/*`,
+`/api/self-improve/*`, detailed `GET /status/safety/self-heal`, and integrity
+quarantine release require a
+purpose-bound bearer identity before scope authorization, confirmation,
+capability checks, provider probes, or execution. The self-healing surfaces
+share an ingress-derived client limiter before the broad JSON parser; decisions,
+active provider probes, self-improve control mutations, and quarantine release
+also use tighter
+authenticated-principal buckets. Authenticated mutation JSON is capped at
+256 KiB. The access token is not interchangeable with
+the separate control-plane approval token used by approval-gated protocol
+operations.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `ARCANOS_CONTROL_PLANE_ACCESS_TOKEN` | none | Dedicated bearer credential for HTTP control-plane operations, protected DevOps/PR diagnostic execution, legacy SDK/orchestration control, `/api/self-heal/*`, `/api/self-improve/*`, detailed `GET /status/safety/self-heal`, and integrity-quarantine release. It must be 32–4096 visible ASCII characters with no whitespace and must not equal another configured purpose-bound credential. Missing or invalid server configuration fails closed at request time; the optional routes return 503 rather than blocking application startup. |
+| `ARCANOS_CONTROL_PLANE_PRINCIPAL_ID` | none | Server-bound operator identifier used for control-plane caller and approval attribution. Caller-supplied `context.caller` and `approval.approvedBy` never establish identity. |
+| `ARCANOS_CONTROL_PLANE_SCOPES` | empty | Comma-separated server-owned scope grant. Empty grants no operations. Every scope declared by the selected operation must be present. Repository-file inspection under `/api/codebase/*` requires `repo:read`; direct `/api/pr-analysis/analyze` execution requires `repo:verify`; `/devops/self-test` and `/devops/daily-summary` require `diagnostics:execute`; legacy SDK/orchestration reads require `arcanos:read`, while SDK mutations and orchestration reset/purge require `mcp:invoke` plus confirmation; prompt and AI-routing debug reads and direct self-heal/detailed safety reads also require `arcanos:read`; active provider probes add `self-heal:probe`; decisions require `self-heal:decide`; `execute: true` adds `self-heal:execute`; manual self-improve runs require both decision and execution scopes; freeze, unfreeze, autonomy changes, and integrity-quarantine release require `self-improve:control`. |
+| `ARCANOS_CONTROL_PLANE_APPROVAL_TOKEN` | none | Separate approval credential for approval-gated `POST /api/control-plane/operations` protocol requests. It is action approval, not HTTP caller authentication. |
+| `CODEBASE_ROOT` | auto-detected repository root | Optional root for `/api/codebase/*`. An explicit value must canonicalize to a directory containing `package.json`; invalid configuration fails closed instead of falling back to a broader working directory. |
+
+### Prompt and AI-routing trace containment
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `PROMPT_DEBUG_TRACE_MODE` | `metadata` | Exact `off`, `metadata`, or `full`. `metadata` keeps bounded categorical routing evidence but removes prompts, executor payloads, responses, session values, and raw failure details. `off` collects nothing. Invalid non-empty values resolve to `off`. `full` is an explicit sensitive-debug mode with bounded cloning and credential redaction; it is not an anonymization guarantee. |
+| `PROMPT_DEBUG_TRACE_PERSIST` | `false` | Only exact `true` permits prompt-debug disk hydration and append. Persistence remains disabled when the byte cap is missing or invalid. |
+| `PROMPT_DEBUG_TRACE_MAX_BYTES` | none | Required only for persistence. Accepts an integer from 1,024 through 104,857,600 bytes. Complete JSONL events are dropped at the cap; the service never truncates or rotates the file automatically. |
+| `PROMPT_DEBUG_EVENTS_PATH` | `logs/prompt-debug-events.jsonl` | Selects the optional JSONL path but never enables persistence by itself. |
+
+The metadata policy also covers the bounded in-memory AI-routing debug store.
+Both read APIs require the control-plane operator identity and `arcanos:read`.
+Self-heal consumes categorical intent/tool evidence and does not require prompt
+text. Switching from `full` to `metadata` purges retained in-memory content.
+Previously created JSONL files remain sensitive and require an explicitly
+approved operator rotation or deletion procedure; the application does not
+remove them during rollout.
+
+For HTTP predictive decisions, server feature flags remain authoritative.
+`simulate` is accepted only with explicit `dryRun: true` and without
+`execute: true`. Live execution returns 409 while predictive healing is
+disabled or server dry-run is enabled; the request body cannot lower either
+server guard.
+
+### Daemon transport authentication
+
+Every `/api/daemon/*` route requires one deployment-wide, purpose-bound
+credential before heartbeat, command, result, confirmation, registry, or daemon
+store work. The daemon router is mounted outside the writing-plane consistency
+and reroute flow. Authenticated unknown paths terminate inside the daemon
+namespace instead of falling through to GPT dispatch.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `ARCANOS_DAEMON_ACCESS_TOKEN` | none | Dedicated daemon transport credential shared by the backend and bundled Python daemon. Configure an exact, case-sensitive 32–4096 character value with no whitespace or placeholder text, distinct from every credential in `src/shared/security/purposeBoundCredential.ts`. The only accepted carrier is exactly one `x-arcanos-daemon-token`; Bearer authorization, `x-gpt-id`, cookies, query parameters, and body fields are ignored. Missing or invalid server configuration returns `503 DAEMON_AUTH_UNAVAILABLE`; missing, malformed, duplicate, or incorrect request credentials return `401 DAEMON_AUTH_REQUIRED`. The backend reads configuration per request; the Python daemon loads it at process start and fails locally before network access when it is missing or malformed. |
+
+This boundary prevents anonymous transport callers but does not establish
+per-instance identity. Any credential holder can address any known
+`instanceId`. The backend persists only internal store partitions—not the
+access credential—and preserves historical opaque partition values for
+compatibility. Coordinate backend and daemon token rollout because all daemon
+routes, including registry startup reads, fail closed without it.
+
+### Memory-plane authentication
+
+The production mounts for `/api/memory/*` and `/api/save-conversation*`, plus
+the exact natural-language memory-interception branch of `POST /gpt/:gptId`,
+require one deployment-wide, purpose-bound credential. Authentication occurs
+before writing-plane consistency checks, confirmation gates, persistence,
+fast-path execution, or job creation. Requests that do not enter the GPT memory
+interception branch are unchanged.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `ARCANOS_MEMORY_ACCESS_TOKEN` | none | Dedicated memory/session-plane credential for `/api/memory/*`, `/api/save-conversation*`, `/api/sessions*`, and exact GPT memory interception. Configure an exact, case-sensitive 32–4096 character value with no whitespace or placeholder text, distinct from every credential in `src/shared/security/purposeBoundCredential.ts`. Send it only through `x-arcanos-memory-token`; Bearer authorization, cookies, query parameters, and body fields are not accepted. Missing or invalid server configuration returns `503 MEMORY_AUTH_UNAVAILABLE`; missing, malformed, duplicate, or incorrect request credentials return `401 MEMORY_AUTH_REQUIRED`. Configuration is resolved per request so rotation is immediate. |
+
+This is access containment, not tenant authentication. Any token holder can
+still choose `sessionId`, use global-list/search behavior where supported, and
+address records available to this deployment. Tenant ownership requires a
+separate schema and principal-binding change.
+
+### Worker operator authentication
+
+Privileged worker-helper routes, `POST /workers/heal`, and `POST /workers/run/:workerId` share the existing worker-helper credential verifier. The two direct routes accept the configured token or an already established full `admin`/`operator`/`owner` identity, but do not treat legacy daemon markers or operator audit labels as authority. They check authentication before action confirmation; `x-confirmed` and automation confirmation cannot authenticate a caller. Both heal entry points share a 10-per-15-minute authenticated-principal budget.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `ARCANOS_WORKER_HELPER_TOKEN` | none | Privileged worker-control credential accepted through exactly one non-empty `x-arcanos-worker-helper-token` or Bearer carrier. Configure an exact 32–4096 character value with no whitespace or placeholder text, distinct from every credential in the canonical ARCANOS application-auth registry in `src/shared/security/purposeBoundCredential.ts`. Duplicate headers, simultaneous carriers, and values requiring trimming fail closed. Existing `/worker-helper/*` routes retain their documented internal-context alternatives; direct `/workers/heal` and `/workers/run/:workerId` accept only this token or an established full `admin`/`operator`/`owner` identity. `operator-light` is denied. The bundled helper and remote repair actuator read this variable only from their environment and send it only through `x-arcanos-worker-helper-token`; configure the identical value on the calling process and target service. |
+| `SELF_HEAL_WORKER_SERVICE_URL` | none | Preferred remote worker-helper actuator origin. It must be an explicit, exact HTTPS origin with no credentials, path, query, or fragment. An exact HTTP loopback origin is accepted for local use only. |
+| `WORKER_HELPER_BASE_URL`, `RAILWAY_SERVICE_ARCANOS_WORKER_URL`, `ARCANOS_WORKER_PUBLIC_URL` | none | Compatibility aliases for the remote worker-helper actuator origin. If more than one URL variable is configured, all configured values must normalize to the same exact origin. An invalid or conflicting alias makes remote actuation unavailable. |
+
+`node scripts/worker-helper.mjs status` remains credential-free. Every protected
+helper command requires a valid `ARCANOS_WORKER_HELPER_TOKEN`, fails locally
+before fetch when the value is missing, invalid, placeholder-like, or collides
+with another canonical application credential, and rejects token,
+worker-helper-token, or Authorization CLI flags. Protected script and actuator
+requests use only the custom worker-helper header, never an outbound
+Authorization carrier, and reject redirects.
+
+Remote worker-helper actuation is reported unavailable unless its URL aliases
+resolve to one permitted origin and the caller has a valid token. The actuator
+re-resolves the token immediately before fetch so rotation and collision changes
+fail closed. The helper script accepts at most 1 MiB of JSON response data and
+redacts exact credential reflections. The remote actuator accepts at most 64
+KiB of JSON and returns only the requested-force value plus the allowlisted
+`restart.started`, `restart.alreadyRunning`, and `restart.runWorkers` values. It
+validates but discards target-controlled message text and generates a local
+`restart.message` from those booleans.
+
 ### Railway service role
 | Variable | Required | Purpose |
 | --- | --- | --- |
@@ -126,7 +334,7 @@ Protected GPT Action and operator calls must use `/gpt-access/*` for backend ope
 | `ARCANOS_CORE_BACKGROUND_PIPELINE_TIMEOUT_MS` | No | `120000` | Primary Trinity timeout for background `ARCANOS:CORE` execution, clamped by code. |
 | `ARCANOS_CORE_BACKGROUND_DEGRADED_HEADROOM_MS` | No | background profile default | Time reserved for degraded fallback after a background pipeline timeout. |
 | `TRINITY_DAG_GPT_ACCESS_ENABLED` | No | auto-enabled only when worker slots are greater than `DAG_MAX_CONCURRENT_NODES` | Routes queued DAG node execution through `/gpt-access/jobs/create` and `/gpt-access/jobs/result`. Set `true` only with `JOB_WORKER_CONCURRENCY` or `WORKER_COUNT` at least `DAG_MAX_CONCURRENT_NODES + 1`; unsafe forced routing fails clearly instead of risking nested queue deadlock. Set `false` for local legacy direct-worker debugging. |
-| `GPT_MODULE_MAP` | No | auto-discovered module definitions | JSON override/extension for GPT ID to module bindings. |
+| `GPT_MODULE_MAP` | No | definitions from the explicit module catalog | JSON override/extension for GPT ID bindings; each target must match an exact registered public module/route pair, so it cannot register service files, target absent or mismatched definitions, or expose GPT Access-only modules. |
 
 Protected async Trinity flow:
 1. `POST /gpt-access/jobs/create` validates bearer auth and the `jobs.create` scope.
@@ -274,7 +482,8 @@ The semantic planner can only propose one registered action plus a JSON-object p
 | --- | --- | --- |
 | `OPENAI_API_KEY` | none | Required by the current daemon startup validator, including backend and hybrid routing modes. |
 | `BACKEND_URL` | none | Backend routing target (recommended for `arcanos-daemon`). |
-| `BACKEND_TOKEN` | none | Optional bearer token for backend auth. |
+| `BACKEND_TOKEN` | none | Optional generic bearer token for non-daemon backend routes. It is never sent to `/api/daemon/*`. |
+| `ARCANOS_DAEMON_ACCESS_TOKEN` | none | Required for generic daemon heartbeat and command threads and every `/api/daemon/*` request. The Python client sends it only as `x-arcanos-daemon-token`, with no `BACKEND_TOKEN`/API-key/admin-key fallback. |
 | `BACKEND_GPT_ID` | `arcanos-daemon` | Identifies the daemon to the backend for `/gpt/:gptId` routing and optional `x-gpt-id` auth metadata. |
 | `BACKEND_ALLOW_GPT_ID_AUTH` | `false` | If true, daemon may authenticate via `x-gpt-id` without a bearer token (backend must allow). |
 | `BACKEND_ROUTING_MODE` | `hybrid` | `local`, `backend`, or `hybrid`. |
@@ -381,6 +590,8 @@ This table mirrors high-impact runtime keys and active operator controls in `.en
 | `ALLOW_MOCK_FALLBACK` | `false` | Allow fallback to mocked providers in non-prod. |
 | `BUDGET_DISABLED` | `false` | Disable runtime budget enforcement (not recommended in prod). |
 | `ARCANOS_OWNER_EMAIL` | `you@example.com` | Optional identity-module owner bootstrap email; replace the example only in runtime configuration. |
+| `DEBUG_WATCHDOG` | `false` (commented) | Registers the optional `GET /debug/watchdog` route only when exactly `true`; changing this flag requires route re-registration or process restart. Leave disabled in production. |
+| `DEBUG_WATCHDOG_KEY` | commented placeholder | Required whenever `DEBUG_WATCHDOG=true`. Use a distinct 32–4096 character purpose-bound credential with no surrounding whitespace or placeholder form. The route reads it per request so rotation/revocation is immediate; unavailable configuration returns generic `503`, while missing or wrong `x-debug-key` returns generic `403`. |
 | `WATCHDOG_LIMIT_MS` | `120000` | Hard watchdog limit for long-running operations. |
 | `SAFETY_BUFFER_MS` | `2000` | Safety buffer subtracted from watchdog to stop early. |
 | `TRINITY_BASE_SOFT_CAP_MS` | `60000` | Base soft cap for Trinity-mode calls. |
@@ -398,7 +609,7 @@ This table mirrors high-impact runtime keys and active operator controls in `.en
 | `RAILWAY_API_TOKEN` | `` | Railway API token used by optional automation/ops routes. |
 | `ARC_LOG_PATH` | `/tmp/arc/log` | Filesystem path for logs (if file logging enabled). |
 | `ARC_MEMORY_PATH` | `/tmp/arc/memory` | Filesystem path for memory persistence. |
-| `RUN_WORKERS` | `true` | Whether to run background workers in this process. |
+| `RUN_WORKERS` | `true` | Whether the explicit local/direct API startup lifecycle boots the in-process worker runtime. The Railway launcher sets this by role; the dedicated `jobRunner` owns its own PostgreSQL queue lifecycle. |
 | `WORKER_API_TIMEOUT_MS` | `60000` template override; `30000` unified-config default when unset | Timeout for worker-to-server API calls. |
 | `JOB_WORKER_ID` | `async-queue` (commented) | Dedicated worker identity. |
 | `JOB_WORKER_CONCURRENCY` | `1` (commented) | Queue-consumer slots per worker process. |

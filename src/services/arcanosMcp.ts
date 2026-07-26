@@ -1,22 +1,18 @@
-import type { Request } from 'express';
-
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 
 import type { McpRequestContext } from '../mcp/context.js';
+import type {
+  ArcanosMcpInvokeOptions as McpInvokeOptions,
+  ArcanosMcpListToolsOptions as McpListToolsOptions,
+  ArcanosMcpPort,
+} from './arcanosMcpPort.js';
+
+export type {
+  ArcanosMcpInvokeOptions,
+  ArcanosMcpListToolsOptions,
+} from './arcanosMcpPort.js';
 
 type JsonObject = Record<string, unknown>;
-
-export interface ArcanosMcpInvokeOptions {
-  toolName: string;
-  toolArguments?: JsonObject;
-  request?: Request;
-  sessionId?: string;
-}
-
-export interface ArcanosMcpListToolsOptions {
-  request?: Request;
-  sessionId?: string;
-}
 
 export interface ArcanosMcpToolCallResult extends JsonObject {
   content?: JsonObject[];
@@ -32,9 +28,9 @@ export interface ArcanosMcpToolListResult extends JsonObject {
   tools: ArcanosMcpToolDefinition[];
 }
 
-export interface ArcanosMcpService {
-  invokeTool: (options: ArcanosMcpInvokeOptions) => Promise<ArcanosMcpToolCallResult>;
-  listTools: (options?: ArcanosMcpListToolsOptions) => Promise<ArcanosMcpToolListResult>;
+export interface ArcanosMcpService extends ArcanosMcpPort {
+  invokeTool: (options: McpInvokeOptions) => Promise<ArcanosMcpToolCallResult>;
+  listTools: (options?: McpListToolsOptions) => Promise<ArcanosMcpToolListResult>;
 }
 
 type InternalMcpClient = {
@@ -98,7 +94,7 @@ function normalizeToolName(toolName: string): string {
 }
 
 async function buildInvocationContext(
-  options: Pick<ArcanosMcpInvokeOptions, 'request' | 'sessionId'> | ArcanosMcpListToolsOptions
+  options: Pick<McpInvokeOptions, 'request' | 'sessionId'> | McpListToolsOptions
 ): Promise<McpRequestContext> {
   const contextModule = await import('../mcp/context.js');
 
@@ -107,7 +103,9 @@ async function buildInvocationContext(
     return contextModule.buildMcpRequestContext(options.request);
   }
 
-  return contextModule.buildMcpInternalContext(options.sessionId);
+  return contextModule.buildMcpInternalContext(options.sessionId, {
+    arcanosMcp: arcanosMcpService,
+  });
 }
 
 async function closeInternalMcpConnection(connection: InternalMcpConnection, ctx: McpRequestContext): Promise<void> {
@@ -176,7 +174,7 @@ async function openInternalMcpConnection(ctx: McpRequestContext): Promise<Intern
  * Edge case behavior:
  * - Throws on empty tool names, MCP transport startup failures, or tool execution failures.
  */
-export async function invokeArcanosMcpTool(options: ArcanosMcpInvokeOptions): Promise<ArcanosMcpToolCallResult> {
+export async function invokeArcanosMcpTool(options: McpInvokeOptions): Promise<ArcanosMcpToolCallResult> {
   const normalizedToolName = normalizeToolName(options.toolName);
   const context = await buildInvocationContext(options);
   const connection = await openInternalMcpConnection(context);
@@ -208,7 +206,7 @@ export async function invokeArcanosMcpTool(options: ArcanosMcpInvokeOptions): Pr
  * - Throws when the in-process MCP connection cannot be opened or tool discovery fails.
  */
 export async function listArcanosMcpTools(
-  options: ArcanosMcpListToolsOptions = {}
+  options: McpListToolsOptions = {}
 ): Promise<ArcanosMcpToolListResult> {
   const context = await buildInvocationContext(options);
   const connection = await openInternalMcpConnection(context);

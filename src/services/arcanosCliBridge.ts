@@ -62,7 +62,7 @@ interface BridgeRunResponse {
   };
 }
 
-export const CLI_READONLY_ACTIONS = new Set([
+const cliReadOnlyActions = new Set([
   'status',
   'policy',
   'repoContext',
@@ -70,6 +70,10 @@ export const CLI_READONLY_ACTIONS = new Set([
   'proposePatch',
   'tailAudit'
 ]);
+
+export function isArcanosCliReadOnlyAction(action: string): boolean {
+  return cliReadOnlyActions.has(action.trim());
+}
 
 export function isArcanosCliBridgeEnabled(): boolean {
   return process.env.ARCANOS_CLI_BRIDGE_ENABLED === 'true';

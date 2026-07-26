@@ -102,6 +102,12 @@ function gptStatusCode(envelope: AskEnvelope): number {
   if (code === 'UNKNOWN_GPT') {
     return 404;
   }
+  if (code === 'MEMORY_AUTH_REQUIRED') {
+    return 401;
+  }
+  if (code === 'MEMORY_AUTH_UNAVAILABLE') {
+    return 503;
+  }
   if (code === 'SYSTEM_STATE_CONFLICT') {
     return 409;
   }

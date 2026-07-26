@@ -295,6 +295,39 @@ function assertActionSupportedByExecutor(
   }
 }
 
+async function loadAuthorizedExecutorAgent(
+  client: PoolClient,
+  actions: readonly ActionRecord[],
+  executor: ActionPlanExecutorBinding,
+): Promise<AgentRow | null> {
+  const firstAction = actions[0];
+  if (!firstAction) {
+    return null;
+  }
+  assertActionSupportedByExecutor(firstAction, executor);
+
+  const agentResult = await client.query<AgentRow>(
+    'SELECT "id", "capabilities" FROM "Agent" WHERE "id"=$1 FOR SHARE',
+    [executor.agentId],
+  );
+  const agent = agentResult.rows[0];
+  if (
+    !agent
+    || !Array.isArray(agent.capabilities)
+    || !agent.capabilities.includes(firstAction.capability)
+  ) {
+    return null;
+  }
+
+  for (const action of actions.slice(1)) {
+    assertActionSupportedByExecutor(action, executor);
+    if (!agent.capabilities.includes(action.capability)) {
+      return null;
+    }
+  }
+  return agent;
+}
+
 function signedInt32(hex: string): number {
   const value = Number.parseInt(hex, 16);
   return value > 0x7fffffff ? value - 0x100000000 : value;
@@ -566,17 +599,12 @@ export class ActionPlanExecutionRepository {
       if (actions.length !== runs.rows.length) {
         throw new ActionPlanExecutionError(ACTION_PLAN_EXECUTION_ERRORS.commandIdempotencyConflict);
       }
+      const agent = await loadAuthorizedExecutorAgent(client, actions, input.executor);
+      if (!agent) {
+        throw new ActionPlanExecutionError(ACTION_PLAN_EXECUTION_ERRORS.commandIdempotencyConflict);
+      }
       const snapshots: Array<{ action: ActionRecord; snapshot: ActionExecutionSnapshot }> = [];
       for (const action of actions) {
-        assertActionSupportedByExecutor(action, input.executor);
-        const agentResult = await client.query<AgentRow>(
-          'SELECT "id", "capabilities" FROM "Agent" WHERE "id"=$1 FOR SHARE',
-          [action.agentId],
-        );
-        const agent = agentResult.rows[0];
-        if (!agent || !Array.isArray(agent.capabilities) || !agent.capabilities.includes(action.capability)) {
-          throw new ActionPlanExecutionError(ACTION_PLAN_EXECUTION_ERRORS.commandIdempotencyConflict);
-        }
         snapshots.push({
           action,
           snapshot: buildActionExecutionSnapshot(action, {
@@ -670,16 +698,11 @@ export class ActionPlanExecutionRepository {
       }
       const snapshots = [] as Array<{ action: ActionRecord; snapshot: ActionExecutionSnapshot; snapshotId: string }>;
       try {
+        const agent = await loadAuthorizedExecutorAgent(client, actions, input.executor);
+        if (!agent) {
+          throw new ActionPlanExecutionError(ACTION_PLAN_EXECUTION_ERRORS.executorUnavailable);
+        }
         for (const action of actions) {
-          assertActionSupportedByExecutor(action, input.executor);
-          const agentResult = await client.query<AgentRow>(
-            'SELECT "id", "capabilities" FROM "Agent" WHERE "id"=$1 FOR SHARE',
-            [action.agentId],
-          );
-          const agent = agentResult.rows[0];
-          if (!agent || !Array.isArray(agent.capabilities) || !agent.capabilities.includes(action.capability)) {
-            throw new ActionPlanExecutionError(ACTION_PLAN_EXECUTION_ERRORS.executorUnavailable);
-          }
           snapshots.push({
             action,
             snapshot: buildActionExecutionSnapshot(action, {

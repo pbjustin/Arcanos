@@ -1,7 +1,8 @@
 import { describe, beforeAll, it, expect } from '@jest/globals';
 
 const externalBaseUrl = process.env.TEST_SERVER_BASE_URL?.trim();
-const describeWithServer = externalBaseUrl ? describe : describe.skip;
+const controlPlaneAccessToken = process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN?.trim();
+const describeWithServer = externalBaseUrl && controlPlaneAccessToken ? describe : describe.skip;
 
 describeWithServer('Codebase access API', () => {
   let baseUrl: string;
@@ -10,12 +11,23 @@ describeWithServer('Codebase access API', () => {
     if (!externalBaseUrl) {
       throw new Error('TEST_SERVER_BASE_URL is required for codebase API endpoint tests');
     }
+    if (!controlPlaneAccessToken) {
+      throw new Error('ARCANOS_CONTROL_PLANE_ACCESS_TOKEN is required for codebase API endpoint tests');
+    }
 
     baseUrl = externalBaseUrl.replace(/\/$/, '');
   });
 
+  function authorizedFetch(path: string): Promise<Response> {
+    return fetch(`${baseUrl}${path}`, {
+      headers: {
+        Authorization: `Bearer ${controlPlaneAccessToken}`,
+      },
+    });
+  }
+
   it('lists repository root contents', async () => {
-    const response = await fetch(`${baseUrl}/api/codebase/tree`);
+    const response = await authorizedFetch('/api/codebase/tree');
     expect(response.status).toBe(200);
     const payload = await response.json();
     expect(payload.status).toBe('success');
@@ -26,7 +38,7 @@ describeWithServer('Codebase access API', () => {
   });
 
   it('reads a repository file', async () => {
-    const response = await fetch(`${baseUrl}/api/codebase/file?path=README.md&startLine=1&endLine=5`);
+    const response = await authorizedFetch('/api/codebase/file?path=README.md&startLine=1&endLine=5');
     expect(response.status).toBe(200);
     const payload = await response.json();
     expect(payload.status).toBe('success');
@@ -39,10 +51,10 @@ describeWithServer('Codebase access API', () => {
   });
 
   it('prevents path traversal outside repository', async () => {
-    const response = await fetch(`${baseUrl}/api/codebase/file?path=../package.json`);
+    const response = await authorizedFetch('/api/codebase/file?path=../package.json');
     expect(response.status).toBe(400);
     const payload = await response.json();
     expect(payload.status).toBe('error');
-    expect(payload.message).toContain('outside');
+    expect(payload.message).toBe('Unable to read file');
   });
 });

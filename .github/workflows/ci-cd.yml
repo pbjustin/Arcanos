@@ -445,10 +445,52 @@ jobs:
       - name: 🗄️ Verify database-enforced local-agent semantics
         run: npm run test:local-agent-postgres
 
+  runtime-redis-admission:
+    name: Standalone Runtime Redis Admission
+    runs-on: ubuntu-latest
+    needs: [lint-and-typecheck]
+    permissions:
+      contents: read
+    timeout-minutes: 15
+    services:
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      AI_RUNTIME_TEST_REDIS_URL: redis://127.0.0.1:6379/15
+      AI_RUNTIME_TEST_REDIS_CONFIRM_DISPOSABLE: disposable-loopback-only
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: 🧰 Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+
+      - name: 📦 Install dependencies
+        run: npm ci
+
+      - name: 🧪 Verify standalone runtime regressions
+        run: npm run test:runtime-integration
+
+      - name: 🧱 Verify Redis admission and BullMQ execution invariants
+        run: npm run test:runtime-redis-integration
+
   all-checks-complete:
     name: All Checks Complete
     runs-on: ubuntu-latest
-    needs: [lint-and-typecheck, build, test, validate-railway-compatibility, validate-deployment-readiness, security-audit, sdk-compliance-audit, python-cli-windows, local-agent-sandbox-linux, local-agent-postgres-concurrency]
+    needs: [lint-and-typecheck, build, test, validate-railway-compatibility, validate-deployment-readiness, security-audit, sdk-compliance-audit, python-cli-windows, local-agent-sandbox-linux, local-agent-postgres-concurrency, runtime-redis-admission]
     
     steps:
       - name: ✅ All checks passed
@@ -463,5 +505,6 @@ jobs:
           echo "✅ Convergence gate"
           echo "✅ Local-agent Linux sandbox"
           echo "✅ Local-agent PostgreSQL concurrency"
+          echo "✅ Standalone runtime Redis admission"
           echo ""
           echo "🚀 Repository is ready for production deployment!"

@@ -59,7 +59,17 @@ npm run build
 npm start
 ```
 
-`arcanos-ai-runtime/` is standalone and can be tested independently through its package scripts.
+`arcanos-ai-runtime/` is standalone and can be tested independently through its
+package scripts. Its package test builds the workspace and exercises the
+fail-closed `/jobs` HTTP boundary against an injected queue; it does not require
+Redis, OpenAI, or a live listener outside loopback. Runtime callers must
+configure the purpose-bound Bearer token, stable server-owned principal, and
+explicit `runtime:enqueue`/`runtime:read` scopes documented in
+`CONFIGURATION.md`. The separately guarded `test:redis-integration` suite
+exercises admission concurrency and BullMQ lifecycle fencing only against an
+explicitly confirmed disposable loopback Redis database; the required CI job
+provides that service. Never point this suite at shared, developer, staging, or
+production Redis.
 
 ## Deploy (Railway)
 Railway builds from the root package and uses `scripts/start-railway-service.mjs`. Workspace package changes must be built into `dist/` before deploy.

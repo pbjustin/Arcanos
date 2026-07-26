@@ -9,7 +9,13 @@ import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { acquireExecutionLock } from "@services/safety/executionLock.js";
 import { emitSafetyAuditEvent } from "@services/safety/auditEvents.js";
 import { interpreterSupervisor } from "@services/safety/interpreterSupervisor.js";
-import { activateUnsafeCondition, incrementWorkerFailure } from "@services/safety/runtimeState.js";
+import {
+  activateUnsafeCondition,
+  getActiveUnsafeConditions,
+  incrementWorkerFailure,
+  resetFailureSignals
+} from "@services/safety/runtimeState.js";
+import { getMonotonicTimestampMs } from '@services/safety/monotonicClock.js';
 import type { CognitiveDomain } from '@shared/types/cognitiveDomain.js';
 import { runWorkerTrinityPrompt } from '@workers/trinityWorkerPipeline.js';
 
@@ -304,6 +310,8 @@ export interface WorkerBootstrapSummary {
   message: string;
 }
 
+const WORKER_RUNTIME_START_ENTITY_ID = 'worker-runtime:start';
+
 function buildWorkersDisabledSummary(): WorkerBootstrapSummary {
   const message =
     workerRuntimeMode.reason === 'process_kind_web'
@@ -444,38 +452,92 @@ export async function startWorkers(force = false): Promise<WorkerBootstrapSummar
   }
 
   try {
-    //audit Assumption: repeated forced restarts inside threshold window indicate unstable worker runtime; failure risk: restart storm and conflicting state writes; expected invariant: threshold breach blocks further restarts; handling strategy: activate unsafe condition and fail closed.
-    if (force) {
-      const restartCounter = incrementWorkerFailure(
-        'worker-runtime:start',
-        runtimeConfig.safety.workerRestartThreshold,
-        runtimeConfig.safety.workerRestartWindowMs
-      );
-      if (restartCounter.exceeded) {
-        activateUnsafeCondition({
-          code: 'WORKER_RESTART_THRESHOLD',
-          message: 'Worker restart threshold exceeded',
-          metadata: {
-            count: restartCounter.count,
-            threshold: runtimeConfig.safety.workerRestartThreshold
-          }
-        });
-        return {
-          started: false,
-          alreadyRunning: runtimeState.started,
-          runWorkers: workerSettings.runWorkers,
-          workerCount: runtimeState.workerIds.length,
-          workerIds: runtimeState.workerIds,
-          model: workerSettings.model,
-          startedAt: runtimeState.startedAt,
-          message: 'Worker restart threshold exceeded; execution blocked.'
-        };
-      }
+    const restartThresholdBlocked = force && getActiveUnsafeConditions('WORKER_RESTART_THRESHOLD')
+      .some(condition => condition.metadata?.entityId === WORKER_RUNTIME_START_ENTITY_ID);
+    //audit Assumption: a threshold reached by actual forced-start failures should pause further forced starts for the configured failure window; failure risk: immediate retries recreate a restart storm; expected invariant: the bounded condition blocks until its explicit expiry; handling strategy: return the existing fail-closed bootstrap summary without touching listeners.
+    if (restartThresholdBlocked) {
+      return {
+        started: false,
+        alreadyRunning: runtimeState.started,
+        runWorkers: workerSettings.runWorkers,
+        workerCount: runtimeState.workerIds.length,
+        workerIds: runtimeState.workerIds,
+        model: workerSettings.model,
+        startedAt: runtimeState.startedAt,
+        message: 'Worker restart threshold exceeded; execution blocked.'
+      };
     }
 
-    return startWorkersUnsafe(force);
+    try {
+      const startSummary = startWorkersUnsafe(force);
+      //audit Assumption: a completed forced start is recovery evidence, not a failure signal; failure risk: successful operator heals eventually trip the restart-failure threshold; expected invariant: only thrown forced-start failures accumulate and a successful forced start clears prior failure history; handling strategy: reset the dedicated entity counter after successful startup.
+      if (force && startSummary.started) {
+        resetFailureSignals(WORKER_RUNTIME_START_ENTITY_ID);
+      }
+      return startSummary;
+    } catch (error) {
+      if (force) {
+        const restartCounter = incrementWorkerFailure(
+          WORKER_RUNTIME_START_ENTITY_ID,
+          runtimeConfig.safety.workerRestartThreshold,
+          runtimeConfig.safety.workerRestartWindowMs
+        );
+        //audit Assumption: repeated actual forced-start failures inside the configured window indicate an unstable runtime; failure risk: an unbounded restart storm or a permanent self-heal deadlock; expected invariant: threshold breach blocks only for the bounded failure window; handling strategy: activate a time-bounded unsafe condition and preserve the original failure.
+        if (restartCounter.exceeded) {
+          const nowMs = getMonotonicTimestampMs();
+          activateUnsafeCondition({
+            code: 'WORKER_RESTART_THRESHOLD',
+            message: 'Worker restart threshold exceeded',
+            expiresAtMs: nowMs + runtimeConfig.safety.workerRestartWindowMs,
+            metadata: {
+              entityId: WORKER_RUNTIME_START_ENTITY_ID,
+              count: restartCounter.count,
+              threshold: runtimeConfig.safety.workerRestartThreshold,
+              windowMs: runtimeConfig.safety.workerRestartWindowMs
+            }
+          });
+        }
+      }
+      throw error;
+    }
   } finally {
     await lock.release();
+  }
+}
+
+/**
+ * Start the configured in-process worker runtime from an explicit application
+ * lifecycle boundary.
+ *
+ * Importing this module must remain side-effect free with respect to worker
+ * execution. Dedicated queue workers import shared dispatch code, so an
+ * import-time start would give one process ownership of two worker runtimes.
+ *
+ * @returns The bootstrap summary when enabled, or `null` when this process is
+ * configured not to host the in-process runtime.
+ */
+export async function startConfiguredWorkerRuntime(): Promise<WorkerBootstrapSummary | null> {
+  if (!workerSettings.runWorkers) {
+    return null;
+  }
+
+  try {
+    return await startWorkers();
+  } catch (error: unknown) {
+    logger.error(
+      '[worker-runtime] startup failed',
+      {
+        module: 'worker-runtime',
+        processKind: workerRuntimeMode.processKind,
+        configuredCount: workerSettings.count
+      },
+      { errorMessage: resolveErrorMessage(error) },
+      error instanceof Error ? error : undefined
+    );
+    setImmediate(() => {
+      throw error;
+    });
+    return null;
   }
 }
 
@@ -661,22 +723,4 @@ export async function recycleWorker(workerId: string): Promise<WorkerRecycleResu
   } finally {
     await lock.release();
   }
-}
-
-if (workerSettings.runWorkers) {
-  void startWorkers().catch((error: unknown) => {
-    logger.error(
-      '[worker-runtime] startup failed',
-      {
-        module: 'worker-runtime',
-        processKind: workerRuntimeMode.processKind,
-        configuredCount: workerSettings.count
-      },
-      { errorMessage: resolveErrorMessage(error) },
-      error instanceof Error ? error : undefined
-    );
-    setImmediate(() => {
-      throw error;
-    });
-  });
 }

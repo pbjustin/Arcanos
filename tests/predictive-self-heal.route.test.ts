@@ -1,6 +1,10 @@
 import express from 'express';
 import request from 'supertest';
-import { describe, expect, it, jest } from '@jest/globals';
+import { afterAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
+
+import {
+  PURPOSE_BOUND_CREDENTIAL_ENV_NAMES,
+} from '../src/shared/security/purposeBoundCredential.js';
 
 const runPredictiveHealingDecisionMock = jest.fn();
 
@@ -71,6 +75,29 @@ jest.unstable_mockModule('@transport/http/middleware/capabilityGate.js', () => (
 }));
 
 const selfHealRouter = (await import('../src/routes/self-heal.js')).default;
+const controlPlaneAccessToken = 'predictive-self-heal-control-token-1234567890';
+const originalCredentialEnvironment = new Map(
+  PURPOSE_BOUND_CREDENTIAL_ENV_NAMES.map(
+    (environmentName) => [environmentName, process.env[environmentName]] as const
+  )
+);
+const originalPrincipalId = process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID;
+const originalScopes = process.env.ARCANOS_CONTROL_PLANE_SCOPES;
+const originalPredictiveHealingEnabled = process.env.PREDICTIVE_HEALING_ENABLED;
+const originalPredictiveHealingDryRun = process.env.PREDICTIVE_HEALING_DRY_RUN;
+
+function clearPurposeBoundCredentialEnvironment(): void {
+  for (const environmentName of PURPOSE_BOUND_CREDENTIAL_ENV_NAMES) {
+    delete process.env[environmentName];
+  }
+}
+
+function configureControlPlane(scopes: string): void {
+  clearPurposeBoundCredentialEnvironment();
+  process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = controlPlaneAccessToken;
+  process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = 'operator:predictive-self-heal-test';
+  process.env.ARCANOS_CONTROL_PLANE_SCOPES = scopes;
+}
 
 function createApp(): express.Express {
   const app = express();
@@ -80,6 +107,13 @@ function createApp(): express.Express {
 }
 
 describe('predictive self-heal route', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    configureControlPlane('self-heal:decide');
+    process.env.PREDICTIVE_HEALING_ENABLED = 'false';
+    process.env.PREDICTIVE_HEALING_DRY_RUN = 'true';
+  });
+
   it('returns structured predictive decision output', async () => {
     runPredictiveHealingDecisionMock.mockResolvedValue({
       source: 'api_self_heal_decide',
@@ -223,6 +257,7 @@ describe('predictive self-heal route', () => {
 
     const response = await request(createApp())
       .post('/api/self-heal/decide')
+      .set('Authorization', `Bearer ${controlPlaneAccessToken}`)
       .send({
         dryRun: true,
         simulate: {
@@ -266,4 +301,125 @@ describe('predictive self-heal route', () => {
       })
     }));
   });
+
+  it('requires a separate execution scope before invoking an actuator decision', async () => {
+    const response = await request(createApp())
+      .post('/api/self-heal/decide')
+      .set('Authorization', `Bearer ${controlPlaneAccessToken}`)
+      .send({
+        execute: true,
+        dryRun: false,
+      });
+
+    expect(response.status).toBe(403);
+    expect(response.body.error.code).toBe('CONTROL_PLANE_SCOPE_DENIED');
+    expect(response.headers['x-ratelimit-bucket']).toBe('self-heal-decision');
+    expect(runPredictiveHealingDecisionMock).not.toHaveBeenCalled();
+  });
+
+  it('allows an explicitly scoped operator to request execution', async () => {
+    configureControlPlane('self-heal:decide,self-heal:execute');
+    process.env.PREDICTIVE_HEALING_ENABLED = 'true';
+    process.env.PREDICTIVE_HEALING_DRY_RUN = 'false';
+    runPredictiveHealingDecisionMock.mockResolvedValue({
+      source: 'api_self_heal_decide',
+      decision: { action: 'observe' },
+      execution: { status: 'not_required' },
+    });
+
+    const response = await request(createApp())
+      .post('/api/self-heal/decide')
+      .set('Authorization', `Bearer ${controlPlaneAccessToken}`)
+      .send({
+        execute: true,
+        dryRun: false,
+      });
+
+    expect(response.status).toBe(200);
+    expect(runPredictiveHealingDecisionMock).toHaveBeenCalledWith(expect.objectContaining({
+      execute: true,
+      dryRun: false,
+    }));
+  });
+
+  it('rejects simulated observations unless they are explicitly non-executing dry runs', async () => {
+    configureControlPlane('self-heal:decide,self-heal:execute');
+    process.env.PREDICTIVE_HEALING_ENABLED = 'true';
+    process.env.PREDICTIVE_HEALING_DRY_RUN = 'false';
+
+    for (const payload of [
+      { simulate: { errorRate: 0.5 } },
+      { dryRun: false, simulate: { errorRate: 0.5 } },
+      { execute: true, dryRun: true, simulate: { errorRate: 0.5 } },
+      {
+        dryRun: true,
+        simulate: {
+          workerRuntime: {
+            workerIds: Array.from({ length: 101 }, (_, index) => `worker-${index}`),
+          },
+        },
+      },
+    ]) {
+      const response = await request(createApp())
+        .post('/api/self-heal/decide')
+        .set('Authorization', `Bearer ${controlPlaneAccessToken}`)
+        .send(payload);
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toBe('Invalid predictive self-heal payload');
+    }
+
+    expect(runPredictiveHealingDecisionMock).not.toHaveBeenCalled();
+  });
+
+  it('does not let HTTP execution override disabled or dry-run server policy', async () => {
+    configureControlPlane('self-heal:decide,self-heal:execute');
+
+    const disabledResponse = await request(createApp())
+      .post('/api/self-heal/decide')
+      .set('Authorization', `Bearer ${controlPlaneAccessToken}`)
+      .send({ execute: true, dryRun: false });
+
+    expect(disabledResponse.status).toBe(409);
+    expect(disabledResponse.body.error).toBe('PREDICTIVE_HEALING_EXECUTION_DISABLED');
+
+    process.env.PREDICTIVE_HEALING_ENABLED = 'true';
+    const dryRunResponse = await request(createApp())
+      .post('/api/self-heal/decide')
+      .set('Authorization', `Bearer ${controlPlaneAccessToken}`)
+      .send({ execute: true, dryRun: false });
+
+    expect(dryRunResponse.status).toBe(409);
+    expect(dryRunResponse.body.error).toBe('PREDICTIVE_HEALING_DRY_RUN_ENFORCED');
+    expect(runPredictiveHealingDecisionMock).not.toHaveBeenCalled();
+  });
+});
+
+afterAll(() => {
+  clearPurposeBoundCredentialEnvironment();
+  for (const [environmentName, value] of originalCredentialEnvironment) {
+    if (value !== undefined) {
+      process.env[environmentName] = value;
+    }
+  }
+  if (originalPrincipalId === undefined) {
+    delete process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID;
+  } else {
+    process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = originalPrincipalId;
+  }
+  if (originalScopes === undefined) {
+    delete process.env.ARCANOS_CONTROL_PLANE_SCOPES;
+  } else {
+    process.env.ARCANOS_CONTROL_PLANE_SCOPES = originalScopes;
+  }
+  if (originalPredictiveHealingEnabled === undefined) {
+    delete process.env.PREDICTIVE_HEALING_ENABLED;
+  } else {
+    process.env.PREDICTIVE_HEALING_ENABLED = originalPredictiveHealingEnabled;
+  }
+  if (originalPredictiveHealingDryRun === undefined) {
+    delete process.env.PREDICTIVE_HEALING_DRY_RUN;
+  } else {
+    process.env.PREDICTIVE_HEALING_DRY_RUN = originalPredictiveHealingDryRun;
+  }
 });

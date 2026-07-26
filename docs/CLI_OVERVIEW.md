@@ -124,6 +124,12 @@ arcanos inspect self-heal
 ```
 
 - Calls `/status/safety/self-heal` and summarizes status.
+- Reads the exact `ARCANOS_CONTROL_PLANE_ACCESS_TOKEN` from the CLI process
+  environment and sends it as a bearer credential. It does not fall back to GPT
+  Access, generic backend, or automation credentials.
+- Sends that credential only to an explicit HTTPS origin or to exact HTTP
+  loopback (`localhost`, `127.0.0.1`, or `::1`) and rejects redirects so the
+  bearer cannot be forwarded to a different origin.
 - Currently supports only the `self-heal` subject.
 
 ### 10) Run implementation doctor check (`doctor implementation`)

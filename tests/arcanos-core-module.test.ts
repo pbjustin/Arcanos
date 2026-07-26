@@ -58,10 +58,6 @@ beforeEach(async () => {
     },
   }));
 
-  jest.unstable_mockModule('@services/gptAccessNaturalLanguageDispatch.js', () => ({
-    routeOperatorCommandThroughDispatch: jest.fn(async () => null),
-  }));
-
   jest.unstable_mockModule('@services/openai.js', () => ({
     generateMockResponse: mockGenerateMockResponse,
   }));
@@ -82,6 +78,9 @@ beforeEach(async () => {
     runWithRequestAbortTimeout: jest.fn(async (_config: unknown, run: () => unknown) => run()),
   }));
 
+  const { configureArcanosCoreOperatorDispatch } =
+    await import('../src/services/arcanosCoreOperatorDispatchPort.js');
+  configureArcanosCoreOperatorDispatch(jest.fn(async () => null));
   ({ default: ArcanosCoreModule } = await import('../src/services/arcanos-core.js'));
 });
 

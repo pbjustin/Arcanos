@@ -1,6 +1,7 @@
 import express from 'express';
 import request from 'supertest';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { PURPOSE_BOUND_CREDENTIAL_ENV_NAMES } from '../src/shared/security/purposeBoundCredential.js';
 
 const mockRouteGptRequest = jest.fn();
 const mockResolveGptRouting = jest.fn();
@@ -98,6 +99,7 @@ const { default: requestContext } = await import('../src/middleware/requestConte
 const { default: gptRouter } = await import('../src/routes/gptRouter.js');
 
 const ASYNC_IDEMPOTENCY_ENV_KEYS = [
+  ...PURPOSE_BOUND_CREDENTIAL_ENV_NAMES,
   'GPT_ASYNC_HEAVY_PROMPT_CHARS',
   'GPT_ASYNC_HEAVY_MESSAGE_COUNT',
   'GPT_ASYNC_HEAVY_MAX_WORDS',
@@ -109,6 +111,7 @@ const ASYNC_IDEMPOTENCY_ENV_KEYS = [
   'GPT_DIRECT_EXECUTION_THRESHOLD_MS',
   'GPT_WAIT_TIMEOUT_MS',
 ] as const;
+const memoryAccessToken = 'gpt-memory-route-token-1234567890';
 
 function captureEnv(keys: readonly string[]): Map<string, string | undefined> {
   return new Map(keys.map((key) => [key, process.env[key]]));
@@ -162,6 +165,27 @@ function buildDirectActionEnvelope(result = 'OK') {
       module: 'GPT:DIRECT_ACTION',
       action: 'query_and_wait',
       route: 'direct_action',
+      timestamp: '2026-04-24T00:00:00.000Z',
+    },
+  };
+}
+
+function buildMemoryDispatchEnvelope() {
+  return {
+    ok: true,
+    result: {
+      handledBy: 'memory-dispatcher',
+      memory: {
+        success: true,
+        operation: 'saved',
+      },
+    },
+    _route: {
+      gptId: 'arcanos-core',
+      module: 'ARCANOS:CORE',
+      action: 'memory',
+      route: 'core',
+      availableActions: ['query'],
       timestamp: '2026-04-24T00:00:00.000Z',
     },
   };
@@ -250,6 +274,103 @@ describe('async /gpt idempotency', () => {
     expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
     expect(waitForQueuedGptJobCompletionMock).not.toHaveBeenCalled();
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('returns 503 for an exact memory intercept when server authentication is unavailable', async () => {
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .set('x-arcanos-memory-token', memoryAccessToken)
+      .send({
+        prompt: 'Remember this release marker for session route-auth.',
+      });
+
+    expect(response.status).toBe(503);
+    expect(response.body.error.code).toBe('MEMORY_AUTH_UNAVAILABLE');
+    expect(response.headers['cache-control']).toBe('no-store');
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(executeFastGptPromptMock).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['missing', undefined],
+    ['wrong', 'wrong-gpt-memory-route-token-1234567890'],
+  ])('returns 401 for a %s memory credential before execution planning', async (_label, token) => {
+    process.env.ARCANOS_MEMORY_ACCESS_TOKEN = memoryAccessToken;
+    let pendingRequest = request(buildApp())
+      .post('/gpt/arcanos-core');
+    if (token) {
+      pendingRequest = pendingRequest.set('x-arcanos-memory-token', token);
+    }
+
+    const response = await pendingRequest.send({
+      prompt: 'Remember this protected release marker.',
+      executionMode: 'async',
+    });
+
+    expect(response.status).toBe(401);
+    expect(response.body.error.code).toBe('MEMORY_AUTH_REQUIRED');
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(executeFastGptPromptMock).not.toHaveBeenCalled();
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('forces an authenticated memory intercept direct even when async and idempotent', async () => {
+    process.env.ARCANOS_MEMORY_ACCESS_TOKEN = memoryAccessToken;
+    mockRouteGptRequest.mockResolvedValue(buildMemoryDispatchEnvelope());
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .set('x-arcanos-memory-token', memoryAccessToken)
+      .set('Authorization', 'Bearer test-unrelated-gateway-token-1234567890')
+      .set('Idempotency-Key', 'memory-route-idempotency-key')
+      .set('Prefer', 'respond-async')
+      .send({
+        action: 'ask',
+        prompt: 'Remember this authorized direct marker.',
+        executionMode: 'async',
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      ok: true,
+      result: {
+        handledBy: 'memory-dispatcher',
+      },
+    });
+    expect(response.headers['x-gpt-route-decision']).toBe('orchestrated_path');
+    expect(response.headers['x-gpt-route-decision-reason']).toBe('memory_dispatch_intercept');
+    expect(response.headers['x-gpt-queue-bypassed']).toBe('true');
+    expect(mockRouteGptRequest).toHaveBeenCalledWith(expect.objectContaining({
+      gptId: 'arcanos-core',
+      memoryPlaneAuthorized: true,
+      bypassIntentRouting: false,
+    }));
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
+    expect(planAutonomousWorkerJobMock).not.toHaveBeenCalled();
+    expect(executeFastGptPromptMock).not.toHaveBeenCalled();
+    expect(JSON.stringify(response.body)).not.toContain(memoryAccessToken);
+  });
+
+  it('does not newly gate explicit query routing that never enters memory interception', async () => {
+    process.env.GPT_ROUTE_ASYNC_CORE_DEFAULT = 'false';
+    mockRouteGptRequest.mockResolvedValue(buildMemoryDispatchEnvelope());
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-core')
+      .send({
+        action: 'query',
+        prompt: 'Remember this wording while answering normally.',
+      });
+
+    expect(response.status).toBe(200);
+    expect(mockRouteGptRequest).toHaveBeenCalledTimes(1);
+    expect(mockRouteGptRequest.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
+      bypassIntentRouting: true,
+      memoryPlaneAuthorized: undefined,
+    }));
+    expect(findOrCreateGptJobMock).not.toHaveBeenCalled();
   });
 
   it('returns the canonical in-flight job when an equivalent async request is deduped', async () => {
@@ -400,9 +521,13 @@ describe('async /gpt idempotency', () => {
       'job-heavy',
       expect.objectContaining({
         waitForResultMs: 500,
-        pollIntervalMs: 250
+        pollIntervalMs: 250,
+        signal: expect.any(AbortSignal)
       })
     );
+    const waiterSignal = waitForQueuedGptJobCompletionMock.mock.calls[0]?.[1]
+      ?.signal as AbortSignal;
+    expect(waiterSignal.aborted).toBe(false);
   });
 
   it('honors an explicit direct-return wait override for async GPT requests', async () => {
@@ -638,7 +763,7 @@ describe('async /gpt idempotency', () => {
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 
-  it('keeps core query_and_wait prompt execution on the direct action lane', async () => {
+  it('keeps memory-worded core query_and_wait requests on the existing direct action lane without memory auth', async () => {
     process.env.GPT_PUBLIC_RESPONSE_MAX_BYTES = '5000';
     executeDirectGptActionMock.mockResolvedValueOnce(buildDirectActionEnvelope('OK'));
 
@@ -646,7 +771,7 @@ describe('async /gpt idempotency', () => {
       .post('/gpt/arcanos-core')
       .send({
         action: 'query_and_wait',
-        prompt: 'Reply with OK'
+        prompt: 'Remember this wording while replying with OK'
       });
 
     expect(response.status).toBe(200);
@@ -679,7 +804,7 @@ describe('async /gpt idempotency', () => {
     expect(executeDirectGptActionMock).toHaveBeenCalledWith(
       expect.objectContaining({
         gptId: 'arcanos-core',
-        prompt: 'Reply with OK',
+        prompt: 'Remember this wording while replying with OK',
         action: 'query_and_wait',
         timeoutMs: 24_000,
       })
@@ -975,6 +1100,53 @@ describe('async /gpt idempotency', () => {
       idempotencyKey: expect.stringMatching(/^derived:/)
     });
     expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
+    expect(mockRouteGptRequest).not.toHaveBeenCalled();
+  });
+
+  it('returns a sanitized recoverable 503 when an accepted job cannot be polled', async () => {
+    findOrCreateGptJobMock.mockResolvedValue({
+      job: {
+        id: 'job-wait-unavailable',
+        status: 'running'
+      },
+      created: true,
+      deduped: false,
+      dedupeReason: 'new_job'
+    });
+    waitForQueuedGptJobCompletionMock.mockRejectedValue(
+      new MockJobRepositoryUnavailableError('internal GPT wait sentinel')
+    );
+
+    const response = await request(buildApp())
+      .post('/gpt/arcanos-gaming')
+      .send({
+        action: 'query_and_wait',
+        prompt: 'Generate a Seth Rollins promo prompt'
+      });
+
+    expect(response.status).toBe(503);
+    expect(response.headers['x-response-bytes']).toBeTruthy();
+    expect(response.body).toMatchObject({
+      ok: false,
+      action: 'query_and_wait',
+      status: 'running',
+      jobStatus: 'running',
+      lifecycleStatus: 'running',
+      error: {
+        code: 'ASYNC_GPT_JOBS_UNAVAILABLE',
+        message:
+          'Async GPT job status is temporarily unavailable because durable job persistence is unavailable.'
+      },
+      jobId: 'job-wait-unavailable',
+      poll: '/jobs/job-wait-unavailable/result',
+      stream: '/jobs/job-wait-unavailable/stream',
+      idempotencyKey: expect.stringMatching(/^derived:/),
+      idempotencySource: 'derived'
+    });
+    expect(JSON.stringify(response.body)).not.toContain('internal GPT wait sentinel');
+    expect(response.body.error.code).not.toBe('ASYNC_GPT_JOB_MISSING');
+    expect(findOrCreateGptJobMock).toHaveBeenCalledTimes(1);
+    expect(waitForQueuedGptJobCompletionMock).toHaveBeenCalledTimes(1);
     expect(mockRouteGptRequest).not.toHaveBeenCalled();
   });
 

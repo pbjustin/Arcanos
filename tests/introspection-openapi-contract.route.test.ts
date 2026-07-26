@@ -1,7 +1,46 @@
+import { afterAll, beforeAll } from '@jest/globals';
 import express from 'express';
 import request from 'supertest';
 
+import { resetGptModuleMapCache } from '../src/platform/runtime/gptRouterConfig.js';
 import introspectionRouter from '../src/routes/introspection.js';
+
+const CURRENT_GPT_ROUTER_HASH = 'e02a4e9739fe4772aac59afe24a99f45348090434c90d7acb560d28c14bd4e2a';
+const ROUTING_OVERRIDE_KEYS = [
+  'GPT_MODULE_MAP',
+  'GPTID_ARCANOS_GAMING',
+  'GPTID_ARCANOS_TUTOR',
+  'GPTID_BACKSTAGE_BOOKER'
+] as const;
+const originalGptRouterHash = process.env.SAFETY_EXPECTED_HASH_GPT_ROUTER_CONFIG;
+const originalRoutingOverrides = Object.fromEntries(
+  ROUTING_OVERRIDE_KEYS.map((key) => [key, process.env[key]])
+) as Record<(typeof ROUTING_OVERRIDE_KEYS)[number], string | undefined>;
+
+beforeAll(() => {
+  resetGptModuleMapCache();
+  for (const key of ROUTING_OVERRIDE_KEYS) {
+    Reflect.deleteProperty(process.env, key);
+  }
+  process.env.SAFETY_EXPECTED_HASH_GPT_ROUTER_CONFIG = CURRENT_GPT_ROUTER_HASH;
+});
+
+afterAll(() => {
+  resetGptModuleMapCache();
+  for (const key of ROUTING_OVERRIDE_KEYS) {
+    const originalValue = originalRoutingOverrides[key];
+    if (originalValue === undefined) {
+      Reflect.deleteProperty(process.env, key);
+    } else {
+      process.env[key] = originalValue;
+    }
+  }
+  if (originalGptRouterHash === undefined) {
+    Reflect.deleteProperty(process.env, 'SAFETY_EXPECTED_HASH_GPT_ROUTER_CONFIG');
+  } else {
+    process.env.SAFETY_EXPECTED_HASH_GPT_ROUTER_CONFIG = originalGptRouterHash;
+  }
+});
 
 describe('custom GPT OpenAPI contract route', () => {
   function buildApp() {
@@ -143,5 +182,51 @@ describe('custom GPT OpenAPI contract route', () => {
     expect(pendingSchema).toContain('result:');
     expect(pendingSchema).toContain('job_status:');
     expect(pendingSchema).not.toContain('stream:');
+  });
+
+  it('excludes protected catalog modules from public GPT introspection', async () => {
+    process.env.SAFETY_EXPECTED_HASH_GPT_ROUTER_CONFIG = CURRENT_GPT_ROUTER_HASH;
+    const response = await request(buildApp()).get('/_introspection');
+    const protectedIdentifiers = [
+      'cli',
+      'arcanos-cli',
+      'ARCANOS:CLI',
+      'local-agent',
+      'arcanos-local-agent',
+      'ARCANOS:LOCAL_AGENT',
+      'productivity',
+      'arcanos-productivity',
+      'ARCANOS:PRODUCTIVITY'
+    ];
+    const protectedLookups = await Promise.all(
+      protectedIdentifiers.map((identifier) =>
+        request(buildApp()).get(
+          `/_introspection/gpt/${encodeURIComponent(identifier)}`
+        )
+      )
+    );
+    const moduleNames = response.body.modules.map(
+      (entry: { name: string }) => entry.name
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body.counts.modules).toBe(12);
+    expect(moduleNames).not.toContain('ARCANOS:CLI');
+    expect(moduleNames).not.toContain('ARCANOS:LOCAL_AGENT');
+    expect(moduleNames).not.toContain('ARCANOS:PRODUCTIVITY');
+    expect(response.body.gptMap).not.toHaveProperty('cli');
+    expect(response.body.gptMap).not.toHaveProperty('local-agent');
+    expect(response.body.gptMap).not.toHaveProperty('productivity');
+    for (const lookup of protectedLookups) {
+      expect(lookup.status).toBe(404);
+      expect(lookup.body).toEqual(
+        expect.objectContaining({
+          ok: false,
+          error: expect.objectContaining({
+            code: 'UNKNOWN_GPT'
+          })
+        })
+      );
+    }
   });
 });

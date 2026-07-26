@@ -5,6 +5,7 @@ import {
   buildArcanosCoreTimeoutFallbackEnvelope,
   resolveArcanosCoreTimeoutPhase
 } from "@services/arcanos-core.js";
+import { classifyGptMemoryInterception } from '@services/memoryDispatchInterception.js';
 import {
   logGptConnection,
   logGptConnectionFailed,
@@ -26,6 +27,7 @@ import { resolveGptRouteHardTimeoutMs } from '@shared/http/gptRouteTimeout.js';
 import { resolveErrorMessage } from '@core/lib/errors/index.js';
 import {
   createAbortError,
+  getRequestAbortSignal,
   isAbortError,
   runWithRequestAbortTimeout
 } from '@arcanos/runtime';
@@ -69,7 +71,6 @@ import {
   PRIORITY_GPT_JOB_PRIORITY,
   isPriorityGpt,
   isPriorityQueueEnabled,
-  mapGptJobStatusToClientStatus,
   resolveGptDirectExecutionThresholdMs,
   resolveGptWaitTimeoutMs
 } from '@shared/gpt/priorityGpt.js';
@@ -119,8 +120,24 @@ import { handleGptDagBridge } from '@services/gptDagBridge.js';
 import {
   isGptDagAction,
 } from '@shared/gpt/gptDagBridgeActions.js';
+import {
+  authenticateMemoryPlaneRequest,
+  sendMemoryPlaneAuthError,
+} from '@transport/http/middleware/memoryPlaneAuth.js';
+import {
+  buildAsyncJobResponseMetadata,
+  buildDirectReturnTimeoutResponse,
+  normalizeCompletedAsyncGptResponse,
+} from './_core/gptAsyncJobResponses.js';
+import {
+  classifyGptRouteExecution,
+  type GptExecutionMode,
+  type GptExecutionPlan,
+} from './_core/gptRouteExecutionPolicy.js';
 
 const router = express.Router();
+const ASYNC_GPT_JOBS_UNAVAILABLE_MESSAGE =
+  'Async GPT job status is temporarily unavailable because durable job persistence is unavailable.';
 const ARCANOS_CORE_GPT_IDS = new Set(['arcanos-core', 'core', 'arcanos-daemon']);
 const DIRECT_MODULE_QUERY_GPT_IDS = new Set(['arcanos-gaming', 'gaming']);
 const GPT_DISPATCHER_ROUTE = '/gpt/:gptId';
@@ -138,17 +155,6 @@ const DIRECT_RETURN_WAIT_KEYS = [
   'timeout_ms'
 ];
 const DIRECT_RETURN_POLL_KEYS = ['pollIntervalMs', 'poll_interval_ms'];
-
-type GptExecutionMode = 'sync' | 'async';
-type GptExecutionPlan = {
-  mode: GptExecutionMode;
-  reason: string;
-  promptLength: number;
-  messageCount: number;
-  answerMode: string | null;
-  maxWords: number | null;
-  heavyPrompt: boolean;
-};
 
 const OPENAI_KEY_PLACEHOLDERS = new Set([
   '',
@@ -865,123 +871,22 @@ function resolveGptExecutionPlan(params: {
       answerMode === 'debug'
     );
 
-  if (explicitExecutionMode) {
-    return {
-      mode: explicitExecutionMode,
-      reason: `explicit_${explicitExecutionMode}_request`,
-      promptLength,
-      messageCount,
-      answerMode,
-      maxWords,
-      heavyPrompt
-    };
-  }
-
-  if (params.requestedAction === 'diagnostics') {
-    return {
-      mode: 'sync',
-      reason: 'diagnostics_request',
-      promptLength,
-      messageCount,
-      answerMode,
-      maxWords,
-      heavyPrompt: false
-    };
-  }
-
-  if (!params.promptText && (!params.requestedAction || params.requestedAction === GPT_QUERY_ACTION)) {
-    return {
-      mode: 'sync',
-      reason: 'missing_prompt_validation',
-      promptLength,
-      messageCount,
-      answerMode,
-      maxWords,
-      heavyPrompt: false
-    };
-  }
-
-  if (params.requestedAction === GPT_QUERY_ACTION) {
-    if (isDirectModuleQueryGpt(params.gptId)) {
-      return {
-        mode: 'sync',
-        reason: 'explicit_module_query_action',
-        promptLength,
-        messageCount,
-        answerMode,
-        maxWords,
-        heavyPrompt: false
-      };
-    }
-
-    if (ARCANOS_CORE_GPT_IDS.has(params.gptId)) {
-      if (shouldDefaultCoreQueriesToAsync(params.gptId, params.requestedAction)) {
-        return {
-          mode: 'async',
-          reason: 'explicit_query_action',
-          promptLength,
-          messageCount,
-          answerMode,
-          maxWords,
-          heavyPrompt
-        };
-      }
-
-      return {
-        mode: 'sync',
-        reason: 'explicit_core_query_action',
-        promptLength,
-        messageCount,
-        answerMode,
-        maxWords,
-        heavyPrompt: false
-      };
-    }
-
-    return {
-      mode: 'async',
-      reason: 'explicit_query_action',
-      promptLength,
-      messageCount,
-      answerMode,
-      maxWords,
-      heavyPrompt
-    };
-  }
-
-  if (shouldDefaultCoreQueriesToAsync(params.gptId, params.requestedAction)) {
-    return {
-      mode: 'async',
-      reason: 'core_query_async_default',
-      promptLength,
-      messageCount,
-      answerMode,
-      maxWords,
-      heavyPrompt: true
-    };
-  }
-
-  if (heavyPrompt) {
-    return {
-      mode: 'async',
-      reason: 'heavy_prompt_auto_async',
-      promptLength,
-      messageCount,
-      answerMode,
-      maxWords,
-      heavyPrompt
-    };
-  }
-
-  return {
-    mode: 'sync',
-    reason: 'default_sync_path',
+  return classifyGptRouteExecution({
+    explicitExecutionMode,
+    requestedAction: params.requestedAction,
+    promptPresent: Boolean(params.promptText),
     promptLength,
     messageCount,
     answerMode,
     maxWords,
-    heavyPrompt: false
-  };
+    heavyPrompt,
+    directModuleQuery: isDirectModuleQueryGpt(params.gptId),
+    coreGpt: ARCANOS_CORE_GPT_IDS.has(params.gptId),
+    coreQueryAsyncDefault: shouldDefaultCoreQueriesToAsync(
+      params.gptId,
+      params.requestedAction
+    ),
+  });
 }
 
 function clampAsyncWaitForRouteTimeout(waitForResultMs: number, routeTimeoutMs: number): number {
@@ -990,30 +895,6 @@ function clampAsyncWaitForRouteTimeout(waitForResultMs: number, routeTimeoutMs: 
     routeTimeoutMs - DIRECT_RETURN_ROUTE_TIMEOUT_HEADROOM_MS
   );
   return Math.min(waitForResultMs, routeSafeWaitBudgetMs);
-}
-
-function buildDirectReturnTimeoutResponse(params: {
-  pendingResponse: ReturnType<typeof buildQueuedGptPendingResponse>;
-  jobId: string;
-  waitForResultMs: number;
-  pollIntervalMs: number;
-}) {
-  return {
-    ...params.pendingResponse,
-    status: 'timeout' as const,
-    result: {},
-    poll: `/jobs/${params.jobId}/result`,
-    timedOut: true,
-    instruction: `Direct wait timed out after ${params.waitForResultMs}ms. Use GET /jobs/${params.jobId}/result to retrieve the final result.`,
-    directReturn: {
-      requested: true,
-      timedOut: true,
-      waitForResultMs: params.waitForResultMs,
-      pollIntervalMs: params.pollIntervalMs,
-      poll: `/jobs/${params.jobId}/result`,
-      result: `/jobs/${params.jobId}/result`
-    }
-  };
 }
 
 function shouldUseQueryAndWaitDirectActionLane(params: {
@@ -1176,53 +1057,6 @@ function resolveAsyncBridgeAction(queryAndWaitRequested: boolean) {
     : GPT_QUERY_ACTION;
 }
 
-function normalizeCompletedAsyncGptResponse(
-  output: unknown
-): ({
-  ok: true;
-  result: unknown;
-  _route: {
-    requestId?: string;
-    gptId: string;
-    module?: string;
-    action?: string;
-    matchMethod?: string;
-    route?: string;
-    availableActions?: string[];
-    moduleVersion?: string | null;
-    timestamp: string;
-  };
-} | null) {
-  if (!output || typeof output !== 'object' || Array.isArray(output)) {
-    return null;
-  }
-
-  const candidate = output as Record<string, unknown>;
-  if (candidate.ok !== true) {
-    return null;
-  }
-
-  if (!candidate._route || typeof candidate._route !== 'object' || Array.isArray(candidate._route)) {
-    return null;
-  }
-
-  return candidate as {
-    ok: true;
-    result: unknown;
-    _route: {
-      requestId?: string;
-      gptId: string;
-      module?: string;
-      action?: string;
-      matchMethod?: string;
-      route?: string;
-      availableActions?: string[];
-      moduleVersion?: string | null;
-      timestamp: string;
-    };
-  };
-}
-
 function isTimeoutAbortError(error: unknown, timeoutMessage: string): boolean {
   if (!isAbortError(error)) {
     return false;
@@ -1272,29 +1106,6 @@ function buildGptRequestAuthState(req: express.Request): Record<string, unknown>
     csrfPresent: Boolean(csrfHeader),
     confirmedYes: confirmedHeader === "yes",
     gptPathHeaderPresent: Boolean(xGptIdHeader),
-  };
-}
-
-function buildAsyncJobResponseMetadata(input: {
-  action: typeof GPT_QUERY_ACTION | typeof GPT_QUERY_AND_WAIT_ACTION;
-  jobId: string;
-  jobStatus: string;
-  deduped: boolean;
-  idempotencyKey: string;
-  idempotencySource: 'explicit' | 'derived';
-}) {
-  return {
-    action: input.action,
-    jobId: input.jobId,
-    status: mapGptJobStatusToClientStatus(input.jobStatus),
-    jobStatus: input.jobStatus,
-    lifecycleStatus: resolveGptJobLifecycleStatus(input.jobStatus),
-    poll: `/jobs/${input.jobId}/result`,
-    stream: `/jobs/${input.jobId}/stream`,
-    timedOut: false,
-    ...(input.deduped ? { deduped: true } : {}),
-    idempotencyKey: input.idempotencyKey,
-    idempotencySource: input.idempotencySource
   };
 }
 
@@ -1776,6 +1587,22 @@ router.post("/:gptId", async (req, res, next) => {
           );
         }
 
+        const memoryInterception = classifyGptMemoryInterception({
+          body: effectiveBody,
+          availableActions: routingValidation.plan.availableActions,
+          fallbackActionCandidate: routingValidation.plan.action,
+          forceDirectModuleRouting: directGamingRoute || bypassIntentRouting,
+        });
+        let memoryPlaneAuthorized: true | undefined;
+        if (memoryInterception.intercept) {
+          const memoryAuthentication = authenticateMemoryPlaneRequest(req);
+          if (!memoryAuthentication.ok) {
+            sendMemoryPlaneAuthError(req, res, memoryAuthentication);
+            return;
+          }
+          memoryPlaneAuthorized = true;
+        }
+
         if (queryAndWaitRequested && !normalizedBody) {
           requestLogger?.warn?.('integration.job.query_and_wait_invalid_body', {
             endpoint: req.originalUrl,
@@ -2179,7 +2006,7 @@ router.post("/:gptId", async (req, res, next) => {
           }
         }
 
-        const fastPathDecision = classifyGptFastPathRequest({
+        const classifiedFastPathDecision = classifyGptFastPathRequest({
           gptId: incomingGptId,
           body: effectiveBody,
           promptText,
@@ -2188,7 +2015,19 @@ router.post("/:gptId", async (req, res, next) => {
           explicitMode: resolveRequestedFastPathMode(req, effectiveBody),
           hasExplicitIdempotencyKey: Boolean(explicitIdempotencyKey)
         });
+        const fastPathDecision: GptFastPathDecision = memoryPlaneAuthorized === true
+          ? {
+              ...classifiedFastPathDecision,
+              path: 'orchestrated_path',
+              eligible: false,
+              reason: 'memory_dispatch_intercept',
+              queueBypassed: true,
+            }
+          : classifiedFastPathDecision;
         applyGptRouteDecisionHeaders(res, fastPathDecision);
+        if (memoryPlaneAuthorized === true) {
+          applyGptQueueBypassedHeader(res, true);
+        }
         requestLogger?.info?.('gpt.request.route_decision', {
           endpoint: req.originalUrl,
           gptId: incomingGptId,
@@ -2307,7 +2146,7 @@ router.post("/:gptId", async (req, res, next) => {
           }
         }
 
-        const executionPlan = resolveGptExecutionPlan({
+        const classifiedExecutionPlan = resolveGptExecutionPlan({
           req,
           gptId: incomingGptId,
           body: effectiveBody,
@@ -2315,11 +2154,22 @@ router.post("/:gptId", async (req, res, next) => {
           requestedAction: effectiveRequestedAction,
           routeTimeoutProfile
         });
+        const executionPlan: GptExecutionPlan = memoryPlaneAuthorized === true
+          ? {
+              ...classifiedExecutionPlan,
+              mode: 'sync',
+              reason: 'memory_dispatch_intercept',
+              heavyPrompt: false,
+            }
+          : classifiedExecutionPlan;
         const priorityJobBackedExecutionRequested =
-          queryAndWaitRequested ||
-          executionPlan.mode === 'async' ||
-          fastPathFallbackToOrchestrated ||
-          Boolean(explicitIdempotencyKey);
+          memoryPlaneAuthorized !== true
+          && (
+            queryAndWaitRequested
+            || executionPlan.mode === 'async'
+            || fastPathFallbackToOrchestrated
+            || Boolean(explicitIdempotencyKey)
+          );
         const priorityQueueActive =
           priorityQueueConfigured && priorityJobBackedExecutionRequested;
         const priorityDirectReturnRequested = priorityQueueActive;
@@ -2400,10 +2250,13 @@ router.post("/:gptId", async (req, res, next) => {
         }
 
         const shouldUseJobBackedExecution =
-          (queryAndWaitRequested && executionPlan.mode === 'async') ||
-          executionPlan.mode === 'async' ||
-          fastPathFallbackToOrchestrated ||
-          Boolean(explicitIdempotencyKey);
+          memoryPlaneAuthorized !== true
+          && (
+            (queryAndWaitRequested && executionPlan.mode === 'async')
+            || executionPlan.mode === 'async'
+            || fastPathFallbackToOrchestrated
+            || Boolean(explicitIdempotencyKey)
+          );
 
         if (shouldUseJobBackedExecution) {
           applyGptQueueBypassedHeader(res, false);
@@ -2683,13 +2536,50 @@ router.post("/:gptId", async (req, res, next) => {
                 );
               }
 
-              const waitedJob = await waitForQueuedGptJobCompletion(
-                job.id,
-                {
-                  waitForResultMs: asyncWaitForResultMs,
-                  pollIntervalMs: asyncPollIntervalMs
+              const requestAbortSignal = getRequestAbortSignal();
+              let waitedJob: Awaited<ReturnType<typeof waitForQueuedGptJobCompletion>>;
+              try {
+                waitedJob = await waitForQueuedGptJobCompletion(
+                  job.id,
+                  {
+                    waitForResultMs: asyncWaitForResultMs,
+                    pollIntervalMs: asyncPollIntervalMs,
+                    signal: requestAbortSignal
+                  }
+                );
+              } catch (error) {
+                requestAbortSignal?.throwIfAborted();
+                if (!(error instanceof JobRepositoryUnavailableError)) {
+                  throw error;
                 }
-              );
+
+                requestLogger?.error?.('gpt.request.async_jobs_unavailable', {
+                  endpoint: req.originalUrl,
+                  gptId: incomingGptId,
+                  requestId,
+                  jobId: job.id
+                });
+                return sendGuardedGptJsonResponse(req, res, {
+                  ok: false,
+                  error: {
+                    code: 'ASYNC_GPT_JOBS_UNAVAILABLE',
+                    message: ASYNC_GPT_JOBS_UNAVAILABLE_MESSAGE
+                  },
+                  ...buildAsyncJobResponseMetadata({
+                    action: asyncBridgeAction,
+                    jobId: job.id,
+                    jobStatus: job.status,
+                    deduped: createResult.deduped,
+                    idempotencyKey: idempotencyDescriptor.publicIdempotencyKey,
+                    idempotencySource: idempotencyDescriptor.source
+                  }),
+                  _route: {
+                    requestId,
+                    gptId: incomingGptId,
+                    timestamp: new Date().toISOString()
+                  }
+                }, 'gpt.response.async_jobs_unavailable', 503);
+              }
 
               if (waitedJob.state === 'completed') {
                 const completedEnvelope = normalizeCompletedAsyncGptResponse(waitedJob.job.output);
@@ -2986,6 +2876,7 @@ router.post("/:gptId", async (req, res, next) => {
           logger: requestLogger,
           request: req,
           bypassIntentRouting,
+          memoryPlaneAuthorized,
         });
 
         if (!envelope.ok) {
@@ -3062,6 +2953,10 @@ router.post("/:gptId", async (req, res, next) => {
           const statusCode =
             envelope.error.code === "UNKNOWN_GPT"
               ? 404
+              : envelope.error.code === 'MEMORY_AUTH_REQUIRED'
+              ? 401
+              : envelope.error.code === 'MEMORY_AUTH_UNAVAILABLE'
+              ? 503
               : envelope.error.code === "SYSTEM_STATE_CONFLICT"
               ? 409
               : unexpectedGamingRouteFailure
@@ -3117,7 +3012,13 @@ router.post("/:gptId", async (req, res, next) => {
           if (envelope.error.code === "MODULE_TIMEOUT") {
             return sendGuardedGptJsonResponse(req, res, publicErrorEnvelope, 'gpt.response.route_error', 504);
           }
-          return sendGuardedGptJsonResponse(req, res, publicErrorEnvelope, 'gpt.response.route_error', 400);
+          return sendGuardedGptJsonResponse(
+            req,
+            res,
+            publicErrorEnvelope,
+            'gpt.response.route_error',
+            statusCode
+          );
         }
 
         if ((queryRequested || queryAndWaitRequested) && ARCANOS_CORE_GPT_IDS.has(incomingGptId)) {

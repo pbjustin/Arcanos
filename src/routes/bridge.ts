@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import express from 'express';
+import { createAbortError } from '@arcanos/runtime';
 import { createRateLimitMiddleware, getRequestActorKey, securityHeaders } from "@platform/runtime/security.js";
 import { isBridgeEnabled } from "@platform/runtime/bridgeEnv.js";
 import { asyncHandler } from '@shared/http/index.js';
@@ -64,12 +65,37 @@ router.post(['/api/bridge/gpt', '/api/openai/gpt-action'], asyncHandler(async (r
     });
   }
 
-  const result = await executeCustomGptBridgeRequest({
-    request: parsedRequest.request,
-    requestId,
-    actorKey: getRequestActorKey(req),
-    explicitIdempotencyKey: req.header('idempotency-key'),
-  });
+  const clientAbortController = new AbortController();
+  const abortWaitForClosedClient = () => {
+    if (!res.writableEnded && !clientAbortController.signal.aborted) {
+      clientAbortController.abort(createAbortError('GPT bridge client disconnected'));
+    }
+  };
+  res.once('close', abortWaitForClosedClient);
+  if (res.destroyed) {
+    abortWaitForClosedClient();
+  }
+
+  let result: Awaited<ReturnType<typeof executeCustomGptBridgeRequest>>;
+  try {
+    result = await executeCustomGptBridgeRequest({
+      request: parsedRequest.request,
+      requestId,
+      actorKey: getRequestActorKey(req),
+      explicitIdempotencyKey: req.header('idempotency-key'),
+      signal: clientAbortController.signal,
+    });
+  } catch (error) {
+    if (
+      clientAbortController.signal.aborted &&
+      (res.destroyed || res.writableEnded)
+    ) {
+      return;
+    }
+    throw error;
+  } finally {
+    res.removeListener('close', abortWaitForClosedClient);
+  }
 
   if (result.errorSource) {
     recordCustomGptBridgeFailure(result.errorSource);

@@ -1,15 +1,37 @@
-import { sendBadRequestPayload, sendInternalErrorPayload } from '@shared/http/index.js';
+import {
+  sendBadRequestPayload,
+  sendInternalErrorPayload,
+} from '@shared/http/index.js';
 /**
  * PR Analysis API Route
  * Provides webhook endpoint for GitHub PR analysis
  */
 
 import { Router, Request, Response } from 'express';
+import path from 'path';
 import { PRAssistant } from "@services/prAssistant.js";
 import { validateCustom } from "@transport/http/middleware/validation.js";
-import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import {
+  diagnosticExecutionHttpBoundary,
+} from '@services/controlPlane/diagnosticExecutionHttpBoundary.js';
+import {
+  diagnosticExecutionBodyParser,
+} from '@services/controlPlane/diagnosticExecutionBodyParser.js';
+import {
+  classifyRepositoryFileAccess,
+} from '@services/prAssistant/utils.js';
 
 const router = Router();
+const MAX_PR_DIFF_BYTES = 1_500_000;
+const MAX_PR_FILES = 500;
+const MAX_PR_FILE_PATH_CHARACTERS = 1_024;
+const MAX_PR_METADATA_TEXT_CHARACTERS = 512;
+const PR_ANALYSIS_REQUEST_KEYS = new Set(['metadata', 'prDiff', 'prFiles']);
+const PR_ANALYSIS_METADATA_KEYS = new Set([
+  'prNumber',
+  'prTitle',
+  'repository',
+]);
 
 interface PRWebhookPayload {
   action: string;
@@ -41,6 +63,125 @@ interface PRAnalysisRequest {
   };
 }
 
+function normalizeRepositoryRelativePath(value: unknown): string | null {
+  if (
+    typeof value !== 'string'
+    || value.length === 0
+    || value.length > MAX_PR_FILE_PATH_CHARACTERS
+    || value !== value.trim()
+    || /[\u0000-\u001f\u007f]/u.test(value)
+    || value.includes(':')
+    || path.posix.isAbsolute(value)
+    || path.win32.isAbsolute(value)
+  ) {
+    return null;
+  }
+
+  const normalizedSeparators = value.replace(/\\/gu, '/');
+  const segments = normalizedSeparators.split('/');
+  if (
+    segments.some(
+      (segment) => segment.length === 0 || segment === '.' || segment === '..'
+    )
+  ) {
+    return null;
+  }
+
+  const normalizedPath = path.posix.normalize(normalizedSeparators);
+  if (
+    normalizedPath !== normalizedSeparators
+    || normalizedPath === '..'
+    || normalizedPath.startsWith('../')
+  ) {
+    return null;
+  }
+  return normalizedPath;
+}
+
+function validatePrAnalysisRequest(
+  data: unknown
+): { valid: boolean; errors: string[] } {
+  const errors: string[] = [];
+  const record = data && typeof data === 'object' && !Array.isArray(data)
+    ? data as Record<string, unknown>
+    : null;
+
+  if (!record) {
+    return {
+      valid: false,
+      errors: ['Request body must be an object'],
+    };
+  }
+  if (Object.keys(record).some((key) => !PR_ANALYSIS_REQUEST_KEYS.has(key))) {
+    errors.push('Request body contains unsupported properties');
+  }
+
+  if (
+    typeof record.prDiff !== 'string'
+    || record.prDiff.trim().length === 0
+  ) {
+    errors.push('prDiff must be a non-empty string');
+  } else if (Buffer.byteLength(record.prDiff, 'utf8') > MAX_PR_DIFF_BYTES) {
+    errors.push('prDiff exceeds the allowed size');
+  }
+
+  if (!Array.isArray(record.prFiles)) {
+    errors.push('prFiles must be an array of repository-relative paths');
+  } else if (record.prFiles.length > MAX_PR_FILES) {
+    errors.push('prFiles exceeds the allowed item count');
+  } else {
+    const normalizedFiles = record.prFiles.map(normalizeRepositoryRelativePath);
+    if (normalizedFiles.some((file) => file === null)) {
+      errors.push('prFiles contains an unsafe repository path');
+    } else if (
+      new Set(normalizedFiles as string[]).size !== normalizedFiles.length
+    ) {
+      errors.push('prFiles must not contain duplicate paths');
+    }
+  }
+
+  if (record.metadata !== undefined) {
+    const metadata =
+      record.metadata
+      && typeof record.metadata === 'object'
+      && !Array.isArray(record.metadata)
+        ? record.metadata as Record<string, unknown>
+        : null;
+    if (!metadata) {
+      errors.push('metadata must be an object when provided');
+    } else {
+      if (Object.keys(metadata).some((key) => !PR_ANALYSIS_METADATA_KEYS.has(key))) {
+        errors.push('metadata contains unsupported properties');
+      }
+      if (
+        metadata.prNumber !== undefined
+        && (
+          typeof metadata.prNumber !== 'number'
+          || !Number.isSafeInteger(metadata.prNumber)
+          || metadata.prNumber <= 0
+        )
+      ) {
+        errors.push('metadata.prNumber must be a positive safe integer');
+      }
+      for (const field of ['prTitle', 'repository'] as const) {
+        const value = metadata[field];
+        if (
+          value !== undefined
+          && (
+            typeof value !== 'string'
+            || value.length > MAX_PR_METADATA_TEXT_CHARACTERS
+            || /[\u0000-\u001f\u007f]/u.test(value)
+          )
+        ) {
+          errors.push(`metadata.${field} is invalid`);
+        }
+      }
+    }
+  }
+
+  return { valid: errors.length === 0, errors };
+}
+
 /**
  * Webhook endpoint for GitHub PR events
  */
@@ -64,11 +205,13 @@ router.post('/webhook', async (req: Request, res: Response) => {
       status: 'processing'
     });
 
-  } catch (error) {
-    console.error('❌ PR webhook error:', error);
-    sendInternalErrorPayload(res, { 
+  } catch {
+    req.logger?.error?.('pr_analysis.webhook.failed', {
+      requestId: req.requestId,
+    });
+    sendInternalErrorPayload(res, {
       error: 'Internal server error processing PR webhook',
-      details: resolveErrorMessage(error)
+      message: 'PR webhook processing failed.',
     });
   }
 });
@@ -76,88 +219,68 @@ router.post('/webhook', async (req: Request, res: Response) => {
 /**
  * Direct API endpoint for PR analysis
  */
-router.post('/analyze', validateCustom((data: any) => {
-  const errors: string[] = [];
-  const record = data && typeof data === 'object' ? (data as Record<string, unknown>) : null;
-
-  if (!record) {
-    errors.push('Request body must be an object');
-    return { valid: false, errors };
-  }
-  
-  if (!record.prDiff || typeof record.prDiff !== 'string' || record.prDiff.trim().length === 0) {
-    errors.push('prDiff must be a non-empty string');
-  }
-  
-  if (!Array.isArray(record.prFiles)) {
-    errors.push('prFiles must be an array of strings');
-  } else {
-    const invalidFiles = record.prFiles.filter(item => typeof item !== 'string' || item.trim().length === 0);
-    if (invalidFiles.length > 0) {
-      errors.push('prFiles must contain non-empty strings');
-    }
-  }
-
-  if (record.metadata !== undefined) {
-    if (!record.metadata || typeof record.metadata !== 'object' || Array.isArray(record.metadata)) {
-      errors.push('metadata must be an object when provided');
-    } else {
-      const metadata = record.metadata as Record<string, unknown>;
-      if (metadata.prNumber !== undefined && typeof metadata.prNumber !== 'number') {
-        errors.push('metadata.prNumber must be a number');
+router.post(
+  '/analyze',
+  diagnosticExecutionHttpBoundary,
+  diagnosticExecutionBodyParser,
+  validateCustom(validatePrAnalysisRequest),
+  async (req: Request, res: Response) => {
+    try {
+      const { prDiff, prFiles, metadata }: PRAnalysisRequest = req.body;
+      const normalizedPrFiles = prFiles.map((file) => (
+        normalizeRepositoryRelativePath(file) as string
+      ));
+      const fileAccessResults = await Promise.all(
+        normalizedPrFiles.map((file) => (
+          classifyRepositoryFileAccess(process.cwd(), file)
+        ))
+      );
+      if (fileAccessResults.some((result) => result.status === 'unsafe')) {
+        return sendBadRequestPayload(res, {
+          error: 'Invalid PR file path',
+          message: 'PR file paths must remain within the repository.',
+        });
       }
-      if (metadata.prTitle !== undefined && typeof metadata.prTitle !== 'string') {
-        errors.push('metadata.prTitle must be a string');
-      }
-      if (metadata.repository !== undefined && typeof metadata.repository !== 'string') {
-        errors.push('metadata.repository must be a string');
-      }
-    }
-  }
-  
-  return { valid: errors.length === 0, errors };
-}), async (req: Request, res: Response) => {
-  try {
-    
-    const { prDiff, prFiles, metadata }: PRAnalysisRequest = req.body;
+      const assistant = new PRAssistant();
+      const analysisResult = await assistant.analyzePR(
+        prDiff,
+        normalizedPrFiles
+      );
+      const markdownOutput = assistant.formatAsMarkdown(analysisResult);
 
-    if (!prDiff || !Array.isArray(prFiles)) {
-      return sendBadRequestPayload(res, {
-        error: 'Invalid request body',
-        required: ['prDiff', 'prFiles'],
-        received: Object.keys(req.body)
+      res.json({
+        success: true,
+        result: analysisResult,
+        markdown: markdownOutput,
+        metadata: {
+          timestamp: new Date().toISOString(),
+          ...(typeof metadata?.prNumber === 'number'
+            ? { prNumber: metadata.prNumber }
+            : {}),
+          ...(typeof metadata?.prTitle === 'string'
+            ? { prTitle: metadata.prTitle }
+            : {}),
+          ...(typeof metadata?.repository === 'string'
+            ? { repository: metadata.repository }
+            : {}),
+        }
+      });
+    } catch {
+      req.logger?.error?.('pr_analysis.execution.failed', {
+        requestId: req.requestId,
+      });
+      sendInternalErrorPayload(res, {
+        error: 'Internal server error during PR analysis',
+        message: 'PR analysis execution failed.',
       });
     }
-
-    const assistant = new PRAssistant();
-    const analysisResult = await assistant.analyzePR(prDiff, prFiles);
-    
-    const markdownOutput = assistant.formatAsMarkdown(analysisResult);
-
-
-    res.json({
-      success: true,
-      result: analysisResult,
-      markdown: markdownOutput,
-      metadata: {
-        timestamp: new Date().toISOString(),
-        ...(metadata || {})
-      }
-    });
-
-  } catch (error) {
-    console.error('❌ PR analysis error:', error);
-    sendInternalErrorPayload(res, {
-      error: 'Internal server error during PR analysis',
-      details: resolveErrorMessage(error)
-    });
   }
-});
+);
 
 /**
  * Health check endpoint for PR assistant service
  */
-router.get('/health', (req: Request, res: Response) => {
+router.get('/health', (_req: Request, res: Response) => {
   res.json({
     service: 'ARCANOS PR Assistant',
     status: 'healthy',
@@ -177,7 +300,7 @@ router.get('/health', (req: Request, res: Response) => {
 /**
  * Get analysis template/schema
  */
-router.get('/schema', (req: Request, res: Response) => {
+router.get('/schema', (_req: Request, res: Response) => {
   res.json({
     requestSchema: {
       type: 'object',
@@ -185,12 +308,14 @@ router.get('/schema', (req: Request, res: Response) => {
       properties: {
         prDiff: {
           type: 'string',
+          maxBytes: MAX_PR_DIFF_BYTES,
           description: 'Git diff content of the PR'
         },
         prFiles: {
           type: 'array',
+          maxItems: MAX_PR_FILES,
           items: { type: 'string' },
-          description: 'List of files changed in the PR'
+          description: 'List of normalized repository-relative files changed in the PR'
         },
         metadata: {
           type: 'object',
@@ -198,9 +323,11 @@ router.get('/schema', (req: Request, res: Response) => {
             prNumber: { type: 'number' },
             prTitle: { type: 'string' },
             repository: { type: 'string' }
-          }
+          },
+          additionalProperties: false
         }
-      }
+      },
+      additionalProperties: false
     },
     responseSchema: {
       type: 'object',
@@ -239,6 +366,13 @@ router.get('/schema', (req: Request, res: Response) => {
         }
       }
     }
+  });
+});
+
+router.use((_req: Request, res: Response) => {
+  res.status(404).json({
+    error: 'Route Not Found',
+    code: 404,
   });
 });
 

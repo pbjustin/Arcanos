@@ -382,7 +382,7 @@ for implemented controls and residual risks.
 | `src/core/db/repositories/localAgentJobRepository.ts` | `job_data` enqueue, atomic claims, leases, expiry recovery, result acceptance, and job events |
 | `src/routes/gpt-access-local-agent.ts` | Executor-only heartbeat, claim, job-heartbeat, and result routes |
 | `src/routes/gpt-access.ts` and `src/services/gptAccessGateway.ts` | Capability exposure, strict confirmation, OpenAPI metadata, and GPT job-result ownership |
-| `src/services/moduleLoader.ts` and `src/routes/modules.ts` | Extended metadata and fail-closed GPT-only module dispatch |
+| `src/services/moduleCatalog.ts`, `src/services/moduleLoader.ts`, `src/services/moduleRegistry.ts`, and `src/routes/modules.ts` | Explicit executable inventory, validated loading, immutable registry ownership, extended metadata, fail-closed GPT-only dispatch, and legacy HTTP adaptation |
 | `src/core/db/repositories/jobRepository.ts` | Exclusion of local-agent jobs from generic worker/recovery/requeue paths |
 | `src/dispatcher/naturalLanguage/policy.ts` | Direct-only rule for every confirmation-required local-agent action |
 | `scripts/generate-local-agent-capability-catalog.mjs` | Deterministic TypeScript-to-Python catalog generation and drift check |

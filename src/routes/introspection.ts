@@ -2,7 +2,11 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import express, { Request, Response } from "express";
 import getGptModuleMap from "@platform/runtime/gptRouterConfig.js";
-import { loadModuleDefinitions } from "@services/moduleLoader.js";
+import {
+  initializeModuleRegistry,
+  listRegisteredModules
+} from "@services/moduleRegistry.js";
+import { isPublicGptModule } from "@services/moduleCatalog.js";
 import { asyncHandler } from "@shared/http/index.js";
 import { resolveGptRouting } from "./_core/gptDispatch.js";
 
@@ -102,11 +106,12 @@ router.get(
 router.get(
   "/_introspection",
   asyncHandler(async (req: Request, res: Response) => {
+    await initializeModuleRegistry();
     const gptModuleMap = await getGptModuleMap();
-    const modules = await loadModuleDefinitions();
+    const modules = listRegisteredModules();
 
     const moduleList = modules
-      .filter(m => m.definition.gptAccessOnly !== true)
+      .filter(m => isPublicGptModule(m.definition))
       .map(m => ({
         name: m.definition.name,
         route: m.route,

@@ -1,7 +1,10 @@
 import fs from 'fs';
 import path from 'path';
 import { describe, test, expect, beforeEach, afterEach, jest } from '@jest/globals';
-import { resolveWorkersDirectory } from '../../../src/platform/runtime/workerPaths.js';
+import {
+  resolveWorkerModuleFile,
+  resolveWorkersDirectory
+} from '../../../src/platform/runtime/workerPaths.js';
 
 type ExistsMap = Set<string>;
 
@@ -97,5 +100,87 @@ describe('resolveWorkersDirectory', () => {
     const result = resolveWorkersDirectory();
     expect(result.exists).toBe(false);
     expect(result.path).toBe(path.resolve(cwd, 'workers'));
+  });
+});
+
+describe('resolveWorkerModuleFile', () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  test.each([
+    '../../workers/dist/worker-logger',
+    '../../scripts/migration-repair',
+    '..\\..\\workers\\dist\\worker-logger',
+    '/tmp/worker',
+    'C:\\temp\\worker',
+    '\\\\server\\share\\worker',
+    'nested/worker',
+    'nested\\worker',
+    '%2e%2e%2fworker',
+    '\0worker',
+    '.',
+    '..',
+    'a'.repeat(129),
+    ''
+  ])('rejects non-module worker identifier %p before touching the filesystem', (workerId) => {
+    const existsSpy = jest.spyOn(fs, 'existsSync');
+
+    expect(resolveWorkerModuleFile(path.resolve('/app/workers'), workerId)).toEqual({
+      status: 'invalid_worker_id'
+    });
+    expect(existsSpy).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    'metricsAgent',
+    'worker-gpt5-reasoning',
+    'worker.module_v1'
+  ])('resolves existing regular worker file %p beneath the canonical worker root', (workerId) => {
+    const workersDirectory = path.resolve('/app/workers');
+    const candidatePath = path.resolve(workersDirectory, `${workerId}.js`);
+
+    jest.spyOn(fs, 'existsSync').mockImplementation((value: any) => String(value) === candidatePath);
+    jest.spyOn(fs, 'statSync').mockReturnValue({
+      isFile: () => true
+    } as any);
+    jest.spyOn(fs, 'realpathSync').mockImplementation(((value: any) => String(value)) as any);
+
+    expect(resolveWorkerModuleFile(workersDirectory, workerId)).toEqual({
+      status: 'ready',
+      path: candidatePath
+    });
+  });
+
+  test('rejects an existing worker file whose canonical path escapes through a symlink', () => {
+    const workersDirectory = path.resolve('/app/workers');
+    const candidatePath = path.resolve(workersDirectory, 'linkedWorker.js');
+    const outsidePath = path.resolve('/outside/linkedWorker.js');
+
+    jest.spyOn(fs, 'existsSync').mockImplementation((value: any) => String(value) === candidatePath);
+    jest.spyOn(fs, 'statSync').mockReturnValue({
+      isFile: () => true
+    } as any);
+    jest.spyOn(fs, 'realpathSync').mockImplementation(((value: any) => {
+      return String(value) === workersDirectory ? workersDirectory : outsidePath;
+    }) as any);
+
+    expect(resolveWorkerModuleFile(workersDirectory, 'linkedWorker')).toEqual({
+      status: 'outside_workers_directory'
+    });
+  });
+
+  test('does not treat a directory with a JavaScript suffix as an executable worker module', () => {
+    const workersDirectory = path.resolve('/app/workers');
+    const candidatePath = path.resolve(workersDirectory, 'directoryWorker.js');
+
+    jest.spyOn(fs, 'existsSync').mockImplementation((value: any) => String(value) === candidatePath);
+    jest.spyOn(fs, 'statSync').mockReturnValue({
+      isFile: () => false
+    } as any);
+
+    expect(resolveWorkerModuleFile(workersDirectory, 'directoryWorker')).toEqual({
+      status: 'not_found'
+    });
   });
 });

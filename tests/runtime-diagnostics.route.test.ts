@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const request = (await import('supertest')).default;
-const CURRENT_GPT_ROUTER_HASH = '8bf52c870195f165b17397ca16e87361fa401553fa10f86ebdbcc857a4fbba58';
+const CURRENT_GPT_ROUTER_HASH = 'e02a4e9739fe4772aac59afe24a99f45348090434c90d7acb560d28c14bd4e2a';
 
 async function buildApp() {
   jest.resetModules();
@@ -134,6 +134,26 @@ describe('runtime diagnostics routes', () => {
     expect(directBeforeResponse.status).toBe(200);
     expect(directBeforeResponse.headers['x-response-bytes']).toBeTruthy();
     expect(directBeforeResponse.headers['x-response-truncated']).toBeUndefined();
+    expect(Object.keys(directBeforeResponse.body.modules).sort()).toEqual([
+      'AUDIT',
+      'BOOKING',
+      'BUILD',
+      'CORE',
+      'GAMING',
+      'GUIDE',
+      'HRC',
+      'RESEARCH',
+      'SIM',
+      'TRACKER',
+      'TUTOR',
+      'WRITE'
+    ]);
+    expect(Object.values(directBeforeResponse.body.modules)).toEqual(
+      Array.from({ length: 12 }, () => 'active')
+    );
+    expect(directBeforeResponse.body.modules).not.toHaveProperty('CLI');
+    expect(directBeforeResponse.body.modules).not.toHaveProperty('LOCAL_AGENT');
+    expect(directBeforeResponse.body.modules).not.toHaveProperty('PRODUCTIVITY');
 
     const gptDiagnosticsResponse = await request(app)
       .post('/gpt/arcanos-core')
@@ -173,6 +193,53 @@ describe('runtime diagnostics routes', () => {
     expect(directAfterResponse.body.requests_total).toBeGreaterThan(
       directBeforeResponse.body.requests_total
     );
+  });
+
+  it('reports unavailable public modules without disclosing protected catalog entries', async () => {
+    const {
+      buildPublicModuleStatusSnapshot
+    } = await import('../src/services/runtimeDiagnosticsService.js');
+
+    const snapshot = buildPublicModuleStatusSnapshot([
+      {
+        route: 'core',
+        definition: {
+          name: 'ARCANOS:CORE',
+          actions: {
+            query: async () => 'ok'
+          }
+        }
+      }
+    ]);
+
+    expect(snapshot.CORE).toBe('active');
+    expect(snapshot.GAMING).toBe('unavailable');
+    expect(snapshot.TUTOR).toBe('unavailable');
+    expect(snapshot.HRC).toBe('unavailable');
+    expect(snapshot).not.toHaveProperty('CLI');
+    expect(snapshot).not.toHaveProperty('LOCAL_AGENT');
+    expect(snapshot).not.toHaveProperty('PRODUCTIVITY');
+  });
+
+  it('fails closed when module registry status is unavailable', async () => {
+    const {
+      buildPublicModuleStatusSnapshot
+    } = await import('../src/services/runtimeDiagnosticsService.js');
+
+    const snapshot = buildPublicModuleStatusSnapshot(null);
+
+    expect(snapshot).toEqual(
+      Object.fromEntries(
+        Object.keys(snapshot).map((moduleKey) => [
+          moduleKey,
+          `DATA NOT EXPOSED: ${moduleKey}`
+        ])
+      )
+    );
+    expect(Object.keys(snapshot)).toHaveLength(12);
+    expect(snapshot).not.toHaveProperty('CLI');
+    expect(snapshot).not.toHaveProperty('LOCAL_AGENT');
+    expect(snapshot).not.toHaveProperty('PRODUCTIVITY');
   });
 
   it('blocks diagnostics action from non-json request bodies', async () => {

@@ -23,6 +23,12 @@ jest.unstable_mockModule('@services/runtimeDiagnosticsService.js', () => ({
     recordRequestCompletion: jest.fn(),
   },
 }));
+jest.unstable_mockModule('@platform/runtime/workerConfig.js', () => ({
+  startConfiguredWorkerRuntime: jest.fn(async () => null),
+}));
+jest.unstable_mockModule('@services/arcanosCoreRuntimeProviders.js', () => ({
+  configureDefaultArcanosCoreRuntimeProviders: jest.fn(),
+}));
 jest.unstable_mockModule('@services/arcanosMcp.js', () => ({ arcanosMcpService: {} }));
 jest.unstable_mockModule('@transport/http/middleware/unsafeExecutionGate.js', () => ({
   unsafeExecutionGate: (_req: unknown, _res: unknown, next: () => void) => next(),

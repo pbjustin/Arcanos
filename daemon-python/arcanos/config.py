@@ -4,6 +4,7 @@ Loads and validates environment variables with sensible defaults.
 Uses a user-writable data dir for configuration, logs, and crash reports.
 """
 
+import re
 import sys
 from pathlib import Path
 from typing import Optional
@@ -108,15 +109,51 @@ def get_backend_token() -> Optional[str]:
     Edge cases: Ignores blank values so whitespace-only secrets cannot be treated as valid credentials.
     """
     # //audit The backend token is resolved with the following precedence, returning the first non-empty value:
-    # //audit 1. BACKEND_TOKEN: The canonical daemon credential.
+    # //audit 1. BACKEND_TOKEN: The canonical generic backend credential.
     # //audit 2. ARCANOS_API_KEY: A compatibility fallback for certain deployments.
-    # //audit 3. ADMIN_KEY: A final fallback for environments that reuse this key for daemon auth.
+    # //audit 3. ADMIN_KEY: A final compatibility fallback for generic backend auth.
     for key in ("BACKEND_TOKEN", "ARCANOS_API_KEY", "ADMIN_KEY"):
         token = (get_env(key) or "").strip()
         if token:
             return token
 
     return None
+
+
+MIN_DAEMON_ACCESS_TOKEN_LENGTH = 32
+MAX_DAEMON_ACCESS_TOKEN_LENGTH = 4_096
+_DAEMON_ACCESS_TOKEN_PLACEHOLDER_PATTERN = re.compile(
+    r"^(?:<[^>]+>|(?:change[-_]?me|example|placeholder)(?:[-_].*)?|replace[-_]?with(?:[-_].*)?)$",
+    re.IGNORECASE,
+)
+
+
+def is_valid_daemon_access_token(value: Optional[str]) -> bool:
+    """
+    Purpose: Validate the dedicated daemon-plane token without normalizing it.
+    Inputs/Outputs: Optional raw token; returns whether it satisfies the transport contract.
+    Edge cases: Counts UTF-16 code units to match the TypeScript server's string-length limits.
+    """
+    if not isinstance(value, str):
+        return False
+
+    utf16_length = len(value.encode("utf-16-le", errors="surrogatepass")) // 2
+    return (
+        MIN_DAEMON_ACCESS_TOKEN_LENGTH <= utf16_length <= MAX_DAEMON_ACCESS_TOKEN_LENGTH
+        and value == value.strip()
+        and not any(character.isspace() for character in value)
+        and _DAEMON_ACCESS_TOKEN_PLACEHOLDER_PATTERN.fullmatch(value) is None
+    )
+
+
+def get_daemon_access_token() -> Optional[str]:
+    """
+    Purpose: Read the dedicated daemon-plane credential without compatibility fallbacks.
+    Inputs/Outputs: Reads ARCANOS_DAEMON_ACCESS_TOKEN; returns the exact valid value or None.
+    Edge cases: Never falls back to BACKEND_TOKEN, ARCANOS_API_KEY, or ADMIN_KEY.
+    """
+    token = get_env("ARCANOS_DAEMON_ACCESS_TOKEN")
+    return token if is_valid_daemon_access_token(token) else None
 
 
 _DEBUG_LOG_PATH_OVERRIDE = get_env_path("DEBUG_LOG_PATH")
@@ -139,6 +176,7 @@ class Config:
     # ============================================
     BACKEND_URL: Optional[str] = get_backend_base_url()
     BACKEND_TOKEN: Optional[str] = get_backend_token()
+    DAEMON_ACCESS_TOKEN: Optional[str] = get_daemon_access_token()
     BACKEND_LOGIN_EMAIL: Optional[str] = get_env("BACKEND_LOGIN_EMAIL")
     BACKEND_ALLOW_GPT_ID_AUTH: bool = get_env_bool("BACKEND_ALLOW_GPT_ID_AUTH", False)
 

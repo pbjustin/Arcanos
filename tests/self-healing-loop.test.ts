@@ -311,6 +311,10 @@ describe('selfHealingLoop', () => {
     'SELF_HEAL_VERIFICATION_DELAY_MS',
     'SELF_HEAL_DEBUG_FORCE_AI_HEAL_ONCE',
     'SELF_HEAL_WORKER_SERVICE_URL',
+    'WORKER_HELPER_BASE_URL',
+    'RAILWAY_SERVICE_ARCANOS_WORKER_URL',
+    'ARCANOS_WORKER_PUBLIC_URL',
+    'ARCANOS_WORKER_HELPER_TOKEN',
     'SELF_HEAL_OPERATOR_ACTION_APPROVED',
     'SELF_HEAL_OPERATOR_ACTION_APPROVED_BY',
     'SELF_HEAL_OPERATOR_ACTION_REASON',
@@ -691,16 +695,37 @@ describe('selfHealingLoop', () => {
   });
 
   it('treats idle workers with no receipts as inactive degraded and heals the runtime', async () => {
-    const remoteHealFetchMock = jest.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      text: async () => JSON.stringify({
-        message: 'Workers started successfully.'
-      })
+    const workerHelperToken = 'self-heal-remote-worker-token-1234567890';
+    const untrustedRemoteMessage = 'REMOTE-WORKER-UNTRUSTED-MESSAGE';
+    const unrelatedSecret = 'remote-unrelated-secret-must-not-propagate';
+    const responseBody = JSON.stringify({
+      timestamp: '2026-03-25T12:00:00.000Z',
+      requestedForce: true,
+      restart: {
+        started: true,
+        alreadyRunning: false,
+        runWorkers: true,
+        workerCount: 1,
+        workerIds: ['arcanos-worker-1'],
+        model: 'test-model',
+        message: `${untrustedRemoteMessage} ${workerHelperToken} ${unrelatedSecret}`
+      },
+      runtime: {
+        enabled: true,
+        started: true
+      }
     });
-    (globalThis as typeof globalThis & { fetch: typeof remoteHealFetchMock }).fetch =
-      remoteHealFetchMock as any;
+    const remoteHealFetchSpy = jest.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(responseBody, {
+        status: 200,
+        headers: {
+          'content-type': 'application/json',
+          'content-length': String(Buffer.byteLength(responseBody, 'utf8'))
+        }
+      })
+    );
     process.env.SELF_HEAL_WORKER_SERVICE_URL = 'https://worker.example.test';
+    process.env.ARCANOS_WORKER_HELPER_TOKEN = workerHelperToken;
 
     getWorkerControlHealthMock.mockResolvedValueOnce(createWorkerHealth({
       overallStatus: 'degraded',
@@ -734,20 +759,35 @@ describe('selfHealingLoop', () => {
 
     const result = await runSelfHealingLoop({ trigger: 'interval' });
 
-    expect(remoteHealFetchMock).toHaveBeenCalledWith(
-      'https://worker.example.test/worker-helper/heal',
-      expect.objectContaining({
-        method: 'POST'
-      })
-    );
+    expect(remoteHealFetchSpy).toHaveBeenCalledTimes(1);
+    const [requestUrl, requestOptions] = remoteHealFetchSpy.mock.calls[0]!;
+    const requestHeaders = new Headers(requestOptions?.headers);
+    expect(String(requestUrl)).toBe('https://worker.example.test/worker-helper/heal');
+    expect(requestOptions).toEqual(expect.objectContaining({
+      method: 'POST',
+      redirect: 'error'
+    }));
+    expect(requestHeaders.get('x-arcanos-worker-helper-token')).toBe(workerHelperToken);
+    expect(requestHeaders.has('authorization')).toBe(false);
     expect(result).toEqual(expect.objectContaining({
       diagnosis: 'inactive_degraded: no worker activity observed',
       action: expect.stringContaining('healWorkerRuntime:')
     }));
-    expect(getSelfHealingLoopStatus()).toEqual(expect.objectContaining({
+    const loopStatus = getSelfHealingLoopStatus();
+    expect(loopStatus).toEqual(expect.objectContaining({
       lastDiagnosis: 'inactive_degraded: no worker activity observed',
       lastWorkerHealth: 'degraded'
     }));
+    const observableState = JSON.stringify({
+      result,
+      loopStatus,
+      events: buildSelfHealEventsSnapshot(20),
+      consoleLog: consoleLogSpy.mock.calls,
+      consoleError: consoleErrorSpy.mock.calls
+    });
+    expect(observableState).not.toContain(untrustedRemoteMessage);
+    expect(observableState).not.toContain(unrelatedSecret);
+    expect(observableState).not.toContain(workerHelperToken);
   });
 
   it('activates degraded mode when a timeout storm is detected', async () => {

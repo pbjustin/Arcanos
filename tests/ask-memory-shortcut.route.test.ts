@@ -13,9 +13,11 @@ const mockRunThroughBrain = jest.fn();
 const mockTryExecutePromptRouteShortcut = jest.fn();
 const runHealthCheckMock = jest.fn();
 const checkRedisHealthMock = jest.fn();
+class MockJobRepositoryUnavailableError extends Error {}
 
 jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
   createJob: createJobMock,
+  JobRepositoryUnavailableError: MockJobRepositoryUnavailableError,
   claimNextPendingJob: jest.fn(),
   recordJobHeartbeat: jest.fn(),
   scheduleJobRetry: jest.fn(),

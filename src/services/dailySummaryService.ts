@@ -8,6 +8,7 @@ import { DAILY_SUMMARY_PROMPT_LINES } from "@platform/runtime/dailySummaryTempla
 import { readJsonFileSafely } from "@shared/jsonFileUtils.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { parseModelOutputWithSchema } from "@services/safety/aiOutputBoundary.js";
+import { redactSensitive } from '@shared/redaction.js';
 
 interface SummarySources {
   systemState: Record<string, unknown>;
@@ -92,7 +93,9 @@ function buildPrompt(model: string, sources: SummarySources): string {
  * Edge cases: OpenAI failure falls back to a heuristic summary.
  */
 export async function generateDailySummary(triggeredBy: string = 'cli'): Promise<DailySummaryResult> {
-  const sources = await buildSummarySources();
+  const sources = redactSensitive(
+    await buildSummarySources()
+  ) as SummarySources;
   // Use config layer for env access (adapter boundary pattern)
   const model = getEnv('DAILY_SUMMARY_MODEL') || getDefaultModel();
   const prompt = buildPrompt(model, sources);

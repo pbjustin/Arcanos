@@ -39,6 +39,7 @@ import { createFallbackTestRoute } from "@transport/http/middleware/fallbackHand
 import { runHealthCheck } from "@platform/logging/diagnostics.js";
 import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import { timingSafeEqualOpaqueSecret } from '@shared/security/opaqueSecret.js';
+import { resolveConfiguredPurposeBoundCredential } from '@shared/security/purposeBoundCredential.js';
 import devopsRouter from './devops.js';
 import introspectionRouter from './introspection.js';
 import trinityRouter from './trinity.js';
@@ -83,11 +84,17 @@ export function registerRoutes(app: Express): void {
 
   if (process.env.DEBUG_WATCHDOG === 'true') {
     app.get('/debug/watchdog', (req: Request, res: Response) => {
-      const expectedDebugKey = process.env.DEBUG_WATCHDOG_KEY;
-      if (
-        expectedDebugKey
-        && !timingSafeEqualOpaqueSecret(req.header('x-debug-key'), expectedDebugKey)
-      ) {
+      const expectedDebugKey = resolveConfiguredPurposeBoundCredential({
+        ownEnvironmentName: 'DEBUG_WATCHDOG_KEY',
+        readEnvironmentValue: (environmentName) => process.env[environmentName],
+      });
+      res.setHeader('Cache-Control', 'no-store');
+
+      if (!expectedDebugKey) {
+        return res.status(503).json({ error: 'Service Unavailable' });
+      }
+
+      if (!timingSafeEqualOpaqueSecret(req.header('x-debug-key'), expectedDebugKey)) {
         return res.status(403).json({ error: 'Forbidden' });
       }
 
@@ -122,6 +129,8 @@ export function registerRoutes(app: Express): void {
   app.use('/', mcpRouter);
   app.use('/', gptAccessRouter);
   app.use('/', controlPlaneRouter);
+  app.use('/', selfHealRouter);
+  app.use('/', selfImproveRouter);
   app.use('/', systemStateRouter);
   app.use('/', jobsRouter);
   app.use('/', askRouter);
@@ -151,9 +160,6 @@ export function registerRoutes(app: Express): void {
   app.use('/', researchRouter);
   app.use('/', reinforcementRouter);
   app.use('/', devopsRouter);
-  app.use('/', selfImproveRouter);
-  app.use('/', selfHealRouter);
-
   // ActionPlan orchestration + CLEAR 2.0 governance
   app.use('/', actionPlanExecutionsRouter);
   app.use('/', plansRouter);

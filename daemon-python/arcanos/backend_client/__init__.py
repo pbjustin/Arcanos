@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Optional, Sequence
+from urllib.parse import urlsplit
 
 import requests
 
@@ -37,8 +38,10 @@ from ..backend_client_models import (
     BackendTranscriptionResult,
     BackendVisionResult,
 )
-from ..config import Config
+from ..config import Config, is_valid_daemon_access_token
 from arcanos.debug import log_audit_event
+
+DAEMON_ACCESS_TOKEN_HEADER_NAME = "x-arcanos-daemon-token"
 
 
 @dataclass(frozen=True)
@@ -58,15 +61,26 @@ class BackendRequestContext:
     effective_gpt_id: Optional[str]
     has_authorization: bool
     has_x_gpt_id: bool
+    has_daemon_access_token: bool = False
     has_cookie: bool = False
 
     @property
     def auth_mode(self) -> str:
+        if self.has_daemon_access_token:
+            return "daemon-token"
         if self.has_authorization:
             return "bearer"
         if self.has_x_gpt_id:
             return "gpt-id"
         return "anonymous"
+
+    @property
+    def authenticated(self) -> bool:
+        return (
+            self.has_daemon_access_token
+            or self.has_authorization
+            or self.has_x_gpt_id
+        )
 
 
 class BackendApiClient:
@@ -81,7 +95,8 @@ class BackendApiClient:
         base_url: str,
         token_provider: Callable[[], Optional[str]],
         timeout_seconds: int = 15,
-        request_sender: Callable[..., requests.Response] = requests.request
+        request_sender: Callable[..., requests.Response] = requests.request,
+        daemon_access_token_provider: Optional[Callable[[], Optional[str]]] = None,
     ) -> None:
         """
         Purpose: Initialize backend API client.
@@ -90,6 +105,11 @@ class BackendApiClient:
         """
         self._base_url = normalize_backend_url(base_url, allow_http_dev=Config.BACKEND_ALLOW_HTTP)
         self._token_provider = token_provider
+        self._daemon_access_token_provider = (
+            daemon_access_token_provider
+            if daemon_access_token_provider is not None
+            else lambda: getattr(Config, "DAEMON_ACCESS_TOKEN", None)
+        )
         self._timeout_seconds = timeout_seconds
         self._request_sender = request_sender
 
@@ -177,6 +197,17 @@ class BackendApiClient:
         return cls._normalize_request_path(path)
 
     @classmethod
+    def _is_daemon_plane_path(cls, path: str) -> bool:
+        """
+        Purpose: Classify only the exact daemon HTTP namespace.
+        Inputs/Outputs: normalized or raw request path; returns a segment-bounded decision.
+        Edge cases: Query strings are ignored; lookalikes such as /api/daemon-tools are excluded.
+        """
+        normalized_path = cls._normalize_request_path(path)
+        route_path = urlsplit(normalized_path).path
+        return route_path == "/api/daemon" or route_path.startswith("/api/daemon/")
+
+    @classmethod
     def _prepare_outbound_payload(
         cls,
         resolved_path: str,
@@ -242,6 +273,41 @@ class BackendApiClient:
             raise BackendRequestError(kind="configuration", message="Backend URL is not configured")
 
         normalized_path = self._normalize_request_path(path)
+        resolved_path = self._resolve_outbound_path(normalized_path)
+        outbound_payload = self._prepare_outbound_payload(resolved_path, payload)
+
+        if self._is_daemon_plane_path(resolved_path):
+            daemon_access_token = self._daemon_access_token_provider()
+            if not is_valid_daemon_access_token(daemon_access_token):
+                log_audit_event(
+                    "auth_failure",
+                    source="backend_client",
+                    reason="daemon_token_missing_or_invalid",
+                    path=normalized_path,
+                    method=method,
+                    has_daemon_access_token=False,
+                )
+                raise BackendRequestError(
+                    kind="daemon_auth",
+                    message="Daemon access token is missing or invalid",
+                )
+
+            return BackendRequestContext(
+                original_path=normalized_path,
+                resolved_path=resolved_path,
+                url=f"{self._base_url}{resolved_path}",
+                headers={
+                    "Content-Type": "application/json",
+                    DAEMON_ACCESS_TOKEN_HEADER_NAME: daemon_access_token,
+                },
+                payload=outbound_payload,
+                request_gpt_id=None,
+                effective_gpt_id=None,
+                has_authorization=False,
+                has_x_gpt_id=False,
+                has_daemon_access_token=True,
+            )
+
         request_gpt_id = self._extract_request_gpt_id(normalized_path, payload)
         auth_value = self._token_provider()
         backend_gpt_id = (getattr(Config, "BACKEND_GPT_ID", "") or "").strip() or None
@@ -262,8 +328,6 @@ class BackendApiClient:
             )
             raise BackendRequestError(kind="auth", message="Backend token is missing")
 
-        resolved_path = self._resolve_outbound_path(normalized_path)
-        outbound_payload = self._prepare_outbound_payload(resolved_path, payload)
         headers = {"Content-Type": "application/json"}
 
         if auth_value:
@@ -347,9 +411,10 @@ class BackendApiClient:
             gpt_id=context.request_gpt_id,
             effective_gpt_id=context.effective_gpt_id,
             auth_mode=context.auth_mode,
-            authenticated=context.has_authorization or context.has_x_gpt_id,
+            authenticated=context.authenticated,
             has_authorization=context.has_authorization,
             has_cookie=context.has_cookie,
+            has_daemon_access_token=context.has_daemon_access_token,
             has_x_gpt_id=context.has_x_gpt_id,
         )
         self._log_backend_route_request(
@@ -384,9 +449,10 @@ class BackendApiClient:
             status_code=status_code,
             error_kind=error_kind,
             auth_mode=context.auth_mode,
-            authenticated=context.has_authorization or context.has_x_gpt_id,
+            authenticated=context.authenticated,
             has_authorization=context.has_authorization,
             has_cookie=context.has_cookie,
+            has_daemon_access_token=context.has_daemon_access_token,
             has_x_gpt_id=context.has_x_gpt_id,
         )
         self._log_backend_route_response(
@@ -680,20 +746,39 @@ class BackendApiClient:
             )
 
         if response.status_code == 401:
-            self._log_request_response(method, context, status_code=response.status_code, error_kind="auth")
+            auth_error_kind = (
+                "daemon_auth"
+                if context.has_daemon_access_token
+                else "auth"
+            )
+            self._log_request_response(
+                method,
+                context,
+                status_code=response.status_code,
+                error_kind=auth_error_kind,
+            )
             log_audit_event(
                 "auth_failure",
                 source="backend_client",
-                reason="401_unauthorized",
+                reason=(
+                    "401_daemon_unauthorized"
+                    if context.has_daemon_access_token
+                    else "401_unauthorized"
+                ),
                 path=context.original_path,
                 method=method,
-                status_code=response.status_code
+                status_code=response.status_code,
+                has_daemon_access_token=context.has_daemon_access_token,
             )
             return BackendResponse(
                 ok=False,
                 error=BackendRequestError(
-                    kind="auth",
-                    message="Backend authorization failed",
+                    kind=auth_error_kind,
+                    message=(
+                        "Daemon authorization failed"
+                        if context.has_daemon_access_token
+                        else "Backend authorization failed"
+                    ),
                     status_code=response.status_code,
                     details=response.text
                 )

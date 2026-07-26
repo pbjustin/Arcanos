@@ -25,6 +25,8 @@ export interface McpRequestContext {
   actionPlanPrincipal?: ActionPlanPrincipal;
 }
 
+export type McpDetachedAppLocals = Readonly<Record<string, unknown>>;
+
 const mcpRequestContextStorage = new AsyncLocalStorage<McpRequestContext>();
 
 /**
@@ -137,7 +139,11 @@ export function readMcpActionPlanRequesterPrincipalId(
  * Edge case behavior:
  * - Throws when the OpenAI adapter is unavailable because detached transports cannot proceed without it.
  */
-function buildDetachedMcpContext(sessionId: string | undefined, transport: 'internal' | 'stdio'): McpRequestContext {
+function buildDetachedMcpContext(
+  sessionId: string | undefined,
+  transport: 'internal' | 'stdio',
+  appLocals: McpDetachedAppLocals
+): McpRequestContext {
   const { client } = getOpenAIClientOrAdapter();
   if (!client) {
     throw new Error('OpenAI client unavailable (adapter not initialized)');
@@ -153,8 +159,13 @@ function buildDetachedMcpContext(sessionId: string | undefined, transport: 'inte
     openai: client,
     runtimeBudget: createRuntimeBudget(),
     sessionId,
-    // No HTTP request in stdio transport; keep as empty object.
-    req: {} as any,
+    // Detached transports still receive explicit application services through
+    // the same request-local composition boundary used by HTTP transports.
+    req: {
+      app: {
+        locals: appLocals,
+      },
+    } as Request,
     logger,
     transport,
   };
@@ -173,8 +184,11 @@ function buildDetachedMcpContext(sessionId: string | undefined, transport: 'inte
  * Edge case behavior:
  * - Throws when the OpenAI adapter is unavailable.
  */
-export function buildMcpStdioContext(sessionId?: string): McpRequestContext {
-  return buildDetachedMcpContext(sessionId, 'stdio');
+export function buildMcpStdioContext(
+  sessionId?: string,
+  appLocals: McpDetachedAppLocals = {}
+): McpRequestContext {
+  return buildDetachedMcpContext(sessionId, 'stdio', appLocals);
 }
 
 /**
@@ -190,6 +204,9 @@ export function buildMcpStdioContext(sessionId?: string): McpRequestContext {
  * Edge case behavior:
  * - Throws when the OpenAI adapter is unavailable.
  */
-export function buildMcpInternalContext(sessionId?: string): McpRequestContext {
-  return buildDetachedMcpContext(sessionId, 'internal');
+export function buildMcpInternalContext(
+  sessionId?: string,
+  appLocals: McpDetachedAppLocals = {}
+): McpRequestContext {
+  return buildDetachedMcpContext(sessionId, 'internal', appLocals);
 }

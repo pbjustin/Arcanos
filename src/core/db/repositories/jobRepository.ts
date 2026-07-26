@@ -809,12 +809,12 @@ export async function updateJob(
  * Get one job by identifier.
  * Purpose: support queue polling and operator inspection of DB-backed jobs.
  * Inputs/outputs: accepts a job id and returns the matching job row or `null`.
- * Edge case behavior: returns `null` when the database is unavailable or the row does not exist.
+ * Edge case behavior: throws `JobRepositoryUnavailableError` when the database
+ * is disconnected at entry; a successful query with no matching row returns
+ * `null`, and query failures propagate unchanged.
  */
 export async function getJobById(jobId: string): Promise<JobData | null> {
-  if (!isDatabaseConnected()) {
-    return null;
-  }
+  assertDatabaseReady();
 
   const result = await query('SELECT * FROM job_data WHERE id = $1 LIMIT 1', [jobId]);
   return (result.rows[0] as JobData | undefined) ?? null;
@@ -1117,7 +1117,7 @@ export async function requestJobCancellation(
 
   const pool = getPool();
   if (!pool) {
-    throw new Error('Database pool unavailable');
+    throw new JobRepositoryUnavailableError('Database pool unavailable');
   }
 
   const client = await pool.connect();

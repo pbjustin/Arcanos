@@ -60,9 +60,10 @@ The root `package.json` still lists several scripts whose target files are missi
 - `audit:python`, `audit:python:fix` -> `daemon-python/scripts/continuous_audit.py`
 - `sync:auto` -> `scripts/auto-sync-watcher.js`
 
-Do not run `npm run probe`: its current implementation prints a prefix of
-`OPENAI_API_KEY` and depends on a missing test file. Use the focused validation
-commands documented for the subsystem you changed.
+The legacy root probe command was retired because it exposed credential prefixes
+and depended on a missing test file. Use the focused validation commands
+documented for the subsystem you changed; use `npm run validate:railway` for the
+local, non-deploying Railway configuration check.
 
 `self-test` and `daily-summary` point at incorrect compiled command paths.
 `sync:fix` accepts its flag but does not currently apply a fix. `sync:setup`

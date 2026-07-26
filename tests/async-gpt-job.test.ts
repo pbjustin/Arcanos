@@ -3,6 +3,10 @@ import {
   buildQueuedGptJobInput,
   parseQueuedGptJobInput
 } from '../src/shared/gpt/asyncGptJob.js';
+import {
+  GPT_HEALTH_ECHO_ACTION,
+  isQueuedBridgeSmokeJobInput
+} from '../src/shared/gpt/bridgeSmoke.js';
 
 describe('async GPT job payload helpers', () => {
   it('bounds route metadata to the worker parser contract', () => {
@@ -22,5 +26,18 @@ describe('async GPT job payload helpers', () => {
     expect(payload.traceId).toHaveLength(128);
     expect(payload.correlationId).toHaveLength(128);
     expect(parseQueuedGptJobInput(payload).ok).toBe(true);
+  });
+
+  it('recognizes only queued jobs with a supported bridge smoke action', () => {
+    expect(isQueuedBridgeSmokeJobInput({
+      bridgeSmoke: true,
+      bridgeAction: GPT_HEALTH_ECHO_ACTION
+    })).toBe(true);
+    expect(isQueuedBridgeSmokeJobInput({
+      bridgeSmoke: true
+    })).toBe(false);
+    expect(isQueuedBridgeSmokeJobInput({
+      bridgeAction: GPT_HEALTH_ECHO_ACTION
+    })).toBe(false);
   });
 });

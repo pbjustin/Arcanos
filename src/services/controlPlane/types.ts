@@ -4,6 +4,7 @@ import type {
   ControlPlaneInvokeResponseData,
   ControlPlaneProvider,
 } from '@arcanos/protocol';
+import type { ArcanosMcpPort } from '@services/arcanosMcpPort.js';
 
 export type { ControlPlaneProvider };
 
@@ -35,6 +36,13 @@ export interface ControlPlaneContext {
     type: string;
     scopes?: string[];
   };
+}
+
+export interface ControlPlaneHttpPrincipal {
+  audience: 'control-plane-http';
+  role: 'operator';
+  principalId: string;
+  scopes: readonly string[];
 }
 
 export interface ControlPlaneRequestPayload {
@@ -180,18 +188,7 @@ export interface ControlPlaneCommandRunner {
   run(plan: ControlPlaneCommandPlan): Promise<ControlPlaneCommandResult>;
 }
 
-export interface ControlPlaneMcpService {
-  invokeTool(options: {
-    toolName: string;
-    toolArguments?: Record<string, unknown>;
-    request?: Request;
-    sessionId?: string;
-  }): Promise<Record<string, unknown>>;
-  listTools(options?: {
-    request?: Request;
-    sessionId?: string;
-  }): Promise<Record<string, unknown>>;
-}
+export type ControlPlaneMcpService = ArcanosMcpPort;
 
 export type ControlPlaneOperationKind =
   | 'command'

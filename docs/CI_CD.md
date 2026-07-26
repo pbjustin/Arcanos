@@ -55,6 +55,21 @@ npm run docs:links -- --local-only
 npm run validate:railway
 ```
 
+The standalone runtime's real Redis admission suite is intentionally separate:
+
+```bash
+AI_RUNTIME_TEST_REDIS_URL=redis://127.0.0.1:6379/15 \
+AI_RUNTIME_TEST_REDIS_CONFIRM_DISPOSABLE=disposable-loopback-only \
+npm run test:runtime-redis-integration
+```
+
+Run it only against a disposable loopback Redis instance. The test rejects
+remote hosts and databases other than 15, deletes only its randomized admission
+namespaces, and never flushes the database. The authoritative CI pipeline runs
+the standard standalone runtime regression suite and this two-connection Redis
+and real BullMQ execution-fence suite in the required
+`runtime-redis-admission` service job.
+
 ## Deploy (Railway)
 Deployment workflows are repository-specific; verify current trigger and required secrets in each workflow file before enabling auto-deploy.
 

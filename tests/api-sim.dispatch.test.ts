@@ -228,4 +228,35 @@ describe('/api/sim dispatcher wiring', () => {
     expect(response.streamChunks?.join('')).toContain('simulation');
     expect(response.streamChunks?.join('')).toContain('"type":"done"');
   });
+
+  it.each([
+    ['MEMORY_AUTH_REQUIRED', 401],
+    ['MEMORY_AUTH_UNAVAILABLE', 503]
+  ] as const)(
+    'preserves the memory-plane authentication status for %s',
+    async (errorCode, expectedStatus) => {
+      mockRouteGptRequest.mockResolvedValue({
+        ok: false,
+        error: {
+          code: errorCode,
+          message: 'memory authentication failed'
+        },
+        _route: {
+          gptId: 'sim',
+          timestamp: '2026-03-13T00:00:00.000Z'
+        }
+      });
+
+      const response = await invokeApiSim({
+        scenario: 'Return exactly the text no-simulation'
+      });
+
+      expect(response.status).toBe(expectedStatus);
+      expect(response.body).toMatchObject({
+        status: 'error',
+        message: 'Simulation failed',
+        error: 'memory authentication failed'
+      });
+    }
+  );
 });

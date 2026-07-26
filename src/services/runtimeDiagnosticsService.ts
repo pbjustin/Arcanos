@@ -7,13 +7,19 @@ import {
   executeRedisOperation,
   getRedisLifecycleSnapshot
 } from '@platform/runtime/redisLifecycle.js';
-import { loadModuleDefinitions, type LoadedModule } from './moduleLoader.js';
+import {
+  initializeModuleRegistry,
+  type RegisteredModule
+} from './moduleRegistry.js';
+import {
+  isPublicGptModule,
+  MODULE_CATALOG
+} from './moduleCatalog.js';
 import { getActiveRouteTable } from './runtimeRouteTableService.js';
 import type { AIDegradedResponseMetadata, AITimeoutKind } from '@shared/http/aiDegradedHeaders.js';
 
 type ModuleStatus =
   | 'active'
-  | 'registered'
   | 'unavailable'
   | `DATA NOT EXPOSED: ${string}`;
 
@@ -124,7 +130,7 @@ export interface RequestWindowSnapshot {
 
 interface RegistrySnapshot {
   registeredGpts: string[] | `DATA NOT EXPOSED: ${string}`;
-  loadedModules: LoadedModule[] | null;
+  loadedModules: RegisteredModule[] | null;
 }
 
 interface MetricsSnapshot {
@@ -147,44 +153,33 @@ const SLOW_REQUEST_LATENCY_MS = Math.max(1_000, getEnvNumber('DIAGNOSTICS_SLOW_R
 const PUBLIC_ERROR_RATE_WINDOW_MS = Math.max(60_000, getEnvNumber('DIAGNOSTICS_PUBLIC_WINDOW_MS', 15 * 60 * 1000));
 const REDIS_SHARED_METRICS_ENABLED = getEnv('DIAGNOSTICS_SHARED_METRICS', 'true') !== 'false';
 
-const MODULE_PROBES: Record<string, { moduleNames?: string[]; routes?: string[] }> = {
-  CORE: {
-    moduleNames: ['ARCANOS:CORE'],
-    routes: ['core']
-  },
-  WRITE: {
-    moduleNames: ['ARCANOS:WRITE'],
-    routes: ['write']
-  },
-  BUILD: {
-    moduleNames: ['ARCANOS:BUILD'],
-    routes: ['build']
-  },
-  RESEARCH: {
-    moduleNames: ['ARCANOS:RESEARCH'],
-    routes: ['research']
-  },
-  AUDIT: {
-    moduleNames: ['ARCANOS:AUDIT'],
-    routes: ['audit']
-  },
-  SIM: {
-    moduleNames: ['ARCANOS:SIM'],
-    routes: ['sim']
-  },
-  BOOKING: {
-    moduleNames: ['BACKSTAGE:BOOKER'],
-    routes: ['backstage-booker']
-  },
-  GUIDE: {
-    moduleNames: ['ARCANOS:GUIDE'],
-    routes: ['guide']
-  },
-  TRACKER: {
-    moduleNames: ['ARCANOS:TRACKER'],
-    routes: ['tracker']
+const PUBLIC_MODULE_DIAGNOSTICS_CATALOG = MODULE_CATALOG.filter(
+  isPublicGptModule
+);
+
+export function buildPublicModuleStatusSnapshot(
+  loadedModules: readonly RegisteredModule[] | null
+): Record<string, ModuleStatus> {
+  const moduleStatuses: Record<string, ModuleStatus> = {};
+
+  for (const catalogEntry of PUBLIC_MODULE_DIAGNOSTICS_CATALOG) {
+    const moduleKey = catalogEntry.diagnosticsKey;
+    if (!loadedModules) {
+      moduleStatuses[moduleKey] = `DATA NOT EXPOSED: ${moduleKey}`;
+      continue;
+    }
+
+    moduleStatuses[moduleKey] = loadedModules.some(
+      (loadedModule) =>
+        loadedModule.definition.name === catalogEntry.name
+        || loadedModule.route === catalogEntry.route
+    )
+      ? 'active'
+      : 'unavailable';
   }
-};
+
+  return moduleStatuses;
+}
 
 class RuntimeDiagnosticsService {
   private requestsTotal = 0;
@@ -304,7 +299,7 @@ class RuntimeDiagnosticsService {
           timeoutCount: route.timeoutCount
         })),
       top_error_routes: metricsSnapshot.topErrorRoutes,
-      modules: this.resolveModuleStatuses(registry.loadedModules)
+      modules: buildPublicModuleStatusSnapshot(registry.loadedModules)
     };
   }
 
@@ -353,7 +348,9 @@ class RuntimeDiagnosticsService {
     try {
       const [gptMap, loadedModules] = await Promise.all([
         getGptModuleMap(),
-        loadModuleDefinitions()
+        initializeModuleRegistry().then((registry) =>
+          registry.listRegisteredModules()
+        )
       ]);
 
       return {
@@ -371,38 +368,6 @@ class RuntimeDiagnosticsService {
         loadedModules: null
       };
     }
-  }
-
-  private resolveModuleStatuses(loadedModules: LoadedModule[] | null): Record<string, ModuleStatus> {
-    const moduleStatuses: Record<string, ModuleStatus> = {};
-
-    for (const [moduleKey, probe] of Object.entries(MODULE_PROBES)) {
-      if (!loadedModules) {
-        moduleStatuses[moduleKey] = `DATA NOT EXPOSED: ${moduleKey}`;
-        continue;
-      }
-
-      const activeMatch = loadedModules.find((loadedModule) => {
-        const moduleName = loadedModule.definition.name;
-        const route = loadedModule.route;
-        return Boolean(
-          probe.moduleNames?.includes(moduleName) ||
-          probe.routes?.includes(route)
-        );
-      });
-
-      if (activeMatch) {
-        moduleStatuses[moduleKey] = 'active';
-        continue;
-      }
-
-      const probeHasDirectRuntimeMapping = Boolean(probe.moduleNames?.length || probe.routes?.length);
-      moduleStatuses[moduleKey] = probeHasDirectRuntimeMapping
-        ? 'unavailable'
-        : `DATA NOT EXPOSED: ${moduleKey}`;
-    }
-
-    return moduleStatuses;
   }
 
   private async getMetricsSnapshot(): Promise<MetricsSnapshot> {

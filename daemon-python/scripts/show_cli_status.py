@@ -21,6 +21,10 @@ print("\n[Configuration]")
 print(f"  Version: {Config.VERSION}")
 print(f"  Backend URL: {Config.BACKEND_URL or 'Not configured'}")
 print(f"  Backend Token: {'Set' if Config.BACKEND_TOKEN else 'Not set'}")
+print(
+    "  Daemon Access Token: "
+    f"{'Set' if Config.DAEMON_ACCESS_TOKEN else 'Not set'}"
+)
 print(f"  OpenAI API Key: {'Set' if Config.OPENAI_API_KEY and Config.OPENAI_API_KEY != 'sk-dummy-api-key' else 'Not set or dummy'}")
 
 if Config.BACKEND_URL:
@@ -29,7 +33,8 @@ if Config.BACKEND_URL:
         client = BackendApiClient(
             base_url=Config.BACKEND_URL,
             token_provider=lambda: Config.BACKEND_TOKEN,
-            timeout_seconds=Config.BACKEND_REQUEST_TIMEOUT
+            timeout_seconds=Config.BACKEND_REQUEST_TIMEOUT,
+            daemon_access_token_provider=lambda: Config.DAEMON_ACCESS_TOKEN,
         )
         response = client.request_registry()
         if response.ok:

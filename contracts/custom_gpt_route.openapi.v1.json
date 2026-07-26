@@ -349,7 +349,7 @@
             }
           },
           "503": {
-            "description": "Durable async GPT jobs unavailable for canonical bridge operations",
+            "description": "Durable async GPT jobs are unavailable during creation or post-enqueue status lookup for canonical bridge operations",
             "content": {
               "application/json": {
                 "schema": {
@@ -366,6 +366,25 @@
                       "error": {
                         "code": "ASYNC_GPT_JOBS_UNAVAILABLE",
                         "message": "query requires durable GPT job persistence, but the jobs backend is unavailable."
+                      }
+                    }
+                  },
+                  "acceptedJobStatusUnavailable": {
+                    "summary": "An accepted query_and_wait job cannot be read while durable persistence is unavailable",
+                    "value": {
+                      "ok": false,
+                      "requestId": "req_example",
+                      "traceId": "trace_example",
+                      "action": "query_and_wait",
+                      "status": "running",
+                      "jobStatus": "running",
+                      "lifecycleStatus": "running",
+                      "jobId": "job_example",
+                      "poll": "/jobs/job_example/result",
+                      "stream": "/jobs/job_example/stream",
+                      "error": {
+                        "code": "ASYNC_GPT_JOBS_UNAVAILABLE",
+                        "message": "Async GPT job status is temporarily unavailable because durable job persistence is unavailable."
                       }
                     }
                   }

@@ -1,4 +1,4 @@
-import { classifyRuntimeInspectionPrompt } from '@services/runtimeInspectionRoutingService.js';
+import { classifyRuntimeInspectionPrompt } from '@shared/runtimeInspectionPrompt.js';
 import { shouldTreatPromptAsDagExecution } from '@shared/dag/dagExecutionRouting.js';
 import { normalizeGptRequestBody } from '@shared/gpt/gptIdempotency.js';
 import {

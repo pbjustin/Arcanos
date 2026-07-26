@@ -11,6 +11,13 @@ async function loadMetricsModule() {
   jest.clearAllMocks();
   const metricsModule = await import('../src/platform/observability/appMetrics.js');
   metricsModule.resetAppMetricsForTests();
+  metricsModule.configureAppMetricsRuntimeProviders({
+    getWorkerHealth: getWorkerControlHealthMock,
+    getAiProviderSnapshot: () => ({
+      state: 'closed',
+      failureCount: 0
+    })
+  });
   return metricsModule;
 }
 

@@ -3,7 +3,8 @@
  * Provides stateless reflection generation without memory dependencies
  */
 
-import { callOpenAI, getDefaultModel } from './openai.js';
+import { callOpenAI } from './openai/chatFlow/index.js';
+import { getDefaultModel } from './openai/credentialProvider.js';
 import { saveSelfReflection } from "@core/db/repositories/selfReflectionRepository.js";
 import {
   AI_REFLECTION_DEFAULT_SYSTEM_PROMPT,
@@ -11,7 +12,6 @@ import {
   buildDefaultPatchContent,
   buildFallbackPatchContent
 } from "@platform/runtime/aiReflectionTemplates.js";
-import { parseEnvInt, parseEnvFloat, parseEnvBoolean } from "@platform/runtime/envParsers.js";
 import { getEnv, getEnvNumber } from "@platform/runtime/env.js";
 
 // Use config layer for env access (adapter boundary pattern)

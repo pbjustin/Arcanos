@@ -1,4 +1,5 @@
 import express, { Request, Response } from 'express';
+import { z } from 'zod';
 import { sendBadRequestPayload, sendNotFoundPayload } from '@shared/http/index.js';
 import {
   getActiveQuarantines,
@@ -23,8 +24,60 @@ import {
   buildPredictiveHealingStatusSnapshot
 } from '@services/selfImprove/predictiveHealingService.js';
 import { buildSafetySelfHealSnapshot } from '@services/selfHealRuntimeInspectionService.js';
+import {
+  isControlPlaneHttpAuthenticationConfigured,
+  requireControlPlaneHttpScopes,
+} from '@services/controlPlane/httpAuth.js';
+import {
+  selfHealingControlHttpBoundary,
+} from '@services/controlPlane/selfHealingControlHttpBoundary.js';
+import {
+  selfImproveControlRateLimit,
+} from '@services/controlPlane/selfHealingControlRateLimits.js';
 
 const router = express.Router();
+const requireSelfHealSafetyReadScope = requireControlPlaneHttpScopes(
+  ['arcanos:read'],
+  'self_heal.safety_status_authorization.denied'
+);
+const requireSafetyQuarantineReleaseScope = requireControlPlaneHttpScopes(
+  ['self-improve:control'],
+  'safety.quarantine_release_authorization.denied'
+);
+const safetyQuarantineReleaseBodySchema = z.object({
+  confirmation: z.string().max(264).optional(),
+  note: z.string().trim().min(1).max(256).optional(),
+}).strict();
+const safetyQuarantineIdSchema = z.string()
+  .min(1)
+  .max(256)
+  .regex(/^[A-Za-z0-9._~-]+$/u);
+const publicSafetyTimestampSchema = z.string().max(40).datetime({ offset: true });
+
+function normalizePublicSafetyTimestamp(value: string | null): string | null {
+  const parsed = publicSafetyTimestampSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+function buildPublicSelfHealSummary(
+  summary: ReturnType<typeof buildCompactSelfHealSummary>
+) {
+  return {
+    enabled: summary.enabled === true,
+    active: summary.active === true,
+    lastEventAt: normalizePublicSafetyTimestamp(summary.lastEventAt),
+    lastEventKind: summary.lastEventKind,
+    lastTriggerAt: normalizePublicSafetyTimestamp(summary.lastTriggerAt),
+    lastAttemptAt: normalizePublicSafetyTimestamp(summary.lastAttemptAt),
+    recentEventCount:
+      Number.isInteger(summary.recentEventCount) &&
+      summary.recentEventCount >= 0 &&
+      summary.recentEventCount <= 100
+        ? summary.recentEventCount
+        : 0,
+    detailsPath: '/status/safety/self-heal' as const
+  };
+}
 
 /**
  * GET /status/safety/operator-auth
@@ -41,6 +94,16 @@ router.get('/status/safety/operator-auth', (_req: Request, res: Response) => {
       acceptedCredentials: [],
       protectedEndpoints: []
     },
+    controlPlaneAuth: {
+      required: true,
+      mode: 'purpose-bound-bearer',
+      configured: isControlPlaneHttpAuthenticationConfigured(),
+      acceptedCredentials: ['Authorization: Bearer <ARCANOS_CONTROL_PLANE_ACCESS_TOKEN>'],
+      protectedEndpoints: [
+        'GET /status/safety/self-heal',
+        'POST /status/safety/quarantine/:quarantineId/release'
+      ]
+    },
     diagnostics: {
       publicEndpoints: ['GET /health', 'GET /healthz', 'GET /status/safety', 'GET /status/safety/operator-auth']
     }
@@ -53,6 +116,8 @@ router.get('/status/safety/operator-auth', (_req: Request, res: Response) => {
  */
 router.get('/status/safety', (_req: Request, res: Response) => {
   const snapshot = getSafetyRuntimeSnapshot();
+  const activeConditions = getActiveUnsafeConditions();
+  const activeQuarantines = getActiveQuarantines();
   const loopStatus = getSelfHealingLoopStatus();
   const trinityStatus = getTrinitySelfHealingStatus();
   const promptRouteMitigation = getPromptRouteMitigationState();
@@ -63,13 +128,36 @@ router.get('/status/safety', (_req: Request, res: Response) => {
     currentHealedComponent: inferSelfHealComponentFromAction(loopStatus.lastAction)
   });
   const predictiveHealing = buildPredictiveHealingStatusSnapshot();
+  res.setHeader('Cache-Control', 'no-store');
   res.json({
     status: hasUnsafeBlockingConditions() ? 'unsafe' : 'safe',
     timestamp: new Date().toISOString(),
-    activeConditions: getActiveUnsafeConditions(),
-    activeQuarantines: getActiveQuarantines(),
-    counters: snapshot.counters,
-    selfHealing: buildCompactSelfHealSummary(selfHealTelemetry),
+    activeConditionCount: activeConditions.length,
+    activeQuarantineCount: activeQuarantines.length,
+    activeConditions: activeConditions.map(({ code, blocking }) => ({
+      code,
+      blocking,
+    })),
+    activeQuarantines: activeQuarantines.map(({
+      kind,
+      integrityFailure,
+      autoRecoverable,
+    }) => ({
+      kind,
+      integrityFailure,
+      autoRecoverable,
+    })),
+    counters: {
+      duplicateSuppressions: snapshot.counters.duplicateSuppressions,
+      quarantineActivations: snapshot.counters.quarantineActivations,
+      workerFailureEvents: Object.values(snapshot.counters.workerFailures)
+        .reduce((total, counter) => total + counter.count, 0),
+      heartbeatMissEvents: Object.values(snapshot.counters.heartbeatMisses)
+        .reduce((total, count) => total + count, 0),
+      healthyCycleEvents: Object.values(snapshot.counters.healthyCycles)
+        .reduce((total, count) => total + count, 0),
+    },
+    selfHealing: buildPublicSelfHealSummary(buildCompactSelfHealSummary(selfHealTelemetry)),
     predictiveHealing: buildPredictiveHealingCompactSummary(predictiveHealing)
   });
 });
@@ -78,20 +166,50 @@ router.get('/status/safety', (_req: Request, res: Response) => {
  * GET /status/safety/self-heal
  * Purpose: expose bounded self-healing state for operator diagnostics.
  */
-router.get('/status/safety/self-heal', (_req: Request, res: Response) => {
-  res.json(buildSafetySelfHealSnapshot());
+router.use('/status/safety/self-heal', selfHealingControlHttpBoundary);
+router.get('/status/safety/self-heal', requireSelfHealSafetyReadScope, (_req: Request, res: Response) => {
+  const safetySnapshot = getSafetyRuntimeSnapshot();
+  res.json({
+    ...buildSafetySelfHealSnapshot(),
+    safetyState: {
+      activeConditions: getActiveUnsafeConditions(),
+      activeQuarantines: getActiveQuarantines(),
+      counters: safetySnapshot.counters,
+    },
+  });
 });
 
 /**
  * POST /status/safety/quarantine/:quarantineId/release
  * Purpose: Explicit release flow for integrity quarantines.
  */
+router.use('/status/safety/quarantine', selfHealingControlHttpBoundary);
 router.post(
   '/status/safety/quarantine/:quarantineId/release',
+  selfImproveControlRateLimit,
+  requireSafetyQuarantineReleaseScope,
   (req: Request, res: Response) => {
-    const { quarantineId } = req.params;
+    const quarantineIdResult = safetyQuarantineIdSchema.safeParse(req.params.quarantineId);
+    const bodyResult = safetyQuarantineReleaseBodySchema.safeParse(req.body ?? {});
+    if (!quarantineIdResult.success || !bodyResult.success) {
+      sendBadRequestPayload(res, {
+        error: 'INVALID_SAFETY_RELEASE_PAYLOAD',
+        details: ['Quarantine release input is invalid.'],
+      });
+      return;
+    }
+
+    const quarantineId = quarantineIdResult.data;
+    const actor = req.controlPlanePrincipal?.principalId;
+    if (!actor) {
+      res.status(403).json({
+        error: 'CONTROL_PLANE_FORBIDDEN',
+      });
+      return;
+    }
+
     const headerConfirmed = resolveHeader(req.headers, 'x-confirmed')?.toLowerCase() === 'yes';
-    const bodyConfirmation = typeof req.body?.confirmation === 'string' ? req.body.confirmation : undefined;
+    const bodyConfirmation = bodyResult.data.confirmation;
     const deterministicConfirmation =
       headerConfirmed || bodyConfirmation === `release:${quarantineId}`;
 
@@ -113,8 +231,8 @@ router.post(
     }
 
     const releaseResult = releaseQuarantine(quarantineId, {
-      actor: req.operatorActor || 'operator:unknown',
-      releaseNote: typeof req.body?.note === 'string' ? req.body.note : undefined,
+      actor,
+      releaseNote: bodyResult.data.note,
       integrityOnly: true
     });
 
@@ -149,7 +267,7 @@ router.post(
       severity: 'warn',
       details: {
         quarantineId,
-        actor: req.operatorActor || 'operator:unknown'
+        actor
       }
     });
 

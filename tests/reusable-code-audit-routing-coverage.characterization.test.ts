@@ -506,13 +506,13 @@ describe('reusable-code audit: deterministic route-collision manifest', () => {
     const reusablePost = collisions.get('POST /api/reusables');
     const reusableHealth = collisions.get('GET /api/reusables/health');
     const audit = collisions.get('POST /audit');
-    const update = collisions.get('POST /api/update');
+    const update = manifest.filter((entry) => entry.method === 'POST' && entry.path === '/api/update');
     const health = collisions.get('GET /health');
 
     expect(reusablePost).toHaveLength(2);
     expect(reusableHealth).toHaveLength(2);
     expect(audit).toHaveLength(2);
-    expect(update).toHaveLength(2);
+    expect(update).toHaveLength(1);
     expect(health).toHaveLength(3);
 
     expect(reusablePost?.map((entry) => entry.source)).toEqual([
@@ -539,9 +539,8 @@ describe('reusable-code audit: deterministic route-collision manifest', () => {
       'src/routes/ai-endpoints.ts',
       'src/routes/reinforcement.ts',
     ]);
-    expect(update?.map((entry) => entry.source)).toEqual([
+    expect(update.map((entry) => entry.source)).toEqual([
       'src/routes/api-update.ts',
-      'src/routes/api-daemon.ts',
     ]);
     expect(health?.map((entry) => entry.source)).toEqual([
       'src/routes/health.ts',

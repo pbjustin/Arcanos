@@ -512,6 +512,65 @@ const eventLoopLagMs = new Gauge({
 
 let lastWorkerMetricsRefreshAtMs = 0;
 let pendingWorkerMetricsRefresh: Promise<void> | null = null;
+export interface AppMetricsWorkerHealthSnapshot {
+  queueSummary: {
+    pending?: number;
+    running?: number;
+    delayed?: number;
+    failed?: number;
+    completed?: number;
+    stalledRunning?: number;
+    oldestPendingJobAgeMs?: number;
+  } | null;
+  operationalHealth: {
+    overallStatus?: string | null;
+    recentFailed?: number;
+    workerHeartbeatAgeMs?: number | null;
+    staleWorkers?: number;
+  };
+  historicalDebt: {
+    retryExhaustedJobs?: number;
+    deadLetterJobs?: number;
+  };
+  alerts?: readonly unknown[];
+  diagnosticAlerts?: readonly unknown[];
+  workers: Array<{
+    workerId: string;
+    processedJobs?: number;
+    scheduledRetries?: number;
+    terminalFailures?: number;
+    recoveredJobs?: number;
+    staleWorkersDetected?: number;
+    stalledJobsDetected?: number;
+    deadLetterJobs?: number;
+    cancelledJobs?: number;
+    recoveryActions?: number;
+    watchdog?: {
+      restartRecommended?: boolean;
+    } | null;
+  }>;
+}
+
+export interface AppMetricsAiProviderSnapshot {
+  state: string | null;
+  failureCount: number;
+}
+
+export interface AppMetricsRuntimeProviders {
+  getWorkerHealth(): Promise<AppMetricsWorkerHealthSnapshot>;
+  getAiProviderSnapshot():
+    | AppMetricsAiProviderSnapshot
+    | Promise<AppMetricsAiProviderSnapshot>;
+}
+
+let appMetricsRuntimeProviders: AppMetricsRuntimeProviders | null = null;
+
+export function configureAppMetricsRuntimeProviders(
+  providers: AppMetricsRuntimeProviders
+): void {
+  appMetricsRuntimeProviders = Object.freeze({ ...providers });
+}
+
 type WorkerSnapshotCounterTotals = {
   staleWorkersDetected: number;
   stalledJobsDetected: number;
@@ -558,19 +617,6 @@ export function resolveMetricRouteLabel(req: Request): string {
 
 export function shouldSkipHttpMetrics(req: Request): boolean {
   return req.path === '/metrics' || req.originalUrl === '/metrics';
-}
-
-function coerceByteSize(value: unknown): number {
-  if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
-    return Math.trunc(value);
-  }
-
-  if (typeof value === 'string') {
-    const parsedValue = Number.parseInt(value, 10);
-    return Number.isFinite(parsedValue) && parsedValue >= 0 ? parsedValue : 0;
-  }
-
-  return 0;
 }
 
 export function recordHttpRequestStart(): void {
@@ -1382,8 +1428,12 @@ async function refreshWorkerMetrics(): Promise<void> {
 
   pendingWorkerMetricsRefresh = (async () => {
     try {
-      const { getWorkerControlHealth } = await import('@services/workerControlService.js');
-      const health = await getWorkerControlHealth();
+      if (!appMetricsRuntimeProviders) {
+        resetWorkerSnapshotMetrics();
+        return;
+      }
+
+      const health = await appMetricsRuntimeProviders.getWorkerHealth();
       const queueSummary = health.queueSummary;
       const operationalHealth = health.operationalHealth;
 
@@ -1415,9 +1465,18 @@ async function refreshWorkerMetrics(): Promise<void> {
 
       recordWorkerFailureTotal('terminal', terminalFailures);
       recordWorkerFailureTotal('queue_failed_rows', queueSummary?.failed ?? 0);
-      recordWorkerFailureTotal('retry_exhausted_jobs', health.historicalDebt.retryExhaustedJobs);
-      recordWorkerFailureTotal('dead_letter_jobs', health.historicalDebt.deadLetterJobs);
-      recordWorkerFailureTotal('recent_failed_jobs', operationalHealth.recentFailed);
+      recordWorkerFailureTotal(
+        'retry_exhausted_jobs',
+        health.historicalDebt.retryExhaustedJobs ?? 0
+      );
+      recordWorkerFailureTotal(
+        'dead_letter_jobs',
+        health.historicalDebt.deadLetterJobs ?? 0
+      );
+      recordWorkerFailureTotal(
+        'recent_failed_jobs',
+        operationalHealth.recentFailed ?? 0
+      );
       recordWorkerRetryTotal('scheduled', scheduledRetries);
       workerHeartbeatAgeMs.set(Math.max(0, operationalHealth.workerHeartbeatAgeMs ?? 0));
       workerStaleWorkers.set(Math.max(0, operationalHealth.staleWorkers ?? 0));
@@ -1442,14 +1501,15 @@ async function refreshWorkerMetrics(): Promise<void> {
 
 async function refreshAiProviderMetrics(): Promise<void> {
   try {
-    const { getOpenAIServiceHealth } = await import('@services/openai/serviceHealth.js');
-    const health = getOpenAIServiceHealth();
-    const currentState = normalizeLabel(health.circuitBreaker?.state, 'unknown').toLowerCase();
+    const health = await appMetricsRuntimeProviders?.getAiProviderSnapshot();
+    const currentState = normalizeLabel(health?.state, 'unknown').toLowerCase();
 
     for (const state of ['closed', 'open', 'half_open', 'unknown']) {
       aiCircuitBreakerState.set({ state }, state === currentState ? 1 : 0);
     }
-    aiCircuitBreakerFailures.set(Math.max(0, Number(health.circuitBreaker?.failureCount ?? 0)));
+    aiCircuitBreakerFailures.set(
+      Math.max(0, Number(health?.failureCount ?? 0))
+    );
   } catch {
     aiCircuitBreakerState.set({ state: 'unknown' }, 1);
     aiCircuitBreakerFailures.set(0);
@@ -1507,6 +1567,7 @@ export function resetAppMetricsForTests(): void {
   metricsRegistry.resetMetrics();
   lastWorkerMetricsRefreshAtMs = 0;
   pendingWorkerMetricsRefresh = null;
+  appMetricsRuntimeProviders = null;
   inFlightRequests.set(0);
   eventLoopDelayMonitor.reset();
   resetWorkerSnapshotMetrics();

@@ -100,11 +100,23 @@ paths:
               schema:
                 $ref: "#/components/schemas/BridgeErrorResponse"
         "503":
-          description: Bridge or queue storage is unavailable or misconfigured.
+          description: Bridge or queue storage is unavailable or misconfigured, including after a job was accepted but its status could not be read.
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/BridgeErrorResponse"
+              examples:
+                repositoryUnavailableAfterAcceptance:
+                  summary: Durable job status became unavailable after acceptance
+                  value:
+                    ok: false
+                    status: queue_error
+                    error:
+                      source: queue
+                      message: Durable GPT job persistence is unavailable.
+                    request_id: req_example
+                    jobId: job_example
+                    timing: {}
   /api/bridge/health:
     get:
       operationId: getArcanosBridgeHealth

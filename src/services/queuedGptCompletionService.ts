@@ -1,14 +1,21 @@
 import { getJobById } from '@core/db/repositories/jobRepository.js';
 import type { JobData } from '@core/db/schema.js';
 import { sleep } from '@shared/sleep.js';
+import {
+  pollQueuedJobCompletion,
+  resolveQueuedJobPollIntervalMs,
+  resolveQueuedJobWaitForResultMs
+} from '@services/queuedJobCompletionPolling.js';
 
 export const DEFAULT_ASYNC_GPT_WAIT_FOR_RESULT_MS = 3_500;
 export const MAX_ASYNC_GPT_WAIT_FOR_RESULT_MS = 30_000;
 export const DEFAULT_ASYNC_GPT_WAIT_POLL_MS = 250;
+export const MAX_ASYNC_GPT_WAIT_POLLS = 601;
 
 export interface WaitForQueuedGptJobCompletionOptions {
   waitForResultMs?: number;
   pollIntervalMs?: number;
+  signal?: AbortSignal;
 }
 
 export interface QueuedGptCompletionDependencies {
@@ -25,11 +32,17 @@ export type QueuedGptCompletionResult =
   | { state: 'pending'; job: JobData | null }
   | { state: 'missing'; job: null };
 
-function readPositiveInteger(rawValue: string | undefined, fallbackValue: number): number {
-  const parsedValue = rawValue ? Number(rawValue) : Number.NaN;
-  return Number.isFinite(parsedValue) && parsedValue >= 0
-    ? Math.trunc(parsedValue)
-    : fallbackValue;
+async function getQueuedGptJobWithAbortPrecedence(
+  jobId: string,
+  getJobByIdFn: typeof getJobById,
+  signal?: AbortSignal
+): Promise<JobData | null> {
+  try {
+    return await getJobByIdFn(jobId);
+  } catch (error) {
+    signal?.throwIfAborted();
+    throw error;
+  }
 }
 
 /**
@@ -42,22 +55,12 @@ export function resolveAsyncGptWaitForResultMs(
   requestedWaitMs: number | undefined,
   env: NodeJS.ProcessEnv = process.env
 ): number {
-  const defaultWaitMs = readPositiveInteger(
-    env.GPT_ASYNC_WAIT_FOR_RESULT_MS,
-    DEFAULT_ASYNC_GPT_WAIT_FOR_RESULT_MS
-  );
-  const rawWaitMs = requestedWaitMs ?? defaultWaitMs;
-
-  if (rawWaitMs === 0) {
-    return 0;
-  }
-
-  const normalizedWaitMs = Number(rawWaitMs);
-  if (!Number.isFinite(normalizedWaitMs) || normalizedWaitMs < 0) {
-    return Math.min(MAX_ASYNC_GPT_WAIT_FOR_RESULT_MS, defaultWaitMs);
-  }
-
-  return Math.min(MAX_ASYNC_GPT_WAIT_FOR_RESULT_MS, Math.trunc(normalizedWaitMs));
+  return resolveQueuedJobWaitForResultMs({
+    requestedWaitMs,
+    configuredWaitMs: env.GPT_ASYNC_WAIT_FOR_RESULT_MS,
+    defaultWaitMs: DEFAULT_ASYNC_GPT_WAIT_FOR_RESULT_MS,
+    maxWaitMs: MAX_ASYNC_GPT_WAIT_FOR_RESULT_MS
+  });
 }
 
 /**
@@ -70,18 +73,11 @@ export function resolveAsyncGptPollIntervalMs(
   requestedPollIntervalMs: number | undefined,
   env: NodeJS.ProcessEnv = process.env
 ): number {
-  const defaultPollIntervalMs = readPositiveInteger(
-    env.GPT_ASYNC_WAIT_POLL_MS,
-    DEFAULT_ASYNC_GPT_WAIT_POLL_MS
-  );
-  const rawPollIntervalMs = requestedPollIntervalMs ?? defaultPollIntervalMs;
-  const normalizedPollIntervalMs = Number(rawPollIntervalMs);
-
-  if (!Number.isFinite(normalizedPollIntervalMs) || normalizedPollIntervalMs <= 0) {
-    return defaultPollIntervalMs;
-  }
-
-  return Math.min(1_000, Math.max(50, Math.trunc(normalizedPollIntervalMs)));
+  return resolveQueuedJobPollIntervalMs({
+    requestedPollIntervalMs,
+    configuredPollIntervalMs: env.GPT_ASYNC_WAIT_POLL_MS,
+    defaultPollIntervalMs: DEFAULT_ASYNC_GPT_WAIT_POLL_MS
+  });
 }
 
 function isQueuedGptJobTerminal(job: JobData): boolean {
@@ -93,11 +89,39 @@ function isQueuedGptJobTerminal(job: JobData): boolean {
   );
 }
 
+function mapQueuedGptJobObservation(job: JobData | null): QueuedGptCompletionResult {
+  if (!job) {
+    return {
+      state: 'missing',
+      job: null
+    };
+  }
+
+  if (isQueuedGptJobTerminal(job)) {
+    return {
+      state:
+        job.status === 'completed'
+          ? 'completed'
+          : job.status === 'cancelled'
+          ? 'cancelled'
+          : job.status === 'expired'
+          ? 'expired'
+          : 'failed',
+      job
+    };
+  }
+
+  return {
+    state: 'pending',
+    job
+  };
+}
+
 /**
  * Wait briefly for one queued GPT job to reach a terminal state.
  * Purpose: let the route return the final GPT envelope when the worker finishes quickly, while preserving explicit polling for longer jobs.
  * Inputs/outputs: accepts a queued job id, optional wait tuning, and injectable DB/time dependencies; returns the latest observable queue state.
- * Edge case behavior: missing jobs fail closed, and non-terminal jobs return `pending` once the bounded wait expires.
+ * Edge case behavior: missing jobs fail closed, aborts reject promptly, and non-terminal jobs return `pending` once either the time or independent poll bound expires.
  */
 export async function waitForQueuedGptJobCompletion(
   jobId: string,
@@ -110,75 +134,21 @@ export async function waitForQueuedGptJobCompletion(
   const sleepFn = dependencies.sleepFn ?? sleep;
   const nowFn = dependencies.nowFn ?? Date.now;
 
-  if (waitForResultMs === 0) {
-    return {
-      state: 'pending',
-      job: null
-    };
-  }
-
-  const waitDeadlineMs = nowFn() + waitForResultMs;
-
-  while (nowFn() <= waitDeadlineMs) {
-    const job = await getJobByIdFn(jobId);
-
-    if (!job) {
-      return {
-        state: 'missing',
-        job: null
-      };
-    }
-
-    if (isQueuedGptJobTerminal(job)) {
-      return {
-        state:
-          job.status === 'completed'
-            ? 'completed'
-            : job.status === 'cancelled'
-            ? 'cancelled'
-            : job.status === 'expired'
-            ? 'expired'
-            : 'failed',
-        job
-      };
-    }
-
-    const remainingWaitMs = waitDeadlineMs - nowFn();
-    if (remainingWaitMs <= 0) {
-      return {
-        state: 'pending',
-        job
-      };
-    }
-
-    await sleepFn(Math.min(pollIntervalMs, remainingWaitMs));
-  }
-
-  const lastObservedJob = await getJobByIdFn(jobId);
-
-  if (!lastObservedJob) {
-    return {
-      state: 'missing',
-      job: null
-    };
-  }
-
-  if (isQueuedGptJobTerminal(lastObservedJob)) {
-    return {
-      state:
-        lastObservedJob.status === 'completed'
-          ? 'completed'
-          : lastObservedJob.status === 'cancelled'
-          ? 'cancelled'
-          : lastObservedJob.status === 'expired'
-          ? 'expired'
-          : 'failed',
-      job: lastObservedJob
-    };
-  }
-
-  return {
-    state: 'pending',
-    job: lastObservedJob
-  };
+  return pollQueuedJobCompletion<JobData, QueuedGptCompletionResult>({
+    jobId,
+    waitForResultMs,
+    pollIntervalMs,
+    maxPolls: MAX_ASYNC_GPT_WAIT_POLLS,
+    signal: options.signal,
+    readJob: currentJobId =>
+      getQueuedGptJobWithAbortPrecedence(
+        currentJobId,
+        getJobByIdFn,
+        options.signal
+      ),
+    sleepFn,
+    nowFn,
+    mapObservation: mapQueuedGptJobObservation,
+    buildPendingObservation: job => ({ state: 'pending', job })
+  });
 }

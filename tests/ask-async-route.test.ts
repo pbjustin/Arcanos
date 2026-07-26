@@ -8,6 +8,7 @@ const logRequestFeedbackMock = jest.fn();
 const tryDispatchDaemonToolsMock = jest.fn();
 const detectCognitiveDomainMock = jest.fn();
 const gptFallbackClassifierMock = jest.fn();
+const sleepMock = jest.fn();
 class MockIdempotencyKeyConflictError extends Error {}
 class MockJobRepositoryUnavailableError extends Error {}
 
@@ -58,6 +59,10 @@ jest.unstable_mockModule('@dispatcher/detectCognitiveDomain.js', () => ({
 
 jest.unstable_mockModule('@dispatcher/gptDomainClassifier.js', () => ({
   gptFallbackClassifier: gptFallbackClassifierMock
+}));
+
+jest.unstable_mockModule('@shared/sleep.js', () => ({
+  sleep: sleepMock
 }));
 
 jest.unstable_mockModule('@services/workerAutonomyService.js', () => ({
@@ -125,6 +130,7 @@ describe('async /brain queue contract', () => {
     tryDispatchDaemonToolsMock.mockResolvedValue(null);
     detectCognitiveDomainMock.mockReturnValue({ domain: 'code', confidence: 0.9 });
     gptFallbackClassifierMock.mockResolvedValue('code');
+    sleepMock.mockResolvedValue(undefined);
     delete process.env.WORKER_ID;
     delete process.env.ASK_ASYNC_WAIT_FOR_RESULT_MS;
   });
@@ -190,19 +196,24 @@ describe('async /brain queue contract', () => {
   });
 
   it('returns the completed ask payload when the worker finishes within the wait window', async () => {
-    getJobByIdMock.mockResolvedValue({
-      id: 'job-123',
-      status: 'completed',
-      output: {
-        result: 'Refactored output',
-        endpoint: 'ask',
-        module: 'ft:test',
-        meta: {
-          id: 'resp_123',
-          created: 1773037200
+    getJobByIdMock
+      .mockResolvedValueOnce({
+        id: 'job-123',
+        status: 'running'
+      })
+      .mockResolvedValue({
+        id: 'job-123',
+        status: 'completed',
+        output: {
+          result: 'Refactored output',
+          endpoint: 'ask',
+          module: 'ft:test',
+          meta: {
+            id: 'resp_123',
+            created: 1773037200
+          }
         }
-      }
-    });
+      });
 
     const response = await request(buildApp()).post('/brain').send({
       message: 'Refactor this TypeScript function.',
@@ -220,6 +231,11 @@ describe('async /brain queue contract', () => {
       }
     });
     expect(getJobByIdMock).toHaveBeenCalledWith('job-123');
+    expect(sleepMock).toHaveBeenCalledWith(250, {
+      signal: expect.any(AbortSignal)
+    });
+    const waiterSignal = sleepMock.mock.calls[0]?.[1]?.signal as AbortSignal;
+    expect(waiterSignal.aborted).toBe(false);
   });
 
   it('surfaces terminal worker failures that occur within the wait window', async () => {
@@ -285,5 +301,51 @@ describe('async /brain queue contract', () => {
       jobId: 'job-123',
       poll: '/jobs/job-123/result'
     });
+  });
+
+  it('returns a sanitized 503 with recovery links when job polling becomes unavailable', async () => {
+    getJobByIdMock.mockRejectedValue(
+      new MockJobRepositoryUnavailableError('internal ask repository sentinel')
+    );
+
+    const response = await request(buildApp()).post('/brain').send({
+      message: 'Refactor this TypeScript function.',
+      async: true
+    });
+
+    expect(response.status).toBe(503);
+    expect(response.headers['x-response-bytes']).toMatch(/^\d+$/);
+    expect(response.body).toEqual({
+      error: 'ASYNC_ASK_JOBS_UNAVAILABLE',
+      message:
+        'Async ask job status is temporarily unavailable because durable job persistence is unavailable.',
+      jobId: 'job-123',
+      poll: '/jobs/job-123/result'
+    });
+    expect(JSON.stringify(response.body)).not.toContain('internal ask repository sentinel');
+    expect(response.body.error).not.toBe('ASYNC_ASK_JOB_MISSING');
+    expect(createJobMock).toHaveBeenCalledTimes(1);
+    expect(handleAIErrorMock).not.toHaveBeenCalled();
+  });
+
+  it('returns a sanitized 503 when async ask job creation is unavailable', async () => {
+    createJobMock.mockRejectedValue(
+      new MockJobRepositoryUnavailableError('internal ask create sentinel')
+    );
+
+    const response = await request(buildApp()).post('/brain').send({
+      message: 'Refactor this TypeScript function.',
+      async: true
+    });
+
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({
+      error: 'ASYNC_ASK_JOBS_UNAVAILABLE',
+      message:
+        'Async ask job status is temporarily unavailable because durable job persistence is unavailable.'
+    });
+    expect(JSON.stringify(response.body)).not.toContain('internal ask create sentinel');
+    expect(getJobByIdMock).not.toHaveBeenCalled();
+    expect(handleAIErrorMock).not.toHaveBeenCalled();
   });
 });

@@ -8,7 +8,11 @@
  * - Persists worker health snapshots for cross-instance inspection
  */
 
-import { getJobById, updateJob } from '@core/db/repositories/jobRepository.js';
+import {
+  getJobById,
+  JobRepositoryUnavailableError,
+  updateJob
+} from '@core/db/repositories/jobRepository.js';
 import { postgresQueueSchedulerAdapter } from '@core/scheduler/postgresAdapter.js';
 import {
   initializeDatabaseWithSchema as initializeDatabase,
@@ -74,6 +78,10 @@ import {
 import { routeGptRequest } from '@routes/_core/gptDispatch.js';
 import { logger } from '@platform/logging/structuredLogging.js';
 import { recordJobEvent } from '@core/db/repositories/jobEventRepository.js';
+import { initializeModuleRegistry } from '@services/moduleRegistry.js';
+import {
+  configureDefaultArcanosCoreRuntimeProviders
+} from '@services/arcanosCoreRuntimeProviders.js';
 
 interface JobExecutionOutcome {
   status: 'completed' | 'failed' | 'cancelled';
@@ -652,12 +660,24 @@ async function executeQueuedGptRequest(params: {
     fallbackMessage: string,
     error?: unknown
   ): Promise<string> => {
-    const refreshedJob = await getJobById(params.jobId);
-    return (
-      refreshedJob?.cancel_reason ??
-      (error ? resolveErrorMessage(error) : null) ??
-      fallbackMessage
-    );
+    try {
+      const refreshedJob = await getJobById(params.jobId);
+      return (
+        refreshedJob?.cancel_reason ??
+        (error ? resolveErrorMessage(error) : null) ??
+        fallbackMessage
+      );
+    } catch (refreshError) {
+      if (!(refreshError instanceof JobRepositoryUnavailableError)) {
+        throw refreshError;
+      }
+
+      logger.warn('gpt.job.cancellation_reason_repository_unavailable', {
+        module: 'worker-gpt',
+        jobId: params.jobId
+      });
+      return (error ? resolveErrorMessage(error) : null) ?? fallbackMessage;
+    }
   };
   if (latestJob?.cancel_requested_at) {
     return {
@@ -1530,6 +1550,7 @@ async function run(): Promise<void> {
     return;
   }
 
+  configureDefaultArcanosCoreRuntimeProviders();
   logger.info('[worker-runtime] start requested', {
     module: 'job-runner',
     workerId: runtimeSettings.baseWorkerId,
@@ -1553,6 +1574,25 @@ async function run(): Promise<void> {
     [`Worker bootstrap completed with ${slotDefinitions.length} consumer slot(s).`],
     databaseBootstrapSettings
   );
+  const moduleRegistryStartedAtMs = Date.now();
+  const moduleRegistry = await initializeModuleRegistry();
+
+  if (isWorkerProcessShutdownRequested()) {
+    logger.info('worker.shutdown.after_module_registry_preload', {
+      module: 'job-runner',
+      workerId: inspectorAutonomyService.getWorkerId(),
+      signal: workerProcessShutdownSignal ?? 'unknown'
+    });
+    await inspectorAutonomyService.flushSnapshotPipeline('worker-process-shutdown');
+    return;
+  }
+
+  logger.info('worker.module_registry.preloaded', {
+    module: 'job-runner',
+    workerId: inspectorAutonomyService.getWorkerId(),
+    moduleCount: moduleRegistry.listRegisteredModules().length,
+    durationMs: Date.now() - moduleRegistryStartedAtMs
+  });
   logger.info('worker.bootstrap.completed', {
     module: 'job-runner',
     workerId: inspectorAutonomyService.getWorkerId(),

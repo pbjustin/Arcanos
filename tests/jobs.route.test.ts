@@ -5,10 +5,17 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const getJobByIdMock = jest.fn();
 const requestJobCancellationMock = jest.fn();
+const sleepMock = jest.fn();
+class MockJobRepositoryUnavailableError extends Error {}
 
 jest.unstable_mockModule('../src/core/db/repositories/jobRepository.js', () => ({
   getJobById: getJobByIdMock,
+  JobRepositoryUnavailableError: MockJobRepositoryUnavailableError,
   requestJobCancellation: requestJobCancellationMock
+}));
+
+jest.unstable_mockModule('../src/shared/sleep.js', () => ({
+  sleep: sleepMock
 }));
 
 const { default: jobsRouter } = await import('../src/routes/jobs.js');
@@ -37,6 +44,7 @@ function hashActorKey(actorKey: string): string {
 describe('/jobs routes', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    sleepMock.mockResolvedValue(undefined);
   });
 
   it('returns the canonical stored-result lookup payload without enqueueing work', async () => {
@@ -564,5 +572,134 @@ describe('/jobs routes', () => {
         process.env.CLIENT_RESPONSE_MAX_BYTES = previousMaxBytes;
       }
     }
+  });
+
+  it.each([
+    ['status', `/jobs/${RUNNING_JOB_ID}`],
+    ['result', `/jobs/${RUNNING_JOB_ID}/result`],
+    ['cancellation', `/jobs/${RUNNING_JOB_ID}/cancel`]
+  ])('returns 503 when the repository is unavailable during the %s lookup', async (routeKind, path) => {
+    getJobByIdMock.mockRejectedValue(
+      new MockJobRepositoryUnavailableError('internal database sentinel')
+    );
+
+    const response = routeKind === 'cancellation'
+      ? await request(buildApp())
+          .post(path)
+          .set('x-confirmed', 'yes')
+          .set('x-session-id', 'owner-1')
+      : await request(buildApp()).get(path);
+
+    expect(response.status).toBe(503);
+    expect(response.headers['x-response-bytes']).toBeTruthy();
+    expect(response.body).toEqual({
+      error: 'JOB_REPOSITORY_UNAVAILABLE'
+    });
+    expect(JSON.stringify(response.body)).not.toContain('internal database sentinel');
+    expect(requestJobCancellationMock).not.toHaveBeenCalled();
+  });
+
+  it('returns 503 when cancellation persistence becomes unavailable after ownership lookup', async () => {
+    getJobByIdMock.mockResolvedValue({
+      id: RUNNING_JOB_ID,
+      job_type: 'gpt',
+      status: 'running',
+      idempotency_scope_hash: hashActorKey('session:owner-1'),
+      created_at: '2026-04-06T10:00:00.000Z',
+      updated_at: '2026-04-06T10:01:00.000Z',
+      completed_at: null,
+      error_message: null,
+      output: null,
+      cancel_requested_at: null,
+      cancel_reason: null
+    });
+    requestJobCancellationMock.mockRejectedValue(
+      new MockJobRepositoryUnavailableError('internal cancellation sentinel')
+    );
+
+    const response = await request(buildApp())
+      .post(`/jobs/${RUNNING_JOB_ID}/cancel`)
+      .set('x-confirmed', 'yes')
+      .set('x-session-id', 'owner-1');
+
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({
+      error: 'JOB_REPOSITORY_UNAVAILABLE'
+    });
+    expect(JSON.stringify(response.body)).not.toContain('internal cancellation sentinel');
+    expect(requestJobCancellationMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns JSON 503 when the repository is unavailable before a job stream starts', async () => {
+    getJobByIdMock.mockRejectedValue(
+      new MockJobRepositoryUnavailableError('internal stream sentinel')
+    );
+
+    const response = await request(buildApp()).get(`/jobs/${RUNNING_JOB_ID}/stream`);
+
+    expect(response.status).toBe(503);
+    expect(response.headers['content-type']).toContain('application/json');
+    expect(response.headers['content-type']).not.toContain('text/event-stream');
+    expect(response.body).toEqual({
+      error: 'JOB_REPOSITORY_UNAVAILABLE'
+    });
+    expect(JSON.stringify(response.body)).not.toContain('internal stream sentinel');
+  });
+
+  it('emits a sanitized SSE error when the repository becomes unavailable midstream', async () => {
+    getJobByIdMock
+      .mockResolvedValueOnce({
+        id: RUNNING_JOB_ID,
+        job_type: 'gpt',
+        status: 'running',
+        created_at: '2026-04-06T10:00:00.000Z',
+        updated_at: '2026-04-06T10:01:00.000Z',
+        completed_at: null,
+        error_message: null,
+        output: null,
+        cancel_requested_at: null,
+        cancel_reason: null
+      })
+      .mockRejectedValueOnce(
+        new MockJobRepositoryUnavailableError('internal stream sentinel')
+      );
+
+    const response = await request(buildApp()).get(`/jobs/${RUNNING_JOB_ID}/stream`);
+
+    expect(response.status).toBe(200);
+    expect(response.headers['content-type']).toContain('text/event-stream');
+    expect(response.text).toContain('event: status');
+    expect(response.text).toContain('event: error');
+    expect(response.text).toContain('"code":"JOB_REPOSITORY_UNAVAILABLE"');
+    expect(response.text).not.toContain('internal stream sentinel');
+    expect(getJobByIdMock).toHaveBeenCalledTimes(2);
+    expect(sleepMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a genuine midstream missing job distinct from a repository outage', async () => {
+    getJobByIdMock
+      .mockResolvedValueOnce({
+        id: RUNNING_JOB_ID,
+        job_type: 'gpt',
+        status: 'running',
+        created_at: '2026-04-06T10:00:00.000Z',
+        updated_at: '2026-04-06T10:01:00.000Z',
+        completed_at: null,
+        error_message: null,
+        output: null,
+        cancel_requested_at: null,
+        cancel_reason: null
+      })
+      .mockResolvedValueOnce(null);
+
+    const response = await request(buildApp()).get(`/jobs/${RUNNING_JOB_ID}/stream`);
+
+    expect(response.status).toBe(200);
+    expect(response.text).toContain('event: status');
+    expect(response.text).toContain('event: error');
+    expect(response.text).toContain('"code":"JOB_NOT_FOUND"');
+    expect(response.text).not.toContain('JOB_REPOSITORY_UNAVAILABLE');
+    expect(getJobByIdMock).toHaveBeenCalledTimes(2);
+    expect(sleepMock).toHaveBeenCalledTimes(1);
   });
 });

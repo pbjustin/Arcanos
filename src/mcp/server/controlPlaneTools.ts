@@ -1,10 +1,9 @@
 import type { McpRequestContext } from '../context.js';
 import { mcpText } from '../errors.js';
 import { wrapTool } from './helpers.js';
-import {
-  controlPlaneInvokeRequestSchema,
-  executeControlPlaneOperation,
-} from '@services/controlPlane/index.js';
+import { resolveArcanosMcpPortFromRequest } from '@services/arcanosMcpPort.js';
+import { controlPlaneInvokeRequestSchema } from '@services/controlPlane/schema.js';
+import { executeControlPlaneOperation } from '@services/controlPlane/executor.js';
 
 type AnyMcpServer = {
   registerTool: (name: string, config: Record<string, unknown>, handler: (args: unknown) => Promise<unknown>) => void;
@@ -23,7 +22,10 @@ export function registerControlPlaneMcpTools(server: AnyMcpServer, ctx: McpReque
     },
     wrapTool('control_plane.invoke', ctx, async (rawArgs: unknown) => {
       const args = controlPlaneInvokeInputSchema.parse(rawArgs);
-      const response = await executeControlPlaneOperation(args, { request: ctx.req });
+      const response = await executeControlPlaneOperation(args, {
+        request: ctx.req,
+        mcpService: resolveArcanosMcpPortFromRequest(ctx.req),
+      });
       return mcpText(response);
     })
   );

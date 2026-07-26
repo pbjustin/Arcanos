@@ -55,8 +55,51 @@ If failing, inspect Railway build/deploy logs first.
 - Worker health is green but jobs stay queued: confirm `DATABASE_URL`, `OPENAI_API_KEY`, worker logs, and `GET /worker-helper/health`.
 - Local port confusion: use `PORT=3000` in `.env`; Railway probes the injected `PORT` and `/health`.
 - Production startup fails OpenAI configuration validation: verify that a real `OPENAI_API_KEY` is present without printing its value. Mock fallback is for explicit non-production/test paths and is not the normal production behavior.
-- Confirmation-required 403: include `x-confirmed` or trusted automation headers.
-- Daemon auth errors: validate backend token/bootstrap settings.
+- Control-plane 401: send the dedicated `ARCANOS_CONTROL_PLANE_ACCESS_TOKEN` bearer credential; confirmation and approval values are not authentication.
+- Worker-control 401: verify `ARCANOS_WORKER_HELPER_TOKEN` is an exact 32–4096 character non-placeholder value with no whitespace and does not equal another credential in the canonical ARCANOS application-auth registry. Send it through either one `x-arcanos-worker-helper-token` header or one Bearer Authorization header, never both; duplicate or normalized credentials fail closed.
+- Worker-heal 429: direct `/workers/heal` and `/worker-helper/heal` share one
+  10-request/15-minute budget per server-derived authenticated
+  principal/context bucket. Wait for the bounded retry interval instead of
+  switching endpoints; credential values are never used as rate keys.
+- Worker-helper CLI fails before making a protected request: set a valid, non-colliding `ARCANOS_WORKER_HELPER_TOKEN` in the process environment. Token, worker-helper-token, and Authorization CLI flags are rejected. The public `status` command remains token-free.
+- Worker-helper CLI rejects its destination: use an exact explicit HTTPS origin in `ARCANOS_BASE_URL` or `--base-url`, with no user information, path, query, or fragment. Exact HTTP is accepted only for loopback. Protected requests reject redirects.
+- Remote worker repair actuator is unavailable: configure the same valid `ARCANOS_WORKER_HELPER_TOKEN` on caller and target, then check `SELF_HEAL_WORKER_SERVICE_URL`, `WORKER_HELPER_BASE_URL`, `RAILWAY_SERVICE_ARCANOS_WORKER_URL`, and `ARCANOS_WORKER_PUBLIC_URL`. Every configured alias must be valid and normalize to the same exact HTTPS origin; exact loopback HTTP is the only exception.
+- Remote worker repair reports an invalid response: the target must return at most 64 KiB of JSON with matching `requestedForce` and boolean `restart.started`, `restart.alreadyRunning`, and `restart.runWorkers` fields plus a bounded non-empty `restart.message`. The target message and arbitrary fields are validated but discarded; the actuator generates its own result message.
+- Control-plane `CONTROL_PLANE_SCOPE_DENIED` 403: grant the operation's allowlisted scope through `ARCANOS_CONTROL_PLANE_SCOPES`; request-body scopes are ignored.
+- Prompt or AI-routing debug 401/403: both read surfaces require the
+  control-plane bearer, operator principal, and `arcanos:read`. Missing trace
+  content is expected in default `metadata` mode. Disk output additionally
+  requires exact `PROMPT_DEBUG_TRACE_PERSIST=true` and a valid
+  `PROMPT_DEBUG_TRACE_MAX_BYTES`; setting only `PROMPT_DEBUG_EVENTS_PATH` does
+  not enable persistence.
+- Prompt-debug persistence stops growing: the configured byte cap was reached.
+  The service preserves bounded in-memory evidence and does not rotate,
+  truncate, or delete the JSONL file. Rotate or remove that exact file only
+  through a separately approved operator procedure.
+- Diagnostic-execution 403: `/devops/self-test` and
+  `/devops/daily-summary` require `diagnostics:execute`;
+  `/api/pr-analysis/analyze` requires `repo:verify`. A 409 means a matching
+  operation is already running in that process; wait for it to finish rather
+  than switching between the two DevOps aliases.
+- Legacy operator 403: SDK/orchestration reads require `arcanos:read`; SDK
+  mutations and orchestration reset/purge require `mcp:invoke`, followed by the
+  existing confirmation header or challenge. Confirmation without the bearer
+  remains a 401. A 409 means the matching SDK or orchestration mutation family
+  already has an in-process operation running.
+- Self-healing `CONTROL_PLANE_SCOPE_DENIED` 403: passive `/api/self-heal/*`, `/api/self-improve/status`, and detailed safety diagnostics require `arcanos:read`; active provider probes add `self-heal:probe`; decisions require `self-heal:decide`; a decision body with `execute: true` adds `self-heal:execute`; manual self-improve runs require both decision and execution scopes; and freeze, unfreeze, autonomy changes, or integrity-quarantine release require `self-improve:control`. Missing scope names are intentionally omitted from the public response.
+- Self-heal decision still returns a capability 401/403 after valid bearer authentication: the route deliberately retains `capabilityGate('self_improve_admin')` as a compatibility prerequisite. Supply an authorized agent identity or the configured automation credential; neither one is identity-bound authorization or replaces the control-plane bearer.
+- Confirmation-required 403: include `x-confirmed` or trusted automation headers only after authenticating and satisfying server-owned scope authorization.
+- Control-plane 503: configure a valid, purpose-bound access token, principal ID, and scopes; control-plane POST, protected DevOps/PR execution, legacy SDK/orchestration control, `/api/self-heal/*`, `/api/self-improve/*`, detailed self-heal status, and quarantine release fail closed when that optional configuration is absent or invalid.
+- Integrity quarantine recovery: read the public summary first, fetch the raw ID from authenticated `GET /status/safety/self-heal` with `arcanos:read`, then call `POST /status/safety/quarantine/:id/release` with `self-improve:control` and exact confirmation. Legacy `ADMIN_KEY`, `x-api-key`, `x-operator-id`, or confirmation alone do not authorize release.
+- Daemon `DAEMON_AUTH_REQUIRED` 401: verify the Python process sends exactly one
+  `x-arcanos-daemon-token` and that its exact
+  `ARCANOS_DAEMON_ACCESS_TOKEN` matches the backend. Bearer, GPT-ID, cookie,
+  query, and body values are not accepted.
+- Daemon `DAEMON_AUTH_UNAVAILABLE` 503: configure a valid, non-placeholder,
+  whitespace-free 32–4096 character `ARCANOS_DAEMON_ACCESS_TOKEN` on the
+  backend, distinct from every other purpose-bound credential. Restart the
+  Python daemon after changing its value; backend configuration is read per
+  request. A daemon 401 does not refresh the unrelated `BACKEND_TOKEN`.
 - Health degraded for database: attach/configure PostgreSQL or accept in-memory mode.
 - `MCP_BEARER_TOKEN not configured`: set `MCP_BEARER_TOKEN` before calling `POST /mcp`.
 - `/brain` returns `410 Gone`: migrate the caller to `/gpt/:gptId`; set `ASK_ROUTE_MODE=compat` only as a temporary migration bridge.

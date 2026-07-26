@@ -9,9 +9,9 @@ import {
   getDefaultModel,
   getGPT5Model,
   getComplexModel,
-  getFallbackModel,
-  createSingleChatCompletion
-} from "@services/openai.js";
+  getFallbackModel
+} from "@services/openai/credentialProvider.js";
+import { createSingleChatCompletion } from "@services/openai/chatFallbacks.js";
 import { getTokenParameter } from "@shared/tokenParameterHelper.js";
 import { APPLICATION_CONSTANTS } from "@shared/constants.js";
 import { countWords } from '@shared/text/countWords.js';
@@ -45,7 +45,7 @@ import { resolveErrorMessage } from "@core/lib/errors/index.js";
 import type { Tier } from './trinityTier.js';
 import type { RuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { assertBudgetAvailable, getSafeRemainingMs } from '@platform/resilience/runtimeBudget.js';
-import { runStructuredReasoning } from '@services/openai.js';
+import { runStructuredReasoning } from '@services/openai/structuredReasoning.js';
 import {
   getRequestAbortSignal,
   isAbortError,

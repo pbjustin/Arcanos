@@ -38,7 +38,7 @@ The daemon preserves the backend writing/control-plane split:
 
 - assistant chat and GPT/module-bound writing traffic use `/gpt/:gptId`
 - system-state reads use the direct `/system-state` endpoint
-- daemon coordination uses `/api/daemon/*`
+- daemon coordination uses purpose-bound `/api/daemon/*` transport
 - update checks use `/api/update`
 - job, runtime, DAG, and other control-plane reads use their structured direct or `/gpt-access/*` endpoints
 
@@ -92,10 +92,23 @@ OPENAI_API_KEY=your-openai-api-key
 BACKEND_URL=https://<your-service>.up.railway.app
 BACKEND_GPT_ID=arcanos-daemon
 BACKEND_TOKEN=your-backend-token
+ARCANOS_DAEMON_ACCESS_TOKEN=one-distinct-32-plus-character-value
 BACKEND_ALLOW_GPT_ID_AUTH=false
 ```
 
-`BACKEND_TOKEN` is the preferred daemon credential. `BACKEND_ALLOW_GPT_ID_AUTH` defaults to `false`; enable GPT-ID-only authentication only when the backend deployment explicitly allows and authorizes that trusted caller model.
+`BACKEND_TOKEN` is the preferred generic credential for non-daemon backend and
+GPT routes. `ARCANOS_DAEMON_ACCESS_TOKEN` is separate and required for registry,
+heartbeat, polling, acknowledgements, results, and confirmations under
+`/api/daemon/*`; configure the exact same distinct value on the backend. Those
+requests send only `x-arcanos-daemon-token`, never `Authorization` or
+`x-gpt-id`, and do not fall back to `BACKEND_TOKEN`, `ARCANOS_API_KEY`, or
+`ADMIN_KEY`. `BACKEND_ALLOW_GPT_ID_AUTH` defaults to `false`; enable GPT-ID-only
+authentication only when the backend deployment explicitly allows and
+authorizes that trusted caller model.
+
+The daemon access token proves possession of one deployment-wide credential,
+not individual daemon identity. Any holder can address known instance IDs. Keep
+it out of source control and restart the Python daemon after rotation.
 
 The complete environment-variable reference is `../docs/CONFIGURATION.md`.
 
@@ -289,7 +302,12 @@ The query methods create writing work through the GPT route. Status and result m
 ## Troubleshooting
 
 - Startup rejects configuration: set `OPENAI_API_KEY`; current validation requires it before the CLI starts.
-- Backend route failure: verify `BACKEND_URL`, backend health, `BACKEND_TOKEN`, and the configured GPT ID.
+- Daemon registry/heartbeat/command auth failure: verify the same valid
+  `ARCANOS_DAEMON_ACCESS_TOKEN` is configured on the backend and daemon. A 401
+  does not refresh `BACKEND_TOKEN`; a backend 503 indicates missing, invalid, or
+  colliding server configuration.
+- Other backend route failure: verify `BACKEND_URL`, backend health,
+  `BACKEND_TOKEN`, and the configured GPT ID.
 - `410 Gone` from an old ask-style route: move writing calls to `/gpt/<gpt-id>`.
 - System-state failure: verify the direct `/system-state` endpoint and backend authorization.
 - Patch application failure: verify the repository is a Git worktree and that patch paths are valid.

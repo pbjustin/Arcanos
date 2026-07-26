@@ -15,7 +15,11 @@ export async function checkDeadCodeRemoval(
   try {
     for (const file of files) {
       try {
-        const lineCount = await getFileLineCount(context.workingDir, file);
+        const lineCount = await getFileLineCount(
+          context.workingDir,
+          file,
+          context.validationConstants.LARGE_FILE_THRESHOLD + 1
+        );
         const fileDiff = getUnifiedDiffSection(diff, file);
         const addedLineCount = countAddedLines(fileDiff);
         const isNewFile = fileDiff?.includes('\nnew file mode ') ?? false;

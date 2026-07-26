@@ -125,18 +125,23 @@ function pickModulesSummary(value: Record<string, unknown>): Record<string, unkn
     .slice(0, 16)
     .map((entry) => {
       const definition = isRecord(entry.definition) ? entry.definition : null;
+      const name = readString(entry.name)
+        ?? (definition ? readString(definition.name) : undefined);
+      const description = readString(entry.description)
+        ?? (definition ? readString(definition.description) : undefined);
+      const defaultAction = readString(entry.defaultAction)
+        ?? (definition ? readString(definition.defaultAction) : undefined);
+      const actions = readStringArray(entry.actions, 32)
+        ?? (definition ? readStringArray(definition.actions, 32) : undefined);
+      const gptIds = readStringArray(entry.gptIds, 6)
+        ?? (definition ? readStringArray(definition.gptIds, 6) : undefined);
       return {
         ...(readString(entry.route) ? { route: readString(entry.route) } : {}),
-        ...(definition && readString(definition.name) ? { name: readString(definition.name) } : {}),
-        ...(definition && readString(definition.description)
-          ? { description: truncateText(readString(definition.description) as string, 240) }
-          : {}),
-        ...(definition && readString(definition.defaultAction)
-          ? { defaultAction: readString(definition.defaultAction) }
-          : {}),
-        ...(definition && readStringArray(definition.gptIds, 6)
-          ? { gptIds: readStringArray(definition.gptIds, 6) }
-          : {}),
+        ...(name ? { name } : {}),
+        ...(description ? { description: truncateText(description, 240) } : {}),
+        ...(defaultAction ? { defaultAction } : {}),
+        ...(actions ? { actions } : {}),
+        ...(gptIds ? { gptIds } : {}),
       };
     });
 

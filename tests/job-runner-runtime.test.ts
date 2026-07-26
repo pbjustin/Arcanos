@@ -432,6 +432,49 @@ describe('jobRunnerRuntime', () => {
     expect(source).toContain("logWorkerShutdownDuringBootstrap(autonomyService.getWorkerId(), 'autonomy_retry')");
   });
 
+  it('preloads the module registry before declaring the worker ready or claiming jobs', () => {
+    const source = fs.readFileSync(path.resolve('src/workers/jobRunner.ts'), 'utf8');
+    const enabledGuardIndex = source.indexOf('if (!entrypointRuntimeMode.enabled)');
+    const operatorDispatchProviderIndex = source.indexOf(
+      'configureDefaultArcanosCoreRuntimeProviders()',
+      enabledGuardIndex
+    );
+    const databaseBootstrapIndex = source.indexOf(
+      "await initializeJobRunnerDatabaseWithRetry('job-runner'"
+    );
+    const autonomyBootstrapIndex = source.indexOf(
+      'await bootstrapWorkerAutonomyWithRetry('
+    );
+    const moduleRegistryPreloadIndex = source.indexOf(
+      'await initializeModuleRegistry()',
+      autonomyBootstrapIndex
+    );
+    const readinessMarkerIndex = source.indexOf(
+      "logger.info('worker.bootstrap.completed'",
+      moduleRegistryPreloadIndex
+    );
+    const consumerStartIndex = source.indexOf(
+      'await Promise.all(',
+      readinessMarkerIndex
+    );
+
+    expect([
+      enabledGuardIndex,
+      operatorDispatchProviderIndex,
+      databaseBootstrapIndex,
+      autonomyBootstrapIndex,
+      moduleRegistryPreloadIndex,
+      readinessMarkerIndex,
+      consumerStartIndex
+    ]).not.toContain(-1);
+    expect(enabledGuardIndex).toBeLessThan(operatorDispatchProviderIndex);
+    expect(operatorDispatchProviderIndex).toBeLessThan(databaseBootstrapIndex);
+    expect(databaseBootstrapIndex).toBeLessThan(autonomyBootstrapIndex);
+    expect(autonomyBootstrapIndex).toBeLessThan(moduleRegistryPreloadIndex);
+    expect(moduleRegistryPreloadIndex).toBeLessThan(readinessMarkerIndex);
+    expect(readinessMarkerIndex).toBeLessThan(consumerStartIndex);
+  });
+
   it('caps delayed worker interval work at one active task per slot and source', async () => {
     const slots = buildJobRunnerSlotDefinitions(resolveJobRunnerRuntimeSettings({
       JOB_WORKER_CONCURRENCY: '8',

@@ -1,6 +1,10 @@
 import express from 'express';
 import request from 'supertest';
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
+
+import {
+  PURPOSE_BOUND_CREDENTIAL_ENV_NAMES,
+} from '../src/shared/security/purposeBoundCredential.js';
 
 const buildSafetySelfHealSnapshotMock = jest.fn();
 
@@ -288,9 +292,36 @@ jest.unstable_mockModule('@services/selfHealRuntimeInspectionService.js', () => 
 }));
 
 const safetyRouter = (await import('../src/routes/safety.js')).default;
+const controlPlaneAccessToken = 'safety-self-heal-status-token-1234567890';
+const originalCredentialEnvironment = new Map(
+  PURPOSE_BOUND_CREDENTIAL_ENV_NAMES.map(
+    (environmentName) => [environmentName, process.env[environmentName]] as const
+  )
+);
+const originalPrincipalId = process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID;
+const originalScopes = process.env.ARCANOS_CONTROL_PLANE_SCOPES;
 
-function createApp() {
+function clearPurposeBoundCredentialEnvironment(): void {
+  for (const environmentName of PURPOSE_BOUND_CREDENTIAL_ENV_NAMES) {
+    delete process.env[environmentName];
+  }
+}
+
+function configureControlPlane(scopes = 'arcanos:read'): void {
+  clearPurposeBoundCredentialEnvironment();
+  process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = controlPlaneAccessToken;
+  process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = 'operator:safety-self-heal-status-test';
+  process.env.ARCANOS_CONTROL_PLANE_SCOPES = scopes;
+}
+
+function createApp(authenticate = true) {
   const app = express();
+  if (authenticate) {
+    app.use((req, _res, next) => {
+      req.headers.authorization = `Bearer ${controlPlaneAccessToken}`;
+      next();
+    });
+  }
   app.use(express.json());
   app.use(safetyRouter);
   return app;
@@ -299,6 +330,7 @@ function createApp() {
 describe('/status/safety/self-heal', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    configureControlPlane();
     buildSafetySelfHealSnapshotMock.mockReturnValue({
       status: 'ok',
       timestamp: '2026-03-24T00:00:30.000Z',
@@ -347,6 +379,23 @@ describe('/status/safety/self-heal', () => {
         enabled: true
       }
     });
+  });
+
+  it('requires an authenticated read-scoped principal before building details', async () => {
+    const anonymousResponse = await request(createApp(false))
+      .get('/status/safety/self-heal');
+
+    expect(anonymousResponse.status).toBe(401);
+    expect(anonymousResponse.body.error.code).toBe('CONTROL_PLANE_AUTH_REQUIRED');
+    expect(buildSafetySelfHealSnapshotMock).not.toHaveBeenCalled();
+
+    configureControlPlane('');
+    const unscopedResponse = await request(createApp())
+      .get('/status/safety/self-heal');
+
+    expect(unscopedResponse.status).toBe(403);
+    expect(unscopedResponse.body.error.code).toBe('CONTROL_PLANE_SCOPE_DENIED');
+    expect(buildSafetySelfHealSnapshotMock).not.toHaveBeenCalled();
   });
 
   it('returns the bounded self-healing loop status fields', async () => {
@@ -403,4 +452,23 @@ describe('/status/safety/self-heal', () => {
     );
     expect(typeof response.body.timestamp).toBe('string');
   });
+});
+
+afterAll(() => {
+  clearPurposeBoundCredentialEnvironment();
+  for (const [environmentName, value] of originalCredentialEnvironment) {
+    if (value !== undefined) {
+      process.env[environmentName] = value;
+    }
+  }
+  if (originalPrincipalId === undefined) {
+    delete process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID;
+  } else {
+    process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = originalPrincipalId;
+  }
+  if (originalScopes === undefined) {
+    delete process.env.ARCANOS_CONTROL_PLANE_SCOPES;
+  } else {
+    process.env.ARCANOS_CONTROL_PLANE_SCOPES = originalScopes;
+  }
 });

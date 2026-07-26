@@ -23,6 +23,7 @@ const resolveGptRoutingMock = jest.fn();
 const getModulesForRegistryMock = jest.fn();
 const getModuleMetadataMock = jest.fn();
 const dispatchModuleActionMock = jest.fn();
+const initializeModuleRegistryMock = jest.fn<() => Promise<void>>();
 const hasValidOpenAiKeyMock = jest.fn();
 const responsesCreateMock = jest.fn();
 const fakeOpenAIClient = {
@@ -67,10 +68,11 @@ jest.unstable_mockModule('../src/routes/_core/gptDispatch.js', () => ({
   resolveGptRouting: resolveGptRoutingMock
 }));
 
-jest.unstable_mockModule('../src/routes/modules.js', () => ({
+jest.unstable_mockModule('../src/services/moduleRegistry.js', () => ({
   getModulesForRegistry: getModulesForRegistryMock,
   getModuleMetadata: getModuleMetadataMock,
   dispatchModuleAction: dispatchModuleActionMock,
+  initializeModuleRegistry: initializeModuleRegistryMock,
   ModuleNotFoundError: MockModuleNotFoundError,
   ModuleActionNotFoundError: MockModuleActionNotFoundError
 }));
@@ -130,6 +132,8 @@ jest.unstable_mockModule('../src/platform/runtime/workerConfig.js', () => ({
   getWorkerRuntimeStatus: getWorkerRuntimeStatusMock
 }));
 
+const ArcanosCli = (await import('../src/services/arcanos-cli.js')).default;
+const { MODULE_CATALOG } = await import('../src/services/moduleCatalog.js');
 const { default: gptAccessRouter } = await import('../src/routes/gpt-access.js');
 const {
   buildGptAccessHealthPayload,
@@ -263,6 +267,7 @@ describe('/gpt-access gateway', () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    initializeModuleRegistryMock.mockResolvedValue(undefined);
     logExecutionMock.mockResolvedValue(undefined);
     responsesCreateMock.mockReset();
     hasValidOpenAiKeyMock.mockReturnValue(false);
@@ -883,6 +888,55 @@ describe('/gpt-access gateway', () => {
         ]
       })
     ]));
+  });
+
+  it('fails closed when the capability registry cannot initialize', async () => {
+    allowCapabilityRead();
+    initializeModuleRegistryMock.mockRejectedValueOnce(
+      new Error('registry unavailable')
+    );
+
+    const response = await authorized(
+      request(buildApp()).get('/gpt-access/capabilities/v1')
+    );
+
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({
+      ok: false,
+      status: 'unavailable',
+      service: 'gpt-access',
+      error: {
+        code: 'GPT_ACCESS_MCP_TOOL_UNAVAILABLE',
+        message: 'Capability registry is unavailable.'
+      }
+    });
+    expect(getModulesForRegistryMock).not.toHaveBeenCalled();
+  });
+
+  it('derives the CLI fallback projection from the canonical module definition', async () => {
+    allowCapabilityRead();
+    const catalogEntry = MODULE_CATALOG.find(
+      (entry) => entry.name === ArcanosCli.name
+    );
+
+    const response = await authorized(
+      request(buildApp()).get('/gpt-access/capabilities/v1/ARCANOS%3ACLI')
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body.capability).toEqual(
+      expect.objectContaining({
+        id: ArcanosCli.name,
+        name: ArcanosCli.name,
+        description: ArcanosCli.description,
+        route: catalogEntry?.route,
+        actions: Object.keys(ArcanosCli.actions).sort(
+          (left, right) => left.localeCompare(right)
+        ),
+        defaultAction: ArcanosCli.defaultAction,
+        defaultTimeoutMs: ArcanosCli.defaultTimeoutMs
+      })
+    );
   });
 
   it('projects ARCANOS:CLI capabilities without leaking implementation details', async () => {

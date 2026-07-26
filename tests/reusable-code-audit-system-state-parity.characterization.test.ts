@@ -23,9 +23,11 @@ const detectCognitiveDomainMock = jest.fn();
 const gptFallbackClassifierMock = jest.fn();
 const tryExecutePromptRouteShortcutMock = jest.fn();
 const updateAiExecutionContextMock = jest.fn();
+class MockJobRepositoryUnavailableError extends Error {}
 
 jest.unstable_mockModule('@core/db/repositories/jobRepository.js', () => ({
   createJob: createJobMock,
+  JobRepositoryUnavailableError: MockJobRepositoryUnavailableError,
   claimNextPendingJob: jest.fn(),
   recordJobHeartbeat: jest.fn(),
   scheduleJobRetry: jest.fn(),
@@ -197,6 +199,9 @@ describe('reusable-code audit: /brain and /system-state characterization', () =>
     storagePath = path.join(tempDir, 'prompt-debug-events.jsonl');
     process.env.ASK_ROUTE_MODE = 'compat';
     process.env.PROMPT_DEBUG_EVENTS_PATH = storagePath;
+    process.env.PROMPT_DEBUG_TRACE_MODE = 'metadata';
+    process.env.PROMPT_DEBUG_TRACE_PERSIST = 'true';
+    process.env.PROMPT_DEBUG_TRACE_MAX_BYTES = '1048576';
     await clearPromptDebugTracesForTest();
 
     requestLogger = {

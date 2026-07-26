@@ -117,11 +117,16 @@ const { assertGptCanUseDag } = await import(
 const { authorizeRootDeepDiagnosticsRequest } = await import(
   '../src/services/rootDeepDiagnosticsBridge.js'
 );
-const workerHelperRouter = (await import('../src/routes/worker-helper.js')).default;
+const { requireWorkerHelperPrivilegedAuth } = await import(
+  '../src/transport/http/middleware/workerHelperPrivilegedAuth.js'
+);
 
 const originalEnv = { ...process.env };
 const secret = ['audit', 'sécret', '7Qx9'].join('-');
 const sameLengthWrongSecret = `${secret.slice(0, -1)}0`;
+const workerHelperSecret = ['worker-helper', secret, 'purpose-bound'].join('-');
+const sameLengthWrongWorkerHelperSecret =
+  `${workerHelperSecret.slice(0, -1)}0`;
 
 interface ResponseObservation {
   body: unknown;
@@ -310,30 +315,6 @@ function observeRootAuth(expectedToken: string | undefined, authorization: unkno
   );
 }
 
-type ExpressLayer = {
-  route?: {
-    path?: string;
-    stack?: Array<{
-      handle?: (req: Request, res: Response, next: NextFunction) => void;
-      name?: string;
-    }>;
-  };
-};
-
-function getWorkerHelperAuthMiddleware() {
-  const routerStack = (workerHelperRouter as unknown as { stack: ExpressLayer[] }).stack;
-  const routeLayer = routerStack.find(
-    (layer) => layer.route?.path === '/worker-helper/jobs/latest',
-  );
-  const authLayer = routeLayer?.route?.stack?.find(
-    (layer) => layer.name === 'requireWorkerHelperPrivilegedAuth',
-  );
-  if (!authLayer?.handle) {
-    throw new Error('Worker-helper privileged auth middleware was not found.');
-  }
-  return authLayer.handle;
-}
-
 function observeWorkerHelperAuth(
   expectedToken: string | undefined,
   headers: Record<string, unknown>,
@@ -345,7 +326,7 @@ function observeWorkerHelperAuth(
   }
   const recorder = buildResponseRecorder();
   let nextCalls = 0;
-  getWorkerHelperAuthMiddleware()(
+  requireWorkerHelperPrivilegedAuth(
     { headers } as unknown as Request,
     recorder.response,
     (() => {
@@ -588,50 +569,63 @@ describe('reusable-code audit: timing-safe credential comparison characterizatio
     );
   });
 
-  it('characterizes worker-helper header precedence, trimming, Unicode, and generic failure output', () => {
-    const exactCustomHeader = observeWorkerHelperAuth(secret, {
-      'x-arcanos-worker-helper-token': secret,
+  it('characterizes strict worker-helper carriers, bounds, and generic failure output', () => {
+    const exactCustomHeader = observeWorkerHelperAuth(workerHelperSecret, {
+      'x-arcanos-worker-helper-token': workerHelperSecret,
     });
-    const exactBearer = observeWorkerHelperAuth(secret, {
-      authorization: `bearer ${secret}`,
+    const exactBearer = observeWorkerHelperAuth(workerHelperSecret, {
+      authorization: `bearer ${workerHelperSecret}`,
     });
-    const trimmed = observeWorkerHelperAuth(`  ${secret}  `, {
-      'x-arcanos-worker-helper-token': `  ${secret}  `,
+    const configuredWhitespace = observeWorkerHelperAuth(`  ${workerHelperSecret}  `, {
+      'x-arcanos-worker-helper-token': workerHelperSecret,
     });
-    const emptyCustomFallsBack = observeWorkerHelperAuth(secret, {
+    const presentedWhitespace = observeWorkerHelperAuth(workerHelperSecret, {
+      'x-arcanos-worker-helper-token': `  ${workerHelperSecret}  `,
+    });
+    const emptyCustomFallsBack = observeWorkerHelperAuth(workerHelperSecret, {
       'x-arcanos-worker-helper-token': '',
-      authorization: `Bearer ${secret}`,
+      authorization: `Bearer ${workerHelperSecret}`,
     });
-    const whitespaceCustomBlocksFallback = observeWorkerHelperAuth(secret, {
+    const whitespaceCustomBlocksFallback = observeWorkerHelperAuth(workerHelperSecret, {
       'x-arcanos-worker-helper-token': '   ',
-      authorization: `Bearer ${secret}`,
+      authorization: `Bearer ${workerHelperSecret}`,
     });
-    const wrongSameLength = observeWorkerHelperAuth(secret, {
-      'x-arcanos-worker-helper-token': sameLengthWrongSecret,
+    const bothCarriers = observeWorkerHelperAuth(workerHelperSecret, {
+      'x-arcanos-worker-helper-token': workerHelperSecret,
+      authorization: `Bearer ${workerHelperSecret}`,
     });
-    const wrongLength = observeWorkerHelperAuth(secret, {
-      'x-arcanos-worker-helper-token': `${secret}x`,
+    const wrongSameLength = observeWorkerHelperAuth(workerHelperSecret, {
+      'x-arcanos-worker-helper-token': sameLengthWrongWorkerHelperSecret,
     });
-    const caseMismatch = observeWorkerHelperAuth(secret, {
-      'x-arcanos-worker-helper-token': secret.toUpperCase(),
+    const wrongLength = observeWorkerHelperAuth(workerHelperSecret, {
+      'x-arcanos-worker-helper-token': `${workerHelperSecret}x`,
     });
-    const missing = observeWorkerHelperAuth(secret, {});
+    const caseMismatch = observeWorkerHelperAuth(workerHelperSecret, {
+      'x-arcanos-worker-helper-token': workerHelperSecret.toUpperCase(),
+    });
+    const missing = observeWorkerHelperAuth(workerHelperSecret, {});
     const longToken = 'w'.repeat(5_000);
     const longExact = observeWorkerHelperAuth(longToken, {
       'x-arcanos-worker-helper-token': longToken,
     });
+    const nonString = observeWorkerHelperAuth(workerHelperSecret, {
+      'x-arcanos-worker-helper-token': 123,
+    });
 
     expect(exactCustomHeader.allowed).toBe(true);
     expect(exactBearer.allowed).toBe(true);
-    expect(trimmed.allowed).toBe(true);
     expect(emptyCustomFallsBack.allowed).toBe(true);
-    expect(longExact.allowed).toBe(true);
     for (const denied of [
+      configuredWhitespace,
+      presentedWhitespace,
       whitespaceCustomBlocksFallback,
+      bothCarriers,
       wrongSameLength,
       wrongLength,
       caseMismatch,
       missing,
+      longExact,
+      nonString,
     ]) {
       expect(denied.allowed).toBe(false);
       expect(denied.observation.statusCode).toBe(401);
@@ -639,17 +633,19 @@ describe('reusable-code audit: timing-safe credential comparison characterizatio
         error: 'WORKER_HELPER_AUTH_REQUIRED',
       });
     }
-    expect(() => observeWorkerHelperAuth(secret, {
-      'x-arcanos-worker-helper-token': 123,
-    })).toThrow(TypeError);
     assertNoCredentialMaterial(
       [
+        configuredWhitespace.observation,
+        presentedWhitespace.observation,
         whitespaceCustomBlocksFallback.observation,
+        bothCarriers.observation,
         wrongSameLength.observation,
         caseMismatch.observation,
+        longExact.observation,
+        nonString.observation,
       ],
-      secret,
-      sameLengthWrongSecret,
+      workerHelperSecret,
+      sameLengthWrongWorkerHelperSecret,
       longToken,
     );
   });

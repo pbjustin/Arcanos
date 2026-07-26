@@ -109,7 +109,12 @@ describe('arcanosMcpService', () => {
       sessionId: 'worker:planner',
     });
 
-    expect(mockBuildMcpInternalContext).toHaveBeenCalledWith('worker:planner');
+    expect(mockBuildMcpInternalContext).toHaveBeenCalledWith(
+      'worker:planner',
+      {
+        arcanosMcp: arcanosMcpService,
+      }
+    );
     expect(mockBuildMcpRequestContext).not.toHaveBeenCalled();
     expect(mockClientCallTool).toHaveBeenCalledWith({
       name: 'modules.list',

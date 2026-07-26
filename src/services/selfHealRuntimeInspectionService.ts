@@ -56,7 +56,6 @@ const WORKER_EVIDENCE_EVENT_TYPES = new Set([
   'failure',
 ]);
 
-const INSPECTION_PROMPT_PATTERN = /\b(self[-\s]?heal|healing|repair|worker-helper|worker runtime|live runtime|runtime inspection|loop)\b/i;
 const SELF_HEAL_TOOL_PATTERN = /^\/api\/self-heal\/|^\/status\/safety\/self-heal$|^\/worker-helper\/health$|^\/workers\/status$|^cli:inspect_self_heal$/i;
 
 function clampLimit(limit: number | undefined, fallback: number, max: number): number {
@@ -235,10 +234,12 @@ function mapSelfHealEventToEvidence(event: SelfHealEvent): SelfHealCompactEviden
 }
 
 function isSelfHealPromptDebugTrace(trace: PromptDebugTraceRecord): boolean {
-  const promptText = `${trace.rawPrompt} ${trace.normalizedPrompt}`;
   return (
     trace.runtimeInspectionChosen &&
-    (trace.selectedTools.some(tool => SELF_HEAL_TOOL_PATTERN.test(tool)) || INSPECTION_PROMPT_PATTERN.test(promptText))
+    (
+      trace.selectedTools.some(tool => SELF_HEAL_TOOL_PATTERN.test(tool)) ||
+      trace.intentTags.includes('runtime_inspection_candidate')
+    )
   );
 }
 
@@ -262,11 +263,10 @@ function mapPromptDebugTrace(trace: PromptDebugTraceRecord): SelfHealCompactEvid
 }
 
 function isSelfHealAiRoutingSnapshot(snapshot: AiRoutingDebugSnapshot): boolean {
-  const promptText = `${snapshot.rawPrompt} ${snapshot.normalizedPrompt}`;
   return (
+    snapshot.detectedIntent === 'RUNTIME_INSPECTION_REQUIRED' ||
     snapshot.runtimeEndpointsQueried.some(endpoint => SELF_HEAL_TOOL_PATTERN.test(endpoint)) ||
-    snapshot.toolsSelected.some(tool => SELF_HEAL_TOOL_PATTERN.test(tool)) ||
-    INSPECTION_PROMPT_PATTERN.test(promptText)
+    snapshot.toolsSelected.some(tool => SELF_HEAL_TOOL_PATTERN.test(tool))
   );
 }
 

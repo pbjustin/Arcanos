@@ -23,6 +23,7 @@ export interface UnsafeConditionRecord {
   blocking: boolean;
   createdAt: string;
   monotonicTsMs: number;
+  expiresAtMs?: number;
   quarantineId?: string;
   metadata?: Record<string, unknown>;
   clearedAt?: string;
@@ -71,6 +72,7 @@ interface UnsafeConditionInput {
   code: UnsafeConditionCode;
   message: string;
   blocking?: boolean;
+  expiresAtMs?: number;
   quarantineId?: string;
   metadata?: Record<string, unknown>;
 }
@@ -187,6 +189,9 @@ function normalizeUnsafeCondition(raw: unknown): UnsafeConditionRecord | null {
     monotonicTsMs: Number.isFinite(Number(raw.monotonicTsMs))
       ? Math.floor(Number(raw.monotonicTsMs))
       : getMonotonicTimestampMs(),
+    expiresAtMs: Number.isFinite(Number(raw.expiresAtMs))
+      ? Math.max(0, Math.floor(Number(raw.expiresAtMs)))
+      : undefined,
     quarantineId: typeof raw.quarantineId === 'string' ? raw.quarantineId : undefined,
     metadata: isRecord(raw.metadata) ? raw.metadata : undefined,
     clearedAt: typeof raw.clearedAt === 'string' ? raw.clearedAt : undefined,
@@ -370,7 +375,18 @@ function saveState(reason: string): void {
 }
 
 function isConditionActive(condition: UnsafeConditionRecord): boolean {
-  return !condition.clearedAt;
+  if (condition.clearedAt) {
+    return false;
+  }
+  //audit Assumption: only the explicitly time-bounded restart-storm guard may expire automatically; failure risk: a transient guard permanently blocks its own recovery path or an integrity condition becomes accidentally self-clearing; expected invariant: integrity and other safety conditions remain fail-closed while this bounded threshold stops blocking at its declared expiry; handling strategy: restrict expiry semantics to WORKER_RESTART_THRESHOLD and compare against the process-monotonic clock.
+  if (
+    condition.code === 'WORKER_RESTART_THRESHOLD'
+    && condition.expiresAtMs !== undefined
+    && getMonotonicTimestampMs() >= condition.expiresAtMs
+  ) {
+    return false;
+  }
+  return true;
 }
 
 function isQuarantineActive(quarantine: SafetyQuarantineRecord): boolean {
@@ -533,6 +549,7 @@ export function activateUnsafeCondition(input: UnsafeConditionInput): UnsafeCond
     blocking: input.blocking !== false,
     createdAt: new Date().toISOString(),
     monotonicTsMs: getMonotonicTimestampMs(),
+    expiresAtMs: input.expiresAtMs,
     quarantineId: input.quarantineId,
     metadata: input.metadata
   };
@@ -861,7 +878,7 @@ export function setTrustedHash(integrityId: string, hash: string): void {
 export function buildUnsafeToProceedPayload(): {
   error: 'UNSAFE_TO_PROCEED';
   conditions: string[];
-  quarantineIds: string[];
+  quarantineCount: number;
   timestamp: string;
 } {
   const activeConditions = getActiveUnsafeConditions().filter(condition => condition.blocking);
@@ -869,7 +886,7 @@ export function buildUnsafeToProceedPayload(): {
   return {
     error: 'UNSAFE_TO_PROCEED',
     conditions: activeConditions.map(condition => condition.code),
-    quarantineIds: activeQuarantines.map(record => record.quarantineId),
+    quarantineCount: activeQuarantines.length,
     timestamp: new Date().toISOString()
   };
 }

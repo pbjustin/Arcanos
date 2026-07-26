@@ -22,6 +22,18 @@ Set `PORT` to `3000` and set `OPENAI_API_KEY` to your local key in `.env`.
 
 `PORT=3000` matches `.env.example` and the direct local server default. Railway injects `PORT`, and the Railway launcher also validates `ARCANOS_PROCESS_KIND`.
 
+To use HTTP control-plane, `/api/self-heal/*`, `/api/self-improve/*`, detailed
+`GET /status/safety/self-heal`, or `arcanos inspect self-heal` locally, also
+configure a distinct `ARCANOS_CONTROL_PLANE_ACCESS_TOKEN`,
+`ARCANOS_CONTROL_PLANE_PRINCIPAL_ID`, and the least-privilege
+`ARCANOS_CONTROL_PLANE_SCOPES`. Self-heal reads use `arcanos:read`; do not grant
+`self-heal:probe`, `self-heal:execute`, or `self-improve:control` merely for
+local health checks.
+
+`arcanos inspect self-heal` sends the dedicated bearer only to HTTPS origins or
+exact HTTP loopback origins and rejects redirects. Use HTTPS for any non-local
+backend URL.
+
 Optional daemon setup:
 ```bash
 cd daemon-python
@@ -39,7 +51,14 @@ Backend local defaults are documented in `CONFIGURATION.md`. For daemon routing 
 ```env
 BACKEND_URL=http://localhost:3000
 BACKEND_ROUTING_MODE=hybrid
+ARCANOS_DAEMON_ACCESS_TOKEN=<same-distinct-32-plus-character-value-as-backend>
 ```
+
+Put the same `ARCANOS_DAEMON_ACCESS_TOKEN` in the backend root `.env` and
+`daemon-python/.env`. It is required for registry, heartbeat, command, result,
+and confirmation traffic. `BACKEND_TOKEN` remains the optional generic
+credential for non-daemon backend/GPT routes and is never a fallback for this
+transport token.
 
 ## Run locally
 Backend:
@@ -73,6 +92,14 @@ curl http://localhost:3000/health
 curl http://localhost:3000/api/test
 ```
 
+An authenticated passive self-heal check, when the optional control-plane
+identity is configured:
+
+```bash
+curl -H "Authorization: Bearer ${ARCANOS_CONTROL_PLANE_ACCESS_TOKEN}" \
+  http://localhost:3000/api/self-heal/runtime
+```
+
 ## Common commands
 ```bash
 npm run build:packages
@@ -97,7 +124,9 @@ Then follow `RAILWAY_DEPLOYMENT.md`.
 ## Troubleshooting
 - Backend won't start: check `PORT`, `.env` loading, and the startup error in the terminal.
 - Daemon exits immediately: ensure daemon `.env` has `OPENAI_API_KEY`.
-- Backend calls from daemon fail: verify `BACKEND_URL` and backend health endpoint.
+- Daemon registry/heartbeat/command calls fail: verify `BACKEND_URL` and that
+  both processes have the same valid `ARCANOS_DAEMON_ACCESS_TOKEN`. Generic
+  GPT/backend failures may separately require `BACKEND_TOKEN`.
 - Worker exits with database bootstrap errors: configure `DATABASE_URL`, `DATABASE_PRIVATE_URL`, `DATABASE_PUBLIC_URL`, or the full `PG*` connection set.
 - Docker Compose note: `docker-compose.yml` builds the Railway-style image for `arcanos-core`, but the service definition does not set `ARCANOS_PROCESS_KIND`. If you use Compose before that config is repaired, set `ARCANOS_PROCESS_KIND=web` for the API container or use the direct `npm run build && npm start` flow above.
 

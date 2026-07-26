@@ -16,7 +16,7 @@ const auditDirectory = '../docs/audits/action-plan-execution/2026-07-18/private-
 const plan = readFileSync(fileURLToPath(new URL(
   `${auditDirectory}gate-r1-postgres-r3b-plan-2026-07-20.md`,
   import.meta.url
-)), 'utf8');
+)), 'utf8').replace(/\r\n?/gu, '\n');
 const evidence = JSON.parse(readFileSync(fileURLToPath(new URL(
   `${auditDirectory}gate-r1-postgres-r3b1-execution-evidence-2026-07-20.json`,
   import.meta.url

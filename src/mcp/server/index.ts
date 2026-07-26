@@ -48,8 +48,11 @@ import { ingestUrl, ingestContent, answerQuestion } from '@services/webRag.js';
 import { connectResearchBridge } from '@services/researchHub.js';
 
 import { saveMemory, loadMemory, deleteMemory, query as dbQuery } from '@core/db/index.js';
-import { loadModuleDefinitions } from '@services/moduleLoader.js';
-import { dispatchModuleAction } from '@routes/modules.js';
+import {
+  dispatchModuleAction,
+  getPublicModulesForRegistry,
+  initializeModuleRegistry
+} from '@services/moduleRegistry.js';
 import { buildActiveMemorySelect, normalizeMemoryEntries, type MemoryListRow } from '@services/memoryListing.js';
 
 import { runHealthCheck } from '@platform/logging/diagnostics.js';
@@ -57,6 +60,7 @@ import { acquireExecutionLock } from '@services/safety/executionLock.js';
 import { emitSafetyAuditEvent } from '@services/safety/auditEvents.js';
 import { executeFastGptPrompt } from '@services/gptFastPath.js';
 import { classifyGptFastPathRequest } from '@shared/gpt/gptFastPath.js';
+import { resolveArcanosMcpPortFromRequest } from '@services/arcanosMcpPort.js';
 import {
   executeControlPlaneRequest,
   getControlPlaneCapabilities,
@@ -1242,13 +1246,13 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
     'modules.list',
     {
       title: 'Modules List',
-      description: 'Control plane: lists loaded modules and actions (same as GET /registry).',
+      description: 'Control plane: lists the safe public module registry (same as GET /registry).',
       annotations: { readOnlyHint: true },
       inputSchema: z.object({}).passthrough(),
     },
     wrapTool('modules.list', ctx, async () => {
-      const defs = await loadModuleDefinitions();
-      return mcpText(defs);
+      await initializeModuleRegistry();
+      return mcpText(getPublicModulesForRegistry());
     })
   );
 
@@ -1283,6 +1287,7 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
       const gate = requireNonceOrIssue(args, 'modules.invoke', ctx, stripConfirmationFields(args));
       if (!gate.ok) return gate.error;
 
+      await initializeModuleRegistry();
       const out = await dispatchModuleAction(args.module, args.action, args.payload ?? {});
       return mcpText(out);
     })
@@ -1369,26 +1374,31 @@ export async function createMcpServer(ctx: McpRequestContext): Promise<AnyMcpSer
         if (!gate.ok) return gate.error;
       }
 
-      const response = await executeControlPlaneRequest({
-        ...requestPayload,
-        requestId: typeof requestPayload.requestId === 'string' ? requestPayload.requestId : ctx.requestId,
-        context: {
-          ...(requestPayload.context ?? {}),
-          sessionId: requestPayload.context?.sessionId ?? args.sessionId ?? ctx.sessionId,
-          caller: requestPayload.context?.caller ?? {
-            id: ctx.sessionId ?? ctx.requestId,
-            type: 'mcp'
-          }
-        },
-        approval: approvalRequired
-          ? {
-              approved: true,
-              approvedBy: requestPayload.approval?.approvedBy ?? `mcp:${ctx.sessionId ?? ctx.requestId}`,
-              reason: requestPayload.approval?.reason ?? 'MCP control-plane confirmation gate accepted.',
-              confirmationId: args.confirmationNonce ?? requestPayload.approval?.confirmationId
+      const response = await executeControlPlaneRequest(
+        {
+          ...requestPayload,
+          requestId: typeof requestPayload.requestId === 'string' ? requestPayload.requestId : ctx.requestId,
+          context: {
+            ...(requestPayload.context ?? {}),
+            sessionId: requestPayload.context?.sessionId ?? args.sessionId ?? ctx.sessionId,
+            caller: requestPayload.context?.caller ?? {
+              id: ctx.sessionId ?? ctx.requestId,
+              type: 'mcp'
             }
-          : requestPayload.approval
-      });
+          },
+          approval: approvalRequired
+            ? {
+                approved: true,
+                approvedBy: requestPayload.approval?.approvedBy ?? `mcp:${ctx.sessionId ?? ctx.requestId}`,
+                reason: requestPayload.approval?.reason ?? 'MCP control-plane confirmation gate accepted.',
+                confirmationId: args.confirmationNonce ?? requestPayload.approval?.confirmationId
+              }
+            : requestPayload.approval
+        },
+        {
+          mcpClient: resolveArcanosMcpPortFromRequest(ctx.req),
+        }
+      );
 
       if (!response.ok) {
         return mcpError({

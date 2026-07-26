@@ -11,15 +11,18 @@ import type {
   TrinityReasoningHonesty,
   TrinityResponseMode,
   TrinityToolBackedCapabilities
-} from './trinityHonesty.js';
+} from './trinityHonestyTypes.js';
 
 export type {
   TrinityCapabilityFlags,
+  TrinityConfidence,
   TrinityEvidenceTag,
   TrinityReasoningHonesty,
   TrinityResponseMode,
-  TrinityToolBackedCapabilities
-} from './trinityHonesty.js';
+  TrinitySourceType,
+  TrinityToolBackedCapabilities,
+  TrinityVerificationStatus
+} from './trinityHonestyTypes.js';
 
 export interface TrinityMetaTokens {
   prompt_tokens: number;

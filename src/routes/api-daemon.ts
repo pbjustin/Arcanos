@@ -1,9 +1,12 @@
 import express, { Request, Response } from 'express';
 import { createRateLimitMiddleware, securityHeaders } from "@platform/runtime/security.js";
 import { asyncHandler, sendBadRequestPayload, sendNotFoundPayload } from '@shared/http/index.js';
-import { timingSafeEqualOpaqueSecret } from '@shared/security/opaqueSecret.js';
-import { getModulesForRegistry } from './modules.js';
-import { recordTraceEvent } from "@platform/logging/telemetry.js";
+import { DAEMON_STORE_PARTITION } from '@shared/daemon/daemonTransportContract.js';
+import { requireDaemonPlaneAuth } from '@transport/http/middleware/daemonPlaneAuth.js';
+import {
+  getModulesForRegistry,
+  initializeModuleRegistry
+} from '@services/moduleRegistry.js';
 import {
   DAEMON_COMMAND_RETENTION_MS,
   DAEMON_RATE_LIMIT_MAX,
@@ -18,29 +21,29 @@ import {
   DAEMON_REGISTRY_VERSION
 } from "@platform/runtime/daemonRegistry.js";
 import { DaemonHeartbeat } from './daemonStore.js';
-import { daemonLogger, daemonStore } from './api-daemon/context.js';
+import { daemonStore } from './api-daemon/context.js';
 import { createPendingDaemonActions, consumePendingDaemonActions } from './api-daemon/pending.js';
 
 export { createPendingDaemonActions, consumePendingDaemonActions };
 
 const router = express.Router();
 
-router.use(securityHeaders);
 const daemonRateLimit = createRateLimitMiddleware(DAEMON_RATE_LIMIT_MAX, DAEMON_RATE_LIMIT_WINDOW_MS);
-router.use('/api/daemon', daemonRateLimit);
-router.use('/api/update', daemonRateLimit);
-
-
-const attachDaemonContext = (req: Request, _res: Response, next: (error?: unknown) => void): void => {
-  req.daemonToken = 'anonymous-daemon';
-  next();
-};
+router.use('/api/daemon', securityHeaders, daemonRateLimit, requireDaemonPlaneAuth);
 
 const REGISTRY_RATE_LIMIT = createRateLimitMiddleware(
   DAEMON_REGISTRY_RATE_LIMIT_MAX,
   DAEMON_REGISTRY_RATE_LIMIT_WINDOW_MS
 );
 
+/**
+ * Resolve an instance's compatibility-only store partition. Historical values
+ * are deliberately kept route-local because some deployments may have
+ * persisted former Bearer credentials before daemon auth became anonymous.
+ */
+function resolveDaemonStorePartition(instanceId: string): string {
+  return daemonStore.getTokenForInstance(instanceId) ?? DAEMON_STORE_PARTITION;
+}
 
 /**
  * POST /api/daemon/heartbeat
@@ -48,7 +51,6 @@ const REGISTRY_RATE_LIMIT = createRateLimitMiddleware(
  */
 router.post(
   '/api/daemon/heartbeat',
-  attachDaemonContext,
   asyncHandler(async (req: Request, res: Response) => {
     const { clientId, instanceId, version, uptime, routingMode, stats } = req.body;
 
@@ -71,29 +73,17 @@ router.post(
       lastSeen: new Date()
     };
 
-    // Use token + instanceId as key to support multiple daemons with same token
-    const daemonToken = req.daemonToken!;
-    daemonStore.recordHeartbeat(daemonToken, heartbeat);
-    
-    // Security: Prevent instanceId hijacking by validating token ownership
-    // Only allow setting/updating token mapping if:
-    // 1. InstanceId has no existing token (first registration), OR
-    // 2. The existing token matches the current token (legitimate update)
-    const existingToken = daemonStore.getTokenForInstance(instanceId);
-    if (existingToken && !timingSafeEqualOpaqueSecret(existingToken, daemonToken)) {
-      //audit Assumption: instanceId hijacking attempt detected; risk: unauthorized access; invariant: reject; handling: return 403.
-      return res.status(403).json({
-        error: 'Forbidden',
-        message: 'InstanceId is already registered with a different token'
-      });
-    }
-    
-    // Safe to set/update the token mapping
-    if (!existingToken) {
-      //audit Assumption: new instance mapping required; risk: missing mapping; invariant: persist mapping; handling: save tokens.
-      daemonStore.setTokenForInstance(instanceId, daemonToken);
+    const existingPartition = daemonStore.getTokenForInstance(instanceId);
+    const storePartition = existingPartition ?? DAEMON_STORE_PARTITION;
+
+    if (!existingPartition) {
+      //audit Assumption: new instance mapping required; risk: missing mapping; invariant: persist only the non-secret canonical partition; handling: save tokens.
+      daemonStore.setTokenForInstance(instanceId, storePartition);
       daemonStore.saveTokens();
     }
+
+    // Ownership lookup/registration must complete before any heartbeat mutation.
+    daemonStore.recordHeartbeat(storePartition, heartbeat);
 
     res.json({
       pong: true,
@@ -108,9 +98,7 @@ router.post(
  */
 router.get(
   '/api/daemon/commands',
-  attachDaemonContext,
   asyncHandler(async (req: Request, res: Response) => {
-    const daemonToken = req.daemonToken!;
     const instanceId = req.query.instance_id as string | undefined;
 
     if (!instanceId) {
@@ -122,7 +110,8 @@ router.get(
     }
 
     // Get pending commands for this daemon instance
-    const pendingCommands = daemonStore.listPendingCommands(daemonToken, instanceId);
+    const storePartition = resolveDaemonStorePartition(instanceId);
+    const pendingCommands = daemonStore.listPendingCommands(storePartition, instanceId);
 
     //audit Assumption: command payloads are safe to expose; risk: leaking sensitive data; invariant: map only required fields; handling: transform.
     res.json({
@@ -142,10 +131,8 @@ router.get(
  */
 router.post(
   '/api/daemon/commands/ack',
-  attachDaemonContext,
   asyncHandler(async (req: Request, res: Response) => {
     const { commandIds } = req.body;
-    const token = req.daemonToken!;
     const instanceId = req.body.instanceId as string | undefined;
 
     if (!Array.isArray(commandIds) || commandIds.length === 0) {
@@ -164,9 +151,11 @@ router.post(
       });
     }
 
+    const storePartition = resolveDaemonStorePartition(instanceId);
+
     // Mark commands as acknowledged
     const acknowledgedCount = daemonStore.acknowledgeCommands(
-      token,
+      storePartition,
       instanceId,
       commandIds,
       DAEMON_COMMAND_RETENTION_MS
@@ -223,8 +212,8 @@ export function getDaemonCommandResultForInstance(
   instanceId: string,
   commandId: string
 ): Record<string, unknown> | null {
-  const daemonToken = process.env.DAEMON_DEFAULT_TOKEN || 'anonymous-daemon';
-  const entry = daemonStore.getCommandResult(daemonToken, instanceId, commandId);
+  const storePartition = resolveDaemonStorePartition(instanceId);
+  const entry = daemonStore.getCommandResult(storePartition, instanceId, commandId);
   return entry ? entry.result : null;
 }
 
@@ -235,9 +224,7 @@ export function getDaemonCommandResultForInstance(
  */
 router.post(
   '/api/daemon/commands/result',
-  attachDaemonContext,
   asyncHandler(async (req: Request, res: Response) => {
-    const daemonToken = req.daemonToken!;
     const instanceId = req.body.instanceId as string | undefined;
     const commandId = req.body.commandId as string | undefined;
     const result = req.body.result as unknown;
@@ -256,7 +243,13 @@ router.post(
       });
     }
 
-    daemonStore.recordCommandResult(daemonToken, instanceId, commandId, result as Record<string, unknown>);
+    const storePartition = resolveDaemonStorePartition(instanceId);
+    daemonStore.recordCommandResult(
+      storePartition,
+      instanceId,
+      commandId,
+      result as Record<string, unknown>
+    );
     res.json({ ok: true });
   })
 );
@@ -267,7 +260,6 @@ router.post(
  */
 router.post(
   '/api/daemon/confirm-actions',
-  attachDaemonContext,
   asyncHandler(async (req: Request, res: Response) => {
     const { confirmation_token: confirmationToken, instanceId } = req.body as {
       confirmation_token?: string;
@@ -290,7 +282,20 @@ router.post(
       });
     }
 
-    const queued = consumePendingDaemonActions(confirmationToken, instanceId, req.daemonToken!);
+    const storePartition = daemonStore.getTokenForInstance(instanceId);
+    if (!storePartition) {
+      // A successful heartbeat must establish the instance before confirmation.
+      return sendNotFoundPayload(res, {
+        error: 'Not Found',
+        message: 'Confirmation token invalid or expired'
+      });
+    }
+
+    const queued = consumePendingDaemonActions(
+      confirmationToken,
+      instanceId,
+      storePartition
+    );
     if (queued < 0) {
       //audit Assumption: invalid/expired token should fail; risk: stale confirmation; invariant: 404 returned; handling: reject.
       return sendNotFoundPayload(res, {
@@ -312,9 +317,9 @@ router.post(
  */
 router.get(
   '/api/daemon/registry',
-  attachDaemonContext,
   REGISTRY_RATE_LIMIT,
   asyncHandler(async (_req: Request, res: Response) => {
+    await initializeModuleRegistry();
     //audit Assumption: registry is safe to expose; risk: leaking internal metadata; invariant: curated registry only; handling: return static config.
     const registry = {
       version: DAEMON_REGISTRY_VERSION,
@@ -329,49 +334,12 @@ router.get(
   })
 );
 
-/**
- * POST /api/update
- * Daemon sends update events (same as existing daemon update functionality)
- */
-router.post(
-  '/api/update',
-  attachDaemonContext,
-  asyncHandler(async (req: Request, res: Response) => {
-    const { updateType, data } = req.body;
-
-    if (!updateType || typeof updateType !== 'string') {
-      //audit Assumption: updateType required; risk: invalid update; invariant: 400 returned; handling: reject.
-      return sendBadRequestPayload(res, {
-        error: 'Bad Request',
-        message: 'updateType is required and must be a string'
-      });
-    }
-
-    if (!data || typeof data !== 'object') {
-      //audit Assumption: data payload required; risk: invalid update; invariant: 400 returned; handling: reject.
-      return sendBadRequestPayload(res, {
-        error: 'Bad Request',
-        message: 'data is required and must be an object'
-      });
-    }
-
-    // Store update event (in production, this should be persisted to database)
-    // For now, we just acknowledge receipt
-    const token = req.daemonToken!;
-    const instanceId = (req.body.metadata?.instanceId as string) || 'unknown';
-
-    // Log the update event (using trace event for daemon updates)
-    //audit Assumption: data keys are safe for telemetry; risk: sensitive keys; invariant: log only keys; handling: Object.keys.
-    recordTraceEvent('daemon.update', {
-      instanceId,
-      updateType,
-      dataKeys: Object.keys(data)
-    });
-
-    res.json({
-      success: true,
-      timestamp: new Date().toISOString()
-    });
+// Authenticated unknown daemon-plane paths must terminate here instead of
+// falling through to writing-plane routing or unrelated API handlers.
+router.use('/api/daemon', (_req: Request, res: Response) =>
+  sendNotFoundPayload(res, {
+    error: 'Not Found',
+    message: 'Daemon endpoint not found'
   })
 );
 

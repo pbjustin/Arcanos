@@ -1,7 +1,11 @@
 import express, { Request, Response } from 'express';
 import { z } from 'zod';
+import { createAbortError } from '@arcanos/runtime';
 import { runTrinityWritingPipeline } from '@core/logic/trinityWritingPipeline.js';
-import { createJob } from "@core/db/repositories/jobRepository.js";
+import {
+  createJob,
+  JobRepositoryUnavailableError
+} from "@core/db/repositories/jobRepository.js";
 import { validateAIRequest, handleAIError, logRequestFeedback } from "@transport/http/requestHandler.js";
 import { confirmGate } from "@transport/http/middleware/confirmGate.js";
 import {
@@ -92,6 +96,8 @@ import {
 import { logger } from '@platform/logging/structuredLogging.js';
 
 const router = express.Router();
+const ASYNC_ASK_JOBS_UNAVAILABLE_MESSAGE =
+  'Async ask job status is temporarily unavailable because durable job persistence is unavailable.';
 
 // Apply security middleware
 router.use(securityHeaders);
@@ -511,6 +517,24 @@ function buildAsyncAskFailurePayload(jobId: string, errorMessage?: string | null
     message: errorMessage?.trim() || 'Async ask job failed.',
     jobId,
     poll: buildJobResultPollPath(jobId)
+  };
+}
+
+function buildAsyncAskJobsUnavailablePayload(jobId?: string): {
+  error: string;
+  message: string;
+  jobId?: string;
+  poll?: string;
+} {
+  return {
+    error: 'ASYNC_ASK_JOBS_UNAVAILABLE',
+    message: ASYNC_ASK_JOBS_UNAVAILABLE_MESSAGE,
+    ...(jobId
+      ? {
+          jobId,
+          poll: buildJobResultPollPath(jobId)
+        }
+      : {})
   };
 }
 
@@ -1146,14 +1170,78 @@ export const handleAIRequest = async (
     if (asyncRequested) {
       const workerId = process.env.WORKER_ID || 'api';
       const plannedJob = await planAutonomousWorkerJob('ask', queuedAskJobInput);
-      const job = await createJob(workerId, 'ask', queuedAskJobInput, plannedJob);
-      const waitedJob = await waitForQueuedAskJobCompletion(
-        job.id,
-        {
-          waitForResultMs: resolveAsyncAskWaitForResultMs(requestedAsyncAskWaitMs),
-          pollIntervalMs: resolveAsyncAskPollIntervalMs(undefined)
+      let job: Awaited<ReturnType<typeof createJob>>;
+      try {
+        job = await createJob(workerId, 'ask', queuedAskJobInput, plannedJob);
+      } catch (error) {
+        if (!(error instanceof JobRepositoryUnavailableError)) {
+          throw error;
         }
-      );
+
+        failAiRouteTrace(req, routeTrace, new Error(ASYNC_ASK_JOBS_UNAVAILABLE_MESSAGE), {
+          activeModel: 'queued-ask',
+          statusCode: 503,
+          extra: { disposition: 'async-jobs-unavailable' }
+        });
+        return sendGuardedAskResponse(
+          req,
+          res,
+          buildAsyncAskJobsUnavailablePayload(),
+          `${endpointName}.async_jobs_unavailable`,
+          503
+        );
+      }
+      const clientAbortController = new AbortController();
+      const abortWaitForClosedClient = () => {
+        if (!res.writableEnded && !clientAbortController.signal.aborted) {
+          clientAbortController.abort(createAbortError('Ask route client disconnected'));
+        }
+      };
+      res.once('close', abortWaitForClosedClient);
+      if (res.destroyed) {
+        abortWaitForClosedClient();
+      }
+
+      let waitedJob: Awaited<ReturnType<typeof waitForQueuedAskJobCompletion>>;
+      try {
+        waitedJob = await waitForQueuedAskJobCompletion(
+          job.id,
+          {
+            waitForResultMs: resolveAsyncAskWaitForResultMs(requestedAsyncAskWaitMs),
+            pollIntervalMs: resolveAsyncAskPollIntervalMs(undefined),
+            signal: clientAbortController.signal
+          }
+        );
+      } catch (error) {
+        if (
+          clientAbortController.signal.aborted &&
+          (res.destroyed || res.writableEnded)
+        ) {
+          return;
+        }
+
+        if (error instanceof JobRepositoryUnavailableError) {
+          failAiRouteTrace(req, routeTrace, new Error(ASYNC_ASK_JOBS_UNAVAILABLE_MESSAGE), {
+            activeModel: 'queued-ask',
+            statusCode: 503,
+            extra: {
+              disposition: 'async-jobs-unavailable',
+              jobId: job.id
+            }
+          });
+          return sendGuardedAskResponse(
+            req,
+            res,
+            buildAsyncAskJobsUnavailablePayload(job.id),
+            `${endpointName}.async_jobs_unavailable`,
+            503
+          );
+        }
+
+        throw error;
+      } finally {
+        res.removeListener('close', abortWaitForClosedClient);
+      }
 
       //audit Assumption: most user-visible frustration comes from fast jobs still requiring a second poll hop; failure risk: clients perceive working queue jobs as hung because they only receive a job id; expected invariant: terminal jobs inside the bounded wait window return immediately; handling strategy: branch on the waited queue state before falling back to HTTP 202.
       if (waitedJob.state === 'completed') {

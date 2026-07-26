@@ -3,7 +3,6 @@ import path from 'path';
 import { updateState } from './stateManager.js';
 import { DEFAULT_SELF_TEST_PROMPTS, SELF_TEST_USER_AGENT, SelfTestPrompt } from "@platform/runtime/selfTestConfig.js";
 import { getBackendBaseUrl, getEnv } from "@platform/runtime/env.js";
-import { resolveErrorMessage } from "@core/lib/errors/index.js";
 
 export interface SelfTestResult {
   id: string;
@@ -37,6 +36,8 @@ export interface SelfTestOptions {
 
 const LOG_FILE = path.join(process.cwd(), 'logs', 'healthcheck.json');
 const DEFAULT_SELF_TEST_GPT_ID = 'arcanos-core';
+const SELF_TEST_REQUEST_TIMEOUT_MS = 30_000;
+const SELF_TEST_MAX_RESPONSE_BYTES = 256 * 1024;
 
 function resolveBaseUrl(): string {
   const selfTestBaseUrl = getEnv('SELF_TEST_BASE_URL');
@@ -92,6 +93,49 @@ function appendLog(summary: SelfTestSummary): void {
   }
 }
 
+async function readBoundedJsonResponse(
+  response: Response
+): Promise<Record<string, unknown>> {
+  const declaredLength = Number(response.headers.get('content-length'));
+  if (
+    Number.isFinite(declaredLength)
+    && declaredLength > SELF_TEST_MAX_RESPONSE_BYTES
+  ) {
+    throw new Error('Self-test response exceeded the size limit.');
+  }
+  if (!response.body) {
+    throw new Error('Self-test response body was empty.');
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let totalBytes = 0;
+  let rawBody = '';
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      totalBytes += value.byteLength;
+      if (totalBytes > SELF_TEST_MAX_RESPONSE_BYTES) {
+        await reader.cancel();
+        throw new Error('Self-test response exceeded the size limit.');
+      }
+      rawBody += decoder.decode(value, { stream: true });
+    }
+    rawBody += decoder.decode();
+  } finally {
+    reader.releaseLock();
+  }
+
+  const parsed = JSON.parse(rawBody) as unknown;
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('Self-test response was not a JSON object.');
+  }
+  return parsed as Record<string, unknown>;
+}
+
 async function executePrompt(
   baseUrl: string,
   targetModel: string,
@@ -99,9 +143,15 @@ async function executePrompt(
 ): Promise<SelfTestResult> {
   const started = Date.now();
   const endpoint = `${baseUrl.replace(/\/$/, '')}/gpt/${encodeURIComponent(resolveSelfTestGptId())}`;
+  const abortController = new AbortController();
+  const timeoutHandle = setTimeout(() => {
+    abortController.abort();
+  }, SELF_TEST_REQUEST_TIMEOUT_MS);
   try {
     const res = await fetch(endpoint, {
       method: 'POST',
+      redirect: 'error',
+      signal: abortController.signal,
       headers: {
         'content-type': 'application/json',
         'user-agent': SELF_TEST_USER_AGENT,
@@ -125,14 +175,18 @@ async function executePrompt(
         statusCode,
         latencyMs,
         success: false,
-        message: `HTTP ${res.status} ${res.statusText}`
+        message: `HTTP ${res.status}`
       };
     }
 
-    const data = (await res.json()) as Record<string, any>;
+    const data = await readBoundedJsonResponse(res);
     const nestedResult =
       typeof data.result === 'object' && data.result !== null
-        ? (data.result as Record<string, any>)
+        ? (data.result as Record<string, unknown>)
+        : null;
+    const routeData =
+      typeof data._route === 'object' && data._route !== null
+        ? (data._route as Record<string, unknown>)
         : null;
     const activeModel =
       typeof data.activeModel === 'string'
@@ -145,8 +199,8 @@ async function executePrompt(
         ? data.module
         : typeof nestedResult?.module === 'string'
           ? nestedResult.module
-          : typeof data._route?.module === 'string'
-            ? data._route.module
+          : typeof routeData?.module === 'string'
+            ? routeData.module
             : undefined;
     const resultText =
       typeof data.result === 'string'
@@ -154,7 +208,6 @@ async function executePrompt(
         : typeof nestedResult?.result === 'string'
           ? nestedResult.result
           : undefined;
-    const responsePreview = typeof resultText === 'string' ? resultText.slice(0, 200) : undefined;
     const modelMatches = activeModel ? activeModel.includes(targetModel) : true;
     const success = Boolean(resultText) && modelMatches;
 
@@ -169,10 +222,9 @@ async function executePrompt(
         ? 'Model responded successfully'
         : `Active model mismatch: expected ${targetModel}, received ${activeModel || 'unknown'}`,
       activeModel,
-      module: moduleName,
-      responsePreview
+      module: moduleName
     };
-  } catch (error) {
+  } catch {
     return {
       id: prompt.id,
       prompt: prompt.prompt,
@@ -180,8 +232,10 @@ async function executePrompt(
       statusCode: 0,
       latencyMs: Date.now() - started,
       success: false,
-      message: resolveErrorMessage(error)
+      message: 'Self-test request failed.'
     };
+  } finally {
+    clearTimeout(timeoutHandle);
   }
 }
 

@@ -9,9 +9,20 @@ import {
   registerQuarantine,
   resetSafetyRuntimeStateForTests
 } from '../src/services/safety/runtimeState.js';
+import {
+  selfHealingControlHttpBoundary,
+} from '../src/services/controlPlane/selfHealingControlHttpBoundary.js';
+import {
+  selfHealingControlBodyParser,
+} from '../src/services/controlPlane/selfHealingControlBodyParser.js';
+import {
+  PURPOSE_BOUND_CREDENTIAL_ENV_NAMES,
+} from '../src/shared/security/purposeBoundCredential.js';
 
 function createUnsafeApp() {
   const app = express();
+  app.use('/status/safety/quarantine', selfHealingControlHttpBoundary);
+  app.use('/status/safety/quarantine', selfHealingControlBodyParser);
   app.use(express.json());
   app.use(unsafeExecutionGate);
   app.use(safetyRouter);
@@ -49,9 +60,25 @@ function activateIntegrityUnsafeConditionForTest() {
 
 describe('unsafeExecutionGate', () => {
   const originalAdminKey = process.env.ADMIN_KEY;
+  const originalCredentialEnvironment = new Map(
+    PURPOSE_BOUND_CREDENTIAL_ENV_NAMES.map(
+      (environmentName) => [environmentName, process.env[environmentName]] as const
+    )
+  );
+  const originalPrincipalId = process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID;
+  const originalScopes = process.env.ARCANOS_CONTROL_PLANE_SCOPES;
+  const controlPlaneAccessToken = 'unsafe-gate-control-token-1234567890';
 
   beforeEach(() => {
+    for (const environmentName of PURPOSE_BOUND_CREDENTIAL_ENV_NAMES) {
+      delete process.env[environmentName];
+    }
     process.env.ADMIN_KEY = 'test-admin-key';
+    process.env.ARCANOS_CONTROL_PLANE_ACCESS_TOKEN = controlPlaneAccessToken;
+    process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID =
+      'operator:unsafe-gate-test';
+    process.env.ARCANOS_CONTROL_PLANE_SCOPES =
+      'arcanos:read,self-improve:control';
     resetSafetyRuntimeStateForTests();
   });
 
@@ -65,17 +92,38 @@ describe('unsafeExecutionGate', () => {
     } else {
       process.env.ADMIN_KEY = originalAdminKey;
     }
+    for (const environmentName of PURPOSE_BOUND_CREDENTIAL_ENV_NAMES) {
+      delete process.env[environmentName];
+    }
+    for (const [environmentName, value] of originalCredentialEnvironment) {
+      if (value !== undefined) {
+        process.env[environmentName] = value;
+      }
+    }
+    if (originalPrincipalId === undefined) {
+      delete process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID;
+    } else {
+      process.env.ARCANOS_CONTROL_PLANE_PRINCIPAL_ID = originalPrincipalId;
+    }
+    if (originalScopes === undefined) {
+      delete process.env.ARCANOS_CONTROL_PLANE_SCOPES;
+    } else {
+      process.env.ARCANOS_CONTROL_PLANE_SCOPES = originalScopes;
+    }
   });
 
   it('blocks mutating requests with unsafe-to-proceed payload when unsafe state is active', async () => {
     const app = createUnsafeApp();
-    activateIntegrityUnsafeConditionForTest();
+    const quarantineId = activateIntegrityUnsafeConditionForTest();
 
     const response = await request(app).post('/mutate').send({ action: 'write' });
     expect(response.status).toBe(503);
     expect(response.body.error).toBe('UNSAFE_TO_PROCEED');
     expect(Array.isArray(response.body.conditions)).toBe(true);
     expect(response.body.conditions).toContain('PATTERN_INTEGRITY_FAILURE');
+    expect(response.body.quarantineCount).toBe(1);
+    expect(response.body).not.toHaveProperty('quarantineIds');
+    expect(JSON.stringify(response.body)).not.toContain(quarantineId);
   });
 
   it('keeps read-only endpoints available while unsafe state is active', async () => {
@@ -168,7 +216,7 @@ describe('unsafeExecutionGate', () => {
     const blockedResponse = await request(app).post('/mutate').send({ action: 'write' });
     expect(blockedResponse.status).toBe(503);
 
-    const releaseResponse = await request(app)
+    const legacyCredentialResponse = await request(app)
       .post(`/status/safety/quarantine/${quarantineId}/release`)
       .set('x-api-key', 'test-admin-key')
       .set('x-operator-id', 'operator:test-suite')
@@ -176,8 +224,20 @@ describe('unsafeExecutionGate', () => {
         confirmation: `release:${quarantineId}`,
         note: 'release from test suite'
       });
+    expect(legacyCredentialResponse.status).toBe(401);
+    expect(legacyCredentialResponse.body.error.code)
+      .toBe('CONTROL_PLANE_AUTH_REQUIRED');
+
+    const releaseResponse = await request(app)
+      .post(`/status/safety/quarantine/${quarantineId}/release`)
+      .set('Authorization', `Bearer ${controlPlaneAccessToken}`)
+      .send({
+        confirmation: `release:${quarantineId}`,
+        note: 'release from test suite'
+      });
     expect(releaseResponse.status).toBe(200);
     expect(releaseResponse.body.released).toBe(true);
+    expect(releaseResponse.body.releasedBy).toBe('operator:unsafe-gate-test');
 
     const unblockedResponse = await request(app).post('/mutate').send({ action: 'write' });
     expect(unblockedResponse.status).toBe(200);

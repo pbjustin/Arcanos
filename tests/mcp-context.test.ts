@@ -22,6 +22,8 @@ jest.unstable_mockModule('../src/mcp/log.js', () => ({
 }));
 
 const { buildMcpInternalContext, buildMcpStdioContext } = await import('../src/mcp/context.js');
+const { resolveArcanosMcpPortFromRequest } =
+  await import('../src/services/arcanosMcpPort.js');
 
 describe('MCP detached context builders', () => {
   beforeEach(() => {
@@ -65,5 +67,32 @@ describe('MCP detached context builders', () => {
       sessionId: 'stdio-session',
       transport: 'stdio',
     });
+  });
+
+  it('carries an explicitly composed MCP port through detached request locals', () => {
+    const arcanosMcp = {
+      invokeTool: jest.fn(),
+      listTools: jest.fn(),
+    };
+
+    const internal = buildMcpInternalContext('worker:planner', { arcanosMcp });
+    const stdio = buildMcpStdioContext('stdio-session', { arcanosMcp });
+
+    expect(resolveArcanosMcpPortFromRequest(internal.req)).toBe(arcanosMcp);
+    expect(resolveArcanosMcpPortFromRequest(stdio.req)).toBe(arcanosMcp);
+  });
+
+  it('rejects absent or malformed request-local MCP ports', () => {
+    expect(resolveArcanosMcpPortFromRequest(undefined)).toBeUndefined();
+    expect(resolveArcanosMcpPortFromRequest({ app: { locals: {} } })).toBeUndefined();
+    expect(resolveArcanosMcpPortFromRequest({
+      app: {
+        locals: {
+          arcanosMcp: {
+            invokeTool: jest.fn(),
+          },
+        },
+      },
+    })).toBeUndefined();
   });
 });

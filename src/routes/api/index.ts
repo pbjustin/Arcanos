@@ -20,29 +20,40 @@ import openaiRouter from "@routes/openai.js";
 import afolRouter from "@routes/afol.js";
 import webSearchRouter from "@routes/web-search.js";
 import { memoryConsistencyGate } from "@transport/http/middleware/memoryConsistencyGate.js";
+import { requireMemoryPlaneAuth } from "@transport/http/middleware/memoryPlaneAuth.js";
 
 const router = Router();
 
+// The control plane is not part of the writing-plane consistency/reroute flow.
+router.use('/api/control-plane', apiControlPlaneRouter);
+// Daemon heartbeat/command transport is also control-plane traffic. Its router
+// applies rate limiting and purpose-bound authentication before every handler.
+router.use('/', apiDaemonRouter);
+// Repository and prompt-trace inspection are read-only control-plane surfaces.
+// Their leaf routers authenticate, authorize, and terminate unknown subpaths.
+router.use('/api/codebase', apiCodebaseRouter);
+router.use('/api/prompt-debug', apiPromptDebugRouter);
+router.use('/', apiAiRoutingDebugRouter);
+// PR verification is control-plane work. Its execution leaf applies a stricter
+// operator boundary while health, schema, and the inert webhook retain their
+// existing public contracts.
+router.use('/api/pr-analysis', prAnalysisRouter);
+router.use('/api/memory', requireMemoryPlaneAuth);
+router.use('/api/save-conversation', requireMemoryPlaneAuth);
 router.use(memoryConsistencyGate);
 
 router.use('/', apiSaveConversationRouter);
 router.use('/api/arcanos', apiArcanosRouter);
 router.use('/api/sim', apiSimRouter);
 router.use('/api/memory', apiMemoryRouter);
-router.use('/api/codebase', apiCodebaseRouter);
 router.use('/api/commands', apiCommandsRouter);
-router.use('/api/control-plane', apiControlPlaneRouter);
-router.use('/api/pr-analysis', prAnalysisRouter);
 router.use('/api/openai', openaiRouter);
 router.use('/api/assistants', apiAssistantsRouter);
-router.use('/', apiPromptDebugRouter);
-router.use('/', apiAiRoutingDebugRouter);
 router.use('/api/afol', afolRouter);
 router.use('/', apiAgentRouter);
 router.use('/', apiVisionRouter);
 router.use('/', apiTranscribeRouter);
 router.use('/', apiUpdateRouter);
-router.use('/', apiDaemonRouter);
 router.use('/', reusableCodeRouter);
 router.use('/', webSearchRouter);
 

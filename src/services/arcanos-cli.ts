@@ -15,6 +15,8 @@ const ArcanosCli: ModuleDef = {
   description: 'Protected control-plane bridge for the optional local ARCANOS Python CLI daemon.',
   defaultAction: 'status',
   defaultTimeoutMs: 30000,
+  exposeLegacyRoute: false,
+  gptAccessOnly: true,
   actions: {
     status: async () => getArcanosCliStatus(),
     policy: async () => getArcanosCliPolicyMetadata(),

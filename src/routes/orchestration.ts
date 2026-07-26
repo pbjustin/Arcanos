@@ -6,10 +6,14 @@ import { sendBadRequest, sendInternalErrorPayload } from '@shared/http/index.js'
 
 import express, { Request, Response } from 'express';
 import { resetOrchestrationShell, getOrchestrationShellStatus } from "@services/orchestrationShell.js";
-import { handleAIError } from "@transport/http/requestHandler.js";
 import { confirmGate } from "@transport/http/middleware/confirmGate.js";
 import type { AIRequestDTO, AIResponseDTO, ErrorResponseDTO } from "@shared/types/dto.js";
-import { resolveErrorMessage } from "@core/lib/errors/index.js";
+import {
+  legacyOperatorHttpBoundary,
+} from '@services/controlPlane/legacyOperatorHttpBoundary.js';
+import {
+  legacyOperatorBodyParser,
+} from '@services/controlPlane/legacyOperatorBodyParser.js';
 
 const router = express.Router();
 
@@ -56,31 +60,80 @@ interface OrchestrationResponse extends AIResponseDTO {
   };
 }
 
+interface ValidatedOrchestrationResetRequest {
+  agentId: string;
+  sessionId: string;
+  contextSnapshotTag?: string;
+}
+
+function readBoundedOrchestrationText(
+  value: unknown,
+  maxLength: number
+): string | null {
+  return typeof value === 'string'
+    && value.length > 0
+    && value.length <= maxLength
+    && value === value.trim()
+    && !/[\u0000-\u001f\u007f]/u.test(value)
+    ? value
+    : null;
+}
+
+function validateOrchestrationResetRequest(
+  body: unknown
+): ValidatedOrchestrationResetRequest | null {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return null;
+  }
+  const record = body as Record<string, unknown>;
+  const agentId = readBoundedOrchestrationText(record.agentId, 128);
+  const sessionId = readBoundedOrchestrationText(record.sessionId, 256);
+  const contextSnapshotTag = record.contextSnapshotTag === undefined
+    ? undefined
+    : readBoundedOrchestrationText(record.contextSnapshotTag, 256);
+  if (!agentId || !sessionId || contextSnapshotTag === null) {
+    return null;
+  }
+  return {
+    agentId,
+    sessionId,
+    ...(contextSnapshotTag ? { contextSnapshotTag } : {}),
+  };
+}
+
 /**
  * POST /orchestration/reset - Reset GPT-5.1 orchestration shell
  * Performs purge and redeploy sequence with safeguards
  */
-router.post('/orchestration/reset', confirmGate, async (
-  req: Request<{}, OrchestrationResponse | ErrorResponseDTO, OrchestrationRequest>,
-  res: Response<OrchestrationResponse | ErrorResponseDTO>
-) => {
-  try {
-    console.log('🔄 [ORCHESTRATION] Reset request received');
+router.post(
+  '/orchestration/reset',
+  legacyOperatorHttpBoundary,
+  legacyOperatorBodyParser,
+  confirmGate,
+  async (
+    req: Request<{}, OrchestrationResponse | ErrorResponseDTO, OrchestrationRequest>,
+    res: Response<OrchestrationResponse | ErrorResponseDTO>
+  ) => {
+    try {
+      const validatedRequest = validateOrchestrationResetRequest(req.body);
+      if (!validatedRequest) {
+        sendBadRequest(res, 'Invalid orchestration request');
+        return;
+      }
+      const { agentId, sessionId, contextSnapshotTag } = validatedRequest;
+      req.logger?.info?.('orchestration.reset.started', {
+        requestId: req.requestId,
+        principalId: req.controlPlanePrincipal?.principalId,
+      });
 
-    const { agentId, sessionId, contextSnapshotTag } = req.body;
-    if (!agentId || !sessionId) {
-      sendBadRequest(res, 'Missing agentId or sessionId');
-      return;
-    }
-
-    // Execute orchestration shell reset
-    const result = await resetOrchestrationShell({
-      agentId,
-      sessionId,
-      contextSnapshotTag
-    });
+      // Execute orchestration shell reset
+      const result = await resetOrchestrationShell({
+        agentId,
+        sessionId,
+        contextSnapshotTag
+      });
     
-    const response: OrchestrationResponse = {
+      const response: OrchestrationResponse = {
       result: result.message,
       module: 'OrchestrationShell',
       meta: {
@@ -113,34 +166,38 @@ router.post('/orchestration/reset', confirmGate, async (
         meta: result.meta,
         logs: result.logs
       }
-    };
+      };
 
-    if (result.success) {
-      res.status(200).json(response);
-    } else {
+      if (result.success) {
+        res.status(200).json(response);
+      } else {
+        req.logger?.error?.('orchestration.reset.failed', {
+          requestId: req.requestId,
+        });
+        sendInternalErrorPayload(res, {
+          error: 'Orchestration reset failed',
+        });
+      }
+    } catch {
+      req.logger?.error?.('orchestration.reset.failed', {
+        requestId: req.requestId,
+      });
       sendInternalErrorPayload(res, {
-        ...response,
-        error: result.message
+        error: 'Orchestration reset failed',
       });
     }
-
-  } catch (error: unknown) {
-    console.error('❌ [ORCHESTRATION] Reset failed:', resolveErrorMessage(error));
-    handleAIError(error, 'orchestration reset request', 'orchestration-reset', res);
   }
-});
+);
 
 /**
  * GET /orchestration/status - Get orchestration shell status
  * Returns current status and configuration
  */
-router.get('/orchestration/status', async (
-  _: Request,
+router.get('/orchestration/status', legacyOperatorHttpBoundary, async (
+  req: Request,
   res: Response<OrchestrationResponse | ErrorResponseDTO>
 ) => {
   try {
-    console.log('📊 [ORCHESTRATION] Status request received');
-    
     // Get orchestration shell status
     const status = await getOrchestrationShellStatus();
     
@@ -180,9 +237,13 @@ router.get('/orchestration/status', async (
 
     res.status(200).json(response);
 
-  } catch (error: unknown) {
-    console.error('❌ [ORCHESTRATION] Status check failed:', resolveErrorMessage(error));
-    handleAIError(error, 'orchestration status request', 'orchestration-status', res);
+  } catch {
+    req.logger?.error?.('orchestration.status.failed', {
+      requestId: req.requestId,
+    });
+    sendInternalErrorPayload(res, {
+      error: 'Orchestration status retrieval failed',
+    });
   }
 });
 
@@ -190,28 +251,36 @@ router.get('/orchestration/status', async (
  * POST /orchestration/purge - Legacy endpoint for the exact script from problem statement
  * Executes the exact orchestration reset functionality as specified
  */
-router.post('/orchestration/purge', confirmGate, async (
-  req: Request<{}, OrchestrationResponse | ErrorResponseDTO, OrchestrationRequest>,
-  res: Response<OrchestrationResponse | ErrorResponseDTO>
-) => {
-  // This endpoint provides the exact same functionality as /reset
-  // but with the specific naming from the problem statement
-  try {
-    console.log('🔄 [ORCHESTRATION] Purge + Redeploy request received');
+router.post(
+  '/orchestration/purge',
+  legacyOperatorHttpBoundary,
+  legacyOperatorBodyParser,
+  confirmGate,
+  async (
+    req: Request<{}, OrchestrationResponse | ErrorResponseDTO, OrchestrationRequest>,
+    res: Response<OrchestrationResponse | ErrorResponseDTO>
+  ) => {
+    // This endpoint provides the exact same functionality as /reset
+    // but with the specific naming from the problem statement
+    try {
+      const validatedRequest = validateOrchestrationResetRequest(req.body);
+      if (!validatedRequest) {
+        sendBadRequest(res, 'Invalid orchestration request');
+        return;
+      }
+      const { agentId, sessionId, contextSnapshotTag } = validatedRequest;
+      req.logger?.info?.('orchestration.purge.started', {
+        requestId: req.requestId,
+        principalId: req.controlPlanePrincipal?.principalId,
+      });
 
-    const { agentId, sessionId, contextSnapshotTag } = req.body;
-    if (!agentId || !sessionId) {
-      sendBadRequest(res, 'Missing agentId or sessionId');
-      return;
-    }
-
-    const result = await resetOrchestrationShell({
-      agentId,
-      sessionId,
-      contextSnapshotTag
-    });
+      const result = await resetOrchestrationShell({
+        agentId,
+        sessionId,
+        contextSnapshotTag
+      });
     
-    const response: OrchestrationResponse = {
+      const response: OrchestrationResponse = {
       result: "GPT-5.1 orchestration shell has been purged and redeployed.",
       module: 'OrchestrationShell',
       meta: {
@@ -244,21 +313,27 @@ router.post('/orchestration/purge', confirmGate, async (
         meta: result.meta,
         logs: result.logs
       }
-    };
+      };
 
-    if (result.success) {
-      res.status(200).json(response);
-    } else {
+      if (result.success) {
+        res.status(200).json(response);
+      } else {
+        req.logger?.error?.('orchestration.purge.failed', {
+          requestId: req.requestId,
+        });
+        sendInternalErrorPayload(res, {
+          error: 'Orchestration purge failed',
+        });
+      }
+    } catch {
+      req.logger?.error?.('orchestration.purge.failed', {
+        requestId: req.requestId,
+      });
       sendInternalErrorPayload(res, {
-        ...response,
-        error: result.message
+        error: 'Orchestration purge failed',
       });
     }
-
-  } catch (error: unknown) {
-    console.error('❌ [ORCHESTRATION] Purge failed:', resolveErrorMessage(error));
-    handleAIError(error, 'orchestration purge request', 'orchestration-purge', res);
   }
-});
+);
 
 export default router;

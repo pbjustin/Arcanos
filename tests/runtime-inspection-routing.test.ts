@@ -1,9 +1,42 @@
+import fs from 'node:fs';
+import path from 'node:path';
+
 import { describe, expect, it } from '@jest/globals';
 
-import { shouldInspectRuntimePrompt } from '../src/services/promptDebugTraceService.js';
-import { classifyRuntimeInspectionPrompt } from '../src/services/runtimeInspectionRoutingService.js';
+import {
+  shouldInspectRuntimePrompt as compatibilityShouldInspectRuntimePrompt,
+} from '../src/services/promptDebugTraceService.js';
+import {
+  classifyRuntimeInspectionPrompt as compatibilityClassifyRuntimeInspectionPrompt,
+} from '../src/services/runtimeInspectionRoutingService.js';
+import {
+  classifyRuntimeInspectionPrompt,
+  shouldInspectRuntimePrompt,
+} from '../src/shared/runtimeInspectionPrompt.js';
 
 describe('runtime inspection prompt detection', () => {
+  it('preserves the service exports while keeping writing-plane classification on the shared leaf', () => {
+    expect(compatibilityShouldInspectRuntimePrompt).toBe(shouldInspectRuntimePrompt);
+    expect(compatibilityClassifyRuntimeInspectionPrompt).toBe(classifyRuntimeInspectionPrompt);
+
+    const writingPlaneSource = fs.readFileSync(
+      path.resolve('src/platform/runtime/writingPlaneContract.ts'),
+      'utf8'
+    );
+    const classifierSource = fs.readFileSync(
+      path.resolve('src/shared/runtimeInspectionPrompt.ts'),
+      'utf8'
+    );
+
+    expect(writingPlaneSource).toContain(
+      "from '@shared/runtimeInspectionPrompt.js'"
+    );
+    expect(writingPlaneSource).not.toContain('runtimeInspectionRoutingService');
+    expect(classifierSource).not.toMatch(
+      /(?:@core\/|@platform\/|@routes\/|@services\/|\/core\/|\/platform\/|\/routes\/|\/services\/)/u
+    );
+  });
+
   it.each([
     'Generate a strong, reusable prompt template for the Codex IDE Agent CLI',
     'Revise the Codex IDE Agent CLI prompt by incorporating this follow-up scope',

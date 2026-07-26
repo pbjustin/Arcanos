@@ -13,15 +13,13 @@ from typing import TYPE_CHECKING
 
 from ..backend_client import BackendRequestError
 from ..cli_types import DaemonCommand
-from ..config import Config
+from ..config import Config, is_valid_daemon_access_token
 from ..error_handler import logger as error_logger
 from . import backend_ops
 
 if TYPE_CHECKING:
     from .cli import ArcanosCLI
 
-
-_PLACEHOLDER_TOKENS = {"REPLACE_WITH_BACKEND_TOKEN", ""}
 
 _INITIAL_HEARTBEAT_DELAY_S = 2
 _MAX_BACKOFF_S = 120
@@ -39,13 +37,15 @@ def start_daemon_threads(cli: "ArcanosCLI") -> None:
 
     generic_ready = bool(
         cli.backend_client
-        and (Config.BACKEND_TOKEN or "") not in _PLACEHOLDER_TOKENS
+        and is_valid_daemon_access_token(Config.DAEMON_ACCESS_TOKEN)
     )
     execution_ready = bool(Config.ACTION_PLAN_EXECUTION_PROTOCOL_V2_ENABLED)
     local_agent_ready = bool(Config.LOCAL_AGENT_ENABLED)
     if not generic_ready and not execution_ready and not local_agent_ready:
-        # //audit assumption: placeholder tokens cannot authenticate; risk: repeated 429/noise; invariant: skip thread startup with placeholder token; strategy: guard and log once.
-        error_logger.info("[DAEMON] Skipping daemon threads: BACKEND_TOKEN is not configured.")
+        # //audit assumption: invalid daemon-plane credentials cannot authenticate; risk: repeated auth failures/noise; invariant: skip generic thread startup; strategy: guard and log once.
+        error_logger.info(
+            "[DAEMON] Skipping daemon threads: ARCANOS_DAEMON_ACCESS_TOKEN is not configured."
+        )
         return
 
     cli._daemon_running = True
@@ -110,7 +110,13 @@ def heartbeat_loop(cli: "ArcanosCLI") -> None:
             status_code = response.status_code
             retry_after = response.headers.get("Retry-After")
 
-            if status_code == 429:
+            if status_code == 401:
+                consecutive_429_count = 0
+                error_logger.warning(
+                    "[DAEMON] Authentication failed, stopping heartbeat"
+                )
+                break
+            elif status_code == 429:
                 consecutive_429_count += 1
                 backoff_time = min(
                     _MAX_BACKOFF_S,

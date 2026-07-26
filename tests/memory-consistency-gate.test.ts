@@ -452,6 +452,8 @@ describe('memoryConsistencyGate', () => {
     expect(response.body.error).toBe('UNSAFE_TO_PROCEED');
     expect(Array.isArray(response.body.conditions)).toBe(true);
     expect(response.body.conditions).toContain('MEMORY_VERSION_MISMATCH');
+    expect(response.body).not.toHaveProperty('quarantineIds');
+    expect(typeof response.body.quarantineCount).toBe('number');
     expect(rollbackToTrustedSnapshot).toHaveBeenCalledTimes(1);
   });
 });

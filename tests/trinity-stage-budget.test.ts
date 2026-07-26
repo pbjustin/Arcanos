@@ -4,12 +4,18 @@ const createSingleChatCompletionMock = jest.fn();
 const runStructuredReasoningMock = jest.fn();
 const getTokenParameterMock = jest.fn();
 
-jest.unstable_mockModule('@services/openai.js', () => ({
+jest.unstable_mockModule('@services/openai/credentialProvider.js', () => ({
   getDefaultModel: () => 'ft:test-default',
   getGPT5Model: () => 'gpt-5.1',
   getComplexModel: () => 'ft:test-complex',
-  getFallbackModel: () => 'gpt-4.1',
+  getFallbackModel: () => 'gpt-4.1'
+}));
+
+jest.unstable_mockModule('@services/openai/chatFallbacks.js', () => ({
   createSingleChatCompletion: createSingleChatCompletionMock,
+}));
+
+jest.unstable_mockModule('@services/openai/structuredReasoning.js', () => ({
   runStructuredReasoning: runStructuredReasoningMock
 }));
 

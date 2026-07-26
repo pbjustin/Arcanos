@@ -72,7 +72,7 @@ jest.unstable_mockModule('@services/workerAutonomyService.js', () => ({
 const express = (await import('express')).default;
 const request = (await import('supertest')).default;
 const workerHelperRouter = (await import('../src/routes/worker-helper.js')).default;
-const workerHelperToken = 'worker-helper-test-token';
+const workerHelperToken = 'worker-helper-test-token-1234567890';
 const originalWorkerHelperToken = process.env.ARCANOS_WORKER_HELPER_TOKEN;
 
 function buildApp(options: { authUser?: any; daemonToken?: string; operatorActor?: string } = {}) {
@@ -323,6 +323,44 @@ describe('/worker-helper routes', () => {
         activeListeners: 2
       })
     );
+  });
+
+  it.each([
+    [
+      'status',
+      '/worker-helper/status',
+      () => getLatestJobMock.mockRejectedValueOnce(new Error('sentinel-worker-helper-secret')),
+      'WORKER_HELPER_STATUS_FAILED',
+      'Worker helper status request failed.'
+    ],
+    [
+      'health',
+      '/worker-helper/health',
+      () => getWorkerControlHealthMock.mockRejectedValueOnce(new Error('sentinel-worker-helper-secret')),
+      'WORKER_HELPER_HEALTH_FAILED',
+      'Worker helper health request failed.'
+    ],
+    [
+      'failed jobs',
+      '/worker-helper/jobs/failed',
+      () => listFailedJobsMock.mockRejectedValueOnce(new Error('sentinel-worker-helper-secret')),
+      'WORKER_HELPER_FAILED_JOBS_LOOKUP_FAILED',
+      'Worker failed-job lookup failed.'
+    ]
+  ])('does not disclose dependency errors from public %s diagnostics', async (
+    _name,
+    path,
+    arrangeFailure,
+    error,
+    message
+  ) => {
+    arrangeFailure();
+
+    const response = await request(buildApp()).get(path);
+
+    expect(response.status).toBe(500);
+    expect(response.body).toEqual({ error, message });
+    expect(JSON.stringify(response.body)).not.toContain('sentinel-worker-helper-secret');
   });
 
   it('returns combined status with queue visibility', async () => {
@@ -672,6 +710,59 @@ describe('/worker-helper routes', () => {
     expect(response.status).toBe(403);
     expect(response.body.error).toBe('WORKER_HELPER_OPERATOR_FORBIDDEN');
     expect(createJobMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['daemon context', { daemonToken: 'established-daemon-context' }],
+    ['operator actor', { operatorActor: 'operator:established' }],
+    [
+      'admin role',
+      {
+        authUser: {
+          id: 7,
+          email: 'admin@example.test',
+          role: 'admin',
+          plan: 'internal',
+          profileId: null,
+          source: 'session'
+        }
+      }
+    ],
+    [
+      'operator role',
+      {
+        authUser: {
+          id: 8,
+          email: 'operator@example.test',
+          role: 'operator',
+          plan: 'internal',
+          profileId: null,
+          source: 'session'
+        }
+      }
+    ],
+    [
+      'owner role',
+      {
+        authUser: {
+          id: 9,
+          email: 'owner@example.test',
+          role: 'owner',
+          plan: 'internal',
+          profileId: null,
+          source: 'session'
+        }
+      }
+    ]
+  ])('preserves privileged %s access without token configuration', async (_label, authContext) => {
+    delete process.env.ARCANOS_WORKER_HELPER_TOKEN;
+
+    const response = await request(buildApp(authContext))
+      .post('/worker-helper/queue/ask')
+      .send({ prompt: 'Explain this stack trace.' });
+
+    expect(response.status).toBe(202);
+    expect(createJobMock).toHaveBeenCalledTimes(1);
   });
 
   it('rejects invalid worker helper token and bearer token mutation requests', async () => {
@@ -1045,6 +1136,23 @@ describe('/worker-helper routes', () => {
         activeListeners: 2
       })
     }));
+  });
+
+  it('does not disclose dependency errors from authenticated worker healing', async () => {
+    startWorkersMock.mockRejectedValueOnce(new Error('sentinel-worker-heal-secret'));
+
+    const response = await withWorkerHelperToken(
+      request(buildApp()).post('/worker-helper/heal')
+    )
+      .set('x-confirmed', 'yes')
+      .send({});
+
+    expect(response.status).toBe(500);
+    expect(response.body).toEqual({
+      error: 'WORKER_HELPER_HEAL_FAILED',
+      message: 'Worker heal request failed.'
+    });
+    expect(JSON.stringify(response.body)).not.toContain('sentinel-worker-heal-secret');
   });
 
   it('does not start in-process workers when execute heal is requested on a disabled runtime', async () => {

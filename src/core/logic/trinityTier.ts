@@ -6,7 +6,7 @@
 import type OpenAI from 'openai';
 import { logger } from "@platform/logging/structuredLogging.js";
 import { recordTraceEvent } from "@platform/logging/telemetry.js";
-import { createGPT5Reasoning } from "@services/openai.js";
+import { createGPT5Reasoning } from "@services/openai/chatFlow/index.js";
 import { ARCANOS_SYSTEM_PROMPTS } from "@platform/runtime/prompts.js";
 import type { RuntimeBudget } from '@platform/resilience/runtimeBudget.js';
 import { assertBudgetAvailable, getSafeRemainingMs } from '@platform/resilience/runtimeBudget.js';

@@ -50,3 +50,27 @@ export function extractLastUserMessageText(messages: unknown): string | null {
 
   return null;
 }
+
+/**
+ * Resolve the dispatcher-compatible prompt aliases from one request record.
+ */
+export function extractGptPromptText(value: unknown): string | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  const direct =
+    record.message ||
+    record.prompt ||
+    record.userInput ||
+    record.content ||
+    record.text ||
+    record.query;
+
+  if (typeof direct === 'string' && direct.trim().length > 0) {
+    return direct.trim();
+  }
+
+  return extractLastUserMessageText(record.messages);
+}

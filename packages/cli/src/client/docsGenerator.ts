@@ -96,6 +96,7 @@ export const DOCS_GENERATION_SECTIONS: DocsGenerationSection[] = [
       "canonical queued/running/completed response fields",
       "bounded polling with JOB_RESULT_ROUTE",
       "timeout handling and stream metadata via JOB_STREAM_ROUTE",
+      "repository-unavailable HTTP 503 handling versus successful not_found, including preservation of accepted job coordinates and idempotent retries",
     ],
   }),
   createDocsSection({
