@@ -27,9 +27,6 @@ const vulnerabilities = report.vulnerabilities ?? {};
 //   a deprecated bad release. The affected template/unset gadgets are not used
 //   by the repository's query stores. Retest the Knex stores when Knex adopts a
 //   supported patched lodash release or npm publishes a non-deprecated patch.
-// - brace-expansion (vendored minimatch -> brace-expansion): the patched
-//   5.0.6/5.0.7 releases are not yet published to npm and exposure is
-//   tooling-only. Retest and remove these entries when a patch is published.
 // - Hono (MCP SDK -> Hono): the patched @hono/node-server 2.0.5 and Hono
 //   4.12.27 npm builds are not published. Their source tags omit the compiled
 //   package exports, so consuming those archives would break runtime imports.
@@ -60,14 +57,6 @@ const IGNORED_LODASH_SOURCES = new Set([1115806, 1115810]);
 const IGNORED_LODASH_URLS = new Set([
   'https://github.com/advisories/GHSA-r5fr-rjxr-66jc',
   'https://github.com/advisories/GHSA-f23m-r3pf-42rh',
-]);
-const IGNORED_BRACE_EXPANSION_SOURCES = new Set([1120311, 1123898]);
-const IGNORED_BRACE_EXPANSION_URLS = new Set([
-  'https://github.com/advisories/GHSA-jxxr-4gwj-5jf2',
-  'https://github.com/advisories/GHSA-3jxr-9vmj-r5cp',
-]);
-const IGNORED_BRACE_EXPANSION_NODES = new Set([
-  'vendor/minimatch-9.0.7/node_modules/brace-expansion',
 ]);
 const IGNORED_HONO_NODE_SERVER_SOURCES = new Set([1124006]);
 const IGNORED_HONO_NODE_SERVER_URLS = new Set([
@@ -116,27 +105,6 @@ function isIgnoredLodashAdvisory(advisory) {
   }
 
   return typeof advisory.url === 'string' && IGNORED_LODASH_URLS.has(advisory.url);
-}
-
-function isIgnoredBraceExpansionAdvisory(advisory) {
-  if (!advisory || typeof advisory !== 'object') {
-    return false;
-  }
-
-  if (advisory.name !== 'brace-expansion') {
-    return false;
-  }
-
-  if (
-    typeof advisory.source === 'number' &&
-    IGNORED_BRACE_EXPANSION_SOURCES.has(advisory.source)
-  ) {
-    return true;
-  }
-
-  return (
-    typeof advisory.url === 'string' && IGNORED_BRACE_EXPANSION_URLS.has(advisory.url)
-  );
 }
 
 function isIgnoredHonoNodeServerAdvisory(advisory) {
@@ -201,16 +169,6 @@ function isIgnoredVulnerability(name, vulnerability) {
 
   // These upstream advisories are source-scoped so new advisories or unrelated
   // transitive chains still fail the CI audit gate.
-  if (name === 'brace-expansion') {
-    const nodes = Array.isArray(vulnerability.nodes) ? vulnerability.nodes : [];
-    return (
-      via.length > 0 &&
-      via.every(isIgnoredBraceExpansionAdvisory) &&
-      nodes.length > 0 &&
-      nodes.every(node => IGNORED_BRACE_EXPANSION_NODES.has(node))
-    );
-  }
-
   if (name === '@hono/node-server') {
     return (
       via.length > 0 &&
