@@ -66,6 +66,12 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) where practical
 
 ### Security
 
+- Preserved the deprecated `GET /status` and confirmed `POST /status` success
+  contracts while marking their responses—including confirmation
+  challenges—`no-store` and replacing raw exception responses and route logs
+  with fixed public text and closed failure classification. The shadowed
+  detailed-health compatibility handler now applies the same containment if
+  route ownership changes.
 - Replaced `/railway/healthcheck` filesystem paths, worker filenames,
   free-form reasons, and exception reflection with a stable no-store public
   projection while preserving its healthy/degraded HTTP status behavior.

@@ -159,8 +159,11 @@ The groups below highlight stable public routes, operator/control routes, compat
 - `GET /api/diagnostics/queues` (credential-free, no-store aggregate queue
   summary; recent failure entries retain category, retryability, count, and
   timestamp but replace persisted failure text with fixed category labels)
-- `GET /status`
-- `POST /status` (confirmation required)
+- `GET /status` (deprecated no-store alias for the public health response;
+  unexpected failures retain the deprecation headers and return a fixed
+  `500` message without exception text)
+- `POST /status` (confirmation required; confirmation challenges and handler
+  responses are no-store, and persistence failures return fixed text)
 - `POST /heartbeat` (confirmation required)
 - `GET /api/test`
 - `GET /api/fallback/test`
