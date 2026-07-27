@@ -150,20 +150,48 @@ The groups below highlight stable public routes, operator/control routes, compat
 - `GET /`
 - `GET /health`
 - `GET /healthz`
-- `GET /readyz`
+- `GET|HEAD /readyz`
 - `GET /railway/healthcheck`
 - `GET /diagnostics` (public no-store runtime summary; its module map is
   catalog-backed and includes only the 12 non-protected definitions; `active`
   means the validated definition is loaded in the process registry, not that
   every downstream dependency of that module is ready)
+- `GET /api/diagnostics/queues` (credential-free, no-store aggregate queue
+  summary; recent failure entries retain category, retryability, count, and
+  timestamp but replace persisted failure text with fixed category labels)
 - `GET /status`
 - `POST /status` (confirmation required)
 - `POST /heartbeat` (confirmation required)
 - `GET /api/test`
 - `GET /api/fallback/test`
 
+The root backend's credential-free `/readyz` checks OpenAI, database, Redis,
+and startup readiness in that order. It returns `200` only when every critical
+check is healthy and otherwise returns `503`; all responses use
+`Cache-Control: no-store`. `GET` returns the top-level fields `ready`, `status`,
+`timestamp`, `checks`, and `duration`. Each check exposes only `name`,
+`healthy`, `duration`, and, when unhealthy, a stable `code` and fixed public
+`error`. The Redis check additionally retains only `recoveryCount`,
+`readyGeneration`, `circuitEnabled`, and `circuitState` under `metadata` for
+the lifecycle recovery verifier. `HEAD` preserves the same status and headers
+without a body. Provider and database exceptions, connection details, OpenAI
+configuration metadata, and arbitrary checker metadata are never returned.
+
+`GET /railway/healthcheck` is a credential-free compatibility diagnostic, not
+the canonical Railway deployment probe. It returns `200` when its internal
+report is healthy and `503` when degraded or unavailable, and all responses
+are marked `no-store`. Its bounded payload contains only a stable status code,
+fixed summary, worker booleans and file count, normalized aggregate memory
+values, and a timestamp. Internal worker filenames, checked filesystem paths,
+free-form reasons, and exception messages are not returned. Unexpected
+failures are logged only by stable code and error type with request
+correlation. Railway deployments should continue probing `GET /health`.
+
 ### Core AI interaction
 - `POST /gpt/:gptId` (canonical GPT writing plane)
+- `POST /dispatch` (universal GPT/DAG compatibility dispatcher; asynchronous
+  branch failures return the stable `500 DISPATCH_FAILED` envelope without
+  internal exception text)
 - `GET|POST /brain` (legacy ask-compatible route; returns `410 Gone` by default; `ASK_ROUTE_MODE=compat` enables the compatibility handler and then requires confirmation)
 - `GET /trinity/status`
 - `POST /arcanos` (confirmation required)
@@ -177,7 +205,8 @@ The groups below highlight stable public routes, operator/control routes, compat
 - `POST /system-state`
 - `POST /api/bridge/gpt`
 - `POST /api/openai/gpt-action` (bridge compatibility alias)
-- `GET /api/bridge/health`
+- `GET /api/bridge/health` (requires the bridge shared secret; returns a
+  no-store operational payload with fixed database and worker failure text)
 
 ### Reinforcement and reflection feedback
 - `POST /reinforce`

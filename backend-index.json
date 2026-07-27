@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-27T01:05:48.284Z",
+  "generatedAt": "2026-07-27T03:17:51.964Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -879,6 +879,9 @@
         },
         {
           "relativePath": "src/platform/runtime/config.ts"
+        },
+        {
+          "relativePath": "src/platform/runtime/corsConfig.ts"
         },
         {
           "relativePath": "src/platform/runtime/daemonConfig.ts"
@@ -2321,6 +2324,9 @@
           "relativePath": "src/shared/http/publicGamingPath.ts"
         },
         {
+          "relativePath": "src/shared/http/railwayHealthcheckProjection.ts"
+        },
+        {
           "relativePath": "src/shared/http/sendBoundedJsonResponse.ts"
         },
         {
@@ -3031,6 +3037,9 @@
           "relativePath": "tests/converge-plan.test.ts"
         },
         {
+          "relativePath": "tests/cors-config.test.ts"
+        },
+        {
           "relativePath": "tests/custom-gpt-bridge-smoke.route.test.ts"
         },
         {
@@ -3107,6 +3116,9 @@
         },
         {
           "relativePath": "tests/dispatch-controller-v9.test.ts"
+        },
+        {
+          "relativePath": "tests/dispatch-error-boundary.test.ts"
         },
         {
           "relativePath": "tests/dispatcher-natural-language-llm.test.ts"
@@ -3728,6 +3740,9 @@
         },
         {
           "relativePath": "tests/railway-client.test.ts"
+        },
+        {
+          "relativePath": "tests/railway-healthcheck.route.test.ts"
         },
         {
           "relativePath": "tests/redis-operation-boundary.test.ts"

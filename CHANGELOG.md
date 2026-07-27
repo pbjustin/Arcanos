@@ -66,10 +66,41 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) where practical
 
 ### Security
 
+- Replaced `/railway/healthcheck` filesystem paths, worker filenames,
+  free-form reasons, and exception reflection with a stable no-store public
+  projection while preserving its healthy/degraded HTTP status behavior.
+- Required the existing timing-safe bridge secret for detailed Custom GPT
+  bridge health, marked its responses private/no-store, and replaced raw
+  database, worker, and route-resolution errors with fixed public messages;
+  the bridge OpenAPI contract is now version 1.2.0 and documents the new
+  authentication and misconfiguration responses. Both authenticated bridge
+  execution aliases now also return fixed unexpected-failure and idempotency
+  conflict messages while retaining redacted server diagnostics.
+- Replaced persisted worker failure text in the credential-free queue
+  diagnostics response with fixed category labels, preserving aggregate
+  operational fields and marking the response `no-store`.
+- Replaced raw provider and internal exception text in shared AI timeout,
+  failure, and mock-fallback responses with stable classification-specific
+  messages while retaining redacted structured diagnostics server-side.
+- Replaced the public readiness endpoint's raw dependency errors and arbitrary
+  metadata with fixed per-check failures and an explicit projection, retained
+  only the four Redis lifecycle fields required by the recovery verifier, and
+  marked both successful and unavailable readiness responses `no-store`.
+- Replaced raw web-search provider failure text with the stable
+  `WEB_SEARCH_FAILED` public contract while retaining structured server-side
+  diagnostics.
+- Kept asynchronous GPT and DAG failures inside the public `/dispatch` error
+  boundary and replaced exception reflection with the stable
+  `DISPATCH_FAILED` response.
+- Removed route-local wildcard CORS headers from both SSE compatibility paths
+  and made the global middleware the single policy owner, with exact
+  canonical-origin matching and no credential headers for denied origins.
 - Unified backend and worker Responses-to-ChatCompletion semantics so refusals
   and callable payloads survive conversion, incomplete outcomes retain their
   terminal metadata, and failed, cancelled, pending, unknown-status, or
-  unrepresentable tool-only responses cannot masquerade as successful stops.
+  unrepresentable tool-only responses cannot masquerade as successful stops;
+  structured JSON parsing now also requires an explicit completed lifecycle
+  and rejects valid-looking partial output from incomplete responses.
 - Replaced credential-shaped and prototype-sensitive property names with
   collision-safe opaque markers in the shared runtime redactor, preventing
   `__proto__` setter mutation and key-name disclosure across logs, control-plane
