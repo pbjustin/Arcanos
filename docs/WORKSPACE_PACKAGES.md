@@ -101,6 +101,10 @@ Railway builds from the root package and uses `scripts/start-railway-service.mjs
 ### OpenAI integration
 
 - `@arcanos/openai` owns portable client construction, retry/backoff utilities, resilience defaults, Responses helpers, structured-reasoning helpers, and response parsing.
+- `@arcanos/openai/responses` owns the cross-runtime Responses lifecycle,
+  refusal, usage, and legacy function/custom-tool projection contract. Backend
+  and worker adapters keep only their surface-specific IDs, timestamps, models,
+  envelopes, telemetry, and orchestration.
 - The backend keeps server-specific adapter configuration, credential resolution, telemetry, circuit-breaker integration, request staging, and chat-flow orchestration in `src/core/adapters/openai.adapter.ts` and `src/services/openai/`.
 - `workers/` and `arcanos-ai-runtime/` import shared client/retry helpers rather than maintaining separate copies.
 - Retry is not globally app-only: the backend adapter can configure SDK retries, while backend chat flow and other runtimes may also apply an application retry helper. Changes must account for the combined attempt budget.

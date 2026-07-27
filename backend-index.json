@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-27T00:31:26.881Z",
+  "generatedAt": "2026-07-27T01:05:48.284Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -116,6 +116,9 @@
         },
         {
           "relativePath": "packages/arcanos-openai/src/responses.ts"
+        },
+        {
+          "relativePath": "packages/arcanos-openai/src/responseSemantics.ts"
         },
         {
           "relativePath": "packages/arcanos-openai/src/retry.ts"
@@ -3602,6 +3605,9 @@
         },
         {
           "relativePath": "tests/openai-structured-reasoning-preview-chaos.test.ts"
+        },
+        {
+          "relativePath": "tests/openai-worker-handler.test.ts"
         },
         {
           "relativePath": "tests/openapi/action-plan-execution.contract.test.ts"

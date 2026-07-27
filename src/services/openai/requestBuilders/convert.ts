@@ -4,14 +4,13 @@ import type {
   ResponseCreateParamsNonStreaming
 } from 'openai/resources/responses/responses';
 
-import {
-  normalizeUsage as normalizeOpenAIUsage,
-  extractResponseOutputText as extractResponseText
-} from '@arcanos/openai/responseParsing';
-import { shouldStoreOpenAIResponses } from '@config/openaiStore.js';
+import { extractResponseOutputText as extractResponseText } from '@arcanos/openai/responseParsing';
 import {
   attachOpenAIResponsesMetadataToChatCompletion,
-  resolveOpenAIResponsesLegacyFinishReason,
+  normalizeOpenAIResponseForLegacyChat
+} from '@arcanos/openai/responses';
+import { shouldStoreOpenAIResponses } from '@config/openaiStore.js';
+import {
   type OpenAIResponsesLegacyChatCompletion
 } from '@core/adapters/openaiResponsesMetadata.js';
 
@@ -29,10 +28,6 @@ import type {
 function isReasoningModel(model: string): boolean {
   // Heuristic: OpenAI reasoning models commonly start with 'o' (e.g., o1, o3).
   return typeof model === 'string' && /^o\d/i.test(model.trim());
-}
-
-function extractUsage(usage: unknown): { promptTokens: number; completionTokens: number; totalTokens: number } {
-  return normalizeOpenAIUsage(usage);
 }
 
 export type {
@@ -203,13 +198,11 @@ export function convertResponseToLegacyChatCompletion(
   response: OpenAIResponse,
   requestedModel: string
 ): OpenAIResponsesLegacyChatCompletion {
-  const outputText = extractResponseOutputText(response, '');
-  const usage = extractUsage((response as unknown as { usage?: unknown }).usage);
+  const semantics = normalizeOpenAIResponseForLegacyChat(response);
   const createdSource = (response as { created_at?: unknown }).created_at;
   const created = typeof createdSource === 'number'
     ? Math.floor(createdSource)
     : Math.floor(Date.now() / 1000);
-  const finishReason = resolveOpenAIResponsesLegacyFinishReason(response);
 
   const legacyResponse: OpenAI.Chat.Completions.ChatCompletion = {
     id: response.id || `legacy_${Date.now()}`,
@@ -221,19 +214,27 @@ export function convertResponseToLegacyChatCompletion(
         index: 0,
         message: {
           role: 'assistant',
-          content: outputText,
-          refusal: null
+          content: semantics.content,
+          refusal: semantics.refusal,
+          ...(semantics.toolCalls.length > 0
+            ? { tool_calls: semantics.toolCalls }
+            : {})
         },
-        finish_reason: finishReason,
+        finish_reason: semantics.finishReason,
         logprobs: null
       }
     ],
     usage: {
-      prompt_tokens: usage.promptTokens,
-      completion_tokens: usage.completionTokens,
-      total_tokens: usage.totalTokens
+      prompt_tokens: semantics.usage.promptTokens,
+      completion_tokens: semantics.usage.completionTokens,
+      total_tokens: semantics.usage.totalTokens
     }
   };
 
-  return attachOpenAIResponsesMetadataToChatCompletion(legacyResponse, response, finishReason);
+  return attachOpenAIResponsesMetadataToChatCompletion(
+    legacyResponse,
+    response,
+    semantics.finishReason,
+    semantics
+  );
 }

@@ -66,6 +66,10 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) where practical
 
 ### Security
 
+- Unified backend and worker Responses-to-ChatCompletion semantics so refusals
+  and callable payloads survive conversion, incomplete outcomes retain their
+  terminal metadata, and failed, cancelled, pending, unknown-status, or
+  unrepresentable tool-only responses cannot masquerade as successful stops.
 - Replaced credential-shaped and prototype-sensitive property names with
   collision-safe opaque markers in the shared runtime redactor, preventing
   `__proto__` setter mutation and key-name disclosure across logs, control-plane

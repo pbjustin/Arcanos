@@ -42,6 +42,27 @@ Continuation has two storage modes:
 
 This branch is implemented in `src/routes/ask/toolLoop.ts`. Callers in both `daemonTools.ts` and `toolRuntime.ts` retain the returned local transcript between loop iterations.
 
+### Legacy ChatCompletion compatibility
+
+Portable Responses-to-ChatCompletion semantics live behind
+`@arcanos/openai/responses`:
+
+- Refusal content is projected to `message.refusal` instead of being discarded.
+- Responses `function_call` and `custom_tool_call` items are projected to
+  matching `message.tool_calls` entries using the provider `call_id`; a
+  `tool_calls` finish reason is never emitted without a corresponding payload.
+- `incomplete` responses preserve status and details and map
+  `max_output_tokens` to `length` and `content_filter` to `content_filter`.
+- Failed, cancelled, queued, in-progress, unknown-status, and unrepresentable
+  tool-only responses fail conversion explicitly rather than appearing as
+  ordinary stopped completions.
+- Backend and worker compatibility adapters attach the same provider metadata
+  while retaining their existing surface-specific fallback IDs.
+
+The worker's direct `OPENAI_COMPLETION` handler applies the same lifecycle
+contract and rejects refusal outcomes instead of storing an empty successful
+result.
+
 ### Daemon tool behavior
 
 - `run_command` remains confirmation-gated; the backend does not immediately execute a proposed local command.

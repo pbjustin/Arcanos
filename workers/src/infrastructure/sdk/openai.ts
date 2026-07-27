@@ -8,7 +8,11 @@
 import type OpenAI from 'openai';
 import { createOpenAIClient } from '@arcanos/openai/client';
 import { retryWithBackoff } from '@arcanos/openai/retry';
-import { extractResponseOutputText, extractTextFromContentParts } from '@arcanos/openai';
+import { extractTextFromContentParts } from '@arcanos/openai/responseParsing';
+import {
+  attachOpenAIResponsesMetadataToChatCompletion,
+  normalizeOpenAIResponseForLegacyChat
+} from '@arcanos/openai/responses';
 import type { ChatCompletion, ChatCompletionCreateParams } from 'openai/resources/chat/completions.js';
 import type { CreateEmbeddingResponse, EmbeddingCreateParams } from 'openai/resources/embeddings.js';
 import type { Response as OpenAIResponse, ResponseCreateParamsNonStreaming } from 'openai/resources/responses/responses';
@@ -45,12 +49,6 @@ export interface WorkerOpenAIAdapter {
   };
   getClient: () => OpenAI;
   getDefaults: () => { chatModel: string; embeddingModel: string };
-}
-
-interface WorkerLegacyUsageShape {
-  input_tokens?: number;
-  output_tokens?: number;
-  total_tokens?: number;
 }
 
 function normalizeWorkerMessageContent(content: unknown): string {
@@ -119,20 +117,11 @@ function buildWorkerResponsesPayload(params: ChatCompletionCreateParams): Respon
   return payload;
 }
 
-function extractWorkerOutputText(response: unknown): string {
-  return extractResponseOutputText(response, '');
-}
-
 function convertWorkerResponseToChatCompletion(response: OpenAIResponse, requestedModel: string): ChatCompletion {
-  const usage = (response.usage ?? {}) as WorkerLegacyUsageShape;
-  const promptTokens = Number.isFinite(usage.input_tokens) ? Number(usage.input_tokens) : 0;
-  const completionTokens = Number.isFinite(usage.output_tokens) ? Number(usage.output_tokens) : 0;
-  const totalTokens = Number.isFinite(usage.total_tokens)
-    ? Number(usage.total_tokens)
-    : promptTokens + completionTokens;
+  const semantics = normalizeOpenAIResponseForLegacyChat(response);
   const createdAt = (response as { created_at?: unknown }).created_at;
 
-  return {
+  const legacyResponse: ChatCompletion = {
     id: response.id || `worker_legacy_${Date.now()}`,
     object: 'chat.completion',
     created: typeof createdAt === 'number' ? Math.floor(createdAt) : Math.floor(Date.now() / 1000),
@@ -142,19 +131,29 @@ function convertWorkerResponseToChatCompletion(response: OpenAIResponse, request
         index: 0,
         message: {
           role: 'assistant',
-          content: extractWorkerOutputText(response),
-          refusal: null
+          content: semantics.content,
+          refusal: semantics.refusal,
+          ...(semantics.toolCalls.length > 0
+            ? { tool_calls: semantics.toolCalls }
+            : {})
         },
-        finish_reason: 'stop',
+        finish_reason: semantics.finishReason,
         logprobs: null
       }
     ],
     usage: {
-      prompt_tokens: promptTokens,
-      completion_tokens: completionTokens,
-      total_tokens: totalTokens
+      prompt_tokens: semantics.usage.promptTokens,
+      completion_tokens: semantics.usage.completionTokens,
+      total_tokens: semantics.usage.totalTokens
     }
   };
+
+  return attachOpenAIResponsesMetadataToChatCompletion(
+    legacyResponse,
+    response,
+    semantics.finishReason,
+    semantics
+  );
 }
 
 let workerAdapterInstance: WorkerOpenAIAdapter | null = null;
