@@ -50,6 +50,9 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) where practical
 - Moved the GPT route's execution-mode precedence tree behind a pure,
   branch-complete policy classifier while keeping request parsing, environment
   thresholds, memory overrides, queueing, and response effects in the router.
+- Moved GPT Access string and payload sanitization into a dependency-light,
+  directly characterized policy module while preserving gateway re-exports and
+  redaction precedence.
 - Reduced ActionPlan executor capability reads from one locked Agent query per
   action to one fresh query per transaction, preserving authorization and
   replay error precedence for plans containing up to 100 actions.
@@ -174,6 +177,8 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) where practical
 
 ### Fixed
 
+- Corrected the `self-test` and `daily-summary` package scripts to use their
+  emitted `dist/core/commands/` entry points.
 - Allowed the commit guard to inspect large staged diffs with a bounded
   subprocess buffer instead of failing before its artifact and secret checks.
 - Corrected stale routing, authentication, environment, CLI, MCP, OpenAI,

@@ -176,6 +176,14 @@ treating an operator command as writing-plane content. This direction keeps GPT
 Access and self-heal inspection out of the core writing module's dependency
 graph.
 
+GPT Access string and payload sanitization is owned by the dependency-light
+`services/gptAccessSanitization.ts` policy module. It applies the shared
+structural redactor before the GPT Access-specific string, prompt-field, and
+diagnostic-payload projections. The gateway retains compatibility re-exports,
+so routes and dispatchers keep their existing public imports without pulling
+the gateway's database, worker, and runtime dependencies into direct policy
+tests.
+
 Run `npm run reindex` after structural moves or deletions. It rewrites `backend-index.json`, `cli-agent-index.json`, `docs/BACKEND_INDEX.md`, and `docs/CLI_AGENT_INDEX.md` together; those generated inventories complement this maintained architecture map.
 
 ## Configuration

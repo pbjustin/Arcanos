@@ -116,7 +116,7 @@ Choose the smallest set covering the change, then expand for cross-cutting or re
 ## Known command traps
 
 - The unsafe root probe command was retired because it depended on a missing test file and printed part of `OPENAI_API_KEY`; do not restore or invoke historical copies.
-- `self-test` and `daily-summary` point at incorrect `dist/commands/` paths. `db:init`, `db:patch`, `guide:generate`, `test:doc-workflow`, root `audit*`, `audit:python*`, and `sync:auto` reference missing targets. Treat them as unavailable until repaired.
+- `db:init`, `db:patch`, `guide:generate`, `test:doc-workflow`, root `audit*`, `audit:python*`, and `sync:auto` reference missing targets. Treat them as unavailable until repaired. `self-test` and `daily-summary` use compiled entry points and require a successful build; they execute application behavior and are not routine read-only validation.
 - `sync:fix` currently parses its flag but performs no fix. `sync:setup` writes Git hooks and may create local tooling directories.
 - `clean` and `rebuild` use `rm -rf`; they are destructive and are not portable to the default Windows npm shell. Never run them automatically.
 

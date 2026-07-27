@@ -65,7 +65,10 @@ and depended on a missing test file. Use the focused validation commands
 documented for the subsystem you changed; use `npm run validate:railway` for the
 local, non-deploying Railway configuration check.
 
-`self-test` and `daily-summary` point at incorrect compiled command paths.
+`self-test` and `daily-summary` use the compiled command entry points under
+`dist/core/commands/` and therefore require a successful build. They execute
+application diagnostic or summary behavior and are not substitutes for
+read-only build and test validation.
 `sync:fix` accepts its flag but does not currently apply a fix. `sync:setup`
 writes Git hooks and may create local tooling directories; it is not a read-only
 validation command.

@@ -21,7 +21,6 @@ import {
   summarizeFingerprintHash
 } from '@shared/gpt/gptIdempotency.js';
 import { buildGptJobResultLookupPayload, GPT_QUERY_ACTION } from '@shared/gpt/gptJobResult.js';
-import { redactSensitive } from '@shared/redaction.js';
 import { sanitizeRequestPath } from '@shared/requestPathSanitizer.js';
 import { timingSafeEqualOpaqueSecret } from '@shared/security/opaqueSecret.js';
 import { conflictsWithLocalAgentExecutorCredential } from '@services/actionPlanExecution/auth.js';
@@ -35,6 +34,7 @@ import {
   PRODUCTIVITY_MODULE_NAME
 } from '@services/productivity/productivityTypes.js';
 import { runtimeDiagnosticsService } from '@services/runtimeDiagnosticsService.js';
+import { sanitizeGptAccessPayload } from '@services/gptAccessSanitization.js';
 import { getWorkerControlHealth, getWorkerControlStatus } from '@services/workerControlService.js';
 import { planAutonomousWorkerJob } from '@services/workerAutonomyService.js';
 import { buildSafetySelfHealSnapshot } from '@services/selfHealRuntimeInspectionService.js';
@@ -45,6 +45,10 @@ import { getStartupLifecycleSnapshot } from '@platform/runtime/startupLifecycle.
 import { getNaturalLanguageDispatchRuntimeStatus } from '@dispatcher/naturalLanguage/planner.js';
 import { DISPATCH_UTTERANCE_MAX_LENGTH } from '@dispatcher/naturalLanguage/types.js';
 export { GPT_ACCESS_SCOPES, type GptAccessScope } from '@services/gptAccessScopes.js';
+export {
+  sanitizeGptAccessPayload,
+  sanitizeGptAccessString
+} from '@services/gptAccessSanitization.js';
 import { GPT_ACCESS_SCOPES, type GptAccessScope } from '@services/gptAccessScopes.js';
 
 const SERVICE_VERSION = '1.0.0';
@@ -1093,93 +1097,6 @@ export async function runApprovedDbExplain(queryKey: GptAccessExplainQueryKey, p
       plan: planJson
     }
   };
-}
-
-const STRING_REDACTIONS: Array<[RegExp, string]> = [
-  [/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi, 'Bearer [REDACTED]'],
-  [/\bsk-[A-Za-z0-9_-]{16,}\b/g, '[REDACTED_OPENAI_KEY]'],
-  [/\b(?:railway|rwy)[_-]?[A-Za-z0-9]{16,}\b/gi, '[REDACTED_RAILWAY_TOKEN]'],
-  [/\b(?:postgres|postgresql|mysql|mongodb):\/\/[^\s"'<>]+/gi, '[REDACTED_DATABASE_URL]'],
-  [/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, '[REDACTED_JWT]'],
-  [/\b(?:authorization|cookie|set-cookie|api[_-]?key|token|secret|password|session(?:id)?|database_url)\s*[:=]\s*["']?[^"'\s,;}]+/gi, '$1=[REDACTED]'],
-  [/\b(email|password)\s*[:=]\s*["']?[^"'\s,;}]+/gi, '$1=[REDACTED]']
-];
-const PROMPT_LOG_FIELD_KEYS = new Set([
-  'prompt',
-  'prompttext',
-  'prompt_text',
-  'promptpreview',
-  'prompt_preview',
-  'rawprompt',
-  'raw_prompt',
-  'normalizedprompt',
-  'normalized_prompt',
-  'task',
-  'taskpreview',
-  'task_preview',
-  'summarypreview',
-  'summary_preview',
-  'inputpreview',
-  'input_preview',
-  'outputpreview',
-  'output_preview',
-  'messages'
-]);
-const DIAGNOSTIC_PAYLOAD_FIELD_KEYS = new Set([
-  'completion',
-  'completiontext',
-  'completion_text',
-  'completions',
-  'providerpayload',
-  'provider_payload',
-  'providerpayloads',
-  'provider_payloads',
-  'providerrequest',
-  'provider_request',
-  'providerresponse',
-  'provider_response',
-  'providerraw',
-  'provider_raw'
-]);
-
-export function sanitizeGptAccessString(value: string): string {
-  return STRING_REDACTIONS.reduce(
-    (current, [pattern, replacement]) => current.replace(pattern, replacement),
-    value
-  );
-}
-
-export function sanitizeGptAccessPayload(payload: unknown): unknown {
-  const redacted = redactSensitive(payload);
-  return sanitizeStringsDeep(redacted);
-}
-
-function sanitizeStringsDeep(value: unknown): unknown {
-  if (typeof value === 'string') {
-    return sanitizeGptAccessString(value);
-  }
-  if (!value || typeof value !== 'object') {
-    return value;
-  }
-  if (Array.isArray(value)) {
-    return value.map(sanitizeStringsDeep);
-  }
-
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>).map(([key, entry]) => {
-      const normalizedKey = key.toLowerCase();
-      if (normalizedKey === 'email' || normalizedKey.includes('password')) {
-        return [key, '[REDACTED]'];
-      }
-      if (PROMPT_LOG_FIELD_KEYS.has(normalizedKey)) {
-        return [key, '[REDACTED_PROMPT]'];
-      }
-      if (DIAGNOSTIC_PAYLOAD_FIELD_KEYS.has(normalizedKey)) {
-        return [key, '[REDACTED_DIAGNOSTIC_PAYLOAD]'];
-      }
-      return [key, sanitizeStringsDeep(entry)];
-    })
-  );
 }
 
 export async function querySanitizedBackendLogs(input: z.infer<typeof logsQuerySchema>) {

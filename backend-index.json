@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-07-26T23:43:44.919Z",
+  "generatedAt": "2026-07-26T23:57:21.368Z",
   "scopes": [
     {
       "scope": "arcanos-ai-runtime",
@@ -1652,6 +1652,9 @@
           "relativePath": "src/services/gptAccessNaturalLanguageDispatch.ts"
         },
         {
+          "relativePath": "src/services/gptAccessSanitization.ts"
+        },
+        {
           "relativePath": "src/services/gptAccessScopes.ts"
         },
         {
@@ -3194,6 +3197,9 @@
         },
         {
           "relativePath": "tests/gpt-access-openapi-capability-catalog.test.ts"
+        },
+        {
+          "relativePath": "tests/gpt-access-sanitization.test.ts"
         },
         {
           "relativePath": "tests/gpt-async-idempotency.route.test.ts"
